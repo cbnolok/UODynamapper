@@ -35,8 +35,6 @@ pub fn ui_uop_browser(app: &mut UopInspectorApp, ctx: &egui::Context) {
         });
 
     if let Some(uop_idx) = app.selected_uop_idx {
-        let entry_labels = app.get_uop_entry_labels(uop_idx);
-        
         egui::SidePanel::left("entry_panel")
             .resizable(true)
             .default_width(350.0)
@@ -58,7 +56,14 @@ pub fn ui_uop_browser(app: &mut UopInspectorApp, ctx: &egui::Context) {
                        }
                     }
                 });
+                if app.selected_uop_is_terrain_texture(uop_idx) {
+                    let mut enabled = app.guess_terrain_texture_file_format;
+                    if ui.checkbox(&mut enabled, "Guess file format").changed() {
+                        app.set_guess_terrain_texture_file_format(enabled);
+                    }
+                }
                 
+                let entry_labels = app.get_uop_entry_labels(uop_idx);
                 let query = app.search_query.to_lowercase();
                 let visible_hashes: Vec<u64> = entry_labels
                     .iter()
@@ -96,7 +101,7 @@ pub fn ui_uop_browser(app: &mut UopInspectorApp, ctx: &egui::Context) {
             let loaded_uop = app.uop_cache.loaded_uops[uop_idx].clone();
             if let Some(file) = loaded_uop.package.get_file_by_hash(file_hash) {
                 let hash = file.filename_hash();
-                let resolved_name = app.dictionary.resolve(hash).map(str::to_string).unwrap_or_else(|| format!("{:016X}", hash));
+                let resolved_name = app.resolve_uop_entry_display_name(uop_idx, hash);
                 
                 ui.horizontal(|ui| {
                     ui.heading("Entry Details");

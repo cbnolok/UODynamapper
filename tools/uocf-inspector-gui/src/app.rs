@@ -29,6 +29,9 @@ use uocf::uop_container::hash::hash_file_name_single;
 use uocf::uop_container::package::{LoadMode, UopPackage};
 use serde::{Deserialize, Serialize};
 
+const TERRAIN_TEXTURE_GUESS_MAX_ID: u32 = 4096;
+const TERRAIN_TEXTURE_GUESS_EXTENSIONS: [&str; 2] = ["dds", "tga"];
+
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ViewMode {
     Home,
@@ -553,6 +556,31 @@ pub struct UopEntryLabel {
     pub hash: u64,
     pub display_name: String,
     pub search_name: String,
+}
+
+fn terrain_texture_guess_candidate(texture_id: u32, extension: &str) -> String {
+    format!("build/terraintexture/{texture_id:08}.{extension}")
+}
+
+fn collect_terrain_texture_guess_names(package: &UopPackage) -> HashMap<u64, String> {
+    let mut names = HashMap::new();
+    for texture_id in 0..=TERRAIN_TEXTURE_GUESS_MAX_ID {
+        for extension in TERRAIN_TEXTURE_GUESS_EXTENSIONS {
+            let candidate = terrain_texture_guess_candidate(texture_id, extension);
+            let hash = hash_file_name_single(&candidate);
+            if package.get_file_by_hash(hash).is_some() {
+                names.entry(hash).or_insert(candidate);
+            }
+        }
+    }
+    names
+}
+
+fn is_terrain_texture_uop_path(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.eq_ignore_ascii_case("terraintexture.uop"))
+        .unwrap_or(false)
 }
 
 #[derive(Clone, Debug)]
@@ -1497,6 +1525,7 @@ pub struct UopInspectorApp {
 
     pub search_query: String,
     pub find_hash_query: String,
+    pub guess_terrain_texture_file_format: bool,
     pub status_message: String,
     pub view_mode: ViewMode,
     pub tile_metadata_source: TileMetadataSource,
@@ -1513,6 +1542,7 @@ pub struct UopInspectorApp {
     pub ec_texture_preview_source_keys: HashMap<u32, u64>,
     pub uop_entry_labels: HashMap<usize, Arc<Vec<UopEntryLabel>>>,
     pub uop_entry_payloads: HashMap<(usize, u64), Arc<[u8]>>,
+    pub terrain_texture_guess_names: HashMap<usize, Arc<HashMap<u64, String>>>,
     pub animationframe_uop_entries: HashMap<(u8, usize), Arc<Vec<AnimationFrameUopEntry>>>,
     pub multimap_texture: Option<egui::TextureHandle>,
     pub image_preview_sources: HashMap<u64, InspectorImagePreview>,
@@ -1629,6 +1659,7 @@ impl UopInspectorApp {
             selected_legacy_source: ArtSource::Any,
             search_query: String::new(),
             find_hash_query: String::new(),
+            guess_terrain_texture_file_format: false,
             status_message: "Welcome to UOCF Inspector".to_string(),
             view_mode: settings.last_view_mode.unwrap_or(ViewMode::Home),
             tile_metadata_source: TileMetadataSource::CcTileData,
@@ -1652,6 +1683,7 @@ impl UopInspectorApp {
             ec_texture_preview_source_keys: HashMap::new(),
             uop_entry_labels: HashMap::new(),
             uop_entry_payloads: HashMap::new(),
+            terrain_texture_guess_names: HashMap::new(),
             animationframe_uop_entries: HashMap::new(),
             multimap_texture: None,
             image_preview_sources: HashMap::new(),
@@ -1764,6 +1796,7 @@ impl UopInspectorApp {
         self.ec_texture_previews.clear();
         self.uop_entry_labels.clear();
         self.uop_entry_payloads.clear();
+        self.terrain_texture_guess_names.clear();
         self.animationframe_uop_entries.clear();
         self.multimap_texture = None;
         self.paperdoll_preview = None;
@@ -2565,6 +2598,51 @@ impl UopInspectorApp {
         }
     }
 
+    pub fn selected_uop_is_terrain_texture(&self, uop_idx: usize) -> bool {
+        self.uop_cache
+            .loaded_uops
+            .get(uop_idx)
+            .map(|loaded| is_terrain_texture_uop_path(&loaded.path))
+            .unwrap_or(false)
+    }
+
+    pub fn set_guess_terrain_texture_file_format(&mut self, enabled: bool) {
+        if self.guess_terrain_texture_file_format != enabled {
+            self.guess_terrain_texture_file_format = enabled;
+            self.uop_entry_labels.clear();
+            self.terrain_texture_guess_names.clear();
+        }
+    }
+
+    fn get_terrain_texture_guess_names(&mut self, uop_idx: usize) -> Option<Arc<HashMap<u64, String>>> {
+        if !self.guess_terrain_texture_file_format || !self.selected_uop_is_terrain_texture(uop_idx) {
+            return None;
+        }
+
+        if let Some(names) = self.terrain_texture_guess_names.get(&uop_idx).cloned() {
+            return Some(names);
+        }
+
+        let loaded = self.uop_cache.loaded_uops.get(uop_idx)?.clone();
+        let names = Arc::new(collect_terrain_texture_guess_names(&loaded.package));
+        self.terrain_texture_guess_names.insert(uop_idx, Arc::clone(&names));
+        Some(names)
+    }
+
+    pub fn resolve_uop_entry_display_name(&mut self, uop_idx: usize, hash: u64) -> String {
+        if let Some(name) = self.dictionary.resolve(hash) {
+            return name.to_string();
+        }
+
+        if let Some(names) = self.get_terrain_texture_guess_names(uop_idx) {
+            if let Some(name) = names.get(&hash) {
+                return name.clone();
+            }
+        }
+
+        format!("{:016X}", hash)
+    }
+
     pub fn get_uop_entry_labels(&mut self, uop_idx: usize) -> Arc<Vec<UopEntryLabel>> {
         if let Some(labels) = self.uop_entry_labels.get(&uop_idx).cloned() {
             return labels;
@@ -2573,6 +2651,7 @@ impl UopInspectorApp {
         let Some(loaded) = self.uop_cache.loaded_uops.get(uop_idx).cloned() else {
             return Arc::new(Vec::new());
         };
+        let guessed_names = self.get_terrain_texture_guess_names(uop_idx);
 
         let labels = loaded
             .package
@@ -2583,6 +2662,7 @@ impl UopInspectorApp {
                     .dictionary
                     .resolve(hash)
                     .map(str::to_string)
+                    .or_else(|| guessed_names.as_ref().and_then(|names| names.get(&hash).cloned()))
                     .unwrap_or_else(|| format!("{:016X}", hash));
                 let search_name = display_name.to_lowercase();
                 UopEntryLabel {
@@ -3549,6 +3629,7 @@ mod tests {
             selected_legacy_source: ArtSource::Any,
             search_query: String::new(),
             find_hash_query: String::new(),
+            guess_terrain_texture_file_format: false,
             status_message: String::new(),
             view_mode: ViewMode::Home,
             tile_metadata_source: TileMetadataSource::CcTileData,
@@ -3564,6 +3645,7 @@ mod tests {
             ec_texture_preview_source_keys: HashMap::new(),
             uop_entry_labels: HashMap::new(),
             uop_entry_payloads: HashMap::new(),
+            terrain_texture_guess_names: HashMap::new(),
             animationframe_uop_entries: HashMap::new(),
             multimap_texture: None,
             image_preview_sources: HashMap::new(),
@@ -3634,6 +3716,29 @@ mod tests {
         app.log("hello test");
         assert_eq!(app.logs.len(), 1);
         assert_eq!(app.logs[0], "hello test");
+    }
+
+    #[test]
+    fn terrain_texture_guess_covers_common_image_extensions() {
+        let dds = "build/terraintexture/00000042.dds";
+        let tga = "build/terraintexture/00000042.tga";
+        let mut package = UopPackage::new_default();
+        package
+            .add_file_from_memory(b"dds", dds, uocf::uop_container::file::CompressionFlag::None)
+            .expect("add dds terrain texture");
+        package
+            .add_file_from_memory(b"tga", tga, uocf::uop_container::file::CompressionFlag::None)
+            .expect("add tga terrain texture");
+
+        let names = collect_terrain_texture_guess_names(&package);
+        assert_eq!(
+            names.get(&hash_file_name_single(dds)).map(String::as_str),
+            Some(dds)
+        );
+        assert_eq!(
+            names.get(&hash_file_name_single(tga)).map(String::as_str),
+            Some(tga)
+        );
     }
 
     #[test]
