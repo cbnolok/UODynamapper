@@ -65,6 +65,12 @@ pub enum MultisSource {
     Multimap,
 }
 
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub enum MultiCollectionSource {
+    ClassicClient,
+    EnhancedClient,
+}
+
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum LocalizedStringsSource {
     Cliloc,
@@ -1391,6 +1397,8 @@ pub struct UopInspectorApp {
     pub ec_tileart_rows: Option<Arc<Vec<TileArtDisplayRow>>>,
     pub ec_hues: Option<Arc<EcHuePackage>>,
     pub multi_collection: Option<Arc<MultiCollection>>,
+    pub multi_collection_source: Option<MultiCollectionSource>,
+    pub multi_collection_path: Option<PathBuf>,
 }
 
 impl UopInspectorApp {
@@ -1450,6 +1458,8 @@ impl UopInspectorApp {
             ec_tileart_rows: None,
             ec_hues: None,
             multi_collection: None,
+            multi_collection_source: None,
+            multi_collection_path: None,
             texture_previews: HashMap::new(),
             ec_texture_previews: HashMap::new(),
             ec_texture_preview_source_keys: HashMap::new(),
@@ -1535,6 +1545,8 @@ impl UopInspectorApp {
         self.selected_cliloc_file_idx = None;
         self.localized_strings = None;
         self.multi_collection = None;
+        self.multi_collection_source = None;
+        self.multi_collection_path = None;
         self.selected_multi_uop_hash = None;
         self.selected_localized_file_hash = None;
         self.cc_sounds = None;
@@ -1709,6 +1721,8 @@ impl UopInspectorApp {
                         Ok(collection) => {
                             let count = collection.items.len();
                             self.multi_collection = Some(Arc::new(collection));
+                            self.multi_collection_source = Some(MultiCollectionSource::ClassicClient);
+                            self.multi_collection_path = Some(uop_path.clone());
                             self.log(format!("Parsed {} MultiCollection.uop entries.", count));
                         }
                         Err(e) => self.log(format!("Failed to parse {}: {}", uop_name, e)),
@@ -1812,6 +1826,8 @@ impl UopInspectorApp {
                         Ok(collection) => {
                             let count = collection.items.len();
                             self.multi_collection = Some(Arc::new(collection));
+                            self.multi_collection_source = Some(MultiCollectionSource::EnhancedClient);
+                            self.multi_collection_path = Some(uop_path.clone());
                             self.log(format!("Parsed {} MultiCollection.uop entries.", count));
                         }
                         Err(e) => self.log(format!("Failed to parse {}: {}", uop_name, e)),
@@ -2769,6 +2785,20 @@ impl UopInspectorApp {
         true
     }
 
+    pub fn select_raw_uop_entry_at_path(&mut self, package_path: &Path, file_hash: u64) -> bool {
+        let Some(index) = self.uop_cache.loaded_uops.iter().position(|loaded| {
+            loaded.path.as_path() == package_path
+        }) else {
+            return false;
+        };
+
+        self.selected_uop_idx = Some(index);
+        self.selected_file_hash = Some(file_hash);
+        self.find_hash_query = format!("{:016X}", file_hash);
+        self.view_mode = ViewMode::UopExplorer;
+        true
+    }
+
     pub fn select_raw_ec_hue_bitmap(&mut self, hue_id: u16) -> bool {
         let hash = uocf::enhanced::hues::hue_bitmap_hash(hue_id);
         if self.select_raw_uop_entry(uocf::enhanced::hues::HUES_UOP_NAME, hash) {
@@ -2807,6 +2837,13 @@ impl UopInspectorApp {
 
     pub fn select_raw_multi_collection_entry(&mut self, multi_id: u32) -> bool {
         let hash = uocf::enhanced::multis::multi_collection_hash(multi_id);
+        if let Some(path) = self.multi_collection_path.clone() {
+            if self.select_raw_uop_entry_at_path(&path, hash) {
+                self.selected_multi_uop_hash = Some(hash);
+                return true;
+            }
+        }
+
         if self.select_raw_uop_entry(uocf::enhanced::multis::MULTI_COLLECTION_UOP_NAME, hash)
             || self.select_raw_uop_entry("multicollection.uop", hash)
         {
@@ -2818,6 +2855,13 @@ impl UopInspectorApp {
 
     pub fn select_raw_multi_collection_housing(&mut self) -> bool {
         let hash = uocf::enhanced::multis::housing_hash();
+        if let Some(path) = self.multi_collection_path.clone() {
+            if self.select_raw_uop_entry_at_path(&path, hash) {
+                self.selected_multi_uop_hash = Some(hash);
+                return true;
+            }
+        }
+
         if self.select_raw_uop_entry(uocf::enhanced::multis::MULTI_COLLECTION_UOP_NAME, hash)
             || self.select_raw_uop_entry("multicollection.uop", hash)
         {
@@ -3017,6 +3061,8 @@ mod tests {
             ec_tileart_rows: None,
             ec_hues: None,
             multi_collection: None,
+            multi_collection_source: None,
+            multi_collection_path: None,
         }
     }
 
@@ -3193,6 +3239,22 @@ mod tests {
 
         let expected = uocf::enhanced::multis::multi_collection_hash(7);
         assert!(app.select_raw_multi_collection_entry(7));
+        assert_eq!(app.selected_file_hash, Some(expected));
+        assert_eq!(app.selected_multi_uop_hash, Some(expected));
+    }
+
+    #[test]
+    fn select_raw_multi_collection_entry_prefers_loaded_source_path() {
+        let mut app = test_app();
+        let cc_path = PathBuf::from("cc/MultiCollection.uop");
+        let ec_path = PathBuf::from("ec/MultiCollection.uop");
+        app.uop_cache.add(cc_path, UopPackage::new_default());
+        app.uop_cache.add(ec_path.clone(), UopPackage::new_default());
+        app.multi_collection_path = Some(ec_path);
+
+        let expected = uocf::enhanced::multis::multi_collection_hash(7);
+        assert!(app.select_raw_multi_collection_entry(7));
+        assert_eq!(app.selected_uop_idx, Some(1));
         assert_eq!(app.selected_file_hash, Some(expected));
         assert_eq!(app.selected_multi_uop_hash, Some(expected));
     }

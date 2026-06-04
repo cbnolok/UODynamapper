@@ -1,4 +1,4 @@
-use crate::app::{ArtSource, MultisSource, UopInspectorApp};
+use crate::app::{ArtSource, MultiCollectionSource, MultisSource, UopInspectorApp};
 use eframe::egui;
 
 #[derive(Clone)]
@@ -45,7 +45,8 @@ pub fn ui_multis(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 ui.selectable_value(&mut app.multis_source, MultisSource::ClassicMul, "multi.mul/.idx");
             }
             if has_uop {
-                ui.selectable_value(&mut app.multis_source, MultisSource::Uop, "MultiCollection.uop");
+                let label = format!("{} MultiCollection.uop", multi_collection_source_label(app));
+                ui.selectable_value(&mut app.multis_source, MultisSource::Uop, label);
             }
             if has_multimap {
                 ui.selectable_value(&mut app.multis_source, MultisSource::Multimap, "multimap.rle");
@@ -65,6 +66,14 @@ fn source_available(source: MultisSource, has_classic: bool, has_uop: bool, has_
         MultisSource::ClassicMul => has_classic,
         MultisSource::Uop => has_uop,
         MultisSource::Multimap => has_multimap,
+    }
+}
+
+fn multi_collection_source_label(app: &UopInspectorApp) -> &'static str {
+    match app.multi_collection_source {
+        Some(MultiCollectionSource::ClassicClient) => "CC",
+        Some(MultiCollectionSource::EnhancedClient) => "EC",
+        None => "Loaded",
     }
 }
 
@@ -127,7 +136,14 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context) {
         .resizable(true)
         .default_width(300.0)
         .show(ctx, |ui| {
-            ui.heading(format!("MultiCollection.uop ({})", collection.items.len()));
+            ui.heading(format!(
+                "{} MultiCollection.uop ({})",
+                multi_collection_source_label(app),
+                collection.items.len()
+            ));
+            if let Some(path) = &app.multi_collection_path {
+                ui.monospace(path.display().to_string());
+            }
             ui.separator();
             ui.horizontal(|ui| {
                 ui.label("Search:");
@@ -190,7 +206,12 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context) {
                     ),
                 })
                 .collect();
-            let raw = Some(format!("{} / 0x{:016X}", item.path, item.filename_hash));
+            let raw = Some(format!(
+                "{} / {} / 0x{:016X}",
+                multi_collection_source_label(app),
+                item.path,
+                item.filename_hash
+            ));
             draw_multi_details(app, ctx, ui, "UOP Multi", &preview_parts, raw.as_deref());
         } else {
             ui.centered_and_justified(|ui| {
@@ -295,35 +316,53 @@ fn draw_multi_details(
     }
     ui.separator();
 
+    let available = ui.available_size();
     ui.horizontal(|ui| {
-        ui.vertical(|ui| {
-            ui.heading("Components");
-            egui::ScrollArea::vertical().max_height(500.0).show(ui, |ui| {
-                egui::Grid::new("multi_parts_grid").striped(true).show(ui, |ui| {
-                    ui.label("Item ID");
-                    ui.label("X");
-                    ui.label("Y");
-                    ui.label("Z");
-                    ui.label("Flags");
-                    ui.end_row();
-                    for part in parts {
-                        ui.label(part.item_id.to_string());
-                        ui.label(part.x.to_string());
-                        ui.label(part.y.to_string());
-                        ui.label(part.z.to_string());
-                        ui.label(&part.flags);
-                        ui.end_row();
-                    }
-                });
-            });
-        });
+        let component_width = if available.x < 700.0 {
+            available.x.min(320.0)
+        } else {
+            (available.x * 0.32).clamp(320.0, 480.0)
+        };
+        ui.allocate_ui_with_layout(
+            egui::vec2(component_width, available.y),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.heading("Components");
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .max_height(ui.available_height())
+                    .show(ui, |ui| {
+                        egui::Grid::new("multi_parts_grid").striped(true).show(ui, |ui| {
+                            ui.label("Item ID");
+                            ui.label("X");
+                            ui.label("Y");
+                            ui.label("Z");
+                            ui.label("Flags");
+                            ui.end_row();
+                            for part in parts {
+                                ui.label(part.item_id.to_string());
+                                ui.label(part.x.to_string());
+                                ui.label(part.y.to_string());
+                                ui.label(part.z.to_string());
+                                ui.label(&part.flags);
+                                ui.end_row();
+                            }
+                        });
+                    });
+            },
+        );
 
         ui.separator();
 
-        ui.vertical(|ui| {
-            ui.heading("2D Preview");
-            draw_preview(app, ctx, ui, parts);
-        });
+        let preview_size = ui.available_size();
+        ui.allocate_ui_with_layout(
+            preview_size,
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.heading("2D Preview");
+                draw_preview(app, ctx, ui, parts);
+            },
+        );
     });
 }
 
@@ -341,11 +380,16 @@ fn draw_preview(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::U
     let span_y = (max_y - min_y + 1).max(1) as f32;
     let tile_w = 22.0f32;
     let tile_h = 22.0f32;
-    let canvas_w = (span_x * tile_w + span_y * tile_w + 360.0).max(700.0);
-    let canvas_h = ((span_x + span_y) * tile_h + ((max_z - min_z).max(0) as f32 * 4.0) + 360.0).max(520.0);
+    let viewport_size = ui.available_size();
+    let canvas_w = (span_x * tile_w + span_y * tile_w + 360.0)
+        .max(700.0)
+        .max(viewport_size.x);
+    let canvas_h = ((span_x + span_y) * tile_h + ((max_z - min_z).max(0) as f32 * 4.0) + 360.0)
+        .max(520.0)
+        .max(viewport_size.y);
     let canvas_size = egui::vec2(canvas_w, canvas_h);
 
-    egui::ScrollArea::both().show(ui, |ui| {
+    egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
         let (rect, _response) = ui.allocate_exact_size(canvas_size, egui::Sense::hover());
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, egui::Color32::from_gray(24));
