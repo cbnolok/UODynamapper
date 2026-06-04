@@ -2,7 +2,7 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use color_eyre::eyre::{self, Context, ContextCompat};
 use std::io::{Cursor, Read};
 use std::path::Path;
-use udd_container::{DataType, UddpReader};
+use udd_container::{DataType, FileKey, UddpReader};
 
 const GUMP_ATLAS_PAGE_MANIFEST_ID: u32 = 0xE000_0000;
 const GUMP_ATLAS_SLOT_MANIFEST_ID: u32 = 0xE000_0001;
@@ -124,6 +124,27 @@ impl GumpsPackage {
 
     pub fn atlas_slots(&self) -> &[GumpAtlasSlotRecord] {
         &self.atlas_slots
+    }
+
+    pub fn available_gump_ids(&self) -> Vec<u32> {
+        let mut ids = self
+            .package
+            .records()
+            .into_iter()
+            .filter_map(|record| match record.key {
+                FileKey::Id(id) => self
+                    .package
+                    .find_by_sparse_id(id)
+                    .filter(|file| file.data_type == DataType::Gump as u8)
+                    .map(|_| id),
+                FileKey::PathHash(_) => None,
+            })
+            .collect::<Vec<_>>();
+
+        ids.extend(self.atlas_slots.iter().map(|slot| slot.gump_id));
+        ids.sort_unstable();
+        ids.dedup();
+        ids
     }
 
     pub fn atlas_slot(&self, gump_id: u32) -> Option<&GumpAtlasSlotRecord> {

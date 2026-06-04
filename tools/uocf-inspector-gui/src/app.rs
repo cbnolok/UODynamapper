@@ -92,6 +92,12 @@ pub enum GumpSource {
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub enum GumpViewerTab {
+    StandardGumps,
+    Paperdoll,
+}
+
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum MultimapPreviewSelection {
     Loaded,
     Plain,
@@ -1513,7 +1519,13 @@ pub struct UopInspectorApp {
 
     // Gumps and paperdolls
     pub selected_gump_source: GumpSource,
+    pub selected_gump_viewer_tab: GumpViewerTab,
     pub selected_gump_id: String,
+    pub standard_gump_ids: Vec<u32>,
+    pub paperdoll_gump_ids: Vec<u32>,
+    pub gump_list_source: Option<GumpSource>,
+    pub gump_list_profile: String,
+    pub gump_list_status: String,
     pub selected_paperdoll_profile: String,
     pub paperdoll_body_id: String,
     pub paperdoll_body_hue: String,
@@ -1643,7 +1655,13 @@ impl UopInspectorApp {
             upscale_preview_elapsed_ms: None,
             upscale_preview_status: String::new(),
             selected_gump_source: GumpSource::Classic,
+            selected_gump_viewer_tab: GumpViewerTab::StandardGumps,
             selected_gump_id: String::new(),
+            standard_gump_ids: Vec::new(),
+            paperdoll_gump_ids: Vec::new(),
+            gump_list_source: None,
+            gump_list_profile: String::new(),
+            gump_list_status: String::new(),
             selected_paperdoll_profile: "human_male".to_string(),
             paperdoll_body_id: String::new(),
             paperdoll_body_hue: "0".to_string(),
@@ -3547,7 +3565,13 @@ mod tests {
             upscale_preview_elapsed_ms: None,
             upscale_preview_status: String::new(),
             selected_gump_source: GumpSource::Classic,
+            selected_gump_viewer_tab: GumpViewerTab::StandardGumps,
             selected_gump_id: String::new(),
+            standard_gump_ids: Vec::new(),
+            paperdoll_gump_ids: Vec::new(),
+            gump_list_source: None,
+            gump_list_profile: String::new(),
+            gump_list_status: String::new(),
             selected_paperdoll_profile: "human_male".to_string(),
             paperdoll_body_id: String::new(),
             paperdoll_body_hue: "0".to_string(),

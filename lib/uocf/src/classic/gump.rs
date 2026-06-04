@@ -12,6 +12,7 @@
 
 crate::eyre_imports!();
 
+use std::collections::BTreeSet;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -28,6 +29,8 @@ pub const RGBA_BYTES_PER_PIXEL: usize = 4;
 const LOOKUP_ENTRY_BYTES: usize = 4;
 const RLE_ENTRY_BYTES: usize = 4;
 const UOP_GUMP_HEADER_BYTES: usize = 8;
+const PAPERDOLL_EQUIPMENT_GUMP_ID_END: u32 = 69_999;
+const MAX_ENUMERATED_UOP_GUMP_ID: u32 = 99_999;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GumpDimensions {
@@ -268,6 +271,59 @@ impl GumpMap {
     pub fn with_verdata(mut self, verdata: Arc<Verdata>) -> Self {
         self.verdata = Some(verdata);
         self
+    }
+
+    pub fn available_gump_ids(&self) -> Vec<u32> {
+        let mut ids = BTreeSet::new();
+
+        if let (Some(idx), Some(gump_mmap)) = (&self.idx_file, &self.gump_mmap) {
+            for gump_id in 0..idx.element_count() {
+                let Ok(entry) = idx.element(gump_id) else {
+                    continue;
+                };
+                let Some((lookup, size, extra)) = entry
+                    .lookup()
+                    .zip(entry.len())
+                    .zip(entry.extra())
+                    .map(|((lookup, size), extra)| (lookup, size, extra))
+                else {
+                    continue;
+                };
+                let Ok(dimensions) = dimensions_from_extra(extra) else {
+                    continue;
+                };
+                let Some(end) = (lookup as usize).checked_add(size as usize) else {
+                    continue;
+                };
+                if end <= gump_mmap.len()
+                    && classic_gump_payload_is_structurally_valid(size, dimensions)
+                {
+                    ids.insert(gump_id as u32);
+                }
+            }
+        }
+
+        if let Some(uop) = &self.uop_package {
+            let max_gump_id = self
+                .idx_file
+                .as_ref()
+                .map(|idx| idx.element_count().saturating_sub(1) as u32)
+                .unwrap_or(MAX_ENUMERATED_UOP_GUMP_ID)
+                .max(PAPERDOLL_EQUIPMENT_GUMP_ID_END);
+            let mut scratch_hashes = Vec::new();
+            for gump_id in 0..=max_gump_id {
+                let candidates = uop_gump_candidates(gump_id);
+                let candidate_refs = [candidates[0].as_str(), candidates[1].as_str()];
+                if uop
+                    .get_file_by_name_batch(&candidate_refs, &mut scratch_hashes)
+                    .is_some()
+                {
+                    ids.insert(gump_id);
+                }
+            }
+        }
+
+        ids.into_iter().collect()
     }
 
     pub fn get_raw_gump_data(
