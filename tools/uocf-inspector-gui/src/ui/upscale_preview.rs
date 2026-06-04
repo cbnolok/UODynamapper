@@ -21,7 +21,8 @@ pub fn ui_upscale_preview_window(app: &mut UopInspectorApp, ctx: &egui::Context)
     let mut passes = app.upscale_preview_passes.clone();
     let mut zoom = app.upscale_preview_zoom;
     let mut open = true;
-    let mut frame_open = true;
+    let mut original_frame_open = true;
+    let mut upscaled_frame_open = true;
     let mut passes_changed = false;
 
     egui::Window::new("Upscale Preview")
@@ -93,44 +94,55 @@ pub fn ui_upscale_preview_window(app: &mut UopInspectorApp, ctx: &egui::Context)
         });
 
     if let Some(source) = source.as_ref() {
-        egui::Window::new("Upscale Preview Frame")
-            .open(&mut frame_open)
+        egui::Window::new("Upscale Preview Original")
+            .open(&mut original_frame_open)
             .resizable(true)
-            .default_size([900.0, 700.0])
+            .default_size([420.0, 520.0])
             .show(ctx, |ui| {
                 egui::ScrollArea::both()
-                    .id_salt("uocf_upscale_preview_images")
+                    .id_salt("uocf_upscale_preview_original_image")
                     .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            if let Some(texture) = &original_texture {
-                                ui.vertical(|ui| {
-                                    ui.label("Original");
-                                    ui.add(egui::Image::new(texture).fit_to_exact_size(egui::vec2(
-                                        source.width as f32 * zoom,
-                                        source.height as f32 * zoom,
-                                    )));
-                                });
-                            }
+                        ui.label(format!("Original {}x{}", source.width, source.height));
+                        if let Some(texture) = &original_texture {
+                            ui.add(egui::Image::new(texture).fit_to_exact_size(egui::vec2(
+                                source.width as f32 * zoom,
+                                source.height as f32 * zoom,
+                            )));
+                        }
+                    });
+            });
 
-                            ui.add_space(20.0);
-
-                            ui.vertical(|ui| {
-                                ui.label("Upscaled");
-                                if let Some(texture) = &upscaled_texture {
-                                    ui.add(egui::Image::new(texture).fit_to_exact_size(egui::vec2(
-                                        upscaled_size[0] as f32 * zoom,
-                                        upscaled_size[1] as f32 * zoom,
-                                    )));
-                                } else if is_computing {
-                                    ui.label("Computing...");
-                                }
-                            });
-                        });
+        egui::Window::new("Upscale Preview Upscaled")
+            .open(&mut upscaled_frame_open)
+            .resizable(true)
+            .default_size([520.0, 620.0])
+            .show(ctx, |ui| {
+                egui::ScrollArea::both()
+                    .id_salt("uocf_upscale_preview_upscaled_image")
+                    .show(ui, |ui| {
+                        if upscaled_size[0] > 0 {
+                            ui.label(format!(
+                                "Upscaled {}x{}",
+                                upscaled_size[0], upscaled_size[1]
+                            ));
+                        } else {
+                            ui.label("Upscaled");
+                        }
+                        if let Some(texture) = &upscaled_texture {
+                            ui.add(egui::Image::new(texture).fit_to_exact_size(egui::vec2(
+                                upscaled_size[0] as f32 * zoom,
+                                upscaled_size[1] as f32 * zoom,
+                            )));
+                        } else if is_computing {
+                            ui.label("Computing...");
+                        } else if !status.is_empty() {
+                            ui.label(status.as_str());
+                        }
                     });
             });
     }
 
-    if !open || !frame_open {
+    if !open || !original_frame_open || !upscaled_frame_open {
         app.show_upscale_preview = false;
     }
 
