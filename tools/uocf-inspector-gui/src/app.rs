@@ -2030,22 +2030,33 @@ impl UopInspectorApp {
                     {
                         continue;
                     }
-                    self.log(format!("Loading {} into cache", uop_name));
                     let load_mode = if uop_name.eq_ignore_ascii_case("interface.uop") {
                         LoadMode::Lazy
                     } else {
                         LoadMode::Eager
                     };
+                    let coalesce_cache_log = uop_name.eq_ignore_ascii_case("string_dictionary.uop");
+                    if !coalesce_cache_log {
+                        self.log(format!("Loading {} into cache", uop_name));
+                    }
                     match UopPackage::load_with_mode(&uop_path, load_mode) {
                         Ok(package) => {
                             self.uop_cache.loaded_uops.push(Arc::new(crate::logic::uop_cache::LoadedUop {
                                 path: uop_path,
                                 package,
                             }));
-                            self.log(format!("Successfully loaded {}", uop_name));
+                            if coalesce_cache_log {
+                                self.log(format!("Loading {} into cache... Success", uop_name));
+                            } else {
+                                self.log(format!("Successfully loaded {}", uop_name));
+                            }
                         }
                         Err(e) => {
-                            self.log(format!("Failed to load {}: {}", uop_name, e));
+                            if coalesce_cache_log {
+                                self.log(format!("Loading {} into cache... Failed: {}", uop_name, e));
+                            } else {
+                                self.log(format!("Failed to load {}: {}", uop_name, e));
+                            }
                         }
                     }
                 }
