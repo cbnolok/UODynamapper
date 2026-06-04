@@ -18,6 +18,8 @@ pub struct AppSettings {
     pub ec_dir: Option<PathBuf>,
     #[serde(default)]
     pub dynamapper_routing_dir: Option<PathBuf>,
+    #[serde(default)]
+    pub upscale_profile_path: Option<PathBuf>,
     pub input_uddp_dir: PathBuf,
     pub output_uddp_dir: PathBuf,
     pub link_uddp_dirs: bool,
@@ -92,6 +94,7 @@ impl Default for AppSettings {
             cc_dir: None,
             ec_dir: None,
             dynamapper_routing_dir: None,
+            upscale_profile_path: None,
             input_uddp_dir: PathBuf::from("packages"),
             output_uddp_dir: PathBuf::from("packages"),
             link_uddp_dirs: true,
@@ -258,6 +261,7 @@ mod tests {
         assert!(!settings.include_static_difs);
         assert!(!settings.ec_mobile_anim_allow_missing_kdl);
         assert_eq!(settings.dynamapper_routing_dir, None);
+        assert_eq!(settings.upscale_profile_path, None);
         assert!(settings.bc7_rdo_enabled);
         assert_eq!(
             settings.bc7_rdo_lookback_blocks,
@@ -276,6 +280,7 @@ mod tests {
                 !line.starts_with("include_") && !line.starts_with("bc7_rdo_enabled")
                     && !line.starts_with("bc7_rdo_lookback_blocks")
                     && !line.starts_with("dynamapper_routing_dir")
+                    && !line.starts_with("upscale_profile_path")
                     && !line.starts_with("ec_mobile_anim_allow_missing_kdl")
             })
             .collect::<Vec<_>>()
@@ -289,6 +294,7 @@ mod tests {
         assert!(!settings.include_static_difs);
         assert!(!settings.ec_mobile_anim_allow_missing_kdl);
         assert_eq!(settings.dynamapper_routing_dir, None);
+        assert_eq!(settings.upscale_profile_path, None);
         assert!(settings.bc7_rdo_enabled);
         assert_eq!(
             settings.bc7_rdo_lookback_blocks,
@@ -306,6 +312,7 @@ mod tests {
         settings.include_static_difs = true;
         settings.ec_mobile_anim_allow_missing_kdl = true;
         settings.dynamapper_routing_dir = Some(PathBuf::from("dynamapper/assets/cc_ec_convtables"));
+        settings.upscale_profile_path = Some(PathBuf::from("profiles/mobile-upscale.toml"));
         settings.bc7_rdo_lookback_blocks = 128;
 
         let serialized = toml::to_string(&settings).expect("serialize settings");
@@ -318,6 +325,10 @@ mod tests {
         assert_eq!(
             restored.dynamapper_routing_dir,
             Some(PathBuf::from("dynamapper/assets/cc_ec_convtables"))
+        );
+        assert_eq!(
+            restored.upscale_profile_path,
+            Some(PathBuf::from("profiles/mobile-upscale.toml"))
         );
         assert_eq!(restored.bc7_rdo_lookback_blocks, 128);
     }

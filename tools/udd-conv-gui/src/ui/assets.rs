@@ -232,6 +232,50 @@ fn draw_assets_overview(ui: &mut egui::Ui, app: &mut UddConvApp) {
 
                 ui.vertical(|ui| {
                     ui.label(
+                        egui::RichText::new("Upscale profile")
+                            .strong()
+                            .color(egui::Color32::from_rgb(150, 220, 170)),
+                    );
+                    ui.horizontal_wrapped(|ui| {
+                        if ui.button("Select File...").clicked() {
+                            let mut dialog = rfd::FileDialog::new()
+                                .set_title("Select Upscale Profile")
+                                .add_filter("Upscale profile", &["toml", "kdl"]);
+                            if let Some(path) = app
+                                .settings
+                                .upscale_profile_path
+                                .as_ref()
+                                .and_then(|path| path.parent())
+                            {
+                                dialog = dialog.set_directory(path);
+                            }
+                            if let Some(path) = dialog.pick_file() {
+                                app.settings.upscale_profile_path = Some(path);
+                                app.persist_settings();
+                            }
+                        }
+                        if ui
+                            .add_enabled(
+                                app.settings.upscale_profile_path.is_some(),
+                                egui::Button::new("Clear"),
+                            )
+                            .clicked()
+                        {
+                            app.settings.upscale_profile_path = None;
+                            app.persist_settings();
+                        }
+                    });
+                    if let Some(path) = &app.settings.upscale_profile_path {
+                        ui.label(egui::RichText::new(path.to_string_lossy()).weak());
+                    } else {
+                        ui.label(egui::RichText::new("No profile selected").weak());
+                    }
+                });
+
+                ui.separator();
+
+                ui.vertical(|ui| {
+                    ui.label(
                         egui::RichText::new("Compression")
                             .strong()
                             .color(egui::Color32::from_rgb(100, 200, 255)),

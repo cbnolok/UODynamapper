@@ -1,4 +1,4 @@
-use color_eyre::eyre;
+use color_eyre::eyre::{self, WrapErr};
 use std::collections::HashMap;
 use std::panic::{self, AssertUnwindSafe};
 use std::path::Path;
@@ -29,7 +29,7 @@ use udd_conv::{
     tex_land_cc::{TexLandCcAtlasOptions, convert_texmaps_mul_to_tex_land_cc_uddp_with_patches_and_progress},
     cc_radar::{build_facet_radar_dds, RadarFormat, RadarBuildOptions},
     source_paths::gather_source_dirs,
-    upscale::{UpscaleConfig, UpscaleFilter},
+    upscale::{UpscaleConfig, UpscaleFilter, UpscalePass},
     BuildProgress, BuildProgressPhase, CompressionFlag,
     PagePixelFormat,
 };
@@ -38,6 +38,7 @@ use udd_conv_cli::{
     package_info::get_package_info_string,
     extract::extract_package,
     tool_cli::{diff_paths_report, DiffKind},
+    upscale_profile_config::load_upscale_profile as load_upscale_profile_config,
 };
 use crate::app::UddConvApp;
 use crate::models::{
@@ -235,9 +236,25 @@ fn upscale_config_active(config: UpscaleConfig) -> bool {
     upscale_filter_active(config.filter)
 }
 
-fn upscale_filter_passes(filter: UpscaleFilter) -> Vec<UpscaleFilter> {
+fn upscale_profile_active(settings: &AppSettings) -> bool {
+    settings.upscale_profile_path.is_some()
+}
+
+fn load_upscale_profile(settings: &AppSettings) -> eyre::Result<Option<Arc<udd_conv::upscale_profile::UpscaleProfile>>> {
+    settings
+        .upscale_profile_path
+        .as_deref()
+        .map(|path| {
+            load_upscale_profile_config(path)
+                .map(Arc::new)
+                .wrap_err_with(|| format!("load upscale profile {}", path.display()))
+        })
+        .transpose()
+}
+
+fn upscale_filter_passes(filter: UpscaleFilter) -> Vec<UpscalePass> {
     if upscale_filter_active(filter) {
-        vec![filter]
+        vec![UpscalePass::from(filter)]
     } else {
         Vec::new()
     }
@@ -363,7 +380,10 @@ impl UddConvApp {
                 settings.zstd_tex_art_cc,
                 settings.jxl_tex_art_cc,
             );
-            let extract_label = if upscale_filter_active(settings.upscale_tex_art_cc) {
+            let upscale_profile = load_upscale_profile(&settings)?;
+            let extract_label = if upscale_filter_active(settings.upscale_tex_art_cc)
+                || upscale_profile_active(&settings)
+            {
                 "Extracting and upscaling"
             } else {
                 "Extracting"
@@ -378,6 +398,7 @@ impl UddConvApp {
                     compression,
                     upscale: settings.upscale_tex_art_cc,
                     upscale_passes: Vec::new(),
+                    upscale_profile,
                     pixel_format: match settings.opt_tex_art_cc {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
                         _ => PagePixelFormat::Rgba8888,
@@ -407,8 +428,10 @@ impl UddConvApp {
                 settings.zstd_tex_land_cc,
                 settings.jxl_tex_land_cc,
             );
+            let upscale_profile = load_upscale_profile(&settings)?;
             let extract_label = if upscale_config_active(settings.upscale_tex_land_cc_64)
                 || upscale_config_active(settings.upscale_tex_land_cc_128)
+                || upscale_profile_active(&settings)
             {
                 "Extracting and upscaling"
             } else {
@@ -426,6 +449,7 @@ impl UddConvApp {
                     upscale_128: settings.upscale_tex_land_cc_128,
                     upscale_64_passes: Vec::new(),
                     upscale_128_passes: Vec::new(),
+                    upscale_profile,
                     pixel_format: match settings.opt_tex_land_cc {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
                         _ => PagePixelFormat::Rgba8888,
@@ -454,7 +478,10 @@ impl UddConvApp {
                 settings.zstd_tex_art_ec,
                 settings.jxl_tex_art_ec,
             );
-            let extract_label = if upscale_filter_active(settings.upscale_tex_art_ec) {
+            let upscale_profile = load_upscale_profile(&settings)?;
+            let extract_label = if upscale_filter_active(settings.upscale_tex_art_ec)
+                || upscale_profile_active(&settings)
+            {
                 "Extracting and upscaling"
             } else {
                 "Extracting"
@@ -470,6 +497,7 @@ impl UddConvApp {
                     compression,
                     upscale: settings.upscale_tex_art_ec,
                     upscale_passes: Vec::new(),
+                    upscale_profile,
                     pixel_format: match settings.opt_tex_art_ec {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
                         _ => PagePixelFormat::Rgba8888,
@@ -497,10 +525,12 @@ impl UddConvApp {
                 settings.zstd_tex_land_ec,
                 settings.jxl_tex_land_ec,
             );
+            let upscale_profile = load_upscale_profile(&settings)?;
             let extract_label = if upscale_config_active(settings.upscale_tex_land_ec_64)
                 || upscale_config_active(settings.upscale_tex_land_ec_128)
                 || upscale_config_active(settings.upscale_tex_land_ec_256)
                 || upscale_config_active(settings.upscale_tex_land_ec_512)
+                || upscale_profile_active(&settings)
             {
                 "Extracting and upscaling"
             } else {
@@ -522,6 +552,7 @@ impl UddConvApp {
                     upscale_128_passes: Vec::new(),
                     upscale_256_passes: Vec::new(),
                     upscale_512_passes: Vec::new(),
+                    upscale_profile,
                     pixel_format: match settings.opt_tex_land_ec {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
                         _ => PagePixelFormat::Rgba8888,
@@ -590,7 +621,10 @@ impl UddConvApp {
                 settings.zstd_mobile_anim_cc,
                 settings.jxl_mobile_anim_cc,
             );
-            let extract_label = if upscale_filter_active(settings.upscale_mobile_anim_cc) {
+            let upscale_profile = load_upscale_profile(&settings)?;
+            let extract_label = if upscale_filter_active(settings.upscale_mobile_anim_cc)
+                || upscale_profile_active(&settings)
+            {
                 "Extracting and upscaling"
             } else {
                 "Extracting"
@@ -612,6 +646,7 @@ impl UddConvApp {
                     bc7_rdo_lambda: bc7_rdo_lambda(&settings, settings.opt_mobile_anim_cc),
                     bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(&settings),
                     upscale_passes: upscale_filter_passes(settings.upscale_mobile_anim_cc),
+                    upscale_profile,
                 },
                 |task_progress| progress.task_progress_with_extract_label(task_progress, extract_label),
                 |build_progress| progress.build_progress(build_progress),
@@ -639,7 +674,10 @@ impl UddConvApp {
                 settings.zstd_mobile_anim_ec,
                 settings.jxl_mobile_anim_ec,
             );
-            let extract_label = if upscale_filter_active(settings.upscale_mobile_anim_ec) {
+            let upscale_profile = load_upscale_profile(&settings)?;
+            let extract_label = if upscale_filter_active(settings.upscale_mobile_anim_ec)
+                || upscale_profile_active(&settings)
+            {
                 "Extracting and upscaling"
             } else {
                 "Extracting"
@@ -661,6 +699,7 @@ impl UddConvApp {
                     bc7_rdo_lambda: bc7_rdo_lambda(&settings, settings.opt_mobile_anim_ec),
                     bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(&settings),
                     upscale_passes: upscale_filter_passes(settings.upscale_mobile_anim_ec),
+                    upscale_profile,
                     metadata_path: None,
                     tables_dir: settings.dynamapper_routing_dir.clone(),
                     allow_missing_metadata: settings.ec_mobile_anim_allow_missing_kdl,
