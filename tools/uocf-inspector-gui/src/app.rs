@@ -1802,6 +1802,39 @@ impl UopInspectorApp {
                 }
             }
 
+            if let Some(texture_path) =
+                find_client_file_case_insensitive(&ec_base_path, "Texture.uop")
+            {
+                self.log(format!("Loading Texture.uop from {}", texture_path.display()));
+                match UopPackage::load(&texture_path) {
+                    Ok(package) => {
+                        if let Some(client) = &mut self.client_data {
+                            let mut art = (*client.art).clone();
+                            art = art.with_ec_kr_uop(package.clone());
+                            client.art = Arc::new(art);
+                            self.log("Attached Texture.uop to CC art as EC UOP KR.");
+                        } else {
+                            let art = ArtMap::load_standalone_ec_kr_uop(package.clone());
+                            self.client_data = Some(ClientData {
+                                path: ec_base_path.clone(),
+                                art: Arc::new(art),
+                                tiledata: Arc::new(TileData::new_empty()),
+                                multis: None,
+                                _ec_multis: None,
+                                hues: None,
+                                animdata: None,
+                                anim_map: None,
+                                anim_defs: None,
+                            });
+                            self.log("Loaded standalone Texture.uop from EC folder as EC UOP KR.");
+                        }
+                    }
+                    Err(e) => {
+                        self.log(format!("Failed to load Texture.uop: {}", e));
+                    }
+                }
+            }
+
             if let Some(hues_path) =
                 find_client_file_case_insensitive(&ec_base_path, "hues.uop")
             {
@@ -2560,7 +2593,7 @@ impl UopInspectorApp {
         };
         let tex_file = TextureFile {
             metadata: RawTextureItem::absent(),
-            is_ec: source == ArtSource::EcUop,
+            is_ec: source.is_ec_uop(),
             format,
             props: None,
             raw_data: Arc::from(scratch),
@@ -2804,7 +2837,7 @@ impl UopInspectorApp {
             if source != ArtSource::Mul || scratch.starts_with(b"DDS ") {
                 let tex_file = TextureFile {
                     metadata: RawTextureItem::absent(),
-                    is_ec: source == ArtSource::EcUop,
+                    is_ec: source.is_ec_uop(),
                     format,
                     props: None,
                     raw_data: Arc::from(scratch.as_slice()),
@@ -3072,22 +3105,30 @@ impl UopInspectorApp {
     pub fn select_raw_art_entry(&mut self, art_id: u32, source: ArtSource) -> bool {
         let candidates: &[(&str, &str)] = match source {
             ArtSource::CcUop => &[("artlegacymul.uop", "build/artlegacymul/{id:08}.tga")],
-            ArtSource::EcUop => &[
+            ArtSource::EcUop | ArtSource::EcUopLegacy => &[
                 ("legacytexture.uop", "build/tileartlegacy/{id:08}.dds"),
                 ("legacytexture.uop", "build/tileartlegacy/{id:08}.tga"),
                 ("legacytexture.uop", "build/legacytexture/{id:08}.tga"),
+            ],
+            ArtSource::EcUopKr => &[
+                ("texture.uop", "build/worldart/{id:08}.dds"),
+                ("texture.uop", "build/worldart/{id:08}.tga"),
+                ("texture.uop", "build/tileartenhanced/{id:08}.dds"),
+                ("texture.uop", "build/tileartenhanced/{id:08}.tga"),
             ],
             ArtSource::Mul | ArtSource::Any => return false,
         };
 
         for (package_name, template) in candidates {
-            let package_art_id = if source == ArtSource::EcUop {
-                match uocf::classic::art::ec_legacy_texture_id_from_art_id(art_id) {
+            let package_art_id = match source {
+                ArtSource::EcUop => match uocf::classic::art::ec_legacy_texture_id_from_art_id(art_id) {
                     Some(id) => id,
                     None => continue,
+                },
+                ArtSource::EcUopLegacy => {
+                    uocf::classic::art::ec_legacy_texture_id_from_art_id(art_id).unwrap_or(art_id)
                 }
-            } else {
-                art_id
+                _ => art_id,
             };
             let path = template.replace("{id:08}", &format!("{:08}", package_art_id));
             let hash = hash_file_name_single(&path);

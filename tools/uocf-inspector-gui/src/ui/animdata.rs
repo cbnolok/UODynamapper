@@ -78,7 +78,8 @@ pub fn ui_animdata(app: &mut UopInspectorApp, ctx: &egui::Context) {
             ui.label("Art source:");
             ui.radio_value(&mut app.selected_animdata_art_source, ArtSource::Mul, "MUL");
             ui.radio_value(&mut app.selected_animdata_art_source, ArtSource::CcUop, "CC UOP");
-            ui.radio_value(&mut app.selected_animdata_art_source, ArtSource::EcUop, "EC UOP");
+            ui.radio_value(&mut app.selected_animdata_art_source, ArtSource::EcUopLegacy, "EC UOP Legacy");
+            ui.radio_value(&mut app.selected_animdata_art_source, ArtSource::EcUopKr, "EC UOP KR");
         });
         ui.horizontal(|ui| {
             if ui
@@ -156,7 +157,7 @@ pub fn ui_animdata(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 tile_id
             ));
             if tile_id >= 0 {
-                let art_id = tile_id as u32 + 0x4000;
+                let art_id = animdata_preview_art_id(tile_id as u32, app.selected_animdata_art_source);
                 if let Some(handle) =
                     app.get_tex_art_texture_from_source(ctx, art_id, app.selected_animdata_art_source)
                 {
@@ -186,7 +187,7 @@ pub fn ui_animdata(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 ui.label(tile_id.to_string());
 
                 if tile_id >= 0 {
-                    let art_id = tile_id as u32 + 0x4000;
+                    let art_id = animdata_preview_art_id(tile_id as u32, app.selected_animdata_art_source);
                     if let Some(handle) =
                         app.get_tex_art_texture_from_source(ctx, art_id, app.selected_animdata_art_source)
                     {
@@ -207,4 +208,19 @@ pub fn ui_animdata(app: &mut UopInspectorApp, ctx: &egui::Context) {
             ui.label(format!("Trailing bytes: {}", animdata.trailing_bytes.len()));
         }
     });
+}
+
+fn animdata_preview_art_id(tile_id: u32, source: ArtSource) -> u32 {
+    match source {
+        ArtSource::EcUopLegacy | ArtSource::EcUopKr => {
+            tile_id.checked_sub(0x4000).unwrap_or(tile_id)
+        }
+        ArtSource::Mul | ArtSource::CcUop | ArtSource::EcUop | ArtSource::Any => {
+            if tile_id >= 0x4000 {
+                tile_id
+            } else {
+                tile_id + 0x4000
+            }
+        }
+    }
 }

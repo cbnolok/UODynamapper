@@ -146,14 +146,16 @@ fn ui_hue_preview_item_picker(app: &mut UopInspectorApp, ui: &mut egui::Ui) -> u
             .selected_text(match app.selected_legacy_source {
                 ArtSource::Mul => "CC MUL",
                 ArtSource::CcUop => "CC UOP",
-                ArtSource::EcUop => "EC UOP",
+                ArtSource::EcUop | ArtSource::EcUopLegacy => "EC UOP Legacy",
+                ArtSource::EcUopKr => "EC UOP KR",
                 ArtSource::Any => "Any",
             })
             .show_ui(ui, |ui| {
                 ui.selectable_value(&mut app.selected_legacy_source, ArtSource::Any, "Any");
                 ui.selectable_value(&mut app.selected_legacy_source, ArtSource::Mul, "CC MUL");
                 ui.selectable_value(&mut app.selected_legacy_source, ArtSource::CcUop, "CC UOP");
-                ui.selectable_value(&mut app.selected_legacy_source, ArtSource::EcUop, "EC UOP");
+                ui.selectable_value(&mut app.selected_legacy_source, ArtSource::EcUopLegacy, "EC UOP Legacy");
+                ui.selectable_value(&mut app.selected_legacy_source, ArtSource::EcUopKr, "EC UOP KR");
             });
     });
 

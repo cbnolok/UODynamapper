@@ -17,12 +17,13 @@ pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context) {
             ui.horizontal(|ui| {
                 ui.label("Source:");
                 egui::ComboBox::from_id_salt("art_source_combo")
-                    .selected_text(format!("{:?}", app.selected_legacy_source))
+                    .selected_text(art_source_label(app.selected_legacy_source))
                     .show_ui(ui, |ui| {
                         ui.selectable_value(&mut app.selected_legacy_source, ArtSource::Any, "Any (Auto)");
                         ui.selectable_value(&mut app.selected_legacy_source, ArtSource::Mul, "Legacy MUL (.mul)");
                         ui.selectable_value(&mut app.selected_legacy_source, ArtSource::CcUop, "CC UOP (artLegacyMUL)");
-                        ui.selectable_value(&mut app.selected_legacy_source, ArtSource::EcUop, "EC UOP (LegacyTexture)");
+                        ui.selectable_value(&mut app.selected_legacy_source, ArtSource::EcUopLegacy, "EC UOP Legacy (LegacyTexture)");
+                        ui.selectable_value(&mut app.selected_legacy_source, ArtSource::EcUopKr, "EC UOP KR (Texture)");
                     });
             });
 
@@ -160,8 +161,18 @@ pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context) {
 
 fn art_row_should_show(source: ArtSource, has_art: bool, has_metadata: bool) -> bool {
     match source {
-        ArtSource::CcUop | ArtSource::EcUop => has_art,
+        ArtSource::CcUop | ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr => has_art,
         ArtSource::Mul | ArtSource::Any => has_art || has_metadata,
+    }
+}
+
+fn art_source_label(source: ArtSource) -> &'static str {
+    match source {
+        ArtSource::Any => "Any (Auto)",
+        ArtSource::Mul => "Legacy MUL (.mul)",
+        ArtSource::CcUop => "CC UOP (artLegacyMUL)",
+        ArtSource::EcUop | ArtSource::EcUopLegacy => "EC UOP Legacy (LegacyTexture)",
+        ArtSource::EcUopKr => "EC UOP KR (Texture)",
     }
 }
 

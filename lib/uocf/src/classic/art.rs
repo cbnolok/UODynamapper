@@ -260,6 +260,7 @@ pub struct ArtMap {
     art_mmap: Option<Arc<Mmap>>,
     cc_uop_package: Option<UopPackage>,
     ec_uop_package: Option<UopPackage>,
+    ec_kr_uop_package: Option<UopPackage>,
     verdata: Option<Arc<Verdata>>,
 }
 
@@ -268,27 +269,47 @@ pub enum ArtSource {
     Mul,
     CcUop,
     EcUop,
+    EcUopLegacy,
+    EcUopKr,
     Any,
 }
 
-fn uop_art_candidate_hashes(art_id: u32, source: ArtSource) -> ([u64; 6], usize) {
-    let mut hashes = [0u64; 6];
-    let mut paths = [[0u8; 64]; 6];
-    let mut lengths = [0usize; 6];
+impl ArtSource {
+    pub fn is_ec_uop(self) -> bool {
+        matches!(self, Self::EcUop | Self::EcUopLegacy | Self::EcUopKr)
+    }
+}
+
+const UOP_ART_CANDIDATE_CAPACITY: usize = 12;
+
+fn uop_art_candidate_hashes(art_id: u32, source: ArtSource) -> ([u64; UOP_ART_CANDIDATE_CAPACITY], usize) {
+    let mut hashes = [0u64; UOP_ART_CANDIDATE_CAPACITY];
+    let mut paths = [[0u8; 64]; UOP_ART_CANDIDATE_CAPACITY];
+    let mut lengths = [0usize; UOP_ART_CANDIDATE_CAPACITY];
     let mut count = 0usize;
     if source == ArtSource::CcUop || source == ArtSource::Any {
         push_uop_art_candidate_path(&mut paths, &mut lengths, &mut count, "build/artlegacymul/", art_id, ".tga");
         push_uop_art_candidate_path(&mut paths, &mut lengths, &mut count, "build/artlegacy/", art_id, ".dat");
         push_uop_art_candidate_path(&mut paths, &mut lengths, &mut count, "build/art/", art_id, ".tga");
     }
-    if source == ArtSource::EcUop || source == ArtSource::Any {
+    if source == ArtSource::EcUop || source == ArtSource::EcUopLegacy || source == ArtSource::Any {
         if let Some(ec_texture_id) = ec_legacy_texture_id_from_art_id(art_id) {
             push_uop_art_candidate_path(&mut paths, &mut lengths, &mut count, "build/tileartlegacy/", ec_texture_id, ".dds");
             push_uop_art_candidate_path(&mut paths, &mut lengths, &mut count, "build/tileartlegacy/", ec_texture_id, ".tga");
             push_uop_art_candidate_path(&mut paths, &mut lengths, &mut count, "build/legacytexture/", ec_texture_id, ".tga");
+        } else if source == ArtSource::EcUopLegacy {
+            push_uop_art_candidate_path(&mut paths, &mut lengths, &mut count, "build/tileartlegacy/", art_id, ".dds");
+            push_uop_art_candidate_path(&mut paths, &mut lengths, &mut count, "build/tileartlegacy/", art_id, ".tga");
+            push_uop_art_candidate_path(&mut paths, &mut lengths, &mut count, "build/legacytexture/", art_id, ".tga");
         }
     }
-    let path_refs: [&[u8]; 6] = std::array::from_fn(|index| &paths[index][..lengths[index]]);
+    if source == ArtSource::EcUopKr || source == ArtSource::Any {
+        push_uop_art_candidate_path(&mut paths, &mut lengths, &mut count, "build/worldart/", art_id, ".dds");
+        push_uop_art_candidate_path(&mut paths, &mut lengths, &mut count, "build/worldart/", art_id, ".tga");
+        push_uop_art_candidate_path(&mut paths, &mut lengths, &mut count, "build/tileartenhanced/", art_id, ".dds");
+        push_uop_art_candidate_path(&mut paths, &mut lengths, &mut count, "build/tileartenhanced/", art_id, ".tga");
+    }
+    let path_refs: [&[u8]; UOP_ART_CANDIDATE_CAPACITY] = std::array::from_fn(|index| &paths[index][..lengths[index]]);
     crate::uop_container::hash::hash_file_name_simd_batch_bytes_into(
         &path_refs[..count],
         &mut hashes[..count],
@@ -297,8 +318,8 @@ fn uop_art_candidate_hashes(art_id: u32, source: ArtSource) -> ([u64; 6], usize)
 }
 
 fn push_uop_art_candidate_path(
-    paths: &mut [[u8; 64]; 6],
-    lengths: &mut [usize; 6],
+    paths: &mut [[u8; 64]; UOP_ART_CANDIDATE_CAPACITY],
+    lengths: &mut [usize; UOP_ART_CANDIDATE_CAPACITY],
     count: &mut usize,
     prefix: &str,
     art_id: u32,
@@ -319,6 +340,19 @@ impl ArtMap {
             art_mmap: None,
             cc_uop_package: None,
             ec_uop_package: Some(uop),
+            ec_kr_uop_package: None,
+            verdata: None,
+        }
+    }
+
+    pub fn load_standalone_ec_kr_uop(uop: UopPackage) -> Self {
+        Self {
+            client_path: PathBuf::new(),
+            idx_file: None,
+            art_mmap: None,
+            cc_uop_package: None,
+            ec_uop_package: None,
+            ec_kr_uop_package: Some(uop),
             verdata: None,
         }
     }
@@ -348,10 +382,21 @@ impl ArtMap {
             }
         }
 
+        let ec_kr_uop_candidates = ["Texture.uop", "texture.uop"];
+        let mut ec_kr_uop_path = None;
+        for &name in &ec_kr_uop_candidates {
+            let path = client_path.join(name);
+            if path.exists() {
+                ec_kr_uop_path = Some(path);
+                break;
+            }
+        }
+
         let mut idx_file = None;
         let mut art_mmap = None;
         let mut cc_uop_package = None;
         let mut ec_uop_package = None;
+        let mut ec_kr_uop_package = None;
 
         if idx_path.exists() && mul_path.exists() {
             idx_file = Some(IndexFile::load(idx_path.clone())?);
@@ -373,7 +418,12 @@ impl ArtMap {
             log::info!("uocf: Loaded EC art UOP format from {}", path.display());
         }
 
-        if idx_file.is_none() && cc_uop_package.is_none() && ec_uop_package.is_none() {
+        if let Some(path) = ec_kr_uop_path {
+            ec_kr_uop_package = Some(UopPackage::load(&path)?);
+            log::info!("uocf: Loaded EC KR art UOP format from {}", path.display());
+        }
+
+        if idx_file.is_none() && cc_uop_package.is_none() && ec_uop_package.is_none() && ec_kr_uop_package.is_none() {
             eyre::bail!(
                 "Neither artidx.mul/art.mul nor artlegacymul.uop found in the client path."
             );
@@ -385,6 +435,7 @@ impl ArtMap {
             art_mmap,
             cc_uop_package,
             ec_uop_package,
+            ec_kr_uop_package,
             verdata: None,
         })
     }
@@ -401,6 +452,11 @@ impl ArtMap {
 
     pub fn with_ec_uop(mut self, uop: UopPackage) -> Self {
         self.ec_uop_package = Some(uop);
+        self
+    }
+
+    pub fn with_ec_kr_uop(mut self, uop: UopPackage) -> Self {
+        self.ec_kr_uop_package = Some(uop);
         self
     }
 
@@ -551,7 +607,9 @@ impl ArtMap {
             ArtSource::Mul => false,
             ArtSource::CcUop => self.cc_uop_package.is_some(),
             ArtSource::EcUop => self.ec_uop_package.is_some(),
-            ArtSource::Any => self.cc_uop_package.is_some() || self.ec_uop_package.is_some(),
+            ArtSource::EcUopLegacy => self.ec_uop_package.is_some(),
+            ArtSource::EcUopKr => self.ec_kr_uop_package.is_some(),
+            ArtSource::Any => self.cc_uop_package.is_some() || self.ec_uop_package.is_some() || self.ec_kr_uop_package.is_some(),
         };
         let uop_max_id = if has_uop_source {
             ART_LEGACY_UOP_MAX_ID_EXCLUSIVE
@@ -561,7 +619,7 @@ impl ArtMap {
 
         match source {
             ArtSource::Mul => mul_max_id,
-            ArtSource::CcUop | ArtSource::EcUop => uop_max_id,
+            ArtSource::CcUop | ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr => uop_max_id,
             ArtSource::Any => mul_max_id.max(uop_max_id),
         }
     }
@@ -612,9 +670,12 @@ impl ArtMap {
         match source {
             ArtSource::Mul => None,
             ArtSource::CcUop => find_uop_art_file(self.cc_uop_package.as_ref(), hashes),
-            ArtSource::EcUop => find_uop_art_file(self.ec_uop_package.as_ref(), hashes),
+            ArtSource::EcUop | ArtSource::EcUopLegacy => find_uop_art_file(self.ec_uop_package.as_ref(), hashes),
+            ArtSource::EcUopKr => find_uop_art_file(self.ec_kr_uop_package.as_ref(), hashes),
             ArtSource::Any => find_uop_art_file(self.cc_uop_package.as_ref(), hashes).or_else(|| {
                 find_uop_art_file(self.ec_uop_package.as_ref(), hashes)
+            }).or_else(|| {
+                find_uop_art_file(self.ec_kr_uop_package.as_ref(), hashes)
             }),
         }
     }
@@ -658,12 +719,22 @@ mod tests {
             )
             .expect("add ec art");
 
+        let mut ec_kr_package = UopPackage::new_default();
+        ec_kr_package
+            .add_file_from_memory(
+                b"ec-kr-art",
+                "build/worldart/00000001.dds",
+                CompressionFlag::None,
+            )
+            .expect("add ec kr art");
+
         let art = ArtMap {
             client_path: PathBuf::new(),
             idx_file: None,
             art_mmap: None,
             cc_uop_package: Some(cc_package),
             ec_uop_package: Some(ec_package),
+            ec_kr_uop_package: Some(ec_kr_package),
             verdata: None,
         };
 
@@ -671,6 +742,8 @@ mod tests {
         assert!(!art.has_id_from_source(0x4000, ArtSource::EcUop));
         assert!(!art.has_id_from_source(0x0001, ArtSource::EcUop));
         assert!(art.has_id_from_source(0x4001, ArtSource::EcUop));
+        assert!(art.has_id_from_source(0x0001, ArtSource::EcUopLegacy));
+        assert!(art.has_id_from_source(0x0001, ArtSource::EcUopKr));
         assert!(!art.has_id_from_source(0x4001, ArtSource::CcUop));
         assert!(art.has_id_from_source(0x4000, ArtSource::Any));
         assert!(art.has_id_from_source(0x4001, ArtSource::Any));
@@ -683,6 +756,14 @@ mod tests {
         art.get_raw_art_data_from_source(0x4001, ArtSource::EcUop, &mut scratch)
             .expect("read ec art");
         assert_eq!(scratch, b"ec-art");
+
+        art.get_raw_art_data_from_source(0x0001, ArtSource::EcUopLegacy, &mut scratch)
+            .expect("read ec legacy art by raw tile id");
+        assert_eq!(scratch, b"ec-art");
+
+        art.get_raw_art_data_from_source(0x0001, ArtSource::EcUopKr, &mut scratch)
+            .expect("read ec kr art");
+        assert_eq!(scratch, b"ec-kr-art");
     }
 }
 

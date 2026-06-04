@@ -448,21 +448,31 @@ fn get_multi_part_texture(
         ArtSource::Mul => [
             (ArtSource::Mul, classic_art_id),
             (ArtSource::Any, classic_art_id),
-            (ArtSource::EcUop, ec_art_id),
+            (ArtSource::EcUopLegacy, ec_art_id),
+            (ArtSource::EcUopKr, ec_art_id),
         ],
         ArtSource::CcUop => [
             (ArtSource::CcUop, classic_art_id),
             (ArtSource::Any, classic_art_id),
-            (ArtSource::EcUop, ec_art_id),
+            (ArtSource::EcUopLegacy, ec_art_id),
+            (ArtSource::EcUopKr, ec_art_id),
         ],
-        ArtSource::EcUop => [
-            (ArtSource::EcUop, ec_art_id),
-            (ArtSource::EcUop, classic_art_id),
+        ArtSource::EcUop | ArtSource::EcUopLegacy => [
+            (ArtSource::EcUopLegacy, ec_art_id),
+            (ArtSource::EcUopLegacy, classic_art_id),
             (ArtSource::Any, classic_art_id),
+            (ArtSource::CcUop, classic_art_id),
+        ],
+        ArtSource::EcUopKr => [
+            (ArtSource::EcUopKr, ec_art_id),
+            (ArtSource::EcUopKr, classic_art_id),
+            (ArtSource::Any, classic_art_id),
+            (ArtSource::CcUop, classic_art_id),
         ],
         ArtSource::Any => [
             (ArtSource::Any, classic_art_id),
-            (ArtSource::EcUop, ec_art_id),
+            (ArtSource::EcUopLegacy, ec_art_id),
+            (ArtSource::EcUopKr, ec_art_id),
             (ArtSource::CcUop, classic_art_id),
         ],
     };

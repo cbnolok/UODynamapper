@@ -214,7 +214,7 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context) {
                     }
                     found_frames
                 }
-                ArtSource::EcUop => {
+                ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr => {
                     let mut found_frames = Err(eyre::eyre!("Animation not found in EC UOPs"));
                     for loaded in &app.uop_cache.loaded_uops {
                         if loaded
@@ -562,7 +562,7 @@ fn show_animation_navigation(app: &mut UopInspectorApp, ctx: &egui::Context, ui:
 
     match app.selected_legacy_source {
         ArtSource::Mul => show_mul_animation_tree(app, ctx, ui, tree_order, collapse_revision),
-        ArtSource::CcUop | ArtSource::EcUop => {
+        ArtSource::CcUop | ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr => {
             show_uop_animationframe_tree(app, ctx, ui, collapse_revision);
             ui.separator();
             ui.heading("Animation Sequence");
@@ -860,7 +860,7 @@ fn show_uop_animationframe_tree(
     egui::ScrollArea::vertical()
         .id_salt(match app.selected_legacy_source {
             ArtSource::CcUop => "cc_animationframe_tree",
-            ArtSource::EcUop => "ec_animationframe_tree",
+            ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr => "ec_animationframe_tree",
             _ => "animationframe_tree",
         })
         .max_height(260.0)
@@ -946,7 +946,7 @@ fn collect_uop_animationframe_tree_entries(
                     }
                 }
             }
-            ArtSource::EcUop => {
+            ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr => {
                 let internal_path = format!("data/animationframe/{:06}.bin", body_id);
                 if let Some(frame_count) =
                     uop_animationframe_frame_count(app, "AnimationFrame", &internal_path, source)
@@ -991,7 +991,7 @@ fn uop_animationframe_frame_count(
             ArtSource::CcUop => AnimationFrameCc::parse_metadata(&data)
                 .ok()
                 .map(|metadata| metadata.frame_count as usize),
-            ArtSource::EcUop => uocf::enhanced::animationframe::AnimationFrame::load_metadata(&data)
+            ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr => uocf::enhanced::animationframe::AnimationFrame::load_metadata(&data)
                 .ok()
                 .map(|metadata| metadata.frames_count as usize),
             ArtSource::Mul | ArtSource::Any => None,
@@ -1112,6 +1112,8 @@ fn animation_source_label(source: ArtSource) -> &'static str {
         ArtSource::Mul => "mul",
         ArtSource::CcUop => "cc_uop",
         ArtSource::EcUop => "ec_uop",
+        ArtSource::EcUopLegacy => "ec_uop_legacy",
+        ArtSource::EcUopKr => "ec_uop_kr",
         ArtSource::Any => "any",
     }
 }
@@ -1163,7 +1165,7 @@ fn selected_animation_patch(app: &UopInspectorApp, body_id: u32) -> eyre::Result
             let payload = selected_cc_animationframe_payload(app, body_id)?;
             Ok(single_payload_patch(body_id as i32, 0, payload))
         }
-        ArtSource::EcUop => {
+        ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr => {
             let payload = selected_ec_animationframe_payload(app, body_id)?;
             Ok(single_payload_patch(body_id as i32, 0, payload))
         }
