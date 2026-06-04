@@ -95,42 +95,34 @@ fn ui_cc_hues(app: &mut UopInspectorApp, ctx: &egui::Context) {
                     ui.heading(format!("Hue {}: {}", app.selected_hue_id, String::from_utf8_lossy(&hue.name).trim_matches('\0')));
                     ui.separator();
 
-                    ui.horizontal(|ui| {
-                        ui.vertical(|ui| {
-                            ui.label("Color Table (32 colors):");
+                    ui.label("Color Table (32 colors):");
+                    egui::ScrollArea::horizontal()
+                        .id_salt("cc_hue_color_table_strip")
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 2.0;
+                                for &color in &hue.color_table {
+                                    let r = (((color >> 10) & 0x1F) << 3) as u8;
+                                    let g = (((color >> 5) & 0x1F) << 3) as u8;
+                                    let b = ((color & 0x1F) << 3) as u8;
 
-                            egui::ScrollArea::horizontal()
-                                .id_salt("cc_hue_color_table_strip")
-                                .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 2.0;
-                                        for &color in &hue.color_table {
-                                            let r = (((color >> 10) & 0x1F) << 3) as u8;
-                                            let g = (((color >> 5) & 0x1F) << 3) as u8;
-                                            let b = ((color & 0x1F) << 3) as u8;
-
-                                            let (rect, _response) = ui.allocate_at_least(
-                                                egui::vec2(24.0, 24.0),
-                                                egui::Sense::hover(),
-                                            );
-                                            ui.painter().rect_filled(
-                                                rect,
-                                                2.0,
-                                                egui::Color32::from_rgb(r, g, b),
-                                            );
-                                        }
-                                    });
-                                });
+                                    let (rect, _response) = ui.allocate_at_least(
+                                        egui::vec2(24.0, 24.0),
+                                        egui::Sense::hover(),
+                                    );
+                                    ui.painter().rect_filled(
+                                        rect,
+                                        2.0,
+                                        egui::Color32::from_rgb(r, g, b),
+                                    );
+                                }
+                            });
                         });
 
-                        ui.separator();
-
-                        ui.vertical(|ui| {
-                            ui.label("Properties:");
-                            ui.label(format!("Start: {}", hue.table_start));
-                            ui.label(format!("End: {}", hue.table_end));
-                        });
-                    });
+                    ui.separator();
+                    ui.label("Properties:");
+                    ui.label(format!("Start: {}", hue.table_start));
+                    ui.label(format!("End: {}", hue.table_end));
 
                     ui_cc_hue_item_preview(app, ctx, ui);
                 }
