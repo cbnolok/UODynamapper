@@ -2856,7 +2856,15 @@ impl UopInspectorApp {
         };
 
         for (package_name, template) in candidates {
-            let path = template.replace("{id:08}", &format!("{:08}", art_id));
+            let package_art_id = if source == ArtSource::EcUop {
+                match uocf::classic::art::ec_legacy_texture_id_from_art_id(art_id) {
+                    Some(id) => id,
+                    None => continue,
+                }
+            } else {
+                art_id
+            };
+            let path = template.replace("{id:08}", &format!("{:08}", package_art_id));
             let hash = hash_file_name_single(&path);
             if self.select_raw_uop_entry(package_name, hash) {
                 return true;

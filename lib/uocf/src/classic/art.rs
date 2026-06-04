@@ -62,6 +62,10 @@ pub const RGBA_BYTES_PER_PIXEL: usize = 4;
 const STATIC_HEADER_BYTES: usize = 8;
 const LOOKUP_ENTRY_BYTES: usize = 2;
 
+pub fn ec_legacy_texture_id_from_art_id(art_id: u32) -> Option<u32> {
+    art_id.checked_sub(ART_ITEM_ID_OFFSET)
+}
+
 fn classic_art_payload_is_structurally_valid(art_id: u32, size: u32) -> bool {
     if art_id < ART_ITEM_ID_OFFSET {
         size as usize >= LAND_DIAMOND_BYTE_COUNT
@@ -278,9 +282,11 @@ fn uop_art_candidate_hashes(art_id: u32, source: ArtSource) -> ([u64; 6], usize)
         push_uop_art_candidate_path(&mut paths, &mut lengths, &mut count, "build/art/", art_id, ".tga");
     }
     if source == ArtSource::EcUop || source == ArtSource::Any {
-        push_uop_art_candidate_path(&mut paths, &mut lengths, &mut count, "build/tileartlegacy/", art_id, ".dds");
-        push_uop_art_candidate_path(&mut paths, &mut lengths, &mut count, "build/tileartlegacy/", art_id, ".tga");
-        push_uop_art_candidate_path(&mut paths, &mut lengths, &mut count, "build/legacytexture/", art_id, ".tga");
+        if let Some(ec_texture_id) = ec_legacy_texture_id_from_art_id(art_id) {
+            push_uop_art_candidate_path(&mut paths, &mut lengths, &mut count, "build/tileartlegacy/", ec_texture_id, ".dds");
+            push_uop_art_candidate_path(&mut paths, &mut lengths, &mut count, "build/tileartlegacy/", ec_texture_id, ".tga");
+            push_uop_art_candidate_path(&mut paths, &mut lengths, &mut count, "build/legacytexture/", ec_texture_id, ".tga");
+        }
     }
     let path_refs: [&[u8]; 6] = std::array::from_fn(|index| &paths[index][..lengths[index]]);
     crate::uop_container::hash::hash_file_name_simd_batch_bytes_into(
@@ -647,7 +653,7 @@ mod tests {
         ec_package
             .add_file_from_memory(
                 b"ec-art",
-                "build/tileartlegacy/00016385.dds",
+                "build/tileartlegacy/00000001.dds",
                 CompressionFlag::None,
             )
             .expect("add ec art");
@@ -663,6 +669,7 @@ mod tests {
 
         assert!(art.has_id_from_source(0x4000, ArtSource::CcUop));
         assert!(!art.has_id_from_source(0x4000, ArtSource::EcUop));
+        assert!(!art.has_id_from_source(0x0001, ArtSource::EcUop));
         assert!(art.has_id_from_source(0x4001, ArtSource::EcUop));
         assert!(!art.has_id_from_source(0x4001, ArtSource::CcUop));
         assert!(art.has_id_from_source(0x4000, ArtSource::Any));
