@@ -3,6 +3,9 @@ use egui_extras::{Column, TableBuilder};
 use crate::app::{tileart_flags_summary, tileart_property_name, tileart_type_name, ArtSource, TileArtFileEntry, TileMetadataSource, UopInspectorApp, ViewMode};
 use uocf::enhanced::tileart::{TaeAnimationAppearance, TaeSittingAnimation};
 
+const TILEDATA_TABLE_MIN_WIDTH: f32 = 980.0;
+const TILEART_TABLE_MIN_WIDTH: f32 = 1450.0;
+
 pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context) {
     egui::SidePanel::left("tex_art_cc_list")
         .resizable(true)
@@ -224,102 +227,105 @@ fn ui_cc_tiledata_table(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
             tiledata.land_tiles().len(),
             tiledata.item_tiles().len()
         ));
-        TableBuilder::new(ui)
-            .striped(true)
-            .resizable(true)
-            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .column(Column::auto().at_least(70.0))
-            .column(Column::auto().at_least(60.0))
-            .column(Column::auto().at_least(160.0))
-            .column(Column::auto().at_least(70.0))
-            .column(Column::auto().at_least(60.0))
-            .column(Column::auto().at_least(70.0))
-            .column(Column::auto().at_least(80.0))
-            .column(Column::auto().at_least(60.0))
-            .column(Column::auto().at_least(70.0))
-            .column(Column::auto().at_least(60.0))
-            .column(Column::remainder().at_least(220.0))
-            .header(20.0, |mut header| {
-                header.col(|ui| {
-                    ui.strong("ID");
-                });
-                header.col(|ui| {
-                    ui.strong("Type");
-                });
-                header.col(|ui| {
-                    ui.strong("Name");
-                });
-                header.col(|ui| {
-                    ui.strong("Texture");
-                });
-                header.col(|ui| {
-                    ui.strong("Height");
-                });
-                header.col(|ui| {
-                    ui.strong("Weight");
-                });
-                header.col(|ui| {
-                    ui.strong("Layer/Light");
-                });
-                header.col(|ui| {
-                    ui.strong("Qty");
-                });
-                header.col(|ui| {
-                    ui.strong("Anim");
-                });
-                header.col(|ui| {
-                    ui.strong("Value");
-                });
-                header.col(|ui| {
-                    ui.strong("Flags");
-                });
-            })
-            .body(|body| {
-                body.rows(text_height, row_count, |mut row| {
-                    let idx = filtered_indices
-                        .as_ref()
-                        .map_or(row.index(), |indices| indices[row.index()]);
-                    let item = &rows[idx];
-                    row.col(|ui| {
-                        if ui
-                            .selectable_label(app.selected_tex_art_cc_id == Some(item.art_id), &item.id)
-                            .clicked()
-                        {
-                            app.selected_tex_art_cc_id = Some(item.art_id);
-                        }
+        egui::ScrollArea::horizontal().auto_shrink([false, true]).show(ui, |ui| {
+            ui.set_min_width(TILEDATA_TABLE_MIN_WIDTH);
+            TableBuilder::new(ui)
+                .striped(true)
+                .resizable(true)
+                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                .column(Column::auto().at_least(70.0))
+                .column(Column::auto().at_least(60.0))
+                .column(Column::auto().at_least(160.0))
+                .column(Column::auto().at_least(70.0))
+                .column(Column::auto().at_least(60.0))
+                .column(Column::auto().at_least(70.0))
+                .column(Column::auto().at_least(80.0))
+                .column(Column::auto().at_least(60.0))
+                .column(Column::auto().at_least(70.0))
+                .column(Column::auto().at_least(60.0))
+                .column(Column::remainder().at_least(220.0))
+                .header(20.0, |mut header| {
+                    header.col(|ui| {
+                        ui.strong("ID");
                     });
-                    row.col(|ui| {
-                        ui.label(item.kind);
+                    header.col(|ui| {
+                        ui.strong("Type");
                     });
-                    row.col(|ui| {
-                        ui.label(&item.name);
+                    header.col(|ui| {
+                        ui.strong("Name");
                     });
-                    row.col(|ui| {
-                        ui.label(&item.texture_id);
+                    header.col(|ui| {
+                        ui.strong("Texture");
                     });
-                    row.col(|ui| {
-                        ui.label(&item.height);
+                    header.col(|ui| {
+                        ui.strong("Height");
                     });
-                    row.col(|ui| {
-                        ui.label(&item.weight);
+                    header.col(|ui| {
+                        ui.strong("Weight");
                     });
-                    row.col(|ui| {
-                        ui.label(&item.quality);
+                    header.col(|ui| {
+                        ui.strong("Layer/Light");
                     });
-                    row.col(|ui| {
-                        ui.label(&item.quantity);
+                    header.col(|ui| {
+                        ui.strong("Qty");
                     });
-                    row.col(|ui| {
-                        ui.label(&item.anim_id);
+                    header.col(|ui| {
+                        ui.strong("Anim");
                     });
-                    row.col(|ui| {
-                        ui.label(&item.value);
+                    header.col(|ui| {
+                        ui.strong("Value");
                     });
-                    row.col(|ui| {
-                        ui.label(&item.flags_summary).on_hover_text(&item.flags_raw);
+                    header.col(|ui| {
+                        ui.strong("Flags");
+                    });
+                })
+                .body(|body| {
+                    body.rows(text_height, row_count, |mut row| {
+                        let idx = filtered_indices
+                            .as_ref()
+                            .map_or(row.index(), |indices| indices[row.index()]);
+                        let item = &rows[idx];
+                        row.col(|ui| {
+                            if ui
+                                .selectable_label(app.selected_tex_art_cc_id == Some(item.art_id), &item.id)
+                                .clicked()
+                            {
+                                app.selected_tex_art_cc_id = Some(item.art_id);
+                            }
+                        });
+                        row.col(|ui| {
+                            ui.label(item.kind);
+                        });
+                        row.col(|ui| {
+                            ui.label(&item.name);
+                        });
+                        row.col(|ui| {
+                            ui.label(&item.texture_id);
+                        });
+                        row.col(|ui| {
+                            ui.label(&item.height);
+                        });
+                        row.col(|ui| {
+                            ui.label(&item.weight);
+                        });
+                        row.col(|ui| {
+                            ui.label(&item.quality);
+                        });
+                        row.col(|ui| {
+                            ui.label(&item.quantity);
+                        });
+                        row.col(|ui| {
+                            ui.label(&item.anim_id);
+                        });
+                        row.col(|ui| {
+                            ui.label(&item.value);
+                        });
+                        row.col(|ui| {
+                            ui.label(&item.flags_summary).on_hover_text(&item.flags_raw);
+                        });
                     });
                 });
-            });
+        });
 
         ui_selected_tiledata_details(app, ui);
     } else {
@@ -335,112 +341,115 @@ fn ui_ec_tileart_table(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
         let row_count = filtered_indices.as_ref().map_or(rows.len(), Vec::len);
         let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
         ui.label(format!("{} tileart.uop entries", entries.len()));
-        TableBuilder::new(ui)
-            .striped(true)
-            .resizable(true)
-            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .column(Column::auto().at_least(70.0))
-            .column(Column::auto().at_least(70.0))
-            .column(Column::auto().at_least(70.0))
-            .column(Column::auto().at_least(180.0))
-            .column(Column::auto().at_least(220.0))
-            .column(Column::auto().at_least(120.0))
-            .column(Column::auto().at_least(80.0))
-            .column(Column::auto().at_least(120.0))
-            .column(Column::auto().at_least(80.0))
-            .column(Column::remainder().at_least(180.0))
-            .column(Column::auto().at_least(90.0))
-            .column(Column::auto().at_least(170.0))
-            .header(20.0, |mut header| {
-                header.col(|ui| {
-                    ui.strong("ID");
-                });
-                header.col(|ui| {
-                    ui.strong("Old ID");
-                });
-                header.col(|ui| {
-                    ui.strong("Type");
-                });
-                header.col(|ui| {
-                    ui.strong("Properties");
-                });
-                header.col(|ui| {
-                    ui.strong("Flags");
-                });
-                header.col(|ui| {
-                    ui.strong("EC Window");
-                });
-                header.col(|ui| {
-                    ui.strong("EC Offset");
-                });
-                header.col(|ui| {
-                    ui.strong("CC Window");
-                });
-                header.col(|ui| {
-                    ui.strong("CC Offset");
-                });
-                header.col(|ui| {
-                    ui.strong("Textures");
-                });
-                header.col(|ui| {
-                    ui.strong("Sitting");
-                });
-                header.col(|ui| {
-                    ui.strong("Appearance");
-                });
-            })
-            .body(|body| {
-                body.rows(text_height, row_count, |mut row| {
-                    let idx = filtered_indices
-                        .as_ref()
-                        .map_or(row.index(), |indices| indices[row.index()]);
-                    let item = &rows[idx];
-                    row.col(|ui| {
-                        if ui
-                            .selectable_label(
-                                app.selected_tileart_hash == Some(item.filename_hash),
-                                &item.tile_id,
-                            )
-                            .clicked()
-                        {
-                            app.selected_tileart_hash = Some(item.filename_hash);
-                        }
+        egui::ScrollArea::horizontal().auto_shrink([false, true]).show(ui, |ui| {
+            ui.set_min_width(TILEART_TABLE_MIN_WIDTH);
+            TableBuilder::new(ui)
+                .striped(true)
+                .resizable(true)
+                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                .column(Column::auto().at_least(70.0))
+                .column(Column::auto().at_least(70.0))
+                .column(Column::auto().at_least(70.0))
+                .column(Column::auto().at_least(180.0))
+                .column(Column::auto().at_least(220.0))
+                .column(Column::auto().at_least(120.0))
+                .column(Column::auto().at_least(80.0))
+                .column(Column::auto().at_least(120.0))
+                .column(Column::auto().at_least(80.0))
+                .column(Column::remainder().at_least(180.0))
+                .column(Column::auto().at_least(90.0))
+                .column(Column::auto().at_least(170.0))
+                .header(20.0, |mut header| {
+                    header.col(|ui| {
+                        ui.strong("ID");
                     });
-                    row.col(|ui| {
-                        ui.label(&item.old_id);
+                    header.col(|ui| {
+                        ui.strong("Old ID");
                     });
-                    row.col(|ui| {
-                        ui.label(item.type_name);
+                    header.col(|ui| {
+                        ui.strong("Type");
                     });
-                    row.col(|ui| {
-                        ui.label(&item.properties_summary);
+                    header.col(|ui| {
+                        ui.strong("Properties");
                     });
-                    row.col(|ui| {
-                        ui.label(&item.flags_summary).on_hover_text(&item.flags_raw);
+                    header.col(|ui| {
+                        ui.strong("Flags");
                     });
-                    row.col(|ui| {
-                        ui.label(&item.ec_window);
+                    header.col(|ui| {
+                        ui.strong("EC Window");
                     });
-                    row.col(|ui| {
-                        ui.label(&item.ec_offset);
+                    header.col(|ui| {
+                        ui.strong("EC Offset");
                     });
-                    row.col(|ui| {
-                        ui.label(&item.cc_window);
+                    header.col(|ui| {
+                        ui.strong("CC Window");
                     });
-                    row.col(|ui| {
-                        ui.label(&item.cc_offset);
+                    header.col(|ui| {
+                        ui.strong("CC Offset");
                     });
-                    row.col(|ui| {
-                        ui.label(&item.texture_summary);
+                    header.col(|ui| {
+                        ui.strong("Textures");
                     });
-                    row.col(|ui| {
-                        ui.label(&item.sitting_summary);
+                    header.col(|ui| {
+                        ui.strong("Sitting");
                     });
-                    row.col(|ui| {
-                        ui.label(&item.appearance_summary);
+                    header.col(|ui| {
+                        ui.strong("Appearance");
+                    });
+                })
+                .body(|body| {
+                    body.rows(text_height, row_count, |mut row| {
+                        let idx = filtered_indices
+                            .as_ref()
+                            .map_or(row.index(), |indices| indices[row.index()]);
+                        let item = &rows[idx];
+                        row.col(|ui| {
+                            if ui
+                                .selectable_label(
+                                    app.selected_tileart_hash == Some(item.filename_hash),
+                                    &item.tile_id,
+                                )
+                                .clicked()
+                            {
+                                app.selected_tileart_hash = Some(item.filename_hash);
+                            }
+                        });
+                        row.col(|ui| {
+                            ui.label(&item.old_id);
+                        });
+                        row.col(|ui| {
+                            ui.label(item.type_name);
+                        });
+                        row.col(|ui| {
+                            ui.label(&item.properties_summary);
+                        });
+                        row.col(|ui| {
+                            ui.label(&item.flags_summary).on_hover_text(&item.flags_raw);
+                        });
+                        row.col(|ui| {
+                            ui.label(&item.ec_window);
+                        });
+                        row.col(|ui| {
+                            ui.label(&item.ec_offset);
+                        });
+                        row.col(|ui| {
+                            ui.label(&item.cc_window);
+                        });
+                        row.col(|ui| {
+                            ui.label(&item.cc_offset);
+                        });
+                        row.col(|ui| {
+                            ui.label(&item.texture_summary);
+                        });
+                        row.col(|ui| {
+                            ui.label(&item.sitting_summary);
+                        });
+                        row.col(|ui| {
+                            ui.label(&item.appearance_summary);
+                        });
                     });
                 });
-            });
+        });
 
         ui.separator();
         if let Some(selected_hash) = app.selected_tileart_hash {
