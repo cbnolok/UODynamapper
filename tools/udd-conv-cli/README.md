@@ -32,12 +32,16 @@ packages consumed by Dynamapper and the other tools at runtime.
 Image packers that support upscale passes also accept `--upscale-profile
 <file.toml|file.kdl>`. A profile can set ordered pass chains per image type and
 override them for a specific type/family/id target.
+See [Palette-Safe Upscaling](../../docs/dev_wiki/rendering/PALETTE_SAFE_UPSCALING.md)
+for the purpose, pass ordering, palette snap modes, and recommended defaults.
 
 Supported image types are `art_land`, `art_items`, `gumps_equip`,
 `gumps_non_equip`, `cc_mobile_animation_frames`,
 `ec_mobile_animation_frames`, `cc_land_textures`, and `ec_land_textures`.
 Mobile animation overrides use `family = body_id` and `id = source_frame_index`.
 Other overrides use the asset id as `id`.
+See [UPSCALE_PROFILES.md](UPSCALE_PROFILES.md) for the full profile format,
+target resolution rules, tunable parameters, and practical examples.
 
 ```toml
 [art_items]
