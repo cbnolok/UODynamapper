@@ -1,4 +1,4 @@
-use crate::app::{ArtSource, UopInspectorApp};
+use crate::app::{AnimationFrameUopEntry, ArtSource, UopInspectorApp};
 use crate::ui::image_export::{export_rgba_png, sanitize_file_stem};
 use color_eyre::eyre;
 use eframe::egui;
@@ -17,13 +17,6 @@ struct MulAnimationTreeEntry {
     source_index: u32,
 }
 
-#[derive(Clone, Copy)]
-struct UopAnimationFrameTreeEntry {
-    body_id: u32,
-    group_id: Option<u8>,
-    frame_count: usize,
-}
-
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 enum AnimationTreeOrder {
     BodyId,
@@ -32,7 +25,6 @@ enum AnimationTreeOrder {
 
 static ANIMATION_TREE_ORDER: AtomicU8 = AtomicU8::new(0);
 static ANIMATION_TREE_COLLAPSE_REVISION: AtomicU64 = AtomicU64::new(0);
-const UOP_ANIMATIONFRAME_TREE_BODY_SCAN_LIMIT: u32 = 4096;
 
 pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context) {
     egui::SidePanel::left("anim_controls")
@@ -136,12 +128,13 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context) {
         });
 
     egui::CentralPanel::default().show(ctx, |ui| {
-        if let Some(client) = &app.client_data {
-            let body_id = if let Some(defs) = &client.anim_defs {
-                defs.resolve(app.selected_anim_id)
-            } else {
-                app.selected_anim_id
-            };
+        if app.client_data.is_some() {
+            let body_id = app
+                .client_data
+                .as_ref()
+                .and_then(|client| client.anim_defs.as_ref())
+                .map(|defs| defs.resolve(app.selected_anim_id))
+                .unwrap_or(app.selected_anim_id);
 
             // Try to load AnimationSequence if not already loaded for this Body ID
             if app.selected_anim_sequence.as_ref().map(|s| s.body_id) != Some(body_id) {
@@ -174,86 +167,42 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context) {
             let frames_res: eyre::Result<Vec<uocf::classic::anim::AnimFrame>> = match app
                 .selected_legacy_source
             {
-                ArtSource::Mul => client
-                    .anim_map
+                ArtSource::Mul => app
+                    .client_data
                     .as_ref()
+                    .and_then(|client| client.anim_map.as_ref())
                     .ok_or_else(|| eyre::eyre!("Classic animation MUL sources are not loaded"))
                     .and_then(|anim_map| {
                         let source_index = selected_mul_source_index(app, body_id)?;
                         anim_map.decode_animation_index(app.selected_anim_file_idx, source_index)
                     }),
                 ArtSource::CcUop => {
-                    let mut found_frames = Err(eyre::eyre!("Animation not found in UOPs"));
-                    for loaded in &app.uop_cache.loaded_uops {
-                        if loaded
-                            .path
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .contains("AnimationFrame")
-                        {
-                            for grp_id in 0..5 {
-                                let path = format!(
-                                    "build/animationlegacyframe/{:06}/{:02}.bin",
-                                    body_id, grp_id
-                                );
-                                let hash = uocf::uop_container::hash::hash_file_name_single(&path);
-                                if let Some(file) = loaded.package.get_file_by_hash(hash) {
-                                    if let Ok(data) = file.unpack() {
-                                        if let Ok(anim) = AnimationFrameCc::parse(&data) {
-                                            found_frames = Ok(anim.frames);
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        if found_frames.is_ok() {
-                            break;
-                        }
-                    }
-                    found_frames
+                    let entry = selected_cc_animationframe_entry(app, body_id);
+                    entry.and_then(|entry| {
+                        let data = animationframe_payload(app, &entry)?;
+                        AnimationFrameCc::parse(&data).map(|animation| animation.frames)
+                    })
                 }
                 ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr => {
-                    let mut found_frames = Err(eyre::eyre!("Animation not found in EC UOPs"));
-                    for loaded in &app.uop_cache.loaded_uops {
-                        if loaded
-                            .path
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .contains("AnimationFrame")
-                        {
-                            let path = format!("data/animationframe/{:06}.bin", body_id);
-                            let hash = uocf::uop_container::hash::hash_file_name_single(&path);
-                            if let Some(file) = loaded.package.get_file_by_hash(hash) {
-                                if let Ok(data) = file.unpack() {
-                                    if let Ok(anim) =
-                                        uocf::enhanced::animationframe::AnimationFrame::load(&data)
-                                    {
-                                        let mut decoded_frames =
-                                            Vec::with_capacity(anim.frames.len());
-                                        for entry in &anim.frames {
-                                            if let Ok(decoded) = anim.decode_frame(entry) {
-                                                decoded_frames.push(
-                                                    uocf::classic::anim::AnimFrame {
-                                                        width: decoded.width,
-                                                        height: decoded.height,
-                                                        center_x: decoded.center_x,
-                                                        center_y: decoded.center_y,
-                                                        data: decoded.data,
-                                                    },
-                                                );
-                                            }
-                                        }
-                                        found_frames = Ok(decoded_frames);
-                                        break;
-                                    }
-                                }
+                    let entry = selected_ec_animationframe_entry(app, body_id);
+                    entry.and_then(|entry| {
+                        let data = animationframe_payload(app, &entry)?;
+                        let animation =
+                            uocf::enhanced::animationframe::AnimationFrame::load(&data)?;
+                        let mut decoded_frames = Vec::with_capacity(animation.frames.len());
+                        for entry in &animation.frames {
+                            if let Ok(decoded) = animation.decode_frame(entry) {
+                                decoded_frames.push(uocf::classic::anim::AnimFrame {
+                                    width: decoded.width,
+                                    height: decoded.height,
+                                    center_x: decoded.center_x,
+                                    center_y: decoded.center_y,
+                                    data: decoded.data,
+                                });
                             }
                         }
-                    }
-                    found_frames
+                        Ok(decoded_frames)
+                    })
                 }
                 _ => Err(eyre::eyre!("Source not supported yet")),
             };
@@ -887,24 +836,84 @@ fn show_uop_animationframe_tree(
                             app.last_frame_time = ctx.input(|input| input.time);
                         }
 
-                        for entry in body_entries {
-                            let selected = app.selected_anim_id == entry.body_id
-                                && entry
-                                    .group_id
-                                    .map_or(true, |group_id| app.selected_anim_file_idx == group_id);
-                            let label = match entry.group_id {
-                                Some(group_id) => {
-                                    format!("Group {group_id:02}: {} frames", entry.frame_count)
+                        if app.selected_legacy_source == ArtSource::CcUop {
+                            let mut actions =
+                                BTreeMap::<u16, BTreeMap<u8, Vec<AnimationFrameUopEntry>>>::new();
+                            for entry in body_entries {
+                                if let (Some(action_id), Some(direction)) =
+                                    (entry.action_id, entry.direction)
+                                {
+                                    actions
+                                        .entry(action_id)
+                                        .or_default()
+                                        .entry(direction)
+                                        .or_default()
+                                        .push(entry);
                                 }
-                                None => format!("AnimationFrame: {} frames", entry.frame_count),
-                            };
-                            if ui.selectable_label(selected, label).clicked() {
-                                app.selected_anim_id = entry.body_id;
-                                if let Some(group_id) = entry.group_id {
-                                    app.selected_anim_file_idx = group_id;
+                            }
+                            for (action_id, directions) in actions {
+                                egui::CollapsingHeader::new(format!("Action {}", action_id))
+                                    .id_salt((
+                                        "uocf_animationframe_action",
+                                        collapse_revision,
+                                        body_id,
+                                        action_id,
+                                    ))
+                                    .default_open(
+                                        collapse_revision == 0
+                                            && app.selected_anim_id == body_id
+                                            && app.selected_action_id == action_id,
+                                    )
+                                    .show(ui, |ui| {
+                                        for (direction, entries) in directions {
+                                            egui::CollapsingHeader::new(format!(
+                                                "Direction {}",
+                                                direction
+                                            ))
+                                                .id_salt((
+                                                    "uocf_animationframe_direction",
+                                                    collapse_revision,
+                                                    body_id,
+                                                    action_id,
+                                                    direction,
+                                                ))
+                                                .default_open(
+                                                    collapse_revision == 0
+                                                        && app.selected_anim_id == body_id
+                                                        && app.selected_action_id == action_id
+                                                        && app.selected_direction == direction,
+                                                )
+                                                .show(ui, |ui| {
+                                                    for entry in entries {
+                                                        show_uop_animationframe_entry_frames(
+                                                            app, ctx, ui, &entry, body_id, action_id,
+                                                            direction,
+                                                        );
+                                                    }
+                                                });
+                                        }
+                                    });
+                            }
+                        } else {
+                            for entry in body_entries {
+                                let selected = app.selected_anim_id == entry.body_id
+                                    && entry.group_id.map_or(true, |group_id| {
+                                        app.selected_anim_file_idx == group_id
+                                    });
+                                let label = match entry.group_id {
+                                    Some(group_id) => {
+                                        format!("Group {group_id:02}: {} frames", entry.frame_count)
+                                    }
+                                    None => format!("AnimationFrame: {} frames", entry.frame_count),
+                                };
+                                if ui.selectable_label(selected, label).clicked() {
+                                    app.selected_anim_id = entry.body_id;
+                                    if let Some(group_id) = entry.group_id {
+                                        app.selected_anim_file_idx = group_id;
+                                    }
+                                    app.current_frame_idx = 0;
+                                    app.last_frame_time = ctx.input(|input| input.time);
                                 }
-                                app.current_frame_idx = 0;
-                                app.last_frame_time = ctx.input(|input| input.time);
                             }
                         }
                     });
@@ -913,94 +922,265 @@ fn show_uop_animationframe_tree(
 }
 
 fn collect_uop_animationframe_tree_entries(
-    app: &UopInspectorApp,
+    app: &mut UopInspectorApp,
     source: ArtSource,
     query: &str,
-) -> BTreeMap<u32, Vec<UopAnimationFrameTreeEntry>> {
-    let mut body_ids = (0..UOP_ANIMATIONFRAME_TREE_BODY_SCAN_LIMIT).collect::<Vec<_>>();
-    if app.selected_anim_id >= UOP_ANIMATIONFRAME_TREE_BODY_SCAN_LIMIT {
-        body_ids.push(app.selected_anim_id);
-    }
-
-    let mut entries = BTreeMap::<u32, Vec<UopAnimationFrameTreeEntry>>::new();
-    for body_id in body_ids {
+) -> BTreeMap<u32, Vec<AnimationFrameUopEntry>> {
+    let mut entries = BTreeMap::<u32, Vec<AnimationFrameUopEntry>>::new();
+    for entry in animationframe_uop_entries(app, source).iter().cloned() {
+        let body_id = entry.body_id;
         if !query.is_empty() && !format!("body {body_id}").contains(query) {
             continue;
         }
 
-        match source {
-            ArtSource::CcUop => {
-                for group_id in 0..=5 {
-                    let internal_path = format!(
-                        "build/animationlegacyframe/{:06}/{:02}.bin",
-                        body_id, group_id
-                    );
-                    if let Some(frame_count) =
-                        uop_animationframe_frame_count(app, "AnimationFrame", &internal_path, source)
-                    {
-                        entries.entry(body_id).or_default().push(UopAnimationFrameTreeEntry {
-                            body_id,
-                            group_id: Some(group_id),
-                            frame_count,
-                        });
-                    }
-                }
-            }
-            ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr => {
-                let internal_path = format!("data/animationframe/{:06}.bin", body_id);
-                if let Some(frame_count) =
-                    uop_animationframe_frame_count(app, "AnimationFrame", &internal_path, source)
-                {
-                    entries.entry(body_id).or_default().push(UopAnimationFrameTreeEntry {
-                        body_id,
-                        group_id: None,
-                        frame_count,
-                    });
-                }
-            }
-            ArtSource::Mul | ArtSource::Any => {}
-        }
+        entries.entry(body_id).or_default().push(entry);
     }
     entries
 }
 
-fn uop_animationframe_frame_count(
+fn show_uop_animationframe_entry_frames(
+    app: &mut UopInspectorApp,
+    ctx: &egui::Context,
+    ui: &mut egui::Ui,
+    entry: &AnimationFrameUopEntry,
+    body_id: u32,
+    action_id: u16,
+    direction: u8,
+) {
+    let label = match entry.group_id {
+        Some(group_id) => format!(
+            "Group {group_id:02} / idx {}: {} frames",
+            entry.source_index, entry.frame_count
+        ),
+        None => format!("AnimationFrame: {} frames", entry.frame_count),
+    };
+
+    egui::CollapsingHeader::new(label)
+        .id_salt((
+            "uocf_animationframe_entry",
+            entry.package_index,
+            entry.file_hash,
+            body_id,
+            action_id,
+            direction,
+        ))
+        .default_open(
+            app.selected_anim_id == body_id
+                && app.selected_action_id == action_id
+                && app.selected_direction == direction
+                && entry.group_id.map_or(true, |group_id| {
+                    app.selected_anim_file_idx == group_id
+                }),
+        )
+        .show(ui, |ui| {
+            if entry.frame_count == 0 {
+                ui.label("No frames.");
+            }
+            for frame_index in 0..entry.frame_count {
+                let selected = app.selected_anim_id == body_id
+                    && app.selected_action_id == action_id
+                    && app.selected_direction == direction
+                    && app.current_frame_idx == frame_index
+                    && entry.group_id.map_or(true, |group_id| {
+                        app.selected_anim_file_idx == group_id
+                    });
+                if ui
+                    .selectable_label(selected, format!("Frame {}", frame_index))
+                    .clicked()
+                {
+                    app.selected_anim_id = body_id;
+                    app.selected_action_id = action_id;
+                    app.selected_direction = direction;
+                    if let Some(group_id) = entry.group_id {
+                        app.selected_anim_file_idx = group_id;
+                    }
+                    app.current_frame_idx = frame_index;
+                    app.last_frame_time = ctx.input(|input| input.time);
+                }
+            }
+        });
+}
+
+fn selected_cc_animationframe_entry(
+    app: &mut UopInspectorApp,
+    body_id: u32,
+) -> eyre::Result<AnimationFrameUopEntry> {
+    let entries = animationframe_uop_entries(app, ArtSource::CcUop);
+    entries
+        .iter()
+        .find(|entry| {
+            entry.body_id == body_id
+                && entry.action_id == Some(app.selected_action_id)
+                && entry.direction == Some(app.selected_direction)
+                && entry.group_id == Some(app.selected_anim_file_idx)
+        })
+        .or_else(|| {
+            entries.iter().find(|entry| {
+                entry.body_id == body_id
+                    && entry.action_id == Some(app.selected_action_id)
+                    && entry.direction == Some(app.selected_direction)
+            })
+        })
+        .cloned()
+        .ok_or_else(|| {
+            eyre::eyre!(
+                "Animation body {} action {} direction {} not found in loaded CC AnimationFrame UOPs",
+                body_id,
+                app.selected_action_id,
+                app.selected_direction
+            )
+        })
+}
+
+fn selected_ec_animationframe_entry(
+    app: &mut UopInspectorApp,
+    body_id: u32,
+) -> eyre::Result<AnimationFrameUopEntry> {
+    let source = app.selected_legacy_source;
+    let entries = animationframe_uop_entries(app, source);
+    entries
+        .iter()
+        .find(|entry| {
+            entry.body_id == body_id && entry.group_id == Some(app.selected_anim_file_idx)
+        })
+        .or_else(|| entries.iter().find(|entry| entry.body_id == body_id))
+        .cloned()
+        .ok_or_else(|| {
+            eyre::eyre!(
+                "Animation body {} not found in loaded EC AnimationFrame UOPs",
+                body_id
+            )
+        })
+}
+
+fn animationframe_payload(
     app: &UopInspectorApp,
-    package_name_part: &str,
-    internal_path: &str,
+    entry: &AnimationFrameUopEntry,
+) -> eyre::Result<Vec<u8>> {
+    let loaded = app
+        .uop_cache
+        .loaded_uops
+        .get(entry.package_index)
+        .ok_or_else(|| {
+            eyre::eyre!(
+                "AnimationFrame package {} is no longer loaded",
+                entry.package_index
+            )
+        })?;
+    let file = loaded
+        .package
+        .get_file_by_hash(entry.file_hash)
+        .ok_or_else(|| {
+            eyre::eyre!(
+                "AnimationFrame payload 0x{:016x} not found in {}",
+                entry.file_hash,
+                loaded.path.display()
+            )
+        })?;
+    file.unpack()
+        .map_err(|error| eyre::eyre!("Failed to unpack AnimationFrame payload: {error}"))
+}
+
+fn animationframe_uop_entries(
+    app: &mut UopInspectorApp,
     source: ArtSource,
-) -> Option<usize> {
-    let hash = hash_file_name_single(internal_path);
-    for loaded in &app.uop_cache.loaded_uops {
-        if !loaded
-            .path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .contains(package_name_part)
-        {
-            continue;
-        }
-        let Some(file) = loaded.package.get_file_by_hash(hash) else {
+) -> std::sync::Arc<Vec<AnimationFrameUopEntry>> {
+    let key = (source as u8, app.uop_cache.loaded_uops.len());
+    if let Some(entries) = app.animationframe_uop_entries.get(&key) {
+        return entries.clone();
+    }
+
+    let entries = std::sync::Arc::new(scan_animationframe_uop_entries(app, source));
+    app.animationframe_uop_entries.insert(key, entries.clone());
+    entries
+}
+
+fn scan_animationframe_uop_entries(
+    app: &UopInspectorApp,
+    source: ArtSource,
+) -> Vec<AnimationFrameUopEntry> {
+    let mut entries = Vec::new();
+    for (package_index, loaded) in app.uop_cache.loaded_uops.iter().enumerate() {
+        let Some(group_id) = animationframe_package_group_id(&loaded.path) else {
             continue;
         };
-        let Ok(data) = file.unpack() else {
-            continue;
-        };
-        let frame_count = match source {
-            ArtSource::CcUop => AnimationFrameCc::parse_metadata(&data)
-                .ok()
-                .map(|metadata| metadata.frame_count as usize),
-            ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr => uocf::enhanced::animationframe::AnimationFrame::load_metadata(&data)
-                .ok()
-                .map(|metadata| metadata.frames_count as usize),
-            ArtSource::Mul | ArtSource::Any => None,
-        };
-        if frame_count.is_some() {
-            return frame_count;
+
+        for file in loaded.package.iter_files().filter(|file| file.has_size()) {
+            let file_hash = file.filename_hash();
+            let Ok(data) = file.unpack() else {
+                continue;
+            };
+            match source {
+                ArtSource::CcUop => {
+                    let Ok(metadata) = AnimationFrameCc::parse_metadata(&data) else {
+                        continue;
+                    };
+                    if metadata.frames.is_empty() {
+                        continue;
+                    }
+                    let identity =
+                        uocf::classic::anim::classic_animation_identity_from_source_index(
+                            group_id,
+                            metadata.anim_id,
+                        );
+                    if identity.flags != 0 {
+                        continue;
+                    }
+                    entries.push(AnimationFrameUopEntry {
+                        package_index,
+                        file_hash,
+                        body_id: u32::from(identity.body_id),
+                        action_id: Some(identity.action_id),
+                        direction: Some(identity.direction),
+                        group_id: Some(group_id),
+                        source_index: metadata.anim_id,
+                        frame_count: metadata.frame_count as usize,
+                    });
+                }
+                ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr => {
+                    let Ok(metadata) =
+                        uocf::enhanced::animationframe::AnimationFrame::load_metadata(&data)
+                    else {
+                        continue;
+                    };
+                    if metadata.frames_count == 0 {
+                        continue;
+                    }
+                    entries.push(AnimationFrameUopEntry {
+                        package_index,
+                        file_hash,
+                        body_id: metadata.animation_id,
+                        action_id: None,
+                        direction: None,
+                        group_id: Some(group_id),
+                        source_index: metadata.animation_id,
+                        frame_count: metadata.frames_count as usize,
+                    });
+                }
+                ArtSource::Mul | ArtSource::Any => {}
+            }
         }
     }
-    None
+    entries.sort_by_key(|entry| {
+        (
+            entry.body_id,
+            entry.action_id.unwrap_or(0),
+            entry.direction.unwrap_or(0),
+            entry.group_id.unwrap_or(0),
+            entry.source_index,
+        )
+    });
+    entries
+}
+
+fn animationframe_package_group_id(path: &Path) -> Option<u8> {
+    let file_name = path.file_name()?.to_str()?.to_ascii_lowercase();
+    let index = file_name
+        .strip_prefix("animationframe")?
+        .strip_suffix(".uop")?
+        .parse::<u8>()
+        .ok()?;
+    (1..=6).contains(&index).then_some(index - 1)
 }
 
 fn show_sequence_animation_tree(

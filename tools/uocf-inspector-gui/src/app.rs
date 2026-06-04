@@ -555,6 +555,18 @@ pub struct UopEntryLabel {
     pub search_name: String,
 }
 
+#[derive(Clone, Debug)]
+pub struct AnimationFrameUopEntry {
+    pub package_index: usize,
+    pub file_hash: u64,
+    pub body_id: u32,
+    pub action_id: Option<u16>,
+    pub direction: Option<u8>,
+    pub group_id: Option<u8>,
+    pub source_index: u32,
+    pub frame_count: usize,
+}
+
 pub fn upscale_filter_cli_value(filter: UpscaleFilter) -> &'static str {
     match filter {
         UpscaleFilter::None => "none",
@@ -1501,6 +1513,7 @@ pub struct UopInspectorApp {
     pub ec_texture_preview_source_keys: HashMap<u32, u64>,
     pub uop_entry_labels: HashMap<usize, Arc<Vec<UopEntryLabel>>>,
     pub uop_entry_payloads: HashMap<(usize, u64), Arc<[u8]>>,
+    pub animationframe_uop_entries: HashMap<(u8, usize), Arc<Vec<AnimationFrameUopEntry>>>,
     pub multimap_texture: Option<egui::TextureHandle>,
     pub image_preview_sources: HashMap<u64, InspectorImagePreview>,
     pub current_image_preview_key: Option<u64>,
@@ -1639,6 +1652,7 @@ impl UopInspectorApp {
             ec_texture_preview_source_keys: HashMap::new(),
             uop_entry_labels: HashMap::new(),
             uop_entry_payloads: HashMap::new(),
+            animationframe_uop_entries: HashMap::new(),
             multimap_texture: None,
             image_preview_sources: HashMap::new(),
             current_image_preview_key: None,
@@ -1750,6 +1764,7 @@ impl UopInspectorApp {
         self.ec_texture_previews.clear();
         self.uop_entry_labels.clear();
         self.uop_entry_payloads.clear();
+        self.animationframe_uop_entries.clear();
         self.multimap_texture = None;
         self.paperdoll_preview = None;
         self.image_preview_sources.clear();
@@ -3549,6 +3564,7 @@ mod tests {
             ec_texture_preview_source_keys: HashMap::new(),
             uop_entry_labels: HashMap::new(),
             uop_entry_payloads: HashMap::new(),
+            animationframe_uop_entries: HashMap::new(),
             multimap_texture: None,
             image_preview_sources: HashMap::new(),
             current_image_preview_key: None,
