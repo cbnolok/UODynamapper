@@ -510,12 +510,29 @@ fn show_animation_navigation(app: &mut UopInspectorApp, ctx: &egui::Context, ui:
     let collapse_revision = ANIMATION_TREE_COLLAPSE_REVISION.load(Ordering::Relaxed);
 
     match app.selected_legacy_source {
-        ArtSource::Mul => show_mul_animation_tree(app, ctx, ui, tree_order, collapse_revision),
+        ArtSource::Mul => {
+            show_mul_animation_tree(
+                app,
+                ctx,
+                ui,
+                tree_order,
+                collapse_revision,
+                ui.available_height(),
+            );
+        }
         ArtSource::CcUop | ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr => {
-            show_uop_animationframe_tree(app, ctx, ui, collapse_revision);
-            ui.separator();
-            ui.heading("Animation Sequence");
-            show_sequence_animation_tree(app, ctx, ui, collapse_revision);
+            let has_sequence = app.selected_anim_sequence.is_some();
+            let tree_height = if has_sequence {
+                ui.available_height() * 0.6
+            } else {
+                ui.available_height()
+            };
+            show_uop_animationframe_tree(app, ctx, ui, collapse_revision, tree_height);
+            if has_sequence {
+                ui.separator();
+                ui.heading("Animation Sequence");
+                show_sequence_animation_tree(app, ctx, ui, collapse_revision, ui.available_height());
+            }
         }
         ArtSource::Any => {
             ui.label("Select an animation source to browse.");
@@ -546,6 +563,7 @@ fn show_mul_animation_tree(
     ui: &mut egui::Ui,
     tree_order: AnimationTreeOrder,
     collapse_revision: u64,
+    max_height: f32,
 ) {
     let Some(anim_map) = app
         .client_data
@@ -603,10 +621,13 @@ fn show_mul_animation_tree(
         );
     }
 
+    let scroll_width = ui.available_width();
     egui::ScrollArea::vertical()
         .id_salt("mul_animation_tree")
-        .max_height(320.0)
+        .auto_shrink([false, false])
+        .max_height(max_height)
         .show(ui, |ui| {
+            ui.set_min_width(scroll_width);
             let allow_default_open = collapse_revision == 0;
             let default_open = allow_default_open && !query.is_empty();
             match tree_order {
@@ -800,20 +821,24 @@ fn show_uop_animationframe_tree(
     ctx: &egui::Context,
     ui: &mut egui::Ui,
     collapse_revision: u64,
+    max_height: f32,
 ) {
     ui.label("Filter:");
     ui.text_edit_singleline(&mut app.search_query);
     let query = app.search_query.to_ascii_lowercase();
     let entries = collect_uop_animationframe_tree_entries(app, app.selected_legacy_source, &query);
 
+    let scroll_width = ui.available_width();
     egui::ScrollArea::vertical()
         .id_salt(match app.selected_legacy_source {
             ArtSource::CcUop => "cc_animationframe_tree",
             ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr => "ec_animationframe_tree",
             _ => "animationframe_tree",
         })
-        .max_height(260.0)
+        .auto_shrink([false, false])
+        .max_height(max_height)
         .show(ui, |ui| {
+            ui.set_min_width(scroll_width);
             if entries.is_empty() {
                 ui.label("No AnimationFrame entries match the current source/filter.");
                 return;
@@ -1188,16 +1213,20 @@ fn show_sequence_animation_tree(
     ctx: &egui::Context,
     ui: &mut egui::Ui,
     collapse_revision: u64,
+    max_height: f32,
 ) {
     let Some(seq) = app.selected_anim_sequence.clone() else {
         ui.label("No AnimationSequence entry is loaded for the selected body.");
         return;
     };
 
+    let scroll_width = ui.available_width();
     egui::ScrollArea::vertical()
         .id_salt("sequence_animation_tree")
-        .max_height(320.0)
+        .auto_shrink([false, false])
+        .max_height(max_height)
         .show(ui, |ui| {
+            ui.set_min_width(scroll_width);
             let mut action_ids: Vec<_> = seq.actions.keys().copied().collect();
             action_ids.sort_unstable();
             for action_id in action_ids {
