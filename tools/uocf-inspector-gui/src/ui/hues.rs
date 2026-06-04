@@ -1,4 +1,4 @@
-use crate::app::{HuesSource, UopInspectorApp};
+use crate::app::{ArtSource, HuesSource, UopInspectorApp};
 use eframe::egui;
 use uocf::enhanced::hues::{
     atlas_coord_for_hue, hue_bitmap_path, HUES_ATLAS_PATH, HUENAMES_PATH, FIXED_PALETTE_HASH,
@@ -114,19 +114,76 @@ fn ui_cc_hues(app: &mut UopInspectorApp, ctx: &egui::Context) {
                         });
                     });
 
-                    ui.separator();
-                    ui.label("Preview on last selected CC Art:");
-                    if let Some(art_id) = app.selected_tex_art_cc_id {
-                        if let Some(handle) = app.get_tex_art_cc_texture(ctx, art_id) {
-                            ui.image(&handle);
-                        }
-                    } else {
-                        ui.label("(Select an art tile in CC Art tab first)");
-                    }
+                    ui_cc_hue_item_preview(app, ctx, ui);
                 }
             }
         }
     });
+}
+
+fn ui_hue_preview_item_picker(app: &mut UopInspectorApp, ui: &mut egui::Ui) -> u32 {
+    ui.horizontal(|ui| {
+        ui.label("Item source:");
+        egui::ComboBox::from_id_salt("hue_preview_item_source")
+            .selected_text(match app.selected_legacy_source {
+                ArtSource::Mul => "CC MUL",
+                ArtSource::CcUop => "CC UOP",
+                ArtSource::EcUop => "EC UOP",
+                ArtSource::Any => "Any",
+            })
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut app.selected_legacy_source, ArtSource::Any, "Any");
+                ui.selectable_value(&mut app.selected_legacy_source, ArtSource::Mul, "CC MUL");
+                ui.selectable_value(&mut app.selected_legacy_source, ArtSource::CcUop, "CC UOP");
+                ui.selectable_value(&mut app.selected_legacy_source, ArtSource::EcUop, "EC UOP");
+            });
+    });
+
+    let mut item_id = app
+        .selected_tex_art_cc_id
+        .unwrap_or(0x4000)
+        .saturating_sub(0x4000);
+    ui.horizontal(|ui| {
+        ui.label("Item ID:");
+        if ui
+            .add(egui::DragValue::new(&mut item_id).range(0..=0xFFFF).speed(1))
+            .changed()
+        {
+            app.selected_tex_art_cc_id = Some(0x4000 + item_id);
+        }
+    });
+    let art_id = 0x4000 + item_id;
+    app.selected_tex_art_cc_id = Some(art_id);
+    art_id
+}
+
+fn ui_cc_hue_item_preview(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
+    ui.separator();
+    ui.label("Preview item:");
+    let art_id = ui_hue_preview_item_picker(app, ui);
+    if let Some(handle) = app.get_tex_art_texture_from_source(ctx, art_id, app.selected_legacy_source) {
+        ui.image(&handle);
+    } else {
+        ui.label("Item art not found for selected source.");
+    }
+}
+
+fn ui_ec_hue_item_preview(
+    app: &mut UopInspectorApp,
+    ctx: &egui::Context,
+    ui: &mut egui::Ui,
+    hue_id: u16,
+) {
+    ui.separator();
+    ui.label("Preview item:");
+    let art_id = ui_hue_preview_item_picker(app, ui);
+    if let Some(handle) =
+        app.get_tex_art_texture_with_ec_hue_from_source(ctx, art_id, app.selected_legacy_source, hue_id)
+    {
+        ui.image(&handle);
+    } else {
+        ui.label("Item art or EC hue bitmap not found for selected source.");
+    }
 }
 
 fn ui_ec_hues(app: &mut UopInspectorApp, ctx: &egui::Context) {
@@ -278,6 +335,8 @@ fn ui_ec_hues(app: &mut UopInspectorApp, ctx: &egui::Context) {
             } else {
                 ui.label("BMP entry not present in hues.uop");
             }
+
+            ui_ec_hue_item_preview(app, ctx, ui, hue_id);
 
             ui.separator();
             ui.horizontal(|ui| {

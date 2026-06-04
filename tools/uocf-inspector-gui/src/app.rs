@@ -2740,6 +2740,113 @@ impl UopInspectorApp {
         self.get_tex_art_cc_texture_from_source(ctx, art_id, source)
     }
 
+    pub fn get_tex_art_texture_with_ec_hue_from_source(
+        &mut self,
+        ctx: &egui::Context,
+        art_id: u32,
+        source: ArtSource,
+        hue_id: u16,
+    ) -> Option<egui::TextureHandle> {
+        let key = 0xEC00_0000_0000_0000u64
+            | ((source as u64) << 48)
+            | ((hue_id as u64) << 32)
+            | art_id as u64;
+        if let Some(handle) = self.texture_previews.get(&key).cloned() {
+            self.select_image_preview(key);
+            return Some(handle);
+        }
+
+        let hue_row = self.ec_hue_lookup_row(hue_id)?;
+        let (width, height, mut pixels) = self.decode_art_item_rgba_from_source(art_id, source)?;
+        apply_hue_lookup_row_to_rgba(&mut pixels, &hue_row);
+
+        let image = egui::ColorImage::from_rgba_unmultiplied(
+            [width as usize, height as usize],
+            &pixels,
+        );
+        let handle = ctx.load_texture(
+            format!("ec_hued_art_{}_{:?}_h{}", art_id, source, hue_id),
+            image,
+            Default::default(),
+        );
+        self.texture_previews.insert(key, handle.clone());
+        self.register_current_image_preview(
+            key,
+            format!("art {} {:?} EC hue {}", art_id, source, hue_id),
+            width,
+            height,
+            &pixels,
+        );
+        Some(handle)
+    }
+
+    fn decode_art_item_rgba_from_source(
+        &self,
+        art_id: u32,
+        source: ArtSource,
+    ) -> Option<(u32, u32, Vec<u8>)> {
+        if art_id < 0x4000 {
+            return None;
+        }
+
+        let client = self.client_data.as_ref()?;
+        let art = Arc::clone(&client.art);
+        let mut scratch = Vec::new();
+        if art
+            .get_raw_art_data_from_source(art_id, source, &mut scratch)
+            .is_ok()
+        {
+            let format = if scratch.starts_with(b"DDS ") {
+                ECImageFormat::DDS
+            } else {
+                ECImageFormat::TGA
+            };
+            if source != ArtSource::Mul || scratch.starts_with(b"DDS ") {
+                let tex_file = TextureFile {
+                    metadata: RawTextureItem::absent(),
+                    is_ec: source == ArtSource::EcUop,
+                    format,
+                    props: None,
+                    raw_data: Arc::from(scratch.as_slice()),
+                    image_data_offset: 0,
+                };
+                if let Ok(img) = tex_file.decode_to_rgba() {
+                    let rgba = img.to_rgba8();
+                    return Some((rgba.width(), rgba.height(), rgba.into_raw()));
+                }
+            }
+        }
+
+        scratch.clear();
+        art.decode_static_tile_from_source(art_id, source, &mut scratch)
+            .ok()
+            .map(|(width, height, pixels)| (width as u32, height as u32, pixels))
+    }
+
+    fn ec_hue_lookup_row(&self, hue_id: u16) -> Option<Vec<u8>> {
+        let hash = uocf::enhanced::hues::hue_bitmap_hash(hue_id);
+        let loaded_uops = self.uop_cache.loaded_uops.clone();
+        for loaded in &loaded_uops {
+            let is_hues = loaded
+                .path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.eq_ignore_ascii_case(uocf::enhanced::hues::HUES_UOP_NAME))
+                .unwrap_or(false);
+            if !is_hues {
+                continue;
+            }
+            let Ok(Some(data)) = loaded.package.unpack_file_by_hash(hash) else {
+                continue;
+            };
+            let Ok((width, height, pixels)) = uocf::enhanced::hues::decode_hue_image_to_rgba(&data) else {
+                continue;
+            };
+            return build_hue_lookup_row(width, height, &pixels);
+        }
+        None
+    }
+
     pub fn get_multimap_texture(&mut self, ctx: &egui::Context) -> Option<egui::TextureHandle> {
         let key = 0x6F00000000000000;
         if let Some(handle) = self.multimap_texture.clone() {
@@ -2937,6 +3044,45 @@ impl UopInspectorApp {
         }
 
         false
+    }
+}
+
+fn build_hue_lookup_row(width: u32, height: u32, pixels: &[u8]) -> Option<Vec<u8>> {
+    if width == 0 || height == 0 || pixels.len() != width as usize * height as usize * 4 {
+        return None;
+    }
+
+    let mut row = vec![0u8; 256 * 4];
+    let sample_y = height / 2;
+    for dst_x in 0..256usize {
+        let src_x = if width <= 1 {
+            0
+        } else {
+            dst_x as u32 * (width - 1) / 255
+        };
+        let src = ((sample_y * width + src_x) as usize) * 4;
+        row[dst_x * 4..dst_x * 4 + 4].copy_from_slice(&pixels[src..src + 4]);
+    }
+    Some(row)
+}
+
+fn apply_hue_lookup_row_to_rgba(pixels: &mut [u8], hue_row: &[u8]) {
+    if hue_row.len() != 256 * 4 {
+        return;
+    }
+
+    for pixel in pixels.chunks_exact_mut(4) {
+        let alpha = pixel[3];
+        if alpha == 0 {
+            continue;
+        }
+
+        let intensity = ((pixel[0] as u16 + pixel[1] as u16 + pixel[2] as u16) / 3) as usize;
+        let src = intensity * 4;
+        pixel[0] = hue_row[src];
+        pixel[1] = hue_row[src + 1];
+        pixel[2] = hue_row[src + 2];
+        pixel[3] = alpha;
     }
 }
 
