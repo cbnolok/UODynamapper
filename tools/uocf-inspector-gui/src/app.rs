@@ -61,6 +61,12 @@ pub enum HuesSource {
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum EcHueingMode {
+    Cc,
+    Ec,
+}
+
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum MultisSource {
     ClassicMul,
     Uop,
@@ -1536,6 +1542,7 @@ pub struct UopInspectorApp {
     pub sound_search_query: String,
     pub selected_hue_id: u16,
     pub selected_ec_hue_id: u16,
+    pub selected_ec_hueing_mode: EcHueingMode,
     pub selected_cliloc_number: i32,
     pub multimap_zoom: f32,
 
@@ -1662,6 +1669,7 @@ impl UopInspectorApp {
             sound_search_query: String::new(),
             selected_hue_id: 0,
             selected_ec_hue_id: 1,
+            selected_ec_hueing_mode: EcHueingMode::Cc,
             selected_cliloc_number: 0,
             multimap_zoom: 0.25,
         };
@@ -2954,7 +2962,9 @@ impl UopInspectorApp {
         source: ArtSource,
         hue_id: u16,
     ) -> Option<egui::TextureHandle> {
+        let hueing_mode = self.selected_ec_hueing_mode;
         let key = 0xEC00_0000_0000_0000u64
+            | ((hueing_mode as u64) << 56)
             | ((source as u64) << 48)
             | ((hue_id as u64) << 32)
             | art_id as u64;
@@ -2963,9 +2973,9 @@ impl UopInspectorApp {
             return Some(handle);
         }
 
-        let hue_table = self.ec_hue_lookup_table(hue_id)?;
+        let hue_table = self.ec_hue_lookup_table(hue_id, hueing_mode)?;
         let (width, height, mut pixels) = self.decode_art_item_rgba_from_source(art_id, source)?;
-        apply_ec_hue_table_to_rgba(&mut pixels, &hue_table);
+        apply_ec_hue_table_to_rgba(&mut pixels, &hue_table, hueing_mode);
 
         let image = egui::ColorImage::from_rgba_unmultiplied(
             [width as usize, height as usize],
@@ -2979,7 +2989,7 @@ impl UopInspectorApp {
         self.texture_previews.insert(key, handle.clone());
         self.register_current_image_preview(
             key,
-            format!("art {} {:?} EC hue {}", art_id, source, hue_id),
+            format!("art {} {:?} EC hue {} {:?}", art_id, source, hue_id, hueing_mode),
             width,
             height,
             &pixels,
@@ -3030,7 +3040,7 @@ impl UopInspectorApp {
             .map(|(width, height, pixels)| (width as u32, height as u32, pixels))
     }
 
-    fn ec_hue_lookup_table(&self, hue_id: u16) -> Option<Vec<u8>> {
+    fn ec_hue_lookup_table(&self, hue_id: u16, hueing_mode: EcHueingMode) -> Option<Vec<u8>> {
         let hash = uocf::enhanced::hues::hue_bitmap_hash(hue_id);
         let loaded_uops = self.uop_cache.loaded_uops.clone();
         for loaded in &loaded_uops {
@@ -3049,7 +3059,10 @@ impl UopInspectorApp {
             let Ok((width, height, pixels)) = uocf::enhanced::hues::decode_hue_image_to_rgba(&data) else {
                 continue;
             };
-            return build_ec_hue_lookup_table(width, height, &pixels);
+            return match hueing_mode {
+                EcHueingMode::Cc => build_ec_hue_lookup_table(width, height, &pixels),
+                EcHueingMode::Ec => build_ec_hue_lookup_strip(width, height, &pixels),
+            };
         }
         None
     }
@@ -3384,11 +3397,36 @@ fn build_ec_hue_lookup_table(width: u32, height: u32, pixels: &[u8]) -> Option<V
     Some(table)
 }
 
-fn apply_ec_hue_table_to_rgba(pixels: &mut [u8], hue_table: &[u8]) {
-    if hue_table.len() != 32 * 4 {
+fn build_ec_hue_lookup_strip(width: u32, height: u32, pixels: &[u8]) -> Option<Vec<u8>> {
+    if width == 0 || height == 0 || pixels.len() != width as usize * height as usize * 4 {
+        return None;
+    }
+
+    let sample_horizontally = width >= height;
+    let color_count = if sample_horizontally { width } else { height } as usize;
+    let mut table = vec![0u8; color_count * 4];
+    for color_index in 0..color_count {
+        let (src_x, src_y) = if sample_horizontally {
+            (color_index as u32, height / 2)
+        } else {
+            (width / 2, color_index as u32)
+        };
+        let src = ((src_y * width + src_x) as usize) * 4;
+        table[color_index * 4..color_index * 4 + 4].copy_from_slice(&pixels[src..src + 4]);
+    }
+    Some(table)
+}
+
+fn apply_ec_hue_table_to_rgba(
+    pixels: &mut [u8],
+    hue_table: &[u8],
+    hueing_mode: EcHueingMode,
+) {
+    if hue_table.len() < 4 || hue_table.len() % 4 != 0 {
         return;
     }
 
+    let color_count = hue_table.len() / 4;
     for pixel in pixels.chunks_exact_mut(4) {
         let alpha = pixel[3];
         if alpha == 0 {
@@ -3398,7 +3436,14 @@ fn apply_ec_hue_table_to_rgba(pixels: &mut [u8], hue_table: &[u8]) {
         let r5 = pixel[0] >> 3;
         let g5 = pixel[1] >> 3;
         let b5 = pixel[2] >> 3;
-        let color_index = ((r5 as u16 + g5 as u16 + b5 as u16) / 3).min(31) as usize;
+        let color_index = match hueing_mode {
+            EcHueingMode::Cc => ((r5 as u16 + g5 as u16 + b5 as u16) / 3).min(31) as usize,
+            EcHueingMode::Ec => {
+                let intensity =
+                    ((pixel[0] as u16 + pixel[1] as u16 + pixel[2] as u16) / 3) as usize;
+                intensity * (color_count - 1) / 255
+            }
+        };
         let src = color_index * 4;
         pixel[0] = hue_table[src];
         pixel[1] = hue_table[src + 1];
@@ -3526,6 +3571,7 @@ mod tests {
             selected_sound_id: 0,
             sound_search_query: String::new(),
             selected_hue_id: 0,
+            selected_ec_hueing_mode: EcHueingMode::Cc,
             selected_ec_hue_id: 1,
             selected_cliloc_number: 0,
             multimap_zoom: 0.25,
@@ -3700,11 +3746,35 @@ mod tests {
             255, 255, 255, 128,
         ];
 
-        apply_ec_hue_table_to_rgba(&mut pixels, &hue_table);
+        apply_ec_hue_table_to_rgba(&mut pixels, &hue_table, EcHueingMode::Cc);
 
         assert_eq!(&pixels[0..4], &[0, 1, 2, 240]);
         assert_eq!(&pixels[4..8], &[2, 3, 4, 200]);
         assert_eq!(&pixels[8..12], &[31, 32, 33, 128]);
+    }
+
+    #[test]
+    fn ec_hue_application_can_use_full_strip_pixels() {
+        let mut hue_table = vec![0u8; 256 * 4];
+        for color_index in 0..256usize {
+            let offset = color_index * 4;
+            hue_table[offset] = color_index as u8;
+            hue_table[offset + 1] = (color_index + 1).min(255) as u8;
+            hue_table[offset + 2] = (color_index + 2).min(255) as u8;
+            hue_table[offset + 3] = 255;
+        }
+
+        let mut pixels = vec![
+            0, 0, 0, 240,
+            127, 127, 127, 200,
+            255, 255, 255, 128,
+        ];
+
+        apply_ec_hue_table_to_rgba(&mut pixels, &hue_table, EcHueingMode::Ec);
+
+        assert_eq!(&pixels[0..4], &[0, 1, 2, 240]);
+        assert_eq!(&pixels[4..8], &[127, 128, 129, 200]);
+        assert_eq!(&pixels[8..12], &[255, 255, 255, 128]);
     }
 
     #[test]

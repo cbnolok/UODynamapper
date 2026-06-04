@@ -1,4 +1,4 @@
-use crate::app::{ArtSource, HuesSource, UopInspectorApp};
+use crate::app::{ArtSource, EcHueingMode, HuesSource, UopInspectorApp};
 use eframe::egui;
 use super::{arrow_delta, move_selection};
 use uocf::enhanced::hues::{
@@ -188,6 +188,11 @@ fn ui_ec_hue_item_preview(
 ) {
     ui.separator();
     ui.label("Preview item:");
+    ui.horizontal(|ui| {
+        ui.label("Hueing mode:");
+        ui.selectable_value(&mut app.selected_ec_hueing_mode, EcHueingMode::Cc, "CC");
+        ui.selectable_value(&mut app.selected_ec_hueing_mode, EcHueingMode::Ec, "EC");
+    });
     let art_id = ui_hue_preview_item_picker(app, ui);
     if let Some(handle) =
         app.get_tex_art_texture_with_ec_hue_from_source(ctx, art_id, app.selected_legacy_source, hue_id)
