@@ -51,6 +51,17 @@ pub fn ui_multis(app: &mut UopInspectorApp, ctx: &egui::Context) {
             if has_multimap {
                 ui.selectable_value(&mut app.multis_source, MultisSource::Multimap, "multimap.rle");
             }
+            ui.separator();
+            ui.label("Art:");
+            egui::ComboBox::from_id_salt("multis_art_source")
+                .selected_text(art_source_label(app.selected_legacy_source))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut app.selected_legacy_source, ArtSource::Any, "Any");
+                    ui.selectable_value(&mut app.selected_legacy_source, ArtSource::Mul, "MUL");
+                    ui.selectable_value(&mut app.selected_legacy_source, ArtSource::CcUop, "CC UOP");
+                    ui.selectable_value(&mut app.selected_legacy_source, ArtSource::EcUopLegacy, "EC UOP Legacy");
+                    ui.selectable_value(&mut app.selected_legacy_source, ArtSource::EcUopKr, "EC UOP KR");
+                });
         });
     });
 
@@ -74,6 +85,16 @@ fn multi_collection_source_label(app: &UopInspectorApp) -> &'static str {
         Some(MultiCollectionSource::ClassicClient) => "CC",
         Some(MultiCollectionSource::EnhancedClient) => "EC",
         None => "Loaded",
+    }
+}
+
+fn art_source_label(source: ArtSource) -> &'static str {
+    match source {
+        ArtSource::Any => "Any",
+        ArtSource::Mul => "MUL",
+        ArtSource::CcUop => "CC UOP",
+        ArtSource::EcUop | ArtSource::EcUopLegacy => "EC UOP Legacy",
+        ArtSource::EcUopKr => "EC UOP KR",
     }
 }
 
@@ -376,8 +397,8 @@ fn draw_preview(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::U
     let (min_z, max_z) = parts.iter().fold((0i16, 0i16), |(min_z, max_z), p| {
         (min_z.min(p.z), max_z.max(p.z))
     });
-    let span_x = (max_x - min_x + 1).max(1) as f32;
-    let span_y = (max_y - min_y + 1).max(1) as f32;
+    let span_x = ((max_x as i32) - (min_x as i32) + 1).max(1) as f32;
+    let span_y = ((max_y as i32) - (min_y as i32) + 1).max(1) as f32;
     let tile_w = 22.0f32;
     let tile_h = 22.0f32;
     let viewport_size = ui.available_size();
@@ -406,8 +427,8 @@ fn draw_preview(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::U
 
         for part in sorted_parts {
             let info = part_render_info(app, part.item_id);
-            let x = (part.x - min_x) as f32;
-            let y = (part.y - min_y) as f32;
+            let x = ((part.x as i32) - (min_x as i32)) as f32;
+            let y = ((part.y as i32) - (min_y as i32)) as f32;
             let base_x = canvas_w * 0.5 - (y * tile_w) + (x * tile_w) + info.height_delta as f32;
             let base_y = 80.0 + (y * tile_h) + (x * tile_h) + info.width_delta as f32 + 64.0
                 + info.height_delta as f32 - (part.original_z as f32 * 4.0);
