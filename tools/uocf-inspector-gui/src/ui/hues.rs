@@ -1,8 +1,8 @@
 use crate::app::{ArtSource, HuesSource, UopInspectorApp};
 use eframe::egui;
 use uocf::enhanced::hues::{
-    atlas_coord_for_hue, hue_bitmap_path, HUES_ATLAS_PATH, HUENAMES_PATH, FIXED_PALETTE_HASH,
-    FIXED_PALETTE_NAME, MAX_EC_HUES,
+    atlas_coord_for_hue, hue_bitmap_path, HUE_STRIP_WIDTH, HUES_ATLAS_HEIGHT, HUES_ATLAS_PATH,
+    HUENAMES_PATH, FIXED_PALETTE_HASH, FIXED_PALETTE_NAME, MAX_EC_HUES,
 };
 
 pub fn ui_hues(app: &mut UopInspectorApp, ctx: &egui::Context) {
@@ -180,9 +180,56 @@ fn ui_ec_hue_item_preview(
     if let Some(handle) =
         app.get_tex_art_texture_with_ec_hue_from_source(ctx, art_id, app.selected_legacy_source, hue_id)
     {
-        ui.image(&handle);
+        let response = ui_nearest_clickable_texture(ui, &handle, handle.size_vec2());
+        if response.clicked() {
+            app.select_raw_art_entry(art_id, app.selected_legacy_source);
+        }
     } else {
         ui.label("Item art or EC hue bitmap not found for selected source.");
+    }
+}
+
+fn ui_nearest_clickable_texture(
+    ui: &mut egui::Ui,
+    handle: &egui::TextureHandle,
+    size: egui::Vec2,
+) -> egui::Response {
+    ui.add(
+        egui::Image::new(handle)
+            .fit_to_exact_size(size)
+            .texture_options(egui::TextureOptions::NEAREST)
+            .sense(egui::Sense::click()),
+    )
+}
+
+fn ec_hue_from_atlas_response(
+    response: &egui::Response,
+    texture_size: [usize; 2],
+) -> Option<u16> {
+    let pos = response.interact_pointer_pos()?;
+    if texture_size[0] == 0 || texture_size[1] == 0 || response.rect.width() <= 0.0 {
+        return None;
+    }
+    if response.rect.height() <= 0.0 {
+        return None;
+    }
+
+    let uv_x = ((pos.x - response.rect.min.x) / response.rect.width()).clamp(0.0, 0.999_999);
+    let uv_y = ((pos.y - response.rect.min.y) / response.rect.height()).clamp(0.0, 0.999_999);
+    let tex_x = (uv_x * texture_size[0] as f32).floor() as u32;
+    let tex_y = (uv_y * texture_size[1] as f32).floor() as u32;
+    let column = tex_x / HUE_STRIP_WIDTH;
+    let row = tex_y.min(HUES_ATLAS_HEIGHT - 1);
+    let hue_id = if column == 0 {
+        row
+    } else {
+        HUES_ATLAS_HEIGHT + (column - 1) * HUES_ATLAS_HEIGHT + row
+    };
+
+    if (1..=MAX_EC_HUES as u32).contains(&hue_id) {
+        Some(hue_id as u16)
+    } else {
+        None
     }
 }
 
@@ -328,7 +375,10 @@ fn ui_ec_hues(app: &mut UopInspectorApp, ctx: &egui::Context) {
             ui.label("Selected hue BMP:");
             if let Some(entry) = ec_hues.bitmap_for_hue(hue_id) {
                 if let Some(handle) = app.get_hues_uop_texture(ctx, entry.filename_hash, &entry.path) {
-                    ui.add(egui::Image::new(&handle).fit_to_exact_size(egui::vec2(512.0, 32.0)));
+                    let response = ui_nearest_clickable_texture(ui, &handle, egui::vec2(512.0, 32.0));
+                    if response.clicked() {
+                        app.select_raw_ec_hue_bitmap(hue_id);
+                    }
                 } else {
                     ui.label("Preview unavailable");
                 }
@@ -344,7 +394,18 @@ fn ui_ec_hues(app: &mut UopInspectorApp, ctx: &egui::Context) {
                     ui.label(HUES_ATLAS_PATH);
                     if let Some(hash) = ec_hues.atlas_hash {
                         if let Some(handle) = app.get_hues_uop_texture(ctx, hash, HUES_ATLAS_PATH) {
-                            ui.add(egui::Image::new(&handle).fit_to_exact_size(egui::vec2(256.0, 256.0)));
+                            let response = ui_nearest_clickable_texture(ui, &handle, egui::vec2(256.0, 256.0));
+                            if response.clicked() {
+                                if let Some(clicked_hue_id) =
+                                    ec_hue_from_atlas_response(&response, handle.size())
+                                {
+                                    app.selected_ec_hue_id = clicked_hue_id;
+                                    app.selected_ec_hue_hash = ec_hues
+                                        .bitmap_for_hue(clicked_hue_id)
+                                        .map(|entry| entry.filename_hash);
+                                }
+                                app.select_raw_ec_hues_atlas();
+                            }
                         } else {
                             ui.label("Preview unavailable");
                         }
@@ -359,7 +420,10 @@ fn ui_ec_hues(app: &mut UopInspectorApp, ctx: &egui::Context) {
                     ui.label(FIXED_PALETTE_NAME);
                     if let Some(hash) = ec_hues.fixed_palette_hash {
                         if let Some(handle) = app.get_hues_uop_texture(ctx, hash, FIXED_PALETTE_NAME) {
-                            ui.add(egui::Image::new(&handle).fit_to_exact_size(egui::vec2(256.0, 256.0)));
+                            let response = ui_nearest_clickable_texture(ui, &handle, egui::vec2(256.0, 256.0));
+                            if response.clicked() {
+                                app.select_raw_ec_hue_palette();
+                            }
                         } else {
                             ui.label("Preview unavailable");
                         }

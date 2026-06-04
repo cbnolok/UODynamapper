@@ -2767,7 +2767,7 @@ impl UopInspectorApp {
         let handle = ctx.load_texture(
             format!("ec_hued_art_{}_{:?}_h{}", art_id, source, hue_id),
             image,
-            Default::default(),
+            egui::TextureOptions::NEAREST,
         );
         self.texture_previews.insert(key, handle.clone());
         self.register_current_image_preview(
@@ -2996,6 +2996,12 @@ impl UopInspectorApp {
         hash: u64,
         name: &str,
     ) -> Option<egui::TextureHandle> {
+        let preview_key = 0x4855_4553_0000_0000u64 ^ hash;
+        if let Some(handle) = self.texture_previews.get(&preview_key).cloned() {
+            self.select_image_preview(preview_key);
+            return Some(handle);
+        }
+
         let loaded_uops = self.uop_cache.loaded_uops.clone();
         for loaded in &loaded_uops {
             let is_hues = loaded
@@ -3009,7 +3015,54 @@ impl UopInspectorApp {
             }
             if loaded.package.get_file_by_hash(hash).is_some() {
                 if let Ok(Some(data)) = loaded.package.unpack_file_by_hash(hash) {
-                    return self.get_uop_texture(ctx, hash, &data, name);
+                    let lower_name = name.to_lowercase();
+                    if lower_name.ends_with(".bmp") {
+                        let (width, height, pixels) =
+                            uocf::enhanced::hues::decode_hue_image_to_rgba(&data).ok()?;
+                        let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                            [width as usize, height as usize],
+                            &pixels,
+                        );
+                        let handle = ctx.load_texture(name, color_image, egui::TextureOptions::NEAREST);
+                        self.texture_previews.insert(preview_key, handle.clone());
+                        self.register_current_image_preview(preview_key, name, width, height, &pixels);
+                        return Some(handle);
+                    }
+
+                    let format = if lower_name.ends_with(".dds") {
+                        ECImageFormat::DDS
+                    } else if lower_name.ends_with(".tga") {
+                        ECImageFormat::TGA
+                    } else {
+                        ECImageFormat::Unknown
+                    };
+
+                    let tex_file = TextureFile {
+                        metadata: RawTextureItem::absent(),
+                        is_ec: true,
+                        format,
+                        props: None,
+                        raw_data: data.into(),
+                        image_data_offset: 0,
+                    };
+
+                    if let Ok(img) = tex_file.decode_to_rgba() {
+                        let size = [img.width() as usize, img.height() as usize];
+                        let pixels = img.to_rgba8();
+                        let color_image =
+                            egui::ColorImage::from_rgba_unmultiplied(size, pixels.as_raw());
+                        let handle =
+                            ctx.load_texture(name, color_image, egui::TextureOptions::NEAREST);
+                        self.texture_previews.insert(preview_key, handle.clone());
+                        self.register_current_image_preview(
+                            preview_key,
+                            name,
+                            size[0] as u32,
+                            size[1] as u32,
+                            pixels.as_raw(),
+                        );
+                        return Some(handle);
+                    }
                 }
             }
         }
