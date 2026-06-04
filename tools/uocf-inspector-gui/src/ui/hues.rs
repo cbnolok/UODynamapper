@@ -214,6 +214,17 @@ fn ui_nearest_clickable_texture(
     )
 }
 
+fn fit_texture_to_width(handle: &egui::TextureHandle, width: f32) -> egui::Vec2 {
+    let [texture_width, texture_height] = handle.size();
+    if texture_width == 0 || texture_height == 0 {
+        return egui::vec2(width.max(1.0), 1.0);
+    }
+
+    let width = width.max(1.0);
+    let height = width * texture_height as f32 / texture_width as f32;
+    egui::vec2(width, height.max(1.0))
+}
+
 fn ec_hue_from_atlas_response(
     response: &egui::Response,
     texture_size: [usize; 2],
@@ -412,7 +423,8 @@ fn ui_ec_hues(app: &mut UopInspectorApp, ctx: &egui::Context) {
             ui.label("Selected hue BMP:");
             if let Some(entry) = ec_hues.bitmap_for_hue(hue_id) {
                 if let Some(handle) = app.get_hues_uop_texture(ctx, entry.filename_hash, &entry.path) {
-                    let response = ui_nearest_clickable_texture(ui, &handle, egui::vec2(512.0, 32.0));
+                    let size = fit_texture_to_width(&handle, ui.available_width());
+                    let response = ui_nearest_clickable_texture(ui, &handle, size);
                     if response.clicked() {
                         app.select_raw_ec_hue_bitmap(hue_id);
                     }

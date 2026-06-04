@@ -2963,9 +2963,9 @@ impl UopInspectorApp {
             return Some(handle);
         }
 
-        let hue_row = self.ec_hue_lookup_row(hue_id)?;
+        let hue_table = self.ec_hue_lookup_table(hue_id)?;
         let (width, height, mut pixels) = self.decode_art_item_rgba_from_source(art_id, source)?;
-        apply_hue_lookup_row_to_rgba(&mut pixels, &hue_row);
+        apply_ec_hue_table_to_rgba(&mut pixels, &hue_table);
 
         let image = egui::ColorImage::from_rgba_unmultiplied(
             [width as usize, height as usize],
@@ -3030,7 +3030,7 @@ impl UopInspectorApp {
             .map(|(width, height, pixels)| (width as u32, height as u32, pixels))
     }
 
-    fn ec_hue_lookup_row(&self, hue_id: u16) -> Option<Vec<u8>> {
+    fn ec_hue_lookup_table(&self, hue_id: u16) -> Option<Vec<u8>> {
         let hash = uocf::enhanced::hues::hue_bitmap_hash(hue_id);
         let loaded_uops = self.uop_cache.loaded_uops.clone();
         for loaded in &loaded_uops {
@@ -3049,7 +3049,7 @@ impl UopInspectorApp {
             let Ok((width, height, pixels)) = uocf::enhanced::hues::decode_hue_image_to_rgba(&data) else {
                 continue;
             };
-            return build_hue_lookup_row(width, height, &pixels);
+            return build_ec_hue_lookup_table(width, height, &pixels);
         }
         None
     }
@@ -3355,27 +3355,37 @@ impl UopInspectorApp {
     }
 }
 
-fn build_hue_lookup_row(width: u32, height: u32, pixels: &[u8]) -> Option<Vec<u8>> {
+fn build_ec_hue_lookup_table(width: u32, height: u32, pixels: &[u8]) -> Option<Vec<u8>> {
     if width == 0 || height == 0 || pixels.len() != width as usize * height as usize * 4 {
         return None;
     }
 
-    let mut row = vec![0u8; 256 * 4];
-    let sample_y = height / 2;
-    for dst_x in 0..256usize {
-        let src_x = if width <= 1 {
-            0
+    let mut table = vec![0u8; 32 * 4];
+    let sample_horizontally = width >= height;
+    for color_index in 0..32usize {
+        let (src_x, src_y) = if sample_horizontally {
+            let x = if width <= 1 {
+                0
+            } else {
+                color_index as u32 * (width - 1) / 31
+            };
+            (x, height / 2)
         } else {
-            dst_x as u32 * (width - 1) / 255
+            let y = if height <= 1 {
+                0
+            } else {
+                color_index as u32 * (height - 1) / 31
+            };
+            (width / 2, y)
         };
-        let src = ((sample_y * width + src_x) as usize) * 4;
-        row[dst_x * 4..dst_x * 4 + 4].copy_from_slice(&pixels[src..src + 4]);
+        let src = ((src_y * width + src_x) as usize) * 4;
+        table[color_index * 4..color_index * 4 + 4].copy_from_slice(&pixels[src..src + 4]);
     }
-    Some(row)
+    Some(table)
 }
 
-fn apply_hue_lookup_row_to_rgba(pixels: &mut [u8], hue_row: &[u8]) {
-    if hue_row.len() != 256 * 4 {
+fn apply_ec_hue_table_to_rgba(pixels: &mut [u8], hue_table: &[u8]) {
+    if hue_table.len() != 32 * 4 {
         return;
     }
 
@@ -3385,11 +3395,14 @@ fn apply_hue_lookup_row_to_rgba(pixels: &mut [u8], hue_row: &[u8]) {
             continue;
         }
 
-        let intensity = ((pixel[0] as u16 + pixel[1] as u16 + pixel[2] as u16) / 3) as usize;
-        let src = intensity * 4;
-        pixel[0] = hue_row[src];
-        pixel[1] = hue_row[src + 1];
-        pixel[2] = hue_row[src + 2];
+        let r5 = pixel[0] >> 3;
+        let g5 = pixel[1] >> 3;
+        let b5 = pixel[2] >> 3;
+        let color_index = ((r5 as u16 + g5 as u16 + b5 as u16) / 3).min(31) as usize;
+        let src = color_index * 4;
+        pixel[0] = hue_table[src];
+        pixel[1] = hue_table[src + 1];
+        pixel[2] = hue_table[src + 2];
         pixel[3] = alpha;
     }
 }
@@ -3668,6 +3681,30 @@ mod tests {
         assert_eq!(app.selected_uop_idx, None);
         assert_eq!(app.selected_file_hash, None);
         assert_eq!(app.view_mode, ViewMode::Home);
+    }
+
+    #[test]
+    fn ec_hue_application_uses_cc_style_intensity_steps() {
+        let mut hue_table = vec![0u8; 32 * 4];
+        for color_index in 0..32usize {
+            let offset = color_index * 4;
+            hue_table[offset] = color_index as u8;
+            hue_table[offset + 1] = color_index as u8 + 1;
+            hue_table[offset + 2] = color_index as u8 + 2;
+            hue_table[offset + 3] = 255;
+        }
+
+        let mut pixels = vec![
+            0, 0, 0, 240,
+            16, 16, 16, 200,
+            255, 255, 255, 128,
+        ];
+
+        apply_ec_hue_table_to_rgba(&mut pixels, &hue_table);
+
+        assert_eq!(&pixels[0..4], &[0, 1, 2, 240]);
+        assert_eq!(&pixels[4..8], &[2, 3, 4, 200]);
+        assert_eq!(&pixels[8..12], &[31, 32, 33, 128]);
     }
 
     #[test]
