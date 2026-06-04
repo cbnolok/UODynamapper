@@ -1,4 +1,5 @@
 use crate::app::{LocalizedStringsSource, UopInspectorApp};
+use crate::ui::{arrow_delta, move_selection};
 use eframe::egui;
 use uocf::enhanced::localized_strings::LocalizedStringEntry;
 
@@ -63,9 +64,9 @@ fn ui_classic_cliloc(app: &mut UopInspectorApp, ctx: &egui::Context) {
             ui.heading(format!("{heading} ({})", entries.len()));
             cliloc_translation_selector(app, ui);
             ui.separator();
-            search_box(app, ui);
+            let search_has_focus = search_box(app, ui);
             ui.separator();
-            cliloc_list(app, ui, entries);
+            cliloc_list(app, ui, entries, search_has_focus);
         });
 
     egui::CentralPanel::default().show(ctx, |ui| {
@@ -188,30 +189,46 @@ fn ui_localized_strings(app: &mut UopInspectorApp, ctx: &egui::Context) {
     });
 }
 
-fn search_box(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
+fn search_box(app: &mut UopInspectorApp, ui: &mut egui::Ui) -> bool {
+    let mut has_focus = false;
     ui.horizontal(|ui| {
         ui.label("Search:");
-        ui.text_edit_singleline(&mut app.search_query);
+        has_focus = ui.text_edit_singleline(&mut app.search_query).has_focus();
     });
+    has_focus
 }
 
 fn cliloc_list(
     app: &mut UopInspectorApp,
     ui: &mut egui::Ui,
     entries: &[uocf::classic::cliloc::ClilocEntry],
+    search_has_focus: bool,
 ) {
     let query = app.search_query.trim();
     let row_height = ui.spacing().interact_size.y;
+    let visible_numbers = visible_cliloc_numbers(entries, query);
+    let keyboard_moved = if let Some(delta) = arrow_delta(ui, search_has_focus) {
+        if let Some(number) =
+            move_selection(&visible_numbers, Some(app.selected_cliloc_number), delta)
+        {
+            app.selected_cliloc_number = number;
+        }
+        true
+    } else {
+        false
+    };
 
     if query.is_empty() {
         egui::ScrollArea::vertical().show_rows(ui, row_height, entries.len(), |ui, row_range| {
             for row in row_range {
                 let entry = &entries[row];
                 let label = format!("{}: {}", entry.number, entry.text);
-                if ui
-                    .selectable_label(app.selected_cliloc_number == entry.number, label)
-                    .clicked()
-                {
+                let selected = app.selected_cliloc_number == entry.number;
+                let response = ui.selectable_label(selected, label);
+                if keyboard_moved && selected {
+                    response.scroll_to_me(Some(egui::Align::Center));
+                }
+                if response.clicked() {
                     app.selected_cliloc_number = entry.number;
                 }
             }
@@ -226,14 +243,32 @@ fn cliloc_list(
                 continue;
             }
             let label = format!("{}: {}", entry.number, entry.text);
-            if ui
-                .selectable_label(app.selected_cliloc_number == entry.number, label)
-                .clicked()
-            {
+            let selected = app.selected_cliloc_number == entry.number;
+            let response = ui.selectable_label(selected, label);
+            if keyboard_moved && selected {
+                response.scroll_to_me(Some(egui::Align::Center));
+            }
+            if response.clicked() {
                 app.selected_cliloc_number = entry.number;
             }
         }
     });
+}
+
+fn visible_cliloc_numbers(
+    entries: &[uocf::classic::cliloc::ClilocEntry],
+    query: &str,
+) -> Vec<i32> {
+    if query.is_empty() {
+        return entries.iter().map(|entry| entry.number).collect();
+    }
+
+    let query = query.to_lowercase();
+    entries
+        .iter()
+        .filter(|entry| cliloc_entry_matches_query(entry, &query))
+        .map(|entry| entry.number)
+        .collect()
 }
 
 fn cliloc_entry_matches_query(entry: &uocf::classic::cliloc::ClilocEntry, query: &str) -> bool {
@@ -284,5 +319,30 @@ mod tests {
         assert!(cliloc_entry_matches_query(&entry, "balance"));
         assert!(cliloc_entry_matches_query(&entry, "bank"));
         assert!(!cliloc_entry_matches_query(&entry, "vendor"));
+    }
+
+    #[test]
+    fn visible_cliloc_numbers_respects_search_query() {
+        let entries = vec![
+            uocf::classic::cliloc::ClilocEntry {
+                number: 100,
+                flag: 0,
+                text: "Vendor".to_string(),
+            },
+            uocf::classic::cliloc::ClilocEntry {
+                number: 200,
+                flag: 0,
+                text: "Bank Balance".to_string(),
+            },
+            uocf::classic::cliloc::ClilocEntry {
+                number: 201,
+                flag: 0,
+                text: "Stable".to_string(),
+            },
+        ];
+
+        assert_eq!(visible_cliloc_numbers(&entries, ""), vec![100, 200, 201]);
+        assert_eq!(visible_cliloc_numbers(&entries, "bank"), vec![200]);
+        assert_eq!(visible_cliloc_numbers(&entries, "20"), vec![200, 201]);
     }
 }
