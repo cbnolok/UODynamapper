@@ -1,5 +1,6 @@
 use crate::app::{ArtSource, MultiCollectionSource, MultisSource, UopInspectorApp};
 use eframe::egui;
+use uocf::classic::art::static_art_id_for_source;
 
 #[derive(Clone)]
 struct PreviewPart {
@@ -20,7 +21,16 @@ struct PartRenderInfo {
     offset_y: i32,
 }
 
+struct PreviewRenderPart {
+    part: PreviewPart,
+    info: PartRenderInfo,
+    texture: Option<egui::TextureHandle>,
+    size: egui::Vec2,
+}
+
 pub fn ui_multis(app: &mut UopInspectorApp, ctx: &egui::Context) {
+    app.selected_legacy_source = concrete_art_tile_source(app.selected_legacy_source);
+
     let has_classic = app
         .client_data
         .as_ref()
@@ -53,15 +63,18 @@ pub fn ui_multis(app: &mut UopInspectorApp, ctx: &egui::Context) {
             }
             ui.separator();
             ui.label("Art:");
+            let previous_source = app.selected_legacy_source;
             egui::ComboBox::from_id_salt("multis_art_source")
                 .selected_text(art_source_label(app.selected_legacy_source))
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut app.selected_legacy_source, ArtSource::Any, "Any");
                     ui.selectable_value(&mut app.selected_legacy_source, ArtSource::Mul, "MUL");
                     ui.selectable_value(&mut app.selected_legacy_source, ArtSource::CcUop, "CC UOP");
-                    ui.selectable_value(&mut app.selected_legacy_source, ArtSource::EcUopLegacy, "EC UOP Legacy");
-                    ui.selectable_value(&mut app.selected_legacy_source, ArtSource::EcUopKr, "EC UOP KR");
+                    ui.selectable_value(&mut app.selected_legacy_source, ArtSource::EcUopLegacy, "EC Legacy UOP");
+                    ui.selectable_value(&mut app.selected_legacy_source, ArtSource::EcUopKr, "KR/New UOP");
                 });
+            if app.selected_legacy_source != previous_source {
+                clear_multi_preview_failure_logs(app);
+            }
         });
     });
 
@@ -90,11 +103,11 @@ fn multi_collection_source_label(app: &UopInspectorApp) -> &'static str {
 
 fn art_source_label(source: ArtSource) -> &'static str {
     match source {
-        ArtSource::Any => "Any",
+        ArtSource::Any => "CC UOP",
         ArtSource::Mul => "MUL",
         ArtSource::CcUop => "CC UOP",
-        ArtSource::EcUop | ArtSource::EcUopLegacy => "EC UOP Legacy",
-        ArtSource::EcUopKr => "EC UOP KR",
+        ArtSource::EcUop | ArtSource::EcUopLegacy => "EC Legacy UOP",
+        ArtSource::EcUopKr => "KR/New UOP",
     }
 }
 
@@ -112,13 +125,14 @@ fn ui_classic_multis(app: &mut UopInspectorApp, ctx: &egui::Context) {
 
             if let Some(client) = &app.client_data {
                 if let Some(multis) = &client.multis {
+                    let max_id = multis.max_id();
                     egui::ScrollArea::vertical().show(ui, |ui| {
-                        for id in 0..multis.max_id() {
+                        for id in 0..max_id {
                             if ui
                                 .selectable_label(app.selected_multi_id == id, format!("Multi {}", id))
                                 .clicked()
                             {
-                                app.selected_multi_id = id;
+                                select_multi(app, id, None);
                             }
                         }
                     });
@@ -190,8 +204,7 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context) {
                         )
                         .clicked()
                     {
-                        app.selected_multi_id = item.id;
-                        app.selected_multi_uop_hash = Some(item.filename_hash);
+                        select_multi(app, item.id, Some(item.filename_hash));
                     }
                 }
             });
@@ -240,6 +253,14 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context) {
             });
         }
     });
+}
+
+fn select_multi(app: &mut UopInspectorApp, multi_id: u32, uop_hash: Option<u64>) {
+    if app.selected_multi_id != multi_id || app.selected_multi_uop_hash != uop_hash {
+        app.selected_multi_id = multi_id;
+        app.selected_multi_uop_hash = uop_hash;
+        clear_multi_preview_failure_logs(app);
+    }
 }
 
 fn ui_multimap(app: &mut UopInspectorApp, ctx: &egui::Context) {
@@ -350,6 +371,7 @@ fn draw_multi_details(
             |ui| {
                 ui.heading("Components");
                 egui::ScrollArea::vertical()
+                    .id_salt(("multi_parts_scroll", app.multis_source as u8, app.selected_multi_id))
                     .auto_shrink([false, false])
                     .max_height(ui.available_height())
                     .show(ui, |ui| {
@@ -381,7 +403,14 @@ fn draw_multi_details(
             egui::Layout::top_down(egui::Align::Min),
             |ui| {
                 ui.heading("2D Preview");
-                draw_preview(app, ctx, ui, parts);
+                let preview_available = ui.available_size();
+                ui.allocate_ui_with_layout(
+                    preview_available,
+                    egui::Layout::top_down(egui::Align::Center),
+                    |ui| {
+                        draw_preview(app, ctx, ui, parts);
+                    },
+                );
             },
         );
     });
@@ -397,49 +426,82 @@ fn draw_preview(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::U
     let (min_z, max_z) = parts.iter().fold((0i16, 0i16), |(min_z, max_z), p| {
         (min_z.min(p.z), max_z.max(p.z))
     });
-    let span_x = ((max_x as i32) - (min_x as i32) + 1).max(1) as f32;
-    let span_y = ((max_y as i32) - (min_y as i32) + 1).max(1) as f32;
+    let span_x = ((max_x as i32) - (min_x as i32) + 1).max(1);
+    let span_y = ((max_y as i32) - (min_y as i32) + 1).max(1);
+    let span_z = ((max_z as i32) - (min_z as i32)).max(0);
     let tile_w = 22.0f32;
     let tile_h = 22.0f32;
     let viewport_size = ui.available_size();
-    let canvas_w = (span_x * tile_w + span_y * tile_w + 360.0)
-        .max(700.0)
-        .max(viewport_size.x);
-    let canvas_h = ((span_x + span_y) * tile_h + ((max_z - min_z).max(0) as f32 * 4.0) + 360.0)
-        .max(520.0)
-        .max(viewport_size.y);
+    let mut sorted_parts: Vec<_> = parts
+        .iter()
+        .map(|part| {
+            let info = part_render_info(app, part.item_id);
+            let texture = get_multi_part_texture(app, ctx, part.item_id);
+            let size = texture
+                .as_ref()
+                .map(|handle| handle.size_vec2())
+                .unwrap_or_else(|| egui::vec2(14.0, 14.0));
+            PreviewRenderPart {
+                part: part.clone(),
+                info,
+                texture,
+                size,
+            }
+        })
+        .collect();
+    sorted_parts.sort_by(|a, b| {
+        a.part.z.cmp(&b.part.z)
+            .then(a.part.y.cmp(&b.part.y))
+            .then(a.part.x.cmp(&b.part.x))
+            .then((!a.info.is_floor).cmp(&(!b.info.is_floor)))
+    });
+
+    let padding = 96.0f32;
+    let mut content_min = egui::pos2(f32::INFINITY, f32::INFINITY);
+    let mut content_max = egui::pos2(f32::NEG_INFINITY, f32::NEG_INFINITY);
+    for render_part in &sorted_parts {
+        let pos = preview_part_position(render_part, min_x, min_y, min_z, tile_w, tile_h);
+        content_min.x = content_min.x.min(pos.x);
+        content_min.y = content_min.y.min(pos.y);
+        content_max.x = content_max.x.max(pos.x + render_part.size.x);
+        content_max.y = content_max.y.max(pos.y + render_part.size.y);
+    }
+    if !content_min.x.is_finite() {
+        content_min = egui::pos2(0.0, 0.0);
+        content_max = egui::pos2(
+            (span_x as f32 + span_y as f32) * tile_w,
+            (span_x as f32 + span_y as f32) * tile_h + span_z as f32 * 4.0,
+        );
+    }
+
+    let content_w = (content_max.x - content_min.x + padding * 2.0).max(1.0);
+    let content_h = (content_max.y - content_min.y + padding * 2.0).max(1.0);
+    let canvas_w = content_w.max(viewport_size.x.max(1.0));
+    let canvas_h = content_h.max(viewport_size.y.max(1.0));
     let canvas_size = egui::vec2(canvas_w, canvas_h);
 
-    egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
+    egui::ScrollArea::both()
+        .id_salt(("multi_preview_scroll", app.multis_source as u8, app.selected_multi_id))
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
         let (rect, _response) = ui.allocate_exact_size(canvas_size, egui::Sense::hover());
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, egui::Color32::from_gray(24));
 
-        let mut sorted_parts = parts.to_vec();
-        sorted_parts.sort_by(|a, b| {
-            let a_info = part_render_info(app, a.item_id);
-            let b_info = part_render_info(app, b.item_id);
-            a.z.cmp(&b.z)
-                .then(a.y.cmp(&b.y))
-                .then(a.x.cmp(&b.x))
-                .then((!a_info.is_floor).cmp(&(!b_info.is_floor)))
-        });
+        let origin = rect.min
+            + egui::vec2(
+                (canvas_w - content_w).max(0.0) * 0.5 + padding - content_min.x,
+                (canvas_h - content_h).max(0.0) * 0.5 + padding - content_min.y,
+            );
 
-        for part in sorted_parts {
-            let info = part_render_info(app, part.item_id);
-            let x = ((part.x as i32) - (min_x as i32)) as f32;
-            let y = ((part.y as i32) - (min_y as i32)) as f32;
-            let base_x = canvas_w * 0.5 - (y * tile_w) + (x * tile_w) + info.height_delta as f32;
-            let base_y = 80.0 + (y * tile_h) + (x * tile_h) + info.width_delta as f32 + 64.0
-                + info.height_delta as f32 - (part.original_z as f32 * 4.0);
-
-            if let Some(handle) = get_multi_part_texture(app, ctx, part.item_id) {
-                let size = handle.size_vec2();
+        for render_part in sorted_parts {
+            let part_pos = preview_part_position(&render_part, min_x, min_y, min_z, tile_w, tile_h);
+            if let Some(handle) = render_part.texture {
                 let draw_pos = rect.min + egui::vec2(
-                    base_x + info.offset_x as f32,
-                    base_y + info.offset_y as f32 + (min_z as f32 * 4.0),
+                    origin.x - rect.min.x + part_pos.x,
+                    origin.y - rect.min.y + part_pos.y,
                 );
-                let part_rect = egui::Rect::from_min_size(draw_pos, size);
+                let part_rect = egui::Rect::from_min_size(draw_pos, render_part.size);
                 painter.image(
                     handle.id(),
                     part_rect,
@@ -447,10 +509,10 @@ fn draw_preview(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::U
                     egui::Color32::WHITE,
                 );
             } else {
-                let fallback_pos = rect.min + egui::vec2(base_x, base_y + (min_z as f32 * 4.0));
+                let fallback_pos = origin + part_pos.to_vec2();
                 let part_rect = egui::Rect::from_center_size(
                     fallback_pos,
-                    egui::vec2(14.0, 14.0),
+                    render_part.size,
                 );
                 painter.rect_filled(part_rect.shrink(1.0), 2.0, egui::Color32::BLUE);
             }
@@ -458,58 +520,90 @@ fn draw_preview(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::U
     });
 }
 
+fn preview_part_position(
+    render_part: &PreviewRenderPart,
+    min_x: i16,
+    min_y: i16,
+    min_z: i16,
+    tile_w: f32,
+    tile_h: f32,
+) -> egui::Pos2 {
+    let part = &render_part.part;
+    let info = render_part.info;
+    let x = ((part.x as i32) - (min_x as i32)) as f32;
+    let y = ((part.y as i32) - (min_y as i32)) as f32;
+    let base_x = (x - y) * tile_w + info.height_delta as f32;
+    let base_y = (x + y) * tile_h
+        + info.width_delta as f32
+        + info.height_delta as f32
+        - (part.original_z as f32 * 4.0);
+
+    egui::pos2(
+        base_x + info.offset_x as f32,
+        base_y + info.offset_y as f32 + (min_z as f32 * 4.0),
+    )
+}
+
 fn get_multi_part_texture(
     app: &mut UopInspectorApp,
     ctx: &egui::Context,
     item_id: u16,
 ) -> Option<egui::TextureHandle> {
-    let classic_art_id = item_id as u32 + 0x4000;
-    let ec_art_id = item_id as u32;
-    let candidates = match app.selected_legacy_source {
-        ArtSource::Mul => [
-            (ArtSource::Mul, classic_art_id),
-            (ArtSource::Any, classic_art_id),
-            (ArtSource::EcUopLegacy, ec_art_id),
-            (ArtSource::EcUopKr, ec_art_id),
-        ],
-        ArtSource::CcUop => [
-            (ArtSource::CcUop, classic_art_id),
-            (ArtSource::Any, classic_art_id),
-            (ArtSource::EcUopLegacy, ec_art_id),
-            (ArtSource::EcUopKr, ec_art_id),
-        ],
-        ArtSource::EcUop | ArtSource::EcUopLegacy => [
-            (ArtSource::EcUopLegacy, ec_art_id),
-            (ArtSource::EcUopLegacy, classic_art_id),
-            (ArtSource::Any, classic_art_id),
-            (ArtSource::CcUop, classic_art_id),
-        ],
-        ArtSource::EcUopKr => [
-            (ArtSource::EcUopKr, ec_art_id),
-            (ArtSource::EcUopKr, classic_art_id),
-            (ArtSource::Any, classic_art_id),
-            (ArtSource::CcUop, classic_art_id),
-        ],
-        ArtSource::Any => [
-            (ArtSource::Any, classic_art_id),
-            (ArtSource::EcUopLegacy, ec_art_id),
-            (ArtSource::EcUopKr, ec_art_id),
-            (ArtSource::CcUop, classic_art_id),
-        ],
-    };
-
-    let mut attempted = Vec::with_capacity(candidates.len());
-    for (source, art_id) in candidates {
-        if attempted.iter().any(|candidate| *candidate == (source, art_id)) {
-            continue;
-        }
-        attempted.push((source, art_id));
-        if let Some(handle) = app.get_tex_art_texture_from_source(ctx, art_id, source) {
-            return Some(handle);
-        }
+    let source = concrete_art_tile_source(app.selected_legacy_source);
+    let art_id = static_art_id_for_source(item_id as u32, source);
+    let selected_hue_id = app.selected_hue_id;
+    app.selected_hue_id = 0;
+    let texture = app.get_tex_art_texture_from_source(ctx, art_id, source);
+    app.selected_hue_id = selected_hue_id;
+    if texture.is_none() {
+        log_missing_multi_part_texture(app, item_id, art_id, source);
     }
+    texture
+}
 
-    None
+fn log_missing_multi_part_texture(
+    app: &mut UopInspectorApp,
+    item_id: u16,
+    art_id: u32,
+    source: ArtSource,
+) {
+    let has_art = app
+        .client_data
+        .as_ref()
+        .map(|client| client.art.has_id_from_source(art_id, source))
+        .unwrap_or(false);
+    let message = if app.client_data.is_none() {
+        format!(
+            "Multi preview cannot render item 0x{item_id:04X}: no CC art map is loaded for {:?}.",
+            source
+        )
+    } else if has_art {
+        format!(
+            "Multi preview failed to decode item 0x{item_id:04X} as art 0x{art_id:04X} from {:?}.",
+            source
+        )
+    } else {
+        format!(
+            "Multi preview missing item 0x{item_id:04X}: art 0x{art_id:04X} is not present in {:?}.",
+            source
+        )
+    };
+    if !app.logs.iter().any(|log| log == &message) {
+        app.log(message);
+    }
+}
+
+fn concrete_art_tile_source(source: ArtSource) -> ArtSource {
+    match source {
+        ArtSource::Any => ArtSource::CcUop,
+        ArtSource::EcUop => ArtSource::EcUopLegacy,
+        source => source,
+    }
+}
+
+fn clear_multi_preview_failure_logs(app: &mut UopInspectorApp) {
+    app.logs
+        .retain(|log| !log.starts_with("Multi preview "));
 }
 
 fn part_render_info(app: &UopInspectorApp, item_id: u16) -> PartRenderInfo {
