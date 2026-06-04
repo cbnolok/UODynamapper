@@ -558,6 +558,10 @@ pub struct UopEntryLabel {
     pub search_name: String,
 }
 
+fn should_show_uop_entry(file: &uocf::uop_container::file::UopFile, hide_empty_entries: bool) -> bool {
+    !hide_empty_entries || file.has_size()
+}
+
 fn terrain_texture_guess_candidate(texture_id: u32, extension: &str) -> String {
     format!("build/terraintexture/{texture_id:08}.{extension}")
 }
@@ -1525,6 +1529,7 @@ pub struct UopInspectorApp {
 
     pub search_query: String,
     pub find_hash_query: String,
+    pub hide_empty_uop_entries: bool,
     pub guess_terrain_texture_file_format: bool,
     pub status_message: String,
     pub view_mode: ViewMode,
@@ -1659,6 +1664,7 @@ impl UopInspectorApp {
             selected_legacy_source: ArtSource::Any,
             search_query: String::new(),
             find_hash_query: String::new(),
+            hide_empty_uop_entries: true,
             guess_terrain_texture_file_format: false,
             status_message: "Welcome to UOCF Inspector".to_string(),
             view_mode: settings.last_view_mode.unwrap_or(ViewMode::Home),
@@ -2614,6 +2620,16 @@ impl UopInspectorApp {
         }
     }
 
+    pub fn set_hide_empty_uop_entries(&mut self, enabled: bool) {
+        if self.hide_empty_uop_entries != enabled {
+            self.hide_empty_uop_entries = enabled;
+            self.uop_entry_labels.clear();
+            if enabled {
+                self.selected_file_hash = None;
+            }
+        }
+    }
+
     fn get_terrain_texture_guess_names(&mut self, uop_idx: usize) -> Option<Arc<HashMap<u64, String>>> {
         if !self.guess_terrain_texture_file_format || !self.selected_uop_is_terrain_texture(uop_idx) {
             return None;
@@ -2656,6 +2672,7 @@ impl UopInspectorApp {
         let labels = loaded
             .package
             .iter_files()
+            .filter(|file| should_show_uop_entry(file, self.hide_empty_uop_entries))
             .map(|file| {
                 let hash = file.filename_hash();
                 let display_name = self
@@ -3629,6 +3646,7 @@ mod tests {
             selected_legacy_source: ArtSource::Any,
             search_query: String::new(),
             find_hash_query: String::new(),
+            hide_empty_uop_entries: true,
             guess_terrain_texture_file_format: false,
             status_message: String::new(),
             view_mode: ViewMode::Home,
@@ -3739,6 +3757,22 @@ mod tests {
             names.get(&hash_file_name_single(tga)).map(String::as_str),
             Some(tga)
         );
+    }
+
+    #[test]
+    fn uop_entry_filter_hides_empty_records_by_default() {
+        let empty = uocf::uop_container::file::UopFile::new();
+        let populated = uocf::uop_container::file::UopFile::new()
+            .create_file_from_bytes(
+                b"payload",
+                hash_file_name_single("build/terraintexture/00000042.dds"),
+                uocf::uop_container::file::CompressionFlag::None,
+            )
+            .expect("create populated UOP file");
+
+        assert!(!should_show_uop_entry(&empty, true));
+        assert!(should_show_uop_entry(&empty, false));
+        assert!(should_show_uop_entry(&populated, true));
     }
 
     #[test]

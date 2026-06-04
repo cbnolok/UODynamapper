@@ -56,6 +56,10 @@ pub fn ui_uop_browser(app: &mut UopInspectorApp, ctx: &egui::Context) {
                        }
                     }
                 });
+                let mut hide_empty_entries = app.hide_empty_uop_entries;
+                if ui.checkbox(&mut hide_empty_entries, "Hide empty/invalid entries").changed() {
+                    app.set_hide_empty_uop_entries(hide_empty_entries);
+                }
                 if app.selected_uop_is_terrain_texture(uop_idx) {
                     let mut enabled = app.guess_terrain_texture_file_format;
                     if ui.checkbox(&mut enabled, "Guess file format").changed() {
