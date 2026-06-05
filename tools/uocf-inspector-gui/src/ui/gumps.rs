@@ -304,7 +304,7 @@ fn ui_gump_preview_controls(app: &mut UopInspectorApp, ctx: &egui::Context, ui: 
                     }
                 }
             });
-            if let Some(handle) = app.get_gump_texture(ctx, app.selected_gump_source, gump_id) {
+            if let Some(handle) = get_panel_gump_texture(app, ctx, app.selected_gump_source, gump_id) {
                 ui.label(format!("{}x{}", handle.size()[0], handle.size()[1]));
                 egui::ScrollArea::both()
                     .id_salt("gump_preview_scroll")
@@ -323,160 +323,195 @@ fn ui_gump_preview_controls(app: &mut UopInspectorApp, ctx: &egui::Context, ui: 
     }
 }
 
+fn get_panel_gump_texture(
+    app: &mut UopInspectorApp,
+    ctx: &egui::Context,
+    source: GumpSource,
+    gump_id: u32,
+) -> Option<egui::TextureHandle> {
+    if source == GumpSource::Classic {
+        return app.get_gump_texture(ctx, source, gump_id);
+    }
+
+    let key = match source {
+        GumpSource::Classic => 0x6D00000000000000 | u64::from(gump_id),
+        GumpSource::Enhanced => 0x6E00000000000000 | u64::from(gump_id),
+    };
+    if let Some(handle) = app.texture_previews.get(&key).cloned() {
+        app.select_image_preview(key);
+        return Some(handle);
+    }
+
+    let (width, height, pixels) = decode_gump_rgba(app, source, gump_id).ok()?;
+    let image = egui::ColorImage::from_rgba_unmultiplied(
+        [width as usize, height as usize],
+        &pixels,
+    );
+    let label = match source {
+        GumpSource::Classic => format!("CC gump {gump_id}"),
+        GumpSource::Enhanced => format!("EC gump {gump_id}"),
+    };
+    let handle = ctx.load_texture(label.clone(), image, Default::default());
+    app.texture_previews.insert(key, handle.clone());
+    app.register_current_image_preview(key, label, width, height, &pixels);
+    Some(handle)
+}
+
 fn ui_paperdoll(
     app: &mut UopInspectorApp,
     ctx: &egui::Context,
     ui: &mut egui::Ui,
     profiles: &[PaperdollProfile],
 ) {
-    ui.heading("Paperdoll Sprites");
-    if let Some(gump_id) = ui_gump_id_list(
-        ui,
-        &app.paperdoll_gump_ids,
-        &app.selected_gump_id,
-        "paperdoll_sprite_list",
-    ) {
-        app.selected_gump_id = gump_id.to_string();
-    }
+    ui.columns(2, |columns| {
+        columns[0].heading("Paperdoll Sprites");
+        if let Some(gump_id) = ui_gump_id_list(
+            &mut columns[0],
+            &app.paperdoll_gump_ids,
+            &app.selected_gump_id,
+            "paperdoll_sprite_list",
+        ) {
+            app.selected_gump_id = gump_id.to_string();
+        }
 
-    ui.separator();
-    ui.heading("Selected Sprite");
-    ui_gump_preview_controls(app, ctx, ui);
+        columns[1].heading("Selected Sprite");
+        ui_gump_preview_controls(app, ctx, &mut columns[1]);
 
-    ui.separator();
-    ui.heading("Paperdoll");
-    egui::ComboBox::from_label("Profile")
-        .selected_text(profile_by_id(profiles, &app.selected_paperdoll_profile).label.as_str())
-        .show_ui(ui, |ui| {
-            for profile in profiles {
-                ui.selectable_value(
-                    &mut app.selected_paperdoll_profile,
-                    profile.id.clone(),
-                    profile.label.as_str(),
-                );
+        columns[1].separator();
+        columns[1].heading("Paperdoll");
+        egui::ComboBox::from_label("Profile")
+            .selected_text(profile_by_id(profiles, &app.selected_paperdoll_profile).label.as_str())
+            .show_ui(&mut columns[1], |ui| {
+                for profile in profiles {
+                    ui.selectable_value(
+                        &mut app.selected_paperdoll_profile,
+                        profile.id.clone(),
+                        profile.label.as_str(),
+                    );
+                }
+            });
+        let selected_profile = profile_by_id(profiles, &app.selected_paperdoll_profile);
+        columns[1].monospace(format!(
+            "equipment_offset={} canvas={}x{} body=({}, {}) equipment=({}, {})",
+            selected_profile.equipment_offset,
+            selected_profile.canvas_width,
+            selected_profile.canvas_height,
+            selected_profile.body_x,
+            selected_profile.body_y,
+            selected_profile.equipment_x,
+            selected_profile.equipment_y,
+        ));
+
+        columns[1].horizontal(|ui| {
+            ui.label("Body:");
+            ui.text_edit_singleline(&mut app.paperdoll_body_id);
+            ui.label("Hue:");
+            ui.text_edit_singleline(&mut app.paperdoll_body_hue);
+            if ui.button("Use Selected Hue").clicked() {
+                app.paperdoll_body_hue = app.selected_hue_id.to_string();
+                app.paperdoll_preview = None;
             }
         });
-    let selected_profile = profile_by_id(profiles, &app.selected_paperdoll_profile);
-    ui.monospace(format!(
-        "equipment_offset={} canvas={}x{} body=({}, {}) equipment=({}, {})",
-        selected_profile.equipment_offset,
-        selected_profile.canvas_width,
-        selected_profile.canvas_height,
-        selected_profile.body_x,
-        selected_profile.body_y,
-        selected_profile.equipment_x,
-        selected_profile.equipment_y,
-    ));
+        ui_hue_picker(app, &mut columns[1]);
 
-    ui.horizontal(|ui| {
-        ui.label("Body:");
-        ui.text_edit_singleline(&mut app.paperdoll_body_id);
-        ui.label("Hue:");
-        ui.text_edit_singleline(&mut app.paperdoll_body_hue);
-        if ui.button("Use Selected Hue").clicked() {
-            app.paperdoll_body_hue = app.selected_hue_id.to_string();
-            app.paperdoll_preview = None;
-        }
-    });
-    ui_hue_picker(app, ui);
+        egui::Grid::new("uocf_inspector_paperdoll_equipment")
+            .num_columns(7)
+            .spacing([8.0, 4.0])
+            .show(&mut columns[1], |ui| {
+                ui.label("Slot");
+                ui.label("Item ID");
+                ui.label("Hue");
+                ui.label("Derived");
+                ui.end_row();
 
-    egui::Grid::new("uocf_inspector_paperdoll_equipment")
-        .num_columns(7)
-        .spacing([8.0, 4.0])
-        .show(ui, |ui| {
-            ui.label("Slot");
-            ui.label("Item ID");
-            ui.label("Hue");
-            ui.label("Derived");
-            ui.end_row();
-
-            let tiledata = app.cc_tiledata.as_ref().map(Arc::clone);
-            let mut remove_index = None;
-            let mut inspect_item_id = None;
-            for (index, row) in app.paperdoll_equipment.iter_mut().enumerate() {
-                egui::ComboBox::from_id_salt(format!("paperdoll_slot_{index}"))
-                    .selected_text(slot_label(&row.slot))
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut row.slot, String::new(), "Any");
-                        for slot in PAPERDOLL_SLOTS {
-                            ui.selectable_value(
-                                &mut row.slot,
-                                slot.id.to_string(),
-                                format!("{} ({})", slot.label, slot.layer),
-                            );
+                let tiledata = app.cc_tiledata.as_ref().map(Arc::clone);
+                let mut remove_index = None;
+                let mut inspect_item_id = None;
+                for (index, row) in app.paperdoll_equipment.iter_mut().enumerate() {
+                    egui::ComboBox::from_id_salt(format!("paperdoll_slot_{index}"))
+                        .selected_text(slot_label(&row.slot))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut row.slot, String::new(), "Any");
+                            for slot in PAPERDOLL_SLOTS {
+                                ui.selectable_value(
+                                    &mut row.slot,
+                                    slot.id.to_string(),
+                                    format!("{} ({})", slot.label, slot.layer),
+                                );
+                            }
+                        });
+                    ui.text_edit_singleline(&mut row.item_id);
+                    ui.text_edit_singleline(&mut row.hue);
+                    ui.monospace(equipment_detail(
+                        tiledata.as_deref(),
+                        selected_profile,
+                        row.slot.as_str(),
+                        row.item_id.as_str(),
+                    ));
+                    if ui.button("Hue").clicked() {
+                        row.hue = app.selected_hue_id.to_string();
+                        app.paperdoll_preview = None;
+                    }
+                    if ui.button("Inspect").clicked() {
+                        if let Ok(item_id) = parse_u32_field(&row.item_id) {
+                            inspect_item_id = Some(item_id);
                         }
-                    });
-                ui.text_edit_singleline(&mut row.item_id);
-                ui.text_edit_singleline(&mut row.hue);
-                ui.monospace(equipment_detail(
-                    tiledata.as_deref(),
-                    selected_profile,
-                    row.slot.as_str(),
-                    row.item_id.as_str(),
-                ));
-                if ui.button("Hue").clicked() {
-                    row.hue = app.selected_hue_id.to_string();
-                    app.paperdoll_preview = None;
+                    }
+                    if ui.button("Remove").clicked() {
+                        remove_index = Some(index);
+                    }
+                    ui.end_row();
                 }
-                if ui.button("Inspect").clicked() {
-                    if let Ok(item_id) = parse_u32_field(&row.item_id) {
-                        inspect_item_id = Some(item_id);
+                if let Some(index) = remove_index {
+                    app.paperdoll_equipment.remove(index);
+                }
+                if let Some(item_id) = inspect_item_id {
+                    app.selected_tex_art_cc_id = Some(0x4000 + item_id);
+                    app.view_mode = crate::app::ViewMode::TexArtCc;
+                }
+            });
+
+        columns[1].horizontal(|ui| {
+            if ui.button("Add Slots").clicked() {
+                app.paperdoll_equipment = PAPERDOLL_SLOTS
+                    .iter()
+                    .map(|slot| PaperdollEquipmentInput {
+                        slot: slot.id.to_string(),
+                        item_id: String::new(),
+                        hue: "0".to_string(),
+                    })
+                    .collect();
+                app.paperdoll_preview = None;
+            }
+            if ui.button("Add Row").clicked() {
+                app.paperdoll_equipment.push(PaperdollEquipmentInput::default());
+            }
+            if ui.button("Clear Rows").clicked() {
+                app.paperdoll_equipment.clear();
+                app.paperdoll_preview = None;
+            }
+            if ui.button("Render").clicked() {
+                match render_paperdoll(app, ctx) {
+                    Ok(handle) => {
+                        app.paperdoll_preview = Some(handle);
+                        app.status_message = "Rendered paperdoll preview.".to_string();
+                    }
+                    Err(error) => {
+                        app.paperdoll_preview = None;
+                        app.status_message = format!("Could not render paperdoll: {error}");
                     }
                 }
-                if ui.button("Remove").clicked() {
-                    remove_index = Some(index);
-                }
-                ui.end_row();
-            }
-            if let Some(index) = remove_index {
-                app.paperdoll_equipment.remove(index);
-            }
-            if let Some(item_id) = inspect_item_id {
-                app.selected_tex_art_cc_id = Some(0x4000 + item_id);
-                app.view_mode = crate::app::ViewMode::TexArtCc;
             }
         });
 
-    ui.horizontal(|ui| {
-        if ui.button("Add Slots").clicked() {
-            app.paperdoll_equipment = PAPERDOLL_SLOTS
-                .iter()
-                .map(|slot| PaperdollEquipmentInput {
-                    slot: slot.id.to_string(),
-                    item_id: String::new(),
-                    hue: "0".to_string(),
-                })
-                .collect();
-            app.paperdoll_preview = None;
-        }
-        if ui.button("Add Row").clicked() {
-            app.paperdoll_equipment.push(PaperdollEquipmentInput::default());
-        }
-        if ui.button("Clear Rows").clicked() {
-            app.paperdoll_equipment.clear();
-            app.paperdoll_preview = None;
-        }
-        if ui.button("Render").clicked() {
-            match render_paperdoll(app, ctx) {
-                Ok(handle) => {
-                    app.paperdoll_preview = Some(handle);
-                    app.status_message = "Rendered paperdoll preview.".to_string();
-                }
-                Err(error) => {
-                    app.paperdoll_preview = None;
-                    app.status_message = format!("Could not render paperdoll: {error}");
-                }
-            }
+        if let Some(handle) = &app.paperdoll_preview {
+            egui::ScrollArea::both()
+                .id_salt("paperdoll_preview_scroll")
+                .show(&mut columns[1], |ui| {
+                    ui.image(handle);
+                });
         }
     });
-
-    if let Some(handle) = &app.paperdoll_preview {
-        egui::ScrollArea::both()
-            .id_salt("paperdoll_preview_scroll")
-            .show(ui, |ui| {
-                ui.image(handle);
-            });
-    }
 }
 
 fn ui_gump_id_list(
@@ -493,9 +528,10 @@ fn ui_gump_id_list(
     let selected_id = parse_u32_field(selected_gump_id).ok();
     let mut selected = None;
     let row_height = ui.text_style_height(&egui::TextStyle::Body);
+    let max_height = ui.available_height().max(row_height);
     egui::ScrollArea::vertical()
         .id_salt(id_salt)
-        .max_height(260.0)
+        .max_height(max_height)
         .show_rows(ui, row_height, ids.len(), |ui, range| {
             for index in range {
                 let gump_id = ids[index];
@@ -767,10 +803,13 @@ fn select_or_load_ec_gump_entry(app: &mut UopInspectorApp, gump_id: u32) -> bool
     let Some(ec_path) = app.settings.ec_path.clone() else {
         return false;
     };
-    let uop_path = ec_path.join("interface.uop");
-    if !uop_path.exists() {
+    let Some(uop_path) = ["interface.uop", "Interface.uop"]
+        .into_iter()
+        .map(|name| ec_path.join(name))
+        .find(|path| path.exists())
+    else {
         return false;
-    }
+    };
 
     match UopPackage::load_with_mode(&uop_path, LoadMode::Lazy) {
         Ok(package) => {
