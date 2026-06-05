@@ -2913,7 +2913,7 @@ impl UopInspectorApp {
         };
         let img = tex_file.decode_to_rgba().ok()?;
         let mut rgba = img.to_rgba8();
-        if art_id >= 0x4000 && self.selected_hue_id > 0 {
+        if cc_hue_should_apply_to_art(art_id, source) && self.selected_hue_id > 0 {
             if let Some(hue) = self
                 .client_data
                 .as_ref()
@@ -3582,6 +3582,10 @@ fn apply_ec_hue_table_to_rgba(
     }
 }
 
+fn cc_hue_should_apply_to_art(art_id: u32, source: ArtSource) -> bool {
+    art_id >= uocf::classic::art::STATIC_TILE_ID_BASE || source.is_ec_uop()
+}
+
 impl eframe::App for UopInspectorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         crate::ui::draw_ui(self, ctx);
@@ -3954,6 +3958,14 @@ mod tests {
         assert_eq!(&pixels[0..4], &[0, 1, 2, 240]);
         assert_eq!(&pixels[4..8], &[127, 128, 129, 200]);
         assert_eq!(&pixels[8..12], &[255, 255, 255, 128]);
+    }
+
+    #[test]
+    fn cc_hues_apply_to_ec_static_uop_art_ids() {
+        assert!(cc_hue_should_apply_to_art(0x4000, ArtSource::CcUop));
+        assert!(!cc_hue_should_apply_to_art(0x0001, ArtSource::CcUop));
+        assert!(cc_hue_should_apply_to_art(0x0001, ArtSource::EcUopLegacy));
+        assert!(cc_hue_should_apply_to_art(0x0001, ArtSource::EcUopKr));
     }
 
     #[test]
