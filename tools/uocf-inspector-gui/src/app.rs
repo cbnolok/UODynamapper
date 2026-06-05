@@ -876,6 +876,14 @@ pub struct CcTileDataRow {
 }
 
 #[derive(Clone)]
+pub struct ArtViewerRow {
+    pub art_id: u32,
+    pub label: String,
+    pub group: &'static str,
+    pub search_text: String,
+}
+
+#[derive(Clone)]
 pub struct TileArtDisplayRow {
     pub filename_hash: u64,
     pub tile_id: String,
@@ -1519,6 +1527,8 @@ pub struct UopInspectorApp {
     pub client_data: Option<ClientData>,
     pub cc_tiledata: Option<Arc<TileData>>,
     pub cc_tiledata_rows: Option<Arc<Vec<CcTileDataRow>>>,
+    pub art_viewer_rows: Option<Arc<Vec<ArtViewerRow>>>,
+    pub art_viewer_rows_source: Option<ArtSource>,
     pub cc_gumps_package: Option<Arc<GumpsPackage>>,
     pub ec_gumps_package: Option<Arc<GumpsPackage>>,
     pub cc_gumps: Option<Arc<GumpMap>>,
@@ -1656,6 +1666,8 @@ impl UopInspectorApp {
             client_data: None,
             cc_tiledata: None,
             cc_tiledata_rows: None,
+            art_viewer_rows: None,
+            art_viewer_rows_source: None,
             cc_gumps_package: None,
             ec_gumps_package: None,
             cc_gumps: None,
@@ -1785,6 +1797,8 @@ impl UopInspectorApp {
         self.client_data = None;
         self.cc_tiledata = None;
         self.cc_tiledata_rows = None;
+        self.art_viewer_rows = None;
+        self.art_viewer_rows_source = None;
         self.ec_tileart_entries = None;
         self.ec_tileart_rows = None;
         self.selected_ec_hue_hash = None;
@@ -3673,6 +3687,8 @@ mod tests {
             client_data: None,
             cc_tiledata: None,
             cc_tiledata_rows: None,
+            art_viewer_rows: None,
+            art_viewer_rows_source: None,
             cc_gumps_package: None,
             ec_gumps_package: None,
             cc_gumps: None,

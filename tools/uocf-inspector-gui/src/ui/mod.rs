@@ -82,7 +82,7 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::UopExplorer, "UOP Explorer");
             }
             if app.client_data.is_some() {
-                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::TexArtCc, "CC Art");
+                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::TexArtCc, "Art");
             }
             if app.client_data.as_ref().and_then(|client| client.multis.as_ref()).is_some()
                 || app.multi_collection.is_some()

@@ -1,7 +1,9 @@
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
-use crate::app::{tileart_flags_summary, tileart_property_name, tileart_type_name, ArtSource, TileArtFileEntry, TileMetadataSource, UopInspectorApp, ViewMode};
+use crate::app::{tileart_flags_summary, tileart_property_name, tileart_type_name, ArtSource, ArtViewerRow, TileArtFileEntry, TileMetadataSource, UopInspectorApp, ViewMode};
+use crate::logic::ClientData;
 use super::{arrow_delta, move_selection};
+use std::sync::Arc;
 use uocf::enhanced::tileart::{TaeAnimationAppearance, TaeSittingAnimation};
 
 const TILEDATA_TABLE_MIN_WIDTH: f32 = 980.0;
@@ -12,7 +14,7 @@ pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context) {
         .resizable(true)
         .default_width(300.0)
         .show(ctx, |ui| {
-            ui.heading("CC Art & TileData");
+            ui.heading("Art & TileData");
             
             ui.horizontal(|ui| {
                 ui.label("Source:");
@@ -27,9 +29,11 @@ pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context) {
                     });
             });
 
+            let mut art_search_has_focus = false;
             ui.horizontal(|ui| {
                 ui.label("Search:");
-                ui.text_edit_singleline(&mut app.search_query);
+                let response = ui.text_edit_singleline(&mut app.search_query);
+                art_search_has_focus |= response.has_focus();
             });
 
             ui.separator();
@@ -50,46 +54,32 @@ pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context) {
             }
             ui.separator();
             
-            if let Some(client) = &app.client_data {
-                let source = app.selected_legacy_source;
+            ensure_art_viewer_rows(app);
+            if let Some(rows) = app.art_viewer_rows.clone() {
+                let query = app.search_query.trim();
+                let filtered_indices = filtered_metadata_indices(&rows, query, |row| &row.search_text);
+                let visible_ids = filtered_indices
+                    .as_ref()
+                    .map(|indices| {
+                        indices
+                            .iter()
+                            .map(|index| rows[*index].art_id)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_else(|| rows.iter().map(|row| row.art_id).collect());
+                let keyboard_moved = if let Some(delta) = arrow_delta(ui, art_search_has_focus) {
+                    app.selected_tex_art_cc_id = move_selection(&visible_ids, app.selected_tex_art_cc_id, delta);
+                    if app.selected_tex_art_cc_id.is_some() {
+                        app.view_mode = ViewMode::TexArtCc;
+                    }
+                    true
+                } else {
+                    false
+                };
+
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    ui.collapsing("Land Tiles", |ui| {
-                        for id in 0..0x4000 {
-                            let has_art = client.art.has_id_from_source(id, source);
-                            let has_metadata = client.tiledata.land_tiles().get(id as usize).is_some();
-                            if !art_row_should_show(source, has_art, has_metadata) { continue; }
-                            
-                            let tile_name = client.tiledata.land_tiles().get(id as usize).map(|t| t.name_ascii()).unwrap_or_default();
-                            if !app.search_query.is_empty() && !id.to_string().contains(&app.search_query) && !tile_name.to_lowercase().contains(&app.search_query.to_lowercase()) {
-                                continue;
-                            }
-
-                            if ui.selectable_label(app.selected_tex_art_cc_id == Some(id), format!("{}: {}", id, tile_name)).clicked() {
-                                app.selected_tex_art_cc_id = Some(id);
-                                app.view_mode = ViewMode::TexArtCc;
-                            }
-                        }
-                    });
-
-                    ui.collapsing("Static Tiles", |ui| {
-                        let max_id = client.art.max_id_for_source(source).max(0x4000 + 32768);
-                        for id in 0x4000..max_id {
-                            let item_id = id - 0x4000;
-                            let has_art = client.art.has_id_from_source(id, source);
-                            let has_metadata = client.tiledata.item_tiles().get(item_id as usize).is_some();
-                            if !art_row_should_show(source, has_art, has_metadata) { continue; }
-                            
-                            let tile_name = client.tiledata.item_tiles().get(item_id as usize).map(|t| t.name_ascii()).unwrap_or_default();
-                            if !app.search_query.is_empty() && !id.to_string().contains(&app.search_query) && !tile_name.to_lowercase().contains(&app.search_query.to_lowercase()) {
-                                continue;
-                            }
-
-                            if ui.selectable_label(app.selected_tex_art_cc_id == Some(id), format!("{}: {}", id, tile_name)).clicked() {
-                                app.selected_tex_art_cc_id = Some(id);
-                                app.view_mode = ViewMode::TexArtCc;
-                            }
-                        }
-                    });
+                    ui_art_group_rows(app, ui, &rows, filtered_indices.as_deref(), "Land Tiles", keyboard_moved);
+                    ui_art_group_rows(app, ui, &rows, filtered_indices.as_deref(), "Static Tiles", keyboard_moved);
                 });
             }
         });
@@ -163,6 +153,115 @@ fn art_row_should_show(source: ArtSource, has_art: bool, has_metadata: bool) -> 
     match source {
         ArtSource::CcUop | ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr => has_art,
         ArtSource::Mul | ArtSource::Any => has_art || has_metadata,
+    }
+}
+
+fn ensure_art_viewer_rows(app: &mut UopInspectorApp) {
+    let source = app.selected_legacy_source;
+    if app.art_viewer_rows_source == Some(source) && app.art_viewer_rows.is_some() {
+        return;
+    }
+
+    let rows = app
+        .client_data
+        .as_ref()
+        .map(|client| Arc::new(collect_art_viewer_rows(client, source)));
+    app.art_viewer_rows = rows;
+    app.art_viewer_rows_source = Some(source);
+}
+
+fn collect_art_viewer_rows(client: &ClientData, source: ArtSource) -> Vec<ArtViewerRow> {
+    let mut rows = Vec::new();
+
+    for id in 0..0x4000 {
+        let has_art = client.art.has_id_from_source(id, source);
+        let has_metadata = client.tiledata.land_tiles().get(id as usize).is_some();
+        if !art_row_should_show(source, has_art, has_metadata) {
+            continue;
+        }
+
+        let tile_name = client
+            .tiledata
+            .land_tiles()
+            .get(id as usize)
+            .map(|tile| tile.name_ascii())
+            .unwrap_or_default();
+        rows.push(art_viewer_row(id, "Land Tiles", tile_name));
+    }
+
+    let max_id = client.art.max_id_for_source(source).max(0x4000 + 32768);
+    for id in 0x4000..max_id {
+        let item_id = id - 0x4000;
+        let has_art = client.art.has_id_from_source(id, source);
+        let has_metadata = client.tiledata.item_tiles().get(item_id as usize).is_some();
+        if !art_row_should_show(source, has_art, has_metadata) {
+            continue;
+        }
+
+        let tile_name = client
+            .tiledata
+            .item_tiles()
+            .get(item_id as usize)
+            .map(|tile| tile.name_ascii())
+            .unwrap_or_default();
+        rows.push(art_viewer_row(id, "Static Tiles", tile_name));
+    }
+
+    rows
+}
+
+fn art_viewer_row(art_id: u32, group: &'static str, tile_name: &str) -> ArtViewerRow {
+    let label = format!("{}: {}", art_id, tile_name);
+    ArtViewerRow {
+        art_id,
+        label,
+        group,
+        search_text: format!("{} {} {}", art_id, group.to_lowercase(), tile_name.to_lowercase()),
+    }
+}
+
+fn ui_art_group_rows(
+    app: &mut UopInspectorApp,
+    ui: &mut egui::Ui,
+    rows: &[ArtViewerRow],
+    filtered_indices: Option<&[usize]>,
+    group: &'static str,
+    keyboard_moved: bool,
+) {
+    let has_rows = filtered_indices
+        .map(|indices| indices.iter().any(|index| rows[*index].group == group))
+        .unwrap_or_else(|| rows.iter().any(|row| row.group == group));
+    if !has_rows {
+        return;
+    }
+
+    ui.collapsing(group, |ui| {
+        if let Some(indices) = filtered_indices {
+            for index in indices.iter().copied().filter(|index| rows[*index].group == group) {
+                ui_art_row(app, ui, &rows[index], keyboard_moved);
+            }
+        } else {
+            for row in rows.iter().filter(|row| row.group == group) {
+                ui_art_row(app, ui, row, keyboard_moved);
+            }
+        }
+    });
+}
+
+fn ui_art_row(
+    app: &mut UopInspectorApp,
+    ui: &mut egui::Ui,
+    row: &ArtViewerRow,
+    keyboard_moved: bool,
+) {
+    let selected = app.selected_tex_art_cc_id == Some(row.art_id);
+    let response = ui.selectable_label(selected, &row.label);
+    if response.clicked() {
+        app.selected_tex_art_cc_id = Some(row.art_id);
+        app.view_mode = ViewMode::TexArtCc;
+    }
+    if keyboard_moved && selected {
+        response.scroll_to_me(Some(egui::Align::Center));
     }
 }
 
