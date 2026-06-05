@@ -3580,22 +3580,50 @@ fn apply_ec_hue_table_to_rgba(
             continue;
         }
 
-        let r5 = pixel[0] >> 3;
-        let g5 = pixel[1] >> 3;
-        let b5 = pixel[2] >> 3;
-        let color_index = match hueing_mode {
-            EcHueingMode::Cc => ((r5 as u16 + g5 as u16 + b5 as u16) / 3).min(31) as usize,
-            EcHueingMode::Ec => {
-                let intensity =
-                    ((pixel[0] as u16 + pixel[1] as u16 + pixel[2] as u16) / 3) as usize;
-                intensity * (color_count - 1) / 255
-            }
-        };
+        let source_luma = ec_hue_source_luma(pixel, hueing_mode);
+        let color_index = ec_hue_color_index(pixel, hueing_mode, color_count);
         let src = color_index * 4;
-        pixel[0] = hue_table[src];
-        pixel[1] = hue_table[src + 1];
-        pixel[2] = hue_table[src + 2];
+        apply_ec_hue_color_to_pixel(pixel, &hue_table[src..src + 4], source_luma);
         pixel[3] = alpha;
+    }
+}
+
+fn ec_hue_color_index(pixel: &[u8], hueing_mode: EcHueingMode, color_count: usize) -> usize {
+    match hueing_mode {
+        EcHueingMode::Cc => {
+            let r5 = pixel[0] >> 3;
+            let g5 = pixel[1] >> 3;
+            let b5 = pixel[2] >> 3;
+            ((r5 as u16 + g5 as u16 + b5 as u16) / 3).min(31) as usize
+        }
+        EcHueingMode::Ec => {
+            ec_hue_source_luma(pixel, hueing_mode) as usize * (color_count - 1) / 255
+        }
+    }
+}
+
+fn ec_hue_source_luma(pixel: &[u8], hueing_mode: EcHueingMode) -> u8 {
+    match hueing_mode {
+        EcHueingMode::Cc => ((pixel[0] as u16 + pixel[1] as u16 + pixel[2] as u16) / 3) as u8,
+        EcHueingMode::Ec => {
+            ((pixel[0] as u32 * 54 + pixel[1] as u32 * 182 + pixel[2] as u32 * 18 + 127) / 255)
+                as u8
+        }
+    }
+}
+
+fn apply_ec_hue_color_to_pixel(pixel: &mut [u8], hue_color: &[u8], source_luma: u8) {
+    if source_luma == 0 {
+        pixel[0] = hue_color[0];
+        pixel[1] = hue_color[1];
+        pixel[2] = hue_color[2];
+        return;
+    }
+
+    let source_luma = source_luma as u32;
+    for channel in 0..3 {
+        let value = hue_color[channel] as u32 * pixel[channel] as u32 / source_luma;
+        pixel[channel] = value.min(255) as u8;
     }
 }
 
@@ -3994,6 +4022,32 @@ mod tests {
         assert_eq!(&pixels[0..4], &[0, 1, 2, 240]);
         assert_eq!(&pixels[4..8], &[127, 128, 129, 200]);
         assert_eq!(&pixels[8..12], &[255, 255, 255, 128]);
+    }
+
+    #[test]
+    fn ec_hue_application_tints_colored_pixels_instead_of_flat_replacement() {
+        for hueing_mode in [EcHueingMode::Cc, EcHueingMode::Ec] {
+            let color_count = match hueing_mode {
+                EcHueingMode::Cc => 32,
+                EcHueingMode::Ec => 256,
+            };
+            let mut hue_table = vec![0u8; color_count * 4];
+            for color in hue_table.chunks_exact_mut(4) {
+                color.copy_from_slice(&[80, 40, 20, 255]);
+            }
+            let mut pixels = vec![
+                96, 32, 32, 240,
+                32, 96, 32, 240,
+            ];
+
+            apply_ec_hue_table_to_rgba(&mut pixels, &hue_table, hueing_mode);
+
+            assert_ne!(&pixels[0..3], &[80, 40, 20]);
+            assert_ne!(&pixels[4..7], &[80, 40, 20]);
+            assert_ne!(&pixels[0..3], &pixels[4..7]);
+            assert_eq!(pixels[3], 240);
+            assert_eq!(pixels[7], 240);
+        }
     }
 
     #[test]
