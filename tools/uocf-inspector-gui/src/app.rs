@@ -562,6 +562,21 @@ fn should_show_uop_entry(file: &uocf::uop_container::file::UopFile, hide_empty_e
     !hide_empty_entries || file.has_size()
 }
 
+pub fn guess_uop_image_format_from_payload(data: &[u8]) -> Option<(&'static str, ECImageFormat)> {
+    if data.starts_with(b"DDS ") {
+        return Some(("dds", ECImageFormat::DDS));
+    }
+
+    if data.len() >= 18 {
+        let image_type = data[2];
+        if (image_type == 2 || image_type == 10) && data[1] <= 1 {
+            return Some(("tga", ECImageFormat::TGA));
+        }
+    }
+
+    None
+}
+
 fn terrain_texture_guess_candidate(texture_id: u32, extension: &str) -> String {
     format!("build/terraintexture/{texture_id:08}.{extension}")
 }
@@ -2571,6 +2586,8 @@ impl UopInspectorApp {
             ECImageFormat::DDS
         } else if lower_name.ends_with(".tga") {
             ECImageFormat::TGA
+        } else if let Some((_, format)) = guess_uop_image_format_from_payload(data) {
+            format
         } else {
             ECImageFormat::Unknown
         };
@@ -3777,6 +3794,25 @@ mod tests {
         assert!(!should_show_uop_entry(&empty, true));
         assert!(should_show_uop_entry(&empty, false));
         assert!(should_show_uop_entry(&populated, true));
+    }
+
+    #[test]
+    fn uop_image_format_guess_uses_payload_content() {
+        let mut tga = vec![0; 18];
+        tga[2] = 2;
+        tga[12..14].copy_from_slice(&1_u16.to_le_bytes());
+        tga[14..16].copy_from_slice(&1_u16.to_le_bytes());
+        tga[16] = 32;
+
+        assert_eq!(
+            guess_uop_image_format_from_payload(b"DDS payload").map(|(extension, format)| (extension, format)),
+            Some(("dds", ECImageFormat::DDS))
+        );
+        assert_eq!(
+            guess_uop_image_format_from_payload(&tga).map(|(extension, format)| (extension, format)),
+            Some(("tga", ECImageFormat::TGA))
+        );
+        assert_eq!(guess_uop_image_format_from_payload(b"not image"), None);
     }
 
     #[test]

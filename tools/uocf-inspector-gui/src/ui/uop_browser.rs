@@ -1,5 +1,5 @@
 use eframe::egui;
-use crate::app::UopInspectorApp;
+use crate::app::{guess_uop_image_format_from_payload, UopInspectorApp};
 use super::{arrow_delta, move_selection};
 use uocf::enhanced::tileart::TileArtEntry;
 use uocf::enhanced::waypoints::{
@@ -346,8 +346,17 @@ fn ui_generic_preview(
     if let Some(data) = app.get_uop_entry_payload(uop_idx, hash) {
         let data = data.as_ref();
         let lower_name = name.to_lowercase();
-        if lower_name.ends_with(".dds") || lower_name.ends_with(".tga") || lower_name.ends_with(".bmp") {
-            if let Some(handle) = app.get_uop_texture(ctx, hash, &data, name) {
+        let guessed_image_name = app
+            .guess_terrain_texture_file_format
+            .then(|| guess_uop_image_format_from_payload(data).map(|(extension, _)| format!("{hash:016X}.{extension}")))
+            .flatten();
+        if lower_name.ends_with(".dds")
+            || lower_name.ends_with(".tga")
+            || lower_name.ends_with(".bmp")
+            || guessed_image_name.is_some()
+        {
+            let texture_name = guessed_image_name.as_deref().unwrap_or(name);
+            if let Some(handle) = app.get_uop_texture(ctx, hash, &data, texture_name) {
                 ui.label(format!("Image: {}x{}", handle.size()[0], handle.size()[1]));
                 egui::ScrollArea::both().show(ui, |ui| {
                     ui.image(&handle);
