@@ -219,10 +219,11 @@ fn pass3_subpixels(width: u32, height: u32, tags: &[Pass2Tag]) -> Vec<SubpixelTa
             let h0 = tag_at(width, height, tags, x as i32, y as i32 + 2);
             let h1 = tag_at(width, height, tags, x as i32, y as i32 + 3);
 
-            let lvl1x = e.corner[0] && (d.corner[2] || b.corner[2] || true);
-            let lvl1y = e.corner[1] && (f.corner[3] || b.corner[3] || true);
-            let lvl1z = e.corner[2] && (f.corner[0] || h.corner[0] || true);
-            let lvl1w = e.corner[3] && (d.corner[1] || h.corner[1] || true);
+            // Reference shader default: SFX_SCN=1, so level-1 corners are unfiltered.
+            let lvl1x = e.corner[0];
+            let lvl1y = e.corner[1];
+            let lvl1z = e.corner[2];
+            let lvl1w = e.corner[3];
 
             let lvl2x = [(e.corner[0] && e.horizontal[1]) && d.corner[2], (e.corner[1] && e.horizontal[0]) && f.corner[3]];
             let lvl2y = [(e.corner[1] && e.vertical[2]) && b.corner[3], (e.corner[2] && e.vertical[1]) && h.corner[0]];
