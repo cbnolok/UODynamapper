@@ -18,6 +18,12 @@ struct MobileAnimPageDetails {
     pixel_format: PagePixelFormat,
 }
 
+const MOBILE_ANIM_OVERVIEW_LEFT_WIDTH: f32 = 340.0;
+const MOBILE_ANIM_OVERVIEW_RIGHT_WIDTH: f32 = 640.0;
+const MOBILE_ANIM_OVERVIEW_GAP: f32 = 12.0;
+const MOBILE_ANIM_DETAIL_MIN_WIDTH: f32 =
+    MOBILE_ANIM_OVERVIEW_LEFT_WIDTH + MOBILE_ANIM_OVERVIEW_GAP + MOBILE_ANIM_OVERVIEW_RIGHT_WIDTH;
+
 pub fn ui_mobile_anim_cc(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
     let Some(package) = app.mobile_anim_cc_package.clone() else {
         ui.centered_and_justified(|ui| {
@@ -167,79 +173,81 @@ pub fn ui_mobile_anim_cc(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
             });
         });
 
-    let selected_animation = animations[app.selected_mobile_anim_index];
-    let frames = package.animation_frames(&selected_animation);
-    apply_pending_frame_reset(
-        app,
-        frames,
-        udd_assets::mobile_anim_cc::MISSING_PAGE_INDEX,
-        |frame| (frame.page_index, frame.width, frame.height),
-    );
+    show_mobile_anim_detail_area(ui, |ui| {
+        let selected_animation = animations[app.selected_mobile_anim_index];
+        let frames = package.animation_frames(&selected_animation);
+        apply_pending_frame_reset(
+            app,
+            frames,
+            udd_assets::mobile_anim_cc::MISSING_PAGE_INDEX,
+            |frame| (frame.page_index, frame.width, frame.height),
+        );
 
-    ui.heading("mobile_anim_cc.uddp");
-    show_mobile_anim_overview(
-        ui,
-        [
-            ("Atlas", format!("{}x{}", package.atlas_width(), package.atlas_height())),
-            ("Gutter", package.gutter().to_string()),
-            ("Packing", packing_mode_name(package.packing_mode()).to_string()),
-            ("Page formats", page_format_summary(package.pages().iter().map(|page| page.pixel_format))),
-            ("Upscale", "not stored".to_string()),
-        ],
-        [
-            ("Textures", codec_summary(&app.entries, DataType::Texture as u8)),
-            ("Metadata", codec_summary(&app.entries, DataType::Metadata as u8)),
-        ],
-        [
-            ("Pages", package.pages().len().to_string()),
-            ("Animations", package.animations().len().to_string()),
-            ("Frames", package.frames().len().to_string()),
-            ("Body maps", package.body_resolve().len().to_string()),
-            ("Body types", package.body_types().len().to_string()),
-        ],
-        package.pages().iter().map(|page| {
-            (page.atlas_width, page.atlas_height, page.frame_count)
-        }),
-    );
-    ui.separator();
+        ui.heading("mobile_anim_cc.uddp");
+        show_mobile_anim_overview(
+            ui,
+            [
+                ("Atlas", format!("{}x{}", package.atlas_width(), package.atlas_height())),
+                ("Gutter", package.gutter().to_string()),
+                ("Packing", packing_mode_name(package.packing_mode()).to_string()),
+                ("Page formats", page_format_summary(package.pages().iter().map(|page| page.pixel_format))),
+                ("Upscale", "not stored".to_string()),
+            ],
+            [
+                ("Textures", codec_summary(&app.entries, DataType::Texture as u8)),
+                ("Metadata", codec_summary(&app.entries, DataType::Metadata as u8)),
+            ],
+            [
+                ("Pages", package.pages().len().to_string()),
+                ("Animations", package.animations().len().to_string()),
+                ("Frames", package.frames().len().to_string()),
+                ("Body maps", package.body_resolve().len().to_string()),
+                ("Body types", package.body_types().len().to_string()),
+            ],
+            package.pages().iter().map(|page| {
+                (page.atlas_width, page.atlas_height, page.frame_count)
+            }),
+        );
+        ui.separator();
 
-    metadata_grid("mobile_anim_cc_selected_animation")
-        .show(ui, |ui| {
-            metadata_label(ui, "Body");
-            ui.label(selected_animation.body_id.to_string());
-            ui.end_row();
-            metadata_label(ui, "Body Type");
-            ui.label(body_type_label(package.body_type_record(selected_animation.body_id).map(|record| record.group_type)));
-            ui.end_row();
-            metadata_label(ui, "Action");
-            ui.label(selected_animation.action_id.to_string());
-            ui.end_row();
-            metadata_label(ui, "Direction");
-            ui.label(selected_animation.direction.to_string());
-            ui.end_row();
-            metadata_label(ui, "Source File");
-            ui.label(format!("anim{}", selected_animation.file_index + 1));
-            ui.end_row();
-            metadata_label(ui, "Source Index");
-            ui.label(selected_animation.source_index.to_string());
-            ui.end_row();
-            metadata_label(ui, "Flags");
-            ui.label(format!("0x{:04X}", selected_animation.flags));
-            ui.end_row();
-        });
+        metadata_grid("mobile_anim_cc_selected_animation")
+            .show(ui, |ui| {
+                metadata_label(ui, "Body");
+                ui.label(selected_animation.body_id.to_string());
+                ui.end_row();
+                metadata_label(ui, "Body Type");
+                ui.label(body_type_label(package.body_type_record(selected_animation.body_id).map(|record| record.group_type)));
+                ui.end_row();
+                metadata_label(ui, "Action");
+                ui.label(selected_animation.action_id.to_string());
+                ui.end_row();
+                metadata_label(ui, "Direction");
+                ui.label(selected_animation.direction.to_string());
+                ui.end_row();
+                metadata_label(ui, "Source File");
+                ui.label(format!("anim{}", selected_animation.file_index + 1));
+                ui.end_row();
+                metadata_label(ui, "Source Index");
+                ui.label(selected_animation.source_index.to_string());
+                ui.end_row();
+                metadata_label(ui, "Flags");
+                ui.label(format!("0x{:04X}", selected_animation.flags));
+                ui.end_row();
+            });
 
-    ui.separator();
-    if let Some(frame) = frames.get(app.selected_mobile_anim_frame_index).copied() {
-        let page_size = cc_frame_page_size(&package, frame);
-        show_frame_playback_preview_row(ui, app, |ui, app| {
+        ui.separator();
+        if let Some(frame) = frames.get(app.selected_mobile_anim_frame_index).copied() {
+            let page_size = cc_frame_page_size(&package, frame);
+            show_frame_playback_preview_row(ui, app, |ui, app| {
+                show_playback_controls(ctx, ui, app, frames.len());
+                show_cc_frame_metadata(ui, frame, page_size);
+            }, |ui, app| {
+                show_cc_frame_image(ui, ctx, app, &package, frame, page_size);
+            });
+        } else {
             show_playback_controls(ctx, ui, app, frames.len());
-            show_cc_frame_metadata(ui, frame, page_size);
-        }, |ui, app| {
-            show_cc_frame_image(ui, ctx, app, &package, frame, page_size);
-        });
-    } else {
-        show_playback_controls(ctx, ui, app, frames.len());
-    }
+        }
+    });
 }
 
 fn show_cc_body_tree(
@@ -455,73 +463,75 @@ pub fn ui_mobile_anim_ec(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
             });
         });
 
-    let selected_animation = animations[app.selected_mobile_anim_index];
-    let frames = package.animation_frames(&selected_animation);
-    apply_pending_frame_reset(
-        app,
-        frames,
-        udd_assets::mobile_anim_ec::MISSING_PAGE_INDEX,
-        |frame| (frame.page_index, frame.width, frame.height),
-    );
+    show_mobile_anim_detail_area(ui, |ui| {
+        let selected_animation = animations[app.selected_mobile_anim_index];
+        let frames = package.animation_frames(&selected_animation);
+        apply_pending_frame_reset(
+            app,
+            frames,
+            udd_assets::mobile_anim_ec::MISSING_PAGE_INDEX,
+            |frame| (frame.page_index, frame.width, frame.height),
+        );
 
-    ui.heading("mobile_anim_ec.uddp");
-    show_mobile_anim_overview(
-        ui,
-        [
-            ("Atlas", format!("{}x{}", package.atlas_width(), package.atlas_height())),
-            ("Gutter", package.gutter().to_string()),
-            ("Packing", packing_mode_name(package.packing_mode()).to_string()),
-            ("Page formats", page_format_summary(package.pages().iter().map(|page| page.pixel_format))),
-            ("Upscale", "not stored".to_string()),
-        ],
-        [
-            ("Textures", codec_summary(&app.entries, DataType::Texture as u8)),
-            ("Metadata", codec_summary(&app.entries, DataType::Metadata as u8)),
-        ],
-        [
-            ("Pages", package.pages().len().to_string()),
-            ("Animations", package.animations().len().to_string()),
-            ("Frames", package.frames().len().to_string()),
-            ("Items", package.items().len().to_string()),
-            ("Source hints", package.source_hints().len().to_string()),
-        ],
-        package.pages().iter().map(|page| {
-            (page.atlas_width, page.atlas_height, page.frame_count)
-        }),
-    );
-    ui.separator();
+        ui.heading("mobile_anim_ec.uddp");
+        show_mobile_anim_overview(
+            ui,
+            [
+                ("Atlas", format!("{}x{}", package.atlas_width(), package.atlas_height())),
+                ("Gutter", package.gutter().to_string()),
+                ("Packing", packing_mode_name(package.packing_mode()).to_string()),
+                ("Page formats", page_format_summary(package.pages().iter().map(|page| page.pixel_format))),
+                ("Upscale", "not stored".to_string()),
+            ],
+            [
+                ("Textures", codec_summary(&app.entries, DataType::Texture as u8)),
+                ("Metadata", codec_summary(&app.entries, DataType::Metadata as u8)),
+            ],
+            [
+                ("Pages", package.pages().len().to_string()),
+                ("Animations", package.animations().len().to_string()),
+                ("Frames", package.frames().len().to_string()),
+                ("Items", package.items().len().to_string()),
+                ("Source hints", package.source_hints().len().to_string()),
+            ],
+            package.pages().iter().map(|page| {
+                (page.atlas_width, page.atlas_height, page.frame_count)
+            }),
+        );
+        ui.separator();
 
-    metadata_grid("mobile_anim_ec_selected_animation")
-        .show(ui, |ui| {
-            metadata_label(ui, "Body");
-            ui.label(selected_animation.body_id.to_string());
-            ui.end_row();
-            metadata_label(ui, "Body Type");
-            ui.label(ec_body_type_label(ec_body_type_for_body(&package, selected_animation.body_id)));
-            ui.end_row();
-            metadata_label(ui, "Action");
-            ui.label(selected_animation.action_id.to_string());
-            ui.end_row();
-            metadata_label(ui, "Direction");
-            ui.label(selected_animation.direction.to_string());
-            ui.end_row();
-            metadata_label(ui, "Flags");
-            ui.label(format!("0x{:04X}", selected_animation.flags));
-            ui.end_row();
-        });
+        metadata_grid("mobile_anim_ec_selected_animation")
+            .show(ui, |ui| {
+                metadata_label(ui, "Body");
+                ui.label(selected_animation.body_id.to_string());
+                ui.end_row();
+                metadata_label(ui, "Body Type");
+                ui.label(ec_body_type_label(ec_body_type_for_body(&package, selected_animation.body_id)));
+                ui.end_row();
+                metadata_label(ui, "Action");
+                ui.label(selected_animation.action_id.to_string());
+                ui.end_row();
+                metadata_label(ui, "Direction");
+                ui.label(selected_animation.direction.to_string());
+                ui.end_row();
+                metadata_label(ui, "Flags");
+                ui.label(format!("0x{:04X}", selected_animation.flags));
+                ui.end_row();
+            });
 
-    ui.separator();
-    if let Some(frame) = frames.get(app.selected_mobile_anim_frame_index).copied() {
-        let page_size = ec_frame_page_size(&package, frame);
-        show_frame_playback_preview_row(ui, app, |ui, app| {
+        ui.separator();
+        if let Some(frame) = frames.get(app.selected_mobile_anim_frame_index).copied() {
+            let page_size = ec_frame_page_size(&package, frame);
+            show_frame_playback_preview_row(ui, app, |ui, app| {
+                show_playback_controls(ctx, ui, app, frames.len());
+                show_ec_frame_metadata(ui, frame, page_size);
+            }, |ui, app| {
+                show_ec_frame_image(ui, ctx, app, &package, frame, page_size);
+            });
+        } else {
             show_playback_controls(ctx, ui, app, frames.len());
-            show_ec_frame_metadata(ui, frame, page_size);
-        }, |ui, app| {
-            show_ec_frame_image(ui, ctx, app, &package, frame, page_size);
-        });
-    } else {
-        show_playback_controls(ctx, ui, app, frames.len());
-    }
+        }
+    });
 }
 
 fn show_ec_body_tree(
@@ -938,6 +948,15 @@ fn ec_body_type_label(body_type: Option<i16>) -> String {
     }
 }
 
+fn show_mobile_anim_detail_area(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) {
+    egui::ScrollArea::both()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.set_min_width(MOBILE_ANIM_DETAIL_MIN_WIDTH);
+            content(ui);
+        });
+}
+
 fn show_mobile_anim_overview(
     ui: &mut egui::Ui,
     atlas_rows: impl IntoIterator<Item = (&'static str, String)>,
@@ -947,28 +966,33 @@ fn show_mobile_anim_overview(
 ) {
     let page_buckets = page_bucket_rows(pages);
     ui.vertical(|ui| {
-        ui.columns(2, |columns| {
+        ui.horizontal(|ui| {
             show_metadata_section(
-                &mut columns[0],
+                ui,
                 "mobile_anim_overview_atlas",
                 "Atlas",
                 atlas_rows,
+                MOBILE_ANIM_OVERVIEW_LEFT_WIDTH,
             );
+            ui.add_space(MOBILE_ANIM_OVERVIEW_GAP);
             show_metadata_section(
-                &mut columns[1],
+                ui,
                 "mobile_anim_overview_storage",
                 "Storage",
                 storage_rows,
+                MOBILE_ANIM_OVERVIEW_RIGHT_WIDTH,
             );
         });
-        ui.columns(2, |columns| {
+        ui.horizontal(|ui| {
             show_metadata_section(
-                &mut columns[0],
+                ui,
                 "mobile_anim_overview_content",
                 "Content",
                 content_rows,
+                MOBILE_ANIM_OVERVIEW_LEFT_WIDTH,
             );
-            show_page_bucket_section(&mut columns[1], &page_buckets);
+            ui.add_space(MOBILE_ANIM_OVERVIEW_GAP);
+            show_page_bucket_section(ui, &page_buckets, MOBILE_ANIM_OVERVIEW_RIGHT_WIDTH);
         });
     });
 }
@@ -978,9 +1002,11 @@ fn show_metadata_section(
     id: &'static str,
     title: &'static str,
     rows: impl IntoIterator<Item = (&'static str, String)>,
+    width: f32,
 ) {
     ui.group(|ui| {
-        ui.set_width(ui.available_width());
+        ui.set_min_width(width);
+        ui.set_max_width(width);
         ui.strong(title);
         ui.add_space(4.0);
         metadata_grid(id)
@@ -994,9 +1020,10 @@ fn show_metadata_section(
     });
 }
 
-fn show_page_bucket_section(ui: &mut egui::Ui, rows: &[(String, String)]) {
+fn show_page_bucket_section(ui: &mut egui::Ui, rows: &[(String, String)], width: f32) {
     ui.group(|ui| {
-        ui.set_width(ui.available_width());
+        ui.set_min_width(width);
+        ui.set_max_width(width);
         ui.strong("Page Buckets");
         ui.add_space(4.0);
         if rows.is_empty() {
