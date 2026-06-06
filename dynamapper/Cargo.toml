@@ -8,6 +8,8 @@ edition = "2024"
 [lints.clippy]
 collapsible_if = "allow"
 empty_line_after_doc_comments = "allow"
+items_after_test_module = "allow"
+let_unit_value = "allow"
 manual_div_ceil = "allow"
 manual_is_multiple_of = "allow"
 needless_lifetimes = "allow"

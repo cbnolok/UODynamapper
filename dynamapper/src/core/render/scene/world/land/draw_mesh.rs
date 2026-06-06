@@ -347,7 +347,7 @@ pub fn sys_draw_spawned_land_chunks(
     let now = frame_pacing
         .time
         .last_update()
-        .unwrap_or_else(|| Instant::now());
+        .unwrap_or_else(Instant::now);
     let current_map_id = scene_state_data_r.map_id;
 
     // ── Initialize background loader thread (once) ─────────────────────
@@ -918,10 +918,9 @@ pub fn sys_draw_spawned_land_chunks(
                             };
 
                             let mut texels_local = [Rg16u::zeroed(); MAP_STORAGE_BLOCK_TILE_TOTAL];
-                            let mut texel_count = 0;
                             let mut has_fallback = false;
 
-                            for cell in &block.cells {
+                            for (texel_count, cell) in block.cells.iter().enumerate() {
                                 let packed = lookup_slice[cell.id as usize];
                                 // ids were pre-populated, this should never be u32::MAX theoretically.
                                 debug_assert!(
@@ -949,7 +948,6 @@ pub fn sys_draw_spawned_land_chunks(
                                     is_wet,
                                     land_flags,
                                 );
-                                texel_count += 1;
                             }
 
                             sub_chunks.push(PackedChunk {

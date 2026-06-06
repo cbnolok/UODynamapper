@@ -172,10 +172,9 @@ pub fn get_texmap_size_only(
         return size;
     }
 
-    let err_size = texmap_2d_res
+    texmap_2d_res
         .get_texture_size(DEFAULT_ERROR_TEXTURE_ID as u32)
-        .unwrap();
-    err_size
+        .unwrap()
 }
 
 pub fn get_texmap_raw_data(

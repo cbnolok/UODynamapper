@@ -462,7 +462,7 @@ fn sys_evict_idle_land_cache(
     mut tile_atlas: ResMut<crate::core::render::scene::world::land::tile_atlas::TileAtlas>,
     time: Res<Time<Real>>,
 ) {
-    let now = time.last_update().unwrap_or_else(|| Instant::now());
+    let now = time.last_update().unwrap_or_else(Instant::now);
     if !cache_r.preloads_full_collection() {
         // 1. Evict idle GPU layers from the Texture Array cache (VRAM/LRU management)
         let evicted_gpu_layers = cache_r.evict_idle_textures(now);
@@ -832,7 +832,7 @@ fn sys_apply_texture_array_expansion(
     _settings: Res<crate::configs::settings::Settings>,
     time: Res<Time<Real>>,
 ) {
-    let now = time.last_update().unwrap_or_else(|| Instant::now());
+    let now = time.last_update().unwrap_or_else(Instant::now);
 
     let (small_req, big_req) = cache_r.take_resize_requests();
     if small_req.is_none() && big_req.is_none() {

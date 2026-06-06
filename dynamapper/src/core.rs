@@ -184,7 +184,7 @@ fn custom_render_plugin_settings() -> bevy::render::RenderPlugin {
 fn file_watcher_fix_suggestion() -> &'static str {
     #[cfg(target_os = "linux")]
     {
-        return "Linux fix: increase the inotify max_user_instances limit with: su -c \"echo 256 > /proc/sys/fs/inotify/max_user_instances\"";
+        "Linux fix: increase the inotify max_user_instances limit with: su -c \"echo 256 > /proc/sys/fs/inotify/max_user_instances\""
     }
 
     #[cfg(target_os = "macos")]

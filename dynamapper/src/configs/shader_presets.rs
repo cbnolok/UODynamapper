@@ -288,16 +288,16 @@ mod tests {
     use super::*;
 
     fn slot(mode: u32, global_lighting: f32, exposure: f32) -> LandMaterialUniformsPresets {
-        let mut effects = LandEffectsUniform::default();
-        effects.shading_mode = mode;
-
-        let mut lighting = GlobalLightingUniforms::default();
-        lighting.exposure = exposure;
-
         LandMaterialUniformsPresets {
             global_lighting,
-            effects,
-            lighting,
+            effects: LandEffectsUniform {
+                shading_mode: mode,
+                ..Default::default()
+            },
+            lighting: GlobalLightingUniforms {
+                exposure,
+                ..Default::default()
+            },
             land_lighting: LandLightingUniforms::default(),
         }
     }

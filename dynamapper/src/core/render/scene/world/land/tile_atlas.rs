@@ -258,7 +258,7 @@ impl TileAtlas {
             // more headroom, then evict the LRU page for this frame.
             if self.params.max_layers < self.max_layers_limit {
                 let target = (self.params.max_layers * 2).min(self.max_layers_limit);
-                if self.requested_expansion.map_or(true, |r| target > r) {
+                if self.requested_expansion.is_none_or(|r| target > r) {
                     self.requested_expansion = Some(target);
                 }
             }

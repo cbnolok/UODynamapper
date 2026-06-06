@@ -1087,7 +1087,7 @@ pub fn sys_sync_static_sprite_entities(
             .iter()
             .any(|desired| desired.key == batch.key)
         {
-            let _ = commands.entity(entity).despawn();
+            commands.entity(entity).despawn();
         }
     }
 
@@ -1152,7 +1152,7 @@ pub fn sys_sync_static_sprite_shadow_entities(
             .iter()
             .any(|desired| desired.key == batch.key)
         {
-            let _ = commands.entity(entity).despawn();
+            commands.entity(entity).despawn();
         }
     }
 }
@@ -1207,7 +1207,7 @@ pub fn sys_sync_static_sprite_transparent_entities(
             .iter()
             .any(|desired| desired.key == batch.key)
         {
-            let _ = commands.entity(entity).despawn();
+            commands.entity(entity).despawn();
         }
     }
 
@@ -1267,7 +1267,7 @@ pub fn sys_sync_static_ground_entities(
             .iter()
             .any(|desired| desired.key == batch.key)
         {
-            let _ = commands.entity(entity).despawn();
+            commands.entity(entity).despawn();
         }
     }
 
@@ -1334,7 +1334,7 @@ pub fn sys_sync_static_ground_transparent_entities(
             .iter()
             .any(|desired| desired.key == batch.key)
         {
-            let _ = commands.entity(entity).despawn();
+            commands.entity(entity).despawn();
         }
     }
 
@@ -1499,7 +1499,7 @@ pub fn sys_update_art_materials(
     let lighting_meaningfully_changed =
         (current_global_lighting - *last_global_lighting).abs() > 0.01;
     let zoom_changed = (current_render_zoom - *last_render_zoom).abs() > 0.1;
-    let uniforms_changed = last_uniform_snapshot.map_or(true, |snapshot| {
+    let uniforms_changed = last_uniform_snapshot.is_none_or(|snapshot| {
         snapshot.effects != current_uniform_snapshot.effects
             || snapshot.lighting != current_uniform_snapshot.lighting
             || (snapshot.global_lighting - current_uniform_snapshot.global_lighting).abs()

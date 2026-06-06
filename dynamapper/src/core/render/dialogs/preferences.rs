@@ -321,10 +321,7 @@ pub fn sys_render_preferences_dialog(
                         }
                     };
 
-                    let limiter_enabled = match framepace.limiter {
-                        Limiter::Off => false,
-                        _ => true,
-                    };
+                    let limiter_enabled = !matches!(framepace.limiter, Limiter::Off);
 
                     if state.frame_limit_enabled != limiter_enabled || fps_changed {
                         framepace.limiter = if state.frame_limit_enabled {

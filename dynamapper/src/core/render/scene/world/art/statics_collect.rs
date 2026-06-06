@@ -21,7 +21,7 @@ use bytemuck::{Pod, Zeroable};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 const CLASSIC_STATIC_ART_ID_OFFSET: u16 = 0x4000;
-const ISO_TILE_SCREEN_DIAGONAL_WORLD_UNITS: f32 = 1.41421356237;
+const ISO_TILE_SCREEN_DIAGONAL_WORLD_UNITS: f32 = std::f32::consts::SQRT_2;
 const CC_TILE_PIXEL_WIDTH: f32 = 44.0;
 const EC_TILE_PIXEL_WIDTH: f32 = 64.0;
 const STATIC_WORLD_Y_PER_XZ_PIXEL: f32 = 7.5 * 0.1;
@@ -37,7 +37,8 @@ const CLASSIC_WATER_LAND_TILE_ID: u32 = 168;
 const EC_WATER_BASE_LAYER_INDEX: u32 = 0;
 const STATIC_CHUNK_CACHE_HYSTERESIS_TICKS: u64 = 30;
 const UNRESOLVED_SURFACE_LIKE_SAMPLE_LIMIT: usize = 8;
-const STATIC_BILLBOARD_RIGHT_XZ: Vec2 = Vec2::new(0.70710677, -0.70710677);
+const STATIC_BILLBOARD_RIGHT_XZ: Vec2 =
+    Vec2::new(std::f32::consts::FRAC_1_SQRT_2, -std::f32::consts::FRAC_1_SQRT_2);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct StaticBillboardBounds {
@@ -113,8 +114,8 @@ fn surface_like_static_world_anchor(
     world_z: f32,
 ) -> (f32, f32) {
     match visual_kind {
-        StaticVisualKind::TexLandEcArt { .. } => (world_x, world_z),
-        StaticVisualKind::CcRegularArt { .. } | StaticVisualKind::EcRegularArt { .. } => {
+        StaticVisualKind::TexLandEc { .. } => (world_x, world_z),
+        StaticVisualKind::CcRegular { .. } | StaticVisualKind::EcRegular { .. } => {
             apply_static_world_anchor_translation(world_x, world_z)
         }
     }
@@ -122,9 +123,9 @@ fn surface_like_static_world_anchor(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StaticVisualKind {
-    CcRegularArt { art_id: u16, fallback_art_id: u16 },
-    EcRegularArt { art_id: u32 },
-    TexLandEcArt { art_id: u32 },
+    CcRegular { art_id: u16, fallback_art_id: u16 },
+    EcRegular { art_id: u32 },
+    TexLandEc { art_id: u32 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -400,16 +401,12 @@ fn resolve_surface_like_tex_land_ec_slot_id(
     tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
     tex_land_ec: Option<&udd_assets::tex_land_ec::TexLandEcPackage>,
 ) -> Option<SurfaceLikeTexLandEcResolution> {
-    let Some(meta) = tilemeta else {
-        return None;
-    };
+    let meta = tilemeta?;
     if !static_tile_uses_tex_land_ec_surface_path(tilemeta) {
         return None;
     }
 
-    let Some(package) = tex_land_ec else {
-        return None;
-    };
+    let package = tex_land_ec?;
 
     let main_ec_texture_id = tilemeta_package
         .and_then(|package| surface_like_visible_ec_texture_ref(tile_id, meta, package))
@@ -634,7 +631,7 @@ fn resolve_static_visual_kind(
             let fallback_texture_id = tilemeta
                 .map(|meta| meta.cc_texture_id as u16)
                 .unwrap_or(tile_graphic);
-            StaticVisualKind::CcRegularArt {
+            StaticVisualKind::CcRegular {
                 art_id: tile_graphic.saturating_add(CLASSIC_STATIC_ART_ID_OFFSET),
                 fallback_art_id: fallback_texture_id.saturating_add(CLASSIC_STATIC_ART_ID_OFFSET),
             }
@@ -655,19 +652,15 @@ fn resolve_static_visual_kind(
 
 fn resolve_ec_static_visual_kind(
     tile_graphic: u16,
-    has_tex_art_ec_slot: bool,
+    _has_tex_art_ec_slot: bool,
     has_surface_like_land_slot: bool,
 ) -> StaticVisualKind {
     if has_surface_like_land_slot {
-        StaticVisualKind::TexLandEcArt {
-            art_id: tile_graphic as u32,
-        }
-    } else if has_tex_art_ec_slot {
-        StaticVisualKind::EcRegularArt {
+        StaticVisualKind::TexLandEc {
             art_id: tile_graphic as u32,
         }
     } else {
-        StaticVisualKind::EcRegularArt {
+        StaticVisualKind::EcRegular {
             art_id: tile_graphic as u32,
         }
     }
@@ -1472,7 +1465,7 @@ pub fn sys_collect_visible_statics(
                             );
 
                             let bias =
-                                if matches!(visual_kind, StaticVisualKind::TexLandEcArt { .. }) {
+                                if matches!(visual_kind, StaticVisualKind::TexLandEc { .. }) {
                                     GROUND_ART_Y_BIAS
                                 } else {
                                     depth_class_y_bias(depth_class)
@@ -1487,7 +1480,7 @@ pub fn sys_collect_visible_statics(
                                 texture_stretch,
                             ) =
                                 match visual_kind {
-                                    StaticVisualKind::CcRegularArt {
+                                    StaticVisualKind::CcRegular {
                                         art_id,
                                         fallback_art_id,
                                     } => {
@@ -1518,7 +1511,7 @@ pub fn sys_collect_visible_statics(
                                             0.0,
                                         )
                                     }
-                                    StaticVisualKind::TexLandEcArt { .. } => {
+                                    StaticVisualKind::TexLandEc { .. } => {
                                         let Some(tex_land_ec) =
                                             tex_land_ec_res.as_ref().map(|x| &x.0)
                                         else {
@@ -1557,7 +1550,7 @@ pub fn sys_collect_visible_statics(
                                             resolution.texture_repetition,
                                         )
                                     }
-                                    StaticVisualKind::EcRegularArt { art_id } => {
+                                    StaticVisualKind::EcRegular { art_id } => {
                                         let Some(tex_art_ec) =
                                             tex_art_ec_res.as_ref().map(|x| &x.0)
                                         else {
@@ -1581,7 +1574,7 @@ pub fn sys_collect_visible_statics(
 
                             if let Some(resolved) = resolved_sprite {
                                 chunk_stats.atlas_hits += 1;
-                                if matches!(visual_kind, StaticVisualKind::TexLandEcArt { .. }) {
+                                if matches!(visual_kind, StaticVisualKind::TexLandEc { .. }) {
                                     chunk_stats.ground_land_tiles += 1;
                                     let bounds = resolve_surface_like_ground_quad_bounds();
                                     let local_light_rgba = static_ground_local_light_rgba(
@@ -1871,7 +1864,7 @@ mod tests {
     #[test]
     fn surface_like_land_art_keeps_raw_world_anchor() {
         let anchor = surface_like_static_world_anchor(
-            StaticVisualKind::TexLandEcArt { art_id: 42 },
+            StaticVisualKind::TexLandEc { art_id: 42 },
             10.0,
             20.0,
         );
@@ -1883,7 +1876,7 @@ mod tests {
     #[test]
     fn regular_static_art_keeps_sprite_world_anchor() {
         let anchor = surface_like_static_world_anchor(
-            StaticVisualKind::CcRegularArt {
+            StaticVisualKind::CcRegular {
                 art_id: 42,
                 fallback_art_id: 42,
             },
@@ -1908,7 +1901,7 @@ mod tests {
 
         assert_eq!(
             visual_kind,
-            StaticVisualKind::CcRegularArt {
+            StaticVisualKind::CcRegular {
                 art_id: 0x4007,
                 fallback_art_id: 0x4063,
             }
@@ -1993,7 +1986,7 @@ mod tests {
     fn surface_like_ec_tiles_prefer_land_path_over_direct_art_slot() {
         let visual_kind = resolve_ec_static_visual_kind(196, true, true);
 
-        assert_eq!(visual_kind, StaticVisualKind::TexLandEcArt { art_id: 196 },);
+        assert_eq!(visual_kind, StaticVisualKind::TexLandEc { art_id: 196 },);
     }
 
     #[test]
@@ -2049,7 +2042,7 @@ mod tests {
     fn non_surface_like_ec_tiles_stay_on_regular_art_path() {
         let visual_kind = resolve_ec_static_visual_kind(196, true, false);
 
-        assert_eq!(visual_kind, StaticVisualKind::EcRegularArt { art_id: 196 },);
+        assert_eq!(visual_kind, StaticVisualKind::EcRegular { art_id: 196 },);
     }
 
     #[test]

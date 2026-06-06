@@ -274,7 +274,7 @@ pub fn sys_sync_static_light_entities(
 ) {
     let Some(world_lights) = world_lights_res else {
         for (entity, _) in existing_q.iter() {
-            let _ = commands.entity(entity).despawn();
+            commands.entity(entity).despawn();
         }
         return;
     };
@@ -345,7 +345,7 @@ pub fn sys_sync_static_light_entities(
 
     for (entity, key) in existing_q.iter() {
         if !desired_keys.contains(key) {
-            let _ = commands.entity(entity).despawn();
+            commands.entity(entity).despawn();
         }
     }
 }

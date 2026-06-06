@@ -32,20 +32,15 @@ use uocf::classic::map::{MapCell, MapCellCoords};
 
 const FONT_SIZE: f32 = 13.0;
 const CLASSIC_STATIC_ART_ID_OFFSET: u16 = 0x4000;
-const INV_SQRT_2: f32 = 0.70710678118;
+const INV_SQRT_2: f32 = std::f32::consts::FRAC_1_SQRT_2;
 const BILLBOARD_RIGHT_XZ: Vec2 = Vec2::new(INV_SQRT_2, -INV_SQRT_2);
 const HOVERED_STATIC_HIGHLIGHT_Y_LIFT: f32 = 0.01;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CursorMode {
+    #[default]
     Select,
     Teleport,
-}
-
-impl Default for CursorMode {
-    fn default() -> Self {
-        CursorMode::Select
-    }
 }
 
 #[derive(Resource, Default)]
@@ -762,7 +757,7 @@ fn hovered_static_match(
     let world_x = block_x as f32 * 8.0 + local_x;
     let world_z = block_y as f32 * 8.0 + local_y;
     let world_y = tile.z as f32 * 0.1 + depth_class_y_bias(depth_class);
-    let (kind, corners) = match resolve_hovered_static_geometry(
+    let (kind, corners) = resolve_hovered_static_geometry(
         settings,
         tex_art_cc_res,
         tex_art_ec_res,
@@ -773,10 +768,7 @@ fn hovered_static_match(
         world_x,
         world_y,
         world_z,
-    ) {
-        Some(value) => value,
-        None => return None,
-    };
+    )?;
 
     if !screen_polygon_contains(cursor_pos, camera, camera_tf, &corners) {
         return None;
@@ -848,12 +840,12 @@ fn resolve_hovered_static_geometry(
             let world_z = world_z + 1.5;
             if let Some(runtime_slot_id) = resolve_overlay_tex_land_ec_runtime_slot(
                 graphic as u32,
-                tilemeta_res.map(|package| &*package.0),
+                tilemeta_res.map(|package| package.0.as_ref()),
                 tilemeta,
-                tex_land_ec_res.map(|package| &*package.0),
+                tex_land_ec_res.map(|package| package.0.as_ref()),
             ) {
                 if tex_land_ec_res
-                    .and_then(|package| (&*package.0).present_slot(runtime_slot_id))
+                    .and_then(|package| package.0.present_slot(runtime_slot_id))
                     .is_some()
                 {
                     let bounds = resolve_surface_like_ground_quad_bounds();
@@ -974,16 +966,12 @@ fn resolve_overlay_tex_land_ec_runtime_slot(
     tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
     tex_land_ec: Option<&udd_assets::tex_land_ec::TexLandEcPackage>,
 ) -> Option<u32> {
-    let Some(meta) = tilemeta else {
-        return None;
-    };
+    let meta = tilemeta?;
     if !static_tile_is_surface_like(tilemeta) {
         return None;
     }
 
-    let Some(package) = tex_land_ec else {
-        return None;
-    };
+    let package = tex_land_ec?;
 
     let Some(main_ec_texture_id) = tilemeta_package
         .and_then(|package| package.main_ec_texture_id(tile_id))
@@ -1135,7 +1123,7 @@ fn describe_static_tiles(
         return "statics: none".to_string();
     }
 
-    matches.sort_unstable_by(|left, right| right.z.cmp(&left.z));
+    matches.sort_unstable_by_key(|tile| std::cmp::Reverse(tile.z));
 
     let summary = matches
         .iter()
@@ -1187,12 +1175,12 @@ fn describe_static_tile_details(
     let tex_art_ec_slot = tex_art_ec_res.and_then(|package| package.0.present_slot(graphic as u32));
     let tex_land_ec_runtime_slot = resolve_overlay_tex_land_ec_runtime_slot(
         graphic as u32,
-        tilemeta_res.map(|meta_package| &*meta_package.0),
+        tilemeta_res.map(|meta_package| meta_package.0.as_ref()),
         meta,
-        tex_land_ec_res.map(|res| &*res.0),
+        tex_land_ec_res.map(|res| res.0.as_ref()),
     );
     let tex_land_ec_slot = tex_land_ec_runtime_slot
-        .and_then(|slot_id| tex_land_ec_res.and_then(|package| (&*package.0).present_slot(slot_id)));
+        .and_then(|slot_id| tex_land_ec_res.and_then(|package| package.0.present_slot(slot_id)));
     let live_decision = match settings.graphics.art_texture_source {
         crate::configs::settings::ClientTextureSource::Cc => {
             format!(

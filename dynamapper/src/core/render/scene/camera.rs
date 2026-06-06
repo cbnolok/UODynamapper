@@ -407,12 +407,10 @@ fn sys_update_camera_projection_to_view(
                 projection_changed = true;
             }
         }
-        Projection::Perspective(ref mut persp) => {
-            if (persp.fov - 0.25).abs() > f32::EPSILON {
-                persp.fov = 0.25;
-                persp.far = 20000.0;
-                projection_changed = true;
-            }
+        Projection::Perspective(ref mut persp) if (persp.fov - 0.25).abs() > f32::EPSILON => {
+            persp.fov = 0.25;
+            persp.far = 20000.0;
+            projection_changed = true;
         }
         _ => {}
     }

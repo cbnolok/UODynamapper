@@ -404,7 +404,7 @@ impl LandTextureCache {
         let texture_size = if let Some((size, _, _)) = &package_source {
             *size
         } else {
-            texture_array::get_texmap_size_only(texture_id, &texmap_2d)
+            texture_array::get_texmap_size_only(texture_id, texmap_2d)
         };
 
         let Some(layer) = self.allocate_layer(texture_size) else {
@@ -664,14 +664,12 @@ impl LandTextureCache {
             // Rebuild the free list from layers not occupied by surviving entries.
             // Using a bitmask instead of HashSet for higher performance and less allocation.
             let mut occupied_bitset = vec![0u64; (new_layers as usize >> 6) + 1];
-            for entry in &self.entry_by_id {
-                if let Some((s, e)) = entry {
-                    if *s == size {
-                        let word = e.layer as usize >> 6;
-                        let bit = e.layer as usize & 63;
-                        if word < occupied_bitset.len() {
-                            occupied_bitset[word] |= 1 << bit;
-                        }
+            for (s, e) in self.entry_by_id.iter().flatten() {
+                if *s == size {
+                    let word = e.layer as usize >> 6;
+                    let bit = e.layer as usize & 63;
+                    if word < occupied_bitset.len() {
+                        occupied_bitset[word] |= 1 << bit;
                     }
                 }
             }

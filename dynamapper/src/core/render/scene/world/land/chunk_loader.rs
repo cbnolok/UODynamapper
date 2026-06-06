@@ -92,6 +92,12 @@ impl ChunkLoaderThread {
     }
 }
 
+impl Default for ChunkLoaderThread {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Thread entry-point
 // ---------------------------------------------------------------------------
