@@ -637,11 +637,13 @@ fn ui_gump_id_list(
         .show_rows(ui, row_height, ids.len(), |ui, range| {
             for index in range {
                 let gump_id = ids[index];
-                let response = ui
-                    .selectable_label(
+                let response = ui.add_sized(
+                    egui::vec2(ui.available_width(), row_height),
+                    egui::SelectableLabel::new(
                         selected_id == Some(gump_id),
                         format!("{gump_id:>5}  0x{gump_id:04X}"),
-                    );
+                    ),
+                );
                 if keyboard_moved && selected == Some(gump_id) {
                     response.scroll_to_me(None);
                 }
