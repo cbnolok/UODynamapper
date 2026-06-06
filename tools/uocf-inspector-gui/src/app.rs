@@ -1966,17 +1966,16 @@ impl UopInspectorApp {
             for uop_name in ["artlegacymul.uop", "artLegacyMUL.uop"] {
                 let uop_path = path.join(uop_name);
                 if uop_path.exists() {
-                    self.log(format!("Loading {} into cache", uop_name));
                     match UopPackage::load(&uop_path) {
                         Ok(package) => {
                             self.uop_cache.loaded_uops.push(Arc::new(crate::logic::uop_cache::LoadedUop {
                                 path: uop_path,
                                 package,
                             }));
-                            self.log(format!("Successfully loaded {}", uop_name));
+                            self.log(format!("Loading {} into cache... Success", uop_name));
                         }
                         Err(e) => {
-                            self.log(format!("Failed to load {}: {}", uop_name, e));
+                            self.log(format!("Loading {} into cache... Failed: {}", uop_name, e));
                         }
                     }
                     break;
@@ -1997,10 +1996,12 @@ impl UopInspectorApp {
                         }
                         Err(e) => self.log(format!("Failed to parse {}: {}", uop_name, e)),
                     }
-                    self.log(format!("Loading {} into cache", uop_name));
                     match UopPackage::load(&uop_path) {
-                        Ok(package) => self.uop_cache.add(uop_path, package),
-                        Err(e) => self.log(format!("Failed to load {}: {}", uop_name, e)),
+                        Ok(package) => {
+                            self.uop_cache.add(uop_path, package);
+                            self.log(format!("Loading {} into cache... Success", uop_name));
+                        }
+                        Err(e) => self.log(format!("Loading {} into cache... Failed: {}", uop_name, e)),
                     }
                     break;
                 }
@@ -2191,28 +2192,16 @@ impl UopInspectorApp {
                     } else {
                         LoadMode::Eager
                     };
-                    let coalesce_cache_log = uop_name.eq_ignore_ascii_case("string_dictionary.uop");
-                    if !coalesce_cache_log {
-                        self.log(format!("Loading {} into cache", uop_name));
-                    }
                     match UopPackage::load_with_mode(&uop_path, load_mode) {
                         Ok(package) => {
                             self.uop_cache.loaded_uops.push(Arc::new(crate::logic::uop_cache::LoadedUop {
                                 path: uop_path,
                                 package,
                             }));
-                            if coalesce_cache_log {
-                                self.log(format!("Loading {} into cache... Success", uop_name));
-                            } else {
-                                self.log(format!("Successfully loaded {}", uop_name));
-                            }
+                            self.log(format!("Loading {} into cache... Success", uop_name));
                         }
                         Err(e) => {
-                            if coalesce_cache_log {
-                                self.log(format!("Loading {} into cache... Failed: {}", uop_name, e));
-                            } else {
-                                self.log(format!("Failed to load {}: {}", uop_name, e));
-                            }
+                            self.log(format!("Loading {} into cache... Failed: {}", uop_name, e));
                         }
                     }
                 }
