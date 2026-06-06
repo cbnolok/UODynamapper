@@ -5,6 +5,15 @@ edition = "2024"
 #resolver = "3"
 autobins = false
 
+[lints.clippy]
+collapsible_if = "allow"
+empty_line_after_doc_comment = "allow"
+manual_div_ceil = "allow"
+manual_is_multiple_of = "allow"
+needless_lifetimes = "allow"
+nonminimal_bool = "allow"
+too_many_arguments = "allow"
+
 [dependencies]
 clap = { version = "4.6.1", features = ["derive"] }
 color-eyre = "0.6.5"

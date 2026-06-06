@@ -5,7 +5,17 @@
 //! point so deeper SIMD work can move into the analytical core without changing
 //! callers again.
 
-use super::analytical::{pack_bc7_rgb, pack_bc7_rgba, Pixel};
+#![allow(
+    clippy::manual_swap,
+    clippy::too_many_arguments,
+    clippy::manual_is_multiple_of,
+    clippy::manual_range_contains,
+    clippy::unnecessary_cast,
+    clippy::needless_range_loop,
+    clippy::explicit_counter_loop
+)]
+
+use super::analytical::{Pixel, pack_bc7_rgb, pack_bc7_rgba};
 use rayon::prelude::*;
 
 const PARALLEL_BLOCK_THRESHOLD: usize = 256;
@@ -35,7 +45,9 @@ pub fn pack_bc7_rgba_blocks_wide(
                 let first_block_index = chunk_index * PROGRESS_BLOCK_BATCH;
                 for (local_block_index, block) in chunk.chunks_exact_mut(16).enumerate() {
                     pack_one_block(
-                        block.try_into().expect("BC7 block buffer is allocated in 16-byte blocks"),
+                        block
+                            .try_into()
+                            .expect("BC7 block buffer is allocated in 16-byte blocks"),
                         rgba_pixels,
                         width,
                         height,
@@ -49,7 +61,9 @@ pub fn pack_bc7_rgba_blocks_wide(
     } else {
         for (block_index, block) in blocks.chunks_exact_mut(16).enumerate() {
             pack_one_block(
-                block.try_into().expect("BC7 block buffer is allocated in 16-byte blocks"),
+                block
+                    .try_into()
+                    .expect("BC7 block buffer is allocated in 16-byte blocks"),
                 rgba_pixels,
                 width,
                 height,
@@ -89,7 +103,9 @@ pub fn pack_bc7_rgba_blocks_wide_with_progress<F>(
                 let first_block_index = chunk_index * PROGRESS_BLOCK_BATCH;
                 for (local_block_index, block) in chunk.chunks_exact_mut(16).enumerate() {
                     pack_one_block(
-                        block.try_into().expect("BC7 block buffer is allocated in 16-byte blocks"),
+                        block
+                            .try_into()
+                            .expect("BC7 block buffer is allocated in 16-byte blocks"),
                         rgba_pixels,
                         width,
                         height,
@@ -104,7 +120,9 @@ pub fn pack_bc7_rgba_blocks_wide_with_progress<F>(
     } else {
         for (block_index, block) in blocks.chunks_exact_mut(16).enumerate() {
             pack_one_block(
-                block.try_into().expect("BC7 block buffer is allocated in 16-byte blocks"),
+                block
+                    .try_into()
+                    .expect("BC7 block buffer is allocated in 16-byte blocks"),
                 rgba_pixels,
                 width,
                 height,

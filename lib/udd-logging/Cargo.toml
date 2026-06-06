@@ -4,6 +4,15 @@ version = "0.1.0"
 edition = "2024"
 #resolver = "3"
 
+[lints.clippy]
+collapsible_if = "allow"
+empty_line_after_doc_comment = "allow"
+manual_div_ceil = "allow"
+manual_is_multiple_of = "allow"
+needless_lifetimes = "allow"
+nonminimal_bool = "allow"
+too_many_arguments = "allow"
+
 [dependencies]
 env_filter = "1.0.1"
 log = "0.4.29"

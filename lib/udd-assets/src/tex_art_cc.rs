@@ -145,7 +145,7 @@ pub fn upscale_algorithm_name(code: u16) -> &'static str {
         13 => "Hq",
         14 => "HqTrue",
         15 => "Epx",
-        16 => "Xbr",
+        16 => "Xbrz",
         17 => "Mmpx",
         18 => "SuperXbr",
         19 => "Cut1",

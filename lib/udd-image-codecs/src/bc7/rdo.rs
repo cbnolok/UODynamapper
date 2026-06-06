@@ -1,6 +1,16 @@
+#![allow(
+    clippy::manual_swap,
+    clippy::too_many_arguments,
+    clippy::manual_is_multiple_of,
+    clippy::manual_range_contains,
+    clippy::unnecessary_cast,
+    clippy::needless_range_loop,
+    clippy::explicit_counter_loop
+)]
+
 use super::tables::{
-    BC7_ANCHOR_SECOND_SUBSET, BC7_ANCHOR_THIRD_SUBSET1, BC7_ANCHOR_THIRD_SUBSET2,
-    BC7_PARTITION2, BC7_PARTITION3,
+    BC7_ANCHOR_SECOND_SUBSET, BC7_ANCHOR_THIRD_SUBSET1, BC7_ANCHOR_THIRD_SUBSET2, BC7_PARTITION2,
+    BC7_PARTITION3,
 };
 use rayon::prelude::*;
 use std::cmp::max;
@@ -103,10 +113,13 @@ const fn mode1_pixel_descs() -> [[u16; 16]; 64] {
         let mut pixel = 0usize;
         while pixel < 16 {
             let subset = BC7_PARTITION2[partition_id * 16 + pixel] as u16;
-            let weight_bits = if pixel == 0 || pixel == anchor { 2usize } else { 3usize };
+            let weight_bits = if pixel == 0 || pixel == anchor {
+                2usize
+            } else {
+                3usize
+            };
             let weight_mask = if weight_bits == 2 { 0x03u16 } else { 0x07u16 };
-            descs[partition_id][pixel] =
-                subset | ((bit_ofs as u16) << 1) | (weight_mask << 8);
+            descs[partition_id][pixel] = subset | ((bit_ofs as u16) << 1) | (weight_mask << 8);
             bit_ofs += weight_bits;
             pixel += 1;
         }
@@ -124,10 +137,13 @@ const fn mode7_pixel_descs() -> [[u16; 16]; 64] {
         let mut pixel = 0usize;
         while pixel < 16 {
             let subset = BC7_PARTITION2[partition_id * 16 + pixel] as u16;
-            let weight_bits = if pixel == 0 || pixel == anchor { 1usize } else { 2usize };
+            let weight_bits = if pixel == 0 || pixel == anchor {
+                1usize
+            } else {
+                2usize
+            };
             let weight_mask = if weight_bits == 1 { 0x01u16 } else { 0x03u16 };
-            descs[partition_id][pixel] =
-                subset | ((bit_ofs as u16) << 1) | (weight_mask << 8);
+            descs[partition_id][pixel] = subset | ((bit_ofs as u16) << 1) | (weight_mask << 8);
             bit_ofs += weight_bits;
             pixel += 1;
         }
@@ -300,7 +316,8 @@ impl DistanceCostLayout {
                 let normal_match_bits = normal_bits + rate_costs.match_len_bits[len];
                 normal_match_bits_by_delta[block_delta][len] = normal_match_bits;
                 normal_trial_lambda_by_delta[block_delta][len] =
-                    (rate_costs.literal_bits_by_match_len[len] + normal_match_bits) * rate_costs.lambda;
+                    (rate_costs.literal_bits_by_match_len[len] + normal_match_bits)
+                        * rate_costs.lambda;
             }
             if let Some(ref mut relative_bits_by_delta) = relative_bits_by_delta {
                 let relative_bits = compute_relative_dist_costs(dist);
@@ -441,7 +458,7 @@ impl Default for Bc7RdoParams {
 }
 
 /// BC7 RDO postprocess.
-/// 
+///
 /// Accepts mutable BC7 blocks and original source pixels in block-raster order.
 /// Returns the count of modified blocks.
 pub fn reduce_entropy_bc7(
@@ -508,7 +525,14 @@ pub fn reduce_entropy_bc7_parallel_with_progress<F>(
 where
     F: Fn(usize) + Sync,
 {
-    reduce_entropy_bc7_parallel_impl(blocks, rgba_blocks, blocks_x, blocks_y, params, Some(&progress))
+    reduce_entropy_bc7_parallel_impl(
+        blocks,
+        rgba_blocks,
+        blocks_x,
+        blocks_y,
+        params,
+        Some(&progress),
+    )
 }
 
 fn reduce_entropy_bc7_impl(
@@ -567,8 +591,12 @@ fn reduce_entropy_bc7_parallel_impl(
     }
 
     let lookback_blocks = max(1, params.lookback_window_size / 16);
-    let chunk_blocks =
-        parallel_rdo_chunk_blocks(num_blocks, blocks_x, lookback_blocks, rayon::current_num_threads());
+    let chunk_blocks = parallel_rdo_chunk_blocks(
+        num_blocks,
+        blocks_x,
+        lookback_blocks,
+        rayon::current_num_threads(),
+    );
 
     blocks
         .par_chunks_mut(chunk_blocks)
@@ -623,7 +651,12 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
 
     // 1. Calculate ultrasmooth scales if requested
     let mut block_mse_scales = if params.use_ultrasmooth_block_handling {
-        Some(compute_block_mse_scales(rgba_blocks, blocks_x, blocks_y, params.debug_output))
+        Some(compute_block_mse_scales(
+            rgba_blocks,
+            blocks_x,
+            blocks_y,
+            params.debug_output,
+        ))
     } else {
         None
     };
@@ -632,7 +665,10 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
     if !params.custom_smooth_block_error_scale {
         actual_params.smooth_block_max_mse_scale = lerp(15.0, 50.0, (params.lambda / 4.0).min(1.0));
         if params.debug_output {
-            println!("Using an automatically computed smooth block error scale of {}", actual_params.smooth_block_max_mse_scale);
+            println!(
+                "Using an automatically computed smooth block error scale of {}",
+                actual_params.smooth_block_max_mse_scale
+            );
         }
     }
 
@@ -642,13 +678,17 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
         if scales.len() < PARALLEL_RDO_BLOCK_THRESHOLD {
             for s in scales.iter_mut() {
                 if *s > 0.0 {
-                    *s = actual_params.smooth_block_max_mse_scale.max(*s * lambda_scale);
+                    *s = actual_params
+                        .smooth_block_max_mse_scale
+                        .max(*s * lambda_scale);
                 }
             }
         } else {
             scales.par_iter_mut().for_each(|s| {
                 if *s > 0.0 {
-                    *s = actual_params.smooth_block_max_mse_scale.max(*s * lambda_scale);
+                    *s = actual_params
+                        .smooth_block_max_mse_scale
+                        .max(*s * lambda_scale);
                 }
             });
         }
@@ -657,25 +697,41 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
     // 4. Main loop
     let total_blocks_to_check = max(1, params.lookback_window_size / 16);
     let rate_costs = RateCostLayout::new(params.lambda);
-    let max_block_delta = total_blocks_to_check.min(num_blocks.saturating_sub(1)).max(1);
+    let max_block_delta = total_blocks_to_check
+        .min(num_blocks.saturating_sub(1))
+        .max(1);
     let distance_cost_layout =
         DistanceCostLayout::new(max_block_delta, params.allow_relative_movement, &rate_costs);
     let mut hash_table = vec![0u64; 8192];
     let hash_mask = hash_table.len() - 1;
     let (mut block_bits, mut block_modes) = if num_blocks < PARALLEL_RDO_BLOCK_THRESHOLD {
-        let block_bits = blocks.iter().map(|block| bc7_block_bits(*block)).collect::<Vec<_>>();
-        let block_modes = block_bits.iter().map(|&bits| get_bc7_mode_bits(bits)).collect::<Vec<_>>();
+        let block_bits = blocks
+            .iter()
+            .map(|block| bc7_block_bits(*block))
+            .collect::<Vec<_>>();
+        let block_modes = block_bits
+            .iter()
+            .map(|&bits| get_bc7_mode_bits(bits))
+            .collect::<Vec<_>>();
         (block_bits, block_modes)
     } else {
-        let block_bits = blocks.par_iter().map(|block| bc7_block_bits(*block)).collect::<Vec<_>>();
-        let block_modes = block_bits.par_iter().map(|&bits| get_bc7_mode_bits(bits)).collect::<Vec<_>>();
+        let block_bits = blocks
+            .par_iter()
+            .map(|block| bc7_block_bits(*block))
+            .collect::<Vec<_>>();
+        let block_modes = block_bits
+            .par_iter()
+            .map(|&bits| get_bc7_mode_bits(bits))
+            .collect::<Vec<_>>();
         (block_bits, block_modes)
     };
     let history_capacity = total_blocks_to_check.min(num_blocks).max(1);
     let mut previous_blocks_by_mode: [ModeHistory; 8] =
         std::array::from_fn(|_| ModeHistory::with_capacity(history_capacity));
     let relative_candidate_layout = if params.allow_relative_movement {
-        Some(RelativeCandidateLayout::new(params.relative_movement_max_offset_delta.min(15)))
+        Some(RelativeCandidateLayout::new(
+            params.relative_movement_max_offset_delta.min(15),
+        ))
     } else {
         None
     };
@@ -690,7 +746,7 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
     //                         The next block can "continue" it for only MATCH_CONTINUE_BITS.
     //   prev_rep0_dist:       byte distance of the last accepted match for cheap REP0 reuse.
     let mut prev_cont_window_ofs: i64 = -1;
-    let mut prev_rep0_dist:       i64 = -1;
+    let mut prev_rep0_dist: i64 = -1;
     let mut pending_progress = 0usize;
 
     for block_index in 0..num_blocks {
@@ -702,8 +758,15 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
             continue; // Invalid block or mode 8 (reserved)
         }
 
-        let cur_err = decode_bc7_error_bounded_for_stats!(stats, orig_bits, p_pixels, bc7_mode, true, u64::MAX)
-            .expect("u64::MAX cannot be exceeded by a 4x4 RGBA block error");
+        let cur_err = decode_bc7_error_bounded_for_stats!(
+            stats,
+            orig_bits,
+            p_pixels,
+            bc7_mode,
+            true,
+            u64::MAX
+        )
+        .expect("u64::MAX cannot be exceeded by a 4x4 RGBA block error");
 
         if params.skip_zero_mse_blocks && cur_err == 0 {
             previous_blocks_by_mode[bc7_mode as usize].push(block_index);
@@ -755,8 +818,8 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
             let max_relative_previous_blocks = params.relative_movement_max_previous_blocks;
             let min_relative_match_len = params.relative_movement_min_match_len.clamp(3, 16);
             let mut relative_previous_blocks_checked = 0usize;
-            let previous_blocks = previous_blocks_by_mode[bc7_mode as usize]
-                .recent_from(first_block_to_check);
+            let previous_blocks =
+                previous_blocks_by_mode[bc7_mode as usize].recent_from(first_block_to_check);
             for &prev_block_index in previous_blocks.iter().rev() {
                 if max_relative_previous_blocks > 0
                     && relative_previous_blocks_checked >= max_relative_previous_blocks
@@ -800,7 +863,8 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
 
                         // Hash check to skip redundant trials
                         let prev_segment = (prev_bits >> candidate.src_shift) & segment_mask;
-                        let hs = hash_hsieh_bc7_segment(prev_segment, len, candidate.dst_ofs as u32);
+                        let hs =
+                            hash_hsieh_bc7_segment(prev_segment, len, candidate.dst_ofs as u32);
                         if rdo_hash_seen(&mut hash_table, hash_mask, hash_epoch, hs) {
                             stat_add!(COLLECT_STATS, stats, hash_skips, 1);
                             continue;
@@ -810,27 +874,30 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                             stat_add!(COLLECT_STATS, stats, original_block_skips, 1);
                             let trial_ms_err = cur_ms_err;
                             if trial_ms_err < thresh_ms_err {
-                                let t = trial_ms_err * smooth_block_error_scale + trial_bits_times_lambda;
+                                let t = trial_ms_err * smooth_block_error_scale
+                                    + trial_bits_times_lambda;
                                 if t < best_t {
-                                    best_t = t; best_bits = orig_bits;
+                                    best_t = t;
+                                    best_bits = orig_bits;
                                     best_ms_err = trial_ms_err;
-                                    best_match_len = len; best_match_dst_block_ofs = dst_ofs;
+                                    best_match_len = len;
+                                    best_match_dst_block_ofs = dst_ofs;
                                     best_match_bits = mb;
                                     stat_add!(COLLECT_STATS, stats, accepted_matches, 1);
                                 }
                             }
                             continue;
                         }
-                        let trial_bits =
-                            bc7_copy_segment_bits_from_segment(
-                                orig_bits,
-                                prev_segment,
-                                candidate.dst_shift as usize,
-                                segment_mask,
-                            );
+                        let trial_bits = bc7_copy_segment_bits_from_segment(
+                            orig_bits,
+                            prev_segment,
+                            candidate.dst_shift as usize,
+                            segment_mask,
+                        );
                         let trust_mode_hint = candidate.dst_shift > 0;
                         stat_add!(COLLECT_STATS, stats, decode_trials, 1);
-                        let max_trial_err = max_trial_error(best_t, trial_bits_times_lambda, trial_error_scale);
+                        let max_trial_err =
+                            max_trial_error(best_t, trial_bits_times_lambda, trial_error_scale);
                         let Some(trial_err) = decode_bc7_error_bounded_for_stats!(
                             stats,
                             trial_bits,
@@ -844,11 +911,14 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                         };
                         let trial_ms_err = trial_err as f32 / 64.0;
                         if trial_ms_err < thresh_ms_err {
-                            let t = trial_ms_err * smooth_block_error_scale + trial_bits_times_lambda;
+                            let t =
+                                trial_ms_err * smooth_block_error_scale + trial_bits_times_lambda;
                             if t < best_t {
-                                best_t = t; best_bits = trial_bits;
+                                best_t = t;
+                                best_bits = trial_bits;
                                 best_ms_err = trial_ms_err;
-                                best_match_len = len; best_match_dst_block_ofs = dst_ofs;
+                                best_match_len = len;
+                                best_match_dst_block_ofs = dst_ofs;
                                 best_match_bits = mb;
                                 stat_add!(COLLECT_STATS, stats, accepted_matches, 1);
                             }
@@ -858,8 +928,8 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
             }
         } else {
             // ── Main search window: fixed-offset default path ──
-            let previous_blocks = previous_blocks_by_mode[bc7_mode as usize]
-                .recent_from(first_block_to_check);
+            let previous_blocks =
+                previous_blocks_by_mode[bc7_mode as usize].recent_from(first_block_to_check);
             for &prev_block_index in previous_blocks.iter().rev() {
                 let prev_bits = block_bits[prev_block_index];
                 let block_delta = block_index - prev_block_index;
@@ -869,7 +939,8 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                 for len in (3..=16).rev() {
                     let segment_mask = BC7_SEGMENT_MASKS[len];
                     // Fixed-offset search: src_ofs == dst_ofs
-                    let normal_match_bits = distance_cost_layout.normal_match_bits(block_delta, len);
+                    let normal_match_bits =
+                        distance_cost_layout.normal_match_bits(block_delta, len);
                     let normal_trial_bits_times_lambda =
                         distance_cost_layout.normal_trial_lambda(block_delta, len);
                     let continuation_possible = prev_block_base_i64 == prev_cont_window_ofs;
@@ -888,14 +959,30 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                         macro_rules! reduce_len {
                             ($len:literal) => {
                                 reduce_fixed_normal_len::<$len, COLLECT_STATS>(
-                                    prev_bits, orig_bits, p_pixels, bc7_mode, dist_i64,
-                                    prev_block_base_i64, normal_match_bits,
-                                    normal_trial_bits_times_lambda, cur_ms_err, thresh_ms_err,
-                                    smooth_block_error_scale, trial_error_scale, &mut hash_table,
-                                    hash_mask, hash_epoch, &mut best_t, &mut best_bits,
-                                    &mut best_ms_err, &mut best_match_len,
-                                    &mut best_match_dst_block_ofs, &mut best_match_bits,
-                                    &mut prev_cont_window_ofs, &mut prev_rep0_dist, &mut stats,
+                                    prev_bits,
+                                    orig_bits,
+                                    p_pixels,
+                                    bc7_mode,
+                                    dist_i64,
+                                    prev_block_base_i64,
+                                    normal_match_bits,
+                                    normal_trial_bits_times_lambda,
+                                    cur_ms_err,
+                                    thresh_ms_err,
+                                    smooth_block_error_scale,
+                                    trial_error_scale,
+                                    &mut hash_table,
+                                    hash_mask,
+                                    hash_epoch,
+                                    &mut best_t,
+                                    &mut best_bits,
+                                    &mut best_ms_err,
+                                    &mut best_match_len,
+                                    &mut best_match_dst_block_ofs,
+                                    &mut best_match_bits,
+                                    &mut prev_cont_window_ofs,
+                                    &mut prev_rep0_dist,
+                                    &mut stats,
                                 )
                             };
                         }
@@ -929,7 +1016,10 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                         let (trial_match_bits, trial_bits_times_lambda) =
                             if prev_block_base_i64 == prev_cont_window_ofs && ofs == 0 {
                                 // Continuation: the match continues directly from the previous block's match
-                                (MATCH_CONTINUE_BITS, rate_costs.continuation_trial_lambda_by_len[len])
+                                (
+                                    MATCH_CONTINUE_BITS,
+                                    rate_costs.continuation_trial_lambda_by_len[len],
+                                )
                             } else if prev_rep0_dist >= 0 && dist_i64 == prev_rep0_dist {
                                 // REP0: re-using the last accepted match distance costs only MATCH_REP0_BITS
                                 (MATCH_REP0_BITS, rate_costs.rep0_trial_lambda_by_len[len])
@@ -960,32 +1050,36 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                             stat_add!(COLLECT_STATS, stats, original_block_skips, 1);
                             let trial_ms_err = cur_ms_err;
                             if trial_ms_err < thresh_ms_err {
-                                let t = trial_ms_err * smooth_block_error_scale + trial_bits_times_lambda;
+                                let t = trial_ms_err * smooth_block_error_scale
+                                    + trial_bits_times_lambda;
                                 if t < best_t {
-                                    best_t = t; best_bits = orig_bits;
+                                    best_t = t;
+                                    best_bits = orig_bits;
                                     best_ms_err = trial_ms_err;
-                                    best_match_len = len; best_match_dst_block_ofs = ofs;
+                                    best_match_len = len;
+                                    best_match_dst_block_ofs = ofs;
                                     best_match_bits = trial_match_bits;
-                                    prev_cont_window_ofs = prev_block_base_i64 + ofs as i64 + len as i64;
-                                    prev_rep0_dist       = dist_i64;
+                                    prev_cont_window_ofs =
+                                        prev_block_base_i64 + ofs as i64 + len as i64;
+                                    prev_rep0_dist = dist_i64;
                                     stat_add!(COLLECT_STATS, stats, accepted_matches, 1);
                                 }
                             }
                             continue;
                         }
-                        let trial_bits =
-                            bc7_copy_segment_bits_from_segment(
-                                orig_bits,
-                                prev_segment,
-                                shift,
-                                segment_mask,
-                            );
+                        let trial_bits = bc7_copy_segment_bits_from_segment(
+                            orig_bits,
+                            prev_segment,
+                            shift,
+                            segment_mask,
+                        );
                         if ofs == 0 && !bc7_block_bits_has_mode(trial_bits, bc7_mode) {
                             stat_add!(COLLECT_STATS, stats, unsupported_mode_trials, 1);
                             continue;
                         }
                         stat_add!(COLLECT_STATS, stats, decode_trials, 1);
-                        let max_trial_err = max_trial_error(best_t, trial_bits_times_lambda, trial_error_scale);
+                        let max_trial_err =
+                            max_trial_error(best_t, trial_bits_times_lambda, trial_error_scale);
                         let Some(trial_err) = decode_bc7_error_bounded_for_stats!(
                             stats,
                             trial_bits,
@@ -999,15 +1093,19 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                         };
                         let trial_ms_err = trial_err as f32 / 64.0;
                         if trial_ms_err < thresh_ms_err {
-                            let t = trial_ms_err * smooth_block_error_scale + trial_bits_times_lambda;
+                            let t =
+                                trial_ms_err * smooth_block_error_scale + trial_bits_times_lambda;
                             if t < best_t {
-                                best_t = t; best_bits = trial_bits;
+                                best_t = t;
+                                best_bits = trial_bits;
                                 best_ms_err = trial_ms_err;
-                                best_match_len = len; best_match_dst_block_ofs = ofs;
+                                best_match_len = len;
+                                best_match_dst_block_ofs = ofs;
                                 best_match_bits = trial_match_bits;
                                 // Update continuation/REP0 state for the next block
-                                prev_cont_window_ofs = prev_block_base_i64 + ofs as i64 + len as i64;
-                                prev_rep0_dist       = dist_i64;
+                                prev_cont_window_ofs =
+                                    prev_block_base_i64 + ofs as i64 + len as i64;
+                                prev_rep0_dist = dist_i64;
                                 stat_add!(COLLECT_STATS, stats, accepted_matches, 1);
                             }
                         }
@@ -1017,15 +1115,19 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
         }
 
         // Try a second non-overlapping match — only attempted when the first was accepted (best_t < cur_t)
-        if params.try_two_matches && best_t < cur_t && best_match_len > 0 && best_match_len <= (16 - 3) {
+        if params.try_two_matches
+            && best_t < cur_t
+            && best_match_len > 0
+            && best_match_len <= (16 - 3)
+        {
             let second_match_layout = second_match_layout
                 .as_ref()
                 .expect("second-match layout exists when second matches are enabled");
             let orig_best_bits = best_bits;
             let orig_best_ms_err = best_ms_err;
 
-            let previous_blocks = previous_blocks_by_mode[bc7_mode as usize]
-                .recent_from(first_block_to_check);
+            let previous_blocks =
+                previous_blocks_by_mode[bc7_mode as usize].recent_from(first_block_to_check);
             for &prev_block_index in previous_blocks.iter().rev() {
                 let prev_bits = block_bits[prev_block_index];
 
@@ -1049,51 +1151,59 @@ fn reduce_entropy_bc7_impl_with_progress<const COLLECT_STATS: bool>(
                         COLLECT_STATS,
                         stats,
                         candidate_checks,
-                        second_match_layout.overlap_count(best_match_dst_block_ofs, best_match_len, len)
+                        second_match_layout.overlap_count(
+                            best_match_dst_block_ofs,
+                            best_match_len,
+                            len
+                        )
                     );
-                    for &ofs in second_match_layout.offsets(best_match_dst_block_ofs, best_match_len, len) {
+                    for &ofs in
+                        second_match_layout.offsets(best_match_dst_block_ofs, best_match_len, len)
+                    {
                         let ofs = ofs as usize;
                         stat_add!(COLLECT_STATS, stats, candidate_checks, 1);
 
                         let shift = ofs * 8;
                         let prev_segment = (prev_bits >> shift) & segment_mask;
-                        let (trial_bits, trial_ms_err) =
-                            if prev_segment == ((orig_best_bits >> shift) & segment_mask) {
-                                (orig_best_bits, orig_best_ms_err)
-                            } else {
-                                let trial_bits =
-                                    bc7_copy_segment_bits_from_segment(
-                                        orig_best_bits,
-                                        prev_segment,
-                                        shift,
-                                        segment_mask,
-                                    );
-                                let trust_mode_hint = !params.allow_relative_movement || ofs > 0;
-                                if !params.allow_relative_movement
-                                    && ofs == 0
-                                    && !bc7_block_bits_has_mode(trial_bits, bc7_mode)
-                                {
-                                    stat_add!(COLLECT_STATS, stats, unsupported_mode_trials, 1);
-                                    continue;
-                                }
+                        let (trial_bits, trial_ms_err) = if prev_segment
+                            == ((orig_best_bits >> shift) & segment_mask)
+                        {
+                            (orig_best_bits, orig_best_ms_err)
+                        } else {
+                            let trial_bits = bc7_copy_segment_bits_from_segment(
+                                orig_best_bits,
+                                prev_segment,
+                                shift,
+                                segment_mask,
+                            );
+                            let trust_mode_hint = !params.allow_relative_movement || ofs > 0;
+                            if !params.allow_relative_movement
+                                && ofs == 0
+                                && !bc7_block_bits_has_mode(trial_bits, bc7_mode)
+                            {
+                                stat_add!(COLLECT_STATS, stats, unsupported_mode_trials, 1);
+                                continue;
+                            }
 
-                                stat_add!(COLLECT_STATS, stats, decode_trials, 1);
-                                let max_trial_err = max_trial_error(best_t, trial_bits_times_lambda, trial_error_scale);
-                                let Some(trial_err) = decode_bc7_error_bounded_for_stats!(
-                                    stats,
-                                    trial_bits,
-                                    p_pixels,
-                                    bc7_mode,
-                                    trust_mode_hint,
-                                    max_trial_err
-                                ) else {
-                                    stat_add!(COLLECT_STATS, stats, bounded_error_exits, 1);
-                                    continue;
-                                };
-                                (trial_bits, trial_err as f32 / 64.0)
+                            stat_add!(COLLECT_STATS, stats, decode_trials, 1);
+                            let max_trial_err =
+                                max_trial_error(best_t, trial_bits_times_lambda, trial_error_scale);
+                            let Some(trial_err) = decode_bc7_error_bounded_for_stats!(
+                                stats,
+                                trial_bits,
+                                p_pixels,
+                                bc7_mode,
+                                trust_mode_hint,
+                                max_trial_err
+                            ) else {
+                                stat_add!(COLLECT_STATS, stats, bounded_error_exits, 1);
+                                continue;
                             };
+                            (trial_bits, trial_err as f32 / 64.0)
+                        };
                         if trial_ms_err < thresh_ms_err {
-                            let t = trial_ms_err * smooth_block_error_scale + trial_bits_times_lambda;
+                            let t =
+                                trial_ms_err * smooth_block_error_scale + trial_bits_times_lambda;
                             if t < best_t {
                                 best_t = t;
                                 best_bits = trial_bits;
@@ -1211,19 +1321,15 @@ fn reduce_fixed_normal_len<const LEN: usize, const COLLECT_STATS: bool>(
         }
 
         let trial_bits =
-            bc7_copy_segment_bits_from_segment(
-                orig_bits,
-                prev_segment,
-                shift,
-                segment_mask,
-            );
+            bc7_copy_segment_bits_from_segment(orig_bits, prev_segment, shift, segment_mask);
         if ofs == 0 && !bc7_block_bits_has_mode(trial_bits, bc7_mode) {
             stat_add!(COLLECT_STATS, stats, unsupported_mode_trials, 1);
             continue;
         }
 
         stat_add!(COLLECT_STATS, stats, decode_trials, 1);
-        let max_trial_err = max_trial_error(*best_t, normal_trial_bits_times_lambda, trial_error_scale);
+        let max_trial_err =
+            max_trial_error(*best_t, normal_trial_bits_times_lambda, trial_error_scale);
         let Some(trial_err) = decode_bc7_error_bounded_for_stats!(
             stats,
             trial_bits,
@@ -1293,7 +1399,9 @@ fn max_trial_error(best_t: f32, trial_bits_times_lambda: f32, max_trial_error_sc
     if max_trial_error_scale <= 0.0 {
         return u64::MAX;
     }
-    ((best_t - trial_bits_times_lambda) * max_trial_error_scale).max(0.0).ceil() as u64
+    ((best_t - trial_bits_times_lambda) * max_trial_error_scale)
+        .max(0.0)
+        .ceil() as u64
 }
 
 #[inline(always)]
@@ -1378,36 +1486,16 @@ fn decode_bc7_mode0_error_bounded(
     let anchor1 = BC7_ANCHOR_THIRD_SUBSET1[partition] as usize;
     let anchor2 = BC7_ANCHOR_THIRD_SUBSET2[partition] as usize;
 
-    let lr = [
-        (low >> 5) & 0x0F,
-        (low >> 13) & 0x0F,
-        (low >> 21) & 0x0F,
-    ];
-    let hr = [
-        (low >> 9) & 0x0F,
-        (low >> 17) & 0x0F,
-        (low >> 25) & 0x0F,
-    ];
-    let lg = [
-        (low >> 29) & 0x0F,
-        (low >> 37) & 0x0F,
-        (low >> 45) & 0x0F,
-    ];
-    let hg = [
-        (low >> 33) & 0x0F,
-        (low >> 41) & 0x0F,
-        (low >> 49) & 0x0F,
-    ];
+    let lr = [(low >> 5) & 0x0F, (low >> 13) & 0x0F, (low >> 21) & 0x0F];
+    let hr = [(low >> 9) & 0x0F, (low >> 17) & 0x0F, (low >> 25) & 0x0F];
+    let lg = [(low >> 29) & 0x0F, (low >> 37) & 0x0F, (low >> 45) & 0x0F];
+    let hg = [(low >> 33) & 0x0F, (low >> 41) & 0x0F, (low >> 49) & 0x0F];
     let lb = [
         (low >> 53) & 0x0F,
         ((low >> 61) & 0x07) | ((high & 0x01) << 3),
         (high >> 5) & 0x0F,
     ];
-    let hb = [
-        (low >> 57) & 0x0F,
-        (high >> 1) & 0x0F,
-        (high >> 9) & 0x0F,
-    ];
+    let hb = [(low >> 57) & 0x0F, (high >> 1) & 0x0F, (high >> 9) & 0x0F];
     let p = [
         (high >> 13) & 0x01,
         (high >> 14) & 0x01,
@@ -1655,16 +1743,60 @@ fn decode_bc7_mode5_error_bounded(
 
     match rotation {
         0 => decode_bc7_mode5_pixels_error_bounded::<0>(
-            source, max_error, lr, hr, lg, hg, lb, hb, la, ha, rgb_stream, alpha_stream,
+            source,
+            max_error,
+            lr,
+            hr,
+            lg,
+            hg,
+            lb,
+            hb,
+            la,
+            ha,
+            rgb_stream,
+            alpha_stream,
         ),
         1 => decode_bc7_mode5_pixels_error_bounded::<1>(
-            source, max_error, lr, hr, lg, hg, lb, hb, la, ha, rgb_stream, alpha_stream,
+            source,
+            max_error,
+            lr,
+            hr,
+            lg,
+            hg,
+            lb,
+            hb,
+            la,
+            ha,
+            rgb_stream,
+            alpha_stream,
         ),
         2 => decode_bc7_mode5_pixels_error_bounded::<2>(
-            source, max_error, lr, hr, lg, hg, lb, hb, la, ha, rgb_stream, alpha_stream,
+            source,
+            max_error,
+            lr,
+            hr,
+            lg,
+            hg,
+            lb,
+            hb,
+            la,
+            ha,
+            rgb_stream,
+            alpha_stream,
         ),
         3 => decode_bc7_mode5_pixels_error_bounded::<3>(
-            source, max_error, lr, hr, lg, hg, lb, hb, la, ha, rgb_stream, alpha_stream,
+            source,
+            max_error,
+            lr,
+            hr,
+            lg,
+            hg,
+            lb,
+            hb,
+            la,
+            ha,
+            rgb_stream,
+            alpha_stream,
         ),
         _ => unreachable!("BC7 mode 5 rotation is two bits"),
     }
@@ -2024,7 +2156,11 @@ fn decode_bc7_partitioned_rgb3_weights3_error_bounded(
 
     for i in 0..16 {
         let subset = partitions[i] as usize;
-        let bits = if i == 0 || i == anchor1 || i == anchor2 { 2 } else { 3 };
+        let bits = if i == 0 || i == anchor1 || i == anchor2 {
+            2
+        } else {
+            3
+        };
         let mask = if bits == 2 { 0x03 } else { 0x07 };
         let index = ((index_stream >> bit_ofs) & mask) as usize;
         bit_ofs += bits;
@@ -2058,7 +2194,11 @@ fn decode_bc7_partitioned_rgb3_weights2_error_bounded(
 
     for i in 0..16 {
         let subset = partitions[i] as usize;
-        let bits = if i == 0 || i == anchor1 || i == anchor2 { 1 } else { 2 };
+        let bits = if i == 0 || i == anchor1 || i == anchor2 {
+            1
+        } else {
+            2
+        };
         let mask = if bits == 1 { 0x01 } else { 0x03 };
         let index = ((index_stream >> bit_ofs) & mask) as usize;
         bit_ofs += bits;
@@ -2253,11 +2393,11 @@ fn hash_hsieh_bc7_segment_variable(segment: u128, len: usize, salt: u32) -> u32 
     while rem >= 4 {
         let w0 = ((segment >> (i * 8)) & 0xFFFF) as u32;
         let w1 = ((segment >> ((i + 2) * 8)) & 0xFFFF) as u32;
-        
+
         h = h.wrapping_add(w0);
         let t = (w1 << 11) ^ h;
         h = (h << 16) ^ t;
-        
+
         i += 4;
         rem -= 4;
         h = h.wrapping_add(h >> 11);
@@ -2408,20 +2548,31 @@ fn compute_literal_bits_by_match_len() -> [f32; 17] {
 }
 
 const SMALL_DIST_EXTRA: [u8; 512] = [
-    0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5,
-    5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
-    6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
-    6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
-    7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
-    7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
-    7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
-    7, 7, 7, 7, 7, 7, 7, 7,
+    0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+    5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+    5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+    6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+    6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+    6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+    6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+    6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+    7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+    7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+    7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+    7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+    7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+    7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+    7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
 ];
 
 const LARGE_DIST_EXTRA: [u8; 128] = [
-    0, 0, 8, 8, 9, 9, 9, 9, 10, 10, 10, 10, 10, 10, 10, 10, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12,
-    12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13,
-    13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13,
+    0, 0, 8, 8, 9, 9, 9, 9, 10, 10, 10, 10, 10, 10, 10, 10, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11,
+    11, 11, 11, 11, 11, 11, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12,
+    12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13,
+    13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13,
+    13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13,
+    13, 13, 13, 13, 13, 13,
 ];
 
 fn compute_block_mse_scales(
@@ -2490,13 +2641,25 @@ fn compute_block_mse_scales(
                 .par_chunks_mut(blocks_x)
                 .enumerate()
                 .map(|(y, next_row)| {
-                    median_erode_ultrasmooth_mask_row(next_row, y, &current_mask, blocks_x, blocks_y)
+                    median_erode_ultrasmooth_mask_row(
+                        next_row,
+                        y,
+                        &current_mask,
+                        blocks_x,
+                        blocks_y,
+                    )
                 })
                 .sum::<usize>()
         } else {
             let mut changed = 0usize;
             for (y, next_row) in next_mask.chunks_mut(blocks_x).enumerate() {
-                changed |= median_erode_ultrasmooth_mask_row(next_row, y, &current_mask, blocks_x, blocks_y);
+                changed |= median_erode_ultrasmooth_mask_row(
+                    next_row,
+                    y,
+                    &current_mask,
+                    blocks_x,
+                    blocks_y,
+                );
             }
             changed
         };
@@ -2625,17 +2788,25 @@ fn erode_ultrasmooth_mask_row(
     let below_row = &current_mask[row_start + blocks_x..row_start + blocks_x * 2];
     let last_x = blocks_x - 1;
 
-    next_row[0] = prev_row[0] & prev_row[1] & curr_row[0] & curr_row[1] & below_row[0] & below_row[1];
+    next_row[0] =
+        prev_row[0] & prev_row[1] & curr_row[0] & curr_row[1] & below_row[0] & below_row[1];
     for x in 1..last_x {
-        next_row[x] =
-            prev_row[x - 1] & prev_row[x] & prev_row[x + 1] &
-            curr_row[x - 1] & curr_row[x] & curr_row[x + 1] &
-            below_row[x - 1] & below_row[x] & below_row[x + 1];
+        next_row[x] = prev_row[x - 1]
+            & prev_row[x]
+            & prev_row[x + 1]
+            & curr_row[x - 1]
+            & curr_row[x]
+            & curr_row[x + 1]
+            & below_row[x - 1]
+            & below_row[x]
+            & below_row[x + 1];
     }
-    next_row[last_x] =
-        prev_row[last_x - 1] & prev_row[last_x] &
-        curr_row[last_x - 1] & curr_row[last_x] &
-        below_row[last_x - 1] & below_row[last_x];
+    next_row[last_x] = prev_row[last_x - 1]
+        & prev_row[last_x]
+        & curr_row[last_x - 1]
+        & curr_row[last_x]
+        & below_row[last_x - 1]
+        & below_row[last_x];
 }
 
 #[inline]
@@ -2681,7 +2852,13 @@ fn median_erode_ultrasmooth_mask_row(
     blocks_y: usize,
 ) -> usize {
     if blocks_x < 3 || y == 0 || y + 1 == blocks_y {
-        return median_erode_ultrasmooth_mask_row_generic(next_row, y, current_mask, blocks_x, blocks_y);
+        return median_erode_ultrasmooth_mask_row_generic(
+            next_row,
+            y,
+            current_mask,
+            blocks_x,
+            blocks_y,
+        );
     }
 
     let row_start = y * blocks_x;
@@ -2699,20 +2876,27 @@ fn median_erode_ultrasmooth_mask_row(
 
     for x in 1..last_x {
         let old = curr_row[x];
-        let sum =
-            prev_row[x - 1] + prev_row[x] + prev_row[x + 1] +
-            curr_row[x - 1] + curr_row[x] + curr_row[x + 1] +
-            below_row[x - 1] + below_row[x] + below_row[x + 1];
+        let sum = prev_row[x - 1]
+            + prev_row[x]
+            + prev_row[x + 1]
+            + curr_row[x - 1]
+            + curr_row[x]
+            + curr_row[x + 1]
+            + below_row[x - 1]
+            + below_row[x]
+            + below_row[x + 1];
         let value = old & ((sum > 4) as u8);
         next_row[x] = value;
         changed |= (value ^ old) as usize;
     }
 
     let old = curr_row[last_x];
-    let sum =
-        prev_row[last_x - 1] + prev_row[last_x] +
-        curr_row[last_x - 1] + curr_row[last_x] +
-        below_row[last_x - 1] + below_row[last_x];
+    let sum = prev_row[last_x - 1]
+        + prev_row[last_x]
+        + curr_row[last_x - 1]
+        + curr_row[last_x]
+        + below_row[last_x - 1]
+        + below_row[last_x];
     let value = old & ((sum > 1) as u8);
     next_row[last_x] = value;
     changed |= (value ^ old) as usize;
@@ -2763,7 +2947,7 @@ fn median_erode_ultrasmooth_mask_row_generic(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bc7::analytical::{pack_bc7_rgba, FLAG_PBIT_OPT_M6, FLAG_USE_DUAL_PLANE};
+    use crate::bc7::analytical::{FLAG_PBIT_OPT_M6, FLAG_USE_DUAL_PLANE, pack_bc7_rgba};
 
     fn fixture_rgba_blocks(blocks_x: usize, blocks_y: usize) -> Vec<[u8; 4]> {
         let num_blocks = blocks_x * blocks_y;
@@ -2778,7 +2962,9 @@ mod tests {
                 rgba_blocks[b * 16 + i] = [
                     x.wrapping_mul(47).wrapping_add(pattern),
                     y.wrapping_mul(53).wrapping_add(pattern.wrapping_mul(2)),
-                    (x ^ y).wrapping_mul(37).wrapping_add((b as u8).wrapping_mul(3)),
+                    (x ^ y)
+                        .wrapping_mul(37)
+                        .wrapping_add((b as u8).wrapping_mul(3)),
                     255,
                 ];
             }
@@ -2792,7 +2978,11 @@ mod tests {
         for b in 0..num_blocks {
             let pixels: &[crate::bc7::analytical::Pixel; 16] =
                 rgba_blocks[b * 16..(b + 1) * 16].try_into().unwrap();
-            pack_bc7_rgba(&mut blocks[b], pixels, FLAG_PBIT_OPT_M6 | FLAG_USE_DUAL_PLANE);
+            pack_bc7_rgba(
+                &mut blocks[b],
+                pixels,
+                FLAG_PBIT_OPT_M6 | FLAG_USE_DUAL_PLANE,
+            );
         }
         blocks
     }
@@ -2802,8 +2992,15 @@ mod tests {
         for (block_index, block) in blocks.iter().enumerate() {
             let pixels = rgba_block_at(rgba_blocks, block_index);
             let block_bits = bc7_block_bits(*block);
-            sse += decode_bc7_error_bounded::<false>(block_bits, pixels, get_bc7_mode_bits(block_bits), true, u64::MAX, None)
-                .expect("RDO should only emit supported BC7 modes");
+            sse += decode_bc7_error_bounded::<false>(
+                block_bits,
+                pixels,
+                get_bc7_mode_bits(block_bits),
+                true,
+                u64::MAX,
+                None,
+            )
+            .expect("RDO should only emit supported BC7 modes");
         }
         sse as f32 / (blocks.len() * 16 * 4) as f32
     }
@@ -2904,8 +3101,13 @@ mod tests {
             generic.fill(0);
             let fast_changed =
                 median_erode_ultrasmooth_mask_row(&mut fast, y, &current_mask, blocks_x, blocks_y);
-            let generic_changed =
-                median_erode_ultrasmooth_mask_row_generic(&mut generic, y, &current_mask, blocks_x, blocks_y);
+            let generic_changed = median_erode_ultrasmooth_mask_row_generic(
+                &mut generic,
+                y,
+                &current_mask,
+                blocks_x,
+                blocks_y,
+            );
             assert_eq!(fast, generic);
             assert_eq!(fast_changed, generic_changed);
         }
@@ -2951,18 +3153,7 @@ mod tests {
         let mut block = [0u8; 16];
         let weights = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 7];
         crate::bc7::analytical::encode_mode6(
-            &mut block,
-            3,
-            17,
-            31,
-            45,
-            0,
-            89,
-            103,
-            117,
-            121,
-            1,
-            &weights,
+            &mut block, 3, 17, 31, 45, 0, 89, 103, 117, 121, 1, &weights,
         );
         let mut pixels = [[0u8; 4]; 16];
         for i in 0..16 {
@@ -3094,19 +3285,7 @@ mod tests {
         let w3 = [0, 1, 2, 3, 4, 5, 6, 7, 1, 2, 3, 4, 5, 6, 7, 0];
         let w2 = [0, 1, 2, 3, 1, 2, 3, 0, 1, 2, 3, 1, 0, 3, 2, 1];
         crate::bc7::analytical::encode_mode4(
-            &mut block,
-            3,
-            8,
-            13,
-            9,
-            21,
-            25,
-            29,
-            47,
-            &w3,
-            &w2,
-            1,
-            1,
+            &mut block, 3, 8, 13, 9, 21, 25, 29, 47, &w3, &w2, 1, 1,
         );
         let mut pixels = [[0u8; 4]; 16];
         for i in 0..16 {
@@ -3133,18 +3312,7 @@ mod tests {
         let wrgb = [0, 1, 2, 3, 1, 2, 3, 0, 1, 2, 3, 1, 0, 3, 2, 1];
         let wa = [0, 1, 2, 3, 2, 1, 0, 3, 1, 2, 3, 0, 3, 2, 1, 0];
         crate::bc7::analytical::encode_mode5(
-            &mut block,
-            8,
-            24,
-            40,
-            52,
-            96,
-            112,
-            120,
-            221,
-            &wrgb,
-            &wa,
-            2,
+            &mut block, 8, 24, 40, 52, 96, 112, 120, 221, &wrgb, &wa, 2,
         );
         let mut pixels = [[0u8; 4]; 16];
         for i in 0..16 {
@@ -3234,7 +3402,7 @@ mod tests {
         let blocks_x = 4;
         let blocks_y = 4;
         let num_blocks = blocks_x * blocks_y;
-        
+
         // Generate a 16-block image with similar but slightly different gradient patterns to allow lossy RDO optimization
         let mut rgba_blocks = vec![[0u8; 4]; num_blocks * 16];
         for b in 0..num_blocks {
@@ -3245,19 +3413,11 @@ mod tests {
                 let x = (i % 4) as u8 * 50;
                 let y = (i / 4) as u8 * 50;
                 if pattern_type == 0 {
-                    rgba_blocks[px_idx] = [
-                        x.saturating_add(offset),
-                        y.saturating_add(offset),
-                        128,
-                        255,
-                    ];
+                    rgba_blocks[px_idx] =
+                        [x.saturating_add(offset), y.saturating_add(offset), 128, 255];
                 } else {
-                    rgba_blocks[px_idx] = [
-                        y.saturating_add(offset),
-                        x.saturating_add(offset),
-                        64,
-                        255,
-                    ];
+                    rgba_blocks[px_idx] =
+                        [y.saturating_add(offset), x.saturating_add(offset), 64, 255];
                 }
             }
         }
@@ -3265,13 +3425,22 @@ mod tests {
         // 1. Encode without RDO (Analytical Encoder)
         let mut original_blocks = vec![[0u8; 16]; num_blocks];
         for b in 0..num_blocks {
-            let pixels: &[crate::bc7::analytical::Pixel; 16] = rgba_blocks[b * 16..(b + 1) * 16].try_into().unwrap();
-            pack_bc7_rgba(&mut original_blocks[b], pixels, FLAG_PBIT_OPT_M6 | FLAG_USE_DUAL_PLANE);
+            let pixels: &[crate::bc7::analytical::Pixel; 16] =
+                rgba_blocks[b * 16..(b + 1) * 16].try_into().unwrap();
+            pack_bc7_rgba(
+                &mut original_blocks[b],
+                pixels,
+                FLAG_PBIT_OPT_M6 | FLAG_USE_DUAL_PLANE,
+            );
         }
 
         let mse_non_rdo = supported_blocks_mse(&original_blocks, &rgba_blocks);
         println!("Analytical BC7 MSE (without RDO): {}", mse_non_rdo);
-        assert!(mse_non_rdo < 150.0, "Analytical BC7 quality is too low! MSE: {}", mse_non_rdo);
+        assert!(
+            mse_non_rdo < 150.0,
+            "Analytical BC7 quality is too low! MSE: {}",
+            mse_non_rdo
+        );
 
         // 3. Apply RDO to reduce entropy/reuse matches
         let mut rdo_blocks = original_blocks.clone();
@@ -3286,26 +3455,34 @@ mod tests {
             ..Default::default()
         };
 
-        let modified_count = reduce_entropy_bc7(
-            &mut rdo_blocks,
-            &rgba_blocks,
-            blocks_x,
-            blocks_y,
-            &params,
+        let modified_count =
+            reduce_entropy_bc7(&mut rdo_blocks, &rgba_blocks, blocks_x, blocks_y, &params);
+        println!(
+            "RDO modified {} out of {} blocks",
+            modified_count, num_blocks
         );
-        println!("RDO modified {} out of {} blocks", modified_count, num_blocks);
-        
+
         // Assert that RDO actually found and modified some blocks
-        assert!(modified_count > 0, "RDO should have modified at least one block to optimize rate-distortion!");
+        assert!(
+            modified_count > 0,
+            "RDO should have modified at least one block to optimize rate-distortion!"
+        );
 
         // Verify that the RDO blocks actually differ from the original blocks
-        assert_ne!(original_blocks, rdo_blocks, "RDO blocks should be different from non-RDO blocks!");
+        assert_ne!(
+            original_blocks, rdo_blocks,
+            "RDO blocks should be different from non-RDO blocks!"
+        );
 
         let mse_rdo = supported_blocks_mse(&rdo_blocks, &rgba_blocks);
         println!("RDO BC7 MSE: {}", mse_rdo);
-        
+
         // Rate-distortion optimizes for rate (entropy) as well, so distortion might be slightly higher,
         // but it should still be very reasonable and well within quality boundaries.
-        assert!(mse_rdo < 250.0, "RDO BC7 quality is too low! MSE: {}", mse_rdo);
+        assert!(
+            mse_rdo < 250.0,
+            "RDO BC7 quality is too low! MSE: {}",
+            mse_rdo
+        );
     }
 }

@@ -5,6 +5,14 @@ version = "0.0.1"
 edition = "2024"
 #resolver = "3"
 
+[lints.clippy]
+collapsible_if = "allow"
+empty_line_after_doc_comment = "allow"
+manual_div_ceil = "allow"
+manual_is_multiple_of = "allow"
+needless_lifetimes = "allow"
+nonminimal_bool = "allow"
+
 [dependencies]
 byteorder = { version = "1.5", features = ["std"] }
 color-eyre = { version = "0.6", features = ["track-caller"] }
@@ -29,6 +37,9 @@ serde = { version = "1.0.228", features = ["derive"] }
 toml = "1.1.2"
 memmap2 = "0.9"
 
+[dev-dependencies]
+rand = "0.8.6"
+
 [features]
 profiling = []
 tile_mappings_builder = []
@@ -36,6 +47,3 @@ tile_mappings_builder = []
 [[bench]]
 name = "rle_decode"
 harness = false
-
-[dev-dependencies]
-rand = "0.8.6"
