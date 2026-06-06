@@ -13,6 +13,9 @@ needless_lifetimes = "allow"
 nonminimal_bool = "allow"
 too_many_arguments = "allow"
 
+[features]
+dev-tool-tests = []
+
 [dependencies]
 uocf = { path = "../../lib/uocf" }
 clap = { version = "4.6.1", features = ["derive", "unicode"] }
@@ -43,9 +46,10 @@ path = "src/bin/cc_uop_mul_converter.rs"
 name = "uop-dict-populator-cli"
 path = "src/bin/dev-tools/uop_dict_populator.rs"
 
-#[[bin]]
-#name = "texture-scanner"
-#path = "src/bin/dev-tools/texture_scanner.rs"
+[[bin]]
+name = "texture-scanner"
+path = "src/bin/dev-tools/texture_scanner.rs"
+required-features = ["dev-tool-tests"]
 
 [[bin]]
 name = "sound-tool"
@@ -55,9 +59,10 @@ path = "src/bin/sound_tool.rs"
 name = "multimap-tool"
 path = "src/bin/multimap_tool.rs"
 
-#[[bin]]
-#name = "facet-evidence-tool"
-#path = "src/bin/dev-tools/facet_evidence_tool.rs"
+[[bin]]
+name = "facet-evidence-tool"
+path = "src/bin/dev-tools/facet_evidence_tool.rs"
+required-features = ["dev-tool-tests"]
 
 #[[bin]]
 #name = "kr-ec-terrain-diff-tool"
