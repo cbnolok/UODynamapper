@@ -1478,11 +1478,11 @@ fn decoded_page_size(
     let pixels = page_rgba.len() / 4;
     if let Some(page_size) = page_size {
         let used_pixels = page_size.used_width as usize * page_size.used_height as usize;
-        if pixels == used_pixels {
+        if pixels == used_pixels && page_size.used_width != 0 && page_size.used_height != 0 {
             return Some([page_size.used_width as usize, page_size.used_height as usize]);
         }
         let atlas_pixels = page_size.atlas_width as usize * page_size.atlas_height as usize;
-        if pixels == atlas_pixels {
+        if pixels == atlas_pixels && page_size.atlas_width != 0 && page_size.atlas_height != 0 {
             return Some([page_size.atlas_width as usize, page_size.atlas_height as usize]);
         }
     }
@@ -1495,7 +1495,7 @@ fn page_width_from_rgba_len(page_rgba: &[u8]) -> Option<u32> {
     }
     let pixels = page_rgba.len() / 4;
     let side = (pixels as f64).sqrt() as usize;
-    if side * side == pixels {
+    if side != 0 && side * side == pixels {
         Some(side as u32)
     } else {
         None

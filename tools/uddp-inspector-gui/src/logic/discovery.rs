@@ -148,7 +148,7 @@ pub fn parse_virtual_entries_from_slot_manifest(data: &[u8]) -> Vec<VirtualEntry
             (1, 0)
         };
 
-        if (flags & 1) != 0 {
+        if (flags & 1) != 0 && page_index != u32::MAX && width != 0 && height != 0 {
             let summary = if matches!(kind, "CC Art" | "EC Art") {
                 let logical_width = width as f32 / f32::from(upscale_factor);
                 let logical_height = height as f32 / f32::from(upscale_factor);
@@ -348,6 +348,17 @@ mod tests {
     #[test]
     fn parse_virtual_entries_skips_non_present_slots() {
         let manifest = build_slot_manifest(b"CASL", 3, Some(1), 0);
+        let entries = parse_virtual_entries_from_slot_manifest(&manifest);
+
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn parse_virtual_entries_skips_present_slots_without_displayable_rects() {
+        let mut manifest = build_slot_manifest(b"ELSL", 3, Some(1), 1);
+        let width_offset = manifest.len() - 4;
+        manifest[width_offset..width_offset + 2].copy_from_slice(&0u16.to_le_bytes());
+
         let entries = parse_virtual_entries_from_slot_manifest(&manifest);
 
         assert!(entries.is_empty());

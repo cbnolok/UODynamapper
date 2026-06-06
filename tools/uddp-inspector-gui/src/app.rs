@@ -146,6 +146,19 @@ impl InspectorApp {
         pixels: &[u8],
         label: String,
     ) {
+        let expected_len = size[0].saturating_mul(size[1]).saturating_mul(4);
+        if size[0] == 0 || size[1] == 0 || pixels.len() != expected_len {
+            self.preview_texture = None;
+            self.preview_texture_size = None;
+            self.preview_text = Some(format!(
+                "{label}\nUnable to preview image: invalid RGBA buffer for {}x{} ({} bytes).",
+                size[0],
+                size[1],
+                pixels.len()
+            ));
+            return;
+        }
+
         let color_image = egui::ColorImage::from_rgba_unmultiplied(size, pixels);
         self.preview_texture =
             Some(ctx.load_texture(texture_name, color_image, Default::default()));
@@ -891,10 +904,20 @@ impl InspectorApp {
                             let rect = [x as usize, y as usize, width as usize, height as usize];
                             let cropped = crop_rgba(&page.rgba, page.width as usize, rect);
                             let atlas_image = if self.atlas_texture.is_none() {
-                                Some(egui::ColorImage::from_rgba_unmultiplied(
-                                    [page.width as usize, page.height as usize],
-                                    &page.rgba,
-                                ))
+                                let atlas_size = [page.width as usize, page.height as usize];
+                                let expected_len =
+                                    atlas_size[0].saturating_mul(atlas_size[1]).saturating_mul(4);
+                                if atlas_size[0] != 0
+                                    && atlas_size[1] != 0
+                                    && page.rgba.len() == expected_len
+                                {
+                                    Some(egui::ColorImage::from_rgba_unmultiplied(
+                                        atlas_size,
+                                        &page.rgba,
+                                    ))
+                                } else {
+                                    None
+                                }
                             } else {
                                 None
                             };
