@@ -176,6 +176,11 @@ impl InspectorApp {
             resp.request_focus();
             self.focus_filter = false;
         }
+        if ui.checkbox(&mut self.hide_empty_entries, "Hide empty entries").changed() {
+            self.selected_idx = None;
+            self.selected_virtual_idx = None;
+            self.clear_preview_state();
+        }
 
         ui.add_space(10.0);
         ui.separator();

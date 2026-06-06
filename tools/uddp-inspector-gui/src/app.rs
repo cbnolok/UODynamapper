@@ -45,6 +45,7 @@ pub struct InspectorApp {
     pub atlas_pages: HashMap<u32, AtlasPageInfo>,
     pub selected_idx: Option<usize>,
     pub filter: String,
+    pub hide_empty_entries: bool,
     pub package_path: Option<PathBuf>,
     pub mobile_anim_cc_package: Option<Arc<MobileAnimCcPackage>>,
     pub mobile_anim_ec_package: Option<Arc<MobileAnimEcPackage>>,
@@ -90,6 +91,7 @@ impl InspectorApp {
             atlas_pages: HashMap::new(),
             selected_idx: None,
             filter: String::new(),
+            hide_empty_entries: true,
             package_path: None,
             mobile_anim_cc_package: None,
             mobile_anim_ec_package: None,
@@ -264,6 +266,10 @@ impl InspectorApp {
             .iter()
             .enumerate()
             .filter(|(_, entry)| {
+                if self.hide_empty_entries && Self::package_entry_is_empty(entry) {
+                    return false;
+                }
+
                 if self.filter.is_empty() {
                     return true;
                 }
@@ -301,6 +307,10 @@ impl InspectorApp {
             .iter()
             .enumerate()
             .filter(|(_, entry)| {
+                if self.hide_empty_entries && self.virtual_entry_is_empty(entry) {
+                    return false;
+                }
+
                 if self.filter.is_empty() {
                     return true;
                 }
@@ -318,6 +328,28 @@ impl InspectorApp {
             })
             .map(|(i, _)| i)
             .collect()
+    }
+
+    fn package_entry_is_empty(entry: &EntryInfo) -> bool {
+        entry.raw_size == 0
+    }
+
+    fn virtual_entry_is_empty(&self, entry: &VirtualEntry) -> bool {
+        match &entry.data {
+            VirtualEntryData::AtlasRect {
+                page_index,
+                width,
+                height,
+                ..
+            } => *page_index == u32::MAX || *width == 0 || *height == 0,
+            VirtualEntryData::MapBlock { source_entry_idx }
+            | VirtualEntryData::StaticBlock { source_entry_idx } => self
+                .entries
+                .get(*source_entry_idx)
+                .map(Self::package_entry_is_empty)
+                .unwrap_or(true),
+            _ => false,
+        }
     }
 
     pub fn active_virtual_entries(&self) -> &[VirtualEntry] {
@@ -1278,6 +1310,7 @@ mod tests {
             atlas_pages: HashMap::new(),
             selected_idx: None,
             filter: String::new(),
+            hide_empty_entries: true,
             package_path: None,
             mobile_anim_cc_package: None,
             mobile_anim_ec_package: None,
@@ -1449,6 +1482,7 @@ mod tests {
             atlas_pages: HashMap::new(),
             selected_idx: None,
             filter: String::new(),
+            hide_empty_entries: true,
             package_path: None,
             mobile_anim_cc_package: None,
             mobile_anim_ec_package: None,
@@ -1528,10 +1562,19 @@ mod tests {
                     codec: udd_container::Codec::None,
                     offset: 0,
                 },
+                EntryInfo {
+                    key: FileKey::Id(5555),
+                    raw_size: 0,
+                    stored_size: 0,
+                    data_type: 1,
+                    codec: udd_container::Codec::None,
+                    offset: 0,
+                },
             ],
             atlas_pages: HashMap::new(),
             selected_idx: None,
             filter: String::new(),
+            hide_empty_entries: true,
             package_path: None,
             mobile_anim_cc_package: None,
             mobile_anim_ec_package: None,
@@ -1568,6 +1611,10 @@ mod tests {
         // Empty filter matches all
         assert_eq!(app.filtered_package_indices(), vec![0, 1, 2]);
 
+        app.hide_empty_entries = false;
+        assert_eq!(app.filtered_package_indices(), vec![0, 1, 2, 3]);
+        app.hide_empty_entries = true;
+
         // Filter by Decimal ID
         app.filter = "42".to_string();
         assert_eq!(app.filtered_package_indices(), vec![0]);
@@ -1586,6 +1633,11 @@ mod tests {
 
         app.filter = "art".to_string();
         assert_eq!(app.filtered_package_indices(), vec![0]);
+
+        app.filter = "5555".to_string();
+        assert_eq!(app.filtered_package_indices(), Vec::<usize>::new());
+        app.hide_empty_entries = false;
+        assert_eq!(app.filtered_package_indices(), vec![3]);
     }
 
     #[test]
@@ -1596,6 +1648,7 @@ mod tests {
             atlas_pages: HashMap::new(),
             selected_idx: None,
             filter: String::new(),
+            hide_empty_entries: true,
             package_path: None,
             mobile_anim_cc_package: None,
             mobile_anim_ec_package: None,
@@ -1639,6 +1692,21 @@ mod tests {
                         name: "Grass".to_string(),
                     }),
                 },
+                VirtualEntry {
+                    id: 300,
+                    _data_type: 9,
+                    kind: "EC Land".to_string(),
+                    summary: "empty".to_string(),
+                    location: "missing page".to_string(),
+                    data: VirtualEntryData::AtlasRect {
+                        page_index: u32::MAX,
+                        x: 0,
+                        y: 0,
+                        width: 0,
+                        height: 0,
+                        flags: 1,
+                    },
+                },
             ],
             virtual_material_entries: Vec::new(),
             virtual_entry_mode: VirtualEntryMode::Entry,
@@ -1662,6 +1730,10 @@ mod tests {
         // Empty filter matches all
         assert_eq!(app.filtered_virtual_indices(), vec![0, 1]);
 
+        app.hide_empty_entries = false;
+        assert_eq!(app.filtered_virtual_indices(), vec![0, 1, 2]);
+        app.hide_empty_entries = true;
+
         // Filter by Decimal ID
         app.filter = "100".to_string();
         assert_eq!(app.filtered_virtual_indices(), vec![0]);
@@ -1673,6 +1745,11 @@ mod tests {
         // Filter by summary substring
         app.filter = "grass".to_string();
         assert_eq!(app.filtered_virtual_indices(), vec![1]);
+
+        app.filter = "300".to_string();
+        assert_eq!(app.filtered_virtual_indices(), Vec::<usize>::new());
+        app.hide_empty_entries = false;
+        assert_eq!(app.filtered_virtual_indices(), vec![2]);
     }
 
     #[test]
@@ -1740,6 +1817,7 @@ mod tests {
             atlas_pages: HashMap::new(),
             selected_idx: None,
             filter: String::new(),
+            hide_empty_entries: true,
             package_path: None,
             mobile_anim_cc_package: None,
             mobile_anim_ec_package: None,

@@ -148,8 +148,11 @@ pub fn parse_virtual_entries_from_slot_manifest(data: &[u8]) -> Vec<VirtualEntry
             (1, 0)
         };
 
-        if (flags & 1) != 0 && page_index != u32::MAX && width != 0 && height != 0 {
-            let summary = if matches!(kind, "CC Art" | "EC Art") {
+        if (flags & 1) != 0 {
+            let is_empty = page_index == u32::MAX || width == 0 || height == 0;
+            let summary = if is_empty {
+                "empty".to_string()
+            } else if matches!(kind, "CC Art" | "EC Art") {
                 let logical_width = width as f32 / f32::from(upscale_factor);
                 let logical_height = height as f32 / f32::from(upscale_factor);
                 format!(
@@ -166,12 +169,17 @@ pub fn parse_virtual_entries_from_slot_manifest(data: &[u8]) -> Vec<VirtualEntry
             } else {
                 format!("{}x{} at {},{}", width, height, x, y)
             };
+            let location = if page_index == u32::MAX {
+                "missing page".to_string()
+            } else {
+                format!("page {}", page_index)
+            };
             entries.push(VirtualEntry {
                 id,
                 _data_type: if kind == "EC Land" || kind == "CC Texmaps" { 9 } else { 1 },
                 kind: kind.to_string(),
                 summary,
-                location: format!("page {}", page_index),
+                location,
                 data: VirtualEntryData::AtlasRect {
                     page_index,
                     x,
@@ -354,14 +362,15 @@ mod tests {
     }
 
     #[test]
-    fn parse_virtual_entries_skips_present_slots_without_displayable_rects() {
+    fn parse_virtual_entries_keeps_present_slots_without_displayable_rects() {
         let mut manifest = build_slot_manifest(b"ELSL", 3, Some(1), 1);
         let width_offset = manifest.len() - 4;
         manifest[width_offset..width_offset + 2].copy_from_slice(&0u16.to_le_bytes());
 
         let entries = parse_virtual_entries_from_slot_manifest(&manifest);
 
-        assert!(entries.is_empty());
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].summary, "empty");
     }
 
     #[test]
