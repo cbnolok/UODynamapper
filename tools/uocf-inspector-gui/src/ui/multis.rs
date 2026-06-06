@@ -1,8 +1,11 @@
 use crate::app::{ArtSource, MultiCollectionSource, MultisSource, UopInspectorApp};
 use crate::ui::{arrow_delta, move_selection};
 use eframe::egui;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use uocf::classic::art::static_art_id_for_source;
+use uocf::enhanced::tileart::ArtTexture;
 use uocf::enhanced::textures::{ECImageFormat, TextureFile, TextureItem as RawTextureItem};
 
 #[derive(Clone)]
@@ -22,6 +25,16 @@ struct PartRenderInfo {
     height_delta: i32,
     offset_x: i32,
     offset_y: i32,
+    texture_id: Option<u32>,
+    clip_rect: Option<MultiSourceClip>,
+}
+
+#[derive(Clone, Copy, Hash, PartialEq, Eq)]
+struct MultiSourceClip {
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
 }
 
 struct PreviewRenderPart {
@@ -539,7 +552,7 @@ fn draw_preview(
         .enumerate()
         .map(|(index, part)| {
             let info = part_render_info(app, part.item_id, art_source);
-            let texture = get_multi_part_texture(app, ctx, part.item_id);
+            let texture = get_multi_part_texture(app, ctx, part.item_id, &info);
             let size = texture
                 .as_ref()
                 .map(|handle| handle.size_vec2() * art_scale)
@@ -704,12 +717,15 @@ fn get_multi_part_texture(
     app: &mut UopInspectorApp,
     ctx: &egui::Context,
     item_id: u16,
+    info: &PartRenderInfo,
 ) -> Option<egui::TextureHandle> {
     let source = concrete_art_tile_source(app.selected_legacy_source);
-    let art_id = static_art_id_for_source(item_id as u32, source);
-    let key = multi_preview_texture_key(art_id, source);
+    let art_id = info
+        .texture_id
+        .unwrap_or_else(|| static_art_id_for_source(item_id as u32, source));
+    let key = multi_preview_texture_key(art_id, source, info.clip_rect);
     let texture = app.texture_previews.get(&key).cloned().or_else(|| {
-        let (width, height, pixels) = decode_multi_part_rgba(app, art_id, source)?;
+        let (width, height, pixels) = decode_multi_part_rgba(app, art_id, source, info.clip_rect)?;
         let image = egui::ColorImage::from_rgba_unmultiplied(
             [width as usize, height as usize],
             &pixels,
@@ -728,14 +744,20 @@ fn get_multi_part_texture(
     texture
 }
 
-fn multi_preview_texture_key(art_id: u32, source: ArtSource) -> u64 {
-    0x4D50_0000_0000_0000u64 | ((source as u64) << 40) | art_id as u64
+fn multi_preview_texture_key(art_id: u32, source: ArtSource, clip_rect: Option<MultiSourceClip>) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    "multi_preview_art".hash(&mut hasher);
+    (source as u8).hash(&mut hasher);
+    art_id.hash(&mut hasher);
+    clip_rect.hash(&mut hasher);
+    hasher.finish()
 }
 
 fn decode_multi_part_rgba(
     app: &UopInspectorApp,
     art_id: u32,
     source: ArtSource,
+    clip_rect: Option<MultiSourceClip>,
 ) -> Option<(u32, u32, Vec<u8>)> {
     let client = app.client_data.as_ref()?;
     let mut scratch = Vec::new();
@@ -748,23 +770,58 @@ fn decode_multi_part_rgba(
     }
 
     if scratch.starts_with(b"DDS ") || source != ArtSource::Mul {
-        if let Some(image) = decode_multi_uop_art_rgba(&scratch, source) {
-            return Some(image);
+        if let Some((width, height, pixels)) = decode_multi_uop_art_rgba(&scratch, source) {
+            return Some(crop_multi_part_rgba(width, height, pixels, clip_rect));
         }
     }
 
     if art_id < uocf::classic::art::STATIC_TILE_ID_BASE {
         let mut pixels = [0u8; 44 * 44 * 4];
         if uocf::classic::art::decode_land_tile_from_raw(&scratch, &mut pixels).is_ok() {
-            return Some((44, 44, pixels.to_vec()));
+            return Some(crop_multi_part_rgba(44, 44, pixels.to_vec(), clip_rect));
         }
     } else if let Ok((width, height, pixels)) =
         client.art.decode_static_tile_from_source(art_id, source, &mut scratch)
     {
-        return Some((width as u32, height as u32, pixels));
+        return Some(crop_multi_part_rgba(width as u32, height as u32, pixels, clip_rect));
     }
 
     None
+}
+
+fn crop_multi_part_rgba(
+    width: u32,
+    height: u32,
+    pixels: Vec<u8>,
+    clip_rect: Option<MultiSourceClip>,
+) -> (u32, u32, Vec<u8>) {
+    let Some(clip_rect) = clip_rect else {
+        return (width, height, pixels);
+    };
+    let left = clip_rect.left.max(0).min(width as i32) as u32;
+    let top = clip_rect.top.max(0).min(height as i32) as u32;
+    let right = clip_rect.right.max(0).min(width as i32) as u32;
+    let bottom = clip_rect.bottom.max(0).min(height as i32) as u32;
+    if right <= left || bottom <= top {
+        return (width, height, pixels);
+    }
+    if left == 0 && top == 0 && right == width && bottom == height {
+        return (width, height, pixels);
+    }
+
+    let cropped_width = right - left;
+    let cropped_height = bottom - top;
+    let mut cropped = vec![0u8; cropped_width as usize * cropped_height as usize * 4];
+    let src_stride = width as usize * 4;
+    let dst_stride = cropped_width as usize * 4;
+    for row in 0..cropped_height as usize {
+        let src_start = ((top as usize + row) * src_stride) + left as usize * 4;
+        let dst_start = row * dst_stride;
+        cropped[dst_start..dst_start + dst_stride]
+            .copy_from_slice(&pixels[src_start..src_start + dst_stride]);
+    }
+
+    (cropped_width, cropped_height, cropped)
 }
 
 fn decode_multi_uop_art_rgba(scratch: &[u8], source: ArtSource) -> Option<(u32, u32, Vec<u8>)> {
@@ -833,10 +890,10 @@ fn clear_multi_preview_failure_logs(app: &mut UopInspectorApp) {
 
 fn multi_preview_art_scale(source: ArtSource) -> f32 {
     match source {
-        ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr => {
+        ArtSource::EcUopKr => {
             CLASSIC_STATIC_TILE_PIXEL_WIDTH / ENHANCED_STATIC_TILE_PIXEL_WIDTH
         }
-        ArtSource::Mul | ArtSource::CcUop | ArtSource::Any => 1.0,
+        ArtSource::Mul | ArtSource::CcUop | ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::Any => 1.0,
     }
 }
 
@@ -851,17 +908,43 @@ fn part_render_info(app: &UopInspectorApp, item_id: u16, source: ArtSource) -> P
 
     if let Some(entries) = &app.ec_tileart_entries {
         if let Some(file) = entries.iter().find(|file| file.entry.tile_id == item_id as u32) {
-            let image_offset = match source {
-                ArtSource::EcUopKr => &file.entry.ec_img_offset,
-                ArtSource::EcUop | ArtSource::EcUopLegacy => &file.entry.cc_img_offset,
-                ArtSource::Mul | ArtSource::CcUop | ArtSource::Any => &file.entry.cc_img_offset,
-            };
-            info.width_delta = image_offset.y_start - image_offset.y_end;
-            info.height_delta = image_offset.x_start;
-            info.offset_x = image_offset.x_off;
-            info.offset_y = image_offset.y_off;
+            if let Some(texture) = multi_tileart_texture(app, file, source) {
+                info.texture_id = Some(texture.texture_id);
+                info.clip_rect = Some(MultiSourceClip {
+                    left: texture.start_x,
+                    top: texture.start_y,
+                    right: texture.end_x,
+                    bottom: texture.end_y,
+                });
+                info.offset_x = texture.offset_x;
+                info.offset_y = texture.offset_y;
+            } else {
+                let image_offset = match source {
+                    ArtSource::EcUopKr => &file.entry.ec_img_offset,
+                    ArtSource::EcUop | ArtSource::EcUopLegacy => &file.entry.cc_img_offset,
+                    ArtSource::Mul | ArtSource::CcUop | ArtSource::Any => &file.entry.cc_img_offset,
+                };
+                info.width_delta = image_offset.y_start - image_offset.y_end;
+                info.height_delta = image_offset.x_start;
+                info.offset_x = image_offset.x_off;
+                info.offset_y = image_offset.y_off;
+            }
         }
     }
 
     info
+}
+
+fn multi_tileart_texture(
+    app: &UopInspectorApp,
+    file: &crate::app::TileArtFileEntry,
+    source: ArtSource,
+) -> Option<ArtTexture> {
+    let dictionary = app.uo_string_dictionary.as_deref()?;
+    let art_data = file.entry.process(dictionary);
+    match source {
+        ArtSource::EcUopKr => art_data.ec_texture,
+        ArtSource::EcUop | ArtSource::EcUopLegacy => art_data.cc_texture,
+        ArtSource::Mul | ArtSource::CcUop | ArtSource::Any => None,
+    }
 }
