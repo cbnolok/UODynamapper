@@ -23,7 +23,8 @@ use uocf::enhanced::multis::MultiCollection;
 use uocf::classic::tiledata::TileData;
 use uocf::enhanced::string_dictionary::UoStringDictionary;
 use uocf::enhanced::tileart::{
-    ArtTexture, TaeAnimationAppearance, TaeFlag, TaeSittingAnimation, TileArtEntry,
+    ArtTexture, TaeAnimationAppearance, TaeFlag, TaeSittingAnimation,
+    TextureItem as TileArtTextureItem, TextureType as TileArtTextureType, TileArtEntry,
 };
 use uocf::enhanced::terrain_definition::TerrainDefinitionEntry;
 use uocf::enhanced::textures::{ECImageFormat, TextureFile, TextureItem as RawTextureItem};
@@ -3275,15 +3276,16 @@ impl UopInspectorApp {
         frame_index: usize,
         _frame_count: usize,
     ) -> Option<egui::TextureHandle> {
-        if !matches!(concrete_art_tile_source(source), ArtSource::EcUopLegacy) {
+        let concrete_source = concrete_art_tile_source(source);
+        if !matches!(concrete_source, ArtSource::EcUopLegacy | ArtSource::EcUopKr) {
             return self.get_tex_art_texture_from_source(ctx, art_id, source);
         }
 
-        let sample = self.ec_legacy_animdata_sample(art_id)?;
+        let sample = self.animdata_tileart_sample(art_id, concrete_source)?;
         let hue_id = self.selected_hue_id;
         let key = 0xAD00_0000_0000_0000u64
             ^ hash_file_name_single(&sample.path)
-            ^ ((source as u64) << 48)
+            ^ ((concrete_source as u64) << 48)
             ^ ((hue_id as u64) << 32)
             ^ (sample.sampled_art_id as u64);
         if let Some(handle) = self.texture_previews.get(&key).cloned() {
@@ -3292,7 +3294,7 @@ impl UopInspectorApp {
         }
 
         let (width, height, pixels) =
-            self.decode_art_item_rgba_from_source(sample.texture_id, ArtSource::EcUopLegacy)?;
+            self.decode_art_item_rgba_from_source(sample.texture_id, concrete_source)?;
         let (width, height, pixels) = crop_rgba_rect(
             width,
             height,
@@ -3320,7 +3322,7 @@ impl UopInspectorApp {
             format!(
                 "animdata art {} {:?} -> {} [{},{}..{},{}] hue {}",
                 sample.sampled_art_id,
-                source,
+                concrete_source,
                 sample.path,
                 sample.left,
                 sample.top,
@@ -3335,14 +3337,42 @@ impl UopInspectorApp {
         Some(handle)
     }
 
-    pub fn ec_legacy_animdata_sample(&self, art_id: u32) -> Option<EcTileArtSample> {
+    pub fn animdata_tileart_sample(
+        &self,
+        art_id: u32,
+        source: ArtSource,
+    ) -> Option<EcTileArtSample> {
         let entries = self.ec_tileart_entries.as_ref()?;
         let index = entries
             .binary_search_by_key(&art_id, |file| file.entry.tile_id)
             .ok()?;
         let dictionary = self.uo_string_dictionary.as_deref()?;
-        let texture = entries[index].entry.process(dictionary).cc_texture?;
-        ec_tileart_sample_from_texture(art_id, texture)
+        let art_data = entries[index].entry.process(dictionary);
+        match concrete_art_tile_source(source) {
+            ArtSource::EcUopLegacy => {
+                let texture = art_data.cc_texture?;
+                let path_prefix = tileart_sample_path_prefix(
+                    &art_data.texture_items,
+                    1,
+                    texture.texture_id,
+                    TileArtTextureType::TileArtLegacy,
+                    "build/tileartlegacy",
+                );
+                ec_tileart_sample_from_texture(art_id, texture, path_prefix)
+            }
+            ArtSource::EcUopKr => {
+                let texture = art_data.ec_texture?;
+                let path_prefix = tileart_sample_path_prefix(
+                    &art_data.texture_items,
+                    0,
+                    texture.texture_id,
+                    TileArtTextureType::WorldArt,
+                    "build/worldart",
+                );
+                ec_tileart_sample_from_texture(art_id, texture, path_prefix)
+            }
+            ArtSource::Mul | ArtSource::CcUop | ArtSource::EcUop | ArtSource::Any => None,
+        }
     }
 
     pub fn animdata_art_source_request_label(
@@ -3357,7 +3387,7 @@ impl UopInspectorApp {
                 format!("Source request: artLegacyMUL.uop build/artlegacymul/{art_id:08}.tga")
             }
             ArtSource::EcUop | ArtSource::EcUopLegacy => {
-                if let Some(sample) = self.ec_legacy_animdata_sample(art_id) {
+                if let Some(sample) = self.animdata_tileart_sample(art_id, source) {
                     format!(
                         "Source request: tileart.uop tile {} -> LegacyTexture.uop {}, rect {},{}..{},{} offset {},{}",
                         sample.sampled_art_id,
@@ -3374,7 +3404,21 @@ impl UopInspectorApp {
                 }
             }
             ArtSource::EcUopKr => {
-                format!("Source request: Texture.uop build/worldart/{art_id:08}.dds or .tga")
+                if let Some(sample) = self.animdata_tileart_sample(art_id, source) {
+                    format!(
+                        "Source request: tileart.uop tile {} -> Texture.uop {}, rect {},{}..{},{} offset {},{}",
+                        sample.sampled_art_id,
+                        sample.path,
+                        sample.left,
+                        sample.top,
+                        sample.right,
+                        sample.bottom,
+                        sample.offset_x,
+                        sample.offset_y
+                    )
+                } else {
+                    format!("Source request: tileart.uop tile {art_id} -> Texture.uop metadata unavailable, frame {frame_index}")
+                }
             }
             ArtSource::Any => format!("Source request: auto art_id {art_id} (0x{art_id:04X})"),
         }
@@ -3889,7 +3933,54 @@ fn cc_hue_should_apply_to_art(art_id: u32, source: ArtSource) -> bool {
     art_id >= uocf::classic::art::STATIC_TILE_ID_BASE || source.is_ec_uop()
 }
 
-fn ec_tileart_sample_from_texture(sampled_art_id: u32, texture: ArtTexture) -> Option<EcTileArtSample> {
+fn tileart_sample_path_prefix(
+    texture_items: &[Vec<TileArtTextureItem>],
+    block_index: usize,
+    texture_id: u32,
+    preferred_type: TileArtTextureType,
+    default_prefix: &'static str,
+) -> &'static str {
+    let Some(items) = texture_items.get(block_index) else {
+        return default_prefix;
+    };
+
+    let selected_type = items
+        .iter()
+        .find(|item| {
+            item.id == texture_id && item.texture_type == preferred_type && !item.is_auxiliary
+        })
+        .or_else(|| {
+            items
+                .iter()
+                .find(|item| item.id == texture_id && item.texture_type == preferred_type)
+        })
+        .or_else(|| {
+            items
+                .iter()
+                .find(|item| item.id == texture_id && !item.is_auxiliary)
+        })
+        .or_else(|| items.iter().find(|item| item.id == texture_id))
+        .map(|item| item.texture_type);
+
+    selected_type
+        .and_then(tileart_texture_path_prefix)
+        .unwrap_or(default_prefix)
+}
+
+fn tileart_texture_path_prefix(texture_type: TileArtTextureType) -> Option<&'static str> {
+    match texture_type {
+        TileArtTextureType::WorldArt => Some("build/worldart"),
+        TileArtTextureType::TileArtLegacy => Some("build/tileartlegacy"),
+        TileArtTextureType::TileArtEnhanced => Some("build/tileartenhanced"),
+        TileArtTextureType::Textures | TileArtTextureType::Undefined => None,
+    }
+}
+
+fn ec_tileart_sample_from_texture(
+    sampled_art_id: u32,
+    texture: ArtTexture,
+    path_prefix: &str,
+) -> Option<EcTileArtSample> {
     if texture.start_x < 0
         || texture.start_y < 0
         || texture.end_x <= texture.start_x
@@ -3901,7 +3992,7 @@ fn ec_tileart_sample_from_texture(sampled_art_id: u32, texture: ArtTexture) -> O
     Some(EcTileArtSample {
         sampled_art_id,
         texture_id: texture.texture_id,
-        path: format!("build/tileartlegacy/{:08}.dds", texture.texture_id),
+        path: format!("{}/{:08}.dds", path_prefix, texture.texture_id),
         left: texture.start_x as u32,
         top: texture.start_y as u32,
         right: texture.end_x as u32,
@@ -4391,6 +4482,7 @@ mod tests {
                 offset_x: 2,
                 offset_y: -3,
             },
+            "build/tileartlegacy",
         )
         .expect("valid tileart window should resolve");
 
@@ -4399,6 +4491,59 @@ mod tests {
         assert_eq!(sample.path, "build/tileartlegacy/00001148.dds");
         assert_eq!((sample.left, sample.top, sample.right, sample.bottom), (0, 0, 44, 166));
         assert_eq!((sample.offset_x, sample.offset_y), (2, -3));
+    }
+
+    #[test]
+    fn ec_tileart_sample_can_use_kr_worldart_window() {
+        let sample = ec_tileart_sample_from_texture(
+            1150,
+            ArtTexture {
+                texture_id: 1147,
+                start_x: 34,
+                start_y: 0,
+                end_x: 105,
+                end_y: 262,
+                offset_x: 1,
+                offset_y: 0,
+            },
+            "build/worldart",
+        )
+        .expect("valid tileart window should resolve");
+
+        assert_eq!(sample.sampled_art_id, 1150);
+        assert_eq!(sample.texture_id, 1147);
+        assert_eq!(sample.path, "build/worldart/00001147.dds");
+        assert_eq!((sample.left, sample.top, sample.right, sample.bottom), (34, 0, 105, 262));
+        assert_eq!((sample.offset_x, sample.offset_y), (1, 0));
+    }
+
+    #[test]
+    fn tileart_sample_path_prefix_uses_matching_texture_family() {
+        let texture_items = vec![vec![
+            TileArtTextureItem {
+                texture_type: TileArtTextureType::TileArtEnhanced,
+                id: 77,
+                is_auxiliary: false,
+                ..Default::default()
+            },
+            TileArtTextureItem {
+                texture_type: TileArtTextureType::WorldArt,
+                id: 88,
+                is_auxiliary: false,
+                ..Default::default()
+            },
+        ]];
+
+        assert_eq!(
+            tileart_sample_path_prefix(
+                &texture_items,
+                0,
+                77,
+                TileArtTextureType::WorldArt,
+                "build/worldart",
+            ),
+            "build/tileartenhanced"
+        );
     }
 
     #[test]
