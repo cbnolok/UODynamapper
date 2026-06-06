@@ -2,6 +2,7 @@ use eframe::egui;
 use udd_container::{FileKey, xxh64_virtual_path};
 use crate::app::{InspectorApp, MAX_INLINE_PREVIEW_WIDTH, MAX_INLINE_PREVIEW_HEIGHT};
 use crate::models::{PreviewModeKind, ViewMode, VirtualEntryData};
+use crate::ui::{metadata_grid, metadata_label};
 use crate::utils::{atlas_page_paths, data_type_to_str, format_size};
 
 impl InspectorApp {
@@ -127,21 +128,21 @@ impl InspectorApp {
         // Package Entry ID / Hash
         ui.label(egui::RichText::new(format!("{:?}", key)).strong());
         ui.separator();
-        egui::Grid::new("detail_grid").show(ui, |ui| {
-            ui.label("Data Type:");
+        metadata_grid("detail_grid").show(ui, |ui| {
+            metadata_label(ui, "Data Type:");
             ui.label(format!(
                 "{:?} ({})",
                 data_type_to_str(data_type),
                 data_type
             ));
             ui.end_row();
-            ui.label("Codec:");
+            metadata_label(ui, "Codec:");
             ui.label(format!("{:?}", codec));
             ui.end_row();
-            ui.label("Raw Size:");
+            metadata_label(ui, "Raw Size:");
             ui.label(format_size(raw_size as u64));
             ui.end_row();
-            ui.label("Stored Size:");
+            metadata_label(ui, "Stored Size:");
             ui.label(format_size(stored_size as u64));
             ui.end_row();
         });
@@ -205,14 +206,14 @@ impl InspectorApp {
         // Virtual Asset ID and Kind
         ui.label(egui::RichText::new(format!("{} ID: {}", ventry.kind, ventry.id)).strong());
         ui.separator();
-        egui::Grid::new("detail_grid_v").show(ui, |ui| {
-            ui.label("Kind:");
+        metadata_grid("detail_grid_v").show(ui, |ui| {
+            metadata_label(ui, "Kind:");
             ui.label(&ventry.kind);
             ui.end_row();
-            ui.label("Summary:");
+            metadata_label(ui, "Summary:");
             ui.label(&ventry.summary);
             ui.end_row();
-            ui.label("Location:");
+            metadata_label(ui, "Location:");
             ui.label(&ventry.location);
             ui.end_row();
             match &ventry.data {
@@ -224,47 +225,47 @@ impl InspectorApp {
                     height,
                     flags,
                 } => {
-                    ui.label("Page Index:");
+                    metadata_label(ui, "Page Index:");
                     ui.label(page_index.to_string());
                     ui.end_row();
-                    ui.label("Rect:");
+                    metadata_label(ui, "Rect:");
                     ui.label(format!("{},{} - {}x{}", x, y, width, height));
                     ui.end_row();
-                    ui.label("Flags:");
+                    metadata_label(ui, "Flags:");
                     ui.label(format!("0x{:04X}", flags));
                     ui.end_row();
                 }
                 VirtualEntryData::EcLandMaterial(info) => {
-                    ui.label("Material ID:");
+                    metadata_label(ui, "Material ID:");
                     ui.label(info.material_id.to_string());
                     ui.end_row();
-                    ui.label("Material Name ID:");
+                    metadata_label(ui, "Material Name ID:");
                     ui.label(info.material_name_id.to_string());
                     ui.end_row();
-                    ui.label("TerrainDefinition Path:");
+                    metadata_label(ui, "TerrainDefinition Path:");
                     ui.label(&info.terrain_definition_path);
                     ui.end_row();
-                    ui.label("TerrainDefinition Hash:");
+                    metadata_label(ui, "TerrainDefinition Hash:");
                     ui.label(format!("0x{:016X}", info.terrain_definition_hash64));
                     ui.end_row();
-                    ui.label("Primary Texture:");
+                    metadata_label(ui, "Primary Texture:");
                     ui.label(
                         info.primary_texture_id
                             .map(|texture_id| texture_id.to_string())
                             .unwrap_or_else(|| "<missing>".to_string()),
                     );
                     ui.end_row();
-                    ui.label("Aliases:");
+                    metadata_label(ui, "Aliases:");
                     ui.label(info.alias_count.to_string());
                     ui.end_row();
-                    ui.label("Selected Textures:");
+                    metadata_label(ui, "Selected Textures:");
                     ui.label(info.selected_texture_count.to_string());
                     ui.end_row();
                     if let Some(preview) = info.preview.as_ref() {
-                        ui.label("Preview Slot:");
+                        metadata_label(ui, "Preview Slot:");
                         ui.label(preview.slot_id.to_string());
                         ui.end_row();
-                        ui.label("Preview Rect:");
+                        metadata_label(ui, "Preview Rect:");
                         ui.label(format!(
                             "page {} {},{} - {}x{}",
                             preview.page_index,
@@ -277,13 +278,13 @@ impl InspectorApp {
                     }
                 }
                 VirtualEntryData::TileMetaLand(info) => {
-                    ui.label("Texture:");
+                    metadata_label(ui, "Texture:");
                     ui.label(info.texture_id.to_string());
                     ui.end_row();
-                    ui.label("Tile Type:");
+                    metadata_label(ui, "Tile Type:");
                     ui.label(info.tile_type.to_string());
                     ui.end_row();
-                    ui.label("Name:");
+                    metadata_label(ui, "Name:");
                     ui.label(if info.name.is_empty() {
                         "<unnamed>"
                     } else {
@@ -292,13 +293,13 @@ impl InspectorApp {
                     ui.end_row();
                 }
                 VirtualEntryData::TileMetaItem(info) => {
-                    ui.label("EC Texture:");
+                    metadata_label(ui, "EC Texture:");
                     ui.label(info.ec_texture_id.to_string());
                     ui.end_row();
-                    ui.label("CC Texture:");
+                    metadata_label(ui, "CC Texture:");
                     ui.label(info.cc_texture_id.to_string());
                     ui.end_row();
-                    ui.label("Name:");
+                    metadata_label(ui, "Name:");
                     ui.label(if info.name.is_empty() {
                         "<unnamed>"
                     } else {
@@ -307,7 +308,7 @@ impl InspectorApp {
                     ui.end_row();
                 }
                 VirtualEntryData::MapBlock { .. } | VirtualEntryData::StaticBlock { .. } => {
-                    ui.label("Block ID:");
+                    metadata_label(ui, "Block ID:");
                     ui.label(ventry.id.to_string());
                     ui.end_row();
                 }

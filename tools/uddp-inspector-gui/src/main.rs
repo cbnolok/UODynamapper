@@ -124,14 +124,14 @@ impl InspectorApp {
             return;
         };
 
-        egui::Grid::new("header_grid").show(ui, |ui| {
-            ui.label("Version:");
+        crate::ui::metadata_grid("header_grid").show(ui, |ui| {
+            crate::ui::metadata_label(ui, "Version:");
             ui.label(format!("{}.{}", version_major, version_minor));
             ui.end_row();
-            ui.label("Lookup Mode:");
+            crate::ui::metadata_label(ui, "Lookup Mode:");
             ui.label(format!("{:?}", lookup_mode));
             ui.end_row();
-            ui.label("Files:");
+            crate::ui::metadata_label(ui, "Files:");
             ui.label(file_count.to_string());
             ui.end_row();
         });
@@ -188,9 +188,9 @@ impl InspectorApp {
         }
 
         egui::ScrollArea::vertical().show(ui, |ui| {
-            egui::Grid::new("dict_grid").show(ui, |ui| {
+            crate::ui::metadata_grid("dict_grid").show(ui, |ui| {
                 for (dtype, codec, size) in dicts {
-                    ui.label(format!("T{}:", dtype));
+                    crate::ui::metadata_label(ui, format!("T{}:", dtype));
                     ui.label(format!("{:?} ({})", codec, crate::utils::format_size(size as u64)));
                     ui.end_row();
                 }

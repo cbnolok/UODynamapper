@@ -344,7 +344,7 @@ impl InspectorApp {
         let filtered = match self.view_mode {
             ViewMode::Package => self.filtered_package_indices(),
             ViewMode::Virtual => self.filtered_virtual_indices(),
-            ViewMode::MobileAnimCc | ViewMode::MobileAnimEc => return,
+            ViewMode::MobileAnimCc | ViewMode::MobileAnimEc => self.filtered_mobile_anim_indices(),
         };
 
         if filtered.is_empty() {
@@ -354,7 +354,7 @@ impl InspectorApp {
         let current = match self.view_mode {
             ViewMode::Package => self.selected_idx,
             ViewMode::Virtual => self.selected_virtual_idx,
-            ViewMode::MobileAnimCc | ViewMode::MobileAnimEc => return,
+            ViewMode::MobileAnimCc | ViewMode::MobileAnimEc => Some(self.selected_mobile_anim_index),
         };
 
         let current_pos = current
@@ -371,7 +371,9 @@ impl InspectorApp {
         match self.view_mode {
             ViewMode::Package => self.select_entry(ctx, target_idx),
             ViewMode::Virtual => self.select_virtual_entry(ctx, target_idx),
-            ViewMode::MobileAnimCc | ViewMode::MobileAnimEc => {}
+            ViewMode::MobileAnimCc | ViewMode::MobileAnimEc => {
+                self.select_mobile_animation_entry(ctx, target_idx);
+            }
         }
     }
 
