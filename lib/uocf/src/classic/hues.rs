@@ -2,7 +2,7 @@
 //!
 //! This module handles the loading and application of hues from the `hues.mul` file.
 //! Hues are used in Ultima Online to colorize items and creatures. Each hue contains a
-//! color table that maps grayscale intensities to specific colors.
+//! color table that maps source red-channel shade steps to specific colors.
 //!
 //! ## File Format
 //!
@@ -17,10 +17,9 @@
 //!
 //! ## Hue Application
 //!
-//! When a hue is applied to an asset, the grayscale intensity of each pixel in the asset is
-//! calculated. This intensity is then used as an index into the hue's color table to determine
-//! the new color for that pixel. This allows for a wide range of color variations for a single
-//! base asset.
+//! When a hue is applied to an asset, the 5-bit red component of each pixel is used as an index
+//! into the hue's color table to determine the new color for that pixel. This matches the
+//! UOFiddler/Punt-style lookup used by existing UO tooling.
 
 use std::io::Read;
 use std::fs::File;
@@ -121,13 +120,7 @@ impl HueEntry {
             return color;
         }
 
-        // The color table in hues.mul is a lookup for the grayscale intensity.
-        // We find the intensity of the pixel (average of R, G, B) and use that
-        // as an index into our 32-entry color table.
-        let intensity: u16 = (r5 + g5 + b5) / 3; // Simple average for intensity
-        let color_index: u16 = if intensity > 31 { 31 } else { intensity };
-
-        self.color_table[color_index as usize] | 0x8000 // Preserve alpha bit
+        self.color_table[r5 as usize] | 0x8000 // Preserve alpha bit
     }
 
     /// Applies the hue to a 32-bit color value (ARGB8888).
@@ -155,25 +148,60 @@ impl HueEntry {
             return color;
         }
 
-        // Convert to 5-bit components to find intensity, similar to 16-bit version
-        let r5: u32 = r8 >> 3;
-        let g5: u32 = g8 >> 3;
-        let b5: u32 = b8 >> 3;
-
-        let intensity: u32 = (r5 + g5 + b5) / 3;
-        let color_index: u32 = if intensity > 31 { 31 } else { intensity };
-
-        let hued_color16: u16 = self.color_table[color_index as usize];
+        let color_index = (r8 >> 3).min(31) as usize;
+        let hued_color16: u16 = self.color_table[color_index];
 
         // Convert the 16-bit hued color back to 32-bit ARGB
         let hr5: u16 = (hued_color16 >> 10) & 0x1F;
         let hg5: u16 = (hued_color16 >> 5) & 0x1F;
         let hb5: u16 = hued_color16 & 0x1F;
 
-        let hr8: u16 = (hr5 << 3) | (hr5 >> 2);
-        let hg8: u16 = (hg5 << 3) | (hg5 >> 2);
-        let hb8: u16 = (hb5 << 3) | (hb5 >> 2);
+        let hr8: u16 = hr5 * 8;
+        let hg8: u16 = hg5 * 8;
+        let hb8: u16 = hb5 * 8;
 
         (a << 24) | ((hr8 as u32) << 16) | ((hg8 as u32) << 8) | (hb8 as u32)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_hue() -> HueEntry {
+        let mut color_table = [0u16; 32];
+        for (index, color) in color_table.iter_mut().enumerate() {
+            let r = index as u16;
+            let g = (31 - index) as u16;
+            let b = (index / 2) as u16;
+            *color = (r << 10) | (g << 5) | b;
+        }
+        HueEntry {
+            id: 0,
+            color_table,
+            table_start: color_table[0],
+            table_end: color_table[31],
+            name: [0; 20],
+        }
+    }
+
+    #[test]
+    fn hue_application_uses_red_channel_index_for_16_bit_colors() {
+        let hue = test_hue();
+        let source = 0x8000 | (12 << 10) | (4 << 5) | 4;
+
+        assert_eq!(hue.apply_to_color16(source, false), hue.color_table[12] | 0x8000);
+    }
+
+    #[test]
+    fn hue_application_uses_red_channel_index_for_32_bit_colors() {
+        let hue = test_hue();
+        let source = 0xCC_60_20_20;
+        let expected = hue.color_table[12];
+        let r = ((expected >> 10) & 0x1F) as u32 * 8;
+        let g = ((expected >> 5) & 0x1F) as u32 * 8;
+        let b = (expected & 0x1F) as u32 * 8;
+
+        assert_eq!(hue.apply_to_color32(source, false), 0xCC00_0000 | (r << 16) | (g << 8) | b);
     }
 }
