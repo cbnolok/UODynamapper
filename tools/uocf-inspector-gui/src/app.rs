@@ -614,11 +614,6 @@ pub struct AnimationFrameUopEntry {
     pub frame_count: usize,
 }
 
-pub struct AnimationFrameUopScanResult {
-    pub key: (u8, usize),
-    pub entries: Vec<AnimationFrameUopEntry>,
-}
-
 pub fn upscale_filter_cli_value(filter: UpscaleFilter) -> &'static str {
     match filter {
         UpscaleFilter::None => "none",
@@ -1588,8 +1583,6 @@ pub struct UopInspectorApp {
     pub uop_entry_payloads: HashMap<(usize, u64), Arc<[u8]>>,
     pub terrain_texture_guess_names: HashMap<usize, Arc<HashMap<u64, String>>>,
     pub animationframe_uop_entries: HashMap<(u8, usize), Arc<Vec<AnimationFrameUopEntry>>>,
-    pub animationframe_uop_worker_rx: Option<mpsc::Receiver<AnimationFrameUopScanResult>>,
-    pub animationframe_uop_worker_key: Option<(u8, usize)>,
     pub multimap_texture: Option<egui::TextureHandle>,
     pub image_preview_sources: HashMap<u64, InspectorImagePreview>,
     pub current_image_preview_key: Option<u64>,
@@ -1734,8 +1727,6 @@ impl UopInspectorApp {
             uop_entry_payloads: HashMap::new(),
             terrain_texture_guess_names: HashMap::new(),
             animationframe_uop_entries: HashMap::new(),
-            animationframe_uop_worker_rx: None,
-            animationframe_uop_worker_key: None,
             multimap_texture: None,
             image_preview_sources: HashMap::new(),
             current_image_preview_key: None,
@@ -1851,8 +1842,6 @@ impl UopInspectorApp {
         self.uop_entry_payloads.clear();
         self.terrain_texture_guess_names.clear();
         self.animationframe_uop_entries.clear();
-        self.animationframe_uop_worker_rx = None;
-        self.animationframe_uop_worker_key = None;
         self.multimap_texture = None;
         self.paperdoll_preview = None;
         self.image_preview_sources.clear();
@@ -3780,8 +3769,6 @@ mod tests {
             uop_entry_payloads: HashMap::new(),
             terrain_texture_guess_names: HashMap::new(),
             animationframe_uop_entries: HashMap::new(),
-            animationframe_uop_worker_rx: None,
-            animationframe_uop_worker_key: None,
             multimap_texture: None,
             image_preview_sources: HashMap::new(),
             current_image_preview_key: None,
