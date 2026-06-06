@@ -1780,7 +1780,7 @@ impl UopInspectorApp {
 
     pub fn log(&mut self, msg: impl Into<String>) {
         let msg = msg.into();
-        println!("{}", msg);
+        log::info!("{}", msg);
         self.logs.push(msg);
     }
 
@@ -1862,10 +1862,10 @@ impl UopInspectorApp {
             match GumpMap::load(&path) {
                 Ok(gumps) => {
                     self.cc_gumps = Some(Arc::new(gumps));
-                    self.log("Successfully loaded CC gump art.");
+                    self.log("Loading CC gump art... Success");
                 }
                 Err(e) => {
-                    self.log(format!("CC gump art unavailable: {}", e));
+                    self.log(format!("Loading CC gump art... Failed: {}", e));
                 }
             }
             let loaded_sounds = SoundMap::load(&path).ok().map(Arc::new);
@@ -1956,10 +1956,10 @@ impl UopInspectorApp {
                         anim_map,
                         anim_defs,
                     });
-                    self.log("Successfully loaded CC assets.");
+                    self.log("Loading CC assets... Success");
                 }
                 Err(e) => {
-                    self.log(format!("Failed to load CC art assets: {}", e));
+                    self.log(format!("Loading CC assets... Failed: {}", e));
                 }
             }
 

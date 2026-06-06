@@ -26,3 +26,4 @@ rodio = { version = "0.17", default-features = false }
 serde = { version = "1", features = ["derive"] }
 color-eyre = "0.6"
 knuffel = "3"
+log = "0.4.29"
