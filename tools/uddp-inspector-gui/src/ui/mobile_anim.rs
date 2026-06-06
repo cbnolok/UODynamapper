@@ -230,9 +230,16 @@ pub fn ui_mobile_anim_cc(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
         });
 
     ui.separator();
-    show_playback_controls(ctx, ui, app, frames.len());
     if let Some(frame) = frames.get(app.selected_mobile_anim_frame_index).copied() {
-        show_cc_frame(ui, ctx, app, &package, frame);
+        let page_size = cc_frame_page_size(&package, frame);
+        show_frame_playback_preview_row(ui, app, |ui, app| {
+            show_playback_controls(ctx, ui, app, frames.len());
+            show_cc_frame_metadata(ui, frame, page_size);
+        }, |ui, app| {
+            show_cc_frame_image(ui, ctx, app, &package, frame, page_size);
+        });
+    } else {
+        show_playback_controls(ctx, ui, app, frames.len());
     }
 }
 
@@ -504,9 +511,16 @@ pub fn ui_mobile_anim_ec(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
         });
 
     ui.separator();
-    show_playback_controls(ctx, ui, app, frames.len());
     if let Some(frame) = frames.get(app.selected_mobile_anim_frame_index).copied() {
-        show_ec_frame(ui, ctx, app, &package, frame);
+        let page_size = ec_frame_page_size(&package, frame);
+        show_frame_playback_preview_row(ui, app, |ui, app| {
+            show_playback_controls(ctx, ui, app, frames.len());
+            show_ec_frame_metadata(ui, frame, page_size);
+        }, |ui, app| {
+            show_ec_frame_image(ui, ctx, app, &package, frame, page_size);
+        });
+    } else {
+        show_playback_controls(ctx, ui, app, frames.len());
     }
 }
 
@@ -789,11 +803,15 @@ fn show_mobile_anim_overview(
     pages: impl Iterator<Item = (u32, u32, u32)>,
 ) {
     let page_buckets = page_bucket_rows(pages);
-    ui.horizontal_wrapped(|ui| {
-        show_metadata_section(ui, "mobile_anim_overview_atlas", "Atlas", atlas_rows);
-        show_metadata_section(ui, "mobile_anim_overview_storage", "Storage", storage_rows);
-        show_metadata_section(ui, "mobile_anim_overview_content", "Content", content_rows);
-        show_page_bucket_section(ui, &page_buckets);
+    ui.vertical(|ui| {
+        ui.horizontal_wrapped(|ui| {
+            show_metadata_section(ui, "mobile_anim_overview_atlas", "Atlas", atlas_rows);
+            show_metadata_section(ui, "mobile_anim_overview_storage", "Storage", storage_rows);
+        });
+        ui.horizontal_wrapped(|ui| {
+            show_metadata_section(ui, "mobile_anim_overview_content", "Content", content_rows);
+            show_page_bucket_section(ui, &page_buckets);
+        });
     });
 }
 
@@ -922,12 +940,28 @@ fn codec_summary(entries: &[EntryInfo], data_type: u8) -> String {
         .join("; ")
 }
 
-fn show_cc_frame(
+fn show_frame_playback_preview_row(
     ui: &mut egui::Ui,
-    ctx: &egui::Context,
     app: &mut InspectorApp,
-    package: &udd_assets::MobileAnimCcPackage,
+    controls_and_metadata: impl FnOnce(&mut egui::Ui, &mut InspectorApp),
+    preview: impl FnOnce(&mut egui::Ui, &mut InspectorApp),
+) {
+    ui.horizontal_wrapped(|ui| {
+        ui.vertical(|ui| {
+            ui.set_width(ui.available_width().min(560.0));
+            controls_and_metadata(ui, app);
+        });
+        ui.add_space(12.0);
+        ui.vertical(|ui| {
+            preview(ui, app);
+        });
+    });
+}
+
+fn show_cc_frame_metadata(
+    ui: &mut egui::Ui,
     frame: udd_assets::mobile_anim_cc::MobileAnimCcFrameRecord,
+    page_size: Option<MobileAnimPageDetails>,
 ) {
     show_frame_metadata(
         ui,
@@ -942,18 +976,17 @@ fn show_cc_frame(
         frame.center_y,
         udd_assets::mobile_anim_cc::MISSING_PAGE_INDEX,
     );
-    let page_size = package
-        .pages()
-        .iter()
-        .find(|page| page.page_index == frame.page_index)
-        .map(|page| MobileAnimPageDetails {
-            atlas_width: page.atlas_width,
-            atlas_height: page.atlas_height,
-            used_width: page.used_width,
-            used_height: page.used_height,
-            pixel_format: page.pixel_format,
-        });
     show_page_size_metadata(ui, page_size);
+}
+
+fn show_cc_frame_image(
+    ui: &mut egui::Ui,
+    ctx: &egui::Context,
+    app: &mut InspectorApp,
+    package: &udd_assets::MobileAnimCcPackage,
+    frame: udd_assets::mobile_anim_cc::MobileAnimCcFrameRecord,
+    page_size: Option<MobileAnimPageDetails>,
+) {
     show_frame_image(
         ui,
         ctx,
@@ -970,12 +1003,27 @@ fn show_cc_frame(
     );
 }
 
-fn show_ec_frame(
+fn cc_frame_page_size(
+    package: &udd_assets::MobileAnimCcPackage,
+    frame: udd_assets::mobile_anim_cc::MobileAnimCcFrameRecord,
+) -> Option<MobileAnimPageDetails> {
+    package
+        .pages()
+        .iter()
+        .find(|page| page.page_index == frame.page_index)
+        .map(|page| MobileAnimPageDetails {
+            atlas_width: page.atlas_width,
+            atlas_height: page.atlas_height,
+            used_width: page.used_width,
+            used_height: page.used_height,
+            pixel_format: page.pixel_format,
+        })
+}
+
+fn show_ec_frame_metadata(
     ui: &mut egui::Ui,
-    ctx: &egui::Context,
-    app: &mut InspectorApp,
-    package: &udd_assets::MobileAnimEcPackage,
     frame: udd_assets::mobile_anim_ec::MobileAnimEcFrameRecord,
+    page_size: Option<MobileAnimPageDetails>,
 ) {
     show_frame_metadata(
         ui,
@@ -990,18 +1038,17 @@ fn show_ec_frame(
         frame.center_y,
         udd_assets::mobile_anim_ec::MISSING_PAGE_INDEX,
     );
-    let page_size = package
-        .pages()
-        .iter()
-        .find(|page| page.page_index == frame.page_index)
-        .map(|page| MobileAnimPageDetails {
-            atlas_width: page.atlas_width,
-            atlas_height: page.atlas_height,
-            used_width: page.used_width,
-            used_height: page.used_height,
-            pixel_format: page.pixel_format,
-        });
     show_page_size_metadata(ui, page_size);
+}
+
+fn show_ec_frame_image(
+    ui: &mut egui::Ui,
+    ctx: &egui::Context,
+    app: &mut InspectorApp,
+    package: &udd_assets::MobileAnimEcPackage,
+    frame: udd_assets::mobile_anim_ec::MobileAnimEcFrameRecord,
+    page_size: Option<MobileAnimPageDetails>,
+) {
     show_frame_image(
         ui,
         ctx,
@@ -1016,6 +1063,23 @@ fn show_ec_frame(
         || package.read_frame_rgba(&frame).ok(),
         || package.read_page_rgba(frame.page_index).ok(),
     );
+}
+
+fn ec_frame_page_size(
+    package: &udd_assets::MobileAnimEcPackage,
+    frame: udd_assets::mobile_anim_ec::MobileAnimEcFrameRecord,
+) -> Option<MobileAnimPageDetails> {
+    package
+        .pages()
+        .iter()
+        .find(|page| page.page_index == frame.page_index)
+        .map(|page| MobileAnimPageDetails {
+            atlas_width: page.atlas_width,
+            atlas_height: page.atlas_height,
+            used_width: page.used_width,
+            used_height: page.used_height,
+            pixel_format: page.pixel_format,
+        })
 }
 
 #[cfg(test)]
