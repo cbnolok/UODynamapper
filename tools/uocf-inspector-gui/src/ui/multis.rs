@@ -28,9 +28,13 @@ struct PreviewRenderPart {
     index: usize,
     part: PreviewPart,
     info: PartRenderInfo,
+    scale: f32,
     texture: Option<egui::TextureHandle>,
     size: egui::Vec2,
 }
+
+const CLASSIC_STATIC_TILE_PIXEL_WIDTH: f32 = 44.0;
+const ENHANCED_STATIC_TILE_PIXEL_WIDTH: f32 = 64.0;
 
 pub fn ui_multis(app: &mut UopInspectorApp, ctx: &egui::Context) {
     app.selected_legacy_source = concrete_art_tile_source(app.selected_legacy_source);
@@ -528,20 +532,23 @@ fn draw_preview(
     let tile_w = 22.0f32;
     let tile_h = 22.0f32;
     let viewport_size = ui.available_size();
+    let art_source = concrete_art_tile_source(app.selected_legacy_source);
+    let art_scale = multi_preview_art_scale(art_source);
     let mut sorted_parts: Vec<_> = parts
         .iter()
         .enumerate()
         .map(|(index, part)| {
-            let info = part_render_info(app, part.item_id);
+            let info = part_render_info(app, part.item_id, art_source);
             let texture = get_multi_part_texture(app, ctx, part.item_id);
             let size = texture
                 .as_ref()
-                .map(|handle| handle.size_vec2())
-                .unwrap_or_else(|| egui::vec2(14.0, 14.0));
+                .map(|handle| handle.size_vec2() * art_scale)
+                .unwrap_or_else(|| egui::vec2(14.0, 14.0) * art_scale);
             PreviewRenderPart {
                 index,
                 part: part.clone(),
                 info,
+                scale: art_scale,
                 texture,
                 size,
             }
@@ -654,15 +661,16 @@ fn preview_part_position(
     let info = render_part.info;
     let x = ((part.x as i32) - (min_x as i32)) as f32;
     let y = ((part.y as i32) - (min_y as i32)) as f32;
-    let base_x = (x - y) * tile_w + info.height_delta as f32;
+    let scale = render_part.scale;
+    let base_x = (x - y) * tile_w + info.height_delta as f32 * scale;
     let base_y = (x + y) * tile_h
-        + info.width_delta as f32
-        + info.height_delta as f32
+        + info.width_delta as f32 * scale
+        + info.height_delta as f32 * scale
         - (part.original_z as f32 * 4.0);
 
     egui::pos2(
-        base_x + info.offset_x as f32,
-        base_y + info.offset_y as f32 + (min_z as f32 * 4.0),
+        base_x + info.offset_x as f32 * scale,
+        base_y + info.offset_y as f32 * scale + (min_z as f32 * 4.0),
     )
 }
 
@@ -823,7 +831,16 @@ fn clear_multi_preview_failure_logs(app: &mut UopInspectorApp) {
         .retain(|log| !log.starts_with("Multi preview "));
 }
 
-fn part_render_info(app: &UopInspectorApp, item_id: u16) -> PartRenderInfo {
+fn multi_preview_art_scale(source: ArtSource) -> f32 {
+    match source {
+        ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr => {
+            CLASSIC_STATIC_TILE_PIXEL_WIDTH / ENHANCED_STATIC_TILE_PIXEL_WIDTH
+        }
+        ArtSource::Mul | ArtSource::CcUop | ArtSource::Any => 1.0,
+    }
+}
+
+fn part_render_info(app: &UopInspectorApp, item_id: u16, source: ArtSource) -> PartRenderInfo {
     let mut info = PartRenderInfo::default();
 
     if let Some(client) = &app.client_data {
@@ -834,10 +851,15 @@ fn part_render_info(app: &UopInspectorApp, item_id: u16) -> PartRenderInfo {
 
     if let Some(entries) = &app.ec_tileart_entries {
         if let Some(file) = entries.iter().find(|file| file.entry.tile_id == item_id as u32) {
-            info.width_delta = file.entry.cc_img_offset.y_start - file.entry.cc_img_offset.y_end;
-            info.height_delta = file.entry.cc_img_offset.x_start;
-            info.offset_x = file.entry.cc_img_offset.x_off;
-            info.offset_y = file.entry.cc_img_offset.y_off;
+            let image_offset = match source {
+                ArtSource::EcUopKr => &file.entry.ec_img_offset,
+                ArtSource::EcUop | ArtSource::EcUopLegacy => &file.entry.cc_img_offset,
+                ArtSource::Mul | ArtSource::CcUop | ArtSource::Any => &file.entry.cc_img_offset,
+            };
+            info.width_delta = image_offset.y_start - image_offset.y_end;
+            info.height_delta = image_offset.x_start;
+            info.offset_x = image_offset.x_off;
+            info.offset_y = image_offset.y_off;
         }
     }
 
