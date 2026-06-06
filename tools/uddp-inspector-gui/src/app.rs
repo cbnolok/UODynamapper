@@ -163,7 +163,7 @@ impl InspectorApp {
 
         let color_image = egui::ColorImage::from_rgba_unmultiplied(size, pixels);
         self.preview_texture =
-            Some(ctx.load_texture(texture_name, color_image, Default::default()));
+            Some(ctx.load_texture(texture_name, color_image, egui::TextureOptions::NEAREST));
         self.preview_texture_size = Some(size);
         self.preview_text = Some(label);
     }
@@ -960,16 +960,32 @@ impl InspectorApp {
                                 "virtual_tile",
                                 [width as usize, height as usize],
                                 &cropped,
-                                format!("Virtual Tile: {} ({}x{})", ventry.id, width, height),
+                                format!(
+                                    "Virtual Tile: {} ({}x{}, format: {})",
+                                    ventry.id,
+                                    width,
+                                    height,
+                                    self.atlas_pages
+                                        .get(&page_index)
+                                        .map(|info| atlas_pixel_format_to_str(info.pixel_format))
+                                        .unwrap_or("unknown")
+                                ),
                             );
                             if let Some(atlas_image) = atlas_image {
                                 self.atlas_texture = Some(ctx.load_texture(
                                     "full_atlas",
                                     atlas_image,
-                                    egui::TextureOptions::default(),
+                                    egui::TextureOptions::NEAREST,
                                 ));
                                 self.atlas_texture_size = Some(atlas_size);
-                                self.atlas_text = Some(format!("Full Atlas Page {}", page_index));
+                                self.atlas_text = Some(format!(
+                                    "Full Atlas Page {} (format: {})",
+                                    page_index,
+                                    self.atlas_pages
+                                        .get(&page_index)
+                                        .map(|info| atlas_pixel_format_to_str(info.pixel_format))
+                                        .unwrap_or("unknown")
+                                ));
                             }
                         }
                     }
@@ -994,11 +1010,15 @@ impl InspectorApp {
                                     [preview.width as usize, preview.height as usize],
                                     &cropped,
                                     format!(
-                                        "Material: {} via slot {} ({}x{})",
+                                        "Material: {} via slot {} ({}x{}, format: {})",
                                         info.material_id,
                                         preview.slot_id,
                                         preview.width,
-                                        preview.height
+                                        preview.height,
+                                        self.atlas_pages
+                                            .get(&preview.page_index)
+                                            .map(|page_info| atlas_pixel_format_to_str(page_info.pixel_format))
+                                            .unwrap_or("unknown")
                                     ),
                                 );
                             }
@@ -1089,7 +1109,7 @@ impl InspectorApp {
                         "uo_land_tex",
                         size,
                         &rgba,
-                        format!("UO Land Texture: {}x{}", size[0], size[1]),
+                        format!("UO Land Texture: {}x{} (format: bgra5551)", size[0], size[1]),
                     );
                     return;
                 }
@@ -1105,7 +1125,7 @@ impl InspectorApp {
                                 "uo_art_land",
                                 [44, 44],
                                 &rgba,
-                                format!("UO Land Art ID {}", id),
+                                format!("UO Land Art ID {} (format: classic art)", id),
                             );
                             return;
                         }
@@ -1117,7 +1137,7 @@ impl InspectorApp {
                             "uo_art_static",
                             [w as usize, h as usize],
                             &rgba,
-                            format!("UO Static Art ID {}", id),
+                            format!("UO Static Art ID {} (format: classic art rle)", id),
                         );
                         return;
                     }
@@ -1150,7 +1170,7 @@ impl InspectorApp {
                             "ktx2_preview",
                             [width as usize, height as usize],
                             &rgba,
-                            format!("KTX2 BC7 Texture: {}x{}", width, height),
+                            format!("KTX2 Texture: {}x{} (format: bc7)", width, height),
                         );
                         return;
                     }
@@ -1171,10 +1191,10 @@ impl InspectorApp {
                         [extent.width() as usize, extent.height() as usize],
                         &rgba,
                         format!(
-                            "VRAM Texture: {}x{} ({:?})",
+                            "VRAM Texture: {}x{} (format: {})",
                             extent.width(),
                             extent.height(),
-                            vram.format()
+                            vram_texture_format_name(vram.format())
                         ),
                     );
                     return;
@@ -1192,10 +1212,10 @@ impl InspectorApp {
                 size,
                 &pixels,
                 format!(
-                    "Standard Image: {}x{} ({:?})",
+                    "Standard Image: {}x{} (format: {})",
                     size[0],
                     size[1],
-                    image.color()
+                    standard_image_format_name(&data).unwrap_or("decoded image")
                 ),
             );
             return;
@@ -1213,7 +1233,7 @@ impl InspectorApp {
                     "guessed_rgba",
                     [side as usize, side as usize],
                     &data,
-                    format!("Guessed Raw RGBA: {}x{}", side, side),
+                    format!("Guessed Raw RGBA: {}x{} (format: rgba8888)", side, side),
                 );
                 return;
             }
@@ -1288,6 +1308,34 @@ impl InspectorApp {
             self.load_preview(ctx);
         }
     }
+}
+
+fn vram_texture_format_name(format: udd_conv::bc7::VramTextureFormat) -> &'static str {
+    match format {
+        udd_conv::bc7::VramTextureFormat::Rgba8UnormSrgb => "rgba8888",
+        udd_conv::bc7::VramTextureFormat::Bc7RgbaUnormSrgb => "bc7",
+    }
+}
+
+fn standard_image_format_name(data: &[u8]) -> Option<&'static str> {
+    image::guess_format(data).ok().map(|format| match format {
+        image::ImageFormat::Jpeg => "jpeg",
+        image::ImageFormat::Png => "png",
+        image::ImageFormat::Gif => "gif",
+        image::ImageFormat::WebP => "webp",
+        image::ImageFormat::Tiff => "tiff",
+        image::ImageFormat::Tga => "tga",
+        image::ImageFormat::Dds => "dds",
+        image::ImageFormat::Bmp => "bmp",
+        image::ImageFormat::Ico => "ico",
+        image::ImageFormat::Hdr => "hdr",
+        image::ImageFormat::OpenExr => "exr",
+        image::ImageFormat::Farbfeld => "farbfeld",
+        image::ImageFormat::Avif => "avif",
+        image::ImageFormat::Qoi => "qoi",
+        image::ImageFormat::Pnm => "pnm",
+        _ => "decoded image",
+    })
 }
 
 #[cfg(test)]

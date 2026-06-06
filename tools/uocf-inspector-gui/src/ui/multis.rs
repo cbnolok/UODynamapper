@@ -944,7 +944,6 @@ fn multi_tileart_texture(
     let art_data = file.entry.process(dictionary);
     match source {
         ArtSource::EcUopKr => art_data.ec_texture,
-        ArtSource::EcUop | ArtSource::EcUopLegacy => art_data.cc_texture,
-        ArtSource::Mul | ArtSource::CcUop | ArtSource::Any => None,
+        ArtSource::Mul | ArtSource::CcUop | ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::Any => None,
     }
 }
