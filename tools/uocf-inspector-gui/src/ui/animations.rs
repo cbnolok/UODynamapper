@@ -1092,18 +1092,28 @@ fn animationframe_payload(
                 entry.package_index
             )
         })?;
-    let file = loaded
+    if loaded
         .package
         .get_file_by_hash(entry.file_hash)
+        .is_none()
+    {
+        return Err(eyre::eyre!(
+            "AnimationFrame payload 0x{:016x} not found in {}",
+            entry.file_hash,
+            loaded.path.display()
+        ));
+    }
+    loaded
+        .package
+        .unpack_file_by_hash(entry.file_hash)
+        .map_err(|error| eyre::eyre!("Failed to unpack AnimationFrame payload: {error}"))?
         .ok_or_else(|| {
             eyre::eyre!(
                 "AnimationFrame payload 0x{:016x} not found in {}",
                 entry.file_hash,
                 loaded.path.display()
             )
-        })?;
-    file.unpack()
-        .map_err(|error| eyre::eyre!("Failed to unpack AnimationFrame payload: {error}"))
+        })
 }
 
 fn animationframe_uop_entries(
@@ -1132,7 +1142,7 @@ fn scan_animationframe_uop_entries(
 
         for file in loaded.package.iter_files().filter(|file| file.has_size()) {
             let file_hash = file.filename_hash();
-            let Ok(data) = file.unpack() else {
+            let Ok(Some(data)) = loaded.package.unpack_file_by_hash(file_hash) else {
                 continue;
             };
             match source {
