@@ -1,4 +1,5 @@
 use crate::app::{GumpSource, GumpViewerTab, PaperdollEquipmentInput, UopInspectorApp};
+use crate::ui::{arrow_delta, move_selection};
 use eframe::egui;
 use knuffel::Decode;
 use std::sync::Arc;
@@ -11,6 +12,9 @@ const HUE_SWATCH_COUNT: usize = 32;
 const PAPERDOLL_SPRITE_ID_START: u32 = 50_000;
 const PAPERDOLL_SPRITE_ID_END: u32 = 69_999;
 const MAX_RAW_UOP_GUMP_ID: u32 = 99_999;
+const GUMP_SPLIT_DEFAULT_RATIO: f32 = 1.0 / 3.0;
+const GUMP_SPLIT_MIN_RATIO: f32 = 0.20;
+const GUMP_SPLIT_MAX_RATIO: f32 = 0.80;
 const PAPERDOLL_PROFILE_KDL: &str =
     include_str!("../../../../dynamapper/assets/runtime_specs/paperdoll/PaperdollProfiles.kdl");
 
@@ -262,19 +266,82 @@ pub fn ui_gumps(app: &mut UopInspectorApp, ctx: &egui::Context) {
 }
 
 fn ui_standard_gumps(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
-    ui.columns(2, |columns| {
-        columns[0].heading("Standard Gumps");
-        if let Some(gump_id) = ui_gump_id_list(
-            &mut columns[0],
-            &app.standard_gump_ids,
-            &app.selected_gump_id,
-            "standard_gump_list",
-        ) {
-            app.selected_gump_id = gump_id.to_string();
-        }
+    let gump_ids = app.standard_gump_ids.clone();
+    let selected_gump_id_text = app.selected_gump_id.clone();
+    let mut selected_gump_id = None;
+    ui_gump_split(
+        ui,
+        "standard_gump_split",
+        |left| {
+            left.heading("Standard Gumps");
+            selected_gump_id = ui_gump_id_list(
+                left,
+                &gump_ids,
+                &selected_gump_id_text,
+                "standard_gump_list",
+            );
+        },
+        |right| {
+            right.heading("Gump");
+            ui_gump_preview_controls(app, ctx, right);
+        },
+    );
+    if let Some(gump_id) = selected_gump_id {
+        app.selected_gump_id = gump_id.to_string();
+    }
+}
 
-        columns[1].heading("Gump");
-        ui_gump_preview_controls(app, ctx, &mut columns[1]);
+fn ui_gump_split(
+    ui: &mut egui::Ui,
+    id_salt: &'static str,
+    add_left: impl FnOnce(&mut egui::Ui),
+    add_right: impl FnOnce(&mut egui::Ui),
+) {
+    let id = ui.make_persistent_id(("uocf_gump_split_ratio", id_salt));
+    let mut ratio = ui
+        .data_mut(|data| data.get_temp::<f32>(id))
+        .unwrap_or(GUMP_SPLIT_DEFAULT_RATIO)
+        .clamp(GUMP_SPLIT_MIN_RATIO, GUMP_SPLIT_MAX_RATIO);
+
+    ui.horizontal(|ui| {
+        ui.label("List width:");
+        if ui
+            .add(egui::Slider::new(
+                &mut ratio,
+                GUMP_SPLIT_MIN_RATIO..=GUMP_SPLIT_MAX_RATIO,
+            ))
+            .changed()
+        {
+            ratio = ratio.clamp(GUMP_SPLIT_MIN_RATIO, GUMP_SPLIT_MAX_RATIO);
+        }
+    });
+    ui.data_mut(|data| data.insert_temp(id, ratio));
+
+    let available_height = ui.available_height();
+    let content_width = ui.available_width().max(1.0);
+    let left_width = (content_width * ratio).max(1.0);
+    let right_width = (content_width - left_width).max(1.0);
+
+    ui.horizontal(|ui| {
+        ui.allocate_ui_with_layout(
+            egui::vec2(left_width, available_height),
+            egui::Layout::top_down(egui::Align::Min),
+            |left| {
+                left.set_width(left_width);
+                left.set_height(available_height);
+                add_left(left);
+            },
+        );
+        ui.separator();
+        ui.allocate_ui_with_layout(
+            egui::vec2(right_width, available_height),
+            egui::Layout::top_down(egui::Align::Min),
+            |right| {
+                right.set_width(right_width);
+                right.set_height(available_height);
+                add_right(right);
+            },
+        );
     });
 }
 
@@ -363,25 +430,30 @@ fn ui_paperdoll(
     ui: &mut egui::Ui,
     profiles: &[PaperdollProfile],
 ) {
-    ui.columns(2, |columns| {
-        columns[0].heading("Paperdoll Sprites");
-        if let Some(gump_id) = ui_gump_id_list(
-            &mut columns[0],
-            &app.paperdoll_gump_ids,
-            &app.selected_gump_id,
-            "paperdoll_sprite_list",
-        ) {
-            app.selected_gump_id = gump_id.to_string();
-        }
+    let gump_ids = app.paperdoll_gump_ids.clone();
+    let selected_gump_id_text = app.selected_gump_id.clone();
+    let mut selected_gump_id = None;
+    ui_gump_split(
+        ui,
+        "paperdoll_gump_split",
+        |left| {
+            left.heading("Paperdoll Sprites");
+            selected_gump_id = ui_gump_id_list(
+                left,
+                &gump_ids,
+                &selected_gump_id_text,
+                "paperdoll_sprite_list",
+            );
+        },
+        |right| {
+        right.heading("Selected Sprite");
+        ui_gump_preview_controls(app, ctx, right);
 
-        columns[1].heading("Selected Sprite");
-        ui_gump_preview_controls(app, ctx, &mut columns[1]);
-
-        columns[1].separator();
-        columns[1].heading("Paperdoll");
+        right.separator();
+        right.heading("Paperdoll");
         egui::ComboBox::from_label("Profile")
             .selected_text(profile_by_id(profiles, &app.selected_paperdoll_profile).label.as_str())
-            .show_ui(&mut columns[1], |ui| {
+            .show_ui(right, |ui| {
                 for profile in profiles {
                     ui.selectable_value(
                         &mut app.selected_paperdoll_profile,
@@ -391,7 +463,7 @@ fn ui_paperdoll(
                 }
             });
         let selected_profile = profile_by_id(profiles, &app.selected_paperdoll_profile);
-        columns[1].monospace(format!(
+        right.monospace(format!(
             "equipment_offset={} canvas={}x{} body=({}, {}) equipment=({}, {})",
             selected_profile.equipment_offset,
             selected_profile.canvas_width,
@@ -402,7 +474,7 @@ fn ui_paperdoll(
             selected_profile.equipment_y,
         ));
 
-        columns[1].horizontal(|ui| {
+        right.horizontal(|ui| {
             ui.label("Body:");
             ui.text_edit_singleline(&mut app.paperdoll_body_id);
             ui.label("Hue:");
@@ -412,12 +484,12 @@ fn ui_paperdoll(
                 app.paperdoll_preview = None;
             }
         });
-        ui_hue_picker(app, &mut columns[1]);
+        ui_hue_picker(app, right);
 
         egui::Grid::new("uocf_inspector_paperdoll_equipment")
             .num_columns(7)
             .spacing([8.0, 4.0])
-            .show(&mut columns[1], |ui| {
+            .show(right, |ui| {
                 ui.label("Slot");
                 ui.label("Item ID");
                 ui.label("Hue");
@@ -471,7 +543,7 @@ fn ui_paperdoll(
                 }
             });
 
-        columns[1].horizontal(|ui| {
+        right.horizontal(|ui| {
             if ui.button("Add Slots").clicked() {
                 app.paperdoll_equipment = PAPERDOLL_SLOTS
                     .iter()
@@ -507,11 +579,15 @@ fn ui_paperdoll(
         if let Some(handle) = &app.paperdoll_preview {
             egui::ScrollArea::both()
                 .id_salt("paperdoll_preview_scroll")
-                .show(&mut columns[1], |ui| {
+                .show(right, |ui| {
                     ui.image(handle);
                 });
         }
-    });
+        },
+    );
+    if let Some(gump_id) = selected_gump_id {
+        app.selected_gump_id = gump_id.to_string();
+    }
 }
 
 fn ui_gump_id_list(
@@ -527,6 +603,18 @@ fn ui_gump_id_list(
 
     let selected_id = parse_u32_field(selected_gump_id).ok();
     let mut selected = None;
+    let list_rect = ui.available_rect_before_wrap();
+    let keyboard_moved = if ui.rect_contains_pointer(list_rect) {
+        arrow_delta(ui, false)
+            .and_then(|delta| move_selection(ids, selected_id, delta))
+            .map(|gump_id| {
+                selected = Some(gump_id);
+                true
+            })
+            .unwrap_or(false)
+    } else {
+        false
+    };
     let row_height = ui.text_style_height(&egui::TextStyle::Body);
     let max_height = ui.available_height().max(row_height);
     egui::ScrollArea::vertical()
@@ -535,13 +623,15 @@ fn ui_gump_id_list(
         .show_rows(ui, row_height, ids.len(), |ui, range| {
             for index in range {
                 let gump_id = ids[index];
-                if ui
+                let response = ui
                     .selectable_label(
                         selected_id == Some(gump_id),
                         format!("{gump_id:>5}  0x{gump_id:04X}"),
-                    )
-                    .clicked()
-                {
+                    );
+                if keyboard_moved && selected == Some(gump_id) {
+                    response.scroll_to_me(None);
+                }
+                if response.clicked() {
                     selected = Some(gump_id);
                 }
             }
