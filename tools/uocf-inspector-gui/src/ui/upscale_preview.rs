@@ -94,52 +94,68 @@ pub fn ui_upscale_preview_window(app: &mut UopInspectorApp, ctx: &egui::Context)
         });
 
     if let Some(source) = source.as_ref() {
-        egui::Window::new("Upscale Preview Original")
-            .open(&mut original_frame_open)
-            .resizable(true)
-            .default_size([420.0, 520.0])
-            .show(ctx, |ui| {
-                egui::ScrollArea::both()
-                    .id_salt("uocf_upscale_preview_original_image")
-                    .show(ui, |ui| {
-                        ui.label(format!("Original {}x{}", source.width, source.height));
-                        if let Some(texture) = &original_texture {
-                            ui.add(egui::Image::new(texture).fit_to_exact_size(egui::vec2(
-                                source.width as f32 * zoom,
-                                source.height as f32 * zoom,
-                            )));
-                        }
-                    });
-            });
+        ctx.show_viewport_immediate(
+            egui::ViewportId::from_hash_of("uocf_upscale_preview_original"),
+            egui::ViewportBuilder::default()
+                .with_title("Upscale Preview Original")
+                .with_inner_size([420.0, 520.0]),
+            |ctx, _class| {
+                if ctx.input(|i| i.viewport().close_requested()) {
+                    original_frame_open = false;
+                }
 
-        egui::Window::new("Upscale Preview Upscaled")
-            .open(&mut upscaled_frame_open)
-            .resizable(true)
-            .default_size([520.0, 620.0])
-            .show(ctx, |ui| {
-                egui::ScrollArea::both()
-                    .id_salt("uocf_upscale_preview_upscaled_image")
-                    .show(ui, |ui| {
-                        if upscaled_size[0] > 0 {
-                            ui.label(format!(
-                                "Upscaled {}x{}",
-                                upscaled_size[0], upscaled_size[1]
-                            ));
-                        } else {
-                            ui.label("Upscaled");
-                        }
-                        if let Some(texture) = &upscaled_texture {
-                            ui.add(egui::Image::new(texture).fit_to_exact_size(egui::vec2(
-                                upscaled_size[0] as f32 * zoom,
-                                upscaled_size[1] as f32 * zoom,
-                            )));
-                        } else if is_computing {
-                            ui.label("Computing...");
-                        } else if !status.is_empty() {
-                            ui.label(status.as_str());
-                        }
-                    });
-            });
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    egui::ScrollArea::both()
+                        .id_salt("uocf_upscale_preview_original_image")
+                        .show(ui, |ui| {
+                            ui.label(format!("Original {}x{}", source.width, source.height));
+                            if let Some(texture) = &original_texture {
+                                ui.add(egui::Image::new(texture).fit_to_exact_size(egui::vec2(
+                                    source.width as f32 * zoom,
+                                    source.height as f32 * zoom,
+                                )));
+                            }
+                        });
+                });
+            },
+        );
+
+        ctx.show_viewport_immediate(
+            egui::ViewportId::from_hash_of("uocf_upscale_preview_upscaled"),
+            egui::ViewportBuilder::default()
+                .with_title("Upscale Preview Upscaled")
+                .with_inner_size([520.0, 620.0]),
+            |ctx, _class| {
+                if ctx.input(|i| i.viewport().close_requested()) {
+                    upscaled_frame_open = false;
+                }
+
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    egui::ScrollArea::both()
+                        .id_salt("uocf_upscale_preview_upscaled_image")
+                        .show(ui, |ui| {
+                            if upscaled_size[0] > 0 {
+                                ui.label(format!(
+                                    "Upscaled {}x{}",
+                                    upscaled_size[0], upscaled_size[1]
+                                ));
+                            } else {
+                                ui.label("Upscaled");
+                            }
+                            if let Some(texture) = &upscaled_texture {
+                                ui.add(egui::Image::new(texture).fit_to_exact_size(egui::vec2(
+                                    upscaled_size[0] as f32 * zoom,
+                                    upscaled_size[1] as f32 * zoom,
+                                )));
+                            } else if is_computing {
+                                ui.label("Computing...");
+                            } else if !status.is_empty() {
+                                ui.label(status.as_str());
+                            }
+                        });
+                });
+            },
+        );
     }
 
     if !open || !original_frame_open || !upscaled_frame_open {
