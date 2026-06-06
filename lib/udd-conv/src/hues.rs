@@ -16,9 +16,6 @@ use uocf::enhanced::hues::{
 };
 use uocf::uop_container::package::{LoadMode, UopPackage};
 
-const BLUR_RADIUS: usize = 6;
-const BLUR_ALPHA_TABLE: [u32; 17] = [14, 10, 8, 6, 5, 5, 4, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2];
-
 pub struct HuesOptions {
     pub compression: CompressionFlag,
 }
@@ -161,8 +158,7 @@ fn build_hues_texture_and_records(hues: &[HueEntry]) -> eyre::Result<(Vec<HueSlo
     for hue in hues.iter().filter(|hue| hue.id >= 1 && hue.id <= u32::from(MAX_HUE_ID)) {
         let coord = uocf::enhanced::hues::atlas_coord_for_hue(hue.id as u16)
             .ok_or_else(|| eyre::eyre!("failed to compute atlas coord for hue {}", hue.id))?;
-        let mut row = build_palette_row_rgba(&hue.color_table);
-        blur_palette_row_in_place(&mut row, BLUR_RADIUS);
+        let row = build_palette_row_rgba(&hue.color_table);
         blit_palette_row(&mut texture_bytes, coord.x, coord.y, &row)?;
 
         records.push(HueSlotRecord {
@@ -191,7 +187,7 @@ fn decode_hue_name(name: &[u8; 20]) -> String {
 fn build_palette_row_rgba(color_table: &[u16; 32]) -> Vec<u8> {
     let mut out = vec![0u8; HUE_STRIP_WIDTH as usize * 4];
     for (index, color16) in color_table.iter().copied().enumerate() {
-        let rgba = argb1555_to_rgba8888_exact(color16);
+        let rgba = argb1555_to_rgba8888_reference(color16);
         let start = index * 8 * 4;
         for repeat in 0..8 {
             let offset = start + repeat * 4;
@@ -235,50 +231,16 @@ fn build_palette_row_from_rgba_image(
     Ok(row)
 }
 
-fn argb1555_to_rgba8888_exact(color16: u16) -> [u8; 4] {
+fn argb1555_to_rgba8888_reference(color16: u16) -> [u8; 4] {
     let r5 = ((color16 >> 10) & 0x1F) as u32;
     let g5 = ((color16 >> 5) & 0x1F) as u32;
     let b5 = (color16 & 0x1F) as u32;
     [
-        ((r5 * 255) / 31) as u8,
-        ((g5 * 255) / 31) as u8,
-        ((b5 * 255) / 31) as u8,
+        (r5 * 8) as u8,
+        (g5 * 8) as u8,
+        (b5 * 8) as u8,
         255,
     ]
-}
-
-fn blur_palette_row_in_place(row: &mut [u8], radius: usize) {
-    if row.is_empty() {
-        return;
-    }
-
-    let alpha: i32 = if radius < 1 {
-        16
-    } else {
-        BLUR_ALPHA_TABLE[radius.min(BLUR_ALPHA_TABLE.len()) - 1] as i32
-    };
-
-    for channel in 0..4 {
-        let mut accum = i32::from(row[channel]) << 4;
-        let mut x = 4 + channel;
-        while x < row.len() {
-            let sample = i32::from(row[x]) << 4;
-            accum += ((sample - accum) * alpha) / 16;
-            row[x] = (accum >> 4) as u8;
-            x += 4;
-        }
-
-        let last = row.len() - 4 + channel;
-        let mut accum = i32::from(row[last]) << 4;
-        let mut x = row.len() as isize - 8 + channel as isize;
-        while x >= 0 {
-            let idx = x as usize;
-            let sample = i32::from(row[idx]) << 4;
-            accum += ((sample - accum) * alpha) / 16;
-            row[idx] = (accum >> 4) as u8;
-            x -= 4;
-        }
-    }
 }
 
 fn blit_palette_row(texture_bytes: &mut [u8], x: u32, y: u32, row: &[u8]) -> eyre::Result<()> {
@@ -415,8 +377,30 @@ mod tests {
         let strip = &texture[row_start..row_start + HUE_STRIP_WIDTH as usize * 4];
 
         for pixel in strip.chunks_exact(4) {
-            assert_eq!(pixel, &[255, 0, 0, 255]);
+            assert_eq!(pixel, &[248, 0, 0, 255]);
         }
+    }
+
+    #[test]
+    fn hues_uddp_creation_keeps_palette_boundaries_exact() {
+        let mut colors = [0u16; 32];
+        colors[1] = 0x7C00;
+        let hues = vec![hue_entry(1, "red edge", colors)];
+
+        let (records, texture) = build_hues_texture_and_records(&hues).expect("build texture");
+        let coord = records
+            .iter()
+            .find(|record| record.hue_id == 1)
+            .expect("hue 1 record");
+        let row_start = ((coord.texture_row * HUES_TEXTURE_WIDTH
+            + coord.texture_column * HUE_STRIP_WIDTH)
+            * 4) as usize;
+        let strip = &texture[row_start..row_start + HUE_STRIP_WIDTH as usize * 4];
+
+        for pixel in strip[..8 * 4].chunks_exact(4) {
+            assert_eq!(pixel, &[0, 0, 0, 255]);
+        }
+        assert_eq!(&strip[8 * 4..9 * 4], &[248, 0, 0, 255]);
     }
 
     #[test]
