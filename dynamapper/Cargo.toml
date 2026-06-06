@@ -6,6 +6,12 @@ edition = "2024"
 #resolver = "3"
 
 [lints.clippy]
+collapsible_if = "allow"
+empty_line_after_doc_comments = "allow"
+manual_div_ceil = "allow"
+manual_is_multiple_of = "allow"
+needless_lifetimes = "allow"
+nonminimal_bool = "allow"
 too_many_arguments = "allow"
 type_complexity = "allow"
 

@@ -6,6 +6,7 @@
     clippy::manual_is_multiple_of,
     clippy::manual_range_contains,
     clippy::unnecessary_cast,
+    clippy::unusual_byte_groupings,
     clippy::needless_range_loop,
     clippy::explicit_counter_loop
 )]
