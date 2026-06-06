@@ -303,26 +303,15 @@ fn ui_gump_split(
         .unwrap_or(GUMP_SPLIT_DEFAULT_RATIO)
         .clamp(GUMP_SPLIT_MIN_RATIO, GUMP_SPLIT_MAX_RATIO);
 
-    ui.horizontal(|ui| {
-        ui.label("List width:");
-        if ui
-            .add(egui::Slider::new(
-                &mut ratio,
-                GUMP_SPLIT_MIN_RATIO..=GUMP_SPLIT_MAX_RATIO,
-            ))
-            .changed()
-        {
-            ratio = ratio.clamp(GUMP_SPLIT_MIN_RATIO, GUMP_SPLIT_MAX_RATIO);
-        }
-    });
-    ui.data_mut(|data| data.insert_temp(id, ratio));
-
     let available_height = ui.available_height();
-    let content_width = ui.available_width().max(1.0);
-    let left_width = (content_width * ratio).max(1.0);
+    let divider_width = 8.0;
+    let content_width = (ui.available_width() - divider_width).max(1.0);
+    let left_width = (content_width * ratio).clamp(1.0, content_width);
     let right_width = (content_width - left_width).max(1.0);
 
     ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+
         ui.allocate_ui_with_layout(
             egui::vec2(left_width, available_height),
             egui::Layout::top_down(egui::Align::Min),
@@ -332,7 +321,31 @@ fn ui_gump_split(
                 add_left(left);
             },
         );
-        ui.separator();
+        let (divider_rect, divider_response) = ui.allocate_exact_size(
+            egui::vec2(divider_width, available_height),
+            egui::Sense::click_and_drag(),
+        );
+        let divider_response =
+            divider_response.on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+        if divider_response.dragged() {
+            let delta_x = ui.input(|input| input.pointer.delta().x);
+            ratio = (ratio + delta_x / content_width)
+                .clamp(GUMP_SPLIT_MIN_RATIO, GUMP_SPLIT_MAX_RATIO);
+            ui.ctx().request_repaint();
+        }
+        let visuals = ui.visuals();
+        let divider_color = if divider_response.dragged() {
+            visuals.widgets.active.bg_fill
+        } else if divider_response.hovered() {
+            visuals.widgets.hovered.bg_fill
+        } else {
+            visuals.widgets.noninteractive.bg_stroke.color
+        };
+        ui.painter().rect_filled(
+            divider_rect.shrink2(egui::vec2(3.0, 0.0)),
+            0.0,
+            divider_color,
+        );
         ui.allocate_ui_with_layout(
             egui::vec2(right_width, available_height),
             egui::Layout::top_down(egui::Align::Min),
@@ -343,6 +356,7 @@ fn ui_gump_split(
             },
         );
     });
+    ui.data_mut(|data| data.insert_temp(id, ratio));
 }
 
 fn ui_gump_preview_controls(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
