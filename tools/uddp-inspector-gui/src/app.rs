@@ -519,32 +519,11 @@ impl InspectorApp {
                     .filter_map(|record| (record.alias_slot_id != 0).then_some(record.alias_slot_id))
                     .collect::<HashSet<_>>()
                     .len();
-                let preview = package
-                    .terrain_provenance()
-                    .iter()
-                    .filter(|record| record.material_id == material_id)
-                    .filter_map(|record| {
-                        if record.canonical_slot_id != 0 {
-                            package
-                                .present_slot(record.canonical_slot_id)
-                                .map(|slot| (record.canonical_slot_id, slot))
-                        } else if record.alias_slot_id != 0 {
-                            package
-                                .present_slot(record.alias_slot_id)
-                                .map(|slot| (record.alias_slot_id, slot))
-                        } else {
-                            None
-                        }
-                    })
-                    .next()
-                    .map(|(slot_id, slot)| EcLandMaterialPreview {
-                        slot_id,
-                        page_index: slot.page_index,
-                        x: slot.x,
-                        y: slot.y,
-                        width: slot.width,
-                        height: slot.height,
-                    });
+                let preview = self.detect_tex_land_ec_material_preview(
+                    package,
+                    material_id,
+                    records.as_slice(),
+                );
                 let primary_texture_id = records
                     .iter()
                     .find_map(|record| {
@@ -589,6 +568,34 @@ impl InspectorApp {
                 }
             })
             .collect()
+    }
+
+    fn detect_tex_land_ec_material_preview(
+        &self,
+        package: &udd_assets::TexLandEcPackage,
+        material_id: u32,
+        records: &[&udd_assets::tex_land_ec::TexLandEcTerrainProvenanceRecord],
+    ) -> Option<EcLandMaterialPreview> {
+        let query_tile_id = records
+            .iter()
+            .filter_map(|record| {
+                (record.alias_slot_id != 0
+                    && record.alias_slot_id != udd_assets::tex_land_ec::MISSING_SLOT_ID)
+                    .then_some(record.alias_slot_id)
+            })
+            .min()
+            .unwrap_or(material_id);
+        let slot_id = package.resolve_effective_runtime_slot_id(query_tile_id)?;
+        let slot = package.present_slot(slot_id)?;
+
+        Some(EcLandMaterialPreview {
+            slot_id,
+            page_index: slot.page_index,
+            x: slot.x,
+            y: slot.y,
+            width: slot.width,
+            height: slot.height,
+        })
     }
 
     fn material_preview_page_data(
@@ -1231,7 +1238,185 @@ impl InspectorApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use udd_container::FileKey;
+    use byteorder::{LittleEndian, WriteBytesExt};
+    use udd_container::{
+        AddFileRequest,
+        CompressionFlag,
+        DataType,
+        FileKey,
+        LookupMode,
+        UddpBuilder,
+    };
+
+    fn empty_test_app(view_mode: ViewMode) -> InspectorApp {
+        InspectorApp {
+            package: None,
+            entries: Vec::new(),
+            atlas_pages: HashMap::new(),
+            selected_idx: None,
+            filter: String::new(),
+            package_path: None,
+            mobile_anim_cc_package: None,
+            mobile_anim_ec_package: None,
+            selected_mobile_anim_index: 0,
+            selected_mobile_anim_frame_index: 0,
+            mobile_anim_is_playing: false,
+            mobile_anim_last_frame_time: 0.0,
+            mobile_anim_playback_speed: 1.0,
+            mobile_anim_loop: true,
+            mobile_anim_frame_reset_pending: false,
+            mobile_anim_tree_order: MobileAnimTreeOrder::BodyType,
+            mobile_anim_tree_collapse_revision: 0,
+            view_mode,
+            virtual_entries: Vec::new(),
+            virtual_material_entries: Vec::new(),
+            virtual_entry_mode: VirtualEntryMode::Entry,
+            selected_virtual_idx: None,
+            preview_text: None,
+            preview_texture: None,
+            preview_texture_size: None,
+            atlas_texture: None,
+            atlas_texture_size: None,
+            atlas_text: None,
+            decoded_atlas_page_index: None,
+            decoded_atlas_page: None,
+            preview_mode: PreviewModeKind::Entry,
+            image_window_open: false,
+            image_window_mode: PreviewModeKind::Entry,
+            texture_zoom: 1.0,
+            focus_filter: false,
+            scroll_to_selected: false,
+        }
+    }
+
+    fn add_metadata_file(builder: &mut UddpBuilder, virtual_path: &str, data: &[u8]) {
+        builder
+            .add_file(AddFileRequest {
+                data_type: DataType::Metadata as u8,
+                compression: CompressionFlag::None,
+                width: 0,
+                height: 0,
+                virtual_path: Some(virtual_path),
+                path_hash64: None,
+                id: None,
+                data,
+            })
+            .expect("add metadata file");
+    }
+
+    fn ec_land_page_manifest_bytes() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"ELPG");
+        bytes.write_u32::<LittleEndian>(3).unwrap();
+        bytes.write_u32::<LittleEndian>(64).unwrap();
+        bytes.write_u32::<LittleEndian>(64).unwrap();
+        bytes.write_u32::<LittleEndian>(1).unwrap();
+        bytes.write_u8(0).unwrap();
+        bytes.write_u8(0).unwrap();
+        bytes.write_u32::<LittleEndian>(1).unwrap();
+        bytes.write_u32::<LittleEndian>(0).unwrap();
+        bytes.write_u32::<LittleEndian>(3).unwrap();
+        bytes.write_u32::<LittleEndian>(64).unwrap();
+        bytes.write_u32::<LittleEndian>(64).unwrap();
+        bytes
+    }
+
+    fn ec_land_slot_manifest_bytes() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"ELSL");
+        bytes.write_u32::<LittleEndian>(3).unwrap();
+        bytes.write_u32::<LittleEndian>(64).unwrap();
+        bytes.write_u32::<LittleEndian>(64).unwrap();
+        bytes.write_u32::<LittleEndian>(1).unwrap();
+        bytes.write_u8(0).unwrap();
+        bytes.write_u32::<LittleEndian>(16_409).unwrap();
+        for art_id in 0..=16_408u32 {
+            bytes.write_u32::<LittleEndian>(art_id).unwrap();
+            if art_id == 77 || art_id == 100 || art_id == 16_408 {
+                bytes.write_u32::<LittleEndian>(0).unwrap();
+                bytes.write_u16::<LittleEndian>(0).unwrap();
+                bytes
+                    .write_u16::<LittleEndian>(
+                        udd_assets::tex_land_ec::SLOT_FLAG_PRESENT
+                            | udd_assets::tex_land_ec::SLOT_FLAG_LAND,
+                    )
+                    .unwrap();
+                bytes.write_u16::<LittleEndian>(0).unwrap();
+                bytes.write_u16::<LittleEndian>(0).unwrap();
+                bytes.write_u16::<LittleEndian>(44).unwrap();
+                bytes.write_u16::<LittleEndian>(44).unwrap();
+            } else {
+                bytes
+                    .write_u32::<LittleEndian>(udd_assets::tex_land_ec::MISSING_PAGE_INDEX)
+                    .unwrap();
+                bytes
+                    .write_u16::<LittleEndian>(udd_assets::tex_land_ec::MISSING_PAGE_TILE_INDEX)
+                    .unwrap();
+                bytes.write_u16::<LittleEndian>(0).unwrap();
+                bytes.write_u16::<LittleEndian>(0).unwrap();
+                bytes.write_u16::<LittleEndian>(0).unwrap();
+                bytes.write_u16::<LittleEndian>(0).unwrap();
+                bytes.write_u16::<LittleEndian>(0).unwrap();
+            }
+        }
+        bytes
+    }
+
+    fn ec_land_terrain_provenance_bytes() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"ELTP");
+        bytes.write_u32::<LittleEndian>(3).unwrap();
+        bytes.write_u32::<LittleEndian>(2).unwrap();
+        for (texture_id, canonical_slot_id, layer_index) in [
+            (1_000_003, 16_408, udd_assets::tex_land_ec::MISSING_TERRAIN_LAYER_INDEX),
+            (2_000_520, 100, 0),
+        ] {
+            bytes.write_u32::<LittleEndian>(52).unwrap();
+            bytes.write_i32::<LittleEndian>(0).unwrap();
+            bytes.write_u32::<LittleEndian>(0).unwrap();
+            bytes.write_u32::<LittleEndian>(77).unwrap();
+            bytes.write_u64::<LittleEndian>(0).unwrap();
+            bytes.write_u32::<LittleEndian>(texture_id).unwrap();
+            bytes.write_u32::<LittleEndian>(canonical_slot_id).unwrap();
+            bytes.write_u32::<LittleEndian>(layer_index).unwrap();
+            bytes.write_f32::<LittleEndian>(5.0).unwrap();
+            bytes.write_u32::<LittleEndian>(2_000_520).unwrap();
+            bytes.write_u32::<LittleEndian>(0).unwrap();
+            bytes
+                .write_u8(udd_assets::tex_land_ec::TERRAIN_PRIMARY_REASON_NON_SUPPORT_PREFERRED_REPETITION)
+                .unwrap();
+            bytes
+                .write_u16::<LittleEndian>(
+                    udd_assets::tex_land_ec::TERRAIN_PRIMARY_FLAG_SELECTED_PREFERRED_REPETITION,
+                )
+                .unwrap();
+        }
+        bytes
+    }
+
+    fn ec_land_test_package() -> udd_assets::TexLandEcPackage {
+        let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
+        add_metadata_file(
+            &mut builder,
+            udd_assets::tex_land_ec::UDDP_PAGE_MANIFEST_ENTRY_VPATH,
+            &ec_land_page_manifest_bytes(),
+        );
+        add_metadata_file(
+            &mut builder,
+            udd_assets::tex_land_ec::UDDP_SLOT_MANIFEST_ENTRY_VPATH,
+            &ec_land_slot_manifest_bytes(),
+        );
+        add_metadata_file(
+            &mut builder,
+            udd_assets::tex_land_ec::UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH,
+            &ec_land_terrain_provenance_bytes(),
+        );
+        let bytes = builder.build().expect("build test package");
+        udd_assets::TexLandEcPackage::from_uddp_package(
+            UddpReader::open(bytes).expect("open test package"),
+        )
+        .expect("load EC land package")
+    }
 
     #[test]
     fn test_clear_preview_state() {
@@ -1478,6 +1663,25 @@ mod tests {
                 "build/terraindefinition/20000061.bin"
             )
         );
+    }
+
+    #[test]
+    fn material_virtual_entries_preview_resolved_primary_texture_slot() {
+        let app = empty_test_app(ViewMode::Virtual);
+        let package = ec_land_test_package();
+
+        let entries = app.detect_tex_land_ec_material_entries(&package);
+        let material_entry = entries
+            .iter()
+            .find(|entry| entry.id == 52)
+            .expect("material 52 entry");
+        let VirtualEntryData::EcLandMaterial(info) = &material_entry.data else {
+            panic!("expected material entry");
+        };
+        let preview = info.preview.as_ref().expect("material preview");
+
+        assert_eq!(preview.slot_id, 100);
+        assert_eq!(info.primary_texture_id, Some(2_000_520));
     }
 
     #[test]
