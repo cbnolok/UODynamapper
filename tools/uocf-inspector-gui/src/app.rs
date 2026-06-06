@@ -1486,6 +1486,15 @@ fn find_localized_strings_uop(base_path: &Path) -> Option<PathBuf> {
     find_client_file_case_insensitive(base_path, LOCALIZED_STRINGS_UOP_NAME)
 }
 
+const ANIMATIONFRAME_UOP_NAMES: [&str; 6] = [
+    "AnimationFrame1.uop",
+    "AnimationFrame2.uop",
+    "AnimationFrame3.uop",
+    "AnimationFrame4.uop",
+    "AnimationFrame5.uop",
+    "AnimationFrame6.uop",
+];
+
 fn find_client_file_case_insensitive(base_path: &Path, file_name: &str) -> Option<PathBuf> {
     let direct_path = base_path.join(file_name);
     if direct_path.exists() {
@@ -2006,6 +2015,52 @@ impl UopInspectorApp {
                     break;
                 }
             }
+
+            for uop_name in ANIMATIONFRAME_UOP_NAMES {
+                if let Some(uop_path) = find_client_file_case_insensitive(&path, uop_name) {
+                    if self
+                        .uop_cache
+                        .loaded_uops
+                        .iter()
+                        .any(|loaded| loaded.path.as_path() == uop_path.as_path())
+                    {
+                        continue;
+                    }
+                    match UopPackage::load_with_mode(&uop_path, LoadMode::Lazy) {
+                        Ok(package) => {
+                            self.uop_cache.add(uop_path, package);
+                            self.log(format!("Loading {} into cache... Success", uop_name));
+                        }
+                        Err(e) => {
+                            self.log(format!("Loading {} into cache... Failed: {}", uop_name, e));
+                        }
+                    }
+                }
+            }
+
+            if let Some(uop_path) =
+                find_client_file_case_insensitive(&path, "AnimationSequence.uop")
+            {
+                if !self
+                    .uop_cache
+                    .loaded_uops
+                    .iter()
+                    .any(|loaded| loaded.path.as_path() == uop_path.as_path())
+                {
+                    match UopPackage::load_with_mode(&uop_path, LoadMode::Lazy) {
+                        Ok(package) => {
+                            self.uop_cache.add(uop_path, package);
+                            self.log("Loading AnimationSequence.uop into cache... Success");
+                        }
+                        Err(e) => {
+                            self.log(format!(
+                                "Loading AnimationSequence.uop into cache... Failed: {}",
+                                e
+                            ));
+                        }
+                    }
+                }
+            }
         }
 
         // 2. Try to load EC assets (string dictionary and legacy texture)
@@ -2174,6 +2229,13 @@ impl UopInspectorApp {
                 "texture.uop",
                 "interface.uop",
                 "waypoint.uop",
+                "AnimationSequence.uop",
+                "AnimationFrame1.uop",
+                "AnimationFrame2.uop",
+                "AnimationFrame3.uop",
+                "AnimationFrame4.uop",
+                "AnimationFrame5.uop",
+                "AnimationFrame6.uop",
             ];
             for uop_name in ec_uops {
                 if let Some(uop_path) =
@@ -2187,7 +2249,12 @@ impl UopInspectorApp {
                     {
                         continue;
                     }
-                    let load_mode = if uop_name.eq_ignore_ascii_case("interface.uop") {
+                    let load_mode = if uop_name.eq_ignore_ascii_case("interface.uop")
+                        || uop_name.eq_ignore_ascii_case("AnimationSequence.uop")
+                        || ANIMATIONFRAME_UOP_NAMES
+                            .iter()
+                            .any(|name| uop_name.eq_ignore_ascii_case(name))
+                    {
                         LoadMode::Lazy
                     } else {
                         LoadMode::Eager
