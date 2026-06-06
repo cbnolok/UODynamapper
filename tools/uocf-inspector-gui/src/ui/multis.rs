@@ -1,7 +1,9 @@
 use crate::app::{ArtSource, MultiCollectionSource, MultisSource, UopInspectorApp};
 use crate::ui::{arrow_delta, move_selection};
 use eframe::egui;
+use std::sync::Arc;
 use uocf::classic::art::static_art_id_for_source;
+use uocf::enhanced::textures::{ECImageFormat, TextureFile, TextureItem as RawTextureItem};
 
 #[derive(Clone)]
 struct PreviewPart {
@@ -600,10 +602,11 @@ fn draw_preview(
         for render_part in sorted_parts {
             let part_pos = preview_part_position(&render_part, min_x, min_y, min_z, tile_w, tile_h);
             if let Some(handle) = render_part.texture {
-                let draw_pos = rect.min + egui::vec2(
+                let draw_pos = (rect.min + egui::vec2(
                     origin.x - rect.min.x + part_pos.x,
                     origin.y - rect.min.y + part_pos.y,
-                );
+                ))
+                .round();
                 let part_rect = egui::Rect::from_min_size(draw_pos, render_part.size);
                 painter.image(
                     handle.id(),
@@ -696,14 +699,83 @@ fn get_multi_part_texture(
 ) -> Option<egui::TextureHandle> {
     let source = concrete_art_tile_source(app.selected_legacy_source);
     let art_id = static_art_id_for_source(item_id as u32, source);
-    let selected_hue_id = app.selected_hue_id;
-    app.selected_hue_id = 0;
-    let texture = app.get_tex_art_texture_from_source(ctx, art_id, source);
-    app.selected_hue_id = selected_hue_id;
+    let key = multi_preview_texture_key(art_id, source);
+    let texture = app.texture_previews.get(&key).cloned().or_else(|| {
+        let (width, height, pixels) = decode_multi_part_rgba(app, art_id, source)?;
+        let image = egui::ColorImage::from_rgba_unmultiplied(
+            [width as usize, height as usize],
+            &pixels,
+        );
+        let handle = ctx.load_texture(
+            format!("multi_preview_art_{}_{:?}", art_id, source),
+            image,
+            egui::TextureOptions::NEAREST,
+        );
+        app.texture_previews.insert(key, handle.clone());
+        Some(handle)
+    });
     if texture.is_none() {
         log_missing_multi_part_texture(app, item_id, art_id, source);
     }
     texture
+}
+
+fn multi_preview_texture_key(art_id: u32, source: ArtSource) -> u64 {
+    0x4D50_0000_0000_0000u64 | ((source as u64) << 40) | art_id as u64
+}
+
+fn decode_multi_part_rgba(
+    app: &UopInspectorApp,
+    art_id: u32,
+    source: ArtSource,
+) -> Option<(u32, u32, Vec<u8>)> {
+    let client = app.client_data.as_ref()?;
+    let mut scratch = Vec::new();
+    if client
+        .art
+        .get_raw_art_data_from_source(art_id, source, &mut scratch)
+        .is_err()
+    {
+        return None;
+    }
+
+    if scratch.starts_with(b"DDS ") || source != ArtSource::Mul {
+        if let Some(image) = decode_multi_uop_art_rgba(&scratch, source) {
+            return Some(image);
+        }
+    }
+
+    if art_id < uocf::classic::art::STATIC_TILE_ID_BASE {
+        let mut pixels = [0u8; 44 * 44 * 4];
+        if uocf::classic::art::decode_land_tile_from_raw(&scratch, &mut pixels).is_ok() {
+            return Some((44, 44, pixels.to_vec()));
+        }
+    } else if let Ok((width, height, pixels)) =
+        client.art.decode_static_tile_from_source(art_id, source, &mut scratch)
+    {
+        return Some((width as u32, height as u32, pixels));
+    }
+
+    None
+}
+
+fn decode_multi_uop_art_rgba(scratch: &[u8], source: ArtSource) -> Option<(u32, u32, Vec<u8>)> {
+    let format = if scratch.starts_with(b"DDS ") {
+        ECImageFormat::DDS
+    } else {
+        ECImageFormat::TGA
+    };
+    let tex_file = TextureFile {
+        metadata: RawTextureItem::absent(),
+        is_ec: source.is_ec_uop(),
+        format,
+        props: None,
+        raw_data: Arc::from(scratch),
+        image_data_offset: 0,
+    };
+    let img = tex_file.decode_to_rgba().ok()?;
+    let rgba = img.to_rgba8();
+    Some((rgba.width(), rgba.height(), rgba.into_raw()))
 }
 
 fn log_missing_multi_part_texture(
