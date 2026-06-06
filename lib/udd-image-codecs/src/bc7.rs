@@ -266,7 +266,7 @@ impl VramTextureData {
         Arc::clone(&self.bytes)
     }
 
-    pub fn into_bytes(&self) -> Arc<[u8]> {
+    pub fn into_bytes(self) -> Arc<[u8]> {
         self.bytes
     }
 
@@ -360,7 +360,7 @@ impl Bc7TextureData {
         &self.blocks
     }
 
-    pub fn into_blocks(&self) -> Vec<u8> {
+    pub fn into_blocks(self) -> Vec<u8> {
         self.blocks
     }
 
