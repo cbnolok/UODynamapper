@@ -183,7 +183,7 @@ impl UddpReader {
     }
 
     fn open_data(data: UddpData, options: UddpReaderOptions) -> Result<Self, FormatError> {
-        let mut cur = Cursor::new(&*data);
+        let mut cur = Cursor::new(&data);
         let header = UddpHeader::read_from(&mut cur)?;
 
         if header.magic != UDDP_MAGIC && header.magic != UDPI_MAGIC {
@@ -478,7 +478,7 @@ impl UddpReader {
                 }
                 Codec::JpegXl => {
                     jxl_decompress(data)
-                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                        .map_err(|e| std::io::Error::other(e))
                         .map_err(FormatError::Io)?
                 }
             };

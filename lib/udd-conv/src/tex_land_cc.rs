@@ -175,9 +175,9 @@ pub fn convert_texmaps_mul_to_tex_land_cc_uddp_with_patches_and_progress(
     payload_progress: impl Fn(AssetTaskProgress) + Sync,
     mut package_progress: impl FnMut(udd_container::BuildProgress),
 ) -> eyre::Result<TexLandCcBuildSummary> {
-    let texmaps_path = find_first_existing_file(&[client_dir.to_path_buf()], &[&"texmaps.mul"])
+    let texmaps_path = find_first_existing_file(&[client_dir.to_path_buf()], &["texmaps.mul"])
         .ok_or_else(|| eyre::eyre!("missing texmaps.mul in {}", client_dir.display()))?;
-    let texidx_path = find_first_existing_file(&[client_dir.to_path_buf()], &[&"texidx.mul"])
+    let texidx_path = find_first_existing_file(&[client_dir.to_path_buf()], &["texidx.mul"])
         .ok_or_else(|| eyre::eyre!("missing texidx.mul in {}", client_dir.display()))?;
 
     info!("Converting CC TexMaps to {}", out_file.display());
@@ -329,7 +329,7 @@ pub fn convert_texmaps_mul_to_tex_land_cc_uddp_with_patches_and_progress(
                         encoding,
                         options.bc7_rdo_lambda,
                         options.bc7_rdo_lookback_blocks,
-                        &report_bc7_progress,
+                        report_bc7_progress,
                     )
                         .map_err(|e| {
                             eyre::eyre!("BC7 encode page {}: {e}", page.record.page_index)
@@ -346,11 +346,10 @@ pub fn convert_texmaps_mul_to_tex_land_cc_uddp_with_patches_and_progress(
             .collect::<Vec<eyre::Result<(String, Vec<u8>, u32, u32)>>>()
             .into_iter()
             .collect::<eyre::Result<Vec<_>>>()
-            .map(|encoded_pages| {
+            .inspect(|encoded_pages| {
                 if let Some(rdo_pb) = rdo_pb {
                     rdo_pb.finish_with_message("BC7 RDO applied to CC texmap atlas pages");
                 }
-                encoded_pages
             })?
     } else {
         payload_progress(AssetTaskProgress {
@@ -456,8 +455,8 @@ fn decode_present_tiles(
             let (w, h, rgba) = if orig_w == 64 && orig_h == 64 {
                 let passes = land_upscale_passes_for(options, id as u32, &options.upscale_64_passes);
                 apply_upscale_config(
-                    orig_w as u32,
-                    orig_h as u32,
+                    orig_w,
+                    orig_h,
                     &rgba_arc,
                     options.upscale_64,
                     &passes,
@@ -465,14 +464,14 @@ fn decode_present_tiles(
             } else if orig_w == 128 && orig_h == 128 {
                 let passes = land_upscale_passes_for(options, id as u32, &options.upscale_128_passes);
                 apply_upscale_config(
-                    orig_w as u32,
-                    orig_h as u32,
+                    orig_w,
+                    orig_h,
                     &rgba_arc,
                     options.upscale_128,
                     &passes,
                 )
             } else {
-                (orig_w as u32, orig_h as u32, rgba_arc.to_vec())
+                (orig_w, orig_h, rgba_arc.to_vec())
             };
             decoded_tiles.push(DecodedTexmapTile {
                 id: id as u32,

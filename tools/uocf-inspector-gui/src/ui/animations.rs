@@ -948,7 +948,7 @@ fn show_uop_animationframe_tree(
                         } else {
                             for entry in body_entries {
                                 let selected = app.selected_anim_id == entry.body_id
-                                    && entry.group_id.map_or(true, |group_id| {
+                                    && entry.group_id.is_none_or(|group_id| {
                                         app.selected_anim_file_idx == group_id
                                     });
                                 let label = match entry.group_id {
@@ -1019,7 +1019,7 @@ fn show_uop_animationframe_entry_frames(
             app.selected_anim_id == body_id
                 && app.selected_action_id == action_id
                 && app.selected_direction == direction
-                && entry.group_id.map_or(true, |group_id| {
+                && entry.group_id.is_none_or(|group_id| {
                     app.selected_anim_file_idx == group_id
                 }),
         )
@@ -1032,7 +1032,7 @@ fn show_uop_animationframe_entry_frames(
                     && app.selected_action_id == action_id
                     && app.selected_direction == direction
                     && app.current_frame_idx == frame_index
-                    && entry.group_id.map_or(true, |group_id| {
+                    && entry.group_id.is_none_or(|group_id| {
                         app.selected_anim_file_idx == group_id
                     });
                 if ui

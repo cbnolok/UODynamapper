@@ -108,7 +108,7 @@ pub fn decode_rle_bytes(bytes: &[u8]) -> eyre::Result<MultimapRleImage> {
                 expected_len
             );
         }
-        pixels.extend(std::iter::repeat(pixel).take(count));
+        pixels.extend(std::iter::repeat_n(pixel, count));
     }
 
     if pixels.len() != expected_len {

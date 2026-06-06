@@ -211,7 +211,7 @@ impl TexMap {
             // Fill texmap
             let cur_idx_elem: &generic_index::IndexElement = texidx
                 .element(i_idx_raw as usize)
-                .expect(format!("Reading lookup value for element {i_idx_raw}").as_str());
+                .unwrap_or_else(|_| panic!("Reading lookup value for element {i_idx_raw}"));
 
             let patch_data = verdata
                 .as_ref()

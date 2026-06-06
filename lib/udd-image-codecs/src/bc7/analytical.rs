@@ -2742,7 +2742,7 @@ fn best_pbits_m3(
     let mut best_pbits = [0u32; 4];
     let mut best_sse = u32::MAX;
     for p in 0u32..16 {
-        let pbits = [(p >> 0) & 1, (p >> 1) & 1, (p >> 2) & 1, (p >> 3) & 1];
+        let pbits = [p & 1, (p >> 1) & 1, (p >> 2) & 1, (p >> 3) & 1];
         let mut tw = [0u8; 16];
         let sse = eval_m3(pixels, &mut tw, lr, lg, lb, hr, hg, hb, &pbits, bmask);
         if sse < best_sse {

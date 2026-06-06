@@ -163,7 +163,7 @@ pub fn ui_sounds(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 }
             }
 
-            let playing = app.sound_player.as_ref().map_or(false, |player| player.is_playing());
+            let playing = app.sound_player.as_ref().is_some_and(|player| player.is_playing());
             ui.label(if playing { "Playing" } else { "Idle" });
         });
 

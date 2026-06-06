@@ -541,9 +541,9 @@ fn reduce_entropy_bc7_impl(
     blocks_x: usize,
     blocks_y: usize,
     params: &Bc7RdoParams,
-    mut stats: Option<&mut Bc7RdoStats>,
+    stats: Option<&mut Bc7RdoStats>,
 ) -> u32 {
-    if let Some(stats) = stats.as_deref_mut() {
+    if let Some(stats) = stats {
         reduce_entropy_bc7_impl_with_progress::<true>(
             blocks,
             rgba_blocks,

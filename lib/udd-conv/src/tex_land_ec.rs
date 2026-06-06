@@ -501,7 +501,7 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_prog
 
     // Build provenance after packing so canonical_slot_id reflects the real packed slot.
     let terrain_provenance = build_terrain_provenance_records(
-        &terrain_definition,
+        terrain_definition,
         &selections,
         &texture_slot_by_texture_id,
         &terrain_override_layers_by_material,
@@ -721,7 +721,7 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_prog
                         encoding,
                         options.bc7_rdo_lambda,
                         options.bc7_rdo_lookback_blocks,
-                        &report_bc7_progress,
+                        report_bc7_progress,
                     )
                         .map_err(|e| {
                             eyre::eyre!("BC7 encode page {}: {e}", page.record.page_index)

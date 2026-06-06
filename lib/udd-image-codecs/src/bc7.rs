@@ -31,7 +31,7 @@ pub enum RawImageFormat {
 }
 
 impl RawImageFormat {
-    pub const fn bytes_per_pixel(self) -> usize {
+    pub const fn bytes_per_pixel(&self) -> usize {
         match self {
             Self::Rgb888 => 3,
             Self::Rgba8888 => 4,
@@ -46,16 +46,16 @@ pub enum Bc7EncoderBackend {
 }
 
 pub trait Bc7EncoderBackendExt {
-    fn is_available(self) -> bool;
-    fn unavailable_reason(self) -> Option<&'static str>;
+    fn is_available(&self) -> bool;
+    fn unavailable_reason(&self) -> Option<&'static str>;
 }
 
 impl Bc7EncoderBackendExt for Bc7EncoderBackend {
-    fn is_available(self) -> bool {
+    fn is_available(&self) -> bool {
         cfg!(feature = "bc7-encode")
     }
 
-    fn unavailable_reason(self) -> Option<&'static str> {
+    fn unavailable_reason(&self) -> Option<&'static str> {
         if self.is_available() {
             None
         } else {
@@ -133,7 +133,7 @@ pub enum VramTextureEncoding {
 }
 
 impl VramTextureEncoding {
-    pub const fn format(self) -> VramTextureFormat {
+    pub const fn format(&self) -> VramTextureFormat {
         match self {
             Self::Rgba8UnormSrgb => VramTextureFormat::Rgba8UnormSrgb,
             Self::Bc7(_) => VramTextureFormat::Bc7RgbaUnormSrgb,
@@ -157,21 +157,21 @@ impl VramTextureFormat {
         }
     }
 
-    pub const fn texture_format(self) -> TextureFormat {
+    pub const fn texture_format(&self) -> TextureFormat {
         match self {
             Self::Rgba8UnormSrgb => TextureFormat::Rgba8UnormSrgb,
             Self::Bc7RgbaUnormSrgb => TextureFormat::Bc7RgbaUnormSrgb,
         }
     }
 
-    pub fn expected_byte_len(self, extent: ImageExtent) -> usize {
+    pub fn expected_byte_len(&self, extent: ImageExtent) -> usize {
         match self {
             Self::Rgba8UnormSrgb => extent.byte_len(RawImageFormat::Rgba8888),
             Self::Bc7RgbaUnormSrgb => expected_bc7_byte_len(extent),
         }
     }
 
-    pub const fn upload_layout(self, extent: ImageExtent) -> TextureUploadLayout {
+    pub const fn upload_layout(&self, extent: ImageExtent) -> TextureUploadLayout {
         match self {
             Self::Rgba8UnormSrgb => TextureUploadLayout {
                 bytes_per_row: extent.width() * 4,
@@ -201,15 +201,15 @@ impl ImageExtent {
         Ok(Self { width, height })
     }
 
-    pub const fn width(self) -> u32 { self.width }
-    pub const fn height(self) -> u32 { self.height }
-    pub const fn blocks_wide(self) -> u32 { self.width.div_ceil(4) }
-    pub const fn blocks_high(self) -> u32 { self.height.div_ceil(4) }
-    pub const fn padded_width(self) -> u32 { self.blocks_wide() * 4 }
-    pub const fn padded_height(self) -> u32 { self.blocks_high() * 4 }
-    pub const fn bytes_per_row_rgba(self) -> usize { self.width as usize * 4 }
+    pub const fn width(&self) -> u32 { self.width }
+    pub const fn height(&self) -> u32 { self.height }
+    pub const fn blocks_wide(&self) -> u32 { self.width.div_ceil(4) }
+    pub const fn blocks_high(&self) -> u32 { self.height.div_ceil(4) }
+    pub const fn padded_width(&self) -> u32 { self.blocks_wide() * 4 }
+    pub const fn padded_height(&self) -> u32 { self.blocks_high() * 4 }
+    pub const fn bytes_per_row_rgba(&self) -> usize { self.width as usize * 4 }
 
-    pub const fn byte_len(self, format: RawImageFormat) -> usize {
+    pub const fn byte_len(&self, format: RawImageFormat) -> usize {
         self.width as usize * self.height as usize * format.bytes_per_pixel()
     }
 }
@@ -266,7 +266,7 @@ impl VramTextureData {
         Arc::clone(&self.bytes)
     }
 
-    pub fn into_bytes(self) -> Arc<[u8]> {
+    pub fn into_bytes(&self) -> Arc<[u8]> {
         self.bytes
     }
 
@@ -360,7 +360,7 @@ impl Bc7TextureData {
         &self.blocks
     }
 
-    pub fn into_blocks(self) -> Vec<u8> {
+    pub fn into_blocks(&self) -> Vec<u8> {
         self.blocks
     }
 
@@ -686,7 +686,7 @@ impl Bc7StageTimings {
         self.flatten += other.flatten;
     }
 
-    pub fn total(self) -> Duration {
+    pub fn total(&self) -> Duration {
         self.input + self.encode + self.rdo + self.flatten
     }
 }

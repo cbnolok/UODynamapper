@@ -224,8 +224,8 @@ impl AnimationFrame {
 
     /// Decodes a single frame using RLE with alpha blending.
     pub fn decode_frame(&self, frame_entry: &FrameEntry) -> eyre::Result<DecodedFrame> {
-        let width = (frame_entry.end_coords_x - frame_entry.init_coords_x).abs() as u16;
-        let height = (frame_entry.end_coords_y - frame_entry.init_coords_y).abs() as u16;
+        let width = (frame_entry.end_coords_x - frame_entry.init_coords_x).unsigned_abs();
+        let height = (frame_entry.end_coords_y - frame_entry.init_coords_y).unsigned_abs();
         
         if width == 0 || height == 0 {
             return Ok(DecodedFrame {

@@ -117,7 +117,7 @@ impl UpscaleProfileOverride {
     fn matches(&self, target: UpscaleTarget) -> bool {
         self.image_type == target.image_type
             && self.id == target.id
-            && self.family.map_or(true, |family| target.family == Some(family))
+            && self.family.is_none_or(|family| target.family == Some(family))
     }
 }
 

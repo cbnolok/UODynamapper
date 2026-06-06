@@ -1432,7 +1432,7 @@ fn write_support_inventory(
                 infer_file_kind(&internal_path, &basename, &bytes, image_info.is_some());
             let keyword_probe = format!("{basename} {payload_text}");
             let keywords = keyword_buckets(&keyword_probe);
-            let stable_role = provisional_stable_role(&file_kind, &keywords);
+            let stable_role = provisional_stable_role(file_kind, &keywords);
             let speculative_role = provisional_speculative_role(&keywords);
             let notes = inventory_notes(&internal_path, owner_links, image_info.is_some());
 
@@ -1538,7 +1538,7 @@ fn known_support_paths(
         .collect::<BTreeSet<_>>();
     let mut paths = HashMap::new();
 
-    for ((owner_kind, texture_id), _) in &owner_index.by_key {
+    for (owner_kind, texture_id) in owner_index.by_key.keys() {
         if *owner_kind != kind {
             continue;
         }
@@ -3306,7 +3306,7 @@ fn terrain_definition_kdl_findings(
     for flag in terrain_type_flags(&kdl_entry.terrain_type) {
         let status = terrain_type_flag_status(&flag, uop_entry);
         findings.push(terrain_kdl_finding(
-            &format!("terrain_type.{flag}"),
+            format!("terrain_type.{flag}"),
             status,
             terrain_type_flag_detail(&flag, uop_entry),
         ));
@@ -3344,7 +3344,7 @@ fn terrain_definition_kdl_findings(
                 .any(|(_, kdl_layer)| kdl_layer.id == texture_id);
             if !in_kdl {
                 findings.push(terrain_kdl_finding(
-                    &format!("uop_layer.{texture_id}"),
+                    format!("uop_layer.{texture_id}"),
                     "uop_only_layer_texture",
                     uop_layer
                         .path
@@ -3815,7 +3815,7 @@ fn kdl_quote(value: &str) -> String {
 }
 
 fn kdl_comment_text(value: &str) -> String {
-    value.replace('\n', " ").replace('\r', " ")
+    value.replace(['\n', '\r'], " ")
 }
 
 fn terrain_type_flags(terrain_type: &str) -> Vec<String> {
@@ -3898,7 +3898,7 @@ fn terrain_kdl_layer_finding(
 
     if matching_layers.is_empty() {
         return terrain_kdl_finding(
-            &format!("layer.{role}"),
+            format!("layer.{role}"),
             "kdl_only_layer_texture",
             format!("texture_id={}; stretch={}", kdl_layer.id, kdl_layer.stretch),
         );
@@ -3929,7 +3929,7 @@ fn terrain_kdl_layer_finding(
         .join(" | ");
 
     terrain_kdl_finding(
-        &format!("layer.{role}"),
+        format!("layer.{role}"),
         status,
         format!(
             "kdl_texture_id={}; kdl_stretch={}; {layer_descriptions}",

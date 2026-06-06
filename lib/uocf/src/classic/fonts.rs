@@ -509,8 +509,7 @@ impl ClassicFonts {
         let width = (max_x - min_x).max(0) as u32;
         let height = (max_y - min_y).max(0) as u32;
         let background = background.unwrap_or([0, 0, 0, 0]);
-        let mut rgba = Vec::new();
-        rgba.resize(width as usize * height as usize * 4, 0);
+        let mut rgba = vec![0; width as usize * height as usize * 4];
         for pixel in rgba.chunks_exact_mut(4) {
             pixel.copy_from_slice(&background);
         }

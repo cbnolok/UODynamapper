@@ -974,8 +974,8 @@ fn planned_frame_from_entry(
     path: Arc<PathBuf>,
     file_hash: u64,
 ) -> PlannedMobileAnimEcFrame {
-    let width = (entry.end_coords_x - entry.init_coords_x).abs() as u16;
-    let height = (entry.end_coords_y - entry.init_coords_y).abs() as u16;
+    let width = (entry.end_coords_x - entry.init_coords_x).unsigned_abs();
+    let height = (entry.end_coords_y - entry.init_coords_y).unsigned_abs();
     PlannedMobileAnimEcFrame {
         body_id: animation.animation_id,
         source_frame_index: source_entry_index,

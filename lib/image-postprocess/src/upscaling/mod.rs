@@ -255,7 +255,9 @@ impl From<UpscaleFilter> for UpscalePass {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Default)]
 pub enum UpscalePassParams {
+    #[default]
     Default,
     ColorFactor {
         factor: f32,
@@ -288,11 +290,6 @@ pub enum UpscalePassParams {
     },
 }
 
-impl Default for UpscalePassParams {
-    fn default() -> Self {
-        Self::Default
-    }
-}
 
 impl UpscaleFilter {
     pub fn scale_factor(self) -> u32 {

@@ -221,7 +221,7 @@ pub mod mythic_decompress {
         let mut m: i32 = 0;
         for i in 0..non_zero_count {
             let freq = frequency_table[i];
-            symbol_table[input[m as usize + 1024] as usize] = freq as u8;
+            symbol_table[input[m as usize + 1024] as usize] = freq;
 
             partial_input[freq as usize + 256] = m + 1;
             m += partial_input[freq as usize];

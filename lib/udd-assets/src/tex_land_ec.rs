@@ -990,11 +990,11 @@ fn read_transcode_from_package(package: &UddpReader) -> Option<HashMap<u32, u32>
     let text = std::str::from_utf8(bytes.as_ref()).ok()?;
     if let Ok(transcode) = crate::eckr_terrain_kdl::EckrTerrainRouting::from_str(
         UDDP_TRANSCODE_ENTRY_VPATH,
-        &text,
+        text,
     ) {
         return Some(transcode.to_map());
     }
-    parse_legacy_pair_transcode(&text)
+    parse_legacy_pair_transcode(text)
 }
 
 fn parse_legacy_pair_transcode(text: &str) -> Option<HashMap<u32, u32>> {

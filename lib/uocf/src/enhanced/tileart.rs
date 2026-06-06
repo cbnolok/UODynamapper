@@ -465,7 +465,7 @@ impl TileArtEntry {
         art_data.appearance = self.appearance_vector.clone();
         art_data.sitting = self.sitting.clone();
 
-        if let Some(ec_texture_block) = self.texture_vector.get(0) {
+        if let Some(ec_texture_block) = self.texture_vector.first() {
             if ec_texture_block.has_texture == 1 {
                 art_data.tile_type = self.get_tile_type(ec_texture_block, string_dictionary);
                 if let Some(id) =
@@ -520,8 +520,8 @@ impl TileArtEntry {
                         string_dictionary.get_string((texture_item.name_string_off - 1) as usize)
                     {
                         let mut item = TextureItem::default();
-                        item.texture_type = classify_texture_path(&str);
-                        if let Some(id) = crate::utils::path::extract_texture_id_from_path(&str) {
+                        item.texture_type = classify_texture_path(str);
+                        if let Some(id) = crate::utils::path::extract_texture_id_from_path(str) {
                             item.id = id;
                         }
                         item.path = str.to_string();
@@ -531,7 +531,7 @@ impl TileArtEntry {
                         item.unk4 = texture_item.unk4;
                         item.unk6 = texture_item.unk6;
                         item.unk7 = texture_item.unk7;
-                        item.is_auxiliary = is_auxiliary_texture_path(&str);
+                        item.is_auxiliary = is_auxiliary_texture_path(str);
 
                         items.push(item);
                     }
@@ -557,7 +557,7 @@ impl TileArtEntry {
                     if self.flags1.contains(TaeFlag::Unused1) {
                         return TileType::Solid;
                     }
-                    if let Some(item) = texture_block.texture_items.get(0) {
+                    if let Some(item) = texture_block.texture_items.first() {
                         if item.texture_stretch != 1.0 {
                             return TileType::Solid;
                         }

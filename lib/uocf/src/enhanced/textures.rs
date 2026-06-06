@@ -226,7 +226,7 @@ impl Textures {
         } else {
             None
         };
-        let is_ec_texture = path.file_name().map_or(false, |n| n == "Texture.uop");
+        let is_ec_texture = path.file_name().is_some_and(|n| n == "Texture.uop");
         Ok(Self {
             package,
             tileart,

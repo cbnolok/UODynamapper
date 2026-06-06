@@ -41,7 +41,7 @@ pub fn load_raw_asset(
                 .element(id as usize)
                 .ok_or_else(|| eyre::eyre!("Texmap metadata for ID {} not found", id))?;
             let (w, h) = element.size().dimensions();
-            Ok(RawAssetData { width: w as u32, height: h as u32, rgba: rgba_arc.to_vec() })
+            Ok(RawAssetData { width: w, height: h, rgba: rgba_arc.to_vec() })
         }
         UpscalePreviewTarget::TexArtEc => {
             let dir = ec_dir.ok_or_else(|| eyre::eyre!("EC directory not configured"))?;

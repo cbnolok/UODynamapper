@@ -243,7 +243,7 @@ fn main() -> eyre::Result<()> {
             let mut name_map = std::collections::HashMap::new();
             if let Some(dict_path) = dictionary {
                 println!("Loading dictionary: {}...", dict_path.display());
-                let dict = uocf::enhanced::string_dictionary::UoStringDictionary::load(&dict_path)
+                let dict = uocf::enhanced::string_dictionary::UoStringDictionary::load(dict_path)
                     .with_context(|| format!("Failed to load dictionary: {}", dict_path.display()))?;
                 for i in 0.. {
                     if let Some(s) = dict.get_string(i) {

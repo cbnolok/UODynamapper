@@ -167,7 +167,7 @@ fn connected_by_idx(connections: &[u8], width: u32, a: usize, b: usize) -> bool 
     };
     connections
         .get(a)
-        .map_or(false, |mask| (mask & bit) != 0)
+        .is_some_and(|mask| (mask & bit) != 0)
 }
 
 fn calculate_curve_score<F>(

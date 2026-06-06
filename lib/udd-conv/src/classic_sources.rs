@@ -131,7 +131,7 @@ pub struct ClassicArtSource {
 }
 
 impl ClassicArtSource {
-    pub fn art_source(self: &Self) -> ArtSource {
+    pub fn art_source(&self) -> ArtSource {
         match self.format {
             SourceFormat::Mul => ArtSource::Mul,
             SourceFormat::Uop => ArtSource::CcUop,

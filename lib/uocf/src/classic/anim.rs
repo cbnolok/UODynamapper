@@ -624,6 +624,12 @@ pub struct AnimationDefinition {
     pub redirects: std::collections::HashMap<u32, u32>,
 }
 
+impl Default for AnimationDefinition {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AnimationDefinition {
     pub fn new() -> Self {
         Self {

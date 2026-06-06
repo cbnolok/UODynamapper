@@ -61,15 +61,12 @@ impl TransparencyState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum DistanceMetric {
+    #[default]
     WeightedSrgb,
 }
 
-impl Default for DistanceMetric {
-    fn default() -> Self {
-        Self::WeightedSrgb
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapMode {

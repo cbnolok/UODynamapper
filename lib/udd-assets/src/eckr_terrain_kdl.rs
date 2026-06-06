@@ -25,7 +25,7 @@ impl EckrTerrainRouting {
     }
 
     pub fn from_str(source_name: &str, content: &str) -> eyre::Result<Self> {
-        let content = strip_c_style_block_comments(&content);
+        let content = strip_c_style_block_comments(content);
         let content = strip_cpp_style_line_comments(&content);
         parse_eckr_terrain_routing_kdl(source_name, &content)
             .wrap_err("Failed to parse EC/KR terrain routing KDL")

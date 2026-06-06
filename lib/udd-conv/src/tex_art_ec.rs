@@ -547,7 +547,7 @@ pub fn convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources_with_progre
                         encoding,
                         options.bc7_rdo_lambda,
                         options.bc7_rdo_lookback_blocks,
-                        &report_bc7_progress,
+                        report_bc7_progress,
                     )
                         .map_err(|e| {
                             eyre::eyre!("BC7 encode page {}: {e}", page.record.page_index)

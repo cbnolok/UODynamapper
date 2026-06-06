@@ -108,7 +108,7 @@ fn write_hues_uddp(
             virtual_path: Some(HUES_TEXTURE_ENTRY_PATH),
             path_hash64: None,
             id: None,
-            data: &texture_bytes,
+            data: texture_bytes,
         })
         .context("add textures/hues.rgba8888")?;
 

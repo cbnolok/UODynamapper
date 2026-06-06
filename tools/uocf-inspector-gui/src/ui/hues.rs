@@ -532,13 +532,10 @@ fn ui_ec_hues(app: &mut UopInspectorApp, ctx: &egui::Context) {
 
             ui.separator();
             ui.label(HUENAMES_PATH);
-            ui.label(format!(
-                "{}",
-                ec_hues
+            ui.label(ec_hues
                     .huenames_byte_len
                     .map(|len| format!("{len} bytes"))
-                    .unwrap_or_else(|| "Not present".to_string())
-            ));
+                    .unwrap_or_else(|| "Not present".to_string()).to_string());
         });
     });
 }

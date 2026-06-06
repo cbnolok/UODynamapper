@@ -166,7 +166,7 @@ impl LightMap {
     }
 
     pub fn has_id(&self, light_id: u32) -> bool {
-        if self.decoded_lights.get(light_id as usize).map_or(false, |l| l.is_some()) {
+        if self.decoded_lights.get(light_id as usize).is_some_and(|l| l.is_some()) {
             return true;
         }
 

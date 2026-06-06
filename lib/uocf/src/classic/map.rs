@@ -189,8 +189,8 @@ impl MapBlock {
             let base_out = i << 2; // i * 4
 
             // Tile 0: Extract 2-byte ID and 1-byte Z. Skip 1-byte pad in output.
-            out_cells[base_out + 0] = MapCell {
-                id: u16::from_le_bytes([raw_bytes[base_in + 0], raw_bytes[base_in + 1]]),
+            out_cells[base_out] = MapCell {
+                id: u16::from_le_bytes([raw_bytes[base_in], raw_bytes[base_in + 1]]),
                 z: raw_bytes[base_in + 2] as i8,
                 _pad: 0,
             };

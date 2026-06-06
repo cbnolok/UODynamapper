@@ -389,7 +389,7 @@ fn ui_generic_preview(
             || guessed_image_name.is_some()
         {
             let texture_name = guessed_image_name.as_deref().unwrap_or(name);
-            if let Some(handle) = app.get_uop_texture(ctx, hash, &data, texture_name) {
+            if let Some(handle) = app.get_uop_texture(ctx, hash, data, texture_name) {
                 ui.label(format!("Image: {}x{}", handle.size()[0], handle.size()[1]));
                 egui::ScrollArea::both().show(ui, |ui| {
                     ui.image(&handle);
@@ -457,7 +457,7 @@ fn ui_integrated_tileart_view(app: &mut UopInspectorApp, ctx: &egui::Context, ui
 }
 
 fn ui_integrated_terrain_view(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui, file: &uocf::uop_container::file::UopFile) {
-    let dict = app.uo_string_dictionary.as_ref().map(|d| &**d);
+    let dict = app.uo_string_dictionary.as_deref();
     if let Ok(entry) = uocf::enhanced::terrain_definition::parse_entry(file, dict) {
         ui.heading(format!("Terrain: {}", entry.name.as_deref().unwrap_or("Unknown")));
         ui.label(format!("ID: {}", entry.id));

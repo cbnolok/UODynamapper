@@ -209,6 +209,7 @@ pub struct MultimapWorkerResult {
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
+#[derive(Default)]
 pub enum UpscalePreviewAlgorithm {
     None,
     Nearest,
@@ -218,6 +219,7 @@ pub enum UpscalePreviewAlgorithm {
     Lq,
     SuperSai,
     FsrEasu,
+    #[default]
     FsrEasuRcas,
     KLDepixelize,
     Nedi,
@@ -255,11 +257,6 @@ pub enum UpscalePreviewAlgorithm {
     HighPassSharpen,
 }
 
-impl Default for UpscalePreviewAlgorithm {
-    fn default() -> Self {
-        Self::FsrEasuRcas
-    }
-}
 
 impl UpscalePreviewAlgorithm {
     pub fn all() -> &'static [Self] {
@@ -1043,7 +1040,7 @@ impl SoundPlayer {
     }
 
     pub fn is_playing(&self) -> bool {
-        self.sink.as_ref().map_or(false, |sink| !sink.empty())
+        self.sink.as_ref().is_some_and(|sink| !sink.empty())
     }
 }
 
@@ -2378,7 +2375,7 @@ impl UopInspectorApp {
                         let mut entries = Vec::new();
                         let mut failed = 0usize;
                         for file in package.iter_files() {
-                            match TileArtEntry::parse_raw(&file) {
+                            match TileArtEntry::parse_raw(file) {
                                 Ok(entry) => entries.push(TileArtFileEntry {
                                     filename_hash: file.filename_hash(),
                                     entry,
@@ -2443,7 +2440,7 @@ impl UopInspectorApp {
                                     continue;
                                 }
                             };
-                            match uocf::enhanced::terrain_definition::parse_entry(&file, dict) {
+                            match uocf::enhanced::terrain_definition::parse_entry(file, dict) {
                                 Ok(entry) => {
                                     files.push(TerrainDefinitionFileEntry {
                                         filename_hash: file.filename_hash(),
@@ -2546,18 +2543,13 @@ impl UopInspectorApp {
             return;
         }
 
-        if !self.image_preview_sources.contains_key(&key) {
-            self.image_preview_sources.insert(
-                key,
-                InspectorImagePreview {
+        self.image_preview_sources.entry(key).or_insert_with(|| InspectorImagePreview {
                     key,
                     label: label.into(),
                     width,
                     height,
                     rgba: Arc::<[u8]>::from(rgba),
-                },
-            );
-        }
+                });
         self.select_image_preview(key);
     }
 

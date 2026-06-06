@@ -42,7 +42,7 @@ impl UddConvApp {
             return;
         };
 
-        if path.extension().map_or(false, |ext| ext == "ktx2") {
+        if path.extension().is_some_and(|ext| ext == "ktx2") {
             if let Some(color_image) = self.load_ktx2_preview(&data) {
                 self.preview_texture = Some(ctx.load_texture("preview", color_image, Default::default()));
             }

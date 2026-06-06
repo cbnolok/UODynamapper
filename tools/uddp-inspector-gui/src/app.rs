@@ -895,7 +895,7 @@ impl InspectorApp {
 
         if self.view_mode == ViewMode::Package {
             let result = if let Some(idx) = self.selected_idx {
-                let entry = self.entries[idx].clone();
+                let entry = self.entries[idx];
                 self.read_entry_payload(u_reader, &entry)
                     .map(|data| (entry, data))
             } else {

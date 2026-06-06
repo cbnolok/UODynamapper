@@ -33,7 +33,7 @@ impl Matrices {
     }
 
     fn set(&mut self, x: usize, y: usize, pixel: u32) {
-        let r = ((pixel >> 0) & 0xff) as u8;
+        let r = (pixel & 0xff) as u8;
         let g = ((pixel >> 8) & 0xff) as u8;
         let b = ((pixel >> 16) & 0xff) as u8;
         let a = ((pixel >> 24) & 0xff) as u8;

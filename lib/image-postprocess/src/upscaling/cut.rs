@@ -401,9 +401,7 @@ fn cut3_cell(width: u32, height: u32, source: &[Pixel], x: u32, y: u32) -> Cut3C
     let vertical = neighbor_patterns[0] == 1 || neighbor_patterns[2] == 1;
     let horizontal = neighbor_patterns[1] == 2 || neighbor_patterns[3] == 2;
     let corner = vertical && horizontal;
-    let opposite = neighbor_patterns
-        .iter()
-        .any(|neighbor| *neighbor == if pattern == 3 { 4 } else { 3 });
+    let opposite = neighbor_patterns.contains(&(if pattern == 3 { 4 } else { 3 }));
     let is_triangle = pattern >= 3;
     let any_connection = connections.iter().any(|connected| *connected);
     let reject = (is_triangle && (opposite || corner)) || !any_connection;

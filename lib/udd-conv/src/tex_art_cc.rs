@@ -564,7 +564,7 @@ pub fn convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches_and_progress
                         encoding,
                         options.bc7_rdo_lambda,
                         options.bc7_rdo_lookback_blocks,
-                        &report_bc7_progress,
+                        report_bc7_progress,
                     )
                         .map_err(|e| {
                             eyre::eyre!("BC7 encode page {}: {e}", page.record.page_index)
@@ -744,7 +744,7 @@ fn decode_present_tiles(
                     ) {
                         Ok(()) => {
                             let upscale_passes =
-                                art_upscale_passes_for(options, UpscaleImageType::ArtLand, art_id as u32);
+                                art_upscale_passes_for(options, UpscaleImageType::ArtLand, art_id);
                             let (w, h, rgba, upscale_factor, upscale_filter) =
                                 apply_upscale_passes(44, 44, &rgba, &upscale_passes);
                             DecodeOutcome::Decoded(DecodedArtTile {
@@ -785,7 +785,7 @@ fn decode_present_tiles(
                                 let upscale_passes = art_upscale_passes_for(
                                     options,
                                     UpscaleImageType::ArtItems,
-                                    art_id as u32,
+                                    art_id,
                                 );
                                 let (w, h, rgba, upscale_factor, upscale_filter) =
                                     apply_upscale_passes(width as u32, height as u32, &rgba, &upscale_passes);

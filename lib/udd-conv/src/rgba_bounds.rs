@@ -37,13 +37,13 @@ static COUNT_NONZERO_ALPHA_BACKEND: std::sync::OnceLock<CountNonzeroAlphaBackend
 fn count_nonzero_alpha_backend() -> CountNonzeroAlphaBackend {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
-        return *COUNT_NONZERO_ALPHA_BACKEND.get_or_init(|| {
+        *COUNT_NONZERO_ALPHA_BACKEND.get_or_init(|| {
             if std::is_x86_feature_detected!("avx2") {
                 count_nonzero_alpha_avx2_dispatch
             } else {
                 count_nonzero_alpha_scalar
             }
-        });
+        })
     }
 
     #[cfg(target_arch = "aarch64")]

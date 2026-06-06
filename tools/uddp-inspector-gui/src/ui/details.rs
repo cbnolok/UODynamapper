@@ -188,7 +188,7 @@ impl InspectorApp {
         match self.entries[entry_idx].key {
             FileKey::Id(id) => self.virtual_entries.iter().position(|v| v.id == id),
             FileKey::PathHash(h) => {
-                for (&page_idx, _info) in &self.atlas_pages {
+                for &page_idx in self.atlas_pages.keys() {
                     let has_match = atlas_page_paths(page_idx)
                         .iter()
                         .any(|path| xxh64_virtual_path(path) == h);

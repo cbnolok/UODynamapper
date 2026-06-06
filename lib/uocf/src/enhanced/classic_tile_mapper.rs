@@ -28,7 +28,7 @@ impl ClassicTileMapper {
 
     pub fn from_toml_str(content: &str) -> eyre::Result<Self> {
         let file: MapperFile =
-            toml::from_str(&content).wrap_err("Failed to parse classic tile mapping TOML")?;
+            toml::from_str(content).wrap_err("Failed to parse classic tile mapping TOML")?;
 
         Ok(Self::from_mapper_file(file))
     }

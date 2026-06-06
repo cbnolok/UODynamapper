@@ -115,7 +115,7 @@ impl ArtDefinition {
         let mut definitions = HashMap::new();
 
         for file in tileart_package.iter_files() {
-            if let Ok(tae) = TileArtEntry::parse_raw(&file) {
+            if let Ok(tae) = TileArtEntry::parse_raw(file) {
                 let art_data = tae.process(&string_dictionary);
                 definitions.insert(art_data.id, art_data);
             }
