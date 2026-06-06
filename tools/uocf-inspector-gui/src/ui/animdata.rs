@@ -195,7 +195,7 @@ pub fn ui_animdata(app: &mut UopInspectorApp, ctx: &egui::Context) {
             ));
             if tile_id >= 0 {
                 let art_id = animdata_preview_art_id(entry.id, tile_id as u32, app.selected_animdata_art_source);
-                ui.label(animdata_source_request_label(
+                ui.label(app.animdata_art_source_request_label(
                     art_id,
                     app.selected_animdata_art_source,
                     current_frame_idx,
@@ -264,34 +264,13 @@ pub fn ui_animdata(app: &mut UopInspectorApp, ctx: &egui::Context) {
     });
 }
 
-fn animdata_preview_art_id(entry_id: u32, tile_id: u32, source: ArtSource) -> u32 {
+fn animdata_preview_art_id(_entry_id: u32, tile_id: u32, source: ArtSource) -> u32 {
     match source {
         ArtSource::Mul | ArtSource::CcUop => tile_id + STATIC_TILE_ID_BASE,
-        ArtSource::EcUop | ArtSource::EcUopLegacy => {
-            entry_id.checked_sub(STATIC_TILE_ID_BASE).unwrap_or(entry_id)
-        }
-        ArtSource::EcUopKr => {
+        ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr => {
             tile_id.checked_sub(STATIC_TILE_ID_BASE).unwrap_or(tile_id)
         }
         ArtSource::Any => tile_id,
-    }
-}
-
-fn animdata_source_request_label(art_id: u32, source: ArtSource, frame_index: usize) -> String {
-    match source {
-        ArtSource::Mul => format!("Source request: art.mul/artidx.mul art_id {art_id} (0x{art_id:04X})"),
-        ArtSource::CcUop => {
-            format!("Source request: artLegacyMUL.uop build/artlegacymul/{art_id:08}.tga")
-        }
-        ArtSource::EcUop | ArtSource::EcUopLegacy => {
-            format!(
-                "Source request: LegacyTexture.uop build/tileartlegacy/{art_id:08}.dds or .tga, frame {frame_index}"
-            )
-        }
-        ArtSource::EcUopKr => {
-            format!("Source request: Texture.uop build/worldart/{art_id:08}.dds or .tga")
-        }
-        ArtSource::Any => format!("Source request: auto art_id {art_id} (0x{art_id:04X})"),
     }
 }
 
@@ -303,17 +282,8 @@ mod tests {
     fn animdata_preview_maps_mul_static_item_ids_to_classic_art_ids() {
         assert_eq!(animdata_preview_art_id(0x047B, 0x047B, ArtSource::Mul), 0x447B);
         assert_eq!(animdata_preview_art_id(0x047B, 0x047B, ArtSource::CcUop), 0x447B);
-        assert_eq!(animdata_preview_art_id(0x047B, 0x047C, ArtSource::EcUopLegacy), 0x047B);
-        assert_eq!(animdata_preview_art_id(0x4001, 0x4002, ArtSource::EcUopLegacy), 0x0001);
+        assert_eq!(animdata_preview_art_id(0x047B, 0x047C, ArtSource::EcUopLegacy), 0x047C);
+        assert_eq!(animdata_preview_art_id(0x4001, 0x4002, ArtSource::EcUopLegacy), 0x0002);
         assert_eq!(animdata_preview_art_id(0x4001, 0x4002, ArtSource::EcUopKr), 0x0002);
-    }
-
-    #[test]
-    fn animdata_source_request_label_shows_physical_lookup() {
-        assert!(animdata_source_request_label(0x447B, ArtSource::Mul, 0).contains("art.mul"));
-        assert!(animdata_source_request_label(0x447B, ArtSource::CcUop, 0).contains("build/artlegacymul/00017531.tga"));
-        assert!(animdata_source_request_label(0x047B, ArtSource::EcUopLegacy, 3).contains("build/tileartlegacy/00001147.dds"));
-        assert!(animdata_source_request_label(0x047B, ArtSource::EcUopLegacy, 3).contains("frame 3"));
-        assert!(animdata_source_request_label(0x047B, ArtSource::EcUopKr, 0).contains("build/worldart/00001147.dds"));
     }
 }

@@ -22,7 +22,9 @@ use uocf::enhanced::localized_strings::{LocalizedStringsPackage, LOCALIZED_STRIN
 use uocf::enhanced::multis::MultiCollection;
 use uocf::classic::tiledata::TileData;
 use uocf::enhanced::string_dictionary::UoStringDictionary;
-use uocf::enhanced::tileart::{TaeAnimationAppearance, TaeFlag, TaeSittingAnimation, TileArtEntry};
+use uocf::enhanced::tileart::{
+    ArtTexture, TaeAnimationAppearance, TaeFlag, TaeSittingAnimation, TileArtEntry,
+};
 use uocf::enhanced::terrain_definition::TerrainDefinitionEntry;
 use uocf::enhanced::textures::{ECImageFormat, TextureFile, TextureItem as RawTextureItem};
 use uocf::uop_container::hash::hash_file_name_single;
@@ -892,6 +894,19 @@ pub struct TerrainDefinitionFileEntry {
 pub struct TileArtFileEntry {
     pub filename_hash: u64,
     pub entry: TileArtEntry,
+}
+
+#[derive(Clone, Debug)]
+pub struct EcTileArtSample {
+    pub sampled_art_id: u32,
+    pub texture_id: u32,
+    pub path: String,
+    pub left: u32,
+    pub top: u32,
+    pub right: u32,
+    pub bottom: u32,
+    pub offset_x: i32,
+    pub offset_y: i32,
 }
 
 #[derive(Clone)]
@@ -3258,45 +3273,111 @@ impl UopInspectorApp {
         art_id: u32,
         source: ArtSource,
         frame_index: usize,
-        frame_count: usize,
+        _frame_count: usize,
     ) -> Option<egui::TextureHandle> {
-        if !matches!(source, ArtSource::EcUop | ArtSource::EcUopLegacy) || frame_count <= 1 {
+        if !matches!(concrete_art_tile_source(source), ArtSource::EcUopLegacy) {
             return self.get_tex_art_texture_from_source(ctx, art_id, source);
         }
 
+        let sample = self.ec_legacy_animdata_sample(art_id)?;
         let hue_id = self.selected_hue_id;
         let key = 0xAD00_0000_0000_0000u64
-            | ((source as u64) << 48)
-            | ((hue_id as u64) << 32)
-            | (((frame_index as u64) & 0xFF) << 24)
-            | art_id as u64;
+            ^ hash_file_name_single(&sample.path)
+            ^ ((source as u64) << 48)
+            ^ ((hue_id as u64) << 32)
+            ^ (sample.sampled_art_id as u64);
         if let Some(handle) = self.texture_previews.get(&key).cloned() {
             self.select_image_preview(key);
             return Some(handle);
         }
 
-        let (width, height, pixels) = self.decode_art_item_rgba_from_source(art_id, source)?;
         let (width, height, pixels) =
-            crop_ec_legacy_animdata_frame(width, height, &pixels, frame_index, frame_count)
-                .unwrap_or((width, height, pixels));
+            self.decode_art_item_rgba_from_source(sample.texture_id, ArtSource::EcUopLegacy)?;
+        let (width, height, pixels) = crop_rgba_rect(
+            width,
+            height,
+            &pixels,
+            sample.left,
+            sample.top,
+            sample.right,
+            sample.bottom,
+        )?;
         let image = egui::ColorImage::from_rgba_unmultiplied(
             [width as usize, height as usize],
             &pixels,
         );
         let handle = ctx.load_texture(
-            format!("animdata_art_{art_id}_{source:?}_{frame_index}_h{hue_id}"),
+            format!(
+                "animdata_art_{}_{}_{}_h{}",
+                sample.sampled_art_id, sample.texture_id, frame_index, hue_id
+            ),
             image,
             Default::default(),
         );
         self.texture_previews.insert(key, handle.clone());
         self.register_current_image_preview(
             key,
-            format!("animdata art {} {:?} frame {} hue {}", art_id, source, frame_index, hue_id),
+            format!(
+                "animdata art {} {:?} -> {} [{},{}..{},{}] hue {}",
+                sample.sampled_art_id,
+                source,
+                sample.path,
+                sample.left,
+                sample.top,
+                sample.right,
+                sample.bottom,
+                hue_id
+            ),
             width,
             height,
             &pixels,
         );
         Some(handle)
+    }
+
+    pub fn ec_legacy_animdata_sample(&self, art_id: u32) -> Option<EcTileArtSample> {
+        let entries = self.ec_tileart_entries.as_ref()?;
+        let index = entries
+            .binary_search_by_key(&art_id, |file| file.entry.tile_id)
+            .ok()?;
+        let dictionary = self.uo_string_dictionary.as_deref()?;
+        let texture = entries[index].entry.process(dictionary).cc_texture?;
+        ec_tileart_sample_from_texture(art_id, texture)
+    }
+
+    pub fn animdata_art_source_request_label(
+        &self,
+        art_id: u32,
+        source: ArtSource,
+        frame_index: usize,
+    ) -> String {
+        match source {
+            ArtSource::Mul => format!("Source request: art.mul/artidx.mul art_id {art_id} (0x{art_id:04X})"),
+            ArtSource::CcUop => {
+                format!("Source request: artLegacyMUL.uop build/artlegacymul/{art_id:08}.tga")
+            }
+            ArtSource::EcUop | ArtSource::EcUopLegacy => {
+                if let Some(sample) = self.ec_legacy_animdata_sample(art_id) {
+                    format!(
+                        "Source request: tileart.uop tile {} -> LegacyTexture.uop {}, rect {},{}..{},{} offset {},{}",
+                        sample.sampled_art_id,
+                        sample.path,
+                        sample.left,
+                        sample.top,
+                        sample.right,
+                        sample.bottom,
+                        sample.offset_x,
+                        sample.offset_y
+                    )
+                } else {
+                    format!("Source request: tileart.uop tile {art_id} -> LegacyTexture.uop metadata unavailable, frame {frame_index}")
+                }
+            }
+            ArtSource::EcUopKr => {
+                format!("Source request: Texture.uop build/worldart/{art_id:08}.dds or .tga")
+            }
+            ArtSource::Any => format!("Source request: auto art_id {art_id} (0x{art_id:04X})"),
+        }
     }
 
     pub fn get_tex_art_texture_with_ec_hue_from_source(
@@ -3808,14 +3889,38 @@ fn cc_hue_should_apply_to_art(art_id: u32, source: ArtSource) -> bool {
     art_id >= uocf::classic::art::STATIC_TILE_ID_BASE || source.is_ec_uop()
 }
 
-fn crop_ec_legacy_animdata_frame(
+fn ec_tileart_sample_from_texture(sampled_art_id: u32, texture: ArtTexture) -> Option<EcTileArtSample> {
+    if texture.start_x < 0
+        || texture.start_y < 0
+        || texture.end_x <= texture.start_x
+        || texture.end_y <= texture.start_y
+    {
+        return None;
+    }
+
+    Some(EcTileArtSample {
+        sampled_art_id,
+        texture_id: texture.texture_id,
+        path: format!("build/tileartlegacy/{:08}.dds", texture.texture_id),
+        left: texture.start_x as u32,
+        top: texture.start_y as u32,
+        right: texture.end_x as u32,
+        bottom: texture.end_y as u32,
+        offset_x: texture.offset_x,
+        offset_y: texture.offset_y,
+    })
+}
+
+fn crop_rgba_rect(
     width: u32,
     height: u32,
     pixels: &[u8],
-    frame_index: usize,
-    frame_count: usize,
+    left: u32,
+    top: u32,
+    right: u32,
+    bottom: u32,
 ) -> Option<(u32, u32, Vec<u8>)> {
-    if frame_count <= 1 || frame_index >= frame_count {
+    if left >= right || top >= bottom || right > width || bottom > height {
         return None;
     }
 
@@ -3825,63 +3930,20 @@ fn crop_ec_legacy_animdata_frame(
         return None;
     }
 
-    let row_has_alpha = |y: usize| -> bool {
-        (0..width_usize).any(|x| pixels[(y * width_usize + x) * 4 + 3] != 0)
-    };
-    let mut bands = Vec::<(usize, usize)>::new();
-    let mut y = 0usize;
-    while y < height_usize {
-        while y < height_usize && !row_has_alpha(y) {
-            y += 1;
-        }
-        if y >= height_usize {
-            break;
-        }
-        let start = y;
-        while y < height_usize && row_has_alpha(y) {
-            y += 1;
-        }
-        bands.push((start, y));
-    }
-    if bands.is_empty() {
-        return None;
+    let left = left as usize;
+    let top = top as usize;
+    let crop_width = (right as usize).checked_sub(left)?;
+    let crop_height = (bottom as usize).checked_sub(top)?;
+    let mut cropped = vec![0u8; crop_width.checked_mul(crop_height)?.checked_mul(4)?];
+    for row_index in 0..crop_height {
+        let src_start = ((top + row_index) * width_usize + left) * 4;
+        let src_end = src_start + crop_width * 4;
+        let dst_start = row_index * crop_width * 4;
+        cropped[dst_start..dst_start + crop_width * 4]
+            .copy_from_slice(&pixels[src_start..src_end]);
     }
 
-    let (first_start, first_end) = bands[0];
-    let mut min_x = width_usize;
-    let mut max_x = 0usize;
-    for y in first_start..first_end {
-        for x in 0..width_usize {
-            if pixels[(y * width_usize + x) * 4 + 3] != 0 {
-                min_x = min_x.min(x);
-                max_x = max_x.max(x);
-            }
-        }
-    }
-    if min_x > max_x {
-        return None;
-    }
-
-    let columns = frame_count.min(5).max(1);
-    let frame_width = (max_x + 1 - min_x) / columns;
-    let row = frame_index / columns;
-    let col = frame_index % columns;
-    let (crop_y, crop_y_end) = *bands.get(row)?;
-    let frame_height = crop_y_end - crop_y;
-    let crop_x = min_x + col * frame_width;
-    if frame_width == 0 || frame_height == 0 || crop_x + frame_width > width_usize {
-        return None;
-    }
-
-    let mut cropped = vec![0u8; frame_width * frame_height * 4];
-    for row_index in 0..frame_height {
-        let src_start = ((crop_y + row_index) * width_usize + crop_x) * 4;
-        let src_end = src_start + frame_width * 4;
-        let dst_start = row_index * frame_width * 4;
-        cropped[dst_start..dst_start + frame_width * 4].copy_from_slice(&pixels[src_start..src_end]);
-    }
-
-    Some((frame_width as u32, frame_height as u32, cropped))
+    Some((crop_width as u32, crop_height as u32, cropped))
 }
 
 impl eframe::App for UopInspectorApp {
@@ -4317,31 +4379,50 @@ mod tests {
     }
 
     #[test]
-    fn crops_ec_legacy_animdata_sheet_frame() {
-        let width = 256u32;
-        let height = 512u32;
+    fn ec_tileart_sample_uses_legacy_texture_window() {
+        let sample = ec_tileart_sample_from_texture(
+            1148,
+            ArtTexture {
+                texture_id: 1148,
+                start_x: 0,
+                start_y: 0,
+                end_x: 44,
+                end_y: 166,
+                offset_x: 2,
+                offset_y: -3,
+            },
+        )
+        .expect("valid tileart window should resolve");
+
+        assert_eq!(sample.sampled_art_id, 1148);
+        assert_eq!(sample.texture_id, 1148);
+        assert_eq!(sample.path, "build/tileartlegacy/00001148.dds");
+        assert_eq!((sample.left, sample.top, sample.right, sample.bottom), (0, 0, 44, 166));
+        assert_eq!((sample.offset_x, sample.offset_y), (2, -3));
+    }
+
+    #[test]
+    fn crop_rgba_rect_uses_explicit_tileart_bounds() {
+        let width = 4u32;
+        let height = 3u32;
         let mut pixels = vec![0u8; width as usize * height as usize * 4];
-        for frame in 0..6usize {
-            let col = frame % 5;
-            let row = frame / 5;
-            let x0 = col * 44;
-            let y0 = row * 168;
-            for y in y0..y0 + 166 {
-                for x in x0..x0 + 44 {
-                    let offset = (y * width as usize + x) * 4;
-                    pixels[offset] = frame as u8;
-                    pixels[offset + 3] = 255;
-                }
+        for y in 0..height as usize {
+            for x in 0..width as usize {
+                let offset = (y * width as usize + x) * 4;
+                pixels[offset] = (y * width as usize + x) as u8;
+                pixels[offset + 3] = 255;
             }
         }
 
         let (crop_width, crop_height, cropped) =
-            crop_ec_legacy_animdata_frame(width, height, &pixels, 5, 6)
-                .expect("frame should crop");
+            crop_rgba_rect(width, height, &pixels, 1, 1, 3, 3)
+                .expect("valid rectangle should crop");
 
-        assert_eq!((crop_width, crop_height), (44, 166));
+        assert_eq!((crop_width, crop_height), (2, 2));
         assert_eq!(cropped[0], 5);
-        assert_eq!(cropped[3], 255);
+        assert_eq!(cropped[4], 6);
+        assert_eq!(cropped[8], 9);
+        assert_eq!(cropped[12], 10);
     }
 
     #[test]
