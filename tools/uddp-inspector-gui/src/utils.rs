@@ -33,7 +33,7 @@ pub fn normalize_linux_portal_env() {
         };
 
         if let Some(desktop) = inferred {
-            env::set_var("XDG_CURRENT_DESKTOP", desktop);
+            unsafe { env::set_var("XDG_CURRENT_DESKTOP", desktop) };
         }
     }
 }

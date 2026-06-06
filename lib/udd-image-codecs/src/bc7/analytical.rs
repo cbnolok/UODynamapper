@@ -610,7 +610,7 @@ unsafe fn eval_m6_rgb_sse41(
     let mut sse = 0u32;
 
     for i in (0..16).step_by(4) {
-        let px = _mm_loadu_si128(pixels.as_ptr().add(i) as *const __m128i);
+        let px = unsafe { _mm_loadu_si128(pixels.as_ptr().add(i) as *const __m128i) };
         let lo16 = _mm_unpacklo_epi8(px, zero);
         let hi16 = _mm_unpackhi_epi8(px, zero);
         let lo_adj = _mm_sub_epi16(lo16, ep);
@@ -628,8 +628,8 @@ unsafe fn eval_m6_rgb_sse41(
         let sel8 = _mm_packus_epi16(sel16, zero);
         let packed = _mm_cvtsi128_si32(sel8) as u32;
 
-        std::ptr::write_unaligned(weights.as_mut_ptr().add(i) as *mut u32, packed);
-        sse += sse_m6_rgb4_sse41(px, packed, lr, lg, lb, dr, dg, db);
+        unsafe { std::ptr::write_unaligned(weights.as_mut_ptr().add(i) as *mut u32, packed) };
+        sse += unsafe { sse_m6_rgb4_sse41(px, packed, lr, lg, lb, dr, dg, db) };
     }
 
     sse
@@ -659,7 +659,7 @@ unsafe fn eval_m6_rgba_sse41(
     let mut sse = 0u32;
 
     for i in (0..16).step_by(4) {
-        let px = _mm_loadu_si128(pixels.as_ptr().add(i) as *const __m128i);
+        let px = unsafe { _mm_loadu_si128(pixels.as_ptr().add(i) as *const __m128i) };
         let lo16 = _mm_unpacklo_epi8(px, zero);
         let hi16 = _mm_unpackhi_epi8(px, zero);
         let lo_adj = _mm_sub_epi16(lo16, ep);
@@ -677,8 +677,8 @@ unsafe fn eval_m6_rgba_sse41(
         let sel8 = _mm_packus_epi16(sel16, zero);
         let packed = _mm_cvtsi128_si32(sel8) as u32;
 
-        std::ptr::write_unaligned(weights.as_mut_ptr().add(i) as *mut u32, packed);
-        sse += sse_m6_rgba4_sse41(px, packed, lr, lg, lb, la, dr, dg, db, da);
+        unsafe { std::ptr::write_unaligned(weights.as_mut_ptr().add(i) as *mut u32, packed) };
+        sse += unsafe { sse_m6_rgba4_sse41(px, packed, lr, lg, lb, la, dr, dg, db, da) };
     }
 
     sse
@@ -885,17 +885,17 @@ unsafe fn eval_m6_rgba_avx512(
     let mut sse = 0u32;
 
     for i in (0..16).step_by(8) {
-        let px = _mm256_loadu_si256(pixels.as_ptr().add(i) as *const __m256i);
+        let px = unsafe { _mm256_loadu_si256(pixels.as_ptr().add(i) as *const __m256i) };
         let px16 = _mm512_cvtepu8_epi16(px);
         let adj = _mm512_sub_epi16(px16, ep);
         let pairs = _mm512_madd_epi16(adj, coef);
-        let packed = select_m6_avx512(pairs, f);
+        let packed = unsafe { select_m6_avx512(pairs, f) };
 
-        std::ptr::write_unaligned(weights.as_mut_ptr().add(i) as *mut u64, packed);
+        unsafe { std::ptr::write_unaligned(weights.as_mut_ptr().add(i) as *mut u64, packed) };
         let packed0 = packed as u32;
         let packed1 = (packed >> 32) as u32;
-        sse += sse_m6_rgba4_sse41(_mm256_castsi256_si128(px), packed0, lr, lg, lb, la, dr, dg, db, da);
-        sse += sse_m6_rgba4_sse41(_mm256_extracti128_si256::<1>(px), packed1, lr, lg, lb, la, dr, dg, db, da);
+        sse += unsafe { sse_m6_rgba4_sse41(_mm256_castsi256_si128(px), packed0, lr, lg, lb, la, dr, dg, db, da) };
+        sse += unsafe { sse_m6_rgba4_sse41(_mm256_extracti128_si256::<1>(px), packed1, lr, lg, lb, la, dr, dg, db, da) };
     }
 
     sse
@@ -919,17 +919,17 @@ unsafe fn eval_m6_rgb_avx512(
     let mut sse = 0u32;
 
     for i in (0..16).step_by(8) {
-        let px = _mm256_loadu_si256(pixels.as_ptr().add(i) as *const __m256i);
+        let px = unsafe { _mm256_loadu_si256(pixels.as_ptr().add(i) as *const __m256i) };
         let px16 = _mm512_cvtepu8_epi16(px);
         let adj = _mm512_sub_epi16(px16, ep);
         let pairs = _mm512_madd_epi16(adj, coef);
-        let packed = select_m6_avx512(pairs, f);
+        let packed = unsafe { select_m6_avx512(pairs, f) };
 
-        std::ptr::write_unaligned(weights.as_mut_ptr().add(i) as *mut u64, packed);
+        unsafe { std::ptr::write_unaligned(weights.as_mut_ptr().add(i) as *mut u64, packed) };
         let packed0 = packed as u32;
         let packed1 = (packed >> 32) as u32;
-        sse += sse_m6_rgb4_sse41(_mm256_castsi256_si128(px), packed0, lr, lg, lb, dr, dg, db);
-        sse += sse_m6_rgb4_sse41(_mm256_extracti128_si256::<1>(px), packed1, lr, lg, lb, dr, dg, db);
+        sse += unsafe { sse_m6_rgb4_sse41(_mm256_castsi256_si128(px), packed0, lr, lg, lb, dr, dg, db) };
+        sse += unsafe { sse_m6_rgb4_sse41(_mm256_extracti128_si256::<1>(px), packed1, lr, lg, lb, dr, dg, db) };
     }
 
     sse
@@ -960,8 +960,8 @@ unsafe fn eval_m6_rgba_avx2(
     let mut sse = 0u32;
 
     for i in (0..16).step_by(8) {
-        let px0 = _mm_loadu_si128(pixels.as_ptr().add(i) as *const __m128i);
-        let px1 = _mm_loadu_si128(pixels.as_ptr().add(i + 4) as *const __m128i);
+        let px0 = unsafe { _mm_loadu_si128(pixels.as_ptr().add(i) as *const __m128i) };
+        let px1 = unsafe { _mm_loadu_si128(pixels.as_ptr().add(i + 4) as *const __m128i) };
         let adj0 = _mm256_sub_epi16(_mm256_cvtepu8_epi16(px0), ep);
         let adj1 = _mm256_sub_epi16(_mm256_cvtepu8_epi16(px1), ep);
         let pairs0 = _mm256_madd_epi16(adj0, coef);
@@ -977,11 +977,11 @@ unsafe fn eval_m6_rgba_avx2(
         let sel8 = _mm_packus_epi16(sel16, zero128);
         let packed = _mm_cvtsi128_si64(sel8) as u64;
 
-        std::ptr::write_unaligned(weights.as_mut_ptr().add(i) as *mut u64, packed);
+        unsafe { std::ptr::write_unaligned(weights.as_mut_ptr().add(i) as *mut u64, packed) };
         let packed0 = packed as u32;
         let packed1 = (packed >> 32) as u32;
-        sse += sse_m6_rgba4_sse41(px0, packed0, lr, lg, lb, la, dr, dg, db, da);
-        sse += sse_m6_rgba4_sse41(px1, packed1, lr, lg, lb, la, dr, dg, db, da);
+        sse += unsafe { sse_m6_rgba4_sse41(px0, packed0, lr, lg, lb, la, dr, dg, db, da) };
+        sse += unsafe { sse_m6_rgba4_sse41(px1, packed1, lr, lg, lb, la, dr, dg, db, da) };
     }
 
     sse
@@ -1009,8 +1009,8 @@ unsafe fn eval_m6_rgb_avx2(
     let mut sse = 0u32;
 
     for i in (0..16).step_by(8) {
-        let px0 = _mm_loadu_si128(pixels.as_ptr().add(i) as *const __m128i);
-        let px1 = _mm_loadu_si128(pixels.as_ptr().add(i + 4) as *const __m128i);
+        let px0 = unsafe { _mm_loadu_si128(pixels.as_ptr().add(i) as *const __m128i) };
+        let px1 = unsafe { _mm_loadu_si128(pixels.as_ptr().add(i + 4) as *const __m128i) };
         let adj0 = _mm256_sub_epi16(_mm256_cvtepu8_epi16(px0), ep);
         let adj1 = _mm256_sub_epi16(_mm256_cvtepu8_epi16(px1), ep);
         let pairs0 = _mm256_madd_epi16(adj0, coef);
@@ -1026,11 +1026,11 @@ unsafe fn eval_m6_rgb_avx2(
         let sel8 = _mm_packus_epi16(sel16, zero128);
         let packed = _mm_cvtsi128_si64(sel8) as u64;
 
-        std::ptr::write_unaligned(weights.as_mut_ptr().add(i) as *mut u64, packed);
+        unsafe { std::ptr::write_unaligned(weights.as_mut_ptr().add(i) as *mut u64, packed) };
         let packed0 = packed as u32;
         let packed1 = (packed >> 32) as u32;
-        sse += sse_m6_rgb4_sse41(px0, packed0, lr, lg, lb, dr, dg, db);
-        sse += sse_m6_rgb4_sse41(px1, packed1, lr, lg, lb, dr, dg, db);
+        sse += unsafe { sse_m6_rgb4_sse41(px0, packed0, lr, lg, lb, dr, dg, db) };
+        sse += unsafe { sse_m6_rgb4_sse41(px1, packed1, lr, lg, lb, dr, dg, db) };
     }
 
     sse

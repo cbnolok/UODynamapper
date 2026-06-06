@@ -235,7 +235,7 @@ unsafe fn count_nonzero_alpha_avx2(rgba: &[u8]) -> u64 {
     let mut count = 0u64;
     let mut chunks = rgba.chunks_exact(EIGHT_PIXEL_BYTES);
     for chunk in chunks.by_ref() {
-        count += u64::from(avx2_nonzero_alpha_mask_32(chunk.as_ptr()).count_ones());
+        count += u64::from(unsafe { avx2_nonzero_alpha_mask_32(chunk.as_ptr()) }.count_ones());
     }
     count + count_nonzero_alpha_scalar(chunks.remainder())
 }
@@ -248,7 +248,7 @@ unsafe fn avx2_nonzero_alpha_mask_32(ptr: *const u8) -> u32 {
     #[cfg(target_arch = "x86_64")]
     use std::arch::x86_64::*;
 
-    let bytes = _mm256_loadu_si256(ptr.cast());
+    let bytes = unsafe { _mm256_loadu_si256(ptr.cast()) };
     let zero = _mm256_setzero_si256();
     let zero_mask = _mm256_movemask_epi8(_mm256_cmpeq_epi8(bytes, zero)) as u32;
     !zero_mask & AVX2_ALPHA_BYTE_MASK

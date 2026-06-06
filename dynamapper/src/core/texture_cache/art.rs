@@ -364,7 +364,7 @@ impl ArtPageAtlas {
                 self.request_growth();
                 return None;
             } else {
-                let lru_layer = self.layer_access_tick.iter().enumerate().min_by_key(|(_, &tick)| tick).map(|(i, _)| i).unwrap() as u32;
+                let lru_layer = self.layer_access_tick.iter().enumerate().min_by_key(|&(_, &tick)| tick).map(|(i, _)| i).unwrap() as u32;
                 if let Some(evicted_page) = self.layer_to_page[lru_layer as usize] {
                     self.page_to_layer.remove(&evicted_page);
                     self.mapping_revision = self.mapping_revision.saturating_add(1);
