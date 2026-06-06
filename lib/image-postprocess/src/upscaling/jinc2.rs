@@ -5,6 +5,7 @@
 //! - /home/claudio/Scaricati/jinc2-sharp.glsl
 //! - /home/claudio/Scaricati/jinc2-sharper.glsl
 //! - /home/claudio/Scaricati/jinc2-sharpest.glsl.txt
+//!
 //! Original shader by Hyllian, MIT licensed.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

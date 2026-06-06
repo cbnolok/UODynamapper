@@ -7,11 +7,14 @@ edition = "2024"
 [lints.clippy]
 collapsible_if = "allow"
 empty_line_after_doc_comments = "allow"
+field_reassign_with_default = "allow"
+items_after_test_module = "allow"
 manual_div_ceil = "allow"
 manual_is_multiple_of = "allow"
 needless_lifetimes = "allow"
 nonminimal_bool = "allow"
 too_many_arguments = "allow"
+type_complexity = "allow"
 
 [dependencies]
 bytemuck = { version = "1.*", default-features = false, features = ["derive", "aarch64_simd", "avx512_simd"] }

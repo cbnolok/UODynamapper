@@ -8,9 +8,16 @@ edition = "2024"
 collapsible_if = "allow"
 empty_line_after_doc_comments = "allow"
 manual_div_ceil = "allow"
+manual_clamp = "allow"
 manual_is_multiple_of = "allow"
 needless_lifetimes = "allow"
 nonminimal_bool = "allow"
+redundant_locals = "allow"
+too_many_arguments = "allow"
+type_complexity = "allow"
+
+[lints.rust]
+dead_code = "allow"
 
 [dependencies]
 eframe = { version = "0.31.1", default-features = false, features = [

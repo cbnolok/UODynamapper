@@ -1,5 +1,5 @@
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use color_eyre::eyre::{self, WrapErr};
 use uocf::enhanced::textures::Textures;
@@ -7,7 +7,7 @@ use uocf::enhanced::textures::Textures;
 // TODO: check!  EC land tiles might only be in texture.uop, not legacytexture.uop, but i'm not sure.
 
 fn load_tile(
-    ecdir: &PathBuf,
+    ecdir: &Path,
     tile_id: u32,
 ) -> eyre::Result<(String, uocf::enhanced::textures::TextureFile)> {
     for file_name in ["Texture.uop", "LegacyTexture.uop"] {

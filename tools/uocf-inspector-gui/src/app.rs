@@ -4236,11 +4236,11 @@ mod tests {
         tga[16] = 32;
 
         assert_eq!(
-            guess_uop_image_format_from_payload(b"DDS payload").map(|(extension, format)| (extension, format)),
+            guess_uop_image_format_from_payload(b"DDS payload"),
             Some(("dds", ECImageFormat::DDS))
         );
         assert_eq!(
-            guess_uop_image_format_from_payload(&tga).map(|(extension, format)| (extension, format)),
+            guess_uop_image_format_from_payload(&tga),
             Some(("tga", ECImageFormat::TGA))
         );
         assert_eq!(guess_uop_image_format_from_payload(b"not image"), None);

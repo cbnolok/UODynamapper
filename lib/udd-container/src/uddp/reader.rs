@@ -478,7 +478,7 @@ impl UddpReader {
                 }
                 Codec::JpegXl => {
                     jxl_decompress(data)
-                        .map_err(|e| std::io::Error::other(e))
+                        .map_err(std::io::Error::other)
                         .map_err(FormatError::Io)?
                 }
             };

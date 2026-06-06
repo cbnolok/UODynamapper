@@ -1,10 +1,10 @@
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use color_eyre::eyre::{self, WrapErr};
 use uocf::enhanced::textures::Textures;
 
-fn load_tile(ecdir: &PathBuf, tile_id: u32) -> eyre::Result<(String, uocf::enhanced::textures::TextureFile)> {
+fn load_tile(ecdir: &Path, tile_id: u32) -> eyre::Result<(String, uocf::enhanced::textures::TextureFile)> {
     for file_name in ["Texture.uop", "LegacyTexture.uop"] {
         let uop_path = ecdir.join(file_name);
         if !uop_path.exists() {

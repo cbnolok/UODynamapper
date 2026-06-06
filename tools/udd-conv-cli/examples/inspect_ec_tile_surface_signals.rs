@@ -138,7 +138,7 @@ fn load_raw_tileart_entries(tileart_path: &Path) -> eyre::Result<HashMap<u16, Ti
     let mut entries = HashMap::new();
 
     for file in package.iter_files() {
-        let Ok(entry) = TileArtEntry::parse_raw(&file) else {
+        let Ok(entry) = TileArtEntry::parse_raw(file) else {
             continue;
         };
         entries.insert(entry.tile_id as u16, entry);
@@ -321,16 +321,12 @@ fn resolve_surface_like_tex_land_ec_slot_id(
     tilemeta: Option<&TileMetaItemTile>,
     tex_land_ec: Option<&TexLandEcPackage>,
 ) -> Option<u32> {
-    let Some(meta) = tilemeta else {
-        return None;
-    };
+    let meta = tilemeta?;
     if !meta.is_surface_like() {
         return None;
     }
 
-    let Some(package) = tex_land_ec else {
-        return None;
-    };
+    let package = tex_land_ec?;
 
     if let Some(slot_id) = package.resolve_runtime_slot_id(meta.cc_texture_id) {
         return Some(slot_id);

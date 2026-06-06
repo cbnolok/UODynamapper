@@ -12,6 +12,7 @@ manual_is_multiple_of = "allow"
 needless_lifetimes = "allow"
 nonminimal_bool = "allow"
 too_many_arguments = "allow"
+type_complexity = "allow"
 
 [dependencies]
 udd-container = { path = "../udd-container" }

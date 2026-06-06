@@ -7,10 +7,13 @@ edition = "2024"
 [lints.clippy]
 collapsible_if = "allow"
 empty_line_after_doc_comments = "allow"
+items_after_test_module = "allow"
 manual_div_ceil = "allow"
 manual_is_multiple_of = "allow"
+needless_range_loop = "allow"
 needless_lifetimes = "allow"
 nonminimal_bool = "allow"
+too_many_arguments = "allow"
 
 [dependencies]
 eframe = { version = "0.31.1", default-features = false, features = [

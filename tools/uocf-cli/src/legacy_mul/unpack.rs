@@ -1,3 +1,5 @@
+#![allow(clippy::items_after_test_module)]
+
 use super::*;
 
 pub(super) fn from_uop(

@@ -5,6 +5,7 @@ edition = "2024"
 #resolver = "3"
 
 [lints.clippy]
+arc_with_non_send_sync = "allow"
 collapsible_if = "allow"
 empty_line_after_doc_comments = "allow"
 manual_div_ceil = "allow"

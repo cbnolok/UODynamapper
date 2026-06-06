@@ -594,24 +594,22 @@ where
 
     let mut dicts_by_type: HashMap<u8, Vec<u8>> = HashMap::new();
     if !training_samples_by_type.is_empty() {
-        let mut completed = 0usize;
         progress(BuildProgress {
             phase: BuildProgressPhase::TrainingDictionaries,
-            completed,
+            completed: 0,
             total: training_samples_by_type.len(),
             active_file: None,
         });
 
-        for (data_type, samples) in &training_samples_by_type {
+        for (completed, (data_type, samples)) in training_samples_by_type.iter().enumerate() {
             let dict_size = choose_dict_size(samples);
             let dict = train_zstd_dict(samples, dict_size)?;
             if !dict.is_empty() {
                 dicts_by_type.insert(*data_type, dict);
             }
-            completed += 1;
             progress(BuildProgress {
                 phase: BuildProgressPhase::TrainingDictionaries,
-                completed,
+                completed: completed + 1,
                 total: training_samples_by_type.len(),
                 active_file: None,
             });
@@ -954,9 +952,7 @@ fn compress_file(
     // delta. If compression grows the payload, the file must fall back to raw
     // storage even when the caller requested compression explicitly.
     let (codec, encoded_payload): (Codec, Vec<u8>) =
-        if codec == Codec::None {
-            (codec, encoded_payload)
-        } else if encoded_payload.len() < file.raw_data.len() {
+        if codec == Codec::None || encoded_payload.len() < file.raw_data.len() {
             (codec, encoded_payload)
         } else {
             (Codec::None, file.raw_data.clone())

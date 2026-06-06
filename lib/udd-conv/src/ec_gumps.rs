@@ -506,7 +506,7 @@ mod tests {
         fs::create_dir_all(&root).expect("create temp root");
         fs::write(root.join("Interface.uop"), b"not a real uop").expect("write marker");
 
-        let found = find_interface_uop(&[root.clone()]).expect("find Interface.uop");
+        let found = find_interface_uop(std::slice::from_ref(&root)).expect("find Interface.uop");
 
         assert_eq!(found.file_name().and_then(|name| name.to_str()), Some("Interface.uop"));
         fs::remove_dir_all(root).ok();

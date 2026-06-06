@@ -473,11 +473,10 @@ fn encode_and_add_mobile_anim_page_chunk(
                 rdo_payload_completed.load(Ordering::Relaxed),
             ),
         };
-        let chunk_progress = if chunk_bc7_blocks == 0 {
-            chunk_frames
-        } else {
-            chunk_frames.saturating_mul(stage_units.min(chunk_bc7_blocks)) / chunk_bc7_blocks
-        };
+        let chunk_progress = chunk_frames
+            .saturating_mul(stage_units.min(chunk_bc7_blocks))
+            .checked_div(chunk_bc7_blocks)
+            .unwrap_or(chunk_frames);
         payload_progress(AssetTaskProgress {
             stage: asset_stage,
             completed: stage_completed.saturating_add(chunk_progress).min(payload_total),

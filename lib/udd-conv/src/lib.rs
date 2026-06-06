@@ -192,7 +192,7 @@ mod tests {
 
 		extrude_rgba_rect_edges(&mut pixels, 6, 6, 1, 1, 4, 4, 2, 2, 2, 2);
 
-		let top_left = ((1 * 6 + 1) * 4) as usize;
+			let top_left = ((6 + 1) * 4) as usize;
 		let content_top_left = ((2 * 6 + 2) * 4) as usize;
 		assert_eq!(&pixels[top_left..top_left + 4], &pixels[content_top_left..content_top_left + 4]);
 

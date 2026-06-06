@@ -1,15 +1,13 @@
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use color_eyre::eyre::{self, WrapErr};
 use uocf::enhanced::tile_database::ArtDefinition;
 
-fn find_string_dictionary_path(ecdir: &PathBuf) -> eyre::Result<PathBuf> {
-    for file_name in ["string_dictionary.uop"] {
-        let path = ecdir.join(file_name);
-        if path.exists() {
-            return Ok(path);
-        }
+fn find_string_dictionary_path(ecdir: &Path) -> eyre::Result<PathBuf> {
+    let path = ecdir.join("string_dictionary.uop");
+    if path.exists() {
+        return Ok(path);
     }
 
     eyre::bail!(

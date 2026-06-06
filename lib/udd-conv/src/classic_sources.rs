@@ -284,7 +284,7 @@ mod tests {
         fs::write(dir.join("map0LegacyMUL.uop"), b"").unwrap();
 
         let selected =
-            resolve_classic_map_source(&[dir.clone()], 0, SourceFormatPreference::Uop).unwrap();
+            resolve_classic_map_source(std::slice::from_ref(&dir), 0, SourceFormatPreference::Uop).unwrap();
 
         assert_eq!(selected.format, SourceFormat::Uop);
         assert_eq!(selected.path, dir.join("map0LegacyMUL.uop"));
@@ -297,7 +297,7 @@ mod tests {
         fs::write(dir.join("map0LegacyMUL.uop"), b"").unwrap();
 
         let selected =
-            resolve_classic_map_source(&[dir.clone()], 0, SourceFormatPreference::Mul).unwrap();
+            resolve_classic_map_source(std::slice::from_ref(&dir), 0, SourceFormatPreference::Mul).unwrap();
 
         assert_eq!(selected.format, SourceFormat::Uop);
         assert_eq!(selected.path, dir.join("map0LegacyMUL.uop"));
@@ -312,7 +312,7 @@ mod tests {
         fs::write(dir.join("artLegacyMUL.uop"), b"").unwrap();
 
         let selected =
-            resolve_classic_art_source(&[dir.clone()], SourceFormatPreference::Mul).unwrap();
+            resolve_classic_art_source(std::slice::from_ref(&dir), SourceFormatPreference::Mul).unwrap();
 
         assert_eq!(selected.format, SourceFormat::Mul);
         assert_eq!(selected.primary_path, dir.join("art.mul"));
@@ -327,7 +327,7 @@ mod tests {
         fs::write(dir.join("gumpartLegacyMUL.uop"), b"").unwrap();
 
         let selected =
-            resolve_classic_gump_source(&[dir.clone()], SourceFormatPreference::Uop).unwrap();
+            resolve_classic_gump_source(std::slice::from_ref(&dir), SourceFormatPreference::Uop).unwrap();
 
         assert_eq!(selected.format, SourceFormat::Uop);
         assert_eq!(selected.primary_path, dir.join("gumpartLegacyMUL.uop"));

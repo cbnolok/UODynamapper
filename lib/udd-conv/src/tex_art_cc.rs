@@ -1548,7 +1548,7 @@ mod tests {
         fs::write(dir.join("tiledata.mul"), b"").unwrap();
         fs::write(dir.join("tileart.uop"), b"").unwrap();
 
-        let selected = select_tex_art_cc_metadata_source(&[dir.clone()]).unwrap();
+        let selected = select_tex_art_cc_metadata_source(std::slice::from_ref(&dir)).unwrap();
 
         assert_eq!(selected.kind, TexArtCcMetadataSourceKind::TiledataMul);
         assert_eq!(selected.path, dir.join("tiledata.mul"));
@@ -1560,7 +1560,7 @@ mod tests {
         let dir = temp_source_dir("metadata_source_falls_back_to_tileart");
         fs::write(dir.join("tileart.uop"), b"").unwrap();
 
-        let selected = select_tex_art_cc_metadata_source(&[dir.clone()]).unwrap();
+        let selected = select_tex_art_cc_metadata_source(std::slice::from_ref(&dir)).unwrap();
 
         assert_eq!(selected.kind, TexArtCcMetadataSourceKind::TileartUop);
         assert_eq!(selected.path, dir.join("tileart.uop"));
