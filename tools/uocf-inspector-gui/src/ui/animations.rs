@@ -1,10 +1,14 @@
-use crate::app::{AnimationFrameUopEntry, ArtSource, UopInspectorApp};
+use crate::app::{
+    AnimationFrameUopEntry, AnimationFrameUopScanResult, ArtSource, UopInspectorApp,
+};
 use crate::ui::image_export::{export_rgba_png, sanitize_file_stem};
+use crate::ui::list_sort_controls;
 use color_eyre::eyre;
 use eframe::egui;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::time::Duration;
 use uocf::classic::animationframe_cc::AnimationFrameCc;
 use uocf::classic::michelangelo_uop_codec::{
     export_anim_blocks_from_mul, MichelangeloPatch, MichelangeloPatchEntry,
@@ -507,6 +511,7 @@ fn show_animation_navigation(app: &mut UopInspectorApp, ctx: &egui::Context, ui:
             ANIMATION_TREE_COLLAPSE_REVISION.fetch_add(1, Ordering::Relaxed);
         }
     });
+    let sort = list_sort_controls(ui, "animation_tree_entries", &["ID/Index"], 0);
     let collapse_revision = ANIMATION_TREE_COLLAPSE_REVISION.load(Ordering::Relaxed);
 
     match app.selected_legacy_source {
@@ -516,6 +521,7 @@ fn show_animation_navigation(app: &mut UopInspectorApp, ctx: &egui::Context, ui:
                 ctx,
                 ui,
                 tree_order,
+                sort.ordering(),
                 collapse_revision,
                 ui.available_height(),
             );
@@ -527,11 +533,11 @@ fn show_animation_navigation(app: &mut UopInspectorApp, ctx: &egui::Context, ui:
             } else {
                 ui.available_height()
             };
-            show_uop_animationframe_tree(app, ctx, ui, collapse_revision, tree_height);
+            show_uop_animationframe_tree(app, ctx, ui, sort.ordering(), collapse_revision, tree_height);
             if has_sequence {
                 ui.separator();
                 ui.heading("Animation Sequence");
-                show_sequence_animation_tree(app, ctx, ui, collapse_revision, ui.available_height());
+                show_sequence_animation_tree(app, ctx, ui, sort.ordering(), collapse_revision, ui.available_height());
             }
         }
         ArtSource::Any => {
@@ -562,6 +568,7 @@ fn show_mul_animation_tree(
     ctx: &egui::Context,
     ui: &mut egui::Ui,
     tree_order: AnimationTreeOrder,
+    ordering: Option<bool>,
     collapse_revision: u64,
     max_height: f32,
 ) {
@@ -635,7 +642,11 @@ fn show_mul_animation_tree(
                     if tree.is_empty() {
                         ui.label("No animations match the current source/filter.");
                     }
-                    for (body_id, actions) in tree {
+                    let mut bodies = tree.into_iter().collect::<Vec<_>>();
+                    if ordering == Some(true) {
+                        bodies.reverse();
+                    }
+                    for (body_id, actions) in bodies {
                         egui::CollapsingHeader::new(format!("Body {}", body_id))
                             .id_salt((
                                 "uocf_anim_body",
@@ -700,7 +711,11 @@ fn show_mul_animation_tree(
                     if source_tree.is_empty() {
                         ui.label("No animations match the current source/filter.");
                     }
-                    for (source_index, (body_id, action_id, direction, entry)) in source_tree {
+                    let mut sources = source_tree.into_iter().collect::<Vec<_>>();
+                    if ordering == Some(true) {
+                        sources.reverse();
+                    }
+                    for (source_index, (body_id, action_id, direction, entry)) in sources {
                         egui::CollapsingHeader::new(format!(
                             "Index {}: Body {} / Action {} / Direction {}",
                             source_index, body_id, action_id, direction
@@ -820,13 +835,20 @@ fn show_uop_animationframe_tree(
     app: &mut UopInspectorApp,
     ctx: &egui::Context,
     ui: &mut egui::Ui,
+    ordering: Option<bool>,
     collapse_revision: u64,
     max_height: f32,
 ) {
     ui.label("Filter:");
     ui.text_edit_singleline(&mut app.search_query);
     let query = app.search_query.to_ascii_lowercase();
-    let entries = collect_uop_animationframe_tree_entries(app, app.selected_legacy_source, &query);
+    let Some(entries) =
+        collect_uop_animationframe_tree_entries(app, app.selected_legacy_source, &query)
+    else {
+        ui.label("Scanning AnimationFrame UOP metadata...");
+        ctx.request_repaint_after(Duration::from_millis(100));
+        return;
+    };
 
     let scroll_width = ui.available_width();
     egui::ScrollArea::vertical()
@@ -844,7 +866,11 @@ fn show_uop_animationframe_tree(
                 return;
             }
 
-            for (body_id, body_entries) in entries {
+            let mut bodies = entries.into_iter().collect::<Vec<_>>();
+            if ordering == Some(true) {
+                bodies.reverse();
+            }
+            for (body_id, body_entries) in bodies {
                 let selected_body = app.selected_anim_id == body_id;
                 egui::CollapsingHeader::new(format!("Body {}", body_id))
                     .id_salt((
@@ -950,9 +976,9 @@ fn collect_uop_animationframe_tree_entries(
     app: &mut UopInspectorApp,
     source: ArtSource,
     query: &str,
-) -> BTreeMap<u32, Vec<AnimationFrameUopEntry>> {
+) -> Option<BTreeMap<u32, Vec<AnimationFrameUopEntry>>> {
     let mut entries = BTreeMap::<u32, Vec<AnimationFrameUopEntry>>::new();
-    for entry in animationframe_uop_entries(app, source).iter().cloned() {
+    for entry in animationframe_uop_entries(app, source)?.iter().cloned() {
         let body_id = entry.body_id;
         if !query.is_empty() && !format!("body {body_id}").contains(query) {
             continue;
@@ -960,7 +986,7 @@ fn collect_uop_animationframe_tree_entries(
 
         entries.entry(body_id).or_default().push(entry);
     }
-    entries
+    Some(entries)
 }
 
 fn show_uop_animationframe_entry_frames(
@@ -1030,7 +1056,8 @@ fn selected_cc_animationframe_entry(
     app: &mut UopInspectorApp,
     body_id: u32,
 ) -> eyre::Result<AnimationFrameUopEntry> {
-    let entries = animationframe_uop_entries(app, ArtSource::CcUop);
+    let entries = animationframe_uop_entries(app, ArtSource::CcUop)
+        .ok_or_else(|| eyre::eyre!("Scanning CC AnimationFrame UOP metadata"))?;
     entries
         .iter()
         .find(|entry| {
@@ -1062,7 +1089,8 @@ fn selected_ec_animationframe_entry(
     body_id: u32,
 ) -> eyre::Result<AnimationFrameUopEntry> {
     let source = app.selected_legacy_source;
-    let entries = animationframe_uop_entries(app, source);
+    let entries = animationframe_uop_entries(app, source)
+        .ok_or_else(|| eyre::eyre!("Scanning EC AnimationFrame UOP metadata"))?;
     entries
         .iter()
         .find(|entry| {
@@ -1119,30 +1147,75 @@ fn animationframe_payload(
 fn animationframe_uop_entries(
     app: &mut UopInspectorApp,
     source: ArtSource,
-) -> std::sync::Arc<Vec<AnimationFrameUopEntry>> {
+) -> Option<std::sync::Arc<Vec<AnimationFrameUopEntry>>> {
     let key = (source as u8, app.uop_cache.loaded_uops.len());
     if let Some(entries) = app.animationframe_uop_entries.get(&key) {
-        return entries.clone();
+        return Some(entries.clone());
     }
 
-    let entries = std::sync::Arc::new(scan_animationframe_uop_entries(app, source));
-    app.animationframe_uop_entries.insert(key, entries.clone());
-    entries
+    if let Some(rx) = app.animationframe_uop_worker_rx.take() {
+        match rx.try_recv() {
+            Ok(result) => {
+                app.animationframe_uop_worker_key = None;
+                app.animationframe_uop_entries
+                    .insert(result.key, std::sync::Arc::new(result.entries));
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                app.animationframe_uop_worker_rx = Some(rx);
+                return None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                app.animationframe_uop_worker_key = None;
+            }
+        }
+    }
+
+    if let Some(entries) = app.animationframe_uop_entries.get(&key) {
+        return Some(entries.clone());
+    }
+    if app.animationframe_uop_worker_key == Some(key) {
+        return None;
+    }
+
+    let packages = app
+        .uop_cache
+        .loaded_uops
+        .iter()
+        .enumerate()
+        .filter_map(|(package_index, loaded)| {
+            animationframe_package_group_id(&loaded.path)?;
+            Some((package_index, loaded.path.clone(), loaded.package.clone()))
+        })
+        .collect::<Vec<_>>();
+    if packages.is_empty() {
+        let entries = std::sync::Arc::new(Vec::new());
+        app.animationframe_uop_entries.insert(key, entries.clone());
+        return Some(entries);
+    }
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let entries = scan_animationframe_uop_packages(packages, source);
+        let _ = tx.send(AnimationFrameUopScanResult { key, entries });
+    });
+    app.animationframe_uop_worker_rx = Some(rx);
+    app.animationframe_uop_worker_key = Some(key);
+    None
 }
 
-fn scan_animationframe_uop_entries(
-    app: &UopInspectorApp,
+fn scan_animationframe_uop_packages(
+    packages: Vec<(usize, PathBuf, uocf::uop_container::package::UopPackage)>,
     source: ArtSource,
 ) -> Vec<AnimationFrameUopEntry> {
     let mut entries = Vec::new();
-    for (package_index, loaded) in app.uop_cache.loaded_uops.iter().enumerate() {
-        let Some(group_id) = animationframe_package_group_id(&loaded.path) else {
+    for (package_index, path, package) in packages {
+        let Some(group_id) = animationframe_package_group_id(&path) else {
             continue;
         };
 
-        for file in loaded.package.iter_files().filter(|file| file.has_size()) {
+        for file in package.iter_files().filter(|file| file.has_size()) {
             let file_hash = file.filename_hash();
-            let Ok(Some(data)) = loaded.package.unpack_file_by_hash(file_hash) else {
+            let Ok(Some(data)) = package.unpack_file_by_hash(file_hash) else {
                 continue;
             };
             match source {
@@ -1222,6 +1295,7 @@ fn show_sequence_animation_tree(
     app: &mut UopInspectorApp,
     ctx: &egui::Context,
     ui: &mut egui::Ui,
+    ordering: Option<bool>,
     collapse_revision: u64,
     max_height: f32,
 ) {
@@ -1239,6 +1313,9 @@ fn show_sequence_animation_tree(
             ui.set_min_width(scroll_width);
             let mut action_ids: Vec<_> = seq.actions.keys().copied().collect();
             action_ids.sort_unstable();
+            if ordering == Some(true) {
+                action_ids.reverse();
+            }
             for action_id in action_ids {
                 let Some(action) = seq.actions.get(&action_id) else {
                     continue;

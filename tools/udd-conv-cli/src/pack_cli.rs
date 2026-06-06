@@ -492,6 +492,8 @@ pub enum CliUpscaleFilter {
     PaletteSnapExpanded16,
     #[value(name = "palette-snap-expanded-32")]
     PaletteSnapExpanded32,
+    #[value(name = "palette-dither-reinsert-checkerboard")]
+    PaletteDitherReinsertCheckerboard,
     Nearest2x,
     Nearest3x,
     Nearest4x,
@@ -590,7 +592,8 @@ impl From<CliUpscaleFilter> for UpscaleFilter {
             | CliUpscaleFilter::PaletteSnapRampAware
             | CliUpscaleFilter::PaletteSnapExpanded8
             | CliUpscaleFilter::PaletteSnapExpanded16
-            | CliUpscaleFilter::PaletteSnapExpanded32 => UpscaleFilter::None,
+            | CliUpscaleFilter::PaletteSnapExpanded32
+            | CliUpscaleFilter::PaletteDitherReinsertCheckerboard => UpscaleFilter::None,
             CliUpscaleFilter::Nearest2x => UpscaleFilter::Nearest2x,
             CliUpscaleFilter::Nearest3x => UpscaleFilter::Nearest3x,
             CliUpscaleFilter::Nearest4x => UpscaleFilter::Nearest4x,
@@ -697,6 +700,7 @@ impl CliUpscaleFilter {
             Self::PaletteSnapExpanded32 => UpscalePass::PaletteSnapExpanded {
                 max_derived_colors: 32,
             },
+            Self::PaletteDitherReinsertCheckerboard => UpscalePass::PaletteDitherReinsertCheckerboard,
             filter => UpscalePass::from(UpscaleFilter::from(filter)),
         }
     }
@@ -2631,6 +2635,8 @@ mod tests {
             "palette-snap-strict",
             "--upscale-pass",
             "palette-snap-expanded-16",
+            "--upscale-pass",
+            "palette-dither-reinsert-checkerboard",
         ])
         .expect("parse palette snap upscale passes");
 
@@ -2642,6 +2648,7 @@ mod tests {
                         CliUpscaleFilter::Bilinear2x,
                         CliUpscaleFilter::PaletteSnapStrict,
                         CliUpscaleFilter::PaletteSnapExpanded16,
+                        CliUpscaleFilter::PaletteDitherReinsertCheckerboard,
                     ]
                 );
             }
@@ -2655,9 +2662,10 @@ mod tests {
             CliUpscaleFilter::Bilinear2x,
             CliUpscaleFilter::PaletteSnapRampAware,
             CliUpscaleFilter::PaletteSnapExpanded16,
+            CliUpscaleFilter::PaletteDitherReinsertCheckerboard,
         ]);
 
-        assert_eq!(passes.len(), 3);
+        assert_eq!(passes.len(), 4);
         assert_eq!(passes[0].filter(), Some(UpscaleFilter::Bilinear2x));
         assert!(matches!(passes[1], UpscalePass::PaletteSnapRampAware));
         assert!(matches!(
@@ -2666,6 +2674,7 @@ mod tests {
                 max_derived_colors: 16
             }
         ));
+        assert!(matches!(passes[3], UpscalePass::PaletteDitherReinsertCheckerboard));
     }
 
     #[test]

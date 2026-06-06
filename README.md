@@ -4,7 +4,6 @@ UODynamapper is a renderer for Ultima Online maps written in Rust and using the 
 
 The main application is `dynamapper`: an interactive map viewer that reads converted Ultima Online data, streams land and static-art assets, and renders the world with Classic, Enhanced Client, and Kingdom Reborn inspired visual modes. The broader workspace contains conversion tools, package readers, inspectors, and format libraries that support that renderer.
 
-
 ## What Dynamapper Does
 
 - Renders Ultima Online land from converted Classic Client map data (also KR and EC facets are supported).
@@ -213,7 +212,6 @@ Detailed crate and tool responsibilities live in [docs/dev_wiki/WORKSPACE_COMPON
 | [docs/dev_wiki/rendering/LAND_TEXTURES_AND_TRANSITIONS.md](docs/dev_wiki/rendering/LAND_TEXTURES_AND_TRANSITIONS.md) | EC land/art classification and transition work |
 | [docs/dev_wiki/CONTRIBUTORS_GUIDE.md](docs/dev_wiki/CONTRIBUTORS_GUIDE.md) | Quick file reference and contributor workflows |
 
-
 Recommended reading:
 
 1. Start with this README to understand the project shape.
@@ -238,7 +236,7 @@ Released under the [Apache license](LICENSE.md)
 
 ### Algorithms
 
-Used as sources for Rust translation, which has been incrementally optimized further.
+Used as references or sources for Rust translation, which has been incrementally optimized further.
 
 - BC7 codec: [basis-universal implementation](https://github.com/BinomialLLC/basis_universal/tree/master/transcoder)
 - RDO implementation: [richgel999/bc7enc_rdo](https://github.com/richgel999/bc7enc_rdo) and [richgel999/bc7enc_rdo_devel](https://github.com/richgel999/bc7enc_rdo_devel/blob/master/bc7enc.cpp#L3711)
@@ -249,9 +247,10 @@ Used as sources for Rust translation, which has been incrementally optimized fur
   - xBRZ: [Rust crate](https://docs.rs/xbrz-rs/latest/xbrz/)
   - Super-xBR: [hansonw/super-xbr](https://github.com/hansonw/super-xbr)
   - ScaleFX: [Themaister/slang-shaders ScaleFX](https://github.com/Themaister/slang-shaders/tree/master/scalefx)
+  - Deblur: [guest(r) `deblur.glsl`](https://github.com/libretro/glsl-shaders/blob/master/deblur/shaders/deblur.glsl)
   - OmniScale: [Themaister/slang-shaders OmniScale](https://github.com/Themaister/slang-shaders/tree/master/omniscale)
   - Jinc2: local Hyllian GLSL passes from `/home/claudio/Scaricati/jinc2*`
-  - Cheap Upscaling Triangulation: [Swordfish90/cheap-upscaling-triangulation](https://github.com/Swordfish90/cheap-upscaling-triangulation)
+  - Cheap Upscaling Triangulation (CUT): [Swordfish90/cheap-upscaling-triangulation](https://github.com/Swordfish90/cheap-upscaling-triangulation)
   - lqx: [PixelScalerWin repo](https://github.com/daelsepara/PixelScalerWin) and [Libretro implementation](https://github.com/libretro/RetroArch/blob/master/gfx/video_filters/lq2x.c)
   - hqx: [C++ implementation](https://github.com/brunexgeek/hqx)
   - epx: [PixelScalerWin repo](https://github.com/daelsepara/PixelScalerWin) and [Libretro implementation](https://github.com/libretro/RetroArch/blob/master/gfx/video_filters/epx.c)

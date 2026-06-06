@@ -7,7 +7,7 @@ visualization, metadata inspection, and mobile animation playback.
 ## Features
 
 - **Package view**: list all raw entries in a `.uddp` file with their virtual
-  paths, sizes, codec, and compression metadata. Select an entry to preview its
+  paths, sizes, and compression metadata. Select an entry to preview its
   decoded content (textures, binary data).
 - **Virtual view**: browse the logical content of packages that expose virtual
   entries (e.g. terrain definition slots, art tile slots). Supports material

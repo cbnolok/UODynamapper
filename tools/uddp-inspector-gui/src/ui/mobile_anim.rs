@@ -1068,8 +1068,8 @@ fn packing_mode_name(mode: AtlasPackingMode) -> &'static str {
 
 fn pixel_format_name(format: PagePixelFormat) -> &'static str {
     match format {
-        PagePixelFormat::Rgba8888 => "RGBA8888",
-        PagePixelFormat::Bc7 => "BC7",
+        PagePixelFormat::Rgba8888 => "rgba8888",
+        PagePixelFormat::Bc7 => "bc7",
     }
 }
 
@@ -1422,6 +1422,7 @@ fn show_frame_image(
             ui.add(
                 egui::Image::new(&texture)
                     .maintain_aspect_ratio(true)
+                    .texture_options(egui::TextureOptions::NEAREST)
                     .fit_to_exact_size(egui::vec2(size[0] as f32 * scale, size[1] as f32 * scale)),
             );
         });
@@ -1462,7 +1463,7 @@ fn set_mobile_anim_atlas_image(
     app.atlas_texture = Some(ctx.load_texture(
         format!("{texture_prefix}_atlas_page{page_index}"),
         color_image,
-        Default::default(),
+        egui::TextureOptions::NEAREST,
     ));
     app.atlas_texture_size = Some(size);
     app.atlas_text = Some(label);

@@ -1,5 +1,7 @@
 use crate::app::{ArtSource, UopInspectorApp};
+use crate::ui::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by};
 use eframe::egui;
+use uocf::classic::art::STATIC_TILE_ID_BASE;
 
 pub fn ui_animdata(app: &mut UopInspectorApp, ctx: &egui::Context) {
     let Some(animdata) = app
@@ -35,15 +37,47 @@ pub fn ui_animdata(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 animdata.entries.len()
             ));
             ui.separator();
+            let mut search_has_focus = false;
             ui.horizontal(|ui| {
                 ui.label("Search:");
-                ui.text_edit_singleline(&mut app.search_query);
+                let response = ui.text_edit_singleline(&mut app.search_query);
+                search_has_focus |= response.has_focus();
             });
+            let sort = list_sort_controls(ui, "animdata_entries", &["ID", "Frames", "Interval"], 0);
             ui.separator();
 
             let query = app.search_query.to_lowercase();
+            let active_entries = animdata.active_entries().collect::<Vec<_>>();
+            let sorted_indices = sorted_indices_by(&active_entries, sort.ordering(), |left, right| {
+                match sort.option_index {
+                    1 => left.frame_count.cmp(&right.frame_count),
+                    2 => left.frame_interval.cmp(&right.frame_interval),
+                    _ => left.id.cmp(&right.id),
+                }
+            });
+            let visible_ids = sorted_indices
+                .iter()
+                .filter_map(|index| {
+                    let entry = active_entries[*index];
+                    if query.is_empty() || entry.id.to_string().contains(&query) {
+                        Some(entry.id)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            let keyboard_moved = if let Some(delta) = arrow_delta(ui, search_has_focus) {
+                app.selected_animdata_id = move_selection(&visible_ids, Some(app.selected_animdata_id), delta)
+                    .unwrap_or(app.selected_animdata_id);
+                app.current_frame_idx = 0;
+                app.is_playing = false;
+                true
+            } else {
+                false
+            };
             egui::ScrollArea::vertical().show(ui, |ui| {
-                for entry in animdata.active_entries() {
+                for index in sorted_indices {
+                    let entry = active_entries[index];
                     if !query.is_empty() && !entry.id.to_string().contains(&query) {
                         continue;
                     }
@@ -59,6 +93,9 @@ pub fn ui_animdata(app: &mut UopInspectorApp, ctx: &egui::Context) {
                         app.selected_animdata_id = entry.id;
                         app.current_frame_idx = 0;
                         app.is_playing = false;
+                    }
+                    if keyboard_moved && app.selected_animdata_id == entry.id {
+                        ui.scroll_to_cursor(Some(egui::Align::Center));
                     }
                 }
             });
@@ -78,8 +115,8 @@ pub fn ui_animdata(app: &mut UopInspectorApp, ctx: &egui::Context) {
             ui.label("Art source:");
             ui.radio_value(&mut app.selected_animdata_art_source, ArtSource::Mul, "MUL");
             ui.radio_value(&mut app.selected_animdata_art_source, ArtSource::CcUop, "CC UOP");
-            ui.radio_value(&mut app.selected_animdata_art_source, ArtSource::EcUopLegacy, "EC UOP Legacy");
-            ui.radio_value(&mut app.selected_animdata_art_source, ArtSource::EcUopKr, "EC UOP KR");
+            ui.radio_value(&mut app.selected_animdata_art_source, ArtSource::EcUopLegacy, "EC Legacy UOP");
+            ui.radio_value(&mut app.selected_animdata_art_source, ArtSource::EcUopKr, "KR/New UOP");
         });
         ui.horizontal(|ui| {
             if ui
@@ -157,9 +194,20 @@ pub fn ui_animdata(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 tile_id
             ));
             if tile_id >= 0 {
-                let art_id = animdata_preview_art_id(tile_id as u32, app.selected_animdata_art_source);
+                let art_id = animdata_preview_art_id(entry.id, tile_id as u32, app.selected_animdata_art_source);
+                ui.label(animdata_source_request_label(
+                    art_id,
+                    app.selected_animdata_art_source,
+                    current_frame_idx,
+                ));
                 if let Some(handle) =
-                    app.get_tex_art_texture_from_source(ctx, art_id, app.selected_animdata_art_source)
+                    app.get_animdata_art_texture_from_source(
+                        ctx,
+                        art_id,
+                        app.selected_animdata_art_source,
+                        current_frame_idx,
+                        entry.frame_count as usize,
+                    )
                 {
                     ui.add(egui::Image::new(&handle).fit_to_exact_size(egui::vec2(96.0, 96.0)));
                 } else {
@@ -187,9 +235,15 @@ pub fn ui_animdata(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 ui.label(tile_id.to_string());
 
                 if tile_id >= 0 {
-                    let art_id = animdata_preview_art_id(tile_id as u32, app.selected_animdata_art_source);
+                    let art_id = animdata_preview_art_id(entry.id, tile_id as u32, app.selected_animdata_art_source);
                     if let Some(handle) =
-                        app.get_tex_art_texture_from_source(ctx, art_id, app.selected_animdata_art_source)
+                        app.get_animdata_art_texture_from_source(
+                            ctx,
+                            art_id,
+                            app.selected_animdata_art_source,
+                            index,
+                            entry.frame_count as usize,
+                        )
                     {
                         let size = if index == current_frame_idx { 48.0 } else { 36.0 };
                         ui.add(egui::Image::new(&handle).fit_to_exact_size(egui::vec2(size, size)));
@@ -210,17 +264,56 @@ pub fn ui_animdata(app: &mut UopInspectorApp, ctx: &egui::Context) {
     });
 }
 
-fn animdata_preview_art_id(tile_id: u32, source: ArtSource) -> u32 {
+fn animdata_preview_art_id(entry_id: u32, tile_id: u32, source: ArtSource) -> u32 {
     match source {
-        ArtSource::EcUopLegacy | ArtSource::EcUopKr => {
-            tile_id.checked_sub(0x4000).unwrap_or(tile_id)
+        ArtSource::Mul | ArtSource::CcUop => tile_id + STATIC_TILE_ID_BASE,
+        ArtSource::EcUop | ArtSource::EcUopLegacy => {
+            entry_id.checked_sub(STATIC_TILE_ID_BASE).unwrap_or(entry_id)
         }
-        ArtSource::Mul | ArtSource::CcUop | ArtSource::EcUop | ArtSource::Any => {
-            if tile_id >= 0x4000 {
-                tile_id
-            } else {
-                tile_id + 0x4000
-            }
+        ArtSource::EcUopKr => {
+            tile_id.checked_sub(STATIC_TILE_ID_BASE).unwrap_or(tile_id)
         }
+        ArtSource::Any => tile_id,
+    }
+}
+
+fn animdata_source_request_label(art_id: u32, source: ArtSource, frame_index: usize) -> String {
+    match source {
+        ArtSource::Mul => format!("Source request: art.mul/artidx.mul art_id {art_id} (0x{art_id:04X})"),
+        ArtSource::CcUop => {
+            format!("Source request: artLegacyMUL.uop build/artlegacymul/{art_id:08}.tga")
+        }
+        ArtSource::EcUop | ArtSource::EcUopLegacy => {
+            format!(
+                "Source request: LegacyTexture.uop build/tileartlegacy/{art_id:08}.dds or .tga, frame {frame_index}"
+            )
+        }
+        ArtSource::EcUopKr => {
+            format!("Source request: Texture.uop build/worldart/{art_id:08}.dds or .tga")
+        }
+        ArtSource::Any => format!("Source request: auto art_id {art_id} (0x{art_id:04X})"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn animdata_preview_maps_mul_static_item_ids_to_classic_art_ids() {
+        assert_eq!(animdata_preview_art_id(0x047B, 0x047B, ArtSource::Mul), 0x447B);
+        assert_eq!(animdata_preview_art_id(0x047B, 0x047B, ArtSource::CcUop), 0x447B);
+        assert_eq!(animdata_preview_art_id(0x047B, 0x047C, ArtSource::EcUopLegacy), 0x047B);
+        assert_eq!(animdata_preview_art_id(0x4001, 0x4002, ArtSource::EcUopLegacy), 0x0001);
+        assert_eq!(animdata_preview_art_id(0x4001, 0x4002, ArtSource::EcUopKr), 0x0002);
+    }
+
+    #[test]
+    fn animdata_source_request_label_shows_physical_lookup() {
+        assert!(animdata_source_request_label(0x447B, ArtSource::Mul, 0).contains("art.mul"));
+        assert!(animdata_source_request_label(0x447B, ArtSource::CcUop, 0).contains("build/artlegacymul/00017531.tga"));
+        assert!(animdata_source_request_label(0x047B, ArtSource::EcUopLegacy, 3).contains("build/tileartlegacy/00001147.dds"));
+        assert!(animdata_source_request_label(0x047B, ArtSource::EcUopLegacy, 3).contains("frame 3"));
+        assert!(animdata_source_request_label(0x047B, ArtSource::EcUopKr, 0).contains("build/worldart/00001147.dds"));
     }
 }

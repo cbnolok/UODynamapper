@@ -1,7 +1,7 @@
 use crate::logic::{ClientData, Dictionary, UopCache};
 use eframe::egui;
 use image_postprocess::palette::{
-    palette_safe_upscale, PaletteModel, PaletteUpscaleConfig, RgbaFilterScaler, SnapMode,
+    palette_safe_upscale, DitherPolicy, PaletteModel, PaletteUpscaleConfig, RgbaFilterScaler, SnapMode,
     TransparencyPolicy,
 };
 use image_postprocess::upscaling::UpscaleFilter;
@@ -80,6 +80,14 @@ pub enum MultisSource {
 pub enum MultiCollectionSource {
     ClassicClient,
     EnhancedClient,
+}
+
+pub fn concrete_art_tile_source(source: ArtSource) -> ArtSource {
+    match source {
+        ArtSource::Any => ArtSource::CcUop,
+        ArtSource::EcUop => ArtSource::EcUopLegacy,
+        source => source,
+    }
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
@@ -237,7 +245,9 @@ pub enum UpscalePreviewAlgorithm {
     PaletteSnapStrict,
     PaletteSnapRampAware,
     PaletteSnapExpanded,
+    PaletteDitherReinsertCheckerboard,
     ScaleFxSmartDeblur,
+    GuestrDeblur,
     UnsharpMaskSmall,
     HighPassSharpen,
 }
@@ -289,7 +299,9 @@ impl UpscalePreviewAlgorithm {
             Self::PaletteSnapStrict,
             Self::PaletteSnapRampAware,
             Self::PaletteSnapExpanded,
+            Self::PaletteDitherReinsertCheckerboard,
             Self::ScaleFxSmartDeblur,
+            Self::GuestrDeblur,
             Self::UnsharpMaskSmall,
             Self::HighPassSharpen,
         ]
@@ -335,7 +347,9 @@ impl UpscalePreviewAlgorithm {
             Self::PaletteSnapStrict => "Palette Snap Strict",
             Self::PaletteSnapRampAware => "Palette Snap Ramp-Aware",
             Self::PaletteSnapExpanded => "Palette Snap Expanded",
+            Self::PaletteDitherReinsertCheckerboard => "Palette Re-dither Checkerboard",
             Self::ScaleFxSmartDeblur => "ScaleFX Smart Deblur",
+            Self::GuestrDeblur => "Libretro Deblur",
             Self::UnsharpMaskSmall => "Unsharp Mask Small",
             Self::HighPassSharpen => "High-pass Sharpen",
         }
@@ -353,9 +367,9 @@ impl UpscalePreviewAlgorithm {
             Self::LocalLaplacianClarity => &[15, 25, 30],
             Self::UnityContrastEnhance => &[20, 35, 50],
             Self::AdaptiveLogContrast => &[75, 80, 90],
-            Self::PaletteSnapStrict | Self::PaletteSnapRampAware => &[1],
+            Self::PaletteSnapStrict | Self::PaletteSnapRampAware | Self::PaletteDitherReinsertCheckerboard => &[1],
             Self::PaletteSnapExpanded => &[8, 16, 32],
-            Self::ScaleFxSmartDeblur | Self::UnsharpMaskSmall | Self::HighPassSharpen => &[1],
+            Self::ScaleFxSmartDeblur | Self::GuestrDeblur | Self::UnsharpMaskSmall | Self::HighPassSharpen => &[1],
             _ => &[2, 3, 4],
         }
     }
@@ -372,6 +386,7 @@ impl UpscalePreviewAlgorithm {
             Self::PaletteSnapStrict => "strict".to_string(),
             Self::PaletteSnapRampAware => "ramp".to_string(),
             Self::PaletteSnapExpanded => format!("{value} colors"),
+            Self::PaletteDitherReinsertCheckerboard => "checker".to_string(),
             _ => format!("{value}x"),
         }
     }
@@ -379,7 +394,7 @@ impl UpscalePreviewAlgorithm {
     pub fn is_palette_snap(self) -> bool {
         matches!(
             self,
-            Self::PaletteSnapStrict | Self::PaletteSnapRampAware | Self::PaletteSnapExpanded
+            Self::PaletteSnapStrict | Self::PaletteSnapRampAware | Self::PaletteSnapExpanded | Self::PaletteDitherReinsertCheckerboard
         )
     }
 
@@ -391,6 +406,10 @@ impl UpscalePreviewAlgorithm {
             Self::PaletteSnapExpanded => SnapMode::ExpandedPalette {
                 max_derived_colors: scale as usize,
             },
+            Self::PaletteDitherReinsertCheckerboard => {
+                config.dither_policy = DitherPolicy::ReinsertCheckerboard;
+                SnapMode::StrictSnap
+            }
             _ => return None,
         };
         Some(config)
@@ -493,10 +512,12 @@ impl UpscalePreviewAlgorithm {
             (
                 Self::PaletteSnapStrict
                 | Self::PaletteSnapRampAware
-                | Self::PaletteSnapExpanded,
+                | Self::PaletteSnapExpanded
+                | Self::PaletteDitherReinsertCheckerboard,
                 _,
             ) => UpscaleFilter::None,
             (Self::ScaleFxSmartDeblur, _) => UpscaleFilter::ScaleFxSmartDeblur,
+            (Self::GuestrDeblur, _) => UpscaleFilter::GuestrDeblur,
             (Self::UnsharpMaskSmall, _) => UpscaleFilter::UnsharpMaskSmall,
             (Self::HighPassSharpen, _) => UpscaleFilter::HighPassSharpen,
         }
@@ -614,6 +635,11 @@ pub struct AnimationFrameUopEntry {
     pub frame_count: usize,
 }
 
+pub struct AnimationFrameUopScanResult {
+    pub key: (u8, usize),
+    pub entries: Vec<AnimationFrameUopEntry>,
+}
+
 pub fn upscale_filter_cli_value(filter: UpscaleFilter) -> &'static str {
     match filter {
         UpscaleFilter::None => "none",
@@ -693,7 +719,17 @@ pub fn upscale_filter_cli_value(filter: UpscaleFilter) -> &'static str {
         UpscaleFilter::SelectiveGreen20 => "selective-green20",
         UpscaleFilter::SelectiveGreen30 => "selective-green30",
         UpscaleFilter::SelectiveGreen40 => "selective-green40",
+        UpscaleFilter::LocalLaplacianClarity15 => "local-laplacian-clarity15",
+        UpscaleFilter::LocalLaplacianClarity25 => "local-laplacian-clarity25",
+        UpscaleFilter::LocalLaplacianClarity30 => "local-laplacian-clarity30",
+        UpscaleFilter::UnityContrastEnhance20 => "unity-contrast-enhance20",
+        UpscaleFilter::UnityContrastEnhance35 => "unity-contrast-enhance35",
+        UpscaleFilter::UnityContrastEnhance50 => "unity-contrast-enhance50",
+        UpscaleFilter::AdaptiveLogContrast75 => "adaptive-log-contrast75",
+        UpscaleFilter::AdaptiveLogContrast80 => "adaptive-log-contrast80",
+        UpscaleFilter::AdaptiveLogContrast90 => "adaptive-log-contrast90",
         UpscaleFilter::ScaleFxSmartDeblur => "scalefx-smart-deblur",
+        UpscaleFilter::GuestrDeblur => "libretro-deblur",
         UpscaleFilter::UnsharpMaskSmall => "unsharp-mask-small",
         UpscaleFilter::HighPassSharpen => "high-pass-sharpen",
     }
@@ -708,6 +744,9 @@ pub fn upscale_pass_cli_value(pass: UpscalePreviewPass) -> String {
             }
             UpscalePreviewAlgorithm::PaletteSnapExpanded => {
                 format!("palette-snap-expanded-{}", pass.scale)
+            }
+            UpscalePreviewAlgorithm::PaletteDitherReinsertCheckerboard => {
+                "palette-dither-reinsert-checkerboard".to_string()
             }
             _ => unreachable!(),
         }
@@ -899,6 +938,14 @@ pub struct TileArtDisplayRow {
     pub texture_summary: String,
     pub sitting_summary: String,
     pub appearance_summary: String,
+    pub search_text: String,
+}
+
+#[derive(Clone)]
+pub struct StringDictionaryRow {
+    pub index: String,
+    pub offset: String,
+    pub value: String,
     pub search_text: String,
 }
 
@@ -1376,6 +1423,26 @@ fn tileart_appearance_summary(appearance: &[TaeAnimationAppearance]) -> String {
     )
 }
 
+fn collect_string_dictionary_rows(dictionary: &UoStringDictionary) -> Vec<StringDictionaryRow> {
+    dictionary
+        .iter()
+        .map(|(index, value)| {
+            let offset = index + 1;
+            StringDictionaryRow {
+                index: index.to_string(),
+                offset: offset.to_string(),
+                value: value.to_string(),
+                search_text: format!(
+                    "{} {} {}",
+                    index,
+                    offset,
+                    value.to_lowercase()
+                ),
+            }
+        })
+        .collect()
+}
+
 fn collect_localized_string_rows(
     package: &LocalizedStringsPackage,
 ) -> Vec<LocalizedStringDisplayFile> {
@@ -1527,6 +1594,7 @@ pub struct UopInspectorApp {
 
     pub dictionary: Dictionary,
     pub uo_string_dictionary: Option<Arc<UoStringDictionary>>,
+    pub string_dictionary_rows: Option<Arc<Vec<StringDictionaryRow>>>,
     pub cliloc: Option<Arc<Cliloc>>,
     pub cliloc_files: Vec<ClilocFileEntry>,
     pub localized_strings: Option<Arc<LocalizedStringsPackage>>,
@@ -1583,6 +1651,8 @@ pub struct UopInspectorApp {
     pub uop_entry_payloads: HashMap<(usize, u64), Arc<[u8]>>,
     pub terrain_texture_guess_names: HashMap<usize, Arc<HashMap<u64, String>>>,
     pub animationframe_uop_entries: HashMap<(u8, usize), Arc<Vec<AnimationFrameUopEntry>>>,
+    pub animationframe_uop_worker_rx: Option<mpsc::Receiver<AnimationFrameUopScanResult>>,
+    pub animationframe_uop_worker_key: Option<(u8, usize)>,
     pub multimap_texture: Option<egui::TextureHandle>,
     pub image_preview_sources: HashMap<u64, InspectorImagePreview>,
     pub current_image_preview_key: Option<u64>,
@@ -1666,6 +1736,7 @@ impl UopInspectorApp {
 
             dictionary: Dictionary::new(),
             uo_string_dictionary: None,
+            string_dictionary_rows: None,
             cliloc: None,
             cliloc_files: Vec::new(),
             localized_strings: None,
@@ -1727,6 +1798,8 @@ impl UopInspectorApp {
             uop_entry_payloads: HashMap::new(),
             terrain_texture_guess_names: HashMap::new(),
             animationframe_uop_entries: HashMap::new(),
+            animationframe_uop_worker_rx: None,
+            animationframe_uop_worker_key: None,
             multimap_texture: None,
             image_preview_sources: HashMap::new(),
             current_image_preview_key: None,
@@ -1803,6 +1876,9 @@ impl UopInspectorApp {
     pub fn trigger_reload(&mut self) {
         self.log("Starting asset reload...");
         self.ec_hues = None;
+        self.uo_string_dictionary = None;
+        self.string_dictionary_rows = None;
+        self.string_dictionary_raw_hash = None;
         self.client_data = None;
         self.cc_tiledata = None;
         self.cc_tiledata_rows = None;
@@ -1842,6 +1918,8 @@ impl UopInspectorApp {
         self.uop_entry_payloads.clear();
         self.terrain_texture_guess_names.clear();
         self.animationframe_uop_entries.clear();
+        self.animationframe_uop_worker_rx = None;
+        self.animationframe_uop_worker_key = None;
         self.multimap_texture = None;
         self.paperdoll_preview = None;
         self.image_preview_sources.clear();
@@ -2079,7 +2157,9 @@ impl UopInspectorApp {
                 self.log(format!("Loading string dictionary from {}", sd_path.display()));
                 match UoStringDictionary::load(&sd_path) {
                     Ok(dict) => {
+                        let rows = collect_string_dictionary_rows(&dict);
                         self.uo_string_dictionary = Some(Arc::new(dict));
+                        self.string_dictionary_rows = Some(Arc::new(rows));
                         self.log("Successfully loaded EC string dictionary.");
                         if let Ok(package) = UopPackage::load(&sd_path) {
                             self.string_dictionary_raw_hash = package
@@ -2138,7 +2218,7 @@ impl UopInspectorApp {
                             let mut art = (*client.art).clone();
                             art = art.with_ec_kr_uop(package.clone());
                             client.art = Arc::new(art);
-                            self.log("Attached Texture.uop to CC art as EC UOP KR.");
+                            self.log("Attached Texture.uop to CC art as KR/New UOP art.");
                         } else {
                             let art = ArtMap::load_standalone_ec_kr_uop(package.clone());
                             self.client_data = Some(ClientData {
@@ -2152,7 +2232,7 @@ impl UopInspectorApp {
                                 anim_map: None,
                                 anim_defs: None,
                             });
-                            self.log("Loaded standalone Texture.uop from EC folder as EC UOP KR.");
+                            self.log("Loaded standalone Texture.uop from EC folder as KR/New UOP art.");
                         }
                     }
                     Err(e) => {
@@ -3172,6 +3252,53 @@ impl UopInspectorApp {
         self.get_tex_art_cc_texture_from_source(ctx, art_id, source)
     }
 
+    pub fn get_animdata_art_texture_from_source(
+        &mut self,
+        ctx: &egui::Context,
+        art_id: u32,
+        source: ArtSource,
+        frame_index: usize,
+        frame_count: usize,
+    ) -> Option<egui::TextureHandle> {
+        if !matches!(source, ArtSource::EcUop | ArtSource::EcUopLegacy) || frame_count <= 1 {
+            return self.get_tex_art_texture_from_source(ctx, art_id, source);
+        }
+
+        let hue_id = self.selected_hue_id;
+        let key = 0xAD00_0000_0000_0000u64
+            | ((source as u64) << 48)
+            | ((hue_id as u64) << 32)
+            | (((frame_index as u64) & 0xFF) << 24)
+            | art_id as u64;
+        if let Some(handle) = self.texture_previews.get(&key).cloned() {
+            self.select_image_preview(key);
+            return Some(handle);
+        }
+
+        let (width, height, pixels) = self.decode_art_item_rgba_from_source(art_id, source)?;
+        let (width, height, pixels) =
+            crop_ec_legacy_animdata_frame(width, height, &pixels, frame_index, frame_count)
+                .unwrap_or((width, height, pixels));
+        let image = egui::ColorImage::from_rgba_unmultiplied(
+            [width as usize, height as usize],
+            &pixels,
+        );
+        let handle = ctx.load_texture(
+            format!("animdata_art_{art_id}_{source:?}_{frame_index}_h{hue_id}"),
+            image,
+            Default::default(),
+        );
+        self.texture_previews.insert(key, handle.clone());
+        self.register_current_image_preview(
+            key,
+            format!("animdata art {} {:?} frame {} hue {}", art_id, source, frame_index, hue_id),
+            width,
+            height,
+            &pixels,
+        );
+        Some(handle)
+    }
+
     pub fn get_tex_art_texture_with_ec_hue_from_source(
         &mut self,
         ctx: &egui::Context,
@@ -3219,7 +3346,7 @@ impl UopInspectorApp {
         art_id: u32,
         source: ArtSource,
     ) -> Option<(u32, u32, Vec<u8>)> {
-        if art_id < 0x4000 {
+        if art_id < uocf::classic::art::STATIC_TILE_ID_BASE && !source.is_ec_uop() {
             return None;
         }
 
@@ -3565,14 +3692,11 @@ impl UopInspectorApp {
 
         for (package_name, template) in candidates {
             let package_art_id = match source {
-                ArtSource::EcUop => match uocf::classic::art::ec_legacy_texture_id_from_art_id(art_id) {
-                    Some(id) => id,
-                    None => continue,
-                },
-                ArtSource::EcUopLegacy => {
-                    uocf::classic::art::ec_legacy_texture_id_from_art_id(art_id).unwrap_or(art_id)
+                ArtSource::CcUop => {
+                    uocf::classic::art::normalize_static_art_id_for_source(art_id, source)
                 }
-                _ => art_id,
+                ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr => art_id,
+                ArtSource::Mul | ArtSource::Any => return false,
             };
             let path = template.replace("{id:08}", &format!("{:08}", package_art_id));
             let hash = hash_file_name_single(&path);
@@ -3684,6 +3808,82 @@ fn cc_hue_should_apply_to_art(art_id: u32, source: ArtSource) -> bool {
     art_id >= uocf::classic::art::STATIC_TILE_ID_BASE || source.is_ec_uop()
 }
 
+fn crop_ec_legacy_animdata_frame(
+    width: u32,
+    height: u32,
+    pixels: &[u8],
+    frame_index: usize,
+    frame_count: usize,
+) -> Option<(u32, u32, Vec<u8>)> {
+    if frame_count <= 1 || frame_index >= frame_count {
+        return None;
+    }
+
+    let width_usize = width as usize;
+    let height_usize = height as usize;
+    if pixels.len() != width_usize.checked_mul(height_usize)?.checked_mul(4)? {
+        return None;
+    }
+
+    let row_has_alpha = |y: usize| -> bool {
+        (0..width_usize).any(|x| pixels[(y * width_usize + x) * 4 + 3] != 0)
+    };
+    let mut bands = Vec::<(usize, usize)>::new();
+    let mut y = 0usize;
+    while y < height_usize {
+        while y < height_usize && !row_has_alpha(y) {
+            y += 1;
+        }
+        if y >= height_usize {
+            break;
+        }
+        let start = y;
+        while y < height_usize && row_has_alpha(y) {
+            y += 1;
+        }
+        bands.push((start, y));
+    }
+    if bands.is_empty() {
+        return None;
+    }
+
+    let (first_start, first_end) = bands[0];
+    let mut min_x = width_usize;
+    let mut max_x = 0usize;
+    for y in first_start..first_end {
+        for x in 0..width_usize {
+            if pixels[(y * width_usize + x) * 4 + 3] != 0 {
+                min_x = min_x.min(x);
+                max_x = max_x.max(x);
+            }
+        }
+    }
+    if min_x > max_x {
+        return None;
+    }
+
+    let columns = frame_count.min(5).max(1);
+    let frame_width = (max_x + 1 - min_x) / columns;
+    let row = frame_index / columns;
+    let col = frame_index % columns;
+    let (crop_y, crop_y_end) = *bands.get(row)?;
+    let frame_height = crop_y_end - crop_y;
+    let crop_x = min_x + col * frame_width;
+    if frame_width == 0 || frame_height == 0 || crop_x + frame_width > width_usize {
+        return None;
+    }
+
+    let mut cropped = vec![0u8; frame_width * frame_height * 4];
+    for row_index in 0..frame_height {
+        let src_start = ((crop_y + row_index) * width_usize + crop_x) * 4;
+        let src_end = src_start + frame_width * 4;
+        let dst_start = row_index * frame_width * 4;
+        cropped[dst_start..dst_start + frame_width * 4].copy_from_slice(&pixels[src_start..src_end]);
+    }
+
+    Some((frame_width as u32, frame_height as u32, cropped))
+}
+
 impl eframe::App for UopInspectorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         crate::ui::draw_ui(self, ctx);
@@ -3717,6 +3917,7 @@ mod tests {
             show_search_paths: false,
             dictionary: Dictionary::new(),
             uo_string_dictionary: None,
+            string_dictionary_rows: None,
             cliloc: None,
             cliloc_files: Vec::new(),
             localized_strings: None,
@@ -3769,6 +3970,8 @@ mod tests {
             uop_entry_payloads: HashMap::new(),
             terrain_texture_guess_names: HashMap::new(),
             animationframe_uop_entries: HashMap::new(),
+            animationframe_uop_worker_rx: None,
+            animationframe_uop_worker_key: None,
             multimap_texture: None,
             image_preview_sources: HashMap::new(),
             current_image_preview_key: None,
@@ -3815,8 +4018,8 @@ mod tests {
             selected_sound_id: 0,
             sound_search_query: String::new(),
             selected_hue_id: 0,
-            selected_ec_hueing_mode: EcHueingMode::Cc,
             selected_ec_hue_id: 1,
+            selected_ec_hueing_mode: EcHueingMode::Cc,
             selected_cliloc_number: 0,
             multimap_zoom: 0.25,
             terrain_def_package: None,
@@ -3934,10 +4137,15 @@ mod tests {
             algorithm: UpscalePreviewAlgorithm::PaletteSnapExpanded,
             scale: 16,
         };
+        let redither = UpscalePreviewPass {
+            algorithm: UpscalePreviewAlgorithm::PaletteDitherReinsertCheckerboard,
+            scale: 1,
+        };
 
         assert_ne!(strict, expanded);
         assert_eq!(upscale_pass_cli_value(strict), "palette-snap-strict");
         assert_eq!(upscale_pass_cli_value(expanded), "palette-snap-expanded-16");
+        assert_eq!(upscale_pass_cli_value(redither), "palette-dither-reinsert-checkerboard");
     }
 
     #[test]
@@ -4106,6 +4314,34 @@ mod tests {
         assert!(!cc_hue_should_apply_to_art(0x0001, ArtSource::CcUop));
         assert!(cc_hue_should_apply_to_art(0x0001, ArtSource::EcUopLegacy));
         assert!(cc_hue_should_apply_to_art(0x0001, ArtSource::EcUopKr));
+    }
+
+    #[test]
+    fn crops_ec_legacy_animdata_sheet_frame() {
+        let width = 256u32;
+        let height = 512u32;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        for frame in 0..6usize {
+            let col = frame % 5;
+            let row = frame / 5;
+            let x0 = col * 44;
+            let y0 = row * 168;
+            for y in y0..y0 + 166 {
+                for x in x0..x0 + 44 {
+                    let offset = (y * width as usize + x) * 4;
+                    pixels[offset] = frame as u8;
+                    pixels[offset + 3] = 255;
+                }
+            }
+        }
+
+        let (crop_width, crop_height, cropped) =
+            crop_ec_legacy_animdata_frame(width, height, &pixels, 5, 6)
+                .expect("frame should crop");
+
+        assert_eq!((crop_width, crop_height), (44, 166));
+        assert_eq!(cropped[0], 5);
+        assert_eq!(cropped[3], 255);
     }
 
     #[test]

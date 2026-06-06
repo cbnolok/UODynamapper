@@ -55,6 +55,7 @@ pub enum VirtualEntryData {
     EcLandMaterial(EcLandMaterialInfo),
     TileMetaLand(TileMetaLandInfo),
     TileMetaItem(TileMetaItemInfo),
+    WorldLight(WorldLightInfo),
     MapBlock {
         source_entry_idx: usize,
     },
@@ -123,6 +124,14 @@ pub struct TileMetaItemInfo {
     pub cc_start_y: i16,
     pub cc_offset_x: i16,
     pub cc_offset_y: i16,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorldLightInfo {
+    pub width: u16,
+    pub height: u16,
+    pub flags: u16,
+    pub path: String,
 }
 
 #[repr(C)]

@@ -1,9 +1,16 @@
 use eframe::egui;
+use udd_assets::hues::HUES_TEXTURE_ENTRY_PATH;
 use udd_container::{FileKey, xxh64_virtual_path};
 use crate::app::{InspectorApp, MAX_INLINE_PREVIEW_WIDTH, MAX_INLINE_PREVIEW_HEIGHT};
 use crate::models::{PreviewModeKind, ViewMode, VirtualEntryData};
 use crate::ui::{metadata_grid, metadata_label};
-use crate::utils::{atlas_page_paths, data_type_to_str, format_size};
+use crate::utils::{
+    atlas_page_paths,
+    atlas_pixel_format_to_str,
+    compression_to_str,
+    data_type_to_str,
+    format_size,
+};
 
 impl InspectorApp {
     pub fn ui_details(&mut self, ctx: &egui::Context, ui: &mut egui::Ui, idx: usize) {
@@ -49,7 +56,10 @@ impl InspectorApp {
                 }
             } else {
                 egui::ScrollArea::both().show(ui, |ui| {
-                    ui.image(texture);
+                    ui.add(
+                        egui::Image::new(texture)
+                            .texture_options(egui::TextureOptions::NEAREST),
+                    );
                 });
             }
         } else if let Some(text) = &self.preview_text {
@@ -70,7 +80,7 @@ impl InspectorApp {
     }
 
     fn ui_details_package(&mut self, ctx: &egui::Context, ui: &mut egui::Ui, idx: usize) {
-        let (data_type, key, codec, raw_size, stored_size) = {
+        let (data_type, key, codec, raw_size, stored_size, format_label) = {
             let entry = &self.entries[idx];
             (
                 entry.data_type,
@@ -78,6 +88,7 @@ impl InspectorApp {
                 entry.codec,
                 entry.raw_size,
                 entry.stored_size,
+                self.package_entry_format_label(entry.key),
             )
         };
         let is_texture_type = data_type == 1 || data_type == 9;
@@ -136,9 +147,14 @@ impl InspectorApp {
                 data_type
             ));
             ui.end_row();
-            metadata_label(ui, "Codec:");
-            ui.label(format!("{:?}", codec));
+            metadata_label(ui, "Compression:");
+            ui.label(compression_to_str(codec));
             ui.end_row();
+            if let Some(format_label) = format_label {
+                metadata_label(ui, "Format:");
+                ui.label(format_label);
+                ui.end_row();
+            }
             metadata_label(ui, "Raw Size:");
             ui.label(format_size(raw_size as u64));
             ui.end_row();
@@ -146,6 +162,25 @@ impl InspectorApp {
             ui.label(format_size(stored_size as u64));
             ui.end_row();
         });
+    }
+
+    fn package_entry_format_label(&self, key: FileKey) -> Option<&'static str> {
+        let FileKey::PathHash(hash) = key else {
+            return None;
+        };
+
+        if hash == xxh64_virtual_path(HUES_TEXTURE_ENTRY_PATH) {
+            return Some("rgba8888");
+        }
+
+        self.atlas_pages
+            .iter()
+            .find_map(|(&page_idx, page_info)| {
+                atlas_page_paths(page_idx)
+                    .iter()
+                    .any(|path| xxh64_virtual_path(path) == hash)
+                    .then_some(atlas_pixel_format_to_str(page_info.pixel_format))
+            })
     }
 
     /// Finds if a physical package entry is referenced by a virtual entry (e.g. CC Art -> Atlas Page)
@@ -305,6 +340,23 @@ impl InspectorApp {
                     } else {
                         &info.name
                     });
+                    ui.end_row();
+                }
+                VirtualEntryData::WorldLight(info) => {
+                    metadata_label(ui, "Light ID:");
+                    ui.label(ventry.id.to_string());
+                    ui.end_row();
+                    metadata_label(ui, "Size:");
+                    ui.label(format!("{}x{}", info.width, info.height));
+                    ui.end_row();
+                    metadata_label(ui, "Format:");
+                    ui.label("rgba8888");
+                    ui.end_row();
+                    metadata_label(ui, "Flags:");
+                    ui.label(format!("0x{:04X}", info.flags));
+                    ui.end_row();
+                    metadata_label(ui, "Path:");
+                    ui.label(&info.path);
                     ui.end_row();
                 }
                 VirtualEntryData::MapBlock { .. } | VirtualEntryData::StaticBlock { .. } => {

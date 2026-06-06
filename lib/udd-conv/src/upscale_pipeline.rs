@@ -1,5 +1,5 @@
 use image_postprocess::palette::{
-    palette_safe_upscale, PaletteModel, PaletteUpscaleConfig, RgbaFilterScaler, SnapMode,
+    palette_safe_upscale, DitherPolicy, PaletteModel, PaletteUpscaleConfig, RgbaFilterScaler, SnapMode,
     TransparencyPolicy,
 };
 use image_postprocess::upscaling::{
@@ -12,6 +12,7 @@ pub enum UpscalePass {
     PaletteSnapStrict,
     PaletteSnapRampAware,
     PaletteSnapExpanded { max_derived_colors: usize },
+    PaletteDitherReinsertCheckerboard,
 }
 
 impl From<UpscaleFilter> for UpscalePass {
@@ -30,7 +31,8 @@ impl UpscalePass {
             Self::Filter(pass) => Some(pass.filter),
             Self::PaletteSnapStrict
             | Self::PaletteSnapRampAware
-            | Self::PaletteSnapExpanded { .. } => None,
+            | Self::PaletteSnapExpanded { .. }
+            | Self::PaletteDitherReinsertCheckerboard => None,
         }
     }
 
@@ -45,6 +47,10 @@ impl UpscalePass {
             Self::PaletteSnapRampAware => SnapMode::RampAwareSnap,
             Self::PaletteSnapExpanded { max_derived_colors } => {
                 SnapMode::ExpandedPalette { max_derived_colors }
+            }
+            Self::PaletteDitherReinsertCheckerboard => {
+                config.dither_policy = DitherPolicy::ReinsertCheckerboard;
+                SnapMode::StrictSnap
             }
             Self::Filter(_) => return None,
         };
@@ -116,7 +122,8 @@ pub fn apply_upscale_passes_owned(
             UpscalePass::Filter(pass) => pass.apply_owned(width, height, rgba),
             UpscalePass::PaletteSnapStrict
             | UpscalePass::PaletteSnapRampAware
-            | UpscalePass::PaletteSnapExpanded { .. } => unreachable!(),
+            | UpscalePass::PaletteSnapExpanded { .. }
+            | UpscalePass::PaletteDitherReinsertCheckerboard => unreachable!(),
         };
         width = next_width;
         height = next_height;
@@ -181,5 +188,42 @@ mod tests {
         assert_eq!(scale, 1);
         assert_eq!(last_filter, UpscaleFilter::None);
         assert_eq!(pixels, rgba);
+    }
+
+    #[test]
+    fn palette_dither_pass_reinserts_checkerboard_after_smoothing() {
+        let rgba = vec![
+            24, 24, 24, 255, 224, 224, 224, 255,
+            224, 224, 224, 255, 24, 24, 24, 255,
+        ];
+        let passes = [
+            UpscalePass::from(UpscaleFilter::Bilinear2x),
+            UpscalePass::PaletteDitherReinsertCheckerboard,
+        ];
+
+        let (width, height, pixels, scale, last_filter) =
+            apply_upscale_passes(2, 2, &rgba, &passes);
+
+        assert_eq!((width, height), (4, 4));
+        assert_eq!(scale, 2);
+        assert_eq!(last_filter, UpscaleFilter::Bilinear2x);
+        let first = [pixels[0], pixels[1], pixels[2], pixels[3]];
+        let second = if first == [24, 24, 24, 255] {
+            [224, 224, 224, 255]
+        } else {
+            assert_eq!(first, [224, 224, 224, 255]);
+            [24, 24, 24, 255]
+        };
+        for y in 0..height {
+            for x in 0..width {
+                let idx = ((y * width + x) as usize) * 4;
+                let expected = if (x + y) & 1 == 0 {
+                    &first
+                } else {
+                    &second
+                };
+                assert_eq!(&pixels[idx..idx + 4], expected);
+            }
+        }
     }
 }

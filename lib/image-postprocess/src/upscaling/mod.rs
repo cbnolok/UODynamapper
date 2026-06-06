@@ -60,7 +60,7 @@ pub enum UpscaleFilter {
     KLDepixelize2x,
     KLDepixelize3x,
     KLDepixelize4x,
-    
+
     // New algorithms
     Nedi2x,
     TwoSai2x,
@@ -126,6 +126,7 @@ pub enum UpscaleFilter {
     AdaptiveLogContrast80,
     AdaptiveLogContrast90,
     ScaleFxSmartDeblur,
+    GuestrDeblur,
     UnsharpMaskSmall,
     HighPassSharpen,
 }
@@ -359,6 +360,7 @@ impl UpscaleFilter {
             | Self::AdaptiveLogContrast80
             | Self::AdaptiveLogContrast90
             | Self::ScaleFxSmartDeblur
+            | Self::GuestrDeblur
             | Self::UnsharpMaskSmall
             | Self::HighPassSharpen => 1,
         }
@@ -462,7 +464,7 @@ impl UpscaleFilter {
                 } else if scale == 4 {
                     ::hqx::hq4x(input_pixels32, &mut output_pixels32, width as usize, height as usize);
                 }
-                
+
                 let byte_length = output_pixels32.len() * 4;
                 let byte_slice: &[u8] = unsafe { std::slice::from_raw_parts(output_pixels32.as_ptr() as *const u8, byte_length) };
                 byte_slice.to_vec()
@@ -565,6 +567,12 @@ impl UpscaleFilter {
                 height,
                 rgba,
                 sharpen::ScaleFxSmartDeblurParams::default(),
+            ).2,
+            Self::GuestrDeblur => sharpen::apply_guestr_deblur(
+                width,
+                height,
+                rgba,
+                sharpen::GuestrDeblurParams::default(),
             ).2,
             Self::UnsharpMaskSmall => sharpen::apply_unsharp_mask(
                 width,
@@ -674,6 +682,12 @@ impl UpscaleFilter {
                 height,
                 rgba,
                 sharpen::ScaleFxSmartDeblurParams::default(),
+            ).2),
+            Self::GuestrDeblur => Some(sharpen::apply_guestr_deblur(
+                width,
+                height,
+                rgba,
+                sharpen::GuestrDeblurParams::default(),
             ).2),
             Self::UnsharpMaskSmall => Some(sharpen::apply_unsharp_mask(
                 width,

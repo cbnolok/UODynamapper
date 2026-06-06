@@ -1,5 +1,5 @@
 use crate::app::{LocalizedStringDisplayRow, LocalizedStringsSource, UopInspectorApp};
-use crate::ui::{arrow_delta, move_selection};
+use crate::ui::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by};
 use eframe::egui;
 
 pub fn ui_clilocs(app: &mut UopInspectorApp, ctx: &egui::Context) {
@@ -142,7 +142,15 @@ fn ui_localized_strings(app: &mut UopInspectorApp, ctx: &egui::Context) {
         .show(ctx, |ui| {
             ui.heading(format!("localizedstrings.uop ({})", package.files.len()));
             ui.separator();
-            for file in &package.files {
+            let sort = list_sort_controls(ui, "localized_strings_files", &["Hash", "Strings"], 0);
+            let file_indices = sorted_indices_by(&package.files, sort.ordering(), |left, right| {
+                match sort.option_index {
+                    1 => left.strings.len().cmp(&right.strings.len()),
+                    _ => left.filename_hash.cmp(&right.filename_hash),
+                }
+            });
+            for index in file_indices {
+                let file = &package.files[index];
                 let label = format!(
                     "{:016X} ({} strings)",
                     file.filename_hash,
@@ -217,7 +225,18 @@ fn cliloc_list(
 ) {
     let query = app.search_query.trim();
     let row_height = ui.spacing().interact_size.y;
-    let visible_numbers = visible_cliloc_numbers(entries, query);
+    let sort = list_sort_controls(ui, "classic_cliloc_entries", &["Number", "Text"], 0);
+    let sorted_indices = sorted_indices_by(entries, sort.ordering(), |left, right| {
+        match sort.option_index {
+            1 => left.text.to_ascii_lowercase().cmp(&right.text.to_ascii_lowercase()),
+            _ => left.number.cmp(&right.number),
+        }
+    });
+    let visible_indices = visible_cliloc_indices(entries, &sorted_indices, query);
+    let visible_numbers = visible_indices
+        .iter()
+        .map(|index| entries[*index].number)
+        .collect::<Vec<_>>();
     let keyboard_moved = if let Some(delta) = arrow_delta(ui, search_has_focus) {
         if let Some(number) =
             move_selection(&visible_numbers, Some(app.selected_cliloc_number), delta)
@@ -229,10 +248,9 @@ fn cliloc_list(
         false
     };
 
-    if query.is_empty() {
-        egui::ScrollArea::vertical().show_rows(ui, row_height, entries.len(), |ui, row_range| {
-            for row in row_range {
-                let entry = &entries[row];
+    egui::ScrollArea::vertical().show_rows(ui, row_height, visible_indices.len(), |ui, row_range| {
+        for row in row_range {
+            let entry = &entries[visible_indices[row]];
                 let label = format!("{}: {}", entry.number, entry.text);
                 let selected = app.selected_cliloc_number == entry.number;
                 let response = ui.selectable_label(selected, label);
@@ -244,41 +262,22 @@ fn cliloc_list(
                 }
             }
         });
-        return;
-    }
-
-    let query = query.to_lowercase();
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        for entry in entries {
-            if !cliloc_entry_matches_query(entry, &query) {
-                continue;
-            }
-            let label = format!("{}: {}", entry.number, entry.text);
-            let selected = app.selected_cliloc_number == entry.number;
-            let response = ui.selectable_label(selected, label);
-            if keyboard_moved && selected {
-                response.scroll_to_me(Some(egui::Align::Center));
-            }
-            if response.clicked() {
-                app.selected_cliloc_number = entry.number;
-            }
-        }
-    });
 }
 
-fn visible_cliloc_numbers(
+fn visible_cliloc_indices(
     entries: &[uocf::classic::cliloc::ClilocEntry],
+    sorted_indices: &[usize],
     query: &str,
-) -> Vec<i32> {
+) -> Vec<usize> {
     if query.is_empty() {
-        return entries.iter().map(|entry| entry.number).collect();
+        return sorted_indices.to_vec();
     }
 
     let query = query.to_lowercase();
-    entries
+    sorted_indices
         .iter()
-        .filter(|entry| cliloc_entry_matches_query(entry, &query))
-        .map(|entry| entry.number)
+        .copied()
+        .filter(|index| cliloc_entry_matches_query(&entries[*index], &query))
         .collect()
 }
 
@@ -293,16 +292,22 @@ fn localized_strings_table(
     rows: &[LocalizedStringDisplayRow],
 ) {
     let query = app.search_query.to_lowercase();
-    let matching_rows: Option<Vec<usize>> = if query.is_empty() {
-        None
-    } else {
-        Some(rows
-            .iter()
-            .enumerate()
-            .filter_map(|(row_index, row)| row.search_text.contains(&query).then_some(row_index))
-            .collect())
-    };
-    let row_count = matching_rows.as_ref().map_or(rows.len(), Vec::len);
+    let sort = list_sort_controls(ui, "localized_strings_rows", &["ID", "String", "unk"], 0);
+    let sorted_indices = sorted_indices_by(rows, sort.ordering(), |left, right| {
+        match sort.option_index {
+            1 => localized_text(entries, left)
+                .to_ascii_lowercase()
+                .cmp(&localized_text(entries, right).to_ascii_lowercase()),
+            2 => left.unk.cmp(&right.unk),
+            _ => string_number(&left.id).cmp(&string_number(&right.id)),
+        }
+    });
+    let matching_rows: Vec<usize> = sorted_indices
+        .iter()
+        .copied()
+        .filter(|row_index| query.is_empty() || rows[*row_index].search_text.contains(&query))
+        .collect();
+    let row_count = matching_rows.len();
 
     egui::Grid::new("localized_strings_header").striped(true).show(ui, |ui| {
         ui.label("ID");
@@ -315,16 +320,11 @@ fn localized_strings_table(
         .show_rows(ui, 20.0, row_count, |ui, row_range| {
             egui::Grid::new("localized_strings_visible_rows")
                 .striped(true)
-                .show(ui, |ui| {
-                    for row_index in row_range {
-                        let source_row_index = matching_rows
-                            .as_ref()
-                            .map_or(row_index, |matches| matches[row_index]);
+                    .show(ui, |ui| {
+                        for row_index in row_range {
+                        let source_row_index = matching_rows[row_index];
                         let row = &rows[source_row_index];
-                        let text = entries
-                            .get(row.entry_index)
-                            .map(|entry| entry.text.as_str())
-                            .unwrap_or("");
+                        let text = localized_text(entries, row);
                         ui.label(&row.id);
                         ui.label(&row.unk);
                         ui.label(text);
@@ -332,6 +332,20 @@ fn localized_strings_table(
                     }
                 });
         });
+}
+
+fn localized_text<'a>(
+    entries: &'a [uocf::enhanced::localized_strings::LocalizedStringEntry],
+    row: &LocalizedStringDisplayRow,
+) -> &'a str {
+    entries
+        .get(row.entry_index)
+        .map(|entry| entry.text.as_str())
+        .unwrap_or("")
+}
+
+fn string_number(value: &str) -> i32 {
+    value.parse().unwrap_or(i32::MAX)
 }
 
 #[cfg(test)]
@@ -353,7 +367,7 @@ mod tests {
     }
 
     #[test]
-    fn visible_cliloc_numbers_respects_search_query() {
+    fn visible_cliloc_indices_respects_search_query() {
         let entries = vec![
             uocf::classic::cliloc::ClilocEntry {
                 number: 100,
@@ -371,9 +385,10 @@ mod tests {
                 text: "Stable".to_string(),
             },
         ];
+        let sorted_indices = vec![0, 1, 2];
 
-        assert_eq!(visible_cliloc_numbers(&entries, ""), vec![100, 200, 201]);
-        assert_eq!(visible_cliloc_numbers(&entries, "bank"), vec![200]);
-        assert_eq!(visible_cliloc_numbers(&entries, "20"), vec![200, 201]);
+        assert_eq!(visible_cliloc_indices(&entries, &sorted_indices, ""), vec![0, 1, 2]);
+        assert_eq!(visible_cliloc_indices(&entries, &sorted_indices, "bank"), vec![1]);
+        assert_eq!(visible_cliloc_indices(&entries, &sorted_indices, "20"), vec![1, 2]);
     }
 }

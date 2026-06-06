@@ -27,6 +27,7 @@ textures are encoded and packed into `.uddp` packages. It is consumed by
 | NEDI | New Edge-Directed Interpolation. |
 | AMD FSR | FidelityFX Super Resolution: EASU pass, or EASU + RCAS sharpening pass. |
 | ScaleFX Smart Deblur | Edge-aware post-upscale crispening pass using ScaleFX-style tuned defaults. |
+| Guestr Deblur | CPU port of `deblur/shaders/deblur.glsl`; edge-aware 3x3 neighborhood deblur using Libretro's exposed defaults. |
 | Unsharp Mask Small | Small-radius post-upscale unsharp mask for controlled edge contrast. |
 | High-pass Sharpen | Small-radius high-pass post-upscale sharpening pass. |
 
@@ -37,6 +38,26 @@ Runtime pixel-art seam filters for fractional-scale rendering live in
 `dynamapper/assets/shaders/world/pixel_art_filters.wgsl`. IQ is wired into the
 linear sprite and terrain sample paths; BGolus AA-linear/AA-smoothstep, Klems,
 and fat-pixel UV remaps are available there for later tuning.
+
+## Post-upscale deblur
+
+`GuestrDeblur` is inspired by guest(r)'s Libretro
+`deblur/shaders/deblur.glsl` fragment pass. It samples the current pixel plus an
+`OFFSET`-spaced 3x3 neighborhood, estimates local min/max contrast, builds an
+edge-directed replacement color from inverse color-distance weights, then mixes
+that result back by local contrast and `SMART`.
+
+The exposed CPU defaults match the shader's `#pragma parameter` defaults:
+`OFFSET=2.0`, `DEBLUR=4.5`, `SMART=0.5`. The CPU port keeps RGB math in
+linear `0.0..1.0` byte-normalized space, uses bilinear reads for fractional
+offsets, clamps source coordinates at image borders, and preserves the source
+alpha channel instead of forcing alpha to opaque as the GLSL framebuffer pass
+does.
+
+Use `GuestrDeblur` when comparing against or reproducing the Libretro shader.
+Use `ScaleFxSmartDeblur` as the looser tuned post-pass that was added for this
+pipeline before the exact shader port; it is intentionally simpler and remains
+available for visual comparison.
 
 ## Notes
 
@@ -95,7 +116,11 @@ Dithering policy is explicit. `Off` treats the image normally. `DetectOnly`
 emits diagnostics without modifying pixels. `CollapseToRamp` is for assets where
 checkerboard shading should become a smoother ramp before scaling. `PreserveButConstrain`
 keeps dither structure while forcing generated colors back into the relevant
-palette/ramp. Dither detection is intentionally local and deterministic.
+palette/ramp. `ReinsertCheckerboard` is for mobile/humanoid sprites where an
+upscaler has smoothed or scrambled intentional 2-color checkerboard shading; it
+restores only detected source `A/B / B/A` regions, skips source pixels touching
+transparency, and writes real palette colors before final cleanup. Dither
+detection is intentionally local and deterministic.
 
 Algorithm guidance:
 

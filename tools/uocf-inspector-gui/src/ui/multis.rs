@@ -1,5 +1,5 @@
 use crate::app::{ArtSource, MultiCollectionSource, MultisSource, UopInspectorApp};
-use crate::ui::{arrow_delta, move_selection};
+use crate::ui::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by};
 use eframe::egui;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -143,11 +143,14 @@ fn ui_classic_multis(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 ui.label("ID:");
                 ui.add(egui::DragValue::new(&mut app.selected_multi_id));
             });
+            let sort = list_sort_controls(ui, "classic_multi_entries", &["ID"], 0);
 
             if let Some(client) = &app.client_data {
                 if let Some(multis) = &client.multis {
                     let max_id = multis.max_id();
-                    let visible_ids = (0..max_id).collect::<Vec<_>>();
+                    let ids = (0..max_id).collect::<Vec<_>>();
+                    let sorted_indices = sorted_indices_by(&ids, sort.ordering(), |left, right| left.cmp(right));
+                    let visible_ids: Vec<_> = sorted_indices.iter().map(|index| ids[*index]).collect();
                     let keyboard_moved = if let Some(delta) = arrow_delta(ui, false) {
                         if let Some(id) = move_selection(&visible_ids, Some(app.selected_multi_id), delta) {
                             select_multi(app, id, None);
@@ -157,7 +160,8 @@ fn ui_classic_multis(app: &mut UopInspectorApp, ctx: &egui::Context) {
                         false
                     };
                     egui::ScrollArea::vertical().show(ui, |ui| {
-                        for id in 0..max_id {
+                        for index in sorted_indices {
+                            let id = ids[index];
                             let selected = app.selected_multi_id == id;
                             let response = ui.selectable_label(selected, format!("Multi {}", id));
                             if keyboard_moved && selected {
@@ -218,12 +222,21 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 ui.label("Search:");
                 search_has_focus = ui.text_edit_singleline(&mut app.search_query).has_focus();
             });
+            let sort = list_sort_controls(ui, "uop_multi_entries", &["ID", "Path", "Hash", "Parts"], 0);
             ui.separator();
 
             let query = app.search_query.to_lowercase();
-            let visible_entries: Vec<_> = collection
-                .items
+            let sorted_indices = sorted_indices_by(&collection.items, sort.ordering(), |left, right| {
+                match sort.option_index {
+                    1 => left.path.to_ascii_lowercase().cmp(&right.path.to_ascii_lowercase()),
+                    2 => left.filename_hash.cmp(&right.filename_hash),
+                    3 => left.parts.len().cmp(&right.parts.len()),
+                    _ => left.id.cmp(&right.id),
+                }
+            });
+            let visible_entries: Vec<_> = sorted_indices
                 .iter()
+                .map(|index| &collection.items[*index])
                 .filter(|item| {
                     query.is_empty()
                         || item.id.to_string().contains(&query)
@@ -245,7 +258,8 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 false
             };
             egui::ScrollArea::vertical().show(ui, |ui| {
-                for item in &collection.items {
+                for index in sorted_indices {
+                    let item = &collection.items[index];
                     if !query.is_empty()
                         && !item.id.to_string().contains(&query)
                         && !item.path.to_lowercase().contains(&query)

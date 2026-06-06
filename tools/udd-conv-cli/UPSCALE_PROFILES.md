@@ -144,12 +144,18 @@ Common patterns:
 
 ```text
 xbr2x -> palette snap -> vibrance
+xbr2x -> palette-dither-reinsert-checkerboard
 nearest2x -> local laplacian clarity
 bilinear2x -> contrast enhance -> adaptive log contrast
 ```
 
 Keep aggressive local contrast and saturation late in the chain so they act on
 the final sprite detail rather than being magnified by a later scaler.
+Use `palette-dither-reinsert-checkerboard` for humanoid/mobile frames where the
+source uses intentional 2-color checkerboard shading. It restores only detected
+`A/B / B/A` source dither regions, skips source pixels touching transparency,
+and should generally be placed immediately after the scaler that smoothed or
+scrambled the dither.
 
 ## Tunable Parameters
 

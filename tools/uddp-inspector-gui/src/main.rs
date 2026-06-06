@@ -276,6 +276,7 @@ impl InspectorApp {
                             ui.add(
                                 egui::Image::new(texture)
                                     .maintain_aspect_ratio(true)
+                                    .texture_options(egui::TextureOptions::NEAREST)
                                     .fit_to_exact_size(new_size),
                             );
                         });

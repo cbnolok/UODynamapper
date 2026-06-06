@@ -18,7 +18,7 @@ UO asset data during development and research.
 | Gumps | CC or EC gump art (switchable source). |
 | Multis | Multi-tile structures from CC or EC sources. |
 | Hues | CC `hues.mul` or EC `hues.uop` hue tables (switchable source). |
-| Clilocs | Classic Client localized string tables. |
+| Clilocs | Classic Client `Cliloc.*` and Enhanced Client `LocalizedStrings.uop` localized string tables. |
 | Terrain Definition | EC `TerrainDefinition.uop` material entries and texture references. |
 | String Dictionary | EC `string_dictionary.uop` string table. |
 | Sounds | Classic Client `sound.mul` / `soundidx.mul` audio entries. |

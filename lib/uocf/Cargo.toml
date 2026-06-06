@@ -2,14 +2,8 @@
 [package]
 name = "uocf"
 version = "0.0.1"
-edition = "2021" #"2024"
-
-[lints.clippy]
-needless_lifetimes = "allow"
-collapsible_if = "allow"
-manual_is_multiple_of = "allow"
-too_many_arguments = "allow"
-#missing_safety_doc = "allow"
+edition = "2024"
+#resolver = "3"
 
 [dependencies]
 byteorder = { version = "1.5", features = ["std"] }

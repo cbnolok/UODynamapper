@@ -1,6 +1,6 @@
 use eframe::egui;
 use crate::app::{guess_uop_image_format_from_payload, UopInspectorApp};
-use super::{arrow_delta, move_selection};
+use super::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by};
 use uocf::enhanced::tileart::TileArtEntry;
 use uocf::enhanced::waypoints::{
     WaypointClilocDefinition, WaypointTypeDefinition, WaypointsPackage,
@@ -20,8 +20,31 @@ pub fn ui_uop_browser(app: &mut UopInspectorApp, ctx: &egui::Context) {
         .default_width(200.0)
         .show(ctx, |ui| {
             ui.heading("Packages");
+            let sort = list_sort_controls(ui, "uop_packages", &["Source", "Name"], 0);
+            let package_indices = sorted_indices_by(
+                &app.uop_cache.loaded_uops,
+                sort.ordering(),
+                |left, right| match sort.option_index {
+                    1 => left
+                        .path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or_default()
+                        .to_ascii_lowercase()
+                        .cmp(
+                            &right
+                                .path
+                                .file_name()
+                                .and_then(|name| name.to_str())
+                                .unwrap_or_default()
+                                .to_ascii_lowercase(),
+                        ),
+                    _ => std::cmp::Ordering::Equal,
+                },
+            );
             egui::ScrollArea::vertical().show(ui, |ui| {
-                for (i, loaded) in app.uop_cache.loaded_uops.iter().enumerate() {
+                for i in package_indices {
+                    let loaded = &app.uop_cache.loaded_uops[i];
                     let name = loaded.path.file_name().unwrap_or_default().to_string_lossy();
                     if package_has_specialized_viewer(Some(name.as_ref())) && app.selected_uop_idx != Some(i) {
                         continue;
@@ -68,9 +91,18 @@ pub fn ui_uop_browser(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 }
                 
                 let entry_labels = app.get_uop_entry_labels(uop_idx);
+                let sort = list_sort_controls(ui, "uop_entries", &["Source", "Name", "Hash"], 0);
+                let sorted_indices = sorted_indices_by(&entry_labels, sort.ordering(), |left, right| {
+                    match sort.option_index {
+                        1 => left.search_name.cmp(&right.search_name),
+                        2 => left.hash.cmp(&right.hash),
+                        _ => std::cmp::Ordering::Equal,
+                    }
+                });
                 let query = app.search_query.to_lowercase();
-                let visible_hashes: Vec<u64> = entry_labels
+                let visible_hashes: Vec<u64> = sorted_indices
                     .iter()
+                    .map(|index| &entry_labels[*index])
                     .filter(|file| query.is_empty() || file.search_name.contains(&query))
                     .map(|file| file.hash)
                     .collect();
@@ -82,7 +114,8 @@ pub fn ui_uop_browser(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 };
 
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    for file in entry_labels.iter() {
+                    for index in sorted_indices {
+                        let file = &entry_labels[index];
                         if !query.is_empty() && !file.search_name.contains(&query) {
                             continue;
                         }

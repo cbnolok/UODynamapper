@@ -1,13 +1,8 @@
 [package]
 name = "udd-conv"
 version = "0.1.0"
-edition = "2021"
-
-[lints.clippy]
-needless_lifetimes = "allow"
-collapsible_if = "allow"
-manual_is_multiple_of = "allow"
-too_many_arguments = "allow"
+edition = "2024"
+#resolver = "3"
 
 [dependencies]
 bytemuck = { version = "1.*", default-features = false, features = ["derive", "aarch64_simd", "avx512_simd"] }

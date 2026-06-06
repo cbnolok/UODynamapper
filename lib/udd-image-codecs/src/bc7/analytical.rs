@@ -1,5 +1,6 @@
 //! BC7 Analytical Encoder
 #![allow(dead_code)]
+#![allow(clippy::manual_swap, clippy::too_many_arguments, clippy::manual_is_multiple_of, clippy::manual_range_contains, clippy::unnecessary_cast, clippy::needless_range_loop, clippy::explicit_counter_loop)]
 //!
 //! Architecture:
 //!   1. Types and quantization helpers

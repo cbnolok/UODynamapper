@@ -2,13 +2,12 @@
 [package]
 name = "dynamapper"
 version = "0.1.0"
-edition = "2021"    # "2024"
+edition = "2024"
+#resolver = "3"
 
 [lints.clippy]
-needless_lifetimes = "allow"
-collapsible_if = "allow"
-manual_is_multiple_of = "allow"
 too_many_arguments = "allow"
+type_complexity = "allow"
 
 [dependencies]
 udd-assets = { path = "../lib/udd-assets" }

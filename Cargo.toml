@@ -1,5 +1,5 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = [
     "dynamapper",
     "lib/uocf",
@@ -21,6 +21,15 @@ members = [
 [workspace.dependencies]
 zstd = { version = "0.13", features = ["zstdmt"] }
 
+[workspace.lints.clippy]
+collapsible_if = "allow"
+empty_line_after_doc_comment = "allow"
+manual_div_ceil = "allow"
+manual_is_multiple_of = "allow"
+needless_lifetimes = "allow"
+nonminimal_bool = "allow"
+too_many_arguments = "allow"
+
 
 # --------- Release
 
@@ -38,8 +47,8 @@ incremental = false
 debug = false
 strip = true        # Strip debug info and symbols
 
-[profile.release.package.image-postprocess]
-opt-level = 3
+#[profile.release.package.image-postprocess]
+#opt-level = 3
 
 # Target the "loggers" and infrastructure: no reasonable difference, < 1 mb.
 #[profile.release.package.tracing]
@@ -99,14 +108,6 @@ incremental = true          # Default for the profile, but shadowed by "*" below
 debug = true                # Default for the profile, but shadowed by "*" below
 debug-assertions = true     # Default for the profile, but shadowed by "*" below
 
-# By default, build scripts and procedural macros (like serde_derive) are compiled
-# with the same profile settings as the other code. This can make them slower.
-# so we override the profile for build scripts and procedural macros.
-[profile.dev.build-override]
-opt-level = 3               # Makes the proc-macros run faster
-debug = false
-strip = true
-
 # Settings for dependencies (incl. Bevy) AND workspace members (unless overridden below):
 [profile.dev.package."*"]
 opt-level = "s"             # Selective size optimization (better for behemoths like bevy_dylib)
@@ -115,23 +116,16 @@ debug = false               # Disable generation of debug info (save RAM/Disk)
 debug-assertions = false    # Disable additional safety checks (including arithmetic overflow).
 strip = true                # Strip debug symbols
 
+# By default, build scripts and procedural macros (like serde_derive) are compiled
+# with the same profile settings as the other code. This can make them slower.
+# so we override the profile for build scripts and procedural macros.
+[profile.dev.build-override]
+opt-level = 3               # Makes the proc-macros run faster
+debug = false
+strip = true
+
 # --- Workspace Member Overrides
 # Since "*" above is very aggressive, we must opt-back-in to debug info for our own code.
-
-# Specifically optimize uocf for map processing performance
-[profile.dev.package.uocf]
-opt-level = 3
-codegen-units = 1
-debug = true
-debug-assertions = true
-strip = false
-
-[profile.dev.package.image-postprocess]
-opt-level = 3
-codegen-units = 1
-debug = true
-debug-assertions = true
-strip = false
 
 [profile.dev.package.dynamapper]
 opt-level = 1
@@ -139,7 +133,48 @@ debug = true
 debug-assertions = true
 strip = false
 
+# Specifically optimize data processing libraries for performance
+[profile.dev.package.image-postprocess]
+opt-level = 3
+codegen-units = 1
+debug = true
+debug-assertions = false
+strip = "debuginfo"
+
+[profile.dev.package.udd-assets]
+opt-level = 2
+debug = true
+debug-assertions = true
+strip = "debuginfo"
+
+[profile.dev.package.udd-container]
+opt-level = 2
+debug = true
+debug-assertions = true
+strip = "debuginfo"
+
 [profile.dev.package.udd-conv]
+opt-level = 2
+codegen-units = 1
+debug = true
+debug-assertions = true
+strip = "debuginfo"
+
+[profile.dev.package.udd-image-codecs]
+opt-level = 3
+codegen-units = 1
+debug = true
+debug-assertions = false
+strip = "debuginfo"
+
+[profile.dev.package.udd-logging]
+opt-level = 3
+codegen-units = 1
+debug = true
+debug-assertions = true
+strip = "debuginfo"
+
+[profile.dev.package.uocf]
 opt-level = 3
 codegen-units = 1
 debug = true
@@ -147,49 +182,43 @@ debug-assertions = true
 strip = false
 
 [profile.dev.package.udd-conv-cli]
-opt-level = 1
+opt-level = 2
 debug = true
 debug-assertions = true
-strip = false
+strip = true # "debuginfo"
 
 [profile.dev.package.udd-conv-gui]
-opt-level = 1
+opt-level = 2
 debug = true
 debug-assertions = true
-strip = false
-
-[profile.dev.package.uddp-inspector-gui]
-opt-level = 1
-debug = true
-debug-assertions = true
-strip = false
-
-[profile.dev.package.udd-image-codecs]
-opt-level = 3
-codegen-units = 1
-debug = true
-strip = false
+strip = true
 
 [profile.dev.package.uocf-cli]
-opt-level = 1
+opt-level = 2
 debug = true
 debug-assertions = true
-strip = false
+strip = true # "debuginfo"
 
 [profile.dev.package.uocf-asset-cli]
-opt-level = 1
+opt-level = 2
 debug = true
 debug-assertions = true
-strip = false
+strip = true # "debuginfo"
 
 [profile.dev.package.uocf-inspector-gui]
-opt-level = 1
+opt-level = 2
 debug = true
 debug-assertions = true
-strip = false
+strip = true # "debuginfo"
+
+[profile.dev.package.uddp-inspector-gui]
+opt-level = 2
+debug = true
+debug-assertions = true
+strip = true # "debuginfo"
 
 [profile.dev.package.uop-dict-populator-gui]
-opt-level = 1
+opt-level = 2
 debug = true
 debug-assertions = true
-strip = false
+strip = true # "debuginfo"

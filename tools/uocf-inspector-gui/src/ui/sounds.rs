@@ -1,6 +1,7 @@
 use eframe::egui;
 
 use crate::app::{SoundPlayer, UopInspectorApp};
+use crate::ui::{list_sort_controls, sorted_indices_by};
 
 pub fn ui_sounds(app: &mut UopInspectorApp, ctx: &egui::Context) {
     let Some(sounds) = app.cc_sounds.clone() else {
@@ -50,12 +51,25 @@ pub fn ui_sounds(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 egui::TextEdit::singleline(&mut app.sound_search_query)
                     .hint_text("Filter by slot or name"),
             );
+            let sort = list_sort_controls(ui, "sound_entries", &["Slot", "Name", "Duration", "Bytes"], 0);
             ui.separator();
 
             if let Some(entries) = app.cc_sound_entries.clone() {
                 let query = app.sound_search_query.to_ascii_lowercase();
+                let sorted_indices = sorted_indices_by(&entries, sort.ordering(), |left, right| {
+                    match sort.option_index {
+                        1 => left.name.to_ascii_lowercase().cmp(&right.name.to_ascii_lowercase()),
+                        2 => left
+                            .duration_seconds
+                            .partial_cmp(&right.duration_seconds)
+                            .unwrap_or(std::cmp::Ordering::Equal),
+                        3 => left.pcm_bytes.cmp(&right.pcm_bytes),
+                        _ => left.slot_id.cmp(&right.slot_id),
+                    }
+                });
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    for entry in entries.iter() {
+                    for index in sorted_indices {
+                        let entry = &entries[index];
                         if !query.is_empty()
                             && !entry.slot_id.to_string().contains(&query)
                             && !entry.name.to_ascii_lowercase().contains(&query)

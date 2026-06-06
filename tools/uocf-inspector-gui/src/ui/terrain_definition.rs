@@ -1,4 +1,5 @@
 use crate::app::{TerrainDefinitionFileEntry, UopInspectorApp};
+use crate::ui::{list_sort_controls, sorted_indices_by};
 use eframe::egui;
 use uocf::enhanced::terrain_definition::TerrainDefinitionEntry;
 use std::collections::BTreeSet;
@@ -22,10 +23,33 @@ pub fn ui_terrain_definition(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 ui.label("Search:");
                 ui.text_edit_singleline(&mut app.search_query);
             });
+            let sort = list_sort_controls(ui, "terrain_definition_files", &["ID", "Name", "Hash", "Bytes"], 0);
             ui.separator();
 
             egui::ScrollArea::vertical().show(ui, |ui| {
-                for file in files {
+                let sorted_indices = sorted_indices_by(files, sort.ordering(), |left, right| {
+                    match sort.option_index {
+                        1 => left
+                            .entry
+                            .name
+                            .as_deref()
+                            .unwrap_or("Unknown")
+                            .to_ascii_lowercase()
+                            .cmp(
+                                &right
+                                    .entry
+                                    .name
+                                    .as_deref()
+                                    .unwrap_or("Unknown")
+                                    .to_ascii_lowercase(),
+                            ),
+                        2 => left.filename_hash.cmp(&right.filename_hash),
+                        3 => left.byte_len.cmp(&right.byte_len),
+                        _ => left.entry.id.cmp(&right.entry.id),
+                    }
+                });
+                for index in sorted_indices {
+                    let file = &files[index];
                     let entry = &file.entry;
                     let name = entry.name.as_deref().unwrap_or("Unknown");
                     

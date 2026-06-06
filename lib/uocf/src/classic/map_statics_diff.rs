@@ -44,7 +44,7 @@ impl MapDiff {
 
 pub struct StaticDiff {
     lookup_table: HashMap<u32, u32>,
-    index: IndexFile,
+    index_file: IndexFile,
     diff_mmap: Mmap,
 }
 
@@ -60,7 +60,7 @@ impl StaticDiff {
         let diff_mmap = unsafe { Mmap::map(&diff_file)? };
         Ok(Self {
             lookup_table,
-            index,
+            index_file: index,
             diff_mmap,
         })
     }
@@ -70,7 +70,7 @@ impl StaticDiff {
             return Ok(None);
         };
 
-        let entry = self.index.element(diff_index as usize)?;
+        let entry = self.index_file.element(diff_index as usize)?;
         let (Some(lookup), Some(length)) = (entry.lookup(), entry.len()) else {
             return Ok(None);
         };

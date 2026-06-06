@@ -1,8 +1,13 @@
+.agents/
+#.cargo/
+.codex/
 .idea/
-.cargo/
+.tmp/
+.vscode/
 archive/
-ClassicUO/
 compare_impl/
 old/
 target/
-*__pycache__/
+*__pycache__*
+
+.*swp*

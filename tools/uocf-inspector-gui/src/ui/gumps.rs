@@ -1,5 +1,5 @@
 use crate::app::{GumpSource, GumpViewerTab, PaperdollEquipmentInput, UopInspectorApp};
-use crate::ui::{arrow_delta, move_selection};
+use crate::ui::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by};
 use eframe::egui;
 use knuffel::Decode;
 use std::sync::Arc;
@@ -616,11 +616,17 @@ fn ui_gump_id_list(
     }
 
     let selected_id = parse_u32_field(selected_gump_id).ok();
+    let sort = list_sort_controls(ui, (id_salt, "gump_ids"), &["ID"], 0);
+    let sorted_indices = sorted_indices_by(ids, sort.ordering(), |left, right| left.cmp(right));
     let mut selected = None;
+    let visible_ids = sorted_indices
+        .iter()
+        .map(|index| ids[*index])
+        .collect::<Vec<_>>();
     let list_rect = ui.available_rect_before_wrap();
     let keyboard_moved = if ui.rect_contains_pointer(list_rect) {
         arrow_delta(ui, false)
-            .and_then(|delta| move_selection(ids, selected_id, delta))
+            .and_then(|delta| move_selection(&visible_ids, selected_id, delta))
             .map(|gump_id| {
                 selected = Some(gump_id);
                 true
@@ -634,9 +640,9 @@ fn ui_gump_id_list(
     egui::ScrollArea::vertical()
         .id_salt(id_salt)
         .max_height(max_height)
-        .show_rows(ui, row_height, ids.len(), |ui, range| {
+        .show_rows(ui, row_height, sorted_indices.len(), |ui, range| {
             for index in range {
-                let gump_id = ids[index];
+                let gump_id = ids[sorted_indices[index]];
                 let response = ui.add_sized(
                     egui::vec2(ui.available_width(), row_height),
                     egui::SelectableLabel::new(

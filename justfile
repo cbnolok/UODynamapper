@@ -54,21 +54,25 @@ sccache_effective := if sccache_requested == "true" { sccache_available } else {
 export RUSTC_WRAPPER := if sccache_effective == "true" { "sccache" } else { wrapper_path }
 
 # Default RUSTFLAGS based on platform
-linux_linker_base := if has_mold != "" {
-    "-Clink-arg=-fuse-ld=mold"
-} else if has_wild != "" {
+linux_debug_linker_base := if has_wild != "" {
     "-Clink-arg=-fuse-ld=wild"
 } else {
     ""
 }
 
+linux_release_linker_base := if has_mold != "" {
+    "-Clink-arg=-fuse-ld=mold"
+} else {
+    ""
+}
+
 # Specific GNU ld / ELF linker flags for optimized Linux builds, not supported by windows cl.exe
-linux_optimized_flags := linux_linker_base + " -Clink-arg=-Wl,--gc-sections -Clink-arg=-Wl,--no-allow-shlib-undefined"
+linux_optimized_flags := linux_release_linker_base + " -Clink-arg=-Wl,--gc-sections -Clink-arg=-Wl,--no-allow-shlib-undefined"
 
 # Features to enable on Linux by default (ensures Wayland/X11 support when using --no-default-features)
 linux_features := if is_linux == "true" { "linux_wayland,linux_x11" } else { "" }
 
-export RUSTFLAGS := ""
+export RUSTFLAGS := if is_linux == "true" { linux_debug_linker_base } else { "" }
 
 # Specialized RUSTFLAGS for different build types (exported to be accessible in shell commands)
 rustflags_optimized_common_nightly      := " -Zshare-generics=y -Zlocation-detail=none"

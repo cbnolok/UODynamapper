@@ -14,14 +14,14 @@ packages consumed by Dynamapper and the other tools at runtime.
 | ------- | -------------- | ------ |
 | `pack-tex-art-cc` | `tex_art_cc.uddp` | Classic `art.mul` / `artidx.mul` |
 | `pack-tex-land-cc` | `tex_land_cc.uddp` | Classic `texmaps.mul` |
-| `pack-mobile-anim-cc` | `mobile_anim_cc.uddp` | Classic `anim*.mul` / `anim*.idx` |
-| `pack-mobile-anim-ec` | `mobile_anim_ec.uddp` | EC `AnimationFrame*.uop` |
+| `pack-mobile-anims` | `mobile_anim_cc.uddp` | Classic `anim*.mul` / `anim*.idx` |
+| `pack-ec-mobile-anims` | `mobile_anim_ec.uddp` | EC `AnimationFrame*.uop` |
 | `pack-tex-art-ec` | `tex_art_ec.uddp`, `tex_land_ec.uddp` | EC art and land in one pass |
 | `pack-tilemeta` | `tilemeta.uddp` | CC tiledata + EC tileart |
 | `pack-map` | `mapX.uddp` | Classic `mapX.mul` |
 | `pack-statics` | `staticsX.uddp` | Classic `staticsX.mul` |
 | `pack-map-statics` | `mapX.uddp` + `staticsX.uddp` | Combined map+statics pass |
-| `pack-world-lights` | `world_lights.uddp` | CC and EC lighting textures |
+| `pack-lights` | `world_lights.uddp` | CC and EC lighting textures |
 | `pack-hues` | `hues.uddp` | Classic `hues.mul` or EC `hues.uop` |
 | `pack-gumps-cc` | `gumps_cc.uddp` | Classic `gumpart.mul` / `gumpidx.mul` |
 | `pack-gumps-ec` | `gumps_ec.uddp` | EC `interface.uop` gumpart |
@@ -74,25 +74,25 @@ override type="cc_mobile_animation_frames" family=42 id=3 {
 Development commands for auditing and validating EC material routing before
 packaging. These produce JSON or KDL reports rather than `.uddp` packages:
 
-- `audit-ec-material-texture-refs`: audit direct EC material texture references
+- `audit-ec-material-refs`: audit direct EC material texture references
   from `tileart.uop` and `TerrainDefinition.uop`.
-- `inventory-ec-support-resources`: inventory `TerrainTexture.uop` and
+- `inventory-ec-support-textures`: inventory `TerrainTexture.uop` and
   `EffectTexture.uop` support resources.
-- `ec-material-baseline-report`: write a developer baseline report for current
+- `report-ec-material-baseline`: write a developer baseline report for current
   EC material heuristics and metadata axes.
 - `audit-terrain-definition-texture-selection`: write a JSON audit of
   `TerrainDefinition` primary texture selection and layer reasoning.
-- `terrain-decision-queue`: write a short JSON queue of terrain material
+- `report-ec-terrain-practical-review`: write a short JSON queue of terrain material
   decisions needed before runtime use.
-- `compare-terrain-definition-kdl`: compare `TerrainDefinition.kdl` against
+- `audit-ec-terrain-definition-kdl`: compare `TerrainDefinition.kdl` against
   `TerrainDefinition.uop` and report manual-only fields.
-- `terrain-definition-review-skeleton`: write a KDL review skeleton for
+- `report-ec-terrain-override-candidates`: write a KDL review skeleton for
   `TerrainDefinition` manual integration candidates.
-- `validate-ec-terrain-overrides`: validate `EcTerrainOverrides.kdl` against
+- `audit-ec-terrain-overrides`: validate `EcTerrainOverrides.kdl` against
   source-derived `TerrainDefinition` evidence.
-- `validate-terrain-routing-package`: validate a terrain routing KDL against a
+- `audit-land-routing-kdl`: validate a terrain routing KDL against a
   `tex_land_ec.uddp` package.
-- `audit-surface-like-art-redirection`: write a JSON audit of surface-like art
+- `audit-ec-surface-redirection`: write a JSON audit of surface-like art
   redirection through tilemeta and `tex_land_ec` provenance.
 
 ## udd-tool

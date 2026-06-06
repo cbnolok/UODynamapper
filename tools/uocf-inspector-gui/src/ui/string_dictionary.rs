@@ -1,4 +1,5 @@
 use crate::app::UopInspectorApp;
+use crate::ui::{list_sort_controls, sorted_indices_by};
 use eframe::egui;
 
 pub fn ui_string_dictionary(app: &mut UopInspectorApp, ctx: &egui::Context) {
@@ -6,6 +7,14 @@ pub fn ui_string_dictionary(app: &mut UopInspectorApp, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.centered_and_justified(|ui| {
                 ui.label("Select an Enhanced Client path containing string_dictionary.uop.");
+            });
+        });
+        return;
+    };
+    let Some(rows) = app.string_dictionary_rows.clone() else {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.centered_and_justified(|ui| {
+                ui.label("Reload assets to rebuild the string dictionary row cache.");
             });
         });
         return;
@@ -46,34 +55,53 @@ pub fn ui_string_dictionary(app: &mut UopInspectorApp, ctx: &egui::Context) {
             ui.label("Search:");
             ui.text_edit_singleline(&mut app.search_query);
         });
+        let sort = list_sort_controls(ui, "string_dictionary_rows", &["Index", "Offset", "String"], 0);
         ui.separator();
 
         let query = app.search_query.to_lowercase();
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            egui::Grid::new("string_dictionary_grid")
-                .striped(true)
-                .show(ui, |ui| {
-                    ui.label("Index");
-                    ui.label("Offset");
-                    ui.label("String");
-                    ui.end_row();
-
-                    for (index, value) in dictionary.iter() {
-                        let offset = index + 1;
-                        if !query.is_empty()
-                            && !index.to_string().contains(&query)
-                            && !offset.to_string().contains(&query)
-                            && !value.to_lowercase().contains(&query)
-                        {
-                            continue;
-                        }
-
-                        ui.label(index.to_string());
-                        ui.label(offset.to_string());
-                        ui.monospace(value);
-                        ui.end_row();
-                    }
-                });
+        let sorted_indices = sorted_indices_by(&rows, sort.ordering(), |left, right| {
+            match sort.option_index {
+                1 => string_number(&left.offset).cmp(&string_number(&right.offset)),
+                2 => left.value.to_ascii_lowercase().cmp(&right.value.to_ascii_lowercase()),
+                _ => string_number(&left.index).cmp(&string_number(&right.index)),
+            }
         });
+        let matching_rows: Vec<usize> = sorted_indices
+            .iter()
+            .copied()
+            .filter(|row_index| {
+                query.is_empty() || rows[*row_index].search_text.contains(&query)
+            })
+            .collect();
+        let row_count = matching_rows.len();
+
+        egui::Grid::new("string_dictionary_grid")
+            .striped(true)
+            .show(ui, |ui| {
+                ui.label("Index");
+                ui.label("Offset");
+                ui.label("String");
+                ui.end_row();
+            });
+        egui::ScrollArea::vertical()
+            .id_salt("string_dictionary_rows")
+            .show_rows(ui, 20.0, row_count, |ui, row_range| {
+                egui::Grid::new("string_dictionary_visible_rows")
+                    .striped(true)
+                    .show(ui, |ui| {
+                        for row_index in row_range {
+                            let source_row_index = matching_rows[row_index];
+                            let row = &rows[source_row_index];
+                            ui.label(&row.index);
+                            ui.label(&row.offset);
+                            ui.monospace(&row.value);
+                            ui.end_row();
+                        }
+                    });
+            });
     });
+}
+
+fn string_number(value: &str) -> u64 {
+    value.parse().unwrap_or(u64::MAX)
 }

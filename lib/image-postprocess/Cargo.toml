@@ -1,7 +1,8 @@
 [package]
 name = "image-postprocess"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+#resolver = "3"
 
 [dependencies]
 image = { version = "0.25", default-features = false }

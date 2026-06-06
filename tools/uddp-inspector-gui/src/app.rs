@@ -163,7 +163,7 @@ impl InspectorApp {
 
         let color_image = egui::ColorImage::from_rgba_unmultiplied(size, pixels);
         self.preview_texture =
-            Some(ctx.load_texture(texture_name, color_image, Default::default()));
+            Some(ctx.load_texture(texture_name, color_image, egui::TextureOptions::NEAREST));
         self.preview_texture_size = Some(size);
         self.preview_text = Some(label);
     }
@@ -494,6 +494,12 @@ impl InspectorApp {
                     ViewMode::MobileAnimCc
                 } else if self.mobile_anim_ec_package.is_some() {
                     ViewMode::MobileAnimEc
+                } else if self
+                    .virtual_entries
+                    .iter()
+                    .any(|entry| matches!(entry.data, VirtualEntryData::WorldLight(_)))
+                {
+                    ViewMode::Virtual
                 } else {
                     ViewMode::Package
                 };
@@ -520,6 +526,14 @@ impl InspectorApp {
                     self.virtual_material_entries = self.detect_tex_land_ec_material_entries(&package);
                 }
                 self.virtual_entries = atlas_entries;
+                return;
+            }
+        }
+
+        if let Ok(package) = udd_assets::WorldLightsPackage::from_uddp_package(reader.clone()) {
+            let world_light_entries = self.detect_world_light_virtual_entries(&package);
+            if !world_light_entries.is_empty() {
+                self.virtual_entries = world_light_entries;
                 return;
             }
         }
@@ -794,6 +808,38 @@ impl InspectorApp {
         entries
     }
 
+    pub fn detect_world_light_virtual_entries(
+        &self,
+        package: &udd_assets::WorldLightsPackage,
+    ) -> Vec<VirtualEntry> {
+        package
+            .slots()
+            .iter()
+            .filter(|slot| slot.is_present())
+            .map(|slot| {
+                let path = udd_assets::world_lights::light_entry_path(slot.light_id);
+                VirtualEntry {
+                    id: slot.light_id,
+                    _data_type: udd_container::DataType::Light as u8,
+                    kind: "World Light".to_string(),
+                    summary: format!(
+                        "{}x{} rgba8888 | {} raw",
+                        slot.width,
+                        slot.height,
+                        format_size(slot.width as u64 * slot.height as u64 * 4)
+                    ),
+                    location: path.clone(),
+                    data: VirtualEntryData::WorldLight(WorldLightInfo {
+                        width: slot.width,
+                        height: slot.height,
+                        flags: slot.flags,
+                        path,
+                    }),
+                }
+            })
+            .collect()
+    }
+
     pub fn detect_block_virtual_entries(&self) -> Vec<VirtualEntry> {
         let mut entries = Vec::new();
 
@@ -888,6 +934,9 @@ impl InspectorApp {
                                 None,
                             ))
                         }
+                        VirtualEntryData::WorldLight(info) => {
+                            Some((ventry, self.read_file_by_path(u_reader, &info.path), None))
+                        }
                         /*
                         VirtualEntryData::DirectPayload { offset, size } => {
                             let mut data = vec![0u8; *size as usize];
@@ -960,16 +1009,32 @@ impl InspectorApp {
                                 "virtual_tile",
                                 [width as usize, height as usize],
                                 &cropped,
-                                format!("Virtual Tile: {} ({}x{})", ventry.id, width, height),
+                                format!(
+                                    "Virtual Tile: {} ({}x{}, format: {})",
+                                    ventry.id,
+                                    width,
+                                    height,
+                                    self.atlas_pages
+                                        .get(&page_index)
+                                        .map(|info| atlas_pixel_format_to_str(info.pixel_format))
+                                        .unwrap_or("unknown")
+                                ),
                             );
                             if let Some(atlas_image) = atlas_image {
                                 self.atlas_texture = Some(ctx.load_texture(
                                     "full_atlas",
                                     atlas_image,
-                                    egui::TextureOptions::default(),
+                                    egui::TextureOptions::NEAREST,
                                 ));
                                 self.atlas_texture_size = Some(atlas_size);
-                                self.atlas_text = Some(format!("Full Atlas Page {}", page_index));
+                                self.atlas_text = Some(format!(
+                                    "Full Atlas Page {} (format: {})",
+                                    page_index,
+                                    self.atlas_pages
+                                        .get(&page_index)
+                                        .map(|info| atlas_pixel_format_to_str(info.pixel_format))
+                                        .unwrap_or("unknown")
+                                ));
                             }
                         }
                     }
@@ -994,11 +1059,15 @@ impl InspectorApp {
                                     [preview.width as usize, preview.height as usize],
                                     &cropped,
                                     format!(
-                                        "Material: {} via slot {} ({}x{})",
+                                        "Material: {} via slot {} ({}x{}, format: {})",
                                         info.material_id,
                                         preview.slot_id,
                                         preview.width,
-                                        preview.height
+                                        preview.height,
+                                        self.atlas_pages
+                                            .get(&preview.page_index)
+                                            .map(|page_info| atlas_pixel_format_to_str(page_info.pixel_format))
+                                            .unwrap_or("unknown")
                                     ),
                                 );
                             }
@@ -1033,6 +1102,47 @@ impl InspectorApp {
                     VirtualEntryData::TileMetaItem(info) => {
                         self.preview_texture = None;
                         self.preview_text = Some(render_tilemeta_item_preview(ventry.id, &info));
+                    }
+                    VirtualEntryData::WorldLight(info) => {
+                        let Some(light_bytes) = page_data_opt else {
+                            self.preview_texture = None;
+                            self.preview_text = Some(format!(
+                                "World Light {} payload is missing at {}.",
+                                ventry.id,
+                                info.path
+                            ));
+                            return;
+                        };
+                        let expected_len =
+                            info.width as usize * info.height as usize * 4;
+                        if info.width == 0
+                            || info.height == 0
+                            || light_bytes.len() != expected_len
+                        {
+                            self.preview_texture = None;
+                            self.preview_text = Some(format!(
+                                "World Light {} has invalid rgba8888 payload: expected {} bytes for {}x{}, got {} bytes.",
+                                ventry.id,
+                                expected_len,
+                                info.width,
+                                info.height,
+                                light_bytes.len()
+                            ));
+                            return;
+                        }
+
+                        self.set_preview_image(
+                            ctx,
+                            &format!("world_light_{}", ventry.id),
+                            [info.width as usize, info.height as usize],
+                            &light_bytes,
+                            format!(
+                                "World Light {} ({}x{}, format: rgba8888)",
+                                ventry.id,
+                                info.width,
+                                info.height
+                            ),
+                        );
                     }
                     VirtualEntryData::MapBlock { source_entry_idx } => {
                         self.preview_texture = None;
@@ -1089,7 +1199,7 @@ impl InspectorApp {
                         "uo_land_tex",
                         size,
                         &rgba,
-                        format!("UO Land Texture: {}x{}", size[0], size[1]),
+                        format!("UO Land Texture: {}x{} (format: bgra5551)", size[0], size[1]),
                     );
                     return;
                 }
@@ -1105,7 +1215,7 @@ impl InspectorApp {
                                 "uo_art_land",
                                 [44, 44],
                                 &rgba,
-                                format!("UO Land Art ID {}", id),
+                                format!("UO Land Art ID {} (format: classic art)", id),
                             );
                             return;
                         }
@@ -1117,7 +1227,7 @@ impl InspectorApp {
                             "uo_art_static",
                             [w as usize, h as usize],
                             &rgba,
-                            format!("UO Static Art ID {}", id),
+                            format!("UO Static Art ID {} (format: classic art rle)", id),
                         );
                         return;
                     }
@@ -1150,7 +1260,7 @@ impl InspectorApp {
                             "ktx2_preview",
                             [width as usize, height as usize],
                             &rgba,
-                            format!("KTX2 BC7 Texture: {}x{}", width, height),
+                            format!("KTX2 Texture: {}x{} (format: bc7)", width, height),
                         );
                         return;
                     }
@@ -1171,10 +1281,10 @@ impl InspectorApp {
                         [extent.width() as usize, extent.height() as usize],
                         &rgba,
                         format!(
-                            "VRAM Texture: {}x{} ({:?})",
+                            "VRAM Texture: {}x{} (format: {})",
                             extent.width(),
                             extent.height(),
-                            vram.format()
+                            vram_texture_format_name(vram.format())
                         ),
                     );
                     return;
@@ -1192,10 +1302,10 @@ impl InspectorApp {
                 size,
                 &pixels,
                 format!(
-                    "Standard Image: {}x{} ({:?})",
+                    "Standard Image: {}x{} (format: {})",
                     size[0],
                     size[1],
-                    image.color()
+                    standard_image_format_name(&data).unwrap_or("decoded image")
                 ),
             );
             return;
@@ -1213,7 +1323,7 @@ impl InspectorApp {
                     "guessed_rgba",
                     [side as usize, side as usize],
                     &data,
-                    format!("Guessed Raw RGBA: {}x{}", side, side),
+                    format!("Guessed Raw RGBA: {}x{} (format: rgba8888)", side, side),
                 );
                 return;
             }
@@ -1288,6 +1398,34 @@ impl InspectorApp {
             self.load_preview(ctx);
         }
     }
+}
+
+fn vram_texture_format_name(format: udd_conv::bc7::VramTextureFormat) -> &'static str {
+    match format {
+        udd_conv::bc7::VramTextureFormat::Rgba8UnormSrgb => "rgba8888",
+        udd_conv::bc7::VramTextureFormat::Bc7RgbaUnormSrgb => "bc7",
+    }
+}
+
+fn standard_image_format_name(data: &[u8]) -> Option<&'static str> {
+    image::guess_format(data).ok().map(|format| match format {
+        image::ImageFormat::Jpeg => "jpeg",
+        image::ImageFormat::Png => "png",
+        image::ImageFormat::Gif => "gif",
+        image::ImageFormat::WebP => "webp",
+        image::ImageFormat::Tiff => "tiff",
+        image::ImageFormat::Tga => "tga",
+        image::ImageFormat::Dds => "dds",
+        image::ImageFormat::Bmp => "bmp",
+        image::ImageFormat::Ico => "ico",
+        image::ImageFormat::Hdr => "hdr",
+        image::ImageFormat::OpenExr => "exr",
+        image::ImageFormat::Farbfeld => "farbfeld",
+        image::ImageFormat::Avif => "avif",
+        image::ImageFormat::Qoi => "qoi",
+        image::ImageFormat::Pnm => "pnm",
+        _ => "decoded image",
+    })
 }
 
 #[cfg(test)]
@@ -1448,6 +1586,58 @@ mod tests {
                 .unwrap();
         }
         bytes
+    }
+
+    fn world_lights_slot_manifest_bytes() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"WLSL");
+        bytes.write_u32::<LittleEndian>(1).unwrap();
+        bytes.write_u32::<LittleEndian>(3).unwrap();
+
+        bytes.write_u32::<LittleEndian>(0).unwrap();
+        bytes.write_u16::<LittleEndian>(0).unwrap();
+        bytes.write_u16::<LittleEndian>(0).unwrap();
+        bytes.write_u16::<LittleEndian>(0).unwrap();
+
+        bytes.write_u32::<LittleEndian>(1).unwrap();
+        bytes
+            .write_u16::<LittleEndian>(udd_assets::world_lights::SLOT_FLAG_PRESENT)
+            .unwrap();
+        bytes.write_u16::<LittleEndian>(2).unwrap();
+        bytes.write_u16::<LittleEndian>(1).unwrap();
+
+        bytes.write_u32::<LittleEndian>(2).unwrap();
+        bytes.write_u16::<LittleEndian>(0).unwrap();
+        bytes.write_u16::<LittleEndian>(0).unwrap();
+        bytes.write_u16::<LittleEndian>(0).unwrap();
+
+        bytes
+    }
+
+    fn world_lights_test_package() -> udd_assets::WorldLightsPackage {
+        let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
+        add_metadata_file(
+            &mut builder,
+            udd_assets::world_lights::SLOT_MANIFEST_ENTRY_PATH,
+            &world_lights_slot_manifest_bytes(),
+        );
+        builder
+            .add_file(AddFileRequest {
+                data_type: DataType::Light as u8,
+                compression: CompressionFlag::None,
+                width: 2,
+                height: 1,
+                virtual_path: Some("lights/00000001.rgba8888"),
+                path_hash64: None,
+                id: None,
+                data: &[255, 255, 255, 255, 64, 64, 64, 255],
+            })
+            .expect("add world light payload");
+        let bytes = builder.build().expect("build test package");
+        udd_assets::WorldLightsPackage::from_uddp_package(
+            UddpReader::open(bytes).expect("open test package"),
+        )
+        .expect("load world lights package")
     }
 
     fn ec_land_test_package() -> udd_assets::TexLandEcPackage {
@@ -1782,6 +1972,26 @@ mod tests {
 
         assert_eq!(preview.slot_id, 100);
         assert_eq!(info.primary_texture_id, Some(2_000_520));
+    }
+
+    #[test]
+    fn world_lights_virtual_entries_report_present_masks() {
+        let app = empty_test_app(ViewMode::Virtual);
+        let package = world_lights_test_package();
+
+        let entries = app.detect_world_light_virtual_entries(&package);
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, 1);
+        assert_eq!(entries[0].kind, "World Light");
+        assert_eq!(entries[0].summary, "2x1 rgba8888 | 8 B raw");
+        assert_eq!(entries[0].location, "lights/00000001.rgba8888");
+        let VirtualEntryData::WorldLight(info) = &entries[0].data else {
+            panic!("expected world light entry");
+        };
+        assert_eq!(info.width, 2);
+        assert_eq!(info.height, 1);
+        assert_eq!(info.flags, udd_assets::world_lights::SLOT_FLAG_PRESENT);
     }
 
     #[test]

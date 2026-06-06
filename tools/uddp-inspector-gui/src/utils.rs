@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 use bytemuck::{pod_read_unaligned, Pod};
+use udd_container::Codec;
+use crate::models::AtlasPixelFormat;
 
 pub fn normalize_linux_portal_env() {
     #[cfg(target_os = "linux")]
@@ -70,6 +72,22 @@ pub fn data_type_to_str(t: u8) -> &'static str {
         11 => "Metadata",
         14 => "Static",
         _ => "Other",
+    }
+}
+
+pub fn compression_to_str(codec: Codec) -> &'static str {
+    match codec {
+        Codec::None => "none",
+        Codec::ZstdNoDict => "zstd",
+        Codec::ZstdTypeDict => "zstd type dict",
+        Codec::JpegXl => "jpegxl",
+    }
+}
+
+pub fn atlas_pixel_format_to_str(format: AtlasPixelFormat) -> &'static str {
+    match format {
+        AtlasPixelFormat::Rgba8888 => "rgba8888",
+        AtlasPixelFormat::Bc7 => "bc7",
     }
 }
 

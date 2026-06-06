@@ -92,6 +92,7 @@ pub enum DitherPolicy {
     DetectOnly,
     CollapseToRamp,
     PreserveButConstrain,
+    ReinsertCheckerboard,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -369,7 +370,7 @@ impl IndexedImage {
         }
 
         let mut image = Self { width, height, pixels };
-        if matches!(config.dither_policy, DitherPolicy::DetectOnly | DitherPolicy::CollapseToRamp | DitherPolicy::PreserveButConstrain)
+        if matches!(config.dither_policy, DitherPolicy::DetectOnly | DitherPolicy::CollapseToRamp | DitherPolicy::PreserveButConstrain | DitherPolicy::ReinsertCheckerboard)
             || config.normalization.detect_dither
         {
             image.mark_checkerboard_dither();
@@ -589,7 +590,10 @@ pub fn palette_safe_upscale<S: PaletteScaler>(
     diagnostics.stages.push(stage_metrics("scaled-working", scaled.width, scaled.height, &scaled.rgba, &config.transparency)?);
 
     let mut snapped = restrict_output_palette(&scaled, &source, &snap_palette, config, &mut diagnostics)?;
-    if config.cleanup_isolated_illegal_pixels && !matches!(config.snap_mode, SnapMode::NoSnap) {
+    if matches!(config.dither_policy, DitherPolicy::ReinsertCheckerboard) && !matches!(config.snap_mode, SnapMode::NoSnap) {
+        reinsert_checkerboard_dither(scaled.width, scaled.height, &source, &snap_palette, config, &mut snapped, &mut diagnostics)?;
+    }
+    if config.cleanup_isolated_illegal_pixels && !matches!(config.snap_mode, SnapMode::NoSnap) && !matches!(config.dither_policy, DitherPolicy::ReinsertCheckerboard) {
         cleanup_isolated_pixels(scaled.width, scaled.height, &mut snapped, &snap_palette, &mut diagnostics);
     }
 
@@ -656,6 +660,52 @@ fn restrict_output_palette(
 
     count_output_violations(scaled.width, scaled.height, &out, palette, config, diagnostics)?;
     Ok(out)
+}
+
+fn reinsert_checkerboard_dither(
+    width: u32,
+    height: u32,
+    source: &IndexedImage,
+    palette: &PaletteModel,
+    config: &PaletteUpscaleConfig,
+    rgba: &mut [u8],
+    diagnostics: &mut PaletteDiagnostics,
+) -> Result<(), PaletteError> {
+    validate_rgba_len(width, height, rgba)?;
+    let mut replacements = 0u64;
+
+    for y in 0..height {
+        for x in 0..width {
+            let (sx, sy) = nearest_source_coords(source, width, height, x, y);
+            let source_pixel = source.pixel(sx, sy);
+            if source_pixel.is_transparent() || source_touches_transparency(source, sx, sy) {
+                continue;
+            }
+            let Some(pair) = source_pixel.dither_pair else { continue; };
+            let Some(source_id) = source_pixel.color_id else { continue; };
+            let Some(partner_id) = dither_partner(pair, source_id) else { continue; };
+
+            let out_index = ((y * width + x) as usize) * 4;
+            let current = Rgba8::from_slice(&rgba[out_index..out_index + 4]);
+            if classify_transparency(current, &config.transparency).is_transparent() {
+                continue;
+            }
+
+            let source_phase = (sx + sy) & 1;
+            let out_phase = (x + y) & 1;
+            let target_id = if out_phase == source_phase { source_id } else { partner_id };
+            let target = palette.color(target_id).ok_or(PaletteError::MissingColor(target_id))?.rgba;
+            let target = Rgba8 { a: 255, ..target };
+            if current.rgb_key() != target.rgb_key() {
+                replacements += 1;
+            }
+            target.write_to(&mut rgba[out_index..out_index + 4]);
+            *diagnostics.snap_histogram.entry(target_id).or_insert(0) += 1;
+        }
+    }
+
+    diagnostics.off_palette_candidates += replacements;
+    Ok(())
 }
 
 fn cleanup_isolated_pixels(width: u32, height: u32, rgba: &mut [u8], palette: &PaletteModel, diagnostics: &mut PaletteDiagnostics) {
@@ -743,9 +793,30 @@ fn count_output_violations(
 }
 
 fn nearest_source_pixel(source: &IndexedImage, out_width: u32, out_height: u32, x: u32, y: u32) -> IndexedPixel {
+    let (sx, sy) = nearest_source_coords(source, out_width, out_height, x, y);
+    source.pixel(sx, sy)
+}
+
+fn nearest_source_coords(source: &IndexedImage, out_width: u32, out_height: u32, x: u32, y: u32) -> (u32, u32) {
     let sx = ((u64::from(x) * u64::from(source.width)) / u64::from(out_width)).min(u64::from(source.width.saturating_sub(1))) as u32;
     let sy = ((u64::from(y) * u64::from(source.height)) / u64::from(out_height)).min(u64::from(source.height.saturating_sub(1))) as u32;
-    source.pixel(sx, sy)
+    (sx, sy)
+}
+
+fn source_touches_transparency(source: &IndexedImage, x: u32, y: u32) -> bool {
+    if x > 0 && source.pixel(x - 1, y).is_transparent() {
+        return true;
+    }
+    if y > 0 && source.pixel(x, y - 1).is_transparent() {
+        return true;
+    }
+    if x + 1 < source.width && source.pixel(x + 1, y).is_transparent() {
+        return true;
+    }
+    if y + 1 < source.height && source.pixel(x, y + 1).is_transparent() {
+        return true;
+    }
+    false
 }
 
 fn stage_metrics(stage: &'static str, width: u32, height: u32, rgba: &[u8], transparency: &TransparencyPolicy) -> Result<StageMetrics, PaletteError> {
@@ -848,6 +919,16 @@ fn ordered_pair(a: ColorId, b: ColorId) -> (ColorId, ColorId) {
     if a <= b { (a, b) } else { (b, a) }
 }
 
+fn dither_partner(pair: (ColorId, ColorId), color: ColorId) -> Option<ColorId> {
+    if color == pair.0 {
+        Some(pair.1)
+    } else if color == pair.1 {
+        Some(pair.0)
+    } else {
+        None
+    }
+}
+
 fn average_u8(a: u8, b: u8) -> u8 {
     ((u16::from(a) + u16::from(b)) / 2) as u8
 }
@@ -865,6 +946,34 @@ impl RgbKey for PaletteColor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct SolidScaler {
+        width: u32,
+        height: u32,
+        color: Rgba8,
+    }
+
+    impl PaletteScaler for SolidScaler {
+        fn name(&self) -> &'static str {
+            "solid-test"
+        }
+
+        fn scale_factor(&self) -> u32 {
+            1
+        }
+
+        fn scale(&self, _image: &IndexedImage, _palette: &PaletteModel, _config: &PaletteUpscaleConfig) -> PaletteScaleOutput {
+            let mut rgba = vec![0u8; (self.width * self.height) as usize * 4];
+            for chunk in rgba.chunks_exact_mut(4) {
+                self.color.write_to(chunk);
+            }
+            PaletteScaleOutput {
+                width: self.width,
+                height: self.height,
+                rgba,
+            }
+        }
+    }
 
     #[test]
     fn palette_safe_strict_snap_removes_bilinear_colors() {
@@ -940,5 +1049,65 @@ mod tests {
         assert!(result.diagnostics.dither_cells >= 4);
         assert!(result.diagnostics.edge_pixels_touching_transparency >= 2);
         assert!(result.diagnostics.stages.iter().any(|stage| stage.stage == "final"));
+    }
+
+    #[test]
+    fn reinsert_checkerboard_restores_detected_dither_pair() {
+        let rgba = vec![
+            24, 24, 24, 255, 224, 224, 224, 255,
+            224, 224, 224, 255, 24, 24, 24, 255,
+        ];
+        let config = PaletteUpscaleConfig {
+            dither_policy: DitherPolicy::ReinsertCheckerboard,
+            cleanup_isolated_illegal_pixels: false,
+            ..PaletteUpscaleConfig::default()
+        };
+        let scaler = SolidScaler {
+            width: 4,
+            height: 4,
+            color: Rgba8 { r: 124, g: 124, b: 124, a: 255 },
+        };
+
+        let result = palette_safe_upscale(2, 2, &rgba, None, &scaler, &config).unwrap();
+
+        assert_eq!(result.diagnostics.dither_cells, 4);
+        for y in 0..result.height {
+            for x in 0..result.width {
+                let idx = ((y * result.width + x) as usize) * 4;
+                let expected = if (x + y) & 1 == 0 {
+                    &[24, 24, 24, 255]
+                } else {
+                    &[224, 224, 224, 255]
+                };
+                assert_eq!(&result.rgba[idx..idx + 4], expected);
+            }
+        }
+    }
+
+    #[test]
+    fn reinsert_checkerboard_skips_source_pixels_touching_transparency() {
+        let rgba = vec![
+            24, 24, 24, 255, 224, 224, 224, 255, 0, 0, 0, 0,
+            224, 224, 224, 255, 24, 24, 24, 255, 0, 0, 0, 0,
+        ];
+        let config = PaletteUpscaleConfig {
+            dither_policy: DitherPolicy::ReinsertCheckerboard,
+            cleanup_isolated_illegal_pixels: false,
+            ..PaletteUpscaleConfig::default()
+        };
+        let scaler = SolidScaler {
+            width: 6,
+            height: 4,
+            color: Rgba8 { r: 124, g: 124, b: 124, a: 255 },
+        };
+
+        let result = palette_safe_upscale(3, 2, &rgba, None, &scaler, &config).unwrap();
+
+        for y in 0..result.height {
+            for x in 2..4 {
+                let idx = ((y * result.width + x) as usize) * 4;
+                assert_eq!(&result.rgba[idx..idx + 4], &[24, 24, 24, 255]);
+            }
+        }
     }
 }

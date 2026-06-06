@@ -1,6 +1,7 @@
-use crate::app::{ArtSource, EcHueingMode, HuesSource, UopInspectorApp};
+use crate::app::{concrete_art_tile_source, ArtSource, EcHueingMode, HuesSource, UopInspectorApp};
 use eframe::egui;
-use super::{arrow_delta, move_selection};
+use super::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by};
+use uocf::classic::art::{static_art_id_for_source, STATIC_TILE_ID_BASE};
 use uocf::enhanced::hues::{
     atlas_coord_for_hue, hue_bitmap_path, HUE_STRIP_WIDTH, HUES_ATLAS_HEIGHT, HUES_ATLAS_PATH,
     HUENAMES_PATH, FIXED_PALETTE_HASH, FIXED_PALETTE_NAME, MAX_EC_HUES,
@@ -43,11 +44,29 @@ fn ui_cc_hues(app: &mut UopInspectorApp, ctx: &egui::Context) {
         .default_width(300.0)
         .show(ctx, |ui| {
             ui.heading("hues.mul Entries");
+            let sort = list_sort_controls(ui, "cc_hues", &["ID", "Name"], 0);
             ui.separator();
 
             if let Some(client) = &app.client_data {
                 if let Some(hues) = &client.hues {
-                    let visible_hues: Vec<u16> = (1..=hues.len() as u16).collect();
+                    let hue_ids: Vec<u16> = (1..=hues.len() as u16).collect();
+                    let sorted_indices = sorted_indices_by(&hue_ids, sort.ordering(), |left, right| {
+                        match sort.option_index {
+                            1 => {
+                                let left_name = hues
+                                    .get((*left as usize).saturating_sub(1))
+                                    .map(|hue| String::from_utf8_lossy(&hue.name).trim_matches('\0').to_ascii_lowercase())
+                                    .unwrap_or_default();
+                                let right_name = hues
+                                    .get((*right as usize).saturating_sub(1))
+                                    .map(|hue| String::from_utf8_lossy(&hue.name).trim_matches('\0').to_ascii_lowercase())
+                                    .unwrap_or_default();
+                                left_name.cmp(&right_name)
+                            }
+                            _ => left.cmp(right),
+                        }
+                    });
+                    let visible_hues: Vec<u16> = sorted_indices.iter().map(|index| hue_ids[*index]).collect();
                     let keyboard_moved = if let Some(delta) = arrow_delta(ui, false) {
                         if let Some(hue_id) =
                             move_selection(&visible_hues, Some(app.selected_hue_id), delta)
@@ -60,8 +79,10 @@ fn ui_cc_hues(app: &mut UopInspectorApp, ctx: &egui::Context) {
                     };
 
                     egui::ScrollArea::vertical().show(ui, |ui| {
-                        for (i, hue) in hues.iter().enumerate() {
-                            let hue_id = (i + 1) as u16;
+                        for hue_id in visible_hues {
+                            let Some(hue) = hues.get((hue_id as usize).saturating_sub(1)) else {
+                                continue;
+                            };
                             let name = String::from_utf8_lossy(&hue.name).trim_matches('\0').to_string();
                             let label = if name.is_empty() {
                                 format!("Hue {}", hue_id)
@@ -132,39 +153,44 @@ fn ui_cc_hues(app: &mut UopInspectorApp, ctx: &egui::Context) {
 }
 
 fn ui_hue_preview_item_picker(app: &mut UopInspectorApp, ui: &mut egui::Ui) -> u32 {
+    app.selected_legacy_source = concrete_art_tile_source(app.selected_legacy_source);
+
     ui.horizontal(|ui| {
         ui.label("Item source:");
         egui::ComboBox::from_id_salt("hue_preview_item_source")
             .selected_text(match app.selected_legacy_source {
                 ArtSource::Mul => "CC MUL",
                 ArtSource::CcUop => "CC UOP",
-                ArtSource::EcUop | ArtSource::EcUopLegacy => "EC UOP Legacy",
-                ArtSource::EcUopKr => "EC UOP KR",
-                ArtSource::Any => "Any",
+                ArtSource::EcUop | ArtSource::EcUopLegacy => "EC Legacy UOP",
+                ArtSource::EcUopKr => "KR/New UOP",
+                ArtSource::Any => "CC UOP",
             })
             .show_ui(ui, |ui| {
-                ui.selectable_value(&mut app.selected_legacy_source, ArtSource::Any, "Any");
                 ui.selectable_value(&mut app.selected_legacy_source, ArtSource::Mul, "CC MUL");
                 ui.selectable_value(&mut app.selected_legacy_source, ArtSource::CcUop, "CC UOP");
-                ui.selectable_value(&mut app.selected_legacy_source, ArtSource::EcUopLegacy, "EC UOP Legacy");
-                ui.selectable_value(&mut app.selected_legacy_source, ArtSource::EcUopKr, "EC UOP KR");
+                ui.selectable_value(&mut app.selected_legacy_source, ArtSource::EcUopLegacy, "EC Legacy UOP");
+                ui.selectable_value(&mut app.selected_legacy_source, ArtSource::EcUopKr, "KR/New UOP");
             });
     });
 
-    let mut item_id = app
+    let selected_art_id = app
         .selected_tex_art_cc_id
-        .unwrap_or(0x4000)
-        .saturating_sub(0x4000);
+        .unwrap_or_else(|| static_art_id_for_source(0, app.selected_legacy_source));
+    let mut item_id = if app.selected_legacy_source.is_ec_uop() {
+        selected_art_id
+    } else {
+        selected_art_id.saturating_sub(STATIC_TILE_ID_BASE)
+    };
     ui.horizontal(|ui| {
         ui.label("Item ID:");
         if ui
             .add(egui::DragValue::new(&mut item_id).range(0..=0xFFFF).speed(1))
             .changed()
         {
-            app.selected_tex_art_cc_id = Some(0x4000 + item_id);
+            app.selected_tex_art_cc_id = Some(static_art_id_for_source(item_id, app.selected_legacy_source));
         }
     });
-    let art_id = 0x4000 + item_id;
+    let art_id = static_art_id_for_source(item_id, app.selected_legacy_source);
     app.selected_tex_art_cc_id = Some(art_id);
     art_id
 }
@@ -285,10 +311,35 @@ fn ui_ec_hues(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 let res = ui.text_edit_singleline(&mut app.search_query);
                 text_has_focus |= res.has_focus();
             });
+            let sort = list_sort_controls(ui, "ec_hues", &["ID", "Name", "Path", "Hash"], 0);
             ui.separator();
 
             let query = app.search_query.to_lowercase();
-            let visible_hues: Vec<u16> = (1..=MAX_EC_HUES)
+            let hue_ids: Vec<u16> = (1..=MAX_EC_HUES).collect();
+            let sorted_indices = sorted_indices_by(&hue_ids, sort.ordering(), |left, right| {
+                match sort.option_index {
+                    1 => ec_hues
+                        .hue_name(*left)
+                        .unwrap_or("")
+                        .to_ascii_lowercase()
+                        .cmp(&ec_hues.hue_name(*right).unwrap_or("").to_ascii_lowercase()),
+                    2 => hue_bitmap_path(*left).cmp(&hue_bitmap_path(*right)),
+                    3 => ec_hues
+                        .bitmap_for_hue(*left)
+                        .map(|entry| entry.filename_hash)
+                        .unwrap_or(u64::MAX)
+                        .cmp(
+                            &ec_hues
+                                .bitmap_for_hue(*right)
+                                .map(|entry| entry.filename_hash)
+                                .unwrap_or(u64::MAX),
+                        ),
+                    _ => left.cmp(right),
+                }
+            });
+            let visible_hues: Vec<u16> = sorted_indices
+                .iter()
+                .map(|index| hue_ids[*index])
                 .filter(|hue_id| {
                     let name = ec_hues.hue_name(*hue_id).unwrap_or("");
                     let path = hue_bitmap_path(*hue_id);
@@ -310,16 +361,8 @@ fn ui_ec_hues(app: &mut UopInspectorApp, ctx: &egui::Context) {
             };
 
             egui::ScrollArea::vertical().show(ui, |ui| {
-                for hue_id in 1..=MAX_EC_HUES {
+                for hue_id in visible_hues {
                     let name = ec_hues.hue_name(hue_id).unwrap_or("");
-                    let path = hue_bitmap_path(hue_id);
-                    if !query.is_empty()
-                        && !hue_id.to_string().contains(&query)
-                        && !name.to_lowercase().contains(&query)
-                        && !path.to_lowercase().contains(&query)
-                    {
-                        continue;
-                    }
 
                     let label = if name.is_empty() {
                         format!("Hue {}", hue_id)

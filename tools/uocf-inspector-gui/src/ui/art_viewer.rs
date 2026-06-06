@@ -1,15 +1,18 @@
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
-use crate::app::{tileart_flags_summary, tileart_property_name, tileart_type_name, ArtSource, ArtViewerRow, TileArtFileEntry, TileMetadataSource, UopInspectorApp, ViewMode};
+use crate::app::{concrete_art_tile_source, tileart_flags_summary, tileart_property_name, tileart_type_name, ArtSource, ArtViewerRow, TileArtFileEntry, TileMetadataSource, UopInspectorApp, ViewMode};
 use crate::logic::ClientData;
-use super::{arrow_delta, move_selection};
+use super::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by};
 use std::sync::Arc;
 use uocf::enhanced::tileart::{TaeAnimationAppearance, TaeSittingAnimation};
+use uocf::classic::art::{static_art_id_for_source, STATIC_TILE_ID_BASE};
 
 const TILEDATA_TABLE_MIN_WIDTH: f32 = 980.0;
 const TILEART_TABLE_MIN_WIDTH: f32 = 1450.0;
 
 pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context) {
+    app.selected_legacy_source = concrete_art_tile_source(app.selected_legacy_source);
+
     egui::SidePanel::left("tex_art_cc_list")
         .resizable(true)
         .default_width(300.0)
@@ -21,11 +24,10 @@ pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 egui::ComboBox::from_id_salt("art_source_combo")
                     .selected_text(art_source_label(app.selected_legacy_source))
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut app.selected_legacy_source, ArtSource::Any, "Any (Auto)");
                         ui.selectable_value(&mut app.selected_legacy_source, ArtSource::Mul, "Legacy MUL (.mul)");
                         ui.selectable_value(&mut app.selected_legacy_source, ArtSource::CcUop, "CC UOP (artLegacyMUL)");
-                        ui.selectable_value(&mut app.selected_legacy_source, ArtSource::EcUopLegacy, "EC UOP Legacy (LegacyTexture)");
-                        ui.selectable_value(&mut app.selected_legacy_source, ArtSource::EcUopKr, "EC UOP KR (Texture)");
+                        ui.selectable_value(&mut app.selected_legacy_source, ArtSource::EcUopLegacy, "EC Legacy UOP (LegacyTexture)");
+                        ui.selectable_value(&mut app.selected_legacy_source, ArtSource::EcUopKr, "KR/New UOP (Texture)");
                     });
             });
 
@@ -57,16 +59,19 @@ pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context) {
             ensure_art_viewer_rows(app);
             if let Some(rows) = app.art_viewer_rows.clone() {
                 let query = app.search_query.trim();
-                let filtered_indices = filtered_metadata_indices(&rows, query, |row| &row.search_text);
+                let sort = list_sort_controls(ui, "art_viewer_rows", &["ID", "Name", "Group"], 0);
+                let sorted_indices = sorted_indices_by(&rows, sort.ordering(), |left, right| {
+                    match sort.option_index {
+                        1 => left.label.to_ascii_lowercase().cmp(&right.label.to_ascii_lowercase()),
+                        2 => left.group.cmp(right.group).then_with(|| left.art_id.cmp(&right.art_id)),
+                        _ => left.art_id.cmp(&right.art_id),
+                    }
+                });
+                let filtered_indices = filtered_metadata_indices(&rows, Some(&sorted_indices), query, |row| &row.search_text);
                 let visible_ids = filtered_indices
-                    .as_ref()
-                    .map(|indices| {
-                        indices
-                            .iter()
-                            .map(|index| rows[*index].art_id)
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_else(|| rows.iter().map(|row| row.art_id).collect());
+                    .iter()
+                    .map(|index| rows[*index].art_id)
+                    .collect::<Vec<_>>();
                 let keyboard_moved = if let Some(delta) = arrow_delta(ui, art_search_has_focus) {
                     app.selected_tex_art_cc_id = move_selection(&visible_ids, app.selected_tex_art_cc_id, delta);
                     if app.selected_tex_art_cc_id.is_some() {
@@ -78,8 +83,8 @@ pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 };
 
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    ui_art_group_rows(app, ui, &rows, filtered_indices.as_deref(), "Land Tiles", keyboard_moved);
-                    ui_art_group_rows(app, ui, &rows, filtered_indices.as_deref(), "Static Tiles", keyboard_moved);
+                    ui_art_group_rows(app, ui, &rows, &filtered_indices, "Land Tiles", keyboard_moved);
+                    ui_art_group_rows(app, ui, &rows, &filtered_indices, "Static Tiles", keyboard_moved);
                 });
             }
         });
@@ -91,7 +96,7 @@ pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context) {
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut app.view_mode, ViewMode::TexArtCc, "Specialized");
                 if ui.button("Raw UOP").clicked() {
-                    app.select_raw_art_entry(id, app.selected_legacy_source);
+                    app.select_raw_art_entry(id, concrete_art_tile_source(app.selected_legacy_source));
                 }
             });
             ui.separator();
@@ -111,7 +116,8 @@ pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 ui.vertical(|ui| {
                     ui.heading("TileData Properties");
                     if let Some(client) = &app.client_data {
-                        if id < 0x4000 {
+                        let source = concrete_art_tile_source(app.selected_legacy_source);
+                        if id < STATIC_TILE_ID_BASE && !source.is_ec_uop() {
                             if let Some(tile) = client.tiledata.land_tiles().get(id as usize) {
                                 egui::Grid::new("land_tile_grid").striped(true).show(ui, |ui| {
                                     ui.label("Name"); ui.label(tile.name_ascii()); ui.end_row();
@@ -123,7 +129,11 @@ pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context) {
                                 ui.label(format!("{:?}", tile.flags));
                             }
                         } else {
-                            let item_id = id - 0x4000;
+                            let item_id = if source.is_ec_uop() {
+                                id
+                            } else {
+                                id - STATIC_TILE_ID_BASE
+                            };
                             if let Some(tile) = client.tiledata.item_tiles().get(item_id as usize) {
                                 egui::Grid::new("item_tile_grid").striped(true).show(ui, |ui| {
                                     ui.label("Name"); ui.label(tile.name_ascii()); ui.end_row();
@@ -157,7 +167,7 @@ fn art_row_should_show(source: ArtSource, has_art: bool, has_metadata: bool) -> 
 }
 
 fn ensure_art_viewer_rows(app: &mut UopInspectorApp) {
-    let source = app.selected_legacy_source;
+    let source = concrete_art_tile_source(app.selected_legacy_source);
     if app.art_viewer_rows_source == Some(source) && app.art_viewer_rows.is_some() {
         return;
     }
@@ -173,25 +183,34 @@ fn ensure_art_viewer_rows(app: &mut UopInspectorApp) {
 fn collect_art_viewer_rows(client: &ClientData, source: ArtSource) -> Vec<ArtViewerRow> {
     let mut rows = Vec::new();
 
-    for id in 0..0x4000 {
-        let has_art = client.art.has_id_from_source(id, source);
-        let has_metadata = client.tiledata.land_tiles().get(id as usize).is_some();
-        if !art_row_should_show(source, has_art, has_metadata) {
-            continue;
-        }
+    if !source.is_ec_uop() {
+        for id in 0..STATIC_TILE_ID_BASE {
+            let has_art = client.art.has_id_from_source(id, source);
+            let has_metadata = client.tiledata.land_tiles().get(id as usize).is_some();
+            if !art_row_should_show(source, has_art, has_metadata) {
+                continue;
+            }
 
-        let tile_name = client
-            .tiledata
-            .land_tiles()
-            .get(id as usize)
-            .map(|tile| tile.name_ascii())
-            .unwrap_or_default();
-        rows.push(art_viewer_row(id, "Land Tiles", tile_name));
+            let tile_name = client
+                .tiledata
+                .land_tiles()
+                .get(id as usize)
+                .map(|tile| tile.name_ascii())
+                .unwrap_or_default();
+            rows.push(art_viewer_row(id, "Land Tiles", tile_name));
+        }
     }
 
-    let max_id = client.art.max_id_for_source(source).max(0x4000 + 32768);
-    for id in 0x4000..max_id {
-        let item_id = id - 0x4000;
+    let source_max_id = client.art.max_id_for_source(source);
+    let max_item_id = if source.is_ec_uop() {
+        source_max_id.max(32768)
+    } else {
+        source_max_id
+            .max(STATIC_TILE_ID_BASE + 32768)
+            .saturating_sub(STATIC_TILE_ID_BASE)
+    };
+    for item_id in 0..max_item_id {
+        let id = static_art_id_for_source(item_id, source);
         let has_art = client.art.has_id_from_source(id, source);
         let has_metadata = client.tiledata.item_tiles().get(item_id as usize).is_some();
         if !art_row_should_show(source, has_art, has_metadata) {
@@ -224,26 +243,18 @@ fn ui_art_group_rows(
     app: &mut UopInspectorApp,
     ui: &mut egui::Ui,
     rows: &[ArtViewerRow],
-    filtered_indices: Option<&[usize]>,
+    filtered_indices: &[usize],
     group: &'static str,
     keyboard_moved: bool,
 ) {
-    let has_rows = filtered_indices
-        .map(|indices| indices.iter().any(|index| rows[*index].group == group))
-        .unwrap_or_else(|| rows.iter().any(|row| row.group == group));
+    let has_rows = filtered_indices.iter().any(|index| rows[*index].group == group);
     if !has_rows {
         return;
     }
 
     ui.collapsing(group, |ui| {
-        if let Some(indices) = filtered_indices {
-            for index in indices.iter().copied().filter(|index| rows[*index].group == group) {
-                ui_art_row(app, ui, &rows[index], keyboard_moved);
-            }
-        } else {
-            for row in rows.iter().filter(|row| row.group == group) {
-                ui_art_row(app, ui, row, keyboard_moved);
-            }
+        for index in filtered_indices.iter().copied().filter(|index| rows[*index].group == group) {
+            ui_art_row(app, ui, &rows[index], keyboard_moved);
         }
     });
 }
@@ -267,11 +278,11 @@ fn ui_art_row(
 
 fn art_source_label(source: ArtSource) -> &'static str {
     match source {
-        ArtSource::Any => "Any (Auto)",
+        ArtSource::Any => "CC UOP (artLegacyMUL)",
         ArtSource::Mul => "Legacy MUL (.mul)",
         ArtSource::CcUop => "CC UOP (artLegacyMUL)",
-        ArtSource::EcUop | ArtSource::EcUopLegacy => "EC UOP Legacy (LegacyTexture)",
-        ArtSource::EcUopKr => "EC UOP KR (Texture)",
+        ArtSource::EcUop | ArtSource::EcUopLegacy => "EC Legacy UOP (LegacyTexture)",
+        ArtSource::EcUopKr => "KR/New UOP (Texture)",
     }
 }
 
@@ -332,18 +343,31 @@ fn ui_cc_tiledata_table(app: &mut UopInspectorApp, ui: &mut egui::Ui, text_has_f
     ui.heading("CC TileData Inspector");
     if let (Some(tiledata), Some(rows)) = (&app.cc_tiledata, app.cc_tiledata_rows.clone()) {
         let query = app.search_query.trim();
-        let filtered_indices = filtered_metadata_indices(&rows, query, |row| &row.search_text);
-        let row_count = filtered_indices.as_ref().map_or(rows.len(), Vec::len);
+        let sort = list_sort_controls(
+            ui,
+            "cc_tiledata_rows",
+            &["ID", "Name", "Type", "Texture", "Height", "Weight", "Anim", "Value"],
+            0,
+        );
+        let sorted_indices = sorted_indices_by(&rows, sort.ordering(), |left, right| {
+            match sort.option_index {
+                1 => left.name.to_ascii_lowercase().cmp(&right.name.to_ascii_lowercase()),
+                2 => left.kind.cmp(right.kind).then_with(|| left.art_id.cmp(&right.art_id)),
+                3 => string_number(&left.texture_id).cmp(&string_number(&right.texture_id)),
+                4 => string_number(&left.height).cmp(&string_number(&right.height)),
+                5 => string_number(&left.weight).cmp(&string_number(&right.weight)),
+                6 => string_number(&left.anim_id).cmp(&string_number(&right.anim_id)),
+                7 => string_number(&left.value).cmp(&string_number(&right.value)),
+                _ => left.art_id.cmp(&right.art_id),
+            }
+        });
+        let filtered_indices = filtered_metadata_indices(&rows, Some(&sorted_indices), query, |row| &row.search_text);
+        let row_count = filtered_indices.len();
         let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
         let visible_ids = filtered_indices
-            .as_ref()
-            .map(|indices| {
-                indices
-                    .iter()
-                    .map(|index| rows[*index].art_id)
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_else(|| rows.iter().map(|row| row.art_id).collect());
+            .iter()
+            .map(|index| rows[*index].art_id)
+            .collect::<Vec<_>>();
         let keyboard_moved = if let Some(delta) = arrow_delta(ui, text_has_focus) {
             app.selected_tex_art_cc_id = move_selection(&visible_ids, app.selected_tex_art_cc_id, delta);
             true
@@ -409,9 +433,7 @@ fn ui_cc_tiledata_table(app: &mut UopInspectorApp, ui: &mut egui::Ui, text_has_f
                 })
                 .body(|body| {
                     body.rows(text_height, row_count, |mut row| {
-                        let idx = filtered_indices
-                            .as_ref()
-                            .map_or(row.index(), |indices| indices[row.index()]);
+                        let idx = filtered_indices[row.index()];
                         let item = &rows[idx];
                         row.col(|ui| {
                             let selected = app.selected_tex_art_cc_id == Some(item.art_id);
@@ -469,18 +491,27 @@ fn ui_ec_tileart_table(app: &mut UopInspectorApp, ui: &mut egui::Ui, text_has_fo
     ui.heading("EC TileArt Inspector");
     if let (Some(entries), Some(rows)) = (app.ec_tileart_entries.clone(), app.ec_tileart_rows.clone()) {
         let query = app.search_query.trim();
-        let filtered_indices = filtered_metadata_indices(&rows, query, |row| &row.search_text);
-        let row_count = filtered_indices.as_ref().map_or(rows.len(), Vec::len);
+        let sort = list_sort_controls(
+            ui,
+            "ec_tileart_rows",
+            &["ID", "Old ID", "Type", "Hash"],
+            0,
+        );
+        let sorted_indices = sorted_indices_by(&rows, sort.ordering(), |left, right| {
+            match sort.option_index {
+                1 => string_number(&left.old_id).cmp(&string_number(&right.old_id)),
+                2 => left.type_name.cmp(right.type_name).then_with(|| string_number(&left.tile_id).cmp(&string_number(&right.tile_id))),
+                3 => left.filename_hash.cmp(&right.filename_hash),
+                _ => string_number(&left.tile_id).cmp(&string_number(&right.tile_id)),
+            }
+        });
+        let filtered_indices = filtered_metadata_indices(&rows, Some(&sorted_indices), query, |row| &row.search_text);
+        let row_count = filtered_indices.len();
         let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
         let visible_hashes = filtered_indices
-            .as_ref()
-            .map(|indices| {
-                indices
-                    .iter()
-                    .map(|index| rows[*index].filename_hash)
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_else(|| rows.iter().map(|row| row.filename_hash).collect());
+            .iter()
+            .map(|index| rows[*index].filename_hash)
+            .collect::<Vec<_>>();
         let keyboard_moved = if let Some(delta) = arrow_delta(ui, text_has_focus) {
             app.selected_tileart_hash = move_selection(&visible_hashes, app.selected_tileart_hash, delta);
             true
@@ -546,9 +577,7 @@ fn ui_ec_tileart_table(app: &mut UopInspectorApp, ui: &mut egui::Ui, text_has_fo
                 })
                 .body(|body| {
                     body.rows(text_height, row_count, |mut row| {
-                        let idx = filtered_indices
-                            .as_ref()
-                            .map_or(row.index(), |indices| indices[row.index()]);
+                        let idx = filtered_indices[row.index()];
                         let item = &rows[idx];
                         row.col(|ui| {
                             let selected = app.selected_tileart_hash == Some(item.filename_hash);
@@ -873,20 +902,26 @@ fn ui_selected_tileart_details(app: &UopInspectorApp, ui: &mut egui::Ui, file: &
 
 fn filtered_metadata_indices<T>(
     rows: &[T],
+    sorted_indices: Option<&[usize]>,
     query: &str,
     search_text: impl Fn(&T) -> &str,
-) -> Option<Vec<usize>> {
+) -> Vec<usize> {
+    let source_indices: Vec<usize> = sorted_indices
+        .map(|indices| indices.to_vec())
+        .unwrap_or_else(|| (0..rows.len()).collect());
     if query.is_empty() {
-        return None;
+        return source_indices;
     }
 
     let query = query.to_lowercase();
-    Some(
-        rows.iter()
-            .enumerate()
-            .filter_map(|(index, row)| search_text(row).contains(&query).then_some(index))
-            .collect()
-    )
+    source_indices
+        .into_iter()
+        .filter(|index| search_text(&rows[*index]).contains(&query))
+        .collect()
+}
+
+fn string_number(value: &str) -> u32 {
+    value.parse().unwrap_or(u32::MAX)
 }
 
 fn tileart_sitting_summary(sitting: Option<&TaeSittingAnimation>) -> String {

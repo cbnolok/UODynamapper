@@ -22,7 +22,7 @@ pub struct MultiPart {
 }
 
 pub struct MultiMap {
-    index: IndexFile,
+    index_file: IndexFile,
     mul_path: std::path::PathBuf,
     verdata: Option<Arc<Verdata>>,
 }
@@ -44,7 +44,7 @@ impl MultiMap {
 
         let index = IndexFile::load(idx_path)?;
         Ok(Self {
-            index,
+            index_file: index,
             mul_path,
             verdata: None,
         })
@@ -70,9 +70,9 @@ impl MultiMap {
     pub fn load_all_parts(&self) -> eyre::Result<Vec<Vec<MultiPart>>> {
         let file = File::open(&self.mul_path)?;
         let mut reader = BufReader::new(file);
-        let mut definitions = Vec::with_capacity(self.index.element_count());
+        let mut definitions = Vec::with_capacity(self.index_file.element_count());
 
-        for multi_id in 0..self.index.element_count() {
+        for multi_id in 0..self.index_file.element_count() {
             definitions.push(self.read_parts_from_reader(multi_id as u32, &mut reader)?);
         }
 
@@ -80,7 +80,7 @@ impl MultiMap {
     }
 
     pub fn max_id(&self) -> u32 {
-        self.index.element_count() as u32
+        self.index_file.element_count() as u32
     }
 
     fn read_parts_from_reader(
@@ -89,7 +89,7 @@ impl MultiMap {
         reader: &mut BufReader<File>,
     ) -> eyre::Result<Vec<MultiPart>> {
         let entry = self
-            .index
+            .index_file
             .element(multi_id as usize)
             .wrap_err_with(|| format!("Multi ID {} not found in index", multi_id))?;
 

@@ -48,6 +48,23 @@ impl Default for ScaleFxSmartDeblurParams {
 }
 
 #[derive(Clone, Copy, Debug)]
+pub struct GuestrDeblurParams {
+    pub offset: f32,
+    pub deblur_strength: f32,
+    pub smart: f32,
+}
+
+impl Default for GuestrDeblurParams {
+    fn default() -> Self {
+        Self {
+            offset: 2.0,
+            deblur_strength: 4.5,
+            smart: 0.5,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
 pub struct LocalLaplacianClarityParams {
     pub radius: u32,
     pub amount: f32,
@@ -184,6 +201,99 @@ pub fn apply_scalefx_smart_deblur(
                 source[index][2] + (source[index][2] - blurred[index][2]) * amount * mask,
             ];
             write_rgb(&mut out, index, clamp_to_local_range(width, height, &source, x as i32, y as i32, rgb));
+        }
+    }
+
+    (width, height, out)
+}
+
+pub fn apply_guestr_deblur(
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+    params: GuestrDeblurParams,
+) -> (u32, u32, Vec<u8>) {
+    if width == 0 || height == 0 || rgba.is_empty() || params.deblur_strength <= 0.0 {
+        return (width, height, rgba.to_vec());
+    }
+
+    let source = rgba_to_rgb_f32(rgba);
+    let mut out = rgba.to_vec();
+    let offset = params.offset.clamp(0.5, 4.0);
+    let deblur_strength = params.deblur_strength.clamp(1.0, 7.0);
+    let smart = params.smart.clamp(0.0, 1.0);
+
+    for y in 0..height {
+        for x in 0..width {
+            let index = (y * width + x) as usize;
+            let x = x as f32;
+            let y = y as f32;
+
+            let c11 = source[index];
+            let c00 = rgb_at_bilinear(width, height, &source, x - offset, y - offset);
+            let c20 = rgb_at_bilinear(width, height, &source, x + offset, y - offset);
+            let c22 = rgb_at_bilinear(width, height, &source, x + offset, y + offset);
+            let c02 = rgb_at_bilinear(width, height, &source, x - offset, y + offset);
+            let c10 = rgb_at_bilinear(width, height, &source, x, y - offset);
+            let c21 = rgb_at_bilinear(width, height, &source, x + offset, y);
+            let c12 = rgb_at_bilinear(width, height, &source, x, y + offset);
+            let c01 = rgb_at_bilinear(width, height, &source, x - offset, y);
+
+            let mut mn = min_rgb(min_rgb(c00, c01), c02);
+            mn = min_rgb(mn, min_rgb(min_rgb(c10, c11), c12));
+            mn = min_rgb(mn, min_rgb(min_rgb(c20, c21), c22));
+
+            let mut mx = max_rgb(max_rgb(c00, c01), c02);
+            mx = max_rgb(mx, max_rgb(max_rgb(c10, c11), c12));
+            mx = max_rgb(mx, max_rgb(max_rgb(c20, c21), c22));
+
+            let contrast = sub_rgb(mx, mn);
+            let dif1 = pow_rgb(add_rgb_scalar(abs_rgb(sub_rgb(c11, mn)), 0.0001), deblur_strength);
+            let dif2 = pow_rgb(add_rgb_scalar(abs_rgb(sub_rgb(c11, mx)), 0.0001), deblur_strength);
+            let mut d11 = [
+                (dif1[0] * mx[0] + dif2[0] * mn[0]) / (dif1[0] + dif2[0]),
+                (dif1[1] * mx[1] + dif2[1] * mn[1]) / (dif1[1] + dif2[1]),
+                (dif1[2] * mx[2] + dif2[2] * mn[2]) / (dif1[2] + dif2[2]),
+            ];
+
+            let mut weights = [
+                guestr_deblur_weight(c10, d11),
+                guestr_deblur_weight(c01, d11),
+                guestr_deblur_weight(c11, d11),
+                guestr_deblur_weight(c21, d11),
+                guestr_deblur_weight(c12, d11),
+                guestr_deblur_weight(c00, d11),
+                guestr_deblur_weight(c02, d11),
+                guestr_deblur_weight(c20, d11),
+                guestr_deblur_weight(c22, d11),
+            ];
+            let avg = weights.iter().sum::<f32>() / 30.0;
+            for weight in &mut weights {
+                *weight = (*weight - avg).max(0.0);
+            }
+
+            let samples = [c10, c01, c11, c21, c12, c00, c02, c20, c22];
+            let mut weighted = [0.0001 * c11[0], 0.0001 * c11[1], 0.0001 * c11[2]];
+            let mut weight_sum = 0.0001;
+            for (sample, weight) in samples.iter().zip(weights.iter().copied()) {
+                weighted[0] += sample[0] * weight;
+                weighted[1] += sample[1] * weight;
+                weighted[2] += sample[2] * weight;
+                weight_sum += weight;
+            }
+            d11 = [
+                weighted[0] / weight_sum,
+                weighted[1] / weight_sum,
+                weighted[2] / weight_sum,
+            ];
+
+            let contrast_mix = [
+                (1.75 * contrast[0] - 0.125).clamp(0.0, 1.0),
+                (1.75 * contrast[1] - 0.125).clamp(0.0, 1.0),
+                (1.75 * contrast[2] - 0.125).clamp(0.0, 1.0),
+            ];
+            let contrast_gated = mix_rgb(c11, d11, contrast_mix);
+            write_rgb(&mut out, index, mix_rgb_scalar(d11, contrast_gated, smart));
         }
     }
 
@@ -460,6 +570,66 @@ fn rgb_at(width: u32, height: u32, source: &[[f32; 3]], x: i32, y: i32) -> [f32;
     source[(y * width + x) as usize]
 }
 
+fn rgb_at_bilinear(width: u32, height: u32, source: &[[f32; 3]], x: f32, y: f32) -> [f32; 3] {
+    let x = x.clamp(0.0, width.saturating_sub(1) as f32);
+    let y = y.clamp(0.0, height.saturating_sub(1) as f32);
+    let x0 = x.floor() as i32;
+    let y0 = y.floor() as i32;
+    let x1 = x0 + 1;
+    let y1 = y0 + 1;
+    let tx = x - x0 as f32;
+    let ty = y - y0 as f32;
+    let c00 = rgb_at(width, height, source, x0, y0);
+    let c10 = rgb_at(width, height, source, x1, y0);
+    let c01 = rgb_at(width, height, source, x0, y1);
+    let c11 = rgb_at(width, height, source, x1, y1);
+    mix_rgb_scalar(mix_rgb_scalar(c00, c10, tx), mix_rgb_scalar(c01, c11, tx), ty)
+}
+
+fn guestr_deblur_weight(sample: [f32; 3], target: [f32; 3]) -> f32 {
+    1.0 / (luma_sum(abs_rgb(sub_rgb(sample, target))) + 0.0001)
+}
+
+fn min_rgb(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [a[0].min(b[0]), a[1].min(b[1]), a[2].min(b[2])]
+}
+
+fn max_rgb(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [a[0].max(b[0]), a[1].max(b[1]), a[2].max(b[2])]
+}
+
+fn sub_rgb(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+
+fn abs_rgb(rgb: [f32; 3]) -> [f32; 3] {
+    [rgb[0].abs(), rgb[1].abs(), rgb[2].abs()]
+}
+
+fn add_rgb_scalar(rgb: [f32; 3], value: f32) -> [f32; 3] {
+    [rgb[0] + value, rgb[1] + value, rgb[2] + value]
+}
+
+fn pow_rgb(rgb: [f32; 3], power: f32) -> [f32; 3] {
+    [rgb[0].powf(power), rgb[1].powf(power), rgb[2].powf(power)]
+}
+
+fn mix_rgb(a: [f32; 3], b: [f32; 3], t: [f32; 3]) -> [f32; 3] {
+    [
+        a[0] * (1.0 - t[0]) + b[0] * t[0],
+        a[1] * (1.0 - t[1]) + b[1] * t[1],
+        a[2] * (1.0 - t[2]) + b[2] * t[2],
+    ]
+}
+
+fn mix_rgb_scalar(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
+    [
+        a[0] * (1.0 - t) + b[0] * t,
+        a[1] * (1.0 - t) + b[1] * t,
+        a[2] * (1.0 - t) + b[2] * t,
+    ]
+}
+
 fn write_rgb(out: &mut [u8], index: usize, rgb: [f32; 3]) {
     let base = index * 4;
     out[base] = float_to_u8(rgb[0]);
@@ -473,6 +643,10 @@ fn luma(rgb: [f32; 3]) -> f32 {
 
 fn luma_abs(rgb: [f32; 3]) -> f32 {
     rgb[0].abs() * 0.2126 + rgb[1].abs() * 0.7152 + rgb[2].abs() * 0.0722
+}
+
+fn luma_sum(rgb: [f32; 3]) -> f32 {
+    rgb[0] + rgb[1] + rgb[2]
 }
 
 fn adaptive_log_channel(value: f32, local_mean: f32, gamma: f32, strength: f32) -> f32 {
@@ -494,9 +668,11 @@ fn float_to_u8(v: f32) -> u8 {
 mod tests {
     use super::{
         apply_adaptive_log_contrast, apply_contrast_enhance, apply_high_pass_sharpen,
-        apply_local_laplacian_clarity, apply_scalefx_smart_deblur, apply_unsharp_mask,
+        apply_guestr_deblur, apply_local_laplacian_clarity, apply_scalefx_smart_deblur,
+        apply_unsharp_mask,
         AdaptiveLogContrastParams, ContrastEnhanceParams, HighPassSharpenParams,
-        LocalLaplacianClarityParams, ScaleFxSmartDeblurParams, UnsharpMaskParams,
+        GuestrDeblurParams, LocalLaplacianClarityParams, ScaleFxSmartDeblurParams,
+        UnsharpMaskParams,
     };
 
     #[test]
@@ -510,6 +686,7 @@ mod tests {
             apply_unsharp_mask(3, 2, &rgba, UnsharpMaskParams::default()).2,
             apply_high_pass_sharpen(3, 2, &rgba, HighPassSharpenParams::default()).2,
             apply_scalefx_smart_deblur(3, 2, &rgba, ScaleFxSmartDeblurParams::default()).2,
+            apply_guestr_deblur(3, 2, &rgba, GuestrDeblurParams::default()).2,
             apply_local_laplacian_clarity(3, 2, &rgba, LocalLaplacianClarityParams::default()).2,
             apply_contrast_enhance(3, 2, &rgba, ContrastEnhanceParams::default()).2,
             apply_adaptive_log_contrast(3, 2, &rgba, AdaptiveLogContrastParams::default()).2,
@@ -523,6 +700,9 @@ mod tests {
     fn flat_images_remain_flat() {
         let rgba = [80, 120, 160, 255].repeat(16);
         let (_, _, out) = apply_scalefx_smart_deblur(4, 4, &rgba, ScaleFxSmartDeblurParams::default());
+        assert_eq!(out, rgba);
+
+        let (_, _, out) = apply_guestr_deblur(4, 4, &rgba, GuestrDeblurParams::default());
         assert_eq!(out, rgba);
     }
 
@@ -575,5 +755,19 @@ mod tests {
         let (_, _, out) = apply_adaptive_log_contrast(3, 3, &rgba, AdaptiveLogContrastParams::default());
         assert_eq!(out.iter().skip(3).step_by(4).copied().collect::<Vec<_>>(), vec![7, 17, 27, 37, 47, 57, 67, 77, 87]);
         assert_ne!(out, rgba);
+    }
+
+    #[test]
+    fn guestr_deblur_changes_soft_boundaries() {
+        let rgba = vec![
+            72, 72, 72, 255, 96, 96, 96, 255, 128, 128, 128, 255, 160, 160, 160, 255, 184, 184, 184, 255,
+            72, 72, 72, 255, 96, 96, 96, 255, 128, 128, 128, 255, 160, 160, 160, 255, 184, 184, 184, 255,
+            72, 72, 72, 255, 96, 96, 96, 255, 128, 128, 128, 255, 160, 160, 160, 255, 184, 184, 184, 255,
+            72, 72, 72, 255, 96, 96, 96, 255, 128, 128, 128, 255, 160, 160, 160, 255, 184, 184, 184, 255,
+            72, 72, 72, 255, 96, 96, 96, 255, 128, 128, 128, 255, 160, 160, 160, 255, 184, 184, 184, 255,
+        ];
+        let (_, _, out) = apply_guestr_deblur(5, 5, &rgba, GuestrDeblurParams::default());
+        assert_ne!(out, rgba);
+        assert_eq!(out.iter().skip(3).step_by(4).copied().collect::<Vec<_>>(), vec![255; 25]);
     }
 }

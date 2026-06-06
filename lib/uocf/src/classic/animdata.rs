@@ -25,7 +25,7 @@ pub struct AnimDataEntry {
 
 impl AnimDataEntry {
     pub fn is_active(&self) -> bool {
-        self.frame_count > 0 && self.frame_interval > 0
+        self.frame_count > 0
     }
 
     pub fn frame_offset(&self, index: usize) -> Option<i8> {
@@ -150,7 +150,7 @@ mod tests {
                 bytes.write_i8(if record == 1 { frame as i8 - 2 } else { 0 }).unwrap();
             }
             bytes.write_u8(9).unwrap();
-            bytes.write_u8(if record == 1 { 3 } else { 0 }).unwrap();
+            bytes.write_u8(if record == 1 || record == 2 { 3 } else { 0 }).unwrap();
             bytes.write_u8(if record == 1 { 5 } else { 0 }).unwrap();
             bytes.write_u8(7).unwrap();
         }
@@ -161,7 +161,7 @@ mod tests {
         assert_eq!(animdata.chunk_headers, vec![0x11223344]);
         assert_eq!(animdata.entries.len(), 8);
         assert_eq!(animdata.trailing_bytes, b"tail");
-        assert_eq!(animdata.active_count(), 1);
+        assert_eq!(animdata.active_count(), 2);
         assert_eq!(animdata.get(1).unwrap().frame_tile_id(0), Some(-1));
         assert_eq!(animdata.get(1).unwrap().frame_tile_id(2), Some(1));
         assert_eq!(animdata.get(1).unwrap().frame_tile_id(3), None);

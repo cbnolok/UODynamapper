@@ -17,13 +17,13 @@ pub const UO_BLOCK_DIM: u32 = 8;
 /// Represents a single static item entry optimized for SIMD/GPU alignment (8 bytes).
 ///
 /// ### Architecture Note:
-/// Although the original Classic Client stores statics in 8x8 blocks, UODynamapper 
-/// packs statics into 32x32 "chunks" within `.uddp` packages. 
+/// Although the original Classic Client stores statics in 8x8 blocks, UODynamapper
+/// packs statics into 32x32 "chunks" within `.uddp` packages.
 ///
 /// In this 32x32 context:
 /// - X/Y offsets require 5 bits each (0-31) to address the full chunk.
 /// - The original 7-byte disk format is expanded to 8 bytes here for alignment.
-/// - Halving this to 4 bytes (32-bit packing) is currently unfeasible without 
+/// - Halving this to 4 bytes (32-bit packing) is currently unfeasible without
 ///   loss, as Graphic(16) + Hue(16) + X(5) + Y(5) + Z(8) = 50 bits.
 #[repr(C, align(8))]
 #[derive(Debug, Clone, Copy, Default, Pod, Zeroable)]
@@ -103,7 +103,7 @@ use memmap2::Mmap;
 /// A highly optimized reader for `statics.mul` and `staidx.mul` files.
 /// Uses memory mapping for zero-copy access to static data.
 pub struct StaticsReader {
-    pub index: IndexFile,
+    pub index_file: IndexFile,
     pub mul_mmap: Mmap,
     pub block_width: u32,
     pub block_height: u32,
@@ -119,7 +119,7 @@ impl StaticsReader {
         let mul_mmap = unsafe { Mmap::map(&mul_file)? };
 
         Ok(Self {
-            index,
+            index_file: index,
             mul_mmap,
             block_width: width / UO_BLOCK_DIM,
             block_height: height / UO_BLOCK_DIM,
@@ -176,7 +176,7 @@ impl StaticsReader {
         let mut offsets = Vec::with_capacity(num_blocks as usize + 1);
         offsets.push(0);
         for i in 0..num_blocks {
-            let entry = self.index.element(i as usize)?;
+            let entry = self.index_file.element(i as usize)?;
             total_tile_count += (entry.len().unwrap_or(0) as usize) / StaticTile::RAW_SIZE;
             offsets.push(total_tile_count as u32);
         }
@@ -185,7 +185,7 @@ impl StaticsReader {
 
         // Step 2: Parse blocks using parallel processing over the in-memory buffer.
         let mul_mmap_ref = &self.mul_mmap;
-        let index = &self.index;
+        let index = &self.index_file;
         let offsets_ref = &offsets;
 
         let tiles_ptr = tiles.as_mut_ptr() as usize;
@@ -286,7 +286,7 @@ impl StaticsReader {
         let (lookup, size) = match lookup_size {
             Some(values) => values,
             None => {
-                let index_element = self.index.element(block_id as usize)?;
+                let index_element = self.index_file.element(block_id as usize)?;
                 let (Some(lookup), Some(size)) = (index_element.lookup(), index_element.len()) else {
                     return Ok(None);
                 };

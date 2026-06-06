@@ -1,5 +1,6 @@
 use eframe::egui;
 use crate::app::UopInspectorApp;
+use std::cmp::Ordering;
 
 pub mod animations;
 pub mod animdata;
@@ -50,6 +51,120 @@ pub(super) fn move_selection<T: Copy + Eq>(
     };
 
     Some(visible[next])
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) struct ListSortState {
+    pub option_index: usize,
+    pub ordering: ListSortOrdering,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum ListSortOrdering {
+    None,
+    Ascending,
+    Descending,
+}
+
+impl ListSortState {
+    pub fn ordering(self) -> Option<bool> {
+        match self.ordering {
+            ListSortOrdering::None => None,
+            ListSortOrdering::Ascending => Some(false),
+            ListSortOrdering::Descending => Some(true),
+        }
+    }
+}
+
+pub(super) fn list_sort_controls(
+    ui: &mut egui::Ui,
+    id_salt: impl std::hash::Hash,
+    options: &[&'static str],
+    default_option_index: usize,
+) -> ListSortState {
+    let id = ui.make_persistent_id(("uocf_list_sort", id_salt));
+    let mut state = ui
+        .data_mut(|data| data.get_temp::<ListSortState>(id))
+        .unwrap_or(ListSortState {
+            option_index: default_option_index.min(options.len().saturating_sub(1)),
+            ordering: ListSortOrdering::None,
+        });
+    if state.option_index >= options.len() {
+        state.option_index = default_option_index.min(options.len().saturating_sub(1));
+    }
+
+    ui.horizontal(|ui| {
+        ui.label("Sort:");
+        egui::ComboBox::from_id_salt((id, "option"))
+            .selected_text(options.get(state.option_index).copied().unwrap_or("Source"))
+            .show_ui(ui, |ui| {
+                for (index, option) in options.iter().enumerate() {
+                    ui.selectable_value(&mut state.option_index, index, *option);
+                }
+            });
+        egui::ComboBox::from_id_salt((id, "ordering"))
+            .selected_text(match state.ordering {
+                ListSortOrdering::None => "No ordering",
+                ListSortOrdering::Ascending => "Ascending",
+                ListSortOrdering::Descending => "Descending",
+            })
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut state.ordering, ListSortOrdering::None, "No ordering");
+                ui.selectable_value(&mut state.ordering, ListSortOrdering::Ascending, "Ascending");
+                ui.selectable_value(&mut state.ordering, ListSortOrdering::Descending, "Descending");
+            });
+    });
+
+    ui.data_mut(|data| data.insert_temp(id, state));
+    state
+}
+
+pub(super) fn sorted_indices_by<T>(
+    items: &[T],
+    ordering: Option<bool>,
+    compare: impl Fn(&T, &T) -> Ordering,
+) -> Vec<usize> {
+    let Some(descending) = ordering else {
+        return (0..items.len()).collect();
+    };
+
+    let mut indices: Vec<usize> = (0..items.len()).collect();
+    indices.sort_by(|left, right| {
+        let ordering = compare(&items[*left], &items[*right]);
+        let ordering = if descending {
+            ordering.reverse()
+        } else {
+            ordering
+        };
+        ordering.then_with(|| left.cmp(right))
+    });
+    indices
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sorted_indices_by_preserves_source_order_for_equal_keys() {
+        let values = ["b", "a", "b"];
+        let indices = sorted_indices_by(&values, Some(false), |left, right| left.cmp(right));
+        assert_eq!(indices, vec![1, 0, 2]);
+    }
+
+    #[test]
+    fn sorted_indices_by_reverses_requested_order() {
+        let values = [2, 1, 3];
+        let indices = sorted_indices_by(&values, Some(true), |left, right| left.cmp(right));
+        assert_eq!(indices, vec![2, 0, 1]);
+    }
+
+    #[test]
+    fn sorted_indices_by_can_leave_source_order_unchanged() {
+        let values = [2, 1, 3];
+        let indices = sorted_indices_by(&values, None, |left, right| left.cmp(right));
+        assert_eq!(indices, vec![0, 1, 2]);
+    }
 }
 
 pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
