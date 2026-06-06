@@ -1,4 +1,4 @@
-///! Represents a string dictionary from a UOP file.
+//! Represents a string dictionary from a UOP file.
 
 use std::{io::Read, path::Path};
 use byteorder::{LittleEndian, ReadBytesExt};

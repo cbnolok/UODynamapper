@@ -299,9 +299,9 @@ mod tests {
         write_verdata(
             &path,
             &[
-                (4, 7, header_len as i32, 1, 0),
-                (4, 9, header_len as i32 + 1, 1, 0),
-                (8, 7, header_len as i32 + 2, 1, 0),
+                (4, 7, header_len, 1, 0),
+                (4, 9, header_len + 1, 1, 0),
+                (8, 7, header_len + 2, 1, 0),
             ],
             &[1, 2, 3],
         )
@@ -330,8 +330,8 @@ mod tests {
         write_verdata(
             &path,
             &[
-                (4, 1, header_len as i32, 1, 11),
-                (4, 1, header_len as i32 + 1, 2, 22),
+                (4, 1, header_len, 1, 11),
+                (4, 1, header_len + 1, 2, 22),
             ],
             &[0x11, 0x22, 0x33],
         )

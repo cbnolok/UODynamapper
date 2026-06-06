@@ -405,7 +405,7 @@ fn append_anim_rle(out: &mut Vec<u8>, width: u16, height: u16, pattern: AnimRunP
                     y,
                     width,
                     height,
-                    std::iter::repeat(1).take(width as usize),
+                    std::iter::repeat_n(1, width as usize),
                 );
             }
             AnimRunPattern::SinglePixelRuns => {

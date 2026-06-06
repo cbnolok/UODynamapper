@@ -24,6 +24,7 @@
 //!             - `BYTE`: `direction` (0-7). If > 7, no further data for this entry.
 //!             - `BYTE`: Z-coordinate of the adjacent tile.
 //!             - `DWORD`: Graphic ID of the adjacent tile.
+//!
 //!         *(This data is used by the Enhanced Client to stitch map chunks and is ignored by this decoder).*
 //!     - **Statics** (Variable size)
 //!         - `BYTE`: `count` of static items on this tile.

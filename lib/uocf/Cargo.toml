@@ -8,10 +8,18 @@ edition = "2024"
 [lints.clippy]
 collapsible_if = "allow"
 empty_line_after_doc_comments = "allow"
+field_reassign_with_default = "allow"
+if_same_then_else = "allow"
+items_after_test_module = "allow"
+len_without_is_empty = "allow"
 manual_div_ceil = "allow"
 manual_is_multiple_of = "allow"
 needless_lifetimes = "allow"
+needless_range_loop = "allow"
+new_without_default = "allow"
 nonminimal_bool = "allow"
+should_implement_trait = "allow"
+too_many_arguments = "allow"
 
 [dependencies]
 byteorder = { version = "1.5", features = ["std"] }

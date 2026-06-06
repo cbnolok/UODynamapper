@@ -61,10 +61,7 @@ impl AnimationSequence {
         }
 
         let mut actions = HashMap::new();
-        let count = match reader.read_u32::<LittleEndian>() {
-            Ok(c) => c,
-            Err(_) => 0,
-        };
+        let count = reader.read_u32::<LittleEndian>().unwrap_or_default();
 
         if count > 0 {
             for _ in 0..count {
@@ -113,10 +110,7 @@ impl AnimationSequence {
             }
 
             // Final sub count loop
-            let sub_count_final = match reader.read_u32::<LittleEndian>() {
-                Ok(c) => c,
-                Err(_) => 0,
-            };
+            let sub_count_final = reader.read_u32::<LittleEndian>().unwrap_or_default();
             if sub_count_final > 0 {
                 for _ in 0..sub_count_final {
                     let _ = reader.read_u32::<LittleEndian>()?;
@@ -135,10 +129,7 @@ impl AnimationSequence {
         let mut reader = Cursor::new(data);
         
         let mut actions = HashMap::new();
-        let count = match reader.read_u32::<LittleEndian>() {
-            Ok(c) => c,
-            Err(_) => 0,
-        };
+        let count = reader.read_u32::<LittleEndian>().unwrap_or_default();
 
         if count > 0 {
             for action_id in 0..count {

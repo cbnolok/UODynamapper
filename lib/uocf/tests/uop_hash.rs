@@ -11,7 +11,7 @@ fn matches_known_uop_reference() {
 
 #[test]
 fn scalar_and_simd_agree_small() {
-    let cases = vec![
+    let cases = [
         "",
         "a",
         "file.txt",

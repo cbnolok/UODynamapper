@@ -355,13 +355,11 @@ pub mod zlib_bwt_codec {
 
     // Helper function: BuildTable (from BwtDecompress)
     fn build_table(table: &mut [u16], start_value: u8) {
-        let mut index = 0;
         let mut first_byte = start_value;
         let mut second_byte = 0u8;
-        for _ in 0..256 * 256 {
+        for (index, _) in (0..256 * 256).enumerate() {
             let val: u16 = (first_byte as u16) + ((second_byte as u16) << 8);
             table[index] = val;
-            index += 1;
 
             first_byte = first_byte.wrapping_add(1);
             if first_byte == 0 {

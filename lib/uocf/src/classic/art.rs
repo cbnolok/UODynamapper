@@ -665,8 +665,7 @@ impl ArtMap {
             }
         }
 
-        if (source == ArtSource::Mul || source == ArtSource::Any) && self.idx_file.is_some() {
-            let idx = self.idx_file.as_ref().expect("checked above");
+        if (source == ArtSource::Mul || source == ArtSource::Any) && let Some(idx) = &self.idx_file {
             if let Ok(entry) = idx.element(art_id as usize) {
                 let index_patch = self
                     .verdata
