@@ -1,4 +1,5 @@
 use crate::app::{ArtSource, MultiCollectionSource, MultisSource, UopInspectorApp};
+use crate::ui::{arrow_delta, move_selection};
 use eframe::egui;
 use uocf::classic::art::static_art_id_for_source;
 
@@ -22,6 +23,7 @@ struct PartRenderInfo {
 }
 
 struct PreviewRenderPart {
+    index: usize,
     part: PreviewPart,
     info: PartRenderInfo,
     texture: Option<egui::TextureHandle>,
@@ -126,11 +128,23 @@ fn ui_classic_multis(app: &mut UopInspectorApp, ctx: &egui::Context) {
             if let Some(client) = &app.client_data {
                 if let Some(multis) = &client.multis {
                     let max_id = multis.max_id();
+                    let visible_ids = (0..max_id).collect::<Vec<_>>();
+                    let keyboard_moved = if let Some(delta) = arrow_delta(ui, false) {
+                        if let Some(id) = move_selection(&visible_ids, Some(app.selected_multi_id), delta) {
+                            select_multi(app, id, None);
+                        }
+                        true
+                    } else {
+                        false
+                    };
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         for id in 0..max_id {
-                            if ui
-                                .selectable_label(app.selected_multi_id == id, format!("Multi {}", id))
-                                .clicked()
+                            let selected = app.selected_multi_id == id;
+                            let response = ui.selectable_label(selected, format!("Multi {}", id));
+                            if keyboard_moved && selected {
+                                response.scroll_to_me(Some(egui::Align::Center));
+                            }
+                            if response.clicked()
                             {
                                 select_multi(app, id, None);
                             }
@@ -180,13 +194,37 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 ui.monospace(path.display().to_string());
             }
             ui.separator();
+            let mut search_has_focus = false;
             ui.horizontal(|ui| {
                 ui.label("Search:");
-                ui.text_edit_singleline(&mut app.search_query);
+                search_has_focus = ui.text_edit_singleline(&mut app.search_query).has_focus();
             });
             ui.separator();
 
             let query = app.search_query.to_lowercase();
+            let visible_entries: Vec<_> = collection
+                .items
+                .iter()
+                .filter(|item| {
+                    query.is_empty()
+                        || item.id.to_string().contains(&query)
+                        || item.path.to_lowercase().contains(&query)
+                        || format!("{:016X}", item.filename_hash).to_lowercase().contains(&query)
+                })
+                .map(|item| (item.id, item.filename_hash))
+                .collect();
+            let selected_entry = collection
+                .get(app.selected_multi_id)
+                .map(|item| (item.id, item.filename_hash))
+                .or_else(|| app.selected_multi_uop_hash.map(|hash| (app.selected_multi_id, hash)));
+            let keyboard_moved = if let Some(delta) = arrow_delta(ui, search_has_focus) {
+                if let Some((id, hash)) = move_selection(&visible_entries, selected_entry, delta) {
+                    select_multi(app, id, Some(hash));
+                }
+                true
+            } else {
+                false
+            };
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for item in &collection.items {
                     if !query.is_empty()
@@ -197,12 +235,15 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context) {
                         continue;
                     }
 
-                    if ui
-                        .selectable_label(
-                            app.selected_multi_id == item.id,
-                            format!("Multi {} ({:016X})", item.id, item.filename_hash),
-                        )
-                        .clicked()
+                    let selected = app.selected_multi_id == item.id;
+                    let response = ui.selectable_label(
+                        selected,
+                        format!("Multi {} ({:016X})", item.id, item.filename_hash),
+                    );
+                    if keyboard_moved && selected {
+                        response.scroll_to_me(Some(egui::Align::Center));
+                    }
+                    if response.clicked()
                     {
                         select_multi(app, item.id, Some(item.filename_hash));
                     }
@@ -356,6 +397,32 @@ fn draw_multi_details(
     if let Some(raw_label) = raw_label {
         ui.monospace(raw_label);
     }
+    let detached_window_id = egui::Id::new("multi_preview_detached_window");
+    let show_center_id = egui::Id::new("multi_preview_show_center");
+    let selected_part_id = multi_selected_part_id(app);
+    let mut detached_open = ctx
+        .data_mut(|data| data.get_temp::<bool>(detached_window_id))
+        .unwrap_or(false);
+    let mut show_center = ctx
+        .data_mut(|data| data.get_temp::<bool>(show_center_id))
+        .unwrap_or(false);
+    let mut selected_part_index = ctx
+        .data_mut(|data| data.get_temp::<usize>(selected_part_id))
+        .filter(|index| *index < parts.len());
+    if selected_part_index.is_none() {
+        ctx.data_mut(|data| data.remove::<usize>(selected_part_id));
+    }
+
+    ui.horizontal(|ui| {
+        if ui.button("Open 2D Window").clicked() {
+            detached_open = true;
+        }
+        ui.checkbox(&mut show_center, "Show center");
+    });
+    ctx.data_mut(|data| {
+        data.insert_temp(detached_window_id, detached_open);
+        data.insert_temp(show_center_id, show_center);
+    });
     ui.separator();
 
     let available = ui.available_size();
@@ -382,12 +449,18 @@ fn draw_multi_details(
                             ui.label("Z");
                             ui.label("Flags");
                             ui.end_row();
-                            for part in parts {
-                                ui.label(part.item_id.to_string());
-                                ui.label(part.x.to_string());
-                                ui.label(part.y.to_string());
-                                ui.label(part.z.to_string());
-                                ui.label(&part.flags);
+                            for (index, part) in parts.iter().enumerate() {
+                                let selected = selected_part_index == Some(index);
+                                let mut clicked = false;
+                                clicked |= ui.selectable_label(selected, part.item_id.to_string()).clicked();
+                                clicked |= ui.selectable_label(selected, part.x.to_string()).clicked();
+                                clicked |= ui.selectable_label(selected, part.y.to_string()).clicked();
+                                clicked |= ui.selectable_label(selected, part.z.to_string()).clicked();
+                                clicked |= ui.selectable_label(selected, &part.flags).clicked();
+                                if clicked {
+                                    selected_part_index = Some(index);
+                                    ui.ctx().data_mut(|data| data.insert_temp(selected_part_id, index));
+                                }
                                 ui.end_row();
                             }
                         });
@@ -408,15 +481,36 @@ fn draw_multi_details(
                     preview_available,
                     egui::Layout::top_down(egui::Align::Center),
                     |ui| {
-                        draw_preview(app, ctx, ui, parts);
+                        draw_preview(app, ctx, ui, parts, selected_part_index, show_center, "inline");
                     },
                 );
             },
         );
     });
+
+    if detached_open {
+        let mut open = true;
+        egui::Window::new(format!("2D Preview - {} {}", title, app.selected_multi_id))
+            .id(egui::Id::new("multi_preview_detached_window_panel"))
+            .open(&mut open)
+            .default_size(egui::vec2(1000.0, 720.0))
+            .resizable(true)
+            .show(ctx, |ui| {
+                draw_preview(app, ctx, ui, parts, selected_part_index, show_center, "detached");
+            });
+        ctx.data_mut(|data| data.insert_temp(detached_window_id, open));
+    }
 }
 
-fn draw_preview(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui, parts: &[PreviewPart]) {
+fn draw_preview(
+    app: &mut UopInspectorApp,
+    ctx: &egui::Context,
+    ui: &mut egui::Ui,
+    parts: &[PreviewPart],
+    selected_part_index: Option<usize>,
+    show_center: bool,
+    scroll_id_salt: &'static str,
+) {
     let (min_x, max_x, min_y, max_y) = parts.iter().fold(
         (0i16, 0i16, 0i16, 0i16),
         |(min_x, max_x, min_y, max_y), p| {
@@ -434,7 +528,8 @@ fn draw_preview(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::U
     let viewport_size = ui.available_size();
     let mut sorted_parts: Vec<_> = parts
         .iter()
-        .map(|part| {
+        .enumerate()
+        .map(|(index, part)| {
             let info = part_render_info(app, part.item_id);
             let texture = get_multi_part_texture(app, ctx, part.item_id);
             let size = texture
@@ -442,6 +537,7 @@ fn draw_preview(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::U
                 .map(|handle| handle.size_vec2())
                 .unwrap_or_else(|| egui::vec2(14.0, 14.0));
             PreviewRenderPart {
+                index,
                 part: part.clone(),
                 info,
                 texture,
@@ -466,6 +562,13 @@ fn draw_preview(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::U
         content_max.x = content_max.x.max(pos.x + render_part.size.x);
         content_max.y = content_max.y.max(pos.y + render_part.size.y);
     }
+    if show_center {
+        let center_pos = multi_center_position(min_x, min_y, min_z, tile_w, tile_h);
+        content_min.x = content_min.x.min(center_pos.x - 24.0);
+        content_min.y = content_min.y.min(center_pos.y - 24.0);
+        content_max.x = content_max.x.max(center_pos.x + 24.0);
+        content_max.y = content_max.y.max(center_pos.y + 24.0);
+    }
     if !content_min.x.is_finite() {
         content_min = egui::pos2(0.0, 0.0);
         content_max = egui::pos2(
@@ -481,7 +584,7 @@ fn draw_preview(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::U
     let canvas_size = egui::vec2(canvas_w, canvas_h);
 
     egui::ScrollArea::both()
-        .id_salt(("multi_preview_scroll", app.multis_source as u8, app.selected_multi_id))
+        .id_salt(("multi_preview_scroll", scroll_id_salt, app.multis_source as u8, app.selected_multi_id))
         .auto_shrink([false, false])
         .show(ui, |ui| {
         let (rect, _response) = ui.allocate_exact_size(canvas_size, egui::Sense::hover());
@@ -508,6 +611,7 @@ fn draw_preview(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::U
                     egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                     egui::Color32::WHITE,
                 );
+                paint_selected_part_highlight(&painter, part_rect, render_part.index, selected_part_index);
             } else {
                 let fallback_pos = origin + part_pos.to_vec2();
                 let part_rect = egui::Rect::from_center_size(
@@ -515,7 +619,22 @@ fn draw_preview(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::U
                     render_part.size,
                 );
                 painter.rect_filled(part_rect.shrink(1.0), 2.0, egui::Color32::BLUE);
+                paint_selected_part_highlight(&painter, part_rect, render_part.index, selected_part_index);
             }
+        }
+
+        if show_center {
+            let center = origin + multi_center_position(min_x, min_y, min_z, tile_w, tile_h).to_vec2();
+            let stroke = egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 220, 64));
+            painter.line_segment(
+                [center + egui::vec2(-18.0, 0.0), center + egui::vec2(18.0, 0.0)],
+                stroke,
+            );
+            painter.line_segment(
+                [center + egui::vec2(0.0, -18.0), center + egui::vec2(0.0, 18.0)],
+                stroke,
+            );
+            painter.circle_stroke(center, 6.0, stroke);
         }
     });
 }
@@ -542,6 +661,32 @@ fn preview_part_position(
         base_x + info.offset_x as f32,
         base_y + info.offset_y as f32 + (min_z as f32 * 4.0),
     )
+}
+
+fn multi_center_position(min_x: i16, min_y: i16, min_z: i16, tile_w: f32, tile_h: f32) -> egui::Pos2 {
+    let x = -(min_x as f32);
+    let y = -(min_y as f32);
+    egui::pos2((x - y) * tile_w, (x + y) * tile_h + (min_z as f32 * 4.0))
+}
+
+fn paint_selected_part_highlight(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    index: usize,
+    selected_part_index: Option<usize>,
+) {
+    if selected_part_index == Some(index) {
+        painter.rect_stroke(
+            rect.expand(3.0),
+            0.0,
+            egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 220, 64)),
+            egui::StrokeKind::Outside,
+        );
+    }
+}
+
+fn multi_selected_part_id(app: &UopInspectorApp) -> egui::Id {
+    egui::Id::new(("multi_selected_part", app.multis_source as u8, app.selected_multi_id))
 }
 
 fn get_multi_part_texture(
