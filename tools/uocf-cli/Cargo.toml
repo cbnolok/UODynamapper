@@ -64,6 +64,7 @@ name = "facet-evidence-tool"
 path = "src/bin/dev-tools/facet_evidence_tool.rs"
 required-features = ["dev-tool-tests"]
 
-#[[bin]]
-#name = "kr-ec-terrain-diff-tool"
-#path = "src/bin/dev-tools/kr_ec_terrain_diff_tool.rs"
+[[bin]]
+name = "kr-ec-terrain-diff-tool"
+path = "src/bin/dev-tools/kr_ec_terrain_diff_tool.rs"
+required-features = ["dev-tool-tests"]

@@ -28,9 +28,9 @@ macro_rules! fname {
 macro_rules! tracy_span {
     ($($arg:tt)*) => {{
         #[cfg(feature = "trace_tracy")]
-        #[allow(clippy::let_unit_value)]
         let _entered = tracing::info_span!($($arg)*).entered();
         #[cfg(not(feature = "trace_tracy"))]
+        #[allow(clippy::let_unit_value)]
         let _entered = ();
         _entered
     }};
