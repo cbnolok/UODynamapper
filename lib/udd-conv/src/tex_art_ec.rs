@@ -42,7 +42,7 @@ use crate::{
 };
 use crate::package_progress::{
     atlas_payload_finish_message, atlas_payload_progress_message, AssetTaskProgress,
-    AssetTaskProgressStage,
+    AssetProgressReporter, AssetTaskProgressStage,
     build_and_write_package_with_progress,
 };
 use crate::rgba_bounds::nonzero_alpha_bounds_in_rect;
@@ -374,6 +374,8 @@ pub fn convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources_with_progre
     payload_progress: impl Fn(AssetTaskProgress) + Sync,
     mut package_progress: impl FnMut(udd_container::BuildProgress),
 ) -> eyre::Result<TexArtEcBuildSummary> {
+    let payload_progress_reporter = AssetProgressReporter::new(payload_progress);
+    let payload_progress = |progress| payload_progress_reporter.report(progress);
     validate_options(options)?;
 
     info!(

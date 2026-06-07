@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use color_eyre::eyre::{self, WrapErr};
@@ -23,6 +24,94 @@ pub struct AssetTaskProgress {
     pub stage: AssetTaskProgressStage,
     pub completed: u64,
     pub total: u64,
+}
+
+const MIN_PROGRESS_FRACTION: f64 = 0.0005;
+
+fn min_progress_step(total: u64) -> u64 {
+    ((total.max(1) as f64) * MIN_PROGRESS_FRACTION).ceil() as u64
+}
+
+fn should_emit_asset_progress(
+    previous: Option<AssetTaskProgress>,
+    next: AssetTaskProgress,
+) -> bool {
+    let Some(previous) = previous else {
+        return true;
+    };
+    if previous.stage != next.stage || previous.total != next.total {
+        return true;
+    }
+    next.completed >= next.total
+        || next.completed.saturating_sub(previous.completed) >= min_progress_step(next.total)
+}
+
+fn should_emit_build_progress(previous: Option<BuildProgress>, next: BuildProgress) -> bool {
+    let Some(previous) = previous else {
+        return true;
+    };
+    if previous.phase != next.phase || previous.total != next.total {
+        return true;
+    }
+    next.completed >= next.total
+        || (next.completed as u64).saturating_sub(previous.completed as u64)
+            >= min_progress_step(next.total as u64)
+}
+
+pub(crate) struct AssetProgressReporter<F> {
+    callback: F,
+    previous: Mutex<Option<AssetTaskProgress>>,
+}
+
+impl<F> AssetProgressReporter<F>
+where
+    F: Fn(AssetTaskProgress) + Sync,
+{
+    pub(crate) fn new(callback: F) -> Self {
+        Self {
+            callback,
+            previous: Mutex::new(None),
+        }
+    }
+
+    pub(crate) fn report(&self, progress: AssetTaskProgress) {
+        let should_emit = {
+            let mut previous = self.previous.lock().expect("asset progress reporter poisoned");
+            if should_emit_asset_progress(*previous, progress) {
+                *previous = Some(progress);
+                true
+            } else {
+                false
+            }
+        };
+        if should_emit {
+            (self.callback)(progress);
+        }
+    }
+}
+
+struct BuildProgressReporter<F> {
+    callback: F,
+    previous: Option<BuildProgress>,
+}
+
+impl<F> BuildProgressReporter<F>
+where
+    F: FnMut(BuildProgress),
+{
+    fn new(callback: F) -> Self {
+        Self {
+            callback,
+            previous: None,
+        }
+    }
+
+    fn report(&mut self, progress: BuildProgress) {
+        if should_emit_build_progress(self.previous, progress) {
+            self.previous = Some(progress);
+            (self.callback)(progress);
+        }
+    }
 }
 
 fn spinner_style() -> ProgressStyle {
@@ -183,7 +272,7 @@ pub fn build_and_write_package(builder: &mut UddpBuilder, out_file: &Path) -> ey
 pub fn build_and_write_package_with_progress<F>(
     builder: &mut UddpBuilder,
     out_file: &Path,
-    mut progress_callback: F,
+    progress_callback: F,
 ) -> eyre::Result<()>
 where
     F: FnMut(BuildProgress),
@@ -191,6 +280,7 @@ where
     let bar = ProgressBar::new(1);
     bar.set_style(build_style());
     let compression_summary = builder.compression_summary();
+    let mut progress_callback = BuildProgressReporter::new(progress_callback);
 
     let mut active_phase = None;
     let mut active_phase_started = Instant::now();
@@ -198,7 +288,7 @@ where
     let mut compression_time = Duration::ZERO;
     let mut assembly_time = Duration::ZERO;
     let bytes = builder.build_with_progress(|progress: BuildProgress| {
-        progress_callback(progress);
+        progress_callback.report(progress);
         let total = progress.total.max(1) as u64;
         if active_phase != Some(progress.phase) || bar.length() != Some(total) {
             if let Some(phase) = active_phase {

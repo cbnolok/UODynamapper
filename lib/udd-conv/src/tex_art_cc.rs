@@ -45,7 +45,7 @@ use crate::classic_patches::{load_verdata_if_enabled, ClassicPatchOptions};
 use crate::classic_sources::{resolve_classic_art_source, SourceFormat, SourceFormatPreference};
 use crate::package_progress::{
     atlas_payload_finish_message, atlas_payload_progress_message, AssetTaskProgress,
-    AssetTaskProgressStage,
+    AssetProgressReporter, AssetTaskProgressStage,
     build_and_write_package_with_progress,
 };
 use crate::source_paths::{find_first_existing_file, source_path_label};
@@ -343,6 +343,8 @@ pub fn convert_art_mul_to_tex_art_cc_uddp_from_sources_with_patches_and_progress
     mut package_progress: impl FnMut(udd_container::BuildProgress),
 ) -> eyre::Result<TexArtCcBuildSummary> {
     validate_options(options)?;
+    let payload_progress_reporter = AssetProgressReporter::new(payload_progress);
+    let payload_progress = |progress| payload_progress_reporter.report(progress);
 
     let art_source_selection =
         resolve_classic_art_source(source_dirs, options.source_preference)?;

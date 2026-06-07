@@ -35,7 +35,8 @@ use crate::bc7::{
     VramTextureEncoding,
 };
 use crate::package_progress::{
-    build_and_write_package_with_progress, AssetTaskProgress, AssetTaskProgressStage,
+    build_and_write_package_with_progress, AssetProgressReporter, AssetTaskProgress,
+    AssetTaskProgressStage,
 };
 use crate::rgba_bounds::{count_nonzero_alpha, nonzero_alpha_bounds, RgbaBounds};
 use crate::source_paths::{find_first_dir_matching, source_path_label};
@@ -278,6 +279,8 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources_with_progress(
     mut package_progress: impl FnMut(udd_container::BuildProgress),
 ) -> eyre::Result<MobileAnimCcBuildSummary> {
     validate_options(options)?;
+    let payload_progress_reporter = AssetProgressReporter::new(payload_progress);
+    let payload_progress = |progress| payload_progress_reporter.report(progress);
     let total_timer = Instant::now();
 
     let client_dir = find_first_dir_matching(source_dirs, &[&["anim.idx", "anim.mul"]])

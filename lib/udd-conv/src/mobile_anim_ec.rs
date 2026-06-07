@@ -27,7 +27,8 @@ use crate::bc7::{
     VramTextureEncoding,
 };
 use crate::package_progress::{
-    build_and_write_package_with_progress, AssetTaskProgress, AssetTaskProgressStage,
+    build_and_write_package_with_progress, AssetProgressReporter, AssetTaskProgress,
+    AssetTaskProgressStage,
 };
 use crate::rgba_bounds::{count_nonzero_alpha, nonzero_alpha_bounds, RgbaBounds};
 use crate::source_paths::{find_first_dir_matching, find_first_existing_file};
@@ -262,6 +263,8 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progr
     mut package_progress: impl FnMut(udd_container::BuildProgress),
 ) -> eyre::Result<MobileAnimEcBuildSummary> {
     validate_options(options)?;
+    let payload_progress_reporter = AssetProgressReporter::new(payload_progress);
+    let payload_progress = |progress| payload_progress_reporter.report(progress);
     let total_timer = Instant::now();
     let client_dir = find_first_dir_matching(source_dirs, &[&["AnimationFrame1.uop"], &["animationframe1.uop"]])
         .ok_or_else(|| eyre::eyre!(

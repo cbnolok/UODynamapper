@@ -42,7 +42,7 @@ use crate::{
 };
 use crate::package_progress::{
     atlas_payload_finish_message, atlas_payload_progress_message, AssetTaskProgress,
-    AssetTaskProgressStage,
+    AssetProgressReporter, AssetTaskProgressStage,
     build_and_write_package_with_progress,
 };
 use crate::source_paths::{find_first_existing_file, source_path_label_from_dirs};
@@ -431,6 +431,8 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_prog
     mut package_progress: impl FnMut(udd_container::BuildProgress),
 ) -> eyre::Result<TexLandEcBuildSummary> {
     validate_options(options)?;
+    let payload_progress_reporter = AssetProgressReporter::new(payload_progress);
+    let payload_progress = |progress| payload_progress_reporter.report(progress);
 
     let terrain_entry_count = terrain_definition.entries.len() as u32;
     let terrain_alias_ref_count = terrain_definition
