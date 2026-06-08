@@ -83,10 +83,10 @@ export RUSTFLAGS_RELEASE_NIGHTLY        := linux_optimized_rustflags + rustflags
 export RUSTFLAGS_RELEASE_STABLE         := linux_optimized_rustflags + rustflags_optimized_common_stable  + " -Csymbol-mangling-version=v0 -Cforce-unwind-tables=no"
 export RUSTFLAGS_PROFILE_NIGHTLY        := linux_optimized_rustflags + rustflags_optimized_common_nightly + " -Cforce-frame-pointers=yes"
 export RUSTFLAGS_PROFILE_STABLE         := linux_optimized_rustflags + rustflags_optimized_common_stable  + " -Cforce-frame-pointers=yes"
-export RUSTFLAGS_RELEASE_NIGHTLY_MUSL   := rustflags_optimized_common_nightly + linux_musl_flags
-export RUSTFLAGS_RELEASE_STABLE_MUSL    := rustflags_optimized_common_stable  + linux_musl_flags
-export RUSTFLAGS_PROFILE_NIGHTLY_MUSL   := rustflags_optimized_common_nightly + linux_musl_flags + " -Cforce-frame-pointers=yes"
-export RUSTFLAGS_PROFILE_STABLE_MUSL    := rustflags_optimized_common_stable  + linux_musl_flags + " -Cforce-frame-pointers=yes"
+rustflags_release_nightly_musl          := rustflags_optimized_common_nightly + linux_musl_flags
+rustflags_release_stable_musl           := rustflags_optimized_common_stable  + linux_musl_flags
+rustflags_profile_nightly_musl          := rustflags_release_nightly_musl + " -Cforce-frame-pointers=yes"
+rustflags_profile_stable_musl           := rustflags_release_stable_musl  + " -Cforce-frame-pointers=yes"
 export CARGO_FLAGS_NIGHTLY              := " -Zbuild-std=std,panic_abort -Zbuild-std-features=optimize_for_size"
 
 # Cross-platform Cargo runners to properly inject RUSTFLAGS in the shell
@@ -94,10 +94,6 @@ cargo_release_nightly   := if is_windows == "true" { "$env:RUSTFLAGS=$env:RUSTFL
 cargo_release_stable    := if is_windows == "true" { "$env:RUSTFLAGS=$env:RUSTFLAGS_RELEASE_STABLE; cargo" } else { "export RUSTFLAGS=\"$RUSTFLAGS_RELEASE_STABLE\"; cargo" }
 cargo_profile_nightly   := if is_windows == "true" { "$env:RUSTFLAGS=$env:RUSTFLAGS_PROFILE_NIGHTLY; cargo +nightly" } else { "export RUSTFLAGS=\"$RUSTFLAGS_PROFILE_NIGHTLY\"; cargo +nightly" }
 cargo_profile_stable    := if is_windows == "true" { "$env:RUSTFLAGS=$env:RUSTFLAGS_PROFILE_STABLE; cargo" } else { "export RUSTFLAGS=\"$RUSTFLAGS_PROFILE_STABLE\"; cargo" }
-cargo_release_nightly_musl := if is_windows == "true" { "$env:RUSTFLAGS=$env:RUSTFLAGS_RELEASE_NIGHTLY_MUSL; cargo +nightly" } else { "export RUSTFLAGS=\"$RUSTFLAGS_RELEASE_NIGHTLY_MUSL\"; cargo +nightly" }
-cargo_release_stable_musl  := if is_windows == "true" { "$env:RUSTFLAGS=$env:RUSTFLAGS_RELEASE_STABLE_MUSL; cargo" } else { "export RUSTFLAGS=\"$RUSTFLAGS_RELEASE_STABLE_MUSL\"; cargo" }
-cargo_profile_nightly_musl := if is_windows == "true" { "$env:RUSTFLAGS=$env:RUSTFLAGS_PROFILE_NIGHTLY_MUSL; cargo +nightly" } else { "export RUSTFLAGS=\"$RUSTFLAGS_PROFILE_NIGHTLY_MUSL\"; cargo +nightly" }
-cargo_profile_stable_musl  := if is_windows == "true" { "$env:RUSTFLAGS=$env:RUSTFLAGS_PROFILE_STABLE_MUSL; cargo" } else { "export RUSTFLAGS=\"$RUSTFLAGS_PROFILE_STABLE_MUSL\"; cargo" }
 
 # --- Release Package Contents ---
 app_docs := "docs/keybindings.md docs/USER_TROUBLESHOOTING.md"
@@ -142,18 +138,11 @@ build-local-workspace-release *args:
 
 # Build the workspace for a Linux musl target in release mode (stable toolchain)
 build-linux-musl-release target="x86_64-unknown-linux-musl" *args:
-    @case "{{target}}" in x86_64-unknown-linux-musl|aarch64-unknown-linux-musl) ;; *) echo "unsupported musl target: {{target}}" >&2; exit 2;; esac
-    @echo "Running stable release build for {{target}}..."
-    @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_STABLE_MUSL}}"
-    {{cargo_release_stable_musl}} build --release --locked --workspace --no-default-features --features "{{linux_features}}" --target "{{target}}" {{args}}
+    @just _build-linux-musl "cargo" "--release" "{{linux_features}}" "" "{{rustflags_release_stable_musl}}" "{{target}}" {{args}}
 
 # Build the workspace for a Linux musl target in release mode (nightly toolchain)
 build-linux-musl-release-nightly target="x86_64-unknown-linux-musl" *args:
-    @case "{{target}}" in x86_64-unknown-linux-musl|aarch64-unknown-linux-musl) ;; *) echo "unsupported musl target: {{target}}" >&2; exit 2;; esac
-    @echo "Running nightly release build for {{target}}..."
-    @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_NIGHTLY_MUSL}}"
-    @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
-    {{cargo_release_nightly_musl}} build --release --locked --workspace --no-default-features --features "{{linux_features}}" --target "{{target}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
+    @just _build-linux-musl "cargo +nightly" "--release" "{{linux_features}}" "{{CARGO_FLAGS_NIGHTLY}}" "{{rustflags_release_nightly_musl}}" "{{target}}" {{args}}
 
 # Build the workspace exactly as CI does for release artifacts
 build-ci-workspace *args:
@@ -192,10 +181,7 @@ build-local-workspace-profile *args:
 
 # Build the workspace for a Linux musl target in profiling mode (stable toolchain)
 build-linux-musl-profile target="x86_64-unknown-linux-musl" *args:
-    @case "{{target}}" in x86_64-unknown-linux-musl|aarch64-unknown-linux-musl) ;; *) echo "unsupported musl target: {{target}}" >&2; exit 2;; esac
-    @echo "Running stable profiling build for {{target}}..."
-    @echo "Using RUSTFLAGS: {{RUSTFLAGS_PROFILE_STABLE_MUSL}}"
-    {{cargo_profile_stable_musl}} build --profile profiling --locked --workspace --no-default-features --features "profiling,{{linux_features}}" --target "{{target}}" {{args}}
+    @just _build-linux-musl "cargo" "--profile profiling" "profiling,{{linux_features}}" "" "{{rustflags_profile_stable_musl}}" "{{target}}" {{args}}
 
 # Build the workspace locally in profiling mode (nightly toolchain)
 # Purpose: Most accurate profiling with optimized standard library symbols.
@@ -207,11 +193,14 @@ build-local-workspace-profile-nightly *args:
 
 # Build the workspace for a Linux musl target in profiling mode (nightly toolchain)
 build-linux-musl-profile-nightly target="x86_64-unknown-linux-musl" *args:
+    @just _build-linux-musl "cargo +nightly" "--profile profiling" "profiling,{{linux_features}}" "{{CARGO_FLAGS_NIGHTLY}}" "{{rustflags_profile_nightly_musl}}" "{{target}}" {{args}}
+
+_build-linux-musl cargo profile_flags features cargo_flags rustflags target *args:
     @case "{{target}}" in x86_64-unknown-linux-musl|aarch64-unknown-linux-musl) ;; *) echo "unsupported musl target: {{target}}" >&2; exit 2;; esac
-    @echo "Running nightly profiling build for {{target}}..."
-    @echo "Using RUSTFLAGS: {{RUSTFLAGS_PROFILE_NIGHTLY_MUSL}}"
-    @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
-    {{cargo_profile_nightly_musl}} build --profile profiling --locked --workspace --no-default-features --features "profiling,{{linux_features}}" --target "{{target}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
+    @echo "Running {{profile_flags}} build for {{target}}..."
+    @echo "Using RUSTFLAGS: {{rustflags}}"
+    @if [ -n "{{cargo_flags}}" ]; then echo "Adding cargo flags: {{cargo_flags}}"; fi
+    export RUSTFLAGS="{{rustflags}}"; {{cargo}} build {{profile_flags}} --locked --workspace --no-default-features --features "{{features}}" --target "{{target}}" {{cargo_flags}} {{args}}
 
 # Run flamegraph profiling (requires cargo-flamegraph)
 # Purpose: Generates a SVG flamegraph for performance analysis.
