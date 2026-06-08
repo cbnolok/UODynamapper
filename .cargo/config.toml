@@ -1,11 +1,15 @@
-# Stable Cargo configuration.
-#
-# Nightly-only profile rustflags live in config.nightly.toml and can be enabled
-# with: cargo +nightly --config .cargo/config.nightly.toml ...
-
+# -- Local
 [build]
 #target-dir = "target"
 target-dir = "/home/claudio/_builds/"
+
+# -- Unstable Rust toolchain only. Only Cargo flags are supported here, not rustc.
+[unstable]
+no-embed-metadata = true
+#profile-rustflags = true
+
+#[profile.profiling]
+#rustflags = ["-C", "force-frame-pointers=yes"]
 
 # ----------
 # Linux, GNU libc (default)
@@ -17,14 +21,45 @@ linker = "clang"
 [target.aarch64-unknown-linux-gnu]
 linker = "aarch64-linux-gnu-gcc"
 
-[target.'cfg(target_os = "linux")']
+[target.'cfg(all(target_os = "linux", debug_assertions, not(feature = "profiling")))']
+# wild linker (even faster than mold) + frame-pointers for debug
 rustflags = [
   # rustc flags
+  "-C", "force-frame-pointers=yes",
   "-C", "embed-bitcode=no",
   # linker flags
+  "-Clink-arg=-fuse-ld=wild", # "-Clink-arg=-fuse-ld=mold",
   "-Clink-arg=-Wl,--gc-sections",
   "-Clink-arg=-Wl,--no-allow-shlib-undefined",
 ]
+
+[target.'cfg(all(target_os = "linux", feature = "profiling"))']
+# profiling feature enables frame pointers (applies to crates with the feature)
+rustflags = [
+  # rustc flags
+  "-C", "force-frame-pointers=yes",
+  "-C", "embed-bitcode=no", # needed if building code that will be passes to LTO
+  "-Csymbol-mangling-version=v0",
+  "-Cforce-unwind-tables=no",
+  # linker flags
+  "-Clink-arg=-fuse-ld=mold",
+  "-Clink-arg=-Wl,--gc-sections",
+  "-Clink-arg=-Wl,--no-allow-shlib-undefined",
+]
+
+[target.'cfg(all(target_os = "linux", not(debug_assertions)))']
+# mold linker for release
+rustflags = [
+  # rustc flags
+  "-C", "embed-bitcode=no",   # here we are using LTO, we have -Clinker-plugin-lto, below
+  "-Clinker-plugin-lto",      # skips generating object files entirely and replaces them with LLVM bitcode
+  "-Csymbol-mangling-version=v0",
+  "-Cforce-unwind-tables=no",
+  # linker flags
+  "-Clink-arg=-fuse-ld=mold",
+  "-Clink-arg=-Wl,--gc-sections",
+  "-Clink-arg=-Wl,--no-allow-shlib-undefined",
+  ]
 
 # ----------
 # Linux, Musl libc (statically linked)
@@ -36,7 +71,11 @@ rustflags = [
   "-C", "target-feature=+crt-static",
   "-C", "link-self-contained=yes",
   "-C", "embed-bitcode=no",
+  "-Clinker-plugin-lto",
+  "-Csymbol-mangling-version=v0",
+  "-Cforce-unwind-tables=no",
   # linker flags
+  "-Clink-arg=-fuse-ld=mold",
   "-Clink-arg=-Wl,--gc-sections",
   "-Clink-arg=-Wl,--no-allow-shlib-undefined",
 ]
@@ -48,23 +87,31 @@ rustflags = [
   "-C", "target-feature=+crt-static",
   "-C", "link-self-contained=yes",
   "-C", "embed-bitcode=no",
+  "-Clinker-plugin-lto",
+  "-Csymbol-mangling-version=v0",
+  "-Cforce-unwind-tables=no",
   # linker flags
+  "-Clink-arg=-fuse-ld=mold",
   "-Clink-arg=-Wl,--gc-sections",
   "-Clink-arg=-Wl,--no-allow-shlib-undefined",
 ]
 #linker = "aarch64-linux-musl-gcc"
 
 # ----------
-# macOS
+# macos
 # ----------
 
 [target.'cfg(target_os = "macos")']
 rustflags = [
   # rustc flags
   "-C", "embed-bitcode=no",
+  "-Clinker-plugin-lto",
+  "-Csymbol-mangling-version=v0",
+  "-Cforce-unwind-tables=no",
   # linker flags
   "-Clink-arg=-Wl,-dead_strip",
 ]
+
 
 # ----------
 # Windows
@@ -77,6 +124,10 @@ rustflags = [
 rustflags = [
   # rustc flags
   "-C", "target-feature=+crt-static",
+  "-Csymbol-mangling-version=v0",
+  "-Cforce-unwind-tables=no",
+  # linker flags
+  "-Clink-arg=-Wl,--gc-sections",
 ]
 
 [target.i686-pc-windows-msvc]
@@ -84,4 +135,8 @@ rustflags = [
 rustflags = [
   # rustc flags
   "-C", "target-feature=+crt-static",
+  "-Csymbol-mangling-version=v0",
+  "-Cforce-unwind-tables=no",
+  # linker flags
+  "-Clink-arg=-Wl,--gc-sections",
 ]
