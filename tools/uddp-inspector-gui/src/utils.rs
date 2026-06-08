@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use bytemuck::{pod_read_unaligned, Pod};
 use udd_container::Codec;
 use crate::models::AtlasPixelFormat;
@@ -40,11 +40,14 @@ pub fn normalize_linux_portal_env() {
     }
 }
 
-pub fn open_package_dialog() -> Option<PathBuf> {
+pub fn open_package_dialog(initial_dir: Option<&Path>) -> Option<PathBuf> {
     normalize_linux_portal_env();
-    rfd::FileDialog::new()
-        .add_filter("UDDP Packages", &["uddp", "uddpi"])
-        .pick_file()
+    let mut dialog = rfd::FileDialog::new()
+        .add_filter("UDDP Packages", &["uddp", "uddpi"]);
+    if let Some(initial_dir) = initial_dir.filter(|path| path.is_dir()) {
+        dialog = dialog.set_directory(initial_dir);
+    }
+    dialog.pick_file()
 }
 
 pub fn save_file_dialog(default_name: &str) -> Option<PathBuf> {

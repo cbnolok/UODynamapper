@@ -10,7 +10,7 @@ mod ui;
 use app::InspectorApp;
 use models::{ViewMode, VirtualEntryMode};
 use ui::mobile_anim::{ui_mobile_anim_cc, ui_mobile_anim_ec};
-use utils::{open_package_dialog};
+use utils::open_package_dialog;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -46,7 +46,7 @@ impl eframe::App for InspectorApp {
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 if ui.button("📁 Open UDDP...").clicked() {
-                    if let Some(path) = open_package_dialog() {
+                    if let Some(path) = open_package_dialog(self.settings.last_package_dir.as_deref()) {
                         self.open_package(path);
                     }
                 }
@@ -99,6 +99,10 @@ impl eframe::App for InspectorApp {
         if self.image_window_open {
             self.ui_texture_viewer_window(ctx);
         }
+    }
+
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        eframe::set_value(storage, app::SETTINGS_KEY, &self.settings);
     }
 }
 

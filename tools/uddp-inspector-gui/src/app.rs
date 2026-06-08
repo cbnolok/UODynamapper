@@ -1,7 +1,8 @@
 use eframe::egui;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use serde::{Deserialize, Serialize};
 use udd_assets::{AtlasCacheOptions, MobileAnimCcPackage, MobileAnimEcPackage};
 use udd_assets::tilemeta::{
     TileMetaItemTile, TileMetaLandTile, TILEMETA_ITEM_ENTRY_PATH, TILEMETA_LAND_ENTRY_PATH,
@@ -28,6 +29,12 @@ pub const MAX_INLINE_PREVIEW_HEIGHT: usize = 600;
 pub const DATA_TYPE_MAP: u8 = 3;
 pub const DATA_TYPE_STATIC: u8 = 14;
 const MISSING_TEXTURE_ID: u32 = u32::MAX;
+pub const SETTINGS_KEY: &str = "uddp_inspector_settings";
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct AppSettings {
+    pub last_package_dir: Option<PathBuf>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MobileAnimTreeOrder {
@@ -40,6 +47,7 @@ fn terrain_definition_path(material_id: u32) -> String {
 }
 
 pub struct InspectorApp {
+    pub settings: AppSettings,
     pub package: Option<UddpReader>,
     pub entries: Vec<EntryInfo>,
     pub atlas_pages: HashMap<u32, AtlasPageInfo>,
@@ -84,8 +92,14 @@ pub struct InspectorApp {
 }
 
 impl InspectorApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        let settings: AppSettings = cc
+            .storage
+            .and_then(|s| eframe::get_value(s, SETTINGS_KEY))
+            .unwrap_or_default();
+
         Self {
+            settings,
             package: None,
             entries: Vec::new(),
             atlas_pages: HashMap::new(),
@@ -486,6 +500,7 @@ impl InspectorApp {
                 self.detect_virtual_entries(&reader);
 
                 self.package = Some(reader);
+                self.remember_package_dir(&path);
                 self.package_path = Some(path);
                 self.selected_idx = None;
                 self.selected_virtual_idx = None;
@@ -508,6 +523,10 @@ impl InspectorApp {
                 println!("Error opening package: {}", e);
             }
         }
+    }
+
+    fn remember_package_dir(&mut self, path: &Path) {
+        self.settings.last_package_dir = package_parent_dir(path);
     }
 
     pub fn detect_virtual_entries(&mut self, reader: &UddpReader) {
@@ -1400,6 +1419,12 @@ impl InspectorApp {
     }
 }
 
+fn package_parent_dir(path: &Path) -> Option<PathBuf> {
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map(Path::to_path_buf)
+}
+
 fn vram_texture_format_name(format: udd_conv::bc7::VramTextureFormat) -> &'static str {
     match format {
         udd_conv::bc7::VramTextureFormat::Rgba8UnormSrgb => "rgba8888",
@@ -1443,6 +1468,7 @@ mod tests {
 
     fn empty_test_app(view_mode: ViewMode) -> InspectorApp {
         InspectorApp {
+            settings: AppSettings::default(),
             package: None,
             entries: Vec::new(),
             atlas_pages: HashMap::new(),
@@ -1667,6 +1693,7 @@ mod tests {
     #[test]
     fn test_clear_preview_state() {
         let mut app = InspectorApp {
+            settings: AppSettings::default(),
             package: None,
             entries: Vec::new(),
             atlas_pages: HashMap::new(),
@@ -1726,6 +1753,7 @@ mod tests {
     #[test]
     fn test_filtered_package_indices() {
         let mut app = InspectorApp {
+            settings: AppSettings::default(),
             package: None,
             entries: vec![
                 EntryInfo {
@@ -1833,6 +1861,7 @@ mod tests {
     #[test]
     fn test_filtered_virtual_indices() {
         let mut app = InspectorApp {
+            settings: AppSettings::default(),
             package: None,
             entries: Vec::new(),
             atlas_pages: HashMap::new(),
@@ -1997,6 +2026,7 @@ mod tests {
     #[test]
     fn test_detect_block_virtual_entries() {
         let app = InspectorApp {
+            settings: AppSettings::default(),
             package: None,
             entries: vec![
                 EntryInfo {
