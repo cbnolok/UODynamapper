@@ -1,7 +1,7 @@
 # -- Local
 [build]
-#target-dir = "target"
-target-dir = "/home/claudio/_builds/"
+target-dir = "target"
+#target-dir = "/home/claudio/_builds/"
 
 # -- Unstable Rust toolchain only. Only Cargo flags are supported here, not rustc.
 #[unstable]
@@ -40,7 +40,6 @@ rustflags = [
   # linker flags
   "-Clink-arg=-fuse-ld=wild", # "-Clink-arg=-fuse-ld=mold",
   "-Clink-arg=-Wl,--gc-sections",
-  #"-Clink-arg=-Wl,--no-allow-shlib-undefined",
 ]
 
 # ----------
@@ -62,24 +61,13 @@ rustflags = [
 
 # On Windows MSVC, statically link the C runtime so that the resulting EXE does
 # not depend on the vcruntime DLL.
-[target.x86_64-pc-windows-msvc]
+[target.'cfg(target_os = "windows")']
 #linker = "rust-lld.exe"
 rustflags = [
   # rustc flags
   "-C", "target-feature=+crt-static",
-  "-Csymbol-mangling-version=v0",
-  "-Cforce-unwind-tables=no",
+  "-C", "embed-bitcode=no",
   # linker flags
   "-Clink-arg=-Wl,--gc-sections",
 ]
 
-[target.i686-pc-windows-msvc]
-#linker = "rust-lld.exe"
-rustflags = [
-  # rustc flags
-  "-C", "target-feature=+crt-static",
-  "-Csymbol-mangling-version=v0",
-  "-Cforce-unwind-tables=no",
-  # linker flags
-  "-Clink-arg=-Wl,--gc-sections",
-]

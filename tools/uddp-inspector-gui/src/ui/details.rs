@@ -13,6 +13,10 @@ use crate::utils::{
     format_size,
 };
 
+const DETAILS_SECTION_SPACING_SMALL: f32 = 5.0;
+const DETAILS_SECTION_SPACING_LARGE: f32 = 10.0;
+const DETAILS_TEXT_PREVIEW_BOTTOM_PADDING: f32 = 20.0;
+
 impl InspectorApp {
     pub fn ui_details(&mut self, ctx: &egui::Context, ui: &mut egui::Ui, idx: usize) {
         ui.horizontal(|ui| {
@@ -29,7 +33,7 @@ impl InspectorApp {
                 }
             });
         });
-        ui.add_space(5.0);
+        ui.add_space(DETAILS_SECTION_SPACING_SMALL);
 
         // Render mode-specific metadata
         match self.view_mode {
@@ -38,9 +42,9 @@ impl InspectorApp {
             ViewMode::MobileAnimCc | ViewMode::MobileAnimEc => {}
         }
 
-        ui.add_space(10.0);
+        ui.add_space(DETAILS_SECTION_SPACING_LARGE);
         ui.separator();
-        ui.add_space(10.0);
+        ui.add_space(DETAILS_SECTION_SPACING_LARGE);
         ui.heading("Content Preview");
 
         // Image/Text preview section
@@ -65,7 +69,7 @@ impl InspectorApp {
             }
         } else if let Some(text) = &self.preview_text {
             egui::ScrollArea::vertical()
-                .max_height(ui.available_height() - 20.0)
+                .max_height(ui.available_height() - DETAILS_TEXT_PREVIEW_BOTTOM_PADDING)
                 .show(ui, |ui| {
                     let mut t = text.as_str();
                     ui.add(
@@ -134,7 +138,7 @@ impl InspectorApp {
                     }
                 }
             });
-            ui.add_space(5.0);
+            ui.add_space(DETAILS_SECTION_SPACING_SMALL);
         }
 
         // Package Entry ID / Hash
@@ -237,7 +241,7 @@ impl InspectorApp {
                 }
             }
         });
-        ui.add_space(5.0);
+        ui.add_space(DETAILS_SECTION_SPACING_SMALL);
 
         // Virtual Asset ID and Kind
         ui.label(egui::RichText::new(format!("{} ID: {}", ventry.kind, ventry.id)).strong());

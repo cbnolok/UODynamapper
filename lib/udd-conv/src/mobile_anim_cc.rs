@@ -947,7 +947,7 @@ fn apply_planned_transparent_trim(
 fn has_effective_upscale(passes: &[UpscalePass]) -> bool {
     passes
         .iter()
-        .any(|pass| !matches!(pass.filter(), Some(UpscaleFilter::None)))
+        .any(|pass| pass.filter().is_none_or(|filter| !matches!(filter, UpscaleFilter::None)))
 }
 
 fn mobile_upscale_passes_for(

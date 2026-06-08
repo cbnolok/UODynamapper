@@ -12,6 +12,12 @@ use models::{ViewMode, VirtualEntryMode};
 use ui::mobile_anim::{ui_mobile_anim_cc, ui_mobile_anim_ec};
 use utils::open_package_dialog;
 
+const MAIN_LEFT_PANEL_DEFAULT_WIDTH: f32 = 300.0;
+const MAIN_RIGHT_PANEL_DEFAULT_WIDTH: f32 = 450.0;
+const LEFT_PANEL_SECTION_SPACING: f32 = 10.0;
+const LEFT_PANEL_SUBSECTION_SPACING: f32 = 6.0;
+const TEXTURE_VIEWER_FIT_VERTICAL_PADDING: f32 = 10.0;
+
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
     color_eyre::install()?;
@@ -59,7 +65,7 @@ impl eframe::App for InspectorApp {
         // Left panel: Metadata and filtering
         egui::SidePanel::left("left_panel")
             .resizable(true)
-            .default_width(300.0)
+            .default_width(MAIN_LEFT_PANEL_DEFAULT_WIDTH)
             .show(ctx, |ui| {
                 self.ui_left_panel(ui);
             });
@@ -74,7 +80,7 @@ impl eframe::App for InspectorApp {
         if let Some(idx) = selected_idx {
             egui::SidePanel::right("right_panel")
                 .resizable(true)
-                .default_width(450.0)
+                .default_width(MAIN_RIGHT_PANEL_DEFAULT_WIDTH)
                 .show(ctx, |ui| {
                     self.ui_details(ctx, ui, idx);
                 });
@@ -140,9 +146,9 @@ impl InspectorApp {
             ui.end_row();
         });
 
-        ui.add_space(10.0);
+        ui.add_space(LEFT_PANEL_SECTION_SPACING);
         ui.separator();
-        ui.add_space(10.0);
+        ui.add_space(LEFT_PANEL_SECTION_SPACING);
 
         // View Mode toggle (only if virtual entries were detected)
         if !self.virtual_entries.is_empty()
@@ -155,7 +161,7 @@ impl InspectorApp {
                 ui.selectable_value(&mut self.view_mode, ViewMode::Virtual, "Virtual");
             }
             if self.view_mode == ViewMode::Virtual && !self.virtual_material_entries.is_empty() {
-                ui.add_space(6.0);
+                ui.add_space(LEFT_PANEL_SUBSECTION_SPACING);
                 ui.label("Virtual Grouping");
                 let old_mode = self.virtual_entry_mode;
                 ui.selectable_value(&mut self.virtual_entry_mode, VirtualEntryMode::Entry, "Entry");
@@ -171,7 +177,7 @@ impl InspectorApp {
             if self.mobile_anim_ec_package.is_some() {
                 ui.selectable_value(&mut self.view_mode, ViewMode::MobileAnimEc, "EC Mobile Anim");
             }
-            ui.add_space(10.0);
+            ui.add_space(LEFT_PANEL_SECTION_SPACING);
         }
 
         ui.label("Filter ID / Hash / Name:");
@@ -186,13 +192,13 @@ impl InspectorApp {
             self.clear_preview_state();
         }
 
-        ui.add_space(10.0);
+        ui.add_space(LEFT_PANEL_SECTION_SPACING);
         ui.separator();
-        ui.add_space(10.0);
+        ui.add_space(LEFT_PANEL_SECTION_SPACING);
 
         ui.heading("Dictionaries");
         if dicts.is_empty() {
-            ui.label("No dictionaries.");
+            ui.label("No zstd dictionaries.");
             return;
         }
 
@@ -240,7 +246,7 @@ impl InspectorApp {
                             if ui.button("Fit").clicked() {
                                 let available = ui.available_size();
                                 let zoom_x = available.x / size[0] as f32;
-                                let zoom_y = (available.y - 10.0) / size[1] as f32;
+                                let zoom_y = (available.y - TEXTURE_VIEWER_FIT_VERTICAL_PADDING) / size[1] as f32;
                                 self.texture_zoom = zoom_x.min(zoom_y).clamp(0.1, 1.0);
                             }
                             ui.add(

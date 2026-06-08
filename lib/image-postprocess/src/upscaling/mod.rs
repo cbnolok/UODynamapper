@@ -18,7 +18,7 @@ pub mod fsr;
 pub mod depixelize;
 pub mod hqx;
 pub mod sai;
-pub mod xbr;
+pub mod xbrz;
 pub mod epx;
 pub mod nedi;
 pub mod lq;
@@ -35,100 +35,164 @@ use image::{ImageBuffer, Rgba};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum UpscaleFilter {
+    /// No upscaling. No parameters.
     #[default]
     None,
+    /// Nearest-neighbor 2x upscale. Scale is fixed to 2.
     Nearest2x,
+    /// Nearest-neighbor 3x upscale. Scale is fixed to 3.
     Nearest3x,
+    /// Nearest-neighbor 4x upscale. Scale is fixed to 4.
     Nearest4x,
+    /// Bilinear 2x upscale. Scale is fixed to 2.
     Bilinear2x,
+    /// Bilinear 3x upscale. Scale is fixed to 3.
     Bilinear3x,
+    /// Bilinear 4x upscale. Scale is fixed to 4.
     Bilinear4x,
+    /// Catmull-Rom 2x upscale. Scale is fixed to 2.
     CatmullRom2x,
+    /// Catmull-Rom 3x upscale. Scale is fixed to 3.
     CatmullRom3x,
+    /// Catmull-Rom 4x upscale. Scale is fixed to 4.
     CatmullRom4x,
+    /// Lanczos3 2x upscale. Scale is fixed to 2.
     Lanczos3_2x,
+    /// Lanczos3 3x upscale. Scale is fixed to 3.
     Lanczos3_3x,
+    /// Lanczos3 4x upscale. Scale is fixed to 4.
     Lanczos3_4x,
+    /// SuperSaI 2x upscale. Scale is fixed to 2.
     SuperSai2x,
+    /// FSR EASU 2x upscale. Scale is fixed to 2.
     FsrEasu2x,
+    /// FSR EASU 3x upscale. Scale is fixed to 3.
     FsrEasu3x,
+    /// FSR EASU 4x upscale. Scale is fixed to 4.
     FsrEasu4x,
+    /// FSR EASU plus RCAS 2x upscale. Scale is fixed to 2.
     FsrEasuRcas2x,
+    /// FSR EASU plus RCAS 3x upscale. Scale is fixed to 3.
     FsrEasuRcas3x,
+    /// FSR EASU plus RCAS 4x upscale. Scale is fixed to 4.
     FsrEasuRcas4x,
-    /// Kopf-Lischinski Depixelization variants.
+    /// Kopf-Lischinski depixelization 2x upscale. Scale is fixed to 2.
     KLDepixelize2x,
+    /// Kopf-Lischinski depixelization 3x upscale. Scale is fixed to 3.
     KLDepixelize3x,
+    /// Kopf-Lischinski depixelization 4x upscale. Scale is fixed to 4.
     KLDepixelize4x,
 
-    // New algorithms
+    /// NEDI 2x upscale. Scale is fixed to 2.
     Nedi2x,
+    /// 2xSaI upscale. Scale is fixed to 2.
     TwoSai2x,
+    /// SuperEagle upscale. Scale is fixed to 2.
     SuperEagle2x,
+    /// LQ 2x upscale. Scale is fixed to 2.
     Lq2x,
+    /// LQ 3x upscale. Scale is fixed to 3.
     Lq3x,
+    /// LQ 4x upscale. Scale is fixed to 4.
     Lq4x,
+    /// Simple HQ 2x upscale. Scale is fixed to 2.
     Hq2xSimple,
+    /// Simple HQ 3x upscale. Scale is fixed to 3.
     Hq3xSimple,
+    /// Simple HQ 4x upscale. Scale is fixed to 4.
     Hq4xSimple,
+    /// True HQ 2x upscale. Scale is fixed to 2.
     Hq2xTrue,
+    /// True HQ 3x upscale. Scale is fixed to 3.
     Hq3xTrue,
+    /// True HQ 4x upscale. Scale is fixed to 4.
     Hq4xTrue,
+    /// EPX 2x upscale. Scale is fixed to 2.
     Epx2x,
+    /// EPX 3x upscale. Scale is fixed to 3.
     Epx3x,
+    /// EPX 4x upscale. Scale is fixed to 4.
     Epx4x,
-    Xbr2x,
-    Xbr3x,
-    Xbr4x,
+    /// xBRZ 2x upscale. Scale is fixed to 2.
+    Xbrz2x,
+    /// xBRZ 3x upscale. Scale is fixed to 3.
+    Xbrz3x,
+    /// xBRZ 4x upscale. Scale is fixed to 4.
+    Xbrz4x,
+    /// Super-xBR 2x upscale. Scale is fixed to 2.
     SuperXbr2x,
+    /// Cheap Upscaling Triangulation mode 1 at 2x. Scale is fixed to 2.
     Cut1_2x,
+    /// Cheap Upscaling Triangulation mode 2 at 2x. Scale is fixed to 2.
     Cut2_2x,
+    /// Cheap Upscaling Triangulation mode 3 at 2x. Scale is fixed to 2.
     Cut3_2x,
+    /// ScaleFX 2x upscale. Scale is fixed to 2.
     ScaleFx2x,
+    /// ScaleFX 3x upscale. Scale is fixed to 3.
     ScaleFx3x,
+    /// ScaleFX 4x upscale. Scale is fixed to 4.
     ScaleFx4x,
+    /// OmniScale 2x upscale. Scale is fixed to 2.
     OmniScale2x,
+    /// OmniScale 3x upscale. Scale is fixed to 3.
     OmniScale3x,
+    /// OmniScale 4x upscale. Scale is fixed to 4.
     OmniScale4x,
+    /// Jinc2 2x upscale. Scale is fixed to 2.
     Jinc2_2x,
+    /// Jinc2 3x upscale. Scale is fixed to 3.
     Jinc2_3x,
+    /// Jinc2 4x upscale. Scale is fixed to 4.
     Jinc2_4x,
+    /// Jinc2 sharp 2x upscale. Scale is fixed to 2.
     Jinc2Sharp2x,
+    /// Jinc2 sharp 3x upscale. Scale is fixed to 3.
     Jinc2Sharp3x,
+    /// Jinc2 sharp 4x upscale. Scale is fixed to 4.
     Jinc2Sharp4x,
+    /// Jinc2 sharper 2x upscale. Scale is fixed to 2.
     Jinc2Sharper2x,
+    /// Jinc2 sharper 3x upscale. Scale is fixed to 3.
     Jinc2Sharper3x,
+    /// Jinc2 sharper 4x upscale. Scale is fixed to 4.
     Jinc2Sharper4x,
+    /// Jinc2 sharpest 2x upscale. Scale is fixed to 2.
     Jinc2Sharpest2x,
+    /// Jinc2 sharpest 3x upscale. Scale is fixed to 3.
     Jinc2Sharpest3x,
+    /// Jinc2 sharpest 4x upscale. Scale is fixed to 4.
     Jinc2Sharpest4x,
+    /// MMPX 2x upscale. Scale is fixed to 2.
     Mmpx2x,
+    /// MMPX 4x upscale. Scale is fixed to 4.
     Mmpx4x,
-    Vibrance20,
-    Vibrance30,
-    Vibrance40,
-    Saturation115,
-    Saturation125,
-    Saturation130,
-    SelectiveWarm20,
-    SelectiveWarm30,
-    SelectiveWarm40,
-    SelectiveGreen20,
-    SelectiveGreen30,
-    SelectiveGreen40,
-    LocalLaplacianClarity15,
-    LocalLaplacianClarity25,
-    LocalLaplacianClarity30,
-    UnityContrastEnhance20,
-    UnityContrastEnhance35,
-    UnityContrastEnhance50,
-    AdaptiveLogContrast75,
-    AdaptiveLogContrast80,
-    AdaptiveLogContrast90,
-    ScaleFxSmartDeblur,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum EnhancementFilter {
+    /// Perceptual vibrance boost. `factor` range: 0.0..=1.0.
+    Vibrance { factor: f32 },
+    /// Global saturation multiplier. `factor` range: 0.0..=2.0.
+    Saturation { factor: f32 },
+    /// Warm hue selective saturation boost. `factor` range: 0.0..=1.0.
+    SelectiveWarm { factor: f32 },
+    /// Green hue selective saturation boost. `factor` range: 0.0..=1.0.
+    SelectiveGreen { factor: f32 },
+    /// Local Laplacian clarity. `radius` range: 1..=16; `amount` range: 0.0..=1.0.
+    LocalLaplacianClarity { radius: u32, amount: f32 },
+    /// Local contrast enhancement. `intensity` range: 0.0..=1.0; `threshold` range: 0.0..=1.0; `blur_spread` range: 0.1..=16.0.
+    ContrastEnhance { intensity: f32, threshold: f32, blur_spread: f32 },
+    /// Adaptive logarithmic contrast. `radius` range: 0.1..=16.0; `gamma` range: 0.1..=4.0.
+    AdaptiveLogContrast { radius: f32, gamma: f32 },
+    /// Unsharp mask. `radius` range: 0.1..=16.0; `amount` range: 0.0..=2.0.
+    UnsharpMask { radius: f32, amount: f32 },
+    /// High-pass sharpening. `radius` range: 0.1..=16.0; `strength` range: 0.0..=2.0.
+    HighPassSharpen { radius: f32, strength: f32 },
+    /// ScaleFX-style smart deblur. `deblur_offset` range: 0.0..=2.0; `deblur_strength` range: 0.0..=2.0; `smart_deblur` range: 0.0..=1.0.
+    ScaleFxSmartDeblur { deblur_offset: f32, deblur_strength: f32, smart_deblur: f32 },
+    /// Guest.r-style deblur. No parameters.
     GuestrDeblur,
-    UnsharpMaskSmall,
-    HighPassSharpen,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -139,155 +203,64 @@ pub struct UpscaleConfig {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct UpscalePass {
-    pub filter: UpscaleFilter,
-    pub params: UpscalePassParams,
+pub enum UpscalePass {
+    None,
+    Upscale(UpscaleFilter),
+    Enhancement(EnhancementFilter),
 }
 
 impl UpscalePass {
     pub fn new(filter: UpscaleFilter) -> Self {
-        Self {
-            filter,
-            params: UpscalePassParams::Default,
+        Self::from(filter)
+    }
+
+    pub fn enhancement(filter: EnhancementFilter) -> Self {
+        Self::from(filter)
+    }
+
+    pub fn filter(self) -> Option<UpscaleFilter> {
+        match self {
+            Self::None => Some(UpscaleFilter::None),
+            Self::Upscale(filter) => Some(filter),
+            Self::Enhancement(_) => None,
         }
     }
 
     pub fn scale_factor(self) -> u32 {
-        self.filter.scale_factor()
+        self.filter().map_or(1, UpscaleFilter::scale_factor)
     }
 
     pub fn apply(self, width: u32, height: u32, rgba: &[u8]) -> (u32, u32, Vec<u8>) {
-        if let Some(pixels) = self.apply_custom(width, height, rgba) {
-            return (width, height, pixels);
+        match self {
+            Self::None => (width, height, rgba.to_vec()),
+            Self::Upscale(filter) => filter.apply(width, height, rgba),
+            Self::Enhancement(filter) => (width, height, filter.apply(width, height, rgba)),
         }
-        self.filter.apply(width, height, rgba)
     }
 
     pub fn apply_owned(self, width: u32, height: u32, rgba: Vec<u8>) -> (u32, u32, Vec<u8>) {
-        if let Some(pixels) = self.apply_custom(width, height, &rgba) {
-            return (width, height, pixels);
-        }
-        self.filter.apply(width, height, &rgba)
-    }
-
-    fn apply_custom(self, width: u32, height: u32, rgba: &[u8]) -> Option<Vec<u8>> {
-        match self.params {
-            UpscalePassParams::Default => None,
-            UpscalePassParams::ColorFactor { factor } => {
-                let mut out = Vec::with_capacity(rgba.len());
-                match self.filter {
-                    UpscaleFilter::Vibrance20 | UpscaleFilter::Vibrance30 | UpscaleFilter::Vibrance40 => {
-                        apply_vibrance(rgba, &mut out, factor);
-                    }
-                    UpscaleFilter::Saturation115 | UpscaleFilter::Saturation125 | UpscaleFilter::Saturation130 => {
-                        apply_saturation(rgba, &mut out, factor);
-                    }
-                    UpscaleFilter::SelectiveWarm20 | UpscaleFilter::SelectiveWarm30 | UpscaleFilter::SelectiveWarm40 => {
-                        apply_selective_hue_boost(rgba, &mut out, factor, HueBoostRange::Warm);
-                    }
-                    UpscaleFilter::SelectiveGreen20 | UpscaleFilter::SelectiveGreen30 | UpscaleFilter::SelectiveGreen40 => {
-                        apply_selective_hue_boost(rgba, &mut out, factor, HueBoostRange::Green);
-                    }
-                    _ => return None,
-                }
-                Some(out)
-            }
-            UpscalePassParams::LocalLaplacianClarity { radius, amount } => {
-                Some(sharpen::apply_local_laplacian_clarity(
-                    width,
-                    height,
-                    rgba,
-                    sharpen::LocalLaplacianClarityParams { radius, amount },
-                ).2)
-            }
-            UpscalePassParams::ContrastEnhance { intensity, threshold, blur_spread } => {
-                Some(sharpen::apply_contrast_enhance(
-                    width,
-                    height,
-                    rgba,
-                    sharpen::ContrastEnhanceParams { intensity, threshold, blur_spread },
-                ).2)
-            }
-            UpscalePassParams::AdaptiveLogContrast { radius, gamma } => {
-                Some(sharpen::apply_adaptive_log_contrast(
-                    width,
-                    height,
-                    rgba,
-                    sharpen::AdaptiveLogContrastParams { radius, gamma },
-                ).2)
-            }
-            UpscalePassParams::UnsharpMask { radius, amount } => {
-                Some(sharpen::apply_unsharp_mask(
-                    width,
-                    height,
-                    rgba,
-                    sharpen::UnsharpMaskParams { radius, amount },
-                ).2)
-            }
-            UpscalePassParams::HighPassSharpen { radius, strength } => {
-                Some(sharpen::apply_high_pass_sharpen(
-                    width,
-                    height,
-                    rgba,
-                    sharpen::HighPassSharpenParams { radius, strength },
-                ).2)
-            }
-            UpscalePassParams::ScaleFxSmartDeblur { deblur_offset, deblur_strength, smart_deblur } => {
-                Some(sharpen::apply_scalefx_smart_deblur(
-                    width,
-                    height,
-                    rgba,
-                    sharpen::ScaleFxSmartDeblurParams {
-                        deblur_offset,
-                        deblur_strength,
-                        smart_deblur,
-                    },
-                ).2)
-            }
+        match self {
+            Self::None => (width, height, rgba),
+            Self::Upscale(filter) => filter.apply(width, height, &rgba),
+            Self::Enhancement(filter) => (width, height, filter.apply(width, height, &rgba)),
         }
     }
 }
 
 impl From<UpscaleFilter> for UpscalePass {
     fn from(filter: UpscaleFilter) -> Self {
-        Self::new(filter)
+        if matches!(filter, UpscaleFilter::None) {
+            Self::None
+        } else {
+            Self::Upscale(filter)
+        }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-#[derive(Default)]
-pub enum UpscalePassParams {
-    #[default]
-    Default,
-    ColorFactor {
-        factor: f32,
-    },
-    LocalLaplacianClarity {
-        radius: u32,
-        amount: f32,
-    },
-    ContrastEnhance {
-        intensity: f32,
-        threshold: f32,
-        blur_spread: f32,
-    },
-    AdaptiveLogContrast {
-        radius: f32,
-        gamma: f32,
-    },
-    UnsharpMask {
-        radius: f32,
-        amount: f32,
-    },
-    HighPassSharpen {
-        radius: f32,
-        strength: f32,
-    },
-    ScaleFxSmartDeblur {
-        deblur_offset: f32,
-        deblur_strength: f32,
-        smart_deblur: f32,
-    },
+impl From<EnhancementFilter> for UpscalePass {
+    fn from(filter: EnhancementFilter) -> Self {
+        Self::Enhancement(filter)
+    }
 }
 
 
@@ -316,9 +289,9 @@ impl UpscaleFilter {
             Self::Epx2x => 2,
             Self::Epx3x => 3,
             Self::Epx4x => 4,
-            Self::Xbr2x => 2,
-            Self::Xbr3x => 3,
-            Self::Xbr4x => 4,
+            Self::Xbrz2x => 2,
+            Self::Xbrz3x => 3,
+            Self::Xbrz4x => 4,
             Self::SuperXbr2x => 2,
             Self::Cut1_2x => 2,
             Self::Cut2_2x => 2,
@@ -335,31 +308,6 @@ impl UpscaleFilter {
             Self::Nedi2x => 2,
             Self::Mmpx2x => 2,
             Self::Mmpx4x => 4,
-            Self::Vibrance20
-            | Self::Vibrance30
-            | Self::Vibrance40
-            | Self::Saturation115
-            | Self::Saturation125
-            | Self::Saturation130
-            | Self::SelectiveWarm20
-            | Self::SelectiveWarm30
-            | Self::SelectiveWarm40
-            | Self::SelectiveGreen20
-            | Self::SelectiveGreen30
-            | Self::SelectiveGreen40
-            | Self::LocalLaplacianClarity15
-            | Self::LocalLaplacianClarity25
-            | Self::LocalLaplacianClarity30
-            | Self::UnityContrastEnhance20
-            | Self::UnityContrastEnhance35
-            | Self::UnityContrastEnhance50
-            | Self::AdaptiveLogContrast75
-            | Self::AdaptiveLogContrast80
-            | Self::AdaptiveLogContrast90
-            | Self::ScaleFxSmartDeblur
-            | Self::GuestrDeblur
-            | Self::UnsharpMaskSmall
-            | Self::HighPassSharpen => 1,
         }
     }
 
@@ -386,14 +334,6 @@ impl UpscaleFilter {
     ) -> Vec<u8> {
         if rgba.is_empty() {
             return rgba.to_vec();
-        }
-
-        if let Some(pixels) = self.apply_color_boost(rgba) {
-            return pixels;
-        }
-
-        if let Some(pixels) = self.apply_post_upscale_sharpen(width, height, rgba) {
-            return pixels;
         }
 
         if matches!(self, Self::None) {
@@ -474,9 +414,9 @@ impl UpscaleFilter {
                 let scale = (target_width / width).max(1);
                 epx::apply_epx(width, height, rgba, scale).2
             }
-            Self::Xbr2x | Self::Xbr3x | Self::Xbr4x => {
+            Self::Xbrz2x | Self::Xbrz3x | Self::Xbrz4x => {
                 let scale = (target_width / width).max(1);
-                xbr::apply_xbr(width, height, rgba, scale).2
+                xbrz::apply_xbrz(width, height, rgba, scale).2
             }
             Self::SuperXbr2x => super_xbr::apply_super_xbr(width, height, rgba).2,
             Self::Cut1_2x => cut::apply_cut(width, height, rgba, cut::CutMode::Cut1).2,
@@ -505,65 +445,72 @@ impl UpscaleFilter {
                 let scale = (target_width / width).max(1);
                 mmpx::apply_mmpx(width, height, rgba, scale).2
             }
-            Self::LocalLaplacianClarity15 => sharpen::apply_local_laplacian_clarity(
+        }
+    }
+}
+
+impl EnhancementFilter {
+    pub fn apply(self, width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
+        match self {
+            Self::Vibrance { factor } => {
+                let mut out = Vec::with_capacity(rgba.len());
+                apply_vibrance(rgba, &mut out, factor);
+                out
+            }
+            Self::Saturation { factor } => {
+                let mut out = Vec::with_capacity(rgba.len());
+                apply_saturation(rgba, &mut out, factor);
+                out
+            }
+            Self::SelectiveWarm { factor } => {
+                let mut out = Vec::with_capacity(rgba.len());
+                apply_selective_hue_boost(rgba, &mut out, factor, HueBoostRange::Warm);
+                out
+            }
+            Self::SelectiveGreen { factor } => {
+                let mut out = Vec::with_capacity(rgba.len());
+                apply_selective_hue_boost(rgba, &mut out, factor, HueBoostRange::Green);
+                out
+            }
+            Self::LocalLaplacianClarity { radius, amount } => sharpen::apply_local_laplacian_clarity(
                 width,
                 height,
                 rgba,
-                sharpen::LocalLaplacianClarityParams { radius: 2, amount: 0.15 },
+                sharpen::LocalLaplacianClarityParams { radius, amount },
             ).2,
-            Self::LocalLaplacianClarity25 => sharpen::apply_local_laplacian_clarity(
+            Self::ContrastEnhance { intensity, threshold, blur_spread } => sharpen::apply_contrast_enhance(
                 width,
                 height,
                 rgba,
-                sharpen::LocalLaplacianClarityParams::default(),
+                sharpen::ContrastEnhanceParams { intensity, threshold, blur_spread },
             ).2,
-            Self::LocalLaplacianClarity30 => sharpen::apply_local_laplacian_clarity(
+            Self::AdaptiveLogContrast { radius, gamma } => sharpen::apply_adaptive_log_contrast(
                 width,
                 height,
                 rgba,
-                sharpen::LocalLaplacianClarityParams { radius: 4, amount: 0.30 },
+                sharpen::AdaptiveLogContrastParams { radius, gamma },
             ).2,
-            Self::UnityContrastEnhance20 => sharpen::apply_contrast_enhance(
+            Self::UnsharpMask { radius, amount } => sharpen::apply_unsharp_mask(
                 width,
                 height,
                 rgba,
-                sharpen::ContrastEnhanceParams { intensity: 0.20, threshold: 0.05, blur_spread: 2.0 },
+                sharpen::UnsharpMaskParams { radius, amount },
             ).2,
-            Self::UnityContrastEnhance35 => sharpen::apply_contrast_enhance(
+            Self::HighPassSharpen { radius, strength } => sharpen::apply_high_pass_sharpen(
                 width,
                 height,
                 rgba,
-                sharpen::ContrastEnhanceParams::default(),
+                sharpen::HighPassSharpenParams { radius, strength },
             ).2,
-            Self::UnityContrastEnhance50 => sharpen::apply_contrast_enhance(
+            Self::ScaleFxSmartDeblur { deblur_offset, deblur_strength, smart_deblur } => sharpen::apply_scalefx_smart_deblur(
                 width,
                 height,
                 rgba,
-                sharpen::ContrastEnhanceParams { intensity: 0.50, threshold: 0.15, blur_spread: 3.0 },
-            ).2,
-            Self::AdaptiveLogContrast75 => sharpen::apply_adaptive_log_contrast(
-                width,
-                height,
-                rgba,
-                sharpen::AdaptiveLogContrastParams { radius: 3.0, gamma: 0.75 },
-            ).2,
-            Self::AdaptiveLogContrast80 => sharpen::apply_adaptive_log_contrast(
-                width,
-                height,
-                rgba,
-                sharpen::AdaptiveLogContrastParams::default(),
-            ).2,
-            Self::AdaptiveLogContrast90 => sharpen::apply_adaptive_log_contrast(
-                width,
-                height,
-                rgba,
-                sharpen::AdaptiveLogContrastParams { radius: 3.0, gamma: 0.90 },
-            ).2,
-            Self::ScaleFxSmartDeblur => sharpen::apply_scalefx_smart_deblur(
-                width,
-                height,
-                rgba,
-                sharpen::ScaleFxSmartDeblurParams::default(),
+                sharpen::ScaleFxSmartDeblurParams {
+                    deblur_offset,
+                    deblur_strength,
+                    smart_deblur,
+                },
             ).2,
             Self::GuestrDeblur => sharpen::apply_guestr_deblur(
                 width,
@@ -571,134 +518,6 @@ impl UpscaleFilter {
                 rgba,
                 sharpen::GuestrDeblurParams::default(),
             ).2,
-            Self::UnsharpMaskSmall => sharpen::apply_unsharp_mask(
-                width,
-                height,
-                rgba,
-                sharpen::UnsharpMaskParams::default(),
-            ).2,
-            Self::HighPassSharpen => sharpen::apply_high_pass_sharpen(
-                width,
-                height,
-                rgba,
-                sharpen::HighPassSharpenParams::default(),
-            ).2,
-            Self::Vibrance20
-            | Self::Vibrance30
-            | Self::Vibrance40
-            | Self::Saturation115
-            | Self::Saturation125
-            | Self::Saturation130
-            | Self::SelectiveWarm20
-            | Self::SelectiveWarm30
-            | Self::SelectiveWarm40
-            | Self::SelectiveGreen20
-            | Self::SelectiveGreen30
-            | Self::SelectiveGreen40 => rgba.to_vec(),
-        }
-    }
-
-    fn apply_color_boost(&self, rgba: &[u8]) -> Option<Vec<u8>> {
-        let mut out = Vec::with_capacity(rgba.len());
-        match self {
-            Self::Vibrance20 => apply_vibrance(rgba, &mut out, 0.20),
-            Self::Vibrance30 => apply_vibrance(rgba, &mut out, 0.30),
-            Self::Vibrance40 => apply_vibrance(rgba, &mut out, 0.40),
-            Self::Saturation115 => apply_saturation(rgba, &mut out, 1.15),
-            Self::Saturation125 => apply_saturation(rgba, &mut out, 1.25),
-            Self::Saturation130 => apply_saturation(rgba, &mut out, 1.30),
-            Self::SelectiveWarm20 => apply_selective_hue_boost(rgba, &mut out, 0.20, HueBoostRange::Warm),
-            Self::SelectiveWarm30 => apply_selective_hue_boost(rgba, &mut out, 0.30, HueBoostRange::Warm),
-            Self::SelectiveWarm40 => apply_selective_hue_boost(rgba, &mut out, 0.40, HueBoostRange::Warm),
-            Self::SelectiveGreen20 => apply_selective_hue_boost(rgba, &mut out, 0.20, HueBoostRange::Green),
-            Self::SelectiveGreen30 => apply_selective_hue_boost(rgba, &mut out, 0.30, HueBoostRange::Green),
-            Self::SelectiveGreen40 => apply_selective_hue_boost(rgba, &mut out, 0.40, HueBoostRange::Green),
-            _ => return None,
-        }
-        Some(out)
-    }
-
-    fn apply_post_upscale_sharpen(&self, width: u32, height: u32, rgba: &[u8]) -> Option<Vec<u8>> {
-        match self {
-            Self::LocalLaplacianClarity15 => Some(sharpen::apply_local_laplacian_clarity(
-                width,
-                height,
-                rgba,
-                sharpen::LocalLaplacianClarityParams { radius: 2, amount: 0.15 },
-            ).2),
-            Self::LocalLaplacianClarity25 => Some(sharpen::apply_local_laplacian_clarity(
-                width,
-                height,
-                rgba,
-                sharpen::LocalLaplacianClarityParams::default(),
-            ).2),
-            Self::LocalLaplacianClarity30 => Some(sharpen::apply_local_laplacian_clarity(
-                width,
-                height,
-                rgba,
-                sharpen::LocalLaplacianClarityParams { radius: 4, amount: 0.30 },
-            ).2),
-            Self::UnityContrastEnhance20 => Some(sharpen::apply_contrast_enhance(
-                width,
-                height,
-                rgba,
-                sharpen::ContrastEnhanceParams { intensity: 0.20, threshold: 0.05, blur_spread: 2.0 },
-            ).2),
-            Self::UnityContrastEnhance35 => Some(sharpen::apply_contrast_enhance(
-                width,
-                height,
-                rgba,
-                sharpen::ContrastEnhanceParams::default(),
-            ).2),
-            Self::UnityContrastEnhance50 => Some(sharpen::apply_contrast_enhance(
-                width,
-                height,
-                rgba,
-                sharpen::ContrastEnhanceParams { intensity: 0.50, threshold: 0.15, blur_spread: 3.0 },
-            ).2),
-            Self::AdaptiveLogContrast75 => Some(sharpen::apply_adaptive_log_contrast(
-                width,
-                height,
-                rgba,
-                sharpen::AdaptiveLogContrastParams { radius: 3.0, gamma: 0.75 },
-            ).2),
-            Self::AdaptiveLogContrast80 => Some(sharpen::apply_adaptive_log_contrast(
-                width,
-                height,
-                rgba,
-                sharpen::AdaptiveLogContrastParams::default(),
-            ).2),
-            Self::AdaptiveLogContrast90 => Some(sharpen::apply_adaptive_log_contrast(
-                width,
-                height,
-                rgba,
-                sharpen::AdaptiveLogContrastParams { radius: 3.0, gamma: 0.90 },
-            ).2),
-            Self::ScaleFxSmartDeblur => Some(sharpen::apply_scalefx_smart_deblur(
-                width,
-                height,
-                rgba,
-                sharpen::ScaleFxSmartDeblurParams::default(),
-            ).2),
-            Self::GuestrDeblur => Some(sharpen::apply_guestr_deblur(
-                width,
-                height,
-                rgba,
-                sharpen::GuestrDeblurParams::default(),
-            ).2),
-            Self::UnsharpMaskSmall => Some(sharpen::apply_unsharp_mask(
-                width,
-                height,
-                rgba,
-                sharpen::UnsharpMaskParams::default(),
-            ).2),
-            Self::HighPassSharpen => Some(sharpen::apply_high_pass_sharpen(
-                width,
-                height,
-                rgba,
-                sharpen::HighPassSharpenParams::default(),
-            ).2),
-            _ => None,
         }
     }
 }
@@ -839,13 +658,15 @@ pub fn apply_upscale_passes_owned(
     let mut scale_factor = 1u32;
     let mut last_filter = UpscaleFilter::None;
 
-    for pass in passes.iter().copied().filter(|pass| !matches!(pass.filter, UpscaleFilter::None)) {
+    for pass in passes.iter().copied().filter(|pass| !matches!(pass, UpscalePass::None)) {
         let (next_width, next_height, next_rgba) = pass.apply_owned(width, height, rgba);
         width = next_width;
         height = next_height;
         rgba = next_rgba;
         scale_factor = scale_factor.saturating_mul(pass.scale_factor());
-        last_filter = pass.filter;
+        if let Some(filter) = pass.filter() {
+            last_filter = filter;
+        }
     }
 
     (width, height, rgba, scale_factor, last_filter)
@@ -853,17 +674,17 @@ pub fn apply_upscale_passes_owned(
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_filter_passes, apply_upscale_passes, UpscaleFilter, UpscalePass, UpscalePassParams};
+    use super::{apply_upscale_passes, EnhancementFilter, UpscaleFilter, UpscalePass};
 
     #[test]
     fn vibrance_boost_preserves_dimensions_and_alpha() {
         let rgba = [128, 96, 96, 77];
         let (width, height, pixels, scale, last_filter) =
-            apply_filter_passes(1, 1, &rgba, &[UpscaleFilter::Vibrance30]);
+            apply_upscale_passes(1, 1, &rgba, &[UpscalePass::from(EnhancementFilter::Vibrance { factor: 0.30 })]);
 
         assert_eq!((width, height), (1, 1));
         assert_eq!(scale, 1);
-        assert_eq!(last_filter, UpscaleFilter::Vibrance30);
+        assert_eq!(last_filter, UpscaleFilter::None);
         assert_eq!(pixels[3], 77);
         assert!(pixels[0] > rgba[0]);
         assert!(pixels[1] < rgba[1]);
@@ -874,7 +695,7 @@ mod tests {
     fn saturation_boost_keeps_neutral_gray_neutral() {
         let rgba = [80, 80, 80, 255];
         let (_, _, pixels, _, _) =
-            apply_filter_passes(1, 1, &rgba, &[UpscaleFilter::Saturation125]);
+            apply_upscale_passes(1, 1, &rgba, &[UpscalePass::from(EnhancementFilter::Saturation { factor: 1.25 })]);
 
         assert_eq!(pixels, rgba);
     }
@@ -883,7 +704,7 @@ mod tests {
     fn selective_warm_boost_leaves_blue_unchanged() {
         let rgba = [120, 80, 60, 255, 80, 80, 160, 128];
         let (_, _, pixels, scale, _) =
-            apply_filter_passes(2, 1, &rgba, &[UpscaleFilter::SelectiveWarm30]);
+            apply_upscale_passes(2, 1, &rgba, &[UpscalePass::from(EnhancementFilter::SelectiveWarm { factor: 0.30 })]);
 
         assert_eq!(scale, 1);
         assert!(pixels[0] > rgba[0]);
@@ -895,7 +716,7 @@ mod tests {
     fn selective_green_boost_targets_green_hues() {
         let rgba = [70, 130, 80, 255, 120, 80, 60, 255];
         let (_, _, pixels, _, _) =
-            apply_filter_passes(2, 1, &rgba, &[UpscaleFilter::SelectiveGreen30]);
+            apply_upscale_passes(2, 1, &rgba, &[UpscalePass::from(EnhancementFilter::SelectiveGreen { factor: 0.30 })]);
 
         assert!(pixels[1] > rgba[1]);
         assert!(pixels[0] < rgba[0]);
@@ -905,17 +726,17 @@ mod tests {
     #[test]
     fn local_contrast_passes_preserve_dimensions_and_alpha() {
         let rgba = [40, 40, 40, 11, 80, 80, 80, 22, 120, 120, 120, 33, 160, 160, 160, 44];
-        for filter in [
-            UpscaleFilter::LocalLaplacianClarity25,
-            UpscaleFilter::UnityContrastEnhance35,
-            UpscaleFilter::AdaptiveLogContrast80,
+        for pass in [
+            UpscalePass::from(EnhancementFilter::LocalLaplacianClarity { radius: 3, amount: 0.25 }),
+            UpscalePass::from(EnhancementFilter::ContrastEnhance { intensity: 0.35, threshold: 0.08, blur_spread: 2.5 }),
+            UpscalePass::from(EnhancementFilter::AdaptiveLogContrast { radius: 3.0, gamma: 0.80 }),
         ] {
             let (width, height, pixels, scale, last_filter) =
-                apply_filter_passes(4, 1, &rgba, &[filter]);
+                apply_upscale_passes(4, 1, &rgba, &[pass]);
 
             assert_eq!((width, height), (4, 1));
             assert_eq!(scale, 1);
-            assert_eq!(last_filter, filter);
+            assert_eq!(last_filter, UpscaleFilter::None);
             assert_eq!(pixels.len(), rgba.len());
             assert_eq!(pixels.chunks_exact(4).map(|pixel| pixel[3]).collect::<Vec<_>>(), vec![11, 22, 33, 44]);
         }
@@ -924,12 +745,10 @@ mod tests {
     #[test]
     fn parameterized_pass_uses_custom_values() {
         let rgba = [128, 96, 96, 77];
-        let pass = UpscalePass {
-            filter: UpscaleFilter::Vibrance30,
-            params: UpscalePassParams::ColorFactor { factor: 0.05 },
-        };
+        let pass = UpscalePass::from(EnhancementFilter::Vibrance { factor: 0.05 });
         let (_, _, custom, _, _) = apply_upscale_passes(1, 1, &rgba, &[pass]);
-        let (_, _, preset, _, _) = apply_filter_passes(1, 1, &rgba, &[UpscaleFilter::Vibrance30]);
+        let preset_pass = UpscalePass::from(EnhancementFilter::Vibrance { factor: 0.30 });
+        let (_, _, preset, _, _) = apply_upscale_passes(1, 1, &rgba, &[preset_pass]);
 
         assert_eq!(custom[3], 77);
         assert_ne!(custom, preset);

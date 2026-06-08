@@ -3,7 +3,7 @@ use image_postprocess::palette::{
     TransparencyPolicy,
 };
 use image_postprocess::upscaling::{
-    UpscaleFilter, UpscalePass as FilterUpscalePass, UpscalePassParams,
+    EnhancementFilter, UpscaleFilter, UpscalePass as FilterUpscalePass,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -21,14 +21,16 @@ impl From<UpscaleFilter> for UpscalePass {
     }
 }
 
-impl UpscalePass {
-    pub fn parameterized_filter(filter: UpscaleFilter, params: UpscalePassParams) -> Self {
-        Self::Filter(FilterUpscalePass { filter, params })
+impl From<EnhancementFilter> for UpscalePass {
+    fn from(value: EnhancementFilter) -> Self {
+        Self::Filter(FilterUpscalePass::from(value))
     }
+}
 
+impl UpscalePass {
     pub fn filter(self) -> Option<UpscaleFilter> {
         match self {
-            Self::Filter(pass) => Some(pass.filter),
+            Self::Filter(pass) => pass.filter(),
             Self::PaletteSnapStrict
             | Self::PaletteSnapRampAware
             | Self::PaletteSnapExpanded { .. }
@@ -96,24 +98,27 @@ pub fn apply_upscale_passes_owned(
             continue;
         }
 
-        let filter = pass.filter().unwrap_or(UpscaleFilter::None);
-        if matches!(filter, UpscaleFilter::None) {
+        if matches!(pass, UpscalePass::Filter(FilterUpscalePass::None)) {
             index += 1;
             continue;
         }
 
-        if let Some(next_pass) = passes.get(index + 1).copied() {
-            if let Some(config) = next_pass.palette_config() {
-                if let Ok((next_width, next_height, next_rgba)) =
-                    apply_palette_snap_pass(width, height, &rgba, source_palette.as_ref(), &config, filter)
-                {
-                    width = next_width;
-                    height = next_height;
-                    rgba = next_rgba;
-                    scale_factor = scale_factor.saturating_mul(filter.scale_factor());
-                    last_filter = filter;
-                    index += 2;
-                    continue;
+        if let Some(filter) = pass.filter() {
+            if !matches!(filter, UpscaleFilter::None) {
+                if let Some(next_pass) = passes.get(index + 1).copied() {
+                    if let Some(config) = next_pass.palette_config() {
+                        if let Ok((next_width, next_height, next_rgba)) =
+                            apply_palette_snap_pass(width, height, &rgba, source_palette.as_ref(), &config, filter)
+                        {
+                            width = next_width;
+                            height = next_height;
+                            rgba = next_rgba;
+                            scale_factor = scale_factor.saturating_mul(filter.scale_factor());
+                            last_filter = filter;
+                            index += 2;
+                            continue;
+                        }
+                    }
                 }
             }
         }
@@ -128,8 +133,10 @@ pub fn apply_upscale_passes_owned(
         width = next_width;
         height = next_height;
         rgba = next_rgba;
-        scale_factor = scale_factor.saturating_mul(filter.scale_factor());
-        last_filter = filter;
+        scale_factor = scale_factor.saturating_mul(pass.scale_factor());
+        if let Some(filter) = pass.filter() {
+            last_filter = filter;
+        }
         index += 1;
     }
 

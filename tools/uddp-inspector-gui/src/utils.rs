@@ -68,6 +68,7 @@ pub fn format_size(bytes: u64) -> String {
 }
 
 pub fn data_type_to_str(t: u8) -> &'static str {
+    // TODO: do not use magic numbers here. use const or enums
     match t {
         1 => "Art",
         3 => "Map",
@@ -163,7 +164,7 @@ pub fn format_tile_flags(flags: u64) -> String {
     if f & 0x20000000 != 0 { names.push("Door"); }
     if f & 0x40000000 != 0 { names.push("StairBack"); }
     if f & 0x80000000 != 0 { names.push("StairRight"); }
-    
+
     format!("0x{:08X} ({})", flags, names.join(", "))
 }
 

@@ -4,7 +4,7 @@ use std::path::Path;
 use clap::ValueEnum;
 use color_eyre::eyre::{self, ContextCompat, WrapErr};
 use serde::Deserialize;
-use udd_conv::upscale::{UpscaleFilter, UpscalePass, UpscalePassParams};
+use udd_conv::upscale::{EnhancementFilter, UpscalePass};
 use udd_conv::upscale_profile::{
     UpscaleImageType, UpscaleProfile, UpscaleProfileOverride,
 };
@@ -232,12 +232,7 @@ fn parse_passes(passes: &[PassConfig]) -> eyre::Result<Vec<UpscalePass>> {
 fn parse_pass(pass: &PassConfig) -> eyre::Result<UpscalePass> {
     let cli_filter = CliUpscaleFilter::from_str(&pass.filter, true)
         .map_err(|error| eyre::eyre!("invalid upscale filter '{}': {error}", pass.filter))?;
-    let filter = UpscaleFilter::from(cli_filter);
-    if !pass.has_custom_params() {
-        return Ok(cli_filter.into_pass());
-    }
-    let params = pass.params_for_filter(filter)?;
-    Ok(UpscalePass::parameterized_filter(filter, params))
+    pass.pass_for_filter(cli_filter)
 }
 
 impl PassConfig {
@@ -255,68 +250,70 @@ impl PassConfig {
             || self.smart_deblur.is_some()
     }
 
-    fn params_for_filter(&self, filter: UpscaleFilter) -> eyre::Result<UpscalePassParams> {
-        match filter {
-            UpscaleFilter::Vibrance20
-            | UpscaleFilter::Vibrance30
-            | UpscaleFilter::Vibrance40
-            | UpscaleFilter::Saturation115
-            | UpscaleFilter::Saturation125
-            | UpscaleFilter::Saturation130
-            | UpscaleFilter::SelectiveWarm20
-            | UpscaleFilter::SelectiveWarm30
-            | UpscaleFilter::SelectiveWarm40
-            | UpscaleFilter::SelectiveGreen20
-            | UpscaleFilter::SelectiveGreen30
-            | UpscaleFilter::SelectiveGreen40 => Ok(UpscalePassParams::ColorFactor {
-                factor: self.factor.unwrap_or_else(|| default_color_factor(filter)),
-            }),
-            UpscaleFilter::LocalLaplacianClarity15
-            | UpscaleFilter::LocalLaplacianClarity25
-            | UpscaleFilter::LocalLaplacianClarity30 => {
-                let (radius, amount) = default_local_laplacian(filter);
-                Ok(UpscalePassParams::LocalLaplacianClarity {
-                    radius: self.radius.map(f32_to_radius).unwrap_or(radius),
-                    amount: self.amount.unwrap_or(amount),
+    fn pass_for_filter(&self, filter: CliUpscaleFilter) -> eyre::Result<UpscalePass> {
+        let pass = match filter {
+            CliUpscaleFilter::Vibrance => {
+                UpscalePass::from(EnhancementFilter::Vibrance { factor: self.factor.unwrap_or(0.30) })
+            }
+            CliUpscaleFilter::Saturation => {
+                UpscalePass::from(EnhancementFilter::Saturation { factor: self.factor.unwrap_or(1.25) })
+            }
+            CliUpscaleFilter::SelectiveWarm => {
+                UpscalePass::from(EnhancementFilter::SelectiveWarm { factor: self.factor.unwrap_or(0.30) })
+            }
+            CliUpscaleFilter::SelectiveGreen => {
+                UpscalePass::from(EnhancementFilter::SelectiveGreen { factor: self.factor.unwrap_or(0.30) })
+            }
+            CliUpscaleFilter::LocalLaplacianClarity => {
+                UpscalePass::from(EnhancementFilter::LocalLaplacianClarity {
+                    radius: self.radius.map(f32_to_radius).unwrap_or(3),
+                    amount: self.amount.unwrap_or(0.25),
                 })
             }
-            UpscaleFilter::UnityContrastEnhance20
-            | UpscaleFilter::UnityContrastEnhance35
-            | UpscaleFilter::UnityContrastEnhance50 => {
-                let (intensity, threshold, blur_spread) = default_contrast_enhance(filter);
-                Ok(UpscalePassParams::ContrastEnhance {
-                    intensity: self.intensity.unwrap_or(intensity),
-                    threshold: self.threshold.unwrap_or(threshold),
-                    blur_spread: self.blur_spread.unwrap_or(blur_spread),
+            CliUpscaleFilter::ContrastEnhance => {
+                UpscalePass::from(EnhancementFilter::ContrastEnhance {
+                    intensity: self.intensity.unwrap_or(0.35),
+                    threshold: self.threshold.unwrap_or(0.08),
+                    blur_spread: self.blur_spread.unwrap_or(2.5),
                 })
             }
-            UpscaleFilter::AdaptiveLogContrast75
-            | UpscaleFilter::AdaptiveLogContrast80
-            | UpscaleFilter::AdaptiveLogContrast90 => {
-                let (radius, gamma) = default_adaptive_log(filter);
-                Ok(UpscalePassParams::AdaptiveLogContrast {
-                    radius: self.radius.unwrap_or(radius),
-                    gamma: self.gamma.unwrap_or(gamma),
+            CliUpscaleFilter::AdaptiveLogContrast => {
+                UpscalePass::from(EnhancementFilter::AdaptiveLogContrast {
+                    radius: self.radius.unwrap_or(3.0),
+                    gamma: self.gamma.unwrap_or(0.80),
                 })
             }
-            UpscaleFilter::UnsharpMaskSmall => Ok(UpscalePassParams::UnsharpMask {
-                radius: self.radius.unwrap_or(1.0),
-                amount: self.amount.unwrap_or(0.35),
-            }),
-            UpscaleFilter::HighPassSharpen => Ok(UpscalePassParams::HighPassSharpen {
-                radius: self.radius.unwrap_or(2.0),
-                strength: self.strength.or(self.amount).unwrap_or(0.18),
-            }),
-            UpscaleFilter::ScaleFxSmartDeblur => Ok(UpscalePassParams::ScaleFxSmartDeblur {
-                deblur_offset: self.deblur_offset.unwrap_or(0.6),
-                deblur_strength: self.deblur_strength.unwrap_or(0.55),
-                smart_deblur: self.smart_deblur.unwrap_or(0.4),
-            }),
-            _ => eyre::bail!(
-                "upscale filter '{}' does not support custom pass parameters",
-                self.filter
-            ),
-        }
+            CliUpscaleFilter::UnsharpMask => {
+                UpscalePass::from(EnhancementFilter::UnsharpMask {
+                    radius: self.radius.unwrap_or(1.0),
+                    amount: self.amount.unwrap_or(0.35),
+                })
+            }
+            CliUpscaleFilter::HighPassSharpen => {
+                UpscalePass::from(EnhancementFilter::HighPassSharpen {
+                    radius: self.radius.unwrap_or(2.0),
+                    strength: self.strength.or(self.amount).unwrap_or(0.18),
+                })
+            }
+            CliUpscaleFilter::ScaleFxSmartDeblur => {
+                UpscalePass::from(EnhancementFilter::ScaleFxSmartDeblur {
+                    deblur_offset: self.deblur_offset.unwrap_or(0.6),
+                    deblur_strength: self.deblur_strength.unwrap_or(0.55),
+                    smart_deblur: self.smart_deblur.unwrap_or(0.4),
+                })
+            }
+            CliUpscaleFilter::GuestrDeblur => UpscalePass::from(EnhancementFilter::GuestrDeblur),
+            _ => {
+                if self.has_custom_params() {
+                    eyre::bail!(
+                        "upscale filter '{}' does not support custom pass parameters",
+                        self.filter
+                    );
+                }
+                filter.into_pass()
+            }
+        };
+        Ok(pass)
     }
 }
 
@@ -324,53 +321,11 @@ fn f32_to_radius(value: f32) -> u32 {
     value.round().max(1.0) as u32
 }
 
-fn default_color_factor(filter: UpscaleFilter) -> f32 {
-    match filter {
-        UpscaleFilter::Vibrance20
-        | UpscaleFilter::SelectiveWarm20
-        | UpscaleFilter::SelectiveGreen20 => 0.20,
-        UpscaleFilter::Vibrance30
-        | UpscaleFilter::SelectiveWarm30
-        | UpscaleFilter::SelectiveGreen30 => 0.30,
-        UpscaleFilter::Vibrance40
-        | UpscaleFilter::SelectiveWarm40
-        | UpscaleFilter::SelectiveGreen40 => 0.40,
-        UpscaleFilter::Saturation115 => 1.15,
-        UpscaleFilter::Saturation125 => 1.25,
-        UpscaleFilter::Saturation130 => 1.30,
-        _ => 1.0,
-    }
-}
-
-fn default_local_laplacian(filter: UpscaleFilter) -> (u32, f32) {
-    match filter {
-        UpscaleFilter::LocalLaplacianClarity15 => (2, 0.15),
-        UpscaleFilter::LocalLaplacianClarity30 => (4, 0.30),
-        _ => (3, 0.25),
-    }
-}
-
-fn default_contrast_enhance(filter: UpscaleFilter) -> (f32, f32, f32) {
-    match filter {
-        UpscaleFilter::UnityContrastEnhance20 => (0.20, 0.05, 2.0),
-        UpscaleFilter::UnityContrastEnhance50 => (0.50, 0.15, 3.0),
-        _ => (0.35, 0.08, 2.5),
-    }
-}
-
-fn default_adaptive_log(filter: UpscaleFilter) -> (f32, f32) {
-    match filter {
-        UpscaleFilter::AdaptiveLogContrast75 => (3.0, 0.75),
-        UpscaleFilter::AdaptiveLogContrast90 => (3.0, 0.90),
-        _ => (3.0, 0.80),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{parse_kdl_profile, parse_toml_profile};
     use std::path::Path;
-    use udd_conv::upscale::{UpscaleFilter, UpscalePass, UpscalePassParams};
+    use udd_conv::upscale::{EnhancementFilter, FilterUpscalePass, UpscaleFilter, UpscalePass};
     use udd_conv::upscale_profile::{UpscaleImageType, UpscaleTarget};
 
     #[test]
@@ -379,7 +334,7 @@ mod tests {
             Path::new("profile.toml"),
             r#"
 [art_items]
-passes = [{ filter = "vibrance30", factor = 0.35 }]
+passes = [{ filter = "vibrance", factor = 0.35 }]
 
 [[overrides]]
 image_type = "art_items"
@@ -390,11 +345,11 @@ passes = [{ filter = "nearest2x" }]
         .expect("parse profile");
 
         let passes = profile.passes_for(UpscaleTarget::new(UpscaleImageType::ArtItems, 1), &[]);
-        assert_eq!(passes[0].filter(), Some(UpscaleFilter::Vibrance30));
         assert!(matches!(
             passes[0],
-            UpscalePass::Filter(pass)
-                if pass.params == (UpscalePassParams::ColorFactor { factor: 0.35 })
+            UpscalePass::Filter(FilterUpscalePass::Enhancement(
+                EnhancementFilter::Vibrance { factor: 0.35 }
+            ))
         ));
         assert_eq!(
             profile.passes_for(UpscaleTarget::new(UpscaleImageType::ArtItems, 4000), &[])[0].filter(),
@@ -408,7 +363,7 @@ passes = [{ filter = "nearest2x" }]
             Path::new("profile.kdl"),
             r#"
 cc_mobile_animation_frames {
-    pass "unity-contrast-enhance35" intensity=0.4 threshold=0.08
+    pass "contrast-enhance" intensity=0.4 threshold=0.08
 }
 override type="cc_mobile_animation_frames" family=42 id=3 {
     pass "nearest2x"
@@ -423,12 +378,13 @@ override type="cc_mobile_animation_frames" family=42 id=3 {
         );
         assert!(matches!(
             default_passes[0],
-            UpscalePass::Filter(pass)
-                if pass.params == (UpscalePassParams::ContrastEnhance {
+            UpscalePass::Filter(FilterUpscalePass::Enhancement(
+                EnhancementFilter::ContrastEnhance {
                     intensity: 0.4,
                     threshold: 0.08,
                     blur_spread: 2.5,
-                })
+                }
+            ))
         ));
         assert_eq!(
             profile.passes_for(

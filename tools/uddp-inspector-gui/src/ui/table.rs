@@ -5,6 +5,17 @@ use crate::app::InspectorApp;
 use crate::models::ViewMode;
 use crate::utils::{data_type_to_str, format_size};
 
+const TABLE_HEADER_HEIGHT: f32 = 20.0;
+
+const PACKAGE_TABLE_KEY_MIN_WIDTH: f32 = 140.0;
+const PACKAGE_TABLE_TYPE_MIN_WIDTH: f32 = 80.0;
+const PACKAGE_TABLE_CODEC_MIN_WIDTH: f32 = 60.0;
+const PACKAGE_TABLE_RAW_MIN_WIDTH: f32 = 80.0;
+
+const VIRTUAL_TABLE_ID_MIN_WIDTH: f32 = 80.0;
+const VIRTUAL_TABLE_KIND_MIN_WIDTH: f32 = 120.0;
+const VIRTUAL_TABLE_LOCATION_MIN_WIDTH: f32 = 90.0;
+
 impl InspectorApp {
     pub fn render_table(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
         match self.view_mode {
@@ -22,12 +33,12 @@ impl InspectorApp {
             .striped(true)
             .resizable(true)
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .column(Column::auto().at_least(140.0)) // Key
-            .column(Column::auto().at_least(80.0)) // Type
-            .column(Column::auto().at_least(60.0)) // Codec
-            .column(Column::auto().at_least(80.0)) // Raw
+            .column(Column::auto().at_least(PACKAGE_TABLE_KEY_MIN_WIDTH)) // Key
+            .column(Column::auto().at_least(PACKAGE_TABLE_TYPE_MIN_WIDTH)) // Type
+            .column(Column::auto().at_least(PACKAGE_TABLE_CODEC_MIN_WIDTH)) // Codec
+            .column(Column::auto().at_least(PACKAGE_TABLE_RAW_MIN_WIDTH)) // Raw
             .column(Column::remainder()) // Offset
-            .header(20.0, |mut header| {
+            .header(TABLE_HEADER_HEIGHT, |mut header| {
                 header.col(|ui| {
                     ui.strong("Key / Hash");
                 });
@@ -86,11 +97,11 @@ impl InspectorApp {
             .striped(true)
             .resizable(true)
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .column(Column::auto().at_least(80.0)) // ID
-            .column(Column::auto().at_least(120.0)) // Kind
+            .column(Column::auto().at_least(VIRTUAL_TABLE_ID_MIN_WIDTH)) // ID
+            .column(Column::auto().at_least(VIRTUAL_TABLE_KIND_MIN_WIDTH)) // Kind
             .column(Column::remainder()) // Summary
-            .column(Column::auto().at_least(90.0)) // Location
-            .header(20.0, |mut header| {
+            .column(Column::auto().at_least(VIRTUAL_TABLE_LOCATION_MIN_WIDTH)) // Location
+            .header(TABLE_HEADER_HEIGHT, |mut header| {
                 header.col(|ui| {
                     ui.strong("ID");
                 });

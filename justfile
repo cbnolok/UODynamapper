@@ -56,6 +56,8 @@ export RUSTC_WRAPPER := if sccache_effective == "true" { "sccache" } else { wrap
 # Default RUSTFLAGS based on platform
 linux_debug_linker_base := if has_wild != "" {
     "-Clink-arg=-fuse-ld=wild"
+} else if has_mold != "" {
+    "-Clink-arg=-fuse-ld=mold"
 } else {
     ""
 }
@@ -67,8 +69,8 @@ linux_release_linker_base := if has_mold != "" {
 }
 
 # Specific GNU ld / ELF linker flags for optimized Linux builds, not supported by windows cl.exe
-linux_optimized_flags := linux_release_linker_base + " -Clink-arg=-Wl,--gc-sections -Clink-arg=-Wl,--no-allow-shlib-undefined"
-linux_musl_flags := " -C target-feature=+crt-static -C link-self-contained=yes -C embed-bitcode=no -Clinker-plugin-lto -Csymbol-mangling-version=v0 -Cforce-unwind-tables=no -Clink-arg=-fuse-ld=mold -Clink-arg=-Wl,--gc-sections -Clink-arg=-Wl,--no-allow-shlib-undefined -Clink-arg=-lgcc"
+linux_optimized_flags := linux_release_linker_base + " -C embed-bitcode=no -Clinker-plugin-lto  -Clink-arg=-Wl,--gc-sections -Clink-arg=-Wl,--no-allow-shlib-undefined"
+linux_musl_flags := " -C target-feature=+crt-static -C link-self-contained=yes -Clink-arg=-lgcc"
 
 # Features to enable on Linux by default (ensures Wayland/X11 support when using --no-default-features)
 linux_features := if is_linux == "true" { "linux_wayland,linux_x11" } else { "" }
@@ -87,7 +89,7 @@ rustflags_release_nightly_musl          := rustflags_optimized_common_nightly + 
 rustflags_release_stable_musl           := rustflags_optimized_common_stable  + linux_musl_flags
 rustflags_profile_nightly_musl          := rustflags_release_nightly_musl + " -Cforce-frame-pointers=yes"
 rustflags_profile_stable_musl           := rustflags_release_stable_musl  + " -Cforce-frame-pointers=yes"
-export CARGO_FLAGS_NIGHTLY              := " -Zbuild-std=std,panic_abort -Zbuild-std-features=optimize_for_size"
+export CARGO_FLAGS_NIGHTLY              := " -Zbuild-std=std,panic_abort -Zbuild-std-features=optimize_for_size -Zno-embed-metadata"
 
 # Cross-platform Cargo runners to properly inject RUSTFLAGS in the shell
 cargo_release_nightly   := if is_windows == "true" { "$env:RUSTFLAGS=$env:RUSTFLAGS_RELEASE_NIGHTLY; cargo +nightly" } else { "export RUSTFLAGS=\"$RUSTFLAGS_RELEASE_NIGHTLY\"; cargo +nightly" }

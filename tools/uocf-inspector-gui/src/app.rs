@@ -4,7 +4,7 @@ use image_postprocess::palette::{
     palette_safe_upscale, DitherPolicy, PaletteModel, PaletteUpscaleConfig, RgbaFilterScaler, SnapMode,
     TransparencyPolicy,
 };
-use image_postprocess::upscaling::UpscaleFilter;
+use image_postprocess::upscaling::{EnhancementFilter, UpscaleFilter};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc};
@@ -245,7 +245,7 @@ pub enum UpscalePreviewAlgorithm {
     SelectiveWarm,
     SelectiveGreen,
     LocalLaplacianClarity,
-    UnityContrastEnhance,
+    ContrastEnhance,
     AdaptiveLogContrast,
     PaletteSnapStrict,
     PaletteSnapRampAware,
@@ -253,7 +253,7 @@ pub enum UpscalePreviewAlgorithm {
     PaletteDitherReinsertCheckerboard,
     ScaleFxSmartDeblur,
     GuestrDeblur,
-    UnsharpMaskSmall,
+    UnsharpMask,
     HighPassSharpen,
 }
 
@@ -294,7 +294,7 @@ impl UpscalePreviewAlgorithm {
             Self::SelectiveWarm,
             Self::SelectiveGreen,
             Self::LocalLaplacianClarity,
-            Self::UnityContrastEnhance,
+            Self::ContrastEnhance,
             Self::AdaptiveLogContrast,
             Self::PaletteSnapStrict,
             Self::PaletteSnapRampAware,
@@ -302,7 +302,7 @@ impl UpscalePreviewAlgorithm {
             Self::PaletteDitherReinsertCheckerboard,
             Self::ScaleFxSmartDeblur,
             Self::GuestrDeblur,
-            Self::UnsharpMaskSmall,
+            Self::UnsharpMask,
             Self::HighPassSharpen,
         ]
     }
@@ -342,7 +342,7 @@ impl UpscalePreviewAlgorithm {
             Self::SelectiveWarm => "Selective Red/Orange Boost",
             Self::SelectiveGreen => "Selective Green Boost",
             Self::LocalLaplacianClarity => "Local Laplacian Clarity",
-            Self::UnityContrastEnhance => "Unity Contrast Enhance",
+            Self::ContrastEnhance => "Contrast Enhance",
             Self::AdaptiveLogContrast => "Adaptive Log Contrast",
             Self::PaletteSnapStrict => "Palette Snap Strict",
             Self::PaletteSnapRampAware => "Palette Snap Ramp-Aware",
@@ -350,7 +350,7 @@ impl UpscalePreviewAlgorithm {
             Self::PaletteDitherReinsertCheckerboard => "Palette Re-dither Checkerboard",
             Self::ScaleFxSmartDeblur => "ScaleFX Smart Deblur",
             Self::GuestrDeblur => "Libretro Deblur",
-            Self::UnsharpMaskSmall => "Unsharp Mask Small",
+            Self::UnsharpMask => "Unsharp Mask",
             Self::HighPassSharpen => "High-pass Sharpen",
         }
     }
@@ -365,11 +365,11 @@ impl UpscalePreviewAlgorithm {
             Self::Saturation => &[115, 125, 130],
             Self::SelectiveWarm | Self::SelectiveGreen => &[20, 30, 40],
             Self::LocalLaplacianClarity => &[15, 25, 30],
-            Self::UnityContrastEnhance => &[20, 35, 50],
+            Self::ContrastEnhance => &[20, 35, 50],
             Self::AdaptiveLogContrast => &[75, 80, 90],
             Self::PaletteSnapStrict | Self::PaletteSnapRampAware | Self::PaletteDitherReinsertCheckerboard => &[1],
             Self::PaletteSnapExpanded => &[8, 16, 32],
-            Self::ScaleFxSmartDeblur | Self::GuestrDeblur | Self::UnsharpMaskSmall | Self::HighPassSharpen => &[1],
+            Self::ScaleFxSmartDeblur | Self::GuestrDeblur | Self::UnsharpMask | Self::HighPassSharpen => &[1],
             _ => &[2, 3, 4],
         }
     }
@@ -380,7 +380,7 @@ impl UpscalePreviewAlgorithm {
             | Self::SelectiveWarm
             | Self::SelectiveGreen
             | Self::LocalLaplacianClarity
-            | Self::UnityContrastEnhance => format!("{value}%"),
+            | Self::ContrastEnhance => format!("{value}%"),
             Self::Saturation => format!("{:.2}x", value as f32 / 100.0),
             Self::AdaptiveLogContrast => format!("{:.2} gamma", value as f32 / 100.0),
             Self::PaletteSnapStrict => "strict".to_string(),
@@ -461,9 +461,9 @@ impl UpscalePreviewAlgorithm {
             (Self::Epx, 2) => UpscaleFilter::Epx2x,
             (Self::Epx, 3) => UpscaleFilter::Epx3x,
             (Self::Epx, _) => UpscaleFilter::Epx4x,
-            (Self::Xbrz, 2) => UpscaleFilter::Xbr2x,
-            (Self::Xbrz, 3) => UpscaleFilter::Xbr3x,
-            (Self::Xbrz, _) => UpscaleFilter::Xbr4x,
+            (Self::Xbrz, 2) => UpscaleFilter::Xbrz2x,
+            (Self::Xbrz, 3) => UpscaleFilter::Xbrz3x,
+            (Self::Xbrz, _) => UpscaleFilter::Xbrz4x,
             (Self::SuperXbr, _) => UpscaleFilter::SuperXbr2x,
             (Self::Cut1, _) => UpscaleFilter::Cut1_2x,
             (Self::Cut2, _) => UpscaleFilter::Cut2_2x,
@@ -488,38 +488,77 @@ impl UpscalePreviewAlgorithm {
             (Self::Jinc2Sharpest, _) => UpscaleFilter::Jinc2Sharpest4x,
             (Self::Mmpx, 2) => UpscaleFilter::Mmpx2x,
             (Self::Mmpx, _) => UpscaleFilter::Mmpx4x,
-            (Self::Vibrance, 20) => UpscaleFilter::Vibrance20,
-            (Self::Vibrance, 30) => UpscaleFilter::Vibrance30,
-            (Self::Vibrance, _) => UpscaleFilter::Vibrance40,
-            (Self::Saturation, 115) => UpscaleFilter::Saturation115,
-            (Self::Saturation, 125) => UpscaleFilter::Saturation125,
-            (Self::Saturation, _) => UpscaleFilter::Saturation130,
-            (Self::SelectiveWarm, 20) => UpscaleFilter::SelectiveWarm20,
-            (Self::SelectiveWarm, 30) => UpscaleFilter::SelectiveWarm30,
-            (Self::SelectiveWarm, _) => UpscaleFilter::SelectiveWarm40,
-            (Self::SelectiveGreen, 20) => UpscaleFilter::SelectiveGreen20,
-            (Self::SelectiveGreen, 30) => UpscaleFilter::SelectiveGreen30,
-            (Self::SelectiveGreen, _) => UpscaleFilter::SelectiveGreen40,
-            (Self::LocalLaplacianClarity, 15) => UpscaleFilter::LocalLaplacianClarity15,
-            (Self::LocalLaplacianClarity, 25) => UpscaleFilter::LocalLaplacianClarity25,
-            (Self::LocalLaplacianClarity, _) => UpscaleFilter::LocalLaplacianClarity30,
-            (Self::UnityContrastEnhance, 20) => UpscaleFilter::UnityContrastEnhance20,
-            (Self::UnityContrastEnhance, 35) => UpscaleFilter::UnityContrastEnhance35,
-            (Self::UnityContrastEnhance, _) => UpscaleFilter::UnityContrastEnhance50,
-            (Self::AdaptiveLogContrast, 75) => UpscaleFilter::AdaptiveLogContrast75,
-            (Self::AdaptiveLogContrast, 80) => UpscaleFilter::AdaptiveLogContrast80,
-            (Self::AdaptiveLogContrast, _) => UpscaleFilter::AdaptiveLogContrast90,
             (
-                Self::PaletteSnapStrict
+                Self::Vibrance
+                | Self::Saturation
+                | Self::SelectiveWarm
+                | Self::SelectiveGreen
+                | Self::LocalLaplacianClarity
+                | Self::ContrastEnhance
+                | Self::AdaptiveLogContrast
+                | Self::ScaleFxSmartDeblur
+                | Self::GuestrDeblur
+                | Self::UnsharpMask
+                | Self::HighPassSharpen
+                | Self::PaletteSnapStrict
                 | Self::PaletteSnapRampAware
                 | Self::PaletteSnapExpanded
                 | Self::PaletteDitherReinsertCheckerboard,
                 _,
             ) => UpscaleFilter::None,
-            (Self::ScaleFxSmartDeblur, _) => UpscaleFilter::ScaleFxSmartDeblur,
-            (Self::GuestrDeblur, _) => UpscaleFilter::GuestrDeblur,
-            (Self::UnsharpMaskSmall, _) => UpscaleFilter::UnsharpMaskSmall,
-            (Self::HighPassSharpen, _) => UpscaleFilter::HighPassSharpen,
+        }
+    }
+
+    pub fn to_enhancement_filter(self, scale: u32) -> Option<EnhancementFilter> {
+        let scale = if self.scale_options().contains(&scale) {
+            scale
+        } else {
+            self.scale_options()[0]
+        };
+
+        match (self, scale) {
+            (Self::Vibrance, value) => Some(EnhancementFilter::Vibrance {
+                factor: value as f32 / 100.0,
+            }),
+            (Self::Saturation, value) => Some(EnhancementFilter::Saturation {
+                factor: value as f32 / 100.0,
+            }),
+            (Self::SelectiveWarm, value) => Some(EnhancementFilter::SelectiveWarm {
+                factor: value as f32 / 100.0,
+            }),
+            (Self::SelectiveGreen, value) => Some(EnhancementFilter::SelectiveGreen {
+                factor: value as f32 / 100.0,
+            }),
+            (Self::LocalLaplacianClarity, 15) => Some(EnhancementFilter::LocalLaplacianClarity { radius: 2, amount: 0.15 }),
+            (Self::LocalLaplacianClarity, 25) => Some(EnhancementFilter::LocalLaplacianClarity { radius: 3, amount: 0.25 }),
+            (Self::LocalLaplacianClarity, _) => Some(EnhancementFilter::LocalLaplacianClarity { radius: 4, amount: 0.30 }),
+            (Self::ContrastEnhance, 20) => Some(EnhancementFilter::ContrastEnhance {
+                intensity: 0.20,
+                threshold: 0.05,
+                blur_spread: 2.0,
+            }),
+            (Self::ContrastEnhance, 35) => Some(EnhancementFilter::ContrastEnhance {
+                intensity: 0.35,
+                threshold: 0.08,
+                blur_spread: 2.5,
+            }),
+            (Self::ContrastEnhance, _) => Some(EnhancementFilter::ContrastEnhance {
+                intensity: 0.50,
+                threshold: 0.15,
+                blur_spread: 3.0,
+            }),
+            (Self::AdaptiveLogContrast, 75) => Some(EnhancementFilter::AdaptiveLogContrast { radius: 3.0, gamma: 0.75 }),
+            (Self::AdaptiveLogContrast, 80) => Some(EnhancementFilter::AdaptiveLogContrast { radius: 3.0, gamma: 0.80 }),
+            (Self::AdaptiveLogContrast, _) => Some(EnhancementFilter::AdaptiveLogContrast { radius: 3.0, gamma: 0.90 }),
+            (Self::ScaleFxSmartDeblur, _) => Some(EnhancementFilter::ScaleFxSmartDeblur {
+                deblur_offset: 0.6,
+                deblur_strength: 0.55,
+                smart_deblur: 0.4,
+            }),
+            (Self::GuestrDeblur, _) => Some(EnhancementFilter::GuestrDeblur),
+            (Self::UnsharpMask, _) => Some(EnhancementFilter::UnsharpMask { radius: 1.0, amount: 0.35 }),
+            (Self::HighPassSharpen, _) => Some(EnhancementFilter::HighPassSharpen { radius: 2.0, strength: 0.18 }),
+            _ => None,
         }
     }
 }
@@ -548,6 +587,10 @@ impl UpscalePreviewPass {
 
     pub fn filter(self) -> UpscaleFilter {
         self.algorithm.to_filter(self.scale)
+    }
+
+    pub fn enhancement_filter(self) -> Option<EnhancementFilter> {
+        self.algorithm.to_enhancement_filter(self.scale)
     }
 
     pub fn palette_config(self) -> Option<PaletteUpscaleConfig> {
@@ -680,9 +723,9 @@ pub fn upscale_filter_cli_value(filter: UpscaleFilter) -> &'static str {
         UpscaleFilter::Epx2x => "epx2x",
         UpscaleFilter::Epx3x => "epx3x",
         UpscaleFilter::Epx4x => "epx4x",
-        UpscaleFilter::Xbr2x => "xbr2x",
-        UpscaleFilter::Xbr3x => "xbr3x",
-        UpscaleFilter::Xbr4x => "xbr4x",
+        UpscaleFilter::Xbrz2x => "xbr2x",
+        UpscaleFilter::Xbrz3x => "xbr3x",
+        UpscaleFilter::Xbrz4x => "xbr4x",
         UpscaleFilter::SuperXbr2x => "super-xbr2x",
         UpscaleFilter::Cut1_2x => "cut1-2x",
         UpscaleFilter::Cut2_2x => "cut2-2x",
@@ -707,31 +750,6 @@ pub fn upscale_filter_cli_value(filter: UpscaleFilter) -> &'static str {
         UpscaleFilter::Jinc2Sharpest4x => "jinc2-sharpest4x",
         UpscaleFilter::Mmpx2x => "mmpx2x",
         UpscaleFilter::Mmpx4x => "mmpx4x",
-        UpscaleFilter::Vibrance20 => "vibrance20",
-        UpscaleFilter::Vibrance30 => "vibrance30",
-        UpscaleFilter::Vibrance40 => "vibrance40",
-        UpscaleFilter::Saturation115 => "saturation115",
-        UpscaleFilter::Saturation125 => "saturation125",
-        UpscaleFilter::Saturation130 => "saturation130",
-        UpscaleFilter::SelectiveWarm20 => "selective-warm20",
-        UpscaleFilter::SelectiveWarm30 => "selective-warm30",
-        UpscaleFilter::SelectiveWarm40 => "selective-warm40",
-        UpscaleFilter::SelectiveGreen20 => "selective-green20",
-        UpscaleFilter::SelectiveGreen30 => "selective-green30",
-        UpscaleFilter::SelectiveGreen40 => "selective-green40",
-        UpscaleFilter::LocalLaplacianClarity15 => "local-laplacian-clarity15",
-        UpscaleFilter::LocalLaplacianClarity25 => "local-laplacian-clarity25",
-        UpscaleFilter::LocalLaplacianClarity30 => "local-laplacian-clarity30",
-        UpscaleFilter::UnityContrastEnhance20 => "unity-contrast-enhance20",
-        UpscaleFilter::UnityContrastEnhance35 => "unity-contrast-enhance35",
-        UpscaleFilter::UnityContrastEnhance50 => "unity-contrast-enhance50",
-        UpscaleFilter::AdaptiveLogContrast75 => "adaptive-log-contrast75",
-        UpscaleFilter::AdaptiveLogContrast80 => "adaptive-log-contrast80",
-        UpscaleFilter::AdaptiveLogContrast90 => "adaptive-log-contrast90",
-        UpscaleFilter::ScaleFxSmartDeblur => "scalefx-smart-deblur",
-        UpscaleFilter::GuestrDeblur => "libretro-deblur",
-        UpscaleFilter::UnsharpMaskSmall => "unsharp-mask-small",
-        UpscaleFilter::HighPassSharpen => "high-pass-sharpen",
     }
 }
 
@@ -748,6 +766,21 @@ pub fn upscale_pass_cli_value(pass: UpscalePreviewPass) -> String {
             UpscalePreviewAlgorithm::PaletteDitherReinsertCheckerboard => {
                 "palette-dither-reinsert-checkerboard".to_string()
             }
+            _ => unreachable!(),
+        }
+    } else if pass.enhancement_filter().is_some() {
+        match pass.algorithm {
+            UpscalePreviewAlgorithm::Vibrance => "vibrance".to_string(),
+            UpscalePreviewAlgorithm::Saturation => "saturation".to_string(),
+            UpscalePreviewAlgorithm::SelectiveWarm => "selective-warm".to_string(),
+            UpscalePreviewAlgorithm::SelectiveGreen => "selective-green".to_string(),
+            UpscalePreviewAlgorithm::LocalLaplacianClarity => "local-laplacian-clarity".to_string(),
+            UpscalePreviewAlgorithm::ContrastEnhance => "contrast-enhance".to_string(),
+            UpscalePreviewAlgorithm::AdaptiveLogContrast => "adaptive-log-contrast".to_string(),
+            UpscalePreviewAlgorithm::ScaleFxSmartDeblur => "scalefx-smart-deblur".to_string(),
+            UpscalePreviewAlgorithm::GuestrDeblur => "guestr-deblur".to_string(),
+            UpscalePreviewAlgorithm::UnsharpMask => "unsharp-mask".to_string(),
+            UpscalePreviewAlgorithm::HighPassSharpen => "high-pass-sharpen".to_string(),
             _ => unreachable!(),
         }
     } else {
@@ -790,6 +823,12 @@ fn apply_upscale_preview_passes(
                     Err(status) => palette_status = status,
                 }
             }
+            index += 1;
+            continue;
+        }
+
+        if let Some(filter) = pass.enhancement_filter() {
+            rgba = filter.apply(width, height, &rgba);
             index += 1;
             continue;
         }

@@ -71,7 +71,7 @@ use udd_conv::{
         build_tilemeta_uddp_from_sources, build_tilemeta_uddp_from_split_sources,
         build_tilemeta_uddp_from_split_sources_with_loaded_ec_sources, TileMetaBuildOptions,
     },
-    upscale::{UpscaleFilter, UpscalePass},
+    upscale::{EnhancementFilter, UpscaleFilter, UpscalePass},
     world_lights::{convert_client_lights_to_world_lights_uddp, WorldLightsOptions},
     CompressionFlag, PagePixelFormat,
 };
@@ -558,29 +558,16 @@ pub enum CliUpscaleFilter {
     Jinc2Sharpest4x,
     Mmpx2x,
     Mmpx4x,
-    Vibrance20,
-    Vibrance30,
-    Vibrance40,
-    Saturation115,
-    Saturation125,
-    Saturation130,
-    SelectiveWarm20,
-    SelectiveWarm30,
-    SelectiveWarm40,
-    SelectiveGreen20,
-    SelectiveGreen30,
-    SelectiveGreen40,
-    LocalLaplacianClarity15,
-    LocalLaplacianClarity25,
-    LocalLaplacianClarity30,
-    UnityContrastEnhance20,
-    UnityContrastEnhance35,
-    UnityContrastEnhance50,
-    AdaptiveLogContrast75,
-    AdaptiveLogContrast80,
-    AdaptiveLogContrast90,
+    Vibrance,
+    Saturation,
+    SelectiveWarm,
+    SelectiveGreen,
+    LocalLaplacianClarity,
+    ContrastEnhance,
+    AdaptiveLogContrast,
     ScaleFxSmartDeblur,
-    UnsharpMaskSmall,
+    GuestrDeblur,
+    UnsharpMask,
     HighPassSharpen,
 }
 
@@ -631,9 +618,9 @@ impl From<CliUpscaleFilter> for UpscaleFilter {
             CliUpscaleFilter::Epx2x => UpscaleFilter::Epx2x,
             CliUpscaleFilter::Epx3x => UpscaleFilter::Epx3x,
             CliUpscaleFilter::Epx4x => UpscaleFilter::Epx4x,
-            CliUpscaleFilter::Xbr2x => UpscaleFilter::Xbr2x,
-            CliUpscaleFilter::Xbr3x => UpscaleFilter::Xbr3x,
-            CliUpscaleFilter::Xbr4x => UpscaleFilter::Xbr4x,
+            CliUpscaleFilter::Xbr2x => UpscaleFilter::Xbrz2x,
+            CliUpscaleFilter::Xbr3x => UpscaleFilter::Xbrz3x,
+            CliUpscaleFilter::Xbr4x => UpscaleFilter::Xbrz4x,
             CliUpscaleFilter::SuperXbr2x => UpscaleFilter::SuperXbr2x,
             CliUpscaleFilter::Cut1_2x => UpscaleFilter::Cut1_2x,
             CliUpscaleFilter::Cut2_2x => UpscaleFilter::Cut2_2x,
@@ -658,30 +645,17 @@ impl From<CliUpscaleFilter> for UpscaleFilter {
             CliUpscaleFilter::Jinc2Sharpest4x => UpscaleFilter::Jinc2Sharpest4x,
             CliUpscaleFilter::Mmpx2x => UpscaleFilter::Mmpx2x,
             CliUpscaleFilter::Mmpx4x => UpscaleFilter::Mmpx4x,
-            CliUpscaleFilter::Vibrance20 => UpscaleFilter::Vibrance20,
-            CliUpscaleFilter::Vibrance30 => UpscaleFilter::Vibrance30,
-            CliUpscaleFilter::Vibrance40 => UpscaleFilter::Vibrance40,
-            CliUpscaleFilter::Saturation115 => UpscaleFilter::Saturation115,
-            CliUpscaleFilter::Saturation125 => UpscaleFilter::Saturation125,
-            CliUpscaleFilter::Saturation130 => UpscaleFilter::Saturation130,
-            CliUpscaleFilter::SelectiveWarm20 => UpscaleFilter::SelectiveWarm20,
-            CliUpscaleFilter::SelectiveWarm30 => UpscaleFilter::SelectiveWarm30,
-            CliUpscaleFilter::SelectiveWarm40 => UpscaleFilter::SelectiveWarm40,
-            CliUpscaleFilter::SelectiveGreen20 => UpscaleFilter::SelectiveGreen20,
-            CliUpscaleFilter::SelectiveGreen30 => UpscaleFilter::SelectiveGreen30,
-            CliUpscaleFilter::SelectiveGreen40 => UpscaleFilter::SelectiveGreen40,
-            CliUpscaleFilter::LocalLaplacianClarity15 => UpscaleFilter::LocalLaplacianClarity15,
-            CliUpscaleFilter::LocalLaplacianClarity25 => UpscaleFilter::LocalLaplacianClarity25,
-            CliUpscaleFilter::LocalLaplacianClarity30 => UpscaleFilter::LocalLaplacianClarity30,
-            CliUpscaleFilter::UnityContrastEnhance20 => UpscaleFilter::UnityContrastEnhance20,
-            CliUpscaleFilter::UnityContrastEnhance35 => UpscaleFilter::UnityContrastEnhance35,
-            CliUpscaleFilter::UnityContrastEnhance50 => UpscaleFilter::UnityContrastEnhance50,
-            CliUpscaleFilter::AdaptiveLogContrast75 => UpscaleFilter::AdaptiveLogContrast75,
-            CliUpscaleFilter::AdaptiveLogContrast80 => UpscaleFilter::AdaptiveLogContrast80,
-            CliUpscaleFilter::AdaptiveLogContrast90 => UpscaleFilter::AdaptiveLogContrast90,
-            CliUpscaleFilter::ScaleFxSmartDeblur => UpscaleFilter::ScaleFxSmartDeblur,
-            CliUpscaleFilter::UnsharpMaskSmall => UpscaleFilter::UnsharpMaskSmall,
-            CliUpscaleFilter::HighPassSharpen => UpscaleFilter::HighPassSharpen,
+            CliUpscaleFilter::Vibrance
+            | CliUpscaleFilter::Saturation
+            | CliUpscaleFilter::SelectiveWarm
+            | CliUpscaleFilter::SelectiveGreen
+            | CliUpscaleFilter::LocalLaplacianClarity
+            | CliUpscaleFilter::ContrastEnhance
+            | CliUpscaleFilter::AdaptiveLogContrast
+            | CliUpscaleFilter::ScaleFxSmartDeblur
+            | CliUpscaleFilter::GuestrDeblur
+            | CliUpscaleFilter::UnsharpMask
+            | CliUpscaleFilter::HighPassSharpen => UpscaleFilter::None,
         }
     }
 }
@@ -701,6 +675,29 @@ impl CliUpscaleFilter {
                 max_derived_colors: 32,
             },
             Self::PaletteDitherReinsertCheckerboard => UpscalePass::PaletteDitherReinsertCheckerboard,
+            Self::Vibrance => UpscalePass::from(EnhancementFilter::Vibrance { factor: 0.30 }),
+            Self::Saturation => UpscalePass::from(EnhancementFilter::Saturation { factor: 1.25 }),
+            Self::SelectiveWarm => UpscalePass::from(EnhancementFilter::SelectiveWarm { factor: 0.30 }),
+            Self::SelectiveGreen => UpscalePass::from(EnhancementFilter::SelectiveGreen { factor: 0.30 }),
+            Self::LocalLaplacianClarity => {
+                UpscalePass::from(EnhancementFilter::LocalLaplacianClarity { radius: 3, amount: 0.25 })
+            }
+            Self::ContrastEnhance => {
+                UpscalePass::from(EnhancementFilter::ContrastEnhance { intensity: 0.35, threshold: 0.08, blur_spread: 2.5 })
+            }
+            Self::AdaptiveLogContrast => {
+                UpscalePass::from(EnhancementFilter::AdaptiveLogContrast { radius: 3.0, gamma: 0.80 })
+            }
+            Self::ScaleFxSmartDeblur => {
+                UpscalePass::from(EnhancementFilter::ScaleFxSmartDeblur {
+                    deblur_offset: 0.6,
+                    deblur_strength: 0.55,
+                    smart_deblur: 0.4,
+                })
+            }
+            Self::GuestrDeblur => UpscalePass::from(EnhancementFilter::GuestrDeblur),
+            Self::UnsharpMask => UpscalePass::from(EnhancementFilter::UnsharpMask { radius: 1.0, amount: 0.35 }),
+            Self::HighPassSharpen => UpscalePass::from(EnhancementFilter::HighPassSharpen { radius: 2.0, strength: 0.18 }),
             filter => UpscalePass::from(UpscaleFilter::from(filter)),
         }
     }
@@ -2685,9 +2682,9 @@ mod tests {
             "--ccdir",
             "/cc",
             "--upscale-pass",
-            "vibrance30",
+            "vibrance",
             "--upscale-pass",
-            "selective-warm30",
+            "selective-warm",
         ])
         .expect("parse color boost upscale passes");
 
@@ -2695,7 +2692,7 @@ mod tests {
             Commands::PackMobileAnims { upscale_passes, .. } => {
                 assert_eq!(
                     upscale_passes,
-                    vec![CliUpscaleFilter::Vibrance30, CliUpscaleFilter::SelectiveWarm30]
+                    vec![CliUpscaleFilter::Vibrance, CliUpscaleFilter::SelectiveWarm]
                 );
             }
             _ => panic!("unexpected command parsed"),
@@ -2710,11 +2707,11 @@ mod tests {
             "--ccdir",
             "/cc",
             "--upscale-pass",
-            "local-laplacian-clarity25",
+            "local-laplacian-clarity",
             "--upscale-pass",
-            "unity-contrast-enhance35",
+            "contrast-enhance",
             "--upscale-pass",
-            "adaptive-log-contrast80",
+            "adaptive-log-contrast",
         ])
         .expect("parse local contrast upscale passes");
 
@@ -2723,9 +2720,9 @@ mod tests {
                 assert_eq!(
                     upscale_passes,
                     vec![
-                        CliUpscaleFilter::LocalLaplacianClarity25,
-                        CliUpscaleFilter::UnityContrastEnhance35,
-                        CliUpscaleFilter::AdaptiveLogContrast80,
+                        CliUpscaleFilter::LocalLaplacianClarity,
+                        CliUpscaleFilter::ContrastEnhance,
+                        CliUpscaleFilter::AdaptiveLogContrast,
                     ]
                 );
             }

@@ -19,10 +19,14 @@ struct MobileAnimPageDetails {
 }
 
 const MOBILE_ANIM_OVERVIEW_LEFT_WIDTH: f32 = 340.0;
-const MOBILE_ANIM_OVERVIEW_RIGHT_WIDTH: f32 = 640.0;
+const MOBILE_ANIM_OVERVIEW_RIGHT_WIDTH: f32 = 500.0;
 const MOBILE_ANIM_OVERVIEW_GAP: f32 = 12.0;
 const MOBILE_ANIM_DETAIL_MIN_WIDTH: f32 =
     MOBILE_ANIM_OVERVIEW_LEFT_WIDTH + MOBILE_ANIM_OVERVIEW_GAP + MOBILE_ANIM_OVERVIEW_RIGHT_WIDTH;
+const MOBILE_ANIM_LIST_PANEL_DEFAULT_WIDTH: f32 = 360.0;
+const MOBILE_ANIM_SECTION_HEADER_SPACING: f32 = 4.0;
+const MOBILE_ANIM_PLAYBACK_PANEL_MAX_WIDTH: f32 = 560.0;
+const MOBILE_ANIM_PLAYBACK_PREVIEW_GAP: f32 = 12.0;
 
 pub fn ui_mobile_anim_cc(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
     let Some(package) = app.mobile_anim_cc_package.clone() else {
@@ -42,7 +46,7 @@ pub fn ui_mobile_anim_cc(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
 
     egui::SidePanel::left("mobile_anim_cc_list")
         .resizable(true)
-        .default_width(360.0)
+        .default_width(MOBILE_ANIM_LIST_PANEL_DEFAULT_WIDTH)
         .show_inside(ui, |ui| {
             ui.heading("CC Mobile Animations");
             ui.label(format!("{} animations", animations.len()));
@@ -335,7 +339,7 @@ pub fn ui_mobile_anim_ec(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
 
     egui::SidePanel::left("mobile_anim_ec_list")
         .resizable(true)
-        .default_width(360.0)
+        .default_width(MOBILE_ANIM_LIST_PANEL_DEFAULT_WIDTH)
         .show_inside(ui, |ui| {
             ui.heading("EC Mobile Animations");
             ui.label(format!("{} animations", animations.len()));
@@ -1008,7 +1012,7 @@ fn show_metadata_section(
         ui.set_min_width(width);
         ui.set_max_width(width);
         ui.strong(title);
-        ui.add_space(4.0);
+        ui.add_space(MOBILE_ANIM_SECTION_HEADER_SPACING);
         metadata_grid(id)
             .show(ui, |ui| {
                 for (label, value) in rows {
@@ -1025,7 +1029,7 @@ fn show_page_bucket_section(ui: &mut egui::Ui, rows: &[(String, String)], width:
         ui.set_min_width(width);
         ui.set_max_width(width);
         ui.strong("Page Buckets");
-        ui.add_space(4.0);
+        ui.add_space(MOBILE_ANIM_SECTION_HEADER_SPACING);
         if rows.is_empty() {
             ui.label("none");
             return;
@@ -1078,7 +1082,7 @@ fn codec_name(codec: Codec) -> &'static str {
         Codec::None => "none",
         Codec::ZstdNoDict => "zstd",
         Codec::ZstdTypeDict => "zstd type dict",
-        Codec::JpegXl => "JPEG XL",
+        Codec::JpegXl => "jpegxl",
     }
 }
 
@@ -1129,10 +1133,10 @@ fn show_frame_playback_preview_row(
 ) {
     ui.horizontal_wrapped(|ui| {
         ui.vertical(|ui| {
-            ui.set_width(ui.available_width().min(560.0));
+            ui.set_width(ui.available_width().min(MOBILE_ANIM_PLAYBACK_PANEL_MAX_WIDTH));
             controls_and_metadata(ui, app);
         });
-        ui.add_space(12.0);
+        ui.add_space(MOBILE_ANIM_PLAYBACK_PREVIEW_GAP);
         ui.vertical(|ui| {
             preview(ui, app);
         });
