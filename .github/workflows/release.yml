@@ -171,7 +171,7 @@ jobs:
               export CC=gcc
               export CXX=g++
               export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=clang
-              just build-ci-workspace --target x86_64-unknown-linux-musl
+              just build-linux-musl-release-nightly x86_64-unknown-linux-musl
               chown -R "$HOST_UID:$HOST_GID" /work/target
             '
 
@@ -222,7 +222,7 @@ jobs:
               export CC=gcc
               export CXX=g++
               export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=clang
-              just build-ci-workspace --target aarch64-unknown-linux-musl
+              just build-linux-musl-release-nightly aarch64-unknown-linux-musl
               chown -R "$HOST_UID:$HOST_GID" /work/target
             '
 

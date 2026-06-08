@@ -662,7 +662,7 @@ fn draw_preview(
 
         if show_center {
             let center = origin + multi_center_position(min_x, min_y, min_z, tile_w, tile_h).to_vec2();
-            let stroke = egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 220, 64));
+            let stroke = egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(255, 220, 64));
             painter.line_segment(
                 [center + egui::vec2(-18.0, 0.0), center + egui::vec2(18.0, 0.0)],
                 stroke,
@@ -717,7 +717,7 @@ fn paint_selected_part_highlight(
         painter.rect_stroke(
             rect.expand(3.0),
             0.0,
-            egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 220, 64)),
+            egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(255, 220, 64)),
             egui::StrokeKind::Outside,
         );
     }

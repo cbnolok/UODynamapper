@@ -68,7 +68,7 @@ linux_release_linker_base := if has_mold != "" {
 
 # Specific GNU ld / ELF linker flags for optimized Linux builds, not supported by windows cl.exe
 linux_optimized_flags := linux_release_linker_base + " -Clink-arg=-Wl,--gc-sections -Clink-arg=-Wl,--no-allow-shlib-undefined"
-linux_musl_flags := " -C target-feature=+crt-static -C link-self-contained=yes -C embed-bitcode=no -Clinker-plugin-lto -Csymbol-mangling-version=v0 -Cforce-unwind-tables=no -Clink-arg=-fuse-ld=mold -Clink-arg=-Wl,--gc-sections -Clink-arg=-Wl,--no-allow-shlib-undefined"
+linux_musl_flags := " -C target-feature=+crt-static -C link-self-contained=yes -C embed-bitcode=no -Clinker-plugin-lto -Csymbol-mangling-version=v0 -Cforce-unwind-tables=no -Clink-arg=-fuse-ld=mold -Clink-arg=-Wl,--gc-sections -Clink-arg=-Wl,--no-allow-shlib-undefined -Clink-arg=-lgcc"
 
 # Features to enable on Linux by default (ensures Wayland/X11 support when using --no-default-features)
 linux_features := if is_linux == "true" { "linux_wayland,linux_x11" } else { "" }
