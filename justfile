@@ -71,7 +71,6 @@ linux_optimized_flags := linux_release_linker_base + " -Clink-arg=-Wl,--gc-secti
 
 # Features to enable on Linux by default (ensures Wayland/X11 support when using --no-default-features)
 linux_features := if is_linux == "true" { "linux_wayland,linux_x11" } else { "" }
-shipping_tool_features := if is_linux == "true" { "linux_wayland,linux_x11,uocf-cli/dev-tool-tests" } else { "uocf-cli/dev-tool-tests" }
 
 export RUSTFLAGS := if is_linux == "true" { linux_debug_linker_base } else { "" }
 
@@ -93,8 +92,8 @@ cargo_profile_stable    := if is_windows == "true" { "$env:RUSTFLAGS=$env:RUSTFL
 
 # --- Release Package Contents ---
 app_docs := "docs/keybindings.md docs/USER_TROUBLESHOOTING.md"
-tool_docs := "docs/dev_wiki/ASSET_PIPELINE.md docs/dev_wiki/WORKSPACE_COMPONENTS.md docs/dev_wiki/UDDP_FORMATS.md README.md"
-tool_bins := "udd-conv-gui udd-pack udd-tool uddp-inspector-gui uocf-inspector-gui uop-tool cc-uop-mul-converter texture-scanner sound-tool multimap-tool facet-evidence-tool kr-ec-terrain-diff-tool uop-dict-populator-cli uop-dict-populator-gui"
+tool_docs := "README.md docs/USER_TROUBLESHOOTING.md"
+tool_bins := "udd-conv-gui udd-pack udd-tool uddp-inspector-gui uocf-inspector-gui uop-tool cc-uop-mul-converter sound-tool multimap-tool uop-dict-populator-cli uop-dict-populator-gui"
 tool_packages := "-p udd-conv-cli -p uocf-cli -p udd-conv-gui -p uddp-inspector-gui -p uocf-inspector-gui -p uop-dict-populator-gui"
 
 # --- Recipes ---
@@ -137,7 +136,7 @@ build-ci-workspace *args:
     @echo "Running {{os}} CI workspace build..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
     @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
-    {{cargo_release_nightly}} build --release --locked --workspace --no-default-features --features "{{shipping_tool_features}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
+    {{cargo_release_nightly}} build --release --locked --workspace --no-default-features --features "{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
 
 # Build only dynamapper with the same release settings used by CI
 build-ci-dynamapper *args:
@@ -152,7 +151,7 @@ build-ci-tools *args:
     @echo "Running {{os}} CI tools build..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
     @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
-    {{cargo_release_nightly}} build --release --locked --no-default-features --features "{{shipping_tool_features}}" {{CARGO_FLAGS_NIGHTLY}} \
+    {{cargo_release_nightly}} build --release --locked --no-default-features --features "{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} \
         {{tool_packages}} --bins {{args}}
 
 # Build the binaries that are included in release artifacts
