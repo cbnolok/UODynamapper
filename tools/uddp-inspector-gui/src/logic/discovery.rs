@@ -113,7 +113,7 @@ pub fn parse_virtual_entries_from_slot_manifest(data: &[u8]) -> Vec<VirtualEntry
         let Ok(page_index) = cursor.read_u32::<LittleEndian>() else {
             break;
         };
-        let Ok(_page_tile_idx) = cursor.read_u16::<LittleEndian>() else {
+        let Ok(page_tile_idx) = cursor.read_u16::<LittleEndian>() else {
             break;
         };
         let Ok(flags) = cursor.read_u16::<LittleEndian>() else {
@@ -182,11 +182,14 @@ pub fn parse_virtual_entries_from_slot_manifest(data: &[u8]) -> Vec<VirtualEntry
                 location,
                 data: VirtualEntryData::AtlasRect {
                     page_index,
+                    page_tile_idx,
                     x,
                     y,
                     width,
                     height,
                     flags,
+                    upscale_factor,
+                    upscale_algorithm,
                 },
             });
         }
@@ -195,7 +198,7 @@ pub fn parse_virtual_entries_from_slot_manifest(data: &[u8]) -> Vec<VirtualEntry
     entries
 }
 
-fn upscale_algorithm_name(code: u16) -> &'static str {
+pub(crate) fn upscale_algorithm_name(code: u16) -> &'static str {
     match code {
         0 => "None",
         1 => "Nearest",

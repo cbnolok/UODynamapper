@@ -46,11 +46,14 @@ pub struct VirtualEntry {
 pub enum VirtualEntryData {
     AtlasRect {
         page_index: u32,
+        page_tile_idx: u16,
         x: u16,
         y: u16,
         width: u16,
         height: u16,
         flags: u16,
+        upscale_factor: u16,
+        upscale_algorithm: u16,
     },
     EcLandMaterial(EcLandMaterialInfo),
     TileMetaLand(TileMetaLandInfo),
@@ -79,7 +82,27 @@ pub struct EcLandMaterialInfo {
     pub alias_count: usize,
     pub selected_texture_count: usize,
     pub primary_texture_id: Option<u32>,
+    pub selected_textures: Vec<EcLandMaterialTextureInfo>,
+    pub override_textures: Vec<EcLandMaterialOverrideTextureInfo>,
     pub preview: Option<EcLandMaterialPreview>,
+}
+
+#[derive(Debug, Clone)]
+pub struct EcLandMaterialTextureInfo {
+    pub layer_index: u32,
+    pub texture_id: u32,
+    pub runtime_slot_id: Option<u32>,
+    pub repetition: f32,
+    pub is_primary: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct EcLandMaterialOverrideTextureInfo {
+    pub role: String,
+    pub layer_index: Option<u32>,
+    pub texture_id: u32,
+    pub runtime_slot_id: Option<u32>,
+    pub repetition: Option<f32>,
 }
 
 #[derive(Debug, Clone)]

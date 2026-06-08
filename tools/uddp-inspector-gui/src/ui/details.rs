@@ -2,6 +2,7 @@ use eframe::egui;
 use udd_assets::hues::HUES_TEXTURE_ENTRY_PATH;
 use udd_container::{FileKey, xxh64_virtual_path};
 use crate::app::{InspectorApp, MAX_INLINE_PREVIEW_WIDTH, MAX_INLINE_PREVIEW_HEIGHT};
+use crate::logic::discovery::upscale_algorithm_name;
 use crate::models::{PreviewModeKind, ViewMode, VirtualEntryData};
 use crate::ui::{metadata_grid, metadata_label};
 use crate::utils::{
@@ -254,17 +255,38 @@ impl InspectorApp {
             match &ventry.data {
                 VirtualEntryData::AtlasRect {
                     page_index,
+                    page_tile_idx,
                     x,
                     y,
                     width,
                     height,
                     flags,
+                    upscale_factor,
+                    upscale_algorithm,
                 } => {
                     metadata_label(ui, "Page Index:");
                     ui.label(page_index.to_string());
                     ui.end_row();
+                    metadata_label(ui, "Page Tile:");
+                    ui.label(page_tile_idx.to_string());
+                    ui.end_row();
                     metadata_label(ui, "Rect:");
                     ui.label(format!("{},{} - {}x{}", x, y, width, height));
+                    ui.end_row();
+                    metadata_label(ui, "Logical Size:");
+                    ui.label(format!(
+                        "{:.1}x{:.1}",
+                        *width as f32 / f32::from((*upscale_factor).max(1)),
+                        *height as f32 / f32::from((*upscale_factor).max(1))
+                    ));
+                    ui.end_row();
+                    metadata_label(ui, "Upscale:");
+                    ui.label(format!(
+                        "{} {}x (code {})",
+                        upscale_algorithm_name(*upscale_algorithm),
+                        upscale_factor,
+                        upscale_algorithm
+                    ));
                     ui.end_row();
                     metadata_label(ui, "Flags:");
                     ui.label(format!("0x{:04X}", flags));
@@ -296,6 +318,16 @@ impl InspectorApp {
                     metadata_label(ui, "Selected Textures:");
                     ui.label(info.selected_texture_count.to_string());
                     ui.end_row();
+                    if !info.selected_textures.is_empty() {
+                        metadata_label(ui, "Material Layers:");
+                        ui.label(format_material_layers(&info.selected_textures));
+                        ui.end_row();
+                    }
+                    if !info.override_textures.is_empty() {
+                        metadata_label(ui, "Linked Textures:");
+                        ui.label(format_override_textures(&info.override_textures));
+                        ui.end_row();
+                    }
                     if let Some(preview) = info.preview.as_ref() {
                         metadata_label(ui, "Preview Slot:");
                         ui.label(preview.slot_id.to_string());
@@ -376,5 +408,67 @@ impl InspectorApp {
                 */
             }
         });
+    }
+}
+
+fn format_material_layers(textures: &[crate::models::EcLandMaterialTextureInfo]) -> String {
+    textures
+        .iter()
+        .map(|texture| {
+            let slot = texture
+                .runtime_slot_id
+                .map(|slot_id| slot_id.to_string())
+                .unwrap_or_else(|| "missing".to_string());
+            let primary = if texture.is_primary { " primary" } else { "" };
+            format!(
+                "{}: texture {} -> slot {} rep {:.3}{}",
+                material_layer_name(texture.layer_index),
+                texture.texture_id,
+                slot,
+                texture.repetition,
+                primary
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn format_override_textures(textures: &[crate::models::EcLandMaterialOverrideTextureInfo]) -> String {
+    textures
+        .iter()
+        .map(|texture| {
+            let slot = texture
+                .runtime_slot_id
+                .map(|slot_id| slot_id.to_string())
+                .unwrap_or_else(|| "missing".to_string());
+            let layer = texture
+                .layer_index
+                .map(|layer_index| format!(" {}", material_layer_name(layer_index)))
+                .unwrap_or_default();
+            let repetition = texture
+                .repetition
+                .map(|value| format!(" rep {value:.3}"))
+                .unwrap_or_default();
+            format!(
+                "{}{}: texture {} -> slot {}{}",
+                texture.role,
+                layer,
+                texture.texture_id,
+                slot,
+                repetition
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn material_layer_name(layer_index: u32) -> String {
+    match layer_index {
+        0 => "layer 0 base/diffuse".to_string(),
+        1 => "layer 1 detail".to_string(),
+        2 => "layer 2 mask/alpha".to_string(),
+        3 => "layer 3 normal".to_string(),
+        u32::MAX => "unassigned layer".to_string(),
+        _ => format!("layer {layer_index}"),
     }
 }

@@ -619,6 +619,25 @@ impl InspectorApp {
                     })
                     .collect::<HashSet<_>>()
                     .len();
+                let selected_textures = self.detect_tex_land_ec_material_textures(records.as_slice());
+                let resolved_override_slots = package.resolve_override_texture_slots(material_id);
+                let override_textures = package
+                    .terrain_override_texture_refs_for(material_id)
+                    .iter()
+                    .map(|texture_ref| EcLandMaterialOverrideTextureInfo {
+                        role: texture_ref.role.clone(),
+                        layer_index: texture_ref.layer_index,
+                        texture_id: texture_ref.texture_id,
+                        runtime_slot_id: resolved_override_slots
+                            .iter()
+                            .find(|slot| {
+                                slot.role == texture_ref.role
+                                    && slot.texture_id == texture_ref.texture_id
+                            })
+                            .and_then(|slot| slot.runtime_slot_id),
+                        repetition: texture_ref.texture_repetition,
+                    })
+                    .collect::<Vec<_>>();
                 let path = terrain_definition_path(material_id);
                 let path_hash = uocf::uop_container::hash::hash_file_name_single(&path);
                 let summary = format!(
@@ -641,11 +660,65 @@ impl InspectorApp {
                         alias_count,
                         selected_texture_count,
                         primary_texture_id,
+                        selected_textures,
+                        override_textures,
                         preview,
                     }),
                 }
             })
             .collect()
+    }
+
+    fn detect_tex_land_ec_material_textures(
+        &self,
+        records: &[&udd_assets::tex_land_ec::TexLandEcTerrainProvenanceRecord],
+    ) -> Vec<EcLandMaterialTextureInfo> {
+        let mut seen = HashSet::new();
+        let mut textures = records
+            .iter()
+            .filter_map(|record| {
+                if record.selected_texture_id == MISSING_TEXTURE_ID {
+                    return None;
+                }
+                let key = (
+                    record.selected_layer_index,
+                    record.selected_texture_id,
+                    record.canonical_slot_id,
+                    record.alias_slot_id,
+                );
+                if !seen.insert(key) {
+                    return None;
+                }
+                let runtime_slot_id = if record.canonical_slot_id != 0
+                    && record.canonical_slot_id != udd_assets::tex_land_ec::MISSING_SLOT_ID
+                {
+                    Some(record.canonical_slot_id)
+                } else if record.alias_slot_id != 0
+                    && record.alias_slot_id != udd_assets::tex_land_ec::MISSING_SLOT_ID
+                {
+                    Some(record.alias_slot_id)
+                } else {
+                    None
+                };
+                Some(EcLandMaterialTextureInfo {
+                    layer_index: record.selected_layer_index,
+                    texture_id: record.selected_texture_id,
+                    runtime_slot_id,
+                    repetition: record.selected_texture_repetition,
+                    is_primary: record.primary_texture_id == record.selected_texture_id
+                        || record.primary_layer_index == record.selected_layer_index,
+                })
+            })
+            .collect::<Vec<_>>();
+        textures.sort_by_key(|texture| {
+            (
+                texture.layer_index,
+                !texture.is_primary,
+                texture.texture_id,
+                texture.runtime_slot_id.unwrap_or(u32::MAX),
+            )
+        });
+        textures
     }
 
     fn detect_tex_land_ec_material_preview(
@@ -1586,10 +1659,11 @@ mod tests {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"ELTP");
         bytes.write_u32::<LittleEndian>(3).unwrap();
-        bytes.write_u32::<LittleEndian>(2).unwrap();
+        bytes.write_u32::<LittleEndian>(3).unwrap();
         for (texture_id, canonical_slot_id, layer_index) in [
             (1_000_003, 16_408, udd_assets::tex_land_ec::MISSING_TERRAIN_LAYER_INDEX),
             (2_000_520, 100, 0),
+            (2_000_521, 100, 3),
         ] {
             bytes.write_u32::<LittleEndian>(52).unwrap();
             bytes.write_i32::<LittleEndian>(0).unwrap();
@@ -1612,6 +1686,25 @@ mod tests {
                 .unwrap();
         }
         bytes
+    }
+
+    fn ec_land_terrain_overrides_json() -> Vec<u8> {
+        br#"{
+  "schema": "tex_land_ec_terrain_overrides",
+  "schema_version": 1,
+  "entries": [
+    {
+      "material_id": 52,
+      "active_action_count": 1,
+      "policies": [],
+      "liquid": null,
+      "layers": [{"role": "normal", "texture_id": 2000521, "stretch": 2.5}],
+      "textures": [{"role": "noise", "texture_id": 2000520}],
+      "ignore": null
+    }
+  ]
+}"#
+        .to_vec()
     }
 
     fn world_lights_slot_manifest_bytes() -> Vec<u8> {
@@ -1682,6 +1775,11 @@ mod tests {
             &mut builder,
             udd_assets::tex_land_ec::UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH,
             &ec_land_terrain_provenance_bytes(),
+        );
+        add_metadata_file(
+            &mut builder,
+            udd_assets::tex_land_ec::UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH,
+            &ec_land_terrain_overrides_json(),
         );
         let bytes = builder.build().expect("build test package");
         udd_assets::TexLandEcPackage::from_uddp_package(
@@ -1890,11 +1988,14 @@ mod tests {
                     location: "page 0".to_string(),
                     data: VirtualEntryData::AtlasRect {
                         page_index: 0,
+                        page_tile_idx: 0,
                         x: 0,
                         y: 0,
                         width: 16,
                         height: 16,
                         flags: 1,
+                        upscale_factor: 1,
+                        upscale_algorithm: 0,
                     },
                 },
                 VirtualEntry {
@@ -1919,11 +2020,14 @@ mod tests {
                     location: "missing page".to_string(),
                     data: VirtualEntryData::AtlasRect {
                         page_index: u32::MAX,
+                        page_tile_idx: u16::MAX,
                         x: 0,
                         y: 0,
                         width: 0,
                         height: 0,
                         flags: 1,
+                        upscale_factor: 1,
+                        upscale_algorithm: 0,
                     },
                 },
             ],
@@ -2001,6 +2105,26 @@ mod tests {
 
         assert_eq!(preview.slot_id, 100);
         assert_eq!(info.primary_texture_id, Some(2_000_520));
+        assert_eq!(info.selected_textures.len(), 3);
+        assert!(info.selected_textures.iter().any(|texture| {
+            texture.layer_index == 3
+                && texture.texture_id == 2_000_521
+                && texture.runtime_slot_id == Some(100)
+        }));
+        assert_eq!(info.override_textures.len(), 2);
+        assert!(info.override_textures.iter().any(|texture| {
+            texture.role == "normal"
+                && texture.layer_index == Some(3)
+                && texture.texture_id == 2_000_521
+                && texture.runtime_slot_id == Some(100)
+                && texture.repetition == Some(2.5)
+        }));
+        assert!(info.override_textures.iter().any(|texture| {
+            texture.role == "noise"
+                && texture.layer_index.is_none()
+                && texture.texture_id == 2_000_520
+                && texture.runtime_slot_id == Some(100)
+        }));
     }
 
     #[test]
