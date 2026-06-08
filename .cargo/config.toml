@@ -1,62 +1,87 @@
-# -- Local
+# Stable Cargo configuration.
+#
+# Nightly-only profile rustflags live in config.nightly.toml and can be enabled
+# with: cargo +nightly --config .cargo/config.nightly.toml ...
+
 [build]
-target-dir = "target"
-
-# -- Unstable Rust compiler only, but useful for profiling.
-#[unstable]
-#profile-rustflags = true
-
-#[profile.profiling]
-#rustflags = ["-C", "force-frame-pointers=yes"]
+#target-dir = "target"
+target-dir = "/home/claudio/_builds/"
 
 # ----------
+# Linux, GNU libc (default)
+# ----------
 
-# -- Linux, GNU libc (default)
 [target.x86_64-unknown-linux-gnu]
 linker = "clang"
 
 [target.aarch64-unknown-linux-gnu]
 linker = "aarch64-linux-gnu-gcc"
 
-[target.'cfg(all(target_os = "linux", debug_assertions, not(feature = "profiling")))']
-# wild linker (even faster than mold) + frame-pointers for debug
-#rustflags = ["-Clink-arg=-fuse-ld=wild", "-C", "force-frame-pointers=yes"]
-rustflags = ["-Clink-arg=-fuse-ld=mold", "-C", "force-frame-pointers=yes"]
+[target.'cfg(target_os = "linux")']
+rustflags = [
+  # rustc flags
+  "-C", "embed-bitcode=no",
+  # linker flags
+  "-Clink-arg=-Wl,--gc-sections",
+  "-Clink-arg=-Wl,--no-allow-shlib-undefined",
+]
 
-[target.'cfg(all(target_os = "linux", feature = "profiling"))']
-# profiling feature enables frame pointers (applies to crates with the feature)
-rustflags = ["-Clink-arg=-fuse-ld=mold", "-C", "force-frame-pointers=yes"]
+# ----------
+# Linux, Musl libc (statically linked)
+# ----------
 
-[target.'cfg(all(target_os = "linux", not(debug_assertions)))']
-# mold linker for release
-rustflags = ["-Clink-arg=-fuse-ld=mold"]
-
-# -- Linux, Musl libc (statically linked)
 [target.x86_64-unknown-linux-musl]
 rustflags = [
-  "-C",
-  "target-feature=+crt-static",
-  "-C",
-  "link-self-contained=yes",
+  # rustc flags
+  "-C", "target-feature=+crt-static",
+  "-C", "link-self-contained=yes",
+  "-C", "embed-bitcode=no",
+  # linker flags
+  "-Clink-arg=-Wl,--gc-sections",
+  "-Clink-arg=-Wl,--no-allow-shlib-undefined",
 ]
 #linker = "musl-gcc"
 
 [target.aarch64-unknown-linux-musl]
 rustflags = [
-  "-C",
-  "target-feature=+crt-static",
-  "-C",
-  "link-self-contained=yes",
+  # rustc flags
+  "-C", "target-feature=+crt-static",
+  "-C", "link-self-contained=yes",
+  "-C", "embed-bitcode=no",
+  # linker flags
+  "-Clink-arg=-Wl,--gc-sections",
+  "-Clink-arg=-Wl,--no-allow-shlib-undefined",
 ]
 #linker = "aarch64-linux-musl-gcc"
 
-# -- Windows
+# ----------
+# macOS
+# ----------
+
+[target.'cfg(target_os = "macos")']
+rustflags = [
+  # rustc flags
+  "-C", "embed-bitcode=no",
+  # linker flags
+  "-Clink-arg=-Wl,-dead_strip",
+]
+
+# ----------
+# Windows
+# ----------
+
 # On Windows MSVC, statically link the C runtime so that the resulting EXE does
 # not depend on the vcruntime DLL.
 [target.x86_64-pc-windows-msvc]
 #linker = "rust-lld.exe"
-rustflags = ["-C", "target-feature=+crt-static"]
+rustflags = [
+  # rustc flags
+  "-C", "target-feature=+crt-static",
+]
 
 [target.i686-pc-windows-msvc]
 #linker = "rust-lld.exe"
-rustflags = ["-C", "target-feature=+crt-static"]
+rustflags = [
+  # rustc flags
+  "-C", "target-feature=+crt-static",
+]

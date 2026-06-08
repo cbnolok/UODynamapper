@@ -1,0 +1,30 @@
+# Nightly Cargo overlay.
+#
+# Use together with the stable base config:
+# cargo +nightly --config .cargo/config.nightly.toml ...
+#
+# Profile rustflags are not target-scoped; keep target-specific linker choices
+# in the base target tables or pass them explicitly for one-off builds.
+
+[unstable]
+no-embed-metadata = true
+profile-rustflags = true
+
+[profile.dev]
+rustflags = [
+  "-C", "force-frame-pointers=yes",
+]
+
+[profile.release]
+rustflags = [
+  "-Clinker-plugin-lto",
+  "-Csymbol-mangling-version=v0",
+  "-Cforce-unwind-tables=no",
+]
+
+[profile.profiling]
+rustflags = [
+  "-C", "force-frame-pointers=yes",
+  "-Csymbol-mangling-version=v0",
+  "-Cforce-unwind-tables=no",
+]
