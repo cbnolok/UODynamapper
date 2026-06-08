@@ -1019,15 +1019,15 @@ unsafe fn sse_m6_rgb4_neon(
     ];
     let pr = vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(vmovl_u8(vget_low_u8(vqtbl1q_u8(
         px,
-        vld1q_u8(R_MASK.as_ptr()),
+        unsafe { vld1q_u8(R_MASK.as_ptr()) },
     ))))));
     let pg = vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(vmovl_u8(vget_low_u8(vqtbl1q_u8(
         px,
-        vld1q_u8(G_MASK.as_ptr()),
+        unsafe { vld1q_u8(G_MASK.as_ptr()) },
     ))))));
     let pb = vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(vmovl_u8(vget_low_u8(vqtbl1q_u8(
         px,
-        vld1q_u8(B_MASK.as_ptr()),
+        unsafe { vld1q_u8(B_MASK.as_ptr()) },
     ))))));
     let half = vdupq_n_s32(32);
     let recon_r = vaddq_s32(
@@ -1079,19 +1079,19 @@ unsafe fn sse_m6_rgba4_neon(
     ];
     let pr = vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(vmovl_u8(vget_low_u8(vqtbl1q_u8(
         px,
-        vld1q_u8(R_MASK.as_ptr()),
+        unsafe { vld1q_u8(R_MASK.as_ptr()) },
     ))))));
     let pg = vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(vmovl_u8(vget_low_u8(vqtbl1q_u8(
         px,
-        vld1q_u8(G_MASK.as_ptr()),
+        unsafe { vld1q_u8(G_MASK.as_ptr()) },
     ))))));
     let pb = vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(vmovl_u8(vget_low_u8(vqtbl1q_u8(
         px,
-        vld1q_u8(B_MASK.as_ptr()),
+        unsafe { vld1q_u8(B_MASK.as_ptr()) },
     ))))));
     let pa = vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(vmovl_u8(vget_low_u8(vqtbl1q_u8(
         px,
-        vld1q_u8(A_MASK.as_ptr()),
+        unsafe { vld1q_u8(A_MASK.as_ptr()) },
     ))))));
     let half = vdupq_n_s32(32);
     let recon_r = vaddq_s32(
@@ -1138,7 +1138,7 @@ unsafe fn eval_m6_rgb_neon(
     let mut sse = 0u32;
 
     for i in (0..16).step_by(4) {
-        let px = vld1q_u8(pixels.as_ptr().add(i) as *const u8);
+        let px = unsafe { vld1q_u8(pixels.as_ptr().add(i) as *const u8) };
         let lo = vsubq_s16(vreinterpretq_s16_u16(vmovl_u8(vget_low_u8(px))), ep);
         let hi = vsubq_s16(vreinterpretq_s16_u16(vmovl_u8(vget_high_u8(px))), ep);
         let prod0 = vmull_s16(vget_low_s16(lo), vget_low_s16(coef));
@@ -1164,7 +1164,7 @@ unsafe fn eval_m6_rgb_neon(
                 _ => vsetq_lane_s32(BC7_WEIGHTS4[sel] as i32, w, 3),
             };
         }
-        sse += sse_m6_rgb4_neon(px, w, lr, lg, lb, dr, dg, db);
+        sse += unsafe { sse_m6_rgb4_neon(px, w, lr, lg, lb, dr, dg, db) };
     }
 
     sse
@@ -1190,7 +1190,7 @@ unsafe fn eval_m6_rgba_neon(
     let mut sse = 0u32;
 
     for i in (0..16).step_by(4) {
-        let px = vld1q_u8(pixels.as_ptr().add(i) as *const u8);
+        let px = unsafe { vld1q_u8(pixels.as_ptr().add(i) as *const u8) };
         let lo = vsubq_s16(vreinterpretq_s16_u16(vmovl_u8(vget_low_u8(px))), ep);
         let hi = vsubq_s16(vreinterpretq_s16_u16(vmovl_u8(vget_high_u8(px))), ep);
         let prod0 = vmull_s16(vget_low_s16(lo), vget_low_s16(coef));
@@ -1216,7 +1216,7 @@ unsafe fn eval_m6_rgba_neon(
                 _ => vsetq_lane_s32(BC7_WEIGHTS4[sel] as i32, w, 3),
             };
         }
-        sse += sse_m6_rgba4_neon(px, w, lr, lg, lb, la, dr, dg, db, da);
+        sse += unsafe { sse_m6_rgba4_neon(px, w, lr, lg, lb, la, dr, dg, db, da) };
     }
 
     sse

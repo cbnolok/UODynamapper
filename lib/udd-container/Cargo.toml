@@ -16,7 +16,7 @@ too_many_arguments = "allow"
 [dependencies]
 xxhash-rust = { version = "0.8", default-features = false, features = ["xxh64"] }
 zstd.workspace = true
-jpegxl-rs = { version = "0.10", features = ["threads", "vendored"] }
+jpegxl-rs = { version = "0.14", features = ["vendored"] }
 byteorder = "1.5"
 rayon = "1.12"
 memmap2 = "0.9"
