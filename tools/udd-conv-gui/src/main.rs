@@ -9,14 +9,19 @@ mod ui;
 use app::UddConvApp;
 use models::{LogLevel, Tab};
 
+const APP_VIEWPORT_WIDTH: f32 = 1100.0;
+const APP_VIEWPORT_HEIGHT: f32 = 800.0;
+const APP_MIN_VIEWPORT_WIDTH: f32 = 900.0;
+const APP_MIN_VIEWPORT_HEIGHT: f32 = 700.0;
+
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
     color_eyre::install()?;
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1100.0, 800.0])
-            .with_min_inner_size([900.0, 700.0])
+            .with_inner_size([APP_VIEWPORT_WIDTH, APP_VIEWPORT_HEIGHT])
+            .with_min_inner_size([APP_MIN_VIEWPORT_WIDTH, APP_MIN_VIEWPORT_HEIGHT])
             .with_title("UODynamapper Asset Converter"),
         ..Default::default()
     };

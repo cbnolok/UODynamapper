@@ -4,6 +4,8 @@ use eframe::egui;
 use uocf::enhanced::terrain_definition::TerrainDefinitionEntry;
 use std::collections::BTreeSet;
 
+const TERRAIN_DEFINITION_PANEL_WIDTH: f32 = 300.0;
+
 pub fn ui_terrain_definition(app: &mut UopInspectorApp, ctx: &egui::Context) {
     let files_arc = if let Some(ref files) = app.terrain_def_files {
         files.clone()
@@ -14,11 +16,11 @@ pub fn ui_terrain_definition(app: &mut UopInspectorApp, ctx: &egui::Context) {
 
     egui::SidePanel::left("terrain_def_panel")
         .resizable(true)
-        .default_width(300.0)
+        .default_width(TERRAIN_DEFINITION_PANEL_WIDTH)
         .show(ctx, |ui| {
             ui.heading(format!("Terrain Definition Files ({})", files.len()));
             ui.separator();
-            
+
             ui.horizontal(|ui| {
                 ui.label("Search:");
                 ui.text_edit_singleline(&mut app.search_query);
@@ -52,9 +54,9 @@ pub fn ui_terrain_definition(app: &mut UopInspectorApp, ctx: &egui::Context) {
                     let file = &files[index];
                     let entry = &file.entry;
                     let name = entry.name.as_deref().unwrap_or("Unknown");
-                    
+
                     if !app.search_query.is_empty() {
-                        if !name.to_lowercase().contains(&app.search_query.to_lowercase()) && 
+                        if !name.to_lowercase().contains(&app.search_query.to_lowercase()) &&
                            !entry.id.to_string().contains(&app.search_query) &&
                            !format!("{:016X}", file.filename_hash).to_lowercase().contains(&app.search_query.to_lowercase()) {
                             continue;
@@ -63,7 +65,7 @@ pub fn ui_terrain_definition(app: &mut UopInspectorApp, ctx: &egui::Context) {
 
                     let is_selected = app.selected_terrain_def_hash == Some(file.filename_hash);
                     let label = format!("[{}] {} ({:016X})", entry.id, name, file.filename_hash);
-                    
+
                     if ui.selectable_label(is_selected, label).clicked() {
                         app.selected_terrain_def_hash = Some(file.filename_hash);
                     }

@@ -13,6 +13,7 @@ use uocf::classic::multimap_rle::{self, MultimapRleImage, BLACK_PIXEL};
 
 const GENERATED_PLAIN_KEY: u64 = 0x6F00000000000001;
 const GENERATED_ARTISTIC_KEY: u64 = 0x6F00000000000002;
+const MULTIMAP_TOOLS_PANEL_WIDTH: f32 = 340.0;
 
 struct GenerateRequest {
     input: GenerateInput,
@@ -46,7 +47,7 @@ pub fn ui_multimap(app: &mut UopInspectorApp, ctx: &egui::Context) {
 
     egui::SidePanel::left("multimap_tools")
         .resizable(true)
-        .default_width(340.0)
+        .default_width(MULTIMAP_TOOLS_PANEL_WIDTH)
         .show(ctx, |ui| {
             ui.heading("Multimap");
             ui.separator();

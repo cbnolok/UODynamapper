@@ -1,4 +1,4 @@
-# UODynamapper justfile
+# UODynamapper workspace justfile
 #
 # This file serves as the unified entry point for building, testing, and packaging UODynamapper
 # across Linux, macOS, and Windows. It replaces dozens of platform-specific shell/PowerShell scripts.
@@ -39,7 +39,7 @@ has_wild := if is_linux == "true" { `command -v wild || echo ""` } else { "" }
 
 # --- Build Configuration ---
 
-# RUSTC_WRAPPER logic
+# RUSTC_WRAPPER logic (needed for sccache)
 wrapper_path := if is_windows == "true" {
     "scripts/build/common/rustc_wrapper.bat"
 } else {
@@ -53,7 +53,9 @@ sccache_effective := if sccache_requested == "true" { sccache_available } else {
 
 export RUSTC_WRAPPER := if sccache_effective == "true" { "sccache" } else { wrapper_path }
 
-# Default RUSTFLAGS based on platform
+# Determine linker to be used and to be passed to RUSTFLAGS
+# For now linux_debug_linker_base is unused, since we are relying on config.toml for rapid iteration debug
+#   builds with stable rust toolchain
 linux_debug_linker_base := if has_wild != "" {
     "-Clink-arg=-fuse-ld=wild"
 } else if has_mold != "" {
@@ -61,41 +63,59 @@ linux_debug_linker_base := if has_wild != "" {
 } else {
     ""
 }
-
-linux_release_linker_base := if has_mold != "" {
+linux_optimized_linker_base := if has_mold != "" {
     "-Clink-arg=-fuse-ld=mold"
 } else {
     ""
 }
 
-# Specific GNU ld / ELF linker flags for optimized Linux builds, not supported by windows cl.exe
-linux_optimized_flags := linux_release_linker_base + " -C embed-bitcode=no -Clinker-plugin-lto  -Clink-arg=-Wl,--gc-sections -Clink-arg=-Wl,--no-allow-shlib-undefined"
-linux_musl_flags := " -C target-feature=+crt-static -C link-self-contained=yes -Clink-arg=-lgcc"
+# Linker flags per build
+linker_debug_flags := if is_linux == "true" {
+    linux_debug_linker_base
+} else {
+    ""
+}
+linker_optimized_flags := if is_linux == "true" {
+    linux_optimized_linker_base +
+    "-Clink-arg=-Wl,--gc-sections -Clink-arg=-Wl,--no-allow-shlib-undefined"
+} else if is_macos == "true" {
+    "-Clink-arg=-Wl,-dead_strip   -Clink-arg=-Wl,--no-allow-shlib-undefined"
+} else {
+  ""
+}
 
 # Features to enable on Linux by default (ensures Wayland/X11 support when using --no-default-features)
 linux_features := if is_linux == "true" { "linux_wayland,linux_x11" } else { "" }
-
-export RUSTFLAGS := if is_linux == "true" { linux_debug_linker_base } else { "" }
+# Added -Clink-arg=-lgcc to musl RUSTFLAGS to satisfy compiler builtins like __popcountdi2 emitted by vendored libjxl C++ objects
+linux_musl_rustflags := " -C target-feature=+crt-static -C link-self-contained=yes -Clink-arg=-lgcc"
 
 # Specialized RUSTFLAGS for different build types (exported to be accessible in shell commands)
-rustflags_optimized_common_nightly      := " -Zshare-generics=y -Zlocation-detail=none"
-rustflags_optimized_common_stable       := ""
-linux_optimized_rustflags               := if is_linux == "true" { linux_optimized_flags } else { "" }
-export RUSTFLAGS_RELEASE_NIGHTLY        := linux_optimized_rustflags + rustflags_optimized_common_nightly + " -Csymbol-mangling-version=v0 -Cforce-unwind-tables=no"
-export RUSTFLAGS_RELEASE_STABLE         := linux_optimized_rustflags + rustflags_optimized_common_stable  + " -Csymbol-mangling-version=v0 -Cforce-unwind-tables=no"
-export RUSTFLAGS_PROFILE_NIGHTLY        := linux_optimized_rustflags + rustflags_optimized_common_nightly + " -Cforce-frame-pointers=yes"
-export RUSTFLAGS_PROFILE_STABLE         := linux_optimized_rustflags + rustflags_optimized_common_stable  + " -Cforce-frame-pointers=yes"
-rustflags_release_nightly_musl          := rustflags_optimized_common_nightly + linux_musl_flags
-rustflags_release_stable_musl           := rustflags_optimized_common_stable  + linux_musl_flags
-rustflags_profile_nightly_musl          := rustflags_release_nightly_musl + " -Cforce-frame-pointers=yes"
-rustflags_profile_stable_musl           := rustflags_release_stable_musl  + " -Cforce-frame-pointers=yes"
-export CARGO_FLAGS_NIGHTLY              := " -Zbuild-std=std,panic_abort -Zbuild-std-features=optimize_for_size -Zno-embed-metadata"
+rustflags_debug_common              := " -C embed-bitcode=no"   # llvm bitcode is unneeded since we are not using LTO in debug
+rustflags_optimized_common_stable   := ""
+rustflags_optimized_common_nightly  := rustflags_optimized_common_stable  +
+                                        " -Zshare-generics=y -Zlocation-detail=none"
+export RUSTFLAGS_RELEASE_STABLE     := rustflags_optimized_common_stable  +
+                                        " -Csymbol-mangling-version=v0 -Cforce-unwind-tables=no"
+export RUSTFLAGS_RELEASE_NIGHTLY    := rustflags_optimized_common_nightly +
+                                        " -Csymbol-mangling-version=v0 -Cforce-unwind-tables=no"
+export RUSTFLAGS_PROFILE_STABLE     := rustflags_optimized_common_stable  +
+                                        " -Cforce-frame-pointers=yes"
+export RUSTFLAGS_PROFILE_NIGHTLY    := rustflags_optimized_common_nightly +
+                                        " -Cforce-frame-pointers=yes"
+# Specialized cargo flags
+export CARGO_FLAGS_NIGHTLY          := " -Zbuild-std=std,panic_abort -Zbuild-std-features=optimize_for_size"
+#   -Zfmt-debug=shallow
+#   -Zembed-metadata=no --emit=metadata to produce the full metadata into a separate .rmeta file.
 
 # Cross-platform Cargo runners to properly inject RUSTFLAGS in the shell
-cargo_release_nightly   := if is_windows == "true" { "$env:RUSTFLAGS=$env:RUSTFLAGS_RELEASE_NIGHTLY; cargo +nightly" } else { "export RUSTFLAGS=\"$RUSTFLAGS_RELEASE_NIGHTLY\"; cargo +nightly" }
-cargo_release_stable    := if is_windows == "true" { "$env:RUSTFLAGS=$env:RUSTFLAGS_RELEASE_STABLE; cargo" } else { "export RUSTFLAGS=\"$RUSTFLAGS_RELEASE_STABLE\"; cargo" }
-cargo_profile_nightly   := if is_windows == "true" { "$env:RUSTFLAGS=$env:RUSTFLAGS_PROFILE_NIGHTLY; cargo +nightly" } else { "export RUSTFLAGS=\"$RUSTFLAGS_PROFILE_NIGHTLY\"; cargo +nightly" }
-cargo_profile_stable    := if is_windows == "true" { "$env:RUSTFLAGS=$env:RUSTFLAGS_PROFILE_STABLE; cargo" } else { "export RUSTFLAGS=\"$RUSTFLAGS_PROFILE_STABLE\"; cargo" }
+cargo_release_nightly   :=
+    if is_windows == "true" { "$env:RUSTFLAGS=$env:RUSTFLAGS_RELEASE_NIGHTLY; cargo +nightly" } else { "export RUSTFLAGS=\"$RUSTFLAGS_RELEASE_NIGHTLY\"; cargo +nightly" }
+cargo_release_stable    :=
+    if is_windows == "true" { "$env:RUSTFLAGS=$env:RUSTFLAGS_RELEASE_STABLE; cargo" }           else { "export RUSTFLAGS=\"$RUSTFLAGS_RELEASE_STABLE\"; cargo" }
+cargo_profile_nightly   :=
+    if is_windows == "true" { "$env:RUSTFLAGS=$env:RUSTFLAGS_PROFILE_NIGHTLY; cargo +nightly" } else { "export RUSTFLAGS=\"$RUSTFLAGS_PROFILE_NIGHTLY\"; cargo +nightly" }
+cargo_profile_stable    :=
+    if is_windows == "true" { "$env:RUSTFLAGS=$env:RUSTFLAGS_PROFILE_STABLE; cargo" }           else { "export RUSTFLAGS=\"$RUSTFLAGS_PROFILE_STABLE\"; cargo" }
 
 # --- Release Package Contents ---
 app_docs := "docs/keybindings.md docs/USER_TROUBLESHOOTING.md"
@@ -114,11 +134,11 @@ default:
 build-local-workspace-debug *args:
     @echo "Running {{os}} debug build..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
-    cargo build --workspace {{args}}
+    cargo build --workspace "{{args}}"
 
 # Build only dynamapper locally in debug mode
 build-local-dynamapper-debug *args:
-    cargo build -p dynamapper --bin dynamapper {{args}}
+    cargo build -p dynamapper --bin dynamapper "{{args}}"
 
 # Build only the shipped tools locally in debug mode
 build-local-tools-debug *args:
@@ -128,7 +148,7 @@ build-local-tools-debug *args:
 build-local-udd-pack-debug *args:
     @echo "Running {{os}} udd-pack debug build..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
-    cargo build -p udd-conv-cli --bin udd-pack {{args}}
+    cargo build -p udd-conv-cli --bin udd-pack "{{args}}"
 
 # Build the workspace locally in release mode (stable toolchain)
 # Purpose: Production build using the stable toolchain. Includes LTO and basic stripping.
@@ -136,38 +156,38 @@ build-local-udd-pack-debug *args:
 build-local-workspace-release *args:
     @echo "Running {{os}} stable release build..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
-    {{cargo_release_stable}} build --release --locked --workspace --no-default-features --features "{{linux_features}}" {{args}}
+    {{cargo_release_stable}} build --release --locked --workspace --no-default-features --features "{{linux_features}}" "{{args}}"
 
 # Build the workspace for a Linux musl target in release mode (stable toolchain)
 build-linux-musl-release target="x86_64-unknown-linux-musl" *args:
-    @just _build-linux-musl "cargo" "--release" "{{linux_features}}" "" "{{rustflags_release_stable_musl}}" "{{target}}" {{args}}
+    @just _build-linux-musl "cargo" "--release" "{{linux_features}}" "{{linux_musl_rustflags}}" "{{rustflags_release_stable_musl}}" "{{target}}" "{{args}}"
 
 # Build the workspace for a Linux musl target in release mode (nightly toolchain)
 build-linux-musl-release-nightly target="x86_64-unknown-linux-musl" *args:
-    @just _build-linux-musl "cargo +nightly" "--release" "{{linux_features}}" "{{CARGO_FLAGS_NIGHTLY}}" "{{rustflags_release_nightly_musl}}" "{{target}}" {{args}}
+    @just _build-linux-musl "cargo +nightly" "--release" "{{linux_features}}" "{{linux_musl_rustflags}}" "{{CARGO_FLAGS_NIGHTLY}}" "{{rustflags_release_nightly_musl}}" "{{target}}" "{{args}}"
 
 # Build the workspace exactly as CI does for release artifacts
 build-ci-workspace *args:
     @echo "Running {{os}} CI workspace build..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
     @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
-    {{cargo_release_nightly}} build --release --locked --workspace --no-default-features --features "{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
+    {{cargo_release_nightly}} build --release --locked --workspace --no-default-features --features "{{linux_features}}" "{{CARGO_FLAGS_NIGHTLY}}" "{{args}}"
 
 # Build only dynamapper with the same release settings used by CI
 build-ci-dynamapper *args:
     @echo "Running {{os}} CI dynamapper build..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
     @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
-    {{cargo_release_nightly}} build --release --locked --no-default-features --features "{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} \
-        -p dynamapper --bin dynamapper {{args}}
+    {{cargo_release_nightly}} build --release --locked --no-default-features --features "{{linux_features}}" "{{CARGO_FLAGS_NIGHTLY}}" \
+        -p dynamapper --bin dynamapper "{{args}}"
 
 # Build only the shipped tools with the same release settings used by CI
 build-ci-tools *args:
     @echo "Running {{os}} CI tools build..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
     @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
-    {{cargo_release_nightly}} build --release --locked --no-default-features --features "{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} \
-        {{tool_packages}} --bins {{args}}
+    {{cargo_release_nightly}} build --release --locked --no-default-features --features "{{linux_features}}" "{{CARGO_FLAGS_NIGHTLY}}" \
+        {{tool_packages}} --bins "{{args}}"
 
 # Build the binaries that are included in release artifacts
 build-ci-shipping *args:
@@ -179,11 +199,11 @@ build-ci-shipping *args:
 build-local-workspace-profile *args:
     @echo "Running {{os}} stable profile build..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
-    {{cargo_profile_stable}} build --profile profiling --locked --workspace --no-default-features --features "profiling,{{linux_features}}" {{args}}
+    {{cargo_profile_stable}} build --profile profiling --locked --workspace --no-default-features --features "profiling,{{linux_features}}" "{{args}}"
 
 # Build the workspace for a Linux musl target in profiling mode (stable toolchain)
 build-linux-musl-profile target="x86_64-unknown-linux-musl" *args:
-    @just _build-linux-musl "cargo" "--profile profiling" "profiling,{{linux_features}}" "" "{{rustflags_profile_stable_musl}}" "{{target}}" {{args}}
+    @just _build-linux-musl "cargo" "--profile profiling" "profiling,{{linux_features}}" "{{linux_musl_rustflags}}" "{{rustflags_profile_stable_musl}}" "{{target}}" "{{args}}"
 
 # Build the workspace locally in profiling mode (nightly toolchain)
 # Purpose: Most accurate profiling with optimized standard library symbols.
@@ -191,18 +211,11 @@ build-local-workspace-profile-nightly *args:
     @echo "Running {{os}} nightly profile build..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
     @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
-    {{cargo_profile_nightly}} build --profile profiling --locked --workspace --no-default-features --features "profiling,{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
+    {{cargo_profile_nightly}} build --profile profiling --locked --workspace --no-default-features --features "profiling,{{linux_features}}" "{{CARGO_FLAGS_NIGHTLY}}" "{{args}}"
 
 # Build the workspace for a Linux musl target in profiling mode (nightly toolchain)
 build-linux-musl-profile-nightly target="x86_64-unknown-linux-musl" *args:
-    @just _build-linux-musl "cargo +nightly" "--profile profiling" "profiling,{{linux_features}}" "{{CARGO_FLAGS_NIGHTLY}}" "{{rustflags_profile_nightly_musl}}" "{{target}}" {{args}}
-
-_build-linux-musl cargo profile_flags features cargo_flags rustflags target *args:
-    @case "{{target}}" in x86_64-unknown-linux-musl|aarch64-unknown-linux-musl) ;; *) echo "unsupported musl target: {{target}}" >&2; exit 2;; esac
-    @echo "Running {{profile_flags}} build for {{target}}..."
-    @echo "Using RUSTFLAGS: {{rustflags}}"
-    @if [ -n "{{cargo_flags}}" ]; then echo "Adding cargo flags: {{cargo_flags}}"; fi
-    export RUSTFLAGS="{{rustflags}}"; {{cargo}} build {{profile_flags}} --locked --workspace --no-default-features --features "{{features}}" --target "{{target}}" {{cargo_flags}} {{args}}
+    @just _build-linux-musl "cargo +nightly" "--profile profiling" "profiling,{{linux_features}}" "{{linux_musl_rustflags}}" "{{CARGO_FLAGS_NIGHTLY}}" "{{target}}" "{{args}}"
 
 # Run flamegraph profiling (requires cargo-flamegraph)
 # Purpose: Generates a SVG flamegraph for performance analysis.
@@ -210,8 +223,8 @@ profile-dynamapper-flamegraph *args:
     @echo "Running {{os}} dynamapper flamegraph profile..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
     @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
-    {{cargo_profile_nightly}} flamegraph --profile profiling --no-default-features --features "profiling,{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} \
-        --bin dynamapper --package dynamapper {{args}}
+    {{cargo_profile_nightly}} flamegraph --profile profiling --no-default-features --features "profiling,{{linux_features}}" "{{CARGO_FLAGS_NIGHTLY}}" \
+        --bin dynamapper --package dynamapper "{{args}}"
 
 # Run bloat analysis (requires cargo-bloat and nightly)
 # Purpose: Identifies which crates/functions contribute most to binary size.
@@ -219,9 +232,9 @@ bloat *args:
     @echo "Running {{os}} bloat analysis..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
     @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
-    {{cargo_release_nightly}} bloat --release --no-default-features --features "{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} \
+    {{cargo_release_nightly}} bloat --release --no-default-features --features "{{linux_features}}" "{{CARGO_FLAGS_NIGHTLY}}" \
         --config 'profile.release.strip=false' \
-        {{args}}
+        "{{args}}"
 
 # Verify release package inputs before creating CI artifacts
 [unix]
@@ -327,31 +340,33 @@ package name="dynamapper-pkg" target="":
     foreach ($doc in '{{tool_docs}}'.Split(' ')) { if (Test-Path $doc) { Copy-Item $doc \"$toolsDir/docs/\" } }; \
     Write-Host \"Packaging complete: $appDir and $toolsDir\""
 
+
 # --- Development Run Recipes ---
+# TODO: incomplete
 
 # Alias for run-dynamapper-debug
 run-dynamapper *args:
-    @just run-dynamapper-debug {{args}}
+    @just run-dynamapper-debug "{{args}}"
 
 # Run the main application in debug mode
 run-dynamapper-debug *args:
     @echo "Running dynamapper in debug mode..."
-    cargo run --bin dynamapper {{args}}
+    cargo run --bin dynamapper "{{args}}"
 
 # Run the main application in release mode (nightly)
 run-dynamapper-release *args:
     @echo "Running dynamapper in release mode (nightly Rust toolchain)..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
     @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
-    {{cargo_release_nightly}} run --release --no-default-features --features "{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} \
-        --bin dynamapper {{args}}
+    {{cargo_release_nightly}} run --release --no-default-features --features "{{linux_features}}" "{{CARGO_FLAGS_NIGHTLY}}" \
+        --bin dynamapper "{{args}}"
 
 # Run the main application in profiling mode (stable, better symbol resolution by perf)
 run-dynamapper-profile *args:
     @echo "Running dynamapper in profiling mode (nightly Rust toolchain)..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
     {{cargo_profile_stable}} run --profile profiling --no-default-features --features "profiling,{{linux_features}}" \
-        --bin dynamapper {{args}}
+        --bin dynamapper "{{args}}"
 
 # Alias for run-tool-debug
 run-tool tool *args:
@@ -367,8 +382,8 @@ run-tool-release tool *args:
     @echo "Running tool {{tool}} in release mode via cargo..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
     @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
-    {{cargo_release_nightly}} run --release --no-default-features --features "{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} \
-        --bin {{tool}} -- {{args}}
+    {{cargo_release_nightly}} run --release --no-default-features --features "{{linux_features}}" "{{CARGO_FLAGS_NIGHTLY}}" \
+        --bin {{tool}} -- "{{args}}"
 
 uddconv-all ccdir="" ecdir="" output_dir="target/uddp" maps="0,1,2,3,4,5":
     python scripts/uddconv/uddconv.py all --ccdir "{{ccdir}}" --ecdir "{{ecdir}}" --output-dir "{{output_dir}}" --maps "{{maps}}"

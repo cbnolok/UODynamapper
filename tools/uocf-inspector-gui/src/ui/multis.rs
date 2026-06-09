@@ -48,6 +48,9 @@ struct PreviewRenderPart {
 
 const CLASSIC_STATIC_TILE_PIXEL_WIDTH: f32 = 44.0;
 const ENHANCED_STATIC_TILE_PIXEL_WIDTH: f32 = 64.0;
+const CLASSIC_MULTI_SIDEBAR_WIDTH: f32 = 250.0;
+const UOP_MULTI_SIDEBAR_WIDTH: f32 = 300.0;
+const MULTIMAP_SIDEBAR_WIDTH: f32 = 260.0;
 
 pub fn ui_multis(app: &mut UopInspectorApp, ctx: &egui::Context) {
     app.selected_legacy_source = concrete_art_tile_source(app.selected_legacy_source);
@@ -135,7 +138,7 @@ fn art_source_label(source: ArtSource) -> &'static str {
 fn ui_classic_multis(app: &mut UopInspectorApp, ctx: &egui::Context) {
     egui::SidePanel::left("classic_multi_sidebar")
         .resizable(true)
-        .default_width(250.0)
+        .default_width(CLASSIC_MULTI_SIDEBAR_WIDTH)
         .show(ctx, |ui| {
             ui.heading("multi.mul/.idx");
             ui.separator();
@@ -206,7 +209,7 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context) {
 
     egui::SidePanel::left("uop_multi_sidebar")
         .resizable(true)
-        .default_width(300.0)
+        .default_width(UOP_MULTI_SIDEBAR_WIDTH)
         .show(ctx, |ui| {
             ui.heading(format!(
                 "{} MultiCollection.uop ({})",
@@ -357,7 +360,7 @@ fn ui_multimap(app: &mut UopInspectorApp, ctx: &egui::Context) {
 
     egui::SidePanel::left("multimap_sidebar")
         .resizable(true)
-        .default_width(260.0)
+        .default_width(MULTIMAP_SIDEBAR_WIDTH)
         .show(ctx, |ui| {
             ui.heading("multimap.rle");
             ui.separator();

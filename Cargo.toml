@@ -137,42 +137,42 @@ strip = false
 [profile.dev.package.image-postprocess]
 opt-level = 3
 codegen-units = 1
-debug = true
+debug = "line-tables-only"
 debug-assertions = false
-strip = "debuginfo"
+#strip = "debuginfo"
 
 [profile.dev.package.udd-assets]
 opt-level = 2
-debug = true
+debug = "line-tables-only"
 debug-assertions = true
-strip = "debuginfo"
+#strip = "debuginfo"
 
 [profile.dev.package.udd-container]
 opt-level = 2
-debug = true
+debug = "line-tables-only"
 debug-assertions = true
-strip = "debuginfo"
+#strip = "debuginfo"
 
 [profile.dev.package.udd-conv]
 opt-level = 2
 codegen-units = 1
-debug = true
+debug = "line-tables-only"
 debug-assertions = true
-strip = "debuginfo"
+#strip = "debuginfo"
 
 [profile.dev.package.udd-image-codecs]
 opt-level = 3
 codegen-units = 1
-debug = true
+debug = "line-tables-only"
 debug-assertions = false
-strip = "debuginfo"
+#strip = "debuginfo"
 
 [profile.dev.package.udd-logging]
 opt-level = 3
 codegen-units = 1
-debug = true
+debug = "line-tables-only"
 debug-assertions = true
-strip = "debuginfo"
+#strip = "debuginfo"
 
 [profile.dev.package.uocf]
 opt-level = 3
@@ -183,42 +183,42 @@ strip = false
 
 [profile.dev.package.udd-conv-cli]
 opt-level = 2
-debug = true
+debug = "line-tables-only"
 debug-assertions = true
-strip = true # "debuginfo"
+#strip = "debuginfo"
 
 [profile.dev.package.udd-conv-gui]
 opt-level = 2
-debug = true
+debug = "line-tables-only"
 debug-assertions = true
-strip = true
+#strip = "debuginfo"
 
 [profile.dev.package.uocf-cli]
 opt-level = 2
-debug = true
+debug = "line-tables-only"
 debug-assertions = true
-strip = true # "debuginfo"
+#strip = "debuginfo"
 
 [profile.dev.package.uocf-asset-cli]
 opt-level = 2
-debug = true
+debug = "line-tables-only"
 debug-assertions = true
-strip = true # "debuginfo"
+#strip = "debuginfo"
 
 [profile.dev.package.uocf-inspector-gui]
 opt-level = 2
-debug = true
+debug = "line-tables-only"
 debug-assertions = true
-strip = true # "debuginfo"
+#strip = "debuginfo"
 
 [profile.dev.package.uddp-inspector-gui]
 opt-level = 2
-debug = true
+debug = "line-tables-only"
 debug-assertions = true
-strip = true # "debuginfo"
+#strip = "debuginfo"
 
 [profile.dev.package.uop-dict-populator-gui]
 opt-level = 2
-debug = true
+debug = "line-tables-only"
 debug-assertions = true
-strip = true # "debuginfo"
+#strip = "debuginfo"

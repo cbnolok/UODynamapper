@@ -17,6 +17,12 @@ const MAIN_RIGHT_PANEL_DEFAULT_WIDTH: f32 = 450.0;
 const LEFT_PANEL_SECTION_SPACING: f32 = 10.0;
 const LEFT_PANEL_SUBSECTION_SPACING: f32 = 6.0;
 const TEXTURE_VIEWER_FIT_VERTICAL_PADDING: f32 = 10.0;
+const APP_VIEWPORT_WIDTH: f32 = 1200.0;
+const APP_VIEWPORT_HEIGHT: f32 = 800.0;
+const APP_MIN_VIEWPORT_WIDTH: f32 = 800.0;
+const APP_MIN_VIEWPORT_HEIGHT: f32 = 600.0;
+const TEXTURE_VIEWER_VIEWPORT_WIDTH: f32 = 960.0;
+const TEXTURE_VIEWER_VIEWPORT_HEIGHT: f32 = 720.0;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -24,8 +30,8 @@ async fn main() -> eyre::Result<()> {
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1200.0, 800.0])
-            .with_min_inner_size([800.0, 600.0])
+            .with_inner_size([APP_VIEWPORT_WIDTH, APP_VIEWPORT_HEIGHT])
+            .with_min_inner_size([APP_MIN_VIEWPORT_WIDTH, APP_MIN_VIEWPORT_HEIGHT])
             .with_title("UDDP Package Inspector"),
         ..Default::default()
     };
@@ -225,7 +231,7 @@ impl InspectorApp {
             egui::ViewportId::from_hash_of("texture_viewer"),
             egui::ViewportBuilder::default()
                 .with_title("Texture Viewer")
-                .with_inner_size([960.0, 720.0]),
+                .with_inner_size([TEXTURE_VIEWER_VIEWPORT_WIDTH, TEXTURE_VIEWER_VIEWPORT_HEIGHT]),
             |ctx, _class| {
                 if ctx.input(|i| i.viewport().close_requested()) {
                     close_requested = true;

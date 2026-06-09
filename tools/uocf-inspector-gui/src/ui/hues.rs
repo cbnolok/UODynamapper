@@ -7,6 +7,9 @@ use uocf::enhanced::hues::{
     HUENAMES_PATH, FIXED_PALETTE_HASH, FIXED_PALETTE_NAME, MAX_EC_HUES,
 };
 
+const CC_HUES_LIST_PANEL_WIDTH: f32 = 300.0;
+const EC_HUES_LIST_PANEL_WIDTH: f32 = 320.0;
+
 pub fn ui_hues(app: &mut UopInspectorApp, ctx: &egui::Context) {
     let has_cc_hues = app
         .client_data
@@ -41,7 +44,7 @@ pub fn ui_hues(app: &mut UopInspectorApp, ctx: &egui::Context) {
 fn ui_cc_hues(app: &mut UopInspectorApp, ctx: &egui::Context) {
     egui::SidePanel::left("cc_hues_list")
         .resizable(true)
-        .default_width(300.0)
+        .default_width(CC_HUES_LIST_PANEL_WIDTH)
         .show(ctx, |ui| {
             ui.heading("hues.mul Entries");
             let sort = list_sort_controls(ui, "cc_hues", &["ID", "Name"], 0);
@@ -300,7 +303,7 @@ fn ui_ec_hues(app: &mut UopInspectorApp, ctx: &egui::Context) {
 
     egui::SidePanel::left("ec_hues_list")
         .resizable(true)
-        .default_width(320.0)
+        .default_width(EC_HUES_LIST_PANEL_WIDTH)
         .show(ctx, |ui| {
             ui.heading(format!("hues.uop Entries ({})", ec_hues.bitmaps.len()));
             ui.separator();

@@ -49,6 +49,7 @@ rustflags = [
 [target.'cfg(target_os = "macos")']
 rustflags = [
   # rustc flags
+  "-C", "force-frame-pointers=yes",
   "-C", "embed-bitcode=no",
   # linker flags
   "-Clink-arg=-Wl,-dead_strip",
@@ -59,13 +60,14 @@ rustflags = [
 # Windows
 # ----------
 
-# On Windows MSVC, statically link the C runtime so that the resulting EXE does
+# On Windows MSVC, we can statically link the C runtime so that the resulting EXE does
 # not depend on the vcruntime DLL.
 [target.'cfg(target_os = "windows")']
 #linker = "rust-lld.exe"
 rustflags = [
   # rustc flags
-  "-C", "target-feature=+crt-static",
+  "-C", "force-frame-pointers=yes",
+  #"-C", "target-feature=+crt-static",
   "-C", "embed-bitcode=no",
   # linker flags
   "-Clink-arg=-Wl,--gc-sections",

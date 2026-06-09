@@ -30,10 +30,13 @@ enum AnimationTreeOrder {
 static ANIMATION_TREE_ORDER: AtomicU8 = AtomicU8::new(0);
 static ANIMATION_TREE_COLLAPSE_REVISION: AtomicU64 = AtomicU64::new(0);
 
+const ANIMATION_CONTROLS_PANEL_WIDTH: f32 = 280.0;
+const ANIMATION_ACTIONS_PANEL_WIDTH: f32 = 260.0;
+
 pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context) {
     egui::SidePanel::left("anim_controls")
         .resizable(true)
-        .default_width(280.0)
+        .default_width(ANIMATION_CONTROLS_PANEL_WIDTH)
         .show(ctx, |ui| {
             ui.heading("Animation Controls");
             ui.separator();
@@ -126,7 +129,7 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context) {
 
     egui::SidePanel::right("anim_actions")
         .resizable(true)
-        .default_width(260.0)
+        .default_width(ANIMATION_ACTIONS_PANEL_WIDTH)
         .show(ctx, |ui| {
             show_animation_action_column(app, ui);
         });

@@ -4,6 +4,13 @@ use crate::app::{
 use eframe::egui;
 use image_postprocess::upscaling::UpscaleFilter;
 
+const UPSCALE_PREVIEW_WINDOW_WIDTH: f32 = 760.0;
+const UPSCALE_PREVIEW_WINDOW_HEIGHT: f32 = 320.0;
+const UPSCALE_PREVIEW_ORIGINAL_VIEWPORT_WIDTH: f32 = 420.0;
+const UPSCALE_PREVIEW_ORIGINAL_VIEWPORT_HEIGHT: f32 = 520.0;
+const UPSCALE_PREVIEW_UPSCALED_VIEWPORT_WIDTH: f32 = 520.0;
+const UPSCALE_PREVIEW_UPSCALED_VIEWPORT_HEIGHT: f32 = 620.0;
+
 pub fn ui_upscale_preview_window(app: &mut UopInspectorApp, ctx: &egui::Context) {
     if !app.show_upscale_preview {
         return;
@@ -28,7 +35,7 @@ pub fn ui_upscale_preview_window(app: &mut UopInspectorApp, ctx: &egui::Context)
     egui::Window::new("Upscale Preview")
         .open(&mut open)
         .resizable(true)
-        .default_size([760.0, 320.0])
+        .default_size([UPSCALE_PREVIEW_WINDOW_WIDTH, UPSCALE_PREVIEW_WINDOW_HEIGHT])
         .show(ctx, |ui| {
             let Some(source) = source.as_ref() else {
                 ui.label("No image selected.");
@@ -98,7 +105,10 @@ pub fn ui_upscale_preview_window(app: &mut UopInspectorApp, ctx: &egui::Context)
             egui::ViewportId::from_hash_of("uocf_upscale_preview_original"),
             egui::ViewportBuilder::default()
                 .with_title("Upscale Preview Original")
-                .with_inner_size([420.0, 520.0]),
+                .with_inner_size([
+                    UPSCALE_PREVIEW_ORIGINAL_VIEWPORT_WIDTH,
+                    UPSCALE_PREVIEW_ORIGINAL_VIEWPORT_HEIGHT,
+                ]),
             |ctx, _class| {
                 if ctx.input(|i| i.viewport().close_requested()) {
                     original_frame_open = false;
@@ -124,7 +134,10 @@ pub fn ui_upscale_preview_window(app: &mut UopInspectorApp, ctx: &egui::Context)
             egui::ViewportId::from_hash_of("uocf_upscale_preview_upscaled"),
             egui::ViewportBuilder::default()
                 .with_title("Upscale Preview Upscaled")
-                .with_inner_size([520.0, 620.0]),
+                .with_inner_size([
+                    UPSCALE_PREVIEW_UPSCALED_VIEWPORT_WIDTH,
+                    UPSCALE_PREVIEW_UPSCALED_VIEWPORT_HEIGHT,
+                ]),
             |ctx, _class| {
                 if ctx.input(|i| i.viewport().close_requested()) {
                     upscaled_frame_open = false;

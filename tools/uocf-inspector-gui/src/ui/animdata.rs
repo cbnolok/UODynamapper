@@ -3,6 +3,8 @@ use crate::ui::{arrow_delta, list_sort_controls, move_selection, sorted_indices_
 use eframe::egui;
 use uocf::classic::art::STATIC_TILE_ID_BASE;
 
+const ANIMDATA_LIST_PANEL_WIDTH: f32 = 320.0;
+
 pub fn ui_animdata(app: &mut UopInspectorApp, ctx: &egui::Context) {
     let Some(animdata) = app
         .client_data
@@ -29,7 +31,7 @@ pub fn ui_animdata(app: &mut UopInspectorApp, ctx: &egui::Context) {
 
     egui::SidePanel::left("animdata_list")
         .resizable(true)
-        .default_width(320.0)
+        .default_width(ANIMDATA_LIST_PANEL_WIDTH)
         .show(ctx, |ui| {
             ui.heading(format!(
                 "animdata.mul ({} active / {} records)",

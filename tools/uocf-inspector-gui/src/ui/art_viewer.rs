@@ -9,16 +9,17 @@ use uocf::classic::art::{static_art_id_for_source, STATIC_TILE_ID_BASE};
 
 const TILEDATA_TABLE_MIN_WIDTH: f32 = 980.0;
 const TILEART_TABLE_MIN_WIDTH: f32 = 1450.0;
+const ART_VIEWER_LIST_PANEL_WIDTH: f32 = 300.0;
 
 pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context) {
     app.selected_legacy_source = concrete_art_tile_source(app.selected_legacy_source);
 
     egui::SidePanel::left("tex_art_cc_list")
         .resizable(true)
-        .default_width(300.0)
+        .default_width(ART_VIEWER_LIST_PANEL_WIDTH)
         .show(ctx, |ui| {
             ui.heading("Art & TileData");
-            
+
             ui.horizontal(|ui| {
                 ui.label("Source:");
                 egui::ComboBox::from_id_salt("art_source_combo")
@@ -55,7 +56,7 @@ pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context) {
                 }
             }
             ui.separator();
-            
+
             ensure_art_viewer_rows(app);
             if let Some(rows) = app.art_viewer_rows.clone() {
                 let query = app.search_query.trim();

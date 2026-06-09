@@ -1,6 +1,11 @@
 use eframe::egui;
 use crate::app::UddConvApp;
 
+const PREVIEW_WINDOW_WIDTH: f32 = 800.0;
+const PREVIEW_WINDOW_HEIGHT: f32 = 800.0;
+const UPSCALE_PREVIEW_WINDOW_WIDTH: f32 = 1000.0;
+const UPSCALE_PREVIEW_WINDOW_HEIGHT: f32 = 800.0;
+
 impl UddConvApp {
     pub fn ui_preview_window(&mut self, ctx: &egui::Context) {
         let Some(path) = self.preview_path.clone() else {
@@ -18,7 +23,7 @@ impl UddConvApp {
         ))
         .open(&mut open)
         .resizable(true)
-        .default_size([800.0, 800.0])
+        .default_size([PREVIEW_WINDOW_WIDTH, PREVIEW_WINDOW_HEIGHT])
         .show(ctx, |ui| {
             if self.preview_texture.is_none() {
                 self.load_preview_texture(ctx, &path);
@@ -110,7 +115,7 @@ impl UddConvApp {
         egui::Window::new(format!("Upscale Preview: {:?}", target))
             .open(&mut open)
             .resizable(true)
-            .default_size([1000.0, 800.0])
+            .default_size([UPSCALE_PREVIEW_WINDOW_WIDTH, UPSCALE_PREVIEW_WINDOW_HEIGHT])
             .show(ctx, |ui| {
                 // Toolbar
                 ui.horizontal(|ui| {

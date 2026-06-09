@@ -3,6 +3,8 @@ use eframe::egui;
 use crate::app::{SoundPlayer, UopInspectorApp};
 use crate::ui::{list_sort_controls, sorted_indices_by};
 
+const SOUNDS_LIST_PANEL_WIDTH: f32 = 280.0;
+
 pub fn ui_sounds(app: &mut UopInspectorApp, ctx: &egui::Context) {
     let Some(sounds) = app.cc_sounds.clone() else {
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -13,7 +15,7 @@ pub fn ui_sounds(app: &mut UopInspectorApp, ctx: &egui::Context) {
 
     egui::SidePanel::left("sounds_list")
         .resizable(true)
-        .default_width(280.0)
+        .default_width(SOUNDS_LIST_PANEL_WIDTH)
         .show(ctx, |ui| {
             ui.heading("sound.mul");
             ui.horizontal(|ui| {

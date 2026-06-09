@@ -7,17 +7,22 @@ use app::UopInspectorApp;
 use eframe::egui;
 use std::sync::Arc;
 
+const APP_VIEWPORT_WIDTH: f32 = 1200.0;
+const APP_VIEWPORT_HEIGHT: f32 = 800.0;
+const APP_MIN_VIEWPORT_WIDTH: f32 = 400.0;
+const APP_MIN_VIEWPORT_HEIGHT: f32 = 300.0;
+
 fn main() -> eframe::Result {
     dialog::normalize_linux_portal_env_before_threads();
     let _ = udd_logging::install_paris_logger();
-    
+
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1200.0, 800.0])
-            .with_min_inner_size([400.0, 300.0]),
+            .with_inner_size([APP_VIEWPORT_WIDTH, APP_VIEWPORT_HEIGHT])
+            .with_min_inner_size([APP_MIN_VIEWPORT_WIDTH, APP_MIN_VIEWPORT_HEIGHT]),
         ..Default::default()
     };
-    
+
     eframe::run_native(
         "UOCF Inspector",
         native_options,

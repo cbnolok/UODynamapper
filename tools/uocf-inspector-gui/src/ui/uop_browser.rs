@@ -7,6 +7,9 @@ use uocf::enhanced::waypoints::{
     KNOWN_WAYPOINTS_PAYLOAD_HASH, WAYPOINTS_PAYLOAD_PATH,
 };
 
+const UOP_BROWSER_PACKAGE_PANEL_WIDTH: f32 = 200.0;
+const UOP_BROWSER_ENTRY_PANEL_WIDTH: f32 = 350.0;
+
 pub fn has_visible_uop_explorer_package(app: &UopInspectorApp) -> bool {
     app.uop_cache
         .loaded_uops
@@ -17,7 +20,7 @@ pub fn has_visible_uop_explorer_package(app: &UopInspectorApp) -> bool {
 pub fn ui_uop_browser(app: &mut UopInspectorApp, ctx: &egui::Context) {
     egui::SidePanel::left("package_panel")
         .resizable(true)
-        .default_width(200.0)
+        .default_width(UOP_BROWSER_PACKAGE_PANEL_WIDTH)
         .show(ctx, |ui| {
             ui.heading("Packages");
             let sort = list_sort_controls(ui, "uop_packages", &["Source", "Name"], 0);
@@ -60,7 +63,7 @@ pub fn ui_uop_browser(app: &mut UopInspectorApp, ctx: &egui::Context) {
     if let Some(uop_idx) = app.selected_uop_idx {
         egui::SidePanel::left("entry_panel")
             .resizable(true)
-            .default_width(350.0)
+            .default_width(UOP_BROWSER_ENTRY_PANEL_WIDTH)
             .show(ctx, |ui| {
                 ui.heading("Entries");
                 let mut text_has_focus = false;
@@ -89,7 +92,7 @@ pub fn ui_uop_browser(app: &mut UopInspectorApp, ctx: &egui::Context) {
                         app.set_guess_terrain_texture_file_format(enabled);
                     }
                 }
-                
+
                 let entry_labels = app.get_uop_entry_labels(uop_idx);
                 let sort = list_sort_controls(ui, "uop_entries", &["Source", "Name", "Hash"], 0);
                 let sorted_indices = sorted_indices_by(&entry_labels, sort.ordering(), |left, right| {
@@ -139,7 +142,7 @@ pub fn ui_uop_browser(app: &mut UopInspectorApp, ctx: &egui::Context) {
             if let Some(file) = loaded_uop.package.get_file_by_hash(file_hash) {
                 let hash = file.filename_hash();
                 let resolved_name = app.resolve_uop_entry_display_name(uop_idx, hash);
-                
+
                 ui.horizontal(|ui| {
                     ui.heading("Entry Details");
                     ui.label(format!("(Hash: {:016X})", hash));
@@ -150,9 +153,9 @@ pub fn ui_uop_browser(app: &mut UopInspectorApp, ctx: &egui::Context) {
                     });
                 });
                 ui.label(format!("Name: {}", resolved_name));
-                
+
                 ui.separator();
-                
+
                 // Specialized Visualizers
                 if is_waypoint_payload(hash, &resolved_name) {
                     ui_integrated_waypoints_view(app, ui, file);
@@ -438,9 +441,9 @@ fn ui_integrated_tileart_view(app: &mut UopInspectorApp, ctx: &egui::Context, ui
                     ui.label("Load UO String Dictionary to resolve texture paths");
                 }
             });
-            
+
             ui.separator();
-            
+
             // Properties Column
             egui::ScrollArea::vertical().show(ui, |ui| {
                 egui::Grid::new("tae_props").striped(true).show(ui, |ui| {
@@ -461,9 +464,9 @@ fn ui_integrated_terrain_view(app: &mut UopInspectorApp, ctx: &egui::Context, ui
     if let Ok(entry) = uocf::enhanced::terrain_definition::parse_entry(file, dict) {
         ui.heading(format!("Terrain: {}", entry.name.as_deref().unwrap_or("Unknown")));
         ui.label(format!("ID: {}", entry.id));
-        
+
         ui.separator();
-        
+
         ui.horizontal(|ui| {
              ui.vertical(|ui| {
                  ui.heading("Textures");
@@ -481,9 +484,9 @@ fn ui_integrated_terrain_view(app: &mut UopInspectorApp, ctx: &egui::Context, ui
                      }
                  }
              });
-             
+
              ui.separator();
-             
+
              ui.vertical(|ui| {
                  ui.heading("Aliases");
                  for alias in &entry.aliases {

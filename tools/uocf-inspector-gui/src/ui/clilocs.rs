@@ -2,6 +2,9 @@ use crate::app::{LocalizedStringDisplayRow, LocalizedStringsSource, UopInspector
 use crate::ui::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by};
 use eframe::egui;
 
+const CLASSIC_CLILOC_LIST_PANEL_WIDTH: f32 = 320.0;
+const LOCALIZED_STRINGS_FILES_PANEL_WIDTH: f32 = 340.0;
+
 pub fn ui_clilocs(app: &mut UopInspectorApp, ctx: &egui::Context) {
     let has_cliloc = app.cliloc.is_some();
     let has_localized = app.localized_strings.is_some();
@@ -53,7 +56,7 @@ fn ui_classic_cliloc(app: &mut UopInspectorApp, ctx: &egui::Context) {
 
     egui::SidePanel::left("classic_cliloc_list")
         .resizable(true)
-        .default_width(320.0)
+        .default_width(CLASSIC_CLILOC_LIST_PANEL_WIDTH)
         .show(ctx, |ui| {
             let heading = app
                 .selected_cliloc_file_idx
@@ -138,7 +141,7 @@ fn ui_localized_strings(app: &mut UopInspectorApp, ctx: &egui::Context) {
 
     egui::SidePanel::left("localized_strings_files")
         .resizable(true)
-        .default_width(340.0)
+        .default_width(LOCALIZED_STRINGS_FILES_PANEL_WIDTH)
         .show(ctx, |ui| {
             ui.heading(format!("localizedstrings.uop ({})", package.files.len()));
             ui.separator();
