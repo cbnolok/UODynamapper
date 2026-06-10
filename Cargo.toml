@@ -124,6 +124,11 @@ opt-level = 3               # Makes the proc-macros run faster
 debug = false
 strip = true
 
+# --- Workspace Dependencies Overrides
+# For color-eyre performance (https://docs.rs/color-eyre/latest/color_eyre/)
+[profile.dev.package.backtrace]
+opt-level = 3
+
 # --- Workspace Member Overrides
 # Since "*" above is very aggressive, we must opt-back-in to debug info for our own code.
 

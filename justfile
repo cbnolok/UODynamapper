@@ -86,8 +86,8 @@ linker_optimized_flags := if is_linux == "true" {
 }
 
 # Features to enable on Linux by default (ensures Wayland/X11 support when using --no-default-features)
-linux_features := if is_linux == "true" { "linux_wayland,linux_x11" } else { "" }
-linux_musl_features := "linux_wayland,linux_x11"
+linux_target_features := if is_linux == "true" { "linux_wayland,linux_x11" } else { "" }
+linux_features := linux_target_features
 # Added -Clink-arg=-lgcc to musl RUSTFLAGS to satisfy compiler builtins like __popcountdi2 emitted by vendored libjxl C++ objects
 linux_musl_rustflags := " -C target-feature=+crt-static -C link-self-contained=yes -Clink-arg=-lgcc"
 
@@ -168,7 +168,7 @@ build-linux-musl-release target="x86_64-unknown-linux-musl" *args:
     export RUSTFLAGS_RELEASE_STABLE="{{RUSTFLAGS_RELEASE_STABLE}}{{linux_musl_rustflags}}"
     echo "Running {{os}} stable musl release build for target {{target}}..."
     echo "Using RUSTFLAGS: $RUSTFLAGS_RELEASE_STABLE"
-    {{cargo_release_stable}} build --release --locked --workspace --target "{{target}}" --no-default-features --features "{{linux_musl_features}}" {{args}}
+    {{cargo_release_stable}} build --release --locked --workspace --target "{{target}}" --no-default-features --features "{{linux_target_features}}" {{args}}
 
 # Build the workspace for a Linux musl target in release mode (nightly toolchain)
 build-linux-musl-release-nightly target="x86_64-unknown-linux-musl" *args:
@@ -178,7 +178,7 @@ build-linux-musl-release-nightly target="x86_64-unknown-linux-musl" *args:
     echo "Running {{os}} nightly musl release build for target {{target}}..."
     echo "Using RUSTFLAGS: $RUSTFLAGS_RELEASE_NIGHTLY"
     echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
-    {{cargo_release_nightly}} build --release --locked --workspace --target "{{target}}" --no-default-features --features "{{linux_musl_features}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
+    {{cargo_release_nightly}} build --release --locked --workspace --target "{{target}}" --no-default-features --features "{{linux_target_features}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
 
 # Build the workspace exactly as CI does for release artifacts
 build-ci-workspace *args:
@@ -222,7 +222,7 @@ build-linux-musl-profile target="x86_64-unknown-linux-musl" *args:
     export RUSTFLAGS_PROFILE_STABLE="{{RUSTFLAGS_PROFILE_STABLE}}{{linux_musl_rustflags}}"
     echo "Running {{os}} stable musl profile build for target {{target}}..."
     echo "Using RUSTFLAGS: $RUSTFLAGS_PROFILE_STABLE"
-    {{cargo_profile_stable}} build --profile profiling --locked --workspace --target "{{target}}" --no-default-features --features "profiling,{{linux_musl_features}}" {{args}}
+    {{cargo_profile_stable}} build --profile profiling --locked --workspace --target "{{target}}" --no-default-features --features "profiling,{{linux_target_features}}" {{args}}
 
 # Build the workspace locally in profiling mode (nightly toolchain)
 # Purpose: Most accurate profiling with optimized standard library symbols.
@@ -240,7 +240,7 @@ build-linux-musl-profile-nightly target="x86_64-unknown-linux-musl" *args:
     echo "Running {{os}} nightly musl profile build for target {{target}}..."
     echo "Using RUSTFLAGS: $RUSTFLAGS_PROFILE_NIGHTLY"
     echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
-    {{cargo_profile_nightly}} build --profile profiling --locked --workspace --target "{{target}}" --no-default-features --features "profiling,{{linux_musl_features}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
+    {{cargo_profile_nightly}} build --profile profiling --locked --workspace --target "{{target}}" --no-default-features --features "profiling,{{linux_target_features}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
 
 # Run flamegraph profiling (requires cargo-flamegraph)
 # Purpose: Generates a SVG flamegraph for performance analysis.

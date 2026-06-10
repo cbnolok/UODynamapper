@@ -249,7 +249,7 @@ Used as references or sources for Rust translation, which has been incrementally
   - ScaleFX: [Themaister/slang-shaders ScaleFX](https://github.com/Themaister/slang-shaders/tree/master/scalefx)
   - Deblur: [guest(r) `deblur.glsl`](https://github.com/libretro/glsl-shaders/blob/master/deblur/shaders/deblur.glsl)
   - OmniScale: [Themaister/slang-shaders OmniScale](https://github.com/Themaister/slang-shaders/tree/master/omniscale)
-  - Jinc2: local Hyllian GLSL passes from `/home/claudio/Scaricati/jinc2*`
+  - Jinc2: local Hyllian [GLSL passes](https://github.com/mrgriscom/emu/blob/master/configs/retroarch/shaders/shaders_glsl/windowed/shaders/) and [RiskyJumps revised Jinc2 shaders](https://forums.libretro.com/t/jinc-2-fixes/21146)
   - Cheap Upscaling Triangulation (CUT): [Swordfish90/cheap-upscaling-triangulation](https://github.com/Swordfish90/cheap-upscaling-triangulation)
   - lqx: [PixelScalerWin repo](https://github.com/daelsepara/PixelScalerWin) and [Libretro implementation](https://github.com/libretro/RetroArch/blob/master/gfx/video_filters/lq2x.c)
   - hqx: [C++ implementation](https://github.com/brunexgeek/hqx)
