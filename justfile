@@ -163,11 +163,22 @@ build-local-workspace-release *args:
 
 # Build the workspace for a Linux musl target in release mode (stable toolchain)
 build-linux-musl-release target="x86_64-unknown-linux-musl" *args:
-    @just _build-linux-musl "stable" "release" "cargo" "RUSTFLAGS_RELEASE_STABLE" "{{RUSTFLAGS_RELEASE_STABLE}}" "--release" "{{linux_musl_features}}" "" "{{target}}" {{args}}
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export RUSTFLAGS_RELEASE_STABLE="{{RUSTFLAGS_RELEASE_STABLE}}{{linux_musl_rustflags}}"
+    echo "Running {{os}} stable musl release build for target {{target}}..."
+    echo "Using RUSTFLAGS: $RUSTFLAGS_RELEASE_STABLE"
+    {{cargo_release_stable}} build --release --locked --workspace --target "{{target}}" --no-default-features --features "{{linux_musl_features}}" {{args}}
 
 # Build the workspace for a Linux musl target in release mode (nightly toolchain)
 build-linux-musl-release-nightly target="x86_64-unknown-linux-musl" *args:
-    @just _build-linux-musl "nightly" "release" "cargo +nightly" "RUSTFLAGS_RELEASE_NIGHTLY" "{{RUSTFLAGS_RELEASE_NIGHTLY}}" "--release" "{{linux_musl_features}}" "{{CARGO_FLAGS_NIGHTLY}}" "{{target}}" {{args}}
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export RUSTFLAGS_RELEASE_NIGHTLY="{{RUSTFLAGS_RELEASE_NIGHTLY}}{{linux_musl_rustflags}}"
+    echo "Running {{os}} nightly musl release build for target {{target}}..."
+    echo "Using RUSTFLAGS: $RUSTFLAGS_RELEASE_NIGHTLY"
+    echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
+    {{cargo_release_nightly}} build --release --locked --workspace --target "{{target}}" --no-default-features --features "{{linux_musl_features}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
 
 # Build the workspace exactly as CI does for release artifacts
 build-ci-workspace *args:
@@ -206,7 +217,12 @@ build-local-workspace-profile *args:
 
 # Build the workspace for a Linux musl target in profiling mode (stable toolchain)
 build-linux-musl-profile target="x86_64-unknown-linux-musl" *args:
-    @just _build-linux-musl "stable" "profile" "cargo" "RUSTFLAGS_PROFILE_STABLE" "{{RUSTFLAGS_PROFILE_STABLE}}" "--profile profiling" "profiling,{{linux_musl_features}}" "" "{{target}}" {{args}}
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export RUSTFLAGS_PROFILE_STABLE="{{RUSTFLAGS_PROFILE_STABLE}}{{linux_musl_rustflags}}"
+    echo "Running {{os}} stable musl profile build for target {{target}}..."
+    echo "Using RUSTFLAGS: $RUSTFLAGS_PROFILE_STABLE"
+    {{cargo_profile_stable}} build --profile profiling --locked --workspace --target "{{target}}" --no-default-features --features "profiling,{{linux_musl_features}}" {{args}}
 
 # Build the workspace locally in profiling mode (nightly toolchain)
 # Purpose: Most accurate profiling with optimized standard library symbols.
@@ -218,20 +234,13 @@ build-local-workspace-profile-nightly *args:
 
 # Build the workspace for a Linux musl target in profiling mode (nightly toolchain)
 build-linux-musl-profile-nightly target="x86_64-unknown-linux-musl" *args:
-    @just _build-linux-musl "nightly" "profile" "cargo +nightly" "RUSTFLAGS_PROFILE_NIGHTLY" "{{RUSTFLAGS_PROFILE_NIGHTLY}}" "--profile profiling" "profiling,{{linux_musl_features}}" "{{CARGO_FLAGS_NIGHTLY}}" "{{target}}" {{args}}
-
-[private]
-_build-linux-musl toolchain mode cargo_cmd rustflags_var rustflags_value profile_flags features cargo_flags target *args:
     #!/usr/bin/env bash
     set -euo pipefail
-    export {{rustflags_var}}="{{rustflags_value}}{{linux_musl_rustflags}}"
-    export RUSTFLAGS="{{rustflags_value}}{{linux_musl_rustflags}}"
-    echo "Running {{os}} {{toolchain}} musl {{mode}} build for target {{target}}..."
-    echo "Using RUSTFLAGS: $RUSTFLAGS"
-    if [ -n "{{cargo_flags}}" ]; then
-        echo "Adding cargo flags: {{cargo_flags}}"
-    fi
-    {{cargo_cmd}} build {{profile_flags}} --locked --workspace --target "{{target}}" --no-default-features --features "{{features}}" {{cargo_flags}} {{args}}
+    export RUSTFLAGS_PROFILE_NIGHTLY="{{RUSTFLAGS_PROFILE_NIGHTLY}}{{linux_musl_rustflags}}"
+    echo "Running {{os}} nightly musl profile build for target {{target}}..."
+    echo "Using RUSTFLAGS: $RUSTFLAGS_PROFILE_NIGHTLY"
+    echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
+    {{cargo_profile_nightly}} build --profile profiling --locked --workspace --target "{{target}}" --no-default-features --features "profiling,{{linux_musl_features}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
 
 # Run flamegraph profiling (requires cargo-flamegraph)
 # Purpose: Generates a SVG flamegraph for performance analysis.
