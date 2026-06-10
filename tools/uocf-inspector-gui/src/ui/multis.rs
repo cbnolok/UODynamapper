@@ -933,6 +933,7 @@ fn part_render_info(app: &UopInspectorApp, item_id: u16, source: ArtSource) -> P
                     right: texture.end_x,
                     bottom: texture.end_y,
                 });
+                info.width_delta = texture.start_y - texture.end_y;
                 info.offset_x = texture.offset_x;
                 info.offset_y = texture.offset_y;
             } else {
