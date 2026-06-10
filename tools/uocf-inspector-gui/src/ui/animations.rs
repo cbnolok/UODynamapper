@@ -193,7 +193,11 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context) {
                     let entry = selected_cc_animationframe_entry(app, body_id);
                     entry.and_then(|entry| {
                         let data = animationframe_payload(app, &entry)?;
-                        decode_uop_animationframe_payload(&data)
+                        let animation = AnimationFrameCc::parse(&data)?;
+                        Ok(cc_direction_frames(
+                            animation.frames,
+                            app.selected_direction,
+                        ))
                     })
                 }
                 ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr => {
@@ -208,8 +212,10 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context) {
 
             match frames_res {
                 Ok(all_frames) => {
-                    let logical_frames = if app.selected_legacy_source != ArtSource::Mul
-                        && app.selected_animationframe_file_hash.is_none()
+                    let logical_frames = if matches!(
+                        app.selected_legacy_source,
+                        ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr
+                    ) && app.selected_animationframe_file_hash.is_none()
                     {
                         if let Some(seq) = &app.selected_anim_sequence {
                             seq.actions
@@ -981,12 +987,29 @@ fn show_uop_animationframe_entry_frames(
     action_id: u16,
     direction: u8,
 ) {
+    let frame_count = if entry.frame_count == 0 {
+        cc_direction_frame_count(app, entry).unwrap_or(0)
+    } else {
+        entry.frame_count
+    };
     let label = match entry.group_id {
         Some(group_id) => format!(
             "Group {group_id:02} / idx {}: {} frames",
-            entry.source_index, entry.frame_count
+            entry.source_index,
+            if frame_count == 0 {
+                "unknown".to_string()
+            } else {
+                frame_count.to_string()
+            }
         ),
-        None => format!("AnimationFrame: {} frames", entry.frame_count),
+        None => format!(
+            "AnimationFrame: {} frames",
+            if frame_count == 0 {
+                "unknown".to_string()
+            } else {
+                frame_count.to_string()
+            }
+        ),
     };
 
     egui::CollapsingHeader::new(label)
@@ -1010,10 +1033,28 @@ fn show_uop_animationframe_entry_frames(
                 }),
         )
         .show(ui, |ui| {
-            if entry.frame_count == 0 {
-                ui.label("No frames.");
+            if ui.selectable_label(
+                app.selected_anim_id == body_id
+                    && app.selected_action_id == action_id
+                    && app.selected_direction == direction
+                    && app.selected_animationframe_file_hash == Some(entry.file_hash),
+                "Select direction",
+            ).clicked() {
+                app.selected_anim_id = body_id;
+                app.selected_action_id = action_id;
+                app.selected_direction = direction;
+                app.selected_animationframe_file_hash = Some(entry.file_hash);
+                if let Some(group_id) = entry.group_id {
+                    app.selected_anim_file_idx = group_id;
+                }
+                app.current_frame_idx = 0;
+                app.last_frame_time = ctx.input(|input| input.time);
             }
-            for frame_index in 0..entry.frame_count {
+
+            if frame_count == 0 {
+                ui.label("Frame count unavailable until payload is decoded.");
+            }
+            for frame_index in 0..frame_count {
                 let selected = app.selected_anim_id == body_id
                     && app.selected_action_id == action_id
                     && app.selected_direction == direction
@@ -1214,14 +1255,6 @@ fn animationframe_payload(
         })
 }
 
-fn decode_uop_animationframe_payload(data: &[u8]) -> eyre::Result<Vec<uocf::classic::anim::AnimFrame>> {
-    if is_amo_animationframe_payload(data) {
-        decode_amo_animationframe_payload(data)
-    } else {
-        AnimationFrameCc::parse(data).map(|animation| animation.frames)
-    }
-}
-
 fn decode_amo_animationframe_payload(data: &[u8]) -> eyre::Result<Vec<uocf::classic::anim::AnimFrame>> {
     let animation = uocf::enhanced::animationframe::AnimationFrame::load(data)?;
     let mut decoded_frames = Vec::with_capacity(animation.frames.len());
@@ -1239,8 +1272,26 @@ fn decode_amo_animationframe_payload(data: &[u8]) -> eyre::Result<Vec<uocf::clas
     Ok(decoded_frames)
 }
 
-fn is_amo_animationframe_payload(data: &[u8]) -> bool {
-    data.len() >= 3 && &data[0..3] == b"AMO"
+fn cc_direction_frames(
+    frames: Vec<uocf::classic::anim::AnimFrame>,
+    direction: u8,
+) -> Vec<uocf::classic::anim::AnimFrame> {
+    if frames.is_empty() {
+        return frames;
+    }
+    let frames_per_direction = (frames.len() / 5).max(1);
+    let start = frames_per_direction.saturating_mul(direction.min(4) as usize);
+    frames
+        .into_iter()
+        .skip(start)
+        .take(frames_per_direction)
+        .collect()
+}
+
+fn cc_direction_frame_count(app: &UopInspectorApp, entry: &AnimationFrameUopEntry) -> Option<usize> {
+    let payload = animationframe_payload(app, entry).ok()?;
+    let metadata = AnimationFrameCc::parse_metadata(&payload).ok()?;
+    Some((metadata.frame_count as usize / 5).max(1))
 }
 
 fn animationframe_uop_entries(
@@ -1327,26 +1378,14 @@ fn animationframe_package_matches_source(
     }
 }
 
-fn cc_animationframe_metadata(data: &[u8]) -> Option<(u32, usize)> {
-    if is_amo_animationframe_payload(data) {
-        let metadata = uocf::enhanced::animationframe::AnimationFrame::load_metadata(data).ok()?;
-        if metadata.frames_count == 0 {
-            return None;
-        }
-        Some((metadata.animation_id, metadata.frames_count as usize))
-    } else {
-        let metadata = AnimationFrameCc::parse_metadata(data).ok()?;
-        if metadata.frames.is_empty() {
-            return None;
-        }
-        Some((metadata.anim_id, metadata.frame_count as usize))
-    }
-}
-
 fn scan_animationframe_uop_packages(
     packages: Vec<(usize, PathBuf, uocf::uop_container::package::UopPackage)>,
     source: ArtSource,
 ) -> Vec<AnimationFrameUopEntry> {
+    if source == ArtSource::CcUop {
+        return scan_cc_animationframe_uop_packages(packages);
+    }
+
     let mut entries = Vec::new();
     for (package_index, path, package) in packages {
         let Some(group_id) = animationframe_package_group_id(&path) else {
@@ -1359,30 +1398,6 @@ fn scan_animationframe_uop_packages(
                 continue;
             };
             match source {
-                ArtSource::CcUop => {
-                    let Some((source_index, frame_count)) =
-                        cc_animationframe_metadata(&data)
-                    else {
-                        continue;
-                    };
-                    let identity = uocf::classic::anim::classic_animation_identity_from_source_index(
-                        group_id,
-                        source_index,
-                    );
-                    if identity.flags != 0 {
-                        continue;
-                    }
-                    entries.push(AnimationFrameUopEntry {
-                        package_index,
-                        file_hash,
-                        body_id: u32::from(identity.body_id),
-                        action_id: Some(identity.action_id),
-                        direction: Some(identity.direction),
-                        group_id: Some(group_id),
-                        source_index,
-                        frame_count,
-                    });
-                }
                 ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr => {
                     let Ok(metadata) =
                         uocf::enhanced::animationframe::AnimationFrame::load_metadata(&data)
@@ -1403,7 +1418,53 @@ fn scan_animationframe_uop_packages(
                         frame_count: metadata.frames_count as usize,
                     });
                 }
-                ArtSource::Mul | ArtSource::Any => {}
+                ArtSource::CcUop | ArtSource::Mul | ArtSource::Any => {}
+            }
+        }
+    }
+    entries.sort_by_key(|entry| {
+        (
+            entry.body_id,
+            entry.action_id.unwrap_or(0),
+            entry.direction.unwrap_or(0),
+            entry.group_id.unwrap_or(0),
+            entry.source_index,
+        )
+    });
+    entries
+}
+
+fn scan_cc_animationframe_uop_packages(
+    packages: Vec<(usize, PathBuf, uocf::uop_container::package::UopPackage)>,
+) -> Vec<AnimationFrameUopEntry> {
+    let mut entries = Vec::new();
+    for (package_index, path, package) in packages {
+        let Some(group_id) = animationframe_package_group_id(&path) else {
+            continue;
+        };
+        for body_id in 0..2048u32 {
+            for action_id in 0..100u16 {
+                let internal_path = format!(
+                    "build/animationlegacyframe/{:06}/{:02}.bin",
+                    body_id, action_id
+                );
+                let file_hash = hash_file_name_single(&internal_path);
+                if package.get_file_by_hash(file_hash).is_none() {
+                    continue;
+                }
+
+                for direction in 0..5u8 {
+                    entries.push(AnimationFrameUopEntry {
+                        package_index,
+                        file_hash,
+                        body_id,
+                        action_id: Some(action_id),
+                        direction: Some(direction),
+                        group_id: Some(group_id),
+                        source_index: action_id as u32,
+                        frame_count: 0,
+                    });
+                }
             }
         }
     }
