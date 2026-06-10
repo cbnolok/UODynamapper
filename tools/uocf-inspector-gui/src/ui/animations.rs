@@ -193,11 +193,7 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context) {
                     let entry = selected_cc_animationframe_entry(app, body_id);
                     entry.and_then(|entry| {
                         let data = animationframe_payload(app, &entry)?;
-                        let animation = AnimationFrameCc::parse(&data)?;
-                        Ok(cc_direction_frames(
-                            animation.frames,
-                            app.selected_direction,
-                        ))
+                        AnimationFrameCc::decode_direction(&data, app.selected_direction)
                     })
                 }
                 ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr => {
@@ -1272,26 +1268,13 @@ fn decode_amo_animationframe_payload(data: &[u8]) -> eyre::Result<Vec<uocf::clas
     Ok(decoded_frames)
 }
 
-fn cc_direction_frames(
-    frames: Vec<uocf::classic::anim::AnimFrame>,
-    direction: u8,
-) -> Vec<uocf::classic::anim::AnimFrame> {
-    if frames.is_empty() {
-        return frames;
-    }
-    let frames_per_direction = (frames.len() / 5).max(1);
-    let start = frames_per_direction.saturating_mul(direction.min(4) as usize);
-    frames
-        .into_iter()
-        .skip(start)
-        .take(frames_per_direction)
-        .collect()
-}
-
 fn cc_direction_frame_count(app: &UopInspectorApp, entry: &AnimationFrameUopEntry) -> Option<usize> {
     let payload = animationframe_payload(app, entry).ok()?;
-    let metadata = AnimationFrameCc::parse_metadata(&payload).ok()?;
-    Some((metadata.frame_count as usize / 5).max(1))
+    let metadata = AnimationFrameCc::direction_metadata(
+        &payload,
+        entry.direction.unwrap_or(app.selected_direction),
+    ).ok()?;
+    Some(metadata.len())
 }
 
 fn animationframe_uop_entries(
@@ -1444,11 +1427,7 @@ fn scan_cc_animationframe_uop_packages(
         };
         for body_id in 0..2048u32 {
             for action_id in 0..100u16 {
-                let internal_path = format!(
-                    "build/animationlegacyframe/{:06}/{:02}.bin",
-                    body_id, action_id
-                );
-                let file_hash = hash_file_name_single(&internal_path);
+                let file_hash = AnimationFrameCc::animationframe_hash(body_id, action_id);
                 if package.get_file_by_hash(file_hash).is_none() {
                     continue;
                 }
@@ -1678,10 +1657,7 @@ fn selected_cc_animationframe_payload(app: &UopInspectorApp, body_id: u32) -> ey
 
     let mut last_error = None;
     for group_id in group_ids {
-        let internal_path = format!(
-            "build/animationlegacyframe/{:06}/{:02}.bin",
-            body_id, group_id
-        );
+        let internal_path = AnimationFrameCc::animationframe_path(body_id, u16::from(group_id));
         match animationframe_payload_from_loaded_uops(
             app,
             "AnimationFrame",
