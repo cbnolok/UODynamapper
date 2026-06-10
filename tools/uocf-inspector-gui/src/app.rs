@@ -1705,6 +1705,7 @@ pub struct UopInspectorApp {
     pub animationframe_uop_entries: HashMap<(u8, usize), Arc<Vec<AnimationFrameUopEntry>>>,
     pub animationframe_uop_worker_rx: Option<mpsc::Receiver<AnimationFrameUopScanResult>>,
     pub animationframe_uop_worker_key: Option<(u8, usize)>,
+    pub selected_animationframe_file_hash: Option<u64>,
     pub multimap_texture: Option<egui::TextureHandle>,
     pub image_preview_sources: HashMap<u64, InspectorImagePreview>,
     pub current_image_preview_key: Option<u64>,
@@ -1852,6 +1853,7 @@ impl UopInspectorApp {
             animationframe_uop_entries: HashMap::new(),
             animationframe_uop_worker_rx: None,
             animationframe_uop_worker_key: None,
+            selected_animationframe_file_hash: None,
             multimap_texture: None,
             image_preview_sources: HashMap::new(),
             current_image_preview_key: None,
@@ -1972,6 +1974,7 @@ impl UopInspectorApp {
         self.animationframe_uop_entries.clear();
         self.animationframe_uop_worker_rx = None;
         self.animationframe_uop_worker_key = None;
+        self.selected_animationframe_file_hash = None;
         self.multimap_texture = None;
         self.paperdoll_preview = None;
         self.image_preview_sources.clear();
@@ -4156,6 +4159,7 @@ mod tests {
             animationframe_uop_entries: HashMap::new(),
             animationframe_uop_worker_rx: None,
             animationframe_uop_worker_key: None,
+            selected_animationframe_file_hash: None,
             multimap_texture: None,
             image_preview_sources: HashMap::new(),
             current_image_preview_key: None,
