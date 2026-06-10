@@ -23,6 +23,7 @@ is_windows := if os == "windows" { "true" } else { "false" }
 is_linux := if os == "linux" { "true" } else { "false" }
 is_macos := if os == "macos" { "true" } else { "false" }
 is_ci := env_var_or_default("GITHUB_ACTIONS", "false")
+RUSTFLAGS := env_var_or_default("RUSTFLAGS", "")
 
 # --- Features ---
 # Enable sccache explicitly. If "true", it will bypass the wrapper and use sccache directly.
@@ -86,21 +87,22 @@ linker_optimized_flags := if is_linux == "true" {
 
 # Features to enable on Linux by default (ensures Wayland/X11 support when using --no-default-features)
 linux_features := if is_linux == "true" { "linux_wayland,linux_x11" } else { "" }
+linux_musl_features := "linux_wayland,linux_x11"
 # Added -Clink-arg=-lgcc to musl RUSTFLAGS to satisfy compiler builtins like __popcountdi2 emitted by vendored libjxl C++ objects
 linux_musl_rustflags := " -C target-feature=+crt-static -C link-self-contained=yes -Clink-arg=-lgcc"
 
 # Specialized RUSTFLAGS for different build types (exported to be accessible in shell commands)
 rustflags_debug_common              := " -C embed-bitcode=no"   # llvm bitcode is unneeded since we are not using LTO in debug
 rustflags_optimized_common_stable   := ""
-rustflags_optimized_common_nightly  := rustflags_optimized_common_stable  +
+rustflags_optimized_common_nightly  := rustflags_optimized_common_stable  +\
                                         " -Zshare-generics=y -Zlocation-detail=none"
-export RUSTFLAGS_RELEASE_STABLE     := rustflags_optimized_common_stable  +
+export RUSTFLAGS_RELEASE_STABLE     := rustflags_optimized_common_stable  +\
                                         " -Csymbol-mangling-version=v0 -Cforce-unwind-tables=no"
-export RUSTFLAGS_RELEASE_NIGHTLY    := rustflags_optimized_common_nightly +
+export RUSTFLAGS_RELEASE_NIGHTLY    := rustflags_optimized_common_nightly +\
                                         " -Csymbol-mangling-version=v0 -Cforce-unwind-tables=no"
-export RUSTFLAGS_PROFILE_STABLE     := rustflags_optimized_common_stable  +
+export RUSTFLAGS_PROFILE_STABLE     := rustflags_optimized_common_stable  +\
                                         " -Cforce-frame-pointers=yes"
-export RUSTFLAGS_PROFILE_NIGHTLY    := rustflags_optimized_common_nightly +
+export RUSTFLAGS_PROFILE_NIGHTLY    := rustflags_optimized_common_nightly +\
                                         " -Cforce-frame-pointers=yes"
 # Specialized cargo flags
 export CARGO_FLAGS_NIGHTLY          := " -Zbuild-std=std,panic_abort -Zbuild-std-features=optimize_for_size"
@@ -108,13 +110,13 @@ export CARGO_FLAGS_NIGHTLY          := " -Zbuild-std=std,panic_abort -Zbuild-std
 #   -Zembed-metadata=no --emit=metadata to produce the full metadata into a separate .rmeta file.
 
 # Cross-platform Cargo runners to properly inject RUSTFLAGS in the shell
-cargo_release_nightly   :=
+cargo_release_nightly   :=\
     if is_windows == "true" { "$env:RUSTFLAGS=$env:RUSTFLAGS_RELEASE_NIGHTLY; cargo +nightly" } else { "export RUSTFLAGS=\"$RUSTFLAGS_RELEASE_NIGHTLY\"; cargo +nightly" }
-cargo_release_stable    :=
+cargo_release_stable    :=\
     if is_windows == "true" { "$env:RUSTFLAGS=$env:RUSTFLAGS_RELEASE_STABLE; cargo" }           else { "export RUSTFLAGS=\"$RUSTFLAGS_RELEASE_STABLE\"; cargo" }
-cargo_profile_nightly   :=
+cargo_profile_nightly   :=\
     if is_windows == "true" { "$env:RUSTFLAGS=$env:RUSTFLAGS_PROFILE_NIGHTLY; cargo +nightly" } else { "export RUSTFLAGS=\"$RUSTFLAGS_PROFILE_NIGHTLY\"; cargo +nightly" }
-cargo_profile_stable    :=
+cargo_profile_stable    :=\
     if is_windows == "true" { "$env:RUSTFLAGS=$env:RUSTFLAGS_PROFILE_STABLE; cargo" }           else { "export RUSTFLAGS=\"$RUSTFLAGS_PROFILE_STABLE\"; cargo" }
 
 # --- Release Package Contents ---
@@ -156,15 +158,16 @@ build-local-udd-pack-debug *args:
 build-local-workspace-release *args:
     @echo "Running {{os}} stable release build..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
-    {{cargo_release_stable}} build --release --locked --workspace --no-default-features --features "{{linux_features}}" "{{args}}"
+    {{cargo_release_stable}} build --release --locked --workspace --no-default-features --features \
+        "{{linux_features}}" "{{args}}"
 
 # Build the workspace for a Linux musl target in release mode (stable toolchain)
 build-linux-musl-release target="x86_64-unknown-linux-musl" *args:
-    @just _build-linux-musl "cargo" "--release" "{{linux_features}}" "{{linux_musl_rustflags}}" "{{rustflags_release_stable_musl}}" "{{target}}" "{{args}}"
+    @just _build-linux-musl "stable" "release" "cargo" "RUSTFLAGS_RELEASE_STABLE" "{{RUSTFLAGS_RELEASE_STABLE}}" "--release" "{{linux_musl_features}}" "" "{{target}}" {{args}}
 
 # Build the workspace for a Linux musl target in release mode (nightly toolchain)
 build-linux-musl-release-nightly target="x86_64-unknown-linux-musl" *args:
-    @just _build-linux-musl "cargo +nightly" "--release" "{{linux_features}}" "{{linux_musl_rustflags}}" "{{CARGO_FLAGS_NIGHTLY}}" "{{rustflags_release_nightly_musl}}" "{{target}}" "{{args}}"
+    @just _build-linux-musl "nightly" "release" "cargo +nightly" "RUSTFLAGS_RELEASE_NIGHTLY" "{{RUSTFLAGS_RELEASE_NIGHTLY}}" "--release" "{{linux_musl_features}}" "{{CARGO_FLAGS_NIGHTLY}}" "{{target}}" {{args}}
 
 # Build the workspace exactly as CI does for release artifacts
 build-ci-workspace *args:
@@ -203,7 +206,7 @@ build-local-workspace-profile *args:
 
 # Build the workspace for a Linux musl target in profiling mode (stable toolchain)
 build-linux-musl-profile target="x86_64-unknown-linux-musl" *args:
-    @just _build-linux-musl "cargo" "--profile profiling" "profiling,{{linux_features}}" "{{linux_musl_rustflags}}" "{{rustflags_profile_stable_musl}}" "{{target}}" "{{args}}"
+    @just _build-linux-musl "stable" "profile" "cargo" "RUSTFLAGS_PROFILE_STABLE" "{{RUSTFLAGS_PROFILE_STABLE}}" "--profile profiling" "profiling,{{linux_musl_features}}" "" "{{target}}" {{args}}
 
 # Build the workspace locally in profiling mode (nightly toolchain)
 # Purpose: Most accurate profiling with optimized standard library symbols.
@@ -215,7 +218,20 @@ build-local-workspace-profile-nightly *args:
 
 # Build the workspace for a Linux musl target in profiling mode (nightly toolchain)
 build-linux-musl-profile-nightly target="x86_64-unknown-linux-musl" *args:
-    @just _build-linux-musl "cargo +nightly" "--profile profiling" "profiling,{{linux_features}}" "{{linux_musl_rustflags}}" "{{CARGO_FLAGS_NIGHTLY}}" "{{target}}" "{{args}}"
+    @just _build-linux-musl "nightly" "profile" "cargo +nightly" "RUSTFLAGS_PROFILE_NIGHTLY" "{{RUSTFLAGS_PROFILE_NIGHTLY}}" "--profile profiling" "profiling,{{linux_musl_features}}" "{{CARGO_FLAGS_NIGHTLY}}" "{{target}}" {{args}}
+
+[private]
+_build-linux-musl toolchain mode cargo_cmd rustflags_var rustflags_value profile_flags features cargo_flags target *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export {{rustflags_var}}="{{rustflags_value}}{{linux_musl_rustflags}}"
+    export RUSTFLAGS="{{rustflags_value}}{{linux_musl_rustflags}}"
+    echo "Running {{os}} {{toolchain}} musl {{mode}} build for target {{target}}..."
+    echo "Using RUSTFLAGS: $RUSTFLAGS"
+    if [ -n "{{cargo_flags}}" ]; then
+        echo "Adding cargo flags: {{cargo_flags}}"
+    fi
+    {{cargo_cmd}} build {{profile_flags}} --locked --workspace --target "{{target}}" --no-default-features --features "{{features}}" {{cargo_flags}} {{args}}
 
 # Run flamegraph profiling (requires cargo-flamegraph)
 # Purpose: Generates a SVG flamegraph for performance analysis.
