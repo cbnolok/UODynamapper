@@ -129,120 +129,146 @@ tool_packages := "-p udd-conv-cli -p uocf-cli -p udd-conv-gui -p uddp-inspector-
 
 # --- Recipes ---
 
-# List all available tasks
+# Show all available recipes and their arguments.
 default:
     @just --list
 
-# Build the workspace locally in debug mode
-# Purpose: Fast compilation for local development. Includes debug symbols.
+# Build the full workspace in debug mode for fast local iteration.
 build-local-workspace-debug *args:
-    @echo "Running {{os}} debug build..."
+    @echo "Building workspace in debug mode on {{os}}..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
-    cargo build --workspace "{{args}}"
+    cargo build --workspace {{args}}
 
-# Build only dynamapper locally in debug mode
+# Build only the Dynamapper application in debug mode.
 build-local-dynamapper-debug *args:
-    cargo build -p dynamapper --bin dynamapper "{{args}}"
+    @echo "Building dynamapper debug binary on {{os}}..."
+    @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
+    cargo build -p dynamapper --bin dynamapper {{args}}
 
-# Build only the shipped tools locally in debug mode
+# Build all shipped tool binaries in debug mode.
 build-local-tools-debug *args:
+    @echo "Building shipped tool binaries in debug mode on {{os}}..."
+    @echo "Packages: {{tool_packages}}"
     cargo build {{tool_packages}} --bins {{args}}
 
-# Build udd-pack locally in debug mode using the same package selection as the uddconv runtime path.
+# Build the udd-pack CLI binary in debug mode.
 build-local-udd-pack-debug *args:
-    @echo "Running {{os}} udd-pack debug build..."
+    @echo "Building udd-pack debug binary on {{os}}..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
-    cargo build -p udd-conv-cli --bin udd-pack "{{args}}"
+    cargo build -p udd-conv-cli --bin udd-pack {{args}}
 
-# Build the workspace locally in release mode (stable toolchain)
-# Purpose: Production build using the stable toolchain. Includes LTO and basic stripping.
-# Linker: Uses mold/wild on Linux for speed, default on other platforms.
+# Build the full workspace in release mode with the stable toolchain.
 build-local-workspace-release *args:
-    @echo "Running {{os}} stable release build..."
-    @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
+    @echo "Building workspace release with the stable toolchain on {{os}}..."
+    @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_STABLE}}"
+    @echo "Using features: {{linux_features}}"
     {{cargo_release_stable}} build --release --locked --workspace --no-default-features --features \
-        "{{linux_features}}" "{{args}}"
+        "{{linux_features}}" {{args}}
 
-# Build the workspace for a Linux musl target in release mode (stable toolchain)
+# Build the full workspace in release mode with nightly build-std optimizations.
+build-local-workspace-release-nightly *args:
+    @echo "Building workspace release with the nightly toolchain on {{os}}..."
+    @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_NIGHTLY}}"
+    @echo "Using features: {{linux_features}}"
+    @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
+    {{cargo_release_nightly}} build --release --locked --workspace --no-default-features --features \
+        "{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
+
+# Build the full workspace for a Linux musl release target with the stable toolchain.
 build-linux-musl-release target="x86_64-unknown-linux-musl" *args:
+    @echo "Building workspace release for musl target {{target}} with the stable toolchain..."
+    @echo "Using features: {{linux_features}}"
+    @echo "Adding musl RUSTFLAGS: {{linux_musl_rustflags}} {{rustflags_release_stable_musl}}"
     @just _build-linux-musl {{cargo_release_stable}} --release --locked --workspace --no-default-features --features \
-        "{{linux_features}}" "{{linux_musl_rustflags}}" "{{rustflags_release_stable_musl}}" "{{target}}" "{{args}}"
+        "{{linux_features}}" "{{linux_musl_rustflags}}" "{{rustflags_release_stable_musl}}" "{{target}}" {{args}}
 
-# Build the workspace for a Linux musl target in release mode (nightly toolchain)
+# Build the full workspace for a Linux musl release target with the nightly toolchain.
 build-linux-musl-release-nightly target="x86_64-unknown-linux-musl" *args:
-    @just _build-linux-musl "cargo +nightly" "--release" "{{linux_features}}" "{{linux_musl_rustflags}}" "{{CARGO_FLAGS_NIGHTLY}}" "{{rustflags_release_nightly_musl}}" "{{target}}" "{{args}}"
+    @echo "Building workspace release for musl target {{target}} with the nightly toolchain..."
+    @echo "Using features: {{linux_features}}"
+    @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
+    @echo "Adding musl RUSTFLAGS: {{linux_musl_rustflags}} {{rustflags_release_nightly_musl}}"
+    @just _build-linux-musl "cargo +nightly" "--release" "{{linux_features}}" "{{linux_musl_rustflags}}" "{{CARGO_FLAGS_NIGHTLY}}" "{{rustflags_release_nightly_musl}}" "{{target}}" {{args}}
 
-# Build the workspace exactly as CI does for release artifacts
+# Build the full workspace with the same nightly release settings used by CI.
 build-ci-workspace *args:
-    @echo "Running {{os}} CI workspace build..."
-    @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
-    @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
-    {{cargo_release_nightly}} build --release --locked --workspace --no-default-features --features "{{linux_features}}" "{{CARGO_FLAGS_NIGHTLY}}" "{{args}}"
+    @echo "Building CI workspace release on {{os}}..."
+    @just build-local-workspace-release-nightly {{args}}
 
-# Build only dynamapper with the same release settings used by CI
+# Build only the Dynamapper application with CI nightly release settings.
 build-ci-dynamapper *args:
-    @echo "Running {{os}} CI dynamapper build..."
-    @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
+    @echo "Building CI dynamapper release on {{os}}..."
+    @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_NIGHTLY}}"
+    @echo "Using features: {{linux_features}}"
     @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
-    {{cargo_release_nightly}} build --release --locked --no-default-features --features "{{linux_features}}" "{{CARGO_FLAGS_NIGHTLY}}" \
-        -p dynamapper --bin dynamapper "{{args}}"
+    {{cargo_release_nightly}} build --release --locked --no-default-features --features "{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} \
+        -p dynamapper --bin dynamapper {{args}}
 
-# Build only the shipped tools with the same release settings used by CI
+# Build all shipped tools with CI nightly release settings.
 build-ci-tools *args:
-    @echo "Running {{os}} CI tools build..."
-    @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
+    @echo "Building CI tool releases on {{os}}..."
+    @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_NIGHTLY}}"
+    @echo "Using features: {{linux_features}}"
     @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
-    {{cargo_release_nightly}} build --release --locked --no-default-features --features "{{linux_features}}" "{{CARGO_FLAGS_NIGHTLY}}" \
-        {{tool_packages}} --bins "{{args}}"
+    {{cargo_release_nightly}} build --release --locked --no-default-features --features "{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} \
+        {{tool_packages}} --bins {{args}}
 
-# Build the binaries that are included in release artifacts
+# Build the Dynamapper app and shipped tools used in release artifacts.
 build-ci-shipping *args:
+    @echo "Building CI shipping binaries: dynamapper plus shipped tools..."
     @just build-ci-dynamapper {{args}}
     @just build-ci-tools {{args}}
 
-# Build the workspace locally in profiling mode (stable toolchain)
-# Purpose: Release-level optimizations but with frame pointers and symbols kept for profilers.
+# Build the full workspace in profiling mode with the stable toolchain.
 build-local-workspace-profile *args:
-    @echo "Running {{os}} stable profile build..."
-    @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
-    {{cargo_profile_stable}} build --profile profiling --locked --workspace --no-default-features --features "profiling,{{linux_features}}" "{{args}}"
+    @echo "Building workspace profiling profile with the stable toolchain on {{os}}..."
+    @echo "Using RUSTFLAGS: {{RUSTFLAGS_PROFILE_STABLE}}"
+    @echo "Using features: profiling,{{linux_features}}"
+    {{cargo_profile_stable}} build --profile profiling --locked --workspace --no-default-features --features "profiling,{{linux_features}}" {{args}}
 
-# Build the workspace for a Linux musl target in profiling mode (stable toolchain)
+# Build the full workspace for a Linux musl profiling target with the stable toolchain.
 build-linux-musl-profile target="x86_64-unknown-linux-musl" *args:
-    @just _build-linux-musl "cargo" "--profile profiling" "profiling,{{linux_features}}" "{{linux_musl_rustflags}}" "{{rustflags_profile_stable_musl}}" "{{target}}" "{{args}}"
+    @echo "Building workspace profiling profile for musl target {{target}} with the stable toolchain..."
+    @echo "Using features: profiling,{{linux_features}}"
+    @echo "Adding musl RUSTFLAGS: {{linux_musl_rustflags}} {{rustflags_profile_stable_musl}}"
+    @just _build-linux-musl "cargo" "--profile profiling" "profiling,{{linux_features}}" "{{linux_musl_rustflags}}" "{{rustflags_profile_stable_musl}}" "{{target}}" {{args}}
 
-# Build the workspace locally in profiling mode (nightly toolchain)
-# Purpose: Most accurate profiling with optimized standard library symbols.
+# Build the full workspace in profiling mode with nightly build-std optimizations.
 build-local-workspace-profile-nightly *args:
-    @echo "Running {{os}} nightly profile build..."
-    @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
+    @echo "Building workspace profiling profile with the nightly toolchain on {{os}}..."
+    @echo "Using RUSTFLAGS: {{RUSTFLAGS_PROFILE_NIGHTLY}}"
+    @echo "Using features: profiling,{{linux_features}}"
     @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
-    {{cargo_profile_nightly}} build --profile profiling --locked --workspace --no-default-features --features "profiling,{{linux_features}}" "{{CARGO_FLAGS_NIGHTLY}}" "{{args}}"
+    {{cargo_profile_nightly}} build --profile profiling --locked --workspace --no-default-features --features "profiling,{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
 
-# Build the workspace for a Linux musl target in profiling mode (nightly toolchain)
+# Build the full workspace for a Linux musl profiling target with the nightly toolchain.
 build-linux-musl-profile-nightly target="x86_64-unknown-linux-musl" *args:
-    @just _build-linux-musl "cargo +nightly" "--profile profiling" "profiling,{{linux_features}}" "{{linux_musl_rustflags}}" "{{CARGO_FLAGS_NIGHTLY}}" "{{target}}" "{{args}}"
+    @echo "Building workspace profiling profile for musl target {{target}} with the nightly toolchain..."
+    @echo "Using features: profiling,{{linux_features}}"
+    @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
+    @echo "Adding musl RUSTFLAGS: {{linux_musl_rustflags}}"
+    @just _build-linux-musl "cargo +nightly" "--profile profiling" "profiling,{{linux_features}}" "{{linux_musl_rustflags}}" "{{CARGO_FLAGS_NIGHTLY}}" "{{target}}" {{args}}
 
-# Run flamegraph profiling (requires cargo-flamegraph)
-# Purpose: Generates a SVG flamegraph for performance analysis.
+# Generate a Dynamapper SVG flamegraph with cargo-flamegraph and nightly profiling settings.
 profile-dynamapper-flamegraph *args:
-    @echo "Running {{os}} dynamapper flamegraph profile..."
-    @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
+    @echo "Generating dynamapper flamegraph on {{os}}..."
+    @echo "Using RUSTFLAGS: {{RUSTFLAGS_PROFILE_NIGHTLY}}"
+    @echo "Using features: profiling,{{linux_features}}"
     @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
-    {{cargo_profile_nightly}} flamegraph --profile profiling --no-default-features --features "profiling,{{linux_features}}" "{{CARGO_FLAGS_NIGHTLY}}" \
-        --bin dynamapper --package dynamapper "{{args}}"
+    {{cargo_profile_nightly}} flamegraph --profile profiling --no-default-features --features "profiling,{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} \
+        --bin dynamapper --package dynamapper {{args}}
 
-# Run bloat analysis (requires cargo-bloat and nightly)
-# Purpose: Identifies which crates/functions contribute most to binary size.
+# Analyze release binary size with cargo-bloat and nightly release settings.
 bloat *args:
-    @echo "Running {{os}} bloat analysis..."
-    @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
+    @echo "Running cargo-bloat release analysis on {{os}}..."
+    @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_NIGHTLY}}"
+    @echo "Using features: {{linux_features}}"
     @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
-    {{cargo_release_nightly}} bloat --release --no-default-features --features "{{linux_features}}" "{{CARGO_FLAGS_NIGHTLY}}" \
+    {{cargo_release_nightly}} bloat --release --no-default-features --features "{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} \
         --config 'profile.release.strip=false' \
-        "{{args}}"
+        {{args}}
 
-# Verify release package inputs before creating CI artifacts
+# Verify Linux/macOS release package inputs before creating artifacts.
 [unix]
 verify-package-inputs target="":
     #!/usr/bin/env bash
@@ -251,6 +277,7 @@ verify-package-inputs target="":
     if [ -n "{{target}}" ]; then
         RELEASE_DIR="target/{{target}}/release"
     fi
+    echo "Verifying release package inputs in $RELEASE_DIR..."
     missing=0
     require_file() {
         if [ ! -f "$1" ]; then
@@ -276,11 +303,12 @@ verify-package-inputs target="":
     done
     exit "$missing"
 
-# Verify release package inputs before creating CI artifacts
+# Verify Windows release package inputs before creating artifacts.
 [windows]
 verify-package-inputs target="":
     @powershell -NoProfile -Command " \
     $releaseDir = if ('{{target}}' -ne '') { 'target/{{target}}/release' } else { 'target/release' }; \
+    Write-Host \"Verifying release package inputs in $releaseDir...\"; \
     $missing = $false; \
     function Require-File([string]$path) { if (-not (Test-Path -Path $path -PathType Leaf)) { Write-Host \"missing file: $path\"; $script:missing = $true } }; \
     function Require-Dir([string]$path) { if (-not (Test-Path -Path $path -PathType Container)) { Write-Host \"missing directory: $path\"; $script:missing = $true } }; \
@@ -291,12 +319,13 @@ verify-package-inputs target="":
     foreach ($doc in ('{{app_docs}} {{tool_docs}}'.Split(' '))) { Require-File $doc }; \
     if ($missing) { exit 1 }"
 
-# Strict release packaging: validates required inputs, then creates app and tools artifacts
+# Validate release inputs, then package app and tool artifacts.
 package-release name="dynamapper-pkg" target="":
+    @echo "Creating checked release package '{{name}}' from target '{{target}}'..."
     @just verify-package-inputs {{target}}
     @just package {{name}} {{target}}
 
-# Package the build artifacts (Linux/macOS)
+# Package Linux/macOS app and tool release artifacts.
 [unix]
 package name="dynamapper-pkg" target="":
     #!/usr/bin/env bash
@@ -327,7 +356,7 @@ package name="dynamapper-pkg" target="":
     done
     echo "Packaging complete: $APP_DIR and $TOOLS_DIR"
 
-# Package the build artifacts (Windows)
+# Package Windows app and tool release artifacts.
 [windows]
 package name="dynamapper-pkg" target="":
     @powershell -NoProfile -Command " \
@@ -348,95 +377,117 @@ package name="dynamapper-pkg" target="":
 
 
 # --- Development Run Recipes ---
-# TODO: incomplete
 
-# Alias for run-dynamapper-debug
+# Alias for running Dynamapper in debug mode.
 run-dynamapper *args:
-    @just run-dynamapper-debug "{{args}}"
+    @echo "Delegating to run-dynamapper-debug..."
+    @just run-dynamapper-debug {{args}}
 
-# Run the main application in debug mode
+# Run the Dynamapper application in debug mode.
 run-dynamapper-debug *args:
-    @echo "Running dynamapper in debug mode..."
-    cargo run --bin dynamapper "{{args}}"
+    @echo "Running dynamapper in debug mode on {{os}}..."
+    @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
+    cargo run --bin dynamapper {{args}}
 
-# Run the main application in release mode (nightly)
+# Run the Dynamapper application in release mode with nightly build-std settings.
 run-dynamapper-release *args:
-    @echo "Running dynamapper in release mode (nightly Rust toolchain)..."
-    @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
+    @echo "Running dynamapper in release mode with the nightly toolchain on {{os}}..."
+    @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_NIGHTLY}}"
+    @echo "Using features: {{linux_features}}"
     @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
-    {{cargo_release_nightly}} run --release --no-default-features --features "{{linux_features}}" "{{CARGO_FLAGS_NIGHTLY}}" \
-        --bin dynamapper "{{args}}"
+    {{cargo_release_nightly}} run --release --no-default-features --features "{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} \
+        --bin dynamapper {{args}}
 
-# Run the main application in profiling mode (stable, better symbol resolution by perf)
+# Run the Dynamapper application in profiling mode with the stable toolchain.
 run-dynamapper-profile *args:
-    @echo "Running dynamapper in profiling mode (nightly Rust toolchain)..."
-    @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
+    @echo "Running dynamapper in profiling mode with the stable toolchain on {{os}}..."
+    @echo "Using RUSTFLAGS: {{RUSTFLAGS_PROFILE_STABLE}}"
+    @echo "Using features: profiling,{{linux_features}}"
     {{cargo_profile_stable}} run --profile profiling --no-default-features --features "profiling,{{linux_features}}" \
-        --bin dynamapper "{{args}}"
+        --bin dynamapper {{args}}
 
-# Alias for run-tool-debug
+# Alias for running any workspace tool in debug mode.
 run-tool tool *args:
+    @echo "Delegating to run-tool-debug for {{tool}}..."
     @just run-tool-debug {{tool}} {{args}}
 
-# Run any tool from the workspace in debug mode
+# Run any workspace tool in debug mode.
 run-tool-debug tool *args:
-    @echo "Running tool {{tool}} in debug mode via cargo..."
+    @echo "Running tool {{tool}} in debug mode on {{os}}..."
+    @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
     cargo run --bin {{tool}} -- {{args}}
 
-# Run any tool from the workspace in release mode (nightly)
+# Run any workspace tool in release mode with nightly build-std settings.
 run-tool-release tool *args:
-    @echo "Running tool {{tool}} in release mode via cargo..."
-    @echo "Using RUSTFLAGS: {{RUSTFLAGS}}"
+    @echo "Running tool {{tool}} in release mode with the nightly toolchain on {{os}}..."
+    @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_NIGHTLY}}"
+    @echo "Using features: {{linux_features}}"
     @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
-    {{cargo_release_nightly}} run --release --no-default-features --features "{{linux_features}}" "{{CARGO_FLAGS_NIGHTLY}}" \
-        --bin {{tool}} -- "{{args}}"
+    {{cargo_release_nightly}} run --release --no-default-features --features "{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} \
+        --bin {{tool}} -- {{args}}
 
+# Convert all supported Classic and Enhanced Client assets into UDDP packages.
 uddconv-all ccdir="" ecdir="" output_dir="target/uddp" maps="0,1,2,3,4,5":
+    @echo "Converting all UO assets to UDDP packages in {{output_dir}}..."
+    @echo "Classic Client: {{ccdir}}"
+    @echo "Enhanced Client: {{ecdir}}"
+    @echo "Maps: {{maps}}"
     python scripts/uddconv/uddconv.py all --ccdir "{{ccdir}}" --ecdir "{{ecdir}}" --output-dir "{{output_dir}}" --maps "{{maps}}"
 
-# Convert only mobile animation packages
+# Convert only mobile animation packages into UDDP.
 uddconv-animations ccdir="" ecdir="" output_dir="target/uddp":
+    @echo "Converting mobile animations to UDDP packages in {{output_dir}}..."
+    @echo "Classic Client: {{ccdir}}"
+    @echo "Enhanced Client: {{ecdir}}"
     python scripts/uddconv/uddconv.py animations --ccdir "{{ccdir}}" --ecdir "{{ecdir}}" --output-dir "{{output_dir}}"
 
-# Convert only Classic gump packages
+# Convert only Classic Client gumps into UDDP.
 uddconv-gumps ccdir="" output_dir="target/uddp":
+    @echo "Converting Classic Client gumps to UDDP packages in {{output_dir}}..."
+    @echo "Classic Client: {{ccdir}}"
     python scripts/uddconv/uddconv.py gumps --ccdir "{{ccdir}}" --output-dir "{{output_dir}}"
 
-# Convert only Enhanced Client gump packages
+# Convert only Enhanced Client gumps into UDDP.
 uddconv-ec-gumps ecdir="" output_dir="target/uddp":
+    @echo "Converting Enhanced Client gumps to UDDP packages in {{output_dir}}..."
+    @echo "Enhanced Client: {{ecdir}}"
     python scripts/uddconv/uddconv.py ec-gumps --ecdir "{{ecdir}}" --output-dir "{{output_dir}}"
 
 
 # --- Maintenance ---
 
-# Run tests across the whole workspace
+# Run all Rust tests across the workspace.
 test:
+    @echo "Running all workspace tests..."
     cargo test --workspace
 
-# Clean build artifacts
+# Remove Cargo and release packaging build artifacts.
 clean:
+    @echo "Removing Cargo build artifacts and artifact/ packages..."
     cargo clean
     rm -rf artifact/
 
-# Format all code
+# Format all Rust code with cargo fmt.
 fmt:
+    @echo "Formatting Rust code across the workspace..."
     cargo fmt --all
 
-# Run clippy for the whole workspace
+# Run Clippy across all workspace targets with warnings denied.
 clippy:
+    @echo "Running Clippy across all workspace targets..."
     cargo clippy --workspace --all-targets -- -D warnings
 
-# Lint the Bevy project using bevy_cli
+# Lint the Bevy app with bevy_cli.
 bevy-lint:
+    @echo "Running Bevy lints..."
     bevy lint
 
-# Check that workspace direct dependencies resolve to the same versions as Bevy's
-# transitive dependency tree. Exits 0 if all aligned, 1 if mismatches found.
-# Pass extra args to the script, e.g.: just check-dep-alignment --no-dev
+# Check workspace direct dependency versions against Bevy's dependency tree.
 check-dep-alignment *args:
+    @echo "Checking workspace dependency alignment against Bevy..."
     cargo metadata --format-version 1 | python3 scripts/dev-helpers/check_dep_alignment.py {{args}}
 
-# Same check but against a different reference root (e.g. eframe):
-#   just check-dep-alignment-ref eframe
+# Check workspace direct dependency versions against a selected reference crate.
 check-dep-alignment-ref ref *args:
+    @echo "Checking workspace dependency alignment against {{ref}}..."
     cargo metadata --format-version 1 | python3 scripts/dev-helpers/check_dep_alignment.py --reference {{ref}} {{args}}
