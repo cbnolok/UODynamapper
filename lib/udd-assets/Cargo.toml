@@ -21,7 +21,7 @@ uocf = { path = "../uocf" }
 bytemuck = { version = "1.*", default-features = false, features = ["derive", "aarch64_simd", "avx512_simd"] }
 color-eyre = "0.6"
 byteorder = "1.5"
-knuffel = "3"
+knuffel.workspace = true
 serde_json = "1"
 dds = "0.2"
 

@@ -30,5 +30,5 @@ udd-logging = { path = "../../lib/udd-logging" }
 rodio = { version = "0.22", default-features = false, features = ["playback"] }
 serde = { version = "1", features = ["derive"] }
 color-eyre.workspace = true
-knuffel = "3"
+knuffel.workspace = true
 log = "0.4.32"

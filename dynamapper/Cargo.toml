@@ -31,7 +31,7 @@ chrono = { version = "0.4", default-features = false, features = [
 color-eyre = { workspace = true, features = ["track-caller"] }
 #lru = "0.16"
 indexmap = "2.14.0"
-knuffel = "3"
+knuffel.workspace = true
 log = { version = "*", features = [
   "max_level_debug",
   "release_max_level_warn",
@@ -58,11 +58,7 @@ strum_macros = { version = "0.28", default-features = false }
 # fails to initialize with dynamic_linking enabled (prints a 'not supported' warning).
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 time = { version = "0.3", default-features = false }
-toml = { version = "1.1", default-features = false, features = [
-  "display",
-  "parse",
-  "serde",
-] }
+toml.workspace = true
 tracing = { version = "0.1.44", features = [
   "max_level_debug",
   "release_max_level_info",
