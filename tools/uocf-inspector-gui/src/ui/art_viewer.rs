@@ -11,13 +11,13 @@ const TILEDATA_TABLE_MIN_WIDTH: f32 = 980.0;
 const TILEART_TABLE_MIN_WIDTH: f32 = 1450.0;
 const ART_VIEWER_LIST_PANEL_WIDTH: f32 = 300.0;
 
-pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context) {
+pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
     app.selected_legacy_source = concrete_art_tile_source(app.selected_legacy_source);
 
-    egui::SidePanel::left("tex_art_cc_list")
+    egui::Panel::left("tex_art_cc_list")
         .resizable(true)
-        .default_width(ART_VIEWER_LIST_PANEL_WIDTH)
-        .show(ctx, |ui| {
+        .default_size(ART_VIEWER_LIST_PANEL_WIDTH)
+        .show_inside(ui, |ui| {
             ui.heading("Art & TileData");
 
             ui.horizontal(|ui| {
@@ -90,7 +90,7 @@ pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context) {
             }
         });
 
-    egui::CentralPanel::default().show(ctx, |ui| {
+    egui::CentralPanel::default().show_inside(ui, |ui| {
         if app.view_mode == ViewMode::CcTileData {
             ui_cc_tiledata(app, ctx, ui);
         } else if let Some(id) = app.selected_tex_art_cc_id {
@@ -291,8 +291,8 @@ fn ui_cc_tiledata(app: &mut UopInspectorApp, _ctx: &egui::Context, ui: &mut egui
     ui_tile_metadata_contents(app, ui);
 }
 
-pub fn ui_tile_metadata(app: &mut UopInspectorApp, ctx: &egui::Context) {
-    egui::CentralPanel::default().show(ctx, |ui| {
+pub fn ui_tile_metadata(app: &mut UopInspectorApp, _ctx: &egui::Context, ui: &mut egui::Ui) {
+    egui::CentralPanel::default().show_inside(ui, |ui| {
         ui_tile_metadata_contents(app, ui);
     });
 }

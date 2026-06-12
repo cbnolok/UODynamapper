@@ -4074,7 +4074,7 @@ fn crop_rgba_rect(
 impl eframe::App for UopInspectorApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        crate::ui::draw_ui(self, &ctx);
+        crate::ui::draw_ui(self, &ctx, ui);
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {

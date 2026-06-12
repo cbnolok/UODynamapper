@@ -1,5 +1,3 @@
-#![allow(deprecated)]
-
 use eframe::egui;
 use color_eyre::eyre;
 
@@ -51,7 +49,7 @@ impl eframe::App for UddConvApp {
         self.ui_preview_window(&ctx);
         self.ui_upscale_preview_window(&ctx);
 
-        egui::CentralPanel::default().show(&ctx, |ui| {
+        egui::CentralPanel::default().show_inside(ui, |ui| {
             ui.vertical(|ui| {
                 ui.add_space(5.0);
                 ui.heading("UODynamapper Asset Converter");

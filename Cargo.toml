@@ -30,6 +30,7 @@ ddsfile = "0.6.0"
 color-eyre = "0.6"
 toml = { version = "1.1", features = ["serde"] }
 wgpu = { version = "27.0", default-features = false, features = ["vulkan", "wgsl"] }
+wgpu-profiler = "0.27.0"
 wgpu-types = "27.0"
 
 [workspace.lints.clippy]

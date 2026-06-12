@@ -44,9 +44,9 @@ pub fn ui_mobile_anim_cc(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
 
     app.selected_mobile_anim_index = app.selected_mobile_anim_index.min(animations.len() - 1);
 
-    egui::SidePanel::left("mobile_anim_cc_list")
+    egui::Panel::left("mobile_anim_cc_list")
         .resizable(true)
-        .default_width(MOBILE_ANIM_LIST_PANEL_DEFAULT_WIDTH)
+        .default_size(MOBILE_ANIM_LIST_PANEL_DEFAULT_WIDTH)
         .show_inside(ui, |ui| {
             ui.heading("CC Mobile Animations");
             ui.label(format!("{} animations", animations.len()));
@@ -337,9 +337,9 @@ pub fn ui_mobile_anim_ec(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
 
     app.selected_mobile_anim_index = app.selected_mobile_anim_index.min(animations.len() - 1);
 
-    egui::SidePanel::left("mobile_anim_ec_list")
+    egui::Panel::left("mobile_anim_ec_list")
         .resizable(true)
-        .default_width(MOBILE_ANIM_LIST_PANEL_DEFAULT_WIDTH)
+        .default_size(MOBILE_ANIM_LIST_PANEL_DEFAULT_WIDTH)
         .show_inside(ui, |ui| {
             ui.heading("EC Mobile Animations");
             ui.label(format!("{} animations", animations.len()));

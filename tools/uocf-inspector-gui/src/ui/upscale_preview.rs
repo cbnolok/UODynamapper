@@ -11,7 +11,7 @@ const UPSCALE_PREVIEW_ORIGINAL_VIEWPORT_HEIGHT: f32 = 520.0;
 const UPSCALE_PREVIEW_UPSCALED_VIEWPORT_WIDTH: f32 = 520.0;
 const UPSCALE_PREVIEW_UPSCALED_VIEWPORT_HEIGHT: f32 = 620.0;
 
-pub fn ui_upscale_preview_window(app: &mut UopInspectorApp, ctx: &egui::Context) {
+pub fn ui_upscale_preview_window(app: &mut UopInspectorApp, ctx: &egui::Context, _ui: &mut egui::Ui) {
     if !app.show_upscale_preview {
         return;
     }
@@ -109,12 +109,12 @@ pub fn ui_upscale_preview_window(app: &mut UopInspectorApp, ctx: &egui::Context)
                     UPSCALE_PREVIEW_ORIGINAL_VIEWPORT_WIDTH,
                     UPSCALE_PREVIEW_ORIGINAL_VIEWPORT_HEIGHT,
                 ]),
-            |ctx, _class| {
-                if ctx.input(|i| i.viewport().close_requested()) {
+            |ui, _class| {
+                if ui.input(|i| i.viewport().close_requested()) {
                     original_frame_open = false;
                 }
 
-                egui::CentralPanel::default().show(ctx, |ui| {
+                egui::CentralPanel::default().show_inside(ui, |ui| {
                     egui::ScrollArea::both()
                         .id_salt("uocf_upscale_preview_original_image")
                         .show(ui, |ui| {
@@ -138,12 +138,12 @@ pub fn ui_upscale_preview_window(app: &mut UopInspectorApp, ctx: &egui::Context)
                     UPSCALE_PREVIEW_UPSCALED_VIEWPORT_WIDTH,
                     UPSCALE_PREVIEW_UPSCALED_VIEWPORT_HEIGHT,
                 ]),
-            |ctx, _class| {
-                if ctx.input(|i| i.viewport().close_requested()) {
+            |ui, _class| {
+                if ui.input(|i| i.viewport().close_requested()) {
                     upscaled_frame_open = false;
                 }
 
-                egui::CentralPanel::default().show(ctx, |ui| {
+                egui::CentralPanel::default().show_inside(ui, |ui| {
                     egui::ScrollArea::both()
                         .id_salt("uocf_upscale_preview_upscaled_image")
                         .show(ui, |ui| {

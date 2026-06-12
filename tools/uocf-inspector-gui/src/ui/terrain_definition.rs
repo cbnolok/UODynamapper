@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 
 const TERRAIN_DEFINITION_PANEL_WIDTH: f32 = 300.0;
 
-pub fn ui_terrain_definition(app: &mut UopInspectorApp, ctx: &egui::Context) {
+pub fn ui_terrain_definition(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
     let files_arc = if let Some(ref files) = app.terrain_def_files {
         files.clone()
     } else {
@@ -14,10 +14,10 @@ pub fn ui_terrain_definition(app: &mut UopInspectorApp, ctx: &egui::Context) {
     };
     let files = files_arc.as_ref();
 
-    egui::SidePanel::left("terrain_def_panel")
+    egui::Panel::left("terrain_def_panel")
         .resizable(true)
-        .default_width(TERRAIN_DEFINITION_PANEL_WIDTH)
-        .show(ctx, |ui| {
+        .default_size(TERRAIN_DEFINITION_PANEL_WIDTH)
+        .show_inside(ui, |ui| {
             ui.heading(format!("Terrain Definition Files ({})", files.len()));
             ui.separator();
 
@@ -73,7 +73,7 @@ pub fn ui_terrain_definition(app: &mut UopInspectorApp, ctx: &egui::Context) {
             });
         });
 
-    egui::TopBottomPanel::top("terrain_definition_tabs").show(ctx, |ui| {
+    egui::Panel::top("terrain_definition_tabs").show_inside(ui, |ui| {
         ui.horizontal(|ui| {
             ui.selectable_value(
                 &mut app.view_mode,
@@ -88,7 +88,7 @@ pub fn ui_terrain_definition(app: &mut UopInspectorApp, ctx: &egui::Context) {
         });
     });
 
-    egui::CentralPanel::default().show(ctx, |ui| {
+    egui::CentralPanel::default().show_inside(ui, |ui| {
         if let Some(selected_hash) = app.selected_terrain_def_hash {
             if let Some(file) = files.iter().find(|file| file.filename_hash == selected_hash) {
                 egui::ScrollArea::vertical().show(ui, |ui| {

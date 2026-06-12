@@ -167,17 +167,17 @@ mod tests {
     }
 }
 
-pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
-    egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
-        egui::menu::bar(ui, |ui| {
+pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
+    egui::Panel::top("top_panel").show_inside(ui, |ui| {
+        egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
                 if ui.button("Open UOP...").clicked() {
                     app.open_uop();
-                    ui.close_menu();
+                    ui.close_kind(egui::UiKind::Menu);
                 }
                 if ui.button("Search Paths...").clicked() {
                     app.show_search_paths = true;
-                    ui.close_menu();
+                    ui.close_kind(egui::UiKind::Menu);
                 }
                 ui.separator();
                 if ui.button("Exit").clicked() {
@@ -245,7 +245,7 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
         });
     });
 
-    egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
+    egui::Panel::bottom("status_bar").show_inside(ui, |ui| {
         ui.horizontal(|ui| {
             ui.label(&app.status_message);
         });
@@ -321,7 +321,7 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
 
     match app.view_mode {
         crate::app::ViewMode::Home => {
-            egui::CentralPanel::default().show(ctx, |ui| {
+            egui::CentralPanel::default().show_inside(ui, |ui| {
                 ui.heading("Logs");
                 ui.separator();
                 egui::ScrollArea::vertical()
@@ -334,45 +334,45 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context) {
             });
         }
         crate::app::ViewMode::UopExplorer => {
-            uop_browser::ui_uop_browser(app, ctx);
+            uop_browser::ui_uop_browser(app, ctx, ui);
         }
         crate::app::ViewMode::TexArtCc | crate::app::ViewMode::CcTileData => {
-            art_viewer::ui_art_viewer(app, ctx);
+            art_viewer::ui_art_viewer(app, ctx, ui);
         }
         crate::app::ViewMode::TileMetadata => {
-            art_viewer::ui_tile_metadata(app, ctx);
+            art_viewer::ui_tile_metadata(app, ctx, ui);
         }
         crate::app::ViewMode::Animations => {
-            animations::ui_animations(app, ctx);
+            animations::ui_animations(app, ctx, ui);
         }
         crate::app::ViewMode::Gumps => {
-            gumps::ui_gumps(app, ctx);
+            gumps::ui_gumps(app, ctx, ui);
         }
         crate::app::ViewMode::AnimData => {
-            animdata::ui_animdata(app, ctx);
+            animdata::ui_animdata(app, ctx, ui);
         }
         crate::app::ViewMode::Multis => {
-            multis::ui_multis(app, ctx);
+            multis::ui_multis(app, ctx, ui);
         }
         crate::app::ViewMode::Multimap => {
-            multimap::ui_multimap(app, ctx);
+            multimap::ui_multimap(app, ctx, ui);
         }
         crate::app::ViewMode::Hues => {
-            hues::ui_hues(app, ctx);
+            hues::ui_hues(app, ctx, ui);
         }
         crate::app::ViewMode::Clilocs => {
-            clilocs::ui_clilocs(app, ctx);
+            clilocs::ui_clilocs(app, ctx, ui);
         }
         crate::app::ViewMode::TerrainDefinition => {
-            terrain_definition::ui_terrain_definition(app, ctx);
+            terrain_definition::ui_terrain_definition(app, ctx, ui);
         }
         crate::app::ViewMode::StringDictionary => {
-            string_dictionary::ui_string_dictionary(app, ctx);
+            string_dictionary::ui_string_dictionary(app, ctx, ui);
         }
         crate::app::ViewMode::Sounds => {
-            sounds::ui_sounds(app, ctx);
+            sounds::ui_sounds(app, ctx, ui);
         }
     }
 
-    upscale_preview::ui_upscale_preview_window(app, ctx);
+    upscale_preview::ui_upscale_preview_window(app, ctx, ui);
 }

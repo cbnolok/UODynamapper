@@ -193,7 +193,7 @@ impl eframe::App for UopPopulatorApp {
             }
         }
 
-        egui::CentralPanel::default().show(&ctx, |ui| {
+        egui::CentralPanel::default().show_inside(ui, |ui| {
             ui.vertical_centered(|ui| {
                 ui.heading("UOP Dictionary Populator");
                 ui.add_space(8.0);

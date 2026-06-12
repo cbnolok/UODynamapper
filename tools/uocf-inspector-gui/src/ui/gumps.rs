@@ -225,8 +225,8 @@ impl From<PaperdollProfileKdl> for PaperdollProfile {
     }
 }
 
-pub fn ui_gumps(app: &mut UopInspectorApp, ctx: &egui::Context) {
-    egui::CentralPanel::default().show(ctx, |ui| {
+pub fn ui_gumps(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
+    egui::CentralPanel::default().show_inside(ui, |ui| {
         let profiles = paperdoll_profiles();
         if app.gump_list_source != Some(app.selected_gump_source)
             || app.gump_list_profile != app.selected_paperdoll_profile
@@ -645,7 +645,7 @@ fn ui_gump_id_list(
                 let gump_id = ids[sorted_indices[index]];
                 let response = ui.add_sized(
                     egui::vec2(ui.available_width(), row_height),
-                    egui::SelectableLabel::new(
+                    egui::Button::selectable(
                         selected_id == Some(gump_id),
                         format!("{gump_id:>5}  0x{gump_id:04X}"),
                     ),

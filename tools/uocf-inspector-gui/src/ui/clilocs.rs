@@ -5,7 +5,7 @@ use eframe::egui;
 const CLASSIC_CLILOC_LIST_PANEL_WIDTH: f32 = 320.0;
 const LOCALIZED_STRINGS_FILES_PANEL_WIDTH: f32 = 340.0;
 
-pub fn ui_clilocs(app: &mut UopInspectorApp, ctx: &egui::Context) {
+pub fn ui_clilocs(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
     let has_cliloc = app.cliloc.is_some();
     let has_localized = app.localized_strings.is_some();
     let cliloc_tab_label = app
@@ -23,7 +23,7 @@ pub fn ui_clilocs(app: &mut UopInspectorApp, ctx: &egui::Context) {
         app.localized_strings_source = LocalizedStringsSource::Cliloc;
     }
 
-    egui::TopBottomPanel::top("cliloc_source_tabs").show(ctx, |ui| {
+    egui::Panel::top("cliloc_source_tabs").show_inside(ui, |ui| {
         ui.horizontal(|ui| {
             if has_cliloc {
                 ui.selectable_value(
@@ -43,21 +43,21 @@ pub fn ui_clilocs(app: &mut UopInspectorApp, ctx: &egui::Context) {
     });
 
     match app.localized_strings_source {
-        LocalizedStringsSource::Cliloc => ui_classic_cliloc(app, ctx),
-        LocalizedStringsSource::LocalizedStringsUop => ui_localized_strings(app, ctx),
+        LocalizedStringsSource::Cliloc => ui_classic_cliloc(app, ctx, ui),
+        LocalizedStringsSource::LocalizedStringsUop => ui_localized_strings(app, ctx, ui),
     }
 }
 
-fn ui_classic_cliloc(app: &mut UopInspectorApp, ctx: &egui::Context) {
+fn ui_classic_cliloc(app: &mut UopInspectorApp, _ctx: &egui::Context, ui: &mut egui::Ui) {
     let Some(cliloc) = app.cliloc.clone() else {
         return;
     };
     let entries = &cliloc.entries;
 
-    egui::SidePanel::left("classic_cliloc_list")
+    egui::Panel::left("classic_cliloc_list")
         .resizable(true)
-        .default_width(CLASSIC_CLILOC_LIST_PANEL_WIDTH)
-        .show(ctx, |ui| {
+        .default_size(CLASSIC_CLILOC_LIST_PANEL_WIDTH)
+        .show_inside(ui, |ui| {
             let heading = app
                 .selected_cliloc_file_idx
                 .and_then(|index| app.cliloc_files.get(index))
@@ -71,7 +71,7 @@ fn ui_classic_cliloc(app: &mut UopInspectorApp, ctx: &egui::Context) {
             cliloc_list(app, ui, entries, search_has_focus);
         });
 
-    egui::CentralPanel::default().show(ctx, |ui| {
+    egui::CentralPanel::default().show_inside(ui, |ui| {
         ui.heading(format!("CliLoc {}", app.selected_cliloc_number));
         ui.separator();
         if let Some(entry) = entries.iter().find(|entry| entry.number == app.selected_cliloc_number) {
@@ -123,12 +123,12 @@ fn cliloc_translation_selector(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
     }
 }
 
-fn ui_localized_strings(app: &mut UopInspectorApp, ctx: &egui::Context) {
+fn ui_localized_strings(app: &mut UopInspectorApp, _ctx: &egui::Context, ui: &mut egui::Ui) {
     let Some(package) = app.localized_strings.clone() else {
         return;
     };
     let Some(row_files) = app.localized_string_rows.clone() else {
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show_inside(ui, |ui| {
             ui.centered_and_justified(|ui| {
                 ui.label("Reload assets to rebuild the localized strings row cache.");
             });
@@ -139,10 +139,10 @@ fn ui_localized_strings(app: &mut UopInspectorApp, ctx: &egui::Context) {
         app.selected_localized_file_hash = package.files.first().map(|file| file.filename_hash);
     }
 
-    egui::SidePanel::left("localized_strings_files")
+    egui::Panel::left("localized_strings_files")
         .resizable(true)
-        .default_width(LOCALIZED_STRINGS_FILES_PANEL_WIDTH)
-        .show(ctx, |ui| {
+        .default_size(LOCALIZED_STRINGS_FILES_PANEL_WIDTH)
+        .show_inside(ui, |ui| {
             ui.heading(format!("localizedstrings.uop ({})", package.files.len()));
             ui.separator();
             let sort = list_sort_controls(ui, "localized_strings_files", &["Hash", "Strings"], 0);
@@ -168,7 +168,7 @@ fn ui_localized_strings(app: &mut UopInspectorApp, ctx: &egui::Context) {
             }
         });
 
-    egui::TopBottomPanel::top("localized_strings_raw_tabs").show(ctx, |ui| {
+    egui::Panel::top("localized_strings_raw_tabs").show_inside(ui, |ui| {
         ui.horizontal(|ui| {
             ui.selectable_value(
                 &mut app.localized_strings_source,
@@ -183,7 +183,7 @@ fn ui_localized_strings(app: &mut UopInspectorApp, ctx: &egui::Context) {
         });
     });
 
-    egui::CentralPanel::default().show(ctx, |ui| {
+    egui::CentralPanel::default().show_inside(ui, |ui| {
         let Some(file_hash) = app.selected_localized_file_hash else {
             ui.label("Select a localized strings file.");
             return;

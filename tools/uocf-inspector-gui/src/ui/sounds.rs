@@ -5,18 +5,18 @@ use crate::ui::{list_sort_controls, sorted_indices_by};
 
 const SOUNDS_LIST_PANEL_WIDTH: f32 = 280.0;
 
-pub fn ui_sounds(app: &mut UopInspectorApp, ctx: &egui::Context) {
+pub fn ui_sounds(app: &mut UopInspectorApp, _ctx: &egui::Context, ui: &mut egui::Ui) {
     let Some(sounds) = app.cc_sounds.clone() else {
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show_inside(ui, |ui| {
             ui.label("Select a Classic Client path containing soundidx.mul and sound.mul.");
         });
         return;
     };
 
-    egui::SidePanel::left("sounds_list")
+    egui::Panel::left("sounds_list")
         .resizable(true)
-        .default_width(SOUNDS_LIST_PANEL_WIDTH)
-        .show(ctx, |ui| {
+        .default_size(SOUNDS_LIST_PANEL_WIDTH)
+        .show_inside(ui, |ui| {
             ui.heading("sound.mul");
             ui.horizontal(|ui| {
                 ui.label("Slot");
@@ -99,7 +99,7 @@ pub fn ui_sounds(app: &mut UopInspectorApp, ctx: &egui::Context) {
             }
         });
 
-    egui::CentralPanel::default().show(ctx, |ui| {
+    egui::CentralPanel::default().show_inside(ui, |ui| {
         let sound = match sounds.read_slot(app.selected_sound_slot) {
             Ok(Some(sound)) => sound,
             Ok(None) => {

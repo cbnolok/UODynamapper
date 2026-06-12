@@ -1,5 +1,3 @@
-#![allow(deprecated)]
-
 use color_eyre::eyre;
 use eframe::egui;
 
@@ -58,7 +56,7 @@ impl eframe::App for InspectorApp {
         self.handle_keyboard_navigation(&ctx);
 
         // Top panel: Package selector
-        egui::TopBottomPanel::top("top_panel").show(&ctx, |ui| {
+        egui::Panel::top("top_panel").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 if ui.button("📁 Open UDDP...").clicked() {
                     if let Some(path) = open_package_dialog(self.settings.last_package_dir.as_deref()) {
@@ -72,10 +70,10 @@ impl eframe::App for InspectorApp {
         });
 
         // Left panel: Metadata and filtering
-        egui::SidePanel::left("left_panel")
+        egui::Panel::left("left_panel")
             .resizable(true)
-            .default_width(MAIN_LEFT_PANEL_DEFAULT_WIDTH)
-            .show(&ctx, |ui| {
+            .default_size(MAIN_LEFT_PANEL_DEFAULT_WIDTH)
+            .show_inside(ui, |ui| {
                 self.ui_left_panel(ui);
             });
 
@@ -87,16 +85,16 @@ impl eframe::App for InspectorApp {
 
         // Right panel: Entry/Asset details (only shown if something is selected)
         if let Some(idx) = selected_idx {
-            egui::SidePanel::right("right_panel")
+            egui::Panel::right("right_panel")
                 .resizable(true)
-                .default_width(MAIN_RIGHT_PANEL_DEFAULT_WIDTH)
-                .show(&ctx, |ui| {
+                .default_size(MAIN_RIGHT_PANEL_DEFAULT_WIDTH)
+                .show_inside(ui, |ui| {
                     self.ui_details(&ctx, ui, idx);
                 });
         }
 
         // Central area: The big table
-        egui::CentralPanel::default().show(&ctx, |ui| {
+        egui::CentralPanel::default().show_inside(ui, |ui| {
             if self.package.is_some() {
                 match self.view_mode {
                     ViewMode::Package | ViewMode::Virtual => self.render_table(&ctx, ui),
@@ -235,12 +233,12 @@ impl InspectorApp {
             egui::ViewportBuilder::default()
                 .with_title("Texture Viewer")
                 .with_inner_size([TEXTURE_VIEWER_VIEWPORT_WIDTH, TEXTURE_VIEWER_VIEWPORT_HEIGHT]),
-            |ctx, _class| {
-                if ctx.input(|i| i.viewport().close_requested()) {
+            |ui, _class| {
+                if ui.input(|i| i.viewport().close_requested()) {
                     close_requested = true;
                 }
 
-                egui::CentralPanel::default().show(ctx, |ui| {
+                egui::CentralPanel::default().show_inside(ui, |ui| {
                     let Some((texture, size, label)) = &viewer_data else {
                         ui.label("No image available for the current selection.");
                         return;

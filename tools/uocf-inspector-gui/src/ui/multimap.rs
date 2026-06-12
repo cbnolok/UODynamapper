@@ -42,13 +42,13 @@ enum GenerateInput {
     },
 }
 
-pub fn ui_multimap(app: &mut UopInspectorApp, ctx: &egui::Context) {
+pub fn ui_multimap(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
     poll_worker(app, ctx);
 
-    egui::SidePanel::left("multimap_tools")
+    egui::Panel::left("multimap_tools")
         .resizable(true)
-        .default_width(MULTIMAP_TOOLS_PANEL_WIDTH)
-        .show(ctx, |ui| {
+        .default_size(MULTIMAP_TOOLS_PANEL_WIDTH)
+        .show_inside(ui, |ui| {
             ui.heading("Multimap");
             ui.separator();
             loaded_rle_controls(app, ui);
@@ -56,7 +56,7 @@ pub fn ui_multimap(app: &mut UopInspectorApp, ctx: &egui::Context) {
             converter_controls(app, ui);
         });
 
-    egui::CentralPanel::default().show(ctx, |ui| {
+    egui::CentralPanel::default().show_inside(ui, |ui| {
         preview_tabs(app, ui);
         ui.separator();
         preview_actions(app, ui);

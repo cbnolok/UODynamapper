@@ -1,5 +1,3 @@
-#![allow(deprecated)]
-
 mod app;
 mod core;
 mod dialog;

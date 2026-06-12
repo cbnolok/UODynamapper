@@ -377,7 +377,7 @@ impl InspectorApp {
     }
 
     pub fn handle_keyboard_navigation(&mut self, ctx: &egui::Context) {
-        if self.package.is_none() || ctx.wants_keyboard_input() {
+        if self.package.is_none() || ctx.egui_wants_keyboard_input() {
             return;
         }
 

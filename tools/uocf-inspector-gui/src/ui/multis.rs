@@ -52,7 +52,7 @@ const CLASSIC_MULTI_SIDEBAR_WIDTH: f32 = 250.0;
 const UOP_MULTI_SIDEBAR_WIDTH: f32 = 300.0;
 const MULTIMAP_SIDEBAR_WIDTH: f32 = 260.0;
 
-pub fn ui_multis(app: &mut UopInspectorApp, ctx: &egui::Context) {
+pub fn ui_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
     app.selected_legacy_source = concrete_art_tile_source(app.selected_legacy_source);
 
     let has_classic = app
@@ -73,7 +73,7 @@ pub fn ui_multis(app: &mut UopInspectorApp, ctx: &egui::Context) {
         };
     }
 
-    egui::TopBottomPanel::top("multis_source_tabs").show(ctx, |ui| {
+    egui::Panel::top("multis_source_tabs").show_inside(ui, |ui| {
         ui.horizontal(|ui| {
             if has_classic {
                 ui.selectable_value(&mut app.multis_source, MultisSource::ClassicMul, "multi.mul/.idx");
@@ -103,9 +103,9 @@ pub fn ui_multis(app: &mut UopInspectorApp, ctx: &egui::Context) {
     });
 
     match app.multis_source {
-        MultisSource::ClassicMul => ui_classic_multis(app, ctx),
-        MultisSource::Uop => ui_uop_multis(app, ctx),
-        MultisSource::Multimap => ui_multimap(app, ctx),
+        MultisSource::ClassicMul => ui_classic_multis(app, ctx, ui),
+        MultisSource::Uop => ui_uop_multis(app, ctx, ui),
+        MultisSource::Multimap => ui_multimap(app, ctx, ui),
     }
 }
 
@@ -135,11 +135,11 @@ fn art_source_label(source: ArtSource) -> &'static str {
     }
 }
 
-fn ui_classic_multis(app: &mut UopInspectorApp, ctx: &egui::Context) {
-    egui::SidePanel::left("classic_multi_sidebar")
+fn ui_classic_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
+    egui::Panel::left("classic_multi_sidebar")
         .resizable(true)
-        .default_width(CLASSIC_MULTI_SIDEBAR_WIDTH)
-        .show(ctx, |ui| {
+        .default_size(CLASSIC_MULTI_SIDEBAR_WIDTH)
+        .show_inside(ui, |ui| {
             ui.heading("multi.mul/.idx");
             ui.separator();
             ui.horizontal(|ui| {
@@ -180,7 +180,7 @@ fn ui_classic_multis(app: &mut UopInspectorApp, ctx: &egui::Context) {
             }
         });
 
-    egui::CentralPanel::default().show(ctx, |ui| {
+    egui::CentralPanel::default().show_inside(ui, |ui| {
         let parts = app
             .client_data
             .as_ref()
@@ -202,15 +202,15 @@ fn ui_classic_multis(app: &mut UopInspectorApp, ctx: &egui::Context) {
     });
 }
 
-fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context) {
+fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
     let Some(collection) = app.multi_collection.clone() else {
         return;
     };
 
-    egui::SidePanel::left("uop_multi_sidebar")
+    egui::Panel::left("uop_multi_sidebar")
         .resizable(true)
-        .default_width(UOP_MULTI_SIDEBAR_WIDTH)
-        .show(ctx, |ui| {
+        .default_size(UOP_MULTI_SIDEBAR_WIDTH)
+        .show_inside(ui, |ui| {
             ui.heading(format!(
                 "{} MultiCollection.uop ({})",
                 multi_collection_source_label(app),
@@ -287,7 +287,7 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context) {
             });
         });
 
-    egui::TopBottomPanel::top("multi_uop_raw_tabs").show(ctx, |ui| {
+    egui::Panel::top("multi_uop_raw_tabs").show_inside(ui, |ui| {
         ui.horizontal(|ui| {
             ui.selectable_value(&mut app.multis_source, MultisSource::Uop, "Specialized");
             if ui.button("Raw selected").clicked() {
@@ -299,7 +299,7 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context) {
         });
     });
 
-    egui::CentralPanel::default().show(ctx, |ui| {
+    egui::CentralPanel::default().show_inside(ui, |ui| {
         if let Some(item) = collection.get(app.selected_multi_id) {
             let preview_parts: Vec<_> = item
                 .parts
@@ -340,9 +340,9 @@ fn select_multi(app: &mut UopInspectorApp, multi_id: u32, uop_hash: Option<u64>)
     }
 }
 
-fn ui_multimap(app: &mut UopInspectorApp, ctx: &egui::Context) {
+fn ui_multimap(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
     let Some(multimap) = app.cc_multimap.clone() else {
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show_inside(ui, |ui| {
             ui.centered_and_justified(|ui| {
                 ui.label("multimap.rle is not loaded.");
             });
@@ -358,10 +358,10 @@ fn ui_multimap(app: &mut UopInspectorApp, ctx: &egui::Context) {
     let total_pixels = multimap.pixels.len();
     let white_pixels = total_pixels.saturating_sub(black_pixels);
 
-    egui::SidePanel::left("multimap_sidebar")
+    egui::Panel::left("multimap_sidebar")
         .resizable(true)
-        .default_width(MULTIMAP_SIDEBAR_WIDTH)
-        .show(ctx, |ui| {
+        .default_size(MULTIMAP_SIDEBAR_WIDTH)
+        .show_inside(ui, |ui| {
             ui.heading("multimap.rle");
             ui.separator();
             egui::Grid::new("multimap_details").striped(true).show(ui, |ui| {
@@ -397,7 +397,7 @@ fn ui_multimap(app: &mut UopInspectorApp, ctx: &egui::Context) {
             );
         });
 
-    egui::CentralPanel::default().show(ctx, |ui| {
+    egui::CentralPanel::default().show_inside(ui, |ui| {
         if let Some(handle) = app.get_multimap_texture(ctx) {
             let size = egui::vec2(
                 multimap.width as f32 * app.multimap_zoom,
