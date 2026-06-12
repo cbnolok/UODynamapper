@@ -86,9 +86,12 @@ linker_optimized_flags := if is_linux == "true" {
 }
 
 # Features to enable on Linux by default (ensures Wayland/X11 support when using --no-default-features)
-linux_target_features := if is_linux == "true" { "linux_wayland,linux_x11" } else { "" }
+linux_features := if is_linux == "true" { "linux_wayland,linux_x11" } else { "" }
 # Added -Clink-arg=-lgcc to musl RUSTFLAGS to satisfy compiler builtins like __popcountdi2 emitted by vendored libjxl C++ objects
 linux_musl_rustflags := " -C target-feature=+crt-static -C link-self-contained=yes -Clink-arg=-lgcc"
+rustflags_release_stable_musl := ""
+rustflags_release_nightly_musl := ""
+rustflags_profile_stable_musl := ""
 
 # Specialized RUSTFLAGS for different build types (exported to be accessible in shell commands)
 rustflags_debug_common              := " -C embed-bitcode=no"   # llvm bitcode is unneeded since we are not using LTO in debug
