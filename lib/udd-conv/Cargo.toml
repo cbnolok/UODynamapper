@@ -29,7 +29,7 @@ uocf = { path = "../uocf" }
 udd-assets = { path = "../udd-assets" }
 udd-container = { path = "../udd-container" }
 udd-image-codecs = { path = "../udd-image-codecs", features = ["bc7-encode"] }
-wgpu-types = "29"
+wgpu-types.workspace = true
 ddsfile.workspace = true
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
