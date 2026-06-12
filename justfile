@@ -92,6 +92,7 @@ linux_musl_rustflags := " -C target-feature=+crt-static -C link-self-contained=y
 rustflags_release_stable_musl := ""
 rustflags_release_nightly_musl := ""
 rustflags_profile_stable_musl := ""
+rustflags_profile_nightly_musl := ""
 
 # Specialized RUSTFLAGS for different build types (exported to be accessible in shell commands)
 rustflags_debug_common              := " -C embed-bitcode=no"   # llvm bitcode is unneeded since we are not using LTO in debug
@@ -177,18 +178,23 @@ build-local-workspace-release-nightly *args:
 # Build the full workspace for a Linux musl release target with the stable toolchain.
 build-linux-musl-release target="x86_64-unknown-linux-musl" *args:
     @echo "Building workspace release for musl target {{target}} with the stable toolchain..."
+    @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_STABLE}}{{linux_musl_rustflags}}{{rustflags_release_stable_musl}}"
     @echo "Using features: {{linux_features}}"
     @echo "Adding musl RUSTFLAGS: {{linux_musl_rustflags}} {{rustflags_release_stable_musl}}"
-    @just _build-linux-musl {{cargo_release_stable}} --release --locked --workspace --no-default-features --features \
-        "{{linux_features}}" "{{linux_musl_rustflags}}" "{{rustflags_release_stable_musl}}" "{{target}}" {{args}}
+    RUSTFLAGS="{{RUSTFLAGS_RELEASE_STABLE}}{{linux_musl_rustflags}}{{rustflags_release_stable_musl}}" \
+        cargo build --target "{{target}}" --release --locked --workspace --no-default-features --features \
+        "{{linux_features}}" {{args}}
 
 # Build the full workspace for a Linux musl release target with the nightly toolchain.
 build-linux-musl-release-nightly target="x86_64-unknown-linux-musl" *args:
     @echo "Building workspace release for musl target {{target}} with the nightly toolchain..."
+    @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_NIGHTLY}}{{linux_musl_rustflags}}{{rustflags_release_nightly_musl}}"
     @echo "Using features: {{linux_features}}"
     @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
     @echo "Adding musl RUSTFLAGS: {{linux_musl_rustflags}} {{rustflags_release_nightly_musl}}"
-    @just _build-linux-musl "cargo +nightly" "--release" "{{linux_features}}" "{{linux_musl_rustflags}}" "{{CARGO_FLAGS_NIGHTLY}}" "{{rustflags_release_nightly_musl}}" "{{target}}" {{args}}
+    RUSTFLAGS="{{RUSTFLAGS_RELEASE_NIGHTLY}}{{linux_musl_rustflags}}{{rustflags_release_nightly_musl}}" \
+        cargo +nightly build --target "{{target}}" --release --locked --workspace --no-default-features --features \
+        "{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
 
 # Build the full workspace with the same nightly release settings used by CI.
 build-ci-workspace *args:
@@ -229,9 +235,12 @@ build-local-workspace-profile *args:
 # Build the full workspace for a Linux musl profiling target with the stable toolchain.
 build-linux-musl-profile target="x86_64-unknown-linux-musl" *args:
     @echo "Building workspace profiling profile for musl target {{target}} with the stable toolchain..."
+    @echo "Using RUSTFLAGS: {{RUSTFLAGS_PROFILE_STABLE}}{{linux_musl_rustflags}}{{rustflags_profile_stable_musl}}"
     @echo "Using features: profiling,{{linux_features}}"
     @echo "Adding musl RUSTFLAGS: {{linux_musl_rustflags}} {{rustflags_profile_stable_musl}}"
-    @just _build-linux-musl "cargo" "--profile profiling" "profiling,{{linux_features}}" "{{linux_musl_rustflags}}" "{{rustflags_profile_stable_musl}}" "{{target}}" {{args}}
+    RUSTFLAGS="{{RUSTFLAGS_PROFILE_STABLE}}{{linux_musl_rustflags}}{{rustflags_profile_stable_musl}}" \
+        cargo build --target "{{target}}" --profile profiling --locked --workspace --no-default-features --features \
+        "profiling,{{linux_features}}" {{args}}
 
 # Build the full workspace in profiling mode with nightly build-std optimizations.
 build-local-workspace-profile-nightly *args:
@@ -244,10 +253,13 @@ build-local-workspace-profile-nightly *args:
 # Build the full workspace for a Linux musl profiling target with the nightly toolchain.
 build-linux-musl-profile-nightly target="x86_64-unknown-linux-musl" *args:
     @echo "Building workspace profiling profile for musl target {{target}} with the nightly toolchain..."
+    @echo "Using RUSTFLAGS: {{RUSTFLAGS_PROFILE_NIGHTLY}}{{linux_musl_rustflags}}{{rustflags_profile_nightly_musl}}"
     @echo "Using features: profiling,{{linux_features}}"
     @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
-    @echo "Adding musl RUSTFLAGS: {{linux_musl_rustflags}}"
-    @just _build-linux-musl "cargo +nightly" "--profile profiling" "profiling,{{linux_features}}" "{{linux_musl_rustflags}}" "{{CARGO_FLAGS_NIGHTLY}}" "{{target}}" {{args}}
+    @echo "Adding musl RUSTFLAGS: {{linux_musl_rustflags}} {{rustflags_profile_nightly_musl}}"
+    RUSTFLAGS="{{RUSTFLAGS_PROFILE_NIGHTLY}}{{linux_musl_rustflags}}{{rustflags_profile_nightly_musl}}" \
+        cargo +nightly build --target "{{target}}" --profile profiling --locked --workspace --no-default-features --features \
+        "profiling,{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
 
 # Generate a Dynamapper SVG flamegraph with cargo-flamegraph and nightly profiling settings.
 profile-dynamapper-flamegraph *args:
