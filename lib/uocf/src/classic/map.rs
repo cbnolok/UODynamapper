@@ -29,7 +29,6 @@
 
 crate::eyre_imports!();
 use bytemuck::{cast_slice, Pod, Zeroable};
-use glam::Vec3; // Bevy uses glam::Vec3 under the hood.
 use memmap2::Mmap;
 use std::fs::File;
 use std::path::PathBuf;
@@ -402,10 +401,10 @@ pub struct MapCellCoords {
     pub y: u32,
 }
 impl MapCellCoords {
-    pub fn from_vec3uo(position_vector: &Vec3) -> Self {
+    pub fn from_xy(x: f32, y: f32) -> Self {
         Self {
-            x: position_vector.x as u32,
-            y: position_vector.y as u32,
+            x: x as u32,
+            y: y as u32,
         }
     }
 }
