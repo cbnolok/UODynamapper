@@ -16,26 +16,19 @@ nonminimal_bool = "allow"
 too_many_arguments = "allow"
 
 [dependencies]
-eframe = { version = "0.31.1", default-features = false, features = [
-    "default_fonts",
-    "wayland",
-    "wgpu",
-    "x11",
-    "persistence",
-    "glow",
-] }
-egui = { version = "0.31.1", features = [ "bytemuck" ] }
-egui_extras = { version = "0.31.1", features = ["all_loaders"] }
+eframe.workspace = true
+egui.workspace = true
+egui_extras.workspace = true
 image = { version = "0.25", default-features = false, features = ["png"] }
 image-postprocess = { path = "../../lib/image-postprocess" }
 udd-conv = { path = "../../lib/udd-conv" }
 udd-assets = { path = "../../lib/udd-assets" }
 udd-image-codecs = { path = "../../lib/udd-image-codecs", features = ["ktx2"] }
 uocf = { path = "../../lib/uocf" }
-rfd = { version = "0.15", features = ["xdg-portal"] }
+rfd.workspace = true
 udd-logging = { path = "../../lib/udd-logging" }
-rodio = { version = "0.17", default-features = false }
+rodio = { version = "0.22", default-features = false }
 serde = { version = "1", features = ["derive"] }
-color-eyre = "0.6"
+color-eyre.workspace = true
 knuffel = "3"
-log = "0.4.29"
+log = "0.4.32"

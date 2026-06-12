@@ -13,20 +13,13 @@ needless_lifetimes = "allow"
 nonminimal_bool = "allow"
 
 [dependencies]
-eframe = { version = "0.31.1", default-features = false, features = [
-    "default_fonts",
-    "wayland",
-    "wgpu",
-    "x11",
-    "persistence",
-    "glow",
-] }
-egui = { version = "0.31.1", features = [ "bytemuck" ] }
-egui_extras = { version = "0.31.1", features = ["all_loaders"] }
+eframe.workspace = true
+egui.workspace = true
+egui_extras.workspace = true
 uocf = { path = "../../lib/uocf" }
-rfd = { version = "0.15", features = ["xdg-portal"] }
+rfd.workspace = true
 serde = { version = "1", features = ["derive"] }
-toml = "0.8"
+toml.workspace = true
 udd-logging = { path = "../../lib/udd-logging" }
-color-eyre = "0.6"
+color-eyre.workspace = true
 crossbeam-channel = "0.5"

@@ -23,13 +23,13 @@ too_many_arguments = "allow"
 
 [dependencies]
 byteorder = { version = "1.5", features = ["std"] }
-color-eyre = { version = "0.6", features = ["track-caller"] }
+color-eyre = { workspace = true, features = ["track-caller"] }
 dds = { version = "0.2", default-features = false }
 derive-new = { version = "0.7", default-features = false }
 getset = { version = "0.1", default-features = false }
-glam = { version = "0.30", default-features = false, features = ["std"] }
+glam = { version = "0.33", default-features = false, features = ["std"] }
 image = { version = "0.25", default-features = false, features = ["bmp", "dds", "png", "tga"] }
-ddsfile = "0.5.2"
+ddsfile.workspace = true
 wide = { version = "1", default-features = false, features = ["std"] }
 bytemuck = { version = "1.*", default-features = false, features = ["derive", "aarch64_simd", "avx512_simd"] }
 bitflags = "2"
@@ -42,11 +42,11 @@ adler32 = "1.2.0"
 flate2 = { version = "1.1.9", features = ["zlib-ng"], default-features = false }
 rayon = "1.12.0"
 serde = { version = "1.0.228", features = ["derive"] }
-toml = "1.1.2"
+toml.workspace = true
 memmap2 = "0.9"
 
 [dev-dependencies]
-rand = "0.8.6"
+rand = "*"
 
 [features]
 profiling = []

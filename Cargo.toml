@@ -20,6 +20,15 @@ members = [
 
 [workspace.dependencies]
 zstd = { version = "0.13", features = ["zstdmt"] }
+eframe = { version = "0.34", default-features = false, features = ["default_fonts", "wayland", "wgpu", "x11", "persistence", "glow"] }
+egui = { version = "0.34", features = ["bytemuck"] }
+egui_extras = { version = "0.34", features = ["image"] }
+rfd = { version = "0.17", features = ["xdg-portal"] }
+ktx2 = "0.5"
+indicatif = "0.18"
+ddsfile = "0.6.0"
+color-eyre = "0.6"
+toml = { version = "1.1", features = ["serde"] }
 
 [workspace.lints.clippy]
 collapsible_if = "allow"
@@ -104,9 +113,9 @@ opt-level = 3
 
 [profile.dev]
 opt-level = 1               # Default for the profile, but shadowed by "*" below
-incremental = true          # Default for the profile, but shadowed by "*" below
-debug = true                # Default for the profile, but shadowed by "*" below
-debug-assertions = true     # Default for the profile, but shadowed by "*" below
+incremental = false         # Default for the profile, but shadowed by "*" below
+debug = false               # Default for the profile, but shadowed by "*" below
+debug-assertions = false    # Default for the profile, but shadowed by "*" below
 
 # Settings for dependencies (incl. Bevy) AND workspace members (unless overridden below):
 [profile.dev.package."*"]
@@ -134,6 +143,7 @@ opt-level = 3
 
 [profile.dev.package.dynamapper]
 opt-level = 1
+#incremental = true
 debug = true
 debug-assertions = true
 strip = false
