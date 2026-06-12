@@ -22,7 +22,6 @@ image = { version = "0.25", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 xbrz-rs = "0.1.0"
 hqx = { git = "https://github.com/CryZe/wasmboy-rs" }
-mmpx = "0.2.0"
 wide = { version = "1.5", default-features = false, features = ["std"] }
 
 [package.metadata.cargo-machete]
