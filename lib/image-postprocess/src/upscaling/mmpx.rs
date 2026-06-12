@@ -6,6 +6,8 @@
 //!
 //! Native support for 2x magnification. 4x is implemented as two 2x passes.
 
+const TRANSPARENT: u32 = 0;
+
 pub fn apply_mmpx(width: u32, height: u32, rgba: &[u8], scale: u32) -> (u32, u32, Vec<u8>) {
     match scale {
         2 => magnify2(width, height, rgba),
@@ -265,9 +267,11 @@ fn unpack_rgba(pixels: &[u32]) -> Vec<u8> {
 }
 
 fn pixel(pixels: &[u32], width: u32, height: u32, x: i32, y: i32) -> u32 {
-    let clamped_x = x.clamp(0, width as i32 - 1) as u32;
-    let clamped_y = y.clamp(0, height as i32 - 1) as u32;
-    pixels[(clamped_y * width + clamped_x) as usize]
+    if x < 0 || y < 0 || x >= width as i32 || y >= height as i32 {
+        return TRANSPARENT;
+    }
+
+    pixels[(y as u32 * width + x as u32) as usize]
 }
 
 fn write2x(
@@ -386,5 +390,17 @@ mod tests {
         let center_top_left = ((2 * 6 + 2) * 4) as usize;
 
         assert_eq!(&out[center_top_left..center_top_left + 4], &BLACK);
+    }
+
+    #[test]
+    fn mmpx_treats_out_of_bounds_as_transparent() {
+        let black = u32::from_le_bytes(BLACK);
+        let pixels = [black];
+
+        assert_eq!(pixel(&pixels, 1, 1, -1, 0), TRANSPARENT);
+        assert_eq!(pixel(&pixels, 1, 1, 0, -1), TRANSPARENT);
+        assert_eq!(pixel(&pixels, 1, 1, 1, 0), TRANSPARENT);
+        assert_eq!(pixel(&pixels, 1, 1, 0, 1), TRANSPARENT);
+        assert_eq!(pixel(&pixels, 1, 1, 0, 0), black);
     }
 }
