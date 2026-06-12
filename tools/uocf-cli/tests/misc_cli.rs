@@ -392,7 +392,7 @@ fn write_bc7_ktx2(path: &Path, width: u32, height: u32, rgba: &[u8]) {
     dds::encode(&mut blocks, image, Format::BC7_UNORM, None, &options).expect("encode bc7");
     let extent = ImageExtent::new(width, height).expect("create extent");
     let bc7 = Bc7TextureData::new(extent, blocks).expect("create bc7 texture");
-    udd_image_codecs::ktx2::write_ktx2_bc7_zstd(bc7, path, 0).expect("write ktx2");
+    udd_image_codecs::ktx2::write_ktx2_bc7_zstd(bc7, path, 3).expect("write ktx2");
 }
 
 #[test]

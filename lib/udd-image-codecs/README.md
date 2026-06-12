@@ -26,8 +26,9 @@ The encoder is inspired by:
 
 ### `ktx2` (default: off)
 
-KTX2 container writing via `libktx-rs`. Used by the `pack-radar` command in
-`udd-pack` and other paths that need GPU-ready KTX2 output.
+KTX2 container reading/writing for single-level BC7 textures, with optional
+Zstd supercompression. Used by the `pack-radar` command in `udd-pack` and other
+paths that need GPU-ready KTX2 output.
 
 ## Notes
 
