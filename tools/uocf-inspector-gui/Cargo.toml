@@ -27,7 +27,7 @@ udd-image-codecs = { path = "../../lib/udd-image-codecs", features = ["ktx2"] }
 uocf = { path = "../../lib/uocf" }
 rfd.workspace = true
 udd-logging = { path = "../../lib/udd-logging" }
-rodio = { version = "0.22", default-features = false }
+rodio = { version = "0.22", default-features = false, features = ["playback"] }
 serde = { version = "1", features = ["derive"] }
 color-eyre.workspace = true
 knuffel = "3"

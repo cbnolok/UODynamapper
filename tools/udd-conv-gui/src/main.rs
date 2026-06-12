@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use eframe::egui;
 use color_eyre::eyre;
 
@@ -40,15 +42,16 @@ async fn main() -> eyre::Result<()> {
 }
 
 impl eframe::App for UddConvApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
         ctx.set_visuals(egui::Visuals::dark());
         let settings_before = self.settings.clone();
 
         // External preview window (for big textures)
-        self.ui_preview_window(ctx);
-        self.ui_upscale_preview_window(ctx);
+        self.ui_preview_window(&ctx);
+        self.ui_upscale_preview_window(&ctx);
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show(&ctx, |ui| {
             ui.vertical(|ui| {
                 ui.add_space(5.0);
                 ui.heading("UODynamapper Asset Converter");

@@ -158,7 +158,8 @@ impl UopPopulatorApp {
 }
 
 impl eframe::App for UopPopulatorApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
         // Handle messages
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
@@ -192,7 +193,7 @@ impl eframe::App for UopPopulatorApp {
             }
         }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show(&ctx, |ui| {
             ui.vertical_centered(|ui| {
                 ui.heading("UOP Dictionary Populator");
                 ui.add_space(8.0);

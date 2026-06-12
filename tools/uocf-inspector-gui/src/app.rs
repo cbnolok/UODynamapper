@@ -5,6 +5,7 @@ use image_postprocess::palette::{
     TransparencyPolicy,
 };
 use image_postprocess::upscaling::{EnhancementFilter, UpscaleFilter};
+use std::num::NonZero;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc};
@@ -1031,9 +1032,8 @@ pub struct ClilocFileEntry {
 }
 
 pub struct SoundPlayer {
-    _stream: rodio::OutputStream,
-    handle: rodio::OutputStreamHandle,
-    sink: Option<rodio::Sink>,
+    device_sink: rodio::MixerDeviceSink,
+    player: Option<rodio::Player>,
 }
 
 #[derive(Clone)]
@@ -1047,39 +1047,39 @@ pub struct InspectorImagePreview {
 
 impl SoundPlayer {
     pub fn new() -> color_eyre::eyre::Result<Self> {
-        let (_stream, handle) = rodio::OutputStream::try_default()?;
+        let mut device_sink = rodio::DeviceSinkBuilder::open_default_sink()?;
+        device_sink.log_on_drop(false);
         Ok(Self {
-            _stream,
-            handle,
-            sink: None,
+            device_sink,
+            player: None,
         })
     }
 
     pub fn play_pcm(&mut self, pcm_data: &[u8]) -> color_eyre::eyre::Result<()> {
         self.stop();
-        let samples: Vec<i16> = pcm_data
+        let samples: Vec<f32> = pcm_data
             .chunks_exact(2)
-            .map(|sample| i16::from_le_bytes([sample[0], sample[1]]))
+            .map(|sample| i16::from_le_bytes([sample[0], sample[1]]) as f32 / 32768.0)
             .collect();
         let source = rodio::buffer::SamplesBuffer::new(
-            uocf::classic::sound::CHANNELS,
-            uocf::classic::sound::SAMPLE_RATE,
+            NonZero::new(uocf::classic::sound::CHANNELS).unwrap(),
+            NonZero::new(uocf::classic::sound::SAMPLE_RATE).unwrap(),
             samples,
         );
-        let sink = rodio::Sink::try_new(&self.handle)?;
-        sink.append(source);
-        self.sink = Some(sink);
+        let player = rodio::Player::connect_new(self.device_sink.mixer());
+        player.append(source);
+        self.player = Some(player);
         Ok(())
     }
 
     pub fn stop(&mut self) {
-        if let Some(sink) = self.sink.take() {
-            sink.stop();
+        if let Some(player) = self.player.take() {
+            player.stop();
         }
     }
 
     pub fn is_playing(&self) -> bool {
-        self.sink.as_ref().is_some_and(|sink| !sink.empty())
+        self.player.as_ref().is_some_and(|player| !player.empty())
     }
 }
 
@@ -4072,8 +4072,9 @@ fn crop_rgba_rect(
 }
 
 impl eframe::App for UopInspectorApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        crate::ui::draw_ui(self, ctx);
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        crate::ui::draw_ui(self, &ctx);
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {

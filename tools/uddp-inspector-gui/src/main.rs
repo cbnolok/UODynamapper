@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use color_eyre::eyre;
 use eframe::egui;
 
@@ -51,11 +53,12 @@ async fn main() -> eyre::Result<()> {
 }
 
 impl eframe::App for InspectorApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.handle_keyboard_navigation(ctx);
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        self.handle_keyboard_navigation(&ctx);
 
         // Top panel: Package selector
-        egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
+        egui::TopBottomPanel::top("top_panel").show(&ctx, |ui| {
             ui.horizontal(|ui| {
                 if ui.button("📁 Open UDDP...").clicked() {
                     if let Some(path) = open_package_dialog(self.settings.last_package_dir.as_deref()) {
@@ -72,7 +75,7 @@ impl eframe::App for InspectorApp {
         egui::SidePanel::left("left_panel")
             .resizable(true)
             .default_width(MAIN_LEFT_PANEL_DEFAULT_WIDTH)
-            .show(ctx, |ui| {
+            .show(&ctx, |ui| {
                 self.ui_left_panel(ui);
             });
 
@@ -87,18 +90,18 @@ impl eframe::App for InspectorApp {
             egui::SidePanel::right("right_panel")
                 .resizable(true)
                 .default_width(MAIN_RIGHT_PANEL_DEFAULT_WIDTH)
-                .show(ctx, |ui| {
-                    self.ui_details(ctx, ui, idx);
+                .show(&ctx, |ui| {
+                    self.ui_details(&ctx, ui, idx);
                 });
         }
 
         // Central area: The big table
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show(&ctx, |ui| {
             if self.package.is_some() {
                 match self.view_mode {
-                    ViewMode::Package | ViewMode::Virtual => self.render_table(ctx, ui),
-                    ViewMode::MobileAnimCc => ui_mobile_anim_cc(self, ctx, ui),
-                    ViewMode::MobileAnimEc => ui_mobile_anim_ec(self, ctx, ui),
+                    ViewMode::Package | ViewMode::Virtual => self.render_table(&ctx, ui),
+                    ViewMode::MobileAnimCc => ui_mobile_anim_cc(self, &ctx, ui),
+                    ViewMode::MobileAnimEc => ui_mobile_anim_ec(self, &ctx, ui),
                 }
             } else {
                 ui.centered_and_justified(|ui| {
@@ -109,7 +112,7 @@ impl eframe::App for InspectorApp {
 
         // Optional separate window for large images
         if self.image_window_open {
-            self.ui_texture_viewer_window(ctx);
+            self.ui_texture_viewer_window(&ctx);
         }
     }
 
