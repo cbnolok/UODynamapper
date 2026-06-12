@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use indicatif::{ProgressBar, ProgressStyle};
+use crate::progress::{ProgressBar, ProgressStyle};
 use log::info;
 use rayon::prelude::*;
 

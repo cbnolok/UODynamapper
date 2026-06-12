@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use color_eyre::eyre::{self, WrapErr};
-use indicatif::{ProgressBar, ProgressStyle};
+use crate::progress::{ProgressBar, ProgressStyle};
 use log::info;
 use udd_container::{
     BuildProgress, BuildProgressFile, BuildProgressPhase, CompressionFlag, CompressionSummary,

@@ -9,7 +9,7 @@
 //! The lookup mode is `DenseId` where ID is the block index.
 
 use color_eyre::eyre::{self};
-use indicatif::{ProgressBar, ProgressStyle};
+use crate::progress::{ProgressBar, ProgressStyle};
 use log::info;
 use std::path::{Path, PathBuf};
 

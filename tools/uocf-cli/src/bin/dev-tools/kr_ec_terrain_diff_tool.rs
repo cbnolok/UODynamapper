@@ -30,7 +30,7 @@ struct EcMaterial {
 
 fn main() -> eyre::Result<()> {
     color_eyre::install()?;
-    let _ = udd_logging::install_paris_logger();
+    let _ = udd_logging::install_tracing_indicatif_logger();
 
     let cli = Cli::parse();
     let kr = parse_route_map(&cli.kr_generated, "kr")?;

@@ -5,7 +5,7 @@
 //! the color source and various compression options.
 
 use color_eyre::eyre::{self, Context};
-use indicatif::{ProgressBar, ProgressStyle};
+use crate::progress::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
 
 use crate::bc7::{

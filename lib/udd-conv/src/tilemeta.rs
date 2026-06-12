@@ -17,7 +17,7 @@
 use std::path::{Path, PathBuf};
 
 use color_eyre::eyre::{self, WrapErr};
-use indicatif::{ProgressBar, ProgressStyle};
+use crate::progress::{ProgressBar, ProgressStyle};
 use log::info;
 
 use crate::classic_patches::{load_verdata_if_enabled, ClassicPatchOptions};

@@ -186,7 +186,7 @@ impl From<CliMultimapStyle> for MultimapStyle {
 
 fn main() -> eyre::Result<()> {
     color_eyre::install()?;
-    let _ = udd_logging::install_paris_logger();
+    let _ = udd_logging::install_tracing_indicatif_logger();
 
     match Cli::parse().command {
         Commands::RleToImage { input, output } => {

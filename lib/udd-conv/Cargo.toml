@@ -22,9 +22,10 @@ byteorder = { version = "1.5.0", default-features = false }
 color-eyre.workspace = true
 dds = { version = "0.2", default-features = false } # Portable BC7 decode path.
 guillotiere = "0.7"
-indicatif.workspace = true
 log = "0.4.32"
 rayon = "1.12.0"
+tracing.workspace = true
+tracing-indicatif.workspace = true
 uocf = { path = "../uocf" }
 udd-assets = { path = "../udd-assets" }
 udd-container = { path = "../udd-container" }

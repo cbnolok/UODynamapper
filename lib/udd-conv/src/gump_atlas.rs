@@ -1,7 +1,7 @@
 use byteorder::{LittleEndian, WriteBytesExt};
 use color_eyre::eyre;
 use guillotiere::{size2, AtlasAllocator};
-use indicatif::{ProgressBar, ProgressStyle};
+use crate::progress::{ProgressBar, ProgressStyle};
 use udd_container::{AddFileRequest, AddOwnedFileRequest, CompressionFlag, DataType, UddpBuilder};
 
 use crate::tex_art_cc::crop_rgba_page;

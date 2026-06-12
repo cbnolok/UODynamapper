@@ -7,8 +7,8 @@ use clap::Parser;
 use serde::Deserialize;
 use uocf::uop_container::hash_dictionary::HashDictionary;
 use uocf::uop_container::package::UopPackage;
+use udd_logging::progress::{ProgressBar, ProgressStyle};
 use uocf::uop_container::template::UopTemplate;
-use indicatif::{ProgressBar, ProgressStyle};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -44,7 +44,7 @@ struct PackageConfig {
 
 fn main() -> color_eyre::eyre::Result<()> {
     color_eyre::install()?;
-    let _ = udd_logging::install_paris_logger();
+    let _ = udd_logging::install_tracing_indicatif_logger();
 
     let args = Args::parse();
 

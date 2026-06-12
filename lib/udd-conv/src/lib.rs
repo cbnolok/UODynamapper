@@ -17,6 +17,7 @@ pub mod tex_land_cc;
 pub mod tex_art_ec;
 pub mod tex_land_ec;
 pub mod package_progress;
+mod progress;
 pub mod source_paths;
 pub mod tilemeta;
 pub mod upscale_pipeline;

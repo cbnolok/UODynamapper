@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use byteorder::{LittleEndian, WriteBytesExt};
 use color_eyre::eyre::{self, WrapErr};
 use guillotiere::{size2, AtlasAllocator};
-use indicatif::{ProgressBar, ProgressStyle};
+use crate::progress::{ProgressBar, ProgressStyle};
 use log::info;
 use rayon::prelude::*;
 use udd_container::{

@@ -2,7 +2,7 @@
 
 use byteorder::{LittleEndian, WriteBytesExt};
 use color_eyre::eyre::{self, WrapErr};
-use indicatif::{ProgressBar, ProgressStyle};
+use crate::progress::{ProgressBar, ProgressStyle};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};

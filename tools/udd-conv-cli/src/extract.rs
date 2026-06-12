@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use color_eyre::eyre::{self, WrapErr};
 use image::{ColorType, ImageFormat};
-use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
+use udd_logging::progress::{ProgressBar, ProgressStyle};
 use udd_assets::bc7::{decode_bc7_to_rgba8888, ImageExtent};
 use udd_assets::{TexArtCcPackage, TexArtEcPackage, TexLandEcPackage, TileMetaPackage};
 use udd_assets::tex_land_ec::{

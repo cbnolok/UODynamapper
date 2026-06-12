@@ -34,7 +34,8 @@ packing, texture preparation, source decoding, and `.uddp` package assembly.
 
 ## Notes
 
-- All conversion functions emit progress via `indicatif` progress bars and log
-  via the `log` facade.
+- Terminal conversion progress is represented as `tracing` spans and rendered
+  by CLI frontends through `tracing-indicatif`; conversion logs continue to use
+  the `log` facade.
 - The `bc7-encode` feature of `udd-image-codecs` is always enabled in this
   crate's dependency.

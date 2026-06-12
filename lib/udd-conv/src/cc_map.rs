@@ -33,7 +33,7 @@
 //! texture array layer after the page is resolved.
 
 use color_eyre::eyre::{self};
-use indicatif::{ProgressBar, ProgressStyle};
+use crate::progress::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
 
 use crate::classic_patches::ClassicPatchOptions;

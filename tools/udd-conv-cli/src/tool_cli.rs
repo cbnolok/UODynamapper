@@ -171,7 +171,7 @@ struct AtlasPageBounds {
 
 pub fn run() -> eyre::Result<()> {
     color_eyre::install()?;
-    let _ = udd_logging::install_paris_logger();
+    let _ = udd_logging::install_tracing_indicatif_logger();
 
     match Cli::parse().command {
         Commands::Info { file } => package_info::print_package_info(&file)?,
