@@ -31,6 +31,14 @@ struct MulAnimationTreeEntry {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+struct MulAnimationEntryKey {
+    body_id: u16,
+    action_id: u16,
+    direction: u8,
+    source_index: u32,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 struct AnimationFrameEntryKey {
     package_index: usize,
     file_hash: u64,
@@ -631,7 +639,7 @@ fn show_mul_animation_tree(
     };
 
     ui.label("Filter:");
-    ui.text_edit_singleline(&mut app.search_query);
+    let filter_response = ui.text_edit_singleline(&mut app.search_query);
     let query = app.search_query.to_ascii_lowercase();
 
     let mut tree = BTreeMap::<u16, BTreeMap<u16, BTreeMap<u8, MulAnimationTreeEntry>>>::new();
@@ -670,6 +678,17 @@ fn show_mul_animation_tree(
             ),
         );
     }
+
+    let visible_keys = mul_animation_entry_keys(tree_order, ordering, &tree, &source_tree);
+    let selected_key = selected_mul_animation_entry_key(app, &visible_keys);
+    let keyboard_moved = if let Some(delta) = arrow_delta(ui, filter_response.has_focus()) {
+        if let Some(key) = move_selection(&visible_keys, selected_key, delta) {
+            select_mul_animation_entry_key(app, ctx, key);
+        }
+        true
+    } else {
+        false
+    };
 
     let scroll_width = ui.available_width();
     egui::ScrollArea::vertical()
@@ -743,6 +762,7 @@ fn show_mul_animation_tree(
                                                     entry,
                                                     default_open,
                                                     collapse_revision,
+                                                    keyboard_moved,
                                                 );
                                             }
                                         });
@@ -779,7 +799,7 @@ fn show_mul_animation_tree(
                         .show(ui, |ui| {
                             show_mul_frame_list(
                                 app, ctx, ui, &anim_map, file_index, body_id, action_id,
-                                direction, entry.source_index,
+                                direction, entry.source_index, keyboard_moved,
                             );
                         });
                     }
@@ -800,6 +820,7 @@ fn show_mul_direction_tree(
     entry: MulAnimationTreeEntry,
     default_open: bool,
     collapse_revision: u64,
+    keyboard_moved: bool,
 ) {
     egui::CollapsingHeader::new(format!(
         "Direction {} (idx {})",
@@ -831,8 +852,74 @@ fn show_mul_direction_tree(
             action_id,
             direction,
             entry.source_index,
+            keyboard_moved,
         );
     });
+}
+
+fn mul_animation_entry_keys(
+    tree_order: AnimationTreeOrder,
+    ordering: Option<bool>,
+    tree: &BTreeMap<u16, BTreeMap<u16, BTreeMap<u8, MulAnimationTreeEntry>>>,
+    source_tree: &BTreeMap<u32, (u16, u16, u8, MulAnimationTreeEntry)>,
+) -> Vec<MulAnimationEntryKey> {
+    let mut keys = Vec::new();
+    match tree_order {
+        AnimationTreeOrder::BodyId => {
+            for (body_id, actions) in tree {
+                for (action_id, directions) in actions {
+                    for (direction, entry) in directions {
+                        keys.push(MulAnimationEntryKey {
+                            body_id: *body_id,
+                            action_id: *action_id,
+                            direction: *direction,
+                            source_index: entry.source_index,
+                        });
+                    }
+                }
+            }
+        }
+        AnimationTreeOrder::SourceIndex => {
+            for (source_index, (body_id, action_id, direction, _entry)) in source_tree {
+                keys.push(MulAnimationEntryKey {
+                    body_id: *body_id,
+                    action_id: *action_id,
+                    direction: *direction,
+                    source_index: *source_index,
+                });
+            }
+        }
+    }
+    if ordering == Some(true) {
+        keys.reverse();
+    }
+    keys
+}
+
+fn selected_mul_animation_entry_key(
+    app: &UopInspectorApp,
+    visible_keys: &[MulAnimationEntryKey],
+) -> Option<MulAnimationEntryKey> {
+    visible_keys
+        .iter()
+        .copied()
+        .find(|key| {
+            app.selected_anim_id == u32::from(key.body_id)
+                && app.selected_action_id == key.action_id
+                && app.selected_direction == key.direction
+        })
+}
+
+fn select_mul_animation_entry_key(
+    app: &mut UopInspectorApp,
+    ctx: &egui::Context,
+    key: MulAnimationEntryKey,
+) {
+    app.selected_anim_id = u32::from(key.body_id);
+    app.selected_action_id = key.action_id;
+    app.selected_direction = key.direction;
+    app.current_frame_idx = 0;
+    app.last_frame_time = ctx.input(|input| input.time);
 }
 
 fn show_mul_frame_list(
@@ -845,6 +932,7 @@ fn show_mul_frame_list(
     action_id: u16,
     direction: u8,
     source_index: u32,
+    keyboard_moved: bool,
 ) {
     match anim_map.decode_animation_index_metadata(file_index, source_index) {
         Ok(frames) => {
@@ -856,10 +944,11 @@ fn show_mul_frame_list(
                     && app.selected_action_id == action_id
                     && app.selected_direction == direction
                     && app.current_frame_idx == frame_index;
-                if ui
-                    .selectable_label(selected, format!("Frame {}", frame_index))
-                    .clicked()
-                {
+                let response = ui.selectable_label(selected, format!("Frame {}", frame_index));
+                if keyboard_moved && selected {
+                    response.scroll_to_me(Some(egui::Align::Center));
+                }
+                if response.clicked() {
                     app.selected_anim_id = u32::from(body_id);
                     app.selected_action_id = action_id;
                     app.selected_direction = direction;
