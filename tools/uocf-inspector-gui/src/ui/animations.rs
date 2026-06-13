@@ -16,6 +16,13 @@ use uocf::classic::michelangelo_uop_codec::{
 use uocf::classic::vd_codec::VdFile;
 use uocf::uop_container::hash::hash_file_name_single;
 
+const EC_ANIMATIONS_COLLECTION_XML: &str = include_str!(
+    "../../../_shared_assets/manual_mappings_from_ec_super_viewer_todo/AnimationsCollection - EC.xml"
+);
+const KR_ANIMATIONS_COLLECTION_XML: &str = include_str!(
+    "../../../_shared_assets/manual_mappings_from_ec_super_viewer_todo/AnimationsCollection - KR.xml"
+);
+
 #[derive(Clone, Copy)]
 struct MulAnimationTreeEntry {
     source_index: u32,
@@ -946,10 +953,38 @@ fn show_uop_animationframe_tree(
                                     });
                             }
                         } else {
+                            let mut actions = BTreeMap::<u16, Vec<AnimationFrameUopEntry>>::new();
+                            let mut direct_entries = Vec::new();
                             for entry in body_entries {
-                                show_ec_uop_animationframe_entry_frames(
-                                    app, ctx, ui, &entry, body_id,
-                                );
+                                if let Some(action_id) = entry.action_id {
+                                    actions.entry(action_id).or_default().push(entry);
+                                } else {
+                                    direct_entries.push(entry);
+                                }
+                            }
+                            for (action_id, entries) in actions {
+                                egui::CollapsingHeader::new(format!("Action {}", action_id))
+                                    .id_salt((
+                                        "uocf_ec_animationframe_action",
+                                        collapse_revision,
+                                        body_id,
+                                        action_id,
+                                    ))
+                                    .default_open(
+                                        collapse_revision == 0
+                                            && app.selected_anim_id == body_id
+                                            && app.selected_action_id == action_id,
+                                    )
+                                    .show(ui, |ui| {
+                                        for entry in entries {
+                                            show_ec_uop_animationframe_entry_frames(
+                                                app, ctx, ui, &entry, body_id,
+                                            );
+                                        }
+                                    });
+                            }
+                            for entry in direct_entries {
+                                show_ec_uop_animationframe_entry_frames(app, ctx, ui, &entry, body_id);
                             }
                         }
                     });
@@ -1088,14 +1123,33 @@ fn show_ec_uop_animationframe_entry_frames(
 ) {
     let selected_entry = app.selected_anim_id == body_id
         && app.selected_animationframe_file_hash == Some(entry.file_hash);
+    let frame_count = if entry.frame_count == 0 {
+        ec_animationframe_frame_count(app, entry).unwrap_or(0)
+    } else {
+        entry.frame_count
+    };
+    let frame_count_label = if frame_count == 0 {
+        "unknown".to_string()
+    } else {
+        frame_count.to_string()
+    };
     let label = match entry.group_id {
-        Some(group_id) => format!(
-            "Group {group_id:02} / 0x{:016X}: {} frames",
-            entry.file_hash, entry.frame_count
-        ),
+        Some(group_id) => {
+            if let Some(block_index) = entry.block_index {
+                format!(
+                    "Group {group_id:02} / block {} file {}: {} frames",
+                    block_index, entry.source_index, frame_count_label
+                )
+            } else {
+                format!(
+                    "Group {group_id:02} / 0x{:016X}: {} frames",
+                    entry.file_hash, frame_count_label
+                )
+            }
+        }
         None => format!(
             "AnimationFrame 0x{:016X}: {} frames",
-            entry.file_hash, entry.frame_count
+            entry.file_hash, frame_count_label
         ),
     };
 
@@ -1110,6 +1164,9 @@ fn show_ec_uop_animationframe_entry_frames(
         .show(ui, |ui| {
             if ui.selectable_label(selected_entry, "Select block").clicked() {
                 app.selected_anim_id = body_id;
+                if let Some(action_id) = entry.action_id {
+                    app.selected_action_id = action_id;
+                }
                 app.selected_animationframe_file_hash = Some(entry.file_hash);
                 if let Some(group_id) = entry.group_id {
                     app.selected_anim_file_idx = group_id;
@@ -1118,16 +1175,19 @@ fn show_ec_uop_animationframe_entry_frames(
                 app.last_frame_time = ctx.input(|input| input.time);
             }
 
-            if entry.frame_count == 0 {
-                ui.label("No frames.");
+            if frame_count == 0 {
+                ui.label("Frame count unavailable until payload is decoded.");
             }
-            for frame_index in 0..entry.frame_count {
+            for frame_index in 0..frame_count {
                 let selected = selected_entry && app.current_frame_idx == frame_index;
                 if ui
                     .selectable_label(selected, format!("Frame {}", frame_index))
                     .clicked()
                 {
                     app.selected_anim_id = body_id;
+                    if let Some(action_id) = entry.action_id {
+                        app.selected_action_id = action_id;
+                    }
                     app.selected_animationframe_file_hash = Some(entry.file_hash);
                     if let Some(group_id) = entry.group_id {
                         app.selected_anim_file_idx = group_id;
@@ -1268,13 +1328,44 @@ fn decode_amo_animationframe_payload(data: &[u8]) -> eyre::Result<Vec<uocf::clas
     Ok(decoded_frames)
 }
 
-fn cc_direction_frame_count(app: &UopInspectorApp, entry: &AnimationFrameUopEntry) -> Option<usize> {
+fn cc_direction_frame_count(app: &mut UopInspectorApp, entry: &AnimationFrameUopEntry) -> Option<usize> {
+    let direction = entry.direction.unwrap_or(app.selected_direction);
+    let key = (
+        app.uop_cache.loaded_uops.len(),
+        entry.package_index,
+        entry.file_hash,
+        direction,
+    );
+    if let Some(count) = app.animationframe_uop_frame_counts.get(&key) {
+        return Some(*count);
+    }
+
     let payload = animationframe_payload(app, entry).ok()?;
     let metadata = AnimationFrameCc::direction_metadata(
         &payload,
-        entry.direction.unwrap_or(app.selected_direction),
+        direction,
     ).ok()?;
-    Some(metadata.len())
+    let count = metadata.len();
+    app.animationframe_uop_frame_counts.insert(key, count);
+    Some(count)
+}
+
+fn ec_animationframe_frame_count(app: &mut UopInspectorApp, entry: &AnimationFrameUopEntry) -> Option<usize> {
+    let key = (
+        app.uop_cache.loaded_uops.len(),
+        entry.package_index,
+        entry.file_hash,
+        u8::MAX,
+    );
+    if let Some(count) = app.animationframe_uop_frame_counts.get(&key) {
+        return Some(*count);
+    }
+
+    let payload = animationframe_payload(app, entry).ok()?;
+    let metadata = uocf::enhanced::animationframe::AnimationFrame::load_metadata(&payload).ok()?;
+    let count = metadata.frames_count as usize;
+    app.animationframe_uop_frame_counts.insert(key, count);
+    Some(count)
 }
 
 fn animationframe_uop_entries(
@@ -1368,53 +1459,11 @@ fn scan_animationframe_uop_packages(
     if source == ArtSource::CcUop {
         return scan_cc_animationframe_uop_packages(packages);
     }
-
-    let mut entries = Vec::new();
-    for (package_index, path, package) in packages {
-        let Some(group_id) = animationframe_package_group_id(&path) else {
-            continue;
-        };
-
-        for file in package.iter_files().filter(|file| file.has_size()) {
-            let file_hash = file.filename_hash();
-            let Ok(Some(data)) = package.unpack_file_by_hash(file_hash) else {
-                continue;
-            };
-            match source {
-                ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr => {
-                    let Ok(metadata) =
-                        uocf::enhanced::animationframe::AnimationFrame::load_metadata(&data)
-                    else {
-                        continue;
-                    };
-                    if metadata.frames_count == 0 {
-                        continue;
-                    }
-                    entries.push(AnimationFrameUopEntry {
-                        package_index,
-                        file_hash,
-                        body_id: metadata.animation_id,
-                        action_id: None,
-                        direction: None,
-                        group_id: Some(group_id),
-                        source_index: metadata.animation_id,
-                        frame_count: metadata.frames_count as usize,
-                    });
-                }
-                ArtSource::CcUop | ArtSource::Mul | ArtSource::Any => {}
-            }
-        }
+    if matches!(source, ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr) {
+        return scan_ec_animationframe_uop_packages(packages, source);
     }
-    entries.sort_by_key(|entry| {
-        (
-            entry.body_id,
-            entry.action_id.unwrap_or(0),
-            entry.direction.unwrap_or(0),
-            entry.group_id.unwrap_or(0),
-            entry.source_index,
-        )
-    });
-    entries
+
+    Vec::new()
 }
 
 fn scan_cc_animationframe_uop_packages(
@@ -1440,6 +1489,7 @@ fn scan_cc_animationframe_uop_packages(
                         action_id: Some(action_id),
                         direction: Some(direction),
                         group_id: Some(group_id),
+                        block_index: None,
                         source_index: action_id as u32,
                         frame_count: 0,
                     });
@@ -1459,9 +1509,143 @@ fn scan_cc_animationframe_uop_packages(
     entries
 }
 
+fn scan_ec_animationframe_uop_packages(
+    packages: Vec<(usize, PathBuf, uocf::uop_container::package::UopPackage)>,
+    source: ArtSource,
+) -> Vec<AnimationFrameUopEntry> {
+    let mut packages_by_group = BTreeMap::new();
+    for (package_index, path, package) in packages {
+        let Some(group_id) = animationframe_package_group_id(&path) else {
+            continue;
+        };
+        packages_by_group.insert(group_id, (package_index, package));
+    }
+
+    let mut entries = Vec::new();
+    for mapped in parse_ec_animation_collection(ec_animation_collection_xml(source)) {
+        let Some((package_index, package)) = packages_by_group.get(&mapped.group_id) else {
+            continue;
+        };
+        let Some(file) = package
+            .blocks()
+            .get(mapped.block_index as usize)
+            .and_then(|block| block.files().get(mapped.file_index as usize))
+        else {
+            continue;
+        };
+        if !file.has_size() {
+            continue;
+        }
+        entries.push(AnimationFrameUopEntry {
+            package_index: *package_index,
+            file_hash: file.filename_hash(),
+            body_id: mapped.body_id,
+            action_id: Some(mapped.action_id),
+            direction: None,
+            group_id: Some(mapped.group_id),
+            block_index: Some(mapped.block_index),
+            source_index: mapped.file_index,
+            frame_count: 0,
+        });
+    }
+
+    entries.sort_by_key(|entry| {
+        (
+            entry.body_id,
+            entry.action_id.unwrap_or(0),
+            entry.group_id.unwrap_or(0),
+            entry.block_index.unwrap_or(0),
+            entry.source_index,
+        )
+    });
+    entries
+}
+
 fn animationframe_package_group_id(path: &Path) -> Option<u8> {
     let file_name = path.file_name()?.to_str()?.to_ascii_lowercase();
     let index = file_name
+        .strip_prefix("animationframe")?
+        .strip_suffix(".uop")?
+        .parse::<u8>()
+        .ok()?;
+    (1..=6).contains(&index).then_some(index - 1)
+}
+
+#[derive(Clone, Copy)]
+struct EcAnimationCollectionEntry {
+    body_id: u32,
+    action_id: u16,
+    group_id: u8,
+    block_index: u32,
+    file_index: u32,
+}
+
+fn ec_animation_collection_xml(source: ArtSource) -> &'static str {
+    match source {
+        ArtSource::EcUopKr => KR_ANIMATIONS_COLLECTION_XML,
+        ArtSource::EcUop | ArtSource::EcUopLegacy => EC_ANIMATIONS_COLLECTION_XML,
+        _ => EC_ANIMATIONS_COLLECTION_XML,
+    }
+}
+
+fn parse_ec_animation_collection(xml: &str) -> Vec<EcAnimationCollectionEntry> {
+    let mut entries = Vec::new();
+    let mut current_body_id = None;
+
+    for line in xml.lines() {
+        let trimmed = line.trim_start_matches('\u{feff}').trim();
+        if trimmed.starts_with("<Item ") {
+            current_body_id = xml_attr(trimmed, "Id")
+                .and_then(|value| value.parse::<i32>().ok())
+                .and_then(|value| u32::try_from(value).ok());
+            continue;
+        }
+        if trimmed.starts_with("</Item") {
+            current_body_id = None;
+            continue;
+        }
+        if !trimmed.starts_with("<Animation ") {
+            continue;
+        }
+
+        let Some(body_id) = current_body_id else {
+            continue;
+        };
+        let Some(action_id) = xml_attr(trimmed, "Id").and_then(|value| value.parse::<u16>().ok()) else {
+            continue;
+        };
+        let Some(group_id) = xml_attr(trimmed, "UOP").and_then(animationframe_uop_name_group_id) else {
+            continue;
+        };
+        let Some(block_index) = xml_attr(trimmed, "Block").and_then(|value| value.parse::<u32>().ok()) else {
+            continue;
+        };
+        let Some(file_index) = xml_attr(trimmed, "File").and_then(|value| value.parse::<u32>().ok()) else {
+            continue;
+        };
+
+        entries.push(EcAnimationCollectionEntry {
+            body_id,
+            action_id,
+            group_id,
+            block_index,
+            file_index,
+        });
+    }
+
+    entries
+}
+
+fn xml_attr<'a>(line: &'a str, name: &str) -> Option<&'a str> {
+    let pattern = format!("{name}=\"");
+    let value_start = line.find(&pattern)? + pattern.len();
+    let value_end = line[value_start..].find('"')?;
+    Some(&line[value_start..value_start + value_end])
+}
+
+fn animationframe_uop_name_group_id(name: &str) -> Option<u8> {
+    let lower = name.to_ascii_lowercase();
+    let index = lower
         .strip_prefix("animationframe")?
         .strip_suffix(".uop")?
         .parse::<u8>()
