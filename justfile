@@ -11,8 +11,8 @@
 #    when sccache is disabled, allowing for potential future interception logic (e.g. for specific crates).
 # 4. Toolchains: We support both Stable and Nightly toolchains. Nightly is used for aggressive
 #    optimizations like 'build-std' which recompiles the standard library for the target.
-# 5. Linkers: On Linux, we automatically detect and use 'mold' or 'wild' for significantly
-#    faster link times.
+# 5. Linkers: On Linux, we automatically detect and use 'lld', 'mold', or 'wild' for
+#    significantly faster link times.
 
 set shell := ["bash", "-c"]
 set windows-shell := ["powershell.exe", "-c"]
@@ -35,8 +35,16 @@ has_sccache := if is_windows == "true" {
 } else {
     `command -v sccache || echo ""`
 }
+has_lld  := if is_linux == "true" { `command -v ld.lld || echo ""` } else { "" }
 has_mold := if is_linux == "true" { `command -v mold || echo ""` } else { "" }
 has_wild := if is_linux == "true" { `command -v wild || echo ""` } else { "" }
+rust_llvm_major_stable := `rustc -vV 2>/dev/null | sed -n 's/^LLVM version: \([0-9][0-9]*\).*/\1/p' | head -n1 || true`
+rust_llvm_major_nightly := `rustc +nightly -vV 2>/dev/null | sed -n 's/^LLVM version: \([0-9][0-9]*\).*/\1/p' | head -n1 || true`
+lld_llvm_major := if has_lld != "" {
+    `ld.lld --version 2>/dev/null | sed -n 's/.*LLD \([0-9][0-9]*\).*/\1/p' | head -n1 || true`
+} else {
+    ""
+}
 
 # --- Build Configuration ---
 
@@ -57,15 +65,49 @@ export RUSTC_WRAPPER := if sccache_effective == "true" { "sccache" } else { wrap
 # Determine linker to be used and to be passed to RUSTFLAGS
 # For now linux_debug_linker_base is unused, since we are relying on config.toml for rapid iteration debug
 #   builds with stable rust toolchain
-linux_debug_linker_base := if has_wild != "" {
-    "-Clink-arg=-fuse-ld=wild"
+linux_debug_linker_base := \
+if has_wild != "" {
+    " -Clink-arg=-fuse-ld=wild"
 } else if has_mold != "" {
-    "-Clink-arg=-fuse-ld=mold"
+    " -Clink-arg=-fuse-ld=mold"
+} else if has_lld != "" {
+    " -Clink-arg=-fuse-ld=lld"
 } else {
     ""
 }
-linux_optimized_linker_base := if has_mold != "" {
-    "-Clink-arg=-fuse-ld=mold"
+# lld can only read Rust LLVM bitcode for linker-plugin LTO when both use the same LLVM major version.
+lld_plugin_lto_stable := if lld_llvm_major == "" {
+    ""
+} else if rust_llvm_major_stable == "" {
+    ""
+} else if lld_llvm_major == rust_llvm_major_stable {
+    " -Clinker-plugin-lto -Cembed-bitcode=no"
+} else {
+    ""
+}
+lld_plugin_lto_nightly := if lld_llvm_major == "" {
+    ""
+} else if rust_llvm_major_nightly == "" {
+    ""
+} else if lld_llvm_major == rust_llvm_major_nightly {
+    " -Clinker-plugin-lto -Cembed-bitcode=no"
+} else {
+    ""
+}
+
+linux_optimized_linker_base_stable := \
+if has_lld != "" {
+    " -Clink-arg=-fuse-ld=lld" + lld_plugin_lto_stable
+} else if has_mold != "" {
+    " -Clink-arg=-fuse-ld=mold"
+} else {
+    ""
+}
+linux_optimized_linker_base_nightly := \
+if has_lld != "" {
+    " -Clink-arg=-fuse-ld=lld" + lld_plugin_lto_nightly
+} else if has_mold != "" {
+    " -Clink-arg=-fuse-ld=mold"
 } else {
     ""
 }
@@ -76,11 +118,19 @@ linker_debug_flags := if is_linux == "true" {
 } else {
     ""
 }
-linker_optimized_flags := if is_linux == "true" {
-    linux_optimized_linker_base +
-    "-Clink-arg=-Wl,--gc-sections -Clink-arg=-Wl,--no-allow-shlib-undefined"
+linker_optimized_flags_stable := if is_linux == "true" {
+    linux_optimized_linker_base_stable +\
+    " -Clink-arg=-Wl,--gc-sections -Clink-arg=-Wl,--no-allow-shlib-undefined"
 } else if is_macos == "true" {
-    "-Clink-arg=-Wl,-dead_strip   -Clink-arg=-Wl,--no-allow-shlib-undefined"
+    " -Clink-arg=-Wl,-dead_strip   -Clink-arg=-Wl,--no-allow-shlib-undefined"
+} else {
+  ""
+}
+linker_optimized_flags_nightly := if is_linux == "true" {
+    linux_optimized_linker_base_nightly +\
+    " -Clink-arg=-Wl,--gc-sections -Clink-arg=-Wl,--no-allow-shlib-undefined"
+} else if is_macos == "true" {
+    " -Clink-arg=-Wl,-dead_strip   -Clink-arg=-Wl,--no-allow-shlib-undefined"
 } else {
   ""
 }
@@ -88,16 +138,16 @@ linker_optimized_flags := if is_linux == "true" {
 # Features to enable on Linux by default (ensures Wayland/X11 support when using --no-default-features)
 linux_features := if is_linux == "true" { "linux_wayland,linux_x11" } else { "" }
 # Added -Clink-arg=-lgcc to musl RUSTFLAGS to satisfy compiler builtins like __popcountdi2 emitted by vendored libjxl C++ objects
-linux_musl_rustflags := " -C target-feature=+crt-static -C link-self-contained=yes -Clink-arg=-lgcc"
+linux_musl_rustflags := " -Ctarget-feature=+crt-static -Clink-self-contained=yes -Clink-arg=-lgcc"
 rustflags_release_stable_musl := ""
 rustflags_release_nightly_musl := ""
 rustflags_profile_stable_musl := ""
 rustflags_profile_nightly_musl := ""
 
 # Specialized RUSTFLAGS for different build types (exported to be accessible in shell commands)
-rustflags_debug_common              := " -C embed-bitcode=no"   # llvm bitcode is unneeded since we are not using LTO in debug
-rustflags_optimized_common_stable   := ""
-rustflags_optimized_common_nightly  := rustflags_optimized_common_stable  +\
+rustflags_debug_common              := linker_debug_flags + " -Cembed-bitcode=no"   # llvm bitcode is unneeded since we are not using LTO in debug
+rustflags_optimized_common_stable   := linker_optimized_flags_stable + ""
+rustflags_optimized_common_nightly  := linker_optimized_flags_nightly +\
                                         " -Zshare-generics=y -Zlocation-detail=none"
 export RUSTFLAGS_RELEASE_STABLE     := rustflags_optimized_common_stable  +\
                                         " -Csymbol-mangling-version=v0 -Cforce-unwind-tables=no"
