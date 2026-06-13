@@ -58,6 +58,7 @@ pub enum VirtualEntryData {
     EcLandMaterial(EcLandMaterialInfo),
     TileMetaLand(TileMetaLandInfo),
     TileMetaItem(TileMetaItemInfo),
+    Gump(GumpInfo),
     WorldLight(WorldLightInfo),
     MapBlock {
         source_entry_idx: usize,
@@ -147,6 +148,28 @@ pub struct TileMetaItemInfo {
     pub cc_start_y: i16,
     pub cc_offset_x: i16,
     pub cc_offset_y: i16,
+}
+
+#[derive(Debug, Clone)]
+pub struct GumpInfo {
+    pub source: GumpSourceInfo,
+}
+
+#[derive(Debug, Clone)]
+pub enum GumpSourceInfo {
+    SingleFile {
+        source_entry_idx: Option<usize>,
+        raw_size: u32,
+    },
+    AtlasSlot {
+        page_index: u32,
+        page_gump_index: u16,
+        x: u16,
+        y: u16,
+        width: u16,
+        height: u16,
+        upscale_factor: u16,
+    },
 }
 
 #[derive(Debug, Clone)]

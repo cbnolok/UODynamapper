@@ -14,6 +14,9 @@ visualization, metadata inspection, and mobile animation playback.
   entry and generic virtual entry modes.
 - **Atlas page preview**: inspect texture atlas pages, zoom, and review per-page
   metadata.
+- **Gump viewer**: load `gumps_cc.uddp` or `gumps_ec.uddp` and browse gump IDs
+  as virtual entries, including standalone payloads and paperdoll atlas slots
+  with logical size/upscale metadata.
 - **Mobile animation playback**: load `mobile_anim_cc.uddp` or
   `mobile_anim_ec.uddp` and play back mobile animation sequences with
   configurable speed and looping.

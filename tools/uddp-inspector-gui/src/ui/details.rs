@@ -378,6 +378,61 @@ impl InspectorApp {
                     });
                     ui.end_row();
                 }
+                VirtualEntryData::Gump(info) => {
+                    metadata_label(ui, "Gump ID:");
+                    ui.label(ventry.id.to_string());
+                    ui.end_row();
+                    match &info.source {
+                        crate::models::GumpSourceInfo::SingleFile {
+                            source_entry_idx,
+                            raw_size,
+                        } => {
+                            metadata_label(ui, "Source:");
+                            ui.label("single payload");
+                            ui.end_row();
+                            metadata_label(ui, "Raw Size:");
+                            ui.label(format_size(*raw_size as u64));
+                            ui.end_row();
+                            if let Some(source_entry_idx) = source_entry_idx {
+                                metadata_label(ui, "Entry Index:");
+                                ui.label(source_entry_idx.to_string());
+                                ui.end_row();
+                            }
+                        }
+                        crate::models::GumpSourceInfo::AtlasSlot {
+                            page_index,
+                            page_gump_index,
+                            x,
+                            y,
+                            width,
+                            height,
+                            upscale_factor,
+                        } => {
+                            metadata_label(ui, "Source:");
+                            ui.label("atlas slot");
+                            ui.end_row();
+                            metadata_label(ui, "Page Index:");
+                            ui.label(page_index.to_string());
+                            ui.end_row();
+                            metadata_label(ui, "Page Gump:");
+                            ui.label(page_gump_index.to_string());
+                            ui.end_row();
+                            metadata_label(ui, "Rect:");
+                            ui.label(format!("{},{} - {}x{}", x, y, width, height));
+                            ui.end_row();
+                            metadata_label(ui, "Logical Size:");
+                            ui.label(format!(
+                                "{}x{}",
+                                (u32::from(*width) / u32::from((*upscale_factor).max(1))).max(1),
+                                (u32::from(*height) / u32::from((*upscale_factor).max(1))).max(1)
+                            ));
+                            ui.end_row();
+                            metadata_label(ui, "Upscale:");
+                            ui.label(format!("{}x", upscale_factor));
+                            ui.end_row();
+                        }
+                    }
+                }
                 VirtualEntryData::WorldLight(info) => {
                     metadata_label(ui, "Light ID:");
                     ui.label(ventry.id.to_string());

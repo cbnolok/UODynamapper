@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};
-use udd_assets::{AtlasCacheOptions, MobileAnimCcPackage, MobileAnimEcPackage};
+use udd_assets::{AtlasCacheOptions, GumpsPackage, MobileAnimCcPackage, MobileAnimEcPackage};
 use udd_assets::tilemeta::{
     TileMetaItemTile, TileMetaLandTile, TILEMETA_ITEM_ENTRY_PATH, TILEMETA_LAND_ENTRY_PATH,
 };
@@ -57,6 +57,7 @@ pub struct InspectorApp {
     pub package_path: Option<PathBuf>,
     pub mobile_anim_cc_package: Option<Arc<MobileAnimCcPackage>>,
     pub mobile_anim_ec_package: Option<Arc<MobileAnimEcPackage>>,
+    pub gumps_package: Option<Arc<GumpsPackage>>,
     pub selected_mobile_anim_index: usize,
     pub selected_mobile_anim_frame_index: usize,
     pub mobile_anim_is_playing: bool,
@@ -109,6 +110,7 @@ impl InspectorApp {
             package_path: None,
             mobile_anim_cc_package: None,
             mobile_anim_ec_package: None,
+            gumps_package: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,
             mobile_anim_is_playing: false,
@@ -490,6 +492,10 @@ impl InspectorApp {
                 )
                 .ok()
                 .map(Arc::new);
+                self.gumps_package = GumpsPackage::from_uddp_package(reader.clone())
+                    .ok()
+                    .filter(|package| !package.available_gump_ids().is_empty())
+                    .map(Arc::new);
                 self.selected_mobile_anim_index = 0;
                 self.selected_mobile_anim_frame_index = 0;
                 self.mobile_anim_is_playing = false;
@@ -512,7 +518,7 @@ impl InspectorApp {
                 } else if self
                     .virtual_entries
                     .iter()
-                    .any(|entry| matches!(entry.data, VirtualEntryData::WorldLight(_)))
+                    .any(|entry| matches!(entry.data, VirtualEntryData::Gump(_) | VirtualEntryData::WorldLight(_)))
                 {
                     ViewMode::Virtual
                 } else {
@@ -545,6 +551,14 @@ impl InspectorApp {
                     self.virtual_material_entries = self.detect_tex_land_ec_material_entries(&package);
                 }
                 self.virtual_entries = atlas_entries;
+                return;
+            }
+        }
+
+        if let Some(package) = self.gumps_package.as_ref() {
+            let gump_entries = self.detect_gump_virtual_entries(package);
+            if !gump_entries.is_empty() {
+                self.virtual_entries = gump_entries;
                 return;
             }
         }
@@ -900,6 +914,74 @@ impl InspectorApp {
         entries
     }
 
+    pub fn detect_gump_virtual_entries(
+        &self,
+        package: &GumpsPackage,
+    ) -> Vec<VirtualEntry> {
+        package
+            .available_gump_ids()
+            .into_iter()
+            .map(|gump_id| {
+                if let Some(slot) = package.atlas_slot(gump_id) {
+                    let upscale_factor = slot.upscale_factor.max(1);
+                    let logical_width =
+                        (u32::from(slot.width) / u32::from(upscale_factor)).max(1);
+                    let logical_height =
+                        (u32::from(slot.height) / u32::from(upscale_factor)).max(1);
+                    VirtualEntry {
+                        id: gump_id,
+                        _data_type: udd_container::DataType::Gump as u8,
+                        kind: "Gump".to_string(),
+                        summary: format!(
+                            "atlas {}x{} at {},{}; logical {}x{}; upscale {}x",
+                            slot.width,
+                            slot.height,
+                            slot.x,
+                            slot.y,
+                            logical_width,
+                            logical_height,
+                            upscale_factor
+                        ),
+                        location: format!("page {}", slot.page_index),
+                        data: VirtualEntryData::Gump(GumpInfo {
+                            source: GumpSourceInfo::AtlasSlot {
+                                page_index: slot.page_index,
+                                page_gump_index: slot.page_gump_index,
+                                x: slot.x,
+                                y: slot.y,
+                                width: slot.width,
+                                height: slot.height,
+                                upscale_factor,
+                            },
+                        }),
+                    }
+                } else {
+                    let source_entry_idx = self.entries.iter().position(|entry| {
+                        entry.key == FileKey::Id(gump_id)
+                            && entry.data_type == udd_container::DataType::Gump as u8
+                    });
+                    let raw_size = source_entry_idx
+                        .and_then(|idx| self.entries.get(idx))
+                        .map(|entry| entry.raw_size)
+                        .unwrap_or(0);
+                    VirtualEntry {
+                        id: gump_id,
+                        _data_type: udd_container::DataType::Gump as u8,
+                        kind: "Gump".to_string(),
+                        summary: format!("single payload | {} raw", format_size(raw_size as u64)),
+                        location: format!("entry {}", gump_id),
+                        data: VirtualEntryData::Gump(GumpInfo {
+                            source: GumpSourceInfo::SingleFile {
+                                source_entry_idx,
+                                raw_size,
+                            },
+                        }),
+                    }
+                }
+            })
+            .collect()
+    }
+
     pub fn detect_world_light_virtual_entries(
         &self,
         package: &udd_assets::WorldLightsPackage,
@@ -1195,6 +1277,53 @@ impl InspectorApp {
                         self.preview_texture = None;
                         self.preview_text = Some(render_tilemeta_item_preview(ventry.id, &info));
                     }
+                    VirtualEntryData::Gump(info) => {
+                        let Some(package) = self.gumps_package.clone() else {
+                            self.preview_texture = None;
+                            self.preview_text = Some(format!(
+                                "Gump {} package reader is unavailable.",
+                                ventry.id
+                            ));
+                            return;
+                        };
+
+                        match package.read_gump_image(ventry.id) {
+                            Ok(image) => {
+                                let source = match info.source {
+                                    GumpSourceInfo::SingleFile { .. } => "single payload".to_string(),
+                                    GumpSourceInfo::AtlasSlot { page_index, .. } => {
+                                        format!("atlas page {page_index}")
+                                    }
+                                };
+                                self.set_preview_image(
+                                    ctx,
+                                    &format!("gump_{}", ventry.id),
+                                    [
+                                        image.physical_width as usize,
+                                        image.physical_height as usize,
+                                    ],
+                                    &image.rgba,
+                                    format!(
+                                        "Gump {} ({}x{} physical, {}x{} logical, {}, upscale {}x)",
+                                        ventry.id,
+                                        image.physical_width,
+                                        image.physical_height,
+                                        image.logical_width,
+                                        image.logical_height,
+                                        source,
+                                        image.upscale_factor
+                                    ),
+                                );
+                            }
+                            Err(error) => {
+                                self.preview_texture = None;
+                                self.preview_text = Some(format!(
+                                    "Failed to decode gump {}: {error}",
+                                    ventry.id
+                                ));
+                            }
+                        }
+                    }
                     VirtualEntryData::WorldLight(info) => {
                         let Some(light_bytes) = page_data_opt else {
                             self.preview_texture = None;
@@ -1267,6 +1396,32 @@ impl InspectorApp {
         self.atlas_texture = None;
         self.atlas_texture_size = None;
         self.atlas_text = None;
+
+        if entry.data_type == udd_container::DataType::Gump as u8 {
+            if let (FileKey::Id(gump_id), Some(package)) = (entry.key, self.gumps_package.clone()) {
+                if let Ok(image) = package.read_gump_image(gump_id) {
+                    self.set_preview_image(
+                        ctx,
+                        &format!("gump_{}", gump_id),
+                        [
+                            image.physical_width as usize,
+                            image.physical_height as usize,
+                        ],
+                        &image.rgba,
+                        format!(
+                            "Gump {} ({}x{} physical, {}x{} logical, single payload, upscale {}x)",
+                            gump_id,
+                            image.physical_width,
+                            image.physical_height,
+                            image.logical_width,
+                            image.logical_height,
+                            image.upscale_factor
+                        ),
+                    );
+                    return;
+                }
+            }
+        }
 
         // 0. Try UO Art/Texture decoders if it's a known UO data type and not KTX2/UDT1
         let is_ktx2 = data.starts_with(&[0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32, 0x30, 0xBB]);
@@ -1551,6 +1706,7 @@ mod tests {
             package_path: None,
             mobile_anim_cc_package: None,
             mobile_anim_ec_package: None,
+            gumps_package: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,
             mobile_anim_is_playing: false,
@@ -1733,6 +1889,110 @@ mod tests {
         bytes
     }
 
+    fn gump_single_payload(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.write_u32::<LittleEndian>(width).unwrap();
+        bytes.write_u32::<LittleEndian>(height).unwrap();
+        bytes.extend_from_slice(rgba);
+        bytes
+    }
+
+    fn gump_page_manifest_bytes() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"GAPG");
+        bytes.write_u32::<LittleEndian>(2).unwrap();
+        bytes.write_u32::<LittleEndian>(3).unwrap();
+        bytes.write_u32::<LittleEndian>(2).unwrap();
+        bytes.write_u32::<LittleEndian>(1).unwrap();
+        bytes.write_u32::<LittleEndian>(1).unwrap();
+        bytes.write_u32::<LittleEndian>(0).unwrap();
+        bytes.write_u32::<LittleEndian>(1).unwrap();
+        bytes.write_u32::<LittleEndian>(3).unwrap();
+        bytes.write_u32::<LittleEndian>(2).unwrap();
+        bytes
+    }
+
+    fn gump_slot_manifest_bytes() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"GASL");
+        bytes.write_u32::<LittleEndian>(2).unwrap();
+        bytes.write_u32::<LittleEndian>(3).unwrap();
+        bytes.write_u32::<LittleEndian>(2).unwrap();
+        bytes.write_u32::<LittleEndian>(1).unwrap();
+        bytes.write_u32::<LittleEndian>(1).unwrap();
+        bytes.write_u32::<LittleEndian>(50_001).unwrap();
+        bytes.write_u32::<LittleEndian>(0).unwrap();
+        bytes.write_u16::<LittleEndian>(0).unwrap();
+        bytes.write_u16::<LittleEndian>(1).unwrap();
+        bytes.write_u16::<LittleEndian>(0).unwrap();
+        bytes.write_u16::<LittleEndian>(2).unwrap();
+        bytes.write_u16::<LittleEndian>(1).unwrap();
+        bytes.write_u16::<LittleEndian>(2).unwrap();
+        bytes
+    }
+
+    fn gumps_test_package() -> (UddpReader, Vec<EntryInfo>) {
+        let mut builder = UddpBuilder::new(LookupMode::SparseId);
+        let single = gump_single_payload(2, 1, &[1, 2, 3, 4, 5, 6, 7, 8]);
+        builder
+            .add_file(AddFileRequest {
+                data_type: DataType::Gump as u8,
+                compression: CompressionFlag::None,
+                width: 2,
+                height: 1,
+                virtual_path: None,
+                path_hash64: None,
+                id: Some(42),
+                data: &single,
+            })
+            .expect("add single gump");
+
+        let page_manifest = gump_page_manifest_bytes();
+        let slot_manifest = gump_slot_manifest_bytes();
+        let page_pixels = vec![
+            0, 0, 0, 0, 9, 10, 11, 12, 13, 14, 15, 16,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        for (id, data_type, data, width, height) in [
+            (0xE000_0000, DataType::Metadata as u8, page_manifest.as_slice(), 0, 0),
+            (0xE000_0001, DataType::Metadata as u8, slot_manifest.as_slice(), 0, 0),
+            (0xF000_0000, DataType::Texture as u8, page_pixels.as_slice(), 3, 2),
+        ] {
+            builder
+                .add_file(AddFileRequest {
+                    data_type,
+                    compression: CompressionFlag::None,
+                    width,
+                    height,
+                    virtual_path: None,
+                    path_hash64: None,
+                    id: Some(id),
+                    data,
+                })
+                .expect("add atlas gump file");
+        }
+
+        let reader = UddpReader::open(builder.build().expect("build gumps package"))
+            .expect("open gumps package");
+        let entries = reader
+            .records()
+            .into_iter()
+            .map(|record| EntryInfo {
+                key: record.key,
+                raw_size: record.locator.raw_size,
+                stored_size: reconstruct_stored_size(
+                    record.locator.raw_size,
+                    record.locator.meta32,
+                    record.locator.pos64,
+                ),
+                data_type: unpack_type(record.locator.meta32),
+                codec: unpack_codec(record.locator.meta32),
+                offset: unpack_offset40(record.locator.pos64),
+            })
+            .collect();
+        (reader, entries)
+    }
+
     fn world_lights_test_package() -> udd_assets::WorldLightsPackage {
         let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
         add_metadata_file(
@@ -1801,6 +2061,7 @@ mod tests {
             package_path: None,
             mobile_anim_cc_package: None,
             mobile_anim_ec_package: None,
+            gumps_package: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,
             mobile_anim_is_playing: false,
@@ -1894,6 +2155,7 @@ mod tests {
             package_path: None,
             mobile_anim_cc_package: None,
             mobile_anim_ec_package: None,
+            gumps_package: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,
             mobile_anim_is_playing: false,
@@ -1969,6 +2231,7 @@ mod tests {
             package_path: None,
             mobile_anim_cc_package: None,
             mobile_anim_ec_package: None,
+            gumps_package: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,
             mobile_anim_is_playing: false,
@@ -2128,6 +2391,54 @@ mod tests {
     }
 
     #[test]
+    fn gump_virtual_entries_report_single_and_atlas_sources() {
+        let (reader, entries) = gumps_test_package();
+        let mut app = empty_test_app(ViewMode::Virtual);
+        app.entries = entries;
+        let package = GumpsPackage::from_uddp_package(reader).expect("load gumps package");
+
+        let entries = app.detect_gump_virtual_entries(&package);
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].id, 42);
+        assert_eq!(entries[0].kind, "Gump");
+        assert!(entries[0].summary.contains("single payload"));
+        let VirtualEntryData::Gump(single_info) = &entries[0].data else {
+            panic!("expected single gump entry");
+        };
+        let GumpSourceInfo::SingleFile {
+            source_entry_idx,
+            raw_size,
+        } = &single_info.source else {
+            panic!("expected single file source");
+        };
+        assert_eq!(*source_entry_idx, Some(0));
+        assert_eq!(*raw_size, 16);
+
+        assert_eq!(entries[1].id, 50_001);
+        assert!(entries[1].summary.contains("logical 1x1"));
+        assert_eq!(entries[1].location, "page 0");
+        let VirtualEntryData::Gump(atlas_info) = &entries[1].data else {
+            panic!("expected atlas gump entry");
+        };
+        let GumpSourceInfo::AtlasSlot {
+            page_index,
+            page_gump_index,
+            x,
+            y,
+            width,
+            height,
+            upscale_factor,
+        } = &atlas_info.source else {
+            panic!("expected atlas source");
+        };
+        assert_eq!(*page_index, 0);
+        assert_eq!(*page_gump_index, 0);
+        assert_eq!((*x, *y, *width, *height), (1, 0, 2, 1));
+        assert_eq!(*upscale_factor, 2);
+    }
+
+    #[test]
     fn world_lights_virtual_entries_report_present_masks() {
         let app = empty_test_app(ViewMode::Virtual);
         let package = world_lights_test_package();
@@ -2185,6 +2496,7 @@ mod tests {
             package_path: None,
             mobile_anim_cc_package: None,
             mobile_anim_ec_package: None,
+            gumps_package: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,
             mobile_anim_is_playing: false,
