@@ -1975,6 +1975,7 @@ impl UopInspectorApp {
         self.uop_entry_payloads.clear();
         self.terrain_texture_guess_names.clear();
         self.animationframe_uop_entries.clear();
+        self.animationframe_uop_frame_counts.clear();
         self.animationframe_uop_worker_rx = None;
         self.animationframe_uop_worker_key = None;
         self.selected_animationframe_file_hash = None;

@@ -22,6 +22,8 @@ const EC_ANIMATIONS_COLLECTION_XML: &str = include_str!(
 const KR_ANIMATIONS_COLLECTION_XML: &str = include_str!(
     "../../../_shared_assets/manual_mappings_from_ec_super_viewer_todo/AnimationsCollection - KR.xml"
 );
+const EC_ANIMATIONFRAME_CACHE_DIR: &str = ".uodynamapper";
+const EC_ANIMATIONFRAME_CACHE_VERSION: u32 = 1;
 
 #[derive(Clone, Copy)]
 struct MulAnimationTreeEntry {
@@ -515,6 +517,31 @@ fn show_animation_navigation(app: &mut UopInspectorApp, ctx: &egui::Context, ui:
         }
         if ui.button("Collapse All").clicked() {
             ANIMATION_TREE_COLLAPSE_REVISION.fetch_add(1, Ordering::Relaxed);
+        }
+        if matches!(
+            app.selected_legacy_source,
+            ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr
+        ) && ui.button("Refresh EC Cache").clicked()
+        {
+            if let Some(path) = ec_animationframe_cache_path(
+                app.settings.ec_path.as_deref(),
+                app.selected_legacy_source,
+            ) {
+                if let Err(error) = std::fs::remove_file(&path) {
+                    if error.kind() != std::io::ErrorKind::NotFound {
+                        log::warn!(
+                            "failed to remove EC AnimationFrame cache {}: {}",
+                            path.display(),
+                            error
+                        );
+                    }
+                }
+            }
+            let key = (app.selected_legacy_source as u8, app.uop_cache.loaded_uops.len());
+            app.animationframe_uop_entries.remove(&key);
+            app.animationframe_uop_frame_counts.clear();
+            app.animationframe_uop_worker_rx = None;
+            app.animationframe_uop_worker_key = None;
         }
     });
     let sort = list_sort_controls(ui, "animation_tree_entries", &["ID/Index"], 0);
@@ -1403,6 +1430,7 @@ fn animationframe_uop_entries(
 
     let cc_path = app.settings.cc_path.clone();
     let ec_path = app.settings.ec_path.clone();
+    let ec_cache_path = ec_animationframe_cache_path(ec_path.as_deref(), source);
     let packages = app
         .uop_cache
         .loaded_uops
@@ -1429,7 +1457,7 @@ fn animationframe_uop_entries(
 
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let entries = scan_animationframe_uop_packages(packages, source);
+        let entries = scan_animationframe_uop_packages(packages, source, ec_cache_path);
         let _ = tx.send(AnimationFrameUopScanResult { key, entries });
     });
     app.animationframe_uop_worker_rx = Some(rx);
@@ -1455,12 +1483,13 @@ fn animationframe_package_matches_source(
 fn scan_animationframe_uop_packages(
     packages: Vec<(usize, PathBuf, uocf::uop_container::package::UopPackage)>,
     source: ArtSource,
+    ec_cache_path: Option<PathBuf>,
 ) -> Vec<AnimationFrameUopEntry> {
     if source == ArtSource::CcUop {
         return scan_cc_animationframe_uop_packages(packages);
     }
     if matches!(source, ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr) {
-        return scan_ec_animationframe_uop_packages(packages, source);
+        return scan_ec_animationframe_uop_packages(packages, source, ec_cache_path.as_deref());
     }
 
     Vec::new()
@@ -1512,6 +1541,7 @@ fn scan_cc_animationframe_uop_packages(
 fn scan_ec_animationframe_uop_packages(
     packages: Vec<(usize, PathBuf, uocf::uop_container::package::UopPackage)>,
     source: ArtSource,
+    cache_path: Option<&Path>,
 ) -> Vec<AnimationFrameUopEntry> {
     let mut packages_by_group = BTreeMap::new();
     for (package_index, path, package) in packages {
@@ -1522,6 +1552,7 @@ fn scan_ec_animationframe_uop_packages(
     }
 
     let mut entries = Vec::new();
+    let mut known_hashes = std::collections::BTreeSet::new();
     for mapped in parse_ec_animation_collection(ec_animation_collection_xml(source)) {
         let Some((package_index, package)) = packages_by_group.get(&mapped.group_id) else {
             continue;
@@ -1536,6 +1567,7 @@ fn scan_ec_animationframe_uop_packages(
         if !file.has_size() {
             continue;
         }
+        known_hashes.insert((mapped.group_id, file.filename_hash()));
         entries.push(AnimationFrameUopEntry {
             package_index: *package_index,
             file_hash: file.filename_hash(),
@@ -1549,6 +1581,45 @@ fn scan_ec_animationframe_uop_packages(
         });
     }
 
+    let cached_entries = cache_path
+        .and_then(read_ec_animationframe_cache)
+        .unwrap_or_else(|| {
+            let scanned = scan_ec_animationframe_metadata_cache(&packages_by_group);
+            if let Some(path) = cache_path {
+                if let Err(error) = write_ec_animationframe_cache(path, &scanned) {
+                    log::warn!(
+                        "failed to write EC AnimationFrame cache {}: {}",
+                        path.display(),
+                        error
+                    );
+                }
+            }
+            scanned
+        });
+
+    for cached in cached_entries {
+        if known_hashes.contains(&(cached.group_id, cached.file_hash)) {
+            continue;
+        }
+        let Some((package_index, package)) = packages_by_group.get(&cached.group_id) else {
+            continue;
+        };
+        if package.get_file_by_hash(cached.file_hash).is_none() {
+            continue;
+        }
+        entries.push(AnimationFrameUopEntry {
+            package_index: *package_index,
+            file_hash: cached.file_hash,
+            body_id: cached.body_id,
+            action_id: None,
+            direction: None,
+            group_id: Some(cached.group_id),
+            block_index: Some(cached.block_index),
+            source_index: cached.file_index,
+            frame_count: cached.frame_count,
+        });
+    }
+
     entries.sort_by_key(|entry| {
         (
             entry.body_id,
@@ -1559,6 +1630,155 @@ fn scan_ec_animationframe_uop_packages(
         )
     });
     entries
+}
+
+#[derive(Clone, Debug)]
+struct EcAnimationFrameCacheEntry {
+    group_id: u8,
+    block_index: u32,
+    file_index: u32,
+    file_hash: u64,
+    body_id: u32,
+    frame_count: usize,
+}
+
+fn scan_ec_animationframe_metadata_cache(
+    packages_by_group: &BTreeMap<u8, (usize, uocf::uop_container::package::UopPackage)>,
+) -> Vec<EcAnimationFrameCacheEntry> {
+    let mut entries = Vec::new();
+    for (group_id, (_package_index, package)) in packages_by_group {
+        for (block_index, block) in package.blocks().iter().enumerate() {
+            for (file_index, file) in block.files().iter().enumerate() {
+                if !file.has_size() {
+                    continue;
+                }
+                let file_hash = file.filename_hash();
+                let Ok(Some(data)) = package.unpack_file_by_hash(file_hash) else {
+                    continue;
+                };
+                let Ok(metadata) = uocf::enhanced::animationframe::AnimationFrame::load_metadata(&data) else {
+                    continue;
+                };
+                if metadata.frames_count == 0 {
+                    continue;
+                }
+                let Ok(block_index) = u32::try_from(block_index) else {
+                    continue;
+                };
+                let Ok(file_index) = u32::try_from(file_index) else {
+                    continue;
+                };
+                entries.push(EcAnimationFrameCacheEntry {
+                    group_id: *group_id,
+                    block_index,
+                    file_index,
+                    file_hash,
+                    body_id: metadata.animation_id,
+                    frame_count: metadata.frames_count as usize,
+                });
+            }
+        }
+    }
+    entries.sort_by_key(|entry| {
+        (
+            entry.body_id,
+            entry.group_id,
+            entry.block_index,
+            entry.file_index,
+        )
+    });
+    entries
+}
+
+fn ec_animationframe_cache_path(ec_path: Option<&Path>, source: ArtSource) -> Option<PathBuf> {
+    let ec_path = ec_path?;
+    let file_name = match source {
+        ArtSource::EcUopKr => "ec-animationframe-kr-cache.kdl",
+        ArtSource::EcUop | ArtSource::EcUopLegacy => "ec-animationframe-cache.kdl",
+        _ => return None,
+    };
+    Some(ec_path.join(EC_ANIMATIONFRAME_CACHE_DIR).join(file_name))
+}
+
+fn read_ec_animationframe_cache(path: &Path) -> Option<Vec<EcAnimationFrameCacheEntry>> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let mut entries = Vec::new();
+    let mut version_ok = false;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with("cache ") {
+            version_ok = kdl_attr(line, "version")
+                .and_then(|value| value.parse::<u32>().ok())
+                == Some(EC_ANIMATIONFRAME_CACHE_VERSION);
+            continue;
+        }
+        if !line.starts_with("entry ") {
+            continue;
+        }
+        let Some(group_id) = kdl_attr(line, "group").and_then(|value| value.parse::<u8>().ok()) else {
+            continue;
+        };
+        let Some(file_hash) = kdl_attr(line, "hash").and_then(parse_u64_value) else {
+            continue;
+        };
+        let Some(body_id) = kdl_attr(line, "body").and_then(|value| value.parse::<u32>().ok()) else {
+            continue;
+        };
+        let Some(frame_count) = kdl_attr(line, "frames").and_then(|value| value.parse::<usize>().ok()) else {
+            continue;
+        };
+        entries.push(EcAnimationFrameCacheEntry {
+            group_id,
+            block_index: kdl_attr(line, "block").and_then(|value| value.parse::<u32>().ok())?,
+            file_index: kdl_attr(line, "file").and_then(|value| value.parse::<u32>().ok())?,
+            file_hash,
+            body_id,
+            frame_count,
+        });
+    }
+    version_ok.then_some(entries)
+}
+
+fn write_ec_animationframe_cache(
+    path: &Path,
+    entries: &[EcAnimationFrameCacheEntry],
+) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut text = String::new();
+    text.push_str(&format!(
+        "cache version={} entries={}\n",
+        EC_ANIMATIONFRAME_CACHE_VERSION,
+        entries.len()
+    ));
+    for entry in entries {
+        text.push_str(&format!(
+            "entry group={} block={} file={} hash=0x{:016X} body={} frames={}\n",
+            entry.group_id,
+            entry.block_index,
+            entry.file_index,
+            entry.file_hash,
+            entry.body_id,
+            entry.frame_count
+        ));
+    }
+    std::fs::write(path, text)
+}
+
+fn kdl_attr<'a>(line: &'a str, name: &str) -> Option<&'a str> {
+    let pattern = format!("{name}=");
+    let value_start = line.find(&pattern)? + pattern.len();
+    let value = &line[value_start..];
+    let value_end = value.find(char::is_whitespace).unwrap_or(value.len());
+    Some(&value[..value_end])
+}
+
+fn parse_u64_value(value: &str) -> Option<u64> {
+    value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+        .map_or_else(|| value.parse::<u64>().ok(), |hex| u64::from_str_radix(hex, 16).ok())
 }
 
 fn animationframe_package_group_id(path: &Path) -> Option<u8> {
