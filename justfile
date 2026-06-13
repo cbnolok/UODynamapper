@@ -328,9 +328,18 @@ profile-dynamapper-flamegraph *args:
     {{cargo_profile_nightly}} flamegraph --profile profiling --no-default-features --features "profiling,{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} \
         --bin dynamapper --package dynamapper {{args}}
 
+# Analyze release binary size with cargo-bloat and stable release settings.
+bloat-stable *args:
+    @echo "Running cargo-bloat stable release analysis on {{os}}..."
+    @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_STABLE}}"
+    @echo "Using features: {{linux_features}}"
+    {{cargo_release_stable}} bloat --release --no-default-features --features "{{linux_features}}" \
+        --config 'profile.release.strip=false' \
+        {{args}}
+
 # Analyze release binary size with cargo-bloat and nightly release settings.
-bloat *args:
-    @echo "Running cargo-bloat release analysis on {{os}}..."
+bloat-nightly *args:
+    @echo "Running cargo-bloat nightly release analysis on {{os}}..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_NIGHTLY}}"
     @echo "Using features: {{linux_features}}"
     @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
