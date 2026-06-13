@@ -38,8 +38,16 @@ has_sccache := if is_windows == "true" {
 has_lld  := if is_linux == "true" { `command -v ld.lld || echo ""` } else { "" }
 has_mold := if is_linux == "true" { `command -v mold || echo ""` } else { "" }
 has_wild := if is_linux == "true" { `command -v wild || echo ""` } else { "" }
-rust_llvm_major_stable := `rustc -vV 2>/dev/null | sed -n 's/^LLVM version: \([0-9][0-9]*\).*/\1/p' | head -n1 || true`
-rust_llvm_major_nightly := `rustc +nightly -vV 2>/dev/null | sed -n 's/^LLVM version: \([0-9][0-9]*\).*/\1/p' | head -n1 || true`
+rust_llvm_major_stable := if is_linux == "true" {
+    `rustc -vV 2>/dev/null | sed -n 's/^LLVM version: \([0-9][0-9]*\).*/\1/p' | head -n1 || true`
+} else {
+    ""
+}
+rust_llvm_major_nightly := if is_linux == "true" {
+    `rustc +nightly -vV 2>/dev/null | sed -n 's/^LLVM version: \([0-9][0-9]*\).*/\1/p' | head -n1 || true`
+} else {
+    ""
+}
 lld_llvm_major := if has_lld != "" {
     `ld.lld --version 2>/dev/null | sed -n 's/.*LLD \([0-9][0-9]*\).*/\1/p' | head -n1 || true`
 } else {
