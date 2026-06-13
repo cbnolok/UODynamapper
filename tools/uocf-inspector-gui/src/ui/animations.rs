@@ -2,7 +2,7 @@ use crate::app::{
     AnimationFrameUopEntry, AnimationFrameUopScanResult, ArtSource, UopInspectorApp,
 };
 use crate::ui::image_export::{export_rgba_png, sanitize_file_stem};
-use crate::ui::list_sort_controls;
+use crate::ui::{arrow_delta, list_sort_controls, move_selection};
 use color_eyre::eyre;
 use eframe::egui;
 use std::collections::BTreeMap;
@@ -28,6 +28,16 @@ const EC_ANIMATIONFRAME_CACHE_VERSION: u32 = 1;
 #[derive(Clone, Copy)]
 struct MulAnimationTreeEntry {
     source_index: u32,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct AnimationFrameEntryKey {
+    package_index: usize,
+    file_hash: u64,
+    body_id: u32,
+    action_id: Option<u16>,
+    direction: Option<u8>,
+    group_id: Option<u8>,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
@@ -873,7 +883,7 @@ fn show_uop_animationframe_tree(
     max_height: f32,
 ) {
     ui.label("Filter:");
-    ui.text_edit_singleline(&mut app.search_query);
+    let filter_response = ui.text_edit_singleline(&mut app.search_query);
     let query = app.search_query.to_ascii_lowercase();
     let Some(entries) =
         collect_uop_animationframe_tree_entries(app, app.selected_legacy_source, &query)
@@ -881,6 +891,21 @@ fn show_uop_animationframe_tree(
         ui.label("Scanning AnimationFrame UOP metadata...");
         ctx.request_repaint_after(Duration::from_millis(100));
         return;
+    };
+
+    let mut bodies = entries.into_iter().collect::<Vec<_>>();
+    if ordering == Some(true) {
+        bodies.reverse();
+    }
+    let visible_keys = animationframe_entry_keys(&bodies, app.selected_legacy_source);
+    let selected_key = selected_animationframe_entry_key(app, &visible_keys);
+    let keyboard_moved = if let Some(delta) = arrow_delta(ui, filter_response.has_focus()) {
+        if let Some(key) = move_selection(&visible_keys, selected_key, delta) {
+            select_animationframe_entry_key(app, ctx, key);
+        }
+        true
+    } else {
+        false
     };
 
     let scroll_width = ui.available_width();
@@ -894,15 +919,11 @@ fn show_uop_animationframe_tree(
         .max_height(max_height)
         .show(ui, |ui| {
             ui.set_min_width(scroll_width);
-            if entries.is_empty() {
+            if bodies.is_empty() {
                 ui.label("No AnimationFrame entries match the current source/filter.");
                 return;
             }
 
-            let mut bodies = entries.into_iter().collect::<Vec<_>>();
-            if ordering == Some(true) {
-                bodies.reverse();
-            }
             for (body_id, body_entries) in bodies {
                 let selected_body = app.selected_anim_id == body_id;
                 egui::CollapsingHeader::new(format!("Body {}", body_id))
@@ -972,7 +993,7 @@ fn show_uop_animationframe_tree(
                                                     for entry in entries {
                                                         show_uop_animationframe_entry_frames(
                                                             app, ctx, ui, &entry, body_id, action_id,
-                                                            direction,
+                                                            direction, keyboard_moved,
                                                         );
                                                     }
                                                 });
@@ -1005,13 +1026,20 @@ fn show_uop_animationframe_tree(
                                     .show(ui, |ui| {
                                         for entry in entries {
                                             show_ec_uop_animationframe_entry_frames(
-                                                app, ctx, ui, &entry, body_id,
+                                                app, ctx, ui, &entry, body_id, keyboard_moved,
                                             );
                                         }
                                     });
                             }
                             for entry in direct_entries {
-                                show_ec_uop_animationframe_entry_frames(app, ctx, ui, &entry, body_id);
+                                show_ec_uop_animationframe_entry_frames(
+                                    app,
+                                    ctx,
+                                    ui,
+                                    &entry,
+                                    body_id,
+                                    keyboard_moved,
+                                );
                             }
                         }
                     });
@@ -1036,6 +1064,116 @@ fn collect_uop_animationframe_tree_entries(
     Some(entries)
 }
 
+fn animationframe_entry_keys(
+    bodies: &[(u32, Vec<AnimationFrameUopEntry>)],
+    source: ArtSource,
+) -> Vec<AnimationFrameEntryKey> {
+    let mut keys = Vec::new();
+    for (body_id, body_entries) in bodies {
+        if source == ArtSource::CcUop {
+            let mut actions =
+                BTreeMap::<u16, BTreeMap<u8, Vec<&AnimationFrameUopEntry>>>::new();
+            for entry in body_entries {
+                if let (Some(action_id), Some(direction)) = (entry.action_id, entry.direction) {
+                    actions
+                        .entry(action_id)
+                        .or_default()
+                        .entry(direction)
+                        .or_default()
+                        .push(entry);
+                }
+            }
+            for (_action_id, directions) in actions {
+                for (_direction, entries) in directions {
+                    keys.extend(
+                        entries
+                            .into_iter()
+                            .map(|entry| animationframe_entry_key(entry, *body_id)),
+                    );
+                }
+            }
+        } else {
+            let mut actions = BTreeMap::<u16, Vec<&AnimationFrameUopEntry>>::new();
+            let mut direct_entries = Vec::new();
+            for entry in body_entries {
+                if let Some(action_id) = entry.action_id {
+                    actions.entry(action_id).or_default().push(entry);
+                } else {
+                    direct_entries.push(entry);
+                }
+            }
+            for (_action_id, entries) in actions {
+                keys.extend(
+                    entries
+                        .into_iter()
+                        .map(|entry| animationframe_entry_key(entry, *body_id)),
+                );
+            }
+            keys.extend(
+                direct_entries
+                    .into_iter()
+                    .map(|entry| animationframe_entry_key(entry, *body_id)),
+            );
+        }
+    }
+    keys
+}
+
+fn animationframe_entry_key(entry: &AnimationFrameUopEntry, body_id: u32) -> AnimationFrameEntryKey {
+    AnimationFrameEntryKey {
+        package_index: entry.package_index,
+        file_hash: entry.file_hash,
+        body_id,
+        action_id: entry.action_id,
+        direction: entry.direction,
+        group_id: entry.group_id,
+    }
+}
+
+fn selected_animationframe_entry_key(
+    app: &UopInspectorApp,
+    visible_keys: &[AnimationFrameEntryKey],
+) -> Option<AnimationFrameEntryKey> {
+    visible_keys
+        .iter()
+        .copied()
+        .find(|key| animationframe_entry_key_is_selected(app, *key))
+}
+
+fn animationframe_entry_key_is_selected(app: &UopInspectorApp, key: AnimationFrameEntryKey) -> bool {
+    app.selected_anim_id == key.body_id
+        && app.selected_animationframe_file_hash == Some(key.file_hash)
+        && key
+            .action_id
+            .is_none_or(|action_id| app.selected_action_id == action_id)
+        && key
+            .direction
+            .is_none_or(|direction| app.selected_direction == direction)
+        && key
+            .group_id
+            .is_none_or(|group_id| app.selected_anim_file_idx == group_id)
+}
+
+fn select_animationframe_entry_key(
+    app: &mut UopInspectorApp,
+    ctx: &egui::Context,
+    key: AnimationFrameEntryKey,
+) {
+    app.selected_anim_id = key.body_id;
+    if let Some(action_id) = key.action_id {
+        app.selected_action_id = action_id;
+    }
+    if let Some(direction) = key.direction {
+        app.selected_direction = direction;
+    }
+    app.selected_animationframe_file_hash = Some(key.file_hash);
+    if let Some(group_id) = key.group_id {
+        app.selected_anim_file_idx = group_id;
+    }
+    app.current_frame_idx = 0;
+    app.last_frame_time = ctx.input(|input| input.time);
+}
+
 fn show_uop_animationframe_entry_frames(
     app: &mut UopInspectorApp,
     ctx: &egui::Context,
@@ -1044,6 +1182,7 @@ fn show_uop_animationframe_entry_frames(
     body_id: u32,
     action_id: u16,
     direction: u8,
+    keyboard_moved: bool,
 ) {
     let frame_count = if entry.frame_count == 0 {
         cc_direction_frame_count(app, entry).unwrap_or(0)
@@ -1091,22 +1230,23 @@ fn show_uop_animationframe_entry_frames(
                 }),
         )
         .show(ui, |ui| {
-            if ui.selectable_label(
-                app.selected_anim_id == body_id
-                    && app.selected_action_id == action_id
-                    && app.selected_direction == direction
-                    && app.selected_animationframe_file_hash == Some(entry.file_hash),
+            let selected_entry = app.selected_anim_id == body_id
+                && app.selected_action_id == action_id
+                && app.selected_direction == direction
+                && app.selected_animationframe_file_hash == Some(entry.file_hash);
+            let response = ui.selectable_label(
+                selected_entry,
                 "Select direction",
-            ).clicked() {
-                app.selected_anim_id = body_id;
-                app.selected_action_id = action_id;
-                app.selected_direction = direction;
-                app.selected_animationframe_file_hash = Some(entry.file_hash);
-                if let Some(group_id) = entry.group_id {
-                    app.selected_anim_file_idx = group_id;
-                }
-                app.current_frame_idx = 0;
-                app.last_frame_time = ctx.input(|input| input.time);
+            );
+            if keyboard_moved && selected_entry {
+                response.scroll_to_me(Some(egui::Align::Center));
+            }
+            if response.clicked() {
+                select_animationframe_entry_key(
+                    app,
+                    ctx,
+                    animationframe_entry_key(entry, body_id),
+                );
             }
 
             if frame_count == 0 {
@@ -1147,6 +1287,7 @@ fn show_ec_uop_animationframe_entry_frames(
     ui: &mut egui::Ui,
     entry: &AnimationFrameUopEntry,
     body_id: u32,
+    keyboard_moved: bool,
 ) {
     let selected_entry = app.selected_anim_id == body_id
         && app.selected_animationframe_file_hash == Some(entry.file_hash);
@@ -1189,17 +1330,16 @@ fn show_ec_uop_animationframe_entry_frames(
         ))
         .default_open(selected_entry)
         .show(ui, |ui| {
-            if ui.selectable_label(selected_entry, "Select block").clicked() {
-                app.selected_anim_id = body_id;
-                if let Some(action_id) = entry.action_id {
-                    app.selected_action_id = action_id;
-                }
-                app.selected_animationframe_file_hash = Some(entry.file_hash);
-                if let Some(group_id) = entry.group_id {
-                    app.selected_anim_file_idx = group_id;
-                }
-                app.current_frame_idx = 0;
-                app.last_frame_time = ctx.input(|input| input.time);
+            let response = ui.selectable_label(selected_entry, "Select block");
+            if keyboard_moved && selected_entry {
+                response.scroll_to_me(Some(egui::Align::Center));
+            }
+            if response.clicked() {
+                select_animationframe_entry_key(
+                    app,
+                    ctx,
+                    animationframe_entry_key(entry, body_id),
+                );
             }
 
             if frame_count == 0 {
