@@ -675,6 +675,7 @@ pub struct AnimationFrameUopEntry {
     pub action_id: Option<u16>,
     pub direction: Option<u8>,
     pub group_id: Option<u8>,
+    pub block_index: Option<u32>,
     pub source_index: u32,
     pub frame_count: usize,
 }
@@ -1703,6 +1704,7 @@ pub struct UopInspectorApp {
     pub uop_entry_payloads: HashMap<(usize, u64), Arc<[u8]>>,
     pub terrain_texture_guess_names: HashMap<usize, Arc<HashMap<u64, String>>>,
     pub animationframe_uop_entries: HashMap<(u8, usize), Arc<Vec<AnimationFrameUopEntry>>>,
+    pub animationframe_uop_frame_counts: HashMap<(usize, usize, u64, u8), usize>,
     pub animationframe_uop_worker_rx: Option<mpsc::Receiver<AnimationFrameUopScanResult>>,
     pub animationframe_uop_worker_key: Option<(u8, usize)>,
     pub selected_animationframe_file_hash: Option<u64>,
@@ -1851,6 +1853,7 @@ impl UopInspectorApp {
             uop_entry_payloads: HashMap::new(),
             terrain_texture_guess_names: HashMap::new(),
             animationframe_uop_entries: HashMap::new(),
+            animationframe_uop_frame_counts: HashMap::new(),
             animationframe_uop_worker_rx: None,
             animationframe_uop_worker_key: None,
             selected_animationframe_file_hash: None,
@@ -3933,24 +3936,44 @@ fn apply_ec_hue_table_to_rgba(
             continue;
         }
 
-        let color_index = ec_hue_color_index(pixel, hueing_mode, color_count);
+        let shade = ec_hue_source_luma(pixel, hueing_mode);
+        let color_index = ec_hue_color_index(pixel, hueing_mode, color_count, shade);
         let src = color_index * 4;
-        pixel[0] = hue_table[src];
-        pixel[1] = hue_table[src + 1];
-        pixel[2] = hue_table[src + 2];
+        let color = [hue_table[src], hue_table[src + 1], hue_table[src + 2]];
+        let color = match hueing_mode {
+            EcHueingMode::Cc => color,
+            EcHueingMode::Ec => shade_ec_hue_color(color, shade),
+        };
+        pixel[0] = color[0];
+        pixel[1] = color[1];
+        pixel[2] = color[2];
         pixel[3] = alpha;
     }
 }
 
-fn ec_hue_color_index(pixel: &[u8], hueing_mode: EcHueingMode, color_count: usize) -> usize {
+fn ec_hue_color_index(
+    pixel: &[u8],
+    hueing_mode: EcHueingMode,
+    color_count: usize,
+    shade: u8,
+) -> usize {
     match hueing_mode {
         EcHueingMode::Cc => {
             (pixel[0] >> 3).min(31) as usize
         }
         EcHueingMode::Ec => {
-            ec_hue_source_luma(pixel, hueing_mode) as usize * (color_count - 1) / 255
+            shade as usize * (color_count - 1) / 255
         }
     }
+}
+
+fn shade_ec_hue_color(color: [u8; 3], shade: u8) -> [u8; 3] {
+    let shade = u16::from(shade);
+    [
+        ((u16::from(color[0]) * shade) / 255) as u8,
+        ((u16::from(color[1]) * shade) / 255) as u8,
+        ((u16::from(color[2]) * shade) / 255) as u8,
+    ]
 }
 
 fn ec_hue_source_luma(pixel: &[u8], hueing_mode: EcHueingMode) -> u8 {
@@ -4158,6 +4181,7 @@ mod tests {
             uop_entry_payloads: HashMap::new(),
             terrain_texture_guess_names: HashMap::new(),
             animationframe_uop_entries: HashMap::new(),
+            animationframe_uop_frame_counts: HashMap::new(),
             animationframe_uop_worker_rx: None,
             animationframe_uop_worker_key: None,
             selected_animationframe_file_hash: None,
@@ -4471,9 +4495,29 @@ mod tests {
 
         apply_ec_hue_table_to_rgba(&mut pixels, &hue_table, EcHueingMode::Ec);
 
-        assert_eq!(&pixels[0..4], &[0, 1, 2, 240]);
-        assert_eq!(&pixels[4..8], &[127, 128, 129, 200]);
+        assert_eq!(&pixels[0..4], &[0, 0, 0, 240]);
+        assert_eq!(&pixels[4..8], &[63, 63, 64, 200]);
         assert_eq!(&pixels[8..12], &[255, 255, 255, 128]);
+    }
+
+    #[test]
+    fn ec_hue_application_shades_flat_hue_colors() {
+        let mut hue_table = vec![0u8; 256 * 4];
+        for color in hue_table.chunks_exact_mut(4) {
+            color.copy_from_slice(&[160, 80, 40, 255]);
+        }
+
+        let mut pixels = vec![
+            64, 64, 64, 240,
+            128, 128, 128, 200,
+            255, 255, 255, 128,
+        ];
+
+        apply_ec_hue_table_to_rgba(&mut pixels, &hue_table, EcHueingMode::Ec);
+
+        assert_eq!(&pixels[0..4], &[40, 20, 10, 240]);
+        assert_eq!(&pixels[4..8], &[80, 40, 20, 200]);
+        assert_eq!(&pixels[8..12], &[160, 80, 40, 128]);
     }
 
     #[test]
