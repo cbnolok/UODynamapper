@@ -120,6 +120,56 @@ pub struct StaticLightMaterialCache {
 #[derive(Component)]
 pub struct StaticLightEntity;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StaticLightSyncSignature {
+    world_lights_loaded: bool,
+    render_style: StaticLightRenderStyle,
+    material_alpha_bits: u32,
+    instance_count: usize,
+    instance_hash: u64,
+}
+
+fn static_light_sync_signature(
+    instances: &RenderStaticLightInstances,
+    render_style: StaticLightRenderStyle,
+    material_alpha: f32,
+    world_lights_loaded: bool,
+) -> StaticLightSyncSignature {
+    let mut hash = 0xcbf29ce484222325u64;
+    for instance in &instances.0 {
+        static_light_sync_hash_u32(&mut hash, instance.key.map_id);
+        static_light_sync_hash_u32(&mut hash, instance.key.tile_x);
+        static_light_sync_hash_u32(&mut hash, instance.key.tile_y);
+        static_light_sync_hash_u32(&mut hash, u32::from(instance.key.z as u8));
+        static_light_sync_hash_u32(&mut hash, u32::from(instance.key.graphic));
+        static_light_sync_hash_u32(&mut hash, instance.key.light_id);
+        static_light_sync_hash_u32(&mut hash, u32::from(instance.key.hue_id));
+        static_light_sync_hash_u32(&mut hash, instance.light_id);
+        static_light_sync_hash_u32(&mut hash, u32::from(instance.hue_id));
+        static_light_sync_hash_u32(&mut hash, instance.world_x.to_bits());
+        static_light_sync_hash_u32(&mut hash, instance.world_y.to_bits());
+        static_light_sync_hash_u32(&mut hash, instance.world_z.to_bits());
+        static_light_sync_hash_u32(&mut hash, instance.width_world.to_bits());
+        static_light_sync_hash_u32(&mut hash, instance.height_world.to_bits());
+        for channel in instance.color_rgb {
+            static_light_sync_hash_u32(&mut hash, channel.to_bits());
+        }
+    }
+
+    StaticLightSyncSignature {
+        world_lights_loaded,
+        render_style,
+        material_alpha_bits: material_alpha.to_bits(),
+        instance_count: instances.0.len(),
+        instance_hash: hash,
+    }
+}
+
+fn static_light_sync_hash_u32(hash: &mut u64, value: u32) {
+    *hash ^= u64::from(value);
+    *hash = hash.wrapping_mul(0x100000001b3);
+}
+
 pub fn build_static_light_mesh() -> Mesh {
     use bevy::mesh::Indices;
 
@@ -285,14 +335,43 @@ pub fn sys_sync_static_light_entities(
     mut meshes: ResMut<Assets<Mesh>>,
     mut mesh_handle: Local<Option<Handle<Mesh>>>,
     mut last_alpha: Local<Option<f32>>,
+    mut last_sync_signature: Local<Option<StaticLightSyncSignature>>,
     existing_q: Query<(Entity, &StaticLightKey), With<StaticLightEntity>>,
 ) {
+    let render_style = StaticLightRenderStyle::from_shading_mode(uniform_state.effects.shading_mode);
+    let material_alpha = static_light_decal_alpha(
+        uniform_state.global_lighting,
+        uniform_state.effects.static_light_decal_visibility,
+        render_style,
+    );
     let Some(world_lights) = world_lights_res else {
+        let signature = static_light_sync_signature(
+            &instances,
+            render_style,
+            material_alpha,
+            false,
+        );
+        if *last_sync_signature == Some(signature) {
+            return;
+        }
+
         for (entity, _) in existing_q.iter() {
             commands.entity(entity).despawn();
         }
+        *last_alpha = None;
+        *last_sync_signature = Some(signature);
         return;
     };
+
+    let signature = static_light_sync_signature(
+        &instances,
+        render_style,
+        material_alpha,
+        true,
+    );
+    if *last_sync_signature == Some(signature) {
+        return;
+    }
 
     let desired_keys = instances
         .0
@@ -307,12 +386,7 @@ pub fn sys_sync_static_light_entities(
     let mesh_handle = mesh_handle
         .get_or_insert_with(|| meshes.add(build_static_light_mesh()))
         .clone();
-    let render_style = StaticLightRenderStyle::from_shading_mode(uniform_state.effects.shading_mode);
-    let material_alpha = static_light_decal_alpha(
-        uniform_state.global_lighting,
-        uniform_state.effects.static_light_decal_visibility,
-        render_style,
-    );
+    let mut sync_complete = true;
     for instance in &instances.0 {
         let Some(material_handle) = static_light_material(
             instance.key.graphic,
@@ -326,6 +400,7 @@ pub fn sys_sync_static_light_entities(
             &mut images,
             &mut materials,
         ) else {
+            sync_complete = false;
             continue;
         };
 
@@ -362,6 +437,12 @@ pub fn sys_sync_static_light_entities(
         if !desired_keys.contains(key) {
             commands.entity(entity).despawn();
         }
+    }
+
+    if sync_complete {
+        *last_sync_signature = Some(signature);
+    } else {
+        *last_sync_signature = None;
     }
 }
 
@@ -995,6 +1076,88 @@ mod tests {
         ] {
             assert_ne!(base_hash, static_light_key_hash(changed));
         }
+    }
+
+    fn test_static_light_instance() -> StaticLightInstance {
+        StaticLightInstance {
+            key: StaticLightKey {
+                map_id: 1,
+                tile_x: 10,
+                tile_y: 20,
+                z: 3,
+                graphic: 0x0e31,
+                light_id: 40,
+                hue_id: 4,
+            },
+            light_id: 40,
+            hue_id: 4,
+            color_rgb: [1.0, 0.5, 0.25],
+            world_x: 10.5,
+            world_z: 20.5,
+            world_y: 0.3,
+            width_world: 2.0,
+            height_world: 3.0,
+        }
+    }
+
+    #[test]
+    fn static_light_sync_signature_tracks_sync_inputs() {
+        let instances = RenderStaticLightInstances(vec![test_static_light_instance()]);
+        let base = static_light_sync_signature(
+            &instances,
+            StaticLightRenderStyle::Classic,
+            0.5,
+            true,
+        );
+        assert_eq!(
+            base,
+            static_light_sync_signature(
+                &instances,
+                StaticLightRenderStyle::Classic,
+                0.5,
+                true,
+            )
+        );
+
+        let mut moved_instances = RenderStaticLightInstances(vec![test_static_light_instance()]);
+        moved_instances.0[0].world_x += 1.0;
+
+        assert_ne!(
+            base,
+            static_light_sync_signature(
+                &moved_instances,
+                StaticLightRenderStyle::Classic,
+                0.5,
+                true,
+            )
+        );
+        assert_ne!(
+            base,
+            static_light_sync_signature(
+                &instances,
+                StaticLightRenderStyle::Enhanced,
+                0.5,
+                true,
+            )
+        );
+        assert_ne!(
+            base,
+            static_light_sync_signature(
+                &instances,
+                StaticLightRenderStyle::Classic,
+                0.25,
+                true,
+            )
+        );
+        assert_ne!(
+            base,
+            static_light_sync_signature(
+                &instances,
+                StaticLightRenderStyle::Classic,
+                0.5,
+                false,
+            )
+        );
     }
 
     #[test]
