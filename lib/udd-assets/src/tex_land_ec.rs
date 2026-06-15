@@ -301,12 +301,11 @@ impl TexLandEcPackage {
         }
 
         let transcode = read_transcode_from_package(&package).unwrap_or_default();
-        let terrain_override_actions = read_terrain_override_actions_from_package(&package)
-            .unwrap_or_default();
-        let terrain_override_details = read_terrain_override_details_from_package(&package)
-            .unwrap_or_default();
-        let terrain_override_texture_refs =
-            read_terrain_override_texture_refs_from_package(&package).unwrap_or_default();
+        let (
+            terrain_override_actions,
+            terrain_override_details,
+            terrain_override_texture_refs,
+        ) = read_terrain_overrides_metadata_maps_from_package(&package).unwrap_or_default();
         Ok(Self {
             package,
             atlas_width: page_width,
@@ -1023,25 +1022,15 @@ fn parse_legacy_pair_transcode(text: &str) -> Option<HashMap<u32, u32>> {
     Some(transcode)
 }
 
-fn read_terrain_override_actions_from_package(
+fn read_terrain_overrides_metadata_maps_from_package(
     package: &UddpReader,
-) -> Option<HashMap<u32, TexLandEcTerrainOverrideActions>> {
+) -> Option<(
+    HashMap<u32, TexLandEcTerrainOverrideActions>,
+    HashMap<u32, TexLandEcTerrainOverrideDetails>,
+    HashMap<u32, Vec<TexLandEcTerrainOverrideTextureRef>>,
+)> {
     let bytes = read_path_entry_cow(package, UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH).ok()?;
-    parse_terrain_override_actions_metadata(bytes.as_ref()).ok()
-}
-
-fn read_terrain_override_texture_refs_from_package(
-    package: &UddpReader,
-) -> Option<HashMap<u32, Vec<TexLandEcTerrainOverrideTextureRef>>> {
-    let bytes = read_path_entry_cow(package, UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH).ok()?;
-    parse_terrain_override_texture_refs_metadata(bytes.as_ref()).ok()
-}
-
-fn read_terrain_override_details_from_package(
-    package: &UddpReader,
-) -> Option<HashMap<u32, TexLandEcTerrainOverrideDetails>> {
-    let bytes = read_path_entry_cow(package, UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH).ok()?;
-    parse_terrain_override_details_metadata(bytes.as_ref()).ok()
+    parse_terrain_overrides_metadata_maps(bytes.as_ref()).ok()
 }
 
 fn terrain_override_maps_from_overrides(
@@ -1157,25 +1146,38 @@ fn terrain_override_maps_from_overrides(
 fn parse_terrain_override_actions_metadata(
     bytes: &[u8],
 ) -> eyre::Result<HashMap<u32, TexLandEcTerrainOverrideActions>> {
+    let (actions, _, _) = parse_terrain_overrides_metadata_maps(bytes)?;
+    Ok(actions)
+}
+
+fn parse_terrain_override_details_metadata(
+    bytes: &[u8],
+) -> eyre::Result<HashMap<u32, TexLandEcTerrainOverrideDetails>> {
+    let (_, details_by_material, _) = parse_terrain_overrides_metadata_maps(bytes)?;
+    Ok(details_by_material)
+}
+
+fn parse_terrain_overrides_metadata_maps(
+    bytes: &[u8],
+) -> eyre::Result<(
+    HashMap<u32, TexLandEcTerrainOverrideActions>,
+    HashMap<u32, TexLandEcTerrainOverrideDetails>,
+    HashMap<u32, Vec<TexLandEcTerrainOverrideTextureRef>>,
+)> {
     let value = serde_json::from_slice::<serde_json::Value>(bytes)?;
     let mut actions = HashMap::new();
+    let mut details_by_material = HashMap::<u32, TexLandEcTerrainOverrideDetails>::new();
+    let mut refs_by_material = HashMap::<u32, Vec<TexLandEcTerrainOverrideTextureRef>>::new();
     let Some(entries) = value.get("entries").and_then(|value| value.as_array()) else {
-        return Ok(actions);
+        return Ok((actions, details_by_material, refs_by_material));
     };
 
     for entry in entries {
-        let Some(material_id) = entry
-            .get("material_id")
-            .and_then(|value| value.as_u64())
-            .and_then(|value| u32::try_from(value).ok())
-        else {
+        let Some(material_id) = json_u32(entry, "material_id") else {
             continue;
         };
-        let action_count = entry
-            .get("active_action_count")
-            .and_then(|value| value.as_u64())
-            .and_then(|value| u32::try_from(value).ok())
-            .unwrap_or(0);
+
+        let action_count = json_u32(entry, "active_action_count").unwrap_or(0);
         let mut action_flags = 0u16;
         if json_array_is_non_empty(entry, "policies") {
             action_flags |= TERRAIN_OVERRIDE_ACTION_POLICY;
@@ -1201,24 +1203,6 @@ fn parse_terrain_override_actions_metadata(
                 action_flags,
             },
         );
-    }
-
-    Ok(actions)
-}
-
-fn parse_terrain_override_details_metadata(
-    bytes: &[u8],
-) -> eyre::Result<HashMap<u32, TexLandEcTerrainOverrideDetails>> {
-    let value = serde_json::from_slice::<serde_json::Value>(bytes)?;
-    let mut details_by_material = HashMap::<u32, TexLandEcTerrainOverrideDetails>::new();
-    let Some(entries) = value.get("entries").and_then(|value| value.as_array()) else {
-        return Ok(details_by_material);
-    };
-
-    for entry in entries {
-        let Some(material_id) = json_u32(entry, "material_id") else {
-            continue;
-        };
 
         let policies = entry
             .get("policies")
@@ -1259,28 +1243,7 @@ fn parse_terrain_override_details_metadata(
                 ignore_code,
             },
         );
-    }
 
-    Ok(details_by_material)
-}
-
-fn parse_terrain_override_texture_refs_metadata(
-    bytes: &[u8],
-) -> eyre::Result<HashMap<u32, Vec<TexLandEcTerrainOverrideTextureRef>>> {
-    let value = serde_json::from_slice::<serde_json::Value>(bytes)?;
-    let mut refs_by_material = HashMap::<u32, Vec<TexLandEcTerrainOverrideTextureRef>>::new();
-    let Some(entries) = value.get("entries").and_then(|value| value.as_array()) else {
-        return Ok(refs_by_material);
-    };
-
-    for entry in entries {
-        let Some(material_id) = entry
-            .get("material_id")
-            .and_then(|value| value.as_u64())
-            .and_then(|value| u32::try_from(value).ok())
-        else {
-            continue;
-        };
         if let Some(layers) = entry.get("layers").and_then(|value| value.as_array()) {
             for (layer_index, layer) in layers.iter().enumerate() {
                 let Some(texture_id) = json_u32(layer, "texture_id") else {
@@ -1335,7 +1298,7 @@ fn parse_terrain_override_texture_refs_metadata(
         }
     }
 
-    Ok(refs_by_material)
+    Ok((actions, details_by_material, refs_by_material))
 }
 
 fn json_u32(value: &serde_json::Value, key: &str) -> Option<u32> {
