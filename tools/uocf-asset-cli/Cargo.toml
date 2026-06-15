@@ -8,8 +8,8 @@ too_many_arguments = "allow"
 
 [dependencies]
 uocf = { path = "../../lib/uocf" }
-clap = { version = "4.6.1", features = ["derive", "unicode"] }
-color-eyre = "0.6.5"
+clap = { workspace = true, features = ["derive", "unicode"] }
+color-eyre.workspace = true
 udd-logging = { path = "../../lib/udd-logging" }
 
 [[bin]]

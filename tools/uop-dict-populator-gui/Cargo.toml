@@ -15,11 +15,11 @@ nonminimal_bool = "allow"
 [dependencies]
 eframe.workspace = true
 egui.workspace = true
-egui_extras.workspace = true
 uocf = { path = "../../lib/uocf" }
 rfd.workspace = true
-serde = { version = "1", features = ["derive"] }
+serde.workspace = true
 toml.workspace = true
 udd-logging = { path = "../../lib/udd-logging" }
+udd-tool-gui = { path = "../../lib/udd-tool-gui" }
 color-eyre.workspace = true
-crossbeam-channel = "0.5"
+crossbeam-channel.workspace = true

@@ -6815,12 +6815,10 @@ dependencies = [
  "color-eyre",
  "eframe",
  "egui 0.34.3",
- "egui_extras",
  "image",
  "ktx2 0.5.0",
  "libc",
  "log",
- "rfd",
  "serde",
  "tokio",
  "toml",
@@ -6828,6 +6826,7 @@ dependencies = [
  "udd-conv-cli",
  "udd-image-codecs",
  "udd-logging",
+ "udd-tool-gui",
  "uocf",
  "zstd",
 ]
@@ -6859,6 +6858,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "udd-tool-gui"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "egui_extras",
+ "rfd",
+]
+
+[[package]]
 name = "uddp-inspector-gui"
 version = "0.1.0"
 dependencies = [
@@ -6870,12 +6878,12 @@ dependencies = [
  "egui_extras",
  "image",
  "ktx2 0.5.0",
- "rfd",
  "serde",
  "tokio",
  "udd-assets",
  "udd-container",
  "udd-conv",
+ "udd-tool-gui",
  "uocf",
  "zstd",
 ]
@@ -7016,6 +7024,7 @@ dependencies = [
  "udd-conv",
  "udd-image-codecs",
  "udd-logging",
+ "udd-tool-gui",
  "uocf",
 ]
 
@@ -7027,11 +7036,11 @@ dependencies = [
  "crossbeam-channel",
  "eframe",
  "egui 0.34.3",
- "egui_extras",
  "rfd",
  "serde",
  "toml",
  "udd-logging",
+ "udd-tool-gui",
  "uocf",
 ]
 

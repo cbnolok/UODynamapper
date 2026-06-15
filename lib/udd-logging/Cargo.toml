@@ -15,7 +15,7 @@ too_many_arguments = "allow"
 
 [dependencies]
 env_filter = "1.0.1"
-log = "0.4.32"
+log.workspace = true
 paris = { version = "1.5", default-features = false, features = [
   "macros",
   "no_logger",

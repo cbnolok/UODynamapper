@@ -15,14 +15,14 @@ nonminimal_bool = "allow"
 too_many_arguments = "allow"
 
 [dependencies]
-clap = { version = "4.6.1", features = ["derive"] }
+clap = { workspace = true, features = ["derive"] }
 color-eyre.workspace = true
-csv = "1.4"
-image = { version = "0.25", default-features = false, features = ["png"] }
-log = "0.4.32"
-rayon = "1.12.0"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+csv.workspace = true
+image = { workspace = true, features = ["png"] }
+log.workspace = true
+rayon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 knuffel.workspace = true
 toml.workspace = true
 udd-assets = { path = "../../lib/udd-assets" }

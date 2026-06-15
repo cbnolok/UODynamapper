@@ -8,6 +8,7 @@ members = [
     "lib/udd-container",
     "lib/udd-assets",
     "lib/udd-logging",
+    "lib/udd-tool-gui",
     "lib/image-postprocess",
     "tools/udd-conv-cli",
     "tools/uocf-cli",
@@ -36,6 +37,22 @@ wgpu = { version = "27.0", default-features = false, features = ["vulkan", "wgsl
 wgpu-profiler = "0.27.0"
 wgpu-types = "27.0"
 knuffel = "3"
+bytemuck = { version = "1.*", default-features = false, features = ["derive", "aarch64_simd", "avx512_simd"] }
+byteorder = "1.5"
+clap = "4.6.1"
+crossbeam-channel = "0.5"
+csv = "1.4"
+dds = "0.2"
+flate2 = { version = "1.1.9", default-features = false }
+image = { version = "0.25", default-features = false }
+libc = "0.2"
+log = "0.4.32"
+rayon = "1.12.0"
+rodio = { version = "0.22", default-features = false, features = ["playback"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.52", features = ["rt-multi-thread", "macros"] }
+walkdir = "2.5.0"
 
 [workspace.lints.clippy]
 collapsible_if = "allow"

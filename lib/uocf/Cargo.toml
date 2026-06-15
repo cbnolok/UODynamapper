@@ -22,15 +22,15 @@ should_implement_trait = "allow"
 too_many_arguments = "allow"
 
 [dependencies]
-byteorder = { version = "1.5", features = ["std"] }
+byteorder.workspace = true
 color-eyre = { workspace = true, features = ["track-caller"] }
 dds = { version = "0.2", default-features = false }
 derive-new = { version = "0.7", default-features = false }
 getset = { version = "0.1", default-features = false }
-image = { version = "0.25", default-features = false, features = ["bmp", "dds", "png", "tga"] }
+image = { workspace = true, features = ["bmp", "dds", "png", "tga"] }
 ddsfile.workspace = true
 wide = { version = "1", default-features = false, features = ["std"] }
-bytemuck = { version = "1.*", default-features = false, features = ["derive", "aarch64_simd", "avx512_simd"] }
+bytemuck.workspace = true
 bitflags = "2"
 nohash-hasher = "0.2.0"
 indexmap = "2.14.0"
@@ -38,9 +38,9 @@ indexmap = "2.14.0"
 # coupling to any specific logger implementation (the app provides the backend).
 log = { version = "0.4", default-features = false }
 adler32 = "1.2.0"
-flate2 = { version = "1.1.9", features = ["zlib-ng"], default-features = false }
-rayon = "1.12.0"
-serde = { version = "1.0.228", features = ["derive"] }
+flate2 = { workspace = true, features = ["zlib-ng"] }
+rayon.workspace = true
+serde.workspace = true
 toml.workspace = true
 memmap2 = "0.9"
 

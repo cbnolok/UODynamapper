@@ -18,10 +18,11 @@ impl UddConvApp {
                 // File selector for Tool 1
                 ui.horizontal(|ui| {
                     if ui.button("📁 Select Package...").clicked() {
-                        if let Some(path) = rfd::FileDialog::new()
-                            .add_filter("UDDP Packages", &["uddp", "uddpi"])
-                            .pick_file()
-                        {
+                        if let Some(path) = udd_tool_gui::open_filtered_file_dialog(
+                            None,
+                            "UDDP Packages",
+                            &["uddp", "uddpi"],
+                        ) {
                             self.tool_file_1 = Some(path);
                         }
                     }
@@ -84,7 +85,7 @@ impl UddConvApp {
                     ui.label("Package A:");
                     ui.horizontal(|ui| {
                         if ui.button("Select...").clicked() {
-                            if let Some(path) = rfd::FileDialog::new().pick_file() {
+                            if let Some(path) = udd_tool_gui::file_dialog().pick_file() {
                                 self.tool_file_1 = Some(path);
                             }
                         }
@@ -98,7 +99,7 @@ impl UddConvApp {
                     ui.label("Package B:");
                     ui.horizontal(|ui| {
                         if ui.button("Select...").clicked() {
-                            if let Some(path) = rfd::FileDialog::new().pick_file() {
+                            if let Some(path) = udd_tool_gui::file_dialog().pick_file() {
                                 self.tool_file_2 = Some(path);
                             }
                         }

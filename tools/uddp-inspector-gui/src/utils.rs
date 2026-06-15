@@ -3,58 +3,12 @@ use bytemuck::{pod_read_unaligned, Pod};
 use udd_container::Codec;
 use crate::models::AtlasPixelFormat;
 
-pub fn normalize_linux_portal_env() {
-    #[cfg(target_os = "linux")]
-    {
-        use std::env;
-
-        let current = env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
-        if !current.is_empty() {
-            return;
-        }
-
-        let session = env::var("XDG_SESSION_DESKTOP")
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-        let desktop_session = env::var("DESKTOP_SESSION")
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-        let kde_full = env::var("KDE_FULL_SESSION").unwrap_or_default();
-
-        let inferred = if kde_full.eq_ignore_ascii_case("true")
-            || session.contains("kde")
-            || session.contains("plasma")
-            || desktop_session.contains("kde")
-            || desktop_session.contains("plasma")
-        {
-            Some("KDE")
-        } else if session.contains("gnome") || desktop_session.contains("gnome") {
-            Some("GNOME")
-        } else {
-            None
-        };
-
-        if let Some(desktop) = inferred {
-            unsafe { env::set_var("XDG_CURRENT_DESKTOP", desktop) };
-        }
-    }
-}
-
 pub fn open_package_dialog(initial_dir: Option<&Path>) -> Option<PathBuf> {
-    normalize_linux_portal_env();
-    let mut dialog = rfd::FileDialog::new()
-        .add_filter("UDDP Packages", &["uddp", "uddpi"]);
-    if let Some(initial_dir) = initial_dir.filter(|path| path.is_dir()) {
-        dialog = dialog.set_directory(initial_dir);
-    }
-    dialog.pick_file()
+    udd_tool_gui::open_filtered_file_dialog(initial_dir, "UDDP Packages", &["uddp", "uddpi"])
 }
 
 pub fn save_file_dialog(default_name: &str) -> Option<PathBuf> {
-    normalize_linux_portal_env();
-    rfd::FileDialog::new()
-        .set_file_name(default_name)
-        .save_file()
+    udd_tool_gui::save_file_dialog(default_name)
 }
 
 pub fn format_size(bytes: u64) -> String {

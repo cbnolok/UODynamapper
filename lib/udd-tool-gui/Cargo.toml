@@ -1,8 +1,7 @@
 [package]
-name = "udd-container"
+name = "udd-tool-gui"
 version = "0.1.0"
 edition = "2024"
-#resolver = "3"
 
 [lints.clippy]
 collapsible_if = "allow"
@@ -14,9 +13,6 @@ nonminimal_bool = "allow"
 too_many_arguments = "allow"
 
 [dependencies]
-xxhash-rust = { version = "0.8", default-features = false, features = ["xxh64"] }
-zstd.workspace = true
-jpegxl-rs = { version = "0.14", features = ["vendored"] }
-byteorder.workspace = true
-rayon.workspace = true
-memmap2 = "0.9"
+eframe.workspace = true
+egui_extras.workspace = true
+rfd.workspace = true

@@ -23,6 +23,7 @@ dead_code = "allow"
 eframe.workspace = true
 egui.workspace = true
 egui_extras.workspace = true
+udd-tool-gui = { path = "../../lib/udd-tool-gui" }
 uocf = { path = "../../lib/uocf" }
 udd-assets = { path = "../../lib/udd-assets" }
 udd-conv = { path = "../../lib/udd-conv" }
@@ -30,12 +31,11 @@ udd-container = { path = "../../lib/udd-container" }
 ktx2.workspace = true
 zstd.workspace = true
 color-eyre.workspace = true
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-rfd.workspace = true
-byteorder = "1.5"
-serde = { version = "1", features = ["derive"] }
-bytemuck = { version = "1.*", default-features = false, features = ["derive", "aarch64_simd", "avx512_simd"] }
-image = { version = "0.25", default-features = false, features = [
+tokio.workspace = true
+byteorder.workspace = true
+serde.workspace = true
+bytemuck.workspace = true
+image = { workspace = true, features = [
     "png",
     "dds",
     "tga",
