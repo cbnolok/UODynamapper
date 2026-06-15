@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
 use std::path::Path;
+#[cfg(any(test, debug_assertions))]
+use std::sync::atomic::{AtomicU64, Ordering};
 use color_eyre::eyre::{self, WrapErr};
 use byteorder::{LittleEndian, ReadBytesExt};
 use udd_container::{xxh64_virtual_path, UddpReader};
@@ -48,6 +50,27 @@ pub const TERRAIN_OVERRIDE_ACTION_LIQUID: u16 = 1 << 1;
 pub const TERRAIN_OVERRIDE_ACTION_LAYER: u16 = 1 << 2;
 pub const TERRAIN_OVERRIDE_ACTION_TEXTURE: u16 = 1 << 3;
 pub const TERRAIN_OVERRIDE_ACTION_IGNORE: u16 = 1 << 4;
+
+#[cfg(any(test, debug_assertions))]
+static FROM_UDDP_PACKAGE_WITH_OPTIONS_CALLS: AtomicU64 = AtomicU64::new(0);
+#[cfg(any(test, debug_assertions))]
+static SET_TERRAIN_OVERRIDES_CALLS: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(any(test, debug_assertions))]
+pub fn debug_from_uddp_package_with_options_call_count() -> u64 {
+    FROM_UDDP_PACKAGE_WITH_OPTIONS_CALLS.load(Ordering::Relaxed)
+}
+
+#[cfg(any(test, debug_assertions))]
+pub fn debug_set_terrain_overrides_call_count() -> u64 {
+    SET_TERRAIN_OVERRIDES_CALLS.load(Ordering::Relaxed)
+}
+
+#[cfg(test)]
+pub fn debug_reset_package_load_counters() {
+    FROM_UDDP_PACKAGE_WITH_OPTIONS_CALLS.store(0, Ordering::Relaxed);
+    SET_TERRAIN_OVERRIDES_CALLS.store(0, Ordering::Relaxed);
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TexLandEcTerrainOverrideActions {
@@ -279,6 +302,9 @@ impl TexLandEcPackage {
         package: UddpReader,
         options: AtlasCacheOptions,
     ) -> eyre::Result<Self> {
+        #[cfg(any(test, debug_assertions))]
+        FROM_UDDP_PACKAGE_WITH_OPTIONS_CALLS.fetch_add(1, Ordering::Relaxed);
+
         let page_manifest = read_path_entry_cow(&package, UDDP_PAGE_MANIFEST_ENTRY_VPATH)
             .context("tex_land_ec.uddp missing metadata/pages.bin")?;
         let slot_manifest = read_path_entry_cow(&package, UDDP_SLOT_MANIFEST_ENTRY_VPATH)
@@ -339,6 +365,9 @@ impl TexLandEcPackage {
         &mut self,
         overrides: &EcTerrainOverrides,
     ) -> TexLandEcTerrainOverrideLoadSummary {
+        #[cfg(any(test, debug_assertions))]
+        SET_TERRAIN_OVERRIDES_CALLS.fetch_add(1, Ordering::Relaxed);
+
         let (actions, details, texture_refs) = terrain_override_maps_from_overrides(overrides);
 
         self.terrain_override_actions = actions;
@@ -1512,6 +1541,30 @@ mod tests {
         let bytes = builder.build().expect("build test package");
         TexLandEcPackage::from_uddp_package(UddpReader::open(bytes).expect("open package"))
             .expect("load test package")
+    }
+
+    #[test]
+    fn debug_package_load_counters_track_tex_land_ec_work() {
+        debug_reset_package_load_counters();
+        assert_eq!(debug_from_uddp_package_with_options_call_count(), 0);
+        assert_eq!(debug_set_terrain_overrides_call_count(), 0);
+
+        let mut package = test_package();
+        assert_eq!(debug_from_uddp_package_with_options_call_count(), 1);
+        assert_eq!(debug_set_terrain_overrides_call_count(), 0);
+
+        let overrides = EcTerrainOverrides::parse(
+            "counter.kdl",
+            r#"
+terrain 52 {
+    ignore code="counter_test"
+}
+"#,
+        )
+        .expect("parse counter overrides");
+        package.set_terrain_overrides(&overrides);
+
+        assert_eq!(debug_set_terrain_overrides_call_count(), 1);
     }
 
     #[test]

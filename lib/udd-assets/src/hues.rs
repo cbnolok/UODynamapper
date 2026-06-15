@@ -1,4 +1,6 @@
 use std::path::Path;
+#[cfg(any(test, debug_assertions))]
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use color_eyre::eyre::{self, Context};
 use udd_container::UddpReader;
@@ -25,6 +27,19 @@ const HUES_CSV_HEADER: [&str; 8] = [
     "palette_width_pixels",
     "flags",
 ];
+
+#[cfg(any(test, debug_assertions))]
+static FROM_UDDP_PACKAGE_CALLS: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(any(test, debug_assertions))]
+pub fn debug_from_uddp_package_call_count() -> u64 {
+    FROM_UDDP_PACKAGE_CALLS.load(Ordering::Relaxed)
+}
+
+#[cfg(test)]
+pub fn debug_reset_package_load_counters() {
+    FROM_UDDP_PACKAGE_CALLS.store(0, Ordering::Relaxed);
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HueSlotRecord {
@@ -73,6 +88,9 @@ impl HuesPackage {
     }
 
     pub fn from_uddp_package(package: UddpReader) -> eyre::Result<Self> {
+        #[cfg(any(test, debug_assertions))]
+        FROM_UDDP_PACKAGE_CALLS.fetch_add(1, Ordering::Relaxed);
+
         let csv_bytes = read_path_entry_cow(&package, HUES_METADATA_ENTRY_PATH)
             .context("hues.uddp missing metadata/hues.csv")?;
         let slots = parse_hues_csv(&csv_bytes)?;
@@ -392,6 +410,9 @@ mod tests {
 
     #[test]
     fn package_load_reads_csv_and_texture_payload() {
+        debug_reset_package_load_counters();
+        assert_eq!(debug_from_uddp_package_call_count(), 0);
+
         let records = vec![record(1, "name", 0, 1)];
         let csv = encode_hues_csv(&records).expect("encode csv");
         let texture = vec![0u8; HUES_TEXTURE_WIDTH as usize * HUES_TEXTURE_HEIGHT as usize * 4];
@@ -427,6 +448,7 @@ mod tests {
         )
         .expect("load hues package");
 
+        assert_eq!(debug_from_uddp_package_call_count(), 1);
         assert_eq!(package.hue_name(1), Some("name"));
         assert_eq!(package.read_texture_bytes().expect("texture bytes").len(), texture.len());
     }
