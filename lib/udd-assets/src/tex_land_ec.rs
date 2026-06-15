@@ -5,7 +5,7 @@ use color_eyre::eyre::{self, WrapErr};
 use byteorder::{LittleEndian, ReadBytesExt};
 use udd_container::{xxh64_virtual_path, UddpReader};
 use crate::common::{AtlasCacheOptions, AtlasPageCache, decode_atlas_page_rgba, read_path_entry, read_path_entry_cow};
-use crate::ec_terrain_overrides::{EcTerrainOverrideEntry, EcTerrainOverrides};
+use crate::ec_terrain_overrides::EcTerrainOverrides;
 use crate::tex_art_cc::{AtlasPackingMode, PagePixelFormat};
 
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"ELPG";
@@ -340,8 +340,7 @@ impl TexLandEcPackage {
         &mut self,
         overrides: &EcTerrainOverrides,
     ) -> TexLandEcTerrainOverrideLoadSummary {
-        let override_map = overrides.to_map();
-        let (actions, details, texture_refs) = terrain_override_maps_from_entries(&override_map);
+        let (actions, details, texture_refs) = terrain_override_maps_from_overrides(overrides);
 
         self.terrain_override_actions = actions;
         self.terrain_override_details = details;
@@ -354,14 +353,24 @@ impl TexLandEcPackage {
         let mut unresolved_texture_refs = Vec::new();
         let mut texture_ref_count = 0u32;
         let mut resolved_texture_ref_count = 0u32;
+        let mut resolved_texture_slots = HashMap::<(u32, u32), bool>::new();
 
         for refs in self.terrain_override_texture_refs.values() {
             for texture_ref in refs {
                 texture_ref_count += 1;
-                if self
-                    .resolve_texture_id_slot(texture_ref.material_id, texture_ref.texture_id)
-                    .is_some()
+                let is_resolved = match resolved_texture_slots
+                    .entry((texture_ref.material_id, texture_ref.texture_id))
                 {
+                    std::collections::hash_map::Entry::Occupied(entry) => *entry.get(),
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        let is_resolved = self
+                            .resolve_texture_id_slot(texture_ref.material_id, texture_ref.texture_id)
+                            .is_some();
+                        entry.insert(is_resolved);
+                        is_resolved
+                    }
+                };
+                if is_resolved {
                     resolved_texture_ref_count += 1;
                 } else {
                     unresolved_texture_refs.push(texture_ref.clone());
@@ -1035,8 +1044,8 @@ fn read_terrain_override_details_from_package(
     parse_terrain_override_details_metadata(bytes.as_ref()).ok()
 }
 
-fn terrain_override_maps_from_entries(
-    entries: &HashMap<u32, EcTerrainOverrideEntry>,
+fn terrain_override_maps_from_overrides(
+    overrides: &EcTerrainOverrides,
 ) -> (
     HashMap<u32, TexLandEcTerrainOverrideActions>,
     HashMap<u32, TexLandEcTerrainOverrideDetails>,
@@ -1044,80 +1053,78 @@ fn terrain_override_maps_from_entries(
 ) {
     let mut actions = HashMap::new();
     let mut details = HashMap::new();
-    let mut texture_refs = HashMap::<u32, Vec<TexLandEcTerrainOverrideTextureRef>>::new();
+    let mut layer_texture_refs = HashMap::<u32, Vec<TexLandEcTerrainOverrideTextureRef>>::new();
+    let mut explicit_texture_refs = HashMap::<u32, Vec<TexLandEcTerrainOverrideTextureRef>>::new();
 
-    for (&material_id, entry) in entries {
-        let mut action_flags = 0u16;
-        if !entry.policies.is_empty() {
-            action_flags |= TERRAIN_OVERRIDE_ACTION_POLICY;
-        }
-        if entry.liquid.is_some() {
-            action_flags |= TERRAIN_OVERRIDE_ACTION_LIQUID;
-        }
-        if !entry.layers.is_empty() {
-            action_flags |= TERRAIN_OVERRIDE_ACTION_LAYER;
-        }
-        if !entry.textures.is_empty() {
-            action_flags |= TERRAIN_OVERRIDE_ACTION_TEXTURE;
-        }
-        if entry.ignore.is_some() {
-            action_flags |= TERRAIN_OVERRIDE_ACTION_IGNORE;
-        }
-
-        actions.insert(
-            material_id,
-            TexLandEcTerrainOverrideActions {
+    for terrain in &overrides.terrains {
+        let material_id = terrain.id;
+        let action = actions
+            .entry(material_id)
+            .or_insert_with(|| TexLandEcTerrainOverrideActions {
                 material_id,
-                action_count: entry.active_action_count() as u32,
-                action_flags,
-            },
-        );
-
-        details.insert(
-            material_id,
-            TexLandEcTerrainOverrideDetails {
+                action_count: 0,
+                action_flags: 0,
+            });
+        let detail = details
+            .entry(material_id)
+            .or_insert_with(|| TexLandEcTerrainOverrideDetails {
                 material_id,
-                policies: entry
-                    .policies
-                    .iter()
-                    .map(|policy| TexLandEcTerrainOverridePolicy {
+                policies: Vec::new(),
+                liquid: None,
+                ignore_code: None,
+            });
+
+        if !terrain.policies.is_empty() {
+            action.action_count += terrain.policies.len() as u32;
+            action.action_flags |= TERRAIN_OVERRIDE_ACTION_POLICY;
+            detail
+                .policies
+                .extend(terrain.policies.iter().map(|policy| {
+                    TexLandEcTerrainOverridePolicy {
                         material_id,
                         policy: policy.policy.clone(),
                         code: policy.code.clone(),
-                    })
-                    .collect(),
-                liquid: entry.liquid.as_ref().map(|liquid| {
-                    TexLandEcTerrainOverrideLiquid {
-                        material_id,
-                        speed: liquid.speed,
-                        waveheight: liquid.waveheight,
-                        code: liquid.code.clone(),
                     }
-                }),
-                ignore_code: entry.ignore.as_ref().and_then(|ignore| ignore.code.clone()),
-            },
-        );
+                }));
+        }
 
-        for (layer_index, layer) in entry.layers.iter().enumerate() {
-            let semantic_layer_index =
-                terrain_override_role_layer_index(&layer.role).unwrap_or(layer_index as u32);
-            texture_refs
-                .entry(material_id)
-                .or_default()
-                .push(TexLandEcTerrainOverrideTextureRef {
+        if let Some(liquid) = terrain.liquid.as_ref() {
+            if !action.has_liquid() {
+                action.action_count += 1;
+            }
+            action.action_flags |= TERRAIN_OVERRIDE_ACTION_LIQUID;
+            detail.liquid = Some(TexLandEcTerrainOverrideLiquid {
+                material_id,
+                speed: liquid.speed,
+                waveheight: liquid.waveheight,
+                code: liquid.code.clone(),
+            });
+        }
+
+        if !terrain.layers.is_empty() {
+            action.action_count += terrain.layers.len() as u32;
+            action.action_flags |= TERRAIN_OVERRIDE_ACTION_LAYER;
+            let refs = layer_texture_refs.entry(material_id).or_default();
+            for layer in &terrain.layers {
+                let fallback_layer_index = refs.len() as u32;
+                let semantic_layer_index =
+                    terrain_override_role_layer_index(&layer.role).unwrap_or(fallback_layer_index);
+                refs.push(TexLandEcTerrainOverrideTextureRef {
                     material_id,
                     role: layer.role.clone(),
                     texture_id: layer.texture,
                     layer_index: Some(semantic_layer_index),
                     texture_repetition: layer.stretch,
                 });
+            }
         }
 
-        for texture in &entry.textures {
-            texture_refs
-                .entry(material_id)
-                .or_default()
-                .push(TexLandEcTerrainOverrideTextureRef {
+        if !terrain.textures.is_empty() {
+            action.action_count += terrain.textures.len() as u32;
+            action.action_flags |= TERRAIN_OVERRIDE_ACTION_TEXTURE;
+            let refs = explicit_texture_refs.entry(material_id).or_default();
+            for texture in &terrain.textures {
+                refs.push(TexLandEcTerrainOverrideTextureRef {
                     material_id,
                     role: texture
                         .role
@@ -1127,7 +1134,21 @@ fn terrain_override_maps_from_entries(
                     layer_index: None,
                     texture_repetition: None,
                 });
+            }
         }
+
+        if let Some(ignore) = terrain.ignore.as_ref() {
+            if !action.has_ignore() {
+                action.action_count += 1;
+            }
+            action.action_flags |= TERRAIN_OVERRIDE_ACTION_IGNORE;
+            detail.ignore_code = ignore.code.clone();
+        }
+    }
+
+    let mut texture_refs = layer_texture_refs;
+    for (material_id, mut refs) in explicit_texture_refs {
+        texture_refs.entry(material_id).or_default().append(&mut refs);
     }
 
     (actions, details, texture_refs)
@@ -1688,5 +1709,62 @@ terrain 52 {
         assert_eq!(override_slots[0].runtime_slot_id, Some(101));
         assert_eq!(override_slots[1].runtime_slot_id, Some(100));
         assert_eq!(override_slots[2].runtime_slot_id, None);
+    }
+
+    #[test]
+    fn loose_terrain_overrides_merge_duplicate_terrain_nodes_without_reordering_refs() {
+        let mut package = test_package();
+        let overrides = EcTerrainOverrides::parse(
+            "loose.kdl",
+            r#"
+terrain 52 {
+    policy "smooth"
+    liquid speed=1.0 code="old_liquid"
+    layer "unknown_a" tex=2000510
+    texture 9999999 role="detail"
+    ignore code="old_ignore"
+}
+terrain 52 {
+    liquid waveheight=2.0 code="new_liquid"
+    layer "unknown_b" tex=2000520
+    texture 2000510 role="base"
+    ignore code="new_ignore"
+}
+"#,
+        )
+        .expect("parse loose overrides");
+
+        let summary = package.set_terrain_overrides(&overrides);
+        let details = package
+            .terrain_override_details_for(52)
+            .expect("material 52 loose override details");
+        let refs = package.terrain_override_texture_refs_for(52);
+
+        assert_eq!(summary.entry_count, 1);
+        assert_eq!(summary.action_count, 7);
+        assert_eq!(summary.texture_ref_count, 4);
+        assert_eq!(summary.resolved_texture_ref_count, 3);
+        assert_eq!(details.policies[0].policy, "smooth");
+        assert_eq!(
+            details.liquid.as_ref().and_then(|liquid| liquid.speed),
+            None
+        );
+        assert_eq!(
+            details.liquid.as_ref().and_then(|liquid| liquid.waveheight),
+            Some(2.0)
+        );
+        assert_eq!(
+            details.liquid.as_ref().and_then(|liquid| liquid.code.as_deref()),
+            Some("new_liquid")
+        );
+        assert_eq!(details.ignore_code.as_deref(), Some("new_ignore"));
+        assert_eq!(refs[0].role, "unknown_a");
+        assert_eq!(refs[0].layer_index, Some(0));
+        assert_eq!(refs[1].role, "unknown_b");
+        assert_eq!(refs[1].layer_index, Some(1));
+        assert_eq!(refs[2].role, "detail");
+        assert_eq!(refs[2].layer_index, None);
+        assert_eq!(refs[3].role, "base");
+        assert_eq!(refs[3].layer_index, None);
     }
 }
