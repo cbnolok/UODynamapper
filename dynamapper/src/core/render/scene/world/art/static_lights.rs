@@ -78,6 +78,7 @@ pub struct StaticLightInstance {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Component)]
+#[component(clone_behavior = Ignore)]
 pub struct StaticLightKey {
     pub map_id: u32,
     pub tile_x: u32,

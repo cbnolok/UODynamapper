@@ -618,6 +618,7 @@ fn provenance_record_matches_runtime_slot(
     false
 }
 
+#[cfg(test)]
 fn resolve_static_visual_kind(
     art_source: ClientTextureSource,
     tile_graphic: u16,
