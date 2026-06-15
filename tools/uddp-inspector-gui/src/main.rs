@@ -1,6 +1,6 @@
 use color_eyre::eyre;
 use eframe::egui;
-use udd_tool_gui::{run_native_with_setup, NativeWindow};
+use gui_shared::{run_native_with_setup, NativeWindow};
 
 mod app;
 mod models;

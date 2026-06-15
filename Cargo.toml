@@ -8,7 +8,7 @@ members = [
     "lib/udd-container",
     "lib/udd-assets",
     "lib/udd-logging",
-    "lib/udd-tool-gui",
+    "lib/gui-shared",
     "lib/image-postprocess",
     "tools/udd-conv-cli",
     "tools/uocf-cli",

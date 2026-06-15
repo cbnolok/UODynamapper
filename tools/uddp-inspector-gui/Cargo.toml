@@ -23,7 +23,7 @@ dead_code = "allow"
 eframe.workspace = true
 egui.workspace = true
 egui_extras.workspace = true
-udd-tool-gui = { path = "../../lib/udd-tool-gui" }
+gui-shared = { path = "../../lib/gui-shared" }
 uocf = { path = "../../lib/uocf" }
 udd-assets = { path = "../../lib/udd-assets" }
 udd-conv = { path = "../../lib/udd-conv" }

@@ -18,7 +18,7 @@ impl UddConvApp {
                 // File selector for Tool 1
                 ui.horizontal(|ui| {
                     if ui.button("📁 Select Package...").clicked() {
-                        if let Some(path) = udd_tool_gui::open_filtered_file_dialog(
+                        if let Some(path) = gui_shared::open_filtered_file_dialog(
                             None,
                             "UDDP Packages",
                             &["uddp", "uddpi"],
@@ -85,7 +85,7 @@ impl UddConvApp {
                     ui.label("Package A:");
                     ui.horizontal(|ui| {
                         if ui.button("Select...").clicked() {
-                            if let Some(path) = udd_tool_gui::file_dialog().pick_file() {
+                            if let Some(path) = gui_shared::file_dialog().pick_file() {
                                 self.tool_file_1 = Some(path);
                             }
                         }
@@ -99,7 +99,7 @@ impl UddConvApp {
                     ui.label("Package B:");
                     ui.horizontal(|ui| {
                         if ui.button("Select...").clicked() {
-                            if let Some(path) = udd_tool_gui::file_dialog().pick_file() {
+                            if let Some(path) = gui_shared::file_dialog().pick_file() {
                                 self.tool_file_2 = Some(path);
                             }
                         }

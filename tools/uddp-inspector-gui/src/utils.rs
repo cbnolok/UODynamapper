@@ -4,11 +4,11 @@ use udd_container::Codec;
 use crate::models::AtlasPixelFormat;
 
 pub fn open_package_dialog(initial_dir: Option<&Path>) -> Option<PathBuf> {
-    udd_tool_gui::open_filtered_file_dialog(initial_dir, "UDDP Packages", &["uddp", "uddpi"])
+    gui_shared::open_filtered_file_dialog(initial_dir, "UDDP Packages", &["uddp", "uddpi"])
 }
 
 pub fn save_file_dialog(default_name: &str) -> Option<PathBuf> {
-    udd_tool_gui::save_file_dialog(default_name)
+    gui_shared::save_file_dialog(default_name)
 }
 
 pub fn format_size(bytes: u64) -> String {

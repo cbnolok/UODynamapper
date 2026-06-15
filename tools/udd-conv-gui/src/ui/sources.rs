@@ -142,7 +142,7 @@ fn pick_folder(title: &str, current: Option<&Path>) -> Option<PathBuf> {
         KdialogFolderResult::Unavailable => {}
     }
 
-    let mut dialog = udd_tool_gui::file_dialog().set_title(title);
+    let mut dialog = gui_shared::file_dialog().set_title(title);
     if let Some(current) = current.filter(|path| path.is_dir()) {
         dialog = dialog.set_directory(current);
     }

@@ -27,7 +27,7 @@ udd-image-codecs = { path = "../../lib/udd-image-codecs", features = ["ktx2"] }
 uocf = { path = "../../lib/uocf" }
 rfd.workspace = true
 udd-logging = { path = "../../lib/udd-logging" }
-udd-tool-gui = { path = "../../lib/udd-tool-gui" }
+gui-shared = { path = "../../lib/gui-shared" }
 rodio.workspace = true
 serde.workspace = true
 color-eyre.workspace = true

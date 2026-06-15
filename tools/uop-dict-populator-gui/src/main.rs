@@ -3,7 +3,7 @@ mod core;
 mod dialog;
 
 use app::UopPopulatorApp;
-use udd_tool_gui::{run_native_with_setup, NativeWindow};
+use gui_shared::{run_native_with_setup, NativeWindow};
 
 const APP_VIEWPORT_WIDTH: f32 = 1000.0;
 const APP_VIEWPORT_HEIGHT: f32 = 700.0;
