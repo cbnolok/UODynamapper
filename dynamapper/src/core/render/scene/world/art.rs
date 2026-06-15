@@ -22,6 +22,7 @@ impl Plugin for DrawStaticSpritesPlugin {
         app.init_resource::<statics_collect::RenderStaticLandInstances>();
         app.init_resource::<statics_collect::RenderStaticChunkBatches>();
         app.init_resource::<statics_collect::StaticChunkRenderCache>();
+        app.init_resource::<statics_collect::StaticSurfaceLikeResolutionCache>();
         app.init_resource::<statics_collect::StaticArtCollectDebugState>();
         app.init_resource::<statics_collect::StaticArtSourceState>();
         app.init_resource::<statics_draw::StaticArtDrawDebugState>();

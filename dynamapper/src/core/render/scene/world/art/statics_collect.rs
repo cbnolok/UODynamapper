@@ -649,6 +649,39 @@ fn resolve_static_visual_kind(
     }
 }
 
+fn resolve_static_visual_kind_cached(
+    art_source: ClientTextureSource,
+    tile_graphic: u16,
+    tilemeta_package: Option<&udd_assets::tilemeta::TileMetaPackage>,
+    tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
+    tex_art_ec: Option<&udd_assets::tex_art_ec::TexArtEcPackage>,
+    tex_land_ec: Option<&udd_assets::tex_land_ec::TexLandEcPackage>,
+    surface_resolution_cache: &mut StaticSurfaceLikeResolutionCache,
+) -> StaticVisualKind {
+    match art_source {
+        ClientTextureSource::Cc => {
+            let fallback_texture_id = tilemeta
+                .map(|meta| meta.cc_texture_id as u16)
+                .unwrap_or(tile_graphic);
+            StaticVisualKind::CcRegular {
+                art_id: tile_graphic.saturating_add(CLASSIC_STATIC_ART_ID_OFFSET),
+                fallback_art_id: fallback_texture_id.saturating_add(CLASSIC_STATIC_ART_ID_OFFSET),
+            }
+        }
+        ClientTextureSource::Ec => resolve_ec_static_visual_kind(
+            tile_graphic,
+            tex_art_ec.is_some_and(|package| package.present_slot(tile_graphic as u32).is_some()),
+            surface_resolution_cache.resolve_surface_like_tex_land_ec_slot_id(
+                art_source,
+                tile_graphic as u32,
+                tilemeta_package,
+                tilemeta,
+                tex_land_ec,
+            ),
+        ),
+    }
+}
+
 fn resolve_ec_static_visual_kind(
     tile_graphic: u16,
     _has_tex_art_ec_slot: bool,
@@ -1115,6 +1148,67 @@ pub struct StaticArtSourceState {
     pub warned_unavailable_source: Option<ClientTextureSource>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct StaticSurfaceLikeResolutionCacheKey {
+    art_source: u8,
+    tile_id: u32,
+}
+
+#[derive(Resource, Default)]
+pub struct StaticSurfaceLikeResolutionCache {
+    entries: HashMap<StaticSurfaceLikeResolutionCacheKey, Option<SurfaceLikeTexLandEcResolution>>,
+}
+
+impl StaticSurfaceLikeResolutionCache {
+    fn resolve_surface_like_tex_land_ec_slot_id(
+        &mut self,
+        art_source: ClientTextureSource,
+        tile_id: u32,
+        tilemeta_package: Option<&udd_assets::tilemeta::TileMetaPackage>,
+        tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
+        tex_land_ec: Option<&udd_assets::tex_land_ec::TexLandEcPackage>,
+    ) -> Option<SurfaceLikeTexLandEcResolution> {
+        let key = StaticSurfaceLikeResolutionCacheKey {
+            art_source: static_surface_like_resolution_art_source_tag(art_source),
+            tile_id,
+        };
+        self.get_or_insert_with(key, || {
+            resolve_surface_like_tex_land_ec_slot_id(
+                tile_id,
+                tilemeta_package,
+                tilemeta,
+                tex_land_ec,
+            )
+        })
+    }
+
+    fn get_or_insert_with(
+        &mut self,
+        key: StaticSurfaceLikeResolutionCacheKey,
+        resolve: impl FnOnce() -> Option<SurfaceLikeTexLandEcResolution>,
+    ) -> Option<SurfaceLikeTexLandEcResolution> {
+        if let Some(cached) = self.entries.get(&key).copied() {
+            return cached;
+        }
+
+        let resolved = resolve();
+        self.entries.insert(key, resolved);
+        resolved
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+}
+
+fn static_surface_like_resolution_art_source_tag(source: ClientTextureSource) -> u8 {
+    match source {
+        ClientTextureSource::Cc => 0,
+        ClientTextureSource::Ec => 1,
+    }
+}
+
 fn source_available(
     source: ClientTextureSource,
     tex_art_cc_res: Option<&Res<TexArtCcPackageRes>>,
@@ -1250,6 +1344,7 @@ pub fn sys_collect_visible_statics(
         ResMut<RenderStaticLandInstances>,
         ResMut<RenderStaticChunkBatches>,
         ResMut<StaticChunkRenderCache>,
+        ResMut<StaticSurfaceLikeResolutionCache>,
     ),
     mut debug_state: ResMut<StaticArtCollectDebugState>,
     source_state: Res<StaticArtSourceState>,
@@ -1502,13 +1597,14 @@ pub fn sys_collect_visible_statics(
                             let Some(art_source) = art_source else {
                                 continue;
                             };
-                            let visual_kind = resolve_static_visual_kind(
+                            let visual_kind = resolve_static_visual_kind_cached(
                                 art_source,
                                 render_tile.graphic,
                                 tilemeta_res.as_ref().map(|res| &*res.0),
                                 tilemeta,
                                 tex_art_ec_res.as_ref().map(|package| &*package.0),
                                 tex_land_ec_res.as_ref().map(|package| &*package.0),
+                                &mut outputs.4,
                             );
 
                             let bias =
@@ -1856,6 +1952,46 @@ mod tests {
             runtime_slot_id: 42,
             texture_repetition: 1.0,
         }
+    }
+
+    #[test]
+    fn surface_like_resolution_cache_stores_hits_and_misses() {
+        let mut cache = StaticSurfaceLikeResolutionCache::default();
+        let hit_key = StaticSurfaceLikeResolutionCacheKey {
+            art_source: static_surface_like_resolution_art_source_tag(ClientTextureSource::Ec),
+            tile_id: 7,
+        };
+        let miss_key = StaticSurfaceLikeResolutionCacheKey {
+            art_source: static_surface_like_resolution_art_source_tag(ClientTextureSource::Ec),
+            tile_id: 8,
+        };
+        let resolution = test_surface_like_resolution();
+        let mut hit_resolves = 0;
+        let mut miss_resolves = 0;
+
+        assert_eq!(
+            cache.get_or_insert_with(hit_key, || {
+                hit_resolves += 1;
+                Some(resolution)
+            }),
+            Some(resolution)
+        );
+        assert_eq!(cache.get_or_insert_with(hit_key, || None), Some(resolution));
+        assert_eq!(hit_resolves, 1);
+
+        assert_eq!(
+            cache.get_or_insert_with(miss_key, || {
+                miss_resolves += 1;
+                None
+            }),
+            None
+        );
+        assert_eq!(
+            cache.get_or_insert_with(miss_key, || Some(resolution)),
+            None
+        );
+        assert_eq!(miss_resolves, 1);
+        assert_eq!(cache.len(), 2);
     }
 
     #[test]
