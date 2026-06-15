@@ -1,7 +1,9 @@
 use byteorder::{LittleEndian, ReadBytesExt};
 use color_eyre::eyre::{self, Context, ContextCompat};
+use std::collections::HashMap;
 use std::io::{Cursor, Read};
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use udd_container::{DataType, FileKey, UddpReader};
 
 const GUMP_ATLAS_PAGE_MANIFEST_ID: u32 = 0xE000_0000;
@@ -48,6 +50,7 @@ pub struct GumpsPackage {
     atlas_gutter: u16,
     atlas_pages: Vec<GumpAtlasPageRecord>,
     atlas_slots: Vec<GumpAtlasSlotRecord>,
+    atlas_page_cache: Mutex<HashMap<u32, Arc<[u8]>>>,
 }
 
 impl GumpsPackage {
@@ -99,6 +102,7 @@ impl GumpsPackage {
             atlas_gutter,
             atlas_pages,
             atlas_slots,
+            atlas_page_cache: Mutex::new(HashMap::new()),
         })
     }
 
@@ -154,6 +158,14 @@ impl GumpsPackage {
             .map(|index| &self.atlas_slots[index])
     }
 
+    #[cfg(test)]
+    fn cached_atlas_page_count(&self) -> usize {
+        self.atlas_page_cache
+            .lock()
+            .map(|cache| cache.len())
+            .unwrap_or(0)
+    }
+
     pub fn read_gump_rgba(&self, gump_id: u32) -> eyre::Result<(u32, u32, Vec<u8>)> {
         let image = self.read_gump_image(gump_id)?;
         Ok((image.physical_width, image.physical_height, image.rgba))
@@ -178,10 +190,7 @@ impl GumpsPackage {
             .get(slot.page_index as usize)
             .filter(|page| page.page_index == slot.page_index)
             .context("gump atlas slot references missing page metadata")?;
-        let page_bytes = self
-            .package
-            .read_file_by_sparse_id(GUMP_ATLAS_PAGE_ID_BASE + slot.page_index)
-            .wrap_err_with(|| format!("read gump atlas page {}", slot.page_index))?;
+        let page_bytes = self.read_atlas_page_bytes(slot.page_index)?;
         let page_stride = page.used_width as usize * 4;
         let slot_width = slot.width as usize;
         let slot_height = slot.height as usize;
@@ -212,6 +221,29 @@ impl GumpsPackage {
             upscale_factor,
             rgba,
         })
+    }
+
+    fn read_atlas_page_bytes(&self, page_index: u32) -> eyre::Result<Arc<[u8]>> {
+        if let Some(bytes) = self
+            .atlas_page_cache
+            .lock()
+            .map_err(|_| eyre::eyre!("gump atlas page cache lock poisoned"))?
+            .get(&page_index)
+            .cloned()
+        {
+            return Ok(bytes);
+        }
+
+        let bytes = self
+            .package
+            .read_file_by_sparse_id(GUMP_ATLAS_PAGE_ID_BASE + page_index)
+            .wrap_err_with(|| format!("read gump atlas page {page_index}"))?;
+        let bytes = Arc::<[u8]>::from(bytes);
+        let mut cache = self
+            .atlas_page_cache
+            .lock()
+            .map_err(|_| eyre::eyre!("gump atlas page cache lock poisoned"))?;
+        Ok(cache.entry(page_index).or_insert_with(|| bytes.clone()).clone())
     }
 }
 
@@ -316,12 +348,19 @@ mod tests {
     fn package_reads_atlas_gump_payload() {
         let package = GumpsPackage::from_uddp_package(build_test_package(true)).unwrap();
 
+        assert_eq!(package.cached_atlas_page_count(), 0);
         let image = package.read_gump_image(50_001).unwrap();
 
         assert_eq!((image.physical_width, image.physical_height), (2, 1));
         assert_eq!((image.logical_width, image.logical_height), (1, 1));
         assert_eq!(image.upscale_factor, 2);
         assert_eq!(image.rgba, vec![9, 10, 11, 12, 13, 14, 15, 16]);
+        assert_eq!(package.cached_atlas_page_count(), 1);
+
+        let image = package.read_gump_image(50_001).unwrap();
+
+        assert_eq!(image.rgba, vec![9, 10, 11, 12, 13, 14, 15, 16]);
+        assert_eq!(package.cached_atlas_page_count(), 1);
     }
 
     fn build_test_package(include_atlas: bool) -> UddpReader {
