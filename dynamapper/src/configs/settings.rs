@@ -103,6 +103,8 @@ pub struct SectWorldRendering {
     pub enable_statics: bool,
     #[serde(default = "default_enable_static_lights")]
     pub enable_static_lights: bool,
+    #[serde(default = "default_enable_static_art_local_lights")]
+    pub enable_static_art_local_lights: bool,
     #[serde(default)]
     pub land_streaming: SectLandStreaming,
     #[serde(default)]
@@ -116,6 +118,10 @@ fn default_enable_statics() -> bool {
 }
 
 fn default_enable_static_lights() -> bool {
+    false
+}
+
+fn default_enable_static_art_local_lights() -> bool {
     false
 }
 
@@ -1104,5 +1110,26 @@ mod tests {
 
         assert_eq!(settings.udd_path, "/tmp/uddp");
         assert!(!settings.load_gumps);
+    }
+
+    #[test]
+    fn world_rendering_settings_default_static_art_local_lights_off() {
+        let settings: SectWorldRendering =
+            toml::from_str("enable_statics = true\nenable_static_lights = true\n")
+                .expect("parse world rendering settings");
+
+        assert!(settings.enable_statics);
+        assert!(settings.enable_static_lights);
+        assert!(!settings.enable_static_art_local_lights);
+    }
+
+    #[test]
+    fn world_rendering_settings_accept_static_art_local_lights_opt_in() {
+        let settings: SectWorldRendering = toml::from_str(
+            "enable_statics = true\nenable_static_lights = true\nenable_static_art_local_lights = true\n",
+        )
+        .expect("parse world rendering settings");
+
+        assert!(settings.enable_static_art_local_lights);
     }
 }

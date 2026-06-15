@@ -762,7 +762,7 @@ struct StaticChunkCacheConfig {
     art_source: Option<ClientTextureSource>,
     sprite_atlas_mapping_revision: u64,
     ground_atlas_mapping_revision: u64,
-    static_light_signature: u64,
+    static_art_local_light_signature: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -896,6 +896,21 @@ fn static_light_signature(
     signature
 }
 
+fn static_art_local_light_rgba(
+    enabled: bool,
+    lights: &super::static_lights::RenderStaticLightInstances,
+    map_id: u32,
+    world_x: f32,
+    world_z: f32,
+    world_y: f32,
+) -> [f32; 4] {
+    if enabled {
+        static_local_light_rgba(lights, map_id, world_x, world_z, world_y)
+    } else {
+        [0.0; 4]
+    }
+}
+
 fn static_local_light_rgba(
     lights: &super::static_lights::RenderStaticLightInstances,
     map_id: u32,
@@ -948,6 +963,22 @@ fn strongest_static_local_light_sample(
     best
 }
 
+fn static_art_billboard_local_light_rgba(
+    enabled: bool,
+    lights: &super::static_lights::RenderStaticLightInstances,
+    map_id: u32,
+    world_x: f32,
+    world_z: f32,
+    base_world_y: f32,
+    bounds: StaticBillboardBounds,
+) -> [f32; 4] {
+    if enabled {
+        static_billboard_local_light_rgba(lights, map_id, world_x, world_z, base_world_y, bounds)
+    } else {
+        [0.0; 4]
+    }
+}
+
 fn static_billboard_sample_world(
     world_x: f32,
     world_z: f32,
@@ -998,6 +1029,22 @@ fn static_billboard_local_light_rgba(
         ),
     ];
     strongest_static_local_light_sample(lights, map_id, &samples)
+}
+
+fn static_art_ground_local_light_rgba(
+    enabled: bool,
+    lights: &super::static_lights::RenderStaticLightInstances,
+    map_id: u32,
+    world_x: f32,
+    world_z: f32,
+    base_world_y: f32,
+    bounds: GroundQuadBounds,
+) -> [f32; 4] {
+    if enabled {
+        static_ground_local_light_rgba(lights, map_id, world_x, world_z, base_world_y, bounds)
+    } else {
+        [0.0; 4]
+    }
 }
 
 fn static_ground_local_light_rgba(
@@ -1227,6 +1274,7 @@ pub fn sys_collect_visible_statics(
     .or(source_state.active_source);
 
     let is_dot_mode = zoom.0 >= 20.0;
+    let static_art_local_lights = settings.world_rendering.enable_static_art_local_lights;
     let mut visited_blocks = 0usize;
     let mut source_tiles = 0usize;
     let mut ground_land_tiles = 0usize;
@@ -1242,7 +1290,8 @@ pub fn sys_collect_visible_statics(
         art_source,
         sprite_atlas_mapping_revision: sprite_atlas.0.mapping_revision(),
         ground_atlas_mapping_revision: ground_atlas.0.mapping_revision(),
-        static_light_signature: static_light_signature(&static_lights, map_id),
+        static_art_local_light_signature: static_art_local_lights
+            .then(|| static_light_signature(&static_lights, map_id)),
     };
     let visible_tick = outputs.3.begin_frame();
     let config_changed = outputs.3.sync_config(cache_config);
@@ -1402,7 +1451,8 @@ pub fn sys_collect_visible_statics(
                             let base_world_y = (render_tile.z as f32) * height_scale;
 
                             if is_dot_mode {
-                                let local_light_rgba = static_local_light_rgba(
+                                let local_light_rgba = static_art_local_light_rgba(
+                                    static_art_local_lights,
                                     &static_lights,
                                     map_id,
                                     world_x,
@@ -1558,7 +1608,8 @@ pub fn sys_collect_visible_statics(
                                 if matches!(visual_kind, StaticVisualKind::TexLandEc { .. }) {
                                     chunk_stats.ground_land_tiles += 1;
                                     let bounds = resolve_surface_like_ground_quad_bounds();
-                                    let local_light_rgba = static_ground_local_light_rgba(
+                                    let local_light_rgba = static_art_ground_local_light_rgba(
+                                        static_art_local_lights,
                                         &static_lights,
                                         map_id,
                                         anchored_world_x,
@@ -1600,7 +1651,8 @@ pub fn sys_collect_visible_statics(
                                         resolved.logical_width,
                                         resolved.logical_height,
                                     );
-                                    let local_light_rgba = static_billboard_local_light_rgba(
+                                    let local_light_rgba = static_art_billboard_local_light_rgba(
+                                        static_art_local_lights,
                                         &static_lights,
                                         map_id,
                                         anchored_world_x,
@@ -2353,7 +2405,7 @@ mod tests {
             art_source: Some(ClientTextureSource::Cc),
             sprite_atlas_mapping_revision: 0,
             ground_atlas_mapping_revision: 0,
-            static_light_signature: 0,
+            static_art_local_light_signature: None,
         });
         cache.chunks.insert(
             StaticChunkBatchKey {
@@ -2371,10 +2423,23 @@ mod tests {
             art_source: Some(ClientTextureSource::Cc),
             sprite_atlas_mapping_revision: 1,
             ground_atlas_mapping_revision: 0,
-            static_light_signature: 0,
+            static_art_local_light_signature: None,
         });
 
         assert!(cache.chunks.is_empty());
+    }
+
+    #[test]
+    fn static_chunk_cache_ignores_static_light_changes_when_local_lights_disabled() {
+        let mut cache = StaticChunkRenderCache::default();
+        cache.sync_config(StaticChunkCacheConfig {
+            map_id: 1,
+            dot_mode: false,
+            art_source: Some(ClientTextureSource::Cc),
+            sprite_atlas_mapping_revision: 0,
+            ground_atlas_mapping_revision: 0,
+            static_art_local_light_signature: None,
+        });
 
         cache.chunks.insert(
             StaticChunkBatchKey {
@@ -2385,14 +2450,48 @@ mod tests {
             },
             CachedStaticChunk::default(),
         );
+
+        assert!(!cache.sync_config(StaticChunkCacheConfig {
+            map_id: 1,
+            dot_mode: false,
+            art_source: Some(ClientTextureSource::Cc),
+            sprite_atlas_mapping_revision: 0,
+            ground_atlas_mapping_revision: 0,
+            static_art_local_light_signature: None,
+        }));
+
+        assert!(!cache.chunks.is_empty());
+    }
+
+    #[test]
+    fn static_chunk_cache_tracks_static_light_changes_when_local_lights_enabled() {
+        let mut cache = StaticChunkRenderCache::default();
         cache.sync_config(StaticChunkCacheConfig {
             map_id: 1,
             dot_mode: false,
             art_source: Some(ClientTextureSource::Cc),
-            sprite_atlas_mapping_revision: 1,
+            sprite_atlas_mapping_revision: 0,
             ground_atlas_mapping_revision: 0,
-            static_light_signature: 1,
+            static_art_local_light_signature: Some(0),
         });
+        cache.chunks.insert(
+            StaticChunkBatchKey {
+                map_id: 1,
+                gx: 0,
+                gy: 0,
+                scale: 1,
+            },
+            CachedStaticChunk::default(),
+        );
+
+        assert!(cache.sync_config(StaticChunkCacheConfig {
+            map_id: 1,
+            dot_mode: false,
+            art_source: Some(ClientTextureSource::Cc),
+            sprite_atlas_mapping_revision: 0,
+            ground_atlas_mapping_revision: 0,
+            static_art_local_light_signature: Some(1),
+        }));
 
         assert!(cache.chunks.is_empty());
     }
@@ -2454,6 +2553,19 @@ mod tests {
         ]);
 
         assert_ne!(static_light_signature(&first, 1), static_light_signature(&second, 1));
+    }
+
+    #[test]
+    fn static_art_local_light_sampling_requires_opt_in() {
+        let lights = super::super::static_lights::RenderStaticLightInstances(vec![
+            test_static_light_at(0, [1.0, 0.72, 0.42], 0.0, 0.0, 0.0),
+        ]);
+
+        assert_eq!(
+            static_art_local_light_rgba(false, &lights, 1, 0.0, 0.0, 0.0),
+            [0.0; 4]
+        );
+        assert!(static_art_local_light_rgba(true, &lights, 1, 0.0, 0.0, 0.0)[3] > 0.0);
     }
 
     #[test]
