@@ -7,13 +7,13 @@ fn apply_kr_color_wash(
   world_xz: vec2<f32>,
   shadow_factor: f32,
   local_light: f32,
-  enable: u32,
+  enabled: u32,
   strength: f32,
   scale: f32,
   profile: u32,
 ) -> vec3<f32> {
   let s = clamp(strength, 0.0, 1.5);
-  if (profile != 2u || enable != 1u || s <= 0.0001) {
+  if (profile != 2u || enabled != 1u || s <= 0.0001) {
     return rgb;
   }
 
