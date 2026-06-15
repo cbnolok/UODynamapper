@@ -610,9 +610,19 @@ fn sys_load_paperdoll_wearable_rules(
 
 fn sys_gump_toggle(
     _trigger: On<ActionToggleGumpDialog>,
+    settings: Res<crate::configs::settings::Settings>,
     mut state: ResMut<GumpDialogState>,
 ) {
     log_system_add_one_shot::<GumpDialogPlugin>("Observer", "ActionToggleGumpDialog", fname!());
+    if !settings.runtime_assets.load_gumps {
+        ingame_sysmessage_logger::error(
+            "Gump art is disabled. Set runtime_assets.load_gumps=true and restart to use gumps."
+                .to_string(),
+        );
+        state.open = false;
+        return;
+    }
+
     state.open = !state.open;
 }
 

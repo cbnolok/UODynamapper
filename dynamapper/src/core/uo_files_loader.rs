@@ -402,26 +402,32 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
             None
         }
     };
-    let gump_package_path = resolve_optional_uddp_paths(&udd_path, &["gumps_cc.uddp", "gumps_ec.uddp"]);
-    let gump_map = if let Some(gump_package_path) = gump_package_path {
-        log_source_choice(
-            &lg,
-            "gumps",
-            SourceContainerKind::Uddp,
-            std::slice::from_ref(&gump_package_path),
-        );
-        match udd_assets::GumpsPackage::load(&gump_package_path) {
-            Ok(package) => Some(GumpMapRes::from_package(package)),
-            Err(error) => {
-                lg_err(&format!(
-                    "Failed to load gump package {}: {error}",
-                    gump_package_path.display()
-                ));
-                load_classic_gumps()
-            }
-        }
+    let gump_map = if !settings.runtime_assets.load_gumps {
+        lg("Gump art loading is disabled by runtime_assets.load_gumps.");
+        None
     } else {
-        load_classic_gumps()
+        let gump_package_path =
+            resolve_optional_uddp_paths(&udd_path, &["gumps_cc.uddp", "gumps_ec.uddp"]);
+        if let Some(gump_package_path) = gump_package_path {
+            log_source_choice(
+                &lg,
+                "gumps",
+                SourceContainerKind::Uddp,
+                std::slice::from_ref(&gump_package_path),
+            );
+            match udd_assets::GumpsPackage::load(&gump_package_path) {
+                Ok(package) => Some(GumpMapRes::from_package(package)),
+                Err(error) => {
+                    lg_err(&format!(
+                        "Failed to load gump package {}: {error}",
+                        gump_package_path.display()
+                    ));
+                    load_classic_gumps()
+                }
+            }
+        } else {
+            load_classic_gumps()
+        }
     };
 
     let classic_fonts = match uocf::classic::fonts::ClassicFonts::load(&udd_path) {

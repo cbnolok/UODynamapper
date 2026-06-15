@@ -4,3 +4,4 @@
 
 # Path to generated runtime packages such as tex_art_cc.uddp, tex_art_ec.uddp, and tex_land_ec.uddp.
 udd_path = "/home/claudio/test/uddp/"
+load_gumps = false

@@ -1173,12 +1173,17 @@ fn describe_static_tile_details(
     let cc_slot =
         tex_art_cc_id.and_then(|art_id| tex_art_cc_res.and_then(|package| package.0.present_slot(art_id)));
     let tex_art_ec_slot = tex_art_ec_res.and_then(|package| package.0.present_slot(graphic as u32));
-    let tex_land_ec_runtime_slot = resolve_overlay_tex_land_ec_runtime_slot(
-        graphic as u32,
-        tilemeta_res.map(|meta_package| meta_package.0.as_ref()),
-        meta,
-        tex_land_ec_res.map(|res| res.0.as_ref()),
-    );
+    let should_resolve_tex_land_ec_slot = matches!(hovered_kind, Some(HoveredObjectKind::Ground));
+    let tex_land_ec_runtime_slot = should_resolve_tex_land_ec_slot
+        .then(|| {
+            resolve_overlay_tex_land_ec_runtime_slot(
+                graphic as u32,
+                tilemeta_res.map(|meta_package| meta_package.0.as_ref()),
+                meta,
+                tex_land_ec_res.map(|res| res.0.as_ref()),
+            )
+        })
+        .flatten();
     let tex_land_ec_slot = tex_land_ec_runtime_slot
         .and_then(|slot_id| tex_land_ec_res.and_then(|package| package.0.present_slot(slot_id)));
     let live_decision = match settings.graphics.art_texture_source {
@@ -1200,6 +1205,8 @@ fn describe_static_tile_details(
                         .unwrap_or_else(|| "unresolved".to_string()),
                     slot_presence(tex_land_ec_slot.is_some())
                 )
+            } else if is_surface_like && !should_resolve_tex_land_ec_slot {
+                "ec->land:not_checked".to_string()
             } else {
                 format!(
                     "ec->art:{} {}",
@@ -1228,11 +1235,19 @@ fn describe_static_tile_details(
             .map(|id| format!("{}:{}", id, slot_presence(cc_slot.is_some())))
             .unwrap_or_else(|| "?".to_string()),
         slot_record_summary_u32(graphic as u32, tex_art_ec_slot.map(|slot| slot.page_index)),
-        tex_land_ec_runtime_slot
-            .map(|runtime_slot| {
-                format!("runtime:{} {}", runtime_slot, slot_presence(tex_land_ec_slot.is_some()))
-            })
-            .unwrap_or_else(|| "unresolved".to_string()),
+        if should_resolve_tex_land_ec_slot {
+            tex_land_ec_runtime_slot
+                .map(|runtime_slot| {
+                    format!(
+                        "runtime:{} {}",
+                        runtime_slot,
+                        slot_presence(tex_land_ec_slot.is_some())
+                    )
+                })
+                .unwrap_or_else(|| "unresolved".to_string())
+        } else {
+            "not_checked".to_string()
+        },
         live_decision,
         hovered_kind_label,
     )

@@ -67,6 +67,7 @@ pub struct SectSessionWindow {
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
 pub struct SectRuntimeAssets {
     pub udd_path: String,
+    pub load_gumps: bool,
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
@@ -1088,5 +1089,20 @@ fn sys_debounced_save(
             pending_save.take();
             save_timer.0.pause();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_assets_settings_require_explicit_gump_loading_opt_in() {
+        let settings: SectRuntimeAssets =
+            toml::from_str("udd_path = \"/tmp/uddp\"\nload_gumps = false\n")
+                .expect("parse runtime asset settings");
+
+        assert_eq!(settings.udd_path, "/tmp/uddp");
+        assert!(!settings.load_gumps);
     }
 }
