@@ -1143,6 +1143,7 @@ fn terrain_override_maps_from_overrides(
     (actions, details, texture_refs)
 }
 
+#[cfg(test)]
 fn parse_terrain_override_actions_metadata(
     bytes: &[u8],
 ) -> eyre::Result<HashMap<u32, TexLandEcTerrainOverrideActions>> {
@@ -1150,6 +1151,7 @@ fn parse_terrain_override_actions_metadata(
     Ok(actions)
 }
 
+#[cfg(test)]
 fn parse_terrain_override_details_metadata(
     bytes: &[u8],
 ) -> eyre::Result<HashMap<u32, TexLandEcTerrainOverrideDetails>> {

@@ -121,11 +121,11 @@ fn surface_like_static_world_anchor(
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum StaticVisualKind {
     CcRegular { art_id: u16, fallback_art_id: u16 },
     EcRegular { art_id: u32 },
-    TexLandEc { art_id: u32 },
+    TexLandEc { resolution: SurfaceLikeTexLandEcResolution },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -644,8 +644,7 @@ fn resolve_static_visual_kind(
                 tilemeta_package,
                 tilemeta,
                 tex_land_ec,
-            )
-            .is_some(),
+            ),
         ),
     }
 }
@@ -653,12 +652,10 @@ fn resolve_static_visual_kind(
 fn resolve_ec_static_visual_kind(
     tile_graphic: u16,
     _has_tex_art_ec_slot: bool,
-    has_surface_like_land_slot: bool,
+    surface_like_land_resolution: Option<SurfaceLikeTexLandEcResolution>,
 ) -> StaticVisualKind {
-    if has_surface_like_land_slot {
-        StaticVisualKind::TexLandEc {
-            art_id: tile_graphic as u32,
-        }
+    if let Some(resolution) = surface_like_land_resolution {
+        StaticVisualKind::TexLandEc { resolution }
     } else {
         StaticVisualKind::EcRegular {
             art_id: tile_graphic as u32,
@@ -1511,26 +1508,10 @@ pub fn sys_collect_visible_statics(
                                             0.0,
                                         )
                                     }
-                                    StaticVisualKind::TexLandEc { .. } => {
+                                    StaticVisualKind::TexLandEc { resolution } => {
                                         let Some(tex_land_ec) =
                                             tex_land_ec_res.as_ref().map(|x| &x.0)
                                         else {
-                                            continue;
-                                        };
-                                        let Some(resolution) =
-                                            resolve_surface_like_tex_land_ec_slot_id(
-                                                render_tile.graphic as u32,
-                                                tilemeta_res.as_ref().map(|res| &*res.0),
-                                                tilemeta,
-                                                Some(tex_land_ec),
-                                            )
-                                        else {
-                                            chunk_stats.unresolved_surface_like_tiles += 1;
-                                            push_sample_tile_id(
-                                                &mut chunk_stats.unresolved_surface_like_sample,
-                                                &mut chunk_stats.unresolved_surface_like_sample_len,
-                                                render_tile.graphic,
-                                            );
                                             continue;
                                         };
 
@@ -1818,6 +1799,13 @@ mod tests {
         }
     }
 
+    fn test_surface_like_resolution() -> SurfaceLikeTexLandEcResolution {
+        SurfaceLikeTexLandEcResolution {
+            runtime_slot_id: 42,
+            texture_repetition: 1.0,
+        }
+    }
+
     #[test]
     fn classic_billboard_bounds_keep_existing_scale() {
         let bounds = resolve_static_billboard_bounds(ClientTextureSource::Cc, 11, 7, 44.0, 88.0);
@@ -1864,7 +1852,9 @@ mod tests {
     #[test]
     fn surface_like_land_art_keeps_raw_world_anchor() {
         let anchor = surface_like_static_world_anchor(
-            StaticVisualKind::TexLandEc { art_id: 42 },
+            StaticVisualKind::TexLandEc {
+                resolution: test_surface_like_resolution(),
+            },
             10.0,
             20.0,
         );
@@ -1984,9 +1974,10 @@ mod tests {
 
     #[test]
     fn surface_like_ec_tiles_prefer_land_path_over_direct_art_slot() {
-        let visual_kind = resolve_ec_static_visual_kind(196, true, true);
+        let resolution = test_surface_like_resolution();
+        let visual_kind = resolve_ec_static_visual_kind(196, true, Some(resolution));
 
-        assert_eq!(visual_kind, StaticVisualKind::TexLandEc { art_id: 196 },);
+        assert_eq!(visual_kind, StaticVisualKind::TexLandEc { resolution },);
     }
 
     #[test]
@@ -2040,7 +2031,7 @@ mod tests {
 
     #[test]
     fn non_surface_like_ec_tiles_stay_on_regular_art_path() {
-        let visual_kind = resolve_ec_static_visual_kind(196, true, false);
+        let visual_kind = resolve_ec_static_visual_kind(196, true, None);
 
         assert_eq!(visual_kind, StaticVisualKind::EcRegular { art_id: 196 },);
     }
