@@ -11,6 +11,7 @@ use bevy::camera::visibility::NoFrustumCulling;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, PrimitiveTopology, TextureDimension, TextureFormat};
 use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 
 const TILE_FLAG_LIGHT_SOURCE: u64 = 0x00800000;
 const LIGHT_PIXELS_PER_WORLD_TILE: f32 = 44.0;
@@ -76,7 +77,7 @@ pub struct StaticLightInstance {
     pub height_world: f32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Component)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Component)]
 pub struct StaticLightKey {
     pub map_id: u32,
     pub tile_x: u32,
@@ -85,6 +86,20 @@ pub struct StaticLightKey {
     pub graphic: u16,
     pub light_id: u32,
     pub hue_id: u16,
+}
+
+impl Hash for StaticLightKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let map_tile_x = (u64::from(self.map_id) << 32) | u64::from(self.tile_x);
+        let tile_y_graphic_hue = (u64::from(self.tile_y) << 32)
+            | (u64::from(self.graphic) << 16)
+            | u64::from(self.hue_id);
+        let light_z = (u64::from(self.light_id) << 8) | u64::from(self.z as u8);
+
+        state.write_u64(map_tile_x);
+        state.write_u64(tile_y_graphic_hue);
+        state.write_u64(light_z);
+    }
 }
 
 #[derive(Resource, Default)]
@@ -948,6 +963,39 @@ fn sample_classicuo_light_shader(shader_id: u16, luma: u8) -> [u8; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::hash_map::DefaultHasher;
+
+    fn static_light_key_hash(key: StaticLightKey) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        key.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    #[test]
+    fn static_light_key_hash_uses_all_fields() {
+        let base = StaticLightKey {
+            map_id: 1,
+            tile_x: 100,
+            tile_y: 200,
+            z: -4,
+            graphic: 0x0e31,
+            light_id: 40,
+            hue_id: 12,
+        };
+        let base_hash = static_light_key_hash(base);
+
+        for changed in [
+            StaticLightKey { map_id: 2, ..base },
+            StaticLightKey { tile_x: 101, ..base },
+            StaticLightKey { tile_y: 201, ..base },
+            StaticLightKey { z: -3, ..base },
+            StaticLightKey { graphic: 0x0e32, ..base },
+            StaticLightKey { light_id: 41, ..base },
+            StaticLightKey { hue_id: 13, ..base },
+        ] {
+            assert_ne!(base_hash, static_light_key_hash(changed));
+        }
+    }
 
     #[test]
     fn package_hue_source_samples_packed_hue_row() {
