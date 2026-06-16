@@ -790,6 +790,18 @@ pub struct RenderStaticChunkBatches {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct StaticAtlasRetrySignature {
+    sprite_mapping_revision: u64,
+    ground_mapping_revision: u64,
+    sprite_resident_pages: usize,
+    ground_resident_pages: usize,
+    sprite_pending_pages: usize,
+    ground_pending_pages: usize,
+    sprite_active_layers: u32,
+    ground_active_layers: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct StaticChunkCacheConfig {
     map_id: u32,
     dot_mode: bool,
@@ -826,6 +838,7 @@ pub struct StaticChunkRenderCache {
     current_tick: u64,
     chunks: HashMap<StaticChunkBatchKey, CachedStaticChunk>,
     last_visible_chunk_keys: Vec<StaticChunkBatchKey>,
+    last_incomplete_retry_atlas_signature: Option<StaticAtlasRetrySignature>,
 }
 
 impl StaticChunkRenderCache {
@@ -840,6 +853,7 @@ impl StaticChunkRenderCache {
             self.config = Some(config);
             self.chunks.clear();
             self.last_visible_chunk_keys.clear();
+            self.last_incomplete_retry_atlas_signature = None;
         }
         changed
     }
@@ -850,6 +864,76 @@ impl StaticChunkRenderCache {
                 <= STATIC_CHUNK_CACHE_HYSTERESIS_TICKS
         });
     }
+}
+
+fn static_atlas_retry_signature(
+    sprite_atlas: &SpriteArtPageAtlas,
+    ground_atlas: &GroundArtPageAtlas,
+) -> StaticAtlasRetrySignature {
+    StaticAtlasRetrySignature {
+        sprite_mapping_revision: sprite_atlas.0.mapping_revision(),
+        ground_mapping_revision: ground_atlas.0.mapping_revision(),
+        sprite_resident_pages: sprite_atlas.resident_page_count(),
+        ground_resident_pages: ground_atlas.resident_page_count(),
+        sprite_pending_pages: sprite_atlas.pending_page_count(),
+        ground_pending_pages: ground_atlas.pending_page_count(),
+        sprite_active_layers: sprite_atlas.active_layers,
+        ground_active_layers: ground_atlas.active_layers,
+    }
+}
+
+fn aggregate_cached_visible_static_stats(
+    cache: &mut StaticChunkRenderCache,
+    visible_chunk_keys: &[StaticChunkBatchKey],
+    visible_tick: u64,
+) -> CachedStaticChunkStats {
+    let mut aggregate = CachedStaticChunkStats::default();
+
+    for chunk_key in visible_chunk_keys {
+        let Some(chunk) = cache.chunks.get_mut(chunk_key) else {
+            continue;
+        };
+        chunk.last_visible_tick = visible_tick;
+        aggregate.visited_blocks += chunk.stats.visited_blocks;
+        aggregate.source_tiles += chunk.stats.source_tiles;
+        aggregate.ground_land_tiles += chunk.stats.ground_land_tiles;
+        aggregate.unresolved_surface_like_tiles += chunk.stats.unresolved_surface_like_tiles;
+        for tile_id in chunk.stats.unresolved_surface_like_sample
+            [..chunk.stats.unresolved_surface_like_sample_len]
+            .iter()
+            .copied()
+        {
+            push_sample_tile_id(
+                &mut aggregate.unresolved_surface_like_sample,
+                &mut aggregate.unresolved_surface_like_sample_len,
+                tile_id,
+            );
+        }
+        aggregate.atlas_hits += chunk.stats.atlas_hits;
+        aggregate.atlas_misses += chunk.stats.atlas_misses;
+        aggregate
+            .requested_pages
+            .extend(chunk.stats.requested_pages.iter().copied());
+    }
+
+    aggregate.requested_pages.sort_unstable();
+    aggregate.requested_pages.dedup();
+    aggregate
+}
+
+fn should_skip_unchanged_incomplete_static_retry(
+    cache: &StaticChunkRenderCache,
+    visible_chunk_keys: &[StaticChunkBatchKey],
+    visible_set_unchanged: bool,
+    all_visible_chunks_complete: bool,
+    atlas_retry_signature: StaticAtlasRetrySignature,
+) -> bool {
+    visible_set_unchanged
+        && !all_visible_chunks_complete
+        && visible_chunk_keys
+            .iter()
+            .all(|chunk_key| cache.chunks.contains_key(chunk_key))
+        && cache.last_incomplete_retry_atlas_signature == Some(atlas_retry_signature)
 }
 
 fn log_static_collect_stats(
@@ -1410,70 +1494,53 @@ pub fn sys_collect_visible_statics(
     visible_chunk_keys.sort_by_key(|key| (key.gy, key.gx, key.scale));
     let visible_chunks = visible_chunk_keys.len();
 
-    let visible_set_unchanged = !config_changed && outputs.3.last_visible_chunk_keys == visible_chunk_keys;
-    let all_visible_chunks_complete = visible_chunk_keys.iter().all(|chunk_key| {
-        outputs
-            .3
-            .chunks
-            .get(chunk_key)
-            .is_some_and(|chunk| chunk.stats.atlas_misses == 0)
-    });
+    let visible_set_unchanged =
+        !config_changed && outputs.3.last_visible_chunk_keys == visible_chunk_keys;
+    let all_visible_chunks_present = visible_chunk_keys
+        .iter()
+        .all(|chunk_key| outputs.3.chunks.contains_key(chunk_key));
+    let all_visible_chunks_complete = all_visible_chunks_present
+        && visible_chunk_keys.iter().all(|chunk_key| {
+            outputs
+                .3
+                .chunks
+                .get(chunk_key)
+                .is_some_and(|chunk| chunk.stats.atlas_misses == 0)
+        });
+    let atlas_retry_signature = static_atlas_retry_signature(&sprite_atlas, &ground_atlas);
+    let skip_unchanged_incomplete_retry = should_skip_unchanged_incomplete_static_retry(
+        &outputs.3,
+        &visible_chunk_keys,
+        visible_set_unchanged,
+        all_visible_chunks_complete,
+        atlas_retry_signature,
+    );
 
-    if visible_set_unchanged && all_visible_chunks_complete {
-        let mut visited_blocks = 0usize;
-        let mut source_tiles = 0usize;
-        let mut ground_land_tiles = 0usize;
-        let mut unresolved_surface_like_tiles = 0usize;
-        let mut unresolved_surface_like_sample = [0u16; UNRESOLVED_SURFACE_LIKE_SAMPLE_LIMIT];
-        let mut unresolved_surface_like_sample_len = 0usize;
-        let mut atlas_hits = 0usize;
-        let mut atlas_misses = 0usize;
-        let mut unique_requested_pages = HashSet::new();
-
-        for chunk_key in &visible_chunk_keys {
-            let Some(chunk) = outputs.3.chunks.get_mut(chunk_key) else {
-                continue;
-            };
-            chunk.last_visible_tick = visible_tick;
-            visited_blocks += chunk.stats.visited_blocks;
-            source_tiles += chunk.stats.source_tiles;
-            ground_land_tiles += chunk.stats.ground_land_tiles;
-            unresolved_surface_like_tiles += chunk.stats.unresolved_surface_like_tiles;
-            for tile_id in chunk.stats.unresolved_surface_like_sample
-                [..chunk.stats.unresolved_surface_like_sample_len]
-                .iter()
-                .copied()
-            {
-                push_sample_tile_id(
-                    &mut unresolved_surface_like_sample,
-                    &mut unresolved_surface_like_sample_len,
-                    tile_id,
-                );
-            }
-            atlas_hits += chunk.stats.atlas_hits;
-            atlas_misses += chunk.stats.atlas_misses;
-            unique_requested_pages.extend(chunk.stats.requested_pages.iter().copied());
+    if (visible_set_unchanged && all_visible_chunks_complete) || skip_unchanged_incomplete_retry {
+        let aggregate =
+            aggregate_cached_visible_static_stats(&mut outputs.3, &visible_chunk_keys, visible_tick);
+        if all_visible_chunks_complete {
+            outputs.3.last_incomplete_retry_atlas_signature = None;
         }
-
         log_static_collect_stats(
             &mut debug_state,
             StaticArtCollectStats {
                 map_id,
                 dot_mode: is_dot_mode,
                 visible_chunks,
-                visited_blocks,
-                source_tiles,
-                ground_land_tiles,
-                unresolved_surface_like_tiles,
-                unresolved_surface_like_sample,
-                unresolved_surface_like_sample_len,
-                unique_requested_pages: unique_requested_pages.len(),
+                visited_blocks: aggregate.visited_blocks,
+                source_tiles: aggregate.source_tiles,
+                ground_land_tiles: aggregate.ground_land_tiles,
+                unresolved_surface_like_tiles: aggregate.unresolved_surface_like_tiles,
+                unresolved_surface_like_sample: aggregate.unresolved_surface_like_sample,
+                unresolved_surface_like_sample_len: aggregate.unresolved_surface_like_sample_len,
+                unique_requested_pages: aggregate.requested_pages.len(),
                 resident_pages: sprite_atlas.resident_page_count() + ground_atlas.resident_page_count(),
                 pending_pages: sprite_atlas.pending_page_count() + ground_atlas.pending_page_count(),
                 atlas_capacity_pages: sprite_atlas.active_layers as usize
                     + ground_atlas.active_layers as usize,
-                atlas_hits,
-                atlas_misses,
+                atlas_hits: aggregate.atlas_hits,
+                atlas_misses: aggregate.atlas_misses,
                 emitted_instances: outputs.0.0.len() + outputs.1.0.len(),
             },
         );
@@ -1889,6 +1956,11 @@ pub fn sys_collect_visible_statics(
         }
     }
 
+    outputs.3.last_incomplete_retry_atlas_signature = if atlas_misses > 0 {
+        Some(static_atlas_retry_signature(&sprite_atlas, &ground_atlas))
+    } else {
+        None
+    };
     outputs.3.prune_stale(visible_tick);
     outputs.3.last_visible_chunk_keys = visible_chunk_keys;
 
@@ -2631,6 +2703,59 @@ mod tests {
         }));
 
         assert!(cache.chunks.is_empty());
+    }
+
+    #[test]
+    fn unchanged_incomplete_static_retry_waits_for_atlas_state_change() {
+        let chunk_key = StaticChunkBatchKey {
+            map_id: 1,
+            gx: 0,
+            gy: 0,
+            scale: 1,
+        };
+        let retry_signature = StaticAtlasRetrySignature {
+            sprite_mapping_revision: 0,
+            ground_mapping_revision: 0,
+            sprite_resident_pages: 1,
+            ground_resident_pages: 0,
+            sprite_pending_pages: 1,
+            ground_pending_pages: 0,
+            sprite_active_layers: 4,
+            ground_active_layers: 4,
+        };
+        let mut cache = StaticChunkRenderCache::default();
+        cache.chunks.insert(
+            chunk_key,
+            CachedStaticChunk {
+                stats: CachedStaticChunkStats {
+                    atlas_misses: 1,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        cache.last_visible_chunk_keys = vec![chunk_key];
+        cache.last_incomplete_retry_atlas_signature = Some(retry_signature);
+
+        assert!(should_skip_unchanged_incomplete_static_retry(
+            &cache,
+            &[chunk_key],
+            true,
+            false,
+            retry_signature,
+        ));
+
+        let changed_retry_signature = StaticAtlasRetrySignature {
+            sprite_pending_pages: 0,
+            ..retry_signature
+        };
+        assert!(!should_skip_unchanged_incomplete_static_retry(
+            &cache,
+            &[chunk_key],
+            true,
+            false,
+            changed_retry_signature,
+        ));
     }
 
     fn test_static_light(
