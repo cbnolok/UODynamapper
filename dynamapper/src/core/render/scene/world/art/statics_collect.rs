@@ -936,6 +936,64 @@ fn should_skip_unchanged_incomplete_static_retry(
         && cache.last_incomplete_retry_atlas_signature == Some(atlas_retry_signature)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StaticArtCollectPath {
+    CompleteFastPath,
+    IncompleteWaitFastPath,
+    SlowRebuild,
+}
+
+impl StaticArtCollectPath {
+    fn label(self) -> &'static str {
+        match self {
+            Self::CompleteFastPath => "complete_fast_path",
+            Self::IncompleteWaitFastPath => "incomplete_wait_fast_path",
+            Self::SlowRebuild => "slow_rebuild",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StaticArtCollectPathCounters {
+    pub complete_fast_path: u64,
+    pub incomplete_wait_fast_path: u64,
+    pub slow_rebuild: u64,
+    pub copied_sprite_instances: u64,
+    pub copied_ground_instances: u64,
+}
+
+fn record_static_collect_path(
+    debug_state: &mut StaticArtCollectDebugState,
+    path: StaticArtCollectPath,
+    copied_sprite_instances: usize,
+    copied_ground_instances: usize,
+) {
+    match path {
+        StaticArtCollectPath::CompleteFastPath => {
+            debug_state.path_counters.complete_fast_path =
+                debug_state.path_counters.complete_fast_path.saturating_add(1);
+        }
+        StaticArtCollectPath::IncompleteWaitFastPath => {
+            debug_state.path_counters.incomplete_wait_fast_path = debug_state
+                .path_counters
+                .incomplete_wait_fast_path
+                .saturating_add(1);
+        }
+        StaticArtCollectPath::SlowRebuild => {
+            debug_state.path_counters.slow_rebuild =
+                debug_state.path_counters.slow_rebuild.saturating_add(1);
+        }
+    }
+    debug_state.path_counters.copied_sprite_instances = debug_state
+        .path_counters
+        .copied_sprite_instances
+        .saturating_add(copied_sprite_instances as u64);
+    debug_state.path_counters.copied_ground_instances = debug_state
+        .path_counters
+        .copied_ground_instances
+        .saturating_add(copied_ground_instances as u64);
+}
+
 fn log_static_collect_stats(
     debug_state: &mut StaticArtCollectDebugState,
     stats: StaticArtCollectStats,
@@ -967,6 +1025,21 @@ fn log_static_collect_stats(
                 stats.atlas_hits,
                 stats.atlas_misses,
                 stats.emitted_instances,
+            ),
+        );
+        console_logger::one(
+            LogSev::DebugVerbose,
+            LogAbout::RenderWorldArt,
+            &format!(
+                "static art collect (3/3):path={} copied_sprite={} copied_ground={} path_counts complete={} incomplete_wait={} slow={} total_copied_sprite={} total_copied_ground={}",
+                stats.path.label(),
+                stats.copied_sprite_instances,
+                stats.copied_ground_instances,
+                debug_state.path_counters.complete_fast_path,
+                debug_state.path_counters.incomplete_wait_fast_path,
+                debug_state.path_counters.slow_rebuild,
+                debug_state.path_counters.copied_sprite_instances,
+                debug_state.path_counters.copied_ground_instances,
             ),
         );
         if stats.unresolved_surface_like_tiles > 0 {
@@ -1204,6 +1277,7 @@ fn static_ground_local_light_rgba(
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct StaticArtCollectStats {
+    pub path: StaticArtCollectPath,
     pub map_id: u32,
     pub dot_mode: bool,
     pub visible_chunks: usize,
@@ -1220,11 +1294,14 @@ pub struct StaticArtCollectStats {
     pub atlas_hits: usize,
     pub atlas_misses: usize,
     pub emitted_instances: usize,
+    pub copied_sprite_instances: usize,
+    pub copied_ground_instances: usize,
 }
 
 #[derive(Resource, Default)]
 pub struct StaticArtCollectDebugState {
     pub last: Option<StaticArtCollectStats>,
+    pub path_counters: StaticArtCollectPathCounters,
 }
 
 #[derive(Resource, Default)]
@@ -1519,12 +1596,19 @@ pub fn sys_collect_visible_statics(
     if (visible_set_unchanged && all_visible_chunks_complete) || skip_unchanged_incomplete_retry {
         let aggregate =
             aggregate_cached_visible_static_stats(&mut outputs.3, &visible_chunk_keys, visible_tick);
+        let path = if skip_unchanged_incomplete_retry {
+            StaticArtCollectPath::IncompleteWaitFastPath
+        } else {
+            StaticArtCollectPath::CompleteFastPath
+        };
         if all_visible_chunks_complete {
             outputs.3.last_incomplete_retry_atlas_signature = None;
         }
+        record_static_collect_path(&mut debug_state, path, 0, 0);
         log_static_collect_stats(
             &mut debug_state,
             StaticArtCollectStats {
+                path,
                 map_id,
                 dot_mode: is_dot_mode,
                 visible_chunks,
@@ -1542,6 +1626,8 @@ pub fn sys_collect_visible_statics(
                 atlas_hits: aggregate.atlas_hits,
                 atlas_misses: aggregate.atlas_misses,
                 emitted_instances: outputs.0.0.len() + outputs.1.0.len(),
+                copied_sprite_instances: 0,
+                copied_ground_instances: 0,
             },
         );
         return;
@@ -1556,6 +1642,8 @@ pub fn sys_collect_visible_statics(
         return;
     };
     let mut statics_store = statics_store.lock();
+    let mut copied_sprite_instances = 0usize;
+    let mut copied_ground_instances = 0usize;
 
     for chunk_key in visible_chunk_keys.iter().copied() {
         let reuse_cached_chunk = if let Some(chunk) = outputs.3.chunks.get_mut(&chunk_key) {
@@ -1937,6 +2025,7 @@ pub fn sys_collect_visible_statics(
             let start = outputs.0.0.len() as u32;
             let count = chunk.sprite_instances.len() as u32;
             outputs.0.0.extend_from_slice(&chunk.sprite_instances);
+            copied_sprite_instances += count as usize;
             outputs.2.sprite.push(StaticChunkBatch {
                 key: chunk_key,
                 start,
@@ -1948,6 +2037,7 @@ pub fn sys_collect_visible_statics(
             let start = outputs.1.0.len() as u32;
             let count = chunk.ground_instances.len() as u32;
             outputs.1.0.extend_from_slice(&chunk.ground_instances);
+            copied_ground_instances += count as usize;
             outputs.2.ground.push(StaticChunkBatch {
                 key: chunk_key,
                 start,
@@ -1964,9 +2054,17 @@ pub fn sys_collect_visible_statics(
     outputs.3.prune_stale(visible_tick);
     outputs.3.last_visible_chunk_keys = visible_chunk_keys;
 
+    let path = StaticArtCollectPath::SlowRebuild;
+    record_static_collect_path(
+        &mut debug_state,
+        path,
+        copied_sprite_instances,
+        copied_ground_instances,
+    );
     log_static_collect_stats(
         &mut debug_state,
         StaticArtCollectStats {
+            path,
             map_id,
             dot_mode: is_dot_mode,
             visible_chunks,
@@ -1984,6 +2082,8 @@ pub fn sys_collect_visible_statics(
             atlas_hits,
             atlas_misses,
             emitted_instances: outputs.0.0.len() + outputs.1.0.len(),
+            copied_sprite_instances,
+            copied_ground_instances,
         },
     );
 }
@@ -2756,6 +2856,36 @@ mod tests {
             false,
             changed_retry_signature,
         ));
+    }
+
+    #[test]
+    fn static_collect_path_counters_accumulate_paths_and_copies() {
+        let mut debug_state = StaticArtCollectDebugState::default();
+
+        record_static_collect_path(
+            &mut debug_state,
+            StaticArtCollectPath::CompleteFastPath,
+            0,
+            0,
+        );
+        record_static_collect_path(
+            &mut debug_state,
+            StaticArtCollectPath::IncompleteWaitFastPath,
+            0,
+            0,
+        );
+        record_static_collect_path(
+            &mut debug_state,
+            StaticArtCollectPath::SlowRebuild,
+            11,
+            7,
+        );
+
+        assert_eq!(debug_state.path_counters.complete_fast_path, 1);
+        assert_eq!(debug_state.path_counters.incomplete_wait_fast_path, 1);
+        assert_eq!(debug_state.path_counters.slow_rebuild, 1);
+        assert_eq!(debug_state.path_counters.copied_sprite_instances, 11);
+        assert_eq!(debug_state.path_counters.copied_ground_instances, 7);
     }
 
     fn test_static_light(
