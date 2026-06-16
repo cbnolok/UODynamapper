@@ -5,7 +5,7 @@ use crate::console_logger::{self, LogAbout, LogSev};
 use crate::core::render::scene::world;
 use crate::core::render::scene::world::art::statics_collect::{
     GroundTileInstance, RenderStaticChunkBatches, RenderStaticInstances, RenderStaticLandInstances,
-    SpriteInstance, StaticChunkBatchKey,
+    SpriteInstance, StaticChunkBatch, StaticChunkBatchKey,
 };
 use crate::core::system_sets::StartupSysSet;
 use crate::core::texture_cache::art::{
@@ -141,6 +141,21 @@ pub struct StaticArtUploadCache {
     pub ground_instances: Vec<GroundTileInstance>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct StaticBatchSyncSignature {
+    len: usize,
+    hash: u64,
+}
+
+#[derive(Resource, Default)]
+pub struct StaticBatchEntitySyncState {
+    sprite: Option<StaticBatchSyncSignature>,
+    sprite_shadow: Option<StaticBatchSyncSignature>,
+    sprite_transparent: Option<StaticBatchSyncSignature>,
+    ground: Option<StaticBatchSyncSignature>,
+    ground_transparent: Option<StaticBatchSyncSignature>,
+}
+
 #[derive(Resource, Default)]
 pub struct ActiveArtAtlasBindingState {
     pub configured_source: Option<ClientTextureSource>,
@@ -174,25 +189,52 @@ impl MaterialExtension for ArtGroundMaterialExtension {
 }
 
 #[derive(Component)]
+#[component(clone_behavior = Ignore)]
 pub struct StaticsDrawEntity;
 
 #[derive(Component)]
+#[component(clone_behavior = Ignore)]
 pub struct StaticsTransparentDrawEntity;
 
 #[derive(Component)]
+#[component(clone_behavior = Ignore)]
 pub struct StaticsShadowDrawEntity;
 
 #[derive(Component)]
+#[component(clone_behavior = Ignore)]
 pub struct StaticsGroundDrawEntity;
 
 #[derive(Component)]
+#[component(clone_behavior = Ignore)]
 pub struct StaticsGroundTransparentDrawEntity;
 
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[component(clone_behavior = Ignore)]
 pub struct StaticChunkBatchEntity {
     pub key: StaticChunkBatchKey,
     pub start: u32,
     pub count: u32,
+}
+
+fn static_batch_sync_signature(batches: &[StaticChunkBatch]) -> StaticBatchSyncSignature {
+    let mut hash = 0xcbf29ce484222325u64;
+    for batch in batches {
+        static_batch_sync_hash_u32(&mut hash, batch.key.map_id);
+        static_batch_sync_hash_u32(&mut hash, batch.key.gx);
+        static_batch_sync_hash_u32(&mut hash, batch.key.gy);
+        static_batch_sync_hash_u32(&mut hash, batch.key.scale);
+        static_batch_sync_hash_u32(&mut hash, batch.start);
+        static_batch_sync_hash_u32(&mut hash, batch.count);
+    }
+    StaticBatchSyncSignature {
+        len: batches.len(),
+        hash,
+    }
+}
+
+fn static_batch_sync_hash_u32(hash: &mut u64, value: u32) {
+    *hash ^= u64::from(value);
+    *hash = hash.wrapping_mul(0x100000001b3);
 }
 
 fn build_art_batch_mesh(start: u32, count: u32) -> Mesh {
@@ -1042,8 +1084,14 @@ pub fn sys_sync_static_sprite_entities(
     render_assets: Res<ArtSpriteRenderAssets>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut debug_state: ResMut<StaticArtDrawDebugState>,
+    mut sync_state: ResMut<StaticBatchEntitySyncState>,
     existing_q: Query<(Entity, &StaticChunkBatchEntity), With<StaticsDrawEntity>>,
 ) {
+    let signature = static_batch_sync_signature(&chunk_batches.sprite);
+    if sync_state.sprite == Some(signature) {
+        return;
+    }
+
     let desired_count = chunk_batches.sprite.len();
     let existing_count = existing_q.iter().count();
     let existing_by_key: HashMap<_, _> = existing_q
@@ -1102,6 +1150,8 @@ pub fn sys_sync_static_sprite_entities(
         );
         debug_state.last_entity_count = Some(desired_count);
     }
+
+    sync_state.sprite = Some(signature);
 }
 
 pub fn sys_sync_static_sprite_shadow_entities(
@@ -1109,8 +1159,14 @@ pub fn sys_sync_static_sprite_shadow_entities(
     chunk_batches: Res<RenderStaticChunkBatches>,
     render_assets: Res<ArtSpriteRenderAssets>,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut sync_state: ResMut<StaticBatchEntitySyncState>,
     existing_q: Query<(Entity, &StaticChunkBatchEntity), With<StaticsShadowDrawEntity>>,
 ) {
+    let signature = static_batch_sync_signature(&chunk_batches.sprite);
+    if sync_state.sprite_shadow == Some(signature) {
+        return;
+    }
+
     let existing_by_key: HashMap<_, _> = existing_q
         .iter()
         .map(|(entity, batch)| (batch.key, (entity, *batch)))
@@ -1155,6 +1211,8 @@ pub fn sys_sync_static_sprite_shadow_entities(
             commands.entity(entity).despawn();
         }
     }
+
+    sync_state.sprite_shadow = Some(signature);
 }
 
 pub fn sys_sync_static_sprite_transparent_entities(
@@ -1163,8 +1221,14 @@ pub fn sys_sync_static_sprite_transparent_entities(
     render_assets: Res<ArtSpriteRenderAssets>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut debug_state: ResMut<StaticArtDrawDebugState>,
+    mut sync_state: ResMut<StaticBatchEntitySyncState>,
     existing_q: Query<(Entity, &StaticChunkBatchEntity), With<StaticsTransparentDrawEntity>>,
 ) {
+    let signature = static_batch_sync_signature(&chunk_batches.sprite);
+    if sync_state.sprite_transparent == Some(signature) {
+        return;
+    }
+
     let desired_count = chunk_batches.sprite.len();
     let existing_by_key: HashMap<_, _> = existing_q
         .iter()
@@ -1214,6 +1278,8 @@ pub fn sys_sync_static_sprite_transparent_entities(
     if debug_state.last_transparent_entity_count != Some(desired_count) {
         debug_state.last_transparent_entity_count = Some(desired_count);
     }
+
+    sync_state.sprite_transparent = Some(signature);
 }
 
 pub fn sys_sync_static_ground_entities(
@@ -1222,8 +1288,14 @@ pub fn sys_sync_static_ground_entities(
     render_assets: Res<ArtGroundRenderAssets>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut debug_state: ResMut<StaticArtDrawDebugState>,
+    mut sync_state: ResMut<StaticBatchEntitySyncState>,
     existing_q: Query<(Entity, &StaticChunkBatchEntity), With<StaticsGroundDrawEntity>>,
 ) {
+    let signature = static_batch_sync_signature(&chunk_batches.ground);
+    if sync_state.ground == Some(signature) {
+        return;
+    }
+
     let desired_count = chunk_batches.ground.len();
     let existing_count = existing_q.iter().count();
     let existing_by_key: HashMap<_, _> = existing_q
@@ -1282,6 +1354,8 @@ pub fn sys_sync_static_ground_entities(
         );
         debug_state.last_ground_entity_count = Some(desired_count);
     }
+
+    sync_state.ground = Some(signature);
 }
 
 pub fn sys_sync_static_ground_transparent_entities(
@@ -1290,8 +1364,14 @@ pub fn sys_sync_static_ground_transparent_entities(
     render_assets: Res<ArtGroundRenderAssets>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut debug_state: ResMut<StaticArtDrawDebugState>,
+    mut sync_state: ResMut<StaticBatchEntitySyncState>,
     existing_q: Query<(Entity, &StaticChunkBatchEntity), With<StaticsGroundTransparentDrawEntity>>,
 ) {
+    let signature = static_batch_sync_signature(&chunk_batches.ground);
+    if sync_state.ground_transparent == Some(signature) {
+        return;
+    }
+
     let desired_count = chunk_batches.ground.len();
     let existing_by_key: HashMap<_, _> = existing_q
         .iter()
@@ -1341,6 +1421,8 @@ pub fn sys_sync_static_ground_transparent_entities(
     if debug_state.last_ground_transparent_entity_count != Some(desired_count) {
         debug_state.last_ground_transparent_entity_count = Some(desired_count);
     }
+
+    sync_state.ground_transparent = Some(signature);
 }
 
 pub fn sys_update_sprite_instance_buffer(
@@ -1710,5 +1792,30 @@ mod tests {
         assert_eq!(material.alpha_mode, AlphaMode::Blend);
         assert!(material.unlit);
         assert!(material.depth_bias > 0.0);
+    }
+
+    #[test]
+    fn static_batch_sync_signature_tracks_batch_identity_and_range() {
+        let batch = StaticChunkBatch {
+            key: StaticChunkBatchKey {
+                map_id: 1,
+                gx: 2,
+                gy: 3,
+                scale: 4,
+            },
+            start: 5,
+            count: 6,
+        };
+        let base = static_batch_sync_signature(&[batch]);
+
+        let mut moved = batch;
+        moved.start += 1;
+        assert_ne!(base, static_batch_sync_signature(&[moved]));
+
+        let mut other_chunk = batch;
+        other_chunk.key.gx += 1;
+        assert_ne!(base, static_batch_sync_signature(&[other_chunk]));
+
+        assert_eq!(base, static_batch_sync_signature(&[batch]));
     }
 }

@@ -27,6 +27,7 @@ impl Plugin for DrawStaticSpritesPlugin {
         app.init_resource::<statics_collect::StaticArtSourceState>();
         app.init_resource::<statics_draw::StaticArtDrawDebugState>();
         app.init_resource::<statics_draw::StaticArtUploadCache>();
+        app.init_resource::<statics_draw::StaticBatchEntitySyncState>();
         app.init_resource::<static_lights::RenderStaticLightInstances>();
         app.init_resource::<static_lights::StaticLightDrawDebugState>();
         app.init_resource::<static_lights::StaticLightMaterialCache>();
