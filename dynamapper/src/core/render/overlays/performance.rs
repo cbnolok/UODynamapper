@@ -18,6 +18,8 @@ const FONT_SIZE: f32 = 11.0;
 
 // How often to refresh the sysinfo data. Read at this interval from sysinfo,
 // refreshing every frame would be expensive and unnecessary.
+const METRICS_REFRESH_INTERVAL_SEC: f32 = 1.0 / 4.0;
+const TEXT_REFRESH_INTERVAL_SEC: f32 = 1.0;
 const BYTES_PER_MIB: f32 = 1024.0 * 1024.0;
 
 use crate::core::texture_cache::land::texture_array as tex_consts;
@@ -219,13 +221,13 @@ impl Plugin for PerformanceOverlayPlugin {
                 Update,
                 sys_refresh_process_metrics
                     .run_if(in_state(AppState::InGame))
-                    .run_if(on_real_timer(Duration::from_secs_f32(1.0 / 4.0))),
+                    .run_if(on_real_timer(Duration::from_secs_f32(METRICS_REFRESH_INTERVAL_SEC))),
             )
             .add_systems(
                 Update,
                 update_performance_text
                     .run_if(in_state(AppState::InGame))
-                    .run_if(on_real_timer(Duration::from_secs_f32(1.0 / 4.0))),
+                    .run_if(on_real_timer(Duration::from_secs_f32(TEXT_REFRESH_INTERVAL_SEC))),
             );
     }
 }
@@ -382,64 +384,68 @@ pub fn update_performance_text(
     let current_scale = settings.app.window.performance_overlay_scale;
     let scale_changed = (*last_scale - current_scale).abs() > 0.001;
 
-    if let Ok((mut text, mut text_font, mut line_height)) = text_query.single_mut() {
-        use std::fmt::Write;
-        let mut buffer = String::with_capacity(1024);
+    use std::fmt::Write;
+    let mut buffer = String::with_capacity(1024);
 
-        let fps_val = diagnostics
-            .get(&FrameTimeDiagnosticsPlugin::FPS)
-            .and_then(|diag| diag.smoothed());
+    let fps_val = diagnostics
+        .get(&FrameTimeDiagnosticsPlugin::FPS)
+        .and_then(|diag| diag.smoothed());
 
-        let entity_count = entities.len();
-        let chunk_count = land_chunk_count.0;
-        let upload_snapshot = land_upload_telemetry.snapshot();
-        let tex_mode = "RGBA8";
+    let entity_count = entities.len();
+    let chunk_count = land_chunk_count.0;
+    let upload_snapshot = land_upload_telemetry.snapshot();
+    let tex_mode = "RGBA8";
 
-        // Single-pass render diagnostic scanning
-        let stats = BatchRenderStats::scan(&diagnostics);
+    // Single-pass render diagnostic scanning
+    let stats = BatchRenderStats::scan(&diagnostics);
 
+    let _ = write!(
+        &mut buffer,
+        "FPS: {}\nCPU(total): {:.1}% | CPU(proc, 1c-eq): {:.1}% | cores: {}\nRAM: {:.1} MiB\nTex VRAM est [{}]: {:.1} MiB | Atlas est: {:.1} MiB\nProcess VRAM tracked: {:.1} MiB\nCHKs: {} | ENTs: {}\n",
+        fps_val.map_or("--".to_string(), |v| format!("{:.0}", v)),
+        metrics.cpu_usage_total,
+        metrics.cpu_usage_one_core,
+        metrics.core_count,
+        metrics.mem_usage_mib,
+        tex_mode,
+        metrics.estimated_texture_vram_mib,
+        metrics.estimated_atlas_vram_mib,
+        metrics.process_vram_tracked_mib,
+        chunk_count,
+        entity_count,
+    );
+
+    let _ = writeln!(
+        &mut buffer,
+        "Land uploads: dirty {} -> queued {} ({}) | submitted {} ({}) | backlog {} ({})",
+        upload_snapshot.dirty_block_updates,
+        upload_snapshot.queued_ops,
+        ByteSizeFormatter(upload_snapshot.queued_bytes),
+        upload_snapshot.submitted_ops,
+        ByteSizeFormatter(upload_snapshot.submitted_bytes),
+        upload_snapshot.pending_ops,
+        ByteSizeFormatter(upload_snapshot.pending_bytes),
+    );
+
+    if stats.found {
         let _ = write!(
             &mut buffer,
-            "FPS: {}\nCPU(total): {:.1}% | CPU(proc, 1c-eq): {:.1}% | cores: {}\nRAM: {:.1} MiB\nTex VRAM est [{}]: {:.1} MiB | Atlas est: {:.1} MiB\nProcess VRAM tracked: {:.1} MiB\nCHKs: {} | ENTs: {}\n",
-            fps_val.map_or("--".to_string(), |v| format!("{:.0}", v)),
-            metrics.cpu_usage_total,
-            metrics.cpu_usage_one_core,
-            metrics.core_count,
-            metrics.mem_usage_mib,
-            tex_mode,
-            metrics.estimated_texture_vram_mib,
-            metrics.estimated_atlas_vram_mib,
-            metrics.process_vram_tracked_mib,
-            chunk_count,
-            entity_count,
+            "GPU elapsed: {:.2}ms | Clipper in/out: {}/{} | Vert/Frag calls: {}/{}",
+            stats.gpu_elapsed,
+            CountFormatter(stats.clipper_in),
+            CountFormatter(stats.clipper_out),
+            CountFormatter(stats.vert_invoc),
+            CountFormatter(stats.frag_invoc),
         );
+    } else {
+        let _ = write!(&mut buffer, "GPU stats: --");
+    }
 
-        let _ = writeln!(
-            &mut buffer,
-            "Land uploads: dirty {} -> queued {} ({}) | submitted {} ({}) | backlog {} ({})",
-            upload_snapshot.dirty_block_updates,
-            upload_snapshot.queued_ops,
-            ByteSizeFormatter(upload_snapshot.queued_bytes),
-            upload_snapshot.submitted_ops,
-            ByteSizeFormatter(upload_snapshot.submitted_bytes),
-            upload_snapshot.pending_ops,
-            ByteSizeFormatter(upload_snapshot.pending_bytes),
-        );
+    if *last_text_cached == buffer && !scale_changed {
+        return;
+    }
 
-        if stats.found {
-            let _ = write!(
-                &mut buffer,
-                "GPU elapsed: {:.2}ms | Clipper in/out: {}/{} | Vert/Frag calls: {}/{}",
-                stats.gpu_elapsed,
-                CountFormatter(stats.clipper_in),
-                CountFormatter(stats.clipper_out),
-                CountFormatter(stats.vert_invoc),
-                CountFormatter(stats.frag_invoc),
-            );
-        } else {
-            let _ = write!(&mut buffer, "GPU stats: --");
-        }
-
+    if let Ok((mut text, mut text_font, mut line_height)) = text_query.single_mut() {
         if *last_text_cached != buffer {
             text.0 = buffer.clone();
             *last_text_cached = buffer;
