@@ -66,6 +66,8 @@ Current runtime note:
 4. **Filtering**: objects are filtered by visibility, routing, and depth-ordering requirements.
 5. **Batching**: statics are grouped by material and atlas residency to minimize draw calls.
 
+Performance notes for this path live in **[rendering/STATIC_ART_PERFORMANCE.md](rendering/STATIC_ART_PERFORMANCE.md)**. The short version is: steady frames must reuse cached chunk output, optional data paths must be gated, and per-frame systems must not parse UDDP metadata or decompress package entries.
+
 ### 3.2 Drawing
 1. **Instance Data**: `statics_draw.rs` prepares per-instance data (position, UVs, color) for GPU submission.
 2. **Alpha Handling**: Shaders use alpha-masking for clean overlap of isometric sprites.
