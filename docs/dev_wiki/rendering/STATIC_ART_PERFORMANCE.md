@@ -106,6 +106,7 @@ Examples:
 - gump package loading is opt-in through runtime asset settings
 - CPU-baked static-art local lights are opt-in
 - cursor overlay EC slot resolution is cached and only runs for relevant hovered objects
+- Bevy wireframe rendering is only installed when `app.debug.map_render_wireframe` is true at startup; `WireframeConfig.global = false` does not remove the plugin's extract, specialize, queue, or render graph work
 
 New optional systems should have both:
 

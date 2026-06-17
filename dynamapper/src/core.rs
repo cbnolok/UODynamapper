@@ -160,10 +160,13 @@ fn custom_wireframe_config(enabled: bool) -> WireframeConfig {
     }
 }
 
-fn custom_render_plugin_settings() -> bevy::render::RenderPlugin {
+fn custom_render_plugin_settings(enable_wireframe: bool) -> bevy::render::RenderPlugin {
     // Features field is a must-enable set, not a “disable everything else” set.
     #[allow(unused_mut)]
-    let mut features = WgpuFeatures::POLYGON_MODE_LINE; // Enable this to allow wireframes.
+    let mut features = WgpuFeatures::empty();
+    if enable_wireframe {
+        features |= WgpuFeatures::POLYGON_MODE_LINE;
+    }
     #[cfg(feature = "gpu-profiling")]
     {
         features |= WgpuFeatures::TIMESTAMP_QUERY;
@@ -302,7 +305,7 @@ pub fn run_bevy_app() -> ExitCode {
             //.disable::<bevy::core_pipeline::upscaling::UpscalingPlugin>()
             .set(custom_window_plugin_settings(window_size, vsync_enabled))
             .set(custom_threadpool_settings())
-            .set(custom_render_plugin_settings())
+            .set(custom_render_plugin_settings(wireframe_enabled))
             .set(ImagePlugin::default_nearest())
             .set(AssetPlugin {
                 watch_for_changes_override: Some(true),
@@ -338,17 +341,22 @@ pub fn run_bevy_app() -> ExitCode {
             .lock()
             .expect("plugin registry poisoned");
         registry.record("DefaultPlugins", "Core");
-        registry.record("WireframePlugin", "Core");
+        if wireframe_enabled {
+            registry.record("WireframePlugin", "Core");
+        }
         registry.record("FramepacePlugin", "Core");
         registry.record("EguiPlugin", "Core");
     }
 
-    app.add_plugins(WireframePanicFixPlugin {
-        registered_by: "Core",
-    }) // Fix for bevy_pbr 0.18.1 Node3d::PostProcessing panic
-    .add_plugins(WireframePlugin::default()) // Needed enable wireframe rendering
-    .insert_resource(custom_wireframe_config(wireframe_enabled))
-    .add_plugins(bevy_framepace::FramepacePlugin)
+    app.insert_resource(custom_wireframe_config(wireframe_enabled));
+    if wireframe_enabled {
+        app.add_plugins(WireframePanicFixPlugin {
+            registered_by: "Core",
+        }) // Fix for bevy_pbr 0.18.1 Node3d::PostProcessing panic
+        .add_plugins(WireframePlugin::default()); // Needed to enable wireframe rendering
+    }
+
+    app.add_plugins(bevy_framepace::FramepacePlugin)
     // TODO: we have to enable hot reloading of this setting, not just setting it at startup.
     .insert_resource(bevy_framepace::FramepaceSettings {
         limiter: if settings_data.app.performance.frame_limit_enabled && !vsync_enabled {
