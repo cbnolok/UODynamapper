@@ -72,6 +72,7 @@ pub struct HueTextureCoord {
 pub struct HuesPackage {
     package: UddpReader,
     slots: Vec<Option<HueSlotRecord>>,
+    texture_bytes: Vec<u8>,
 }
 
 impl HuesPackage {
@@ -99,7 +100,11 @@ impl HuesPackage {
             .context("hues.uddp missing textures/hues.rgba8888")?;
         validate_texture_len(&texture_bytes)?;
 
-        Ok(Self { package, slots })
+        Ok(Self {
+            package,
+            slots,
+            texture_bytes,
+        })
     }
 
     pub fn package(&self) -> &UddpReader {
@@ -135,10 +140,12 @@ impl HuesPackage {
         })
     }
 
+    pub fn texture_bytes(&self) -> &[u8] {
+        &self.texture_bytes
+    }
+
     pub fn read_texture_bytes(&self) -> eyre::Result<Vec<u8>> {
-        let bytes = read_path_entry(&self.package, HUES_TEXTURE_ENTRY_PATH)?;
-        validate_texture_len(&bytes)?;
-        Ok(bytes)
+        Ok(self.texture_bytes.clone())
     }
 }
 
@@ -383,6 +390,7 @@ mod tests {
             )
             .expect("open empty package"),
             slots,
+            texture_bytes: vec![0; HUES_TEXTURE_WIDTH as usize * HUES_TEXTURE_HEIGHT as usize * 4],
         };
 
         assert_eq!(
@@ -450,6 +458,7 @@ mod tests {
 
         assert_eq!(debug_from_uddp_package_call_count(), 1);
         assert_eq!(package.hue_name(1), Some("name"));
+        assert_eq!(package.texture_bytes().len(), texture.len());
         assert_eq!(package.read_texture_bytes().expect("texture bytes").len(), texture.len());
     }
 }

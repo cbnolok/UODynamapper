@@ -1005,12 +1005,7 @@ fn compose_paperdoll(
     let hue_texture_bytes = if layers.iter().any(|layer| layer.hue_id > 0) {
         let package = hues_package
             .ok_or_else(|| color_eyre::eyre::eyre!("hues.uddp is not loaded."))?;
-        Some(
-            package
-                .0
-                .read_texture_bytes()
-                .map_err(|error| color_eyre::eyre::eyre!("Could not read hues.uddp texture: {error}"))?,
-        )
+        Some(package.0.texture_bytes())
     } else {
         None
     };
@@ -1027,7 +1022,7 @@ fn compose_paperdoll(
             apply_hue(
                 &mut gump.rgba,
                 hues_package,
-                hue_texture_bytes.as_deref(),
+                hue_texture_bytes,
                 layer.hue_id,
                 layer.partial_hue,
             )?;

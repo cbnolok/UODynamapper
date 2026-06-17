@@ -443,13 +443,7 @@ fn create_hue_lookup_image(
 ) -> (Handle<Image>, u32) {
     use bevy::render::render_resource::{Extent3d, TextureDimension, TextureUsages};
 
-    let texture_bytes = hues_package.and_then(|package| match package.0.read_texture_bytes() {
-        Ok(bytes) => Some(bytes),
-        Err(error) => {
-            bevy::log::warn!("Failed to read hues.uddp lookup texture: {error}");
-            None
-        }
-    });
+    let texture_bytes = hues_package.map(|package| package.0.texture_bytes().to_vec());
     let hue_enabled = texture_bytes.is_some() as u32;
     let data = texture_bytes.unwrap_or_else(|| {
         vec![

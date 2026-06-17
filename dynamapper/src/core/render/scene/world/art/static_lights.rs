@@ -790,15 +790,7 @@ fn package_hue_source<'a>(
     if material_cache.hue_texture_bytes.is_none()
         && !material_cache.hue_texture_failed
     {
-        match package.0.read_texture_bytes() {
-            Ok(bytes) => {
-                material_cache.hue_texture_bytes = Some(bytes);
-            }
-            Err(error) => {
-                material_cache.hue_texture_failed = true;
-                log::warn!("Failed to read hues.uddp texture for static light hues: {error}");
-            }
-        }
+        material_cache.hue_texture_bytes = Some(package.0.texture_bytes().to_vec());
     }
 
     material_cache
