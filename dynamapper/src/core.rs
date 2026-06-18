@@ -26,8 +26,6 @@ use crate::{
     },
 };
 use bevy::{
-    ecs::schedule::ScheduleLabel,
-    //ecs::schedule::ExecutorKind,
     pbr::wireframe::{WireframeConfig, WireframePlugin},
     prelude::*,
     render::settings::{RenderCreation, WgpuFeatures, WgpuSettings},
@@ -337,28 +335,6 @@ pub fn run_bevy_app() -> ExitCode {
                 ..default()
             }),
     );
-
-    for sched in [
-        Update.intern(),
-        PreUpdate.intern(),
-        PostUpdate.intern(),
-        FixedUpdate.intern(),
-        FixedPreUpdate.intern(),
-        FixedPostUpdate.intern(),
-    ] {
-        app.edit_schedule(sched, |schedule| {
-            schedule.set_executor_kind(bevy::ecs::schedule::ExecutorKind::SingleThreaded);
-        });
-    }
-
-    if let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) {
-        use bevy::render;
-        for sched in [render::Render.intern(), render::ExtractSchedule.intern()] {
-            render_app.edit_schedule(sched, |schedule| {
-                schedule.set_executor_kind(bevy::ecs::schedule::ExecutorKind::SingleThreaded);
-            });
-        }
-    }
 
     {
         let mut registry = crate::util_lib::tracked_plugin::plugin_registry()
