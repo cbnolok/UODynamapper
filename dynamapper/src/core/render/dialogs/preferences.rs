@@ -1,7 +1,10 @@
 use crate::core::controls::input_actions::{ActionCloseActiveDialog, ActionTogglePreferences};
 use crate::{
     configs::settings::{AntiAliasingMode, ClientTextureSource},
-    core::render::{dialogs, scene::camera::UiCameraResource},
+    core::{
+        framepace_limiter_for_options, framepace_limiter_for_settings, present_mode_for_vsync,
+        render::{dialogs, scene::camera::UiCameraResource},
+    },
     prelude::*,
 };
 use bevy::{pbr::wireframe::WireframeConfig, prelude::*};
@@ -133,6 +136,15 @@ fn sys_sync_settings_to_state(
         wireframe_config.global = settings.app.debug.map_render_wireframe;
 
         *initialized = true;
+    }
+}
+
+fn limiter_matches(a: &Limiter, b: &Limiter) -> bool {
+    match (a, b) {
+        (Limiter::Off, Limiter::Off) => true,
+        (Limiter::Auto, Limiter::Auto) => true,
+        (Limiter::Manual(a), Limiter::Manual(b)) => a == b,
+        _ => false,
     }
 }
 
@@ -281,58 +293,46 @@ pub fn sys_render_preferences_dialog(
                     ui.heading("Performance");
                     ui.separator();
 
-                    // ---- Frame limiter toggle ----
-                    if ui
-                        .checkbox(&mut state.frame_limit_enabled, "Enable frame limiter")
-                        .changed()
-                    {
-                        state.apply_timer.reset();
-                        state.apply_timer.unpause();
-                    }
-
-                    // ---- FPS combobox ----
-                    ui.add_enabled_ui(state.frame_limit_enabled, |ui| {
-                        let current_fps = FPS_PRESETS[state.fps_preset_idx];
-                        let res = egui::ComboBox::from_label("Target FPS")
-                            .selected_text(format!("{} fps", current_fps))
-                            .show_ui(ui, |ui| {
-                                for (idx, &fps) in FPS_PRESETS.iter().enumerate() {
-                                    let label = format!("{} fps", fps);
-                                    ui.selectable_value(&mut state.fps_preset_idx, idx, label);
-                                }
-                            });
-                        if res.response.changed() {
+                    ui.add_enabled_ui(!state.vsync, |ui| {
+                        // ---- Frame limiter toggle ----
+                        if ui
+                            .checkbox(&mut state.frame_limit_enabled, "Enable frame limiter")
+                            .changed()
+                        {
                             state.apply_timer.reset();
                             state.apply_timer.unpause();
                         }
+
+                        // ---- FPS combobox ----
+                        ui.add_enabled_ui(state.frame_limit_enabled, |ui| {
+                            let current_fps = FPS_PRESETS[state.fps_preset_idx];
+                            let res = egui::ComboBox::from_label("Target FPS")
+                                .selected_text(format!("{} fps", current_fps))
+                                .show_ui(ui, |ui| {
+                                    for (idx, &fps) in FPS_PRESETS.iter().enumerate() {
+                                        let label = format!("{} fps", fps);
+                                        ui.selectable_value(&mut state.fps_preset_idx, idx, label);
+                                    }
+                                });
+                            if res.response.changed() {
+                                state.apply_timer.reset();
+                                state.apply_timer.unpause();
+                            }
+                        });
                     });
 
                     // Apply frame limiter changes immediately to framepace resource
-                    let fps_changed = state.fps_preset_idx != {
-                        match framepace.limiter {
-                            Limiter::Manual(d) => {
-                                let current_fps_hz = 1.0 / d.as_secs_f64();
-                                FPS_PRESETS
-                                    .iter()
-                                    .position(|&fps| (fps as f64 - current_fps_hz).abs() < 0.5)
-                                    .unwrap_or(usize::MAX)
-                            }
-                            _ => usize::MAX,
-                        }
-                    };
-
-                    let limiter_enabled = !matches!(framepace.limiter, Limiter::Off);
-
-                    if state.frame_limit_enabled != limiter_enabled || fps_changed {
-                        framepace.limiter = if state.frame_limit_enabled {
-                            Limiter::from_framerate(FPS_PRESETS[state.fps_preset_idx] as f64)
-                        } else {
-                            Limiter::Off
-                        };
+                    let desired_limiter = framepace_limiter_for_options(
+                        state.frame_limit_enabled,
+                        FPS_PRESETS[state.fps_preset_idx],
+                        state.vsync,
+                    );
+                    if !limiter_matches(&framepace.limiter, &desired_limiter) {
+                        framepace.limiter = desired_limiter;
                     }
 
                     ui.label(
-                        egui::RichText::new("Note: frame limiting also affected by VSync.")
+                        egui::RichText::new("Frame limiting is disabled while VSync is enabled.")
                             .small()
                             .weak(),
                     );
@@ -344,11 +344,15 @@ pub fn sys_render_preferences_dialog(
                         settings.graphics.vsync = state.vsync;
                         // Apply immediately to the window's present mode
                         if let Ok(mut window) = windows_q.single_mut() {
-                            window.present_mode = if state.vsync {
-                                bevy::window::PresentMode::AutoVsync
-                            } else {
-                                bevy::window::PresentMode::AutoNoVsync
-                            };
+                            window.present_mode = present_mode_for_vsync(state.vsync);
+                        }
+                        let desired_limiter = framepace_limiter_for_options(
+                            state.frame_limit_enabled,
+                            FPS_PRESETS[state.fps_preset_idx],
+                            state.vsync,
+                        );
+                        if !limiter_matches(&framepace.limiter, &desired_limiter) {
+                            framepace.limiter = desired_limiter;
                         }
                     }
 
@@ -564,13 +568,6 @@ pub fn sys_apply_performance_settings(
 ) {
     if settings.is_changed() {
         log_system_add_update::<PreferencesDialogPlugin>(fname!());
-        let target_fps = settings.app.performance.target_fps;
-        let enabled = settings.app.performance.frame_limit_enabled;
-
-        framepace.limiter = if enabled {
-            Limiter::from_framerate(target_fps as f64)
-        } else {
-            Limiter::Off
-        };
+        framepace.limiter = framepace_limiter_for_settings(settings.as_ref());
     }
 }

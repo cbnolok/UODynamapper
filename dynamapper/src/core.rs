@@ -53,6 +53,34 @@ fn custom_winit_settings(reduce_unfocused_fps: bool) -> WinitSettings {
     settings
 }
 
+pub fn present_mode_for_vsync(vsync: bool) -> PresentMode {
+    if vsync {
+        PresentMode::AutoVsync
+    } else {
+        PresentMode::AutoNoVsync
+    }
+}
+
+pub fn framepace_limiter_for_options(
+    frame_limit_enabled: bool,
+    target_fps: u32,
+    vsync: bool,
+) -> bevy_framepace::Limiter {
+    if frame_limit_enabled && !vsync {
+        bevy_framepace::Limiter::from_framerate(target_fps as f64)
+    } else {
+        bevy_framepace::Limiter::Off
+    }
+}
+
+pub fn framepace_limiter_for_settings(settings: &settings::Settings) -> bevy_framepace::Limiter {
+    framepace_limiter_for_options(
+        settings.app.performance.frame_limit_enabled,
+        settings.app.performance.target_fps,
+        settings.graphics.vsync,
+    )
+}
+
 fn custom_threadpool_settings() -> TaskPoolPlugin {
     TaskPoolPlugin {
         task_pool_options: TaskPoolOptions {
@@ -86,11 +114,7 @@ fn custom_threadpool_settings() -> TaskPoolPlugin {
 }
 
 fn custom_window_plugin_settings(size: (f32, f32), vsync: bool) -> WindowPlugin {
-    let present_mode = if vsync {
-        PresentMode::AutoVsync
-    } else {
-        PresentMode::AutoNoVsync
-    };
+    let present_mode = present_mode_for_vsync(vsync);
     WindowPlugin {
         primary_window: Some(Window {
             present_mode,
@@ -357,13 +381,8 @@ pub fn run_bevy_app() -> ExitCode {
     }
 
     app.add_plugins(bevy_framepace::FramepacePlugin)
-    // TODO: we have to enable hot reloading of this setting, not just setting it at startup.
     .insert_resource(bevy_framepace::FramepaceSettings {
-        limiter: if settings_data.app.performance.frame_limit_enabled && !vsync_enabled {
-            bevy_framepace::Limiter::from_framerate(settings_data.app.performance.target_fps as f64)
-        } else {
-            bevy_framepace::Limiter::Off
-        },
+        limiter: framepace_limiter_for_settings(&settings_data),
     })
     .insert_resource(bevy_egui::EguiGlobalSettings {
         auto_create_primary_context: false, // We manually spawn PrimaryEguiContext on the UI camera
