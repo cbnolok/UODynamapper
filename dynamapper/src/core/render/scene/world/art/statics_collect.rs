@@ -2402,7 +2402,7 @@ pub fn sys_collect_visible_statics(
     // Height conversion factor from UO units to our world Y units.
     // Usually z is roughly 1 unit = 0.1 world units (or similar).
     // The land shader does: world.y = z * 0.1
-    let height_scale = 0.1;
+    let height_scale = 0.1; // TODO: no magic numbers. also, don't we already have a fn for this?
     let frame = StaticCollectFrameConfig {
         map_id,
         art_source,

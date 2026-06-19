@@ -42,3 +42,6 @@ default = []
 [[bench]]
 name = "mobile_anim_blit"
 harness = false
+
+#[lib]
+#crate-type = ["dylib", "rlib"]

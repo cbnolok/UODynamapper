@@ -33,3 +33,7 @@ ktx2 = ["dep:color-eyre", "dep:ktx2", "dep:zstd"]
 name = "bc7_encode"
 harness = false
 required-features = ["bc7-encode"]
+
+#[lib]
+#crate-type = ["dylib", "rlib"]
+

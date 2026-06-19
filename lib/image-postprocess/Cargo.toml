@@ -26,3 +26,6 @@ wide = { version = "1.5", default-features = false, features = ["std"] }
 
 [package.metadata.cargo-machete]
 ignored = ["xbrz-rs"]
+
+#[lib]
+#crate-type = ["dylib", "rlib"]

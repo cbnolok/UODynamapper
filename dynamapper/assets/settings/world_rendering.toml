@@ -1,5 +1,6 @@
 enable_statics = true
-enable_static_lights = false
+enable_static_lights = true
+enable_static_art_local_lights = false
 
 [land_streaming]
 prepare_max_blocks_per_frame = 32768

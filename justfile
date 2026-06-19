@@ -39,7 +39,8 @@ has_lld  := if is_linux == "true" { `command -v ld.lld || echo ""` } else { "" }
 has_mold := if is_linux == "true" { `command -v mold || echo ""` } else { "" }
 has_wild := if is_linux == "true" { `command -v wild || echo ""` } else { "" }
 rust_llvm_major_stable := if is_linux == "true" {
-    `rustc -vV 2>/dev/null | sed -n 's/^LLVM version: \([0-9][0-9]*\).*/\1/p' | head -n1 || true`
+    `rustc -vV 2>/dev/null |
+ sed -n 's/^LLVM version: \([0-9][0-9]*\).*/\1/p' | head -n1 || true`
 } else {
     ""
 }
@@ -89,7 +90,7 @@ lld_plugin_lto_stable := if lld_llvm_major == "" {
 } else if rust_llvm_major_stable == "" {
     ""
 } else if lld_llvm_major == rust_llvm_major_stable {
-    " -Clinker-plugin-lto -Cembed-bitcode=no"
+    " -Clinker-plugin-lto"
 } else {
     ""
 }
@@ -98,7 +99,7 @@ lld_plugin_lto_nightly := if lld_llvm_major == "" {
 } else if rust_llvm_major_nightly == "" {
     ""
 } else if lld_llvm_major == rust_llvm_major_nightly {
-    " -Clinker-plugin-lto -Cembed-bitcode=no"
+    " -Clinker-plugin-lto"
 } else {
     ""
 }
@@ -112,10 +113,10 @@ if has_lld != "" {
     ""
 }
 linux_optimized_linker_base_nightly := \
-if has_lld != "" {
-    " -Clink-arg=-fuse-ld=lld" + lld_plugin_lto_nightly
-} else if has_mold != "" {
+if has_mold != "" {
     " -Clink-arg=-fuse-ld=mold"
+} else if has_lld != "" {
+    " -Clink-arg=-fuse-ld=lld" + lld_plugin_lto_nightly
 } else {
     ""
 }
@@ -154,8 +155,8 @@ rustflags_profile_nightly_musl := ""
 
 # Specialized RUSTFLAGS for different build types (exported to be accessible in shell commands)
 rustflags_debug_common              := linker_debug_flags + " -Cembed-bitcode=no"   # llvm bitcode is unneeded since we are not using LTO in debug
-rustflags_optimized_common_stable   := linker_optimized_flags_stable + ""
-rustflags_optimized_common_nightly  := linker_optimized_flags_nightly +\
+rustflags_optimized_common_stable   := linker_optimized_flags_stable  + " --remap-path-prefix"
+rustflags_optimized_common_nightly  := linker_optimized_flags_nightly + " --remap-path-prefix" +\
                                         " -Zshare-generics=y -Zlocation-detail=none"
 export RUSTFLAGS_RELEASE_STABLE     := rustflags_optimized_common_stable  +\
                                         " -Csymbol-mangling-version=v0 -Cforce-unwind-tables=no"
@@ -333,8 +334,8 @@ bloat-stable *args:
     @echo "Running cargo-bloat stable release analysis on {{os}}..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_STABLE}}"
     @echo "Using features: {{linux_features}}"
-    {{cargo_release_stable}} bloat --release --no-default-features --features "{{linux_features}}" \
-        --config 'profile.release.strip=false' \
+    {{cargo_release_stable}} bloat --profile profiling --no-default-features --features "profiling,{{linux_features}}" \
+        --config 'profile.profiling.strip=false' --config 'profile.profiling.debug=true' \
         {{args}}
 
 # Analyze release binary size with cargo-bloat and nightly release settings.
@@ -343,8 +344,8 @@ bloat-nightly *args:
     @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_NIGHTLY}}"
     @echo "Using features: {{linux_features}}"
     @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
-    {{cargo_release_nightly}} bloat --release --no-default-features --features "{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} \
-        --config 'profile.release.strip=false' \
+    {{cargo_release_nightly}} bloat --profile profiling --no-default-features --features "profiling,{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} \
+        --config 'profile.profiling.strip=false' --config 'profile.profiling.debug=true' \
         {{args}}
 
 # Verify Linux/macOS release package inputs before creating artifacts.

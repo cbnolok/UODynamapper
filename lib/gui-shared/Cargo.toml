@@ -16,3 +16,6 @@ too_many_arguments = "allow"
 eframe.workspace = true
 egui_extras.workspace = true
 rfd.workspace = true
+
+#[lib]
+#crate-type = ["dylib", "rlib"]

@@ -102,16 +102,13 @@ strip = true        # Strip debug info and symbols
 
 [profile.profiling]
 inherits = "release"
-debug = true
+debug = "line-tables-only"
 debug-assertions = false
 lto = false
-strip = "debuginfo" # leaves mangled symbols
-#strip = false
-panic = "abort"
-#overflow-checks = false
+strip = false # "debuginfo"
 
-[profile.profiling.package.image-postprocess]
-opt-level = 3
+#[profile.profiling.package.image-postprocess]
+#opt-level = 3
 
 # for those we don't tipically need debug info for profiling
 #[profile.profiling.package.uocf]
@@ -168,7 +165,7 @@ opt-level = 3
 [profile.dev.package.dynamapper]
 opt-level = 1
 #incremental = true
-debug = true
+debug = "line-tables-only" # true
 debug-assertions = true
 strip = false
 

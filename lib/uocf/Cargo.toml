@@ -54,3 +54,6 @@ tile_mappings_builder = []
 [[bench]]
 name = "rle_decode"
 harness = false
+
+#[lib]
+#crate-type = ["dylib", "rlib"]

@@ -36,7 +36,7 @@ log = { version = "*", features = [
   "max_level_debug",
   "release_max_level_warn",
 ] }
-mimalloc = { version = "*", features = ["v3"] }
+mimalloc = { version = "0.1.*", default-features = false, features = ["v3"] }
 nohash-hasher = "0.2.0"
 #pad = "0.1"
 paris = { version = "1.5", default-features = false, features = [
@@ -114,7 +114,7 @@ features = [
   #"bevy_audio",         # Provides audio functionality
   #"bevy_camera_controller", # Provides a collection of prebuilt camera controllers
   #"bevy_ci_testing",    # Enable systems that allow for automated testing on CI
-  "bevy_dev_tools", # Provides a collection of developer tools
+  #"bevy_dev_tools", # Provides a collection of developer tools
   #"bevy_gilrs",         # Adds gamepad support
   "bevy_gizmos_render", # Adds support for rendering gizmos
   #"bevy_gltf",          # glTF support
@@ -268,6 +268,7 @@ trace_tracy = ["bevy/trace_tracy", "bevy/trace_tracy_memory"]
 # but allow CI to disable it by building with `--no-default-features`.
 bevy_development_opts = [
   #"bevy/dynamic_linking", # it doesn't work on windows because the linker complains that there are too much exported symbols
+  #bevy_dev_tools
   "bevy/glam_assert",
   "bevy/track_location",
   "bevy/debug",
