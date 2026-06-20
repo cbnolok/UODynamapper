@@ -1641,6 +1641,7 @@ fn animationframe_uop_entries(
     let cc_path = app.settings.cc_path.clone();
     let ec_path = app.settings.ec_path.clone();
     let is_ec = matches!(source, ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr);
+    let is_cc = source == ArtSource::CcUop;
     let sequence_package = if is_ec {
         app.uop_cache.loaded_uops.iter().find_map(|loaded| {
             loaded
@@ -1673,6 +1674,28 @@ fn animationframe_uop_entries(
     } else {
         std::collections::HashMap::new()
     };
+    // Pre-build CC frame hash→(body_id, action_id) from the dictionary.
+    let dict_cc_frame_map: std::collections::HashMap<u64, (u32, u16)> = if is_cc {
+        app.dictionary
+            .iter_named()
+            .filter_map(|(hash, name)| {
+                if !name.starts_with("build/animationlegacyframe/") {
+                    return None;
+                }
+                // path: build/animationlegacyframe/{body:06}/{action:02}.bin
+                let mut parts = name.splitn(4, '/');
+                let _ = parts.next(); // "build"
+                let _ = parts.next(); // "animationlegacyframe"
+                let body_str = parts.next()?;
+                let file_str = parts.next()?;
+                let body_id = body_str.parse::<u32>().ok()?;
+                let action_id = file_str.strip_suffix(".bin")?.parse::<u16>().ok()?;
+                Some((hash, (body_id, action_id)))
+            })
+            .collect()
+    } else {
+        std::collections::HashMap::new()
+    };
     let packages = app
         .uop_cache
         .loaded_uops
@@ -1699,8 +1722,13 @@ fn animationframe_uop_entries(
 
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let (entries, new_dic_entries) =
-            scan_animationframe_uop_packages(packages, source, sequence_package, dict_seq_map);
+        let (entries, new_dic_entries) = scan_animationframe_uop_packages(
+            packages,
+            source,
+            sequence_package,
+            dict_seq_map,
+            dict_cc_frame_map,
+        );
         let _ = tx.send(AnimationFrameUopScanResult { key, entries, new_dic_entries });
     });
     app.animationframe_uop_worker_rx = Some(rx);
@@ -1728,9 +1756,10 @@ fn scan_animationframe_uop_packages(
     source: ArtSource,
     sequence_package: Option<uocf::uop_container::package::UopPackage>,
     dict_seq_map: std::collections::HashMap<u64, u32>,
+    dict_cc_frame_map: std::collections::HashMap<u64, (u32, u16)>,
 ) -> (Vec<AnimationFrameUopEntry>, Vec<(u64, String)>) {
     if source == ArtSource::CcUop {
-        return (scan_cc_animationframe_uop_packages(packages), Vec::new());
+        return scan_cc_animationframe_uop_packages(packages, dict_cc_frame_map);
     }
     if matches!(source, ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr) {
         return scan_ec_animationframe_uop_packages(packages, sequence_package, dict_seq_map);
@@ -1741,35 +1770,76 @@ fn scan_animationframe_uop_packages(
 
 fn scan_cc_animationframe_uop_packages(
     packages: Vec<(usize, PathBuf, uocf::uop_container::package::UopPackage)>,
-) -> Vec<AnimationFrameUopEntry> {
+    dict_frame_map: std::collections::HashMap<u64, (u32, u16)>,
+) -> (Vec<AnimationFrameUopEntry>, Vec<(u64, String)>) {
+    use uocf::enhanced::animationframe::MAX_BODY_ID;
+    use uocf::uop_container::hash::hash_file_name_simd_batch_strs_into;
+
+    const MAX_ACTION_ID_CC: u16 = 100;
+    const CC_DIRECTIONS: u8 = 5;
+
+    // Build brute-force reverse map only for body_ids not already in the dict.
+    let known_bodies: std::collections::HashSet<u32> = dict_frame_map.values().map(|&(b, _)| b).collect();
+    let unknown_bodies: Vec<u32> = (0..MAX_BODY_ID).filter(|b| !known_bodies.contains(b)).collect();
+
+    let mut combined_map: std::collections::HashMap<u64, (u32, u16)> =
+        std::collections::HashMap::with_capacity(dict_frame_map.len() + unknown_bodies.len() * MAX_ACTION_ID_CC as usize);
+    combined_map.extend(dict_frame_map.iter().map(|(&h, &p)| (h, p)));
+
+    if !unknown_bodies.is_empty() {
+        let total = unknown_bodies.len() * MAX_ACTION_ID_CC as usize;
+        let paths: Vec<String> = unknown_bodies
+            .iter()
+            .flat_map(|&body_id| {
+                (0..MAX_ACTION_ID_CC).map(move |action_id| AnimationFrameCc::animationframe_path(body_id, action_id))
+            })
+            .collect();
+        let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
+        let mut hashes = vec![0u64; total];
+        hash_file_name_simd_batch_strs_into(&path_refs, &mut hashes);
+        for (i, hash) in hashes.into_iter().enumerate() {
+            let body_id = unknown_bodies[i / MAX_ACTION_ID_CC as usize];
+            let action_id = (i % MAX_ACTION_ID_CC as usize) as u16;
+            combined_map.insert(hash, (body_id, action_id));
+        }
+    }
+
     let mut entries = Vec::new();
-    for (package_index, path, package) in packages {
-        let Some(group_id) = animationframe_package_group_id(&path) else {
+    let mut new_dic_entries: Vec<(u64, String)> = Vec::new();
+
+    for (package_index, path, package) in &packages {
+        let Some(group_id) = animationframe_package_group_id(path) else {
             continue;
         };
-        for body_id in 0..2048u32 {
-            for action_id in 0..100u16 {
-                let file_hash = AnimationFrameCc::animationframe_hash(body_id, action_id);
-                if package.get_file_by_hash(file_hash).is_none() {
-                    continue;
-                }
-
-                for direction in 0..5u8 {
-                    entries.push(AnimationFrameUopEntry {
-                        package_index,
-                        file_hash,
-                        body_id,
-                        action_id: Some(action_id),
-                        direction: Some(direction),
-                        group_id: Some(group_id),
-                        block_index: None,
-                        source_index: action_id as u32,
-                        frame_count: 0,
-                    });
-                }
+        for (file_hash, file) in package.files_by_hash() {
+            if !file.has_size() {
+                continue;
+            }
+            let Some(&(body_id, action_id)) = combined_map.get(file_hash) else {
+                continue;
+            };
+            if !dict_frame_map.contains_key(file_hash) {
+                new_dic_entries.push((
+                    *file_hash,
+                    AnimationFrameCc::animationframe_path(body_id, action_id),
+                ));
+            }
+            for direction in 0..CC_DIRECTIONS {
+                entries.push(AnimationFrameUopEntry {
+                    package_index: *package_index,
+                    file_hash: *file_hash,
+                    body_id,
+                    action_id: Some(action_id),
+                    direction: Some(direction),
+                    group_id: Some(group_id),
+                    block_index: None,
+                    source_index: action_id as u32,
+                    frame_count: 0,
+                });
             }
         }
     }
+
     entries.sort_by_key(|entry| {
         (
             entry.body_id,
@@ -1779,7 +1849,7 @@ fn scan_cc_animationframe_uop_packages(
             entry.source_index,
         )
     });
-    entries
+    (entries, new_dic_entries)
 }
 
 fn scan_ec_animationframe_uop_packages(
