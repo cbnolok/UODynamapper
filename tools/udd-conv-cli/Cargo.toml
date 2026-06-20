@@ -36,9 +36,5 @@ uocf = { path = "../../lib/uocf" }
 default = []
 
 [[bin]]
-name = "udd-pack"
-path = "src/bin/uddpack.rs"
-
-[[bin]]
-name = "udd-tool"
-path = "src/bin/uddtool.rs"
+name = "udd-cli"
+path = "src/bin/uddcli.rs"

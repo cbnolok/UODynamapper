@@ -1,5 +1,5 @@
 [package]
-name = "uocf-cli"
+name = "uoppackage-cli"
 version = "0.1.0"
 edition = "2024"
 
@@ -17,14 +17,11 @@ uocf = { path = "../../lib/uocf" }
 udd-logging = { path = "../../lib/udd-logging" }
 clap = { workspace = true, features = ["derive", "unicode"] }
 color-eyre.workspace = true
-byteorder.workspace = true
-dds.workspace = true
-ddsfile.workspace = true
 flate2.workspace = true
-image = { workspace = true, features = ["bmp", "png"] }
 log.workspace = true
-udd-image-codecs = { path = "../../lib/udd-image-codecs", features = ["ktx2"] }
+serde = { workspace = true, features = ["derive"] }
+toml.workspace = true
 
 [[bin]]
-name = "uocf-cli"
+name = "uoppackage-cli"
 path = "src/main.rs"

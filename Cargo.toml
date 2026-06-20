@@ -12,7 +12,8 @@ members = [
     "lib/image-postprocess",
     "tools/udd-conv-cli",
     "tools/uocf-cli",
-    "tools/uocf-asset-cli",
+    "tools/uocf-devtools-cli",
+    "tools/uoppackage-cli",
     "tools/udd-conv-gui",
     "tools/uddp-inspector-gui",
     "tools/uocf-inspector-gui",
@@ -235,7 +236,13 @@ debug = "line-tables-only"
 debug-assertions = true
 #strip = "debuginfo"
 
-[profile.dev.package.uocf-asset-cli]
+[profile.dev.package.uocf-devtools-cli]
+opt-level = 2
+debug = "line-tables-only"
+debug-assertions = true
+#strip = "debuginfo"
+
+[profile.dev.package.uoppackage-cli]
 opt-level = 2
 debug = "line-tables-only"
 debug-assertions = true

@@ -6942,17 +6942,24 @@ dependencies = [
 ]
 
 [[package]]
-name = "uocf-asset-cli"
+name = "uocf-cli"
 version = "0.1.0"
 dependencies = [
+ "byteorder",
  "clap",
  "color-eyre",
+ "dds",
+ "ddsfile",
+ "flate2",
+ "image",
+ "log",
+ "udd-image-codecs",
  "udd-logging",
  "uocf",
 ]
 
 [[package]]
-name = "uocf-cli"
+name = "uocf-devtools-cli"
 version = "0.1.0"
 dependencies = [
  "byteorder",
@@ -6961,12 +6968,7 @@ dependencies = [
  "csv",
  "dds",
  "ddsfile",
- "flate2",
- "image",
  "log",
- "serde",
- "toml",
- "udd-image-codecs",
  "udd-logging",
  "uocf",
  "walkdir",
@@ -7005,6 +7007,20 @@ dependencies = [
  "egui 0.34.3",
  "gui-shared",
  "rfd",
+ "serde",
+ "toml",
+ "udd-logging",
+ "uocf",
+]
+
+[[package]]
+name = "uoppackage-cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "color-eyre",
+ "flate2",
+ "log",
  "serde",
  "toml",
  "udd-logging",

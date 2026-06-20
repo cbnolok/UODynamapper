@@ -1268,8 +1268,15 @@ enum Commands {
 pub fn run() -> eyre::Result<()> {
     color_eyre::install()?;
     let _ = udd_logging::install_tracing_indicatif_logger();
+    run_with_args(std::env::args_os())
+}
 
-    match Cli::parse().command {
+pub fn run_with_args<I, T>(args: I) -> eyre::Result<()>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString> + Clone,
+{
+    match Cli::parse_from(args).command {
         Commands::PackArt {
             source_dirs: source_dir_args,
             classic_patches,

@@ -1,3 +1,8 @@
+mod legacy_mul;
+mod mul_convert;
+mod multimap;
+mod sound;
+
 use clap::{Parser, Subcommand, ValueEnum};
 use color_eyre::eyre::{self, Context};
 use std::path::{Path, PathBuf};
@@ -71,6 +76,15 @@ enum Commands {
         #[arg(short, long)]
         output: PathBuf,
     },
+    /// Classic Client sound.mul/soundidx.mul utility.
+    #[command(subcommand)]
+    Sound(sound::SoundCmd),
+    /// Classic Client multimap.rle converter.
+    #[command(subcommand)]
+    Multimap(multimap::MultimapCmd),
+    /// UO Legacy MUL/UOP format converter.
+    #[command(subcommand)]
+    MulConvert(mul_convert::MulConvertCmd),
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -128,6 +142,9 @@ fn main() -> eyre::Result<()> {
                 output.display()
             );
         }
+        Commands::Sound(cmd) => sound::run(cmd)?,
+        Commands::Multimap(cmd) => multimap::run(cmd)?,
+        Commands::MulConvert(cmd) => mul_convert::run(cmd)?,
     }
 
     Ok(())

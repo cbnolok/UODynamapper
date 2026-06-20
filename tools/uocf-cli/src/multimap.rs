@@ -2,7 +2,7 @@ use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Subcommand, ValueEnum};
 use color_eyre::eyre::{self, WrapErr};
 use image::{ColorType, ImageFormat};
 use uocf::classic::multimap_render::{
@@ -11,16 +11,8 @@ use uocf::classic::multimap_render::{
 };
 use uocf::classic::multimap_rle;
 
-/// Classic Client multimap.rle converter.
-#[derive(Parser)]
-#[command(author, version, about, long_about = None)]
-struct Cli {
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(Subcommand)]
-enum Commands {
+#[derive(Subcommand, Debug)]
+pub enum MultimapCmd {
     /// Decode multimap.rle to a BMP or PNG image.
     RleToImage {
         /// Input multimap.rle file.
@@ -168,7 +160,7 @@ enum Commands {
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
-enum CliMultimapStyle {
+pub(crate) enum CliMultimapStyle {
     /// First-pass edge extraction from the aerial render.
     Edge,
     /// Symbolic hand-drawn style closer to Classic Client multimap.rle.
@@ -184,12 +176,9 @@ impl From<CliMultimapStyle> for MultimapStyle {
     }
 }
 
-fn main() -> eyre::Result<()> {
-    color_eyre::install()?;
-    let _ = udd_logging::install_tracing_indicatif_logger();
-
-    match Cli::parse().command {
-        Commands::RleToImage { input, output } => {
+pub fn run(cmd: MultimapCmd) -> eyre::Result<()> {
+    match cmd {
+        MultimapCmd::RleToImage { input, output } => {
             let image = multimap_rle::load_rle(&input)?;
             multimap_rle::save_bitmap_or_png(&output, &image)?;
             println!(
@@ -200,7 +189,7 @@ fn main() -> eyre::Result<()> {
                 output.display()
             );
         }
-        Commands::ImageToRle { input, output } => {
+        MultimapCmd::ImageToRle { input, output } => {
             let image = multimap_rle::load_bitmap_or_png(&input)?;
             multimap_rle::save_rle(&output, &image)?;
             println!(
@@ -211,7 +200,7 @@ fn main() -> eyre::Result<()> {
                 output.display()
             );
         }
-        Commands::DdsToImage {
+        MultimapCmd::DdsToImage {
             input,
             output,
             source_x,
@@ -235,7 +224,7 @@ fn main() -> eyre::Result<()> {
                 output_height,
             )?;
         }
-        Commands::DdsToRle {
+        MultimapCmd::DdsToRle {
             input,
             output,
             source_x,
@@ -265,7 +254,7 @@ fn main() -> eyre::Result<()> {
                 style,
             )?;
         }
-        Commands::Ktx2ToImage {
+        MultimapCmd::Ktx2ToImage {
             input,
             output,
             source_x,
@@ -289,7 +278,7 @@ fn main() -> eyre::Result<()> {
                 output_height,
             )?;
         }
-        Commands::Ktx2ToRle {
+        MultimapCmd::Ktx2ToRle {
             input,
             output,
             source_x,

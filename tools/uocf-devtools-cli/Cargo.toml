@@ -1,5 +1,5 @@
 [package]
-name = "uocf-cli"
+name = "uocf-devtools-cli"
 version = "0.1.0"
 edition = "2024"
 
@@ -12,19 +12,32 @@ needless_lifetimes = "allow"
 nonminimal_bool = "allow"
 too_many_arguments = "allow"
 
+[features]
+dev-tool-tests = []
+
 [dependencies]
 uocf = { path = "../../lib/uocf" }
 udd-logging = { path = "../../lib/udd-logging" }
 clap = { workspace = true, features = ["derive", "unicode"] }
 color-eyre.workspace = true
 byteorder.workspace = true
+csv.workspace = true
 dds.workspace = true
 ddsfile.workspace = true
-flate2.workspace = true
-image = { workspace = true, features = ["bmp", "png"] }
 log.workspace = true
-udd-image-codecs = { path = "../../lib/udd-image-codecs", features = ["ktx2"] }
+walkdir.workspace = true
 
 [[bin]]
-name = "uocf-cli"
-path = "src/main.rs"
+name = "texture-scanner"
+path = "src/bin/texture_scanner.rs"
+required-features = ["dev-tool-tests"]
+
+[[bin]]
+name = "facet-evidence-tool"
+path = "src/bin/facet_evidence_tool.rs"
+required-features = ["dev-tool-tests"]
+
+[[bin]]
+name = "kr-ec-terrain-diff-tool"
+path = "src/bin/kr_ec_terrain_diff_tool.rs"
+required-features = ["dev-tool-tests"]

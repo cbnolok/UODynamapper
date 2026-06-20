@@ -1,20 +1,12 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::Subcommand;
 use color_eyre::eyre;
-use uocf_cli::legacy_mul::{CompressionFlag, FileType, LegacyMulFileConverter};
+use crate::legacy_mul::{CompressionFlag, FileType, LegacyMulFileConverter};
 
-/// UO Legacy MUL/UOP Converter - A tool to convert between legacy .mul/.idx files
-/// and modern .uop packages.
-#[derive(Parser)]
-#[command(author, version, about, long_about = None)]
-struct Cli {
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(Subcommand)]
-enum Commands {
+/// UO Legacy MUL/UOP Converter - convert between legacy .mul/.idx files and .uop packages.
+#[derive(Subcommand, Debug)]
+pub enum MulConvertCmd {
     /// Extracts known UOP files into MUL format.
     Extract {
         #[arg(name = "path")]
@@ -27,26 +19,12 @@ enum Commands {
     },
 }
 
-fn print_results(success: u32, total: u32) {
-    println!();
-    if success < total {
-        println!("Errors: {}", total - success);
-    } else {
-        println!("All actions completed successfully.");
-    }
-}
-
-fn main() -> eyre::Result<()> {
-    color_eyre::install()?;
-    let _ = udd_logging::install_tracing_indicatif_logger();
-
-    let cli = Cli::parse();
-
+pub fn run(cmd: MulConvertCmd) -> eyre::Result<()> {
     let mut success_count = 0;
     let mut total_count = 0;
 
-    match &cli.command {
-        Commands::Extract { path } => {
+    match &cmd {
+        MulConvertCmd::Extract { path } => {
             println!("Mode: Extract from UOP.");
             println!();
 
@@ -56,7 +34,6 @@ fn main() -> eyre::Result<()> {
 
             let uop_dir = path;
 
-            // Extract artLegacyMUL.uop
             total_count += 1;
             if let Err(e) = LegacyMulFileConverter::from_uop(
                 &uop_dir.join("artLegacyMUL.uop"),
@@ -71,7 +48,6 @@ fn main() -> eyre::Result<()> {
                 success_count += 1;
             }
 
-            // Extract gumpartLegacyMUL.uop
             total_count += 1;
             if let Err(e) = LegacyMulFileConverter::from_uop(
                 &uop_dir.join("gumpartLegacyMUL.uop"),
@@ -86,7 +62,6 @@ fn main() -> eyre::Result<()> {
                 success_count += 1;
             }
 
-            // Extract MultiCollection.uop
             total_count += 1;
             if let Err(e) = LegacyMulFileConverter::from_uop(
                 &uop_dir.join("MultiCollection.uop"),
@@ -101,7 +76,6 @@ fn main() -> eyre::Result<()> {
                 success_count += 1;
             }
 
-            // Extract soundLegacyMUL.uop
             total_count += 1;
             if let Err(e) = LegacyMulFileConverter::from_uop(
                 &uop_dir.join("soundLegacyMUL.uop"),
@@ -116,7 +90,6 @@ fn main() -> eyre::Result<()> {
                 success_count += 1;
             }
 
-            // Extract maps
             for i in 0..=5 {
                 let map_variants = [
                     format!("map{}", i),
@@ -152,14 +125,11 @@ fn main() -> eyre::Result<()> {
                         } else {
                             success_count += 1;
                         }
-                    } else {
-                        // If it's a primary map (no 'x'), we might want to warn if both are missing.
-                        // But since we are iterating 0..5, some maps might just not exist in all clients.
                     }
                 }
             }
         }
-        Commands::Pack { path } => {
+        MulConvertCmd::Pack { path } => {
             println!("Mode: Pack to UOP.");
             println!();
 
@@ -169,7 +139,6 @@ fn main() -> eyre::Result<()> {
 
             let mul_dir = path;
 
-            // Pack art.mul
             total_count += 1;
             if let Err(e) = LegacyMulFileConverter::to_uop(
                 &mul_dir.join("art.mul"),
@@ -184,7 +153,6 @@ fn main() -> eyre::Result<()> {
                 success_count += 1;
             }
 
-            // Pack gumpart.mul
             total_count += 1;
             if let Err(e) = LegacyMulFileConverter::to_uop(
                 &mul_dir.join("gumpart.mul"),
@@ -199,7 +167,6 @@ fn main() -> eyre::Result<()> {
                 success_count += 1;
             }
 
-            // Pack multi.mul
             total_count += 1;
             if let Err(e) = LegacyMulFileConverter::to_uop(
                 &mul_dir.join("multi.mul"),
@@ -207,14 +174,13 @@ fn main() -> eyre::Result<()> {
                 &mul_dir.join("MultiCollection.uop"),
                 FileType::MultiCollection,
                 0,
-                CompressionFlag::None, // housing.bin is not compressed
+                CompressionFlag::None,
             ) {
                 eprintln!("Error packing multi.mul: {}", e);
             } else {
                 success_count += 1;
             }
 
-            // Pack sound.mul
             total_count += 1;
             if let Err(e) = LegacyMulFileConverter::to_uop(
                 &mul_dir.join("sound.mul"),
@@ -229,7 +195,6 @@ fn main() -> eyre::Result<()> {
                 success_count += 1;
             }
 
-            // Pack maps
             for i in 0..=5 {
                 total_count += 1;
                 let map_name = format!("map{}", i);
@@ -264,14 +229,16 @@ fn main() -> eyre::Result<()> {
         }
     }
 
-    print_results(success_count, total_count);
-
+    println!();
     if success_count < total_count {
+        println!("Errors: {}", total_count - success_count);
         return Err(eyre::eyre!(
             "{} of {} actions failed",
             total_count - success_count,
             total_count
         ));
+    } else {
+        println!("All actions completed successfully.");
     }
 
     Ok(())

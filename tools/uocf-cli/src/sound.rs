@@ -1,20 +1,12 @@
 use std::fs;
 use std::path::PathBuf;
 
-use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
+use clap::{ArgGroup, Subcommand, ValueEnum};
 use color_eyre::eyre::{self, WrapErr};
 use uocf::classic::sound::SoundMap;
 
-/// Classic Client sound.mul/soundidx.mul utility.
-#[derive(Parser)]
-#[command(author, version, about, long_about = None)]
-struct Cli {
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(Subcommand)]
-enum Commands {
+#[derive(Subcommand, Debug)]
+pub enum SoundCmd {
     /// Export one Classic Client sound to a playable audio file.
     #[command(group(
         ArgGroup::new("selector")
@@ -41,25 +33,16 @@ enum Commands {
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
-enum SoundExportFormat {
+pub(crate) enum SoundExportFormat {
     Wav,
 }
 
-fn main() -> eyre::Result<()> {
-    color_eyre::install()?;
-    let _ = udd_logging::install_tracing_indicatif_logger();
-
-    match Cli::parse().command {
-        Commands::Export {
-            ccdir,
-            slot,
-            id,
-            output,
-            format,
-        } => export_sound(ccdir, slot, id, output, format)?,
+pub fn run(cmd: SoundCmd) -> eyre::Result<()> {
+    match cmd {
+        SoundCmd::Export { ccdir, slot, id, output, format } => {
+            export_sound(ccdir, slot, id, output, format)
+        }
     }
-
-    Ok(())
 }
 
 fn export_sound(

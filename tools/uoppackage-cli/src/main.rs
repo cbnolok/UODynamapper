@@ -1,19 +1,25 @@
-//! A command-line tool for working with Ultima Online UOP files.
+//! UO Package Tool — inspect, modify, and populate dictionaries for .uop files.
 
-use clap::{Parser, Subcommand};
-use color_eyre::eyre::{self, Context};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use clap::{Parser, Subcommand};
+use color_eyre::eyre::{self, Context};
+use serde::Deserialize;
 use uocf::uop_container::file::{CompressionFlag, UopFile};
 use uocf::uop_container::hash_bruteforce;
 use uocf::uop_container::hash_dictionary::HashDictionary;
 use uocf::uop_container::package::UopPackage;
-use uocf_cli::parse_hex_u64;
+use uocf::uop_container::template::UopTemplate;
+use udd_logging::progress::{ProgressBar, ProgressStyle};
 
-/// UO Package Tool - A utility for inspecting, hashing, and modifying Ultima Online .uop files.
+use uoppackage_cli::parse_hex_u64;
+
+/// UO Package Tool — inspect, hash, modify, and populate dictionaries for Ultima Online .uop files.
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
@@ -34,31 +40,24 @@ enum Commands {
         /// The target hash (hex).
         #[arg(required = true, value_parser = parse_hex_u64)]
         hash: u64,
-
         /// Known prefix.
         #[arg(long, default_value = "")]
         prefix: String,
-
         /// Known suffix.
         #[arg(long, default_value = "")]
         suffix: String,
-
         /// Character set to use.
         #[arg(long, default_value = "abcdefghijklmnopqrstuvwxyz0123456789")]
         charset: String,
-
         /// Minimum length of the variable part.
         #[arg(long, default_value_t = 1)]
         min_len: usize,
-
         /// Maximum length of the variable part.
         #[arg(long, default_value_t = 8)]
         max_len: usize,
-
         /// Number of threads to use (0 for auto).
         #[arg(long, default_value_t = 0)]
         threads: usize,
-
         /// Cracking method (parallel-simd, parallel-scalar).
         #[arg(long, default_value = "parallel-simd")]
         method: String,
@@ -68,11 +67,9 @@ enum Commands {
         /// The path to the UOP file.
         #[arg(required = true)]
         uop_file: PathBuf,
-
         /// The hash of the file to replace.
         #[arg(required = true, value_parser = parse_hex_u64)]
         hash: u64,
-
         /// The path to the new file.
         #[arg(required = true)]
         new_file: PathBuf,
@@ -88,11 +85,9 @@ enum Commands {
         /// The path to the UOP file.
         #[arg(required = true)]
         uop_file: PathBuf,
-
         /// The directory to extract files into.
         #[arg(required = true)]
         out_dir: PathBuf,
-
         /// Optional path to a string dictionary UOP to resolve hashes.
         #[arg(long)]
         dictionary: Option<PathBuf>,
@@ -102,11 +97,37 @@ enum Commands {
         /// The merged dictionary output path.
         #[arg(short, long)]
         output: PathBuf,
-
         /// Raw DIC dictionary files to merge.
         #[arg(required = true)]
         inputs: Vec<PathBuf>,
     },
+    /// Populate a UOP hash dictionary using TOML-configured templates.
+    PopulateDict {
+        /// Path to the TOML configuration file.
+        #[arg(short, long)]
+        config: PathBuf,
+        /// Path to the UOP files directory.
+        #[arg(short, long)]
+        uop_dir: PathBuf,
+        /// Path to the output dictionary file (.dic).
+        #[arg(short, long, default_value = "Dictionary.dic")]
+        output: PathBuf,
+        /// Path to an existing .dic dictionary to load first (optional).
+        #[arg(short, long)]
+        input: Option<PathBuf>,
+    },
+}
+
+#[derive(Deserialize, Debug)]
+struct PopulatorConfig {
+    #[serde(flatten)]
+    packages: HashMap<String, PackageConfig>,
+}
+
+#[derive(Deserialize, Debug)]
+struct PackageConfig {
+    candidates: Vec<String>,
+    range: Option<[u64; 2]>,
 }
 
 fn main() -> eyre::Result<()> {
@@ -244,7 +265,9 @@ fn main() -> eyre::Result<()> {
             if let Some(dict_path) = dictionary {
                 println!("Loading dictionary: {}...", dict_path.display());
                 let dict = uocf::enhanced::string_dictionary::UoStringDictionary::load(dict_path)
-                    .with_context(|| format!("Failed to load dictionary: {}", dict_path.display()))?;
+                    .with_context(|| {
+                        format!("Failed to load dictionary: {}", dict_path.display())
+                    })?;
                 for i in 0.. {
                     if let Some(s) = dict.get_string(i) {
                         let h = uocf::uop_container::hash::hash_file_name_single(s);
@@ -339,6 +362,82 @@ fn main() -> eyre::Result<()> {
                 duplicate_hashes
             );
         }
+        Commands::PopulateDict {
+            config,
+            uop_dir,
+            output,
+            input,
+        } => {
+            let config_content = std::fs::read_to_string(config)?;
+            let cfg: PopulatorConfig = toml::from_str(&config_content)?;
+
+            let mut hash_dictionary = if let Some(input_path) = input {
+                HashDictionary::load(input_path)?
+            } else {
+                HashDictionary::new()
+            };
+
+            let stop_signal = Arc::new(AtomicBool::new(false));
+
+            for (uop_name, pkg_config) in cfg.packages {
+                let uop_path = uop_dir.join(&uop_name);
+                if !uop_path.exists() {
+                    log::warn!("UOP file not found: {}", uop_path.display());
+                    continue;
+                }
+
+                println!("Processing {}...", uop_name);
+                let package = UopPackage::load(&uop_path)?;
+                let missing_hashes: HashSet<u64> = package
+                    .iter_files()
+                    .map(|f| f.filename_hash())
+                    .filter(|h| !hash_dictionary.contains(*h))
+                    .collect();
+
+                if missing_hashes.is_empty() {
+                    println!("  No missing hashes in {}.", uop_name);
+                    continue;
+                }
+
+                println!("  Found {} missing hashes.", missing_hashes.len());
+
+                for template_str in pkg_config.candidates {
+                    println!("  Trying template: {}", template_str);
+                    let range = pkg_config.range.map(|r| r[0]..=r[1]);
+                    let template = UopTemplate::new(&template_str, range.clone());
+
+                    if template.has_placeholders() {
+                        let count = range
+                            .as_ref()
+                            .map(|r| r.clone().count())
+                            .unwrap_or_else(|| (template.infer_max_range() + 1) as usize);
+                        let pb = ProgressBar::new(count as u64);
+                        pb.set_style(
+                            ProgressStyle::default_bar()
+                                .template(
+                                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})",
+                                )?
+                                .progress_chars("#>-"),
+                        );
+                        let found = template.crack(&missing_hashes, &stop_signal);
+                        for (h, s) in found {
+                            println!("    Found match: 0x{:016X} -> {}", h, s);
+                            hash_dictionary.set(h, s);
+                        }
+                        pb.finish_and_clear();
+                    } else {
+                        let found = template.crack(&missing_hashes, &stop_signal);
+                        for (h, s) in found {
+                            println!("    Found match: 0x{:016X} -> {}", h, s);
+                            hash_dictionary.set(h, s);
+                        }
+                    }
+                }
+            }
+
+            hash_dictionary.save(output)?;
+            println!("Saved dictionary to {}", output.display());
+        }
     }
 
     Ok(())
@@ -378,8 +477,7 @@ fn save_package_atomically(package: &mut UopPackage, target_path: &Path) -> eyre
 
     if let Err(error) = fs::rename(&temp_path, target_path) {
         let _ = fs::remove_file(&temp_path);
-        return Err(error)
-            .with_context(|| "Failed to replace old UOP file with the new one");
+        return Err(error).with_context(|| "Failed to replace old UOP file with the new one");
     }
 
     Ok(())
