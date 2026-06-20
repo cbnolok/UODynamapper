@@ -6,6 +6,9 @@
 
 // TODO: the format should be the same also for KR!
 
+pub const MAX_BODY_ID: u32 = 2048;
+pub const MAX_ACTION_ID_FALLBACK: u16 = 100;
+
 crate::eyre_imports!();
 use bytemuck::{cast_slice_mut, Pod, Zeroable};
 use std::sync::Arc;
@@ -96,6 +99,14 @@ pub struct AnimationFrameMetadata {
 }
 
 impl AnimationFrame {
+    pub fn animationframe_path(body_id: u32, action_id: u16) -> String {
+        format!("build/animationframe/{body_id:06}/{action_id:02}.bin")
+    }
+
+    pub fn animationframe_hash(body_id: u32, action_id: u16) -> u64 {
+        crate::uop_container::hash::hash_file_name_single(&Self::animationframe_path(body_id, action_id))
+    }
+
     /// Loads an animation frame from a zero-copy byte slice (e.g. from UOP).
     pub fn load(data: &[u8]) -> eyre::Result<Self> {
         if data.len() < std::mem::size_of::<AnimationFrameHeader>() {

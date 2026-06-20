@@ -683,6 +683,8 @@ pub struct AnimationFrameUopEntry {
 pub struct AnimationFrameUopScanResult {
     pub key: (u8, usize),
     pub entries: Vec<AnimationFrameUopEntry>,
+    /// New (hash, path) pairs discovered during the scan, not previously in the dictionary.
+    pub new_dic_entries: Vec<(u64, String)>,
 }
 
 pub fn upscale_filter_cli_value(filter: UpscaleFilter) -> &'static str {

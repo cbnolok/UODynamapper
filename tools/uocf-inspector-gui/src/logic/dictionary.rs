@@ -25,6 +25,16 @@ impl Dictionary {
     pub fn count(&self) -> usize {
         self.hash_dictionary.named_len()
     }
+
+    pub fn iter_named(&self) -> impl Iterator<Item = (u64, &str)> {
+        self.hash_dictionary
+            .iter()
+            .filter_map(|(hash, name)| name.map(|n| (hash, n)))
+    }
+
+    pub fn set(&mut self, hash: u64, name: impl Into<String>) {
+        self.hash_dictionary.set(hash, name);
+    }
 }
 
 #[cfg(test)]

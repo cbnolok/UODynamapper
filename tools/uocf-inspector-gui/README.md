@@ -32,6 +32,36 @@ where both exist.
 uocf-inspector-gui
 ```
 
+## Asset metadata
+
+### EC/KR animation frame mapping
+
+EC and KR animation data lives in `AnimationFrame*.uop` packages (six files each, numbered 1–6).
+The UOP index stores hashed filenames; the path format is:
+
+```
+build/animationframe/{body_id:06}/{action_id:02}.bin   (EC/KR)
+build/animationlegacyframe/{body_id:06}/{action_id:02}.bin   (CC inside AnimationFrame*.uop)
+```
+
+Because both `body_id` and `action_id` are encoded in the virtual path, both values are recovered by hash enumeration: `uocf::enhanced::animationframe::AnimationFrame::animationframe_hash(body_id, action_id)` is computed for all `body_id` in `0..2048` and `action_id` in `0..100` and matched against hashes present in each package. This is the same approach used for the Classic Client (`uocf::classic::animationframe_cc::AnimationFrameCc::animationframe_hash`). No external XML or dictionary file is required.
+
+### Reference XML files
+
+The `assets/` directory ships XML files originally derived from EC Super Viewer:
+
+| File | Content |
+| ---- | ------- |
+| `AnimationsCollection - EC.xml` | Per-body action/layer/sex metadata for the Enhanced Client. |
+| `AnimationsCollection - KR.xml` | Same for Kingdom Reborn. |
+| `AnimationsCollection.xml` | Original base version, kept as reference. |
+
+These files are **not** used by any runtime code. They document creature type, layer, and MaleOnly/FemaleOnly constraints that are not stored in the UOP binaries and may be useful for future display features. They must be distributed alongside the binary in the end-user artifact.
+
+### MultiCollection
+
+Multi-tile structure data (`MultiCollection.uop`) is decoded directly from its binary format by `uocf::enhanced::multis::MultiCollection`. No XML metadata is required.
+
 ## Notes
 
 - Configure client paths in the application settings panel.

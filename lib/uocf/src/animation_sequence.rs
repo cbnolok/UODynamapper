@@ -28,7 +28,22 @@ pub struct DirectionData {
     pub frame_indices: Vec<u16>,
 }
 
+pub fn ec_sequence_path_6digit(body_id: u32) -> String {
+    format!("data/animationsequence/{body_id:06}.bin")
+}
+
+pub fn ec_sequence_path_8digit(body_id: u32) -> String {
+    format!("build/animationsequence/{body_id:08}.bin")
+}
+
 impl AnimationSequence {
+    /// Returns the number of actions declared in an EC AnimationSequence payload
+    /// without fully parsing it. Returns `None` if the data is too short.
+    pub fn ec_action_count(data: &[u8]) -> Option<u32> {
+        use byteorder::{LittleEndian, ReadBytesExt};
+        std::io::Cursor::new(data).read_u32::<LittleEndian>().ok()
+    }
+
     /// Attempts to parse the animation sequence, trying CC first, then EC.
     pub fn parse(data: &[u8], body_id: u32) -> eyre::Result<Self> {
         if let Ok(seq) = Self::parse_cc(data, body_id) {
