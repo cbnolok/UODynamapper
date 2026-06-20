@@ -156,9 +156,9 @@ rustflags_profile_stable_musl := ""
 rustflags_profile_nightly_musl := ""
 
 # Specialized RUSTFLAGS for different build types (exported to be accessible in shell commands)
-rustflags_debug_common              := linker_debug_flags + " -Csymbol-mangling-version=v0 -Cembed-bitcode=no"   # llvm bitcode is unneeded since we are not using LTO in debug
-rustflags_optimized_common_stable   := linker_optimized_flags_stable  + " --remap-path-prefix -Csymbol-mangling-version=v0"
-rustflags_optimized_common_nightly  := linker_optimized_flags_nightly + " --remap-path-prefix -Csymbol-mangling-version=v0" +\
+rustflags_debug_common              := linker_debug_flags + " -Csplit-debuginfo=packed -Csymbol-mangling-version=v0 -Cembed-bitcode=no"   # llvm bitcode is unneeded since we are not using LTO in debug
+rustflags_optimized_common_stable   := linker_optimized_flags_stable  + " --remap-path-prefix -Csplit-debuginfo=packed -Csymbol-mangling-version=v0"
+rustflags_optimized_common_nightly  := linker_optimized_flags_nightly + " --remap-path-prefix -Csplit-debuginfo=packed -Csymbol-mangling-version=v0" +\
                                         " -Zshare-generics=y -Zlocation-detail=none"
 export RUSTFLAGS_RELEASE_STABLE     := rustflags_optimized_common_stable  +\
                                         " -Cforce-unwind-tables=no"
@@ -186,8 +186,8 @@ cargo_profile_stable    :=\
 # --- Release Package Contents ---
 app_docs := "docs/keybindings.md docs/USER_TROUBLESHOOTING.md"
 tool_docs := "README.md docs/USER_TROUBLESHOOTING.md"
-tool_bins := "udd-conv-gui udd-pack udd-tool uddp-inspector-gui uocf-inspector-gui uop-tool cc-uop-mul-converter sound-tool multimap-tool uop-dict-populator-cli uop-dict-populator-gui"
-tool_packages := "-p udd-conv-cli -p uocf-cli -p udd-conv-gui -p uddp-inspector-gui -p uocf-inspector-gui -p uop-dict-populator-gui"
+tool_bins := "udd-cli udd-conv-gui uddp-inspector-gui uocf-cli uocf-inspector-gui uop-dict-populator-gui uoppackage-cli"
+tool_packages := "-p udd-conv-cli -p uocf-cli -p udd-conv-gui -p uddp-inspector-gui -p uocf-inspector-gui -p uop-dict-populator-gui -p uoppackage-cli"
 
 # --- Recipes ---
 

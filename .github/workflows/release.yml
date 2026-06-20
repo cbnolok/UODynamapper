@@ -79,7 +79,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: dynamapper-linux-x86_64-tools
-          path: artifact/dynamapper-linux-x86_64-tools/*
+          path: artifact/dynamapper-linux-x86_64-tools/UODynamapper-tools/*
           retention-days: ${{ github.ref_name == 'prereleases' && 7 || 90 }}
 
   build-linux-arm64:
