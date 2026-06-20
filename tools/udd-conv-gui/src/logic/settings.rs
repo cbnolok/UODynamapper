@@ -2,8 +2,8 @@ use std::path::PathBuf;
 use color_eyre::eyre;
 use crate::models::AppSettings;
 
-const CONFIG_FILE_NAME: &str = "uddconv_gui_config.toml";
-const CONFIG_ENV_VAR: &str = "UDDCONV_GUI_CONFIG";
+const CONFIG_FILE_NAME: &str = "udd_conv_gui_config.toml";
+const CONFIG_ENV_VAR: &str = "UDD_CONV_GUI_CONFIG";
 
 pub fn config_file_path() -> PathBuf {
     if let Some(path) = std::env::var_os(CONFIG_ENV_VAR) {
@@ -64,7 +64,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .expect("system time is after unix epoch")
             .as_nanos();
-        std::env::temp_dir().join(format!("uddconv_gui_{}_{}.toml", name, nanos))
+        std::env::temp_dir().join(format!("udd_conv_gui_{}_{}.toml", name, nanos))
     }
 
     #[test]
