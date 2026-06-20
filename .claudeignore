@@ -1,0 +1,12 @@
+.codex/
+.idea/
+.tmp/
+.vscode/
+archive/
+compare_impl/
+old/
+target/
+*__pycache__*
+
+.*swp*
+.bak

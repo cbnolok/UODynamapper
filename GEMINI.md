@@ -2,6 +2,8 @@
 
 Read **[ENGINEERING.md](ENGINEERING.md)** before starting any task. It contains workspace layout, build commands, architecture rules, and engineering discipline shared across all agents.
 
+For tasks in `dynamapper/`, also read **[docs/agents/dynamapper_architecture.md](docs/agents/dynamapper_architecture.md)**.
+
 ---
 
 ## Gemini Notes

@@ -131,7 +131,7 @@ linker_optimized_flags_stable := if is_linux == "true" {
     linux_optimized_linker_base_stable +\
     " -Clink-arg=-Wl,--gc-sections -Clink-arg=-Wl,--no-allow-shlib-undefined"
 } else if is_macos == "true" {
-    " -Clink-arg=-Wl,-dead_strip   -Clink-arg=-Wl,--no-allow-shlib-undefined"
+    " -Clink-arg=-Wl,-dead_strip"
 } else {
   ""
 }
@@ -139,13 +139,15 @@ linker_optimized_flags_nightly := if is_linux == "true" {
     linux_optimized_linker_base_nightly +\
     " -Clink-arg=-Wl,--gc-sections -Clink-arg=-Wl,--no-allow-shlib-undefined"
 } else if is_macos == "true" {
-    " -Clink-arg=-Wl,-dead_strip   -Clink-arg=-Wl,--no-allow-shlib-undefined"
+    " -Clink-arg=-Wl,-dead_strip"
 } else {
   ""
 }
 
 # Features to enable on Linux by default (ensures Wayland/X11 support when using --no-default-features)
 linux_features := if is_linux == "true" { "linux_wayland,linux_x11" } else { "" }
+# Avoids passing --features "" on platforms where linux_features is empty (Windows PowerShell can't handle empty quoted args)
+features_args  := if linux_features != "" { "--features " + linux_features } else { "" }
 # Added -Clink-arg=-lgcc to musl RUSTFLAGS to satisfy compiler builtins like __popcountdi2 emitted by vendored libjxl C++ objects
 linux_musl_rustflags := " -Ctarget-feature=+crt-static -Clink-self-contained=yes -Clink-arg=-lgcc"
 rustflags_release_stable_musl := ""
@@ -154,18 +156,18 @@ rustflags_profile_stable_musl := ""
 rustflags_profile_nightly_musl := ""
 
 # Specialized RUSTFLAGS for different build types (exported to be accessible in shell commands)
-rustflags_debug_common              := linker_debug_flags + " -Cembed-bitcode=no"   # llvm bitcode is unneeded since we are not using LTO in debug
-rustflags_optimized_common_stable   := linker_optimized_flags_stable  + " --remap-path-prefix"
-rustflags_optimized_common_nightly  := linker_optimized_flags_nightly + " --remap-path-prefix" +\
+rustflags_debug_common              := linker_debug_flags + " -Csymbol-mangling-version=v0 -Cembed-bitcode=no"   # llvm bitcode is unneeded since we are not using LTO in debug
+rustflags_optimized_common_stable   := linker_optimized_flags_stable  + " --remap-path-prefix -Csymbol-mangling-version=v0"
+rustflags_optimized_common_nightly  := linker_optimized_flags_nightly + " --remap-path-prefix -Csymbol-mangling-version=v0" +\
                                         " -Zshare-generics=y -Zlocation-detail=none"
 export RUSTFLAGS_RELEASE_STABLE     := rustflags_optimized_common_stable  +\
-                                        " -Csymbol-mangling-version=v0 -Cforce-unwind-tables=no"
+                                        " -Cforce-unwind-tables=no"
 export RUSTFLAGS_RELEASE_NIGHTLY    := rustflags_optimized_common_nightly +\
-                                        " -Csymbol-mangling-version=v0 -Cforce-unwind-tables=no"
+                                        " -Cforce-unwind-tables=no"
 export RUSTFLAGS_PROFILE_STABLE     := rustflags_optimized_common_stable  +\
-                                        " -Cforce-frame-pointers=yes"
+                                        " -Cforce-frame-pointers=yes -Cembed-bitcode=no"
 export RUSTFLAGS_PROFILE_NIGHTLY    := rustflags_optimized_common_nightly +\
-                                        " -Cforce-frame-pointers=yes"
+                                        " -Cforce-frame-pointers=yes -Cembed-bitcode=no"
 # Specialized cargo flags
 export CARGO_FLAGS_NIGHTLY          := " -Zbuild-std=std,panic_abort -Zbuild-std-features=optimize_for_size"
 #   -Zfmt-debug=shallow
@@ -222,8 +224,7 @@ build-local-workspace-release *args:
     @echo "Building workspace release with the stable toolchain on {{os}}..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_STABLE}}"
     @echo "Using features: {{linux_features}}"
-    {{cargo_release_stable}} build --release --locked --workspace --no-default-features --features \
-        "{{linux_features}}" {{args}}
+    {{cargo_release_stable}} build --release --locked --workspace --no-default-features {{features_args}} {{args}}
 
 # Build the full workspace in release mode with nightly build-std optimizations.
 build-local-workspace-release-nightly *args:
@@ -231,11 +232,10 @@ build-local-workspace-release-nightly *args:
     @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_NIGHTLY}}"
     @echo "Using features: {{linux_features}}"
     @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
-    {{cargo_release_nightly}} build --release --locked --workspace --no-default-features --features \
-        "{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
+    {{cargo_release_nightly}} build --release --locked --workspace --no-default-features {{features_args}} {{CARGO_FLAGS_NIGHTLY}} {{args}}
 
 # Build the full workspace for a Linux musl release target with the stable toolchain.
-build-linux-musl-release target="x86_64-unknown-linux-musl" *args:
+build-linux-musl-release target *args:
     @echo "Building workspace release for musl target {{target}} with the stable toolchain..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_STABLE}}{{linux_musl_rustflags}}{{rustflags_release_stable_musl}}"
     @echo "Using features: {{linux_features}}"
@@ -245,7 +245,7 @@ build-linux-musl-release target="x86_64-unknown-linux-musl" *args:
         "{{linux_features}}" {{args}}
 
 # Build the full workspace for a Linux musl release target with the nightly toolchain.
-build-linux-musl-release-nightly target="x86_64-unknown-linux-musl" *args:
+build-linux-musl-release-nightly target *args:
     @echo "Building workspace release for musl target {{target}} with the nightly toolchain..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_NIGHTLY}}{{linux_musl_rustflags}}{{rustflags_release_nightly_musl}}"
     @echo "Using features: {{linux_features}}"
@@ -266,7 +266,7 @@ build-ci-dynamapper *args:
     @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_NIGHTLY}}"
     @echo "Using features: {{linux_features}}"
     @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
-    {{cargo_release_nightly}} build --release --locked --no-default-features --features "{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} \
+    {{cargo_release_nightly}} build --release --locked --no-default-features {{features_args}} {{CARGO_FLAGS_NIGHTLY}} \
         -p dynamapper --bin dynamapper {{args}}
 
 # Build all shipped tools with CI nightly release settings.
@@ -275,7 +275,7 @@ build-ci-tools *args:
     @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_NIGHTLY}}"
     @echo "Using features: {{linux_features}}"
     @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
-    {{cargo_release_nightly}} build --release --locked --no-default-features --features "{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} \
+    {{cargo_release_nightly}} build --release --locked --no-default-features {{features_args}} {{CARGO_FLAGS_NIGHTLY}} \
         {{tool_packages}} --bins {{args}}
 
 # Build the Dynamapper app and shipped tools used in release artifacts.
@@ -292,7 +292,7 @@ build-local-workspace-profile *args:
     {{cargo_profile_stable}} build --profile profiling --locked --workspace --no-default-features --features "profiling,{{linux_features}}" {{args}}
 
 # Build the full workspace for a Linux musl profiling target with the stable toolchain.
-build-linux-musl-profile target="x86_64-unknown-linux-musl" *args:
+build-linux-musl-profile target *args:
     @echo "Building workspace profiling profile for musl target {{target}} with the stable toolchain..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS_PROFILE_STABLE}}{{linux_musl_rustflags}}{{rustflags_profile_stable_musl}}"
     @echo "Using features: profiling,{{linux_features}}"
@@ -310,7 +310,7 @@ build-local-workspace-profile-nightly *args:
     {{cargo_profile_nightly}} build --profile profiling --locked --workspace --no-default-features --features "profiling,{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
 
 # Build the full workspace for a Linux musl profiling target with the nightly toolchain.
-build-linux-musl-profile-nightly target="x86_64-unknown-linux-musl" *args:
+build-linux-musl-profile-nightly target *args:
     @echo "Building workspace profiling profile for musl target {{target}} with the nightly toolchain..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS_PROFILE_NIGHTLY}}{{linux_musl_rustflags}}{{rustflags_profile_nightly_musl}}"
     @echo "Using features: profiling,{{linux_features}}"

@@ -248,6 +248,16 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui
     egui::Panel::bottom("status_bar").show_inside(ui, |ui| {
         ui.horizontal(|ui| {
             ui.label(&app.status_message);
+            ui.separator();
+            match &app.settings.dict_path {
+                Some(path) => {
+                    ui.label("DIC:");
+                    ui.label(path.display().to_string());
+                }
+                None => {
+                    ui.weak("No .dic loaded");
+                }
+            }
         });
     });
 
