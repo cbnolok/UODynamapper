@@ -316,6 +316,12 @@ impl InspectorApp {
                             .unwrap_or_else(|| "<missing>".to_string()),
                     );
                     ui.end_row();
+                    metadata_label(ui, "Primary Reason:");
+                    ui.label(terrain_primary_reason_label(info.primary_selection_reason));
+                    ui.end_row();
+                    metadata_label(ui, "Primary Flags:");
+                    ui.label(terrain_primary_flags_label(info.primary_selection_flags));
+                    ui.end_row();
                     metadata_label(ui, "Aliases:");
                     ui.label(info.alias_count.to_string());
                     ui.end_row();
@@ -530,4 +536,49 @@ fn material_layer_name(layer_index: u32) -> String {
         u32::MAX => "unassigned layer".to_string(),
         _ => format!("layer {layer_index}"),
     }
+}
+
+fn terrain_primary_reason_label(reason: u8) -> &'static str {
+    use udd_assets::tex_land_ec::*;
+    match reason {
+        TERRAIN_PRIMARY_REASON_NON_SUPPORT_PREFERRED_REPETITION => "non-support preferred repetition",
+        TERRAIN_PRIMARY_REASON_NON_SUPPORT_REPETITION_FALLBACK => "non-support repetition fallback",
+        TERRAIN_PRIMARY_REASON_SUPPORT_PREFERRED_REPETITION_FALLBACK => "support preferred repetition fallback",
+        TERRAIN_PRIMARY_REASON_SUPPORT_REPETITION_FALLBACK => "support repetition fallback",
+        TERRAIN_PRIMARY_REASON_UNKNOWN | _ => "unknown",
+    }
+}
+
+fn terrain_primary_flags_label(flags: u16) -> String {
+    use udd_assets::tex_land_ec::*;
+    if flags == 0 {
+        return "none".to_string();
+    }
+    let mut parts = Vec::new();
+    if flags & TERRAIN_PRIMARY_FLAG_SELECTED_CURRENT_SUPPORT != 0 {
+        parts.push("current-support");
+    }
+    if flags & TERRAIN_PRIMARY_FLAG_SELECTED_SUPPORT_LIKE != 0 {
+        parts.push("support-like");
+    }
+    if flags & TERRAIN_PRIMARY_FLAG_SELECTED_PREFERRED_REPETITION != 0 {
+        parts.push("preferred-repetition");
+    }
+    if flags & TERRAIN_PRIMARY_FLAG_FALLBACK_REASON != 0 {
+        parts.push("fallback");
+    }
+    if flags & TERRAIN_PRIMARY_FLAG_MULTIPLE_PREFERRED_NON_SUPPORT != 0 {
+        parts.push("multiple-preferred-non-support");
+    }
+    if flags & TERRAIN_PRIMARY_FLAG_SUPPORT_LIKE_OUTSIDE_CURRENT_HEURISTIC != 0 {
+        parts.push("support-like-outside-heuristic");
+    }
+    if flags & TERRAIN_PRIMARY_FLAG_OPAQUE_UNK6_TIEBREAKER != 0 {
+        parts.push("unk6-tiebreaker");
+    }
+    let unknown = flags & !0x7F;
+    if unknown != 0 {
+        parts.push("unknown-bits");
+    }
+    parts.join(", ")
 }

@@ -1,7 +1,7 @@
 use crate::app::{TerrainDefinitionFileEntry, UopInspectorApp};
 use crate::ui::{list_sort_controls, sorted_indices_by};
 use eframe::egui;
-use uocf::enhanced::terrain_definition::TerrainDefinitionEntry;
+use uocf::enhanced::terrain_definition::{TerrainDefinitionEntry, TerrainTextureType};
 use std::collections::BTreeSet;
 
 const TERRAIN_DEFINITION_PANEL_WIDTH: f32 = 300.0;
@@ -250,6 +250,9 @@ fn ui_texture_data(
             ui.label("path");
             ui.label("texture_id");
             ui.label("type");
+            ui.label("support?");
+            ui.label("clue?");
+            ui.label("pref.rep?");
             ui.label("unk4");
             ui.label("repetition");
             ui.label("unk6");
@@ -262,14 +265,17 @@ fn ui_texture_data(
                 ui.label(layer.name_string_off.to_string());
                 ui.label(layer.path.as_deref().unwrap_or("None"));
                 ui.label(layer.texture_id.map(|id| id.to_string()).unwrap_or_else(|| "None".to_string()));
-                ui.label(format!("{:?}", layer.texture_type));
+                ui.label(terrain_texture_type_label(layer.texture_type));
+                ui.label(layer.is_support_layer_by_current_name_heuristic().to_string());
+                ui.label(layer.has_support_like_name_clue().to_string());
+                ui.label(layer.has_preferred_primary_repetition().to_string());
                 ui.label(layer.unk4.to_string());
                 ui.label(layer.texture_repetition.to_string());
                 ui.label(layer.unk6.to_string());
                 ui.label(layer.unk7.to_string());
                 if let Some(texture_id) = layer.texture_id {
                     if let Some(handle) = app.get_ec_texture_by_id(ctx, texture_id) {
-                        ui.add(thumbnail(&handle, 96.0));
+                        ui.add(thumbnail(&handle, 128.0));
                     } else {
                         ui.label("missing");
                     }
@@ -279,9 +285,74 @@ fn ui_texture_data(
                 ui.end_row();
             }
         });
+        ui.add_space(5.0);
+        ui.collapsing("Layer Analysis", |ui| {
+            let primary = entry.primary_texture_layer_with_reason();
+            if let Some((primary_layer, reason)) = primary {
+                let primary_idx = texture.layers.iter().position(|l| std::ptr::eq(l, primary_layer));
+                egui::Grid::new("td_primary_analysis_grid").show(ui, |ui| {
+                    ui.label("Primary layer:");
+                    ui.label(primary_idx.map(|i| i.to_string()).unwrap_or_else(|| "?".to_string()));
+                    ui.end_row();
+                    ui.label("Reason:");
+                    ui.label(reason.as_str());
+                    ui.end_row();
+                    ui.label("Path:");
+                    ui.label(primary_layer.path.as_deref().unwrap_or("None"));
+                    ui.end_row();
+                    ui.label("Repetition:");
+                    ui.label(primary_layer.texture_repetition.to_string());
+                    ui.end_row();
+                });
+            } else {
+                ui.label("No primary layer selected.");
+            }
+
+            ui.add_space(5.0);
+            for (i, layer) in texture.layers.iter().enumerate() {
+                let header = format!(
+                    "Layer {} — {} ({})",
+                    i,
+                    layer.path.as_deref().unwrap_or("no path"),
+                    terrain_texture_type_label(layer.texture_type)
+                );
+                ui.collapsing(header, |ui| {
+                    egui::Grid::new(format!("td_layer_analysis_{i}")).show(ui, |ui| {
+                        ui.label("support heuristic:");
+                        ui.label(layer.is_support_layer_by_current_name_heuristic().to_string());
+                        ui.end_row();
+                        ui.label("support-like clue:");
+                        ui.label(layer.has_support_like_name_clue().to_string());
+                        ui.end_row();
+                        ui.label("preferred repetition:");
+                        ui.label(layer.has_preferred_primary_repetition().to_string());
+                        ui.end_row();
+                    });
+                    if let Some(texture_id) = layer.texture_id {
+                        if let Some(handle) = app.get_ec_texture_by_id(ctx, texture_id) {
+                            ui.add(egui::Image::new(&handle).texture_options(egui::TextureOptions::LINEAR));
+                        } else {
+                            ui.label("texture missing");
+                        }
+                    } else {
+                        ui.label("no texture id");
+                    }
+                });
+            }
+        });
     } else {
         ui.heading("Texture Item");
         ui.label("No texture definition.");
+    }
+}
+
+fn terrain_texture_type_label(texture_type: TerrainTextureType) -> &'static str {
+    match texture_type {
+        TerrainTextureType::Undefined => "Undefined",
+        TerrainTextureType::WorldArt => "WorldArt",
+        TerrainTextureType::TileArtLegacy => "TileArtLegacy",
+        TerrainTextureType::TileArtEnhanced => "TileArtEnhanced",
+        TerrainTextureType::Textures => "Textures",
     }
 }
 

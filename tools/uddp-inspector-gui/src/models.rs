@@ -86,6 +86,8 @@ pub struct EcLandMaterialInfo {
     pub selected_textures: Vec<EcLandMaterialTextureInfo>,
     pub override_textures: Vec<EcLandMaterialOverrideTextureInfo>,
     pub preview: Option<EcLandMaterialPreview>,
+    pub primary_selection_reason: u8,
+    pub primary_selection_flags: u16,
 }
 
 #[derive(Debug, Clone)]

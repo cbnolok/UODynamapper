@@ -4,7 +4,7 @@ use crate::app::{concrete_art_tile_source, tileart_flags_summary, tileart_proper
 use crate::logic::ClientData;
 use super::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by};
 use std::sync::Arc;
-use uocf::enhanced::tileart::{TaeAnimationAppearance, TaeSittingAnimation};
+use uocf::enhanced::tileart::{TaeAnimationAppearance, TaeSittingAnimation, TextureType};
 use uocf::classic::art::{static_art_id_for_source, STATIC_TILE_ID_BASE};
 
 const TILEDATA_TABLE_MIN_WIDTH: f32 = 980.0;
@@ -287,17 +287,17 @@ fn art_source_label(source: ArtSource) -> &'static str {
     }
 }
 
-fn ui_cc_tiledata(app: &mut UopInspectorApp, _ctx: &egui::Context, ui: &mut egui::Ui) {
-    ui_tile_metadata_contents(app, ui);
+fn ui_cc_tiledata(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
+    ui_tile_metadata_contents(app, ctx, ui);
 }
 
-pub fn ui_tile_metadata(app: &mut UopInspectorApp, _ctx: &egui::Context, ui: &mut egui::Ui) {
+pub fn ui_tile_metadata(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
     egui::CentralPanel::default().show_inside(ui, |ui| {
-        ui_tile_metadata_contents(app, ui);
+        ui_tile_metadata_contents(app, ctx, ui);
     });
 }
 
-fn ui_tile_metadata_contents(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
+fn ui_tile_metadata_contents(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.heading("Tile Metadata");
         ui.separator();
@@ -336,7 +336,7 @@ fn ui_tile_metadata_contents(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
 
     match app.tile_metadata_source {
         TileMetadataSource::CcTileData => ui_cc_tiledata_table(app, ui, text_has_focus),
-        TileMetadataSource::EcTileArt => ui_ec_tileart_table(app, ui, text_has_focus),
+        TileMetadataSource::EcTileArt => ui_ec_tileart_table(app, ctx, ui, text_has_focus),
     }
 }
 
@@ -488,7 +488,7 @@ fn ui_cc_tiledata_table(app: &mut UopInspectorApp, ui: &mut egui::Ui, text_has_f
     }
 }
 
-fn ui_ec_tileart_table(app: &mut UopInspectorApp, ui: &mut egui::Ui, text_has_focus: bool) {
+fn ui_ec_tileart_table(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui, text_has_focus: bool) {
     ui.heading("EC TileArt Inspector");
     if let (Some(entries), Some(rows)) = (app.ec_tileart_entries.clone(), app.ec_tileart_rows.clone()) {
         let query = app.search_query.trim();
@@ -636,7 +636,7 @@ fn ui_ec_tileart_table(app: &mut UopInspectorApp, ui: &mut egui::Ui, text_has_fo
         if let Some(selected_hash) = app.selected_tileart_hash {
             if let Some(file) = entries.iter().find(|file| file.filename_hash == selected_hash) {
                 ui.heading(format!("Selected TileArt {}", file.entry.tile_id));
-                ui_selected_tileart_details(app, ui, file);
+                ui_selected_tileart_details(app, ctx, ui, file);
             }
         }
     } else {
@@ -700,7 +700,7 @@ fn ui_selected_tiledata_details(app: &UopInspectorApp, ui: &mut egui::Ui) {
     });
 }
 
-fn ui_selected_tileart_details(app: &UopInspectorApp, ui: &mut egui::Ui, file: &TileArtFileEntry) {
+fn ui_selected_tileart_details(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui, file: &TileArtFileEntry) {
     let entry = &file.entry;
 
     ui.collapsing("Core", |ui| {
@@ -861,14 +861,25 @@ fn ui_selected_tileart_details(app: &UopInspectorApp, ui: &mut egui::Ui, file: &
                 ui.label("ID");
                 ui.label("Stretch");
                 ui.label("Path");
+                ui.label("Preview");
                 ui.end_row();
                 for block in art_data.texture_items {
                     for item in block {
                         ui.label(format!("{}.{}", item.block_index, item.item_index));
-                        ui.label(format!("{:?}", item.texture_type));
+                        ui.label(tileart_texture_type_label(item.texture_type));
                         ui.label(item.id.to_string());
                         ui.label(item.texture_stretch.to_string());
-                        ui.label(item.path);
+                        ui.label(&item.path);
+                        if let Some(handle) = app.get_ec_texture_by_id(ctx, item.id) {
+                            let [w, h] = handle.size();
+                            let scale = (128.0 / w.max(1) as f32).min(128.0 / h.max(1) as f32).min(1.0);
+                            ui.add(
+                                egui::Image::new(&handle)
+                                    .fit_to_exact_size(egui::vec2(w as f32 * scale, h as f32 * scale))
+                            );
+                        } else {
+                            ui.label("missing");
+                        }
                         ui.end_row();
                     }
                 }
@@ -958,6 +969,16 @@ fn tileart_appearance_summary(appearance: &[TaeAnimationAppearance]) -> String {
         counts[1],
         other
     )
+}
+
+fn tileart_texture_type_label(texture_type: TextureType) -> &'static str {
+    match texture_type {
+        TextureType::Undefined => "Undefined",
+        TextureType::WorldArt => "WorldArt",
+        TextureType::TileArtLegacy => "TileArtLegacy",
+        TextureType::TileArtEnhanced => "TileArtEnhanced",
+        TextureType::Textures => "Textures",
+    }
 }
 
 fn tileart_appearance_detail(appearance: &TaeAnimationAppearance) -> String {

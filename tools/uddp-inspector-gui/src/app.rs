@@ -526,7 +526,7 @@ impl InspectorApp {
                 };
             }
             Err(e) => {
-                println!("Error opening package: {}", e);
+                log::error!("Error opening package: {}", e);
             }
         }
     }
@@ -625,6 +625,14 @@ impl InspectorApp {
                 let primary_texture = primary_texture_id
                     .map(|texture_id| texture_id.to_string())
                     .unwrap_or_else(|| "missing".to_string());
+                let primary_selection_reason = records
+                    .first()
+                    .map(|r| r.primary_selection_reason)
+                    .unwrap_or(udd_assets::tex_land_ec::TERRAIN_PRIMARY_REASON_UNKNOWN);
+                let primary_selection_flags = records
+                    .first()
+                    .map(|r| r.primary_selection_flags)
+                    .unwrap_or(0);
                 let selected_texture_count = records
                     .iter()
                     .filter_map(|record| {
@@ -674,6 +682,8 @@ impl InspectorApp {
                         alias_count,
                         selected_texture_count,
                         primary_texture_id,
+                        primary_selection_reason,
+                        primary_selection_flags,
                         selected_textures,
                         override_textures,
                         preview,
@@ -698,7 +708,6 @@ impl InspectorApp {
                     record.selected_layer_index,
                     record.selected_texture_id,
                     record.canonical_slot_id,
-                    record.alias_slot_id,
                 );
                 if !seen.insert(key) {
                     return None;
