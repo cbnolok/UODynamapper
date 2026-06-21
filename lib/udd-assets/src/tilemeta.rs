@@ -404,6 +404,11 @@ impl TileMetaPackage {
                     })
             })
     }
+
+    pub fn main_ec_texture_id_with_branch(&self, tile_id: u32) -> Option<(u32, &'static str)> {
+        self.main_ec_texture_id_with_reason(tile_id)
+            .map(|(texture_id, reason)| (texture_id, reason.as_str()))
+    }
 }
 
 fn choose_main_ec_texture_ref(

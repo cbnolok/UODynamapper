@@ -1224,7 +1224,10 @@ fn describe_static_tile_details(
         .filter(|name| !name.is_empty())
         .unwrap_or("<unnamed>");
     let cc_texture_id = meta.map(|item| item.cc_texture_id);
-    let ec_texture_id = tilemeta_res.and_then(|meta_package| meta_package.0.main_ec_texture_id(graphic as u32));
+    let (ec_texture_id, ec_tex_branch) = tilemeta_res
+        .and_then(|meta_package| meta_package.0.main_ec_texture_id_with_branch(graphic as u32))
+        .map(|(id, branch)| (Some(id), branch))
+        .unwrap_or((None, "none"));
     let is_surface_like = static_tile_is_surface_like(meta);
     let tex_art_cc_id = cc_texture_id.map(|id| id.saturating_add(CLASSIC_STATIC_ART_ID_OFFSET as u32));
     let cc_slot =
@@ -1255,6 +1258,7 @@ fn describe_static_tile_details(
     };
     let tex_land_ec_slot = tex_land_ec_runtime_slot
         .and_then(|slot_id| tex_land_ec_res.and_then(|package| package.0.present_slot(slot_id)));
+    let tex_land_ec_direct_slot = tex_land_ec_res.and_then(|p| p.0.present_slot(graphic as u32));
     let live_decision = match settings.graphics.art_texture_source {
         crate::configs::settings::ClientTextureSource::Cc => {
             format!(
@@ -1292,7 +1296,7 @@ fn describe_static_tile_details(
     };
 
     format!(
-        "id={} z={} hue={} name={} surf={} cc_tex={} ec_tex={} cc_slot={} tex_art_ec_slot={} tex_land_ec_slot={} {}{}",
+        "id={} z={} hue={} name={} surf={} cc_tex={} ec_tex={} ec_tex_branch={} cc_slot={} tex_art_ec_slot={} tex_land_ec_slot={} tex_land_ec_direct={} {}{}",
         graphic,
         z,
         hue,
@@ -1300,6 +1304,7 @@ fn describe_static_tile_details(
         is_surface_like,
         optional_u32(cc_texture_id),
         optional_u32(ec_texture_id),
+        ec_tex_branch,
         tex_art_cc_id
             .map(|id| format!("{}:{}", id, slot_presence(cc_slot.is_some())))
             .unwrap_or_else(|| "?".to_string()),
@@ -1317,6 +1322,9 @@ fn describe_static_tile_details(
         } else {
             "not_checked".to_string()
         },
+        tex_land_ec_direct_slot
+            .map(|slot| slot_record_summary_u32(graphic as u32, Some(slot.page_index)))
+            .unwrap_or_else(|| "absent".to_string()),
         live_decision,
         hovered_kind_label,
     )
