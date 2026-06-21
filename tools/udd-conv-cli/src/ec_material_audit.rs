@@ -1120,6 +1120,7 @@ pub fn inventory_ec_support_textures(
     source_dirs: &[PathBuf],
     terrain_output: &Path,
     effect_output: &Path,
+    summary_output: &Path,
 ) -> eyre::Result<()> {
     let sources = load_tex_art_ec_sources(source_dirs)?;
     let package_membership = EcPackageMembership::load(source_dirs)?;
@@ -1158,6 +1159,8 @@ pub fn inventory_ec_support_textures(
         effect_output.display()
     );
     log_inventory_summary("EffectTexture.uop", &effect_summary);
+
+    write_inventory_markdown_summary("EC client", &terrain_summary, &effect_summary, summary_output)?;
 
     Ok(())
 }
@@ -1367,6 +1370,8 @@ struct InventorySummary {
     row_count: u64,
     decodable_images: u64,
     owner_linked: u64,
+    image_no_owner: u64,
+    owner_no_image: u64,
     kind_counts: BTreeMap<String, u64>,
     keyword_counts: BTreeMap<String, u64>,
     stable_role_counts: BTreeMap<String, u64>,
@@ -1486,11 +1491,19 @@ fn write_support_inventory(
             ])?;
 
             summary.row_count += 1;
-            if image_info.is_some() {
+            let has_image = image_info.is_some();
+            let has_owner = owner_links.is_some();
+            if has_image {
                 summary.decodable_images += 1;
             }
-            if owner_links.is_some() {
+            if has_owner {
                 summary.owner_linked += 1;
+            }
+            if has_image && !has_owner {
+                summary.image_no_owner += 1;
+            }
+            if has_owner && !has_image {
+                summary.owner_no_image += 1;
             }
             increment_count(&mut summary.kind_counts, file_kind);
             increment_count(&mut summary.stable_role_counts, stable_role);
@@ -1525,6 +1538,129 @@ fn log_inventory_summary(label: &str, summary: &InventorySummary) {
         &format!("{label}: keyword buckets"),
         &summary.keyword_counts,
     );
+}
+
+fn write_inventory_markdown_summary(
+    label: &str,
+    terrain_summary: &InventorySummary,
+    effect_summary: &InventorySummary,
+    output: &Path,
+) -> eyre::Result<()> {
+    use std::fmt::Write as _;
+    let mut md = String::new();
+
+    writeln!(md, "# EC Support Texture Inventory Summary")?;
+    writeln!(md)?;
+    writeln!(md, "Source: `{label}`")?;
+    writeln!(md)?;
+
+    for (pkg_label, summary) in [
+        ("TerrainTexture.uop", terrain_summary),
+        ("EffectTexture.uop", effect_summary),
+    ] {
+        writeln!(md, "## {pkg_label}")?;
+        writeln!(md)?;
+        writeln!(md, "| Metric | Count |")?;
+        writeln!(md, "|--------|-------|")?;
+        writeln!(md, "| Total resources | {} |", summary.row_count)?;
+        writeln!(md, "| Decodable images | {} |", summary.decodable_images)?;
+        writeln!(md, "| Directly owner-linked | {} |", summary.owner_linked)?;
+        writeln!(md, "| Image, no owner link | {} |", summary.image_no_owner)?;
+        writeln!(md, "| Owner-linked, no image | {} |", summary.owner_no_image)?;
+        writeln!(md)?;
+
+        writeln!(md, "### File Kinds")?;
+        writeln!(md)?;
+        writeln!(md, "| Kind | Count |")?;
+        writeln!(md, "|------|-------|")?;
+        for (kind, count) in &summary.kind_counts {
+            writeln!(md, "| {kind} | {count} |")?;
+        }
+        writeln!(md)?;
+
+        writeln!(md, "### Stable Role Guesses")?;
+        writeln!(md)?;
+        writeln!(md, "| Role | Count |")?;
+        writeln!(md, "|------|-------|")?;
+        for (role, count) in &summary.stable_role_counts {
+            writeln!(md, "| {role} | {count} |")?;
+        }
+        writeln!(md)?;
+
+        writeln!(md, "### Speculative Role Guesses")?;
+        writeln!(md)?;
+        writeln!(md, "| Role | Count |")?;
+        writeln!(md, "|------|-------|")?;
+        for (role, count) in &summary.speculative_role_counts {
+            writeln!(md, "| {role} | {count} |")?;
+        }
+        writeln!(md)?;
+
+        writeln!(md, "### Keyword Frequency")?;
+        writeln!(md)?;
+        writeln!(md, "| Keyword | Count |")?;
+        writeln!(md, "|---------|-------|")?;
+        let mut sorted_keywords: Vec<_> = summary.keyword_counts.iter().collect();
+        sorted_keywords.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+        for (kw, count) in &sorted_keywords {
+            writeln!(md, "| {kw} | {count} |")?;
+        }
+        writeln!(md)?;
+    }
+
+    writeln!(md, "## Required Special Cases")?;
+    writeln!(md)?;
+    let terrain_kw = &terrain_summary.keyword_counts;
+    let effect_kw = &effect_summary.keyword_counts;
+
+    let check_keyword = |kw: &str| -> &'static str {
+        let t = terrain_kw.contains_key(kw);
+        let e = effect_kw.contains_key(kw);
+        match (t, e) {
+            (true, true) => "both",
+            (true, false) => "TerrainTexture.uop only",
+            (false, true) => "EffectTexture.uop only",
+            (false, false) => "neither",
+        }
+    };
+
+    writeln!(md, "| Name pattern | Occurs in |")?;
+    writeln!(md, "|--------------|-----------|")?;
+    writeln!(md, "| ripple | {} |", check_keyword("ripple"))?;
+    writeln!(md, "| cube | {} |", check_keyword("cube"))?;
+    writeln!(md, "| env | {} |", check_keyword("env"))?;
+    writeln!(md, "| sphere | {} |", check_keyword("sphere"))?;
+    writeln!(md, "| water | {} |", check_keyword("water"))?;
+    writeln!(md, "| mask | {} |", check_keyword("mask"))?;
+    writeln!(md, "| alpha | {} |", check_keyword("alpha"))?;
+    writeln!(md, "| noise | {} |", check_keyword("noise"))?;
+    writeln!(md, "| blur | {} |", check_keyword("blur"))?;
+    writeln!(md, "| lava | {} |", check_keyword("lava"))?;
+    writeln!(md, "| splash | {} |", check_keyword("splash"))?;
+    writeln!(md, "| waterfall | {} |", check_keyword("waterfall"))?;
+    writeln!(md, "| flare | {} |", check_keyword("flare"))?;
+    writeln!(md, "| glow | {} |", check_keyword("glow"))?;
+    writeln!(md, "| foam | {} |", check_keyword("foam"))?;
+    writeln!(md)?;
+    writeln!(md, "**EffectTexture.uop images directly owner-referenced:** {}", effect_summary.owner_linked)?;
+    writeln!(md)?;
+    writeln!(md, "**Images with no direct owner link (may be only indirect/NIF/EMS):**")?;
+    writeln!(md, "- TerrainTexture.uop: {}", terrain_summary.image_no_owner)?;
+    writeln!(md, "- EffectTexture.uop: {}", effect_summary.image_no_owner)?;
+    writeln!(md)?;
+    writeln!(md, "**Owner-linked resources with no decodable image (NIF/EMS/text/binary):**")?;
+    writeln!(md, "- TerrainTexture.uop: {}", terrain_summary.owner_no_image)?;
+    writeln!(md, "- EffectTexture.uop: {}", effect_summary.owner_no_image)?;
+    writeln!(md)?;
+    writeln!(md, "## Open Points")?;
+    writeln!(md)?;
+    writeln!(md, "- Resources with no direct owner link and no decodable image may be reachable only through NIF or EMS indirection.")?;
+    writeln!(md, "- No TerrainShaders-like or shader-resource package families are distinguished from this inventory alone; check the owner-reference census CSV for shader_name columns.")?;
+    writeln!(md, "- Speculative roles are provisional guesses from name heuristics only — not proven original-EC intent.")?;
+
+    fs::write(output, md)?;
+    info!("wrote inventory summary to '{}'", output.display());
+    Ok(())
 }
 
 fn known_support_paths(

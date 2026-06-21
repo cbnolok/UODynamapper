@@ -3,6 +3,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use log::info;
+
 use crate::ec_material_audit::{
     audit_ec_material_refs, audit_ec_surface_redirection, audit_ec_terrain_definition_kdl,
     audit_ec_terrain_overrides, audit_ec_terrain_primary_selection, inventory_ec_support_textures,
@@ -456,7 +458,7 @@ fn audit_land_routing_kdl(
 
     let bytes = serde_json::to_vec_pretty(&report)?;
     fs::write(output, bytes)?;
-    println!(
+    info!(
         "Wrote land routing audit with {} routes and {} unresolved routes to '{}'.",
         report.unique_source_count,
         report.unresolved_route_count,
@@ -1003,6 +1005,8 @@ enum Commands {
         terrain_output: PathBuf,
         #[arg(long, default_value = "effecttexture_inventory.csv")]
         effect_output: PathBuf,
+        #[arg(long, default_value = "ec_support_texture_summary.md")]
+        summary_output: PathBuf,
     },
     /// Writes a developer baseline report for current EC material heuristics and metadata axes.
     ReportEcMaterialBaseline {
@@ -1338,7 +1342,7 @@ where
                 },
                 &classic_patches.into(),
             )?;
-            println!(
+            info!(
                 "Wrote {} pages ({}) for {} populated slots out of {} total slots to '{}'.",
                 summary.page_count,
                 output_format.label,
@@ -1405,7 +1409,7 @@ where
                 },
                 &classic_patches.into(),
             )?;
-            println!(
+            info!(
                 "Wrote {} pages ({}) for {} populated slots out of {} total slots to '{}'.",
                 summary.page_count,
                 output_format.label,
@@ -1462,7 +1466,7 @@ where
                     upscale_profile,
                 },
             )?;
-            println!(
+            info!(
                 "Wrote {} pages ({}) for {} packed frames out of {} total frames across {} animations to '{}'.",
                 summary.page_count,
                 output_format.label,
@@ -1471,7 +1475,7 @@ where
                 summary.animation_count,
                 out_file.display()
             );
-            println!(
+            info!(
                 "Mobile animation atlas usage: {} used pixels, {} filled ({}) and {} empty ({}); estimated uncompressed page payload {} bytes.",
                 summary.used_page_pixel_count,
                 summary.filled_pixel_count,
@@ -1534,7 +1538,7 @@ where
                     allow_missing_metadata: false,
                 },
             )?;
-            println!(
+            info!(
                 "Wrote {} pages ({}) from {} EC animation UOPs for {} packed frames out of {} logical frames across {} EC animations from {} bodies with {} metadata items and {} source hints to '{}'.",
                 summary.page_count,
                 output_format.label,
@@ -1547,7 +1551,7 @@ where
                 summary.source_hint_count,
                 out_file.display()
             );
-            println!(
+            info!(
                 "EC mobile animation atlas usage: {} used pixels, {} filled ({}) and {} empty ({}); estimated uncompressed page payload {} bytes.",
                 summary.used_page_pixel_count,
                 summary.filled_pixel_count,
@@ -1671,7 +1675,7 @@ where
                     bc7_rdo_lookback_blocks: art_output_format.bc7_rdo_lookback_blocks,
                 },
             )?;
-            println!(
+            info!(
                 "Wrote {} pages ({}) for {} populated art slots out of {} total slots to '{}'.",
                 art_summary.page_count,
                 art_output_format.label,
@@ -1721,7 +1725,7 @@ where
                     transcode_kdl_path: land_transcode_kdl,
                 },
             )?;
-            println!(
+            info!(
                 "TerrainDefinition raw texture packing: {} entries, {} alias refs, {} unique alias slots, {} source textures, {} selected textures, {} unique packed textures.",
                 land_summary.terrain_entry_count,
                 land_summary.terrain_alias_ref_count,
@@ -1731,13 +1735,13 @@ where
                 land_summary.unique_packed_texture_count,
             );
             if let Some(path) = land_summary.terrain_override_source.as_ref() {
-                println!(
+                info!(
                     "Embedded {} reviewed terrain override entries from '{}'.",
                     land_summary.terrain_override_entry_count,
                     path.display()
                 );
             }
-            println!(
+            info!(
                 "Wrote {} pages ({}) for {} populated land slots out of {} total slots to '{}'.",
                 land_summary.page_count,
                 land_output_format.label,
@@ -1767,7 +1771,7 @@ where
                         package_compression: CompressionFlag::ZstdNoDict,
                     },
                 )?;
-                println!(
+                info!(
                     "Wrote tilemeta.uddp from shared EC sources to '{}'.",
                     tilemeta_out_file.display()
                 );
@@ -1785,11 +1789,13 @@ where
             source_dirs: source_dir_args,
             terrain_output,
             effect_output,
+            summary_output,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
             let terrain_out_file = resolve_output_path(&paths, &terrain_output);
             let effect_out_file = resolve_output_path(&paths, &effect_output);
-            inventory_ec_support_textures(&paths, &terrain_out_file, &effect_out_file)?;
+            let summary_out_file = resolve_output_path(&paths, &summary_output);
+            inventory_ec_support_textures(&paths, &terrain_out_file, &effect_out_file, &summary_out_file)?;
         }
         Commands::ReportEcMaterialBaseline {
             source_dirs: source_dir_args,
@@ -1916,7 +1922,7 @@ where
                     build_tilemeta_uddp_from_sources(&paths, &out_file, &options)?;
                 }
             }
-            println!("Wrote tilemeta.uddp to '{}'.", out_file.display());
+            info!("Wrote tilemeta.uddp to '{}'.", out_file.display());
         }
         Commands::PackMap {
             source_dirs: source_dir_args,
@@ -1940,7 +1946,7 @@ where
                 },
                 &classic_patches.into(),
             )?;
-            println!(
+            info!(
                 "Wrote {} chunks for map {} to '{}' ({}x{} package chunks).",
                 summary.chunk_count,
                 summary.map_id,
@@ -1965,7 +1971,7 @@ where
                 map_id,
                 &classic_patches.into(),
             )?;
-            println!(
+            info!(
                 "Wrote {} chunks with {} total statics for map {} to '{}'.",
                 summary.chunk_count,
                 summary.total_statics,
@@ -2003,7 +2009,7 @@ where
                 },
                 &patch_options,
             )?;
-            println!(
+            info!(
                 "Wrote {} chunks for map {} to '{}' ({}x{} package chunks).",
                 map_summary.chunk_count,
                 map_summary.map_id,
@@ -2021,7 +2027,7 @@ where
                     map_summary.height_blocks,
                     &patch_options,
                 )?;
-            println!(
+            info!(
                 "Wrote {} chunks with {} total statics for map {} to '{}' using map dimensions from the map pass.",
                 statics_summary.chunk_count,
                 statics_summary.total_statics,
@@ -2076,7 +2082,7 @@ where
                     &classic_patches.into(),
                 )?;
                 udd_image_codecs::ktx2::write_ktx2_bc7_zstd(bc7_data, &out_file, zstd_level)?;
-                println!("Successfully created facet0{}.ktx2 (BC7 + Zstd)", map_id);
+                info!("Successfully created facet0{}.ktx2 (BC7 + Zstd)", map_id);
             } else {
                 udd_conv::cc_radar::build_facet_radar_dds(
                     &paths,
@@ -2117,7 +2123,7 @@ where
                     classic_patches: classic_patches.into(),
                 },
             )?;
-            println!("Wrote world_lights.uddp to '{}'.", out_file.display());
+            info!("Wrote world_lights.uddp to '{}'.", out_file.display());
         }
         Commands::PackHues {
             source_dirs: source_dir_args,
@@ -2139,7 +2145,7 @@ where
                 &out_file,
                 &HuesOptions { compression },
             )?;
-            println!("Wrote hues.uddp to '{}'.", out_file.display());
+            info!("Wrote hues.uddp to '{}'.", out_file.display());
         }
         Commands::PackGumps {
             source_dirs: source_dir_args,
@@ -2185,7 +2191,7 @@ where
                     },
                 },
             )?;
-            println!(
+            info!(
                 "Wrote {} Classic gumps to '{}' ({} single, {} atlas).",
                 summary.gump_count,
                 out_file.display(),
@@ -2231,7 +2237,7 @@ where
                     upscale_profile,
                 },
             )?;
-            println!(
+            info!(
                 "Wrote {} EC gumps to '{}' ({} single, {} atlas, {} skipped).",
                 summary.gump_count,
                 out_file.display(),
