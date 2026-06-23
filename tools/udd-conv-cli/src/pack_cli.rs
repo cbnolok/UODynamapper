@@ -17,6 +17,7 @@ use color_eyre::eyre;
 use serde::Serialize;
 use udd_conv::{
     classic_patches::ClassicPatchOptions,
+    ec_tex_aux::pack_ec_tex_aux,
     classic_sources::SourceFormatPreference,
     cc_gumps::{
         convert_gumps_to_uddp_from_sources_with_patches_and_options, CcGumpsOptions,
@@ -1128,6 +1129,16 @@ enum Commands {
         #[arg(long, default_value = "ec_effect_meta_manifest.json")]
         output: PathBuf,
     },
+    /// Packs non-base auxiliary EC texture refs from tilemeta.uddp into ec_tex_aux.uddp.
+    #[command(name = "pack-ec-tex-aux")]
+    PackEcTexAux {
+        #[command(flatten)]
+        source_dirs: SourceDirArgs,
+        #[arg(long)]
+        tilemeta: PathBuf,
+        #[arg(long, default_value = "ec_tex_aux.uddp")]
+        output: PathBuf,
+    },
     /// Packs CC tiledata and EC tileart into tilemeta.uddp.
     #[command(name = "pack-tilemeta")]
     PackTilemeta {
@@ -1938,6 +1949,25 @@ where
             let paths = collect_ec_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
             write_ec_effect_meta_manifest(&paths, &out_file)?;
+        }
+        Commands::PackEcTexAux {
+            source_dirs: source_dir_args,
+            tilemeta,
+            output,
+        } => {
+            let paths = collect_ec_source_dirs(&source_dir_args)?;
+            let out_file = resolve_output_path(&paths, &output);
+            let summary = pack_ec_tex_aux(&paths, &tilemeta, &out_file)?;
+            info!(
+                "ec_tex_aux: packed {} auxiliary textures ({} refs considered, {} base-role excluded, {} no-path excluded, {} decode errors, {} duplicates) to '{}'.",
+                summary.included,
+                summary.refs_considered,
+                summary.excluded_base_role,
+                summary.excluded_no_path,
+                summary.excluded_decode_error,
+                summary.excluded_duplicate_id,
+                out_file.display()
+            );
         }
         Commands::PackTilemeta {
             source_dirs: source_dir_args,

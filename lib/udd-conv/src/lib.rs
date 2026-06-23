@@ -20,6 +20,7 @@ pub mod package_progress;
 mod progress;
 pub mod source_paths;
 pub mod tilemeta;
+pub mod ec_tex_aux;
 pub mod terrain_meta;
 pub mod upscale_pipeline;
 pub mod upscale_profile;
