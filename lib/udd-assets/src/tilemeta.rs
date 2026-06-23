@@ -165,6 +165,54 @@ impl TileMetaMainEcTextureReason {
     }
 }
 
+/// Reason produced by the stable-role-aware base texture chooser.
+///
+/// Priority order (highest first):
+/// 1. `RoleBase`              — `stable_role == Base` && primary-selected
+/// 2. `RoleBaseFirst`         — `stable_role == Base`, any (first found)
+/// 3. `RoleSecondaryBase`     — `stable_role == SecondaryBase`, primary-selected
+/// 4. `FallbackWorldArtPrimary` — no Base/SecondaryBase; WorldArt + primary-selected
+/// 5. `FallbackWorldArtFirst`   — no Base/SecondaryBase; WorldArt, first non-aux
+/// 6. `FallbackAnyPrimary`      — primary-selected, any non-aux ref
+/// 7. `FallbackAnyFirst`        — first non-aux ref
+/// 8. `FallbackLegacyEcTextureId` — used `item.ec_texture_id`
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MainEcTextureRoleReason {
+    RoleBase,
+    RoleBaseFirst,
+    RoleSecondaryBase,
+    FallbackWorldArtPrimary,
+    FallbackWorldArtFirst,
+    FallbackAnyPrimary,
+    FallbackAnyFirst,
+    FallbackLegacyEcTextureId,
+}
+
+impl MainEcTextureRoleReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::RoleBase => "role_base",
+            Self::RoleBaseFirst => "role_base_first",
+            Self::RoleSecondaryBase => "role_secondary_base",
+            Self::FallbackWorldArtPrimary => "fallback_worldart_primary",
+            Self::FallbackWorldArtFirst => "fallback_worldart_first",
+            Self::FallbackAnyPrimary => "fallback_any_primary",
+            Self::FallbackAnyFirst => "fallback_any_first",
+            Self::FallbackLegacyEcTextureId => "fallback_legacy_ec_texture_id",
+        }
+    }
+
+    pub fn is_low_confidence(self) -> bool {
+        matches!(
+            self,
+            Self::FallbackWorldArtFirst
+                | Self::FallbackAnyPrimary
+                | Self::FallbackAnyFirst
+                | Self::FallbackLegacyEcTextureId
+        )
+    }
+}
+
 #[repr(C, align(8))]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct TileMetaLandTile {
@@ -405,9 +453,28 @@ impl TileMetaPackage {
             })
     }
 
+    /// Stable-role-aware base texture selector.
+    ///
+    /// Returns `None` only when there are no candidates at all.
+    pub fn main_ec_texture_id_role_aware(
+        &self,
+        tile_id: u32,
+    ) -> Option<(u32, EcMaterialStableRole, MainEcTextureRoleReason)> {
+        choose_main_ec_texture_id_role_aware(
+            self.item_texture_refs(tile_id),
+            self.item_tile(tile_id),
+        )
+    }
+
+    /// Returns `true` when `main_ec_texture_id_role_aware` would select a low-confidence fallback.
+    pub fn main_ec_texture_selection_is_low_confidence(&self, tile_id: u32) -> bool {
+        self.main_ec_texture_id_role_aware(tile_id)
+            .is_some_and(|(_, _, reason)| reason.is_low_confidence())
+    }
+
     pub fn main_ec_texture_id_with_branch(&self, tile_id: u32) -> Option<(u32, &'static str)> {
-        self.main_ec_texture_id_with_reason(tile_id)
-            .map(|(texture_id, reason)| (texture_id, reason.as_str()))
+        self.main_ec_texture_id_role_aware(tile_id)
+            .map(|(texture_id, _, reason)| (texture_id, reason.as_str()))
     }
 }
 
@@ -559,6 +626,101 @@ fn valid_ec_art_texture_identity(
     allow_exact_tile_id: bool,
 ) -> bool {
     allow_exact_tile_id || texture_ref.texture_id != tile_id
+}
+
+fn choose_main_ec_texture_id_role_aware(
+    texture_refs: &[TileMetaItemTextureRef],
+    item_tile: Option<&TileMetaItemTile>,
+) -> Option<(u32, EcMaterialStableRole, MainEcTextureRoleReason)> {
+    // 1. Base + primary-selected
+    if let Some(r) = texture_refs.iter().find(|r| {
+        !r.is_auxiliary()
+            && r.stable_role() == EcMaterialStableRole::Base
+            && r.is_primary_selected()
+    }) {
+        return Some((r.texture_id, EcMaterialStableRole::Base, MainEcTextureRoleReason::RoleBase));
+    }
+
+    // 2. Base, any (first found)
+    if let Some(r) = texture_refs.iter().find(|r| {
+        !r.is_auxiliary() && r.stable_role() == EcMaterialStableRole::Base
+    }) {
+        return Some((r.texture_id, EcMaterialStableRole::Base, MainEcTextureRoleReason::RoleBaseFirst));
+    }
+
+    // 3. SecondaryBase + primary-selected
+    if let Some(r) = texture_refs.iter().find(|r| {
+        !r.is_auxiliary()
+            && r.stable_role() == EcMaterialStableRole::SecondaryBase
+            && r.is_primary_selected()
+    }) {
+        return Some((
+            r.texture_id,
+            EcMaterialStableRole::SecondaryBase,
+            MainEcTextureRoleReason::RoleSecondaryBase,
+        ));
+    }
+
+    // 4. WorldArt + primary-selected (UnknownSupport only)
+    if let Some(r) = texture_refs.iter().find(|r| {
+        !r.is_auxiliary()
+            && r.stable_role() == EcMaterialStableRole::UnknownSupport
+            && r.is_world_art()
+            && r.is_primary_selected()
+    }) {
+        return Some((
+            r.texture_id,
+            EcMaterialStableRole::UnknownSupport,
+            MainEcTextureRoleReason::FallbackWorldArtPrimary,
+        ));
+    }
+
+    // 5. WorldArt, first non-aux (UnknownSupport only)
+    if let Some(r) = texture_refs.iter().find(|r| {
+        !r.is_auxiliary()
+            && r.stable_role() == EcMaterialStableRole::UnknownSupport
+            && r.is_world_art()
+    }) {
+        return Some((
+            r.texture_id,
+            EcMaterialStableRole::UnknownSupport,
+            MainEcTextureRoleReason::FallbackWorldArtFirst,
+        ));
+    }
+
+    // 6. Any primary-selected non-aux
+    if let Some(r) = texture_refs
+        .iter()
+        .find(|r| !r.is_auxiliary() && r.is_primary_selected())
+    {
+        return Some((
+            r.texture_id,
+            r.stable_role(),
+            MainEcTextureRoleReason::FallbackAnyPrimary,
+        ));
+    }
+
+    // 7. First non-aux
+    if let Some(r) = texture_refs.iter().find(|r| !r.is_auxiliary()) {
+        return Some((
+            r.texture_id,
+            r.stable_role(),
+            MainEcTextureRoleReason::FallbackAnyFirst,
+        ));
+    }
+
+    // 8. Legacy item.ec_texture_id
+    if let Some(item) = item_tile {
+        if item.ec_texture_id != 0 {
+            return Some((
+                item.ec_texture_id,
+                EcMaterialStableRole::UnknownSupport,
+                MainEcTextureRoleReason::FallbackLegacyEcTextureId,
+            ));
+        }
+    }
+
+    None
 }
 
 fn read_optional_pod_vec<T: Pod>(package: &UddpReader, path: &str) -> eyre::Result<Vec<T>> {
@@ -744,5 +906,105 @@ mod tests {
             flags,
             ..TileMetaItemTextureRef::zeroed()
         }
+    }
+
+    // --- Role-aware selection tests ---
+
+    #[test]
+    fn selects_primary_base_first() {
+        let texture_refs = [
+            texture_ref_with_role(
+                99,
+                EcMaterialLogicalFamily::WorldArt,
+                EcMaterialStableRole::Base,
+                0,
+            ),
+            texture_ref_with_role(
+                42,
+                EcMaterialLogicalFamily::Textures,
+                EcMaterialStableRole::Base,
+                TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
+            ),
+            texture_ref_with_role(
+                77,
+                EcMaterialLogicalFamily::WorldArt,
+                EcMaterialStableRole::UnknownSupport,
+                TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
+            ),
+        ];
+
+        let (id, role, reason) =
+            choose_main_ec_texture_id_role_aware(&texture_refs, None).expect("result");
+
+        assert_eq!(id, 42);
+        assert_eq!(role, EcMaterialStableRole::Base);
+        assert_eq!(reason, MainEcTextureRoleReason::RoleBase);
+    }
+
+    #[test]
+    fn falls_back_to_worldart_when_no_base() {
+        let texture_refs = [
+            texture_ref_with_role(
+                55,
+                EcMaterialLogicalFamily::WorldArt,
+                EcMaterialStableRole::UnknownSupport,
+                TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
+            ),
+            texture_ref_with_role(
+                66,
+                EcMaterialLogicalFamily::WorldArt,
+                EcMaterialStableRole::UnknownSupport,
+                0,
+            ),
+        ];
+
+        let (id, _, reason) =
+            choose_main_ec_texture_id_role_aware(&texture_refs, None).expect("result");
+
+        assert_eq!(id, 55);
+        assert_eq!(reason, MainEcTextureRoleReason::FallbackWorldArtPrimary);
+    }
+
+    #[test]
+    fn low_confidence_when_fallback_any() {
+        let texture_refs = [texture_ref_with_role(
+            10,
+            EcMaterialLogicalFamily::Textures,
+            EcMaterialStableRole::NormalLike,
+            0,
+        )];
+
+        let (_, _, reason) =
+            choose_main_ec_texture_id_role_aware(&texture_refs, None).expect("result");
+
+        assert_eq!(reason, MainEcTextureRoleReason::FallbackAnyFirst);
+        assert!(reason.is_low_confidence());
+    }
+
+    #[test]
+    fn not_found_when_no_refs() {
+        let result = choose_main_ec_texture_id_role_aware(&[], None);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn legacy_ec_texture_id_used_as_last_resort() {
+        // All refs are auxiliary — none qualify as non-aux candidates.
+        let texture_refs = [TileMetaItemTextureRef {
+            texture_id: 999,
+            texture_type: EcMaterialLogicalFamily::WorldArt as u8,
+            stable_role: EcMaterialStableRole::Base as u8,
+            flags: TILEMETA_ITEM_TEXTURE_FLAG_AUXILIARY,
+            ..TileMetaItemTextureRef::zeroed()
+        }];
+        let mut item_tile = TileMetaItemTile::zeroed();
+        item_tile.ec_texture_id = 777;
+
+        let (id, _, reason) =
+            choose_main_ec_texture_id_role_aware(&texture_refs, Some(&item_tile)).expect("result");
+
+        assert_eq!(id, 777);
+        assert_eq!(reason, MainEcTextureRoleReason::FallbackLegacyEcTextureId);
+        assert!(reason.is_low_confidence());
     }
 }

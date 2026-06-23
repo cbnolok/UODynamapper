@@ -311,6 +311,20 @@ fn print_tilemeta(tilemeta: &TileMetaPackage, art_id: u32) {
                 ),
                 None => println!("  tilemeta.main_ec_texture_id=missing"),
             }
+            match tilemeta.main_ec_texture_id_role_aware(art_id) {
+                Some((texture_id, _, reason)) => {
+                    println!("  tilemeta.role_aware_base_id={texture_id}");
+                    println!("  tilemeta.role_aware_reason={}", reason.as_str());
+                }
+                None => {
+                    println!("  tilemeta.role_aware_base_id=none");
+                    println!("  tilemeta.role_aware_reason=not_found");
+                }
+            }
+            println!(
+                "  tilemeta.low_confidence={}",
+                tilemeta.main_ec_texture_selection_is_low_confidence(art_id)
+            );
         }
         None => println!("  tilemeta=missing"),
     }
