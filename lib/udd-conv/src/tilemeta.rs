@@ -670,7 +670,7 @@ fn physical_package_for_tileart_texture_type(
     }
 }
 
-fn stable_role_for_tileart_texture_ref(
+pub fn stable_role_for_tileart_texture_ref(
     item: &uocf::enhanced::tileart::TextureItem,
     flags: u8,
 ) -> EcMaterialStableRole {

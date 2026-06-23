@@ -27,6 +27,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::progress::{ProgressBar, ProgressStyle};
 use log::info;
 use rayon::prelude::*;
+use udd_assets::tilemeta::EcMaterialStableRole;
+use udd_assets::tilemeta::TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED;
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use color_eyre::eyre::{self, ContextCompat, WrapErr};
@@ -822,6 +824,10 @@ fn decode_present_tiles(
         total: resolve_total,
     });
     let mut decode_groups: Vec<PreparedArtDecodeGroup> = Vec::new();
+    let mut liquid_included_count = 0u32;
+    let mut liquid_no_base_count = 0u32;
+    let mut liquid_effect_only_count = 0u32;
+    let mut liquid_unknown_support_only_count = 0u32;
 
     for (index, art_id) in art_ids.into_iter().enumerate() {
         resolve_pb.inc(1);
@@ -837,6 +843,31 @@ fn decode_present_tiles(
 
         if !should_include_art_tile(art_data.tile_type) {
             continue;
+        }
+
+        if art_data.tile_type == TileType::Liquid {
+            let chosen_texture_id = art_data
+                .ec_texture
+                .as_ref()
+                .map(|t| t.texture_id)
+                .or_else(|| art_data.cc_texture.as_ref().map(|t| t.texture_id));
+            let stable_role = primary_texture_stable_role(art_data);
+            if let Some(reason) = liquid_exclusion_reason(chosen_texture_id, stable_role) {
+                tracing::debug!(
+                    art_id = art_id,
+                    reason = reason.as_str(),
+                    "liquid tileart entry excluded from tex_art_ec"
+                );
+                match reason {
+                    LiquidExclusionReason::LiquidNoBase => liquid_no_base_count += 1,
+                    LiquidExclusionReason::LiquidEffectOnly => liquid_effect_only_count += 1,
+                    LiquidExclusionReason::LiquidUnknownSupportOnly => {
+                        liquid_unknown_support_only_count += 1
+                    }
+                }
+                continue;
+            }
+            liquid_included_count += 1;
         }
         let resolved = if let (Some(texture), Some(_)) =
             (art_data.ec_texture.as_ref(), world_textures)
@@ -905,6 +936,19 @@ fn decode_present_tiles(
         }
     }
     resolve_pb.finish_with_message("EC art tile sources extracted");
+
+    let liquid_excluded_count =
+        liquid_no_base_count + liquid_effect_only_count + liquid_unknown_support_only_count;
+    tracing::info!(
+        liquid_included = liquid_included_count,
+        liquid_excluded = liquid_excluded_count,
+        excluded_no_base = liquid_no_base_count,
+        excluded_effect_only = liquid_effect_only_count,
+        excluded_unknown_support_only = liquid_unknown_support_only_count,
+        "tex_art_ec liquid entry summary: included={liquid_included_count} excluded={liquid_excluded_count} \
+         (no_base={liquid_no_base_count} effect_only={liquid_effect_only_count} \
+         unknown_support_only={liquid_unknown_support_only_count})"
+    );
 
     let mut source_files_by_key = HashMap::<TextureSourceKey, Arc<TextureFile>>::new();
     for group in &decode_groups {
@@ -1084,6 +1128,100 @@ fn decode_present_tiles(
     });
 
     Ok((decoded_tiles, aliases, crop_adjustments))
+}
+
+/// Reason a liquid tileart entry is excluded from `tex_art_ec` packing.
+///
+/// Entries with no exclusion reason pass base-eligibility and are packed normally.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiquidExclusionReason {
+    /// No primary texture id was selected for this entry.
+    LiquidNoBase,
+    /// The primary-selected ref has role `EffectOnlyMetadata` — no visible base image.
+    LiquidEffectOnly,
+    /// All refs have role `UnknownSupport` and the tile is liquid — no verifiable base.
+    LiquidUnknownSupportOnly,
+}
+
+impl LiquidExclusionReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::LiquidNoBase => "LiquidNoBase",
+            Self::LiquidEffectOnly => "LiquidEffectOnly",
+            Self::LiquidUnknownSupportOnly => "LiquidUnknownSupportOnly",
+        }
+    }
+}
+
+/// Returns `true` when the tileart entry should be packed into `tex_art_ec`.
+///
+/// Liquid entries with no base image ref are excluded; liquid entries that carry
+/// a verifiable base ref (role `Base` or `SecondaryBase`) are included. All
+/// non-liquid entries are always eligible.
+pub fn is_base_eligible(
+    tile_type: TileType,
+    chosen_texture_id: Option<u32>,
+    stable_role: EcMaterialStableRole,
+) -> bool {
+    liquid_exclusion_reason_for(tile_type, chosen_texture_id, stable_role).is_none()
+}
+
+/// Returns the reason a liquid entry should be excluded, or `None` if it is eligible.
+///
+/// Non-liquid entries with `chosen_texture_id == None` return `LiquidNoBase` so the
+/// predicate table stays consistent; in practice only liquid entries are checked here.
+fn liquid_exclusion_reason(
+    chosen_texture_id: Option<u32>,
+    stable_role: EcMaterialStableRole,
+) -> Option<LiquidExclusionReason> {
+    liquid_exclusion_reason_for(TileType::Liquid, chosen_texture_id, stable_role)
+}
+
+fn liquid_exclusion_reason_for(
+    tile_type: TileType,
+    chosen_texture_id: Option<u32>,
+    stable_role: EcMaterialStableRole,
+) -> Option<LiquidExclusionReason> {
+    if chosen_texture_id.is_none() {
+        return Some(LiquidExclusionReason::LiquidNoBase);
+    }
+    if stable_role == EcMaterialStableRole::EffectOnlyMetadata {
+        return Some(LiquidExclusionReason::LiquidEffectOnly);
+    }
+    if stable_role == EcMaterialStableRole::UnknownSupport && tile_type == TileType::Liquid {
+        return Some(LiquidExclusionReason::LiquidUnknownSupportOnly);
+    }
+    None
+}
+
+/// Computes the `EcMaterialStableRole` for the primary-selected texture ref of an art entry.
+///
+/// Returns `UnknownSupport` when no matching ref is found.
+fn primary_texture_stable_role(art_data: &uocf::enhanced::tileart::ArtData) -> EcMaterialStableRole {
+    use crate::tilemeta::stable_role_for_tileart_texture_ref;
+
+    let chosen_id = art_data
+        .ec_texture
+        .as_ref()
+        .map(|t| t.texture_id)
+        .or_else(|| art_data.cc_texture.as_ref().map(|t| t.texture_id));
+
+    let Some(chosen_id) = chosen_id else {
+        return EcMaterialStableRole::UnknownSupport;
+    };
+
+    for block in &art_data.texture_items {
+        for item in block {
+            if item.id == chosen_id {
+                return stable_role_for_tileart_texture_ref(
+                    item,
+                    TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
+                );
+            }
+        }
+    }
+
+    EcMaterialStableRole::UnknownSupport
 }
 
 fn should_include_art_tile(tile_type: TileType) -> bool {
@@ -2096,5 +2234,97 @@ mod tests {
         assert_eq!(slots[1].y, slots[0].y);
         assert_eq!(slots[1].draw_offset_x, -10);
         assert_eq!(slots[1].draw_offset_y, 11);
+    }
+
+    // --- Phase 7: liquid base-eligibility predicate ---
+
+    #[test]
+    fn liquid_with_base_role_is_included() {
+        assert!(is_base_eligible(
+            TileType::Liquid,
+            Some(42),
+            EcMaterialStableRole::Base,
+        ));
+    }
+
+    #[test]
+    fn liquid_with_secondary_base_role_is_included() {
+        assert!(is_base_eligible(
+            TileType::Liquid,
+            Some(42),
+            EcMaterialStableRole::SecondaryBase,
+        ));
+    }
+
+    #[test]
+    fn liquid_with_no_texture_id_is_excluded() {
+        assert!(!is_base_eligible(
+            TileType::Liquid,
+            None,
+            EcMaterialStableRole::Base,
+        ));
+    }
+
+    #[test]
+    fn liquid_with_unknown_support_only_is_excluded() {
+        assert!(!is_base_eligible(
+            TileType::Liquid,
+            Some(42),
+            EcMaterialStableRole::UnknownSupport,
+        ));
+    }
+
+    #[test]
+    fn non_liquid_with_unknown_support_is_included() {
+        // Unknown support alone must not exclude non-liquid entries.
+        assert!(is_base_eligible(
+            TileType::Static,
+            Some(42),
+            EcMaterialStableRole::UnknownSupport,
+        ));
+        assert!(is_base_eligible(
+            TileType::Solid,
+            Some(42),
+            EcMaterialStableRole::UnknownSupport,
+        ));
+    }
+
+    #[test]
+    fn effect_only_is_always_excluded() {
+        assert!(!is_base_eligible(
+            TileType::Liquid,
+            Some(42),
+            EcMaterialStableRole::EffectOnlyMetadata,
+        ));
+        assert!(!is_base_eligible(
+            TileType::Static,
+            Some(42),
+            EcMaterialStableRole::EffectOnlyMetadata,
+        ));
+        assert!(!is_base_eligible(
+            TileType::Solid,
+            Some(42),
+            EcMaterialStableRole::EffectOnlyMetadata,
+        ));
+    }
+
+    #[test]
+    fn liquid_exclusion_reasons_are_correct() {
+        assert_eq!(
+            liquid_exclusion_reason(None, EcMaterialStableRole::UnknownSupport),
+            Some(LiquidExclusionReason::LiquidNoBase),
+        );
+        assert_eq!(
+            liquid_exclusion_reason(Some(1), EcMaterialStableRole::EffectOnlyMetadata),
+            Some(LiquidExclusionReason::LiquidEffectOnly),
+        );
+        assert_eq!(
+            liquid_exclusion_reason(Some(1), EcMaterialStableRole::UnknownSupport),
+            Some(LiquidExclusionReason::LiquidUnknownSupportOnly),
+        );
+        assert_eq!(
+            liquid_exclusion_reason(Some(1), EcMaterialStableRole::Base),
+            None,
+        );
     }
 }

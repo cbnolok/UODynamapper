@@ -8,6 +8,9 @@ use udd_assets::{
     tex_land_ec::{TexLandEcPackage, MISSING_SLOT_ID},
     tilemeta::{TileMetaItemTextureRef, TileMetaItemTile, TileMetaPackage},
 };
+use udd_conv::tex_art_ec::{is_base_eligible, LiquidExclusionReason};
+use udd_conv::tilemeta::stable_role_for_tileart_texture_ref;
+use udd_assets::tilemeta::TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED;
 use udd_conv::terrain_meta::TerrainMetaPackage;
 use uocf::enhanced::string_dictionary::UoStringDictionary;
 use uocf::enhanced::tile_database::ArtDefinition;
@@ -132,6 +135,43 @@ fn main() -> eyre::Result<()> {
                     ),
                     None => println!("  processed.cc_texture=missing"),
                 }
+                let chosen_texture_id = art_data
+                    .ec_texture
+                    .as_ref()
+                    .map(|t| t.texture_id)
+                    .or_else(|| art_data.cc_texture.as_ref().map(|t| t.texture_id));
+                let stable_role = {
+                    let chosen_id = chosen_texture_id;
+                    let mut role = udd_assets::tilemeta::EcMaterialStableRole::UnknownSupport;
+                    if let Some(id) = chosen_id {
+                        'outer: for block in &art_data.texture_items {
+                            for item in block {
+                                if item.id == id {
+                                    role = stable_role_for_tileart_texture_ref(
+                                        item,
+                                        TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
+                                    );
+                                    break 'outer;
+                                }
+                            }
+                        }
+                    }
+                    role
+                };
+                let eligible = is_base_eligible(art_data.tile_type, chosen_texture_id, stable_role);
+                println!("  liquid_base_eligible={eligible}");
+                let exclusion_reason = if !eligible {
+                    if chosen_texture_id.is_none() {
+                        "LiquidNoBase"
+                    } else if stable_role == udd_assets::tilemeta::EcMaterialStableRole::EffectOnlyMetadata {
+                        "LiquidEffectOnly"
+                    } else {
+                        "LiquidUnknownSupportOnly"
+                    }
+                } else {
+                    "NotExcluded"
+                };
+                println!("  liquid_exclusion_reason={exclusion_reason}");
             }
             None => println!("  processed=missing"),
         }
