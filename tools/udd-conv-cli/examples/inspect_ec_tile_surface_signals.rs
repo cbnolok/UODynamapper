@@ -263,6 +263,18 @@ fn print_tilemeta_texture_refs(texture_refs: &[TileMetaItemTextureRef]) {
             texture_ref.unk6,
             texture_ref.unk7,
         );
+        println!(
+            "      ref[{index}].physical_package={:?}",
+            texture_ref.physical_package()
+        );
+        println!(
+            "      ref[{index}].logical_family={:?}",
+            texture_ref.logical_family()
+        );
+        println!(
+            "      ref[{index}].stable_role={:?}",
+            texture_ref.stable_role()
+        );
     }
 }
 
