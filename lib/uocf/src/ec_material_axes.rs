@@ -26,7 +26,7 @@
 /// Physical package describes origin, not semantics. A `TerrainTextureUop` ref
 /// may still be art-owned support; an `EffectTextureUop` ref may still be an
 /// image-bearing texture rather than particle-only.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum EcPhysicalPackage {
     /// `build/worldart/` — Texture.uop image pool.
     TextureUop,
@@ -41,6 +41,7 @@ pub enum EcPhysicalPackage {
     /// System textures (e.g. white, black, default) known by convention.
     SystemTextures,
     /// None of the above matched.
+    #[default]
     Unknown,
 }
 
@@ -86,7 +87,7 @@ impl EcPhysicalPackage {
 ///
 /// Derived entirely from the path string; independent of which physical UOP
 /// actually stores it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum EcLogicalFamily {
     /// `build/worldart/` or `data/worldart/` paths.
     WorldArt,
@@ -103,6 +104,7 @@ pub enum EcLogicalFamily {
     /// `build/shadertexture/` or `shader`-containing paths.
     ShaderResources,
     /// None of the above matched.
+    #[default]
     Unknown,
 }
 

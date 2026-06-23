@@ -30,11 +30,12 @@ use crate::tex_art_ec::{
 };
 use udd_assets::tex_art_ec::TexArtEcCropAdjustment;
 use udd_assets::tilemeta::{
-    EcMaterialPhysicalPackage, EcMaterialSpeculativeRole, EcMaterialStableRole,
-    TileMetaItemTextureRef, TileMetaItemTextureRefSpan, TileMetaItemTile, TileMetaItemVisualKind,
-    TileMetaLandTile, TILEMETA_ITEM_ENTRY_PATH, TILEMETA_ITEM_TEXTURE_FLAG_AUXILIARY,
-    TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED, TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH,
-    TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH, TILEMETA_LAND_ENTRY_PATH,
+    EcMaterialLogicalFamily, EcMaterialPhysicalPackage, EcMaterialSpeculativeRole,
+    EcMaterialStableRole, TileMetaItemTextureRef, TileMetaItemTextureRefSpan, TileMetaItemTile,
+    TileMetaItemVisualKind, TileMetaLandTile, TILEMETA_ITEM_ENTRY_PATH,
+    TILEMETA_ITEM_TEXTURE_FLAG_AUXILIARY, TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
+    TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH, TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH,
+    TILEMETA_LAND_ENTRY_PATH,
 };
 use udd_container::{
     xxh64_virtual_path, AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder,
@@ -587,7 +588,10 @@ fn build_tilemeta_tables_from_resolved_paths(
 
                 TileMetaItemTextureRef {
                     texture_id: item.id,
-                    texture_type: item.texture_type as u8,
+                    // Use ec_logical_family (path-inferred) to populate the logical_family
+                    // field; it resolves Effects/ShaderResources that the old TextureType
+                    // enum left as Undefined.
+                    texture_type: ec_logical_family_as_material_u8(item.ec_logical_family),
                     block_index: item.block_index,
                     item_index: item.item_index,
                     flags,
@@ -599,6 +603,8 @@ fn build_tilemeta_tables_from_resolved_paths(
                     speculative_role: EcMaterialSpeculativeRole::UnknownSupport as u8,
                     unk6: item.unk6,
                     unk7: item.unk7,
+                    // TODO Phase 5: populate raw_path and normalized_path sidecar fields
+                    // when TileMetaItemTextureRef is extended for variable-length data.
                 }
             }));
         } else {
@@ -631,6 +637,23 @@ fn build_tilemeta_tables_from_resolved_paths(
             adjusted_ec_item_count,
         },
     })
+}
+
+/// Maps `EcLogicalFamily` (from `uocf::ec_material_axes`) to the numeric discriminant
+/// used by `EcMaterialLogicalFamily` (from `udd_assets::tilemeta`). Both enums share the
+/// same variant ordering; this function makes the conversion explicit and safe.
+fn ec_logical_family_as_material_u8(family: uocf::ec_material_axes::EcLogicalFamily) -> u8 {
+    use uocf::ec_material_axes::EcLogicalFamily;
+    match family {
+        EcLogicalFamily::Unknown => EcMaterialLogicalFamily::Unknown as u8,
+        EcLogicalFamily::WorldArt => EcMaterialLogicalFamily::WorldArt as u8,
+        EcLogicalFamily::TileArtLegacy => EcMaterialLogicalFamily::TileArtLegacy as u8,
+        EcLogicalFamily::TileArtEnhanced => EcMaterialLogicalFamily::TileArtEnhanced as u8,
+        EcLogicalFamily::Textures => EcMaterialLogicalFamily::Textures as u8,
+        EcLogicalFamily::Effects => EcMaterialLogicalFamily::Effects as u8,
+        EcLogicalFamily::SystemTextures => EcMaterialLogicalFamily::SystemTextures as u8,
+        EcLogicalFamily::ShaderResources => EcMaterialLogicalFamily::ShaderResources as u8,
+    }
 }
 
 fn physical_package_for_tileart_texture_type(

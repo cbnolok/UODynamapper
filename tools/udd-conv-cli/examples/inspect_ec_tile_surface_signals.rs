@@ -69,6 +69,30 @@ fn main() -> eyre::Result<()> {
 
         match art_definition.definitions.get(&art_id) {
             Some(art_data) => {
+                for (block_i, block) in art_data.texture_items.iter().enumerate() {
+                    for (item_i, item) in block.iter().enumerate() {
+                        println!(
+                            "  texture_items[{block_i}][{item_i}].ec_logical_family={:?}",
+                            item.ec_logical_family
+                        );
+                        println!(
+                            "  texture_items[{block_i}][{item_i}].ec_physical_package={:?}",
+                            item.ec_physical_package
+                        );
+                        println!(
+                            "  texture_items[{block_i}][{item_i}].texture_stretch={}",
+                            item.texture_stretch
+                        );
+                        println!(
+                            "  texture_items[{block_i}][{item_i}].raw_path={}",
+                            item.raw_path.as_deref().unwrap_or("<missing>")
+                        );
+                        println!(
+                            "  texture_items[{block_i}][{item_i}].normalized_path={}",
+                            item.normalized_path.as_deref().unwrap_or("<missing>")
+                        );
+                    }
+                }
                 println!("  processed.tile_type={:?}", art_data.tile_type);
                 println!("  processed.flags_bits=0x{:x}", art_data.flags.bits());
                 println!("  processed.height={}", art_data.height);

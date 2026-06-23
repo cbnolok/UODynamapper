@@ -1,5 +1,6 @@
 //! Represents tile art data from a UOP file for Enhanced Client "Art Tiles" (statics).
 
+use crate::ec_material_axes::{EcLogicalFamily, EcPhysicalPackage};
 use crate::enhanced::string_dictionary::UoStringDictionary;
 use crate::uop_container::file::UopFile;
 use bitflags::bitflags;
@@ -105,6 +106,11 @@ pub enum TextureType {
 pub struct TextureItem {
     pub texture_type: TextureType,
     pub id: u32,
+    /// Raw path string as it appears in the string dictionary.
+    pub raw_path: Option<String>,
+    /// Lowercased path with backslashes converted to forward slashes.
+    pub normalized_path: Option<String>,
+    /// Legacy convenience accessor — same as `raw_path` unwrapped or empty.
     pub path: String,
     pub block_index: u8,
     pub item_index: u8,
@@ -113,6 +119,10 @@ pub struct TextureItem {
     pub unk6: u32,
     pub unk7: u32,
     pub is_auxiliary: bool,
+    /// Logical folder family inferred from the path.
+    pub ec_logical_family: EcLogicalFamily,
+    /// Physical UOP package inferred from the path.
+    pub ec_physical_package: EcPhysicalPackage,
 }
 
 bitflags! {
@@ -519,12 +529,19 @@ impl TileArtEntry {
                     if let Some(str) =
                         string_dictionary.get_string((texture_item.name_string_off - 1) as usize)
                     {
+                        let raw_path = str.to_string();
+                        // normalized_path: lowercased, backslash converted to forward slash
+                        let normalized_path = str.to_ascii_lowercase().replace('\\', "/");
                         let mut item = TextureItem::default();
                         item.texture_type = classify_texture_path(str);
+                        item.ec_logical_family = EcLogicalFamily::infer_from_path(str);
+                        item.ec_physical_package = EcPhysicalPackage::infer_from_path(str);
                         if let Some(id) = crate::utils::path::extract_texture_id_from_path(str) {
                             item.id = id;
                         }
-                        item.path = str.to_string();
+                        item.path = raw_path.clone();
+                        item.raw_path = Some(raw_path);
+                        item.normalized_path = Some(normalized_path);
                         item.block_index = block_index as u8;
                         item.item_index = item_index as u8;
                         item.texture_stretch = texture_item.texture_stretch;
