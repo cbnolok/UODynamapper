@@ -8,6 +8,7 @@ use udd_assets::{
     tex_land_ec::{TexLandEcPackage, MISSING_SLOT_ID},
     tilemeta::{TileMetaItemTextureRef, TileMetaItemTile, TileMetaPackage},
 };
+use udd_conv::terrain_meta::TerrainMetaPackage;
 use uocf::enhanced::string_dictionary::UoStringDictionary;
 use uocf::enhanced::tile_database::ArtDefinition;
 use uocf::enhanced::tileart::TileArtEntry;
@@ -23,6 +24,8 @@ struct Args {
     tex_art_ec: Option<PathBuf>,
     #[arg(long = "ec-land")]
     tex_land_ec: Option<PathBuf>,
+    #[arg(long = "terrain-meta", help = "Optional terrain-layer sidecar binary (terrain_meta.bin) for layer graph display.")]
+    terrain_meta: Option<PathBuf>,
     #[arg(required = true)]
     art_ids: Vec<u16>,
 }
@@ -58,6 +61,12 @@ fn main() -> eyre::Result<()> {
         .map(TexLandEcPackage::load)
         .transpose()
         .wrap_err("load tex_land_ec package")?;
+    let terrain_meta = args
+        .terrain_meta
+        .as_ref()
+        .map(TerrainMetaPackage::load)
+        .transpose()
+        .wrap_err("load terrain_meta sidecar")?;
 
     for art_id in args.art_ids {
         println!("art_id={art_id}");
@@ -139,6 +148,10 @@ fn main() -> eyre::Result<()> {
                 tex_art_ec.as_ref(),
                 tex_land_ec.as_ref(),
             );
+        }
+
+        if let Some(terrain_meta) = terrain_meta.as_ref() {
+            print_terrain_meta_layers(terrain_meta, art_id as u32);
         }
 
         println!();
@@ -299,6 +312,10 @@ fn print_tilemeta_texture_refs(texture_refs: &[TileMetaItemTextureRef]) {
             "      ref[{index}].stable_role={:?}",
             texture_ref.stable_role()
         );
+        // TODO Phase 6: raw_path and normalized_path are not yet stored in TileMetaItemTextureRef
+        // (deferred from Phase 5 — POD format extension requires a parallel string sidecar table).
+        println!("      ref[{index}].raw_path=TODO(Phase6)");
+        println!("      ref[{index}].normalized_path=TODO(Phase6)");
     }
 }
 
@@ -350,6 +367,28 @@ fn slot_summary(slot: Option<(u32, u16, u16, u16, u16)>) -> String {
             format!("present page={} pos=({}, {}) size={}x{}", page_index, x, y, width, height)
         }
         None => "missing".to_string(),
+    }
+}
+
+fn print_terrain_meta_layers(terrain_meta: &TerrainMetaPackage, terrain_tile_id: u32) {
+    let layers = terrain_meta.layers_for_tile(terrain_tile_id);
+    if layers.is_empty() {
+        println!("  terrain_meta.layers=none");
+        return;
+    }
+    println!("  terrain_meta.layers.count={}", layers.len());
+    for (index, layer) in layers.iter().enumerate() {
+        println!(
+            "    layer[{index}] texture_id={} repetition={} is_support={} has_name_clue={} has_pref_rep={} unk4={} unk6={} unk7={}",
+            layer.texture_id,
+            layer.texture_repetition,
+            layer.is_support,
+            layer.has_name_clue,
+            layer.has_pref_rep,
+            layer.unk4,
+            layer.unk6,
+            layer.unk7,
+        );
     }
 }
 

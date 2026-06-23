@@ -4391,3 +4391,98 @@ fn physical_package_by_hash_membership(
 
     "Unknown"
 }
+
+// region: --- Effect texture metadata manifest (Part C)
+
+/// One non-image (or image) resource from `EffectTexture.uop`, enriched with
+/// direct owner references from TileArt and TerrainDefinition census data.
+#[derive(Debug, Serialize)]
+pub struct EcEffectMetaEntry {
+    pub internal_path: String,
+    pub normalized_basename: String,
+    pub file_kind: String,
+    pub direct_tileart_refs: Vec<u32>,
+    pub direct_terrain_refs: Vec<u32>,
+}
+
+/// Full manifest of `EffectTexture.uop` resources, keyed by internal path.
+#[derive(Debug, Serialize)]
+pub struct EcEffectMetaManifest {
+    pub entries: Vec<EcEffectMetaEntry>,
+}
+
+/// Build and write a JSON manifest of all `EffectTexture.uop` resources,
+/// annotated with direct owner references from the tileart and terrain census.
+///
+/// The output file is a human-readable JSON document.
+pub fn write_ec_effect_meta_manifest(
+    source_dirs: &[PathBuf],
+    output: &Path,
+) -> eyre::Result<()> {
+    let sources = load_tex_art_ec_sources(source_dirs)?;
+    let package_membership = EcPackageMembership::load(source_dirs)?;
+    let owner_index = SupportOwnerIndex::build(&sources, &package_membership);
+
+    let effect_path = find_first_existing_file(source_dirs, &["EffectTexture.uop"])
+        .ok_or_else(|| eyre::eyre!("missing required file: EffectTexture.uop"))?;
+    let effect_package = UopPackage::load(&effect_path)?;
+
+    let mut known_paths = known_support_paths(SupportPackageKind::EffectTexture, &effect_package, &owner_index);
+    let mut entries: Vec<EcEffectMetaEntry> = Vec::new();
+
+    for block in effect_package.blocks() {
+        for file in block.files() {
+            if !file.has_size() {
+                continue;
+            }
+
+            let filename_hash = file.filename_hash();
+            let internal_path = known_paths
+                .remove(&filename_hash)
+                .unwrap_or_else(|| format!("hash:0x{filename_hash:016x}"));
+            let texture_id = extract_texture_id_for_inventory(&internal_path)
+                .or_else(|| owner_id_from_hash(SupportPackageKind::EffectTexture, filename_hash, &owner_index));
+            let owner_links = owner_index.links(SupportPackageKind::EffectTexture, texture_id);
+            let owner_name = owner_links
+                .and_then(|links| links.source_paths.iter().next())
+                .map(|path| normalized_basename(path));
+            let basename = owner_name.unwrap_or_else(|| normalized_basename(&internal_path));
+            let bytes = file.unpack().unwrap_or_default();
+            let image_info = decode_image_info(&bytes);
+            let file_kind = infer_file_kind(&internal_path, &basename, &bytes, image_info.is_some());
+
+            let direct_tileart_refs = owner_links
+                .map(|links| links.tileart_ids.iter().copied().collect::<Vec<_>>())
+                .unwrap_or_default();
+            let direct_terrain_refs = owner_links
+                .map(|links| links.terrain_definition_ids.iter().copied().collect::<Vec<_>>())
+                .unwrap_or_default();
+
+            entries.push(EcEffectMetaEntry {
+                internal_path,
+                normalized_basename: basename,
+                file_kind: file_kind.to_string(),
+                direct_tileart_refs,
+                direct_terrain_refs,
+            });
+        }
+    }
+
+    entries.sort_by(|a, b| a.internal_path.cmp(&b.internal_path));
+    let manifest = EcEffectMetaManifest { entries };
+    let mut json = serde_json::to_vec_pretty(&manifest)
+        .map_err(|e| eyre::eyre!("serialize effect meta manifest: {e}"))?;
+    json.push(b'\n');
+    std::fs::write(output, &json)
+        .map_err(|e| eyre::eyre!("write {}: {e}", output.display()))?;
+
+    info!(
+        "wrote {} EffectTexture.uop metadata entries to '{}'",
+        manifest.entries.len(),
+        output.display()
+    );
+
+    Ok(())
+}
+
+// endregion: --- Effect texture metadata manifest
