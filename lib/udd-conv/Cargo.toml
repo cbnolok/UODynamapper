@@ -20,6 +20,7 @@ type_complexity = "allow"
 bytemuck.workspace = true
 byteorder.workspace = true
 color-eyre.workspace = true
+knuffel.workspace = true
 dds = { version = "0.2", default-features = false } # Portable BC7 decode path.
 guillotiere = "0.7"
 log.workspace = true

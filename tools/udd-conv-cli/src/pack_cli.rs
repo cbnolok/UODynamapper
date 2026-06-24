@@ -11,6 +11,7 @@ use crate::ec_material_audit::{
     write_ec_abnormality_report, write_ec_effect_meta_manifest, write_ec_material_baseline_report,
     write_ec_terrain_override_candidates, write_ec_terrain_practical_review,
     write_terrain_definition_owner_audit, write_tileart_owner_audit,
+    write_terrain_definition_review, write_tileart_liquid_surface_report,
 };
 use crate::upscale_profile_config::load_upscale_profile;
 use clap::{ArgGroup, Args, Parser, Subcommand};
@@ -1137,6 +1138,10 @@ enum Commands {
         source_dirs: SourceDirArgs,
         #[arg(long)]
         tilemeta: PathBuf,
+        /// Optional directory containing ec_overrides KDL files. When provided,
+        /// base_choice_overrides.kdl and metadata_only_overrides.kdl are applied.
+        #[arg(long)]
+        ec_overrides_dir: Option<PathBuf>,
         #[arg(long, default_value = "ec_abnormality_report.csv")]
         output: PathBuf,
     },
@@ -1154,6 +1159,25 @@ enum Commands {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
         #[arg(long, default_value = "terrain_definition_owner_audit.csv")]
+        output: PathBuf,
+    },
+    /// Writes a JSON review artifact for all TerrainDefinition material entries with layer classification.
+    #[command(name = "write-terrain-definition-review")]
+    WriteTerrainDefinitionReview {
+        #[command(flatten)]
+        source_dirs: SourceDirArgs,
+        #[arg(long, default_value = "terrain_definition_review.json")]
+        output: PathBuf,
+    },
+    /// Writes a JSON report of tileart entries with Liquid type or Wet/Surface flags.
+    #[command(name = "write-tileart-liquid-surface-report")]
+    WriteTileartLiquidSurfaceReport {
+        #[command(flatten)]
+        source_dirs: SourceDirArgs,
+        /// Optional path to tilemeta.uddp for role-aware base selection.
+        #[arg(long)]
+        tilemeta: Option<PathBuf>,
+        #[arg(long, default_value = "tileart_liquid_surface_report.json")]
         output: PathBuf,
     },
     /// Packs non-base auxiliary EC texture refs from tilemeta.uddp into ec_tex_aux.uddp.
@@ -1980,11 +2004,16 @@ where
         Commands::WriteEcAbnormalityReport {
             source_dirs: source_dir_args,
             tilemeta,
+            ec_overrides_dir,
             output,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
-            write_ec_abnormality_report(&paths, &tilemeta, &out_file)?;
+            let overrides = ec_overrides_dir
+                .as_deref()
+                .map(udd_conv::ec_overrides::EcOverrides::load_from_dir)
+                .transpose()?;
+            write_ec_abnormality_report(&paths, &tilemeta, overrides.as_ref(), &out_file)?;
         }
         Commands::WriteTileartOwnerAudit {
             source_dirs: source_dir_args,
@@ -2001,6 +2030,23 @@ where
             let paths = collect_ec_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
             write_terrain_definition_owner_audit(&paths, &out_file)?;
+        }
+        Commands::WriteTerrainDefinitionReview {
+            source_dirs: source_dir_args,
+            output,
+        } => {
+            let paths = collect_ec_source_dirs(&source_dir_args)?;
+            let out_file = resolve_output_path(&paths, &output);
+            write_terrain_definition_review(&paths, &out_file)?;
+        }
+        Commands::WriteTileartLiquidSurfaceReport {
+            source_dirs: source_dir_args,
+            tilemeta,
+            output,
+        } => {
+            let paths = collect_ec_source_dirs(&source_dir_args)?;
+            let out_file = resolve_output_path(&paths, &output);
+            write_tileart_liquid_surface_report(&paths, tilemeta.as_deref(), &out_file)?;
         }
         Commands::PackEcTexAux {
             source_dirs: source_dir_args,

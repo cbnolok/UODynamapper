@@ -4498,6 +4498,10 @@ enum AbnormalityCode {
     LiquidNoBase,
     LiquidEffectOnly,
     LiquidUnknownSupportOnly,
+    /// A `BaseChoiceOverride` was applied for this art id.
+    OverrideApplied,
+    /// A `MetadataOnlyOverride` marks this texture id as never a visible base.
+    MetadataOnlyOverride,
 }
 
 impl AbnormalityCode {
@@ -4509,17 +4513,20 @@ impl AbnormalityCode {
             Self::LiquidNoBase => "LiquidNoBase",
             Self::LiquidEffectOnly => "LiquidEffectOnly",
             Self::LiquidUnknownSupportOnly => "LiquidUnknownSupportOnly",
+            Self::OverrideApplied => "OverrideApplied",
+            Self::MetadataOnlyOverride => "MetadataOnlyOverride",
         }
     }
 
     fn severity(self) -> &'static str {
         match self {
-            Self::Ok => "ok",
+            Self::Ok | Self::OverrideApplied => "ok",
             Self::MissingBase => "error",
             Self::LowConfidenceBase
             | Self::LiquidNoBase
             | Self::LiquidEffectOnly
-            | Self::LiquidUnknownSupportOnly => "warning",
+            | Self::LiquidUnknownSupportOnly
+            | Self::MetadataOnlyOverride => "warning",
         }
     }
 }
@@ -4533,6 +4540,8 @@ pub struct AbnormalityCounts {
     pub liquid_no_base: u64,
     pub liquid_effect_only: u64,
     pub liquid_unknown_support_only: u64,
+    pub override_applied: u64,
+    pub metadata_only_override: u64,
     /// Top-10 low-confidence tiles by owner_id (owner_id, chosen_texture_id).
     pub top_low_confidence: Vec<(u32, u32)>,
 }
@@ -4547,6 +4556,8 @@ impl AbnormalityCounts {
             liquid_no_base: 0,
             liquid_effect_only: 0,
             liquid_unknown_support_only: 0,
+            override_applied: 0,
+            metadata_only_override: 0,
             top_low_confidence: Vec::new(),
         }
     }
@@ -4566,6 +4577,8 @@ impl AbnormalityCounts {
             AbnormalityCode::LiquidNoBase => self.liquid_no_base += 1,
             AbnormalityCode::LiquidEffectOnly => self.liquid_effect_only += 1,
             AbnormalityCode::LiquidUnknownSupportOnly => self.liquid_unknown_support_only += 1,
+            AbnormalityCode::OverrideApplied => self.override_applied += 1,
+            AbnormalityCode::MetadataOnlyOverride => self.metadata_only_override += 1,
         }
     }
 
@@ -4585,9 +4598,16 @@ const TOP_LOW_CONFIDENCE_LIMIT: usize = 10;
 ///
 /// Also writes a companion markdown summary alongside the CSV (replacing `.csv` with `.md`,
 /// or appending `_summary.md` if the output does not end in `.csv`).
+///
+/// When `overrides` is `Some`, base-choice overrides are applied: the row for
+/// that art id uses the override texture id as `chosen_texture_id` and is marked
+/// `abnormality_code=OverrideApplied`. Metadata-only overrides mark rows with
+/// `abnormality_code=MetadataOnlyOverride`. When `overrides` is `None`, behaviour
+/// is unchanged.
 pub fn write_ec_abnormality_report(
     source_dirs: &[PathBuf],
     tilemeta_path: &Path,
+    overrides: Option<&udd_conv::ec_overrides::EcOverrides>,
     output: &Path,
 ) -> eyre::Result<()> {
     use udd_assets::tilemeta::TileMetaPackage;
@@ -4607,6 +4627,24 @@ pub fn write_ec_abnormality_report(
 
     let mut counts = AbnormalityCounts::new();
     let sources = load_tex_art_ec_sources(source_dirs)?;
+
+    // Build override look-up maps when overrides are provided.
+    let base_choice_overrides: HashMap<u32, u32> = overrides
+        .map(|ov| {
+            ov.base_choices
+                .iter()
+                .map(|entry| (entry.art_id, entry.base_texture_id))
+                .collect()
+        })
+        .unwrap_or_default();
+    let metadata_only_texture_ids: BTreeSet<u32> = overrides
+        .map(|ov| {
+            ov.metadata_only
+                .iter()
+                .map(|entry| entry.texture_id)
+                .collect()
+        })
+        .unwrap_or_default();
 
     let mut art_ids = sources
         .art_definition
@@ -4712,6 +4750,18 @@ pub fn write_ec_abnormality_report(
                 }
             };
 
+        // Apply base-choice override if present.
+        let (chosen_texture_id, code) =
+            if let Some(&override_texture_id) = base_choice_overrides.get(&tile_id) {
+                (Some(override_texture_id), AbnormalityCode::OverrideApplied)
+            } else if chosen_texture_id
+                .is_some_and(|id| metadata_only_texture_ids.contains(&id))
+            {
+                (chosen_texture_id, AbnormalityCode::MetadataOnlyOverride)
+            } else {
+                (chosen_texture_id, code)
+            };
+
         counts.record(code, tile_id, chosen_texture_id);
 
         let notes = abnormality_notes(code);
@@ -4733,7 +4783,7 @@ pub fn write_ec_abnormality_report(
 
     info!(
         "wrote {} EC abnormality report rows to '{}' \
-         (ok={} missing_base={} low_confidence={} liquid_no_base={} liquid_effect_only={} liquid_unknown_support_only={})",
+         (ok={} missing_base={} low_confidence={} liquid_no_base={} liquid_effect_only={} liquid_unknown_support_only={} override_applied={} metadata_only_override={})",
         counts.total,
         output.display(),
         counts.ok,
@@ -4742,6 +4792,8 @@ pub fn write_ec_abnormality_report(
         counts.liquid_no_base,
         counts.liquid_effect_only,
         counts.liquid_unknown_support_only,
+        counts.override_applied,
+        counts.metadata_only_override,
     );
 
     let summary_path = abnormality_summary_path(output);
@@ -4763,6 +4815,12 @@ fn abnormality_notes(code: AbnormalityCode) -> &'static str {
         }
         AbnormalityCode::LiquidUnknownSupportOnly => {
             "liquid tile refs are all UnknownSupport — no verifiable base"
+        }
+        AbnormalityCode::OverrideApplied => {
+            "base texture id replaced by base_choice_overrides.kdl entry"
+        }
+        AbnormalityCode::MetadataOnlyOverride => {
+            "chosen texture id is marked metadata-only by metadata_only_overrides.kdl"
         }
     }
 }
@@ -4800,6 +4858,12 @@ pub fn write_ec_abnormality_summary(counts: &AbnormalityCounts, output: &Path) -
         (
             "LiquidUnknownSupportOnly",
             counts.liquid_unknown_support_only,
+            "warning",
+        ),
+        ("OverrideApplied", counts.override_applied, "ok"),
+        (
+            "MetadataOnlyOverride",
+            counts.metadata_only_override,
             "warning",
         ),
     ];
@@ -4966,3 +5030,304 @@ fn write_owner_audit_filtered(
 }
 
 // endregion: --- Owner-reference filtered audit outputs
+
+// region: --- TerrainDefinition review generator
+
+/// Writes a JSON review artifact for all TerrainDefinition material entries.
+///
+/// Each record contains material metadata, all texture layers with physical/logical
+/// classification, the selected primary layer, its reason, and uncertainty notes.
+pub fn write_terrain_definition_review(
+    source_dirs: &[PathBuf],
+    output: &Path,
+) -> eyre::Result<()> {
+    let sources = load_tex_art_ec_sources(source_dirs)?;
+    let package_membership = EcPackageMembership::load(source_dirs)?;
+    let mut entries = Vec::new();
+
+    for entry in &sources.terrain_definition.entries {
+        let alias_ids: Vec<u32> = entry.runtime_slot_ids();
+        let (primary_layer_index, primary_layer_reason) =
+            if let Some((layer, reason)) = entry.primary_texture_layer_with_reason() {
+                let index = entry
+                    .texture
+                    .as_ref()
+                    .and_then(|tex| {
+                        tex.layers
+                            .iter()
+                            .position(|candidate| std::ptr::eq(candidate, layer))
+                    });
+                (index, Some(reason.as_str().to_string()))
+            } else {
+                (None, None)
+            };
+
+        let layers: Vec<TerrainDefinitionReviewLayerRecord> = entry
+            .texture
+            .as_ref()
+            .map(|tex| {
+                tex.layers
+                    .iter()
+                    .enumerate()
+                    .map(|(index, layer)| {
+                        let raw_path = layer.path.as_deref().unwrap_or("");
+                        let normalized = normalize_dictionary_path(raw_path);
+                        let physical_package =
+                            physical_package_guess(&normalized, layer.texture_id, &package_membership);
+                        let logical_family =
+                            terrain_texture_family_name(layer.texture_type, physical_package);
+                        TerrainDefinitionReviewLayerRecord {
+                            index,
+                            path: layer.path.clone(),
+                            texture_id: layer.texture_id,
+                            texture_repetition: layer.texture_repetition,
+                            physical_package: physical_package.to_string(),
+                            logical_family: logical_family.to_string(),
+                            is_support_heuristic: layer
+                                .is_support_layer_by_current_name_heuristic(),
+                            has_name_clue: layer.has_support_like_name_clue(),
+                            has_preferred_repetition: layer.has_preferred_primary_repetition(),
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let mut uncertainty_notes = Vec::new();
+        for layer in &layers {
+            if layer.physical_package == "Unknown" {
+                uncertainty_notes.push(format!(
+                    "layer {} has Unknown physical package",
+                    layer.index
+                ));
+            }
+            if layer.is_support_heuristic && layer.has_preferred_repetition {
+                uncertainty_notes.push(format!(
+                    "layer {} matches support heuristic but has preferred-primary repetition",
+                    layer.index
+                ));
+            }
+        }
+
+        entries.push(TerrainDefinitionReviewRecord {
+            material_id: entry.id,
+            aliases: alias_ids,
+            shader_name: entry
+                .texture
+                .as_ref()
+                .and_then(|tex| tex.shader_name.clone()),
+            layers,
+            primary_layer_index,
+            primary_layer_reason,
+            uncertainty_notes,
+        });
+    }
+
+    let row_count = entries.len() as u64;
+    let report = TerrainDefinitionReviewReport {
+        schema: "terrain_definition_review",
+        schema_version: 1,
+        entry_count: row_count as usize,
+        entries,
+    };
+    let json = serde_json::to_vec_pretty(&report)?;
+    fs::write(output, json)?;
+
+    info!(
+        "wrote {} terrain definition review entries to '{}'",
+        row_count,
+        output.display()
+    );
+    Ok(())
+}
+
+#[derive(Serialize)]
+struct TerrainDefinitionReviewReport {
+    schema: &'static str,
+    schema_version: u32,
+    entry_count: usize,
+    entries: Vec<TerrainDefinitionReviewRecord>,
+}
+
+#[derive(Serialize)]
+struct TerrainDefinitionReviewRecord {
+    material_id: u32,
+    aliases: Vec<u32>,
+    shader_name: Option<String>,
+    layers: Vec<TerrainDefinitionReviewLayerRecord>,
+    primary_layer_index: Option<usize>,
+    primary_layer_reason: Option<String>,
+    uncertainty_notes: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct TerrainDefinitionReviewLayerRecord {
+    index: usize,
+    path: Option<String>,
+    texture_id: Option<u32>,
+    texture_repetition: f32,
+    physical_package: String,
+    logical_family: String,
+    is_support_heuristic: bool,
+    has_name_clue: bool,
+    has_preferred_repetition: bool,
+}
+
+// endregion: --- TerrainDefinition review generator
+
+// region: --- Tileart liquid/surface report
+
+/// Writes a JSON report of all tileart entries with `Liquid` tile type, or with
+/// `Wet` or `Surface` flag bits set.
+///
+/// `tilemeta_path` is optional. When absent, base-choice and reason fields degrade
+/// gracefully to `"no_tilemeta"`.
+pub fn write_tileart_liquid_surface_report(
+    source_dirs: &[PathBuf],
+    tilemeta_path: Option<&Path>,
+    output: &Path,
+) -> eyre::Result<()> {
+    use udd_assets::tilemeta::TileMetaPackage;
+    use uocf::enhanced::tileart::TaeFlag;
+
+    let sources = load_tex_art_ec_sources(source_dirs)?;
+    let tilemeta = tilemeta_path
+        .map(TileMetaPackage::load)
+        .transpose()?;
+
+    let mut art_ids = sources
+        .art_definition
+        .definitions
+        .keys()
+        .copied()
+        .collect::<Vec<_>>();
+    art_ids.sort_unstable();
+
+    let mut entries = Vec::new();
+
+    for art_id in art_ids {
+        let Some(art_data) = sources.art_definition.definitions.get(&art_id) else {
+            continue;
+        };
+
+        let is_liquid = art_data.tile_type == TileType::Liquid;
+        let flags = art_data.flags;
+        let is_wet = flags.contains(TaeFlag::Wet);
+        let is_surface = flags.contains(TaeFlag::Surface);
+
+        if !is_liquid && !is_wet && !is_surface {
+            continue;
+        }
+
+        let tile_id = art_id as u32;
+
+        let (base_choice, base_reason) = if let Some(tilemeta) = tilemeta.as_ref() {
+            match tilemeta.main_ec_texture_id_role_aware(tile_id) {
+                Some((tex_id, _role, reason)) => {
+                    (Some(tex_id), reason.as_str().to_string())
+                }
+                None => (None, "not_found".to_string()),
+            }
+        } else {
+            (
+                art_data
+                    .ec_texture
+                    .as_ref()
+                    .map(|t| t.texture_id)
+                    .or_else(|| art_data.cc_texture.as_ref().map(|t| t.texture_id)),
+                "no_tilemeta".to_string(),
+            )
+        };
+
+        let all_items: Vec<&uocf::enhanced::tileart::TextureItem> =
+            art_data.texture_items.iter().flatten().collect();
+
+        let base_id = base_choice;
+        let support_refs: Vec<TileartSupportRefRecord> = all_items
+            .iter()
+            .filter(|item| Some(item.id) != base_id || base_id.is_none())
+            .map(|item| TileartSupportRefRecord {
+                texture_id: item.id,
+                ec_logical_family: item.ec_logical_family.as_str().to_string(),
+                ec_physical_package: item.ec_physical_package.as_str().to_string(),
+                raw_path: item.raw_path.clone(),
+                is_auxiliary: item.is_auxiliary,
+            })
+            .collect();
+
+        let abnormality_code = if is_liquid {
+            if base_choice.is_none() {
+                Some("LiquidNoBase")
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        entries.push(TileartLiquidSurfaceRecord {
+            art_id: tile_id,
+            tile_type: tile_type_name(art_data.tile_type).to_string(),
+            flags_bits: flags.bits(),
+            is_liquid,
+            is_wet,
+            is_surface,
+            base_choice,
+            base_reason,
+            support_refs,
+            abnormality_code: abnormality_code.map(str::to_string),
+        });
+    }
+
+    let row_count = entries.len() as u64;
+    let report = TileartLiquidSurfaceReport {
+        schema: "tileart_liquid_surface",
+        schema_version: 1,
+        tilemeta_path: tilemeta_path.map(|p| p.display().to_string()),
+        entry_count: row_count as usize,
+        entries,
+    };
+    let json = serde_json::to_vec_pretty(&report)?;
+    fs::write(output, json)?;
+
+    info!(
+        "wrote {} tileart liquid/surface report entries to '{}'",
+        row_count,
+        output.display()
+    );
+    Ok(())
+}
+
+#[derive(Serialize)]
+struct TileartLiquidSurfaceReport {
+    schema: &'static str,
+    schema_version: u32,
+    tilemeta_path: Option<String>,
+    entry_count: usize,
+    entries: Vec<TileartLiquidSurfaceRecord>,
+}
+
+#[derive(Serialize)]
+struct TileartLiquidSurfaceRecord {
+    art_id: u32,
+    tile_type: String,
+    flags_bits: u64,
+    is_liquid: bool,
+    is_wet: bool,
+    is_surface: bool,
+    base_choice: Option<u32>,
+    base_reason: String,
+    support_refs: Vec<TileartSupportRefRecord>,
+    abnormality_code: Option<String>,
+}
+
+#[derive(Serialize)]
+struct TileartSupportRefRecord {
+    texture_id: u32,
+    ec_logical_family: String,
+    ec_physical_package: String,
+    raw_path: Option<String>,
+    is_auxiliary: bool,
+}
+
+// endregion: --- Tileart liquid/surface report
