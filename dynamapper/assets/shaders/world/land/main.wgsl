@@ -46,6 +46,8 @@
   sample_ec_material_albedo_at_world,
   apply_sharpening, blurred_albedo,
   apply_ec_aux_two_base_blend,
+  read_aux_lookup_slot,
+  sample_ec_ripple_normal,
 }
 #import "shaders/world/land/shading.wgsl"::{
   shade_mode0_classic_vertex,
@@ -675,6 +677,34 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   if (tile.texture_size == 2u) {
     let world_xz = vec2<f32>(floor(in.world_position.x), floor(in.world_position.z)) + uv_in_tile;
     base_albedo = apply_ec_aux_two_base_blend(base_albedo, world_xz, tile);
+  }
+
+  // ---- Liquid-terrain ripple perturbation (Phase 10E) ----
+  // For EC tiles with a reviewed liquid material and a ripple/perturbation layer
+  // baked into the aux lookup (.z channel), apply an animated UV perturbation to
+  // the albedo before lighting.  The perturbation is read from the aux atlas ripple
+  // layer using two scrolling UV passes that interfere to simulate flowing water.
+  //
+  // Guard conditions (all must be true for the ripple path to activate):
+  //   1. EC texture (texture_size == 2)
+  //   2. Water animation not already disabled at this zoom level
+  //   3. Tile has a reviewed liquid override (reviewed_liquid) OR aux.is_liquid == 1
+  //   4. The tile has a ripple layer in the aux lookup
+  //   5. The tile does NOT already have a normal-map-driven base UV perturbation
+  //      (ec_liquid_normal path) — that path already handles its own animated UV.
+  if (tile.texture_size == 2u && enable_water == 1u) {
+    let world_xz_liq = vec2<f32>(floor(in.world_position.x), floor(in.world_position.z)) + uv_in_tile;
+    let aux_liq = read_aux_lookup_slot(tile.texture_payload);
+    let tile_is_liquid = reviewed_liquid || aux_liq.is_liquid == 1u;
+    if (tile_is_liquid && aux_liq.ripple_layer != 0u && !ec_liquid_normal) {
+      let perturb = sample_ec_ripple_normal(world_xz_liq, aux_liq.ripple_layer, aux_liq.ripple_stretch, globals.time);
+      // Apply perturbation as a small UV nudge to the base albedo re-sample.
+      // A strength of 0.08 keeps the displacement subtle while remaining visible.
+      let RIPPLE_UV_STRENGTH: f32 = 0.08;
+      let perturbed_uv = fract(sample_uv + perturb * RIPPLE_UV_STRENGTH);
+      // texture_size == 2u is guaranteed by the outer guard.
+      base_albedo = sample_ec_material_albedo(world_xz_liq, perturbed_uv, tile);
+    }
   }
 
   // ---- Normals ----

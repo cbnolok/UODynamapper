@@ -136,6 +136,25 @@ fn alpha_mask_texture_id(
     None
 }
 
+/// Identify the ripple/perturbation `texture_id` for a terrain tile.
+///
+/// A ripple layer is a support layer (`is_support == 1`) that also carries a
+/// name-based clue (`has_name_clue == 1`), indicating it is a normal map,
+/// ripple texture, or similar perturbation source rather than a plain alpha mask.
+/// Returns the first such layer found, or `None` when none exists.
+fn ripple_texture_id(tile_id: u32, terrain_meta: &TerrainMetaPackage) -> Option<(u32, f32)> {
+    let layers = terrain_meta.layers_for_tile(tile_id);
+    for layer in layers {
+        if layer.texture_id == 0 {
+            continue;
+        }
+        if layer.is_support == 1 && layer.has_name_clue == 1 {
+            return Some((layer.texture_id, layer.texture_repetition));
+        }
+    }
+    None
+}
+
 /// Resize RGBA pixel data from `(src_w, src_h)` to `(dst_w, dst_h)` using
 /// nearest-neighbour scaling into the top-left of a zeroed `dst_w × dst_h` buffer.
 fn resize_rgba_nearest(
@@ -242,8 +261,19 @@ fn create_aux_atlas_images(
     for tile_id in 0..AUX_LOOKUP_TILE_CAPACITY {
         let sec_base = secondary_base_texture_id(tile_id, terrain_meta, tex_land_ec);
         let alpha_mask = alpha_mask_texture_id(tile_id, terrain_meta);
+        let ripple = ripple_texture_id(tile_id, terrain_meta);
 
-        if sec_base.is_none() && alpha_mask.is_none() {
+        // Determine whether this tile has a reviewed liquid material override.
+        let is_liquid: u32 = {
+            let decision = tex_land_ec.resolve_material_decision(tile_id);
+            let has_liquid_override = decision
+                .material_id
+                .and_then(|mid| tex_land_ec.terrain_override_details_for(mid))
+                .is_some_and(|details| details.liquid.is_some());
+            u32::from(has_liquid_override)
+        };
+
+        if sec_base.is_none() && alpha_mask.is_none() && ripple.is_none() && is_liquid == 0 {
             continue;
         }
 
@@ -299,18 +329,37 @@ fn create_aux_atlas_images(
             (0u32, 0u32)
         };
 
-        if sec_layer == 0 && mask_layer == 0 {
+        let (ripple_layer, ripple_rep_q8) = if let Some((tid, rep)) = ripple {
+            let layer = assign_layer(tid);
+            let rep_q8 = if rep.is_finite() && rep > 0.0 {
+                (rep * 256.0).round().clamp(0.0, u16::MAX as f32) as u32
+            } else {
+                0
+            };
+            (layer, rep_q8)
+        } else {
+            (0u32, 0u32)
+        };
+
+        if sec_layer == 0 && mask_layer == 0 && ripple_layer == 0 && is_liquid == 0 {
             continue;
         }
 
-        // Write lookup entry: [secondary_layer | (secondary_rep_q8 << 16), mask_layer, 0, 0]
+        // Write lookup entry:
+        //   x: secondary_layer | (secondary_rep_q8 << 16)
+        //   y: mask_layer
+        //   z: ripple_layer | (ripple_rep_q8 << 16)
+        //   w: is_liquid (1 = liquid terrain material, 0 = solid)
         let lookup_index = tile_id as usize;
         let texel_offset = lookup_index * 16;
         lookup_bytes[texel_offset..texel_offset + 4]
             .copy_from_slice(&((sec_layer & 0xFFFF) | (sec_rep_q8 << 16)).to_le_bytes());
         lookup_bytes[texel_offset + 4..texel_offset + 8]
             .copy_from_slice(&mask_layer.to_le_bytes());
-        // bytes [8..16] remain 0.
+        lookup_bytes[texel_offset + 8..texel_offset + 12]
+            .copy_from_slice(&((ripple_layer & 0xFFFF) | (ripple_rep_q8 << 16)).to_le_bytes());
+        lookup_bytes[texel_offset + 12..texel_offset + 16]
+            .copy_from_slice(&is_liquid.to_le_bytes());
     }
 
     let layer_count = layers_rgba.len().max(1) as u32;

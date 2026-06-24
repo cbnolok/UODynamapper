@@ -130,12 +130,14 @@ fn ec_material_mask_value(mask_sample: vec4<f32>) -> f32 {
 // Two-base + alpha-mask blend from ec_tex_aux (Phase 10D)
 // ============================================================================
 //
-// The aux lookup texture encodes per-tile secondary-base and alpha-mask slots.
+// The aux lookup texture encodes per-tile secondary-base, alpha-mask, and ripple slots.
 // Layout of the Rgba32Uint texel (x,y,z,w):
 //   x: lower 16 bits = secondary atlas layer (0 = absent)
 //      upper 16 bits = secondary_rep_q8 (stretch × 256, fixed-point)
 //   y: alpha-mask atlas layer (0 = absent)
-//   z, w: reserved, zero
+//   z: lower 16 bits = ripple/perturbation atlas layer (0 = absent)
+//      upper 16 bits = ripple_rep_q8 (stretch × 256, fixed-point)
+//   w: is_liquid flag (1 = liquid terrain material with reviewed override, 0 = solid)
 //
 // The aux atlas is a texture_2d_array<f32> where layer 0 is a transparent
 // sentinel.  All layers share AUX_ATLAS_TILE_SIZE × AUX_ATLAS_TILE_SIZE px.
@@ -143,10 +145,21 @@ fn ec_material_mask_value(mask_sample: vec4<f32>) -> f32 {
 
 const AUX_LOOKUP_WIDTH_WGSL: u32 = 256u;
 
+// Scroll speed constants for the two ripple UV animation passes.
+// Two offset layers moving in slightly different directions create an animated
+// interference pattern that resembles flowing or rippling water.
+const RIPPLE_SCROLL_A_X: f32 =  0.03;
+const RIPPLE_SCROLL_A_Y: f32 =  0.01;
+const RIPPLE_SCROLL_B_X: f32 = -0.02;
+const RIPPLE_SCROLL_B_Y: f32 =  0.025;
+
 struct AuxLookupSlot {
-    secondary_layer:  u32,
+    secondary_layer:   u32,
     secondary_stretch: f32,   // world-tiles per texture repetition
-    mask_layer:       u32,
+    mask_layer:        u32,
+    ripple_layer:      u32,   // perturbation / ripple normal-map atlas layer (0 = absent)
+    ripple_stretch:    f32,   // world-tiles per ripple texture repetition
+    is_liquid:         u32,   // 1 = liquid terrain material, 0 = solid
 };
 
 fn read_aux_lookup_slot(tile_payload: u32) -> AuxLookupSlot {
@@ -159,12 +172,58 @@ fn read_aux_lookup_slot(tile_payload: u32) -> AuxLookupSlot {
     let secondary_layer  = texel.x & 0xFFFFu;
     let secondary_rep_q8 = texel.x >> 16u;
     let mask_layer       = texel.y;
+    let ripple_layer     = texel.z & 0xFFFFu;
+    let ripple_rep_q8    = texel.z >> 16u;
+    let is_liquid        = texel.w;
     let secondary_stretch = select(
         1.0,
         f32(secondary_rep_q8) / 256.0,
         secondary_rep_q8 != 0u,
     );
-    return AuxLookupSlot(secondary_layer, secondary_stretch, mask_layer);
+    let ripple_stretch = select(
+        1.0,
+        f32(ripple_rep_q8) / 256.0,
+        ripple_rep_q8 != 0u,
+    );
+    return AuxLookupSlot(
+        secondary_layer,
+        secondary_stretch,
+        mask_layer,
+        ripple_layer,
+        ripple_stretch,
+        is_liquid,
+    );
+}
+
+/// Sample the ripple/perturbation layer from the aux atlas using animated world-space UVs.
+///
+/// Two UV passes scroll in different directions and are averaged to produce a
+/// flowing interference pattern.  Returns a vec2 perturbation in [-0.5, 0.5]
+/// suitable for offsetting base texture UVs or driving a normal perturbation.
+fn sample_ec_ripple_normal(world_xz: vec2<f32>, ripple_layer: u32, ripple_stretch: f32, time: f32) -> vec2<f32> {
+    let scroll_a = vec2<f32>(time * RIPPLE_SCROLL_A_X, time * RIPPLE_SCROLL_A_Y);
+    let scroll_b = vec2<f32>(time * RIPPLE_SCROLL_B_X, time * RIPPLE_SCROLL_B_Y);
+    let safe_stretch = max(ripple_stretch, 0.01);
+    // Each pass uses a different scrolled UV to create interference.
+    let uv_a = fract(world_xz / safe_stretch + scroll_a);
+    let uv_b = fract(world_xz / safe_stretch + scroll_b);
+    let atlas_size = vec2<f32>(textureDimensions(ec_aux_atlas).xy);
+    let use_linear = effects.enable_linear_filtering == 1u;
+    var s_a: vec4<f32>;
+    var s_b: vec4<f32>;
+    if (use_linear) {
+        let atlas_uv_a = clamp(uv_a, vec2<f32>(0.5) / atlas_size, vec2<f32>(1.0) - vec2<f32>(0.5) / atlas_size);
+        let atlas_uv_b = clamp(uv_b, vec2<f32>(0.5) / atlas_size, vec2<f32>(1.0) - vec2<f32>(0.5) / atlas_size);
+        s_a = textureSample(ec_aux_atlas, tex_small_sampler, atlas_uv_a, i32(ripple_layer));
+        s_b = textureSample(ec_aux_atlas, tex_small_sampler, atlas_uv_b, i32(ripple_layer));
+    } else {
+        let iuv_a = clamp(vec2<i32>(uv_a * atlas_size), vec2<i32>(0), vec2<i32>(atlas_size) - vec2<i32>(1));
+        let iuv_b = clamp(vec2<i32>(uv_b * atlas_size), vec2<i32>(0), vec2<i32>(atlas_size) - vec2<i32>(1));
+        s_a = textureLoad(ec_aux_atlas, iuv_a, i32(ripple_layer), 0);
+        s_b = textureLoad(ec_aux_atlas, iuv_b, i32(ripple_layer), 0);
+    }
+    // Return the averaged RG channels remapped from [0,1] to [-0.5, 0.5].
+    return (s_a.rg + s_b.rg) * 0.5 - vec2<f32>(0.5);
 }
 
 fn sample_ec_aux_atlas_layer(world_xz: vec2<f32>, layer: u32, stretch: f32) -> vec4<f32> {
