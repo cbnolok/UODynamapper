@@ -49,6 +49,14 @@ pub struct TexArtEcPackageRes(pub Arc<udd_assets::tex_art_ec::TexArtEcPackage>);
 #[derive(Resource)]
 pub struct TexLandEcPackageRes(pub Arc<udd_assets::tex_land_ec::TexLandEcPackage>);
 
+/// Optional auxiliary texture package for EC non-base terrain slots (secondary base, alpha mask, noise).
+#[derive(Resource)]
+pub struct TexAuxEcPackageRes(pub Arc<udd_assets::tex_aux_ec::TexAuxEcPackage>);
+
+/// Optional terrain-layer sidecar for identifying secondary-base and alpha-mask layers.
+#[derive(Resource)]
+pub struct TerrainMetaPackageRes(pub Arc<udd_assets::terrain_meta::TerrainMetaPackage>);
+
 /// Optional prepacked world light mask package from light.mul/lightidx.mul.
 #[derive(Resource)]
 pub struct WorldLightsPackageRes(pub Arc<udd_assets::world_lights::WorldLightsPackage>);
@@ -372,6 +380,46 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         None
     };
 
+    let tex_aux_ec_path = resolve_optional_uddp_path(&udd_path, "ec_tex_aux.uddp");
+    let tex_aux_ec_package = if let Some(tex_aux_ec_path) = tex_aux_ec_path {
+        log_source_choice(
+            &lg,
+            "EC auxiliary texture package",
+            SourceContainerKind::Uddp,
+            std::slice::from_ref(&tex_aux_ec_path),
+        );
+        match udd_assets::tex_aux_ec::TexAuxEcPackage::load(&tex_aux_ec_path) {
+            Ok(package) => Some(package),
+            Err(e) => {
+                lg_err(&format!("Failed to load ec_tex_aux.uddp: {e}"));
+                None
+            }
+        }
+    } else {
+        lg("No EC auxiliary texture package found: ec_tex_aux.uddp not found in udd_path.");
+        None
+    };
+
+    let terrain_meta_path = resolve_optional_uddp_path(&udd_path, "terrain_meta.bin");
+    let terrain_meta_package = if let Some(terrain_meta_path) = terrain_meta_path {
+        log_source_choice(
+            &lg,
+            "terrain meta sidecar",
+            SourceContainerKind::Mul,
+            std::slice::from_ref(&terrain_meta_path),
+        );
+        match udd_assets::terrain_meta::TerrainMetaPackage::load(&terrain_meta_path) {
+            Ok(package) => Some(package),
+            Err(e) => {
+                lg_err(&format!("Failed to load terrain_meta.bin: {e}"));
+                None
+            }
+        }
+    } else {
+        lg("No terrain meta sidecar found: terrain_meta.bin not found in udd_path.");
+        None
+    };
+
     let world_lights_path = resolve_optional_uddp_path(&udd_path, "world_lights.uddp");
     let world_lights_package = if let Some(world_lights_path) = world_lights_path {
         log_source_choice(
@@ -588,6 +636,12 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
     }
     if let Some(multis) = multi_definitions {
         commands.insert_resource(multis);
+    }
+    if let Some(tex_aux_ec_package) = tex_aux_ec_package {
+        commands.insert_resource(TexAuxEcPackageRes(Arc::new(tex_aux_ec_package)));
+    }
+    if let Some(terrain_meta_package) = terrain_meta_package {
+        commands.insert_resource(TerrainMetaPackageRes(Arc::new(terrain_meta_package)));
     }
     commands.insert_resource(StaticsStoreRes(statics_stores));
 }

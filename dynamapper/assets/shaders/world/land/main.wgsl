@@ -25,6 +25,7 @@
   TileUniform, AtlasParams, LandLightingUniforms,
   tex_small_sampler, tex_small, tex_big, tile_meta_atlas,
   visual_grunge_texture,
+  ec_aux_atlas, ec_aux_lookup,
   ATLAS, scene, effects, global_light, land_light
 }
 #import "shaders/world/land/atlas.wgsl"::{atlas_read_meta, atlas_read_height, chunk_edge_blend_factor}
@@ -44,6 +45,7 @@
   sample_ec_material_albedo,
   sample_ec_material_albedo_at_world,
   apply_sharpening, blurred_albedo,
+  apply_ec_aux_two_base_blend,
 }
 #import "shaders/world/land/shading.wgsl"::{
   shade_mode0_classic_vertex,
@@ -666,6 +668,15 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
       base_albedo = apply_sharpening(base_albedo, sample_uv, tile, effects.sharpening_amount);
     }
   }
+
+  // ---- Two-base + alpha-mask authored blend (ec_tex_aux, Phase 10D) ----
+  // Only active for EC tiles that have a secondary-base slot authored in ec_tex_aux.
+  // Falls through unchanged for all other tiles (single-base path preserved).
+  if (tile.texture_size == 2u) {
+    let world_xz = vec2<f32>(floor(in.world_position.x), floor(in.world_position.z)) + uv_in_tile;
+    base_albedo = apply_ec_aux_two_base_blend(base_albedo, world_xz, tile);
+  }
+
   // ---- Normals ----
   // We already computed in the vertex shader and passed in.world_normal.
   // For non-classic modes we can still override with bicubic if desired.

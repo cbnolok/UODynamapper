@@ -16,6 +16,9 @@ use bevy::prelude::*;
 // use bevy::render::render_resource::*;
 use bevy::render::extract_resource::ExtractResource;
 use bevy::render::render_asset::RenderAssets;
+use bevy::render::render_resource::{
+    Buffer as RenderBuffer, BufferDescriptor, BufferUsages, CommandEncoderDescriptor,
+};
 use bevy::render::renderer::RenderDevice;
 use bevy::render::renderer::RenderQueue;
 use bevy::render::texture::GpuImage;
@@ -967,7 +970,7 @@ pub fn sys_clear_texture_array_uploads(mut cache: ResMut<LandTextureCache>) {
 }
 #[derive(Default)]
 pub struct PersistentStaging {
-    pub buffer: Option<wgpu::Buffer>,
+    pub buffer: Option<RenderBuffer>,
     pub capacity: usize,
     pub scratch_bytes: Vec<u8>,
 }
@@ -999,8 +1002,6 @@ pub fn sys_render_upload_texture_array(
         return;
     }
 
-    let device = render_device.wgpu_device();
-
     let mut required_capacity = 0;
     for upload in &uploads.0 {
         let row_bytes = upload.upload_layout.bytes_per_row as usize;
@@ -1011,10 +1012,10 @@ pub fn sys_render_upload_texture_array(
 
     if staging.capacity < required_capacity {
         let new_cap = required_capacity.next_power_of_two().max(4 * 1024 * 1024);
-        staging.buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
+        staging.buffer = Some(render_device.create_buffer(&BufferDescriptor {
             label: Some("Persistent Texture Staging Buffer"),
             size: new_cap as u64,
-            usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            usage: BufferUsages::COPY_SRC | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         }));
         staging.capacity = new_cap;
@@ -1046,13 +1047,16 @@ pub fn sys_render_upload_texture_array(
 
     render_queue.write_buffer(staging.buffer.as_ref().unwrap(), 0, &staging.scratch_bytes);
 
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+    let mut encoder = render_device.create_command_encoder(&CommandEncoderDescriptor {
         label: Some("Batched Texture Uploads Encoder"),
     });
 
     let mut current_offset = 0;
 
-    use wgpu::{Extent3d, Origin3d, TexelCopyBufferLayout, TexelCopyTextureInfo};
+    use bevy::render::render_resource::{
+        Extent3d, Origin3d, TexelCopyBufferInfo, TexelCopyBufferLayout, TexelCopyTextureInfo,
+        TextureAspect,
+    };
 
     for upload in uploads.0.drain(..) {
         let gpu_image = match upload.size {
@@ -1072,7 +1076,7 @@ pub fn sys_render_upload_texture_array(
         current_offset += padded_row_bytes * rows;
 
         encoder.copy_buffer_to_texture(
-            wgpu::TexelCopyBufferInfo {
+            TexelCopyBufferInfo {
                 buffer: staging.buffer.as_ref().unwrap(),
                 layout: TexelCopyBufferLayout {
                     offset,
@@ -1088,7 +1092,7 @@ pub fn sys_render_upload_texture_array(
                     y: 0,
                     z: upload.layer,
                 },
-                aspect: wgpu::TextureAspect::All,
+                aspect: TextureAspect::All,
             },
             Extent3d {
                 width,

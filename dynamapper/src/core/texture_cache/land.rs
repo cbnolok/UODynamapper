@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 use udd_assets::{
     tex_land_cc::TexLandCcPackage,
     tex_land_ec::TexLandEcPackage,
+    tex_aux_ec::TexAuxEcPackage,
+    terrain_meta::TerrainMetaPackage,
 };
 use uocf::classic::land_texture::LandTextureSize;
 use uocf::classic::map::MapBlockRelPos;
@@ -46,6 +48,28 @@ struct LandPageAtlasImages {
     lookup: Handle<Image>,
 }
 
+/// GPU images for the `ec_tex_aux` two-base blend path.
+///
+/// `aux_atlas`: a `texture_2d_array<f32>` where layer 0 is a transparent sentinel
+/// (absent) and layers 1..N each hold the RGBA pixels of one aux slot.
+/// All layers share the same `AUX_ATLAS_TILE_SIZE` × `AUX_ATLAS_TILE_SIZE` extent;
+/// images smaller than that are placed in the top-left corner.
+///
+/// `aux_lookup`: a `Rgba32Uint` 2D image of width `LAND_PAGE_LOOKUP_WIDTH`.
+/// Each texel holds `[secondary_layer, secondary_repetition_q8, mask_layer, 0]`
+/// for the tile at that index (0 = absent).
+struct LandAuxAtlasImages {
+    aux_atlas: Handle<Image>,
+    aux_lookup: Handle<Image>,
+}
+
+/// Side length (in pixels) of each layer in the aux atlas.
+/// Aux textures (secondary base, alpha mask) are typically 64–256 px;
+/// we normalise them all to this common size so the array is homogeneous.
+const AUX_ATLAS_TILE_SIZE: u32 = 256;
+const AUX_LOOKUP_WIDTH: u32 = 256;
+const AUX_LOOKUP_TILE_CAPACITY: u32 = 16_384;
+
 enum LandShaderAtlasSource<'a> {
     Cc(&'a TexLandCcPackage),
     Ec(&'a TexLandEcPackage),
@@ -58,6 +82,280 @@ const LAND_PAGE_LOOKUP_ROLE_BASE: u32 = 0;
 const LAND_PAGE_LOOKUP_ROLE_DETAIL: u32 = 1;
 const LAND_PAGE_LOOKUP_ROLE_MASK: u32 = 2;
 const LAND_PAGE_LOOKUP_ROLE_NORMAL: u32 = 3;
+
+/// Identify the secondary-base `texture_id` for a terrain tile from the layer graph.
+///
+/// A secondary base is a layer where `is_support == 0` and `has_pref_rep == 1` that is
+/// NOT the primary texture already packed into `tex_land_ec`.
+fn secondary_base_texture_id(
+    tile_id: u32,
+    terrain_meta: &TerrainMetaPackage,
+    tex_land_ec: &TexLandEcPackage,
+) -> Option<(u32, f32)> {
+    let layers = terrain_meta.layers_for_tile(tile_id);
+    if layers.len() < 2 {
+        return None;
+    }
+    // The primary texture_id already used by tex_land_ec for this tile.
+    let primary_texture_id = tex_land_ec
+        .resolve_material_decision(tile_id)
+        .primary_texture_id;
+
+    for layer in layers {
+        if layer.texture_id == 0 {
+            continue;
+        }
+        // Skip the primary layer.
+        if Some(layer.texture_id) == primary_texture_id {
+            continue;
+        }
+        // Secondary base: non-support, preferred repetition.
+        if layer.is_support == 0 && layer.has_pref_rep == 1 {
+            return Some((layer.texture_id, layer.texture_repetition));
+        }
+    }
+    None
+}
+
+/// Identify the alpha-mask `texture_id` for a terrain tile from the layer graph.
+///
+/// An alpha mask is a layer where `is_support == 1`.
+fn alpha_mask_texture_id(
+    tile_id: u32,
+    terrain_meta: &TerrainMetaPackage,
+) -> Option<(u32, f32)> {
+    let layers = terrain_meta.layers_for_tile(tile_id);
+    for layer in layers {
+        if layer.texture_id == 0 {
+            continue;
+        }
+        if layer.is_support == 1 {
+            return Some((layer.texture_id, layer.texture_repetition));
+        }
+    }
+    None
+}
+
+/// Resize RGBA pixel data from `(src_w, src_h)` to `(dst_w, dst_h)` using
+/// nearest-neighbour scaling into the top-left of a zeroed `dst_w × dst_h` buffer.
+fn resize_rgba_nearest(
+    src: &[u8],
+    src_w: u32,
+    src_h: u32,
+    dst_w: u32,
+    dst_h: u32,
+) -> Vec<u8> {
+    let mut dst = vec![0u8; (dst_w * dst_h * 4) as usize];
+    // Copy up to the min of src and dst dimensions into the top-left corner.
+    let copy_w = src_w.min(dst_w);
+    let copy_h = src_h.min(dst_h);
+    for y in 0..copy_h {
+        let src_x = (y * src_w * 4) as usize;
+        let dst_x = (y * dst_w * 4) as usize;
+        dst[dst_x..dst_x + (copy_w * 4) as usize]
+            .copy_from_slice(&src[src_x..src_x + (copy_w * 4) as usize]);
+    }
+    dst
+}
+
+fn create_blank_aux_atlas_images(images: &mut Assets<Image>) -> LandAuxAtlasImages {
+    use bevy::render::render_resource::{
+        Extent3d, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor,
+        TextureViewDimension,
+    };
+
+    // Layer 0: transparent sentinel.
+    let sentinel_bytes = vec![0u8; (AUX_ATLAS_TILE_SIZE * AUX_ATLAS_TILE_SIZE * 4) as usize];
+    let mut aux_atlas = Image::new(
+        Extent3d {
+            width: AUX_ATLAS_TILE_SIZE,
+            height: AUX_ATLAS_TILE_SIZE,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        sentinel_bytes,
+        TextureFormat::Rgba8UnormSrgb,
+        bevy::asset::RenderAssetUsages::RENDER_WORLD,
+    );
+    aux_atlas.texture_descriptor.usage |= TextureUsages::TEXTURE_BINDING;
+    aux_atlas.texture_view_descriptor = Some(TextureViewDescriptor {
+        dimension: Some(TextureViewDimension::D2Array),
+        ..Default::default()
+    });
+
+    let lookup_height = (AUX_LOOKUP_TILE_CAPACITY + AUX_LOOKUP_WIDTH - 1) / AUX_LOOKUP_WIDTH;
+    let mut aux_lookup = Image::new(
+        Extent3d {
+            width: AUX_LOOKUP_WIDTH,
+            height: lookup_height,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        vec![0u8; (AUX_LOOKUP_WIDTH * lookup_height * 16) as usize],
+        TextureFormat::Rgba32Uint,
+        bevy::asset::RenderAssetUsages::RENDER_WORLD,
+    );
+    aux_lookup.texture_descriptor.usage |= TextureUsages::TEXTURE_BINDING;
+
+    LandAuxAtlasImages {
+        aux_atlas: images.add(aux_atlas),
+        aux_lookup: images.add(aux_lookup),
+    }
+}
+
+/// Build the `ec_tex_aux` atlas and per-tile lookup texture from the auxiliary
+/// texture package and terrain-layer sidecar.
+///
+/// Returns blank images when either package is absent — the shader degrades to
+/// the existing single-base path for all tiles.
+fn create_aux_atlas_images(
+    images: &mut Assets<Image>,
+    tex_aux_ec: Option<&TexAuxEcPackage>,
+    terrain_meta: Option<&TerrainMetaPackage>,
+    tex_land_ec: Option<&TexLandEcPackage>,
+) -> LandAuxAtlasImages {
+    use bevy::render::render_resource::{
+        Extent3d, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor,
+        TextureViewDimension,
+    };
+
+    let (Some(tex_aux_ec), Some(terrain_meta), Some(tex_land_ec)) =
+        (tex_aux_ec, terrain_meta, tex_land_ec)
+    else {
+        return create_blank_aux_atlas_images(images);
+    };
+
+    // Map texture_id → atlas layer index (1-based; 0 = absent sentinel).
+    let mut texture_id_to_layer: std::collections::HashMap<u32, u32> =
+        std::collections::HashMap::new();
+    // Layer 0 is the sentinel. Collect the distinct texture_ids needed.
+    let mut layers_rgba: Vec<Vec<u8>> = Vec::new();
+    // Sentinel layer.
+    layers_rgba.push(vec![
+        0u8;
+        (AUX_ATLAS_TILE_SIZE * AUX_ATLAS_TILE_SIZE * 4) as usize
+    ]);
+
+    let lookup_height = (AUX_LOOKUP_TILE_CAPACITY + AUX_LOOKUP_WIDTH - 1) / AUX_LOOKUP_WIDTH;
+    let mut lookup_bytes = vec![0u8; (AUX_LOOKUP_WIDTH * lookup_height * 16) as usize];
+
+    for tile_id in 0..AUX_LOOKUP_TILE_CAPACITY {
+        let sec_base = secondary_base_texture_id(tile_id, terrain_meta, tex_land_ec);
+        let alpha_mask = alpha_mask_texture_id(tile_id, terrain_meta);
+
+        if sec_base.is_none() && alpha_mask.is_none() {
+            continue;
+        }
+
+        let mut assign_layer = |texture_id: u32| -> u32 {
+            if let Some(&layer) = texture_id_to_layer.get(&texture_id) {
+                return layer;
+            }
+            // Check if the slot exists in the package.
+            if tex_aux_ec.slot_for_texture_id(texture_id).is_none() {
+                return 0;
+            }
+            // Try to load the raw pixels.
+            let rgba = match tex_aux_ec.load_rgba(texture_id) {
+                Ok(Some(bytes)) => bytes,
+                _ => return 0,
+            };
+            // We need width/height to scale properly.
+            let slot = tex_aux_ec.slot_for_texture_id(texture_id).unwrap();
+            let resized = resize_rgba_nearest(
+                &rgba,
+                slot.width as u32,
+                slot.height as u32,
+                AUX_ATLAS_TILE_SIZE,
+                AUX_ATLAS_TILE_SIZE,
+            );
+            let layer = layers_rgba.len() as u32;
+            layers_rgba.push(resized);
+            texture_id_to_layer.insert(texture_id, layer);
+            layer
+        };
+
+        let (sec_layer, sec_rep_q8) = if let Some((tid, rep)) = sec_base {
+            let layer = assign_layer(tid);
+            let rep_q8 = if rep.is_finite() && rep > 0.0 {
+                (rep * 256.0).round().clamp(0.0, u16::MAX as f32) as u32
+            } else {
+                0
+            };
+            (layer, rep_q8)
+        } else {
+            (0u32, 0u32)
+        };
+
+        let (mask_layer, _mask_rep_q8) = if let Some((tid, rep)) = alpha_mask {
+            let layer = assign_layer(tid);
+            let rep_q8 = if rep.is_finite() && rep > 0.0 {
+                (rep * 256.0).round().clamp(0.0, u16::MAX as f32) as u32
+            } else {
+                0
+            };
+            (layer, rep_q8)
+        } else {
+            (0u32, 0u32)
+        };
+
+        if sec_layer == 0 && mask_layer == 0 {
+            continue;
+        }
+
+        // Write lookup entry: [secondary_layer | (secondary_rep_q8 << 16), mask_layer, 0, 0]
+        let lookup_index = tile_id as usize;
+        let texel_offset = lookup_index * 16;
+        lookup_bytes[texel_offset..texel_offset + 4]
+            .copy_from_slice(&((sec_layer & 0xFFFF) | (sec_rep_q8 << 16)).to_le_bytes());
+        lookup_bytes[texel_offset + 4..texel_offset + 8]
+            .copy_from_slice(&mask_layer.to_le_bytes());
+        // bytes [8..16] remain 0.
+    }
+
+    let layer_count = layers_rgba.len().max(1) as u32;
+    let mut atlas_bytes: Vec<u8> = Vec::with_capacity(
+        (AUX_ATLAS_TILE_SIZE * AUX_ATLAS_TILE_SIZE * 4 * layer_count) as usize,
+    );
+    for layer_data in &layers_rgba {
+        atlas_bytes.extend_from_slice(layer_data);
+    }
+
+    let mut aux_atlas = Image::new(
+        Extent3d {
+            width: AUX_ATLAS_TILE_SIZE,
+            height: AUX_ATLAS_TILE_SIZE,
+            depth_or_array_layers: layer_count,
+        },
+        TextureDimension::D2,
+        atlas_bytes,
+        TextureFormat::Rgba8UnormSrgb,
+        bevy::asset::RenderAssetUsages::RENDER_WORLD,
+    );
+    aux_atlas.texture_descriptor.usage |= TextureUsages::TEXTURE_BINDING;
+    aux_atlas.texture_view_descriptor = Some(TextureViewDescriptor {
+        dimension: Some(TextureViewDimension::D2Array),
+        ..Default::default()
+    });
+
+    let mut aux_lookup = Image::new(
+        Extent3d {
+            width: AUX_LOOKUP_WIDTH,
+            height: lookup_height,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        lookup_bytes,
+        TextureFormat::Rgba32Uint,
+        bevy::asset::RenderAssetUsages::RENDER_WORLD,
+    );
+    aux_lookup.texture_descriptor.usage |= TextureUsages::TEXTURE_BINDING;
+
+    LandAuxAtlasImages {
+        aux_atlas: images.add(aux_atlas),
+        aux_lookup: images.add(aux_lookup),
+    }
+}
 
 fn create_blank_land_page_atlas_images(images: &mut Assets<Image>) -> LandPageAtlasImages {
     use bevy::render::render_resource::{
@@ -656,6 +954,8 @@ pub fn sys_setup_terrain_cache(
     tex_art_cc_r: Option<Res<crate::core::uo_files_loader::TexArtCcPackageRes>>,
     tex_art_ec_r: Option<Res<crate::core::uo_files_loader::TexArtEcPackageRes>>,
     tex_land_ec_r: Option<Res<crate::core::uo_files_loader::TexLandEcPackageRes>>,
+    tex_aux_ec_r: Option<Res<crate::core::uo_files_loader::TexAuxEcPackageRes>>,
+    terrain_meta_r: Option<Res<crate::core::uo_files_loader::TerrainMetaPackageRes>>,
 ) {
     log_system_add_startup::<LandTextureCachePlugin>(StartupSysSet::SetupSceneStage1, fname!());
 
@@ -734,6 +1034,13 @@ pub fn sys_setup_terrain_cache(
 
     let shader_images = create_land_shader_images(&mut images, land_shader_source_from_cache(&land_texture_cache))
         .expect("Failed to build land atlas shader images");
+
+    let aux_images = create_aux_atlas_images(
+        &mut images,
+        tex_aux_ec_r.as_deref().map(|r| r.0.as_ref()),
+        terrain_meta_r.as_deref().map(|r| r.0.as_ref()),
+        tex_land_ec_package.as_deref(),
+    );
 
     cmd.insert_resource(land_texture_cache);
 
@@ -815,6 +1122,8 @@ pub fn sys_setup_terrain_cache(
                 land_lighting_uniform: Default::default(),
                 static_light_uniform: Default::default(),
                 visual_grunge_texture,
+                ec_aux_atlas: aux_images.aux_atlas,
+                ec_aux_lookup: aux_images.aux_lookup,
             },
         };
 

@@ -11,6 +11,7 @@ pub mod cc_tex_land_ec_transcode {
 pub mod ec_surface_overrides;
 pub mod ec_terrain_overrides;
 pub mod tex_aux_ec;
+pub mod terrain_meta;
 pub mod tilemeta;
 pub mod world_lights;
 pub mod hues;

@@ -83,6 +83,10 @@ struct LandStaticLightUniform {
 @group(3) @binding(108) var<uniform> land_light:   LandLightingUniforms;
 @group(3) @binding(111) var<uniform> static_lights: LandStaticLightUniform;
 @group(3) @binding(112) var visual_grunge_texture: texture_2d<f32>;
+// Optional ec_tex_aux two-base blend atlas (layer 0 = absent sentinel).
+@group(3) @binding(113) var ec_aux_atlas: texture_2d_array<f32>;
+// Per-tile aux lookup: Rgba32Uint texel = [secondary_layer|(rep_q8<<16), mask_layer, 0, 0].
+@group(3) @binding(114) var ec_aux_lookup: texture_2d<u32>;
 
 // ============================================================================
 // Grid / chunk constants

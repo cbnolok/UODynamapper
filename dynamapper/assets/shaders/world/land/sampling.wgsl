@@ -29,7 +29,7 @@
 
 
 #import "shaders/world/common_bindings.wgsl"::{LandEffectsUniform}
-#import "shaders/world/land/land_bindings.wgsl"::{TileUniform, tex_small, tex_big, land_page_atlas, land_page_lookup, tex_small_sampler, effects}
+#import "shaders/world/land/land_bindings.wgsl"::{TileUniform, tex_small, tex_big, land_page_atlas, land_page_lookup, tex_small_sampler, effects, ec_aux_atlas, ec_aux_lookup}
 #import "shaders/world/pixel_art_filters.wgsl"::pixel_art_uv_iq
 
 // Width in pixels of one Classic Client isometric tile — the world-unit
@@ -124,6 +124,85 @@ fn ec_material_mask_value(mask_sample: vec4<f32>) -> f32 {
   let rgb_luma = dot(mask_sample.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
   let alpha_has_signal = abs(mask_sample.a - 1.0) > 0.001;
   return clamp(select(rgb_luma, mask_sample.a, alpha_has_signal), 0.0, 1.0);
+}
+
+// ============================================================================
+// Two-base + alpha-mask blend from ec_tex_aux (Phase 10D)
+// ============================================================================
+//
+// The aux lookup texture encodes per-tile secondary-base and alpha-mask slots.
+// Layout of the Rgba32Uint texel (x,y,z,w):
+//   x: lower 16 bits = secondary atlas layer (0 = absent)
+//      upper 16 bits = secondary_rep_q8 (stretch × 256, fixed-point)
+//   y: alpha-mask atlas layer (0 = absent)
+//   z, w: reserved, zero
+//
+// The aux atlas is a texture_2d_array<f32> where layer 0 is a transparent
+// sentinel.  All layers share AUX_ATLAS_TILE_SIZE × AUX_ATLAS_TILE_SIZE px.
+// ============================================================================
+
+const AUX_LOOKUP_WIDTH_WGSL: u32 = 256u;
+
+struct AuxLookupSlot {
+    secondary_layer:  u32,
+    secondary_stretch: f32,   // world-tiles per texture repetition
+    mask_layer:       u32,
+};
+
+fn read_aux_lookup_slot(tile_payload: u32) -> AuxLookupSlot {
+    let lookup_dims = textureDimensions(ec_aux_lookup);
+    let coord = vec2<i32>(
+        i32(tile_payload % AUX_LOOKUP_WIDTH_WGSL),
+        i32(tile_payload / AUX_LOOKUP_WIDTH_WGSL),
+    );
+    let texel = textureLoad(ec_aux_lookup, coord, 0);
+    let secondary_layer  = texel.x & 0xFFFFu;
+    let secondary_rep_q8 = texel.x >> 16u;
+    let mask_layer       = texel.y;
+    let secondary_stretch = select(
+        1.0,
+        f32(secondary_rep_q8) / 256.0,
+        secondary_rep_q8 != 0u,
+    );
+    return AuxLookupSlot(secondary_layer, secondary_stretch, mask_layer);
+}
+
+fn sample_ec_aux_atlas_layer(world_xz: vec2<f32>, layer: u32, stretch: f32) -> vec4<f32> {
+    let uv = fract(world_xz / max(stretch, 0.01));
+    let atlas_size = vec2<f32>(textureDimensions(ec_aux_atlas).xy);
+    let use_linear = effects.enable_linear_filtering == 1u;
+    if (use_linear) {
+        let atlas_uv = clamp(uv, vec2<f32>(0.5) / atlas_size, vec2<f32>(1.0) - vec2<f32>(0.5) / atlas_size);
+        return textureSample(ec_aux_atlas, tex_small_sampler, atlas_uv, i32(layer));
+    }
+    let iuv = clamp(vec2<i32>(uv * atlas_size), vec2<i32>(0), vec2<i32>(atlas_size) - vec2<i32>(1));
+    return textureLoad(ec_aux_atlas, iuv, i32(layer), 0);
+}
+
+/// Apply the two-base + alpha-mask authored blend from ec_tex_aux.
+/// Falls through unchanged when the secondary-base slot is absent (layer == 0).
+fn apply_ec_aux_two_base_blend(
+    base_albedo: vec3<f32>,
+    world_xz: vec2<f32>,
+    tile: TileUniform,
+) -> vec3<f32> {
+    let aux = read_aux_lookup_slot(tile.texture_payload);
+    if (aux.secondary_layer == 0u) {
+        return base_albedo;
+    }
+
+    let secondary = sample_ec_aux_atlas_layer(world_xz, aux.secondary_layer, aux.secondary_stretch).rgb;
+
+    // Alpha mask: use authored mask when present, otherwise blend 50/50.
+    let alpha_mask_value: f32 = select(
+        0.5,
+        ec_material_mask_value(
+            sample_ec_aux_atlas_layer(world_xz, aux.mask_layer, aux.secondary_stretch)
+        ),
+        aux.mask_layer != 0u,
+    );
+
+    return mix(base_albedo, secondary, alpha_mask_value);
 }
 
 fn sample_ec_material_albedo(world_xz: vec2<f32>, base_uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {

@@ -69,6 +69,17 @@ pub struct LandMaterialExtension {
     /// Shared generated grunge/noise texture for EC/KR weathering overlays.
     #[texture(112, visibility(fragment))]
     pub visual_grunge_texture: Handle<Image>,
+
+    /// Optional `ec_tex_aux` atlas: one layer per auxiliary texture slot.
+    /// Layer 0 is a transparent sentinel (absent). Bound as a `texture_2d_array<f32>`.
+    #[texture(113, dimension = "2d_array", visibility(fragment))]
+    pub ec_aux_atlas: Handle<Image>,
+
+    /// Per-tile aux lookup: `Rgba32Uint` where each texel holds
+    /// `[secondary_layer | (secondary_rep_q8 << 16), mask_layer, 0, 0]`.
+    /// Indexed by the tile's `texture_payload` (land tile id).
+    #[texture(114, sample_type = "u_int", visibility(fragment))]
+    pub ec_aux_lookup: Handle<Image>,
 }
 
 impl MaterialExtension for LandMaterialExtension {
