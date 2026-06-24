@@ -1003,8 +1003,11 @@ fn resolve_overlay_tex_land_ec_runtime_slot(
     let package = tex_land_ec?;
 
     let Some(main_ec_texture_id) = tilemeta_package
-        .and_then(|package| package.main_ec_texture_id(tile_id))
-        .or_else(|| (meta.ec_texture_id != 0).then_some(meta.ec_texture_id))
+        .and_then(|package| {
+            package
+                .main_ec_texture_id_role_aware(tile_id)
+                .map(|(id, _role, _reason)| id)
+        })
     else {
         return package.resolve_runtime_slot_id(meta.cc_texture_id);
     };
