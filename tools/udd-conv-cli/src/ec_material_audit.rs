@@ -4486,3 +4486,483 @@ pub fn write_ec_effect_meta_manifest(
 }
 
 // endregion: --- Effect texture metadata manifest
+
+// region: --- Abnormality report
+
+/// Per-tile abnormality code for `write_ec_abnormality_report`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AbnormalityCode {
+    Ok,
+    MissingBase,
+    LowConfidenceBase,
+    LiquidNoBase,
+    LiquidEffectOnly,
+    LiquidUnknownSupportOnly,
+}
+
+impl AbnormalityCode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Ok => "OK",
+            Self::MissingBase => "MissingBase",
+            Self::LowConfidenceBase => "LowConfidenceBase",
+            Self::LiquidNoBase => "LiquidNoBase",
+            Self::LiquidEffectOnly => "LiquidEffectOnly",
+            Self::LiquidUnknownSupportOnly => "LiquidUnknownSupportOnly",
+        }
+    }
+
+    fn severity(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::MissingBase => "error",
+            Self::LowConfidenceBase
+            | Self::LiquidNoBase
+            | Self::LiquidEffectOnly
+            | Self::LiquidUnknownSupportOnly => "warning",
+        }
+    }
+}
+
+/// Aggregate counts of abnormality codes across all audited tiles.
+pub struct AbnormalityCounts {
+    pub total: u64,
+    pub ok: u64,
+    pub missing_base: u64,
+    pub low_confidence_base: u64,
+    pub liquid_no_base: u64,
+    pub liquid_effect_only: u64,
+    pub liquid_unknown_support_only: u64,
+    /// Top-10 low-confidence tiles by owner_id (owner_id, chosen_texture_id).
+    pub top_low_confidence: Vec<(u32, u32)>,
+}
+
+impl AbnormalityCounts {
+    fn new() -> Self {
+        Self {
+            total: 0,
+            ok: 0,
+            missing_base: 0,
+            low_confidence_base: 0,
+            liquid_no_base: 0,
+            liquid_effect_only: 0,
+            liquid_unknown_support_only: 0,
+            top_low_confidence: Vec::new(),
+        }
+    }
+
+    fn record(&mut self, code: AbnormalityCode, owner_id: u32, chosen_texture_id: Option<u32>) {
+        self.total += 1;
+        match code {
+            AbnormalityCode::Ok => self.ok += 1,
+            AbnormalityCode::MissingBase => self.missing_base += 1,
+            AbnormalityCode::LowConfidenceBase => {
+                self.low_confidence_base += 1;
+                if self.top_low_confidence.len() < TOP_LOW_CONFIDENCE_LIMIT {
+                    self.top_low_confidence
+                        .push((owner_id, chosen_texture_id.unwrap_or(0)));
+                }
+            }
+            AbnormalityCode::LiquidNoBase => self.liquid_no_base += 1,
+            AbnormalityCode::LiquidEffectOnly => self.liquid_effect_only += 1,
+            AbnormalityCode::LiquidUnknownSupportOnly => self.liquid_unknown_support_only += 1,
+        }
+    }
+
+    fn percent(part: u64, total: u64) -> f64 {
+        if total == 0 {
+            0.0
+        } else {
+            part as f64 * 100.0 / total as f64
+        }
+    }
+}
+
+/// Number of low-confidence entries captured for the human-readable summary.
+const TOP_LOW_CONFIDENCE_LIMIT: usize = 10;
+
+/// Writes a CSV abnormality report for all item tiles in the tilemeta package.
+///
+/// Also writes a companion markdown summary alongside the CSV (replacing `.csv` with `.md`,
+/// or appending `_summary.md` if the output does not end in `.csv`).
+pub fn write_ec_abnormality_report(
+    source_dirs: &[PathBuf],
+    tilemeta_path: &Path,
+    output: &Path,
+) -> eyre::Result<()> {
+    use udd_assets::tilemeta::TileMetaPackage;
+
+    let tilemeta = TileMetaPackage::load(tilemeta_path)?;
+    let mut writer = WriterBuilder::new().from_path(output)?;
+    writer.write_record([
+        "owner_id",
+        "chosen_texture_id",
+        "stable_role",
+        "reason",
+        "is_low_confidence",
+        "abnormality_code",
+        "severity",
+        "notes",
+    ])?;
+
+    let mut counts = AbnormalityCounts::new();
+    let sources = load_tex_art_ec_sources(source_dirs)?;
+
+    let mut art_ids = sources
+        .art_definition
+        .definitions
+        .keys()
+        .copied()
+        .collect::<Vec<_>>();
+    art_ids.sort_unstable();
+
+    for art_id in art_ids {
+        use udd_assets::tilemeta::EcMaterialStableRole;
+        use udd_conv::tex_art_ec::{is_base_eligible, LiquidExclusionReason};
+        use uocf::enhanced::tileart::TileType;
+
+        let tile_id = art_id as u32;
+        let art_data = sources.art_definition.definitions.get(&art_id);
+
+        // For liquid tiles, check base eligibility before consulting tilemeta.
+        let liquid_exclusion: Option<LiquidExclusionReason> =
+            if art_data.map(|d| d.tile_type) == Some(TileType::Liquid) {
+                let chosen_texture_id = art_data.and_then(|d| {
+                    d.ec_texture
+                        .as_ref()
+                        .map(|t| t.texture_id)
+                        .or_else(|| d.cc_texture.as_ref().map(|t| t.texture_id))
+                });
+                // Re-derive the stable role via tilemeta lookup (same approach as packer).
+                let stable_role = tilemeta
+                    .main_ec_texture_id_role_aware(tile_id)
+                    .map(|(_, role, _)| role)
+                    .unwrap_or(EcMaterialStableRole::UnknownSupport);
+                if !is_base_eligible(TileType::Liquid, chosen_texture_id, stable_role) {
+                    // Determine the specific liquid exclusion reason.
+                    if chosen_texture_id.is_none() {
+                        Some(LiquidExclusionReason::LiquidNoBase)
+                    } else if stable_role == EcMaterialStableRole::EffectOnlyMetadata {
+                        Some(LiquidExclusionReason::LiquidEffectOnly)
+                    } else {
+                        Some(LiquidExclusionReason::LiquidUnknownSupportOnly)
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+        let result = tilemeta.main_ec_texture_id_role_aware(tile_id);
+
+        let (chosen_texture_id, stable_role_str, reason_str, is_low_confidence, code) =
+            if let Some(liquid_reason) = liquid_exclusion {
+                let liquid_code = match liquid_reason {
+                    LiquidExclusionReason::LiquidNoBase => AbnormalityCode::LiquidNoBase,
+                    LiquidExclusionReason::LiquidEffectOnly => AbnormalityCode::LiquidEffectOnly,
+                    LiquidExclusionReason::LiquidUnknownSupportOnly => {
+                        AbnormalityCode::LiquidUnknownSupportOnly
+                    }
+                };
+                let chosen = art_data.and_then(|d| {
+                    d.ec_texture
+                        .as_ref()
+                        .map(|t| t.texture_id)
+                        .or_else(|| d.cc_texture.as_ref().map(|t| t.texture_id))
+                });
+                (
+                    chosen,
+                    "UnknownSupport",
+                    liquid_reason.as_str(),
+                    false,
+                    liquid_code,
+                )
+            } else {
+                match result {
+                    None => (
+                        None,
+                        "UnknownSupport",
+                        "not_found",
+                        false,
+                        AbnormalityCode::MissingBase,
+                    ),
+                    Some((tex_id, stable_role, reason)) => {
+                        let role_str = match stable_role {
+                            EcMaterialStableRole::Base => "Base",
+                            EcMaterialStableRole::SecondaryBase => "SecondaryBase",
+                            EcMaterialStableRole::AlphaMask => "AlphaMask",
+                            EcMaterialStableRole::GenericMask => "GenericMask",
+                            EcMaterialStableRole::Noise => "Noise",
+                            EcMaterialStableRole::Detail => "Detail",
+                            EcMaterialStableRole::Overlay => "Overlay",
+                            EcMaterialStableRole::NormalLike => "NormalLike",
+                            EcMaterialStableRole::ImageSupport => "ImageSupport",
+                            EcMaterialStableRole::EffectOnlyMetadata => "EffectOnlyMetadata",
+                            EcMaterialStableRole::UnknownSupport => "UnknownSupport",
+                        };
+                        let low = reason.is_low_confidence();
+                        let code = if low {
+                            AbnormalityCode::LowConfidenceBase
+                        } else {
+                            AbnormalityCode::Ok
+                        };
+                        (Some(tex_id), role_str, reason.as_str(), low, code)
+                    }
+                }
+            };
+
+        counts.record(code, tile_id, chosen_texture_id);
+
+        let notes = abnormality_notes(code);
+        writer.write_record([
+            &tile_id.to_string(),
+            &chosen_texture_id
+                .map(|id| id.to_string())
+                .unwrap_or_default(),
+            stable_role_str,
+            reason_str,
+            bool_str(is_low_confidence),
+            code.as_str(),
+            code.severity(),
+            notes,
+        ])?;
+    }
+
+    writer.flush()?;
+
+    info!(
+        "wrote {} EC abnormality report rows to '{}' \
+         (ok={} missing_base={} low_confidence={} liquid_no_base={} liquid_effect_only={} liquid_unknown_support_only={})",
+        counts.total,
+        output.display(),
+        counts.ok,
+        counts.missing_base,
+        counts.low_confidence_base,
+        counts.liquid_no_base,
+        counts.liquid_effect_only,
+        counts.liquid_unknown_support_only,
+    );
+
+    let summary_path = abnormality_summary_path(output);
+    write_ec_abnormality_summary(&counts, &summary_path)?;
+
+    Ok(())
+}
+
+fn abnormality_notes(code: AbnormalityCode) -> &'static str {
+    match code {
+        AbnormalityCode::Ok => "",
+        AbnormalityCode::MissingBase => "no texture refs resolved for this tile",
+        AbnormalityCode::LowConfidenceBase => {
+            "base selection used a low-confidence fallback path"
+        }
+        AbnormalityCode::LiquidNoBase => "liquid tile has no chosen texture id",
+        AbnormalityCode::LiquidEffectOnly => {
+            "liquid tile primary ref has EffectOnlyMetadata role"
+        }
+        AbnormalityCode::LiquidUnknownSupportOnly => {
+            "liquid tile refs are all UnknownSupport — no verifiable base"
+        }
+    }
+}
+
+fn abnormality_summary_path(csv_path: &Path) -> PathBuf {
+    let stem = csv_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("ec_abnormality_report");
+    let parent = csv_path.parent().unwrap_or(Path::new("."));
+    parent.join(format!("{stem}_summary.md"))
+}
+
+/// Writes a human-readable markdown summary of abnormality counts.
+pub fn write_ec_abnormality_summary(counts: &AbnormalityCounts, output: &Path) -> eyre::Result<()> {
+    use std::fmt::Write as _;
+    let mut md = String::new();
+
+    writeln!(md, "# EC Abnormality Report Summary")?;
+    writeln!(md)?;
+    writeln!(md, "| Metric | Count |")?;
+    writeln!(md, "|--------|-------|")?;
+    writeln!(md, "| Total tiles audited | {} |", counts.total)?;
+    writeln!(md)?;
+    writeln!(md, "## Abnormality Codes")?;
+    writeln!(md)?;
+    writeln!(md, "| Code | Count | Percent | Severity |")?;
+    writeln!(md, "|------|-------|---------|----------|")?;
+    let rows: &[(&str, u64, &str)] = &[
+        ("OK", counts.ok, "ok"),
+        ("MissingBase", counts.missing_base, "error"),
+        ("LowConfidenceBase", counts.low_confidence_base, "warning"),
+        ("LiquidNoBase", counts.liquid_no_base, "warning"),
+        ("LiquidEffectOnly", counts.liquid_effect_only, "warning"),
+        (
+            "LiquidUnknownSupportOnly",
+            counts.liquid_unknown_support_only,
+            "warning",
+        ),
+    ];
+    for (code, count, severity) in rows {
+        let pct = AbnormalityCounts::percent(*count, counts.total);
+        writeln!(md, "| {code} | {count} | {pct:.2}% | {severity} |")?;
+    }
+
+    if !counts.top_low_confidence.is_empty() {
+        writeln!(md)?;
+        writeln!(
+            md,
+            "## Top {} Low-Confidence Tiles (by owner_id)",
+            TOP_LOW_CONFIDENCE_LIMIT
+        )?;
+        writeln!(md)?;
+        writeln!(md, "| owner_id | chosen_texture_id |")?;
+        writeln!(md, "|----------|-------------------|")?;
+        for (owner_id, chosen_texture_id) in &counts.top_low_confidence {
+            writeln!(md, "| {owner_id} | {chosen_texture_id} |")?;
+        }
+    }
+
+    writeln!(md)?;
+    writeln!(
+        md,
+        "> **Note**: Liquid exclusion abnormalities are not included in this report. \
+         They are captured separately by the packer's liquid exclusion summary."
+    )?;
+
+    fs::write(output, md)?;
+    info!(
+        "wrote EC abnormality summary to '{}'",
+        output.display()
+    );
+    Ok(())
+}
+
+// endregion: --- Abnormality report
+
+// region: --- Owner-reference filtered audit outputs
+
+/// Writes a filtered CSV of tileart owner references from the Phase 0 census data.
+///
+/// Columns match the `ec_material_owner_refs.csv` subset relevant to tileart:
+/// `owner_id,shader_name,source_path_normalized,inferred_physical_package,inferred_logical_family,direct_reference_confidence`
+pub fn write_tileart_owner_audit(source_dirs: &[PathBuf], output: &Path) -> eyre::Result<()> {
+    write_owner_audit_filtered(source_dirs, output, OwnerKindFilter::TileArt)
+}
+
+/// Writes a filtered CSV of TerrainDefinition owner references from the Phase 0 census data.
+///
+/// Columns match the `ec_material_owner_refs.csv` subset relevant to terrain:
+/// `owner_id,shader_name,source_path_normalized,inferred_physical_package,inferred_logical_family,direct_reference_confidence`
+pub fn write_terrain_definition_owner_audit(
+    source_dirs: &[PathBuf],
+    output: &Path,
+) -> eyre::Result<()> {
+    write_owner_audit_filtered(source_dirs, output, OwnerKindFilter::TerrainDefinition)
+}
+
+#[derive(Clone, Copy)]
+enum OwnerKindFilter {
+    TileArt,
+    TerrainDefinition,
+}
+
+fn write_owner_audit_filtered(
+    source_dirs: &[PathBuf],
+    output: &Path,
+    filter: OwnerKindFilter,
+) -> eyre::Result<()> {
+    let sources = load_tex_art_ec_sources(source_dirs)?;
+    let package_membership = EcPackageMembership::load(source_dirs)?;
+    let mut writer = WriterBuilder::new().from_path(output)?;
+    writer.write_record([
+        "owner_id",
+        "shader_name",
+        "source_path_normalized",
+        "inferred_physical_package",
+        "inferred_logical_family",
+        "direct_reference_confidence",
+    ])?;
+
+    let mut row_count = 0u64;
+
+    match filter {
+        OwnerKindFilter::TileArt => {
+            let mut art_ids = sources
+                .art_definition
+                .definitions
+                .keys()
+                .copied()
+                .collect::<Vec<_>>();
+            art_ids.sort_unstable();
+
+            for art_id in art_ids {
+                let Some(art_data) = sources.art_definition.definitions.get(&art_id) else {
+                    continue;
+                };
+                for item in art_data.texture_items.iter().flatten() {
+                    let normalized_path = uocf::utils::path::normalize_dictionary_path(&item.path);
+                    let package = physical_package_guess(
+                        &normalized_path,
+                        Some(item.id),
+                        &package_membership,
+                    );
+                    let family = tileart_texture_family_name(item.texture_type);
+                    writer.write_record([
+                        &art_data.id.to_string(),
+                        "",
+                        &normalized_path,
+                        package,
+                        family,
+                        "direct-textual",
+                    ])?;
+                    row_count += 1;
+                }
+            }
+        }
+        OwnerKindFilter::TerrainDefinition => {
+            for entry in &sources.terrain_definition.entries {
+                let Some(texture) = entry.texture.as_ref() else {
+                    continue;
+                };
+                let shader_name = texture.shader_name.as_deref().unwrap_or("");
+                for layer in &texture.layers {
+                    let raw_path = layer.path.as_deref().unwrap_or("");
+                    let normalized_path =
+                        uocf::utils::path::normalize_dictionary_path(raw_path);
+                    let package = physical_package_guess(
+                        &normalized_path,
+                        layer.texture_id,
+                        &package_membership,
+                    );
+                    let family =
+                        terrain_texture_family_name(layer.texture_type, package);
+                    writer.write_record([
+                        &entry.id.to_string(),
+                        shader_name,
+                        &normalized_path,
+                        package,
+                        family,
+                        "direct-textual",
+                    ])?;
+                    row_count += 1;
+                }
+            }
+        }
+    }
+
+    writer.flush()?;
+
+    let label = match filter {
+        OwnerKindFilter::TileArt => "tileart",
+        OwnerKindFilter::TerrainDefinition => "terrain_definition",
+    };
+    info!(
+        "wrote {row_count} {label} owner-reference rows to '{}'",
+        output.display()
+    );
+
+    Ok(())
+}
+
+// endregion: --- Owner-reference filtered audit outputs

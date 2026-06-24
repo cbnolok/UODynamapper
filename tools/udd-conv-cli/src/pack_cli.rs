@@ -8,8 +8,9 @@ use log::info;
 use crate::ec_material_audit::{
     audit_ec_material_refs, audit_ec_surface_redirection, audit_ec_terrain_definition_kdl,
     audit_ec_terrain_overrides, audit_ec_terrain_primary_selection, inventory_ec_support_textures,
-    write_ec_effect_meta_manifest, write_ec_material_baseline_report,
+    write_ec_abnormality_report, write_ec_effect_meta_manifest, write_ec_material_baseline_report,
     write_ec_terrain_override_candidates, write_ec_terrain_practical_review,
+    write_terrain_definition_owner_audit, write_tileart_owner_audit,
 };
 use crate::upscale_profile_config::load_upscale_profile;
 use clap::{ArgGroup, Args, Parser, Subcommand};
@@ -1129,6 +1130,32 @@ enum Commands {
         #[arg(long, default_value = "ec_effect_meta_manifest.json")]
         output: PathBuf,
     },
+    /// Writes a CSV abnormality report for EC item tile base-texture selections, plus a markdown summary.
+    #[command(name = "write-ec-abnormality-report")]
+    WriteEcAbnormalityReport {
+        #[command(flatten)]
+        source_dirs: SourceDirArgs,
+        #[arg(long)]
+        tilemeta: PathBuf,
+        #[arg(long, default_value = "ec_abnormality_report.csv")]
+        output: PathBuf,
+    },
+    /// Writes a filtered CSV of tileart owner references (owner_kind=tileart subset of the Phase 0 census).
+    #[command(name = "write-tileart-owner-audit")]
+    WriteTileartOwnerAudit {
+        #[command(flatten)]
+        source_dirs: SourceDirArgs,
+        #[arg(long, default_value = "tileart_owner_audit.csv")]
+        output: PathBuf,
+    },
+    /// Writes a filtered CSV of TerrainDefinition owner references (owner_kind=terrain_definition subset of the Phase 0 census).
+    #[command(name = "write-terrain-definition-owner-audit")]
+    WriteTerrainDefinitionOwnerAudit {
+        #[command(flatten)]
+        source_dirs: SourceDirArgs,
+        #[arg(long, default_value = "terrain_definition_owner_audit.csv")]
+        output: PathBuf,
+    },
     /// Packs non-base auxiliary EC texture refs from tilemeta.uddp into ec_tex_aux.uddp.
     #[command(name = "pack-ec-tex-aux")]
     PackEcTexAux {
@@ -1949,6 +1976,31 @@ where
             let paths = collect_ec_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
             write_ec_effect_meta_manifest(&paths, &out_file)?;
+        }
+        Commands::WriteEcAbnormalityReport {
+            source_dirs: source_dir_args,
+            tilemeta,
+            output,
+        } => {
+            let paths = collect_ec_source_dirs(&source_dir_args)?;
+            let out_file = resolve_output_path(&paths, &output);
+            write_ec_abnormality_report(&paths, &tilemeta, &out_file)?;
+        }
+        Commands::WriteTileartOwnerAudit {
+            source_dirs: source_dir_args,
+            output,
+        } => {
+            let paths = collect_ec_source_dirs(&source_dir_args)?;
+            let out_file = resolve_output_path(&paths, &output);
+            write_tileart_owner_audit(&paths, &out_file)?;
+        }
+        Commands::WriteTerrainDefinitionOwnerAudit {
+            source_dirs: source_dir_args,
+            output,
+        } => {
+            let paths = collect_ec_source_dirs(&source_dir_args)?;
+            let out_file = resolve_output_path(&paths, &output);
+            write_terrain_definition_owner_audit(&paths, &out_file)?;
         }
         Commands::PackEcTexAux {
             source_dirs: source_dir_args,

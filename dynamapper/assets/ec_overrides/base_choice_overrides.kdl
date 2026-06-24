@@ -1,0 +1,6 @@
+// EC material base-choice overrides.
+// Each entry overrides the automatic base-texture selection for one art tile.
+// Format:
+//   art <tile_id> base-texture=<texture_id> reason="<human note>"
+// Example:
+//   art 4321 base-texture=5678 reason="primary-selected ref is a mask, not the visible base"

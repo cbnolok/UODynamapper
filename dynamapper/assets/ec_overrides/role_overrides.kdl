@@ -1,0 +1,5 @@
+// EC material role overrides.
+// Format:
+//   texture <texture_id> stable-role=<role> speculative-role=<role> reason="<note>"
+// Example:
+//   texture 9012 stable-role="NormalLike" reason="name contains 'normal', confirmed in EffectTexture inventory"
