@@ -1882,9 +1882,24 @@ fn emit_static_render_tile(
         world_x: render_tile.world_x,
         world_z: render_tile.world_z,
         depth_class: resolve_static_depth_class(tilemeta),
-        is_wet_flags: tilemeta.map_or(0, |meta| {
-            if meta.flags & TILE_FLAG_WET != 0 { 1 } else { 0 }
-        }),
+        is_wet_flags: {
+            let classic_wet = tilemeta.map_or(false, |meta| meta.flags & TILE_FLAG_WET != 0);
+            let ec_wet = tilemeta_package.map_or(false, |pkg| {
+                pkg.item_texture_refs(render_tile.graphic as u32).iter().any(|r| {
+                    use udd_assets::tilemeta::EcMaterialSpeculativeRole;
+                    matches!(
+                        r.speculative_role(),
+                        EcMaterialSpeculativeRole::LiquidRipple
+                            | EcMaterialSpeculativeRole::LiquidReflectionSupport
+                            | EcMaterialSpeculativeRole::LiquidEnvProbe
+                            | EcMaterialSpeculativeRole::FoamHighlight
+                            | EcMaterialSpeculativeRole::WaterfallSupport
+                            | EcMaterialSpeculativeRole::LavaBubbleSupport
+                    )
+                })
+            });
+            u32::from(classic_wet || ec_wet)
+        },
         base_world_y: (render_tile.z as f32) * frame.height_scale,
     };
 

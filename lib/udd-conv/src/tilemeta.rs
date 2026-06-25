@@ -600,7 +600,9 @@ fn build_tilemeta_tables_from_resolved_paths(
                     physical_package: physical_package_for_tileart_texture_type(item.texture_type)
                         as u8,
                     stable_role: stable_role_for_tileart_texture_ref(item, flags) as u8,
-                    speculative_role: EcMaterialSpeculativeRole::UnknownSupport as u8,
+                    speculative_role: speculative_role_from_normalized_path(
+                        item.normalized_path.as_deref(),
+                    ) as u8,
                     unk6: item.unk6,
                     unk7: item.unk7,
                     // TODO Phase 5: populate raw_path and normalized_path sidecar fields
@@ -637,6 +639,40 @@ fn build_tilemeta_tables_from_resolved_paths(
             adjusted_ec_item_count,
         },
     })
+}
+
+fn speculative_role_from_normalized_path(path: Option<&str>) -> EcMaterialSpeculativeRole {
+    let Some(p) = path else {
+        return EcMaterialSpeculativeRole::UnknownSupport;
+    };
+    if p.contains("waterfall") {
+        return EcMaterialSpeculativeRole::WaterfallSupport;
+    }
+    if p.contains("ripple") || p.contains("wave") || p.contains("liquid") {
+        return EcMaterialSpeculativeRole::LiquidRipple;
+    }
+    if p.contains("foam") || p.contains("highlight") {
+        return EcMaterialSpeculativeRole::FoamHighlight;
+    }
+    if p.contains("lava") || p.contains("magma") || p.contains("bubble") {
+        return EcMaterialSpeculativeRole::LavaBubbleSupport;
+    }
+    if p.contains("flowmap") || p.contains("flow_map") {
+        return EcMaterialSpeculativeRole::FlowMapLike;
+    }
+    if p.contains("refract") || p.contains("distort") {
+        return EcMaterialSpeculativeRole::RefractionDistortionLike;
+    }
+    if p.contains("envprobe") || p.contains("reflect") {
+        return EcMaterialSpeculativeRole::LiquidEnvProbe;
+    }
+    if p.contains("postblend") || p.contains("post_blend") {
+        return EcMaterialSpeculativeRole::PostBlendSupport;
+    }
+    if p.contains("water") || p.contains("splash") || p.contains("wet") {
+        return EcMaterialSpeculativeRole::LiquidReflectionSupport;
+    }
+    EcMaterialSpeculativeRole::UnknownSupport
 }
 
 /// Maps `EcLogicalFamily` (from `uocf::ec_material_axes`) to the numeric discriminant
