@@ -136,6 +136,85 @@ impl EcMaterialSpeculativeRole {
     }
 }
 
+/// Implementation readiness of a preserved EC texture reference.
+///
+/// Computed from `stable_role` and `speculative_role`; never stored as a separate
+/// binary field.  Classifies every preserved ref by which future rendering feature
+/// family it is meant to serve so later agents can consume or ignore refs without
+/// repeating role archaeology.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum EcMaterialImplementationReadiness {
+    /// Role derivation was inconclusive.
+    #[default]
+    Unknown,
+    /// Already selected or eligible as the visible base.  Stable role: `Base`.
+    BaseSafe,
+    /// Candidate for two-base + alpha-mask authored blend (Phase 10D).
+    /// Stable roles: `SecondaryBase`, `AlphaMask`, `Detail`, `Overlay`.
+    BlendReady,
+    /// Candidate for liquid-base + ripple/normal-like perturbation (Phase 10E/10F).
+    /// Speculative roles: `LiquidRipple`, `LiquidReflectionSupport`, `LiquidEnvProbe`
+    /// on any stable role, or `NormalLike` with a liquid speculative role.
+    LiquidReady,
+    /// Normal-map-like candidate not yet consumable by any implemented pass.
+    /// Stable role: `NormalLike` without a liquid speculative role.
+    NormalLikeExperimental,
+    /// Requires a dedicated extra render pass not yet implemented.
+    /// Speculative roles: `FoamHighlight`, `WaterfallSupport`, `LavaBubbleSupport`,
+    /// `RefractionDistortionLike`, `FlowMapLike`, `PostBlendSupport`.
+    /// Also: `EffectOnlyMetadata` stable role.
+    ExtraPassOnly,
+}
+
+impl EcMaterialImplementationReadiness {
+    /// Derive readiness from an already-resolved stable and speculative role pair.
+    pub fn from_roles(stable: EcMaterialStableRole, speculative: EcMaterialSpeculativeRole) -> Self {
+        use EcMaterialImplementationReadiness::*;
+        use EcMaterialSpeculativeRole as Spec;
+        use EcMaterialStableRole as Stable;
+
+        match stable {
+            Stable::Base => BaseSafe,
+            Stable::SecondaryBase | Stable::AlphaMask | Stable::Detail | Stable::Overlay => {
+                BlendReady
+            }
+            Stable::NormalLike => match speculative {
+                Spec::LiquidRipple | Spec::LiquidReflectionSupport | Spec::LiquidEnvProbe => {
+                    LiquidReady
+                }
+                _ => NormalLikeExperimental,
+            },
+            Stable::ImageSupport
+            | Stable::GenericMask
+            | Stable::Noise
+            | Stable::UnknownSupport => match speculative {
+                Spec::LiquidRipple | Spec::LiquidReflectionSupport | Spec::LiquidEnvProbe => {
+                    LiquidReady
+                }
+                Spec::FoamHighlight
+                | Spec::WaterfallSupport
+                | Spec::LavaBubbleSupport
+                | Spec::RefractionDistortionLike
+                | Spec::FlowMapLike
+                | Spec::PostBlendSupport => ExtraPassOnly,
+                Spec::UnknownSupport => Unknown,
+            },
+            Stable::EffectOnlyMetadata => ExtraPassOnly,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Unknown => "unknown",
+            Self::BaseSafe => "base_safe",
+            Self::BlendReady => "blend_ready",
+            Self::LiquidReady => "liquid_ready",
+            Self::NormalLikeExperimental => "normal_like_experimental",
+            Self::ExtraPassOnly => "extra_pass_only",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TileMetaMainEcTextureReason {
     RoleBaseExactTileId,
@@ -341,6 +420,15 @@ impl TileMetaItemTextureRef {
 
     pub fn speculative_role(&self) -> EcMaterialSpeculativeRole {
         EcMaterialSpeculativeRole::from_u8(self.speculative_role)
+    }
+
+    /// Compute the implementation readiness class from the stored role fields.
+    ///
+    /// Readiness is not stored as a separate binary field; it is always derived fresh
+    /// from `stable_role` and `speculative_role` so it reflects the current derivation
+    /// logic without requiring a format version bump.
+    pub fn implementation_readiness(&self) -> EcMaterialImplementationReadiness {
+        EcMaterialImplementationReadiness::from_roles(self.stable_role(), self.speculative_role())
     }
 }
 
@@ -1006,5 +1094,87 @@ mod tests {
         assert_eq!(id, 777);
         assert_eq!(reason, MainEcTextureRoleReason::FallbackLegacyEcTextureId);
         assert!(reason.is_low_confidence());
+    }
+
+    // --- Implementation readiness tests (Phase 12) ---
+
+    fn ref_with_roles(
+        stable: EcMaterialStableRole,
+        speculative: EcMaterialSpeculativeRole,
+    ) -> TileMetaItemTextureRef {
+        TileMetaItemTextureRef {
+            texture_id: 1,
+            stable_role: stable as u8,
+            speculative_role: speculative as u8,
+            ..TileMetaItemTextureRef::zeroed()
+        }
+    }
+
+    #[test]
+    fn blend_ready_secondary_base_preserved() {
+        let r = ref_with_roles(
+            EcMaterialStableRole::SecondaryBase,
+            EcMaterialSpeculativeRole::UnknownSupport,
+        );
+        assert_eq!(
+            r.implementation_readiness(),
+            EcMaterialImplementationReadiness::BlendReady
+        );
+    }
+
+    #[test]
+    fn liquid_ready_ripple_preserved() {
+        let r = ref_with_roles(
+            EcMaterialStableRole::ImageSupport,
+            EcMaterialSpeculativeRole::LiquidRipple,
+        );
+        assert_eq!(
+            r.implementation_readiness(),
+            EcMaterialImplementationReadiness::LiquidReady
+        );
+    }
+
+    #[test]
+    fn normal_like_distinguished_from_liquid_ready() {
+        let r = ref_with_roles(
+            EcMaterialStableRole::NormalLike,
+            EcMaterialSpeculativeRole::UnknownSupport,
+        );
+        assert_eq!(
+            r.implementation_readiness(),
+            EcMaterialImplementationReadiness::NormalLikeExperimental
+        );
+        // NormalLike + liquid speculative → LiquidReady, not NormalLikeExperimental.
+        let r2 = ref_with_roles(
+            EcMaterialStableRole::NormalLike,
+            EcMaterialSpeculativeRole::LiquidEnvProbe,
+        );
+        assert_eq!(
+            r2.implementation_readiness(),
+            EcMaterialImplementationReadiness::LiquidReady
+        );
+    }
+
+    #[test]
+    fn extra_pass_foam_preserved() {
+        let r = ref_with_roles(
+            EcMaterialStableRole::ImageSupport,
+            EcMaterialSpeculativeRole::FoamHighlight,
+        );
+        assert_eq!(
+            r.implementation_readiness(),
+            EcMaterialImplementationReadiness::ExtraPassOnly
+        );
+    }
+
+    #[test]
+    fn readiness_visible_from_ref_method_and_as_str() {
+        let r = ref_with_roles(
+            EcMaterialStableRole::Base,
+            EcMaterialSpeculativeRole::UnknownSupport,
+        );
+        let readiness = r.implementation_readiness();
+        assert_eq!(readiness, EcMaterialImplementationReadiness::BaseSafe);
+        assert_eq!(readiness.as_str(), "base_safe");
     }
 }

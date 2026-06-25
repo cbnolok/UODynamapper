@@ -339,12 +339,13 @@ fn print_tilemeta_texture_refs(texture_refs: &[TileMetaItemTextureRef]) {
     println!("  tilemeta.texture_refs.count={}", texture_refs.len());
     for (index, texture_ref) in texture_refs.iter().enumerate() {
         println!(
-            "    ref[{index}] id={} family={:?} package={:?} stable_role={:?} speculative_role={:?} block={} item={} aux={} primary={} stretch={} unk4={} unk6={} unk7={}",
+            "    ref[{index}] id={} family={:?} package={:?} stable_role={:?} speculative_role={:?} readiness={} block={} item={} aux={} primary={} stretch={} unk4={} unk6={} unk7={}",
             texture_ref.texture_id,
             texture_ref.logical_family(),
             texture_ref.physical_package(),
             texture_ref.stable_role(),
             texture_ref.speculative_role(),
+            texture_ref.implementation_readiness().as_str(),
             texture_ref.block_index,
             texture_ref.item_index,
             texture_ref.is_auxiliary(),
