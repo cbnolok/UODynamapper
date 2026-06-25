@@ -1,0 +1,118 @@
+# EC content-family regression fixtures
+#
+# Purpose: track representative tile IDs for each visual target family so
+# future changes can be validated against known-meaningful content, not only
+# isolated micro-tests.
+#
+# Format rules:
+# - land_ids: terrain (land tile) IDs — loaded from TerrainDefinition.uop
+# - art_ids:  static/art tile IDs   — loaded from tileart.uop
+# - notes:    human-readable context for this family
+#
+# Source: IDs derived from the Phase 0 owner-reference census in
+# docs/agent_notes/ec_material_audit/ec_material_owner_refs.csv.
+# Exact visual correctness must be verified against EC screenshots; ID
+# membership in a family is based on path evidence, not visual confirmation.
+#
+# Validation use:
+# - Run inspect_ec_tile_surface_signals over art_ids to verify stable_role,
+#   speculative_role, readiness, and routing are consistent.
+# - Run inspect_ec_tile_terrain_candidates over land_ids to verify
+#   primary-layer selection and material metadata.
+# - Screenshot comparisons should target each [[family]] section independently
+#   so regressions are locatable by family rather than only by id.
+
+[[family]]
+name = "marsh_and_swamp_water"
+notes = """
+Liquid terrain tiles (UOWaterTerrainLayer shader family). Terrain IDs 5 and 8
+appear in the lava-and-liquid audit bucket; 70 is a swamp-adjacent water variant.
+Art IDs 4651 is a Liquid TileType entry with a known ripple ref (stretch=16)
+and a blood-like base (tga path 00004651_blood.tga) — anomalous liquid/blood
+overlap that should remain inspectable.
+"""
+land_ids = [5, 8, 70]
+art_ids  = [4651]
+
+[[family]]
+name = "lava_fields"
+notes = """
+Terrain lava material: terrain ID 10 is the primary lava material with
+lava_a, lava_b, and lava_normal refs.  IDs 49, 168, 169, 193, 194 are
+secondary lava or near-lava variants.  Art IDs 10980–10987 are lava-bubble
+statics (Liquid TileType); 11070–11090 carry multi-ref lava stacks with
+speculative roles LavaBubbleSupport and NormalLike-lava.
+"""
+land_ids = [10, 49, 168, 169, 193, 194]
+art_ids  = [10980, 10981, 10982, 10983, 10984, 10985, 10986, 10987,
+            11070, 11072, 11074, 11076, 11077, 11079, 11080]
+
+[[family]]
+name = "snow_and_waterfall"
+notes = """
+Terrain IDs 61–67 are snow material variants. ID 8 appears in both the
+water and snow/waterfall buckets from the census — multi-role terrain that
+needs explicit override review. Art IDs 10092, 13550–13576 include snow
+and waterfall statics with WaterfallSupport speculative roles.
+"""
+land_ids = [8, 61, 62, 63, 64, 65, 66, 67]
+art_ids  = [10092, 13550, 13551, 13556, 13559, 13562, 13568,
+            13574, 13575, 13576]
+
+[[family]]
+name = "marble_and_polished_floors"
+notes = """
+Solid-terrain-like tileart entries (TileType::Solid) with marble path
+keywords. IDs 1080–1089 are the core marble floor cluster identified from
+path evidence. These should carry stable_role=Base and implementation_readiness
+=BaseSafe; secondary refs may carry BlendReady.
+"""
+land_ids = []
+art_ids  = [1080, 1081, 1082, 1083, 1084, 1085, 1086, 1087, 1088, 1089]
+
+[[family]]
+name = "cave_floors_and_stone"
+notes = """
+Solid or Impassable static floor entries typical of dungeon cave surfaces.
+IDs 1035–1054 and 1169–1180 were found in the solid-terrain scan with stone/
+cave-adjacent path names. Inspect for correct stable_role and surface-like
+routing (SurfaceLike visual kind).
+"""
+land_ids = []
+art_ids  = [1035, 1036, 1037, 1038, 1039, 1040, 1041, 1042, 1043, 1044,
+            1045, 1046, 1047, 1048, 1049, 1050, 1169, 1170, 1171, 1172]
+
+[[family]]
+name = "blood_stains"
+notes = """
+Liquid TileType art entries with blood-like path tokens. Art IDs 3616, 11702,
+16503, 22306–22309 are the core blood-stain cluster from the census. 4651 also
+carries a blood tga, overlapping with the marsh_water family. These should test
+that liquid entries with an actual base image are NOT excluded from packing
+(Phase 7 liquid-base-retention).
+"""
+land_ids = []
+art_ids  = [3616, 4651, 11702, 16503, 22306, 22307, 22308, 22309, 22316, 22344]
+
+[[family]]
+name = "roads_and_plazas"
+notes = """
+Repeating surface materials used for roads, cobblestones, and plaza tiles.
+IDs 1169–1180 overlap with the cave-floor family by numeric range but include
+road/cobble keyword paths. Inspect for texture_stretch values > 1.0 (multi-tile
+repetition) and for correct world-space UV derivation in the renderer.
+"""
+land_ids = []
+art_ids  = [1169, 1170, 1171, 1172, 1173, 1174, 1175, 1176, 1179, 1180]
+
+[[family]]
+name = "grass_to_sand_transitions"
+notes = """
+Terrain transition tiles with AlphaMask-role refs (Phase 10D blend target).
+IDs to be filled from a targeted terrain census once the TerrainDefinition
+blend-layer audit is complete. Placeholder IDs are approximate; correct
+values depend on a map-coordinate cross-reference with visual screenshots.
+"""
+land_ids = []
+art_ids  = []
+# TODO: populate from targeted audit once blend-layer census is run.

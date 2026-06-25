@@ -10,8 +10,11 @@ use bytemuck::Zeroable;
 
 use udd_assets::{
     tilemeta::{
-        TileMetaItemTile, TileMetaLandTile, TileMetaItemVisualKind,
-        TILEMETA_LAND_ENTRY_PATH, TILEMETA_ITEM_ENTRY_PATH,
+        EcMaterialImplementationReadiness, EcMaterialLogicalFamily, EcMaterialPhysicalPackage,
+        EcMaterialSpeculativeRole, EcMaterialStableRole, TileMetaItemTextureRef,
+        TileMetaItemTextureRefSpan, TileMetaItemTile, TileMetaItemVisualKind, TileMetaLandTile,
+        TILEMETA_ITEM_ENTRY_PATH, TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH,
+        TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH, TILEMETA_LAND_ENTRY_PATH,
     },
     tex_art_ec::TexArtEcCropAdjustment,
     TileMetaPackage,
@@ -189,5 +192,132 @@ fn classify_item_visual_kind_keeps_static_entries_as_regular_art() {
     assert_eq!(
         classify_item_visual_kind(172, Some(&art_data)),
         TileMetaItemVisualKind::RegularArt,
+    );
+}
+
+/// Sidecar integrity: TileMetaItemTextureRef records with populated role,
+/// physical-package, and logical-family fields must survive a UDDP write/read
+/// round-trip without losing any metadata axis.
+///
+/// This is the Phase 13 sidecar-integrity acceptance test.  It exercises the
+/// full binary format path:
+///   Vec<TileMetaItemTextureRef> → bytemuck::cast_slice → UDDP entry →
+///   TileMetaPackage::from_uddp_package → item_texture_refs(tile_id)
+#[test]
+fn tilemeta_texture_refs_roundtrip_preserves_role_fields() {
+    // Two refs for tile 42 — one Base (blend-ready candidate) and one
+    // ImageSupport + LiquidRipple (liquid-ready candidate).
+    let ref_base = TileMetaItemTextureRef {
+        texture_id: 1000,
+        texture_type: EcMaterialLogicalFamily::WorldArt as u8,
+        physical_package: EcMaterialPhysicalPackage::Texture as u8,
+        stable_role: EcMaterialStableRole::Base as u8,
+        speculative_role: EcMaterialSpeculativeRole::UnknownSupport as u8,
+        texture_stretch: 4.0,
+        ..TileMetaItemTextureRef::zeroed()
+    };
+    let ref_ripple = TileMetaItemTextureRef {
+        texture_id: 1000020,
+        texture_type: EcMaterialLogicalFamily::Textures as u8,
+        physical_package: EcMaterialPhysicalPackage::TerrainTexture as u8,
+        stable_role: EcMaterialStableRole::ImageSupport as u8,
+        speculative_role: EcMaterialSpeculativeRole::LiquidRipple as u8,
+        texture_stretch: 16.0,
+        ..TileMetaItemTextureRef::zeroed()
+    };
+    let refs = vec![ref_base, ref_ripple];
+
+    // The span table is indexed by tile_id, so it must have at least tile_id+1
+    // entries.  Entries for tiles without refs stay zeroed (len=0).
+    let mut spans = vec![TileMetaItemTextureRefSpan::zeroed(); 43];
+    spans[42] = TileMetaItemTextureRefSpan {
+        start: 0,
+        len: 2,
+        _pad: 0,
+    };
+
+    // Build a minimal item tile so tile 42 has an entry (span lookup is by
+    // tile_id, which indexes into item_tiles by position).
+    let mut item_tiles = vec![TileMetaItemTile::zeroed(); 43];
+    item_tiles[42].tile_id = 42;
+
+    let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
+    package
+        .add_file(AddFileRequest {
+            data_type: DataType::Metadata as u8,
+            compression: CompressionFlag::ZstdNoDict,
+            width: 0,
+            height: 0,
+            virtual_path: Some(TILEMETA_LAND_ENTRY_PATH),
+            path_hash64: None,
+            id: None,
+            data: &[],
+        })
+        .expect("add empty land");
+    package
+        .add_file(AddFileRequest {
+            data_type: DataType::Metadata as u8,
+            compression: CompressionFlag::ZstdNoDict,
+            width: 0,
+            height: 0,
+            virtual_path: Some(TILEMETA_ITEM_ENTRY_PATH),
+            path_hash64: None,
+            id: None,
+            data: bytemuck::cast_slice(&item_tiles),
+        })
+        .expect("add item tiles");
+    package
+        .add_file(AddFileRequest {
+            data_type: DataType::Metadata as u8,
+            compression: CompressionFlag::ZstdNoDict,
+            width: 0,
+            height: 0,
+            virtual_path: Some(TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH),
+            path_hash64: None,
+            id: None,
+            data: bytemuck::cast_slice(&spans),
+        })
+        .expect("add ref spans");
+    package
+        .add_file(AddFileRequest {
+            data_type: DataType::Metadata as u8,
+            compression: CompressionFlag::ZstdNoDict,
+            width: 0,
+            height: 0,
+            virtual_path: Some(TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH),
+            path_hash64: None,
+            id: None,
+            data: bytemuck::cast_slice(&refs),
+        })
+        .expect("add texture refs");
+
+    let reader = UddpReader::open(package.build().expect("build")).expect("open");
+    let tilemeta = TileMetaPackage::from_uddp_package(reader).expect("load tilemeta");
+
+    let loaded = tilemeta.item_texture_refs(42);
+    assert_eq!(loaded.len(), 2, "both refs must survive the round-trip");
+
+    // Base ref — role axes
+    assert_eq!(loaded[0].texture_id, 1000);
+    assert_eq!(loaded[0].logical_family(), EcMaterialLogicalFamily::WorldArt);
+    assert_eq!(loaded[0].physical_package(), EcMaterialPhysicalPackage::Texture);
+    assert_eq!(loaded[0].stable_role(), EcMaterialStableRole::Base);
+    assert_eq!(loaded[0].speculative_role(), EcMaterialSpeculativeRole::UnknownSupport);
+    assert!((loaded[0].texture_stretch - 4.0).abs() < f32::EPSILON);
+    assert_eq!(
+        loaded[0].implementation_readiness(),
+        EcMaterialImplementationReadiness::BaseSafe,
+    );
+
+    // Ripple ref — role axes and readiness
+    assert_eq!(loaded[1].texture_id, 1000020);
+    assert_eq!(loaded[1].logical_family(), EcMaterialLogicalFamily::Textures);
+    assert_eq!(loaded[1].physical_package(), EcMaterialPhysicalPackage::TerrainTexture);
+    assert_eq!(loaded[1].stable_role(), EcMaterialStableRole::ImageSupport);
+    assert_eq!(loaded[1].speculative_role(), EcMaterialSpeculativeRole::LiquidRipple);
+    assert!((loaded[1].texture_stretch - 16.0).abs() < f32::EPSILON);
+    assert_eq!(
+        loaded[1].implementation_readiness(),
+        EcMaterialImplementationReadiness::LiquidReady,
     );
 }

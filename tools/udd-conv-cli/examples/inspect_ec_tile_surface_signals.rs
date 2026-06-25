@@ -367,6 +367,14 @@ fn print_tilemeta_texture_refs(texture_refs: &[TileMetaItemTextureRef]) {
             "      ref[{index}].stable_role={:?}",
             texture_ref.stable_role()
         );
+        println!(
+            "      ref[{index}].speculative_role={:?}",
+            texture_ref.speculative_role()
+        );
+        println!(
+            "      ref[{index}].implementation_readiness={}",
+            texture_ref.implementation_readiness().as_str()
+        );
         // TODO Phase 6: raw_path and normalized_path are not yet stored in TileMetaItemTextureRef
         // (deferred from Phase 5 — POD format extension requires a parallel string sidecar table).
         println!("      ref[{index}].raw_path=TODO(Phase6)");
