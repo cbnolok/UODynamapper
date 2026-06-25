@@ -1898,6 +1898,11 @@ fn emit_static_render_tile(
                     )
                 })
             });
+            // TODO Phase 10G: FoamHighlight, WaterfallSupport, LavaBubbleSupport, and
+            // RefractionDistortionLike roles currently contribute to is_wet_flags (water
+            // animation) but deserve dedicated extra-pass rendering (additive post-lighting
+            // compositing for emissive/foam, screen-space copy for refraction).  The
+            // speculative_role data is already stored in TileMetaItemTextureRef.
             u32::from(classic_wet || ec_wet)
         },
         base_world_y: (render_tile.z as f32) * frame.height_scale,

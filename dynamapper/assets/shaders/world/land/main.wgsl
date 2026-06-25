@@ -707,6 +707,14 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     }
   }
 
+  // TODO Phase 10G — post-lighting extra-pass effects (not yet implemented):
+  // FoamHighlight, WaterfallSupport, LavaBubbleSupport, RefractionDistortionLike.
+  // These require either additive compositing after tone-mapping (to avoid highlight
+  // crush) or a screen-space texture copy before the transparent pass (refraction).
+  // Both cases need a custom Bevy render-graph node beyond the current single-pass
+  // ExtendedMaterial setup.  The speculative_role field in TileMetaItemTextureRef and
+  // the ec_tex_aux slots are already in place to drive them.
+
   // ---- Normals ----
   // We already computed in the vertex shader and passed in.world_normal.
   // For non-classic modes we can still override with bicubic if desired.
