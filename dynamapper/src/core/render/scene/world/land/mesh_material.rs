@@ -70,7 +70,7 @@ pub struct LandMaterialExtension {
     #[texture(112, visibility(fragment))]
     pub visual_grunge_texture: Handle<Image>,
 
-    /// Optional `ec_tex_aux` atlas: one layer per auxiliary texture slot.
+    /// Optional `tex_aux_ec` atlas: one layer per auxiliary texture slot.
     /// Layer 0 is a transparent sentinel (absent). Bound as a `texture_2d_array<f32>`.
     #[texture(113, dimension = "2d_array", visibility(fragment))]
     pub ec_aux_atlas: Handle<Image>,

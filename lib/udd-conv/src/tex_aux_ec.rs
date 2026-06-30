@@ -1,4 +1,4 @@
-//! Build-time packer for `ec_tex_aux.uddp`.
+//! Build-time packer for `tex_aux_ec.uddp`.
 //!
 //! Packs image-bearing auxiliary texture refs from tileart entries — those whose
 //! `EcMaterialStableRole` is not `Base` or `SecondaryBase` — into a UDDP keyed
@@ -31,7 +31,7 @@ use crate::source_paths::find_first_existing_file;
 
 /// Breakdown of how refs were classified during packing.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct EcTexAuxPackSummary {
+pub struct TexAuxEcPackSummary {
     /// Total `TileMetaItemTextureRef` rows considered.
     pub refs_considered: u64,
     /// Refs with a base role — excluded (those belong to tex_art_ec).
@@ -60,19 +60,19 @@ struct QualifiedRef {
 /// `physical_package` field on each `TileMetaItemTextureRef` to select the
 /// right UOP archive. Only refs with a decodable RGBA image and a non-base
 /// stable role are included.
-pub fn pack_ec_tex_aux(
+pub fn pack_tex_aux_ec(
     source_dirs: &[PathBuf],
     tilemeta_path: &Path,
     output: &Path,
-) -> eyre::Result<EcTexAuxPackSummary> {
+) -> eyre::Result<TexAuxEcPackSummary> {
     info!(
-        "Building ec_tex_aux.uddp from tilemeta '{}' -> '{}'",
+        "Building tex_aux_ec.uddp from tilemeta '{}' -> '{}'",
         tilemeta_path.display(),
         output.display()
     );
 
     let tilemeta = TileMetaPackage::load(tilemeta_path)
-        .wrap_err("load tilemeta for ec_tex_aux packing")?;
+        .wrap_err("load tilemeta for tex_aux_ec packing")?;
 
     // Open the source texture UOP archives once.
     let texture_uop_path = find_first_existing_file(source_dirs, &["Texture.uop"]);
@@ -97,7 +97,7 @@ pub fn pack_ec_tex_aux(
         .map(|p| Textures::new(p, None, None).wrap_err_with(|| format!("load {}", p.display())))
         .transpose()?;
 
-    let mut summary = EcTexAuxPackSummary::default();
+    let mut summary = TexAuxEcPackSummary::default();
 
     // Collect unique qualifying refs.
     // Deduplication is by texture_id — the same texture may appear for multiple
@@ -140,7 +140,7 @@ pub fn pack_ec_tex_aux(
     }
 
     info!(
-        "ec_tex_aux: {} refs considered, {} qualifying unique texture ids before decode",
+        "tex_aux_ec: {} refs considered, {} qualifying unique texture ids before decode",
         summary.refs_considered,
         qualifying_refs.len()
     );
@@ -214,7 +214,7 @@ pub fn pack_ec_tex_aux(
     image_entries.sort_by_key(|(tid, _, _, _)| *tid);
 
     info!(
-        "ec_tex_aux: {} included, {} excluded (base role: {}, no path: {}, decode error: {}, duplicates: {})",
+        "tex_aux_ec: {} included, {} excluded (base role: {}, no path: {}, decode error: {}, duplicates: {})",
         summary.included,
         summary.excluded_base_role
             + summary.excluded_no_path
@@ -257,7 +257,7 @@ pub fn pack_ec_tex_aux(
     build_and_write_package_with_progress(&mut package, output, &mut |_| {})?;
 
     info!(
-        "ec_tex_aux: wrote {} auxiliary texture slots to '{}'",
+        "tex_aux_ec: wrote {} auxiliary texture slots to '{}'",
         summary.included,
         output.display()
     );

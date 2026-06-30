@@ -1,4 +1,4 @@
-//! Runtime support for `ec_tex_aux.uddp`.
+//! Runtime support for `tex_aux_ec.uddp`.
 //!
 //! This package holds image-bearing support texture refs that belong to tileart
 //! entries but have a non-base stable role (ImageSupport, AlphaMask, Noise, etc.).
@@ -54,7 +54,7 @@ pub struct SlotInfo {
     pub stable_role: u8,
 }
 
-/// Runtime reader for `ec_tex_aux.uddp`.
+/// Runtime reader for `tex_aux_ec.uddp`.
 pub struct TexAuxEcPackage {
     package: UddpReader,
     slots: Vec<TexAuxEcSlotRecord>,
@@ -69,7 +69,7 @@ impl TexAuxEcPackage {
 
     pub fn from_uddp_package(package: UddpReader) -> eyre::Result<Self> {
         let slot_bytes = crate::common::read_path_entry_cow(&package, TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH)
-            .wrap_err("read ec_tex_aux slot manifest")?;
+            .wrap_err("read tex_aux_ec slot manifest")?;
         let slots = read_pod_vec(slot_bytes.as_ref(), TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH)?;
         Ok(Self { package, slots })
     }
@@ -99,7 +99,7 @@ impl TexAuxEcPackage {
         match self.package.read_file_by_path_hash(hash) {
             Ok(bytes) => Ok(Some(bytes)),
             Err(udd_container::uddp::FormatError::FileNotFound) => Ok(None),
-            Err(e) => Err(eyre::eyre!("load ec_tex_aux texture {texture_id}: {e}")),
+            Err(e) => Err(eyre::eyre!("load tex_aux_ec texture {texture_id}: {e}")),
         }
     }
 

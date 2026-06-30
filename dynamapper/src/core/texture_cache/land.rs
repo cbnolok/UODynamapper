@@ -48,7 +48,7 @@ struct LandPageAtlasImages {
     lookup: Handle<Image>,
 }
 
-/// GPU images for the `ec_tex_aux` two-base blend path.
+/// GPU images for the `tex_aux_ec` two-base blend path.
 ///
 /// `aux_atlas`: a `texture_2d_array<f32>` where layer 0 is a transparent sentinel
 /// (absent) and layers 1..N each hold the RGBA pixels of one aux slot.
@@ -222,7 +222,7 @@ fn create_blank_aux_atlas_images(images: &mut Assets<Image>) -> LandAuxAtlasImag
     }
 }
 
-/// Build the `ec_tex_aux` atlas and per-tile lookup texture from the auxiliary
+/// Build the `tex_aux_ec` atlas and per-tile lookup texture from the auxiliary
 /// texture package and terrain-layer sidecar.
 ///
 /// Returns blank images when either package is absent — the shader degrades to

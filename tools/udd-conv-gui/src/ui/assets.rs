@@ -169,6 +169,24 @@ impl UddConvApp {
             if stop_clicked { self.request_cancel_conversion(); }
             if let Some((target, filter)) = preview { self.open_upscale_preview(target, filter); }
 
+            let tex_aux_ec_progress = self.asset_pack_progress(AssetPackTask::TexAuxEc);
+            let (clicked, stop_clicked, _) = draw_asset_card(
+                ui,
+                "Enhanced Auxiliary Textures",
+                "Non-base auxiliary texture refs (support, alpha mask, noise) from tilemeta",
+                None,
+                &tex_aux_ec_progress,
+                !is_busy,
+                None,
+                None,
+                None,
+                None,
+                None,
+                vec![],
+            );
+            if clicked { self.convert_tex_aux_ec(); }
+            if stop_clicked { self.request_cancel_conversion(); }
+
             let mobile_anim_ec_progress = self.asset_pack_progress(AssetPackTask::MobileAnimEc);
             let (clicked, stop_clicked, _) = draw_asset_card(
                 ui,

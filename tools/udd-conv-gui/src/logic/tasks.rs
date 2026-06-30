@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use udd_conv::{
     classic_patches::ClassicPatchOptions,
+    tex_aux_ec::pack_tex_aux_ec,
     mobile_anim_cc::{
         convert_anim_mul_to_mobile_anim_cc_uddp_from_sources_with_progress,
         MobileAnimCcAtlasOptions,
@@ -712,6 +713,28 @@ impl UddConvApp {
                 summary.page_count,
                 summary.packed_frame_count,
                 summary.frame_count,
+                output.display()
+            ))
+        });
+    }
+
+    pub fn convert_tex_aux_ec(&self) {
+        let settings = self.settings.clone();
+        let tilemeta_path = self.get_input_uddp_path("tilemeta.uddp");
+        let output = self.get_output_path("tex_aux_ec.uddp");
+        self.spawn_asset_task(AssetPackTask::TexAuxEc, "EC Auxiliary Textures Packing".to_string(), move |progress| {
+            let sources = gather_ec_source_dirs(settings.ec_dir.as_ref());
+            if sources.is_empty() { eyre::bail!("No EC source dir configured"); }
+            if !tilemeta_path.exists() {
+                eyre::bail!("tilemeta.uddp not found in input UDDP directory. Pack Tilemeta first!");
+            }
+            ensure_output_parent(&output)?;
+            progress.set(AssetPackProgressState::Running, 0.1, "Packing auxiliary EC textures");
+            let summary = pack_tex_aux_ec(&sources, &tilemeta_path, &output)?;
+            Ok(format!(
+                "Packed {} auxiliary textures ({} refs considered) to {}",
+                summary.included,
+                summary.refs_considered,
                 output.display()
             ))
         });

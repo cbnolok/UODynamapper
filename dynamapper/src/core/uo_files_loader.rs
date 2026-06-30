@@ -380,7 +380,7 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         None
     };
 
-    let tex_aux_ec_path = resolve_optional_uddp_path(&udd_path, "ec_tex_aux.uddp");
+    let tex_aux_ec_path = resolve_optional_uddp_path(&udd_path, "tex_aux_ec.uddp");
     let tex_aux_ec_package = if let Some(tex_aux_ec_path) = tex_aux_ec_path {
         log_source_choice(
             &lg,
@@ -391,12 +391,12 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
         match udd_assets::tex_aux_ec::TexAuxEcPackage::load(&tex_aux_ec_path) {
             Ok(package) => Some(package),
             Err(e) => {
-                lg_err(&format!("Failed to load ec_tex_aux.uddp: {e}"));
+                lg_err(&format!("Failed to load tex_aux_ec.uddp: {e}"));
                 None
             }
         }
     } else {
-        lg("No EC auxiliary texture package found: ec_tex_aux.uddp not found in udd_path.");
+        lg("No EC auxiliary texture package found: tex_aux_ec.uddp not found in udd_path.");
         None
     };
 

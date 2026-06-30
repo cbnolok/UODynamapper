@@ -176,6 +176,7 @@ pub enum AssetPackTask {
     TexLandCc,
     TexArtEc,
     TexLandEc,
+    TexAuxEc,
     MobileAnimCc,
     MobileAnimEc,
     TileMeta,
