@@ -55,7 +55,19 @@ impl UddConvApp {
                         }
                         ui.end_row();
 
-                        ui.label("Dynamapper Routing Files:");
+                        ui.horizontal(|ui| {
+                            ui.label("Dynamapper Routing Files:");
+                            ui.label(egui::RichText::new("(?)").color(egui::Color32::from_rgb(100, 200, 255)))
+                                .on_hover_text(
+                                    "Directory containing KDL metadata files shipped with UODynamapper — \
+                                    not part of the UO client.\n\n\
+                                    Currently used to locate EcMobileAnimations.kdl for EC mobile animation \
+                                    packing. If not set, the packer automatically searches the EC source \
+                                    directory and common relative paths (cc_ec_convtables/, \
+                                    dynamapper/assets/cc_ec_convtables/), so this field is only needed \
+                                    when running the GUI from a directory where those paths are not reachable."
+                                );
+                        });
                         if ui.button("Select Folder...").clicked() {
                             if let Some(path) = pick_folder(
                                 "Select Dynamapper Routing Files Directory",
@@ -70,12 +82,15 @@ impl UddConvApp {
                         } else {
                             ui.colored_label(
                                 egui::Color32::YELLOW,
-                                "Not selected (uses source dirs or current working directory)",
+                                "Not selected (auto-discovered from source dirs or working directory)",
                             );
                         }
                         ui.end_row();
 
-                        ui.label("EC Mobile Animation KDL:");
+                        ui.horizontal(|ui| {
+                            ui.add_space(16.0);
+                            ui.label(egui::RichText::new("↳ EC Mobile Animation KDL:").weak());
+                        });
                         if ui.checkbox(
                             &mut self.settings.ec_mobile_anim_allow_missing_kdl,
                             "Allow conversion without EcMobileAnimations.kdl",
@@ -88,7 +103,18 @@ impl UddConvApp {
                         ui.label("");
                         ui.end_row();
 
-                        ui.label("Input UDDP Folder:");
+                        ui.horizontal(|ui| {
+                            ui.label("Input UDDP Folder:");
+                            ui.label(egui::RichText::new("(?)").color(egui::Color32::from_rgb(100, 200, 255)))
+                                .on_hover_text(
+                                    "Folder where already-built .uddp packages are read from as \
+                                    inputs to dependent conversions:\n\n\
+                                    • Radar map (facet0X.*) — reads tilemeta.uddp\n\
+                                    • EC Auxiliary Textures (tex_aux_ec.uddp) — reads tilemeta.uddp\n\n\
+                                    Typically the same folder as the Output UDDP Folder. \
+                                    Use 'Link to Output' to keep them in sync automatically."
+                                );
+                        });
                         ui.horizontal(|ui| {
                             if ui.button("Select Folder...").clicked() {
                                 if let Some(path) = pick_folder(
