@@ -2,12 +2,12 @@
 //!
 //! Packs image-bearing auxiliary texture refs from tileart entries — those whose
 //! `EcMaterialStableRole` is not `Base` or `SecondaryBase` — into a UDDP keyed
-//! by virtual path hash. Each payload is raw RGBA8888 pixels stored at the virtual
-//! path `textures/{texture_id:08x}`.
+//! by virtual path hash. Each payload is raw pixel bytes (RGBA8888 or BC7) stored
+//! at the virtual path `textures/{texture_id:08x}`.
 //!
 //! Package layout:
 //! - `metadata/slots.bin`: flat sorted array of `TexAuxEcSlotRecord`.
-//! - `textures/{texture_id:08x}`: RGBA8888 raw pixel bytes per `texture_id`.
+//! - `textures/{texture_id:08x}`: raw pixel bytes per `texture_id`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -17,6 +17,7 @@ use color_eyre::eyre::{self, WrapErr};
 use log::info;
 use rayon::prelude::*;
 
+use udd_assets::tex_art_cc::PagePixelFormat;
 use udd_assets::tex_aux_ec::{
     texture_entry_path, TexAuxEcSlotRecord, TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH,
 };
@@ -26,8 +27,43 @@ use udd_container::{
 };
 use uocf::enhanced::textures::Textures;
 
+use crate::bc7::{
+    encode_for_vram_with_bc7_rdo_and_stage_progress, preferred_bc7_encoder_backend,
+    ImageExtent, RawImageFormat, VramTextureEncoding,
+};
 use crate::package_progress::build_and_write_package_with_progress;
 use crate::source_paths::find_first_existing_file;
+use crate::upscale_pipeline::{apply_upscale_passes_owned, UpscalePass};
+use image_postprocess::upscaling::UpscaleFilter;
+
+/// Options controlling texture format and upscaling for `pack_tex_aux_ec`.
+pub struct TexAuxEcPackOptions {
+    /// Payload compression applied to each texture entry.
+    pub compression: CompressionFlag,
+    /// Pixel format for texture payloads.
+    pub pixel_format: PagePixelFormat,
+    /// BC7 RDO lambda (0.0 = no RDO). Only used when `pixel_format == Bc7`.
+    pub bc7_rdo_lambda: f32,
+    /// BC7 RDO lookback block count. Only used when `pixel_format == Bc7`.
+    pub bc7_rdo_lookback_blocks: usize,
+    /// Simple upscale filter applied before format encoding. `None` = no upscaling.
+    pub upscale: UpscaleFilter,
+    /// Explicit upscale pass chain. Takes precedence over `upscale` when non-empty.
+    pub upscale_passes: Vec<UpscalePass>,
+}
+
+impl Default for TexAuxEcPackOptions {
+    fn default() -> Self {
+        Self {
+            compression: CompressionFlag::ZstdNoDict,
+            pixel_format: PagePixelFormat::Rgba8888,
+            bc7_rdo_lambda: 0.0,
+            bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
+            upscale: UpscaleFilter::None,
+            upscale_passes: Vec::new(),
+        }
+    }
+}
 
 /// Breakdown of how refs were classified during packing.
 #[derive(Debug, Clone, Copy, Default)]
@@ -64,6 +100,7 @@ pub fn pack_tex_aux_ec(
     source_dirs: &[PathBuf],
     tilemeta_path: &Path,
     output: &Path,
+    options: &TexAuxEcPackOptions,
 ) -> eyre::Result<TexAuxEcPackSummary> {
     info!(
         "Building tex_aux_ec.uddp from tilemeta '{}' -> '{}'",
@@ -151,10 +188,19 @@ pub fn pack_tex_aux_ec(
         stable_role: u8,
         width: u32,
         height: u32,
-        rgba: Vec<u8>,
+        pixel_format: PagePixelFormat,
+        data: Vec<u8>,
     }
 
-    // Decode images in parallel.
+    let upscale_passes: Vec<UpscalePass> = if !options.upscale_passes.is_empty() {
+        options.upscale_passes.clone()
+    } else if options.upscale != UpscaleFilter::None {
+        vec![UpscalePass::from(options.upscale)]
+    } else {
+        Vec::new()
+    };
+
+    // Decode (and optionally upscale + BC7-encode) images in parallel.
     let decoded: Vec<Option<DecodedEntry>> = qualifying_refs
         .par_iter()
         .map(|q| {
@@ -178,19 +224,51 @@ pub fn pack_tex_aux_ec(
             };
             let width = rgba8.width();
             let height = rgba8.height();
+            let rgba = rgba8.into_raw();
+
+            let (width, height, rgba) = if !upscale_passes.is_empty() {
+                let (w, h, r, _, _) = apply_upscale_passes_owned(width, height, rgba, &upscale_passes);
+                (w, h, r)
+            } else {
+                (width, height, rgba)
+            };
+
+            let (pixel_format, data) = if options.pixel_format == PagePixelFormat::Bc7 {
+                let extent = match ImageExtent::new(width, height) {
+                    Ok(e) => e,
+                    Err(_) => return None,
+                };
+                let vram = match encode_for_vram_with_bc7_rdo_and_stage_progress(
+                    &rgba,
+                    extent,
+                    RawImageFormat::Rgba8888,
+                    VramTextureEncoding::Bc7(preferred_bc7_encoder_backend()),
+                    options.bc7_rdo_lambda,
+                    options.bc7_rdo_lookback_blocks,
+                    |_, _| {},
+                ) {
+                    Ok(v) => v,
+                    Err(_) => return None,
+                };
+                (PagePixelFormat::Bc7, vram.to_container_bytes())
+            } else {
+                (PagePixelFormat::Rgba8888, rgba)
+            };
+
             Some(DecodedEntry {
                 texture_id: q.texture_id,
                 logical_family: q.logical_family,
                 stable_role: q.stable_role,
                 width,
                 height,
-                rgba: rgba8.into_raw(),
+                pixel_format,
+                data,
             })
         })
         .collect();
 
     let mut slot_records: Vec<TexAuxEcSlotRecord> = Vec::new();
-    let mut image_entries: Vec<(u32, u32, u32, Vec<u8>)> = Vec::new(); // (texture_id, w, h, rgba)
+    let mut image_entries: Vec<(u32, u32, u32, PagePixelFormat, Vec<u8>)> = Vec::new();
 
     for opt in decoded {
         if let Some(entry) = opt {
@@ -201,9 +279,10 @@ pub fn pack_tex_aux_ec(
                 height: entry.height as u16,
                 logical_family: entry.logical_family,
                 stable_role: entry.stable_role,
+                pixel_format: entry.pixel_format as u8,
                 _pad: 0,
             });
-            image_entries.push((entry.texture_id, entry.width, entry.height, entry.rgba));
+            image_entries.push((entry.texture_id, entry.width, entry.height, entry.pixel_format, entry.data));
         } else {
             summary.excluded_decode_error += 1;
         }
@@ -211,7 +290,7 @@ pub fn pack_tex_aux_ec(
 
     // Sort by texture_id for binary-search at runtime.
     slot_records.sort_by_key(|slot| slot.texture_id);
-    image_entries.sort_by_key(|(tid, _, _, _)| *tid);
+    image_entries.sort_by_key(|(tid, _, _, _, _)| *tid);
 
     info!(
         "tex_aux_ec: {} included, {} excluded (base role: {}, no path: {}, decode error: {}, duplicates: {})",
@@ -240,17 +319,17 @@ pub fn pack_tex_aux_ec(
         data: slot_bytes,
     })?;
 
-    for (texture_id, width, height, rgba) in image_entries {
+    for (texture_id, width, height, _pixel_format, data) in image_entries {
         let vpath = texture_entry_path(texture_id);
         package.add_owned_file(AddOwnedFileRequest {
             data_type: DataType::Texture as u8,
-            compression: CompressionFlag::ZstdNoDict,
+            compression: options.compression,
             width,
             height,
             virtual_path: Some(vpath),
             path_hash64: None,
             id: None,
-            data: rgba,
+            data,
         })?;
     }
 

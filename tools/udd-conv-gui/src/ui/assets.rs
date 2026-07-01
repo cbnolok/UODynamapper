@@ -177,11 +177,15 @@ impl UddConvApp {
                 None,
                 &tex_aux_ec_progress,
                 !is_busy,
+                Some((&mut self.settings.zstd_tex_aux_ec, &mut self.settings.jxl_tex_aux_ec)),
                 None,
-                None,
-                None,
-                None,
-                None,
+                Some(&mut self.settings.opt_tex_aux_ec),
+                Some((
+                    &mut self.settings.bc7_rdo_enabled,
+                    &mut self.settings.bc7_rdo_lambda,
+                    &mut self.settings.bc7_rdo_lookback_blocks,
+                )),
+                Some((&mut self.settings.upscale_tex_aux_ec, None)),
                 vec![],
             );
             if clicked { self.convert_tex_aux_ec(); }

@@ -31,6 +31,8 @@ pub struct AppSettings {
     pub opt_mobile_anim_cc: TextureOptimization,
     #[serde(default = "default_mobile_anim_optimization")]
     pub opt_mobile_anim_ec: TextureOptimization,
+    #[serde(default = "default_tex_aux_ec_optimization")]
+    pub opt_tex_aux_ec: TextureOptimization,
     #[serde(default = "default_zstd_level")]
     pub zstd_tex_art_cc: i32,
     #[serde(default = "default_zstd_level")]
@@ -45,6 +47,8 @@ pub struct AppSettings {
     pub zstd_mobile_anim_cc: i32,
     #[serde(default = "default_zstd_level")]
     pub zstd_mobile_anim_ec: i32,
+    #[serde(default = "default_zstd_level")]
+    pub zstd_tex_aux_ec: i32,
     #[serde(default = "default_jxl_level")]
     pub jxl_tex_art_cc: u8,
     #[serde(default = "default_jxl_level")]
@@ -57,6 +61,8 @@ pub struct AppSettings {
     pub jxl_mobile_anim_cc: u8,
     #[serde(default = "default_jxl_level")]
     pub jxl_mobile_anim_ec: u8,
+    #[serde(default = "default_jxl_level")]
+    pub jxl_tex_aux_ec: u8,
     #[serde(default = "default_bc7_rdo_lambda")]
     pub bc7_rdo_lambda: f32,
     #[serde(default = "default_bc7_rdo_lookback_blocks")]
@@ -75,6 +81,8 @@ pub struct AppSettings {
     pub upscale_mobile_anim_cc: UpscaleFilter,
     #[serde(default)]
     pub upscale_mobile_anim_ec: UpscaleFilter,
+    #[serde(default)]
+    pub upscale_tex_aux_ec: UpscaleFilter,
     pub radar_format: RadarFormat,
     pub radar_zstd: i32,
     pub map_preferences: [CcMapSourcePreference; 6],
@@ -104,6 +112,7 @@ impl Default for AppSettings {
             opt_tex_land_ec: TextureOptimization::None,
             opt_mobile_anim_cc: default_mobile_anim_optimization(),
             opt_mobile_anim_ec: default_mobile_anim_optimization(),
+            opt_tex_aux_ec: TextureOptimization::None,
             zstd_tex_art_cc: default_zstd_level(),
             zstd_tex_land_cc: default_zstd_level(),
             zstd_tex_art_ec: default_zstd_level(),
@@ -111,12 +120,14 @@ impl Default for AppSettings {
             zstd_tilemeta: default_zstd_level(),
             zstd_mobile_anim_cc: default_zstd_level(),
             zstd_mobile_anim_ec: default_zstd_level(),
+            zstd_tex_aux_ec: default_zstd_level(),
             jxl_tex_art_cc: default_jxl_level(),
             jxl_tex_land_cc: default_jxl_level(),
             jxl_tex_art_ec: default_jxl_level(),
             jxl_tex_land_ec: default_jxl_level(),
             jxl_mobile_anim_cc: default_jxl_level(),
             jxl_mobile_anim_ec: default_jxl_level(),
+            jxl_tex_aux_ec: default_jxl_level(),
             bc7_rdo_lambda: default_bc7_rdo_lambda(),
             bc7_rdo_lookback_blocks: default_bc7_rdo_lookback_blocks(),
             bc7_rdo_enabled: default_bc7_rdo_enabled(),
@@ -130,6 +141,7 @@ impl Default for AppSettings {
             upscale_tex_land_ec_512: udd_conv::upscale::UpscaleConfig { target_size: 512, filter: UpscaleFilter::None },
             upscale_mobile_anim_cc: UpscaleFilter::None,
             upscale_mobile_anim_ec: UpscaleFilter::None,
+            upscale_tex_aux_ec: UpscaleFilter::None,
             radar_format: RadarFormat::Bc7,
             radar_zstd: 3,
             map_preferences: [CcMapSourcePreference::Mul; 6],
@@ -163,6 +175,10 @@ fn default_jxl_level() -> u8 {
 
 fn default_mobile_anim_optimization() -> TextureOptimization {
     TextureOptimization::Bc7
+}
+
+fn default_tex_aux_ec_optimization() -> TextureOptimization {
+    TextureOptimization::None
 }
 
 pub struct LogMessage {

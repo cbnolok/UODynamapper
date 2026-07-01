@@ -7,13 +7,14 @@
 //!
 //! Package layout:
 //! - `metadata/slots.bin`: flat array of `TexAuxEcSlotRecord`, sorted by `texture_id`.
-//! - `textures/{texture_id:08x}`: RGBA8888 raw pixel bytes per `texture_id`.
+//! - `textures/{texture_id:08x}`: raw pixel bytes per `texture_id` (format in slot record).
 //!   The virtual path is hashed for lookup in the UDDP path-hash index.
 
 use bytemuck::{Pod, Zeroable};
 use color_eyre::eyre::{self, WrapErr};
 use std::path::Path;
 use udd_container::{xxh64_virtual_path, UddpReader};
+use udd_image_codecs::bc7::{decode_from_vram, RawImageFormat, VramTextureData};
 
 use crate::common::read_pod_vec;
 
@@ -28,6 +29,9 @@ pub fn texture_entry_path(texture_id: u32) -> String {
 ///
 /// One record per packed auxiliary texture ref.
 /// Records are sorted by `texture_id` for runtime binary search.
+///
+/// The first padding byte carries `pixel_format` (0 = Rgba8888, 1 = Bc7).
+/// Old UDDP files with all-zero padding read as Rgba8888.
 #[repr(C, align(4))]
 #[derive(Debug, Clone, Copy, Default, Pod, Zeroable)]
 pub struct TexAuxEcSlotRecord {
@@ -41,7 +45,9 @@ pub struct TexAuxEcSlotRecord {
     pub logical_family: u8,
     /// Stable role byte (`EcMaterialStableRole as u8`).
     pub stable_role: u8,
-    pub _pad: u16,
+    /// Pixel format: 0 = Rgba8888 (backward compat, was _pad byte), 1 = Bc7.
+    pub pixel_format: u8,
+    pub _pad: u8,
 }
 
 /// Runtime handle for an auxiliary texture slot.
@@ -52,6 +58,7 @@ pub struct SlotInfo {
     pub height: u16,
     pub logical_family: u8,
     pub stable_role: u8,
+    pub pixel_format: u8,
 }
 
 /// Runtime reader for `tex_aux_ec.uddp`.
@@ -87,17 +94,34 @@ impl TexAuxEcPackage {
             height: slot.height,
             logical_family: slot.logical_family,
             stable_role: slot.stable_role,
+            pixel_format: slot.pixel_format,
         })
     }
 
     /// Load the RGBA8888 pixels for the given `texture_id`.
     ///
     /// Returns `None` when the id is not present in the package.
+    /// Transparently decodes BC7-encoded entries so callers always receive RGBA8888.
     pub fn load_rgba(&self, texture_id: u32) -> eyre::Result<Option<Vec<u8>>> {
+        let slot_pos = self
+            .slots
+            .binary_search_by_key(&texture_id, |s| s.texture_id)
+            .ok();
         let path = texture_entry_path(texture_id);
         let hash = xxh64_virtual_path(&path);
         match self.package.read_file_by_path_hash(hash) {
-            Ok(bytes) => Ok(Some(bytes)),
+            Ok(bytes) => {
+                let pixel_format = slot_pos.map(|pos| self.slots[pos].pixel_format).unwrap_or(0);
+                if pixel_format == 1 {
+                    let vram = VramTextureData::from_container_bytes(&bytes)
+                        .map_err(|e| eyre::eyre!("parse BC7 container for tex_aux_ec texture {texture_id}: {e}"))?;
+                    let rgba = decode_from_vram(&vram, RawImageFormat::Rgba8888)
+                        .map_err(|e| eyre::eyre!("decode BC7 for tex_aux_ec texture {texture_id}: {e}"))?;
+                    Ok(Some(rgba))
+                } else {
+                    Ok(Some(bytes))
+                }
+            }
             Err(udd_container::uddp::FormatError::FileNotFound) => Ok(None),
             Err(e) => Err(eyre::eyre!("load tex_aux_ec texture {texture_id}: {e}")),
         }

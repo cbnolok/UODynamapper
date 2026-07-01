@@ -1182,6 +1182,7 @@ enum Commands {
     },
     /// Packs non-base auxiliary EC texture refs from tilemeta.uddp into tex_aux_ec.uddp.
     #[command(name = "pack-ec-tex-aux")]
+    #[command(group(ArgGroup::new("output_format").args(["raw", "jxl", "bc7", "bc7_rdo"])))]
     PackEcTexAux {
         #[command(flatten)]
         source_dirs: SourceDirArgs,
@@ -1189,6 +1190,24 @@ enum Commands {
         tilemeta: PathBuf,
         #[arg(long, default_value = "tex_aux_ec.uddp")]
         output: PathBuf,
+        #[arg(long, help = "Write uncompressed RGBA8888 textures.")]
+        raw: bool,
+        #[arg(long, help = "Write RGBA8888 textures with lossless JPEG XL payload compression.")]
+        jxl: bool,
+        #[arg(long = "jxl-level", value_parser = clap::value_parser!(u8).range(1..=10))]
+        jxl_level: Option<u8>,
+        #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE)]
+        zstd: Option<i32>,
+        #[arg(long, help = "Write BC7 textures without BC7 RDO.")]
+        bc7: bool,
+        #[arg(long = "bc7-rdo", help = "Write BC7 textures with BC7 RDO.")]
+        bc7_rdo: bool,
+        #[arg(long, default_value_t = udd_conv::bc7::DEFAULT_BC7_RDO_LAMBDA)]
+        bc7_rdo_lambda: f32,
+        #[arg(long, value_parser = parse_bc7_rdo_lookback_blocks, default_value_t = udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS)]
+        bc7_rdo_lookback_blocks: usize,
+        #[arg(long = "upscale-pass", value_enum, help = "Add an upscale pass. Repeat to chain filters.")]
+        upscale_passes: Vec<CliUpscaleFilter>,
     },
     /// Packs CC tiledata and EC tileart into tilemeta.uddp.
     #[command(name = "pack-tilemeta")]
@@ -2052,10 +2071,34 @@ where
             source_dirs: source_dir_args,
             tilemeta,
             output,
+            raw,
+            jxl,
+            jxl_level,
+            zstd,
+            bc7,
+            bc7_rdo,
+            bc7_rdo_lambda,
+            bc7_rdo_lookback_blocks,
+            upscale_passes,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&paths, &output);
-            let summary = pack_tex_aux_ec(&paths, &tilemeta, &out_file)?;
+            let output_format = resolve_texture_output_format(
+                raw, jxl, jxl_level, zstd, bc7, bc7_rdo, bc7_rdo_lambda, bc7_rdo_lookback_blocks,
+            )?;
+            let summary = pack_tex_aux_ec(
+                &paths,
+                &tilemeta,
+                &out_file,
+                &udd_conv::tex_aux_ec::TexAuxEcPackOptions {
+                    compression: output_format.compression,
+                    pixel_format: output_format.pixel_format,
+                    bc7_rdo_lambda: output_format.bc7_rdo_lambda,
+                    bc7_rdo_lookback_blocks: output_format.bc7_rdo_lookback_blocks,
+                    upscale: UpscaleFilter::None,
+                    upscale_passes: convert_upscale_passes(upscale_passes),
+                },
+            )?;
             info!(
                 "tex_aux_ec: packed {} auxiliary textures ({} refs considered, {} base-role excluded, {} no-path excluded, {} decode errors, {} duplicates) to '{}'.",
                 summary.included,

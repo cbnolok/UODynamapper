@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use udd_conv::{
     classic_patches::ClassicPatchOptions,
-    tex_aux_ec::pack_tex_aux_ec,
+    tex_aux_ec::{pack_tex_aux_ec, TexAuxEcPackOptions},
     mobile_anim_cc::{
         convert_anim_mul_to_mobile_anim_cc_uddp_from_sources_with_progress,
         MobileAnimCcAtlasOptions,
@@ -729,8 +729,28 @@ impl UddConvApp {
                 eyre::bail!("tilemeta.uddp not found in input UDDP directory. Pack Tilemeta first!");
             }
             ensure_output_parent(&output)?;
+            let compression = texture_compression(
+                settings.opt_tex_aux_ec,
+                settings.zstd_tex_aux_ec,
+                settings.jxl_tex_aux_ec,
+            );
             progress.set(AssetPackProgressState::Running, 0.1, "Packing auxiliary EC textures");
-            let summary = pack_tex_aux_ec(&sources, &tilemeta_path, &output)?;
+            let summary = pack_tex_aux_ec(
+                &sources,
+                &tilemeta_path,
+                &output,
+                &TexAuxEcPackOptions {
+                    compression,
+                    pixel_format: match settings.opt_tex_aux_ec {
+                        TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
+                        _ => PagePixelFormat::Rgba8888,
+                    },
+                    bc7_rdo_lambda: bc7_rdo_lambda(&settings, settings.opt_tex_aux_ec),
+                    bc7_rdo_lookback_blocks: bc7_rdo_lookback_blocks(&settings),
+                    upscale: settings.upscale_tex_aux_ec,
+                    upscale_passes: Vec::new(),
+                },
+            )?;
             Ok(format!(
                 "Packed {} auxiliary textures ({} refs considered) to {}",
                 summary.included,
