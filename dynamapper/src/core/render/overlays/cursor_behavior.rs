@@ -1199,12 +1199,12 @@ fn describe_static_tiles(
             )
         })
         .collect::<Vec<_>>()
-        .join(" | ");
+        .join("\n");
 
     if matches.len() > 3 {
-        format!("statics: count={} top={} ...", matches.len(), summary)
+        format!("statics: count={} top=\n{}\n...", matches.len(), summary)
     } else {
-        format!("statics: count={} {}", matches.len(), summary)
+        format!("statics: count={}\n{}", matches.len(), summary)
     }
 }
 
@@ -1298,8 +1298,11 @@ fn describe_static_tile_details(
         None => "",
     };
 
+    // Split across several shorter lines instead of one long one: a single-line dump of
+    // every diagnostic field ran off the edge of the screen and was unreadable (this is a
+    // debug/dev overlay, so we keep every field, just wrapped instead of truncated).
     format!(
-        "id={} z={} hue={} name={} surf={} cc_tex={} ec_tex={} ec_tex_branch={} cc_slot={} tex_art_ec_slot={} tex_land_ec_slot={} tex_land_ec_direct={} {}{}",
+        "  id={} z={} hue={} name={} surf={}\n  cc_tex={} ec_tex={} ec_tex_branch={}\n  cc_slot={} tex_art_ec_slot={}\n  tex_land_ec_slot={} tex_land_ec_direct={}\n  live={}{}",
         graphic,
         z,
         hue,
