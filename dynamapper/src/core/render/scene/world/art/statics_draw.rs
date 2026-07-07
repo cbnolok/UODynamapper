@@ -398,8 +398,8 @@ fn ground_atlas_spec(
 
 fn atlas_texture_format(pixel_format: PagePixelFormat) -> TextureFormat {
     match pixel_format {
-        PagePixelFormat::Rgba8888 => VramTextureFormat::Rgba8UnormSrgb.texture_format(),
-        PagePixelFormat::Bc7 => VramTextureFormat::Bc7RgbaUnormSrgb.texture_format(),
+        PagePixelFormat::Rgba8888 => TextureFormat::Rgba8UnormSrgb,
+        PagePixelFormat::Bc7 => TextureFormat::Bc7RgbaUnormSrgb,
     }
 }
 

@@ -565,7 +565,7 @@ pub fn sys_render_upload_tile_atlas(
         return;
     };
 
-    use wgpu::{Extent3d, Origin3d, TexelCopyBufferLayout, TexelCopyTextureInfo};
+    use bevy::render::render_resource::{Extent3d, Origin3d, TexelCopyBufferLayout, TexelCopyTextureInfo};
 
     // Apply explicit per-frame upload caps so metadata-atlas updates can spill over to
     // later frames instead of forcing a single large Queue pass after zoom-outs or teleports.

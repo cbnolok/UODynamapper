@@ -834,7 +834,7 @@ fn render_art_page_uploads(
     let Some(atlas_handle) = atlas_handle else { return };
     let Some(gpu_image) = gpu_images.get(atlas_handle) else { return };
 
-    use wgpu::{Extent3d, Origin3d, TexelCopyBufferLayout, TexelCopyTextureInfo};
+    use bevy::render::render_resource::{Extent3d, Origin3d, TexelCopyBufferLayout, TexelCopyTextureInfo};
 
     let submitted = uploads.len();
     for upload in uploads.iter() {

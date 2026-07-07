@@ -16,10 +16,13 @@ too_many_arguments = "allow"
 [dependencies]
 xxhash-rust = { version = "0.8", default-features = false, features = ["xxh64"] }
 zstd.workspace = true
-jpegxl-rs = { version = "0.14", features = ["vendored"] }
+jpegxl-rs = { version = "0.14" }
 byteorder.workspace = true
 rayon.workspace = true
 memmap2 = "0.9"
+
+[features]
+vendored-jpegxl = ["jpegxl-rs/vendored"]
 
 #[lib]
 #crate-type = ["dylib", "rlib"]

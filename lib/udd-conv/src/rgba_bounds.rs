@@ -265,7 +265,7 @@ unsafe fn count_nonzero_alpha_neon(rgba: &[u8]) -> u64 {
     let mut count = 0u64;
     let mut chunks = rgba.chunks_exact(FOUR_PIXEL_BYTES);
     for chunk in chunks.by_ref() {
-        count += u64::from(neon_count_nonzero_alpha_16(chunk.as_ptr()));
+        count += u64::from(unsafe { neon_count_nonzero_alpha_16(chunk.as_ptr()) });
     }
     count + count_nonzero_alpha_scalar(chunks.remainder())
 }
@@ -274,11 +274,12 @@ unsafe fn count_nonzero_alpha_neon(rgba: &[u8]) -> u64 {
 #[target_feature(enable = "neon")]
 unsafe fn neon_count_nonzero_alpha_16(ptr: *const u8) -> u8 {
     use std::arch::aarch64::*;
-
-    let bytes = vld1q_u8(ptr);
-    let alpha = vqtbl1q_u8(bytes, vld1q_u8(NEON_ALPHA_SHUFFLE.as_ptr()));
-    let nonzero = vmvnq_u8(vceqq_u8(alpha, vdupq_n_u8(0)));
-    vaddvq_u8(vcntq_u8(nonzero)) / 8
+    unsafe {
+        let bytes = vld1q_u8(ptr);
+        let alpha = vqtbl1q_u8(bytes, vld1q_u8(NEON_ALPHA_SHUFFLE.as_ptr()));
+        let nonzero = vmvnq_u8(vceqq_u8(alpha, vdupq_n_u8(0)));
+        vaddvq_u8(vcntq_u8(nonzero)) / 8
+    }
 }
 
 #[cfg(test)]

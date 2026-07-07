@@ -34,9 +34,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ddsfile = "0.6.0"
 color-eyre = "0.6"
 toml = { version = "1.1", default-features = false, features = ["display", "parse", "serde"] }
-wgpu = { version = "27.0", default-features = false, features = ["vulkan", "wgsl"] }
+wgpu = { version = "29.0", default-features = false, features = ["vulkan", "wgsl"] }
 wgpu-profiler = "0.27.0"
-wgpu-types = "27.0"
+wgpu-types = "29.0"
 knuffel = "3"
 bytemuck = { version = "1.*", default-features = false, features = ["derive", "aarch64_simd", "avx512_simd"] }
 byteorder = "1.5"
@@ -52,7 +52,6 @@ rayon = "1.12.0"
 rodio = { version = "0.22", default-features = false, features = ["playback"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-tokio = { version = "1.52", features = ["rt-multi-thread", "macros"] }
 walkdir = "2.5.0"
 
 [workspace.lints.clippy]
@@ -76,9 +75,10 @@ lto = "thin"        # Enable Link-Time Optimization (binary reduction size, ofte
 
 ## Other settings
 panic = "abort"     # Abort on panic instead of unwinding (saves executable size)
-#overflow-checks = false
 incremental = false
 debug = false
+debug-assertions = false
+#overflow-checks = false
 strip = true        # Strip debug info and symbols
 
 #[profile.release.package.image-postprocess]
@@ -104,7 +104,6 @@ strip = true        # Strip debug info and symbols
 [profile.profiling]
 inherits = "release"
 debug = "line-tables-only"
-debug-assertions = false
 lto = false
 strip = false # "debuginfo"
 
@@ -145,7 +144,7 @@ opt-level = "s"             # Selective size optimization (better for behemoths 
 incremental = false         # Disable incremental for dependencies to save disk space
 debug = false               # Disable generation of debug info (save RAM/Disk)
 debug-assertions = false    # Disable additional safety checks (including arithmetic overflow).
-strip = true                # Strip debug symbols
+#strip = true               # Strip debug symbols
 
 # By default, build scripts and procedural macros (like serde_derive) are compiled
 # with the same profile settings as the other code. This can make them slower.
@@ -153,7 +152,7 @@ strip = true                # Strip debug symbols
 [profile.dev.build-override]
 opt-level = 3               # Makes the proc-macros run faster
 debug = false
-strip = true
+#strip = true
 
 # --- Workspace Dependencies Overrides
 # For color-eyre performance (https://docs.rs/color-eyre/latest/color_eyre/)
@@ -173,7 +172,7 @@ strip = false
 # Specifically optimize data processing libraries for performance
 [profile.dev.package.image-postprocess]
 opt-level = 3
-codegen-units = 1
+#codegen-units = 1 # makes compilation much slower, and we are in a debug build
 debug = "line-tables-only"
 debug-assertions = false
 #strip = "debuginfo"
@@ -192,76 +191,76 @@ debug-assertions = true
 
 [profile.dev.package.udd-conv]
 opt-level = 2
-codegen-units = 1
+#codegen-units = 1
 debug = "line-tables-only"
 debug-assertions = true
 #strip = "debuginfo"
 
 [profile.dev.package.udd-image-codecs]
 opt-level = 3
-codegen-units = 1
+#codegen-units = 1
 debug = "line-tables-only"
 debug-assertions = false
 #strip = "debuginfo"
 
 [profile.dev.package.udd-logging]
-opt-level = 3
-codegen-units = 1
+opt-level = 1
+#codegen-units = 1
 debug = "line-tables-only"
 debug-assertions = true
 #strip = "debuginfo"
 
 [profile.dev.package.uocf]
-opt-level = 3
-codegen-units = 1
+opt-level = 1
+#codegen-units = 1
 debug = true
 debug-assertions = true
 strip = false
 
 [profile.dev.package.udd-conv-cli]
-opt-level = 2
+opt-level = 1
 debug = "line-tables-only"
 debug-assertions = true
 #strip = "debuginfo"
 
 [profile.dev.package.udd-conv-gui]
-opt-level = 2
+opt-level = 1
 debug = "line-tables-only"
 debug-assertions = true
 #strip = "debuginfo"
 
 [profile.dev.package.uocf-cli]
-opt-level = 2
+opt-level = 1
 debug = "line-tables-only"
 debug-assertions = true
 #strip = "debuginfo"
 
 [profile.dev.package.uocf-devtools-cli]
-opt-level = 2
+opt-level = 1
 debug = "line-tables-only"
 debug-assertions = true
 #strip = "debuginfo"
 
 [profile.dev.package.uoppackage-cli]
-opt-level = 2
+opt-level = 1
 debug = "line-tables-only"
 debug-assertions = true
 #strip = "debuginfo"
 
 [profile.dev.package.uocf-inspector-gui]
-opt-level = 2
+opt-level = 1
 debug = "line-tables-only"
 debug-assertions = true
 #strip = "debuginfo"
 
 [profile.dev.package.uddp-inspector-gui]
-opt-level = 2
+opt-level = 1
 debug = "line-tables-only"
 debug-assertions = true
 #strip = "debuginfo"
 
 [profile.dev.package.uop-dict-populator-gui]
-opt-level = 2
+opt-level = 1
 debug = "line-tables-only"
 debug-assertions = true
 #strip = "debuginfo"

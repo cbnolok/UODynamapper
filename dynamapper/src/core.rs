@@ -199,7 +199,7 @@ fn custom_render_plugin_settings(enable_wireframe: bool) -> bevy::render::Render
         render_creation: RenderCreation::Automatic(WgpuSettings {
             //backends: Some(Backends::VULKAN),
             features,
-            memory_hints: wgpu::MemoryHints::MemoryUsage,
+            memory_hints: bevy::render::settings::MemoryHints::MemoryUsage,
             ..Default::default()
         }),
         ..Default::default()

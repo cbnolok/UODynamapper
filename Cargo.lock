@@ -2606,7 +2606,7 @@ dependencies = [
  "udd-assets",
  "udd-container",
  "uocf",
- "wgpu 27.0.1",
+ "wgpu 29.0.3",
  "wgpu-profiler",
  "windows 0.62.2",
 ]
@@ -6445,27 +6445,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
-name = "tokio"
-version = "1.52.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fc7f01b389ac15039e4dc9531aa973a135d7a4135281b12d7c1bc79fd57fffe"
-dependencies = [
- "pin-project-lite",
- "tokio-macros",
-]
-
-[[package]]
-name = "tokio-macros"
-version = "2.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "385a6cb71ab9ab790c5fe8d67f1645e6c450a7ce006a33de03daa956cf70a496"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.118",
-]
-
-[[package]]
 name = "toml"
 version = "1.1.2+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6749,6 +6728,7 @@ dependencies = [
  "ddsfile",
  "guillotiere 0.7.0",
  "image-postprocess",
+ "knuffel",
  "log",
  "rayon",
  "serde",
@@ -6759,7 +6739,7 @@ dependencies = [
  "udd-container",
  "udd-image-codecs",
  "uocf",
- "wgpu-types 27.0.1",
+ "wgpu-types 29.0.3",
 ]
 
 [[package]]
@@ -6797,7 +6777,6 @@ dependencies = [
  "libc",
  "log",
  "serde",
- "tokio",
  "toml",
  "udd-conv",
  "udd-conv-cli",
@@ -6815,7 +6794,7 @@ dependencies = [
  "dds",
  "ktx2 0.5.0",
  "rayon",
- "wgpu-types 27.0.1",
+ "wgpu-types 29.0.3",
  "wide",
  "zstd",
 ]
@@ -6846,8 +6825,8 @@ dependencies = [
  "gui-shared",
  "image",
  "ktx2 0.5.0",
+ "log",
  "serde",
- "tokio",
  "udd-assets",
  "udd-container",
  "udd-conv",
@@ -6949,7 +6928,6 @@ dependencies = [
  "clap",
  "color-eyre",
  "dds",
- "ddsfile",
  "flate2",
  "image",
  "log",
