@@ -181,9 +181,12 @@ impl TexMap {
             generic_index::IndexFile::load(texmap_idx_file_path)?;
 
         /* Read whole texidx.mul to get texmap index data */
-        const TEXMAP_MAX_ID: u32 = 0x1388;
+        // Sized from the actual index file, not a hardcoded guess: older clients shipped as few
+        // as 4096 texidx.mul entries, modern ones as many as 16384. A fixed cap here previously
+        // silently dropped every land texture indexed beyond it.
+        let texmap_max_id = texidx.element_count() as u32;
         let mut texmap = TexMap {
-            file_data: vec![TexMapElement::default(); TEXMAP_MAX_ID as usize],
+            file_data: vec![TexMapElement::default(); texmap_max_id as usize],
             shared_data: std::sync::Mutex::new(TexMapShared {
                 file_reader: BufReader::new(texmap_file_handle),
                 cache: IndexMap::with_capacity_and_hasher(64, BuildNoHashHasher::default()),
@@ -206,8 +209,7 @@ impl TexMap {
             table
         };
         */
-        for i_idx_raw in 0..TEXMAP_MAX_ID {
-            // 0..texidx.element_count() {
+        for i_idx_raw in 0..texmap_max_id {
             // Fill texmap
             let cur_idx_elem: &generic_index::IndexElement = texidx
                 .element(i_idx_raw as usize)
