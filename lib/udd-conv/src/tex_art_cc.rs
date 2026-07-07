@@ -764,7 +764,6 @@ fn decode_present_tiles(
                             Some(tiledata) => match classic_static_draw_offset(
                                 art_id,
                                 width,
-                                height,
                                 tiledata,
                             ) {
                                 Ok(offsets) => Ok(offsets),
@@ -903,7 +902,6 @@ fn i16_draw_offset(art_id: u32, axis: &str, value: i32) -> eyre::Result<i16> {
 fn classic_static_draw_offset(
     art_id: u32,
     width: u16,
-    height: u16,
     tiledata: &TileData,
 ) -> eyre::Result<(i16, i16)> {
     let item_id = art_id
@@ -922,9 +920,13 @@ fn classic_static_draw_offset(
         );
     }
 
+    // Y is left at 0 (no per-sprite nudge): resolve_static_billboard_bounds already
+    // anchors the sprite's bottom edge at ground level and extends it upward by the
+    // full decoded height, so a nonzero offset here (e.g. -height) double-counts the
+    // height and floats the sprite above the ground by its own on-screen height.
     Ok((
         i16_draw_offset(art_id, "x", -(i32::from(width) / 2))?,
-        i16_draw_offset(art_id, "y", -i32::from(height))?,
+        i16_draw_offset(art_id, "y", 0)?,
     ))
 }
 
@@ -959,6 +961,23 @@ fn load_tileart_cc_slot_aliases(
     Ok(aliases)
 }
 
+// Overwrites each aliased slot with the canonical slot's atlas rect plus the alias's OWN
+// `draw_offset_x/draw_offset_y` — which for tileart-sourced aliases are the REAL authored
+// offsets from `tileart.uop` (arbitrary, incl. nonzero Y), not the synthetic `-(w/2), 0`
+// produced by `classic_static_draw_offset` on the primary path.
+//
+// By design, the flat-quad render path for CC surface-like (WET) statics ignores stored slot
+// offsets: it re-derives placement from the sprite's pixel width/height alone, assuming the
+// synthetic bottom-anchored `offset_y == 0` convention (see
+// `cc_surface_like_flat_quad_center_offsets` in statics_collect.rs). That assumption holds
+// because aliases are only ever built when the metadata source is `TileartUop` — the fallback
+// used to pack CC art from a source tree WITHOUT `tiledata.mul` (see the `slot_aliases` match
+// near the top of `convert_*`). The supported CC workflow packs from a full classic tree WITH
+// `tiledata.mul`, where this alias list is empty and every slot offset is synthetic, so a WET
+// tile never reaches the flat path carrying a real nonzero offset. If the `TileartUop` fallback
+// is ever promoted to a supported CC-art workflow, the flat path must be generalized to honor
+// these real offsets (fold `offset_x/offset_y` into `cc_surface_like_flat_quad_center_offsets`);
+// until then it is correct to drop them here.
 pub fn apply_slot_aliases(
     slots: &mut [TexArtCcSlotRecord],
     aliases: &[TexArtCcSlotAlias],
