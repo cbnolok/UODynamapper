@@ -1,5 +1,41 @@
 # Handoff: flat-quad water/wave follow-ups (verification, commit, offset-caveats study)
 
+## SESSION UPDATE 2026-07-07 — steps 1–3 DONE
+
+- **Step 1 (in-game verification): PASSED.** User confirmed all checks
+  good on CC art across the 3 presets (shaders compile, no sawtooth /
+  brown bleed-through, breaking waves on the shoreline, earlier
+  uncommitted fixes still correct).
+- **Step 2 (commit + cleanup): DONE.** The rendering-thread work was
+  committed on `prereleases` in 6 focused batches, WITHOUT absorbing the
+  unrelated pre-existing user edits (the wgpu→bevy import migration in
+  `core.rs`/`tile_atlas.rs`/`texture_cache/art.rs`/`statics_draw.rs`
+  TextureFormat hunk/`rgba_bounds.rs`, settings TOMLs, tools/, scripts/,
+  Cargo files — all still uncommitted by design):
+  `ec4d353` texmap cap fix (uocf) · `e66a0bb` CC land slot resolution
+  (draw_mesh) · `2b25879` CC static draw-offset fix + caveat-2 comment
+  (tex_art_cc) · `68bf045` flat-quad water rework (art_bindings/main/
+  shading wgsl + statics_collect + statics_draw flat_quad hunk only) ·
+  `bf1bdc0` overlay wrap (cursor_behavior) · `d466ea9` docs. The two
+  `.bak-pre-*` runtime-asset backups were deleted.
+  `statics_draw.rs` was staged partially: only the `flat_quad` field-init
+  hunk; its unrelated `TextureFormat` migration hunk stays uncommitted
+  with the rest of the wgpu→bevy migration.
+- **Step 3 (offset caveats): CLOSED.** User confirmed the tileart.uop
+  fallback packing path (`TexArtCcMetadataSourceKind::TileartUop`) is NOT
+  a supported CC workflow (CC art is always packed from a full classic
+  tree with `tiledata.mul` ⇒ empty alias list ⇒ synthetic offsets only).
+  Caveat 2 closed as by-design with a documenting comment above
+  `apply_slot_aliases` in `lib/udd-conv/src/tex_art_cc.rs`. Caveat 1
+  (odd-width 0.5px sub-pixel polish) intentionally left un-done — plain
+  water is byte-identical regardless; revisit only if going for exactness.
+
+**Still open: only "Smaller leftovers" (§4 below).** Most need a user
+design decision or a display; none are blocking. The original body below
+is retained for context.
+
+---
+
 **Prepared 2026-07-06 for a fresh session.** Continuation of the thread in
 `docs/agent_notes/land_shader_and_placement_issues.md` (issues A–H + rounds
 of follow-ups) and `docs/agent_notes/water_animation_wave_tile_handoff.md`
