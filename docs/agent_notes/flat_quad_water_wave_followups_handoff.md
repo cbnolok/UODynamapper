@@ -67,19 +67,47 @@ user's still-uncommitted local edits (`.cargo`, settings TOMLs).
   out when the master is off. Runtime visual confirmation is the user's
   (no display for agents).
 
-**Found (not fixed): `justfile:155` has a `just` parse error** (a
-conditional using `!=`), so `just bevy-lint` cannot run. Pre-existing, not
-from this thread's files — left for the user. bevy-lint therefore not run
-for the overlay/system-code edits; changes are minimal gating logic with
-no new queries/systems.
+**`justfile:155` parse error — FIXED** (`daf6e82`). Root cause: `just` 1.51
+conditions accept only a *single* comparison — no `&&`/`||` chaining, even
+parenthesized (verified empirically). `build_features` was rewritten with
+nested `if`s (all 4 feature combos verified equal to the old intent). `just`
+now parses; the `bevy-lint` recipe is reachable, but **`bevy_lint` itself is
+not installed** (`bevy lint` → "install via `bevy lint install`", needs a
+nightly toolchain fetch — left for the user).
 
-**Still open in §4:** Issue D (see refined plan below), Issue B +
-A/B tuning (deferred — user has screenshots to set direction first),
-EC `tileart.rs` offset parsing. Issue D user steer captured 2026-07-07:
-keep Classic / Enhanced / KR presets, and make each setting clearly state
-its **scope** to a non-expert user — one of: land only, art only, both,
-land + land-like statics, whole screen, or other. UX wording/structure is
-the agent's call; bring a proposal before implementing (design decision).
+### 2026-07-07 (later 2) — Issue D LANDED (`b29004a`)
+
+User picked all three recommended options (coupling, scope-grouped sections,
+tag+remove-dead). Implemented in
+`dynamapper/src/core/render/dialogs/land_shader.rs`, Basic Controls block:
+
+- **Render Style now couples** `shading_mode` + `post_process_profile` via a
+  named `RENDER_STYLE_PRESETS` table (Classic→0/Neutral, Enhanced→1/EC,
+  KR→2/KR). Fixes the confirmed Issue-D bug: KR Transition Grime / KR Color
+  Wash were gated behind `post_process_profile==2`, only reachable via the
+  hidden Advanced "Visual Profile", so picking "KR" in Basic did nothing.
+  Advanced Visual Profile kept as a post-hoc override (not removed).
+- **Scope sections** via new `basic_scope_header(ui, title, caption)`:
+  *Terrain (land)* / *Objects (art / statics)* / *Everything (whole scene)*.
+  Full per-control scope audit (which land/art/postprocess shaders read each
+  uniform field) is the basis; Render Style itself only drives LAND shading
+  (art has a separate shading path) — worth remembering.
+- **EC-only knobs tagged** "(EC land only)" — Normal Maps + Land Normal Maps
+  only affect `texture_size==2` (EC atlas) land; no-op on CC art source. NOT
+  dynamically greyed: there is no global "source is EC" signal in the dialog's
+  scope (source is per-tile), so a static label states the scope instead.
+- **Dead knob removed**: "Static Light Decals" — `static_light_decal_visibility`
+  has no shader reader (only the uniform struct decl). UI control dropped; the
+  struct field left in place (GPU layout).
+
+Validated: `cargo check -p dynamapper` clean, `cargo test -p dynamapper` 90/90.
+Did NOT touch the user's still-uncommitted local edits (`.cargo`, settings TOMLs).
+
+**Still open in §4:** Issue B + A/B tuning (deferred — user has screenshots to
+set direction first), EC `tileart.rs` offset parsing (optional/low priority;
+its motivating caveat-2 was already closed as by-design). Issue D re-verify:
+user to confirm in-game that picking KR in Basic Controls now visibly activates
+KR Transition Grime / Color Wash, across the 3 presets.
 
 ---
 
