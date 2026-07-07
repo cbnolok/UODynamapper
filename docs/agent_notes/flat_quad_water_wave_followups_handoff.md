@@ -34,6 +34,53 @@
 design decision or a display; none are blocking. The original body below
 is retained for context.
 
+### 2026-07-07 (later) — two §4 leftovers landed
+
+Picked up the two self-contained §4 items (user steer: "easier tasks
+first"). Both committed on `prereleases`, validated (`cargo check
+--workspace` clean, `cargo test -p dynamapper` 90/90). Did NOT touch the
+user's still-uncommitted local edits (`.cargo`, settings TOMLs).
+
+- **Dead stub `try_load_cc_land_tile` → implemented, kept UNWIRED**
+  (`36ddbd1`). User decision: implement it fully but do NOT invoke it yet
+  (easier to debug without it; a switch will enable it later). It now
+  extracts a land tile from the CC **art** package (`tex_art_cc`, art.mul
+  land art) and crop/pads it into a texmap-sized buffer. Added
+  `TexArtCcPackage::get_pixel_data` (mirrors `TexLandCcPackage`) so the
+  slot crop is correct for both RGBA8888 and BC7 pages — do NOT hand-roll
+  an atlas-stride crop, BC7 pages decode to `used_w×used_h`, not atlas
+  dims. Assumptions the future switch's author must revisit are documented
+  at the fn: (a) `texture_id` is treated as a CC **art** slot id
+  (`art_id`), not a texmap id — different id spaces; (b) top-left crop/pad,
+  not centered/scaled onto the cell diamond (the stretched land mesh will
+  want that). The live loader
+  (`try_load_tile_from_packages_with_sources`) still ignores `tex_art_cc`.
+- **Per-overlay overlay toggles** (`d674ac7`). "Show Performance Overlay"
+  was a single master gating all three overlays (perf stats,
+  player-position, cursor/tile-inspector). Kept it as master, added three
+  per-overlay flags on `SectPerformance` (`show_perf_stats_overlay`,
+  `show_player_position_overlay`, `show_cursor_inspect_overlay`,
+  `#[serde(default = "default_emit_true")]` for back-compat). Effective
+  visibility = master AND flag, via helper methods
+  (`perf_stats_overlay_visible()` etc.) used at every gate site.
+  Preferences dialog shows the three as indented sub-checkboxes, greyed
+  out when the master is off. Runtime visual confirmation is the user's
+  (no display for agents).
+
+**Found (not fixed): `justfile:155` has a `just` parse error** (a
+conditional using `!=`), so `just bevy-lint` cannot run. Pre-existing, not
+from this thread's files — left for the user. bevy-lint therefore not run
+for the overlay/system-code edits; changes are minimal gating logic with
+no new queries/systems.
+
+**Still open in §4:** Issue D (see refined plan below), Issue B +
+A/B tuning (deferred — user has screenshots to set direction first),
+EC `tileart.rs` offset parsing. Issue D user steer captured 2026-07-07:
+keep Classic / Enhanced / KR presets, and make each setting clearly state
+its **scope** to a non-expert user — one of: land only, art only, both,
+land + land-like statics, whole screen, or other. UX wording/structure is
+the agent's call; bring a proposal before implementing (design decision).
+
 ---
 
 **Prepared 2026-07-06 for a fresh session.** Continuation of the thread in
