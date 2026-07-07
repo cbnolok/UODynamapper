@@ -8,6 +8,22 @@ const ART_DEPTH_CLASS_FOLIAGE: u32 = 2u;
 const ART_DEPTH_CLASS_ROOF: u32 = 3u;
 const ART_DEPTH_CLASS_SURFACE_LIKE_FLOOR: u32 = 4u;
 
+// Vertical-edge shading profiles for plain upright billboards (Regular/Background depth
+// classes — walls, bridges, docks, furniture; anything that isn't foliage/roof/floor/ground).
+// These sprites are flat rectangular cards with no real beveled vertical edges, so any shading
+// keyed to horizontal-UV distance from the sprite's left/right margins paints a spurious
+// bright/dark "frame" around the sprite silhouette: seen in-game as a highlighted "vertical
+// margin" on plaster/stucco walls (from the additive edge_catch term this drives) and a
+// "boxed shadow" on Background bridge/dock tiles (from the one-sided side_falloff this drives).
+// Because both terms are smoothstep ramps keyed to the UV rectangle's edges, they produce a
+// visible border at essentially any nonzero strength, so they are removed structurally here
+// rather than tuned down. The Lambertian directional shading (side_slope normal -> shadow_cut
+// and warm_key top highlight) is retained, so upright billboards still get sensible 3D-ish
+// lighting — just without the edge frame. Erred conservative (edge polish fully removed);
+// re-tune these upward if in-game visual review wants a subtle margin cue back.
+const ART_UPRIGHT_BILLBOARD_EDGE_PROFILE: f32 = 0.0;
+const ART_UPRIGHT_BILLBOARD_SIDE_FALLOFF_PROFILE: f32 = 0.0;
+
 fn art_luminance(c: vec3<f32>) -> f32 {
     return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
 }
@@ -171,12 +187,25 @@ fn apply_art_surface_shading(
             saturation_profile = 0.78;
             plane_catch_profile = 0.58;
             foot_contact_profile = 0.42;
-            edge_profile = side_plane * 0.35;
+            // SurfaceLikeFloor tiles that are NOT wet still stand up as ordinary upright
+            // billboards (e.g. a bridge deck: SURFACE-flagged but not WET, so it never enters
+            // the flat-quad path and is_ground_art is false here) — same spurious edge-frame
+            // artifact as the plain upright-billboard branch below, so zero it the same way.
+            // A genuinely flat SurfaceLikeFloor instance (is_ground_art true) keeps the
+            // original edge_profile; in practice real CC water never reaches this branch (it
+            // classifies Background, checked earlier in resolve_static_depth_class), so this
+            // case is untested but left as designed rather than assumed away.
+            edge_profile = select(side_plane * 0.35, ART_UPRIGHT_BILLBOARD_EDGE_PROFILE, !is_ground_art);
         } else if (!is_ground_art) {
+            // Regular/Background upright billboards (walls, bridges, docks). Keep the
+            // Lambertian directional shading (shadow_profile/plane_catch_profile feed
+            // shadow_cut + warm_key) but zero the vertical-edge terms that otherwise frame
+            // the flat sprite with a spurious highlighted margin / boxed shadow — see the
+            // ART_UPRIGHT_BILLBOARD_* constants above.
             shadow_profile = 1.04;
             plane_catch_profile = 1.0;
-            edge_profile = side_plane * 0.08;
-            side_falloff_profile = 0.52;
+            edge_profile = ART_UPRIGHT_BILLBOARD_EDGE_PROFILE;
+            side_falloff_profile = ART_UPRIGHT_BILLBOARD_SIDE_FALLOFF_PROFILE;
         } else {
             foot_contact_profile = 0.55;
             edge_profile = side_plane * 0.35;

@@ -24,7 +24,9 @@ struct SpriteInstance {
     is_wet_flags: u32,
     hue_id: u32,
     hue_flags: u32,
-    _pad_inst: u32,
+    // Flat-quad flag: 1 = lay flat in the XZ plane (CC surface-like water statics),
+    // 0 = upright camera-facing billboard (default). Branched on in main.wgsl vertex.
+    flat_quad: u32,
     _pad_hue: vec2<u32>,
     local_light_rgba: vec4<f32>,
     color_rgba: vec4<f32>,
@@ -79,6 +81,11 @@ struct SpriteParams {
 // Constants
 const INV_SQRT_2: f32 = 0.70710678118;
 const BILLBOARD_RIGHT_XZ: vec2<f32> = vec2<f32>(INV_SQRT_2, -INV_SQRT_2);
+// In-plane ground direction perpendicular to BILLBOARD_RIGHT_XZ, pointing down-screen
+// (increasing camera depth). Together with BILLBOARD_RIGHT_XZ it forms the diagonal basis that
+// lays a CC surface-like water static flat as an on-screen diamond matching the projected
+// terrain cell, undoing the isometric diamond baked into the sprite's pixels (see main.wgsl).
+const FLAT_QUAD_FORWARD_XZ: vec2<f32> = vec2<f32>(INV_SQRT_2, INV_SQRT_2);
 const HEIGHT_SCALE: f32 = 0.1;
 const DEPTH_CLASS_REGULAR: u32 = 0u;
 const DEPTH_CLASS_BACKGROUND: u32 = 1u;

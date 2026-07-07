@@ -33,6 +33,22 @@ const STATIC_ART_Y_BIAS: f32 = 0.002;
 const GROUND_ART_Y_BIAS: f32 = 0.0;
 const EC_STATIC_TILE_TRANSLATION_X: f32 = 0.5;
 const EC_STATIC_TILE_TRANSLATION_Z: f32 = 1.5;
+// CC billboard anchor: feet-center at the tile's near (south) vertex = cell corner (X+1, Z+1).
+//
+// A CC static sprite is force-centered horizontally in its bounding box (`classic_static_draw_offset`
+// uses `offset_x = -(width/2)`), so its on-screen horizontal center sits exactly at the anchor
+// `(world_x, world_z)`. In the diagonal billboard basis (BILLBOARD_RIGHT_XZ = on-screen horizontal),
+// a translation `(tx, tz)` displaces the sprite horizontally by `(tx - tz)/sqrt(2)`; horizontal
+// alignment with the tile therefore *requires* `tx == tz` (the tile's screen-horizontal center lies
+// on the line `X - Z = const`). The verified surface-like flat-quad path already uses a symmetric
+// `(0.5, 0.5)`. The old shared EC value `(0.5, 1.5)` — bundled in underived (commit a538d3b) and only
+// ever validated for EC, which carries its own real per-sprite offsets — is asymmetric: it shoves
+// every CC billboard ~1/sqrt(2) (~half a tile) sideways from the tile beneath it. `(1.0, 1.0)` is the
+// unique symmetric value with the *same* forward/depth component as `(0.5, 1.5)` (both = sqrt(2), the
+// near-vertex depth), so it fixes the horizontal drift without disturbing the vertical grounding
+// tuned earlier for the same billboards. EC keeps its own value above (its real offsets rely on it).
+const CC_STATIC_TILE_TRANSLATION_X: f32 = 1.0;
+const CC_STATIC_TILE_TRANSLATION_Z: f32 = 1.0;
 const CLASSIC_WATER_LAND_TILE_ID: u32 = 168;
 const EC_WATER_BASE_LAYER_INDEX: u32 = 0;
 const STATIC_CHUNK_CACHE_HYSTERESIS_TICKS: u64 = 30;
@@ -101,10 +117,68 @@ pub(crate) fn resolve_surface_like_ground_quad_bounds() -> GroundQuadBounds {
     }
 }
 
+/// Local quad bounds for a CC surface-like (shoreline water) static rendered flat.
+///
+/// EC terrain textures are plain square texmaps whose isometric look comes purely from the
+/// camera projecting a 1x1 axis-aligned cell — so the EC ground path can use a plain 0..1
+/// quad (see `resolve_surface_like_ground_quad_bounds`). A CC static sprite is different: the
+/// isometric *diamond* is baked into its pixels (a 44x44 rhombus with transparent corners,
+/// like art.mul land art). Laying that diamond on a plain axis-aligned 0..1 quad would project
+/// it a second time, collapsing the visible water to a half-size inscribed blob — the reported
+/// "too small" symptom. Instead we size the quad in world units from the sprite's real pixel
+/// dimensions via `CC_WORLD_XZ_PER_PIXEL` (the same per-pixel scale the billboard path uses)
+/// and center it on the origin. Combined with the diagonal `BILLBOARD_RIGHT_XZ` /
+/// `FLAT_QUAD_FORWARD_XZ` basis applied in main.wgsl, the sprite's diamond vertices then land
+/// exactly on the cell corners and seam with the terrain water beneath. A 44px-wide tile maps
+/// to a half-extent of `44 * 0.5 * (sqrt(2)/44) = sqrt(2)/2` along each diagonal axis, i.e. the
+/// visible diamond spans a full 1x1 world cell.
+fn resolve_cc_surface_like_flat_quad_bounds(
+    logical_width: f32,
+    logical_height: f32,
+) -> GroundQuadBounds {
+    let half_width = logical_width * 0.5 * CC_WORLD_XZ_PER_PIXEL;
+    let half_height = logical_height * 0.5 * CC_WORLD_XZ_PER_PIXEL;
+    GroundQuadBounds {
+        local_min_x: -half_width,
+        local_max_x: half_width,
+        local_min_z: -half_height,
+        local_max_z: half_height,
+    }
+}
+
+/// Per-axis world offsets from the cell origin to a CC surface-like flat quad's *center*,
+/// for a sprite of the given pixel height.
+///
+/// Feet-first anchor matching the validated CC billboard convention: the sprite box's
+/// bottom-center sits at the cell's near vertex (`+CC_STATIC_TILE_TRANSLATION_X/Z`), and
+/// laying the box flat extends it up-screen along `-FLAT_QUAD_FORWARD_XZ`, so the box center
+/// sits half the sprite's world-space height back along the forward diagonal — per axis,
+/// `CC_STATIC_TILE_TRANSLATION_* - h * CC_WORLD_XZ_PER_PIXEL * (1/sqrt(2)) * 0.5`
+/// (= `1 - h/88` at the CC pixel scale). For the 44px plain-water sprites this is exactly the
+/// cell center (`0.5`, matching the previously verified water placement); taller sprites (the
+/// 45px/89px `wave` sets 0x1fa3-0x1fca, whose crest content is deliberately off-center in the
+/// bitmap) get the anchor classic art actually assumes, instead of a hardcoded cell-center
+/// that silently assumed `h == 44` and pushed the ~89px breaking waves ~one cell up-screen.
+fn cc_surface_like_flat_quad_center_offsets(logical_height: f32) -> (f32, f32) {
+    let forward_half_height =
+        logical_height * CC_WORLD_XZ_PER_PIXEL * std::f32::consts::FRAC_1_SQRT_2 * 0.5;
+    (
+        CC_STATIC_TILE_TRANSLATION_X - forward_half_height,
+        CC_STATIC_TILE_TRANSLATION_Z - forward_half_height,
+    )
+}
+
 fn apply_static_world_anchor_translation(world_x: f32, world_z: f32) -> (f32, f32) {
     (
         world_x + EC_STATIC_TILE_TRANSLATION_X,
         world_z + EC_STATIC_TILE_TRANSLATION_Z,
+    )
+}
+
+fn apply_cc_static_world_anchor_translation(world_x: f32, world_z: f32) -> (f32, f32) {
+    (
+        world_x + CC_STATIC_TILE_TRANSLATION_X,
+        world_z + CC_STATIC_TILE_TRANSLATION_Z,
     )
 }
 
@@ -115,7 +189,13 @@ fn surface_like_static_world_anchor(
 ) -> (f32, f32) {
     match visual_kind {
         StaticVisualKind::TexLandEc { .. } => (world_x, world_z),
-        StaticVisualKind::CcRegular { .. } | StaticVisualKind::EcRegular { .. } => {
+        // CC billboards are force-centered in their bbox, so they need a symmetric anchor
+        // (see CC_STATIC_TILE_TRANSLATION_*); EC billboards carry their own per-sprite offsets
+        // and keep the legacy asymmetric anchor they were validated against.
+        StaticVisualKind::CcRegular { .. } => {
+            apply_cc_static_world_anchor_translation(world_x, world_z)
+        }
+        StaticVisualKind::EcRegular { .. } => {
             apply_static_world_anchor_translation(world_x, world_z)
         }
     }
@@ -223,6 +303,23 @@ fn static_tile_uses_tex_land_ec_surface_path(
     tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
 ) -> bool {
     static_tile_is_surface_like(tilemeta)
+}
+
+/// CC-specific gate for the flat-quad (lie-flat) static render path.
+///
+/// Only genuine water/shoreline statics should lie flat like the terrain water beneath them.
+/// The broader `static_tile_is_surface_like` predicate — reused by the EC land-redirection
+/// path — also matches walkable/authored "surface-like" tiles (floors, and roofs such as
+/// "slate roof", tiledata flags `0x04006201` = SURFACE | Background, authored SurfaceLike, not
+/// WET, sitting at elevated z). Those are upright/elevated CC sprite art and must stay
+/// billboards: flattening them laid them as horizontal diamonds at their own elevation,
+/// mis-anchored and z-fighting with the other statics stacked in the same cell. Keying purely
+/// on the IsWet tiledata flag keeps every real water and "wave" static flat (all carry IsWet,
+/// verified against tiledata.mul) while excluding roofs/floors.
+fn cc_static_tile_renders_flat(
+    tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
+) -> bool {
+    tilemeta.is_some_and(|meta| meta.flags & TILE_FLAG_WET != 0)
 }
 
 pub(crate) fn resolve_static_depth_class(
@@ -727,7 +824,9 @@ pub struct SpriteInstance {
     pub is_wet_flags: u32,
     pub hue_id: u32,
     pub hue_flags: u32,
-    pub _pad_inst: u32,
+    /// Flat-quad flag: 1 = lay this instance flat in the XZ plane (CC surface-like
+    /// water statics), 0 = upright camera-facing billboard (default). See main.wgsl.
+    pub flat_quad: u32,
     pub _pad_hue: [u32; 2],
     pub local_light_rgba: [f32; 4],
     pub color_rgba: [f32; 4], // for dot mode
@@ -1967,7 +2066,7 @@ fn emit_dot_static_tile(
         is_wet_flags: info.is_wet_flags,
         hue_id: 0,
         hue_flags: 0,
-        _pad_inst: 0,
+        flat_quad: 0,
         _pad_hue: [0; 2],
         local_light_rgba,
         color_rgba: [
@@ -2021,8 +2120,21 @@ fn emit_art_static_tile(
         return;
     };
 
-    let (anchored_world_x, anchored_world_z) =
-        surface_like_static_world_anchor(visual_kind, info.world_x, info.world_z);
+    // CC water/shoreline statics (placed as items) must lie flat like the terrain water
+    // beneath them, not stand up as billboards. They stay in the sprite pipeline but render a
+    // flat XZ quad (see emit_cc_surface_like_flat_static_instance / main.wgsl).
+    // Gate on IsWet only (cc_static_tile_renders_flat), NOT the broad static_tile_is_surface_like:
+    // the latter also matches non-water "surface-like" tiles (floors, elevated roofs) which are
+    // upright CC sprite art and must stay billboards. See cc_static_tile_renders_flat.
+    let cc_surface_like_flat = matches!(art_source, ClientTextureSource::Cc)
+        && cc_static_tile_renders_flat(info.tilemeta);
+
+    let (anchored_world_x, anchored_world_z) = if cc_surface_like_flat {
+        // Flat ground quad: no upright-billboard centering translation (mirrors TexLandEc).
+        (info.world_x, info.world_z)
+    } else {
+        surface_like_static_world_anchor(visual_kind, info.world_x, info.world_z)
+    };
 
     if let Some(resolved) = resolved_sprite {
         build.stats.atlas_hits += 1;
@@ -2039,6 +2151,21 @@ fn emit_art_static_tile(
                 encoded_depth_class,
                 priority_z_units,
                 texture_stretch,
+                hue_id,
+                hue_flags,
+                build,
+            );
+        } else if cc_surface_like_flat {
+            emit_cc_surface_like_flat_static_instance(
+                info,
+                frame,
+                resources,
+                resolved,
+                anchored_world_x,
+                anchored_world_z,
+                world_y,
+                encoded_depth_class,
+                priority_z_units,
                 hue_id,
                 hue_flags,
                 build,
@@ -2221,7 +2348,80 @@ fn emit_billboard_static_instance(
         is_wet_flags: info.is_wet_flags,
         hue_id,
         hue_flags,
-        _pad_inst: 0,
+        flat_quad: 0,
+        _pad_hue: [0; 2],
+        local_light_rgba,
+        color_rgba: [1.0, 1.0, 1.0, 1.0],
+    });
+}
+
+/// Emit a CC surface-like static (shoreline water) as a flat XZ-plane quad within the
+/// sprite pipeline, instead of an upright billboard, so the tile lies flat and seams with
+/// the terrain water beneath it while still sampling the CC sprite atlas and keeping the
+/// `is_wet` water animation. Unlike the EC ground path (plain square texmap on a plain 0..1
+/// cell), the CC sprite has the isometric diamond baked into its pixels, so the quad is sized
+/// from the sprite's real pixel dimensions and centered (see
+/// `resolve_cc_surface_like_flat_quad_bounds`) and laid out on the diagonal
+/// `BILLBOARD_RIGHT_XZ` / `FLAT_QUAD_FORWARD_XZ` basis in main.wgsl. The `flat_quad` flag
+/// drives that flat vertex transform and the `is_ground_art` shading branch in main.wgsl.
+fn emit_cc_surface_like_flat_static_instance(
+    info: StaticTileRenderInfo<'_>,
+    frame: StaticCollectFrameConfig,
+    resources: StaticCollectResources<'_>,
+    resolved: ResolvedArtSprite,
+    anchored_world_x: f32,
+    anchored_world_z: f32,
+    world_y: f32,
+    encoded_depth_class: u32,
+    priority_z_units: f32,
+    hue_id: u32,
+    hue_flags: u32,
+    build: &mut StaticChunkBuildState,
+) {
+    let bounds = resolve_cc_surface_like_flat_quad_bounds(
+        resolved.logical_width,
+        resolved.logical_height,
+    );
+    let local_light_rgba = static_art_ground_local_light_rgba(
+        frame.static_art_local_lights,
+        resources.static_lights,
+        frame.map_id,
+        anchored_world_x,
+        anchored_world_z,
+        info.base_world_y,
+        bounds,
+    );
+    // Anchor the flat diamond feet-first by the sprite's real pixel height (see
+    // `cc_surface_like_flat_quad_center_offsets`): for the 44px plain-water sprites this lands
+    // exactly on the cell center, so the diagonal basis in main.wgsl maps the baked diamond's
+    // edge vertices onto the cell corners as before; taller wave sprites extend further
+    // up-screen from the same feet anchor instead of being wrongly re-centered. Depth-sort
+    // keys (tile_x/tile_y below) stay at the cell origin to remain consistent with the EC
+    // ground path.
+    let (center_offset_x, center_offset_z) =
+        cc_surface_like_flat_quad_center_offsets(resolved.logical_height);
+    let centered_world_x = anchored_world_x + center_offset_x;
+    let centered_world_z = anchored_world_z + center_offset_z;
+
+    build.sprite_instances.push(SpriteInstance {
+        world_x: centered_world_x,
+        world_z: centered_world_z,
+        world_y,
+        layer: resolved.layer,
+        depth_class: encoded_depth_class,
+        base_world_y: info.base_world_y,
+        uv_min: [resolved.uv_min.x, resolved.uv_min.y],
+        uv_max: [resolved.uv_max.x, resolved.uv_max.y],
+        local_min: [bounds.local_min_x, bounds.local_min_z],
+        local_max: [bounds.local_max_x, bounds.local_max_z],
+        tile_x: anchored_world_x,
+        tile_y: anchored_world_z,
+        priority_z_units,
+        sort_bias_ordinal: 0,
+        is_wet_flags: info.is_wet_flags,
+        hue_id,
+        hue_flags,
+        flat_quad: 1,
         _pad_hue: [0; 2],
         local_light_rgba,
         color_rgba: [1.0, 1.0, 1.0, 1.0],
@@ -2637,6 +2837,20 @@ mod tests {
     }
 
     #[test]
+    fn cc_flat_quad_center_offsets_track_sprite_height() {
+        // 44px plain water: exactly the cell center — the previously verified placement.
+        let (x, z) = cc_surface_like_flat_quad_center_offsets(44.0);
+        approx_eq(x, 0.5);
+        approx_eq(z, 0.5);
+
+        // 88px (two-cell breaking-wave scale): feet stay at the near vertex, so the center
+        // pulls back to the cell origin instead of being wrongly re-centered on the cell.
+        let (x, z) = cc_surface_like_flat_quad_center_offsets(88.0);
+        approx_eq(x, 0.0);
+        approx_eq(z, 0.0);
+    }
+
+    #[test]
     fn regular_static_art_keeps_sprite_world_anchor() {
         let anchor = surface_like_static_world_anchor(
             StaticVisualKind::CcRegular {
@@ -2647,8 +2861,8 @@ mod tests {
             20.0,
         );
 
-        approx_eq(anchor.0, 10.0 + EC_STATIC_TILE_TRANSLATION_X);
-        approx_eq(anchor.1, 20.0 + EC_STATIC_TILE_TRANSLATION_Z);
+        approx_eq(anchor.0, 10.0 + CC_STATIC_TILE_TRANSLATION_X);
+        approx_eq(anchor.1, 20.0 + CC_STATIC_TILE_TRANSLATION_Z);
     }
 
     #[test]
@@ -2680,6 +2894,27 @@ mod tests {
 
         assert!(static_tile_is_surface_like(Some(&tile)));
         assert!(static_tile_uses_tex_land_ec_surface_path(Some(&tile)));
+    }
+
+    #[test]
+    fn cc_flat_render_gate_targets_wet_water_not_surface_floors() {
+        // Real "slate roof": SURFACE | Background, authored SurfaceLike, NOT wet, elevated.
+        // It is surface-like (would enter the EC land path) but must stay a CC billboard.
+        let roof = item_tile_with_flags(
+            TILE_FLAG_SURFACE | TILE_FLAG_BACKGROUND,
+            udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike,
+        );
+        assert!(static_tile_is_surface_like(Some(&roof)));
+        assert!(!cc_static_tile_renders_flat(Some(&roof)));
+
+        // Real shoreline water / "wave" statics carry IsWet -> lie flat.
+        let water = item_tile_with_flags(
+            TILE_FLAG_WET | TILE_FLAG_BACKGROUND,
+            udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike,
+        );
+        assert!(cc_static_tile_renders_flat(Some(&water)));
+
+        assert!(!cc_static_tile_renders_flat(None));
     }
 
     #[test]
@@ -3079,7 +3314,7 @@ mod tests {
             is_wet_flags: 0,
             hue_id: 0,
             hue_flags: 0,
-            _pad_inst: 0,
+            flat_quad: 0,
             _pad_hue: [0; 2],
             local_light_rgba: [0.0; 4],
             color_rgba: [1.0, 1.0, 1.0, 1.0],

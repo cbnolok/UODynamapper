@@ -16,7 +16,7 @@
     SpriteInstance, SpriteParams, SceneUniform, LandEffectsUniform, GlobalLightingUniforms,
     art_atlas_sampler, art_atlas, instances, sprite_params, scene, effects, global_light,
     hue_sampler, hue_texture, visual_grunge_texture,
-    INV_SQRT_2, BILLBOARD_RIGHT_XZ, HEIGHT_SCALE, DEPTH_CLASS_REGULAR, DEPTH_CLASS_BACKGROUND,
+    INV_SQRT_2, BILLBOARD_RIGHT_XZ, FLAT_QUAD_FORWARD_XZ, HEIGHT_SCALE, DEPTH_CLASS_REGULAR, DEPTH_CLASS_BACKGROUND,
     DEPTH_CLASS_FOLIAGE, DEPTH_CLASS_ROOF, DEPTH_CLASS_SURFACE_LIKE_FLOOR, PASS_MODE_OPAQUE,
     PASS_MODE_TRANSPARENT, PASS_MODE_SHADOW, SURFACE_LIKE_DEPTH_CLASS_OFFSET,
     STATIC_DEPTH_TIE_BREAK_FRAG_EPSILON
@@ -83,12 +83,30 @@ fn vertex(vertex: Vertex) -> ArtVertexOutput {
     let inst = instances[u32(vertex.uv_b.x + 0.5)];
 
     let corner = vec2<f32>(vertex.position.x, vertex.position.z);
-    let local = mix(inst.local_min, inst.local_max, vec2<f32>(corner.x, 1.0 - corner.y));
-    let world_pos = vec3<f32>(
-        inst.world_x + local.x * BILLBOARD_RIGHT_XZ.x,
-        inst.world_y + local.y,
-        inst.world_z + local.x * BILLBOARD_RIGHT_XZ.y,
-    );
+    var world_pos: vec3<f32>;
+    if (inst.flat_quad != 0u) {
+        // CC surface-like statics (shoreline water) lie flat in the XZ plane instead of
+        // standing up as a camera-facing card. Unlike the EC ground-quad path (plain square
+        // texmap on an axis-aligned cell), the CC sprite already has the isometric diamond
+        // baked into its pixels, so we lay it out on the diagonal screen-aligned basis
+        // (BILLBOARD_RIGHT_XZ = on-screen horizontal, FLAT_QUAD_FORWARD_XZ = on-screen
+        // vertical/depth). With the centered, pixel-sized bounds from
+        // resolve_cc_surface_like_flat_quad_bounds, the sprite's diamond vertices land on the
+        // cell corners so the water seams with the terrain beneath it.
+        let local = mix(inst.local_min, inst.local_max, corner);
+        world_pos = vec3<f32>(
+            inst.world_x + local.x * BILLBOARD_RIGHT_XZ.x + local.y * FLAT_QUAD_FORWARD_XZ.x,
+            inst.world_y,
+            inst.world_z + local.x * BILLBOARD_RIGHT_XZ.y + local.y * FLAT_QUAD_FORWARD_XZ.y,
+        );
+    } else {
+        let local = mix(inst.local_min, inst.local_max, vec2<f32>(corner.x, 1.0 - corner.y));
+        world_pos = vec3<f32>(
+            inst.world_x + local.x * BILLBOARD_RIGHT_XZ.x,
+            inst.world_y + local.y,
+            inst.world_z + local.x * BILLBOARD_RIGHT_XZ.y,
+        );
+    }
     var projected_world_pos = world_pos;
     if (sprite_params.pass_mode == PASS_MODE_SHADOW) {
         let caster_height = max(world_pos.y - inst.base_world_y, 0.0);
@@ -211,6 +229,31 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
         return out;
     }
 
+    // Flat CC surface-like water quads lie coplanar with the terrain mesh they overlay.
+    // Every other sprite writes a per-instance CONSTANT logical depth
+    // (logical_depth_from_projected_priority projects a single point at the cell origin,
+    // inst.tile_x/inst.tile_y). That is correct for upright billboards — thin cards that must
+    // sort in classic painter order as a unit — but wrong for a flat quad that spans a whole
+    // tile in the ground plane: a single constant cannot track the terrain's per-fragment depth
+    // gradient across the tile (the terrain's depth varies by ~2 world-units of x+z over one
+    // cell, ~5.8e-4 in NDC, vs. the Background class' 0.001 world-Y logical offset, ~3e-7 NDC —
+    // a ~2000x mismatch). So the terrain wins the depth test over a moving diagonal band of the
+    // tile: the sawtooth boundary and the intermittent "brown terrain bleeding through the
+    // water on specific frames" (the band sweeps as the camera follows the player). It is a
+    // depth-sort artifact, not a UV/alpha hole — matching the prior finding that the water UV
+    // animation never opens a transparent hole.
+    //
+    // Fix: for flat quads write the quad's own rasterized per-fragment depth (in.position.z)
+    // instead of the constant. The quad geometry is already placed STATIC_ART_Y_BIAS (world-Y)
+    // above the terrain, so — the two being parallel planes — its depth beats the terrain by a
+    // small, UNIFORM margin at every fragment (~1.7e-6 NDC ≈ tens of float-depth ULP), with no
+    // gradient mismatch, removing both artifacts. The margin is independent of zoom because the
+    // orthographic near/far planes are fixed (see camera.rs). Only reached in the opaque/
+    // transparent passes (the shadow pass returns above); billboards are unaffected.
+    if (inst.flat_quad != 0u) {
+        out.depth = in.position.z;
+    }
+
     if (effects.enable_water_animation == 1u && in.is_wet == 1u) {
         let uv_in_tile = (uv - inst.uv_min) / atlas_extent;
         uv = inst.uv_min + apply_water_animation(uv_in_tile, vec2<f32>(0.5, 0.5)) * atlas_extent;
@@ -240,25 +283,36 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
     if (sprite_params.pass_mode == PASS_MODE_TRANSPARENT) {
         shaded = vec4<f32>(shaded.rgb * shaded.a * 2.0, shaded.a);
     }
-    shaded = vec4<f32>(apply_art_surface_shading(
-        shaded.rgb,
-        uv_in_tile_for_shading,
-        in.world_pos,
-        in.depth_class,
-        scene.light_direction,
-        global_light.light_color,
-        global_light.atmosphere_tint,
-        effects.enable_art_fake_normals,
-        effects.art_shadow_strength,
-        effects.art_highlight_strength,
-        effects.art_depth_tint_strength,
-        effects.art_contact_shadow_strength,
-        effects.art_mottle_strength,
-        effects.light_decal_intensity,
-        effects.kr_art_temperature_strength,
-        inst.local_light_rgba,
-        false,
-    ), shaded.a);
+    // CC surface-like water statics lie flat and must read as a continuous water
+    // surface that seams with the terrain water beneath them. apply_art_surface_shading
+    // models an upright object's self-occlusion (lower_occlusion / side_contact darkening,
+    // top highlight) which is applied unconditionally regardless of the is_ground_art flag;
+    // painted onto a flat water diamond it produces a bright-top/dark-edge shaded outline —
+    // the "boxed shadow" artifact. Skip it for flat water, mirroring the EC ground path which
+    // likewise bypasses this shading for its water material (ground.wgsl `if (!use_ec_water_material)`).
+    // Non-water flat statics and all billboards are unaffected.
+    let is_cc_flat_water = inst.flat_quad != 0u && in.is_wet == 1u;
+    if (!is_cc_flat_water) {
+        shaded = vec4<f32>(apply_art_surface_shading(
+            shaded.rgb,
+            uv_in_tile_for_shading,
+            in.world_pos,
+            in.depth_class,
+            scene.light_direction,
+            global_light.light_color,
+            global_light.atmosphere_tint,
+            effects.enable_art_fake_normals,
+            effects.art_shadow_strength,
+            effects.art_highlight_strength,
+            effects.art_depth_tint_strength,
+            effects.art_contact_shadow_strength,
+            effects.art_mottle_strength,
+            effects.light_decal_intensity,
+            effects.kr_art_temperature_strength,
+            inst.local_light_rgba,
+            inst.flat_quad != 0u,
+        ), shaded.a);
+    }
     if (effects.enable_grunge == 1u) {
         let visual_grunge = textureSample(visual_grunge_texture, art_atlas_sampler, visual_grunge_uv(in.world_pos.xz, effects.post_process_profile)).rgb;
         shaded = vec4<f32>(apply_texture_visual_grunge(shaded.rgb, in.world_pos.xz, effects.grunge_strength, effects.post_process_profile, visual_grunge), shaded.a);

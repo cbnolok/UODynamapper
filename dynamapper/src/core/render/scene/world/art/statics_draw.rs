@@ -777,7 +777,7 @@ pub fn sys_setup_art_page_atlas(
         is_wet_flags: 0,
         hue_id: 0,
         hue_flags: 0,
-        _pad_inst: 0,
+        flat_quad: 0,
         _pad_hue: [0; 2],
         local_light_rgba: [0.0, 0.0, 0.0, 0.0],
         color_rgba: [0.0, 0.0, 0.0, 0.0],
