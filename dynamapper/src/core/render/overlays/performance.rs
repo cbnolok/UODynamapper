@@ -252,7 +252,7 @@ pub fn setup_overlay_performance(
                 right: Val::Px(20.0),
                 top: Val::Px(20.0),
                 padding: UiRect::all(Val::Px(10.0)),
-                display: if settings.app.performance.show_overlay {
+                display: if settings.app.performance.perf_stats_overlay_visible() {
                     Display::Flex
                 } else {
                     Display::None
@@ -362,7 +362,7 @@ pub fn update_performance_text(
     mut last_scale: Local<f32>,
     mut last_text_cached: Local<String>,
 ) {
-    let show_overlay = settings.app.performance.show_overlay;
+    let show_overlay = settings.app.performance.perf_stats_overlay_visible();
 
     // 1. Real-time visibility toggle from settings
     if let Ok(mut node) = node_query.single_mut() {

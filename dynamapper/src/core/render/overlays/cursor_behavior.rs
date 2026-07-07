@@ -141,7 +141,7 @@ pub fn setup_overlay_cursor_behavior(
                 align_items: AlignItems::Start,
                 justify_content: JustifyContent::Start,
                 padding: UiRect::all(Val::Px(7.0 * settings.app.window.cursor_position_scale)),
-                display: if settings.app.performance.show_overlay {
+                display: if settings.app.performance.cursor_inspect_overlay_visible() {
                     Display::Flex
                 } else {
                     Display::None
@@ -237,7 +237,7 @@ pub fn update_cursor_behavior_text(
     let current_scale = settings.app.window.cursor_position_scale;
     let scale_changed = (*last_scale - current_scale).abs() > 0.001;
 
-    let show_overlay = settings.app.performance.show_overlay;
+    let show_overlay = settings.app.performance.cursor_inspect_overlay_visible();
     if *last_show_overlay != show_overlay || scale_changed {
         if let Ok(mut node) = node_q.single_mut() {
             node.display = if show_overlay {
@@ -356,7 +356,7 @@ pub fn update_cursor_inspect_text(
     let current_scale = resources.settings.app.window.cursor_position_scale;
     let scale_changed = (*locals.last_scale - current_scale).abs() > 0.001;
     let show_inspect =
-        resources.settings.app.performance.show_overlay && resources.inspect_state.enabled;
+        resources.settings.app.performance.cursor_inspect_overlay_visible() && resources.inspect_state.enabled;
 
     if *locals.last_show_inspect != show_inspect || scale_changed {
         if let Ok(mut node) = inspect_node_q.single_mut() {

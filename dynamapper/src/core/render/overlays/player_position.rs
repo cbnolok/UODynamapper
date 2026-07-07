@@ -52,7 +52,7 @@ pub fn setup_overlay_player_position(
                 left: Val::Px(20.0),
                 top: Val::Px(20.0),
                 padding: UiRect::all(Val::Px(7.0 * settings.app.window.player_position_scale)),
-                display: if settings.app.performance.show_overlay {
+                display: if settings.app.performance.player_position_overlay_visible() {
                     Display::Flex
                 } else {
                     Display::None
@@ -101,7 +101,7 @@ pub fn update_player_position_text(
     windows: Query<&Window>,
     render_zoom: Res<RenderZoom>,
 ) {
-    let show_overlay = settings.app.performance.show_overlay;
+    let show_overlay = settings.app.performance.player_position_overlay_visible();
 
     // 1. Real-time visibility toggle from settings
     if let Ok(mut node) = node_query.single_mut() {

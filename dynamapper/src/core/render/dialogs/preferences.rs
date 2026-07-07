@@ -25,6 +25,9 @@ pub struct PreferencesDialogState {
     pub smooth_movement: bool,
     pub hide_player: bool,
     pub show_overlay: bool,
+    pub show_perf_stats_overlay: bool,
+    pub show_player_position_overlay: bool,
+    pub show_cursor_inspect_overlay: bool,
     pub free_camera: bool,
     pub ui_scale: f32,
     pub player_position_scale: f32,
@@ -58,6 +61,9 @@ impl Default for PreferencesDialogState {
             smooth_movement: false,
             hide_player: false,
             show_overlay: true,
+            show_perf_stats_overlay: true,
+            show_player_position_overlay: true,
+            show_cursor_inspect_overlay: true,
             free_camera: false,
             ui_scale: 1.0,
             player_position_scale: 1.0,
@@ -114,6 +120,11 @@ fn sys_sync_settings_to_state(
         state.smooth_movement = settings.app.input.smooth_movement;
         state.hide_player = settings.core.world.hide_player;
         state.show_overlay = settings.app.performance.show_overlay;
+        state.show_perf_stats_overlay = settings.app.performance.show_perf_stats_overlay;
+        state.show_player_position_overlay =
+            settings.app.performance.show_player_position_overlay;
+        state.show_cursor_inspect_overlay =
+            settings.app.performance.show_cursor_inspect_overlay;
         state.frame_limit_enabled = settings.app.performance.frame_limit_enabled;
         state.fps_preset_idx = FPS_PRESETS
             .iter()
@@ -202,6 +213,23 @@ pub fn sys_render_preferences_dialog(
         }
         if settings.as_ref().app.performance.show_overlay != state.show_overlay {
             settings.app.performance.show_overlay = state.show_overlay;
+        }
+        if settings.as_ref().app.performance.show_perf_stats_overlay
+            != state.show_perf_stats_overlay
+        {
+            settings.app.performance.show_perf_stats_overlay = state.show_perf_stats_overlay;
+        }
+        if settings.as_ref().app.performance.show_player_position_overlay
+            != state.show_player_position_overlay
+        {
+            settings.app.performance.show_player_position_overlay =
+                state.show_player_position_overlay;
+        }
+        if settings.as_ref().app.performance.show_cursor_inspect_overlay
+            != state.show_cursor_inspect_overlay
+        {
+            settings.app.performance.show_cursor_inspect_overlay =
+                state.show_cursor_inspect_overlay;
         }
         if settings.as_ref().app.performance.frame_limit_enabled != state.frame_limit_enabled {
             settings.app.performance.frame_limit_enabled = state.frame_limit_enabled;
@@ -449,6 +477,44 @@ pub fn sys_render_preferences_dialog(
                         state.apply_timer.reset();
                         state.apply_timer.unpause();
                     }
+                    // Per-overlay toggles, gated behind the master above: greyed out and
+                    // ineffective while the master is off (each overlay's visibility is
+                    // `show_overlay && <this flag>`, see SectPerformance).
+                    let master_on = state.show_overlay;
+                    ui.indent("overlay_toggles", |ui| {
+                        let mut any_changed = false;
+                        any_changed |= ui
+                            .add_enabled(
+                                master_on,
+                                egui::Checkbox::new(
+                                    &mut state.show_perf_stats_overlay,
+                                    "Performance stats",
+                                ),
+                            )
+                            .changed();
+                        any_changed |= ui
+                            .add_enabled(
+                                master_on,
+                                egui::Checkbox::new(
+                                    &mut state.show_player_position_overlay,
+                                    "Player position",
+                                ),
+                            )
+                            .changed();
+                        any_changed |= ui
+                            .add_enabled(
+                                master_on,
+                                egui::Checkbox::new(
+                                    &mut state.show_cursor_inspect_overlay,
+                                    "Tile inspector",
+                                ),
+                            )
+                            .changed();
+                        if any_changed {
+                            state.apply_timer.reset();
+                            state.apply_timer.unpause();
+                        }
+                    });
 
                     ui.add_space(4.0);
                     if ui

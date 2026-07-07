@@ -249,9 +249,34 @@ fn default_land_upload_max_bytes_per_frame() -> usize {
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
 pub struct SectPerformance {
+    /// Master toggle for all on-screen overlays. When off, every overlay is hidden
+    /// regardless of the per-overlay flags below.
     pub show_overlay: bool,
+    /// Per-overlay toggles, gated behind `show_overlay`. Defaulted to `true` so configs
+    /// written before these existed keep showing every overlay (prior behavior).
+    #[serde(default = "default_emit_true")]
+    pub show_perf_stats_overlay: bool,
+    #[serde(default = "default_emit_true")]
+    pub show_player_position_overlay: bool,
+    #[serde(default = "default_emit_true")]
+    pub show_cursor_inspect_overlay: bool,
     pub frame_limit_enabled: bool,
     pub target_fps: u32,
+}
+
+impl SectPerformance {
+    /// Effective visibility of the FPS / performance-stats overlay: master AND its own toggle.
+    pub fn perf_stats_overlay_visible(&self) -> bool {
+        self.show_overlay && self.show_perf_stats_overlay
+    }
+    /// Effective visibility of the player-position overlay: master AND its own toggle.
+    pub fn player_position_overlay_visible(&self) -> bool {
+        self.show_overlay && self.show_player_position_overlay
+    }
+    /// Effective visibility of the cursor / tile-inspector overlay: master AND its own toggle.
+    pub fn cursor_inspect_overlay_visible(&self) -> bool {
+        self.show_overlay && self.show_cursor_inspect_overlay
+    }
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
