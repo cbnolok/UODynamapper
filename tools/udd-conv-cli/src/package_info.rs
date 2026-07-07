@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use log::info;
+
 use color_eyre::eyre::{self, WrapErr};
 use udd_assets::{
     HuesPackage, MobileAnimCcPackage, MobileAnimEcPackage, TexArtCcPackage, TexArtEcPackage,
@@ -105,9 +107,9 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
             .first()
             .and_then(|page| package.read_page_bytes(page.page_index).ok().map(|data| (page, data.len())));
 
-        println!("Recognized package: tex_art_cc");
-        println!("Known logical files: metadata=2, textures={}", package.pages().len());
-        println!(
+        info!("Recognized package: tex_art_cc");
+        info!("Known logical files: metadata=2, textures={}", package.pages().len());
+        info!(
             "Atlas: {}x{}, gutter={}, pages={}, slots={}, populated={}",
             package.atlas_width(),
             package.atlas_height(),
@@ -116,14 +118,14 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
             package.slots().len(),
             populated_slots
         );
-        println!(
+        info!(
             "Upscale: {}",
             art_upscale_summary(package.slots().iter().filter(|slot| slot.is_present()).map(|slot| {
                 (slot.upscale_algorithm_name(), slot.upscale_factor)
             }))
         );
         if let Some((page, byte_len)) = first_page_format {
-            println!(
+            info!(
                 "Page payload format: {} (first stored page bytes={})",
                 page_pixel_format_name(byte_len, page.used_width, page.used_height),
                 byte_len
@@ -134,9 +136,9 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
 
     if let Ok(package) = TexArtEcPackage::from_uddp_package(package.clone()) {
         let populated_slots = package.slots().iter().filter(|slot| slot.is_present()).count();
-        println!("Recognized package: tex_art_ec");
-        println!("Known logical files: metadata=2, textures={}", package.pages().len());
-        println!(
+        info!("Recognized package: tex_art_ec");
+        info!("Known logical files: metadata=2, textures={}", package.pages().len());
+        info!(
             "Atlas: {}x{}, gutter={}, pages={}, slots={}, populated={}",
             package.atlas_width(),
             package.atlas_height(),
@@ -145,7 +147,7 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
             package.slots().len(),
             populated_slots
         );
-        println!(
+        info!(
             "Upscale: {}",
             art_upscale_summary(package.slots().iter().filter(|slot| slot.is_present()).map(|slot| {
                 (slot.upscale_algorithm_name(), slot.upscale_factor)
@@ -155,9 +157,9 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
     }
 
     if let Ok(package) = MobileAnimCcPackage::from_uddp_package(package.clone()) {
-        println!("Recognized package: mobile_anim_cc");
-        println!("Known logical files: metadata=5, textures={}", package.pages().len());
-        println!(
+        info!("Recognized package: mobile_anim_cc");
+        info!("Known logical files: metadata=5, textures={}", package.pages().len());
+        info!(
             "Atlas: max={}x{}, gutter={}, pages={}, buckets={}",
             package.atlas_width(),
             package.atlas_height(),
@@ -167,7 +169,7 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
                 (page.atlas_width, page.atlas_height, page.frame_count)
             }))
         );
-        println!(
+        info!(
             "Animations: {}, frames={}, body_maps={}, body_types={}",
             package.animations().len(),
             package.frames().len(),
@@ -178,9 +180,9 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
     }
 
     if let Ok(package) = MobileAnimEcPackage::from_uddp_package(package.clone()) {
-        println!("Recognized package: mobile_anim_ec");
-        println!("Known logical files: metadata=5, textures={}", package.pages().len());
-        println!(
+        info!("Recognized package: mobile_anim_ec");
+        info!("Known logical files: metadata=5, textures={}", package.pages().len());
+        info!(
             "Atlas: max={}x{}, gutter={}, pages={}, buckets={}",
             package.atlas_width(),
             package.atlas_height(),
@@ -190,7 +192,7 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
                 (page.atlas_width, page.atlas_height, page.frame_count)
             }))
         );
-        println!(
+        info!(
             "Animations: {}, frames={}, items={}, source_hints={}",
             package.animations().len(),
             package.frames().len(),
@@ -230,9 +232,9 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
             .values()
             .filter(|details| details.ignore_code.is_some())
             .count();
-        println!("Recognized package: tex_land_ec");
-        println!("Known logical files: metadata>=3, textures={}", package.pages().len());
-        println!(
+        info!("Recognized package: tex_land_ec");
+        info!("Known logical files: metadata>=3, textures={}", package.pages().len());
+        info!(
             "Atlas: {}x{}, gutter={}, pages={}, slots={}, populated={}",
             package.atlas_width(),
             package.atlas_height(),
@@ -241,8 +243,8 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
             package.slots().len(),
             populated_slots
         );
-        println!("Terrain provenance rows: {}", package.terrain_provenance().len());
-        println!(
+        info!("Terrain provenance rows: {}", package.terrain_provenance().len());
+        info!(
             "Terrain override metadata: entries={}, policies={}, liquids={}, ignores={}, texture_refs={} (resolved={}), effective_slot_changes={}",
             override_entries,
             policy_count,
@@ -265,7 +267,7 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
                     .map(|policy| policy.policy.as_str())
                     .collect::<Vec<_>>()
                     .join("|");
-                println!(
+                info!(
                     "  material {} override details: policies={} liquid={} ignore={}",
                     details.material_id,
                     if policies.is_empty() { "none" } else { policies.as_str() },
@@ -275,7 +277,7 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
             }
         }
         for change in effective_slot_changes.iter().take(8) {
-            println!(
+            info!(
                 "  material {} query {}: runtime_slot={:?} effective_slot={:?}",
                 change.material_id,
                 change.query_tile_id,
@@ -287,9 +289,9 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
     }
 
     if let Ok(package) = TileMetaPackage::from_uddp_package(package.clone()) {
-        println!("Recognized package: tilemeta");
-        println!("Known logical files: metadata=2");
-        println!(
+        info!("Recognized package: tilemeta");
+        info!("Known logical files: metadata=2");
+        info!(
             "Tilemeta: land_tiles={}, item_tiles={}",
             package.land_tiles().len(),
             package.item_tiles().len()
@@ -304,9 +306,9 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
             .filter_map(|slot| slot.as_ref())
             .filter(|slot| slot.is_present())
             .count();
-        println!("Recognized package: hues");
-        println!("Known logical files: metadata=1, textures=1");
-        println!(
+        info!("Recognized package: hues");
+        info!("Known logical files: metadata=1, textures=1");
+        info!(
             "Hues: slots={}, populated={}, texture={}x{}",
             package.slots().len(),
             populated,
@@ -352,22 +354,22 @@ pub fn print_package_info(path: &Path) -> eyre::Result<()> {
         stored_total += stored_size;
     }
 
-    println!("File: {}", path.display());
-    println!("Kind: {}", kind);
-    println!("Lookup mode: {}", lookup_mode_name(package.lookup_mode()));
-    println!("Package bytes: {}", package.package_size_bytes());
-    println!("Header file count: {}", header.file_count);
-    println!("Stored package hash64: {:#018x}", package.stored_package_hash64());
-    println!("Computed package hash64: {:#018x}", package.computed_package_hash64());
+    info!("File: {}", path.display());
+    info!("Kind: {}", kind);
+    info!("Lookup mode: {}", lookup_mode_name(package.lookup_mode()));
+    info!("Package bytes: {}", package.package_size_bytes());
+    info!("Header file count: {}", header.file_count);
+    info!("Stored package hash64: {:#018x}", package.stored_package_hash64());
+    info!("Computed package hash64: {:#018x}", package.computed_package_hash64());
     match package.lookup_mode() {
-        LookupMode::VirtualPathHash => println!("Logical key counts: path_hashes={}", header.file_count),
-        LookupMode::DenseId | LookupMode::SparseId => println!("Logical key counts: ids={}", header.file_count),
+        LookupMode::VirtualPathHash => info!("Logical key counts: path_hashes={}", header.file_count),
+        LookupMode::DenseId | LookupMode::SparseId => info!("Logical key counts: ids={}", header.file_count),
     }
 
     let dictionaries = package.dictionary_records();
-    println!("Dictionaries: {}", dictionaries.len());
+    info!("Dictionaries: {}", dictionaries.len());
     for (data_type, codec, size) in dictionaries {
-        println!(
+        info!(
             "  {} ({}) : codec={}, bytes={}",
             data_type_name(data_type),
             data_type,
@@ -378,21 +380,21 @@ pub fn print_package_info(path: &Path) -> eyre::Result<()> {
 
     print_known_package_summary(&package)?;
 
-    println!(
+    info!(
         "Payload totals: raw={} stored={} saved={}",
         raw_total,
         stored_total,
         raw_total.saturating_sub(stored_total)
     );
 
-    println!("Compression:");
+    info!("Compression:");
     for (codec, count) in codec_counts {
-        println!("  {}: {} files", codec, count);
+        info!("  {}: {} files", codec, count);
     }
 
-    println!("Data types:");
+    info!("Data types:");
     for (data_type, (count, raw_size, stored_size)) in type_counts {
-        println!(
+        info!(
             "  {} ({}) : {} files, raw={}, stored={}",
             data_type_name(data_type),
             data_type,

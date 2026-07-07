@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use clap::{Subcommand, ValueEnum};
 use color_eyre::eyre::{self, WrapErr};
+use log::info;
 use image::{ColorType, ImageFormat};
 use uocf::classic::multimap_render::{
     render_multimap, render_source_image, DecodedRgba, ImageRenderOptions, MultimapRenderOptions,
@@ -181,7 +182,7 @@ pub fn run(cmd: MultimapCmd) -> eyre::Result<()> {
         MultimapCmd::RleToImage { input, output } => {
             let image = multimap_rle::load_rle(&input)?;
             multimap_rle::save_bitmap_or_png(&output, &image)?;
-            println!(
+            info!(
                 "Decoded {}x{} multimap RLE '{}' to '{}'.",
                 image.width,
                 image.height,
@@ -192,7 +193,7 @@ pub fn run(cmd: MultimapCmd) -> eyre::Result<()> {
         MultimapCmd::ImageToRle { input, output } => {
             let image = multimap_rle::load_bitmap_or_png(&input)?;
             multimap_rle::save_rle(&output, &image)?;
-            println!(
+            info!(
                 "Encoded {}x{} multimap image '{}' to '{}'.",
                 image.width,
                 image.height,
@@ -356,7 +357,7 @@ fn convert_source_to_image(
         },
     )?;
     save_rgba_image(output, rendered.width, rendered.height, &rendered.rgba)?;
-    println!(
+    info!(
         "Decoded {} '{}' crop {}x{}+{},{} to {}x{} image '{}'.",
         label,
         input.display(),
@@ -401,7 +402,7 @@ fn convert_source_to_rle(
         },
     )?;
     multimap_rle::save_rle(output, &rendered.image)?;
-    println!(
+    info!(
         "Converted {} '{}' crop {}x{}+{},{} to {}x{} {:?} multimap RLE '{}'.",
         label,
         input.display(),

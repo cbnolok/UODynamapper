@@ -74,7 +74,7 @@ fn export_sound(
 
     fs::write(&output, bytes).wrap_err_with(|| format!("Failed to write {}", output.display()))?;
 
-    println!(
+    log::info!(
         "Exported sound {} '{}' from slot {}{} to '{}'.",
         lookup.1,
         lookup.0.name,

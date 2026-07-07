@@ -2,15 +2,15 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use clap::{Parser, ValueEnum};
+use clap::{Args as ClapArgs, ValueEnum};
 use color_eyre::eyre::{self, Context};
 use uocf::classic::map::{MapBlockRelPos, MapPlane, MapSizeCells};
 use uocf::enhanced::terrain_definition::TerrainDefinitionPackage;
 use uocf::uop_container::package::UopPackage;
 
-#[derive(Parser, Debug)]
-#[command(author, version, about = "Extract facet terrain evidence into KDL.")]
-struct Cli {
+#[derive(ClapArgs, Debug)]
+#[command(about = "Extract facet terrain evidence into KDL.")]
+pub struct Args {
     #[arg(long, value_enum)]
     client: ClientKind,
     #[arg(long)]
@@ -51,13 +51,9 @@ struct Evidence {
     transcodes: BTreeMap<TranscodeKey, u64>,
 }
 
-fn main() -> eyre::Result<()> {
-    color_eyre::install()?;
-    let _ = udd_logging::install_tracing_indicatif_logger();
-
-    let cli = Cli::parse();
-    let size = match cli.map_index {
-        Some(map_index) => Some(map_size(map_index, cli.width, cli.height)?),
+pub fn run(args: Args) -> eyre::Result<()> {
+    let size = match args.map_index {
+        Some(map_index) => Some(map_size(map_index, args.width, args.height)?),
         None => None,
     };
     let mut output = String::new();
@@ -65,48 +61,48 @@ fn main() -> eyre::Result<()> {
     output.push_str("// Generated facet terrain evidence. Do not hand-edit as authoritative data.\n");
     output.push_str(&format!(
         "source client={}",
-        kdl_quote(match cli.client {
+        kdl_quote(match args.client {
             ClientKind::Ec => "ec",
             ClientKind::Kr => "kr",
         })
     ));
-    if let Some(map_index) = cli.map_index {
+    if let Some(map_index) = args.map_index {
         output.push_str(&format!(" map_index={map_index}"));
     }
-    if let Some(facet) = cli.facet.as_ref() {
+    if let Some(facet) = args.facet.as_ref() {
         output.push_str(&format!(" facet={}", kdl_quote_path(facet)));
     }
     if let Some(size) = size {
         output.push_str(&format!(" width={} height={}", size.width, size.height));
     }
-    if let Some(cc_map) = cli.cc_map.as_ref() {
+    if let Some(cc_map) = args.cc_map.as_ref() {
         output.push_str(&format!(" cc_map={}", kdl_quote_path(cc_map)));
     }
-    if let Some(path) = cli.kr_dictionary_csv.as_ref() {
+    if let Some(path) = args.kr_dictionary_csv.as_ref() {
         output.push_str(&format!(" kr_dictionary_csv={}", kdl_quote_path(path)));
     }
-    if let Some(path) = cli.terrain_definition.as_ref() {
+    if let Some(path) = args.terrain_definition.as_ref() {
         output.push_str(&format!(" terrain_definition={}", kdl_quote_path(path)));
     }
     output.push('\n');
 
     let mut evidence = Evidence::default();
-    if let Some(path) = cli.kr_dictionary_csv.as_ref() {
-        if !matches!(cli.client, ClientKind::Kr) {
+    if let Some(path) = args.kr_dictionary_csv.as_ref() {
+        if !matches!(args.client, ClientKind::Kr) {
             return Err(eyre::eyre!("--kr-dictionary-csv can only be used with --client kr"));
         }
         merge_evidence(&mut evidence, extract_kr_dictionary_csv(path)?);
     }
-    if cli.facet.is_some() {
-        let map_index = cli
+    if args.facet.is_some() {
+        let map_index = args
             .map_index
             .ok_or_else(|| eyre::eyre!("--map-index is required when --facet is used"))?;
         let size = size.expect("size is computed when map_index is present");
         merge_evidence(
             &mut evidence,
-            match cli.client {
-                ClientKind::Ec => extract_ec_evidence(&cli, map_index, size)?,
-                ClientKind::Kr => extract_kr_evidence(&cli, map_index, size)?,
+            match args.client {
+                ClientKind::Ec => extract_ec_evidence(&args, map_index, size)?,
+                ClientKind::Kr => extract_kr_evidence(&args, map_index, size)?,
             },
         );
     }
@@ -115,9 +111,9 @@ fn main() -> eyre::Result<()> {
             "no evidence source selected; use --facet and/or --kr-dictionary-csv"
         ));
     }
-    write_transcodes(&mut output, cli.client, &evidence);
+    write_transcodes(&mut output, args.client, &evidence);
 
-    if let Some(path) = cli.terrain_definition.as_ref() {
+    if let Some(path) = args.terrain_definition.as_ref() {
         match TerrainDefinitionPackage::load(path) {
             Ok(terrain) => write_terrain_definition(&mut output, &terrain),
             Err(err) => {
@@ -134,20 +130,20 @@ fn main() -> eyre::Result<()> {
         }
     }
 
-    fs::write(&cli.output, output)
-        .wrap_err_with(|| format!("write {}", cli.output.display()))?;
-    println!("Wrote facet evidence to {}", cli.output.display());
+    fs::write(&args.output, output)
+        .wrap_err_with(|| format!("write {}", args.output.display()))?;
+    log::info!("Wrote facet evidence to {}", args.output.display());
 
     Ok(())
 }
 
-fn extract_ec_evidence(cli: &Cli, map_index: u8, size: MapSizeCells) -> eyre::Result<Evidence> {
-    let cc_map = cli
+fn extract_ec_evidence(args: &Args, map_index: u8, size: MapSizeCells) -> eyre::Result<Evidence> {
+    let cc_map = args
         .cc_map
         .as_ref()
         .ok_or_else(|| eyre::eyre!("--cc-map is required for EC facet transcode extraction"))?;
     let mut cc_plane = load_cc_plane(cc_map, map_index, size)?;
-    let facet = cli.facet.as_ref().expect("checked by caller");
+    let facet = args.facet.as_ref().expect("checked by caller");
     let package = UopPackage::load(facet)
         .wrap_err_with(|| format!("load {}", facet.display()))?;
     let mut evidence = Evidence::default();
@@ -183,11 +179,11 @@ fn extract_ec_evidence(cli: &Cli, map_index: u8, size: MapSizeCells) -> eyre::Re
     Ok(evidence)
 }
 
-fn extract_kr_evidence(cli: &Cli, map_index: u8, size: MapSizeCells) -> eyre::Result<Evidence> {
-    let facet = cli.facet.as_ref().expect("checked by caller");
+fn extract_kr_evidence(args: &Args, map_index: u8, size: MapSizeCells) -> eyre::Result<Evidence> {
+    let facet = args.facet.as_ref().expect("checked by caller");
     let package = UopPackage::load(facet)
         .wrap_err_with(|| format!("load {}", facet.display()))?;
-    let mut cc_plane = cli
+    let mut cc_plane = args
         .cc_map
         .as_ref()
         .map(|cc_map| load_cc_plane(cc_map, map_index, size))

@@ -13,6 +13,7 @@ use std::{
 };
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use log::warn;
 use flate2::{
     Compression,
     read::{ZlibDecoder, ZlibEncoder},
@@ -166,7 +167,7 @@ fn expected_map_file_size(type_index: i32) -> Option<u64> {
 fn warn_if_non_standard_map_size(out_file: &Path, type_index: i32, current_size: u64) {
     match expected_map_file_size(type_index) {
         Some(expected_size) if current_size != expected_size => {
-            eprintln!(
+            warn!(
                 "warning: map file '{}' has size {} bytes, expected {} bytes for standard map{}; keeping non-standard size as-is.",
                 out_file.display(),
                 current_size,
@@ -176,7 +177,7 @@ fn warn_if_non_standard_map_size(out_file: &Path, type_index: i32, current_size:
         }
         Some(_) => {}
         None => {
-            eprintln!(
+            warn!(
                 "warning: map file '{}' uses unknown map type {}; generated size is {} bytes.",
                 out_file.display(),
                 type_index,

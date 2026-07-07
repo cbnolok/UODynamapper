@@ -138,7 +138,7 @@ fn main() -> eyre::Result<()> {
     match &cli.subcommand {
         Commands::Hash { value } => {
             let hash = uocf::uop_container::hash::hash_file_name_single(value);
-            println!("Hash for \"{value}\": 0x{:016x}", hash);
+            log::info!("Hash for \"{value}\": 0x{:016x}", hash);
         }
         Commands::Crack {
             hash,
@@ -161,12 +161,12 @@ fn main() -> eyre::Result<()> {
                 ));
             }
 
-            println!("Cracking hash 0x{:016x}...", hash);
-            println!("  Prefix: \"{}\"", prefix);
-            println!("  Suffix: \"{}\"", suffix);
-            println!("  Charset: \"{}\"", charset);
-            println!("  Length: {} to {}", min_len, max_len);
-            println!("  Method: {}", method);
+            log::info!("Cracking hash 0x{:016x}...", hash);
+            log::info!("  Prefix: \"{}\"", prefix);
+            log::info!("  Suffix: \"{}\"", suffix);
+            log::info!("  Charset: \"{}\"", charset);
+            log::info!("  Length: {} to {}", min_len, max_len);
+            log::info!("  Method: {}", method);
 
             let stop_signal = Arc::new(AtomicBool::new(false));
             let result = match method.as_str() {
@@ -199,8 +199,8 @@ fn main() -> eyre::Result<()> {
             };
 
             match result {
-                Some(found) => println!("\nFound: {}", found),
-                None => println!("\nFailed to find matching string."),
+                Some(found) => log::info!("\nFound: {}", found),
+                None => log::info!("\nFailed to find matching string."),
             }
         }
         Commands::Replace {
@@ -208,7 +208,7 @@ fn main() -> eyre::Result<()> {
             hash,
             new_file,
         } => {
-            println!(
+            log::info!(
                 "Replacing file with hash 0x{:016x} in {}",
                 *hash,
                 uop_file.display()
@@ -231,10 +231,10 @@ fn main() -> eyre::Result<()> {
 
             save_package_atomically(&mut uop, uop_file)?;
 
-            println!("Successfully replaced file and saved the UOP package.");
+            log::info!("Successfully replaced file and saved the UOP package.");
         }
         Commands::Rebuild { uop_file } => {
-            println!("Rebuilding UOP package: {}", uop_file.display());
+            log::info!("Rebuilding UOP package: {}", uop_file.display());
 
             let mut uop = UopPackage::load(uop_file)
                 .with_context(|| format!("Failed to load UOP file: {}", uop_file.display()))?;
@@ -244,14 +244,14 @@ fn main() -> eyre::Result<()> {
 
             save_package_atomically(&mut uop, uop_file)?;
 
-            println!("Successfully rebuilt and saved the UOP package.");
+            log::info!("Successfully rebuilt and saved the UOP package.");
         }
         Commands::Extract {
             uop_file,
             out_dir,
             dictionary,
         } => {
-            println!(
+            log::info!(
                 "Extracting {} to {}...",
                 uop_file.display(),
                 out_dir.display()
@@ -263,7 +263,7 @@ fn main() -> eyre::Result<()> {
 
             let mut name_map = std::collections::HashMap::new();
             if let Some(dict_path) = dictionary {
-                println!("Loading dictionary: {}...", dict_path.display());
+                log::info!("Loading dictionary: {}...", dict_path.display());
                 let dict = uocf::enhanced::string_dictionary::UoStringDictionary::load(dict_path)
                     .with_context(|| {
                         format!("Failed to load dictionary: {}", dict_path.display())
@@ -276,7 +276,7 @@ fn main() -> eyre::Result<()> {
                         break;
                     }
                 }
-                println!("Loaded {} strings from dictionary.", name_map.len());
+                log::info!("Loaded {} strings from dictionary.", name_map.len());
             }
 
             // TODO: add it only for Texture.uop
@@ -333,7 +333,7 @@ fn main() -> eyre::Result<()> {
                     .with_context(|| format!("Failed to write file: {}", out_path.display()))?;
                 count += 1;
             }
-            println!("Successfully extracted {} files.", count);
+            log::info!("Successfully extracted {} files.", count);
         }
         Commands::MergeDic { output, inputs } => {
             let mut dictionary = HashDictionary::new();
@@ -343,7 +343,7 @@ fn main() -> eyre::Result<()> {
             let mut duplicate_hashes = 0usize;
             for input in inputs {
                 let incoming = HashDictionary::load(input)?;
-                println!("Loaded {} entries from {}", incoming.len(), input.display());
+                log::info!("Loaded {} entries from {}", incoming.len(), input.display());
                 input_entries += incoming.len();
                 let report = dictionary.merge(incoming);
                 new_hashes += report.new_hashes;
@@ -352,7 +352,7 @@ fn main() -> eyre::Result<()> {
             }
 
             dictionary.save(output)?;
-            println!(
+            log::info!(
                 "Merged {} input entries into {} unique entries at {} ({} new hashes, {} new names, {} duplicate hashes)",
                 input_entries,
                 dictionary.len(),
@@ -386,7 +386,7 @@ fn main() -> eyre::Result<()> {
                     continue;
                 }
 
-                println!("Processing {}...", uop_name);
+                log::info!("Processing {}...", uop_name);
                 let package = UopPackage::load(&uop_path)?;
                 let missing_hashes: HashSet<u64> = package
                     .iter_files()
@@ -395,14 +395,14 @@ fn main() -> eyre::Result<()> {
                     .collect();
 
                 if missing_hashes.is_empty() {
-                    println!("  No missing hashes in {}.", uop_name);
+                    log::info!("  No missing hashes in {}.", uop_name);
                     continue;
                 }
 
-                println!("  Found {} missing hashes.", missing_hashes.len());
+                log::info!("  Found {} missing hashes.", missing_hashes.len());
 
                 for template_str in pkg_config.candidates {
-                    println!("  Trying template: {}", template_str);
+                    log::info!("  Trying template: {}", template_str);
                     let range = pkg_config.range.map(|r| r[0]..=r[1]);
                     let template = UopTemplate::new(&template_str, range.clone());
 
@@ -421,14 +421,14 @@ fn main() -> eyre::Result<()> {
                         );
                         let found = template.crack(&missing_hashes, &stop_signal);
                         for (h, s) in found {
-                            println!("    Found match: 0x{:016X} -> {}", h, s);
+                            log::info!("    Found match: 0x{:016X} -> {}", h, s);
                             hash_dictionary.set(h, s);
                         }
                         pb.finish_and_clear();
                     } else {
                         let found = template.crack(&missing_hashes, &stop_signal);
                         for (h, s) in found {
-                            println!("    Found match: 0x{:016X} -> {}", h, s);
+                            log::info!("    Found match: 0x{:016X} -> {}", h, s);
                             hash_dictionary.set(h, s);
                         }
                     }
@@ -436,7 +436,7 @@ fn main() -> eyre::Result<()> {
             }
 
             hash_dictionary.save(output)?;
-            println!("Saved dictionary to {}", output.display());
+            log::info!("Saved dictionary to {}", output.display());
         }
     }
 

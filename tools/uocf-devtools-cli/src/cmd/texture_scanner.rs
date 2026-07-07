@@ -1,14 +1,16 @@
 use byteorder::{LittleEndian, ReadBytesExt};
-use clap::Parser;
+use clap::Args as ClapArgs;
+use color_eyre::eyre::{self, Context};
+use log::{info, warn};
 use std::fs;
-use std::io::{self, Cursor, Read};
+use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use uocf::uop_container::hash::hash_file_name_single;
 
 /// Scan unpacked DDS textures and write a CSV inventory.
-#[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
-struct Cli {
+#[derive(ClapArgs, Debug)]
+#[command(about = "Scan unpacked DDS textures and write a CSV inventory.")]
+pub struct Args {
     /// Root directory containing unpacked DDS files.
     #[arg(value_name = "INPUT_DIR")]
     input_dir: PathBuf,
@@ -35,22 +37,21 @@ struct TextureInfo {
     unused1: u8,
 }
 
-fn main() -> io::Result<()> {
-    let cli = Cli::parse();
-    let root = cli.input_dir;
-    let land_dir = cli.land_candidates_dir;
+pub fn run(args: Args) -> eyre::Result<()> {
+    let root = args.input_dir;
+    let land_dir = args.land_candidates_dir;
     let mut infos = Vec::new();
 
     if !root.is_dir() {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("input directory does not exist: {}", root.display()),
+        return Err(eyre::eyre!(
+            "input directory does not exist: {}",
+            root.display()
         ));
     }
 
-    println!("Scanning {}...", root.display());
+    info!("Scanning {}...", root.display());
     if let Some(land_dir) = &land_dir {
-        fs::create_dir_all(land_dir)?;
+        fs::create_dir_all(land_dir).wrap_err("create land candidates dir")?;
     }
 
     for entry in walkdir::WalkDir::new(&root)
@@ -63,34 +64,34 @@ fn main() -> io::Result<()> {
                 match process_dds(path, &root) {
                     Ok(info) => {
                         if info.is_land_candidate == 1 {
-                            // Copy to land candidates folder
                             if let Some(land_dir) = &land_dir {
                                 let target_path = land_dir.join(info.path.replace('/', "_"));
                                 if let Some(parent) = target_path.parent() {
-                                    fs::create_dir_all(parent)?;
+                                    fs::create_dir_all(parent)
+                                        .wrap_err("create land candidate subdir")?;
                                 }
-                                fs::copy(path, target_path)?;
+                                fs::copy(path, target_path).wrap_err("copy land candidate")?;
                             }
                         }
                         infos.push(info);
                     }
-                    Err(e) => eprintln!("Warning: Failed to process {}: {}", path.display(), e),
+                    Err(e) => warn!("Warning: Failed to process {}: {}", path.display(), e),
                 }
             }
         }
     }
 
-    println!("Found {} DDS files. Sorting...", infos.len());
+    info!("Found {} DDS files. Sorting...", infos.len());
 
-    // Sort by width, then height
     infos.sort_by(|a, b| a.width.cmp(&b.width).then(a.height.cmp(&b.height)));
 
-    if let Some(parent) = cli.output.parent() {
+    if let Some(parent) = args.output.parent() {
         if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)?;
+            fs::create_dir_all(parent).wrap_err("create output dir")?;
         }
     }
-    let mut wtr = csv::Writer::from_path(&cli.output)?;
+    let mut wtr = csv::Writer::from_path(&args.output)
+        .wrap_err_with(|| format!("open output CSV {}", args.output.display()))?;
 
     wtr.write_record(&[
         "path",
@@ -120,9 +121,9 @@ fn main() -> io::Result<()> {
 
     wtr.flush()?;
 
-    println!(
+    info!(
         "Done. CSV saved to {}. Land candidates copied to {}",
-        cli.output.display(),
+        args.output.display(),
         land_dir
             .as_ref()
             .map(|path| path.display().to_string())
@@ -132,23 +133,24 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-fn process_dds(path: &Path, root: &Path) -> io::Result<TextureInfo> {
-    let mut file = fs::File::open(path)?;
+fn process_dds(path: &Path, root: &Path) -> eyre::Result<TextureInfo> {
+    let mut file = fs::File::open(path).wrap_err_with(|| format!("open {}", path.display()))?;
     let mut data = Vec::new();
-    file.read_to_end(&mut data)?;
+    file.read_to_end(&mut data)
+        .wrap_err_with(|| format!("read {}", path.display()))?;
 
     let size = data.len() as u64;
 
     let rel_path = path
         .strip_prefix(root)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?
+        .wrap_err("strip root prefix")?
         .to_string_lossy()
         .into_owned();
     let vpath_hash = if rel_path.starts_with("0x") {
         rel_path
             .split('.')
             .next()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "empty texture path"))?
+            .ok_or_else(|| eyre::eyre!("empty texture path"))?
             .to_string()
     } else {
         format!("0x{:016x}", hash_file_name_single(&rel_path))
@@ -156,38 +158,32 @@ fn process_dds(path: &Path, root: &Path) -> io::Result<TextureInfo> {
 
     let mut cursor = Cursor::new(&data);
     let mut magic = [0u8; 4];
-    cursor.read_exact(&mut magic)?;
+    cursor.read_exact(&mut magic).wrap_err("read magic")?;
 
     let mut unused1 = 0u8;
     if &magic != b"DDS " {
         cursor.set_position(0);
-        let present = cursor.read_u8()? != 0;
+        let present = cursor.read_u8().wrap_err("read present byte")? != 0;
         if present {
-            unused1 = cursor.read_u8()?;
-            let _name_index = cursor.read_i32::<LittleEndian>()?;
-            let count1 = cursor.read_u8()?;
+            unused1 = cursor.read_u8().wrap_err("read unused1")?;
+            let _name_index = cursor.read_i32::<LittleEndian>().wrap_err("read name_index")?;
+            let count1 = cursor.read_u8().wrap_err("read count1")?;
             for _ in 0..count1 {
                 cursor.set_position(cursor.position() + 17);
             }
-            let count2 = cursor.read_u32::<LittleEndian>()?;
+            let count2 = cursor.read_u32::<LittleEndian>().wrap_err("read count2")?;
             cursor.set_position(cursor.position() + (count2 as u64 * 4));
-            let count3 = cursor.read_u32::<LittleEndian>()?;
+            let count3 = cursor.read_u32::<LittleEndian>().wrap_err("read count3")?;
             cursor.set_position(cursor.position() + (count3 as u64 * 4));
 
             let mut magic2 = [0u8; 4];
             if cursor.read_exact(&mut magic2).is_ok() && &magic2 == b"DDS " {
                 // OK
             } else {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "Expected DDS magic after EC header",
-                ));
+                return Err(eyre::eyre!("Expected DDS magic after EC header"));
             }
         } else {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Texture not present in EC header",
-            ));
+            return Err(eyre::eyre!("Texture not present in EC header"));
         }
     }
 
@@ -195,9 +191,8 @@ fn process_dds(path: &Path, root: &Path) -> io::Result<TextureInfo> {
     let dds_data = &data[dds_data_start..];
 
     let mut dds_cursor = Cursor::new(dds_data);
-    let dds = ddsfile::Dds::read(&mut dds_cursor).map_err(|e| {
-        io::Error::new(io::ErrorKind::InvalidData, format!("DDS read error: {}", e))
-    })?;
+    let dds = ddsfile::Dds::read(&mut dds_cursor)
+        .map_err(|e| eyre::eyre!("DDS read error: {}", e))?;
 
     let width = dds.get_width();
     let height = dds.get_height();
@@ -205,7 +200,6 @@ fn process_dds(path: &Path, root: &Path) -> io::Result<TextureInfo> {
     let is_square = if width == height { 1 } else { 0 };
     let mut is_opaque = 1u8;
 
-    // Check for opacity if it's a square texture
     if is_square == 1 && width >= 4 && height >= 4 {
         let cursor = Cursor::new(dds_data);
         if let Ok(mut decoder) = dds::Decoder::new(cursor) {

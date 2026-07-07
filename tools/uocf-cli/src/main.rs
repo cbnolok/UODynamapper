@@ -135,7 +135,7 @@ fn main() -> eyre::Result<()> {
                 extra,
             )?;
             let entry_count = write_animation_patch(patch, format, &output)?;
-            println!(
+            log::info!(
                 "Exported {} animation patch entr{} to {}.",
                 entry_count,
                 if entry_count == 1 { "y" } else { "ies" },

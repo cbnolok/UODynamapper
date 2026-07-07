@@ -34,7 +34,7 @@ def run(command: list[str]) -> None:
 
 def run_pack(*args: str) -> None:
     print()
-    run(["cargo", "run", "-p", "udd-conv-cli", "--bin", "udd-pack", "--", *args])
+    run(["cargo", "run", "-p", "udd-conv-cli", "--bin", "udd-cli", "--", "pack", *args])
 
 
 def add_format_args(parser: argparse.ArgumentParser, *, prefix: str = "") -> None:

@@ -15,8 +15,7 @@ const APP_VIEWPORT_HEIGHT: f32 = 800.0;
 const APP_MIN_VIEWPORT_WIDTH: f32 = 900.0;
 const APP_MIN_VIEWPORT_HEIGHT: f32 = 700.0;
 
-#[tokio::main]
-async fn main() -> eyre::Result<()> {
+fn main() -> eyre::Result<()> {
     color_eyre::install()?;
 
     run_native_with_setup(

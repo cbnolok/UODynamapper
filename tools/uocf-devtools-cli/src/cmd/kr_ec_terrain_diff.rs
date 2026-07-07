@@ -2,13 +2,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use clap::Parser;
+use clap::Args as ClapArgs;
 use color_eyre::eyre::{self, Context};
 use uocf::uop_container::package::UopPackage;
 
-#[derive(Parser, Debug)]
-#[command(author, version, about = "Compare KR terrain routing against EC facet and TerrainDefinition evidence.")]
-struct Cli {
+#[derive(ClapArgs, Debug)]
+#[command(about = "Compare KR terrain routing against EC facet and TerrainDefinition evidence.")]
+pub struct Args {
     #[arg(long)]
     kr_generated: PathBuf,
     #[arg(long)]
@@ -28,14 +28,10 @@ struct EcMaterial {
     layers: Vec<(u32, f32, String)>,
 }
 
-fn main() -> eyre::Result<()> {
-    color_eyre::install()?;
-    let _ = udd_logging::install_tracing_indicatif_logger();
-
-    let cli = Cli::parse();
-    let kr = parse_route_map(&cli.kr_generated, "kr")?;
-    let ec_facet = parse_route_map(&cli.ec_generated, "ec")?;
-    let ec_materials = parse_ec_materials(&cli.ec_generated)?;
+pub fn run(args: Args) -> eyre::Result<()> {
+    let kr = parse_route_map(&args.kr_generated, "kr")?;
+    let ec_facet = parse_route_map(&args.ec_generated, "ec")?;
+    let ec_materials = parse_ec_materials(&args.ec_generated)?;
     let ec_alias_to_material = ec_materials
         .iter()
         .flat_map(|(material_id, material)| {
@@ -126,9 +122,9 @@ fn main() -> eyre::Result<()> {
         ));
     }
 
-    fs::write(&cli.output, csv).wrap_err_with(|| format!("write {}", cli.output.display()))?;
-    println!("wrote {}", cli.output.display());
-    println!(
+    fs::write(&args.output, csv).wrap_err_with(|| format!("write {}", args.output.display()))?;
+    log::info!("wrote {}", args.output.display());
+    log::info!(
         "routes: cc_ids={} comparable={} same_material={} different_material={} ec_facet_without_material={}",
         kr.len().max(ec_facet.len()),
         comparable,
@@ -137,7 +133,7 @@ fn main() -> eyre::Result<()> {
         missing_ec_material
     );
 
-    if let (Some(krdir), Some(ecdir)) = (cli.krdir.as_ref(), cli.ecdir.as_ref()) {
+    if let (Some(krdir), Some(ecdir)) = (args.krdir.as_ref(), args.ecdir.as_ref()) {
         report_package_containment(krdir, ecdir)?;
     }
 
@@ -223,7 +219,7 @@ fn report_package_containment(krdir: &Path, ecdir: &Path) -> eyre::Result<()> {
         let kr_path = krdir.join(package_name);
         let ec_path = ecdir.join(package_name);
         if !kr_path.exists() || !ec_path.exists() {
-            println!(
+            log::info!(
                 "package {package_name}: skipped kr_exists={} ec_exists={}",
                 kr_path.exists(),
                 ec_path.exists()
@@ -234,7 +230,7 @@ fn report_package_containment(krdir: &Path, ecdir: &Path) -> eyre::Result<()> {
         let ec_hashes = package_hashes(&ec_path)?;
         let kr_not_ec = kr_hashes.difference(&ec_hashes).count();
         let ec_not_kr = ec_hashes.difference(&kr_hashes).count();
-        println!(
+        log::info!(
             "package {package_name}: kr_files={} ec_files={} kr_not_in_ec={} ec_not_in_kr={}",
             kr_hashes.len(),
             ec_hashes.len(),
@@ -248,7 +244,7 @@ fn report_package_containment(krdir: &Path, ecdir: &Path) -> eyre::Result<()> {
                 .map(|hash| format!("0x{hash:016x}"))
                 .collect::<Vec<_>>()
                 .join(",");
-            println!("package {package_name}: first_kr_not_in_ec={first_missing}");
+            log::info!("package {package_name}: first_kr_not_in_ec={first_missing}");
         }
     }
     Ok(())

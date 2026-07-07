@@ -28,16 +28,6 @@ log.workspace = true
 walkdir.workspace = true
 
 [[bin]]
-name = "texture-scanner"
-path = "src/bin/texture_scanner.rs"
-required-features = ["dev-tool-tests"]
-
-[[bin]]
-name = "facet-evidence-tool"
-path = "src/bin/facet_evidence_tool.rs"
-required-features = ["dev-tool-tests"]
-
-[[bin]]
-name = "kr-ec-terrain-diff-tool"
-path = "src/bin/kr_ec_terrain_diff_tool.rs"
+name = "uocf-devtools-cli"
+path = "src/main.rs"
 required-features = ["dev-tool-tests"]

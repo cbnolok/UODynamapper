@@ -1,6 +1,8 @@
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
+use log::info;
+
 use color_eyre::eyre::{self, WrapErr};
 use image::{ColorType, ImageFormat};
 use rayon::prelude::*;
@@ -25,24 +27,24 @@ pub fn extract_package(file: &Path, output: Option<&Path>) -> eyre::Result<()> {
     let package = UddpReader::load(file).wrap_err_with(|| format!("load {}", file.display()))?;
 
     if extract_tex_art_cc(&package, &out_dir)? {
-        println!("Extracted tex_art_cc package to '{}'", out_dir.display());
+        info!("Extracted tex_art_cc package to '{}'", out_dir.display());
         return Ok(());
     }
     if extract_tex_art_ec(&package, &out_dir)? {
-        println!("Extracted tex_art_ec package to '{}'", out_dir.display());
+        info!("Extracted tex_art_ec package to '{}'", out_dir.display());
         return Ok(());
     }
     if extract_tex_land_ec(&package, &out_dir)? {
-        println!("Extracted tex_land_ec package to '{}'", out_dir.display());
+        info!("Extracted tex_land_ec package to '{}'", out_dir.display());
         return Ok(());
     }
     if extract_tilemeta(&package, &out_dir)? {
-        println!("Extracted tilemeta package to '{}'", out_dir.display());
+        info!("Extracted tilemeta package to '{}'", out_dir.display());
         return Ok(());
     }
 
     extract_generic(&package, &out_dir)?;
-    println!("Extracted generic package to '{}'", out_dir.display());
+    info!("Extracted generic package to '{}'", out_dir.display());
     Ok(())
 }
 

@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use clap::Subcommand;
 use color_eyre::eyre;
+use log::{info, error};
 use crate::legacy_mul::{CompressionFlag, FileType, LegacyMulFileConverter};
 
 /// UO Legacy MUL/UOP Converter - convert between legacy .mul/.idx files and .uop packages.
@@ -25,8 +26,8 @@ pub fn run(cmd: MulConvertCmd) -> eyre::Result<()> {
 
     match &cmd {
         MulConvertCmd::Extract { path } => {
-            println!("Mode: Extract from UOP.");
-            println!();
+            info!("Mode: Extract from UOP.");
+            info!("");
 
             if !path.exists() || !path.is_dir() {
                 return Err(eyre::eyre!("Directory '{}' does not exist", path.display()));
@@ -43,7 +44,7 @@ pub fn run(cmd: MulConvertCmd) -> eyre::Result<()> {
                 0,
                 None,
             ) {
-                eprintln!("Error extracting artLegacyMUL.uop: {}", e);
+                error!("Error extracting artLegacyMUL.uop: {}", e);
             } else {
                 success_count += 1;
             }
@@ -57,7 +58,7 @@ pub fn run(cmd: MulConvertCmd) -> eyre::Result<()> {
                 0,
                 None,
             ) {
-                eprintln!("Error extracting gumpartLegacyMUL.uop: {}", e);
+                error!("Error extracting gumpartLegacyMUL.uop: {}", e);
             } else {
                 success_count += 1;
             }
@@ -71,7 +72,7 @@ pub fn run(cmd: MulConvertCmd) -> eyre::Result<()> {
                 0,
                 Some(&uop_dir.join("housing.bin")),
             ) {
-                eprintln!("Error extracting MultiCollection.uop: {}", e);
+                error!("Error extracting MultiCollection.uop: {}", e);
             } else {
                 success_count += 1;
             }
@@ -85,7 +86,7 @@ pub fn run(cmd: MulConvertCmd) -> eyre::Result<()> {
                 0,
                 None,
             ) {
-                eprintln!("Error extracting soundLegacyMUL.uop: {}", e);
+                error!("Error extracting soundLegacyMUL.uop: {}", e);
             } else {
                 success_count += 1;
             }
@@ -121,7 +122,7 @@ pub fn run(cmd: MulConvertCmd) -> eyre::Result<()> {
                             i,
                             None,
                         ) {
-                            eprintln!("Error extracting {}: {}", p.display(), e);
+                            error!("Error extracting {}: {}", p.display(), e);
                         } else {
                             success_count += 1;
                         }
@@ -130,8 +131,8 @@ pub fn run(cmd: MulConvertCmd) -> eyre::Result<()> {
             }
         }
         MulConvertCmd::Pack { path } => {
-            println!("Mode: Pack to UOP.");
-            println!();
+            info!("Mode: Pack to UOP.");
+            info!("");
 
             if !path.exists() || !path.is_dir() {
                 return Err(eyre::eyre!("Directory '{}' does not exist", path.display()));
@@ -148,7 +149,7 @@ pub fn run(cmd: MulConvertCmd) -> eyre::Result<()> {
                 0,
                 CompressionFlag::Zlib,
             ) {
-                eprintln!("Error packing art.mul: {}", e);
+                error!("Error packing art.mul: {}", e);
             } else {
                 success_count += 1;
             }
@@ -162,7 +163,7 @@ pub fn run(cmd: MulConvertCmd) -> eyre::Result<()> {
                 0,
                 CompressionFlag::Zlib,
             ) {
-                eprintln!("Error packing gumpart.mul: {}", e);
+                error!("Error packing gumpart.mul: {}", e);
             } else {
                 success_count += 1;
             }
@@ -176,7 +177,7 @@ pub fn run(cmd: MulConvertCmd) -> eyre::Result<()> {
                 0,
                 CompressionFlag::None,
             ) {
-                eprintln!("Error packing multi.mul: {}", e);
+                error!("Error packing multi.mul: {}", e);
             } else {
                 success_count += 1;
             }
@@ -190,7 +191,7 @@ pub fn run(cmd: MulConvertCmd) -> eyre::Result<()> {
                 0,
                 CompressionFlag::Zlib,
             ) {
-                eprintln!("Error packing sound.mul: {}", e);
+                error!("Error packing sound.mul: {}", e);
             } else {
                 success_count += 1;
             }
@@ -206,7 +207,7 @@ pub fn run(cmd: MulConvertCmd) -> eyre::Result<()> {
                     i,
                     CompressionFlag::None,
                 ) {
-                    eprintln!("Error packing {}.mul: {}", map_name, e);
+                    error!("Error packing {}.mul: {}", map_name, e);
                 } else {
                     success_count += 1;
                 }
@@ -221,7 +222,7 @@ pub fn run(cmd: MulConvertCmd) -> eyre::Result<()> {
                     i,
                     CompressionFlag::None,
                 ) {
-                    eprintln!("Error packing {}.mul: {}", map_x_name, e);
+                    error!("Error packing {}.mul: {}", map_x_name, e);
                 } else {
                     success_count += 1;
                 }
@@ -229,16 +230,16 @@ pub fn run(cmd: MulConvertCmd) -> eyre::Result<()> {
         }
     }
 
-    println!();
+    info!("");
     if success_count < total_count {
-        println!("Errors: {}", total_count - success_count);
+        info!("Errors: {}", total_count - success_count);
         return Err(eyre::eyre!(
             "{} of {} actions failed",
             total_count - success_count,
             total_count
         ));
     } else {
-        println!("All actions completed successfully.");
+        info!("All actions completed successfully.");
     }
 
     Ok(())

@@ -4,6 +4,8 @@ use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
+use log::info;
+
 use clap::{Parser, Subcommand, ValueEnum};
 use color_eyre::eyre::{self, WrapErr};
 use csv::{ReaderBuilder, StringRecord, Trim, WriterBuilder};
@@ -184,7 +186,7 @@ where
         Commands::Info { file } => package_info::print_package_info(&file)?,
         Commands::Extract { file, output } => extract::extract_package(&file, output.as_deref())?,
         Commands::HashPath { value } => {
-            println!("{}", hash_path_report(&value));
+            info!("{}", hash_path_report(&value));
         }
         Commands::Replace {
             file,
@@ -196,7 +198,7 @@ where
             let payload =
                 fs::read(&new_file).wrap_err_with(|| format!("read {}", new_file.display()))?;
             package_edit::replace_virtual_path_file(&file, &output, &path, &payload)?;
-            println!(
+            info!(
                 "Replaced '{}' in '{}' and wrote '{}'.",
                 path,
                 file.display(),
@@ -206,7 +208,7 @@ where
         Commands::Rebuild { file, output } => {
             let output = output.unwrap_or_else(|| derived_output_path(&file, "rebuilt"));
             package_edit::rebuild_package(&file, &output)?;
-            println!("Rebuilt '{}' into '{}'.", file.display(), output.display());
+            info!("Rebuilt '{}' into '{}'.", file.display(), output.display());
         }
         Commands::ExportCsv { file, kind, output } => match kind {
             CsvKind::Auto => export_csv_auto(&file, output.as_deref())?,
@@ -271,7 +273,7 @@ fn export_terrain_provenance_csv(file: &Path, output: Option<&Path>) -> eyre::Re
         ))
     });
     write_tex_land_ec_terrain_provenance_csv(&output, package.terrain_provenance())?;
-    println!(
+    info!(
         "Wrote tex_land_ec terrain provenance CSV with {} rows to '{}'.",
         package.terrain_provenance().len(),
         output.display()
@@ -297,7 +299,7 @@ fn import_terrain_provenance_csv(
         UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH,
         &manifest,
     )?;
-    println!(
+    info!(
         "Imported {} tex_land_ec terrain provenance rows from '{}' into '{}'.",
         records.len(),
         csv.display(),
@@ -312,7 +314,7 @@ fn export_slots_csv_auto(file: &Path, output: Option<&Path>) -> eyre::Result<()>
             .map(Path::to_path_buf)
             .unwrap_or_else(|| default_slots_output(file));
         write_atlas_slot_csv(&output, &cc_slot_rows(&package))?;
-        println!("Wrote tex_art_cc slot CSV to '{}'.", output.display());
+        info!("Wrote tex_art_cc slot CSV to '{}'.", output.display());
         return Ok(());
     }
     if let Ok(package) = TexArtEcPackage::load(file) {
@@ -320,7 +322,7 @@ fn export_slots_csv_auto(file: &Path, output: Option<&Path>) -> eyre::Result<()>
             .map(Path::to_path_buf)
             .unwrap_or_else(|| default_slots_output(file));
         write_atlas_slot_csv(&output, &tex_art_ec_slot_rows(&package))?;
-        println!("Wrote tex_art_ec slot CSV to '{}'.", output.display());
+        info!("Wrote tex_art_ec slot CSV to '{}'.", output.display());
         return Ok(());
     }
     if let Ok(package) = TexLandEcPackage::load(file) {
@@ -328,7 +330,7 @@ fn export_slots_csv_auto(file: &Path, output: Option<&Path>) -> eyre::Result<()>
             .map(Path::to_path_buf)
             .unwrap_or_else(|| default_slots_output(file));
         write_atlas_slot_csv(&output, &tex_land_ec_slot_rows(&package))?;
-        println!("Wrote tex_land_ec slot CSV to '{}'.", output.display());
+        info!("Wrote tex_land_ec slot CSV to '{}'.", output.display());
         return Ok(());
     }
 
@@ -380,7 +382,7 @@ fn import_slots_csv_auto(file: &Path, csv: &Path, output: Option<&Path>) -> eyre
             CC_SLOT_MANIFEST_ENTRY_PATH,
             &manifest,
         )?;
-        println!(
+        info!(
             "Imported {} tex_art_cc slot rows into '{}'.",
             rows.len(),
             output.display()
@@ -428,7 +430,7 @@ fn import_slots_csv_auto(file: &Path, csv: &Path, output: Option<&Path>) -> eyre
             TEX_ART_EC_SLOT_MANIFEST_ENTRY_PATH,
             &manifest,
         )?;
-        println!(
+        info!(
             "Imported {} tex_art_ec slot rows into '{}'.",
             rows.len(),
             output.display()
@@ -472,7 +474,7 @@ fn import_slots_csv_auto(file: &Path, csv: &Path, output: Option<&Path>) -> eyre
             TEX_LAND_EC_SLOT_MANIFEST_ENTRY_PATH,
             &manifest,
         )?;
-        println!(
+        info!(
             "Imported {} tex_land_ec slot rows into '{}'.",
             rows.len(),
             output.display()
@@ -487,7 +489,7 @@ fn import_slots_csv_auto(file: &Path, csv: &Path, output: Option<&Path>) -> eyre
 }
 
 pub fn diff_paths(left: &Path, right: &Path, kind: DiffKind) -> eyre::Result<()> {
-    print!("{}", diff_paths_report(left, right, kind)?);
+    info!("{}", diff_paths_report(left, right, kind)?);
     Ok(())
 }
 

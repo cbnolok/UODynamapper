@@ -31,10 +31,10 @@ udd-container = { path = "../../lib/udd-container" }
 ktx2.workspace = true
 zstd.workspace = true
 color-eyre.workspace = true
-tokio.workspace = true
 byteorder.workspace = true
 serde.workspace = true
 bytemuck.workspace = true
+log.workspace = true
 image = { workspace = true, features = [
     "png",
     "dds",

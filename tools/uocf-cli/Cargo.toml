@@ -15,14 +15,14 @@ too_many_arguments = "allow"
 [dependencies]
 uocf = { path = "../../lib/uocf" }
 udd-logging = { path = "../../lib/udd-logging" }
+log.workspace = true
 clap = { workspace = true, features = ["derive", "unicode"] }
 color-eyre.workspace = true
 byteorder.workspace = true
 dds.workspace = true
-ddsfile.workspace = true
+#ddsfile.workspace = true
 flate2.workspace = true
 image = { workspace = true, features = ["bmp", "png"] }
-log.workspace = true
 udd-image-codecs = { path = "../../lib/udd-image-codecs", features = ["ktx2"] }
 
 [[bin]]

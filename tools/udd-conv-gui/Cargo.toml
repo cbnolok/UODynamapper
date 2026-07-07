@@ -27,11 +27,10 @@ udd-logging = { path = "../../lib/udd-logging" }
 gui-shared = { path = "../../lib/gui-shared" }
 uocf = { path = "../../lib/uocf" }
 udd-conv-cli = { path = "../udd-conv-cli" }
-tokio.workspace = true
 serde.workspace = true
 toml.workspace = true
 ktx2.workspace = true
-image = { workspace = true, features = ["png", "dds"] }
+image = { workspace = true, features = ["png"] }
 zstd.workspace = true
 
 [features]

@@ -25,8 +25,7 @@ const APP_MIN_VIEWPORT_HEIGHT: f32 = 600.0;
 const TEXTURE_VIEWER_VIEWPORT_WIDTH: f32 = 960.0;
 const TEXTURE_VIEWER_VIEWPORT_HEIGHT: f32 = 720.0;
 
-#[tokio::main]
-async fn main() -> eyre::Result<()> {
+fn main() -> eyre::Result<()> {
     color_eyre::install()?;
 
     run_native_with_setup(
