@@ -51,6 +51,17 @@ fn sys_shader_ui_toggle(
     state.open = !state.open;
 }
 
+/// Basic-Controls "Render Style" presets: `(label, shading_mode, post_process_profile)`.
+/// Each style couples the land shading mode with the matching post-process visual
+/// profile so a single pick activates the whole look — notably, KR's grime / color-wash
+/// effects are gated behind `post_process_profile == KR` and would otherwise stay inert.
+/// The Advanced "Visual Profile" selector can still override the profile afterward.
+const RENDER_STYLE_PRESETS: [(&str, u32, u32); 3] = [
+    ("Classic", 0, 0),  // vertex/Gouraud land shading + Neutral profile
+    ("Enhanced", 1, 1), // fragment land shading + EC profile
+    ("KR", 2, 2),       // fragment land shading + KR profile
+];
+
 // ============================== UI SYSTEM ===============================
 // Renders a window with controls for mode, toggles, intensities, colors,
 // grading, gloom, and presets. Updates UniformState + sets "dirty" when changed.
@@ -96,83 +107,93 @@ pub fn land_ui_system(
             ui.collapsing("Basic Controls", |ui| {
                 let mut changed = false;
 
+                // Render Style couples the land shading mode with the matching
+                // post-process visual profile (see RENDER_STYLE_PRESETS) so one pick
+                // activates the whole look, including the KR-gated effects.
                 ui.horizontal(|ui| {
                     ui.strong("Render Style:");
-                    let mut mode = u.effects.shading_mode;
-                    for (label, val) in [("Classic", 0u32), ("Enhanced", 1u32), ("KR", 2u32)] {
-                        if ui.selectable_label(mode == val, label).clicked() {
-                            mode = val;
+                    let cur_mode = u.effects.shading_mode;
+                    for (label, mode, profile) in RENDER_STYLE_PRESETS {
+                        if ui.selectable_label(cur_mode == mode, label).clicked() {
+                            if u.effects.shading_mode != mode {
+                                u.effects.shading_mode = mode;
+                                changed = true;
+                            }
+                            if u.effects.post_process_profile != profile {
+                                u.effects.post_process_profile = profile;
+                                changed = true;
+                            }
                         }
                     }
-                    if mode != u.effects.shading_mode {
-                        u.effects.shading_mode = mode;
-                        changed = true;
-                    }
                 });
 
-                ui.horizontal(|ui| {
-                    ui.label("Output:");
-                    changed |= toggle_u32(ui, "Tonemap", &mut u.lighting.enable_tonemap);
-                    changed |= toggle_u32(ui, "Color Richness", &mut u.lighting.enable_grading);
-                    changed |= toggle_u32(ui, "Texture Smoothness", &mut u.effects.enable_linear_filtering);
-                });
-
-                changed |= slider_s(ui, "Brightness", &mut u.global_lighting, 0.0..=2.0);
+                // ---------------- Terrain (land) ----------------
+                basic_scope_header(ui, "Terrain (land)", "Affects land/ground tiles only.");
                 changed |= slider_s(ui, "Sun Strength", &mut u.land_lighting.diffuse_strength, 0.0..=2.0);
                 changed |= slider_s(ui, "Shadow Brightness", &mut u.lighting.ambient_strength, 0.0..=1.5);
-
-                ui.separator();
 
                 let mut land_relief = land_relief_control_value(&u);
                 if slider_s(ui, "Land Relief", &mut land_relief, 0.0..=1.0) {
                     apply_land_relief_control(&mut u, land_relief);
                     changed = true;
                 }
-
                 let mut soft_lighting = soft_lighting_control_value(&u);
                 if slider_s(ui, "Soft Lighting", &mut soft_lighting, 0.0..=1.0) {
                     apply_soft_lighting_control(&mut u, soft_lighting);
                     changed = true;
                 }
-
                 let mut highlights = highlights_control_value(&u);
                 if slider_s(ui, "Highlights", &mut highlights, 0.0..=1.0) {
                     apply_highlights_control(&mut u, highlights);
                     changed = true;
                 }
 
-                ui.separator();
+                changed |= slider_s(ui, "KR Land Temperature", &mut u.effects.kr_land_temperature_strength, 0.0..=1.5);
+                changed |= slider_s(ui, "KR Land Relief Shadow", &mut u.effects.kr_land_relief_shadow_strength, 0.0..=1.5);
+                changed |= slider_s(ui, "KR Land Shadow Mottle", &mut u.effects.kr_land_shadow_mottle_strength, 0.0..=1.5);
+                changed |= slider_s(ui, "KR Material Contrast", &mut u.effects.kr_land_material_contrast_strength, 0.0..=1.5);
+                changed |= toggle_u32(ui, "KR Transition Grime", &mut u.effects.enable_kr_transition_grime);
+                changed |= slider_s(ui, "KR Transition Grime", &mut u.effects.kr_transition_grime_strength, 0.0..=1.0);
 
+                // Normal maps only apply to EC-atlas land textures (`texture_size == 2`
+                // in the shader); on a CC art source they are a structural no-op — the
+                // label states this since there is no global "source is EC" signal here.
+                changed |= toggle_u32(ui, "Normal Maps (EC land only)", &mut u.effects.enable_normal_maps);
+                changed |= slider_s(ui, "Land Normal Maps (EC land only)", &mut u.effects.land_normal_map_strength, 0.0..=1.0);
+
+                // ---------------- Objects (art / statics) ----------------
+                basic_scope_header(ui, "Objects (art / statics)", "Affects static art sprites only.");
                 changed |= slider_s(ui, "Art Shadow Shape", &mut u.effects.art_shadow_strength, 0.0..=1.0);
                 changed |= slider_s(ui, "Art Contact Shadows", &mut u.effects.art_contact_shadow_strength, 0.0..=1.0);
                 changed |= slider_s(ui, "Art Mottle", &mut u.effects.art_mottle_strength, 0.0..=1.5);
                 changed |= slider_s(ui, "Art Light Catch", &mut u.effects.art_highlight_strength, 0.0..=1.0);
                 changed |= slider_s(ui, "Art Atmosphere Tint", &mut u.effects.art_depth_tint_strength, 0.0..=1.0);
-                changed |= slider_s(ui, "KR Land Temperature", &mut u.effects.kr_land_temperature_strength, 0.0..=1.5);
-                changed |= slider_s(ui, "KR Land Relief Shadow", &mut u.effects.kr_land_relief_shadow_strength, 0.0..=1.5);
-                changed |= slider_s(ui, "KR Land Shadow Mottle", &mut u.effects.kr_land_shadow_mottle_strength, 0.0..=1.5);
-                changed |= slider_s(ui, "KR Material Contrast", &mut u.effects.kr_land_material_contrast_strength, 0.0..=1.5);
-                changed |= slider_s(ui, "KR Transition Grime", &mut u.effects.kr_transition_grime_strength, 0.0..=1.0);
-                changed |= slider_s(ui, "KR Color Wash", &mut u.effects.kr_color_wash_strength, 0.0..=1.5);
-                changed |= slider_s(ui, "KR Color Wash Scale", &mut u.effects.kr_color_wash_scale, 8.0..=160.0);
                 changed |= slider_s(ui, "KR Art Temperature", &mut u.effects.kr_art_temperature_strength, 0.0..=1.5);
-                changed |= slider_s(ui, "Land Normal Maps", &mut u.effects.land_normal_map_strength, 0.0..=1.0);
+                ui.horizontal(|ui| {
+                    changed |= toggle_u32(ui, "Art Projected Shadows", &mut u.effects.enable_art_projected_shadows);
+                    changed |= toggle_u32(ui, "Art Fake Normals", &mut u.effects.enable_art_fake_normals);
+                });
                 changed |= slider_s(ui, "Art Projected Shadows", &mut u.effects.art_projected_shadow_strength, 0.0..=1.0);
 
+                // ---------------- Everything (whole scene) ----------------
+                basic_scope_header(ui, "Everything (whole scene)", "Affects both land and art / the full frame.");
+                changed |= slider_s(ui, "Brightness", &mut u.global_lighting, 0.0..=2.0);
+                ui.horizontal(|ui| {
+                    ui.label("Output:");
+                    changed |= toggle_u32(ui, "Tonemap", &mut u.lighting.enable_tonemap);
+                    changed |= toggle_u32(ui, "Color Richness", &mut u.lighting.enable_grading);
+                    changed |= toggle_u32(ui, "Texture Smoothness", &mut u.effects.enable_linear_filtering);
+                });
                 ui.horizontal(|ui| {
                     changed |= toggle_u32(ui, "Grunge", &mut u.effects.enable_grunge);
                     changed |= toggle_u32(ui, "Fog", &mut u.lighting.enable_fog);
                     changed |= toggle_u32(ui, "Water Animation", &mut u.effects.enable_water_animation);
-                    changed |= toggle_u32(ui, "Normal Maps", &mut u.effects.enable_normal_maps);
-                    changed |= toggle_u32(ui, "Art Fake Normals", &mut u.effects.enable_art_fake_normals);
-                    changed |= toggle_u32(ui, "KR Transition Grime", &mut u.effects.enable_kr_transition_grime);
                     changed |= toggle_u32(ui, "KR Color Wash", &mut u.effects.enable_kr_color_wash);
-                    changed |= toggle_u32(ui, "Art Projected Shadows", &mut u.effects.enable_art_projected_shadows);
                 });
-
                 changed |= slider_s(ui, "Grunge Strength", &mut u.effects.grunge_strength, 0.0..=1.0);
                 changed |= slider_s(ui, "Light/Static Interaction", &mut u.effects.light_decal_intensity, 0.0..=2.0);
-                changed |= slider_s(ui, "Static Light Decals", &mut u.effects.static_light_decal_visibility, 0.0..=2.0);
+                changed |= slider_s(ui, "KR Color Wash", &mut u.effects.kr_color_wash_strength, 0.0..=1.5);
+                changed |= slider_s(ui, "KR Color Wash Scale", &mut u.effects.kr_color_wash_scale, 8.0..=160.0);
 
                 if changed {
                     u.dirty = true;
@@ -748,6 +769,15 @@ fn push_uniforms_if_dirty(
 // avoiding overlapping &mut borrows inside the helper.
 
 // Toggle a u32 field as a boolean (0/1). Returns true if the value changed.
+/// Section header for a scope group inside Basic Controls: a separator, a bold
+/// title, and a small caption stating which part of the render the group affects.
+fn basic_scope_header(ui: &mut egui::Ui, title: &str, scope: &str) {
+    ui.add_space(6.0);
+    ui.separator();
+    ui.strong(title);
+    ui.small(scope);
+}
+
 fn toggle_u32(ui: &mut egui::Ui, label: &str, val: &mut u32) -> bool {
     let mut b = *val != 0;
     let changed = ui.checkbox(&mut b, label).changed();
