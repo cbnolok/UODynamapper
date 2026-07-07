@@ -3,7 +3,7 @@ use std::path::Path;
 use color_eyre::eyre::{self, WrapErr};
 use byteorder::{LittleEndian, ReadBytesExt};
 use udd_container::UddpReader;
-use crate::common::{AtlasCacheOptions, AtlasPageCache, decode_atlas_page_rgba, read_path_entry, read_path_entry_cow};
+use crate::common::{AtlasCacheOptions, AtlasPageCache, decode_atlas_page_rgba, extract_atlas_subrect_rgba, read_path_entry, read_path_entry_cow};
 
 pub const PAGE_MANIFEST_ENTRY_PATH: &str = "metadata/pages.bin";
 pub const SLOT_MANIFEST_ENTRY_PATH: &str = "metadata/slots.bin";
@@ -312,6 +312,28 @@ impl TexArtCcPackage {
         self.slots
             .get(art_id as usize)
             .filter(|slot| slot.is_present())
+    }
+
+    /// Decode a single present slot's own pixels (its `width`x`height` sub-rect) as tightly
+    /// packed RGBA8, handling both RGBA8888 and BC7 pages (BC7 block alignment included).
+    /// Mirrors `TexLandCcPackage::get_pixel_data`.
+    pub fn get_pixel_data(&self, art_id: u32) -> Option<Vec<u8>> {
+        let slot = *self.present_slot(art_id)?;
+        let page = self.pages.get(slot.page_index as usize)?;
+        let page_bytes = self.read_page_bytes(slot.page_index).ok()?;
+        extract_atlas_subrect_rgba(
+            &page_bytes,
+            page.pixel_format,
+            self.atlas_width,
+            self.atlas_height,
+            page.used_width,
+            page.used_height,
+            slot.x,
+            slot.y,
+            slot.width,
+            slot.height,
+        )
+        .ok()
     }
 }
 

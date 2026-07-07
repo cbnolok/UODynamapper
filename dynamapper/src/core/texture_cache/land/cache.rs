@@ -138,13 +138,58 @@ fn prepare_texture_upload_bytes(
     (raw_rgba8, upload_layout)
 }
 
+/// Load a land tile straight from the CC **art** package (`tex_art_cc`) — the 44x44 land art
+/// baked into `art.mul` — as an alternative source to the `tex_land_cc` texmaps the default
+/// land path uses.
+///
+/// INTENTIONALLY NOT WIRED IN: the live loader
+/// (`try_load_tile_from_packages_with_sources`) never calls this, so CC land always resolves
+/// through `tex_land_cc`. Keeping the art-based path dark keeps land-texture debugging simple;
+/// a user-facing switch will select it later. It is implemented fully so that switch only has to
+/// call it. Assumptions the future caller should revisit before enabling:
+/// - `texture_id` is treated as a CC **art** slot id (`art_id`), not a texmap id — the two id
+///   spaces differ, so the switch must feed the land-art graphic id, not the tiledata texmap id.
+/// - The art tile (typically 44x44, larger when upscaled at pack time) is copied top-left into a
+///   zeroed texmap-sized buffer (Small 64x64 when it fits, else Big 128x128), matching the
+///   `resize_rgba_nearest` convention used for the aux atlas. It is neither centered nor scaled
+///   onto the cell diamond, which the stretched land mesh will eventually want.
 fn try_load_cc_land_tile(
     texture_id: u16,
     cc: Option<&Arc<udd_assets::tex_art_cc::TexArtCcPackage>>,
 ) -> Option<(LandTextureSize, Arc<[u8]>, TextureUploadLayout)> {
-    let _ = texture_id;
-    let _ = cc;
-    None
+    let cc = cc?;
+    let slot = *cc.present_slot(texture_id as u32)?;
+    if !slot.is_land() {
+        return None;
+    }
+    let (src_w, src_h) = (u32::from(slot.width), u32::from(slot.height));
+    if src_w == 0 || src_h == 0 {
+        return None;
+    }
+
+    // Decode the slot's own RGBA sub-rect (handles both RGBA8888 and BC7 pages).
+    let tile_rgba = cc.get_pixel_data(texture_id as u32)?;
+
+    // Choose the smallest texmap size the art tile fits into (clamp oversize art to Big), then
+    // copy it top-left into a zeroed buffer — the same crop/pad convention as resize_rgba_nearest.
+    let size = if src_w <= LandTextureSize::SMALL_X && src_h <= LandTextureSize::SMALL_Y {
+        LandTextureSize::Small
+    } else {
+        LandTextureSize::Big
+    };
+    let (dst_w, dst_h) = size.dimensions();
+    let (copy_w, copy_h) = (src_w.min(dst_w), src_h.min(dst_h));
+    let mut dst = vec![0u8; (dst_w * dst_h * 4) as usize];
+    for row in 0..copy_h {
+        let src_start = (row * src_w * 4) as usize;
+        let dst_start = (row * dst_w * 4) as usize;
+        let width_bytes = (copy_w * 4) as usize;
+        dst[dst_start..dst_start + width_bytes]
+            .copy_from_slice(&tile_rgba[src_start..src_start + width_bytes]);
+    }
+
+    let (bytes, layout) = prepare_texture_upload_bytes(Arc::from(dst), size);
+    Some((size, bytes, layout))
 }
 
 fn try_load_tile_from_packages_with_sources(
