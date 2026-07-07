@@ -760,10 +760,22 @@ pub fn sys_draw_spawned_land_chunks(
         for &id in &*ids {
             let resolved_page_slot = if use_land_page_atlas {
                 match frame_pacing.settings.graphics.land_texture_source {
-                    crate::configs::settings::ClientTextureSource::Cc => cache_r
-                        .tex_land_cc
-                        .as_ref()
-                        .and_then(|package| package.present_slot(id as u32).map(|_| id as u32)),
+                    crate::configs::settings::ClientTextureSource::Cc => {
+                        // Resolve graphic id -> tiledata texture id (tex_land_cc slots are keyed by texmap id).
+                        // Fall back to the graphic id itself when texture_id is 0 or tilemeta is unavailable,
+                        // preserving current behavior for untextured tiles.
+                        let cc_lookup_id = frame_pacing
+                            .tilemeta
+                            .as_ref()
+                            .and_then(|m| m.0.land_tiles().get(id as usize))
+                            .map(|t| t.texture_id as u32)
+                            .filter(|&t| t != 0)
+                            .unwrap_or(id as u32);
+                        cache_r
+                            .tex_land_cc
+                            .as_ref()
+                            .and_then(|package| package.present_slot(cc_lookup_id).map(|_| cc_lookup_id))
+                    }
                     crate::configs::settings::ClientTextureSource::Ec => cache_r
                         .tex_land_ec
                         .as_ref()
