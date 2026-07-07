@@ -151,10 +151,13 @@ linux_features := if is_linux == "true" { "linux_wayland,linux_x11" } else { "" 
 jxl_vendored      := env_var_or_default("VENDORED_JXL", is_ci)
 jxl_vendored_feat := if jxl_vendored == "true" { "udd-container/vendored-jpegxl" } else { "" }
 # Combined features for --no-default-features builds (release, profiling, run)
+# NOTE: just (1.51) conditions support only a single comparison — no && / || chaining,
+# even parenthesized — so this joins the two feature lists via nested ifs.
 build_features := \
-    if linux_features != "" && jxl_vendored_feat != "" { linux_features + "," + jxl_vendored_feat } \
-    else if jxl_vendored_feat != "" { jxl_vendored_feat } \
-    else { linux_features }
+    if linux_features != "" { \
+        if jxl_vendored_feat != "" { linux_features + "," + jxl_vendored_feat } \
+        else { linux_features } \
+    } else { jxl_vendored_feat }
 # Musl targets always require vendored libjxl (no system package available)
 musl_features := if linux_features != "" { linux_features + ",udd-container/vendored-jpegxl" } \
                  else { "udd-container/vendored-jpegxl" }
