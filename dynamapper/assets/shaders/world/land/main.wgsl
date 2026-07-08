@@ -851,7 +851,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   }
   var final_rgb = post;
   if (enable_tonemap == 1u) {
-    final_rgb = tonemap_ec_kr_profile(max(post, vec3<f32>(0.0)), exposure, visual_profile);
+    final_rgb = tonemap_ec_kr_profile(max(post, vec3<f32>(0.0)), exposure, visual_profile, global_light.kr_tonemap_params.x);
   }
 
   final_rgb = max(final_rgb, vec3<f32>(0.0));

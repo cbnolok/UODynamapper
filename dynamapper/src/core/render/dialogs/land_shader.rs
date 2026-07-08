@@ -134,41 +134,51 @@ pub fn land_ui_system(
                     }
                 });
 
+                // Render-style gating: controls the current style never consumes are
+                // shown grayed out. Fragment features are inactive in Classic (vertex);
+                // KR-land shading effects need KR shading; KR post effects need the KR
+                // profile. Art (Objects) shading is independent of render style, so those
+                // controls stay enabled in every style.
+                let is_classic = u.effects.shading_mode == 0;
+                let is_fragment = !is_classic;
+                let is_kr_shading = u.effects.shading_mode == 2;
+                let is_kr_profile = u.effects.post_process_profile == 2;
+
                 // Terrain / Objects / Everything are split into collapsible
                 // sub-dropdowns so the panel stays short enough to fit on screen;
                 // each group's body opens with a caption of what it affects.
                 basic_scope_group(ui, "Terrain (land)", "Affects land/ground tiles only.", |ui| {
-                    changed |= slider_s(ui, "Sun Strength", &mut u.land_lighting.diffuse_strength, 0.0..=2.0);
+                    changed |= slider_en(ui, is_fragment, "Sun Strength", &mut u.land_lighting.diffuse_strength, 0.0..=2.0);
                     changed |= slider_s(ui, "Shadow Brightness", &mut u.lighting.ambient_strength, 0.0..=1.5);
 
                     let mut land_relief = land_relief_control_value(&u);
-                    if slider_s(ui, "Land Relief", &mut land_relief, 0.0..=1.0) {
+                    if slider_en(ui, is_fragment, "Land Relief", &mut land_relief, 0.0..=1.0) {
                         apply_land_relief_control(&mut u, land_relief);
                         changed = true;
                     }
                     let mut soft_lighting = soft_lighting_control_value(&u);
-                    if slider_s(ui, "Soft Lighting", &mut soft_lighting, 0.0..=1.0) {
+                    if slider_en(ui, is_fragment, "Soft Lighting", &mut soft_lighting, 0.0..=1.0) {
                         apply_soft_lighting_control(&mut u, soft_lighting);
                         changed = true;
                     }
                     let mut highlights = highlights_control_value(&u);
-                    if slider_s(ui, "Highlights", &mut highlights, 0.0..=1.0) {
+                    if slider_en(ui, is_fragment, "Highlights", &mut highlights, 0.0..=1.0) {
                         apply_highlights_control(&mut u, highlights);
                         changed = true;
                     }
 
-                    changed |= slider_s(ui, "KR Land Temperature", &mut u.effects.kr_land_temperature_strength, 0.0..=1.5);
-                    changed |= slider_s(ui, "KR Land Relief Shadow", &mut u.effects.kr_land_relief_shadow_strength, 0.0..=1.5);
-                    changed |= slider_s(ui, "KR Land Shadow Mottle", &mut u.effects.kr_land_shadow_mottle_strength, 0.0..=1.5);
-                    changed |= slider_s(ui, "KR Material Contrast", &mut u.effects.kr_land_material_contrast_strength, 0.0..=1.5);
-                    changed |= toggle_u32(ui, "KR Transition Grime", &mut u.effects.enable_kr_transition_grime);
-                    changed |= slider_s(ui, "KR Transition Grime", &mut u.effects.kr_transition_grime_strength, 0.0..=1.0);
+                    changed |= slider_en(ui, is_kr_shading, "KR Land Temperature", &mut u.effects.kr_land_temperature_strength, 0.0..=1.5);
+                    changed |= slider_en(ui, is_kr_shading, "KR Land Relief Shadow", &mut u.effects.kr_land_relief_shadow_strength, 0.0..=1.5);
+                    changed |= slider_en(ui, is_kr_shading, "KR Land Shadow Mottle", &mut u.effects.kr_land_shadow_mottle_strength, 0.0..=1.5);
+                    changed |= slider_en(ui, is_kr_profile, "KR Material Contrast", &mut u.effects.kr_land_material_contrast_strength, 0.0..=1.5);
+                    changed |= toggle_en(ui, is_kr_profile, "KR Transition Grime", &mut u.effects.enable_kr_transition_grime);
+                    changed |= slider_en(ui, is_kr_profile, "KR Transition Grime", &mut u.effects.kr_transition_grime_strength, 0.0..=1.0);
 
                     // Normal maps only apply to EC-atlas land textures (`texture_size == 2`
                     // in the shader); on a CC art source they are a structural no-op — the
                     // label states this since there is no global "source is EC" signal here.
-                    changed |= toggle_u32(ui, "Normal Maps (EC land only)", &mut u.effects.enable_normal_maps);
-                    changed |= slider_s(ui, "Land Normal Maps (EC land only)", &mut u.effects.land_normal_map_strength, 0.0..=1.0);
+                    changed |= toggle_en(ui, is_fragment, "Normal Maps (EC land only)", &mut u.effects.enable_normal_maps);
+                    changed |= slider_en(ui, is_fragment, "Land Normal Maps (EC land only)", &mut u.effects.land_normal_map_strength, 0.0..=1.0);
                 });
 
                 basic_scope_group(ui, "Objects (art / statics)", "Affects static art sprites only.", |ui| {
@@ -187,22 +197,37 @@ pub fn land_ui_system(
 
                 basic_scope_group(ui, "Everything (whole scene)", "Affects both land and art / the full frame.", |ui| {
                     changed |= slider_s(ui, "Brightness", &mut u.global_lighting, 0.0..=2.0);
+                    // KR's filmic tonemap pre-scales the image darker than EC/Classic;
+                    // this exposes that pre-scale (higher = brighter). Only the KR profile
+                    // uses it, so it is grayed out in the other styles.
+                    changed |= slider_en(ui, is_kr_profile, "KR Tonemap Brightness", &mut u.lighting.kr_tonemap_params.x, 0.02..=1.0);
                     ui.horizontal(|ui| {
                         ui.label("Output:");
                         changed |= toggle_u32(ui, "Tonemap", &mut u.lighting.enable_tonemap);
-                        changed |= toggle_u32(ui, "Color Richness", &mut u.lighting.enable_grading);
+                        // "Color Grading" is the master on/off for the same vibrant grading
+                        // whose knobs live under Advanced → "Color Grading (Vibrant)". The
+                        // excess saturation the user sees comes from those defaults, not a
+                        // separate effect — the tooltip makes the relationship explicit.
+                        changed |= toggle_tip(
+                            ui,
+                            "Color Grading",
+                            &mut u.lighting.enable_grading,
+                            "Master on/off for the vibrant color grading tuned under \
+                             Advanced -> Color Grading (Vibrant). If colors look \
+                             oversaturated, lower Saturation / Vibrance there.",
+                        );
                         changed |= toggle_u32(ui, "Texture Smoothness", &mut u.effects.enable_linear_filtering);
                     });
                     ui.horizontal(|ui| {
                         changed |= toggle_u32(ui, "Grunge", &mut u.effects.enable_grunge);
                         changed |= toggle_u32(ui, "Fog", &mut u.lighting.enable_fog);
                         changed |= toggle_u32(ui, "Water Animation", &mut u.effects.enable_water_animation);
-                        changed |= toggle_u32(ui, "KR Color Wash", &mut u.effects.enable_kr_color_wash);
+                        changed |= toggle_en(ui, is_kr_profile, "KR Color Wash", &mut u.effects.enable_kr_color_wash);
                     });
                     changed |= slider_s(ui, "Grunge Strength", &mut u.effects.grunge_strength, 0.0..=1.0);
                     changed |= slider_s(ui, "Light/Static Interaction", &mut u.effects.light_decal_intensity, 0.0..=2.0);
-                    changed |= slider_s(ui, "KR Color Wash", &mut u.effects.kr_color_wash_strength, 0.0..=1.5);
-                    changed |= slider_s(ui, "KR Color Wash Scale", &mut u.effects.kr_color_wash_scale, 8.0..=160.0);
+                    changed |= slider_en(ui, is_kr_profile, "KR Color Wash", &mut u.effects.kr_color_wash_strength, 0.0..=1.5);
+                    changed |= slider_en(ui, is_kr_profile, "KR Color Wash Scale", &mut u.effects.kr_color_wash_scale, 8.0..=160.0);
                 });
 
                 if changed {
@@ -823,6 +848,41 @@ fn slider_s(
     range: std::ops::RangeInclusive<f32>,
 ) -> bool {
     ui.add(egui::Slider::new(val, range).text(label)).changed()
+}
+
+// Like `slider_s`, but grayed out (non-interactive) when `enabled` is false —
+// used to show controls that the current render style does not consume.
+fn slider_en(
+    ui: &mut egui::Ui,
+    enabled: bool,
+    label: &str,
+    val: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+) -> bool {
+    ui.add_enabled(enabled, egui::Slider::new(val, range).text(label))
+        .changed()
+}
+
+// Like `toggle_u32`, but shows an explanatory tooltip on hover.
+fn toggle_tip(ui: &mut egui::Ui, label: &str, val: &mut u32, tip: &str) -> bool {
+    let mut b = *val != 0;
+    let changed = ui.checkbox(&mut b, label).on_hover_text(tip).changed();
+    if changed {
+        *val = if b { 1 } else { 0 };
+    }
+    changed
+}
+
+// Like `toggle_u32`, but grayed out when `enabled` is false.
+fn toggle_en(ui: &mut egui::Ui, enabled: bool, label: &str, val: &mut u32) -> bool {
+    let mut b = *val != 0;
+    let changed = ui
+        .add_enabled(enabled, egui::Checkbox::new(&mut b, label))
+        .changed();
+    if changed {
+        *val = if b { 1 } else { 0 };
+    }
+    changed
 }
 
 // Edit a Vec3 as RGB (0..1). Returns true if changed.

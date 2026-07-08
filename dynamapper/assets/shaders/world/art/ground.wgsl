@@ -293,7 +293,7 @@ fn fragment(in: GroundVertexOutput) -> GroundFragmentOutput {
         final_rgb = grade_color_vibrant(final_rgb, global_light);
     }
     if (global_light.enable_tonemap == 1u) {
-        final_rgb = tonemap_ec_kr_profile(max(final_rgb, vec3<f32>(0.0)), global_light.exposure, effects.post_process_profile);
+        final_rgb = tonemap_ec_kr_profile(max(final_rgb, vec3<f32>(0.0)), global_light.exposure, effects.post_process_profile, global_light.kr_tonemap_params.x);
     }
 
     out.color = vec4<f32>(max(final_rgb, vec3<f32>(0.0)), shaded.a);

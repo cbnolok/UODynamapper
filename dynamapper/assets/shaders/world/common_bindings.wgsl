@@ -77,4 +77,6 @@ struct GlobalLightingUniforms {
     fog_params: vec4<f32>,
     gloom_color: vec4<f32>,
     fog_night_color: vec4<f32>,
+    // kr_tonemap_params.x = KR tonemap pre-scale (brightness); y/z/w reserved.
+    kr_tonemap_params: vec4<f32>,
 }

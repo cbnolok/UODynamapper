@@ -343,6 +343,26 @@ pub struct GlobalLightingUniforms {
     //   Blends fog_color toward this darker tint. At blend=0: fog_color as-is.
     //   At blend=1: fully replaces fog_color with this (e.g. deep blue-black night fog).
     pub fog_night_color: Vec4,
+
+    // --- KR tonemap ---
+    //   kr_tonemap_params.x = pre-scale applied to the incoming color for the KR
+    //   post-process profile, before the filmic curve in `tonemap_ec_kr_profile`.
+    //   Exposed as a UI knob so KR brightness is tunable instead of hardcoded (the
+    //   old fixed value crushed KR ~11x darker than EC). y/z/w reserved.
+    //   A full vec4 slot is used (not a trailing scalar + vec3) to match the other
+    //   *_params blocks — naga-oil mis-composes this struct with a trailing vec3.
+    //   Appended as a new trailing slot so pre-existing saved presets deserialize
+    //   unchanged (serde default fills it in).
+    #[serde(default = "default_kr_tonemap_params")]
+    pub kr_tonemap_params: Vec4,
+}
+
+/// Legacy hardcoded KR tonemap pre-scale ≈ middle_gray(0.18) / luminance(2.0).
+/// Kept as the default so existing presets render exactly as before until tuned.
+pub const DEFAULT_KR_TONEMAP_GAIN: f32 = 0.09;
+
+fn default_kr_tonemap_params() -> Vec4 {
+    Vec4::new(DEFAULT_KR_TONEMAP_GAIN, 0.0, 0.0, 0.0)
 }
 
 /// Land-specific lighting: parameters that require a 3D mesh with surface normals
