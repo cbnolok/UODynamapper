@@ -210,7 +210,7 @@ pub fn land_ui_system(
                 }
             });
 
-            ui.checkbox(&mut advanced_open, "Show advanced raw shader knobs (opens as a side panel →)");
+            ui.checkbox(&mut advanced_open, "Show advanced raw shader knobs (opens a side panel on the right)");
 
             // ------------------------ Presets -------------------------
             ui.horizontal(|ui| {
