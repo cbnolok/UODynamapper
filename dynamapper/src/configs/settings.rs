@@ -414,8 +414,9 @@ const WORLD_RENDERING_CONFIG_FILE: &str = "settings/world_rendering.toml";
 
 /// Read a user-side settings file, preferring the cache copy (where the app writes
 /// runtime changes) and falling back to the bundled default under `assets/`. Used
-/// only for user settings + session state; system/bundled config reads `assets/` directly.
-fn read_user_settings_file(rel: &str) -> std::io::Result<String> {
+/// for user settings, session state, and user-saved shader settings; system/bundled
+/// config reads `assets/` directly.
+pub(crate) fn read_user_settings_file(rel: &str) -> std::io::Result<String> {
     let cache_path = crate::core::constants::valid_cache_dir().join(rel);
     match std::fs::read_to_string(&cache_path) {
         Ok(contents) => Ok(contents),

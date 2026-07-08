@@ -108,11 +108,12 @@ fn load_factory_presets() -> LandShaderModePresets {
 //  User shader settings persistence (land.toml)
 // ---------------------------------------------------------------------------
 
-/// Try to load user-saved shader settings from `settings/shaders/land.toml`.
-/// Returns `None` if the file doesn't exist or can't be parsed.
+/// Try to load user-saved shader settings from `settings/shaders/land.toml`,
+/// preferring the cache copy (where the app writes) and falling back to the bundled
+/// default under `assets/`. Returns `None` if neither exists; panics on a parse error.
 pub fn load_shader_settings() -> Option<LandShaderModePresets> {
-    let path = crate::core::constants::valid_asset_dir().join(SHADER_SETTINGS_FILE_NAME);
-    let contents = std::fs::read_to_string(&path).ok()?;
+    let contents =
+        crate::configs::settings::read_user_settings_file(SHADER_SETTINGS_FILE_NAME).ok()?;
     match toml::from_str::<LandShaderModePresets>(&contents) {
         Ok(p) => Some(p),
         Err(e) => {
@@ -121,10 +122,11 @@ pub fn load_shader_settings() -> Option<LandShaderModePresets> {
     }
 }
 
-/// Save the active shader settings to `settings/shaders/land.toml`.
+/// Save the active shader settings to the cache dir's `settings/shaders/land.toml`
+/// (never the read-only asset tree — the bundled `assets/` copy is the fallback default).
 /// Overwrites the full preset structure (all modes × time-of-day) plus the active preset key.
 pub fn save_shader_settings(presets: &LandShaderModePresets) {
-    let path = crate::core::constants::valid_asset_dir().join(SHADER_SETTINGS_FILE_NAME);
+    let path = crate::core::constants::valid_cache_dir().join(SHADER_SETTINGS_FILE_NAME);
 
     // Ensure parent directory exists
     if let Some(parent) = path.parent() {
