@@ -70,3 +70,36 @@ Multi-tile structure data (`MultiCollection.uop`) is decoded directly from its b
   hue boosts, and local-contrast clarity passes.
 - Audio playback is supported in the Sounds view.
 - See [lib/uocf](../../lib/uocf/README.md) for the underlying parser library.
+
+## Screenshots
+
+### Main View: UOP Explorer
+![UOP Explorer](docs/images/uocf_inspector_uop_explore.png)
+
+<details>
+<summary><b>Click to expand individual view screenshots</b></summary>
+
+#### Client Art & Tiledata
+| Classic Client Tiledata | Enhanced Client Tile Art | Kingdom Reborn Art |
+| ---------------------- | ------------------------ | ------------------ |
+| ![CC Tiledata](docs/images/uocf_inspector_tiledata_cc.png) | ![EC Tile Art](docs/images/uocf_inspector_tileart_ec.png) | ![KR Art](docs/images/uocf_inspector_art_kr.png) |
+
+#### Localized Strings & Dictionaries
+| Classic Client Clilocs | Enhanced Client Localized Strings | Enhanced Client String Dictionary |
+| ---------------------- | --------------------------------- | --------------------------------- |
+| ![CC Clilocs](docs/images/uocf_inspector_clilocs_cc.png) | ![EC Localized Strings](docs/images/uocf_inspector_localizedstrings_ec.png) | ![EC String Dictionary](docs/images/uocf_inspector_string_dict_ec.png) |
+
+#### Hues & Palettes
+![CC Hues](docs/images/uocf_inspector_hues_cc.png)
+
+#### Animations & Multi-Tile Structures
+| Classic Client UOP Animations | Classic Client Anim w/ Upscaler |
+| ----------------------------- | ------------------------------- |
+| ![CC UOP Animations](docs/images/uocf_inspector_uop_anim_cc.png) | ![CC Anim Upscaler](docs/images/uocf_inspector_anim_upscaler_mul.png) |
+
+| Classic Client Multi (KR Art) | Enhanced Client Multi (CC Sprites) |
+| ----------------------------- | ---------------------------------- |
+| ![CC Multi w/ KR Art](docs/images/uocf_inspector_multi_cc_w_kr_art.png) | ![EC Multi w/ CC Sprites](docs/images/uocf_inspector_multicollection_ec_w_cc_sprites.png) |
+
+</details>
+

@@ -34,3 +34,20 @@ uddp-inspector-gui
   package format details.
 - For CLI-based extraction and metadata editing, use
   [`udd-tool`](../udd-conv-cli/README.md) from `udd-conv-cli`.
+
+## Screenshots
+
+### Main View: UDDP Package & Atlas Inspector
+![UDDP Package Inspector](docs/images/uddp_inspector_textures_ec.png)
+
+<details>
+<summary><b>Click to expand individual view screenshots</b></summary>
+
+#### Classic Client Texture Atlas
+![Classic Client Textures](docs/images/uddp_inspector_textures_cc.png)
+
+#### Mobile Animation Playback
+![Mobile Animations](docs/images/uddp_inspector_anim_cc.png)
+
+</details>
+
