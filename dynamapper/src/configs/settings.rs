@@ -38,7 +38,11 @@ pub struct SectCore {
     pub world: SectWorld,
 }
 
-#[derive(Clone, Deserialize, Serialize, PartialEq)]
+// User-settings section: `#[serde(default)]` lets a cache file written by an older
+// build (missing newly-added keys) load with defaults instead of panicking. Applied
+// only to user settings + session state, not to bundled/system config.
+#[derive(Clone, Default, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
 pub struct SectApp {
     pub input: SectInput,
     pub window: SectWindow,
@@ -46,18 +50,20 @@ pub struct SectApp {
     pub performance: SectPerformance,
 }
 
-#[derive(Clone, Deserialize, Serialize, PartialEq)]
+// Session state: relocated to the cache dir and made tolerant to missing keys.
+#[derive(Clone, Default, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
 pub struct SectSessionState {
     pub world: SectSessionWorld,
     pub window: SectSessionWindow,
 }
 
-#[derive(Clone, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct SectSessionWorld {
     pub last_p: UOVec4,
 }
 
-#[derive(Clone, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct SectSessionWindow {
     pub height: f32,
     pub width: f32,
@@ -70,13 +76,13 @@ pub struct SectRuntimeAssets {
     pub load_gumps: bool,
 }
 
-#[derive(Clone, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct SectInput {
     pub movement_speed_multiplier: f32,
     pub smooth_movement: bool,
 }
 
-#[derive(Clone, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct SectWindow {
     pub ui_scale: f32,
     /// Per-overlay scale for the player position overlay.
@@ -206,7 +212,7 @@ impl Default for SectLandStreaming {
     }
 }
 
-#[derive(Clone, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct SectDebug {
     pub map_render_wireframe: bool,
 }
@@ -247,7 +253,11 @@ fn default_land_upload_max_bytes_per_frame() -> usize {
     16 * 1024 * 1024
 }
 
-#[derive(Clone, Deserialize, Serialize, PartialEq)]
+// Derived `Default` exists only to satisfy the `#[serde(default)]` on `SectApp`; in
+// practice the `[performance]` table is always present (bundled default has it), so
+// these zero/false defaults are never the effective values. Per-field `serde(default)`
+// still governs individually-missing keys.
+#[derive(Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct SectPerformance {
     /// Master toggle for all on-screen overlays. When off, every overlay is hidden
     /// regardless of the per-overlay flags below.
@@ -279,7 +289,8 @@ impl SectPerformance {
     }
 }
 
-#[derive(Clone, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Default, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
 pub struct SectGraphics {
     pub reduce_unfocused_fps: bool,
     pub vsync: bool, // Added vsync control
@@ -401,13 +412,22 @@ const KEYBINDINGS_CONFIG_FILE: &str = "settings/keybindings.toml";
 const GRAPHICS_CONFIG_FILE: &str = "settings/graphics.toml";
 const WORLD_RENDERING_CONFIG_FILE: &str = "settings/world_rendering.toml";
 
+/// Read a user-side settings file, preferring the cache copy (where the app writes
+/// runtime changes) and falling back to the bundled default under `assets/`. Used
+/// only for user settings + session state; system/bundled config reads `assets/` directly.
+fn read_user_settings_file(rel: &str) -> std::io::Result<String> {
+    let cache_path = crate::core::constants::valid_cache_dir().join(rel);
+    match std::fs::read_to_string(&cache_path) {
+        Ok(contents) => Ok(contents),
+        Err(_) => std::fs::read_to_string(crate::core::constants::valid_asset_dir().join(rel)),
+    }
+}
+
 pub fn load_from_files() -> Settings {
     let assets_path = crate::core::constants::valid_asset_dir();
 
     let core_path = assets_path.join(CORE_CONFIG_FILE);
     let runtime_assets_path = assets_path.join(RUNTIME_ASSETS_CONFIG_FILE);
-    let user_path = assets_path.join(USER_PREFERENCES_CONFIG_FILE);
-    let session_state_path = assets_path.join(SESSION_STATE_CONFIG_FILE);
     let world_rendering_path = assets_path.join(WORLD_RENDERING_CONFIG_FILE);
 
     let core_contents =
@@ -430,21 +450,21 @@ pub fn load_from_files() -> Settings {
         .expect("Failed to parse settings/runtime_assets.toml — please fix the file in assets/settings/runtime_assets.toml");
 
     // User preferences file contains SectApp fields directly at top level
-    let user_contents = std::fs::read_to_string(&user_path)
+    // (loaded from the cache dir if present, else the bundled default).
+    let user_contents = read_user_settings_file(USER_PREFERENCES_CONFIG_FILE)
         .expect("Failed to read settings/user_preferences.toml — please ensure assets/settings/user_preferences.toml exists and is valid");
 
     let user_app: SectApp = toml::from_str(&user_contents)
         .expect("Failed to parse settings/user_preferences.toml — please fix the file in assets/settings/user_preferences.toml");
 
-    let session_state_contents = std::fs::read_to_string(&session_state_path)
+    let session_state_contents = read_user_settings_file(SESSION_STATE_CONFIG_FILE)
         .expect("Failed to read settings/session_state.toml — please ensure assets/settings/session_state.toml exists and is valid");
 
     let session_state: SectSessionState = toml::from_str(&session_state_contents)
         .expect("Failed to parse settings/session_state.toml — please fix the file in assets/settings/session_state.toml");
 
-    // Graphics settings loader (assets/settings/graphics.toml)
-    let gfx_path = assets_path.join(GRAPHICS_CONFIG_FILE);
-    let gfx_contents = std::fs::read_to_string(&gfx_path).expect(
+    // Graphics settings loader (cache dir if present, else the bundled default).
+    let gfx_contents = read_user_settings_file(GRAPHICS_CONFIG_FILE).expect(
         "Failed to read settings/graphics.toml — please ensure assets/settings/graphics.toml exists",
     );
 
@@ -513,8 +533,11 @@ pub fn apply_logging_settings(logging: &SectLogging) {
 }
 
 pub fn save_app_settings(settings: &Settings) {
-    let assets_path = crate::core::constants::valid_asset_dir();
-    let user_path = assets_path.join(USER_PREFERENCES_CONFIG_FILE);
+    // User settings: written to the cache dir, never the read-only asset tree.
+    let user_path = crate::core::constants::valid_cache_dir().join(USER_PREFERENCES_CONFIG_FILE);
+    if let Some(parent) = user_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
 
     match toml::to_string_pretty(&settings.app) {
         Ok(toml_str) => {
@@ -543,8 +566,11 @@ pub fn save_app_settings(settings: &Settings) {
 }
 
 pub fn save_session_state_settings(settings: &Settings) {
-    let assets_path = crate::core::constants::valid_asset_dir();
-    let path = assets_path.join(SESSION_STATE_CONFIG_FILE);
+    // Session state: written to the cache dir, never the read-only asset tree.
+    let path = crate::core::constants::valid_cache_dir().join(SESSION_STATE_CONFIG_FILE);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
 
     match toml::to_string_pretty(&settings.session_state) {
         Ok(toml_str) => {
@@ -595,8 +621,11 @@ pub fn save_keybindings(settings: &Settings) {
 }
 
 pub fn save_graphics_settings(settings: &Settings) {
-    let assets_path = crate::core::constants::valid_asset_dir();
-    let graphics_path = assets_path.join(GRAPHICS_CONFIG_FILE);
+    // User graphics prefs: written to the cache dir, never the read-only asset tree.
+    let graphics_path = crate::core::constants::valid_cache_dir().join(GRAPHICS_CONFIG_FILE);
+    if let Some(parent) = graphics_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
 
     #[derive(Serialize)]
     struct GraphicsWrapper<'a> {

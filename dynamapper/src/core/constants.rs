@@ -39,6 +39,24 @@ pub fn valid_asset_dir() -> PathBuf {
     PathBuf::from("assets")
 }
 
+/// Directory for runtime-mutable settings (user preferences + session state).
+///
+/// These are written here — a `cache/` folder placed next to the resolved asset
+/// dir — instead of into the read-only `assets/` tree, so the app never dirties
+/// its own source/asset files (which used to trigger a rebuild+relink and keep
+/// `git status` dirty). System/bundled config stays authoritative in `assets/`.
+/// The directory is created on demand.
+pub fn valid_cache_dir() -> PathBuf {
+    let asset_dir = valid_asset_dir();
+    let base = asset_dir
+        .parent()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let cache = base.join("cache");
+    let _ = std::fs::create_dir_all(&cache);
+    cache
+}
+
 pub const ASSET_FOLDER: &str = "assets/";
 
 //------------------------------------

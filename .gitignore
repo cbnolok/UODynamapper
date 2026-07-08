@@ -8,6 +8,8 @@ archive/
 compare_impl/
 old/
 target/
+# Runtime-mutable settings (user preferences + session state) written next to assets/.
+cache/
 *__pycache__*
 
 .*swp*
