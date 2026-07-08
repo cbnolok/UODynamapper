@@ -62,6 +62,12 @@ const RENDER_STYLE_PRESETS: [(&str, u32, u32); 3] = [
     ("KR", 2, 2),       // fragment land shading + KR profile
 ];
 
+/// Default screen position of the detached "Advanced Raw Shader Knobs" window.
+/// Placed to the right of the main Land Shader Controls window (whose default
+/// pos is `[16, 80]`) so the long list of low-level sliders opens as a side
+/// panel instead of stretching the main window past the screen height.
+const ADVANCED_WINDOW_DEFAULT_POS: [f32; 2] = [560.0, 80.0];
+
 // ============================== UI SYSTEM ===============================
 // Renders a window with controls for mode, toggles, intensities, colors,
 // grading, gloom, and presets. Updates UniformState + sets "dirty" when changed.
@@ -97,6 +103,7 @@ pub fn land_ui_system(
         .default_pos([16.0, 80.0])
         .open(&mut window_open)
         .resizable(true)
+        .vscroll(true)
         .show(ctx, |ui| {
             ui.label("Modes: 0=Classic (vertex), 1=Enhanced (fragment), 2=KR-like (fragment).");
             ui.label(
@@ -127,82 +134,144 @@ pub fn land_ui_system(
                     }
                 });
 
-                // ---------------- Terrain (land) ----------------
-                basic_scope_header(ui, "Terrain (land)", "Affects land/ground tiles only.");
-                changed |= slider_s(ui, "Sun Strength", &mut u.land_lighting.diffuse_strength, 0.0..=2.0);
-                changed |= slider_s(ui, "Shadow Brightness", &mut u.lighting.ambient_strength, 0.0..=1.5);
+                // Terrain / Objects / Everything are split into collapsible
+                // sub-dropdowns so the panel stays short enough to fit on screen;
+                // each group's body opens with a caption of what it affects.
+                basic_scope_group(ui, "Terrain (land)", "Affects land/ground tiles only.", |ui| {
+                    changed |= slider_s(ui, "Sun Strength", &mut u.land_lighting.diffuse_strength, 0.0..=2.0);
+                    changed |= slider_s(ui, "Shadow Brightness", &mut u.lighting.ambient_strength, 0.0..=1.5);
 
-                let mut land_relief = land_relief_control_value(&u);
-                if slider_s(ui, "Land Relief", &mut land_relief, 0.0..=1.0) {
-                    apply_land_relief_control(&mut u, land_relief);
-                    changed = true;
-                }
-                let mut soft_lighting = soft_lighting_control_value(&u);
-                if slider_s(ui, "Soft Lighting", &mut soft_lighting, 0.0..=1.0) {
-                    apply_soft_lighting_control(&mut u, soft_lighting);
-                    changed = true;
-                }
-                let mut highlights = highlights_control_value(&u);
-                if slider_s(ui, "Highlights", &mut highlights, 0.0..=1.0) {
-                    apply_highlights_control(&mut u, highlights);
-                    changed = true;
-                }
+                    let mut land_relief = land_relief_control_value(&u);
+                    if slider_s(ui, "Land Relief", &mut land_relief, 0.0..=1.0) {
+                        apply_land_relief_control(&mut u, land_relief);
+                        changed = true;
+                    }
+                    let mut soft_lighting = soft_lighting_control_value(&u);
+                    if slider_s(ui, "Soft Lighting", &mut soft_lighting, 0.0..=1.0) {
+                        apply_soft_lighting_control(&mut u, soft_lighting);
+                        changed = true;
+                    }
+                    let mut highlights = highlights_control_value(&u);
+                    if slider_s(ui, "Highlights", &mut highlights, 0.0..=1.0) {
+                        apply_highlights_control(&mut u, highlights);
+                        changed = true;
+                    }
 
-                changed |= slider_s(ui, "KR Land Temperature", &mut u.effects.kr_land_temperature_strength, 0.0..=1.5);
-                changed |= slider_s(ui, "KR Land Relief Shadow", &mut u.effects.kr_land_relief_shadow_strength, 0.0..=1.5);
-                changed |= slider_s(ui, "KR Land Shadow Mottle", &mut u.effects.kr_land_shadow_mottle_strength, 0.0..=1.5);
-                changed |= slider_s(ui, "KR Material Contrast", &mut u.effects.kr_land_material_contrast_strength, 0.0..=1.5);
-                changed |= toggle_u32(ui, "KR Transition Grime", &mut u.effects.enable_kr_transition_grime);
-                changed |= slider_s(ui, "KR Transition Grime", &mut u.effects.kr_transition_grime_strength, 0.0..=1.0);
+                    changed |= slider_s(ui, "KR Land Temperature", &mut u.effects.kr_land_temperature_strength, 0.0..=1.5);
+                    changed |= slider_s(ui, "KR Land Relief Shadow", &mut u.effects.kr_land_relief_shadow_strength, 0.0..=1.5);
+                    changed |= slider_s(ui, "KR Land Shadow Mottle", &mut u.effects.kr_land_shadow_mottle_strength, 0.0..=1.5);
+                    changed |= slider_s(ui, "KR Material Contrast", &mut u.effects.kr_land_material_contrast_strength, 0.0..=1.5);
+                    changed |= toggle_u32(ui, "KR Transition Grime", &mut u.effects.enable_kr_transition_grime);
+                    changed |= slider_s(ui, "KR Transition Grime", &mut u.effects.kr_transition_grime_strength, 0.0..=1.0);
 
-                // Normal maps only apply to EC-atlas land textures (`texture_size == 2`
-                // in the shader); on a CC art source they are a structural no-op — the
-                // label states this since there is no global "source is EC" signal here.
-                changed |= toggle_u32(ui, "Normal Maps (EC land only)", &mut u.effects.enable_normal_maps);
-                changed |= slider_s(ui, "Land Normal Maps (EC land only)", &mut u.effects.land_normal_map_strength, 0.0..=1.0);
-
-                // ---------------- Objects (art / statics) ----------------
-                basic_scope_header(ui, "Objects (art / statics)", "Affects static art sprites only.");
-                changed |= slider_s(ui, "Art Shadow Shape", &mut u.effects.art_shadow_strength, 0.0..=1.0);
-                changed |= slider_s(ui, "Art Contact Shadows", &mut u.effects.art_contact_shadow_strength, 0.0..=1.0);
-                changed |= slider_s(ui, "Art Mottle", &mut u.effects.art_mottle_strength, 0.0..=1.5);
-                changed |= slider_s(ui, "Art Light Catch", &mut u.effects.art_highlight_strength, 0.0..=1.0);
-                changed |= slider_s(ui, "Art Atmosphere Tint", &mut u.effects.art_depth_tint_strength, 0.0..=1.0);
-                changed |= slider_s(ui, "KR Art Temperature", &mut u.effects.kr_art_temperature_strength, 0.0..=1.5);
-                ui.horizontal(|ui| {
-                    changed |= toggle_u32(ui, "Art Projected Shadows", &mut u.effects.enable_art_projected_shadows);
-                    changed |= toggle_u32(ui, "Art Fake Normals", &mut u.effects.enable_art_fake_normals);
+                    // Normal maps only apply to EC-atlas land textures (`texture_size == 2`
+                    // in the shader); on a CC art source they are a structural no-op — the
+                    // label states this since there is no global "source is EC" signal here.
+                    changed |= toggle_u32(ui, "Normal Maps (EC land only)", &mut u.effects.enable_normal_maps);
+                    changed |= slider_s(ui, "Land Normal Maps (EC land only)", &mut u.effects.land_normal_map_strength, 0.0..=1.0);
                 });
-                changed |= slider_s(ui, "Art Projected Shadows", &mut u.effects.art_projected_shadow_strength, 0.0..=1.0);
 
-                // ---------------- Everything (whole scene) ----------------
-                basic_scope_header(ui, "Everything (whole scene)", "Affects both land and art / the full frame.");
-                changed |= slider_s(ui, "Brightness", &mut u.global_lighting, 0.0..=2.0);
-                ui.horizontal(|ui| {
-                    ui.label("Output:");
-                    changed |= toggle_u32(ui, "Tonemap", &mut u.lighting.enable_tonemap);
-                    changed |= toggle_u32(ui, "Color Richness", &mut u.lighting.enable_grading);
-                    changed |= toggle_u32(ui, "Texture Smoothness", &mut u.effects.enable_linear_filtering);
+                basic_scope_group(ui, "Objects (art / statics)", "Affects static art sprites only.", |ui| {
+                    changed |= slider_s(ui, "Art Shadow Shape", &mut u.effects.art_shadow_strength, 0.0..=1.0);
+                    changed |= slider_s(ui, "Art Contact Shadows", &mut u.effects.art_contact_shadow_strength, 0.0..=1.0);
+                    changed |= slider_s(ui, "Art Mottle", &mut u.effects.art_mottle_strength, 0.0..=1.5);
+                    changed |= slider_s(ui, "Art Light Catch", &mut u.effects.art_highlight_strength, 0.0..=1.0);
+                    changed |= slider_s(ui, "Art Atmosphere Tint", &mut u.effects.art_depth_tint_strength, 0.0..=1.0);
+                    changed |= slider_s(ui, "KR Art Temperature", &mut u.effects.kr_art_temperature_strength, 0.0..=1.5);
+                    ui.horizontal(|ui| {
+                        changed |= toggle_u32(ui, "Art Projected Shadows", &mut u.effects.enable_art_projected_shadows);
+                        changed |= toggle_u32(ui, "Art Fake Normals", &mut u.effects.enable_art_fake_normals);
+                    });
+                    changed |= slider_s(ui, "Art Projected Shadows", &mut u.effects.art_projected_shadow_strength, 0.0..=1.0);
                 });
-                ui.horizontal(|ui| {
-                    changed |= toggle_u32(ui, "Grunge", &mut u.effects.enable_grunge);
-                    changed |= toggle_u32(ui, "Fog", &mut u.lighting.enable_fog);
-                    changed |= toggle_u32(ui, "Water Animation", &mut u.effects.enable_water_animation);
-                    changed |= toggle_u32(ui, "KR Color Wash", &mut u.effects.enable_kr_color_wash);
+
+                basic_scope_group(ui, "Everything (whole scene)", "Affects both land and art / the full frame.", |ui| {
+                    changed |= slider_s(ui, "Brightness", &mut u.global_lighting, 0.0..=2.0);
+                    ui.horizontal(|ui| {
+                        ui.label("Output:");
+                        changed |= toggle_u32(ui, "Tonemap", &mut u.lighting.enable_tonemap);
+                        changed |= toggle_u32(ui, "Color Richness", &mut u.lighting.enable_grading);
+                        changed |= toggle_u32(ui, "Texture Smoothness", &mut u.effects.enable_linear_filtering);
+                    });
+                    ui.horizontal(|ui| {
+                        changed |= toggle_u32(ui, "Grunge", &mut u.effects.enable_grunge);
+                        changed |= toggle_u32(ui, "Fog", &mut u.lighting.enable_fog);
+                        changed |= toggle_u32(ui, "Water Animation", &mut u.effects.enable_water_animation);
+                        changed |= toggle_u32(ui, "KR Color Wash", &mut u.effects.enable_kr_color_wash);
+                    });
+                    changed |= slider_s(ui, "Grunge Strength", &mut u.effects.grunge_strength, 0.0..=1.0);
+                    changed |= slider_s(ui, "Light/Static Interaction", &mut u.effects.light_decal_intensity, 0.0..=2.0);
+                    changed |= slider_s(ui, "KR Color Wash", &mut u.effects.kr_color_wash_strength, 0.0..=1.5);
+                    changed |= slider_s(ui, "KR Color Wash Scale", &mut u.effects.kr_color_wash_scale, 8.0..=160.0);
                 });
-                changed |= slider_s(ui, "Grunge Strength", &mut u.effects.grunge_strength, 0.0..=1.0);
-                changed |= slider_s(ui, "Light/Static Interaction", &mut u.effects.light_decal_intensity, 0.0..=2.0);
-                changed |= slider_s(ui, "KR Color Wash", &mut u.effects.kr_color_wash_strength, 0.0..=1.5);
-                changed |= slider_s(ui, "KR Color Wash Scale", &mut u.effects.kr_color_wash_scale, 8.0..=160.0);
 
                 if changed {
                     u.dirty = true;
                 }
             });
 
-            ui.checkbox(&mut advanced_open, "Show advanced raw shader knobs");
-            if advanced_open {
- 
+            ui.checkbox(&mut advanced_open, "Show advanced raw shader knobs (opens as a side panel →)");
+
+            // ------------------------ Presets -------------------------
+            ui.horizontal(|ui| {
+                ui.strong("Presets:");
+                let mode = u.effects.shading_mode;
+                let mode_prefix = match mode {
+                    0 => "classic",
+                    1 => "enhanced",
+                    _ => "kr",
+                };
+
+                // Helper: apply a preset and update active_preset key.
+                fn apply_preset(u: &mut UniformState, preset: &LandMaterialUniformsPresets, key: String) {
+                    u.effects = preset.effects;
+                    u.lighting = preset.lighting;
+                    u.land_lighting = preset.land_lighting;
+                    u.global_lighting = preset.global_lighting;
+                    u.active_preset = key;
+                    u.dirty = true;
+                }
+
+                if ui.button("Morning").clicked() {
+                    let p = match mode { 0 => &shader_presets.classic.morning, 1 => &shader_presets.enhanced.morning, _ => &shader_presets.kr.morning };
+                    apply_preset(&mut u, p, format!("{}.morning", mode_prefix));
+                }
+                if ui.button("Afternoon").clicked() {
+                    let p = match mode { 0 => &shader_presets.classic.afternoon, 1 => &shader_presets.enhanced.afternoon, _ => &shader_presets.kr.afternoon };
+                    apply_preset(&mut u, p, format!("{}.afternoon", mode_prefix));
+                }
+                if ui.button("Night").clicked() {
+                    let p = match mode { 0 => &shader_presets.classic.night, 1 => &shader_presets.enhanced.night, _ => &shader_presets.kr.night };
+                    apply_preset(&mut u, p, format!("{}.night", mode_prefix));
+                }
+                if ui.button("Cave").clicked() {
+                    let p = match mode { 0 => &shader_presets.classic.cave, 1 => &shader_presets.enhanced.cave, _ => &shader_presets.kr.cave };
+                    apply_preset(&mut u, p, format!("{}.cave", mode_prefix));
+                }
+            });
+
+            // Undo button: restore the last saved values.
+            ui.horizontal(|ui| {
+                if ui.button("⟲ Undo to Last Saved").clicked() {
+                    if let Some(snap) = u.saved_snapshot {
+                        u.restore(&snap);
+                    }
+                }
+                // Show active preset label
+                ui.label(format!("Active: {}", u.active_preset));
+            });
+        });
+
+    // Advanced raw knobs open in their own window to the right of the main one,
+    // so the long list of low-level sliders never stretches the main window past
+    // the screen height. `.open()` hides this window when the checkbox is off.
+    egui::Window::new("Advanced Raw Shader Knobs")
+        .default_pos(ADVANCED_WINDOW_DEFAULT_POS)
+        .open(&mut advanced_open)
+        .resizable(true)
+        .vscroll(true)
+        .show(ctx, |ui| {
+
             // ------------------------- Effects -------------------------
             ui.collapsing("Effects", |ui| {
                 let mut changed = false;
@@ -656,57 +725,6 @@ pub fn land_ui_system(
                 }
             });
 
-            ui.separator();
-            }
-
-            // ------------------------ Presets -------------------------
-            ui.horizontal(|ui| {
-                ui.strong("Presets:");
-                let mode = u.effects.shading_mode;
-                let mode_prefix = match mode {
-                    0 => "classic",
-                    1 => "enhanced",
-                    _ => "kr",
-                };
-
-                // Helper: apply a preset and update active_preset key.
-                fn apply_preset(u: &mut UniformState, preset: &LandMaterialUniformsPresets, key: String) {
-                    u.effects = preset.effects;
-                    u.lighting = preset.lighting;
-                    u.land_lighting = preset.land_lighting;
-                    u.global_lighting = preset.global_lighting;
-                    u.active_preset = key;
-                    u.dirty = true;
-                }
-
-                if ui.button("Morning").clicked() {
-                    let p = match mode { 0 => &shader_presets.classic.morning, 1 => &shader_presets.enhanced.morning, _ => &shader_presets.kr.morning };
-                    apply_preset(&mut u, p, format!("{}.morning", mode_prefix));
-                }
-                if ui.button("Afternoon").clicked() {
-                    let p = match mode { 0 => &shader_presets.classic.afternoon, 1 => &shader_presets.enhanced.afternoon, _ => &shader_presets.kr.afternoon };
-                    apply_preset(&mut u, p, format!("{}.afternoon", mode_prefix));
-                }
-                if ui.button("Night").clicked() {
-                    let p = match mode { 0 => &shader_presets.classic.night, 1 => &shader_presets.enhanced.night, _ => &shader_presets.kr.night };
-                    apply_preset(&mut u, p, format!("{}.night", mode_prefix));
-                }
-                if ui.button("Cave").clicked() {
-                    let p = match mode { 0 => &shader_presets.classic.cave, 1 => &shader_presets.enhanced.cave, _ => &shader_presets.kr.cave };
-                    apply_preset(&mut u, p, format!("{}.cave", mode_prefix));
-                }
-            });
-
-            // Undo button: restore the last saved values.
-            ui.horizontal(|ui| {
-                if ui.button("⟲ Undo to Last Saved").clicked() {
-                    if let Some(snap) = u.saved_snapshot {
-                        u.restore(&snap);
-                    }
-                }
-                // Show active preset label
-                ui.label(format!("Active: {}", u.active_preset));
-            });
         });
 
     ui_state.open = window_open;
@@ -769,13 +787,23 @@ fn push_uniforms_if_dirty(
 // avoiding overlapping &mut borrows inside the helper.
 
 // Toggle a u32 field as a boolean (0/1). Returns true if the value changed.
-/// Section header for a scope group inside Basic Controls: a separator, a bold
-/// title, and a small caption stating which part of the render the group affects.
-fn basic_scope_header(ui: &mut egui::Ui, title: &str, scope: &str) {
-    ui.add_space(6.0);
-    ui.separator();
-    ui.strong(title);
-    ui.small(scope);
+/// Collapsible scope group inside Basic Controls: a titled sub-dropdown whose
+/// body opens with a small caption stating which part of the render it affects.
+/// Splitting the many controls into per-scope dropdowns keeps the panel from
+/// growing taller than the screen. Defaults to open so nothing is hidden on
+/// first show; the user collapses the groups they don't need.
+fn basic_scope_group(
+    ui: &mut egui::Ui,
+    title: &str,
+    scope: &str,
+    add_contents: impl FnOnce(&mut egui::Ui),
+) {
+    egui::CollapsingHeader::new(title)
+        .default_open(true)
+        .show(ui, |ui| {
+            ui.small(scope);
+            add_contents(ui);
+        });
 }
 
 fn toggle_u32(ui: &mut egui::Ui, label: &str, val: &mut u32) -> bool {
