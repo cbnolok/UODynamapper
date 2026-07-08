@@ -3,7 +3,7 @@ movement_speed_multiplier = 1.0
 smooth_movement = true
 
 [window]
-ui_scale = 1.5
+ui_scale = 1.15
 player_position_scale = 1.0
 sysmessages_scale = 1.0
 performance_overlay_scale = 1.0
@@ -16,5 +16,8 @@ map_render_wireframe = false
 
 [performance]
 show_overlay = true
+show_perf_stats_overlay = true
+show_player_position_overlay = true
+show_cursor_inspect_overlay = true
 frame_limit_enabled = true
 target_fps = 60
