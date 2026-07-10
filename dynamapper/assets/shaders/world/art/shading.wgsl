@@ -4,6 +4,7 @@
 
 #import "shaders/world/land/noise.wgsl"::noise_2d
 
+const ART_DEPTH_CLASS_BACKGROUND: u32 = 1u;
 const ART_DEPTH_CLASS_FOLIAGE: u32 = 2u;
 const ART_DEPTH_CLASS_ROOF: u32 = 3u;
 const ART_DEPTH_CLASS_SURFACE_LIKE_FLOOR: u32 = 4u;
@@ -133,7 +134,15 @@ fn apply_art_surface_shading(
     var out_rgb = rgb;
     out_rgb *= 1.0 - shadow_strength * (0.35 * lower_occlusion + 0.15 * side_contact) * contact_noise;
     out_rgb += rgb * light_color * vertical_light * highlight_strength * (0.25 + 0.25 * light_static);
-    out_rgb = mix(out_rgb, out_rgb * atmosphere_tint, tint_strength * lower_occlusion);
+    // Atmosphere tint uses `lower_occlusion` (a per-V-coordinate gradient) which is
+    // only meaningful on an upright billboard. On flat floor/ground/background tiles
+    // it would darken/tint by an arbitrary vertical gradient, so skip it there.
+    let is_floor_like =
+        is_ground_art
+        || depth_class == ART_DEPTH_CLASS_SURFACE_LIKE_FLOOR
+        || depth_class == ART_DEPTH_CLASS_BACKGROUND;
+    let depth_tint_weight = select(tint_strength * lower_occlusion, 0.0, is_floor_like);
+    out_rgb = mix(out_rgb, out_rgb * atmosphere_tint, depth_tint_weight);
 
     if (enable_art_fake_normals == 1u) {
         let N = art_fake_normal(uv_in_tile, depth_class, is_ground_art);

@@ -22,7 +22,9 @@ fn tonemap_ec_kr_profile(c: vec3<f32>, exposure: f32, profile: u32, kr_tonemap_g
   if (profile == 2u) {
     pre_gain = kr_tonemap_gain;
     if (kr_tonemap_gain <= 0.0) {
-      pre_gain = 0.09;
+      // Fallback for an uninitialized Default uniform (0). Matches
+      // DEFAULT_KR_TONEMAP_GAIN so KR is legible, not the old ~0.09 crush.
+      pre_gain = 0.9;
     }
     white_cutoff = 0.8;
   }

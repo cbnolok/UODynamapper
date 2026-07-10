@@ -168,14 +168,17 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
         }
         var depth_profile = 0.0;
         if (in.depth_class == DEPTH_CLASS_FOLIAGE) {
-            depth_profile = 0.92;
+            depth_profile = 1.0;
         } else if (in.depth_class == DEPTH_CLASS_ROOF) {
-            depth_profile = 0.10;
+            depth_profile = 0.35;
         } else if (in.depth_class != DEPTH_CLASS_BACKGROUND && in.depth_class != DEPTH_CLASS_SURFACE_LIKE_FLOOR) {
-            depth_profile = 0.55;
+            depth_profile = 0.85;
         }
+        // Onset tuned for classic sprite world-heights (a 44px tile is only ~1
+        // world unit tall); the old 0.45..3.2 window left short/typical statics
+        // casting a near-zero shadow, so the strength knob looked inert.
         let caster_height = max(inst.local_max.y - inst.local_min.y, 0.0);
-        let height_profile = smoothstep(0.45, 3.2, caster_height);
+        let height_profile = smoothstep(0.2, 1.5, caster_height);
         var shadow_center = vec2<f32>(0.5, 0.56);
         var shadow_radius = vec2<f32>(0.54, 0.42);
         if (in.depth_class == DEPTH_CLASS_FOLIAGE) {

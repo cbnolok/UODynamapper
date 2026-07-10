@@ -357,9 +357,11 @@ pub struct GlobalLightingUniforms {
     pub kr_tonemap_params: Vec4,
 }
 
-/// Legacy hardcoded KR tonemap pre-scale ≈ middle_gray(0.18) / luminance(2.0).
-/// Kept as the default so existing presets render exactly as before until tuned.
-pub const DEFAULT_KR_TONEMAP_GAIN: f32 = 0.09;
+/// Default KR tonemap pre-scale. The old hardcoded value was ≈ 0.09
+/// (middle_gray(0.18) / luminance(2.0)), which crushed KR ~11x darker than EC.
+/// Defaulted near EC's own pre-scale (~1.0) so KR presets are legible out of the
+/// box; the "KR Tonemap Brightness" knob can still lower it for a moodier look.
+pub const DEFAULT_KR_TONEMAP_GAIN: f32 = 0.9;
 
 fn default_kr_tonemap_params() -> Vec4 {
     Vec4::new(DEFAULT_KR_TONEMAP_GAIN, 0.0, 0.0, 0.0)
