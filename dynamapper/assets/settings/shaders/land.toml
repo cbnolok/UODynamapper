@@ -1,7 +1,7 @@
 default_preset = "classic.morning"
 
 [classic.morning]
-global_lighting = 0.65
+global_lighting = 0.95
 
 [classic.morning.effects]
 shading_mode = 0
@@ -303,7 +303,7 @@ rim_color = [
 ]
 
 [classic.night]
-global_lighting = 0.82
+global_lighting = 0.65
 
 [classic.night.effects]
 shading_mode = 0
@@ -360,7 +360,7 @@ atmosphere_tint = [
     0.24,
 ]
 _pad1_ = 0.0
-exposure = 1.2
+exposure = 1.0
 ambient_strength = 0.1
 _pad2_ = [
     0.0,
