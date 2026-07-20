@@ -62,6 +62,79 @@ const RENDER_STYLE_PRESETS: [(&str, u32, u32); 3] = [
     ("KR", 2, 2),       // fragment land shading + KR profile
 ];
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ShaderPresetPeriod {
+    Morning,
+    Afternoon,
+    Night,
+    Cave,
+}
+
+impl ShaderPresetPeriod {
+    fn from_active_key(key: &str) -> Self {
+        match key.split_once('.').map(|(_, period)| period) {
+            Some("afternoon") => Self::Afternoon,
+            Some("night") => Self::Night,
+            Some("cave") => Self::Cave,
+            _ => Self::Morning,
+        }
+    }
+
+    fn key(self, mode: u32) -> String {
+        let mode = match mode {
+            0 => "classic",
+            1 => "enhanced",
+            _ => "kr",
+        };
+        let period = match self {
+            Self::Morning => "morning",
+            Self::Afternoon => "afternoon",
+            Self::Night => "night",
+            Self::Cave => "cave",
+        };
+        format!("{mode}.{period}")
+    }
+}
+
+fn preset_for_style(
+    presets: &LandShaderModePresets,
+    mode: u32,
+    period: ShaderPresetPeriod,
+) -> &LandMaterialUniformsPresets {
+    let style = match mode {
+        0 => &presets.classic,
+        1 => &presets.enhanced,
+        _ => &presets.kr,
+    };
+    match period {
+        ShaderPresetPeriod::Morning => &style.morning,
+        ShaderPresetPeriod::Afternoon => &style.afternoon,
+        ShaderPresetPeriod::Night => &style.night,
+        ShaderPresetPeriod::Cave => &style.cave,
+    }
+}
+
+fn apply_render_preset(
+    u: &mut UniformState,
+    preset: &LandMaterialUniformsPresets,
+    mode: u32,
+    profile: u32,
+    period: ShaderPresetPeriod,
+) {
+    // Animation is an interactive playback preference, not part of the visual
+    // time/style preset. Keep the user's current choice when changing either.
+    let enable_water_animation = u.effects.enable_water_animation;
+    u.effects = preset.effects;
+    u.effects.shading_mode = mode;
+    u.effects.post_process_profile = profile;
+    u.effects.enable_water_animation = enable_water_animation;
+    u.lighting = preset.lighting;
+    u.land_lighting = preset.land_lighting;
+    u.global_lighting = preset.global_lighting;
+    u.active_preset = period.key(mode);
+    u.dirty = true;
+}
+
 /// Default screen position of the detached "Advanced Raw Shader Knobs" window.
 /// Placed to the right of the main Land Shader Controls window (whose default
 /// pos is `[16, 80]`) so the long list of low-level sliders opens as a side
@@ -122,14 +195,10 @@ pub fn land_ui_system(
                     let cur_mode = u.effects.shading_mode;
                     for (label, mode, profile) in RENDER_STYLE_PRESETS {
                         if ui.selectable_label(cur_mode == mode, label).clicked() {
-                            if u.effects.shading_mode != mode {
-                                u.effects.shading_mode = mode;
-                                changed = true;
-                            }
-                            if u.effects.post_process_profile != profile {
-                                u.effects.post_process_profile = profile;
-                                changed = true;
-                            }
+                            let period = ShaderPresetPeriod::from_active_key(&u.active_preset);
+                            let preset = preset_for_style(&shader_presets, mode, period);
+                            apply_render_preset(&mut u, preset, mode, profile, period);
+                            changed = true;
                         }
                     }
                 });
@@ -149,7 +218,7 @@ pub fn land_ui_system(
                 // each group's body opens with a caption of what it affects.
                 basic_scope_group(ui, "Terrain (land)", "Affects land/ground tiles only.", |ui| {
                     changed |= slider_en(ui, is_fragment, "Sun Strength", &mut u.land_lighting.diffuse_strength, 0.0..=2.0);
-                    changed |= slider_s(ui, "Shadow Brightness", &mut u.lighting.ambient_strength, 0.0..=1.5);
+                    changed |= slider_s(ui, "Terrain Ambient Light", &mut u.lighting.ambient_strength, 0.0..=1.5);
 
                     let mut land_relief = land_relief_control_value(&u);
                     if slider_en(ui, is_fragment, "Land Relief", &mut land_relief, 0.0..=1.0) {
@@ -240,38 +309,28 @@ pub fn land_ui_system(
             // ------------------------ Presets -------------------------
             ui.horizontal(|ui| {
                 ui.strong("Presets:");
-                let mode = u.effects.shading_mode;
-                let mode_prefix = match mode {
-                    0 => "classic",
-                    1 => "enhanced",
-                    _ => "kr",
-                };
-
-                // Helper: apply a preset and update active_preset key.
-                fn apply_preset(u: &mut UniformState, preset: &LandMaterialUniformsPresets, key: String) {
-                    u.effects = preset.effects;
-                    u.lighting = preset.lighting;
-                    u.land_lighting = preset.land_lighting;
-                    u.global_lighting = preset.global_lighting;
-                    u.active_preset = key;
-                    u.dirty = true;
-                }
+                let mode = u.effects.shading_mode.min(2);
+                let profile = mode;
 
                 if ui.button("Morning").clicked() {
-                    let p = match mode { 0 => &shader_presets.classic.morning, 1 => &shader_presets.enhanced.morning, _ => &shader_presets.kr.morning };
-                    apply_preset(&mut u, p, format!("{}.morning", mode_prefix));
+                    let period = ShaderPresetPeriod::Morning;
+                    let preset = preset_for_style(&shader_presets, mode, period);
+                    apply_render_preset(&mut u, preset, mode, profile, period);
                 }
                 if ui.button("Afternoon").clicked() {
-                    let p = match mode { 0 => &shader_presets.classic.afternoon, 1 => &shader_presets.enhanced.afternoon, _ => &shader_presets.kr.afternoon };
-                    apply_preset(&mut u, p, format!("{}.afternoon", mode_prefix));
+                    let period = ShaderPresetPeriod::Afternoon;
+                    let preset = preset_for_style(&shader_presets, mode, period);
+                    apply_render_preset(&mut u, preset, mode, profile, period);
                 }
                 if ui.button("Night").clicked() {
-                    let p = match mode { 0 => &shader_presets.classic.night, 1 => &shader_presets.enhanced.night, _ => &shader_presets.kr.night };
-                    apply_preset(&mut u, p, format!("{}.night", mode_prefix));
+                    let period = ShaderPresetPeriod::Night;
+                    let preset = preset_for_style(&shader_presets, mode, period);
+                    apply_render_preset(&mut u, preset, mode, profile, period);
                 }
                 if ui.button("Cave").clicked() {
-                    let p = match mode { 0 => &shader_presets.classic.cave, 1 => &shader_presets.enhanced.cave, _ => &shader_presets.kr.cave };
-                    apply_preset(&mut u, p, format!("{}.cave", mode_prefix));
+                    let period = ShaderPresetPeriod::Cave;
+                    let preset = preset_for_style(&shader_presets, mode, period);
+                    apply_render_preset(&mut u, preset, mode, profile, period);
                 }
             });
 
@@ -983,5 +1042,54 @@ mod tests {
 
         apply_highlights_control(&mut u, 0.6);
         assert!((highlights_control_value(&u) - 0.6).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn render_presets_preserve_animation_and_enforce_the_selected_style() {
+        let mut u = uniform_state();
+        u.effects.enable_water_animation = 0;
+        let preset = LandMaterialUniformsPresets {
+            global_lighting: 0.75,
+            effects: LandEffectsUniform {
+                shading_mode: 2,
+                post_process_profile: 2,
+                enable_water_animation: 1,
+                ..Default::default()
+            },
+            lighting: GlobalLightingUniforms {
+                exposure: 1.25,
+                ..Default::default()
+            },
+            land_lighting: LandLightingUniforms {
+                diffuse_strength: 0.8,
+                ..Default::default()
+            },
+        };
+
+        apply_render_preset(
+            &mut u,
+            &preset,
+            0,
+            0,
+            ShaderPresetPeriod::Morning,
+        );
+
+        assert_eq!(u.effects.shading_mode, 0);
+        assert_eq!(u.effects.post_process_profile, 0);
+        assert_eq!(u.effects.enable_water_animation, 0);
+        assert_eq!(u.active_preset, "classic.morning");
+        assert_eq!(u.global_lighting, 0.75);
+        assert_eq!(u.lighting.exposure, 1.25);
+        assert_eq!(u.land_lighting.diffuse_strength, 0.8);
+        assert!(u.dirty);
+    }
+
+    #[test]
+    fn render_style_changes_keep_the_active_time_period() {
+        let period = ShaderPresetPeriod::from_active_key("kr.cave");
+
+        assert_eq!(period, ShaderPresetPeriod::Cave);
+        assert_eq!(period.key(0), "classic.cave");
+        assert_eq!(period.key(1), "enhanced.cave");
     }
 }
