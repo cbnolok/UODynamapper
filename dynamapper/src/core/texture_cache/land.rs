@@ -12,10 +12,12 @@ use bevy::time::common_conditions::on_timer;
 use color_eyre::eyre;
 use std::time::{Duration, Instant};
 use udd_assets::{
+    tex_art_cc::TexArtCcPackage,
     tex_land_cc::TexLandCcPackage,
     tex_land_ec::TexLandEcPackage,
     tex_aux_ec::TexAuxEcPackage,
     terrain_meta::TerrainMetaPackage,
+    tilemeta::{TileMetaLandTile, TileMetaPackage},
 };
 use uocf::classic::land_texture::LandTextureSize;
 use uocf::classic::map::MapBlockRelPos;
@@ -47,6 +49,21 @@ struct LandPageAtlasImages {
     page_atlas: Handle<Image>,
     lookup: Handle<Image>,
 }
+
+/// Compact Classic land-art tiles used for flat wet terrain.
+///
+/// Classic land art is a 44×44 isometric diamond in `art.mul`, whereas the
+/// ordinary terrain path samples the corresponding square `texmaps.mul`
+/// texture. Keeping a separate compact atlas lets flat wet cells use the same
+/// authored pixels as shoreline statics without replacing either graphic.
+struct ClassicLandArtImages {
+    atlas: Handle<Image>,
+    lookup: Handle<Image>,
+}
+
+const CLASSIC_LAND_ART_LOOKUP_WIDTH: u32 = 256;
+const CLASSIC_LAND_ART_TILE_CAPACITY: u32 = 16_384;
+const TILEMETA_FLAG_WET: u64 = 0x80;
 
 /// GPU images for the `tex_aux_ec` two-base blend path.
 ///
@@ -446,6 +463,231 @@ fn create_blank_land_page_atlas_images(images: &mut Assets<Image>) -> LandPageAt
         page_atlas: images.add(atlas),
         lookup: images.add(lookup),
     }
+}
+
+fn classic_land_art_payload_id(tile: &TileMetaLandTile) -> Option<u32> {
+    if tile.flags & TILEMETA_FLAG_WET == 0 {
+        return None;
+    }
+
+    // The tile metadata's texture id normally addresses texmaps.mul. We can
+    // look the corresponding land art up from the shader's existing payload
+    // only when that mapping is identity (or zero, where the renderer already
+    // falls back to the original land graphic id).
+    let texture_id = u32::from(tile.texture_id);
+    (texture_id == 0 || texture_id == tile.tile_id).then_some(tile.tile_id)
+}
+
+fn create_blank_classic_land_art_images(images: &mut Assets<Image>) -> ClassicLandArtImages {
+    use bevy::render::render_resource::{
+        Extent3d, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor,
+        TextureViewDimension,
+    };
+
+    let mut atlas = Image::new(
+        Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        vec![0u8; 4],
+        TextureFormat::Rgba8UnormSrgb,
+        bevy::asset::RenderAssetUsages::RENDER_WORLD,
+    );
+    atlas.texture_descriptor.usage |= TextureUsages::TEXTURE_BINDING;
+    atlas.texture_view_descriptor = Some(TextureViewDescriptor {
+        dimension: Some(TextureViewDimension::D2Array),
+        ..Default::default()
+    });
+
+    let lookup_height =
+        (CLASSIC_LAND_ART_TILE_CAPACITY + CLASSIC_LAND_ART_LOOKUP_WIDTH - 1)
+            / CLASSIC_LAND_ART_LOOKUP_WIDTH;
+    let mut lookup = Image::new(
+        Extent3d {
+            width: CLASSIC_LAND_ART_LOOKUP_WIDTH,
+            height: lookup_height,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        vec![
+            0u8;
+            (CLASSIC_LAND_ART_LOOKUP_WIDTH * lookup_height * 16) as usize
+        ],
+        TextureFormat::Rgba32Uint,
+        bevy::asset::RenderAssetUsages::RENDER_WORLD,
+    );
+    lookup.texture_descriptor.usage |= TextureUsages::TEXTURE_BINDING;
+
+    ClassicLandArtImages {
+        atlas: images.add(atlas),
+        lookup: images.add(lookup),
+    }
+}
+
+fn create_classic_land_art_images(
+    images: &mut Assets<Image>,
+    tex_art_cc: Option<&TexArtCcPackage>,
+    tilemeta: Option<&TileMetaPackage>,
+) -> eyre::Result<ClassicLandArtImages> {
+    use bevy::render::render_resource::{
+        Extent3d, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor,
+        TextureViewDimension,
+    };
+
+    let (Some(tex_art_cc), Some(tilemeta)) = (tex_art_cc, tilemeta) else {
+        return Ok(create_blank_classic_land_art_images(images));
+    };
+
+    let mut candidates = tilemeta
+        .land_tiles()
+        .iter()
+        .filter_map(|tile| {
+            let art_id = classic_land_art_payload_id(tile)?;
+            if art_id >= CLASSIC_LAND_ART_TILE_CAPACITY {
+                return None;
+            }
+            let slot = *tex_art_cc.present_slot(art_id)?;
+            (slot.is_land() && slot.width != 0 && slot.height != 0).then_some((art_id, slot))
+        })
+        .collect::<Vec<_>>();
+
+    if candidates.is_empty() {
+        return Ok(create_blank_classic_land_art_images(images));
+    }
+
+    // Group by package page so each source page is decoded at most once. The
+    // normal sprite cache streams those pages; this one-off derived atlas must
+    // not repeatedly decode a full page for every wet tile on it.
+    candidates.sort_unstable_by_key(|(art_id, slot)| (slot.page_index, *art_id));
+
+    let atlas_width = candidates
+        .iter()
+        .map(|(_, slot)| u32::from(slot.width))
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    let atlas_height = candidates
+        .iter()
+        .map(|(_, slot)| u32::from(slot.height))
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    let layer_count = candidates.len() as u32 + 1; // layer 0 is the absent sentinel
+    let layer_byte_len = (atlas_width * atlas_height * 4) as usize;
+    let mut atlas_bytes = vec![0u8; layer_byte_len * layer_count as usize];
+
+    let lookup_height =
+        (CLASSIC_LAND_ART_TILE_CAPACITY + CLASSIC_LAND_ART_LOOKUP_WIDTH - 1)
+            / CLASSIC_LAND_ART_LOOKUP_WIDTH;
+    let mut lookup_bytes =
+        vec![0u8; (CLASSIC_LAND_ART_LOOKUP_WIDTH * lookup_height * 16) as usize];
+
+    let mut decoded_page_index = u32::MAX;
+    let mut decoded_page_rgba = Vec::new();
+    let mut decoded_page_width = 0u32;
+    let mut decoded_page_height = 0u32;
+
+    for (candidate_index, (art_id, slot)) in candidates.into_iter().enumerate() {
+        if decoded_page_index != slot.page_index {
+            let page = tex_art_cc
+                .pages()
+                .get(slot.page_index as usize)
+                .ok_or_else(|| {
+                    eyre::eyre!(
+                        "missing tex_art_cc page metadata for Classic land art {}",
+                        slot.page_index
+                    )
+                })?;
+            decoded_page_rgba = tex_art_cc.read_page_rgba(slot.page_index)?;
+            decoded_page_index = slot.page_index;
+            decoded_page_width = page.used_width;
+            decoded_page_height = page.used_height;
+        }
+
+        let slot_width = u32::from(slot.width);
+        let slot_height = u32::from(slot.height);
+        let slot_x = u32::from(slot.x);
+        let slot_y = u32::from(slot.y);
+        if slot_x + slot_width > decoded_page_width
+            || slot_y + slot_height > decoded_page_height
+        {
+            eyre::bail!(
+                "Classic land art {art_id} rect {slot_width}x{slot_height} at {slot_x},{slot_y} exceeds page {} extent {}x{}",
+                slot.page_index,
+                decoded_page_width,
+                decoded_page_height,
+            );
+        }
+
+        let layer = candidate_index as u32 + 1;
+        let layer_start = layer as usize * layer_byte_len;
+        let copy_row_bytes = slot_width as usize * 4;
+        for row in 0..slot_height {
+            let source_start = ((slot_y + row) * decoded_page_width + slot_x) as usize * 4;
+            let source_end = source_start + copy_row_bytes;
+            let target_start = layer_start + row as usize * atlas_width as usize * 4;
+            let target_end = target_start + copy_row_bytes;
+            if source_end > decoded_page_rgba.len() {
+                eyre::bail!(
+                    "Classic land art {art_id} source pixels exceed decoded page {}",
+                    slot.page_index,
+                );
+            }
+            atlas_bytes[target_start..target_end]
+                .copy_from_slice(&decoded_page_rgba[source_start..source_end]);
+        }
+
+        let lookup_offset = art_id as usize * 16;
+        for (component_index, value) in [
+            layer,
+            slot_width,
+            slot_height,
+            u32::from(slot.upscale_factor.max(1)),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let start = lookup_offset + component_index * 4;
+            lookup_bytes[start..start + 4].copy_from_slice(&value.to_le_bytes());
+        }
+    }
+
+    let mut atlas = Image::new(
+        Extent3d {
+            width: atlas_width,
+            height: atlas_height,
+            depth_or_array_layers: layer_count,
+        },
+        TextureDimension::D2,
+        atlas_bytes,
+        TextureFormat::Rgba8UnormSrgb,
+        bevy::asset::RenderAssetUsages::RENDER_WORLD,
+    );
+    atlas.texture_descriptor.usage |= TextureUsages::TEXTURE_BINDING;
+    atlas.texture_view_descriptor = Some(TextureViewDescriptor {
+        dimension: Some(TextureViewDimension::D2Array),
+        ..Default::default()
+    });
+
+    let mut lookup = Image::new(
+        Extent3d {
+            width: CLASSIC_LAND_ART_LOOKUP_WIDTH,
+            height: lookup_height,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        lookup_bytes,
+        TextureFormat::Rgba32Uint,
+        bevy::asset::RenderAssetUsages::RENDER_WORLD,
+    );
+    lookup.texture_descriptor.usage |= TextureUsages::TEXTURE_BINDING;
+
+    Ok(ClassicLandArtImages {
+        atlas: images.add(atlas),
+        lookup: images.add(lookup),
+    })
 }
 
 fn copy_land_page_into_full_atlas_rgba(
@@ -1000,6 +1242,7 @@ pub fn sys_setup_terrain_cache(
     mut materials: ResMut<Assets<LandCustomMeshMaterial>>,
     settings: Res<crate::configs::settings::Settings>,
     texmap_2d_r: Res<crate::core::uo_files_loader::TexMap2DRes>,
+    tilemeta_r: Option<Res<crate::core::uo_files_loader::TileMetaPackageRes>>,
     tex_art_cc_r: Option<Res<crate::core::uo_files_loader::TexArtCcPackageRes>>,
     tex_art_ec_r: Option<Res<crate::core::uo_files_loader::TexArtEcPackageRes>>,
     tex_land_ec_r: Option<Res<crate::core::uo_files_loader::TexLandEcPackageRes>>,
@@ -1053,7 +1296,7 @@ pub fn sys_setup_terrain_cache(
         settings.graphics.land_texture_source,
     );
 
-    land_texture_cache.tex_art_cc = tex_art_cc_r.map(|r| r.0.clone());
+    land_texture_cache.tex_art_cc = tex_art_cc_r.as_ref().map(|r| r.0.clone());
     land_texture_cache.tex_land_cc = Some(texmap_2d_r.0.clone());
     land_texture_cache.tex_art_ec = tex_art_ec_r.map(|r| r.0.clone());
     land_texture_cache.tex_land_ec = tex_land_ec_package.clone();
@@ -1083,6 +1326,13 @@ pub fn sys_setup_terrain_cache(
 
     let shader_images = create_land_shader_images(&mut images, land_shader_source_from_cache(&land_texture_cache))
         .expect("Failed to build land atlas shader images");
+
+    let classic_land_art_images = create_classic_land_art_images(
+        &mut images,
+        tex_art_cc_r.as_deref().map(|resource| resource.0.as_ref()),
+        tilemeta_r.as_deref().map(|resource| resource.0.as_ref()),
+    )
+    .expect("Failed to build Classic wet land-art shader images");
 
     let aux_images = create_aux_atlas_images(
         &mut images,
@@ -1173,6 +1423,8 @@ pub fn sys_setup_terrain_cache(
                 visual_grunge_texture,
                 ec_aux_atlas: aux_images.aux_atlas,
                 ec_aux_lookup: aux_images.aux_lookup,
+                classic_land_art_atlas: classic_land_art_images.atlas,
+                classic_land_art_lookup: classic_land_art_images.lookup,
             },
         };
 
@@ -1359,4 +1611,89 @@ fn sys_apply_tile_atlas_expansion(
                 / (1024 * 1024)
         ),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::render::render_resource::{DownlevelFlags, WgpuFeatures};
+    use bevy::shader::{
+        PipelineCacheError, Shader, ShaderCache, ShaderCacheSource, ValidateShader,
+    };
+
+    fn accept_shader_module(
+        _device: &(),
+        _source: ShaderCacheSource<'_>,
+        _validation: &ValidateShader,
+    ) -> Result<(), PipelineCacheError> {
+        Ok(())
+    }
+
+    fn land_tile(tile_id: u32, texture_id: u16, flags: u64) -> TileMetaLandTile {
+        TileMetaLandTile {
+            tile_id,
+            texture_id,
+            tile_type: 0,
+            _pad1: 0,
+            flags,
+            radar_color: [0; 4],
+            name: [0; 20],
+        }
+    }
+
+    #[test]
+    fn classic_land_art_payload_requires_wet_identity_mapping() {
+        assert_eq!(
+            classic_land_art_payload_id(&land_tile(168, 0, TILEMETA_FLAG_WET)),
+            Some(168)
+        );
+        assert_eq!(
+            classic_land_art_payload_id(&land_tile(310, 310, TILEMETA_FLAG_WET)),
+            Some(310)
+        );
+        assert_eq!(classic_land_art_payload_id(&land_tile(168, 0, 0)), None);
+        assert_eq!(
+            classic_land_art_payload_id(&land_tile(168, 42, TILEMETA_FLAG_WET)),
+            None
+        );
+    }
+
+    #[test]
+    fn land_sampling_shader_composes() {
+        let mut shader_cache = ShaderCache::<(), ()>::new(
+            WgpuFeatures::empty(),
+            DownlevelFlags::empty(),
+            accept_shader_module,
+        );
+
+        let dependencies = [
+            Shader::from_wgsl(
+                include_str!("../../../assets/shaders/world/common_bindings.wgsl"),
+                "shaders/world/common_bindings.wgsl",
+            ),
+            Shader::from_wgsl(
+                include_str!("../../../assets/shaders/world/land/land_bindings.wgsl"),
+                "shaders/world/land/land_bindings.wgsl",
+            ),
+            Shader::from_wgsl(
+                include_str!("../../../assets/shaders/world/pixel_art_filters.wgsl"),
+                "shaders/world/pixel_art_filters.wgsl",
+            ),
+        ];
+        for dependency in &dependencies {
+            shader_cache
+                .composer
+                .add_composable_module(dependency.into())
+                .unwrap();
+        }
+
+        let sampling = Shader::from_wgsl(
+            include_str!("../../../assets/shaders/world/land/sampling.wgsl"),
+            "shaders/world/land/sampling.wgsl",
+        );
+        shader_cache
+            .composer
+            .make_naga_module((&sampling).into())
+            .unwrap();
+    }
 }

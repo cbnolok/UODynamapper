@@ -3,7 +3,7 @@
 //                  compile-time constants shared by all land shader modules.
 // ============================================================================
 
-#import "shaders/world/common_bindings.wgsl"::{SceneUniform, GlobalLightingUniforms, LandEffectsUniform, USE_VOLUMETRIC_NOISE}
+#import "shaders/world/common_bindings.wgsl"::{SceneUniform, GlobalLightingUniforms, LandEffectsUniform}
 
 // Virtual metadata record extracted from the tile_meta_atlas.
 struct TileUniform {
@@ -87,6 +87,10 @@ struct LandStaticLightUniform {
 @group(3) @binding(113) var ec_aux_atlas: texture_2d_array<f32>;
 // Per-tile aux lookup: Rgba32Uint texel = [secondary_layer|(rep_q8<<16), mask_layer, 0, 0].
 @group(3) @binding(114) var ec_aux_lookup: texture_2d<u32>;
+// Compact Classic art.mul land diamonds for flat wet terrain (layer 0 = absent).
+@group(3) @binding(115) var classic_land_art_atlas: texture_2d_array<f32>;
+// Rgba32Uint texel = [atlas layer, physical width, physical height, upscale factor].
+@group(3) @binding(116) var classic_land_art_lookup: texture_2d<u32>;
 
 // ============================================================================
 // Grid / chunk constants

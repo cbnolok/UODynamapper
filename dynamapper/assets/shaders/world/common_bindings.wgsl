@@ -2,8 +2,6 @@
 // common_bindings.wgsl — Shared uniform struct definitions across all shaders.
 // ============================================================================
 
-const USE_VOLUMETRIC_NOISE: u32 = 1u;
-
 // Global scene state: camera, light, zoom level.
 struct SceneUniform {
     camera_position: vec3<f32>,
@@ -67,7 +65,12 @@ struct GlobalLightingUniforms {
     _pad1_: f32,
     exposure: f32,
     ambient_strength: f32,
-    _pad2_: vec2<f32>,
+    // land_diffuse_strength mirrors LandLightingUniforms.diffuse_strength, plumbed into
+    // this shared struct so the art (flat-quad water) path can reproduce the terrain's
+    // flat ambient+diffuse response without binding the land-only uniform. Occupies the
+    // former _pad2_ vec2 slot (matched by offset to the Rust `_pad2_: Vec2`).
+    land_diffuse_strength: f32,
+    _pad2_: f32,
     grade_warm_color: vec4<f32>,
     grade_cool_color: vec4<f32>,
     grade_params: vec4<f32>,

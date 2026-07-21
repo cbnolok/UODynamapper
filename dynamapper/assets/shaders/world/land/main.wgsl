@@ -19,7 +19,7 @@
 
 // ---- Land shader modules (quoted asset-path imports for on-demand loading) ----
 #import "shaders/world/common_bindings.wgsl"::{
-  SceneUniform, LandEffectsUniform, GlobalLightingUniforms, USE_VOLUMETRIC_NOISE
+  SceneUniform, LandEffectsUniform, GlobalLightingUniforms
 }
 #import "shaders/world/land/land_bindings.wgsl"::{
   TileUniform, AtlasParams, LandLightingUniforms,
@@ -33,7 +33,7 @@
 #import "shaders/world/land/normals.wgsl"::{get_geometric_normal_local, get_bicubic_normal, get_bent_normal}
 #import "shaders/postprocess/color_grading.wgsl"::{grade_color_vibrant}
 #import "shaders/postprocess/global_lighting.wgsl"::{apply_global_lighting_rgb}
-#import "shaders/postprocess/grunge.wgsl"::{apply_texture_shadow_aware_land_grunge, visual_grunge_uv}
+#import "shaders/postprocess/grunge.wgsl"::{apply_texture_shadow_aware_land_grunge, apply_texture_visual_grunge, visual_grunge_uv}
 #import "shaders/postprocess/kr_color_wash.wgsl"::apply_kr_color_wash
 #import "shaders/postprocess/tonemapping.wgsl"::{tonemap_ec_kr_profile}
 #import "shaders/world/land/sampling.wgsl"::{
@@ -48,6 +48,8 @@
   apply_ec_aux_two_base_blend,
   read_aux_lookup_slot,
   sample_ec_ripple_normal,
+  classic_land_art_is_present,
+  sample_classic_land_art,
 }
 #import "shaders/world/land/shading.wgsl"::{
   shade_mode0_classic_vertex,
@@ -55,7 +57,7 @@
   shade_mode2_kr_fragment,
   apply_static_light_decals,
 }
-#import "shaders/world/effects/surface_effects.wgsl"::apply_water_animation
+#import "shaders/world/effects/surface_effects.wgsl"::{apply_water_animation, water_flat_wrapped_lambert}
 
 // ============================================================================
 // Vertex shader
@@ -67,6 +69,13 @@
 const TERRAIN_FLAG_REVIEWED_LIQUID: u32 = 0x4u;
 const EC_TERRAIN_TRANSITION_WIDTH: f32 = 0.82;
 const EC_TERRAIN_TRANSITION_BASE_WEIGHT: f32 = 0.35;
+
+fn land_cell_is_flat(world_tile: vec2<i32>, tile_height: f32) -> bool {
+  let epsilon = 0.0001;
+  return abs(atlas_read_height(world_tile.x + 1, world_tile.y) - tile_height) <= epsilon
+    && abs(atlas_read_height(world_tile.x, world_tile.y + 1) - tile_height) <= epsilon
+    && abs(atlas_read_height(world_tile.x + 1, world_tile.y + 1) - tile_height) <= epsilon;
+}
 
 fn apply_kr_liquid_material_response(color: vec3<f32>,
                                      base_albedo: vec3<f32>,
@@ -277,43 +286,6 @@ fn apply_kr_material_micro_contrast(
   let saturated = vec3<f32>(luma) + (color - vec3<f32>(luma)) * (1.0 + material_strength * material_mask * 0.06);
   let shaped = vec3<f32>(luma) + (saturated - vec3<f32>(luma)) * contrast;
   return max(shaped, vec3<f32>(0.0));
-}
-
-fn apply_kr_land_atmosphere_depth(
-  color: vec3<f32>,
-  world_pos: vec3<f32>,
-  camera_pos: vec3<f32>,
-  normal_world: vec3<f32>,
-  enable_fog: u32,
-  visual_profile: u32,
-) -> vec3<f32> {
-  if (enable_fog != 1u || visual_profile != 2u) {
-    return color;
-  }
-
-  let dist_density = clamp(global_light.fog_params.x, 0.0, 1.0);
-  let height_density = clamp(global_light.fog_params.y, 0.0, 1.0);
-  if (dist_density <= 0.0001 && height_density <= 0.0001) {
-    return color;
-  }
-
-  let dist_tiles = distance(world_pos.xz, camera_pos.xz);
-  let distance_term = smoothstep(96.0, 520.0, dist_tiles) * dist_density * 5.5;
-  let height_term = smoothstep(2.0, 14.0, max(world_pos.y, 0.0)) * height_density * 10.0;
-  let slope_term = clamp(1.0 - dot(normalize(normal_world), vec3<f32>(0.0, 1.0, 0.0)), 0.0, 1.0) * height_density * 3.0;
-
-  let fog_cap = clamp(global_light.fog_color.a, 0.0, 0.45);
-  let amount = clamp((distance_term + height_term + slope_term) * fog_cap * 0.38, 0.0, 0.14);
-  if (amount <= 0.0001) {
-    return color;
-  }
-
-  let night_blend = clamp(global_light.fog_night_color.a, 0.0, 1.0);
-  let fog_tint = mix(global_light.fog_color.rgb, global_light.fog_night_color.rgb, night_blend);
-  let atmosphere_tint = mix(global_light.atmosphere_tint, fog_tint, 0.25);
-  let luma = dot(color, vec3<f32>(0.2126, 0.7152, 0.0722));
-  let softened = mix(color, vec3<f32>(luma), amount * 0.22);
-  return max(mix(softened, atmosphere_tint, amount), vec3<f32>(0.0));
 }
 
 fn kr_height_contact_shadow(world_tile: vec2<i32>, center_height: f32, strength: f32) -> f32 {
@@ -530,14 +502,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   // ---- Zoom-based shader LOD: disable expensive features when zoomed out ----
   // zoom > 10 : disable blur + sharpening + bicubic normals (saves ~30 tex reads)
   // zoom > 20 : disable bent normals (saves ~4 tex reads)
-  // zoom > 30 : disable volumetric fog → flat fog (saves heavy FBM ALU)
   let zoom = scene.render_zoom;
   var normal_mode    = effects.normal_mode;
   var enable_bent    = land_light.enable_bent;
-  var enable_fog     = global_light.enable_fog;
   var enable_gloom   = global_light.enable_gloom;
   var enable_blur    = effects.enable_blur;
-  var use_volumetric_fog = USE_VOLUMETRIC_NOISE == 1u;
   var disable_sharpen = false;
 
   if (zoom > 10.0) {
@@ -548,10 +517,6 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   if (zoom > 20.0) {
     enable_bent = 0u;       // skip bent normals (4 extra height reads)
   }
-  if (zoom > 30.0) {
-    use_volumetric_fog = false; // skip domain-warped FBM fog when zoomed far out
-  }
-
   // Water animation: disable at high zoom where individual tiles are sub-pixel.
   var enable_water = effects.enable_water_animation;
   if (zoom > 10.0) {
@@ -576,6 +541,10 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   var uv_in_tile = vec2<f32>(fract(in.world_position.x), fract(in.world_position.z));
   let world_tile = vec2<i32>(i32(floor(in.world_position.x)), i32(floor(in.world_position.z)));
   let tile = atlas_read_meta(world_tile.x, world_tile.y);
+  let use_classic_flat_wet_land_art = tile.texture_size == 4u
+    && tile.is_wet == 1u
+    && classic_land_art_is_present(tile.texture_payload)
+    && land_cell_is_flat(world_tile, tile.tile_height);
 
   // ---- Animated water ----
   // Apply sin/cos UV distortion to tiles with the IsWet tiledata flag.
@@ -671,6 +640,16 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     }
   }
 
+  // The normal Classic terrain path samples square texmaps.mul textures. On a
+  // flat wet cell, sample the corresponding art.mul land diamond instead so
+  // shoreline statics and the terrain underneath share their authored source
+  // albedo. This override intentionally happens after terrain blur/sharpening:
+  // static art is not filtered by those controls, and preserving the exact art
+  // pixels is what removes the material seam. Sloped wet cells retain texmaps.
+  if (use_classic_flat_wet_land_art) {
+    base_albedo = sample_classic_land_art(uv_in_tile, tile.texture_payload);
+  }
+
   // ---- Two-base + alpha-mask authored blend (ec_tex_aux, Phase 10D) ----
   // Only active for EC tiles that have a secondary-base slot authored in ec_tex_aux.
   // Falls through unchanged for all other tiles (single-base path preserved).
@@ -746,7 +725,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let raw_ndotl = max(dot(normalize(Nw), normalize(L)), 0.0);
     let slope_shadow = clamp(1.0 - dot(normalize(Nw), vec3<f32>(0.0, 1.0, 0.0)), 0.0, 1.0);
     let grunge_shadow = clamp((1.0 - raw_ndotl) * 0.82 + slope_shadow * 0.28, 0.0, 1.0);
-    if (visual_profile == 2u && effects.enable_kr_transition_grime == 1u) {
+    if (visual_profile == 2u && effects.enable_kr_transition_grime == 1u && !use_classic_flat_wet_land_art) {
       base_albedo = apply_kr_transition_grime(
         base_albedo,
         tile,
@@ -757,14 +736,27 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
       );
     }
     let visual_grunge = textureSample(visual_grunge_texture, tex_small_sampler, visual_grunge_uv(in.world_position.xz, visual_profile)).rgb;
-    base_albedo = apply_texture_shadow_aware_land_grunge(
-      base_albedo,
-      in.world_position.xz,
-      effects.grunge_strength,
-      visual_profile,
-      grunge_shadow,
-      visual_grunge,
-    );
+    if (use_classic_flat_wet_land_art) {
+      // Flat CC terrain water and flat CC art water are one material with two
+      // geometry owners. Do not inject terrain-normal shadow deposits on only
+      // one side of their boundary.
+      base_albedo = apply_texture_visual_grunge(
+        base_albedo,
+        in.world_position.xz,
+        effects.grunge_strength,
+        visual_profile,
+        visual_grunge,
+      );
+    } else {
+      base_albedo = apply_texture_shadow_aware_land_grunge(
+        base_albedo,
+        in.world_position.xz,
+        effects.grunge_strength,
+        visual_profile,
+        grunge_shadow,
+        visual_grunge,
+      );
+    }
   }
   if (visual_profile == 2u) {
     base_albedo = apply_kr_material_micro_contrast(
@@ -778,8 +770,23 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   // ---- Shade ----
   var hdr_rgb = vec3<f32>(0.0);
   var kr_color_wash_shadow = 0.0;
-  if (shading_mode == 0u) {
-    hdr_rgb = shade_mode0_classic_vertex(base_albedo, in.uv_b.x, ambient_strength, diffuse_strength);
+  if (use_classic_flat_wet_land_art) {
+    // The adjoining authored flat-water statics use this same level-liquid
+    // response in every visual profile. KR/Enhanced styling is added later by
+    // the shared grunge, wash, global-light, grading, tonemap, and fullscreen fog
+    // stages; terrain relief and seabed normals must not shade the water plane.
+    let flat_water_lambert = water_flat_wrapped_lambert(scene.light_direction);
+    hdr_rgb = shade_mode0_classic_vertex(base_albedo, flat_water_lambert, ambient_strength, diffuse_strength);
+  } else if (shading_mode == 0u) {
+    // Wet ownership is per cell, while the terrain grid vertices are shared. Resolve the
+    // level-water Lambert from the owning fragment tile so it exactly matches canonical
+    // water-fill statics without interpolating wet/dry lighting across the cell diagonal.
+    let classic_lambert = select(
+      in.uv_b.x,
+      water_flat_wrapped_lambert(scene.light_direction),
+      tile.is_wet == 1u || reviewed_liquid,
+    );
+    hdr_rgb = shade_mode0_classic_vertex(base_albedo, classic_lambert, ambient_strength, diffuse_strength);
   } else if (shading_mode == 1u) {
     hdr_rgb = shade_mode1_enhanced_fragment(
       base_albedo, in.world_position.xyz, Nw, V, L,
@@ -820,7 +827,14 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
       enable_water,
     );
   }
-  hdr_rgb = apply_static_light_decals(hdr_rgb, base_albedo, in.world_position.xyz);
+
+  // Classic's accepted output retains its existing light decals. In the
+  // Enhanced/KR flat-water material, the adjoining authored water quads have
+  // no equivalent land-light buffer, so applying decals only to terrain would
+  // recreate the bright bands and color step at their boundary.
+  if (!use_classic_flat_wet_land_art || shading_mode == 0u) {
+    hdr_rgb = apply_static_light_decals(hdr_rgb, base_albedo, in.world_position.xyz);
+  }
   hdr_rgb = apply_kr_color_wash(
     hdr_rgb,
     in.world_position.xz,
@@ -833,14 +847,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   );
 
   hdr_rgb = apply_global_lighting_rgb(hdr_rgb, scene.global_lighting);
-  hdr_rgb = apply_kr_land_atmosphere_depth(
-    hdr_rgb,
-    in.world_position.xyz,
-    scene.camera_position,
-    Nw,
-    enable_fog,
-    visual_profile,
-  );
+  // Fog is applied once to the fully composed frame by effects/fog_pass.wgsl.
 
   // ============================================================================
   // Grading (vibrant, neutral contrast) + Tonemap (Reinhard + exposure)

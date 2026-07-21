@@ -1677,8 +1677,14 @@ fn update_art_material_uniforms(
     mat.extension.scene_uniform.global_lighting = global_lighting;
     mat.extension.scene_uniform.render_zoom = render_zoom;
     mat.extension.scene_uniform.camera_position = camera_pos;
+    mat.extension.scene_uniform.light_direction =
+        crate::core::constants::BAKED_GLOBAL_LIGHT.normalize();
     mat.extension.effects_uniform = uniform_state.effects;
     mat.extension.global_lighting_uniform = uniform_state.lighting;
+    // Flat-quad CC water shades itself with a flat ambient+diffuse response (see art
+    // main.wgsl); surface the land diffuse strength through the shared uniform's spare
+    // `_pad2_.x` slot (WGSL: land_diffuse_strength) so it matches the terrain water.
+    mat.extension.global_lighting_uniform._pad2_.x = uniform_state.land_lighting.diffuse_strength;
 }
 
 fn update_art_material_uniforms_ground(
@@ -1691,8 +1697,12 @@ fn update_art_material_uniforms_ground(
     mat.extension.scene_uniform.global_lighting = global_lighting;
     mat.extension.scene_uniform.render_zoom = render_zoom;
     mat.extension.scene_uniform.camera_position = camera_pos;
+    mat.extension.scene_uniform.light_direction =
+        crate::core::constants::BAKED_GLOBAL_LIGHT.normalize();
     mat.extension.effects_uniform = uniform_state.effects;
     mat.extension.global_lighting_uniform = uniform_state.lighting;
+    // See update_art_material_uniforms: keep the flat-quad water diffuse in sync.
+    mat.extension.global_lighting_uniform._pad2_.x = uniform_state.land_lighting.diffuse_strength;
 }
 
 #[cfg(test)]

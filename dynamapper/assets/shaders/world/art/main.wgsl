@@ -3,7 +3,7 @@
     view_transformations,
     mesh_view_bindings::globals,
 }
-#import "shaders/world/effects/surface_effects.wgsl"::apply_water_animation
+#import "shaders/world/effects/surface_effects.wgsl"::{apply_water_animation, water_flat_wrapped_lambert}
 #import "shaders/postprocess/color_grading.wgsl"::{grade_color_vibrant}
 #import "shaders/postprocess/global_lighting.wgsl"::{apply_global_lighting_rgb}
 #import "shaders/postprocess/grunge.wgsl"::{apply_texture_visual_grunge, visual_grunge_uv}
@@ -22,7 +22,7 @@
     STATIC_DEPTH_TIE_BREAK_FRAG_EPSILON
 }
 #import "shaders/world/art/hue.wgsl"::apply_static_hue
-#import "shaders/world/art/shading.wgsl"::{apply_art_surface_shading, apply_art_atmosphere_depth}
+#import "shaders/world/art/shading.wgsl"::apply_art_surface_shading
 
 struct ArtVertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -240,19 +240,15 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
     // tile in the ground plane: a single constant cannot track the terrain's per-fragment depth
     // gradient across the tile (the terrain's depth varies by ~2 world-units of x+z over one
     // cell, ~5.8e-4 in NDC, vs. the Background class' 0.001 world-Y logical offset, ~3e-7 NDC —
-    // a ~2000x mismatch). So the terrain wins the depth test over a moving diagonal band of the
-    // tile: the sawtooth boundary and the intermittent "brown terrain bleeding through the
-    // water on specific frames" (the band sweeps as the camera follows the player). It is a
-    // depth-sort artifact, not a UV/alpha hole — matching the prior finding that the water UV
-    // animation never opens a transparent hole.
+    // a ~2000x mismatch). A flat world-space surface therefore needs its own rasterized geometric
+    // depth instead of an upright sprite's synthetic constant priority depth. The quad geometry
+    // is already placed STATIC_ART_Y_BIAS (world-Y) above the terrain, so the two parallel planes
+    // retain a small uniform separation without a depth-gradient mismatch. This also remains
+    // valid for a future perspective camera, unlike ClassicUO's per-sprite synthetic depth.
     //
-    // Fix: for flat quads write the quad's own rasterized per-fragment depth (in.position.z)
-    // instead of the constant. The quad geometry is already placed STATIC_ART_Y_BIAS (world-Y)
-    // above the terrain, so — the two being parallel planes — its depth beats the terrain by a
-    // small, UNIFORM margin at every fragment (~1.7e-6 NDC ≈ tens of float-depth ULP), with no
-    // gradient mismatch, removing both artifacts. The margin is independent of zoom because the
-    // orthographic near/far planes are fixed (see camera.rs). Only reached in the opaque/
-    // transparent passes (the shadow pass returns above); billboards are unaffected.
+    // This policy prevents coplanar/intersection artifacts without changing authored alpha or
+    // color coverage. Only reached in the opaque/transparent passes; billboards and the shadow
+    // pass are unaffected.
     if (inst.flat_quad != 0u) {
         out.depth = in.position.z;
     }
@@ -295,7 +291,19 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
     // likewise bypasses this shading for its water material (ground.wgsl `if (!use_ec_water_material)`).
     // Non-water flat statics and all billboards are unaffected.
     let is_cc_flat_water = inst.flat_quad != 0u && in.is_wet == 1u;
-    if (!is_cc_flat_water) {
+    if (is_cc_flat_water) {
+        // Flat CC water is a level liquid surface that must read as the SAME even tone as
+        // the terrain water it seams with (the terrain water shows through this quad's
+        // transparent diamond corners, so any brightness mismatch appears as dark ticks
+        // along the shoreline). Reproduce the terrain water's Classic response exactly:
+        // albedo * (ambient + diffuse * wrapped_lambert), using the identical shared
+        // wrapped-Lambert term and the same ambient / diffuse (diffuse arrives via the
+        // shared uniform's land_diffuse_strength slot — see art_bindings / statics_draw).
+        // No rim/spec/fill: a flat surface has no meaningful view/normal variation.
+        let flat_water_lam = water_flat_wrapped_lambert(scene.light_direction);
+        let flat_water_energy = global_light.ambient_strength + global_light.land_diffuse_strength * flat_water_lam;
+        shaded = vec4<f32>(shaded.rgb * flat_water_energy, shaded.a);
+    } else {
         shaded = vec4<f32>(apply_art_surface_shading(
             shaded.rgb,
             uv_in_tile_for_shading,
@@ -320,18 +328,24 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
         let visual_grunge = textureSample(visual_grunge_texture, art_atlas_sampler, visual_grunge_uv(in.world_pos.xz, effects.post_process_profile)).rgb;
         shaded = vec4<f32>(apply_texture_visual_grunge(shaded.rgb, in.world_pos.xz, effects.grunge_strength, effects.post_process_profile, visual_grunge), shaded.a);
     }
-    let color_wash_shadow = clamp(
+
+    let object_color_wash_shadow = clamp(
         smoothstep(0.42, 1.0, uv_in_tile_for_shading.y) * 0.40
         + select(0.0, 0.14, in.depth_class == DEPTH_CLASS_FOLIAGE)
         + select(0.0, 0.10, in.depth_class == DEPTH_CLASS_ROOF),
         0.0,
         1.0,
     );
+    // A flat liquid has no per-sprite vertical shadow gradient or local-light
+    // ownership. Feeding either into the KR wash paints the authored diamond
+    // outline into the water and diverges from the terrain-owned surface.
+    let color_wash_shadow = select(object_color_wash_shadow, 0.0, is_cc_flat_water);
+    let color_wash_local_light = select(inst.local_light_rgba.a, 0.0, is_cc_flat_water);
     shaded = vec4<f32>(apply_kr_color_wash(
         shaded.rgb,
         in.world_pos.xz,
         color_wash_shadow,
-        inst.local_light_rgba.a,
+        color_wash_local_light,
         effects.enable_kr_color_wash,
         effects.kr_color_wash_strength,
         effects.kr_color_wash_scale,
@@ -339,18 +353,7 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
     ), shaded.a);
 
     shaded = vec4<f32>(apply_global_lighting_rgb(shaded.rgb, scene.global_lighting), shaded.a);
-    shaded = vec4<f32>(apply_art_atmosphere_depth(
-        shaded.rgb,
-        shaded.a,
-        in.world_pos,
-        scene.camera_position,
-        global_light.atmosphere_tint,
-        global_light.fog_color,
-        global_light.fog_night_color,
-        global_light.fog_params,
-        global_light.enable_fog,
-        effects.post_process_profile,
-    ), shaded.a);
+    // Fog is applied once to the fully composed frame by effects/fog_pass.wgsl.
 
     var final_rgb = shaded.rgb;
     if (global_light.enable_grading == 1u) {

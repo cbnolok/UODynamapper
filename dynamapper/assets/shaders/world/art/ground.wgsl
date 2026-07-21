@@ -21,7 +21,7 @@
     GROUND_FLAG_EC_WATER_MATERIAL
 }
 #import "shaders/world/art/hue.wgsl"::apply_static_hue
-#import "shaders/world/art/shading.wgsl"::{apply_art_surface_shading, apply_art_atmosphere_depth}
+#import "shaders/world/art/shading.wgsl"::apply_art_surface_shading
 
 struct GroundVertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -275,18 +275,7 @@ fn fragment(in: GroundVertexOutput) -> GroundFragmentOutput {
     ), shaded.a);
 
     shaded = vec4<f32>(apply_global_lighting_rgb(shaded.rgb, scene.global_lighting), shaded.a);
-    shaded = vec4<f32>(apply_art_atmosphere_depth(
-        shaded.rgb,
-        shaded.a,
-        in.world_pos,
-        scene.camera_position,
-        global_light.atmosphere_tint,
-        global_light.fog_color,
-        global_light.fog_night_color,
-        global_light.fog_params,
-        global_light.enable_fog,
-        effects.post_process_profile,
-    ), shaded.a);
+    // Fog is applied once to the fully composed frame by effects/fog_pass.wgsl.
 
     var final_rgb = shaded.rgb;
     if (global_light.enable_grading == 1u) {

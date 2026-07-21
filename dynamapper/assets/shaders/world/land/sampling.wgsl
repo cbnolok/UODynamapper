@@ -29,7 +29,7 @@
 
 
 #import "shaders/world/common_bindings.wgsl"::{LandEffectsUniform}
-#import "shaders/world/land/land_bindings.wgsl"::{TileUniform, tex_small, tex_big, land_page_atlas, land_page_lookup, tex_small_sampler, effects, ec_aux_atlas, ec_aux_lookup}
+#import "shaders/world/land/land_bindings.wgsl"::{TileUniform, tex_small, tex_big, land_page_atlas, land_page_lookup, tex_small_sampler, effects, ec_aux_atlas, ec_aux_lookup, classic_land_art_atlas, classic_land_art_lookup}
 #import "shaders/world/pixel_art_filters.wgsl"::pixel_art_uv_iq
 
 // Width in pixels of one Classic Client isometric tile — the world-unit
@@ -334,6 +334,57 @@ fn ec_liquid_perturbed_base_uv(world_xz: vec2<f32>, base_uv: vec2<f32>, tile: Ti
 // ============================================================================
 // Basic albedo sampling
 // ============================================================================
+
+struct ClassicLandArtSlot {
+  layer: u32,
+  extent: vec2<u32>,
+};
+
+fn read_classic_land_art_slot(tile_payload: u32) -> ClassicLandArtSlot {
+  let lookup_dims = textureDimensions(classic_land_art_lookup);
+  let lookup_uv = vec2<i32>(
+    i32(tile_payload % lookup_dims.x),
+    i32(tile_payload / lookup_dims.x),
+  );
+  let slot = textureLoad(classic_land_art_lookup, lookup_uv, 0);
+  return ClassicLandArtSlot(slot.x, vec2<u32>(slot.y, slot.z));
+}
+
+fn classic_land_art_is_present(tile_payload: u32) -> bool {
+  return read_classic_land_art_slot(tile_payload).layer != 0u;
+}
+
+// Classic land art stores an isometric diamond in a square bitmap, while the
+// terrain mesh is an axis-aligned XZ cell. Inverse of the flat static quad's
+// geometry (world_x = art_u + art_v - 0.5, world_z = art_v - art_u + 0.5).
+fn classic_flat_art_uv_from_world_cell_uv(world_cell_uv: vec2<f32>) -> vec2<f32> {
+  return vec2<f32>(
+    0.5 + 0.5 * (world_cell_uv.x - world_cell_uv.y),
+    0.5 * (world_cell_uv.x + world_cell_uv.y),
+  );
+}
+
+fn sample_classic_land_art(world_cell_uv: vec2<f32>, tile_payload: u32) -> vec3<f32> {
+  let slot = read_classic_land_art_slot(tile_payload);
+  let tile_dims = max(vec2<f32>(slot.extent), vec2<f32>(1.0));
+  let atlas_dims = vec2<f32>(textureDimensions(classic_land_art_atlas).xy);
+  let art_uv = classic_flat_art_uv_from_world_cell_uv(world_cell_uv);
+  let layer = i32(slot.layer);
+
+  if (effects.enable_linear_filtering == 1u) {
+    let seam_uv = pixel_art_uv_iq(art_uv, tile_dims);
+    let local_px = clamp(seam_uv * tile_dims, vec2<f32>(0.5), tile_dims - vec2<f32>(0.5));
+    let atlas_uv = local_px / atlas_dims;
+    return textureSample(classic_land_art_atlas, tex_small_sampler, atlas_uv, layer).rgb;
+  }
+
+  let local_iuv = clamp(
+    vec2<i32>(art_uv * tile_dims),
+    vec2<i32>(0),
+    vec2<i32>(slot.extent) - vec2<i32>(1),
+  );
+  return textureLoad(classic_land_art_atlas, local_iuv, layer, 0).rgb;
+}
 
 // Single-tap albedo: linear (textureSample) or nearest (textureLoad).
 // For CC/array tiles, uv is the [0,1) coordinate within the tile.

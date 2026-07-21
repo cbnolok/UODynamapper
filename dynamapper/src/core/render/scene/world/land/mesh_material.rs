@@ -80,6 +80,15 @@ pub struct LandMaterialExtension {
     /// Indexed by the tile's `texture_payload` (land tile id).
     #[texture(114, sample_type = "u_int", visibility(fragment))]
     pub ec_aux_lookup: Handle<Image>,
+
+    /// Compact Classic `art.mul` land diamonds used only by flat wet terrain.
+    #[texture(115, dimension = "2d_array", visibility(fragment))]
+    pub classic_land_art_atlas: Handle<Image>,
+
+    /// Maps a Classic land graphic id to `[layer, width, height, upscale]` in
+    /// `classic_land_art_atlas`; layer 0 means absent.
+    #[texture(116, sample_type = "u_int", visibility(fragment))]
+    pub classic_land_art_lookup: Handle<Image>,
 }
 
 impl MaterialExtension for LandMaterialExtension {
