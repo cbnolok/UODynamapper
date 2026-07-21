@@ -9,7 +9,10 @@
 use super::super::scene::world::land::mesh_material::*;
 use crate::core::controls::input_actions::ActionToggleShaderSettings;
 use crate::{
-    configs::shader_presets::{build_save_presets, save_shader_settings, UniformState},
+    configs::shader_presets::{
+        build_save_presets, reset_mode_to_factory, save_shader_settings,
+        FactoryShaderPresets, UniformState,
+    },
     core::render::{dialogs, scene::camera::UiCameraResource},
     impl_tracked_plugin,
     prelude::*,
@@ -149,7 +152,8 @@ pub fn land_ui_system(
     mut egui_contexts: EguiContexts,
     egui_ui_camera: Res<UiCameraResource>,
     mut u: ResMut<UniformState>,
-    shader_presets: Res<LandShaderModePresets>,
+    mut shader_presets: ResMut<LandShaderModePresets>,
+    factory_shader_presets: Res<FactoryShaderPresets>,
     settings: ResMut<Settings>,
     mut ui_state: ResMut<LandShaderUiState>,
     mut was_open: Local<bool>,
@@ -333,6 +337,14 @@ pub fn land_ui_system(
                     apply_render_preset(&mut u, preset, mode, profile, period);
                 }
             });
+
+            if ui.button("Reset Current Mode to Factory Defaults").clicked() {
+                let mode = u.effects.shading_mode.min(2);
+                let period = ShaderPresetPeriod::from_active_key(&u.active_preset);
+                reset_mode_to_factory(&mut shader_presets, &factory_shader_presets.0, mode);
+                let preset = preset_for_style(&shader_presets, mode, period);
+                apply_render_preset(&mut u, preset, mode, mode, period);
+            }
 
             // Undo button: restore the last saved values.
             ui.horizontal(|ui| {

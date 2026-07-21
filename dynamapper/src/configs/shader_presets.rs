@@ -39,6 +39,13 @@ pub struct UniformSnapshot {
     pub global_lighting: f32,
 }
 
+/// Immutable factory presets loaded from `assets/defaults/shader_presets.toml`.
+///
+/// The effective `LandShaderModePresets` resource may contain bundled or cached user
+/// overrides, so the UI needs this separate resource for a real factory reset.
+#[derive(Resource)]
+pub struct FactoryShaderPresets(pub LandShaderModePresets);
+
 impl UniformState {
     /// Take a snapshot of the current live values.
     pub fn snapshot(&self) -> UniformSnapshot {
@@ -71,17 +78,22 @@ impl_tracked_plugin!(ShaderPresetsPlugin);
 impl Plugin for ShaderPresetsPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
-        app.insert_resource(load_from_file())
+        let factory_presets = load_factory_presets();
+        let effective_presets = load_effective_presets(&factory_presets);
+
+        app.insert_resource(effective_presets)
+            .insert_resource(FactoryShaderPresets(factory_presets))
             .add_systems(Startup, setup_uniform_state);
     }
 }
 
 pub fn load_from_file() -> LandShaderModePresets {
-    if let Some(saved) = load_shader_settings() {
-        return saved;
-    }
+    let factory_presets = load_factory_presets();
+    load_effective_presets(&factory_presets)
+}
 
-    load_factory_presets()
+fn load_effective_presets(factory_presets: &LandShaderModePresets) -> LandShaderModePresets {
+    load_shader_settings().unwrap_or_else(|| clone_presets(factory_presets))
 }
 
 fn load_factory_presets() -> LandShaderModePresets {
@@ -222,29 +234,46 @@ fn get_preset_slot<'a>(
     }
 }
 
+/// Replace every time-of-day slot for one render mode with its immutable factory values.
+/// The active preset key is intentionally preserved by the caller.
+pub fn reset_mode_to_factory(
+    presets: &mut LandShaderModePresets,
+    factory_presets: &LandShaderModePresets,
+    mode: u32,
+) {
+    let (target, factory) = match mode {
+        0 => (&mut presets.classic, &factory_presets.classic),
+        1 => (&mut presets.enhanced, &factory_presets.enhanced),
+        _ => (&mut presets.kr, &factory_presets.kr),
+    };
+    *target = clone_mode(factory);
+}
+
 /// Clone a `LandShaderModePresets` (field-by-field since the inner Copy types make this easy).
 fn clone_presets(p: &LandShaderModePresets) -> LandShaderModePresets {
-    fn clone_mode(m: &LandRenderStylePresetsPerMode) -> LandRenderStylePresetsPerMode {
-        LandRenderStylePresetsPerMode {
-            morning: clone_slot(&m.morning),
-            afternoon: clone_slot(&m.afternoon),
-            night: clone_slot(&m.night),
-            cave: clone_slot(&m.cave),
-        }
-    }
-    fn clone_slot(s: &LandMaterialUniformsPresets) -> LandMaterialUniformsPresets {
-        LandMaterialUniformsPresets {
-            global_lighting: s.global_lighting,
-            effects: s.effects,
-            lighting: s.lighting,
-            land_lighting: s.land_lighting,
-        }
-    }
     LandShaderModePresets {
         classic: clone_mode(&p.classic),
         enhanced: clone_mode(&p.enhanced),
         kr: clone_mode(&p.kr),
         default_preset: p.default_preset.clone(),
+    }
+}
+
+fn clone_mode(m: &LandRenderStylePresetsPerMode) -> LandRenderStylePresetsPerMode {
+    LandRenderStylePresetsPerMode {
+        morning: clone_slot(&m.morning),
+        afternoon: clone_slot(&m.afternoon),
+        night: clone_slot(&m.night),
+        cave: clone_slot(&m.cave),
+    }
+}
+
+fn clone_slot(s: &LandMaterialUniformsPresets) -> LandMaterialUniformsPresets {
+    LandMaterialUniformsPresets {
+        global_lighting: s.global_lighting,
+        effects: s.effects,
+        lighting: s.lighting,
+        land_lighting: s.land_lighting,
     }
 }
 
@@ -348,5 +377,22 @@ mod tests {
         assert_eq!(saved.kr.afternoon.global_lighting, 3.1);
         assert_eq!(saved.kr.afternoon.lighting.exposure, 1.1);
         assert_eq!(saved.default_preset, "classic.morning");
+    }
+
+    #[test]
+    fn resetting_mode_restores_all_factory_periods_without_touching_other_modes() {
+        let factory = presets();
+        let mut effective = presets();
+        effective.classic.morning.global_lighting = 9.0;
+        effective.classic.cave.lighting.exposure = 8.0;
+        effective.enhanced.afternoon.global_lighting = 7.0;
+        effective.default_preset = "classic.cave".to_string();
+
+        reset_mode_to_factory(&mut effective, &factory, 0);
+
+        assert_eq!(effective.classic.morning.global_lighting, 1.0);
+        assert_eq!(effective.classic.cave.lighting.exposure, 1.3);
+        assert_eq!(effective.enhanced.afternoon.global_lighting, 7.0);
+        assert_eq!(effective.default_preset, "classic.cave");
     }
 }
