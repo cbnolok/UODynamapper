@@ -10,8 +10,8 @@ use super::super::scene::world::land::mesh_material::*;
 use crate::core::controls::input_actions::ActionToggleShaderSettings;
 use crate::{
     configs::shader_presets::{
-        build_save_presets, reset_mode_to_factory, save_shader_settings,
-        FactoryShaderPresets, UniformState,
+        build_save_presets, reset_preset_to_factory, save_shader_settings,
+        store_active_preset, FactoryShaderPresets, UniformState,
     },
     core::render::{dialogs, scene::camera::UiCameraResource},
     impl_tracked_plugin,
@@ -138,6 +138,18 @@ fn apply_render_preset(
     u.dirty = true;
 }
 
+fn store_active_and_apply_render_preset(
+    u: &mut UniformState,
+    presets: &mut LandShaderModePresets,
+    mode: u32,
+    profile: u32,
+    period: ShaderPresetPeriod,
+) {
+    store_active_preset(presets, u);
+    let preset = preset_for_style(presets, mode, period);
+    apply_render_preset(u, preset, mode, profile, period);
+}
+
 /// Default screen position of the detached "Advanced Raw Shader Knobs" window.
 /// Placed to the right of the main Land Shader Controls window (whose default
 /// pos is `[16, 80]`) so the long list of low-level sliders opens as a side
@@ -200,8 +212,13 @@ pub fn land_ui_system(
                     for (label, mode, profile) in RENDER_STYLE_PRESETS {
                         if ui.selectable_label(cur_mode == mode, label).clicked() {
                             let period = ShaderPresetPeriod::from_active_key(&u.active_preset);
-                            let preset = preset_for_style(&shader_presets, mode, period);
-                            apply_render_preset(&mut u, preset, mode, profile, period);
+                            store_active_and_apply_render_preset(
+                                &mut u,
+                                &mut shader_presets,
+                                mode,
+                                profile,
+                                period,
+                            );
                             changed = true;
                         }
                     }
@@ -318,30 +335,55 @@ pub fn land_ui_system(
 
                 if ui.button("Morning").clicked() {
                     let period = ShaderPresetPeriod::Morning;
-                    let preset = preset_for_style(&shader_presets, mode, period);
-                    apply_render_preset(&mut u, preset, mode, profile, period);
+                    store_active_and_apply_render_preset(
+                        &mut u,
+                        &mut shader_presets,
+                        mode,
+                        profile,
+                        period,
+                    );
                 }
                 if ui.button("Afternoon").clicked() {
                     let period = ShaderPresetPeriod::Afternoon;
-                    let preset = preset_for_style(&shader_presets, mode, period);
-                    apply_render_preset(&mut u, preset, mode, profile, period);
+                    store_active_and_apply_render_preset(
+                        &mut u,
+                        &mut shader_presets,
+                        mode,
+                        profile,
+                        period,
+                    );
                 }
                 if ui.button("Night").clicked() {
                     let period = ShaderPresetPeriod::Night;
-                    let preset = preset_for_style(&shader_presets, mode, period);
-                    apply_render_preset(&mut u, preset, mode, profile, period);
+                    store_active_and_apply_render_preset(
+                        &mut u,
+                        &mut shader_presets,
+                        mode,
+                        profile,
+                        period,
+                    );
                 }
                 if ui.button("Cave").clicked() {
                     let period = ShaderPresetPeriod::Cave;
-                    let preset = preset_for_style(&shader_presets, mode, period);
-                    apply_render_preset(&mut u, preset, mode, profile, period);
+                    store_active_and_apply_render_preset(
+                        &mut u,
+                        &mut shader_presets,
+                        mode,
+                        profile,
+                        period,
+                    );
                 }
             });
 
-            if ui.button("Reset Current Mode to Factory Defaults").clicked() {
+            if ui.button("Reset Current Preset to Factory Defaults").clicked() {
                 let mode = u.effects.shading_mode.min(2);
                 let period = ShaderPresetPeriod::from_active_key(&u.active_preset);
-                reset_mode_to_factory(&mut shader_presets, &factory_shader_presets.0, mode);
+                let key = period.key(mode);
+                reset_preset_to_factory(
+                    &mut shader_presets,
+                    &factory_shader_presets.0,
+                    &key,
+                );
                 let preset = preset_for_style(&shader_presets, mode, period);
                 apply_render_preset(&mut u, preset, mode, mode, period);
             }
@@ -1042,6 +1084,24 @@ mod tests {
         }
     }
 
+    fn preset(global_lighting: f32) -> LandMaterialUniformsPresets {
+        LandMaterialUniformsPresets {
+            global_lighting,
+            effects: LandEffectsUniform::default(),
+            lighting: GlobalLightingUniforms::default(),
+            land_lighting: LandLightingUniforms::default(),
+        }
+    }
+
+    fn mode(base: f32) -> LandRenderStylePresetsPerMode {
+        LandRenderStylePresetsPerMode {
+            morning: preset(base),
+            afternoon: preset(base + 1.0),
+            night: preset(base + 2.0),
+            cave: preset(base + 3.0),
+        }
+    }
+
     #[test]
     fn basic_composite_controls_roundtrip_their_slider_values() {
         let mut u = uniform_state();
@@ -1103,5 +1163,29 @@ mod tests {
         assert_eq!(period, ShaderPresetPeriod::Cave);
         assert_eq!(period.key(0), "classic.cave");
         assert_eq!(period.key(1), "enhanced.cave");
+    }
+
+    #[test]
+    fn changing_presets_captures_live_values_before_loading_the_target() {
+        let mut u = uniform_state();
+        let mut presets = LandShaderModePresets {
+            classic: mode(1.0),
+            enhanced: mode(5.0),
+            kr: mode(9.0),
+            default_preset: "classic.morning".to_string(),
+        };
+        u.global_lighting = 0.42;
+
+        store_active_and_apply_render_preset(
+            &mut u,
+            &mut presets,
+            1,
+            1,
+            ShaderPresetPeriod::Afternoon,
+        );
+
+        assert_eq!(presets.classic.morning.global_lighting, 0.42);
+        assert_eq!(u.active_preset, "enhanced.afternoon");
+        assert_eq!(u.global_lighting, 6.0);
     }
 }

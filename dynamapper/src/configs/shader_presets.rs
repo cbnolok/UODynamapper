@@ -173,17 +173,23 @@ pub fn build_save_presets(u: &UniformState, base: &LandShaderModePresets) -> Lan
     // Start with a clone of the base (either user-saved or factory defaults).
     // We only overwrite the active preset's slot so other modes are preserved.
     let mut out = clone_presets(base);
+    store_active_preset(&mut out, u);
+    out
+}
 
-    // Write the live values into the active slot.
-    if let Some(slot) = get_preset_slot_mut(&mut out, &u.active_preset) {
+/// Capture the live shader values in their active mode × time-of-day slot.
+///
+/// The UI calls this before changing presets so edits are not discarded when the
+/// next slot is applied. Disk persistence remains tied to closing the shader panel.
+pub fn store_active_preset(presets: &mut LandShaderModePresets, u: &UniformState) {
+    if let Some(slot) = get_preset_slot_mut(presets, &u.active_preset) {
         slot.effects = u.effects;
         slot.lighting = u.lighting;
         slot.land_lighting = u.land_lighting;
         slot.global_lighting = u.global_lighting;
     }
 
-    out.default_preset = u.active_preset.clone();
-    out
+    presets.default_preset = u.active_preset.clone();
 }
 
 /// Get a mutable reference to a particular mode×time slot by key.
@@ -234,19 +240,20 @@ fn get_preset_slot<'a>(
     }
 }
 
-/// Replace every time-of-day slot for one render mode with its immutable factory values.
-/// The active preset key is intentionally preserved by the caller.
-pub fn reset_mode_to_factory(
+/// Replace one mode × time-of-day slot with its immutable factory values.
+pub fn reset_preset_to_factory(
     presets: &mut LandShaderModePresets,
     factory_presets: &LandShaderModePresets,
-    mode: u32,
-) {
-    let (target, factory) = match mode {
-        0 => (&mut presets.classic, &factory_presets.classic),
-        1 => (&mut presets.enhanced, &factory_presets.enhanced),
-        _ => (&mut presets.kr, &factory_presets.kr),
+    key: &str,
+) -> bool {
+    let Some(factory_slot) = get_preset_slot(factory_presets, key) else {
+        return false;
     };
-    *target = clone_mode(factory);
+    let Some(target_slot) = get_preset_slot_mut(presets, key) else {
+        return false;
+    };
+    *target_slot = clone_slot(factory_slot);
+    true
 }
 
 /// Clone a `LandShaderModePresets` (field-by-field since the inner Copy types make this easy).
@@ -380,7 +387,24 @@ mod tests {
     }
 
     #[test]
-    fn resetting_mode_restores_all_factory_periods_without_touching_other_modes() {
+    fn storing_active_preset_updates_only_its_combination() {
+        let mut effective = presets();
+        let mut state = uniform_state_from_presets(&effective);
+        state.active_preset = "classic.cave".to_string();
+        state.global_lighting = 9.0;
+        state.lighting.exposure = 8.0;
+
+        store_active_preset(&mut effective, &state);
+
+        assert_eq!(effective.classic.cave.global_lighting, 9.0);
+        assert_eq!(effective.classic.cave.lighting.exposure, 8.0);
+        assert_eq!(effective.classic.morning.global_lighting, 1.0);
+        assert_eq!(effective.enhanced.cave.global_lighting, 2.3);
+        assert_eq!(effective.default_preset, "classic.cave");
+    }
+
+    #[test]
+    fn resetting_preset_restores_only_the_active_factory_combination() {
         let factory = presets();
         let mut effective = presets();
         effective.classic.morning.global_lighting = 9.0;
@@ -388,9 +412,13 @@ mod tests {
         effective.enhanced.afternoon.global_lighting = 7.0;
         effective.default_preset = "classic.cave".to_string();
 
-        reset_mode_to_factory(&mut effective, &factory, 0);
+        assert!(reset_preset_to_factory(
+            &mut effective,
+            &factory,
+            "classic.cave",
+        ));
 
-        assert_eq!(effective.classic.morning.global_lighting, 1.0);
+        assert_eq!(effective.classic.morning.global_lighting, 9.0);
         assert_eq!(effective.classic.cave.lighting.exposure, 1.3);
         assert_eq!(effective.enhanced.afternoon.global_lighting, 7.0);
         assert_eq!(effective.default_preset, "classic.cave");
