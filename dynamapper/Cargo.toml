@@ -21,8 +21,8 @@ type_complexity = "allow"
 udd-assets = { path = "../lib/udd-assets" }
 udd-container = { path = "../lib/udd-container" }
 uocf = { path = "../lib/uocf" }
-bevy_framepace = { version = "0.21", default-features = false }
-bevy_egui = { version = "0.39" } #, features = ["immutable_ctx"] }
+bevy_framepace = { version = "0.22", default-features = false }
+bevy_egui = { version = "0.42" } #, features = ["immutable_ctx"] }
 bytemuck = { version = "1.*", default-features = false, features = ["derive", "aarch64_simd", "avx512_simd"] }
 chrono = { version = "0.4", default-features = false, features = [
   "clock",
@@ -30,7 +30,7 @@ chrono = { version = "0.4", default-features = false, features = [
 ] }
 color-eyre = { workspace = true, features = ["track-caller"] }
 #lru = "0.16"
-indexmap = "2.14.0"
+indexmap = "2.14.2"
 knuffel.workspace = true
 log = { version = "*", features = [
   "max_level_debug",
@@ -81,7 +81,7 @@ wgpu-profiler = { workspace = true, optional = true }
 
 
 [dependencies.bevy]
-version = "0.18.1"
+version = "0.19"
 default-features = false
 features = [
   # --- Bevy Internal Crates & Core Features ---

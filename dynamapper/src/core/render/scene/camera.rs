@@ -476,7 +476,7 @@ fn sys_camera_zoom(
         Ok(c) => c,
         Err(_) => return,
     };
-    if ctx.wants_pointer_input() || ctx.wants_keyboard_input() {
+    if ctx.egui_wants_pointer_input() || ctx.egui_wants_keyboard_input() {
         return;
     }
 
@@ -524,7 +524,7 @@ fn sys_free_camera_movement(
         Ok(c) => c,
         Err(_) => return,
     };
-    if ctx.wants_keyboard_input() {
+    if ctx.egui_wants_keyboard_input() {
         return;
     }
 

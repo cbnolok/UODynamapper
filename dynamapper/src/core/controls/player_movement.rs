@@ -71,7 +71,7 @@ fn sys_player_input(
     // Keep movement and mouse cursor input separate.
     if let Ok(ctx) = egui_contexts.ctx_mut() {
         // ctx()
-        if ctx.wants_pointer_input() {
+        if ctx.egui_wants_pointer_input() {
             move_dir.dir = None;
             move_dir.vertical_dir = 0;
             return;
@@ -80,7 +80,7 @@ fn sys_player_input(
     if let Some(ui_cam) = egui_ui_camera.0 {
         if let Ok(ctx) = egui_contexts.ctx_for_entity_mut(ui_cam) {
             // ctx_for_entity
-            if ctx.wants_pointer_input() {
+            if ctx.egui_wants_pointer_input() {
                 move_dir.dir = None;
                 move_dir.vertical_dir = 0;
                 return;

@@ -217,7 +217,7 @@ fn sys_apply_land_shader_simplification_override(
     let Some(shared_mat) = shared_mat else {
         return;
     };
-    let Some(mat) = materials.get_mut(&shared_mat.0) else {
+    let Some(mut mat) = materials.get_mut(&shared_mat.0) else {
         return;
     };
 
@@ -323,7 +323,7 @@ pub fn sys_update_shared_land_material(
     // This avoids triggering Bevy's asset change detection, which would force
     // re-extraction of the material bind group for all chunk entities.
     if atlas_changed || lighting_meaningfully_changed || zoom_changed || static_lights_changed {
-        if let Some(mat) = materials.get_mut(&shared_mat.0) {
+        if let Some(mut mat) = materials.get_mut(&shared_mat.0) {
             /*
             console_logger::one(
                 None,

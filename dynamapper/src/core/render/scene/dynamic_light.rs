@@ -48,7 +48,7 @@ pub fn sys_spawn_dynamic_light(
     );
     commands.spawn((
         DirectionalLight {
-            shadows_enabled: false, // Disable shadows if not needed
+            shadow_maps_enabled: false, // Disable shadows if not needed
             illuminance: 500.0,
             ..default()
         },

@@ -22,7 +22,7 @@ image.workspace = true
 serde.workspace = true
 xbrz-rs = "0.1.0"
 hqx = { git = "https://github.com/CryZe/wasmboy-rs" }
-wide = { version = "1.5", default-features = false, features = ["std"] }
+wide = { version = "1.7", default-features = false, features = ["std"] }
 
 [package.metadata.cargo-machete]
 ignored = ["xbrz-rs"]

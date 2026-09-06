@@ -1,15 +1,12 @@
 #![cfg(feature = "gpu-profiling")]
-use bevy::core_pipeline::core_3d::graph::Core3d;
+use bevy::core_pipeline::{Core3d, Core3dSystems};
 use bevy::prelude::*;
 use bevy::render::{
-    render_graph::{Node, NodeRunError, RenderGraph, RenderGraphContext, RenderLabel},
     render_resource::WgpuFeatures,
     renderer::{RenderContext, RenderDevice, RenderQueue},
     Extract, Render, RenderApp, RenderSystems,
 };
 use wgpu_profiler::{GpuProfiler, GpuProfilerQuery, GpuProfilerSettings};
-// Workaround for Node3d if import fails: use the full path or check variants.
-use bevy::core_pipeline::core_3d::graph::Node3d;
 use parking_lot::Mutex;
 use std::ops::DerefMut;
 use std::sync::Arc;
@@ -34,12 +31,6 @@ pub struct RenderGpuProfilingTrigger {
 /// Resource in the Render World to track a query across nodes.
 #[derive(Resource, Default)]
 pub struct ActiveProfilingQuery(pub Arc<Mutex<Option<GpuProfilerQuery>>>);
-
-#[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
-pub struct ProfilingBeginLabel;
-
-#[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
-pub struct ProfilingEndLabel;
 
 use crate::util_lib::tracked_plugin::{TrackedPlugin, log_plugin_build};
 use crate::impl_tracked_plugin;
@@ -69,19 +60,14 @@ impl Plugin for LandProfilingPlugin {
                 sys_gpu_profiler_finalize.in_set(RenderSystems::Cleanup),
             );
 
-        // Add nodes to the Render Graph
-        let mut graph = render_app.world_mut().resource_mut::<RenderGraph>();
-
-        let Some(core_3d) = graph.get_sub_graph_mut(Core3d) else {
-            return;
-        };
-
-        core_3d.add_node(ProfilingBeginLabel, ProfilingBeginNode);
-        core_3d.add_node(ProfilingEndLabel, ProfilingEndNode);
-
-        // Wrap the MainPass
-        core_3d.add_node_edge(ProfilingBeginLabel, Node3d::StartMainPass);
-        core_3d.add_node_edge(Node3d::EndMainPass, ProfilingEndLabel);
+        // The render graph is a schedule: the passes are systems wrapping the main pass.
+        render_app.add_systems(
+            Core3d,
+            (
+                sys_profiling_begin.before(Core3dSystems::MainPass),
+                sys_profiling_end.after(Core3dSystems::MainPass),
+            ),
+        );
     }
 
     fn finish(&self, app: &mut App) {
@@ -133,73 +119,54 @@ fn sys_trigger_gpu_profiling(
     }
 }
 
-pub struct ProfilingBeginNode;
-impl Node for ProfilingBeginNode {
-    fn run(
-        &self,
-        _graph: &mut RenderGraphContext,
-        render_context: &mut RenderContext,
-        world: &World,
-    ) -> Result<(), NodeRunError> {
-        // Only profile if it's a camera view (we don't want to profile every shadow pass etc by default)
-        // In this app, we specifically care about the main world rendering.
+fn sys_profiling_begin(
+    profiler_res: Option<Res<GpuProfilerResource>>,
+    active_query_res: Res<ActiveProfilingQuery>,
+    mut render_context: RenderContext,
+) {
+    // Only profile if it's a camera view (we don't want to profile every shadow pass etc by default)
+    // In this app, we specifically care about the main world rendering.
 
-        let profiler_res = world.get_resource::<GpuProfilerResource>();
-        let active_query_res = world.resource::<ActiveProfilingQuery>();
+    let Some(profiler_res) = profiler_res else {
+        return;
+    };
 
-        let Some(profiler_res) = profiler_res else {
-            return Ok(());
-        };
+    let profiler = profiler_res.0.lock();
+    let mut active_query = active_query_res.0.lock();
+    let mut encoder = render_context.command_encoder();
 
-        let mut profiler = profiler_res.0.lock();
-        let mut active_query = active_query_res.0.lock();
-        let mut encoder = render_context.command_encoder();
-
-        // Use begin_query for 0.25.0
-        // We only start a "Total Frame" query if one isn't already active.
-        // This handles multiple views by timing the first one encountered.
-        if active_query.is_none() {
-            *active_query = Some(profiler.begin_query("Total Frame", encoder.deref_mut()));
-        }
-
-        Ok(())
+    // Use begin_query for 0.25.0
+    // We only start a "Total Frame" query if one isn't already active.
+    // This handles multiple views by timing the first one encountered.
+    if active_query.is_none() {
+        *active_query = Some(profiler.begin_query("Total Frame", encoder.deref_mut()));
     }
 }
 
-pub struct ProfilingEndNode;
-impl Node for ProfilingEndNode {
-    fn run(
-        &self,
-        _graph: &mut RenderGraphContext,
-        render_context: &mut RenderContext,
-        world: &World,
-    ) -> Result<(), NodeRunError> {
-        let profiler_res = world.get_resource::<GpuProfilerResource>();
-        let active_query_res = world.resource::<ActiveProfilingQuery>();
+fn sys_profiling_end(
+    profiler_res: Option<Res<GpuProfilerResource>>,
+    active_query_res: Res<ActiveProfilingQuery>,
+    mut render_context: RenderContext,
+) {
+    let Some(profiler_res) = profiler_res else {
+        return;
+    };
 
-        let Some(profiler_res) = profiler_res else {
-            return Ok(());
-        };
+    let mut profiler = profiler_res.0.lock();
+    let mut active_query = active_query_res.0.lock();
+    let mut encoder = render_context.command_encoder();
 
-        let mut profiler = profiler_res.0.lock();
-        let mut active_query = active_query_res.0.lock();
-        let mut encoder = render_context.command_encoder();
+    // 1. Close the frame query if it belongs to this frame's start
+    // We only close it here. If multiple views run, only the first view's query is timed.
+    if let Some(query) = active_query.take() {
+        profiler.end_query(encoder.deref_mut(), query);
 
-        // 1. Close the frame query if it belongs to this node's start
-        // We only close it here. If multiple views run, only the first view's query is timed.
-        if let Some(query) = active_query.take() {
-            profiler.end_query(encoder.deref_mut(), query);
-
-            // 2. Resolve queries for the frame - DO IT ONLY ONCE at the end of the query
-            profiler.resolve_queries(encoder.deref_mut());
-        }
-
-        // 3. Process finished frames and end_frame MUST BE CALLED ONCE per App Frame.
-        // We use a global system for this instead of a node to be safe.
-        // Or we could check if we are the "last" camera, but that's hard.
-
-        Ok(())
+        // 2. Resolve queries for the frame - DO IT ONLY ONCE at the end of the query
+        profiler.resolve_queries(encoder.deref_mut());
     }
+
+    // 3. Process finished frames and end_frame MUST BE CALLED ONCE per App Frame.
+    // We use a global system for this instead of a pass to be safe.
 }
 
 /// System to finalize the profiler frame once per frame.

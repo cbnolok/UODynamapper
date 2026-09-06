@@ -33,7 +33,7 @@ wide = { version = "1", default-features = false, features = ["std"] }
 bytemuck.workspace = true
 bitflags = "2"
 nohash-hasher = "0.2.0"
-indexmap = "2.14.0"
+indexmap = "2.14.2"
 # Standard Rust log facade — allows uocf to emit log events without
 # coupling to any specific logger implementation (the app provides the backend).
 log = { version = "0.4", default-features = false }

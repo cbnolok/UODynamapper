@@ -6,7 +6,7 @@
 // shader, resulting in inconsistent coverage.
 //
 // Architecture:
-// - Uses Bevy 0.18's `FullscreenMaterial` trait to register the pass.
+// - Uses Bevy's `FullscreenMaterial` trait to register the pass.
 // - `FogPostProcessUniform` is a `ShaderType` component attached to the
 //   `PlayerCamera` entity and extracted to the GPU each frame.
 // - `sys_sync_fog_uniform` reads from `UniformState` each frame and
@@ -16,11 +16,14 @@ use crate::configs::shader_presets::UniformState;
 use crate::core::render::scene::camera::PlayerCamera;
 use crate::prelude::*;
 use bevy::core_pipeline::{
-    core_3d::graph::Node3d,
     fullscreen_material::{FullscreenMaterial, FullscreenMaterialPlugin},
+    tonemapping::tonemapping,
+    Core3dSystems,
 };
+use bevy::ecs::schedule::ScheduleConfigs;
+use bevy::ecs::system::BoxedSystem;
 use bevy::prelude::*;
-use bevy::render::{extract_component::ExtractComponent, render_graph::InternedRenderLabel, render_graph::RenderLabel};
+use bevy::render::extract_component::ExtractComponent;
 use bevy::render::render_resource::ShaderType;
 use bevy::shader::ShaderRef;
 use bevy::window::Window;
@@ -74,14 +77,10 @@ impl FullscreenMaterial for FogPostProcessUniform {
         "shaders/world/effects/fog_pass.wgsl".into()
     }
 
-    fn node_edges() -> Vec<InternedRenderLabel> {
-        // Run after tonemapping so fog is applied on the fully composed frame,
-        // before the final end-of-post-processing blit.
-        vec![
-            Node3d::Tonemapping.intern(),
-            Self::node_label().intern(),
-            Node3d::EndMainPassPostProcessing.intern(),
-        ]
+    fn schedule_configs(system: ScheduleConfigs<BoxedSystem>) -> ScheduleConfigs<BoxedSystem> {
+        // Run after tonemapping so fog is applied on the fully composed frame.
+        // Upscaling (the final blit) runs after the whole `PostProcess` set.
+        system.in_set(Core3dSystems::PostProcess).after(tonemapping)
     }
 }
 

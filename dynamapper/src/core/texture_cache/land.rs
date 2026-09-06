@@ -1201,7 +1201,7 @@ fn sys_apply_land_texture_source_changes(
 
     let shader_images = create_land_shader_images(&mut images, land_shader_source_from_cache(&cache_r))
         .expect("Failed to rebuild land atlas shader images for source switch");
-    if let Some(mat) = materials.get_mut(&shared_mat.0) {
+    if let Some(mut mat) = materials.get_mut(&shared_mat.0) {
         mat.extension.land_page_atlas = shader_images.page_atlas;
         mat.extension.land_page_lookup = shader_images.lookup;
     }
@@ -1505,7 +1505,7 @@ fn sys_apply_texture_array_expansion(
     // the root cause of 95% GPU usage at idle — Bevy re-uploaded all texture
     // array bind groups every frame instead of reusing the cached GPU state.
     if resized_small.is_some() || resized_big.is_some() {
-        if let Some(mat) = materials.get_mut(&shared_mat.0) {
+        if let Some(mut mat) = materials.get_mut(&shared_mat.0) {
             mat.extension.texarray_small = handles_r.small.clone();
             mat.extension.texarray_big = handles_r.big.clone();
         }
@@ -1588,7 +1588,7 @@ fn sys_apply_tile_atlas_expansion(
     }
 
     // Update the shared material so the shader sees the new texture.
-    if let Some(mat) = materials.get_mut(&shared_mat.0) {
+    if let Some(mut mat) = materials.get_mut(&shared_mat.0) {
         mat.extension.tile_meta_atlas = new_handle;
         mat.extension.atlas_params = tile_atlas.params;
     }
@@ -1618,14 +1618,14 @@ mod tests {
     use super::*;
     use bevy::render::render_resource::{DownlevelFlags, WgpuFeatures};
     use bevy::shader::{
-        PipelineCacheError, Shader, ShaderCache, ShaderCacheSource, ValidateShader,
+        Shader, ShaderCache, ShaderCacheError, ShaderCacheSource, ValidateShader,
     };
 
     fn accept_shader_module(
         _device: &(),
         _source: ShaderCacheSource<'_>,
         _validation: &ValidateShader,
-    ) -> Result<(), PipelineCacheError> {
+    ) -> Result<(), ShaderCacheError> {
         Ok(())
     }
 
@@ -1661,6 +1661,7 @@ mod tests {
     #[test]
     fn land_sampling_shader_composes() {
         let mut shader_cache = ShaderCache::<(), ()>::new(
+            (),
             WgpuFeatures::empty(),
             DownlevelFlags::empty(),
             accept_shader_module,

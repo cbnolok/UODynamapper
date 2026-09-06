@@ -157,8 +157,8 @@ pub fn setup_overlay_cursor_behavior(
             builder.spawn((
                 Text::new("Cursor mode: Select"),
                 TextFont {
-                    font: font.clone(),
-                    font_size: FONT_SIZE * scale,
+                    font: font.clone().into(),
+                    font_size: (FONT_SIZE * scale).into(),
                     font_smoothing: FontSmoothing::AntiAliased,
                     ..default()
                 },
@@ -169,8 +169,8 @@ pub fn setup_overlay_cursor_behavior(
             builder.spawn((
                 Text::new("Cursor position: (NA, NA, NA)"),
                 TextFont {
-                    font: font.clone(),
-                    font_size: FONT_SIZE * scale,
+                    font: font.clone().into(),
+                    font_size: (FONT_SIZE * scale).into(),
                     font_smoothing: FontSmoothing::AntiAliased,
                     ..default()
                 },
@@ -191,8 +191,8 @@ pub fn setup_overlay_cursor_behavior(
                     builder.spawn((
                         Text::new("Hovered tiles:\n[disabled]"),
                         TextFont {
-                            font: font.clone(),
-                            font_size: FONT_SIZE * scale,
+                            font: font.clone().into(),
+                            font_size: (FONT_SIZE * scale).into(),
                             font_smoothing: FontSmoothing::AntiAliased,
                             ..default()
                         },
@@ -252,11 +252,11 @@ pub fn update_cursor_behavior_text(
 
     if scale_changed {
         if let Ok((_, mut text_font, mut line_height)) = mode_text_q.single_mut() {
-            text_font.font_size = FONT_SIZE * current_scale;
+            text_font.font_size = (FONT_SIZE * current_scale).into();
             *line_height = LineHeight::Px(FONT_SIZE * current_scale);
         }
         if let Ok((_, mut text_font, mut line_height)) = position_text_q.single_mut() {
-            text_font.font_size = FONT_SIZE * current_scale;
+            text_font.font_size = (FONT_SIZE * current_scale).into();
             *line_height = LineHeight::Px(FONT_SIZE * current_scale);
         }
         *last_scale = current_scale;
@@ -372,7 +372,7 @@ pub fn update_cursor_inspect_text(
 
     if scale_changed {
         if let Ok((_, mut text_font, mut line_height)) = inspect_text_q.single_mut() {
-            text_font.font_size = FONT_SIZE * current_scale;
+            text_font.font_size = (FONT_SIZE * current_scale).into();
             *line_height = LineHeight::Px(FONT_SIZE * current_scale);
         }
         *locals.last_scale = current_scale;
@@ -1375,7 +1375,7 @@ fn sys_teleport_on_click(
 
     // If egui wants pointer input, don't teleport
     if let Some(ctx) = dialogs::get_egui_context_ready_mut(&mut egui_contexts, &egui_ui_camera) {
-        if ctx.wants_pointer_input() {
+        if ctx.egui_wants_pointer_input() {
             return;
         }
     }

@@ -9,7 +9,7 @@ use crate::impl_tracked_plugin;
 use crate::prelude::*;
 use crate::util_lib::tracked_plugin::*;
 use bevy::prelude::*;
-use bevy_egui::{EguiContextSettings, EguiContexts};
+use bevy_egui::EguiContexts;
 use gump::GumpDialogPlugin;
 use keybindings_help::KeybindingsHelpPlugin;
 use land_shader::LandUiPlugin;
@@ -48,13 +48,11 @@ impl Plugin for DialogsPlugin {
 fn sys_sync_egui_context_scale_factor(
     settings: Res<crate::configs::settings::Settings>,
     egui_ui_camera: Res<UiCameraResource>,
-    mut egui_ctx_settings_q: Query<&mut EguiContextSettings>,
+    mut egui_contexts: EguiContexts,
 ) {
-    let Some(ui_cam) = egui_ui_camera.0 else {
-        return;
-    };
-
-    let Ok(mut egui_ctx_settings) = egui_ctx_settings_q.get_mut(ui_cam) else {
+    // `EguiContextSettings::scale_factor` was removed: UI scale is now egui's own
+    // zoom factor, which bevy_egui only mirrors into `EguiZoomFactor`.
+    let Some(ctx) = get_egui_context_ready_mut(&mut egui_contexts, &egui_ui_camera) else {
         return;
     };
 
@@ -64,9 +62,9 @@ fn sys_sync_egui_context_scale_factor(
         1.0
     };
 
-    if (egui_ctx_settings.scale_factor - target_scale).abs() > 0.001 {
+    if (ctx.zoom_factor() - target_scale).abs() > 0.001 {
         log_system_add_update::<DialogsPlugin>(fname!());
-        egui_ctx_settings.scale_factor = target_scale;
+        ctx.set_zoom_factor(target_scale);
     }
 }
 

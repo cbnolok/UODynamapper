@@ -22,7 +22,7 @@ use bevy::pbr::{ExtendedMaterial, MaterialExtension};
 use bevy::prelude::*;
 use bevy::render::render_resource::TextureFormat;
 use bevy::render::render_resource::{AsBindGroup, PrimitiveTopology, ShaderType};
-use bevy::render::storage::ShaderStorageBuffer;
+use bevy::render::storage::ShaderBuffer;
 use std::collections::HashMap;
 use udd_assets::tex_art_cc::PagePixelFormat;
 use udd_assets::bc7::{ImageExtent, VramTextureFormat};
@@ -52,7 +52,7 @@ pub struct ArtSpriteMaterialExtension {
     #[sampler(100, visibility(vertex, fragment))]
     pub atlas: Handle<Image>,
     #[storage(102, read_only, visibility(vertex, fragment))]
-    pub instances: Handle<ShaderStorageBuffer>,
+    pub instances: Handle<ShaderBuffer>,
     #[uniform(103, visibility(vertex, fragment))]
     pub params: SpriteParams,
     #[uniform(105, visibility(vertex, fragment))]
@@ -74,7 +74,7 @@ pub struct ArtGroundMaterialExtension {
     #[sampler(100, visibility(vertex, fragment))]
     pub atlas: Handle<Image>,
     #[storage(102, read_only, visibility(vertex, fragment))]
-    pub instances: Handle<ShaderStorageBuffer>,
+    pub instances: Handle<ShaderBuffer>,
     #[uniform(103, visibility(vertex, fragment))]
     pub params: SpriteParams,
     #[uniform(105, visibility(vertex, fragment))]
@@ -608,13 +608,13 @@ fn apply_sprite_art_atlas_resize(
 
     *atlas_handle = new_handle.clone();
 
-    if let Some(material) = materials.get_mut(&render_assets.opaque_material) {
+    if let Some(mut material) = materials.get_mut(&render_assets.opaque_material) {
         material.extension.atlas = new_handle.clone();
     }
-    if let Some(material) = materials.get_mut(&render_assets.transparent_material) {
+    if let Some(mut material) = materials.get_mut(&render_assets.transparent_material) {
         material.extension.atlas = new_handle.clone();
     }
-    if let Some(material) = materials.get_mut(&render_assets.shadow_material) {
+    if let Some(mut material) = materials.get_mut(&render_assets.shadow_material) {
         material.extension.atlas = new_handle;
     }
 }
@@ -663,10 +663,10 @@ fn apply_ground_art_atlas_resize(
 
     *atlas_handle = new_handle.clone();
 
-    if let Some(material) = materials.get_mut(&render_assets.opaque_material) {
+    if let Some(mut material) = materials.get_mut(&render_assets.opaque_material) {
         material.extension.atlas = new_handle.clone();
     }
-    if let Some(material) = materials.get_mut(&render_assets.transparent_material) {
+    if let Some(mut material) = materials.get_mut(&render_assets.transparent_material) {
         material.extension.atlas = new_handle;
     }
 }
@@ -694,13 +694,13 @@ fn rebind_active_art_atlases(
     sprite_atlas.0 = next_sprite_atlas;
     sprite_atlas_handle.0 = next_sprite_handle.clone();
 
-    if let Some(material) = materials.get_mut(&render_assets.opaque_material) {
+    if let Some(mut material) = materials.get_mut(&render_assets.opaque_material) {
         material.extension.atlas = next_sprite_handle.clone();
     }
-    if let Some(material) = materials.get_mut(&render_assets.transparent_material) {
+    if let Some(mut material) = materials.get_mut(&render_assets.transparent_material) {
         material.extension.atlas = next_sprite_handle.clone();
     }
-    if let Some(material) = materials.get_mut(&render_assets.shadow_material) {
+    if let Some(mut material) = materials.get_mut(&render_assets.shadow_material) {
         material.extension.atlas = next_sprite_handle;
     }
 
@@ -709,10 +709,10 @@ fn rebind_active_art_atlases(
     ground_atlas.0 = next_ground_atlas;
     ground_atlas_handle.0 = next_ground_handle.clone();
 
-    if let Some(material) = ground_materials.get_mut(&ground_render_assets.opaque_material) {
+    if let Some(mut material) = ground_materials.get_mut(&ground_render_assets.opaque_material) {
         material.extension.atlas = next_ground_handle.clone();
     }
-    if let Some(material) = ground_materials.get_mut(&ground_render_assets.transparent_material) {
+    if let Some(mut material) = ground_materials.get_mut(&ground_render_assets.transparent_material) {
         material.extension.atlas = next_ground_handle;
     }
 }
@@ -724,7 +724,7 @@ pub fn sys_setup_art_page_atlas(
     mut ground_materials: ResMut<Assets<ArtGroundMaterial>>,
     land_materials: Res<Assets<world::land::mesh_material::LandCustomMeshMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut storage_buffers: ResMut<Assets<ShaderStorageBuffer>>,
+    mut storage_buffers: ResMut<Assets<ShaderBuffer>>,
     settings: Res<Settings>,
     shared_land_material: Option<Res<world::land::draw_mesh::SharedLandMaterial>>,
     tex_art_cc_res: Option<Res<TexArtCcPackageRes>>,
@@ -759,7 +759,7 @@ pub fn sys_setup_art_page_atlas(
         land_page_binding_handles(shared_land_material.as_deref(), &land_materials)
             .unwrap_or_else(|| create_blank_land_page_binding_images(&mut images));
 
-    let initial_buffer = ShaderStorageBuffer::from(vec![SpriteInstance {
+    let initial_buffer = ShaderBuffer::from(vec![SpriteInstance {
         world_x: 0.0,
         world_z: 0.0,
         world_y: 0.0,
@@ -864,7 +864,7 @@ pub fn sys_setup_art_page_atlas(
         },
     });
 
-    let initial_ground_buffer = ShaderStorageBuffer::from(vec![GroundTileInstance {
+    let initial_ground_buffer = ShaderBuffer::from(vec![GroundTileInstance {
         world_x: 0.0,
         world_z: 0.0,
         world_y: 0.0,
@@ -1423,7 +1423,7 @@ pub fn sys_update_sprite_instance_buffer(
     instances: Res<RenderStaticInstances>,
     render_assets: Res<ArtSpriteRenderAssets>,
     mut materials: ResMut<Assets<ArtSpriteMaterial>>,
-    mut storage_buffers: ResMut<Assets<ShaderStorageBuffer>>,
+    mut storage_buffers: ResMut<Assets<ShaderBuffer>>,
     zoom: Res<crate::core::render::scene::camera::RenderZoom>,
     scene_state: Res<crate::core::render::scene::SceneStateData>,
     world_geo: Res<crate::core::render::scene::world::WorldGeoData>,
@@ -1442,7 +1442,7 @@ pub fn sys_update_sprite_instance_buffer(
         .unwrap_or((1.0, 1.0));
 
     let opaque_buffer_handle = {
-        let Some(material) = materials.get_mut(&render_assets.opaque_material) else {
+        let Some(mut material) = materials.get_mut(&render_assets.opaque_material) else {
             return;
         };
         material.extension.params.render_mode = render_mode;
@@ -1452,7 +1452,7 @@ pub fn sys_update_sprite_instance_buffer(
     };
 
     {
-        let Some(transparent_material) = materials.get_mut(&render_assets.transparent_material)
+        let Some(mut transparent_material) = materials.get_mut(&render_assets.transparent_material)
         else {
             return;
         };
@@ -1461,7 +1461,7 @@ pub fn sys_update_sprite_instance_buffer(
         transparent_material.extension.params.map_height_tiles = map_height_tiles;
     }
     {
-        let Some(shadow_material) = materials.get_mut(&render_assets.shadow_material) else {
+        let Some(mut shadow_material) = materials.get_mut(&render_assets.shadow_material) else {
             return;
         };
         shadow_material.extension.params.render_mode = render_mode;
@@ -1473,7 +1473,7 @@ pub fn sys_update_sprite_instance_buffer(
     if upload_changed {
         let _ = storage_buffers.insert(
             &opaque_buffer_handle,
-            ShaderStorageBuffer::from(instances.0.clone()),
+            ShaderBuffer::from(instances.0.clone()),
         );
         upload_cache.sprite_instances.clone_from(&instances.0);
     }
@@ -1497,7 +1497,7 @@ pub fn sys_update_ground_instance_buffer(
     instances: Res<RenderStaticLandInstances>,
     render_assets: Res<ArtGroundRenderAssets>,
     mut materials: ResMut<Assets<ArtGroundMaterial>>,
-    mut storage_buffers: ResMut<Assets<ShaderStorageBuffer>>,
+    mut storage_buffers: ResMut<Assets<ShaderBuffer>>,
     scene_state: Res<crate::core::render::scene::SceneStateData>,
     world_geo: Res<crate::core::render::scene::world::WorldGeoData>,
     mut upload_cache: ResMut<StaticArtUploadCache>,
@@ -1514,7 +1514,7 @@ pub fn sys_update_ground_instance_buffer(
         .unwrap_or((1.0, 1.0));
 
     let opaque_buffer_handle = {
-        let Some(material) = materials.get_mut(&render_assets.opaque_material) else {
+        let Some(mut material) = materials.get_mut(&render_assets.opaque_material) else {
             return;
         };
         material.extension.params.map_width_tiles = map_width_tiles;
@@ -1523,7 +1523,7 @@ pub fn sys_update_ground_instance_buffer(
     };
 
     {
-        let Some(transparent_material) = materials.get_mut(&render_assets.transparent_material)
+        let Some(mut transparent_material) = materials.get_mut(&render_assets.transparent_material)
         else {
             return;
         };
@@ -1535,7 +1535,7 @@ pub fn sys_update_ground_instance_buffer(
     if upload_changed {
         let _ = storage_buffers.insert(
             &opaque_buffer_handle,
-            ShaderStorageBuffer::from(instances.0.clone()),
+            ShaderBuffer::from(instances.0.clone()),
         );
         upload_cache.ground_instances.clone_from(&instances.0);
     }
@@ -1585,11 +1585,11 @@ pub fn sys_update_art_materials(
         land_page_binding_handles(shared_land_material.as_deref(), &land_materials);
 
     if let (Some(assets), Some(bindings)) = (ground_assets.as_ref(), land_page_bindings.as_ref()) {
-        if let Some(mat) = ground_materials.get_mut(&assets.opaque_material) {
+        if let Some(mut mat) = ground_materials.get_mut(&assets.opaque_material) {
             mat.extension.land_page_atlas = bindings.atlas.clone();
             mat.extension.land_page_lookup = bindings.lookup.clone();
         }
-        if let Some(mat) = ground_materials.get_mut(&assets.transparent_material) {
+        if let Some(mut mat) = ground_materials.get_mut(&assets.transparent_material) {
             mat.extension.land_page_atlas = bindings.atlas.clone();
             mat.extension.land_page_lookup = bindings.lookup.clone();
         }
@@ -1606,27 +1606,27 @@ pub fn sys_update_art_materials(
         .unwrap_or(Vec3::ZERO);
 
     if let Some(assets) = sprite_assets {
-        if let Some(mat) = materials.get_mut(&assets.opaque_material) {
+        if let Some(mut mat) = materials.get_mut(&assets.opaque_material) {
             update_art_material_uniforms(
-                mat,
+                &mut mat,
                 &uniform_state,
                 current_global_lighting,
                 current_render_zoom,
                 camera_pos,
             );
         }
-        if let Some(mat) = materials.get_mut(&assets.transparent_material) {
+        if let Some(mut mat) = materials.get_mut(&assets.transparent_material) {
             update_art_material_uniforms(
-                mat,
+                &mut mat,
                 &uniform_state,
                 current_global_lighting,
                 current_render_zoom,
                 camera_pos,
             );
         }
-        if let Some(mat) = materials.get_mut(&assets.shadow_material) {
+        if let Some(mut mat) = materials.get_mut(&assets.shadow_material) {
             update_art_material_uniforms(
-                mat,
+                &mut mat,
                 &uniform_state,
                 current_global_lighting,
                 current_render_zoom,
@@ -1636,18 +1636,18 @@ pub fn sys_update_art_materials(
     }
 
     if let Some(assets) = ground_assets {
-        if let Some(mat) = ground_materials.get_mut(&assets.opaque_material) {
+        if let Some(mut mat) = ground_materials.get_mut(&assets.opaque_material) {
             update_art_material_uniforms_ground(
-                mat,
+                &mut mat,
                 &uniform_state,
                 current_global_lighting,
                 current_render_zoom,
                 camera_pos,
             );
         }
-        if let Some(mat) = ground_materials.get_mut(&assets.transparent_material) {
+        if let Some(mut mat) = ground_materials.get_mut(&assets.transparent_material) {
             update_art_material_uniforms_ground(
-                mat,
+                &mut mat,
                 &uniform_state,
                 current_global_lighting,
                 current_render_zoom,

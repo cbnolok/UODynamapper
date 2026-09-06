@@ -36,7 +36,7 @@ fn sys_dispatch_keyboard_input(
 ) {
     // Check if egui is currently using the keyboard to block global actions.
     if let Ok(ctx) = egui_contexts.ctx_mut() {
-        if ctx.wants_keyboard_input() {
+        if ctx.egui_wants_keyboard_input() {
             return;
         }
     }

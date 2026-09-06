@@ -68,8 +68,8 @@ pub fn setup_overlay_player_position(
             builder.spawn((
                 Text::new("Player position: (NA, NA, NA)"),
                 TextFont {
-                    font: font.clone(),
-                    font_size: FONT_SIZE * scale,
+                    font: font.clone().into(),
+                    font_size: (FONT_SIZE * scale).into(),
                     font_smoothing: FontSmoothing::AntiAliased,
                     ..default()
                 },
@@ -190,7 +190,7 @@ pub fn update_player_position_text(
         }
 
         if scale_changed {
-            text_font.font_size = FONT_SIZE * current_scale;
+            text_font.font_size = (FONT_SIZE * current_scale).into();
             *line_height = LineHeight::Px(FONT_SIZE * current_scale);
             *last_scale = current_scale;
         }

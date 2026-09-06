@@ -427,7 +427,7 @@ pub fn sys_sync_static_light_entities(
 
     if *last_alpha != Some(material_alpha) {
         for handle in material_cache.materials_by_key.values() {
-            if let Some(material) = materials.get_mut(handle) {
+            if let Some(mut material) = materials.get_mut(handle) {
                 material.base_color = static_light_base_color(material_alpha);
             }
         }

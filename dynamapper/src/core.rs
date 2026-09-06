@@ -20,10 +20,7 @@ use crate::{
         diagnostics::{add_diagnostics_plugins, LogGpuPreprocessingModePlugin},
         render::scene::camera::UO_TILE_PIXEL_SIZE,
     },
-    impl_tracked_plugin,
-    util_lib::tracked_plugin::{
-        log_plugin_build, set_plugin_log_toggles, sys_log_plugin_registry_tree, TrackedPlugin,
-    },
+    util_lib::tracked_plugin::{set_plugin_log_toggles, sys_log_plugin_registry_tree},
 };
 use bevy::{
     pbr::wireframe::{WireframeConfig, WireframePlugin},
@@ -136,37 +133,6 @@ fn custom_window_plugin_settings(size: (f32, f32), vsync: bool) -> WindowPlugin 
     }
 }
 
-/// Bevy 0.18.1 WireframePlugin panics if Node3d::PostProcessing is missing from the graph.
-/// This plugin adds an EmptyNode to satisfy the edge requirement.
-struct WireframePanicFixPlugin {
-    pub registered_by: &'static str,
-}
-impl_tracked_plugin!(WireframePanicFixPlugin);
-impl Plugin for WireframePanicFixPlugin {
-    /* https://taintedcoders.com/bevy/rendering
-    Bevy provides an extendable graph-structured rendering system, where input nodes pass data to output nodes.
-    These nodes are held inside the RenderGraph, a stateless structure that holds your stateful nodes.
-    In a similar way to your App, it has a separate runner that iterates over this graph to actually render things.
-    These graphs are made up of Nodes, Edges and Slots.
-    - Nodes are responsible for generating draw calls and operating on input and output slots.
-    - Edges specify the order of execution for nodes and connect input and output slots together.
-    - Slots describe the render resources created or used by the nodes.
-    Adding an input node to a render graph allows them to be nested.
-    Render Graphs are a way to logically model GPU command construction in a modular way. Graph Nodes pass GPU resources
-    like Textures and Buffers (and sometimes Entities) to each other, forming a directed acyclic graph.
-    When a Graph Node runs, it uses its graph inputs and the Render World to construct GPU command lists.
-     */
-    fn build(&self, app: &mut App) {
-        log_plugin_build(self);
-        use bevy::core_pipeline::core_3d::graph::{Core3d, Node3d};
-        use bevy::render::render_graph::{EmptyNode, RenderGraphExt};
-        let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) else {
-            return;
-        };
-        render_app.add_render_graph_node::<EmptyNode>(Core3d, Node3d::PostProcessing);
-    }
-}
-
 fn custom_wireframe_config(enabled: bool) -> WireframeConfig {
     // Wireframes can be configured with this resource. This can be changed at runtime.
     WireframeConfig {
@@ -179,6 +145,7 @@ fn custom_wireframe_config(enabled: bool) -> WireframeConfig {
         default_color: Color::srgb_from_array(
             bevy::color::palettes::css::BLACK.to_f32_array_no_alpha(),
         ), //.with_alpha(0.2), // alpha is unsupported, even if we change it
+        ..Default::default()
     }
 }
 
@@ -196,12 +163,12 @@ fn custom_render_plugin_settings(enable_wireframe: bool) -> bevy::render::Render
     }
 
     bevy::render::RenderPlugin {
-        render_creation: RenderCreation::Automatic(WgpuSettings {
+        render_creation: RenderCreation::Automatic(Box::new(WgpuSettings {
             //backends: Some(Backends::VULKAN),
             features,
             memory_hints: bevy::render::settings::MemoryHints::MemoryUsage,
             ..Default::default()
-        }),
+        })),
         ..Default::default()
     }
 }
@@ -376,10 +343,7 @@ pub fn run_bevy_app() -> ExitCode {
 
     app.insert_resource(custom_wireframe_config(wireframe_enabled));
     if wireframe_enabled {
-        app.add_plugins(WireframePanicFixPlugin {
-            registered_by: "Core",
-        }) // Fix for bevy_pbr 0.18.1 Node3d::PostProcessing panic
-        .add_plugins(WireframePlugin::default()); // Needed to enable wireframe rendering
+        app.add_plugins(WireframePlugin::default()); // Needed to enable wireframe rendering
     }
 
     app.add_plugins(bevy_framepace::FramepacePlugin)

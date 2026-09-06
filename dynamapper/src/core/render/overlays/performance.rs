@@ -269,8 +269,8 @@ pub fn setup_overlay_performance(
             builder.spawn((
                 Text::new("FPS: Init..."),
                 TextFont {
-                    font,
-                    font_size: FONT_SIZE * scale,
+                    font: font.into(),
+                    font_size: (FONT_SIZE * scale).into(),
                     ..default()
                 },
                 LineHeight::Px(FONT_SIZE * scale),
@@ -452,7 +452,7 @@ pub fn update_performance_text(
         }
 
         if scale_changed {
-            text_font.font_size = FONT_SIZE * current_scale;
+            text_font.font_size = (FONT_SIZE * current_scale).into();
             *line_height = LineHeight::Px(FONT_SIZE * current_scale);
             *last_scale = current_scale;
         }

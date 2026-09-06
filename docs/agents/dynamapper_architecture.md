@@ -43,7 +43,7 @@ Three modes: **Classic 2D (0)**, **Enhanced Classic (1)**, **KR-like (2)**. Alwa
 
 ### Bevy
 
-- **egui systems must run in `EguiPrimaryContextPass`** (not `Update` or `PostUpdate`). Bevy 0.18 + bevy_egui 0.39 requirement.
+- **egui systems must run in `EguiPrimaryContextPass`** (not `Update` or `PostUpdate`). Bevy 0.19 + bevy_egui 0.42 requirement.
 - **Never call `get_mut()` on Materials in hot paths.** It triggers expensive re-extraction and re-binding every frame; use `get()` for read-checks.
 - **All internal plugins must implement `TrackedPlugin`**: add `pub registered_by: &'static str`, call `log_plugin_build(self)` at the start of `build()`. Register third-party plugins manually in `core.rs`.
 
