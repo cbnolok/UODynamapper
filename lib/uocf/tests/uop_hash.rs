@@ -1,5 +1,5 @@
 use uocf::uop_container::hash::*;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 
 #[test]
 fn matches_known_uop_reference() {
@@ -46,8 +46,8 @@ fn randomized_matches() {
     let mut rng = rand::rngs::StdRng::seed_from_u64(0x12345678);
     let mut samples: Vec<String> = Vec::new();
     for _ in 0..256 {
-        let len = rng.gen_range(0..64);
-        let s: String = (0..len).map(|_| (rng.gen_range(32..127) as u8) as char).collect();
+        let len = rng.random_range(0..64);
+        let s: String = (0..len).map(|_| (rng.random_range(32..127) as u8) as char).collect();
         samples.push(s);
     }
     let refs: Vec<u64> = samples.iter().map(|s| hash_file_name_single(s)).collect();

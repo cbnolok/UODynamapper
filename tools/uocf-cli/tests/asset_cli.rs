@@ -38,7 +38,7 @@ impl Drop for TempDir {
 }
 
 fn asset_cli() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_uocf-asset-cli"))
+    Command::new(env!("CARGO_BIN_EXE_uocf-cli"))
 }
 
 #[test]
