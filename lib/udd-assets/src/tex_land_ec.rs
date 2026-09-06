@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
 use std::path::Path;
-#[cfg(any(test, debug_assertions))]
+#[cfg(test)]
+use std::cell::Cell;
+#[cfg(all(debug_assertions, not(test)))]
 use std::sync::atomic::{AtomicU64, Ordering};
 use color_eyre::eyre::{self, WrapErr};
 use byteorder::{LittleEndian, ReadBytesExt};
@@ -51,25 +53,65 @@ pub const TERRAIN_OVERRIDE_ACTION_LAYER: u16 = 1 << 2;
 pub const TERRAIN_OVERRIDE_ACTION_TEXTURE: u16 = 1 << 3;
 pub const TERRAIN_OVERRIDE_ACTION_IGNORE: u16 = 1 << 4;
 
-#[cfg(any(test, debug_assertions))]
+#[cfg(all(debug_assertions, not(test)))]
 static FROM_UDDP_PACKAGE_WITH_OPTIONS_CALLS: AtomicU64 = AtomicU64::new(0);
-#[cfg(any(test, debug_assertions))]
+#[cfg(all(debug_assertions, not(test)))]
 static SET_TERRAIN_OVERRIDES_CALLS: AtomicU64 = AtomicU64::new(0);
 
-#[cfg(any(test, debug_assertions))]
+// Under `cfg(test)` the counters are per-thread: the test harness runs sibling tests
+// that load packages concurrently, and shared counters would make absolute-count
+// assertions depend on scheduling. Diagnostic (non-test) builds keep the process-wide
+// atomics, which are read across threads by the application.
+#[cfg(test)]
+thread_local! {
+    static FROM_UDDP_PACKAGE_WITH_OPTIONS_CALLS: Cell<u64> = const { Cell::new(0) };
+    static SET_TERRAIN_OVERRIDES_CALLS: Cell<u64> = const { Cell::new(0) };
+}
+
+#[cfg(all(debug_assertions, not(test)))]
+fn note_from_uddp_package_with_options_call() {
+    FROM_UDDP_PACKAGE_WITH_OPTIONS_CALLS.fetch_add(1, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+fn note_from_uddp_package_with_options_call() {
+    FROM_UDDP_PACKAGE_WITH_OPTIONS_CALLS.with(|calls| calls.set(calls.get() + 1));
+}
+
+#[cfg(all(debug_assertions, not(test)))]
+fn note_set_terrain_overrides_call() {
+    SET_TERRAIN_OVERRIDES_CALLS.fetch_add(1, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+fn note_set_terrain_overrides_call() {
+    SET_TERRAIN_OVERRIDES_CALLS.with(|calls| calls.set(calls.get() + 1));
+}
+
+#[cfg(all(debug_assertions, not(test)))]
 pub fn debug_from_uddp_package_with_options_call_count() -> u64 {
     FROM_UDDP_PACKAGE_WITH_OPTIONS_CALLS.load(Ordering::Relaxed)
 }
 
-#[cfg(any(test, debug_assertions))]
+#[cfg(test)]
+pub fn debug_from_uddp_package_with_options_call_count() -> u64 {
+    FROM_UDDP_PACKAGE_WITH_OPTIONS_CALLS.with(Cell::get)
+}
+
+#[cfg(all(debug_assertions, not(test)))]
 pub fn debug_set_terrain_overrides_call_count() -> u64 {
     SET_TERRAIN_OVERRIDES_CALLS.load(Ordering::Relaxed)
 }
 
 #[cfg(test)]
+pub fn debug_set_terrain_overrides_call_count() -> u64 {
+    SET_TERRAIN_OVERRIDES_CALLS.with(Cell::get)
+}
+
+#[cfg(test)]
 pub fn debug_reset_package_load_counters() {
-    FROM_UDDP_PACKAGE_WITH_OPTIONS_CALLS.store(0, Ordering::Relaxed);
-    SET_TERRAIN_OVERRIDES_CALLS.store(0, Ordering::Relaxed);
+    FROM_UDDP_PACKAGE_WITH_OPTIONS_CALLS.with(|calls| calls.set(0));
+    SET_TERRAIN_OVERRIDES_CALLS.with(|calls| calls.set(0));
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -303,7 +345,7 @@ impl TexLandEcPackage {
         options: AtlasCacheOptions,
     ) -> eyre::Result<Self> {
         #[cfg(any(test, debug_assertions))]
-        FROM_UDDP_PACKAGE_WITH_OPTIONS_CALLS.fetch_add(1, Ordering::Relaxed);
+        note_from_uddp_package_with_options_call();
 
         let page_manifest = read_path_entry_cow(&package, UDDP_PAGE_MANIFEST_ENTRY_VPATH)
             .context("tex_land_ec.uddp missing metadata/pages.bin")?;
@@ -366,7 +408,7 @@ impl TexLandEcPackage {
         overrides: &EcTerrainOverrides,
     ) -> TexLandEcTerrainOverrideLoadSummary {
         #[cfg(any(test, debug_assertions))]
-        SET_TERRAIN_OVERRIDES_CALLS.fetch_add(1, Ordering::Relaxed);
+        note_set_terrain_overrides_call();
 
         let (actions, details, texture_refs) = terrain_override_maps_from_overrides(overrides);
 

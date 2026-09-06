@@ -1,5 +1,7 @@
 use std::path::Path;
-#[cfg(any(test, debug_assertions))]
+#[cfg(test)]
+use std::cell::Cell;
+#[cfg(all(debug_assertions, not(test)))]
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use color_eyre::eyre::{self, Context};
@@ -28,17 +30,41 @@ const HUES_CSV_HEADER: [&str; 8] = [
     "flags",
 ];
 
-#[cfg(any(test, debug_assertions))]
+#[cfg(all(debug_assertions, not(test)))]
 static FROM_UDDP_PACKAGE_CALLS: AtomicU64 = AtomicU64::new(0);
 
-#[cfg(any(test, debug_assertions))]
+// Under `cfg(test)` the counter is per-thread: the test harness runs sibling tests
+// that load packages concurrently, and a shared counter would make absolute-count
+// assertions depend on scheduling. Diagnostic (non-test) builds keep the process-wide
+// atomic, which is read across threads by the application.
+#[cfg(test)]
+thread_local! {
+    static FROM_UDDP_PACKAGE_CALLS: Cell<u64> = const { Cell::new(0) };
+}
+
+#[cfg(all(debug_assertions, not(test)))]
+fn note_from_uddp_package_call() {
+    FROM_UDDP_PACKAGE_CALLS.fetch_add(1, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+fn note_from_uddp_package_call() {
+    FROM_UDDP_PACKAGE_CALLS.with(|calls| calls.set(calls.get() + 1));
+}
+
+#[cfg(all(debug_assertions, not(test)))]
 pub fn debug_from_uddp_package_call_count() -> u64 {
     FROM_UDDP_PACKAGE_CALLS.load(Ordering::Relaxed)
 }
 
 #[cfg(test)]
+pub fn debug_from_uddp_package_call_count() -> u64 {
+    FROM_UDDP_PACKAGE_CALLS.with(Cell::get)
+}
+
+#[cfg(test)]
 pub fn debug_reset_package_load_counters() {
-    FROM_UDDP_PACKAGE_CALLS.store(0, Ordering::Relaxed);
+    FROM_UDDP_PACKAGE_CALLS.with(|calls| calls.set(0));
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,7 +116,7 @@ impl HuesPackage {
 
     pub fn from_uddp_package(package: UddpReader) -> eyre::Result<Self> {
         #[cfg(any(test, debug_assertions))]
-        FROM_UDDP_PACKAGE_CALLS.fetch_add(1, Ordering::Relaxed);
+        note_from_uddp_package_call();
 
         let csv_bytes = read_path_entry_cow(&package, HUES_METADATA_ENTRY_PATH)
             .context("hues.uddp missing metadata/hues.csv")?;
