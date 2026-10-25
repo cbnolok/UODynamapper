@@ -10,6 +10,7 @@ import package::shaders::postprocess::grunge::{apply_texture_visual_grunge, visu
 import package::shaders::postprocess::kr_color_wash::apply_kr_color_wash;
 import package::shaders::postprocess::tonemapping::{tonemap_ec_kr_profile};
 import package::shaders::world::pixel_art_filters::{pixel_art_atlas_uv_iq, pixel_art_uv_iq};
+import package::shaders::world::texture_data::texture_data_rgb;
 
 import package::shaders::world::art::art_ground_bindings::{
     GroundTileInstance, SpriteParams, SceneUniform, LandEffectsUniform, GlobalLightingUniforms,
@@ -112,7 +113,7 @@ fn ec_liquid_perturbed_base_uv(world_xz: vec2<f32>, base_uv: vec2<f32>, payload:
 
     let moving_world_xz = vec2<f32>(world_xz.x, world_xz.y - globals.time * 1.0);
     let normal_uv = ec_slot_world_uv(moving_world_xz, normal);
-    let normal_sample = sample_ec_lookup_slot_rgba(normal_uv, normal);
+    let normal_sample = texture_data_rgb(sample_ec_lookup_slot_rgba(normal_uv, normal).rgb);
     let perturbation = 0.30 * (normal_sample.rg - vec2<f32>(0.5)) * 2.0;
     return fract(base_uv + perturbation);
 }
@@ -179,7 +180,10 @@ fn vertex(vertex: Vertex) -> GroundVertexOutput {
 @fragment
 fn fragment(in: GroundVertexOutput) -> GroundFragmentOutput {
     var out: GroundFragmentOutput;
-    out.depth = in.logical_depth;
+    // This is a horizontal world quad, so depth must vary across its surface.
+    // A sprite's constant priority depth intersects the terrain plane and leaves
+    // triangular gaps along otherwise coplanar EC water tiles.
+    out.depth = in.position.z;
 
     let layer = u32(in.uv_b.x);
     let inst = instances[in.instance_index];

@@ -23,6 +23,7 @@ pub const UDDP_SLOT_MANIFEST_ENTRY_VPATH: &str = "metadata/slots.bin";
 pub const UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH: &str = "metadata/terrain_provenance.bin";
 pub const UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH: &str = "metadata/terrain_overrides.json";
 pub const UDDP_TRANSCODE_ENTRY_VPATH: &str = "metadata/transcode.bin";
+pub const UDDP_LEGACY_TERRAIN_MAP_ENTRY_VPATH: &str = "metadata/legacy_terrain_map.csv";
 
 pub const SLOT_FLAG_PRESENT: u16 = 1 << 0;
 pub const SLOT_FLAG_LAND: u16 = 1 << 1;
@@ -308,6 +309,7 @@ pub struct TexLandEcPackage {
     terrain_override_actions: HashMap<u32, TexLandEcTerrainOverrideActions>,
     terrain_override_details: HashMap<u32, TexLandEcTerrainOverrideDetails>,
     terrain_override_texture_refs: HashMap<u32, Vec<TexLandEcTerrainOverrideTextureRef>>,
+    source_terrain_map: Option<uocf::enhanced::legacy_terrain_map::LegacyTerrainMap>,
     pub transcode: HashMap<u32, u32>,
     page_cache: AtlasPageCache,
 }
@@ -368,7 +370,17 @@ impl TexLandEcPackage {
             eyre::bail!("tex_land_ec metadata headers disagree on atlas packing mode");
         }
 
-        let transcode = read_transcode_from_package(&package).unwrap_or_default();
+        let source_terrain_map = if package.find_by_path_hash(xxh64_virtual_path(UDDP_LEGACY_TERRAIN_MAP_ENTRY_VPATH)).is_some() {
+            let bytes = read_path_entry_cow(&package, UDDP_LEGACY_TERRAIN_MAP_ENTRY_VPATH)?;
+            Some(uocf::enhanced::legacy_terrain_map::LegacyTerrainMap::from_bytes(&bytes)?)
+        } else {
+            None
+        };
+        let mut transcode: HashMap<u32, u32> = source_terrain_map.as_ref()
+            .into_iter().flat_map(|map| map.routes.values())
+            .map(|route| (u32::from(route.legacy_id), route.material_id)).collect();
+        // Explicit embedded/loose KDL remains a policy overlay, never the source census.
+        transcode.extend(read_transcode_from_package(&package).unwrap_or_default());
         let (
             terrain_override_actions,
             terrain_override_details,
@@ -386,6 +398,7 @@ impl TexLandEcPackage {
             terrain_override_actions,
             terrain_override_details,
             terrain_override_texture_refs,
+            source_terrain_map,
             transcode,
             page_cache: AtlasPageCache::new(options),
         })
@@ -393,6 +406,10 @@ impl TexLandEcPackage {
 
     pub fn set_transcode(&mut self, transcode: HashMap<u32, u32>) {
         self.transcode.extend(transcode);
+    }
+
+    pub fn source_terrain_map(&self) -> Option<&uocf::enhanced::legacy_terrain_map::LegacyTerrainMap> {
+        self.source_terrain_map.as_ref()
     }
 
     pub fn set_terrain_overrides_from_kdl(
@@ -548,6 +565,27 @@ impl TexLandEcPackage {
         let decision = self.resolve_material_decision(cc_tile_id);
         let material_id = decision.material_id?;
         self.resolve_material_layer_slot_by_material(material_id, cc_tile_id, layer_index)
+    }
+
+    /// Shader roles `[base, detail, mask, normal]`, distinct from source layer indices.
+    /// Reviewed liquid overrides define their own base/normal pair; their raw
+    /// layers may instead contain ripple, reflection, or environment inputs.
+    pub fn resolve_material_render_layers(
+        &self,
+        cc_tile_id: u32,
+    ) -> [Option<TexLandEcResolvedMaterialLayer>; 4] {
+        let decision = self.resolve_material_decision(cc_tile_id);
+        let reviewed_liquid = decision.override_actions.is_some_and(|actions| actions.has_liquid());
+        std::array::from_fn(|index| {
+            if reviewed_liquid {
+                if index == 1 || index == 2 {
+                    return None;
+                }
+                self.resolve_override_material_layer_slot_by_material(decision.material_id?, index as u32)
+            } else {
+                self.resolve_material_layer_slot(cc_tile_id, index as u32)
+            }
+        })
     }
 
     fn resolve_material_layer_slot_by_material(
@@ -1567,6 +1605,10 @@ mod tests {
     }
 
     fn test_package() -> TexLandEcPackage {
+        test_package_with_source_map(None)
+    }
+
+    fn test_package_with_source_map(source_csv: Option<&[u8]>) -> TexLandEcPackage {
         let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
         add_metadata_file(&mut builder, UDDP_PAGE_MANIFEST_ENTRY_VPATH, &page_manifest_bytes());
         add_metadata_file(&mut builder, UDDP_SLOT_MANIFEST_ENTRY_VPATH, &slot_manifest_bytes());
@@ -1580,9 +1622,28 @@ mod tests {
             UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH,
             &terrain_overrides_json(),
         );
+        if let Some(bytes) = source_csv {
+            add_metadata_file(&mut builder, UDDP_LEGACY_TERRAIN_MAP_ENTRY_VPATH, bytes);
+            add_metadata_file(&mut builder, UDDP_TRANSCODE_ENTRY_VPATH, b"t 52 203\n");
+        }
         let bytes = builder.build().expect("build test package");
         TexLandEcPackage::from_uddp_package(UddpReader::open(bytes).expect("open package"))
             .expect("load test package")
+    }
+
+    #[test]
+    fn source_terrain_routes_roundtrip_without_losing_subtypes_or_overrides() {
+        let source_csv = b"legacyId,newId,newSubType\r\n203,99,2\r\n500,52,1\r\n";
+        let mut package = test_package_with_source_map(Some(source_csv));
+        assert_eq!(package.transcode[&203], 52, "explicit embedded route overrides source policy");
+        assert_eq!(package.resolve_runtime_slot_id(500), Some(100));
+        let source = package.source_terrain_map().unwrap();
+        assert_eq!(source.source_csv, source_csv);
+        assert_eq!(source.routes[&203].material_id, 99);
+        assert_eq!(source.routes[&203].subtype, 2);
+        package.set_transcode(HashMap::from([(500, 99)]));
+        assert_eq!(package.transcode[&500], 99);
+        assert_eq!(package.source_terrain_map().unwrap().routes[&500].material_id, 52);
     }
 
     #[test]
@@ -1723,6 +1784,35 @@ terrain 52 {
         assert_eq!(package.resolve_runtime_slot_id(2000), Some(100));
         assert_eq!(package.resolve_runtime_slot_id(2001), Some(100));
         assert_eq!(package.resolve_runtime_slot_id(77), Some(100));
+    }
+
+    #[test]
+    fn reviewed_liquid_render_layers_do_not_reuse_raw_reflection_as_solid_blend() {
+        let package = test_package();
+        assert!(package.resolve_material_layer_slot(77, 1).is_some());
+        let [base, detail, mask, normal] = package.resolve_material_render_layers(77);
+        assert_eq!(base.unwrap().texture_id, 2000510);
+        assert!(detail.is_none());
+        assert!(mask.is_none());
+        assert!(normal.is_none());
+    }
+
+    #[test]
+    fn reviewed_liquid_render_layers_preserve_explicit_normal_and_repetition() {
+        let mut package = test_package();
+        let overrides = EcTerrainOverrides::parse(
+            "liquid.kdl",
+            "terrain 52 {\n liquid\n layer \"t0\" tex=2000510 stretch=7.0\n layer \"n\" tex=2000520 stretch=12.0\n}\n",
+        ).unwrap();
+        package.set_terrain_overrides(&overrides);
+        let [base, detail, mask, normal] = package.resolve_material_render_layers(77);
+        assert_eq!(base.unwrap().texture_repetition, 7.0);
+        assert!(detail.is_none());
+        assert!(mask.is_none());
+        let normal = normal.unwrap();
+        assert_eq!(normal.texture_id, 2000520);
+        assert_eq!(normal.runtime_slot_id, Some(100));
+        assert_eq!(normal.texture_repetition, 12.0);
     }
 
     #[test]

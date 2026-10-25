@@ -58,6 +58,9 @@ fn main() -> eyre::Result<()> {
 
         let tex_art_ec_direct = tex_art_ec.present_slot(tile_id);
         print_tex_art_ec_slot("tex_art_ec.present_slot(tile_id)", tex_art_ec_direct);
+        let primary = tilemeta.item_texture_refs(tile_id).iter()
+            .find(|texture_ref| texture_ref.is_world_art() && texture_ref.is_primary_selected());
+        println!("  tileart_packed_primary={primary:?}");
 
         let tex_land_ec_direct = tex_land_ec.present_slot(tile_id);
         print_tex_land_ec_slot("tex_land_ec.present_slot(tile_id)", tex_land_ec_direct);
@@ -72,7 +75,18 @@ fn main() -> eyre::Result<()> {
             print_tex_land_ec_slot("  tex_land_ec.present_slot(resolved_runtime_slot)", resolved_slot);
         }
 
-        let renderer_decision = if item.is_surface_like() {
+        let renderer_decision = if tex_art_ec_direct.is_some_and(|slot| slot.is_land()) {
+            use udd_assets::tilemeta::EcMaterialStableRole;
+            if primary.is_some_and(|texture_ref| matches!(texture_ref.stable_role(),
+                EcMaterialStableRole::AlphaMask | EcMaterialStableRole::GenericMask
+                    | EcMaterialStableRole::Noise | EcMaterialStableRole::NormalLike
+                    | EcMaterialStableRole::ImageSupport | EcMaterialStableRole::EffectOnlyMetadata
+            )) {
+                "TileartSupport(visible terrain material resolution required)".to_string()
+            } else {
+                format!("EcSurface(art_id={tile_id}, owner=tileart, geometry=ground_quad)")
+            }
+        } else if item.is_surface_like() {
             match tex_land_ec_from_cc {
                 Some(runtime_slot_id) => format!("TexLandEcArt(runtime_slot_id={runtime_slot_id})"),
                 None => "TexLandEcArt(unresolved)".to_string(),

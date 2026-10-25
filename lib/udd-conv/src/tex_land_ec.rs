@@ -62,7 +62,7 @@ use udd_assets::tex_land_ec::{
     TERRAIN_PRIMARY_REASON_SUPPORT_REPETITION_FALLBACK, TERRAIN_PRIMARY_REASON_UNKNOWN,
     UDDP_PAGE_MANIFEST_ENTRY_VPATH, UDDP_SLOT_MANIFEST_ENTRY_VPATH,
     UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH, UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH,
-    UDDP_TRANSCODE_ENTRY_VPATH,
+    UDDP_TRANSCODE_ENTRY_VPATH, UDDP_LEGACY_TERRAIN_MAP_ENTRY_VPATH,
 };
 use udd_assets::ec_terrain_overrides::{
     EcTerrainOverrideEntry, EcTerrainOverrides, TerrainIgnoreOverride, TerrainLayerOverride,
@@ -609,6 +609,22 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_prog
             path_hash64: None,
             id: None,
             data: &transcode_bytes,
+        })?;
+    }
+
+    if let Some(game_data_path) = find_first_existing_file(source_dirs, &["GameData.uop"]) {
+        let source_map = uocf::enhanced::legacy_terrain_map::LegacyTerrainMap::load(&game_data_path)
+            .wrap_err_with(|| format!("load original EC terrain routing from {}", game_data_path.display()))?;
+        info!("Preserving {} original EC terrain routes and their subtypes from GameData.uop", source_map.routes.len());
+        package.add_file(AddFileRequest {
+            data_type: DataType::Metadata as u8,
+            compression: CompressionFlag::ZstdNoDict,
+            width: 0,
+            height: 0,
+            virtual_path: Some(UDDP_LEGACY_TERRAIN_MAP_ENTRY_VPATH),
+            path_hash64: None,
+            id: None,
+            data: &source_map.source_csv,
         })?;
     }
 

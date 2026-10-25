@@ -203,9 +203,14 @@ fn log_tex_land_ec_coverage(lg: &impl Fn(&str), package: &udd_assets::tex_land_e
     let slot_table_len = package.slots().len();
 
     lg(&format!(
-        "Enhanced land package coverage: {populated_slot_count} populated land ids from {alias_ref_count} TerrainDefinition alias refs (slot table span: 0..{}). Unmapped land ids fall back to classic texmaps.mul.",
+        "Enhanced land package coverage: {populated_slot_count} populated slots from {alias_ref_count} TerrainDefinition alias refs (slot table span: 0..{}). Unmapped EC land ids remain explicitly black.",
         slot_table_len.saturating_sub(1),
     ));
+    if let Some(source_map) = package.source_terrain_map() {
+        lg(&format!("Loaded {} original GameData.uop terrain routes with preserved subtypes.", source_map.routes.len()));
+    } else {
+        lg("No original GameData.uop terrain routes are embedded; rebuild EC land with the current converter to recover source terrain routes.");
+    }
 }
 
 pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {

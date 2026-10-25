@@ -860,10 +860,7 @@ fn create_land_shader_images(
                 }
             }
             LandShaderAtlasSource::Ec(package) => {
-                let layer0 = package.resolve_material_layer_slot(tile_id, 0);
-                let layer1 = package.resolve_material_layer_slot(tile_id, 1);
-                let layer2 = package.resolve_material_layer_slot(tile_id, 2);
-                let layer3 = package.resolve_material_layer_slot(tile_id, 3);
+                let [layer0, layer1, layer2, layer3] = package.resolve_material_render_layers(tile_id);
                 let has_base_layer = layer0
                     .as_ref()
                     .and_then(|layer| layer.runtime_slot_id)
@@ -1691,6 +1688,10 @@ mod tests {
             Shader::from_wesl(
                 include_str!("../../../assets/shaders/world/pixel_art_filters.wesl"),
                 "shaders/world/pixel_art_filters.wesl",
+            ),
+            Shader::from_wesl(
+                include_str!("../../../assets/shaders/world/texture_data.wesl"),
+                "shaders/world/texture_data.wesl",
             ),
             Shader::from_wesl(
                 include_str!("../../../assets/shaders/world/land/sampling.wesl"),

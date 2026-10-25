@@ -31,6 +31,7 @@
 import package::shaders::world::common_bindings::{LandEffectsUniform};
 import package::shaders::world::land::land_bindings::{TileUniform, tex_small, tex_big, land_page_atlas, land_page_lookup, tex_small_sampler, effects, ec_aux_atlas, ec_aux_lookup, classic_land_art_atlas, classic_land_art_lookup};
 import package::shaders::world::pixel_art_filters::pixel_art_uv_iq;
+import package::shaders::world::texture_data::texture_data_rgb;
 
 // Width in pixels of one Classic Client isometric tile — the world-unit
 // denominator shared by both CC and EC coordinate systems.
@@ -121,7 +122,7 @@ fn sample_ec_lookup_slot(uv: vec2<f32>, slot: LandLookupSlot) -> vec3<f32> {
 }
 
 fn ec_material_mask_value(mask_sample: vec4<f32>) -> f32 {
-  let rgb_luma = dot(mask_sample.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+  let rgb_luma = dot(texture_data_rgb(mask_sample.rgb), vec3<f32>(0.2126, 0.7152, 0.0722));
   let alpha_has_signal = abs(mask_sample.a - 1.0) > 0.001;
   return clamp(select(rgb_luma, mask_sample.a, alpha_has_signal), 0.0, 1.0);
 }
@@ -223,7 +224,7 @@ fn sample_ec_ripple_normal(world_xz: vec2<f32>, ripple_layer: u32, ripple_stretc
         s_b = textureLoad(ec_aux_atlas, iuv_b, i32(ripple_layer), 0);
     }
     // Return the averaged RG channels remapped from [0,1] to [-0.5, 0.5].
-    return (s_a.rg + s_b.rg) * 0.5 - vec2<f32>(0.5);
+    return (texture_data_rgb(s_a.rgb).rg + texture_data_rgb(s_b.rgb).rg) * 0.5 - vec2<f32>(0.5);
 }
 
 fn sample_ec_aux_atlas_layer(world_xz: vec2<f32>, layer: u32, stretch: f32) -> vec4<f32> {
@@ -245,6 +246,13 @@ fn apply_ec_aux_two_base_blend(
     world_xz: vec2<f32>,
     tile: TileUniform,
 ) -> vec3<f32> {
+    // A reviewed liquid uses its own base/normal pair. Solid materials already
+    // blended from their packed detail/mask roles must not be blended twice.
+    if ((tile.terrain_flags & 0x4u) != 0u
+        || (read_ec_lookup_slot(tile.texture_payload, LAND_PAGE_LOOKUP_ROLE_DETAIL).present
+            && read_ec_lookup_slot(tile.texture_payload, LAND_PAGE_LOOKUP_ROLE_MASK).present)) {
+        return base_albedo;
+    }
     let aux = read_aux_lookup_slot(tile.texture_payload);
     if (aux.secondary_layer == 0u) {
         return base_albedo;
@@ -301,7 +309,7 @@ fn sample_ec_material_normal_world(world_xz: vec2<f32>, tile: TileUniform, time_
     animate_liquid,
   );
   let normal_uv = ec_slot_world_uv(normal_world_xz, normal);
-  let normal_sample = sample_ec_lookup_slot_rgba(normal_uv, normal).rgb;
+  let normal_sample = texture_data_rgb(sample_ec_lookup_slot_rgba(normal_uv, normal).rgb);
   if (normal_sample.b < 0.35) {
     return vec4<f32>(0.0, 1.0, 0.0, 0.0);
   }
@@ -326,7 +334,7 @@ fn ec_liquid_perturbed_base_uv(world_xz: vec2<f32>, base_uv: vec2<f32>, tile: Ti
   let wave_height = select(0.24, 0.30, follow_center);
   let moving_world_xz = vec2<f32>(world_xz.x, world_xz.y - time_seconds * wind_force * 10.0);
   let normal_uv = ec_slot_world_uv(moving_world_xz, normal);
-  let normal_sample = sample_ec_lookup_slot_rgba(normal_uv, normal);
+  let normal_sample = texture_data_rgb(sample_ec_lookup_slot_rgba(normal_uv, normal).rgb);
   let perturbation = wave_height * (normal_sample.rg - vec2<f32>(0.5)) * 2.0;
   return fract(base_uv + perturbation);
 }

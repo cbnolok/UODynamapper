@@ -17,6 +17,32 @@ use udd_container::CompressionFlag;
 
 fn ignore_asset_progress(_: udd_conv::package_progress::AssetTaskProgress) {}
 
+#[test]
+fn conversion_embeds_original_game_data_routes_and_subtypes() {
+    use uocf::enhanced::terrain_definition::TerrainDefinitionPackage;
+    use uocf::enhanced::legacy_terrain_map::UOP_ENTRY_PATH;
+    use uocf::uop_container::package::UopPackage;
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let root = std::env::temp_dir().join(format!("ec_terrain_routes_{stamp}"));
+    std::fs::create_dir_all(&root).unwrap();
+    let bytes = b"legacyId,newId,newSubType\r\n203,4,0\r\n15853,69,1\r\n";
+    let mut source = UopPackage::new_default();
+    source.add_file_from_memory(bytes, UOP_ENTRY_PATH, uocf::uop_container::file::CompressionFlag::Zlib).unwrap();
+    source.finalize_and_save(&root.join("GameData.uop")).unwrap();
+    let output = root.join("tex_land_ec.uddp");
+    convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources(
+        &[root.clone()], &root.join("TerrainDefinition.uop"), None, None,
+        &TerrainDefinitionPackage { entries: Vec::new() }, None, None,
+        &output, &TexLandEcAtlasOptions::default(),
+    ).unwrap();
+    let package = TexLandEcPackage::load(&output).unwrap();
+    assert_eq!(package.transcode[&203], 4);
+    let source_map = package.source_terrain_map().unwrap();
+    assert_eq!(source_map.routes[&15853].subtype, 1);
+    assert_eq!(source_map.source_csv, bytes);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 pub fn rgba_tile(art_id: u32, kind: ArtTileKind, width: u16, height: u16) -> DecodedArtTile {
     DecodedArtTile {
         art_id,

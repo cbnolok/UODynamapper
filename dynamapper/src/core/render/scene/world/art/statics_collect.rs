@@ -30,7 +30,9 @@ const CC_WORLD_Y_PER_PIXEL: f32 = STATIC_WORLD_Y_PER_XZ_PIXEL * CC_WORLD_XZ_PER_
 const EC_WORLD_XZ_PER_PIXEL: f32 = ISO_TILE_SCREEN_DIAGONAL_WORLD_UNITS / EC_TILE_PIXEL_WIDTH;
 const EC_WORLD_Y_PER_PIXEL: f32 = STATIC_WORLD_Y_PER_XZ_PIXEL * EC_WORLD_XZ_PER_PIXEL;
 const STATIC_ART_Y_BIAS: f32 = 0.002;
-const GROUND_ART_Y_BIAS: f32 = 0.0;
+// Ground quads use rasterized depth and need the same small geometric separation
+// from terrain as flat sprite quads to avoid coplanar depth fighting.
+const GROUND_ART_Y_BIAS: f32 = STATIC_ART_Y_BIAS;
 const EC_STATIC_TILE_TRANSLATION_X: f32 = 0.5;
 const EC_STATIC_TILE_TRANSLATION_Z: f32 = 1.5;
 // CC billboard anchor: feet-center at the tile's near (south) vertex = cell corner (X+1, Z+1).
@@ -738,7 +740,8 @@ fn resolve_static_visual_kind(
         ClientTextureSource::Ec => resolve_ec_static_visual_kind(
             tile_graphic,
             tex_art_ec.and_then(|package| package.present_slot(tile_graphic as u32))
-                .is_some_and(|slot| slot.is_land()),
+                .is_some_and(|slot| slot.is_land())
+                && tileart_surface_has_visible_primary(tilemeta_package.map_or(&[], |package| package.item_texture_refs(tile_graphic as u32))),
             resolve_surface_like_tex_land_ec_slot_id(
                 tile_graphic as u32,
                 tilemeta_package,
@@ -771,7 +774,8 @@ fn resolve_static_visual_kind_cached(
         ClientTextureSource::Ec => resolve_ec_static_visual_kind(
             tile_graphic,
             tex_art_ec.and_then(|package| package.present_slot(tile_graphic as u32))
-                .is_some_and(|slot| slot.is_land()),
+                .is_some_and(|slot| slot.is_land())
+                && tileart_surface_has_visible_primary(tilemeta_package.map_or(&[], |package| package.item_texture_refs(tile_graphic as u32))),
             surface_resolution_cache.resolve_surface_like_tex_land_ec_slot_id(
                 art_source,
                 tile_graphic as u32,
@@ -781,6 +785,24 @@ fn resolve_static_visual_kind_cached(
             ),
         ),
     }
+}
+
+fn tileart_surface_has_visible_primary(
+    refs: &[udd_assets::tilemeta::TileMetaItemTextureRef],
+) -> bool {
+    use udd_assets::tilemeta::EcMaterialStableRole;
+    // Some packed land slots contain the first source support image, not albedo.
+    // Water's primary-selected alpha/normal input must use its visible material
+    // route instead of painting that support image onto a tileart ground quad.
+    // The packer uses ArtData.ec_texture, preserved as PRIMARY_SELECTED. The
+    // runtime's role-aware main selector can choose a different source image;
+    // it cannot change the pixels already stored in the tileart atlas.
+    !refs.iter().find(|texture_ref| texture_ref.is_world_art() && texture_ref.is_primary_selected())
+        .is_some_and(|texture_ref| matches!(texture_ref.stable_role(),
+        EcMaterialStableRole::AlphaMask | EcMaterialStableRole::GenericMask
+            | EcMaterialStableRole::Noise | EcMaterialStableRole::NormalLike
+            | EcMaterialStableRole::ImageSupport | EcMaterialStableRole::EffectOnlyMetadata
+    ))
 }
 
 fn resolve_ec_static_visual_kind(
@@ -2253,7 +2275,8 @@ fn resolve_art_static_sprite(
 
             let texture_stretch = if matches!(visual_kind, StaticVisualKind::EcSurface { .. }) {
                 resources.tilemeta_package()
-                    .and_then(|package| package.main_ec_texture_ref(art_id))
+                    .and_then(|package| package.item_texture_refs(art_id).iter()
+                        .find(|texture_ref| texture_ref.is_world_art() && texture_ref.is_primary_selected()))
                     // Ripple-like inputs on small authored stains are not tiled albedo.
                     .filter(|texture_ref| texture_ref.speculative_role()
                         != udd_assets::tilemeta::EcMaterialSpeculativeRole::LiquidRipple)
@@ -3041,6 +3064,24 @@ mod tests {
         let visual_kind = resolve_ec_static_visual_kind(196, true, Some(resolution));
 
         assert_eq!(visual_kind, StaticVisualKind::EcSurface { art_id: 196 });
+    }
+
+    #[test]
+    fn tileart_water_support_slot_uses_visible_terrain_material() {
+        let primary = texture_ref_with_role(
+            1000013,
+            udd_assets::tilemeta::EcMaterialStableRole::AlphaMask,
+            udd_assets::tilemeta::TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
+        );
+        let resolution = test_surface_like_resolution();
+        assert_eq!(
+            resolve_ec_static_visual_kind(6038, tileart_surface_has_visible_primary(&[primary]), Some(resolution)),
+            StaticVisualKind::TexLandEc { resolution },
+        );
+        let base = texture_ref_with_role(200, udd_assets::tilemeta::EcMaterialStableRole::Base, 0);
+        assert!(!tileart_surface_has_visible_primary(&[primary, base]));
+        assert!(tileart_surface_has_visible_primary(&[base]));
+        assert!(tileart_surface_has_visible_primary(&[]));
     }
 
     #[test]

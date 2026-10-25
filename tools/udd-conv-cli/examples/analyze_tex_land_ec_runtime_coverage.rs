@@ -15,7 +15,7 @@ fn main() -> eyre::Result<()> {
     let mut args = env::args_os().skip(1);
     let package_path = PathBuf::from(args.next().ok_or_else(|| {
         eyre::eyre!(
-            "usage: analyze_tex_land_ec_runtime_coverage <tex_land_ec.uddp> <ecdir> [map_index] [top_n]"
+            "usage: analyze_tex_land_ec_runtime_coverage <tex_land_ec.uddp> <ecdir> [map_index] [top_n] [routing.kdl]"
         )
     })?);
     let ecdir = PathBuf::from(
@@ -25,8 +25,25 @@ fn main() -> eyre::Result<()> {
     let map_index = parse_optional_u32(args.next(), 0, "map_index")?;
     let top_n = parse_optional_usize(args.next(), DEFAULT_TOP_N, "top_n")?;
 
-    let package = TexLandEcPackage::load(&package_path)
+    let mut package = TexLandEcPackage::load(&package_path)
         .wrap_err_with(|| format!("load {}", package_path.display()))?;
+    if let Some(path) = args.next() {
+        let routing = udd_assets::eckr_terrain_kdl::EckrTerrainRouting::load(PathBuf::from(path))?;
+        package.set_transcode(routing.to_map());
+    }
+    if let Some(source) = package.source_terrain_map() {
+        println!("original_game_data_routes={}", source.routes.len());
+        let conflicts = source.routes.values().filter(|route| {
+            package.transcode.get(&u32::from(route.legacy_id))
+                .is_some_and(|material| *material != route.material_id)
+        }).collect::<Vec<_>>();
+        println!("explicit_route_overrides={}", conflicts.len());
+        for route in conflicts.iter().take(top_n) {
+            println!("  route_override land={} source_material={} source_subtype={} effective_material={}",
+                route.legacy_id, route.material_id, route.subtype,
+                package.transcode[&u32::from(route.legacy_id)]);
+        }
+    }
     let facet_path = facet_uop_path(&ecdir, map_index);
     let facet_package =
         UopPackage::load(&facet_path).wrap_err_with(|| format!("load {}", facet_path.display()))?;
@@ -110,7 +127,7 @@ fn process_decoded_blocks<'a>(
         for cell in block_cells {
             let terrain_id = cell.id as u32;
             *total_cells += 1;
-            if package.resolve_runtime_slot_id(terrain_id).is_some() {
+            if package.resolve_effective_runtime_slot_id(terrain_id).is_some() {
                 *resolved_cells += 1;
                 *resolved_by_id.entry(terrain_id).or_default() += 1;
                 if package.present_slot(terrain_id).is_some() {

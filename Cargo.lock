@@ -7200,6 +7200,7 @@ dependencies = [
  "bytemuck",
  "byteorder",
  "color-eyre",
+ "csv",
  "dds",
  "ddsfile",
  "derive-new",
