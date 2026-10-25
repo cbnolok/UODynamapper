@@ -66,6 +66,8 @@ than duplicating their formats in Python. Run from the repository root:
 cargo run -p uocf-devtools-cli --example ec_research -- \
   --client /path/to/enhanced-client materials 5 10 49 70
 cargo run -p uocf-devtools-cli --example ec_research -- \
+  --client /path/to/enhanced-client items 6038 6057
+cargo run -p uocf-devtools-cli --example ec_research -- \
   --client /path/to/enhanced-client images --output /tmp/ec-source-images \
   1000013 1000017 2000051 6038 2100014
 ```
@@ -75,3 +77,7 @@ source order, repetition, raw sampler fields, `Technique` and `Tweaks`. Exported
 DDS files retain the original payload; PNGs use the same decoder as conversion.
 Compare independently decoded DDSs when investigating a possible decoder defect.
 Always supply the matching client bundle; standard and FP assets can differ.
+The `items` command also prints the original per-block shader parameters that
+the processed `ArtData` and current `tilemeta` texture-ref table do not retain.
+Use those source values when reconstructing item-specific composition; terrain
+Technique/Tweaks are not substitutes for an item's parameters.

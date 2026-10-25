@@ -197,3 +197,33 @@ or other surfaces underneath. It is not established as blanket water coverage.
 Terrain has an additional blend input and requires its own composition trace
 before sharing this implementation blindly. Shoreline geometry/transition
 coverage and fourth-image packing/UV windows remain separate unresolved work.
+
+## Item composition information lost before runtime
+
+`TileArtEntry::process` retains processed image refs, but `ArtData` has no field
+for each block's shader name, Technique or Tweaks. `udd-conv::tilemeta` flattens
+those processed image refs into `TileMetaItemTextureRef`; the original per-block
+shader parameters consequently never reach `TileMetaPackage`. Source terrain
+material metadata does not restore item-specific parameters.
+
+The reusable `ec_research items 6038 6057` command reads the raw source blocks:
+both block-0 shaders are `UOWaterShader`, both have all-zero Technique/Tweaks,
+and both share source images 1000013/2000051/1000017. Their fourth images differ:
+6038 uses image 6038 and 6057 uses 2100014. The first three refs have raw `unk7=1`,
+while the fourth has `unk7=0`; retain that distinction while reconstructing UVs.
+Each item also has separate legacy and enhanced sprite blocks; a matching numeric
+image ID in those blocks is a different physical source.
+
+`resolve_surface_like_tex_land_ec_slot_id` currently joins both items to the
+same terrain payload using only their first three image identities. The resulting
+`GroundTileInstance.material_payload` cannot distinguish their fourth inputs.
+`create_aux_atlas_images` builds a terrain-oriented lookup from `TerrainMetaPackage`;
+the art ground material does not bind that auxiliary atlas. Having an image in
+`tex_aux_ec` is therefore insufficient to render its item-specific composition.
+
+A complete repair needs original item material parameters retained through
+conversion, a per-item fourth-source lookup with the correct physical package
+and UV domain, and the original RGB/alpha operation in the ground path. Validate
+the underlying terrain together with that alpha coverage. Do not replace these
+missing inputs with filename-only role guesses or reuse the terrain's Technique
+as the item's Technique.

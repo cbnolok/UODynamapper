@@ -19,6 +19,11 @@ struct Args {
 enum Command {
     /// Print source material layers, Technique and Tweaks. With no IDs, list liquids.
     Materials { ids: Vec<u32> },
+    /// Print original item shader blocks, parameters, sampler refs and art windows.
+    Items {
+        #[arg(required = true)]
+        ids: Vec<u32>,
+    },
     /// Export original DDS payloads and decoded PNGs; refuses existing outputs.
     Images {
         #[arg(long)]
@@ -48,6 +53,32 @@ fn main() -> Result<()> {
                     println!("  source={index} id={:?} path={:?} repetition={} fields={}/{}/{}",
                         layer.texture_id, layer.path, layer.texture_repetition,
                         layer.unk4, layer.unk6, layer.unk7);
+                }
+            }
+        }
+        Command::Items { ids } => {
+            let dictionary = uocf::enhanced::string_dictionary::UoStringDictionary::load(
+                &args.client.join("string_dictionary.uop"),
+            )?;
+            let package = uocf::uop_container::package::UopPackage::load(args.client.join("tileart.uop"))?;
+            for file in package.iter_files() {
+                let entry = uocf::enhanced::tileart::TileArtEntry::parse_raw(file)?;
+                if !ids.contains(&entry.tile_id) { continue; }
+                let art = entry.process(&dictionary);
+                println!("item={} type={:?} flags={:?} ec_window={:?}",
+                    entry.tile_id, art.tile_type, art.flags, art.ec_texture);
+                for (index, block) in entry.texture_vector.iter().enumerate() {
+                    if block.has_texture == 0 { continue; }
+                    let shader = block.type_string_off.checked_sub(1)
+                        .and_then(|offset| dictionary.get_string(offset as usize));
+                    println!("  block={index} shader={shader:?} Technique={:?} Tweaks={:?}",
+                        block.unk8_vector, block.unk9_vector);
+                }
+                for reference in art.texture_items.iter().flatten() {
+                    println!("  block={} source={} sampler={} id={} path={:?} repetition={} fields={}/{}",
+                        reference.block_index, reference.item_index, reference.unk6,
+                        reference.id, reference.raw_path, reference.texture_stretch,
+                        reference.unk4, reference.unk7);
                 }
             }
         }
