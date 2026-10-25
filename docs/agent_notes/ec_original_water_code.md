@@ -85,10 +85,10 @@ and [texture-coordinate generation](https://learn.microsoft.com/en-us/windows/wi
 
 The source roles, bindings, fallback branch, and coordinate-generation state are
 observed in code. They do not by themselves prove a complete modern shader
-reimplementation. Exact texture transforms/addressing, bump texture conversion,
-clock equivalence, fourth-layer composition, and final original-client reflection
-appearance still require separate verification. In particular, the renderer's
-current reflection-vector-to-2D mapping is a reconstruction. Source Technique[0]
+reimplementation. The texture transform and unsigned sampling follow-up below
+corrects the former reflection-vector-to-2D guess. Exact camera/clock equivalence,
+fourth-layer composition, and final original-client reflection appearance still
+require separate verification. Source Technique[0]
 selects explicit coordinates for lava/acid (1/2), or reflection coordinates for
 water (0). Tweaks[0..2] provides the bump UV scroll velocity; material 5 contains
 `[-0.01, 0.0]`, rather than a universal guessed water speed. The shared runtime
@@ -117,3 +117,83 @@ identities match the original graph. A numeric item/land-ID collision is not
 evidence of shared material ownership. Both geometry owners then call the same
 liquid sampling/shading path, avoiding a visible boundary caused solely by
 different land and static renderers.
+
+## Texture transforms and unsigned bump sampling
+
+The item material loader creates each extra source's transform at `0x45e527`–
+`0x45e59f`. It sets zero translation/rotation, scale `1 / texture_repetition`,
+pivot `(0.5, 0.5)` and transform mode 2. The first source has the same setup at
+`0x45dfe2`–`0x45e099`. The texture binder calls the transform builder at
+`0x692760`, then copies its affine rows through `0x58e0c0` into a D3D texture
+matrix with `D3DTTFF_COUNT2`. The mode-2 branch starts at `0x69279a`.
+For zero rotation, the resulting two coordinates are:
+
+```text
+u_out = u_in / repetition + translation_x
+v_out = 1 - v_in / repetition - translation_y
+```
+
+There is no `reflection.xy * 0.5 + 0.5` remapping in this chain. The incoming
+reflection vector must reach the authored affine transform directly; explicit
+lava/acid coordinates use their own repetition through the same transform.
+The bump source's scroll changes translation before this vertical reversal.
+The source-2 draw path forces the engine address-mode bits to 3 at `0x59c28d`;
+`0x58dfc0` passes those bits to `0x74d4e0`. This identifies the addressing path,
+but the runtime-initialized enum lookup at `0xe16690` is not a static proof of
+each final sampler value. Current shader sampling repeats the source image.
+
+The original images 1000013 and 1000017 are unsigned DXT1 DDSs, not signed DuDv
+formats; image 1000013's decoded red/green ranges are 107–181 and 109–178.
+The inspected load/bind path supplies those texture resources without a signed
+format request or a normal-decoding operation. With identity `BUMPENVMAT`, the
+reimplementation therefore adds sampled unsigned RG directly. A normal-style
+`RG * 2 - 1` expansion changes that displacement range. The earlier shader
+incorrectly applied this expansion to all materials.
+
+Microsoft's [bump formulas](https://learn.microsoft.com/en-us/windows/win32/direct3d9/bump-mapping-formulas)
+specify that the sampled deltas pass through the matrix into the next stage;
+the [signed bump pixel formats](https://learn.microsoft.com/en-us/windows/win32/direct3d9/bump-map-pixel-formats)
+describe different resource formats. As a secondary API-semantics cross-check,
+DXVK's [fixed-function fragment implementation](https://github.com/doitsujin/dxvk/blob/master/src/d3d9/shaders/d3d9_fixed_function_frag.glsl)
+adds the sampled previous-stage XY through that matrix, without a blanket
+unsigned-to-signed expansion. Its [vertex implementation](https://github.com/doitsujin/dxvk/blob/master/src/d3d9/shaders/d3d9_fixed_function_vert.vert)
+also distinguishes raw reflection-vector generation from sphere-map remapping.
+These corroborate API behavior; they do not supply EC material selection or
+replace the original executable/asset evidence.
+
+The shared shader now applies this transform and preserves unsigned bump samples
+when original material metadata is present. Reviewed materials without that
+source graph retain their existing normal decoding. The bridge capture recovers
+bright environment-image structure that was absent from the earlier output;
+this is a visible improvement, not a claim of pixel-exact reflection parity.
+
+## Fourth-source operations traced, not yet implemented
+
+The item draw branches on `Technique[1]` at `0x59c479`:
+
+| Technique[1] | Fourth-stage RGB | Fourth-stage alpha | Code |
+| --- | --- | --- | --- |
+| 1 | current × texture | texture alpha | `0x59c59f`–`0x59c623` |
+| 2 | texture × texture alpha + current × (1 − texture alpha) | current alpha | `0x59c506`–`0x59c58f` |
+| other | current + texture | texture alpha | `0x59c489`–`0x59c623` |
+
+The default also sets property-flags bit 0 and writes a time-dependent value to
+the alpha property's byte at `+0x1a`, at `0x59c48f`–`0x59c4e3`. That write is
+separate from texture-stage alpha; its property semantics and timing still need
+to be traced rather than assumed to multiply the sampled color.
+Tweaks[2..4] supplies fourth-source translation, through `0x59c44f`–`0x59c474`.
+The low-capability fallback has corresponding branches starting at `0x59c8ec`.
+
+The state setter at `0x74c260` preserves ECX/EDX, which matters when following
+the final LEAs: `0x59c609` sets ALPHAOP (4) to SELECTARG1 (2), then `0x59c61c`–
+`0x59c623` sets ALPHAARG1 (5) to TEXTURE (2). Do not infer alpha behavior from
+the RGB operation or from untyped decompiler output.
+
+Item 6038 has all-zero Technique/Tweaks, so its sparse-alpha fourth image is
+added to RGB and supplies the static layer's alpha. This refines the earlier
+unverified concern that simply masking it would create holes: alpha coverage is
+indeed authored for this item path, but compositing also depends on the terrain
+or other surfaces underneath. It is not established as blanket water coverage.
+Terrain has an additional blend input and requires its own composition trace
+before sharing this implementation blindly. Shoreline geometry/transition
+coverage and fourth-image packing/UV windows remain separate unresolved work.

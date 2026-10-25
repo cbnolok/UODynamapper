@@ -34,7 +34,14 @@ fn ec_liquid_texel(atlas: texture_2d_array<f32>, atlas_sampler: sampler,
 
 fn ec_liquid_reflection_uv(view_position: vec3<f32>, view_normal: vec3<f32>) -> vec2<f32> {
     let direction = reflect(normalize(view_position), normalize(view_normal));
-    return direction.xy * 0.5 + vec2<f32>(0.5);
+    return direction.xy;
+}
+
+fn ec_liquid_texture_uv(uv: vec2<f32>, stretch: f32, scroll: vec2<f32>) -> vec2<f32> {
+    // The source loader installs NiTextureTransform mode 2, scale 1/repetition.
+    // With zero rotation its matrix maps (u,v) to (u/stretch+tx,1-v/stretch-ty).
+    let transformed = uv / stretch + scroll;
+    return vec2<f32>(transformed.x, 1.0 - transformed.y);
 }
 
 fn sample_ec_liquid(atlas: texture_2d_array<f32>, lookup: texture_2d<u32>, atlas_sampler: sampler,
@@ -50,12 +57,13 @@ fn sample_ec_liquid(atlas: texture_2d_array<f32>, lookup: texture_2d<u32>, atlas
     var uv = world_xz / fallback.stretch;
     if (animated.present) {
         surface = animated;
-        uv = reflection_uv;
+        var coordinates = reflection_uv;
         // Techniques 1/2 use explicit coordinates (lava/acid), whereas the
         // original water's Technique 0 generates a camera reflection vector.
         if (params.x == 1u || params.x == 2u) {
-            uv = world_xz / animated.stretch;
+            coordinates = world_xz;
         }
+        uv = ec_liquid_texture_uv(coordinates, animated.stretch, vec2<f32>(0.0));
     }
     if (!surface.present) { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }
     if (normal.present) {
@@ -63,8 +71,18 @@ fn sample_ec_liquid(atlas: texture_2d_array<f32>, lookup: texture_2d<u32>, atlas
         if (params.w != 0u) {
             velocity = bitcast<vec2<f32>>(params.yz);
         }
-        let bump_uv = world_xz / normal.stretch + velocity * select(0.0, time, animate);
-        let bump = texture_data_rgb(ec_liquid_texel(atlas, atlas_sampler, normal, bump_uv, linear).rgb).rg * 2.0 - vec2<f32>(1.0);
+        let scroll = velocity * select(0.0, time, animate);
+        var bump_uv = world_xz / normal.stretch + scroll;
+        if (params.w != 0u) {
+            bump_uv = ec_liquid_texture_uv(world_xz, normal.stretch, scroll);
+        }
+        var bump = texture_data_rgb(ec_liquid_texel(atlas, atlas_sampler, normal, bump_uv, linear).rgb).rg;
+        if (params.w == 0u) {
+            bump = bump * 2.0 - vec2<f32>(1.0);
+        }
+        // The original source is an unsigned DXT1 image. BUMPENVMAP consumes
+        // its sampled RG directly; expanding it as a signed normal doubles the
+        // displacement range instead of preserving the authored offsets.
         // The original bump-environment matrix is identity. Keep the existing
         // smaller perturbation only when no original animated surface is packed.
         uv += bump * select(0.30, 1.0, animated.present);
