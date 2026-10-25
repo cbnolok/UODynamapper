@@ -1163,11 +1163,14 @@ fn ec_land_shader_flags(
     let Some(material_id) = package.resolve_material_decision(tile_id).material_id else {
         return 0;
     };
-    let Some(details) = package.terrain_override_details_for(material_id) else {
-        return 0;
-    };
-
     let mut flags = 0u16;
+    if package.source_material(material_id).and_then(|entry| entry.texture.as_ref())
+        .is_some_and(|texture| texture.shader_name.as_deref() == Some("UOWaterTerrainLayer")) {
+        flags |= TERRAIN_SHADER_FLAG_REVIEWED_LIQUID;
+    }
+    let Some(details) = package.terrain_override_details_for(material_id) else {
+        return flags;
+    };
     for policy in &details.policies {
         match policy.policy.as_str() {
             "smooth" => flags |= TERRAIN_SHADER_FLAG_SMOOTH,

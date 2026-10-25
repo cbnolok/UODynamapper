@@ -19,7 +19,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum TerrainTextureType {
     #[default]
     Undefined,
@@ -29,14 +29,14 @@ pub enum TerrainTextureType {
     Textures,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct TerrainDefinitionTileAlias {
     pub count_index: u32,
     pub alias: u32,
     pub tile_flags: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct TerrainDefinitionTextureLayer {
     pub name_string_off: i32,
     pub texture_id: Option<u32>,
@@ -113,7 +113,7 @@ impl TerrainDefinitionPrimaryLayerReason {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct TerrainDefinitionTexture {
     pub unk1: u8,
     pub shader_name_id: i32,
@@ -123,7 +123,7 @@ pub struct TerrainDefinitionTexture {
     pub unk9: Vec<f32>,
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct TerrainDefinitionEntry {
     pub name_id: i32,
     pub id: u32,

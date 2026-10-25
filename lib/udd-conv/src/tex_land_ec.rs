@@ -62,7 +62,7 @@ use udd_assets::tex_land_ec::{
     TERRAIN_PRIMARY_REASON_SUPPORT_REPETITION_FALLBACK, TERRAIN_PRIMARY_REASON_UNKNOWN,
     UDDP_PAGE_MANIFEST_ENTRY_VPATH, UDDP_SLOT_MANIFEST_ENTRY_VPATH,
     UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH, UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH,
-    UDDP_TRANSCODE_ENTRY_VPATH, UDDP_LEGACY_TERRAIN_MAP_ENTRY_VPATH,
+    UDDP_TRANSCODE_ENTRY_VPATH, UDDP_LEGACY_TERRAIN_MAP_ENTRY_VPATH, UDDP_SOURCE_MATERIALS_ENTRY_VPATH,
 };
 use udd_assets::ec_terrain_overrides::{
     EcTerrainOverrideEntry, EcTerrainOverrides, TerrainIgnoreOverride, TerrainLayerOverride,
@@ -627,6 +627,18 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_prog
             data: &source_map.source_csv,
         })?;
     }
+
+    let source_materials = serde_json::to_vec(&terrain_definition.entries)?;
+    package.add_file(AddFileRequest {
+        data_type: DataType::Metadata as u8,
+        compression: CompressionFlag::ZstdNoDict,
+        width: 0,
+        height: 0,
+        virtual_path: Some(UDDP_SOURCE_MATERIALS_ENTRY_VPATH),
+        path_hash64: None,
+        id: None,
+        data: &source_materials,
+    })?;
 
     // Determine the final pixel format and encoding for atlas pages.
     let use_bc7 = options.pixel_format == PagePixelFormat::Bc7;

@@ -3,14 +3,14 @@ import bevy_pbr::render::{
     view_transformations,
     mesh_view_bindings::globals,
 };
-import package::shaders::world::effects::surface_effects::apply_water_animation;
+import package::shaders::world::effects::surface_effects::{apply_water_animation, water_flat_wrapped_lambert};
+import package::shaders::world::ec_liquid::{sample_ec_liquid, ec_liquid_reflection_uv};
 import package::shaders::postprocess::color_grading::{grade_color_vibrant};
 import package::shaders::postprocess::global_lighting::{apply_global_lighting_rgb};
 import package::shaders::postprocess::grunge::{apply_texture_visual_grunge, visual_grunge_uv};
 import package::shaders::postprocess::kr_color_wash::apply_kr_color_wash;
 import package::shaders::postprocess::tonemapping::{tonemap_ec_kr_profile};
-import package::shaders::world::pixel_art_filters::{pixel_art_atlas_uv_iq, pixel_art_uv_iq};
-import package::shaders::world::texture_data::texture_data_rgb;
+import package::shaders::world::pixel_art_filters::{pixel_art_atlas_uv_iq};
 
 import package::shaders::world::art::art_ground_bindings::{
     GroundTileInstance, SpriteParams, SceneUniform, LandEffectsUniform, GlobalLightingUniforms,
@@ -40,82 +40,8 @@ struct GroundFragmentOutput {
     @builtin(frag_depth) depth: f32,
 }
 
-const LAND_PAGE_LOOKUP_TILE_CAPACITY: u32 = 16384u;
-const LAND_PAGE_LOOKUP_ROLE_BASE: u32 = 0u;
-const LAND_PAGE_LOOKUP_ROLE_NORMAL: u32 = 3u;
-
-struct LandLookupSlot {
-    present: bool,
-    texture_layer: u32,
-    texture_origin: vec2<u32>,
-    texture_extent: vec2<u32>,
-    texture_stretch: f32,
-};
-
 fn clip_depth_to_frag_depth(clip_position: vec4<f32>) -> f32 {
     return clamp(clip_position.z / clip_position.w, 0.0, 1.0);
-}
-
-fn ec_lookup_uv(payload: u32, role: u32) -> vec2<i32> {
-    let lookup_dims = textureDimensions(land_page_lookup);
-    let lookup_index = role * LAND_PAGE_LOOKUP_TILE_CAPACITY + payload;
-    return vec2<i32>(
-        i32(lookup_index % lookup_dims.x),
-        i32(lookup_index / lookup_dims.x),
-    );
-}
-
-fn read_ec_lookup_slot(payload: u32, role: u32) -> LandLookupSlot {
-    let slot = textureLoad(land_page_lookup, ec_lookup_uv(payload, role), 0);
-    let packed_wh = slot.w;
-    let w = packed_wh & 0xFFFFu;
-    let h = packed_wh >> 16u;
-    let page_index = slot.x & 0xFFFFu;
-    let stretch_q8 = slot.x >> 16u;
-    return LandLookupSlot(
-        w != 0u || h != 0u,
-        page_index,
-        vec2<u32>(slot.y, slot.z),
-        vec2<u32>(w, h),
-        f32(stretch_q8) / 256.0,
-    );
-}
-
-fn ec_slot_world_uv(world_xz: vec2<f32>, slot: LandLookupSlot) -> vec2<f32> {
-    let tile_w = max(f32(slot.texture_extent.x), 1.0);
-    let stretch = select(tile_w / 44.0, slot.texture_stretch, slot.texture_stretch > 0.0);
-    return fract(world_xz / stretch);
-}
-
-fn sample_ec_lookup_slot_rgba(uv: vec2<f32>, slot: LandLookupSlot) -> vec4<f32> {
-    let layer: i32 = i32(slot.texture_layer);
-    let tile_dims = max(vec2<f32>(slot.texture_extent), vec2<f32>(1.0));
-    let use_linear = effects.enable_linear_filtering == 1u;
-
-    if (use_linear) {
-        let atlas_dims = vec2<f32>(textureDimensions(land_page_atlas));
-        let seam_uv = pixel_art_uv_iq(uv, tile_dims);
-        let local_px = clamp(seam_uv * tile_dims, vec2<f32>(0.5), tile_dims - vec2<f32>(0.5));
-        let atlas_uv = (vec2<f32>(slot.texture_origin) + local_px) / atlas_dims;
-        return textureSample(land_page_atlas, art_atlas_sampler, atlas_uv, layer);
-    }
-
-    let local_iuv = clamp(vec2<i32>(uv * tile_dims), vec2<i32>(0), vec2<i32>(slot.texture_extent) - 1);
-    let atlas_iuv = vec2<i32>(slot.texture_origin) + local_iuv;
-    return textureLoad(land_page_atlas, atlas_iuv, layer, 0);
-}
-
-fn ec_liquid_perturbed_base_uv(world_xz: vec2<f32>, base_uv: vec2<f32>, payload: u32) -> vec2<f32> {
-    let normal = read_ec_lookup_slot(payload, LAND_PAGE_LOOKUP_ROLE_NORMAL);
-    if (!normal.present) {
-        return base_uv;
-    }
-
-    let moving_world_xz = vec2<f32>(world_xz.x, world_xz.y - globals.time * 1.0);
-    let normal_uv = ec_slot_world_uv(moving_world_xz, normal);
-    let normal_sample = texture_data_rgb(sample_ec_lookup_slot_rgba(normal_uv, normal).rgb);
-    let perturbation = 0.30 * (normal_sample.rg - vec2<f32>(0.5)) * 2.0;
-    return fract(base_uv + perturbation);
 }
 
 fn depth_class_logical_offset(depth_class: u32) -> f32 {
@@ -192,15 +118,13 @@ fn fragment(in: GroundVertexOutput) -> GroundFragmentOutput {
     let use_ec_water_material = (inst.material_flags & GROUND_FLAG_EC_WATER_MATERIAL) != 0u;
     var color: vec4<f32>;
     if (use_ec_water_material) {
-        let base_slot = read_ec_lookup_slot(inst.material_payload, LAND_PAGE_LOOKUP_ROLE_BASE);
-        if (!base_slot.present) {
-            discard;
-        }
-        uv_in_tile = ec_slot_world_uv(in.world_pos.xz, base_slot);
-        if (effects.enable_water_animation == 1u && in.is_wet == 1u) {
-            uv_in_tile = ec_liquid_perturbed_base_uv(in.world_pos.xz, uv_in_tile, inst.material_payload);
-        }
-        color = sample_ec_lookup_slot_rgba(uv_in_tile, base_slot);
+        let reflection_uv = ec_liquid_reflection_uv(
+            view_transformations::position_world_to_view(in.world_pos),
+            view_transformations::direction_world_to_view(vec3<f32>(0.0, 1.0, 0.0)),
+        );
+        color = sample_ec_liquid(land_page_atlas, land_page_lookup, art_atlas_sampler,
+            inst.material_payload, in.world_pos.xz, reflection_uv, globals.time,
+            effects.enable_water_animation == 1u, effects.enable_linear_filtering == 1u);
     } else {
         if (inst.texture_stretch > 0.0) {
             uv_in_tile = fract(in.world_pos.xz / inst.texture_stretch);
@@ -235,7 +159,11 @@ fn fragment(in: GroundVertexOutput) -> GroundFragmentOutput {
     if (sprite_params.pass_mode == PASS_MODE_TRANSPARENT) {
         shaded = vec4<f32>(shaded.rgb * shaded.a * 2.0, shaded.a);
     }
-    if (!use_ec_water_material) {
+    if (use_ec_water_material) {
+        let energy = global_light.ambient_strength
+            + global_light.land_diffuse_strength * water_flat_wrapped_lambert(scene.light_direction);
+        shaded = vec4<f32>(shaded.rgb * energy, shaded.a);
+    } else {
         shaded = vec4<f32>(apply_art_surface_shading(
             shaded.rgb,
             uv_in_tile,
@@ -260,18 +188,18 @@ fn fragment(in: GroundVertexOutput) -> GroundFragmentOutput {
         let visual_grunge = textureSample(visual_grunge_texture, art_atlas_sampler, visual_grunge_uv(in.world_pos.xz, effects.post_process_profile)).rgb;
         shaded = vec4<f32>(apply_texture_visual_grunge(shaded.rgb, in.world_pos.xz, effects.grunge_strength, effects.post_process_profile, visual_grunge), shaded.a);
     }
-    let color_wash_shadow = clamp(
+    let color_wash_shadow = select(clamp(
         smoothstep(0.48, 1.0, uv_in_tile.y) * 0.28
         + select(0.0, 0.10, inst.depth_class == DEPTH_CLASS_FOLIAGE)
         + select(0.0, 0.08, inst.depth_class == DEPTH_CLASS_ROOF),
         0.0,
         1.0,
-    );
+    ), 0.0, use_ec_water_material);
     shaded = vec4<f32>(apply_kr_color_wash(
         shaded.rgb,
         in.world_pos.xz,
         color_wash_shadow,
-        inst.local_light_rgba.a,
+        select(inst.local_light_rgba.a, 0.0, use_ec_water_material),
         effects.enable_kr_color_wash,
         effects.kr_color_wash_strength,
         effects.kr_color_wash_scale,

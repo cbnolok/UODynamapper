@@ -3,6 +3,18 @@
 This report freezes current UODynamapper EC material behavior before role-aware
 selection changes. It is a developer review artifact, not runtime pack data.
 
+This is a historical baseline. The heuristic and inclusion descriptions below
+record the pre-role implementation, not the current runtime. For the current
+source graph, ownership rules, and executable-derived liquid roles, read
+[ec_source_terrain_routing.md](../ec_source_terrain_routing.md) and
+[ec_original_water_code.md](../ec_original_water_code.md).
+
+Original shader bindings are stronger evidence than filename-based role labels.
+In particular, `water_alpha` (1000013) is the original bump-environment input,
+and `cube3` (1000017) is a 2D animated surface. The runtime uses the preserved
+shader graph for these roles; a speculative inventory label alone still must
+not determine visibility or ownership.
+
 ## Current Heuristics
 
 ### Item main EC texture chooser

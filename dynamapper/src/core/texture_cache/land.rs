@@ -94,11 +94,13 @@ enum LandShaderAtlasSource<'a> {
 
 const LAND_PAGE_LOOKUP_WIDTH: u32 = 256;
 const LAND_PAGE_LOOKUP_TILE_CAPACITY: u32 = 16_384;
-const LAND_PAGE_LOOKUP_ROLE_COUNT: u32 = 4;
+const LAND_PAGE_LOOKUP_ROLE_COUNT: u32 = 6;
 const LAND_PAGE_LOOKUP_ROLE_BASE: u32 = 0;
 const LAND_PAGE_LOOKUP_ROLE_DETAIL: u32 = 1;
 const LAND_PAGE_LOOKUP_ROLE_MASK: u32 = 2;
 const LAND_PAGE_LOOKUP_ROLE_NORMAL: u32 = 3;
+const LAND_PAGE_LOOKUP_ROLE_ANIMATED: u32 = 4;
+const LAND_PAGE_LOOKUP_ROLE_LIQUID_PARAMS: u32 = 5;
 
 /// Identify the secondary-base `texture_id` for a terrain tile from the layer graph.
 ///
@@ -860,7 +862,20 @@ fn create_land_shader_images(
                 }
             }
             LandShaderAtlasSource::Ec(package) => {
-                let [layer0, layer1, layer2, layer3] = package.resolve_material_render_layers(tile_id);
+                if let Some(source) = package.resolve_material_decision(tile_id).material_id
+                    .and_then(|id| package.source_material(id))
+                    .and_then(|entry| entry.texture.as_ref())
+                    .filter(|texture| texture.shader_name.as_deref() == Some("UOWaterTerrainLayer")) {
+                    // Original Technique[0] selects coordinates; Tweaks[0..2]
+                    // scrolls the bump texture in UV units per second.
+                    write_land_lookup_entry(&mut lookup_bytes, tile_id, LAND_PAGE_LOOKUP_ROLE_LIQUID_PARAMS, [
+                        source.unk8.first().copied().unwrap_or(0) as u32,
+                        source.unk9.first().copied().unwrap_or(0.0).to_bits(),
+                        source.unk9.get(1).copied().unwrap_or(0.0).to_bits(),
+                        1,
+                    ]);
+                }
+                let [layer0, layer1, layer2, layer3, animated] = package.resolve_material_render_layers(tile_id);
                 let has_base_layer = layer0
                     .as_ref()
                     .and_then(|layer| layer.runtime_slot_id)
@@ -872,6 +887,7 @@ fn create_land_shader_images(
                         (LAND_PAGE_LOOKUP_ROLE_DETAIL, layer1),
                         (LAND_PAGE_LOOKUP_ROLE_MASK, layer2),
                         (LAND_PAGE_LOOKUP_ROLE_NORMAL, layer3),
+                        (LAND_PAGE_LOOKUP_ROLE_ANIMATED, animated),
                     ] {
                         if let Some(layer) = layer {
                             if let Some(slot_id) = layer.runtime_slot_id {
@@ -1694,6 +1710,10 @@ mod tests {
                 "shaders/world/texture_data.wesl",
             ),
             Shader::from_wesl(
+                include_str!("../../../assets/shaders/world/ec_liquid.wesl"),
+                "shaders/world/ec_liquid.wesl",
+            ),
+            Shader::from_wesl(
                 include_str!("../../../assets/shaders/world/land/sampling.wesl"),
                 "shaders/world/land/sampling.wesl",
             ),
@@ -1710,7 +1730,8 @@ mod tests {
             root_id,
             Shader::from_wesl(
                 r#"
-import package::shaders::world::land::land_bindings::TileUniform;
+import package::shaders::world::land::land_bindings::{TileUniform, land_page_atlas, land_page_lookup, tex_small_sampler};
+import package::shaders::world::ec_liquid::{sample_ec_liquid, ec_liquid_reflection_uv};
 import package::shaders::world::land::sampling::{
     apply_ec_aux_two_base_blend, apply_sharpening, blurred_albedo, classic_land_art_is_present,
     ec_liquid_perturbed_base_uv, sample_classic_land_art, sample_ec_material_albedo,
@@ -1729,6 +1750,9 @@ fn fragment() -> @location(0) vec4<f32> {
     }
     let normal = sample_ec_material_normal_world(uv, tile, 0.0, true);
     let ripple = sample_ec_ripple_normal(uv, 0u, 0.0, 0.0);
+    let reflection_uv = ec_liquid_reflection_uv(vec3<f32>(0.0, 0.0, -1.0), vec3<f32>(0.0, 1.0, 0.0));
+    color += sample_ec_liquid(land_page_atlas, land_page_lookup, tex_small_sampler,
+        0u, uv, reflection_uv, 0.0, true, true).rgb;
     return vec4<f32>(color, normal.w + ripple.x);
 }
 "#,

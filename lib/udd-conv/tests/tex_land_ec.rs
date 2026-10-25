@@ -32,7 +32,9 @@ fn conversion_embeds_original_game_data_routes_and_subtypes() {
     let output = root.join("tex_land_ec.uddp");
     convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources(
         &[root.clone()], &root.join("TerrainDefinition.uop"), None, None,
-        &TerrainDefinitionPackage { entries: Vec::new() }, None, None,
+        &TerrainDefinitionPackage { entries: vec![uocf::enhanced::terrain_definition::TerrainDefinitionEntry {
+            id: 999, name: Some("source material evidence".into()), ..Default::default()
+        }] }, None, None,
         &output, &TexLandEcAtlasOptions::default(),
     ).unwrap();
     let package = TexLandEcPackage::load(&output).unwrap();
@@ -40,6 +42,7 @@ fn conversion_embeds_original_game_data_routes_and_subtypes() {
     let source_map = package.source_terrain_map().unwrap();
     assert_eq!(source_map.routes[&15853].subtype, 1);
     assert_eq!(source_map.source_csv, bytes);
+    assert_eq!(package.source_material(999).unwrap().name.as_deref(), Some("source material evidence"));
     std::fs::remove_dir_all(root).unwrap();
 }
 

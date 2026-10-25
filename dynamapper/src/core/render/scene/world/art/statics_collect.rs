@@ -508,6 +508,28 @@ fn resolve_surface_like_tex_land_ec_slot_id(
 
     let package = tex_land_ec?;
 
+    // Match the original item material's sampler identities to the terrain
+    // material graph, rather than treating an item graphic as a land tile id.
+    if let Some(tilemeta_package) = tilemeta_package {
+        let refs = tilemeta_package.item_texture_refs(tile_id);
+        let source_ids = [0, 1, 2].map(|index| refs.iter()
+            .find(|r| r.block_index == 0 && r.is_world_art() && r.unk6 == index)
+            .map(|r| r.texture_id));
+        if let [Some(bump), Some(fallback), Some(animated)] = source_ids {
+            if let Some(payload) = package.source_liquid_payload([bump, fallback, animated]) {
+                if let Some(base) = package.resolve_material_render_layers(payload)[0] {
+                    if let Some(runtime_slot_id) = base.runtime_slot_id {
+                        return Some(SurfaceLikeTexLandEcResolution {
+                            runtime_slot_id,
+                            texture_repetition: base.texture_repetition,
+                            liquid_payload: Some(payload),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
     let main_ec_texture_id = tilemeta_package
         .and_then(|package| surface_like_visible_ec_texture_ref(tile_id, meta, package))
         .map(|texture_ref| texture_ref.texture_id)
@@ -638,6 +660,7 @@ fn wet_surface_like_water_resolution(
             return Some(SurfaceLikeTexLandEcResolution {
                 runtime_slot_id,
                 texture_repetition: valid_texture_repetition(layer.texture_repetition),
+                liquid_payload: None,
             });
         }
     }
@@ -659,6 +682,7 @@ fn valid_texture_repetition(repetition: f32) -> f32 {
 struct SurfaceLikeTexLandEcResolution {
     runtime_slot_id: u32,
     texture_repetition: f32,
+    liquid_payload: Option<u32>,
 }
 
 fn surface_like_tex_land_ec_resolution(
@@ -689,11 +713,12 @@ fn surface_like_tex_land_ec_resolution(
     SurfaceLikeTexLandEcResolution {
         runtime_slot_id,
         texture_repetition,
+        liquid_payload: None,
     }
 }
 
-fn surface_like_ground_material_payload(_is_wet_flags: u32) -> (u32, u32) {
-    (0, 0)
+fn surface_like_ground_material_payload(liquid_payload: Option<u32>) -> (u32, u32) {
+    liquid_payload.map_or((0, 0), |payload| (payload, 1))
 }
 
 fn provenance_record_matches_runtime_slot(
@@ -819,6 +844,8 @@ fn resolve_ec_static_visual_kind(
         // Walkable sprites (stairs, bridges, furniture) still own their art.
         // The Surface tiledata flag does not make their graphic id a land id.
         StaticVisualKind::EcRegular { art_id: tile_graphic as u32 }
+    } else if let Some(resolution) = surface_like_land_resolution.filter(|r| r.liquid_payload.is_some()) {
+        StaticVisualKind::TexLandEc { resolution }
     } else if has_tex_art_ec_surface_slot {
         // Tileart owns this image and its sampling window. A terrain texture with
         // the same source id cannot replace an authored item-owned surface.
@@ -2192,6 +2219,7 @@ fn emit_art_static_tile(
                 encoded_depth_class,
                 priority_z_units,
                 texture_stretch,
+                match visual_kind { StaticVisualKind::TexLandEc { resolution } => resolution.liquid_payload, _ => None },
                 hue_id,
                 hue_flags,
                 build,
@@ -2310,6 +2338,7 @@ fn emit_ground_static_instance(
     encoded_depth_class: u32,
     priority_z_units: f32,
     texture_stretch: f32,
+    liquid_payload: Option<u32>,
     hue_id: u32,
     hue_flags: u32,
     build: &mut StaticChunkBuildState,
@@ -2326,7 +2355,7 @@ fn emit_ground_static_instance(
         bounds,
     );
     let (material_payload, material_flags) =
-        surface_like_ground_material_payload(info.is_wet_flags);
+        surface_like_ground_material_payload(liquid_payload);
     build.ground_instances.push(GroundTileInstance {
         world_x: anchored_world_x,
         world_z: anchored_world_z,
@@ -2823,6 +2852,7 @@ mod tests {
         SurfaceLikeTexLandEcResolution {
             runtime_slot_id: 42,
             texture_repetition: 1.0,
+            liquid_payload: None,
         }
     }
 
@@ -3026,7 +3056,7 @@ mod tests {
 
     #[test]
     fn wet_surface_like_ground_payload_does_not_force_ec_water_material() {
-        let (material_payload, material_flags) = surface_like_ground_material_payload(1);
+        let (material_payload, material_flags) = surface_like_ground_material_payload(None);
 
         assert_eq!(material_flags, 0);
         assert_eq!(material_payload, 0);
@@ -3084,6 +3114,23 @@ mod tests {
                 StaticVisualKind::EcRegular { art_id: u32::from(tile_graphic) },
             );
         }
+    }
+
+    #[test]
+    fn source_matched_liquid_shares_terrain_material_without_replacing_sprite_art() {
+        let resolution = SurfaceLikeTexLandEcResolution {
+            liquid_payload: Some(168),
+            ..test_surface_like_resolution()
+        };
+        assert_eq!(
+            resolve_ec_static_visual_kind(6038, false, true, Some(resolution)),
+            StaticVisualKind::TexLandEc { resolution },
+        );
+        assert_eq!(surface_like_ground_material_payload(resolution.liquid_payload), (168, 1));
+        assert_eq!(
+            resolve_ec_static_visual_kind(6038, true, true, Some(resolution)),
+            StaticVisualKind::EcRegular { art_id: 6038 },
+        );
     }
 
     #[test]

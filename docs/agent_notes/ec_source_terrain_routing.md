@@ -66,3 +66,13 @@ The heuristic terrain-neighbor blend must keep solid substrates and liquid
 surfaces separate. Mixing underwater sand (land 100, material 52) into water
 material 5 creates a pale sawtooth boundary at static/terrain ownership changes.
 Liquid coverage belongs to its material/alpha path, not a solid albedo average.
+
+The complete original material graph now survives conversion in
+`metadata/source_materials.json`. This is distinct from the route CSV and the
+manual override graph. Original `UOWaterTerrainLayer` source indices 0/1/2 are
+bump, fallback, and animated surface, rather than solid base/detail/mask.
+The GPU lookup has five image roles and a sixth parameter record carrying the
+source coordinate technique, bump UV velocity, and source-presence marker.
+Both land and source-matched item water consume it. See
+[ec_original_water_code.md](ec_original_water_code.md) for the executable evidence
+and the remaining reflection/coverage proof boundary.

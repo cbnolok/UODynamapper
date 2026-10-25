@@ -24,6 +24,7 @@ import package::shaders::world::common_bindings::{
 import package::shaders::world::land::land_bindings::{
   TileUniform, AtlasParams, LandLightingUniforms,
   tex_small_sampler, tex_small, tex_big, tile_meta_atlas,
+  land_page_atlas, land_page_lookup,
   visual_grunge_texture,
   ec_aux_atlas, ec_aux_lookup,
   ATLAS, scene, effects, global_light, land_light
@@ -58,6 +59,7 @@ import package::shaders::world::land::shading::{
   apply_static_light_decals,
 };
 import package::shaders::world::effects::surface_effects::{apply_water_animation, water_flat_wrapped_lambert};
+import package::shaders::world::ec_liquid::{sample_ec_liquid, ec_liquid_reflection_uv};
 
 // ============================================================================
 // Vertex shader
@@ -573,6 +575,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   // creating a gentle wavy appearance (faithful port of ClassicUO's formula).
   // Skipped at high zoom where individual tiles are sub-pixel (already gated above).
   let reviewed_liquid = (tile.terrain_flags & TERRAIN_FLAG_REVIEWED_LIQUID) != 0u;
+  let use_ec_liquid = tile.texture_size == 2u && (tile.is_wet == 1u || reviewed_liquid);
   let ec_liquid_normal = tile.texture_size == 2u && reviewed_liquid && ec_material_has_liquid_normal(tile);
   if (enable_water == 1u && (tile.is_wet == 1u || reviewed_liquid) && !ec_liquid_normal) {
     uv_in_tile = apply_water_animation(uv_in_tile, vec2<f32>(0.5, 0.5));
@@ -592,7 +595,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // uv_in_tile offset so water animation stays coherent with EC textures too.
     let world_xz = vec2<f32>(floor(in.world_position.x), floor(in.world_position.z)) + uv_in_tile;
     sample_uv = ec_world_uv(world_xz, tile);
-    if (enable_water == 1u && ec_liquid_normal) {
+    if (enable_water == 1u && ec_liquid_normal && !use_ec_liquid) {
       sample_uv = ec_liquid_perturbed_base_uv(world_xz, sample_uv, tile, globals.time);
     }
   }
@@ -626,7 +629,15 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
   // ---- Base albedo ----
   var base_albedo = vec3<f32>(0.0);
-  if (use_cheap_path) {
+  if (use_ec_liquid) {
+    let reflection_uv = ec_liquid_reflection_uv(
+      view_transformations::position_world_to_view(in.world_position.xyz),
+      view_transformations::direction_world_to_view(vec3<f32>(0.0, 1.0, 0.0)),
+    );
+    base_albedo = sample_ec_liquid(land_page_atlas, land_page_lookup, tex_small_sampler,
+      tile.texture_payload, in.world_position.xz, reflection_uv, globals.time,
+      enable_water == 1u, effects.enable_linear_filtering == 1u).rgb;
+  } else if (use_cheap_path) {
     // Quantize UV to a coarser grid and use direct nearest sample.
     // For EC tiles sample_uv is already world-space; we quantize in the same space.
     // We still run full lighting/fog/shadows below to keep visual consistency.
@@ -674,7 +685,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   // ---- Two-base + alpha-mask authored blend (ec_tex_aux, Phase 10D) ----
   // Only active for EC tiles that have a secondary-base slot authored in ec_tex_aux.
   // Falls through unchanged for all other tiles (single-base path preserved).
-  if (tile.texture_size == 2u) {
+  if (tile.texture_size == 2u && !use_ec_liquid) {
     let world_xz = vec2<f32>(floor(in.world_position.x), floor(in.world_position.z)) + uv_in_tile;
     base_albedo = apply_ec_aux_two_base_blend(base_albedo, world_xz, tile);
   }
@@ -692,7 +703,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   //   4. The tile has a ripple layer in the aux lookup
   //   5. The tile does NOT already have a normal-map-driven base UV perturbation
   //      (ec_liquid_normal path) — that path already handles its own animated UV.
-  if (tile.texture_size == 2u && enable_water == 1u) {
+  if (tile.texture_size == 2u && enable_water == 1u && !use_ec_liquid) {
     let world_xz_liq = vec2<f32>(floor(in.world_position.x), floor(in.world_position.z)) + uv_in_tile;
     let aux_liq = read_aux_lookup_slot(tile.texture_payload);
     let tile_is_liquid = reviewed_liquid || aux_liq.is_liquid == 1u;
@@ -728,7 +739,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   if (enable_bent == 1u) {
     Nw = get_bent_normal(in.world_position.xyz, Nw);
   }
-  if (effects.enable_normal_maps == 1u && shading_mode != 0u && tile.texture_size == 2u) {
+  if (effects.enable_normal_maps == 1u && shading_mode != 0u && tile.texture_size == 2u && !use_ec_liquid) {
     let animate_normal_map = enable_water == 1u && (tile.is_wet == 1u || reviewed_liquid) && ec_liquid_normal;
     let normal_map = sample_ec_material_normal_world(in.world_position.xz, tile, globals.time, animate_normal_map);
     if (normal_map.w > 0.5) {
@@ -746,7 +757,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let raw_ndotl = max(dot(normalize(Nw), normalize(L)), 0.0);
     let slope_shadow = clamp(1.0 - dot(normalize(Nw), vec3<f32>(0.0, 1.0, 0.0)), 0.0, 1.0);
     let grunge_shadow = clamp((1.0 - raw_ndotl) * 0.82 + slope_shadow * 0.28, 0.0, 1.0);
-    if (visual_profile == 2u && effects.enable_kr_transition_grime == 1u && !use_classic_flat_wet_land_art) {
+    if (visual_profile == 2u && effects.enable_kr_transition_grime == 1u && !use_classic_flat_wet_land_art && !use_ec_liquid) {
       base_albedo = apply_kr_transition_grime(
         base_albedo,
         tile,
@@ -757,7 +768,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
       );
     }
     let visual_grunge = textureSample(visual_grunge_texture, tex_small_sampler, visual_grunge_uv(in.world_position.xz, visual_profile)).rgb;
-    if (use_classic_flat_wet_land_art) {
+    if (use_classic_flat_wet_land_art || use_ec_liquid) {
       // Flat CC terrain water and flat CC art water are one material with two
       // geometry owners. Do not inject terrain-normal shadow deposits on only
       // one side of their boundary.
@@ -791,7 +802,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   // ---- Shade ----
   var hdr_rgb = vec3<f32>(0.0);
   var kr_color_wash_shadow = 0.0;
-  if (use_classic_flat_wet_land_art) {
+  if (use_classic_flat_wet_land_art || use_ec_liquid) {
     // The adjoining authored flat-water statics use this same level-liquid
     // response in every visual profile. KR/Enhanced styling is added later by
     // the shared grunge, wash, global-light, grading, tonemap, and fullscreen fog
@@ -853,7 +864,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   // Enhanced/KR flat-water material, the adjoining authored water quads have
   // no equivalent land-light buffer, so applying decals only to terrain would
   // recreate the bright bands and color step at their boundary.
-  if (!use_classic_flat_wet_land_art || shading_mode == 0u) {
+  if (!use_ec_liquid && (!use_classic_flat_wet_land_art || shading_mode == 0u)) {
     hdr_rgb = apply_static_light_decals(hdr_rgb, base_albedo, in.world_position.xyz);
   }
   hdr_rgb = apply_kr_color_wash(

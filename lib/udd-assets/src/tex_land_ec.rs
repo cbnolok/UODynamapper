@@ -24,6 +24,7 @@ pub const UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH: &str = "metadata/terrain_provenan
 pub const UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH: &str = "metadata/terrain_overrides.json";
 pub const UDDP_TRANSCODE_ENTRY_VPATH: &str = "metadata/transcode.bin";
 pub const UDDP_LEGACY_TERRAIN_MAP_ENTRY_VPATH: &str = "metadata/legacy_terrain_map.csv";
+pub const UDDP_SOURCE_MATERIALS_ENTRY_VPATH: &str = "metadata/source_materials.json";
 
 pub const SLOT_FLAG_PRESENT: u16 = 1 << 0;
 pub const SLOT_FLAG_LAND: u16 = 1 << 1;
@@ -310,6 +311,7 @@ pub struct TexLandEcPackage {
     terrain_override_details: HashMap<u32, TexLandEcTerrainOverrideDetails>,
     terrain_override_texture_refs: HashMap<u32, Vec<TexLandEcTerrainOverrideTextureRef>>,
     source_terrain_map: Option<uocf::enhanced::legacy_terrain_map::LegacyTerrainMap>,
+    source_materials: HashMap<u32, uocf::enhanced::terrain_definition::TerrainDefinitionEntry>,
     pub transcode: HashMap<u32, u32>,
     page_cache: AtlasPageCache,
 }
@@ -376,6 +378,13 @@ impl TexLandEcPackage {
         } else {
             None
         };
+        let source_materials = if package.find_by_path_hash(xxh64_virtual_path(UDDP_SOURCE_MATERIALS_ENTRY_VPATH)).is_some() {
+            let bytes = read_path_entry_cow(&package, UDDP_SOURCE_MATERIALS_ENTRY_VPATH)?;
+            let entries: Vec<uocf::enhanced::terrain_definition::TerrainDefinitionEntry> = serde_json::from_slice(&bytes)?;
+            entries.into_iter().map(|entry| (entry.id, entry)).collect()
+        } else {
+            HashMap::new()
+        };
         let mut transcode: HashMap<u32, u32> = source_terrain_map.as_ref()
             .into_iter().flat_map(|map| map.routes.values())
             .map(|route| (u32::from(route.legacy_id), route.material_id)).collect();
@@ -399,6 +408,7 @@ impl TexLandEcPackage {
             terrain_override_details,
             terrain_override_texture_refs,
             source_terrain_map,
+            source_materials,
             transcode,
             page_cache: AtlasPageCache::new(options),
         })
@@ -410,6 +420,26 @@ impl TexLandEcPackage {
 
     pub fn source_terrain_map(&self) -> Option<&uocf::enhanced::legacy_terrain_map::LegacyTerrainMap> {
         self.source_terrain_map.as_ref()
+    }
+
+    pub fn source_material(&self, material_id: u32) -> Option<&uocf::enhanced::terrain_definition::TerrainDefinitionEntry> {
+        self.source_materials.get(&material_id)
+    }
+
+    /// Find a land lookup payload for an item sharing an original liquid graph.
+    /// IDs are source texture identities, not item graphics interpreted as land.
+    pub fn source_liquid_payload(&self, textures: [u32; 3]) -> Option<u32> {
+        self.source_materials.values().filter(|entry| {
+            entry.texture.as_ref().is_some_and(|texture| {
+                texture.shader_name.as_deref() == Some("UOWaterTerrainLayer")
+                    && texture.layers.len() >= 3
+                    && texture.layers.iter().take(3).map(|layer| layer.texture_id)
+                        .eq(textures.into_iter().map(Some))
+            })
+        }).flat_map(|entry| self.transcode.iter()
+            .filter(move |(tile, material)| **tile < 16384 && **material == entry.id)
+            .map(|(tile, _)| *tile))
+            .min()
     }
 
     pub fn set_terrain_overrides_from_kdl(
@@ -567,22 +597,43 @@ impl TexLandEcPackage {
         self.resolve_material_layer_slot_by_material(material_id, cc_tile_id, layer_index)
     }
 
-    /// Shader roles `[base, detail, mask, normal]`, distinct from source layer indices.
+    /// Shader roles `[fallback/base, detail, mask, normal, animated liquid]`,
+    /// distinct from source layer indices.
     /// Reviewed liquid overrides define their own base/normal pair; their raw
     /// layers may instead contain ripple, reflection, or environment inputs.
     pub fn resolve_material_render_layers(
         &self,
         cc_tile_id: u32,
-    ) -> [Option<TexLandEcResolvedMaterialLayer>; 4] {
+    ) -> [Option<TexLandEcResolvedMaterialLayer>; 5] {
         let decision = self.resolve_material_decision(cc_tile_id);
+        let source_liquid = decision.material_id.and_then(|id| self.source_material(id))
+            .and_then(|entry| entry.texture.as_ref())
+            .filter(|texture| texture.shader_name.as_deref() == Some("UOWaterTerrainLayer"));
         let reviewed_liquid = decision.override_actions.is_some_and(|actions| actions.has_liquid());
         std::array::from_fn(|index| {
+            if let Some(source) = source_liquid {
+                let material_id = decision.material_id?;
+                // Original UOWaterShader uses source 0 for bump displacement,
+                // source 2 as the animated surface, and source 1 as fallback.
+                let source_index = match index { 0 => 1, 3 => 0, 4 => 2, _ => return None };
+                if let Some(layer) = self.resolve_override_material_layer_slot_by_material(material_id, index as u32) {
+                    return Some(layer);
+                }
+                let layer = source.layers.get(source_index)?;
+                let texture_id = layer.texture_id?;
+                return Some(TexLandEcResolvedMaterialLayer {
+                    material_id, layer_index: source_index as u32, texture_id,
+                    runtime_slot_id: self.resolve_texture_id_slot(material_id, texture_id),
+                    texture_repetition: layer.texture_repetition,
+                });
+            }
             if reviewed_liquid {
                 if index == 1 || index == 2 {
                     return None;
                 }
                 self.resolve_override_material_layer_slot_by_material(decision.material_id?, index as u32)
             } else {
+                if index == 4 { return None; }
                 self.resolve_material_layer_slot(cc_tile_id, index as u32)
             }
         })
@@ -1455,6 +1506,7 @@ fn terrain_override_role_matches_layer(role: &str, layer_index: u32) -> bool {
             | (1, "detail" | "t1")
             | (2, "mask" | "alpha" | "t2")
             | (3, "normal" | "normal_map" | "n")
+            | (4, "animated" | "reflection")
     )
 }
 
@@ -1463,6 +1515,7 @@ fn terrain_override_role_layer_index(role: &str) -> Option<u32> {
         "base" | "diffuse" | "albedo" | "t0" => Some(0),
         "detail" | "t1" => Some(1),
         "mask" | "alpha" | "t2" => Some(2),
+        "animated" | "reflection" => Some(4),
         "normal" | "normal_map" | "n" => Some(3),
         _ => None,
     }
@@ -1625,6 +1678,20 @@ mod tests {
         if let Some(bytes) = source_csv {
             add_metadata_file(&mut builder, UDDP_LEGACY_TERRAIN_MAP_ENTRY_VPATH, bytes);
             add_metadata_file(&mut builder, UDDP_TRANSCODE_ENTRY_VPATH, b"t 52 203\n");
+            use uocf::enhanced::terrain_definition::{TerrainDefinitionEntry, TerrainDefinitionTexture, TerrainDefinitionTextureLayer};
+            let source = vec![TerrainDefinitionEntry {
+                id: 52,
+                texture: Some(TerrainDefinitionTexture {
+                    shader_name: Some("UOWaterTerrainLayer".to_owned()),
+                    layers: [(2000520, 16.0), (2000510, 4.0), (2000530, 1.0)].into_iter()
+                        .map(|(id, rep)| TerrainDefinitionTextureLayer {
+                            texture_id: Some(id), texture_repetition: rep, ..Default::default()
+                        }).collect(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }];
+            add_metadata_file(&mut builder, UDDP_SOURCE_MATERIALS_ENTRY_VPATH, &serde_json::to_vec(&source).unwrap());
         }
         let bytes = builder.build().expect("build test package");
         TexLandEcPackage::from_uddp_package(UddpReader::open(bytes).expect("open package"))
@@ -1644,6 +1711,19 @@ mod tests {
         package.set_transcode(HashMap::from([(500, 99)]));
         assert_eq!(package.transcode[&500], 99);
         assert_eq!(package.source_terrain_map().unwrap().routes[&500].material_id, 52);
+    }
+
+    #[test]
+    fn source_liquid_graph_separates_fallback_bump_and_animated_surface() {
+        let package = test_package_with_source_map(Some(b"legacyId,newId,newSubType\n500,52,0\n"));
+        let [base, detail, mask, normal, animated] = package.resolve_material_render_layers(500);
+        assert_eq!(base.unwrap().texture_id, 2000510);
+        assert_eq!(normal.unwrap().texture_id, 2000520);
+        assert_eq!(normal.unwrap().texture_repetition, 16.0);
+        assert_eq!(animated.unwrap().texture_id, 2000530);
+        assert!(detail.is_none() && mask.is_none());
+        assert_eq!(package.source_liquid_payload([2000520, 2000510, 2000530]), Some(203));
+        assert_eq!(package.source_liquid_payload([2000520, 2000510, 2000999]), None);
     }
 
     #[test]
@@ -1790,11 +1870,12 @@ terrain 52 {
     fn reviewed_liquid_render_layers_do_not_reuse_raw_reflection_as_solid_blend() {
         let package = test_package();
         assert!(package.resolve_material_layer_slot(77, 1).is_some());
-        let [base, detail, mask, normal] = package.resolve_material_render_layers(77);
+        let [base, detail, mask, normal, animated] = package.resolve_material_render_layers(77);
         assert_eq!(base.unwrap().texture_id, 2000510);
         assert!(detail.is_none());
         assert!(mask.is_none());
         assert!(normal.is_none());
+        assert!(animated.is_none());
     }
 
     #[test]
@@ -1805,10 +1886,11 @@ terrain 52 {
             "terrain 52 {\n liquid\n layer \"t0\" tex=2000510 stretch=7.0\n layer \"n\" tex=2000520 stretch=12.0\n}\n",
         ).unwrap();
         package.set_terrain_overrides(&overrides);
-        let [base, detail, mask, normal] = package.resolve_material_render_layers(77);
+        let [base, detail, mask, normal, animated] = package.resolve_material_render_layers(77);
         assert_eq!(base.unwrap().texture_repetition, 7.0);
         assert!(detail.is_none());
         assert!(mask.is_none());
+        assert!(animated.is_none());
         let normal = normal.unwrap();
         assert_eq!(normal.texture_id, 2000520);
         assert_eq!(normal.runtime_slot_id, Some(100));
