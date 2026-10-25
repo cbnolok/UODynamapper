@@ -2652,6 +2652,13 @@ pub fn sys_collect_visible_statics(
     chunks_q: Query<&crate::core::render::scene::world::land::LCMesh>,
 ) {
     if !settings.world_rendering.enable_statics {
+        let (sprite_output, ground_output, batches, cache, _) = &mut outputs;
+        clear_static_collect_outputs(sprite_output, ground_output, batches);
+        // Re-enabling must rebuild the output lists, even if the visible chunks
+        // and their cached instances are unchanged.
+        cache.last_visible_chunk_keys.clear();
+        cache.last_incomplete_retry_atlas_signature = None;
+        debug_state.last = None;
         return;
     }
 
@@ -3055,6 +3062,46 @@ mod tests {
             resolve_ec_static_visual_kind(196, false, Some(resolution)),
             StaticVisualKind::TexLandEc { resolution },
         );
+    }
+
+    #[test]
+    fn disabling_statics_clears_draw_batches_and_invalidates_output_reuse() {
+        use bevy::ecs::system::RunSystemOnce;
+        use udd_assets::tex_art_cc::PagePixelFormat;
+        let mut world = World::new();
+        let mut settings = crate::configs::settings::load_from_files();
+        settings.world_rendering.enable_statics = false;
+        let key = StaticChunkBatchKey { map_id: 0, gx: 1, gy: 2, scale: 1 };
+        let batch = StaticChunkBatch { key, start: 0, count: 1 };
+        let mut cache = StaticChunkRenderCache::default();
+        cache.last_visible_chunk_keys.push(key);
+        cache.chunks.insert(key, CachedStaticChunk::default());
+        world.insert_resource(settings);
+        world.insert_resource(StaticsStoreRes(Vec::new()));
+        world.insert_resource(SceneStateData { map_id: 0 });
+        world.insert_resource(RenderZoom::default());
+        world.insert_resource(SpriteArtPageAtlas(crate::core::texture_cache::art::ArtPageAtlas::new(
+            Handle::default(), 64, 64, 1, 1, PagePixelFormat::Rgba8888,
+        )));
+        world.insert_resource(GroundArtPageAtlas(crate::core::texture_cache::art::ArtPageAtlas::new(
+            Handle::default(), 64, 64, 1, 1, PagePixelFormat::Rgba8888,
+        )));
+        world.insert_resource(RenderStaticInstances(vec![SpriteInstance::zeroed()]));
+        world.insert_resource(RenderStaticLandInstances(vec![GroundTileInstance::zeroed()]));
+        world.insert_resource(RenderStaticChunkBatches { sprite: vec![batch], ground: vec![batch] });
+        world.insert_resource(cache);
+        world.init_resource::<StaticSurfaceLikeResolutionCache>();
+        world.init_resource::<StaticArtCollectDebugState>();
+        world.init_resource::<StaticArtSourceState>();
+        world.init_resource::<super::super::static_lights::RenderStaticLightInstances>();
+        world.run_system_once(sys_collect_visible_statics).unwrap();
+        assert!(world.resource::<RenderStaticInstances>().0.is_empty());
+        assert!(world.resource::<RenderStaticLandInstances>().0.is_empty());
+        let batches = world.resource::<RenderStaticChunkBatches>();
+        assert!(batches.sprite.is_empty() && batches.ground.is_empty());
+        let cache = world.resource::<StaticChunkRenderCache>();
+        assert!(cache.last_visible_chunk_keys.is_empty());
+        assert!(cache.chunks.contains_key(&key), "decoded chunks remain reusable after enabling");
     }
 
     #[test]
