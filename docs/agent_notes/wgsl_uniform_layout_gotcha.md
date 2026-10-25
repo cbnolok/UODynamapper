@@ -1,5 +1,9 @@
 # WGSL uniform layout gotcha: don't end a shared uniform struct with `scalar + vec3`
 
+> Status (2026-10-25): the root cause below was naga-oil composition, which Bevy 0.20
+> removed (shaders are now WESL, see `bevy_0_20_port_notes.md`, so `.wgsl` paths below are
+> now `.wesl`). Not re-tested under WESL; keep the `vec4` slot convention anyway.
+
 Discovered 2026-07-08 while adding a `kr_tonemap_gain` field to
 `GlobalLightingUniforms` (task: expose the KR tonemap brightness knob).
 
