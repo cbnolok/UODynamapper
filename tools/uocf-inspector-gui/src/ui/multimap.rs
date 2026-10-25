@@ -48,7 +48,7 @@ pub fn ui_multimap(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui
     egui::Panel::left("multimap_tools")
         .resizable(true)
         .default_size(MULTIMAP_TOOLS_PANEL_WIDTH)
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             ui.heading("Multimap");
             ui.separator();
             loaded_rle_controls(app, ui);
@@ -56,7 +56,7 @@ pub fn ui_multimap(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui
             converter_controls(app, ui);
         });
 
-    egui::CentralPanel::default().show_inside(ui, |ui| {
+    egui::CentralPanel::default().show(ui, |ui| {
         preview_tabs(app, ui);
         ui.separator();
         preview_actions(app, ui);

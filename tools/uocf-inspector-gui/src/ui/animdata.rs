@@ -11,7 +11,7 @@ pub fn ui_animdata(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui
         .as_ref()
         .and_then(|client| client.animdata.clone())
     else {
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             ui.centered_and_justified(|ui| {
                 ui.label("Select a Classic Client path containing animdata.mul.");
             });
@@ -32,7 +32,7 @@ pub fn ui_animdata(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui
     egui::Panel::left("animdata_list")
         .resizable(true)
         .default_size(ANIMDATA_LIST_PANEL_WIDTH)
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             ui.heading(format!(
                 "animdata.mul ({} active / {} records)",
                 animdata.active_count(),
@@ -103,7 +103,7 @@ pub fn ui_animdata(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui
             });
         });
 
-    egui::CentralPanel::default().show_inside(ui, |ui| {
+    egui::CentralPanel::default().show(ui, |ui| {
         let Some(entry) = animdata.get(app.selected_animdata_id) else {
             ui.centered_and_justified(|ui| {
                 ui.label("Select an animdata entry from the left panel.");

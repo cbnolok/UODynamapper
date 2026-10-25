@@ -17,7 +17,7 @@ pub fn ui_terrain_definition(app: &mut UopInspectorApp, ctx: &egui::Context, ui:
     egui::Panel::left("terrain_def_panel")
         .resizable(true)
         .default_size(TERRAIN_DEFINITION_PANEL_WIDTH)
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             ui.heading(format!("Terrain Definition Files ({})", files.len()));
             ui.separator();
 
@@ -73,7 +73,7 @@ pub fn ui_terrain_definition(app: &mut UopInspectorApp, ctx: &egui::Context, ui:
             });
         });
 
-    egui::Panel::top("terrain_definition_tabs").show_inside(ui, |ui| {
+    egui::Panel::top("terrain_definition_tabs").show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.selectable_value(
                 &mut app.view_mode,
@@ -88,7 +88,7 @@ pub fn ui_terrain_definition(app: &mut UopInspectorApp, ctx: &egui::Context, ui:
         });
     });
 
-    egui::CentralPanel::default().show_inside(ui, |ui| {
+    egui::CentralPanel::default().show(ui, |ui| {
         if let Some(selected_hash) = app.selected_terrain_def_hash {
             if let Some(file) = files.iter().find(|file| file.filename_hash == selected_hash) {
                 egui::ScrollArea::vertical().show(ui, |ui| {

@@ -51,7 +51,7 @@ impl eframe::App for InspectorApp {
         self.handle_keyboard_navigation(&ctx);
 
         // Top panel: Package selector
-        egui::Panel::top("top_panel").show_inside(ui, |ui| {
+        egui::Panel::top("top_panel").show(ui, |ui| {
             ui.horizontal(|ui| {
                 if ui.button("📁 Open UDDP...").clicked() {
                     if let Some(path) = open_package_dialog(self.settings.last_package_dir.as_deref()) {
@@ -68,7 +68,7 @@ impl eframe::App for InspectorApp {
         egui::Panel::left("left_panel")
             .resizable(true)
             .default_size(MAIN_LEFT_PANEL_DEFAULT_WIDTH)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 self.ui_left_panel(ui);
             });
 
@@ -83,13 +83,13 @@ impl eframe::App for InspectorApp {
             egui::Panel::right("right_panel")
                 .resizable(true)
                 .default_size(MAIN_RIGHT_PANEL_DEFAULT_WIDTH)
-                .show_inside(ui, |ui| {
+                .show(ui, |ui| {
                     self.ui_details(&ctx, ui, idx);
                 });
         }
 
         // Central area: The big table
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             if self.package.is_some() {
                 match self.view_mode {
                     ViewMode::Package | ViewMode::Virtual => self.render_table(&ctx, ui),
@@ -233,7 +233,7 @@ impl InspectorApp {
                     close_requested = true;
                 }
 
-                egui::CentralPanel::default().show_inside(ui, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
                     let Some((texture, size, label)) = &viewer_data else {
                         ui.label("No image available for the current selection.");
                         return;

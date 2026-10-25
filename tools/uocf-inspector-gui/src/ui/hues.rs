@@ -24,7 +24,7 @@ pub fn ui_hues(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui
         app.hues_source = HuesSource::CcMul;
     }
 
-    egui::Panel::top("hues_file_tabs").show_inside(ui, |ui| {
+    egui::Panel::top("hues_file_tabs").show(ui, |ui| {
         ui.horizontal(|ui| {
             if has_cc_hues {
                 ui.selectable_value(&mut app.hues_source, HuesSource::CcMul, "hues.mul");
@@ -45,7 +45,7 @@ fn ui_cc_hues(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui)
     egui::Panel::left("cc_hues_list")
         .resizable(true)
         .default_size(CC_HUES_LIST_PANEL_WIDTH)
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             ui.heading("hues.mul Entries");
             let sort = list_sort_controls(ui, "cc_hues", &["ID", "Name"], 0);
             ui.separator();
@@ -111,7 +111,7 @@ fn ui_cc_hues(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui)
             }
         });
 
-    egui::CentralPanel::default().show_inside(ui, |ui| {
+    egui::CentralPanel::default().show(ui, |ui| {
         if let Some(client) = &app.client_data {
             if let Some(hues) = &client.hues {
                 let idx = (app.selected_hue_id as usize).saturating_sub(1);
@@ -292,7 +292,7 @@ fn ec_hue_from_atlas_response(
 
 fn ui_ec_hues(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
     let Some(ec_hues_arc) = app.ec_hues.clone() else {
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             ui.centered_and_justified(|ui| {
                 ui.label("Select an Enhanced Client path containing hues.uop.");
             });
@@ -304,7 +304,7 @@ fn ui_ec_hues(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui)
     egui::Panel::left("ec_hues_list")
         .resizable(true)
         .default_size(EC_HUES_LIST_PANEL_WIDTH)
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             ui.heading(format!("hues.uop Entries ({})", ec_hues.bitmaps.len()));
             ui.separator();
 
@@ -387,7 +387,7 @@ fn ui_ec_hues(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui)
             });
         });
 
-    egui::Panel::top("ec_hues_raw_tabs").show_inside(ui, |ui| {
+    egui::Panel::top("ec_hues_raw_tabs").show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.selectable_value(&mut app.hues_source, HuesSource::EcUop, "Specialized");
             if ui.button("Raw selected BMP").clicked() {
@@ -405,7 +405,7 @@ fn ui_ec_hues(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui)
         });
     });
 
-    egui::CentralPanel::default().show_inside(ui, |ui| {
+    egui::CentralPanel::default().show(ui, |ui| {
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("EC Hues");

@@ -114,7 +114,7 @@ pub fn ui_upscale_preview_window(app: &mut UopInspectorApp, ctx: &egui::Context,
                     original_frame_open = false;
                 }
 
-                egui::CentralPanel::default().show_inside(ui, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
                     egui::ScrollArea::both()
                         .id_salt("uocf_upscale_preview_original_image")
                         .show(ui, |ui| {
@@ -143,7 +143,7 @@ pub fn ui_upscale_preview_window(app: &mut UopInspectorApp, ctx: &egui::Context,
                     upscaled_frame_open = false;
                 }
 
-                egui::CentralPanel::default().show_inside(ui, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
                     egui::ScrollArea::both()
                         .id_salt("uocf_upscale_preview_upscaled_image")
                         .show(ui, |ui| {

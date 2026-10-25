@@ -4,7 +4,7 @@ use eframe::egui;
 
 pub fn ui_string_dictionary(app: &mut UopInspectorApp, _ctx: &egui::Context, ui: &mut egui::Ui) {
     let Some(dictionary) = app.uo_string_dictionary.clone() else {
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             ui.centered_and_justified(|ui| {
                 ui.label("Select an Enhanced Client path containing string_dictionary.uop.");
             });
@@ -12,7 +12,7 @@ pub fn ui_string_dictionary(app: &mut UopInspectorApp, _ctx: &egui::Context, ui:
         return;
     };
     let Some(rows) = app.string_dictionary_rows.clone() else {
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             ui.centered_and_justified(|ui| {
                 ui.label("Reload assets to rebuild the string dictionary row cache.");
             });
@@ -20,7 +20,7 @@ pub fn ui_string_dictionary(app: &mut UopInspectorApp, _ctx: &egui::Context, ui:
         return;
     };
 
-    egui::Panel::top("string_dictionary_tabs").show_inside(ui, |ui| {
+    egui::Panel::top("string_dictionary_tabs").show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.selectable_value(
                 &mut app.view_mode,
@@ -35,7 +35,7 @@ pub fn ui_string_dictionary(app: &mut UopInspectorApp, _ctx: &egui::Context, ui:
         });
     });
 
-    egui::CentralPanel::default().show_inside(ui, |ui| {
+    egui::CentralPanel::default().show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.heading("EC String Dictionary");
             ui.separator();

@@ -73,7 +73,7 @@ pub fn ui_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
         };
     }
 
-    egui::Panel::top("multis_source_tabs").show_inside(ui, |ui| {
+    egui::Panel::top("multis_source_tabs").show(ui, |ui| {
         ui.horizontal(|ui| {
             if has_classic {
                 ui.selectable_value(&mut app.multis_source, MultisSource::ClassicMul, "multi.mul/.idx");
@@ -139,7 +139,7 @@ fn ui_classic_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
     egui::Panel::left("classic_multi_sidebar")
         .resizable(true)
         .default_size(CLASSIC_MULTI_SIDEBAR_WIDTH)
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             ui.heading("multi.mul/.idx");
             ui.separator();
             ui.horizontal(|ui| {
@@ -180,7 +180,7 @@ fn ui_classic_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
             }
         });
 
-    egui::CentralPanel::default().show_inside(ui, |ui| {
+    egui::CentralPanel::default().show(ui, |ui| {
         let parts = app
             .client_data
             .as_ref()
@@ -210,7 +210,7 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
     egui::Panel::left("uop_multi_sidebar")
         .resizable(true)
         .default_size(UOP_MULTI_SIDEBAR_WIDTH)
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             ui.heading(format!(
                 "{} MultiCollection.uop ({})",
                 multi_collection_source_label(app),
@@ -287,7 +287,7 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
             });
         });
 
-    egui::Panel::top("multi_uop_raw_tabs").show_inside(ui, |ui| {
+    egui::Panel::top("multi_uop_raw_tabs").show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.selectable_value(&mut app.multis_source, MultisSource::Uop, "Specialized");
             if ui.button("Raw selected").clicked() {
@@ -299,7 +299,7 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
         });
     });
 
-    egui::CentralPanel::default().show_inside(ui, |ui| {
+    egui::CentralPanel::default().show(ui, |ui| {
         if let Some(item) = collection.get(app.selected_multi_id) {
             let preview_parts: Vec<_> = item
                 .parts
@@ -342,7 +342,7 @@ fn select_multi(app: &mut UopInspectorApp, multi_id: u32, uop_hash: Option<u64>)
 
 fn ui_multimap(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
     let Some(multimap) = app.cc_multimap.clone() else {
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             ui.centered_and_justified(|ui| {
                 ui.label("multimap.rle is not loaded.");
             });
@@ -361,7 +361,7 @@ fn ui_multimap(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui
     egui::Panel::left("multimap_sidebar")
         .resizable(true)
         .default_size(MULTIMAP_SIDEBAR_WIDTH)
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             ui.heading("multimap.rle");
             ui.separator();
             egui::Grid::new("multimap_details").striped(true).show(ui, |ui| {
@@ -397,7 +397,7 @@ fn ui_multimap(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui
             );
         });
 
-    egui::CentralPanel::default().show_inside(ui, |ui| {
+    egui::CentralPanel::default().show(ui, |ui| {
         if let Some(handle) = app.get_multimap_texture(ctx) {
             let size = egui::vec2(
                 multimap.width as f32 * app.multimap_zoom,
@@ -433,8 +433,8 @@ fn draw_multi_details(
     if let Some(raw_label) = raw_label {
         ui.monospace(raw_label);
     }
-    let detached_window_id = egui::Id::new("multi_preview_detached_window");
-    let show_center_id = egui::Id::new("multi_preview_show_center");
+    let detached_window_id = egui::Id::unique("multi_preview_detached_window");
+    let show_center_id = egui::Id::unique("multi_preview_show_center");
     let selected_part_id = multi_selected_part_id(app);
     let mut detached_open = ctx
         .data_mut(|data| data.get_temp::<bool>(detached_window_id))
@@ -527,7 +527,7 @@ fn draw_multi_details(
     if detached_open {
         let mut open = true;
         egui::Window::new(format!("2D Preview - {} {}", title, app.selected_multi_id))
-            .id(egui::Id::new("multi_preview_detached_window_panel"))
+            .id(egui::Id::unique("multi_preview_detached_window_panel"))
             .open(&mut open)
             .default_size(egui::vec2(1000.0, 720.0))
             .resizable(true)
@@ -727,7 +727,7 @@ fn paint_selected_part_highlight(
 }
 
 fn multi_selected_part_id(app: &UopInspectorApp) -> egui::Id {
-    egui::Id::new(("multi_selected_part", app.multis_source as u8, app.selected_multi_id))
+    egui::Id::unique(("multi_selected_part", app.multis_source as u8, app.selected_multi_id))
 }
 
 fn get_multi_part_texture(

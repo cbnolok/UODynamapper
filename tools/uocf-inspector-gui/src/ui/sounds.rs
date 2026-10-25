@@ -7,7 +7,7 @@ const SOUNDS_LIST_PANEL_WIDTH: f32 = 280.0;
 
 pub fn ui_sounds(app: &mut UopInspectorApp, _ctx: &egui::Context, ui: &mut egui::Ui) {
     let Some(sounds) = app.cc_sounds.clone() else {
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             ui.label("Select a Classic Client path containing soundidx.mul and sound.mul.");
         });
         return;
@@ -16,7 +16,7 @@ pub fn ui_sounds(app: &mut UopInspectorApp, _ctx: &egui::Context, ui: &mut egui:
     egui::Panel::left("sounds_list")
         .resizable(true)
         .default_size(SOUNDS_LIST_PANEL_WIDTH)
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             ui.heading("sound.mul");
             ui.horizontal(|ui| {
                 ui.label("Slot");
@@ -99,7 +99,7 @@ pub fn ui_sounds(app: &mut UopInspectorApp, _ctx: &egui::Context, ui: &mut egui:
             }
         });
 
-    egui::CentralPanel::default().show_inside(ui, |ui| {
+    egui::CentralPanel::default().show(ui, |ui| {
         let sound = match sounds.read_slot(app.selected_sound_slot) {
             Ok(Some(sound)) => sound,
             Ok(None) => {

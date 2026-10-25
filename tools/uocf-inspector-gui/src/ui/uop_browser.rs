@@ -21,7 +21,7 @@ pub fn ui_uop_browser(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut e
     egui::Panel::left("package_panel")
         .resizable(true)
         .default_size(UOP_BROWSER_PACKAGE_PANEL_WIDTH)
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             ui.heading("Packages");
             let sort = list_sort_controls(ui, "uop_packages", &["Source", "Name"], 0);
             let package_indices = sorted_indices_by(
@@ -64,7 +64,7 @@ pub fn ui_uop_browser(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut e
         egui::Panel::left("entry_panel")
             .resizable(true)
             .default_size(UOP_BROWSER_ENTRY_PANEL_WIDTH)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.heading("Entries");
                 let mut text_has_focus = false;
                 ui.horizontal(|ui| {
@@ -136,7 +136,7 @@ pub fn ui_uop_browser(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut e
             });
     }
 
-    egui::CentralPanel::default().show_inside(ui, |ui| {
+    egui::CentralPanel::default().show(ui, |ui| {
         if let (Some(uop_idx), Some(file_hash)) = (app.selected_uop_idx, app.selected_file_hash) {
             let loaded_uop = app.uop_cache.loaded_uops[uop_idx].clone();
             if let Some(file) = loaded_uop.package.get_file_by_hash(file_hash) {

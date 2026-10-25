@@ -226,7 +226,7 @@ impl From<PaperdollProfileKdl> for PaperdollProfile {
 }
 
 pub fn ui_gumps(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
-    egui::CentralPanel::default().show_inside(ui, |ui| {
+    egui::CentralPanel::default().show(ui, |ui| {
         let profiles = paperdoll_profiles();
         if app.gump_list_source != Some(app.selected_gump_source)
             || app.gump_list_profile != app.selected_paperdoll_profile

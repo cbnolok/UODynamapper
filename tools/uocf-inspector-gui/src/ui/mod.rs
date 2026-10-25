@@ -78,7 +78,7 @@ impl ListSortState {
 
 pub(super) fn list_sort_controls(
     ui: &mut egui::Ui,
-    id_salt: impl std::hash::Hash,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
     options: &[&'static str],
     default_option_index: usize,
 ) -> ListSortState {
@@ -168,7 +168,7 @@ mod tests {
 }
 
 pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
-    egui::Panel::top("top_panel").show_inside(ui, |ui| {
+    egui::Panel::top("top_panel").show(ui, |ui| {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
                 if ui.button("Open UOP...").clicked() {
@@ -245,7 +245,7 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui
         });
     });
 
-    egui::Panel::bottom("status_bar").show_inside(ui, |ui| {
+    egui::Panel::bottom("status_bar").show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.label(&app.status_message);
             ui.separator();
@@ -331,7 +331,7 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui
 
     match app.view_mode {
         crate::app::ViewMode::Home => {
-            egui::CentralPanel::default().show_inside(ui, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
                 ui.heading("Logs");
                 ui.separator();
                 egui::ScrollArea::vertical()

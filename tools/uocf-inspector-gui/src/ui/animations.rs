@@ -56,7 +56,7 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
     egui::Panel::left("anim_controls")
         .resizable(true)
         .default_size(ANIMATION_CONTROLS_PANEL_WIDTH)
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             ui.heading("Animation Controls");
             ui.separator();
 
@@ -155,11 +155,11 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
     egui::Panel::right("anim_actions")
         .resizable(true)
         .default_size(ANIMATION_ACTIONS_PANEL_WIDTH)
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             show_animation_action_column(app, ui);
         });
 
-    egui::CentralPanel::default().show_inside(ui, |ui| {
+    egui::CentralPanel::default().show(ui, |ui| {
         if app.client_data.is_some() {
             let body_id = app
                 .client_data
