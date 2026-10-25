@@ -8,8 +8,8 @@ which uses its own egui through `bevy_egui` (a second egui version in the graph 
 The workspace pins `eframe` with `default-features = false`. Up to 0.34, eframe always
 enabled `egui-winit/clipboard` and `egui-winit/links` itself. From 0.37 both are opt-in
 eframe features (`clipboard`, `links`). Leaving them out still compiles cleanly, but
-copy/paste and opening hyperlinks stop working at runtime. Keep them in the eframe
-feature list.
+copy/paste and opening hyperlinks stop working at runtime. `clipboard` is enabled;
+`links` is intentionally left off for now (maintainer decision).
 
 `egui` itself also dropped `default_fonts` from its defaults in 0.37; eframe's
 `default_fonts` feature re-enables it through feature unification.

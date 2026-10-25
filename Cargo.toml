@@ -22,7 +22,7 @@ members = [
 
 [workspace.dependencies]
 zstd = { version = "0.13", features = ["zstdmt"] }
-eframe = { version = "0.37", default-features = false, features = ["clipboard", "default_fonts", "links", "wayland", "wgpu", "x11", "persistence", "glow"] }
+eframe = { version = "0.37", default-features = false, features = ["clipboard", "default_fonts", "wayland", "wgpu", "x11", "persistence", "glow"] }
 egui = { version = "0.37", features = ["bytemuck"] }
 egui_extras = { version = "0.37", features = ["image"] }
 rfd = { version = "0.17", features = ["xdg-portal"] }
