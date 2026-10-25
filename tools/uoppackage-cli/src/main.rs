@@ -257,6 +257,7 @@ fn main() -> eyre::Result<()> {
                 out_dir.display()
             );
             fs::create_dir_all(out_dir).with_context(|| "Failed to create output directory")?;
+            let out_dir = fs::canonicalize(out_dir)?;
 
             let uop = UopPackage::load(uop_file)
                 .with_context(|| format!("Failed to load UOP file: {}", uop_file.display()))?;
@@ -315,19 +316,21 @@ fn main() -> eyre::Result<()> {
                 };
 
                 let out_path = if let Some(name) = name_map.get(&hash) {
-                    let p = safe_extract_path(out_dir, name).with_context(|| {
+                    let p = safe_extract_path(&out_dir, name).with_context(|| {
                         format!(
                             "Dictionary name for hash 0x{:016x} is not a safe relative path: {}",
                             hash, name
                         )
                     })?;
-                    if let Some(parent) = p.parent() {
-                        fs::create_dir_all(parent)?;
-                    }
                     p
                 } else {
                     out_dir.join(format!("0x{:016x}.{}", hash, ext))
                 };
+
+                check_extract_containment(&out_dir, &out_path)?;
+                if let Some(parent) = out_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
 
                 fs::write(&out_path, data)
                     .with_context(|| format!("Failed to write file: {}", out_path.display()))?;
@@ -469,6 +472,28 @@ fn safe_extract_path(out_dir: &Path, file_name: &str) -> eyre::Result<PathBuf> {
     Ok(out_path)
 }
 
+fn check_extract_containment(canonical_root: &Path, destination: &Path) -> eyre::Result<()> {
+    let mut ancestor = destination;
+    loop {
+        match fs::symlink_metadata(ancestor) {
+            Ok(metadata) => {
+                if ancestor == destination && metadata.file_type().is_symlink() {
+                    eyre::bail!("refusing to overwrite extraction symlink: {}", destination.display());
+                }
+                let resolved = fs::canonicalize(ancestor)?;
+                if !resolved.starts_with(canonical_root) {
+                    eyre::bail!("extraction path escapes output directory through a symlink: {}", destination.display());
+                }
+                return Ok(());
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                ancestor = ancestor.parent().ok_or_else(|| eyre::eyre!("extraction path has no existing parent"))?;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
 fn save_package_atomically(package: &mut UopPackage, target_path: &Path) -> eyre::Result<()> {
     let temp_path = unique_temp_path_for(target_path)?;
     package
@@ -542,6 +567,27 @@ mod tests {
     #[test]
     fn safe_extract_path_rejects_absolute_path() {
         assert!(safe_extract_path(Path::new("/tmp/out"), "/tmp/outside.dds").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn extraction_rejects_symlink_parents_and_dangling_leaf_links() {
+        use std::os::unix::fs::symlink;
+        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("uop_extract_containment_{stamp}"));
+        let output = root.join("output");
+        let outside = root.join("outside");
+        fs::create_dir_all(&output).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let output = fs::canonicalize(output).unwrap();
+        symlink(&outside, output.join("build")).unwrap();
+        let escaped = safe_extract_path(&output, "build/worldart/image.dds").unwrap();
+        assert!(check_extract_containment(&output, &escaped).is_err());
+        symlink(outside.join("missing.dds"), output.join("leaf.dds")).unwrap();
+        assert!(check_extract_containment(&output, &output.join("leaf.dds")).is_err());
+        assert!(check_extract_containment(&output, &output.join("safe/subdir/image.dds")).is_ok());
+        assert!(!outside.join("worldart").exists());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
