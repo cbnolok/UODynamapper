@@ -1354,6 +1354,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn solid_mode5_roundtrips_every_channel_value_exactly() {
+        let extent = ImageExtent::new(4, 4).unwrap();
+        for value in 0..=255u8 {
+            let color = [value, 255 - value, value.wrapping_mul(73), value.rotate_left(3)];
+            let pixels = color.repeat(16);
+            let encoded = encode_to_bc7(&pixels, extent, RawImageFormat::Rgba8888, Bc7EncoderBackend::Analytical).unwrap();
+            let decoded = decode_bc7_to_rgba8888(encoded.blocks(), extent).unwrap();
+            assert_eq!(decoded, pixels, "solid source {color:?}");
+        }
+    }
+
+    #[test]
     fn bc7_progress_counts_encode_and_rdo_passes_separately() {
         let extent = ImageExtent::new(8, 8).expect("extent");
         let blocks = extent.blocks_wide() as usize * extent.blocks_high() as usize;
