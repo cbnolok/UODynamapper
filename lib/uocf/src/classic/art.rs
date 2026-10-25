@@ -371,6 +371,18 @@ impl ArtMap {
         }
     }
 
+    pub fn load_standalone_cc_uop(uop: UopPackage) -> Self {
+        Self {
+            client_path: PathBuf::new(),
+            idx_file: None,
+            art_mmap: None,
+            cc_uop_package: Some(uop),
+            ec_uop_package: None,
+            ec_kr_uop_package: None,
+            verdata: None,
+        }
+    }
+
     pub fn load_standalone_ec_kr_uop(uop: UopPackage) -> Self {
         Self {
             client_path: PathBuf::new(),

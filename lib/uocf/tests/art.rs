@@ -83,7 +83,7 @@ fn art_legacy_uop_exposes_full_classic_art_range() {
         )
         .unwrap();
 
-    let art = ArtMap::load_standalone_uop(package);
+    let art = ArtMap::load_standalone_cc_uop(package);
     assert_eq!(
         art.max_id_for_source(ArtSource::CcUop),
         ART_LEGACY_UOP_MAX_ID_EXCLUSIVE
