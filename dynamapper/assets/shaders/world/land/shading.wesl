@@ -9,10 +9,10 @@
 // ============================================================================
 
 
-#import "shaders/world/common_bindings.wgsl"::{GlobalLightingUniforms}
-#import "shaders/world/land/land_bindings.wgsl"::{LandLightingUniforms, effects, global_light, land_light, static_lights}
-#import "shaders/world/land/lighting.wgsl"::{luminance, chroma_only, get_lambert, get_specular, get_rim, get_hemisphere_fill, apply_gloom}
-#import "shaders/world/land/noise.wgsl"::hash
+import package::shaders::world::common_bindings::{GlobalLightingUniforms};
+import package::shaders::world::land::land_bindings::{LandLightingUniforms, effects, global_light, land_light, static_lights};
+import package::shaders::world::land::lighting::{luminance, chroma_only, get_lambert, get_specular, get_rim, get_hemisphere_fill, apply_gloom};
+import package::shaders::world::land::noise::hash;
 
 // ============================================================================
 // Mode 0: Classic (Gouraud, vertex-lit)

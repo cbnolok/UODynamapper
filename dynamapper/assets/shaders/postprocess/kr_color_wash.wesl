@@ -1,6 +1,6 @@
 // postprocess::kr_color_wash — Low-frequency KR-style painted illumination.
 
-#import "shaders/world/land/noise.wgsl"::noise_2d
+import package::shaders::world::land::noise::noise_2d;
 
 fn apply_kr_color_wash(
   rgb: vec3<f32>,

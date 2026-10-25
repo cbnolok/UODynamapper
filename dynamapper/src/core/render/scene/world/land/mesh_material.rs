@@ -93,18 +93,18 @@ pub struct LandMaterialExtension {
 
 impl MaterialExtension for LandMaterialExtension {
     fn vertex_shader() -> ShaderRef {
-        "shaders/world/land/main.wgsl".into()
+        "shaders/world/land/main.wesl".into()
     }
     fn fragment_shader() -> ShaderRef {
-        "shaders/world/land/main.wgsl".into()
+        "shaders/world/land/main.wesl".into()
     }
 
     /*
     fn deferred_vertex_shader() -> ShaderRef {
-        "shaders/world/land/main.wgsl".into()
+        "shaders/world/land/main.wesl".into()
     }
     fn deferred_fragment_shader() -> ShaderRef {
-        "shaders/world/land/main.wgsl".into()
+        "shaders/world/land/main.wesl".into()
     }
     */
 

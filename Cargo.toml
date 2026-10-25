@@ -34,9 +34,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ddsfile = "0.6.0"
 color-eyre = "0.6"
 toml = { version = "1.1", default-features = false, features = ["display", "parse", "serde"] }
-wgpu = { version = "29.0", default-features = false, features = ["vulkan", "wgsl"] }
-wgpu-profiler = "0.27.0"
-wgpu-types = "29.0"
+wgpu = { version = "30.0", default-features = false, features = ["vulkan", "wgsl"] }
+wgpu-profiler = "0.28.0"
+wgpu-types = "30.0"
 knuffel = "3"
 bytemuck = { version = "1.*", default-features = false, features = ["derive", "aarch64_simd", "avx512_simd"] }
 byteorder = "1.5"

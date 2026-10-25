@@ -21,7 +21,7 @@ type_complexity = "allow"
 udd-assets = { path = "../lib/udd-assets" }
 udd-container = { path = "../lib/udd-container" }
 uocf = { path = "../lib/uocf" }
-bevy_egui = { version = "0.42" } #, features = ["immutable_ctx"] }
+bevy_egui = { version = "0.43" } #, features = ["immutable_ctx"] }
 bytemuck = { version = "1.*", default-features = false, features = ["derive", "aarch64_simd", "avx512_simd"] }
 chrono = { version = "0.4", default-features = false, features = [
   "clock",
@@ -81,7 +81,7 @@ wgpu-profiler = { workspace = true, optional = true }
 
 
 [dependencies.bevy]
-version = "0.19"
+version = "0.20"
 default-features = false
 features = [
   # --- Bevy Internal Crates & Core Features ---
@@ -144,7 +144,6 @@ features = [
   #"accesskit_unix",     # Enable AccessKit on Unix backends
   #"android-game-activity",    # Android GameActivity support.
   #"android-native-activity",  # Android NativeActivity support.
-  #"android_shared_stdcxx",    # Enable using a shared stdlib for cxx on Android
   #"web",                # Enables use of browser APIs. (Wasm32 only)
   #"webgl2",             # Enable some limitations to be able to use WebGL2.
   #"webgpu",             # Enable support for WebGPU in Wasm. (Overrides webgl2)
@@ -194,10 +193,9 @@ features = [
   #"mp3",                # MP3 audio format support
   #"vorbis",             # OGG/VORBIS audio format support
   #"wav",                # WAV audio format support
-  #"symphonia-aac",      # AAC audio format support (through symphonia)
-  #"symphonia-all",      # AAC, FLAC, MP3, MP4, OGG/VORBIS, and WAV (through symphonia)
+  #"aac",                # AAC audio format support (through symphonia)
   #"symphonia-flac",     # FLAC audio format support (through symphonia)
-  #"symphonia-isomp4",   # MP4 audio format support (through symphonia)
+  #"mp4",                # MP4 audio format support (through symphonia)
   #"symphonia-vorbis",   # OGG/VORBIS audio format support (through symphonia)
   #"symphonia-wav",      # WAV audio format support (through symphonia)
 
@@ -218,9 +216,7 @@ features = [
   #"morph_animation",    # Enables bevy_mesh and bevy_animation morph weight support
 
   # --- Shaders ---
-  #"shader_format_glsl", # Enable support for shaders in GLSL
   #"shader_format_spirv",# Enable support for shaders in SPIR-V
-  #"shader_format_wesl", # Enable support for shaders in WESL
 
   # --- Asset Management & Task Execution ---
   #"asset_processor",     # Enables the built-in asset processor for processed assets.
@@ -250,8 +246,8 @@ features = [
   #"track_location",     # Enables source location tracking for change detection
 
   # --- Experimental & Specialized ---
-  #"experimental_bevy_feathers", # Feathers widget collection.
-  #"experimental_bevy_ui_widgets", # Experimental headless widget collection for Bevy UI.
+  #"bevy_feathers",      # Feathers widget collection.
+  #"bevy_ui_widgets",    # Headless widget collection for Bevy UI.
   #"free_camera",        # Enables the free cam from bevy_camera_controller
   #"pan_camera",         # Enables the pan camera from bevy_camera_controller
   #"ghost_nodes",        # Experimental support for nodes that are ignored for UI layouting

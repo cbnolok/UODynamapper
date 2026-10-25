@@ -9,7 +9,7 @@
 // ============================================================================
 
 
-#import "shaders/world/land/atlas.wgsl"::{atlas_read_height}
+import package::shaders::world::land::atlas::{atlas_read_height};
 
 // ============================================================================
 // Cubic interpolation helpers (value + derivative) for heightfield normals

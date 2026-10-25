@@ -11,7 +11,7 @@
 //   bit  7:   is_wet flag (tile has IsWet in tiledata.mul)
 // ============================================================================
 
-#import "shaders/world/land/land_bindings.wgsl"::{TileUniform, AtlasParams, ATLAS, tile_meta_atlas, land_page_lookup, CHUNK_TILE_NUM_DIM}
+import package::shaders::world::land::land_bindings::{TileUniform, AtlasParams, ATLAS, tile_meta_atlas, land_page_lookup, CHUNK_TILE_NUM_DIM};
 
 // Query world-space (x,z) tile coordinates and map them, through the LRU
 // page table, to the physical GPU atlas layer.  Returns a zero'd TileUniform

@@ -10,7 +10,7 @@ Before diving into source code for any non-trivial task, also read relevant file
 
 UODynamapper is a 2D client/dynamic map renderer for Ultima Online, emulating Classic 2D, Enhanced Classic, and Kingdom Reborn (KR-like) visuals.
 
-**Tech Stack**: Rust, Bevy Engine v0.19.1, WGSL shaders (naga-oil), wgpu.
+**Tech Stack**: Rust, Bevy Engine v0.20.0, WESL/WGSL shaders (Bevy's `wesl` composer), wgpu.
 
 ---
 

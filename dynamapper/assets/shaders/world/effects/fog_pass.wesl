@@ -1,5 +1,5 @@
 // ============================================================================
-// fog_pass.wgsl — Fullscreen fog post-processing pass.
+// fog_pass.wesl — Fullscreen fog post-processing pass.
 //
 // This runs as a fullscreen triangle after the main 3D pass, applying fog
 // uniformly over all rendered geometry (land + art tiles + any future passes).
@@ -15,7 +15,7 @@
 // angle, this correlates well with world-space distance from the player.
 // ============================================================================
 
-#import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput
+import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput;
 
 // The screen texture (rendered world, land + art)
 @group(0) @binding(0)

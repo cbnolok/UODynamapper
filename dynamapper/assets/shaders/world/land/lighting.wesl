@@ -5,8 +5,8 @@
 // ============================================================================
 
 
-#import "shaders/world/common_bindings.wgsl"::{GlobalLightingUniforms}
-#import "shaders/world/land/land_bindings.wgsl"::{LandLightingUniforms, global_light, land_light}
+import package::shaders::world::common_bindings::{GlobalLightingUniforms};
+import package::shaders::world::land::land_bindings::{LandLightingUniforms, global_light, land_light};
 
 // ============================================================================
 // Basic math helpers

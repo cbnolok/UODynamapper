@@ -1,18 +1,18 @@
-#import bevy_pbr::{
+import bevy_pbr::render::{
     forward_io::Vertex,
     view_transformations,
     mesh_view_bindings::globals,
-}
-#import "shaders/world/effects/surface_effects.wgsl"::{apply_water_animation, water_flat_wrapped_lambert}
-#import "shaders/postprocess/color_grading.wgsl"::{grade_color_vibrant}
-#import "shaders/postprocess/global_lighting.wgsl"::{apply_global_lighting_rgb}
-#import "shaders/postprocess/grunge.wgsl"::{apply_texture_visual_grunge, visual_grunge_uv}
-#import "shaders/postprocess/kr_color_wash.wgsl"::apply_kr_color_wash
-#import "shaders/postprocess/tonemapping.wgsl"::{tonemap_ec_kr_profile}
-#import "shaders/world/land/noise.wgsl"::noise_2d
-#import "shaders/world/pixel_art_filters.wgsl"::pixel_art_atlas_uv_iq
+};
+import package::shaders::world::effects::surface_effects::{apply_water_animation, water_flat_wrapped_lambert};
+import package::shaders::postprocess::color_grading::{grade_color_vibrant};
+import package::shaders::postprocess::global_lighting::{apply_global_lighting_rgb};
+import package::shaders::postprocess::grunge::{apply_texture_visual_grunge, visual_grunge_uv};
+import package::shaders::postprocess::kr_color_wash::apply_kr_color_wash;
+import package::shaders::postprocess::tonemapping::{tonemap_ec_kr_profile};
+import package::shaders::world::land::noise::noise_2d;
+import package::shaders::world::pixel_art_filters::pixel_art_atlas_uv_iq;
 
-#import "shaders/world/art/art_bindings.wgsl"::{
+import package::shaders::world::art::art_bindings::{
     SpriteInstance, SpriteParams, SceneUniform, LandEffectsUniform, GlobalLightingUniforms,
     art_atlas_sampler, art_atlas, instances, sprite_params, scene, effects, global_light,
     hue_sampler, hue_texture, visual_grunge_texture,
@@ -20,9 +20,9 @@
     DEPTH_CLASS_FOLIAGE, DEPTH_CLASS_ROOF, DEPTH_CLASS_SURFACE_LIKE_FLOOR, PASS_MODE_OPAQUE,
     PASS_MODE_TRANSPARENT, PASS_MODE_SHADOW, SURFACE_LIKE_DEPTH_CLASS_OFFSET,
     STATIC_DEPTH_TIE_BREAK_FRAG_EPSILON
-}
-#import "shaders/world/art/hue.wgsl"::apply_static_hue
-#import "shaders/world/art/shading.wgsl"::apply_art_surface_shading
+};
+import package::shaders::world::art::hue::apply_static_hue;
+import package::shaders::world::art::shading::apply_art_surface_shading;
 
 struct ArtVertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -288,7 +288,7 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
     // top highlight) which is applied unconditionally regardless of the is_ground_art flag;
     // painted onto a flat water diamond it produces a bright-top/dark-edge shaded outline —
     // the "boxed shadow" artifact. Skip it for flat water, mirroring the EC ground path which
-    // likewise bypasses this shading for its water material (ground.wgsl `if (!use_ec_water_material)`).
+    // likewise bypasses this shading for its water material (ground.wesl `if (!use_ec_water_material)`).
     // Non-water flat statics and all billboards are unaffected.
     let is_cc_flat_water = inst.flat_quad != 0u && in.is_wet == 1u;
     if (is_cc_flat_water) {
@@ -353,7 +353,7 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
     ), shaded.a);
 
     shaded = vec4<f32>(apply_global_lighting_rgb(shaded.rgb, scene.global_lighting), shaded.a);
-    // Fog is applied once to the fully composed frame by effects/fog_pass.wgsl.
+    // Fog is applied once to the fully composed frame by effects/fog_pass.wesl.
 
     var final_rgb = shaded.rgb;
     if (global_light.enable_grading == 1u) {

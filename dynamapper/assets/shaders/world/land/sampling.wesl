@@ -28,9 +28,9 @@
 // ============================================================================
 
 
-#import "shaders/world/common_bindings.wgsl"::{LandEffectsUniform}
-#import "shaders/world/land/land_bindings.wgsl"::{TileUniform, tex_small, tex_big, land_page_atlas, land_page_lookup, tex_small_sampler, effects, ec_aux_atlas, ec_aux_lookup, classic_land_art_atlas, classic_land_art_lookup}
-#import "shaders/world/pixel_art_filters.wgsl"::pixel_art_uv_iq
+import package::shaders::world::common_bindings::{LandEffectsUniform};
+import package::shaders::world::land::land_bindings::{TileUniform, tex_small, tex_big, land_page_atlas, land_page_lookup, tex_small_sampler, effects, ec_aux_atlas, ec_aux_lookup, classic_land_art_atlas, classic_land_art_lookup};
+import package::shaders::world::pixel_art_filters::pixel_art_uv_iq;
 
 // Width in pixels of one Classic Client isometric tile — the world-unit
 // denominator shared by both CC and EC coordinate systems.

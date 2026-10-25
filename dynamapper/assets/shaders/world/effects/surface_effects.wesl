@@ -1,4 +1,4 @@
-#import bevy_pbr::mesh_view_bindings::globals
+import bevy_pbr::render::mesh_view_bindings::globals;
 
 // Faithful port of ClassicUO's water animation scaling algorithm.
 //

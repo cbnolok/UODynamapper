@@ -6,37 +6,37 @@
 //  - Mode 2: "KR-like"      — painterly: warm key, cool ambient/fill, vibrant grading.
 //
 // This file contains ONLY the @vertex and @fragment entry points.
-// All helpers live in the co-located module files and are pulled in via #import.
+// All helpers live in the co-located module files and are pulled in via import.
 //  https://wgmath.rs/docs/user_guides/wgcore/shaders_composition/
 // ============================================================================
 
-#import bevy_pbr::{
+import bevy_pbr::render::{
   forward_io::{Vertex, VertexOutput},
   mesh_functions,
   mesh_view_bindings::globals,
   view_transformations,
-}
+};
 
-// ---- Land shader modules (quoted asset-path imports for on-demand loading) ----
-#import "shaders/world/common_bindings.wgsl"::{
+// ---- Land shader modules (package asset-path imports for on-demand loading) ----
+import package::shaders::world::common_bindings::{
   SceneUniform, LandEffectsUniform, GlobalLightingUniforms
-}
-#import "shaders/world/land/land_bindings.wgsl"::{
+};
+import package::shaders::world::land::land_bindings::{
   TileUniform, AtlasParams, LandLightingUniforms,
   tex_small_sampler, tex_small, tex_big, tile_meta_atlas,
   visual_grunge_texture,
   ec_aux_atlas, ec_aux_lookup,
   ATLAS, scene, effects, global_light, land_light
-}
-#import "shaders/world/land/atlas.wgsl"::{atlas_read_meta, atlas_read_height, chunk_edge_blend_factor}
-#import "shaders/world/land/noise.wgsl"::{hash, fbm_billow, domain_warp}
-#import "shaders/world/land/normals.wgsl"::{get_geometric_normal_local, get_bicubic_normal, get_bent_normal}
-#import "shaders/postprocess/color_grading.wgsl"::{grade_color_vibrant}
-#import "shaders/postprocess/global_lighting.wgsl"::{apply_global_lighting_rgb}
-#import "shaders/postprocess/grunge.wgsl"::{apply_texture_shadow_aware_land_grunge, apply_texture_visual_grunge, visual_grunge_uv}
-#import "shaders/postprocess/kr_color_wash.wgsl"::apply_kr_color_wash
-#import "shaders/postprocess/tonemapping.wgsl"::{tonemap_ec_kr_profile}
-#import "shaders/world/land/sampling.wgsl"::{
+};
+import package::shaders::world::land::atlas::{atlas_read_meta, atlas_read_height, chunk_edge_blend_factor};
+import package::shaders::world::land::noise::{hash, fbm_billow, domain_warp};
+import package::shaders::world::land::normals::{get_geometric_normal_local, get_bicubic_normal, get_bent_normal};
+import package::shaders::postprocess::color_grading::{grade_color_vibrant};
+import package::shaders::postprocess::global_lighting::{apply_global_lighting_rgb};
+import package::shaders::postprocess::grunge::{apply_texture_shadow_aware_land_grunge, apply_texture_visual_grunge, visual_grunge_uv};
+import package::shaders::postprocess::kr_color_wash::apply_kr_color_wash;
+import package::shaders::postprocess::tonemapping::{tonemap_ec_kr_profile};
+import package::shaders::world::land::sampling::{
   ec_world_uv,
   ec_material_has_liquid_normal,
   ec_liquid_perturbed_base_uv,
@@ -50,14 +50,14 @@
   sample_ec_ripple_normal,
   classic_land_art_is_present,
   sample_classic_land_art,
-}
-#import "shaders/world/land/shading.wgsl"::{
+};
+import package::shaders::world::land::shading::{
   shade_mode0_classic_vertex,
   shade_mode1_enhanced_fragment,
   shade_mode2_kr_fragment,
   apply_static_light_decals,
-}
-#import "shaders/world/effects/surface_effects.wgsl"::{apply_water_animation, water_flat_wrapped_lambert}
+};
+import package::shaders::world::effects::surface_effects::{apply_water_animation, water_flat_wrapped_lambert};
 
 // ============================================================================
 // Vertex shader
@@ -847,7 +847,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   );
 
   hdr_rgb = apply_global_lighting_rgb(hdr_rgb, scene.global_lighting);
-  // Fog is applied once to the fully composed frame by effects/fog_pass.wgsl.
+  // Fog is applied once to the fully composed frame by effects/fog_pass.wesl.
 
   // ============================================================================
   // Grading (vibrant, neutral contrast) + Tonemap (Reinhard + exposure)

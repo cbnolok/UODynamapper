@@ -1,17 +1,17 @@
-#import bevy_pbr::{
+import bevy_pbr::render::{
     forward_io::Vertex,
     view_transformations,
     mesh_view_bindings::globals,
-}
-#import "shaders/world/effects/surface_effects.wgsl"::apply_water_animation
-#import "shaders/postprocess/color_grading.wgsl"::{grade_color_vibrant}
-#import "shaders/postprocess/global_lighting.wgsl"::{apply_global_lighting_rgb}
-#import "shaders/postprocess/grunge.wgsl"::{apply_texture_visual_grunge, visual_grunge_uv}
-#import "shaders/postprocess/kr_color_wash.wgsl"::apply_kr_color_wash
-#import "shaders/postprocess/tonemapping.wgsl"::{tonemap_ec_kr_profile}
-#import "shaders/world/pixel_art_filters.wgsl"::{pixel_art_atlas_uv_iq, pixel_art_uv_iq}
+};
+import package::shaders::world::effects::surface_effects::apply_water_animation;
+import package::shaders::postprocess::color_grading::{grade_color_vibrant};
+import package::shaders::postprocess::global_lighting::{apply_global_lighting_rgb};
+import package::shaders::postprocess::grunge::{apply_texture_visual_grunge, visual_grunge_uv};
+import package::shaders::postprocess::kr_color_wash::apply_kr_color_wash;
+import package::shaders::postprocess::tonemapping::{tonemap_ec_kr_profile};
+import package::shaders::world::pixel_art_filters::{pixel_art_atlas_uv_iq, pixel_art_uv_iq};
 
-#import "shaders/world/art/art_ground_bindings.wgsl"::{
+import package::shaders::world::art::art_ground_bindings::{
     GroundTileInstance, SpriteParams, SceneUniform, LandEffectsUniform, GlobalLightingUniforms,
     art_atlas_sampler, art_atlas, instances, sprite_params, scene, effects, global_light,
     hue_sampler, hue_texture, land_page_atlas, land_page_lookup, visual_grunge_texture,
@@ -19,9 +19,9 @@
     PASS_MODE_OPAQUE, PASS_MODE_TRANSPARENT, DEPTH_CLASS_SURFACE_LIKE_FLOOR,
     SURFACE_LIKE_DEPTH_CLASS_OFFSET, STATIC_DEPTH_TIE_BREAK_FRAG_EPSILON,
     GROUND_FLAG_EC_WATER_MATERIAL
-}
-#import "shaders/world/art/hue.wgsl"::apply_static_hue
-#import "shaders/world/art/shading.wgsl"::apply_art_surface_shading
+};
+import package::shaders::world::art::hue::apply_static_hue;
+import package::shaders::world::art::shading::apply_art_surface_shading;
 
 struct GroundVertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -275,7 +275,7 @@ fn fragment(in: GroundVertexOutput) -> GroundFragmentOutput {
     ), shaded.a);
 
     shaded = vec4<f32>(apply_global_lighting_rgb(shaded.rgb, scene.global_lighting), shaded.a);
-    // Fog is applied once to the fully composed frame by effects/fog_pass.wgsl.
+    // Fog is applied once to the fully composed frame by effects/fog_pass.wesl.
 
     var final_rgb = shaded.rgb;
     if (global_light.enable_grading == 1u) {

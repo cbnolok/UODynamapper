@@ -68,7 +68,8 @@ Two port errors hid in `texture_cache/land.rs`'s test module and only surfaced
 under `cargo test`: `bevy::shader::PipelineCacheError` → `ShaderCacheError`, and
 `ShaderCache::new` gained a leading `device` parameter (still generic over
 `<ShaderModule, RenderDevice>`, so the test's `ShaderCache::<(), ()>` trick for
-compiling shaders without a GPU still works — pass `()` as the device). When
+compiling shaders without a GPU still works — pass `()` as the device; 0.20
+changed this API again, see `bevy_0_20_port_notes.md`). When
 porting, run `cargo test --workspace` and
 `cargo check -p dynamapper --features gpu-profiling`, not just `cargo check`.
 

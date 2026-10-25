@@ -9,7 +9,7 @@
 //  Reference: https://www.shadertoy.com/view/stXSWB
 // ============================================================================
 
-#import "shaders/world/land/land_bindings.wgsl"::{TileUniform, tex_small, tex_big, land_page_atlas}
+import package::shaders::world::land::land_bindings::{TileUniform, tex_small, tex_big, land_page_atlas};
 
 // ============================================================================
 // Texel fetch helper — integer-coordinate nearest tap
@@ -246,7 +246,7 @@ fn fsr_easu(
 }
 
 // ============================================================================
-// Public entry point — called from sampling.wgsl
+// Public entry point — called from sampling.wesl
 // ============================================================================
 
 /// FSR EASU tile reconstruction.

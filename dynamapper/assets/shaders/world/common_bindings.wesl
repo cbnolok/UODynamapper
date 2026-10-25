@@ -1,5 +1,5 @@
 // ============================================================================
-// common_bindings.wgsl — Shared uniform struct definitions across all shaders.
+// common_bindings.wesl — Shared uniform struct definitions across all shaders.
 // ============================================================================
 
 // Global scene state: camera, light, zoom level.

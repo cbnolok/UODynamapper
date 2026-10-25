@@ -128,7 +128,7 @@ pub(crate) fn resolve_surface_like_ground_quad_bounds() -> GroundQuadBounds {
 /// "too small" symptom. Instead we size the quad in world units from the sprite's real pixel
 /// dimensions via `CC_WORLD_XZ_PER_PIXEL` (the same per-pixel scale the billboard path uses)
 /// and center it on the origin. Combined with the diagonal `BILLBOARD_RIGHT_XZ` /
-/// `FLAT_QUAD_FORWARD_XZ` basis applied in main.wgsl, the sprite's diamond vertices then land
+/// `FLAT_QUAD_FORWARD_XZ` basis applied in main.wesl, the sprite's diamond vertices then land
 /// exactly on the cell corners and seam with the terrain water beneath. A 44px-wide tile maps
 /// to a half-extent of `44 * 0.5 * (sqrt(2)/44) = sqrt(2)/2` along each diagonal axis, i.e. the
 /// visible diamond spans a full 1x1 world cell.
@@ -825,7 +825,7 @@ pub struct SpriteInstance {
     pub hue_id: u32,
     pub hue_flags: u32,
     /// Flat-quad flag: 1 = lay this instance flat in the XZ plane (CC surface-like
-    /// water statics), 0 = upright camera-facing billboard (default). See main.wgsl.
+    /// water statics), 0 = upright camera-facing billboard (default). See main.wesl.
     pub flat_quad: u32,
     pub _pad_hue: [u32; 2],
     pub local_light_rgba: [f32; 4],
@@ -2122,7 +2122,7 @@ fn emit_art_static_tile(
 
     // CC water/shoreline statics (placed as items) must lie flat like the terrain water
     // beneath them, not stand up as billboards. They stay in the sprite pipeline but render a
-    // flat XZ quad (see emit_cc_surface_like_flat_static_instance / main.wgsl).
+    // flat XZ quad (see emit_cc_surface_like_flat_static_instance / main.wesl).
     // Gate on IsWet only (cc_static_tile_renders_flat), NOT the broad static_tile_is_surface_like:
     // the latter also matches non-water "surface-like" tiles (floors, elevated roofs) which are
     // upright CC sprite art and must stay billboards. See cc_static_tile_renders_flat.
@@ -2362,8 +2362,8 @@ fn emit_billboard_static_instance(
 /// cell), the CC sprite has the isometric diamond baked into its pixels, so the quad is sized
 /// from the sprite's real pixel dimensions and centered (see
 /// `resolve_cc_surface_like_flat_quad_bounds`) and laid out on the diagonal
-/// `BILLBOARD_RIGHT_XZ` / `FLAT_QUAD_FORWARD_XZ` basis in main.wgsl. The `flat_quad` flag
-/// drives that flat vertex transform and the `is_ground_art` shading branch in main.wgsl.
+/// `BILLBOARD_RIGHT_XZ` / `FLAT_QUAD_FORWARD_XZ` basis in main.wesl. The `flat_quad` flag
+/// drives that flat vertex transform and the `is_ground_art` shading branch in main.wesl.
 fn emit_cc_surface_like_flat_static_instance(
     info: StaticTileRenderInfo<'_>,
     frame: StaticCollectFrameConfig,
@@ -2393,7 +2393,7 @@ fn emit_cc_surface_like_flat_static_instance(
     );
     // Anchor the flat diamond feet-first by the sprite's real pixel height (see
     // `cc_surface_like_flat_quad_center_offsets`): for the 44px plain-water sprites this lands
-    // exactly on the cell center, so the diagonal basis in main.wgsl maps the baked diamond's
+    // exactly on the cell center, so the diagonal basis in main.wesl maps the baked diamond's
     // edge vertices onto the cell corners as before; taller wave sprites extend further
     // up-screen from the same feet anchor instead of being wrongly re-centered. Depth-sort
     // keys (tile_x/tile_y below) stay at the cell origin to remain consistent with the EC

@@ -1616,16 +1616,30 @@ fn sys_apply_tile_atlas_expansion(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bevy::render::render_resource::{DownlevelFlags, WgpuFeatures};
+    use bevy::asset::{uuid::Uuid, AssetId};
     use bevy::shader::{
         Shader, ShaderCache, ShaderCacheError, ShaderCacheSource, ValidateShader,
     };
+    use wgpu::naga;
 
-    fn accept_shader_module(
+    /// Parses and validates the composed WGSL with naga, standing in for the GPU
+    /// shader module creation that the real `PipelineCache` would perform.
+    fn validate_shader_module(
         _device: &(),
-        _source: ShaderCacheSource<'_>,
+        source: ShaderCacheSource<'_>,
         _validation: &ValidateShader,
     ) -> Result<(), ShaderCacheError> {
+        let ShaderCacheSource::Wgsl(wgsl) = source else {
+            return Err(ShaderCacheError::CreateShaderModule("expected WGSL output".into()));
+        };
+        let module = naga::front::wgsl::parse_str(&wgsl)
+            .map_err(|error| ShaderCacheError::CreateShaderModule(error.emit_to_string(&wgsl)))?;
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .map_err(|error| ShaderCacheError::CreateShaderModule(error.emit_to_string(&wgsl)))?;
         Ok(())
     }
 
@@ -1660,41 +1674,66 @@ mod tests {
 
     #[test]
     fn land_sampling_shader_composes() {
-        let mut shader_cache = ShaderCache::<(), ()>::new(
-            (),
-            WgpuFeatures::empty(),
-            DownlevelFlags::empty(),
-            accept_shader_module,
-        );
+        let mut shader_cache = ShaderCache::<(), ()>::new((), validate_shader_module);
+        let shader_id = |n: u128| AssetId::<Shader>::Uuid {
+            uuid: Uuid::from_u128(n),
+        };
 
-        let dependencies = [
-            Shader::from_wgsl(
-                include_str!("../../../assets/shaders/world/common_bindings.wgsl"),
-                "shaders/world/common_bindings.wgsl",
+        let shaders = [
+            Shader::from_wesl(
+                include_str!("../../../assets/shaders/world/common_bindings.wesl"),
+                "shaders/world/common_bindings.wesl",
             ),
-            Shader::from_wgsl(
-                include_str!("../../../assets/shaders/world/land/land_bindings.wgsl"),
-                "shaders/world/land/land_bindings.wgsl",
+            Shader::from_wesl(
+                include_str!("../../../assets/shaders/world/land/land_bindings.wesl"),
+                "shaders/world/land/land_bindings.wesl",
             ),
-            Shader::from_wgsl(
-                include_str!("../../../assets/shaders/world/pixel_art_filters.wgsl"),
-                "shaders/world/pixel_art_filters.wgsl",
+            Shader::from_wesl(
+                include_str!("../../../assets/shaders/world/pixel_art_filters.wesl"),
+                "shaders/world/pixel_art_filters.wesl",
+            ),
+            Shader::from_wesl(
+                include_str!("../../../assets/shaders/world/land/sampling.wesl"),
+                "shaders/world/land/sampling.wesl",
             ),
         ];
-        for dependency in &dependencies {
-            shader_cache
-                .composer
-                .add_composable_module(dependency.into())
-                .unwrap();
+        for (n, shader) in (1..).zip(shaders) {
+            shader_cache.set_shader(shader_id(n), shader);
         }
 
-        let sampling = Shader::from_wgsl(
-            include_str!("../../../assets/shaders/world/land/sampling.wgsl"),
-            "shaders/world/land/sampling.wgsl",
+        // WESL strips everything an entry point does not reach, so a library module
+        // compiled on its own composes to nothing. Compose a minimal entry point that
+        // calls the sampling functions used by `land/main.wesl` instead.
+        let root_id = shader_id(0);
+        shader_cache.set_shader(
+            root_id,
+            Shader::from_wesl(
+                r#"
+import package::shaders::world::land::land_bindings::TileUniform;
+import package::shaders::world::land::sampling::{
+    apply_ec_aux_two_base_blend, apply_sharpening, blurred_albedo, classic_land_art_is_present,
+    ec_liquid_perturbed_base_uv, sample_classic_land_art, sample_ec_material_albedo,
+    sample_ec_material_normal_world, sample_ec_ripple_normal, sample_tile_albedo,
+};
+
+@fragment
+fn fragment() -> @location(0) vec4<f32> {
+    var tile: TileUniform;
+    let uv = ec_liquid_perturbed_base_uv(vec2<f32>(0.0), vec2<f32>(0.0), tile, 0.0);
+    var color = sample_tile_albedo(uv, tile) + sample_ec_material_albedo(uv, uv, tile);
+    color = apply_ec_aux_two_base_blend(color, uv, tile);
+    color = apply_sharpening(color, uv, tile, 0.0) + blurred_albedo(uv, tile, 0.0, uv);
+    if (classic_land_art_is_present(0u)) {
+        color += sample_classic_land_art(uv, 0u);
+    }
+    let normal = sample_ec_material_normal_world(uv, tile, 0.0, true);
+    let ripple = sample_ec_ripple_normal(uv, 0u, 0.0, 0.0);
+    return vec4<f32>(color, normal.w + ripple.x);
+}
+"#,
+                "shaders/test/land_sampling_root.wesl",
+            ),
         );
-        shader_cache
-            .composer
-            .make_naga_module((&sampling).into())
-            .unwrap();
+        shader_cache.get(0, root_id, &[]).unwrap();
     }
 }

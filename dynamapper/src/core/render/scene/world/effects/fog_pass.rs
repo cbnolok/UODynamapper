@@ -48,9 +48,10 @@ impl Plugin for FogPostProcessPlugin {
 /// Fog parameters passed to the fullscreen fog shader.
 /// Kept in sync each frame with `UniformState.lighting` by `sys_sync_fog_uniform`.
 ///
-/// Must match the `FogPostProcessUniform` struct layout in `fog_pass.wgsl` exactly.
+/// Must match the `FogPostProcessUniform` struct layout in `fog_pass.wesl` exactly.
 /// All fields must be aligned to 16 bytes per WGSL/encase rules.
 #[derive(Component, ExtractComponent, Clone, Copy, ShaderType, Default)]
+#[extract_app(bevy::render::RenderApp)]
 pub struct FogPostProcessUniform {
     // --- Toggle ---
     pub enable_fog: u32,
@@ -74,7 +75,7 @@ pub struct FogPostProcessUniform {
 
 impl FullscreenMaterial for FogPostProcessUniform {
     fn fragment_shader() -> ShaderRef {
-        "shaders/world/effects/fog_pass.wgsl".into()
+        "shaders/world/effects/fog_pass.wesl".into()
     }
 
     fn schedule_configs(system: ScheduleConfigs<BoxedSystem>) -> ScheduleConfigs<BoxedSystem> {

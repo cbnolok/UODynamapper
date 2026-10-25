@@ -48,6 +48,7 @@ pub struct LCMesh {
 /// Keeping the values in one explicit resource makes the upload path easier to inspect
 /// and avoids hiding frame-pacing behavior behind scattered constants.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, ExtractResource)]
+#[extract_app(bevy::render::RenderApp)]
 pub struct LandUploadBudget {
     pub prepare_max_blocks_per_frame: usize,
     pub upload_max_ops_per_frame: usize,
@@ -128,6 +129,7 @@ pub struct LandUploadTelemetrySnapshot {
 /// We store the counters in an `Arc` so both worlds see the same numbers without introducing
 /// a bespoke cross-world messaging path.
 #[derive(Resource, Clone, Default, ExtractResource)]
+#[extract_app(bevy::render::RenderApp)]
 pub struct LandUploadTelemetry {
     shared: Arc<LandUploadTelemetryShared>,
 }

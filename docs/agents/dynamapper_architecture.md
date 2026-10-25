@@ -24,7 +24,7 @@ core/
   statics.rs             — Static object management
 ```
 
-Shaders: `dynamapper/assets/shaders/worldmap/land/` — WGSL modules using naga-oil `#import`.
+Shaders: `dynamapper/assets/shaders/world/` — `.wesl` modules using WESL `import package::shaders::...;` (see `docs/agent_notes/bevy_0_20_port_notes.md`).
 
 ---
 
@@ -43,18 +43,18 @@ Three modes: **Classic 2D (0)**, **Enhanced Classic (1)**, **KR-like (2)**. Alwa
 
 ### Bevy
 
-- **egui systems must run in `EguiPrimaryContextPass`** (not `Update` or `PostUpdate`). Bevy 0.19 + bevy_egui 0.42 requirement.
+- **egui systems must run in `EguiPrimaryContextPass`** (not `Update` or `PostUpdate`). Bevy 0.20 + bevy_egui 0.43 requirement.
 - **Never call `get_mut()` on Materials in hot paths.** It triggers expensive re-extraction and re-binding every frame; use `get()` for read-checks.
 - **All internal plugins must implement `TrackedPlugin`**: add `pub registered_by: &'static str`, call `log_plugin_build(self)` at the start of `build()`. Register third-party plugins manually in `core.rs`.
 
-### Shaders (WGSL / naga-oil)
+### Shaders (WESL)
 
-- WGSL variable names **cannot end with a digit** (naga-oil constraint).
-- `#[uniform(10X)]` in Rust must exactly match `@binding(10X)` in WGSL. See `mesh_material.rs` and `bindings.wgsl`.
+- WGSL variable names **cannot end with a digit** (naga-oil constraint; Bevy 0.20 replaced naga-oil with WESL, whose mangler accepts such names, so this rule is a candidate for removal).
+- `#[uniform(10X)]` in Rust must exactly match `@binding(10X)` in WGSL. See `mesh_material.rs` and `land_bindings.wesl`.
 - **Adding a new uniform** (follow this exact order):
   1. Add field to struct in `mesh_material.rs`
   2. Populate value in `draw_mesh.rs` inside `create_land_chunk_material`
-  3. Add corresponding field in `bindings.wgsl`
+  3. Add corresponding field in `land_bindings.wesl`
   4. Use the field in the shader
   5. Verify binding indices match between Rust and WGSL
 

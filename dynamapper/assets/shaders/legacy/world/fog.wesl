@@ -1,12 +1,12 @@
 // Legacy world-space material fog helper.
 //
 // This file is intentionally not imported by active shaders. Runtime fog is
-// applied by shaders/world/effects/fog_pass.wgsl as a fullscreen post-process pass.
+// applied by shaders/world/effects/fog_pass.wesl as a fullscreen post-process pass.
 
-#import bevy_pbr::mesh_view_bindings::globals
-#import "shaders/world/land/noise.wgsl"::{hash, fbm_billow, domain_warp}
+import bevy_pbr::render::mesh_view_bindings::globals;
+import package::shaders::world::land::noise::{hash, fbm_billow, domain_warp};
 
-#import "shaders/world/common_bindings.wgsl"::{SceneUniform, GlobalLightingUniforms}
+import package::shaders::world::common_bindings::{SceneUniform, GlobalLightingUniforms};
 
 fn calculate_fog_factor(
     world_pos: vec3<f32>,

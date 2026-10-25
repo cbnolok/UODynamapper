@@ -33,6 +33,7 @@ use udd_assets::bc7::{TextureUploadLayout, VramTextureFormat};
 use uocf::classic::land_texture::LandTextureSize;
 
 #[derive(Resource, Clone, ExtractResource)]
+#[extract_app(bevy::render::RenderApp)]
 pub struct TextureArrayImageHandles {
     pub small: Handle<Image>,
     pub big: Handle<Image>,

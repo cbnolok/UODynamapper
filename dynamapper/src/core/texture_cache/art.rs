@@ -799,9 +799,11 @@ pub fn sys_extract_ground_art_page_uploads(
 }
 
 #[derive(Resource, Clone, ExtractResource)]
+#[extract_app(bevy::render::RenderApp)]
 pub struct SpriteArtPageAtlasHandle(pub Handle<Image>);
 
 #[derive(Resource, Clone, ExtractResource)]
+#[extract_app(bevy::render::RenderApp)]
 pub struct GroundArtPageAtlasHandle(pub Handle<Image>);
 
 pub fn sys_render_upload_sprite_art_pages(

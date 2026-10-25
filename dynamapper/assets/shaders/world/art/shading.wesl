@@ -2,7 +2,7 @@
 // art::shading — Shared fake-lighting helpers for 2D art and ground-art passes.
 // ============================================================================
 
-#import "shaders/world/land/noise.wgsl"::noise_2d
+import package::shaders::world::land::noise::noise_2d;
 
 const ART_DEPTH_CLASS_BACKGROUND: u32 = 1u;
 const ART_DEPTH_CLASS_FOLIAGE: u32 = 2u;

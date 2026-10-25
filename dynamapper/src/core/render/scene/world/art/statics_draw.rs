@@ -172,19 +172,19 @@ struct AtlasAllocationSpec {
 
 impl MaterialExtension for ArtSpriteMaterialExtension {
     fn vertex_shader() -> bevy::shader::ShaderRef {
-        "shaders/world/art/main.wgsl".into()
+        "shaders/world/art/main.wesl".into()
     }
     fn fragment_shader() -> bevy::shader::ShaderRef {
-        "shaders/world/art/main.wgsl".into()
+        "shaders/world/art/main.wesl".into()
     }
 }
 
 impl MaterialExtension for ArtGroundMaterialExtension {
     fn vertex_shader() -> bevy::shader::ShaderRef {
-        "shaders/world/art/ground.wgsl".into()
+        "shaders/world/art/ground.wesl".into()
     }
     fn fragment_shader() -> bevy::shader::ShaderRef {
-        "shaders/world/art/ground.wgsl".into()
+        "shaders/world/art/ground.wesl".into()
     }
 }
 
@@ -1682,7 +1682,7 @@ fn update_art_material_uniforms(
     mat.extension.effects_uniform = uniform_state.effects;
     mat.extension.global_lighting_uniform = uniform_state.lighting;
     // Flat-quad CC water shades itself with a flat ambient+diffuse response (see art
-    // main.wgsl); surface the land diffuse strength through the shared uniform's spare
+    // main.wesl); surface the land diffuse strength through the shared uniform's spare
     // `_pad2_.x` slot (WGSL: land_diffuse_strength) so it matches the terrain water.
     mat.extension.global_lighting_uniform._pad2_.x = uniform_state.land_lighting.diffuse_strength;
 }
