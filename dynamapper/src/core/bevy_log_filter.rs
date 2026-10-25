@@ -71,7 +71,6 @@ fn bevy_log_targets() -> Targets {
         .with_target("bevy", LevelFilter::INFO)
         .with_target("bevy_ecs", LevelFilter::ERROR)
         .with_target("bevy_render", LevelFilter::ERROR)
-        .with_target("bevy_framepace", LevelFilter::WARN)
         .with_target("wgpu", LevelFilter::ERROR)
         .with_target("wgpu_hal", LevelFilter::ERROR)
         .with_target("naga", LevelFilter::WARN)

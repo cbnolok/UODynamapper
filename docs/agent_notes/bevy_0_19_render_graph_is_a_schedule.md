@@ -74,7 +74,8 @@ porting, run `cargo test --workspace` and
 
 ## Third-party plugins must be bumped in lockstep
 
-`bevy_egui` and `bevy_framepace` link Bevy directly, so a stale version silently
+`bevy_egui` (and formerly `bevy_framepace`, since replaced by the local
+`dynamapper/src/core/frame_limiter.rs`) link Bevy directly, so a stale version silently
 pulls a **second** copy of Bevy into the graph. The symptom is a flood of
 nonsense errors — `FramepaceSettings is not a Resource`,
 `EguiPrimaryContextPass: ScheduleLabel is not satisfied`, `expected Entity,
@@ -82,7 +83,7 @@ found a different Entity` — none of which are real API changes. Check with
 `cargo tree -p dynamapper -i bevy`: it must print exactly one `bevy vX`.
 
 For 0.19 the working pair is `bevy_egui 0.42` (which brings egui 0.33 → 0.36)
-and `bevy_framepace 0.22`. egui 0.36 renamed the context input-capture queries:
+and `bevy_framepace 0.22` (later dropped). egui 0.36 renamed the context input-capture queries:
 `ctx.wants_pointer_input()` / `wants_keyboard_input()` →
 `egui_wants_pointer_input()` / `egui_wants_keyboard_input()`, and
 `EguiContextSettings::scale_factor` is gone — UI scale is egui's own zoom factor

@@ -2,14 +2,14 @@ use crate::core::controls::input_actions::{ActionCloseActiveDialog, ActionToggle
 use crate::{
     configs::settings::{AntiAliasingMode, ClientTextureSource},
     core::{
-        framepace_limiter_for_options, framepace_limiter_for_settings, present_mode_for_vsync,
+        frame_limiter::FrameLimiterSettings, frame_limiter_for_options, frame_limiter_for_settings,
+        present_mode_for_vsync,
         render::{dialogs, scene::camera::UiCameraResource},
     },
     prelude::*,
 };
 use bevy::{pbr::wireframe::WireframeConfig, prelude::*};
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
-use bevy_framepace::{FramepaceSettings, Limiter};
 
 const FPS_PRESETS: &[u32] = &[15, 30, 60, 75, 120, 144, 165, 240];
 const DEFAULT_FPS_LIMIT: u32 = 60;
@@ -150,15 +150,6 @@ fn sys_sync_settings_to_state(
     }
 }
 
-fn limiter_matches(a: &Limiter, b: &Limiter) -> bool {
-    match (a, b) {
-        (Limiter::Off, Limiter::Off) => true,
-        (Limiter::Auto, Limiter::Auto) => true,
-        (Limiter::Manual(a), Limiter::Manual(b)) => a == b,
-        _ => false,
-    }
-}
-
 fn sys_preferences_toggle(
     _trigger: On<ActionTogglePreferences>,
     mut state: ResMut<PreferencesDialogState>,
@@ -188,7 +179,7 @@ pub fn sys_render_preferences_dialog(
     mut egui_contexts: EguiContexts,
     egui_ui_camera: Res<UiCameraResource>,
     mut state: ResMut<PreferencesDialogState>,
-    mut framepace: ResMut<FramepaceSettings>,
+    mut frame_limiter: ResMut<FrameLimiterSettings>,
     mut settings: ResMut<Settings>,
     mut windows_q: Query<&mut Window>,
     time: Res<Time>,
@@ -349,14 +340,14 @@ pub fn sys_render_preferences_dialog(
                         });
                     });
 
-                    // Apply frame limiter changes immediately to framepace resource
-                    let desired_limiter = framepace_limiter_for_options(
+                    // Apply frame limiter changes immediately to frame limiter resource
+                    let desired_limiter = frame_limiter_for_options(
                         state.frame_limit_enabled,
                         FPS_PRESETS[state.fps_preset_idx],
                         state.vsync,
                     );
-                    if !limiter_matches(&framepace.limiter, &desired_limiter) {
-                        framepace.limiter = desired_limiter;
+                    if frame_limiter.limiter != desired_limiter {
+                        frame_limiter.limiter = desired_limiter;
                     }
 
                     ui.label(
@@ -374,13 +365,13 @@ pub fn sys_render_preferences_dialog(
                         if let Ok(mut window) = windows_q.single_mut() {
                             window.present_mode = present_mode_for_vsync(state.vsync);
                         }
-                        let desired_limiter = framepace_limiter_for_options(
+                        let desired_limiter = frame_limiter_for_options(
                             state.frame_limit_enabled,
                             FPS_PRESETS[state.fps_preset_idx],
                             state.vsync,
                         );
-                        if !limiter_matches(&framepace.limiter, &desired_limiter) {
-                            framepace.limiter = desired_limiter;
+                        if frame_limiter.limiter != desired_limiter {
+                            frame_limiter.limiter = desired_limiter;
                         }
                     }
 
@@ -630,10 +621,10 @@ pub fn sys_render_preferences_dialog(
 
 pub fn sys_apply_performance_settings(
     settings: Res<Settings>,
-    mut framepace: ResMut<FramepaceSettings>,
+    mut frame_limiter: ResMut<FrameLimiterSettings>,
 ) {
     if settings.is_changed() {
         log_system_add_update::<PreferencesDialogPlugin>(fname!());
-        framepace.limiter = framepace_limiter_for_settings(settings.as_ref());
+        frame_limiter.limiter = frame_limiter_for_settings(settings.as_ref());
     }
 }

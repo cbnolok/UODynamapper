@@ -21,7 +21,6 @@ type_complexity = "allow"
 udd-assets = { path = "../lib/udd-assets" }
 udd-container = { path = "../lib/udd-container" }
 uocf = { path = "../lib/uocf" }
-bevy_framepace = { version = "0.22", default-features = false }
 bevy_egui = { version = "0.42" } #, features = ["immutable_ctx"] }
 bytemuck = { version = "1.*", default-features = false, features = ["derive", "aarch64_simd", "avx512_simd"] }
 chrono = { version = "0.4", default-features = false, features = [
@@ -49,6 +48,7 @@ regex = { version = "1", default-features = false, features = [
   "unicode",
 ] }
 serde = { version = "1", default-features = false, features = ["derive"] }
+spin_sleep = "1.3"
 strum = { version = "0.28", default-features = false }
 strum_macros = { version = "0.28", default-features = false }
 

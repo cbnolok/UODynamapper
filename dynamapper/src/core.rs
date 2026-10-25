@@ -3,6 +3,7 @@ mod bevy_log_filter;
 pub mod constants;
 pub mod controls;
 mod diagnostics;
+pub mod frame_limiter;
 pub mod maps;
 pub mod multis;
 pub mod render;
@@ -56,20 +57,20 @@ pub fn present_mode_for_vsync(vsync: bool) -> PresentMode {
     }
 }
 
-pub fn framepace_limiter_for_options(
+pub fn frame_limiter_for_options(
     frame_limit_enabled: bool,
     target_fps: u32,
     vsync: bool,
-) -> bevy_framepace::Limiter {
+) -> frame_limiter::Limiter {
     if frame_limit_enabled && !vsync {
-        bevy_framepace::Limiter::from_framerate(target_fps as f64)
+        frame_limiter::Limiter::from_framerate(target_fps as f64)
     } else {
-        bevy_framepace::Limiter::Off
+        frame_limiter::Limiter::Off
     }
 }
 
-pub fn framepace_limiter_for_settings(settings: &settings::Settings) -> bevy_framepace::Limiter {
-    framepace_limiter_for_options(
+pub fn frame_limiter_for_settings(settings: &settings::Settings) -> frame_limiter::Limiter {
+    frame_limiter_for_options(
         settings.app.performance.frame_limit_enabled,
         settings.app.performance.target_fps,
         settings.graphics.vsync,
@@ -337,7 +338,6 @@ pub fn run_bevy_app() -> ExitCode {
         if wireframe_enabled {
             registry.record("WireframePlugin", "Core");
         }
-        registry.record("FramepacePlugin", "Core");
         registry.record("EguiPlugin", "Core");
     }
 
@@ -346,9 +346,11 @@ pub fn run_bevy_app() -> ExitCode {
         app.add_plugins(WireframePlugin::default()); // Needed to enable wireframe rendering
     }
 
-    app.add_plugins(bevy_framepace::FramepacePlugin)
-    .insert_resource(bevy_framepace::FramepaceSettings {
-        limiter: framepace_limiter_for_settings(&settings_data),
+    app.add_plugins(frame_limiter::FrameLimiterPlugin {
+        registered_by: "Core",
+    })
+    .insert_resource(frame_limiter::FrameLimiterSettings {
+        limiter: frame_limiter_for_settings(&settings_data),
     })
     .insert_resource(bevy_egui::EguiGlobalSettings {
         auto_create_primary_context: false, // We manually spawn PrimaryEguiContext on the UI camera
