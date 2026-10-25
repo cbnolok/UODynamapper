@@ -84,7 +84,12 @@ fn vertex(vertex: Vertex) -> ArtVertexOutput {
 
     let corner = vec2<f32>(vertex.position.x, vertex.position.z);
     var world_pos: vec3<f32>;
-    if (inst.flat_quad != 0u) {
+    if (inst.flat_quad == 2u) {
+        // Tileart-owned EC material images share the sprite atlas, but cover
+        // an axis-aligned world cell just like terrain-owned ground materials.
+        let local = mix(inst.local_min, inst.local_max, corner);
+        world_pos = vec3<f32>(inst.world_x + local.x, inst.world_y, inst.world_z + local.y);
+    } else if (inst.flat_quad == 1u) {
         // CC surface-like statics (shoreline water) lie flat in the XZ plane instead of
         // standing up as a camera-facing card. Unlike the EC ground-quad path (plain square
         // texmap on an axis-aligned cell), the CC sprite already has the isometric diamond
@@ -163,6 +168,9 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
     let uv_in_tile_for_shading = clamp((uv - inst.uv_min) / atlas_extent, vec2<f32>(0.0), vec2<f32>(1.0));
 
     if (sprite_params.pass_mode == PASS_MODE_SHADOW) {
+        if (inst.flat_quad == 2u) {
+            discard;
+        }
         if (effects.enable_art_projected_shadows == 0u || effects.art_projected_shadow_strength <= 0.0001 || sprite_params.render_mode == 1u) {
             discard;
         }
@@ -253,6 +261,9 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
         out.depth = in.position.z;
     }
 
+    if (inst.flat_quad == 2u && inst.texture_stretch > 0.0) {
+        uv = inst.uv_min + fract(in.world_pos.xz / inst.texture_stretch) * atlas_extent;
+    }
     if (effects.enable_water_animation == 1u && in.is_wet == 1u) {
         let uv_in_tile = (uv - inst.uv_min) / atlas_extent;
         uv = inst.uv_min + apply_water_animation(uv_in_tile, vec2<f32>(0.5, 0.5)) * atlas_extent;
@@ -290,7 +301,7 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
     // the "boxed shadow" artifact. Skip it for flat water, mirroring the EC ground path which
     // likewise bypasses this shading for its water material (ground.wesl `if (!use_ec_water_material)`).
     // Non-water flat statics and all billboards are unaffected.
-    let is_cc_flat_water = inst.flat_quad != 0u && in.is_wet == 1u;
+    let is_cc_flat_water = inst.flat_quad == 1u && in.is_wet == 1u;
     if (is_cc_flat_water) {
         // Flat CC water is a level liquid surface that must read as the SAME even tone as
         // the terrain water it seams with (the terrain water shows through this quad's

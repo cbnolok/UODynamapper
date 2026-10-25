@@ -778,7 +778,8 @@ pub fn sys_setup_art_page_atlas(
         hue_id: 0,
         hue_flags: 0,
         flat_quad: 0,
-        _pad_hue: [0; 2],
+        texture_stretch: 0.0,
+        _pad_hue: 0,
         local_light_rgba: [0.0, 0.0, 0.0, 0.0],
         color_rgba: [0.0, 0.0, 0.0, 0.0],
     }]);

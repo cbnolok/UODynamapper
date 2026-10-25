@@ -188,7 +188,7 @@ fn surface_like_static_world_anchor(
     world_z: f32,
 ) -> (f32, f32) {
     match visual_kind {
-        StaticVisualKind::TexLandEc { .. } => (world_x, world_z),
+        StaticVisualKind::TexLandEc { .. } | StaticVisualKind::EcSurface { .. } => (world_x, world_z),
         // CC billboards are force-centered in their bbox, so they need a symmetric anchor
         // (see CC_STATIC_TILE_TRANSLATION_*); EC billboards carry their own per-sprite offsets
         // and keep the legacy asymmetric anchor they were validated against.
@@ -205,6 +205,7 @@ fn surface_like_static_world_anchor(
 enum StaticVisualKind {
     CcRegular { art_id: u16, fallback_art_id: u16 },
     EcRegular { art_id: u32 },
+    EcSurface { art_id: u32 },
     TexLandEc { resolution: SurfaceLikeTexLandEcResolution },
 }
 
@@ -736,7 +737,8 @@ fn resolve_static_visual_kind(
         }
         ClientTextureSource::Ec => resolve_ec_static_visual_kind(
             tile_graphic,
-            tex_art_ec.is_some_and(|package| package.present_slot(tile_graphic as u32).is_some()),
+            tex_art_ec.and_then(|package| package.present_slot(tile_graphic as u32))
+                .is_some_and(|slot| slot.is_land()),
             resolve_surface_like_tex_land_ec_slot_id(
                 tile_graphic as u32,
                 tilemeta_package,
@@ -768,7 +770,8 @@ fn resolve_static_visual_kind_cached(
         }
         ClientTextureSource::Ec => resolve_ec_static_visual_kind(
             tile_graphic,
-            tex_art_ec.is_some_and(|package| package.present_slot(tile_graphic as u32).is_some()),
+            tex_art_ec.and_then(|package| package.present_slot(tile_graphic as u32))
+                .is_some_and(|slot| slot.is_land()),
             surface_resolution_cache.resolve_surface_like_tex_land_ec_slot_id(
                 art_source,
                 tile_graphic as u32,
@@ -782,10 +785,14 @@ fn resolve_static_visual_kind_cached(
 
 fn resolve_ec_static_visual_kind(
     tile_graphic: u16,
-    _has_tex_art_ec_slot: bool,
+    has_tex_art_ec_surface_slot: bool,
     surface_like_land_resolution: Option<SurfaceLikeTexLandEcResolution>,
 ) -> StaticVisualKind {
-    if let Some(resolution) = surface_like_land_resolution {
+    if has_tex_art_ec_surface_slot {
+        // Tileart owns this image and its sampling window. A terrain texture with
+        // the same source id cannot replace an authored item-owned surface.
+        StaticVisualKind::EcSurface { art_id: tile_graphic as u32 }
+    } else if let Some(resolution) = surface_like_land_resolution {
         StaticVisualKind::TexLandEc { resolution }
     } else {
         StaticVisualKind::EcRegular {
@@ -825,9 +832,11 @@ pub struct SpriteInstance {
     pub hue_id: u32,
     pub hue_flags: u32,
     /// Flat-quad flag: 1 = lay this instance flat in the XZ plane (CC surface-like
-    /// water statics), 0 = upright camera-facing billboard (default). See main.wesl.
+    /// water statics), 2 = axis-aligned EC material surface, 0 = upright billboard.
+    /// See main.wesl.
     pub flat_quad: u32,
-    pub _pad_hue: [u32; 2],
+    pub texture_stretch: f32,
+    pub _pad_hue: u32,
     pub local_light_rgba: [f32; 4],
     pub color_rgba: [f32; 4], // for dot mode
 }
@@ -2067,7 +2076,8 @@ fn emit_dot_static_tile(
         hue_id: 0,
         hue_flags: 0,
         flat_quad: 0,
-        _pad_hue: [0; 2],
+        texture_stretch: 0.0,
+        _pad_hue: 0,
         local_light_rgba,
         color_rgba: [
             color[2] as f32 / 255.0,
@@ -2177,6 +2187,8 @@ fn emit_art_static_tile(
                 resources,
                 resolved,
                 billboard_source,
+                matches!(visual_kind, StaticVisualKind::EcSurface { .. }),
+                texture_stretch,
                 anchored_world_x,
                 anchored_world_z,
                 world_y,
@@ -2232,14 +2244,25 @@ fn resolve_art_static_sprite(
                 resolution.texture_repetition,
             ))
         }
-        StaticVisualKind::EcRegular { art_id } => {
+        StaticVisualKind::EcRegular { art_id } | StaticVisualKind::EcSurface { art_id } => {
             let tex_art_ec = resources.tex_art_ec_package()?;
 
             if let Some(slot) = tex_art_ec.present_slot(art_id) {
                 requested_pages.insert(slot.page_index as u64);
             }
 
-            Some((ClientTextureSource::Ec, sprite_atlas.resolve_ec(tex_art_ec, art_id), 0.0))
+            let texture_stretch = if matches!(visual_kind, StaticVisualKind::EcSurface { .. }) {
+                resources.tilemeta_package()
+                    .and_then(|package| package.main_ec_texture_ref(art_id))
+                    // Ripple-like inputs on small authored stains are not tiled albedo.
+                    .filter(|texture_ref| texture_ref.speculative_role()
+                        != udd_assets::tilemeta::EcMaterialSpeculativeRole::LiquidRipple)
+                    .map(|texture_ref| valid_texture_repetition(texture_ref.texture_stretch))
+                    .unwrap_or(0.0)
+            } else {
+                0.0
+            };
+            Some((ClientTextureSource::Ec, sprite_atlas.resolve_ec(tex_art_ec, art_id), texture_stretch))
         }
     }
 }
@@ -2304,6 +2327,8 @@ fn emit_billboard_static_instance(
     resources: StaticCollectResources<'_>,
     resolved: ResolvedArtSprite,
     billboard_source: ClientTextureSource,
+    ec_surface: bool,
+    texture_stretch: f32,
     anchored_world_x: f32,
     anchored_world_z: f32,
     world_y: f32,
@@ -2313,22 +2338,43 @@ fn emit_billboard_static_instance(
     hue_flags: u32,
     build: &mut StaticChunkBuildState,
 ) {
-    let bounds = resolve_static_billboard_bounds(
-        billboard_source,
-        resolved.offset_x,
-        resolved.offset_y,
-        resolved.logical_width,
-        resolved.logical_height,
-    );
-    let local_light_rgba = static_art_billboard_local_light_rgba(
-        frame.static_art_local_lights,
-        resources.static_lights,
-        frame.map_id,
-        anchored_world_x,
-        anchored_world_z,
-        info.base_world_y,
-        bounds,
-    );
+    let bounds = if ec_surface {
+        StaticBillboardBounds {
+            local_min_x: 0.0,
+            local_min_y: 0.0,
+            local_max_x: 1.0,
+            local_max_y: 1.0,
+        }
+    } else {
+        resolve_static_billboard_bounds(
+            billboard_source,
+            resolved.offset_x,
+            resolved.offset_y,
+            resolved.logical_width,
+            resolved.logical_height,
+        )
+    };
+    let local_light_rgba = if ec_surface {
+        static_art_ground_local_light_rgba(
+            frame.static_art_local_lights,
+            resources.static_lights,
+            frame.map_id,
+            anchored_world_x,
+            anchored_world_z,
+            info.base_world_y,
+            resolve_surface_like_ground_quad_bounds(),
+        )
+    } else {
+        static_art_billboard_local_light_rgba(
+            frame.static_art_local_lights,
+            resources.static_lights,
+            frame.map_id,
+            anchored_world_x,
+            anchored_world_z,
+            info.base_world_y,
+            bounds,
+        )
+    };
 
     build.sprite_instances.push(SpriteInstance {
         world_x: anchored_world_x,
@@ -2348,8 +2394,9 @@ fn emit_billboard_static_instance(
         is_wet_flags: info.is_wet_flags,
         hue_id,
         hue_flags,
-        flat_quad: 0,
-        _pad_hue: [0; 2],
+        flat_quad: if ec_surface { 2 } else { 0 },
+        texture_stretch,
+        _pad_hue: 0,
         local_light_rgba,
         color_rgba: [1.0, 1.0, 1.0, 1.0],
     });
@@ -2422,7 +2469,8 @@ fn emit_cc_surface_like_flat_static_instance(
         hue_id,
         hue_flags,
         flat_quad: 1,
-        _pad_hue: [0; 2],
+        texture_stretch: 0.0,
+        _pad_hue: 0,
         local_light_rgba,
         color_rgba: [1.0, 1.0, 1.0, 1.0],
     });
@@ -2981,11 +3029,32 @@ mod tests {
     }
 
     #[test]
-    fn surface_like_ec_tiles_prefer_land_path_over_direct_art_slot() {
+    fn tileart_owned_surfaces_keep_their_own_atlas_slot() {
         let resolution = test_surface_like_resolution();
         let visual_kind = resolve_ec_static_visual_kind(196, true, Some(resolution));
 
-        assert_eq!(visual_kind, StaticVisualKind::TexLandEc { resolution },);
+        assert_eq!(visual_kind, StaticVisualKind::EcSurface { art_id: 196 });
+    }
+
+    #[test]
+    fn tileart_owned_surfaces_render_without_a_terrain_texture_copy() {
+        assert_eq!(
+            resolve_ec_static_visual_kind(1169, true, None),
+            StaticVisualKind::EcSurface { art_id: 1169 },
+        );
+        assert_eq!(
+            surface_like_static_world_anchor(StaticVisualKind::EcSurface { art_id: 1169 }, 10.0, 20.0),
+            (10.0, 20.0),
+        );
+    }
+
+    #[test]
+    fn terrain_surface_resolution_remains_available_without_tileart_material() {
+        let resolution = test_surface_like_resolution();
+        assert_eq!(
+            resolve_ec_static_visual_kind(196, false, Some(resolution)),
+            StaticVisualKind::TexLandEc { resolution },
+        );
     }
 
     #[test]
@@ -3039,7 +3108,7 @@ mod tests {
 
     #[test]
     fn non_surface_like_ec_tiles_stay_on_regular_art_path() {
-        let visual_kind = resolve_ec_static_visual_kind(196, true, None);
+        let visual_kind = resolve_ec_static_visual_kind(196, false, None);
 
         assert_eq!(visual_kind, StaticVisualKind::EcRegular { art_id: 196 },);
     }
@@ -3315,7 +3384,8 @@ mod tests {
             hue_id: 0,
             hue_flags: 0,
             flat_quad: 0,
-            _pad_hue: [0; 2],
+            texture_stretch: 0.0,
+            _pad_hue: 0,
             local_light_rgba: [0.0; 4],
             color_rgba: [1.0, 1.0, 1.0, 1.0],
         };

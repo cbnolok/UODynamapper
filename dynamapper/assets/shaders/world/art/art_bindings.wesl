@@ -25,9 +25,11 @@ struct SpriteInstance {
     hue_id: u32,
     hue_flags: u32,
     // Flat-quad flag: 1 = lay flat in the XZ plane (CC surface-like water statics),
-    // 0 = upright camera-facing billboard (default). Branched on in main.wesl vertex.
+    // 2 = axis-aligned EC material surface, 0 = upright camera-facing billboard.
+    // Branched on in main.wesl vertex.
     flat_quad: u32,
-    _pad_hue: vec2<u32>,
+    texture_stretch: f32,
+    _pad_hue: u32,
     local_light_rgba: vec4<f32>,
     color_rgba: vec4<f32>,
 }
