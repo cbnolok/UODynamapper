@@ -2,6 +2,10 @@
 
 ## Reproducible search
 
+Reusable PE string/reference extraction and bounded Ghidra decompilation helpers
+live in [scripts/dev-helpers/ec-research](../../scripts/dev-helpers/ec-research/README.md).
+They accept input/output paths and keep generated evidence outside the repository.
+
 Start with material identities from `TerrainDefinition.uop` and `tileart.uop`,
 not a guessed function address. Material 5 names `UOWaterTerrainLayer`; shoreline
 item 6038 names `UOWaterShader`. Their first three image identities agree:
