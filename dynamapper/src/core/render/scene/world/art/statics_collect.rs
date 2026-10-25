@@ -740,6 +740,8 @@ fn resolve_static_visual_kind(
         ClientTextureSource::Ec => resolve_ec_static_visual_kind(
             tile_graphic,
             tex_art_ec.and_then(|package| package.present_slot(tile_graphic as u32))
+                .is_some_and(|slot| slot.is_static()),
+            tex_art_ec.and_then(|package| package.present_slot(tile_graphic as u32))
                 .is_some_and(|slot| slot.is_land())
                 && tileart_surface_has_visible_primary(tilemeta_package.map_or(&[], |package| package.item_texture_refs(tile_graphic as u32))),
             resolve_surface_like_tex_land_ec_slot_id(
@@ -774,6 +776,8 @@ fn resolve_static_visual_kind_cached(
         ClientTextureSource::Ec => resolve_ec_static_visual_kind(
             tile_graphic,
             tex_art_ec.and_then(|package| package.present_slot(tile_graphic as u32))
+                .is_some_and(|slot| slot.is_static()),
+            tex_art_ec.and_then(|package| package.present_slot(tile_graphic as u32))
                 .is_some_and(|slot| slot.is_land())
                 && tileart_surface_has_visible_primary(tilemeta_package.map_or(&[], |package| package.item_texture_refs(tile_graphic as u32))),
             surface_resolution_cache.resolve_surface_like_tex_land_ec_slot_id(
@@ -807,10 +811,15 @@ fn tileart_surface_has_visible_primary(
 
 fn resolve_ec_static_visual_kind(
     tile_graphic: u16,
+    has_tex_art_ec_static_slot: bool,
     has_tex_art_ec_surface_slot: bool,
     surface_like_land_resolution: Option<SurfaceLikeTexLandEcResolution>,
 ) -> StaticVisualKind {
-    if has_tex_art_ec_surface_slot {
+    if has_tex_art_ec_static_slot {
+        // Walkable sprites (stairs, bridges, furniture) still own their art.
+        // The Surface tiledata flag does not make their graphic id a land id.
+        StaticVisualKind::EcRegular { art_id: tile_graphic as u32 }
+    } else if has_tex_art_ec_surface_slot {
         // Tileart owns this image and its sampling window. A terrain texture with
         // the same source id cannot replace an authored item-owned surface.
         StaticVisualKind::EcSurface { art_id: tile_graphic as u32 }
@@ -3061,9 +3070,20 @@ mod tests {
     #[test]
     fn tileart_owned_surfaces_keep_their_own_atlas_slot() {
         let resolution = test_surface_like_resolution();
-        let visual_kind = resolve_ec_static_visual_kind(196, true, Some(resolution));
+        let visual_kind = resolve_ec_static_visual_kind(196, false, true, Some(resolution));
 
         assert_eq!(visual_kind, StaticVisualKind::EcSurface { art_id: 196 });
+    }
+
+    #[test]
+    fn walkable_sprite_art_takes_precedence_over_terrain_id_collisions() {
+        let resolution = test_surface_like_resolution();
+        for tile_graphic in [1874, 1993, 2880] {
+            assert_eq!(
+                resolve_ec_static_visual_kind(tile_graphic, true, false, Some(resolution)),
+                StaticVisualKind::EcRegular { art_id: u32::from(tile_graphic) },
+            );
+        }
     }
 
     #[test]
@@ -3075,7 +3095,7 @@ mod tests {
         );
         let resolution = test_surface_like_resolution();
         assert_eq!(
-            resolve_ec_static_visual_kind(6038, tileart_surface_has_visible_primary(&[primary]), Some(resolution)),
+            resolve_ec_static_visual_kind(6038, false, tileart_surface_has_visible_primary(&[primary]), Some(resolution)),
             StaticVisualKind::TexLandEc { resolution },
         );
         let base = texture_ref_with_role(200, udd_assets::tilemeta::EcMaterialStableRole::Base, 0);
@@ -3087,7 +3107,7 @@ mod tests {
     #[test]
     fn tileart_owned_surfaces_render_without_a_terrain_texture_copy() {
         assert_eq!(
-            resolve_ec_static_visual_kind(1169, true, None),
+            resolve_ec_static_visual_kind(1169, false, true, None),
             StaticVisualKind::EcSurface { art_id: 1169 },
         );
         assert_eq!(
@@ -3100,7 +3120,7 @@ mod tests {
     fn terrain_surface_resolution_remains_available_without_tileart_material() {
         let resolution = test_surface_like_resolution();
         assert_eq!(
-            resolve_ec_static_visual_kind(196, false, Some(resolution)),
+            resolve_ec_static_visual_kind(196, false, false, Some(resolution)),
             StaticVisualKind::TexLandEc { resolution },
         );
     }
@@ -3196,7 +3216,7 @@ mod tests {
 
     #[test]
     fn non_surface_like_ec_tiles_stay_on_regular_art_path() {
-        let visual_kind = resolve_ec_static_visual_kind(196, false, None);
+        let visual_kind = resolve_ec_static_visual_kind(196, false, false, None);
 
         assert_eq!(visual_kind, StaticVisualKind::EcRegular { art_id: 196 },);
     }

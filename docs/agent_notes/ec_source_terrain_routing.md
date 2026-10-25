@@ -56,3 +56,13 @@ support slot cannot become albedo just because the runtime chooser finds a base.
 For example, shoreline item 6038 packs source 1000013 (alpha/support), while the
 role-aware chooser returns visible source 2000051. Known support primaries use
 the visible terrain-material route instead of painting support pixels as color.
+
+An existing static/sprite slot also takes precedence over terrain redirection.
+Walkable `Surface` flags on stairs, bridges, and furniture do not turn their art
+graphic IDs into land IDs. For example, item 1993 owns wooden-plank sprite art;
+interpreting 1993 through the land routing table selects unrelated terrain.
+
+The heuristic terrain-neighbor blend must keep solid substrates and liquid
+surfaces separate. Mixing underwater sand (land 100, material 52) into water
+material 5 creates a pale sawtooth boundary at static/terrain ownership changes.
+Liquid coverage belongs to its material/alpha path, not a solid albedo average.

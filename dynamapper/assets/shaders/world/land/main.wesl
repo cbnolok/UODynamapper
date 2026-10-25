@@ -146,6 +146,15 @@ fn ec_transition_neighbor_weight(offset: vec2<i32>, uv_in_tile: vec2<f32>) -> f3
   return weight;
 }
 
+fn ec_transition_materials_compatible(current: TileUniform, neighbor: TileUniform) -> bool {
+  let current_liquid = current.is_wet == 1u || (current.terrain_flags & TERRAIN_FLAG_REVIEWED_LIQUID) != 0u;
+  let neighbor_liquid = neighbor.is_wet == 1u || (neighbor.terrain_flags & TERRAIN_FLAG_REVIEWED_LIQUID) != 0u;
+  // A liquid surface covers its substrate through authored coverage, not the
+  // solid-material neighbor blend. Mixing underwater sand into water paints
+  // a pale sawtooth border at the terrain/static ownership boundary.
+  return current_liquid == neighbor_liquid;
+}
+
 fn ec_transition_boundary_neighbor_weight(
   current_tile: TileUniform,
   neighbor_tile: TileUniform,
@@ -153,6 +162,10 @@ fn ec_transition_boundary_neighbor_weight(
   uv_in_tile: vec2<f32>,
 ) -> f32 {
   if (neighbor_tile.texture_size != 2u) {
+    return 0.0;
+  }
+
+  if (!ec_transition_materials_compatible(current_tile, neighbor_tile)) {
     return 0.0;
   }
 
@@ -175,6 +188,10 @@ fn ec_transition_neighbor_color(
   weight: f32,
 ) -> vec4<f32> {
   if (weight <= 0.0 || neighbor_tile.texture_size != 2u) {
+    return vec4<f32>(base_color, 0.0);
+  }
+
+  if (!ec_transition_materials_compatible(current_tile, neighbor_tile)) {
     return vec4<f32>(base_color, 0.0);
   }
 
@@ -202,6 +219,10 @@ fn ec_transition_boundary_diagonal_weight(
   uv_in_tile: vec2<f32>,
 ) -> f32 {
   if (neighbor_tile.texture_size != 2u) {
+    return 0.0;
+  }
+
+  if (!ec_transition_materials_compatible(current_tile, neighbor_tile)) {
     return 0.0;
   }
 

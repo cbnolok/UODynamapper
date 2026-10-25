@@ -75,7 +75,9 @@ fn main() -> eyre::Result<()> {
             print_tex_land_ec_slot("  tex_land_ec.present_slot(resolved_runtime_slot)", resolved_slot);
         }
 
-        let renderer_decision = if tex_art_ec_direct.is_some_and(|slot| slot.is_land()) {
+        let renderer_decision = if tex_art_ec_direct.is_some_and(|slot| slot.is_static()) {
+            format!("EcRegularArt(art_id={tile_id}, owner=tileart)")
+        } else if tex_art_ec_direct.is_some_and(|slot| slot.is_land()) {
             use udd_assets::tilemeta::EcMaterialStableRole;
             if primary.is_some_and(|texture_ref| matches!(texture_ref.stable_role(),
                 EcMaterialStableRole::AlphaMask | EcMaterialStableRole::GenericMask
