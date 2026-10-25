@@ -56,3 +56,22 @@ listing is a navigation aid, not independent proof of shader semantics.
 See [the water investigation](../../../docs/agent_notes/ec_original_water_code.md)
 for the tested executable identity and the addresses established for it. Those
 addresses are not portable to other executable builds.
+
+## Original material graph and image extraction
+
+The companion Rust example uses the repository's original UOP readers rather
+than duplicating their formats in Python. Run from the repository root:
+
+```sh
+cargo run -p uocf-devtools-cli --example ec_research -- \
+  --client /path/to/enhanced-client materials 5 10 49 70
+cargo run -p uocf-devtools-cli --example ec_research -- \
+  --client /path/to/enhanced-client images --output /tmp/ec-source-images \
+  1000013 1000017 2000051 6038 2100014
+```
+
+Omit material IDs to list all `UOWaterTerrainLayer` entries. The output preserves
+source order, repetition, raw sampler fields, `Technique` and `Tweaks`. Exported
+DDS files retain the original payload; PNGs use the same decoder as conversion.
+Compare independently decoded DDSs when investigating a possible decoder defect.
+Always supply the matching client bundle; standard and FP assets can differ.
