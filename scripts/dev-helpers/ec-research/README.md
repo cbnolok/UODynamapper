@@ -53,6 +53,9 @@ branches can therefore be wrong. Check important results against the assembly;
 run normal Ghidra analysis or define callee signatures when needed. A decompiler
 listing is a navigation aid, not independent proof of shader semantics.
 
+For Direct3D 9 / D3DX9 signatures and COM interface types, apply the archive in
+[`ghidra-d3d9-types`](ghidra-d3d9-types/README.md).
+
 See [the water investigation](../../../docs/agent_notes/ec_original_water_code.md)
 for the tested executable identity and the addresses established for it. Those
 addresses are not portable to other executable builds.
