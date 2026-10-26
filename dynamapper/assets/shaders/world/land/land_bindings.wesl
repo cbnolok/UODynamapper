@@ -91,6 +91,8 @@ struct LandStaticLightUniform {
 @group(3) @binding(115) var classic_land_art_atlas: texture_2d_array<f32>;
 // Rgba32Uint texel = [atlas layer, physical width, physical height, upscale factor].
 @group(3) @binding(116) var classic_land_art_lookup: texture_2d<u32>;
+// First and last retained pass payloads per 32x32 chunk; 65535 means not prepared.
+@group(3) @binding(117) var ec_terrain_bases: texture_2d<u32>;
 
 // ============================================================================
 // Grid / chunk constants

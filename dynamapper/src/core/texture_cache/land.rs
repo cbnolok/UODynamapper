@@ -1,5 +1,6 @@
 pub mod cache;
 pub mod texture_array;
+pub mod coverage;
 
 use crate::core::render::scene::world::land::mesh_material::LandCustomMeshMaterial;
 use crate::core::system_sets::*;
@@ -95,13 +96,14 @@ enum LandShaderAtlasSource<'a> {
 
 const LAND_PAGE_LOOKUP_WIDTH: u32 = 256;
 const LAND_PAGE_LOOKUP_TILE_CAPACITY: u32 = 16_384;
-const LAND_PAGE_LOOKUP_ROLE_COUNT: u32 = 6;
+const LAND_PAGE_LOOKUP_ROLE_COUNT: u32 = 7;
 const LAND_PAGE_LOOKUP_ROLE_BASE: u32 = 0;
 const LAND_PAGE_LOOKUP_ROLE_DETAIL: u32 = 1;
 const LAND_PAGE_LOOKUP_ROLE_MASK: u32 = 2;
 const LAND_PAGE_LOOKUP_ROLE_NORMAL: u32 = 3;
 const LAND_PAGE_LOOKUP_ROLE_ANIMATED: u32 = 4;
 const LAND_PAGE_LOOKUP_ROLE_LIQUID_PARAMS: u32 = 5;
+const LAND_PAGE_LOOKUP_ROLE_COVERAGE_PARAMS: u32 = 6;
 
 /// Identify the secondary-base `texture_id` for a terrain tile from the layer graph.
 ///
@@ -880,6 +882,9 @@ fn create_land_shader_images(
                 }
             }
             LandShaderAtlasSource::Ec(package) => {
+                if let Some(params) = coverage::EcTerrainParams::for_tile(package, tile_id) {
+                    write_land_lookup_entry(&mut lookup_bytes, tile_id, LAND_PAGE_LOOKUP_ROLE_COVERAGE_PARAMS, params.0);
+                }
                 if let Some(source) = package.resolve_material_decision(tile_id).material_id
                     .and_then(|id| package.source_material(id))
                     .and_then(|entry| entry.texture.as_ref())
@@ -1279,6 +1284,7 @@ pub fn sys_setup_terrain_cache(
     tex_land_ec_r: Option<Res<crate::core::uo_files_loader::TexLandEcPackageRes>>,
     tex_aux_ec_r: Option<Res<crate::core::uo_files_loader::TexAuxEcPackageRes>>,
     terrain_meta_r: Option<Res<crate::core::uo_files_loader::TerrainMetaPackageRes>>,
+    map_planes: Res<crate::core::uo_files_loader::MapPlanesRes>,
 ) {
     log_system_add_startup::<LandTextureCachePlugin>(StartupSysSet::SetupSceneStage1, fname!());
 
@@ -1427,6 +1433,12 @@ pub fn sys_setup_terrain_cache(
 
     let atlas_image_handle = images.add(image);
     cmd.insert_resource(TileAtlasImageHandle(atlas_image_handle.clone()));
+    let base_dimensions = map_planes.0.iter().flatten().fold(UVec2::ONE, |size, plane| {
+        size.max(UVec2::new(plane.size_blocks.width.div_ceil(4), plane.size_blocks.height.div_ceil(4)))
+    });
+    let terrain_bases = coverage::EcTerrainBases::new(&mut images, base_dimensions, tex_land_ec_package.as_deref());
+    let ec_terrain_bases = terrain_bases.image.clone();
+    cmd.insert_resource(terrain_bases);
     let visual_grunge_texture = images.add(crate::util_lib::image::visual_grunge_image(128));
 
     let shared_mat =
@@ -1461,6 +1473,7 @@ pub fn sys_setup_terrain_cache(
                 ec_aux_lookup: aux_images.aux_lookup,
                 classic_land_art_atlas: classic_land_art_images.atlas,
                 classic_land_art_lookup: classic_land_art_images.lookup,
+                ec_terrain_bases,
             },
         };
 
@@ -1744,6 +1757,14 @@ mod tests {
                 include_str!("../../../assets/shaders/world/land/sampling.wesl"),
                 "shaders/world/land/sampling.wesl",
             ),
+            Shader::from_wesl(
+                include_str!("../../../assets/shaders/world/land/atlas.wesl"),
+                "shaders/world/land/atlas.wesl",
+            ),
+            Shader::from_wesl(
+                include_str!("../../../assets/shaders/world/land/coverage.wesl"),
+                "shaders/world/land/coverage.wesl",
+            ),
         ];
         for (n, shader) in (1..).zip(shaders) {
             shader_cache.set_shader(shader_id(n), shader);
@@ -1760,6 +1781,7 @@ mod tests {
 import package::shaders::world::land::land_bindings::{TileUniform, land_page_atlas, land_page_lookup, tex_small_sampler};
 import package::shaders::world::ec_liquid::{sample_ec_liquid, ec_liquid_reflection_uv};
 import package::shaders::world::ec_item_liquid::apply_ec_item_liquid;
+import package::shaders::world::land::coverage::{ec_terrain_stack, ec_layer_tile};
 import package::shaders::world::land::sampling::{
     apply_ec_aux_two_base_blend, apply_sharpening, blurred_albedo, classic_land_art_is_present,
     ec_liquid_perturbed_base_uv, sample_classic_land_art, sample_ec_material_albedo,
@@ -1768,7 +1790,8 @@ import package::shaders::world::land::sampling::{
 
 @fragment
 fn fragment() -> @location(0) vec4<f32> {
-    var tile: TileUniform;
+    let stack = ec_terrain_stack(vec2<f32>(0.0));
+    var tile = ec_layer_tile(stack.layers[0], 0.0);
     let uv = ec_liquid_perturbed_base_uv(vec2<f32>(0.0), vec2<f32>(0.0), tile, 0.0);
     var color = sample_tile_albedo(uv, tile) + sample_ec_material_albedo(uv, uv, tile);
     color = apply_ec_aux_two_base_blend(color, uv, tile);

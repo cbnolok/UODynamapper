@@ -89,6 +89,10 @@ pub struct LandMaterialExtension {
     /// `classic_land_art_atlas`; layer 0 means absent.
     #[texture(116, sample_type = "u_int", visibility(fragment))]
     pub classic_land_art_lookup: Handle<Image>,
+
+    /// First/last sorted EC material payloads within the original 49-pass limit.
+    #[texture(117, sample_type = "u_int", visibility(fragment))]
+    pub ec_terrain_bases: Handle<Image>,
 }
 
 impl MaterialExtension for LandMaterialExtension {

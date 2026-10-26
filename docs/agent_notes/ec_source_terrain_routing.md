@@ -62,10 +62,10 @@ Walkable `Surface` flags on stairs, bridges, and furniture do not turn their art
 graphic IDs into land IDs. For example, item 1993 owns wooden-plank sprite art;
 interpreting 1993 through the land routing table selects unrelated terrain.
 
-The heuristic terrain-neighbor blend must keep solid substrates and liquid
-surfaces separate. Mixing underwater sand (land 100, material 52) into water
-material 5 creates a pale sawtooth boundary at static/terrain ownership changes.
-Liquid coverage belongs to its material/alpha path, not a solid albedo average.
+The fallback terrain-neighbor heuristic keeps solid substrates and liquid
+surfaces separate. Its former averaging of underwater sand (land 100, material
+52) into water material 5 created a pale sawtooth boundary at static/terrain
+ownership changes. Source-backed composition instead uses per-layer coverage.
 
 This separation describes the current heuristic's guard, not the original
 client's complete transition model. Original terrain creates one 32×32 RGBA
@@ -74,15 +74,20 @@ exponent: positive values supply separate cardinal/diagonal neighbor bytes;
 zero retains binary ownership. The original terrain comparator sorts normal
 layers by material ID and water by `1000 * material_id`. UVs, chunk-edge tests,
 filtering and pass-index evidence are documented in `ec_original_water_code.md`.
-The reusable coverage exporter/model reconstructs these bytes without changing
-production rendering or introducing a compatibility mapping.
+The reusable exporter/model reconstructs these bytes independently of rendering.
+Runtime lookup role 6 now retains the source coverage parameters, and a per-chunk
+Rg16Uint image retains the first/last payloads within the original 49-pass cap.
+The fragment shader evaluates the full local mask footprint and composes shaded
+material layers in source order, including liquids. It does not average wet and
+solid albedos or introduce a compatibility mapping.
 
 The complete original material graph now survives conversion in
 `metadata/source_materials.json`. This is distinct from the route CSV and the
 manual override graph. Original `UOWaterTerrainLayer` source indices 0/1/2 are
 bump, fallback, and animated surface, rather than solid base/detail/mask.
-The GPU lookup has five image roles and a sixth parameter record carrying the
-source coordinate technique, bump UV velocity, and source-presence marker.
+The GPU lookup's first five roles carry images; role 5 carries the source
+coordinate technique, bump UV velocity, and source-presence marker. Role 6
+carries the separate terrain ownership/coverage parameters.
 Both land and source-matched item water consume it. See
 [ec_original_water_code.md](ec_original_water_code.md) for the executable evidence
 and the remaining reflection/coverage proof boundary.

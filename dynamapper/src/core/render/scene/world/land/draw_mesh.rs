@@ -311,6 +311,8 @@ pub struct LandFramePacing<'w> {
     /// Optional tile metadata (tilemeta.uddp); used to determine the IsWet flag per tile.
     /// Optional because the package may not have been converted/loaded yet.
     pub tilemeta: Option<Res<'w, TileMetaPackageRes>>,
+    pub terrain_bases: ResMut<'w, crate::core::texture_cache::land::coverage::EcTerrainBases>,
+    pub images: ResMut<'w, Assets<Image>>,
 }
 
 /// Main system: finds visible land map chunks and ensures their mesh is generated and rendered.
@@ -331,7 +333,7 @@ pub fn sys_draw_spawned_land_chunks(
     land_mesh_handles_r: Res<LandMeshHandles>,
     current_lod: Res<LandMeshLod>,
     shared_land_material_r: Res<SharedLandMaterial>,
-    frame_pacing: LandFramePacing,
+    mut frame_pacing: LandFramePacing,
     mut system_diagnostics: ResMut<crate::core::diagnostics::WorldmapSystemDiagnostics>,
     mut locals: Local<DrawMeshLocals>,
 ) {
@@ -855,6 +857,35 @@ pub fn sys_draw_spawned_land_chunks(
         .and_then(|opt| opt.as_ref())
         .expect("Requested map plane metadata is uncached?");
 
+    if frame_pacing.settings.graphics.land_texture_source == crate::configs::settings::ClientTextureSource::Ec {
+        let bases = &mut frame_pacing.terrain_bases;
+        bases.begin_map(current_map_id);
+        let mut payloads = Vec::with_capacity((TILE_NUM_PER_CHUNK_DIM * TILE_NUM_PER_CHUNK_DIM) as usize);
+        for target in &ready_targets {
+            for gx in target.chunk_origin_chunk_units_x..target.chunk_origin_chunk_units_x + target.chunk_scale {
+                for gy in target.chunk_origin_chunk_units_z..target.chunk_origin_chunk_units_z + target.chunk_scale {
+                    payloads.clear();
+                    let mut complete = true;
+                    for bx in gx * CHUNK_STORAGE_BLOCKS_DIM..((gx + 1) * CHUNK_STORAGE_BLOCKS_DIM).min(max_chunk_x as u32) {
+                        for by in gy * CHUNK_STORAGE_BLOCKS_DIM..((gy + 1) * CHUNK_STORAGE_BLOCKS_DIM).min(max_chunk_y as u32) {
+                            if let Some(block) = plane_ref.block_no_update(MapBlockRelPos { x: bx, y: by }) {
+                                payloads.extend(block.cells.iter().map(|cell| cell.id));
+                            } else {
+                                complete = false;
+                            }
+                        }
+                    }
+                    if complete {
+                        let limits = crate::core::texture_cache::land::coverage::layer_limits(payloads.iter().copied(), &bases.params);
+                        bases.set(UVec2::new(gx, gy), limits.unwrap_or([u16::MAX; 2]));
+                    }
+                }
+            }
+        }
+        let LandFramePacing { terrain_bases, images, .. } = &mut frame_pacing;
+        terrain_bases.flush(images);
+    }
+
     // Struct to hold packed payloads from background threads
     struct PackedChunk {
         bx: u32,
@@ -1160,26 +1191,5 @@ fn ec_land_shader_flags(
     package: &udd_assets::tex_land_ec::TexLandEcPackage,
     tile_id: u32,
 ) -> u16 {
-    let Some(material_id) = package.resolve_material_decision(tile_id).material_id else {
-        return 0;
-    };
-    let mut flags = 0u16;
-    if package.source_material(material_id).and_then(|entry| entry.texture.as_ref())
-        .is_some_and(|texture| texture.shader_name.as_deref() == Some("UOWaterTerrainLayer")) {
-        flags |= TERRAIN_SHADER_FLAG_REVIEWED_LIQUID;
-    }
-    let Some(details) = package.terrain_override_details_for(material_id) else {
-        return flags;
-    };
-    for policy in &details.policies {
-        match policy.policy.as_str() {
-            "smooth" => flags |= TERRAIN_SHADER_FLAG_SMOOTH,
-            "follow-center" => flags |= TERRAIN_SHADER_FLAG_FOLLOW_CENTER,
-            _ => {}
-        }
-    }
-    if details.liquid.is_some() {
-        flags |= TERRAIN_SHADER_FLAG_REVIEWED_LIQUID;
-    }
-    flags
+    crate::core::texture_cache::land::coverage::ec_land_shader_flags(package, tile_id)
 }

@@ -449,8 +449,12 @@ decompiler's containing function entry before disassembling an interior address.
 that same pass index as the second stack argument to the layer draw function.
 This resolves the earlier zero/pass ambiguity: `0x59919c` tests the actual pass
 index. Water at pass zero bypasses coverage; later water passes select generated
-coverage alpha. This pass-zero behavior is proven for the traced water draw
-path; the default and bump draw bodies still need their own state cross-checks.
+coverage alpha. Default high-capability body `0x5974f0` tests the forwarded pass
+at `0x5979f0`: its final ALPHAOP is SELECTARG1, with ALPHAARG1=DIFFUSE (0) for
+pass zero and TEXTURE (2) otherwise. Low-capability body `0x597b50` uses the same
+selection. Their caller `0x597210` forwards the pass index through vtable `+0x40`
+or `+0x44`. This establishes an unmasked first base for default and water layers;
+the complete DOT3/bump material response remains a separate fidelity question.
 
 World texture coordinates and coverage coordinates are separate. The geometry
 builder writes world `(world_x, -world_y)` to one stream, and positive chunk-local
@@ -489,10 +493,47 @@ The installed map-0 chunks containing lava `[5744,2928]`, acid `[6512,464]`, swa
 `[1872,2416]` and the bridge `[2834,987]` exported successfully: 5, 3, 15 and 9
 interior terrain layers respectively. In particular, swamp cannot be represented
 by a compositor that silently keeps only a handful of neighboring materials.
-The four liquid masks were inspected. This is reconstructed coverage evidence,
-not a new renderer capture or a repaired terrain-transition claim. The production
-neighbor-color heuristic remains until ordered material passes, mask sampling
-and existing liquid shading can be implemented together.
+The four liquid masks were inspected. Those diagnostic exports are reconstructed
+coverage evidence, separate from the runtime integration and native captures below.
+
+### Runtime ordered terrain composition
+
+Source-backed EC terrain now uses the recovered coverage model. GPU land lookup
+role 6 stores material ID, signed sorting key, cardinal/diagonal bytes and flags
+for source class, positive exponent, reviewed terrain policies and filter mode.
+The six existing image/liquid roles keep their indices. A small Rg16Uint image
+stores the first and last retained material payload for each 32×32 chunk. CPU
+preparation uses the full cached chunk, collapses aliases by material identity,
+and retains the first 49 sorted passes, matching `0x596c80`. Source switches and
+map changes retain the ordinary texture path; the base image clears on a map
+change. It is updated only when its contents change.
+
+`land/coverage.wesl` reconstructs the ownership bytes from the paged map metadata.
+The bilinear mask footprint plus its one-cell ownership expansion touches at most
+4×4 source cells. Every distinct material there is retained, together with the
+chunk's first base even when that base owns no nearby cell. The resulting bound
+of 17 local records is derived from the sampling footprint; it does not keep
+only the first few chunk materials. The CPU's last retained key also excludes
+materials beyond the original 49-pass cap.
+
+Each contributing layer uses the existing material sampler and its own wet/solid
+lighting response. Sorted straight-alpha composition operates on those shaded
+colors; global lighting, grading and tone mapping run on the composed result.
+An opaque later pass can skip all earlier shading. Coverage stays unperturbed by
+water animation and uses the original point/bilinear selection independently of
+the albedo filtering control. Missing EC textures remain explicit. The previous
+neighbor-color transition is used only while source coverage/base metadata is
+unavailable; it is bypassed for the prepared source-backed composition path,
+including liquid terrain.
+
+Renderer tests cover weight truncation, chunk sorting/alias selection, the 49-pass
+cap, map-base invalidation and WESL composition. Native checks cover the bridge
+in all three presets, paused water, EC coast/town, Classic coast and lava/acid/swamp
+on Desktop 4. Lava banks now receive terrain coverage instead of stopping at the
+former hard ownership boundary. The original world-coordinate orientation,
+reflection/camera/clock parity, source albedo filtering and several static
+geometry/effect differences remain unfinished; ordered masks do not establish
+complete original-client visual parity.
 
 Before using the recovered world-coordinate stream in the renderer, establish
 the axis mapping explicitly: the original stream has negative map Y, whereas

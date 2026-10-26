@@ -17,6 +17,7 @@ The pre-existing `.cargo/config.toml` edit, untracked `todos dynamapper.txt`, an
 | EC ground depth | Flat material quads used a sprite's constant priority depth, cutting triangular gaps against the terrain. | Use rasterized surface depth with a small geometric separation from terrain, also avoiding coplanar overlap flicker. |
 | Walkable EC sprites | Bridge planks, stairs and furniture carrying `Surface` flags could select unrelated terrain through item/land ID collisions. | Existing sprite slots take precedence; the bridge fixture now uses wooden planks and stone stairs. |
 | Liquid boundary blending | Underwater sand was averaged into water across terrain neighbors, producing pale sawtooth patches at static/terrain ownership changes. | Keep solid and liquid material classes separate in cardinal and diagonal transition weights. |
+| EC terrain coverage | Solid transitions used a neighbor-color approximation, while liquid terrain bypassed it and stopped at hard ownership boundaries. | Compose shaded material layers with the recovered ownership bytes, chunk-edge/filter rules, original sorting keys, full-chunk base and 49-pass cap. |
 | BC7 solid blocks | The encoder's constant-block endpoint table reconstructed 246 of 256 channel values incorrectly, corrupting reflection texture 1000017. | Generate exact Mode 5 endpoint pairs at compile time; exhaustively round-trip all channel values. Rebuild affected packages from original images. |
 | Original liquid source roles | The runtime lacked the original material graph and used fallback water as its ordinary visible surface. | Preserve source definitions; separate fallback, bump and animated-surface roles. Match item water by source sampler identities and share sampling, flat lighting, grunge and wash across land/static owners. Retain source coordinate technique and bump scroll velocity. |
 | Item shoreline composition | Different shoreline items shared only the first three liquid images, discarding their fourth-source coverage and blend parameters. Applying the affine V flip without the original mesh flip also reversed masks. | Preserve item identity alongside the shared base, reuse packed auxiliary pixels with original item Technique/Tweaks and local UVs, and blend authored alpha. The coast now has curved coverage instead of whole-cell steps. |
@@ -90,7 +91,7 @@ Original item shader parameters now survive `TileArtEntry` processing and tileme
 | P2 | Switching between map packages at runtime is unfinished. | Startup loads only the selected map. WorldGeoData contains only loaded maps, so the teleport dialog rejects other facets even if corresponding package files exist. It does not lazily load them. |
 | P2 | EC liquid/effect parity is incomplete. | Original bump/environment inputs and the traced affine transform now have a shared path. Exact camera/clock equivalence, complete sampler/filter parity, terrain-specific extra inputs, foam, waterfalls, lava bubbles and refraction remain unverified or unimplemented. Item fourth-source stages and unit-mask clamp/reflection-wrap choices are now reconstructed. The recovered highlights do not establish complete original-client reflection parity. |
 | P2 | EC shoreline/effect parity remains incomplete. | Original per-item fourth images, blend rules and local UVs now smooth the coast at `[1445, 1790, 0]` and the bridge boundary. Exact original camera geometry and alpha-property timing are still unproven; lava/acid/swamp expose separate terrain coverage and transition defects. |
-| P2 | Terrain transitions remain a reconstruction. | The shader blends neighboring materials heuristically. The original 32×32 coverage generator, exponent bytes, chunk-edge rules, sampler and material sorting keys are now reconstructed in a reusable offline diagnostic. Ordered terrain passes still need renderer integration. Material-slot coverage is complete for the audited map; transition-alpha parity and every explicit override's visual correctness remain unproven. |
+| P2 | Complete terrain visual parity remains unfinished. | Source-backed EC terrain now composes ordered 32×32 ownership coverage, using original exponent bytes, chunk-edge/filter rules, material sorting keys and the 49-pass cap. Per-layer liquid/solid shading is preserved. Original world-UV orientation, exact material filtering/lighting and the visual correctness of every explicit override remain unproven. |
 | P2 | Full-source EC art/material composition is incomplete. | The existing packer still crops art windows. Other multi-layer item shaders, authored geometry/windows, unusual liquid/stain stacks, and support-role interpretation need their own family checks. The new ground route fixes geometry/ownership without claiming full shader parity. |
 | P3 | Cross-facet and visual regression coverage remains incomplete. | The audited payload is map 0; content-family fixtures contain TBD transition IDs and do not constitute automated image golden tests. |
 | P3 | Several roadmap features remain planned rather than implemented. | Clipmaps, complete mobile world rendering, world export, projected light decals, and network/editor workflows remain tracked in docs/TODO.md. Converter/reader or inspector support alone does not establish world-renderer support. |
@@ -99,7 +100,7 @@ The historical height-scale concern was not treated as a confirmed bug: the exis
 
 ## Validation
 
-- Latest full workspace, all-features test run: **665 passed, 0 failed, 4 intentionally ignored slow brute-force tests** across 57 test groups, including source item material retention/validation, per-item fourth-source selection, and the 16-bit GPU item lookup. The renderer has **107** tests, including liquid/item WESL composition and independent per-item masks above the land lookup range.
+- Latest full workspace, all-features test run: **665 passed, 0 failed, 4 intentionally ignored slow brute-force tests** across 57 test groups, including source item material retention/validation, per-item fourth-source selection, and the 16-bit GPU item lookup. That run contained **107** renderer tests; the subsequent terrain-integration renderer-only run passed **111**, including coverage sorting/alias selection, map invalidation, the 49-pass cap and WESL composition.
 - Focused extraction gate: **5 passed**, including symlink-parent and dangling-destination coverage.
 - Original CSV parsing, source-UOP-to-UDDP round-trip, subtype preservation, routing precedence, source material retention, liquid-role isolation, sprite ownership, shared liquid payloads, BC7 channel integrity, static visibility, and shader composition have regression coverage.
 - `cargo check --workspace --all-targets --all-features --locked`: passed for the source-parameter implementation.
@@ -119,6 +120,20 @@ including 15 material layers at swamp. Applying the preview's loose routing KDL
 produced identical ownership in all four fixtures. These are diagnostic/model
 checks; this phase changes no renderer shader, asset package or GUI state and
 does not claim repaired terrain transitions or new screenshot parity.
+
+The subsequent runtime coverage phase passed all **111 renderer tests** and the
+normal build after temporary capture-hook removal. Twelve settled native previews
+covered the bridge in all three presets, acid in all three presets, lava, swamp,
+EC coast/town, paused bridge water and Classic coast. Every preview verified
+Desktop 4 placement and cleanup, with no shader/pipeline errors. The paused
+water crop was identical between frames; the animated crop changed. Accepted
+final captures use `terrain-coverage-final-` in `/tmp/uodynamapper-ec-followup/`.
+The first frame-count-only lava capture was blank and was rejected; the final
+hook waited 8 and 12 seconds after InGame before capturing. This phase changes
+terrain composition without rebuilding packages or applying compatibility maps.
+Texture/camera/reflection and several static-geometry differences remain visible.
+Logs use `/tmp/uodynamapper-terrain-integration-` with `final-tests`,
+`final-families`, `final-scenes`, `normal-build` and `normal-preview` suffixes.
 
 Local captures are available in `/tmp/uodynamapper-render/`: `before-source-routes.png`, `ec-{classic,enhanced,kr}-town.png`, `ec-{classic,enhanced,kr}-water-validated.png`, and `cc-{classic,enhanced,kr}-water.png`. Test logs are `/tmp/uodynamapper-final-workspace-tests.log`, `/tmp/uodynamapper-final-check.log`, and `/tmp/uodynamapper-final-build.log`.
 

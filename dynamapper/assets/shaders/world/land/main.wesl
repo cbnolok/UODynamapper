@@ -60,6 +60,7 @@ import package::shaders::world::land::shading::{
 };
 import package::shaders::world::effects::surface_effects::{apply_water_animation, water_flat_wrapped_lambert};
 import package::shaders::world::ec_liquid::{sample_ec_liquid, ec_liquid_reflection_uv};
+import package::shaders::world::land::coverage::{ec_coverage_params, ec_terrain_stack, ec_layer_tile};
 
 // ============================================================================
 // Vertex shader
@@ -510,17 +511,9 @@ fn vertex(in: Vertex, @builtin(vertex_index) vertex_index: u32) -> VertexOutput 
 // Fragment shader
 // ============================================================================
 
-@fragment
-fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
+fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool) -> vec3<f32> {
   let shading_mode   = effects.shading_mode;
-  let enable_tonemap = global_light.enable_tonemap;
-  let enable_grading = global_light.enable_grading;
   let visual_profile = effects.post_process_profile;
-
-  // Debug mode: return a flat color immediately to isolate non-fragment bottlenecks.
-  if (shading_mode == 3u) {
-    return vec4<f32>(0.5, 0.5, 0.5, 1.0);
-  }
 
   // ---- Zoom-based shader LOD: disable expensive features when zoomed out ----
   // zoom > 10 : disable blur + sharpening + bicubic normals (saves ~30 tex reads)
@@ -558,12 +551,10 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   let blur_strength     = effects.blur_strength;
   let blur_radius       = effects.blur_radius;
 
-  let exposure          = global_light.exposure;
 
   // Local UV (fractional position within the current tile, in [0,1))
   var uv_in_tile = vec2<f32>(fract(in.world_position.x), fract(in.world_position.z));
   let world_tile = vec2<i32>(i32(floor(in.world_position.x)), i32(floor(in.world_position.z)));
-  let tile = atlas_read_meta(world_tile.x, world_tile.y);
   let use_classic_flat_wet_land_art = tile.texture_size == 4u
     && tile.is_wet == 1u
     && classic_land_art_is_present(tile.texture_payload)
@@ -600,7 +591,6 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     }
   }
 
-  let base_alpha: f32 = 1.0; // tile textures assumed opaque for terrain
 
   // ---- Zoom-adaptive cheap path ----
   // Skips expensive reconstruction/blur/sharpen/lighting for a fraction of
@@ -653,13 +643,15 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     if (tile.texture_size == 2u) {
       let world_xz = vec2<f32>(floor(in.world_position.x), floor(in.world_position.z)) + uv_in_tile;
       base_albedo = sample_ec_material_albedo(world_xz, sample_uv, tile);
-      base_albedo = blend_ec_terrain_transitions(
-        base_albedo,
-        tile,
-        world_tile,
-        world_xz,
-        uv_in_tile,
-      );
+      if (!ordered_coverage) {
+        base_albedo = blend_ec_terrain_transitions(
+          base_albedo,
+          tile,
+          world_tile,
+          world_xz,
+          uv_in_tile,
+        );
+      }
     } else {
       base_albedo = sample_tile_albedo(sample_uv, tile);
     }
@@ -878,7 +870,14 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     visual_profile,
   );
 
-  hdr_rgb = apply_global_lighting_rgb(hdr_rgb, scene.global_lighting);
+  return hdr_rgb;
+}
+
+fn finish_land(hdr_rgb: vec3<f32>) -> vec4<f32> {
+  let enable_tonemap = global_light.enable_tonemap;
+  let enable_grading = global_light.enable_grading;
+  let exposure = global_light.exposure;
+  let visual_profile = effects.post_process_profile;
   // Fog is applied once to the fully composed frame by effects/fog_pass.wesl.
 
   // ============================================================================
@@ -894,5 +893,38 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   }
 
   final_rgb = max(final_rgb, vec3<f32>(0.0));
-  return vec4<f32>(final_rgb, base_alpha);
+  return vec4<f32>(final_rgb, 1.0); // tile textures assumed opaque for terrain
+}
+
+@fragment
+fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
+  // Debug mode: return a flat color immediately to isolate non-fragment bottlenecks.
+  if (effects.shading_mode == 3u) {
+    return vec4<f32>(0.5, 0.5, 0.5, 1.0);
+  }
+  let cell = vec2<i32>(floor(in.world_position.xz));
+  let tile = atlas_read_meta(cell.x, cell.y);
+  var hdr_rgb: vec3<f32>;
+  var composed = false;
+  if (tile.texture_size == 2u && ec_coverage_params(tile.texture_payload).w != 0u) {
+    let stack = ec_terrain_stack(in.world_position.xz);
+    if (stack.count > 0u) {
+      // Opaque later passes cover all earlier shading. This keeps homogeneous
+      // terrain at one material sample while retaining the complete layer order.
+      var first = 0u;
+      for (var index = 1u; index < stack.count; index++) {
+        if (stack.alpha[index] == 1.0) { first = index; }
+      }
+      hdr_rgb = shade_land(in, ec_layer_tile(stack.layers[first], tile.tile_height), true);
+      for (var index = first + 1u; index < stack.count; index++) {
+        if (stack.alpha[index] > 0.0) {
+          let layer_color = shade_land(in, ec_layer_tile(stack.layers[index], tile.tile_height), true);
+          hdr_rgb = mix(hdr_rgb, layer_color, stack.alpha[index]);
+        }
+      }
+      composed = true;
+    }
+  }
+  if (!composed) { hdr_rgb = shade_land(in, tile, false); }
+  return finish_land(apply_global_lighting_rgb(hdr_rgb, scene.global_lighting));
 }
