@@ -87,7 +87,7 @@ The source roles, bindings, fallback branch, and coordinate-generation state are
 observed in code. They do not by themselves prove a complete modern shader
 reimplementation. The texture transform and unsigned sampling follow-up below
 corrects the former reflection-vector-to-2D guess. Exact camera/clock equivalence,
-fourth-layer composition, and final original-client reflection appearance still
+terrain-specific extra-layer composition, and final original-client reflection appearance still
 require separate verification. Source Technique[0]
 selects explicit coordinates for lava/acid (1/2), or reflection coordinates for
 water (0). Tweaks[0..2] provides the bump UV scroll velocity; material 5 contains
@@ -105,8 +105,9 @@ Representative original terrain parameters:
 | 53 stars | 0 | 2 | -0.02, -0.015 |
 | 70 swamp | 0 | 3 | -0.005, 0.0025 |
 
-Only the first technique and first two floating-point values currently drive
-the shared sampler. Later values remain retained evidence for overlay work.
+The first technique and first two floating-point values drive the shared terrain
+base sampler. Later terrain values remain retained for terrain overlay work;
+item fourth stages use their own retained Technique[1] and Tweaks[2..4].
 
 `tex_land_ec` now retains the original material entries in
 `metadata/source_materials.json`. Runtime roles are
@@ -138,9 +139,12 @@ reflection vector must reach the authored affine transform directly; explicit
 lava/acid coordinates use their own repetition through the same transform.
 The bump source's scroll changes translation before this vertical reversal.
 The source-2 draw path forces the engine address-mode bits to 3 at `0x59c28d`;
-`0x58dfc0` passes those bits to `0x74d4e0`. This identifies the addressing path,
-but the runtime-initialized enum lookup at `0xe16690` is not a static proof of
-each final sampler value. Current shader sampling repeats the source image.
+`0x58dfc0` passes those bits to `0x74d4e0`. The initialization at
+`0x756b38`–`0x756b72` resolves the former unknown enum lookup: mode 0 maps
+both axes to D3DTADDRESS_CLAMP (3), mode 3 maps both to D3DTADDRESS_WRAP (1).
+The reflected source therefore repeats. Item masks with unit repetition clamp;
+the material loader chooses wrapping for other repetition values or its explicit
+geometry flag bit 3.
 
 The original images 1000013 and 1000017 are unsigned DXT1 DDSs, not signed DuDv
 formats; image 1000013's decoded red/green ranges are 107–181 and 109–178.
@@ -167,7 +171,7 @@ source graph retain their existing normal decoding. The bridge capture recovers
 bright environment-image structure that was absent from the earlier output;
 this is a visible improvement, not a claim of pixel-exact reflection parity.
 
-## Fourth-source operations traced, not yet implemented
+## Fourth-source operations
 
 The item draw branches on `Technique[1]` at `0x59c479`:
 
@@ -195,10 +199,11 @@ unverified concern that simply masking it would create holes: alpha coverage is
 indeed authored for this item path, but compositing also depends on the terrain
 or other surfaces underneath. It is not established as blanket water coverage.
 Terrain has an additional blend input and requires its own composition trace
-before sharing this implementation blindly. Shoreline geometry/transition
-coverage and fourth-image packing/UV windows remain separate unresolved work.
+before sharing this implementation blindly. Item fourth-stage composition is
+implemented below; exact camera geometry, terrain transitions and other families'
+packing/UV windows remain separate validation work.
 
-## Item composition retention and the remaining runtime gap
+## Item composition retention and runtime selection
 
 The former `TileArtEntry::process` kept image refs while dropping each block's
 shader name, Technique and Tweaks. `ArtData.materials` now retains these as
@@ -217,19 +222,83 @@ while the fourth has `unk7=0`; retain that distinction while reconstructing UVs.
 Each item also has separate legacy and enhanced sprite blocks; a matching numeric
 image ID in those blocks is a different physical source.
 
-`resolve_surface_like_tex_land_ec_slot_id` currently joins both items to the
-same terrain payload using only their first three image identities. The resulting
-`GroundTileInstance.material_payload` cannot distinguish their fourth inputs.
-`create_aux_atlas_images` builds a terrain-oriented lookup from `TerrainMetaPackage`;
-the art ground material does not bind that auxiliary atlas. Having an image in
-`tex_aux_ec` is therefore insufficient to render its item-specific composition.
+`resolve_surface_like_tex_land_ec_slot_id` joins both items to the same terrain
+payload using their first three image identities. `GroundTileInstance` now also
+carries the original item graphic, so that base sharing no longer loses the fourth
+source. A separate two-record-per-item GPU lookup retains its atlas layer, true
+image extent, original Technique[1], repetition, Tweaks[2..4], and UV-set index.
+It covers the 16-bit item space independently of the 14-bit land lookup.
 
-A complete rendering repair still needs a per-item fourth-source lookup with
-the correct physical package and UV domain, and the original RGB/alpha operation
-in the ground path. Validate
-the underlying terrain together with that alpha coverage. Do not replace these
-missing inputs with filename-only role guesses or reuse the terrain's Technique
-as the item's Technique.
+The fourth images already exist in `tex_aux_ec`: the installed 64×64 RGBA pixels
+for 6038 and 2100014 match decoded original DDSs byte for byte. There was no
+conversion repair to make for these fixtures. The shared auxiliary atlas now
+collects item sources even without `terrain_meta.bin`; the art ground material
+binds those same GPU image layers rather than allocating a duplicate atlas.
+Only block-0 `UOWaterShader`, sampler 3, WorldArt/Texture references qualify.
+Packed family mismatches are rejected instead of accepting a colliding sprite ID.
+
+`ec_item_liquid.wesl` performs the traced RGB/alpha stage over the lit shared
+liquid. Unit-repetition masks clamp to their actual image extent. Partial coverage
+uses straight-alpha blending, without the non-water sprite path's alpha premultiply
+or its 0.5 opaque threshold. An absent fourth source preserves the base surface.
+Terrain's own extra input is deliberately separate and remains unfinished.
+
+## Local UV construction is separate from the texture transform
+
+`0x45e1e4`–`0x45e1f8` copies the raw source descriptor's UV-set field (`unk7`)
+into the shader map's low flag byte. `0x58dfc0` passes that byte to the texture
+coordinate-index state: cache field `+0xe8` corresponds to
+`0xbc + D3DTSS_TEXCOORDINDEX(11) * 4`. This establishes a coordinate-set index,
+not a generic Boolean or a filename-derived role.
+
+The local coordinate set is already vertically reversed by the mesh builder.
+The flagged planar/sprite quad in `0x45a080` writes `(0,1), (1,1), (0,0), (1,0)`
+at `0x45a364`–`0x45a3c6`. The image-window builder `0x459b00` likewise writes
+`1 - image_y / image_height`. The collector `0x45cd80` copies these four local
+UV pairs, but adds item position to the separate world-plane pairs at
+`0x45d7b2`–`0x45d8b0`. Consequently local V must reach the affine transform as
+`1-v`; its second reversal returns the authored mask orientation. Passing the
+world convention directly into the local path flips shoreline coverage.
+
+This was cross-checked independently using the packed map's neighboring masks,
+without a compatibility mapping or external reconstruction. For the 29×29-cell
+coast fixture centered at map 0 `(1445,1790)`, mean neighboring alpha-edge
+difference is 0.005164075 in the original image orientation versus 0.022726467
+with vertical reversal. All eight rotations/reflections were compared; the
+original orientation has the lowest discontinuity. This measures source coverage
+continuity, not original-client pixel parity. The original-UV fix also removes the
+repeating exposed wedges visible in the reversed-mask capture.
+
+Reusable scene and mask inspectors plus `compare_mask_edges.py` reproduce this
+check; see the research helper README. Original images remain intact.
+The bridge and coast now show authored curved item coverage. Exact original
+camera geometry, the default alpha-property threshold waveform, terrain blend
+inputs, unusual item stacks and all effect-family appearance remain separate
+proof boundaries.
+
+## Following the analyzed texture loaders
+
+The configured ghidra-mcp GUI project was queried through its read-only HTTP
+endpoints with `program=UOSA.exe`, without changing program state or selection.
+Metadata identifies the same standard-client path and x86 image base as above.
+Auto-analysis and the Direct3D type archive improve navigation, but register-based
+engine arguments still require assembly checks.
+
+The Ex import thunk is `0xbd65f6`, through IAT slot `0xc13504`. Its actual call
+site is `0xaecd2e` in `0xaecc3d`: a cached scratch-texture loader using explicit
+width/height/format, one mip, zero usage and D3DPOOL_SCRATCH. Xrefs to the external
+symbol also include the IAT data reference and thunk jump; those are not two
+independent loader call sites.
+
+The ordinary `D3DXCreateTextureFromFileInMemory` thunk is `0xb63ba8`, called at
+`0x771c8d` in `0x771af0`. Its caller `0x770b90` belongs to the NiSourceTexture
+path, and `0x774a80` handles NiSourceCubeMap. The helper reads the DDS info and
+chooses ordinary, cube or volume D3DX loading by resource type. If pixel preference
+4 is requested, it rejects inputs outside the signed bump-format list; it does
+not silently reinterpret a DXT1 file as signed DuDv. The engine also has a
+NiPixelData conversion/upload fallback when direct source loading is unavailable.
+These are distinct paths; locating the Ex import alone does not establish the
+world water texture's upload format or prove which runtime branch a resource took.
 
 `retain_ec_item_materials` is a research example for preserving existing packed
 metadata while adding material records from a freshly rebuilt source package.

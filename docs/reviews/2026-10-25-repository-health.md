@@ -19,6 +19,7 @@ The pre-existing `.cargo/config.toml` edit, untracked `todos dynamapper.txt`, an
 | Liquid boundary blending | Underwater sand was averaged into water across terrain neighbors, producing pale sawtooth patches at static/terrain ownership changes. | Keep solid and liquid material classes separate in cardinal and diagonal transition weights. |
 | BC7 solid blocks | The encoder's constant-block endpoint table reconstructed 246 of 256 channel values incorrectly, corrupting reflection texture 1000017. | Generate exact Mode 5 endpoint pairs at compile time; exhaustively round-trip all channel values. Rebuild affected packages from original images. |
 | Original liquid source roles | The runtime lacked the original material graph and used fallback water as its ordinary visible surface. | Preserve source definitions; separate fallback, bump and animated-surface roles. Match item water by source sampler identities and share sampling, flat lighting, grunge and wash across land/static owners. Retain source coordinate technique and bump scroll velocity. |
+| Item shoreline composition | Different shoreline items shared only the first three liquid images, discarding their fourth-source coverage and blend parameters. Applying the affine V flip without the original mesh flip also reversed masks. | Preserve item identity alongside the shared base, reuse packed auxiliary pixels with original item Technique/Tweaks and local UVs, and blend authored alpha. The coast now has curved coverage instead of whole-cell steps. |
 | Static visibility | Disabling statics returned before clearing cached draw batches; existing opaque/transparent/shadow draw entities remained alive. | Clear instance/batch outputs and invalidate output-list reuse. Keep decoded chunks reusable when enabled again. |
 | Optional KR encoder feature | `tile_mappings_builder` imported a module that existed but was not declared, breaking all-features compilation. | Declare the module under its feature gate. |
 | UOP extraction | Lexical traversal checks allowed an existing symlink parent or destination to redirect writes outside the output root. | Canonicalize the output root and check existing destination ancestry before creating directories or writing; reject destination symlinks, including dangling links. This guards existing symlink escapes, not concurrent hostile directory replacement. |
@@ -85,10 +86,10 @@ Original item shader parameters now survive `TileArtEntry` processing and tileme
 | --- | --- | --- |
 | P2 | Free perspective camera zoom has no geometric effect. | `sys_camera_zoom` changes RenderZoom, perspective projection keeps a constant FOV, player-follow dolly is disabled in free-camera mode, and free-camera movement does not consume zoom. Follow-camera perspective uses dolly zoom and is a separate path. |
 | P2 | Switching between map packages at runtime is unfinished. | Startup loads only the selected map. WorldGeoData contains only loaded maps, so the teleport dialog rejects other facets even if corresponding package files exist. It does not lazily load them. |
-| P2 | EC liquid/effect parity is incomplete. | Original bump/environment inputs and the traced affine transform now have a shared path. Exact camera/clock equivalence, sampler-state parity, fourth-layer overlays, foam, waterfalls, lava bubbles and refraction remain unverified or unimplemented. The recovered highlights do not establish complete original-client reflection parity. |
-| P2 | EC shoreline composition still has visible defects. | The shared liquid path and solid/liquid transition gate remove the prior pale patches and ownership color step. The coast at `[1445, 1790, 0]` still has angular cell coverage; authored fourth-image shoreline/foam composition needs implementation. Filling a material quad does not reproduce every original coverage mask. |
+| P2 | EC liquid/effect parity is incomplete. | Original bump/environment inputs and the traced affine transform now have a shared path. Exact camera/clock equivalence, complete sampler/filter parity, terrain-specific extra inputs, foam, waterfalls, lava bubbles and refraction remain unverified or unimplemented. Item fourth-source stages and unit-mask clamp/reflection-wrap choices are now reconstructed. The recovered highlights do not establish complete original-client reflection parity. |
+| P2 | EC shoreline/effect parity remains incomplete. | Original per-item fourth images, blend rules and local UVs now smooth the coast at `[1445, 1790, 0]` and the bridge boundary. Exact original camera geometry and alpha-property timing are still unproven; lava/acid/swamp expose separate terrain coverage and transition defects. |
 | P2 | Terrain transitions remain a reconstruction. | The shader blends neighboring materials heuristically. Material-slot coverage is complete for the audited map; original EC transition-alpha parity and the visual correctness of every explicit override remain unproven. |
-| P2 | Full-source EC art/material composition is incomplete. | The existing packer still crops art windows. Multi-layer item materials, authored alpha coverage, unusual liquid/stain stacks, and support-role interpretation need their own family checks. The new ground route fixes geometry/ownership without claiming full shader parity. |
+| P2 | Full-source EC art/material composition is incomplete. | The existing packer still crops art windows. Other multi-layer item shaders, authored geometry/windows, unusual liquid/stain stacks, and support-role interpretation need their own family checks. The new ground route fixes geometry/ownership without claiming full shader parity. |
 | P3 | Cross-facet and visual regression coverage remains incomplete. | The audited payload is map 0; content-family fixtures contain TBD transition IDs and do not constitute automated image golden tests. |
 | P3 | Several roadmap features remain planned rather than implemented. | Clipmaps, complete mobile world rendering, world export, projected light decals, and network/editor workflows remain tracked in docs/TODO.md. Converter/reader or inspector support alone does not establish world-renderer support. |
 
@@ -96,7 +97,7 @@ The historical height-scale concern was not treated as a confirmed bug: the exis
 
 ## Validation
 
-- Latest full workspace, all-features test run: **663 passed, 0 failed, 4 intentionally ignored slow brute-force tests** across 57 test groups, including the new source item material retention/validation tests. The renderer has **105** tests, including liquid WESL composition.
+- Latest full workspace, all-features test run: **665 passed, 0 failed, 4 intentionally ignored slow brute-force tests** across 57 test groups, including source item material retention/validation, per-item fourth-source selection, and the 16-bit GPU item lookup. The renderer has **107** tests, including liquid/item WESL composition and independent per-item masks above the land lookup range.
 - Focused extraction gate: **5 passed**, including symlink-parent and dangling-destination coverage.
 - Original CSV parsing, source-UOP-to-UDDP round-trip, subtype preservation, routing precedence, source material retention, liquid-role isolation, sprite ownership, shared liquid payloads, BC7 channel integrity, static visibility, and shader composition have regression coverage.
 - `cargo check --workspace --all-targets --all-features --locked`: passed for the source-parameter implementation.
@@ -117,3 +118,29 @@ Follow-up logs: `/tmp/uodynamapper-water-followup-tests.log`, `/tmp/uodynamapper
 Reflection follow-up captures use the `reflection-` prefix in the same temporary directory. Logs: `/tmp/uodynamapper-reflection-{tests,scenes,families,build}.log`; all captured previews verified Desktop 4 placement and cleanup. This phase does not rebuild asset packages or change their previous validation counts.
 
 Item material retention logs: `/tmp/uodynamapper-item-material-{workspace-tests,check,build,preview,final-test,final-preserve}.log`. The normal binary reached InGame on Desktop 4 with the validated candidate. Installed `tilemeta.uddp` SHA-256 is `2ba4d5c43d4b3fc2ff75fab1fdb3a577e199d54e19f3fad3b7074dbcf8abbbf2`; its backup is `tilemeta.before-item-materials-20261026T144526Z.uddp` alongside it. This metadata phase does not change atlas pixels or claim new shoreline coverage.
+
+
+Item composition follow-up: the two fixture masks were already packed correctly
+and match original decoded DDSs exactly. No package rebuild or compatibility map
+was applied. The shared auxiliary atlas now retains the item fourth sources even
+when the optional terrain sidecar is absent; the ground shader selects them by
+original graphic, with original blend parameters and corrected local UVs.
+The independent original-map mask continuity comparison reports 0.005164075 mean
+edge difference in the authored orientation versus 0.022726467 when vertically
+reversed; this is coverage evidence, not pixel parity. New source/loader/UV findings
+are in `docs/agent_notes/ec_original_water_code.md`.
+
+Accepted captures use `item-composition-` in `/tmp/uodynamapper-ec-followup/`.
+They include the bridge in all three presets, paused water, EC coast/town,
+Classic coast and lava/acid/swamp. Desktop placement and cleanup logs are
+`/tmp/uodynamapper-item-composition-accepted-{scenes,families}.log`.
+The prior `composition-` captures deliberately retain the initial reversed-mask
+failure; use the accepted prefix for the final output. Terrain-specific liquid
+coverage defects remain visible in the family scenes and are not claimed fixed.
+
+Item composition validation: workspace/all-features tests passed **665/665**
+(4 intentional ignores, 57 groups); all-targets/all-features check passed with
+only the pre-existing unused-import warning. The two-frame paused water crop
+matched exactly; the animated crop changed. The 10 final native-capture previews
+verified Desktop 4 placement and cleanup, with no shader/pipeline errors.
+Logs use `/tmp/uodynamapper-item-composition-{workspace-tests,workspace-check,normal-build}.log`.

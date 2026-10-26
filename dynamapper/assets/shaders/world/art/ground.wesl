@@ -5,6 +5,7 @@ import bevy_pbr::render::{
 };
 import package::shaders::world::effects::surface_effects::{apply_water_animation, water_flat_wrapped_lambert};
 import package::shaders::world::ec_liquid::{sample_ec_liquid, ec_liquid_reflection_uv};
+import package::shaders::world::ec_item_liquid::apply_ec_item_liquid;
 import package::shaders::postprocess::color_grading::{grade_color_vibrant};
 import package::shaders::postprocess::global_lighting::{apply_global_lighting_rgb};
 import package::shaders::postprocess::grunge::{apply_texture_visual_grunge, visual_grunge_uv};
@@ -16,6 +17,7 @@ import package::shaders::world::art::art_ground_bindings::{
     GroundTileInstance, SpriteParams, SceneUniform, LandEffectsUniform, GlobalLightingUniforms,
     art_atlas_sampler, art_atlas, instances, sprite_params, scene, effects, global_light,
     hue_sampler, hue_texture, land_page_atlas, land_page_lookup, visual_grunge_texture,
+    item_liquid_atlas, item_liquid_lookup,
     HEIGHT_SCALE, DEPTH_CLASS_BACKGROUND, DEPTH_CLASS_FOLIAGE, DEPTH_CLASS_ROOF,
     PASS_MODE_OPAQUE, PASS_MODE_TRANSPARENT, DEPTH_CLASS_SURFACE_LIKE_FLOOR,
     SURFACE_LIKE_DEPTH_CLASS_OFFSET, STATIC_DEPTH_TIE_BREAK_FRAG_EPSILON,
@@ -125,6 +127,12 @@ fn fragment(in: GroundVertexOutput) -> GroundFragmentOutput {
         color = sample_ec_liquid(land_page_atlas, land_page_lookup, art_atlas_sampler,
             inst.material_payload, in.world_pos.xz, reflection_uv, globals.time,
             effects.enable_water_animation == 1u, effects.enable_linear_filtering == 1u);
+        let energy = global_light.ambient_strength
+            + global_light.land_diffuse_strength * water_flat_wrapped_lambert(scene.light_direction);
+        color = apply_ec_item_liquid(vec4<f32>(color.rgb * energy, color.a),
+            item_liquid_atlas, item_liquid_lookup, art_atlas_sampler, inst.material_item_id,
+            uv_in_tile, in.world_pos.xz, globals.time,
+            effects.enable_water_animation == 1u, effects.enable_linear_filtering == 1u);
     } else {
         if (inst.texture_stretch > 0.0) {
             uv_in_tile = fract(in.world_pos.xz / inst.texture_stretch);
@@ -137,12 +145,15 @@ fn fragment(in: GroundVertexOutput) -> GroundFragmentOutput {
         let sample_uv = pixel_art_atlas_uv_iq(uv, inst.uv_min, inst.uv_max, atlas_size);
         color = textureSample(art_atlas, art_atlas_sampler, sample_uv, i32(layer));
     }
+    // Blend authored partial-alpha coverage instead of making half-opaque masks
+    // solid. Other art keeps its existing sprite split.
+    let alpha_cutoff = select(sprite_params.alpha_cutoff, 0.9999, use_ec_water_material);
     if (sprite_params.pass_mode == PASS_MODE_OPAQUE) {
-        if color.a < 0.0001 || color.a < sprite_params.alpha_cutoff {
+        if color.a < 0.0001 || color.a < alpha_cutoff {
             discard;
         }
     } else {
-        if color.a >= sprite_params.alpha_cutoff {
+        if color.a < 0.0001 || color.a >= alpha_cutoff {
             discard;
         }
     }
@@ -156,14 +167,10 @@ fn fragment(in: GroundVertexOutput) -> GroundFragmentOutput {
         hue_texture,
         hue_sampler,
     );
-    if (sprite_params.pass_mode == PASS_MODE_TRANSPARENT) {
+    if (sprite_params.pass_mode == PASS_MODE_TRANSPARENT && !use_ec_water_material) {
         shaded = vec4<f32>(shaded.rgb * shaded.a * 2.0, shaded.a);
     }
-    if (use_ec_water_material) {
-        let energy = global_light.ambient_strength
-            + global_light.land_diffuse_strength * water_flat_wrapped_lambert(scene.light_direction);
-        shaded = vec4<f32>(shaded.rgb * energy, shaded.a);
-    } else {
+    if (!use_ec_water_material) {
         shaded = vec4<f32>(apply_art_surface_shading(
             shaded.rgb,
             uv_in_tile,

@@ -44,6 +44,7 @@ impl Plugin for DrawStaticSpritesPlugin {
            ))
            .add_systems(Startup, statics_draw::sys_setup_art_page_atlas
                .in_set(StartupSysSet::SetupSceneStage1)
+               .after(crate::core::texture_cache::land::sys_setup_terrain_cache)
                .after(StartupSysSet::LoadStartupUOFiles))
            .add_systems(Update, (
                statics_collect::sys_sync_static_art_source,

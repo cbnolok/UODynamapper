@@ -26,6 +26,10 @@ struct GroundTileInstance {
     hue_flags: u32,
     material_payload: u32,
     material_flags: u32,
+    material_item_id: u32,
+    _pad_material_a: u32,
+    _pad_material_b: u32,
+    _pad_material_c: u32,
     local_light_rgba: vec4<f32>,
     color_rgba: vec4<f32>,
 }
@@ -52,6 +56,8 @@ struct SpriteParams {
 @group(3) @binding(111) var land_page_atlas: texture_2d_array<f32>;
 @group(3) @binding(112) var land_page_lookup: texture_2d<u32>;
 @group(3) @binding(113) var visual_grunge_texture: texture_2d<f32>;
+@group(3) @binding(114) var item_liquid_atlas: texture_2d_array<f32>;
+@group(3) @binding(115) var item_liquid_lookup: texture_2d<u32>;
 
 const HEIGHT_SCALE: f32 = 0.1;
 const DEPTH_CLASS_BACKGROUND: u32 = 1u;

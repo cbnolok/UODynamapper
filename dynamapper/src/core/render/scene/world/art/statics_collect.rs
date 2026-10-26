@@ -924,6 +924,9 @@ pub struct GroundTileInstance {
     pub hue_flags: u32,
     pub material_payload: u32,
     pub material_flags: u32,
+    /// Original item graphic selects its own optional fourth water source.
+    pub material_item_id: u32,
+    pub _pad_material: [u32; 3],
     pub local_light_rgba: [f32; 4],
     pub color_rgba: [f32; 4],
 }
@@ -2377,6 +2380,8 @@ fn emit_ground_static_instance(
         hue_flags,
         material_payload,
         material_flags,
+        material_item_id: info.tile.graphic as u32,
+        _pad_material: [0; 3],
         local_light_rgba,
         color_rgba: [1.0, 1.0, 1.0, 1.0],
     });
@@ -3574,7 +3579,7 @@ mod tests {
 
     #[test]
     fn ground_instance_stride_stays_16_byte_aligned() {
-        assert_eq!(std::mem::size_of::<GroundTileInstance>(), 128);
+        assert_eq!(std::mem::size_of::<GroundTileInstance>(), 144);
     }
 
     #[test]

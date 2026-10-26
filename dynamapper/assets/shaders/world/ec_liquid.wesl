@@ -24,7 +24,12 @@ fn ec_liquid_slot(lookup: texture_2d<u32>, payload: u32, role: u32) -> EcLiquidS
 
 fn ec_liquid_texel(atlas: texture_2d_array<f32>, atlas_sampler: sampler,
                    slot: EcLiquidSlot, uv: vec2<f32>, linear: bool) -> vec4<f32> {
-    let local = fract(uv) * vec2<f32>(slot.extent);
+    return ec_liquid_texel_at_uv(atlas, atlas_sampler, slot, fract(uv), linear);
+}
+
+fn ec_liquid_texel_at_uv(atlas: texture_2d_array<f32>, atlas_sampler: sampler,
+                         slot: EcLiquidSlot, uv: vec2<f32>, linear: bool) -> vec4<f32> {
+    let local = uv * vec2<f32>(slot.extent);
     if (linear) {
         let px = vec2<f32>(slot.origin) + clamp(local, vec2<f32>(0.5), vec2<f32>(slot.extent) - vec2<f32>(0.5));
         return textureSample(atlas, atlas_sampler, px / vec2<f32>(textureDimensions(atlas)), slot.layer);

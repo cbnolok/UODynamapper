@@ -28,6 +28,9 @@ enum Command {
     Images {
         #[arg(long)]
         output: PathBuf,
+        /// Physical archive; numeric IDs can refer to different images in each.
+        #[arg(long, default_value = "Texture.uop")]
+        archive: PathBuf,
         #[arg(required = true)]
         ids: Vec<u32>,
     },
@@ -82,8 +85,8 @@ fn main() -> Result<()> {
                 }
             }
         }
-        Command::Images { output, ids } => {
-            let textures = Textures::new(&args.client.join("Texture.uop"), None, None)?;
+        Command::Images { output, archive, ids } => {
+            let textures = Textures::new(&args.client.join(archive), None, None)?;
             std::fs::create_dir_all(&output)?;
             for id in ids {
                 let dds_path = output.join(format!("source-{id}.dds"));

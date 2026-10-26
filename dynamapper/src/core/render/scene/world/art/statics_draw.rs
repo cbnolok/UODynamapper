@@ -92,6 +92,10 @@ pub struct ArtGroundMaterialExtension {
     pub land_page_lookup: Handle<Image>,
     #[texture(113, visibility(fragment))]
     pub visual_grunge_texture: Handle<Image>,
+    #[texture(114, dimension = "2d_array", visibility(fragment))]
+    pub item_liquid_atlas: Handle<Image>,
+    #[texture(115, sample_type = "u_int", visibility(fragment))]
+    pub item_liquid_lookup: Handle<Image>,
 }
 
 #[derive(Resource, Clone)]
@@ -732,6 +736,7 @@ pub fn sys_setup_art_page_atlas(
     tex_land_ec_res: Option<Res<TexLandEcPackageRes>>,
     tilemeta_res: Option<Res<TileMetaPackageRes>>,
     hues_package_res: Option<Res<HuesPackageRes>>,
+    item_liquid_images: Res<crate::core::texture_cache::ec_item_liquid::EcItemLiquidImages>,
 ) {
     log_system_add_startup::<DrawStaticSpritesPlugin>(StartupSysSet::SetupSceneStage1, fname!());
     let active_source = resolve_effective_art_source(
@@ -886,6 +891,8 @@ pub fn sys_setup_art_page_atlas(
         hue_flags: 0,
         material_payload: 0,
         material_flags: 0,
+        material_item_id: 0,
+        _pad_material: [0; 3],
         local_light_rgba: [0.0, 0.0, 0.0, 0.0],
         color_rgba: [0.0, 0.0, 0.0, 0.0],
     }]);
@@ -919,6 +926,8 @@ pub fn sys_setup_art_page_atlas(
             land_page_atlas: land_page_bindings.atlas.clone(),
             land_page_lookup: land_page_bindings.lookup.clone(),
             visual_grunge_texture: visual_grunge_texture.clone(),
+            item_liquid_atlas: item_liquid_images.atlas.clone(),
+            item_liquid_lookup: item_liquid_images.lookup.clone(),
         },
     });
 
@@ -948,6 +957,8 @@ pub fn sys_setup_art_page_atlas(
             land_page_atlas: land_page_bindings.atlas,
             land_page_lookup: land_page_bindings.lookup,
             visual_grunge_texture,
+            item_liquid_atlas: item_liquid_images.atlas.clone(),
+            item_liquid_lookup: item_liquid_images.lookup.clone(),
         },
     });
 
@@ -1586,13 +1597,15 @@ pub fn sys_update_art_materials(
         land_page_binding_handles(shared_land_material.as_deref(), &land_materials);
 
     if let (Some(assets), Some(bindings)) = (ground_assets.as_ref(), land_page_bindings.as_ref()) {
-        if let Some(mut mat) = ground_materials.get_mut(&assets.opaque_material) {
-            mat.extension.land_page_atlas = bindings.atlas.clone();
-            mat.extension.land_page_lookup = bindings.lookup.clone();
-        }
-        if let Some(mut mat) = ground_materials.get_mut(&assets.transparent_material) {
-            mat.extension.land_page_atlas = bindings.atlas.clone();
-            mat.extension.land_page_lookup = bindings.lookup.clone();
+        for handle in [&assets.opaque_material, &assets.transparent_material] {
+            let changed = ground_materials.get(handle).is_some_and(|mat|
+                mat.extension.land_page_atlas != bindings.atlas || mat.extension.land_page_lookup != bindings.lookup);
+            if changed {
+                if let Some(mut mat) = ground_materials.get_mut(handle) {
+                    mat.extension.land_page_atlas = bindings.atlas.clone();
+                    mat.extension.land_page_lookup = bindings.lookup.clone();
+                }
+            }
         }
     }
 

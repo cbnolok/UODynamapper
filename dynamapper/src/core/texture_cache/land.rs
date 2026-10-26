@@ -78,6 +78,7 @@ const TILEMETA_FLAG_WET: u64 = 0x80;
 struct LandAuxAtlasImages {
     aux_atlas: Handle<Image>,
     aux_lookup: Handle<Image>,
+    item_lookup: Handle<Image>,
 }
 
 /// Side length (in pixels) of each layer in the aux atlas.
@@ -238,28 +239,55 @@ fn create_blank_aux_atlas_images(images: &mut Assets<Image>) -> LandAuxAtlasImag
     LandAuxAtlasImages {
         aux_atlas: images.add(aux_atlas),
         aux_lookup: images.add(aux_lookup),
+        item_lookup: super::ec_item_liquid::create_lookup(images, None, |_| None),
     }
+}
+
+fn assign_aux_layer(
+    package: &TexAuxEcPackage,
+    texture_id: u32,
+    assigned: &mut std::collections::HashMap<u32, u32>,
+    layers: &mut Vec<Vec<u8>>,
+) -> Option<(u32, UVec2)> {
+    let slot = package.slot_for_texture_id(texture_id)?;
+    let extent = UVec2::new(slot.width.into(), slot.height.into());
+    if let Some(&layer) = assigned.get(&texture_id) { return Some((layer, extent)); }
+    if extent.min_element() == 0 || extent.max_element() > AUX_ATLAS_TILE_SIZE {
+        log::warn!("EC auxiliary source {texture_id} exceeds atlas cell extent: {extent:?}");
+        return None;
+    }
+    let rgba = match package.load_rgba(texture_id) {
+        Ok(Some(rgba)) => rgba,
+        result => { log::warn!("EC auxiliary source {texture_id} could not be read: {result:?}"); return None; }
+    };
+    if rgba.len() != (extent.x * extent.y * 4) as usize {
+        log::warn!("EC auxiliary source {texture_id} has an invalid RGBA byte count");
+        return None;
+    }
+    let layer = layers.len() as u32;
+    layers.push(resize_rgba_nearest(&rgba, extent.x, extent.y, AUX_ATLAS_TILE_SIZE, AUX_ATLAS_TILE_SIZE));
+    assigned.insert(texture_id, layer);
+    Some((layer, extent))
 }
 
 /// Build the `tex_aux_ec` atlas and per-tile lookup texture from the auxiliary
 /// texture package and terrain-layer sidecar.
 ///
-/// Returns blank images when either package is absent — the shader degrades to
-/// the existing single-base path for all tiles.
+/// Item water shares these image layers even without the optional terrain sidecar.
+/// Missing auxiliary pixels leave the existing base path intact.
 fn create_aux_atlas_images(
     images: &mut Assets<Image>,
     tex_aux_ec: Option<&TexAuxEcPackage>,
     terrain_meta: Option<&TerrainMetaPackage>,
     tex_land_ec: Option<&TexLandEcPackage>,
+    tilemeta: Option<&TileMetaPackage>,
 ) -> LandAuxAtlasImages {
     use bevy::render::render_resource::{
         Extent3d, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor,
         TextureViewDimension,
     };
 
-    let (Some(tex_aux_ec), Some(terrain_meta), Some(tex_land_ec)) =
-        (tex_aux_ec, terrain_meta, tex_land_ec)
-    else {
+    let Some(tex_aux_ec) = tex_aux_ec else {
         return create_blank_aux_atlas_images(images);
     };
 
@@ -277,109 +305,98 @@ fn create_aux_atlas_images(
     let lookup_height = (AUX_LOOKUP_TILE_CAPACITY + AUX_LOOKUP_WIDTH - 1) / AUX_LOOKUP_WIDTH;
     let mut lookup_bytes = vec![0u8; (AUX_LOOKUP_WIDTH * lookup_height * 16) as usize];
 
-    for tile_id in 0..AUX_LOOKUP_TILE_CAPACITY {
-        let sec_base = secondary_base_texture_id(tile_id, terrain_meta, tex_land_ec);
-        let alpha_mask = alpha_mask_texture_id(tile_id, terrain_meta);
-        let ripple = ripple_texture_id(tile_id, terrain_meta);
+    if let (Some(terrain_meta), Some(tex_land_ec)) = (terrain_meta, tex_land_ec) {
+        for tile_id in 0..AUX_LOOKUP_TILE_CAPACITY {
+            let sec_base = secondary_base_texture_id(tile_id, terrain_meta, tex_land_ec);
+            let alpha_mask = alpha_mask_texture_id(tile_id, terrain_meta);
+            let ripple = ripple_texture_id(tile_id, terrain_meta);
 
-        // Determine whether this tile has a reviewed liquid material override.
-        let is_liquid: u32 = {
-            let decision = tex_land_ec.resolve_material_decision(tile_id);
-            let has_liquid_override = decision
-                .material_id
-                .and_then(|mid| tex_land_ec.terrain_override_details_for(mid))
-                .is_some_and(|details| details.liquid.is_some());
-            u32::from(has_liquid_override)
-        };
+            // Determine whether this tile has a reviewed liquid material override.
+            let is_liquid: u32 = {
+                let decision = tex_land_ec.resolve_material_decision(tile_id);
+                let has_liquid_override = decision
+                    .material_id
+                    .and_then(|mid| tex_land_ec.terrain_override_details_for(mid))
+                    .is_some_and(|details| details.liquid.is_some());
+                u32::from(has_liquid_override)
+            };
 
-        if sec_base.is_none() && alpha_mask.is_none() && ripple.is_none() && is_liquid == 0 {
-            continue;
-        }
-
-        let mut assign_layer = |texture_id: u32| -> u32 {
-            if let Some(&layer) = texture_id_to_layer.get(&texture_id) {
-                return layer;
+            if sec_base.is_none() && alpha_mask.is_none() && ripple.is_none() && is_liquid == 0 {
+                continue;
             }
-            // Check if the slot exists in the package.
-            if tex_aux_ec.slot_for_texture_id(texture_id).is_none() {
-                return 0;
+
+            let mut assign_layer = |texture_id: u32| -> u32 {
+                assign_aux_layer(tex_aux_ec, texture_id, &mut texture_id_to_layer, &mut layers_rgba)
+                    .map_or(0, |(layer, _)| layer)
+            };
+
+            let (sec_layer, sec_rep_q8) = if let Some((tid, rep)) = sec_base {
+                let layer = assign_layer(tid);
+                let rep_q8 = if rep.is_finite() && rep > 0.0 {
+                    (rep * 256.0).round().clamp(0.0, u16::MAX as f32) as u32
+                } else {
+                    0
+                };
+                (layer, rep_q8)
+            } else {
+                (0u32, 0u32)
+            };
+
+            let (mask_layer, _mask_rep_q8) = if let Some((tid, rep)) = alpha_mask {
+                let layer = assign_layer(tid);
+                let rep_q8 = if rep.is_finite() && rep > 0.0 {
+                    (rep * 256.0).round().clamp(0.0, u16::MAX as f32) as u32
+                } else {
+                    0
+                };
+                (layer, rep_q8)
+            } else {
+                (0u32, 0u32)
+            };
+
+            let (ripple_layer, ripple_rep_q8) = if let Some((tid, rep)) = ripple {
+                let layer = assign_layer(tid);
+                let rep_q8 = if rep.is_finite() && rep > 0.0 {
+                    (rep * 256.0).round().clamp(0.0, u16::MAX as f32) as u32
+                } else {
+                    0
+                };
+                (layer, rep_q8)
+            } else {
+                (0u32, 0u32)
+            };
+
+            if sec_layer == 0 && mask_layer == 0 && ripple_layer == 0 && is_liquid == 0 {
+                continue;
             }
-            // Try to load the raw pixels.
-            let rgba = match tex_aux_ec.load_rgba(texture_id) {
-                Ok(Some(bytes)) => bytes,
-                _ => return 0,
-            };
-            // We need width/height to scale properly.
-            let slot = tex_aux_ec.slot_for_texture_id(texture_id).unwrap();
-            let resized = resize_rgba_nearest(
-                &rgba,
-                slot.width as u32,
-                slot.height as u32,
-                AUX_ATLAS_TILE_SIZE,
-                AUX_ATLAS_TILE_SIZE,
-            );
-            let layer = layers_rgba.len() as u32;
-            layers_rgba.push(resized);
-            texture_id_to_layer.insert(texture_id, layer);
-            layer
-        };
 
-        let (sec_layer, sec_rep_q8) = if let Some((tid, rep)) = sec_base {
-            let layer = assign_layer(tid);
-            let rep_q8 = if rep.is_finite() && rep > 0.0 {
-                (rep * 256.0).round().clamp(0.0, u16::MAX as f32) as u32
-            } else {
-                0
-            };
-            (layer, rep_q8)
-        } else {
-            (0u32, 0u32)
-        };
-
-        let (mask_layer, _mask_rep_q8) = if let Some((tid, rep)) = alpha_mask {
-            let layer = assign_layer(tid);
-            let rep_q8 = if rep.is_finite() && rep > 0.0 {
-                (rep * 256.0).round().clamp(0.0, u16::MAX as f32) as u32
-            } else {
-                0
-            };
-            (layer, rep_q8)
-        } else {
-            (0u32, 0u32)
-        };
-
-        let (ripple_layer, ripple_rep_q8) = if let Some((tid, rep)) = ripple {
-            let layer = assign_layer(tid);
-            let rep_q8 = if rep.is_finite() && rep > 0.0 {
-                (rep * 256.0).round().clamp(0.0, u16::MAX as f32) as u32
-            } else {
-                0
-            };
-            (layer, rep_q8)
-        } else {
-            (0u32, 0u32)
-        };
-
-        if sec_layer == 0 && mask_layer == 0 && ripple_layer == 0 && is_liquid == 0 {
-            continue;
+            // Write lookup entry:
+            //   x: secondary_layer | (secondary_rep_q8 << 16)
+            //   y: mask_layer
+            //   z: ripple_layer | (ripple_rep_q8 << 16)
+            //   w: is_liquid (1 = liquid terrain material, 0 = solid)
+            let lookup_index = tile_id as usize;
+            let texel_offset = lookup_index * 16;
+            lookup_bytes[texel_offset..texel_offset + 4]
+                .copy_from_slice(&((sec_layer & 0xFFFF) | (sec_rep_q8 << 16)).to_le_bytes());
+            lookup_bytes[texel_offset + 4..texel_offset + 8]
+                .copy_from_slice(&mask_layer.to_le_bytes());
+            lookup_bytes[texel_offset + 8..texel_offset + 12]
+                .copy_from_slice(&((ripple_layer & 0xFFFF) | (ripple_rep_q8 << 16)).to_le_bytes());
+            lookup_bytes[texel_offset + 12..texel_offset + 16]
+                .copy_from_slice(&is_liquid.to_le_bytes());
         }
-
-        // Write lookup entry:
-        //   x: secondary_layer | (secondary_rep_q8 << 16)
-        //   y: mask_layer
-        //   z: ripple_layer | (ripple_rep_q8 << 16)
-        //   w: is_liquid (1 = liquid terrain material, 0 = solid)
-        let lookup_index = tile_id as usize;
-        let texel_offset = lookup_index * 16;
-        lookup_bytes[texel_offset..texel_offset + 4]
-            .copy_from_slice(&((sec_layer & 0xFFFF) | (sec_rep_q8 << 16)).to_le_bytes());
-        lookup_bytes[texel_offset + 4..texel_offset + 8]
-            .copy_from_slice(&mask_layer.to_le_bytes());
-        lookup_bytes[texel_offset + 8..texel_offset + 12]
-            .copy_from_slice(&((ripple_layer & 0xFFFF) | (ripple_rep_q8 << 16)).to_le_bytes());
-        lookup_bytes[texel_offset + 12..texel_offset + 16]
-            .copy_from_slice(&is_liquid.to_le_bytes());
     }
+    let item_lookup = super::ec_item_liquid::create_lookup(images, tilemeta, |source| {
+        let slot = tex_aux_ec.slot_for_texture_id(source.texture_id)?;
+        // The package is keyed by numeric ID; a legacy/sprite family collision
+        // must never supply a WorldArt shoreline mask.
+        if slot.logical_family != source.texture_type {
+            log::warn!("EC item liquid source {} has a different packed family; rebuild tex_aux_ec", source.texture_id);
+            return None;
+        }
+        assign_aux_layer(tex_aux_ec, source.texture_id, &mut texture_id_to_layer, &mut layers_rgba)
+    });
 
     let layer_count = layers_rgba.len().max(1) as u32;
     let mut atlas_bytes: Vec<u8> = Vec::with_capacity(
@@ -422,6 +439,7 @@ fn create_aux_atlas_images(
     LandAuxAtlasImages {
         aux_atlas: images.add(aux_atlas),
         aux_lookup: images.add(aux_lookup),
+        item_lookup,
     }
 }
 
@@ -1352,7 +1370,12 @@ pub fn sys_setup_terrain_cache(
         tex_aux_ec_r.as_deref().map(|r| r.0.as_ref()),
         terrain_meta_r.as_deref().map(|r| r.0.as_ref()),
         tex_land_ec_package.as_deref(),
+        tilemeta_r.as_deref().map(|r| r.0.as_ref()),
     );
+    cmd.insert_resource(super::ec_item_liquid::EcItemLiquidImages {
+        atlas: aux_images.aux_atlas.clone(),
+        lookup: aux_images.item_lookup.clone(),
+    });
 
     cmd.insert_resource(land_texture_cache);
 
@@ -1714,6 +1737,10 @@ mod tests {
                 "shaders/world/ec_liquid.wesl",
             ),
             Shader::from_wesl(
+                include_str!("../../../assets/shaders/world/ec_item_liquid.wesl"),
+                "shaders/world/ec_item_liquid.wesl",
+            ),
+            Shader::from_wesl(
                 include_str!("../../../assets/shaders/world/land/sampling.wesl"),
                 "shaders/world/land/sampling.wesl",
             ),
@@ -1732,6 +1759,7 @@ mod tests {
                 r#"
 import package::shaders::world::land::land_bindings::{TileUniform, land_page_atlas, land_page_lookup, tex_small_sampler};
 import package::shaders::world::ec_liquid::{sample_ec_liquid, ec_liquid_reflection_uv};
+import package::shaders::world::ec_item_liquid::apply_ec_item_liquid;
 import package::shaders::world::land::sampling::{
     apply_ec_aux_two_base_blend, apply_sharpening, blurred_albedo, classic_land_art_is_present,
     ec_liquid_perturbed_base_uv, sample_classic_land_art, sample_ec_material_albedo,
@@ -1753,7 +1781,9 @@ fn fragment() -> @location(0) vec4<f32> {
     let reflection_uv = ec_liquid_reflection_uv(vec3<f32>(0.0, 0.0, -1.0), vec3<f32>(0.0, 1.0, 0.0));
     color += sample_ec_liquid(land_page_atlas, land_page_lookup, tex_small_sampler,
         0u, uv, reflection_uv, 0.0, true, true).rgb;
-    return vec4<f32>(color, normal.w + ripple.x);
+    return apply_ec_item_liquid(vec4<f32>(color, normal.w + ripple.x),
+        land_page_atlas, land_page_lookup, tex_small_sampler, 6038u,
+        uv, uv, 0.0, true, true);
 }
 "#,
                 "shaders/test/land_sampling_root.wesl",

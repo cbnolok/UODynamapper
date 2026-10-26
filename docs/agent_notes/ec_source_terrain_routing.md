@@ -83,3 +83,12 @@ tilemeta packages require `metadata/item_materials.json` and expose it through
 `item_material` / `item_materials`. Matching an item's first three sampler images
 to terrain water establishes shared base inputs, but does not establish its
 fourth-image operation or UV domain. Read the item's own retained parameters.
+
+
+Source-matched item water now preserves its item graphic through the ground
+instance as well as the shared terrain payload. Its fourth image and own blend
+parameters use an independent 16-bit item lookup, sharing the existing auxiliary
+GPU atlas with terrain. This lookup works without the terrain sidecar. Local UV
+set zero is preflipped by the original mesh before the affine transform; world
+UV set one is separate. See `ec_original_water_code.md` for the source addresses,
+neighbor-mask continuity check, and remaining terrain-specific composition work.

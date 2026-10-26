@@ -103,3 +103,45 @@ not guess a source bundle or overwrite its inputs/output. Compare logical payloa
 with `udd-cli tool diff --kind package`: adding source metadata alone should report
 one added entry, zero removed entries and zero changed entries. Test the new
 package with isolated runtime settings before replacing an installed test asset.
+
+## Packed item composition and shoreline coverage
+
+Inspect original item material parameters against already packed auxiliary pixels:
+
+```sh
+cargo run -p udd-conv-cli --example inspect_ec_item_aux -- \
+  --tilemeta /path/to/tilemeta.uddp --aux /path/to/tex_aux_ec.uddp \
+  --output /tmp/ec-item-aux 6038 6057
+```
+
+Omit IDs to inventory every original `UOWaterShader`. The output directory must
+be new. It exports each referenced packed image once and reports logical family,
+physical source package, source sampler, repetition and original UV-set index.
+To export a colliding numeric ID from another original archive, the original
+image helper also accepts `images --archive LegacyTexture.uop` (default:
+`Texture.uop`). Archive identity is part of the comparison.
+
+The scene inspector reads the installed packed map/statics and tile metadata:
+
+```sh
+cargo run -p udd-conv-cli --example inspect_ec_scene_cells -- \
+  --packages /path/to/packages --map 0 --x 1445 --y 1790 --radius 14 \
+  > /tmp/ec-coast-cells.csv
+```
+
+It reports original land IDs/heights/water flags and wet item IDs/heights per
+cell. Use the actual map dimensions from its final metadata record, not a guessed
+facet height. Feed all observed wet item IDs to `inspect_ec_item_aux`, retaining
+its stdout as `/tmp/ec-coast-refs.txt` and images in a new directory. Compare the
+eight mask orientations against neighboring cells with:
+
+```sh
+python3 scripts/dev-helpers/ec-research/compare_mask_edges.py \
+  --cells /tmp/ec-coast-cells.csv --refs /tmp/ec-coast-refs.txt \
+  --images /tmp/ec-coast-aux
+```
+
+This Python helper requires Pillow and numpy. It compares source alpha-edge
+continuity for same-height water coverage; inspect the census first when heights
+or stacked layers differ. A low seam score is supporting coverage evidence, not
+a substitute for actual renderer captures or original-client pixel validation.
