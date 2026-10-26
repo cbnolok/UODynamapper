@@ -1779,7 +1779,7 @@ mod tests {
             Shader::from_wesl(
                 r#"
 import package::shaders::world::land::land_bindings::{TileUniform, land_page_atlas, land_page_lookup, tex_small_sampler};
-import package::shaders::world::ec_liquid::{sample_ec_liquid, ec_liquid_reflection_uv};
+import package::shaders::world::ec_liquid::{sample_ec_liquid, ec_liquid_reflection_uv, ec_liquid_world_uv};
 import package::shaders::world::ec_item_liquid::apply_ec_item_liquid;
 import package::shaders::world::land::coverage::{ec_terrain_stack, ec_layer_tile};
 import package::shaders::world::land::sampling::{
@@ -1803,7 +1803,7 @@ fn fragment() -> @location(0) vec4<f32> {
     let ripple = sample_ec_ripple_normal(uv, 0u, 0.0, 0.0);
     let reflection_uv = ec_liquid_reflection_uv(vec3<f32>(0.0, 0.0, -1.0), vec3<f32>(0.0, 1.0, 0.0));
     color += sample_ec_liquid(land_page_atlas, land_page_lookup, tex_small_sampler,
-        0u, uv, reflection_uv, 0.0, true, true).rgb;
+        0u, uv, ec_liquid_world_uv(uv), reflection_uv, 0.0, true, true).rgb;
     return apply_ec_item_liquid(vec4<f32>(color, normal.w + ripple.x),
         land_page_atlas, land_page_lookup, tex_small_sampler, 6038u,
         uv, uv, 0.0, true, true);

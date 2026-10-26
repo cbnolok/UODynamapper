@@ -530,17 +530,83 @@ Renderer tests cover weight truncation, chunk sorting/alias selection, the 49-pa
 cap, map-base invalidation and WESL composition. Native checks cover the bridge
 in all three presets, paused water, EC coast/town, Classic coast and lava/acid/swamp
 on Desktop 4. Lava banks now receive terrain coverage instead of stopping at the
-former hard ownership boundary. The original world-coordinate orientation,
-reflection/camera/clock parity, source albedo filtering and several static
-geometry/effect differences remain unfinished; ordered masks do not establish
+former hard ownership boundary. Reflection/camera/clock parity, source albedo
+filtering and several static geometry/effect differences remain unfinished;
+ordered masks do not establish
 complete original-client visual parity.
 
-Before using the recovered world-coordinate stream in the renderer, establish
-the axis mapping explicitly: the original stream has negative map Y, whereas
-the Bevy surface positions use positive map Y as world Z. Agreement between the
-current item and terrain shaders does not independently prove their world UV
-orientation. This coordinate comparison is separate from the already validated
-local shoreline-mask orientation.
+### Signed world coordinates
+
+The original terrain mesh builder `0x461ae0` appends `(map_x, -map_y)` to texture
+stream 0 at `0x461e80`–`0x461ed5`, then the other three cell corners through
+`0x461fdd`. Stream 1 remains the positive chunk-local coverage domain above.
+The sign is explicit subtraction from zero, not a DDS image flip. Terrain chunk
+placement `0x462fb0` also stores negative map Y in its geometry origin at
+`0x46308a`–`0x4630ac`; the origin's half-unit adjustment belongs to geometry,
+separately from stream 0's integer map coordinates. The decompiler incorrectly
+types these origin floats as integers; the MOVSS stores establish their types.
+
+The item path confirms the same signed axes independently. Position setter
+`0x4598d0` retains integer map X/Y at object `+0x4c/+0x50` and forms geometry
+translation X/Z from positive X and negative Y at `0x45999b`–`0x4599e7`.
+Its camera/height displacement and geometry-anchor offsets are additional terms.
+Image-window builder `0x459b00` creates local UVs and separate world-plane pairs;
+at `0x459f2d`–`0x45a058` each world pair takes local geometry X minus 0.5 and
+Z plus 0.5. Collector `0x45cd80` adds the item's X/Z translation to those pairs
+at `0x45d7b2`–`0x45d8b0`. The alternate flagged-quad adjustment `0x45a930`
+likewise adds integer X and **negative** integer Y at `0x45a969`–`0x45a99f`.
+Neither world path uses the local mask's `1-v` convention. These observations
+establish the signed domain; they do not establish complete parity of item
+geometry, anchors or height projection in our simpler grid quads.
+
+Bevy surface positions use positive map Y as world Z. The shared liquid sampler
+now converts that input to `(x, -z)` before applying the recovered mode-2 affine
+transform to original world-indexed bump and surface sources.
+Terrain supplies its signed world stream for Technique 2; items supply their
+local stream as described below. Item fourth stages selecting world UV set 1
+use the same signed-world conversion. Previously, passing positive map Y directly
+into the affine V reversal mirrored their spatial
+sampling. For repetition `r` and translation `(tx,ty)`, the corrected wrapped
+world texture domain is `(x/r + tx, y/r - ty)`, since the affine's constant 1
+vanishes under wrapping. Ordinary solid terrain already samples positive
+map coordinates and does not need this additional reversal.
+
+Reflection-vector XY still enters the affine transform directly, and local
+shoreline masks still enter as `(u,1-v)`. Generated terrain coverage remains
+positive chunk-local/32. Keep these domains distinct when investigating
+remaining reflection/camera, filtering and authored geometry differences.
+
+### Technique 2 selects an owner-specific stream
+
+The item draw's jump table at `0x59d008`, indexed by `Technique[0]-1` at
+`0x59c2a8`–`0x59c2bb`, points Technique 1 to `0x59c2c2` and Technique 2 to
+`0x59c322`. The first retains the source map's low-byte UV-set index; the second
+sets TEXCOORDINDEX to zero, explicitly at `0x59c334` and its cache-update paths.
+Terrain's corresponding table at `0x5996b4` dispatches to `0x598f01` and
+`0x598f20`, with the zero write at `0x598f2c`. This distinction is visible in
+assembly even where the decompiler simplifies the state-cache branches.
+
+| Input | Terrain mesh | Item ground mesh |
+| --- | --- | --- |
+| Explicit stream 0, selected by Technique 2 | Signed world `(x,-y)` | Local art `(u,1-v)` |
+| World stream used by the retained liquid sources | Signed world `(x,-y)` | Signed world plane, separately constructed from local UVs |
+| Generated terrain coverage | Positive chunk-local `(x/32,y/32)` | Not an item input |
+| Reflection generation | Camera-space reflection-vector XY | Camera-space reflection-vector XY |
+
+The previous shared liquid sampler lost this distinction and fed world
+coordinates to both explicit techniques on both owners. The sampler now accepts
+the owner's original stream 0 separately: land passes signed world coordinates,
+and item ground art passes its vertically reversed local UV. Technique 1 and
+the bump source continue using world coordinates; Technique 0 continues using
+the reflection vector. The optional fourth stage retains its independent
+source UV-set selection.
+
+This path is exercised by acid border item 11778, whose original block-0
+Technique is `[2,1,0,0]`: source 0 is world-indexed bump 1000012/repetition 12,
+source 2 is image 2000490/repetition 8, and source 3 is the local unit-repetition
+mask. Sharing its active image graph with terrain material 49 must not replace
+the item's stream-0 coordinates with terrain's. This corrects sampling ownership;
+full source geometry/anchor and reflection/filtering parity remain separate.
 
 For later serialized geometry/property checks, the user identified
 [nifly](https://github.com/ousnius/nifly) and

@@ -59,7 +59,7 @@ import package::shaders::world::land::shading::{
   apply_static_light_decals,
 };
 import package::shaders::world::effects::surface_effects::{apply_water_animation, water_flat_wrapped_lambert};
-import package::shaders::world::ec_liquid::{sample_ec_liquid, ec_liquid_reflection_uv};
+import package::shaders::world::ec_liquid::{sample_ec_liquid, ec_liquid_reflection_uv, ec_liquid_world_uv};
 import package::shaders::world::land::coverage::{ec_coverage_params, ec_terrain_stack, ec_layer_tile};
 
 // ============================================================================
@@ -625,7 +625,7 @@ fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool) -> ve
       view_transformations::direction_world_to_view(vec3<f32>(0.0, 1.0, 0.0)),
     );
     base_albedo = sample_ec_liquid(land_page_atlas, land_page_lookup, tex_small_sampler,
-      tile.texture_payload, in.world_position.xz, reflection_uv, globals.time,
+      tile.texture_payload, in.world_position.xz, ec_liquid_world_uv(in.world_position.xz), reflection_uv, globals.time,
       enable_water == 1u, effects.enable_linear_filtering == 1u).rgb;
   } else if (use_cheap_path) {
     // Quantize UV to a coarser grid and use direct nearest sample.

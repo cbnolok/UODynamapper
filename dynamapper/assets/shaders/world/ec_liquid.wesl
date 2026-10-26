@@ -42,6 +42,12 @@ fn ec_liquid_reflection_uv(view_position: vec3<f32>, view_normal: vec3<f32>) -> 
     return direction.xy;
 }
 
+fn ec_liquid_world_uv(world_xz: vec2<f32>) -> vec2<f32> {
+    // Original terrain stream 0 and item world-plane UVs follow (map X, -map Y).
+    // Bevy world Z follows positive map Y; convert before the authored transform.
+    return vec2<f32>(world_xz.x, -world_xz.y);
+}
+
 fn ec_liquid_texture_uv(uv: vec2<f32>, stretch: f32, scroll: vec2<f32>) -> vec2<f32> {
     // The source loader installs NiTextureTransform mode 2, scale 1/repetition.
     // With zero rotation its matrix maps (u,v) to (u/stretch+tx,1-v/stretch-ty).
@@ -50,7 +56,7 @@ fn ec_liquid_texture_uv(uv: vec2<f32>, stretch: f32, scroll: vec2<f32>) -> vec2<
 }
 
 fn sample_ec_liquid(atlas: texture_2d_array<f32>, lookup: texture_2d<u32>, atlas_sampler: sampler,
-                    payload: u32, world_xz: vec2<f32>, reflection_uv: vec2<f32>,
+                    payload: u32, world_xz: vec2<f32>, uv_zero: vec2<f32>, reflection_uv: vec2<f32>,
                     time: f32, animate: bool, linear: bool) -> vec4<f32> {
     let fallback = ec_liquid_slot(lookup, payload, 0u);
     let normal = ec_liquid_slot(lookup, payload, 3u);
@@ -63,10 +69,14 @@ fn sample_ec_liquid(atlas: texture_2d_array<f32>, lookup: texture_2d<u32>, atlas
     if (animated.present) {
         surface = animated;
         var coordinates = reflection_uv;
-        // Techniques 1/2 use explicit coordinates (lava/acid), whereas the
-        // original water's Technique 0 generates a camera reflection vector.
-        if (params.x == 1u || params.x == 2u) {
-            coordinates = world_xz;
+        // Technique 1 retains the source's world UV set. Technique 2 forces
+        // set 0: world UVs on terrain, local art UVs on items. The caller
+        // supplies that stream in the original coordinate convention.
+        // Original water's Technique 0 generates a camera reflection vector.
+        if (params.x == 1u) {
+            coordinates = ec_liquid_world_uv(world_xz);
+        } else if (params.x == 2u) {
+            coordinates = uv_zero;
         }
         uv = ec_liquid_texture_uv(coordinates, animated.stretch, vec2<f32>(0.0));
     }
@@ -79,7 +89,7 @@ fn sample_ec_liquid(atlas: texture_2d_array<f32>, lookup: texture_2d<u32>, atlas
         let scroll = velocity * select(0.0, time, animate);
         var bump_uv = world_xz / normal.stretch + scroll;
         if (params.w != 0u) {
-            bump_uv = ec_liquid_texture_uv(world_xz, normal.stretch, scroll);
+            bump_uv = ec_liquid_texture_uv(ec_liquid_world_uv(world_xz), normal.stretch, scroll);
         }
         var bump = texture_data_rgb(ec_liquid_texel(atlas, atlas_sampler, normal, bump_uv, linear).rgb).rg;
         if (params.w == 0u) {

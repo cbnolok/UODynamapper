@@ -20,6 +20,7 @@ The pre-existing `.cargo/config.toml` edit, untracked `todos dynamapper.txt`, an
 | EC terrain coverage | Solid transitions used a neighbor-color approximation, while liquid terrain bypassed it and stopped at hard ownership boundaries. | Compose shaded material layers with the recovered ownership bytes, chunk-edge/filter rules, original sorting keys, full-chunk base and 49-pass cap. |
 | BC7 solid blocks | The encoder's constant-block endpoint table reconstructed 246 of 256 channel values incorrectly, corrupting reflection texture 1000017. | Generate exact Mode 5 endpoint pairs at compile time; exhaustively round-trip all channel values. Rebuild affected packages from original images. |
 | Original liquid source roles | The runtime lacked the original material graph and used fallback water as its ordinary visible surface. | Preserve source definitions; separate fallback, bump and animated-surface roles. Match item water by source sampler identities and share sampling, flat lighting, grunge and wash across land/static owners. Retain source coordinate technique and bump scroll velocity. |
+| Original liquid UV domains | The shared sampler passed positive map Y into an affine V reversal and used world coordinates for both owners' explicit techniques. Original stream 0 is world-indexed on terrain but local on items. | Convert world input to signed `(x,-y)` before the original transform. Supply each owner's stream 0 separately for Technique 2, keeping bump/world inputs, reflection generation, local masks and terrain coverage distinct. |
 | Item shoreline composition | Different shoreline items shared only the first three liquid images, discarding their fourth-source coverage and blend parameters. Applying the affine V flip without the original mesh flip also reversed masks. | Preserve item identity alongside the shared base, reuse packed auxiliary pixels with original item Technique/Tweaks and local UVs, and blend authored alpha. The coast now has curved coverage instead of whole-cell steps. |
 | Acid border material | Local fallback masks differ from the terrain fallback image. Requiring all three images to agree rejected valid acid graphs and selected blue water. | Also match the active bump/surface pair with original repetitions, coordinate technique and scroll parameters. Preserve the item's fourth-stage coverage. |
 | NoDraw statics | The art renderer drew diagnostic black tiles with green "no draw" lettering, obscuring the acid/rock boundary. | Honor the retained source NoDraw flag in art emission and visible-object picking; retain dot diagnostics and full cell inspection. |
@@ -134,6 +135,25 @@ terrain composition without rebuilding packages or applying compatibility maps.
 Texture/camera/reflection and several static-geometry differences remain visible.
 Logs use `/tmp/uodynamapper-terrain-integration-` with `final-tests`,
 `final-families`, `final-scenes`, `normal-build` and `normal-preview` suffixes.
+
+The liquid-UV follow-up passed all **111 renderer tests**, including composition
+with the separate owner-supplied stream 0. Twelve signed-world-UV previews covered
+the existing preset/family matrix; five final previews after the item stream-0
+correction covered acid in all three presets, lava and bridge water. All 17
+verified Desktop 4 placement and cleanup, with no shader/pipeline errors. Final
+paused acid pixels matched between frames; animated bridge water changed. The
+paused before/after acid comparison isolates changes along static borders while
+leaving the terrain interior intact. The earlier signed-world change also left
+the town scene below the HUD and a bridge-plank crop byte-identical. These are
+native-renderer comparisons, not registered original-client pixel parity.
+
+Captures use `world-uv-` and `liquid-uv-final-` under the same temporary directory.
+Logs are `/tmp/uodynamapper-world-uv-{families,scenes}.log` and
+`/tmp/uodynamapper-liquid-uv-final-{tests,scenes,normal-build,normal-preview}.log`.
+The original placement, UV construction and technique dispatch addresses are
+documented in `ec_original_water_code.md`. This phase changes no asset packages,
+compatibility mappings, filtering presets or geometry. Reflection/camera/filter
+parity and authored static geometry/effects remain unfinished.
 
 Local captures are available in `/tmp/uodynamapper-render/`: `before-source-routes.png`, `ec-{classic,enhanced,kr}-town.png`, `ec-{classic,enhanced,kr}-water-validated.png`, and `cc-{classic,enhanced,kr}-water.png`. Test logs are `/tmp/uodynamapper-final-workspace-tests.log`, `/tmp/uodynamapper-final-check.log`, and `/tmp/uodynamapper-final-build.log`.
 

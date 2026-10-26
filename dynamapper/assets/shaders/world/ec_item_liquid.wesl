@@ -1,6 +1,6 @@
 // UOWaterShader's optional fourth stage uses the item's own material parameters.
 // It is composed over the lit liquid, before the frame's color processing.
-import package::shaders::world::ec_liquid::{EcLiquidSlot, ec_liquid_texel_at_uv, ec_liquid_texture_uv};
+import package::shaders::world::ec_liquid::{EcLiquidSlot, ec_liquid_texel_at_uv, ec_liquid_texture_uv, ec_liquid_world_uv};
 
 fn apply_ec_item_liquid(current: vec4<f32>, atlas: texture_2d_array<f32>,
                         lookup: texture_2d<u32>, atlas_sampler: sampler, item: u32,
@@ -14,8 +14,8 @@ fn apply_ec_item_liquid(current: vec4<f32>, atlas: texture_2d_array<f32>,
     let repetition = bitcast<f32>(params.x);
     let velocity = bitcast<vec2<f32>>(params.yz);
     // The original mesh stores local V as 1-v before the mode-2 transform
-    // reverses it again. World UVs have their own domain and are not preflipped.
-    let coordinates = select(vec2<f32>(local_uv.x, 1.0 - local_uv.y), world_xz, params.w == 1u);
+    // reverses it again. World UVs have their own signed map-coordinate domain.
+    let coordinates = select(vec2<f32>(local_uv.x, 1.0 - local_uv.y), ec_liquid_world_uv(world_xz), params.w == 1u);
     let transformed = ec_liquid_texture_uv(coordinates, repetition, velocity * select(0.0, time, animate));
     // Unit-repetition item masks clamp; tiled sources wrap. Reflection source 2
     // forces WRAP separately in the original draw path.

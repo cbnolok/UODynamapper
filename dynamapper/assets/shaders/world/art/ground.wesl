@@ -125,7 +125,7 @@ fn fragment(in: GroundVertexOutput) -> GroundFragmentOutput {
             view_transformations::direction_world_to_view(vec3<f32>(0.0, 1.0, 0.0)),
         );
         color = sample_ec_liquid(land_page_atlas, land_page_lookup, art_atlas_sampler,
-            inst.material_payload, in.world_pos.xz, reflection_uv, globals.time,
+            inst.material_payload, in.world_pos.xz, vec2<f32>(uv_in_tile.x, 1.0 - uv_in_tile.y), reflection_uv, globals.time,
             effects.enable_water_animation == 1u, effects.enable_linear_filtering == 1u);
         let energy = global_light.ambient_strength
             + global_light.land_diffuse_strength * water_flat_wrapped_lambert(scene.light_direction);

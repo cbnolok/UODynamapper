@@ -105,7 +105,12 @@ instance as well as the shared terrain payload. Its fourth image and own blend
 parameters use an independent 16-bit item lookup, sharing the existing auxiliary
 GPU atlas with terrain. This lookup works without the terrain sidecar. Local UV
 set zero is preflipped by the original mesh before the affine transform; world
-UV set one is separate. See `ec_original_water_code.md` for the source addresses,
+UV set one follows signed `(map X, -map Y)` coordinates. The liquid sampler
+converts positive Bevy world Z before the affine transform for original bump,
+world-indexed surface and item world-overlay sources. Technique 2 selects stream
+zero, supplied separately as world UVs by terrain and local UVs by item art.
+Reflection vectors and generated terrain coverage have separate domains.
+See `ec_original_water_code.md` for the source addresses,
 neighbor-mask continuity check, and remaining terrain-specific composition work.
 
 Items with local hardware-fallback masks (acid border items 11778–11817) cannot
