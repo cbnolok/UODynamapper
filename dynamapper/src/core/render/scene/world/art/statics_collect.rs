@@ -512,11 +512,8 @@ fn resolve_surface_like_tex_land_ec_slot_id(
     // material graph, rather than treating an item graphic as a land tile id.
     if let Some(tilemeta_package) = tilemeta_package {
         let refs = tilemeta_package.item_texture_refs(tile_id);
-        let source_ids = [0, 1, 2].map(|index| refs.iter()
-            .find(|r| r.block_index == 0 && r.is_world_art() && r.unk6 == index)
-            .map(|r| r.texture_id));
-        if let [Some(bump), Some(fallback), Some(animated)] = source_ids {
-            if let Some(payload) = package.source_liquid_payload([bump, fallback, animated]) {
+        if let Some(material) = tilemeta_package.item_material(tile_id, 0) {
+            if let Some(payload) = package.source_liquid_payload_for_item(material, refs) {
                 if let Some(base) = package.resolve_material_render_layers(payload)[0] {
                     if let Some(runtime_slot_id) = base.runtime_slot_id {
                         return Some(SurfaceLikeTexLandEcResolution {
@@ -2045,6 +2042,9 @@ fn emit_static_render_tile(
 
     let tilemeta_package = resources.tilemeta_package();
     let tilemeta = tilemeta_package.and_then(|meta| meta.item_tile(render_tile.graphic as u32));
+    if !frame.is_dot_mode && tilemeta.is_some_and(|meta| meta.is_nodraw()) {
+        return;
+    }
     let info = StaticTileRenderInfo {
         tile: render_tile,
         tilemeta,

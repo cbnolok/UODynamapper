@@ -113,8 +113,8 @@ item fourth stages use their own retained Technique[1] and Tweaks[2..4].
 `metadata/source_materials.json`. Runtime roles are
 `[fallback/base, detail, mask, bump/normal, animated surface]`; source indices
 remain a separate inspection API. Explicit overrides remain explicit policy.
-Item water joins a terrain material only when its first three WorldArt sampler
-identities match the original graph. A numeric item/land-ID collision is not
+Item water joins a terrain material through the source graph, using the full
+three-image match or the parameter-checked active pair described below. A numeric item/land-ID collision is not
 evidence of shared material ownership. Both geometry owners then call the same
 liquid sampling/shading path, avoiding a visible boundary caused solely by
 different land and static renderers.
@@ -308,3 +308,84 @@ It refuses mismatches or an existing output file. The installed test tilemeta
 matches the FP bundle; standard source disagrees for 30 items including candle
 2600, hat 5907 and garland 8965. Both shoreline fixtures agree. Do not infer a
 whole bundle match from those two fixtures or overwrite other packed tables.
+
+## Active liquid sources can agree while fallback masks differ
+
+The acid fixture at map 0 `(6512,464)` contains liquid border items including
+11778, 11786, 11809 and 11816. Their block-0 `UOWaterShader` sources are:
+
+| Sampler | Source | Repetition | UV set |
+| --- | --- | ---: | ---: |
+| 0 | 1000012, lava normal | 12 | 1 |
+| 1 | item-specific image 1011778 / 1011786 / 1011809 / 1011816 | 1 | 0 |
+| 2 | 2000490, acid surface | 8 | 1 |
+| 3 | item-specific coverage image 11778 / 11786 / 11809 / 11816 | 1 | 0 |
+
+The normal-capability branch at `0x59be80`–`0x59c2a3` uses samplers 0 and 2;
+sampler 1 belongs to the fallback branch at `0x59c6b7`. Requiring sampler 1 to
+equal terrain material 49's fallback 2000490 rejected these valid acid graphs.
+The generic wet-item route then supplied ordinary blue water instead. This is a
+runtime graph-selection defect, despite every needed source image being packed.
+
+`source_liquid_payload_for_item` now accepts the active pair when both image IDs,
+both repetitions, Technique[0] and Tweaks[0..2] agree with a source terrain
+material. Acid uses `[2,1,0,0]` and `[-0.012,0.0012,0,0]`. Materials 168/169 have
+the same images but different scroll `[-0.1,0.01]`, so image identities alone
+would be insufficient. Only block-0 `UOWaterShader`, WorldArt, physical Texture
+references qualify. The earlier full-three-image sharing path remains available
+for ordinary water's zero local Tweaks; its clock equivalence remains unproven.
+The item fourth stage still uses its own identity, coverage and parameters.
+
+The same acid census found 54 instances of graphic 8612, whose source flags
+include `NoDraw` (`0x200000000`). Its WorldArt image is 8600 `NO_DRAW`, with a
+65×65 window. These are the literal black wedges with green "no draw" lettering
+in the former capture. The converter already retains that high flag bit; runtime
+art emission and visible-object picking now honor it. Dot-mode diagnostics and
+the cell's full static inspection remain available. No graphic-number blacklist,
+terrain fill or texture replacement was added.
+
+The matching supplied references are `20261026_181306.png` (coast),
+`20261026_181421.png` (lava), `20261026_181520.png` (acid) and
+`20261026_181634.png` (bridge) under `docs/images/ec_reference/`. Their framing,
+resolution and animation phase differ from native captures, so comparisons here
+are visual content checks rather than registered pixel differences. The corrected
+acid capture removes blue-water substitutions and diagnostic black wedges;
+terrain blending, texture scale, lighting and exact geometry still differ.
+
+## Terrain coverage is generated from neighboring material ownership
+
+The analyzed terrain loader `0x461800` constructs the layer using `0x4616e0`,
+then calls `0x461060` at `0x461845` before iterating serialized material sources.
+It appends this generated source through layer-vtable `+0x10` at `0x461909`;
+only afterward does the source loop call `0x4613b0` and append each source at
+`0x461965`. Thus terrain vector index 0 is generated coverage, followed by
+serialized sources 0/1/2 at vector indices 1/2/3. This explains the vector shift
+in `0x5988a0` without treating a material image as the terrain blend mask.
+
+`0x461060` builds a 32×32 ownership field by comparing each cell's material
+identity with the requested layer. For positive blend parameters it also checks
+the neighborhood at the chunk edges. It creates 32×32 pixel data in its later
+allocation path and writes the same coverage byte to all four channels.
+Interior membership yields 255; cardinal and diagonal neighbors can receive
+separate intermediate bytes. The exact parameter-to-byte math and resampling
+contract still need assembly-level reconstruction before implementation.
+
+In the normal draw branch, `0x59925b`–`0x5993c2` binds vector index 0 after
+bump/environment stages. The cached stage values are COLOROP=SELECTARG1,
+COLORARG1=CURRENT, ALPHAOP=SELECTARG1, ALPHAARG1=TEXTURE. It preserves current RGB
+and selects the generated coverage alpha. The zero/pass flag branch at
+`0x59919c` instead disables that extra stage. This is terrain-layer composition,
+separate from the item fourth-source rules; the current neighbor-color heuristic
+does not implement this ownership/coverage mechanism.
+
+The read-only Ghidra evidence can be reproduced with `ghidra_query.py` in the
+research helpers. Decompiled register arguments are imperfect here; the append
+order and stage constants above were checked against x86 disassembly. The
+original executable and Ghidra program were not modified.
+
+For later serialized geometry/property checks, the user identified
+[nifly](https://github.com/ousnius/nifly) and
+[NifSkope](https://github.com/niftools/nifskope). These are inspection aids;
+support for this client's exact NIF version and custom blocks must be established
+on actual assets. They were not required to diagnose the source selection and
+NoDraw defects, and no NIF dependency was added to the renderer.

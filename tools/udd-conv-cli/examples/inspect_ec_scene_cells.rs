@@ -31,7 +31,7 @@ fn main() -> Result<()> {
     let dimensions = decode_map_package_metadata(&map.read_file_by_dense_id(id)?)
         .map_err(|error| color_eyre::eyre::eyre!(error))?;
     let mut chunks = HashMap::new();
-    println!("x,y,land_id,land_z,land_wet,wet_items");
+    println!("x,y,land_id,land_z,land_wet,wet_items,items");
     for y in args.y.saturating_sub(args.radius)..=args.y.saturating_add(args.radius).min(dimensions.height_tiles - 1) {
         for x in args.x.saturating_sub(args.radius)..=args.x.saturating_add(args.radius).min(dimensions.width_tiles - 1) {
             let chunk = x / 32 * dimensions.height_tiles.div_ceil(32) + y / 32;
@@ -51,7 +51,10 @@ fn main() -> Result<()> {
                 && meta.item_tile(item.graphic.into()).is_some_and(|m| m.flags & 0x80 != 0))
                 .map(|item| format!("{}@{}", item.graphic, item.z)).collect::<Vec<_>>().join(";");
             let land_wet = meta.land_tile(land_id.into()).is_some_and(|m| m.flags & 0x80 != 0);
-            println!("{x},{y},{land_id},{z},{land_wet},{wet}");
+            let all = items.iter().filter(|item| u32::from(item.x_offset) == x % 32
+                && u32::from(item.y_offset) == y % 32)
+                .map(|item| format!("{}@{}", item.graphic, item.z)).collect::<Vec<_>>().join(";");
+            println!("{x},{y},{land_id},{z},{land_wet},{wet},{all}");
         }
     }
     Ok(())

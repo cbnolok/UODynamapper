@@ -61,6 +61,9 @@ fn main() -> eyre::Result<()> {
         let primary = tilemeta.item_texture_refs(tile_id).iter()
             .find(|texture_ref| texture_ref.is_world_art() && texture_ref.is_primary_selected());
         println!("  tileart_packed_primary={primary:?}");
+        let liquid_payload = tilemeta.item_material(tile_id, 0).and_then(|material|
+            tex_land_ec.source_liquid_payload_for_item(material, tilemeta.item_texture_refs(tile_id)));
+        println!("  source_liquid_payload={liquid_payload:?} nodraw={}", item.is_nodraw());
 
         let tex_land_ec_direct = tex_land_ec.present_slot(tile_id);
         print_tex_land_ec_slot("tex_land_ec.present_slot(tile_id)", tex_land_ec_direct);
@@ -75,8 +78,12 @@ fn main() -> eyre::Result<()> {
             print_tex_land_ec_slot("  tex_land_ec.present_slot(resolved_runtime_slot)", resolved_slot);
         }
 
-        let renderer_decision = if tex_art_ec_direct.is_some_and(|slot| slot.is_static()) {
+        let renderer_decision = if item.is_nodraw() {
+            "Hidden(NoDraw)".to_string()
+        } else if tex_art_ec_direct.is_some_and(|slot| slot.is_static()) {
             format!("EcRegularArt(art_id={tile_id}, owner=tileart)")
+        } else if let Some(payload) = liquid_payload {
+            format!("TexLandEcArt(liquid_payload={payload})")
         } else if tex_art_ec_direct.is_some_and(|slot| slot.is_land()) {
             use udd_assets::tilemeta::EcMaterialStableRole;
             if primary.is_some_and(|texture_ref| matches!(texture_ref.stable_role(),

@@ -428,13 +428,64 @@ impl TexLandEcPackage {
 
     /// Find a land lookup payload for an item sharing an original liquid graph.
     /// IDs are source texture identities, not item graphics interpreted as land.
-    pub fn source_liquid_payload(&self, textures: [u32; 3]) -> Option<u32> {
+    pub fn source_liquid_payload_for_item(
+        &self,
+        material: &uocf::enhanced::tileart::ArtMaterial,
+        refs: &[crate::tilemeta::TileMetaItemTextureRef],
+    ) -> Option<u32> {
+        use crate::tilemeta::EcMaterialPhysicalPackage;
+        if material.block_index != 0 || material.shader_name.as_deref() != Some("UOWaterShader") {
+            return None;
+        }
+        let [Some(bump), Some(fallback), Some(surface)] = [0, 1, 2].map(|sampler| refs.iter()
+            .find(|r| r.block_index == 0 && r.is_world_art() && r.unk6 == sampler
+                && r.physical_package() == EcMaterialPhysicalPackage::Texture)) else { return None; };
+        let active = material.technique.first().zip(material.tweaks.get(..2))
+            .and_then(|(technique, scroll)| self.source_liquid_payload_for_active_sources(
+                [(bump.texture_id, bump.texture_stretch), (surface.texture_id, surface.texture_stretch)],
+                *technique, [scroll[0], scroll[1]],
+            ));
+        // Existing water items have local zero Tweaks but share all three source
+        // identities. Preserve that established base-sharing path separately.
+        active.or_else(|| self.source_liquid_payload([bump.texture_id, fallback.texture_id, surface.texture_id]))
+    }
+
+    fn source_liquid_payload(&self, textures: [u32; 3]) -> Option<u32> {
         self.source_materials.values().filter(|entry| {
             entry.texture.as_ref().is_some_and(|texture| {
                 texture.shader_name.as_deref() == Some("UOWaterTerrainLayer")
                     && texture.layers.len() >= 3
                     && texture.layers.iter().take(3).map(|layer| layer.texture_id)
                         .eq(textures.into_iter().map(Some))
+            })
+        }).flat_map(|entry| self.transcode.iter()
+            .filter(move |(tile, material)| **tile < 16384 && **material == entry.id)
+            .map(|(tile, _)| *tile))
+            .min()
+    }
+
+    /// Match the normal-capability path when an item has its own fallback mask.
+    /// Source 1 is not sampled by that path; sources 0/2 and their active
+    /// parameters must agree before the item can share a terrain liquid lookup.
+    fn source_liquid_payload_for_active_sources(
+        &self,
+        sources: [(u32, f32); 2],
+        technique: i32,
+        scroll: [f32; 2],
+    ) -> Option<u32> {
+        if sources.iter().any(|(_, repetition)| !repetition.is_finite() || *repetition <= 0.0)
+            || scroll.iter().any(|value| !value.is_finite()) {
+            return None;
+        }
+        self.source_materials.values().filter(|entry| {
+            entry.texture.as_ref().is_some_and(|texture| {
+                texture.shader_name.as_deref() == Some("UOWaterTerrainLayer")
+                    && texture.unk8.first().copied() == Some(technique)
+                    && texture.unk9.get(..2) == Some(scroll.as_slice())
+                    && [0, 2].into_iter().zip(sources).all(|(index, (id, repetition))| {
+                        texture.layers.get(index).is_some_and(|layer|
+                            layer.texture_id == Some(id) && layer.texture_repetition == repetition)
+                    })
             })
         }).flat_map(|entry| self.transcode.iter()
             .filter(move |(tile, material)| **tile < 16384 && **material == entry.id)
@@ -1724,6 +1775,50 @@ mod tests {
         assert!(detail.is_none() && mask.is_none());
         assert_eq!(package.source_liquid_payload([2000520, 2000510, 2000530]), Some(203));
         assert_eq!(package.source_liquid_payload([2000520, 2000510, 2000999]), None);
+    }
+
+    #[test]
+    fn source_liquid_active_match_excludes_item_fallback_and_other_material_parameters() {
+        let mut package = test_package_with_source_map(Some(b"legacyId,newId,newSubType\n500,52,0\n"));
+        let texture = package.source_materials.get_mut(&52).unwrap().texture.as_mut().unwrap();
+        texture.unk8 = vec![2, 1, 0, 0];
+        texture.unk9 = vec![-0.012, 0.0012, 0.0, 0.0];
+        let sources = [(2000520, 16.0), (2000530, 1.0)];
+        let scroll = [-0.012, 0.0012];
+        // A local fallback mask has no bearing on the active bump/surface pair.
+        assert_eq!(package.source_liquid_payload([2000520, 1011816, 2000530]), None);
+        assert_eq!(package.source_liquid_payload_for_active_sources(sources, 2, scroll), Some(203));
+        for wrong in [[(2000520, 12.0), sources[1]], [sources[0], (2000999, 1.0)],
+            [(2000520, f32::NAN), sources[1]]] {
+            assert_eq!(package.source_liquid_payload_for_active_sources(wrong, 2, scroll), None);
+        }
+        assert_eq!(package.source_liquid_payload_for_active_sources(sources, 0, scroll), None);
+        assert_eq!(package.source_liquid_payload_for_active_sources(sources, 2, [-0.1, 0.01]), None);
+        assert_eq!(package.source_liquid_payload_for_active_sources(sources, 2, [f32::NAN, 0.0]), None);
+
+        use crate::tilemeta::{EcMaterialPhysicalPackage, TileMetaItemTextureRef};
+        let material = uocf::enhanced::tileart::ArtMaterial {
+            shader_name: Some("UOWaterShader".into()), technique: vec![2, 1],
+            tweaks: scroll.to_vec(), ..Default::default()
+        };
+        let refs: [_; 3] = [(2000520, 16.0), (1011816, 1.0), (2000530, 1.0)]
+            .map(|(texture_id, texture_stretch)| TileMetaItemTextureRef {
+                texture_id, texture_stretch, texture_type: 1,
+                physical_package: EcMaterialPhysicalPackage::Texture as u8, ..Default::default()
+            });
+        let refs = [refs[0], TileMetaItemTextureRef { unk6: 1, ..refs[1] },
+            TileMetaItemTextureRef { unk6: 2, ..refs[2] }];
+        assert_eq!(package.source_liquid_payload_for_item(&material, &refs), Some(203));
+        let mut wrong = refs;
+        wrong[0].physical_package = EcMaterialPhysicalPackage::LegacyTexture as u8;
+        assert_eq!(package.source_liquid_payload_for_item(&material, &wrong), None);
+        wrong = refs;
+        wrong[2].block_index = 1;
+        assert_eq!(package.source_liquid_payload_for_item(&material, &wrong), None);
+        let other_shader = uocf::enhanced::tileart::ArtMaterial {
+            shader_name: Some("UOSpriteShader".into()), ..material
+        };
+        assert_eq!(package.source_liquid_payload_for_item(&other_shader, &refs), None);
     }
 
     #[test]

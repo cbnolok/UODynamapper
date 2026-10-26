@@ -348,6 +348,10 @@ pub enum TileMetaItemVisualKind {
 }
 
 impl TileMetaItemTile {
+    pub fn is_nodraw(&self) -> bool {
+        self.flags & uocf::enhanced::tileart::TaeFlag::NoDraw.bits() != 0
+    }
+
     pub fn name_ascii(&self) -> &str {
         let null_pos = self.name.iter().position(|&byte| byte == 0).unwrap_or(20);
         std::str::from_utf8(&self.name[..null_pos]).unwrap_or("")

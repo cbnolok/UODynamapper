@@ -80,7 +80,7 @@ and the remaining reflection/coverage proof boundary.
 Item shader metadata is separate from the terrain graph. `ArtData.materials`
 retains each original block's shader name, Technique, Tweaks and block index;
 tilemeta packages require `metadata/item_materials.json` and expose it through
-`item_material` / `item_materials`. Matching an item's first three sampler images
+`item_material` / `item_materials`. Matching an item's source graph
 to terrain water establishes shared base inputs, but does not establish its
 fourth-image operation or UV domain. Read the item's own retained parameters.
 
@@ -92,3 +92,16 @@ GPU atlas with terrain. This lookup works without the terrain sidecar. Local UV
 set zero is preflipped by the original mesh before the affine transform; world
 UV set one is separate. See `ec_original_water_code.md` for the source addresses,
 neighbor-mask continuity check, and remaining terrain-specific composition work.
+
+Items with local hardware-fallback masks (acid border items 11778–11817) cannot
+require the same source-1 image as terrain. The source matcher also supports an
+active-source pair: bump/surface IDs, their repetitions, Technique[0] and bump
+scroll must match. This prevents unrelated ocean fill and keeps acid variants
+with different scroll rates distinct. The existing complete three-image water
+match remains available. Both routes require the original water shader and
+WorldArt/Texture references, and still retain item-owned fourth-stage coverage.
+
+Black wedges labeled "no draw" at the acid fixture are item 8612's diagnostic
+art, not missing terrain textures. Tilemeta preserves the source NoDraw flag;
+art emission and visible-object picking now skip it, while dot diagnostics and
+full cell inspection retain the source data.

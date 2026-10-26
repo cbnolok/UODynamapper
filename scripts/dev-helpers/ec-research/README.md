@@ -56,6 +56,24 @@ listing is a navigation aid, not independent proof of shader semantics.
 For Direct3D 9 / D3DX9 signatures and COM interface types, apply the archive in
 [`ghidra-d3d9-types`](ghidra-d3d9-types/README.md).
 
+For an already analyzed program in the configured ghidra-mcp GUI project, use
+the read-only HTTP helper instead of opening another project:
+
+```sh
+python3 scripts/dev-helpers/ec-research/ghidra_query.py \
+  --url http://127.0.0.1:8089 --program UOSA.exe \
+  --output /tmp/ec-terrain-loader.json functions 0x461800 0x461060 0x5988a0
+python3 scripts/dev-helpers/ec-research/ghidra_query.py \
+  --url http://127.0.0.1:8089 --program UOSA.exe \
+  --output /tmp/ec-layer-xrefs.json xrefs-to 0x461800
+```
+
+`GHIDRA_MCP_URL` can replace `--url`. Outputs must be new files. This helper
+only calls GET `/get_functions` and `/get_xrefs_to`; it does not alter selection,
+annotations or program data. Query just the needed `--fields` for large functions
+and select specific JSON fields when reading evidence. Function decompilation
+still needs instruction-level cross-checks for engine register arguments.
+
 See [the water investigation](../../../docs/agent_notes/ec_original_water_code.md)
 for the tested executable identity and the addresses established for it. Those
 addresses are not portable to other executable builds.
@@ -130,7 +148,9 @@ cargo run -p udd-conv-cli --example inspect_ec_scene_cells -- \
 ```
 
 It reports original land IDs/heights/water flags and wet item IDs/heights per
-cell. Use the actual map dimensions from its final metadata record, not a guessed
+cell, plus every static graphic/height in the `items` column. This distinguishes
+non-liquid diagnostic artwork such as NoDraw markers from missing water coverage.
+Use the actual map dimensions from its final metadata record, not a guessed
 facet height. Feed all observed wet item IDs to `inspect_ec_item_aux`, retaining
 its stdout as `/tmp/ec-coast-refs.txt` and images in a new directory. Compare the
 eight mask orientations against neighboring cells with:

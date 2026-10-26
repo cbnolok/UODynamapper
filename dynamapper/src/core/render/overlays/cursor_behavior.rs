@@ -777,6 +777,9 @@ fn hovered_static_match(
 ) -> Option<HoveredStaticMatch> {
     let graphic = tile.graphic;
     let tilemeta = tilemeta_res.and_then(|meta| meta.0.item_tile(graphic as u32));
+    if tilemeta.is_some_and(|meta| meta.is_nodraw()) {
+        return None;
+    }
     let depth_class = resolve_static_depth_class(tilemeta);
     let local_x = tile.x_offset() as f32;
     let local_y = tile.y_offset() as f32;

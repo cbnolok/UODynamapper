@@ -20,6 +20,8 @@ The pre-existing `.cargo/config.toml` edit, untracked `todos dynamapper.txt`, an
 | BC7 solid blocks | The encoder's constant-block endpoint table reconstructed 246 of 256 channel values incorrectly, corrupting reflection texture 1000017. | Generate exact Mode 5 endpoint pairs at compile time; exhaustively round-trip all channel values. Rebuild affected packages from original images. |
 | Original liquid source roles | The runtime lacked the original material graph and used fallback water as its ordinary visible surface. | Preserve source definitions; separate fallback, bump and animated-surface roles. Match item water by source sampler identities and share sampling, flat lighting, grunge and wash across land/static owners. Retain source coordinate technique and bump scroll velocity. |
 | Item shoreline composition | Different shoreline items shared only the first three liquid images, discarding their fourth-source coverage and blend parameters. Applying the affine V flip without the original mesh flip also reversed masks. | Preserve item identity alongside the shared base, reuse packed auxiliary pixels with original item Technique/Tweaks and local UVs, and blend authored alpha. The coast now has curved coverage instead of whole-cell steps. |
+| Acid border material | Local fallback masks differ from the terrain fallback image. Requiring all three images to agree rejected valid acid graphs and selected blue water. | Also match the active bump/surface pair with original repetitions, coordinate technique and scroll parameters. Preserve the item's fourth-stage coverage. |
+| NoDraw statics | The art renderer drew diagnostic black tiles with green "no draw" lettering, obscuring the acid/rock boundary. | Honor the retained source NoDraw flag in art emission and visible-object picking; retain dot diagnostics and full cell inspection. |
 | Static visibility | Disabling statics returned before clearing cached draw batches; existing opaque/transparent/shadow draw entities remained alive. | Clear instance/batch outputs and invalidate output-list reuse. Keep decoded chunks reusable when enabled again. |
 | Optional KR encoder feature | `tile_mappings_builder` imported a module that existed but was not declared, breaking all-features compilation. | Declare the module under its feature gate. |
 | UOP extraction | Lexical traversal checks allowed an existing symlink parent or destination to redirect writes outside the output root. | Canonicalize the output root and check existing destination ancestry before creating directories or writing; reject destination symlinks, including dangling links. This guards existing symlink escapes, not concurrent hostile directory replacement. |
@@ -64,7 +66,7 @@ Future `pack-ec-textures` conversions read the original table from a source `Gam
 
 The user supplied original-client reference screenshots and map-0 fixture `[2834, 987, 0]`. The follow-up corrected sprite ownership and liquid transition boundaries, then traced the original `UOWaterShader` and terrain counterpart in `UOSA.exe`. The reproducible string/PE-section/xref/vtable procedure, executable hash, addresses, observed bindings, and proof boundary are in [ec_original_water_code.md](../agent_notes/ec_original_water_code.md).
 
-Material 5 uses source 1000013 for bump displacement, source 1000017 for the bump/environment surface, and source 2000051 for its hardware fallback. Its animated surface is a 2D image; the name `cube3` does not establish a cubemap. Original Technique parameters distinguish water reflection coordinates from lava/acid explicit coordinates. The terrain graph, including the original parameters, now survives conversion as `metadata/source_materials.json`. Item water is matched to this graph by its first three WorldArt sampler identities, never by treating an item graphic as a land ID.
+Material 5 uses source 1000013 for bump displacement, source 1000017 for the bump/environment surface, and source 2000051 for its hardware fallback. Its animated surface is a 2D image; the name `cube3` does not establish a cubemap. Original Technique parameters distinguish water reflection coordinates from lava/acid explicit coordinates. The terrain graph, including the original parameters, now survives conversion as `metadata/source_materials.json`. Item water is matched to this graph through its original samplers and parameters, including the active-pair route for local fallback masks, never by treating an item graphic as a land ID.
 
 The rebuilt candidate contains 201 source materials, 207 unique source textures and five BC7 atlas pages. It uses the corrected codec with RDO disabled for this fidelity check. For source 1000017, packed-image RGB RMSE is 0.604 on the 0–255 channel scale; an independent Pillow DDS decode agrees. The old package had 13,968 severe pixel errors in this image; the rebuild has zero under the same squared-RGB-error threshold of 500. Existing packages need a source rebuild; changing the decoder cannot recover ambiguous corrupted endpoint pairs. See [bc7_solid_block_integrity.md](../agent_notes/bc7_solid_block_integrity.md).
 
@@ -144,3 +146,31 @@ only the pre-existing unused-import warning. The two-frame paused water crop
 matched exactly; the animated crop changed. The 10 final native-capture previews
 verified Desktop 4 placement and cleanup, with no shader/pipeline errors.
 Logs use `/tmp/uodynamapper-item-composition-{workspace-tests,workspace-check,normal-build}.log`.
+
+The matching original-client views added on 2026-10-26 distinguish acid-family
+selection from diagnostic geometry. The 37×37-cell census around `[6512,464,0]`
+contains 54 NoDraw item-8612 markers, plus acid border items with local source-1
+masks. Matching active bump/surface inputs and honoring NoDraw removes the blue
+water patches and black labeled wedges. No source package rebuild or compatibility
+mapping was needed. Native captures use `liquid-routing-` in the same temporary
+directory; the acid fixture was checked in all three presets, alongside bridge,
+coast, town, Classic coast, lava and swamp. Every preview verified Desktop 4
+placement and cleanup. No shader/pipeline errors were reported; paused bridge
+water was identical across the two settled frames.
+
+The original terrain coverage input is now traced through loader `0x461800` and
+generator `0x461060`: a 32×32 per-layer ownership mask precedes serialized source
+images and supplies alpha after bump/environment shading. The current heuristic
+terrain transitions do not implement it. Exact mask weights, filtering, layer
+ordering, camera geometry and reflection parity remain unfinished. Lava and swamp
+still expose visible terrain/coverage differences. The detailed evidence and the
+new reference filenames are recorded in `ec_original_water_code.md`.
+
+Liquid-routing validation: **159 passed** in the affected renderer/assets suites
+(107 renderer, 52 assets), plus three PE helper tests. Workspace all-targets and
+all-features checking passed with only the existing unused-import warning in
+`inspect_ec_tile_surface_signals`. The normal renderer was rebuilt after removing
+temporary capture code, reached InGame on Desktop 4, and cleaned up successfully.
+The routing inspector confirms acid items 11778/11816/11820 share payload 10049,
+ordinary shoreline item 6038 retains payload 168, and item 8612 is hidden by its
+NoDraw flag. Logs use `/tmp/uodynamapper-liquid-routing-` prefixes.
