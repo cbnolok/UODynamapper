@@ -8,6 +8,7 @@ pub const TILEMETA_LAND_ENTRY_PATH: &str = "metadata/land.bin";
 pub const TILEMETA_ITEM_ENTRY_PATH: &str = "metadata/items.bin";
 pub const TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH: &str = "metadata/item_texture_refs_index.bin";
 pub const TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH: &str = "metadata/item_texture_refs.bin";
+pub const TILEMETA_ITEM_MATERIAL_ENTRY_PATH: &str = "metadata/item_materials.json";
 
 pub const TILEMETA_ITEM_TEXTURE_FLAG_AUXILIARY: u8 = 1 << 0;
 pub const TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED: u8 = 1 << 1;
@@ -439,6 +440,7 @@ pub struct TileMetaPackage {
     item_tiles: Vec<TileMetaItemTile>,
     item_texture_ref_spans: Vec<TileMetaItemTextureRefSpan>,
     item_texture_refs: Vec<TileMetaItemTextureRef>,
+    item_materials: std::collections::BTreeMap<u32, Vec<uocf::enhanced::tileart::ArtMaterial>>,
 }
 
 impl TileMetaPackage {
@@ -463,6 +465,10 @@ impl TileMetaPackage {
             read_optional_pod_vec(&package, TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH)?;
         let land_tiles = read_pod_vec(land_bytes.as_ref(), TILEMETA_LAND_ENTRY_PATH)?;
         let item_tiles = read_pod_vec(item_bytes.as_ref(), TILEMETA_ITEM_ENTRY_PATH)?;
+        let material_bytes = read_path_entry_cow(&package, TILEMETA_ITEM_MATERIAL_ENTRY_PATH)
+            .wrap_err("tilemeta missing source item materials; rebuild tilemeta.uddp")?;
+        let item_materials = serde_json::from_slice(material_bytes.as_ref())
+            .wrap_err("parse source item material metadata")?;
 
         Ok(Self {
             package,
@@ -470,6 +476,7 @@ impl TileMetaPackage {
             item_tiles,
             item_texture_ref_spans,
             item_texture_refs,
+            item_materials,
         })
     }
 
@@ -479,6 +486,15 @@ impl TileMetaPackage {
 
     pub fn item_tiles(&self) -> &[TileMetaItemTile] {
         &self.item_tiles
+    }
+
+    pub fn item_material(&self, tile_id: u32, block_index: u8) -> Option<&uocf::enhanced::tileart::ArtMaterial> {
+        self.item_materials(tile_id).iter()
+            .find(|material| material.block_index == block_index)
+    }
+
+    pub fn item_materials(&self, tile_id: u32) -> &[uocf::enhanced::tileart::ArtMaterial] {
+        self.item_materials.get(&tile_id).map(Vec::as_slice).unwrap_or(&[])
     }
 
     pub fn land_tile(&self, tile_id: u32) -> Option<&TileMetaLandTile> {
@@ -821,6 +837,33 @@ fn read_optional_pod_vec<T: Pod>(package: &UddpReader, path: &str) -> eyre::Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_item_material_metadata_is_required_and_validated() {
+        for source in [None, Some(b"invalid JSON".as_slice())] {
+            let mut builder = udd_container::UddpBuilder::new(udd_container::LookupMode::VirtualPathHash);
+            let entries = [
+                (TILEMETA_LAND_ENTRY_PATH, Some(b"".as_slice())),
+                (TILEMETA_ITEM_ENTRY_PATH, Some(b"".as_slice())),
+                (TILEMETA_ITEM_MATERIAL_ENTRY_PATH, source),
+            ];
+            for (path, data) in entries {
+                if let Some(data) = data {
+                    builder.add_file(udd_container::AddFileRequest {
+                        data_type: udd_container::DataType::Metadata as u8,
+                        compression: udd_container::CompressionFlag::ZstdNoDict,
+                        width: 0, height: 0, virtual_path: Some(path), path_hash64: None,
+                        id: None, data,
+                    }).expect("add test metadata");
+                }
+            }
+            let result = TileMetaPackage::from_uddp_package(
+                UddpReader::open(builder.build().expect("build test metadata")).expect("open test metadata"),
+            );
+            let message = result.err().expect("reject incomplete material metadata").to_string();
+            assert!(message.contains(if source.is_none() { "rebuild tilemeta.uddp" } else { "parse source item material" }));
+        }
+    }
 
     #[test]
     fn item_texture_ref_material_axes_decode_from_dense_bytes() {

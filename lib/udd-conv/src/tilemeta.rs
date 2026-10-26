@@ -13,6 +13,7 @@
 //! Package layout:
 //! - `metadata/land.bin`: dense table for `TileMetaLandTile` entries.
 //! - `metadata/items.bin`: dense table for `TileMetaItemTile` entries.
+//! - `metadata/item_materials.json`: original per-item shader block parameters.
 
 use std::path::{Path, PathBuf};
 
@@ -35,7 +36,7 @@ use udd_assets::tilemeta::{
     TileMetaItemVisualKind, TileMetaLandTile, TILEMETA_ITEM_ENTRY_PATH,
     TILEMETA_ITEM_TEXTURE_FLAG_AUXILIARY, TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
     TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH, TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH,
-    TILEMETA_LAND_ENTRY_PATH,
+    TILEMETA_LAND_ENTRY_PATH, TILEMETA_ITEM_MATERIAL_ENTRY_PATH,
 };
 use udd_container::{
     xxh64_virtual_path, AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder,
@@ -76,6 +77,7 @@ struct BuiltTileMetaTables {
     item_tiles: Vec<TileMetaItemTile>,
     item_texture_ref_spans: Vec<TileMetaItemTextureRefSpan>,
     item_texture_refs: Vec<TileMetaItemTextureRef>,
+    item_materials: std::collections::BTreeMap<u32, Vec<uocf::enhanced::tileart::ArtMaterial>>,
     package_compression: CompressionFlag,
     summary: TileMetaBuildSummary,
 }
@@ -104,6 +106,28 @@ fn read_path_entry(package: &UddpReader, path: &str) -> eyre::Result<Vec<u8>> {
 mod tests {
     use super::*;
     use uocf::enhanced::tileart::{TextureItem, TextureType};
+
+    #[test]
+    fn source_item_materials_survive_converter_package_roundtrip() {
+        let path = std::env::temp_dir().join(format!("tilemeta_materials_{}.uddp", std::process::id()));
+        let material = uocf::enhanced::tileart::ArtMaterial {
+            block_index: 0, shader_name: Some("UOWaterShader".to_owned()),
+            technique: vec![0, 2, 0, 0], tweaks: vec![-0.01, 0.0, 0.25, -0.5], unk1: 7,
+        };
+        write_tilemeta_uddp(&path, BuiltTileMetaTables {
+            land_tiles: Vec::new(), item_tiles: Vec::new(),
+            item_texture_ref_spans: Vec::new(), item_texture_refs: Vec::new(),
+            item_materials: [(6038, vec![material.clone()])].into_iter().collect(),
+            package_compression: CompressionFlag::ZstdNoDict,
+            summary: TileMetaBuildSummary::default(),
+        }).expect("write source material metadata");
+        let package = udd_assets::tilemeta::TileMetaPackage::load(&path).expect("read source material metadata");
+        assert_eq!(package.item_material(6038, 0), Some(&material));
+        assert!(package.item_material(6038, 1).is_none());
+        assert!(package.item_material(6057, 0).is_none());
+        drop(package);
+        std::fs::remove_file(path).expect("remove test package");
+    }
 
     #[test]
     fn tileart_textures_refs_are_preserved_as_terraintexture_support() {
@@ -258,8 +282,19 @@ fn write_tilemeta_uddp_with_progress(
     let item_bytes = bytemuck::cast_slice(&built.item_tiles);
     let item_texture_ref_span_bytes = bytemuck::cast_slice(&built.item_texture_ref_spans);
     let item_texture_ref_bytes = bytemuck::cast_slice(&built.item_texture_refs);
+    let item_material_bytes = serde_json::to_vec(&built.item_materials)?;
 
     let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
+    package.add_file(AddFileRequest {
+        data_type: DataType::Metadata as u8,
+        compression: built.package_compression,
+        width: 0,
+        height: 0,
+        virtual_path: Some(TILEMETA_ITEM_MATERIAL_ENTRY_PATH),
+        path_hash64: None,
+        id: None,
+        data: &item_material_bytes,
+    })?;
     package.add_file(AddFileRequest {
         data_type: DataType::Metadata as u8,
         compression: built.package_compression,
@@ -505,6 +540,7 @@ fn build_tilemeta_tables_from_resolved_paths(
     let mut tilemeta_items = Vec::with_capacity(cc_tiledata.item_tiles().len());
     let mut item_texture_ref_spans = Vec::with_capacity(cc_tiledata.item_tiles().len());
     let mut item_texture_refs = Vec::new();
+    let mut item_materials = std::collections::BTreeMap::new();
     let mut adjusted_ec_item_count = 0u32;
     for tile in cc_tiledata.item_tiles() {
         pb.inc(1);
@@ -535,6 +571,9 @@ fn build_tilemeta_tables_from_resolved_paths(
             .map_err(|_| eyre::eyre!("tilemeta texture-ref table exceeds u32 address space"))?;
 
         if let Some(ec_data) = tex_art_ec.definitions.get(&(tile.tile_id as u16)) {
+            if !ec_data.materials.is_empty() {
+                item_materials.insert(tile.tile_id as u32, ec_data.materials.clone());
+            }
             tile_meta_item.flags |= ec_data.flags.bits();
             tile_meta_item.set_visual_kind(classify_item_visual_kind(
                 tile.tile_id as u32,
@@ -634,6 +673,7 @@ fn build_tilemeta_tables_from_resolved_paths(
         item_tiles: tilemeta_items,
         item_texture_ref_spans,
         item_texture_refs,
+        item_materials,
         package_compression: options.package_compression,
         summary: TileMetaBuildSummary {
             adjusted_ec_item_count,

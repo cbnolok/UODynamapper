@@ -198,13 +198,16 @@ Terrain has an additional blend input and requires its own composition trace
 before sharing this implementation blindly. Shoreline geometry/transition
 coverage and fourth-image packing/UV windows remain separate unresolved work.
 
-## Item composition information lost before runtime
+## Item composition retention and the remaining runtime gap
 
-`TileArtEntry::process` retains processed image refs, but `ArtData` has no field
-for each block's shader name, Technique or Tweaks. `udd-conv::tilemeta` flattens
-those processed image refs into `TileMetaItemTextureRef`; the original per-block
-shader parameters consequently never reach `TileMetaPackage`. Source terrain
-material metadata does not restore item-specific parameters.
+The former `TileArtEntry::process` kept image refs while dropping each block's
+shader name, Technique and Tweaks. `ArtData.materials` now retains these as
+`ArtMaterial` records with original block indices and the additional raw `unk1`
+byte. The tilemeta converter writes `metadata/item_materials.json` separately
+from the existing dense image-ref table. `TileMetaPackage::item_materials` and
+`item_material` expose the retained source data. Missing or malformed material
+metadata fails loading with an explicit rebuild message; rebuild packages with
+the matching original bundle. Terrain parameters remain distinct from item data.
 
 The reusable `ec_research items 6038 6057` command reads the raw source blocks:
 both block-0 shaders are `UOWaterShader`, both have all-zero Technique/Tweaks,
@@ -221,9 +224,18 @@ same terrain payload using only their first three image identities. The resultin
 the art ground material does not bind that auxiliary atlas. Having an image in
 `tex_aux_ec` is therefore insufficient to render its item-specific composition.
 
-A complete repair needs original item material parameters retained through
-conversion, a per-item fourth-source lookup with the correct physical package
-and UV domain, and the original RGB/alpha operation in the ground path. Validate
+A complete rendering repair still needs a per-item fourth-source lookup with
+the correct physical package and UV domain, and the original RGB/alpha operation
+in the ground path. Validate
 the underlying terrain together with that alpha coverage. Do not replace these
 missing inputs with filename-only role guesses or reuse the terrain's Technique
 as the item's Technique.
+
+`retain_ec_item_materials` is a research example for preserving existing packed
+metadata while adding material records from a freshly rebuilt source package.
+It requires every source item's sampler identities, block/item indices,
+repetition, raw sampler fields and logical/physical package axes to agree.
+It refuses mismatches or an existing output file. The installed test tilemeta
+matches the FP bundle; standard source disagrees for 30 items including candle
+2600, hat 5907 and garland 8965. Both shoreline fixtures agree. Do not infer a
+whole bundle match from those two fixtures or overwrite other packed tables.

@@ -13,7 +13,7 @@ use udd_assets::{
         EcMaterialImplementationReadiness, EcMaterialLogicalFamily, EcMaterialPhysicalPackage,
         EcMaterialSpeculativeRole, EcMaterialStableRole, TileMetaItemTextureRef,
         TileMetaItemTextureRefSpan, TileMetaItemTile, TileMetaItemVisualKind, TileMetaLandTile,
-        TILEMETA_ITEM_ENTRY_PATH, TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH,
+        TILEMETA_ITEM_ENTRY_PATH, TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH, TILEMETA_ITEM_MATERIAL_ENTRY_PATH,
         TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH, TILEMETA_LAND_ENTRY_PATH,
     },
     tex_art_ec::TexArtEcCropAdjustment,
@@ -88,6 +88,11 @@ fn tilemeta_package_roundtrip_preserves_metadata_records() {
     };
 
     let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
+    package.add_file(AddFileRequest {
+        data_type: DataType::Metadata as u8, compression: CompressionFlag::ZstdNoDict,
+        width: 0, height: 0, virtual_path: Some(TILEMETA_ITEM_MATERIAL_ENTRY_PATH),
+        path_hash64: None, id: None, data: b"{}",
+    }).expect("add source item materials");
     package
         .add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,
@@ -242,6 +247,11 @@ fn tilemeta_texture_refs_roundtrip_preserves_role_fields() {
     item_tiles[42].tile_id = 42;
 
     let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
+    package.add_file(AddFileRequest {
+        data_type: DataType::Metadata as u8, compression: CompressionFlag::ZstdNoDict,
+        width: 0, height: 0, virtual_path: Some(TILEMETA_ITEM_MATERIAL_ENTRY_PATH),
+        path_hash64: None, id: None, data: b"{}",
+    }).expect("add source item materials");
     package
         .add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,

@@ -76,3 +76,10 @@ source coordinate technique, bump UV velocity, and source-presence marker.
 Both land and source-matched item water consume it. See
 [ec_original_water_code.md](ec_original_water_code.md) for the executable evidence
 and the remaining reflection/coverage proof boundary.
+
+Item shader metadata is separate from the terrain graph. `ArtData.materials`
+retains each original block's shader name, Technique, Tweaks and block index;
+tilemeta packages require `metadata/item_materials.json` and expose it through
+`item_material` / `item_materials`. Matching an item's first three sampler images
+to terrain water establishes shared base inputs, but does not establish its
+fourth-image operation or UV domain. Read the item's own retained parameters.

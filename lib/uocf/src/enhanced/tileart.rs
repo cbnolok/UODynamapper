@@ -87,8 +87,19 @@ pub struct ArtData {
     pub cc_texture: Option<ArtTexture>,
     pub radar_color: TaeRadarcol,
     pub texture_items: Vec<Vec<TextureItem>>,
+    /// Original per-block shader identity and parameters, separate from image refs.
+    pub materials: Vec<ArtMaterial>,
     pub appearance: Vec<TaeAnimationAppearance>,
     pub sitting: Option<TaeSittingAnimation>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ArtMaterial {
+    pub block_index: u8,
+    pub shader_name: Option<String>,
+    pub technique: Vec<i32>,
+    pub tweaks: Vec<f32>,
+    pub unk1: u8,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -472,6 +483,17 @@ impl TileArtEntry {
         art_data.radar_color = self.radarcol.clone();
         art_data.height = self.get_property(PropertyKey::Height).unwrap_or(0) as u8;
         art_data.texture_items = self.get_texture_item_vector(string_dictionary);
+        art_data.materials = self.texture_vector.iter().enumerate()
+            .filter(|(_, block)| block.has_texture == 1)
+            .map(|(index, block)| ArtMaterial {
+                block_index: index as u8,
+                shader_name: block.type_string_off.checked_sub(1)
+                    .and_then(|offset| string_dictionary.get_string(offset as usize))
+                    .map(str::to_owned),
+                technique: block.unk8_vector.clone(),
+                tweaks: block.unk9_vector.clone(),
+                unk1: block.unk1,
+            }).collect();
         art_data.appearance = self.appearance_vector.clone();
         art_data.sitting = self.sitting.clone();
 
@@ -704,6 +726,30 @@ mod tests {
 
     fn dictionary_with_single_string(value: &str) -> UoStringDictionary {
         dictionary_with_strings(&[value])
+    }
+
+    #[test]
+    fn tileart_process_preserves_material_parameters_and_original_block_indices() {
+        let dictionary = dictionary_with_strings(&["UOWaterShader", "UOSpriteShader"]);
+        let entry = TileArtEntry {
+            texture_vector: vec![
+                TaeTexture { has_texture: 1, type_string_off: 1,
+                    unk8_vector: vec![0, 2, -7, 9],
+                    unk9_vector: vec![-0.01, 0.0, 0.25, -0.5], unk1: 3,
+                    ..Default::default() },
+                TaeTexture::default(),
+                TaeTexture { has_texture: 1, type_string_off: 2, ..Default::default() },
+            ],
+            ..Default::default()
+        };
+        let art = entry.process(&dictionary);
+        assert_eq!(art.materials.len(), 2);
+        assert_eq!(art.materials[0], ArtMaterial {
+            block_index: 0, shader_name: Some("UOWaterShader".to_owned()),
+            technique: vec![0, 2, -7, 9], tweaks: vec![-0.01, 0.0, 0.25, -0.5], unk1: 3,
+        });
+        assert_eq!(art.materials[1].block_index, 2);
+        assert_eq!(art.materials[1].shader_name.as_deref(), Some("UOSpriteShader"));
     }
 
     #[test]

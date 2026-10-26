@@ -77,6 +77,8 @@ At the bridge and previous shoreline fixtures, land/static water now has a conti
 
 The subsequent reflection fix replaces the guessed vector remap with the original affine texture transform (including repetition, vertical reversal and scrolling), and preserves unsigned bump samples from the source DDS. Bright environment-image structure is now visible in the bridge and coast captures. The exact camera/clock response and shoreline composition remain incomplete. Original item fourth-stage RGB/alpha operations are documented in `ec_original_water_code.md`; their authored alpha must be evaluated together with the underlying terrain rather than applied as a blanket water mask.
 
+Original item shader parameters now survive `TileArtEntry` processing and tilemeta conversion in `metadata/item_materials.json`. Missing/malformed source material metadata fails with a rebuild message. The installed test package was updated from the matching FP source after all 39,062 items with material blocks passed sampler identity checks. Its four existing metadata payloads are byte-identical. The renderer can now query the original item parameters; selecting and composing each item's fourth texture remains unfinished.
+
 ## Remaining broken or incomplete paths
 
 | Priority | Finding | Evidence and practical limit |
@@ -94,7 +96,7 @@ The historical height-scale concern was not treated as a confirmed bug: the exis
 
 ## Validation
 
-- Follow-up full workspace, all-features test run: **660 passed, 0 failed, 4 intentionally ignored slow brute-force tests** across 57 test groups. The subsequent source-parameter changes also passed all **105** renderer tests, including liquid WESL composition.
+- Latest full workspace, all-features test run: **663 passed, 0 failed, 4 intentionally ignored slow brute-force tests** across 57 test groups, including the new source item material retention/validation tests. The renderer has **105** tests, including liquid WESL composition.
 - Focused extraction gate: **5 passed**, including symlink-parent and dangling-destination coverage.
 - Original CSV parsing, source-UOP-to-UDDP round-trip, subtype preservation, routing precedence, source material retention, liquid-role isolation, sprite ownership, shared liquid payloads, BC7 channel integrity, static visibility, and shader composition have regression coverage.
 - `cargo check --workspace --all-targets --all-features --locked`: passed for the source-parameter implementation.
@@ -113,3 +115,5 @@ Follow-up captures are in `/tmp/uodynamapper-ec-followup/`: `baseline-enhanced.p
 Follow-up logs: `/tmp/uodynamapper-water-followup-tests.log`, `/tmp/uodynamapper-water-params-tests.log`, `/tmp/uodynamapper-water-followup-check.log`, `/tmp/uodynamapper-water-followup-final-build.log`, and `/tmp/uodynamapper-water-followup-coverage.log`. Desktop placement and cleanup evidence is retained in `/tmp/uodynamapper-scenes-params-validation.log` and `/tmp/uodynamapper-liquid-families-validation.log`. Captures and logs are temporary local artifacts, not checked-in reference images.
 
 Reflection follow-up captures use the `reflection-` prefix in the same temporary directory. Logs: `/tmp/uodynamapper-reflection-{tests,scenes,families,build}.log`; all captured previews verified Desktop 4 placement and cleanup. This phase does not rebuild asset packages or change their previous validation counts.
+
+Item material retention logs: `/tmp/uodynamapper-item-material-{workspace-tests,check,build,preview,final-test,final-preserve}.log`. The normal binary reached InGame on Desktop 4 with the validated candidate. Installed `tilemeta.uddp` SHA-256 is `2ba4d5c43d4b3fc2ff75fab1fdb3a577e199d54e19f3fad3b7074dbcf8abbbf2`; its backup is `tilemeta.before-item-materials-20261026T144526Z.uddp` alongside it. This metadata phase does not change atlas pixels or claim new shoreline coverage.
