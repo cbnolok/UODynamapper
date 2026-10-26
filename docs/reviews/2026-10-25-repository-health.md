@@ -90,7 +90,7 @@ Original item shader parameters now survive `TileArtEntry` processing and tileme
 | P2 | Switching between map packages at runtime is unfinished. | Startup loads only the selected map. WorldGeoData contains only loaded maps, so the teleport dialog rejects other facets even if corresponding package files exist. It does not lazily load them. |
 | P2 | EC liquid/effect parity is incomplete. | Original bump/environment inputs and the traced affine transform now have a shared path. Exact camera/clock equivalence, complete sampler/filter parity, terrain-specific extra inputs, foam, waterfalls, lava bubbles and refraction remain unverified or unimplemented. Item fourth-source stages and unit-mask clamp/reflection-wrap choices are now reconstructed. The recovered highlights do not establish complete original-client reflection parity. |
 | P2 | EC shoreline/effect parity remains incomplete. | Original per-item fourth images, blend rules and local UVs now smooth the coast at `[1445, 1790, 0]` and the bridge boundary. Exact original camera geometry and alpha-property timing are still unproven; lava/acid/swamp expose separate terrain coverage and transition defects. |
-| P2 | Terrain transitions remain a reconstruction. | The shader blends neighboring materials heuristically. Material-slot coverage is complete for the audited map; original EC transition-alpha parity and the visual correctness of every explicit override remain unproven. |
+| P2 | Terrain transitions remain a reconstruction. | The shader blends neighboring materials heuristically. The original 32×32 coverage generator, exponent bytes, chunk-edge rules, sampler and material sorting keys are now reconstructed in a reusable offline diagnostic. Ordered terrain passes still need renderer integration. Material-slot coverage is complete for the audited map; transition-alpha parity and every explicit override's visual correctness remain unproven. |
 | P2 | Full-source EC art/material composition is incomplete. | The existing packer still crops art windows. Other multi-layer item shaders, authored geometry/windows, unusual liquid/stain stacks, and support-role interpretation need their own family checks. The new ground route fixes geometry/ownership without claiming full shader parity. |
 | P3 | Cross-facet and visual regression coverage remains incomplete. | The audited payload is map 0; content-family fixtures contain TBD transition IDs and do not constitute automated image golden tests. |
 | P3 | Several roadmap features remain planned rather than implemented. | Clipmaps, complete mobile world rendering, world export, projected light decals, and network/editor workflows remain tracked in docs/TODO.md. Converter/reader or inspector support alone does not establish world-renderer support. |
@@ -110,6 +110,15 @@ The historical height-scale concern was not treated as a confirmed bug: the exis
 - Reflection follow-up: focused WESL composition passed; all three EC bridge presets, pause/motion, EC coast/town, Classic coast, lava, acid and swamp reached InGame without shader errors. The paused water crop matched exactly across two frames; the animated crop changed. Reusable PE helpers passed three mapping tests and reproduced the known executable references; the Ghidra helper and source-material/image extractor were exercised against the original inputs.
 
 Tests and type checks do not certify perfect original-client visuals, all liquid/effect families, long-session stability, or the roadmap performance targets.
+
+Terrain coverage research follow-up: **8 Python checks passed** (3 PE mapping
+checks and 5 coverage-model cases). The two diagnostic CLI crates passed
+all-target/all-feature checking; only the existing unused import warning remains.
+The exporter and offline model processed the lava, acid, swamp and bridge chunks,
+including 15 material layers at swamp. Applying the preview's loose routing KDL
+produced identical ownership in all four fixtures. These are diagnostic/model
+checks; this phase changes no renderer shader, asset package or GUI state and
+does not claim repaired terrain transitions or new screenshot parity.
 
 Local captures are available in `/tmp/uodynamapper-render/`: `before-source-routes.png`, `ec-{classic,enhanced,kr}-town.png`, `ec-{classic,enhanced,kr}-water-validated.png`, and `cc-{classic,enhanced,kr}-water.png`. Test logs are `/tmp/uodynamapper-final-workspace-tests.log`, `/tmp/uodynamapper-final-check.log`, and `/tmp/uodynamapper-final-build.log`.
 

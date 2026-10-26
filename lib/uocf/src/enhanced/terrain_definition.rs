@@ -128,6 +128,9 @@ pub struct TerrainDefinitionEntry {
     pub name_id: i32,
     pub id: u32,
     pub unk: f32,
+    /// Original per-layer coverage exponent (UOSA.exe 0x461060, object +0x38).
+    /// Positive values expand ownership with distinct cardinal/diagonal bytes;
+    /// nonpositive values retain a binary mask. Serialized field name retained.
     pub unk2: f32,
     pub unk3: f32,
     pub name: Option<String>,

@@ -52,6 +52,7 @@ fn main() -> Result<()> {
                 if !selected { continue; }
                 println!("material={} name={:?} shader={:?} Technique={:?} Tweaks={:?}",
                     entry.id, entry.name, texture.shader_name, texture.unk8, texture.unk9);
+                println!("  terrain_fields={}/{}/{}", entry.unk, entry.unk2, entry.unk3);
                 for (index, layer) in texture.layers.iter().enumerate() {
                     println!("  source={index} id={:?} path={:?} repetition={} fields={}/{}/{}",
                         layer.texture_id, layer.path, layer.texture_repetition,

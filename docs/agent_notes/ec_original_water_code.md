@@ -367,8 +367,8 @@ identity with the requested layer. For positive blend parameters it also checks
 the neighborhood at the chunk edges. It creates 32×32 pixel data in its later
 allocation path and writes the same coverage byte to all four channels.
 Interior membership yields 255; cardinal and diagonal neighbors can receive
-separate intermediate bytes. The exact parameter-to-byte math and resampling
-contract still need assembly-level reconstruction before implementation.
+separate intermediate bytes. The recovered byte algorithm and sampling state
+are detailed below; renderer integration remains unfinished.
 
 In the normal draw branch, `0x59925b`–`0x5993c2` binds vector index 0 after
 bump/environment stages. The cached stage values are COLOROP=SELECTARG1,
@@ -382,6 +382,124 @@ The read-only Ghidra evidence can be reproduced with `ghidra_query.py` in the
 research helpers. Decompiled register arguments are imperfect here; the append
 order and stage constants above were checked against x86 disassembly. The
 original executable and Ghidra program were not modified.
+
+### Coverage exponent, edge tests and byte conversion
+
+Definition reader `0x845c25` reads name, material ID, then three float fields.
+The stores at `0x845cde`–`0x845cf5` put the ID at object `+0x30` and the floats at
+`+0x34/+0x38/+0x3c`. Loader `0x461800` passes `+0x38` to `0x461060`. Therefore
+`TerrainDefinitionEntry.unk2`, already retained in `source_materials.json`, is
+the terrain coverage exponent. It is independent of texture repetition and
+the shader's `Tweaks` vector.
+
+For positive exponent `b`, the coverage bytes are:
+
+| Membership of the requested material | Byte |
+| --- | --- |
+| Current ownership cell | 255 |
+| At least one cardinal ownership neighbor | trunc(255 × 0.949999988079071^b) |
+| Otherwise, at least one diagonal ownership neighbor | trunc(255 × 0.6000000238418579^b) |
+| Otherwise | 0 |
+
+The constants are doubles at `0xd05278` and `0xd05270`, promoted from float
+values; multiplier `0xd04ef0` is float 255. `0xbd6860` dispatches the power
+operation through its x87 or SSE implementation. Its x87 path at `0xbd690a`
+uses `fyl2x` followed by exponentiation. Both integer conversions in `0x461060`
+explicitly set x87 rounding control to truncation (`OR 0xc00`, `fistp`), rather
+than the nearest rounding suggested by the decompiler's `ROUND` label.
+Nonpositive exponents produce zero neighbor bytes, retaining binary ownership.
+The generator replicates each result into all four RGBA channels.
+
+There are two distinct boundary rules. For positive `b`, a cell on a chunk edge
+counts as owned only if its immediately adjacent out-of-chunk neighbor is also
+owned; at a corner all three exterior neighbors must match. The subsequent
+neighbor expansion reads the resulting 32×32 boolean field. Horizontal checks
+require `0 < x < 31`, vertical checks require `0 < y < 31`, and diagonal checks
+require both. The implementation does not independently clamp missing neighbors
+or perform ordinary image dilation across chunk edges. A positive cardinal byte
+takes precedence over a diagonal one.
+
+Observed original definitions give water material 5 `b=0`, acid 49 `b=1`, lava
+10 `b=5`, and swamp 70 `b=0.15`. Their cardinal/diagonal bytes are respectively
+0/0, 242/153, 197/19 and 253/236. The sparse acid variants 168/169 use `b=5`.
+Matching liquid images alone does not make two terrain layers equivalent.
+
+### Layer order and coverage coordinates
+
+Terrain builder `0x461ae0` appends material layers, then sorts their records
+using comparator `0x5996d0` (call at `0x462993`). The comparator calls each layer's
+vtable `+0x08` and performs a signed ascending comparison. Getter `0x4600d0`
+returns layer object `+0x04`. The normal/default/bump setter `0x4600e0` stores
+the material ID directly; the water setter `0x4601e0` multiplies it by 1000.
+Loader `0x46181f`–`0x46182f` supplies the definition's actual material ID to that
+virtual setter. Sorting by raw ID, water flags or texture identity is incorrect.
+
+The shader RTTI identifies `UOTerrainShader`'s vtable at `0xcb4534`.
+The navigation is reproducible without guessing instruction addresses: find the
+MSVC type-descriptor names `.?AVUOTerrainDefinitionBinaryFactory@@` and
+`.?AVUOTerrainShader@@`, then follow data references through their complete-object
+locators to the vtable pointers. The factory type descriptor at `0xde6d3c` leads
+to vtable `0xca5e14`; its `+0x04` method `0x845b04` calls reader `0x845c25`.
+The shader descriptor at `0xdeeea8` leads to `0xcb4534`; its `+0x1c` and `+0xa0`
+methods identify the pass-count and per-pass layer drivers. Cross-check the
+decompiler's containing function entry before disassembling an interior address.
+
+`0x596c80` derives its pass count from the sorted property vector, capped at 49.
+`0x596ce0` selects the current vector entry using shader object `+0x38` and passes
+that same pass index as the second stack argument to the layer draw function.
+This resolves the earlier zero/pass ambiguity: `0x59919c` tests the actual pass
+index. Water at pass zero bypasses coverage; later water passes select generated
+coverage alpha. This pass-zero behavior is proven for the traced water draw
+path; the default and bump draw bodies still need their own state cross-checks.
+
+World texture coordinates and coverage coordinates are separate. The geometry
+builder writes world `(world_x, -world_y)` to one stream, and positive chunk-local
+`(x/32, y/32)` to the other at `0x461fde`–`0x4620f3`. The generated map's low flag
+byte is 1, consumed by `0x58dfc0` as `D3DTSS_TEXCOORDINDEX`; it has no authored
+texture transform. Its address-mode bits are zero, selecting CLAMP on both axes.
+Loader `0x4618d7`–`0x4618fd` sets filter index zero for `b==0` and one otherwise.
+Binder `0x58e021` forwards this index to `0x74d530`; initializer `0x756990` writes
+filter triples at `0xe16648` / `0xe16654`: point/point/none and linear/linear/none.
+State cache `0x74c390` uses zero-based slots; the flush at `0x74c6df` maps them
+through `0xda8658` before `IDirect3DDevice9::SetSamplerState` (vtable `+0x114`).
+The table maps slots 4/5/6 to D3DSAMP_MAGFILTER/MINFILTER/MIPFILTER (5/6/7),
+avoiding an off-by-one interpretation of the internal indices.
+Thus positive-exponent coverage uses bilinear filtering of the 32×32 mask, not
+an arbitrary per-edge smoothstep. No half-texel offset is added to the chunk-local
+mesh coordinates. This is coverage sampling evidence, not proof of all camera,
+rasterization or color-space equivalence.
+
+### Reproduce the coverage model independently of the renderer
+
+`inspect_ec_terrain_coverage` exports a 34×34 material-ownership grid (the chunk
+plus its border), land IDs and the preserved source definitions. It uses the
+packed source/embedded routing; `--routing` applies an explicitly selected loose
+`TerrainTranscode.kdl`. It refuses an unresolved cell, missing source definition,
+facet-edge fixture without a complete border, or existing output. This provenance
+is not a claim that every manual routing override is original-client truth.
+
+`scripts/dev-helpers/ec-research/terrain_coverage.py` reconstructs the generator's
+raw bytes, writes one RGBA dump and 32×32 PNG per material, and reports sort keys,
+weights and byte histograms. It does not composite a fabricated client screenshot
+or feed a heuristic mask back into the renderer. Its fixtures cover cardinal vs
+diagonal weights, truncation, binary ownership, exterior corner requirements,
+the both-neighbors-in-bounds rule, and water's distinct sorting key.
+
+The installed map-0 chunks containing lava `[5744,2928]`, acid `[6512,464]`, swamp
+`[1872,2416]` and the bridge `[2834,987]` exported successfully: 5, 3, 15 and 9
+interior terrain layers respectively. In particular, swamp cannot be represented
+by a compositor that silently keeps only a handful of neighboring materials.
+The four liquid masks were inspected. This is reconstructed coverage evidence,
+not a new renderer capture or a repaired terrain-transition claim. The production
+neighbor-color heuristic remains until ordered material passes, mask sampling
+and existing liquid shading can be implemented together.
+
+Before using the recovered world-coordinate stream in the renderer, establish
+the axis mapping explicitly: the original stream has negative map Y, whereas
+the Bevy surface positions use positive map Y as world Z. Agreement between the
+current item and terrain shaders does not independently prove their world UV
+orientation. This coordinate comparison is separate from the already validated
+local shoreline-mask orientation.
 
 For later serialized geometry/property checks, the user identified
 [nifly](https://github.com/ousnius/nifly) and

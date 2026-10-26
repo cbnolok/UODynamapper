@@ -165,3 +165,36 @@ This Python helper requires Pillow and numpy. It compares source alpha-edge
 continuity for same-height water coverage; inspect the census first when heights
 or stacked layers differ. A low seam score is supporting coverage evidence, not
 a substitute for actual renderer captures or original-client pixel validation.
+
+## Original terrain ownership coverage
+
+Export the 32×32 chunk containing a fixture, plus a one-cell ownership border:
+
+```sh
+cargo run -p udd-conv-cli --example inspect_ec_terrain_coverage -- \
+  --packages /path/to/packages --map 0 --x 6512 --y 464 \
+  --output /tmp/ec-acid-ownership.json
+python3 scripts/dev-helpers/ec-research/terrain_coverage.py \
+  --input /tmp/ec-acid-ownership.json --output /tmp/ec-acid-coverage
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover \
+  -s scripts/dev-helpers/ec-research -p 'test_*.py'
+```
+
+The exporter uses packed map cells, effective source/embedded material routing,
+and preserved source definitions. Pass `--routing /path/to/TerrainTranscode.kdl`
+when matching a preview that applies a loose routing overlay. It refuses existing
+outputs, unresolved cells and facet-edge chunks without a full border. The JSON
+retains raw land IDs and material definitions, so routing choices remain visible.
+This does not establish original-client correctness of manual mapping overlays.
+
+The Python model reconstructs `0x461060`'s raw coverage bytes from the original
+`unk2` exponent and its exact chunk-edge/neighborhood rules. Pillow exports one
+32×32 PNG per material; `.rgba` contains the corresponding four-channel bytes.
+`manifest.json` records layer sort keys, cardinal/diagonal bytes and histograms.
+All outputs stay outside the repository. See the executable evidence and
+sampling contract in `docs/agent_notes/ec_original_water_code.md`.
+
+This is an offline byte model. It neither captures the original executable nor
+reproduces the final framebuffer, ordered terrain passes, filtering or lighting.
+Inspect its masks alongside actual renderer captures before implementing terrain
+composition. A successful export is not a visual regression pass.
