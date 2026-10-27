@@ -19,7 +19,14 @@ functions and object sizes from those, and can annotate the program with them.
   A candidate becomes a class only if a `GetRTTI` returns it or it is an ancestor of one.
   Records with base 0 are roots.
 - **GetRTTI**: the 6-byte virtual `MOV EAX, <record>; RET`, found by byte scan and
-  accepted only when a data pointer refers to it.
+  accepted only when a data pointer refers to it. Other virtuals can have the same shape
+  (a getter returning the base class's `NiRTTI`, so a renderer-specific subclass streams
+  as its base). A class has one `GetRTTI`, so when a class has several candidates, one
+  whose pointers all lie inside another class's vtable is reclassified as a slot of that
+  vtable: walking back from the pointer over contiguous code pointers reaches that
+  vtable's start, past its `GetRTTI` slot, with no labeled or code-stored address in
+  between (this script's own `vftable` labels do not count). Repeated until nothing
+  changes; the report lists each such slot with its vtable.
 - **Vtables**: a data pointer to `GetRTTI` at slot 2 (slots 0/1 are the `NiRefObject`
   destructor and `DeleteThis`), with code pointers in slots 0 and 1. If the slot is itself
   labeled or stored by code, the vtable starts there with `GetRTTI` at slot 0. A class
@@ -79,6 +86,12 @@ program unless `-readOnly` is given. Without `--apply` the program is not change
   field 0 is set, and the description gives the bounds: the nearest sized ancestor and the
   smallest sized descendant.
 
+Repair of earlier runs: an `ANALYSIS` `<Class>::GetRTTI` on an untagged GetRTTI-shaped
+function returning that class that no longer qualifies returns to its default name, and an
+`ANALYSIS` `vftable` label at the vtable start a reclassified pointer implied is deleted;
+both are reported. A structure description this script wrote whose bounds or source no
+longer match is reported, not changed.
+
 New names use source type `ANALYSIS`. Only `DEFAULT` and `ANALYSIS` names are renamed, so
 user and imported names are kept and reported. Existing structures with the same path are
 never modified; the report lists them as kept and flags a size different from the
@@ -104,9 +117,15 @@ zero changes.
 Ghidra 12.1.4, `UOSA.exe` SHA-256
 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`: 343 classes (60 with
 non-`Ni` names) under 15 roots (`NiObject` plus `NiRefObject`-derived roots such as
-`NiShader`, `NiMaterial`, `NiRenderView`), 340 vftables, 181 loader registrations (59 in
-code Ghidra had not disassembled) and 171 object sizes; `NiSourceTexture` is `0x44`
-bytes with vftable `0x00c9f774` (24 slots), `NiPixelData` `0x70`. The recovered vtables
-agree with all MSVC RTTI `vftable` labels. The report also lists the three ambiguous
-`GetRTTI`s, the loader aliases (old names such as `NiKeyframeController` registered with
+`NiShader`, `NiMaterial`, `NiRenderView`), 343 `GetRTTI`s, 396 vtables with a `GetRTTI`
+slot, 340 vftables, 181 loader registrations (59 in code Ghidra had not disassembled) and
+171 object sizes; `NiSourceTexture` is `0x44` bytes with vftable `0x00c9f774` (24 slots),
+`NiPixelData` `0x70`. The recovered vtables agree with all MSVC RTTI `vftable` labels. One `GetRTTI`-shaped function is a vtable
+slot: `0x00772270` returns `NiPersistentSrcTextureRendererData::ms_RTTI` but is slot 14 of
+`NiDX9PersistentSrcTextureRendererData`'s vftable `0x00cd5d88` (20 slots); an earlier
+version took it for a second `GetRTTI` with a vtable at `0x00cd5db8`, which cut that
+vftable to 12 slots, and the repair returned it to `FUN_00772270`. The report also lists
+the three ambiguous `GetRTTI`s (`NiObject` in 21 vtables, `NiShaderDeclaration` in 3,
+`NiGPUProgramCache` in 2: separate vtables stored by code, of subclasses without their
+own NiRTTI), the loader aliases (old names such as `NiKeyframeController` registered with
 a current class's `CreateObject`) and the two register calls without the push pattern.

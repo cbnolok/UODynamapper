@@ -28,6 +28,7 @@ import ghidra.program.model.symbol.Reference;
 import ghidra.program.model.symbol.SourceType;
 import ghidra.program.model.symbol.Symbol;
 import ghidra.program.model.symbol.SymbolTable;
+import ghidra.program.model.symbol.SymbolType;
 import java.io.PrintWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -78,8 +79,10 @@ public class GamebryoClasses extends GhidraScript {
     private static final String CATEGORY = "/Gamebryo";
     private static final String RTTI_STRUCT = "NiRTTI";
     private static final String VFTABLE = "vftable";
+    private static final String GETRTTI = "GetRTTI";
     private static final String STREAM_CLASS = "NiStream";
     private static final String MEMORY_CLASS = "NiMemObject";
+    private static final String DESCRIPTION_PREFIX = "Gamebryo class ";
 
     private static final class Block {
         long start;
@@ -110,11 +113,23 @@ public class GamebryoClasses extends GhidraScript {
         Set<Long> storedVtables = new LinkedHashSet<>();
     }
 
+    // A GetRTTI-shaped function's pointer that is a later slot of another class's vtable.
+    private static final class SlotUse {
+        long function;
+        ClassInfo returned;
+        long pointer;
+        long vtable;
+        int slot;
+        ClassInfo vtableClass;
+        boolean dropped;
+    }
+
     private final List<Block> blocks = new ArrayList<>();
     private Block lastBlock;
     private final List<String> anomalies = new ArrayList<>();
     private final Map<String, Integer> changes = new LinkedHashMap<>();
     private final List<String> kept = new ArrayList<>();
+    private final List<String> removed = new ArrayList<>();
 
     public void run() throws Exception {
         String[] args = getScriptArgs();
@@ -193,6 +208,12 @@ public class GamebryoClasses extends GhidraScript {
             info.getRtti.add(function);
             getRttiOwner.put(function, info);
         }
+        SymbolTable symbols = currentProgram.getSymbolTable();
+        List<SlotUse> reclassified = reclassifySlots(symbols, getRttiOwner, pointerSources);
+        Set<Long> slotPointers = new HashSet<>();
+        for (SlotUse use : reclassified) {
+            slotPointers.add(use.pointer);
+        }
         List<ClassInfo> work = new ArrayList<>(classes.values());
         while (!work.isEmpty()) {
             ClassInfo info = work.remove(work.size() - 1);
@@ -225,10 +246,12 @@ public class GamebryoClasses extends GhidraScript {
 
         // 2. Vtables: a data pointer to GetRTTI at slot 2, with code pointers in slots 0 and 1. A slot
         // that is itself labeled or stored by code starts a vtable with GetRTTI in slot 0.
-        SymbolTable symbols = currentProgram.getSymbolTable();
         Map<Long, ClassInfo> vtableRtti = new TreeMap<>();
         for (var entry : getRttiOwner.entrySet()) {
             for (long source : pointerSources.getOrDefault(entry.getKey(), List.of())) {
+                if (slotPointers.contains(source)) {
+                    continue;
+                }
                 long start = source - (long) GETRTTI_SLOT * POINTER_SIZE;
                 if (startsLabeledItem(symbols, toAddr(source))) {
                     start = source;
@@ -487,6 +510,15 @@ public class GamebryoClasses extends GhidraScript {
 
         if (apply) {
             annotate(ordered, byName, register, unregister, allocator);
+            repair(classes, shaped, getRttiOwner, reclassified);
+        }
+        List<String> reclassifiedLines = new ArrayList<>();
+        for (SlotUse use : reclassified) {
+            reclassifiedLines.add(hex(use.function) + " returns `" + use.returned.name + "` " + hex(use.returned.record)
+                + "; its pointer " + hex(use.pointer) + " is slot " + use.slot + " of `" + use.vtableClass.name
+                + "` vtable " + hex(use.vtable) + " (not a vtable start at "
+                + hex(use.pointer - (long) GETRTTI_SLOT * POINTER_SIZE) + ")"
+                + (use.dropped ? "; no other pointer, so not a GetRTTI" : "; other pointers kept"));
         }
 
         try (PrintWriter output = new PrintWriter(Files.newBufferedWriter(Path.of(args[0]),
@@ -508,6 +540,7 @@ public class GamebryoClasses extends GhidraScript {
             output.println("| RTTI record candidates (name pointer, base) | " + candidates.size() + " |");
             output.println("| GetRTTI-shaped functions | " + getRttiOwner.size() + " |");
             output.println("| Rejected `MOV EAX, record; RET` byte matches | " + rejectedGetRtti.size() + " |");
+            output.println("| GetRTTI-shaped pointers reclassified as vtable slots | " + reclassified.size() + " |");
             output.println("| Validated classes | " + classes.size() + " |");
             output.println("| Roots | " + roots.size() + " |");
             output.println("| Vtables with a GetRTTI slot | " + vtableRtti.size() + " |");
@@ -547,6 +580,7 @@ public class GamebryoClasses extends GhidraScript {
             section(output, "MSVC classes without their own NiRTTI", inherited);
             section(output, "Unmatched registration call sites", unmatchedSites);
             section(output, "Rejected GetRTTI byte matches", rejectedGetRtti);
+            section(output, "GetRTTI-shaped vtable slots", reclassifiedLines);
             section(output, "Other anomalies", anomalies);
             if (apply) {
                 output.println();
@@ -561,6 +595,7 @@ public class GamebryoClasses extends GhidraScript {
                 for (var entry : changes.entrySet()) {
                     output.println("- " + entry.getKey() + ": " + entry.getValue());
                 }
+                section(output, "Removed earlier annotations", removed);
                 section(output, "Kept existing", kept);
             }
         }
@@ -715,15 +750,111 @@ public class GamebryoClasses extends GhidraScript {
         return count;
     }
 
+    // A class has one NiRTTI and one GetRTTI. Of several candidates, one whose pointers are all later slots
+    // of another class's vtable (contiguous code pointers back to that vtable's start, nothing starting in
+    // between) is a virtual of that vtable, such as a getter returning the base class's NiRTTI. Repeated
+    // until no pointer changes, since a dropped pointer no longer starts a vtable.
+    private List<SlotUse> reclassifySlots(SymbolTable symbols, Map<Long, ClassInfo> getRttiOwner,
+            Map<Long, List<Long>> pointerSources) {
+        List<SlotUse> uses = new ArrayList<>();
+        Set<Long> slotPointers = new HashSet<>();
+        boolean changed = true;
+        while (changed) {
+            changed = false;
+            Map<Long, Long> startPointers = new HashMap<>();
+            for (long function : getRttiOwner.keySet()) {
+                for (long source : pointerSources.get(function)) {
+                    long start = slotPointers.contains(source) ? -1 : vtableStart(symbols, source);
+                    if (start >= 0) {
+                        startPointers.put(start, source);
+                    }
+                }
+            }
+            for (var entry : new ArrayList<>(getRttiOwner.entrySet())) {
+                long function = entry.getKey();
+                ClassInfo info = entry.getValue();
+                if (info.getRtti.size() < 2) {
+                    continue;
+                }
+                List<SlotUse> found = new ArrayList<>();
+                int remaining = 0;
+                for (long source : pointerSources.get(function)) {
+                    if (slotPointers.contains(source)) {
+                        continue;
+                    }
+                    SlotUse use = enclosingVtable(symbols, source, startPointers);
+                    ClassInfo vtableClass = use != null ? getRttiOwner.get(u32(use.vtable + (long) GETRTTI_SLOT * POINTER_SIZE)) : null;
+                    if (vtableClass == null || vtableClass == info) {
+                        remaining++;
+                        continue;
+                    }
+                    use.function = function;
+                    use.returned = info;
+                    use.vtableClass = vtableClass;
+                    found.add(use);
+                }
+                for (SlotUse use : found) {
+                    use.dropped = remaining == 0;
+                    slotPointers.add(use.pointer);
+                    uses.add(use);
+                    changed = true;
+                }
+                if (!found.isEmpty() && remaining == 0) {
+                    info.getRtti.remove(function);
+                    getRttiOwner.remove(function);
+                }
+            }
+        }
+        return uses;
+    }
+
+    // The vtable start a GetRTTI pointer implies (see step 2), or -1.
+    private long vtableStart(SymbolTable symbols, long source) {
+        if (startsLabeledItem(symbols, toAddr(source))) {
+            return source;
+        }
+        long start = source - (long) GETRTTI_SLOT * POINTER_SIZE;
+        return isExec(u32(start)) && isExec(u32(start + POINTER_SIZE))
+            && !startsLabeledItem(symbols, toAddr(start + POINTER_SIZE)) ? start : -1;
+    }
+
+    // The vtable whose slot past GETRTTI_SLOT a pointer is, walking back over code pointers to the nearest
+    // other vtable start with nothing starting in between; null if there is none. This script's own
+    // vftable labels do not count as starts, as an earlier run may have put one at the pointer's start.
+    private SlotUse enclosingVtable(SymbolTable symbols, long pointer, Map<Long, Long> startPointers) {
+        for (int back = 1; back < MAX_VTABLE_SLOTS; back++) {
+            long slot = pointer - (long) back * POINTER_SIZE;
+            if (startsLabeledItem(symbols, toAddr(slot + POINTER_SIZE), true) || !isExec(u32(slot))) {
+                return null;
+            }
+            Long other = startPointers.get(slot);
+            if (other != null && other != pointer) {
+                if (back <= GETRTTI_SLOT || u32(slot + (long) GETRTTI_SLOT * POINTER_SIZE) != u32(other)) {
+                    return null;
+                }
+                SlotUse use = new SlotUse();
+                use.pointer = pointer;
+                use.vtable = slot;
+                use.slot = back;
+                return use;
+            }
+        }
+        return null;
+    }
+
+    private boolean startsLabeledItem(SymbolTable symbols, Address address) {
+        return startsLabeledItem(symbols, address, false);
+    }
+
     // A named label, or an address taken as a value (a vtable store), that is not an offcut into a
     // data item starting earlier such as vftable[23]. Direct calls through a slot only read it.
-    private boolean startsLabeledItem(SymbolTable symbols, Address address) {
+    private boolean startsLabeledItem(SymbolTable symbols, Address address, boolean ignoreOwnVftables) {
         Data containing = getDataContaining(address);
         if (containing != null && !containing.getMinAddress().equals(address)) {
             return false;
         }
         for (Symbol symbol : symbols.getSymbols(address)) {
-            if (symbol.getSource() != SourceType.DEFAULT) {
+            if (symbol.getSource() != SourceType.DEFAULT && !(ignoreOwnVftables && ownVftable(symbol))) {
                 return true;
             }
         }
@@ -733,6 +864,11 @@ public class GamebryoClasses extends GhidraScript {
             }
         }
         return false;
+    }
+
+    // A vftable label as this script creates it; MSVC RTTI labels are IMPORTED.
+    private static boolean ownVftable(Symbol symbol) {
+        return symbol.getSource() == SourceType.ANALYSIS && symbol.getName().equals(VFTABLE);
     }
 
     // Vtable immediates stored by a CreateObject and by the constructors it calls.
@@ -805,7 +941,7 @@ public class GamebryoClasses extends GhidraScript {
                 applyRecord(info, rtti);
             }
             for (long function : info.getRtti) {
-                nameFunction(function, namespace, "GetRTTI");
+                nameFunction(function, namespace, GETRTTI);
             }
             if (info.vftable >= 0) {
                 boolean existing = false;
@@ -829,6 +965,49 @@ public class GamebryoClasses extends GhidraScript {
         }
         if (allocator >= 0) {
             nameFunction(allocator, classNamespace(MEMORY_CLASS), "operator_new");
+        }
+    }
+
+    // Undo names an earlier run gave on wrong evidence: an ANALYSIS <Class>::GetRTTI on an untagged
+    // GetRTTI-shaped function returning that class that no longer qualifies returns to its default
+    // name, and an ANALYSIS vftable label at the start a reclassified pointer implied is deleted.
+    private void repair(Map<Long, ClassInfo> classes, Map<Long, Long> shaped, Map<Long, ClassInfo> getRttiOwner,
+            List<SlotUse> reclassified) {
+        SymbolTable symbols = currentProgram.getSymbolTable();
+        List<Symbol> named = new ArrayList<>();
+        symbols.getSymbols(GETRTTI).forEach(named::add);
+        for (Symbol symbol : named) {
+            long offset = symbol.getAddress().getOffset();
+            Function function = getFunctionAt(symbol.getAddress());
+            ClassInfo returned = shaped.containsKey(offset) ? classes.get(shaped.get(offset)) : null;
+            if (symbol.getSymbolType() != SymbolType.FUNCTION || symbol.getSource() != SourceType.ANALYSIS
+                    || getRttiOwner.containsKey(offset) || returned == null || function == null
+                    || !function.getTags().isEmpty() || !symbol.getParentNamespace().getName(true).equals(returned.name)) {
+                continue;
+            }
+            String old = symbol.getName(true);
+            // Returns the function to its default name, or to another label at its address.
+            symbols.removeSymbolSpecial(symbol);
+            removed.add("Function " + hex(offset) + " `" + old + "` renamed to `" + function.getName(true) + "` ("
+                + function.getSymbol().getSource() + ")");
+            count("GetRTTI names removed");
+        }
+        Set<Long> vftables = new HashSet<>();
+        for (ClassInfo info : classes.values()) {
+            vftables.add(info.vftable);
+        }
+        for (SlotUse use : reclassified) {
+            long start = use.pointer - (long) GETRTTI_SLOT * POINTER_SIZE;
+            if (vftables.contains(start)) {
+                continue;
+            }
+            for (Symbol symbol : symbols.getSymbols(toAddr(start))) {
+                if (ownVftable(symbol)) {
+                    removed.add("Label " + hex(start) + " `" + symbol.getName(true) + "` deleted (not a vtable start)");
+                    symbol.delete();
+                    count("vftable labels removed");
+                }
+            }
         }
     }
 
@@ -936,10 +1115,18 @@ public class GamebryoClasses extends GhidraScript {
         String structName = parts[parts.length - 1];
         String path = category.getPath() + CategoryPath.DELIMITER_STRING + structName;
         DataType existing = dtm.getDataType(category, structName);
+        String parent = info.parent != null ? info.parent.name : "none";
+        String description = DESCRIPTION_PREFIX + info.name + ", parent " + parent + "; " + (size >= 0
+            ? "size from " + info.name + "::CreateObject " + hexShort(info.registration.createObject)
+            : "size unknown, " + bounds(info));
         if (existing != null) {
             info.struct = existing;
+            // Only descriptions this script wrote are compared; text appended by other tools is kept.
+            String old = existing.getDescription();
+            boolean stale = old != null && old.startsWith(DESCRIPTION_PREFIX) && !old.startsWith(description);
             kept.add("Structure `" + path + "` (" + hexShort(existing.getLength()) + " bytes)"
-                + (size >= 0 && existing.getLength() != size ? " **size differs from recovered " + hexShort(size) + "**" : ""));
+                + (size >= 0 && existing.getLength() != size ? " **size differs from recovered " + hexShort(size) + "**" : "")
+                + (stale ? " **description differs from recovered: " + description + "**" : ""));
             return;
         }
         ClassInfo ancestor = sizedAncestor(info);
@@ -955,16 +1142,13 @@ public class GamebryoClasses extends GhidraScript {
             return;
         }
         StructureDataType struct = new StructureDataType(category, structName, length, dtm);
-        String parent = info.parent != null ? info.parent.name : "none";
         if (base != null) {
             struct.replaceAtOffset(0, base, base.getLength(), "base",
                 ancestor != info.parent ? "Direct parent: " + parent : null);
         } else {
             struct.replaceAtOffset(0, new PointerDataType(VoidDataType.dataType, dtm), POINTER_SIZE, VFTABLE, null);
         }
-        struct.setDescription("Gamebryo class " + info.name + ", parent " + parent + "; " + (size >= 0
-            ? "size from " + info.name + "::CreateObject " + hexShort(info.registration.createObject)
-            : "size unknown, " + bounds(info)));
+        struct.setDescription(description);
         info.struct = dtm.addDataType(struct, DataTypeConflictHandler.DEFAULT_HANDLER);
         count("structures created");
     }

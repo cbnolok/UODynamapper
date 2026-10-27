@@ -23,13 +23,13 @@ Thresholds: similarity >= 0.7, significance >= 30.0, margin 0.05, self-significa
 | BSim: Source functions with one 2.6 name (not thunks/imports) | 6775 |
 | BSim: Source functions skipped as ICF-folded (several names) | 1051 |
 | BSim: Sources above the self-significance bound | 4880 |
-| BSim: UOSA functions in the ranges | 6255 |
-| BSim: Targets above the self-significance bound | 5702 |
+| BSim: UOSA functions in the ranges | 6274 |
+| BSim: Targets above the self-significance bound | 5716 |
 | BSim: Rejected: not mutual best | 260 |
 | BSim: Rejected: second-best source name within margin | 73 |
 | BSim: Rejected: second-best target within margin | 24 |
 | BSim: Rejected: significance below threshold | 251 |
-| BSim: Rejected: similarity below threshold | 4730 |
+| BSim: Rejected: similarity below threshold | 4744 |
 | BSim: Accepted BSim names | 364 |
 | Vtable and BSim agree | 40 |
 | Vtable and BSim disagree (vtable kept) | 0 |
@@ -40,21 +40,18 @@ Thresholds: similarity >= 0.7, significance >= 30.0, margin 0.05, self-significa
 | BSim call-graph check: some named callees agree | 5 |
 | Final names from vtables | 572 |
 | Final names from BSim | 317 |
-| Existing names that also occur in 2.6 (anchors) | 257 |
+| Existing names that also occur in 2.6 (anchors) | 256 |
 | Anchors agreeing with the vtable name | 137 |
-| Anchors disagreeing with the vtable name | 1 |
+| Anchors disagreeing with the vtable name | 0 |
 | Anchors agreeing with the BSim name | 1 |
 | Anchors disagreeing with the BSim name | 0 |
 | Other existing names with a transferred name (kept) | 0 |
 
 Changes:
 
-- function tag created: 2
-- function renamed (GB26_VTABLE): 434
-- function tag added: 750
-- plate comment added: 750
-- function renamed (GB26_BSIM): 316
-- class namespace created: 71
+- function renamed (GB26_VTABLE): 1
+- function tag added: 1
+- plate comment added: 1
 
 ## Calibration
 
@@ -106,12 +103,6 @@ By significance (similarity >= 0.5 | similarity >= 0.7):
 - 0x00752650 `NiD3DDefaultShader::IsCurrentCombineMode` (bsim sim=0.907 sig=39.116 NiDX9Renderer26VC80R.dll 10001f20): 1 named callees, none called by the 2.6 function
 - 0x007688a0 `NiD3DShaderProgramFactory::RegisterShaderCreator` (bsim sim=0.776 sig=50.313 NiDX9Renderer26VC80R.dll 1001d980): 1 named callees, none called by the 2.6 function
 
-## Anchor disagreements (vtable)
-
-1 in total:
-
-- 0x00772270 `NiPersistentSrcTextureRendererData::GetRTTI` vs `NiDX9PersistentSrcTextureRendererData::GetStreamableRTTIName` (vtable NiDX9PersistentSrcTextureRendererData slot 14)
-
 ## Notes
 
 6 in total:
@@ -124,5 +115,6 @@ By significance (similarity >= 0.5 | similarity >= 0.7):
 - `NiTriShapeData` vtable is shorter than its ancestor `NiObject`'s; not mapped
 
 
-A second `--apply` run on the result reported `Changes: none` (750 functions `unchanged`).
+This run refreshed an earlier `--apply` that had renamed 750 functions (434 vtable, 316 BSim) and created 71 class namespaces; after the classes script dropped the misidentified `GetRTTI` at `0x00772270`, it renamed that function only. Status `unchanged` in the match list marks names from the earlier run.
+A second `--apply` run on the result reported `Changes: none` (751 functions `unchanged`).
 Full match list: `uosa_gamebryo_names.tsv` (UOSA address, name, 2.6 name, source tag, apply status, evidence, 2.6 prototype; then conflicts, rejected candidates and the per-class vtable mapping).

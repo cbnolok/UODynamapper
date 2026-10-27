@@ -148,10 +148,12 @@ reports `Changes: none`.
   hand-named texture-path code. Lower similarity buckets agreed fully too, but 0.7 is used
   to stay well inside the tested range. A wrong BSim name is still possible where 2.3 and
   2.6 code diverged; the evidence is in each plate comment.
-- `0x00772270` is named `NiPersistentSrcTextureRendererData::GetRTTI` in the program but
-  is slot 14 of the `NiDX9PersistentSrcTextureRendererData` vtable, which 2.6 calls
-  `GetStreamableRTTIName`. The existing name is kept and the disagreement reported; it is
-  probably a misidentified `GetRTTI` from the classes script.
+- A 2.3 virtual can differ in meaning from the 2.6 virtual in the same slot even when the
+  vtable lengths match. Slot 14 of `NiDX9PersistentSrcTextureRendererData` (`0x00772270`)
+  is named `GetStreamableRTTIName`, which in 2.6 is
+  `bool GetStreamableRTTIName(char *, unsigned int)`, but the 2.3 function is a getter
+  returning an `NiRTTI *` (the base class's `ms_RTTI`). The name marks the slot; check the
+  body before relying on the 2.6 prototype.
 
 ## Tested result
 
@@ -159,13 +161,15 @@ Ghidra 12.1.4, `UOSA.exe` SHA-256
 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`, with the three 2.6
 DLLs above: 143 classes mapped by vtable (2272 slots), naming 572 functions with no
 conflicts; BSim accepted 364 pairs, of which 40 agree with a vtable name, none disagree,
-and 7 were dropped by the call-graph check, leaving 317 BSim names. `--apply` renamed 750
-functions (434 vtable, 316 BSim; the rest had names already) and created 71 class
-namespaces; the second run changed nothing. Calibration: 76 anchor pairs at significance
->= 30 all agree, from similarity 0.5 up; the only miss in the floor set is
-`NiTimeController::ProcessClone` at `0x006a4fc0` (best `NiLODNode::UpdateWorldData`,
-similarity 1.0, significance 21.4), which the significance threshold excludes. Of the 257
-anchors, 137 agree with the vtable name and one disagrees (`0x00772270`, above).
+and 7 were dropped by the call-graph check, leaving 317 BSim names. `--apply` renamed 751
+functions (435 vtable, 316 BSim; the rest had names already) and created 71 class
+namespaces; a second run changed nothing. The committed report is a refresh run after the
+classes script dropped the misidentified `GetRTTI` at `0x00772270`: it renamed that
+function only, to `NiDX9PersistentSrcTextureRendererData::GetStreamableRTTIName`.
+Calibration: 76 anchor pairs at significance >= 30 all agree, from similarity 0.5 up; the
+only miss in the floor set is `NiTimeController::ProcessClone` at `0x006a4fc0` (best
+`NiLODNode::UpdateWorldData`, similarity 1.0, significance 21.4), which the significance
+threshold excludes. Of the 256 anchors, 137 agree with the vtable name and none disagree.
 
 On the texture path, the vtables name `NiSourceTexture::LoadBinary`, `LinkObject`,
 `PostLinkObject`, `SaveBinary`, `IsEqual` and `GetViewerStrings`, and BSim names
