@@ -58,7 +58,9 @@ For Direct3D 9 / D3DX9 signatures and COM interface types, apply the archive in
 
 To recover Gamebryo class names, inheritance, vtables, stream loaders and object
 sizes from NiRTTI records, run the script in
-[`ghidra-gamebryo-classes`](ghidra-gamebryo-classes/README.md).
+[`ghidra-gamebryo-classes`](ghidra-gamebryo-classes/README.md). Then fill the class
+structures with Gamebryo 2.6 member layouts where the sizes match, using
+[`ghidra-gamebryo-layouts`](ghidra-gamebryo-layouts/README.md).
 
 For an already analyzed program in the configured ghidra-mcp GUI project, prefer
 the plugin's MCP tools when the client exposes them. Start with
