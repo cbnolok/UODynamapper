@@ -1,6 +1,6 @@
 // UOWaterShader's optional fourth stage uses the item's own material parameters.
 // It is composed over the lit liquid, before the frame's color processing.
-import package::shaders::world::ec_liquid::{EcLiquidSlot, ec_liquid_sample, ec_liquid_texture_uv, ec_liquid_world_uv};
+import package::shaders::world::ec_liquid::{EcLiquidSlot, ec_aux_sample, ec_liquid_texture_uv, ec_liquid_world_uv};
 
 fn apply_ec_item_liquid(current: vec4<f32>, atlas: texture_2d_array<f32>,
                         lookup: texture_2d<u32>, liquid_sampler: sampler, item: u32,
@@ -20,7 +20,7 @@ fn apply_ec_item_liquid(current: vec4<f32>, atlas: texture_2d_array<f32>,
     // Unit-repetition item masks clamp; tiled sources wrap. Reflection source 2
     // forces WRAP separately in the original draw path.
     let slot = EcLiquidSlot(true, i32(source.x), vec2<u32>(0u), source.yz, repetition);
-    let overlay = ec_liquid_sample(atlas, liquid_sampler, slot, transformed, linear, repetition != 1.0, false);
+    let overlay = ec_aux_sample(atlas, liquid_sampler, slot, transformed, linear, repetition != 1.0);
     if (source.w == 2u) {
         // D3DTOP_BLENDTEXTUREALPHA retains current alpha.
         return vec4<f32>(mix(current.rgb, overlay.rgb, overlay.a), current.a);

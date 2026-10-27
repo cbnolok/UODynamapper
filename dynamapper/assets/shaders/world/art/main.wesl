@@ -11,11 +11,14 @@ import package::shaders::postprocess::kr_color_wash::apply_kr_color_wash;
 import package::shaders::postprocess::tonemapping::{tonemap_ec_kr_profile};
 import package::shaders::world::land::noise::noise_2d;
 import package::shaders::world::pixel_art_filters::pixel_art_atlas_uv_iq;
+import package::shaders::world::ec_item_surface::{apply_ec_item_surface, ec_item_surface_record};
+import package::shaders::world::ec_liquid::{ec_liquid_texture_uv, ec_liquid_world_uv};
 
 import package::shaders::world::art::art_bindings::{
     SpriteInstance, SpriteParams, SceneUniform, LandEffectsUniform, GlobalLightingUniforms,
     art_atlas_sampler, art_atlas, instances, sprite_params, scene, effects, global_light,
     hue_sampler, hue_texture, visual_grunge_texture,
+    item_surface_atlas, item_surface_lookup, item_surface_sampler,
     INV_SQRT_2, BILLBOARD_RIGHT_XZ, FLAT_QUAD_FORWARD_XZ, HEIGHT_SCALE, DEPTH_CLASS_REGULAR, DEPTH_CLASS_BACKGROUND,
     DEPTH_CLASS_FOLIAGE, DEPTH_CLASS_ROOF, DEPTH_CLASS_SURFACE_LIKE_FLOOR, PASS_MODE_OPAQUE,
     PASS_MODE_TRANSPARENT, PASS_MODE_SHADOW, SURFACE_LIKE_DEPTH_CLASS_OFFSET,
@@ -261,8 +264,19 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
         out.depth = in.position.z;
     }
 
-    if (inst.flat_quad == 2u && inst.texture_stretch > 0.0) {
-        uv = inst.uv_min + fract(in.world_pos.xz / inst.texture_stretch) * atlas_extent;
+    var surface_header = vec4<u32>(0u);
+    if (inst.flat_quad == 2u) {
+        surface_header = ec_item_surface_record(item_surface_lookup, inst.material_item_id);
+        if (surface_header.x != 0u) {
+            let repetition = bitcast<f32>(surface_header.w);
+            let coordinates = select(vec2<f32>(uv_in_tile_for_shading.x, 1.0 - uv_in_tile_for_shading.y),
+                ec_liquid_world_uv(in.world_pos.xz), surface_header.z == 1u);
+            let transformed = ec_liquid_texture_uv(coordinates, repetition, vec2<f32>(0.0));
+            uv = inst.uv_min + select(clamp(transformed, vec2<f32>(0.0), vec2<f32>(1.0)),
+                fract(transformed), repetition != 1.0) * atlas_extent;
+        } else if (inst.texture_stretch > 0.0) {
+            uv = inst.uv_min + fract(in.world_pos.xz / inst.texture_stretch) * atlas_extent;
+        }
     }
     if (effects.enable_water_animation == 1u && in.is_wet == 1u) {
         let uv_in_tile = (uv - inst.uv_min) / atlas_extent;
@@ -270,13 +284,20 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
     }
     let atlas_size = vec2<f32>(textureDimensions(art_atlas).xy);
     let sample_uv = pixel_art_atlas_uv_iq(uv, inst.uv_min, inst.uv_max, atlas_size);
-    let color = textureSample(art_atlas, art_atlas_sampler, sample_uv, i32(layer));
+    var color = textureSample(art_atlas, art_atlas_sampler, sample_uv, i32(layer));
+    if (inst.flat_quad == 2u) {
+        color = apply_ec_item_surface(color, item_surface_atlas, item_surface_lookup,
+            item_surface_sampler, surface_header, uv_in_tile_for_shading, in.world_pos.xz,
+            effects.enable_linear_filtering == 1u);
+    }
+    // Preserve fractional coverage in the blended pass for authored materials.
+    let alpha_cutoff = select(sprite_params.alpha_cutoff, 0.9999, surface_header.x != 0u);
     if (sprite_params.pass_mode == PASS_MODE_OPAQUE) {
-        if color.a < 0.0001 || color.a < sprite_params.alpha_cutoff {
+        if color.a < 0.0001 || color.a < alpha_cutoff {
             discard;
         }
     } else {
-        if color.a >= sprite_params.alpha_cutoff {
+        if color.a < 0.0001 || color.a >= alpha_cutoff {
             discard;
         }
     }
@@ -290,7 +311,7 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
         hue_texture,
         hue_sampler,
     );
-    if (sprite_params.pass_mode == PASS_MODE_TRANSPARENT) {
+    if (sprite_params.pass_mode == PASS_MODE_TRANSPARENT && surface_header.x == 0u) {
         shaded = vec4<f32>(shaded.rgb * shaded.a * 2.0, shaded.a);
     }
     // CC surface-like water statics lie flat and must read as a continuous water

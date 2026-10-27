@@ -66,6 +66,11 @@ pub struct ArtSpriteMaterialExtension {
     pub hues: Handle<Image>,
     #[texture(110, visibility(fragment))]
     pub visual_grunge_texture: Handle<Image>,
+    #[texture(111, dimension = "2d_array", visibility(fragment))]
+    #[sampler(113, visibility(fragment))]
+    pub item_surface_atlas: Handle<Image>,
+    #[texture(112, sample_type = "u_int", visibility(fragment))]
+    pub item_surface_lookup: Handle<Image>,
 }
 
 #[derive(Asset, AsBindGroup, TypePath, Clone)]
@@ -738,6 +743,7 @@ pub fn sys_setup_art_page_atlas(
     tilemeta_res: Option<Res<TileMetaPackageRes>>,
     hues_package_res: Option<Res<HuesPackageRes>>,
     item_liquid_images: Res<crate::core::texture_cache::ec_item_liquid::EcItemLiquidImages>,
+    item_surface_images: Res<crate::core::texture_cache::ec_item_surface::EcItemSurfaceImages>,
 ) {
     log_system_add_startup::<DrawStaticSpritesPlugin>(StartupSysSet::SetupSceneStage1, fname!());
     let active_source = resolve_effective_art_source(
@@ -785,7 +791,7 @@ pub fn sys_setup_art_page_atlas(
         hue_flags: 0,
         flat_quad: 0,
         texture_stretch: 0.0,
-        _pad_hue: 0,
+        material_item_id: 0,
         local_light_rgba: [0.0, 0.0, 0.0, 0.0],
         color_rgba: [0.0, 0.0, 0.0, 0.0],
     }]);
@@ -819,6 +825,8 @@ pub fn sys_setup_art_page_atlas(
             global_lighting_uniform: world::land::mesh_material::GlobalLightingUniforms::default(),
             hues: hue_lookup_handle.clone(),
             visual_grunge_texture: visual_grunge_texture.clone(),
+            item_surface_atlas: item_surface_images.atlas.clone(),
+            item_surface_lookup: item_surface_images.lookup.clone(),
         },
     });
 
@@ -846,6 +854,8 @@ pub fn sys_setup_art_page_atlas(
             global_lighting_uniform: world::land::mesh_material::GlobalLightingUniforms::default(),
             hues: hue_lookup_handle.clone(),
             visual_grunge_texture: visual_grunge_texture.clone(),
+            item_surface_atlas: item_surface_images.atlas.clone(),
+            item_surface_lookup: item_surface_images.lookup.clone(),
         },
     });
 
@@ -868,6 +878,8 @@ pub fn sys_setup_art_page_atlas(
             global_lighting_uniform: world::land::mesh_material::GlobalLightingUniforms::default(),
             hues: hue_lookup_handle.clone(),
             visual_grunge_texture: visual_grunge_texture.clone(),
+            item_surface_atlas: item_surface_images.atlas.clone(),
+            item_surface_lookup: item_surface_images.lookup.clone(),
         },
     });
 

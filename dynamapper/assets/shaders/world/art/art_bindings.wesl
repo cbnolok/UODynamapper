@@ -29,7 +29,7 @@ struct SpriteInstance {
     // Branched on in main.wesl vertex.
     flat_quad: u32,
     texture_stretch: f32,
-    _pad_hue: u32,
+    material_item_id: u32,
     local_light_rgba: vec4<f32>,
     color_rgba: vec4<f32>,
 }
@@ -79,6 +79,9 @@ struct SpriteParams {
 @group(3) @binding(108) var hue_sampler: sampler;
 @group(3) @binding(109) var hue_texture: texture_2d<f32>;
 @group(3) @binding(110) var visual_grunge_texture: texture_2d<f32>;
+@group(3) @binding(111) var item_surface_atlas: texture_2d_array<f32>;
+@group(3) @binding(112) var item_surface_lookup: texture_2d<u32>;
+@group(3) @binding(113) var item_surface_sampler: sampler;
 
 // Constants
 const INV_SQRT_2: f32 = 0.70710678118;

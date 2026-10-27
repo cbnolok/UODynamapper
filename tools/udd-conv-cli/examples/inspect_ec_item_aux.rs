@@ -29,7 +29,7 @@ fn main() -> Result<()> {
     let mut exported = std::collections::HashSet::new();
     for tile in tilemeta.item_tiles() {
         for material in tilemeta.item_materials(tile.tile_id) {
-            if material.shader_name.as_deref() != Some("UOWaterShader")
+            if (args.ids.is_empty() && material.shader_name.as_deref() != Some("UOWaterShader"))
                 || (!args.ids.is_empty() && !args.ids.contains(&tile.tile_id)) {
                 continue;
             }

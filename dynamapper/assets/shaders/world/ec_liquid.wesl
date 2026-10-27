@@ -70,6 +70,43 @@ fn ec_liquid_reflection_uv(view_position: vec3<f32>) -> vec2<f32> {
     return view_position.xy * inverseSqrt(max(dot(view_position, view_position), 1e-20));
 }
 
+fn ec_aux_load(atlas: texture_2d_array<f32>, slot: EcLiquidSlot,
+               texel: vec2<i32>, repeat: bool) -> vec4<f32> {
+    let extent = vec2<i32>(slot.extent);
+    var addressed = clamp(texel, vec2<i32>(0), extent - vec2<i32>(1));
+    if (repeat) { addressed = ((texel % extent) + extent) % extent; }
+    // Auxiliary layers are nearest-resized to a common array extent. Select
+    // the center of the original texel's replicated block, not its old offset.
+    let px = vec2<i32>((vec2<f32>(addressed) + vec2<f32>(0.5))
+        * vec2<f32>(textureDimensions(atlas)) / vec2<f32>(slot.extent));
+    return textureLoad(atlas, px, slot.layer, 0);
+}
+
+fn ec_aux_sample(atlas: texture_2d_array<f32>, linear_sampler: sampler, slot: EcLiquidSlot,
+                 uv: vec2<f32>, linear: bool, repeat: bool) -> vec4<f32> {
+    let addressed_uv = select(clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), fract(uv), repeat);
+    let local = addressed_uv * vec2<f32>(slot.extent);
+    if (!linear) { return ec_aux_load(atlas, slot, vec2<i32>(floor(local)), repeat); }
+    let footprint = local - vec2<f32>(0.5);
+    let first = vec2<i32>(floor(footprint));
+    let weight = fract(footprint);
+    let interior = all(local >= vec2<f32>(0.5)) && all(local <= vec2<f32>(slot.extent) - vec2<f32>(0.5));
+    if (!repeat || interior) {
+        // Adjacent replicated blocks meet at ceil((native_texel+1)*scale).
+        // Put the hardware footprint across that boundary with native weights:
+        // a single bilinear read then matches filtering the original image.
+        let dims = vec2<f32>(textureDimensions(atlas));
+        let boundary = ceil((vec2<f32>(first) + vec2<f32>(1.0)) * dims / vec2<f32>(slot.extent));
+        let px = clamp(boundary - vec2<f32>(0.5) + weight, vec2<f32>(0.5), dims - vec2<f32>(0.5));
+        return textureSampleLevel(atlas, linear_sampler, px / dims, slot.layer, 0.0);
+    }
+    let upper_left = ec_aux_load(atlas, slot, first, repeat);
+    let upper_right = ec_aux_load(atlas, slot, first + vec2<i32>(1, 0), repeat);
+    let lower_left = ec_aux_load(atlas, slot, first + vec2<i32>(0, 1), repeat);
+    let lower_right = ec_aux_load(atlas, slot, first + vec2<i32>(1, 1), repeat);
+    return mix(mix(upper_left, upper_right, weight.x), mix(lower_left, lower_right, weight.x), weight.y);
+}
+
 fn ec_liquid_world_uv(world_xz: vec2<f32>) -> vec2<f32> {
     // Original terrain stream 0 and item world-plane UVs follow (map X, -map Y).
     // Bevy world Z follows positive map Y; convert before the authored transform.

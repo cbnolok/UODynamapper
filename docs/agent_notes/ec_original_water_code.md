@@ -739,3 +739,85 @@ fixed-function state machinery to preserve these coordinates efficiently.
 The retained terrain LOD topology and reconstructed item quads can still differ
 from the original triangles, so this change does not establish interpolation
 parity at every point or across all terrain/static boundaries.
+
+
+## Static terrain materials and resized item masks
+
+`UOStaticTerrainShader` is a distinct four-source material, not an ordinary
+sprite or the water shader. Constructor `0x595680` installs vtable `0xcb446c`;
+its `+0xa0` drawing method is `0x595a00`. In the normal four-stage capability
+branch (`shader+0x38 == 0`, stage count greater than three), the stages are:
+
+| Stage | Input | Fixed-function operation |
+| --- | --- | --- |
+| 0 | source 0 | Save texture RGB into `D3DTA_TEMP` |
+| 1 | source 1 | Select its alpha, preserving current RGB |
+| 2 | source 2 | `BLENDCURRENTALPHA`, texture RGB versus TEMP |
+| 3 | source 3 | Modulate RGB by diffuse; alpha is texture alpha times diffuse alpha |
+
+Thus RGB before lighting is `mix(source0.rgb, source2.rgb, source1.a)`.
+Source 3 supplies coverage independently. When it is absent, the last stage
+selects diffuse alpha rather than source 2 alpha. The lower-capability branch
+uses source 0 with source 3 coverage; it need not be reproduced on modern GPUs.
+These operations come from UOSA, using the Direct3D state constants documented
+above, without a compatibility mapping or a replacement image.
+
+Lava crust items 12937, 12941, 12943 and 12949 demonstrate the failure: sources
+0/1 are WorldArt 2000103 (`Lava_Grey`, repetition 4, UV stream 1); sources 2/3
+are their item-specific 64-by-64 `mask_lava` images (repetition 1, UV stream 0).
+The art package correctly contains source 0. Rendering that single image loses
+both the visible authored crust image and coverage, producing grey rectangles.
+The existing auxiliary package already contains sources 2/3.
+
+Runtime `ec_item_surface` retains these graphs in a direct item header plus
+compact source descriptors. It checks physical package, family, UV stream,
+finite repetition and the packed `PRIMARY_SELECTED` identity. Identical
+source 0/1 and source 2/3 samples are reused. It shares the auxiliary image array
+with terrain and water; it adds no duplicate atlas or draw pass. Authored
+fractional alpha uses the blended pass without the legacy sprite RGB scaling.
+The graph uses the existing renderer's linear-light color domain; the original
+renderer upload/sRGB and final color-response questions remain separate.
+
+The auxiliary array nearest-resizes smaller images to 256-by-256 layers.
+Its item descriptors retain native dimensions. Treating a 64-by-64 descriptor
+as a top-left rectangle of that resized layer consequently sampled only one
+sixteenth of the image. `ec_aux_sample` now addresses original texels through
+their replicated blocks. Interior/clamped bilinear footprints use one hardware
+sample with native interpolation weights; wrapped borders use four bounded
+loads. Water item masks and static materials share this correction. Sources
+larger than the array cell are already rejected, not silently downsampled.
+The headless GPU regression exercises a genuine 2-by-2 image resized to 4-by-4,
+including fractional weights, clamp/wrap boundaries and negative UVs, plus
+independent RGB blending and final alpha for the static graph.
+
+Desktop-4 captures at map 0 (5744,2928) confirm removal of the solid grey lava
+rectangles. All three presets, shoreline/bridge, acid, town and a CC control
+were inspected. This establishes material composition, not full lava cliff
+geometry parity: reconstructed flat quads can still intersect the raised
+terrain differently from the original camera-plane geometry.
+
+## Original camera and height domain
+
+Camera constructor `0x471580` builds a row-major NiMatrix3 equivalent to
+`Rz(pi/2) * Rx(pi/4 - 0.001) * Rz(0.05)`. Matrix helper `0x668f10`
+multiplies its stack matrix by its EDX matrix; reversing that order gives a
+plausible but incorrect basis. The columns are direction, up and right,
+respectively. Item geometry `0x459b00` explicitly transforms camera-plane
+`(0, up, right)` coordinates with this matrix, independently confirming the
+storage convention. Camera update `0x470180` adds the followed object's world
+position to the direction-column offset of -10 installed by the constructor.
+Changing orthographic zoom changes the frustum, not this distance.
+
+Map coordinates enter original world positions as `(mapX, 0, -mapY)`.
+Item placement `0x4598d0` adds raw height times `0.12856454` along camera up,
+plus `(0.5, 0, -1.5)`. Terrain construction `0x460650` uses the same height
+vector, with a small direction-column priority displacement. Height therefore
+changes screen up without the large depth change caused by our world-Y relief.
+The item flag at `+0x3c & 4` (TileArt `Unused1`, bit 34) selects constructor
+`0x45a080`'s camera-plane quad: screen `(right, up)` vertices are
+`(0.707105,1.4742099)`, `(1.4742099,0.707105)`,
+`(-0.06,0.707105)`, `(0.707105,-0.06)` with local UVs
+`(0,1)`, `(1,1)`, `(0,0)`, `(1,0)`. These include a small overlap margin.
+They are not evidence for an arbitrary rectangular billboard or a NIF mesh.
+Keep reflection-coordinate reconstruction, projected height, overlap/depth and
+regular item image-window geometry as separately validated contracts.

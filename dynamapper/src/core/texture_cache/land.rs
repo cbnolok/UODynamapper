@@ -82,6 +82,7 @@ struct LandAuxAtlasImages {
     aux_atlas: Handle<Image>,
     aux_lookup: Handle<Image>,
     item_lookup: Handle<Image>,
+    surface_lookup: Handle<Image>,
 }
 
 /// Side length (in pixels) of each layer in the aux atlas.
@@ -221,6 +222,7 @@ fn create_blank_aux_atlas_images(images: &mut Assets<Image>) -> LandAuxAtlasImag
         bevy::asset::RenderAssetUsages::RENDER_WORLD,
     );
     aux_atlas.texture_descriptor.usage |= TextureUsages::TEXTURE_BINDING;
+    aux_atlas.sampler = bevy::image::ImageSampler::linear();
     aux_atlas.texture_view_descriptor = Some(TextureViewDescriptor {
         dimension: Some(TextureViewDimension::D2Array),
         ..Default::default()
@@ -244,6 +246,7 @@ fn create_blank_aux_atlas_images(images: &mut Assets<Image>) -> LandAuxAtlasImag
         aux_atlas: images.add(aux_atlas),
         aux_lookup: images.add(aux_lookup),
         item_lookup: super::ec_item_liquid::create_lookup(images, None, |_| None),
+        surface_lookup: super::ec_item_surface::create_lookup(images, None, |_| None),
     }
 }
 
@@ -401,6 +404,11 @@ fn create_aux_atlas_images(
         }
         assign_aux_layer(tex_aux_ec, source.texture_id, &mut texture_id_to_layer, &mut layers_rgba)
     });
+    let surface_lookup = super::ec_item_surface::create_lookup(images, tilemeta, |source| {
+        let slot = tex_aux_ec.slot_for_texture_id(source.texture_id)?;
+        if slot.logical_family != source.texture_type { return None; }
+        assign_aux_layer(tex_aux_ec, source.texture_id, &mut texture_id_to_layer, &mut layers_rgba)
+    });
 
     let layer_count = layers_rgba.len().max(1) as u32;
     let mut atlas_bytes: Vec<u8> = Vec::with_capacity(
@@ -422,6 +430,7 @@ fn create_aux_atlas_images(
         bevy::asset::RenderAssetUsages::RENDER_WORLD,
     );
     aux_atlas.texture_descriptor.usage |= TextureUsages::TEXTURE_BINDING;
+    aux_atlas.sampler = bevy::image::ImageSampler::linear();
     aux_atlas.texture_view_descriptor = Some(TextureViewDescriptor {
         dimension: Some(TextureViewDimension::D2Array),
         ..Default::default()
@@ -444,6 +453,7 @@ fn create_aux_atlas_images(
         aux_atlas: images.add(aux_atlas),
         aux_lookup: images.add(aux_lookup),
         item_lookup,
+        surface_lookup,
     }
 }
 
@@ -1386,6 +1396,10 @@ pub fn sys_setup_terrain_cache(
         atlas: aux_images.aux_atlas.clone(),
         lookup: aux_images.item_lookup.clone(),
     });
+    cmd.insert_resource(super::ec_item_surface::EcItemSurfaceImages {
+        atlas: aux_images.aux_atlas.clone(),
+        lookup: aux_images.surface_lookup.clone(),
+    });
 
     cmd.insert_resource(land_texture_cache);
 
@@ -1758,6 +1772,10 @@ mod tests {
                 "shaders/world/ec_item_liquid.wesl",
             ),
             Shader::from_wesl(
+                include_str!("../../../assets/shaders/world/ec_item_surface.wesl"),
+                "shaders/world/ec_item_surface.wesl",
+            ),
+            Shader::from_wesl(
                 include_str!("../../../assets/shaders/world/land/sampling.wesl"),
                 "shaders/world/land/sampling.wesl",
             ),
@@ -1785,6 +1803,7 @@ mod tests {
 import package::shaders::world::land::land_bindings::{TileUniform, land_page_atlas, land_page_lookup, tex_small_sampler};
 import package::shaders::world::ec_liquid::{sample_ec_liquid, ec_liquid_reflection_uv, ec_liquid_world_uv};
 import package::shaders::world::ec_item_liquid::apply_ec_item_liquid;
+import package::shaders::world::ec_item_surface::apply_ec_item_surface;
 import package::shaders::world::land::coverage::{ec_terrain_stack, ec_layer_tile};
 import package::shaders::world::land::sampling::{
     apply_ec_aux_two_base_blend, apply_sharpening, blurred_albedo, classic_land_art_is_present,
@@ -1808,9 +1827,11 @@ fn fragment() -> @location(0) vec4<f32> {
     let reflection_uv = ec_liquid_reflection_uv(vec3<f32>(0.0, 0.0, -1.0));
     color += sample_ec_liquid(land_page_atlas, land_page_lookup, tex_small_sampler,
         0u, uv, ec_liquid_world_uv(uv), reflection_uv, 0.0, true, true).rgb;
-    return apply_ec_item_liquid(vec4<f32>(color, normal.w + ripple.x),
+    let liquid = apply_ec_item_liquid(vec4<f32>(color, normal.w + ripple.x),
         land_page_atlas, land_page_lookup, tex_small_sampler, 6038u,
         uv, uv, 0.0, true, true);
+    return apply_ec_item_surface(liquid, land_page_atlas, land_page_lookup, tex_small_sampler,
+        vec4<u32>(0u), uv, uv, true);
 }
 "#,
                 "shaders/test/land_sampling_root.wesl",

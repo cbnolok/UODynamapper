@@ -891,7 +891,7 @@ pub struct SpriteInstance {
     /// See main.wesl.
     pub flat_quad: u32,
     pub texture_stretch: f32,
-    pub _pad_hue: u32,
+    pub material_item_id: u32,
     pub local_light_rgba: [f32; 4],
     pub color_rgba: [f32; 4], // for dot mode
 }
@@ -2138,7 +2138,7 @@ fn emit_dot_static_tile(
         hue_flags: 0,
         flat_quad: 0,
         texture_stretch: 0.0,
-        _pad_hue: 0,
+        material_item_id: 0,
         local_light_rgba,
         color_rgba: [
             color[2] as f32 / 255.0,
@@ -2462,7 +2462,7 @@ fn emit_billboard_static_instance(
         hue_flags,
         flat_quad: if ec_surface { 2 } else { 0 },
         texture_stretch,
-        _pad_hue: 0,
+        material_item_id: info.tile.graphic as u32,
         local_light_rgba,
         color_rgba: [1.0, 1.0, 1.0, 1.0],
     });
@@ -2536,7 +2536,7 @@ fn emit_cc_surface_like_flat_static_instance(
         hue_flags,
         flat_quad: 1,
         texture_stretch: 0.0,
-        _pad_hue: 0,
+        material_item_id: 0,
         local_light_rgba,
         color_rgba: [1.0, 1.0, 1.0, 1.0],
     });
@@ -3545,7 +3545,7 @@ mod tests {
             hue_flags: 0,
             flat_quad: 0,
             texture_stretch: 0.0,
-            _pad_hue: 0,
+            material_item_id: 0,
             local_light_rgba: [0.0; 4],
             color_rgba: [1.0, 1.0, 1.0, 1.0],
         };

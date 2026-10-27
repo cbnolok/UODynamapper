@@ -1,5 +1,6 @@
 pub mod art;
 pub mod ec_item_liquid;
+pub mod ec_item_surface;
 pub mod land;
 pub mod residency;
 
