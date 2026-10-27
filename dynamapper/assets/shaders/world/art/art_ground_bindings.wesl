@@ -58,6 +58,7 @@ struct SpriteParams {
 @group(3) @binding(113) var visual_grunge_texture: texture_2d<f32>;
 @group(3) @binding(114) var item_liquid_atlas: texture_2d_array<f32>;
 @group(3) @binding(115) var item_liquid_lookup: texture_2d<u32>;
+@group(3) @binding(116) var liquid_sampler: sampler;
 
 const HEIGHT_SCALE: f32 = 0.1;
 const DEPTH_CLASS_BACKGROUND: u32 = 1u;

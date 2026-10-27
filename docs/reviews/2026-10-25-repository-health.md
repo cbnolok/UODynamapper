@@ -12,7 +12,7 @@ The pre-existing `.cargo/config.toml` edit, untracked `todos dynamapper.txt`, an
 | --- | --- | --- |
 | EC map textures | The packer omitted `GameData.uop/data/gamedata/legacyterrainmap.csv`. The active manual KDL covered only part of the source routing graph. Missing tiles became black despite their material images already being packed. | Parse and embed the original CSV; load it as the source routing base and retain its complete subtype data. Explicit embedded and loose KDL remain separate policy overlays. |
 | EC material layers | Reviewed liquid materials inherited positional detail/mask slots from source layouts containing ripple/reflection inputs. This could blend over the reviewed visible base with support images. | Keep the source-layer API, and resolve reviewed liquid shader roles separately as explicit base/normal inputs. Avoid applying the auxiliary solid blend twice. |
-| EC support textures | RGB normal/mask/displacement data shared an sRGB atlas with color images and was interpreted after GPU color decoding. Neutral encoded normal channels consequently shifted away from 0.5. | Recover encoded RGB values before interpreting data maps; leave alpha and albedo color handling intact. Filtering still occurs through the shared sRGB view; a dedicated linear data view would be the precise future filtering solution. |
+| EC support textures | RGB normal/mask/displacement data shared an sRGB atlas with color images and was interpreted after GPU color decoding. Neutral encoded normal channels consequently shifted away from 0.5. | Recover encoded RGB values before interpreting data maps; leave alpha and albedo color handling intact. The liquid sampler now recovers individual bump texels before interpolation; other data-map paths still need equivalent filtering or a linear data view. |
 | EC art/statics | Tileart-owned material slots could be replaced with terrain-owned copies or rendered as upright billboards when terrain redirection failed. | Preserve tileart color ownership and sampling windows; draw those atlas slots as axis-aligned ground quads with authored repetition. Known support primaries use the visible material route. Retain the existing Classic shoreline path. |
 | EC ground depth | Flat material quads used a sprite's constant priority depth, cutting triangular gaps against the terrain. | Use rasterized surface depth with a small geometric separation from terrain, also avoiding coplanar overlap flicker. |
 | Walkable EC sprites | Bridge planks, stairs and furniture carrying `Surface` flags could select unrelated terrain through item/land ID collisions. | Existing sprite slots take precedence; the bridge fixture now uses wooden planks and stone stairs. |
@@ -21,6 +21,7 @@ The pre-existing `.cargo/config.toml` edit, untracked `todos dynamapper.txt`, an
 | BC7 solid blocks | The encoder's constant-block endpoint table reconstructed 246 of 256 channel values incorrectly, corrupting reflection texture 1000017. | Generate exact Mode 5 endpoint pairs at compile time; exhaustively round-trip all channel values. Rebuild affected packages from original images. |
 | Original liquid source roles | The runtime lacked the original material graph and used fallback water as its ordinary visible surface. | Preserve source definitions; separate fallback, bump and animated-surface roles. Match item water by source sampler identities and share sampling, flat lighting, grunge and wash across land/static owners. Retain source coordinate technique and bump scroll velocity. |
 | Original liquid UV domains | The shared sampler passed positive map Y into an affine V reversal and used world coordinates for both owners' explicit techniques. Original stream 0 is world-indexed on terrain but local on items. | Convert world input to signed `(x,-y)` before the original transform. Supply each owner's stream 0 separately for Technique 2, keeping bump/world inputs, reflection generation, local masks and terrain coverage distinct. |
+| Shared liquid filtering | Terrain used a linear sampler while item liquid inherited a nearest sampler, so the same toggle produced different output. Slot-center clamping broke wrapped-edge interpolation, and recovering encoded bump data after sRGB filtering changed offsets. | Use source-bounded explicit taps with the same point/bilinear policy for both owners. Wrap tiled footprints, clamp unit masks, and recover encoded bump RGB before interpolation. Preserve existing preset choices. |
 | Item shoreline composition | Different shoreline items shared only the first three liquid images, discarding their fourth-source coverage and blend parameters. Applying the affine V flip without the original mesh flip also reversed masks. | Preserve item identity alongside the shared base, reuse packed auxiliary pixels with original item Technique/Tweaks and local UVs, and blend authored alpha. The coast now has curved coverage instead of whole-cell steps. |
 | Acid border material | Local fallback masks differ from the terrain fallback image. Requiring all three images to agree rejected valid acid graphs and selected blue water. | Also match the active bump/surface pair with original repetitions, coordinate technique and scroll parameters. Preserve the item's fourth-stage coverage. |
 | NoDraw statics | The art renderer drew diagnostic black tiles with green "no draw" lettering, obscuring the acid/rock boundary. | Honor the retained source NoDraw flag in art emission and visible-object picking; retain dot diagnostics and full cell inspection. |
@@ -92,7 +93,7 @@ Original item shader parameters now survive `TileArtEntry` processing and tileme
 | P2 | Switching between map packages at runtime is unfinished. | Startup loads only the selected map. WorldGeoData contains only loaded maps, so the teleport dialog rejects other facets even if corresponding package files exist. It does not lazily load them. |
 | P2 | EC liquid/effect parity is incomplete. | Original bump/environment inputs and the traced affine transform now have a shared path. Exact camera/clock equivalence, complete sampler/filter parity, terrain-specific extra inputs, foam, waterfalls, lava bubbles and refraction remain unverified or unimplemented. Item fourth-source stages and unit-mask clamp/reflection-wrap choices are now reconstructed. The recovered highlights do not establish complete original-client reflection parity. |
 | P2 | EC shoreline/effect parity remains incomplete. | Original per-item fourth images, blend rules and local UVs now smooth the coast at `[1445, 1790, 0]` and the bridge boundary. Exact original camera geometry and alpha-property timing are still unproven; lava/acid/swamp expose separate terrain coverage and transition defects. |
-| P2 | Complete terrain visual parity remains unfinished. | Source-backed EC terrain now composes ordered 32×32 ownership coverage, using original exponent bytes, chunk-edge/filter rules, material sorting keys and the 49-pass cap. Per-layer liquid/solid shading is preserved. Original world-UV orientation, exact material filtering/lighting and the visual correctness of every explicit override remain unproven. |
+| P2 | Complete terrain visual parity remains unfinished. | Source-backed EC terrain now composes ordered 32×32 ownership coverage, using original exponent bytes, chunk-edge/filter rules, material sorting keys and the 49-pass cap. Signed world UVs and owner-specific stream selection follow the recovered construction. Exact per-stage material filtering/lighting and the visual correctness of every explicit override remain unproven. |
 | P2 | Full-source EC art/material composition is incomplete. | The existing packer still crops art windows. Other multi-layer item shaders, authored geometry/windows, unusual liquid/stain stacks, and support-role interpretation need their own family checks. The new ground route fixes geometry/ownership without claiming full shader parity. |
 | P3 | Cross-facet and visual regression coverage remains incomplete. | The audited payload is map 0; content-family fixtures contain TBD transition IDs and do not constitute automated image golden tests. |
 | P3 | Several roadmap features remain planned rather than implemented. | Clipmaps, complete mobile world rendering, world export, projected light decals, and network/editor workflows remain tracked in docs/TODO.md. Converter/reader or inspector support alone does not establish world-renderer support. |
@@ -156,6 +157,36 @@ compatibility mappings, filtering presets or geometry. Reflection/camera/filter
 parity and authored static geometry/effects remain unfinished.
 
 Local captures are available in `/tmp/uodynamapper-render/`: `before-source-routes.png`, `ec-{classic,enhanced,kr}-town.png`, `ec-{classic,enhanced,kr}-water-validated.png`, and `cc-{classic,enhanced,kr}-water.png`. Test logs are `/tmp/uodynamapper-final-workspace-tests.log`, `/tmp/uodynamapper-final-check.log`, and `/tmp/uodynamapper-final-build.log`.
+
+Liquid filtering follow-up: **111 renderer tests passed**, with the new optional
+GPU regression ignored by the ordinary suite and then run explicitly with a
+passing result. Its 14 real-shader samples cover linear color/data differences,
+wrap/clamp edges, negative coordinates, point sampling, alpha and a single-texel
+slot surrounded by contrasting pixels in an sRGB array texture. Original sampler
+construction was traced through direct Ghidra MCP tools; terrain sources use
+filter 1, extra item sources clear it to 0, and the primary item source has a
+flag-dependent choice. The runtime filter toggle remains explicit policy rather
+than silently overriding every stage with one assumed original filter.
+
+Thirteen final native captures cover bridge and acid in all three presets,
+filtered lava/swamp/shoreline, town, Classic shoreline and an explicitly filtered
+paused bridge. All verified Desktop 4 placement and cleanup, without shader
+errors. Nearest-filtered paused bridge, acid and town pixels below the HUD match
+the prior UV phase exactly. Both point and linear paused water crops remain
+stable between frames, while animated filtered water changes. The native color
+path uses hardware filtering inside a slot and explicit taps only at wrapped
+edges; data filtering still requires four decoded taps. No atlas duplication or
+package rebuild was introduced.
+
+Two additional uncapped old/new bridge runs verified placement/cleanup. The
+captured FPS samples were 50/55 before and 50/47 after. This short overlay check
+is not a controlled benchmark or a claim of unchanged GPU cost; exact data
+interpolation adds work. Earlier all-explicit-color sampling was replaced by
+the native interior-color path to reduce unnecessary loads. Current captures
+use `liquid-filter-final-` in `/tmp/uodynamapper-ec-followup/`; logs use
+`/tmp/uodynamapper-liquid-filter-final-` with `tests`, `gpu-test`, `scenes`,
+`performance`, `normal-build` and `normal-preview` suffixes. Reflection/camera,
+per-stage faithful filtering and authored static geometry remain open.
 
 Follow-up captures are in `/tmp/uodynamapper-ec-followup/`: `baseline-enhanced.png`, `ec-{classic,enhanced,kr}-bridge.png`, `ec-paused-bridge.png`, `ec-enhanced-coast.png`, `ec-enhanced-town.png`, `cc-{classic,enhanced,kr}-coast.png`, and `ec-enhanced-{lava,acid,swamp}.png`. The corresponding `.early.png` images retain the earlier settled frame. Motion changed water-only crop pixels; the paused pair matched exactly in that crop. Lava `[5744,2928]`, acid `[6512,464]`, and swamp `[1872,2416]` checks established successful source-family rendering without shader errors, not full overlay/coverage parity. The lava edges and swamp coverage also expose remaining composition work.
 

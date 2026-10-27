@@ -608,6 +608,67 @@ mask. Sharing its active image graph with terrain material 49 must not replace
 the item's stream-0 coordinates with terrain's. This corrects sampling ownership;
 full source geometry/anchor and reflection/filtering parity remain separate.
 
+## Liquid filtering and original sampler state
+
+`0x58e021` extracts `(map_flags >> 8) & 0xf` and passes that filter index to
+`0x74d530`. The previously recovered table maps index 0 to point/point/no-mip
+and index 1 to linear/linear/no-mip. Source maps need their own trace, separately
+from generated terrain coverage:
+
+- Terrain source-map loader `0x4613b0` initializes flags with `0x3100` at
+  `0x4613dd`, then applies `(flags & 0xf1ff) | 0x3100` at `0x461590`–`0x46159c`.
+  The resulting filter nibble is 1, with WRAP addressing. These are the maps
+  appended after generated coverage by `0x461800`.
+- The item's first map retains a flag-dependent filter. `0x45df69`–`0x45dfba`
+  tests low-word masks `0x10000000`, `0x200`, `0x10` and high-word mask `0x20`;
+  `0x45dfaf`–`0x45dfc2` writes filter 1 when any is set, otherwise 0.
+- Extra item maps are initialized with `0x3100`, but the authored-source branch
+  then clears the filter nibble with `AND ECX,0xf0ff` at `0x45e231`. Their
+  source UV index and repetition-dependent address mode remain separate fields.
+  Do not infer their final filter from the constructor alone.
+
+These source choices are not one universal original liquid filter. The runtime's
+existing user filtering toggle remains explicit policy; a future faithful
+per-stage filtering mode must preserve the distinctions above rather than
+silently enabling linear filtering for every original source.
+
+### Shared runtime filter implementation
+
+Terrain's sampler is explicitly linear in `land/texture_array.rs`; art atlas
+images inherit the application-wide `ImagePlugin::default_nearest()`. The former
+liquid `textureSample` branch consequently filtered terrain but kept item liquid
+nearest even when `enable_linear_filtering` was enabled. Clamping the sample
+center into a packed slot also prevented bilinear interpolation across a tiled
+source's last/first texels. Finally, recovering encoded bump RGB **after** sRGB
+interpolation changed the authored offsets between texel centers.
+
+`ec_liquid_sample` now applies the same point/bilinear policy on both owners.
+Art ground binds a linear sampler from the existing land-page image at binding
+116; both real and blank page images declare that sampler explicitly. Terrain
+already supplies its linear sampler. Color footprints inside a slot, and clamped
+color sources, use one hardware-filtered sample at mip zero. Wrapped border
+footprints use four explicit taps, wrapping each within the source extent before
+adding the packed origin. Tiled sources consequently blend opposite edges while
+unit item masks keep CLAMP, without sampling neighboring packed images.
+
+Bump/data filtering uses four explicit taps to recover encoded RGB individually
+**before** interpolation; alpha stays linear. Color taps retain their decoded
+linear RGB. Nearest sampling still uses one load. Keeping native color filtering
+for the common interior case avoids paying four color loads across every liquid
+fragment. No duplicate atlas is allocated. Existing preset filtering choices
+and the non-liquid art/terrain samplers are unchanged.
+
+The headless `liquid_sampling_gpu_preserves_data_and_source_edges` regression
+executes the actual composed WESL on an sRGB array texture. Contrasting source
+values distinguish color/data interpolation, and magenta guard pixels plus an
+unused array layer detect slot/layer leakage. It covers wrap, clamp, negative
+coordinates, nearest sampling, alpha and a single-texel source. Run explicitly
+with `cargo test -p dynamapper --all-features --locked liquid_sampling_gpu_preserves_data_and_source_edges -- --ignored`.
+It is ignored in the ordinary suite because it requires a Vulkan adapter; it
+does not open a window. Other support-map samplers still require their own data
+filtering review. This repair does not establish camera/reflection, original
+runtime upload-format or complete original-client pixel parity.
+
 For later serialized geometry/property checks, the user identified
 [nifly](https://github.com/ousnius/nifly) and
 [NifSkope](https://github.com/niftools/nifskope). These are inspection aids;

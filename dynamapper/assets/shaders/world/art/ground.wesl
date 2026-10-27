@@ -17,7 +17,7 @@ import package::shaders::world::art::art_ground_bindings::{
     GroundTileInstance, SpriteParams, SceneUniform, LandEffectsUniform, GlobalLightingUniforms,
     art_atlas_sampler, art_atlas, instances, sprite_params, scene, effects, global_light,
     hue_sampler, hue_texture, land_page_atlas, land_page_lookup, visual_grunge_texture,
-    item_liquid_atlas, item_liquid_lookup,
+    item_liquid_atlas, item_liquid_lookup, liquid_sampler,
     HEIGHT_SCALE, DEPTH_CLASS_BACKGROUND, DEPTH_CLASS_FOLIAGE, DEPTH_CLASS_ROOF,
     PASS_MODE_OPAQUE, PASS_MODE_TRANSPARENT, DEPTH_CLASS_SURFACE_LIKE_FLOOR,
     SURFACE_LIKE_DEPTH_CLASS_OFFSET, STATIC_DEPTH_TIE_BREAK_FRAG_EPSILON,
@@ -124,13 +124,13 @@ fn fragment(in: GroundVertexOutput) -> GroundFragmentOutput {
             view_transformations::position_world_to_view(in.world_pos),
             view_transformations::direction_world_to_view(vec3<f32>(0.0, 1.0, 0.0)),
         );
-        color = sample_ec_liquid(land_page_atlas, land_page_lookup, art_atlas_sampler,
+        color = sample_ec_liquid(land_page_atlas, land_page_lookup, liquid_sampler,
             inst.material_payload, in.world_pos.xz, vec2<f32>(uv_in_tile.x, 1.0 - uv_in_tile.y), reflection_uv, globals.time,
             effects.enable_water_animation == 1u, effects.enable_linear_filtering == 1u);
         let energy = global_light.ambient_strength
             + global_light.land_diffuse_strength * water_flat_wrapped_lambert(scene.light_direction);
         color = apply_ec_item_liquid(vec4<f32>(color.rgb * energy, color.a),
-            item_liquid_atlas, item_liquid_lookup, art_atlas_sampler, inst.material_item_id,
+            item_liquid_atlas, item_liquid_lookup, liquid_sampler, inst.material_item_id,
             uv_in_tile, in.world_pos.xz, globals.time,
             effects.enable_water_animation == 1u, effects.enable_linear_filtering == 1u);
     } else {

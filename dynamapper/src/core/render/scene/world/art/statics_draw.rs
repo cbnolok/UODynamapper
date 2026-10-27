@@ -87,6 +87,7 @@ pub struct ArtGroundMaterialExtension {
     #[sampler(108, visibility(fragment))]
     pub hues: Handle<Image>,
     #[texture(111, dimension = "2d_array", visibility(fragment))]
+    #[sampler(116, visibility(fragment))]
     pub land_page_atlas: Handle<Image>,
     #[texture(112, sample_type = "u_int", visibility(fragment))]
     pub land_page_lookup: Handle<Image>,

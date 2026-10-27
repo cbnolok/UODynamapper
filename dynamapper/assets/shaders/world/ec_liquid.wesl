@@ -22,19 +22,45 @@ fn ec_liquid_slot(lookup: texture_2d<u32>, payload: u32, role: u32) -> EcLiquidS
         extent, max(f32(value.x >> 16u) / 256.0, 0.01));
 }
 
-fn ec_liquid_texel(atlas: texture_2d_array<f32>, atlas_sampler: sampler,
-                   slot: EcLiquidSlot, uv: vec2<f32>, linear: bool) -> vec4<f32> {
-    return ec_liquid_texel_at_uv(atlas, atlas_sampler, slot, fract(uv), linear);
+fn ec_liquid_load(atlas: texture_2d_array<f32>, slot: EcLiquidSlot,
+                  texel: vec2<i32>, repeat: bool, encoded_data: bool) -> vec4<f32> {
+    let extent = vec2<i32>(slot.extent);
+    var local = clamp(texel, vec2<i32>(0), extent - vec2<i32>(1));
+    if (repeat) {
+        local = ((texel % extent) + extent) % extent;
+    }
+    let value = textureLoad(atlas, vec2<i32>(slot.origin) + local, slot.layer, 0);
+    if (encoded_data) {
+        return vec4<f32>(texture_data_rgb(value.rgb), value.a);
+    }
+    return value;
 }
 
-fn ec_liquid_texel_at_uv(atlas: texture_2d_array<f32>, atlas_sampler: sampler,
-                         slot: EcLiquidSlot, uv: vec2<f32>, linear: bool) -> vec4<f32> {
-    let local = uv * vec2<f32>(slot.extent);
-    if (linear) {
-        let px = vec2<f32>(slot.origin) + clamp(local, vec2<f32>(0.5), vec2<f32>(slot.extent) - vec2<f32>(0.5));
-        return textureSample(atlas, atlas_sampler, px / vec2<f32>(textureDimensions(atlas)), slot.layer);
+fn ec_liquid_sample(atlas: texture_2d_array<f32>, linear_sampler: sampler, slot: EcLiquidSlot,
+                    uv: vec2<f32>, linear: bool, repeat: bool, encoded_data: bool) -> vec4<f32> {
+    let addressed_uv = select(clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), fract(uv), repeat);
+    let local = addressed_uv * vec2<f32>(slot.extent);
+    if (!linear) {
+        return ec_liquid_load(atlas, slot, vec2<i32>(floor(local)), repeat, encoded_data);
     }
-    return textureLoad(atlas, vec2<i32>(slot.origin) + clamp(vec2<i32>(local), vec2<i32>(0), vec2<i32>(slot.extent) - vec2<i32>(1)), slot.layer, 0);
+    // Both geometry owners provide a linear sampler for liquid color. Hardware
+    // filtering is safe inside the slot, or at a clamped source's texel centers.
+    // Wrapped border footprints still need source-bounded explicit taps.
+    let interior = all(local >= vec2<f32>(0.5)) && all(local <= vec2<f32>(slot.extent) - vec2<f32>(0.5));
+    if (!encoded_data && (!repeat || interior)) {
+        let px = vec2<f32>(slot.origin) + clamp(local, vec2<f32>(0.5), vec2<f32>(slot.extent) - vec2<f32>(0.5));
+        return textureSampleLevel(atlas, linear_sampler, px / vec2<f32>(textureDimensions(atlas)), slot.layer, 0.0);
+    }
+    let footprint = local - vec2<f32>(0.5);
+    let first = vec2<i32>(floor(footprint));
+    let weight = fract(footprint);
+    // Decode support data per texel, before interpolation. Re-encoding a filtered
+    // sRGB sample instead changes the authored bump offsets between texel centers.
+    let upper_left = ec_liquid_load(atlas, slot, first, repeat, encoded_data);
+    let upper_right = ec_liquid_load(atlas, slot, first + vec2<i32>(1, 0), repeat, encoded_data);
+    let lower_left = ec_liquid_load(atlas, slot, first + vec2<i32>(0, 1), repeat, encoded_data);
+    let lower_right = ec_liquid_load(atlas, slot, first + vec2<i32>(1, 1), repeat, encoded_data);
+    return mix(mix(upper_left, upper_right, weight.x), mix(lower_left, lower_right, weight.x), weight.y);
 }
 
 fn ec_liquid_reflection_uv(view_position: vec3<f32>, view_normal: vec3<f32>) -> vec2<f32> {
@@ -55,7 +81,7 @@ fn ec_liquid_texture_uv(uv: vec2<f32>, stretch: f32, scroll: vec2<f32>) -> vec2<
     return vec2<f32>(transformed.x, 1.0 - transformed.y);
 }
 
-fn sample_ec_liquid(atlas: texture_2d_array<f32>, lookup: texture_2d<u32>, atlas_sampler: sampler,
+fn sample_ec_liquid(atlas: texture_2d_array<f32>, lookup: texture_2d<u32>, linear_sampler: sampler,
                     payload: u32, world_xz: vec2<f32>, uv_zero: vec2<f32>, reflection_uv: vec2<f32>,
                     time: f32, animate: bool, linear: bool) -> vec4<f32> {
     let fallback = ec_liquid_slot(lookup, payload, 0u);
@@ -91,7 +117,7 @@ fn sample_ec_liquid(atlas: texture_2d_array<f32>, lookup: texture_2d<u32>, atlas
         if (params.w != 0u) {
             bump_uv = ec_liquid_texture_uv(ec_liquid_world_uv(world_xz), normal.stretch, scroll);
         }
-        var bump = texture_data_rgb(ec_liquid_texel(atlas, atlas_sampler, normal, bump_uv, linear).rgb).rg;
+        var bump = ec_liquid_sample(atlas, linear_sampler, normal, bump_uv, linear, true, true).rg;
         if (params.w == 0u) {
             bump = bump * 2.0 - vec2<f32>(1.0);
         }
@@ -102,5 +128,5 @@ fn sample_ec_liquid(atlas: texture_2d_array<f32>, lookup: texture_2d<u32>, atlas
         // smaller perturbation only when no original animated surface is packed.
         uv += bump * select(0.30, 1.0, animated.present);
     }
-    return ec_liquid_texel(atlas, atlas_sampler, surface, uv, linear);
+    return ec_liquid_sample(atlas, linear_sampler, surface, uv, linear, true, false);
 }

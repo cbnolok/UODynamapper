@@ -41,8 +41,12 @@ reader remains available for inspection.
 
 Color and support images currently share sRGB atlas views. Recover encoded RGB
 with `texture_data_rgb` before interpreting normal, displacement, or RGB-mask
-samples as data. Alpha is not sRGB-decoded. This corrects data-channel values;
-precise interpolation of data maps would require a dedicated linear view.
+samples as data. Alpha is not sRGB-decoded. The shared liquid sampler recovers
+encoded bump values per texel before explicit bilinear interpolation, and applies
+the same filtering toggle to terrain and items independently of their GPU
+samplers. Wrapped taps stay within the source slot; unit item masks clamp.
+Other support-map paths still recover values after hardware interpolation and
+need a dedicated linear view or equivalent per-texel treatment for exact filtering.
 
 Tileart-owned slots marked as land/material surfaces stay in the art atlas and
 render as axis-aligned ground cells. Terrain-owned copies cannot replace their

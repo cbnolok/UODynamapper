@@ -60,8 +60,19 @@ To recover Gamebryo class names, inheritance, vtables, stream loaders and object
 sizes from NiRTTI records, run the script in
 [`ghidra-gamebryo-classes`](ghidra-gamebryo-classes/README.md).
 
-For an already analyzed program in the configured ghidra-mcp GUI project, use
-the read-only HTTP helper instead of opening another project:
+For an already analyzed program in the configured ghidra-mcp GUI project, prefer
+the plugin's MCP tools when the client exposes them. Start with
+`get_metadata(program="UOSA.exe")`; batch known entries with
+`get_functions(program="UOSA.exe", functions="0x461800,0x4613b0", fields="entry_point,body_end,decompiled_code")`.
+Use `disassemble_function` for instruction-level cross-checks. The plugin loads
+some categories lazily: `search_tools` identifies the needed tool and
+`load_tool_group` enables its category. Always pass the explicit program rather
+than changing the shared GUI selection. Consult the installed tool schemas;
+names and supported fields can change between plugin versions.
+
+If MCP tools are unavailable to the client, the read-only HTTP helper reaches
+the same analyzed program without opening another project. Do not use this
+fallback to bypass an explicit tool permission or read-only restriction:
 
 ```sh
 python3 scripts/dev-helpers/ec-research/ghidra_query.py \

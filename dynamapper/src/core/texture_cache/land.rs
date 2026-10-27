@@ -1,6 +1,8 @@
 pub mod cache;
 pub mod texture_array;
 pub mod coverage;
+#[cfg(test)]
+mod liquid_sampling_tests;
 
 use crate::core::render::scene::world::land::mesh_material::LandCustomMeshMaterial;
 use crate::core::system_sets::*;
@@ -462,6 +464,7 @@ fn create_blank_land_page_atlas_images(images: &mut Assets<Image>) -> LandPageAt
         TextureFormat::Rgba8UnormSrgb,
         bevy::asset::RenderAssetUsages::RENDER_WORLD,
     );
+    atlas.sampler = bevy::image::ImageSampler::linear();
     atlas.texture_descriptor.usage |= TextureUsages::TEXTURE_BINDING;
     atlas.texture_view_descriptor = Some(TextureViewDescriptor {
         dimension: Some(TextureViewDimension::D2Array),
@@ -852,6 +855,7 @@ fn create_land_shader_images(
         TextureFormat::Rgba8UnormSrgb,
         bevy::asset::RenderAssetUsages::RENDER_WORLD,
     );
+    atlas.sampler = bevy::image::ImageSampler::linear();
     atlas.texture_descriptor.usage |= TextureUsages::TEXTURE_BINDING;
     atlas.texture_view_descriptor = Some(TextureViewDescriptor {
         dimension: Some(TextureViewDimension::D2Array),
