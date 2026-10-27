@@ -1,0 +1,460 @@
+# Gamebryo classes
+
+Program: UOSA.exe
+SHA-256: 5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50
+Mode: analysis and --apply
+
+| Item | Count |
+|---|---:|
+| RTTI record candidates (name pointer, base) | 12996 |
+| GetRTTI-shaped functions | 344 |
+| Rejected `MOV EAX, record; RET` byte matches | 2 |
+| Validated classes | 343 |
+| Roots | 15 |
+| Vtables with a GetRTTI slot | 397 |
+| Classes with a recovered vftable | 340 |
+| Classes with ambiguous vtables | 3 |
+| Existing vftable labels in the program (MSVC RTTI / user) | 1881 |
+| Loader registrations | 181 |
+| Registrations in code with no call reference (not disassembled) | 59 |
+| Loader unregistrations | 180 |
+| Classes with object size | 171 |
+
+Detected functions:
+
+- `NiStream::RegisterLoader`: `0x00685d40` (174 calls with a class name)
+- `NiStream::UnregisterLoader`: `0x00685df0` (173 calls with a class name)
+- `NiMemObject::operator_new` (inferred): `0x0065fd00` (first call of 181 CreateObject functions)
+
+Roots: `NiDX92DBufferData`, `NiGPUProgram`, `NiGPUProgramCache`, `NiMaterial`, `NiMaterialNode`, `NiObject`, `NiRenderClick`, `NiRenderClickValidator`, `NiRenderListProcessor`, `NiRenderView`, `NiShader`, `NiShader::NiShaderInstanceDescriptor`, `NiShadowClickGenerator`, `NiShadowMap`, `NiShadowTechnique`
+
+## Class tree
+
+RTTI = NiRTTI record, vftable source in parentheses, size from CreateObject; unknown sizes show the bounds from the nearest sized ancestor and the smallest sized descendant.
+
+- `NiDX92DBufferData` RTTI `0x00ddf9d4`, GetRTTI `0x0076cae0`, vftable `0x00cd5748` (10 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+  - `NiDX9DepthStencilBufferData` RTTI `0x00ddf9ec`, GetRTTI `0x0076ca90`, vftable `0x00cd57c0` (10 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+    - `NiDX9AdditionalDepthStencilBufferData` RTTI `0x00ddfa04`, GetRTTI `0x0076ca60`, vftable `0x00cd5838` (10 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+    - `NiDX9Direct3DDepthStencilBufferData` RTTI `0x00ddf9fc`, GetRTTI `0x0076ca70`, vftable `0x00cd5810` (10 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+    - `NiDX9ImplicitDepthStencilBufferData` RTTI `0x00ddf9f4`, GetRTTI `0x0076ca80`, vftable `0x00cd57e8` (10 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+    - `NiDX9SwapChainDepthStencilBufferData` RTTI `0x00ddfa34`, GetRTTI `0x0076c9d0`, vftable `0x00cd58e4` (12 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+  - `NiDX9Direct3DBufferData` RTTI `0x00ddf9e4`, GetRTTI `0x0076caa0`, vftable `0x00cd5798` (10 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+  - `NiDX9OnscreenBufferData` RTTI `0x00ddfa1c`, GetRTTI `0x0076ca20`, vftable `0x00cd586c` (10 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+    - `NiDX9ImplicitBufferData` RTTI `0x00ddfa24`, GetRTTI `0x0076ca10`, vftable `0x00cd5894` (10 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+    - `NiDX9SwapChainBufferData` RTTI `0x00ddfa2c`, GetRTTI `0x0076c9f0`, vftable `0x00cd58bc` (10 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+  - `NiDX9TextureBufferData` RTTI `0x00ddf9dc`, GetRTTI `0x0076cab0`, vftable `0x00cd5770` (10 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+- `NiGPUProgram` RTTI `0x00de2eb0`, GetRTTI `0x0078def0`, vftable `0x00cd79f8` (5 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+  - `NiD3DShaderProgram` RTTI `0x00ddfa84`, GetRTTI `0x0078de50`, vftable `0x00cd79b8` (16 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+    - `NiD3DPixelShader` RTTI `0x00ddfa7c`, GetRTTI `0x0078c7d0`, vftable `0x00cd7758` (20 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+      - `NiD3DHLSLPixelShader` RTTI `0x00ddfa6c`, GetRTTI `0x0078b850`, vftable `0x00cd7550` (26 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+    - `NiD3DVertexShader` RTTI `0x00ddfa74`, GetRTTI `0x0078c890`, vftable `0x00cd77a8` (26 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+      - `NiD3DHLSLVertexShader` RTTI `0x00ddfa64`, GetRTTI `0x0078ad10`, vftable `0x00cd7420` (32 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+- `NiGPUProgramCache` RTTI `0x00de2ea8`, GetRTTI `0x0077b480`, vftable ambiguous (2), size ? (>= 0x4 (vftable), no sized descendant)
+- `NiMaterial` RTTI `0x00ddf6c8`, GetRTTI `0x0069e630`, vftable `0x00cc10f0` (8 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+  - `NiFragmentMaterial` RTTI `0x00ddf70c`, GetRTTI `0x006ca8a0`, vftable `0x00ccbf08` (36 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+    - `NiDirectionalShadowWriteMaterial` RTTI `0x00ddf944`, GetRTTI `0x0072fff0`, vftable `0x00cd07c8` (83 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+    - `NiPointShadowWriteMaterial` RTTI `0x00ddf954`, GetRTTI `0x00735d60`, vftable `0x00cd0a98` (83 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+    - `NiSpotShadowWriteMaterial` RTTI `0x00ddf94c`, GetRTTI `0x00732f60`, vftable `0x00cd0930` (83 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+    - `NiStandardMaterial` RTTI `0x00ddf704`, GetRTTI `0x006c6320`, vftable `0x00ccbd88` (83 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+    - `NiVSMBlurMaterial` RTTI `0x00ddf994`, GetRTTI `0x00743a10`, vftable `0x00cd38c8` (41 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+  - `NiSingleShaderMaterial` RTTI `0x00ddf6c0`, GetRTTI `0x0069dee0`, vftable `0x00cc10c4` (8 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+- `NiMaterialNode` RTTI `0x00ddf8fc`, GetRTTI `0x006fd4c0`, vftable `0x00ccef18` (8 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+  - `NiMaterialFragmentNode` RTTI `0x00ddf904`, GetRTTI `0x006a5a30`, vftable `0x00ccbb7c` (8 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+  - `NiMaterialResourceConsumerNode` RTTI `0x00ddf914`, GetRTTI `0x00709b20`, vftable `0x00ccf89c` (8 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+  - `NiMaterialResourceProducerNode` RTTI `0x00ddf90c`, GetRTTI `0x007099b0`, vftable `0x00ccf85c` (8 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+- `NiObject` RTTI `0x00dde04c`, GetRTTI `0x0066cbb0`, vftable ambiguous (21), size ? (>= 0x4 (vftable), <= 0xc (NiExtraData))
+  - `Ni2DBuffer` RTTI `0x00ddf714`, GetRTTI `0x006cb700`, vftable `0x00ccbfb8` (21 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+    - `NiDepthStencilBuffer` RTTI `0x00ddf724`, GetRTTI `0x006cc130`, vftable `0x00ccc0c8` (21 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+  - `NiAVObjectPalette` RTTI `0x00ddf984`, GetRTTI `0x006fa180`, vftable `0x00cceb18` (20 slots; single vtable), size ? (>= 0x4 (vftable), <= 0x20 (NiDefaultAVObjectPalette))
+    - `NiDefaultAVObjectPalette` RTTI `0x00ddf8cc`, GetRTTI `0x006fa220`, vftable `0x00cceb68` (22 slots; single vtable), CreateObject `0x006f98b0`, size 0x20
+  - `NiAccumulator` RTTI `0x00ddf63c`, GetRTTI `0x00455d30`, vftable `0x00ca0374` (21 slots; single vtable; `NiAccumulator::vftable`), size ? (>= 0x4 (vftable), <= 0x34 (NiAlphaAccumulator))
+    - `NiBackToFrontAccumulator` RTTI `0x00ddf76c`, GetRTTI `0x006d6d50`, vftable `0x00ccc680` (22 slots; single vtable), size ? (>= 0x4 (vftable), <= 0x34 (NiAlphaAccumulator))
+      - `NiAlphaAccumulator` RTTI `0x00ddf6a0`, GetRTTI `0x00699400`, vftable `0x00cc0cf8` (22 slots; single vtable), CreateObject `0x006992d0`, size 0x34
+    - `ShaderOverrideSorter` RTTI `0x00de2e88`, GetRTTI `0x00a66960`, vftable `0x00cfd884` (21 slots; single vtable; `ShaderOverrideSorter::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+    - `UOShaderOverrideSorter` RTTI `0x00dc0b58`, GetRTTI `0x00455da0`, vftable `0x00ca03cc` (21 slots; single vtable; `UOShaderOverrideSorter::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+  - `NiAdditionalGeometryData` RTTI `0x00ddf87c`, GetRTTI `0x006f5670`, vftable `0x00cce658` (18 slots; single vtable), CreateObject `0x006f48a0`, size 0x28
+  - `NiBSplineBasisData` RTTI `0x00ddfbe8`, GetRTTI `0x007c7930`, vftable `0x00cd9e68` (18 slots; single vtable), CreateObject `0x007c7740`, size 0x28
+  - `NiBSplineData` RTTI `0x00ddfbf0`, GetRTTI `0x007c8340`, vftable `0x00cd9ee8` (18 slots; single vtable), CreateObject `0x007c7fb0`, size 0x18
+  - `NiBoolData` RTTI `0x00ddfbd0`, GetRTTI `0x007c67d0`, vftable `0x00cd9cb0` (18 slots; single vtable), CreateObject `0x007c63b0`, size 0x18
+  - `NiCollisionObject` RTTI `0x00ddf6b8`, GetRTTI `0x0069d070`, vftable `0x00cc1038` (23 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+    - `NiCollisionData` RTTI `0x00ddfd00`, GetRTTI `0x007dfea0`, vftable `0x00cdb2f0` (23 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+  - `NiColorData` RTTI `0x00ddfc38`, GetRTTI `0x007cbdb0`, vftable `0x00cda570` (18 slots; single vtable), CreateObject `0x007cb9c0`, size 0x18
+  - `NiControllerSequence` RTTI `0x00ddfa98`, GetRTTI `0x0079eb50`, vftable `0x00cd7f88` (18 slots; single vtable), CreateObject `0x0079d1f0`, size 0x7c
+  - `NiExtraData` RTTI `0x00dde0cc`, GetRTTI `0x0067d940`, vftable `0x00cbfc08` (20 slots; single vtable), CreateObject `0x0067d7c0`, size 0xc
+    - `MythicShadowGenerator` RTTI `0x00de2e70`, GetRTTI `0x009d73d0`, vftable `0x00cfc984` (20 slots; existing label; `MythicShadowGenerator::vftable`), size ? (>= 0xc (NiExtraData), no sized descendant)
+    - `NiBinaryExtraData` RTTI `0x00ddf8ac`, GetRTTI `0x006f8530`, vftable `0x00cfcd3c` (20 slots; single vtable; `NiBinaryExtraData::vftable`), CreateObject `0x006f80f0`, size 0x14
+    - `NiBooleanExtraData` RTTI `0x00ddf8b4`, GetRTTI `0x006f8850`, vftable `0x00cce9c0` (20 slots; single vtable), CreateObject `0x006f85b0`, size 0x10
+    - `NiColorExtraData` RTTI `0x00ddf8c4`, GetRTTI `0x006f96a0`, vftable `0x00cceac8` (20 slots; single vtable), CreateObject `0x006f9450`, size 0x1c
+    - `NiFloatExtraData` RTTI `0x00ddf8dc`, GetRTTI `0x006fab20`, vftable `0x00cceca8` (20 slots; single vtable), CreateObject `0x006fa8a0`, size 0x10
+    - `NiFloatsExtraData` RTTI `0x00dde0c4`, GetRTTI `0x0067d5b0`, vftable `0x00cbfba0` (20 slots; single vtable), CreateObject `0x0067d110`, size 0x14
+    - `NiIntegerExtraData` RTTI `0x00ddf8e4`, GetRTTI `0x006fae20`, vftable `0x00cced08` (20 slots; single vtable), CreateObject `0x006faba0`, size 0x10
+    - `NiIntegersExtraData` RTTI `0x00dde0b4`, GetRTTI `0x0067ac30`, vftable `0x00cbf838` (20 slots; single vtable), CreateObject `0x0067a7a0`, size 0x14
+    - `NiSCMExtraData` RTTI `0x00de2e98`, GetRTTI `0x00ab0330`, vftable `0x00d008f0` (20 slots; single vtable), size ? (>= 0xc (NiExtraData), no sized descendant)
+    - `NiStringExtraData` RTTI `0x00ddf7fc`, GetRTTI `0x006e99d0`, vftable `0x00ccd9e0` (20 slots; single vtable), CreateObject `0x006e9700`, size 0x10
+    - `NiStringsExtraData` RTTI `0x00ddf80c`, GetRTTI `0x006eb870`, vftable `0x00ccdc40` (20 slots; single vtable), CreateObject `0x006eb3c0`, size 0x14
+    - `NiSwitchStringExtraData` RTTI `0x00ddf81c`, GetRTTI `0x006ed2b0`, vftable `0x00ccdd58` (20 slots; single vtable), CreateObject `0x006ecd40`, size 0x18
+    - `NiTextKeyExtraData` RTTI `0x00ddfb60`, GetRTTI `0x007b15c0`, vftable `0x00cd8f70` (20 slots; single vtable), CreateObject `0x007b0ed0`, size 0x14
+    - `NiVectorExtraData` RTTI `0x00ddf84c`, GetRTTI `0x006eeb40`, vftable `0x00ccdf78` (20 slots; single vtable), CreateObject `0x006ee790`, size 0x1c
+    - `NiVertWeightsExtraData` RTTI `0x00ddf6ec`, GetRTTI `0x006a4750`, vftable `0x00cc1780` (20 slots; single vtable), CreateObject `0x006a45b0`, size 0xc
+  - `NiFloatData` RTTI `0x00ddfaa8`, GetRTTI `0x007a0d00`, vftable `0x00cd8148` (18 slots; single vtable), CreateObject `0x007a1040`, size 0x18
+  - `NiGeometryData` RTTI `0x00dde174`, GetRTTI `0x0068a590`, vftable `0x00cc0678` (22 slots; single vtable), size ? (>= 0x4 (vftable), <= 0x48 (NiLinesData))
+    - `NiLinesData` RTTI `0x00ddf734`, GetRTTI `0x006ccd00`, vftable `0x00ccc178` (22 slots; single vtable), CreateObject `0x006ccaa0`, size 0x48
+    - `NiParticlesData` RTTI `0x00ddf89c`, GetRTTI `0x006f6ba0`, vftable `0x00cce838` (23 slots; single vtable), CreateObject `0x006f6130`, size 0x58
+      - `NiPSysData` RTTI `0x00ddfdfc`, GetRTTI `0x00818a80`, vftable `0x00cdc850` (25 slots; single vtable), CreateObject `0x00818470`, size 0x64
+        - `NiMeshPSysData` RTTI `0x00ddfd80`, GetRTTI `0x00810f60`, vftable `0x00cdc0a0` (25 slots; single vtable), CreateObject `0x00810860`, size 0x80
+    - `NiTriBasedGeomData` RTTI `0x00ddf71c`, GetRTTI `0x006cba50`, vftable `0x00ccc048` (26 slots; single vtable), size ? (>= 0x4 (vftable), <= 0x54 (NiTriStripsData))
+      - `NiTriShapeData` RTTI `0x00dde154`, GetRTTI `0x00680410`, vftable `0x00cc0000` (8 slots; single vtable), CreateObject `0x0067fda0`, size 0x5c
+        - `NiScreenElementsData` RTTI `0x00dde05c`, GetRTTI `0x00670030`, vftable `0x00cbf060` (26 slots; single vtable), CreateObject `0x0066f710`, size 0x74
+        - `NiScreenGeometryData` RTTI `0x00ddf854`, GetRTTI `0x006eeb50`, vftable `0x00ccdff0` (26 slots; single vtable), CreateObject `0x006eee80`, size 0x74
+        - `NiTriShapeDynamicData` RTTI `0x00ddf834`, GetRTTI `0x006edaa0`, vftable `0x00ccddb0` (26 slots; single vtable), CreateObject `0x006ed870`, size 0x5c
+      - `NiTriStripsData` RTTI `0x00ddf844`, GetRTTI `0x006ee510`, vftable `0x00ccdee8` (26 slots; single vtable), CreateObject `0x006ee010`, size 0x54
+  - `NiInterpolator` RTTI `0x00ddfc88`, GetRTTI `0x007d2b10`, vftable `0x00cdad48` (37 slots; single vtable), size ? (>= 0x4 (vftable), <= 0x18 (NiFloatInterpolator))
+    - `NiBSplineInterpolator` RTTI `0x00ddfcf0`, GetRTTI `0x007d93a0`, vftable `0x00cdb100` (46 slots; single vtable), size ? (>= 0x4 (vftable), <= 0x24 (NiBSplineFloatInterpolator))
+      - `NiBSplineColorInterpolator` RTTI `0x00ddfbf8`, GetRTTI `0x007c8f50`, vftable `0x00cd9f48` (46 slots; single vtable), CreateObject `0x007c8cb0`, size 0x34
+        - `NiBSplineCompColorInterpolator` RTTI `0x00ddfc00`, GetRTTI `0x007c9440`, vftable `0x00cda000` (46 slots; single vtable), CreateObject `0x007c9240`, size 0x3c
+      - `NiBSplineFloatInterpolator` RTTI `0x00ddfc20`, GetRTTI `0x007ca8d0`, vftable `0x00cda2f8` (46 slots; single vtable), CreateObject `0x007ca690`, size 0x24
+        - `NiBSplineCompFloatInterpolator` RTTI `0x00ddfc08`, GetRTTI `0x007c9860`, vftable `0x00cda0b8` (46 slots; single vtable), CreateObject `0x007c96b0`, size 0x2c
+      - `NiBSplinePoint3Interpolator` RTTI `0x00ddfc28`, GetRTTI `0x007cae70`, vftable `0x00cda3c8` (46 slots; single vtable), CreateObject `0x007cac60`, size 0x2c
+        - `NiBSplineCompPoint3Interpolator` RTTI `0x00ddfc10`, GetRTTI `0x007c9d00`, vftable `0x00cda170` (46 slots; single vtable), CreateObject `0x007c9b30`, size 0x34
+      - `NiBSplineTransformInterpolator` RTTI `0x00ddfc30`, GetRTTI `0x007cb7f0`, vftable `0x00cda4b8` (46 slots; single vtable), CreateObject `0x007cb500`, size 0x48
+        - `NiBSplineCompTransformInterpolator` RTTI `0x00ddfc18`, GetRTTI `0x007ca3a0`, vftable `0x00cda228` (46 slots; single vtable), CreateObject `0x007ca1e0`, size 0x60
+    - `NiBlendInterpolator` RTTI `0x00ddfc60`, GetRTTI `0x007d16f0`, vftable `0x00cda970` (41 slots; single vtable), size ? (>= 0x4 (vftable), <= 0x30 (NiBlendTransformInterpolator))
+      - `NiBlendAccumTransformInterpolator` RTTI `0x00ddfb90`, GetRTTI `0x007a4ba0`, vftable `0x00cd85d8` (42 slots; single vtable), CreateObject `0x007bdff0`, size 0x58
+      - `NiBlendBoolInterpolator` RTTI `0x00ddfb98`, GetRTTI `0x007be8a0`, vftable `0x00cd94d8` (41 slots; single vtable), CreateObject `0x007be710`, size 0x34
+      - `NiBlendColorInterpolator` RTTI `0x00ddfba0`, GetRTTI `0x007befe0`, vftable `0x00cd9590` (41 slots; single vtable), CreateObject `0x007bee00`, size 0x44
+      - `NiBlendFloatInterpolator` RTTI `0x00ddfba8`, GetRTTI `0x007bf560`, vftable `0x00cd9638` (41 slots; single vtable), CreateObject `0x007bf3c0`, size 0x34
+      - `NiBlendPoint3Interpolator` RTTI `0x00ddfbb0`, GetRTTI `0x007bfb80`, vftable `0x00cd96e0` (41 slots; single vtable), CreateObject `0x007bf9c0`, size 0x40
+      - `NiBlendQuaternionInterpolator` RTTI `0x00ddfbb8`, GetRTTI `0x007c0330`, vftable `0x00cd9788` (41 slots; single vtable), CreateObject `0x007c01a0`, size 0x40
+      - `NiBlendTransformInterpolator` RTTI `0x00ddfbc0`, GetRTTI `0x007c0bf0`, vftable `0x00cd9830` (41 slots; single vtable), CreateObject `0x007c0aa0`, size 0x30
+    - `NiKeyBasedInterpolator` RTTI `0x00ddfc80`, GetRTTI `0x007d2850`, vftable `0x00cdac88` (44 slots; single vtable), size ? (>= 0x4 (vftable), <= 0x18 (NiFloatInterpolator))
+      - `NiBoolInterpolator` RTTI `0x00ddfbd8`, GetRTTI `0x007c7010`, vftable `0x00cd9d08` (44 slots; single vtable), CreateObject `0x007c6d30`, size 0x18
+        - `NiBoolTimelineInterpolator` RTTI `0x00ddfbe0`, GetRTTI `0x007c75d0`, vftable `0x00cd9db8` (44 slots; single vtable), CreateObject `0x007c7460`, size 0x20
+      - `NiColorInterpolator` RTTI `0x00ddfc48`, GetRTTI `0x007ccc30`, vftable `0x00cda670` (44 slots; single vtable), CreateObject `0x007cc940`, size 0x24
+      - `NiFloatInterpolator` RTTI `0x00ddfab8`, GetRTTI `0x007a2060`, vftable `0x00cd8268` (44 slots; single vtable), CreateObject `0x007a1d80`, size 0x18
+      - `NiPathInterpolator` RTTI `0x00ddfb28`, GetRTTI `0x007ae270`, vftable `0x00cd8b90` (44 slots; single vtable), CreateObject `0x007adbd0`, size 0x5c
+      - `NiPoint3Interpolator` RTTI `0x00ddfb30`, GetRTTI `0x007aef50`, vftable `0x00cd8c60` (44 slots; single vtable), CreateObject `0x007aec80`, size 0x20
+      - `NiQuaternionInterpolator` RTTI `0x00ddfb40`, GetRTTI `0x007aff40`, vftable `0x00cd8d38` (44 slots; single vtable), CreateObject `0x007afc70`, size 0x24
+      - `NiTransformInterpolator` RTTI `0x00ddfb70`, GetRTTI `0x007b3060`, vftable `0x00cd90d0` (44 slots; single vtable), CreateObject `0x007b2e50`, size 0x3c
+    - `NiLookAtInterpolator` RTTI `0x00ddfb00`, GetRTTI `0x007a8090`, vftable `0x00cd88d0` (37 slots; single vtable), CreateObject `0x007a7d20`, size 0x44
+  - `NiLODData` RTTI `0x00ddf97c`, GetRTTI `0x00737490`, vftable `0x00cd0cf8` (22 slots; single vtable), size ? (>= 0x4 (vftable), <= 0x28 (NiRangeLODData))
+    - `NiRangeLODData` RTTI `0x00ddf7bc`, GetRTTI `0x006dc8e0`, vftable `0x00ccca00` (22 slots; single vtable), CreateObject `0x006dc4d0`, size 0x28
+    - `NiScreenLODData` RTTI `0x00ddf7c4`, GetRTTI `0x006dd3f0`, vftable `0x00ccca80` (22 slots; single vtable), CreateObject `0x006dcf60`, size 0x30
+  - `NiMorphData` RTTI `0x00ddfb10`, GetRTTI `0x007a9790`, vftable `0x00cd8a70` (18 slots; single vtable), CreateObject `0x007a8f80`, size 0x18
+  - `NiObjectNET` RTTI `0x00dde0a4`, GetRTTI `0x00679df0`, vftable `0x00cbf718` (18 slots; single vtable), size ? (>= 0x4 (vftable), <= 0x18 (NiRendererSpecificProperty))
+    - `NiAVObject` RTTI `0x00dde00c`, GetRTTI `0x006657b0`, vftable `0x00cbec70` (34 slots; single vtable), size ? (>= 0x4 (vftable), <= 0xe0 (NiNode))
+      - `NiCamera` RTTI `0x00ddf634`, GetRTTI `0x00692190`, vftable `0x00cc0ac8` (34 slots; single vtable), CreateObject `0x00691740`, size 0x130
+        - `NiScreenSpaceCamera` RTTI `0x00ddf86c`, GetRTTI `0x006eeb80`, vftable `0x00cce158` (34 slots; single vtable), CreateObject `0x006f0b50`, size 0x150
+      - `NiDynamicEffect` RTTI `0x00ddf6dc`, GetRTTI `0x006a23a0`, vftable `0x00cc1650` (34 slots; single vtable), size ? (>= 0x4 (vftable), <= 0x110 (NiAmbientLight))
+        - `NiLight` RTTI `0x00ddf974`, GetRTTI `0x00737390`, vftable `0x00cd0c60` (34 slots; single vtable), size ? (>= 0x4 (vftable), <= 0x110 (NiAmbientLight))
+          - `NiAmbientLight` RTTI `0x00ddf884`, GetRTTI `0x006f5980`, vftable `0x00cce6a8` (34 slots; single vtable), CreateObject `0x006f5880`, size 0x110
+            - `MythicAmbientLight` RTTI `0x00de2e80`, GetRTTI `0x00a5da30`, vftable `0x00cfca8c` (34 slots; single vtable; `MythicAmbientLight::vftable`), size ? (>= 0x110 (NiAmbientLight), no sized descendant)
+          - `NiDirectionalLight` RTTI `0x00ddf8d4`, GetRTTI `0x006fa820`, vftable `0x00ccec10` (34 slots; single vtable), CreateObject `0x006fa730`, size 0x11c
+            - `MythicDirectionalLight` RTTI `0x00de2e68`, GetRTTI `0x009d8100`, vftable `0x00cfc2c4` (34 slots; single vtable; `MythicDirectionalLight::vftable`), size ? (>= 0x11c (NiDirectionalLight), no sized descendant)
+          - `NiPointLight` RTTI `0x00ddf7b4`, GetRTTI `0x006dbf10`, vftable `0x00ccc948` (34 slots; single vtable), CreateObject `0x006dbbe0`, size 0x11c
+            - `MythicPointLight` RTTI `0x00de2e78`, GetRTTI `0x00a5d510`, vftable `0x00cfc9ec` (34 slots; single vtable; `MythicPointLight::vftable`), size ? (>= 0x11c (NiPointLight), no sized descendant)
+            - `NiSpotLight` RTTI `0x00ddf7f4`, GetRTTI `0x006e4f30`, vftable `0x00cccd88` (34 slots; single vtable), CreateObject `0x006e4b80`, size 0x13c
+        - `NiTextureEffect` RTTI `0x00ddf804`, GetRTTI `0x006eaf40`, vftable `0x00ccdba8` (34 slots; single vtable), CreateObject `0x006ea400`, size 0x17c
+      - `NiGeometry` RTTI `0x00dde014`, GetRTTI `0x00668380`, vftable `0x00cbed28` (39 slots; single vtable), size ? (>= 0x4 (vftable), <= 0xe4 (NiTriStrips))
+        - `NiLines` RTTI `0x00ddf624`, GetRTTI `0x0068f110`, vftable `0x00cc08e8` (39 slots; single vtable), CreateObject `0x0068f040`, size 0xe4
+        - `NiParticles` RTTI `0x00ddf894`, GetRTTI `0x006f5d30`, vftable `0x00cce748` (39 slots; single vtable), CreateObject `0x006f5c60`, size 0xe4
+          - `NiParticleSystem` RTTI `0x00ddfd88`, GetRTTI `0x008123d0`, vftable `0x00cdc118` (41 slots; single vtable), CreateObject `0x00811d20`, size 0x134
+            - `NiMeshParticleSystem` RTTI `0x00ddfd78`, GetRTTI `0x0080fee0`, vftable `0x00cdbfe0` (41 slots; single vtable), size ? (>= 0x134 (NiParticleSystem), no sized descendant)
+        - `NiTriBasedGeom` RTTI `0x00dde054`, GetRTTI `0x0066d3a0`, vftable `0x00cbef18` (40 slots; single vtable), size ? (>= 0x4 (vftable), <= 0xe4 (NiTriStrips))
+          - `NiTriShape` RTTI `0x00dde044`, GetRTTI `0x0066c520`, vftable `0x00cbedf8` (40 slots; single vtable), CreateObject `0x0066c450`, size 0xe4
+            - `CachingTriShape` RTTI `0x00de2e90`, GetRTTI `0x00a66d50`, vftable `0x00cfd90c` (40 slots; single vtable; `CachingTriShape::vftable`), size ? (>= 0xe4 (NiTriShape), no sized descendant)
+            - `FoliageTriShape` RTTI `0x00dbf7a0`, GetRTTI `0x0045ca00`, vftable `0x00ca075c` (40 slots; single vtable; `FoliageTriShape::vftable`), size ? (>= 0xe4 (NiTriShape), no sized descendant)
+            - `MobAnimTriShape` RTTI `0x00dbf080`, GetRTTI `0x00431050`, vftable `0x00c9f9ac` (40 slots; single vtable; `MobAnimTriShape::vftable`), size ? (>= 0xe4 (NiTriShape), no sized descendant)
+              - `MobAnimTriShapeShadow` RTTI `0x00dbf090`, GetRTTI `0x00431130`, vftable `0x00c9fa54` (40 slots; single vtable; `MobAnimTriShapeShadow::vftable`), size ? (>= 0xe4 (NiTriShape), no sized descendant)
+            - `NiScreenElements` RTTI `0x00dde064`, GetRTTI `0x00670330`, vftable `0x00cbf0e0` (40 slots; single vtable), CreateObject `0x00670260`, size 0xe4
+            - `NiScreenGeometry` RTTI `0x00ddf85c`, GetRTTI `0x006eeb60`, vftable `0x00cce068` (40 slots; single vtable), CreateObject `0x006ef8c0`, size 0xe4
+            - `ParticleTriShape` RTTI `0x00de28b4`, GetRTTI `0x008c4a10`, vftable `0x00ce653c` (43 slots; single vtable; `ParticleTriShape::vftable`), size ? (>= 0xe4 (NiTriShape), no sized descendant)
+            - `SpriteTriShape` RTTI `0x00dbf798`, GetRTTI `0x0045c940`, vftable `0x00ca06b4` (40 slots; single vtable; `SpriteTriShape::vftable`), size ? (>= 0xe4 (NiTriShape), no sized descendant)
+            - `TerrainTriShape` RTTI `0x00dc18b0`, GetRTTI `0x00460020`, vftable `0x00ca0964` (40 slots; existing label; `TerrainTriShape::vftable`), size ? (>= 0xe4 (NiTriShape), no sized descendant)
+            - `UOCollisionNode` RTTI `0x00dbcff0`, GetRTTI `0x00415310`, vftable `0x00c9d4d4` (41 slots; single vtable; `UOCollisionNode::vftable`), size ? (>= 0xe4 (NiTriShape), no sized descendant)
+              - `UOObjectCollisionNode` RTTI `0x00dbd000`, GetRTTI `0x00415330`, vftable `0x00c9d57c` (41 slots; single vtable; `UOObjectCollisionNode::vftable`), size ? (>= 0xe4 (NiTriShape), no sized descendant)
+              - `UOStencilCollisionNode` RTTI `0x00dbd008`, GetRTTI `0x00415370`, vftable `0x00c9d6cc` (41 slots; single vtable; `UOStencilCollisionNode::vftable`), size ? (>= 0xe4 (NiTriShape), no sized descendant)
+              - `UOTerrainCollisionNode` RTTI `0x00dbcff8`, GetRTTI `0x00415350`, vftable `0x00c9d624` (41 slots; single vtable; `UOTerrainCollisionNode::vftable`), size ? (>= 0xe4 (NiTriShape), no sized descendant)
+            - `WeaponTrailTriShape` RTTI `0x00de28f0`, GetRTTI `0x008c6aa0`, vftable `0x00ce664c` (44 slots; single vtable; `WeaponTrailTriShape::vftable`), size ? (>= 0xe4 (NiTriShape), no sized descendant)
+          - `NiTriStrips` RTTI `0x00ddf83c`, GetRTTI `0x006eddc0`, vftable `0x00ccde18` (40 slots; single vtable), CreateObject `0x006edcf0`, size 0xe4
+      - `NiNode` RTTI `0x00dde09c`, GetRTTI `0x0044a7c0`, vftable `0x00cbf628` (39 slots; CreateObject), CreateObject `0x00676cb0`, size 0xe0
+        - `Effect` RTTI `0x00de27f0`, GetRTTI `0x00416260`, vftable `0x00ce4a2c` (46 slots; existing label; `Effect::vftable`), size ? (>= 0xe0 (NiNode), no sized descendant)
+          - `DynamicEffect` RTTI `0x00de2900`, GetRTTI `0x008c9070`, vftable `0x00ce6714` (46 slots; single vtable; `DynamicEffect::vftable`), size ? (>= 0xe0 (NiNode), no sized descendant)
+            - `WeaponTrailEffect` RTTI `0x00de28a4`, GetRTTI `0x008c46c0`, vftable `0x00ce643c` (46 slots; single vtable; `WeaponTrailEffect::vftable`), size ? (>= 0xe0 (NiNode), no sized descendant)
+          - `EmitterEffect` RTTI `0x00de286c`, GetRTTI `0x008b9790`, vftable `0x00ce5d2c` (48 slots; single vtable; `EmitterEffect::vftable`), size ? (>= 0xe0 (NiNode), no sized descendant)
+        - `NiBSPNode` RTTI `0x00ddf8bc`, GetRTTI `0x006f9260`, vftable `0x00ccea20` (39 slots; single vtable), CreateObject `0x006f8f50`, size 0x100
+        - `NiBillboardNode` RTTI `0x00ddf8a4`, GetRTTI `0x006f7f40`, vftable `0x00cce918` (39 slots; single vtable), CreateObject `0x006f7c00`, size 0xe8
+        - `NiSortAdjustNode` RTTI `0x00ddf7e4`, GetRTTI `0x006e3420`, vftable `0x00cccbe0` (39 slots; single vtable), CreateObject `0x006e3210`, size 0xe4
+        - `NiSwitchNode` RTTI `0x00ddf814`, GetRTTI `0x006ec910`, vftable `0x00ccdcb0` (39 slots; single vtable), CreateObject `0x006ec3f0`, size 0x100
+          - `NiLODNode` RTTI `0x00ddf8ec`, GetRTTI `0x006fb3b0`, vftable `0x00cced68` (39 slots; single vtable), CreateObject `0x006fb0f0`, size 0x108
+    - `NiProperty` RTTI `0x00dde084`, GetRTTI `0x00415e00`, vftable `0x00c9d914` (20 slots; single vtable; `NiProperty::vftable`), size ? (>= 0x4 (vftable), <= 0x18 (NiRendererSpecificProperty))
+      - `NiAlphaProperty` RTTI `0x00dde0dc`, GetRTTI `0x00419f20`, vftable `0x00c9dfbc` (20 slots; single vtable; `NiAlphaProperty::vftable`), CreateObject `0x0067e3a0`, size 0x1c
+      - `NiDitherProperty` RTTI `0x00ddf78c`, GetRTTI `0x006d8a00`, vftable `0x00ce6374` (20 slots; single vtable; `NiDitherProperty::vftable`), CreateObject `0x006d8690`, size 0x1c
+      - `NiFogProperty` RTTI `0x00ddf794`, GetRTTI `0x006d9030`, vftable `0x00ccc7c8` (20 slots; single vtable), CreateObject `0x006d8af0`, size 0x2c
+      - `NiMaterialProperty` RTTI `0x00ddf62c`, GetRTTI `0x0068f780`, vftable `0x00cc09d0` (20 slots; single vtable), CreateObject `0x0068f300`, size 0x5c
+      - `NiRendererSpecificProperty` RTTI `0x00ddf79c`, GetRTTI `0x006d93f0`, vftable `0x00ccc818` (20 slots; single vtable), CreateObject `0x006d91a0`, size 0x18
+      - `NiShadeProperty` RTTI `0x00ddf7a4`, GetRTTI `0x006d9810`, vftable `0x00ccc878` (20 slots; single vtable), CreateObject `0x006d9490`, size 0x1c
+      - `NiSpecularProperty` RTTI `0x00ddf7ac`, GetRTTI `0x006d9c40`, vftable `0x00ccc8d0` (20 slots; single vtable), CreateObject `0x006d98e0`, size 0x1c
+      - `NiStencilProperty` RTTI `0x00dde15c`, GetRTTI `0x0041a260`, vftable `0x00c9e014` (20 slots; single vtable; `NiStencilProperty::vftable`), CreateObject `0x00680610`, size 0x24
+      - `NiTexturingProperty` RTTI `0x00dde07c`, GetRTTI `0x00673ef0`, vftable `0x00cbf4d8` (20 slots; single vtable), CreateObject `0x00671010`, size 0x34
+        - `GenericShaderTexturingProperty` RTTI `0x00de2dc8`, GetRTTI `0x009bdfa0`, vftable `0x00cfb04c` (20 slots; single vtable; `GenericShaderTexturingProperty::vftable`), size ? (>= 0x34 (NiTexturingProperty), no sized descendant)
+        - `UOTerrainTexturingProperty` RTTI `0x00dcfe30`, GetRTTI `0x00460240`, vftable `0x00ca0aa4` (20 slots; single vtable; `UOTerrainTexturingProperty::vftable`), size ? (>= 0x34 (NiTexturingProperty), no sized descendant)
+      - `NiVertexColorProperty` RTTI `0x00dde0ac`, GetRTTI `0x00416bc0`, vftable `0x00c9d96c` (20 slots; single vtable; `NiVertexColorProperty::vftable`), CreateObject `0x00679fa0`, size 0x1c
+      - `NiWireframeProperty` RTTI `0x00ddf784`, GetRTTI `0x006d85c0`, vftable `0x00ccc720` (20 slots; single vtable), CreateObject `0x006d8240`, size 0x1c
+      - `NiZBufferProperty` RTTI `0x00dde0d4`, GetRTTI `0x0041a420`, vftable `0x00c9e06c` (20 slots; single vtable; `NiZBufferProperty::vftable`), CreateObject `0x0067dec0`, size 0x1c
+    - `NiTexture` RTTI `0x00ddf5d4`, GetRTTI `0x00430950`, vftable `0x00c9f6c4` (21 slots; single vtable; `NiTexture::vftable`), size ? (>= 0x4 (vftable), <= 0x44 (NiSourceTexture))
+      - `NiDX9Direct3DTexture` RTTI `0x00ddfa5c`, GetRTTI `0x0077b560`, vftable `0x00cd6c00` (21 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+      - `NiRenderedTexture` RTTI `0x00dde140`, GetRTTI `0x0067f750`, vftable `0x00cbff70` (22 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+        - `NiRenderedCubeMap` RTTI `0x00ddf74c`, GetRTTI `0x006d1cc0`, vftable `0x00ccc558` (22 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+      - `NiSourceTexture` RTTI `0x00dde17c`, GetRTTI `0x00430dd0`, vftable `0x00c9f774` (24 slots; single vtable; `NiSourceTexture::vftable`), CreateObject `0x0068abb0`, size 0x44
+        - `MobAnimTexture` RTTI `0x00dbf088`, GetRTTI `0x00431220`, vftable `0x00c9f944` (24 slots; single vtable; `MobAnimTexture::vftable`), size ? (>= 0x44 (NiSourceTexture), no sized descendant)
+        - `NiSourceCubeMap` RTTI `0x00ddf7ec`, GetRTTI `0x006e42d0`, vftable `0x00cccc80` (24 slots; single vtable), CreateObject `0x006e3e10`, size 0x48
+  - `NiPSysCollider` RTTI `0x00ddfefc`, GetRTTI `0x0082a000`, vftable `0x00cddd80` (21 slots; single vtable), size ? (>= 0x4 (vftable), <= 0xb0 (NiPSysSphericalCollider))
+    - `NiPSysPlanarCollider` RTTI `0x00ddfecc`, GetRTTI `0x00827920`, vftable `0x00cdda20` (21 slots; single vtable), CreateObject `0x00827520`, size 0x100
+    - `NiPSysSphericalCollider` RTTI `0x00ddfd50`, GetRTTI `0x0080d350`, vftable `0x00cdbdd8` (21 slots; single vtable), CreateObject `0x0080d090`, size 0xb0
+  - `NiPSysEmitterCtlrData` RTTI `0x00ddfe1c`, GetRTTI `0x0081b9b0`, vftable `0x00cdcae0` (18 slots; single vtable), CreateObject `0x0081b4f0`, size 0x28
+  - `NiPSysModifier` RTTI `0x00ddfee4`, GetRTTI `0x008288d0`, vftable `0x00cddb58` (23 slots; single vtable), size ? (>= 0x4 (vftable), <= 0x18 (NiPSysPositionModifier))
+    - `NiPSysAgeDeathModifier` RTTI `0x00ddfdc0`, GetRTTI `0x00814980`, vftable `0x00cdc4c8` (23 slots; single vtable), CreateObject `0x008146d0`, size 0x20
+    - `NiPSysBombModifier` RTTI `0x00ddfdc8`, GetRTTI `0x00815750`, vftable `0x00cdc5a8` (23 slots; single vtable), CreateObject `0x008150d0`, size 0x38
+    - `NiPSysBoundUpdateModifier` RTTI `0x00ddfdd0`, GetRTTI `0x00816210`, vftable `0x00cdc610` (23 slots; single vtable), CreateObject `0x00815ff0`, size 0x20
+    - `NiPSysColliderManager` RTTI `0x00ddfde0`, GetRTTI `0x00817050`, vftable `0x00cdc6d8` (23 slots; single vtable), CreateObject `0x00816e20`, size 0x1c
+    - `NiPSysColorModifier` RTTI `0x00ddfde8`, GetRTTI `0x00817610`, vftable `0x00cdc738` (23 slots; single vtable), CreateObject `0x00817430`, size 0x24
+    - `NiPSysDragModifier` RTTI `0x00ddfe0c`, GetRTTI `0x00819d20`, vftable `0x00cdc960` (23 slots; single vtable), CreateObject `0x008198f0`, size 0x34
+    - `NiPSysEmitter` RTTI `0x00ddfef4`, GetRTTI `0x00829830`, vftable `0x00cddcd8` (25 slots; single vtable), size ? (>= 0x4 (vftable), <= 0x58 (NiPSysSphereEmitter))
+      - `NiPSysMeshEmitter` RTTI `0x00ddfeb4`, GetRTTI `0x008252a0`, vftable `0x00cdd880` (25 slots; single vtable), CreateObject `0x00823fa0`, size 0x84
+      - `NiPSysVolumeEmitter` RTTI `0x00ddfeec`, GetRTTI `0x00828c50`, vftable `0x00cddbc8` (26 slots; single vtable), size ? (>= 0x4 (vftable), <= 0x58 (NiPSysSphereEmitter))
+        - `NiPSysBoxEmitter` RTTI `0x00ddfdd8`, GetRTTI `0x00816af0`, vftable `0x00cdc670` (26 slots; single vtable), CreateObject `0x00816790`, size 0x60
+        - `NiPSysCylinderEmitter` RTTI `0x00ddfdf4`, GetRTTI `0x00817d10`, vftable `0x00cdc798` (26 slots; single vtable), CreateObject `0x00817a50`, size 0x5c
+        - `NiPSysSphereEmitter` RTTI `0x00ddfd48`, GetRTTI `0x0080c950`, vftable `0x00cdbd60` (26 slots; single vtable), CreateObject `0x0080c720`, size 0x58
+    - `NiPSysFieldModifier` RTTI `0x00ddff04`, GetRTTI `0x0082a610`, vftable `0x00cdde28` (23 slots; single vtable), size ? (>= 0x4 (vftable), <= 0x34 (NiPSysRadialFieldModifier))
+      - `NiPSysAirFieldModifier` RTTI `0x00ddfda4`, GetRTTI `0x00813f80`, vftable `0x00cdc398` (23 slots; single vtable), CreateObject `0x00813a30`, size 0x68
+      - `NiPSysDragFieldModifier` RTTI `0x00ddfe04`, GetRTTI `0x008193e0`, vftable `0x00cdc8c8` (23 slots; single vtable), CreateObject `0x00819180`, size 0x40
+      - `NiPSysGravityFieldModifier` RTTI `0x00ddfe7c`, GetRTTI `0x0081f9b0`, vftable `0x00cdd2d0` (23 slots; single vtable), CreateObject `0x0081f7e0`, size 0x48
+      - `NiPSysRadialFieldModifier` RTTI `0x00ddfedc`, GetRTTI `0x008283c0`, vftable `0x00cddae0` (23 slots; single vtable), CreateObject `0x00828200`, size 0x34
+      - `NiPSysTurbulenceFieldModifier` RTTI `0x00ddfd58`, GetRTTI `0x0080dca0`, vftable `0x00cdbe38` (23 slots; single vtable), CreateObject `0x0080da90`, size 0x3c
+      - `NiPSysVortexFieldModifier` RTTI `0x00ddfd68`, GetRTTI `0x0080eb70`, vftable `0x00cdbf18` (23 slots; single vtable), CreateObject `0x0080e9d0`, size 0x3c
+    - `NiPSysGravityModifier` RTTI `0x00ddfe74`, GetRTTI `0x0081f0e0`, vftable `0x00cdd270` (23 slots; single vtable), CreateObject `0x0081eac0`, size 0x3c
+    - `NiPSysGrowFadeModifier` RTTI `0x00ddfe8c`, GetRTTI `0x00820340`, vftable `0x00cdd418` (23 slots; single vtable), CreateObject `0x0081ffd0`, size 0x28
+    - `NiPSysMeshUpdateModifier` RTTI `0x00ddfebc`, GetRTTI `0x00825eb0`, vftable `0x00cdd900` (23 slots; single vtable), CreateObject `0x00825b80`, size 0x28
+    - `NiPSysPositionModifier` RTTI `0x00ddfed4`, GetRTTI `0x00827c70`, vftable `0x00cdda78` (23 slots; single vtable), CreateObject `0x00827b30`, size 0x18
+    - `NiPSysRotationModifier` RTTI `0x00ddfd30`, GetRTTI `0x0080ad00`, vftable `0x00cdbbf8` (23 slots; single vtable), CreateObject `0x0080a790`, size 0x38
+    - `NiPSysSpawnModifier` RTTI `0x00ddfd3c`, GetRTTI `0x0080c330`, vftable `0x00cdbcf0` (25 slots; single vtable), CreateObject `0x0080bd90`, size 0x34
+  - `NiPalette` RTTI `0x00ddf72c`, GetRTTI `0x006cc7b0`, vftable `0x00ccc120` (18 slots; single vtable), CreateObject `0x006cc4b0`, size 0x24
+  - `NiPersistentSrcTextureRendererData` RTTI `0x00ddf8f4`, GetRTTI `0x006fc620`, `0x00772270`, vftable `0x00ccee70` (20 slots; CreateObject), CreateObject `0x006fba90`, size 0x8c
+    - `NiDX9PersistentSrcTextureRendererData` RTTI `0x00ddfa3c`, GetRTTI `0x00772320`, vftable `0x00cd5d88` (12 slots; single vtable), size ? (>= 0x8c (NiPersistentSrcTextureRendererData), no sized descendant)
+  - `NiPixelData` RTTI `0x00ddf5cc`, GetRTTI `0x0068d810`, vftable `0x00cc0730` (18 slots; single vtable), CreateObject `0x0068ce20`, size 0x70
+  - `NiPosData` RTTI `0x00ddfb38`, GetRTTI `0x007ac2b0`, vftable `0x00cd8b48` (18 slots; single vtable), CreateObject `0x007af1b0`, size 0x18
+  - `NiRenderTargetGroup` RTTI `0x00dde164`, GetRTTI `0x00681800`, vftable `0x00cc01f8` (33 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+  - `NiRenderer` RTTI `0x00dde0bc`, GetRTTI `0x0067ba20`, vftable `0x00cbf8a8` (101 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+    - `NiDX9Renderer` RTTI `0x00ddf9b4`, GetRTTI `0x00761630`, vftable `0x00cd4c48` (101 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+  - `NiRotData` RTTI `0x00ddfb50`, GetRTTI `0x007b09e0`, vftable `0x00cd8ec8` (18 slots; single vtable), CreateObject `0x007b0700`, size 0x18
+  - `NiScreenPolygon` RTTI `0x00ddf864`, GetRTTI `0x006eeb70`, vftable `0x00cce108` (18 slots; single vtable), CreateObject `0x006efcb0`, size 0x1c
+  - `NiScreenTexture` RTTI `0x00ddf7cc`, GetRTTI `0x006de000`, vftable `0x00cccad8` (18 slots; single vtable), CreateObject `0x006dd860`, size 0x20
+  - `NiShaderDeclaration` RTTI `0x00ddf6a8`, GetRTTI `0x0069a910`, vftable ambiguous (3), size ? (>= 0x4 (vftable), no sized descendant)
+  - `NiShadowGenerator` RTTI `0x00ddf6e4`, GetRTTI `0x006a3d90`, vftable `0x00cc1720` (18 slots; single vtable), CreateObject `0x006a3420`, size 0x68
+  - `NiSkinData` RTTI `0x00ddf7d4`, GetRTTI `0x006deea0`, vftable `0x00cccb20` (18 slots; single vtable), CreateObject `0x006de5f0`, size 0x48
+  - `NiSkinInstance` RTTI `0x00ddf6d0`, GetRTTI `0x0069feb0`, vftable `0x00cc1198` (18 slots; single vtable), CreateObject `0x0069f670`, size 0x30
+  - `NiSkinPartition` RTTI `0x00ddf7dc`, GetRTTI `0x006e3080`, vftable `0x00cccb68` (18 slots; single vtable), CreateObject `0x006e25a0`, size 0x10
+  - `NiStringPalette` RTTI `0x00ddfb58`, GetRTTI `0x007b0d50`, vftable `0x00cd8f10` (18 slots; single vtable), CreateObject `0x007b09f0`, size 0x14
+  - `NiTask` RTTI `0x00de2ec8`, GetRTTI `0x007bc400`, vftable `0x00cd93c8` (21 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+    - `NiGeomMorpherUpdateTask` RTTI `0x00ddfb80`, GetRTTI `0x007bc390`, vftable `0x00cd9370` (21 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+    - `NiPSysUpdateTask` RTTI `0x00ddfd70`, GetRTTI `0x0080f6f0`, vftable `0x00cdbf88` (21 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+    - `NiParallelUpdateTaskManager::SignalTask` RTTI `0x00de2ec0`, GetRTTI `0x00ab3d50`, vftable `0x00d00be0` (21 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+  - `NiTaskManager` RTTI `0x00de2ed0`, GetRTTI `0x00ab54f0`, vftable `0x00d00d00` (23 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+    - `NiParallelUpdateTaskManager` RTTI `0x00de2eb8`, GetRTTI `0x00ab3d80`, vftable `0x00d00b78` (24 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+  - `NiTimeController` RTTI `0x00ddf6f4`, GetRTTI `0x006a5810`, vftable `0x00cc18c0` (28 slots; single vtable), size ? (>= 0x4 (vftable), <= 0x34 (NiPSysUpdateCtlr))
+    - `NiBoneLODController` RTTI `0x00ddfbc8`, GetRTTI `0x007c5fb0`, vftable `0x00cd9c30` (28 slots; single vtable), CreateObject `0x007c3a80`, size 0x68
+    - `NiControllerManager` RTTI `0x00ddfc50`, GetRTTI `0x007cf300`, vftable `0x00cda740` (29 slots; single vtable), CreateObject `0x007ce700`, size 0x6c
+    - `NiFloatController` RTTI `0x00ddfce0`, GetRTTI `0x007b0410`, vftable `0x00cd8de8` (28 slots; single vtable), size ? (>= 0x4 (vftable), <= 0x3c (NiRollController))
+      - `NiRollController` RTTI `0x00ddfb48`, GetRTTI `0x007b0460`, vftable `0x00cd8e58` (28 slots; single vtable), CreateObject `0x007b0250`, size 0x3c
+    - `NiInterpController` RTTI `0x00ddfc58`, GetRTTI `0x007cfc20`, vftable `0x00cda838` (40 slots; single vtable), size ? (>= 0x4 (vftable), <= 0x38 (NiTransformController))
+      - `NiGeomMorpherController` RTTI `0x00ddfad0`, GetRTTI `0x007a4070`, vftable `0x00cd8488` (42 slots; single vtable), CreateObject `0x007a3730`, size 0x44
+      - `NiMultiTargetTransformController` RTTI `0x00ddfb18`, GetRTTI `0x0079f1b0`, vftable `0x00cd7ff8` (40 slots; single vtable), CreateObject `0x007aa080`, size 0x40
+      - `NiSingleInterpController` RTTI `0x00ddfc70`, GetRTTI `0x007d1e00`, vftable `0x00cdaaf8` (41 slots; single vtable), size ? (>= 0x4 (vftable), <= 0x38 (NiTransformController))
+        - `NiBoolInterpController` RTTI `0x00ddfce8`, GetRTTI `0x007d4070`, vftable `0x00cdaf08` (42 slots; single vtable), size ? (>= 0x4 (vftable), <= 0x38 (NiVisController))
+          - `NiVisController` RTTI `0x00ddfb78`, GetRTTI `0x007b3600`, vftable `0x00cd9180` (42 slots; single vtable), CreateObject `0x007b3430`, size 0x38
+        - `NiExtraDataController` RTTI `0x00ddfc78`, GetRTTI `0x007d2340`, vftable `0x00cdabc8` (41 slots; single vtable), size ? (>= 0x4 (vftable), <= 0x40 (NiFloatExtraDataController))
+          - `NiColorExtraDataController` RTTI `0x00ddfc40`, GetRTTI `0x007cc200`, vftable `0x00cda5b8` (41 slots; single vtable), CreateObject `0x007cc080`, size 0x40
+          - `NiFloatExtraDataController` RTTI `0x00ddfab0`, GetRTTI `0x007a17e0`, vftable `0x00cd81a0` (41 slots; single vtable), CreateObject `0x007a1660`, size 0x40
+          - `NiFloatsExtraDataController` RTTI `0x00ddfac0`, GetRTTI `0x007a2810`, vftable `0x00cd8338` (41 slots; single vtable), CreateObject `0x007a25c0`, size 0x48
+          - `NiFloatsExtraDataPoint3Controller` RTTI `0x00ddfac8`, GetRTTI `0x007a2eb0`, vftable `0x00cd83e0` (41 slots; single vtable), CreateObject `0x007a2ce0`, size 0x48
+        - `NiFloatInterpController` RTTI `0x00ddfc68`, GetRTTI `0x007d1a90`, vftable `0x00cdaa30` (42 slots; single vtable), size ? (>= 0x4 (vftable), <= 0x38 (NiLightDimmerController))
+          - `NiAlphaController` RTTI `0x00ddfb88`, GetRTTI `0x007bc7c0`, vftable `0x00cd9420` (42 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+          - `NiFlipController` RTTI `0x00ddfaa0`, GetRTTI `0x007a0bf0`, vftable `0x00cd8098` (42 slots; single vtable), CreateObject `0x007a0220`, size 0x54
+          - `NiLightDimmerController` RTTI `0x00ddfaf0`, GetRTTI `0x007a6610`, vftable `0x00cd87a8` (42 slots; single vtable), CreateObject `0x007a64b0`, size 0x38
+          - `NiTextureTransformController` RTTI `0x00ddfb68`, GetRTTI `0x007b20a0`, vftable `0x00cd9028` (42 slots; single vtable), CreateObject `0x007b1cb0`, size 0x50
+        - `NiPSysModifierCtlr` RTTI `0x00ddff0c`, GetRTTI `0x0082aae0`, vftable `0x00cddea8` (42 slots; single vtable), size ? (>= 0x4 (vftable), <= 0x40 (NiPSysInitialRotSpeedVarCtlr))
+          - `NiPSysEmitterCtlr` RTTI `0x00ddfe14`, GetRTTI `0x0081b100`, vftable `0x00cdc9d8` (43 slots; single vtable), CreateObject `0x0081ac40`, size 0x5c
+          - `NiPSysModifierBoolCtlr` RTTI `0x00ddff1c`, GetRTTI `0x0082b690`, vftable `0x00cde030` (44 slots; single vtable), size ? (>= 0x4 (vftable), <= 0x40 (NiPSysModifierActiveCtlr))
+            - `NiPSysModifierActiveCtlr` RTTI `0x00ddfec4`, GetRTTI `0x00826510`, vftable `0x00cdd960` (44 slots; single vtable), CreateObject `0x008263c0`, size 0x40
+          - `NiPSysModifierFloatCtlr` RTTI `0x00ddff14`, GetRTTI `0x0082b000`, vftable `0x00cddf68` (44 slots; single vtable), size ? (>= 0x4 (vftable), <= 0x40 (NiPSysInitialRotSpeedVarCtlr))
+            - `NiPSysAirFieldAirFrictionCtlr` RTTI `0x00ddfd90`, GetRTTI `0x00812870`, vftable `0x00cdc1c8` (44 slots; single vtable), CreateObject `0x00812720`, size 0x40
+            - `NiPSysAirFieldInheritVelocityCtlr` RTTI `0x00ddfd98`, GetRTTI `0x00812c10`, vftable `0x00cdc278` (44 slots; single vtable), CreateObject `0x00812ac0`, size 0x40
+            - `NiPSysAirFieldSpreadCtlr` RTTI `0x00ddfdb8`, GetRTTI `0x00814390`, vftable `0x00cdc3f8` (44 slots; single vtable), CreateObject `0x00814240`, size 0x40
+            - `NiPSysEmitterDeclinationCtlr` RTTI `0x00ddfe24`, GetRTTI `0x0081bdb0`, vftable `0x00cdcb28` (44 slots; single vtable), CreateObject `0x0081bc60`, size 0x40
+            - `NiPSysEmitterDeclinationVarCtlr` RTTI `0x00ddfe2c`, GetRTTI `0x0081c120`, vftable `0x00cdcbd8` (44 slots; single vtable), CreateObject `0x0081bfd0`, size 0x40
+            - `NiPSysEmitterInitialRadiusCtlr` RTTI `0x00ddfe34`, GetRTTI `0x0081c490`, vftable `0x00cdcc88` (44 slots; single vtable), CreateObject `0x0081c340`, size 0x40
+            - `NiPSysEmitterLifeSpanCtlr` RTTI `0x00ddfe3c`, GetRTTI `0x0081c800`, vftable `0x00cdcd38` (44 slots; single vtable), CreateObject `0x0081c6b0`, size 0x40
+            - `NiPSysEmitterPlanarAngleCtlr` RTTI `0x00ddfe44`, GetRTTI `0x0081cb70`, vftable `0x00cdcde8` (44 slots; single vtable), CreateObject `0x0081ca20`, size 0x40
+            - `NiPSysEmitterPlanarAngleVarCtlr` RTTI `0x00ddfe4c`, GetRTTI `0x0081cee0`, vftable `0x00cdce98` (44 slots; single vtable), CreateObject `0x0081cd90`, size 0x40
+            - `NiPSysEmitterSpeedCtlr` RTTI `0x00ddfe54`, GetRTTI `0x0081d250`, vftable `0x00cdcf48` (44 slots; single vtable), CreateObject `0x0081d100`, size 0x40
+            - `NiPSysFieldAttenuationCtlr` RTTI `0x00ddfe5c`, GetRTTI `0x0081d5c0`, vftable `0x00cdcff8` (44 slots; single vtable), CreateObject `0x0081d470`, size 0x40
+            - `NiPSysFieldMagnitudeCtlr` RTTI `0x00ddfe64`, GetRTTI `0x0081d930`, vftable `0x00cdd0a8` (44 slots; single vtable), CreateObject `0x0081d7e0`, size 0x40
+            - `NiPSysFieldMaxDistanceCtlr` RTTI `0x00ddfe6c`, GetRTTI `0x0081dca0`, vftable `0x00cdd158` (44 slots; single vtable), CreateObject `0x0081db50`, size 0x40
+            - `NiPSysGravityStrengthCtlr` RTTI `0x00ddfe84`, GetRTTI `0x0081fd30`, vftable `0x00cdd330` (44 slots; single vtable), CreateObject `0x0081fbe0`, size 0x40
+            - `NiPSysInitialRotAngleCtlr` RTTI `0x00ddfe94`, GetRTTI `0x00820690`, vftable `0x00cdd478` (44 slots; single vtable), CreateObject `0x00820540`, size 0x40
+            - `NiPSysInitialRotAngleVarCtlr` RTTI `0x00ddfe9c`, GetRTTI `0x00820a00`, vftable `0x00cdd528` (44 slots; single vtable), CreateObject `0x008208b0`, size 0x40
+            - `NiPSysInitialRotSpeedCtlr` RTTI `0x00ddfea4`, GetRTTI `0x00820d70`, vftable `0x00cdd5d8` (44 slots; single vtable), CreateObject `0x00820c20`, size 0x40
+            - `NiPSysInitialRotSpeedVarCtlr` RTTI `0x00ddfeac`, GetRTTI `0x008210e0`, vftable `0x00cdd688` (44 slots; single vtable), CreateObject `0x00820f90`, size 0x40
+        - `NiPoint3InterpController` RTTI `0x00ddfcd8`, GetRTTI `0x007d3850`, vftable `0x00cdae30` (42 slots; single vtable), size ? (>= 0x4 (vftable), <= 0x3c (NiMaterialColorController))
+          - `NiLightColorController` RTTI `0x00ddfae8`, GetRTTI `0x007a6210`, vftable `0x00cd8700` (42 slots; single vtable), CreateObject `0x007a5f50`, size 0x3c
+          - `NiMaterialColorController` RTTI `0x00ddfb08`, GetRTTI `0x007a8920`, vftable `0x00cd8988` (42 slots; single vtable), CreateObject `0x007a86d0`, size 0x3c
+        - `NiTransformController` RTTI `0x00ddfad8`, GetRTTI `0x007a4990`, vftable `0x00cd8530` (41 slots; single vtable), CreateObject `0x007a47b0`, size 0x38
+    - `NiLookAtController` RTTI `0x00ddfaf8`, GetRTTI `0x007a6fa0`, vftable `0x00cd8850` (28 slots; single vtable), CreateObject `0x007a6c10`, size 0x3c
+    - `NiPSysResetOnLoopCtlr` RTTI `0x00ddfd24`, GetRTTI `0x0080a2e0`, vftable `0x00cdbad0` (28 slots; single vtable), CreateObject `0x0080a1d0`, size 0x38
+    - `NiPSysUpdateCtlr` RTTI `0x00ddfd60`, GetRTTI `0x0080e040`, vftable `0x00cdbe98` (28 slots; single vtable), CreateObject `0x0080df30`, size 0x34
+    - `NiPathController` RTTI `0x00ddfb20`, GetRTTI `0x007abf00`, vftable `0x00cd8ad8` (28 slots; single vtable), CreateObject `0x007ab810`, size 0x64
+    - `NiShaderTimeController` RTTI `0x00de2ea0`, GetRTTI `0x00ab0dc0`, vftable `0x00d00958` (34 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+  - `NiTransformData` RTTI `0x00ddfae0`, GetRTTI `0x007a5ac0`, vftable `0x00cd86b8` (18 slots; single vtable), CreateObject `0x007a54d0`, size 0x38
+- `NiRenderClick` RTTI `0x00ddf75c`, GetRTTI `0x00693860`, vftable `0x00cc0be8` (7 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+  - `NiViewRenderClick` RTTI `0x00ddf744`, GetRTTI `0x00693960`, vftable `0x00cc0c04` (7 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+    - `NiShadowRenderClick` RTTI `0x00ddf754`, GetRTTI `0x00693c60`, vftable `0x00cc0c44` (7 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+- `NiRenderClickValidator` RTTI `0x00ddf93c`, GetRTTI `0x006d14e0`, vftable `0x00ccc47c` (4 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+  - `NiShadowClickValidator` RTTI `0x00ddf934`, GetRTTI `0x006d0ea0`, vftable `0x00ccc43c` (4 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+- `NiRenderListProcessor` RTTI `0x00ddf88c`, GetRTTI `0x006a11b0`, vftable `0x00cc1600` (5 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+  - `NiMaterialSwapProcessor` RTTI `0x00ddf95c`, GetRTTI `0x006d1730`, vftable `0x00ccc48c` (5 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+- `NiRenderView` RTTI `0x00ddf73c`, GetRTTI `0x00693160`, vftable `0x00cc0b9c` (5 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+  - `Ni3DRenderView` RTTI `0x00ddf764`, GetRTTI `0x00693270`, vftable `0x00cc0bb0` (5 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+  - `NiScreenFillingRenderView` RTTI `0x00ddf98c`, GetRTTI `0x00737ea0`, vftable `0x00cd0d88` (5 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+- `NiShader` RTTI `0x00dde08c`, GetRTTI `0x00675000`, vftable `0x00cbf5a0` (26 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+  - `NiD3DShaderInterface` RTTI `0x00ddf9a4`, GetRTTI `0x0074f1a0`, vftable `0x00cd3a90` (38 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+    - `NiD3DShader` RTTI `0x00ddf99c`, GetRTTI `0x0074c050`, vftable `0x00cd39a8` (39 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+      - `NiD3DDefaultShader` RTTI `0x00ddf9ac`, GetRTTI `0x00753510`, vftable `0x00cd3b60` (39 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+        - `MythicBaseShader` RTTI `0x00de2e60`, GetRTTI `0x009d7280`, vftable `0x00cfc1ac` (40 slots; single vtable; `MythicBaseShader::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+          - `ColorShader` RTTI `0x00de2e08`, GetRTTI `0x009cee00`, vftable `0x00cfb904` (40 slots; single vtable; `ColorShader::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+          - `DepthOnlyShader` RTTI `0x00de2e18`, GetRTTI `0x009d1b50`, vftable `0x00cfbc5c` (40 slots; single vtable; `DepthOnlyShader::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+          - `LightingShader` RTTI `0x00de2db8`, GetRTTI `0x009b2a20`, vftable `0x00cfa8dc` (45 slots; single vtable; `LightingShader::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+            - `AtlasTerrainShader` RTTI `0x00de2dd0`, GetRTTI `0x009c59d0`, vftable `0x00cfb194` (45 slots; single vtable; `AtlasTerrainShader::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+            - `GameTerrainShader` RTTI `0x00de2dd8`, GetRTTI `0x009c76a0`, vftable `0x00cfb344` (45 slots; single vtable; `GameTerrainShader::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+            - `GenericShader` RTTI `0x00de2de8`, GetRTTI `0x009c98c0`, vftable `0x00cfb4b4` (46 slots; single vtable; `GenericShader::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+              - `WarhammerCharacterShader` RTTI `0x00de2df0`, GetRTTI `0x009ce3b0`, vftable `0x00cfb684` (46 slots; single vtable; `WarhammerCharacterShader::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+              - `WarhammerFixtureBlendShader` RTTI `0x00de2e00`, GetRTTI `0x009ce3d0`, vftable `0x00cfb804` (46 slots; single vtable; `WarhammerFixtureBlendShader::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+              - `WarhammerFixtureShader` RTTI `0x00de2df8`, GetRTTI `0x009ce3c0`, vftable `0x00cfb744` (46 slots; single vtable; `WarhammerFixtureShader::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+          - `NewWaterShader` RTTI `0x00de2e48`, GetRTTI `0x009d4870`, vftable `0x00cfbeec` (45 slots; single vtable; `NewWaterShader::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+          - `ShadowMapShader` RTTI `0x00de2e20`, GetRTTI `0x009d24b0`, vftable `0x00cfbd54` (40 slots; single vtable; `ShadowMapShader::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+          - `SimpleFFP` RTTI `0x00de2e28`, GetRTTI `0x009d32f0`, vftable `0x00cfbdfc` (40 slots; single vtable; `SimpleFFP::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+          - `UIDecalShader` RTTI `0x00de2e58`, GetRTTI `0x009d66e0`, vftable `0x00cfc0f4` (40 slots; single vtable; `UIDecalShader::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+          - `UiShader` RTTI `0x00de2e50`, GetRTTI `0x009d5cb0`, vftable `0x00cfbfc4` (40 slots; single vtable; `UiShader::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+          - `VCAlphaTextureBlendShader` RTTI `0x00de2e10`, GetRTTI `0x009cf930`, vftable `0x00cfbb8c` (40 slots; single vtable; `VCAlphaTextureBlendShader::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+        - `UOBaseShader` RTTI `0x00dcec70`, GetRTTI `0x0058ddc0`, vftable `0x00cb39dc` (41 slots; single vtable; `UOBaseShader::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+          - `UODeathShaderFFP` RTTI `0x00dbd350`, GetRTTI `0x00416da0`, vftable `0x00c9dc6c` (41 slots; single vtable; `UODeathShaderFFP::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+          - `UODeathShaderHLSL` RTTI `0x00dbd358`, GetRTTI `0x00416db0`, vftable `0x00c9dd14` (41 slots; single vtable; `UODeathShaderHLSL::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+          - `UOEffectsShaderFFP` RTTI `0x00dcefb8`, GetRTTI `0x0058e330`, vftable `0x00cb3b04` (41 slots; single vtable; `UOEffectsShaderFFP::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+          - `UOEffectsShaderHLSL` RTTI `0x00dcefc0`, GetRTTI `0x0058e340`, vftable `0x00cb3bac` (41 slots; single vtable; `UOEffectsShaderHLSL::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+          - `UOFadeShader` RTTI `0x00dbddd0`, GetRTTI `0x00424a00`, vftable `0x00c9eb94` (41 slots; single vtable; `UOFadeShader::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+          - `UOLightingShader` RTTI `0x00dcf308`, GetRTTI `0x0058f440`, vftable `0x00cb3c54` (41 slots; single vtable; `UOLightingShader::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+          - `UONightMapShader` RTTI `0x00dcf310`, GetRTTI `0x0058f450`, vftable `0x00cb3cfc` (41 slots; single vtable; `UONightMapShader::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+          - `UOShadowShader` RTTI `0x00dcf710`, GetRTTI `0x00591f20`, vftable `0x00cb3e1c` (41 slots; single vtable; `UOShadowShader::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+          - `UOSpriteShaderDepthOnly` RTTI `0x00dcfa68`, GetRTTI `0x00592730`, vftable `0x00cb410c` (41 slots; single vtable; `UOSpriteShaderDepthOnly::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+          - `UOSpriteShaderFFP` RTTI `0x00dcfa58`, GetRTTI `0x00592710`, vftable `0x00cb3fbc` (41 slots; single vtable; `UOSpriteShaderFFP::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+            - `UOSpriteShaderMob` RTTI `0x00dcfa60`, GetRTTI `0x00592720`, vftable `0x00cb4064` (41 slots; single vtable; `UOSpriteShaderMob::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+          - `UOSpriteShaderHLSL` RTTI `0x00dcfa78`, GetRTTI `0x00592750`, vftable `0x00cb425c` (41 slots; single vtable; `UOSpriteShaderHLSL::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+          - `UOSpriteShaderShadow` RTTI `0x00dcfa70`, GetRTTI `0x00592740`, vftable `0x00cb41b4` (41 slots; single vtable; `UOSpriteShaderShadow::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+          - `UOSpriteUIShaderFFP` RTTI `0x00dcfa80`, GetRTTI `0x00592760`, vftable `0x00cb4304` (41 slots; single vtable; `UOSpriteUIShaderFFP::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+          - `UOSpriteUIShaderHLSL` RTTI `0x00dcfa88`, GetRTTI `0x00592770`, vftable `0x00cb43ac` (41 slots; single vtable; `UOSpriteUIShaderHLSL::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+          - `UOStaticTerrainShader` RTTI `0x00dcfae0`, GetRTTI `0x00595670`, vftable `0x00cb446c` (41 slots; single vtable; `UOStaticTerrainShader::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+          - `UOTerrainShader` RTTI `0x00dcfe28`, GetRTTI `0x00596980`, vftable `0x00cb4534` (41 slots; single vtable; `UOTerrainShader::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+          - `UOWaterShader` RTTI `0x00dd0178`, GetRTTI `0x0059b8b0`, vftable `0x00cb46bc` (41 slots; single vtable; `UOWaterShader::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+      - `NiDX9ErrorShader` RTTI `0x00ddfa54`, GetRTTI `0x00779af0`, vftable `0x00cd6a40` (39 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+      - `NiDX9FragmentShader` RTTI `0x00ddfa4c`, GetRTTI `0x007778c0`, vftable `0x00cd6898` (40 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+        - `NiDX9ShadowWriteShader` RTTI `0x00ddfa44`, GetRTTI `0x00776980`, vftable `0x00cd67d8` (40 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+- `NiShader::NiShaderInstanceDescriptor` RTTI `0x00dde094`, GetRTTI `0x00777e00`, vftable `0x00cd6938` (2 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+  - `NiFragmentShaderInstanceDescriptor` RTTI `0x00ddf91c`, GetRTTI `0x007778d0`, vftable `0x00cd688c` (2 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+- `NiShadowClickGenerator` RTTI `0x00ddf92c`, GetRTTI `0x00711800`, vftable `0x00ccfd68` (8 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+  - `NiDefaultShadowClickGenerator` RTTI `0x00ddf924`, GetRTTI `0x007110a0`, vftable `0x00ccfd2c` (13 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+- `NiShadowMap` RTTI `0x00ddf698`, GetRTTI `0x0058a510`, vftable `0x00cb233c` (2 slots; single vtable; `NiShadowMap::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+  - `NiShadowCubeMap` RTTI `0x00ddf690`, GetRTTI `0x0058a5a0`, vftable `0x00cb2348` (2 slots; single vtable; `NiShadowCubeMap::vftable`), size ? (>= 0x4 (vftable), no sized descendant)
+- `NiShadowTechnique` RTTI `0x00ddf964`, GetRTTI `0x00736370`, vftable `0x00cd0c10` (4 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+  - `NiVSMShadowTechnique` RTTI `0x00ddf96c`, GetRTTI `0x00736e00`, vftable `0x00cd0c20` (4 slots; single vtable), size ? (>= 0x4 (vftable), no sized descendant)
+
+## Ambiguous vtables
+
+- `NiObject::GetRTTI` is in 21 vtables: `0x00cbeec0` (18 slots) `0x00cceec0` (18 slots) `0x00cd5d08` (21 slots) `0x00cd62c0` (19 slots) `0x00cd63f0` (21 slots) `0x00cd64e0` (19 slots) `0x00cd6768` (22 slots) `0x00cd69a8` (19 slots) `0x00cd6c58` (19 slots) `0x00ce548c` (18 slots, `EmitterGroup::vftable`) `0x00ce5514` (18 slots, `ParticleSystemManager::vftable`) `0x00ce556c` (18 slots, `PostProcessEffectsManager::vftable`) `0x00ce55c4` (18 slots, `DynamicEffectsManager::vftable`) `0x00ce6004` (18 slots, `BloomPostProcessEffect::BloomObjectInfo::vftable`) `0x00ce6164` (18 slots, `HDRBloomPostProcessEffect::BloomObjectInfo::vftable`) `0x00ce63cc` (21 slots, `WeaponTrailGroup::vftable`) `0x00cee57c` (19 slots, `MythUi::Texture::vftable`) `0x00cf5e74` (18 slots, `MythUi::ScreenTexture::vftable`) `0x00cf880c` (18 slots, `MythUi::Canvas::vftable`) `0x00cfb0a4` (18 slots, `GenericShaderTexturingProperty::BlendOverrideInfo::vftable`) `0x00cfb0f4` (18 slots, `GenericShaderTexturingProperty::TextureOverlayInfo::vftable`)
+- `NiShaderDeclaration::GetRTTI` is in 3 vtables: `0x00cc0de8` (22 slots) `0x00cd59d8` (29 slots) `0x00cd6fa8` (29 slots)
+- `NiGPUProgramCache::GetRTTI` is in 2 vtables: `0x00cd6b70` (28 slots) `0x00d00a88` (27 slots)
+
+## MSVC RTTI mismatches
+
+None.
+
+## MSVC classes without their own NiRTTI
+
+- `PostProcessEffect::vftable` `0x00c9d9dc` uses `Effect::GetRTTI` (no NiRTTI record of its own)
+- `UODeathPostProcessEffect::vftable` `0x00c9db2c` uses `Effect::GetRTTI` (no NiRTTI record of its own)
+- `UOFadePostProcessEffect::vftable` `0x00c9ea4c` uses `Effect::GetRTTI` (no NiRTTI record of its own)
+- `UOLightingPostProcessEffect::vftable` `0x00c9edbc` uses `Effect::GetRTTI` (no NiRTTI record of its own)
+- `UOHealthBarOverlayDisplay::vftable` `0x00c9ff14` uses `NiNode::GetRTTI` (no NiRTTI record of its own)
+- `UOShadowPostProcessEffect::vftable` `0x00ca0434` uses `Effect::GetRTTI` (no NiRTTI record of its own)
+- `EmitterGroup::vftable` `0x00ce548c` uses `NiObject::GetRTTI` (no NiRTTI record of its own)
+- `ParticleSystemManager::vftable` `0x00ce5514` uses `NiObject::GetRTTI` (no NiRTTI record of its own)
+- `PostProcessEffectsManager::vftable` `0x00ce556c` uses `NiObject::GetRTTI` (no NiRTTI record of its own)
+- `DynamicEffectsManager::vftable` `0x00ce55c4` uses `NiObject::GetRTTI` (no NiRTTI record of its own)
+- `ColorPostProcessEffect::vftable` `0x00ce5e04` uses `Effect::GetRTTI` (no NiRTTI record of its own)
+- `BloomPostProcessEffect::vftable` `0x00ce5f04` uses `Effect::GetRTTI` (no NiRTTI record of its own)
+- `BloomPostProcessEffect::BloomObjectInfo::vftable` `0x00ce6004` uses `NiObject::GetRTTI` (no NiRTTI record of its own)
+- `HDRBloomPostProcessEffect::vftable` `0x00ce6064` uses `Effect::GetRTTI` (no NiRTTI record of its own)
+- `HDRBloomPostProcessEffect::BloomObjectInfo::vftable` `0x00ce6164` uses `NiObject::GetRTTI` (no NiRTTI record of its own)
+- `MotionBlurPostProcessEffect::vftable` `0x00ce61ec` uses `Effect::GetRTTI` (no NiRTTI record of its own)
+- `WeaponTrailGroup::vftable` `0x00ce63cc` uses `NiObject::GetRTTI` (no NiRTTI record of its own)
+- `MythUi::Texture::vftable` `0x00cee57c` uses `NiObject::GetRTTI` (no NiRTTI record of its own)
+- `MythUi::ScreenTexture::vftable` `0x00cf5e74` uses `NiObject::GetRTTI` (no NiRTTI record of its own)
+- `MythUi::Canvas::vftable` `0x00cf880c` uses `NiObject::GetRTTI` (no NiRTTI record of its own)
+- `GenericShaderTexturingProperty::BlendOverrideInfo::vftable` `0x00cfb0a4` uses `NiObject::GetRTTI` (no NiRTTI record of its own)
+- `GenericShaderTexturingProperty::TextureOverlayInfo::vftable` `0x00cfb0f4` uses `NiObject::GetRTTI` (no NiRTTI record of its own)
+- `MythicShadowMapGenerator::vftable` `0x00cfc254` uses `MythicShadowGenerator::GetRTTI` (no NiRTTI record of its own)
+
+## Unmatched registration call sites
+
+- `0x00809aa0` (UNCONDITIONAL_CALL, previous instruction `MOV byte ptr [0x00e3213a],0x1`)
+- `0x007dd7d3` (UNCONDITIONAL_CALL, previous instruction `MOV byte ptr [0x00e32138],0x1`)
+
+## Rejected GetRTTI byte matches
+
+- `0x0052363a` returns `0x00dcb110` (`P6R`)
+- `0x00b892bf` returns `0x00da3248` (`PST`), a function with no data pointer to it
+
+## Other anomalies
+
+- `NiPersistentSrcTextureRendererData` has 2 GetRTTI functions: `0x006fc620`, `0x00772270`
+- Pointer to `TerrainTriShape::GetRTTI` at `0x00c6dd38` is not in a vtable
+- Pointer to `TerrainTriShape::GetRTTI` at `0x00ca8770` is not in a vtable
+- `NiShadowMap::GetRTTI` is slot 0 of vtable `0x00cb233c` (labeled or stored by code)
+- `NiShadowCubeMap::GetRTTI` is slot 0 of vtable `0x00cb2348` (labeled or stored by code)
+- `NiShadowTechnique::GetRTTI` is slot 0 of vtable `0x00cd0c10` (labeled or stored by code)
+- `NiVSMShadowTechnique::GetRTTI` is slot 0 of vtable `0x00cd0c20` (labeled or stored by code)
+- `NiFragmentShaderInstanceDescriptor::GetRTTI` is slot 0 of vtable `0x00cd688c` (labeled or stored by code)
+- `NiShader::NiShaderInstanceDescriptor::GetRTTI` is slot 0 of vtable `0x00cd6938` (labeled or stored by code)
+- Loader `NiAutoNormalParticles` registered at `0x006a0249` has no NiRTTI record of that name; its CreateObject is shared with `NiParticles`
+- Loader `NiAutoNormalParticlesData` registered at `0x006a0258` has no NiRTTI record of that name; its CreateObject is shared with `NiParticlesData`
+- Loader `NiClusterAccumulator` registered at `0x006a02b2` has no NiRTTI record of that name; its CreateObject is shared with `NiAlphaAccumulator`
+- Loader `NiCollisionSwitch` registered at `0x006a02c1` has no NiRTTI record of that name; its CreateObject is shared with `NiNode`
+- Loader `NiKeyframeController` registered at `0x0079640f` has no NiRTTI record of that name; its CreateObject is shared with `NiTransformController`
+- Loader `NiKeyframeData` registered at `0x0079641e` has no NiRTTI record of that name; its CreateObject is shared with `NiTransformData`
+- Loader `NiVisData` registered at `0x00796568` has no NiRTTI record of that name; its CreateObject is shared with `NiBoolData`
+- `NiPersistentSrcTextureRendererData` is registered 4 times (site -> CreateObject): `0x006a03de` -> `0x006fba90`, `0x006fc554` -> `0x006fba90`, `0x00754b33` -> `0x006fba90`, `0x00754fa1` -> `0x00771ef0`; the first is used
+- `NiAdditionalGeometryData` is registered but never unregistered
+- `NiSourceCubeMap` is registered but never unregistered
+
+## Applied changes
+
+Total: 2458
+
+- structures created: 344
+- namespaces created: 254
+- labels created: 611
+- NiRTTI records typed: 343
+- functions created: 388
+- functions renamed: 518
+
+## Kept existing
+
+None.

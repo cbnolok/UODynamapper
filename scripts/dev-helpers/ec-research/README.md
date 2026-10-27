@@ -56,6 +56,10 @@ listing is a navigation aid, not independent proof of shader semantics.
 For Direct3D 9 / D3DX9 signatures and COM interface types, apply the archive in
 [`ghidra-d3d9-types`](ghidra-d3d9-types/README.md).
 
+To recover Gamebryo class names, inheritance, vtables, stream loaders and object
+sizes from NiRTTI records, run the script in
+[`ghidra-gamebryo-classes`](ghidra-gamebryo-classes/README.md).
+
 For an already analyzed program in the configured ghidra-mcp GUI project, use
 the read-only HTTP helper instead of opening another project:
 
