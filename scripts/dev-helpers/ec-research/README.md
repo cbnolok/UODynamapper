@@ -64,6 +64,9 @@ structures with Gamebryo 2.6 member layouts where the sizes match, using
 from Gamebryo 2.6 by vtable slot and BSim similarity with
 [`ghidra-gamebryo-names`](ghidra-gamebryo-names/README.md).
 
+To name UO's Lua API bindings, the Lua 5.1 library and core functions and LuaPlus
+helpers, run the script in [`ghidra-lua-names`](ghidra-lua-names/README.md).
+
 For an already analyzed program in the configured ghidra-mcp GUI project, prefer
 the plugin's MCP tools when the client exposes them. Start with
 `get_metadata(program="UOSA.exe")`; batch known entries with

@@ -1,0 +1,960 @@
+# Lua function names
+
+Program: UOSA.exe
+SHA-256: 5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50
+Source map: `lua51_sources.tsv`
+Mode: analysis only
+
+| Item | Count |
+|---|---:|
+| UO API registrations (helper calls and table entries) | 560 |
+| Distinct UO API names | 536 |
+| Distinct UO API C functions | 536 |
+| UO API C functions not yet defined as functions | 0 |
+| Unresolved helper call sites | 3 |
+| LuaPlus global registrations (secondary helpers) | 8 functions |
+| luaL_Reg tables found | 14 |
+| luaL_Reg tables matched to a source table | 13 |
+| Source strings considered / accepted | 374 / 124 |
+| Functions named by LUA_API | 544 |
+| Functions named by LUA_REG | 162 |
+| Functions named by LUA_STRING | 59 |
+| Conflicts | 0 |
+| Agreements between sources | 22 |
+
+Detected functions:
+
+- UO API registration helper (`UOLua::RegisterFunction`, inferred): `0x0098fb25` (558 survey hits)
+- `luaL_register`: `0x00a9cae0`
+- Unrolled `luaL_openlibs` cluster: `0x00a862e7`
+- LUA_STRING target range: `0x00a60380`-`0x00ac2c00` (LUA_REG functions +/- 0x00020000)
+- Range of named Lua/LuaPlus functions: `0x00a80380`-`0x00aaaaf0`
+
+## Other registration-like helpers
+
+- `0x00a7c020` `FUN_00a7c020`: 8 registrations, name in argument 2, code in argument 3; named in namespace `LuaPlus`
+- `0x00a8ef60` `FUN_00a8ef60`: 8 survey hits, no consistent name/code argument positions; ignored
+- `0x00b6b4e5` `_atexit`: 6 survey hits, no consistent name/code argument positions; ignored
+- `0x00b7636c` `FUN_00b7636c`: 17 survey hits, no consistent name/code argument positions; ignored
+- `0x00685d40` `NiStream::RegisterLoader`: name in argument 1, code in argument 2, outside the Lua range; ignored
+
+## Unresolved registration sites
+
+- `0x00a7bfcd` (LuaPlus helper): arguments `EDX`, `ECX`, `EAX`, `0x0`
+- `0x00a7bff0` (LuaPlus helper): arguments `EDX`, `ECX`, `0xa776f0`, `EAX`
+- `0x00a7c012` (LuaPlus helper): arguments `EDX`, `ECX`, `0xa77740`, `EAX`
+
+## UO API: one function under several names, one name for several functions
+
+None.
+
+## Validation against the UI scripts
+
+- 114 Lua files scanned
+- 343 of 536 registered UO API names appear in the UI scripts
+- 193 registered names not referenced by the UI: _LabelGetLinkColor, _LabelGetText, _LabelGetTextColor, _LabelGetTextDimensions, _WindowGetShowing, ActionButtonGroupSetGameActionData, ActionButtonGroupSetGameActionTrigger, ActionButtonGroupSetIcon, ActionButtonGroupSetNumButtons, ActionButtonGroupSetText, ActionButtonGroupSetTimeAbbreviations, ActionButtonGroupSetTimeFormat, ActionButtonGroupSetTimer, ActionButtonGroupSetTintColor, AnimatedImageSetTexture, BuildTableFromCSV, ButtonGetCheckButtonFlag, ButtonGetHighlightFlag, ButtonGetStayDownFlag, CheckForNewChannel, CircleImageSetFillParams, CircleImageSetTextureSlice, ClearCurrentTarget, ColorPickerAddColor, ColorPickerAddColorAtPosition, ColorPickerClear, ColorPickerGetColorById, ColorPickerGetColorSize, ColorPickerGetColorSpacing, ColorPickerGetTexDims, ComboBoxExternalOpenMenu, ComboBoxGetDisabledFlag, ComboBoxGetSelectedText, ComboBoxIsMenuOpen, ComboBoxSetDisabledFlag, CooldownDisplaySetCooldown, CreateUIDocumentFile, DeleteCharacter, DockableWindowGetTabShowing, DockableWindowSetAllTabsAlphas, DockableWindowSetTabShowing, DragSlotPickupAction, DynamicImageClearCustomShader, DynamicImageHasTexture, DynamicImageSetTextureOrientation, DynamicImageSetTextureSlice, ExitGame, ForceProcessAllWindowAnchors, GetBuildVersion, GetCheckForCircularDependencies, GetLoginServers, GetMapIconData, GetStringFormatFromTable, GetStringFromTable, HasReceivedServerFeatures, HorizontalScrollbarGetLineSize, HorizontalScrollbarGetMaxScrollPosition, HorizontalScrollbarGetPageSize, HorizontalScrollbarGetScrollPosition, HorizontalScrollbarSetLineSize, HorizontalScrollbarSetMaxScrollPosition, HorizontalScrollbarSetPageSize, HorizontalScrollbarSetScrollPosition, HotbarCreateNewItem, HousingClearCurrentTarget, HousingTileIDTableBuilt, HS_HideTargetingCursor, HS_ShowTargetingCursor, IsConnectedToKRServer, IsLoginBefore, IsOneCharPerAcct, IsShiftDown, LabelGetFont, LabelGetWordWrap, LabelSetLinkColor, ListBoxSetDataTable, ListBoxSetVisibleRowCount, LoadResources, LoadStringTable, LogDisplayGetShowFilterName, LogDisplayGetShowLogName, LogDisplayGetShowTimestamp, LogDisplayGetTextFadeTime, LogDisplayHideFilterSubType, LogDisplayIsScrolledToBottom, LogDisplayIsScrolledToTop, LogDisplayRemoveLog, LogDisplayScrollToTop, LogLuaMessage, LogSystem, ModuleInitialize, ModuleLoad, ModuleRestrictedLoad, ModuleSetEnabled, ModulesGetData, ModulesInitializeAllEnabled, ModulesInitializeRestricted, ModulesLoadFromDirectory, ModulesLoadFromListFile, PageWindowAddPageBreak, PageWindowAddSplitableWindow, PageWindowClearPageBreaks, PageWindowClearSplitableWindows, PageWindowGetCurrentPage, PageWindowGetNumPages, PageWindowGetNumPagesDisplayed, PageWindowRemovePageBreak, PageWindowRemoveSplitableWindow, PageWindowSetCurrentPage, PageWindowUpdatePages, RegisterEventHandler, RegisterWindowSet, ReleaseTexture, RequestTexture, ScaleInterface, SelectCharacter, SelectShard, SendTextEntry, SetAgreementAccepted, SetCheckForCircularDependencies, SetItemDragging, SetLoginServer, SetStaticHotbarPage, Settings.LoadChatSettings, SliderBarGetDisabledFlag, SliderBarSetDisabledFlag, StatusBarGetCurrentValue, StatusBarSetBackgroundTint, StatusBarSetForegroundTint, StatusBarStopInterpolating, TextEditBoxGetFont, TextEditBoxGetTextColor, TextEditBoxInsertText, TextLogAddFilterType, TextLogAddSingleByteEntry, TextLogCreateWithLimit, TextLogGetEntry, TextLogGetIncrementalSaving, TextLogGetNumEntries, TextLogGetUpdateEventId, TextLogLoadFromFile, TextLogSaveLog, TryLogin, UndoLogin, UnloadStringTable, UnregisterEventHandler, UOEditUserWaypoint, UORadarGetFacetDimensions, UOResetWaypointMapFacet, UOSetWaypointTypeDisplayInfo, UpdateCustomUI, UserActionGetNumSlots, UserActionGetSpecialId, UserActionInvokeVirtue, UserActionMacroAddNewAction, UserActionPeaceMode, UserActionSetId, UserActionTargetByResourceGetUseObjectId, UserActionTargetByResourceSetUseObjectId, UserActionToggleAlwaysRun, UserActionToggleCircleOfTransparency, UserActionUseObjectTypeGetIconObjectTypeHue, UserActionUseObjectTypeSetIconObjectTypeHue, UserActionWarMode, VerticalScrollbarGetLineSize, VerticalScrollbarGetPageSize, VerticalScrollbarGetScrollPosition, VerticalScrollbarSetLineSize, VerticalScrollbarSetMaxScrollPosition, VerticalScrollbarSetPageSize, VerticalScrollbarSetScrollPosition, WindowBatchDraw, WindowBreakPoint, WindowGetFontAlpha, WindowGetHandleInput, WindowGetLayer, WindowGetPopable, WindowGetResizing, WindowGetTabOrder, WindowIsGameActionLocked, WindowIsSticky, WindowResizeOnChildren, WindowRestoreDefaultSettings, WindowSetDrawWhenInterfaceHidden, WindowSetGameActionData, WindowSetGameActionTrigger, WindowSetPopable, WindowSetRelativeScale, WindowSetUpdateFrequency, WindowStartPositionAnimation, WindowStartScaleAnimation, WindowStopPositionAnimation, WindowUnregisterCoreEventHandler
+- 7 global names called by the UI but neither registered nor defined in the scripts: `ERROR` (4 calls), `GetFormatStringFromTable` (1 calls), `LabelGetText` (11 calls; `_LabelGetText` is registered), `LabelGetTextColor` (3 calls; `_LabelGetTextColor` is registered), `LabelGetTextDimensions` (15 calls; `_LabelGetTextDimensions` is registered), `WindowGetDimensions` (100 calls; `_WindowGetDimensions` is registered), `WindowGetShowing` (103 calls; `_WindowGetShowing` is registered)
+
+## Texture, image, icon and art related UO API names
+
+- `ActionButtonGroupSetIcon` `0x0092973c`
+- `AnimatedImageSetPlaySpeed` `0x0092b2dd`
+- `AnimatedImageSetTexture` `0x0092b027`
+- `AnimatedImageStartAnimation` `0x0092b0fe`
+- `AnimatedImageStopAnimation` `0x0092b23b`
+- `ButtonSetTexture` `0x008ff094`
+- `CircleImageSetFillParams` `0x0092c997`
+- `CircleImageSetRotation` `0x0092cc60`
+- `CircleImageSetTexture` `0x0092c83d`
+- `CircleImageSetTextureScale` `0x0092cab4`
+- `CircleImageSetTextureSlice` `0x0092cb89`
+- `DynamicImageClearCustomShader` `0x008f5627`
+- `DynamicImageHasTexture` `0x008f53f0`
+- `DynamicImageSetCustomShader` `0x008f54d8`
+- `DynamicImageSetRotation` `0x008f5313`
+- `DynamicImageSetTexture` `0x008f4dc3`
+- `DynamicImageSetTextureDimensions` `0x008f503d`
+- `DynamicImageSetTextureOrientation` `0x008f5152`
+- `DynamicImageSetTextureScale` `0x008f4f68`
+- `DynamicImageSetTextureSlice` `0x008f5230`
+- `GenericGumpGetItemPropertiesId` `0x004e33d0`
+- `GenericGumpGetToolTipText` `0x004e31e0`
+- `GenericGumpOnClicked` `0x004e3020`
+- `GenericGumpOnDoubleClicked` `0x004e3100`
+- `GenericGumpOnRClicked` `0x004dd9e0`
+- `GetIconData` `0x008d950a`
+- `GetMapIconData` `0x008d960f`
+- `GumpManagerGetPlayerFaceType` `0x004f2c10`
+- `GumpManagerOnCloseContainer` `0x004f1d40`
+- `GumpManagerRequestBookPages` `0x004f1ef0`
+- `GumpManagerSendAuthorTitle` `0x004f2960`
+- `GumpManagerSendBookPages` `0x004f2390`
+- `GumpManagerSetPlayerFaceType` `0x004f2e10`
+- `HousingTileIDTableBuilt` `0x006535d0`
+- `ReleaseGumpArt` `0x0051d440`
+- `ReleaseLegacyTileArt` `0x0051c5b0`
+- `ReleaseTexture` `0x0051ce30`
+- `ReleaseTileArt` `0x0051bd30`
+- `RequestGumpArt` `0x0051cfd0`
+- `RequestLegacyTileArt` `0x0051bed0`
+- `RequestTexture` `0x0051c750`
+- `RequestTileArt` `0x0051b650`
+- `SetHousingTileSelected` `0x00654700`
+- `UOGetTextureSize` `0x00528370`
+- `UpdatePortrait` `0x0051b400`
+- `UserActionGetIconId` `0x0053e830`
+- `UserActionSetIconId` `0x0053ea40`
+- `UserActionUseObjectTypeGetIconObjectTypeHue` `0x00570d50`
+- `UserActionUseObjectTypeSetIconObjectTypeHue` `0x00570b50`
+
+## UO API names
+
+- `_LabelGetLinkColor` `0x008f17ba` (registered at `0x008f1191`)
+- `_LabelGetText` `0x008f12f0` (registered at `0x008f1151`)
+- `_LabelGetTextColor` `0x008f154b` (registered at `0x008f1171`)
+- `_LabelGetTextDimensions` `0x008f1aba` (registered at `0x008f11e1`)
+- `_WindowGetDimensions` `0x008ea661` (registered at `0x008e9110`)
+- `_WindowGetShowing` `0x008ea801` (registered at `0x008e9160`)
+- `AcceptCriminalNotification` `0x005d0310` (registered at `0x005cc198`)
+- `AcceptPartyInvite` `0x0052ee20` (registered at `0x0052d6c4`)
+- `ActionButtonGroupSetGameActionData` `0x00929c1f` (registered at `0x009296d0`)
+- `ActionButtonGroupSetGameActionTrigger` `0x00929ac9` (registered at `0x009296c0`)
+- `ActionButtonGroupSetIcon` `0x0092973c` (registered at `0x00929680`)
+- `ActionButtonGroupSetNumButtons` `0x00929f91` (registered at `0x009296e0`)
+- `ActionButtonGroupSetText` `0x00929855` (registered at `0x00929690`)
+- `ActionButtonGroupSetTimeAbbreviations` `0x0092a194` (registered at `0x00929700`)
+- `ActionButtonGroupSetTimeFormat` `0x0092a0a5` (registered at `0x009296f0`)
+- `ActionButtonGroupSetTimer` `0x0092998c` (registered at `0x009296a0`)
+- `ActionButtonGroupSetTintColor` `0x00929dd5` (registered at `0x009296b0`)
+- `AddPlayerToIgnoreList` `0x00626e50` (registered at `0x00622eea`)
+- `AnimatedImageSetPlaySpeed` `0x0092b2dd` (registered at `0x0092b020`)
+- `AnimatedImageSetTexture` `0x0092b027` (registered at `0x0092aff0`)
+- `AnimatedImageStartAnimation` `0x0092b0fe` (registered at `0x0092b000`)
+- `AnimatedImageStopAnimation` `0x0092b23b` (registered at `0x0092b010`)
+- `AttachWindowToWorldObject` `0x00526b90` (registered at `0x0052d4f4`)
+- `BroadcastEvent` `0x008d9095` (registered at `0x008d8973`)
+- `BuildTableFromCSV` `0x008d9127` (registered at `0x008d8985`)
+- `ButtonGetCheckButtonFlag` `0x008fee28` (registered at `0x008fe494`)
+- `ButtonGetDisabledFlag` `0x008feaf0` (registered at `0x008fe454`)
+- `ButtonGetHighlightFlag` `0x008fe955` (registered at `0x008fe434`)
+- `ButtonGetPressedFlag` `0x008fe7bb` (registered at `0x008fe414`)
+- `ButtonGetStayDownFlag` `0x008fec8d` (registered at `0x008fe474`)
+- `ButtonGetText` `0x008fe5f9` (registered at `0x008fe3f4`)
+- `ButtonGetTextDimensions` `0x008ff387` (registered at `0x008fe4c4`)
+- `ButtonSetCheckButtonFlag` `0x008fed5a` (registered at `0x008fe484`)
+- `ButtonSetDisabledFlag` `0x008fea23` (registered at `0x008fe444`)
+- `ButtonSetHighlightFlag` `0x008fe888` (registered at `0x008fe424`)
+- `ButtonSetPressedFlag` `0x008fe6ec` (registered at `0x008fe404`)
+- `ButtonSetStayDownFlag` `0x008febbf` (registered at `0x008fe464`)
+- `ButtonSetText` `0x008fe51c` (registered at `0x008fe3e4`)
+- `ButtonSetTextColor` `0x008ff209` (registered at `0x008fe4b4`)
+- `ButtonSetTexture` `0x008ff094` (registered at `0x008fe4a4`)
+- `ChatCreateChannel` `0x00626cb0` (registered at `0x00622eda`)
+- `ChatJoinChannel` `0x00626af0` (registered at `0x00622eba`)
+- `ChatLeaveChannel` `0x00626c90` (registered at `0x00622eca`)
+- `CheckForNewChannel` `0x00557730` (registered at `0x005583d4`)
+- `CircleImageSetFillParams` `0x0092c997` (registered at `0x0092c806`)
+- `CircleImageSetRotation` `0x0092cc60` (registered at `0x0092c836`)
+- `CircleImageSetTexture` `0x0092c83d` (registered at `0x0092c7f6`)
+- `CircleImageSetTextureScale` `0x0092cab4` (registered at `0x0092c816`)
+- `CircleImageSetTextureSlice` `0x0092cb89` (registered at `0x0092c826`)
+- `ClearCurrentTarget` `0x005cfd50` (registered at `0x005cc158`)
+- `ClosePaperdoll` `0x0052efa0` (registered at `0x0052d6f4`)
+- `ColorPickerAddColor` `0x0093672f` (registered at `0x00935da9`)
+- `ColorPickerAddColorAtPosition` `0x00936888` (registered at `0x00935db9`)
+- `ColorPickerClear` `0x00936a7a` (registered at `0x00935dc9`)
+- `ColorPickerCreateWithColorTable` `0x00936363` (registered at `0x00935d99`)
+- `ColorPickerGetColorAtPoint` `0x00935fc9` (registered at `0x00935d79`)
+- `ColorPickerGetColorById` `0x009361fc` (registered at `0x00935d89`)
+- `ColorPickerGetColorSize` `0x00936d0f` (registered at `0x00935de9`)
+- `ColorPickerGetColorSpacing` `0x00936b2d` (registered at `0x00935dd9`)
+- `ColorPickerGetCoordinatesForColor` `0x00935e00` (registered at `0x00935d69`)
+- `ColorPickerGetTexDims` `0x00936c23` (registered at `0x00935df9`)
+- `ComboBoxAddMenuItem` `0x0092f9e9` (registered at `0x0092f962`)
+- `ComboBoxClearMenuItems` `0x0092fac6` (registered at `0x0092f972`)
+- `ComboBoxExternalOpenMenu` `0x00930091` (registered at `0x0092f9e2`)
+- `ComboBoxGetDisabledFlag` `0x0092fedd` (registered at `0x0092f9c2`)
+- `ComboBoxGetSelectedMenuItem` `0x0092fc45` (registered at `0x0092f992`)
+- `ComboBoxGetSelectedText` `0x0092fd28` (registered at `0x0092f9a2`)
+- `ComboBoxIsMenuOpen` `0x0092ffc4` (registered at `0x0092f9d2`)
+- `ComboBoxSetDisabledFlag` `0x0092fe0e` (registered at `0x0092f9b2`)
+- `ComboBoxSetSelectedMenuItem` `0x0092fb68` (registered at `0x0092f982`)
+- `CooldownDisplaySetCooldown` `0x0091a076` (registered at `0x009194bd`)
+- `CourseMapAddPoint` `0x00537890` (registered at `0x00536194`)
+- `CourseMapClearCourse` `0x005376a0` (registered at `0x00536184`)
+- `CourseMapDeletePoint` `0x00537b70` (registered at `0x005361b4`)
+- `CourseMapIsPlotting` `0x00537120` (registered at `0x00536164`)
+- `CourseMapMovePoint` `0x005379e0` (registered at `0x005361a4`)
+- `CourseMapPlotToggle` `0x005374b0` (registered at `0x00536174`)
+- `CreateUIDocumentFile` `0x008d9c42` (registered at `0x008d8a15`)
+- `CreateWindow` `0x008d8d37` (registered at `0x008d8919`)
+- `CreateWindowFromTemplate` `0x008d8dd7` (registered at `0x008d893d`)
+- `CreateWindowFromTemplateShow` `0x008d8eaa` (registered at `0x008d894f`)
+- `DeclinePartyInvite` `0x0052ee40` (registered at `0x0052d6d4`)
+- `DeleteCharacter` `0x0052a050` (registered at `0x0052d574`)
+- `DeleteFromIgnoreList` `0x0052d9d0` (registered at `0x0052d634`)
+- `DestroyWindow` `0x008d8f92` (registered at `0x008d892b`)
+- `DetachWindowFromWorldObject` `0x005270e0` (registered at `0x0052d504`)
+- `DockableWindowDock` `0x00923e7c` (registered at `0x00923a29`)
+- `DockableWindowGetChildName` `0x0092446d` (registered at `0x00923a79`)
+- `DockableWindowGetRootName` `0x0092411c` (registered at `0x00923a49`)
+- `DockableWindowGetTabOffset` `0x00923d97` (registered at `0x00923a09`)
+- `DockableWindowGetTabShowing` `0x00924af1` (registered at `0x00923ac9`)
+- `DockableWindowGetTabString` `0x00923ae0` (registered at `0x009239e9`)
+- `DockableWindowGetTopWindowName` `0x0092437b` (registered at `0x00923a69`)
+- `DockableWindowIsChildOf` `0x009246ea` (registered at `0x00923a99`)
+- `DockableWindowSetAllTabsAlphas` `0x00924a1a` (registered at `0x00923ad9`)
+- `DockableWindowSetMovable` `0x00924833` (registered at `0x00923aa9`)
+- `DockableWindowSetOffsetOnRootDelete` `0x009245d9` (registered at `0x00923a89`)
+- `DockableWindowSetTabOffset` `0x00923cb4` (registered at `0x00923a19`)
+- `DockableWindowSetTabShowing` `0x00924935` (registered at `0x00923ab9`)
+- `DockableWindowSetTabString` `0x00923bd9` (registered at `0x009239f9`)
+- `DockableWindowSetTopWindow` `0x00924237` (registered at `0x00923a59`)
+- `DockableWindowUnDock` `0x00923fcc` (registered at `0x00923a39`)
+- `DoesPlayerHaveItem` `0x00528c20` (registered at `0x0052d4e4`)
+- `DoesWindowExist` `0x008ec5e8` (registered at `0x008e9360`)
+- `DoesWindowNameExist` `0x0052b960` (registered at `0x0052d624`)
+- `DragSlotAutoPickupObject` `0x004d4450` (registered at `0x004d0014`)
+- `DragSlotDropAction` `0x004d4250` (registered at `0x004d0004`)
+- `DragSlotDropObjectToContainer` `0x004d3bc0` (registered at `0x004cffa4`)
+- `DragSlotDropObjectToObject` `0x004d3c60` (registered at `0x004cffb4`)
+- `DragSlotDropObjectToObjectAtIndex` `0x004d3ce0` (registered at `0x004cffc4`)
+- `DragSlotDropObjectToPaperdoll` `0x004d3de0` (registered at `0x004cffd4`)
+- `DragSlotDropObjectToPaperdollEquipment` `0x004d3f70` (registered at `0x004cffe4`)
+- `DragSlotDropObjectToSource` `0x004d4100` (registered at `0x004cfff4`)
+- `DragSlotPickupAction` `0x004d45e0` (registered at `0x004d0024`)
+- `DragSlotQuantityRequestResult` `0x004d3710` (registered at `0x004cff64`)
+- `DragSlotSetActionMouseClickData` `0x004d3980` (registered at `0x004cff84`)
+- `DragSlotSetExistingActionMouseClickData` `0x004d3a90` (registered at `0x004cff94`)
+- `DragSlotSetObjectMouseClickData` `0x004d38b0` (registered at `0x004cff74`)
+- `DynamicImageClearCustomShader` `0x008f5627` (registered at `0x008f4dbc`)
+- `DynamicImageHasTexture` `0x008f53f0` (registered at `0x008f4d9c`)
+- `DynamicImageSetCustomShader` `0x008f54d8` (registered at `0x008f4dac`)
+- `DynamicImageSetRotation` `0x008f5313` (registered at `0x008f4d8c`)
+- `DynamicImageSetTexture` `0x008f4dc3` (registered at `0x008f4d3c`)
+- `DynamicImageSetTextureDimensions` `0x008f503d` (registered at `0x008f4d5c`)
+- `DynamicImageSetTextureOrientation` `0x008f5152` (registered at `0x008f4d6c`)
+- `DynamicImageSetTextureScale` `0x008f4f68` (registered at `0x008f4d4c`)
+- `DynamicImageSetTextureSlice` `0x008f5230` (registered at `0x008f4d7c`)
+- `ExitGame` `0x0052a2f0` (registered at `0x0052d5e4`)
+- `ForceProcessAllWindowAnchors` `0x008da3bf` (registered at `0x008d8aff`)
+- `GenericGumpGetItemPropertiesId` `0x004e33d0` (registered at `0x004e2324`)
+- `GenericGumpGetToolTipText` `0x004e31e0` (registered at `0x004e2314`)
+- `GenericGumpOnClicked` `0x004e3020` (registered at `0x004e22f4`)
+- `GenericGumpOnDoubleClicked` `0x004e3100` (registered at `0x004e2304`)
+- `GenericGumpOnRClicked` `0x004dd9e0` (registered at `0x004da794`, `0x0052d7cb`)
+- `GetAbilityData` `0x005ca9a0` (registered at `0x005ca034`)
+- `GetAllMobileTargets` `0x005d0b40` (registered at `0x005cc1b8`)
+- `GetBuildVersion` `0x0052ad30` (registered at `0x0052d594`)
+- `GetCheckForCircularDependencies` `0x008da175` (registered at `0x008d8ab7`)
+- `GetCourseMapData` `0x00536af0` (registered at `0x00536154`)
+- `GetCourseMapWindowDimensions` `0x00536400` (registered at `0x00536144`)
+- `GetCurrentDateTime` `0x0052fbd0` (registered at `0x0052d5a4`)
+- `GetDistanceFromPlayer` `0x005d06c0` (registered at `0x005cc1a8`)
+- `GetHueFromRGB` `0x0052b750` (registered at `0x0052d614`)
+- `GetIconData` `0x008d950a` (registered at `0x008d8997`)
+- `GetLoadLuaDebugLibrary` `0x008da0f0` (registered at `0x008d8a93`)
+- `GetLoginServers` `0x006056e0` (registered at `0x0052d798`, `0x006056c4`)
+- `GetMapIconData` `0x008d960f` (registered at `0x008d89a9`)
+- `GetMaxRacialAbilities` `0x005cbc50` (registered at `0x005ca064`)
+- `GetPaperdollObject` `0x005288d0` (registered at `0x0052d4d4`)
+- `GetParentContainer` `0x0059eeb0` (registered at `0x0059d536`)
+- `GetRacialAbilityId` `0x005cb8a0` (registered at `0x005ca054`)
+- `GetRandomNumber` `0x0052eb00` (registered at `0x0052d6b4`)
+- `GetScreenResolution` `0x008d9058` (registered at `0x008d8961`)
+- `GetShardPingInfo` `0x0052dd10` (registered at `0x0052d654`)
+- `GetStringFormatFromTable` `0x008d9a16` (registered at `0x008d89f1`)
+- `GetStringFromTable` `0x008d98f4` (registered at `0x008d89df`)
+- `GetStringFromTid` `0x004bbca0` (registered at `0x004bb9c4`, `0x0052d737`)
+- `GetStringUpppercaseFromTid` `0x004bbfe0` (registered at `0x004bb9e4`, `0x0052d757`)
+- `GetUseLuaErrorHandling` `0x008da06b` (registered at `0x008d8a6f`)
+- `GetWeaponAbilityId` `0x005cb4f0` (registered at `0x005ca044`)
+- `GumpManagerGetPlayerFaceType` `0x004f2c10` (registered at `0x004f17f4`)
+- `GumpManagerOnCloseContainer` `0x004f1d40` (registered at `0x004f17b4`)
+- `GumpManagerRequestBookPages` `0x004f1ef0` (registered at `0x004f17c4`)
+- `GumpManagerSendAuthorTitle` `0x004f2960` (registered at `0x004f17e4`)
+- `GumpManagerSendBookPages` `0x004f2390` (registered at `0x004f17d4`)
+- `GumpManagerSetPlayerFaceType` `0x004f2e10` (registered at `0x004f1804`)
+- `HandleSingleLeftClkTarget` `0x0052e780` (registered at `0x0052d694`)
+- `HasEntitlement` `0x0064a4c0` (registered at `0x00523bda`, `0x0064a4a4`)
+- `HasReceivedServerFeatures` `0x00613a30` (registered at `0x0060fd8f`)
+- `HorizontalScrollbarGetLineSize` `0x009176f9` (registered at `0x009170e4`)
+- `HorizontalScrollbarGetMaxScrollPosition` `0x00917391` (registered at `0x009170a4`)
+- `HorizontalScrollbarGetPageSize` `0x00917545` (registered at `0x009170c4`)
+- `HorizontalScrollbarGetScrollPosition` `0x009171c2` (registered at `0x00917084`)
+- `HorizontalScrollbarSetLineSize` `0x00917610` (registered at `0x009170d4`)
+- `HorizontalScrollbarSetMaxScrollPosition` `0x009172a8` (registered at `0x00917094`)
+- `HorizontalScrollbarSetPageSize` `0x0091745c` (registered at `0x009170b4`)
+- `HorizontalScrollbarSetScrollPosition` `0x009170eb` (registered at `0x00917074`)
+- `HorizontalScrollWindowGetOffset` `0x00922169` (registered at `0x0092207b`)
+- `HorizontalScrollWindowSetOffset` `0x00922092` (registered at `0x0092206b`)
+- `HorizontalScrollWindowUpdateScrollRect` `0x0092224e` (registered at `0x0092208b`)
+- `HotbarClearItem` `0x004fa9b0` (registered at `0x004fa0e4`)
+- `HotbarCreateNewAction` `0x004fbb60` (registered at `0x004fa144`)
+- `HotbarCreateNewItem` `0x004fa6b0` (registered at `0x004fa0d4`)
+- `HotbarExecuteItem` `0x004facd0` (registered at `0x004fa0f4`)
+- `HotbarHasItem` `0x004fa150` (registered at `0x004fa0c4`)
+- `HotbarRegisterNew` `0x004fb1b0` (registered at `0x004fa114`)
+- `HotbarUnregister` `0x004fb350` (registered at `0x004fa124`)
+- `HotbarUpdateBinding` `0x004fb000` (registered at `0x004fa104`)
+- `HousingClearCurrentTarget` `0x00655a50` (registered at `0x00652a14`)
+- `HousingSetRoofZOffset` `0x006558e0` (registered at `0x00652a04`)
+- `HousingTileIDTableBuilt` `0x006535d0` (registered at `0x006529f4`)
+- `HS_HideTargetingCursor` `0x00657030` (registered at `0x006529e4`)
+- `HS_ShowTargetingCursor` `0x00657020` (registered at `0x006529d4`)
+- `HuePickerColorSelected` `0x004f1c50` (registered at `0x004f17a4`)
+- `HueRGBAValue` `0x0052b130` (registered at `0x0052d604`)
+- `IsConnectedToKRServer` `0x00613b70` (registered at `0x0060fd9f`)
+- `IsHealthBarEnabled` `0x005cff40` (registered at `0x005cc178`)
+- `IsInPlayerBackPack` `0x0059eab0` (registered at `0x0059d526`)
+- `IsInternalBuild` `0x005268c0` (registered at `0x0052d484`)
+- `IsLoginBefore` `0x0052abf0` (registered at `0x0052d584`)
+- `IsMobile` `0x0052e300` (registered at `0x0052d684`)
+- `IsObjectIdPet` `0x0064b3e0` (registered at `0x004afcfb`, `0x0064b194`, `0x0064b3d4`)
+- `IsOneCharPerAcct` `0x00613cc0` (registered at `0x0060fdaf`)
+- `IsPartyRequestPending` `0x0052ee60` (registered at `0x0052d6e4`)
+- `IsShiftDown` `0x00528210` (registered at `0x0052d4c4`)
+- `IsValidObject` `0x0052f7a0` (registered at `0x0052d704`)
+- `LabelGetFont` `0x008f19f3` (registered at `0x008f11b1`)
+- `LabelGetWordWrap` `0x008f1db1` (registered at `0x008f11d1`)
+- `LabelSetFont` `0x008f18ce` (registered at `0x008f11a1`)
+- `LabelSetLinkColor` `0x008f165f` (registered at `0x008f1181`)
+- `LabelSetText` `0x008f11f8` (registered at `0x008f1141`)
+- `LabelSetTextAlign` `0x008f1e7e` (registered at `0x008f11f1`)
+- `LabelSetTextColor` `0x008f13c5` (registered at `0x008f1161`)
+- `LabelSetWordWrap` `0x008f1ce2` (registered at `0x008f11c1`)
+- `ListBoxGetDataIndex` `0x0093b0e6` (registered at `0x0093afb1`)
+- `ListBoxSetDataTable` `0x0093afd8` (registered at `0x0093afa1`)
+- `ListBoxSetDisplayOrder` `0x0093b22e` (registered at `0x0093afc1`)
+- `ListBoxSetVisibleRowCount` `0x0093b377` (registered at `0x0093afd1`)
+- `LoadResources` `0x008d8bba` (registered at `0x008d88f5`)
+- `LoadStringTable` `0x008d9781` (registered at `0x008d89bb`)
+- `LoadTextFile` `0x0052a5b0` (registered at `0x0052d5b4`)
+- `LogDisplayAddLog` `0x0091d077` (registered at `0x0091cef0`)
+- `LogDisplayGetFilterColor` `0x0091da73` (registered at `0x0091cfc0`)
+- `LogDisplayGetFilterState` `0x0091dd5b` (registered at `0x0091cfa0`)
+- `LogDisplayGetFont` `0x0091e397` (registered at `0x0091d000`)
+- `LogDisplayGetShowFilterName` `0x0091d7d4` (registered at `0x0091cf70`)
+- `LogDisplayGetShowLogName` `0x0091d639` (registered at `0x0091cf50`)
+- `LogDisplayGetShowTimestamp` `0x0091d49e` (registered at `0x0091cf30`)
+- `LogDisplayGetTextFadeTime` `0x0091e117` (registered at `0x0091cfe0`)
+- `LogDisplayHideFilterSubType` `0x0091deaa` (registered at `0x0091cf80`)
+- `LogDisplayIsScrollbarActive` `0x0091e1e2` (registered at `0x0091d040`)
+- `LogDisplayIsScrolledToBottom` `0x0091e502` (registered at `0x0091d010`)
+- `LogDisplayIsScrolledToTop` `0x0091e7f7` (registered at `0x0091d060`)
+- `LogDisplayRemoveLog` `0x0091d196` (registered at `0x0091cf00`)
+- `LogDisplayResetLineFadeTime` `0x0091e5c9` (registered at `0x0091d030`)
+- `LogDisplayScrollToBottom` `0x0091e45e` (registered at `0x0091d020`)
+- `LogDisplayScrollToTop` `0x0091e753` (registered at `0x0091d070`)
+- `LogDisplaySetFilterColor` `0x0091d887` (registered at `0x0091cfb0`)
+- `LogDisplaySetFilterState` `0x0091dc0d` (registered at `0x0091cf90`)
+- `LogDisplaySetFont` `0x0091e2ac` (registered at `0x0091cff0`)
+- `LogDisplaySetShowFilterName` `0x0091d706` (registered at `0x0091cf60`)
+- `LogDisplaySetShowLogName` `0x0091d56b` (registered at `0x0091cf40`)
+- `LogDisplaySetShowTimestamp` `0x0091d388` (registered at `0x0091cf20`)
+- `LogDisplaySetTextFadeTime` `0x0091e042` (registered at `0x0091cfd0`)
+- `LogLuaMessage` `0x00994956` (registered at `0x0098f11d`)
+- `LogSetLimit` `0x0091d28e` (registered at `0x0091cf10`)
+- `LogSystem` `0x008d9b4c` (registered at `0x008d8a03`)
+- `LuaGetTerrainType` `0x005dc160` (registered at `0x004a9803`, `0x005dc13f`)
+- `MacroSystemAddMacroItem` `0x00508600` (registered at `0x00508474`)
+- `MacroSystemDeleteMacroItem` `0x00508760` (registered at `0x00508484`)
+- `MacroSystemDoLegacyMacrosExist` `0x00508b10` (registered at `0x005084a4`)
+- `MacroSystemGetMacroIndexById` `0x005088b0` (registered at `0x00508494`)
+- `MacroSystemGetNumMacros` `0x005084b0` (registered at `0x00508464`)
+- `ModuleInitialize` `0x00914ad7` (registered at `0x00913925`)
+- `ModuleLoad` `0x0091473a` (registered at `0x009138e5`)
+- `ModuleRestrictedLoad` `0x00914835` (registered at `0x009138f5`)
+- `ModuleSetEnabled` `0x009149f8` (registered at `0x00913945`)
+- `ModulesGetData` `0x00914925` (registered at `0x00913935`)
+- `ModulesInitializeAllEnabled` `0x00914909` (registered at `0x00913905`)
+- `ModulesInitializeRestricted` `0x00914917` (registered at `0x00913915`)
+- `ModulesLoadFromDirectory` `0x0091454a` (registered at `0x009138c5`)
+- `ModulesLoadFromListFile` `0x0091463f` (registered at `0x009138d5`)
+- `MoveItemToContainer` `0x004d47e0` (registered at `0x004d0034`)
+- `OpenWebBrowser` `0x005269f0` (registered at `0x0052d494`)
+- `PageWindowAddPageBreak` `0x0093d172` (registered at `0x0093cc66`)
+- `PageWindowAddSplitableWindow` `0x0093d3fa` (registered at `0x0093cc96`)
+- `PageWindowClearPageBreaks` `0x0093d0d0` (registered at `0x0093cc56`)
+- `PageWindowClearSplitableWindows` `0x0093d358` (registered at `0x0093cc86`)
+- `PageWindowGetCurrentPage` `0x0093cf4a` (registered at `0x0093cc36`)
+- `PageWindowGetNumPages` `0x0093cd8e` (registered at `0x0093cc16`)
+- `PageWindowGetNumPagesDisplayed` `0x0093ccad` (registered at `0x0093cc06`)
+- `PageWindowRemovePageBreak` `0x0093d265` (registered at `0x0093cc76`)
+- `PageWindowRemoveSplitableWindow` `0x0093d4ed` (registered at `0x0093cca6`)
+- `PageWindowSetCurrentPage` `0x0093ce6f` (registered at `0x0093cc26`)
+- `PageWindowUpdatePages` `0x0093d02d` (registered at `0x0093cc46`)
+- `PlaySound` `0x004b5fc0` (registered at `0x004b56e9`)
+- `PrintTidToChatWindow` `0x00526760` (registered at `0x0052d464`)
+- `PrintWStringToChatWindow` `0x005267e0` (registered at `0x0052d474`)
+- `RegisterEventHandler` `0x008da251` (registered at `0x008d8adb`)
+- `RegisterWindowData` `0x00527be0` (registered at `0x0052d4a4`)
+- `RegisterWindowSet` `0x008d8c78` (registered at `0x008d8907`)
+- `ReleaseCourseMap` `0x005361c0` (registered at `0x00536134`)
+- `ReleaseGumpArt` `0x0051d440` (registered at `0x0051d674`)
+- `ReleaseLegacyTileArt` `0x0051c5b0` (registered at `0x0051d634`)
+- `ReleaseTexture` `0x0051ce30` (registered at `0x0051d654`)
+- `ReleaseTileArt` `0x0051bd30` (registered at `0x0051d614`)
+- `ReplaceTokens` `0x004bc330` (registered at `0x004bb9d4`, `0x0052d747`)
+- `RequestContextMenu` `0x0052a340` (registered at `0x0052d5d4`)
+- `RequestGumpArt` `0x0051cfd0` (registered at `0x0051d664`)
+- `RequestLegacyTileArt` `0x0051bed0` (registered at `0x0051d624`)
+- `RequestTargetInfo` `0x005d0300` (registered at `0x005cc188`)
+- `RequestTexture` `0x0051c750` (registered at `0x0051d644`)
+- `RequestTileArt` `0x0051b650` (registered at `0x0051d604`)
+- `ResetLegacyKeyBinding` `0x00528350` (registered at `0x0052d664`)
+- `ResetMMOKeyBinding` `0x00528360` (registered at `0x0052d674`)
+- `ScaleInterface` `0x008d9f95` (registered at `0x008d8a4b`)
+- `ScrollWindowGetOffset` `0x008f3ea1` (registered at `0x008f3db3`)
+- `ScrollWindowSetOffset` `0x008f3dca` (registered at `0x008f3da3`)
+- `ScrollWindowUpdateScrollRect` `0x008f3f86` (registered at `0x008f3dc3`)
+- `SelectCharacter` `0x00529df0` (registered at `0x0052d564`)
+- `SelectShard` `0x00529ba0` (registered at `0x0052d554`)
+- `SendBugReport` `0x005742c0` (registered at `0x0052d534`)
+- `SendChat` `0x00528ff0` (registered at `0x0052d514`)
+- `SendHousingSystemMsg` `0x00656bb0` (registered at `0x006529c4`)
+- `SendRaceChangeResponse` `0x00621bd0` (registered at `0x0062183e`)
+- `SendTextEntry` `0x005291b0` (registered at `0x0052d524`)
+- `SetAgreementAccepted` `0x00530270` (registered at `0x0052d714`)
+- `SetCheckForCircularDependencies` `0x008da10a` (registered at `0x008d8aa5`)
+- `SetCurrentHouseFloorView` `0x006551b0` (registered at `0x00652994`)
+- `SetFloorVisibility` `0x00655340` (registered at `0x006529a4`)
+- `SetHousingMode` `0x00654f10` (registered at `0x00652964`)
+- `SetHousingMultiSelected` `0x00654530` (registered at `0x00652984`)
+- `SetHousingTileSelected` `0x00654700` (registered at `0x00652974`)
+- `SetIsCustomizingHouse` `0x00655520` (registered at `0x006529b4`)
+- `SetItemDragging` `0x008da18e` (registered at `0x008d8ac9`)
+- `SetLoadLuaDebugLibrary` `0x008da085` (registered at `0x008d8a81`)
+- `SetLoginServer` `0x006058c0` (registered at `0x0052d7a8`, `0x006056d4`)
+- `SetStaticHotbarPage` `0x004fb4f0` (registered at `0x004fa134`)
+- `Settings.LoadChatSettings` `0x0049aa00` (registered at `0x00495d99`)
+- `SetUseLuaErrorHandling` `0x008da006` (registered at `0x008d8a5d`)
+- `SliderBarGetCurrentPosition` `0x00919379` (registered at `0x0091927a`)
+- `SliderBarGetDisabledFlag` `0x00917f04` (registered at `0x0091929a`)
+- `SliderBarSetCurrentPosition` `0x009192a1` (registered at `0x0091926a`)
+- `SliderBarSetDisabledFlag` `0x00917e36` (registered at `0x0091928a`)
+- `StartIgnoreListAdd` `0x005cfda0` (registered at `0x005cc168`)
+- `StatusBarGetCurrentValue` `0x00934b92` (registered at `0x00934a6a`)
+- `StatusBarGetMaximumValue` `0x00934d33` (registered at `0x00934a8a`)
+- `StatusBarSetBackgroundTint` `0x00934fe5` (registered at `0x00934aba`)
+- `StatusBarSetCurrentValue` `0x00934ac1` (registered at `0x00934a5a`)
+- `StatusBarSetForegroundTint` `0x00934e99` (registered at `0x00934aaa`)
+- `StatusBarSetMaximumValue` `0x00934c62` (registered at `0x00934a7a`)
+- `StatusBarStopInterpolating` `0x00934e03` (registered at `0x00934a9a`)
+- `StringToWString` `0x008d9d75` (registered at `0x008d8a27`)
+- `TextEditBoxGetFont` `0x008fa5fc` (registered at `0x008f9d30`)
+- `TextEditBoxGetHistory` `0x008fa6c3` (registered at `0x008f9d50`)
+- `TextEditBoxGetText` `0x008f9e44` (registered at `0x008f9cc0`)
+- `TextEditBoxGetTextColor` `0x008fa360` (registered at `0x008f9d00`)
+- `TextEditBoxGetTextLines` `0x008f9f0b` (registered at `0x008f9cd0`)
+- `TextEditBoxInsertText` `0x008fa0e6` (registered at `0x008f9ce0`)
+- `TextEditBoxSelectAll` `0x008fa474` (registered at `0x008f9d10`)
+- `TextEditBoxSetFont` `0x008fa527` (registered at `0x008f9d20`)
+- `TextEditBoxSetHandleKeyDown` `0x008fa8f6` (registered at `0x008f9d60`)
+- `TextEditBoxSetHistory` `0x008fa7c9` (registered at `0x008f9d40`)
+- `TextEditBoxSetText` `0x008f9d67` (registered at `0x008f9cb0`)
+- `TextEditBoxSetTextColor` `0x008fa1e9` (registered at `0x008f9cf0`)
+- `TextLogAddEntry` `0x0090f862` (registered at `0x0090f45a`)
+- `TextLogAddFilterType` `0x0090f768` (registered at `0x0090f44a`)
+- `TextLogAddSingleByteEntry` `0x0090f95d` (registered at `0x0090f46a`)
+- `TextLogClear` `0x0090fc28` (registered at `0x0090f4aa`)
+- `TextLogCreate` `0x0090f561` (registered at `0x0090f41a`)
+- `TextLogCreateWithLimit` `0x0090f62b` (registered at `0x0090f43a`)
+- `TextLogDestroy` `0x0090f6d8` (registered at `0x0090f42a`)
+- `TextLogDisplayShowScrollbar` `0x0091e66d` (registered at `0x0091d050`)
+- `TextLogGetEnabled` `0x0090fef9` (registered at `0x0090f4ca`)
+- `TextLogGetEntry` `0x00910059` (registered at `0x0090f4ea`)
+- `TextLogGetIncrementalSaving` `0x0090fb75` (registered at `0x0090f48a`)
+- `TextLogGetNumEntries` `0x0090ffac` (registered at `0x0090f4da`)
+- `TextLogGetUpdateEventId` `0x00910189` (registered at `0x0090f50a`)
+- `TextLogLoadFromFile` `0x0090fd6f` (registered at `0x0090f4fa`)
+- `TextLogSaveLog` `0x0090fcbe` (registered at `0x0090f49a`)
+- `TextLogSetEnabled` `0x0090fe3b` (registered at `0x0090f4ba`)
+- `TextLogSetIncrementalSaving` `0x0090fa70` (registered at `0x0090f47a`)
+- `TranslatePointer` `0x006367f0` (registered at `0x00635319`)
+- `TryLogin` `0x005296e0` (registered at `0x0052d544`)
+- `UndoLogin` `0x0052a300` (registered at `0x0052d5f4`)
+- `UnloadStringTable` `0x008d987f` (registered at `0x008d89cd`)
+- `UnregisterEventHandler` `0x008da2f3` (registered at `0x008d8aed`)
+- `UnregisterWindowData` `0x00527ee0` (registered at `0x0052d4b4`)
+- `UOBuildTableFromCSV` `0x0051f2e0` (registered at `0x0051f2c4`, `0x0052d770`)
+- `UOCenterRadarOnLocation` `0x00512940` (registered at `0x005120b4`)
+- `UOCreateUserWaypoint` `0x005d6a40` (registered at `0x005d5964`)
+- `UODeleteUserWaypoint` `0x005d7550` (registered at `0x005d5984`)
+- `UOEditUserWaypoint` `0x005d70c0` (registered at `0x005d5974`)
+- `UOGetPhysicalRadarFacet` `0x00512e10` (registered at `0x005120e4`)
+- `UOGetRadarArea` `0x00512f60` (registered at `0x005120f4`)
+- `UOGetRadarCenter` `0x005130a0` (registered at `0x00512104`)
+- `UOGetRadarFacet` `0x00512cc0` (registered at `0x005120d4`)
+- `UOGetRadarPosToWorld` `0x00512440` (registered at `0x005120a4`)
+- `UOGetTextureSize` `0x00528370` (registered at `0x0052d644`)
+- `UOGetWaypointInfo` `0x005d5b60` (registered at `0x005d5914`)
+- `UOGetWorldPosToRadar` `0x005126d0` (registered at `0x00512114`)
+- `UORadarGetAreaCount` `0x00513d00` (registered at `0x00512184`)
+- `UORadarGetAreaDimensions` `0x005138d0` (registered at `0x00512174`)
+- `UORadarGetAreaLabel` `0x00513490` (registered at `0x00512154`)
+- `UORadarGetFacetDimensions` `0x00513670` (registered at `0x00512164`)
+- `UORadarGetFacetLabel` `0x005132f0` (registered at `0x00512144`)
+- `UORadarGetMaxZoomForMap` `0x005140e0` (registered at `0x005121a4`)
+- `UORadarIsLocationInArea` `0x00513ea0` (registered at `0x00512194`)
+- `UORadarSetCenterOnPlayer` `0x00512c50` (registered at `0x005120c4`)
+- `UORadarSetWindowOffset` `0x005122b0` (registered at `0x00512134`)
+- `UORadarSetWindowSize` `0x00512340` (registered at `0x00512124`)
+- `UOResetWaypointMapFacet` `0x005d5b40` (registered at `0x005d5954`)
+- `UOSetRadarRotation` `0x00512220` (registered at `0x00512094`)
+- `UOSetRadarZoom` `0x005121b0` (registered at `0x00512084`)
+- `UOSetWaypointDisplayMode` `0x005d66c0` (registered at `0x005d5934`)
+- `UOSetWaypointMapFacet` `0x005d5990` (registered at `0x005d5944`)
+- `UOSetWaypointTypeDisplayInfo` `0x005d6540` (registered at `0x005d5924`)
+- `UOUnloadCSVTable` `0x00520260` (registered at `0x0051f2d4`, `0x0052d780`)
+- `UpdateCharProfile` `0x004f1810` (registered at `0x004f1794`)
+- `UpdateCustomUI` `0x005265b0` (registered at `0x0052d454`)
+- `UpdatePortrait` `0x0051b400` (registered at `0x0051d5f4`)
+- `UpdateStatLock` `0x00631700` (registered at `0x0062f84b`)
+- `UpdateViewport` `0x0052a4f0` (registered at `0x0052d5c4`)
+- `UserActionAddSlot` `0x00542910` (registered at `0x005428d4`)
+- `UserActionArmDisarmGetSlotNumber` `0x005465f0` (registered at `0x0053dc74`, `0x00546434`)
+- `UserActionArmDisarmSelectSlot` `0x00546440` (registered at `0x0053dc64`, `0x00546424`)
+- `UserActionCastSpell` `0x0053f6c0` (registered at `0x0053dbb5`, `0x0053f6a4`)
+- `UserActionCastSpellOnId` `0x0053f8f0` (registered at `0x0053dbc5`, `0x0053f6b4`)
+- `UserActionDelayGetDelay` `0x00540fc0` (registered at `0x0053dbfb`, `0x00540fa4`)
+- `UserActionDelaySetDelay` `0x00541250` (registered at `0x0053dc0b`, `0x00540fb4`)
+- `UserActionEquipItemsAddEquippedItems` `0x00541c90` (registered at `0x005418e4`)
+- `UserActionEquipItemsAddItem` `0x00541920` (registered at `0x005418d4`)
+- `UserActionEquipItemsGetItem` `0x00541fb0` (registered at `0x00541904`)
+- `UserActionEquipItemsGetNumItems` `0x00542250` (registered at `0x00541914`)
+- `UserActionEquipItemsRemoveItem` `0x00541e00` (registered at `0x005418f4`)
+- `UserActionFindSlot` `0x00542cb0` (registered at `0x005428f4`)
+- `UserActionGetIconId` `0x0053e830` (registered at `0x0053db44`)
+- `UserActionGetId` `0x0053e4a0` (registered at `0x0053db24`)
+- `UserActionGetNextObjectId` `0x00571ae0` (registered at `0x00570b44`)
+- `UserActionGetNumSlots` `0x00542f60` (registered at `0x00542904`)
+- `UserActionGetSpecialId` `0x00571080` (registered at `0x00570b24`)
+- `UserActionGetTargetId` `0x0053ebc0` (registered at `0x0053db64`)
+- `UserActionGetTargetType` `0x0053e110` (registered at `0x0053daf4`)
+- `UserActionGetType` `0x0053dcc0` (registered at `0x0053dad4`)
+- `UserActionHasTargetType` `0x0053def0` (registered at `0x0053dae4`)
+- `UserActionInvokeVirtue` `0x00543e30` (registered at `0x0053dc46`, `0x00543e24`)
+- `UserActionIsActionTypeTargetModeCompat` `0x0053f160` (registered at `0x0053db84`)
+- `UserActionIsSpeechType` `0x005583e0` (registered at `0x005583c4`)
+- `UserActionIsTargetModeCompat` `0x0053ef40` (registered at `0x0053db74`)
+- `UserActionMacroAddNewAction` `0x00552640` (registered at `0x00552594`)
+- `UserActionMacroGetBinding` `0x00553170` (registered at `0x005525e4`)
+- `UserActionMacroGetName` `0x00552d30` (registered at `0x005525c4`)
+- `UserActionMacroGetNumActions` `0x00552b00` (registered at `0x005525b4`)
+- `UserActionMacroGetRepeatCount` `0x00553aa0` (registered at `0x00552624`)
+- `UserActionMacroGetRepeatEnabled` `0x005536e0` (registered at `0x00552604`)
+- `UserActionMacroRemoveAction` `0x00552990` (registered at `0x005525a4`)
+- `UserActionMacroSetName` `0x00552f90` (registered at `0x005525d4`)
+- `UserActionMacroSetRepeatCount` `0x00553920` (registered at `0x00552634`)
+- `UserActionMacroSetRepeatEnabled` `0x00553590` (registered at `0x00552614`)
+- `UserActionMacroUpdateBinding` `0x005533e0` (registered at `0x005525f4`)
+- `UserActionPeaceMode` `0x00543a00` (registered at `0x005439f3`)
+- `UserActionRemoveSlot` `0x00542b00` (registered at `0x005428e4`)
+- `UserActionSetIconId` `0x0053ea40` (registered at `0x0053db34`)
+- `UserActionSetId` `0x0053e6b0` (registered at `0x0053db14`)
+- `UserActionSetTargetId` `0x0053edc0` (registered at `0x0053db54`)
+- `UserActionSetTargetType` `0x0053e320` (registered at `0x0053db04`)
+- `UserActionSpeechGetText` `0x00558630` (registered at `0x005583a4`)
+- `UserActionSpeechSetText` `0x005588e0` (registered at `0x005583b4`)
+- `UserActionTargetByResourceGetResourceCategory` `0x00547eb0` (registered at `0x00546bf7`)
+- `UserActionTargetByResourceGetResourceType` `0x00547c40` (registered at `0x00546be7`)
+- `UserActionTargetByResourceGetUseObjectId` `0x00547750` (registered at `0x00546bc7`)
+- `UserActionTargetByResourceGetUseObjectInstanceId` `0x005479c0` (registered at `0x00546bd7`)
+- `UserActionTargetByResourceSetResourceCategory` `0x00547590` (registered at `0x00546bb7`)
+- `UserActionTargetByResourceSetResourceType` `0x005473e0` (registered at `0x00546ba7`)
+- `UserActionTargetByResourceSetUseObjectId` `0x00547080` (registered at `0x00546b87`)
+- `UserActionTargetByResourceSetUseObjectInstanceId` `0x00547230` (registered at `0x00546b97`)
+- `UserActionToggleAlwaysRun` `0x005484f0` (registered at `0x005484e3`)
+- `UserActionToggleCircleOfTransparency` `0x005486a0` (registered at `0x00548693`)
+- `UserActionToggleWarMode` `0x005435c0` (registered at `0x0053dc2e`, `0x005435b4`)
+- `UserActionUseItem` `0x005408e0` (registered at `0x0053db9d`, `0x005408d4`)
+- `UserActionUseObjectTypeGetIconObjectTypeHue` `0x00570d50` (registered at `0x00570b14`)
+- `UserActionUseObjectTypeGetObjectTypeHue` `0x00571540` (registered at `0x00570b34`)
+- `UserActionUseObjectTypeSetIconObjectTypeHue` `0x00570b50` (registered at `0x00570b04`)
+- `UserActionUseRacialAbility` `0x0053fdb0` (registered at `0x0053dcaf`, `0x0053fda4`)
+- `UserActionUseSkill` `0x00540200` (registered at `0x0053dbde`, `0x005401f4`)
+- `UserActionUseWeaponAbility` `0x0053fb60` (registered at `0x0053dc96`, `0x0053fb54`)
+- `UserActionWarMode` `0x005437e0` (registered at `0x005437d3`)
+- `UserSettingsChanged` `0x0052e9b0` (registered at `0x0052d6a4`)
+- `VerticalScrollbarGetLineSize` `0x009398bd` (registered at `0x009392a8`)
+- `VerticalScrollbarGetMaxScrollPosition` `0x00939555` (registered at `0x00939268`)
+- `VerticalScrollbarGetPageSize` `0x00939709` (registered at `0x00939288`)
+- `VerticalScrollbarGetScrollPosition` `0x00939386` (registered at `0x00939248`)
+- `VerticalScrollbarSetLineSize` `0x009397d4` (registered at `0x00939298`)
+- `VerticalScrollbarSetMaxScrollPosition` `0x0093946c` (registered at `0x00939258`)
+- `VerticalScrollbarSetPageSize` `0x00939620` (registered at `0x00939278`)
+- `VerticalScrollbarSetScrollPosition` `0x009392af` (registered at `0x00939238`)
+- `WindowAddAnchor` `0x008eb1e5` (registered at `0x008e9250`)
+- `WindowAssignFocus` `0x008eb66e` (registered at `0x008e9220`)
+- `WindowBatchDraw` `0x008ec799` (registered at `0x008e9390`)
+- `WindowBreakPoint` `0x008ec741` (registered at `0x008e9380`)
+- `WindowClearAnchors` `0x008eb12d` (registered at `0x008e9240`)
+- `WindowForceProcessAnchors` `0x008eb5c6` (registered at `0x008e9280`)
+- `WindowGetAlpha` `0x008e9df4` (registered at `0x008e90b0`)
+- `WindowGetAnchor` `0x008eb464` (registered at `0x008e9270`)
+- `WindowGetAnchorCount` `0x008eb3b7` (registered at `0x008e9260`)
+- `WindowGetFontAlpha` `0x008ea1ad` (registered at `0x008e90f0`)
+- `WindowGetHandleInput` `0x008eab20` (registered at `0x008e91a0`)
+- `WindowGetId` `0x008e9ad8` (registered at `0x008e9060`)
+- `WindowGetLayer` `0x008ea998` (registered at `0x008e9180`)
+- `WindowGetMovable` `0x008eae3a` (registered at `0x008e91e0`)
+- `WindowGetMoving` `0x008eb076` (registered at `0x008e9210`)
+- `WindowGetOffsetFromParent` `0x008ea37b` (registered at `0x008e9130`)
+- `WindowGetParent` `0x008ec2ae` (registered at `0x008e9320`)
+- `WindowGetPopable` `0x008eacb0` (registered at `0x008e91c0`)
+- `WindowGetResizing` `0x008eb94a` (registered at `0x008e92a0`)
+- `WindowGetScale` `0x008ec45a` (registered at `0x008e9340`)
+- `WindowGetScreenPosition` `0x008ea46e` (registered at `0x008e9140`)
+- `WindowGetTabOrder` `0x008e9c67` (registered at `0x008e9080`)
+- `WindowGetTintColor` `0x008e9fee` (registered at `0x008e90d0`)
+- `WindowHasFocus` `0x008eb760` (registered at `0x008e9230`)
+- `WindowIsGameActionLocked` `0x008eccad` (registered at `0x008e93d0`)
+- `WindowIsSticky` `0x008eaef1` (registered at `0x008e91f0`)
+- `WindowRegisterCoreEventHandler` `0x008e94af` (registered at `0x008e9020`)
+- `WindowRegisterEventHandler` `0x008e96e9` (registered at `0x008e9040`)
+- `WindowResizeOnChildren` `0x008ec79c` (registered at `0x008e93a0`)
+- `WindowRestoreDefaultSettings` `0x008ece10` (registered at `0x008e93f0`)
+- `WindowSetAlpha` `0x008e9d2e` (registered at `0x008e90a0`)
+- `WindowSetDimensions` `0x008ea541` (registered at `0x008e9100`)
+- `WindowSetDrawWhenInterfaceHidden` `0x008ecd5c` (registered at `0x008e93e0`)
+- `WindowSetFontAlpha` `0x008ea0e5` (registered at `0x008e90e0`)
+- `WindowSetGameActionData` `0x008ec9c5` (registered at `0x008e93c0`)
+- `WindowSetGameActionTrigger` `0x008ec8c9` (registered at `0x008e93b0`)
+- `WindowSetHandleInput` `0x008eaa47` (registered at `0x008e9190`)
+- `WindowSetId` `0x008e9a10` (registered at `0x008e9070`)
+- `WindowSetLayer` `0x008ea8b8` (registered at `0x008e9170`)
+- `WindowSetMovable` `0x008ead67` (registered at `0x008e91d0`)
+- `WindowSetMoving` `0x008eafa3` (registered at `0x008e9200`)
+- `WindowSetOffsetFromParent` `0x008ea25e` (registered at `0x008e9120`)
+- `WindowSetParent` `0x008ec1aa` (registered at `0x008e9310`)
+- `WindowSetPopable` `0x008eabd4` (registered at `0x008e91b0`)
+- `WindowSetRelativeScale` `0x008ec50b` (registered at `0x008e9350`)
+- `WindowSetResizing` `0x008eb835` (registered at `0x008e9290`)
+- `WindowSetScale` `0x008ec37b` (registered at `0x008e9330`)
+- `WindowSetShowing` `0x008ea72e` (registered at `0x008e9150`)
+- `WindowSetTabOrder` `0x008e9b9f` (registered at `0x008e9090`)
+- `WindowSetTintColor` `0x008e9ea5` (registered at `0x008e90c0`)
+- `WindowSetUpdateFrequency` `0x008ec67a` (registered at `0x008e9370`)
+- `WindowStartAlphaAnimation` `0x008eb9fc` (registered at `0x008e92b0`)
+- `WindowStartPositionAnimation` `0x008ebc58` (registered at `0x008e92d0`)
+- `WindowStartScaleAnimation` `0x008ebf29` (registered at `0x008e92f0`)
+- `WindowStopAlphaAnimation` `0x008ebbc6` (registered at `0x008e92c0`)
+- `WindowStopPositionAnimation` `0x008ebe81` (registered at `0x008e92e0`)
+- `WindowStopScaleAnimation` `0x008ec102` (registered at `0x008e9300`)
+- `WindowUnregisterCoreEventHandler` `0x008e95db` (registered at `0x008e9030`)
+- `WindowUnregisterEventHandler` `0x008e9901` (registered at `0x008e9050`)
+- `WStringToString` `0x008d9e84` (registered at `0x008d8a39`)
+
+## LuaPlus global registrations
+
+- `LOG` `0x00a857b0` (at `0x00a86613`, LuaPlus helper)
+- `_ALERT` `0x00a85a60` (at `0x00a8665b`, LuaPlus helper)
+- `LuaDumpObject` `0x00a85cb0` (at `0x00a86576`, LuaPlus helper (dispatcher `0x00a776f0`))
+- `LuaDumpFile` `0x00a860f0` (at `0x00a865cb`, LuaPlus helper (dispatcher `0x00a776f0`))
+- `LuaDumpGlobals` `0x00a86100` (at `0x00a86521`, LuaPlus helper (dispatcher `0x00a776f0`))
+- `LuaFilePrint` `0x00a8be60` (at `0x00a8c135`, LuaPlus helper (dispatcher `0x00a776f0`))
+- `LuaFileIndent` `0x00a8bf20` (at `0x00a8c258`, LuaPlus helper (dispatcher `0x00a776f0`))
+- `GetTickCount` `0x00a9e7c0` (at `0x00a9e909`, LuaPlus helper (dispatcher `0x00a776f0`))
+
+## luaL_Reg tables
+
+- `0x00c94d88` 2 entries, libname `package`, registered at `0x00aa2c3b`: `pk_funcs` (loadlib.c) score 1.00; entries loadlib seeall
+- `0x00c94da0` 2 entries, libname NULL, registered at `0x00aa2ff2`: `ll_funcs` (loadlib.c) score 1.00; entries module require
+- `0x00c94dd0` 11 entries, libname `os`, registered at `0x00aa17e4`: `syslib` (loslib.c) score 1.00; entries clock date difftime execute exit getenv remove rename setlocale time tmpname
+- `0x00c94e38` 11 entries, libname `io`, registered at `0x00aa0b85`: `iolib` (liolib.c) score 1.00; entries close flush input lines open output popen read tmpfile type write
+- `0x00c94e98` 9 entries, libname NULL, registered at `0x00aa0a48`: `flib` (liolib.c) score 1.00; entries close flush lines read seek setvbuf write __gc __tostring
+- `0x00c94f48` 9 entries, libname `table`, registered at `0x00a93a84`: `tab_funcs` (ltablib.c) score 1.00; entries concat foreach foreachi getn maxn insert remove setn sort
+- `0x00c94f98` 16 entries, libname `wstring`, registered at `0x00a92b3b`: `strlib` (lstrlib.c) score 0.82 (not the best match); entries byte char find format gfind gmatch gmatch_aux gsub len lower match rep reverse sub upper lualex
+- `0x00c95020` 28 entries, libname `math`, registered at `0x00a8e6cb`: `mathlib` (lmathlib.c) score 1.00; entries abs acos asin atan2 atan ceil cosh cos deg exp floor fmod frexp ldexp log10 log max min modf pow rad random randomseed sinh sin sqrt tanh tan
+- `0x00c95108` 14 entries, libname `debug`, registered at `0x00a8b8c4`: `dblib` (ldblib.c) score 1.00; entries debug getfenv gethook getinfo getlocal getregistry getmetatable getupvalue setfenv sethook setlocal setmetatable setupvalue traceback
+- `0x00c95180` 25 entries, libname `_G`, registered at `0x00a8a0e7`: `base_funcs` (lbaselib.c) score 0.89; entries assert collectgarbage dofile error gcinfo getfenv getmetatable loadfile load loadstring next pcall print rawequal rawget rawset select setfenv setmetatable tonumber tostring towstring type unpack xpcall
+- `0x00c95250` 21 entries, libname `_G`, registered at `0x00a8a280`: `base_funcs` (lbaselib.c) score 0.74 (not the best match); entries assert collectgarbage error gcinfo getfenv getmetatable next pcall print rawequal rawget rawset select setfenv setmetatable tonumber tostring towstring type unpack xpcall
+- `0x00c95300` 6 entries, libname `coroutine`, registered at `0x00a8a40d`: `co_funcs` (lbaselib.c) score 1.00; entries create resume running status wrap yield
+- `0x00c95338` 16 entries, libname `string`, registered at `0x00a8503b`: `strlib` (lstrlib.c) score 0.94; entries byte char dump find format gfind gmatch gmatch_aux gsub len lower match rep reverse sub upper
+- `0x00c953c0` 2 entries, libname `string`, registered at `0x00a85010`, `0x00a85068`: no source table; entries pack unpack
+
+## Unrolled luaL_openlibs
+
+- `luaopen_base` `0x00a8a400`
+- `luaopen_debug` `0x00a8b8c0`
+- `luaopen_io` `0x00aa0ae0`
+- `luaopen_math` `0x00a8e6c0`
+- `luaopen_os` `0x00aa17e0`
+- `luaopen_package` `0x00aa2c00`
+- `luaopen_string` `0x00a85030`
+- `luaopen_table` `0x00a93a80`
+- `luaopen_wstring` `0x00a92b30`
+
+## Lua function names (LUA_REG)
+
+- `_G::towstring` `0x00a89710`: luaL_Reg 0x00c95180 (registered as `_G`) entry `towstring` (table matches `base_funcs` score 0.89)
+- `base_open` `0x00a8a0b0`: registers luaL_Reg 0x00c95180 (registered as `_G`) (`base_funcs` is registered by `base_open` in lbaselib.c)
+- `createmeta` `0x00aa0a10`: registers luaL_Reg 0x00c94e98 (registered as `NULL`) (`flib` is registered by `createmeta` in liolib.c)
+- `db_debug` `0x00a8b360`: luaL_Reg 0x00c95108 (registered as `debug`) entry `debug` = `dblib` (ldblib.c) score 1.00
+- `db_errorfb` `0x00a8b520`: luaL_Reg 0x00c95108 (registered as `debug`) entry `traceback` = `dblib` (ldblib.c) score 1.00
+- `db_getfenv` `0x00a8a540`: luaL_Reg 0x00c95108 (registered as `debug`) entry `getfenv` = `dblib` (ldblib.c) score 1.00
+- `db_gethook` `0x00a8b220`: luaL_Reg 0x00c95108 (registered as `debug`) entry `gethook` = `dblib` (ldblib.c) score 1.00
+- `db_getinfo` `0x00a8a6e0`: luaL_Reg 0x00c95108 (registered as `debug`) entry `getinfo` = `dblib` (ldblib.c) score 1.00
+- `db_getlocal` `0x00a8aae0`: luaL_Reg 0x00c95108 (registered as `debug`) entry `getlocal` = `dblib` (ldblib.c) score 1.00
+- `db_getmetatable` `0x00a8a460`: luaL_Reg 0x00c95108 (registered as `debug`) entry `getmetatable` = `dblib` (ldblib.c) score 1.00
+- `db_getregistry` `0x00a8a430`: luaL_Reg 0x00c95108 (registered as `debug`) entry `getregistry` = `dblib` (ldblib.c) score 1.00
+- `db_getupvalue` `0x00a8adb0`: luaL_Reg 0x00c95108 (registered as `debug`) entry `getupvalue` = `dblib` (ldblib.c) score 1.00
+- `db_setfenv` `0x00a8a560`: luaL_Reg 0x00c95108 (registered as `debug`) entry `setfenv` = `dblib` (ldblib.c) score 1.00
+- `db_sethook` `0x00a8b020`: luaL_Reg 0x00c95108 (registered as `debug`) entry `sethook` = `dblib` (ldblib.c) score 1.00
+- `db_setlocal` `0x00a8ac00`: luaL_Reg 0x00c95108 (registered as `debug`) entry `setlocal` = `dblib` (ldblib.c) score 1.00
+- `db_setmetatable` `0x00a8a4b0`: luaL_Reg 0x00c95108 (registered as `debug`) entry `setmetatable` = `dblib` (ldblib.c) score 1.00
+- `db_setupvalue` `0x00a8adc0`: luaL_Reg 0x00c95108 (registered as `debug`) entry `setupvalue` = `dblib` (ldblib.c) score 1.00
+- `f_flush` `0x00aa0960`: luaL_Reg 0x00c94e98 (registered as `NULL`) entry `flush` = `flib` (liolib.c) score 1.00
+- `f_lines` `0x00a9fbc0`: luaL_Reg 0x00c94e98 (registered as `NULL`) entry `lines` = `flib` (liolib.c) score 1.00
+- `f_read` `0x00aa0350`: luaL_Reg 0x00c94e98 (registered as `NULL`) entry `read` = `flib` (liolib.c) score 1.00
+- `f_seek` `0x00aa06d0`: luaL_Reg 0x00c94e98 (registered as `NULL`) entry `seek` = `flib` (liolib.c) score 1.00
+- `f_setvbuf` `0x00aa07d0`: luaL_Reg 0x00c94e98 (registered as `NULL`) entry `setvbuf` = `flib` (liolib.c) score 1.00
+- `f_write` `0x00aa0690`: luaL_Reg 0x00c94e98 (registered as `NULL`) entry `write` = `flib` (liolib.c) score 1.00
+- `foreach` `0x00a92cc0`: luaL_Reg 0x00c94f48 (registered as `table`) entry `foreach` = `tab_funcs` (ltablib.c) score 1.00
+- `foreachi` `0x00a92b80`: luaL_Reg 0x00c94f48 (registered as `table`) entry `foreachi` = `tab_funcs` (ltablib.c) score 1.00
+- `getn` `0x00a92eb0`: luaL_Reg 0x00c94f48 (registered as `table`) entry `getn` = `tab_funcs` (ltablib.c) score 1.00
+- `gfind_nodef` `0x00a82080`: luaL_Reg 0x00c95338 (registered as `string`) entry `gfind` = `strlib` (lstrlib.c) score 0.94
+- `gmatch_aux` `0x00a81da0`: luaL_Reg 0x00c95338 (registered as `string`) entry `gmatch_aux`, not in `strlib` but a function of that name exists in lstrlib.c
+- `gmatch` `0x00a81f50`: luaL_Reg 0x00c95338 (registered as `string`) entry `gmatch` = `strlib` (lstrlib.c) score 0.94
+- `io_close` `0x00a9f530`: luaL_Reg 0x00c94e38 (registered as `io`) entry `close` = `iolib` (liolib.c) score 1.00
+- `io_flush` `0x00aa08d0`: luaL_Reg 0x00c94e38 (registered as `io`) entry `flush` = `iolib` (liolib.c) score 1.00
+- `io_gc` `0x00a9f5c0`: luaL_Reg 0x00c94e98 (registered as `NULL`) entry `__gc` = `flib` (liolib.c) score 1.00
+- `io_input` `0x00a9fb30`: luaL_Reg 0x00c94e38 (registered as `io`) entry `input` = `iolib` (liolib.c) score 1.00
+- `io_lines` `0x00a9fc40`: luaL_Reg 0x00c94e38 (registered as `io`) entry `lines` = `iolib` (liolib.c) score 1.00
+- `io_open` `0x00a9f660`: luaL_Reg 0x00c94e38 (registered as `io`) entry `open` = `iolib` (liolib.c) score 1.00
+- `io_output` `0x00a9fb50`: luaL_Reg 0x00c94e38 (registered as `io`) entry `output` = `iolib` (liolib.c) score 1.00
+- `io_popen` `0x00a9f790`: luaL_Reg 0x00c94e38 (registered as `io`) entry `popen` = `iolib` (liolib.c) score 1.00
+- `io_read` `0x00aa0330`: luaL_Reg 0x00c94e38 (registered as `io`) entry `read` = `iolib` (liolib.c) score 1.00
+- `io_tmpfile` `0x00a9f8c0`: luaL_Reg 0x00c94e38 (registered as `io`) entry `tmpfile` = `iolib` (liolib.c) score 1.00
+- `io_tostring` `0x00a9f610`: luaL_Reg 0x00c94e98 (registered as `NULL`) entry `__tostring` = `flib` (liolib.c) score 1.00
+- `io_type` `0x00a9f210`: luaL_Reg 0x00c94e38 (registered as `io`) entry `type` = `iolib` (liolib.c) score 1.00
+- `io_write` `0x00aa0670`: luaL_Reg 0x00c94e38 (registered as `io`) entry `write` = `iolib` (liolib.c) score 1.00
+- `ll_loadlib` `0x00aa1ba0`: luaL_Reg 0x00c94d88 (registered as `package`) entry `loadlib` = `pk_funcs` (loadlib.c) score 1.00
+- `ll_module` `0x00aa2950`: luaL_Reg 0x00c94da0 (registered as `NULL`) entry `module` = `ll_funcs` (loadlib.c) score 1.00
+- `ll_require` `0x00aa23d0`: luaL_Reg 0x00c94da0 (registered as `NULL`) entry `require` = `ll_funcs` (loadlib.c) score 1.00
+- `ll_seeall` `0x00aa2ad0`: luaL_Reg 0x00c94d88 (registered as `package`) entry `seeall` = `pk_funcs` (loadlib.c) score 1.00
+- `luaB_assert` `0x00a89010`: luaL_Reg 0x00c95180 (registered as `_G`) entry `assert` = `base_funcs` (lbaselib.c) score 0.89
+- `luaB_cocreate` `0x00a89d70`: luaL_Reg 0x00c95300 (registered as `coroutine`) entry `create` = `co_funcs` (lbaselib.c) score 1.00
+- `luaB_collectgarbage` `0x00a887e0`: luaL_Reg 0x00c95180 (registered as `_G`) entry `collectgarbage` = `base_funcs` (lbaselib.c) score 0.89
+- `luaB_coresume` `0x00a89c10`: luaL_Reg 0x00c95300 (registered as `coroutine`) entry `resume` = `co_funcs` (lbaselib.c) score 1.00
+- `luaB_corunning` `0x00a89fc0`: luaL_Reg 0x00c95300 (registered as `coroutine`) entry `running` = `co_funcs` (lbaselib.c) score 1.00
+- `luaB_costatus` `0x00a89eb0`: luaL_Reg 0x00c95300 (registered as `coroutine`) entry `status` = `co_funcs` (lbaselib.c) score 1.00
+- `luaB_cowrap` `0x00a89e40`: luaL_Reg 0x00c95300 (registered as `coroutine`) entry `wrap` = `co_funcs` (lbaselib.c) score 1.00
+- `luaB_dofile` `0x00a88f70`: luaL_Reg 0x00c95180 (registered as `_G`) entry `dofile` = `base_funcs` (lbaselib.c) score 0.89
+- `luaB_error` `0x00a880c0`: luaL_Reg 0x00c95180 (registered as `_G`) entry `error` = `base_funcs` (lbaselib.c) score 0.89
+- `luaB_gcinfo` `0x00a887a0`: luaL_Reg 0x00c95180 (registered as `_G`) entry `gcinfo` = `base_funcs` (lbaselib.c) score 0.89
+- `luaB_getfenv` `0x00a883e0`: luaL_Reg 0x00c95180 (registered as `_G`) entry `getfenv` = `base_funcs` (lbaselib.c) score 0.89
+- `luaB_getmetatable` `0x00a881b0`: luaL_Reg 0x00c95180 (registered as `_G`) entry `getmetatable` = `base_funcs` (lbaselib.c) score 0.89
+- `luaB_load` `0x00a88e40`: luaL_Reg 0x00c95180 (registered as `_G`) entry `load` = `base_funcs` (lbaselib.c) score 0.89
+- `luaB_loadfile` `0x00a88ce0`: luaL_Reg 0x00c95180 (registered as `_G`) entry `loadfile` = `base_funcs` (lbaselib.c) score 0.89
+- `luaB_loadstring` `0x00a88c20`: luaL_Reg 0x00c95180 (registered as `_G`) entry `loadstring` = `base_funcs` (lbaselib.c) score 0.89
+- `luaB_next` `0x00a88940`: luaL_Reg 0x00c95180 (registered as `_G`) entry `next` = `base_funcs` (lbaselib.c) score 0.89
+- `luaB_pcall` `0x00a892d0`: luaL_Reg 0x00c95180 (registered as `_G`) entry `pcall` = `base_funcs` (lbaselib.c) score 0.89
+- `luaB_print` `0x00a87c30`: luaL_Reg 0x00c95180 (registered as `_G`) entry `print` = `base_funcs` (lbaselib.c) score 0.89
+- `luaB_rawequal` `0x00a88560`: luaL_Reg 0x00c95180 (registered as `_G`) entry `rawequal` = `base_funcs` (lbaselib.c) score 0.89
+- `luaB_rawget` `0x00a88610`: luaL_Reg 0x00c95180 (registered as `_G`) entry `rawget` = `base_funcs` (lbaselib.c) score 0.89
+- `luaB_rawset` `0x00a886d0`: luaL_Reg 0x00c95180 (registered as `_G`) entry `rawset` = `base_funcs` (lbaselib.c) score 0.89
+- `luaB_select` `0x00a89200`: luaL_Reg 0x00c95180 (registered as `_G`) entry `select` = `base_funcs` (lbaselib.c) score 0.89
+- `luaB_setfenv` `0x00a88430`: luaL_Reg 0x00c95180 (registered as `_G`) entry `setfenv` = `base_funcs` (lbaselib.c) score 0.89
+- `luaB_setmetatable` `0x00a88220`: luaL_Reg 0x00c95180 (registered as `_G`) entry `setmetatable` = `base_funcs` (lbaselib.c) score 0.89
+- `luaB_tonumber` `0x00a87eb0`: luaL_Reg 0x00c95180 (registered as `_G`) entry `tonumber` = `base_funcs` (lbaselib.c) score 0.89
+- `luaB_tostring` `0x00a89490`: luaL_Reg 0x00c95180 (registered as `_G`) entry `tostring` = `base_funcs` (lbaselib.c) score 0.89
+- `luaB_type` `0x00a888d0`: luaL_Reg 0x00c95180 (registered as `_G`) entry `type` = `base_funcs` (lbaselib.c) score 0.89
+- `luaB_unpack` `0x00a890d0`: luaL_Reg 0x00c95180 (registered as `_G`) entry `unpack` = `base_funcs` (lbaselib.c) score 0.89
+- `luaB_xpcall` `0x00a89380`: luaL_Reg 0x00c95180 (registered as `_G`) entry `xpcall` = `base_funcs` (lbaselib.c) score 0.89
+- `luaB_yield` `0x00a89e70`: luaL_Reg 0x00c95300 (registered as `coroutine`) entry `yield` = `co_funcs` (lbaselib.c) score 1.00
+- `luaL_register` `0x00a9cae0`: called with luaL_Reg tables after PUSH <table>; PUSH <libname>
+- `luaopen_base` `0x00a8a400`: registers luaL_Reg 0x00c95300 (registered as `coroutine`) (`co_funcs` is registered by `luaopen_base` in lbaselib.c)
+- `luaopen_debug` `0x00a8b8c0`: registers luaL_Reg 0x00c95108 (registered as `debug`) (`dblib` is registered by `luaopen_debug` in ldblib.c)
+- `luaopen_io` `0x00aa0ae0`: registers luaL_Reg 0x00c94e38 (registered as `io`) (`iolib` is registered by `luaopen_io` in liolib.c)
+- `luaopen_math` `0x00a8e6c0`: registers luaL_Reg 0x00c95020 (registered as `math`) (`mathlib` is registered by `luaopen_math` in lmathlib.c)
+- `luaopen_os` `0x00aa17e0`: registers luaL_Reg 0x00c94dd0 (registered as `os`) (`syslib` is registered by `luaopen_os` in loslib.c)
+- `luaopen_package` `0x00aa2c00`: registers luaL_Reg 0x00c94d88 (registered as `package`) (`pk_funcs` is registered by `luaopen_package` in loadlib.c)
+- `luaopen_string` `0x00a85030`: registers luaL_Reg 0x00c95338 (registered as `string`) (`strlib` is registered by `luaopen_string` in lstrlib.c)
+- `luaopen_table` `0x00a93a80`: registers luaL_Reg 0x00c94f48 (registered as `table`) (`tab_funcs` is registered by `luaopen_table` in ltablib.c)
+- `luaopen_wstring` `0x00a92b30`: pushed before its library name in the unrolled luaL_openlibs at 0x00a862e7 (library not in linit.c; name follows the luaopen_<libname> convention)
+- `math_abs` `0x00a8ddd0`: luaL_Reg 0x00c95020 (registered as `math`) entry `abs` = `mathlib` (lmathlib.c) score 1.00
+- `math_acos` `0x00a8dfd0`: luaL_Reg 0x00c95020 (registered as `math`) entry `acos` = `mathlib` (lmathlib.c) score 1.00
+- `math_asin` `0x00a8df90`: luaL_Reg 0x00c95020 (registered as `math`) entry `asin` = `mathlib` (lmathlib.c) score 1.00
+- `math_atan2` `0x00a8e050`: luaL_Reg 0x00c95020 (registered as `math`) entry `atan2` = `mathlib` (lmathlib.c) score 1.00
+- `math_atan` `0x00a8e010`: luaL_Reg 0x00c95020 (registered as `math`) entry `atan` = `mathlib` (lmathlib.c) score 1.00
+- `math_ceil` `0x00a8e0a0`: luaL_Reg 0x00c95020 (registered as `math`) entry `ceil` = `mathlib` (lmathlib.c) score 1.00
+- `math_cos` `0x00a8de90`: luaL_Reg 0x00c95020 (registered as `math`) entry `cos` = `mathlib` (lmathlib.c) score 1.00
+- `math_cosh` `0x00a8ded0`: luaL_Reg 0x00c95020 (registered as `math`) entry `cosh` = `mathlib` (lmathlib.c) score 1.00
+- `math_deg` `0x00a8e330`: luaL_Reg 0x00c95020 (registered as `math`) entry `deg` = `mathlib` (lmathlib.c) score 1.00
+- `math_exp` `0x00a8e2e0`: luaL_Reg 0x00c95020 (registered as `math`) entry `exp` = `mathlib` (lmathlib.c) score 1.00
+- `math_floor` `0x00a8e0e0`: luaL_Reg 0x00c95020 (registered as `math`) entry `floor` = `mathlib` (lmathlib.c) score 1.00
+- `math_fmod` `0x00a8e120`: luaL_Reg 0x00c95020 (registered as `math`) entry `fmod` = `mathlib` (lmathlib.c) score 1.00
+- `math_frexp` `0x00a8e3b0`: luaL_Reg 0x00c95020 (registered as `math`) entry `frexp` = `mathlib` (lmathlib.c) score 1.00
+- `math_ldexp` `0x00a8e410`: luaL_Reg 0x00c95020 (registered as `math`) entry `ldexp` = `mathlib` (lmathlib.c) score 1.00
+- `math_log10` `0x00a8e2a0`: luaL_Reg 0x00c95020 (registered as `math`) entry `log10` = `mathlib` (lmathlib.c) score 1.00
+- `math_log` `0x00a8e260`: luaL_Reg 0x00c95020 (registered as `math`) entry `log` = `mathlib` (lmathlib.c) score 1.00
+- `math_max` `0x00a8e4d0`: luaL_Reg 0x00c95020 (registered as `math`) entry `max` = `mathlib` (lmathlib.c) score 1.00
+- `math_min` `0x00a8e460`: luaL_Reg 0x00c95020 (registered as `math`) entry `min` = `mathlib` (lmathlib.c) score 1.00
+- `math_modf` `0x00a8e170`: luaL_Reg 0x00c95020 (registered as `math`) entry `modf` = `mathlib` (lmathlib.c) score 1.00
+- `math_pow` `0x00a8e210`: luaL_Reg 0x00c95020 (registered as `math`) entry `pow` = `mathlib` (lmathlib.c) score 1.00
+- `math_rad` `0x00a8e370`: luaL_Reg 0x00c95020 (registered as `math`) entry `rad` = `mathlib` (lmathlib.c) score 1.00
+- `math_random` `0x00a8e540`: luaL_Reg 0x00c95020 (registered as `math`) entry `random` = `mathlib` (lmathlib.c) score 1.00
+- `math_randomseed` `0x00a8e6a0`: luaL_Reg 0x00c95020 (registered as `math`) entry `randomseed` = `mathlib` (lmathlib.c) score 1.00
+- `math_sin` `0x00a8de10`: luaL_Reg 0x00c95020 (registered as `math`) entry `sin` = `mathlib` (lmathlib.c) score 1.00
+- `math_sinh` `0x00a8de50`: luaL_Reg 0x00c95020 (registered as `math`) entry `sinh` = `mathlib` (lmathlib.c) score 1.00
+- `math_sqrt` `0x00a8e1d0`: luaL_Reg 0x00c95020 (registered as `math`) entry `sqrt` = `mathlib` (lmathlib.c) score 1.00
+- `math_tan` `0x00a8df10`: luaL_Reg 0x00c95020 (registered as `math`) entry `tan` = `mathlib` (lmathlib.c) score 1.00
+- `math_tanh` `0x00a8df50`: luaL_Reg 0x00c95020 (registered as `math`) entry `tanh` = `mathlib` (lmathlib.c) score 1.00
+- `maxn` `0x00a92df0`: luaL_Reg 0x00c94f48 (registered as `table`) entry `maxn` = `tab_funcs` (ltablib.c) score 1.00
+- `os_clock` `0x00aa1080`: luaL_Reg 0x00c94dd0 (registered as `os`) entry `clock` = `syslib` (loslib.c) score 1.00
+- `os_date` `0x00aa1220`: luaL_Reg 0x00c94dd0 (registered as `os`) entry `date` = `syslib` (loslib.c) score 1.00
+- `os_difftime` `0x00aa16a0`: luaL_Reg 0x00c94dd0 (registered as `os`) entry `difftime` = `syslib` (loslib.c) score 1.00
+- `os_execute` `0x00aa0d90`: luaL_Reg 0x00c94dd0 (registered as `os`) entry `execute` = `syslib` (loslib.c) score 1.00
+- `os_exit` `0x00aa17a0`: luaL_Reg 0x00c94dd0 (registered as `os`) entry `exit` = `syslib` (loslib.c) score 1.00
+- `os_getenv` `0x00aa0ff0`: luaL_Reg 0x00c94dd0 (registered as `os`) entry `getenv` = `syslib` (loslib.c) score 1.00
+- `os_remove` `0x00aa0e10`: luaL_Reg 0x00c94dd0 (registered as `os`) entry `remove` = `syslib` (loslib.c) score 1.00
+- `os_rename` `0x00aa0ea0`: luaL_Reg 0x00c94dd0 (registered as `os`) entry `rename` = `syslib` (loslib.c) score 1.00
+- `os_setlocale` `0x00aa1720`: luaL_Reg 0x00c94dd0 (registered as `os`) entry `setlocale` = `syslib` (loslib.c) score 1.00
+- `os_time` `0x00aa1520`: luaL_Reg 0x00c94dd0 (registered as `os`) entry `time` = `syslib` (loslib.c) score 1.00
+- `os_tmpname` `0x00aa0fa0`: luaL_Reg 0x00c94dd0 (registered as `os`) entry `tmpname` = `syslib` (loslib.c) score 1.00
+- `setn` `0x00a92f10`: luaL_Reg 0x00c94f48 (registered as `table`) entry `setn` = `tab_funcs` (ltablib.c) score 1.00
+- `sort` `0x00a93990`: luaL_Reg 0x00c94f48 (registered as `table`) entry `sort` = `tab_funcs` (ltablib.c) score 1.00
+- `str_byte` `0x00a80a60`: luaL_Reg 0x00c95338 (registered as `string`) entry `byte` = `strlib` (lstrlib.c) score 0.94
+- `str_char` `0x00a80c30`: luaL_Reg 0x00c95338 (registered as `string`) entry `char` = `strlib` (lstrlib.c) score 0.94
+- `str_dump` `0x00a80e00`: luaL_Reg 0x00c95338 (registered as `string`) entry `dump` = `strlib` (lstrlib.c) score 0.94
+- `str_find` `0x00a81d60`: luaL_Reg 0x00c95338 (registered as `string`) entry `find` = `strlib` (lstrlib.c) score 0.94
+- `str_format` `0x00a835c0`: luaL_Reg 0x00c95338 (registered as `string`) entry `format` = `strlib` (lstrlib.c) score 0.94
+- `str_gsub` `0x00a82310`: luaL_Reg 0x00c95338 (registered as `string`) entry `gsub` = `strlib` (lstrlib.c) score 0.94
+- `str_len` `0x00a80380`: luaL_Reg 0x00c95338 (registered as `string`) entry `len` = `strlib` (lstrlib.c) score 0.94
+- `str_lower` `0x00a80650`: luaL_Reg 0x00c95338 (registered as `string`) entry `lower` = `strlib` (lstrlib.c) score 0.94
+- `str_match` `0x00a81d80`: luaL_Reg 0x00c95338 (registered as `string`) entry `match` = `strlib` (lstrlib.c) score 0.94
+- `str_rep` `0x00a809b0`: luaL_Reg 0x00c95338 (registered as `string`) entry `rep` = `strlib` (lstrlib.c) score 0.94
+- `str_reverse` `0x00a80500`: luaL_Reg 0x00c95338 (registered as `string`) entry `reverse` = `strlib` (lstrlib.c) score 0.94
+- `str_sub` `0x00a803e0`: luaL_Reg 0x00c95338 (registered as `string`) entry `sub` = `strlib` (lstrlib.c) score 0.94
+- `str_upper` `0x00a80800`: luaL_Reg 0x00c95338 (registered as `string`) entry `upper` = `strlib` (lstrlib.c) score 0.94
+- `string::pack` `0x00a84460`: luaL_Reg 0x00c953c0 (registered as `string`) entry `pack` (no source table)
+- `string::unpack` `0x00a837d0`: luaL_Reg 0x00c953c0 (registered as `string`) entry `unpack` (no source table)
+- `tconcat` `0x00a931c0`: luaL_Reg 0x00c94f48 (registered as `table`) entry `concat` = `tab_funcs` (ltablib.c) score 1.00
+- `tinsert` `0x00a92f80`: luaL_Reg 0x00c94f48 (registered as `table`) entry `insert` = `tab_funcs` (ltablib.c) score 1.00
+- `tremove` `0x00a93080`: luaL_Reg 0x00c94f48 (registered as `table`) entry `remove` = `tab_funcs` (ltablib.c) score 1.00
+- `wstring::byte` `0x00a90230`: luaL_Reg 0x00c94f98 (registered as `wstring`) entry `byte` (table matches `strlib` score 0.82, not the best match)
+- `wstring::char` `0x00a90430`: luaL_Reg 0x00c94f98 (registered as `wstring`) entry `char` (table matches `strlib` score 0.82, not the best match)
+- `wstring::find` `0x00a91420`: luaL_Reg 0x00c94f98 (registered as `wstring`) entry `find` (table matches `strlib` score 0.82, not the best match)
+- `wstring::format` `0x00a92510`: luaL_Reg 0x00c94f98 (registered as `wstring`) entry `format` (table matches `strlib` score 0.82, not the best match)
+- `wstring::gfind` `0x00a91720`: luaL_Reg 0x00c94f98 (registered as `wstring`) entry `gfind` (table matches `strlib` score 0.82, not the best match)
+- `wstring::gmatch_aux` `0x00a91440`: luaL_Reg 0x00c94f98 (registered as `wstring`) entry `gmatch_aux` (table matches `strlib` score 0.82, not the best match)
+- `wstring::gmatch` `0x00a91600`: luaL_Reg 0x00c94f98 (registered as `wstring`) entry `gmatch` (table matches `strlib` score 0.82, not the best match)
+- `wstring::gsub` `0x00a919e0`: luaL_Reg 0x00c94f98 (registered as `wstring`) entry `gsub` (table matches `strlib` score 0.82, not the best match)
+- `wstring::len` `0x00a8fc20`: luaL_Reg 0x00c94f98 (registered as `wstring`) entry `len` (table matches `strlib` score 0.82, not the best match)
+- `wstring::lower` `0x00a8fe70`: luaL_Reg 0x00c94f98 (registered as `wstring`) entry `lower` (table matches `strlib` score 0.82, not the best match)
+- `wstring::lualex` `0x00a92550`: luaL_Reg 0x00c94f98 (registered as `wstring`) entry `lualex` (table matches `strlib` score 0.82, not the best match)
+- `wstring::match` `0x00a91430`: luaL_Reg 0x00c94f98 (registered as `wstring`) entry `match` (table matches `strlib` score 0.82, not the best match)
+- `wstring::rep` `0x00a90190`: luaL_Reg 0x00c94f98 (registered as `wstring`) entry `rep` (table matches `strlib` score 0.82, not the best match)
+- `wstring::reverse` `0x00a8fd30`: luaL_Reg 0x00c94f98 (registered as `wstring`) entry `reverse` (table matches `strlib` score 0.82, not the best match)
+- `wstring::sub` `0x00a8fc70`: luaL_Reg 0x00c94f98 (registered as `wstring`) entry `sub` (table matches `strlib` score 0.82, not the best match)
+- `wstring::upper` `0x00a90000`: luaL_Reg 0x00c94f98 (registered as `wstring`) entry `upper` (table matches `strlib` score 0.82, not the best match)
+
+## Lua function names (LUA_STRING)
+
+- `LoadConstants` `0x00aa88f0`: 1 unique string of `LoadConstants` (lundump.c): "bad constant"
+- `LoadFunction` `0x00aa8d30`: 1 unique string of `LoadFunction` (lundump.c): "bad code"
+- `LoadHeader` `0x00aa8ec0`: 1 unique string of `LoadHeader` (lundump.c): "bad header"
+- `LoadInt` `0x00aa86c0`: 1 unique string of `LoadInt` (lundump.c): "bad integer"
+- `LoadMem` `0x00aa8580`: 1 unique string of `LoadMem` (lundump.c): "bad size"
+- `LuaPlus::LuaStackObject::GetBoolean` `0x00a86de0`: 1 unique string of `LuaPlus::LuaStackObject::GetBoolean` (LuaStackObject.inl): "lua_isboolean( GetCState(), m_stackIndex ) || lua_isnil( GetCState(), m_stackIndex )"
+- `LuaPlus::LuaStackObject::GetUserdata` `0x00a86cc0`: 1 unique string of `LuaPlus::LuaStackObject::GetUserdata` (LuaStackObject.inl): "lua_isuserdata( GetCState(), m_stackIndex )"
+- `LuaPlus::LuaState::CallFormatting` `0x00a8bfb0`: 3 unique strings of `LuaPlus::LuaState::CallFormatting` (LuaState_DumpObject.cpp): "FormattedWrite", "LuaFileIndent", "LuaFilePrint"
+- `assignment` `0x00aa7080`: 1 unique string of `assignment` (lparser.c): "syntax error"
+- `auxresume` `0x00a89b40`: 2 unique strings of `auxresume` (lbaselib.c): "too many arguments to resume", "too many results to resume"
+- `auxsort` `0x00a93510`: 1 unique string of `auxsort` (ltablib.c): "invalid order function for sorting"
+- `breakstat` `0x00aa71e0`: 1 unique string of `breakstat` (lparser.c): "no loop to break"
+- `check_match` `0x00aa4fc0`: 1 unique string of `check_match` (lparser.c): "'%s' expected (to close '%s' at line %d)"
+- `errfile` `0x00a9d430`: 1 unique string of `errfile` (lauxlib.c): "cannot %s %s: %s"
+- `error` `0x00aa8540`: 1 unique string of `error` (lundump.c): "%s: %s in precompiled chunk"
+- `errorlimit` `0x00aa4eb0`: 2 unique strings of `errorlimit` (lparser.c): "function at line %d has more than %d %s", "main function has more than %d %s"
+- `findfile` `0x00aa1d90`: 2 unique strings of `findfile` (loadlib.c): "\n\tno file '%s'", "'package.%s' must be a string"
+- `findindex` `0x00a951a0`: 1 unique string of `findindex` (ltable.c): "invalid key to 'next'"
+- `findlocal` `0x00a9b370`: 1 unique string of `findlocal` (ldebug.c): "(*temporary)"
+- `forlist` `0x00aa7a30`: 3 unique strings of `forlist` (lparser.c): "(for control)", "(for generator)", "(for state)"
+- `fornum` `0x00aa7800`: 3 unique strings of `fornum` (lparser.c): "(for index)", "(for limit)", "(for step)"
+- `forstat` `0x00aa7c60`: 1 unique string of `forstat` (lparser.c): "'=' or 'in' expected"
+- `funcargs` `0x00aa6540`: 2 unique strings of `funcargs` (lparser.c): "ambiguous syntax (function call x new statement)", "function arguments expected"
+- `g_read` `0x00aa00f0`: 2 unique strings of `g_read` (liolib.c): "invalid format", "too many arguments"
+- `generic_reader` `0x00a88d60`: 2 unique strings of `generic_reader` (lbaselib.c): "reader function must return a string", "too many nested functions"
+- `getfield` `0x00aa1180`: 1 unique string of `getfield` (loslib.c): "field '%s' missing in date table"
+- `getfunc` `0x00a882f0`: 3 unique strings of `getfunc` (lbaselib.c): "invalid level", "level must be non-negative", "no function environment for tail call at level %d"
+- `getiofile` `0x00a9f960`: 1 unique string of `getiofile` (liolib.c): "standard %s file is closed"
+- `getobjname` `0x00a9bdb0`: 2 unique strings of `getobjname` (ldebug.c): "global", "upvalue"
+- `indexupvalue` `0x00aa5340`: 1 unique string of `indexupvalue` (lparser.c): "upvalues"
+- `info_tailcall` `0x00a9b500`: 1 unique string of `info_tailcall` (ldebug.c): "=(tail call)"
+- `llex` `0x00aa4940`: 1 unique string of `llex` (llex.c): "invalid long string delimiter"
+- `loader_preload` `0x00aa22e0`: 2 unique strings of `loader_preload` (loadlib.c): "\n\tno field package.preload['%s']", "'package.preload' must be a table"
+- `loaderror` `0x00aa1f20`: 1 unique string of `loaderror` (loadlib.c): "error loading module '%s' from file '%s':\n\t%s"
+- `luaD_seterrorobj` `0x00a9d890`: 1 unique string of `luaD_seterrorobj` (ldo.c): "error in error handling"
+- `luaG_ordererror` `0x00a9c090`: 2 unique strings of `luaG_ordererror` (ldebug.c): "attempt to compare %s with %s", "attempt to compare two %s values"
+- `luaG_typeerror` `0x00a9bfb0`: 2 unique strings of `luaG_typeerror` (ldebug.c): "attempt to %s %s '%s' (a %s value)", "attempt to %s a %s value"
+- `luaK_code` `0x00aaaaf0`: 1 unique string of `luaK_code` (lcode.c): "code size overflow"
+- `luaL_argerror` `0x00a9c230`: 3 unique strings of `luaL_argerror` (lauxlib.c): "bad argument #%d (%s)", "bad argument #%d to '%s' (%s)", "calling '%s' on bad self (%s)"
+- `luaL_checkoption` `0x00a9c490`: 1 unique string of `luaL_checkoption` (lauxlib.c): "invalid option '%s'"
+- `luaL_loadfile` `0x00a9d4e0`: 2 unique strings of `luaL_loadfile` (lauxlib.c): "=stdin", "reopen"
+- `luaO_chunkid` `0x00a96910`: 1 unique string of `luaO_chunkid` (lobject.c): "[string ""
+- `luaU_undump` `0x00aa8fd0`: 1 unique string of `luaU_undump` (lundump.c): "binary string"
+- `luaV_concat` `0x00a97b30`: 1 unique string of `luaV_concat` (lvm.c): "string length overflow"
+- `luaV_execute` `0x00a982d0`: 4 unique strings of `luaV_execute` (lvm.c): "'for' initial value must be a number", "'for' limit must be a number", "'for' step must be a number", "get length of"
+- `luaV_gettable` `0x00a97400`: 1 unique string of `luaV_gettable` (lvm.c): "loop in gettable"
+- `luaV_settable` `0x00a97540`: 1 unique string of `luaV_settable` (lvm.c): "loop in settable"
+- `luaX_lexerror` `0x00aa3c40`: 1 unique string of `luaX_lexerror` (llex.c): "%s near '%s'"
+- `lua_resume` `0x00a9e470`: 1 unique string of `lua_resume` (ldo.c): "cannot resume non-suspended coroutine"
+- `modinit` `0x00aa28a0`: 1 unique string of `modinit` (loadlib.c): "_PACKAGE"
+- `parlist` `0x00aa6210`: 1 unique string of `parlist` (lparser.c): "<name> or '...' expected"
+- `prefixexp` `0x00aa6680`: 1 unique string of `prefixexp` (lparser.c): "unexpected symbol"
+- `pusherror` `0x00aa18f0`: 1 unique string of `pusherror` (loadlib.c): "system error %d\n"
+- `read_long_string` `0x00aa4160`: 3 unique strings of `read_long_string` (llex.c): "nesting of [[...]] is deprecated", "unfinished long comment", "unfinished long string"
+- `registerlocalvar` `0x00aa51a0`: 1 unique string of `registerlocalvar` (lparser.c): "too many local variables"
+- `setnodevector` `0x00a955e0`: 1 unique string of `setnodevector` (ltable.c): "table overflow"
+- `setprogdir` `0x00aa1800`: 1 unique string of `setprogdir` (loadlib.c): "unable to get ModuleFileName"
+- `simpleexp` `0x00aa6960`: 1 unique string of `simpleexp` (lparser.c): "cannot use '...' outside a vararg function"
+- `trydecpoint` `0x00aa3ed0`: 1 unique string of `trydecpoint` (llex.c): "malformed number"
+
+## LUA_STRING candidate outcomes
+
+- accepted: 124
+- data references: 21
+- not in the program: 59
+- referenced by functions: 30
+- referenced from code outside functions: 16
+- short or format-only: 124
+
+## Conflicts
+
+None.
+
+## Agreements between sources
+
+- `0x00a80e00` `str_dump`: LUA_REG and LUA_STRING
+- `0x00a87c30` `luaB_print`: LUA_REG and LUA_STRING
+- `0x00a87eb0` `luaB_tonumber`: LUA_REG and LUA_STRING
+- `0x00a88220` `luaB_setmetatable`: LUA_REG and LUA_STRING
+- `0x00a88e40` `luaB_load`: LUA_REG and LUA_STRING
+- `0x00a89010` `luaB_assert`: LUA_REG and LUA_STRING
+- `0x00a89200` `luaB_select`: LUA_REG and LUA_STRING
+- `0x00a89d70` `luaB_cocreate`: LUA_REG and LUA_STRING
+- `0x00a8a400` `luaopen_base`: LUA_REG and LUA_STRING
+- `0x00a8a6e0` `db_getinfo`: LUA_REG and LUA_STRING
+- `0x00a8b220` `db_gethook`: LUA_REG and LUA_STRING
+- `0x00a8b360` `db_debug`: LUA_REG and LUA_STRING
+- `0x00a8b520` `db_errorfb`: LUA_REG and LUA_STRING
+- `0x00a8e540` `math_random`: LUA_REG and LUA_STRING
+- `0x00a92f10` `setn`: LUA_REG and LUA_STRING
+- `0x00a92f80` `tinsert`: LUA_REG and LUA_STRING
+- `0x00a9f210` `io_type`: LUA_REG and LUA_STRING
+- `0x00a9f610` `io_tostring`: LUA_REG and LUA_STRING
+- `0x00aa0ae0` `luaopen_io`: LUA_REG and LUA_STRING
+- `0x00aa0fa0` `os_tmpname`: LUA_REG and LUA_STRING
+- `0x00aa23d0` `ll_require`: LUA_REG and LUA_STRING
+- `0x00aa2c00` `luaopen_package`: LUA_REG and LUA_STRING
+
+## Kept names (not DEFAULT)
+
+None.
+
+## Anomalies
+
+None.
