@@ -35,6 +35,7 @@ struct GroundVertexOutput {
     @location(4) @interpolate(flat) is_wet: u32,
     @location(5) world_pos: vec3<f32>,
     @location(6) @interpolate(flat) instance_index: u32,
+    @location(7) reflection_uv: vec2<f32>,
 }
 
 struct GroundFragmentOutput {
@@ -102,6 +103,7 @@ fn vertex(vertex: Vertex) -> GroundVertexOutput {
     out.is_wet = inst.is_wet_flags & 1u;
     out.world_pos = world_pos;
     out.instance_index = u32(vertex.uv_b.x + 0.5);
+    out.reflection_uv = ec_liquid_reflection_uv(view_transformations::position_world_to_view(world_pos));
     return out;
 }
 
@@ -120,12 +122,8 @@ fn fragment(in: GroundVertexOutput) -> GroundFragmentOutput {
     let use_ec_water_material = (inst.material_flags & GROUND_FLAG_EC_WATER_MATERIAL) != 0u;
     var color: vec4<f32>;
     if (use_ec_water_material) {
-        let reflection_uv = ec_liquid_reflection_uv(
-            view_transformations::position_world_to_view(in.world_pos),
-            view_transformations::direction_world_to_view(vec3<f32>(0.0, 1.0, 0.0)),
-        );
         color = sample_ec_liquid(land_page_atlas, land_page_lookup, liquid_sampler,
-            inst.material_payload, in.world_pos.xz, vec2<f32>(uv_in_tile.x, 1.0 - uv_in_tile.y), reflection_uv, globals.time,
+            inst.material_payload, in.world_pos.xz, vec2<f32>(uv_in_tile.x, 1.0 - uv_in_tile.y), in.reflection_uv, globals.time,
             effects.enable_water_animation == 1u, effects.enable_linear_filtering == 1u);
         let energy = global_light.ambient_strength
             + global_light.land_diffuse_strength * water_flat_wrapped_lambert(scene.light_direction);

@@ -188,6 +188,38 @@ use `liquid-filter-final-` in `/tmp/uodynamapper-ec-followup/`; logs use
 `performance`, `normal-build` and `normal-preview` suffixes. Reflection/camera,
 per-stage faithful filtering and authored static geometry remain open.
 
+Vertex-reflection follow-up: both original liquid mesh constructors omit the
+normal stream; the FVF builder only includes normals when that pointer exists.
+The fixed-function reflection input therefore has a zero normal, so its
+coordinates reduce to normalized view-position XY at vertices. The shared shader
+now uses that contract and interpolates the result, removing the assumed
+horizontal normal and the per-fragment reflection calculation. Terrain reuses
+an unused varying; statics add one `vec2`, without new texture memory or draws.
+Addresses and the original pass/constructor/FVF evidence are recorded in
+`docs/agent_notes/ec_original_water_code.md`.
+
+Validation: **111 renderer tests passed**, one optional GPU test ignored by the
+ordinary suite and then run successfully with **17 numeric samples**. Thirteen
+current native fixtures cover the bridge and acid in all presets, filtered
+coast/lava/swamp, town and Classic shoreline. Three fresh baselines, four fresh
+acid/town old/new controls and two uncapped bridge runs also completed. Every
+successful preview verified Desktop 4 placement and cleanup, with no shader
+errors. Acid and town controls match exactly below the HUD; older phase images
+differ from the fresh baseline too and must not substitute for that control.
+Point-paused bridge frames match exactly. KR paused-water differences are at
+most two byte values per channel, also present before this change, rather than
+proof of reflection motion. The uncapped FPS samples were 45/45 before and
+24/46 after at 8/12 seconds: a brief startup/overlay check, not evidence of a
+throughput gain. Less fragment arithmetic does not establish total frame speed.
+
+Current artifacts use `reflection-vertex-` in `/tmp/uodynamapper-ec-followup/`;
+logs use `/tmp/uodynamapper-reflection-vertex-` with `before`, `after`, `controls`,
+`performance`, `tests`, `normal-build` and `normal-preview` suffixes. The focused
+GPU run is `/tmp/uodynamapper-reflection-gpu-test.log`. Temporary capture hooks
+were removed before the normal build. Camera orientation, original triangles
+versus reconstructed quads/LODs, color response and authored static geometry
+remain fidelity work; this phase does not establish original-client pixel parity.
+
 Follow-up captures are in `/tmp/uodynamapper-ec-followup/`: `baseline-enhanced.png`, `ec-{classic,enhanced,kr}-bridge.png`, `ec-paused-bridge.png`, `ec-enhanced-coast.png`, `ec-enhanced-town.png`, `cc-{classic,enhanced,kr}-coast.png`, and `ec-enhanced-{lava,acid,swamp}.png`. The corresponding `.early.png` images retain the earlier settled frame. Motion changed water-only crop pixels; the paused pair matched exactly in that crop. Lava `[5744,2928]`, acid `[6512,464]`, and swamp `[1872,2416]` checks established successful source-family rendering without shader errors, not full overlay/coverage parity. The lava edges and swamp coverage also expose remaining composition work.
 
 Follow-up logs: `/tmp/uodynamapper-water-followup-tests.log`, `/tmp/uodynamapper-water-params-tests.log`, `/tmp/uodynamapper-water-followup-check.log`, `/tmp/uodynamapper-water-followup-final-build.log`, and `/tmp/uodynamapper-water-followup-coverage.log`. Desktop placement and cleanup evidence is retained in `/tmp/uodynamapper-scenes-params-validation.log` and `/tmp/uodynamapper-liquid-families-validation.log`. Captures and logs are temporary local artifacts, not checked-in reference images.

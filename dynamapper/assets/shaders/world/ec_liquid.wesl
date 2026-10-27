@@ -63,9 +63,11 @@ fn ec_liquid_sample(atlas: texture_2d_array<f32>, linear_sampler: sampler, slot:
     return mix(mix(upper_left, upper_right, weight.x), mix(lower_left, lower_right, weight.x), weight.y);
 }
 
-fn ec_liquid_reflection_uv(view_position: vec3<f32>, view_normal: vec3<f32>) -> vec2<f32> {
-    let direction = reflect(normalize(view_position), normalize(view_normal));
-    return direction.xy;
+fn ec_liquid_reflection_uv(view_position: vec3<f32>) -> vec2<f32> {
+    // Both original liquid geometry owners omit the normal stream. Fixed-function
+    // reflection with that zero normal reduces to the normalized view position.
+    // Generate this at vertices and interpolate XY, before the source affine.
+    return view_position.xy * inverseSqrt(max(dot(view_position, view_position), 1e-20));
 }
 
 fn ec_liquid_world_uv(world_xz: vec2<f32>) -> vec2<f32> {

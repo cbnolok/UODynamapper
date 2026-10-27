@@ -114,6 +114,12 @@ converts positive Bevy world Z before the affine transform for original bump,
 world-indexed surface and item world-overlay sources. Technique 2 selects stream
 zero, supplied separately as world UVs by terrain and local UVs by item art.
 Reflection vectors and generated terrain coverage have separate domains.
+Both original liquid mesh paths omit a vertex normal stream. Their fixed-function
+reflection coordinates reduce to normalized view-position XY, generated at
+vertices and interpolated before the source affine. The runtime uses that
+contract for both owners; it does not reflect a fragment ray about a fabricated
+horizontal normal. Terrain carries the coordinates in its otherwise unused UV
+varying, keeping the current batched terrain/material architecture.
 See `ec_original_water_code.md` for the source addresses,
 neighbor-mask continuity check, and remaining terrain-specific composition work.
 

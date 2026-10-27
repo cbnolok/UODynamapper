@@ -1805,7 +1805,7 @@ fn fragment() -> @location(0) vec4<f32> {
     }
     let normal = sample_ec_material_normal_world(uv, tile, 0.0, true);
     let ripple = sample_ec_ripple_normal(uv, 0u, 0.0, 0.0);
-    let reflection_uv = ec_liquid_reflection_uv(vec3<f32>(0.0, 0.0, -1.0), vec3<f32>(0.0, 1.0, 0.0));
+    let reflection_uv = ec_liquid_reflection_uv(vec3<f32>(0.0, 0.0, -1.0));
     color += sample_ec_liquid(land_page_atlas, land_page_lookup, tex_small_sampler,
         0u, uv, ec_liquid_world_uv(uv), reflection_uv, 0.0, true, true).rgb;
     return apply_ec_item_liquid(vec4<f32>(color, normal.w + ripple.x),

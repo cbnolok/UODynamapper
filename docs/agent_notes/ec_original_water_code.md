@@ -666,7 +666,7 @@ coordinates, nearest sampling, alpha and a single-texel source. Run explicitly
 with `cargo test -p dynamapper --all-features --locked liquid_sampling_gpu_preserves_data_and_source_edges -- --ignored`.
 It is ignored in the ordinary suite because it requires a Vulkan adapter; it
 does not open a window. Other support-map samplers still require their own data
-filtering review. This repair does not establish camera/reflection, original
+filtering review. This repair does not establish camera equivalence, original
 runtime upload-format or complete original-client pixel parity.
 
 For later serialized geometry/property checks, the user identified
@@ -675,3 +675,67 @@ For later serialized geometry/property checks, the user identified
 support for this client's exact NIF version and custom blocks must be established
 on actual assets. They were not required to diagnose the source selection and
 NoDraw defects, and no NIF dependency was added to the renderer.
+
+## Reflection generation and missing vertex normals
+
+The `0x30000` coordinate-generation flag describes an operation on **vertices**,
+not a requirement to recompute a reflected ray in the fragment shader. The
+original water path uses the fixed-function vertex pipeline:
+
+- `UOWaterShader` installs vtable `0xcb46bc`. Its inherited pass entry at `+0x28`
+  is `0x749ea0`, which dispatches through render-pass vtable slot `+4`.
+  The pass vtable at `0xcd396c` resolves that slot to `0x7453d0`.
+- The pass constructor at `0x746290` clears its shader fields. The water
+  constructor `0x59b8d0` acquires a pass through `0x745170` and attaches texture
+  stages, without installing a vertex program. The pass's absent-program branch
+  at `0x7455cf`–`0x7455f3` clears the cached vertex shader and calls device
+  vtable `+0x170`, `IDirect3DDevice9::SetVertexShader(NULL)`. It then selects the
+  geometry FVF/declaration through `0x58e230` or `0x58e270`.
+- Terrain mesh construction calls `0x688710` at `0x4625c4` with its second
+  stack argument zero (`XOR EDI,EDI` at `0x4625b4`, `PUSH EDI` at `0x4625bf`).
+  That constructor stores this argument into geometry data `+0x24`, the normal
+  pointer. Position/color/UV streams are separate arguments.
+- Item collector `0x45cd80` creates geometry through `0x45ccc0` → `0x66c260` →
+  `0x67f7e0`. The last constructor also passes zero (`PUSH 0` at `0x67f7f2`)
+  as the normal argument to
+  `0x688710`. Its body does not allocate a replacement normal stream.
+- Buffer-format builder `0x76d1b0` adds `D3DFVF_NORMAL` (`0x10`) only when
+  geometry data `+0x24` is nonzero. Buffer upload `0x76d270` likewise copies
+  normals only when present. There is no fabricated upward normal in these
+  traced mesh paths. Do not confuse the CPU normals used for terrain vertex
+  colors with an uploaded normal stream.
+
+This matters to the reflection formula. Microsoft's
+[automatic-coordinate documentation](https://learn.microsoft.com/en-us/windows/win32/direct3d9/automatically-generated-texture-coordinates)
+identifies vertex position and normal as the inputs. As an independent API
+implementation check, Wine's
+[fixed-function vertex shader generator](https://github.com/wine-mirror/wine/blob/master/dlls/wined3d/glsl_shader.c)
+initializes an absent normal to zero and computes
+`reflect(normalize(view_position), normal)` for this TCI mode. With zero normal,
+the result is simply `normalize(view_position)`. DXVK's
+[vertex implementation](https://github.com/doitsujin/dxvk/blob/master/src/d3d9/shaders/d3d9_fixed_function_vert.vert)
+also generates reflection coordinates before rasterization. These sources
+corroborate API semantics; the mesh ownership and absent streams above come
+from UOSA itself. Function names can change as external recovery annotates the
+shared Ghidra project; the executable hash and addresses remain the anchors.
+
+The runtime therefore computes normalized view-position XY at vertices, then
+interpolates it without renormalizing in the fragment stage. Its source affine
+is linear and can remain after interpolation. The former helper instead
+reflected an interpolated position about an assumed horizontal normal per
+fragment, changing both the direction and interpolation. A tiny length floor
+makes an exact camera-origin vertex finite. Terrain reuses its otherwise unused
+UV varying; ground statics carry one extra `vec2`. This removes per-fragment
+view-position/normal transforms and normalization without another texture,
+lookup, allocation or draw call. Explicit-coordinate lava/acid techniques still
+select their existing UV streams.
+
+The GPU sampler regression additionally checks the recovered coordinate values
+for two view directions and the camera origin. This establishes the traced
+coordinate contract, not full camera equivalence: original camera orientation,
+item geometry/anchors, clocks, per-stage filtering and final color response still
+need separate comparison. It is unnecessary to reproduce the original
+fixed-function state machinery to preserve these coordinates efficiently.
+The retained terrain LOD topology and reconstructed item quads can still differ
+from the original triangles, so this change does not establish interpolation
+parity at every point or across all terrain/static boundaries.

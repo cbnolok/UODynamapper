@@ -476,7 +476,9 @@ fn vertex(in: Vertex, @builtin(vertex_index) vertex_index: u32) -> VertexOutput 
 
   out.world_position = final_world_pos;
   out.position       = view_transformations::position_world_to_clip(out.world_position.xyz);
-  out.uv = in.uv;
+  // Terrain albedo uses world coordinates; use the otherwise unused UV varying
+  // for the original vertex-generated liquid reflection coordinates.
+  out.uv = ec_liquid_reflection_uv(view_transformations::position_world_to_view(final_world_pos.xyz));
   out.instance_index = in.instance_index;
 
   // Base geometric normal (fast central-difference)
@@ -620,12 +622,8 @@ fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool) -> ve
   // ---- Base albedo ----
   var base_albedo = vec3<f32>(0.0);
   if (use_ec_liquid) {
-    let reflection_uv = ec_liquid_reflection_uv(
-      view_transformations::position_world_to_view(in.world_position.xyz),
-      view_transformations::direction_world_to_view(vec3<f32>(0.0, 1.0, 0.0)),
-    );
     base_albedo = sample_ec_liquid(land_page_atlas, land_page_lookup, tex_small_sampler,
-      tile.texture_payload, in.world_position.xz, ec_liquid_world_uv(in.world_position.xz), reflection_uv, globals.time,
+      tile.texture_payload, in.world_position.xz, ec_liquid_world_uv(in.world_position.xz), in.uv, globals.time,
       enable_water == 1u, effects.enable_linear_filtering == 1u).rgb;
   } else if (use_cheap_path) {
     // Quantize UV to a coarser grid and use direct nearest sample.

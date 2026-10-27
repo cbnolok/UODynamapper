@@ -27,7 +27,7 @@ fn liquid_sampling_gpu_preserves_data_and_source_edges() {
             "shaders/world/ec_liquid.wesl",
         ));
         shaders.set_shader(shader_id(0), Shader::from_wesl(r#"
-import package::shaders::world::ec_liquid::{EcLiquidSlot, ec_liquid_sample};
+import package::shaders::world::ec_liquid::{EcLiquidSlot, ec_liquid_sample, ec_liquid_reflection_uv};
 @group(0) @binding(0) var atlas: texture_2d_array<f32>;
 @group(0) @binding(1) var<storage, read_write> samples: array<vec4<f32>>;
 @group(0) @binding(2) var linear_sampler: sampler;
@@ -49,6 +49,11 @@ fn main() {
     samples[11] = ec_liquid_sample(atlas, linear_sampler, slot, vec2<f32>(0.0, 0.25), true, false, false);
     samples[12] = ec_liquid_sample(atlas, linear_sampler, slot, vec2<f32>(0.49, 0.25), false, true, false);
     samples[13] = ec_liquid_sample(atlas, linear_sampler, slot, vec2<f32>(0.0), true, true, false);
+    // The original meshes have no normal stream: reflecting about zero leaves
+    // the view direction intact. A fabricated horizontal normal changes Y.
+    samples[14] = vec4<f32>(ec_liquid_reflection_uv(vec3<f32>(0.0, -3.0, -4.0)), 0.0, 0.0);
+    samples[15] = vec4<f32>(ec_liquid_reflection_uv(vec3<f32>(6.0, -6.0, -3.0)), 0.0, 0.0);
+    samples[16] = vec4<f32>(ec_liquid_reflection_uv(vec3<f32>(0.0)), 0.0, 0.0);
 }
 "#, "shaders/test/liquid_sampling_gpu.wesl"));
         let wgsl = shaders.get(0, shader_id(0), &[]).unwrap();
@@ -79,7 +84,7 @@ fn main() {
         let view = atlas.create_view(&wgpu::TextureViewDescriptor {
             dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default()
         });
-        let result_size = 14 * 16;
+        let result_size = 17 * 16;
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: None, size: result_size, mapped_at_creation: false,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
@@ -129,7 +134,8 @@ fn main() {
         }));
         let expected = [mean(&normalized), mean(&linear), mean(&normalized[..2]),
             normalized[0], normalized[0], normalized[1], normalized[1], normalized[0],
-            mean(&normalized), normalized[3], mean(&linear[..2]), linear[0], linear[0], mean(&linear)];
+            mean(&normalized), normalized[3], mean(&linear[..2]), linear[0], linear[0], mean(&linear),
+            [0.0, -0.6, 0.0, 0.0], [2.0 / 3.0, -2.0 / 3.0, 0.0, 0.0], [0.0; 4]];
         for (sample, (actual, expected)) in actual.iter().zip(expected).enumerate() {
             for channel in 0..4 {
                 assert!((actual[channel] - expected[channel]).abs() < 0.001,
