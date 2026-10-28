@@ -76,6 +76,8 @@ loader are named and documented in [`ghidra-login-names`](ghidra-login-names/REA
 
 The `tileart.uop` load path, its record format as the client reads it and the code
 using tile definitions are named and documented in [`ghidra-tileart`](ghidra-tileart/README.md).
+The effect definitions at the end of tileart records, which share their format with
+`EffectDefinitionCollection.uop`, are decoded in [`ghidra-effects`](ghidra-effects/README.md).
 
 For an already analyzed program in the configured ghidra-mcp GUI project, prefer
 the plugin's MCP tools when the client exposes them. Start with
