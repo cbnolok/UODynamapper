@@ -1,10 +1,10 @@
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
-use crate::app::{concrete_art_tile_source, tileart_flags_summary, tileart_property_name, tileart_type_name, ArtSource, ArtViewerRow, TileArtFileEntry, TileMetadataSource, UopInspectorApp, ViewMode};
+use crate::app::{concrete_art_tile_source, tileart_flags_summary, tileart_property_name, ArtSource, ArtViewerRow, TileArtFileEntry, TileMetadataSource, UopInspectorApp, ViewMode};
 use crate::logic::ClientData;
 use super::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by};
 use std::sync::Arc;
-use uocf::enhanced::tileart::{TaeAnimationAppearance, TaeSittingAnimation, TextureType};
+use uocf::enhanced::tileart::{TaeAppearanceFilter, TaeSittingAnimation, TextureType};
 use uocf::classic::art::{static_art_id_for_source, STATIC_TILE_ID_BASE};
 
 const TILEDATA_TABLE_MIN_WIDTH: f32 = 980.0;
@@ -495,13 +495,13 @@ fn ui_ec_tileart_table(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut 
         let sort = list_sort_controls(
             ui,
             "ec_tileart_rows",
-            &["ID", "Old ID", "Type", "Hash"],
+            &["ID", "Old ID", "Body Type", "Hash"],
             0,
         );
         let sorted_indices = sorted_indices_by(&rows, sort.ordering(), |left, right| {
             match sort.option_index {
                 1 => string_number(&left.old_id).cmp(&string_number(&right.old_id)),
-                2 => left.type_name.cmp(right.type_name).then_with(|| string_number(&left.tile_id).cmp(&string_number(&right.tile_id))),
+                2 => string_number(&left.body_type).cmp(&string_number(&right.body_type)).then_with(|| string_number(&left.tile_id).cmp(&string_number(&right.tile_id))),
                 3 => left.filename_hash.cmp(&right.filename_hash),
                 _ => string_number(&left.tile_id).cmp(&string_number(&right.tile_id)),
             }
@@ -546,7 +546,7 @@ fn ui_ec_tileart_table(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut 
                         ui.strong("Old ID");
                     });
                     header.col(|ui| {
-                        ui.strong("Type");
+                        ui.strong("Body Type");
                     });
                     header.col(|ui| {
                         ui.strong("Properties");
@@ -599,7 +599,7 @@ fn ui_ec_tileart_table(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut 
                             ui.label(&item.old_id);
                         });
                         row.col(|ui| {
-                            ui.label(item.type_name);
+                            ui.label(&item.body_type);
                         });
                         row.col(|ui| {
                             ui.label(&item.properties_summary);
@@ -717,14 +717,14 @@ fn ui_selected_tileart_details(app: &mut UopInspectorApp, ctx: &egui::Context, u
             ui.label("Old ID");
             ui.label(entry.old_id.to_string());
             ui.end_row();
-            ui.label("Type");
-            ui.label(format!("{} ({})", tileart_type_name(entry.type_val), entry.type_val));
+            ui.label("Body Type");
+            ui.label(entry.body_type.to_string());
             ui.end_row();
             ui.label("Facing");
             ui.label(entry.facing.to_string());
             ui.end_row();
-            ui.label("Light");
-            ui.label(format!("{}, {}", entry.light1, entry.light2));
+            ui.label("Light Offset");
+            ui.label(format!("{}, {}", entry.light_offset_x, entry.light_offset_y));
             ui.end_row();
             ui.label("Radar RGBA");
             ui.label(format!(
@@ -835,17 +835,17 @@ fn ui_selected_tileart_details(app: &mut UopInspectorApp, ctx: &egui::Context, u
                 ui.label(block.type_string_off.to_string());
                 ui.label(block.texture_items_count.to_string());
                 ui.label(format!(
-                    "unk8 {} / unk9 {}",
-                    block.unk8_count,
-                    block.unk9_count
+                    "technique {} / tweaks {}",
+                    block.technique_count,
+                    block.tweak_count
                 ));
                 ui.end_row();
                 for (item_index, item) in block.texture_items.iter().enumerate() {
                     ui.label(format!("{}.{}", block_index, item_index));
                     ui.label(format!("name off {}", item.name_string_off));
                     ui.label(format!("stretch {}", item.texture_stretch));
-                    ui.label(format!("unk4 {}", item.unk4));
-                    ui.label(format!("unk6 {} / unk7 {}", item.unk6, item.unk7));
+                    ui.label(format!("source_kind {}", item.source_kind));
+                    ui.label(format!("sampler {} / uv_set {}", item.sampler_index, item.uv_set));
                     ui.end_row();
                 }
             }
@@ -898,8 +898,9 @@ fn ui_selected_tileart_details(app: &mut UopInspectorApp, ctx: &egui::Context, u
             if let Some(sitting) = &entry.sitting {
                 ui.label("Sitting Values");
                 ui.monospace(format!(
-                    "{}, {}, {}, {}",
-                    sitting.unk1, sitting.unk2, sitting.unk3, sitting.unk4
+                    "{}, {}, {}, {}, {}, {}",
+                    sitting.direction_mask, sitting.field_04, sitting.field_08,
+                    sitting.window_shift, sitting.field_10, sitting.field_14
                 ));
                 ui.end_row();
             }
@@ -939,35 +940,37 @@ fn string_number(value: &str) -> u32 {
 fn tileart_sitting_summary(sitting: Option<&TaeSittingAnimation>) -> String {
     if let Some(sitting) = sitting {
         format!(
-            "yes ({}, {}, {}, {})",
-            sitting.unk1, sitting.unk2, sitting.unk3, sitting.unk4
+            "yes (directions {}, window shift {}, fields {}, {}, {}, {})",
+            sitting.direction_mask, sitting.window_shift,
+            sitting.field_04, sitting.field_08, sitting.field_10, sitting.field_14
         )
     } else {
         "no".to_string()
     }
 }
 
-fn tileart_appearance_summary(appearance: &[TaeAnimationAppearance]) -> String {
+fn tileart_appearance_summary(appearance: &[TaeAppearanceFilter]) -> String {
     if appearance.is_empty() {
         return "none".to_string();
     }
 
-    let mut counts = [0usize; 2];
-    let mut other = 0usize;
+    let mut by_body = 0usize;
+    let mut by_gender = 0usize;
+    let mut animation_by_body = 0usize;
     for item in appearance {
-        match item.sub_type {
-            0 => counts[0] += 1,
-            1 => counts[1] += 1,
-            _ => other += 1,
+        match item {
+            TaeAppearanceFilter::ByOwnerBodyType(_) => by_body += 1,
+            TaeAppearanceFilter::ByOwnerGender { .. } => by_gender += 1,
+            TaeAppearanceFilter::AnimationByOwnerBodyType(_) => animation_by_body += 1,
         }
     }
 
     format!(
-        "{} records (type0 {}, type1 {}, other {})",
+        "{} filters (body {}, gender {}, animation body {})",
         appearance.len(),
-        counts[0],
-        counts[1],
-        other
+        by_body,
+        by_gender,
+        animation_by_body
     )
 }
 
@@ -981,24 +984,18 @@ fn tileart_texture_type_label(texture_type: TextureType) -> &'static str {
     }
 }
 
-fn tileart_appearance_detail(appearance: &TaeAnimationAppearance) -> String {
-    if let Some(sub1) = &appearance.sub1 {
-        return format!("type {}: {}, {}", appearance.sub_type, sub1.unk1, sub1.unk2);
-    }
-    if let Some(sub2) = &appearance.sub2 {
-        let pairs = sub2
-            .sub3_vector
-            .iter()
-            .map(|sub3| format!("{}:{}", sub3.unk1, sub3.unk2))
-            .collect::<Vec<_>>()
-            .join(", ");
-        return format!(
-            "type {}: {} records [{}]",
-            appearance.sub_type,
-            sub2.sub_count,
-            pairs
-        );
-    }
-
-    format!("type {}: empty", appearance.sub_type)
+fn tileart_appearance_detail(appearance: &TaeAppearanceFilter) -> String {
+    let (label, mappings) = match appearance {
+        TaeAppearanceFilter::ByOwnerGender { gender, appearance } => {
+            return format!("gender {}: appearance {}", gender, appearance);
+        }
+        TaeAppearanceFilter::ByOwnerBodyType(mappings) => ("body", mappings),
+        TaeAppearanceFilter::AnimationByOwnerBodyType(mappings) => ("animation body", mappings),
+    };
+    let pairs = mappings
+        .iter()
+        .map(|mapping| format!("{}:{}", mapping.body_type, mapping.appearance))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{}: {} records [{}]", label, mappings.len(), pairs)
 }

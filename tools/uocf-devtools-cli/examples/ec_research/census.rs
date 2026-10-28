@@ -20,7 +20,7 @@ impl ItemCensus {
             counts.0 += 1;
             counts.1 += usize::from(!refs.is_empty());
             for reference in refs {
-                *self.stages.entry((material.block_index, material.shader_name.clone(), reference.unk6)).or_default() += 1;
+                *self.stages.entry((material.block_index, material.shader_name.clone(), reference.sampler_index)).or_default() += 1;
             }
         }
     }

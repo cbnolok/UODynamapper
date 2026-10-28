@@ -24,7 +24,7 @@ use uocf::enhanced::multis::MultiCollection;
 use uocf::classic::tiledata::TileData;
 use uocf::enhanced::string_dictionary::UoStringDictionary;
 use uocf::enhanced::tileart::{
-    ArtTexture, TaeAnimationAppearance, TaeFlag, TaeSittingAnimation,
+    ArtTexture, TaeAppearanceFilter, TaeFlag, TaeSittingAnimation,
     TextureItem as TileArtTextureItem, TextureType as TileArtTextureType, TileArtEntry,
 };
 use uocf::enhanced::terrain_definition::TerrainDefinitionEntry;
@@ -983,7 +983,7 @@ pub struct TileArtDisplayRow {
     pub filename_hash: u64,
     pub tile_id: String,
     pub old_id: String,
-    pub type_name: &'static str,
+    pub body_type: String,
     pub properties_summary: String,
     pub flags_raw: String,
     pub flags_summary: String,
@@ -1211,7 +1211,7 @@ fn collect_tileart_display_rows(
             let entry = &file.entry;
             let tile_id = entry.tile_id.to_string();
             let old_id = entry.old_id.to_string();
-            let type_name = tileart_type_name(entry.type_val);
+            let body_type = entry.body_type.to_string();
             let properties_summary = tileart_properties_summary(entry);
             let flags_raw = format!("0x{:016X}", entry.flags1.bits());
             let flags_summary = tileart_flags_summary(entry.flags1);
@@ -1246,7 +1246,7 @@ fn collect_tileart_display_rows(
                 "{} {} {} {} {} {} {} {}",
                 tile_id,
                 old_id,
-                type_name.to_lowercase(),
+                body_type,
                 properties_summary.to_lowercase(),
                 flags_raw.to_lowercase(),
                 flags_summary.to_lowercase(),
@@ -1257,7 +1257,7 @@ fn collect_tileart_display_rows(
                 filename_hash: file.filename_hash,
                 tile_id,
                 old_id,
-                type_name,
+                body_type,
                 properties_summary,
                 flags_raw,
                 flags_summary,
@@ -1318,15 +1318,6 @@ fn classic_tile_flags_summary(flags: uocf::classic::tiledata::Flags) -> String {
         "none".to_string()
     } else {
         active.join(", ")
-    }
-}
-
-pub(crate) fn tileart_type_name(type_val: i32) -> &'static str {
-    match type_val {
-        0 => "Static",
-        1 => "Solid",
-        2 => "Liquid",
-        _ => "Unknown",
     }
 }
 
@@ -1397,7 +1388,7 @@ pub(crate) fn tileart_flags_summary(flags: TaeFlag) -> String {
         (TaeFlag::StairRight, "StairRight"),
         (TaeFlag::NoHouse, "NoHouse"),
         (TaeFlag::NoDraw, "NoDraw"),
-        (TaeFlag::Unused1, "Unused1"),
+        (TaeFlag::Rotated, "Rotated"),
         (TaeFlag::AlphaBlend, "AlphaBlend"),
         (TaeFlag::NoShadow, "NoShadow"),
         (TaeFlag::PixelBleed, "PixelBleed"),
@@ -1446,35 +1437,37 @@ fn tileart_texture_summary(
 fn tileart_sitting_summary(sitting: Option<&TaeSittingAnimation>) -> String {
     if let Some(sitting) = sitting {
         format!(
-            "yes ({}, {}, {}, {})",
-            sitting.unk1, sitting.unk2, sitting.unk3, sitting.unk4
+            "yes (directions {}, window shift {}, fields {}, {}, {}, {})",
+            sitting.direction_mask, sitting.window_shift,
+            sitting.field_04, sitting.field_08, sitting.field_10, sitting.field_14
         )
     } else {
         "no".to_string()
     }
 }
 
-fn tileart_appearance_summary(appearance: &[TaeAnimationAppearance]) -> String {
+fn tileart_appearance_summary(appearance: &[TaeAppearanceFilter]) -> String {
     if appearance.is_empty() {
         return "none".to_string();
     }
 
-    let mut counts = [0usize; 2];
-    let mut other = 0usize;
+    let mut by_body = 0usize;
+    let mut by_gender = 0usize;
+    let mut animation_by_body = 0usize;
     for item in appearance {
-        match item.sub_type {
-            0 => counts[0] += 1,
-            1 => counts[1] += 1,
-            _ => other += 1,
+        match item {
+            TaeAppearanceFilter::ByOwnerBodyType(_) => by_body += 1,
+            TaeAppearanceFilter::ByOwnerGender { .. } => by_gender += 1,
+            TaeAppearanceFilter::AnimationByOwnerBodyType(_) => animation_by_body += 1,
         }
     }
 
     format!(
-        "{} records (type0 {}, type1 {}, other {})",
+        "{} filters (body {}, gender {}, animation body {})",
         appearance.len(),
-        counts[0],
-        counts[1],
-        other
+        by_body,
+        by_gender,
+        animation_by_body
     )
 }
 

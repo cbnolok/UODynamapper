@@ -20,9 +20,9 @@ fn fourth_source<'a>(material: &ArtMaterial, refs: &'a [TileMetaItemTextureRef])
     if material.block_index != 0 || material.shader_name.as_deref() != Some("UOWaterShader") {
         return None;
     }
-    refs.iter().find(|r| r.block_index == material.block_index && r.unk6 == 3
+    refs.iter().find(|r| r.block_index == material.block_index && r.sampler_index == 3
         && r.is_world_art() && r.physical_package() == EcMaterialPhysicalPackage::Texture
-        && r.unk7 <= 1 && r.texture_stretch.is_finite() && r.texture_stretch > 0.0)
+        && r.uv_set <= 1 && r.texture_stretch.is_finite() && r.texture_stretch > 0.0)
 }
 
 pub(super) fn create_lookup(
@@ -43,7 +43,7 @@ pub(super) fn create_lookup(
             records[index] = [layer, extent.x, extent.y, material.technique.get(1).copied().unwrap_or(0) as u32];
             records[index + 1] = [source.texture_stretch.to_bits(),
                 material.tweaks.get(2).copied().unwrap_or(0.0).to_bits(),
-                material.tweaks.get(3).copied().unwrap_or(0.0).to_bits(), source.unk7];
+                material.tweaks.get(3).copied().unwrap_or(0.0).to_bits(), source.uv_set];
         }
     }
     images.add(Image::new(
@@ -64,14 +64,14 @@ mod tests {
         let material = ArtMaterial { shader_name: Some("UOWaterShader".into()), ..Default::default() };
         let source = TileMetaItemTextureRef {
             texture_id: 6038, texture_type: 1, physical_package: EcMaterialPhysicalPackage::Texture as u8,
-            unk6: 3, unk7: 0, texture_stretch: 1.0, ..Default::default()
+            sampler_index: 3, uv_set: 0, texture_stretch: 1.0, ..Default::default()
         };
         let refs = [TileMetaItemTextureRef { block_index: 1, ..source }, source];
         assert_eq!(fourth_source(&material, &refs).unwrap().block_index, 0);
         for wrong in [
             TileMetaItemTextureRef { physical_package: EcMaterialPhysicalPackage::LegacyTexture as u8, ..source },
-            TileMetaItemTextureRef { unk6: 2, ..source },
-            TileMetaItemTextureRef { unk7: 2, ..source },
+            TileMetaItemTextureRef { sampler_index: 2, ..source },
+            TileMetaItemTextureRef { uv_set: 2, ..source },
             TileMetaItemTextureRef { texture_stretch: f32::NAN, ..source },
         ] {
             assert!(fourth_source(&material, &[wrong]).is_none());
@@ -93,7 +93,7 @@ mod tests {
         spans[17001] = TileMetaItemTextureRefSpan { start: 1, len: 1, ..Default::default() };
         let refs = [6038, 2100014].map(|texture_id| TileMetaItemTextureRef {
             texture_id, texture_type: 1, physical_package: EcMaterialPhysicalPackage::Texture as u8,
-            unk6: 3, texture_stretch: 1.0, ..Default::default()
+            sampler_index: 3, texture_stretch: 1.0, ..Default::default()
         });
         let source = br#"{"17000":[{"block_index":0,"shader_name":"UOWaterShader","technique":[0,1],"tweaks":[0,0,-0.02,0.001],"unk1":0}],"17001":[{"block_index":0,"shader_name":"UOWaterShader","technique":[0,2],"tweaks":[0,0,0,0],"unk1":0}]}"#;
         let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);

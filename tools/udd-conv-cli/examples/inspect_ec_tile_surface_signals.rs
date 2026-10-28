@@ -226,7 +226,7 @@ fn load_raw_tileart_entries(tileart_path: &Path) -> eyre::Result<HashMap<u16, Ti
 
 fn print_raw_entry(raw_entry: &TileArtEntry, string_dictionary: &UoStringDictionary) {
     println!("  raw.old_id={}", raw_entry.old_id);
-    println!("  raw.type_val={}", raw_entry.type_val);
+    println!("  raw.body_type={}", raw_entry.body_type);
     println!("  raw.flags1_bits=0x{:x}", raw_entry.flags1.bits());
     println!("  raw.flags2_bits=0x{:x}", raw_entry.flags2.bits());
     println!(
@@ -263,11 +263,11 @@ fn print_raw_entry(raw_entry: &TileArtEntry, string_dictionary: &UoStringDiction
         for (item_index, item) in texture_block.texture_items.iter().enumerate() {
             let path = dictionary_string(string_dictionary, item.name_string_off);
             println!(
-                "    item[{item_index}] stretch={} unk4={} unk6={} unk7={} path={}",
+                "    item[{item_index}] stretch={} source_kind={} sampler_index={} uv_set={} path={}",
                 item.texture_stretch,
-                item.unk4,
-                item.unk6,
-                item.unk7,
+                item.source_kind,
+                item.sampler_index,
+                item.uv_set,
                 path.as_deref().unwrap_or("<missing>")
             );
         }
@@ -339,7 +339,7 @@ fn print_tilemeta_texture_refs(texture_refs: &[TileMetaItemTextureRef]) {
     println!("  tilemeta.texture_refs.count={}", texture_refs.len());
     for (index, texture_ref) in texture_refs.iter().enumerate() {
         println!(
-            "    ref[{index}] id={} family={:?} package={:?} stable_role={:?} speculative_role={:?} readiness={} block={} item={} aux={} primary={} stretch={} unk4={} unk6={} unk7={}",
+            "    ref[{index}] id={} family={:?} package={:?} stable_role={:?} speculative_role={:?} readiness={} block={} item={} aux={} primary={} stretch={} source_kind={} sampler_index={} uv_set={}",
             texture_ref.texture_id,
             texture_ref.logical_family(),
             texture_ref.physical_package(),
@@ -351,9 +351,9 @@ fn print_tilemeta_texture_refs(texture_refs: &[TileMetaItemTextureRef]) {
             texture_ref.is_auxiliary(),
             texture_ref.is_primary_selected(),
             texture_ref.texture_stretch,
-            texture_ref.unk4,
-            texture_ref.unk6,
-            texture_ref.unk7,
+            texture_ref.source_kind,
+            texture_ref.sampler_index,
+            texture_ref.uv_set,
         );
         println!(
             "      ref[{index}].physical_package={:?}",

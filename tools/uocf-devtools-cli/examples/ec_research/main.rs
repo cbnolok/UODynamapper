@@ -85,13 +85,13 @@ fn main() -> Result<()> {
                     let shader = block.type_string_off.checked_sub(1)
                         .and_then(|offset| dictionary.get_string(offset as usize));
                     println!("  block={index} shader={shader:?} Technique={:?} Tweaks={:?}",
-                        block.unk8_vector, block.unk9_vector);
+                        block.technique, block.tweaks);
                 }
                 for reference in art.texture_items.iter().flatten() {
-                    println!("  block={} source={} sampler={} id={} path={:?} repetition={} fields={}/{}",
-                        reference.block_index, reference.item_index, reference.unk6,
+                    println!("  block={} source={} sampler={} id={} path={:?} repetition={} source_kind={} uv_set={}",
+                        reference.block_index, reference.item_index, reference.sampler_index,
                         reference.id, reference.raw_path, reference.texture_stretch,
-                        reference.unk4, reference.unk7);
+                        reference.source_kind, reference.uv_set);
                 }
             }
             if summary { census.print(); }

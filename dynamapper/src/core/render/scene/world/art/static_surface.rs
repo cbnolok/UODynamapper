@@ -19,7 +19,7 @@ fn source_key(tile: &TileMetaItemTile, refs: &[TileMetaItemTextureRef]) -> Optio
         return None;
     }
     let base = refs.iter().find(|r| r.block_index == 0 && r.is_primary_selected() && r.is_world_art())?;
-    if base.stable_role() != EcMaterialStableRole::Base || base.unk7 != 1
+    if base.stable_role() != EcMaterialStableRole::Base || base.uv_set != 1
         || !base.texture_stretch.is_finite() || base.texture_stretch <= 0.0 { return None; }
     Some((base.texture_id, base.texture_stretch.to_bits()))
 }
@@ -102,9 +102,9 @@ mod tests {
         tile.flags = 0x400002201;
         let base = TileMetaItemTextureRef { texture_id: 2000090, flags: 2,
             texture_type: 1, stable_role: EcMaterialStableRole::Base as u8,
-            texture_stretch: 8.0, unk7: 1, ..Default::default() };
+            texture_stretch: 8.0, uv_set: 1, ..Default::default() };
         assert_eq!(source_key(&tile, &[base]), Some((2000090, 8.0f32.to_bits())));
-        for invalid in [TileMetaItemTextureRef { unk7: 0, ..base },
+        for invalid in [TileMetaItemTextureRef { uv_set: 0, ..base },
             TileMetaItemTextureRef { stable_role: EcMaterialStableRole::AlphaMask as u8, ..base }] {
             assert_eq!(source_key(&tile, &[invalid]), None);
         }

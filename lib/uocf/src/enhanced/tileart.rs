@@ -5,6 +5,7 @@ use crate::enhanced::string_dictionary::UoStringDictionary;
 use crate::uop_container::file::UopFile;
 use bitflags::bitflags;
 use byteorder::{LittleEndian, ReadBytesExt};
+use color_eyre::eyre::{bail, ensure};
 use std::io::Cursor;
 
 // region: --- Public API (Convenience & Application Use)
@@ -21,13 +22,27 @@ pub fn load(
     Ok(processed_data)
 }
 
+/// Record version accepted by the client (`UOTileArt::ParseObjectDefinition` rejects any other).
+pub const TILEART_RECORD_VERSION: u16 = 4;
+/// Shader blocks per record: 0 WorldArt, 1 TileArtLegacy, 2 TileArtEnhanced, 3 light texture.
+pub const TILEART_SHADER_BLOCK_COUNT: usize = 4;
+/// Number of u32 words in a sitting block (`UOTileArtSitting`).
+pub const TILEART_SITTING_WORD_COUNT: usize = 6;
+/// Appearance filter subtype: appearance by owner body type.
+pub const APPEARANCE_FILTER_BY_OWNER_BODY_TYPE: u8 = 0;
+/// Appearance filter subtype: appearance by owner gender.
+pub const APPEARANCE_FILTER_BY_OWNER_GENDER: u8 = 1;
+/// Appearance filter subtype: animation appearance by owner body type.
+pub const APPEARANCE_FILTER_ANIMATION_BY_OWNER_BODY_TYPE: u8 = 2;
+
+const TILEART_SITTING_ABSENT: u8 = 0;
+const TILEART_SITTING_PRESENT: u8 = 1;
+
 /// Inferred tile classification used for high-level logic.
 ///
-/// This is a convenience abstraction. In the raw binary data, this is stored as
-/// a simple integer (`type_val` in `TileArtEntry`). We map these values:
-/// - 0 => `Static`
-/// - 1 => `Solid`
-/// - 2 => `Liquid`
+/// This is a convenience abstraction, not a file field: `get_tile_type` derives it
+/// from the WorldArt block (block 0) shader name, the `Rotated` flag and the first
+/// texture stretch.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum TileType {
     #[default]
@@ -89,7 +104,7 @@ pub struct ArtData {
     pub texture_items: Vec<Vec<TextureItem>>,
     /// Original per-block shader identity and parameters, separate from image refs.
     pub materials: Vec<ArtMaterial>,
-    pub appearance: Vec<TaeAnimationAppearance>,
+    pub appearance: Vec<TaeAppearanceFilter>,
     pub sitting: Option<TaeSittingAnimation>,
 }
 
@@ -99,7 +114,10 @@ pub struct ArtMaterial {
     pub shader_name: Option<String>,
     pub technique: Vec<i32>,
     pub tweaks: Vec<f32>,
-    pub unk1: u8,
+    /// Shader block byte at `UOShaderDefinition` +0x04; 0 in all client records, meaning unknown.
+    /// Older tilemeta packages stored it as `unk1`.
+    #[serde(alias = "unk1")]
+    pub field_04: u8,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -126,9 +144,12 @@ pub struct TextureItem {
     pub block_index: u8,
     pub item_index: u8,
     pub texture_stretch: f32,
-    pub unk4: u8,
-    pub unk6: u32,
-    pub unk7: u32,
+    /// Texture load path selector (medium); see `TaeTextureImage::source_kind`.
+    pub source_kind: u8,
+    /// Probable sampler index inside the shader block (low); see `TaeTextureImage::sampler_index`.
+    pub sampler_index: u32,
+    /// UV set (medium); see `TaeTextureImage::uv_set`.
+    pub uv_set: u32,
     pub is_auxiliary: bool,
     /// Logical folder family inferred from the path.
     pub ec_logical_family: EcLogicalFamily,
@@ -176,7 +197,9 @@ bitflags! {
         const StairRight = 0x80000000;
         const NoHouse = 0x100000000;
         const NoDraw = 0x200000000;
-        const Unused1 = 0x400000000;
+        /// Rotated tile art: the client applies `rotation_degrees` to the sprite and uses the
+        /// full texture size in the UI (formerly `Unused1`).
+        const Rotated = 0x400000000;
         const AlphaBlend = 0x800000000;
         const NoShadow = 0x1000000000;
         const PixelBleed = 0x2000000000;
@@ -217,59 +240,82 @@ pub struct TaeStackAlias {
     pub amount_id: u32,
 }
 
-#[derive(Debug, Default, Clone)]
-pub struct TaeAnimationAppearanceSub3 {
-    pub unk1: u32,
-    pub unk2: u32,
+/// Body type to appearance mapping of a body-type appearance filter.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct TaeBodyAppearance {
+    pub body_type: u32,
+    pub appearance: u32,
 }
 
-#[derive(Debug, Default, Clone)]
-pub struct TaeAnimationAppearanceSub2 {
-    pub sub_count: u32,
-    pub sub3_vector: Vec<TaeAnimationAppearanceSub3>,
+/// One appearance filter, as read by `UOTileArt::ParseAppearanceFilters`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaeAppearanceFilter {
+    /// Subtype 0 (`AppearanceFilterByOwnerBodyType`): appearance by owner body type.
+    ByOwnerBodyType(Vec<TaeBodyAppearance>),
+    /// Subtype 1 (`AppearanceFilterByOwnerGender`): appearance by owner gender.
+    ByOwnerGender { gender: u8, appearance: u32 },
+    /// Subtype 2 (`AnimationAppearanceFilterByOwnerBodyType`): animation appearance by owner body type.
+    AnimationByOwnerBodyType(Vec<TaeBodyAppearance>),
 }
 
-#[derive(Debug, Default, Clone)]
-pub struct TaeAnimationAppearanceSub1 {
-    pub unk1: u8,
-    pub unk2: u32,
+impl TaeAppearanceFilter {
+    /// Subtype byte as stored in the file.
+    pub fn subtype(&self) -> u8 {
+        match self {
+            Self::ByOwnerBodyType(_) => APPEARANCE_FILTER_BY_OWNER_BODY_TYPE,
+            Self::ByOwnerGender { .. } => APPEARANCE_FILTER_BY_OWNER_GENDER,
+            Self::AnimationByOwnerBodyType(_) => APPEARANCE_FILTER_ANIMATION_BY_OWNER_BODY_TYPE,
+        }
+    }
 }
 
-#[derive(Debug, Default, Clone)]
-pub struct TaeAnimationAppearance {
-    pub sub_type: u8,
-    pub sub1: Option<TaeAnimationAppearanceSub1>,
-    pub sub2: Option<TaeAnimationAppearanceSub2>,
-}
-
-#[derive(Debug, Default, Clone)]
+/// Sitting block (`UOTileArtSitting`), `TILEART_SITTING_WORD_COUNT` u32 words.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TaeSittingAnimation {
-    pub unk1: u32,
-    pub unk2: u32,
-    pub unk3: u32,
-    pub unk4: u32,
+    /// Word 0: probable sitting direction bitmask (1, 2, 4, 5, 6, 8, 10, 15 in client data).
+    pub direction_mask: u32,
+    /// Word 1 (`GetSittingField04`): meaning unknown; signed (-5..10 in client data).
+    pub field_04: i32,
+    /// Word 2 (`GetSittingField08`): meaning unknown (mostly 16, 18, 20 or 22 in client data).
+    pub field_08: u32,
+    /// Word 3: shifts the sprite window when `direction_mask` is 1 or 8 (probable); signed.
+    pub window_shift: i32,
+    /// Word 4 (`GetSittingField10`): looks like a y offset; unconfirmed.
+    pub field_10: i32,
+    /// Word 5 (`GetSittingField14`): looks like a y offset; unconfirmed.
+    pub field_14: i32,
 }
 
+/// Texture item of a shader block (`UOTileArtTextureItem`).
 #[derive(Debug, Default, Clone)]
 pub struct TaeTextureImage {
     pub name_string_off: u32,
-    pub unk4: u8,
+    /// Texture load path selector: the material builder branches on 0 vs 2 (medium);
+    /// 0 in all client records.
+    pub source_kind: u8,
+    /// Texture stretch; the client switches the sampler to wrap when it is not 1.0.
     pub texture_stretch: f32,
-    pub unk6: u32,
-    pub unk7: u32,
+    /// Probable sampler index inside the shader block, 0..3 (low: no client code read found).
+    pub sampler_index: u32,
+    /// UV set, ORed into the low bits of the sampler flag word (medium); 0 or 1.
+    pub uv_set: u32,
 }
 
+/// Shader block (`UOShaderDefinition`).
 #[derive(Debug, Default, Clone)]
 pub struct TaeTexture {
     pub has_texture: u8,
-    pub unk1: u8,
+    /// Byte at `UOShaderDefinition` +0x04 (`GetField04`); 0 in all client records, meaning unknown.
+    pub field_04: u8,
     pub type_string_off: u32,
     pub texture_items_count: u8,
     pub texture_items: Vec<TaeTextureImage>,
-    pub unk8_count: u32,
-    pub unk8_vector: Vec<i32>,
-    pub unk9_count: u32,
-    pub unk9_vector: Vec<f32>,
+    pub technique_count: u32,
+    /// Shader technique values (`SetTechniqueValue`; the client keeps up to 4).
+    pub technique: Vec<i32>,
+    pub tweak_count: u32,
+    /// Shader tweak values (`SetTweakValue`; the client keeps up to 4).
+    pub tweaks: Vec<f32>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -284,9 +330,11 @@ pub struct TaeImgOffset {
 
 /// Raw, bit-for-bit mapping of an Art Tile entry as stored in the UOP binary.
 ///
-/// This structure contains many "unknown" fields and raw offsets that are specific to the
-/// file format. It is used internally for parsing and should not be exposed to the
-/// main application. Use `ArtData` instead for a cleaned-up version.
+/// Field meanings follow the client parser (`UOTileArt::ParseObjectDefinition` in UOSA.exe,
+/// see `scripts/dev-helpers/ec-research/ghidra-tileart/results/uosa_tileart.md`); fields
+/// without a known meaning are named after their in-memory offset. It is used internally
+/// for parsing and should not be exposed to the main application. Use `ArtData` instead
+/// for a cleaned-up version.
 #[derive(Debug, Default, Clone)]
 pub struct TileArtEntry {
     pub uop_block: i32,
@@ -294,20 +342,33 @@ pub struct TileArtEntry {
     pub version: u16,
     pub string_dict_off: u32,
     pub tile_id: u32,
-    pub unk_bool1: bool,
-    pub unk_bool2: bool,
-    pub unk_float3: f32,
-    pub unk_float4: f32,
-    pub fixed_zero: i32,
+    /// Set exactly when the WorldArt shader block (block 0) is present.
+    pub has_world_art: bool,
+    /// Selects the TileArtEnhanced block (block 2) with a 1.5x legacy window; unset in all client records.
+    pub uses_enhanced_tileart: bool,
+    /// Sprite scale when drawing WorldArt (client default 1.0).
+    pub world_art_scale: f32,
+    /// Sprite scale when drawing legacy/enhanced tile art (client default 1.5).
+    pub legacy_art_scale: f32,
+    /// Object field +0x60; 0 in all client records, meaning unknown.
+    pub field_60: u32,
     pub old_id: i32,
-    pub unk_float5: f32,
-    pub type_val: i32,
-    pub unk_byte6: u8,
-    pub unk_dw7: i32,
-    pub unk_dw8: i32,
-    pub light1: f32,
-    pub light2: f32,
-    pub unk_dw9: u32,
+    /// Sprite rotation in degrees, applied only with the `Rotated` flag.
+    pub rotation_degrees: f32,
+    /// Owner body type (client default 400, human male; medium confidence).
+    pub body_type: u32,
+    /// Object field +0xe8; set on a few weapons and creatures, meaning unknown.
+    pub field_e8: u8,
+    /// Probable light scale (client default 1.0; 2.0 on windows and arrow loops).
+    pub light_scale: f32,
+    /// Object field +0x70 next to the light fields; 0 in all client records, meaning unknown.
+    pub light_field_70: u32,
+    /// Probable light x offset (non-zero only with a light texture block).
+    pub light_offset_x: f32,
+    /// Probable light y offset.
+    pub light_offset_y: f32,
+    /// House customization join bits; bits 6..13 connect west, east, north and south.
+    pub house_join_bits: u32,
     pub flags1: TaeFlag,
     pub flags2: TaeFlag,
     pub facing: i32,
@@ -321,12 +382,19 @@ pub struct TileArtEntry {
     pub stack_alias_count: u32,
     pub stack_alias_vector: Vec<TaeStackAlias>,
     pub appearance_count: u32,
-    pub appearance_vector: Vec<TaeAnimationAppearance>,
+    pub appearance_vector: Vec<TaeAppearanceFilter>,
     pub has_sitting: bool,
     pub sitting: Option<TaeSittingAnimation>,
     pub radarcol_offset: u32,
     pub radarcol: TaeRadarcol,
+    /// The `TILEART_SHADER_BLOCK_COUNT` shader blocks: WorldArt, TileArtLegacy,
+    /// TileArtEnhanced and light texture.
     pub texture_vector: Vec<TaeTexture>,
+    /// Number of effect definitions after the shader blocks (`UOTileArt::ParseEffects`).
+    pub effect_count: u8,
+    /// Record bytes after `effect_count`: the effect definitions (u32 type key + body each).
+    /// Effect bodies are not decoded yet; empty when `effect_count` is 0.
+    pub effects_raw: Vec<u8>,
 }
 
 // endregion: --- Internal Raw File-Mapping Structs
@@ -334,7 +402,12 @@ pub struct TileArtEntry {
 impl TileArtEntry {
     pub fn parse_raw(uop_file: &UopFile) -> color_eyre::eyre::Result<Self> {
         let decompressed_data = uop_file.unpack_arc()?;
-        let mut reader = Cursor::new(decompressed_data.as_ref());
+        Self::parse_bytes(decompressed_data.as_ref())
+    }
+
+    /// Parses one decompressed record the way `UOTileArt::ParseObjectDefinition` does.
+    pub fn parse_bytes(data: &[u8]) -> color_eyre::eyre::Result<Self> {
+        let mut reader = Cursor::new(data);
         let mut entry = TileArtEntry::default();
 
         macro_rules! read_value {
@@ -344,22 +417,27 @@ impl TileArtEntry {
         }
 
         read_value!(entry.version, read_u16, LittleEndian);
+        ensure!(
+            entry.version == TILEART_RECORD_VERSION,
+            "unsupported tileart record version {} (expected {TILEART_RECORD_VERSION})",
+            entry.version
+        );
         read_value!(entry.string_dict_off, read_u32, LittleEndian);
         read_value!(entry.tile_id, read_u32, LittleEndian);
-        entry.unk_bool1 = reader.read_u8()? != 0;
-        entry.unk_bool2 = reader.read_u8()? != 0;
-        read_value!(entry.unk_float3, read_f32, LittleEndian);
-        read_value!(entry.unk_float4, read_f32, LittleEndian);
-        read_value!(entry.fixed_zero, read_i32, LittleEndian);
+        entry.has_world_art = reader.read_u8()? != 0;
+        entry.uses_enhanced_tileart = reader.read_u8()? != 0;
+        read_value!(entry.world_art_scale, read_f32, LittleEndian);
+        read_value!(entry.legacy_art_scale, read_f32, LittleEndian);
+        read_value!(entry.field_60, read_u32, LittleEndian);
         read_value!(entry.old_id, read_i32, LittleEndian);
-        read_value!(entry.unk_float5, read_f32, LittleEndian);
-        read_value!(entry.type_val, read_i32, LittleEndian);
-        entry.unk_byte6 = reader.read_u8()?;
-        read_value!(entry.unk_dw7, read_i32, LittleEndian);
-        read_value!(entry.unk_dw8, read_i32, LittleEndian);
-        read_value!(entry.light1, read_f32, LittleEndian);
-        read_value!(entry.light2, read_f32, LittleEndian);
-        read_value!(entry.unk_dw9, read_u32, LittleEndian);
+        read_value!(entry.rotation_degrees, read_f32, LittleEndian);
+        read_value!(entry.body_type, read_u32, LittleEndian);
+        entry.field_e8 = reader.read_u8()?;
+        read_value!(entry.light_scale, read_f32, LittleEndian);
+        read_value!(entry.light_field_70, read_u32, LittleEndian);
+        read_value!(entry.light_offset_x, read_f32, LittleEndian);
+        read_value!(entry.light_offset_y, read_f32, LittleEndian);
+        read_value!(entry.house_join_bits, read_u32, LittleEndian);
         entry.flags1 = TaeFlag::from_bits_truncate(reader.read_u64::<LittleEndian>()?);
         entry.flags2 = TaeFlag::from_bits_truncate(reader.read_u64::<LittleEndian>()?);
         read_value!(entry.facing, read_i32, LittleEndian);
@@ -405,35 +483,40 @@ impl TileArtEntry {
 
         read_value!(entry.appearance_count, read_u32, LittleEndian);
         for _ in 0..entry.appearance_count {
-            let mut appearance = TaeAnimationAppearance::default();
-            appearance.sub_type = reader.read_u8()?;
-            if appearance.sub_type == 1 {
-                let mut sub1 = TaeAnimationAppearanceSub1::default();
-                sub1.unk1 = reader.read_u8()?;
-                sub1.unk2 = reader.read_u32::<LittleEndian>()?;
-                appearance.sub1 = Some(sub1);
-            } else {
-                let mut sub2 = TaeAnimationAppearanceSub2::default();
-                sub2.sub_count = reader.read_u32::<LittleEndian>()?;
-                for _ in 0..sub2.sub_count {
-                    let mut sub3 = TaeAnimationAppearanceSub3::default();
-                    sub3.unk1 = reader.read_u32::<LittleEndian>()?;
-                    sub3.unk2 = reader.read_u32::<LittleEndian>()?;
-                    sub2.sub3_vector.push(sub3);
+            let appearance = match reader.read_u8()? {
+                APPEARANCE_FILTER_BY_OWNER_BODY_TYPE => {
+                    TaeAppearanceFilter::ByOwnerBodyType(read_body_appearances(&mut reader)?)
                 }
-                appearance.sub2 = Some(sub2);
-            }
+                APPEARANCE_FILTER_BY_OWNER_GENDER => {
+                    let gender = reader.read_u8()?;
+                    let appearance = reader.read_u32::<LittleEndian>()?;
+                    TaeAppearanceFilter::ByOwnerGender { gender, appearance }
+                }
+                APPEARANCE_FILTER_ANIMATION_BY_OWNER_BODY_TYPE => {
+                    TaeAppearanceFilter::AnimationByOwnerBodyType(read_body_appearances(&mut reader)?)
+                }
+                subtype => bail!("unknown tileart appearance filter subtype {subtype}"),
+            };
             entry.appearance_vector.push(appearance);
         }
 
-        entry.has_sitting = reader.read_u8()? != 0;
+        entry.has_sitting = match reader.read_u8()? {
+            TILEART_SITTING_ABSENT => false,
+            TILEART_SITTING_PRESENT => true,
+            flag => bail!("invalid tileart sitting flag {flag}"),
+        };
         if entry.has_sitting {
-            let mut sitting = TaeSittingAnimation::default();
-            sitting.unk1 = reader.read_u32::<LittleEndian>()?;
-            sitting.unk2 = reader.read_u32::<LittleEndian>()?;
-            sitting.unk3 = reader.read_u32::<LittleEndian>()?;
-            sitting.unk4 = reader.read_u32::<LittleEndian>()?;
-            entry.sitting = Some(sitting);
+            let mut words = [0u32; TILEART_SITTING_WORD_COUNT];
+            reader.read_u32_into::<LittleEndian>(&mut words)?;
+            let [direction_mask, field_04, field_08, window_shift, field_10, field_14] = words;
+            entry.sitting = Some(TaeSittingAnimation {
+                direction_mask,
+                field_04: field_04 as i32,
+                field_08,
+                window_shift: window_shift as i32,
+                field_10: field_10 as i32,
+                field_14: field_14 as i32,
+            });
         }
 
         entry.radarcol_offset = reader.position() as u32;
@@ -442,35 +525,38 @@ impl TileArtEntry {
         entry.radarcol.b = reader.read_u8()?;
         entry.radarcol.a = reader.read_u8()?;
 
-        for _ in 0..4 {
+        for _ in 0..TILEART_SHADER_BLOCK_COUNT {
             let mut texture = TaeTexture::default();
             texture.has_texture = reader.read_u8()?;
             if texture.has_texture == 1 {
-                texture.unk1 = reader.read_u8()?;
+                texture.field_04 = reader.read_u8()?;
                 texture.type_string_off = reader.read_u32::<LittleEndian>()?;
                 texture.texture_items_count = reader.read_u8()?;
                 for _ in 0..texture.texture_items_count {
                     let mut item = TaeTextureImage::default();
                     item.name_string_off = reader.read_u32::<LittleEndian>()?;
-                    item.unk4 = reader.read_u8()?;
+                    item.source_kind = reader.read_u8()?;
                     item.texture_stretch = reader.read_f32::<LittleEndian>()?;
-                    item.unk6 = reader.read_u32::<LittleEndian>()?;
-                    item.unk7 = reader.read_u32::<LittleEndian>()?;
+                    item.sampler_index = reader.read_u32::<LittleEndian>()?;
+                    item.uv_set = reader.read_u32::<LittleEndian>()?;
                     texture.texture_items.push(item);
                 }
 
-                texture.unk8_count = reader.read_u32::<LittleEndian>()?;
-                for _ in 0..texture.unk8_count {
-                    texture.unk8_vector.push(reader.read_i32::<LittleEndian>()?);
+                texture.technique_count = reader.read_u32::<LittleEndian>()?;
+                for _ in 0..texture.technique_count {
+                    texture.technique.push(reader.read_i32::<LittleEndian>()?);
                 }
 
-                texture.unk9_count = reader.read_u32::<LittleEndian>()?;
-                for _ in 0..texture.unk9_count {
-                    texture.unk9_vector.push(reader.read_f32::<LittleEndian>()?);
+                texture.tweak_count = reader.read_u32::<LittleEndian>()?;
+                for _ in 0..texture.tweak_count {
+                    texture.tweaks.push(reader.read_f32::<LittleEndian>()?);
                 }
             }
             entry.texture_vector.push(texture);
         }
+
+        entry.effect_count = reader.read_u8()?;
+        entry.effects_raw = data[reader.position() as usize..].to_vec();
 
         Ok(entry)
     }
@@ -490,9 +576,9 @@ impl TileArtEntry {
                 shader_name: block.type_string_off.checked_sub(1)
                     .and_then(|offset| string_dictionary.get_string(offset as usize))
                     .map(str::to_owned),
-                technique: block.unk8_vector.clone(),
-                tweaks: block.unk9_vector.clone(),
-                unk1: block.unk1,
+                technique: block.technique.clone(),
+                tweaks: block.tweaks.clone(),
+                field_04: block.field_04,
             }).collect();
         art_data.appearance = self.appearance_vector.clone();
         art_data.sitting = self.sitting.clone();
@@ -567,9 +653,9 @@ impl TileArtEntry {
                         item.block_index = block_index as u8;
                         item.item_index = item_index as u8;
                         item.texture_stretch = texture_item.texture_stretch;
-                        item.unk4 = texture_item.unk4;
-                        item.unk6 = texture_item.unk6;
-                        item.unk7 = texture_item.unk7;
+                        item.source_kind = texture_item.source_kind;
+                        item.sampler_index = texture_item.sampler_index;
+                        item.uv_set = texture_item.uv_set;
                         item.is_auxiliary = is_auxiliary_texture_path(str);
 
                         items.push(item);
@@ -593,7 +679,7 @@ impl TileArtEntry {
                 "UOWaterShader" => TileType::Liquid,
                 "UOStaticTerrainShader" => TileType::Solid,
                 "UOSpriteShader" => {
-                    if self.flags1.contains(TaeFlag::Unused1) {
+                    if self.flags1.contains(TaeFlag::Rotated) {
                         return TileType::Solid;
                     }
                     if let Some(item) = texture_block.texture_items.first() {
@@ -676,6 +762,18 @@ impl TileArtEntry {
     }
 }
 
+/// Reads a body-type appearance list: u32 count, then count x {u32 body type, u32 appearance}.
+fn read_body_appearances(reader: &mut Cursor<&[u8]>) -> color_eyre::eyre::Result<Vec<TaeBodyAppearance>> {
+    let count = reader.read_u32::<LittleEndian>()?;
+    let mut mappings = Vec::new();
+    for _ in 0..count {
+        let body_type = reader.read_u32::<LittleEndian>()?;
+        let appearance = reader.read_u32::<LittleEndian>()?;
+        mappings.push(TaeBodyAppearance { body_type, appearance });
+    }
+    Ok(mappings)
+}
+
 pub fn classify_texture_path(path: &str) -> TextureType {
     let normalized = crate::utils::path::normalize_dictionary_path(path);
     if normalized.contains("data\\worldart\\") {
@@ -734,8 +832,8 @@ mod tests {
         let entry = TileArtEntry {
             texture_vector: vec![
                 TaeTexture { has_texture: 1, type_string_off: 1,
-                    unk8_vector: vec![0, 2, -7, 9],
-                    unk9_vector: vec![-0.01, 0.0, 0.25, -0.5], unk1: 3,
+                    technique: vec![0, 2, -7, 9],
+                    tweaks: vec![-0.01, 0.0, 0.25, -0.5], field_04: 3,
                     ..Default::default() },
                 TaeTexture::default(),
                 TaeTexture { has_texture: 1, type_string_off: 2, ..Default::default() },
@@ -746,17 +844,17 @@ mod tests {
         assert_eq!(art.materials.len(), 2);
         assert_eq!(art.materials[0], ArtMaterial {
             block_index: 0, shader_name: Some("UOWaterShader".to_owned()),
-            technique: vec![0, 2, -7, 9], tweaks: vec![-0.01, 0.0, 0.25, -0.5], unk1: 3,
+            technique: vec![0, 2, -7, 9], tweaks: vec![-0.01, 0.0, 0.25, -0.5], field_04: 3,
         });
         assert_eq!(art.materials[1].block_index, 2);
         assert_eq!(art.materials[1].shader_name.as_deref(), Some("UOSpriteShader"));
     }
 
     #[test]
-    fn tileart_get_tile_type_treats_unused1_sprite_as_solid() {
+    fn tileart_get_tile_type_treats_rotated_sprite_as_solid() {
         let dictionary = dictionary_with_single_string("UOSpriteShader");
         let entry = TileArtEntry {
-            flags1: TaeFlag::Unused1,
+            flags1: TaeFlag::Rotated,
             ..Default::default()
         };
         let texture_block = TaeTexture {
@@ -823,19 +921,17 @@ mod tests {
     fn tileart_process_preserves_animation_and_sitting_metadata() {
         let dictionary = dictionary_with_single_string("UOSpriteShader");
         let entry = TileArtEntry {
-            appearance_vector: vec![TaeAnimationAppearance {
-                sub_type: 1,
-                sub1: Some(TaeAnimationAppearanceSub1 {
-                    unk1: 7,
-                    unk2: 1234,
-                }),
-                sub2: None,
+            appearance_vector: vec![TaeAppearanceFilter::ByOwnerGender {
+                gender: 7,
+                appearance: 1234,
             }],
             sitting: Some(TaeSittingAnimation {
-                unk1: 1,
-                unk2: 2,
-                unk3: 3,
-                unk4: 4,
+                direction_mask: 1,
+                field_04: 2,
+                field_08: 3,
+                window_shift: 4,
+                field_10: 5,
+                field_14: 6,
             }),
             ..Default::default()
         };
@@ -843,7 +939,165 @@ mod tests {
         let art_data = entry.process(&dictionary);
 
         assert_eq!(art_data.appearance.len(), 1);
-        assert_eq!(art_data.appearance[0].sub_type, 1);
-        assert_eq!(art_data.sitting.as_ref().map(|sitting| sitting.unk3), Some(3));
+        assert_eq!(art_data.appearance[0].subtype(), APPEARANCE_FILTER_BY_OWNER_GENDER);
+        assert_eq!(art_data.sitting.as_ref().map(|sitting| sitting.field_08), Some(3));
+    }
+
+    const SAMPLE_EFFECT_BYTES: [u8; 6] = [0x11, 0, 0, 0, 0xAA, 0xBB];
+
+    /// Little-endian writer for synthetic records.
+    #[derive(Default)]
+    struct RecordWriter(Vec<u8>);
+
+    impl RecordWriter {
+        fn u8(&mut self, value: u8) -> &mut Self { self.0.push(value); self }
+        fn u16(&mut self, value: u16) -> &mut Self { self.0.extend_from_slice(&value.to_le_bytes()); self }
+        fn u32(&mut self, value: u32) -> &mut Self { self.0.extend_from_slice(&value.to_le_bytes()); self }
+        fn i32(&mut self, value: i32) -> &mut Self { self.0.extend_from_slice(&value.to_le_bytes()); self }
+        fn u64(&mut self, value: u64) -> &mut Self { self.0.extend_from_slice(&value.to_le_bytes()); self }
+        fn f32(&mut self, value: f32) -> &mut Self { self.0.extend_from_slice(&value.to_le_bytes()); self }
+
+        /// Shader block with one texture item per `(path index, source_kind, stretch, sampler, uv)`.
+        fn block(&mut self, shader: u32, items: &[(u32, u8, f32, u32, u32)], technique: &[i32], tweaks: &[f32]) -> &mut Self {
+            self.u8(1).u8(0).u32(shader).u8(items.len() as u8);
+            for &(path, source_kind, stretch, sampler_index, uv_set) in items {
+                self.u32(path).u8(source_kind).f32(stretch).u32(sampler_index).u32(uv_set);
+            }
+            self.u32(technique.len() as u32);
+            technique.iter().for_each(|value| { self.i32(*value); });
+            self.u32(tweaks.len() as u32);
+            tweaks.iter().for_each(|value| { self.f32(*value); });
+            self
+        }
+    }
+
+    /// Builds a record with every variable part populated; the arguments override the
+    /// version, the last appearance filter subtype and the sitting flag.
+    fn sample_record(version: u16, last_appearance_subtype: u8, sitting_flag: u8) -> Vec<u8> {
+        let mut writer = RecordWriter::default();
+        writer.u16(version).u32(7).u32(1234).u8(1).u8(0).f32(1.4).f32(1.5).u32(0).i32(1233)
+            .f32(90.0).u32(666).u8(3).f32(2.0).u32(0).f32(-5.0).f32(-4.0).u32(0x3FC0)
+            .u64((TaeFlag::Rotated | TaeFlag::AlphaBlend).bits()).u64(TaeFlag::UseNewArt.bits()).u32(3);
+        (1..=6).chain(7..=12).for_each(|value| { writer.i32(value); });
+        // props1, props2, stack aliases
+        writer.u8(1).u8(PropertyKey::Height as u8).u32(5).u8(0).u32(1).u32(5).u32(1235);
+        // appearance filters 0, 1, 2 (the last subtype is overridable)
+        writer.u32(3)
+            .u8(APPEARANCE_FILTER_BY_OWNER_BODY_TYPE).u32(2).u32(400).u32(10).u32(401).u32(11)
+            .u8(APPEARANCE_FILTER_BY_OWNER_GENDER).u8(1).u32(77)
+            .u8(last_appearance_subtype).u32(1).u32(666).u32(12);
+        writer.u8(sitting_flag).u32(8).i32(-3).u32(20).i32(-6).i32(3).i32(-4);
+        writer.u8(10).u8(20).u8(30).u8(255);
+        writer.block(2, &[(3, 0, 2.0, 1, 1)], &[0, 2, -7, 9], &[-0.01, 0.0, 0.25, -0.5])
+            .block(4, &[], &[], &[])
+            .u8(0)
+            .block(5, &[(6, 2, 1.0, 0, 0)], &[], &[]);
+        writer.u8(1);
+        writer.0.extend_from_slice(&SAMPLE_EFFECT_BYTES);
+        writer.0
+    }
+
+    fn valid_sample_record() -> Vec<u8> {
+        sample_record(TILEART_RECORD_VERSION, APPEARANCE_FILTER_ANIMATION_BY_OWNER_BODY_TYPE, TILEART_SITTING_PRESENT)
+    }
+
+    #[test]
+    fn tileart_parse_bytes_reads_every_record_part() {
+        let entry = TileArtEntry::parse_bytes(&valid_sample_record()).expect("parse sample record");
+
+        assert_eq!(entry.version, TILEART_RECORD_VERSION);
+        assert_eq!((entry.string_dict_off, entry.tile_id), (7, 1234));
+        assert!(entry.has_world_art);
+        assert!(!entry.uses_enhanced_tileart);
+        assert_eq!((entry.world_art_scale, entry.legacy_art_scale), (1.4, 1.5));
+        assert_eq!((entry.field_60, entry.old_id), (0, 1233));
+        assert_eq!((entry.rotation_degrees, entry.body_type, entry.field_e8), (90.0, 666, 3));
+        assert_eq!((entry.light_scale, entry.light_field_70), (2.0, 0));
+        assert_eq!((entry.light_offset_x, entry.light_offset_y), (-5.0, -4.0));
+        assert_eq!(entry.house_join_bits, 0x3FC0);
+        assert_eq!(entry.flags1, TaeFlag::Rotated | TaeFlag::AlphaBlend);
+        assert_eq!(entry.flags2, TaeFlag::UseNewArt);
+        assert_eq!(entry.facing, 3);
+        let ec = &entry.ec_img_offset;
+        assert_eq!([ec.x_start, ec.y_start, ec.x_end, ec.y_end, ec.x_off, ec.y_off], [1, 2, 3, 4, 5, 6]);
+        let cc = &entry.cc_img_offset;
+        assert_eq!([cc.x_start, cc.y_start, cc.x_end, cc.y_end, cc.x_off, cc.y_off], [7, 8, 9, 10, 11, 12]);
+
+        assert_eq!(entry.prop_count1, 1);
+        assert_eq!((entry.prop_vector1[0].id, entry.prop_vector1[0].val), (PropertyKey::Height as u8, 5));
+        assert_eq!(entry.prop_count2, 0);
+        assert!(entry.prop_vector2.is_empty());
+        assert_eq!(entry.stack_alias_count, 1);
+        assert_eq!((entry.stack_alias_vector[0].amount, entry.stack_alias_vector[0].amount_id), (5, 1235));
+
+        assert_eq!(entry.appearance_count, 3);
+        assert_eq!(entry.appearance_vector, vec![
+            TaeAppearanceFilter::ByOwnerBodyType(vec![
+                TaeBodyAppearance { body_type: 400, appearance: 10 },
+                TaeBodyAppearance { body_type: 401, appearance: 11 },
+            ]),
+            TaeAppearanceFilter::ByOwnerGender { gender: 1, appearance: 77 },
+            TaeAppearanceFilter::AnimationByOwnerBodyType(vec![
+                TaeBodyAppearance { body_type: 666, appearance: 12 },
+            ]),
+        ]);
+
+        assert!(entry.has_sitting);
+        assert_eq!(entry.sitting, Some(TaeSittingAnimation {
+            direction_mask: 8, field_04: -3, field_08: 20, window_shift: -6, field_10: 3, field_14: -4,
+        }));
+        assert_eq!((entry.radarcol.r, entry.radarcol.g, entry.radarcol.b, entry.radarcol.a), (10, 20, 30, 255));
+
+        assert_eq!(entry.texture_vector.len(), TILEART_SHADER_BLOCK_COUNT);
+        let [world_art, legacy, enhanced, light] = &entry.texture_vector[..] else { unreachable!() };
+        assert_eq!((world_art.has_texture, world_art.field_04, world_art.type_string_off), (1, 0, 2));
+        assert_eq!(world_art.texture_items_count, 1);
+        let item = &world_art.texture_items[0];
+        assert_eq!((item.name_string_off, item.source_kind, item.texture_stretch), (3, 0, 2.0));
+        assert_eq!((item.sampler_index, item.uv_set), (1, 1));
+        assert_eq!((world_art.technique_count, world_art.technique.as_slice()), (4, &[0, 2, -7, 9][..]));
+        assert_eq!((world_art.tweak_count, world_art.tweaks.as_slice()), (4, &[-0.01, 0.0, 0.25, -0.5][..]));
+        assert_eq!((legacy.has_texture, legacy.type_string_off, legacy.texture_items_count), (1, 4, 0));
+        assert_eq!((legacy.technique_count, legacy.tweak_count), (0, 0));
+        assert_eq!(enhanced.has_texture, 0);
+        assert_eq!((light.has_texture, light.type_string_off, light.texture_items_count), (1, 5, 1));
+        let light_item = &light.texture_items[0];
+        assert_eq!((light_item.name_string_off, light_item.source_kind, light_item.texture_stretch), (6, 2, 1.0));
+        assert_eq!((light_item.sampler_index, light_item.uv_set), (0, 0));
+
+        assert_eq!(entry.effect_count, 1);
+        assert_eq!(entry.effects_raw, SAMPLE_EFFECT_BYTES);
+    }
+
+    #[test]
+    fn tileart_parse_bytes_rejects_what_the_client_rejects() {
+        let unknown_subtype = APPEARANCE_FILTER_ANIMATION_BY_OWNER_BODY_TYPE + 1;
+        let invalid_sitting_flag = TILEART_SITTING_PRESENT + 1;
+        let old_version = TILEART_RECORD_VERSION - 1;
+        for (record, reason) in [
+            (sample_record(TILEART_RECORD_VERSION, unknown_subtype, TILEART_SITTING_PRESENT), "appearance filter subtype"),
+            (sample_record(TILEART_RECORD_VERSION, APPEARANCE_FILTER_ANIMATION_BY_OWNER_BODY_TYPE, invalid_sitting_flag), "sitting flag"),
+            (sample_record(old_version, APPEARANCE_FILTER_ANIMATION_BY_OWNER_BODY_TYPE, TILEART_SITTING_PRESENT), "record version"),
+        ] {
+            let error = TileArtEntry::parse_bytes(&record).expect_err(reason);
+            assert!(error.to_string().contains(reason), "{error}");
+        }
+    }
+
+    #[test]
+    fn tileart_parse_bytes_without_sitting_or_effects_leaves_no_raw_bytes() {
+        let mut writer = RecordWriter::default();
+        writer.u16(TILEART_RECORD_VERSION).u32(1).u32(2).u8(0).u8(0).f32(1.0).f32(1.5).u32(0).i32(0xFFFFFF)
+            .f32(0.0).u32(400).u8(0).f32(1.0).u32(0).f32(0.0).f32(0.0).u32(0).u64(0).u64(0).u32(1);
+        (0..12).for_each(|_| { writer.i32(0); });
+        writer.u8(0).u8(0).u32(0).u32(0).u8(TILEART_SITTING_ABSENT).u8(0).u8(0).u8(0).u8(0);
+        writer.u8(0).block(1, &[], &[], &[]).block(1, &[], &[], &[]).u8(0).u8(0);
+
+        let entry = TileArtEntry::parse_bytes(&writer.0).expect("parse minimal record");
+
+        assert!(!entry.has_sitting);
+        assert_eq!(entry.sitting, None);
+        assert_eq!(entry.effect_count, 0);
+        assert!(entry.effects_raw.is_empty());
     }
 }

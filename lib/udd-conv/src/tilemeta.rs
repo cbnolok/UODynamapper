@@ -112,7 +112,7 @@ mod tests {
         let path = std::env::temp_dir().join(format!("tilemeta_materials_{}.uddp", std::process::id()));
         let material = uocf::enhanced::tileart::ArtMaterial {
             block_index: 0, shader_name: Some("UOWaterShader".to_owned()),
-            technique: vec![0, 2, 0, 0], tweaks: vec![-0.01, 0.0, 0.25, -0.5], unk1: 7,
+            technique: vec![0, 2, 0, 0], tweaks: vec![-0.01, 0.0, 0.25, -0.5], field_04: 7,
         };
         write_tilemeta_uddp(&path, BuiltTileMetaTables {
             land_tiles: Vec::new(), item_tiles: Vec::new(),
@@ -635,15 +635,15 @@ fn build_tilemeta_tables_from_resolved_paths(
                     item_index: item.item_index,
                     flags,
                     texture_stretch: item.texture_stretch,
-                    unk4: item.unk4,
+                    source_kind: item.source_kind,
                     physical_package: physical_package_for_tileart_texture_type(item.texture_type)
                         as u8,
                     stable_role: stable_role_for_tileart_texture_ref(item, flags) as u8,
                     speculative_role: speculative_role_from_normalized_path(
                         item.normalized_path.as_deref(),
                     ) as u8,
-                    unk6: item.unk6,
-                    unk7: item.unk7,
+                    sampler_index: item.sampler_index,
+                    uv_set: item.uv_set,
                     // TODO Phase 5: populate raw_path and normalized_path sidecar fields
                     // when TileMetaItemTextureRef is extended for variable-length data.
                 }

@@ -62,7 +62,7 @@ fn sparse_slots_keep_absent_records() {
 #[test]
 fn tileart_unused1_surfaces_pack_as_land_material_slots() {
     assert_eq!(
-        art_tile_kind_for_tileart(TileType::Solid, TaeFlag::Unused1),
+        art_tile_kind_for_tileart(TileType::Solid, TaeFlag::Rotated),
         ArtTileKind::Land
     );
     assert_eq!(

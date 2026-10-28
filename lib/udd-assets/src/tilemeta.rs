@@ -390,13 +390,33 @@ pub struct TileMetaItemTextureRef {
     pub item_index: u8,
     pub flags: u8,
     pub texture_stretch: f32,
-    pub unk4: u8,
+    /// Tileart texture item load path selector (medium confidence).
+    pub source_kind: u8,
     pub physical_package: u8,
     pub stable_role: u8,
     pub speculative_role: u8,
-    pub unk6: u32,
-    pub unk7: u32,
+    /// Probable sampler index inside the tileart shader block (low confidence).
+    pub sampler_index: u32,
+    /// Tileart texture item UV set (medium confidence).
+    pub uv_set: u32,
 }
+
+/// On-disk size of one `item_texture_refs.bin` record.
+const TILEMETA_ITEM_TEXTURE_REF_SIZE: usize = 24;
+
+// Packages written before the field renames must keep loading: the record stays packed
+// with the renamed fields at their original positions.
+const _: () = {
+    use std::mem::{offset_of, size_of};
+    assert!(size_of::<TileMetaItemTextureRef>() == TILEMETA_ITEM_TEXTURE_REF_SIZE);
+    assert!(offset_of!(TileMetaItemTextureRef, source_kind)
+        == offset_of!(TileMetaItemTextureRef, texture_stretch) + size_of::<f32>());
+    assert!(offset_of!(TileMetaItemTextureRef, sampler_index)
+        == offset_of!(TileMetaItemTextureRef, speculative_role) + size_of::<u8>());
+    assert!(offset_of!(TileMetaItemTextureRef, uv_set)
+        == offset_of!(TileMetaItemTextureRef, sampler_index) + size_of::<u32>());
+    assert!(offset_of!(TileMetaItemTextureRef, uv_set) + size_of::<u32>() == TILEMETA_ITEM_TEXTURE_REF_SIZE);
+};
 
 impl TileMetaItemTextureRef {
     pub fn is_auxiliary(&self) -> bool {
@@ -867,6 +887,14 @@ mod tests {
             let message = result.err().expect("reject incomplete material metadata").to_string();
             assert!(message.contains(if source.is_none() { "rebuild tilemeta.uddp" } else { "parse source item material" }));
         }
+    }
+
+    #[test]
+    fn item_materials_from_packages_written_with_unk1_still_load() {
+        let source = br#"{"6038":[{"block_index":0,"shader_name":"UOWaterShader","technique":[0,2,0,0],"tweaks":[0,0,0.25,-0.5],"unk1":7}]}"#;
+        let materials: std::collections::BTreeMap<u32, Vec<uocf::enhanced::tileart::ArtMaterial>> =
+            serde_json::from_slice(source).expect("parse item materials with the old unk1 key");
+        assert_eq!(materials[&6038][0].field_04, 7);
     }
 
     #[test]

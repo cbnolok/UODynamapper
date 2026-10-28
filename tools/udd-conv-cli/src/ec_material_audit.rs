@@ -117,9 +117,9 @@ pub fn audit_ec_material_refs(source_dirs: &[PathBuf], output: &Path) -> eyre::R
                 family,
                 bool_str(item.is_auxiliary),
                 &format_float(item.texture_stretch),
-                &item.unk4.to_string(),
-                &item.unk6.to_string(),
-                &item.unk7.to_string(),
+                &item.source_kind.to_string(),
+                &item.sampler_index.to_string(),
+                &item.uv_set.to_string(),
                 "direct-textual",
             ])?;
             row_count += 1;

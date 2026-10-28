@@ -438,7 +438,7 @@ impl TexLandEcPackage {
             return None;
         }
         let [Some(bump), Some(fallback), Some(surface)] = [0, 1, 2].map(|sampler| refs.iter()
-            .find(|r| r.block_index == 0 && r.is_world_art() && r.unk6 == sampler
+            .find(|r| r.block_index == 0 && r.is_world_art() && r.sampler_index == sampler
                 && r.physical_package() == EcMaterialPhysicalPackage::Texture)) else { return None; };
         let active = material.technique.first().zip(material.tweaks.get(..2))
             .and_then(|(technique, scroll)| self.source_liquid_payload_for_active_sources(
@@ -1806,8 +1806,8 @@ mod tests {
                 texture_id, texture_stretch, texture_type: 1,
                 physical_package: EcMaterialPhysicalPackage::Texture as u8, ..Default::default()
             });
-        let refs = [refs[0], TileMetaItemTextureRef { unk6: 1, ..refs[1] },
-            TileMetaItemTextureRef { unk6: 2, ..refs[2] }];
+        let refs = [refs[0], TileMetaItemTextureRef { sampler_index: 1, ..refs[1] },
+            TileMetaItemTextureRef { sampler_index: 2, ..refs[2] }];
         assert_eq!(package.source_liquid_payload_for_item(&material, &refs), Some(203));
         let mut wrong = refs;
         wrong[0].physical_package = EcMaterialPhysicalPackage::LegacyTexture as u8;

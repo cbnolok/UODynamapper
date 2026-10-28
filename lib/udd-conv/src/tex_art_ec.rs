@@ -1234,7 +1234,7 @@ fn should_include_art_tile(tile_type: TileType) -> bool {
 }
 
 pub fn art_tile_kind_for_tileart(tile_type: TileType, flags: TaeFlag) -> ArtTileKind {
-    if tile_type != TileType::Static || flags.contains(TaeFlag::Unused1) {
+    if tile_type != TileType::Static || flags.contains(TaeFlag::Rotated) {
         ArtTileKind::Land
     } else {
         ArtTileKind::Static

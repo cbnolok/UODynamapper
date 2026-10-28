@@ -21,7 +21,7 @@ struct Args {
 
 fn source_ref(reference: &TileMetaItemTextureRef) -> (u32, u8, u8, u32, u8, u32, u32, u8, u8) {
     (reference.texture_id, reference.block_index, reference.item_index,
-        reference.texture_stretch.to_bits(), reference.unk4, reference.unk6, reference.unk7,
+        reference.texture_stretch.to_bits(), reference.source_kind, reference.sampler_index, reference.uv_set,
         reference.texture_type, reference.physical_package)
 }
 

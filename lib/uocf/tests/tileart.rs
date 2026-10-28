@@ -18,10 +18,10 @@ fn test_dictionary(strings: &[&str]) -> UoStringDictionary {
 }
 
 #[test]
-fn tileart_get_tile_type_promotes_unused1_sprite_tiles_to_solid() {
+fn tileart_get_tile_type_promotes_rotated_sprite_tiles_to_solid() {
     let dictionary = test_dictionary(&["UOSpriteShader"]);
     let entry = TileArtEntry {
-        flags1: TaeFlag::Unused1,
+        flags1: TaeFlag::Rotated,
         ..TileArtEntry::default()
     };
     let texture = TaeTexture {

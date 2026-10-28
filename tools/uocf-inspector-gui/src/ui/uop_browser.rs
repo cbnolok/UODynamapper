@@ -451,7 +451,7 @@ fn ui_integrated_tileart_view(app: &mut UopInspectorApp, ctx: &egui::Context, ui
                     ui.label("StrDic Offset"); ui.label(tae.string_dict_off.to_string()); ui.end_row();
                     ui.label("ID"); ui.label(tae.tile_id.to_string()); ui.end_row();
                     ui.label("OldID"); ui.label(format!("{} {:06X}", tae.old_id, tae.old_id)); ui.end_row();
-                    ui.label("Type"); ui.label(tae.type_val.to_string()); ui.end_row();
+                    ui.label("Body Type"); ui.label(tae.body_type.to_string()); ui.end_row();
                     ui.label("FLAGS"); ui.label(format!("{:?}", tae.flags1)); ui.end_row();
                 });
             });

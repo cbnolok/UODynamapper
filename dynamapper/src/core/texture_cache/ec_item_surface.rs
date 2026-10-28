@@ -15,13 +15,13 @@ pub struct EcItemSurfaceImages {
 }
 
 fn source(refs: &[TileMetaItemTextureRef], stage: u32) -> Option<&TileMetaItemTextureRef> {
-    refs.iter().find(|r| r.block_index == 0 && r.unk6 == stage && r.is_world_art()
+    refs.iter().find(|r| r.block_index == 0 && r.sampler_index == stage && r.is_world_art()
         && r.physical_package() == EcMaterialPhysicalPackage::Texture
-        && r.unk7 <= 1 && r.texture_stretch.is_finite() && r.texture_stretch > 0.0)
+        && r.uv_set <= 1 && r.texture_stretch.is_finite() && r.texture_stretch > 0.0)
 }
 
 fn same_sample(a: &TileMetaItemTextureRef, b: &TileMetaItemTextureRef) -> bool {
-    a.texture_id == b.texture_id && a.texture_stretch == b.texture_stretch && a.unk7 == b.unk7
+    a.texture_id == b.texture_id && a.texture_stretch == b.texture_stretch && a.uv_set == b.uv_set
 }
 
 fn append_material(
@@ -37,7 +37,7 @@ fn append_material(
     // conversion populated from a different source in the material graph.
     if !base.is_primary_selected() { return; }
     let fourth = source(refs, 3);
-    if fourth.is_none() && refs.iter().any(|r| r.block_index == 0 && r.unk6 == 3) { return; }
+    if fourth.is_none() && refs.iter().any(|r| r.block_index == 0 && r.sampler_index == 3) { return; }
     let temporary_is_base = same_sample(base, temporary);
     let fourth_is_mask = fourth.is_some_and(|r| same_sample(mask, r));
     let mut descriptors = [[0u32; 4]; 6];
@@ -45,14 +45,14 @@ fn append_material(
         let Some(reference) = reference else { continue; };
         if (index == 0 && temporary_is_base) || (index == 2 && fourth_is_mask) { continue; }
         let Some((layer, extent)) = assign(reference) else { return; };
-        descriptors[index * 2] = [layer, extent.x, extent.y, reference.unk7];
+        descriptors[index * 2] = [layer, extent.x, extent.y, reference.uv_set];
         descriptors[index * 2 + 1] = [reference.texture_stretch.to_bits(), 0, 0, 0];
     }
     // One direct header per 16-bit graphic; only present graphs have descriptors.
     // flags: bit0=source1 aliases base, bit1=source3 aliases mask, bit2=source3 exists.
     records[item as usize] = [records.len() as u32,
         u32::from(temporary_is_base) | (u32::from(fourth_is_mask) << 1) | (u32::from(fourth.is_some()) << 2),
-        base.unk7, base.texture_stretch.to_bits()];
+        base.uv_set, base.texture_stretch.to_bits()];
     records.extend(descriptors);
 }
 
@@ -85,9 +85,9 @@ mod tests {
         let refs = std::array::from_fn(|stage| TileMetaItemTextureRef {
             texture_id: if stage < 2 { 2000103 } else { 12943 },
             texture_type: 1, physical_package: EcMaterialPhysicalPackage::Texture as u8,
-            flags: if stage == 0 { 2 } else { 0 }, unk6: stage as u32,
+            flags: if stage == 0 { 2 } else { 0 }, sampler_index: stage as u32,
             texture_stretch: if stage < 2 { 4.0 } else { 1.0 },
-            unk7: u32::from(stage < 2), ..Default::default()
+            uv_set: u32::from(stage < 2), ..Default::default()
         });
         (material, refs)
     }
@@ -113,7 +113,7 @@ mod tests {
         for wrong in [
             TileMetaItemTextureRef { physical_package: EcMaterialPhysicalPackage::LegacyTexture as u8, ..refs[2] },
             TileMetaItemTextureRef { texture_stretch: f32::NAN, ..refs[2] },
-            TileMetaItemTextureRef { unk7: 2, ..refs[2] },
+            TileMetaItemTextureRef { uv_set: 2, ..refs[2] },
         ] {
             let mut invalid = refs;
             invalid[2] = wrong;
@@ -123,7 +123,7 @@ mod tests {
             assert_eq!(records[12943], [0; 4]);
         }
         let mut invalid = refs;
-        invalid[3].unk7 = 2;
+        invalid[3].uv_set = 2;
         let mut records = vec![[0; 4]; ITEM_CAPACITY];
         append_material(&mut records, 12943, &material, &invalid, &mut |_| Some((1, UVec2::splat(256))));
         assert_eq!(records.len(), ITEM_CAPACITY);

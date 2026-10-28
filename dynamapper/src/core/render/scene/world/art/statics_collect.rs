@@ -35,7 +35,7 @@ const STATIC_ART_Y_BIAS: f32 = 0.002;
 // from terrain as flat sprite quads to avoid coplanar depth fighting.
 const GROUND_ART_Y_BIAS: f32 = STATIC_ART_Y_BIAS;
 // The original 0x45a080 geometry constructor tests this TileArt flag.
-const EC_CAMERA_QUAD_FLAG: u64 = uocf::enhanced::tileart::TaeFlag::Unused1.bits();
+const EC_CAMERA_QUAD_FLAG: u64 = uocf::enhanced::tileart::TaeFlag::Rotated.bits();
 const EC_STATIC_TILE_TRANSLATION_X: f32 = 0.5;
 const EC_STATIC_TILE_TRANSLATION_Z: f32 = 1.5;
 // CC billboard anchor: feet-center at the tile's near (south) vertex = cell corner (X+1, Z+1).

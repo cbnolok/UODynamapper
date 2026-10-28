@@ -87,37 +87,67 @@ unless the data becomes a stable package contract.
 `tileart.uop`:
 
 - Owns EC item/static semantics, including flat surface-like statics.
-- Raw records include tile id, two boolean fields, several unknown numeric
-  fields, old id, `type_val`, lighting fields, two 64-bit flag fields, facing,
-  EC and CC image windows/offsets, property vectors, stack aliases, appearance
-  metadata, optional sitting metadata, radar color, and four texture blocks.
-- Texture block 0 is used as the primary EC visual block. Texture block 1 is
-  used as the preferred classic/legacy visual block. Blocks 2 and 3 are
-  preserved as referenced texture data when present.
-- Each texture item stores string offset, `texture_stretch`, `unk4`, `unk6`,
-  and `unk7`. These are copied into `tilemeta.uddp` texture-ref metadata.
-- Current tile type classification is render-oriented:
+- Record layout and field meanings follow the client parser
+  (`UOTileArt::ParseObjectDefinition` in UOSA.exe), documented in
+  `scripts/dev-helpers/ec-research/ghidra-tileart/results/uosa_tileart.md`
+  (sections 2, 5 and 6) and verified on all 37756 client records.
+- Records are version 4; the client and `TileArtEntry::parse_raw` reject any
+  other version.
+- The fixed part holds the name string index, tile id, `has_world_art`,
+  `uses_enhanced_tileart`, world/legacy art scales, `field_60` (always 0),
+  old id, `rotation_degrees`, `body_type` (default 400), `field_e8` (unknown),
+  `light_scale`, `light_field_70` (always 0), light x/y offsets,
+  `house_join_bits`, two 64-bit flag fields, facing, and the EC and legacy
+  image windows. Light fields are probable, `body_type` is medium confidence.
+- The variable part holds two property vectors, stack aliases, appearance
+  filters, an optional sitting block, radar color, four shader blocks and the
+  effects tail:
+  - appearance filter subtypes: 0 = appearance by owner body type, 1 = by
+    owner gender, 2 = animation appearance by owner body type; any other
+    subtype is an error.
+  - sitting: a 0/1 flag (other values are errors), then 6 u32 words: probable
+    direction bitmask, `field_04`, `field_08`, `window_shift`, `field_10`,
+    `field_14`. Before this was fixed the repo read 4 words, which shifted the
+    rest of all 170 sitting records: their radar color was garbage and all four
+    shader blocks were lost.
+  - effects: u8 count, then effect definitions (u32 type key + body). The
+    bodies are not decoded yet; `TileArtEntry::effects_raw` keeps the bytes
+    after the count (empty when the count is 0).
+- Shader blocks: 0 = WorldArt (present exactly when `has_world_art` is set),
+  1 = TileArtLegacy, 2 = TileArtEnhanced, 3 = light texture
+  (`*_light_window.tga`). Block 0 is used as the primary EC visual block and
+  block 1 as the preferred classic/legacy visual block. Each block stores
+  `field_04` (formerly `unk1`), the shader name index, texture items, Technique
+  (i32 values, formerly `unk8`) and Tweaks (f32 values, formerly `unk9`).
+- Each texture item stores string offset, `source_kind` (formerly `unk4`),
+  `texture_stretch`, `sampler_index` (formerly `unk6`) and `uv_set` (formerly
+  `unk7`). These are copied into `tilemeta.uddp` texture-ref metadata.
+- Flag bit 34 (`TaeFlag::Rotated`, formerly `Unused1`) marks rotated tile art:
+  the client applies `rotation_degrees` and uses the full texture size in the
+  UI.
+- Current tile type classification is render-oriented and derived from the
+  block 0 shader name, not stored in the file:
 
   - `UOWaterShader` -> liquid
   - `UOStaticTerrainShader` -> solid/surface-like
-  - `UOSpriteShader` + `Unused1` flag -> solid/surface-like
+  - `UOSpriteShader` + `Rotated` flag -> solid/surface-like
   - `UOSpriteShader` + first texture stretch not equal to `1.0` ->
     solid/surface-like
   - otherwise regular static art
-- Important: current code does not use texture-block `unk1` as the switch for
-  land-style rendering. Prior diagnostics showed this signal is fairly
-  consistent for surface-like/static terrain-style tileart, but the current
-  pipeline already resolves those cases through shader/flag/stretch
-  classification plus texture provenance. Keep `unk1` documented and preserved;
-  do not add it to routing unless the current evidence path stops covering a
-  real case.
-- Current interpretation of tileart texture unknowns:
-  - texture-block `unk1` likely encodes a block mode/class. It is useful audit
-    evidence, not active policy.
-  - item `unk4` is preserved per texture ref; no rendering meaning is assigned.
-  - item `unk6` and `unk7` are preserved in `tilemeta.uddp`. They may encode
-    sampler/channel/blend parameters, but current routing does not depend on
-    them.
+- Current code does not use texture-block `field_04` (formerly `unk1`) for
+  routing. It is 0 in every client record (with the old or the fixed parser),
+  so it cannot distinguish surface-like tileart.
+- Current interpretation of tileart texture fields (client code evidence):
+  - texture-block `field_04`: stored at `UOShaderDefinition` +0x04, meaning
+    unknown, always 0.
+  - item `source_kind`: the material builder branches on 0 vs 2 to pick the
+    texture load path (medium confidence); always 0 in client data.
+  - item `texture_stretch`: values other than 1.0 switch the sampler to wrap.
+  - item `sampler_index`: 0..3 per block, probably the sampler/stage index
+    (low confidence: no client code reading it was found). The renderer already
+    uses it as the sampler index for item water and surface materials.
+  - item `uv_set`: ORed into the low bits of the sampler flag word, 0 or 1
+    (medium confidence).
 
 `waypoint.uop`:
 
@@ -260,8 +290,9 @@ Build-time flow:
 - `tilemeta.uddp` stores `TileMetaItemVisualKind::SurfaceLike` for non-static
   tileart classifications.
 - It also stores all tileart texture refs, including logical family, physical
-  package, stable role, speculative role, `texture_stretch`, `unk4`, `unk6`,
-  `unk7`, block index, item index, and primary/auxiliary flags.
+  package, stable role, speculative role, `texture_stretch`, `source_kind`,
+  `sampler_index`, `uv_set`, block index, item index, and primary/auxiliary
+  flags.
 
 Runtime flow for EC surface-like statics:
 
@@ -428,8 +459,12 @@ Runtime:
 - Item records store EC and CC texture ids, crop starts, offsets, radar color,
   flags, height, visual kind, and names.
 - Texture refs store texture id, logical family, physical package, stable role,
-  speculative role, block/item index, primary/auxiliary flags, stretch, `unk4`,
-  `unk6`, and `unk7`.
+  speculative role, block/item index, primary/auxiliary flags, stretch,
+  `source_kind`, `sampler_index`, and `uv_set` (formerly `unk4`, `unk6` and
+  `unk7`; the binary layout is unchanged).
+- `metadata/item_materials.json`: per-item shader block material (block index,
+  shader name, Technique, Tweaks, `field_04`). Packages that still use the old
+  `unk1` key load through a serde alias.
 
 `tex_art_ec.uddp`:
 
@@ -532,9 +567,8 @@ When a case is unclear:
 Known weak signals:
 
 - `unk6` is only a tie-breaker and audit flag today.
-- `unk1` has prior diagnostic support for surface-like tileart mode, but it is
-  preserved rather than used because shader/flag/stretch plus provenance
-  currently solves the routing.
+- Tileart texture-block `field_04` (formerly `unk1`) is 0 in every client
+  record; it carries no routing signal.
 - Physical package names are not semantic ownership.
 - `EffectTexture.uop` evidence is metadata/support evidence unless linked by a
   real owner; do not infer particle-only or terrain-only behavior from the file
