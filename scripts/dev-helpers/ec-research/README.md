@@ -67,6 +67,9 @@ from Gamebryo 2.6 by vtable slot and BSim similarity with
 To name UO's Lua API bindings, the Lua 5.1 library and core functions and LuaPlus
 helpers, run the script in [`ghidra-lua-names`](ghidra-lua-names/README.md).
 
+The login flow, packet table, login/game ciphers and the patch sites of the ECLO
+loader are named and documented in [`ghidra-login-names`](ghidra-login-names/README.md).
+
 For an already analyzed program in the configured ghidra-mcp GUI project, prefer
 the plugin's MCP tools when the client exposes them. Start with
 `get_metadata(program="UOSA.exe")`; batch known entries with
