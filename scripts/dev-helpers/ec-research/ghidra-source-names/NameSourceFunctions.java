@@ -84,6 +84,10 @@ public class NameSourceFunctions extends GhidraScript {
     private static final int MIN_STRING_LENGTH = 6;
     private static final int MIN_STRING_LETTERS = 4;
     private static final Pattern FORMAT_SPEC = Pattern.compile("%[-+ #0-9.]*[a-zA-Z%]");
+    // Plain words ("Script", "Anchor") also appear in host code: a function matched by words
+    // only needs at least this many of them.
+    private static final Pattern WORD = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
+    private static final int MIN_WORD_STRINGS = 2;
     // TABLE evidence: checked fields (strings, pointers, constants) of an accepted table.
     private static final int MIN_TABLE_CHECKS = 2;
     private static final int MAX_ROUNDS = 64;
@@ -134,6 +138,8 @@ public class NameSourceFunctions extends GhidraScript {
         String path;
         final Map<String, Integer> definitions = new HashMap<>();
         final Set<String> inline = new HashSet<>();
+        // File-local (static) functions: only their own file calls them, so callers are safe to follow.
+        final Set<String> statics = new HashSet<>();
         final List<String[]> strings = new ArrayList<>();
         final Map<String, Set<String>> calls = new HashMap<>();
         final Map<String, Set<String>> callers = new HashMap<>();
@@ -312,6 +318,9 @@ public class NameSourceFunctions extends GhidraScript {
                     lib.definitions.merge(f[2], 1, Integer::sum);
                     if (f[3].contains("i")) {
                         lib.inline.add(f[2]);
+                    }
+                    if (f[3].contains("s")) {
+                        lib.statics.add(f[2]);
                     }
                 }
                 case "STRING" -> lib.strings.add(new String[] {f[1], f[2], f[3]});
@@ -1037,6 +1046,10 @@ public class NameSourceFunctions extends GhidraScript {
                 list.forEach(evidence -> evidence.reason = "source function matches several functions");
                 continue;
             }
+            if (list.size() < MIN_WORD_STRINGS && list.stream().allMatch(e -> WORD.matcher(e.text).matches())) {
+                list.forEach(evidence -> evidence.reason = "only plain word strings, fewer than " + MIN_WORD_STRINGS);
+                continue;
+            }
             List<String> quoted = new ArrayList<>();
             for (StringEvidence evidence : list) {
                 evidence.reason = "accepted";
@@ -1093,8 +1106,11 @@ public class NameSourceFunctions extends GhidraScript {
                     }
                     neighbour(lib, name, function.getCalledFunctions(monitor), lib.calls.get(name), placed, placedAt,
                         "callee", found);
-                    neighbour(lib, name, function.getCallingFunctions(monitor), lib.callers.get(name), placed,
-                        placedAt, "caller", found);
+                    // Exported functions may be called by host code, so only static ones lead to callers.
+                    if (lib.statics.contains(name)) {
+                        neighbour(lib, name, function.getCallingFunctions(monitor), lib.callers.get(name), placed,
+                            placedAt, "caller", found);
+                    }
                 }
                 Map<String, Set<Long>> byName = new HashMap<>();
                 for (var entry : found.entrySet()) {
@@ -1211,8 +1227,23 @@ public class NameSourceFunctions extends GhidraScript {
         Map<Long, Proposal> chosen = new TreeMap<>();
         resolveConflicts.clear();
         agreements.clear();
+        kept.clear();
         for (var entry : proposals.entrySet()) {
-            List<Proposal> list = new ArrayList<>(entry.getValue());
+            List<Proposal> list = new ArrayList<>();
+            for (Proposal proposal : entry.getValue()) {
+                String other = foreignName(proposal);
+                if (other == null) {
+                    list.add(proposal);
+                } else {
+                    // Names from other sources (other tools, imports, users) are kept, listed, and
+                    // not used as call graph anchors.
+                    kept.add(hex(proposal.address) + " " + other + ", not renamed to `" + proposal.path + "` ("
+                        + proposal.tag + ")");
+                }
+            }
+            if (list.isEmpty()) {
+                continue;
+            }
             list.sort((a, b) -> Integer.compare(METHODS.indexOf(a.method), METHODS.indexOf(b.method)));
             Proposal best = list.get(0);
             boolean contested = false;
@@ -1255,6 +1286,21 @@ public class NameSourceFunctions extends GhidraScript {
             }
         }
         return chosen;
+    }
+
+    // The current name of the proposal's function when it comes from another source, else null.
+    private String foreignName(Proposal proposal) {
+        Function function = getFunctionAt(toAddr(proposal.address));
+        if (function == null || function.getSymbol().getSource() == SourceType.DEFAULT
+                || function.getName(true).equals(proposal.path)) {
+            return null;
+        }
+        for (FunctionTag tag : function.getTags()) {
+            if (tag.getName().startsWith(proposal.lib.tag + "_")) {
+                return null;
+            }
+        }
+        return "`" + function.getName(true) + "` (" + function.getSymbol().getSource() + ")";
     }
 
     private void createProposedFunctions(String method) {

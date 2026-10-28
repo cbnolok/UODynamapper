@@ -71,6 +71,8 @@ PROFILES = {
                     (r"\bFT_BEGIN_HEADER\b", ""), (r"\bFT_END_HEADER\b", "")],
         # FreeType's bundled zlib 1.1.4 (src/gzip) keeps the zlib names; keep them apart.
         "path_namespaces": {"src/gzip/": "ft_zlib"},
+        # FT_CALLBACK_DEF( type ) expands to "static type".
+        "static_macros": {"FT_CALLBACK_DEF"},
         "calls": True,
     },
     "tinyxml": {
@@ -106,6 +108,8 @@ C_KEYWORDS = {"if", "while", "for", "switch", "return", "sizeof", "do", "else", 
 TYPE_WORDS = {"void", "char", "short", "int", "long", "float", "double", "signed", "unsigned", "bool",
               "wchar_t", "__int64", "__int32", "__int16", "__int8", "const", "volatile", "struct", "enum",
               "union", "class", "typename"}
+# Storage words that make a definition file-local (zlib spells static "local").
+STATIC_WORDS = {"static", "local"}
 DECL_NOISE = {"static", "extern", "inline", "__inline", "__forceinline", "register", "auto", "mutable",
               "explicit", "local", "__cdecl", "__stdcall", "__fastcall", "WINAPI", "CALLBACK"}
 ACCESS = {"public", "private", "protected"}
@@ -872,6 +876,7 @@ class Parser:
     def block(self, header, open_index, close, scope, owner, pending):
         """Handle a block; return the index where the next statement starts."""
         tokens = self.tokens
+        static = any(t.text in STATIC_WORDS | self.lib.profile["static_macros"] for t in header)
         header = strip_noise(header)
         texts = [t.text for t in header]
         if texts[:1] == ["namespace"]:
@@ -905,7 +910,7 @@ class Parser:
                 self.typedef_names(tokens[tail_start:after], info, rest)
             return after + 1
         if "(" in texts:
-            self.function(header, open_index, close, scope, owner)
+            self.function(header, open_index, close, scope, owner, static)
             return close + 1
         if not header and pending and owner is None:
             # K&R definition: int f(a, b) int a; int b; { -- the parameter declarations
@@ -913,7 +918,8 @@ class Parser:
             for candidate in reversed(pending):
                 found = kr_header(candidate)
                 if found:
-                    self.function(strip_noise(found), open_index, close, scope, owner)
+                    self.function(strip_noise(found), open_index, close, scope, owner,
+                                  any(t.text in STATIC_WORDS for t in found))
                     break
                 if not candidate or any(t.text in ("=", "{") for t in candidate):
                     break
@@ -1053,7 +1059,7 @@ class Parser:
         owner.members.append(Member(simple, sig, virtual, pure, dtor, rest[open_index - 1].cons))
         return simple
 
-    def function(self, header, open_index, close, scope, owner):
+    def function(self, header, open_index, close, scope, owner, static):
         rest, _ = strip_template_prefix(header)
         found = function_name(rest)
         if not found:
@@ -1067,7 +1073,7 @@ class Parser:
         if owner is not None and not owner.qualified:
             return
         name = self.qualified(scope, parts)
-        flags = "i" if inline else ""
+        flags = ("i" if inline else "") + ("s" if static else "")
         key = (self.file, name)
         self.lib.functions[key] = flags
         self.body(open_index, close, key, inline)
@@ -1284,6 +1290,11 @@ class Layouts:
                     new.append(Slot("~" + qualified.split("::")[-1], "", display, member.pure, True))
                 continue
             index = next((k for k, s in enumerate(slots) if s.name == member.name and s.sig == member.sig), -1)
+            if index < 0:
+                # Parameter types may be spelled through typedefs (Element for Integer): accept
+                # the only base slot of that name with the same arity and constness.
+                similar = [k for k, s in enumerate(slots) if s.name == member.name and shape(s.sig) == shape(member.sig)]
+                index = similar[0] if len(similar) == 1 else -1
             if index >= 0:
                 slots[index] = Slot(member.name, member.sig, display, member.pure, False)
             elif (member.name, member.sig) in secondary:
@@ -1325,6 +1336,12 @@ class Layouts:
                     if other:
                         found |= self.atoms(other, seen)
         return found
+
+
+def shape(signature):
+    """(parameter count, const) of a normalized signature."""
+    params, _, qualifier = signature.partition("|")
+    return (len(split_top(tokenize(params))) if params else 0, qualifier)
 
 
 def substitute(text, subst):
@@ -1805,6 +1822,7 @@ def main():
     profile.update(PROFILES.get(args.lib, {}))
     profile.setdefault("replace", [])
     profile.setdefault("path_namespaces", {})
+    profile.setdefault("static_macros", set())
     pinned = dict(COMMON_PINNED)
     pinned.update(profile["pinned"])
     pinned = {k: v for k, v in pinned.items() if v is not None}
@@ -1857,7 +1875,7 @@ def main():
         out.write("# Generated by extract_source_names.py; do not edit.\n")
         out.write("# Library: %s %s\n" % (args.lib, args.version))
         out.write("# Files: %d (%s)\n" % (len(library.sources), " ".join(library.sources)))
-        out.write("# FUNC file name flags(i = inline or header) | STRING file function text"
+        out.write("# FUNC file name flags(i = inline or header, s = static) | STRING file function text"
                   " | CALL file caller callee\n")
         out.write("# TABLE name variant size type conditions | FIELD name variant offset size"
                   " kind(str,func,ref,null,int) value\n")

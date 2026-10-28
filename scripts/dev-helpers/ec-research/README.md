@@ -67,6 +67,10 @@ from Gamebryo 2.6 by vtable slot and BSim similarity with
 To name UO's Lua API bindings, the Lua 5.1 library and core functions and LuaPlus
 helpers, run the script in [`ghidra-lua-names`](ghidra-lua-names/README.md).
 
+The statically linked zlib, FreeType, TinyXML and Crypto++ functions are named from
+their sources, and the UOP read/decompress chain is traced, in
+[`ghidra-source-names`](ghidra-source-names/README.md).
+
 The login flow, packet table, login/game ciphers and the patch sites of the ECLO
 loader are named and documented in [`ghidra-login-names`](ghidra-login-names/README.md).
 
