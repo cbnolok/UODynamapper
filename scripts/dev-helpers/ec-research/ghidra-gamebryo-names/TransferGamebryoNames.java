@@ -11,6 +11,7 @@ import ghidra.features.bsim.query.GenSignatures;
 import ghidra.features.bsim.query.client.Configuration;
 import ghidra.features.bsim.query.description.FunctionDescription;
 import ghidra.framework.model.DomainFile;
+import ghidra.framework.model.DomainFolder;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.listing.Function;
@@ -51,8 +52,8 @@ public class TransferGamebryoNames extends GhidraScript {
     private static final String MIN_SIM_FLAG = "--min-sim";
     private static final String MIN_SIG_FLAG = "--min-sig";
     private static final String MARGIN_FLAG = "--margin";
-    private static final String[] DEFAULT_SOURCES = {
-        "/gamebryo26/NiMain26VC80R.dll", "/gamebryo26/NiDX9Renderer26VC80R.dll", "/gamebryo26/NiSystem26VC80R.dll" };
+    // Without --sources, every program in this project folder is a source, in name order.
+    private static final String DEFAULT_SOURCE_FOLDER = "/gamebryo26";
     // Gamebryo code in UOSA.exe, [start, end).
     private static final long[][] DEFAULT_RANGES = { { 0x00650000L, 0x00830000L }, { 0x00aa0000L, 0x00ac0000L } };
     private static final int RANGE_HEX_RADIX = 16;
@@ -71,6 +72,8 @@ public class TransferGamebryoNames extends GhidraScript {
     private static final double[] CALIBRATION_BUCKETS = { 0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 0.99 };
     private static final double[] SIGNIFICANCE_BUCKETS = { 0.0, 15.0, 20.0, 30.0, 40.0, 60.0, 100.0 };
     private static final double CALIBRATION_TARGET_AGREEMENT = 0.98;
+    // Similarity table counts: pairs, agree, then both at the significance threshold, then both checked.
+    private static final int CALIBRATION_COLUMNS = 6;
     private static final double PERCENT = 100.0;
     private static final int PROGRESS_INTERVAL = 250;
 
@@ -110,7 +113,8 @@ public class TransferGamebryoNames extends GhidraScript {
         boolean vtable = true;
         String output;
         String matches;
-        List<String> sources = new ArrayList<>(List.of(DEFAULT_SOURCES));
+        // Project paths of the 2.6 programs; null means every program in DEFAULT_SOURCE_FOLDER.
+        List<String> sources;
         List<long[]> ranges = new ArrayList<>(List.of(DEFAULT_RANGES));
         int maxSources = Integer.MAX_VALUE;
         double minSim = DEFAULT_MIN_SIMILARITY;
@@ -188,6 +192,15 @@ public class TransferGamebryoNames extends GhidraScript {
     private final List<String> classLines = new ArrayList<>();
     private final Map<String, Integer> callgraphStats = new TreeMap<>();
     private final List<String> callgraphRejected = new ArrayList<>();
+    // Vtable-class check: UOSA slot targets by Gamebryo class, slots of other labeled vtables, UOSA class
+    // chains, and the 2.6 slot targets per source program. Empty with --no-vtable (check off).
+    private final Map<Long, Set<String>> slotClassesU = new HashMap<>();
+    private final Set<Long> foreignSlotsU = new HashSet<>();
+    private final Map<String, List<String>> chainsU = new HashMap<>();
+    private final Map<Program, Set<Long>> slots26 = new HashMap<>();
+    private final List<String> classCheckRejected = new ArrayList<>();
+    // Names the call-graph check knows: anchors and this run's final names.
+    private final Map<Long, String> known = new HashMap<>();
     private final Map<Program, Map<Long, List<Alias>>> aliasCache = new HashMap<>();
 
     public void run() throws Exception {
@@ -198,7 +211,7 @@ public class TransferGamebryoNames extends GhidraScript {
         }
         List<Program> sources = new ArrayList<>();
         try {
-            for (String path : settings.sources) {
+            for (String path : settings.sources != null ? settings.sources : folderPrograms()) {
                 DomainFile file = state.getProject().getProjectData().getFile(path);
                 if (file == null) {
                     throw new IllegalArgumentException("No such project file: " + path);
@@ -211,6 +224,24 @@ public class TransferGamebryoNames extends GhidraScript {
                 source.release(this);
             }
         }
+    }
+
+    private List<String> folderPrograms() {
+        DomainFolder folder = state.getProject().getProjectData().getFolder(DEFAULT_SOURCE_FOLDER);
+        if (folder == null) {
+            throw new IllegalArgumentException("No project folder " + DEFAULT_SOURCE_FOLDER + "; use " + SOURCES_FLAG);
+        }
+        List<String> paths = new ArrayList<>();
+        for (DomainFile file : folder.getFiles()) {
+            if (Program.class.isAssignableFrom(file.getDomainObjectClass())) {
+                paths.add(file.getPathname());
+            }
+        }
+        if (paths.isEmpty()) {
+            throw new IllegalArgumentException("No programs in " + DEFAULT_SOURCE_FOLDER);
+        }
+        paths.sort(null);
+        return paths;
     }
 
     private void parseArgs(String[] args) {
@@ -323,9 +354,10 @@ public class TransferGamebryoNames extends GhidraScript {
             }
         }
 
-        // Call-graph check: a BSim pair whose named UOSA callees include none of the 2.6 function's callees
-        // is dropped.
-        Map<Long, String> known = new HashMap<>(anchors);
+        // Vtable-class check: a 2.6 virtual of class S matched to a UOSA vtable slot of Gamebryo classes none
+        // of which is S or derives from S is dropped. Call-graph check: a BSim pair whose named UOSA callees
+        // include none of the 2.6 function's callees is dropped.
+        known.putAll(anchors);
         for (var entry : finalNames.entrySet()) {
             known.putIfAbsent(entry.getKey(), entry.getValue().name);
         }
@@ -333,33 +365,16 @@ public class TransferGamebryoNames extends GhidraScript {
             if (!finalNames.containsKey(entry.getKey()) || vtableNames.containsKey(entry.getKey())) {
                 continue;
             }
-            Set<String> sourceCallees = new HashSet<>();
-            Program sourceProgram = entry.getValue().source.getProgram();
-            for (Function callee : entry.getValue().source.getCalledFunctions(monitor)) {
-                sourceCallees.add(callee.getName(true));
-                for (Alias alias : aliases(sourceProgram, callee.getEntryPoint().getOffset())) {
-                    sourceCallees.add(alias.full());
-                }
-                Function thunked = callee.isThunk() ? callee.getThunkedFunction(true) : null;
-                if (thunked != null) {
-                    sourceCallees.add(thunked.getName(true));
-                }
+            String classConflict = classCheck(entry.getKey(), entry.getValue().alias, entry.getValue().source);
+            if (classConflict != null) {
+                classCheckRejected.add(hex(entry.getKey()) + " `" + entry.getValue().name + "` ("
+                    + entry.getValue().evidence + "): " + classConflict);
+                finalNames.remove(entry.getKey());
+                continue;
             }
-            int checkable = 0;
-            int agree = 0;
-            for (Function callee : getFunctionAt(toAddr(entry.getKey())).getCalledFunctions(monitor)) {
-                Function resolved = callee.isThunk() && callee.getThunkedFunction(true) != null
-                    ? callee.getThunkedFunction(true) : callee;
-                String name = known.get(callee.getEntryPoint().getOffset());
-                if (name == null) {
-                    name = known.get(resolved.getEntryPoint().getOffset());
-                }
-                if (name == null) {
-                    continue;
-                }
-                checkable++;
-                agree += sourceCallees.contains(name) ? 1 : 0;
-            }
+            int[] callees = callgraphAgreement(entry.getKey(), entry.getValue().source);
+            int checkable = callees[0];
+            int agree = callees[1];
             if (checkable == 0) {
                 callgraphStats.merge("no named callee", 1, Integer::sum);
             } else if (agree == checkable) {
@@ -443,6 +458,15 @@ public class TransferGamebryoNames extends GhidraScript {
         }
         Map<String, ClassU> classesU = collectClassesU(classes26.keySet());
         Set<Long> foreignSlots = foreignVtableSlots(classesU);
+        foreignSlotsU.addAll(foreignSlots);
+        for (ClassU classU : classesU.values()) {
+            chainsU.put(classU.name, classU.chain);
+            for (Long slot : classU.slots) {
+                if (slot != null) {
+                    slotClassesU.computeIfAbsent(slot, key -> new HashSet<>()).add(classU.name);
+                }
+            }
+        }
         stats.put("2.6 classes with a vtable", count(classes26.values(), c -> c.vtable != null));
         stats.put("2.6 classes with NiRTTI parent data", count(classes26.values(), c -> c.hasRtti));
         stats.put("UOSA classes with a vtable", count(classesU.values(), c -> !c.slots.isEmpty()));
@@ -624,9 +648,10 @@ public class TransferGamebryoNames extends GhidraScript {
             }
             long start = symbol.getAddress().getOffset();
             Vtable vtable = vtables.computeIfAbsent(start, key -> readVtable(program, key));
+            slots26.computeIfAbsent(program, key -> new HashSet<>()).addAll(vtable.slots);
             Class26 info = classes.computeIfAbsent(className, key -> new Class26());
             info.name = className;
-            if (info.vtable != null && info.vtable.start != start) {
+            if (info.vtable != null && (info.vtable.program != program || info.vtable.start != start)) {
                 notes.add("2.6 `" + className + "` has several vtables; the first is used");
                 continue;
             }
@@ -1027,6 +1052,59 @@ public class TransferGamebryoNames extends GhidraScript {
         stats.put("Accepted BSim names", accepted);
     }
 
+    /** Named UOSA callees of a BSim target, and how many of them the 2.6 function (or a folded alias) calls. */
+    private int[] callgraphAgreement(long address, Function source) {
+        Set<String> sourceCallees = new HashSet<>();
+        Program sourceProgram = source.getProgram();
+        for (Function callee : source.getCalledFunctions(monitor)) {
+            sourceCallees.add(callee.getName(true));
+            for (Alias alias : aliases(sourceProgram, callee.getEntryPoint().getOffset())) {
+                sourceCallees.add(alias.full());
+            }
+            Function thunked = callee.isThunk() ? callee.getThunkedFunction(true) : null;
+            if (thunked != null) {
+                sourceCallees.add(thunked.getName(true));
+            }
+        }
+        int checkable = 0;
+        int agree = 0;
+        for (Function callee : getFunctionAt(toAddr(address)).getCalledFunctions(monitor)) {
+            Function resolved = callee.isThunk() && callee.getThunkedFunction(true) != null
+                ? callee.getThunkedFunction(true) : callee;
+            String name = known.get(callee.getEntryPoint().getOffset());
+            if (name == null) {
+                name = known.get(resolved.getEntryPoint().getOffset());
+            }
+            if (name == null) {
+                continue;
+            }
+            checkable++;
+            agree += sourceCallees.contains(name) ? 1 : 0;
+        }
+        return new int[] { checkable, agree };
+    }
+
+    /**
+     * Why a BSim pair contradicts the vtables, or null: the 2.6 function is a vtable slot implemented by
+     * class S, the UOSA function is a slot only of Gamebryo vtables, and none of their classes is S or
+     * derives from S. Pairs without vtable evidence on either side pass.
+     */
+    private String classCheck(long address, Alias alias, Function source) {
+        Set<String> classes = slotClassesU.get(address);
+        if (classes == null || foreignSlotsU.contains(address)
+                || !slots26.getOrDefault(source.getProgram(), Set.of()).contains(source.getEntryPoint().getOffset())) {
+            return null;
+        }
+        for (String name : classes) {
+            if (chainsU.getOrDefault(name, List.of()).contains(alias.ns())) {
+                return null;
+            }
+        }
+        List<String> sample = new ArrayList<>(new TreeSet<>(classes));
+        return "2.6 virtual of `" + alias.ns() + "`, UOSA slot of " + classes.size() + " classes not derived from it ("
+            + String.join(", ", sample.subList(0, Math.min(sample.size(), MAX_EXAMPLES))) + ")";
+    }
+
     /** Why a target's best match is not accepted under the given thresholds, or null. */
     private String rejection(List<TargetFunction> targets, List<SourceFunction> sources, int t, double minSim,
             double minSig) {
@@ -1213,6 +1291,8 @@ public class TransferGamebryoNames extends GhidraScript {
             output.println("| Vtable and BSim agree | " + sourceAgreements + " |");
             output.println("| Vtable and BSim disagree (vtable kept) | " + sourceDisagreements.size() + " |");
             output.println("| BSim names a vtable gives to another function (dropped) | " + collisions.size() + " |");
+            output.println("| BSim vtable-class check: 2.6 virtual of an unrelated class (dropped) | "
+                + classCheckRejected.size() + " |");
             for (var entry : callgraphStats.entrySet()) {
                 output.println("| BSim call-graph check: " + entry.getKey() + " | " + entry.getValue() + " |");
             }
@@ -1243,6 +1323,7 @@ public class TransferGamebryoNames extends GhidraScript {
             examples(output, "Vtable conflicts (not named)", conflictLines(vtableConflicts), vtableConflicts.size());
             examples(output, "Vtable and BSim disagreements", sourceDisagreements, sourceDisagreements.size());
             examples(output, "BSim names dropped for a vtable collision", collisions, collisions.size());
+            examples(output, "BSim names dropped by the vtable-class check", classCheckRejected, classCheckRejected.size());
             examples(output, "BSim names dropped by the call-graph check", callgraphRejected, callgraphRejected.size());
             examples(output, "Anchor disagreements (vtable)", anchorDisagreementsVtable, anchorDisagreementsVtable.size());
             examples(output, "Anchor disagreements (BSim)", anchorDisagreementsBsim, anchorDisagreementsBsim.size());
@@ -1259,11 +1340,20 @@ public class TransferGamebryoNames extends GhidraScript {
         // Anchor targets whose best match passes mutual best and both margins at the calibration floor.
         List<Integer> candidates = new ArrayList<>();
         List<Boolean> agrees = new ArrayList<>();
+        // Why the vtable-class or call-graph check would drop the pair, or null if it passes both.
+        List<String> dropped = new ArrayList<>();
         for (var entry : calibration.entrySet()) {
             Integer t = index.get(entry.getKey());
             if (t != null && rejection(targets, sources, t, CALIBRATION_BUCKETS[0], SIGNIFICANCE_BUCKETS[0]) == null) {
                 candidates.add(t);
-                agrees.add(sources.get(targets.get(t).best).name.equals(entry.getValue()));
+                SourceFunction source = sources.get(targets.get(t).best);
+                agrees.add(source.name.equals(entry.getValue()));
+                String reason = classCheck(entry.getKey(), source.alias, source.function);
+                if (reason == null) {
+                    int[] callees = callgraphAgreement(entry.getKey(), source.function);
+                    reason = callees[0] > 0 && callees[1] == 0 ? "no named callee agrees" : null;
+                }
+                dropped.add(reason);
             }
         }
         output.println("## Calibration");
@@ -1271,14 +1361,17 @@ public class TransferGamebryoNames extends GhidraScript {
         output.println("Anchors: existing names that occur in 2.6 plus vtable names, restricted to BSim targets ("
             + count(calibration.keySet(), index::containsKey) + "); " + candidates.size() + " have a best match that"
             + " is mutual and passes both margins at similarity >= " + CALIBRATION_BUCKETS[0] + ". `Agree` means the"
-            + " best source has the anchor's name. Cumulative columns count the bucket and all higher ones.");
+            + " best source has the anchor's name. Cumulative columns count the bucket and all higher ones. `Checked`"
+            + " columns keep only the pairs that also pass the vtable-class and call-graph checks, as accepted names"
+            + " must.");
         output.println();
         output.println("By similarity (all significances | significance >= " + settings.minSig + "):");
         output.println();
-        output.println("| Similarity | Pairs | Agree | Pairs (sig) | Agree (sig) | Cumulative (sig) | Cumulative rate (sig) |");
-        output.println("|---|---:|---:|---:|---:|---:|---:|");
+        output.println("| Similarity | Pairs | Agree | Pairs (sig) | Agree (sig) | Cumulative (sig) | Cumulative rate (sig)"
+            + " | Checked (sig) | Agree checked (sig) | Cumulative rate checked (sig) |");
+        output.println("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
         int buckets = CALIBRATION_BUCKETS.length;
-        int[][] table = new int[buckets][4];
+        int[][] table = new int[buckets][CALIBRATION_COLUMNS];
         for (int i = 0; i < candidates.size(); i++) {
             TargetFunction target = targets.get(candidates.get(i));
             int bucket = bucketOf(CALIBRATION_BUCKETS, target.bestSim);
@@ -1287,22 +1380,36 @@ public class TransferGamebryoNames extends GhidraScript {
             if (target.bestSig >= settings.minSig) {
                 table[bucket][2]++;
                 table[bucket][3] += agrees.get(i) ? 1 : 0;
+                if (dropped.get(i) == null) {
+                    table[bucket][4]++;
+                    table[bucket][5] += agrees.get(i) ? 1 : 0;
+                }
             }
         }
         String[] lines = new String[buckets];
         int cumulativePairs = 0;
         int cumulativeAgree = 0;
+        int cumulativeChecked = 0;
+        int cumulativeAgreeChecked = 0;
         double suggested = UNSET;
+        double suggestedChecked = UNSET;
         for (int bucket = buckets - 1; bucket >= 0; bucket--) {
             cumulativePairs += table[bucket][2];
             cumulativeAgree += table[bucket][3];
+            cumulativeChecked += table[bucket][4];
+            cumulativeAgreeChecked += table[bucket][5];
             double cumulativeRate = rate(cumulativeAgree, cumulativePairs);
+            double cumulativeRateChecked = rate(cumulativeAgreeChecked, cumulativeChecked);
             if (cumulativePairs > 0 && cumulativeRate >= CALIBRATION_TARGET_AGREEMENT * PERCENT) {
                 suggested = CALIBRATION_BUCKETS[bucket];
             }
+            if (cumulativeChecked > 0 && cumulativeRateChecked >= CALIBRATION_TARGET_AGREEMENT * PERCENT) {
+                suggestedChecked = CALIBRATION_BUCKETS[bucket];
+            }
             lines[bucket] = "| >= " + CALIBRATION_BUCKETS[bucket] + " | " + table[bucket][0] + " | " + table[bucket][1]
                 + " | " + table[bucket][2] + " | " + table[bucket][3] + " | " + cumulativePairs + " | "
-                + format(cumulativeRate) + "% |";
+                + format(cumulativeRate) + "% | " + table[bucket][4] + " | " + table[bucket][5] + " | "
+                + format(cumulativeRateChecked) + "% |";
         }
         for (int bucket = buckets - 1; bucket >= 0; bucket--) {
             output.println(lines[bucket]);
@@ -1310,7 +1417,8 @@ public class TransferGamebryoNames extends GhidraScript {
         output.println();
         output.println("Lowest similarity bucket with cumulative agreement >= " + format(CALIBRATION_TARGET_AGREEMENT
             * PERCENT) + "% at significance >= " + settings.minSig + ": "
-            + (suggested == UNSET ? "none" : String.valueOf(suggested)));
+            + (suggested == UNSET ? "none" : String.valueOf(suggested)) + "; checked pairs only: "
+            + (suggestedChecked == UNSET ? "none" : String.valueOf(suggestedChecked)));
         output.println();
         output.println("By significance (similarity >= " + CALIBRATION_BUCKETS[0] + " | similarity >= " + settings.minSim
             + "):");
@@ -1335,16 +1443,24 @@ public class TransferGamebryoNames extends GhidraScript {
         }
         output.println();
         List<String> wrong = new ArrayList<>();
+        List<String> lost = new ArrayList<>();
         for (int i = 0; i < candidates.size(); i++) {
+            if (agrees.get(i) && dropped.get(i) != null) {
+                TargetFunction target = targets.get(candidates.get(i));
+                lost.add(hex(target.function.getEntryPoint().getOffset()) + " `" + sources.get(target.best).name
+                    + "` sim=" + format(target.bestSim) + " sig=" + format(target.bestSig) + ": " + dropped.get(i));
+            }
             if (!agrees.get(i)) {
                 TargetFunction target = targets.get(candidates.get(i));
                 long address = target.function.getEntryPoint().getOffset();
                 wrong.add(hex(address) + " anchor `" + calibration.get(address) + "`, best `"
                     + sources.get(target.best).name + "` sim=" + format(target.bestSim) + " sig="
-                    + format(target.bestSig));
+                    + format(target.bestSig) + (dropped.get(i) != null ? "; dropped by the checks: " + dropped.get(i)
+                    : "; passes the checks"));
             }
         }
         examples(output, "Calibration disagreements", wrong, wrong.size());
+        examples(output, "Calibration agreements the checks would drop", lost, lost.size());
     }
 
     private static int bucketOf(double[] bounds, double value) {
@@ -1397,6 +1513,7 @@ public class TransferGamebryoNames extends GhidraScript {
             section(output, "vtable classes", classLines);
             section(output, "vtable/BSim disagreements", sourceDisagreements);
             section(output, "BSim names dropped for vtable collisions", collisions);
+            section(output, "BSim names dropped by the vtable-class check", classCheckRejected);
             section(output, "BSim names dropped by the call-graph check", callgraphRejected);
             section(output, "anchor disagreements (vtable)", anchorDisagreementsVtable);
             section(output, "anchor disagreements (BSim)", anchorDisagreementsBsim);

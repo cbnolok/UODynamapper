@@ -1,7 +1,7 @@
 # -- Local
 [build]
-target-dir = "target"
-#target-dir = "/home/claudio/_builds/"
+#target-dir = "target"
+target-dir = "/home/claudio/rust-target/uodynamapper"
 
 # -- Unstable Rust toolchain only. Only Cargo flags are supported here, not rustc.
 #[unstable]

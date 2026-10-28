@@ -12,6 +12,9 @@ annotate the program with them.
 | `extract_lua_sources.py` | Generates `lua51_sources.tsv` from the LuaPlus sources |
 | `lua51_sources.tsv` | Source map: functions, `luaL_Reg` tables, `luaL_register` calls, `linit.c` libraries, unique literals |
 | `results/uosa_lua_names.md` | Report for the tested `UOSA.exe` (all names and addresses) |
+| `CrossReferenceUi.java` | Ghidra script: UI scripts and XML against `UOSA.exe`, both directions (see below) |
+| `extract_ui_xref.py` | Generates the UI index (API call sites, handler registrations, Lua definitions, `SystemData`/`WindowData` paths, XML schema) from the unpacked `UserInterface/Default` folder; the index is generated, not shipped |
+| `results/uosa_ui_xref.md` | Cross-reference summary for the tested `UOSA.exe` (report-only run after `--apply`, without `--details`) |
 
 ## What it recovers
 
@@ -148,3 +151,114 @@ defined there (`WindowGetShowing`, `WindowGetDimensions`, `LabelGetText*` are re
 as `_WindowGetShowing`, ...; `ERROR`, `GetFormatStringFromTable`). Texture-related examples:
 `UOLua::DynamicImageSetTexture` `0x008f4dc3`, `UOLua::RequestTileArt` `0x0051b650`,
 `UOLua::UOGetTextureSize` `0x00528370`.
+
+# UI cross-reference
+
+`CrossReferenceUi.java` runs after `NameLuaFunctions.java --apply` and matches the
+Enhanced Client UI against the program in both directions.
+
+## Regenerating the UI index
+
+```sh
+python3 -I extract_ui_xref.py "/path/to/Ultima Online Enhanced/UserInterface/Default" /tmp/ui_xref.tsv
+```
+
+The index is derived from the UI files (about 1.4 MB for the Default UI) and is not part of
+the repository: write it outside the repo and pass it with `--xref`. The scripts are tokenized (not
+parsed): `L"..."` is a wide string literal, calls through the Lua standard library and
+through names the UI defines itself are left out, and for each remaining call it records
+the argument count (`+` when the last argument is a call or `...`), how many values the
+caller assigns (`*` when the results are forwarded: `return F()` or a last argument) and
+the enclosing function. `WindowRegisterEventHandler`/`WindowRegisterCoreEventHandler`
+calls give handler registrations; `SystemData.*`/`WindowData.*` chains (up to 4
+components, indexes as `[]`) are counted as reads and writes. The XML files (`.xml`, `.mod`)
+give elements, parent/child pairs, attributes, `EventHandler` event/function values and
+named windows. Only identifiers, counts and line numbers are stored.
+
+## Running
+
+Arguments: `OUTPUT_FILE [--apply] [--details] [--xref TSV]`. Always pass `--xref` (the default,
+`ui_xref.tsv` next to the script, is not shipped, and ghidra-mcp runs a copy of the script
+from `~/ghidra_scripts`). `results/uosa_ui_xref.md` is exactly the output of:
+
+```text
+run_ghidra_script(program="UOSA.exe",
+  script_name="/absolute/repo/scripts/dev-helpers/ec-research/ghidra-lua-names/CrossReferenceUi.java",
+  args="/absolute/repo/scripts/dev-helpers/ec-research/ghidra-lua-names/results/uosa_ui_xref.md --xref /tmp/ui_xref.tsv")
+```
+
+run after `--apply` (the labels show the applied names). `--details` adds the per-call-site
+index (file, line, enclosing function, args -> results for every UI call), the per-string
+lists (paths used by the UI, engine-only `SystemData`/`WindowData` strings, UI globals and
+windows) and every element dispatch site; without it those sections give only their size.
+The output is created exclusively before anything else. Without `--apply` nothing changes.
+
+## What it reports
+
+1. **Lua -> C**: for every `LUA_API` function (Lua names taken from the NameLuaFunctions
+   plate comment, including "also registered as"), the UI call sites with file, line,
+   enclosing function, argument and result counts, and a summary line. Names the UI calls
+   that are not registered are listed with the strings found (some are registered as
+   `_Name` and wrapped by Lua code outside `UserInterface/Default`).
+2. **C -> Lua**: exact NUL-terminated strings equal to UI names (`SystemData`/`WindowData`
+   paths, event names, `EventHandler` functions, Lua globals of 5+ characters, window
+   names), their code references (raw imm32 scan of executable blocks) and the call that
+   takes each pushed string (`FUN_00994480` resolves dotted Lua paths, `FUN_008d67ac`
+   creates a window from a template, TinyXML `FirstChildElement(name)` `FUN_00b666e2` reads
+   settings files with the same names). Engine `SystemData`/`WindowData` strings the UI never uses are listed.
+   UI tables are matched to C functions by field names: a function referencing at least 3
+   and 25% of the fields the UI reads from a table (for example `WindowData.PlayerStatus`
+   -> `0x00577be0`).
+3. **XML schema -> parsers**: tag compares `PUSH "Tag"; ...; CALL compare; ...; Jcc` are
+   decoded; the element handler is the first call in either branch whose function (or its
+   direct callees) references at least 2 of the element's attribute/child names, one of
+   them directly. Functions reading a tag and 2+ of its names without a dispatch (for
+   example the `ManagedTextures.xml` reader) are listed as direct parsers. Attributes
+   whose name is not a string in the program are listed (never read by name).
+4. **Texture chain**: a fixed table of the UI texture path (XML `<Texture>`, `<DynamicImage
+   texture=>`, `RequestTexture`, `RequestTileArt`, `RequestGumpArt`, down to
+   `NiSourceTexture::Create`), each step re-verified by calls, strings, vftable references
+   or vftable slots.
+
+## What `--apply` changes
+
+- A second plate comment line `UI: <n> calls in <m> files, args <a>, results <r>; e.g.
+  <file>:<line>` on `LUA_API` functions called by the UI, only when the plate comment is
+  exactly the NameLuaFunctions line (or that line plus an earlier `UI:` line, which is
+  updated or removed). Other comments are left alone and listed.
+- Tag `UI_HOOK` on functions referencing at least 2 UI names, one of them a path, event,
+  window or matched field table.
+- Tag `UI_XML` on element handlers, direct parsers and functions dispatching 2+ elements.
+- Name `UOXml::Parse<Element>` (source `ANALYSIS`) for a handler serving one element that
+  has one handler, or a unique direct parser, only over `DEFAULT` names.
+- Functions tagged by the Gamebryo and library scripts (`GB26_`, `ZLIB_`, `CRYPTOPP_`,
+  `TINYXML_`, `FREETYPE_`) are never tagged or renamed.
+
+A second `--apply` changes nothing.
+
+## Limitations
+
+- String matching is exact: names built at run time, wide strings and substrings
+  (`_WindowGetShowing` for `WindowGetShowing`) are not found; strings reached through
+  data tables rather than imm32 operands have no code reference.
+- The UI index covers only `UserInterface/Default`; the `InterfaceCore` Lua inside the
+  packages is not unpacked.
+- Elements the Default UI never uses (`HyperLinkWindow`, `FixedFontLabel`, `PageWindow`,
+  `MapDisplay`, `CooldownDisplay`, `RenderedImage`, `NifDisplay`, `ActionButtonGroup`,
+  `Font`, `MapIcon`, ...) have no attribute list, so their handlers stay unnamed even
+  where the dispatch is visible.
+- Elements sharing a handler (`<TexCoords>`, `<AbsPoint>` and the other offset/size
+  elements at `0x0095672b`; the color elements at `0x00955d2d`) are reported, not named.
+
+## Tested result (UI)
+
+Same program, 114 Lua and 105 XML files: 12592 calls to 392 non-UI names; 344 of the 545
+`LUA_API` functions are called by the UI (11784 call sites); 48 called names are not
+registered. 211 UI `SystemData`/`WindowData` paths are strings in the program, 116 engine
+paths are never used by the UI, 29 event names, 107 UI globals/windows, 39 UI tables
+matched by field names, 80 `UI_HOOK` functions. 82 XML elements and 365 element/attribute
+pairs; 252 tag compares through `FUN_0099e8b9` in 40 functions, 40 handlers, 38
+`UOXml::Parse<Element>` names. `--apply`: 344 `UI:` comment lines, 80 `UI_HOOK` and 50
+`UI_XML` tags, 38 renames; the second `--apply` changed nothing. `typeid` on `<Texture>`
+(365 uses) is not a string in the program: the client ignores it. All 27 texture chain
+steps verified.

@@ -27,7 +27,10 @@ import ghidra.program.model.data.Undefined;
 import ghidra.program.model.data.Union;
 import ghidra.program.model.data.UnionDataType;
 import ghidra.program.model.data.VoidDataType;
+import ghidra.program.model.listing.Data;
+import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.Program;
+import ghidra.program.model.listing.Variable;
 import ghidra.program.model.symbol.Namespace;
 import ghidra.program.model.symbol.Symbol;
 import ghidra.program.model.symbol.SymbolTable;
@@ -42,6 +45,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.regex.Matcher;
@@ -71,11 +75,20 @@ public class ApplyGamebryoLayouts extends GhidraScript {
     private static final String MEMBERS_SUFFIX = "_members";
     private static final String CLASS_PREFIX = "Gamebryo class ";
     private static final String LAYOUT_MARKER = "; layout from Gamebryo 2.6 ";
-    private static final String INFERRED = "; size inferred: 2.6 size within the recorded bounds";
-    private static final String UNBOUNDED = "; size inferred: no upper bound (no sized descendant)";
+    private static final String INFERRED_PREFIX = "; size inferred: ";
+    private static final String INFERRED = INFERRED_PREFIX + "2.6 size within the recorded bounds";
+    private static final String UNBOUNDED = INFERRED_PREFIX + "no upper bound (no sized descendant)";
     // Classes without CreateObject and without a sized descendant have only a lower bound, which
     // proves nothing about the 2.6 layout; set to true to fill them anyway (marked UNBOUNDED).
     private static final boolean APPLY_UNBOUNDED = false;
+    // Classes whose 2.6 layout the 2.3 code contradicts although the sizes fit: never filled, and a
+    // structure an earlier run filled is restored to the GamebryoClasses.java placeholder.
+    private static final Map<String, String> EXCLUDED = Map.of(
+        "NiControllerSequence",
+        "2.3 constructor 0x00799810 stores an embedded array at +0x48 where 2.6 has m_fWeightedLastTime");
+    // Description prefix of the types this script copies to COPY_CATEGORY.
+    private static final String COPY_DESCRIPTION = "Gamebryo 2.6 ";
+    private static final String DIRECT_PARENT = "Direct parent: ";
     // GamebryoClasses.java description: name, parent, then exact size or bounds.
     private static final Pattern DESCRIPTION = Pattern.compile("Gamebryo class (\\S+), parent (\\S+); (?:"
         + "size from \\S+::CreateObject 0x[0-9a-f]+|size unknown, >= 0x([0-9a-f]+) \\([^)]*\\), "
@@ -95,7 +108,7 @@ public class ApplyGamebryoLayouts extends GhidraScript {
 
     private enum State { PLACEHOLDER, APPLIED, EDITED }
 
-    private enum Outcome { NONE, MISSING, MISMATCH, UNBOUNDED, REJECTED, EXACT, INFERRED }
+    private enum Outcome { NONE, MISSING, MISMATCH, UNBOUNDED, REJECTED, EXCLUDED, EXACT, INFERRED }
 
     private static final class Source {
         String name;
@@ -112,6 +125,8 @@ public class ApplyGamebryoLayouts extends GhidraScript {
         int startLength;
         String original;
         State state;
+        // Filled by an earlier run with an inferred size; re-checked against the current sources.
+        boolean earlierInferred;
         String editReason;
         long size = -1;
         long lower = POINTER_SIZE;
@@ -123,8 +138,15 @@ public class ApplyGamebryoLayouts extends GhidraScript {
         Outcome outcome = Outcome.NONE;
         String reason;
         String field0 = "";
+        // Size evidence of a class without CreateObject: sized descendants with a 2.6 type, how many fit,
+        // and how many of the fitting ones have exactly this class's 2.6 size.
+        int sizedTotal;
+        int sizedFit;
+        int sizedEqual;
         // The 2.6 layout as built this run (non-DB in report-only mode), for descendants' base field.
         DataType planned;
+        // What happened to an EXCLUDED class's structure.
+        String excludedResult;
 
         boolean hasOwn() {
             return source != null && firstOwn < source.getLength();
@@ -149,6 +171,10 @@ public class ApplyGamebryoLayouts extends GhidraScript {
     private final Set<String> valueTypes = new HashSet<>();
     private final Map<DataType, String> copiedTypes = new LinkedHashMap<>();
     private final Map<String, DataType> converted = new HashMap<>();
+    // Excluded structures restored to the placeholder, and the copied types they referenced.
+    private final Set<String> restored = new HashSet<>();
+    private final Map<String, DataType> releasable = new TreeMap<>();
+    private final List<String> removedTypes = new ArrayList<>();
     private DataTypeManager dtm;
     private boolean apply;
     private Structure refObject;
@@ -252,9 +278,15 @@ public class ApplyGamebryoLayouts extends GhidraScript {
         for (ClassInfo info : ordered) {
             if (info.eligible()) {
                 build(info);
+            } else if (info.outcome == Outcome.EXCLUDED) {
+                exclude(info);
             } else if (info.state == State.APPLIED) {
-                anomalies.add("`" + info.name + "` was filled by an earlier run but no longer passes the checks; kept");
+                anomalies.add("`" + info.name + "` was filled by an earlier run but no longer passes the checks ("
+                    + info.outcome + (info.reason != null ? ": " + info.reason : "") + "); kept");
             }
+        }
+        if (!releasable.isEmpty()) {
+            releaseCopies();
         }
     }
 
@@ -278,6 +310,7 @@ public class ApplyGamebryoLayouts extends GhidraScript {
             info.startLength = struct.getLength();
             int marker = description.indexOf(LAYOUT_MARKER);
             info.state = marker >= 0 ? State.APPLIED : State.PLACEHOLDER;
+            info.earlierInferred = marker >= 0 && description.contains(INFERRED_PREFIX);
             info.original = marker >= 0 ? description.substring(0, marker) : description;
             Matcher matcher = DESCRIPTION.matcher(info.original);
             if (!matcher.matches() || !matcher.group(GROUP_NAME).equals(name)) {
@@ -435,6 +468,12 @@ public class ApplyGamebryoLayouts extends GhidraScript {
         if (info.state == State.EDITED) {
             return;
         }
+        String excluded = EXCLUDED.get(info.name);
+        if (excluded != null) {
+            info.outcome = Outcome.EXCLUDED;
+            info.reason = excluded;
+            return;
+        }
         if (info.source == null) {
             info.outcome = Outcome.MISSING;
             return;
@@ -475,7 +514,14 @@ public class ApplyGamebryoLayouts extends GhidraScript {
             // may lie in this class.
             List<ClassInfo> sized = new ArrayList<>();
             sizedDescendants(info, sized);
-            if (!sized.isEmpty() && sized.stream().noneMatch(ApplyGamebryoLayouts::sizeFits)) {
+            info.sizedTotal = sized.size();
+            for (ClassInfo descendant : sized) {
+                if (sizeFits(descendant)) {
+                    info.sizedFit++;
+                    info.sizedEqual += descendant.size == length ? 1 : 0;
+                }
+            }
+            if (!sized.isEmpty() && info.sizedFit == 0) {
                 reject(info, "none of the " + sized.size() + " sized descendants with a 2.6 type fits");
                 return;
             }
@@ -544,7 +590,7 @@ public class ApplyGamebryoLayouts extends GhidraScript {
         }
         if (base != null) {
             DataType baseType = base.planned;
-            String comment = base != info.parent ? "Direct parent: " + info.parent.name : null;
+            String comment = base != info.parent ? DIRECT_PARENT + info.parent.name : null;
             def.replaceAtOffset(0, baseType, baseType.getLength(), BASE, comment);
             start = baseType.getLength();
             info.field0 = "base `" + base.name + "`" + (base != info.parent ? " (parent `" + info.parent.name
@@ -589,6 +635,202 @@ public class ApplyGamebryoLayouts extends GhidraScript {
             count(changes, "class structures filled");
         } else {
             info.planned = def;
+        }
+    }
+
+    // An excluded class: a structure still exactly as this script filled it goes back to the placeholder.
+    private void exclude(ClassInfo info) {
+        if (info.state == State.PLACEHOLDER) {
+            info.excludedResult = "placeholder, not filled";
+            return;
+        }
+        String difference = appliedDifference(info);
+        if (difference != null) {
+            info.excludedResult = "kept: differs from the layout this script applies (" + difference + ")";
+            return;
+        }
+        StructureDataType placeholder = placeholder(info);
+        if (placeholder.getLength() != info.struct.getLength()) {
+            for (DataType parent : info.struct.getParents()) {
+                if (!(parent instanceof Pointer)) {
+                    info.excludedResult = "kept: embedded by value in `" + parent.getPathName() + "`, would change size";
+                    return;
+                }
+            }
+        }
+        for (DataTypeComponent component : info.struct.getDefinedComponents()) {
+            collectCopied(memberType(component), releasable);
+        }
+        restored.add(info.struct.getPathName());
+        if (apply) {
+            info.struct.replaceWith(placeholder);
+            info.struct.setDescription(info.original);
+            count(changes, "class structures restored to the placeholder");
+            info.excludedResult = "restored the placeholder";
+        } else {
+            info.excludedResult = "would restore the placeholder";
+        }
+    }
+
+    // Null if the structure has exactly the layout build() gives it from the 2.6 type, else the difference.
+    private String appliedDifference(ClassInfo info) {
+        if (info.source == null) {
+            return "no 2.6 type to compare with";
+        }
+        String expected = info.original + LAYOUT_MARKER + info.sourceName + " " + info.source.getPathName();
+        String description = info.struct.getDescription();
+        if (!expected.equals(description) && !(expected + INFERRED).equals(description)
+                && !(expected + UNBOUNDED).equals(description)) {
+            return "description";
+        }
+        if (info.struct.getLength() != info.source.getLength()) {
+            return "length " + hex(info.struct.getLength());
+        }
+        Set<String> own = new HashSet<>();
+        for (DataTypeComponent component : info.source.getDefinedComponents()) {
+            if (!isPadding(component) && component.getLength() > 0) {
+                own.add(componentKey(component, component.getComment()));
+            }
+        }
+        Set<String> refMembers = new HashSet<>();
+        if (refObject != null) {
+            for (DataTypeComponent component : refObject.getDefinedComponents()) {
+                if (!isPadding(component)) {
+                    refMembers.add(componentKey(component, REF_OBJECT));
+                }
+            }
+        }
+        int matched = 0;
+        for (DataTypeComponent component : info.struct.getDefinedComponents()) {
+            String key = componentKey(component, component.getComment());
+            boolean field0 = component.getOffset() == 0 && (BASE.equals(component.getFieldName())
+                && component.getDataType() instanceof Structure || VFTABLE.equals(component.getFieldName())
+                && component.getDataType() instanceof Pointer);
+            if (own.contains(key)) {
+                matched++;
+            } else if (!field0 && !refMembers.contains(key)) {
+                return "member `" + component.getFieldName() + "` at " + hex(component.getOffset());
+            }
+        }
+        return matched == own.size() ? null : (own.size() - matched) + " 2.6 members missing";
+    }
+
+    private static String componentKey(DataTypeComponent component, String comment) {
+        return component.getOffset() + ":" + component.getFieldName() + ":" + component.getLength() + ":"
+            + component.getDataType().getDisplayName() + ":" + Objects.toString(comment, "");
+    }
+
+    // The structure GamebryoClasses.java creates: field 0 is the nearest sized ancestor as `base`, or
+    // `void *vftable`; the length is the CreateObject size, else that ancestor's length, else a pointer.
+    private StructureDataType placeholder(ClassInfo info) {
+        ClassInfo ancestor = info.parent;
+        while (ancestor != null && ancestor.size < 0) {
+            ancestor = ancestor.parent;
+        }
+        DataType base = ancestor != null ? ancestor.struct : null;
+        int length = info.size >= 0 ? (int) info.size : base != null ? base.getLength() : POINTER_SIZE;
+        if (base != null && base.getLength() > length) {
+            base = null;
+        }
+        StructureDataType def = new StructureDataType(info.struct.getCategoryPath(), info.struct.getName(), length, dtm);
+        if (base != null) {
+            def.replaceAtOffset(0, base, base.getLength(), BASE, ancestor != info.parent
+                ? DIRECT_PARENT + info.parentName : null);
+        } else {
+            def.replaceAtOffset(0, new PointerDataType(VoidDataType.dataType, dtm), POINTER_SIZE, VFTABLE, null);
+        }
+        def.setDescription(info.original);
+        return def;
+    }
+
+    // Types this script copied (COPY_CATEGORY, its description prefix) reachable from a member type.
+    private void collectCopied(DataType type, Map<String, DataType> found) {
+        while (type instanceof Pointer || type instanceof Array) {
+            type = type instanceof Pointer pointer ? pointer.getDataType() : ((Array) type).getDataType();
+        }
+        if (type == null || !type.getCategoryPath().isAncestorOrSelf(new CategoryPath(COPY_CATEGORY))
+                || type.getDescription() == null || !type.getDescription().startsWith(COPY_DESCRIPTION)
+                || found.putIfAbsent(type.getPathName(), type) != null) {
+            return;
+        }
+        if (type instanceof TypeDef typedef) {
+            collectCopied(typedef.getBaseDataType(), found);
+        } else if (type instanceof Composite composite) {
+            for (DataTypeComponent component : composite.getDefinedComponents()) {
+                collectCopied(memberType(component), found);
+            }
+        }
+    }
+
+    // Removes the copied types of restored structures that nothing else references: no other type,
+    // no defined data and no function signature or variable.
+    private void releaseCopies() {
+        Map<String, DataType> leaving = new TreeMap<>(releasable);
+        while (leaving.keySet().removeAll(usedTypes(leaving.keySet()))) {
+            // Kept types keep what they reference; repeat until stable.
+        }
+        CategoryPath copyRoot = new CategoryPath(COPY_CATEGORY);
+        for (DataType type : leaving.values()) {
+            String path = type.getPathName();
+            CategoryPath category = type.getCategoryPath();
+            if (apply) {
+                if (!dtm.remove(type)) {
+                    anomalies.add("Could not remove copied type `" + path + "`");
+                    continue;
+                }
+                count(changes, "copied types removed");
+                // Subcategories left empty (nested-type categories this script created) go too.
+                while (!category.equals(copyRoot) && category.isAncestorOrSelf(copyRoot)) {
+                    Category parent = dtm.getCategory(category.getParent());
+                    if (parent == null || !parent.removeEmptyCategory(category.getName(), monitor)) {
+                        break;
+                    }
+                    count(changes, "empty copy categories removed");
+                    category = category.getParent();
+                }
+            }
+            removedTypes.add(path);
+        }
+    }
+
+    private Set<String> usedTypes(Set<String> leaving) {
+        Set<String> used = new HashSet<>();
+        List<DataType> all = new ArrayList<>();
+        dtm.getAllDataTypes(all);
+        for (DataType type : all) {
+            String path = type.getPathName();
+            if (leaving.contains(path) || restored.contains(path) || type instanceof Pointer || type instanceof Array) {
+                continue;
+            }
+            if (type instanceof Composite composite) {
+                for (DataTypeComponent component : composite.getDefinedComponents()) {
+                    markUsed(memberType(component), used);
+                }
+            } else if (type instanceof TypeDef typedef) {
+                markUsed(typedef.getBaseDataType(), used);
+            } else if (type instanceof FunctionDefinition definition) {
+                markUsed(definition.getReturnType(), used);
+                for (var argument : definition.getArguments()) {
+                    markUsed(argument.getDataType(), used);
+                }
+            }
+        }
+        for (Data data : currentProgram.getListing().getDefinedData(true)) {
+            markUsed(data.getDataType(), used);
+        }
+        for (Function function : currentProgram.getFunctionManager().getFunctions(true)) {
+            markUsed(function.getReturnType(), used);
+            for (Variable variable : function.getAllVariables()) {
+                markUsed(variable.getDataType(), used);
+            }
+        }
+        return used;
+    }
+
+    private static void markUsed(DataType type, Set<String> used) {
+        while (type != null && used.add(type.getPathName())) {
+            type = type instanceof Pointer pointer ? pointer.getDataType() : type instanceof Array array
+                ? array.getDataType() : type instanceof TypeDef typedef ? typedef.getBaseDataType() : null;
         }
     }
 
@@ -711,7 +953,7 @@ public class ApplyGamebryoLayouts extends GhidraScript {
             count(notes, "existing types reused");
             return existing;
         }
-        String description = "Gamebryo 2.6 " + key;
+        String description = COPY_DESCRIPTION + key;
         if (type instanceof TypeDef typedef) {
             TypedefDataType copy = new TypedefDataType(category, type.getName(), convertValue(typedef.getBaseDataType()), dtm);
             copy.setDescription(description);
@@ -807,7 +1049,7 @@ public class ApplyGamebryoLayouts extends GhidraScript {
         }
         DataType stub = type instanceof Union ? new UnionDataType(category, type.getName(), dtm)
             : new StructureDataType(category, type.getName(), 0, dtm);
-        stub.setDescription("Gamebryo 2.6 " + key + "; referenced by pointer only, members not copied");
+        stub.setDescription(COPY_DESCRIPTION + key + "; referenced by pointer only, members not copied");
         return added(key, stub, STUBS);
     }
 
@@ -878,6 +1120,13 @@ public class ApplyGamebryoLayouts extends GhidraScript {
         output.println("| Size mismatches | " + byOutcome.get(Outcome.MISMATCH).size() + " |");
         output.println("| No size evidence (no sized descendant) | " + byOutcome.get(Outcome.UNBOUNDED).size() + " |");
         output.println("| Rejected by consistency checks | " + byOutcome.get(Outcome.REJECTED).size() + " |");
+        output.println("| Excluded (2.6 layout contradicted by the 2.3 code) | " + byOutcome.get(Outcome.EXCLUDED).size()
+            + " |");
+        List<ClassInfo> earlier = ordered.stream().filter(info -> info.earlierInferred && info.state != State.EDITED)
+            .toList();
+        output.println("| Earlier inferred layouts re-checked | " + earlier.size() + " |");
+        output.println("| Earlier inferred layouts contradicted | " + earlier.stream()
+            .filter(info -> info.outcome != Outcome.INFERRED).count() + " |");
         for (var entry : copies.entrySet()) {
             output.println("| 2.6 types " + (apply ? "copied" : "to copy") + ": " + entry.getKey() + " | " + entry.getValue() + " |");
         }
@@ -903,11 +1152,24 @@ public class ApplyGamebryoLayouts extends GhidraScript {
             + " sized descendant), at least one sized descendant with a 2.6 type fits, and none of the fitting ones"
             + " has 2.6 members inside this size.");
         output.println();
-        output.println("| Class | UOSA bounds | 2.6 size | 2.6 source | Field 0 |");
-        output.println("|---|---|---:|---|---|");
+        output.println("| Class | UOSA bounds | 2.6 size | Sized descendants | 2.6 source | Field 0 |");
+        output.println("|---|---|---:|---|---|---|");
         for (ClassInfo info : byOutcome.get(Outcome.INFERRED)) {
-            output.println("| `" + info.name + "` | " + uosaSize(info) + " | " + hex(info.source.getLength()) + " | `"
-                + info.sourceName + "` | " + field0(info, status) + " |");
+            output.println("| `" + info.name + "` | " + uosaSize(info) + " | " + hex(info.source.getLength()) + " | "
+                + evidence(info) + " | `" + info.sourceName + "` | " + field0(info, status) + " |");
+        }
+        output.println();
+        output.println("## Earlier inferred layouts re-checked");
+        output.println();
+        output.println("Structures an earlier run filled with an inferred size, evaluated again against the current"
+            + " sources. A contradicted one is kept as it is and listed here and under Anomalies.");
+        output.println();
+        output.println("| Class | 2.6 size | Sized descendants | Result |");
+        output.println("|---|---:|---|---|");
+        for (ClassInfo info : earlier) {
+            output.println("| `" + info.name + "` | " + (info.source != null ? hex(info.source.getLength()) : "none")
+                + " | " + evidence(info) + " | " + (info.outcome == Outcome.INFERRED ? "consistent"
+                : "**contradicted**: " + info.outcome + (info.reason != null ? ", " + info.reason : "")) + " |");
         }
         output.println();
         output.println("## Size mismatches");
@@ -936,6 +1198,25 @@ public class ApplyGamebryoLayouts extends GhidraScript {
             output.println("| `" + info.name + "` | " + uosaSize(info) + " | " + hex(info.source.getLength()) + " | "
                 + info.reason + " |");
         }
+        output.println();
+        output.println("## Excluded");
+        output.println();
+        output.println("Listed in the script's `EXCLUDED`: the 2.3 code contradicts the 2.6 layout although the sizes"
+            + " fit. Never filled; a structure still exactly as this script filled it is restored to the"
+            + " `GamebryoClasses.java` placeholder, and the copied types only it referenced are removed.");
+        output.println();
+        output.println("| Class | Reason | Result |");
+        output.println("|---|---|---|");
+        for (var entry : new TreeMap<>(EXCLUDED).entrySet()) {
+            ClassInfo info = byName.get(entry.getKey());
+            String result = info == null ? "no structure" : info.state == State.EDITED
+                ? "kept: edited by the user (" + info.editReason + ")" : info.excludedResult;
+            output.println("| `" + entry.getKey() + "` | " + entry.getValue() + " | " + result + " |");
+        }
+        output.println();
+        output.println("Copied types " + (apply ? "removed" : "to remove") + " (no other reference): "
+            + (removedTypes.isEmpty() ? "none." : String.join(", ", removedTypes.stream().map(path -> "`" + path + "`")
+            .toList())));
         output.println();
         output.println("## No 2.6 structure in the sources");
         output.println();
@@ -972,6 +1253,10 @@ public class ApplyGamebryoLayouts extends GhidraScript {
             output.println();
             output.println("- class structures filled: " + changes.getOrDefault("class structures filled", 0));
             output.println("- 2.6 types copied to `" + COPY_CATEGORY + "`: " + total);
+            output.println("- class structures restored to the placeholder: "
+                + changes.getOrDefault("class structures restored to the placeholder", 0));
+            output.println("- copied types removed: " + changes.getOrDefault("copied types removed", 0));
+            output.println("- empty copy categories removed: " + changes.getOrDefault("empty copy categories removed", 0));
         }
     }
 
@@ -1022,6 +1307,12 @@ public class ApplyGamebryoLayouts extends GhidraScript {
 
     private static String field0(ClassInfo info, String status) {
         return info.state == State.APPLIED ? "filled earlier" : status + "; " + info.field0;
+    }
+
+    // Fitting / all sized descendants with a 2.6 type, and the fitting ones of exactly the 2.6 size.
+    private static String evidence(ClassInfo info) {
+        return info.sizedTotal == 0 ? "none with a 2.6 type" : info.sizedFit + " of " + info.sizedTotal + " fit, "
+            + info.sizedEqual + " of this size";
     }
 
     private static String names(List<ClassInfo> infos) {

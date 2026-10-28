@@ -20,12 +20,17 @@ project, in the folder `/gamebryo26`, the release DLLs
 - `sdk/Win32/DLL/NiMain26VC80R.dll`
 - `sdk/Win32/DLL/NiDX9Renderer26VC80R.dll`
 - `sdk/Win32/DLL/NiSystem26VC80R.dll`
+- `sdk/Win32/DLL/NiAnimation26VC80R.dll`
+- `sdk/Win32/DLL/NiParticle26VC80R.dll`
+- `sdk/Win32/DLL/NiCollision26VC80R.dll`
 
 and analyze each with its PDB `sdk/Win32/Lib/vc80/ReleaseDLL/<Lib>26VC80R.pdb`: in the GUI pick
 the file in the analysis options of *PDB Universal*; headless, call
 `PdbUniversalAnalyzer.setPdbFileOption(currentProgram, new File(pdbPath))` in a pre-script before
-auto-analysis. Every program in `/gamebryo26` is used, so more libraries (NiAnimation,
-NiParticle, NiCollision, ...) can be added the same way. The source programs are opened read-only.
+auto-analysis. Every program in `/gamebryo26` is used, so more libraries can be added the same
+way. These six are the ones `UOSA.exe` names in its `Gamebryo Version 2.3.0.0` strings; it has no
+such string for NiAnimationCompression or NiPhysXParticle. The source programs are opened
+read-only.
 
 Ghidra 12's PDB loader produces one flattened structure per class, e.g.
 `/NiMain26VC80R.pdb/NiSourceTexture` (0x44): the full object size, the inherited regions (vptr,
@@ -53,6 +58,9 @@ Classes are read from the `/Gamebryo` structure descriptions that `GamebryoClass
 - **Consistency**: rejected if a UOSA ancestor's 2.6 size does not fit that ancestor, or the
   class's 2.6 own members start inside an ancestor's 2.6 or UOSA size. Size mismatches and
   rejections are listed with both sizes.
+- **Re-check**: a layout an earlier run applied with an inferred size is evaluated again against
+  the current sources (sized descendants that fit, and those of equal size). The report lists
+  each one as consistent or contradicted; a contradicted layout is reported, not removed.
 
 ## Representation
 
@@ -113,6 +121,12 @@ members file shows the planned layouts.
 - The NiRTTI parent is not always the C++ parent: a base without its own NiRTTI is invisible to
   the sibling script. `NiPersistentSrcTextureRendererData` derives from `NiTexture::RendererData`
   in 2.6, so its bytes 0x08..0x58 stay undefined after the `NiObject` base.
+- `NiControllerSequence` is filled with the 2.6 layout (0x7c in both) although its members
+  differ: the UOSA constructor (`0x00799810`, called from `CreateObject` `0x0079d1f0`) stores an
+  embedded array object (vptr, data pointer, 16-bit counts, grow-by 1) at +0x48, where 2.6 has
+  the float `m_fWeightedLastTime`, and 2.3 has no `NiSequenceData`, `NiPoseBuffer` or
+  `NiScratchPad` (no strings in the binary) that the 2.6 members point to. Treat its member
+  names as wrong past the `NiObject` base.
 - Copied by-value types (`NiPixelFormat`, `NiTransform`, ...) are 2.6 layouts checked only by the
   size of the class embedding them.
 - Only classes of the imported libraries can be filled; UO/Mythic classes and classes from
@@ -122,13 +136,20 @@ members file shows the planned layouts.
 ## Tested result
 
 Ghidra 12.1.4, `UOSA.exe` SHA-256
-`5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`, sources NiMain, NiDX9Renderer
-and NiSystem 2.6 (VC80 release DLLs): of 343 classes, 38 filled with exact size and 9 inferred
-(`NiObject` 0x8, `NiObjectNET` 0x18, `NiTexture` 0x30, `NiProperty`, `NiTimeController`, ...);
-29 size mismatches (e.g. `NiNode` 0xe0 vs 0xdc, the geometry data classes by 8); 7 rejected
-(`NiAVObject` and its geometry/light/effect bases: no sized descendant fits); 72 without size
-evidence (renderer, shader, material and render-view classes); 188 without a 2.6 type. 39 types
-were copied (20 structures, 9 enums, 10 stubs). A second `--apply` run reports zero changes.
+`5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`, sources NiMain,
+NiDX9Renderer, NiSystem, NiAnimation, NiParticle and NiCollision 2.6 (VC80 release DLLs): of 343
+classes, 118 filled with exact size and 25 inferred (`NiObject` 0x8, `NiObjectNET` 0x18,
+`NiTexture` 0x30, `NiTimeController` 0x34, `NiInterpolator` 0xc, `NiPSysModifier` 0x18, ...);
+50 size mismatches (e.g. `NiNode` 0xe0 vs 0xdc, the geometry data classes by 8,
+`NiParticleSystem` 0x134 vs 0x124, `NiControllerManager` 0x6c vs 0xa0); 9 rejected (`NiAVObject`
+and its geometry/light/effect bases, `NiPSysCollider`, `NiPSysFieldModifier`: no sized descendant
+fits); 74 without size evidence (renderer, shader, material and render-view classes,
+`NiCollisionData`); 67 without a 2.6 type (UO/Mythic classes and 2.3 classes dropped by 2.6, such
+as `NiFloatController`, `NiPathController`, `NiLookAtController`). 47 types were copied (26
+structures, 8 enums, 13 stubs). This run extended an earlier one with three sources (38 exact, 9
+inferred): it filled 96 more structures, and the 9 earlier inferred layouts all stay consistent.
+`NiTimeController` (0x34) is confirmed by `NiPSysUpdateCtlr`, exactly 0x34 with no own members;
+33 of its 37 sized descendants fit. A second `--apply` run reports zero changes.
 
 The texture path checks out against the binary: the inlined `NiTexture` constructor at
 `0x00430960` writes the `NiRefObject` vptr and count, clears `NiObjectNET`'s name, controllers,
@@ -137,3 +158,11 @@ extra-data pointer and the two 16-bit counts at 0x08..0x16, then stores 6, 3, 2 
 `m_pkRendererData` at 0x24. `NiSourceTexture::CreateObject` (`0x0068abb0`) clears 0x30..0x3c
 (the two `NiFixedString` handles and two `NiPointer`s) and sets the bools at 0x40 (`m_bStatic`,
 1 as in 2.6), 0x41 and 0x42.
+
+The animation path checks out as well: the `NiFlipController` constructor (`0x0079fbe0`)
+initializes an embedded array at 0x38 and clears 0x48..0x50 (`m_kTextures`, `m_uiIndex`,
+`m_uiAffectedMap`, `m_pcCtlrID`); `NiTextureTransformController` (`0x007b15d0`) writes 0x38..0x4c
+(`m_uiLastIdx`, `m_pkMap`, `m_bShaderMap`, `m_uiMapIndex`, `m_eMember`, `m_pcCtlrID`);
+`NiTransformInterpolator` (`0x007b2110`) sets `m_fLastTime` at 0x8, the `NiQuatTransform` at
+0x0c..0x28, `m_spData` at 0x2c (reference count incremented) and the three key indices at
+0x30..0x38.

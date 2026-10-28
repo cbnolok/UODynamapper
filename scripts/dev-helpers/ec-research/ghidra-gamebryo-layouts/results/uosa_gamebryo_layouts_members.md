@@ -64,6 +64,76 @@ Mode: --apply
 | 0x14 | `NiAGDDataStream *` | `m_pkDataStreamEntries` |  |
 | 0x18 | `NiTPrimitiveArray<NiAdditionalGeometryData::NiAGDDataBlock_*>` | `m_aDataBlocks` |  |
 
+### `NiBSplineBasisData` (0x28, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiObject` | `base` |  |
+| 0x8 | `NiBSplineBasis<float,3>` | `m_kBasisDegree3` |  |
+
+### `NiBSplineData` (0x18, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiObject` | `base` |  |
+| 0x8 | `float *` | `m_pafControlPoints` |  |
+| 0xc | `short *` | `m_pasCompactControlPoints` |  |
+| 0x10 | `uint` | `m_uiControlPointCount` |  |
+| 0x14 | `uint` | `m_uiCompactControlPointCount` |  |
+
+### `NiBoolData` (0x18, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiObject` | `base` |  |
+| 0x8 | `uint` | `m_uiNumKeys` |  |
+| 0xc | `NiBoolKey *` | `m_pkKeys` |  |
+| 0x10 | `KeyType` | `m_eType` |  |
+| 0x14 | `uchar` | `m_ucKeySize` |  |
+
+### `NiColorData` (0x18, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiObject` | `base` |  |
+| 0x8 | `uint` | `m_uiNumKeys` |  |
+| 0xc | `NiColorKey *` | `m_pkKeys` |  |
+| 0x10 | `KeyType` | `m_eType` |  |
+| 0x14 | `uchar` | `m_ucKeySize` |  |
+
+### `NiControllerSequence` (0x7c, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiObject` | `base` |  |
+| 0x8 | `uint` | `m_uiActivationID` |  |
+| 0xc | `NiControllerManager *` | `m_pkOwner` |  |
+| 0x10 | `NiPointer<NiPoseBuffer>` | `m_spPoseBuffer` |  |
+| 0x14 | `ushort` | `m_usNumPoseBufferItems` |  |
+| 0x16 | `short` | `m_sLastPoseBufferUpdateLOD` |  |
+| 0x18 | `float` | `m_fLastPoseBufferUpdateTime` |  |
+| 0x1c | `NiPointer<NiScratchPad>` | `m_spScratchPad` |  |
+| 0x20 | `NiPointer<NiSequenceData>` | `m_spSeqData` |  |
+| 0x24 | `NiPointer<NiTextKeyExtraData>` | `m_spTextKeys` |  |
+| 0x28 | `int` | `m_iPriority` |  |
+| 0x2c | `float` | `m_fWeight` |  |
+| 0x30 | `float` | `m_fTransSpinner` |  |
+| 0x34 | `float` | `m_fEaseSpinner` |  |
+| 0x38 | `float` | `m_fDuration` |  |
+| 0x3c | `CycleType` | `m_eCycleType` |  |
+| 0x40 | `float` | `m_fFrequency` |  |
+| 0x44 | `float` | `m_fLastTime` |  |
+| 0x48 | `float` | `m_fWeightedLastTime` |  |
+| 0x4c | `float` | `m_fLastScaledTime` |  |
+| 0x50 | `NiAnimState` | `m_eState` |  |
+| 0x54 | `float` | `m_fOffset` |  |
+| 0x58 | `float` | `m_fStartTime` |  |
+| 0x5c | `float` | `m_fEndTime` |  |
+| 0x60 | `float` | `m_fDestFrame` |  |
+| 0x64 | `bool` | `m_bHoldDestFrame` |  |
+| 0x68 | `NiPointer<NiControllerSequence>` | `m_spPartnerSequence` |  |
+| 0x6c | `NiTPrimitiveArray<NiSequenceData::ActivationCallback_*>` | `m_kActivationCallbacks` |  |
+
 ### `NiExtraData` (0xc, exact)
 
 | Offset | Type | Name | Comment |
@@ -147,6 +217,14 @@ Mode: --apply
 | 0x10 | `char * *` | `m_ppcValue` |  |
 | 0x14 | `int` | `m_iIndex` |  |
 
+### `NiTextKeyExtraData` (0x14, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiExtraData` | `base` |  |
+| 0xc | `uint` | `m_uiNumKeys` |  |
+| 0x10 | `NiTextKey *` | `m_pKeys` |  |
+
 ### `NiVectorExtraData` (0x1c, exact)
 
 | Offset | Type | Name | Comment |
@@ -159,6 +237,244 @@ Mode: --apply
 | Offset | Type | Name | Comment |
 |---:|---|---|---|
 | 0x0 | `NiExtraData` | `base` |  |
+
+### `NiFloatData` (0x18, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiObject` | `base` |  |
+| 0x8 | `uint` | `m_uiNumKeys` |  |
+| 0xc | `NiFloatKey *` | `m_pkKeys` |  |
+| 0x10 | `KeyType` | `m_eType` |  |
+| 0x14 | `uchar` | `m_ucKeySize` |  |
+
+### `NiInterpolator` (0xc, inferred)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiObject` | `base` |  |
+| 0x8 | `float` | `m_fLastTime` |  |
+
+### `NiBSplineInterpolator` (0x1c, inferred)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiInterpolator` | `base` |  |
+| 0xc | `float` | `m_fStartTime` |  |
+| 0x10 | `float` | `m_fEndTime` |  |
+| 0x14 | `NiPointer<NiBSplineData>` | `m_spData` |  |
+| 0x18 | `NiPointer<NiBSplineBasisData>` | `m_spBasisData` |  |
+
+### `NiBSplineFloatInterpolator` (0x24, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiBSplineInterpolator` | `base` |  |
+| 0x1c | `float` | `m_fFloatValue` |  |
+| 0x20 | `uint` | `m_kFloatCPHandle` |  |
+
+### `NiBSplineCompFloatInterpolator` (0x2c, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiBSplineFloatInterpolator` | `base` |  |
+| 0x24 | `float[2]` | `m_afCompScalars` |  |
+
+### `NiBSplinePoint3Interpolator` (0x2c, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiBSplineInterpolator` | `base` |  |
+| 0x1c | `NiPoint3` | `m_kPoint3Value` |  |
+| 0x28 | `uint` | `m_kPoint3CPHandle` |  |
+
+### `NiBSplineCompPoint3Interpolator` (0x34, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiBSplinePoint3Interpolator` | `base` |  |
+| 0x2c | `float[2]` | `m_afCompScalars` |  |
+
+### `NiBSplineTransformInterpolator` (0x48, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiBSplineInterpolator` | `base` |  |
+| 0x1c | `NiQuatTransform` | `m_kTransformValue` |  |
+| 0x3c | `uint` | `m_kTransCPHandle` |  |
+| 0x40 | `uint` | `m_kRotCPHandle` |  |
+| 0x44 | `uint` | `m_kScaleCPHandle` |  |
+
+### `NiBSplineCompTransformInterpolator` (0x60, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiBSplineTransformInterpolator` | `base` |  |
+| 0x48 | `float[6]` | `m_afCompScalars` |  |
+
+### `NiBlendInterpolator` (0x30, inferred)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiInterpolator` | `base` |  |
+| 0xc | `uchar` | `m_uFlags` |  |
+| 0xd | `uchar` | `m_ucArraySize` |  |
+| 0xe | `uchar` | `m_ucInterpCount` |  |
+| 0xf | `uchar` | `m_ucSingleIdx` |  |
+| 0x10 | `char` | `m_cHighPriority` |  |
+| 0x11 | `char` | `m_cNextHighPriority` |  |
+| 0x14 | `InterpArrayItem *` | `m_pkInterpArray` |  |
+| 0x18 | `NiInterpolator *` | `m_pkSingleInterpolator` |  |
+| 0x1c | `float` | `m_fWeightThreshold` |  |
+| 0x20 | `float` | `m_fSingleTime` |  |
+| 0x24 | `float` | `m_fHighSumOfWeights` |  |
+| 0x28 | `float` | `m_fNextHighSumOfWeights` |  |
+| 0x2c | `float` | `m_fHighEaseSpinner` |  |
+
+### `NiBlendBoolInterpolator` (0x34, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiBlendInterpolator` | `base` |  |
+| 0x30 | `uchar` | `m_bBoolValue` |  |
+
+### `NiBlendColorInterpolator` (0x44, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiBlendInterpolator` | `base` |  |
+| 0x30 | `NiColorA` | `m_kColorValue` |  |
+| 0x40 | `bool` | `m_bValidValue` |  |
+
+### `NiBlendFloatInterpolator` (0x34, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiBlendInterpolator` | `base` |  |
+| 0x30 | `float` | `m_fFloatValue` |  |
+
+### `NiBlendPoint3Interpolator` (0x40, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiBlendInterpolator` | `base` |  |
+| 0x30 | `NiPoint3` | `m_kPoint3Value` |  |
+| 0x3c | `bool` | `m_bValidValue` |  |
+
+### `NiBlendQuaternionInterpolator` (0x40, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiBlendInterpolator` | `base` |  |
+| 0x30 | `NiQuaternion` | `m_kQuaternionValue` |  |
+
+### `NiBlendTransformInterpolator` (0x30, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiBlendInterpolator` | `base` |  |
+
+### `NiKeyBasedInterpolator` (0xc, inferred)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiInterpolator` | `base` |  |
+
+### `NiBoolInterpolator` (0x18, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiKeyBasedInterpolator` | `base` |  |
+| 0xc | `uchar` | `m_bBoolValue` |  |
+| 0x10 | `NiPointer<NiBoolData>` | `m_spBoolData` |  |
+| 0x14 | `uint` | `m_uiLastIdx` |  |
+
+### `NiBoolTimelineInterpolator` (0x20, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiBoolInterpolator` | `base` |  |
+| 0x18 | `uint` | `m_uiPreviousIdx` |  |
+| 0x1c | `bool` | `m_bPreviousValue` |  |
+
+### `NiColorInterpolator` (0x24, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiKeyBasedInterpolator` | `base` |  |
+| 0xc | `NiColorA` | `m_kColorValue` |  |
+| 0x1c | `NiPointer<NiColorData>` | `m_spColorData` |  |
+| 0x20 | `uint` | `m_uiLastIdx` |  |
+
+### `NiFloatInterpolator` (0x18, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiKeyBasedInterpolator` | `base` |  |
+| 0xc | `float` | `m_fFloatValue` |  |
+| 0x10 | `NiPointer<NiFloatData>` | `m_spFloatData` |  |
+| 0x14 | `uint` | `m_uiLastIdx` |  |
+
+### `NiPathInterpolator` (0x5c, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiKeyBasedInterpolator` | `base` |  |
+| 0xc | `ushort` | `m_uFlags` |  |
+| 0x10 | `uint` | `m_uiLastPathIdx` |  |
+| 0x14 | `uint` | `m_uiLastPctIdx` |  |
+| 0x18 | `NiPointer<NiPosData>` | `m_spPathData` |  |
+| 0x1c | `NiPointer<NiFloatData>` | `m_spPctData` |  |
+| 0x20 | `float *` | `m_pfPartialLength` |  |
+| 0x24 | `float` | `m_fTotalLength` |  |
+| 0x28 | `float` | `m_fMaxBankAngle` |  |
+| 0x2c | `float` | `m_fSmoothing` |  |
+| 0x30 | `short` | `m_sFollowAxis` |  |
+| 0x34 | `float` | `m_fMaxCurvature` |  |
+| 0x38 | `BankDir` | `m_eBankDir` |  |
+| 0x3c | `NiQuaternion` | `m_kRotation` |  |
+| 0x4c | `NiPoint3` | `m_kPosition` |  |
+| 0x58 | `float` | `m_fLastTime` |  |
+
+### `NiPoint3Interpolator` (0x20, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiKeyBasedInterpolator` | `base` |  |
+| 0xc | `NiPoint3` | `m_kPoint3Value` |  |
+| 0x18 | `NiPointer<NiPosData>` | `m_spPoint3Data` |  |
+| 0x1c | `uint` | `m_uiLastIdx` |  |
+
+### `NiQuaternionInterpolator` (0x24, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiKeyBasedInterpolator` | `base` |  |
+| 0xc | `NiQuaternion` | `m_kQuaternionValue` |  |
+| 0x1c | `NiPointer<NiRotData>` | `m_spQuaternionData` |  |
+| 0x20 | `uint` | `m_uiLastIdx` |  |
+
+### `NiTransformInterpolator` (0x3c, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiKeyBasedInterpolator` | `base` |  |
+| 0xc | `NiQuatTransform` | `m_kTransformValue` |  |
+| 0x2c | `NiPointer<NiTransformData>` | `m_spData` |  |
+| 0x30 | `uint` | `m_uiLastTransIdx` |  |
+| 0x34 | `uint` | `m_uiLastRotIdx` |  |
+| 0x38 | `uint` | `m_uiLastScaleIdx` |  |
+
+### `NiLookAtInterpolator` (0x44, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiInterpolator` | `base` |  |
+| 0xc | `ushort` | `m_uFlags` |  |
+| 0x10 | `NiAVObject *` | `m_pkLookAt` |  |
+| 0x14 | `NiFixedString` | `m_kLookAtName` |  |
+| 0x18 | `NiQuatTransform` | `m_kTransformValue` |  |
+| 0x38 | `NiPointer<NiInterpolator>[3]` | `m_aspInterpolators` |  |
 
 ### `NiLODData` (0x8, inferred)
 
@@ -185,6 +501,16 @@ Mode: --apply
 | 0x18 | `NiBound` | `m_kWorldBound` |  |
 | 0x28 | `uint` | `m_uiNumProportions` |  |
 | 0x2c | `float *` | `m_pfProportions` |  |
+
+### `NiMorphData` (0x18, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiObject` | `base` |  |
+| 0x8 | `uint` | `m_uiNumTargets` |  |
+| 0xc | `uint` | `m_uiNumVertsPerTarget` |  |
+| 0x10 | `MorphTarget *` | `m_aMorphTargets` |  |
+| 0x14 | `bool` | `m_bRelativeTargets` |  |
 
 ### `NiObjectNET` (0x18, inferred)
 
@@ -322,6 +648,179 @@ Mode: --apply
 | 0x0 | `NiSourceTexture` | `base` |  |
 | 0x44 | `FaceID` | `m_eFace` |  |
 
+### `NiPSysEmitterCtlrData` (0x28, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiObject` | `base` |  |
+| 0x8 | `uint` | `m_uiNumBirthRateKeys` |  |
+| 0xc | `NiFloatKey *` | `m_pkBirthRateKeys` |  |
+| 0x10 | `KeyType` | `m_eBirthRateKeyType` |  |
+| 0x14 | `uchar` | `m_ucBirthRateSize` |  |
+| 0x18 | `uint` | `m_uiNumEmitterActiveKeys` |  |
+| 0x1c | `NiBoolKey *` | `m_pkEmitterActiveKeys` |  |
+| 0x20 | `KeyType` | `m_eEmitterActiveKeyType` |  |
+| 0x24 | `uchar` | `m_ucEmitterActiveSize` |  |
+
+### `NiPSysModifier` (0x18, inferred)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiObject` | `base` |  |
+| 0x8 | `NiFixedString` | `m_kName` |  |
+| 0xc | `uint` | `m_uiOrder` |  |
+| 0x10 | `NiParticleSystem *` | `m_pkTarget` |  |
+| 0x14 | `bool` | `m_bActive` |  |
+
+### `NiPSysAgeDeathModifier` (0x20, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysModifier` | `base` |  |
+| 0x18 | `bool` | `m_bSpawnOnDeath` |  |
+| 0x1c | `NiPSysSpawnModifier *` | `m_pkSpawnModifier` |  |
+
+### `NiPSysBombModifier` (0x38, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysModifier` | `base` |  |
+| 0x18 | `NiAVObject *` | `m_pkBombObj` |  |
+| 0x1c | `NiPoint3` | `m_kBombAxis` |  |
+| 0x28 | `float` | `m_fDecay` |  |
+| 0x2c | `float` | `m_fDeltaV` |  |
+| 0x30 | `DecayType` | `m_eDecayType` |  |
+| 0x34 | `SymmType` | `m_eSymmType` |  |
+
+### `NiPSysColliderManager` (0x1c, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysModifier` | `base` |  |
+| 0x18 | `NiPointer<NiPSysCollider>` | `m_spColliders` |  |
+
+### `NiPSysDragModifier` (0x34, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysModifier` | `base` |  |
+| 0x18 | `NiAVObject *` | `m_pkDragObj` |  |
+| 0x1c | `NiPoint3` | `m_kDragAxis` |  |
+| 0x28 | `float` | `m_fPercentage` |  |
+| 0x2c | `float` | `m_fRange` |  |
+| 0x30 | `float` | `m_fFalloff` |  |
+
+### `NiPSysEmitter` (0x50, inferred)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysModifier` | `base` |  |
+| 0x18 | `float` | `m_fSpeed` |  |
+| 0x1c | `float` | `m_fSpeedVar` |  |
+| 0x20 | `float` | `m_fDeclination` |  |
+| 0x24 | `float` | `m_fDeclinationVar` |  |
+| 0x28 | `float` | `m_fPlanarAngle` |  |
+| 0x2c | `float` | `m_fPlanarAngleVar` |  |
+| 0x30 | `NiColorA` | `m_kInitialColor` |  |
+| 0x40 | `float` | `m_fInitialRadius` |  |
+| 0x44 | `float` | `m_fRadiusVar` |  |
+| 0x48 | `float` | `m_fLifeSpan` |  |
+| 0x4c | `float` | `m_fLifeSpanVar` |  |
+
+### `NiPSysVolumeEmitter` (0x54, inferred)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysEmitter` | `base` |  |
+| 0x50 | `NiAVObject *` | `m_pkEmitterObj` |  |
+
+### `NiPSysBoxEmitter` (0x60, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysVolumeEmitter` | `base` |  |
+| 0x54 | `float` | `m_fEmitterWidth` |  |
+| 0x58 | `float` | `m_fEmitterHeight` |  |
+| 0x5c | `float` | `m_fEmitterDepth` |  |
+
+### `NiPSysCylinderEmitter` (0x5c, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysVolumeEmitter` | `base` |  |
+| 0x54 | `float` | `m_fEmitterRadius` |  |
+| 0x58 | `float` | `m_fEmitterHeight` |  |
+
+### `NiPSysSphereEmitter` (0x58, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysVolumeEmitter` | `base` |  |
+| 0x54 | `float` | `m_fEmitterRadius` |  |
+
+### `NiPSysGravityModifier` (0x3c, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysModifier` | `base` |  |
+| 0x18 | `NiAVObject *` | `m_pkGravityObj` |  |
+| 0x1c | `NiPoint3` | `m_kGravityAxis` |  |
+| 0x28 | `float` | `m_fDecay` |  |
+| 0x2c | `float` | `m_fStrength` |  |
+| 0x30 | `ForceType` | `m_eType` |  |
+| 0x34 | `float` | `m_fTurbulence` |  |
+| 0x38 | `float` | `m_fScale` |  |
+
+### `NiPSysGrowFadeModifier` (0x28, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysModifier` | `base` |  |
+| 0x18 | `float` | `m_fGrowTime` |  |
+| 0x1c | `ushort` | `m_usGrowGeneration` |  |
+| 0x20 | `float` | `m_fFadeTime` |  |
+| 0x24 | `ushort` | `m_usFadeGeneration` |  |
+
+### `NiPSysMeshUpdateModifier` (0x28, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysModifier` | `base` |  |
+| 0x18 | `NiTObjectArray<NiPointer<NiAVObject>_>` | `m_kMeshes` |  |
+
+### `NiPSysPositionModifier` (0x18, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysModifier` | `base` |  |
+
+### `NiPSysRotationModifier` (0x38, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysModifier` | `base` |  |
+| 0x18 | `float` | `m_fInitialRotSpeed` |  |
+| 0x1c | `float` | `m_fInitialRotSpeedVar` |  |
+| 0x20 | `float` | `m_fInitialRotAngle` |  |
+| 0x24 | `float` | `m_fInitialRotAngleVar` |  |
+| 0x28 | `NiPoint3` | `m_kInitialAxis` |  |
+| 0x34 | `bool` | `m_bRandomInitialAxis` |  |
+| 0x35 | `bool` | `m_bRandomRotSpeedSign` |  |
+
+### `NiPSysSpawnModifier` (0x34, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysModifier` | `base` |  |
+| 0x18 | `ushort` | `m_usNumSpawnGenerations` |  |
+| 0x1c | `float` | `m_fPercentageSpawned` |  |
+| 0x20 | `ushort` | `m_usMinNumToSpawn` |  |
+| 0x22 | `ushort` | `m_usMaxNumToSpawn` |  |
+| 0x24 | `float` | `m_fSpawnSpeedChaos` |  |
+| 0x28 | `float` | `m_fSpawnDirChaos` |  |
+| 0x2c | `float` | `m_fLifeSpan` |  |
+| 0x30 | `float` | `m_fLifeSpanVar` |  |
+
 ### `NiPalette` (0x24, exact)
 
 | Offset | Type | Name | Comment |
@@ -369,6 +868,26 @@ Mode: --apply
 | 0x64 | `uint` | `m_uiPixelStride` |  |
 | 0x68 | `uint` | `m_uiRevID` |  |
 | 0x6c | `uint` | `m_uiFaces` |  |
+
+### `NiPosData` (0x18, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiObject` | `base` |  |
+| 0x8 | `uint` | `m_uiNumKeys` |  |
+| 0xc | `NiPosKey *` | `m_pkKeys` |  |
+| 0x10 | `KeyType` | `m_eType` |  |
+| 0x14 | `uchar` | `m_ucKeySize` |  |
+
+### `NiRotData` (0x18, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiObject` | `base` |  |
+| 0x8 | `uint` | `m_uiNumKeys` |  |
+| 0xc | `NiRotKey *` | `m_pkKeys` |  |
+| 0x10 | `KeyType` | `m_eType` |  |
+| 0x14 | `uchar` | `m_ucKeySize` |  |
 
 ### `NiScreenPolygon` (0x1c, exact)
 
@@ -423,6 +942,15 @@ Mode: --apply
 | 0x8 | `uint` | `m_uiPartitions` |  |
 | 0xc | `Partition *` | `m_pkPartitions` |  |
 
+### `NiStringPalette` (0x14, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiObject` | `base` |  |
+| 0x8 | `char *` | `m_pcBuffer` |  |
+| 0xc | `uint` | `m_uiAllocatedSize` |  |
+| 0x10 | `uint` | `m_uiEndOfBuffer` |  |
+
 ### `NiTimeController` (0x34, inferred)
 
 | Offset | Type | Name | Comment |
@@ -440,168 +968,487 @@ Mode: --apply
 | 0x2c | `NiObjectNET *` | `m_pkTarget` |  |
 | 0x30 | `NiPointer<NiTimeController>` | `m_spNext` |  |
 
+### `NiBoneLODController` (0x68, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiTimeController` | `base` |  |
+| 0x34 | `int` | `m_iLOD` |  |
+| 0x38 | `uint` | `m_uiNumLODs` |  |
+| 0x3c | `NiTPrimitiveArray<NiTPrimitiveSet<NiNode_*>_*>` | `m_kBoneArray` |  |
+| 0x4c | `NiTPrimitiveArray<NiTPrimitiveSet<NiBoneLODController::SkinInfo_*>_*>` | `m_kSkinArray` |  |
+| 0x5c | `NiTPrimitiveSet<NiTriBasedGeom_*>` | `m_kSkinSet` |  |
+
+### `NiInterpController` (0x34, inferred)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiTimeController` | `base` |  |
+
+### `NiGeomMorpherController` (0x44, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiInterpController` | `base` |  |
+| 0x34 | `ushort` | `m_uFlags` |  |
+| 0x38 | `NiPointer<NiMorphData>` | `m_spMorphData` |  |
+| 0x3c | `InterpItem *` | `m_pkInterpItems` |  |
+| 0x40 | `bool` | `m_bAlwaysUpdate` |  |
+
+### `NiSingleInterpController` (0x38, inferred)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiInterpController` | `base` |  |
+| 0x34 | `NiPointer<NiInterpolator>` | `m_spInterpolator` |  |
+
+### `NiBoolInterpController` (0x38, inferred)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiSingleInterpController` | `base` |  |
+
+### `NiVisController` (0x38, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiBoolInterpController` | `base` |  |
+
+### `NiExtraDataController` (0x40, inferred)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiSingleInterpController` | `base` |  |
+| 0x38 | `NiFixedString` | `m_kExtraDataName` |  |
+| 0x3c | `NiPointer<NiExtraData>` | `m_spExtraData` |  |
+
+### `NiColorExtraDataController` (0x40, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiExtraDataController` | `base` |  |
+
+### `NiFloatExtraDataController` (0x40, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiExtraDataController` | `base` |  |
+
+### `NiFloatsExtraDataController` (0x48, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiExtraDataController` | `base` |  |
+| 0x40 | `int` | `m_iFloatsExtraDataIndex` |  |
+| 0x44 | `NiFixedString` | `m_kCtlrID` |  |
+
+### `NiFloatsExtraDataPoint3Controller` (0x48, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiExtraDataController` | `base` |  |
+| 0x40 | `int` | `m_iFloatsExtraDataIndex` |  |
+| 0x44 | `NiFixedString` | `m_kCtlrID` |  |
+
+### `NiFloatInterpController` (0x38, inferred)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiSingleInterpController` | `base` |  |
+
+### `NiFlipController` (0x54, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiFloatInterpController` | `base` |  |
+| 0x38 | `NiTObjectArray<NiPointer<NiTexture>_>` | `m_kTextures` |  |
+| 0x48 | `uint` | `m_uiIndex` |  |
+| 0x4c | `uint` | `m_uiAffectedMap` |  |
+| 0x50 | `char *` | `m_pcCtlrID` |  |
+
+### `NiLightDimmerController` (0x38, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiFloatInterpController` | `base` |  |
+
+### `NiTextureTransformController` (0x50, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiFloatInterpController` | `base` |  |
+| 0x38 | `uint` | `m_uiLastIdx` |  |
+| 0x3c | `Map *` | `m_pkMap` |  |
+| 0x40 | `bool` | `m_bShaderMap` |  |
+| 0x44 | `uint` | `m_uiMapIndex` |  |
+| 0x48 | `TransformMember` | `m_eMember` |  |
+| 0x4c | `char *` | `m_pcCtlrID` |  |
+
+### `NiPSysModifierCtlr` (0x40, inferred)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiSingleInterpController` | `base` |  |
+| 0x38 | `NiFixedString` | `m_kModifierName` |  |
+| 0x3c | `NiPSysModifier *` | `m_pkModifier` |  |
+
+### `NiPSysModifierBoolCtlr` (0x40, inferred)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysModifierCtlr` | `base` |  |
+
+### `NiPSysModifierActiveCtlr` (0x40, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysModifierBoolCtlr` | `base` |  |
+
+### `NiPSysModifierFloatCtlr` (0x40, inferred)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysModifierCtlr` | `base` |  |
+
+### `NiPSysAirFieldAirFrictionCtlr` (0x40, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysModifierFloatCtlr` | `base` |  |
+
+### `NiPSysAirFieldInheritVelocityCtlr` (0x40, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysModifierFloatCtlr` | `base` |  |
+
+### `NiPSysAirFieldSpreadCtlr` (0x40, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysModifierFloatCtlr` | `base` |  |
+
+### `NiPSysEmitterDeclinationCtlr` (0x40, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysModifierFloatCtlr` | `base` |  |
+
+### `NiPSysEmitterDeclinationVarCtlr` (0x40, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysModifierFloatCtlr` | `base` |  |
+
+### `NiPSysEmitterInitialRadiusCtlr` (0x40, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysModifierFloatCtlr` | `base` |  |
+
+### `NiPSysEmitterLifeSpanCtlr` (0x40, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysModifierFloatCtlr` | `base` |  |
+
+### `NiPSysEmitterPlanarAngleCtlr` (0x40, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysModifierFloatCtlr` | `base` |  |
+
+### `NiPSysEmitterPlanarAngleVarCtlr` (0x40, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysModifierFloatCtlr` | `base` |  |
+
+### `NiPSysEmitterSpeedCtlr` (0x40, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysModifierFloatCtlr` | `base` |  |
+
+### `NiPSysFieldAttenuationCtlr` (0x40, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysModifierFloatCtlr` | `base` |  |
+
+### `NiPSysFieldMagnitudeCtlr` (0x40, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysModifierFloatCtlr` | `base` |  |
+
+### `NiPSysFieldMaxDistanceCtlr` (0x40, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysModifierFloatCtlr` | `base` |  |
+
+### `NiPSysGravityStrengthCtlr` (0x40, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysModifierFloatCtlr` | `base` |  |
+
+### `NiPSysInitialRotAngleCtlr` (0x40, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysModifierFloatCtlr` | `base` |  |
+
+### `NiPSysInitialRotAngleVarCtlr` (0x40, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysModifierFloatCtlr` | `base` |  |
+
+### `NiPSysInitialRotSpeedCtlr` (0x40, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysModifierFloatCtlr` | `base` |  |
+
+### `NiPSysInitialRotSpeedVarCtlr` (0x40, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysModifierFloatCtlr` | `base` |  |
+
+### `NiPoint3InterpController` (0x38, inferred)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiSingleInterpController` | `base` |  |
+
+### `NiLightColorController` (0x3c, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPoint3InterpController` | `base` |  |
+| 0x38 | `ushort` | `m_uFlags` |  |
+
+### `NiMaterialColorController` (0x3c, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPoint3InterpController` | `base` |  |
+| 0x38 | `ushort` | `m_uFlags` |  |
+
+### `NiTransformController` (0x38, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiSingleInterpController` | `base` |  |
+
+### `NiPSysUpdateCtlr` (0x34, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiTimeController` | `base` |  |
+
+### `NiTransformData` (0x38, exact)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiObject` | `base` |  |
+| 0x8 | `uint` | `m_uiNumRotKeys` |  |
+| 0xc | `NiRotKey *` | `m_pkRotKeys` |  |
+| 0x10 | `KeyType` | `m_eRotType` |  |
+| 0x14 | `uchar` | `m_ucRotSize` |  |
+| 0x18 | `uint` | `m_uiNumPosKeys` |  |
+| 0x1c | `NiPosKey *` | `m_pkPosKeys` |  |
+| 0x20 | `KeyType` | `m_ePosType` |  |
+| 0x24 | `uchar` | `m_ucPosSize` |  |
+| 0x28 | `uint` | `m_uiNumScaleKeys` |  |
+| 0x2c | `NiFloatKey *` | `m_pkScaleKeys` |  |
+| 0x30 | `KeyType` | `m_eScaleType` |  |
+| 0x34 | `uchar` | `m_ucScaleSize` |  |
+
 ## Types copied to `/Gamebryo26`
 
-### `/Gamebryo26/NiTStringPointerMap<NiAVObject_*,NiStringHashFunctor,NiStringEqualsFunctor>` (0x14, structure)
-
-### `/Gamebryo26/NiTPointerList<NiRenderObject_*>` (0x10, structure)
-
-### `/Gamebryo26/NiRenderObject` (no size, stub (pointer target, no members))
-
-### `/Gamebryo26/NiAdditionalGeometryData/NiAGDDataStream` (no size, stub (pointer target, no members))
-
-### `/Gamebryo26/NiTPrimitiveArray<NiAdditionalGeometryData::NiAGDDataBlock_*>` (0x10, structure)
-
-### `/Gamebryo26/NiFixedString` (0x4, structure)
+### `/Gamebryo26/NiBSplineBasis<float,3>` (0x20, structure)
 
 | Offset | Type | Name | Comment |
 |---:|---|---|---|
-| 0x0 | `char *` | `m_kHandle` |  |
+| 0x0 | `int` | `m_iQuantity` |  |
+| 0x4 | `float[4]` | `m_afValue` |  |
+| 0x14 | `float` | `m_fLastTime` |  |
+| 0x18 | `int` | `m_iMin` |  |
+| 0x1c | `int` | `m_iMax` |  |
 
-### `/Gamebryo26/NiColorA` (0x10, structure)
+### `/Gamebryo26/NiBoolKey` (no size, stub (pointer target, no members))
 
-| Offset | Type | Name | Comment |
-|---:|---|---|---|
-| 0x0 | `float` | `r` |  |
-| 0x4 | `float` | `g` |  |
-| 0x8 | `float` | `b` |  |
-| 0xc | `float` | `a` |  |
+### `/Gamebryo26/NiAnimationKey/KeyType` (0x4, enum)
 
-### `/Gamebryo26/NiPoint3` (0xc, structure)
+### `/Gamebryo26/NiColorKey` (no size, stub (pointer target, no members))
 
-| Offset | Type | Name | Comment |
-|---:|---|---|---|
-| 0x0 | `float` | `x` |  |
-| 0x4 | `float` | `y` |  |
-| 0x8 | `float` | `z` |  |
-
-### `/Gamebryo26/NiRangeLODData/Range` (no size, stub (pointer target, no members))
-
-### `/Gamebryo26/NiBound` (0x10, structure)
+### `/Gamebryo26/NiPointer<NiPoseBuffer>` (0x4, structure)
 
 | Offset | Type | Name | Comment |
 |---:|---|---|---|
-| 0x0 | `NiPoint3` | `m_kCenter` |  |
-| 0xc | `float` | `m_fRadius` |  |
+| 0x0 | `NiPoseBuffer *` | `m_pObject` |  |
 
-### `/Gamebryo26/NiPointer<NiTimeController>` (0x4, structure)
+### `/Gamebryo26/NiPoseBuffer` (no size, stub (pointer target, no members))
 
-| Offset | Type | Name | Comment |
-|---:|---|---|---|
-| 0x0 | `NiTimeController *` | `m_pObject` |  |
-
-### `/Gamebryo26/NiColor` (0xc, structure)
+### `/Gamebryo26/NiPointer<NiScratchPad>` (0x4, structure)
 
 | Offset | Type | Name | Comment |
 |---:|---|---|---|
-| 0x0 | `float` | `r` |  |
-| 0x4 | `float` | `g` |  |
-| 0x8 | `float` | `b` |  |
+| 0x0 | `NiScratchPad *` | `m_pObject` |  |
 
-### `/Gamebryo26/NiTexture/FormatPrefs` (0xc, structure)
+### `/Gamebryo26/NiScratchPad` (no size, stub (pointer target, no members))
 
-| Offset | Type | Name | Comment |
-|---:|---|---|---|
-| 0x0 | `PixelLayout` | `m_ePixelLayout` |  |
-| 0x4 | `AlphaFormat` | `m_eAlphaFmt` |  |
-| 0x8 | `MipFlag` | `m_eMipMapped` |  |
-
-### `/Gamebryo26/NiTexture/FormatPrefs/PixelLayout` (0x4, enum)
-
-### `/Gamebryo26/NiTexture/FormatPrefs/AlphaFormat` (0x4, enum)
-
-### `/Gamebryo26/NiTexture/FormatPrefs/MipFlag` (0x4, enum)
-
-### `/Gamebryo26/NiTexture/RendererData` (no size, stub (pointer target, no members))
-
-### `/Gamebryo26/NiPointer<NiPersistentSrcTextureRendererData>` (0x4, structure)
+### `/Gamebryo26/NiPointer<NiSequenceData>` (0x4, structure)
 
 | Offset | Type | Name | Comment |
 |---:|---|---|---|
-| 0x0 | `NiPersistentSrcTextureRendererData *` | `m_pObject` |  |
+| 0x0 | `NiSequenceData *` | `m_pObject` |  |
 
-### `/Gamebryo26/NiPointer<NiPixelData>` (0x4, structure)
+### `/Gamebryo26/NiSequenceData` (no size, stub (pointer target, no members))
 
-| Offset | Type | Name | Comment |
-|---:|---|---|---|
-| 0x0 | `NiPixelData *` | `m_pObject` |  |
-
-### `/Gamebryo26/NiSourceCubeMap/FaceID` (0x4, enum)
-
-### `/Gamebryo26/NiPalette/PaletteEntry` (no size, stub (pointer target, no members))
-
-### `/Gamebryo26/NiPalette/RendererData` (no size, stub (pointer target, no members))
-
-### `/Gamebryo26/NiPersistentSrcTextureRendererData/PlatformID` (0x4, enum)
-
-### `/Gamebryo26/NiPointer<NiPalette>` (0x4, structure)
+### `/Gamebryo26/NiPointer<NiTextKeyExtraData>` (0x4, structure)
 
 | Offset | Type | Name | Comment |
 |---:|---|---|---|
-| 0x0 | `NiPalette *` | `m_pObject` |  |
+| 0x0 | `NiTextKeyExtraData *` | `m_pObject` |  |
 
-### `/Gamebryo26/NiPixelFormat` (0x44, structure)
+### `/Gamebryo26/NiTimeController/CycleType` (0x4, enum)
 
-| Offset | Type | Name | Comment |
-|---:|---|---|---|
-| 0x0 | `uchar` | `m_uFlags` |  |
-| 0x1 | `uchar` | `m_ucBitsPerPixel` |  |
-| 0x2 | `bool` | `m_bSRGBSpace` |  |
-| 0x4 | `Format` | `m_eFormat` |  |
-| 0x8 | `Tiling` | `m_eTiling` |  |
-| 0xc | `uint` | `m_uiRendererHint` |  |
-| 0x10 | `uint` | `m_uiExtraData` |  |
-| 0x14 | `NiComponentSpec[4]` | `m_akComponents` |  |
+### `/Gamebryo26/NiAnimState` (0x4, enum)
 
-### `/Gamebryo26/NiPixelFormat/Format` (0x4, enum)
-
-### `/Gamebryo26/NiPixelFormat/Tiling` (0x4, enum)
-
-### `/Gamebryo26/NiPixelFormat/NiComponentSpec` (0xc, structure)
+### `/Gamebryo26/NiPointer<NiControllerSequence>` (0x4, structure)
 
 | Offset | Type | Name | Comment |
 |---:|---|---|---|
-| 0x0 | `Component` | `m_eComponent` |  |
-| 0x4 | `Representation` | `m_eRepresentation` |  |
-| 0x8 | `uchar` | `m_ucBitsPerComponent` |  |
-| 0x9 | `bool` | `m_bSigned` |  |
+| 0x0 | `NiControllerSequence *` | `m_pObject` |  |
 
-### `/Gamebryo26/NiPixelFormat/Component` (0x4, enum)
+### `/Gamebryo26/NiTPrimitiveArray<NiSequenceData::ActivationCallback_*>` (0x10, structure)
 
-### `/Gamebryo26/NiPixelFormat/Representation` (0x4, enum)
+### `/Gamebryo26/NiTextKey` (no size, stub (pointer target, no members))
 
-### `/Gamebryo26/NiPointer<NiPropertyState>` (0x4, structure)
+### `/Gamebryo26/NiFloatKey` (no size, stub (pointer target, no members))
 
-| Offset | Type | Name | Comment |
-|---:|---|---|---|
-| 0x0 | `NiPropertyState *` | `m_pObject` |  |
-
-### `/Gamebryo26/NiPropertyState` (no size, stub (pointer target, no members))
-
-### `/Gamebryo26/NiPoint2` (no size, stub (pointer target, no members))
-
-### `/Gamebryo26/NiTPointerList<NiNode_*>` (0x10, structure)
-
-### `/Gamebryo26/NiPointer<NiSkinPartition>` (0x4, structure)
+### `/Gamebryo26/NiPointer<NiBSplineData>` (0x4, structure)
 
 | Offset | Type | Name | Comment |
 |---:|---|---|---|
-| 0x0 | `NiSkinPartition *` | `m_pObject` |  |
+| 0x0 | `NiBSplineData *` | `m_pObject` |  |
 
-### `/Gamebryo26/NiTransform` (0x34, structure)
-
-| Offset | Type | Name | Comment |
-|---:|---|---|---|
-| 0x0 | `NiMatrix3` | `m_Rotate` |  |
-| 0x24 | `NiPoint3` | `m_Translate` |  |
-| 0x30 | `float` | `m_fScale` |  |
-
-### `/Gamebryo26/NiMatrix3` (0x24, structure)
+### `/Gamebryo26/NiPointer<NiBSplineBasisData>` (0x4, structure)
 
 | Offset | Type | Name | Comment |
 |---:|---|---|---|
-| 0x0 | `float[3][3]` | `m_pEntry` |  |
+| 0x0 | `NiBSplineBasisData *` | `m_pObject` |  |
 
-### `/Gamebryo26/NiSkinData/BoneData` (no size, stub (pointer target, no members))
+### `/Gamebryo26/NiQuatTransform` (0x20, structure)
 
-### `/Gamebryo26/NiSkinPartition/Partition` (no size, stub (pointer target, no members))
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPoint3` | `m_kTranslate` |  |
+| 0xc | `NiQuaternion` | `m_kRotate` |  |
+| 0x1c | `float` | `m_fScale` |  |
+
+### `/Gamebryo26/NiQuaternion` (0x10, structure)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `float` | `m_fW` |  |
+| 0x4 | `float` | `m_fX` |  |
+| 0x8 | `float` | `m_fY` |  |
+| 0xc | `float` | `m_fZ` |  |
+
+### `/Gamebryo26/NiBlendInterpolator/InterpArrayItem` (no size, stub (pointer target, no members))
+
+### `/Gamebryo26/NiPointer<NiBoolData>` (0x4, structure)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiBoolData *` | `m_pObject` |  |
+
+### `/Gamebryo26/NiPointer<NiColorData>` (0x4, structure)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiColorData *` | `m_pObject` |  |
+
+### `/Gamebryo26/NiPointer<NiFloatData>` (0x4, structure)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiFloatData *` | `m_pObject` |  |
+
+### `/Gamebryo26/NiPointer<NiPosData>` (0x4, structure)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPosData *` | `m_pObject` |  |
+
+### `/Gamebryo26/NiPathInterpolator/BankDir` (0x4, enum)
+
+### `/Gamebryo26/NiPointer<NiRotData>` (0x4, structure)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiRotData *` | `m_pObject` |  |
+
+### `/Gamebryo26/NiPointer<NiTransformData>` (0x4, structure)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiTransformData *` | `m_pObject` |  |
+
+### `/Gamebryo26/NiPointer<NiInterpolator>` (0x4, structure)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiInterpolator *` | `m_pObject` |  |
+
+### `/Gamebryo26/NiMorphData/MorphTarget` (no size, stub (pointer target, no members))
+
+### `/Gamebryo26/NiPSysBombModifier/DecayType` (0x4, enum)
+
+### `/Gamebryo26/NiPSysBombModifier/SymmType` (0x4, enum)
+
+### `/Gamebryo26/NiPointer<NiPSysCollider>` (0x4, structure)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiPSysCollider *` | `m_pObject` |  |
+
+### `/Gamebryo26/NiPSysGravityModifier/ForceType` (0x4, enum)
+
+### `/Gamebryo26/NiTObjectArray<NiPointer<NiAVObject>_>` (0x10, structure)
+
+### `/Gamebryo26/NiPosKey` (no size, stub (pointer target, no members))
+
+### `/Gamebryo26/NiRotKey` (no size, stub (pointer target, no members))
+
+### `/Gamebryo26/NiTPrimitiveArray<NiTPrimitiveSet<NiNode_*>_*>` (0x10, structure)
+
+### `/Gamebryo26/NiTPrimitiveArray<NiTPrimitiveSet<NiBoneLODController::SkinInfo_*>_*>` (0x10, structure)
+
+### `/Gamebryo26/NiTPrimitiveSet<NiTriBasedGeom_*>` (0xc, structure)
+
+### `/Gamebryo26/NiPointer<NiMorphData>` (0x4, structure)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiMorphData *` | `m_pObject` |  |
+
+### `/Gamebryo26/NiGeomMorpherController/InterpItem` (no size, stub (pointer target, no members))
+
+### `/Gamebryo26/NiPointer<NiExtraData>` (0x4, structure)
+
+| Offset | Type | Name | Comment |
+|---:|---|---|---|
+| 0x0 | `NiExtraData *` | `m_pObject` |  |
+
+### `/Gamebryo26/NiTObjectArray<NiPointer<NiTexture>_>` (0x10, structure)
+
+### `/Gamebryo26/NiTexturingProperty/Map` (no size, stub (pointer target, no members))
+
+### `/Gamebryo26/NiTextureTransformController/TransformMember` (0x4, enum)

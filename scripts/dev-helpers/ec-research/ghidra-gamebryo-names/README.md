@@ -18,12 +18,14 @@ The script expects the classes, `GetRTTI`s, `ms_RTTI` records and `vftable` labe
 ## Preparing the 2.6 sources
 
 Import each DLL into the same Ghidra project as `UOSA.exe`, in a `/gamebryo26` folder
-(the default source paths), and analyze it with its PDB:
+(without `--sources`, every program in that folder is a source, in name order), and
+analyze it with its PDB:
 
 - DLL: `sdk/Win32/DLL/<Lib>26VC80R.dll`
 - PDB: `sdk/Win32/Lib/vc80/ReleaseDLL/<Lib>26VC80R.pdb`
 
-for `<Lib>` = `NiMain`, `NiDX9Renderer` and `NiSystem`. Set the PDB with
+for `<Lib>` = `NiMain`, `NiDX9Renderer`, `NiSystem`, `NiAnimation`, `NiParticle` and
+`NiCollision`, the libraries `UOSA.exe` names in its `Gamebryo Version 2.3.0.0` strings. Set the PDB with
 `PdbUniversalAnalyzer.setPdbFileOption(program, pdbFile)` (in a pre-script, or through
 the analyzer's options in the GUI) before running auto-analysis. The script opens these
 programs read-only and releases them at the end; it never modifies them.
@@ -65,6 +67,12 @@ accepted only if:
   are below the best by at least the margin,
 - no near-identical source vector (similarity >= 0.97) carries another name.
 
+**Vtable-class check.** An accepted BSim pair is dropped when the 2.6 source is a
+virtual (a slot of a labeled 2.6 vtable), the UOSA target is a slot of Gamebryo-class
+vtables only, and none of those UOSA classes has the source's class in its chain: a
+virtual of an unrelated class (typically a generic `IsEqual` whose true 2.6 counterpart
+is folded or missing).
+
 **Call-graph check.** For an accepted BSim pair, the named callees of the UOSA function
 (existing names and names from this run) are compared with the callees of the 2.6
 function, including their folded aliases. If at least one callee is named and none of
@@ -78,7 +86,10 @@ are listed.
 names and other existing names) and the vtable names are anchors.
 For each anchor that is a BSim target and whose best match passes the mutual-best and
 margin tests at a low floor, the report tabulates how often the best source has the
-anchor's name, by similarity and by significance bucket.
+anchor's name, by similarity and by significance bucket. The `Checked` columns keep only
+the pairs that also pass the vtable-class and call-graph checks, as accepted names must;
+the report lists the disagreements with the check that would drop each, and the
+agreeing pairs the checks would drop.
 
 ## Running
 
@@ -91,7 +102,7 @@ OUTPUT_FILE [--apply] [--matches TSV_FILE] [--no-bsim] [--no-vtable]
             [--min-sim F] [--min-sig F] [--margin F]
 ```
 
-Defaults: the three `/gamebryo26` DLLs, ranges `00650000-00830000,00aa0000-00ac0000`,
+Defaults: every program in `/gamebryo26`, ranges `00650000-00830000,00aa0000-00ac0000`,
 similarity 0.7, significance 30, margin 0.05. `--max-sources` limits the BSim sources for
 quick tests. Through ghidra-mcp:
 
@@ -140,14 +151,24 @@ reports `Changes: none`.
   gained or lost a virtual between 2.3 and 2.6 is mapped only up to the last matching
   ancestor (`NiTexture` and `NiSourceTexture` only up to `NiObjectNET`), and shader and
   material classes are not mapped at all.
-- 469 mapped slots point at code Ghidra has no function for. They are listed but not
+- 1370 mapped slots point at code Ghidra has no function for. They are listed but not
   named; creating functions is out of scope.
 - Folded 2.6 functions cannot be BSim sources, and small functions fall below the
   self-significance bound, so short accessors are named only through vtables.
-- BSim names are calibrated on 76 anchor pairs, biased toward vtable methods and
-  hand-named texture-path code. Lower similarity buckets agreed fully too, but 0.7 is used
-  to stay well inside the tested range. A wrong BSim name is still possible where 2.3 and
-  2.6 code diverged; the evidence is in each plate comment.
+- BSim names are calibrated on anchor pairs biased toward vtable methods and hand-named
+  texture-path code; the vtable-class check is partly circular on vtable anchors and does
+  not help non-virtual targets. The call-graph check is conservative: it drops 28 agreeing
+  calibration pairs (no named UOSA callee occurs in the 2.6 function). A wrong BSim name
+  is still possible where 2.3 and 2.6 code diverged; the evidence is in each plate
+  comment.
+- Identical small helpers and template instances (list, array and bounding-volume
+  helpers) match at similarity 1.0 under several names; the chosen name can belong to
+  another instance or class. `0x007f0a00` was named `NiRenderer::DeleteAllMacros` by the
+  three-library run and now matches `NiUnionBV::RemoveAllBoundingVolumes`; the earlier
+  name is kept.
+- BSim names applied earlier are never removed: `0x006cbee0` keeps
+  `NiGPUProgramCache::NiGPUProgramDesc::scalar_deleting_destructor` although the
+  vtable-class check now drops it (it is a slot of `NiDepthStencilBuffer`).
 - A 2.3 virtual can differ in meaning from the 2.6 virtual in the same slot even when the
   vtable lengths match. Slot 14 of `NiDX9PersistentSrcTextureRendererData` (`0x00772270`)
   is named `GetStreamableRTTIName`, which in 2.6 is
@@ -158,18 +179,24 @@ reports `Changes: none`.
 ## Tested result
 
 Ghidra 12.1.4, `UOSA.exe` SHA-256
-`5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`, with the three 2.6
-DLLs above: 143 classes mapped by vtable (2272 slots), naming 572 functions with no
-conflicts; BSim accepted 364 pairs, of which 40 agree with a vtable name, none disagree,
-and 7 were dropped by the call-graph check, leaving 317 BSim names. `--apply` renamed 751
-functions (435 vtable, 316 BSim; the rest had names already) and created 71 class
-namespaces; a second run changed nothing. The committed report is a refresh run after the
-classes script dropped the misidentified `GetRTTI` at `0x00772270`: it renamed that
-function only, to `NiDX9PersistentSrcTextureRendererData::GetStreamableRTTIName`.
-Calibration: 76 anchor pairs at significance >= 30 all agree, from similarity 0.5 up; the
-only miss in the floor set is `NiTimeController::ProcessClone` at `0x006a4fc0` (best
-`NiLODNode::UpdateWorldData`, similarity 1.0, significance 21.4), which the significance
-threshold excludes. Of the 256 anchors, 137 agree with the vtable name and none disagree.
+`5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`, with the six 2.6
+DLLs above: 265 classes mapped by vtable (4929 slots), naming 1073 functions with no
+conflicts; BSim accepted 428 pairs, of which 46 agree with a vtable name and 2 disagree
+(the vtable name is kept), 1 was dropped by the vtable-class check and 7 by the
+call-graph check, leaving 372 BSim names. The run extended an earlier `--apply` with
+NiMain, NiDX9Renderer and NiSystem only (143 classes, 2272 slots, 572 vtable and 317
+BSim names, 751 functions renamed). It renamed 436 more functions (380 vtable; 56 BSim:
+41 from NiAnimation, 13 from NiCollision, 2 from NiParticle) and created 15 class
+namespaces; a second run changed nothing.
+
+Calibration: 911 anchors are BSim targets, 111 of them pass the mutual-best and margin
+tests. At significance >= 30, the anchor agreement at the 0.7 threshold is 47 of 49
+(95.9%), below the 98% of the three-library run: both misses are `IsEqual` virtuals
+matched to another class's `IsEqual` (`NiSingleInterpController` at `0x007d1d50` vs
+`NiFloatInterpolator`, `NiPSysEmitterCtlrData` at `0x0081b7d0` vs `NiTransformData`),
+whose true 2.6 counterpart is folded or absent. Both are dropped by the vtable-class
+check; on the pairs that pass both checks, agreement is 36 of 36 from similarity 0.7 up
+and 98.5% from 0.5 up. The thresholds are unchanged.
 
 On the texture path, the vtables name `NiSourceTexture::LoadBinary`, `LinkObject`,
 `PostLinkObject`, `SaveBinary`, `IsEqual` and `GetViewerStrings`, and BSim names
@@ -178,3 +205,11 @@ On the texture path, the vtables name `NiSourceTexture::LoadBinary`, `LinkObject
 `NiSourceTexture::CreateRendererData`, `NiDevImageConverter::GenerateMipmapLevels`,
 `NiDX9SourceTextureData::CreateSurfFromRendererData` and
 `NiDX9TextureData::InitializeFromD3DTexture`.
+
+On the animation path, the vtables name the `LoadBinary`/`SaveBinary`/`Update` methods of
+`NiFlipController`, `NiTextureTransformController`, `NiTransformInterpolator`,
+`NiTransformData` and the B-spline interpolators, and BSim names the key helpers
+(`NiEulerRotKey`, `NiTCBRotKey::FillDerivedVals`, `NiAnimationKey::CopySequence`),
+`NiTransformData::ReplaceRotAnim`/`ReplaceScaleAnim`, `NiTransformInterpolator::GetChannelPosed`,
+the `NiBlendInterpolator` weight functions, `NiBSplineData::GetValueDegree3` and
+`NiFlipController::CopyMembers`.
