@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::{Result, ensure};
 use uocf::enhanced::{terrain_definition::TerrainDefinitionPackage, textures::Textures};
+mod census;
 
 #[derive(Parser)]
 struct Args {
@@ -21,8 +22,10 @@ enum Command {
     Materials { ids: Vec<u32> },
     /// Print original item shader blocks, parameters, sampler refs and art windows.
     Items {
-        #[arg(required = true)]
         ids: Vec<u32>,
+        /// Count shader families and sampler stages; omit IDs to inspect all items.
+        #[arg(long)]
+        summary: bool,
     },
     /// Export original DDS payloads and decoded PNGs; refuses existing outputs.
     Images {
@@ -60,15 +63,21 @@ fn main() -> Result<()> {
                 }
             }
         }
-        Command::Items { ids } => {
+        Command::Items { ids, summary } => {
+            ensure!(summary || !ids.is_empty(), "supply item IDs or --summary");
+            let mut census = census::ItemCensus::default();
             let dictionary = uocf::enhanced::string_dictionary::UoStringDictionary::load(
                 &args.client.join("string_dictionary.uop"),
             )?;
             let package = uocf::uop_container::package::UopPackage::load(args.client.join("tileart.uop"))?;
             for file in package.iter_files() {
                 let entry = uocf::enhanced::tileart::TileArtEntry::parse_raw(file)?;
-                if !ids.contains(&entry.tile_id) { continue; }
+                if !ids.is_empty() && !ids.contains(&entry.tile_id) { continue; }
                 let art = entry.process(&dictionary);
+                if summary {
+                    census.record(&art);
+                    continue;
+                }
                 println!("item={} type={:?} flags={:?} ec_window={:?}",
                     entry.tile_id, art.tile_type, art.flags, art.ec_texture);
                 for (index, block) in entry.texture_vector.iter().enumerate() {
@@ -85,6 +94,7 @@ fn main() -> Result<()> {
                         reference.unk4, reference.unk7);
                 }
             }
+            if summary { census.print(); }
         }
         Command::Images { output, archive, ids } => {
             let textures = Textures::new(&args.client.join(archive), None, None)?;

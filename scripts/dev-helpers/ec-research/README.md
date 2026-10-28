@@ -135,6 +135,13 @@ of the retained `ArtData.materials` / `tilemeta` material metadata. Use source
 values to cross-check item-specific composition; terrain Technique/Tweaks are
 not substitutes for an item's parameters.
 
+Use `items --summary` to count material families and sampler stages over the
+whole original tileart package, or append item IDs to restrict the census. Counts
+stay separate by source block; legacy alternatives are not additional EC layers.
+This uses the production `ArtData.materials` parser (`has_texture=1`), rather than
+treating every nonzero raw block marker as a material. A family count establishes
+reachability, not complete runtime support for every sampler in that family.
+
 ## Preserve existing packed tables while adding source materials
 
 Build a fresh source tilemeta package from the matching original bundle with
