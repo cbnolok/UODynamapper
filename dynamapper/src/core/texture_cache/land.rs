@@ -218,7 +218,7 @@ fn create_blank_aux_atlas_images(images: &mut Assets<Image>) -> LandAuxAtlasImag
         },
         TextureDimension::D2,
         sentinel_bytes,
-        TextureFormat::Rgba8UnormSrgb,
+        TextureFormat::Rgba8Unorm,
         bevy::asset::RenderAssetUsages::RENDER_WORLD,
     );
     aux_atlas.texture_descriptor.usage |= TextureUsages::TEXTURE_BINDING;
@@ -426,7 +426,7 @@ fn create_aux_atlas_images(
         },
         TextureDimension::D2,
         atlas_bytes,
-        TextureFormat::Rgba8UnormSrgb,
+        TextureFormat::Rgba8Unorm,
         bevy::asset::RenderAssetUsages::RENDER_WORLD,
     );
     aux_atlas.texture_descriptor.usage |= TextureUsages::TEXTURE_BINDING;
@@ -862,7 +862,10 @@ fn create_land_shader_images(
         },
         TextureDimension::D2,
         atlas_bytes,
-        TextureFormat::Rgba8UnormSrgb,
+        match source {
+            LandShaderAtlasSource::Ec(_) => TextureFormat::Rgba8Unorm,
+            LandShaderAtlasSource::Cc(_) => TextureFormat::Rgba8UnormSrgb,
+        },
         bevy::asset::RenderAssetUsages::RENDER_WORLD,
     );
     atlas.sampler = bevy::image::ImageSampler::linear();

@@ -861,3 +861,40 @@ sRGB atlas's hardware color interpolation and linear-light stage operations
 are a separate, now evidenced color mismatch; compensating with an arbitrary
 final tint would hide it. Do not confuse this state with pixel-format metadata
 or a frame-wide gamma setting. Neither was established by this trace.
+
+
+### Runtime encoded-color contract
+
+EC page and auxiliary arrays now use `Rgba8Unorm`, preserving original bytes
+without another allocation, asset repack or GPU view. CC page arrays retain
+`Rgba8UnormSrgb`; ordinary art is unchanged. `ec_liquid_sample` returns encoded
+RGB for both color and bump inputs. Interior/clamped bilinear samples therefore
+use one hardware read for both, replacing the former four bump loads and four
+sRGB re-encodings. Only wrapped border footprints need four explicit taps.
+
+Terrain and item water apply the shared diffuse response in encoded space,
+clamp the result as the original stages do, compose any item's fourth stage,
+and convert the completed RGB once with `texture_color_rgb` before modern
+styling/postprocessing. The static-terrain graph likewise blends in encoded
+space and converts its result. Its packed primary still comes from the sRGB
+art atlas, so `texture_data_rgb` recovers that input. No arbitrary tint or gamma
+multiplier was introduced. Current style controls, clocks and per-material
+lighting parameters are not claimed to reproduce original frame settings.
+
+Solid terrain albedo explicitly converts after native encoded filtering.
+Normal, displacement and RGB-mask helpers read UNORM values directly, including
+the older auxiliary ripple path; recovering encoded values after hardware sRGB
+filtering is no longer necessary there. Solid terrain's modern lighting and
+transition composition retain their existing behavior; this change does not
+claim to replace all solid-material shading with fixed-function emulation.
+The earlier sRGB sampling implementation described above is superseded by this
+contract. Alpha is linear in either texture format and remains unchanged.
+
+The real GPU regression now has 36 cases, covering native encoded filtering,
+color conversion after interpolation, source bounds, resized auxiliary masks,
+static-stage composition, the recovered camera basis and all three fourth-stage
+water operations with their distinct alpha rules. Desktop-4 checks cover paused
+point/bilinear bridge and coast, animated water/lava/acid, all three visual
+profiles, town solids and a CC control. No extra atlas or draw was added; the
+operation reduction is established in shader code, not a claim of a measured
+whole-frame speedup.

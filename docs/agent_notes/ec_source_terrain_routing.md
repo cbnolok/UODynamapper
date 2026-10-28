@@ -39,14 +39,16 @@ materials use explicit base/normal roles; their raw reflection/ripple inputs
 must not be reinterpreted as a solid material's detail/mask pair. The source-layer
 reader remains available for inspection.
 
-Color and support images currently share sRGB atlas views. Recover encoded RGB
-with `texture_data_rgb` before interpreting normal, displacement, or RGB-mask
-samples as data. Alpha is not sRGB-decoded. The shared liquid sampler recovers
-encoded bump values per texel before explicit bilinear interpolation, and applies
-the same filtering toggle to terrain and items independently of their GPU
-samplers. Wrapped taps stay within the source slot; unit item masks clamp.
-Other support-map paths still recover values after hardware interpolation and
-need a dedicated linear view or equivalent per-texel treatment for exact filtering.
+EC page and auxiliary images use UNORM views: original texture-stage flush
+`0x74d9f0` explicitly disables `D3DSAMP_SRGBTEXTURE`, and pass `0x745640`
+disables `D3DRS_SRGBWRITEENABLE`. Keep data channels encoded during filtering.
+Liquid stages compose encoded RGB, apply their diffuse response and clamp, then
+convert the completed color once for Bevy's linear postprocessing. Solid albedo
+samples convert after native encoded filtering; normal/displacement/RGB masks
+read native data directly. CC page images and ordinary art remain sRGB.
+The shared liquid sampler uses one hardware read for interior/clamped linear
+footprints, including bump data; wrapped border taps stay source-bounded.
+Auxiliary item samples account for nearest-resized layers and native dimensions.
 
 Tileart-owned slots marked as land/material surfaces stay in the art atlas and
 render as axis-aligned ground cells. Terrain-owned copies cannot replace their

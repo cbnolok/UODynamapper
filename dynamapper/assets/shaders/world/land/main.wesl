@@ -61,6 +61,7 @@ import package::shaders::world::land::shading::{
 import package::shaders::world::effects::surface_effects::{apply_water_animation, water_flat_wrapped_lambert};
 import package::shaders::world::ec_liquid::{sample_ec_liquid, ec_liquid_world_uv};
 import package::shaders::world::ec_liquid_camera::ec_liquid_camera_reflection_uv;
+import package::shaders::world::texture_data::texture_color_rgb;
 import package::shaders::world::land::coverage::{ec_coverage_params, ec_terrain_stack, ec_layer_tile};
 
 // ============================================================================
@@ -626,6 +627,8 @@ fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool) -> ve
     base_albedo = sample_ec_liquid(land_page_atlas, land_page_lookup, tex_small_sampler,
       tile.texture_payload, in.world_position.xz, ec_liquid_world_uv(in.world_position.xz), in.uv, globals.time,
       enable_water == 1u, effects.enable_linear_filtering == 1u).rgb;
+    let energy = ambient_strength + diffuse_strength * water_flat_wrapped_lambert(scene.light_direction);
+    base_albedo = texture_color_rgb(clamp(base_albedo * energy, vec3<f32>(0.0), vec3<f32>(1.0)));
   } else if (use_cheap_path) {
     // Quantize UV to a coarser grid and use direct nearest sample.
     // For EC tiles sample_uv is already world-space; we quantize in the same space.
@@ -793,7 +796,10 @@ fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool) -> ve
   // ---- Shade ----
   var hdr_rgb = vec3<f32>(0.0);
   var kr_color_wash_shadow = 0.0;
-  if (use_classic_flat_wet_land_art || use_ec_liquid) {
+  if (use_ec_liquid) {
+    // Original encoded stage lighting was applied before conversion above.
+    hdr_rgb = base_albedo;
+  } else if (use_classic_flat_wet_land_art) {
     // The adjoining authored flat-water statics use this same level-liquid
     // response in every visual profile. KR/Enhanced styling is added later by
     // the shared grunge, wash, global-light, grading, tonemap, and fullscreen fog

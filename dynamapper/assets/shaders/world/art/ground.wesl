@@ -7,6 +7,7 @@ import package::shaders::world::effects::surface_effects::{apply_water_animation
 import package::shaders::world::ec_liquid::sample_ec_liquid;
 import package::shaders::world::ec_liquid_camera::ec_liquid_camera_reflection_uv;
 import package::shaders::world::ec_item_liquid::apply_ec_item_liquid;
+import package::shaders::world::texture_data::texture_color_rgb;
 import package::shaders::postprocess::color_grading::{grade_color_vibrant};
 import package::shaders::postprocess::global_lighting::{apply_global_lighting_rgb};
 import package::shaders::postprocess::grunge::{apply_texture_visual_grunge, visual_grunge_uv};
@@ -128,10 +129,11 @@ fn fragment(in: GroundVertexOutput) -> GroundFragmentOutput {
             effects.enable_water_animation == 1u, effects.enable_linear_filtering == 1u);
         let energy = global_light.ambient_strength
             + global_light.land_diffuse_strength * water_flat_wrapped_lambert(scene.light_direction);
-        color = apply_ec_item_liquid(vec4<f32>(color.rgb * energy, color.a),
+        color = apply_ec_item_liquid(vec4<f32>(clamp(color.rgb * energy, vec3<f32>(0.0), vec3<f32>(1.0)), color.a),
             item_liquid_atlas, item_liquid_lookup, liquid_sampler, inst.material_item_id,
             uv_in_tile, in.world_pos.xz, globals.time,
             effects.enable_water_animation == 1u, effects.enable_linear_filtering == 1u);
+        color = vec4<f32>(texture_color_rgb(color.rgb), color.a);
     } else {
         if (inst.texture_stretch > 0.0) {
             uv_in_tile = fract(in.world_pos.xz / inst.texture_stretch);
