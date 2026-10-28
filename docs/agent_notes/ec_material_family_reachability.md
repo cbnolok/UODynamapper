@@ -17,12 +17,11 @@ The inspected FP bundle has 40,426 tileart entries. Its EC block 0 contains:
 Every processed block-0 material has texture references. None names
 `UOEffectsShader` or an unknown family. This establishes the reachable family
 set for that bundle, not complete composition parity. The 347 sprite source-2
-references (300 distinct original paths) remain a separate authored-mask audit:
+references (300 distinct original paths) are authored hue masks:
 examples include item 2301's `20002301_axe_dual_short_mask.tga` and item 3336's
 lily-pad mask family. Do not infer their operation from the filenames or apply
-the static-terrain stage formula to them. The ordinary sprite path currently
-does not bind these original extra maps; its procedural shading and hue rules
-are not proof of source-mask parity.
+the static-terrain stage formula to them. Their operation is established by the
+original HLSL below, rather than the names.
 
 Non-EC blocks remain distinct: the census finds 37 unnamed block-1 materials
 with references, and sprite materials in blocks 1, 2 and 3. They must not be
@@ -52,5 +51,41 @@ cross-checks.
 The effect archive inventory and NIF/EMS ownership investigation therefore
 remain distinct from item sampler routing. No filename-driven foam/bubble
 substitution or guessed effect-to-terrain route was added. Next source work
-should follow the actual effect-definition/spawn graph or decode the named
-sprite shader programs, preserving their optional-input semantics.
+should follow the actual effect-definition/spawn graph, preserving its optional
+inputs rather than assigning effect images to unrelated terrain materials.
+
+## Original sprite HLSL and hue coverage
+
+`Shaders.uop` contains plaintext `data/shaders/uosprite.psh` and `.vsh`, not
+only compiled programs. The production UOP name hash for the pixel source is
+`0xa2e9963e6d9a7e50`. The unpacked EC source is also available under
+`/mnt/dati/_proj_local/_uo_clients/ec_kr_extract/shaders_ec/`. The inspected
+standard EC and FP shader archives have identical SHA-256
+`11ec3cdb361812a321835dd898b3b042476149e0a5823be914db4cbe6b029920`.
+
+The world sprite shader samples source 0 at the transformed sprite UV. When
+the hue offset is nonzero, its **encoded red channel** selects a hue-strip
+position over `255/1024` of the 1024-square hue atlas. The comment says
+"luminance", but the expression reads red, without a luminance dot product.
+Hue alpha multiplies sprite alpha. With `HAS_HUEMASK_TEX`, source-2 **alpha**
+mixes the original sprite with that hue result; without it, the hue replaces
+the whole sprite. The mask does not add terrain coverage, normal detail or foam.
+It has no effect on an unhued sprite. Vertex RGB modulation is a separate
+shader operation; our renderer's white instance color must not be mistaken
+for proof of the original client's diffuse-color inputs.
+
+The runtime art atlas is sRGB, while the original lookup index is encoded red.
+The hue atlas already contains the original 256-pixel EC strips; it is not a
+32-entry Classic palette. A faithful implementation must recover encoded red
+before lookup and keep mask alpha linear. `UOSpriteUI.psh` has a different
+256/1024 factor and must not replace the world shader's formula.
+
+The census resolves 295 distinct numeric mask IDs. Of these, 272 are packed;
+all 23 absent packed IDs are also absent from the matching original
+`Texture.uop`. This does **not** demonstrate a converter omission. Across 347
+owners, 312 original base/mask pairs are available and every pair has matching
+native extents; 26 owners lack their original base and nine more lack the mask.
+Do not invent KR substitutions for missing or malformed original references.
+`inspect_ec_texture_extents` checks availability/extents without exporting pixels
+and continues across missing IDs. Temporary inventory and source-pair CSVs live
+under `/tmp/uodynamapper-ec-followup/` with `sprite-mask-` prefixes.
