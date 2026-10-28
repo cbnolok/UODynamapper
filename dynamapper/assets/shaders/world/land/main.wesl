@@ -13,7 +13,7 @@
 import bevy_pbr::render::{
   forward_io::{Vertex, VertexOutput},
   mesh_functions,
-  mesh_view_bindings::globals,
+  mesh_view_bindings::{globals, view},
   view_transformations,
 };
 
@@ -63,7 +63,7 @@ import package::shaders::world::ec_liquid::{sample_ec_liquid, ec_liquid_world_uv
 import package::shaders::world::ec_liquid_camera::ec_liquid_camera_reflection_uv;
 import package::shaders::world::texture_data::texture_color_rgb;
 import package::shaders::world::land::coverage::{ec_coverage_params, ec_terrain_stack, ec_layer_tile};
-import package::shaders::world::land::liquid_bank::ec_liquid_bank;
+import package::shaders::world::land::liquid_bank::{ec_liquid_bank, ec_bank_vertex};
 
 // ============================================================================
 // Vertex shader
@@ -472,10 +472,13 @@ fn vertex(in: Vertex, @builtin(vertex_index) vertex_index: u32) -> VertexOutput 
 
   let wx = i32(round(flat_world_pos.x));
   let wz = i32(round(flat_world_pos.z));
-  let final_y = atlas_read_height(wx, wz);
+  let bank_vertex = ec_bank_vertex(vec2<i32>(wx, wz), atlas_read_meta(wx, wz));
 
   var final_world_pos = flat_world_pos;
-  final_world_pos.y += final_y;
+  // Keep the visible mountain face's authored crust contact fixed. Relax only
+  // inset corners where the rising bank faces away from the camera.
+  let relax_corner = smoothstep(0.0, 0.1, dot(bank_vertex.xz, view.world_from_view[2].xz));
+  final_world_pos += vec4<f32>(bank_vertex.x * relax_corner, bank_vertex.y, bank_vertex.z * relax_corner, 0.0);
 
   out.world_position = final_world_pos;
   out.position       = view_transformations::position_world_to_clip(out.world_position.xyz);
@@ -922,15 +925,17 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         if (stack.alpha[index] == 1.0) { first = index; }
       }
       var liquid_material = 0xffffffffu;
+      var liquid_coverage = 1.0;
       for (var index = first; index < stack.count; index++) {
         if ((index == first || stack.alpha[index] > 0.0) && ((stack.layers[index].w >> 16u) & 7u) == 2u) {
           liquid_material = stack.layers[index].x;
+          liquid_coverage = stack.alpha[index];
         }
       }
       var bank_weight = 0.0;
       var bank_cell = cell;
       if (liquid_material != 0xffffffffu) {
-        let bank = ec_liquid_bank(in.world_position.xyz, tile, liquid_material);
+        let bank = ec_liquid_bank(in.world_position.xyz, tile, liquid_material, liquid_coverage);
         bank_weight = bank.weight;
         bank_cell = bank.cell;
       }

@@ -1814,7 +1814,7 @@ import package::shaders::world::ec_liquid::{sample_ec_liquid, ec_liquid_reflecti
 import package::shaders::world::ec_item_liquid::apply_ec_item_liquid;
 import package::shaders::world::ec_item_surface::apply_ec_item_surface;
 import package::shaders::world::land::coverage::{ec_terrain_stack, ec_layer_tile};
-import package::shaders::world::land::liquid_bank::ec_liquid_bank;
+import package::shaders::world::land::liquid_bank::{ec_liquid_bank, ec_bank_vertex};
 import package::shaders::world::land::sampling::{
     apply_ec_aux_two_base_blend, apply_sharpening, blurred_albedo, classic_land_art_is_present,
     ec_liquid_perturbed_base_uv, sample_classic_land_art, sample_ec_material_albedo,
@@ -1825,7 +1825,8 @@ import package::shaders::world::land::sampling::{
 fn fragment() -> @location(0) vec4<f32> {
     let stack = ec_terrain_stack(vec2<f32>(0.0));
     var tile = ec_layer_tile(stack.layers[0], 0.0);
-    let bank = ec_liquid_bank(vec3<f32>(0.0), tile, 0u);
+    tile.tile_height = ec_bank_vertex(vec2<i32>(0), tile).y;
+    let bank = ec_liquid_bank(vec3<f32>(0.0), tile, 0u, 1.0);
     tile.tile_height += bank.weight;
     let uv = ec_liquid_perturbed_base_uv(vec2<f32>(0.0), vec2<f32>(0.0), tile, 0.0);
     var color = sample_tile_albedo(uv, tile) + sample_ec_material_albedo(uv, uv, tile);

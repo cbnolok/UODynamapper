@@ -311,7 +311,15 @@ draw pass was introduced. Full original-client pixel parity is not established.
 The subsequent liquid-to-bank improvement attenuates liquid coverage on rising
 banks, revealing the retained solid pass stack earlier. It uses the original
 liquid shader class and neighboring heights, with safeguards for submerged sand,
-material aliases and missing EC sources. The final GPU regression has 52 cases.
-The same paused KR lava fixture's uncapped ABBA smoke samples stayed at 37–39 FPS
-in both variants; this is not a sustained benchmark or a speedup claim.
+material aliases and missing EC sources. The corrected GPU regression has 72 cases.
+Review of the first result exposed isolated lava patches: filtered ownership
+reached two cells away, beyond the original bank search. The corrected search
+covers that footprint. A soft liquid-side blend now finishes at crust height,
+with a small guard above the liquid plane to prevent renewed mountain coverage.
+Bounded solid-height smoothing and diagonal-corner relaxation ease the stepped
+northern outline while preserving the visible face's authored crust contact.
+Level marsh/substrate coverage is retained until its mesh actually rises.
+The topology, vertex count, original map metadata and CC geometry are unchanged.
+An uncapped ABBA smoke checks the same paused KR lava fixture; this is not a
+sustained benchmark or a speedup claim.
 See `docs/agent_notes/ec_liquid_bank_transitions.md` for policy and evidence.

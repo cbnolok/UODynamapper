@@ -79,7 +79,7 @@ import package::shaders::world::ec_item_liquid::apply_ec_item_liquid;
 import package::shaders::world::texture_data::texture_color_rgb;
 import package::shaders::world::ec_item_quad::{ec_item_quad_screen, ec_item_quad_world};
 import package::shaders::world::land::atlas::bank_fixture_tile;
-import package::shaders::world::land::liquid_bank::{ec_liquid_bank, EcLiquidBank};
+import package::shaders::world::land::liquid_bank::{ec_liquid_bank, ec_bank_vertex, EcLiquidBank};
 @group(0) @binding(0) var atlas: texture_2d_array<f32>;
 @group(0) @binding(1) var<storage, read_write> samples: array<vec4<f32>>;
 @group(0) @binding(2) var linear_sampler: sampler;
@@ -157,15 +157,40 @@ fn main() {
         vec4<u32>(1u, 7u, 0u, 0u), vec2<f32>(0.5), vec2<f32>(0.0), false, true);
     let liquid = bank_fixture_tile(10u, 3.0, 4u, 2u);
     let rock = bank_fixture_tile(2u, 4.0, 0u, 2u);
-    samples[43] = bank_result(ec_liquid_bank(vec3<f32>(10.9, 3.0, 10.5), liquid, 500u));
-    samples[44] = bank_result(ec_liquid_bank(vec3<f32>(10.9, 3.2, 10.5), liquid, 500u));
-    samples[45] = bank_result(ec_liquid_bank(vec3<f32>(10.9, 3.1, 10.5), liquid, 500u));
-    samples[46] = bank_result(ec_liquid_bank(vec3<f32>(20.9, 3.2, 20.5), liquid, 500u));
-    samples[47] = bank_result(ec_liquid_bank(vec3<f32>(11.1, 4.0, 10.5), rock, 500u));
-    samples[48] = bank_result(ec_liquid_bank(vec3<f32>(11.2, 4.0, 11.1), rock, 500u));
-    samples[49] = bank_result(ec_liquid_bank(vec3<f32>(11.1, 4.0, 10.5), rock, 600u));
-    samples[50] = bank_result(ec_liquid_bank(vec3<f32>(9.1, 2.0, 10.5), bank_fixture_tile(4u, 2.0, 0u, 2u), 500u));
-    samples[51] = bank_result(ec_liquid_bank(vec3<f32>(10.9, 3.2, 10.5), bank_fixture_tile(99u, 3.0, 0u, 3u), 500u));
+    samples[43] = bank_result(ec_liquid_bank(vec3<f32>(10.9, 3.0, 10.5), liquid, 500u, 1.0));
+    samples[44] = bank_result(ec_liquid_bank(vec3<f32>(10.9, 3.2, 10.5), liquid, 500u, 0.8));
+    samples[45] = bank_result(ec_liquid_bank(vec3<f32>(10.999, 2.975, 10.5), liquid, 500u, 0.8));
+    samples[46] = bank_result(ec_liquid_bank(vec3<f32>(20.9, 3.2, 20.5), liquid, 500u, 0.8));
+    samples[47] = bank_result(ec_liquid_bank(vec3<f32>(11.1, 4.0, 10.5), rock, 500u, 0.8));
+    samples[48] = bank_result(ec_liquid_bank(vec3<f32>(11.2, 4.0, 11.1), rock, 500u, 0.8));
+    samples[49] = bank_result(ec_liquid_bank(vec3<f32>(11.1, 4.0, 10.5), rock, 600u, 0.8));
+    samples[50] = bank_result(ec_liquid_bank(vec3<f32>(9.1, 2.0, 10.5), bank_fixture_tile(4u, 2.0, 0u, 2u), 500u, 0.8));
+    samples[51] = bank_result(ec_liquid_bank(vec3<f32>(10.9, 3.2, 10.5), bank_fixture_tile(99u, 3.0, 0u, 3u), 500u, 0.8));
+    // Coverage's bilinear footprint reaches two cells in either direction.
+    samples[52] = bank_result(ec_liquid_bank(vec3<f32>(12.01, 4.0, 10.5), rock, 500u, 0.8));
+    samples[53] = bank_result(ec_liquid_bank(vec3<f32>(8.99, 4.0, 10.5), rock, 500u, 0.8));
+    samples[54] = bank_result(ec_liquid_bank(vec3<f32>(12.01, 4.0, 12.01), rock, 500u, 0.8));
+    samples[55] = bank_result(ec_liquid_bank(vec3<f32>(8.99, 4.0, 8.99), rock, 500u, 0.8));
+    samples[56] = bank_result(ec_liquid_bank(vec3<f32>(13.01, 4.0, 10.5), rock, 500u, 0.8));
+    // Blend through the crust plane, with no lava on a fully raised bank.
+    samples[57] = bank_result(ec_liquid_bank(vec3<f32>(11.1, 3.0, 10.5), rock, 500u, 0.8));
+    samples[58] = bank_result(ec_liquid_bank(vec3<f32>(11.1, 2.9, 10.5), rock, 500u, 0.8));
+    samples[59] = bank_result(ec_liquid_bank(vec3<f32>(10.999, 3.0, 10.5), liquid, 500u, 0.8));
+    samples[60] = bank_result(ec_liquid_bank(vec3<f32>(10.5, 3.0, 10.5), liquid, 500u, 1.0));
+    // Ease only raised EC banks; liquid planes, other terrain and CC stay pinned.
+    samples[61] = vec4<f32>(ec_bank_vertex(vec2<i32>(10, 10), liquid), 0.0);
+    samples[62] = vec4<f32>(ec_bank_vertex(vec2<i32>(11, 10), rock), 0.0);
+    samples[63] = vec4<f32>(ec_bank_vertex(vec2<i32>(20, 20), rock), 0.0);
+    samples[64] = vec4<f32>(ec_bank_vertex(vec2<i32>(11, 10), bank_fixture_tile(2u, 4.0, 0u, 4u)), 0.0);
+    samples[65] = vec4<f32>(ec_bank_vertex(vec2<i32>(9, 9), bank_fixture_tile(3u, 5.0, 0u, 2u)), 0.0);
+    samples[66] = vec4<f32>(ec_bank_vertex(vec2<i32>(10, 11), bank_fixture_tile(11u, 3.0, 4u, 2u)), 0.0);
+    samples[67] = bank_result(ec_liquid_bank(vec3<f32>(11.1, 2.975, 10.5), rock, 500u, 0.8));
+    samples[68] = bank_result(ec_liquid_bank(vec3<f32>(10.5, 3.0, 10.5), liquid, 500u, 0.8));
+    // Flat marsh/substrate coverage must not turn into a dry bank at equal Z.
+    let level_solid = bank_fixture_tile(4u, 3.0, 0u, 2u);
+    samples[69] = bank_result(ec_liquid_bank(vec3<f32>(11.1, 3.0, 10.5), level_solid, 500u, 0.8));
+    samples[70] = bank_result(ec_liquid_bank(vec3<f32>(11.1, 3.1, 10.5), level_solid, 500u, 0.8));
+    samples[71] = bank_result(ec_liquid_bank(vec3<f32>(11.1, 3.0, 10.5), bank_fixture_tile(4u, 2.0, 0u, 2u), 500u, 0.8));
 }
 "#, "shaders/test/liquid_sampling_gpu.wesl"));
         let wgsl = shaders.get(0, shader_id(0), &[]).unwrap();
@@ -224,7 +249,7 @@ fn main() {
             offset: 0, bytes_per_row: Some(6 * 16), rows_per_image: Some(1),
         }, item_lookup.size());
         let item_view = item_lookup.create_view(&wgpu::TextureViewDescriptor::default());
-        let result_size = 52 * 16;
+        let result_size = 72 * 16;
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: None, size: result_size, mapped_at_creation: false,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
@@ -314,7 +339,14 @@ fn main() {
             [11.207105, 20.737105, 31.5, 1.0], [11.207105, 19.97, 31.5, 1.0], [0.2, 0.4, 0.6, mask[3]],
             [0.0, 10.0, 10.0, 0.0], [1.0, 11.0, 10.0, 0.0], [0.5, 11.0, 10.0, 0.0],
             [0.0, 20.0, 20.0, 0.0], [1.0, 11.0, 10.0, 0.0], [1.0, 11.0, 11.0, 0.0],
-            [0.0, 11.0, 10.0, 0.0], [0.0, 9.0, 10.0, 0.0], [0.0, 10.0, 10.0, 0.0]];
+            [0.0, 11.0, 10.0, 0.0], [0.0, 9.0, 10.0, 0.0], [0.0, 10.0, 10.0, 0.0],
+            [1.0, 12.0, 10.0, 0.0], [1.0, 8.0, 10.0, 0.0], [1.0, 12.0, 12.0, 0.0],
+            [1.0, 8.0, 8.0, 0.0], [0.0, 13.0, 10.0, 0.0],
+            [1.0, 11.0, 10.0, 0.0], [0.0, 11.0, 10.0, 0.0], [1.0, 11.0, 10.0, 0.0], [0.0, 10.0, 10.0, 0.0],
+            [0.0, 3.0, 0.0, 0.0], [0.0, 3.85, 0.0, 0.0], [0.0, 4.0, 0.0, 0.0],
+            [0.0, 4.0, 0.0, 0.0], [0.0, 4.85, 0.0, 0.0], [0.25, 3.0, -0.25, 0.0],
+            [0.5, 11.0, 10.0, 0.0], [0.0, 11.0, 10.0, 0.0],
+            [0.0, 11.0, 10.0, 0.0], [1.0, 11.0, 10.0, 0.0], [0.0, 11.0, 10.0, 0.0]];
         for (sample, (actual, expected)) in actual.iter().zip(expected).enumerate() {
             for channel in 0..4 {
                 assert!((actual[channel] - expected[channel]).abs() < 0.001,
