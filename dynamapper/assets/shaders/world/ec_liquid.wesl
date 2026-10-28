@@ -70,6 +70,18 @@ fn ec_liquid_reflection_uv(view_position: vec3<f32>) -> vec2<f32> {
     return view_position.xy * inverseSqrt(max(dot(view_position, view_position), 1e-20));
 }
 
+fn ec_liquid_original_view(delta_world: vec3<f32>) -> vec3<f32> {
+    // UOSA 0x471580: Rz(pi/2) * Rx(pi/4-.001) * Rz(.05), with
+    // columns direction/up/right. Original world Z is negative map Y.
+    // Height moves along camera up (0x4598d0/0x460650), not world Y.
+    let right = vec2<f32>(0.706399321, -0.707813534);
+    let up = vec2<f32>(-0.706928952, -0.705516506);
+    let direction = vec2<f32>(-0.0353759324, -0.0353052512);
+    return vec3<f32>(dot(right, delta_world.xz),
+        dot(up, delta_world.xz) + delta_world.y * 1.2856454,
+        10.0 + dot(direction, delta_world.xz));
+}
+
 fn ec_aux_load(atlas: texture_2d_array<f32>, slot: EcLiquidSlot,
                texel: vec2<i32>, repeat: bool) -> vec4<f32> {
     let extent = vec2<i32>(slot.extent);

@@ -1704,6 +1704,8 @@ fn update_art_material_uniforms(
     mat.extension.scene_uniform.global_lighting = global_lighting;
     mat.extension.scene_uniform.render_zoom = render_zoom;
     mat.extension.scene_uniform.camera_position = camera_pos;
+    mat.extension.scene_uniform.ec_reflection_camera_distance =
+        crate::core::render::scene::camera::PlayerCamera::BASE_OFFSET_FROM_PLAYER.length();
     mat.extension.scene_uniform.light_direction =
         crate::core::constants::BAKED_GLOBAL_LIGHT.normalize();
     mat.extension.effects_uniform = uniform_state.effects;
@@ -1724,6 +1726,8 @@ fn update_art_material_uniforms_ground(
     mat.extension.scene_uniform.global_lighting = global_lighting;
     mat.extension.scene_uniform.render_zoom = render_zoom;
     mat.extension.scene_uniform.camera_position = camera_pos;
+    mat.extension.scene_uniform.ec_reflection_camera_distance =
+        crate::core::render::scene::camera::PlayerCamera::BASE_OFFSET_FROM_PLAYER.length();
     mat.extension.scene_uniform.light_direction =
         crate::core::constants::BAKED_GLOBAL_LIGHT.normalize();
     mat.extension.effects_uniform = uniform_state.effects;

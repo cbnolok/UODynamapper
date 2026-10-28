@@ -1480,7 +1480,9 @@ pub fn sys_setup_terrain_cache(
                     global_lighting: 1.0,
                     render_zoom: 1.0,
                     adaptive_zoom_simplification: 0.0,
-                    _pad: Vec2::ZERO,
+                    ec_reflection_camera_distance:
+                        crate::core::render::scene::camera::PlayerCamera::BASE_OFFSET_FROM_PLAYER.length(),
+                    _pad: 0.0,
                 },
                 effects_uniform: Default::default(),
                 global_lighting_uniform: Default::default(),

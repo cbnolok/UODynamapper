@@ -821,3 +821,43 @@ The item flag at `+0x3c & 4` (TileArt `Unused1`, bit 34) selects constructor
 They are not evidence for an arbitrary rectangular billboard or a NIF mesh.
 Keep reflection-coordinate reconstruction, projected height, overlap/depth and
 regular item image-window geometry as separately validated contracts.
+
+
+The runtime reflection path now reconstructs this original view domain for the
+default orthographic isometric camera. `ec_liquid_original_view` projects signed
+map deltas onto the recovered right/up/direction basis, converts runtime height
+from its 0.1 scale, and uses the original camera distance 10. The common camera
+adapter derives the current focus from Bevy's existing per-frame view transform
+and the CPU camera's base offset length. That length occupies existing uniform
+padding, preserving the 48-byte layout. No camera movement causes a material
+`get_mut()` or bind-group extraction. Perspective and intentionally rotated
+free cameras use their actual view instead. Orthographic zoom affects framing,
+not the recovered reflection distance. Both terrain and item water call the
+same adapter at vertices. Explicit-coordinate liquid techniques are unchanged.
+
+The GPU regression independently reconstructs the documented trigonometric
+basis and checks shader coordinates for map-X, map-Y and elevated vertices.
+Desktop-4 paused A/B captures at (2834,987) and (1445,1790), plus animated,
+Classic/Enhanced/KR, lava, acid, town and CC controls check the actual pipelines.
+This closes the default reflection-camera coordinate mismatch. It does not
+change the retained projected terrain/item geometry or assert pixel parity
+between different source triangulations.
+
+### Texture color domain: direct sampler-state evidence
+
+A later trace establishes more than the D3D9 default: texture-stage flush
+`0x74d9f0` explicitly sets sampler state `DAT_00da8680` to zero whenever a real
+texture is bound. The table at `0xda8658` contains sampler enums 1 through 13;
+`0xda8680` is 11, `D3DSAMP_SRGBTEXTURE`. The device call uses vtable `+0x114`,
+`IDirect3DDevice9::SetSamplerState`. The state-group flush `0x74c6a0`
+(`NiD3DTextureStageGroup::SetAllStageSamplers`, recovered by the external naming
+work) and the subsequent texture-stage flush are called by `0x745640`.
+The pass binds sampler groups before the texture-stage flush, so the explicit
+zero is the final sampler value. Pass binder `0x745640` also clears render state
+`0xc2` (194, `D3DRS_SRGBWRITEENABLE`) through device vtable `+0xe4` before drawing.
+Thus this path filters and combines encoded texture RGB and writes encoded RGB
+without an automatic output conversion. The existing shared
+sRGB atlas's hardware color interpolation and linear-light stage operations
+are a separate, now evidenced color mismatch; compensating with an arbitrary
+final tint would hide it. Do not confuse this state with pixel-format metadata
+or a frame-wide gamma setting. Neither was established by this trace.

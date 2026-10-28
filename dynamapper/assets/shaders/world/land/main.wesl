@@ -59,7 +59,8 @@ import package::shaders::world::land::shading::{
   apply_static_light_decals,
 };
 import package::shaders::world::effects::surface_effects::{apply_water_animation, water_flat_wrapped_lambert};
-import package::shaders::world::ec_liquid::{sample_ec_liquid, ec_liquid_reflection_uv, ec_liquid_world_uv};
+import package::shaders::world::ec_liquid::{sample_ec_liquid, ec_liquid_world_uv};
+import package::shaders::world::ec_liquid_camera::ec_liquid_camera_reflection_uv;
 import package::shaders::world::land::coverage::{ec_coverage_params, ec_terrain_stack, ec_layer_tile};
 
 // ============================================================================
@@ -478,7 +479,7 @@ fn vertex(in: Vertex, @builtin(vertex_index) vertex_index: u32) -> VertexOutput 
   out.position       = view_transformations::position_world_to_clip(out.world_position.xyz);
   // Terrain albedo uses world coordinates; use the otherwise unused UV varying
   // for the original vertex-generated liquid reflection coordinates.
-  out.uv = ec_liquid_reflection_uv(view_transformations::position_world_to_view(final_world_pos.xyz));
+  out.uv = ec_liquid_camera_reflection_uv(final_world_pos.xyz, scene.ec_reflection_camera_distance);
   out.instance_index = in.instance_index;
 
   // Base geometric normal (fast central-difference)

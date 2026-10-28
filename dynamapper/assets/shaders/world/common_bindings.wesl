@@ -10,7 +10,8 @@ struct SceneUniform {
     global_lighting: f32,
     render_zoom: f32,
     adaptive_zoom_simplification: f32,
-    _pad0_: vec2<f32>,
+    ec_reflection_camera_distance: f32,
+    _pad0_: f32,
 }
 
 // Visual feature toggles and intensity parameters.

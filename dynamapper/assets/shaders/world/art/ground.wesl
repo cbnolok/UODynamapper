@@ -4,7 +4,8 @@ import bevy_pbr::render::{
     mesh_view_bindings::globals,
 };
 import package::shaders::world::effects::surface_effects::{apply_water_animation, water_flat_wrapped_lambert};
-import package::shaders::world::ec_liquid::{sample_ec_liquid, ec_liquid_reflection_uv};
+import package::shaders::world::ec_liquid::sample_ec_liquid;
+import package::shaders::world::ec_liquid_camera::ec_liquid_camera_reflection_uv;
 import package::shaders::world::ec_item_liquid::apply_ec_item_liquid;
 import package::shaders::postprocess::color_grading::{grade_color_vibrant};
 import package::shaders::postprocess::global_lighting::{apply_global_lighting_rgb};
@@ -103,7 +104,7 @@ fn vertex(vertex: Vertex) -> GroundVertexOutput {
     out.is_wet = inst.is_wet_flags & 1u;
     out.world_pos = world_pos;
     out.instance_index = u32(vertex.uv_b.x + 0.5);
-    out.reflection_uv = ec_liquid_reflection_uv(view_transformations::position_world_to_view(world_pos));
+    out.reflection_uv = ec_liquid_camera_reflection_uv(world_pos, scene.ec_reflection_camera_distance);
     return out;
 }
 

@@ -31,7 +31,7 @@ fn liquid_sampling_gpu_preserves_data_and_source_edges() {
             "shaders/world/ec_item_surface.wesl",
         ));
         shaders.set_shader(shader_id(0), Shader::from_wesl(r#"
-import package::shaders::world::ec_liquid::{EcLiquidSlot, ec_liquid_sample, ec_liquid_reflection_uv, ec_aux_sample};
+import package::shaders::world::ec_liquid::{EcLiquidSlot, ec_liquid_sample, ec_liquid_reflection_uv, ec_aux_sample, ec_liquid_original_view};
 import package::shaders::world::ec_item_surface::apply_ec_item_surface;
 @group(0) @binding(0) var atlas: texture_2d_array<f32>;
 @group(0) @binding(1) var<storage, read_write> samples: array<vec4<f32>>;
@@ -79,6 +79,10 @@ fn main() {
         vec4<u32>(1u, 0u, 0u, 0u), vec2<f32>(0.5), vec2<f32>(0.0), true);
     samples[28] = apply_ec_item_surface(base, atlas, surface_lookup, linear_sampler,
         vec4<u32>(0u), vec2<f32>(0.5), vec2<f32>(0.0), true);
+    samples[29] = vec4<f32>(ec_liquid_reflection_uv(ec_liquid_original_view(vec3<f32>(0.0))), 0.0, 0.0);
+    samples[30] = vec4<f32>(ec_liquid_reflection_uv(ec_liquid_original_view(vec3<f32>(1.0, 0.0, 0.0))), 0.0, 0.0);
+    samples[31] = vec4<f32>(ec_liquid_reflection_uv(ec_liquid_original_view(vec3<f32>(0.0, 0.0, 1.0))), 0.0, 0.0);
+    samples[32] = vec4<f32>(ec_liquid_reflection_uv(ec_liquid_original_view(vec3<f32>(0.0, 1.0, 0.0))), 0.0, 0.0);
 }
 "#, "shaders/test/liquid_sampling_gpu.wesl"));
         let wgsl = shaders.get(0, shader_id(0), &[]).unwrap();
@@ -128,7 +132,7 @@ fn main() {
             offset: 0, bytes_per_row: Some(7 * 16), rows_per_image: Some(1),
         }, lookup.size());
         let lookup_view = lookup.create_view(&wgpu::TextureViewDescriptor::default());
-        let result_size = 29 * 16;
+        let result_size = 33 * 16;
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: None, size: result_size, mapped_at_creation: false,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
@@ -184,12 +188,25 @@ fn main() {
              0.6 * (1.0 - blend) + mask[2] * blend, alpha]
         };
         let quarter = std::array::from_fn(|channel| linear[0][channel] * 0.75 + linear[1][channel] * 0.25);
+        // Independently construct the documented row-major camera matrix.
+        let tilt = std::f64::consts::FRAC_PI_4 - 0.001;
+        let (sin_tilt, cos_tilt) = tilt.sin_cos();
+        let (sin_roll, cos_roll) = 0.05f64.sin_cos();
+        let original_uv = |x: f64, height: f64, map_y: f64| {
+            let right = sin_tilt * x - cos_tilt * map_y;
+            let up = -cos_tilt * cos_roll * x - sin_tilt * cos_roll * map_y + height * 1.2856454;
+            let forward = 10.0 - cos_tilt * sin_roll * x - sin_tilt * sin_roll * map_y;
+            let length = (right * right + up * up + forward * forward).sqrt();
+            [(right / length) as f32, (up / length) as f32, 0.0, 0.0]
+        };
         let expected = [mean(&normalized), mean(&linear), mean(&normalized[..2]),
             normalized[0], normalized[0], normalized[1], normalized[1], normalized[0],
             mean(&normalized), normalized[3], mean(&linear[..2]), linear[0], linear[0], mean(&linear),
             [0.0, -0.6, 0.0, 0.0], [2.0 / 3.0, -2.0 / 3.0, 0.0, 0.0], [0.0; 4],
             mask, mean(&linear[..2]), linear[0], linear[0], linear[1], linear[3], quarter, mask,
-            composed(0.25, mask[3]), composed(0.25, 1.0), composed(mask[3], 1.0), [0.2, 0.4, 0.6, 0.25]];
+            composed(0.25, mask[3]), composed(0.25, 1.0), composed(mask[3], 1.0), [0.2, 0.4, 0.6, 0.25],
+            original_uv(0.0, 0.0, 0.0), original_uv(1.0, 0.0, 0.0),
+            original_uv(0.0, 0.0, 1.0), original_uv(0.0, 1.0, 0.0)];
         for (sample, (actual, expected)) in actual.iter().zip(expected).enumerate() {
             for channel in 0..4 {
                 assert!((actual[channel] - expected[channel]).abs() < 0.001,
