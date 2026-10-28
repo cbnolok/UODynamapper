@@ -70,6 +70,9 @@ helpers, run the script in [`ghidra-lua-names`](ghidra-lua-names/README.md).
 The login flow, packet table, login/game ciphers and the patch sites of the ECLO
 loader are named and documented in [`ghidra-login-names`](ghidra-login-names/README.md).
 
+The `tileart.uop` load path, its record format as the client reads it and the code
+using tile definitions are named and documented in [`ghidra-tileart`](ghidra-tileart/README.md).
+
 For an already analyzed program in the configured ghidra-mcp GUI project, prefer
 the plugin's MCP tools when the client exposes them. Start with
 `get_metadata(program="UOSA.exe")`; batch known entries with
