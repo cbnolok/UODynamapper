@@ -94,7 +94,7 @@ Original item shader parameters now survive `TileArtEntry` processing and tileme
 | P2 | EC liquid/effect parity is incomplete. | Original bump/environment inputs and the traced affine transform now have a shared path. Exact camera/clock equivalence, complete sampler/filter parity, terrain-specific extra inputs, foam, waterfalls, lava bubbles and refraction remain unverified or unimplemented. Item fourth-source stages and unit-mask clamp/reflection-wrap choices are now reconstructed. The recovered highlights do not establish complete original-client reflection parity. |
 | P2 | EC shoreline/effect parity remains incomplete. | Original per-item fourth images, blend rules and local UVs now smooth the coast at `[1445, 1790, 0]` and the bridge boundary. Exact original camera geometry and alpha-property timing are still unproven; lava/acid/swamp expose separate terrain coverage and transition defects. |
 | P2 | Complete terrain visual parity remains unfinished. | Source-backed EC terrain now composes ordered 32×32 ownership coverage, using original exponent bytes, chunk-edge/filter rules, material sorting keys and the 49-pass cap. Signed world UVs and owner-specific stream selection follow the recovered construction. Exact per-stage material filtering/lighting and the visual correctness of every explicit override remain unproven. |
-| P2 | Full-source EC art/material composition is incomplete. | The existing packer still crops art windows. Other multi-layer item shaders, authored geometry/windows, unusual liquid/stain stacks, and support-role interpretation need their own family checks. The new ground route fixes geometry/ownership without claiming full shader parity. |
+| P2 | Full-source EC art/material composition is incomplete. | The existing packer still crops art windows. The source census finds sprite, static-terrain and water families in EC block 0, with no unnamed material family. Original optional sprite masks, authored geometry/windows and effect-definition/NIF ownership remain separate gaps; family recognition does not establish every sampler's composition. See [material reachability](../agent_notes/ec_material_family_reachability.md). |
 | P3 | Cross-facet and visual regression coverage remains incomplete. | The audited payload is map 0; content-family fixtures contain TBD transition IDs and do not constitute automated image golden tests. |
 | P3 | Several roadmap features remain planned rather than implemented. | Clipmaps, complete mobile world rendering, world export, projected light decals, and network/editor workflows remain tracked in docs/TODO.md. Converter/reader or inspector support alone does not establish world-renderer support. |
 
@@ -334,3 +334,27 @@ regular sprite depth and the existing half-height priority. No extra GPU work,
 new bias or global depth replacement was introduced. The shared classifier also
 serves picking. See `docs/agent_notes/static_depth_ordering.md` for installed
 metadata, regression checks and the original-client bridge comparison.
+
+## Static ground and test-control follow-up — 2026-10-28
+
+At (2518,561), item-owned cobblestone and grass surfaces now soften their exposed
+borders into map terrain in Enhanced/KR styling. Same-material neighbors remain
+opaque across cached chunk boundaries; ground eligibility excludes volume,
+raised/local-UV art and liquids. Classic coverage and CC sources keep their
+previous paths. The collector caches neighbor flags without a new instance
+field, atlas or draw. See [the ground-transition contract](../agent_notes/ec_static_ground_transitions.md).
+The renderer suite passes 123 tests, including 78 actual GPU shader cases;
+Desktop-4 captures cover all three styles and CC scene controls.
+
+The opt-in Unix control socket accepts validated teleports, status queries and
+native captures in one running preview. It shares the UI teleport path and does
+not add cross-facet package loading. [Control documentation](../agent_notes/renderer_control_channel.md)
+and `scripts/dev-helpers/renderer/` describe the reusable client and benchmark.
+
+Sustained stable-release KR measurements at 1280×800, zoom 0.8 and disabled caps
+remain about 33–46 FPS across the four orthographic fixtures and 34–47 FPS in
+perspective. The performance targets remain open. GPU utilization and the
+existing flat-fragment diagnostic point toward substantial terrain GPU work;
+neither an operation-count reduction nor a clean build proves a frame-rate gain.
+The perspective fixture additionally shows roof overlap striping requiring
+separate investigation. See [release measurements and limits](../agent_notes/renderer_release_performance.md).

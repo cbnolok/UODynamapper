@@ -37,3 +37,23 @@ No arbitrary code, shell command or settings mutation is exposed.
 The server refuses an occupied socket path and only unlinks its own inode during
 normal shutdown. A force-terminated process can leave a stale socket: keep each
 run in its own temporary directory and clean up only that run's owned artifacts.
+
+`benchmark.py` samples several locations in one running preview and writes a new
+JSON report with the raw status replies and per-fixture median/min/max sampled
+FPS. For example:
+
+```sh
+python3 scripts/dev-helpers/renderer/benchmark.py \
+  --socket /tmp/my-preview/control.sock --output /tmp/renderer-benchmark.json \
+  --label 'release; KR morning; EC art/map; 1280x800 zoom0.8; orthographic' \
+  --fixture transition:2518:561 --fixture bridge:2834:987 --fixture lava:5744:2928
+```
+
+Defaults allow eight seconds to settle and sample twenty seconds per fixture at
+four requests per second. Allocate enough time in the bounded preview helper.
+The diagnostics are **smoothed**, so their sampled extrema are not raw frame
+percentiles. Position agreement does not prove that uploads have settled; check
+captures and upload diagnostics too. Use isolated settings to disable VSync,
+the frame limiter and unfocused throttling for uncapped comparisons. Record the
+build, camera, preset, package source, viewport and zoom in the label, keep other
+GPU work comparable, and benchmark after compilation finishes.
