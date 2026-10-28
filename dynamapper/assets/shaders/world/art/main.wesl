@@ -1,6 +1,7 @@
 import bevy_pbr::render::{
     forward_io::Vertex,
     view_transformations,
+    mesh_view_bindings::view,
     mesh_view_bindings::globals,
 };
 import package::shaders::world::effects::surface_effects::{apply_water_animation, water_flat_wrapped_lambert};
@@ -11,6 +12,7 @@ import package::shaders::postprocess::kr_color_wash::apply_kr_color_wash;
 import package::shaders::postprocess::tonemapping::{tonemap_ec_kr_profile};
 import package::shaders::world::land::noise::noise_2d;
 import package::shaders::world::pixel_art_filters::pixel_art_atlas_uv_iq;
+import package::shaders::world::ec_item_quad::ec_item_quad_world;
 import package::shaders::world::ec_item_surface::{apply_ec_item_surface, ec_item_surface_record};
 import package::shaders::world::ec_liquid::{ec_liquid_texture_uv, ec_liquid_world_uv};
 
@@ -87,7 +89,7 @@ fn vertex(vertex: Vertex) -> ArtVertexOutput {
 
     let corner = vec2<f32>(vertex.position.x, vertex.position.z);
     var world_pos: vec3<f32>;
-    if (inst.flat_quad == 2u) {
+    if (inst.flat_quad >= 2u) {
         // Tileart-owned EC material images share the sprite atlas, but cover
         // an axis-aligned world cell just like terrain-owned ground materials.
         let local = mix(inst.local_min, inst.local_max, corner);
@@ -116,6 +118,13 @@ fn vertex(vertex: Vertex) -> ArtVertexOutput {
         );
     }
     var projected_world_pos = world_pos;
+    if (inst.flat_quad == 3u && view.clip_from_view[3][3] == 1.0
+        && dot(view.world_from_view[2].xyz, vec3<f32>(0.577350269)) >= 0.999999) {
+        let pixel_aspect = (view.clip_from_view[0][0] * view.viewport.z)
+            / (view.clip_from_view[1][1] * view.viewport.w);
+        projected_world_pos = ec_item_quad_world(vec3<f32>(inst.world_x, inst.world_y, inst.world_z),
+            corner, view.world_from_view[0].xyz, view.world_from_view[1].xyz, pixel_aspect);
+    }
     if (sprite_params.pass_mode == PASS_MODE_SHADOW) {
         let caster_height = max(world_pos.y - inst.base_world_y, 0.0);
         let light_xz_len = max(length(scene.light_direction.xz), 0.001);
@@ -169,9 +178,10 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
     var uv = in.uv;
     let atlas_extent = max(inst.uv_max - inst.uv_min, vec2<f32>(0.000001));
     let uv_in_tile_for_shading = clamp((uv - inst.uv_min) / atlas_extent, vec2<f32>(0.0), vec2<f32>(1.0));
+    let surface_footprint = max(fwidth(uv_in_tile_for_shading), vec2<f32>(0.00001));
 
     if (sprite_params.pass_mode == PASS_MODE_SHADOW) {
-        if (inst.flat_quad == 2u) {
+        if (inst.flat_quad >= 2u) {
             discard;
         }
         if (effects.enable_art_projected_shadows == 0u || effects.art_projected_shadow_strength <= 0.0001 || sprite_params.render_mode == 1u) {
@@ -256,6 +266,8 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
     // is already placed STATIC_ART_Y_BIAS (world-Y) above the terrain, so the two parallel planes
     // retain a small uniform separation without a depth-gradient mismatch. This also remains
     // valid for a future perspective camera, unlike ClassicUO's per-sprite synthetic depth.
+    // Authored EC camera quads also use their rasterized plane depth, which is
+    // constant across their camera-facing geometry rather than a horizontal cell.
     //
     // This policy prevents coplanar/intersection artifacts without changing authored alpha or
     // color coverage. Only reached in the opaque/transparent passes; billboards and the shadow
@@ -265,7 +277,7 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
     }
 
     var surface_header = vec4<u32>(0u);
-    if (inst.flat_quad == 2u) {
+    if (inst.flat_quad >= 2u) {
         surface_header = ec_item_surface_record(item_surface_lookup, inst.material_item_id);
         if (surface_header.x != 0u) {
             let repetition = bitcast<f32>(surface_header.w);
@@ -285,10 +297,17 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
     let atlas_size = vec2<f32>(textureDimensions(art_atlas).xy);
     let sample_uv = pixel_art_atlas_uv_iq(uv, inst.uv_min, inst.uv_max, atlas_size);
     var color = textureSample(art_atlas, art_atlas_sampler, sample_uv, i32(layer));
-    if (inst.flat_quad == 2u) {
+    if (inst.flat_quad >= 2u) {
         color = apply_ec_item_surface(color, item_surface_atlas, item_surface_lookup,
             item_surface_sampler, surface_header, uv_in_tile_for_shading, in.world_pos.xz,
-            effects.enable_linear_filtering == 1u);
+            effects.enable_linear_filtering == 1u,
+            effects.enable_linear_filtering == 1u || effects.post_process_profile != 0u);
+    }
+    if (surface_header.x != 0u && effects.post_process_profile != 0u) {
+        // The authored overlap margin allows a 1.5-pixel coverage fade at the
+        // quad boundary without drawing a hard cutout over the liquid below.
+        let edge = min(uv_in_tile_for_shading, vec2<f32>(1.0) - uv_in_tile_for_shading);
+        color.a *= smoothstep(0.0, 1.5, min(edge.x / surface_footprint.x, edge.y / surface_footprint.y));
     }
     // Preserve fractional coverage in the blended pass for authored materials.
     let alpha_cutoff = select(sprite_params.alpha_cutoff, 0.9999, surface_header.x != 0u);

@@ -281,3 +281,32 @@ temporary capture code, reached InGame on Desktop 4, and cleaned up successfully
 The routing inspector confirms acid items 11778/11816/11820 share payload 10049,
 ordinary shoreline item 6038 retains payload 168, and item 8612 is hidden by its
 NoDraw flag. Logs use `/tmp/uodynamapper-liquid-routing-` prefixes.
+
+
+## Material, camera and crust follow-up — 2026-10-28
+
+The current renderer reconstructs the original default reflection camera at
+vertices and preserves encoded texture-stage color math with UNORM EC page and
+auxiliary atlases. This removes four-tap sRGB reconstruction for interior bump
+samples without another atlas. CC color handling remains unchanged.
+
+Static-terrain sources bind in order **1,2,0,3**, confirmed from the caller's
+EAX/ECX/stack arguments: source 2 alpha blends source 1 RGB against source 0 RGB;
+source 3 supplies final coverage. Lava retains its grey base artwork and its
+item-specific mask. Art-owned flagged crust uses the authored camera-plane
+quad with its overlap margin; Enhanced/KR styles add smooth coverage and a small
+screen-space edge fade. Background water and ordinary art depth are preserved.
+
+Auxiliary uploads pad native texels into a larger layer; they never resize.
+The misleading upload helper name/comment and the intermediate shader's resized
+coordinate assumption were corrected. The GPU fixture now calls the production
+padding helper, protecting both sides of that contract. The final source graph,
+register-binding evidence and rejected depth experiments are documented in
+`docs/agent_notes/ec_original_water_code.md`.
+
+Validation: 43 actual GPU cases, the renderer suite, and Desktop-4 captures across
+Classic/Enhanced/KR, lava, bridge/stairs, coast, acid, swamp, town and CC controls.
+No package rebuild, reconstructed compatibility mapping, duplicate atlas or new
+draw pass was introduced. Full original-client pixel parity is not established.
+The next requested improvement is liquid-to-bank transition coverage on rising
+terrain: the lower lava fixture still exposes lava climbing the mountain face.

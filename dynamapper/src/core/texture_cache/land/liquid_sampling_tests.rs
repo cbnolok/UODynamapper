@@ -34,11 +34,16 @@ fn liquid_sampling_gpu_preserves_data_and_source_edges() {
             include_str!("../../../../assets/shaders/world/ec_item_liquid.wesl"),
             "shaders/world/ec_item_liquid.wesl",
         ));
+        shaders.set_shader(shader_id(5), Shader::from_wesl(
+            include_str!("../../../../assets/shaders/world/ec_item_quad.wesl"),
+            "shaders/world/ec_item_quad.wesl",
+        ));
         shaders.set_shader(shader_id(0), Shader::from_wesl(r#"
-import package::shaders::world::ec_liquid::{EcLiquidSlot, ec_liquid_sample, ec_liquid_reflection_uv, ec_aux_sample, ec_liquid_original_view};
+import package::shaders::world::ec_liquid::{EcLiquidSlot, ec_liquid_sample, ec_liquid_reflection_uv, ec_liquid_original_view};
 import package::shaders::world::ec_item_surface::apply_ec_item_surface;
 import package::shaders::world::ec_item_liquid::apply_ec_item_liquid;
 import package::shaders::world::texture_data::texture_color_rgb;
+import package::shaders::world::ec_item_quad::{ec_item_quad_screen, ec_item_quad_world};
 @group(0) @binding(0) var atlas: texture_2d_array<f32>;
 @group(0) @binding(1) var<storage, read_write> samples: array<vec4<f32>>;
 @group(0) @binding(2) var linear_sampler: sampler;
@@ -70,25 +75,25 @@ fn main() {
     samples[14] = vec4<f32>(ec_liquid_reflection_uv(vec3<f32>(0.0, -3.0, -4.0)), 0.0, 0.0);
     samples[15] = vec4<f32>(ec_liquid_reflection_uv(vec3<f32>(6.0, -6.0, -3.0)), 0.0, 0.0);
     samples[16] = vec4<f32>(ec_liquid_reflection_uv(vec3<f32>(0.0)), 0.0, 0.0);
-    // This layer is the same 2x2 image nearest-resized to 4x4, as in tex_aux_ec.
+    // This layer uses the production native-texel padding helper, as in tex_aux_ec.
     let auxiliary = EcLiquidSlot(true, 2, vec2<u32>(0u), vec2<u32>(2u), 1.0);
-    samples[17] = ec_aux_sample(atlas, linear_sampler, auxiliary, vec2<f32>(0.5), true, true);
-    samples[18] = ec_aux_sample(atlas, linear_sampler, auxiliary, vec2<f32>(0.0, 0.25), true, true);
-    samples[19] = ec_aux_sample(atlas, linear_sampler, auxiliary, vec2<f32>(0.0, 0.25), true, false);
-    samples[20] = ec_aux_sample(atlas, linear_sampler, auxiliary, vec2<f32>(0.49, 0.25), false, true);
-    samples[21] = ec_aux_sample(atlas, linear_sampler, auxiliary, vec2<f32>(-0.25, 0.25), true, true);
-    samples[22] = ec_aux_sample(atlas, linear_sampler, auxiliary, vec2<f32>(1.0), true, false);
-    samples[23] = ec_aux_sample(atlas, linear_sampler, auxiliary, vec2<f32>(0.375, 0.25), true, false);
-    samples[24] = ec_aux_sample(atlas, linear_sampler, auxiliary, vec2<f32>(0.0), true, true);
+    samples[17] = ec_liquid_sample(atlas, linear_sampler, auxiliary, vec2<f32>(0.5), true, true);
+    samples[18] = ec_liquid_sample(atlas, linear_sampler, auxiliary, vec2<f32>(0.0, 0.25), true, true);
+    samples[19] = ec_liquid_sample(atlas, linear_sampler, auxiliary, vec2<f32>(0.0, 0.25), true, false);
+    samples[20] = ec_liquid_sample(atlas, linear_sampler, auxiliary, vec2<f32>(0.49, 0.25), false, true);
+    samples[21] = ec_liquid_sample(atlas, linear_sampler, auxiliary, vec2<f32>(-0.25, 0.25), true, true);
+    samples[22] = ec_liquid_sample(atlas, linear_sampler, auxiliary, vec2<f32>(1.0), true, false);
+    samples[23] = ec_liquid_sample(atlas, linear_sampler, auxiliary, vec2<f32>(0.375, 0.25), true, false);
+    samples[24] = ec_liquid_sample(atlas, linear_sampler, auxiliary, vec2<f32>(0.0), true, true);
     let base = vec4<f32>(0.2, 0.4, 0.6, 0.25);
     samples[25] = apply_ec_item_surface(base, atlas, surface_lookup, linear_sampler,
-        vec4<u32>(1u, 7u, 0u, 0u), vec2<f32>(0.5), vec2<f32>(0.0), true);
+        vec4<u32>(1u, 7u, 0u, 0u), vec2<f32>(0.5), vec2<f32>(0.0), true, true);
     samples[26] = apply_ec_item_surface(base, atlas, surface_lookup, linear_sampler,
-        vec4<u32>(1u, 1u, 0u, 0u), vec2<f32>(0.5), vec2<f32>(0.0), true);
+        vec4<u32>(1u, 1u, 0u, 0u), vec2<f32>(0.5), vec2<f32>(0.0), true, true);
     samples[27] = apply_ec_item_surface(base, atlas, surface_lookup, linear_sampler,
-        vec4<u32>(1u, 0u, 0u, 0u), vec2<f32>(0.5), vec2<f32>(0.0), true);
+        vec4<u32>(1u, 0u, 0u, 0u), vec2<f32>(0.5), vec2<f32>(0.0), true, true);
     samples[28] = apply_ec_item_surface(base, atlas, surface_lookup, linear_sampler,
-        vec4<u32>(0u), vec2<f32>(0.5), vec2<f32>(0.0), true);
+        vec4<u32>(0u), vec2<f32>(0.5), vec2<f32>(0.0), true, true);
     samples[29] = vec4<f32>(ec_liquid_reflection_uv(ec_liquid_original_view(vec3<f32>(0.0))), 0.0, 0.0);
     samples[30] = vec4<f32>(ec_liquid_reflection_uv(ec_liquid_original_view(vec3<f32>(1.0, 0.0, 0.0))), 0.0, 0.0);
     samples[31] = vec4<f32>(ec_liquid_reflection_uv(ec_liquid_original_view(vec3<f32>(0.0, 0.0, 1.0))), 0.0, 0.0);
@@ -100,6 +105,17 @@ fn main() {
         vec2<f32>(0.5), vec2<f32>(0.0), 0.0, false, true);
     samples[35] = apply_ec_item_liquid(lit, atlas, item_lookup, linear_sampler, 2u,
         vec2<f32>(0.5), vec2<f32>(0.0), 0.0, false, true);
+    samples[36] = vec4<f32>(ec_item_quad_screen(vec2<f32>(0.0)), 0.0, 1.0);
+    samples[37] = vec4<f32>(ec_item_quad_screen(vec2<f32>(1.0, 0.0)), 0.0, 1.0);
+    samples[38] = vec4<f32>(ec_item_quad_screen(vec2<f32>(0.0, 1.0)), 0.0, 1.0);
+    samples[39] = vec4<f32>(ec_item_quad_screen(vec2<f32>(1.0)), 0.0, 1.0);
+    samples[40] = vec4<f32>(ec_item_quad_world(vec3<f32>(10.0, 20.0, 30.0), vec2<f32>(0.0),
+        vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0), 0.5), 1.0);
+    samples[41] = vec4<f32>(ec_item_quad_world(vec3<f32>(10.0, 20.0, 30.0), vec2<f32>(1.0),
+        vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0), 0.5), 1.0);
+    // Coverage can filter independently of nearest albedo in Enhanced styling.
+    samples[42] = apply_ec_item_surface(base, atlas, surface_lookup, linear_sampler,
+        vec4<u32>(1u, 7u, 0u, 0u), vec2<f32>(0.5), vec2<f32>(0.0), false, true);
 }
 "#, "shaders/test/liquid_sampling_gpu.wesl"));
         let wgsl = shaders.get(0, shader_id(0), &[]).unwrap();
@@ -124,12 +140,8 @@ fn main() {
             let offset = (16 + (1 + i / 2) * 4 + 1 + i % 2) * 4;
             bytes[offset..offset + 4].copy_from_slice(pixel);
         }
-        for y in 0..4 {
-            for x in 0..4 {
-                let offset = (32 + y * 4 + x) * 4;
-                bytes[offset..offset + 4].copy_from_slice(&pixels[(y / 2) * 2 + x / 2]);
-            }
-        }
+        let padded = super::pad_aux_rgba(bytemuck::cast_slice(&pixels), 2, 2, 4, 4);
+        bytes[32 * 4..].copy_from_slice(&padded);
         queue.write_texture(atlas.as_image_copy(), &bytes, wgpu::TexelCopyBufferLayout {
             offset: 0, bytes_per_row: Some(16), rows_per_image: Some(4),
         }, atlas.size());
@@ -162,7 +174,7 @@ fn main() {
             offset: 0, bytes_per_row: Some(6 * 16), rows_per_image: Some(1),
         }, item_lookup.size());
         let item_view = item_lookup.create_view(&wgpu::TextureViewDescriptor::default());
-        let result_size = 36 * 16;
+        let result_size = 43 * 16;
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: None, size: result_size, mapped_at_creation: false,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
@@ -215,10 +227,12 @@ fn main() {
         let linear = normalized.map(decode);
         let mask = mean(&normalized);
         let encoded_base = [0.2f32, 0.4, 0.6].map(|v| 1.055 * v.powf(1.0 / 2.4) - 0.055);
-        let composed = |blend: f32, alpha| decode([
-            encoded_base[0] * (1.0 - blend) + mask[0] * blend,
-            encoded_base[1] * (1.0 - blend) + mask[1] * blend,
-            encoded_base[2] * (1.0 - blend) + mask[2] * blend, alpha,
+        // ASM binds source1 to TEMP, source2 to alpha, then source0 to COLOR.
+        // Distinct source RGB and alpha make a positional-stage mistake observable.
+        let separate_bases = decode([
+            mask[0] * (1.0 - mask[3]) + encoded_base[0] * mask[3],
+            mask[1] * (1.0 - mask[3]) + encoded_base[1] * mask[3],
+            mask[2] * (1.0 - mask[3]) + encoded_base[2] * mask[3], 1.0,
         ]);
         let quarter = std::array::from_fn(|channel| normalized[0][channel] * 0.75 + normalized[1][channel] * 0.25);
         // Independently construct the documented row-major camera matrix.
@@ -237,14 +251,17 @@ fn main() {
             mean(&normalized), normalized[3], decode(mean(&normalized[..2])), linear[0], linear[0], decode(mask),
             [0.0, -0.6, 0.0, 0.0], [2.0 / 3.0, -2.0 / 3.0, 0.0, 0.0], [0.0; 4],
             mask, mean(&normalized[..2]), normalized[0], normalized[0], normalized[1], normalized[3], quarter, mask,
-            composed(0.25, mask[3]), composed(0.25, 1.0), composed(mask[3], 1.0), [0.2, 0.4, 0.6, 0.25],
+            [0.2, 0.4, 0.6, mask[3]], [0.2, 0.4, 0.6, 1.0], separate_bases, [0.2, 0.4, 0.6, 0.25],
             original_uv(0.0, 0.0, 0.0), original_uv(1.0, 0.0, 0.0),
             original_uv(0.0, 0.0, 1.0), original_uv(0.0, 1.0, 0.0),
             [0.4 * mask[0], 0.3 * mask[1], 0.2 * mask[2], mask[3]],
             [0.4 * (1.0 - mask[3]) + mask[0] * mask[3],
              0.3 * (1.0 - mask[3]) + mask[1] * mask[3],
              0.2 * (1.0 - mask[3]) + mask[2] * mask[3], 0.8],
-            [(0.4 + mask[0]).min(1.0), (0.3 + mask[1]).min(1.0), (0.2 + mask[2]).min(1.0), mask[3]]];
+            [(0.4 + mask[0]).min(1.0), (0.3 + mask[1]).min(1.0), (0.2 + mask[2]).min(1.0), mask[3]],
+            [0.707105, 1.4742099, 0.0, 1.0], [1.4742099, 0.707105, 0.0, 1.0],
+            [-0.06, 0.707105, 0.0, 1.0], [0.707105, -0.06, 0.0, 1.0],
+            [11.207105, 20.737105, 31.5, 1.0], [11.207105, 19.97, 31.5, 1.0], [0.2, 0.4, 0.6, mask[3]]];
         for (sample, (actual, expected)) in actual.iter().zip(expected).enumerate() {
             for channel in 0..4 {
                 assert!((actual[channel] - expected[channel]).abs() < 0.001,

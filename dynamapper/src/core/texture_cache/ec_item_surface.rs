@@ -31,19 +31,19 @@ fn append_material(
 ) {
     if item as usize >= ITEM_CAPACITY || material.block_index != 0
         || material.shader_name.as_deref() != Some("UOStaticTerrainShader") { return; }
-    let (Some(base), Some(blend), Some(mask)) = (source(refs, 0), source(refs, 1), source(refs, 2))
+    let (Some(base), Some(temporary), Some(mask)) = (source(refs, 0), source(refs, 1), source(refs, 2))
         else { return; };
     // The base comes from the item-owned art slot. Never reinterpret a slot that
     // conversion populated from a different source in the material graph.
     if !base.is_primary_selected() { return; }
     let fourth = source(refs, 3);
     if fourth.is_none() && refs.iter().any(|r| r.block_index == 0 && r.unk6 == 3) { return; }
-    let blend_is_base = same_sample(base, blend);
+    let temporary_is_base = same_sample(base, temporary);
     let fourth_is_mask = fourth.is_some_and(|r| same_sample(mask, r));
     let mut descriptors = [[0u32; 4]; 6];
-    for (index, reference) in [Some(blend), Some(mask), fourth].into_iter().enumerate() {
+    for (index, reference) in [Some(temporary), Some(mask), fourth].into_iter().enumerate() {
         let Some(reference) = reference else { continue; };
-        if (index == 0 && blend_is_base) || (index == 2 && fourth_is_mask) { continue; }
+        if (index == 0 && temporary_is_base) || (index == 2 && fourth_is_mask) { continue; }
         let Some((layer, extent)) = assign(reference) else { return; };
         descriptors[index * 2] = [layer, extent.x, extent.y, reference.unk7];
         descriptors[index * 2 + 1] = [reference.texture_stretch.to_bits(), 0, 0, 0];
@@ -51,7 +51,7 @@ fn append_material(
     // One direct header per 16-bit graphic; only present graphs have descriptors.
     // flags: bit0=source1 aliases base, bit1=source3 aliases mask, bit2=source3 exists.
     records[item as usize] = [records.len() as u32,
-        u32::from(blend_is_base) | (u32::from(fourth_is_mask) << 1) | (u32::from(fourth.is_some()) << 2),
+        u32::from(temporary_is_base) | (u32::from(fourth_is_mask) << 1) | (u32::from(fourth.is_some()) << 2),
         base.unk7, base.texture_stretch.to_bits()];
     records.extend(descriptors);
 }

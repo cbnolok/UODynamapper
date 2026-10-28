@@ -33,6 +33,8 @@ const STATIC_ART_Y_BIAS: f32 = 0.002;
 // Ground quads use rasterized depth and need the same small geometric separation
 // from terrain as flat sprite quads to avoid coplanar depth fighting.
 const GROUND_ART_Y_BIAS: f32 = STATIC_ART_Y_BIAS;
+// The original 0x45a080 geometry constructor tests this TileArt flag.
+const EC_CAMERA_QUAD_FLAG: u64 = uocf::enhanced::tileart::TaeFlag::Unused1.bits();
 const EC_STATIC_TILE_TRANSLATION_X: f32 = 0.5;
 const EC_STATIC_TILE_TRANSLATION_Z: f32 = 1.5;
 // CC billboard anchor: feet-center at the tile's near (south) vertex = cell corner (X+1, Z+1).
@@ -323,6 +325,10 @@ fn cc_static_tile_renders_flat(
     tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
 ) -> bool {
     tilemeta.is_some_and(|meta| meta.flags & TILE_FLAG_WET != 0)
+}
+
+fn ec_static_camera_quad(tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>) -> bool {
+    tilemeta.is_some_and(|meta| meta.flags & EC_CAMERA_QUAD_FLAG != 0)
 }
 
 pub(crate) fn resolve_static_depth_class(
@@ -887,7 +893,8 @@ pub struct SpriteInstance {
     pub hue_id: u32,
     pub hue_flags: u32,
     /// Flat-quad flag: 1 = lay this instance flat in the XZ plane (CC surface-like
-    /// water statics), 2 = axis-aligned EC material surface, 0 = upright billboard.
+    /// water statics), 2 = axis-aligned EC surface, 3 = authored EC camera quad,
+    /// 0 = upright billboard.
     /// See main.wesl.
     pub flat_quad: u32,
     pub texture_stretch: f32,
@@ -2460,7 +2467,7 @@ fn emit_billboard_static_instance(
         is_wet_flags: info.is_wet_flags,
         hue_id,
         hue_flags,
-        flat_quad: if ec_surface { 2 } else { 0 },
+        flat_quad: if ec_surface { if ec_static_camera_quad(info.tilemeta) { 3 } else { 2 } } else { 0 },
         texture_stretch,
         material_item_id: info.tile.graphic as u32,
         local_light_rgba,
@@ -3166,6 +3173,17 @@ mod tests {
             surface_like_static_world_anchor(StaticVisualKind::EcSurface { art_id: 1169 }, 10.0, 20.0),
             (10.0, 20.0),
         );
+    }
+
+    #[test]
+    fn ec_camera_quad_uses_the_authored_flag_instead_of_wet_classification() {
+        let solid = item_tile_with_flags(EC_CAMERA_QUAD_FLAG,
+            udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike);
+        let wet = item_tile_with_flags(TILE_FLAG_WET,
+            udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike);
+        assert!(ec_static_camera_quad(Some(&solid)));
+        assert!(!ec_static_camera_quad(Some(&wet)));
+        assert!(!ec_static_camera_quad(None));
     }
 
     #[test]

@@ -741,7 +741,7 @@ from the original triangles, so this change does not establish interpolation
 parity at every point or across all terrain/static boundaries.
 
 
-## Static terrain materials and resized item masks
+## Static terrain materials and native item masks
 
 `UOStaticTerrainShader` is a distinct four-source material, not an ordinary
 sprite or the water shader. Constructor `0x595680` installs vtable `0xcb446c`;
@@ -750,12 +750,12 @@ branch (`shader+0x38 == 0`, stage count greater than three), the stages are:
 
 | Stage | Input | Fixed-function operation |
 | --- | --- | --- |
-| 0 | source 0 | Save texture RGB into `D3DTA_TEMP` |
-| 1 | source 1 | Select its alpha, preserving current RGB |
-| 2 | source 2 | `BLENDCURRENTALPHA`, texture RGB versus TEMP |
+| 0 | source 1 | Save texture RGB into `D3DTA_TEMP` |
+| 1 | source 2 | Select its alpha, preserving current RGB |
+| 2 | source 0 | `BLENDCURRENTALPHA`, texture RGB versus TEMP |
 | 3 | source 3 | Modulate RGB by diffuse; alpha is texture alpha times diffuse alpha |
 
-Thus RGB before lighting is `mix(source0.rgb, source2.rgb, source1.a)`.
+Thus RGB before lighting is `mix(source1.rgb, source0.rgb, source2.a)`.
 Source 3 supplies coverage independently. When it is absent, the last stage
 selects diffuse alpha rather than source 2 alpha. The lower-capability branch
 uses source 0 with source 3 coverage; it need not be reproduced on modern GPUs.
@@ -766,7 +766,8 @@ Lava crust items 12937, 12941, 12943 and 12949 demonstrate the failure: sources
 0/1 are WorldArt 2000103 (`Lava_Grey`, repetition 4, UV stream 1); sources 2/3
 are their item-specific 64-by-64 `mask_lava` images (repetition 1, UV stream 0).
 The art package correctly contains source 0. Rendering that single image loses
-both the visible authored crust image and coverage, producing grey rectangles.
+the authored coverage, producing grey rectangles. Sources 0/1 retain the grey
+rock artwork; source 2 contributes its blend alpha, not replacement RGB.
 The existing auxiliary package already contains sources 2/3.
 
 Runtime `ec_item_surface` retains these graphs in a direct item header plus
@@ -775,20 +776,24 @@ finite repetition and the packed `PRIMARY_SELECTED` identity. Identical
 source 0/1 and source 2/3 samples are reused. It shares the auxiliary image array
 with terrain and water; it adds no duplicate atlas or draw pass. Authored
 fractional alpha uses the blended pass without the legacy sprite RGB scaling.
-The graph uses the existing renderer's linear-light color domain; the original
-renderer upload/sRGB and final color-response questions remain separate.
+The graph blends encoded RGB and converts the result before modern art lighting
+and postprocessing. The sampler/output color-state trace below establishes that
+domain; exact frame lighting and runtime texture upload formats are separate.
 
-The auxiliary array nearest-resizes smaller images to 256-by-256 layers.
-Its item descriptors retain native dimensions. Treating a 64-by-64 descriptor
-as a top-left rectangle of that resized layer consequently sampled only one
-sixteenth of the image. `ec_aux_sample` now addresses original texels through
-their replicated blocks. Interior/clamped bilinear footprints use one hardware
-sample with native interpolation weights; wrapped borders use four bounded
-loads. Water item masks and static materials share this correction. Sources
-larger than the array cell are already rejected, not silently downsampled.
-The headless GPU regression exercises a genuine 2-by-2 image resized to 4-by-4,
-including fractional weights, clamp/wrap boundaries and negative UVs, plus
-independent RGB blending and final alpha for the static graph.
+The auxiliary array **pads native texels into the top-left** of 256-by-256
+layers. It does not resize them. The old helper's name `resize_rgba_nearest` and
+comment were misleading; its row copies preserve native coordinates. It is now
+named `pad_aux_rgba`. Treating these padded layers as resized images scales mask
+coordinates into transparent padding and removes most visible coverage. The
+common source-bounded UNORM sampler correctly uses origin zero and the retained
+native width/height for item masks. Unit masks clamp; tiled sources wrap within
+their native extent. No resampling-specific auxiliary shader is needed.
+
+The GPU regression now builds its small auxiliary layer with the **actual
+production padding helper**, then executes the real shader on it. This guards
+the upload/sampling contract instead of constructing an assumed resized fixture.
+It includes native fractional filtering weights, clamp/wrap boundaries and
+negative coordinates, plus independent RGB blending and final material alpha.
 
 Desktop-4 captures at map 0 (5744,2928) confirm removal of the solid grey lava
 rectangles. All three presets, shoreline/bridge, acid, town and a CC control
@@ -891,10 +896,68 @@ The earlier sRGB sampling implementation described above is superseded by this
 contract. Alpha is linear in either texture format and remains unchanged.
 
 The real GPU regression now has 36 cases, covering native encoded filtering,
-color conversion after interpolation, source bounds, resized auxiliary masks,
+color conversion after interpolation, source bounds, native padded auxiliary masks,
 static-stage composition, the recovered camera basis and all three fourth-stage
 water operations with their distinct alpha rules. Desktop-4 checks cover paused
 point/bilinear bridge and coast, animated water/lava/acid, all three visual
 profiles, town solids and a CC control. No extra atlas or draw was added; the
 operation reduction is established in shader code, not a claim of a measured
 whole-frame speedup.
+
+
+### Verify source bindings separately from stage operations
+
+The static-terrain draw uses source order **1,2,0,3**, not 0,1,2,3. The
+stage binder `0x58dfc0` receives the source reference in EAX, its UV selection
+in ECX, and the stage object on the stack. Ghidra's call text can omit that
+register argument. In `0x595a00`, source 0 is saved at `[esp+0x30]`, source 1
+at `[esp+0x18]`, source 2 at `[esp+0x1c]`, and source 3 at `[esp+0x10]`.
+At call `0x595b71`, the preceding push means `[esp+0x1c]` names source 1;
+`0x595c88` loads source 2 before pushing; `0x595de7` loads source 0; and
+`0x595faa` loads source 3. The bounded full-entry disassembly, including stack
+adjustments and callee cleanup, resolves the association that decompilation
+alone concealed. The stage table and formula above incorporate this correction.
+
+For lava crust, sources 0 and 1 are identical opaque grey rock images. Source 2
+RGB must not replace them: only its alpha selects between the two bases. Source
+3 provides final coverage. Tests with different base RGB and alpha values must
+exercise these associations independently; a test derived solely from a
+positional stage assumption can pass while displaying the wrong artwork.
+
+
+### Authored crust geometry and edge treatment
+
+Art-owned EC surfaces carrying TileArt `Unused1` now use the screen right/up
+quad from `0x45a080`, including its overlap margin, instead of a horizontal
+unit cell. The original `(0.5,0,-1.5)` translation is converted into the
+runtime's signed-map convention. The camera right/up basis and projection's
+pixel aspect adapt those screen units to the existing default isometric view.
+Texture coordinates remain in their separate authored local/world domains.
+The instance stride is unchanged; an existing geometry selector carries the
+new path. Perspective and rotated free views retain their existing surface
+geometry. Ordinary sprites and CC shoreline geometry are unchanged.
+
+Enhanced/KR styling filters authored coverage independently of nearest albedo
+and applies a 1.5-screen-pixel fade at the quad boundary. The source's overlap
+margin allows the fade without imposing a grid of holes. This is a deliberate
+styling improvement, not a claim that UOSA added the same fade. Classic styling
+retains its point coverage choice. Fractional coverage remains straight alpha
+through the blended pass, without legacy sprite RGB scaling.
+
+The geometry experiment must not be generalized to every water quad in
+isolation: camera-facing background water covered parts of the bridge stairs
+under the retained modern depth model. An approximate global depth replacement
+also changed ordinary wall/stair ordering. Both experiments were removed.
+Background liquid quads retain the validated horizontal/depth path. Original
+per-cell terrain priorities, regular sprite anchors and the shared-grid LOD
+must be considered together before changing that model. The original terrain
+constructor uses camera-plane per-cell corners, separate camera-up height and
+a small direction-column priority, rather than our world-Y relief.
+
+Current validation executes **43 GPU cases** and the production padding helper,
+plus source-flag selection tests. The accepted captures use `crust-final-` and
+`crust-edges-` under the temporary follow-up directory. They cover lava in all
+three styles, bridge/stairs, curved coast, acid, swamp, town and CC controls;
+all previews verified Desktop 4 placement and cleanup. Earlier `surface-`,
+`camera-`, `color-`, `quad-` and `solid-quad-` captures retain intermediate or
+rejected hypotheses and must not be presented as final mask validation.

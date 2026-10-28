@@ -48,10 +48,12 @@ samples convert after native encoded filtering; normal/displacement/RGB masks
 read native data directly. CC page images and ordinary art remain sRGB.
 The shared liquid sampler uses one hardware read for interior/clamped linear
 footprints, including bump data; wrapped border taps stay source-bounded.
-Auxiliary item samples account for nearest-resized layers and native dimensions.
+Auxiliary item samples use the native dimensions of top-left-padded layers.
 
-Tileart-owned slots marked as land/material surfaces stay in the art atlas and
-render as axis-aligned ground cells. Terrain-owned copies cannot replace their
+Tileart-owned slots marked as land/material surfaces stay in the art atlas.
+Flagged art-owned surfaces use their authored camera-plane quad in the default
+isometric view; background liquid ground quads retain their horizontal depth
+path. Terrain-owned copies cannot replace their
 authored item windows. Classic shoreline sprite quads keep their separate
 diagonal geometry and alpha-coverage contract.
 

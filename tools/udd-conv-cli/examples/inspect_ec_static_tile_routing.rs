@@ -113,6 +113,7 @@ fn main() -> eyre::Result<()> {
 }
 
 fn print_tilemeta(item: &TileMetaItemTile) {
+    println!("  tilemeta.flags=0x{:016x}", item.flags);
     println!("  tilemeta.visual_kind={:?}", item.visual_kind());
     println!("  tilemeta.is_surface_like={}", item.is_surface_like());
     println!("  tilemeta.ec_texture_id={}", item.ec_texture_id);

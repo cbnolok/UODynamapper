@@ -180,9 +180,9 @@ fn ripple_texture_id(tile_id: u32, terrain_meta: &TerrainMetaPackage) -> Option<
     None
 }
 
-/// Resize RGBA pixel data from `(src_w, src_h)` to `(dst_w, dst_h)` using
-/// nearest-neighbour scaling into the top-left of a zeroed `dst_w × dst_h` buffer.
-fn resize_rgba_nearest(
+/// Copy native RGBA texels into the top-left of a zeroed atlas layer.
+/// This pads (or crops) the image; it never rescales its texel coordinates.
+fn pad_aux_rgba(
     src: &[u8],
     src_w: u32,
     src_h: u32,
@@ -272,7 +272,7 @@ fn assign_aux_layer(
         return None;
     }
     let layer = layers.len() as u32;
-    layers.push(resize_rgba_nearest(&rgba, extent.x, extent.y, AUX_ATLAS_TILE_SIZE, AUX_ATLAS_TILE_SIZE));
+    layers.push(pad_aux_rgba(&rgba, extent.x, extent.y, AUX_ATLAS_TILE_SIZE, AUX_ATLAS_TILE_SIZE));
     assigned.insert(texture_id, layer);
     Some((layer, extent))
 }
@@ -1836,7 +1836,7 @@ fn fragment() -> @location(0) vec4<f32> {
         land_page_atlas, land_page_lookup, tex_small_sampler, 6038u,
         uv, uv, 0.0, true, true);
     return apply_ec_item_surface(liquid, land_page_atlas, land_page_lookup, tex_small_sampler,
-        vec4<u32>(0u), uv, uv, true);
+        vec4<u32>(0u), uv, uv, true, true);
 }
 "#,
                 "shaders/test/land_sampling_root.wesl",
