@@ -1,4 +1,5 @@
 use crate::core::controls::input_actions::{ActionCloseActiveDialog, ActionToggleTeleportDialog};
+use crate::core::controls::teleport::teleport_player;
 use crate::core::render::scene::player::Player;
 use crate::core::render::scene::world::WorldGeoData;
 use crate::core::render::scene::RecomputeVisibleChunksEvent;
@@ -100,26 +101,11 @@ pub fn sys_render_teleport_dialog(
                 ) {
                     if let Ok((mut player, mut transform)) = player_q.single_mut() {
                         // Validate target coordinates
-                        if let Some(meta) = world_geo_data.maps.get(&(m as u32)) {
-                            if x as u32 >= meta.width || y as u32 >= meta.height {
-                                crate::ingame_sysmessage_logger::error(format!(
-                                    "Target coordinates [{}, {}] out of bounds for map {} ({}x{})",
-                                    x, y, m, meta.width, meta.height
-                                ));
-                                return;
-                            }
-                        } else {
-                            crate::ingame_sysmessage_logger::error(format!(
-                                "Invalid map ID: {}",
-                                m
-                            ));
+                        let uo_pos = UOVec4::new(x, y, z, m);
+                        if let Err(error) = teleport_player(&mut player, &mut transform, uo_pos, &world_geo_data) {
+                            ingame_sysmessage_logger::error(error);
                             return;
                         }
-
-                        let uo_pos = UOVec4::new(x, y, z, m);
-                        player.current_pos = Some(uo_pos);
-                        let bevy_pos = uo_pos.to_bevy_vec3_ignore_map();
-                        transform.translation = bevy_pos;
                         // Always force a full recompute — same-map teleports must also
                         // despawn the old chunks and spawn the new visible set.
                         chunk_recompute_writer.write(RecomputeVisibleChunksEvent {});

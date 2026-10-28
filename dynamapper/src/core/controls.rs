@@ -1,6 +1,9 @@
 pub mod window_controls;
 pub mod input_actions;
 pub mod player_movement;
+pub(crate) mod teleport;
+#[cfg(unix)]
+mod dev_control;
 
 use crate::prelude::*;
 use bevy::prelude::*;
@@ -21,6 +24,8 @@ impl Plugin for ControlsPlugin {
                 registered_by: "ControlsPlugin",
             },
         ));
+        #[cfg(unix)]
+        app.add_plugins(dev_control::DevControlPlugin { registered_by: "ControlsPlugin" });
 
         // CENTRAL INPUT DISPATCHER (Event-driven)
         app.add_systems(Update, sys_dispatch_keyboard_input);

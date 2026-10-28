@@ -2869,6 +2869,7 @@ dependencies = [
  "parking_lot",
  "regex",
  "serde",
+ "serde_json",
  "spin_sleep",
  "strum",
  "strum_macros",
