@@ -110,9 +110,12 @@ unless the data becomes a stable package contract.
     `field_14`. Before this was fixed the repo read 4 words, which shifted the
     rest of all 170 sitting records: their radar color was garbage and all four
     shader blocks were lost.
-  - effects: u8 count, then effect definitions (u32 type key + body). The
-    bodies are not decoded yet; `TileArtEntry::effects_raw` keeps the bytes
-    after the count (empty when the count is 0).
+  - effects: u8 count, then that many effect definitions (see
+    `EffectDefinitionCollection.uop`), decoded into `TileArtEntry::effects`
+    and `ArtData::effects`. They end the record: trailing bytes are an error.
+    Client records hold particles (572 at all nesting levels), 23
+    PropertyFlag selectors keyed by object hue and 1 LOD selector; 313 records
+    have 1 effect and 16 have 2.
 - Shader blocks: 0 = WorldArt (present exactly when `has_world_art` is set),
   1 = TileArtLegacy, 2 = TileArtEnhanced, 3 = light texture
   (`*_light_window.tga`). Block 0 is used as the primary EC visual block and
@@ -148,6 +151,23 @@ unless the data becomes a stable package contract.
     uses it as the sampler index for item water and surface materials.
   - item `uv_set`: ORed into the low bits of the sampler flag word, 0 or 1
     (medium confidence).
+
+`EffectDefinitionCollection.uop`:
+
+- One entry per server effect id (`build/effectdefinitioncollection/%08d.bin`);
+  the payload is a u32 count, then that many effect definitions, ending the
+  entry exactly. `effect_definition::parse_effect_definition_collection`
+  decodes it.
+- Effect definitions (`effect_definition.rs`) are a u32 type key and a body:
+  0 Particle, 1 Sound, 2 RoundRobin, 7 PositionOffset, 10 Wait, 11 LOD,
+  12 PropertyFlag, 15 Earthquake, 16 Random, 17 UserPreference. Lists and maps
+  nest further definitions. Unknown keys and Wait `aligned` / PropertyFlag
+  `mode` values other than 0/1 are errors, as in the client; nesting deeper
+  than `MAX_EFFECT_NESTING_DEPTH` is our own limit (the client has none).
+- Particle names are client string dictionary indices; `ParticleEffect::name`
+  resolves them.
+- Formats, field meanings, confidence and verification against the client data
+  are in `scripts/dev-helpers/ec-research/ghidra-effects/results/uosa_effects.md`.
 
 `waypoint.uop`:
 

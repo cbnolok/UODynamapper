@@ -1,6 +1,7 @@
 //! Represents tile art data from a UOP file for Enhanced Client "Art Tiles" (statics).
 
 use crate::ec_material_axes::{EcLogicalFamily, EcPhysicalPackage};
+use crate::enhanced::effect_definition::{read_effect_definitions, EffectDefinition};
 use crate::enhanced::string_dictionary::UoStringDictionary;
 use crate::uop_container::file::UopFile;
 use bitflags::bitflags;
@@ -106,6 +107,9 @@ pub struct ArtData {
     pub materials: Vec<ArtMaterial>,
     pub appearance: Vec<TaeAppearanceFilter>,
     pub sitting: Option<TaeSittingAnimation>,
+    /// Effect definitions of the record. Particle names stay client string dictionary
+    /// indices; resolve them with `ParticleEffect::name`.
+    pub effects: Vec<EffectDefinition>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -390,11 +394,9 @@ pub struct TileArtEntry {
     /// The `TILEART_SHADER_BLOCK_COUNT` shader blocks: WorldArt, TileArtLegacy,
     /// TileArtEnhanced and light texture.
     pub texture_vector: Vec<TaeTexture>,
-    /// Number of effect definitions after the shader blocks (`UOTileArt::ParseEffects`).
-    pub effect_count: u8,
-    /// Record bytes after `effect_count`: the effect definitions (u32 type key + body each).
-    /// Effect bodies are not decoded yet; empty when `effect_count` is 0.
-    pub effects_raw: Vec<u8>,
+    /// Effect definitions after the shader blocks (`UOTileArt::ParseEffects`: u8 count, then
+    /// the definitions); they end the record.
+    pub effects: Vec<EffectDefinition>,
 }
 
 // endregion: --- Internal Raw File-Mapping Structs
@@ -555,8 +557,10 @@ impl TileArtEntry {
             entry.texture_vector.push(texture);
         }
 
-        entry.effect_count = reader.read_u8()?;
-        entry.effects_raw = data[reader.position() as usize..].to_vec();
+        let effect_count = reader.read_u8()?;
+        entry.effects = read_effect_definitions(&mut reader, usize::from(effect_count))?;
+        let trailing = data.len() - reader.position() as usize;
+        ensure!(trailing == 0, "{trailing} trailing bytes after the tileart effects");
 
         Ok(entry)
     }
@@ -582,6 +586,7 @@ impl TileArtEntry {
             }).collect();
         art_data.appearance = self.appearance_vector.clone();
         art_data.sitting = self.sitting.clone();
+        art_data.effects = self.effects.clone();
 
         if let Some(ec_texture_block) = self.texture_vector.first() {
             if ec_texture_block.has_texture == 1 {
@@ -807,6 +812,7 @@ fn is_auxiliary_texture_path(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::enhanced::effect_definition::{SoundEffect, EFFECT_TYPE_SOUND};
 
     fn dictionary_with_strings(values: &[&str]) -> UoStringDictionary {
         let mut payload = Vec::new();
@@ -943,7 +949,15 @@ mod tests {
         assert_eq!(art_data.sitting.as_ref().map(|sitting| sitting.field_08), Some(3));
     }
 
-    const SAMPLE_EFFECT_BYTES: [u8; 6] = [0x11, 0, 0, 0, 0xAA, 0xBB];
+    fn sample_effect() -> EffectDefinition {
+        EffectDefinition::Sound(SoundEffect { sound_id: 43, value_08: 1.0 })
+    }
+
+    #[test]
+    fn tileart_process_preserves_effects() {
+        let entry = TileArtEntry { effects: vec![sample_effect()], ..Default::default() };
+        assert_eq!(entry.process(&dictionary_with_strings(&[])).effects, vec![sample_effect()]);
+    }
 
     /// Little-endian writer for synthetic records.
     #[derive(Default)]
@@ -992,8 +1006,7 @@ mod tests {
             .block(4, &[], &[], &[])
             .u8(0)
             .block(5, &[(6, 2, 1.0, 0, 0)], &[], &[]);
-        writer.u8(1);
-        writer.0.extend_from_slice(&SAMPLE_EFFECT_BYTES);
+        writer.u8(1).u32(EFFECT_TYPE_SOUND).u32(43).f32(1.0);
         writer.0
     }
 
@@ -1065,8 +1078,7 @@ mod tests {
         assert_eq!((light_item.name_string_off, light_item.source_kind, light_item.texture_stretch), (6, 2, 1.0));
         assert_eq!((light_item.sampler_index, light_item.uv_set), (0, 0));
 
-        assert_eq!(entry.effect_count, 1);
-        assert_eq!(entry.effects_raw, SAMPLE_EFFECT_BYTES);
+        assert_eq!(entry.effects, vec![sample_effect()]);
     }
 
     #[test]
@@ -1074,10 +1086,13 @@ mod tests {
         let unknown_subtype = APPEARANCE_FILTER_ANIMATION_BY_OWNER_BODY_TYPE + 1;
         let invalid_sitting_flag = TILEART_SITTING_PRESENT + 1;
         let old_version = TILEART_RECORD_VERSION - 1;
+        let mut trailing_byte = valid_sample_record();
+        trailing_byte.push(0);
         for (record, reason) in [
             (sample_record(TILEART_RECORD_VERSION, unknown_subtype, TILEART_SITTING_PRESENT), "appearance filter subtype"),
             (sample_record(TILEART_RECORD_VERSION, APPEARANCE_FILTER_ANIMATION_BY_OWNER_BODY_TYPE, invalid_sitting_flag), "sitting flag"),
             (sample_record(old_version, APPEARANCE_FILTER_ANIMATION_BY_OWNER_BODY_TYPE, TILEART_SITTING_PRESENT), "record version"),
+            (trailing_byte, "trailing bytes"),
         ] {
             let error = TileArtEntry::parse_bytes(&record).expect_err(reason);
             assert!(error.to_string().contains(reason), "{error}");
@@ -1085,7 +1100,7 @@ mod tests {
     }
 
     #[test]
-    fn tileart_parse_bytes_without_sitting_or_effects_leaves_no_raw_bytes() {
+    fn tileart_parse_bytes_without_sitting_or_effects() {
         let mut writer = RecordWriter::default();
         writer.u16(TILEART_RECORD_VERSION).u32(1).u32(2).u8(0).u8(0).f32(1.0).f32(1.5).u32(0).i32(0xFFFFFF)
             .f32(0.0).u32(400).u8(0).f32(1.0).u32(0).f32(0.0).f32(0.0).u32(0).u64(0).u64(0).u32(1);
@@ -1097,7 +1112,6 @@ mod tests {
 
         assert!(!entry.has_sitting);
         assert_eq!(entry.sitting, None);
-        assert_eq!(entry.effect_count, 0);
-        assert!(entry.effects_raw.is_empty());
+        assert!(entry.effects.is_empty());
     }
 }

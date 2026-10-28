@@ -5,6 +5,7 @@
 
 pub mod animationframe;
 pub mod classic_tile_mapper;
+pub mod effect_definition;
 pub mod facet_decoder;
 pub mod facet_encoder;
 pub mod hues;
