@@ -46,6 +46,12 @@ No fixed addresses are used. Each function is found from evidence that doesn't d
 | Call structure | parser = callee of factory Create that calls `StreamRead`; its 8 stream-reading callees in call order are the sub-parsers; inserters are their low-caller callees |
 | Immediate 0x80000 (UseNewArt) | `UOTileArt::BuildSpriteDescriptor` and its cache |
 | Virtual-call offsets (`CALL [reg+off]` or `MOV reg,[reg+off]; CALL reg`) | `GetGraphicForAmount` user (+0xc4), `TilesConnect` (+0x114/+0x11c/+0x12c) |
+| RTTI `UOObject` vtable slots +0x44, +0x6c..+0x78, +0xb0 | `UOObject::SetDirection`, `Set/GetBodyType`, `Set/GetAlternateAnimation`, `GetFlags1` |
+| RTTI component vtables, slot +4, checked for the definition slots they call | `UOObjectComponentSprite::Initialize` (+0x88), `UOObjectComponentLighting::Initialize` (+0x40/+0x48/+0x4c) |
+| Common writer of the `UOObjectComponentLighting` and `UOObjectComponentEffects` vftables | `UOObject::CreateComponents` |
+| GetObjectDefinition caller with immediate 99999999, then its caller using +0xb4 and +0xb8 | `UOObject::GetObjectDefinition`, `UOObject::InitFromDefinition` |
+| Callee of `UOObject::SetDirection` whose callers all use +0xe8 | `UOObject::NearestAllowedDirection` |
+| GetObjectDefinition caller using +0x6c and +0x70; caller using exactly +0x100/+0x104/+0x110 | `UOPaperdoll::BuildImage`, `UOHouseCustomization::IsPlacementAllowed` |
 
 Vtable slot functions referenced from more tables than their class and base vtables (identical-code
 folding) are skipped and reported.

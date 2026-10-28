@@ -87,6 +87,11 @@ public class NameTileartCode extends GhidraScript {
     private static final String SIMPLE_LOCATION = "SimpleTextureFileLocation";
     private static final String MYP_INPUT_FILE = "MythMypInputFile";
     private static final String MEMORY_INPUT_FILE = "MythMemoryInputFile";
+    // World objects and the components built from their tile definition.
+    private static final String WORLD_OBJECT = "UOObject";
+    private static final String COMPONENT_SPRITE = "UOObjectComponentSprite";
+    private static final String COMPONENT_LIGHTING = "UOObjectComponentLighting";
+    private static final String COMPONENT_EFFECTS = "UOObjectComponentEffects";
 
     // MSVC RTTI: TypeDescriptor name at +8; CompleteObjectLocator {signature, offset, cdOffset, pTypeDescriptor}.
     private static final int TYPE_DESCRIPTOR_NAME_OFFSET = 8;
@@ -137,6 +142,40 @@ public class NameTileartCode extends GhidraScript {
     private static final int SUB_SHADER = 6;
     private static final int SUB_EFFECTS = 7;
 
+    // Tile id used when an object has no definition yet (cached-definition wrapper).
+    private static final long FALLBACK_TILE_ID = 99999999L;
+    // Paperdoll gump id offsets added to the appearance id (male / female).
+    private static final long PAPERDOLL_GUMP_MALE = 50000L;
+    private static final long PAPERDOLL_GUMP_FEMALE = 60000L;
+    // UOObjectDefinition slots read only when a world object is built from its definition.
+    private static final Set<Long> OBJECT_INIT_SLOTS = Set.of(0xb4L, 0xb8L);
+    // Component Initialize(object, objectRef, definition, definitionRef) is vtable slot +4.
+    private static final int COMPONENT_INITIALIZE_SLOT = 0x4;
+    // UOObjectDefinition slots each component Initialize must call to be accepted.
+    private static final Set<Long> SPRITE_INIT_SLOTS = Set.of(0x88L);
+    private static final Set<Long> LIGHTING_INIT_SLOTS = Set.of(0x40L, 0x48L, 0x4cL);
+    private static final long SLOT_GET_SITTING_DIRECTIONS = 0xe8L;
+    // HasProperty2 / GetProperty2: only the paperdoll image builder calls both.
+    private static final Set<Long> PROPERTY2_SLOTS = Set.of(0x6cL, 0x70L);
+    private static final int WORLD_OBJECT_SET_DIRECTION = 0x44;
+    // Virtual-call offsets found in the house placement check (bits 1, 2, 5; the bit 3 load jumps to the bit 2 CALL).
+    private static final Set<Long> HOUSE_PLACEMENT_SLOTS = Set.of(0x100L, 0x104L, 0x110L);
+
+    // UOObject vtable: world object state copied from its definition.
+    private static final Slot[] WORLD_OBJECT_SLOTS = {
+        new Slot(WORLD_OBJECT_SET_DIRECTION, "SetDirection", "reads the definition sitting direction mask"
+            + " (GetSittingDirections) and snaps the requested direction to the nearest allowed one before"
+            + " storing it at +0x2c", true),
+        new Slot(0x6c, "SetBodyType", "stores +0x50; UOObject::InitFromDefinition passes"
+            + " UOObjectDefinition::GetBodyType", false),
+        new Slot(0x70, "GetBodyType", "returns +0x50", false),
+        new Slot(0x74, "SetAlternateAnimation", "stores byte +0x54; UOObject::InitFromDefinition passes"
+            + " UOObjectDefinition::GetFieldE8 (tileart byte +0xe8)", false),
+        new Slot(0x78, "GetAlternateAnimation", "returns byte +0x54; read on the item in the wearer's layer 2 to pick"
+            + " the alternate entry of the animation action map", false),
+        new Slot(0xb0, "GetFlags1", "returns the u64 at +0x38, copied from UOObjectDefinition::GetFlags1", true),
+    };
+
     private record Slot(int offset, String name, String evidence, boolean probable) {
     }
 
@@ -157,10 +196,16 @@ public class NameTileartCode extends GhidraScript {
         new Slot(0x34, "GetField60", "returns +0x60 (0 in all records)", false),
         new Slot(0x38, "HasLegacyArtData", "block 1 differs from the default or +0x5c != 1.5 or +0x60 set", true),
         new Slot(0x3c, "GetLightShaderName", "name of shader block 3 (+0xb4, *_light_window.tga)", false),
-        new Slot(0x40, "GetLightScale", "returns float +0x6c (default 1.0, 2.0 on windows)", true),
-        new Slot(0x44, "GetLightField70", "returns +0x70 (0 in all records)", true),
-        new Slot(0x48, "GetLightOffsetX", "returns float +0x74 (non-zero only with block 3)", true),
-        new Slot(0x4c, "GetLightOffsetY", "returns float +0x78 (non-zero only with block 3)", true),
+        new Slot(0x40, "GetLightScale", "returns float +0x6c (default 1.0, 2.0 on windows);"
+            + " UOObjectComponentLighting::Initialize stores it as the light sprite scale (descriptor"
+            + " +0x44)", false),
+        new Slot(0x44, "GetLightField70", "returns +0x70 (0 in all records); no caller on a definition"
+            + " was found", true),
+        new Slot(0x48, "GetLightOffsetX", "returns float +0x74 (non-zero only with block 3);"
+            + " UOObjectComponentLighting::Initialize rotates (0, y, x) by the view matrix and adds it"
+            + " to the light sprite position", false),
+        new Slot(0x4c, "GetLightOffsetY", "returns float +0x78 (non-zero only with block 3); second"
+            + " component of the light sprite offset", false),
         new Slot(0x50, "HasLightData", "block 3 present or +0x6c..+0x78 differ from the defaults", true),
         new Slot(0x54, "HasFlags1", "(lo, hi) mask test against the u64 at +0x80", false),
         new Slot(0x58, "GetFlags1", "returns the u64 at +0x80", false),
@@ -175,7 +220,8 @@ public class NameTileartCode extends GhidraScript {
         new Slot(0x7c, "GetRotation", "returns float +0x68 (0/90/180/270), used when flags1 bit 34 is set", true),
         new Slot(0x80, "GetPrimaryTextureLocation", "block 0 if HasWorldArt else block 1; checks UOWaterShader; builds a SpriteTextureFileLocation", false),
         new Slot(0x84, "GetPrimaryArtScale", "HasWorldArt ? +0x58 : +0x5c", false),
-        new Slot(0x88, "GetFacing", "returns +0x90 (default 1)", false),
+        new Slot(0x88, "GetFacing", "returns +0x90 (default 1); UOObjectComponentSprite::Initialize"
+            + " stores it at component +0x2c", false),
         new Slot(0x8c, "GetEffectCount", "size of the shared_ptr vector at +0xf0", false),
         new Slot(0x90, "GetEffect", "shared_ptr copy of effect i", false),
         new Slot(0x94, "GetWorldArtShader", "shared_ptr at +0x9c (block 0)", false),
@@ -186,8 +232,11 @@ public class NameTileartCode extends GhidraScript {
         new Slot(0xa8, "SetLegacyShader", "parser stores block 1", false),
         new Slot(0xac, "SetEnhancedShader", "parser stores block 2", false),
         new Slot(0xb0, "SetLightShader", "parser stores block 3", false),
-        new Slot(0xb4, "GetBodyType", "returns +0xe4 (default 400 = human male body; 666 on gargoyle items)", true),
-        new Slot(0xb8, "GetFieldE8", "returns byte +0xe8", false),
+        new Slot(0xb4, "GetBodyType", "returns +0xe4 (default 400 = human male body; 666 on gargoyle"
+            + " items); copied to UOObject::SetBodyType; equipping refuses an appearance whose body type"
+            + " differs from the wearer's body", false),
+        new Slot(0xb8, "GetFieldE8", "returns byte +0xe8; copied to UOObject::SetAlternateAnimation; for"
+            + " the item in layer 2 it selects the alternate entry of the wearer's animation action map", false),
         new Slot(0xbc, "GetAppearance", "prop1 key 8 or tile id, then non-animation appearance filters for the owner body", false),
         new Slot(0xc0, "GetAnimationAppearance", "applies appearance filters of type 2", false),
         new Slot(0xc4, "GetGraphicForAmount", "last stack alias whose amount <= argument, default tile id", false),
@@ -199,17 +248,22 @@ public class NameTileartCode extends GhidraScript {
         new Slot(0xdc, "GetRadarColor", "returns the rgba at +0x94", false),
         new Slot(0xe0, "SetRadarColor", "stores rgba at +0x94, sets +0x98", false),
         new Slot(0xe4, "HasSitting", "sitting pointer +0xc0 non-null", false),
-        new Slot(0xe8, "GetSittingDirections", "sitting field 0 (+0x0); 1/8 adjust the sprite window", true),
-        new Slot(0xec, "GetSittingField04", "sitting field 1", false),
-        new Slot(0xf0, "GetSittingField08", "sitting field 2", false),
-        new Slot(0xf4, "GetSittingWindowShift", "sitting field 3, used to shift the sprite window for directions 1/8", true),
-        new Slot(0xf8, "GetSittingField10", "sitting field 4", false),
-        new Slot(0xfc, "GetSittingField14", "sitting field 5", false),
-        new Slot(0x100, "HasHouseJoinBit1", "bit 1 of +0x7c", false),
-        new Slot(0x104, "HasHouseJoinBit2", "bit 2 of +0x7c", false),
-        new Slot(0x108, "HasHouseJoinBit3", "bit 3 of +0x7c", false),
-        new Slot(0x10c, "HasHouseJoinBit4", "bit 4 of +0x7c", false),
-        new Slot(0x110, "HasHouseJoinBit5", "bit 5 of +0x7c", false),
+        new Slot(0xe8, "GetSittingDirections", "sitting field 0 (+0x0): direction mask 1 = north (dir"
+            + " 0), 2 = east (dir 2), 4 = south (dir 4), 8 = west (dir 6); UOObject::SetDirection snaps"
+            + " to the nearest allowed direction", false),
+        new Slot(0xec, "GetSittingField04", "sitting field 1: seated mobile sprite x offset (negated)", false),
+        new Slot(0xf0, "GetSittingField08", "sitting field 2: seated mobile sprite y offset (negated)", false),
+        new Slot(0xf4, "GetSittingWindowShift", "sitting field 3: shifts the split column of the"
+            + " chair-back overlay window for directions 1/8", false),
+        new Slot(0xf8, "GetSittingField10", "sitting field 4; no caller on a definition was found", false),
+        new Slot(0xfc, "GetSittingField14", "sitting field 5; no caller on a definition was found", false),
+        new Slot(0x100, "HasHouseJoinBit1", "bit 1 of +0x7c; house customization: placeable on the"
+            + " corner cell (x = 0, y = 0)", false),
+        new Slot(0x104, "HasHouseJoinBit2", "bit 2 of +0x7c; house customization: placeable on the x = 0 edge", false),
+        new Slot(0x108, "HasHouseJoinBit3", "bit 3 of +0x7c; house customization: placeable on the y = 0 edge", false),
+        new Slot(0x10c, "HasHouseJoinBit4", "bit 4 of +0x7c; no caller on a definition was found", false),
+        new Slot(0x110, "HasHouseJoinBit5", "bit 5 of +0x7c; house customization: placement also checks"
+            + " the cell below", false),
         new Slot(0x114, "ConnectsWestA", "bit 6 of +0x7c; paired with bit 8 of the west neighbour", true),
         new Slot(0x118, "ConnectsWestB", "bit 7 of +0x7c; paired with bit 9 of the west neighbour", true),
         new Slot(0x11c, "ConnectsEastA", "bit 8 of +0x7c", true),
@@ -218,8 +272,10 @@ public class NameTileartCode extends GhidraScript {
         new Slot(0x128, "ConnectsSouthB", "bit 13 of +0x7c", true),
         new Slot(0x12c, "ConnectsNorthA", "bit 10 of +0x7c; paired with bit 12 of the north neighbour", true),
         new Slot(0x130, "ConnectsNorthB", "bit 11 of +0x7c; paired with bit 13 of the north neighbour", true),
-        new Slot(0x134, "HasHouseJoinBit14", "bit 14 of +0x7c", false),
-        new Slot(0x138, "HasHouseJoinBit15", "bit 15 of +0x7c", false),
+        new Slot(0x134, "HasHouseJoinBit14", "bit 14 of +0x7c; house customization: marks the cell and"
+            + " its +x/+y neighbours", false),
+        new Slot(0x138, "HasHouseJoinBit15", "bit 15 of +0x7c; set only on roof tiles; no caller on a"
+            + " definition was found", false),
         new Slot(0x13c, "GetSpriteDescriptor", "requests the definition and the cached sprite descriptor (legacy flag from settings +0x54)", false),
         new Slot(0x140, "HasFlags2OrProperties2", "flags2 non-zero or props2 non-empty", false),
         new Slot(0x144, "AddEffect", "push_back into the effect vector at +0xf0", false),
@@ -338,7 +394,8 @@ public class NameTileartCode extends GhidraScript {
 
         for (String cls : List.of(OBJECT_DEFINITION, OBJECT_DEFINITION_BASE, OBJECT_FACTORY, BASE_FACTORY, SHADER_DEFINITION,
                 FILTER_BODY, FILTER_GENDER, FILTER_ANIMATION_BODY, SPRITE_LOCATION, SIMPLE_LOCATION,
-                MYP_INPUT_FILE, MEMORY_INPUT_FILE)) {
+                MYP_INPUT_FILE, MEMORY_INPUT_FILE, WORLD_OBJECT, COMPONENT_SPRITE, COMPONENT_LIGHTING,
+                COMPONENT_EFFECTS)) {
             long vt = rttiVtable(cls);
             vtables.put(cls, vt);
             anchors.add("RTTI `" + cls + "` vftable " + hexOrNone(vt));
@@ -683,6 +740,11 @@ public class NameTileartCode extends GhidraScript {
             }
         }
 
+        // 7b. World objects and components built from a definition.
+        if (accessor != null) {
+            nameWorldObjectCode(accessor);
+        }
+
         // 8. Types.
         defineTypes(apply);
         for (long global : defaultShaderGlobals) {
@@ -708,6 +770,93 @@ public class NameTileartCode extends GhidraScript {
             }
         }
         report(out, apply, usages);
+    }
+
+    private void nameWorldObjectCode(Function accessor) {
+        Map<Integer, Function> objectSlots = nameSlots(WORLD_OBJECT, null, WORLD_OBJECT_SLOTS);
+        List<Function> users = callers(accessor);
+
+        Function sprite = componentInitialize(COMPONENT_SPRITE, SPRITE_INIT_SLOTS);
+        propose(sprite, COMPONENT_SPRITE + SCOPE + "Initialize", COMPONENT_SPRITE + " vtable +"
+            + hexShort(COMPONENT_INITIALIZE_SLOT) + "; reads the definition sprite descriptor, sitting window and"
+            + " GetFacing (stored at component +0x2c)", false);
+        Function lighting = componentInitialize(COMPONENT_LIGHTING, LIGHTING_INIT_SLOTS);
+        propose(lighting, COMPONENT_LIGHTING + SCOPE + "Initialize", COMPONENT_LIGHTING + " vtable +"
+            + hexShort(COMPONENT_INITIALIZE_SLOT) + "; definition is the third argument: GetLightScale -> light"
+            + " sprite scale, (0, GetLightOffsetY, GetLightOffsetX) rotated by the view matrix -> light sprite"
+            + " position", false);
+
+        List<Function> creators = new ArrayList<>(vtableWriters(COMPONENT_LIGHTING));
+        creators.retainAll(vtableWriters(COMPONENT_EFFECTS));
+        Function creator = single(creators, "writer of both component vftables");
+        propose(creator, WORLD_OBJECT + SCOPE + "CreateComponents", "writes the " + COMPONENT_LIGHTING + " and "
+            + COMPONENT_EFFECTS + " vftables; adds the lighting component only when GetLightShaderName is set", true);
+
+        List<Function> cached = new ArrayList<>();
+        for (Function f : users) {
+            if (hasScalar(f, FALLBACK_TILE_ID)) {
+                cached.add(f);
+            }
+        }
+        Function objectDefinition = single(cached, "GetObjectDefinition caller with the fallback tile id");
+        propose(objectDefinition, WORLD_OBJECT + SCOPE + "GetObjectDefinition", "caches the definition of tile id"
+            + " +0x8 at +0x44; falls back to tile " + FALLBACK_TILE_ID + " when the definition is missing", true);
+        if (objectDefinition != null) {
+            List<Function> init = new ArrayList<>();
+            for (Function f : callers(objectDefinition)) {
+                if (indirectCallOffsets(f).containsAll(OBJECT_INIT_SLOTS)) {
+                    init.add(f);
+                }
+            }
+            propose(single(init, "UOObject::GetObjectDefinition caller reading GetBodyType and GetFieldE8"),
+                WORLD_OBJECT + SCOPE + "InitFromDefinition", "copies GetFlags1, GetBodyType (SetBodyType),"
+                + " GetFieldE8 (SetAlternateAnimation) and property 3 (height) from the definition", true);
+        }
+
+        Function setDirection = objectSlots.get(WORLD_OBJECT_SET_DIRECTION);
+        if (setDirection != null) {
+            List<Function> snaps = new ArrayList<>();
+            for (Function callee : distinct(calls(setDirection))) {
+                List<Function> calleeCallers = callers(callee);
+                if (!callee.equals(accessor) && calleeCallers.size() <= MAX_HELPER_CALLERS && calleeCallers.stream()
+                        .allMatch(c -> indirectCallOffsets(c).contains(SLOT_GET_SITTING_DIRECTIONS))) {
+                    snaps.add(callee);
+                }
+            }
+            propose(single(snaps, "SetDirection helper"), WORLD_OBJECT + SCOPE + "NearestAllowedDirection",
+                "called with the sitting direction mask by every caller (UOObject::SetDirection and the mobile"
+                + " animation code); returns the allowed direction (mask 1/2/4/8 = 0/2/4/6) nearest the requested one",
+                true);
+        }
+
+        List<Function> paperdoll = new ArrayList<>();
+        List<Function> placement = new ArrayList<>();
+        for (Function f : users) {
+            Set<Long> offsets = indirectCallOffsets(f);
+            if (offsets.containsAll(PROPERTY2_SLOTS)) {
+                paperdoll.add(f);
+            }
+            if (HOUSE_PLACEMENT_SLOTS.equals(offsets)) {
+                placement.add(f);
+            }
+        }
+        propose(single(paperdoll, "HasProperty2/GetProperty2 user"), "UOPaperdoll::BuildImage",
+            "only caller of HasProperty2/GetProperty2: per equipped layer, appearance tile = properties2 key 11, else"
+            + " key 8, else properties1 key 11, else key 8 (+10000000); draws gump id + " + PAPERDOLL_GUMP_FEMALE
+            + " (female) or + " + PAPERDOLL_GUMP_MALE + "; HasFlags2 bit 18 (PartialHue) selects partial hue", true);
+        propose(single(placement, "house placement check"), "UOHouseCustomization::IsPlacementAllowed",
+            "calls only HasHouseJoinBit1/2/3/5 (the bit 3 load shares the bit 2 CALL): cell (0, 0) needs bit 1,"
+            + " x = 0 needs bit 2, y = 0 needs bit 3; bit 5 adds the support check of the cell below", true);
+    }
+
+    private Function componentInitialize(String cls, Set<Long> requiredSlots) {
+        long vt = vtables.getOrDefault(cls, -1L);
+        Function f = vt < 0 ? null : slotFunction(vt, COMPONENT_INITIALIZE_SLOT);
+        if (f == null || !indirectCallOffsets(f).containsAll(requiredSlots)) {
+            anomalies.add(cls + " Initialize slot does not call UOObjectDefinition slots " + requiredSlots);
+            return null;
+        }
+        return f;
     }
 
     // ---- naming helpers ----
@@ -1032,10 +1181,14 @@ public class NameTileartCode extends GhidraScript {
             field(window, i * POINTER_SIZE, i32, windowNames[i], null);
         }
         StructureDataType sitting = struct("UOTileArtSitting", 0x18, "sitting record: 6 x u32 (file and memory)");
-        String[] sittingNames = {"directions", "field_04", "field_08", "window_shift", "field_10", "field_14"};
+        String[] sittingNames = {"directions", "seat_offset_x", "seat_offset_y", "window_shift",
+            "field_10", "field_14"};
+        String[] sittingComments = {"direction mask: 1 north, 2 east, 4 south, 8 west",
+            "subtracted from the seated mobile sprite x", "subtracted from the seated mobile sprite y",
+            "shifts the chair-back overlay split for directions 1 and 8", "not read by the client",
+            "not read by the client"};
         for (int i = 0; i < sittingNames.length; i++) {
-            field(sitting, i * POINTER_SIZE, u32, sittingNames[i], i == 0 ? "probable direction bitmask (1,2,4,8)"
-                : i == 3 ? "subtracted from the sprite window for directions 1 and 8" : null);
+            field(sitting, i * POINTER_SIZE, u32, sittingNames[i], sittingComments[i]);
         }
         StructureDataType item = struct("UOTileArtTextureItem", 0x2c, "texture item of a shader block");
         field(item, 0x0, string, "path", "string dictionary entry, e.g. Data\\WorldArt\\...");
@@ -1071,14 +1224,14 @@ public class NameTileartCode extends GhidraScript {
         field(def, 0x60, u32, "field_60", "0 in all records");
         field(def, 0x64, u32, "old_id", "default 0xffffff");
         field(def, 0x68, f32, "rotation", "degrees, used with flags1 bit 34");
-        field(def, 0x6c, f32, "light_scale", "probable");
-        field(def, 0x70, u32, "light_field_70", "0 in all records");
-        field(def, 0x74, f32, "light_offset_x", "probable");
-        field(def, 0x78, f32, "light_offset_y", "probable");
+        field(def, 0x6c, f32, "light_scale", "light sprite scale");
+        field(def, 0x70, u32, "light_field_70", "0 in all records; not read by the client");
+        field(def, 0x74, f32, "light_offset_x", "light sprite offset, rotated by the view matrix");
+        field(def, 0x78, f32, "light_offset_y", "light sprite offset, rotated by the view matrix");
         field(def, 0x7c, u32, "house_join_bits", "house customization connection bits");
         field(def, 0x80, u64, "flags1", null);
         field(def, 0x88, u64, "flags2", null);
-        field(def, 0x90, u32, "facing", "default 1");
+        field(def, 0x90, u32, "facing", "default 1; copied to the sprite component +0x2c");
         field(def, 0x94, u32, "radar_rgba", null);
         field(def, 0x98, bool, "has_radar_color", null);
         String[] blockNames = {"world_art_shader", "legacy_shader", "enhanced_shader", "light_shader"};
@@ -1090,8 +1243,8 @@ public class NameTileartCode extends GhidraScript {
         field(def, 0xc8, map, "properties1", null);
         field(def, 0xd4, map, "properties2", null);
         field(def, 0xe0, voidPtr, "stack_aliases", "map amount -> tile id, allocated on first use");
-        field(def, 0xe4, u32, "body_type", "default 400 (human male), 666 gargoyle");
-        field(def, 0xe8, u8, "field_e8", null);
+        field(def, 0xe4, u32, "body_type", "default 400 (human male), 666 gargoyle; must match the wearer's body");
+        field(def, 0xe8, bool, "alternate_animation", "layer 2 item: wearer uses the alternate animation actions");
         field(def, 0xf0, vector, "effects", "vector of shared_ptr effect definitions");
 
         StructureDataType record = new StructureDataType(CATEGORY, "TileArtRecordFixed", 0, dtm);
@@ -1100,7 +1253,7 @@ public class NameTileartCode extends GhidraScript {
             {u16, "version", "must be 4"}, {u32, "name_index", "string dictionary index (0 = empty)"},
             {u32, "tile_id", null}, {u8, "has_world_art", null}, {u8, "uses_enhanced_tileart", null},
             {f32, "world_art_scale", null}, {f32, "legacy_art_scale", null}, {u32, "field_60", null},
-            {u32, "old_id", null}, {f32, "rotation", null}, {u32, "body_type", null}, {u8, "field_e8", null},
+            {u32, "old_id", null}, {f32, "rotation", null}, {u32, "body_type", null}, {u8, "alternate_animation", null},
             {f32, "light_scale", null}, {u32, "light_field_70", null}, {f32, "light_offset_x", null},
             {f32, "light_offset_y", null}, {u32, "house_join_bits", "set via vtable +0x14c"},
             {u64, "flags1", null}, {u64, "flags2", null}, {u32, "facing", null},
