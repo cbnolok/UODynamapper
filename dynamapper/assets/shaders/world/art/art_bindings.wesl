@@ -21,6 +21,7 @@ struct SpriteInstance {
     priority_z_units: f32,
     sort_bias_ordinal: u32,
     // Tiledata flags: bit 0 = is_wet (animated water UV distortion).
+    // Bit 1 = static/map surface blend; bits 2..9 = NW,N,NE,W,E,SW,S,SE neighbors.
     is_wet_flags: u32,
     hue_id: u32,
     hue_flags: u32,

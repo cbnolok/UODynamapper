@@ -55,6 +55,7 @@ fn main() -> eyre::Result<()> {
         };
 
         print_tilemeta(item);
+        println!("  item_materials={:#?}", tilemeta.item_materials(tile_id));
 
         let tex_art_ec_direct = tex_art_ec.present_slot(tile_id);
         print_tex_art_ec_slot("tex_art_ec.present_slot(tile_id)", tex_art_ec_direct);

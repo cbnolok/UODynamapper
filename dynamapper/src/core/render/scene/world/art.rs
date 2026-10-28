@@ -9,6 +9,7 @@ use crate::util_lib::tracked_plugin::TrackedPlugin;
 pub mod statics_collect;
 pub mod statics_draw;
 pub mod static_lights;
+mod static_surface;
 
 pub struct DrawStaticSpritesPlugin {
     pub registered_by: &'static str,

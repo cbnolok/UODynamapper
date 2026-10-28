@@ -72,6 +72,10 @@ fn ec_coverage_params(payload: u32) -> vec4<u32> {
             include_str!("../../../../assets/shaders/world/land/liquid_bank.wesl"),
             "shaders/world/land/liquid_bank.wesl",
         ));
+        shaders.set_shader(shader_id(11), Shader::from_wesl(
+            include_str!("../../../../assets/shaders/world/art/surface_blend.wesl"),
+            "shaders/world/art/surface_blend.wesl",
+        ));
         shaders.set_shader(shader_id(0), Shader::from_wesl(r#"
 import package::shaders::world::ec_liquid::{EcLiquidSlot, ec_liquid_sample, ec_liquid_reflection_uv, ec_liquid_original_view};
 import package::shaders::world::ec_item_surface::apply_ec_item_surface;
@@ -80,6 +84,7 @@ import package::shaders::world::texture_data::texture_color_rgb;
 import package::shaders::world::ec_item_quad::{ec_item_quad_screen, ec_item_quad_world};
 import package::shaders::world::land::atlas::bank_fixture_tile;
 import package::shaders::world::land::liquid_bank::{ec_liquid_bank, ec_bank_vertex, EcLiquidBank};
+import package::shaders::world::art::surface_blend::static_surface_coverage;
 @group(0) @binding(0) var atlas: texture_2d_array<f32>;
 @group(0) @binding(1) var<storage, read_write> samples: array<vec4<f32>>;
 @group(0) @binding(2) var linear_sampler: sampler;
@@ -191,6 +196,13 @@ fn main() {
     samples[69] = bank_result(ec_liquid_bank(vec3<f32>(11.1, 3.0, 10.5), level_solid, 500u, 0.8));
     samples[70] = bank_result(ec_liquid_bank(vec3<f32>(11.1, 3.1, 10.5), level_solid, 500u, 0.8));
     samples[71] = bank_result(ec_liquid_bank(vec3<f32>(11.1, 3.0, 10.5), bank_fixture_tile(4u, 2.0, 0u, 2u), 500u, 0.8));
+    // Static ground patches expose map terrain only at unoccupied boundaries.
+    samples[72] = vec4<f32>(static_surface_coverage(vec2<f32>(0.0), 255u), 0.0, 0.0, 0.0);
+    samples[73] = vec4<f32>(static_surface_coverage(vec2<f32>(0.0, 0.5), 247u), 0.0, 0.0, 0.0);
+    samples[74] = vec4<f32>(static_surface_coverage(vec2<f32>(0.15, 0.5), 247u), 0.0, 0.0, 0.0);
+    samples[75] = vec4<f32>(static_surface_coverage(vec2<f32>(0.0), 254u), 0.0, 0.0, 0.0);
+    samples[76] = vec4<f32>(static_surface_coverage(vec2<f32>(0.15), 254u), 0.0, 0.0, 0.0);
+    samples[77] = vec4<f32>(static_surface_coverage(vec2<f32>(0.5), 0u), 0.0, 0.0, 0.0);
 }
 "#, "shaders/test/liquid_sampling_gpu.wesl"));
         let wgsl = shaders.get(0, shader_id(0), &[]).unwrap();
@@ -249,7 +261,7 @@ fn main() {
             offset: 0, bytes_per_row: Some(6 * 16), rows_per_image: Some(1),
         }, item_lookup.size());
         let item_view = item_lookup.create_view(&wgpu::TextureViewDescriptor::default());
-        let result_size = 72 * 16;
+        let result_size = 78 * 16;
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: None, size: result_size, mapped_at_creation: false,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
@@ -346,7 +358,9 @@ fn main() {
             [0.0, 3.0, 0.0, 0.0], [0.0, 3.85, 0.0, 0.0], [0.0, 4.0, 0.0, 0.0],
             [0.0, 4.0, 0.0, 0.0], [0.0, 4.85, 0.0, 0.0], [0.25, 3.0, -0.25, 0.0],
             [0.5, 11.0, 10.0, 0.0], [0.0, 11.0, 10.0, 0.0],
-            [0.0, 11.0, 10.0, 0.0], [1.0, 11.0, 10.0, 0.0], [0.0, 11.0, 10.0, 0.0]];
+            [0.0, 11.0, 10.0, 0.0], [1.0, 11.0, 10.0, 0.0], [0.0, 11.0, 10.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0], [0.0; 4], [0.5, 0.0, 0.0, 0.0],
+            [0.0; 4], [0.75, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]];
         for (sample, (actual, expected)) in actual.iter().zip(expected).enumerate() {
             for channel in 0..4 {
                 assert!((actual[channel] - expected[channel]).abs() < 0.001,

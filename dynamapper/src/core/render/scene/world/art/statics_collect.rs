@@ -5,6 +5,7 @@ use crate::core::render::scene::camera::RenderZoom;
 use crate::core::render::scene::world::land::{
     CHUNK_STORAGE_BLOCKS_DIM, MAP_STORAGE_BLOCK_TILE_DIM,
 };
+use crate::core::render::scene::world::land::tile_atlas::TileAtlas;
 use crate::core::multis::{
     expanded_multi_part_z, multi_id_from_static_graphic, MultiDefinitionsRes,
 };
@@ -891,6 +892,7 @@ pub struct SpriteInstance {
     pub sort_bias_ordinal: u32,
     /// Tiledata flags packed for the GPU.
     /// Bit 0: is_wet (IsWet tiledata flag → animated water UV distortion in sprite shader).
+    /// Bit 1: ground surface blend; bits 2..9: NW,N,NE,W,E,SW,S,SE same-material neighbors.
     pub is_wet_flags: u32,
     pub hue_id: u32,
     pub hue_flags: u32,
@@ -1681,6 +1683,7 @@ struct StaticCollectResources<'a> {
     tilemeta: Option<&'a TileMetaPackageRes>,
     multis: Option<&'a MultiDefinitionsRes>,
     static_lights: &'a super::static_lights::RenderStaticLightInstances,
+    tile_atlas: &'a TileAtlas,
 }
 
 impl<'a> StaticCollectResources<'a> {
@@ -1774,6 +1777,7 @@ fn static_collect_resources<'a>(
     tilemeta_res: &'a Option<Res<TileMetaPackageRes>>,
     multis_res: &'a Option<Res<MultiDefinitionsRes>>,
     static_lights: &'a super::static_lights::RenderStaticLightInstances,
+    tile_atlas: &'a TileAtlas,
 ) -> StaticCollectResources<'a> {
     StaticCollectResources {
         tex_art_cc: tex_art_cc_res.as_ref().map(|res| &**res),
@@ -1782,6 +1786,7 @@ fn static_collect_resources<'a>(
         tilemeta: tilemeta_res.as_ref().map(|res| &**res),
         multis: multis_res.as_ref().map(|res| &**res),
         static_lights,
+        tile_atlas,
     }
 }
 
@@ -2033,6 +2038,14 @@ fn rebuild_static_chunk(
         }
     }
 
+    if !frame.is_dot_mode && frame.art_source == Some(ClientTextureSource::Ec) {
+        if let (Some(tilemeta), Some(art)) = (resources.tilemeta_package(), resources.tex_art_ec_package()) {
+            super::static_surface::apply_boundary_coverage(
+                &mut build.sprite_instances, chunk_key, frame.height_scale,
+                statics_store, tilemeta, art, resources.tile_atlas,
+            );
+        }
+    }
     finish_rebuilt_static_chunk(build, visible_tick)
 }
 
@@ -2724,8 +2737,9 @@ pub fn sys_collect_visible_statics(
     static_lights: Res<super::static_lights::RenderStaticLightInstances>,
     // TODO: Need a way to get the currently visible chunks from the terrain system.
     // We can iterate over existing land chunk entities to find which blocks to draw.
-    chunks_q: Query<&crate::core::render::scene::world::land::LCMesh>,
+    terrain: (Query<&crate::core::render::scene::world::land::LCMesh>, Res<TileAtlas>),
 ) {
+    let (chunks_q, tile_atlas) = terrain;
     if !settings.world_rendering.enable_statics {
         let (sprite_output, ground_output, batches, cache, _) = &mut outputs;
         clear_static_collect_outputs(sprite_output, ground_output, batches);
@@ -2767,6 +2781,7 @@ pub fn sys_collect_visible_statics(
         &tilemeta_res,
         &multis_res,
         &static_lights,
+        &tile_atlas,
     );
     let cache_config =
         static_chunk_cache_config(frame, &sprite_atlas, &ground_atlas, &static_lights);
@@ -3212,6 +3227,7 @@ mod tests {
         world.insert_resource(settings);
         world.insert_resource(StaticsStoreRes(Vec::new()));
         world.insert_resource(SceneStateData { map_id: 0 });
+        world.insert_resource(TileAtlas::new(Default::default(), 0));
         world.insert_resource(RenderZoom::default());
         world.insert_resource(SpriteArtPageAtlas(crate::core::texture_cache::art::ArtPageAtlas::new(
             Handle::default(), 64, 64, 1, 1, PagePixelFormat::Rgba8888,

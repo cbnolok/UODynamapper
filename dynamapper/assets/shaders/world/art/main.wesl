@@ -28,6 +28,7 @@ import package::shaders::world::art::art_bindings::{
 };
 import package::shaders::world::art::hue::apply_static_hue;
 import package::shaders::world::art::shading::apply_art_surface_shading;
+import package::shaders::world::art::surface_blend::static_surface_coverage;
 
 struct ArtVertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -309,8 +310,12 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
         let edge = min(uv_in_tile_for_shading, vec2<f32>(1.0) - uv_in_tile_for_shading);
         color.a *= smoothstep(0.0, 1.5, min(edge.x / surface_footprint.x, edge.y / surface_footprint.y));
     }
+    let blend_surface = (inst.is_wet_flags & 2u) != 0u && effects.post_process_profile != 0u;
+    if (blend_surface) {
+        color.a *= static_surface_coverage(uv_in_tile_for_shading, (inst.is_wet_flags >> 2u) & 255u);
+    }
     // Preserve fractional coverage in the blended pass for authored materials.
-    let alpha_cutoff = select(sprite_params.alpha_cutoff, 0.9999, surface_header.x != 0u);
+    let alpha_cutoff = select(sprite_params.alpha_cutoff, 0.9999, surface_header.x != 0u || blend_surface);
     if (sprite_params.pass_mode == PASS_MODE_OPAQUE) {
         if color.a < 0.0001 || color.a < alpha_cutoff {
             discard;
@@ -330,7 +335,7 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
         hue_texture,
         hue_sampler,
     );
-    if (sprite_params.pass_mode == PASS_MODE_TRANSPARENT && surface_header.x == 0u) {
+    if (sprite_params.pass_mode == PASS_MODE_TRANSPARENT && surface_header.x == 0u && !blend_surface) {
         shaded = vec4<f32>(shaded.rgb * shaded.a * 2.0, shaded.a);
     }
     // CC surface-like water statics lie flat and must read as a continuous water
