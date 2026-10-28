@@ -196,8 +196,9 @@ The output is created exclusively before anything else. Without `--apply` nothin
 ## What it reports
 
 1. **Lua -> C**: for every `LUA_API` function (Lua names taken from the NameLuaFunctions
-   plate comment, including "also registered as"), the UI call sites with file, line,
-   enclosing function, argument and result counts, and a summary line. Names the UI calls
+   plate comment, including "also registered as"), a summary line (calls, files, argument
+   and result counts, one example), and with `--details` every call site with file, line,
+   enclosing function, argument and result counts. Names the UI calls
    that are not registered are listed with the strings found (some are registered as
    `_Name` and wrapped by Lua code outside `UserInterface/Default`).
 2. **C -> Lua**: exact NUL-terminated strings equal to UI names (`SystemData`/`WindowData`
