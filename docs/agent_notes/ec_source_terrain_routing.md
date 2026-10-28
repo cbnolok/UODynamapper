@@ -50,6 +50,11 @@ The shared liquid sampler uses one hardware read for interior/clamped linear
 footprints, including bump data; wrapped border taps stay source-bounded.
 Auxiliary item samples use the native dimensions of top-left-padded layers.
 
+Liquid terrain also has a [height-aware bank policy](ec_liquid_bank_transitions.md):
+its coverage detaches early on rising solid banks while retaining the underlying
+solid pass stack. This is an intentional rendering policy, separate from the
+recovered original mask generation and material routing.
+
 Tileart-owned slots marked as land/material surfaces stay in the art atlas.
 Flagged art-owned surfaces use their authored camera-plane quad in the default
 isometric view; background liquid ground quads retain their horizontal depth

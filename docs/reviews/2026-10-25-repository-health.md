@@ -308,5 +308,10 @@ Validation: 43 actual GPU cases, the renderer suite, and Desktop-4 captures acro
 Classic/Enhanced/KR, lava, bridge/stairs, coast, acid, swamp, town and CC controls.
 No package rebuild, reconstructed compatibility mapping, duplicate atlas or new
 draw pass was introduced. Full original-client pixel parity is not established.
-The next requested improvement is liquid-to-bank transition coverage on rising
-terrain: the lower lava fixture still exposes lava climbing the mountain face.
+The subsequent liquid-to-bank improvement attenuates liquid coverage on rising
+banks, revealing the retained solid pass stack earlier. It uses the original
+liquid shader class and neighboring heights, with safeguards for submerged sand,
+material aliases and missing EC sources. The final GPU regression has 52 cases.
+The same paused KR lava fixture's uncapped ABBA smoke samples stayed at 37–39 FPS
+in both variants; this is not a sustained benchmark or a speedup claim.
+See `docs/agent_notes/ec_liquid_bank_transitions.md` for policy and evidence.

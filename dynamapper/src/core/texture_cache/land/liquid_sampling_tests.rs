@@ -38,17 +38,56 @@ fn liquid_sampling_gpu_preserves_data_and_source_edges() {
             include_str!("../../../../assets/shaders/world/ec_item_quad.wesl"),
             "shaders/world/ec_item_quad.wesl",
         ));
+        shaders.set_shader(shader_id(6), Shader::from_wesl(
+            include_str!("../../../../assets/shaders/world/common_bindings.wesl"),
+            "shaders/world/common_bindings.wesl",
+        ));
+        shaders.set_shader(shader_id(7), Shader::from_wesl(
+            include_str!("../../../../assets/shaders/world/land/land_bindings.wesl"),
+            "shaders/world/land/land_bindings.wesl",
+        ));
+        // Synthetic metadata isolates the real bank-selection algorithm from
+        // paging. It includes an alias, a higher bank, and lower submerged sand.
+        shaders.set_shader(shader_id(8), Shader::from_wesl(r#"
+import package::shaders::world::land::land_bindings::TileUniform;
+fn bank_fixture_tile(payload: u32, height: f32, flags: u32, size: u32) -> TileUniform {
+    return TileUniform(height, size, 0u, 0u, vec2<u32>(0u), vec2<u32>(2u), 0u, flags, payload, 1.0);
+}
+fn atlas_read_meta(x: i32, y: i32) -> TileUniform {
+    if (x == 10 && y == 10) { return bank_fixture_tile(10u, 3.0, 4u, 2u); }
+    if (x == 10 && y == 11) { return bank_fixture_tile(11u, 3.0, 4u, 2u); }
+    if (x == 11 && y == 10) { return bank_fixture_tile(2u, 4.0, 0u, 2u); }
+    if (x == 9 && y == 9) { return bank_fixture_tile(3u, 5.0, 0u, 2u); }
+    if ((x == 9 && y == 10) || (x == 19 && y == 20)) { return bank_fixture_tile(4u, 2.0, 0u, 2u); }
+    return bank_fixture_tile(0u, 0.0, 0u, 3u);
+}
+"#, "shaders/world/land/atlas.wesl"));
+        shaders.set_shader(shader_id(9), Shader::from_wesl(r#"
+fn ec_coverage_params(payload: u32) -> vec4<u32> {
+    if (payload == 10u || payload == 11u) { return vec4<u32>(500u, 0u, 0u, 2u); }
+    return vec4<u32>(payload, 0u, 0u, 1u);
+}
+"#, "shaders/world/land/coverage.wesl"));
+        shaders.set_shader(shader_id(10), Shader::from_wesl(
+            include_str!("../../../../assets/shaders/world/land/liquid_bank.wesl"),
+            "shaders/world/land/liquid_bank.wesl",
+        ));
         shaders.set_shader(shader_id(0), Shader::from_wesl(r#"
 import package::shaders::world::ec_liquid::{EcLiquidSlot, ec_liquid_sample, ec_liquid_reflection_uv, ec_liquid_original_view};
 import package::shaders::world::ec_item_surface::apply_ec_item_surface;
 import package::shaders::world::ec_item_liquid::apply_ec_item_liquid;
 import package::shaders::world::texture_data::texture_color_rgb;
 import package::shaders::world::ec_item_quad::{ec_item_quad_screen, ec_item_quad_world};
+import package::shaders::world::land::atlas::bank_fixture_tile;
+import package::shaders::world::land::liquid_bank::{ec_liquid_bank, EcLiquidBank};
 @group(0) @binding(0) var atlas: texture_2d_array<f32>;
 @group(0) @binding(1) var<storage, read_write> samples: array<vec4<f32>>;
 @group(0) @binding(2) var linear_sampler: sampler;
 @group(0) @binding(3) var surface_lookup: texture_2d<u32>;
 @group(0) @binding(4) var item_lookup: texture_2d<u32>;
+fn bank_result(bank: EcLiquidBank) -> vec4<f32> {
+    return vec4<f32>(bank.weight, vec2<f32>(bank.cell), 0.0);
+}
 fn color_sample(value: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(texture_color_rgb(value.rgb), value.a);
 }
@@ -116,6 +155,17 @@ fn main() {
     // Coverage can filter independently of nearest albedo in Enhanced styling.
     samples[42] = apply_ec_item_surface(base, atlas, surface_lookup, linear_sampler,
         vec4<u32>(1u, 7u, 0u, 0u), vec2<f32>(0.5), vec2<f32>(0.0), false, true);
+    let liquid = bank_fixture_tile(10u, 3.0, 4u, 2u);
+    let rock = bank_fixture_tile(2u, 4.0, 0u, 2u);
+    samples[43] = bank_result(ec_liquid_bank(vec3<f32>(10.9, 3.0, 10.5), liquid, 500u));
+    samples[44] = bank_result(ec_liquid_bank(vec3<f32>(10.9, 3.2, 10.5), liquid, 500u));
+    samples[45] = bank_result(ec_liquid_bank(vec3<f32>(10.9, 3.1, 10.5), liquid, 500u));
+    samples[46] = bank_result(ec_liquid_bank(vec3<f32>(20.9, 3.2, 20.5), liquid, 500u));
+    samples[47] = bank_result(ec_liquid_bank(vec3<f32>(11.1, 4.0, 10.5), rock, 500u));
+    samples[48] = bank_result(ec_liquid_bank(vec3<f32>(11.2, 4.0, 11.1), rock, 500u));
+    samples[49] = bank_result(ec_liquid_bank(vec3<f32>(11.1, 4.0, 10.5), rock, 600u));
+    samples[50] = bank_result(ec_liquid_bank(vec3<f32>(9.1, 2.0, 10.5), bank_fixture_tile(4u, 2.0, 0u, 2u), 500u));
+    samples[51] = bank_result(ec_liquid_bank(vec3<f32>(10.9, 3.2, 10.5), bank_fixture_tile(99u, 3.0, 0u, 3u), 500u));
 }
 "#, "shaders/test/liquid_sampling_gpu.wesl"));
         let wgsl = shaders.get(0, shader_id(0), &[]).unwrap();
@@ -174,7 +224,7 @@ fn main() {
             offset: 0, bytes_per_row: Some(6 * 16), rows_per_image: Some(1),
         }, item_lookup.size());
         let item_view = item_lookup.create_view(&wgpu::TextureViewDescriptor::default());
-        let result_size = 43 * 16;
+        let result_size = 52 * 16;
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: None, size: result_size, mapped_at_creation: false,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
@@ -261,7 +311,10 @@ fn main() {
             [(0.4 + mask[0]).min(1.0), (0.3 + mask[1]).min(1.0), (0.2 + mask[2]).min(1.0), mask[3]],
             [0.707105, 1.4742099, 0.0, 1.0], [1.4742099, 0.707105, 0.0, 1.0],
             [-0.06, 0.707105, 0.0, 1.0], [0.707105, -0.06, 0.0, 1.0],
-            [11.207105, 20.737105, 31.5, 1.0], [11.207105, 19.97, 31.5, 1.0], [0.2, 0.4, 0.6, mask[3]]];
+            [11.207105, 20.737105, 31.5, 1.0], [11.207105, 19.97, 31.5, 1.0], [0.2, 0.4, 0.6, mask[3]],
+            [0.0, 10.0, 10.0, 0.0], [1.0, 11.0, 10.0, 0.0], [0.5, 11.0, 10.0, 0.0],
+            [0.0, 20.0, 20.0, 0.0], [1.0, 11.0, 10.0, 0.0], [1.0, 11.0, 11.0, 0.0],
+            [0.0, 11.0, 10.0, 0.0], [0.0, 9.0, 10.0, 0.0], [0.0, 10.0, 10.0, 0.0]];
         for (sample, (actual, expected)) in actual.iter().zip(expected).enumerate() {
             for channel in 0..4 {
                 assert!((actual[channel] - expected[channel]).abs() < 0.001,

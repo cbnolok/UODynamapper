@@ -63,6 +63,7 @@ import package::shaders::world::ec_liquid::{sample_ec_liquid, ec_liquid_world_uv
 import package::shaders::world::ec_liquid_camera::ec_liquid_camera_reflection_uv;
 import package::shaders::world::texture_data::texture_color_rgb;
 import package::shaders::world::land::coverage::{ec_coverage_params, ec_terrain_stack, ec_layer_tile};
+import package::shaders::world::land::liquid_bank::ec_liquid_bank;
 
 // ============================================================================
 // Vertex shader
@@ -920,11 +921,43 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
       for (var index = 1u; index < stack.count; index++) {
         if (stack.alpha[index] == 1.0) { first = index; }
       }
-      hdr_rgb = shade_land(in, ec_layer_tile(stack.layers[first], tile.tile_height), true);
+      var liquid_material = 0xffffffffu;
+      for (var index = first; index < stack.count; index++) {
+        if ((index == first || stack.alpha[index] > 0.0) && ((stack.layers[index].w >> 16u) & 7u) == 2u) {
+          liquid_material = stack.layers[index].x;
+        }
+      }
+      var bank_weight = 0.0;
+      var bank_cell = cell;
+      if (liquid_material != 0xffffffffu) {
+        let bank = ec_liquid_bank(in.world_position.xyz, tile, liquid_material);
+        bank_weight = bank.weight;
+        bank_cell = bank.cell;
+      }
+      if (bank_weight > 0.0) {
+        // Reveal the existing solid pass stack, including its authored blends.
+        // A single neighboring texture would introduce hard material patches.
+        first = 0u;
+        for (var index = 1u; index < stack.count; index++) {
+          let alpha = stack.alpha[index] * select(1.0, 1.0 - bank_weight, stack.layers[index].x == liquid_material);
+          if (alpha == 1.0) { first = index; }
+        }
+      }
+      if (first == 0u && bank_weight > 0.0 && stack.layers[0].x == liquid_material) {
+        // An all-liquid chunk can meet a bank across its edge without having
+        // a local solid base pass. Only that case needs the neighboring material.
+        hdr_rgb = shade_land(in, atlas_read_meta(bank_cell.x, bank_cell.y), true);
+        if (bank_weight < 1.0) {
+          hdr_rgb = mix(hdr_rgb, shade_land(in, ec_layer_tile(stack.layers[0], tile.tile_height), true), 1.0 - bank_weight);
+        }
+      } else {
+        hdr_rgb = shade_land(in, ec_layer_tile(stack.layers[first], tile.tile_height), true);
+      }
       for (var index = first + 1u; index < stack.count; index++) {
-        if (stack.alpha[index] > 0.0) {
+        let alpha = stack.alpha[index] * select(1.0, 1.0 - bank_weight, stack.layers[index].x == liquid_material);
+        if (alpha > 0.0) {
           let layer_color = shade_land(in, ec_layer_tile(stack.layers[index], tile.tile_height), true);
-          hdr_rgb = mix(hdr_rgb, layer_color, stack.alpha[index]);
+          hdr_rgb = mix(hdr_rgb, layer_color, alpha);
         }
       }
       composed = true;
