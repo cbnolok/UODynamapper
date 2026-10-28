@@ -350,7 +350,9 @@ pub(crate) fn resolve_static_depth_class(
         return StaticDepthClass::Foliage;
     }
 
-    if static_tile_is_surface_like(tilemeta) {
+    // Bridge marks walkable volume (stairs and stacked stone blocks), not a
+    // flat floor. Keep its effective height and regular sprite depth priority.
+    if static_tile_is_surface_like(tilemeta) && meta.flags & TILE_FLAG_BRIDGE == 0 {
         return StaticDepthClass::SurfaceLikeFloor;
     }
 
@@ -3378,6 +3380,26 @@ mod tests {
             resolve_static_depth_class(Some(&tile)),
             StaticDepthClass::SurfaceLikeFloor,
         );
+    }
+
+    #[test]
+    fn bridge_stone_and_stairs_retain_volume_depth_and_height_priority() {
+        // Installed bridge fixture: stone 1872 and stair pieces 1874/1895.
+        for (flags, height, priority) in [
+            (0x04002600, 10, 20.0),
+            (0x80002600, 5, 17.0),
+            (0x2600, 5, 17.0),
+        ] {
+            let mut tile = item_tile_with_flags(
+                flags,
+                udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike,
+            );
+            tile.height = height;
+            assert!(static_tile_is_surface_like(Some(&tile)));
+            let class = resolve_static_depth_class(Some(&tile));
+            assert_eq!(class, StaticDepthClass::Regular);
+            assert_eq!(resolve_priority_z_units(15, Some(&tile), class), priority);
+        }
     }
 
     #[test]

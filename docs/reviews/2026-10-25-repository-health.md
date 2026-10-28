@@ -323,3 +323,14 @@ The topology, vertex count, original map metadata and CC geometry are unchanged.
 An uncapped ABBA smoke checks the same paused KR lava fixture; this is not a
 sustained benchmark or a speedup claim.
 See `docs/agent_notes/ec_liquid_bank_transitions.md` for policy and evidence.
+
+## Static depth follow-up — 2026-10-28
+
+Bridge stone and stair sprites were classified as flat floors because the broad
+surface-like predicate matched their Surface flag. The floor class discarded
+their effective height and projected them backward, letting terrain and water
+clip the stair ends and support pillar. Bridge-bearing solid pieces now retain
+regular sprite depth and the existing half-height priority. No extra GPU work,
+new bias or global depth replacement was introduced. The shared classifier also
+serves picking. See `docs/agent_notes/static_depth_ordering.md` for installed
+metadata, regression checks and the original-client bridge comparison.

@@ -954,6 +954,13 @@ must be considered together before changing that model. The original terrain
 constructor uses camera-plane per-cell corners, separate camera-up height and
 a small direction-column priority, rather than our world-Y relief.
 
+A separate bridge occlusion bug was in the runtime static classifier: Surface
+plus Bridge flags incorrectly selected flat-floor depth for solid stairs and
+stone supports, discarding their height priority and applying a large backward
+offset. Keeping these volumes in the regular sprite depth class restores their
+ordering against water and the bank without changing the ground-quad depth
+contract above. See [static_depth_ordering.md](static_depth_ordering.md).
+
 Current validation executes **43 GPU cases** and the production padding helper,
 plus source-flag selection tests. The accepted captures use `crust-final-` and
 `crust-edges-` under the temporary follow-up directory. They cover lava in all
