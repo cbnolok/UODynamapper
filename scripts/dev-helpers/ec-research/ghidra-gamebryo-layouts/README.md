@@ -61,6 +61,13 @@ Classes are read from the `/Gamebryo` structure descriptions that `GamebryoClass
 - **Re-check**: a layout an earlier run applied with an inferred size is evaluated again against
   the current sources (sized descendants that fit, and those of equal size). The report lists
   each one as consistent or contradicted; a contradicted layout is reported, not removed.
+- **Excluded**: classes in the script's `EXCLUDED` map (class -> reason) are never filled, because
+  the 2.3 code contradicts their 2.6 layout although the sizes fit. With `--apply`, a structure
+  still exactly as this script filled it (same members, layout marker in the description) is
+  restored to the `GamebryoClasses.java` placeholder; one edited since is reported and kept. The
+  copied `/Gamebryo26` types it referenced are removed when this script created them (its
+  description prefix) and nothing references them any more: no other type, defined data, function
+  signature or variable. Categories left empty go too.
 
 ## Representation
 
@@ -82,7 +89,7 @@ Classes are read from the `/Gamebryo` structure descriptions that `GamebryoClass
 
 Only placeholders exactly as `GamebryoClasses.java` created them (one field 0 `vftable` or
 `base`, original description, matching length) are filled. Edited structures are kept and
-reported; nothing is deleted. The layout marker in the description makes a second `--apply` run
+reported; apart from excluded classes (see Rules), nothing is deleted. The layout marker in the description makes a second `--apply` run
 change nothing.
 
 ## Running
@@ -121,33 +128,38 @@ members file shows the planned layouts.
 - The NiRTTI parent is not always the C++ parent: a base without its own NiRTTI is invisible to
   the sibling script. `NiPersistentSrcTextureRendererData` derives from `NiTexture::RendererData`
   in 2.6, so its bytes 0x08..0x58 stay undefined after the `NiObject` base.
-- `NiControllerSequence` is filled with the 2.6 layout (0x7c in both) although its members
-  differ: the UOSA constructor (`0x00799810`, called from `CreateObject` `0x0079d1f0`) stores an
-  embedded array object (vptr, data pointer, 16-bit counts, grow-by 1) at +0x48, where 2.6 has
-  the float `m_fWeightedLastTime`, and 2.3 has no `NiSequenceData`, `NiPoseBuffer` or
-  `NiScratchPad` (no strings in the binary) that the 2.6 members point to. Treat its member
-  names as wrong past the `NiObject` base.
+- `NiControllerSequence` is excluded although its size is 0x7c in both versions: the UOSA
+  constructor (`0x00799810`, called from `CreateObject` `0x0079d1f0`) stores an embedded array
+  object (vptr, data pointer, 16-bit counts, grow-by 1) at +0x48, where 2.6 has the float
+  `m_fWeightedLastTime`, and 2.3 has no `NiSequenceData`, `NiPoseBuffer` or `NiScratchPad` (no
+  strings in the binary) that the 2.6 members point to. It stays a placeholder.
 - Copied by-value types (`NiPixelFormat`, `NiTransform`, ...) are 2.6 layouts checked only by the
   size of the class embedding them.
 - Only classes of the imported libraries can be filled; UO/Mythic classes and classes from
   Gamebryo libraries not imported are reported as having no 2.6 type.
-- There is no undo besides Ghidra's own; the script never deletes or replaces existing types.
+- There is no undo besides Ghidra's own. Besides the restore of excluded classes and the removal
+  of their unreferenced copies, the script never deletes or replaces existing types.
 
 ## Tested result
 
 Ghidra 12.1.4, `UOSA.exe` SHA-256
 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`, sources NiMain,
 NiDX9Renderer, NiSystem, NiAnimation, NiParticle and NiCollision 2.6 (VC80 release DLLs): of 343
-classes, 118 filled with exact size and 25 inferred (`NiObject` 0x8, `NiObjectNET` 0x18,
+classes, 117 filled with exact size and 25 inferred (`NiObject` 0x8, `NiObjectNET` 0x18,
 `NiTexture` 0x30, `NiTimeController` 0x34, `NiInterpolator` 0xc, `NiPSysModifier` 0x18, ...);
 50 size mismatches (e.g. `NiNode` 0xe0 vs 0xdc, the geometry data classes by 8,
 `NiParticleSystem` 0x134 vs 0x124, `NiControllerManager` 0x6c vs 0xa0); 9 rejected (`NiAVObject`
 and its geometry/light/effect bases, `NiPSysCollider`, `NiPSysFieldModifier`: no sized descendant
 fits); 74 without size evidence (renderer, shader, material and render-view classes,
 `NiCollisionData`); 67 without a 2.6 type (UO/Mythic classes and 2.3 classes dropped by 2.6, such
-as `NiFloatController`, `NiPathController`, `NiLookAtController`). 47 types were copied (26
-structures, 8 enums, 13 stubs). This run extended an earlier one with three sources (38 exact, 9
-inferred): it filled 96 more structures, and the 9 earlier inferred layouts all stay consistent.
+as `NiFloatController`, `NiPathController`, `NiLookAtController`); `NiControllerSequence`
+excluded. The six-source run extended an earlier one with three sources (38 exact, 9 inferred):
+it filled 96 more structures and copied 47 types (26 structures, 8 enums, 13 stubs), and the 9
+earlier inferred layouts all stay consistent. The committed report is the following run, which
+restored `NiControllerSequence` to its placeholder and removed the 11 copied types only it used
+(`NiAnimState`, `NiTimeController/CycleType`, six `NiPointer<...>`, the
+`NiTPrimitiveArray<NiSequenceData::ActivationCallback_*>` and the `NiPoseBuffer`,
+`NiScratchPad`, `NiSequenceData` stubs) with the emptied category `/Gamebryo26/NiTimeController`.
 `NiTimeController` (0x34) is confirmed by `NiPSysUpdateCtlr`, exactly 0x34 with no own members;
 33 of its 37 sized descendants fit. A second `--apply` run reports zero changes.
 

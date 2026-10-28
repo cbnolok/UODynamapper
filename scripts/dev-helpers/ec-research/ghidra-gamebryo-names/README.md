@@ -141,9 +141,21 @@ candidates above the similarity threshold with the reason.
   prototype, and the evidence (vtable class and slot, or BSim similarity, significance
   and source address).
 
+- Earlier transferred names that the current rules no longer give are withdrawn. This
+  applies only to a function whose name is still exactly the transferred one: source
+  `ANALYSIS`, a `GB26_*` tag, and a plate comment whose first line is
+  `Gamebryo 2.6: <that name>`. If the current rules give it another name, that name is
+  applied (tag replaced; plate comment rewritten if it is still in the script's
+  three-line form). Otherwise the function goes back to its default name in the global
+  namespace, the tags are removed, and the plate comment is removed if it is still in
+  that form. A `GB26_BSIM` name is judged only when BSim runs on all sources (no
+  `--max-sources`) and the function lies in the target ranges, a `GB26_VTABLE` name only
+  when the vtable step runs. The report lists them under "Earlier transferred names
+  withdrawn".
+
 Prototypes are not applied: 2.3 and 2.6 signatures differ (for example `CreateObject`).
-Functions that already have another name are kept and listed. A second `--apply` run
-reports `Changes: none`.
+Other functions that already have another name are kept and listed. A second `--apply`
+run reports `Changes: none`.
 
 ## Limitations
 
@@ -163,12 +175,8 @@ reports `Changes: none`.
   comment.
 - Identical small helpers and template instances (list, array and bounding-volume
   helpers) match at similarity 1.0 under several names; the chosen name can belong to
-  another instance or class. `0x007f0a00` was named `NiRenderer::DeleteAllMacros` by the
-  three-library run and now matches `NiUnionBV::RemoveAllBoundingVolumes`; the earlier
-  name is kept.
-- BSim names applied earlier are never removed: `0x006cbee0` keeps
-  `NiGPUProgramCache::NiGPUProgramDesc::scalar_deleting_destructor` although the
-  vtable-class check now drops it (it is a slot of `NiDepthStencilBuffer`).
+  another instance or class.
+- Class namespaces created for a name that is later withdrawn stay, possibly empty.
 - A 2.3 virtual can differ in meaning from the 2.6 virtual in the same slot even when the
   vtable lengths match. Slot 14 of `NiDX9PersistentSrcTextureRendererData` (`0x00772270`)
   is named `GetStreamableRTTIName`, which in 2.6 is
@@ -187,7 +195,13 @@ call-graph check, leaving 372 BSim names. The run extended an earlier `--apply` 
 NiMain, NiDX9Renderer and NiSystem only (143 classes, 2272 slots, 572 vtable and 317
 BSim names, 751 functions renamed). It renamed 436 more functions (380 vtable; 56 BSim:
 41 from NiAnimation, 13 from NiCollision, 2 from NiParticle) and created 15 class
-namespaces; a second run changed nothing.
+namespaces. The committed report is the following run, which withdrew two names of
+the three-library run: `0x006cbee0`
+(`NiGPUProgramCache::NiGPUProgramDesc::scalar_deleting_destructor`, a slot of
+`NiDepthStencilBuffer` that the vtable-class check drops) is back to `FUN_006cbee0`
+with its tag and plate comment removed, and `0x007f0a00` (`NiRenderer::DeleteAllMacros`
+at similarity 0.736) is renamed to `NiUnionBV::RemoveAllBoundingVolumes` (similarity
+1.0, next to the other `NiUnionBV` functions). A second run changed nothing.
 
 Calibration: 911 anchors are BSim targets, 111 of them pass the mutual-best and margin
 tests. At significance >= 30, the anchor agreement at the 0.7 threshold is 47 of 49

@@ -23,13 +23,13 @@ Thresholds: similarity >= 0.7, significance >= 30.0, margin 0.05, self-significa
 | BSim: Source functions with one 2.6 name (not thunks/imports) | 12142 |
 | BSim: Source functions skipped as ICF-folded (several names) | 1673 |
 | BSim: Sources above the self-significance bound | 8433 |
-| BSim: UOSA functions in the ranges | 6274 |
-| BSim: Targets above the self-significance bound | 5716 |
+| BSim: UOSA functions in the ranges | 6289 |
+| BSim: Targets above the self-significance bound | 5724 |
 | BSim: Rejected: not mutual best | 342 |
 | BSim: Rejected: second-best source name within margin | 102 |
 | BSim: Rejected: second-best target within margin | 30 |
 | BSim: Rejected: significance below threshold | 317 |
-| BSim: Rejected: similarity below threshold | 4497 |
+| BSim: Rejected: similarity below threshold | 4505 |
 | BSim: Accepted BSim names | 428 |
 | Vtable and BSim agree | 46 |
 | Vtable and BSim disagree (vtable kept) | 2 |
@@ -47,15 +47,13 @@ Thresholds: similarity >= 0.7, significance >= 30.0, margin 0.05, self-significa
 | Anchors agreeing with the BSim name | 1 |
 | Anchors disagreeing with the BSim name | 0 |
 | Other existing names with a transferred name (kept) | 0 |
+| Earlier transferred names no longer given (reverted or replaced) | 2 |
 
 Changes:
 
-- function renamed (GB26_VTABLE): 380
-- function tag added: 436
-- plate comment added: 436
-- class namespace created: 15
-- function renamed (GB26_BSIM): 56
-- namespace created: 1
+- earlier transferred name replaced (GB26_BSIM): 1
+- plate comment removed: 1
+- earlier transferred name reverted to default (GB26_BSIM): 1
 
 ## Calibration
 
@@ -139,6 +137,13 @@ By significance (similarity >= 0.5 | similarity >= 0.7):
 - 0x00752650 `NiD3DDefaultShader::IsCurrentCombineMode` (bsim sim=0.907 sig=39.116 NiDX9Renderer26VC80R.dll 10001f20): 1 named callees, none called by the 2.6 function
 - 0x007688a0 `NiD3DShaderProgramFactory::RegisterShaderCreator` (bsim sim=0.776 sig=50.313 NiDX9Renderer26VC80R.dll 1001d980): 1 named callees, none called by the 2.6 function
 
+## Earlier transferred names withdrawn
+
+2 in total:
+
+- 0x007f0a00 `NiRenderer::DeleteAllMacros` renamed to `NiUnionBV::RemoveAllBoundingVolumes` (bsim sim=1.000 sig=64.769 NiCollision26VC80R.dll 10037130)
+- 0x006cbee0 `NiGPUProgramCache::NiGPUProgramDesc::`scalar_deleting_destructor'` (GB26_BSIM): vtable-class check: 2.6 virtual of `NiGPUProgramCache::NiGPUProgramDesc`, UOSA slot of 1 classes not derived from it (NiDepthStencilBuffer)
+
 ## Notes
 
 11 in total; first 8:
@@ -153,6 +158,6 @@ By significance (similarity >= 0.5 | similarity >= 0.7):
 - 2.6 `NiTLargeArray<NiPointer<NiObject>,NiTNewInterface<NiPointer<NiObject>_>_>` has several vtables; the first is used
 
 
-This run extended an earlier `--apply` (751 functions renamed from NiMain, NiDX9Renderer and NiSystem) with NiAnimation, NiParticle and NiCollision; status `unchanged` marks names from the earlier run. The vtable-class check now drops the earlier BSim name at `0x006cbee0` (`NiGPUProgramCache::NiGPUProgramDesc` destructor in a `NiDepthStencilBuffer` vtable); the script never removes names, so it stays in the program.
-A second `--apply` run on the result reported `Changes: none` (1185 functions `unchanged`).
-Full match list: `uosa_gamebryo_names.tsv` (UOSA address, name, 2.6 name, source tag, apply status, evidence, 2.6 prototype; then conflicts, rejected candidates and the per-class vtable mapping).
+This run refreshed the six-library `--apply`, which had renamed 436 more functions (380 vtable; 56 BSim) on top of the 751 of the three-library run. It withdrew the two earlier names that the current rules no longer give: `0x006cbee0` is back to its default name, and `0x007f0a00` is renamed to `NiUnionBV::RemoveAllBoundingVolumes`. Status `unchanged` in the match list marks names from the earlier runs.
+A second `--apply` run on the result reported `Changes: none` (1186 functions `unchanged`).
+Full match list: `uosa_gamebryo_names.tsv` (UOSA address, name, 2.6 name, source tag, apply status, evidence, 2.6 prototype; then conflicts, rejected candidates, withdrawn names and the per-class vtable mapping).

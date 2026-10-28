@@ -26,6 +26,7 @@ import ghidra.program.model.symbol.Reference;
 import ghidra.program.model.symbol.SourceType;
 import ghidra.program.model.symbol.Symbol;
 import ghidra.program.model.symbol.SymbolTable;
+import ghidra.program.model.symbol.SymbolUtilities;
 import ghidra.program.model.symbol.SymbolType;
 import java.io.PrintWriter;
 import java.nio.file.Files;
@@ -103,6 +104,13 @@ public class TransferGamebryoNames extends GhidraScript {
     private static final String TAG_BSIM = "GB26_BSIM";
     private static final String TAG_VTABLE_COMMENT = "Name transferred from a Gamebryo 2.6 vtable slot";
     private static final String TAG_BSIM_COMMENT = "Name transferred from Gamebryo 2.6 by BSim similarity";
+    // Plate comment as apply() writes it: PLATE_PREFIX + name, the 2.6 prototype, the evidence.
+    private static final String PLATE_PREFIX = "Gamebryo 2.6: ";
+    private static final String PLATE_SEPARATOR = "\n";
+    private static final int PLATE_LINES = 3;
+    private static final int PLATE_EVIDENCE_LINE = 2;
+    private static final String VTABLE_EVIDENCE = "vtable ";
+    private static final String BSIM_EVIDENCE = "bsim sim=";
     private static final String MANGLED_PREFIX = "?";
     private static final String ORDINAL_PREFIX = "Ordinal_";
     private static final String IMPORT_PREFIX = "__imp_";
@@ -199,11 +207,19 @@ public class TransferGamebryoNames extends GhidraScript {
     private final Map<String, List<String>> chainsU = new HashMap<>();
     private final Map<Program, Set<Long>> slots26 = new HashMap<>();
     private final List<String> classCheckRejected = new ArrayList<>();
+    // Why a BSim name of this run was dropped, by address; and earlier transferred names withdrawn.
+    private final Map<Long, String> dropReasons = new HashMap<>();
+    private final List<String> withdrawn = new ArrayList<>();
     // Names the call-graph check knows: anchors and this run's final names.
     private final Map<Long, String> known = new HashMap<>();
     private final Map<Program, Map<Long, List<Alias>>> aliasCache = new HashMap<>();
 
     public void run() throws Exception {
+        // Load the nested classes now: a script run elsewhere can rebuild the shared script bundle during
+        // this long run, and a class loaded only later would then be missing (NoClassDefFoundError).
+        for (Class<?> nested : getClass().getDeclaredClasses()) {
+            Class.forName(nested.getName(), true, getClass().getClassLoader());
+        }
         parseArgs(getScriptArgs());
         if (Files.exists(Path.of(settings.output))
                 || (settings.matches != null && Files.exists(Path.of(settings.matches)))) {
@@ -350,6 +366,7 @@ public class TransferGamebryoNames extends GhidraScript {
             if (other != null && other.longValue() != entry.getKey() && !vtableNames.containsKey(entry.getKey())) {
                 collisions.add(hex(entry.getKey()) + " BSim `" + entry.getValue().name + "`, vtable gives it to "
                     + hex(other));
+                dropReasons.put(entry.getKey(), "BSim name given by a vtable to " + hex(other));
                 finalNames.remove(entry.getKey());
             }
         }
@@ -369,6 +386,7 @@ public class TransferGamebryoNames extends GhidraScript {
             if (classConflict != null) {
                 classCheckRejected.add(hex(entry.getKey()) + " `" + entry.getValue().name + "` ("
                     + entry.getValue().evidence + "): " + classConflict);
+                dropReasons.put(entry.getKey(), "vtable-class check: " + classConflict);
                 finalNames.remove(entry.getKey());
                 continue;
             }
@@ -385,6 +403,8 @@ public class TransferGamebryoNames extends GhidraScript {
                 callgraphStats.merge("no named callee agrees (dropped)", 1, Integer::sum);
                 callgraphRejected.add(hex(entry.getKey()) + " `" + entry.getValue().name + "` (" + entry.getValue().evidence
                     + "): " + checkable + " named callees, none called by the 2.6 function");
+                dropReasons.put(entry.getKey(), "call-graph check: " + checkable
+                    + " named callees, none called by the 2.6 function");
                 finalNames.remove(entry.getKey());
             }
         }
@@ -434,6 +454,7 @@ public class TransferGamebryoNames extends GhidraScript {
                 }
             }
         }
+        withdraw(finalNames, bsimRejected);
 
         writeReport(sources, vtableNames, vtableConflicts, vtableClasses, vtableStats, bsimNames, bsimRejected, bsimStats,
             targets, sourceFunctions, finalNames, sourceAgreements, sourceDisagreements, collisions, anchors,
@@ -578,7 +599,7 @@ public class TransferGamebryoNames extends GhidraScript {
                     proposal.name = chosen.full();
                     proposal.alias = chosen;
                     proposal.prototype = prototype(class26.vtable.program, class26.vtable.slots.get(slot), chosen);
-                    proposal.evidence = "vtable " + classU.name + " slot " + slot;
+                    proposal.evidence = VTABLE_EVIDENCE + classU.name + " slot " + slot;
                     votes.get(target).put(chosen.full(), proposal);
                 }
                 proposal.votes++;
@@ -1041,7 +1062,7 @@ public class TransferGamebryoNames extends GhidraScript {
             proposal.alias = source.alias;
             proposal.prototype = prototype(source.program, source.function.getEntryPoint().getOffset(), source.alias);
             proposal.source = source.function;
-            proposal.evidence = "bsim sim=" + format(target.bestSim) + " sig=" + format(target.bestSig) + " "
+            proposal.evidence = BSIM_EVIDENCE + format(target.bestSim) + " sig=" + format(target.bestSig) + " "
                 + source.program.getName() + " " + source.function.getEntryPoint();
             names.put(address, proposal);
             accepted++;
@@ -1212,22 +1233,26 @@ public class TransferGamebryoNames extends GhidraScript {
         Function function = getFunctionAt(toAddr(address));
         String status;
         if (function.getSymbol().getSource() == SourceType.DEFAULT) {
-            Namespace namespace = currentProgram.getGlobalNamespace();
-            SymbolTable symbols = currentProgram.getSymbolTable();
-            for (NsElem elem : proposal.alias.path()) {
-                Namespace next = symbols.getNamespace(elem.name(), namespace);
-                if (next == null) {
-                    next = elem.isClass() ? symbols.createClass(namespace, elem.name(), SourceType.ANALYSIS)
-                        : symbols.createNameSpace(namespace, elem.name(), SourceType.ANALYSIS);
-                    count(elem.isClass() ? "class namespace created" : "namespace created");
-                }
-                namespace = next;
-            }
-            function.getSymbol().setNameAndNamespace(proposal.alias.method(), namespace, SourceType.ANALYSIS);
+            function.getSymbol().setNameAndNamespace(proposal.alias.method(), namespaceFor(proposal.alias),
+                SourceType.ANALYSIS);
             count("function renamed (" + tag + ")");
             status = "renamed";
         } else if (isOurs(function) && function.getName(true).equals(proposal.name)) {
             status = "unchanged";
+        } else if (earlierTransfer(function) != null) {
+            // Our own earlier name, which the current rules replace.
+            String earlier = function.getName(true);
+            String plate = function.getComment();
+            function.getSymbol().setNameAndNamespace(proposal.alias.method(), namespaceFor(proposal.alias),
+                SourceType.ANALYSIS);
+            removeOurTags(function);
+            function.addTag(tag);
+            if (isScriptPlate(plate)) {
+                function.setComment(plate(proposal));
+            }
+            count("earlier transferred name replaced (" + tag + ")");
+            withdrawn.add(hex(address) + " `" + earlier + "` renamed to `" + proposal.name + "` (" + proposal.evidence + ")");
+            return "renamed (was " + earlier + ")";
         } else {
             return function.getName(true).equals(proposal.name) ? "kept (already named)" : "kept (existing name)";
         }
@@ -1237,10 +1262,109 @@ public class TransferGamebryoNames extends GhidraScript {
         }
         String plate = function.getComment();
         if (plate == null || plate.isBlank()) {
-            function.setComment("Gamebryo 2.6: " + proposal.name + "\n" + proposal.prototype + "\n" + proposal.evidence);
+            function.setComment(plate(proposal));
             count("plate comment added");
         }
         return status;
+    }
+
+    private Namespace namespaceFor(Alias alias) throws Exception {
+        Namespace namespace = currentProgram.getGlobalNamespace();
+        SymbolTable symbols = currentProgram.getSymbolTable();
+        for (NsElem elem : alias.path()) {
+            Namespace next = symbols.getNamespace(elem.name(), namespace);
+            if (next == null) {
+                next = elem.isClass() ? symbols.createClass(namespace, elem.name(), SourceType.ANALYSIS)
+                    : symbols.createNameSpace(namespace, elem.name(), SourceType.ANALYSIS);
+                count(elem.isClass() ? "class namespace created" : "namespace created");
+            }
+            namespace = next;
+        }
+        return namespace;
+    }
+
+    private static String plate(Proposal proposal) {
+        return PLATE_PREFIX + proposal.name + PLATE_SEPARATOR + proposal.prototype + PLATE_SEPARATOR + proposal.evidence;
+    }
+
+    // The name an earlier run transferred, if the function still carries it exactly: our tag, source
+    // ANALYSIS and a plate comment whose first line names it. Null otherwise.
+    private String earlierTransfer(Function function) {
+        String plate = function.getComment();
+        String name = function.getName(true);
+        return isOurs(function) && function.getSymbol().getSource() == SourceType.ANALYSIS && plate != null
+            && plate.split(PLATE_SEPARATOR, -1)[0].equals(PLATE_PREFIX + name) ? name : null;
+    }
+
+    // A plate comment exactly in the form apply() writes (no lines added or removed).
+    private static boolean isScriptPlate(String plate) {
+        if (plate == null || !plate.startsWith(PLATE_PREFIX)) {
+            return false;
+        }
+        String[] lines = plate.split(PLATE_SEPARATOR, -1);
+        return lines.length == PLATE_LINES && (lines[PLATE_EVIDENCE_LINE].startsWith(VTABLE_EVIDENCE)
+            || lines[PLATE_EVIDENCE_LINE].startsWith(BSIM_EVIDENCE));
+    }
+
+    private void removeOurTags(Function function) {
+        for (String tag : List.of(TAG_VTABLE, TAG_BSIM)) {
+            if (function.getTags().stream().anyMatch(t -> t.getName().equals(tag))) {
+                function.removeTag(tag);
+            }
+        }
+    }
+
+    // Earlier transferred names that the current rules no longer give: back to the default name, our
+    // tags removed, and the plate comment removed if it is still exactly ours. Only judged where this
+    // run covers the function: a GB26_BSIM name needs BSim on all sources and the function in the
+    // target ranges, a GB26_VTABLE name needs the vtable step.
+    private void withdraw(Map<Long, Proposal> finalNames, Map<Long, String> bsimRejected) throws Exception {
+        if (settings.maxSources != Integer.MAX_VALUE) {
+            notes.add("--max-sources given: earlier transferred names are not re-judged");
+            return;
+        }
+        AddressSet ranges = new AddressSet();
+        for (long[] range : settings.ranges) {
+            ranges.add(toAddr(range[0]), toAddr(range[1] - 1));
+        }
+        for (Function function : currentProgram.getFunctionManager().getFunctions(true)) {
+            long address = function.getEntryPoint().getOffset();
+            String name = earlierTransfer(function);
+            if (name == null) {
+                continue;
+            }
+            Proposal current = finalNames.get(address);
+            if (current != null) {
+                // With --apply, apply() has already replaced a different name.
+                if (!settings.apply && !current.name.equals(name)) {
+                    withdrawn.add(hex(address) + " `" + name + "` to be renamed to `" + current.name + "` ("
+                        + current.evidence + ")");
+                }
+                continue;
+            }
+            boolean bsimTag = function.getTags().stream().anyMatch(t -> t.getName().equals(TAG_BSIM));
+            boolean vtableTag = function.getTags().stream().anyMatch(t -> t.getName().equals(TAG_VTABLE));
+            if (bsimTag && !(settings.bsim && ranges.contains(function.getEntryPoint())) || vtableTag && !settings.vtable) {
+                continue;
+            }
+            String reason = dropReasons.containsKey(address) ? dropReasons.get(address)
+                : bsimRejected.containsKey(address) ? "BSim rejected: " + bsimRejected.get(address) : "no longer proposed";
+            String line = hex(address) + " `" + name + "` (" + (bsimTag ? TAG_BSIM : TAG_VTABLE) + "): " + reason;
+            if (settings.apply) {
+                String plate = function.getComment();
+                function.getSymbol().setNameAndNamespace(SymbolUtilities.getDefaultFunctionName(function.getEntryPoint()),
+                    currentProgram.getGlobalNamespace(), SourceType.DEFAULT);
+                removeOurTags(function);
+                if (isScriptPlate(plate)) {
+                    function.setComment(null);
+                    count("plate comment removed");
+                } else {
+                    line += "; plate comment kept (edited)";
+                }
+                count("earlier transferred name reverted to default (" + (bsimTag ? TAG_BSIM : TAG_VTABLE) + ")");
+            }
+            withdrawn.add(line);
+        }
     }
 
     // ---------------------------------------------------------------- report
@@ -1304,6 +1428,8 @@ public class TransferGamebryoNames extends GhidraScript {
             output.println("| Anchors agreeing with the BSim name | " + anchorAgreementsBsim.size() + " |");
             output.println("| Anchors disagreeing with the BSim name | " + anchorDisagreementsBsim.size() + " |");
             output.println("| Other existing names with a transferred name (kept) | " + existingOther + " |");
+            output.println("| Earlier transferred names no longer given (" + (settings.apply ? "reverted or replaced"
+                : "to revert or replace") + ") | " + withdrawn.size() + " |");
             output.println();
             if (!changes.isEmpty()) {
                 output.println("Changes:");
@@ -1325,6 +1451,7 @@ public class TransferGamebryoNames extends GhidraScript {
             examples(output, "BSim names dropped for a vtable collision", collisions, collisions.size());
             examples(output, "BSim names dropped by the vtable-class check", classCheckRejected, classCheckRejected.size());
             examples(output, "BSim names dropped by the call-graph check", callgraphRejected, callgraphRejected.size());
+            examples(output, "Earlier transferred names withdrawn", withdrawn, withdrawn.size());
             examples(output, "Anchor disagreements (vtable)", anchorDisagreementsVtable, anchorDisagreementsVtable.size());
             examples(output, "Anchor disagreements (BSim)", anchorDisagreementsBsim, anchorDisagreementsBsim.size());
             examples(output, "Notes", notes, notes.size());
@@ -1515,6 +1642,7 @@ public class TransferGamebryoNames extends GhidraScript {
             section(output, "BSim names dropped for vtable collisions", collisions);
             section(output, "BSim names dropped by the vtable-class check", classCheckRejected);
             section(output, "BSim names dropped by the call-graph check", callgraphRejected);
+            section(output, "earlier transferred names withdrawn", withdrawn);
             section(output, "anchor disagreements (vtable)", anchorDisagreementsVtable);
             section(output, "anchor disagreements (BSim)", anchorDisagreementsBsim);
             List<String> rejectedLines = new ArrayList<>();

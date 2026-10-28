@@ -8,22 +8,19 @@ Sources (/gamebryo26): `NiAnimation26VC80R.dll` (22363 data types), `NiCollision
 | Item | Count |
 |---|---:|
 | Class structures in `/Gamebryo` | 343 |
-| Unfilled placeholders | 296 |
-| Filled by an earlier run | 47 |
+| Unfilled placeholders | 200 |
+| Filled by an earlier run | 143 |
 | Edited by the user (kept) | 0 |
 | Other types in `/Gamebryo` | 1 |
 | No 2.6 structure in the sources | 67 |
-| Layout applied, exact size | 118 |
+| Layout applied, exact size | 117 |
 | Layout applied, inferred size | 25 |
 | Size mismatches | 50 |
 | No size evidence (no sized descendant) | 74 |
 | Rejected by consistency checks | 9 |
-| Earlier inferred layouts re-checked | 9 |
+| Excluded (2.6 layout contradicted by the 2.3 code) | 1 |
+| Earlier inferred layouts re-checked | 25 |
 | Earlier inferred layouts contradicted | 0 |
-| 2.6 types copied: structure | 26 |
-| 2.6 types copied: stub (pointer target, no members) | 13 |
-| 2.6 types copied: enum | 8 |
-| 2.6 members: existing types reused | 9 |
 
 ## Exact size
 
@@ -34,11 +31,10 @@ UOSA size from `CreateObject` equals the 2.6 size.
 | `NiDefaultAVObjectPalette` | 0x20 | `NiMain26VC80R.dll` | filled earlier |
 | `NiAlphaAccumulator` | 0x34 | `NiMain26VC80R.dll` | filled earlier |
 | `NiAdditionalGeometryData` | 0x28 | `NiMain26VC80R.dll` | filled earlier |
-| `NiBSplineBasisData` | 0x28 | `NiAnimation26VC80R.dll` | applied; base `NiObject` |
-| `NiBSplineData` | 0x18 | `NiAnimation26VC80R.dll` | applied; base `NiObject` |
-| `NiBoolData` | 0x18 | `NiAnimation26VC80R.dll` | applied; base `NiObject` |
-| `NiColorData` | 0x18 | `NiAnimation26VC80R.dll` | applied; base `NiObject` |
-| `NiControllerSequence` | 0x7c | `NiAnimation26VC80R.dll` | applied; base `NiObject` |
+| `NiBSplineBasisData` | 0x28 | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiBSplineData` | 0x18 | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiBoolData` | 0x18 | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiColorData` | 0x18 | `NiAnimation26VC80R.dll` | filled earlier |
 | `NiExtraData` | 0xc | `NiMain26VC80R.dll` | filled earlier |
 | `NiBinaryExtraData` | 0x14 | `NiMain26VC80R.dll` | filled earlier |
 | `NiBooleanExtraData` | 0x10 | `NiMain26VC80R.dll` | filled earlier |
@@ -50,34 +46,34 @@ UOSA size from `CreateObject` equals the 2.6 size.
 | `NiStringExtraData` | 0x10 | `NiMain26VC80R.dll` | filled earlier |
 | `NiStringsExtraData` | 0x14 | `NiMain26VC80R.dll` | filled earlier |
 | `NiSwitchStringExtraData` | 0x18 | `NiMain26VC80R.dll` | filled earlier |
-| `NiTextKeyExtraData` | 0x14 | `NiAnimation26VC80R.dll` | applied; base `NiExtraData` |
+| `NiTextKeyExtraData` | 0x14 | `NiAnimation26VC80R.dll` | filled earlier |
 | `NiVectorExtraData` | 0x1c | `NiMain26VC80R.dll` | filled earlier |
 | `NiVertWeightsExtraData` | 0xc | `NiMain26VC80R.dll` | filled earlier |
-| `NiFloatData` | 0x18 | `NiAnimation26VC80R.dll` | applied; base `NiObject` |
-| `NiBSplineFloatInterpolator` | 0x24 | `NiAnimation26VC80R.dll` | applied; base `NiBSplineInterpolator` |
-| `NiBSplineCompFloatInterpolator` | 0x2c | `NiAnimation26VC80R.dll` | applied; base `NiBSplineFloatInterpolator` |
-| `NiBSplinePoint3Interpolator` | 0x2c | `NiAnimation26VC80R.dll` | applied; base `NiBSplineInterpolator` |
-| `NiBSplineCompPoint3Interpolator` | 0x34 | `NiAnimation26VC80R.dll` | applied; base `NiBSplinePoint3Interpolator` |
-| `NiBSplineTransformInterpolator` | 0x48 | `NiAnimation26VC80R.dll` | applied; base `NiBSplineInterpolator` |
-| `NiBSplineCompTransformInterpolator` | 0x60 | `NiAnimation26VC80R.dll` | applied; base `NiBSplineTransformInterpolator` |
-| `NiBlendBoolInterpolator` | 0x34 | `NiAnimation26VC80R.dll` | applied; base `NiBlendInterpolator` |
-| `NiBlendColorInterpolator` | 0x44 | `NiAnimation26VC80R.dll` | applied; base `NiBlendInterpolator` |
-| `NiBlendFloatInterpolator` | 0x34 | `NiAnimation26VC80R.dll` | applied; base `NiBlendInterpolator` |
-| `NiBlendPoint3Interpolator` | 0x40 | `NiAnimation26VC80R.dll` | applied; base `NiBlendInterpolator` |
-| `NiBlendQuaternionInterpolator` | 0x40 | `NiAnimation26VC80R.dll` | applied; base `NiBlendInterpolator` |
-| `NiBlendTransformInterpolator` | 0x30 | `NiAnimation26VC80R.dll` | applied; base `NiBlendInterpolator` |
-| `NiBoolInterpolator` | 0x18 | `NiAnimation26VC80R.dll` | applied; base `NiKeyBasedInterpolator` |
-| `NiBoolTimelineInterpolator` | 0x20 | `NiAnimation26VC80R.dll` | applied; base `NiBoolInterpolator` |
-| `NiColorInterpolator` | 0x24 | `NiAnimation26VC80R.dll` | applied; base `NiKeyBasedInterpolator` |
-| `NiFloatInterpolator` | 0x18 | `NiAnimation26VC80R.dll` | applied; base `NiKeyBasedInterpolator` |
-| `NiPathInterpolator` | 0x5c | `NiAnimation26VC80R.dll` | applied; base `NiKeyBasedInterpolator` |
-| `NiPoint3Interpolator` | 0x20 | `NiAnimation26VC80R.dll` | applied; base `NiKeyBasedInterpolator` |
-| `NiQuaternionInterpolator` | 0x24 | `NiAnimation26VC80R.dll` | applied; base `NiKeyBasedInterpolator` |
-| `NiTransformInterpolator` | 0x3c | `NiAnimation26VC80R.dll` | applied; base `NiKeyBasedInterpolator` |
-| `NiLookAtInterpolator` | 0x44 | `NiAnimation26VC80R.dll` | applied; base `NiInterpolator` |
+| `NiFloatData` | 0x18 | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiBSplineFloatInterpolator` | 0x24 | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiBSplineCompFloatInterpolator` | 0x2c | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiBSplinePoint3Interpolator` | 0x2c | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiBSplineCompPoint3Interpolator` | 0x34 | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiBSplineTransformInterpolator` | 0x48 | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiBSplineCompTransformInterpolator` | 0x60 | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiBlendBoolInterpolator` | 0x34 | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiBlendColorInterpolator` | 0x44 | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiBlendFloatInterpolator` | 0x34 | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiBlendPoint3Interpolator` | 0x40 | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiBlendQuaternionInterpolator` | 0x40 | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiBlendTransformInterpolator` | 0x30 | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiBoolInterpolator` | 0x18 | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiBoolTimelineInterpolator` | 0x20 | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiColorInterpolator` | 0x24 | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiFloatInterpolator` | 0x18 | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiPathInterpolator` | 0x5c | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiPoint3Interpolator` | 0x20 | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiQuaternionInterpolator` | 0x24 | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiTransformInterpolator` | 0x3c | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiLookAtInterpolator` | 0x44 | `NiAnimation26VC80R.dll` | filled earlier |
 | `NiRangeLODData` | 0x28 | `NiMain26VC80R.dll` | filled earlier |
 | `NiScreenLODData` | 0x30 | `NiMain26VC80R.dll` | filled earlier |
-| `NiMorphData` | 0x18 | `NiAnimation26VC80R.dll` | applied; base `NiObject` |
+| `NiMorphData` | 0x18 | `NiAnimation26VC80R.dll` | filled earlier |
 | `NiAlphaProperty` | 0x1c | `NiMain26VC80R.dll` | filled earlier |
 | `NiDitherProperty` | 0x1c | `NiMain26VC80R.dll` | filled earlier |
 | `NiFogProperty` | 0x2c | `NiMain26VC80R.dll` | filled earlier |
@@ -91,64 +87,64 @@ UOSA size from `CreateObject` equals the 2.6 size.
 | `NiZBufferProperty` | 0x1c | `NiMain26VC80R.dll` | filled earlier |
 | `NiSourceTexture` | 0x44 | `NiMain26VC80R.dll` | filled earlier |
 | `NiSourceCubeMap` | 0x48 | `NiMain26VC80R.dll` | filled earlier |
-| `NiPSysEmitterCtlrData` | 0x28 | `NiParticle26VC80R.dll` | applied; base `NiObject` |
-| `NiPSysAgeDeathModifier` | 0x20 | `NiParticle26VC80R.dll` | applied; base `NiPSysModifier` |
-| `NiPSysBombModifier` | 0x38 | `NiParticle26VC80R.dll` | applied; base `NiPSysModifier` |
-| `NiPSysColliderManager` | 0x1c | `NiParticle26VC80R.dll` | applied; base `NiPSysModifier` |
-| `NiPSysDragModifier` | 0x34 | `NiParticle26VC80R.dll` | applied; base `NiPSysModifier` |
-| `NiPSysBoxEmitter` | 0x60 | `NiParticle26VC80R.dll` | applied; base `NiPSysVolumeEmitter` |
-| `NiPSysCylinderEmitter` | 0x5c | `NiParticle26VC80R.dll` | applied; base `NiPSysVolumeEmitter` |
-| `NiPSysSphereEmitter` | 0x58 | `NiParticle26VC80R.dll` | applied; base `NiPSysVolumeEmitter` |
-| `NiPSysGravityModifier` | 0x3c | `NiParticle26VC80R.dll` | applied; base `NiPSysModifier` |
-| `NiPSysGrowFadeModifier` | 0x28 | `NiParticle26VC80R.dll` | applied; base `NiPSysModifier` |
-| `NiPSysMeshUpdateModifier` | 0x28 | `NiParticle26VC80R.dll` | applied; base `NiPSysModifier` |
-| `NiPSysPositionModifier` | 0x18 | `NiParticle26VC80R.dll` | applied; base `NiPSysModifier` |
-| `NiPSysRotationModifier` | 0x38 | `NiParticle26VC80R.dll` | applied; base `NiPSysModifier` |
-| `NiPSysSpawnModifier` | 0x34 | `NiParticle26VC80R.dll` | applied; base `NiPSysModifier` |
+| `NiPSysEmitterCtlrData` | 0x28 | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysAgeDeathModifier` | 0x20 | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysBombModifier` | 0x38 | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysColliderManager` | 0x1c | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysDragModifier` | 0x34 | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysBoxEmitter` | 0x60 | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysCylinderEmitter` | 0x5c | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysSphereEmitter` | 0x58 | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysGravityModifier` | 0x3c | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysGrowFadeModifier` | 0x28 | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysMeshUpdateModifier` | 0x28 | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysPositionModifier` | 0x18 | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysRotationModifier` | 0x38 | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysSpawnModifier` | 0x34 | `NiParticle26VC80R.dll` | filled earlier |
 | `NiPalette` | 0x24 | `NiMain26VC80R.dll` | filled earlier |
 | `NiPersistentSrcTextureRendererData` | 0x8c | `NiMain26VC80R.dll` | filled earlier |
 | `NiPixelData` | 0x70 | `NiMain26VC80R.dll` | filled earlier |
-| `NiPosData` | 0x18 | `NiAnimation26VC80R.dll` | applied; base `NiObject` |
-| `NiRotData` | 0x18 | `NiAnimation26VC80R.dll` | applied; base `NiObject` |
+| `NiPosData` | 0x18 | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiRotData` | 0x18 | `NiAnimation26VC80R.dll` | filled earlier |
 | `NiScreenPolygon` | 0x1c | `NiMain26VC80R.dll` | filled earlier |
 | `NiShadowGenerator` | 0x68 | `NiMain26VC80R.dll` | filled earlier |
 | `NiSkinData` | 0x48 | `NiMain26VC80R.dll` | filled earlier |
 | `NiSkinPartition` | 0x10 | `NiMain26VC80R.dll` | filled earlier |
-| `NiStringPalette` | 0x14 | `NiAnimation26VC80R.dll` | applied; base `NiObject` |
-| `NiBoneLODController` | 0x68 | `NiAnimation26VC80R.dll` | applied; base `NiTimeController` |
-| `NiGeomMorpherController` | 0x44 | `NiAnimation26VC80R.dll` | applied; base `NiInterpController` |
-| `NiVisController` | 0x38 | `NiAnimation26VC80R.dll` | applied; base `NiBoolInterpController` |
-| `NiColorExtraDataController` | 0x40 | `NiAnimation26VC80R.dll` | applied; base `NiExtraDataController` |
-| `NiFloatExtraDataController` | 0x40 | `NiAnimation26VC80R.dll` | applied; base `NiExtraDataController` |
-| `NiFloatsExtraDataController` | 0x48 | `NiAnimation26VC80R.dll` | applied; base `NiExtraDataController` |
-| `NiFloatsExtraDataPoint3Controller` | 0x48 | `NiAnimation26VC80R.dll` | applied; base `NiExtraDataController` |
-| `NiFlipController` | 0x54 | `NiAnimation26VC80R.dll` | applied; base `NiFloatInterpController` |
-| `NiLightDimmerController` | 0x38 | `NiAnimation26VC80R.dll` | applied; base `NiFloatInterpController` |
-| `NiTextureTransformController` | 0x50 | `NiAnimation26VC80R.dll` | applied; base `NiFloatInterpController` |
-| `NiPSysModifierActiveCtlr` | 0x40 | `NiParticle26VC80R.dll` | applied; base `NiPSysModifierBoolCtlr` |
-| `NiPSysAirFieldAirFrictionCtlr` | 0x40 | `NiParticle26VC80R.dll` | applied; base `NiPSysModifierFloatCtlr` |
-| `NiPSysAirFieldInheritVelocityCtlr` | 0x40 | `NiParticle26VC80R.dll` | applied; base `NiPSysModifierFloatCtlr` |
-| `NiPSysAirFieldSpreadCtlr` | 0x40 | `NiParticle26VC80R.dll` | applied; base `NiPSysModifierFloatCtlr` |
-| `NiPSysEmitterDeclinationCtlr` | 0x40 | `NiParticle26VC80R.dll` | applied; base `NiPSysModifierFloatCtlr` |
-| `NiPSysEmitterDeclinationVarCtlr` | 0x40 | `NiParticle26VC80R.dll` | applied; base `NiPSysModifierFloatCtlr` |
-| `NiPSysEmitterInitialRadiusCtlr` | 0x40 | `NiParticle26VC80R.dll` | applied; base `NiPSysModifierFloatCtlr` |
-| `NiPSysEmitterLifeSpanCtlr` | 0x40 | `NiParticle26VC80R.dll` | applied; base `NiPSysModifierFloatCtlr` |
-| `NiPSysEmitterPlanarAngleCtlr` | 0x40 | `NiParticle26VC80R.dll` | applied; base `NiPSysModifierFloatCtlr` |
-| `NiPSysEmitterPlanarAngleVarCtlr` | 0x40 | `NiParticle26VC80R.dll` | applied; base `NiPSysModifierFloatCtlr` |
-| `NiPSysEmitterSpeedCtlr` | 0x40 | `NiParticle26VC80R.dll` | applied; base `NiPSysModifierFloatCtlr` |
-| `NiPSysFieldAttenuationCtlr` | 0x40 | `NiParticle26VC80R.dll` | applied; base `NiPSysModifierFloatCtlr` |
-| `NiPSysFieldMagnitudeCtlr` | 0x40 | `NiParticle26VC80R.dll` | applied; base `NiPSysModifierFloatCtlr` |
-| `NiPSysFieldMaxDistanceCtlr` | 0x40 | `NiParticle26VC80R.dll` | applied; base `NiPSysModifierFloatCtlr` |
-| `NiPSysGravityStrengthCtlr` | 0x40 | `NiParticle26VC80R.dll` | applied; base `NiPSysModifierFloatCtlr` |
-| `NiPSysInitialRotAngleCtlr` | 0x40 | `NiParticle26VC80R.dll` | applied; base `NiPSysModifierFloatCtlr` |
-| `NiPSysInitialRotAngleVarCtlr` | 0x40 | `NiParticle26VC80R.dll` | applied; base `NiPSysModifierFloatCtlr` |
-| `NiPSysInitialRotSpeedCtlr` | 0x40 | `NiParticle26VC80R.dll` | applied; base `NiPSysModifierFloatCtlr` |
-| `NiPSysInitialRotSpeedVarCtlr` | 0x40 | `NiParticle26VC80R.dll` | applied; base `NiPSysModifierFloatCtlr` |
-| `NiLightColorController` | 0x3c | `NiAnimation26VC80R.dll` | applied; base `NiPoint3InterpController` |
-| `NiMaterialColorController` | 0x3c | `NiAnimation26VC80R.dll` | applied; base `NiPoint3InterpController` |
-| `NiTransformController` | 0x38 | `NiAnimation26VC80R.dll` | applied; base `NiSingleInterpController` |
-| `NiPSysUpdateCtlr` | 0x34 | `NiParticle26VC80R.dll` | applied; base `NiTimeController` |
-| `NiTransformData` | 0x38 | `NiAnimation26VC80R.dll` | applied; base `NiObject` |
+| `NiStringPalette` | 0x14 | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiBoneLODController` | 0x68 | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiGeomMorpherController` | 0x44 | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiVisController` | 0x38 | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiColorExtraDataController` | 0x40 | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiFloatExtraDataController` | 0x40 | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiFloatsExtraDataController` | 0x48 | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiFloatsExtraDataPoint3Controller` | 0x48 | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiFlipController` | 0x54 | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiLightDimmerController` | 0x38 | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiTextureTransformController` | 0x50 | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiPSysModifierActiveCtlr` | 0x40 | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysAirFieldAirFrictionCtlr` | 0x40 | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysAirFieldInheritVelocityCtlr` | 0x40 | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysAirFieldSpreadCtlr` | 0x40 | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysEmitterDeclinationCtlr` | 0x40 | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysEmitterDeclinationVarCtlr` | 0x40 | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysEmitterInitialRadiusCtlr` | 0x40 | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysEmitterLifeSpanCtlr` | 0x40 | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysEmitterPlanarAngleCtlr` | 0x40 | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysEmitterPlanarAngleVarCtlr` | 0x40 | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysEmitterSpeedCtlr` | 0x40 | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysFieldAttenuationCtlr` | 0x40 | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysFieldMagnitudeCtlr` | 0x40 | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysFieldMaxDistanceCtlr` | 0x40 | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysGravityStrengthCtlr` | 0x40 | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysInitialRotAngleCtlr` | 0x40 | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysInitialRotAngleVarCtlr` | 0x40 | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysInitialRotSpeedCtlr` | 0x40 | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysInitialRotSpeedVarCtlr` | 0x40 | `NiParticle26VC80R.dll` | filled earlier |
+| `NiLightColorController` | 0x3c | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiMaterialColorController` | 0x3c | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiTransformController` | 0x38 | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiPSysUpdateCtlr` | 0x34 | `NiParticle26VC80R.dll` | filled earlier |
+| `NiTransformData` | 0x38 | `NiAnimation26VC80R.dll` | filled earlier |
 
 ## Inferred size
 
@@ -160,27 +156,27 @@ No `CreateObject`; the 2.6 size lies within the recorded bounds (the upper bound
 | `NiAVObjectPalette` | >= 0x4, <= 0x20 | 0x8 | 1 of 1 fit, 0 of this size | `NiMain26VC80R.dll` | filled earlier |
 | `NiAccumulator` | >= 0x4, <= 0x34 | 0xc | 1 of 1 fit, 0 of this size | `NiMain26VC80R.dll` | filled earlier |
 | `NiBackToFrontAccumulator` | >= 0x4, <= 0x34 | 0x30 | 1 of 1 fit, 0 of this size | `NiMain26VC80R.dll` | filled earlier |
-| `NiInterpolator` | >= 0x4, <= 0x18 | 0xc | 21 of 23 fit, 0 of this size | `NiAnimation26VC80R.dll` | applied; base `NiObject` |
-| `NiBSplineInterpolator` | >= 0x4, <= 0x24 | 0x1c | 6 of 8 fit, 0 of this size | `NiAnimation26VC80R.dll` | applied; base `NiInterpolator` |
-| `NiBlendInterpolator` | >= 0x4, <= 0x30 | 0x30 | 6 of 6 fit, 1 of this size | `NiAnimation26VC80R.dll` | applied; base `NiInterpolator` |
-| `NiKeyBasedInterpolator` | >= 0x4, <= 0x18 | 0xc | 8 of 8 fit, 0 of this size | `NiAnimation26VC80R.dll` | applied; base `NiInterpolator` |
+| `NiInterpolator` | >= 0x4, <= 0x18 | 0xc | 21 of 23 fit, 0 of this size | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiBSplineInterpolator` | >= 0x4, <= 0x24 | 0x1c | 6 of 8 fit, 0 of this size | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiBlendInterpolator` | >= 0x4, <= 0x30 | 0x30 | 6 of 6 fit, 1 of this size | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiKeyBasedInterpolator` | >= 0x4, <= 0x18 | 0xc | 8 of 8 fit, 0 of this size | `NiAnimation26VC80R.dll` | filled earlier |
 | `NiLODData` | >= 0x4, <= 0x28 | 0x8 | 2 of 2 fit, 0 of this size | `NiMain26VC80R.dll` | filled earlier |
 | `NiObjectNET` | >= 0x4, <= 0x18 | 0x18 | 13 of 34 fit, 1 of this size | `NiMain26VC80R.dll` | filled earlier |
 | `NiProperty` | >= 0x4, <= 0x18 | 0x18 | 11 of 12 fit, 1 of this size | `NiMain26VC80R.dll` | filled earlier |
 | `NiTexture` | >= 0x4, <= 0x44 | 0x30 | 2 of 2 fit, 0 of this size | `NiMain26VC80R.dll` | filled earlier |
-| `NiPSysModifier` | >= 0x4, <= 0x18 | 0x18 | 13 of 22 fit, 1 of this size | `NiParticle26VC80R.dll` | applied; base `NiObject` |
-| `NiPSysEmitter` | >= 0x4, <= 0x58 | 0x50 | 3 of 4 fit, 0 of this size | `NiParticle26VC80R.dll` | applied; base `NiPSysModifier` |
-| `NiPSysVolumeEmitter` | >= 0x4, <= 0x58 | 0x54 | 3 of 3 fit, 0 of this size | `NiParticle26VC80R.dll` | applied; base `NiPSysEmitter` |
+| `NiPSysModifier` | >= 0x4, <= 0x18 | 0x18 | 13 of 22 fit, 1 of this size | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysEmitter` | >= 0x4, <= 0x58 | 0x50 | 3 of 4 fit, 0 of this size | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysVolumeEmitter` | >= 0x4, <= 0x58 | 0x54 | 3 of 3 fit, 0 of this size | `NiParticle26VC80R.dll` | filled earlier |
 | `NiTimeController` | >= 0x4, <= 0x34 | 0x34 | 33 of 37 fit, 1 of this size | `NiMain26VC80R.dll` | filled earlier |
-| `NiInterpController` | >= 0x4, <= 0x38 | 0x34 | 31 of 33 fit, 0 of this size | `NiAnimation26VC80R.dll` | applied; base `NiTimeController` |
-| `NiSingleInterpController` | >= 0x4, <= 0x38 | 0x38 | 30 of 31 fit, 3 of this size | `NiAnimation26VC80R.dll` | applied; base `NiInterpController` |
-| `NiBoolInterpController` | >= 0x4, <= 0x38 | 0x38 | 1 of 1 fit, 1 of this size | `NiAnimation26VC80R.dll` | applied; base `NiSingleInterpController` |
-| `NiExtraDataController` | >= 0x4, <= 0x40 | 0x40 | 4 of 4 fit, 2 of this size | `NiAnimation26VC80R.dll` | applied; base `NiSingleInterpController` |
-| `NiFloatInterpController` | >= 0x4, <= 0x38 | 0x38 | 3 of 3 fit, 1 of this size | `NiAnimation26VC80R.dll` | applied; base `NiSingleInterpController` |
-| `NiPSysModifierCtlr` | >= 0x4, <= 0x40 | 0x40 | 19 of 20 fit, 19 of this size | `NiParticle26VC80R.dll` | applied; base `NiSingleInterpController` |
-| `NiPSysModifierBoolCtlr` | >= 0x4, <= 0x40 | 0x40 | 1 of 1 fit, 1 of this size | `NiParticle26VC80R.dll` | applied; base `NiPSysModifierCtlr` |
-| `NiPSysModifierFloatCtlr` | >= 0x4, <= 0x40 | 0x40 | 18 of 18 fit, 18 of this size | `NiParticle26VC80R.dll` | applied; base `NiPSysModifierCtlr` |
-| `NiPoint3InterpController` | >= 0x4, <= 0x3c | 0x38 | 2 of 2 fit, 0 of this size | `NiAnimation26VC80R.dll` | applied; base `NiSingleInterpController` |
+| `NiInterpController` | >= 0x4, <= 0x38 | 0x34 | 31 of 33 fit, 0 of this size | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiSingleInterpController` | >= 0x4, <= 0x38 | 0x38 | 30 of 31 fit, 3 of this size | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiBoolInterpController` | >= 0x4, <= 0x38 | 0x38 | 1 of 1 fit, 1 of this size | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiExtraDataController` | >= 0x4, <= 0x40 | 0x40 | 4 of 4 fit, 2 of this size | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiFloatInterpController` | >= 0x4, <= 0x38 | 0x38 | 3 of 3 fit, 1 of this size | `NiAnimation26VC80R.dll` | filled earlier |
+| `NiPSysModifierCtlr` | >= 0x4, <= 0x40 | 0x40 | 19 of 20 fit, 19 of this size | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysModifierBoolCtlr` | >= 0x4, <= 0x40 | 0x40 | 1 of 1 fit, 1 of this size | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPSysModifierFloatCtlr` | >= 0x4, <= 0x40 | 0x40 | 18 of 18 fit, 18 of this size | `NiParticle26VC80R.dll` | filled earlier |
+| `NiPoint3InterpController` | >= 0x4, <= 0x3c | 0x38 | 2 of 2 fit, 0 of this size | `NiAnimation26VC80R.dll` | filled earlier |
 
 ## Earlier inferred layouts re-checked
 
@@ -192,11 +188,27 @@ Structures an earlier run filled with an inferred size, evaluated again against 
 | `NiAVObjectPalette` | 0x8 | 1 of 1 fit, 0 of this size | consistent |
 | `NiAccumulator` | 0xc | 1 of 1 fit, 0 of this size | consistent |
 | `NiBackToFrontAccumulator` | 0x30 | 1 of 1 fit, 0 of this size | consistent |
+| `NiInterpolator` | 0xc | 21 of 23 fit, 0 of this size | consistent |
+| `NiBSplineInterpolator` | 0x1c | 6 of 8 fit, 0 of this size | consistent |
+| `NiBlendInterpolator` | 0x30 | 6 of 6 fit, 1 of this size | consistent |
+| `NiKeyBasedInterpolator` | 0xc | 8 of 8 fit, 0 of this size | consistent |
 | `NiLODData` | 0x8 | 2 of 2 fit, 0 of this size | consistent |
 | `NiObjectNET` | 0x18 | 13 of 34 fit, 1 of this size | consistent |
 | `NiProperty` | 0x18 | 11 of 12 fit, 1 of this size | consistent |
 | `NiTexture` | 0x30 | 2 of 2 fit, 0 of this size | consistent |
+| `NiPSysModifier` | 0x18 | 13 of 22 fit, 1 of this size | consistent |
+| `NiPSysEmitter` | 0x50 | 3 of 4 fit, 0 of this size | consistent |
+| `NiPSysVolumeEmitter` | 0x54 | 3 of 3 fit, 0 of this size | consistent |
 | `NiTimeController` | 0x34 | 33 of 37 fit, 1 of this size | consistent |
+| `NiInterpController` | 0x34 | 31 of 33 fit, 0 of this size | consistent |
+| `NiSingleInterpController` | 0x38 | 30 of 31 fit, 3 of this size | consistent |
+| `NiBoolInterpController` | 0x38 | 1 of 1 fit, 1 of this size | consistent |
+| `NiExtraDataController` | 0x40 | 4 of 4 fit, 2 of this size | consistent |
+| `NiFloatInterpController` | 0x38 | 3 of 3 fit, 1 of this size | consistent |
+| `NiPSysModifierCtlr` | 0x40 | 19 of 20 fit, 19 of this size | consistent |
+| `NiPSysModifierBoolCtlr` | 0x40 | 1 of 1 fit, 1 of this size | consistent |
+| `NiPSysModifierFloatCtlr` | 0x40 | 18 of 18 fit, 18 of this size | consistent |
+| `NiPoint3InterpController` | 0x38 | 2 of 2 fit, 0 of this size | consistent |
 
 ## Size mismatches
 
@@ -348,6 +360,16 @@ No `CreateObject` and no sized descendant, so the bounds are only a lower bound;
 | `NiPSysCollider` | >= 0x4, <= 0xb0 | 0x1c | none of the 2 sized descendants with a 2.6 type fits |
 | `NiPSysFieldModifier` | >= 0x4, <= 0x34 | 0x2c | none of the 6 sized descendants with a 2.6 type fits |
 
+## Excluded
+
+Listed in the script's `EXCLUDED`: the 2.3 code contradicts the 2.6 layout although the sizes fit. Never filled; a structure still exactly as this script filled it is restored to the `GamebryoClasses.java` placeholder, and the copied types only it referenced are removed.
+
+| Class | Reason | Result |
+|---|---|---|
+| `NiControllerSequence` | 2.3 constructor 0x00799810 stores an embedded array at +0x48 where 2.6 has m_fWeightedLastTime | restored the placeholder |
+
+Copied types removed (no other reference): `/Gamebryo26/NiAnimState`, `/Gamebryo26/NiPointer<NiControllerSequence>`, `/Gamebryo26/NiPointer<NiPoseBuffer>`, `/Gamebryo26/NiPointer<NiScratchPad>`, `/Gamebryo26/NiPointer<NiSequenceData>`, `/Gamebryo26/NiPointer<NiTextKeyExtraData>`, `/Gamebryo26/NiPoseBuffer`, `/Gamebryo26/NiScratchPad`, `/Gamebryo26/NiSequenceData`, `/Gamebryo26/NiTPrimitiveArray<NiSequenceData::ActivationCallback_*>`, `/Gamebryo26/NiTimeController/CycleType`
+
 ## No 2.6 structure in the sources
 
 `ShaderOverrideSorter`, `UOShaderOverrideSorter`, `MythicShadowGenerator`, `NiBlendAccumTransformInterpolator`, `MythicAmbientLight`, `MythicDirectionalLight`, `MythicPointLight`, `CachingTriShape`, `FoliageTriShape`, `MobAnimTriShape`, `MobAnimTriShapeShadow`, `ParticleTriShape`, `SpriteTriShape`, `TerrainTriShape`, `UOCollisionNode`, `UOObjectCollisionNode`, `UOStencilCollisionNode`, `UOTerrainCollisionNode`, `WeaponTrailTriShape`, `Effect`, `DynamicEffect`, `WeaponTrailEffect`, `EmitterEffect`, `GenericShaderTexturingProperty`, `UOTerrainTexturingProperty`, `MobAnimTexture`, `NiGeomMorpherUpdateTask`, `NiPSysUpdateTask`, `NiFloatController`, `NiRollController`, `NiLookAtController`, `NiPathController`, `MythicBaseShader`, `ColorShader`, `DepthOnlyShader`, `LightingShader`, `AtlasTerrainShader`, `GameTerrainShader`, `GenericShader`, `WarhammerCharacterShader`, `WarhammerFixtureBlendShader`, `WarhammerFixtureShader`, `NewWaterShader`, `ShadowMapShader`, `SimpleFFP`, `UIDecalShader`, `UiShader`, `VCAlphaTextureBlendShader`, `UOBaseShader`, `UODeathShaderFFP`, `UODeathShaderHLSL`, `UOEffectsShaderFFP`, `UOEffectsShaderHLSL`, `UOFadeShader`, `UOLightingShader`, `UONightMapShader`, `UOShadowShader`, `UOSpriteShaderDepthOnly`, `UOSpriteShaderFFP`, `UOSpriteShaderMob`, `UOSpriteShaderHLSL`, `UOSpriteShaderShadow`, `UOSpriteUIShaderFFP`, `UOSpriteUIShaderHLSL`, `UOStaticTerrainShader`, `UOTerrainShader`, `UOWaterShader`
@@ -366,5 +388,8 @@ None.
 
 ## Applied changes
 
-- class structures filled: 96
-- 2.6 types copied to `/Gamebryo26`: 47
+- class structures filled: 0
+- 2.6 types copied to `/Gamebryo26`: 0
+- class structures restored to the placeholder: 1
+- copied types removed: 11
+- empty copy categories removed: 1
