@@ -1,0 +1,53 @@
+# Perspective lens and baked isometric art
+
+The follow perspective camera previously multiplied its orbit Y by
+`ORTHO_WIDTH_SCALE_FACTOR` (1.79), while the orthographic camera applies that
+factor to the projection's vertical extent. These operations are not equivalent.
+The former changes pitch from the art view's approximately 35.26 degrees to
+approximately 51.69 degrees. Ground anchors then move farther apart on screen
+relative to upright sprite pixels, exposing striped gaps between thatched roof
+pieces at map 0 (2518,561).
+
+A temporary perspective-only raster-depth diagnostic retained the stripes and
+clipped foliage. Changing sprite painter priority therefore did not address
+the primary geometry mismatch. That shader experiment was removed.
+
+`camera/perspective.rs` now provides a custom Bevy projection with the existing
+narrow perspective FOV, near/far limits, and vertical lens stretch. The follow
+camera uses the isometric orbit direction while retaining the previous orbit
+distance, preserving horizontal zoom framing. Terrain and art share the lens;
+no sprite-only scale, synthetic depth replacement or coordinate-specific roof
+rule is involved. Orthographic projection and upright-art painter priority are unchanged.
+
+The projection's frustum corners use the inverse vertical stretch. Off-center
+subviews scale the lens coefficient without scaling the crop-center offset.
+Bevy's viewport/world conversion and visibility therefore use the same matrix
+as rendering. Projection switching uses `Projection::is_perspective()` so the
+custom perspective can return to orthographic through the existing control.
+
+The camera regression checks perspective classification, all eight projected
+frustum corners, and off-center subview coordinates against full-view pixel
+cropping. Native Desktop-4 captures show continuous thatched roofs with bridge,
+town and foliage controls. Initial black captures during compilation of the new
+pipeline are rejected; accepted captures use the `perspective-lens-settled-`
+prefix in `/tmp/uodynamapper-ec-followup/`. This fixes the demonstrated pitch
+mismatch, not arbitrary free-camera fidelity for art authored as 2D sprites.
+
+## CC ground control and map arrival
+
+The CC control exposed triangular road holes under perspective. Dry 44×44
+background/surface diamonds previously retained upright, constant painter depth
+against terrain's per-fragment depth. Zero-height, non-roof/non-foliage/non-Bridge
+diamonds now use the existing diagonal flat-quad path only when all four resident
+map corners equal the static's Z. Raised or sloped surfaces and larger sprites
+retain their previous path; water keeps its separate existing rule.
+
+This check initially did nothing: the static chunk was cached before its map
+metadata arrived. `TileAtlas.content_revision` now invalidates the static cache
+when map data changes or mappings clear. Identical block uploads leave the
+revision unchanged. The dependency also serves EC static/map boundary coverage.
+It prevents a launch/teleport race from permanently retaining an unresolved
+ground classification. No per-frame material mutation or package read is added.
+
+Native `perspective-ground-resident-enhanced-cc-` captures demonstrate continuous
+roads, bridge and town controls. Temporary routing instrumentation was removed.

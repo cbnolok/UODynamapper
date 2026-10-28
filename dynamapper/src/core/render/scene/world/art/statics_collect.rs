@@ -328,6 +328,17 @@ fn cc_static_tile_renders_flat(
     tilemeta.is_some_and(|meta| meta.flags & TILE_FLAG_WET != 0)
 }
 
+// A tile-sized dry ground diamond also needs terrain depth, rather than the
+// upright sprite's constant painter depth. Roofs, volume and raised/sloped
+// surfaces retain their authored billboard path.
+fn cc_ground_diamond(tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>, width: f32, height: f32) -> bool {
+    tilemeta.is_some_and(|meta| meta.height == 0
+        && meta.flags & (TILE_FLAG_BACKGROUND | TILE_FLAG_SURFACE) == (TILE_FLAG_BACKGROUND | TILE_FLAG_SURFACE)
+        && meta.flags & (TILE_FLAG_WET | TILE_FLAG_ROOF | TILE_FLAG_FOLIAGE | TILE_FLAG_BRIDGE) == 0
+        && !meta.is_nodraw())
+        && width == CC_TILE_PIXEL_WIDTH && height == CC_TILE_PIXEL_WIDTH
+}
+
 fn ec_static_camera_quad(tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>) -> bool {
     tilemeta.is_some_and(|meta| meta.flags & EC_CAMERA_QUAD_FLAG != 0)
 }
@@ -985,6 +996,7 @@ struct StaticChunkCacheConfig {
     art_source: Option<ClientTextureSource>,
     sprite_atlas_mapping_revision: u64,
     ground_atlas_mapping_revision: u64,
+    land_metadata_revision: u64,
     static_art_local_light_signature: Option<u64>,
 }
 
@@ -1795,6 +1807,7 @@ fn static_chunk_cache_config(
     sprite_atlas: &SpriteArtPageAtlas,
     ground_atlas: &GroundArtPageAtlas,
     static_lights: &super::static_lights::RenderStaticLightInstances,
+    tile_atlas: &TileAtlas,
 ) -> StaticChunkCacheConfig {
     StaticChunkCacheConfig {
         map_id: frame.map_id,
@@ -1802,6 +1815,7 @@ fn static_chunk_cache_config(
         art_source: frame.art_source,
         sprite_atlas_mapping_revision: sprite_atlas.0.mapping_revision(),
         ground_atlas_mapping_revision: ground_atlas.0.mapping_revision(),
+        land_metadata_revision: tile_atlas.content_revision,
         static_art_local_light_signature: frame
             .static_art_local_lights
             .then(|| static_light_signature(static_lights, frame.map_id)),
@@ -2219,8 +2233,16 @@ fn emit_art_static_tile(
     // Gate on IsWet only (cc_static_tile_renders_flat), NOT the broad static_tile_is_surface_like:
     // the latter also matches non-water "surface-like" tiles (floors, elevated roofs) which are
     // upright CC sprite art and must stay billboards. See cc_static_tile_renders_flat.
+    // Separately admit tile-sized dry diamonds only on a resident, level map cell.
     let cc_surface_like_flat = matches!(art_source, ClientTextureSource::Cc)
-        && cc_static_tile_renders_flat(info.tilemeta);
+        && (cc_static_tile_renders_flat(info.tilemeta)
+            || resolved_sprite.as_ref().is_some_and(|sprite| {
+                cc_ground_diamond(info.tilemeta, sprite.logical_width, sprite.logical_height)
+                    && [(0, 0), (1, 0), (0, 1), (1, 1)].into_iter().all(|(dx, dy)| {
+                        super::static_surface::map_height(resources.tile_atlas,
+                            info.tile.world_x as u32 + dx, info.tile.world_z as u32 + dy) == Some(info.tile.z)
+                    })
+            }));
 
     let (anchored_world_x, anchored_world_z) = if cc_surface_like_flat {
         // Flat ground quad: no upright-billboard centering translation (mirrors TexLandEc).
@@ -2784,7 +2806,7 @@ pub fn sys_collect_visible_statics(
         &tile_atlas,
     );
     let cache_config =
-        static_chunk_cache_config(frame, &sprite_atlas, &ground_atlas, &static_lights);
+        static_chunk_cache_config(frame, &sprite_atlas, &ground_atlas, &static_lights, &tile_atlas);
     let visible_tick = outputs.3.begin_frame();
     let config_changed = outputs.3.sync_config(cache_config);
 
@@ -3061,6 +3083,23 @@ mod tests {
         assert!(cc_static_tile_renders_flat(Some(&water)));
 
         assert!(!cc_static_tile_renders_flat(None));
+    }
+
+    #[test]
+    fn cc_ground_diamond_requires_tile_sized_dry_background_without_volume() {
+        let mut tile = item_tile_with_flags(TILE_FLAG_BACKGROUND | TILE_FLAG_SURFACE,
+            udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike);
+        assert!(cc_ground_diamond(Some(&tile), 44.0, 44.0));
+        assert!(!cc_ground_diamond(Some(&tile), 44.0, 88.0));
+        assert!(!cc_ground_diamond(Some(&tile), 43.0, 44.0));
+        for excluded in [TILE_FLAG_ROOF, TILE_FLAG_BRIDGE, TILE_FLAG_FOLIAGE, TILE_FLAG_WET] {
+            tile.flags = TILE_FLAG_BACKGROUND | TILE_FLAG_SURFACE | excluded;
+            assert!(!cc_ground_diamond(Some(&tile), 44.0, 44.0));
+        }
+        tile.flags = TILE_FLAG_BACKGROUND | TILE_FLAG_SURFACE;
+        tile.height = 1;
+        assert!(!cc_ground_diamond(Some(&tile), 44.0, 44.0));
+        assert!(!cc_ground_diamond(None, 44.0, 44.0));
     }
 
     #[test]
@@ -3647,6 +3686,7 @@ mod tests {
             art_source: Some(ClientTextureSource::Cc),
             sprite_atlas_mapping_revision: 0,
             ground_atlas_mapping_revision: 0,
+            land_metadata_revision: 0,
             static_art_local_light_signature: None,
         });
         cache.chunks.insert(
@@ -3665,6 +3705,7 @@ mod tests {
             art_source: Some(ClientTextureSource::Cc),
             sprite_atlas_mapping_revision: 1,
             ground_atlas_mapping_revision: 0,
+            land_metadata_revision: 0,
             static_art_local_light_signature: None,
         });
 
@@ -3680,6 +3721,7 @@ mod tests {
             art_source: Some(ClientTextureSource::Cc),
             sprite_atlas_mapping_revision: 0,
             ground_atlas_mapping_revision: 0,
+            land_metadata_revision: 0,
             static_art_local_light_signature: None,
         });
 
@@ -3699,6 +3741,7 @@ mod tests {
             art_source: Some(ClientTextureSource::Cc),
             sprite_atlas_mapping_revision: 0,
             ground_atlas_mapping_revision: 0,
+            land_metadata_revision: 0,
             static_art_local_light_signature: None,
         }));
 
@@ -3714,6 +3757,7 @@ mod tests {
             art_source: Some(ClientTextureSource::Cc),
             sprite_atlas_mapping_revision: 0,
             ground_atlas_mapping_revision: 0,
+            land_metadata_revision: 0,
             static_art_local_light_signature: Some(0),
         });
         cache.chunks.insert(
@@ -3732,6 +3776,7 @@ mod tests {
             art_source: Some(ClientTextureSource::Cc),
             sprite_atlas_mapping_revision: 0,
             ground_atlas_mapping_revision: 0,
+            land_metadata_revision: 0,
             static_art_local_light_signature: Some(1),
         }));
 

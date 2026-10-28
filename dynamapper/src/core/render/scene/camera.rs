@@ -21,6 +21,7 @@ pub const UO_TILE_PIXEL_SIZE: f32 = 44.0;
 pub const DEFAULT_ZOOM: f32 = 1.0;
 pub const MIN_ZOOM: f32 = 0.25;
 pub const MAX_ZOOM: f32 = 50.0;
+mod perspective;
 
 #[derive(Resource, Default)]
 pub struct UiCameraResource(pub Option<Entity>);
@@ -66,6 +67,12 @@ impl PlayerCamera {
     pub const BASE_OFFSET_FROM_PLAYER: Vec3 = Vec3::new(5.0, 5.0, 5.0);
     pub const BASE_OFFSET_FROM_PLAYER_PERSP: Vec3 =
         Vec3::new(50.0, 50.0 * ORTHO_WIDTH_SCALE_FACTOR, 50.0);
+
+    pub fn perspective_offset() -> Vec3 {
+        // Preserve the orbit distance/zoom framing, with the art view's pitch.
+        // The lens supplies vertical stretch instead of changing the camera pose.
+        Vec3::ONE.normalize() * Self::BASE_OFFSET_FROM_PLAYER_PERSP.length()
+    }
 }
 
 pub struct CameraPlugin {
@@ -126,12 +133,7 @@ fn sys_setup_cam(
     let player_start_pos: Vec3 = start_p.to_bevy_vec3_ignore_map();
 
     let projection = if settings.app.window.perspective_camera {
-        Projection::Perspective(PerspectiveProjection {
-            fov: 0.25, // Fixed, narrow FOV to mitigate edge fisheye distortion
-            near: 0.1,
-            far: 20000.0, // High far plane for high de-zoom
-            ..PerspectiveProjection::default()
-        })
+        perspective::projection()
     } else {
         Projection::Orthographic(OrthographicProjection {
             // NOTE: You control zoom by adjusting .scale (or by adjusting orthographic width/height).
@@ -147,7 +149,7 @@ fn sys_setup_cam(
     };
 
     let offset = if settings.app.window.perspective_camera {
-        PlayerCamera::BASE_OFFSET_FROM_PLAYER_PERSP * zoom
+        PlayerCamera::perspective_offset() * zoom
     } else {
         PlayerCamera::BASE_OFFSET_FROM_PLAYER
     };
@@ -361,15 +363,10 @@ fn sys_update_camera_projection_to_view(
 
     // Toggle logic
     let transition_to_persp = is_perspective && matches!(*proj, Projection::Orthographic(_));
-    let transition_to_ortho = !is_perspective && matches!(*proj, Projection::Perspective(_));
+    let transition_to_ortho = !is_perspective && proj.is_perspective();
 
     if transition_to_persp {
-        *proj = Projection::Perspective(PerspectiveProjection {
-            fov: 0.25,
-            near: 0.1,
-            far: 20000.0,
-            ..PerspectiveProjection::default()
-        });
+        *proj = perspective::projection();
         projection_changed = true;
     } else if transition_to_ortho {
         *proj = Projection::Orthographic(OrthographicProjection {
@@ -408,11 +405,6 @@ fn sys_update_camera_projection_to_view(
                 projection_changed = true;
             }
         }
-        Projection::Perspective(ref mut persp) if (persp.fov - 0.25).abs() > f32::EPSILON => {
-            persp.fov = 0.25;
-            persp.far = 20000.0;
-            projection_changed = true;
-        }
         _ => {}
     }
 
@@ -439,7 +431,7 @@ fn sys_camera_follow_player(
     };
 
     let offset = if settings.app.window.perspective_camera {
-        PlayerCamera::BASE_OFFSET_FROM_PLAYER_PERSP * render_zoom.0
+        PlayerCamera::perspective_offset() * render_zoom.0
     } else {
         PlayerCamera::BASE_OFFSET_FROM_PLAYER
     };

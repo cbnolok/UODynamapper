@@ -191,6 +191,8 @@ pub struct TileAtlas {
 
     /// CPU mirror of mapped layer data. Indexed by layer.
     pub cpu_mirror: Vec<Option<Vec<Rg16u>>>,
+    /// Invalidates CPU consumers whose cached geometry depends on map data.
+    pub content_revision: u64,
     /// Tracks modified regions per layer.
     ///
     /// We keep multiple rectangles and coalesce only overlapping or edge-sharing ones so the
@@ -223,6 +225,7 @@ impl TileAtlas {
             layer_access_tick: vec![0; max_layers],
             current_tick: 0,
             cpu_mirror: vec![None; max_layers],
+            content_revision: 0,
             dirty_regions: vec![Vec::new(); max_layers],
             pending_dirty_write_count: 0,
             extract_staging: Vec::new(),
@@ -362,6 +365,7 @@ impl TileAtlas {
         if !any_changed {
             return;
         }
+        self.content_revision = self.content_revision.wrapping_add(1);
 
         /*
         console_logger::one(
@@ -388,6 +392,7 @@ impl TileAtlas {
     /// Called after the atlas GPU image is replaced so mappings are rebuilt
     /// by the mesh renderer.
     pub fn clear_all_mappings(&mut self) {
+        self.content_revision = self.content_revision.wrapping_add(1);
         self.page_to_layer.clear();
         self.layer_to_page.fill(IVec2::ZERO);
         self.layer_access_tick.fill(0);

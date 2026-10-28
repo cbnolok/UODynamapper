@@ -24,7 +24,7 @@ fn source_key(tile: &TileMetaItemTile, refs: &[TileMetaItemTextureRef]) -> Optio
     Some((base.texture_id, base.texture_stretch.to_bits()))
 }
 
-fn map_height(atlas: &TileAtlas, x: u32, y: u32) -> Option<i8> {
+pub(super) fn map_height(atlas: &TileAtlas, x: u32, y: u32) -> Option<i8> {
     let p = &atlas.params;
     if p.page_texels.x == 0 || p.page_texels.y == 0 { return None; }
     let index = (y / p.page_texels.y) * p.world_pages_x + x / p.page_texels.x;
@@ -143,5 +143,23 @@ mod tests {
         atlas.cpu_mirror[0].as_mut().unwrap()[0] = Rg16u::pack(3, 0, 3, false, 0);
         assert_eq!(map_height(&atlas, 2, 0), None);
         assert_eq!(map_height(&atlas, 0, 256), None);
+    }
+
+    #[test]
+    fn map_dependency_changes_when_data_arrives_but_not_for_identical_uploads() {
+        use crate::core::render::scene::world::land::tile_atlas::{AtlasParams, Rg16u};
+        use bevy::math::UVec2;
+        let mut atlas = TileAtlas::new(AtlasParams { page_texels: UVec2::splat(2),
+            max_layers: 1, world_pages_x: 1, ..Default::default() }, 1);
+        let (layer, _) = atlas.ensure_layer_for_page(bevy::math::IVec2::ZERO);
+        let before = atlas.content_revision;
+        atlas.enqueue_rg16u_block(layer, UVec2::ZERO, UVec2::ONE, &[Rg16u::pack(3, 0, 4, false, 0)]);
+        assert_ne!(atlas.content_revision, before);
+        let loaded = atlas.content_revision;
+        atlas.enqueue_rg16u_block(layer, UVec2::ZERO, UVec2::ONE, &[Rg16u::pack(3, 0, 4, false, 0)]);
+        assert_eq!(atlas.content_revision, loaded);
+        atlas.clear_all_mappings();
+        assert_ne!(atlas.content_revision, loaded);
+        assert_eq!(map_height(&atlas, 0, 0), None);
     }
 }
