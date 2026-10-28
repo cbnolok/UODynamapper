@@ -65,7 +65,38 @@ diagnostic suffixes identify separate runs. Logs use
 `release-kr-{orthographic,perspective}-transition.png`, with completed PNGs and
 zero pending land uploads in their overlays. No shader/pipeline errors appeared.
 
-The perspective capture also exposes roof overlap striping. Ground blending
-works in that view, but this is not a clean perspective-depth acceptance result;
-the roof/art overlap needs its own diagnosis. The orthographic bridge/stair
+Those initial perspective captures exposed roof overlap striping, subsequently
+corrected as documented in `isometric_perspective_projection.md`. The orthographic
+bridge/stair
 ordering correction is documented separately in `static_depth_ordering.md`.
+
+## Rejected ownership shortcut
+
+A CPU-proven five-by-five uniform footprint was tested using a spare EC metadata
+bit, comparing all seven material lookup records and retaining the full stack's
+canonical/first-alias payload. The direct shader variant measured approximately
+2% bridge and 5% lava gains in an ABBA release comparison. However, matched
+captures retained one-pixel differences around static edges, while repeated full
+baselines stayed within two byte values. Moving single-layer shading to a shared
+call site reduced but did not eliminate them. Derivative-sensitive filtering is
+a hypothesis, not an established cause. This candidate was removed: the small
+measured gain did not justify an unresolved image change and extra CPU policy.
+Temporary `release-kr-uniform-direct-*` and `shared-call-*` reports/captures describe
+that rejected experiment, not the accepted renderer or performance guarantees.
+
+A second candidate split raw metadata reads from full texture-slot resolution for
+height-only normals/occlusion queries. All six matched fixture captures differed
+by at most one byte. Release ABBA medians were nevertheless effectively unchanged:
+
+| Query | Bridge sampled medians | Lava sampled medians |
+|---|---|---|
+| Full metadata | 53.32, 53.35 | 39.03, 39.07 |
+| Direct height | 53.89, 53.08 | 39.09, 39.21 |
+
+This does not establish a material speedup; shader dead-code elimination may
+already prune unused slot fields, but that was not verified in GPU assembly.
+The refactor was removed as well. Reports use `release-kr-height-*`; measurements
+follow the same paused KR/EC configuration, eight-second settling and twelve-second
+sampling as the ownership experiment. The next performance work needs a measured
+pass breakdown or a larger ownership-cache change, rather than assuming helper
+call counts equal GPU memory traffic. The original FPS targets remain open.
