@@ -44,6 +44,17 @@ alpha. There is no new draw, texture, binding or per-frame material mutation.
 Different static-material patches each reveal their underlying map at their
 boundary; this is not direct cross-sampling of neighboring item artwork.
 
+## Remaining visible gap
+
+The native KR checkpoint at (2518,561), `stack-final-kr-upload-one-transition.png`,
+still shows a hard static-cobblestone/grass boundary. The existing eligibility,
+neighbor-mask and alpha tests do not establish that this scene achieves the
+requested blend. Treat that issue as open: its acceptance reference is the soft
+terrain cobblestone/dirt-to-grass transition visible in the town fixture, including
+under perspective. Recheck emitted static eligibility, coverage and actual
+opaque/transparent composition before changing the fade width. This follow-up
+is ordered after the current FPS work.
+
 ## Validation
 
 The renderer suite passes 123 tests, including the explicitly run Vulkan

@@ -206,3 +206,71 @@ Raw status reports use `release-kr-passes-stack-final-*`; correlated hardware
 reports use `gpu-passes-stack-final-*`. `stack-final-performance.json` retains
 all run summaries. All six timing previews verified Desktop 4 and cleanup;
 production shaders and isolated settings were restored afterward.
+
+## Compact cached view and shared geometry normal
+
+The follow-up keeps one composition policy for cache hits and misses. Hits read
+the existing packed texture through a compact view; misses construct the original
+arrays. A literal selector at each composition call lets the compiler discard
+the hit's unused fallback argument. The geometry normal is shared across material
+layers, with authored normal maps still applied per material. Details are in
+[ec_terrain_stack_cache.md](ec_terrain_stack_cache.md).
+
+This needed a filtering correction first: derivatives inside material-dependent
+branches produced image changes despite bit-identical ownership. The continuous
+footprint in [ec_terrain_filtering.md](ec_terrain_filtering.md) makes those filters
+independent of stack execution. It intentionally corrects affected seam pixels;
+the image-equivalence control uses that same footprint on both readers.
+
+The final native matrix has 36 comparisons across the six fixtures, all three
+styles, KR perspective, the Enhanced CC control and forced uncached KR. Enhanced,
+Classic and CC comparisons are byte-identical; KR comparisons stay within one
+byte per channel. Fog animation timelines are matched. All 133 renderer tests
+pass, including the Vulkan record/alpha-bit regression and stale-guard checks.
+
+Final stable-release measurements use the same adapter, 1280×800, zoom 0.8,
+EC art/map, paused water and uncapped Desktop-4 configuration. Both variants use
+one rebuilt binary and identical CPU preparation. The baseline shaders are the
+previous expanded-cache renderer; the final shaders include the footprint and
+shared-normal changes. Each fixture settles twenty seconds and samples twelve.
+KR orthographic runs use baseline/final/final/baseline order; values below average
+the two run medians. Perspective and Classic have one baseline/final pair.
+
+| Style / camera / fixture | Baseline sampled FPS | Final sampled FPS | Baseline opaque GPU ms | Final opaque GPU ms |
+|---|---:|---:|---:|---:|
+| KR orthographic bridge | 78.63 | 120.68 | 11.70 | 7.31 |
+| KR orthographic lava | 53.69 | 94.98 | 17.80 | 9.82 |
+| KR perspective bridge | 71.54 | 112.26 | 12.84 | 7.90 |
+| KR perspective lava | 52.16 | 92.31 | 18.38 | 10.12 |
+| Classic orthographic bridge | 212.38 | 280.04 | 3.78 | 2.64 |
+| Classic orthographic lava | 163.09 | 233.97 | 5.47 | 3.61 |
+
+These retain the smoothed FPS and smoothed/rounded GPU-duration semantics above.
+Every accepted timing window has sixteen published cache chunks, equal metadata
+revisions, no pending metadata writes, and constant rounded fragment counts
+matching its control. That last check matters: an earlier cold shader capture
+was entirely clear color even after metadata submission. Exclude compilation and
+partial-draw windows rather than treating missing terrain as a speedup.
+
+The KR orthographic repeats establish roughly 53%/77% higher sampled FPS and
+37%/45% lower opaque GPU time at bridge/lava. The Classic pair improves too.
+The 400 FPS orthographic and 144 FPS perspective targets remain open on this
+workstation. Continuous movement, larger views and the GTX 1060 baseline are
+not established by these settled-fixture measurements.
+
+Raw final data uses `release-kr-passes-lazy-warm-final-*`,
+`gpu-passes-lazy-warm-final-*` and `lazy-warm-final-performance.json` under
+`/tmp/uodynamapper-ec-followup`. Accepted images and cleanup evidence are indexed
+by `lazy-final-accepted-matrix.json` and `lazy-final-accepted-logs.json`.
+All eight final timing previews verified Desktop 4 and cleanup, with no shader
+validation errors. Reusable compiler-statistic extraction is in
+`scripts/dev-helpers/renderer/shader_stats.py`.
+
+Intermediate single-shading-call, owner-array-pointer, unused-normal-guard and
+mode/profile-specialization candidates were not retained. The single-call version
+increased spills and GPU time; mode specialization was neutral in KR and slower
+in Classic. Changing the owner-array parameter to a pointer compiled to identical
+reported code, and the unused-normal guard added no convincing benefit. The
+combined cached/fallback-view prototype also retained eager scratch clears and
+regressed the Classic bridge. These temporary artifacts do not describe the
+accepted implementation.

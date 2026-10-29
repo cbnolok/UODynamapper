@@ -21,10 +21,15 @@ def correlate(benchmark, log):
                         key=lambda value: abs(value.timestamp() - reference)).timestamp()
         metric = re.search(r'Render \| total gpu ([\d.]+) ms \| main3d ([\d.]+) ms \| upscale ([\d.]+) ms', line)
         if metric and clock is not None:
-            samples.append({'logged_at_unix_seconds': clock,
-                            'reported_gpu_ms': float(metric[1]),
-                            'main_opaque_gpu_ms': float(metric[2]),
-                            'upscaling_gpu_ms': float(metric[3])})
+            sample = {'logged_at_unix_seconds': clock,
+                      'reported_gpu_ms': float(metric[1]),
+                      'main_opaque_gpu_ms': float(metric[2]),
+                      'upscaling_gpu_ms': float(metric[3])}
+            fragments = re.search(r'\| frag main3d ([\d.]+)([KM]?)', line)
+            if fragments:
+                scale = {'': 1, 'K': 1000, 'M': 1000000}[fragments[2]]
+                sample['main_opaque_fragments'] = float(fragments[1]) * scale
+            samples.append(sample)
     result = {'label': benchmark['label'],
               'diagnostics': 'smoothed hardware durations; rounded console values; not raw frame percentiles',
               'window_guard_seconds': 1, 'fixtures': []}
@@ -36,10 +41,14 @@ def correlate(benchmark, log):
         selected = [sample for sample in samples if start <= sample['logged_at_unix_seconds'] <= end]
         if len(selected) < 3:
             raise ValueError(f"insufficient GPU pass diagnostics for {fixture['name']}: {len(selected)}")
+        medians = {key: statistics.median(sample[key] for sample in selected)
+                   for key in ['reported_gpu_ms', 'main_opaque_gpu_ms', 'upscaling_gpu_ms']}
+        fragments = [sample['main_opaque_fragments'] for sample in selected if 'main_opaque_fragments' in sample]
+        if fragments:
+            medians['main_opaque_fragments'] = statistics.median(fragments)
         result['fixtures'].append({'name': fixture['name'], 'position': fixture['position'],
             'median_sampled_fps': fixture['median_sampled_fps'], 'samples': selected,
-            'medians': {key: statistics.median(sample[key] for sample in selected)
-                        for key in ['reported_gpu_ms', 'main_opaque_gpu_ms', 'upscaling_gpu_ms']}})
+            'medians': medians})
     return result
 
 

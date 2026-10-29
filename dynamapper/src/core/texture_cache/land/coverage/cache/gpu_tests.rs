@@ -68,14 +68,28 @@ fn atlas_read_meta(x: i32, y: i32) -> TileUniform {
 }
 "#, "shaders/world/land/atlas.wesl"));
         shaders.set_shader(id(0), Shader::from_wesl(r#"
-import package::shaders::world::land::coverage::{ec_terrain_stack, ec_terrain_stack_uncached};
+import package::shaders::world::land::coverage::{EcTerrainStack, ec_terrain_cache, ec_cache_layer, ec_terrain_stack_uncached};
 @group(0) @binding(4) var<storage, read_write> result: array<vec4<u32>>;
 @group(0) @binding(5) var<uniform> test_mode: vec4<u32>;
+// Adapt the compact production view to the original stack representation so
+// every layer and alpha bit can be compared independently of fragment shading.
+fn cached_stack(world: vec2<f32>) -> EcTerrainStack {
+    let cache = ec_terrain_cache(world);
+    if (cache.count == 0u) { return ec_terrain_stack_uncached(world); }
+    var stack: EcTerrainStack;
+    stack.count = cache.count;
+    for (var index = 0u; index < cache.count; index++) {
+        let layer = ec_cache_layer(cache, index);
+        stack.layers[index] = layer.material;
+        stack.alpha[index] = layer.alpha;
+    }
+    return stack;
+}
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (test_mode.x != 0u) {
         if (gid.x == 0u) {
-            let cached = ec_terrain_stack(vec2<f32>(47.5));
+            let cached = cached_stack(vec2<f32>(47.5));
             let original = ec_terrain_stack_uncached(vec2<f32>(47.5));
             result[0] = vec4<u32>(cached.count, original.count, cached.layers[0].x, original.layers[0].x);
         }
@@ -87,7 +101,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let offsets = array<f32, 3>(0.05, 0.5, 0.95);
     let world = vec2<f32>(32.0 + f32(index % 32u) + offsets[subpixel % 3u],
         32.0 + f32((index / 32u) % 32u) + offsets[subpixel / 3u]);
-    let cached = ec_terrain_stack(world);
+    let cached = cached_stack(world);
     let original = ec_terrain_stack_uncached(world);
     var difference = u32(cached.count != original.count);
     for (var layer = 0u; layer < min(cached.count, original.count); layer++) {

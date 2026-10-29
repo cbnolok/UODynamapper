@@ -80,3 +80,25 @@ Console times have one-second resolution, so correlation excludes both boundary
 seconds. Results retain smoothed, rounded pass durations. `reported_gpu_ms` sums
 the renderer's timed spans; it is not complete frame wall time and overlapping
 spans can count the same work. Use the named opaque-pass timing for comparisons.
+When available, `main_opaque_fragments` retains the console's rounded fragment
+invocation count. Compare stable counts within matched fixture windows; a cold
+shader can leave terrain undrawn after metadata submission has completed.
+Metadata readiness alone must not turn such a frame into a benchmark result.
+
+On Mesa RADV, launching the owned preview with `RADV_DEBUG=shaderstats` also
+records compiler statistics in `app.log`. Extract them with:
+
+```sh
+python3 scripts/dev-helpers/renderer/shader_stats.py \
+  --app-log /tmp/my-preview/app.log --output /tmp/renderer-shader-stats.json \
+  --label 'release; KR morning; terrain variant'
+```
+
+This preserves all reported stages and pipeline hashes and prints the five
+largest modules. Identify the terrain pipeline by a controlled shader change;
+the largest module alone is not a source-file identifier. Register allocation,
+scratch allocation and static instruction counts help explain compilation
+changes; they do not replace timed passes or count instructions actually executed
+per fragment. This is an optional driver diagnostic, independent of the portable
+runtime rendering path. Reused pipeline cache entries can omit compiler output;
+keep a timing result usable even when its optional compiler statistics are absent.

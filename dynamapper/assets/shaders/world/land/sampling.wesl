@@ -30,7 +30,7 @@
 
 import package::shaders::world::common_bindings::{LandEffectsUniform};
 import package::shaders::world::land::land_bindings::{TileUniform, tex_small, tex_big, land_page_atlas, land_page_lookup, tex_small_sampler, effects, ec_aux_atlas, ec_aux_lookup, classic_land_art_atlas, classic_land_art_lookup};
-import package::shaders::world::pixel_art_filters::pixel_art_uv_iq;
+import package::shaders::world::pixel_art_filters::{pixel_art_uv_iq, pixel_art_uv_iq_grad};
 import package::shaders::world::texture_data::texture_color_rgb;
 
 // Width in pixels of one Classic Client isometric tile — the world-unit
@@ -41,6 +41,22 @@ const LAND_PAGE_LOOKUP_ROLE_DETAIL: u32 = 1u;
 const LAND_PAGE_LOOKUP_ROLE_MASK: u32 = 2u;
 const LAND_PAGE_LOOKUP_ROLE_NORMAL: u32 = 3u;
 const TERRAIN_FLAG_FOLLOW_CENTER: u32 = 0x2u;
+
+// Derivatives of unwrapped world XZ, captured before per-material control flow.
+struct LandGradients {
+  dx: vec2<f32>,
+  dy: vec2<f32>,
+}
+
+fn ec_tile_stretch(tile: TileUniform) -> f32 {
+  let tile_w = max(f32(tile.texture_extent.x), 1.0);
+  return select(tile_w / CC_TILE_PX, tile.texture_stretch, tile.texture_stretch > 0.0);
+}
+
+fn ec_tile_gradients(world: LandGradients, tile: TileUniform) -> LandGradients {
+  let stretch = ec_tile_stretch(tile);
+  return LandGradients(world.dx / stretch, world.dy / stretch);
+}
 
 struct LandLookupSlot {
   present: bool,
@@ -62,8 +78,7 @@ struct LandLookupSlot {
 fn ec_world_uv(world_xz: vec2<f32>, tile: TileUniform) -> vec2<f32> {
   // How many world tiles one texture repetition covers.
   // A 44-px EC texture maps exactly to 1 tile; a 176-px one to 4 tiles, etc.
-  let tile_w = max(f32(tile.texture_extent.x), 1.0);
-  let stretch = select(tile_w / CC_TILE_PX, tile.texture_stretch, tile.texture_stretch > 0.0);
+  let stretch = ec_tile_stretch(tile);
   // World-space UV — wraps to [0,1) so the texture tiles infinitely.
   return fract(world_xz / stretch);
 }
@@ -99,17 +114,21 @@ fn ec_slot_world_uv(world_xz: vec2<f32>, slot: LandLookupSlot) -> vec2<f32> {
   return fract(world_xz / stretch);
 }
 
-fn sample_ec_lookup_slot_rgba(uv: vec2<f32>, slot: LandLookupSlot) -> vec4<f32> {
+fn sample_ec_lookup_slot_rgba(uv: vec2<f32>, slot: LandLookupSlot, world: LandGradients) -> vec4<f32> {
   let layer: i32 = i32(slot.texture_layer);
   let tile_dims = max(vec2<f32>(slot.texture_extent), vec2<f32>(1.0));
   let use_linear = effects.enable_linear_filtering == 1u;
 
   if (use_linear) {
     let atlas_dims = vec2<f32>(textureDimensions(land_page_atlas));
-    let seam_uv = pixel_art_uv_iq(uv, tile_dims);
+    let tile_w = max(f32(slot.texture_extent.x), 1.0);
+    let stretch = select(tile_w / CC_TILE_PX, slot.texture_stretch, slot.texture_stretch > 0.0);
+    let seam_uv = pixel_art_uv_iq_grad(uv, tile_dims, world.dx / stretch, world.dy / stretch);
     let local_px = clamp(seam_uv * tile_dims, vec2<f32>(0.5), tile_dims - vec2<f32>(0.5));
     let atlas_uv = (vec2<f32>(slot.texture_origin) + local_px) / atlas_dims;
-    return textureSample(land_page_atlas, tex_small_sampler, atlas_uv, layer);
+    let atlas_scale = tile_dims / atlas_dims;
+    return textureSampleGrad(land_page_atlas, tex_small_sampler, atlas_uv, layer,
+      (world.dx / stretch) * atlas_scale, (world.dy / stretch) * atlas_scale);
   }
 
   let local_iuv = clamp(vec2<i32>(uv * tile_dims), vec2<i32>(0), vec2<i32>(slot.texture_extent) - 1);
@@ -117,8 +136,8 @@ fn sample_ec_lookup_slot_rgba(uv: vec2<f32>, slot: LandLookupSlot) -> vec4<f32> 
   return textureLoad(land_page_atlas, atlas_iuv, layer, 0);
 }
 
-fn sample_ec_lookup_slot(uv: vec2<f32>, slot: LandLookupSlot) -> vec3<f32> {
-  return texture_color_rgb(sample_ec_lookup_slot_rgba(uv, slot).rgb);
+fn sample_ec_lookup_slot(uv: vec2<f32>, slot: LandLookupSlot, world: LandGradients) -> vec3<f32> {
+  return texture_color_rgb(sample_ec_lookup_slot_rgba(uv, slot, world).rgb);
 }
 
 fn ec_material_mask_value(mask_sample: vec4<f32>) -> f32 {
@@ -272,30 +291,30 @@ fn apply_ec_aux_two_base_blend(
     return mix(base_albedo, secondary, alpha_mask_value);
 }
 
-fn sample_ec_material_albedo(world_xz: vec2<f32>, base_uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
+fn sample_ec_material_albedo(world_xz: vec2<f32>, base_uv: vec2<f32>, tile: TileUniform, world: LandGradients) -> vec3<f32> {
   let detail = read_ec_lookup_slot(tile.texture_payload, LAND_PAGE_LOOKUP_ROLE_DETAIL);
   let mask = read_ec_lookup_slot(tile.texture_payload, LAND_PAGE_LOOKUP_ROLE_MASK);
   if (!detail.present || !mask.present) {
-    return sample_tile_albedo(base_uv, tile);
+    return sample_tile_albedo(base_uv, tile, ec_tile_gradients(world, tile));
   }
 
-  let base = sample_tile_albedo(base_uv, tile);
+  let base = sample_tile_albedo(base_uv, tile, ec_tile_gradients(world, tile));
   let detail_uv = ec_slot_world_uv(world_xz, detail);
   let mask_uv = ec_slot_world_uv(world_xz, mask);
-  let detail_color = sample_ec_lookup_slot(detail_uv, detail);
-  let mask_value = ec_material_mask_value(sample_ec_lookup_slot_rgba(mask_uv, mask));
+  let detail_color = sample_ec_lookup_slot(detail_uv, detail, world);
+  let mask_value = ec_material_mask_value(sample_ec_lookup_slot_rgba(mask_uv, mask, world));
   return mix(base, detail_color, mask_value);
 }
 
-fn sample_ec_material_albedo_at_world(world_xz: vec2<f32>, tile: TileUniform) -> vec3<f32> {
-  return sample_ec_material_albedo(world_xz, ec_world_uv(world_xz, tile), tile);
+fn sample_ec_material_albedo_at_world(world_xz: vec2<f32>, tile: TileUniform, world: LandGradients) -> vec3<f32> {
+  return sample_ec_material_albedo(world_xz, ec_world_uv(world_xz, tile), tile, world);
 }
 
 fn ec_material_has_liquid_normal(tile: TileUniform) -> bool {
   return read_ec_lookup_slot(tile.texture_payload, LAND_PAGE_LOOKUP_ROLE_NORMAL).present;
 }
 
-fn sample_ec_material_normal_world(world_xz: vec2<f32>, tile: TileUniform, time_seconds: f32, animate_liquid: bool) -> vec4<f32> {
+fn sample_ec_material_normal_world(world_xz: vec2<f32>, tile: TileUniform, time_seconds: f32, animate_liquid: bool, world: LandGradients) -> vec4<f32> {
   let normal = read_ec_lookup_slot(tile.texture_payload, LAND_PAGE_LOOKUP_ROLE_NORMAL);
   if (!normal.present) {
     return vec4<f32>(0.0, 1.0, 0.0, 0.0);
@@ -309,7 +328,7 @@ fn sample_ec_material_normal_world(world_xz: vec2<f32>, tile: TileUniform, time_
     animate_liquid,
   );
   let normal_uv = ec_slot_world_uv(normal_world_xz, normal);
-  let normal_sample = sample_ec_lookup_slot_rgba(normal_uv, normal).rgb;
+  let normal_sample = sample_ec_lookup_slot_rgba(normal_uv, normal, world).rgb;
   if (normal_sample.b < 0.35) {
     return vec4<f32>(0.0, 1.0, 0.0, 0.0);
   }
@@ -323,7 +342,7 @@ fn sample_ec_material_normal_world(world_xz: vec2<f32>, tile: TileUniform, time_
   return vec4<f32>(world_normal, 1.0);
 }
 
-fn ec_liquid_perturbed_base_uv(world_xz: vec2<f32>, base_uv: vec2<f32>, tile: TileUniform, time_seconds: f32) -> vec2<f32> {
+fn ec_liquid_perturbed_base_uv(world_xz: vec2<f32>, base_uv: vec2<f32>, tile: TileUniform, time_seconds: f32, world: LandGradients) -> vec2<f32> {
   let normal = read_ec_lookup_slot(tile.texture_payload, LAND_PAGE_LOOKUP_ROLE_NORMAL);
   if (!normal.present) {
     return base_uv;
@@ -334,7 +353,7 @@ fn ec_liquid_perturbed_base_uv(world_xz: vec2<f32>, base_uv: vec2<f32>, tile: Ti
   let wave_height = select(0.24, 0.30, follow_center);
   let moving_world_xz = vec2<f32>(world_xz.x, world_xz.y - time_seconds * wind_force * 10.0);
   let normal_uv = ec_slot_world_uv(moving_world_xz, normal);
-  let normal_sample = sample_ec_lookup_slot_rgba(normal_uv, normal).rgb;
+  let normal_sample = sample_ec_lookup_slot_rgba(normal_uv, normal, world).rgb;
   let perturbation = wave_height * (normal_sample.rg - vec2<f32>(0.5)) * 2.0;
   return fract(base_uv + perturbation);
 }
@@ -397,8 +416,8 @@ fn sample_classic_land_art(world_cell_uv: vec2<f32>, tile_payload: u32) -> vec3<
 // Single-tap albedo: linear (textureSample) or nearest (textureLoad).
 // For CC/array tiles, uv is the [0,1) coordinate within the tile.
 // For EC atlas tiles, uv must already be the world-space tiling UV (see ec_world_uv);
-// pass world_xz = in.world_position.xz from the fragment shader.
-fn sample_tile_albedo(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
+// gradients are the continuous world footprint divided by this material's stretch.
+fn sample_tile_albedo(uv: vec2<f32>, tile: TileUniform, gradients: LandGradients) -> vec3<f32> {
   let layer: i32 = i32(tile.texture_layer);
   let use_linear = effects.enable_linear_filtering == 1u;
 
@@ -414,11 +433,21 @@ fn sample_tile_albedo(uv: vec2<f32>, tile: TileUniform) -> vec3<f32> {
     let atlas_dims = vec2<f32>(textureDimensions(land_page_atlas));
     if (use_linear) {
       // Sub-pixel bias keeps samples inside the texture's atlas region.
-      let seam_uv = pixel_art_uv_iq(uv, tile_dims);
+      var seam_uv: vec2<f32>;
+      if (tile.texture_size == 2u) {
+        seam_uv = pixel_art_uv_iq_grad(uv, tile_dims, gradients.dx, gradients.dy);
+      } else {
+        seam_uv = pixel_art_uv_iq(uv, tile_dims);
+      }
       let local_px = clamp(seam_uv * tile_dims, vec2<f32>(0.5), tile_dims - vec2<f32>(0.5));
       let atlas_uv = (vec2<f32>(tile.texture_origin) + local_px) / atlas_dims;
-      let color = textureSample(land_page_atlas, tex_small_sampler, atlas_uv, layer).rgb;
-      return select(color, texture_color_rgb(color), tile.texture_size == 2u);
+      if (tile.texture_size == 2u) {
+        let atlas_scale = tile_dims / atlas_dims;
+        let color = textureSampleGrad(land_page_atlas, tex_small_sampler, atlas_uv, layer,
+          gradients.dx * atlas_scale, gradients.dy * atlas_scale).rgb;
+        return texture_color_rgb(color);
+      }
+      return textureSample(land_page_atlas, tex_small_sampler, atlas_uv, layer).rgb;
     } else {
       let local_iuv = clamp(vec2<i32>(uv * tile_dims), vec2<i32>(0), vec2<i32>(tile.texture_extent) - 1);
       let atlas_iuv = vec2<i32>(tile.texture_origin) + local_iuv;
@@ -463,7 +492,12 @@ fn sample_tile_albedo_grad(uv: vec2<f32>, tile: TileUniform, ddx_uv: vec2<f32>, 
     let tile_dims = max(vec2<f32>(tile.texture_extent), vec2<f32>(1.0));
     if (use_linear) {
       let atlas_dims = vec2<f32>(textureDimensions(land_page_atlas));
-      let seam_uv = pixel_art_uv_iq(uv, tile_dims);
+      var seam_uv: vec2<f32>;
+      if (tile.texture_size == 2u) {
+        seam_uv = pixel_art_uv_iq_grad(uv, tile_dims, ddx_uv, ddy_uv);
+      } else {
+        seam_uv = pixel_art_uv_iq(uv, tile_dims);
+      }
       let local_px = clamp(seam_uv * tile_dims, vec2<f32>(0.5), tile_dims - vec2<f32>(0.5));
       let atlas_uv = (vec2<f32>(tile.texture_origin) + local_px) / atlas_dims;
       let atlas_ddx = ddx_uv * (tile_dims / atlas_dims);
@@ -504,17 +538,19 @@ fn sample_tile_albedo_grad(uv: vec2<f32>, tile: TileUniform, ddx_uv: vec2<f32>, 
 // ============================================================================
 
 // Simple sharpening filter (Unsharp Masking style).
-fn apply_sharpening(color: vec3<f32>, uv: vec2<f32>, tile: TileUniform, amount: f32) -> vec3<f32> {
+fn apply_sharpening(color: vec3<f32>, uv: vec2<f32>, tile: TileUniform, amount: f32, gradients: LandGradients) -> vec3<f32> {
   if (amount <= 0.0) { return color; }
 
   // Approximate a 1-pixel offset in UV space
-  let fw = fwidth(uv);
+  var fw: vec2<f32>;
+  if (tile.texture_size == 2u) { fw = abs(gradients.dx) + abs(gradients.dy); }
+  else { fw = fwidth(uv); }
   let off = max(fw.x, fw.y);
 
-  let s1 = sample_tile_albedo(uv + vec2<f32>(off, 0.0), tile);
-  let s2 = sample_tile_albedo(uv - vec2<f32>(off, 0.0), tile);
-  let s3 = sample_tile_albedo(uv + vec2<f32>(0.0, off), tile);
-  let s4 = sample_tile_albedo(uv - vec2<f32>(0.0, off), tile);
+  let s1 = sample_tile_albedo(uv + vec2<f32>(off, 0.0), tile, gradients);
+  let s2 = sample_tile_albedo(uv - vec2<f32>(off, 0.0), tile, gradients);
+  let s3 = sample_tile_albedo(uv + vec2<f32>(0.0, off), tile, gradients);
+  let s4 = sample_tile_albedo(uv - vec2<f32>(0.0, off), tile, gradients);
 
   let neighbor_avg = (s1 + s2 + s3 + s4) * 0.25;
   return color + (color - neighbor_avg) * amount;
@@ -526,12 +562,15 @@ fn rand01_from_tile(ix: i32, iz: i32, layer: u32) -> f32 {
   return fract(sin(dot(p, vec2<f32>(12.9898, 78.233))) * 43758.5453);
 }
 
-// 9-tap blur with radius in *screen pixels* via fwidth.
+// 9-tap blur with radius in *screen pixels* via the continuous EC footprint
+// (or the existing per-tile fwidth for Classic textures).
 // LOD is kept stable by using the same gradients for all taps.
 // Kernel direction is randomly rotated per tile to decorrelate tiling artifacts.
-fn blurred_albedo(uv: vec2<f32>, tile: TileUniform, radius_in_pixels: f32, world_xz: vec2<f32>) -> vec3<f32> {
+fn blurred_albedo(uv: vec2<f32>, tile: TileUniform, radius_in_pixels: f32, world_xz: vec2<f32>, gradients: LandGradients) -> vec3<f32> {
   // Approximate one screen pixel in UV space for this fragment
-  let fw = fwidth(uv);
+  var fw: vec2<f32>;
+  if (tile.texture_size == 2u) { fw = abs(gradients.dx) + abs(gradients.dy); }
+  else { fw = fwidth(uv); }
   let px_uv = max(fw.x, fw.y) + 1e-6;
 
   // Ensure at least half-pixel radius so it's *noticeable* even at low zoom
@@ -539,8 +578,10 @@ fn blurred_albedo(uv: vec2<f32>, tile: TileUniform, radius_in_pixels: f32, world
   let r = max(radius_in_pixels, min_px) * px_uv;
 
   // Keep LOD stable for all taps
-  let ddx_uv = dpdx(uv);
-  let ddy_uv = dpdy(uv);
+  var ddx_uv: vec2<f32>;
+  var ddy_uv: vec2<f32>;
+  if (tile.texture_size == 2u) { ddx_uv = gradients.dx; ddy_uv = gradients.dy; }
+  else { ddx_uv = dpdx(uv); ddy_uv = dpdy(uv); }
 
   // Decorrelation: derive a tiny rotation per tile/layer (+tiny world jitter)
   let jitter = rand01_from_tile(i32(floor(world_xz.x)), i32(floor(world_xz.y)), tile.texture_layer)

@@ -144,7 +144,22 @@ fn ec_terrain_stack_uncached(world: vec2<f32>) -> EcTerrainStack {
     return stack;
 }
 
-fn ec_terrain_stack(world: vec2<f32>) -> EcTerrainStack {
+struct EcTerrainCache {
+    count: u32,
+    slot: u32,
+    at: vec2<i32>,
+    fraction: vec2<f32>,
+    delta: vec2<i32>,
+}
+
+struct EcTerrainLayer {
+    material: vec4<u32>,
+    alpha: f32,
+}
+
+// This view contains no fallback arrays to initialize in the fragment entry.
+fn ec_terrain_cache(world: vec2<f32>) -> EcTerrainCache {
+    var cache: EcTerrainCache;
     let chunk = vec2<i32>(floor(world / 32.0));
     let dims = vec2<i32>(textureDimensions(ec_terrain_bases));
     if (all(chunk >= vec2<i32>(0)) && all(chunk < dims)) {
@@ -164,27 +179,29 @@ fn ec_terrain_stack(world: vec2<f32>) -> EcTerrainStack {
                 let cell = vec2<i32>(floor(world));
                 let current = atlas_read_meta(cell.x, cell.y);
                 if (header.x > 0u && header.x <= 17u && current.texture_size == 2u && current.texture_payload == expected) {
-                    var stack: EcTerrainStack;
-                    stack.count = header.x;
-                    let fraction = fract(sample_position);
-                    for (var index = 0u; index < stack.count; index++) {
-                        let at = header_at + vec2<i32>(1 + i32(index) * 2, 0);
-                        let layer = textureLoad(ec_terrain_stacks, at, i32(limits.z), 0);
-                        let values = bitcast<vec4<f32>>(textureLoad(ec_terrain_stacks, at + vec2<i32>(1, 0), i32(limits.z), 0));
-                        stack.layers[index] = layer;
-                        if (((layer.w >> 16u) & 128u) == 0u) {
-                            stack.alpha[index] = values[u32(delta.y * 2 + delta.x)];
-                        } else {
-                            stack.alpha[index] = mix(mix(values.x, values.y, fraction.x),
-                                mix(values.z, values.w, fraction.x), fraction.y);
-                        }
-                    }
-                    return stack;
+                    cache.count = header.x;
+                    cache.slot = limits.z;
+                    cache.at = header_at;
+                    cache.fraction = fract(sample_position);
+                    cache.delta = delta;
+                    return cache;
                 }
             }
         }
     }
-    // Keep the exact previous path for missing data, uploads in flight and
-    // positions outside the bounded cache. Shading call sites are unchanged.
-    return ec_terrain_stack_uncached(world);
+    return cache;
+}
+
+fn ec_cache_layer(cache: EcTerrainCache, index: u32) -> EcTerrainLayer {
+    let at = cache.at + vec2<i32>(1 + i32(index) * 2, 0);
+    let layer = textureLoad(ec_terrain_stacks, at, i32(cache.slot), 0);
+    let values = bitcast<vec4<f32>>(textureLoad(ec_terrain_stacks, at + vec2<i32>(1, 0), i32(cache.slot), 0));
+    var alpha: f32;
+    if (((layer.w >> 16u) & 128u) == 0u) {
+        alpha = values[u32(cache.delta.y * 2 + cache.delta.x)];
+    } else {
+        let fraction = cache.fraction;
+        alpha = mix(mix(values.x, values.y, fraction.x), mix(values.z, values.w, fraction.x), fraction.y);
+    }
+    return EcTerrainLayer(layer, alpha);
 }

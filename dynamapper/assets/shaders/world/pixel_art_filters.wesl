@@ -12,6 +12,17 @@ fn pixel_art_uv_iq(uv: vec2<f32>, texture_size: vec2<f32>) -> vec2<f32> {
     return snapped / size;
 }
 
+// Explicit gradients keep the seam footprint valid inside material-dependent
+// branches. Compute the screen derivatives before entering those branches.
+fn pixel_art_uv_iq_grad(uv: vec2<f32>, texture_size: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> vec2<f32> {
+    let size = max(texture_size, vec2<f32>(1.0));
+    let pixel = uv * size;
+    let seam = floor(pixel + vec2<f32>(0.5));
+    let width = max(abs(dx * size) + abs(dy * size), vec2<f32>(0.000001));
+    let snapped = seam + clamp((pixel - seam) / width, vec2<f32>(-0.5), vec2<f32>(0.5));
+    return snapped / size;
+}
+
 fn pixel_art_uv_aa_linear(uv: vec2<f32>, texture_size: vec2<f32>, width_scale: f32) -> vec2<f32> {
     let size = max(texture_size, vec2<f32>(1.0));
     let pixel = uv * size;

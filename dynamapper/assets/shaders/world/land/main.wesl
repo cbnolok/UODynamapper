@@ -38,7 +38,7 @@ import package::shaders::postprocess::grunge::{apply_texture_shadow_aware_land_g
 import package::shaders::postprocess::kr_color_wash::apply_kr_color_wash;
 import package::shaders::postprocess::tonemapping::{tonemap_ec_kr_profile};
 import package::shaders::world::land::sampling::{
-  ec_world_uv,
+  LandGradients, ec_tile_gradients, ec_world_uv,
   ec_material_has_liquid_normal,
   ec_liquid_perturbed_base_uv,
   sample_ec_material_normal_world,
@@ -62,7 +62,7 @@ import package::shaders::world::effects::surface_effects::{apply_water_animation
 import package::shaders::world::ec_liquid::{sample_ec_liquid, ec_liquid_world_uv};
 import package::shaders::world::ec_liquid_camera::ec_liquid_camera_reflection_uv;
 import package::shaders::world::texture_data::texture_color_rgb;
-import package::shaders::world::land::coverage::{ec_coverage_params, ec_terrain_stack, ec_layer_tile};
+import package::shaders::world::land::coverage::{EcTerrainStack, EcTerrainCache, EcTerrainLayer, ec_coverage_params, ec_terrain_cache, ec_cache_layer, ec_terrain_stack_uncached, ec_layer_tile};
 import package::shaders::world::land::liquid_bank::{ec_liquid_bank, ec_bank_vertex};
 
 // ============================================================================
@@ -192,6 +192,7 @@ fn ec_transition_neighbor_color(
   world_xz: vec2<f32>,
   base_color: vec3<f32>,
   weight: f32,
+  world_gradients: LandGradients,
 ) -> vec4<f32> {
   if (weight <= 0.0 || neighbor_tile.texture_size != 2u) {
     return vec4<f32>(base_color, 0.0);
@@ -209,7 +210,7 @@ fn ec_transition_neighbor_color(
     return vec4<f32>(base_color, 0.0);
   }
 
-  return vec4<f32>(sample_ec_material_albedo_at_world(world_xz, neighbor_tile), weight);
+  return vec4<f32>(sample_ec_material_albedo_at_world(world_xz, neighbor_tile, world_gradients), weight);
 }
 
 fn ec_transition_diagonal_weight(offset: vec2<i32>, uv_in_tile: vec2<f32>) -> f32 {
@@ -355,6 +356,7 @@ fn blend_ec_terrain_transitions(
   world_tile: vec2<i32>,
   world_xz: vec2<f32>,
   uv_in_tile: vec2<f32>,
+  world_gradients: LandGradients,
 ) -> vec3<f32> {
   if (current_tile.texture_size != 2u) {
     return base_color;
@@ -378,6 +380,7 @@ fn blend_ec_terrain_transitions(
     world_xz,
     base_color,
     ec_transition_neighbor_weight(west_offset, uv_in_tile),
+    world_gradients,
   );
   accum += west.rgb * west.a;
   total_weight += west.a;
@@ -388,6 +391,7 @@ fn blend_ec_terrain_transitions(
     world_xz,
     base_color,
     ec_transition_neighbor_weight(east_offset, uv_in_tile),
+    world_gradients,
   );
   accum += east.rgb * east.a;
   total_weight += east.a;
@@ -398,6 +402,7 @@ fn blend_ec_terrain_transitions(
     world_xz,
     base_color,
     ec_transition_neighbor_weight(north_offset, uv_in_tile),
+    world_gradients,
   );
   accum += north.rgb * north.a;
   total_weight += north.a;
@@ -408,6 +413,7 @@ fn blend_ec_terrain_transitions(
     world_xz,
     base_color,
     ec_transition_neighbor_weight(south_offset, uv_in_tile),
+    world_gradients,
   );
   accum += south.rgb * south.a;
   total_weight += south.a;
@@ -418,6 +424,7 @@ fn blend_ec_terrain_transitions(
     world_xz,
     base_color,
     ec_transition_diagonal_weight(northwest_offset, uv_in_tile),
+    world_gradients,
   );
   accum += northwest.rgb * northwest.a;
   total_weight += northwest.a;
@@ -428,6 +435,7 @@ fn blend_ec_terrain_transitions(
     world_xz,
     base_color,
     ec_transition_diagonal_weight(northeast_offset, uv_in_tile),
+    world_gradients,
   );
   accum += northeast.rgb * northeast.a;
   total_weight += northeast.a;
@@ -438,6 +446,7 @@ fn blend_ec_terrain_transitions(
     world_xz,
     base_color,
     ec_transition_diagonal_weight(southwest_offset, uv_in_tile),
+    world_gradients,
   );
   accum += southwest.rgb * southwest.a;
   total_weight += southwest.a;
@@ -448,6 +457,7 @@ fn blend_ec_terrain_transitions(
     world_xz,
     base_color,
     ec_transition_diagonal_weight(southeast_offset, uv_in_tile),
+    world_gradients,
   );
   accum += southeast.rgb * southeast.a;
   total_weight += southeast.a;
@@ -519,7 +529,27 @@ fn vertex(in: Vertex, @builtin(vertex_index) vertex_index: u32) -> VertexOutput 
 // Fragment shader
 // ============================================================================
 
-fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool) -> vec3<f32> {
+// Geometry is shared by every material in the ownership stack. Keep its
+// height reconstruction outside the per-layer shading calls.
+fn land_surface_normal(in: VertexOutput) -> vec3<f32> {
+  var normal_mode = effects.normal_mode;
+  var enable_bent = land_light.enable_bent;
+  if (scene.render_zoom > 10.0) { normal_mode = 0u; } // geometric normals only (skip bicubic 4×4 kernel)
+  if (scene.render_zoom > 20.0) { enable_bent = 0u; } // skip bent normals (4 extra height reads)
+  var Nw = normalize(in.world_normal);
+  if (normal_mode == 1u) {
+    let smooth_local = get_bicubic_normal(in.world_position.xyz);
+    let smooth_world = mesh_functions::mesh_normal_local_to_world(smooth_local, in.instance_index);
+    let blend_edge = chunk_edge_blend_factor(in.world_position.x, in.world_position.z);
+    Nw = normalize(mix(smooth_world, Nw, blend_edge));
+  }
+  if (enable_bent == 1u) {
+    Nw = get_bent_normal(in.world_position.xyz, Nw);
+  }
+  return Nw;
+}
+
+fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool, world_gradients: LandGradients, surface_normal: vec3<f32>) -> vec3<f32> {
   let shading_mode   = effects.shading_mode;
   let visual_profile = effects.post_process_profile;
 
@@ -527,8 +557,6 @@ fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool) -> ve
   // zoom > 10 : disable blur + sharpening + bicubic normals (saves ~30 tex reads)
   // zoom > 20 : disable bent normals (saves ~4 tex reads)
   let zoom = scene.render_zoom;
-  var normal_mode    = effects.normal_mode;
-  var enable_bent    = land_light.enable_bent;
   var enable_gloom   = global_light.enable_gloom;
   var enable_blur    = effects.enable_blur;
   var disable_sharpen = false;
@@ -536,10 +564,6 @@ fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool) -> ve
   if (zoom > 10.0) {
     enable_blur = 0u;      // skip 9-tap blur
     disable_sharpen = true; // skip sharpening (4 extra taps)
-    normal_mode = 0u;       // geometric normals only (skip bicubic 4×4 kernel)
-  }
-  if (zoom > 20.0) {
-    enable_bent = 0u;       // skip bent normals (4 extra height reads)
   }
   // Water animation: disable at high zoom where individual tiles are sub-pixel.
   var enable_water = effects.enable_water_animation;
@@ -589,13 +613,15 @@ fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool) -> ve
   // Water-distorted uv_in_tile is intentionally preserved for CC/wet tiles;
   // EC wet tiles use distorted world UVs so the wave effect is consistent.
   var sample_uv = uv_in_tile;
+  var uv_gradients: LandGradients;
+  if (tile.texture_size == 2u) { uv_gradients = ec_tile_gradients(world_gradients, tile); }
   if (tile.texture_size == 2u) {
     // Compute world-space tiling UV.  We use the (possibly water-distorted)
     // uv_in_tile offset so water animation stays coherent with EC textures too.
     let world_xz = vec2<f32>(floor(in.world_position.x), floor(in.world_position.z)) + uv_in_tile;
     sample_uv = ec_world_uv(world_xz, tile);
     if (enable_water == 1u && ec_liquid_normal && !use_ec_liquid) {
-      sample_uv = ec_liquid_perturbed_base_uv(world_xz, sample_uv, tile, globals.time);
+      sample_uv = ec_liquid_perturbed_base_uv(world_xz, sample_uv, tile, globals.time, world_gradients);
     }
   }
 
@@ -641,14 +667,14 @@ fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool) -> ve
     let uv_q = (floor(sample_uv * cells) + vec2<f32>(0.5)) / cells;
     if (tile.texture_size == 2u) {
       let world_xz = vec2<f32>(floor(in.world_position.x), floor(in.world_position.z)) + uv_in_tile;
-      base_albedo = sample_ec_material_albedo(world_xz, uv_q, tile);
+      base_albedo = sample_ec_material_albedo(world_xz, uv_q, tile, world_gradients);
     } else {
-      base_albedo = sample_tile_albedo(uv_q, tile);
+      base_albedo = sample_tile_albedo(uv_q, tile, uv_gradients);
     }
   } else {
     if (tile.texture_size == 2u) {
       let world_xz = vec2<f32>(floor(in.world_position.x), floor(in.world_position.z)) + uv_in_tile;
-      base_albedo = sample_ec_material_albedo(world_xz, sample_uv, tile);
+      base_albedo = sample_ec_material_albedo(world_xz, sample_uv, tile, world_gradients);
       if (!ordered_coverage) {
         base_albedo = blend_ec_terrain_transitions(
           base_albedo,
@@ -656,17 +682,18 @@ fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool) -> ve
           world_tile,
           world_xz,
           uv_in_tile,
+          world_gradients,
         );
       }
     } else {
-      base_albedo = sample_tile_albedo(sample_uv, tile);
+      base_albedo = sample_tile_albedo(sample_uv, tile, uv_gradients);
     }
     if (enable_blur == 1u && blur_strength > 0.001 && blur_radius > 0.0) {
-      let blurred = blurred_albedo(sample_uv, tile, blur_radius, vec2<f32>(in.world_position.x, in.world_position.z));
+      let blurred = blurred_albedo(sample_uv, tile, blur_radius, vec2<f32>(in.world_position.x, in.world_position.z), uv_gradients);
       base_albedo = mix(base_albedo, blurred, clamp(blur_strength, 0.0, 1.0));
     }
     if (!disable_sharpen && effects.sharpening_amount > 0.0) {
-      base_albedo = apply_sharpening(base_albedo, sample_uv, tile, effects.sharpening_amount);
+      base_albedo = apply_sharpening(base_albedo, sample_uv, tile, effects.sharpening_amount, uv_gradients);
     }
   }
 
@@ -712,7 +739,7 @@ fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool) -> ve
       let RIPPLE_UV_STRENGTH: f32 = 0.08;
       let perturbed_uv = fract(sample_uv + perturb * RIPPLE_UV_STRENGTH);
       // texture_size == 2u is guaranteed by the outer guard.
-      base_albedo = sample_ec_material_albedo(world_xz_liq, perturbed_uv, tile);
+      base_albedo = sample_ec_material_albedo(world_xz_liq, perturbed_uv, tile, world_gradients);
     }
   }
 
@@ -727,19 +754,10 @@ fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool) -> ve
   // ---- Normals ----
   // We already computed in the vertex shader and passed in.world_normal.
   // For non-classic modes we can still override with bicubic if desired.
-  var Nw = normalize(in.world_normal);
-  if (normal_mode == 1u) {
-    let smooth_local = get_bicubic_normal(in.world_position.xyz);
-    let smooth_world = mesh_functions::mesh_normal_local_to_world(smooth_local, in.instance_index);
-    let blend_edge = chunk_edge_blend_factor(in.world_position.x, in.world_position.z);
-    Nw = normalize(mix(smooth_world, Nw, blend_edge));
-  }
-  if (enable_bent == 1u) {
-    Nw = get_bent_normal(in.world_position.xyz, Nw);
-  }
+  var Nw = surface_normal;
   if (effects.enable_normal_maps == 1u && shading_mode != 0u && tile.texture_size == 2u && !use_ec_liquid) {
     let animate_normal_map = enable_water == 1u && (tile.is_wet == 1u || reviewed_liquid) && ec_liquid_normal;
-    let normal_map = sample_ec_material_normal_world(in.world_position.xz, tile, globals.time, animate_normal_map);
+    let normal_map = sample_ec_material_normal_world(in.world_position.xz, tile, globals.time, animate_normal_map, world_gradients);
     if (normal_map.w > 0.5) {
       let base_normal_map_strength = clamp(effects.land_normal_map_strength, 0.0, 1.0);
       let normal_map_strength = select(base_normal_map_strength, min(base_normal_map_strength * 1.28, 1.0), animate_normal_map);
@@ -905,69 +923,100 @@ fn finish_land(hdr_rgb: vec3<f32>) -> vec4<f32> {
   return vec4<f32>(final_rgb, 1.0); // tile textures assumed opaque for terrain
 }
 
+// Each call supplies a literal selector: the cached call has no live fallback
+// arrays; the uncached call reads the original reconstruction. Keep their layer
+// ordering, bank selection and shading call sites in one routine.
+fn ec_composition_layer(cache: EcTerrainCache, stack: ptr<function, EcTerrainStack>, cached: bool, index: u32) -> EcTerrainLayer {
+  if (cached) { return ec_cache_layer(cache, index); }
+  return EcTerrainLayer((*stack).layers[index], (*stack).alpha[index]);
+}
+
+fn compose_ec_terrain(in: VertexOutput, tile: TileUniform, world_gradients: LandGradients, surface_normal: vec3<f32>,
+    cache: EcTerrainCache, fallback: EcTerrainStack, cached: bool) -> vec3<f32> {
+  var stack = fallback;
+  let count = select(stack.count, cache.count, cached);
+  let cell = vec2<i32>(floor(in.world_position.xz));
+  var hdr_rgb: vec3<f32>;
+  // Opaque later passes cover all earlier shading. This keeps homogeneous
+  // terrain at one material sample while retaining the complete layer order.
+  var first = 0u;
+  for (var index = 1u; index < count; index++) {
+    if (ec_composition_layer(cache, &stack, cached, index).alpha == 1.0) { first = index; }
+  }
+  var liquid_material = 0xffffffffu;
+  var liquid_coverage = 1.0;
+  for (var index = first; index < count; index++) {
+    let layer = ec_composition_layer(cache, &stack, cached, index);
+    if ((index == first || layer.alpha > 0.0) && ((layer.material.w >> 16u) & 7u) == 2u) {
+      liquid_material = layer.material.x;
+      liquid_coverage = layer.alpha;
+    }
+  }
+  var bank_weight = 0.0;
+  var bank_cell = cell;
+  if (liquid_material != 0xffffffffu) {
+    let bank = ec_liquid_bank(in.world_position.xyz, tile, liquid_material, liquid_coverage);
+    bank_weight = bank.weight;
+    bank_cell = bank.cell;
+  }
+  if (bank_weight > 0.0) {
+    // Reveal the existing solid pass stack, including its authored blends.
+    // A single neighboring texture would introduce hard material patches.
+    first = 0u;
+    for (var index = 1u; index < count; index++) {
+      let layer = ec_composition_layer(cache, &stack, cached, index);
+      let alpha = layer.alpha * select(1.0, 1.0 - bank_weight, layer.material.x == liquid_material);
+      if (alpha == 1.0) { first = index; }
+    }
+  }
+  if (first == 0u && bank_weight > 0.0 && ec_composition_layer(cache, &stack, cached, 0u).material.x == liquid_material) {
+    // An all-liquid chunk can meet a bank across its edge without having
+    // a local solid base pass. Only that case needs the neighboring material.
+    hdr_rgb = shade_land(in, atlas_read_meta(bank_cell.x, bank_cell.y), true, world_gradients, surface_normal);
+    if (bank_weight < 1.0) {
+      hdr_rgb = mix(hdr_rgb, shade_land(in, ec_layer_tile(ec_composition_layer(cache, &stack, cached, 0u).material, tile.tile_height), true, world_gradients, surface_normal), 1.0 - bank_weight);
+    }
+  } else {
+    hdr_rgb = shade_land(in, ec_layer_tile(ec_composition_layer(cache, &stack, cached, first).material, tile.tile_height), true, world_gradients, surface_normal);
+  }
+  for (var index = first + 1u; index < count; index++) {
+    let layer = ec_composition_layer(cache, &stack, cached, index);
+    let alpha = layer.alpha * select(1.0, 1.0 - bank_weight, layer.material.x == liquid_material);
+    if (alpha > 0.0) {
+      let layer_color = shade_land(in, ec_layer_tile(layer.material, tile.tile_height), true, world_gradients, surface_normal);
+      hdr_rgb = mix(hdr_rgb, layer_color, alpha);
+    }
+  }
+  return hdr_rgb;
+}
+
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   // Debug mode: return a flat color immediately to isolate non-fragment bottlenecks.
   if (effects.shading_mode == 3u) {
     return vec4<f32>(0.5, 0.5, 0.5, 1.0);
   }
+  // Capture the continuous world footprint before ownership/bank/LOD branches.
+  // Material-specific repetition scales it without differentiating another pass's UVs.
+  let world_gradients = LandGradients(dpdx(in.world_position.xz), dpdy(in.world_position.xz));
+  let surface_normal = land_surface_normal(in);
   let cell = vec2<i32>(floor(in.world_position.xz));
   let tile = atlas_read_meta(cell.x, cell.y);
   var hdr_rgb: vec3<f32>;
   var composed = false;
   if (tile.texture_size == 2u && ec_coverage_params(tile.texture_payload).w != 0u) {
-    let stack = ec_terrain_stack(in.world_position.xz);
-    if (stack.count > 0u) {
-      // Opaque later passes cover all earlier shading. This keeps homogeneous
-      // terrain at one material sample while retaining the complete layer order.
-      var first = 0u;
-      for (var index = 1u; index < stack.count; index++) {
-        if (stack.alpha[index] == 1.0) { first = index; }
-      }
-      var liquid_material = 0xffffffffu;
-      var liquid_coverage = 1.0;
-      for (var index = first; index < stack.count; index++) {
-        if ((index == first || stack.alpha[index] > 0.0) && ((stack.layers[index].w >> 16u) & 7u) == 2u) {
-          liquid_material = stack.layers[index].x;
-          liquid_coverage = stack.alpha[index];
-        }
-      }
-      var bank_weight = 0.0;
-      var bank_cell = cell;
-      if (liquid_material != 0xffffffffu) {
-        let bank = ec_liquid_bank(in.world_position.xyz, tile, liquid_material, liquid_coverage);
-        bank_weight = bank.weight;
-        bank_cell = bank.cell;
-      }
-      if (bank_weight > 0.0) {
-        // Reveal the existing solid pass stack, including its authored blends.
-        // A single neighboring texture would introduce hard material patches.
-        first = 0u;
-        for (var index = 1u; index < stack.count; index++) {
-          let alpha = stack.alpha[index] * select(1.0, 1.0 - bank_weight, stack.layers[index].x == liquid_material);
-          if (alpha == 1.0) { first = index; }
-        }
-      }
-      if (first == 0u && bank_weight > 0.0 && stack.layers[0].x == liquid_material) {
-        // An all-liquid chunk can meet a bank across its edge without having
-        // a local solid base pass. Only that case needs the neighboring material.
-        hdr_rgb = shade_land(in, atlas_read_meta(bank_cell.x, bank_cell.y), true);
-        if (bank_weight < 1.0) {
-          hdr_rgb = mix(hdr_rgb, shade_land(in, ec_layer_tile(stack.layers[0], tile.tile_height), true), 1.0 - bank_weight);
-        }
-      } else {
-        hdr_rgb = shade_land(in, ec_layer_tile(stack.layers[first], tile.tile_height), true);
-      }
-      for (var index = first + 1u; index < stack.count; index++) {
-        let alpha = stack.alpha[index] * select(1.0, 1.0 - bank_weight, stack.layers[index].x == liquid_material);
-        if (alpha > 0.0) {
-          let layer_color = shade_land(in, ec_layer_tile(stack.layers[index], tile.tile_height), true);
-          hdr_rgb = mix(hdr_rgb, layer_color, alpha);
-        }
-      }
+    let cache = ec_terrain_cache(in.world_position.xz);
+    if (cache.count > 0u) {
+      hdr_rgb = compose_ec_terrain(in, tile, world_gradients, surface_normal, cache, EcTerrainStack(), true);
       composed = true;
+    } else {
+      let stack = ec_terrain_stack_uncached(in.world_position.xz);
+      if (stack.count > 0u) {
+        hdr_rgb = compose_ec_terrain(in, tile, world_gradients, surface_normal, cache, stack, false);
+        composed = true;
+      }
     }
   }
-  if (!composed) { hdr_rgb = shade_land(in, tile, false); }
+  if (!composed) { hdr_rgb = shade_land(in, tile, false, world_gradients, surface_normal); }
   return finish_land(apply_global_lighting_rgb(hdr_rgb, scene.global_lighting));
 }

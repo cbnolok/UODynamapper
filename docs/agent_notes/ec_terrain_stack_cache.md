@@ -7,6 +7,29 @@ it does not replace the recovered ownership rules or the terrain shading policy.
 The uncached implementation remains in `land/coverage.wesl` for missing,
 unsettled and uncached neighborhoods. `land/main.wesl` keeps its shading calls.
 
+The fragment reader streams cached layers through the compact `EcTerrainCache`
+view and `ec_cache_layer`. The cached view contains no fallback arrays. Chunk,
+map and raw-owner guards, record layout and alpha evaluation remain the same.
+The original private layer/alpha arrays are constructed only on a miss.
+
+`compose_ec_terrain` receives a literal cached/uncached selector at its two call
+sites. The cached call has a zero-value fallback argument that is never read;
+the uncached call receives the original reconstruction. This keeps one layer,
+bank and shading policy while allowing the compiler to remove the cached call's
+unused array state. Avoid putting both views into one fragment-local struct:
+an intermediate version caused the AMD driver to emit 340 bytes of scratch
+clears before the first branch, even for hits and the flat diagnostic. The
+separate views remove those eager clears in the inspected NIR and assembly.
+This is a measured compiler result, not a vendor-specific runtime feature.
+
+The geometry normal is reconstructed once per fragment and shared by all
+material passes. It depends on the same world position, mesh normal, height
+neighborhood and LOD controls for every pass, including a neighboring bank base.
+Authored material normal-map overrides remain inside each shading call.
+
+Filtered native comparisons require the continuous footprint described in
+[ec_terrain_filtering.md](ec_terrain_filtering.md).
+
 ## Exact inputs and representation
 
 The builder uses raw map cells, original per-material parameters, effective EC

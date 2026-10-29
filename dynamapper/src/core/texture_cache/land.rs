@@ -1825,29 +1825,30 @@ import package::shaders::world::land::land_bindings::{TileUniform, land_page_atl
 import package::shaders::world::ec_liquid::{sample_ec_liquid, ec_liquid_reflection_uv, ec_liquid_world_uv};
 import package::shaders::world::ec_item_liquid::apply_ec_item_liquid;
 import package::shaders::world::ec_item_surface::apply_ec_item_surface;
-import package::shaders::world::land::coverage::{ec_terrain_stack, ec_layer_tile};
+import package::shaders::world::land::coverage::{ec_terrain_cache, ec_cache_layer, ec_layer_tile};
 import package::shaders::world::land::liquid_bank::{ec_liquid_bank, ec_bank_vertex};
 import package::shaders::world::land::sampling::{
-    apply_ec_aux_two_base_blend, apply_sharpening, blurred_albedo, classic_land_art_is_present,
+    LandGradients, apply_ec_aux_two_base_blend, apply_sharpening, blurred_albedo, classic_land_art_is_present,
     ec_liquid_perturbed_base_uv, sample_classic_land_art, sample_ec_material_albedo,
     sample_ec_material_normal_world, sample_ec_ripple_normal, sample_tile_albedo,
 };
 
 @fragment
 fn fragment() -> @location(0) vec4<f32> {
-    let stack = ec_terrain_stack(vec2<f32>(0.0));
-    var tile = ec_layer_tile(stack.layers[0], 0.0);
+    let cache = ec_terrain_cache(vec2<f32>(0.0));
+    var tile = ec_layer_tile(ec_cache_layer(cache, 0u).material, 0.0);
     tile.tile_height = ec_bank_vertex(vec2<i32>(0), tile).y;
     let bank = ec_liquid_bank(vec3<f32>(0.0), tile, 0u, 1.0);
     tile.tile_height += bank.weight;
-    let uv = ec_liquid_perturbed_base_uv(vec2<f32>(0.0), vec2<f32>(0.0), tile, 0.0);
-    var color = sample_tile_albedo(uv, tile) + sample_ec_material_albedo(uv, uv, tile);
+    let gradients = LandGradients(vec2<f32>(0.01, 0.0), vec2<f32>(0.0, 0.01));
+    let uv = ec_liquid_perturbed_base_uv(vec2<f32>(0.0), vec2<f32>(0.0), tile, 0.0, gradients);
+    var color = sample_tile_albedo(uv, tile, gradients) + sample_ec_material_albedo(uv, uv, tile, gradients);
     color = apply_ec_aux_two_base_blend(color, uv, tile);
-    color = apply_sharpening(color, uv, tile, 0.0) + blurred_albedo(uv, tile, 0.0, uv);
+    color = apply_sharpening(color, uv, tile, 0.0, gradients) + blurred_albedo(uv, tile, 0.0, uv, gradients);
     if (classic_land_art_is_present(0u)) {
         color += sample_classic_land_art(uv, 0u);
     }
-    let normal = sample_ec_material_normal_world(uv, tile, 0.0, true);
+    let normal = sample_ec_material_normal_world(uv, tile, 0.0, true, gradients);
     let ripple = sample_ec_ripple_normal(uv, 0u, 0.0, 0.0);
     let reflection_uv = ec_liquid_reflection_uv(vec3<f32>(0.0, 0.0, -1.0));
     color += sample_ec_liquid(land_page_atlas, land_page_lookup, tex_small_sampler,
