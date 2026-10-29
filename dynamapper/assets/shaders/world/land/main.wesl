@@ -532,6 +532,13 @@ fn vertex(in: Vertex, @builtin(vertex_index) vertex_index: u32) -> VertexOutput 
 // Geometry is shared by every material in the ownership stack. Keep its
 // height reconstruction outside the per-layer shading calls.
 fn land_surface_normal(in: VertexOutput) -> vec3<f32> {
+  // Classic lighting uses the vertex Lambert, not a fragment normal. Only
+  // KR-profile shadow weathering consumes it when those controls are combined.
+  let shadow_grunge = effects.enable_grunge == 1u && effects.post_process_profile == 2u
+    && clamp(effects.grunge_strength, 0.0, 1.0) > 0.0001;
+  if (effects.shading_mode == 0u && !shadow_grunge) {
+    return in.world_normal;
+  }
   var normal_mode = effects.normal_mode;
   var enable_bent = land_light.enable_bent;
   if (scene.render_zoom > 10.0) { normal_mode = 0u; } // geometric normals only (skip bicubic 4×4 kernel)

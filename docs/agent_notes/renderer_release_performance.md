@@ -274,3 +274,60 @@ reported code, and the unused-normal guard added no convincing benefit. The
 combined cached/fallback-view prototype also retained eager scratch clears and
 regressed the Classic bridge. These temporary artifacts do not describe the
 accepted implementation.
+
+## Classic fragment normals
+
+The customized Classic slot used above has `normal_mode=0` and bent normals
+disabled. It therefore does not measure the cost of the factory Classic slot,
+which enables bicubic and bent normals for its vertex/Gouraud lighting. The
+fragment shader was also reconstructing those normals even though Classic's
+lighting, light decals, micro-contrast and color-wash shadow input do not use
+them. Only Classic combined with active KR-profile shadow weathering needs a
+fragment normal. The guard in `land_surface_normal` preserves that exception
+and all vertex normal/lighting work. It changes no presets or texture policy.
+
+The factory comparison copies the checked-in presets into isolated preview
+settings; saved user preferences are untouched. Both shader variants use the
+same stable-release executable, EC art/map, paused water, 1280×800, zoom 0.8,
+uncapped orthographic camera and the same AMD adapter. Each fixture settles
+20 seconds and samples 12. Baseline/final/final/baseline order gives these
+averages of the two run medians:
+
+| Factory Classic fixture | Baseline sampled FPS | Final sampled FPS | Baseline opaque GPU ms | Final opaque GPU ms |
+|---|---:|---:|---:|---:|
+| Bridge | 218.72 | 334.50 | 3.69 | 2.09 |
+| Lava | 185.20 | 268.22 | 4.73 | 3.07 |
+
+Opaque GPU time falls approximately 43%/35% at bridge/lava, with the same stable
+rounded fragment counts (2.57M/1.18M), sixteen cache chunks, matching metadata
+revisions and no pending writes. All four timing previews verified Desktop 4
+placement and cleanup, without shader errors. This is a factory-Classic result;
+it must not be presented as a KR gain or compared directly with the earlier
+customized Classic row. The original 400/144 FPS targets remain open, including
+raw frame-time minima, movement and GTX 1060-class validation.
+
+Raw data uses `release-kr-passes-factory-normals-{initial,repeat}-*`,
+`gpu-passes-factory-normals-{initial,repeat}-*` and
+`factory-normals-accepted-performance.json` under the temporary evidence folder.
+
+The native matrix has 31 accepted comparisons: six each for factory Classic,
+customized Classic, Enhanced EC, KR EC and Enhanced CC, plus Classic lighting
+combined with KR-profile shadow weathering at lava. All except KR EC are
+byte-identical; KR EC stays within one byte per channel. An intentional negative
+control that skips normals for every Classic combination changes 102,707 pixels
+by more than one byte (maximum ten), demonstrating that the exception fixture
+actually detects the lost shadow response. The negative control is not shipped.
+All nine capture previews and four timing previews verified placement/cleanup,
+with no shader errors. The complete index is `normal-guard-accepted-evidence.json`.
+No Rust or binding changes require a rebuilt executable; shaders load at runtime.
+
+Do not require an arbitrary distinct-color count to accept a capture: the
+valid CC bridge/swamp controls have only 4,819/2,969 colors. Reject uniform clear
+frames and compare matched controls instead. A corrected temporary harness
+rechecked all six existing CC captures as byte-identical without rerendering.
+
+Sharing the weathering texture/noise once across material layers was also
+measured in a separate release pair. Six matched KR captures stayed within one
+byte, but opaque GPU time improved only about 1.5% at bridge and 3.4% at lava.
+That larger shader refactor was removed. Its `shared-weathering-*` artifacts
+are diagnostic evidence, not the accepted renderer.

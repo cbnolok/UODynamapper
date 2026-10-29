@@ -27,6 +27,15 @@ material passes. It depends on the same world position, mesh normal, height
 neighborhood and LOD controls for every pass, including a neighboring bank base.
 Authored material normal-map overrides remain inside each shading call.
 
+Classic lighting uses the vertex Lambert and does not consume this fragment
+normal. `land_surface_normal` skips fragment reconstruction for Classic unless
+KR-profile shadow weathering is enabled with nonzero effective strength. Keep
+that exception: the lighting mode and post-process profile can be combined
+independently. Classic vertex bicubic/bent normals and their Gouraud lighting
+remain active according to the preset; this guard only skips unused fragment
+work. Material micro-contrast, transition grime, light decals and Classic's
+color-wash shadow input do not consume the fragment normal.
+
 Filtered native comparisons require the continuous footprint described in
 [ec_terrain_filtering.md](ec_terrain_filtering.md).
 
