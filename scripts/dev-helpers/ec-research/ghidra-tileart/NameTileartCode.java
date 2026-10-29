@@ -160,6 +160,16 @@ public class NameTileartCode extends GhidraScript {
     private static final int WORLD_OBJECT_SET_DIRECTION = 0x44;
     // Virtual-call offsets found in the house placement check (bits 1, 2, 5; the bit 3 load jumps to the bit 2 CALL).
     private static final Set<Long> HOUSE_PLACEMENT_SLOTS = Set.of(0x100L, 0x104L, 0x110L);
+    // House customization support solver: HasHouseJoinBit1/2/3/5 (object support), HasHouseJoinBit14 (support from
+    // the level below), HasHouseJoinBit2/3 (neighbours marked by a supporting piece).
+    private static final Set<Long> OBJECT_SUPPORT_SLOTS = Set.of(0x100L, 0x104L, 0x108L, 0x110L);
+    private static final long SLOT_HAS_HOUSE_JOIN_BIT14 = 0x134L;
+    private static final Set<Long> SUPPORT_ABOVE_SLOTS = Set.of(0x104L, 0x108L);
+    // House object field: number of levels of the customization grid.
+    private static final long HOUSE_LEVEL_COUNT_OFFSET = 0x876f4L;
+    // Lua binding (named by ghidra-lua-names) whose commit message runs the unsupported-piece check.
+    private static final String LUA_SEND_HOUSING_MESSAGE = "UOLua::SendHousingSystemMsg";
+    private static final int UNSUPPORTED_PIECE_HUE = 0x2b;
 
     // UOObject vtable: world object state copied from its definition.
     private static final Slot[] WORLD_OBJECT_SLOTS = {
@@ -193,8 +203,9 @@ public class NameTileartCode extends GhidraScript {
         new Slot(0x28, "GetLegacyShaderName", "name of shader block 1 (+0xa4)", false),
         new Slot(0x2c, "GetWorldArtScale", "returns float +0x58 (default 1.0); scale of the WorldArt sprite", false),
         new Slot(0x30, "GetLegacyArtScale", "returns float +0x5c (default 1.5); scale of the legacy/enhanced tile art", false),
-        new Slot(0x34, "GetField60", "returns +0x60 (0 in all records)", false),
-        new Slot(0x38, "HasLegacyArtData", "block 1 differs from the default or +0x5c != 1.5 or +0x60 set", true),
+        new Slot(0x34, "GetField60", "returns +0x60 (0 in all records); no caller on a definition was found", false),
+        new Slot(0x38, "HasLegacyArtData", "block 1 differs from the default or +0x5c != 1.5 or +0x60 set; no"
+            + " caller on a definition was found", true),
         new Slot(0x3c, "GetLightShaderName", "name of shader block 3 (+0xb4, *_light_window.tga)", false),
         new Slot(0x40, "GetLightScale", "returns float +0x6c (default 1.0, 2.0 on windows);"
             + " UOObjectComponentLighting::Initialize stores it as the light sprite scale (descriptor"
@@ -216,12 +227,12 @@ public class NameTileartCode extends GhidraScript {
         new Slot(0x6c, "HasProperty2", "key lookup in the props2 map at +0xd4", false),
         new Slot(0x70, "GetProperty2", "value of a props2 key (0 when missing)", false),
         new Slot(0x74, "HasFlags1OrProperties1", "flags1 non-zero or props1 non-empty", false),
-        new Slot(0x78, "GetOldId", "returns +0x64 (default 0xffffff)", false),
+        new Slot(0x78, "GetOldId", "returns +0x64 (default 0xffffff); no caller on a definition was found", false),
         new Slot(0x7c, "GetRotation", "returns float +0x68 (0/90/180/270), used when flags1 bit 34 is set", true),
         new Slot(0x80, "GetPrimaryTextureLocation", "block 0 if HasWorldArt else block 1; checks UOWaterShader; builds a SpriteTextureFileLocation", false),
         new Slot(0x84, "GetPrimaryArtScale", "HasWorldArt ? +0x58 : +0x5c", false),
         new Slot(0x88, "GetFacing", "returns +0x90 (default 1); UOObjectComponentSprite::Initialize"
-            + " stores it at component +0x2c", false),
+            + " stores it at component +0x2c; no reader of that component field was found", false),
         new Slot(0x8c, "GetEffectCount", "size of the shared_ptr vector at +0xf0", false),
         new Slot(0x90, "GetEffect", "shared_ptr copy of effect i", false),
         new Slot(0x94, "GetWorldArtShader", "shared_ptr at +0x9c (block 0)", false),
@@ -262,8 +273,10 @@ public class NameTileartCode extends GhidraScript {
         new Slot(0x104, "HasHouseJoinBit2", "bit 2 of +0x7c; house customization: placeable on the x = 0 edge", false),
         new Slot(0x108, "HasHouseJoinBit3", "bit 3 of +0x7c; house customization: placeable on the y = 0 edge", false),
         new Slot(0x10c, "HasHouseJoinBit4", "bit 4 of +0x7c; no caller on a definition was found", false),
-        new Slot(0x110, "HasHouseJoinBit5", "bit 5 of +0x7c; house customization: placement also checks"
-            + " the cell below", false),
+        new Slot(0x110, "HasHouseJoinBit5", "bit 5 of +0x7c; house customization: the piece rests on the floor:"
+            + " refused on a stairs or teleporter cell or above stairs; ComputeObjectSupport supports it from its own"
+            + " cell (piece below or floor) or the floor of the +y, +x or +x+y cell for bits 3, 2, 1; pieces without"
+            + " it are supported only by a connected supported neighbour", false),
         new Slot(0x114, "ConnectsWestA", "bit 6 of +0x7c; paired with bit 8 of the west neighbour", true),
         new Slot(0x118, "ConnectsWestB", "bit 7 of +0x7c; paired with bit 9 of the west neighbour", true),
         new Slot(0x11c, "ConnectsEastA", "bit 8 of +0x7c", true),
@@ -272,8 +285,8 @@ public class NameTileartCode extends GhidraScript {
         new Slot(0x128, "ConnectsSouthB", "bit 13 of +0x7c", true),
         new Slot(0x12c, "ConnectsNorthA", "bit 10 of +0x7c; paired with bit 12 of the north neighbour", true),
         new Slot(0x130, "ConnectsNorthB", "bit 11 of +0x7c; paired with bit 13 of the north neighbour", true),
-        new Slot(0x134, "HasHouseJoinBit14", "bit 14 of +0x7c; house customization: marks the cell and"
-            + " its +x/+y neighbours", false),
+        new Slot(0x134, "HasHouseJoinBit14", "bit 14 of +0x7c; house customization: a supported piece with"
+            + " this bit supports the cell above it (UOHouseCustomization::MarkSupportAbove)", false),
         new Slot(0x138, "HasHouseJoinBit15", "bit 15 of +0x7c; set only on roof tiles; no caller on a"
             + " definition was found", false),
         new Slot(0x13c, "GetSpriteDescriptor", "requests the definition and the cached sprite descriptor (legacy flag from settings +0x54)", false),
@@ -364,6 +377,7 @@ public class NameTileartCode extends GhidraScript {
     private final List<String> anchors = new ArrayList<>();
     private final Set<Long> defaultShaderGlobals = new LinkedHashSet<>();
     private final Map<String, Integer> changes = new LinkedHashMap<>();
+    private Function tilesConnect;
 
     public void run() throws Exception {
         String[] args = getScriptArgs();
@@ -735,7 +749,8 @@ public class NameTileartCode extends GhidraScript {
                 anomalies.add("GetGraphicForAmount users: " + names(amountUsers));
             }
             if (joinUsers.size() == 1) {
-                propose(joinUsers.get(0), "UOHouseCustomization::TilesConnect", "(dx, dy): tests the house join"
+                tilesConnect = joinUsers.get(0);
+                propose(tilesConnect, "UOHouseCustomization::TilesConnect", "(dx, dy): tests the house join"
                     + " bits of a tile against the neighbour (6/8, 7/9 along x; 10/12, 11/13 along y)", true);
             } else {
                 anomalies.add("TilesConnect candidates: " + names(joinUsers));
@@ -762,7 +777,8 @@ public class NameTileartCode extends GhidraScript {
         } else {
             for (Proposal proposal : proposals.values()) {
                 Function f = functions.getFunctionAt(toAddr(proposal.address));
-                proposal.status = f.getName(true).equals(proposal.path) ? "already named"
+                proposal.status = f.getName(true).equals(proposal.path)
+                    ? (hasStaleOwnComment(f, proposal) ? "already named, plate comment would be refreshed" : "already named")
                     : f.getSymbol().getSource() == SourceType.DEFAULT ? "would rename"
                     : isOwnName(f) ? "would rename from " + f.getName(true)
                     : "kept " + f.getName(true) + " (" + f.getSymbol().getSource() + ")";
@@ -797,7 +813,8 @@ public class NameTileartCode extends GhidraScript {
         creators.retainAll(vtableWriters(COMPONENT_EFFECTS));
         Function creator = single(creators, "writer of both component vftables");
         propose(creator, WORLD_OBJECT + SCOPE + "CreateComponents", "writes the " + COMPONENT_LIGHTING + " and "
-            + COMPONENT_EFFECTS + " vftables; adds the lighting component only when GetLightShaderName is set", true);
+            + COMPONENT_EFFECTS + " vftables; adds the lighting component only when GetLightShaderName is set;"
+            + " skips particle effect definitions with +0x30 == 2 (played only by the moving-effect paths)", true);
 
         List<Function> cached = new ArrayList<>();
         for (Function f : users) {
@@ -852,9 +869,151 @@ public class NameTileartCode extends GhidraScript {
             "only caller of HasProperty2/GetProperty2: per equipped layer, appearance tile = properties2 key 11, else"
             + " key 8, else properties1 key 11, else key 8 (+10000000); draws gump id + " + PAPERDOLL_GUMP_FEMALE
             + " (female) or + " + PAPERDOLL_GUMP_MALE + "; HasFlags2 bit 18 (PartialHue) selects partial hue", true);
-        propose(single(placement, "house placement check"), "UOHouseCustomization::IsPlacementAllowed",
+        Function placementCheck = single(placement, "house placement check");
+        propose(placementCheck, "UOHouseCustomization::IsPlacementAllowed",
             "calls only HasHouseJoinBit1/2/3/5 (the bit 3 load shares the bit 2 CALL): cell (0, 0) needs bit 1,"
-            + " x = 0 needs bit 2, y = 0 needs bit 3; bit 5 adds the support check of the cell below", true);
+            + " x = 0 needs bit 2, y = 0 needs bit 3; bit 5 also needs IsClearOfStairs", true);
+        if (placementCheck != null) {
+            nameHouseSupport(placementCheck);
+        }
+    }
+
+    // House customization support solver, reached from IsPlacementAllowed through the stairs check it shares with
+    // the object support pass. Cell fields (house grid, 0x90 per level): +0x54 floor tile type (1 stairs,
+    // 6 teleporter, 8 none), +0xbc supported from below, +0xbf floor / +0xc0 object / +0xc1 slot 0x88 supported.
+    private void nameHouseSupport(Function placementCheck) {
+        List<Function> leaves = new ArrayList<>();
+        for (Function callee : distinct(calls(placementCheck))) {
+            if (calls(callee).isEmpty()) {
+                leaves.add(callee);
+            }
+        }
+        Function objectSupport = null;
+        Function clearOfStairs = null;
+        List<Function> placementOnly = new ArrayList<>();
+        for (Function leaf : leaves) {
+            List<Function> leafCallers = callers(leaf);
+            if (leafCallers.size() == 1) {
+                placementOnly.add(leaf);
+            }
+            for (Function other : leafCallers) {
+                if (!other.equals(placementCheck) && indirectCallOffsets(other).containsAll(OBJECT_SUPPORT_SLOTS)) {
+                    objectSupport = other;
+                    clearOfStairs = leaf;
+                }
+            }
+        }
+        propose(clearOfStairs, "UOHouseCustomization::IsClearOfStairs", "(cell, level): false when the cell floor"
+            + " type (+0x54) is 1 (stairs) or 6 (teleporter), or the cell one level below has type 1; required for"
+            + " pieces with HasHouseJoinBit5", false);
+        propose(single(placementOnly, "IsPlacementAllowed stairs-below check"), "UOHouseCustomization::IsNotAboveStairs",
+            "leaf callee of IsPlacementAllowed for floor, teleporter and stairs pieces: false when the cell one level"
+            + " below holds stairs", true);
+        if (objectSupport == null) {
+            anomalies.add("object support pass not found from IsPlacementAllowed");
+            return;
+        }
+        propose(objectSupport, "UOHouseCustomization::ComputeObjectSupport", "(level): clears cell +0xc0, then sets it"
+            + " for objects with HasHouseJoinBit5 that pass IsClearOfStairs and stand on a supported cell (+0xbc or"
+            + " +0xbf) or next to a supported floor (bit 3: +y, bit 2: +x, bit 1: +x+y); then for any object (not on"
+            + " or above stairs) connected to a supported neighbour (IsConnectedToSupportedNeighbour)", false);
+        List<Function> neighbour = new ArrayList<>();
+        for (Function callee : distinct(calls(objectSupport))) {
+            if (tilesConnect != null && distinct(calls(callee)).contains(tilesConnect)) {
+                neighbour.add(callee);
+            }
+        }
+        propose(single(neighbour, "TilesConnect caller in the object support pass"),
+            "UOHouseCustomization::IsConnectedToSupportedNeighbour", "true when a cell at x-1, y-1, y+1 or x+1 holds"
+            + " a supported piece (+0xc0) that TilesConnect joins to this one", false);
+
+        Function update = single(callers(objectSupport), "caller of ComputeObjectSupport");
+        propose(update, "UOHouseCustomization::UpdateSupport", "per level: ResetLevelSupport,"
+            + " PropagateSupportFromBelow, three floor/slot passes, ComputeObjectSupport; run after loading or"
+            + " editing the house design", true);
+        if (update == null) {
+            return;
+        }
+        List<Function> updateOnly = new ArrayList<>();
+        Function fromBelow = null;
+        for (Function callee : distinct(calls(update))) {
+            if (callers(callee).size() == 1) {
+                updateOnly.add(callee);
+            }
+            if (indirectCallOffsets(callee).contains(SLOT_HAS_HOUSE_JOIN_BIT14)) {
+                fromBelow = callee;
+            }
+        }
+        if (!updateOnly.isEmpty()) {
+            propose(updateOnly.get(0), "UOHouseCustomization::ResetLevelSupport", "(level): first pass of"
+                + " UpdateSupport; +0xbc..+0xbe and +0xc2 = (level == 0), +0xbf..+0xc1 = 0 on every cell", false);
+        }
+        propose(fromBelow, "UOHouseCustomization::PropagateSupportFromBelow", "(level > 0): for each cell whose"
+            + " level-below object is supported (+0xc0) and has HasHouseJoinBit14, calls MarkSupportAbove", false);
+        if (fromBelow != null) {
+            List<Function> mark = new ArrayList<>();
+            for (Function callee : distinct(calls(fromBelow))) {
+                if (callers(callee).size() == 1 && indirectCallOffsets(callee).containsAll(SUPPORT_ABOVE_SLOTS)) {
+                    mark.add(callee);
+                }
+            }
+            propose(single(mark, "PropagateSupportFromBelow helper"), "UOHouseCustomization::MarkSupportAbove",
+                "(level, x, y, piece below): sets +0xbc (object support) on the cell; with HasHouseJoinBit2 the +x"
+                + " cell, else with HasHouseJoinBit3 the +y cell, gets +0xbd / +0xbe; a floor on the cell sets +0xbd"
+                + " on its 4 neighbours, a slot 0x88 piece sets +0xbe in the 3x3 window", false);
+        }
+
+        // Display: called with the house by every caller of UpdateSupport, one callee per cell.
+        List<Function> show = new ArrayList<>();
+        Set<Function> updateCallers = new LinkedHashSet<>(callers(update));
+        for (Function caller : updateCallers) {
+            for (Function callee : distinct(calls(caller))) {
+                if (!callee.equals(update) && new LinkedHashSet<>(callers(callee)).equals(updateCallers)
+                        && distinct(calls(callee)).size() == 1 && !show.contains(callee)) {
+                    show.add(callee);
+                }
+            }
+        }
+        Function showSupport = single(show, "support display pass");
+        propose(showSupport, "UOHouseCustomization::ShowSupport", "after UpdateSupport: UpdateCellSupportHues for"
+            + " every cell of every level", true);
+        if (showSupport != null) {
+            Function cellHues = distinct(calls(showSupport)).get(0);
+            propose(cellHues, "UOHouseCustomization::UpdateCellSupportHues", "passes the floor (+0xbf), object"
+                + " (+0xc0) and slot (+0xc1) support flags to SetPieceSupportHue", true);
+            List<Function> hue = new ArrayList<>();
+            for (Function callee : distinct(calls(cellHues))) {
+                if (hasScalar(callee, UNSUPPORTED_PIECE_HUE)) {
+                    hue.add(callee);
+                }
+            }
+            propose(single(hue, "SetPieceSupportHue"), "UOHouseCustomization::SetPieceSupportHue", "sets the piece"
+                + " hue to " + UNSUPPORTED_PIECE_HUE + " when it is unsupported, else 0", true);
+        }
+
+        // Commit: the housing system message handler checks for unsupported pieces (logged; commit continues).
+        Function send = null;
+        for (Function f : functions.getFunctions(true)) {
+            if (f.getName(true).equals(LUA_SEND_HOUSING_MESSAGE)) {
+                send = f;
+            }
+        }
+        if (send == null) {
+            anomalies.add("`" + LUA_SEND_HOUSING_MESSAGE + "` not named; HasUnsupportedPieces skipped");
+            return;
+        }
+        List<Function> unsupported = new ArrayList<>();
+        for (Function handler : distinct(calls(send))) {
+            for (Function callee : distinct(calls(handler))) {
+                if (calls(callee).isEmpty() && hasScalar(callee, HOUSE_LEVEL_COUNT_OFFSET)
+                        && !unsupported.contains(callee)) {
+                    unsupported.add(callee);
+                }
+            }
+        }
+        propose(single(unsupported, "HasUnsupportedPieces"), "UOHouseCustomization::HasUnsupportedPieces",
+            "true when any cell has an object without +0xc0, a slot 0x88 piece without +0xc1 or a floor (type != 8)"
+            + " without +0xbf; checked on commit (housing system message 4), which only logs it", false);
     }
 
     private Function componentInitialize(String cls, Set<Long> requiredSlots) {
@@ -1069,6 +1228,10 @@ public class NameTileartCode extends GhidraScript {
         Symbol symbol = function.getSymbol();
         if (symbol.getName().equals(name) && symbol.getParentNamespace().equals(namespace)) {
             proposal.status = "already named";
+            if (hasStaleOwnComment(function, proposal)) {
+                function.setComment(plateComment(proposal));
+                count("plate comments refreshed");
+            }
         } else if (symbol.getSource() == SourceType.DEFAULT) {
             try {
                 symbol.setNameAndNamespace(name, namespace, SourceType.ANALYSIS);
@@ -1108,6 +1271,13 @@ public class NameTileartCode extends GhidraScript {
             function.setComment(plateComment(proposal));
             count("plate comments set");
         }
+    }
+
+    // An own name whose single-line plate comment no longer matches the current evidence.
+    private boolean hasStaleOwnComment(Function function, Proposal proposal) {
+        String comment = function.getComment();
+        return isOwnName(function) && isOwnCommentText(comment, proposal.path)
+            && !comment.equals(plateComment(proposal));
     }
 
     private static String plateComment(Proposal proposal) {
@@ -1239,10 +1409,11 @@ public class NameTileartCode extends GhidraScript {
         }
         StructureDataType item = struct("UOTileArtTextureItem", 0x2c, "texture item of a shader block");
         field(item, 0x0, string, "path", "string dictionary entry, e.g. Data\\WorldArt\\...");
-        field(item, 0x1c, u32, "source_kind", "record u8; 0 in all records; material builder branches on 0/2");
+        field(item, 0x1c, u32, "source_kind", "record u8; 0 in all records; material builder: 0 loads the texture,"
+            + " 2 loads it and forces wrap addressing, any other value loads nothing");
         field(item, 0x20, f32, "stretch", "repetition; != 1.0 selects wrap addressing");
-        field(item, 0x24, u32, "sampler_index", "probable: 0..3 per block, noise texture 1");
-        field(item, 0x28, u32, "uv_set", "ORed into the sampler flags (UV set)");
+        field(item, 0x24, u32, "sampler_index", "not read; the material builder binds items by position (usually equal)");
+        field(item, 0x28, u32, "uv_set", "texture coordinate set: low byte of the NiTexturingProperty map flags");
         StructureDataType shader = struct("UOShaderDefinition", 0x54, "shader block of a tile art record");
         field(shader, 0x0, voidPtr, "vftable", null);
         field(shader, 0x4, u32, "field_04", "record u8; 0 in all records");
@@ -1268,8 +1439,8 @@ public class NameTileartCode extends GhidraScript {
         field(def, 0x55, bool, "uses_enhanced_tileart", "0 in all records");
         field(def, 0x58, f32, "world_art_scale", "default 1.0");
         field(def, 0x5c, f32, "legacy_art_scale", "default 1.5");
-        field(def, 0x60, u32, "field_60", "0 in all records");
-        field(def, 0x64, u32, "old_id", "default 0xffffff");
+        field(def, 0x60, u32, "field_60", "0 in all records; only read by HasLegacyArtData, never called on a definition");
+        field(def, 0x64, u32, "old_id", "default 0xffffff; GetOldId is never called on a definition");
         field(def, 0x68, f32, "rotation", "degrees, used with flags1 bit 34");
         field(def, 0x6c, f32, "light_scale", "light sprite scale");
         field(def, 0x70, u32, "light_field_70", "0 in all records; not read by the client");
@@ -1278,7 +1449,7 @@ public class NameTileartCode extends GhidraScript {
         field(def, 0x7c, u32, "house_join_bits", "house customization connection bits");
         field(def, 0x80, u64, "flags1", null);
         field(def, 0x88, u64, "flags2", null);
-        field(def, 0x90, u32, "facing", "default 1; copied to the sprite component +0x2c");
+        field(def, 0x90, u32, "facing", "default 1; copied to the sprite component +0x2c, which nothing reads");
         field(def, 0x94, u32, "radar_rgba", null);
         field(def, 0x98, bool, "has_radar_color", null);
         String[] blockNames = {"world_art_shader", "legacy_shader", "enhanced_shader", "light_shader"};

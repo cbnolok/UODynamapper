@@ -65,8 +65,8 @@ Byte packed, little endian. The parser checks that the u16 version equals 4.
 | 0x0b | u8 | uses_enhanced_tileart | +0x55 | `UsesEnhancedTileArt` +0x20; `BuildSpriteDescriptor` mode 2 (block 2, TileArtEnhanced, window x1.5); 0 in all records | high (code), unused in data |
 | 0x0c | f32 | world_art_scale | +0x58 | default 1.0; `GetWorldArtScale` +0x2c; sprite scale in mode 1. Values 1.0, 1.4, 5, 4, 0.8 ... | high |
 | 0x10 | f32 | legacy_art_scale | +0x5c | default 1.5; `GetLegacyArtScale` +0x30; sprite scale in modes 0/2. 1.5, or 1.0 on 1113 records | high |
-| 0x14 | u32 | field_60 | +0x60 | `GetField60` +0x34; read only by `HasLegacyArtData`; 0 in all records | unknown (unused) |
-| 0x18 | u32 | old_id | +0x64 | default 0xffffff; `GetOldId` +0x78; equals the tile id on 2236 records, another id on 141 (103->102, 129->128, 722->720); no virtual call to +0x78 on a definition was found | medium (data only) |
+| 0x14 | u32 | field_60 | +0x60 | `GetField60` +0x34 and `HasLegacyArtData` +0x38 read it; neither slot is called on a definition (section 8.10); 0 in all records | high (unused) |
+| 0x18 | u32 | old_id | +0x64 | default 0xffffff; `GetOldId` +0x78; equals the tile id on 2236 records, another id on 141 (103->102, 129->128, 722->720); `GetOldId` is never called on a definition (section 8.10) | high (unused by the client; meaning from data only) |
 | 0x1c | f32 | rotation | +0x68 | `GetRotation` +0x7c; 0/90/180/270; read by `BuildSpriteDescriptor` only when flags1 bit 34 is set | high |
 | 0x20 | u32 | body_type | +0xe4 | default 400; `GetBodyType` +0xb4. 400 = human male, 666 = gargoyle male; creature placeholders (ids >= 10000000) hold the body id. `FUN_004387f0` refuses an equipment appearance whose body type differs from the wearer's body ("Not letting a %u(sq %u) wear a %u(sq %u)"); `UOObject::InitFromDefinition` copies it to the world object (+0x50) | high |
 | 0x24 | u8 | alternate_animation (repo `field_e8`) | +0xe8 | `GetAlternateAnimation` +0xb8 -> `UOObject::SetAlternateAnimation` (+0x54). `FUN_004386a0` reads it from the item in the wearer's layer 2 and passes it to the animation action lookup `FUN_008361ed` (alternate entry +0x14 instead of +0x10) for stand (0) and walk/run (1/2). Set on 30 records: gargoyle two-handed weapons (body 666), halberds 5182/5183, creature placeholders | high (mechanism) |
@@ -74,10 +74,10 @@ Byte packed, little endian. The parser checks that the u16 version equals 4.
 | 0x29 | u32 | light_field_70 | +0x70 | `GetLightField70` +0x44; 0 in all records; no virtual call on a definition reads it | unknown (unused) |
 | 0x2d | f32 | light_offset_x | +0x74 | `GetLightOffsetX` +0x48; non-zero only with block 3; e.g. -5, -1.35. `UOObjectComponentLighting::Initialize`: (0, y, x) times the view matrix, added to the light sprite position | high |
 | 0x31 | f32 | light_offset_y | +0x78 | `GetLightOffsetY` +0x4c; e.g. -4, -3; second component of the same offset | high |
-| 0x35 | u32 | house_join_bits | +0x7c | stored through vtable +0x14c; tested bit by bit (slots +0x100..+0x138); bits 6..13 are house-customization connectors (section 4.6), bits 1, 2, 3, 5, 14 placement rules (section 8.4); bits 0, 4, 15 not read | high (1-3, 6..13), probable (5, 14), unused (0, 4, 15) |
+| 0x35 | u32 | house_join_bits | +0x7c | stored through vtable +0x14c; tested bit by bit (slots +0x100..+0x138); bits 6..13 are house-customization connectors (section 4.6), bits 1, 2, 3 placement rules, bit 5 rests on the floor, bit 14 supports the level above (section 8.4); bits 0, 4, 15 not read | high (1-3, 5, 6..13, 14), unused (0, 4, 15) |
 | 0x39 | u64 | flags1 | +0x80 | `HasFlags1`/`GetFlags1`; classic TileData flags plus EC bits | high |
 | 0x41 | u64 | flags2 | +0x88 | `HasFlags2`/`GetFlags2`; `UseNewArt` (0x80000) is tested here | high |
-| 0x49 | u32 | facing | +0x90 | default 1; `GetFacing` +0x88 -> `UOObjectComponentSprite::Initialize` (component +0x2c; consumer not traced). 1 x34276, 3 x2915, 2 x411, 0 x150, 4 x4 | medium |
+| 0x49 | u32 | facing | +0x90 | default 1; `GetFacing` +0x88 -> `UOObjectComponentSprite::Initialize` stores it at component +0x2c; no reader of that component field was found (section 8.10). 1 x34276, 3 x2915, 2 x411, 0 x150, 4 x4 | medium (probably unused) |
 | 0x4d | i32[6] | enhanced_window | +0x24 | `GetEnhancedImageWindow` +0x14: x_start, y_start, x_end, y_end, x_offset, y_offset; the sprite builder adds 1 to the end values (inclusive) | high |
 | 0x65 | i32[6] | legacy_window | +0x3c | `GetLegacyImageWindow` +0x18; scaled x1.5 in mode 2 | high |
 
@@ -115,10 +115,10 @@ Texture item (`UOTileArtTextureItem`, ctor `UOTileArtTextureItem::Init` 0x004491
 | Field | Memory | Meaning | Conf. |
 |---|---|---|---|
 | path | +0x00 std::string | `Data\WorldArt\...`, `TileArtLegacy\...`, `TileArtEnhanced\...` | high |
-| source_kind (u8) | +0x1c | material builder 0x0045cd80 branches on 0 vs 2 to pick the load path; 0 in all records | medium |
+| source_kind (u8) | +0x1c | material builder 0x0045cd80 (0x0045e23f): 0 loads the texture, 2 loads it the same way and forces wrap addressing (`OR [map+4],0x3000` at 0x0045e2f2), any other value loads nothing; 0 in all records | high |
 | stretch (f32) | +0x20 | != 1.0 sets address mode wrap (bits 12-13 = 3) | high |
-| sampler_index (u32) | +0x24 | 0..3 per block; no code use found | low |
-| uv_set (u32) | +0x28 | ORed into the low bits of the sampler flag word; 0/1 | medium |
+| sampler_index (u32) | +0x24 | not read: the material builder binds items by position (base map = item 0, shader maps = items 1..n); usually equals the position (section 8.10) | high (unused) |
+| uv_set (u32) | +0x28 | texture coordinate set: low byte of the `NiTexturingProperty::Map` flags (0x0045de94, 0x0045e1ec); 0/1 | high |
 
 Blocks: 0 = WorldArt (present on 15271 records; implies `has_world_art`), 1 = TileArtLegacy (always present),
 2 = TileArtEnhanced (always present, 2 items), 3 = light texture (`*_light_window.tga`, 1042 records).
@@ -249,8 +249,11 @@ they use. Grouped by subsystem:
   dx = -1: A.bit6 & B.bit8 or A.bit7 & B.bit9; dx = +1 reversed;
   dy = -1: A.bit10 & B.bit12 or A.bit11 & B.bit13; dy = +1 reversed.
   So bits 6/7 connect west, 8/9 east, 10/11 north, 12/13 south.
-- `UOHouseCustomization::IsPlacementAllowed` 0x00654aa0 (probable), `FUN_00657e20`, `FUN_00658e30` ->
-  `FUN_00658fc0` (join bits 1, 2, 3, 5, 14; section 8.4), in the LoadHouseFromMultiData chain.
+- `UOHouseCustomization::IsPlacementAllowed` 0x00654aa0 (probable) and the support solver
+  `UOHouseCustomization::UpdateSupport` 0x00657d50 (`ComputeObjectSupport` 0x00657e20,
+  `PropagateSupportFromBelow` 0x00658e30 -> `MarkSupportAbove` 0x00658fc0) read join bits 1, 2, 3, 5, 14
+  (section 8.4); `UpdateSupport` runs after loading the house design (`FUN_00653ad0`) and after edits
+  (`FUN_00655c80`).
 
 ## 5. Comparison with UOETE and repo `tileart.rs`
 
@@ -617,9 +620,10 @@ props1 key 8 (each + 10000000); it then draws gump `id + 60000` for a female wea
 
 ### 8.4 House join bits 1-5, 14, 15
 
-Readers on a definition: `UOHouseCustomization::IsPlacementAllowed` 0x00654aa0, `FUN_00657e20` (same edge
-rules, result in cell +0xc0) and `FUN_00658e30` -> `FUN_00658fc0`. Coordinates are relative to the house
-origin (+0x87710/+0x87714); x grows east, y grows south.
+Readers on a definition: `UOHouseCustomization::IsPlacementAllowed` 0x00654aa0,
+`UOHouseCustomization::ComputeObjectSupport` 0x00657e20 (result in cell +0xc0) and
+`UOHouseCustomization::PropagateSupportFromBelow` 0x00658e30 -> `MarkSupportAbove` 0x00658fc0 (round 3 names).
+Coordinates are relative to the house origin (+0x87710/+0x87714); x grows east, y grows south.
 
 | Bit | Slot | Rule | Data | Conf. |
 |---|---|---|---|---|
@@ -628,11 +632,53 @@ origin (+0x87710/+0x87714); x grows east, y grows south.
 | 2 | +0x104 | cells with x = 0 (west edge) need it; in mode 1 also the row y = height (outside the front) at x = 0 | 734 (walls running north-south) | high |
 | 3 | +0x108 | cells with y = 0 (north edge) need it | 729 (walls running east-west) | high |
 | 4 | +0x10c | not read | 1335 (walls) | unused |
-| 5 | +0x110 | after the edge rules (and the mode 1/4/6 check `FUN_006599c0`), placement also needs `FUN_00659950`: the cell floor type (+0x54) is not 6 or 1 and the level below is not type 1 | 1797 (walls, columns) | probable |
-| 14 | +0x134 | `FUN_00658e30`: each cell whose object has it is passed to `FUN_00658fc0`, which flags the cell (+0xbc) and its +x and +y neighbours (+0xbe in a 3 x 3 window) | 961 (walls, windows, fences) | probable |
+| 5 | +0x110 | the piece rests on the floor (section 8.4.1): placement refuses it on a stairs or teleporter cell or above stairs (`IsClearOfStairs`); the support solver supports (+0xc0) a bit-5 piece directly from its own cell (piece below or floor) or a neighbouring floor, while a piece without bit 5 is supported only through a connected supported neighbour; unsupported pieces are drawn with hue 43 | 1797 (walls, columns) | high |
+| 14 | +0x134 | a supported piece with it supports the cell above (section 8.4.1): `PropagateSupportFromBelow` passes it to `MarkSupportAbove`, which sets +0xbc on the cell one level up (plus floor/slot support around it) | 961 (walls, windows, fences) | high |
 | 15 | +0x138 | not read on a definition (the +0x138 calls in `FUN_00466940`/`FUN_0044bb40` are on other objects) | 10 records, all roofs (join bits 0x8001) | unused |
 
 Outside the house rectangle, or above the top level, placement is refused before any bit is read.
+
+#### 8.4.1 Support solver (round 3)
+
+House grid: one 0x90-byte cell per (level, x, y), index `(level + (x * 31 + y) * 4) * 0x90` from the house
+object; level count +0x876f4, width +0x87728, height +0x8772c. Cell fields: +0x54 floor tile type (1 stairs,
+6 teleporter, 8 none; the Lua `CustomizeHouseWindow` uses the same numbers, `TILE_TYPE_STAIRS = 1`,
+`TILE_TYPE_TELEPORTERS = 6`), +0x64 floor piece, +0x88 second piece slot, +0xac object piece; support bytes
++0xbc (object supported from below), +0xbd (floor support), +0xbe (slot support), +0xbf (floor supported),
++0xc0 (object supported), +0xc1 (slot supported).
+
+- `IsPlacementAllowed` 0x00654aa0 (ECX = x, EDX = level from +0x18, pushed y): after the edge bits,
+  `0x00654bf1` calls `HasHouseJoinBit5` (+0x110); if set, `IsClearOfStairs` 0x00659950 must return true:
+  cell +0x54 is neither 6 nor 1 (0x0065996e, 0x0065997a) and the cell one level below is not 1
+  (`CMP [EDI-0x3c],1` at 0x006599a6, i.e. +0x54 of the cell 0x90 bytes lower).
+- `UpdateSupport` 0x00657d50, per level: `ResetLevelSupport` 0x00658dc0 (+0xbc..+0xbe and +0xc2 = level == 0,
+  +0xbf..+0xc1 = 0), `PropagateSupportFromBelow` 0x00658e30, `FUN_006592e0`, `FUN_00658c10` (+0xbf),
+  `FUN_00658b10` (+0xc1), `ComputeObjectSupport` 0x00657e20.
+- `ComputeObjectSupport` clears +0xc0 on the level (0x00657e80), then for each object (+0xac) that passes the
+  edge bits 1-3 (pieces failing them stay unsupported). First loop: only pieces with bit 5 can be supported
+  directly (`0x00658182` +0x110, `JZ 0x0065828e` skips the rest); after `IsClearOfStairs`, the piece is
+  supported when its own cell has +0xbc or +0xbf, or bit 3 and the +y
+  cell has +0xbf (`[EBX+0x2ff]`), or bit 2 and the +x cell (`+0x467f`), or bit 1 and the +x+y cell (`+0x48bf`)
+  -> `0x00658287 MOV byte [EBX+0xc0],1`. Second loop (0x006585e2, no bit 5 test): any still unsupported piece not on a
+  stairs/teleporter cell (+0x54 6/1 at 0x006585ee/0x006585f3) nor above stairs (0x0065862b) becomes supported
+  (0x0065864d) when `IsConnectedToSupportedNeighbour` 0x006586f0 finds a supported piece at x-1, y-1, y+1 or
+  x+1 that `TilesConnect` joins to it.
+- `PropagateSupportFromBelow` (level > 0): for each cell whose level-below object is supported (+0xc0 at
+  0x00658e92) and has bit 14 (`+0x134` at 0x00658ede), calls `MarkSupportAbove` 0x00658fc0, which sets +0xbc on
+  the cell above (0x00658fec); with bit 2 the +x cell, else with bit 3 the +y cell, gets +0xbd/+0xbe
+  (0x00659060, 0x00659095); a floor on the cell sets +0xbd on its 4 neighbours, a slot piece +0xbe in the 3 x 3
+  window.
+- Display: `ShowSupport` 0x00657ce0 -> `UpdateCellSupportHues` 0x006505c0 -> `SetPieceSupportHue` 0x0064fc80:
+  hue 0x2b (43) on unsupported pieces, 0 otherwise.
+- Commit: `UOLua::SendHousingSystemMsg` 0x00656bb0 -> `FUN_00656f80`, message 4 (commit) calls
+  `HasUnsupportedPieces` 0x00657c50 (object without +0xc0, slot piece without +0xc1, floor with type != 8
+  without +0xbf) and only logs the result (`FUN_0040c6c0`); the commit proceeds.
+
+So bit 5 = "rests on the floor": the piece can stand directly on a floor or on a load-bearing piece below,
+and is therefore kept off stairs and teleporters (walls, columns); bit 14 = "supports the level above"
+(walls, windows, fences). Other pieces must hang on a connected supported piece. The client only shows and
+logs unsupported pieces; it does not block the commit. The earlier names "needs support" and "marks
+neighbours" were close but incomplete.
 
 ### 8.5 Other confidence upgrades
 
@@ -642,10 +688,10 @@ Outside the house rectangle, or above the top level, placement is refused before
 | `light_scale` | probable | high | `UOObjectComponentLighting::Initialize` 0x00449740 (vtable 0x00c9fdfc +4; definition = third stack argument, ESI at 0x449907..0x449988): `GetLightScale` -> light sprite descriptor +0x44 |
 | `light_offset_x/y` | probable | high | same function: (0, `GetLightOffsetY`, `GetLightOffsetX`) times the matrix at settings 0x00e37224 +0x7c (+0x2c..+0x4c), added to descriptor +0x68/+0x6c/+0x70. The component exists only when `GetLightShaderName` (+0x3c, block 3) is set (`UOObject::CreateComponents`) |
 | `light_field_70` | unknown | unused | no call to +0x44 on a definition; 0 in all records |
-| `field_60` | unknown | unused | read only inside `HasLegacyArtData`; 0 in all records |
-| `old_id` | medium | medium (data only) | no call to +0x78 on a definition |
-| `facing` | medium | medium | `UOObjectComponentSprite::Initialize` 0x00444b10 (vtable 0x00c9fc6c +4) stores it at component +0x2c; the reader of +0x2c was not traced |
-| `sampler_index`, `uv_set`, `source_kind` | low, medium, medium | unchanged | not re-examined |
+| `field_60` | unknown | unused (high, round 3) | read only inside `HasLegacyArtData`; neither slot is called on a definition (section 8.10); 0 in all records |
+| `old_id` | medium | unused by the client (high, round 3) | no call to +0x78 on a definition (section 8.10) |
+| `facing` | medium | medium (probably unused, round 3) | `UOObjectComponentSprite::Initialize` 0x00444b10 (vtable 0x00c9fc6c +4) stores it at component +0x2c; no reader of +0x2c found (section 8.10) |
+| `sampler_index`, `uv_set`, `source_kind` | low, medium, medium | unused / high / high (round 3) | section 8.10 |
 
 ### 8.6 Flags
 
@@ -729,11 +775,19 @@ and never tested: unused, high confidence.
 
 ### 8.7 Effect definition fields
 
-- Particle `field_30` (u8): no reader. The Nif particle initializer 0x0041a8e0 reads definition
-  +0x20..+0x3c except +0x30; `Instantiate` only zeroes instance +0x30. Data: 2 on thrown models
-  (boomerang, glaives, `rock02` boulders, `eaglestrike.ems`), 0 on arrow projectiles (3906, 7166, 20346),
-  1 on the other 550. Unknown; probably a projectile kind used outside the client.
-- Sound `value_08` (f32): no reader found; 1.0 on the 2 collection sounds. Unknown (maybe volume).
+- Particle `field_30` (u8), round 3: attach mode, see `../ghidra-effects/results/uosa_effects.md`. The only
+  reader is `UOObject::CreateComponents` 0x005befd0: for each tileart effect it gets the definition
+  (`GetEffect` 0x005bf66e), checks `GetType` == 0 (particle, 0x005bf68c) and then
+  `0x005bf69d CMP dword [EAX+0x30],2; JNZ`: value 2 skips attaching the effect to the world object (jump to
+  0x005bf7e3). The moving-effect paths (`FUN_0044bb40` at 0x0044c5e2/0x0044c606, `FUN_00466940` at
+  0x00466d0a) instantiate the same effects without testing it. 0 and 1 are not told apart anywhere. Data:
+  2 on thrown models (boomerang, glaives, `rock02` boulders, `eaglestrike.ems`: tiles 2303, 2305, 2314,
+  4962-4973, 16487, 16491, 16492, 16506), 0 on arrow projectiles (3906, 7166, 20346), 1 on the other 550.
+  High: value 2 = "projectile only" (shown only while the item flies).
+- Sound `value_08` (f32), round 3: not read. `UOSoundEffect::Init` 0x004b88d0 copies it to the instance
+  (`FSTP [ECX+0x14]` 0x004b88e8; constructor default 1.0) and no `UOSoundEffect` method (vftable 0x00ca5594)
+  reads +0x14; `Start` 0x004b8900 -> `FUN_004b5770` computes its own distance volume. 1.0 on the 2 collection
+  sounds. High (unused); probably an intended gain.
 - UserPreference mask: the global 0x00e33584 is the `filter` attribute (hex) of the user setting element
   `Effects` (loaded in `FUN_0048c9f0`, saved in `FUN_0048cdf0`). Bit 0 is "footsteps disabled":
   `FUN_0048d330` ORs 1 when `Footsteps.enabled` is false or "0", `FUN_00499860` toggles bit 0 for
@@ -792,13 +846,96 @@ this round.
 10. `effect_definition.rs` (not tileart.rs): add `USER_PREFERENCE_FOOTSTEPS: u32 = 0x1` for the
     UserPreference mask; keep particle `field_30` and sound `value_08` unknown, with the data notes above.
 
+### 8.10 Round 3: fields confirmed unread, texture items, facing
+
+Method as in section 8; probe scripts `~/ghidra_scripts/ProbeUnknownFields01.java` (slot callers, register
+chains, displacement scans), `ProbeHouseSupport02.java` (call graph of the house support code) and
+`ProbeComments03.java` (stale plate comments). The 52 definition users are the callers of
+`UOTileArt::GetObjectDefinition` plus the component `Initialize` slots.
+
+- Sitting words 4 and 5 (`field_10`/`field_14`): the only virtual calls to +0xf8/+0xfc are on objects that are
+  not definitions. A scan of all 319 loads of `[X+0xc0]` (the sitting shared_ptr) found no `[R+0x10]` or
+  `[R+0x14]` read of the sitting record; `UOTileArt::ParseSitting` 0x00845168 only passes it to `SetSitting`.
+  Not exposed to Lua (the only tileart Lua bindings are the texture requests). High: not read.
+- `field_60`: slot +0x34 (`GetField60`) is called in `UOObject::InitFromDefinition` 0x005bdb6c/0x005be2c0,
+  `FUN_005bbe30` 0x005bbf85, `FUN_005db6f0` 0x005db93d and `FUN_005ea110` 0x005ea531/0x005eaac6, all on world
+  objects (e.g. at 0x005bdb6c ECX is the new 0x98-byte `UOObject` from 0x005b32d0, and the call passes an
+  argument, a setter). Slot +0x38 (`HasLegacyArtData`, the only other reader of +0x60) has 188 callers and
+  none among the definition users. High: unused.
+- `old_id`: none of the 32 callers of slot +0x78 is a definition user. High: unused by the client; the value
+  only documents the classic id the art came from.
+- `facing`: `UOObjectComponentSprite::Initialize` 0x00444b10 stores it (`0x00444c53 CALL [vt+0x88]`,
+  `0x00444c5b MOV [EBX+0x2c],EAX`). None of the 29 `UOObjectComponentSprite` vtable functions (0x00c9fc6c)
+  nor the overrides of the foliage subclass (0x00c9fce4) reads component +0x2c; there is no
+  `dynamic_cast` to the sprite type (TD 0x00de41ec); the graphics base constructor 0x00433620 only zeroes it
+  (0x00433679). The animation component uses its own +0x2c as a shared_ptr. Medium: probably unused (a reader
+  through a non-virtual path cannot be fully excluded).
+- Texture items, material builder 0x0045cd80: item 0 becomes the base map and items 1..n the shader maps
+  (loop from index 1 at 0x0045e145, slot = loop index), so the slot is the item position.
+  - `uv_set`: `MOV CX,word [item+0x28]; AND DX,0xff00; OR CX,DX` into the map flags (0x0045de94, 0x0045e1ec),
+    the Gamebryo texture coordinate set index. High.
+  - `stretch`: compared with 1.0 (0x0045e200) -> clamp bits 12-13 = 3 (wrap) when different; UV scale
+    1/stretch (0x0045e076, 0x0045e57c). High.
+  - `source_kind` (0x0045e23f): 0 -> load through the settings texture loader (+0xa8 vtable +4, mode 4;
+    0x0045e301); 2 -> the same load, then `OR word [map+4],0x3000` (wrap, 0x0045e2f2); other values skip the
+    load (0x0045e3d1). High.
+  - `sampler_index`: no read of item +0x24 in the builder (`[ESI+0x24]` at 0x0045d02a is the sprite descriptor,
+    0x0045dae2/0x0045db1e are vtable slots), in `GetPrimaryTextureLocation`, `BuildSpriteDescriptor` or
+    `GetCachedSpriteDescriptor`. High: unused.
+  - Data (repo parser, scratch tool): `source_kind` 0 on all 198182 items. `sampler_index` equals the item
+    position except in block 1: position 1 holds 2 on 249 records and 0 on 1; position 2 holds 0 on 917
+    and 1 on 1; position 3 holds 2 on 1; block 0 position 0 holds 1 on 1 record. Repo code that matches
+    items by `sampler_index` (`udd-assets/src/tex_land_ec.rs`, water lookup on block 0) works on current
+    data, but the client order is the item position.
+
+Ghidra names added this round (`NameTileartCode.java`, tag `UO_TILEART`): `UOHouseCustomization::`
+`IsClearOfStairs` 0x00659950, `IsNotAboveStairs` 0x006599c0 (probable), `UpdateSupport` 0x00657d50
+(probable), `ResetLevelSupport` 0x00658dc0, `PropagateSupportFromBelow` 0x00658e30, `MarkSupportAbove`
+0x00658fc0, `ComputeObjectSupport` 0x00657e20, `IsConnectedToSupportedNeighbour` 0x006586f0,
+`ShowSupport` 0x00657ce0 (probable), `UpdateCellSupportHues` 0x006505c0 (probable), `SetPieceSupportHue`
+0x0064fc80 (probable), `HasUnsupportedPieces` 0x00657c50. The script now also refreshes its own single-line
+plate comments when the evidence text changed (26 refreshed, e.g. the old `GetFieldE8` text in
+`UOObject::InitFromDefinition`); comments edited by hand are kept.
+
+### 8.11 Proposed Rust changes (round 3)
+
+Not applied; for `lib/uocf/src/enhanced/tileart.rs` and `effect_definition.rs`.
+
+1. House join constants:
+   - `HOUSE_JOIN_NEEDS_SUPPORT` -> `HOUSE_JOIN_RESTS_ON_FLOOR: u32 = 1 << 5`, doc: "House placement: the
+     piece can stand directly on a floor or on a load-bearing piece below (`HOUSE_JOIN_SUPPORTS_ABOVE`), so
+     the client refuses it on stairs and teleporter cells and above stairs. Pieces without it are supported
+     only by a connected supported neighbour; the client draws unsupported pieces with hue 43."
+   - `HOUSE_JOIN_MARKS_NEIGHBOURS` -> `HOUSE_JOIN_SUPPORTS_ABOVE: u32 = 1 << 14`, doc: "House placement: a
+     supported piece with this bit supports the cell above it, and with the west/north edge bits also the
+     floor of the next cell above."
+   - Optional: `HOUSE_UNSUPPORTED_HUE: u16 = 43` where the repo shows support.
+   - `house_join_bits` doc: replace "placement rules (bits 1, 2, 3, 5, 14)" with "placement rules (bits 1,
+     2, 3), floor support (bit 5), support of the level above (bit 14)".
+2. `TileArtEntry::field_60` doc: "0 in all client records; not read by the client." `old_id` doc:
+   "Classic tile id the art replaces (default 0xffffff); not read by the client." `facing` doc: "Copied to
+   the sprite component (client default 1); no client reader found (probably unused)."
+3. `TaeTextureImage` (and `tileart.rs` 202-207 equivalents):
+   - `source_kind` doc: "0 loads the texture; 2 loads it and forces wrap addressing; any other value makes
+     the client skip the texture. 0 in all client records." Constants
+     `TEXTURE_SOURCE_NORMAL: u8 = 0`, `TEXTURE_SOURCE_WRAP: u8 = 2`.
+   - `sampler_index` doc: "Not read by the client, which binds the items in order (item 0 the base map,
+     the rest the shader maps); usually equal to the item position."
+   - `uv_set` doc: "Texture coordinate set index (low byte of the Gamebryo texture map flags); 0 or 1."
+   - Repo users matching on `sampler_index` (`udd-assets/src/tex_land_ec.rs`) could use the item position
+     instead; same result on current data.
+4. `TaeSittingAnimation::field_10`/`field_14`: keep "Not read by the client." (now high).
+5. `effect_definition.rs`: see `../ghidra-effects/results/uosa_effects.md` section "Proposed Rust changes":
+   particle `field_30` -> `attach_mode` with `PARTICLE_ATTACH_PROJECTILE_ONLY: u8 = 2`; `field_3c` and sound
+   `value_08` docs.
+
 ## 9. Open questions
 
 - Alternate animation entries: which actions the alternate map entries hold (animation data, not tileart).
-- `facing`: the reader of sprite component +0x2c.
+- `facing`: stored at sprite component +0x2c; no reader found (a non-virtual reader is not excluded).
 - Weight > 90 test (`UOObject` vtable +0xcc): what the caller does with it.
-- House join bits 5 and 14: the exact game rule behind the support check and the neighbour marking.
+- House support: `FUN_006592e0`, `FUN_00658c10` (floor support +0xbf) and `FUN_00658b10` (slot support +0xc1)
+  were not analysed in detail; they do not read join bits.
 - props1 keys 1, 2, 4, 5, 7: only reachable through effect or variable keys; no meaning found.
-- Texture item `sampler_index`: no code reads it.
-- Sitting words 4 and 5, `old_id`, `light_field_70`, `field_60`: not read by the client.
-- Effect particle `field_30`, sound `value_08`.
+- Settled as not read by the client: sitting words 4 and 5, `old_id`, `light_field_70`, `field_60`, texture
+  item `sampler_index`, sound `value_08` (section 8.10, effects document).

@@ -100,6 +100,8 @@ public class NameEffectCode extends GhidraScript {
 
     // Effect type keys (the u32 before each definition body).
     private static final int KEY_PARTICLE = 0;
+    // Particle definition +0x30 value that UOObject::CreateComponents does not attach to the object.
+    private static final int PARTICLE_ATTACH_PROJECTILE_ONLY = 2;
     private static final int KEY_SOUND = 1;
     private static final int KEY_ROUND_ROBIN = 2;
     private static final int KEY_POSITION_OFFSET = 7;
@@ -119,14 +121,14 @@ public class NameEffectCode extends GhidraScript {
     // Registered factories (StartUp state), key from CanHandle and the definition's GetType.
     private static final EffectType[] EFFECT_TYPES = {
         new EffectType(KEY_PARTICLE, "UOParticleEffectBinaryFactory", "UOParticleEffectBinaryBaseFactory", "UOParticleEffectDefinition",
-            "u32 name string index (.nif or .ems), f32 offset_x, f32 offset_y, f32 camera_offset, f32 scale, u8 field_30,"
+            "u32 name string index (.nif or .ems), f32 offset_x, f32 offset_y, f32 camera_offset, f32 scale, u8 attach_mode,"
                 + " f32 duration, u8 loop (!= 0), u8 field_3c, u8 hued; NewInstance(name), Init(fields)",
             "stores the particle fields at +0x20..+0x40",
             "'.ems' in the name -> UOParticleEffectChaos; object hue (vtable +0x58) != 0 and hued (+0x40) ->"
                 + " UOHuedParticleEffectNif; else UOParticleEffectNif; then the effect Init from the definition", false),
         new EffectType(KEY_SOUND, "UOSoundEffectBinaryFactory", "UOSoundEffectBinaryBaseFactory", "UOSoundEffectDefinition",
             "u32 sound id, f32 value_08 (1.0 in the data)", "stores sound id at +4 and value at +8",
-            "creates a UOSoundEffect (0x1c bytes) and copies sound id and value_08", false),
+            "creates a UOSoundEffect (0x1c bytes) and copies sound id and value_08 (to +0x14, never read)", false),
         new EffectType(KEY_ROUND_ROBIN, "UORoundRobinEffectBinaryFactory", "UORoundRobinEffectBinaryBaseFactory",
             "UORoundRobinEffectCollection",
             "u32 count, count x ParseEffectDefinition, each appended through Init (vtable +0x18)",
@@ -496,7 +498,8 @@ public class NameEffectCode extends GhidraScript {
         } else {
             for (Proposal proposal : proposals.values()) {
                 Function f = functions.getFunctionAt(toAddr(proposal.address));
-                proposal.status = f.getName(true).equals(proposal.path) ? "already named"
+                proposal.status = f.getName(true).equals(proposal.path)
+                    ? (hasStaleOwnComment(f, proposal) ? "already named, plate comment would be refreshed" : "already named")
                     : f.getSymbol().getSource() == SourceType.DEFAULT ? "would rename"
                     : "kept " + f.getName(true) + " (" + f.getSymbol().getSource() + ")";
                 if (proposal.status.startsWith("kept")) {
@@ -670,6 +673,10 @@ public class NameEffectCode extends GhidraScript {
         Symbol symbol = function.getSymbol();
         if (symbol.getName().equals(name) && symbol.getParentNamespace().equals(namespace)) {
             proposal.status = "already named";
+            if (hasStaleOwnComment(function, proposal)) {
+                function.setComment(plateComment(proposal));
+                count("plate comments refreshed");
+            }
         } else if (symbol.getSource() == SourceType.DEFAULT) {
             try {
                 symbol.setNameAndNamespace(name, namespace, SourceType.ANALYSIS);
@@ -695,10 +702,22 @@ public class NameEffectCode extends GhidraScript {
         }
         String comment = function.getComment();
         if (comment == null || comment.isBlank()) {
-            function.setComment(COMMENT_PREFIX + TAG + " `" + proposal.path + "`" + (proposal.probable ? PROBABLE : "")
-                + ": " + proposal.evidence);
+            function.setComment(plateComment(proposal));
             count("plate comments set");
         }
+    }
+
+    private static String plateComment(Proposal proposal) {
+        return COMMENT_PREFIX + TAG + " `" + proposal.path + "`" + (proposal.probable ? PROBABLE : "") + ": "
+            + proposal.evidence;
+    }
+
+    // A single-line plate comment this script wrote for the current name, with outdated evidence. Comments from
+    // other sources, or edited ones (more than one line), are never touched.
+    private static boolean hasStaleOwnComment(Function function, Proposal proposal) {
+        String comment = function.getComment();
+        return comment != null && comment.startsWith(COMMENT_PREFIX + TAG + " `" + proposal.path + "`")
+            && !comment.contains("\n") && !comment.equals(plateComment(proposal));
     }
 
     private void ensureTag() {
@@ -791,15 +810,19 @@ public class NameEffectCode extends GhidraScript {
         field(particle, 0x24, f32, "offset_y", "subtracted from the effect z (vertical, probable)");
         field(particle, 0x28, f32, "camera_offset", "times -0.1286 along the camera vector (probable)");
         field(particle, 0x2c, f32, "scale", "node scale");
-        field(particle, 0x30, u32, "field_30", "record u8 (1, 2, 0); no reader found");
+        field(particle, 0x30, u32, "attach_mode", "record u8 (1, 2, 0); UOObject::CreateComponents does not attach"
+            + " the effect to the object when it is " + PARTICLE_ATTACH_PROJECTILE_ONLY + " (thrown models); 0 and 1"
+            + " are treated alike");
         field(particle, 0x34, f32, "duration", "seconds; loop period or lifetime");
         field(particle, 0x38, bool, "loop", null);
-        field(particle, 0x3c, u32, "field_3c", "record u8, 0 in the data; 1 fails the Nif init, non-zero fails Chaos");
+        field(particle, 0x3c, u32, "field_3c", "record u8, 0 in the data; 1 fails the Nif init, non-zero fails Chaos;"
+            + " no other reader");
         field(particle, 0x40, bool, "hued", "apply the object hue (UOHuedParticleEffectNif)");
         StructureDataType sound = struct("UOSoundEffectDefinition", 0xc, "effect type 1");
         field(sound, 0x0, voidPtr, "vftable", null);
         field(sound, 0x4, u32, "sound_id", null);
-        field(sound, 0x8, f32, "value_08", "default 1.0; copied to UOSoundEffect +0x14, no reader found");
+        field(sound, 0x8, f32, "value_08", "default 1.0; copied to UOSoundEffect +0x14, which no UOSoundEffect method"
+            + " reads (Start computes its own distance volume)");
         StructureDataType roundRobin = struct("UORoundRobinEffectCollection", 0x18, "effect type 2");
         field(roundRobin, 0x0, voidPtr, "vftable", null);
         field(roundRobin, 0x4, vector, "children", null);
@@ -847,7 +870,7 @@ public class NameEffectCode extends GhidraScript {
         // Byte-packed file records of the fixed-size bodies (after the u32 type key).
         StructureDataType particleRecord = packed("EffectParticleRecord", "type 0 body, 28 bytes", new Object[][] {
             {u32, "name_index", "string dictionary index"}, {f32, "offset_x", null}, {f32, "offset_y", null},
-            {f32, "camera_offset", null}, {f32, "scale", null}, {u8, "field_30", null}, {f32, "duration", null},
+            {f32, "camera_offset", null}, {f32, "scale", null}, {u8, "attach_mode", null}, {f32, "duration", null},
             {u8, "loop", "tested != 0"}, {u8, "field_3c", null}, {u8, "hued", "tested != 0"}});
         StructureDataType soundRecord = packed("EffectSoundRecord", "type 1 body", new Object[][] {
             {u32, "sound_id", null}, {f32, "value_08", null}});

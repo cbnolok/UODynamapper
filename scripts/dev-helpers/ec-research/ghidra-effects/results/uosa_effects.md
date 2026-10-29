@@ -74,10 +74,10 @@ column gives the definition object offset.
 | 3 | f32 | offset_y | +0x24 | subtracted from the effect z, so it acts as a vertical offset | probable |
 | 4 | f32 | camera_offset | +0x28 | scaled by k = -camera_offset * 0.12856 (0x00d050a0) and applied along the camera vector (`DAT_00e37224`+0x24..+0x2c) | probable |
 | 5 | f32 | scale | +0x2c | scale of the scene node (`FUN_00419ca0`, node +0x5c) | confirmed |
-| 6 | u8 | field_30 | +0x30 | stored as u32. No reader was found. Data values: 1, 2 and 0. | unknown |
+| 6 | u8 | attach_mode (was field_30) | +0x30 | stored as u32. Only reader: `UOObject::CreateComponents` 0x005befd0, which does not attach a particle with value 2 to the world object (`0x005bf69d CMP dword [EAX+0x30],2; JNZ`); such an effect plays only on the moving-effect (projectile) paths. 0 and 1 are not told apart. Data: 2 on thrown models, 0 on arrows, 1 elsewhere. See "Particle attach mode". | confirmed (value 2) |
 | 7 | f32 | duration | +0x34 | seconds. If the effect doesn't loop, it stops once elapsed >= duration. If it loops and duration != 0, elapsed = fmod(elapsed, duration). | confirmed |
 | 8 | u8 | loop | +0x38 | normalized with SETNZ, so any non-zero value means true | confirmed |
-| 9 | u8 | field_3c | +0x3c | the Nif Init fails when the value is 1, and the Chaos Init requires 0. Always 0 in the data. | probable |
+| 9 | u8 | field_3c | +0x3c | the Nif Init fails when the value is 1 (0x0041a8fb `CMP [EBX+0x3c],1; JNZ`), and the Chaos Init requires 0 (0x0041aff8, error with the effect name otherwise). No other reader. Always 0 in the data, so a valid definition holds 0. Meaning of non-zero values unknown. | confirmed (checks) |
 | 10 | u8 | hued | +0x40 | non-zero together with a non-zero object hue gives `UOHuedParticleEffectNif` | confirmed |
 
 Particle bytes aren't validated when they are parsed.
@@ -91,12 +91,28 @@ Particle bytes aren't validated when they are parsed.
 The positional math is in `UOParticleEffectNif::Init` 0x0041a8e0. The axis names follow the code, not a
 proven world orientation.
 
+#### Particle attach mode (definition +0x30)
+
+`UOObject::CreateComponents` 0x005befd0 walks the tileart effects of the object's definition: `GetEffect`
+(definition vtable +0x90, 0x005bf66e), then the effect definition's `GetType` (vtable +0xc, 0x005bf68c).
+For type 0 (particle) it tests `0x005bf69d CMP dword ptr [EAX+0x30],0x2` / `JNZ`: with value 2 the effect
+is skipped (jump to 0x005bf7e3) and is not added to the object's effects component; other values are
+attached. The moving-effect code that shows an item in flight (`FUN_0044bb40` at 0x0044c5e2/0x0044c606,
+`FUN_00466940` at 0x00466d0a) instantiates the same definitions without testing +0x30. A whole-program scan
+of `+0x30]` operands after `GetEffect`/`GetType` found no other reader, and `Instantiate` only zeroes the
+instance's own +0x30.
+
+Data: value 2 on thrown models (boomerang, glaives, `rock02` boulders, `eaglestrike.ems`: tiles 2303, 2305,
+2314, 4962-4973, 16487, 16491, 16492, 16506), 0 on arrow projectiles (3906, 7166, 20346), 1 on the other
+550; always 1 in EffectDefinitionCollection.uop. So 2 means "projectile only": the trail is shown while the
+item flies but not when it lies on the ground. The meaning of 0 versus 1 is not visible in the client.
+
 ### 1 Sound (body 8 bytes, Create 0x0083b590)
 
 | # | Type | Name | Stored at | Meaning | Confidence |
 |---:|---|---|---|---|---|
 | 1 | u32 | sound_id | +0x04 | `UOSoundEffect::Start` plays this id at the effect position, with distance attenuation, when sound is enabled | confirmed |
-| 2 | f32 | value_08 | +0x08 | copied to `UOSoundEffect`+0x14. Start doesn't read it. 1.0 in the data. Possibly a volume. | unknown |
+| 2 | f32 | value_08 | +0x08 | copied to `UOSoundEffect`+0x14 (`UOSoundEffect::Init` 0x004b88d0, `FSTP [ECX+0x14]` at 0x004b88e8; constructor default 1.0). No `UOSoundEffect` method (vftable 0x00ca5594) reads +0x14; `Start` 0x004b8900 -> `FUN_004b5770` computes its own distance volume. 1.0 in the data. Probably an intended gain. | confirmed (not read) |
 
 ### 2 RoundRobin (Create 0x0083b7f0)
 
@@ -220,7 +236,7 @@ Value distributions:
 - **Particle:**
   - loop: 1 x532, 0 x40;
   - hued: 1 x6;
-  - field_30: 1 x550, 2 x19, 0 x3;
+  - attach_mode (field_30): 1 x550, 2 x19, 0 x3;
   - field_3c: always 0;
   - duration: 0 x275, 1 x147, 3 x65, ...;
   - scale: 0.25 x269, 1.0 x135, ...;
@@ -246,7 +262,7 @@ Value distributions:
 - **Particle:**
   - loop: 0 x247;
   - offset_x and offset_y: -8 in 23 definitions;
-  - field_30: always 1;
+  - attach_mode (field_30): always 1;
   - hued: always 0;
   - 258 distinct names.
 - **Wait:** (500, 2000, aligned 0), containing two Sounds (id 43, 1.0).
@@ -296,7 +312,7 @@ EffectList       := u32 count, count x EffectDefinition
 EffectMap        := u32 count, count x { u32 key, EffectList }
 
 Body(0  Particle)       := u32 name_string_index, f32 offset_x, f32 offset_y, f32 camera_offset, f32 scale,
-                           u8 field_30, f32 duration, u8 loop, u8 field_3c, u8 hued            // 28 bytes
+                           u8 attach_mode, f32 duration, u8 loop, u8 field_3c, u8 hued         // 28 bytes
 Body(1  Sound)          := u32 sound_id, f32 value_08                                          // 8 bytes
 Body(2  RoundRobin)     := EffectList
 Body(7  PositionOffset) := 8 x { i8 x, i8 y }                                                  // 16 bytes, index = direction 0..7
@@ -320,8 +336,8 @@ Validation, in terms of what the client does and what a parser should do:
 - **Wait aligned and PropertyFlag mode.** These are bytes that must be 0 or 1. The client stores
   `value == 1` and clears the ok flag for other values, but keeps reading. Return an error, or warn and
   store `value == 1`. The data never violates this.
-- **Particle flags.** loop and hued are booleans meaning non-zero. field_30 and field_3c are raw bytes; keep
-  them as u8. The client doesn't check them when parsing.
+- **Particle flags.** loop and hued are booleans meaning non-zero. attach_mode and field_3c are raw bytes;
+  keep them as u8. The client doesn't check them when parsing (field_3c is checked when the effect starts).
 - **Particle name.** This is a `string_dictionary.uop` index, not an inline string. Resolve it later with the
   repo's string dictionary. All indices in the data are in range.
 - **Counts.** Counts aren't bounded by the client. Before allocating, check each count against the bytes
@@ -371,11 +387,38 @@ The following are not renamed:
 - the effect id lookup `FUN_004220c0`;
 - the other readers `FUN_0083c0ba` and `FUN_004b93d0`.
 
+### Round 3 (unknown fields)
+
+`NameEffectCode.java` now renames the `UOParticleEffectDefinition` +0x30 field and the packed record field to
+`attach_mode` (constant `PARTICLE_ATTACH_PROJECTILE_ONLY = 2`), documents `field_3c` and the sound
+`value_08`, and refreshes its own single-line plate comments when the evidence changed (comments edited by
+hand are kept). `--apply` updated 3 types and refreshed 2 plate comments
+(`UOParticleEffectBinaryBaseFactory::Create`, `UOSoundEffectDefinition::Instantiate`); a second `--apply`
+reported no changes. `UOObject::CreateComponents` (named by `NameTileartCode.java`) now mentions the attach
+mode test in its plate comment.
+
+## Proposed Rust changes
+
+Not applied; for `lib/uocf/src/enhanced/effect_definition.rs`.
+
+1. `ParticleEffect::field_30: u8` -> `attach_mode: u8`, with
+   `pub const PARTICLE_ATTACH_PROJECTILE_ONLY: u8 = 2;` doc: "The client does not attach the effect to the
+   world object; it plays only while the item is shown in flight (thrown models). Client data: 2 on thrown
+   models, 0 on arrows, 1 elsewhere; the client treats 0 and 1 alike." Field doc: "Attach mode
+   (confirmed for `PARTICLE_ATTACH_PROJECTILE_ONLY`); see the constant."
+2. `ParticleEffect::field_3c` doc: "Must be 0: the client refuses to start a Nif effect when it is 1 and a
+   Chaos (`.ems`) effect when it is non-zero (confirmed); 0 in all client data. Meaning of other values
+   unknown."
+3. `SoundEffect::value_08` doc: "Copied into the sound instance but never read by the client (confirmed);
+   1.0 in all client data, probably an intended gain." Keep the name.
+4. Tests and fixtures that build `ParticleEffect { field_30: .. }` follow the rename.
+
 ## Uncertainties
 
-- What field_30 means: no reader was found for definition +0x30 or for the runtime copy.
-- Whether field_3c is a "Chaos only" flag. Its value is always 0 in the data.
-- Sound value_08: it is stored but no reader was seen. A volume is plausible.
+- Particle attach mode: the difference between 0 (arrows) and 1 is not visible in the client.
+- field_3c: what a non-zero value was meant for (1 is rejected by the Nif effect, any non-zero value by the
+  Chaos effect). Always 0 in the data.
+- Sound value_08: not read by the client (settled); its intended use (probably a gain) is unknown.
 - The axis names of the particle offsets are inferred from the Nif Init math, not from a rendered check.
 - UserPreference mask semantics: the bit meanings of `DAT_00e33584` (the user effect settings) weren't
   traced.
