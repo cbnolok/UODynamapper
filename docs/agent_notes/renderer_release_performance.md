@@ -331,3 +331,53 @@ measured in a separate release pair. Six matched KR captures stayed within one
 byte, but opaque GPU time improved only about 1.5% at bridge and 3.4% at lava.
 That larger shader refactor was removed. Its `shared-weathering-*` artifacts
 are diagnostic evidence, not the accepted renderer.
+
+## Rejected liquid-only fragment normals
+
+A conservative shader-only prototype delayed geometry-normal reconstruction
+until after opaque-layer and bank selection. It skipped the normal only for a
+single remaining, resolved flat-liquid pass with zero bank weight. Missing
+slots (`texture_size=3`), mixed stacks and banks retained regular shading. The
+actual `TileUniform` matters: raw wet ownership or liquid class alone cannot
+prove that the normal is unused. Noncomposed EC liquids used the same check.
+
+The policy passed 39 native comparisons: the six fixtures in Classic, Enhanced,
+KR, KR perspective, Enhanced CC and forced uncached KR; two synthetic missing
+liquid-slot scenes; and Classic lighting with KR shadow grunge at lava. Classic,
+Enhanced and CC comparisons were exact; KR and the missing-slot diagnostic
+stayed within one byte. The Classic/KR-grunge exception was exact as well.
+
+The same release/settings methodology gives these opaque GPU durations:
+
+| KR orthographic fixture | Baseline ms | Prototype ms | Comparison |
+|---|---:|---:|---|
+| Bridge | 7.32 | 6.98 | Two run medians per variant, ABBA |
+| Lava | 9.81 | 9.42 | Two run medians per variant, ABBA |
+| Swamp | 4.89 | 3.62 | One reverse-order pair |
+| Town | 9.33 | 8.92 | One reverse-order pair |
+
+Swamp's sampled FPS rose from 178.93 to 223.88. Perspective bridge/lava also
+improved, but factory Classic regressed in a repeat with background compilation
+finished: bridge 2.05→2.19 ms, lava 3.08→3.14 ms. An earlier Classic pair had
+concurrent Rust compilation and a large FPS/GPU-duration mismatch; that pair
+is excluded from the performance conclusion.
+
+Moving Classic's uniform no-normal check ahead of the varying liquid decision
+did not eliminate the Classic GPU cost in a separate pair (2.135→2.195 ms at
+bridge, 3.06→3.16 ms at lava). The cause of that residual cost was not established;
+shader register allocation and control flow are hypotheses. Neither prototype
+was retained. The shipped `land_surface_normal` and fragment composition remain
+as before this investigation. This is not a claimed production speedup.
+
+Evidence uses `liquid-normals-*` under the temporary fixture folder. The first
+prototype's accepted image matrices are `liquid-normals-first-matrix.json`,
+`liquid-normals-standard-matrix.json`, `liquid-normals-missing-matrix.json` and
+`liquid-normals-exception-matrix.json`. Timing sets are `initial`, `wide`,
+`perspective`, `factory-repeat` and `uniform-factory`; `factory` is the excluded
+busy comparison. Preserve these distinctions when reconsidering this approach.
+
+A separate [cache-only compiler-footprint diagnostic](ec_terrain_shader_footprint.md)
+removed the cold reconstruction call while preserving settled fixture output.
+It reduced static code/scratch substantially but changed opaque GPU time by less
+than one percent. That result does not justify a split cache-hit/miss render path;
+active height/material work needs further attribution.

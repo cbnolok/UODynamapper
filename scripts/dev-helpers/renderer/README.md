@@ -102,3 +102,13 @@ changes; they do not replace timed passes or count instructions actually execute
 per fragment. This is an optional driver diagnostic, independent of the portable
 runtime rendering path. Reused pipeline cache entries can omit compiler output;
 keep a timing result usable even when its optional compiler statistics are absent.
+
+## Temporary artifacts
+
+After each completed task, remove superseded captures, obsolete test fixtures and
+logs from the isolated temporary workspace. Keep current baselines, compact
+benchmark/validation reports, active settings/packages, reusable helpers and
+user-provided reference images. Archive useful small historical reports together.
+Scope preview-directory cleanup to owned paths whose own metadata confirms
+successful child/window cleanup. Record a retention/deletion manifest and verify
+that the active fixture and helper entry points still work afterward.
