@@ -288,6 +288,7 @@ fn create_aux_atlas_images(
     terrain_meta: Option<&TerrainMetaPackage>,
     tex_land_ec: Option<&TexLandEcPackage>,
     tilemeta: Option<&TileMetaPackage>,
+    tex_art_ec: Option<&udd_assets::tex_art_ec::TexArtEcPackage>,
 ) -> LandAuxAtlasImages {
     use bevy::render::render_resource::{
         Extent3d, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor,
@@ -409,6 +410,11 @@ fn create_aux_atlas_images(
         if slot.logical_family != source.texture_type { return None; }
         assign_aux_layer(tex_aux_ec, source.texture_id, &mut texture_id_to_layer, &mut layers_rgba)
     });
+
+    if let (Some(meta), Some(art)) = (tilemeta, tex_art_ec) {
+        super::ec_item_surface::append_sprite_hues(&mut images.get_mut(&surface_lookup).expect("new item lookup"),
+            meta, art, tex_aux_ec, &mut layers_rgba);
+    }
 
     let layer_count = layers_rgba.len().max(1) as u32;
     let mut atlas_bytes: Vec<u8> = Vec::with_capacity(
@@ -1394,6 +1400,7 @@ pub fn sys_setup_terrain_cache(
         terrain_meta_r.as_deref().map(|r| r.0.as_ref()),
         tex_land_ec_package.as_deref(),
         tilemeta_r.as_deref().map(|r| r.0.as_ref()),
+        land_texture_cache.tex_art_ec.as_deref(),
     );
     cmd.insert_resource(super::ec_item_liquid::EcItemLiquidImages {
         atlas: aux_images.aux_atlas.clone(),

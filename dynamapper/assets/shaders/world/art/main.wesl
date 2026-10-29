@@ -26,7 +26,7 @@ import package::shaders::world::art::art_bindings::{
     PASS_MODE_TRANSPARENT, PASS_MODE_SHADOW, SURFACE_LIKE_DEPTH_CLASS_OFFSET,
     STATIC_DEPTH_TIE_BREAK_FRAG_EPSILON
 };
-import package::shaders::world::art::hue::apply_static_hue;
+import package::shaders::world::art::hue::{apply_static_hue, apply_ec_sprite_hue, STATIC_HUE_FLAG_APPLY, STATIC_HUE_FLAG_EC_SPRITE};
 import package::shaders::world::art::shading::apply_art_surface_shading;
 import package::shaders::world::art::surface_blend::static_surface_coverage;
 
@@ -327,14 +327,26 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
     }
 
     var shaded = color * in.color;
-    shaded = apply_static_hue(
-        shaded,
-        inst.hue_id,
-        inst.hue_flags,
-        sprite_params.hue_enabled,
-        hue_texture,
-        hue_sampler,
-    );
+    var sprite_hue = vec4<u32>(0u);
+    let ec_hue_flags = STATIC_HUE_FLAG_APPLY | STATIC_HUE_FLAG_EC_SPRITE;
+    if (sprite_params.hue_enabled != 0u && inst.hue_id != 0u
+        && (inst.hue_flags & ec_hue_flags) == ec_hue_flags) {
+        sprite_hue = ec_item_surface_record(item_surface_lookup, inst.material_item_id);
+    }
+    if ((sprite_hue.y & 256u) != 0u) {
+        shaded = apply_ec_sprite_hue(shaded, inst.hue_id, sprite_hue,
+            (sample_uv - inst.uv_min) / atlas_extent, hue_texture, hue_sampler,
+            item_surface_atlas, item_surface_lookup, effects.enable_linear_filtering == 1u);
+    } else {
+        shaded = apply_static_hue(
+            shaded,
+            inst.hue_id,
+            inst.hue_flags,
+            sprite_params.hue_enabled,
+            hue_texture,
+            hue_sampler,
+        );
+    }
     if (sprite_params.pass_mode == PASS_MODE_TRANSPARENT && surface_header.x == 0u && !blend_surface) {
         shaded = vec4<f32>(shaded.rgb * shaded.a * 2.0, shaded.a);
     }

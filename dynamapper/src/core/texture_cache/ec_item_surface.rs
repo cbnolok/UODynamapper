@@ -7,6 +7,8 @@ use uocf::enhanced::tileart::ArtMaterial;
 
 const ITEM_CAPACITY: usize = 65_536;
 const LOOKUP_WIDTH: usize = 256;
+mod hue_mask;
+pub(super) use hue_mask::append as append_sprite_hues;
 
 #[derive(Resource, Clone)]
 pub struct EcItemSurfaceImages {
@@ -18,6 +20,14 @@ fn source(refs: &[TileMetaItemTextureRef], stage: u32) -> Option<&TileMetaItemTe
     refs.iter().find(|r| r.block_index == 0 && r.sampler_index == stage && r.is_world_art()
         && r.physical_package() == EcMaterialPhysicalPackage::Texture
         && r.uv_set <= 1 && r.texture_stretch.is_finite() && r.texture_stretch > 0.0)
+}
+
+fn has_source(refs: &[TileMetaItemTextureRef], stage: u32) -> bool {
+    refs.iter().any(|r| r.block_index == 0 && r.sampler_index == stage)
+}
+
+fn sprite_source(refs: &[TileMetaItemTextureRef], stage: u32) -> Option<&TileMetaItemTextureRef> {
+    source(refs, stage).filter(|r| r.uv_set == 0 && r.texture_stretch == 1.0)
 }
 
 fn same_sample(a: &TileMetaItemTextureRef, b: &TileMetaItemTextureRef) -> bool {

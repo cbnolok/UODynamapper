@@ -89,3 +89,44 @@ Do not invent KR substitutions for missing or malformed original references.
 `inspect_ec_texture_extents` checks availability/extents without exporting pixels
 and continues across missing IDs. Temporary inventory and source-pair CSVs live
 under `/tmp/uodynamapper-ec-followup/` with `sprite-mask-` prefixes.
+
+## Runtime sprite hue coverage
+
+`texture_cache/ec_item_surface/hue_mask.rs` registers block-0 local-UV,
+unit-repetition `UOSpriteShader` graphs only when their selected primary matches
+the resident static art slot. Header flags distinguish this sprite graph from
+the existing static-terrain graph. The runtime bundle registers 11,569 sprite
+owners, 287 distinct native mask crops and nine unavailable declared masks.
+
+Masks use the art window's `ec_start_x/y` and logical dimensions, undoing atlas
+upscale. A shelf allocator packs those crops into additional layers of the
+existing 256-square UNORM auxiliary array. Crops larger than a layer split into
+blocks, with bounded explicit filtering across block boundaries. Source images
+are decoded once during setup and shared crops reuse descriptors. No package
+schema, GPU binding, draw pass or instance stride is added. This is startup
+construction, not a per-frame `Assets::get_mut` operation.
+
+Only an EC sprite instance with a nonzero enabled hue consults this graph; CC
+and other material families retain their previous hue path. The sprite uses its
+existing art filter, reconstructs encoded red for the palette index, then mixes
+the hue result by native mask alpha. Mask alpha zero skips palette work. Missing
+declared inputs retain the original sprite color and are counted at startup;
+this is a conservative missing-resource policy, not a claim about the original
+client's missing-texture fallback. An actually absent source-2 declaration hues
+the full sprite as specified by the original shader.
+
+`find_hued_statics` scans native statics without changing map data. Map 0 has
+masked flowers 3211/3213 near (7038,391), with hues 40/30, and vines 3308/3309
+near (7064,726), hue 1175. These are useful runtime fixtures. CPU coverage tests
+check crop offsets, upscale and block placement; the production-shader GPU test
+checks encoded-red indexing, fractional alpha, filtering across the 255/256 seam,
+nearest sampling, full-sprite hues and declared-but-missing masks. These checks
+establish the recovered hue operation, not complete original-client pixel parity.
+
+The final native captures use `hue-gradient-final-` under the temporary evidence
+directory, with a matching EC palette loaded, all three styles and CC controls.
+The bridge and road controls differ from the prior hue path by at most one byte;
+flower/vine changes remain on hued art. Earlier `sprite-hue-native-` captures had
+no palette, and `sprite-hue-palette-settled-` used the defective solid swatch row;
+neither is acceptance evidence. See [EC hue palette conversion](ec_hue_palette_conversion.md)
+for the recovered two-row bitmap contract and independent 3,000-strip comparison.

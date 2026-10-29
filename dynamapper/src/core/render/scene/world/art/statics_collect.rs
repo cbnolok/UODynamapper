@@ -291,6 +291,7 @@ const TILE_FLAG_ROOF: u64 = 0x1000_0000;
 /// When set, the art shader applies the animated sin/cos UV distortion.
 const TILE_FLAG_WET: u64 = 0x80;
 const STATIC_HUE_FLAG_APPLY: u32 = 1;
+const STATIC_HUE_FLAG_EC_SPRITE: u32 = 2;
 const DEFAULT_PRIORITY_HEIGHT: i8 = 10;
 const SURFACE_LIKE_DEPTH_CLASS_OFFSET: f32 = -4.0;
 const STATIC_DEPTH_TIE_BREAK_STEP: f32 = 0.000_001;
@@ -2503,7 +2504,7 @@ fn emit_billboard_static_instance(
         sort_bias_ordinal: 0,
         is_wet_flags: info.is_wet_flags,
         hue_id,
-        hue_flags,
+        hue_flags: hue_flags | if billboard_source == ClientTextureSource::Ec { STATIC_HUE_FLAG_EC_SPRITE } else { 0 },
         flat_quad: if ec_surface { if ec_static_camera_quad(info.tilemeta) { 3 } else { 2 } } else { 0 },
         texture_stretch,
         material_item_id: info.tile.graphic as u32,
