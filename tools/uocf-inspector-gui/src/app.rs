@@ -6,7 +6,7 @@ use image_postprocess::palette::{
 };
 use image_postprocess::upscaling::{EnhancementFilter, UpscaleFilter};
 use std::num::NonZero;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc};
 use std::time::Instant;
@@ -85,6 +85,53 @@ pub enum MultisSource {
 pub enum MultiCollectionSource {
     ClassicClient,
     EnhancedClient,
+}
+
+/// Part and entry filters of the multis panel.
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub struct MultiPartFilters {
+    /// Also list and draw the parts the client never draws (EC `not_drawn`, classic parts without the
+    /// visible flag).
+    pub show_hidden: bool,
+    /// Keep the parts whose tile id is a housing.bin piece.
+    pub show_housing_parts: bool,
+    /// Keep the parts whose tile id is not a housing.bin piece.
+    pub show_other_parts: bool,
+    /// List only the multis referenced by the housing.bin multi lists.
+    pub only_housing_multis: bool,
+}
+
+impl Default for MultiPartFilters {
+    fn default() -> Self {
+        Self {
+            show_hidden: false,
+            show_housing_parts: true,
+            show_other_parts: true,
+            only_housing_multis: false,
+        }
+    }
+}
+
+/// housing.bin ids looked up by the multis panel filters.
+#[derive(Debug, Default)]
+pub struct HousingIndex {
+    /// Tile ids of the `solid` and `windows` lists.
+    pub piece_tile_ids: HashSet<u32>,
+    /// Multi ids of the `multis` lists (stair blocks).
+    pub multi_ids: HashSet<u32>,
+}
+
+impl HousingIndex {
+    pub fn from_pieces(housing: &HousingPieces) -> Self {
+        let mut index = Self::default();
+        for (_, piece) in housing.pieces() {
+            index
+                .piece_tile_ids
+                .extend(piece.solid.iter().chain(&piece.windows).map(|slot| slot.id));
+            index.multi_ids.extend(piece.multis.iter().map(|slot| slot.id));
+        }
+        index
+    }
 }
 
 pub fn concrete_art_tile_source(source: ArtSource) -> ArtSource {
@@ -1771,6 +1818,8 @@ pub struct UopInspectorApp {
     pub multi_collection_source: Option<MultiCollectionSource>,
     pub multi_collection_path: Option<PathBuf>,
     pub housing_pieces: Option<Arc<HousingPieces>>,
+    pub housing_index: Option<Arc<HousingIndex>>,
+    pub multi_part_filters: MultiPartFilters,
 }
 
 impl UopInspectorApp {
@@ -1845,6 +1894,8 @@ impl UopInspectorApp {
             multi_collection_source: None,
             multi_collection_path: None,
             housing_pieces: None,
+            housing_index: None,
+            multi_part_filters: MultiPartFilters::default(),
             texture_previews: HashMap::new(),
             ec_texture_previews: HashMap::new(),
             ec_texture_preview_source_keys: HashMap::new(),
@@ -1952,6 +2003,7 @@ impl UopInspectorApp {
         self.multi_collection_source = None;
         self.multi_collection_path = None;
         self.housing_pieces = None;
+        self.housing_index = None;
         self.selected_multi_uop_hash = None;
         self.selected_localized_file_hash = None;
         self.cc_sounds = None;
@@ -3723,6 +3775,10 @@ impl UopInspectorApp {
                 None
             }
         };
+        self.housing_index = self
+            .housing_pieces
+            .as_deref()
+            .map(|housing| Arc::new(HousingIndex::from_pieces(housing)));
     }
 
     pub fn select_raw_multi_collection_housing(&mut self) -> bool {
@@ -4243,6 +4299,8 @@ mod tests {
             multi_collection_source: None,
             multi_collection_path: None,
             housing_pieces: None,
+            housing_index: None,
+            multi_part_filters: MultiPartFilters::default(),
         }
     }
 
@@ -4758,5 +4816,31 @@ mod tests {
         assert!(app.select_raw_localized_strings_file(0x1234));
         assert_eq!(app.selected_file_hash, Some(0x1234));
         assert_eq!(app.selected_localized_file_hash, Some(0x1234));
+    }
+
+    #[test]
+    fn housing_index_collects_piece_tiles_and_stair_multis() {
+        use uocf::enhanced::housing::{HousingPiece, HousingSlot, HousingTileType, HOUSING_TILE_TYPE_STAIRS};
+
+        let slot = |slot, id| HousingSlot { slot, id };
+        let housing = HousingPieces {
+            tile_types: vec![HousingTileType {
+                tile_type: HOUSING_TILE_TYPE_STAIRS,
+                pieces: vec![HousingPiece {
+                    category: 0,
+                    group: 0,
+                    feature_mask: 0,
+                    tooltip_cliloc: 0,
+                    solid: vec![slot(1, 0x10)],
+                    multis: vec![slot(1, 7600)],
+                    windows: vec![slot(2, 0x20)],
+                }],
+            }],
+        };
+
+        let index = HousingIndex::from_pieces(&housing);
+
+        assert_eq!(index.piece_tile_ids, HashSet::from([0x10, 0x20]));
+        assert_eq!(index.multi_ids, HashSet::from([7600]));
     }
 }

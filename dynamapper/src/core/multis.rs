@@ -11,67 +11,99 @@ pub struct MultiPart {
     pub z: i16,
 }
 
+/// Multi definitions indexed by multi id. Parts the client never draws (classic parts without
+/// `MULTI_PART_VISIBLE_FLAG`, EC `not_drawn` parts) are kept apart, so they can be shown on demand.
 #[derive(Resource, Default)]
 pub struct MultiDefinitionsRes {
-    definitions: Vec<Vec<MultiPart>>,
+    visible_definitions: Vec<Vec<MultiPart>>,
+    all_definitions: Vec<Vec<MultiPart>>,
 }
 
 impl MultiDefinitionsRes {
     pub fn from_classic_parts(parts: Vec<Vec<uocf::classic::multi::MultiPart>>) -> Self {
-        Self {
-            definitions: parts
+        Self::from_tagged_parts(parts.into_iter().map(|parts| {
+            parts
                 .into_iter()
-                .map(|parts| {
-                    parts
-                        .into_iter()
-                        .filter(|part| multi_part_is_visible(part.flags))
-                        .map(|part| MultiPart {
+                .map(|part| {
+                    (
+                        MultiPart {
                             item_id: part.item_id,
                             x: part.x,
                             y: part.y,
                             z: part.z,
-                        })
-                        .collect()
+                        },
+                        multi_part_is_visible(part.flags),
+                    )
                 })
-                .collect(),
-        }
+                .collect()
+        }))
     }
 
     pub fn from_ec_collection(collection: &uocf::enhanced::multis::MultiCollection) -> Self {
-        let max_id = collection
-            .items
-            .iter()
-            .map(|item| item.id)
-            .max()
-            .unwrap_or(0);
+        Self::from_ec_items(&collection.items)
+    }
+
+    fn from_ec_items(items: &[uocf::enhanced::multis::MultiItem]) -> Self {
+        let max_id = items.iter().map(|item| item.id).max().unwrap_or(0);
         let mut definitions = vec![Vec::new(); max_id as usize + 1];
 
-        for item in &collection.items {
+        for item in items {
             definitions[item.id as usize] = item
                 .parts
                 .iter()
-                .filter(|part| multi_part_is_visible(u32::from(part.not_drawn)))
-                .map(|part| MultiPart {
-                    item_id: part.item_id,
-                    x: part.x,
-                    y: part.y,
-                    z: part.z,
+                .map(|part| {
+                    (
+                        MultiPart {
+                            item_id: part.item_id,
+                            x: part.x,
+                            y: part.y,
+                            z: part.z,
+                        },
+                        !part.not_drawn,
+                    )
                 })
                 .collect();
         }
 
-        Self { definitions }
+        Self::from_tagged_parts(definitions)
     }
 
-    pub fn parts(&self, multi_id: u32) -> Option<&[MultiPart]> {
-        self.definitions
+    /// Builds both definition lists from parts tagged with whether the client draws them.
+    fn from_tagged_parts(definitions: impl IntoIterator<Item = Vec<(MultiPart, bool)>>) -> Self {
+        let mut visible_definitions = Vec::new();
+        let mut all_definitions = Vec::new();
+        for parts in definitions {
+            visible_definitions.push(
+                parts
+                    .iter()
+                    .filter(|(_, visible)| *visible)
+                    .map(|(part, _)| *part)
+                    .collect(),
+            );
+            all_definitions.push(parts.into_iter().map(|(part, _)| part).collect());
+        }
+
+        Self {
+            visible_definitions,
+            all_definitions,
+        }
+    }
+
+    /// Parts of a multi, optionally including the ones the client never draws.
+    pub fn parts(&self, multi_id: u32, include_hidden: bool) -> Option<&[MultiPart]> {
+        let definitions = if include_hidden {
+            &self.all_definitions
+        } else {
+            &self.visible_definitions
+        };
+        definitions
             .get(multi_id as usize)
             .map(Vec::as_slice)
             .filter(|parts| !parts.is_empty())
     }
 
     pub fn definition_count(&self) -> usize {
-        self.definitions
+        self.visible_definitions
             .iter()
             .filter(|parts| !parts.is_empty())
             .count()
@@ -122,9 +154,40 @@ mod tests {
             },
         ]]);
 
-        let parts = definitions.parts(0).expect("visible multi definition");
+        let parts = definitions.parts(0, false).expect("visible multi definition");
         assert_eq!(parts.len(), 1);
         assert_eq!(parts[0].item_id, 1);
+
+        let parts = definitions.parts(0, true).expect("full multi definition");
+        assert_eq!(parts.len(), 2);
+    }
+
+    #[test]
+    fn ec_conversion_keeps_only_drawn_parts_by_default() {
+        let part = |item_id, not_drawn| uocf::enhanced::multis::MultiItemPart {
+            item_id,
+            x: 0,
+            y: 0,
+            z: 0,
+            not_drawn,
+            flag2: 0,
+            string_ids: Vec::new(),
+        };
+        let definitions = MultiDefinitionsRes::from_ec_items(&[uocf::enhanced::multis::MultiItem {
+            id: 1,
+            filename_hash: 0,
+            path: String::new(),
+            parts: vec![part(1, false), part(2, true)],
+        }]);
+
+        assert_eq!(definitions.parts(0, false), None);
+        let parts = definitions.parts(1, false).expect("drawn multi definition");
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0].item_id, 1);
+
+        let parts = definitions.parts(1, true).expect("full multi definition");
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[1].item_id, 2);
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use crate::app::{ArtSource, MultiCollectionSource, MultisSource, UopInspectorApp};
+use crate::app::{ArtSource, HousingIndex, MultiCollectionSource, MultiPartFilters, MultisSource, UopInspectorApp};
 use crate::ui::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by};
 use eframe::egui;
 use std::collections::hash_map::DefaultHasher;
@@ -11,12 +11,18 @@ use uocf::enhanced::textures::{ECImageFormat, TextureFile, TextureItem as RawTex
 
 #[derive(Clone)]
 struct PreviewPart {
+    /// Index of the part in the multi definition, kept across filtering.
+    source_index: usize,
     item_id: u16,
     x: i16,
     y: i16,
     z: i16,
     original_z: i16,
     flags: String,
+    /// The client never draws this part.
+    hidden: bool,
+    /// The tile id is a housing.bin piece.
+    housing_piece: bool,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -52,6 +58,13 @@ const ENHANCED_STATIC_TILE_PIXEL_WIDTH: f32 = 64.0;
 const CLASSIC_MULTI_SIDEBAR_WIDTH: f32 = 250.0;
 const UOP_MULTI_SIDEBAR_WIDTH: f32 = 300.0;
 const MULTIMAP_SIDEBAR_WIDTH: f32 = 260.0;
+/// Classic `multi.mul` part flag set on the parts the client draws.
+const CLASSIC_MULTI_PART_VISIBLE_FLAG: u32 = 0x1;
+/// Alpha of the tint applied to hidden parts in the preview.
+const HIDDEN_PART_TINT_ALPHA: u8 = 96;
+const HIDDEN_PART_OUTLINE_WIDTH: f32 = 1.0;
+const HIDDEN_PART_OUTLINE_COLOR: egui::Color32 = egui::Color32::from_rgb(255, 64, 255);
+const MISSING_PART_FILL_COLOR: egui::Color32 = egui::Color32::BLUE;
 
 pub fn ui_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
     app.selected_legacy_source = concrete_art_tile_source(app.selected_legacy_source);
@@ -148,11 +161,16 @@ fn ui_classic_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
                 ui.add(egui::DragValue::new(&mut app.selected_multi_id));
             });
             let sort = list_sort_controls(ui, "classic_multi_entries", &["ID"], 0);
+            let housing_index = app.housing_index.clone();
+            housing_multis_filter_checkbox(ui, &mut app.multi_part_filters, housing_index.as_deref());
+            let only_housing_multis = housing_multis_filter_active(app.multi_part_filters, housing_index.as_deref());
 
             if let Some(client) = &app.client_data {
                 if let Some(multis) = &client.multis {
                     let max_id = multis.max_id();
-                    let ids = (0..max_id).collect::<Vec<_>>();
+                    let ids = (0..max_id)
+                        .filter(|id| !only_housing_multis || is_housing_multi(housing_index.as_deref(), *id))
+                        .collect::<Vec<_>>();
                     let sorted_indices = sorted_indices_by(&ids, sort.ordering(), |left, right| left.cmp(right));
                     let visible_ids: Vec<_> = sorted_indices.iter().map(|index| ids[*index]).collect();
                     let keyboard_moved = if let Some(delta) = arrow_delta(ui, false) {
@@ -167,7 +185,10 @@ fn ui_classic_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
                         for index in sorted_indices {
                             let id = ids[index];
                             let selected = app.selected_multi_id == id;
-                            let response = ui.selectable_label(selected, format!("Multi {}", id));
+                            let response = ui.selectable_label(
+                                selected,
+                                format!("Multi {}{}", id, housing_multi_marker(housing_index.as_deref(), id)),
+                            );
                             if keyboard_moved && selected {
                                 response.scroll_to_me(Some(egui::Align::Center));
                             }
@@ -190,13 +211,17 @@ fn ui_classic_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
             .unwrap_or_default();
         let preview_parts: Vec<_> = parts
             .iter()
-            .map(|part| PreviewPart {
+            .enumerate()
+            .map(|(source_index, part)| PreviewPart {
+                source_index,
                 item_id: part.item_id,
                 x: part.x,
                 y: part.y,
                 z: part.z,
                 original_z: part.z,
                 flags: format!("0x{:08X}", part.flags),
+                hidden: part.flags & CLASSIC_MULTI_PART_VISIBLE_FLAG == 0,
+                housing_piece: is_housing_piece(app.housing_index.as_deref(), part.item_id),
             })
             .collect();
         draw_multi_details(app, ctx, ui, "Classic Multi", &preview_parts, None);
@@ -227,9 +252,19 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
                 search_has_focus = ui.text_edit_singleline(&mut app.search_query).has_focus();
             });
             let sort = list_sort_controls(ui, "uop_multi_entries", &["ID", "Path", "Hash", "Parts"], 0);
+            let housing_index = app.housing_index.clone();
+            housing_multis_filter_checkbox(ui, &mut app.multi_part_filters, housing_index.as_deref());
+            let only_housing_multis = housing_multis_filter_active(app.multi_part_filters, housing_index.as_deref());
             ui.separator();
 
             let query = app.search_query.to_lowercase();
+            let entry_listed = |item: &uocf::enhanced::multis::MultiItem| {
+                (query.is_empty()
+                    || item.id.to_string().contains(&query)
+                    || item.path.to_lowercase().contains(&query)
+                    || format!("{:016X}", item.filename_hash).to_lowercase().contains(&query))
+                    && (!only_housing_multis || is_housing_multi(housing_index.as_deref(), item.id))
+            };
             let sorted_indices = sorted_indices_by(&collection.items, sort.ordering(), |left, right| {
                 match sort.option_index {
                     1 => left.path.to_ascii_lowercase().cmp(&right.path.to_ascii_lowercase()),
@@ -241,12 +276,7 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
             let visible_entries: Vec<_> = sorted_indices
                 .iter()
                 .map(|index| &collection.items[*index])
-                .filter(|item| {
-                    query.is_empty()
-                        || item.id.to_string().contains(&query)
-                        || item.path.to_lowercase().contains(&query)
-                        || format!("{:016X}", item.filename_hash).to_lowercase().contains(&query)
-                })
+                .filter(|item| entry_listed(item))
                 .map(|item| (item.id, item.filename_hash))
                 .collect();
             let selected_entry = collection
@@ -264,18 +294,19 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for index in sorted_indices {
                     let item = &collection.items[index];
-                    if !query.is_empty()
-                        && !item.id.to_string().contains(&query)
-                        && !item.path.to_lowercase().contains(&query)
-                        && !format!("{:016X}", item.filename_hash).to_lowercase().contains(&query)
-                    {
+                    if !entry_listed(item) {
                         continue;
                     }
 
                     let selected = app.selected_multi_id == item.id;
                     let response = ui.selectable_label(
                         selected,
-                        format!("Multi {} ({:016X})", item.id, item.filename_hash),
+                        format!(
+                            "Multi {} ({:016X}){}",
+                            item.id,
+                            item.filename_hash,
+                            housing_multi_marker(housing_index.as_deref(), item.id)
+                        ),
                     );
                     if keyboard_moved && selected {
                         response.scroll_to_me(Some(egui::Align::Center));
@@ -315,7 +346,9 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
             let preview_parts: Vec<_> = item
                 .parts
                 .iter()
-                .map(|part| PreviewPart {
+                .enumerate()
+                .map(|(source_index, part)| PreviewPart {
+                    source_index,
                     item_id: part.item_id,
                     x: part.x,
                     y: part.y,
@@ -327,6 +360,8 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
                         part.flag2,
                         part.string_ids.len()
                     ),
+                    hidden: part.not_drawn,
+                    housing_piece: is_housing_piece(app.housing_index.as_deref(), part.item_id),
                 })
                 .collect();
             let raw = Some(format!(
@@ -378,6 +413,71 @@ fn housing_slots_label(slots: &[HousingSlot]) -> String {
         .map(|slot| format!("{}:{}", slot.slot, slot.id))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn is_housing_piece(housing_index: Option<&HousingIndex>, item_id: u16) -> bool {
+    housing_index.is_some_and(|index| index.piece_tile_ids.contains(&u32::from(item_id)))
+}
+
+fn is_housing_multi(housing_index: Option<&HousingIndex>, multi_id: u32) -> bool {
+    housing_index.is_some_and(|index| index.multi_ids.contains(&multi_id))
+}
+
+fn housing_multi_marker(housing_index: Option<&HousingIndex>, multi_id: u32) -> &'static str {
+    if is_housing_multi(housing_index, multi_id) {
+        " [housing]"
+    } else {
+        ""
+    }
+}
+
+fn housing_multis_filter_active(filters: MultiPartFilters, housing_index: Option<&HousingIndex>) -> bool {
+    filters.only_housing_multis && housing_index.is_some()
+}
+
+fn housing_multis_filter_checkbox(
+    ui: &mut egui::Ui,
+    filters: &mut MultiPartFilters,
+    housing_index: Option<&HousingIndex>,
+) {
+    if let Some(index) = housing_index {
+        ui.checkbox(
+            &mut filters.only_housing_multis,
+            format!("Only multis used by housing.bin ({})", index.multi_ids.len()),
+        )
+        .on_hover_text("Multis referenced by the housing.bin multi lists (stair blocks), marked [housing].");
+    }
+}
+
+/// Whether a part passes the panel filters; the housing.bin filters apply only when housing.bin is loaded.
+fn part_passes_filters(part: &PreviewPart, filters: MultiPartFilters, housing_loaded: bool) -> bool {
+    let housing_kept = !housing_loaded
+        || if part.housing_piece {
+            filters.show_housing_parts
+        } else {
+            filters.show_other_parts
+        };
+    (filters.show_hidden || !part.hidden) && housing_kept
+}
+
+fn part_cell_text(part: &PreviewPart, text: impl Into<String>) -> egui::RichText {
+    let text = egui::RichText::new(text);
+    if part.hidden {
+        text.italics().weak()
+    } else {
+        text
+    }
+}
+
+fn part_notes(part: &PreviewPart) -> String {
+    let mut notes = Vec::new();
+    if part.hidden {
+        notes.push("hidden");
+    }
+    if part.housing_piece {
+        notes.push("housing.bin");
+    }
+    notes.join(", ")
 }
 
 fn select_multi(app: &mut UopInspectorApp, multi_id: u32, uop_hash: Option<u64>) {
@@ -467,20 +567,48 @@ fn draw_multi_details(
     ctx: &egui::Context,
     ui: &mut egui::Ui,
     title: &str,
-    parts: &[PreviewPart],
+    all_parts: &[PreviewPart],
     raw_label: Option<&str>,
 ) {
-    if parts.is_empty() {
+    if all_parts.is_empty() {
         ui.centered_and_justified(|ui| {
             ui.label(format!("Multi {} is empty or missing", app.selected_multi_id));
         });
         return;
     }
 
-    ui.heading(format!("{} {}: {} parts", title, app.selected_multi_id, parts.len()));
+    let hidden_count = all_parts.iter().filter(|part| part.hidden).count();
+    ui.heading(format!(
+        "{} {}: {} parts ({} hidden)",
+        title,
+        app.selected_multi_id,
+        all_parts.len(),
+        hidden_count
+    ));
     if let Some(raw_label) = raw_label {
         ui.monospace(raw_label);
     }
+    let housing_loaded = app.housing_index.is_some();
+    let filters = &mut app.multi_part_filters;
+    ui.horizontal(|ui| {
+        ui.checkbox(&mut filters.show_hidden, "Show hidden parts")
+            .on_hover_text("Parts the client never draws: EC not_drawn, classic parts without the visible flag.");
+        if housing_loaded {
+            ui.separator();
+            ui.checkbox(&mut filters.show_housing_parts, "housing.bin parts")
+                .on_hover_text("Parts whose tile id is in a housing.bin solid or windows list.");
+            ui.checkbox(&mut filters.show_other_parts, "other parts")
+                .on_hover_text("Parts whose tile id is not a housing.bin piece.");
+        }
+    });
+    let filters = app.multi_part_filters;
+    let parts: Vec<_> = all_parts
+        .iter()
+        .filter(|part| part_passes_filters(part, filters, housing_loaded))
+        .cloned()
+        .collect();
+    let parts = parts.as_slice();
+    ui.label(format!("Showing {} of {} parts", parts.len(), all_parts.len()));
     let detached_window_id = egui::Id::unique("multi_preview_detached_window");
     let show_center_id = egui::Id::unique("multi_preview_show_center");
     let selected_part_id = multi_selected_part_id(app);
@@ -492,7 +620,7 @@ fn draw_multi_details(
         .unwrap_or(false);
     let mut selected_part_index = ctx
         .data_mut(|data| data.get_temp::<usize>(selected_part_id))
-        .filter(|index| *index < parts.len());
+        .filter(|index| parts.iter().any(|part| part.source_index == *index));
     if selected_part_index.is_none() {
         ctx.data_mut(|data| data.remove::<usize>(selected_part_id));
     }
@@ -532,15 +660,22 @@ fn draw_multi_details(
                             ui.label("Y");
                             ui.label("Z");
                             ui.label("Flags");
+                            ui.label("Notes");
                             ui.end_row();
-                            for (index, part) in parts.iter().enumerate() {
+                            for part in parts {
+                                let index = part.source_index;
                                 let selected = selected_part_index == Some(index);
                                 let mut clicked = false;
-                                clicked |= ui.selectable_label(selected, part.item_id.to_string()).clicked();
-                                clicked |= ui.selectable_label(selected, part.x.to_string()).clicked();
-                                clicked |= ui.selectable_label(selected, part.y.to_string()).clicked();
-                                clicked |= ui.selectable_label(selected, part.z.to_string()).clicked();
-                                clicked |= ui.selectable_label(selected, &part.flags).clicked();
+                                for text in [
+                                    part.item_id.to_string(),
+                                    part.x.to_string(),
+                                    part.y.to_string(),
+                                    part.z.to_string(),
+                                    part.flags.clone(),
+                                    part_notes(part),
+                                ] {
+                                    clicked |= ui.selectable_label(selected, part_cell_text(part, text)).clicked();
+                                }
                                 if clicked {
                                     selected_part_index = Some(index);
                                     ui.ctx().data_mut(|data| data.insert_temp(selected_part_id, index));
@@ -614,8 +749,7 @@ fn draw_preview(
     let art_scale = multi_preview_art_scale(art_source);
     let mut sorted_parts: Vec<_> = parts
         .iter()
-        .enumerate()
-        .map(|(index, part)| {
+        .map(|part| {
             let info = part_render_info(app, part.item_id, art_source);
             let texture = get_multi_part_texture(app, ctx, part.item_id, &info);
             let size = texture
@@ -623,7 +757,7 @@ fn draw_preview(
                 .map(|handle| handle.size_vec2() * art_scale)
                 .unwrap_or_else(|| egui::vec2(14.0, 14.0) * art_scale);
             PreviewRenderPart {
-                index,
+                index: part.source_index,
                 part: part.clone(),
                 info,
                 scale: art_scale,
@@ -693,12 +827,18 @@ fn draw_preview(
                 ))
                 .round();
                 let part_rect = egui::Rect::from_min_size(draw_pos, render_part.size);
+                let tint = if render_part.part.hidden {
+                    egui::Color32::from_white_alpha(HIDDEN_PART_TINT_ALPHA)
+                } else {
+                    egui::Color32::WHITE
+                };
                 painter.image(
                     handle.id(),
                     part_rect,
                     egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                    egui::Color32::WHITE,
+                    tint,
                 );
+                paint_hidden_part_outline(&painter, part_rect, render_part.part.hidden);
                 paint_selected_part_highlight(&painter, part_rect, render_part.index, selected_part_index);
             } else {
                 let fallback_pos = origin + part_pos.to_vec2();
@@ -706,7 +846,13 @@ fn draw_preview(
                     fallback_pos,
                     render_part.size,
                 );
-                painter.rect_filled(part_rect.shrink(1.0), 2.0, egui::Color32::BLUE);
+                let fill = if render_part.part.hidden {
+                    MISSING_PART_FILL_COLOR.gamma_multiply(f32::from(HIDDEN_PART_TINT_ALPHA) / f32::from(u8::MAX))
+                } else {
+                    MISSING_PART_FILL_COLOR
+                };
+                painter.rect_filled(part_rect.shrink(1.0), 2.0, fill);
+                paint_hidden_part_outline(&painter, part_rect, render_part.part.hidden);
                 paint_selected_part_highlight(&painter, part_rect, render_part.index, selected_part_index);
             }
         }
@@ -756,6 +902,17 @@ fn multi_center_position(min_x: i16, min_y: i16, min_z: i16, tile_w: f32, tile_h
     let x = -(min_x as f32);
     let y = -(min_y as f32);
     egui::pos2((x - y) * tile_w, (x + y) * tile_h + (min_z as f32 * 4.0))
+}
+
+fn paint_hidden_part_outline(painter: &egui::Painter, rect: egui::Rect, hidden: bool) {
+    if hidden {
+        painter.rect_stroke(
+            rect,
+            0.0,
+            egui::Stroke::new(HIDDEN_PART_OUTLINE_WIDTH, HIDDEN_PART_OUTLINE_COLOR),
+            egui::StrokeKind::Inside,
+        );
+    }
 }
 
 fn paint_selected_part_highlight(
@@ -1011,5 +1168,49 @@ fn multi_tileart_texture(
     match source {
         ArtSource::EcUopKr => art_data.ec_texture,
         ArtSource::Mul | ArtSource::CcUop | ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::Any => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn part(hidden: bool, housing_piece: bool) -> PreviewPart {
+        PreviewPart {
+            source_index: 0,
+            item_id: 0,
+            x: 0,
+            y: 0,
+            z: 0,
+            original_z: 0,
+            flags: String::new(),
+            hidden,
+            housing_piece,
+        }
+    }
+
+    #[test]
+    fn hidden_parts_are_filtered_out_by_default() {
+        let filters = MultiPartFilters::default();
+
+        assert!(part_passes_filters(&part(false, false), filters, true));
+        assert!(!part_passes_filters(&part(true, false), filters, true));
+        assert!(part_passes_filters(
+            &part(true, false),
+            MultiPartFilters { show_hidden: true, ..filters },
+            true
+        ));
+    }
+
+    #[test]
+    fn housing_filters_split_parts_only_when_housing_is_loaded() {
+        let only_housing = MultiPartFilters { show_other_parts: false, ..MultiPartFilters::default() };
+        let only_other = MultiPartFilters { show_housing_parts: false, ..MultiPartFilters::default() };
+
+        assert!(part_passes_filters(&part(false, true), only_housing, true));
+        assert!(!part_passes_filters(&part(false, false), only_housing, true));
+        assert!(part_passes_filters(&part(false, false), only_other, true));
+        assert!(!part_passes_filters(&part(false, true), only_other, true));
+        assert!(part_passes_filters(&part(false, false), only_housing, false));
     }
 }

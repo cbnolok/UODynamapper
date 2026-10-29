@@ -111,6 +111,10 @@ pub struct SectWorldRendering {
     pub enable_static_lights: bool,
     #[serde(default = "default_enable_static_art_local_lights")]
     pub enable_static_art_local_lights: bool,
+    /// Also draws the multi parts the client never draws (classic parts without the visible
+    /// flag, EC `not_drawn` parts).
+    #[serde(default)]
+    pub show_hidden_multi_parts: bool,
     #[serde(default)]
     pub land_streaming: SectLandStreaming,
     #[serde(default)]
@@ -1176,6 +1180,7 @@ mod tests {
         assert!(settings.enable_statics);
         assert!(settings.enable_static_lights);
         assert!(!settings.enable_static_art_local_lights);
+        assert!(!settings.show_hidden_multi_parts);
     }
 
     #[test]

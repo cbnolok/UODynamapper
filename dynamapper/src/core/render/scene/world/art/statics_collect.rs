@@ -228,6 +228,7 @@ fn collect_static_render_tiles(
     block_x: u32,
     block_y: u32,
     multis: Option<&MultiDefinitionsRes>,
+    show_hidden_multi_parts: bool,
     output: &mut Vec<StaticRenderTile>,
 ) {
     output.clear();
@@ -237,7 +238,9 @@ fn collect_static_render_tiles(
     let base_world_z =
         (block_y * MAP_STORAGE_BLOCK_TILE_DIM) as i32 + source_tile.y_offset() as i32;
     let parts = multi_id_from_static_graphic(source_tile.graphic)
-        .and_then(|multi_id| multis.and_then(|multis| multis.parts(multi_id)));
+        .and_then(|multi_id| {
+            multis.and_then(|multis| multis.parts(multi_id, show_hidden_multi_parts))
+        });
 
     let Some(parts) = parts else {
         output.push(StaticRenderTile {
@@ -999,6 +1002,7 @@ struct StaticChunkCacheConfig {
     ground_atlas_mapping_revision: u64,
     land_metadata_revision: u64,
     static_art_local_light_signature: Option<u64>,
+    show_hidden_multi_parts: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1685,6 +1689,7 @@ struct StaticCollectFrameConfig {
     art_source: Option<ClientTextureSource>,
     is_dot_mode: bool,
     static_art_local_lights: bool,
+    show_hidden_multi_parts: bool,
     height_scale: f32,
 }
 
@@ -1820,6 +1825,7 @@ fn static_chunk_cache_config(
         static_art_local_light_signature: frame
             .static_art_local_lights
             .then(|| static_light_signature(static_lights, frame.map_id)),
+        show_hidden_multi_parts: frame.show_hidden_multi_parts,
     }
 }
 
@@ -2034,6 +2040,7 @@ fn rebuild_static_chunk(
                     gx,
                     gy,
                     resources.multis,
+                    frame.show_hidden_multi_parts,
                     &mut build.render_tiles,
                 );
 
@@ -2795,6 +2802,7 @@ pub fn sys_collect_visible_statics(
         art_source,
         is_dot_mode,
         static_art_local_lights: settings.world_rendering.enable_static_art_local_lights,
+        show_hidden_multi_parts: settings.world_rendering.show_hidden_multi_parts,
         height_scale,
     };
     let resources = static_collect_resources(
@@ -3359,7 +3367,7 @@ mod tests {
         };
         let mut output = Vec::new();
 
-        collect_static_render_tiles(source_tile, 2, 3, None, &mut output);
+        collect_static_render_tiles(source_tile, 2, 3, None, false, &mut output);
 
         assert_eq!(
             output,
@@ -3371,6 +3379,41 @@ mod tests {
                 hue: 0,
             }],
         );
+    }
+
+    #[test]
+    fn multi_static_tile_expands_hidden_parts_only_on_request() {
+        let definitions = MultiDefinitionsRes::from_classic_parts(vec![vec![
+            uocf::classic::multi::MultiPart {
+                item_id: 10,
+                x: 0,
+                y: 0,
+                z: 0,
+                flags: crate::core::multis::MULTI_PART_VISIBLE_FLAG,
+            },
+            uocf::classic::multi::MultiPart {
+                item_id: 11,
+                x: 0,
+                y: 0,
+                z: 0,
+                flags: 0,
+            },
+        ]]);
+        let source_tile = uocf::classic::statics::PackedStaticTile {
+            graphic: crate::core::multis::MULTI_STATIC_GRAPHIC_OFFSET,
+            xy_packed: 0,
+            z: 0,
+            hue: 0,
+        };
+        let mut output = Vec::new();
+
+        collect_static_render_tiles(source_tile, 0, 0, Some(&definitions), false, &mut output);
+        let graphics: Vec<u16> = output.iter().map(|tile| tile.graphic).collect();
+        assert_eq!(graphics, vec![10]);
+
+        collect_static_render_tiles(source_tile, 0, 0, Some(&definitions), true, &mut output);
+        let graphics: Vec<u16> = output.iter().map(|tile| tile.graphic).collect();
+        assert_eq!(graphics, vec![10, 11]);
     }
 
     #[test]
@@ -3399,7 +3442,7 @@ mod tests {
         };
         let mut output = Vec::new();
 
-        collect_static_render_tiles(source_tile, 2, 3, Some(&definitions), &mut output);
+        collect_static_render_tiles(source_tile, 2, 3, Some(&definitions), false, &mut output);
 
         assert_eq!(
             output,
@@ -3689,6 +3732,7 @@ mod tests {
             ground_atlas_mapping_revision: 0,
             land_metadata_revision: 0,
             static_art_local_light_signature: None,
+            show_hidden_multi_parts: false,
         });
         cache.chunks.insert(
             StaticChunkBatchKey {
@@ -3708,6 +3752,7 @@ mod tests {
             ground_atlas_mapping_revision: 0,
             land_metadata_revision: 0,
             static_art_local_light_signature: None,
+            show_hidden_multi_parts: false,
         });
 
         assert!(cache.chunks.is_empty());
@@ -3724,6 +3769,7 @@ mod tests {
             ground_atlas_mapping_revision: 0,
             land_metadata_revision: 0,
             static_art_local_light_signature: None,
+            show_hidden_multi_parts: false,
         });
 
         cache.chunks.insert(
@@ -3744,6 +3790,7 @@ mod tests {
             ground_atlas_mapping_revision: 0,
             land_metadata_revision: 0,
             static_art_local_light_signature: None,
+            show_hidden_multi_parts: false,
         }));
 
         assert!(!cache.chunks.is_empty());
@@ -3760,6 +3807,7 @@ mod tests {
             ground_atlas_mapping_revision: 0,
             land_metadata_revision: 0,
             static_art_local_light_signature: Some(0),
+            show_hidden_multi_parts: false,
         });
         cache.chunks.insert(
             StaticChunkBatchKey {
@@ -3779,6 +3827,7 @@ mod tests {
             ground_atlas_mapping_revision: 0,
             land_metadata_revision: 0,
             static_art_local_light_signature: Some(1),
+            show_hidden_multi_parts: false,
         }));
 
         assert!(cache.chunks.is_empty());
