@@ -9,6 +9,7 @@ pub mod classic_tile_mapper;
 pub mod effect_definition;
 pub mod facet_decoder;
 pub mod facet_encoder;
+pub mod housing;
 pub mod hues;
 pub mod localized_strings;
 pub mod legacy_terrain_map;

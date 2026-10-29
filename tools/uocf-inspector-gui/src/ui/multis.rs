@@ -5,6 +5,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use uocf::classic::art::static_art_id_for_source;
+use uocf::enhanced::housing::{housing_tile_type_name, HousingPieces, HousingSlot};
 use uocf::enhanced::tileart::ArtTexture;
 use uocf::enhanced::textures::{ECImageFormat, TextureFile, TextureItem as RawTextureItem};
 
@@ -287,6 +288,10 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
             });
         });
 
+    let show_housing_id = egui::Id::unique("multi_uop_show_housing_pieces");
+    let mut show_housing = ctx
+        .data_mut(|data| data.get_temp::<bool>(show_housing_id))
+        .unwrap_or(false);
     egui::Panel::top("multi_uop_raw_tabs").show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.selectable_value(&mut app.multis_source, MultisSource::Uop, "Specialized");
@@ -296,11 +301,17 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
             if collection.housing_hash.is_some() && ui.button("Raw housing").clicked() {
                 app.select_raw_multi_collection_housing();
             }
+            if app.housing_pieces.is_some() {
+                ui.toggle_value(&mut show_housing, "housing.bin pieces");
+            }
         });
     });
+    ctx.data_mut(|data| data.insert_temp(show_housing_id, show_housing));
 
     egui::CentralPanel::default().show(ui, |ui| {
-        if let Some(item) = collection.get(app.selected_multi_id) {
+        if let Some(housing) = app.housing_pieces.clone().filter(|_| show_housing) {
+            draw_housing_pieces(ui, &housing);
+        } else if let Some(item) = collection.get(app.selected_multi_id) {
             let preview_parts: Vec<_> = item
                 .parts
                 .iter()
@@ -311,9 +322,10 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
                     z: part.z,
                     original_z: part.z,
                     flags: format!(
-                        "0x{:04X} / {} clilocs",
-                        part.flags,
-                        part.cliloc_offsets.len()
+                        "not_drawn {} / flag2 {} / {} strings",
+                        u8::from(part.not_drawn),
+                        part.flag2,
+                        part.string_ids.len()
                     ),
                 })
                 .collect();
@@ -330,6 +342,42 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
             });
         }
     });
+}
+
+fn draw_housing_pieces(ui: &mut egui::Ui, housing: &HousingPieces) {
+    ui.heading(format!(
+        "housing.bin: {} tile types, {} pieces",
+        housing.tile_types.len(),
+        housing.pieces().count()
+    ));
+    ui.separator();
+    egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
+        egui::Grid::new("housing_pieces_grid").striped(true).show(ui, |ui| {
+            for header in ["Tile type", "Category", "Group", "Feature mask", "Tooltip", "Solid", "Multis", "Windows"] {
+                ui.label(header);
+            }
+            ui.end_row();
+            for (tile_type, piece) in housing.pieces() {
+                ui.label(format!("{} {}", tile_type, housing_tile_type_name(tile_type).unwrap_or("?")));
+                ui.label(piece.category.to_string());
+                ui.label(piece.group.to_string());
+                ui.monospace(format!("0x{:X}", piece.feature_mask));
+                ui.label(piece.tooltip_cliloc.to_string());
+                ui.monospace(housing_slots_label(&piece.solid));
+                ui.monospace(housing_slots_label(&piece.multis));
+                ui.monospace(housing_slots_label(&piece.windows));
+                ui.end_row();
+            }
+        });
+    });
+}
+
+fn housing_slots_label(slots: &[HousingSlot]) -> String {
+    slots
+        .iter()
+        .map(|slot| format!("{}:{}", slot.slot, slot.id))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn select_multi(app: &mut UopInspectorApp, multi_id: u32, uop_hash: Option<u64>) {

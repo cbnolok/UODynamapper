@@ -269,6 +269,51 @@ unless the data becomes a stable package contract.
   data for both files are in
   `scripts/dev-helpers/ec-research/ghidra-animation/results/uosa_animation.md`.
 
+`MultiCollection.uop`:
+
+- Holds two asset types: one entry per multi (`build/multicollection/%06d.bin`,
+  `multis::MultiItem::from_payload_bytes`) and the house customization piece
+  tables (`build/multicollection/housing.bin`,
+  `housing::HousingPieces::from_payload_bytes`). The Classic Client package
+  holds the same payloads. Both parsers, like the client, reject trailing
+  bytes.
+- Multi entry: u32 multi id (equal to the file id in all 862 client entries;
+  the loader uses the file id), u32 part count, then parts `{u16 tile,
+  i16 x, i16 y, i16 z, u8 not_drawn, u8 flag2, u32 n, n x u32 string id}`.
+  - z is a full signed 16-bit value (client data: -8..123).
+  - `not_drawn` (part +0xa, high confidence): the client does not show the
+    part (multi renderer, house customization multi appearances, placement
+    tests), except for multis whose collection field +0x30 is 24..99,
+    probably the new ships. Classic `multi.mul` has flags = 0 (not visible)
+    for these parts. 4,026 of 178,808 parts.
+  - `flag2` (part +0xb, low-medium confidence): with 1 the renderer uses hue 0
+    instead of the multi hue; equals the extra dword of classic `multi.mul`
+    records. 1,359 parts.
+  - string ids: `string_dictionary.uop` indices of part tags such as
+    `house_door`, `hueshadow`, `shipaccess`; the client drops empty strings.
+  - `MultiItem::bounds` covers x, y and z of all parts, drawn or not, like
+    the client's bounds.
+- `housing.bin` (all u32): tile type count, then per tile type the tile type,
+  a piece count and the pieces `{category, group, feature_mask,
+  tooltip_cliloc, solid list, multi list, window list}`, each list a count of
+  `{slot, id}`.
+  - Tile types (`HOUSING_TILE_TYPE_*`): 1 stairs, 2 roof, 3 door, 4 floor,
+    5 wall, 6 teleporter, 7 misc. Category is the window row (style), group a
+    sub-row (walls and misc only); Lua publishes both 1-based.
+  - Solid ids are the tile variants, window ids the wall variants with
+    windows, multi ids the stair blocks 7600..7675 (slots 1..4 = N/E/S/W).
+  - `feature_mask` (`HOUSING_FEATURE_*`): the mask of the last piece of a
+    category decides its entitlement against the 0xB9 feature flags, with
+    cliloc 1062930 ("upgrade to the latest Expansion Pack") or the Gothic /
+    Rustic / Time of Legends clilocs (`HOUSING_ENTITLEMENT_CLILOC_*`).
+  - `tooltip_cliloc` is the category name.
+  - Client data: 7 tile types, 424 pieces, 3,567 tile references, 74 multi
+    references.
+- Layouts, field meanings, confidence and verification against the client
+  data are in
+  [`uosa_housing.md`](../../../../scripts/dev-helpers/ec-research/ghidra-housing/results/uosa_housing.md)
+  (decoder: `verify_housing.py` next to it).
+
 `waypoint.uop`:
 
 - Stores waypoint definition tables and compact waypoint records under

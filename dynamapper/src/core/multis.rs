@@ -50,7 +50,7 @@ impl MultiDefinitionsRes {
             definitions[item.id as usize] = item
                 .parts
                 .iter()
-                .filter(|part| multi_part_is_visible(part.flags as u32))
+                .filter(|part| multi_part_is_visible(u32::from(part.not_drawn)))
                 .map(|part| MultiPart {
                     item_id: part.item_id,
                     x: part.x,

@@ -20,6 +20,7 @@ use uocf::classic::multimap_rle::MultimapRleImage;
 use uocf::classic::sound::SoundMap;
 use uocf::enhanced::hues::EcHuePackage;
 use uocf::enhanced::localized_strings::{LocalizedStringsPackage, LOCALIZED_STRINGS_UOP_NAME};
+use uocf::enhanced::housing::HousingPieces;
 use uocf::enhanced::multis::MultiCollection;
 use uocf::classic::tiledata::TileData;
 use uocf::enhanced::string_dictionary::UoStringDictionary;
@@ -1769,6 +1770,7 @@ pub struct UopInspectorApp {
     pub multi_collection: Option<Arc<MultiCollection>>,
     pub multi_collection_source: Option<MultiCollectionSource>,
     pub multi_collection_path: Option<PathBuf>,
+    pub housing_pieces: Option<Arc<HousingPieces>>,
 }
 
 impl UopInspectorApp {
@@ -1842,6 +1844,7 @@ impl UopInspectorApp {
             multi_collection: None,
             multi_collection_source: None,
             multi_collection_path: None,
+            housing_pieces: None,
             texture_previews: HashMap::new(),
             ec_texture_previews: HashMap::new(),
             ec_texture_preview_source_keys: HashMap::new(),
@@ -1948,6 +1951,7 @@ impl UopInspectorApp {
         self.multi_collection = None;
         self.multi_collection_source = None;
         self.multi_collection_path = None;
+        self.housing_pieces = None;
         self.selected_multi_uop_hash = None;
         self.selected_localized_file_hash = None;
         self.cc_sounds = None;
@@ -2115,6 +2119,7 @@ impl UopInspectorApp {
                             self.multi_collection_source = Some(MultiCollectionSource::ClassicClient);
                             self.multi_collection_path = Some(uop_path.clone());
                             self.log(format!("Parsed {} MultiCollection.uop entries.", count));
+                            self.load_housing_pieces(&uop_path);
                         }
                         Err(e) => self.log(format!("Failed to parse {}: {}", uop_name, e)),
                     }
@@ -2301,6 +2306,7 @@ impl UopInspectorApp {
                             self.multi_collection_source = Some(MultiCollectionSource::EnhancedClient);
                             self.multi_collection_path = Some(uop_path.clone());
                             self.log(format!("Parsed {} MultiCollection.uop entries.", count));
+                            self.load_housing_pieces(&uop_path);
                         }
                         Err(e) => self.log(format!("Failed to parse {}: {}", uop_name, e)),
                     }
@@ -3701,6 +3707,24 @@ impl UopInspectorApp {
         false
     }
 
+    fn load_housing_pieces(&mut self, uop_path: &Path) {
+        self.housing_pieces = match HousingPieces::load(uop_path) {
+            Ok(Some(housing)) => {
+                self.log(format!(
+                    "Parsed housing.bin: {} tile types, {} pieces.",
+                    housing.tile_types.len(),
+                    housing.pieces().count()
+                ));
+                Some(Arc::new(housing))
+            }
+            Ok(None) => None,
+            Err(e) => {
+                self.log(format!("Failed to parse housing.bin from {}: {}", uop_path.display(), e));
+                None
+            }
+        };
+    }
+
     pub fn select_raw_multi_collection_housing(&mut self) -> bool {
         let hash = uocf::enhanced::multis::housing_hash();
         if let Some(path) = self.multi_collection_path.clone() {
@@ -4218,6 +4242,7 @@ mod tests {
             multi_collection: None,
             multi_collection_source: None,
             multi_collection_path: None,
+            housing_pieces: None,
         }
     }
 
