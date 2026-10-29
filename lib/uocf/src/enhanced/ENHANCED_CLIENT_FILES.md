@@ -94,14 +94,15 @@ unless the data becomes a stable package contract.
 - Records are version 4; the client and `TileArtEntry::parse_raw` reject any
   other version.
 - The fixed part holds the name string index, tile id, `has_world_art`,
-  `uses_enhanced_tileart`, world/legacy art scales, `field_60` (always 0, only
-  part of the client's legacy-art-data test), old id, `rotation_degrees`,
+  `uses_enhanced_tileart`, world/legacy art scales, `field_60` (always 0, not
+  read by the client), `old_id` (the classic tile id the art replaces, default
+  0xffffff; not read by the client), `rotation_degrees`,
   `body_type` (default 400; an equipment appearance is only worn by a mobile
   with this body type), `alternate_animation` (formerly `field_e8`),
   `light_scale`, `light_field_70` (always 0, not read), light x/y offsets,
   `house_join_bits`, two 64-bit flag fields, facing, and the EC and legacy
-  image windows. `facing` is copied to the sprite component; its use was not
-  traced (medium confidence).
+  image windows. `facing` is copied to the sprite component; no client reader
+  was found, so it is probably unused (medium confidence).
 - `alternate_animation`: when the item is equipped in layer 2 (two-handed),
   the wearer's stand, walk and run actions use the alternate entry of the
   animation action map. The client copies the raw byte and tests it for
@@ -113,8 +114,13 @@ unless the data becomes a stable package contract.
   creates the light component when the light shader block (block 3) is set.
 - `house_join_bits` (`HOUSE_JOIN_*` constants): bits 1, 2 and 3 are required on
   the north-west corner cell, the west edge (x = 0) and the north edge (y = 0)
-  of a house; bit 5 (probable) also requires a supporting floor; bit 14
-  (probable) flags the cell and its +x and +y neighbours; bits 6..13 are the
+  of a house; bit 5 (`HOUSE_JOIN_RESTS_ON_FLOOR`) lets the piece stand
+  directly on a floor or on a load-bearing piece below, so the client refuses
+  it on stairs and teleporter cells and above stairs (pieces without it are
+  supported only by a connected supported neighbour); bit 14
+  (`HOUSE_JOIN_SUPPORTS_ABOVE`) makes a supported piece support the cell above
+  it. The client draws unsupported pieces with hue 43
+  (`HOUSE_UNSUPPORTED_HUE`) but still commits the design. Bits 6..13 are the
   west, east, north and south connectors (two kinds per side, matched with the
   same kind on the facing side). Bits 0, 4 and 15 are not read by the client.
 - `flags2` is not a copy of `flags1`; the client tests only bits 18 (paperdoll
@@ -177,14 +183,17 @@ unless the data becomes a stable package contract.
 - Current interpretation of tileart texture fields (client code evidence):
   - texture-block `field_04`: stored at `UOShaderDefinition` +0x04, meaning
     unknown, always 0.
-  - item `source_kind`: the material builder branches on 0 vs 2 to pick the
-    texture load path (medium confidence); always 0 in client data.
+  - item `source_kind`: 0 (`TEXTURE_SOURCE_NORMAL`) loads the texture, 2
+    (`TEXTURE_SOURCE_WRAP`) loads it and forces wrap addressing, any other
+    value makes the client load no texture; always 0 in client data.
   - item `texture_stretch`: values other than 1.0 switch the sampler to wrap.
-  - item `sampler_index`: 0..3 per block, probably the sampler/stage index
-    (low confidence: no client code reading it was found). The renderer already
-    uses it as the sampler index for item water and surface materials.
-  - item `uv_set`: ORed into the low bits of the sampler flag word, 0 or 1
-    (medium confidence).
+  - item `sampler_index`: not read by the client, which binds the items by
+    their position in the block (item 0 the base map, the rest the shader
+    maps); usually equal to the item position. The renderer still matches item
+    water and surface materials by it, which gives the same result on current
+    client data.
+  - item `uv_set`: the texture coordinate set index (low byte of the Gamebryo
+    texture map flags), 0 or 1.
 
 `EffectDefinitionCollection.uop`:
 
@@ -201,8 +210,15 @@ unless the data becomes a stable package contract.
 - Particle names are client string dictionary indices; `ParticleEffect::name`
   resolves them.
 - UserPreference `mask` bit 0 (`USER_PREFERENCE_FOOTSTEPS`) is set when the
-  user disabled footsteps; the other bits are unknown. Particle `field_30` and
-  sound `value_08` have no client reader and stay unknown.
+  user disabled footsteps; the other bits are unknown.
+- Particle `attach_mode` (formerly `field_30`): with
+  `PARTICLE_ATTACH_PROJECTILE_ONLY` (2) the client does not attach the effect
+  to the world object; it plays only while the item is shown in flight
+  (thrown models). Client data: 2 on thrown models, 0 on arrows, 1 elsewhere;
+  the client treats 0 and 1 alike. Particle `field_3c` must be 0 (the client
+  refuses a Nif effect with 1 and a Chaos effect with any non-zero value).
+  Sound `value_08` is copied into the sound instance but never read (1.0 in
+  the data, probably an intended gain).
 - Formats, field meanings, confidence and verification against the client data
   are in `scripts/dev-helpers/ec-research/ghidra-effects/results/uosa_effects.md`.
 

@@ -39,6 +39,11 @@ pub const EFFECT_TYPE_USER_PREFERENCE: u32 = 17;
 /// `Effects`, `Footsteps.enabled`); the other bits come only from the settings file.
 pub const USER_PREFERENCE_FOOTSTEPS: u32 = 0x1;
 
+/// `ParticleEffect::attach_mode` value: the client does not attach the effect to the world
+/// object; it plays only while the item is shown in flight (thrown models). Client data: 2 on
+/// thrown models, 0 on arrows, 1 elsewhere; the client treats 0 and 1 alike.
+pub const PARTICLE_ATTACH_PROJECTILE_ONLY: u8 = 2;
+
 /// Directions of a position offset effect, indexed 0..7.
 pub const POSITION_OFFSET_DIRECTION_COUNT: usize = 8;
 
@@ -92,17 +97,16 @@ pub struct ParticleEffect {
     pub camera_offset: f32,
     /// Scene node scale (confirmed).
     pub scale: f32,
-    /// Definition +0x30; no reader found (the Nif particle initializer skips it), meaning
-    /// unknown, probably a projectile kind used outside the client. Client data: 2 on thrown
-    /// models (boomerang, glaives, boulders), 0 on arrow projectiles, 1 on the rest.
-    pub field_30: u8,
+    /// Attach mode (confirmed for `PARTICLE_ATTACH_PROJECTILE_ONLY`); see the constant.
+    pub attach_mode: u8,
     /// Seconds (confirmed): a non-looping effect stops once elapsed >= duration, a looping one
     /// wraps the elapsed time when duration is non-zero.
     pub duration: f32,
     /// Restarts the effect when it ends; any non-zero byte is true (confirmed).
     pub looping: bool,
-    /// Definition +0x3c (probable): the Nif effect fails to start when it is 1 and the Chaos
-    /// effect requires 0; always 0 in client data.
+    /// Must be 0: the client refuses to start a Nif effect when it is 1 and a Chaos (`.ems`)
+    /// effect when it is non-zero (confirmed); 0 in all client data. Meaning of other values
+    /// unknown.
     pub field_3c: u8,
     /// Uses `UOHuedParticleEffectNif` when the object hue is non-zero; any non-zero byte is
     /// true (confirmed).
@@ -114,8 +118,8 @@ pub struct ParticleEffect {
 pub struct SoundEffect {
     /// Sound id played with distance attenuation (confirmed).
     pub sound_id: u32,
-    /// Stored but no reader found (`UOSoundEffect::Start` does not read it); 1.0 on the 2
-    /// collection sounds, possibly a volume (unknown).
+    /// Copied into the sound instance but never read by the client (confirmed); 1.0 in all
+    /// client data, probably an intended gain.
     pub value_08: f32,
 }
 
@@ -312,7 +316,7 @@ fn read_definition(reader: &mut Cursor<&[u8]>, depth: usize) -> Result<EffectDef
             offset_y: reader.read_f32::<LittleEndian>()?,
             camera_offset: reader.read_f32::<LittleEndian>()?,
             scale: reader.read_f32::<LittleEndian>()?,
-            field_30: reader.read_u8()?,
+            attach_mode: reader.read_u8()?,
             duration: reader.read_f32::<LittleEndian>()?,
             looping: reader.read_u8()? != 0,
             field_3c: reader.read_u8()?,
@@ -462,10 +466,10 @@ mod tests {
     fn effect_reads_particle() {
         let mut writer = EffectWriter::default();
         writer.u32(EFFECT_TYPE_PARTICLE).u32(42).f32(-8.0).f32(4.0).f32(-10.0).f32(0.25)
-            .u8(2).f32(3.0).u8(7).u8(0).u8(1);
+            .u8(PARTICLE_ATTACH_PROJECTILE_ONLY).f32(3.0).u8(7).u8(0).u8(1);
         assert_eq!(decode(&writer.0).unwrap(), EffectDefinition::Particle(ParticleEffect {
             name_index: 42, offset_x: -8.0, offset_y: 4.0, camera_offset: -10.0, scale: 0.25,
-            field_30: 2, duration: 3.0, looping: true, field_3c: 0, hued: true,
+            attach_mode: PARTICLE_ATTACH_PROJECTILE_ONLY, duration: 3.0, looping: true, field_3c: 0, hued: true,
         }));
     }
 
@@ -635,7 +639,7 @@ mod tests {
         let dictionary = UoStringDictionary::from_payload_bytes(&payload.0, "test dictionary").unwrap();
         let particle = |name_index| ParticleEffect {
             name_index, offset_x: 0.0, offset_y: 0.0, camera_offset: 0.0, scale: 1.0,
-            field_30: 1, duration: 0.0, looping: false, field_3c: 0, hued: false,
+            attach_mode: 1, duration: 0.0, looping: false, field_3c: 0, hued: false,
         };
         assert_eq!(particle(2).name(&dictionary), Some("second.ems"));
         assert_eq!(particle(0).name(&dictionary), None);

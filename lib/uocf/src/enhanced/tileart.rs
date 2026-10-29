@@ -48,9 +48,9 @@ pub const SITTING_DIRECTION_SOUTH: u32 = 1 << 2;
 /// `TaeSittingAnimation::direction_mask` bit: the mobile may sit facing west.
 pub const SITTING_DIRECTION_WEST: u32 = 1 << 3;
 
-// `TileArtEntry::house_join_bits` placement rules (`UOHouseCustomization::IsPlacementAllowed`).
-// Cells are relative to the house origin; x grows east, y grows south. Bits 0, 4 and 15 are
-// not read by the client.
+// `TileArtEntry::house_join_bits` placement rules (`UOHouseCustomization::IsPlacementAllowed`)
+// and support (`UOHouseCustomization::UpdateSupport`). Cells are relative to the house origin;
+// x grows east, y grows south. Bits 0, 4 and 15 are not read by the client.
 
 /// House placement: required on the north-west corner cell (0, 0).
 pub const HOUSE_JOIN_CORNER: u32 = 1 << 1;
@@ -58,11 +58,17 @@ pub const HOUSE_JOIN_CORNER: u32 = 1 << 1;
 pub const HOUSE_JOIN_WEST_EDGE: u32 = 1 << 2;
 /// House placement: required on the north edge cells (y = 0).
 pub const HOUSE_JOIN_NORTH_EDGE: u32 = 1 << 3;
-/// House placement (probable): also needs a supporting floor (the cell floor type is not 6
-/// or 1 and the level below is not type 1).
-pub const HOUSE_JOIN_NEEDS_SUPPORT: u32 = 1 << 5;
-/// House placement (probable): the client flags the cell and its +x and +y neighbours.
-pub const HOUSE_JOIN_MARKS_NEIGHBOURS: u32 = 1 << 14;
+/// House placement: the piece can stand directly on a floor or on a load-bearing piece below
+/// (`HOUSE_JOIN_SUPPORTS_ABOVE`), so the client refuses it on stairs and teleporter cells and
+/// above stairs. Pieces without it are supported only by a connected supported neighbour; the
+/// client draws unsupported pieces with `HOUSE_UNSUPPORTED_HUE`.
+pub const HOUSE_JOIN_RESTS_ON_FLOOR: u32 = 1 << 5;
+/// House placement: a supported piece with this bit supports the cell above it, and with the
+/// west/north edge bits also the floor of the next cell above.
+pub const HOUSE_JOIN_SUPPORTS_ABOVE: u32 = 1 << 14;
+/// Hue the client draws unsupported house customization pieces with (display only; the
+/// client still commits a design with unsupported pieces).
+pub const HOUSE_UNSUPPORTED_HUE: u16 = 43;
 
 // House customization connectors (`UOHouseCustomization::TilesConnect`): two adjacent tiles
 // join when a connector of one matches the same-numbered connector on the facing side of the
@@ -84,6 +90,12 @@ pub const HOUSE_JOIN_NORTH_2: u32 = 1 << 11;
 pub const HOUSE_JOIN_SOUTH_1: u32 = 1 << 12;
 /// House connector: south side, kind 2.
 pub const HOUSE_JOIN_SOUTH_2: u32 = 1 << 13;
+
+/// `TaeTextureImage::source_kind`: the client loads the texture. Any value other than
+/// `TEXTURE_SOURCE_NORMAL` and `TEXTURE_SOURCE_WRAP` makes the client load no texture.
+pub const TEXTURE_SOURCE_NORMAL: u8 = 0;
+/// `TaeTextureImage::source_kind`: the client loads the texture and forces wrap addressing.
+pub const TEXTURE_SOURCE_WRAP: u8 = 2;
 
 /// Inferred tile classification used for high-level logic.
 ///
@@ -199,11 +211,11 @@ pub struct TextureItem {
     pub block_index: u8,
     pub item_index: u8,
     pub texture_stretch: f32,
-    /// Texture load path selector (medium); see `TaeTextureImage::source_kind`.
+    /// Texture load path selector (`TEXTURE_SOURCE_*`); see `TaeTextureImage::source_kind`.
     pub source_kind: u8,
-    /// Probable sampler index inside the shader block (low); see `TaeTextureImage::sampler_index`.
+    /// Not read by the client; see `TaeTextureImage::sampler_index`.
     pub sampler_index: u32,
-    /// UV set (medium); see `TaeTextureImage::uv_set`.
+    /// Texture coordinate set index; see `TaeTextureImage::uv_set`.
     pub uv_set: u32,
     pub is_auxiliary: bool,
     /// Logical folder family inferred from the path.
@@ -350,14 +362,16 @@ pub struct TaeSittingAnimation {
 #[derive(Debug, Default, Clone)]
 pub struct TaeTextureImage {
     pub name_string_off: u32,
-    /// Texture load path selector: the material builder branches on 0 vs 2 (medium);
-    /// 0 in all client records.
+    /// 0 (`TEXTURE_SOURCE_NORMAL`) loads the texture; 2 (`TEXTURE_SOURCE_WRAP`) loads it and
+    /// forces wrap addressing; any other value makes the client skip the texture. 0 in all
+    /// client records.
     pub source_kind: u8,
     /// Texture stretch; the client switches the sampler to wrap when it is not 1.0.
     pub texture_stretch: f32,
-    /// Probable sampler index inside the shader block, 0..3 (low: no client code read found).
+    /// Not read by the client, which binds the items in order (item 0 the base map, the rest
+    /// the shader maps); usually equal to the item position.
     pub sampler_index: u32,
-    /// UV set, ORed into the low bits of the sampler flag word (medium); 0 or 1.
+    /// Texture coordinate set index (low byte of the Gamebryo texture map flags); 0 or 1.
     pub uv_set: u32,
 }
 
@@ -410,8 +424,9 @@ pub struct TileArtEntry {
     pub world_art_scale: f32,
     /// Sprite scale when drawing legacy/enhanced tile art (client default 1.5).
     pub legacy_art_scale: f32,
-    /// Object field +0x60; 0 in all client records, only part of the client's legacy-art-data test.
+    /// Object field +0x60; 0 in all client records; not read by the client.
     pub field_60: u32,
+    /// Classic tile id the art replaces (default 0xffffff); not read by the client.
     pub old_id: i32,
     /// Sprite rotation in degrees, applied only with the `Rotated` flag.
     pub rotation_degrees: f32,
@@ -432,14 +447,16 @@ pub struct TileArtEntry {
     pub light_offset_x: f32,
     /// Light sprite y offset; see `light_offset_x`.
     pub light_offset_y: f32,
-    /// House customization join bits: `HOUSE_JOIN_*` placement rules (bits 1, 2, 3, 5, 14)
-    /// and connectors (bits 6..13); bits 0, 4 and 15 are not read by the client.
+    /// House customization join bits: `HOUSE_JOIN_*` placement rules (bits 1, 2, 3), floor
+    /// support (bit 5), support of the level above (bit 14) and connectors (bits 6..13); bits
+    /// 0, 4 and 15 are not read by the client.
     pub house_join_bits: u32,
     pub flags1: TaeFlag,
     /// Not a copy of `flags1`; the client tests only bits 18 (paperdoll partial hue),
     /// 19 (`UseNewArt`) and 24 (`Animation`) in it.
     pub flags2: TaeFlag,
-    /// Copied to the sprite component (client default 1); use not traced (medium).
+    /// Copied to the sprite component (client default 1); no client reader found (probably
+    /// unused).
     pub facing: i32,
     pub ec_img_offset: TaeImgOffset,
     pub cc_img_offset: TaeImgOffset,
@@ -1069,10 +1086,10 @@ mod tests {
             .u8(last_appearance_subtype).u32(1).u32(666).u32(12);
         writer.u8(sitting_flag).u32(SITTING_DIRECTION_WEST).i32(-3).i32(-20).i32(-6).i32(3).i32(-4);
         writer.u8(10).u8(20).u8(30).u8(255);
-        writer.block(2, &[(3, 0, 2.0, 1, 1)], &[0, 2, -7, 9], &[-0.01, 0.0, 0.25, -0.5])
+        writer.block(2, &[(3, TEXTURE_SOURCE_NORMAL, 2.0, 1, 1)], &[0, 2, -7, 9], &[-0.01, 0.0, 0.25, -0.5])
             .block(4, &[], &[], &[])
             .u8(0)
-            .block(5, &[(6, 2, 1.0, 0, 0)], &[], &[]);
+            .block(5, &[(6, TEXTURE_SOURCE_WRAP, 1.0, 0, 0)], &[], &[]);
         writer.u8(1).u32(EFFECT_TYPE_SOUND).u32(43).f32(1.0);
         writer.0
     }
@@ -1134,7 +1151,7 @@ mod tests {
         assert_eq!((world_art.has_texture, world_art.field_04, world_art.type_string_off), (1, 0, 2));
         assert_eq!(world_art.texture_items_count, 1);
         let item = &world_art.texture_items[0];
-        assert_eq!((item.name_string_off, item.source_kind, item.texture_stretch), (3, 0, 2.0));
+        assert_eq!((item.name_string_off, item.source_kind, item.texture_stretch), (3, TEXTURE_SOURCE_NORMAL, 2.0));
         assert_eq!((item.sampler_index, item.uv_set), (1, 1));
         assert_eq!((world_art.technique_count, world_art.technique.as_slice()), (4, &[0, 2, -7, 9][..]));
         assert_eq!((world_art.tweak_count, world_art.tweaks.as_slice()), (4, &[-0.01, 0.0, 0.25, -0.5][..]));
@@ -1143,7 +1160,7 @@ mod tests {
         assert_eq!(enhanced.has_texture, 0);
         assert_eq!((light.has_texture, light.type_string_off, light.texture_items_count), (1, 5, 1));
         let light_item = &light.texture_items[0];
-        assert_eq!((light_item.name_string_off, light_item.source_kind, light_item.texture_stretch), (6, 2, 1.0));
+        assert_eq!((light_item.name_string_off, light_item.source_kind, light_item.texture_stretch), (6, TEXTURE_SOURCE_WRAP, 1.0));
         assert_eq!((light_item.sampler_index, light_item.uv_set), (0, 0));
 
         assert_eq!(entry.effects, vec![sample_effect()]);
