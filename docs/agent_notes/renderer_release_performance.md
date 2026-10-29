@@ -1,5 +1,10 @@
 # Release fixture measurements
 
+Further renderer optimization is deferred at the user's request until the
+desktop workstation profiling session. The recorded hypotheses and minimal
+tests are in [the performance handoff](../reviews/2026-10-29-renderer-performance-handoff.md).
+Visual fidelity is the current priority; measurements below remain historical evidence.
+
 Use `scripts/dev-helpers/renderer/benchmark.py` against an isolated, already
 running preview. The socket's FPS/frame-time fields are Bevy **smoothed**
 diagnostics. Median/min/max sampled FPS describe that signal, not raw frame

@@ -52,8 +52,8 @@ neighbor-mask and alpha tests do not establish that this scene achieves the
 requested blend. Treat that issue as open: its acceptance reference is the soft
 terrain cobblestone/dirt-to-grass transition visible in the town fixture, including
 under perspective. Recheck emitted static eligibility, coverage and actual
-opaque/transparent composition before changing the fade width. This follow-up
-is ordered after the current FPS work.
+opaque/transparent composition before changing the fade width. Renderer FPS
+optimization is now deferred; this is the first visual-fidelity follow-up.
 
 ## Validation
 

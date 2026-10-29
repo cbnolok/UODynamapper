@@ -51,6 +51,14 @@ Current execution decisions:
 
 ## Now
 
+### Current Renderer Focus: Visual Fidelity
+
+- Fix the demonstrated static-cobblestone/map-grass transition at map 0 `(2518,561)` against the supplied soft terrain-blend reference.
+- Add independently controlled CC/EC terrain transitions and the requested CC blending support.
+- Validate static heights/anchors, non-KR fake-normal wall artifacts, effect visibility and static light decals against matched fixtures.
+- Fix free perspective zoom; distinguish it from follow-camera dolly and the already corrected isometric pitch.
+- Use [the visual follow-up review](reviews/2026-10-29-visual-fidelity-followup.md) for current evidence and reconciliation of the unstaged user TODO. Historical repaired items must reproduce before being reopened.
+
 ### Baseline And Instrumentation
 
 - Add frame-time breakdown telemetry for CPU update, extraction, upload, and render.
@@ -389,6 +397,7 @@ Current execution decisions:
 
 ## Deferred
 
+- Renderer FPS optimization is deferred until the desktop workstation session with RenderDoc and rocprofv3. Preserve the accepted cache changes; resume from [the hypotheses and test plan](reviews/2026-10-29-renderer-performance-handoff.md) before choosing another implementation.
 - Full lighting-model parity with original client time-of-day rules.
 - Networking protocol integration.
 - Editor UX for live map sculpting and tile painting.
