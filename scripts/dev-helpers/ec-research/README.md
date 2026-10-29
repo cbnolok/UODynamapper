@@ -79,6 +79,7 @@ using tile definitions are named and documented in [`ghidra-tileart`](ghidra-til
 The effect definitions at the end of tileart records, which share their format with
 `EffectDefinitionCollection.uop`, are decoded in [`ghidra-effects`](ghidra-effects/README.md).
 `AnimationSequence.uop`, `AnimationDefinition.uop` and the 0x6E/0xE2 animation packets are traced in [`ghidra-animation`](ghidra-animation/README.md).
+`build/multicollection/housing.bin` (house customization pieces) and the `MultiCollection.uop` multis are decoded in [`ghidra-housing`](ghidra-housing/README.md).
 
 For an already analyzed program in the configured ghidra-mcp GUI project, prefer
 the plugin's MCP tools when the client exposes them. Start with
