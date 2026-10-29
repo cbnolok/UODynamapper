@@ -1658,6 +1658,25 @@ where
                 percent_string(summary.empty_pixel_count, summary.used_page_pixel_count),
                 estimated_bc7_bytes(summary.used_page_pixel_count, output_format.pixel_format),
             );
+            let layout = summary.layout;
+            info!(
+                "EC mobile animation records: {} sequence bodies ({} plain actions, {} aliases, {} unresolved, {} plain actions without frames, {} frame count mismatches), {} sequences without frames, {} sequence parse errors; {} no-sequence bodies ({} directional and {} undirected actions); {} mirrored records; {} missing frame placeholders; {} unreferenced source frames; {} dropped skipped frames.",
+                layout.sequence_body_count,
+                layout.plain_action_count,
+                layout.alias_action_count,
+                layout.unresolved_action_count,
+                layout.plain_action_without_frames_count,
+                layout.frame_count_mismatch_action_count,
+                layout.sequence_without_frames_count,
+                layout.sequence_parse_error_count,
+                layout.no_sequence_body_count,
+                layout.fallback_directional_action_count,
+                layout.fallback_undirected_action_count,
+                layout.mirrored_record_count,
+                layout.missing_frame_count,
+                layout.unreferenced_frame_count,
+                layout.dropped_skipped_frame_count,
+            );
         }
         Commands::PackEcTextures {
             source_dirs: source_dir_args,

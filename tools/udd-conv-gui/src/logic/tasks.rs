@@ -709,10 +709,13 @@ impl UddConvApp {
                 |build_progress| progress.build_progress(build_progress),
             )?;
             Ok(format!(
-                "Wrote {} pages for {} packed frames out of {} total frames to {}",
+                "Wrote {} pages for {} packed frames out of {} total frames and {} animation records for {} bodies ({} without a sequence) to {}",
                 summary.page_count,
                 summary.packed_frame_count,
                 summary.frame_count,
+                summary.animation_count,
+                summary.body_count,
+                summary.layout.no_sequence_body_count,
                 output.display()
             ))
         });

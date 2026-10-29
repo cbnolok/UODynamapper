@@ -1,9 +1,12 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use log::info;
 
 use color_eyre::eyre::{self, WrapErr};
+use udd_assets::mobile_anim_ec::{
+    ANIMATION_FLAG_MIRRORED, ANIMATION_FLAG_NO_SEQUENCE, ANIMATION_FLAG_UNDIRECTED,
+};
 use udd_assets::{
     HuesPackage, MobileAnimCcPackage, MobileAnimEcPackage, TexArtCcPackage, TexArtEcPackage,
     TexLandEcPackage, TileMetaPackage,
@@ -198,6 +201,20 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
             package.frames().len(),
             package.items().len(),
             package.source_hints().len()
+        );
+        let animations = package.animations();
+        let flagged = |flag: u16| animations.iter().filter(|animation| animation.flags & flag != 0).count();
+        info!(
+            "Animation records: bodies={}, aliases={}, mirrored={}, no_sequence={}, undirected={}",
+            animations
+                .iter()
+                .map(|animation| animation.body_id)
+                .collect::<BTreeSet<_>>()
+                .len(),
+            animations.iter().filter(|animation| animation.is_alias()).count(),
+            flagged(ANIMATION_FLAG_MIRRORED),
+            flagged(ANIMATION_FLAG_NO_SEQUENCE),
+            flagged(ANIMATION_FLAG_UNDIRECTED),
         );
         return Ok(true);
     }

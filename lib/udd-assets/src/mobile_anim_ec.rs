@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::{Cursor, Read};
 use std::path::Path;
 
@@ -20,14 +21,46 @@ pub const SOURCE_HINT_MANIFEST_ENTRY_PATH: &str = "metadata/source_hints.bin";
 
 pub const MISSING_PAGE_INDEX: u32 = u32::MAX;
 pub const MISSING_PAGE_FRAME_INDEX: u16 = u16::MAX;
+/// `MobileAnimEcFrameRecord::source_frame_index` of a placeholder for a frame number missing
+/// from the source `AnimationFrame` entry (a gap); the record has no pixels.
+pub const MISSING_SOURCE_FRAME_INDEX: u16 = u16::MAX;
+/// `MobileAnimEcAnimationRecord::alias_action_id` of an action with its own frames.
+pub const NO_ALIAS_ACTION: u16 = u16::MAX;
+/// Number of frames `MobileAnimEcAnimationRecord::skipped_frame_mask` can describe.
+pub const SKIPPED_FRAME_MASK_BITS: u32 = u32::BITS;
+
+/// The record shows the frames of direction `MIRROR_DIRECTION_SUM - direction` flipped
+/// horizontally about the frame anchor (the flipped anchor x is `width - center_x`).
+pub const ANIMATION_FLAG_MIRRORED: u16 = 1 << 0;
+/// The body has no `AnimationSequence` entry: actions, directions and fps are derived from the
+/// `AnimationFrame` entries (see the crate README). The client cannot animate these bodies.
+pub const ANIMATION_FLAG_NO_SEQUENCE: u16 = 1 << 1;
+/// No-sequence action whose frame numbers do not split into directions: every direction record
+/// shows all frames of the action, in frame number order, unmirrored.
+pub const ANIMATION_FLAG_UNDIRECTED: u16 = 1 << 2;
+/// The resolved action is the stand action of a sequence group (`IsStandAction`): the client
+/// shows only its first frame when the `idleAnimation` setting is off.
+pub const ANIMATION_FLAG_STAND_ACTION: u16 = 1 << 3;
+
+/// Directions of a mobile, in UO order (0 north .. 7 north-west); each has a record.
+pub const DIRECTION_COUNT: u8 = uocf::animation_sequence::DIRECTION_COUNT as u8;
+/// Directions below this one are mirrored (`ANIMATION_FLAG_MIRRORED`).
+pub const FIRST_STORED_DIRECTION: u8 = uocf::animation_sequence::FIRST_STORED_DIRECTION;
+/// A mirrored direction `d` shows direction `MIRROR_DIRECTION_SUM - d` flipped horizontally.
+pub const MIRROR_DIRECTION_SUM: u8 = uocf::animation_sequence::MIRROR_DIRECTION_SUM;
 
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"MEPG";
 const ANIMATION_MANIFEST_MAGIC: [u8; 4] = *b"MEAN";
 const FRAME_MANIFEST_MAGIC: [u8; 4] = *b"MEFR";
 const ITEM_MANIFEST_MAGIC: [u8; 4] = *b"MEIT";
 const SOURCE_HINT_MANIFEST_MAGIC: [u8; 4] = *b"MESH";
-const MOBILE_ANIM_EC_METADATA_VERSION: u32 = 2;
+/// Metadata version written by the converter, in every manifest.
+pub const MOBILE_ANIM_EC_METADATA_VERSION: u32 = 3;
+const MOBILE_ANIM_EC_METADATA_VERSION_FIRST: u32 = 1;
 const MOBILE_ANIM_EC_METADATA_VERSION_DYNAMIC_PAGES: u32 = 2;
+/// First version whose animation and frame records follow the client `AnimationSequence`
+/// (actions, 8 directions, aliases, fps). Older records are not read: rebuild the package.
+const MOBILE_ANIM_EC_METADATA_VERSION_CLIENT_ANIMATIONS: u32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MobileAnimEcPageRecord {
@@ -40,21 +73,81 @@ pub struct MobileAnimEcPageRecord {
     pub pixel_format: PagePixelFormat,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// What the client shows for "body, action, direction" (one record per sequence action and
+/// direction 0..`DIRECTION_COUNT`). Records are sorted by `(body_id, action_id, direction)`.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MobileAnimEcAnimationRecord {
+    /// Body type: the `AnimationSequence` entry name; for `ANIMATION_FLAG_NO_SEQUENCE` records
+    /// the `AnimationFrame` body.
     pub body_id: u32,
+    /// Requested action.
     pub action_id: u16,
     pub direction: u8,
+    /// Frames shown, `frame_start..frame_start + frame_count` in the frame records. Mirrored and
+    /// alias records share the frames of the record they show. For sequence actions every
+    /// direction has exactly the sequence frame count of frames (placeholders fill gaps), so the
+    /// position is the frame index within the direction; 0 frames when the action has no
+    /// `AnimationFrame` entry.
     pub frame_start: u32,
     pub frame_count: u16,
+    /// `ANIMATION_FLAG_*`.
     pub flags: u16,
+    /// `AnimationFrame` body holding the frames (the sequence stored id: 146 -> 704,
+    /// 1308 -> 29, 1309 -> 1254; else `body_id`).
+    pub source_body_id: u32,
+    /// Action whose frames are shown (`ResolveAction` with flying animations enabled).
+    pub resolved_action_id: u16,
+    /// Alias stored in the sequence for `action_id`; `NO_ALIAS_ACTION` for an action with its
+    /// own frames.
+    pub alias_action_id: u16,
+    /// `ResolveAction` with flying animations disabled; the frames are those of the record of
+    /// this action and the same direction.
+    pub resolved_action_id_no_flying: u16,
+    /// Frames per second (`GetActionFps`) with flying animations enabled.
+    pub fps: f32,
+    /// Frames per second with flying animations disabled.
+    pub fps_no_flying: f32,
+    /// Bit `i` set: the player passes over frame `i` of the direction (the sequence skipped
+    /// frames of `action_id`).
+    pub skipped_frame_mask: u32,
+}
+
+impl MobileAnimEcAnimationRecord {
+    pub fn is_mirrored(&self) -> bool {
+        self.flags & ANIMATION_FLAG_MIRRORED != 0
+    }
+
+    pub fn is_alias(&self) -> bool {
+        self.alias_action_id != NO_ALIAS_ACTION
+    }
+
+    pub fn is_frame_skipped(&self, frame_index: u32) -> bool {
+        frame_index < SKIPPED_FRAME_MASK_BITS && self.skipped_frame_mask & (1 << frame_index) != 0
+    }
+}
+
+/// An animation record chosen by [`MobileAnimEcPackage::resolve_animation`] and its fps.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ResolvedMobileAnimEcAnimation<'a> {
+    /// Record whose frames, mirroring and skipped frames are shown.
+    pub record: &'a MobileAnimEcAnimationRecord,
+    pub fps: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MobileAnimEcFrameRecord {
+    /// Record that owns the frame: the stored direction of the plain action.
     pub animation_index: u32,
+    /// Position within the owner's frames.
     pub frame_index: u16,
+    /// Position of the frame among all `AnimationFrame` entries of the source body (atlas key);
+    /// `MISSING_SOURCE_FRAME_INDEX` for a placeholder.
     pub source_frame_index: u16,
+    /// `FrameEntry` action of the source frame.
+    pub source_action: u16,
+    /// `FrameEntry` 1-based frame number of the source frame (the expected number for a
+    /// placeholder).
+    pub source_frame_number: u16,
     pub page_index: u32,
     pub page_frame_index: u16,
     pub x: u16,
@@ -154,6 +247,8 @@ pub struct MobileAnimEcPackage {
     packing_mode: AtlasPackingMode,
     pages: Vec<MobileAnimEcPageRecord>,
     animations: Vec<MobileAnimEcAnimationRecord>,
+    animation_lookup: HashMap<(u32, u16, u8), usize>,
+    lowest_plain_actions: HashMap<u32, u16>,
     frames: Vec<MobileAnimEcFrameRecord>,
     items: Vec<MobileAnimEcItemRecord>,
     source_hints: Vec<MobileAnimEcSourceHintRecord>,
@@ -196,6 +291,15 @@ impl MobileAnimEcPackage {
         let frames = parse_frame_manifest(&frame_manifest)?;
         let items = parse_item_manifest(&item_manifest)?;
         let source_hints = parse_source_hint_manifest(&source_hint_manifest)?;
+        let mut animation_lookup = HashMap::with_capacity(animations.len());
+        let mut lowest_plain_actions = HashMap::<u32, u16>::new();
+        for (index, animation) in animations.iter().enumerate() {
+            animation_lookup.insert((animation.body_id, animation.action_id, animation.direction), index);
+            if !animation.is_alias() {
+                let lowest = lowest_plain_actions.entry(animation.body_id).or_insert(animation.action_id);
+                *lowest = (*lowest).min(animation.action_id);
+            }
+        }
 
         Ok(Self {
             package,
@@ -205,6 +309,8 @@ impl MobileAnimEcPackage {
             packing_mode,
             pages,
             animations,
+            animation_lookup,
+            lowest_plain_actions,
             frames,
             items,
             source_hints,
@@ -222,12 +328,33 @@ impl MobileAnimEcPackage {
     pub fn items(&self) -> &[MobileAnimEcItemRecord] { &self.items }
     pub fn source_hints(&self) -> &[MobileAnimEcSourceHintRecord] { &self.source_hints }
 
+    /// Record of exactly (body, action, direction); `None` when the sequence has no such action.
     pub fn animation(&self, body_id: u32, action_id: u16, direction: u8) -> Option<&MobileAnimEcAnimationRecord> {
-        self.animations.iter().find(|animation| {
-            animation.body_id == body_id
-                && animation.action_id == action_id
-                && animation.direction == direction
-        })
+        self.animation_lookup
+            .get(&(body_id, action_id, direction))
+            .map(|&index| &self.animations[index])
+    }
+
+    /// What the client shows for (body, action, direction) under the `flying_animations`
+    /// setting: an action the sequence does not have falls back to the lowest plain action of
+    /// the body (`ResolveAction`); with flying disabled, the frames of
+    /// `resolved_action_id_no_flying` and `fps_no_flying` are used.
+    pub fn resolve_animation(
+        &self,
+        body_id: u32,
+        action_id: u16,
+        direction: u8,
+        flying_enabled: bool,
+    ) -> Option<ResolvedMobileAnimEcAnimation<'_>> {
+        let requested = self.animation(body_id, action_id, direction).or_else(|| {
+            let lowest = *self.lowest_plain_actions.get(&body_id)?;
+            self.animation(body_id, lowest, direction)
+        })?;
+        if flying_enabled {
+            return Some(ResolvedMobileAnimEcAnimation { record: requested, fps: requested.fps });
+        }
+        let record = self.animation(body_id, requested.resolved_action_id_no_flying, direction)?;
+        Some(ResolvedMobileAnimEcAnimation { record, fps: requested.fps_no_flying })
     }
 
     pub fn animation_frames(&self, animation: &MobileAnimEcAnimationRecord) -> &[MobileAnimEcFrameRecord] {
@@ -350,7 +477,9 @@ fn parse_animation_manifest(bytes: &[u8]) -> eyre::Result<Vec<MobileAnimEcAnimat
     cursor.read_exact(&mut magic)?;
     if magic != ANIMATION_MANIFEST_MAGIC { eyre::bail!("invalid EC mobile animation manifest magic"); }
     let version = cursor.read_u32::<LittleEndian>()?;
-    if !is_supported_metadata_version(version) { eyre::bail!("invalid EC mobile animation manifest version"); }
+    if !is_supported_animation_metadata_version(version) {
+        eyre::bail!("unsupported EC mobile animation manifest version {version}; rebuild mobile_anim_ec.uddp");
+    }
     let count = cursor.read_u32::<LittleEndian>()? as usize;
     let mut animations = Vec::with_capacity(count);
     for _ in 0..count {
@@ -361,6 +490,13 @@ fn parse_animation_manifest(bytes: &[u8]) -> eyre::Result<Vec<MobileAnimEcAnimat
             frame_start: cursor.read_u32::<LittleEndian>()?,
             frame_count: cursor.read_u16::<LittleEndian>()?,
             flags: cursor.read_u16::<LittleEndian>()?,
+            source_body_id: cursor.read_u32::<LittleEndian>()?,
+            resolved_action_id: cursor.read_u16::<LittleEndian>()?,
+            alias_action_id: cursor.read_u16::<LittleEndian>()?,
+            resolved_action_id_no_flying: cursor.read_u16::<LittleEndian>()?,
+            fps: cursor.read_f32::<LittleEndian>()?,
+            fps_no_flying: cursor.read_f32::<LittleEndian>()?,
+            skipped_frame_mask: cursor.read_u32::<LittleEndian>()?,
         });
     }
     Ok(animations)
@@ -372,7 +508,9 @@ fn parse_frame_manifest(bytes: &[u8]) -> eyre::Result<Vec<MobileAnimEcFrameRecor
     cursor.read_exact(&mut magic)?;
     if magic != FRAME_MANIFEST_MAGIC { eyre::bail!("invalid EC mobile animation frame magic"); }
     let version = cursor.read_u32::<LittleEndian>()?;
-    if !is_supported_metadata_version(version) { eyre::bail!("invalid EC mobile animation frame version"); }
+    if !is_supported_animation_metadata_version(version) {
+        eyre::bail!("unsupported EC mobile animation frame version {version}; rebuild mobile_anim_ec.uddp");
+    }
     let count = cursor.read_u32::<LittleEndian>()? as usize;
     let mut frames = Vec::with_capacity(count);
     for _ in 0..count {
@@ -380,6 +518,8 @@ fn parse_frame_manifest(bytes: &[u8]) -> eyre::Result<Vec<MobileAnimEcFrameRecor
             animation_index: cursor.read_u32::<LittleEndian>()?,
             frame_index: cursor.read_u16::<LittleEndian>()?,
             source_frame_index: cursor.read_u16::<LittleEndian>()?,
+            source_action: cursor.read_u16::<LittleEndian>()?,
+            source_frame_number: cursor.read_u16::<LittleEndian>()?,
             page_index: cursor.read_u32::<LittleEndian>()?,
             page_frame_index: cursor.read_u16::<LittleEndian>()?,
             x: cursor.read_u16::<LittleEndian>()?,
@@ -459,7 +599,11 @@ fn parse_source_hint_manifest(bytes: &[u8]) -> eyre::Result<Vec<MobileAnimEcSour
 }
 
 fn is_supported_metadata_version(version: u32) -> bool {
-    version == 1 || version == MOBILE_ANIM_EC_METADATA_VERSION
+    (MOBILE_ANIM_EC_METADATA_VERSION_FIRST..=MOBILE_ANIM_EC_METADATA_VERSION).contains(&version)
+}
+
+fn is_supported_animation_metadata_version(version: u32) -> bool {
+    (MOBILE_ANIM_EC_METADATA_VERSION_CLIENT_ANIMATIONS..=MOBILE_ANIM_EC_METADATA_VERSION).contains(&version)
 }
 
 pub fn page_entry_path(page_index: u32, fmt: PagePixelFormat) -> String {

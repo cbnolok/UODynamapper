@@ -27,6 +27,9 @@ const MOBILE_ANIM_LIST_PANEL_DEFAULT_WIDTH: f32 = 300.0;
 const MOBILE_ANIM_SECTION_HEADER_SPACING: f32 = 4.0;
 const MOBILE_ANIM_PLAYBACK_PANEL_MAX_WIDTH: f32 = 560.0;
 const MOBILE_ANIM_PLAYBACK_PREVIEW_GAP: f32 = 12.0;
+/// Texture coordinates of a frame preview, and of a mirrored one (flipped horizontally).
+const FRAME_UV: egui::Rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+const MIRRORED_FRAME_UV: egui::Rect = egui::Rect::from_min_max(egui::pos2(1.0, 0.0), egui::pos2(0.0, 1.0));
 
 pub fn ui_mobile_anim_cc(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
     let Some(package) = app.mobile_anim_cc_package.clone() else {
@@ -519,18 +522,50 @@ pub fn ui_mobile_anim_ec(app: &mut InspectorApp, ctx: &egui::Context, ui: &mut e
                 ui.label(selected_animation.direction.to_string());
                 ui.end_row();
                 metadata_label(ui, "Flags");
-                ui.label(format!("0x{:04X}", selected_animation.flags));
+                ui.label(format!(
+                    "0x{:04X} {}",
+                    selected_animation.flags,
+                    ec_animation_flag_names(selected_animation.flags)
+                ));
+                ui.end_row();
+                metadata_label(ui, "Source Body");
+                ui.label(selected_animation.source_body_id.to_string());
+                ui.end_row();
+                metadata_label(ui, "Alias");
+                ui.label(if selected_animation.is_alias() {
+                    selected_animation.alias_action_id.to_string()
+                } else {
+                    "none".to_string()
+                });
+                ui.end_row();
+                metadata_label(ui, "Resolved Action");
+                ui.label(format!(
+                    "{} (flying off: {})",
+                    selected_animation.resolved_action_id,
+                    selected_animation.resolved_action_id_no_flying
+                ));
+                ui.end_row();
+                metadata_label(ui, "FPS");
+                ui.label(format!(
+                    "{} (flying off: {})",
+                    selected_animation.fps,
+                    selected_animation.fps_no_flying
+                ));
+                ui.end_row();
+                metadata_label(ui, "Skipped Frames");
+                ui.label(format!("0x{:08X}", selected_animation.skipped_frame_mask));
                 ui.end_row();
             });
 
         ui.separator();
         if let Some(frame) = frames.get(app.selected_mobile_anim_frame_index).copied() {
             let page_size = ec_frame_page_size(&package, frame);
+            let mirrored = selected_animation.is_mirrored();
             show_frame_playback_preview_row(ui, app, |ui, app| {
                 show_playback_controls(ctx, ui, app, frames.len());
                 show_ec_frame_metadata(ui, frame, page_size);
             }, |ui, app| {
-                show_ec_frame_image(ui, ctx, app, &package, frame, page_size);
+                show_ec_frame_image(ui, ctx, app, &package, frame, page_size, mirrored);
             });
         } else {
             show_playback_controls(ctx, ui, app, frames.len());
@@ -921,12 +956,38 @@ fn ec_animation_label(
     visible_count: usize,
     frame_count: usize,
 ) -> String {
+    let mirrored = if animation.is_mirrored() { " mirrored" } else { "" };
+    let alias = if animation.is_alias() {
+        format!(" alias {} -> {}", animation.alias_action_id, animation.resolved_action_id)
+    } else {
+        String::new()
+    };
     format!(
-        "dir {} | {}/{} visible",
+        "dir {}{}{} | {}/{} visible",
         animation.direction,
+        mirrored,
+        alias,
         visible_count,
         frame_count
     )
+}
+
+fn ec_animation_flag_names(flags: u16) -> String {
+    use udd_assets::mobile_anim_ec::{
+        ANIMATION_FLAG_MIRRORED, ANIMATION_FLAG_NO_SEQUENCE, ANIMATION_FLAG_STAND_ACTION,
+        ANIMATION_FLAG_UNDIRECTED,
+    };
+    [
+        (ANIMATION_FLAG_MIRRORED, "mirrored"),
+        (ANIMATION_FLAG_NO_SEQUENCE, "no sequence"),
+        (ANIMATION_FLAG_UNDIRECTED, "undirected"),
+        (ANIMATION_FLAG_STAND_ACTION, "stand"),
+    ]
+    .into_iter()
+    .filter(|(flag, _)| flags & flag != 0)
+    .map(|(_, name)| name)
+    .collect::<Vec<_>>()
+    .join(", ")
 }
 
 fn body_type_label(body_type: Option<u8>) -> String {
@@ -1183,6 +1244,7 @@ fn show_cc_frame_image(
         frame.y,
         frame.width,
         frame.height,
+        false,
         || package.read_frame_rgba(&frame).ok(),
         || package.read_page_rgba(frame.page_index).ok(),
     );
@@ -1223,6 +1285,10 @@ fn show_ec_frame_metadata(
         frame.center_y,
         udd_assets::mobile_anim_ec::MISSING_PAGE_INDEX,
     );
+    ui.label(format!(
+        "Source: action {} frame number {}",
+        frame.source_action, frame.source_frame_number
+    ));
     show_page_size_metadata(ui, page_size);
 }
 
@@ -1233,6 +1299,7 @@ fn show_ec_frame_image(
     package: &udd_assets::MobileAnimEcPackage,
     frame: udd_assets::mobile_anim_ec::MobileAnimEcFrameRecord,
     page_size: Option<MobileAnimPageDetails>,
+    mirrored: bool,
 ) {
     show_frame_image(
         ui,
@@ -1245,6 +1312,7 @@ fn show_ec_frame_image(
         frame.y,
         frame.width,
         frame.height,
+        mirrored,
         || package.read_frame_rgba(&frame).ok(),
         || package.read_page_rgba(frame.page_index).ok(),
     );
@@ -1351,6 +1419,7 @@ fn show_frame_image(
     y: u16,
     width: u16,
     height: u16,
+    mirrored: bool,
     read_frame_rgba: impl Fn() -> Option<Vec<u8>>,
     read_page_rgba: impl Fn() -> Option<Vec<u8>>,
 ) {
@@ -1422,11 +1491,13 @@ fn show_frame_image(
             .min((max.y.max(1.0)) / size[1] as f32)
             .min(1.0)
             .max(0.1);
+        let uv = if mirrored { MIRRORED_FRAME_UV } else { FRAME_UV };
         egui::ScrollArea::both().show(ui, |ui| {
             ui.add(
                 egui::Image::new(&texture)
                     .maintain_aspect_ratio(true)
                     .texture_options(egui::TextureOptions::NEAREST)
+                    .uv(uv)
                     .fit_to_exact_size(egui::vec2(size[0] as f32 * scale, size[1] as f32 * scale)),
             );
         });

@@ -1,7 +1,7 @@
 //! Build-time support for `mobile_anim_ec.uddp`.
 
 use std::cmp::Reverse;
-use std::collections::{hash_map::Entry, BTreeMap, HashMap};
+use std::collections::{hash_map::Entry, BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -11,12 +11,15 @@ use byteorder::{LittleEndian, WriteBytesExt};
 use color_eyre::eyre::{self, WrapErr};
 use guillotiere::{size2, AtlasAllocator};
 use crate::progress::{ProgressBar, ProgressStyle};
-use log::info;
+use log::{info, warn};
 use rayon::prelude::*;
 use udd_container::{
     AddFileRequest, AddOwnedFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder,
 };
-use uocf::animation_sequence::AnimationSequence;
+use uocf::animation_sequence::{
+    AnimationSequence, SequenceAction, FIRST_FRAME_NUMBER, FIRST_STORED_DIRECTION, MIRROR_DIRECTION_SUM,
+    MISSING_ACTION_FPS, STORED_DIRECTION_COUNT,
+};
 use uocf::enhanced::animationframe::{AnimationFrame, AnimationFrameMetadata, FrameEntry};
 use uocf::uop_container::hash::hash_file_name_single;
 use uocf::uop_container::package::{LoadMode, UopPackage};
@@ -39,8 +42,11 @@ use udd_assets::mobile_anim_ec::{
     EcMobileAnimationsKdl,
     page_entry_path, MobileAnimEcAnimationRecord, MobileAnimEcFrameRecord,
     MobileAnimEcItemRecord, MobileAnimEcPageRecord, MobileAnimEcSourceHintRecord,
-    ANIMATION_MANIFEST_ENTRY_PATH, FRAME_MANIFEST_ENTRY_PATH, ITEM_MANIFEST_ENTRY_PATH,
-    MISSING_PAGE_FRAME_INDEX, MISSING_PAGE_INDEX, PAGE_MANIFEST_ENTRY_PATH,
+    ANIMATION_FLAG_MIRRORED, ANIMATION_FLAG_NO_SEQUENCE, ANIMATION_FLAG_STAND_ACTION,
+    ANIMATION_FLAG_UNDIRECTED, ANIMATION_MANIFEST_ENTRY_PATH, DIRECTION_COUNT,
+    FRAME_MANIFEST_ENTRY_PATH, ITEM_MANIFEST_ENTRY_PATH, MISSING_PAGE_FRAME_INDEX,
+    MISSING_PAGE_INDEX, MISSING_SOURCE_FRAME_INDEX, MOBILE_ANIM_EC_METADATA_VERSION,
+    NO_ALIAS_ACTION, PAGE_MANIFEST_ENTRY_PATH, SKIPPED_FRAME_MASK_BITS,
     SOURCE_HINT_MANIFEST_ENTRY_PATH,
 };
 use udd_assets::tex_art_cc::PagePixelFormat;
@@ -54,7 +60,8 @@ const ANIMATION_MANIFEST_MAGIC: [u8; 4] = *b"MEAN";
 const FRAME_MANIFEST_MAGIC: [u8; 4] = *b"MEFR";
 const ITEM_MANIFEST_MAGIC: [u8; 4] = *b"MEIT";
 const SOURCE_HINT_MANIFEST_MAGIC: [u8; 4] = *b"MESH";
-const MOBILE_ANIM_EC_METADATA_VERSION: u32 = 2;
+/// Highest body type whose `AnimationSequence` entry name is looked up (body ids are u16).
+const MAX_SEQUENCE_BODY_TYPE: u32 = u16::MAX as u32;
 const PLANNED_SOURCE_CACHE_LIMIT: usize = 256;
 const PAGE_PACK_CANDIDATE_INITIAL_CAPACITY_LIMIT: usize = 4096;
 const BC7_PROGRESS_FLUSH_UNITS: u64 = 256;
@@ -75,6 +82,7 @@ const EC_ANIMATIONFRAME_FILES: [&str; 12] = [
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MobileAnimEcBuildSummary {
+    /// Bodies with animation records (sequence bodies plus no-sequence bodies).
     pub body_count: u32,
     pub animation_count: u32,
     pub frame_count: u32,
@@ -88,6 +96,44 @@ pub struct MobileAnimEcBuildSummary {
     pub source_uop_count: u32,
     pub atlas_width: u32,
     pub atlas_height: u32,
+    pub layout: MobileAnimEcLayoutStats,
+}
+
+/// How the source frames were turned into animation records.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MobileAnimEcLayoutStats {
+    /// `AnimationSequence` entries that failed to parse (their bodies get no sequence records).
+    pub sequence_parse_error_count: u32,
+    /// Bodies with a sequence whose stored id has frames.
+    pub sequence_body_count: u32,
+    /// Sequences whose stored id has no frames: no records.
+    pub sequence_without_frames_count: u32,
+    /// Bodies with frames but no sequence: fallback records (`ANIMATION_FLAG_NO_SEQUENCE`).
+    pub no_sequence_body_count: u32,
+    /// Sequence actions with their own frames.
+    pub plain_action_count: u32,
+    /// Sequence actions that alias another action.
+    pub alias_action_count: u32,
+    /// Sequence actions without records because the sequence has no plain action.
+    pub unresolved_action_count: u32,
+    /// No-sequence actions split into directions by frame number.
+    pub fallback_directional_action_count: u32,
+    /// No-sequence actions shown undirected (`ANIMATION_FLAG_UNDIRECTED`).
+    pub fallback_undirected_action_count: u32,
+    /// Records with `ANIMATION_FLAG_MIRRORED`.
+    pub mirrored_record_count: u32,
+    /// Plain actions without an `AnimationFrame` entry: records with no frames.
+    pub plain_action_without_frames_count: u32,
+    /// Plain actions whose entry has a frame count other than
+    /// `STORED_DIRECTION_COUNT * frame_count`.
+    pub frame_count_mismatch_action_count: u32,
+    /// Placeholder frames for frame numbers missing from an entry (gaps).
+    pub missing_frame_count: u32,
+    /// Source frames no record shows, not packed: numbers beyond the sequence frame count,
+    /// repeated numbers, and actions or bodies the sequences do not use.
+    pub unreferenced_frame_count: u32,
+    /// Skipped frames at or beyond `SKIPPED_FRAME_MASK_BITS`, not carried.
+    pub dropped_skipped_frame_count: u32,
 }
 
 pub struct MobileAnimEcAtlasOptions {
@@ -148,6 +194,10 @@ struct PlannedMobileAnimEcFrame {
     body_id: u32,
     source_frame_index: u16,
     source_entry_index: u16,
+    /// `FrameEntry::action`.
+    action: u16,
+    /// `FrameEntry::frame_number` (1-based).
+    frame_number: u16,
     width: u16,
     height: u16,
     source_left: u16,
@@ -304,6 +354,20 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progr
         total: 1,
     });
     let mut planned_by_body = plan_animationframe_packages(&animationframe_paths)?;
+    let (sequences, sequence_parse_error_count) = load_animation_sequences(&client_dir)?;
+    let mut layout = build_animation_layout(&source_frames_by_body(&planned_by_body), &sequences)?;
+    layout.stats.sequence_parse_error_count = sequence_parse_error_count;
+    let referenced_frames = layout.referenced_source_frames();
+    for (&body_id, frames) in planned_by_body.iter_mut() {
+        frames.retain(|frame| referenced_frames.contains(&(body_id, frame.source_frame_index)));
+    }
+    planned_by_body.retain(|_, frames| !frames.is_empty());
+    info!(
+        "EC mobile animation layout: {} records, {} frame records, {:?}",
+        layout.animations.len(),
+        layout.slots.len(),
+        layout.stats
+    );
     apply_planned_transparent_trim(&mut planned_by_body, options)?;
     apply_planned_upscale(&mut planned_by_body, options)?;
     payload_progress(AssetTaskProgress {
@@ -331,10 +395,8 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progr
         pack_timer.elapsed().as_secs_f64()
     );
     let packed_frame_count = placements.len() as u32;
-    let sequences = load_animation_sequences(&client_dir, planned_by_body.keys().copied().collect::<Vec<_>>())?;
-    let planned_frame_indices_by_body = planned_frame_indices_by_body(&planned_by_body);
-    let (animations, frames) =
-        build_animation_records_for_body_frames(&planned_frame_indices_by_body, &placements, &sequences)?;
+    let layout_stats = layout.stats;
+    let (animations, frames) = layout.into_records(&placements)?;
 
     let page_manifest = serialize_page_record_manifest(&packed_pages.records, options)?;
     let animation_manifest = serialize_animation_manifest(&animations)?;
@@ -369,7 +431,7 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progr
     );
 
     let summary = MobileAnimEcBuildSummary {
-        body_count: planned_by_body.len() as u32,
+        body_count: layout_stats.sequence_body_count + layout_stats.no_sequence_body_count,
         animation_count: animations.len() as u32,
         frame_count: frames.len() as u32,
         packed_frame_count,
@@ -382,6 +444,7 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progr
         source_uop_count: animationframe_paths.len() as u32,
         atlas_width: options.atlas_width,
         atlas_height: options.atlas_height,
+        layout: layout_stats,
     };
     info!(
         "EC mobile animation conversion completed in {:.3}s",
@@ -982,6 +1045,8 @@ fn planned_frame_from_entry(
         body_id: animation.animation_id,
         source_frame_index: source_entry_index,
         source_entry_index,
+        action: entry.action,
+        frame_number: entry.frame_number,
         width,
         height,
         source_left: 0,
@@ -1056,9 +1121,47 @@ fn cached_decode_planned_animation_source(
     Ok(decoded)
 }
 
-fn planned_frame_indices_by_body(
+/// Identity of one source frame of a body: its position among the body's `AnimationFrame`
+/// entries (the atlas key) and its `FrameEntry` action and 1-based frame number.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SourceFrameIdentity {
+    source_frame_index: u16,
+    action: u16,
+    frame_number: u16,
+}
+
+/// One frame record before atlas placement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FrameSlot {
+    /// Owner record, set when the stored-direction record of the action is emitted.
+    animation_index: Option<u32>,
+    frame_index: u16,
+    source_body_id: u32,
+    source_action: u16,
+    source_frame_number: u16,
+    /// `None` for a placeholder of a frame number missing from the source entry.
+    source_frame_index: Option<u16>,
+}
+
+/// Animation records and their frame slots, built from the sequences before atlas packing.
+struct AnimationLayout {
+    animations: Vec<MobileAnimEcAnimationRecord>,
+    slots: Vec<FrameSlot>,
+    stats: MobileAnimEcLayoutStats,
+}
+
+/// Frames of one action of a body, by `FrameEntry` frame number.
+#[derive(Default)]
+struct ActionSourceFrames {
+    /// The first entry of each number, in entry order.
+    by_number: BTreeMap<u16, SourceFrameIdentity>,
+    /// All entries of the action, repeated numbers included.
+    entry_count: usize,
+}
+
+fn source_frames_by_body(
     planned_by_body: &BTreeMap<u32, Vec<PlannedMobileAnimEcFrame>>,
-) -> BTreeMap<u32, Vec<u16>> {
+) -> BTreeMap<u32, Vec<SourceFrameIdentity>> {
     planned_by_body
         .iter()
         .map(|(&body_id, frames)| {
@@ -1066,121 +1169,388 @@ fn planned_frame_indices_by_body(
                 body_id,
                 frames
                     .iter()
-                    .map(|frame| frame.source_frame_index)
+                    .map(|frame| SourceFrameIdentity {
+                        source_frame_index: frame.source_frame_index,
+                        action: frame.action,
+                        frame_number: frame.frame_number,
+                    })
                     .collect::<Vec<_>>(),
             )
         })
         .collect()
 }
 
-fn load_animation_sequences(
-    client_dir: &Path,
-    body_ids: Vec<u32>,
-) -> eyre::Result<HashMap<u32, AnimationSequence>> {
+fn source_frames_by_action(frames: &[SourceFrameIdentity]) -> BTreeMap<u16, ActionSourceFrames> {
+    let mut by_action = BTreeMap::<u16, ActionSourceFrames>::new();
+    for frame in frames {
+        let action_frames = by_action.entry(frame.action).or_default();
+        action_frames.entry_count += 1;
+        action_frames.by_number.entry(frame.frame_number).or_insert(*frame);
+    }
+    by_action
+}
+
+/// Loads every `AnimationSequence` entry, keyed by body type (the entry name). Returns the
+/// sequences and the number of entries that failed to parse.
+fn load_animation_sequences(client_dir: &Path) -> eyre::Result<(BTreeMap<u32, AnimationSequence>, u32)> {
     let sequence_path = ["AnimationSequence.uop", "animationsequence.uop"]
         .iter()
         .map(|name| client_dir.join(name))
         .find(|path| path.is_file());
     let Some(sequence_path) = sequence_path else {
-        return Ok(HashMap::new());
+        warn!("AnimationSequence.uop not found in {}; every EC body uses the no-sequence fallback", client_dir.display());
+        return Ok((BTreeMap::new(), 0));
     };
     let mut package = UopPackage::load_with_mode(&sequence_path, LoadMode::Lazy)
         .wrap_err_with(|| format!("load {}", sequence_path.display()))?;
-    let mut sequences = HashMap::new();
-    let pb = ProgressBar::new(body_ids.len() as u64);
-    pb.set_style(ProgressStyle::default_bar()
-        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg} ({eta})")
-        .unwrap()
-        .progress_chars("#>-"));
-    pb.set_message("loading EC mobile animation sequences");
-    pb.enable_steady_tick(Duration::from_millis(100));
-    for body_id in body_ids {
-        pb.inc(1);
-        let hash = hash_file_name_single(&AnimationSequence::entry_path(body_id));
+    let entry_hashes = package
+        .iter_files()
+        .filter(|file| file.has_size())
+        .map(|file| file.filename_hash())
+        .collect::<HashSet<_>>();
+    let mut sequences = BTreeMap::new();
+    let mut named_entry_count = 0usize;
+    let mut parse_error_count = 0u32;
+    for body_type in 0..=MAX_SEQUENCE_BODY_TYPE {
+        let hash = hash_file_name_single(&AnimationSequence::entry_path(body_type));
+        if !entry_hashes.contains(&hash) {
+            continue;
+        }
+        named_entry_count += 1;
         let Some(data) = package.unpack_file_by_hash_cached(hash)? else {
             continue;
         };
-        if let Ok(sequence) = AnimationSequence::parse(&data) {
-            sequences.insert(body_id, sequence);
+        match AnimationSequence::parse(&data) {
+            Ok(sequence) => {
+                sequences.insert(body_type, sequence);
+            }
+            Err(error) => {
+                parse_error_count += 1;
+                warn!("EC animation sequence of body {body_type} failed to parse: {error}");
+            }
         }
     }
-    pb.finish_with_message(format!("EC mobile animation sequences loaded ({})", sequences.len()));
-    Ok(sequences)
+    let unnamed_entry_count = entry_hashes.len() - named_entry_count;
+    if unnamed_entry_count != 0 {
+        warn!("{unnamed_entry_count} AnimationSequence.uop entries have no body type name up to {MAX_SEQUENCE_BODY_TYPE}");
+    }
+    info!("EC mobile animation sequences loaded ({})", sequences.len());
+    Ok((sequences, parse_error_count))
 }
 
-fn build_animation_records(
-    decoded_by_body: &BTreeMap<u32, Vec<DecodedMobileAnimEcFrame>>,
-    placements: &HashMap<(u32, u16), FramePlacement>,
-    sequences: &HashMap<u32, AnimationSequence>,
-) -> eyre::Result<(Vec<MobileAnimEcAnimationRecord>, Vec<MobileAnimEcFrameRecord>)> {
-    let source_frame_indices_by_body = decoded_by_body
-        .iter()
-        .map(|(&body_id, frames)| {
-            (
-                body_id,
-                frames
-                    .iter()
-                    .map(|frame| frame.source_frame_index)
-                    .collect::<Vec<_>>(),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
-    build_animation_records_for_body_frames(&source_frame_indices_by_body, placements, sequences)
+fn action_id_u16(action: u32) -> eyre::Result<u16> {
+    u16::try_from(action)
+        .ok()
+        .filter(|&action| action != NO_ALIAS_ACTION)
+        .ok_or_else(|| eyre::eyre!("EC animation action {action} does not fit the package action ids"))
 }
 
-/// TEMPORARY (AnimationSequence rewrite, batch 1 of 2): `sequences` is not used yet.
+/// Builds the animation records the client resolves for "body, action, direction":
 ///
-/// The previous `AnimationSequence::parse_ec` decoded no client entry except bodies 0..2, which
-/// it read as actions without directions, so every other body took the single action 0 /
-/// direction 0 record below. The client-accurate parser decodes every entry, but its model has no
-/// per-direction frame lists; until this builder emits per-action, per-direction records from it
-/// (directions 3..7, mirrored 0..2, aliases, fps, skipped frames), every body keeps that record.
-fn build_animation_records_for_body_frames(
-    source_frame_indices_by_body: &BTreeMap<u32, Vec<u16>>,
-    placements: &HashMap<(u32, u16), FramePlacement>,
-    _sequences: &HashMap<u32, AnimationSequence>,
-) -> eyre::Result<(Vec<MobileAnimEcAnimationRecord>, Vec<MobileAnimEcFrameRecord>)> {
-    let mut animations = Vec::new();
-    let mut frames = Vec::new();
+/// - Bodies with an `AnimationSequence` entry are keyed by the entry name; their frames are
+///   those of the sequence stored id. Each plain action lays out
+///   `STORED_DIRECTION_COUNT * frame_count` frame slots, slot `n - 1` holding the frame whose
+///   `FrameEntry` number is `n` (directions 3..7, `frame_count` frames each); a missing number
+///   gets a placeholder, numbers beyond the slots and repeated numbers are not used.
+/// - Every sequence action gets one record per direction. Directions below
+///   `FIRST_STORED_DIRECTION` point at the frames of `MIRROR_DIRECTION_SUM - direction` and are
+///   flagged mirrored. Alias actions point at the frames of `resolve_action` (flying enabled)
+///   and keep the raw alias and the flying-disabled resolution.
+/// - Bodies with frames but no sequence (and not hidden by a sequence of the same name) get
+///   `ANIMATION_FLAG_NO_SEQUENCE` records per `FrameEntry` action, at `MISSING_ACTION_FPS`:
+///   when the highest frame number is a positive multiple of `STORED_DIRECTION_COUNT`, it is
+///   split into directions like a plain action of `highest / STORED_DIRECTION_COUNT` frames;
+///   otherwise every direction shows all frames in number order (`ANIMATION_FLAG_UNDIRECTED`).
+fn build_animation_layout(
+    frames_by_body: &BTreeMap<u32, Vec<SourceFrameIdentity>>,
+    sequences: &BTreeMap<u32, AnimationSequence>,
+) -> eyre::Result<AnimationLayout> {
+    let mut layout = AnimationLayout {
+        animations: Vec::new(),
+        slots: Vec::new(),
+        stats: MobileAnimEcLayoutStats::default(),
+    };
+    let stored_ids = sequences.values().map(|sequence| sequence.stored_id).collect::<HashSet<_>>();
+    let no_sequence_bodies = frames_by_body
+        .keys()
+        .copied()
+        .filter(|body_id| !stored_ids.contains(body_id) && !sequences.contains_key(body_id))
+        .collect::<HashSet<_>>();
+    let body_ids = sequences
+        .keys()
+        .copied()
+        .chain(no_sequence_bodies.iter().copied())
+        .collect::<std::collections::BTreeSet<_>>();
+    for body_id in body_ids {
+        if let Some(sequence) = sequences.get(&body_id) {
+            layout.add_sequence_body(body_id, sequence, frames_by_body.get(&sequence.stored_id))?;
+        } else if let Some(frames) = frames_by_body.get(&body_id) {
+            layout.add_no_sequence_body(body_id, frames)?;
+        }
+    }
+    let source_frame_count = frames_by_body.values().map(Vec::len).sum::<usize>();
+    layout.stats.unreferenced_frame_count = (source_frame_count - layout.referenced_source_frames().len()) as u32;
+    Ok(layout)
+}
 
-    for (&body_id, source_frame_indices) in source_frame_indices_by_body {
-        if source_frame_indices.len() > u16::MAX as usize {
-            continue;
+impl AnimationLayout {
+    fn add_sequence_body(
+        &mut self,
+        body_id: u32,
+        sequence: &AnimationSequence,
+        frames: Option<&Vec<SourceFrameIdentity>>,
+    ) -> eyre::Result<()> {
+        let Some(frames) = frames else {
+            self.stats.sequence_without_frames_count += 1;
+            return Ok(());
+        };
+        self.stats.sequence_body_count += 1;
+        let frames_by_action = source_frames_by_action(frames);
+
+        // Frame slots of the plain actions: (first slot, frames per direction).
+        let mut spans = BTreeMap::<u32, (u32, u16)>::new();
+        for (&action, record) in sequence.actions.iter().filter(|(_, record)| record.alias.is_none()) {
+            self.stats.plain_action_count += 1;
+            let action_id = action_id_u16(action)?;
+            let slot_start = self.slots.len() as u32;
+            let Some(action_frames) = frames_by_action.get(&action_id) else {
+                self.stats.plain_action_without_frames_count += 1;
+                spans.insert(action, (slot_start, 0));
+                continue;
+            };
+            let frame_count = u16::try_from(record.frame_count)
+                .map_err(|_| eyre::eyre!("EC body {body_id} action {action} frame count {} exceeds u16", record.frame_count))?;
+            let slot_count = STORED_DIRECTION_COUNT * u32::from(frame_count);
+            if action_frames.entry_count != slot_count as usize {
+                self.stats.frame_count_mismatch_action_count += 1;
+            }
+            self.push_numbered_slots(sequence.stored_id, action_id, action_frames, slot_count)?;
+            spans.insert(action, (slot_start, frame_count));
         }
-        let animation_index = animations.len() as u32;
-        let frame_start = frames.len() as u32;
-        for &source_frame_index in source_frame_indices {
-            frames.push(frame_record_from_placement(
-                animation_index,
-                source_frame_index,
-                source_frame_index,
-                placements.get(&(body_id, source_frame_index)),
-            ));
+
+        for (&action, record) in &sequence.actions {
+            let (Some(resolved), Some(resolved_no_flying)) =
+                (sequence.resolve_action(action, true), sequence.resolve_action(action, false))
+            else {
+                self.stats.unresolved_action_count += 1;
+                continue;
+            };
+            if record.alias.is_some() {
+                self.stats.alias_action_count += 1;
+            }
+            let (span_start, frame_count) = spans[&resolved];
+            let flags = if sequence.is_stand_action(resolved) { ANIMATION_FLAG_STAND_ACTION } else { 0 };
+            let template = MobileAnimEcAnimationRecord {
+                body_id,
+                action_id: action_id_u16(action)?,
+                direction: 0,
+                frame_start: 0,
+                frame_count,
+                flags,
+                source_body_id: sequence.stored_id,
+                resolved_action_id: action_id_u16(resolved)?,
+                alias_action_id: record.alias.map(action_id_u16).transpose()?.unwrap_or(NO_ALIAS_ACTION),
+                resolved_action_id_no_flying: action_id_u16(resolved_no_flying)?,
+                fps: sequence.action_fps(action, true),
+                fps_no_flying: sequence.action_fps(action, false),
+                skipped_frame_mask: self.skipped_frame_mask(record),
+            };
+            for direction in 0..DIRECTION_COUNT {
+                let direction_frames = sequence
+                    .direction_frames(resolved, direction)
+                    .ok_or_else(|| eyre::eyre!("EC body {body_id} action {resolved} has no direction {direction}"))?;
+                let frame_offset = if frame_count == 0 {
+                    0
+                } else {
+                    direction_frames.first_frame_number - FIRST_FRAME_NUMBER
+                };
+                self.push_record(
+                    template,
+                    direction,
+                    span_start + frame_offset,
+                    direction_frames.mirrored,
+                    record.alias.is_none() && !direction_frames.mirrored,
+                );
+            }
         }
-        animations.push(MobileAnimEcAnimationRecord {
-            body_id,
-            action_id: 0,
-            direction: 0,
+        Ok(())
+    }
+
+    fn add_no_sequence_body(&mut self, body_id: u32, frames: &[SourceFrameIdentity]) -> eyre::Result<()> {
+        self.stats.no_sequence_body_count += 1;
+        for (action, action_frames) in source_frames_by_action(frames) {
+            let highest_number = action_frames.by_number.keys().next_back().copied().unwrap_or(0);
+            let slot_start = self.slots.len() as u32;
+            let directional =
+                highest_number != 0 && u32::from(highest_number) % STORED_DIRECTION_COUNT == 0;
+            let (frame_count, flags) = if directional {
+                self.stats.fallback_directional_action_count += 1;
+                self.push_numbered_slots(body_id, action, &action_frames, u32::from(highest_number))?;
+                (
+                    (u32::from(highest_number) / STORED_DIRECTION_COUNT) as u16,
+                    ANIMATION_FLAG_NO_SEQUENCE,
+                )
+            } else {
+                self.stats.fallback_undirected_action_count += 1;
+                for frame in action_frames.by_number.values() {
+                    self.slots.push(FrameSlot {
+                        animation_index: None,
+                        frame_index: 0,
+                        source_body_id: body_id,
+                        source_action: action,
+                        source_frame_number: frame.frame_number,
+                        source_frame_index: Some(frame.source_frame_index),
+                    });
+                }
+                (
+                    action_frames.by_number.len() as u16,
+                    ANIMATION_FLAG_NO_SEQUENCE | ANIMATION_FLAG_UNDIRECTED,
+                )
+            };
+            let template = MobileAnimEcAnimationRecord {
+                body_id,
+                action_id: action,
+                direction: 0,
+                frame_start: 0,
+                frame_count,
+                flags,
+                source_body_id: body_id,
+                resolved_action_id: action,
+                alias_action_id: NO_ALIAS_ACTION,
+                resolved_action_id_no_flying: action,
+                fps: MISSING_ACTION_FPS,
+                fps_no_flying: MISSING_ACTION_FPS,
+                skipped_frame_mask: 0,
+            };
+            for direction in 0..DIRECTION_COUNT {
+                if directional {
+                    let mirrored = direction < FIRST_STORED_DIRECTION;
+                    let stored_direction = if mirrored { MIRROR_DIRECTION_SUM - direction } else { direction };
+                    let frame_offset = u32::from(stored_direction - FIRST_STORED_DIRECTION) * u32::from(frame_count);
+                    self.push_record(template, direction, slot_start + frame_offset, mirrored, !mirrored);
+                } else {
+                    self.push_record(template, direction, slot_start, false, direction == FIRST_STORED_DIRECTION);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Pushes `slot_count` slots, slot `i` holding frame number `FIRST_FRAME_NUMBER + i`.
+    fn push_numbered_slots(
+        &mut self,
+        source_body_id: u32,
+        action: u16,
+        action_frames: &ActionSourceFrames,
+        slot_count: u32,
+    ) -> eyre::Result<()> {
+        for number in FIRST_FRAME_NUMBER..FIRST_FRAME_NUMBER + slot_count {
+            let number = u16::try_from(number)
+                .map_err(|_| eyre::eyre!("EC body {source_body_id} action {action} frame number {number} exceeds u16"))?;
+            let source = action_frames.by_number.get(&number);
+            if source.is_none() {
+                self.stats.missing_frame_count += 1;
+            }
+            self.slots.push(FrameSlot {
+                animation_index: None,
+                frame_index: 0,
+                source_body_id,
+                source_action: action,
+                source_frame_number: number,
+                source_frame_index: source.map(|frame| frame.source_frame_index),
+            });
+        }
+        Ok(())
+    }
+
+    /// Pushes the record of `direction`; the owner record also claims its frame slots.
+    fn push_record(
+        &mut self,
+        template: MobileAnimEcAnimationRecord,
+        direction: u8,
+        frame_start: u32,
+        mirrored: bool,
+        owns_frames: bool,
+    ) {
+        let animation_index = self.animations.len() as u32;
+        if mirrored {
+            self.stats.mirrored_record_count += 1;
+        }
+        if owns_frames {
+            let start = frame_start as usize;
+            let slots = &mut self.slots[start..start + usize::from(template.frame_count)];
+            for (frame_index, slot) in slots.iter_mut().enumerate() {
+                slot.animation_index = Some(animation_index);
+                slot.frame_index = frame_index as u16;
+            }
+        }
+        self.animations.push(MobileAnimEcAnimationRecord {
+            direction,
             frame_start,
-            frame_count: (frames.len() as u32 - frame_start) as u16,
-            flags: 0,
+            flags: template.flags | if mirrored { ANIMATION_FLAG_MIRRORED } else { 0 },
+            ..template
         });
     }
 
-    Ok((animations, frames))
+    fn skipped_frame_mask(&mut self, record: &SequenceAction) -> u32 {
+        let mut mask = 0u32;
+        for &frame in &record.skipped_frames {
+            if frame < SKIPPED_FRAME_MASK_BITS {
+                mask |= 1 << frame;
+            } else {
+                self.stats.dropped_skipped_frame_count += 1;
+            }
+        }
+        mask
+    }
+
+    /// Source frames (body, source frame index) shown by some record.
+    fn referenced_source_frames(&self) -> HashSet<(u32, u16)> {
+        self.slots
+            .iter()
+            .filter_map(|slot| slot.source_frame_index.map(|index| (slot.source_body_id, index)))
+            .collect()
+    }
+
+    fn into_records(
+        self,
+        placements: &HashMap<(u32, u16), FramePlacement>,
+    ) -> eyre::Result<(Vec<MobileAnimEcAnimationRecord>, Vec<MobileAnimEcFrameRecord>)> {
+        let frames = self
+            .slots
+            .iter()
+            .map(|slot| {
+                let animation_index = slot.animation_index.ok_or_else(|| {
+                    eyre::eyre!(
+                        "EC body {} action {} frame {} has no owner animation record",
+                        slot.source_body_id,
+                        slot.source_action,
+                        slot.source_frame_number
+                    )
+                })?;
+                let placement = slot
+                    .source_frame_index
+                    .and_then(|index| placements.get(&(slot.source_body_id, index)));
+                Ok(frame_record_from_placement(animation_index, slot, placement))
+            })
+            .collect::<eyre::Result<Vec<_>>>()?;
+        Ok((self.animations, frames))
+    }
 }
 
 fn frame_record_from_placement(
     animation_index: u32,
-    frame_index: u16,
-    source_frame_index: u16,
+    slot: &FrameSlot,
     placement: Option<&FramePlacement>,
 ) -> MobileAnimEcFrameRecord {
+    let source_frame_index = slot.source_frame_index.unwrap_or(MISSING_SOURCE_FRAME_INDEX);
     if let Some(placement) = placement {
         MobileAnimEcFrameRecord {
             animation_index,
-            frame_index,
+            frame_index: slot.frame_index,
             source_frame_index,
+            source_action: slot.source_action,
+            source_frame_number: slot.source_frame_number,
             page_index: placement.page_index,
             page_frame_index: placement.page_frame_index,
             x: placement.x,
@@ -1193,8 +1563,10 @@ fn frame_record_from_placement(
     } else {
         MobileAnimEcFrameRecord {
             animation_index,
-            frame_index,
+            frame_index: slot.frame_index,
             source_frame_index,
+            source_action: slot.source_action,
+            source_frame_number: slot.source_frame_number,
             page_index: MISSING_PAGE_INDEX,
             page_frame_index: MISSING_PAGE_FRAME_INDEX,
             x: 0,
@@ -2369,7 +2741,7 @@ fn serialize_page_record_manifest(
 pub fn serialize_animation_manifest(
     animations: &[MobileAnimEcAnimationRecord],
 ) -> eyre::Result<Vec<u8>> {
-    let mut bytes = Vec::with_capacity(12 + animations.len() * 15);
+    let mut bytes = Vec::with_capacity(12 + animations.len() * 37);
     bytes.extend_from_slice(&ANIMATION_MANIFEST_MAGIC);
     bytes.write_u32::<LittleEndian>(MOBILE_ANIM_EC_METADATA_VERSION)?;
     bytes.write_u32::<LittleEndian>(animations.len() as u32)?;
@@ -2380,12 +2752,19 @@ pub fn serialize_animation_manifest(
         bytes.write_u32::<LittleEndian>(animation.frame_start)?;
         bytes.write_u16::<LittleEndian>(animation.frame_count)?;
         bytes.write_u16::<LittleEndian>(animation.flags)?;
+        bytes.write_u32::<LittleEndian>(animation.source_body_id)?;
+        bytes.write_u16::<LittleEndian>(animation.resolved_action_id)?;
+        bytes.write_u16::<LittleEndian>(animation.alias_action_id)?;
+        bytes.write_u16::<LittleEndian>(animation.resolved_action_id_no_flying)?;
+        bytes.write_f32::<LittleEndian>(animation.fps)?;
+        bytes.write_f32::<LittleEndian>(animation.fps_no_flying)?;
+        bytes.write_u32::<LittleEndian>(animation.skipped_frame_mask)?;
     }
     Ok(bytes)
 }
 
 pub fn serialize_frame_manifest(frames: &[MobileAnimEcFrameRecord]) -> eyre::Result<Vec<u8>> {
-    let mut bytes = Vec::with_capacity(12 + frames.len() * 26);
+    let mut bytes = Vec::with_capacity(12 + frames.len() * 30);
     bytes.extend_from_slice(&FRAME_MANIFEST_MAGIC);
     bytes.write_u32::<LittleEndian>(MOBILE_ANIM_EC_METADATA_VERSION)?;
     bytes.write_u32::<LittleEndian>(frames.len() as u32)?;
@@ -2393,6 +2772,8 @@ pub fn serialize_frame_manifest(frames: &[MobileAnimEcFrameRecord]) -> eyre::Res
         bytes.write_u32::<LittleEndian>(frame.animation_index)?;
         bytes.write_u16::<LittleEndian>(frame.frame_index)?;
         bytes.write_u16::<LittleEndian>(frame.source_frame_index)?;
+        bytes.write_u16::<LittleEndian>(frame.source_action)?;
+        bytes.write_u16::<LittleEndian>(frame.source_frame_number)?;
         bytes.write_u32::<LittleEndian>(frame.page_index)?;
         bytes.write_u16::<LittleEndian>(frame.page_frame_index)?;
         bytes.write_u16::<LittleEndian>(frame.x)?;
@@ -2669,6 +3050,251 @@ mod tests {
         assert_eq!(placements[&(42, 0)].page_index, 0);
     }
 
+    const SEQUENCE_BODY: u32 = 146;
+    const SEQUENCE_STORED_ID: u32 = 704;
+    const NO_SEQUENCE_BODY: u32 = 42;
+
+    fn source(source_frame_index: u16, action: u16, frame_number: u16) -> SourceFrameIdentity {
+        SourceFrameIdentity { source_frame_index, action, frame_number }
+    }
+
+    /// Source frames numbered `numbers` for `action`, appended to `frames` in entry order.
+    fn push_sources(frames: &mut Vec<SourceFrameIdentity>, action: u16, numbers: impl IntoIterator<Item = u16>) {
+        for number in numbers {
+            let index = frames.len() as u16;
+            frames.push(source(index, action, number));
+        }
+    }
+
+    /// `(action, frame_count, alias, fps, skipped frames)` in file order; `stand` is the stand
+    /// action of the peace group.
+    fn sequence(stored_id: u32, actions: &[(u32, u32, Option<u32>, f32, &[u32])], stand: u32) -> AnimationSequence {
+        let mut next_base_frame = uocf::animation_sequence::FIRST_BASE_FRAME;
+        let actions = actions
+            .iter()
+            .map(|&(action, frame_count, alias, fps, skipped)| {
+                let base_frame = if alias.is_none() {
+                    let base_frame = next_base_frame;
+                    next_base_frame += STORED_DIRECTION_COUNT * frame_count;
+                    base_frame
+                } else {
+                    0
+                };
+                (action, SequenceAction {
+                    frame_count,
+                    alias,
+                    fps,
+                    offsets: Default::default(),
+                    extra_offsets: Default::default(),
+                    frame_effects: BTreeMap::new(),
+                    skipped_frames: skipped.iter().copied().collect(),
+                    base_frame,
+                })
+            })
+            .collect();
+        let group = uocf::animation_sequence::ActionGroup {
+            parent: None,
+            default_action: stand,
+            transitions: BTreeMap::new(),
+            moves: BTreeMap::from([(
+                uocf::animation_sequence::MOVE_STAND,
+                uocf::animation_sequence::MoveActions { action: stand, alternate: stand },
+            )]),
+            typed: BTreeMap::new(),
+        };
+        AnimationSequence {
+            stored_id,
+            offsets: Default::default(),
+            extra_offsets: Default::default(),
+            actions,
+            groups: BTreeMap::from([(uocf::animation_sequence::GROUP_PEACE, group)]),
+        }
+    }
+
+    /// Body 146 (frames under 704): plain 3 (1 frame), 4 (2 frames, fps 12, skipped frame 0,
+    /// stand) and 19 (1 frame); alias 0 -> 4, 1 -> 4, 2 -> 1 (alias of an alias).
+    fn sample_sequences() -> BTreeMap<u32, AnimationSequence> {
+        BTreeMap::from([(
+            SEQUENCE_BODY,
+            sequence(
+                SEQUENCE_STORED_ID,
+                &[
+                    (0, 0, Some(4), 0.0, &[]),
+                    (1, 0, Some(4), 0.0, &[]),
+                    (2, 0, Some(1), 0.0, &[]),
+                    (3, 1, None, 9.0, &[]),
+                    (4, 2, None, 12.0, &[0]),
+                    (19, 1, None, 9.0, &[]),
+                ],
+                4,
+            ),
+        )])
+    }
+
+    fn sample_sequence_frames() -> BTreeMap<u32, Vec<SourceFrameIdentity>> {
+        let mut frames = Vec::new();
+        push_sources(&mut frames, 3, 1..=5);
+        push_sources(&mut frames, 4, 1..=10);
+        push_sources(&mut frames, 19, 1..=5);
+        BTreeMap::from([(SEQUENCE_STORED_ID, frames)])
+    }
+
+    fn record<'a>(
+        layout: &'a AnimationLayout,
+        body_id: u32,
+        action_id: u16,
+        direction: u8,
+    ) -> (usize, &'a MobileAnimEcAnimationRecord) {
+        layout
+            .animations
+            .iter()
+            .enumerate()
+            .find(|(_, record)| {
+                record.body_id == body_id && record.action_id == action_id && record.direction == direction
+            })
+            .expect("animation record exists")
+    }
+
+    fn slot_numbers(layout: &AnimationLayout, record: &MobileAnimEcAnimationRecord) -> Vec<(u16, u16)> {
+        let start = record.frame_start as usize;
+        layout.slots[start..start + usize::from(record.frame_count)]
+            .iter()
+            .map(|slot| (slot.source_action, slot.source_frame_number))
+            .collect()
+    }
+
+    #[test]
+    fn sequence_layout_emits_stored_mirrored_and_alias_records() {
+        let layout = build_animation_layout(&sample_sequence_frames(), &sample_sequences()).unwrap();
+
+        assert_eq!(layout.animations.len(), 6 * usize::from(DIRECTION_COUNT));
+        assert!(layout.animations.windows(2).all(|pair| {
+            (pair[0].body_id, pair[0].action_id, pair[0].direction)
+                < (pair[1].body_id, pair[1].action_id, pair[1].direction)
+        }));
+        assert_eq!(layout.stats.sequence_body_count, 1);
+        assert_eq!(layout.stats.plain_action_count, 3);
+        assert_eq!(layout.stats.alias_action_count, 3);
+        assert_eq!(layout.stats.mirrored_record_count, 6 * 3);
+        assert_eq!(layout.stats.unreferenced_frame_count, 0);
+
+        // Stored direction: frames numbered from (direction - 3) * frame_count + 1.
+        let (owner_index, south) = record(&layout, SEQUENCE_BODY, 4, 4);
+        assert_eq!(south.source_body_id, SEQUENCE_STORED_ID);
+        assert_eq!(south.frame_count, 2);
+        assert_eq!(slot_numbers(&layout, south), [(4, 3), (4, 4)]);
+        assert!(!south.is_mirrored());
+        assert_eq!((south.fps, south.skipped_frame_mask), (12.0, 1));
+        assert_ne!(south.flags & ANIMATION_FLAG_STAND_ACTION, 0);
+        let start = south.frame_start as usize;
+        assert!(layout.slots[start..start + 2]
+            .iter()
+            .enumerate()
+            .all(|(index, slot)| slot.animation_index == Some(owner_index as u32) && slot.frame_index == index as u16));
+
+        // Directions 0..2 mirror 6..4 and share their frames.
+        let (_, east) = record(&layout, SEQUENCE_BODY, 4, 2);
+        assert!(east.is_mirrored());
+        assert_eq!(east.frame_start, south.frame_start);
+        let (_, north) = record(&layout, SEQUENCE_BODY, 4, 0);
+        let (_, west) = record(&layout, SEQUENCE_BODY, 4, 6);
+        assert_eq!((north.frame_start, north.is_mirrored()), (west.frame_start, true));
+        assert_eq!(slot_numbers(&layout, west), [(4, 7), (4, 8)]);
+
+        // Aliases point at the resolved action's frames and keep the raw alias.
+        let (_, alias) = record(&layout, SEQUENCE_BODY, 0, 7);
+        let (_, target) = record(&layout, SEQUENCE_BODY, 4, 7);
+        assert_eq!((alias.frame_start, alias.frame_count), (target.frame_start, target.frame_count));
+        assert_eq!((alias.alias_action_id, alias.resolved_action_id), (4, 4));
+        assert_eq!((alias.fps, alias.skipped_frame_mask), (12.0, 0));
+        assert!(alias.is_alias());
+
+        // An alias of an alias falls back to the lowest plain action.
+        let (_, chained) = record(&layout, SEQUENCE_BODY, 2, 3);
+        assert_eq!((chained.alias_action_id, chained.resolved_action_id), (1, 3));
+        assert_eq!(slot_numbers(&layout, chained), [(3, 1)]);
+
+        // Flying action: itself when enabled; 0 is an alias, so the lowest plain action when not.
+        let (_, flying) = record(&layout, SEQUENCE_BODY, 19, 3);
+        assert_eq!((flying.resolved_action_id, flying.resolved_action_id_no_flying), (19, 3));
+        assert_eq!((flying.fps, flying.fps_no_flying), (9.0, 9.0));
+        assert_eq!(flying.alias_action_id, NO_ALIAS_ACTION);
+    }
+
+    #[test]
+    fn sequence_layout_handles_gaps_count_mismatches_and_missing_entries() {
+        let sequences = BTreeMap::from([(
+            SEQUENCE_BODY,
+            sequence(SEQUENCE_STORED_ID, &[(23, 2, None, 9.0, &[]), (24, 3, None, 9.0, &[])], 23),
+        )]);
+        let mut frames = Vec::new();
+        // Action 23: number 1 missing, 5 repeated, 11 beyond 5 * 2; action 30 is not in the sequence.
+        push_sources(&mut frames, 23, [2, 3, 4, 5, 5, 6, 7, 8, 9, 10, 11]);
+        push_sources(&mut frames, 30, [1, 2]);
+        let first_number_five = frames[3].source_frame_index;
+        let layout = build_animation_layout(&BTreeMap::from([(SEQUENCE_STORED_ID, frames)]), &sequences).unwrap();
+
+        assert_eq!(layout.stats.frame_count_mismatch_action_count, 1);
+        assert_eq!(layout.stats.missing_frame_count, 1);
+        assert_eq!(layout.stats.plain_action_without_frames_count, 1);
+        assert_eq!(layout.stats.unreferenced_frame_count, 4);
+
+        let (_, first_direction) = record(&layout, SEQUENCE_BODY, 23, 3);
+        let start = first_direction.frame_start as usize;
+        assert_eq!(layout.slots[start].source_frame_index, None);
+        assert_eq!(layout.slots[start].source_frame_number, 1);
+        assert_eq!(layout.slots[start + 1].source_frame_number, 2);
+        let (_, third_direction) = record(&layout, SEQUENCE_BODY, 23, 5);
+        assert_eq!(layout.slots[third_direction.frame_start as usize].source_frame_index, Some(first_number_five));
+        assert!(layout.slots.iter().all(|slot| slot.animation_index.is_some()));
+
+        let (_, without_frames) = record(&layout, SEQUENCE_BODY, 24, 5);
+        assert_eq!(without_frames.frame_count, 0);
+
+        let (_, frames) = layout.into_records(&HashMap::new()).unwrap();
+        assert_eq!(frames.len(), 10);
+        assert_eq!(frames[0].source_frame_index, MISSING_SOURCE_FRAME_INDEX);
+        assert_eq!((frames[0].source_action, frames[0].source_frame_number), (23, 1));
+        assert_eq!(frames[0].page_index, MISSING_PAGE_INDEX);
+    }
+
+    #[test]
+    fn no_sequence_layout_derives_directions_or_falls_back_undirected() {
+        // Body 600 is hidden by the sequence of the same name, whose frames are under 601.
+        let hidden_body = 600;
+        let sequences = BTreeMap::from([(hidden_body, sequence(601, &[(0, 1, None, 9.0, &[])], 0))]);
+        let mut fallback = Vec::new();
+        push_sources(&mut fallback, 0, [1, 2, 3, 5, 6, 7, 8, 9, 10]);
+        push_sources(&mut fallback, 1, [1, 2, 3]);
+        let mut hidden = Vec::new();
+        push_sources(&mut hidden, 0, 1..=5);
+        let frames_by_body = BTreeMap::from([(NO_SEQUENCE_BODY, fallback), (hidden_body, hidden)]);
+        let layout = build_animation_layout(&frames_by_body, &sequences).unwrap();
+
+        assert_eq!(layout.stats.no_sequence_body_count, 1);
+        assert_eq!(layout.stats.sequence_without_frames_count, 1);
+        assert_eq!(layout.stats.fallback_directional_action_count, 1);
+        assert_eq!(layout.stats.fallback_undirected_action_count, 1);
+        assert_eq!(layout.stats.missing_frame_count, 1);
+        assert_eq!(layout.stats.unreferenced_frame_count, 5);
+        assert!(layout.animations.iter().all(|record| record.body_id == NO_SEQUENCE_BODY));
+
+        let (_, west) = record(&layout, NO_SEQUENCE_BODY, 0, 6);
+        let (_, north) = record(&layout, NO_SEQUENCE_BODY, 0, 0);
+        assert_eq!(west.flags, ANIMATION_FLAG_NO_SEQUENCE);
+        assert_eq!(north.flags, ANIMATION_FLAG_NO_SEQUENCE | ANIMATION_FLAG_MIRRORED);
+        assert_eq!(north.frame_start, west.frame_start);
+        assert_eq!(slot_numbers(&layout, west), [(0, 7), (0, 8)]);
+        assert_eq!((west.fps, west.resolved_action_id), (MISSING_ACTION_FPS, 0));
+
+        for direction in 0..DIRECTION_COUNT {
+            let (_, undirected) = record(&layout, NO_SEQUENCE_BODY, 1, direction);
+            assert_eq!(undirected.flags, ANIMATION_FLAG_NO_SEQUENCE | ANIMATION_FLAG_UNDIRECTED);
+            assert_eq!(slot_numbers(&layout, undirected), [(1, 1), (1, 2), (1, 3)]);
+        }
+        assert!(layout.slots.iter().all(|slot| slot.animation_index.is_some()));
+    }
+
     #[test]
     fn serialized_package_roundtrips_through_reader() {
         let options = MobileAnimEcAtlasOptions {
@@ -2686,13 +3312,11 @@ mod tests {
             tables_dir: None,
             allow_missing_metadata: false,
         };
-        let (pages, placements) = pack_frames_into_pages(vec![frame(42, 0, 4, 4)], &options).unwrap();
-        let (animations, frames) = build_animation_records(
-            &BTreeMap::from([(42, vec![frame(42, 0, 4, 4)])]),
-            &placements,
-            &HashMap::new(),
-        )
-        .unwrap();
+        let mut frames_by_body = sample_sequence_frames();
+        frames_by_body.insert(NO_SEQUENCE_BODY, vec![source(0, 0, 1)]);
+        let layout = build_animation_layout(&frames_by_body, &sample_sequences()).unwrap();
+        let (pages, placements) = pack_frames_into_pages(vec![frame(NO_SEQUENCE_BODY, 0, 4, 4)], &options).unwrap();
+        let (animations, frames) = layout.into_records(&placements).unwrap();
         let page_manifest = serialize_page_manifest(&pages, &options).unwrap();
         let animation_manifest = serialize_animation_manifest(&animations).unwrap();
         let frame_manifest = serialize_frame_manifest(&frames).unwrap();
@@ -2744,8 +3368,22 @@ mod tests {
         ).unwrap();
 
         assert_eq!(package.pages().len(), 1);
-        assert_eq!(package.animation(42, 0, 0).unwrap().frame_count, 1);
-        assert_eq!(package.animation_frames(package.animation(42, 0, 0).unwrap())[0].center_y, -1);
+        assert_eq!(package.animations(), animations.as_slice());
+        assert_eq!(package.frames(), frames.as_slice());
+        let undirected = package.animation(NO_SEQUENCE_BODY, 0, 0).unwrap();
+        assert_eq!(undirected.frame_count, 1);
+        assert_eq!(package.animation_frames(undirected)[0].center_y, -1);
+
+        // Client resolution: missing actions use the lowest plain action; flying disabled
+        // uses the no-flying resolution and fps.
+        let missing = package.resolve_animation(SEQUENCE_BODY, 50, 3, true).unwrap();
+        assert_eq!((missing.record.action_id, missing.fps), (3, 9.0));
+        let grounded = package.resolve_animation(SEQUENCE_BODY, 19, 1, false).unwrap();
+        assert_eq!((grounded.record.action_id, grounded.record.direction), (3, 1));
+        assert!(grounded.record.is_mirrored());
+        let flying = package.resolve_animation(SEQUENCE_BODY, 19, 1, true).unwrap();
+        assert_eq!(flying.record.action_id, 19);
+
         assert_eq!(package.item(42).unwrap().name, "Test Body");
         assert_eq!(package.item_source_hints(package.item(42).unwrap())[0].file_index, 7);
         assert_eq!(package.read_page_bytes(0).unwrap().len(), stored_page.len());
@@ -2753,10 +3391,10 @@ mod tests {
 
     #[test]
     fn animation_records_preserve_unpacked_empty_frames() {
-        let source_frames = BTreeMap::from([(42, vec![
-            frame(42, 0, 4, 4),
+        let source_frames = vec![
+            frame(NO_SEQUENCE_BODY, 0, 4, 4),
             DecodedMobileAnimEcFrame {
-                body_id: 42,
+                body_id: NO_SEQUENCE_BODY,
                 source_frame_index: 1,
                 width: 0,
                 height: 0,
@@ -2764,7 +3402,7 @@ mod tests {
                 center_y: 0,
                 rgba: Vec::new(),
             },
-        ])]);
+        ];
         let options = MobileAnimEcAtlasOptions {
             atlas_width: 16,
             atlas_height: 16,
@@ -2780,8 +3418,13 @@ mod tests {
             tables_dir: None,
             allow_missing_metadata: false,
         };
-        let (_, placements) = pack_frames_into_pages(source_frames[&42].clone(), &options).unwrap();
-        let (animations, frames) = build_animation_records(&source_frames, &placements, &HashMap::new()).unwrap();
+        let (_, placements) = pack_frames_into_pages(source_frames, &options).unwrap();
+        let layout = build_animation_layout(
+            &BTreeMap::from([(NO_SEQUENCE_BODY, vec![source(0, 0, 1), source(1, 0, 2)])]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        let (animations, frames) = layout.into_records(&placements).unwrap();
 
         assert_eq!(animations[0].frame_count, 2);
         assert_eq!(frames.len(), 2);
