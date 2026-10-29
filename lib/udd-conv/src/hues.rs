@@ -12,13 +12,17 @@ use udd_assets::hues::{
 use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
 use uocf::classic::hues::{load_hues, HueEntry};
 use uocf::enhanced::hues::{
-    atlas_coord_for_hue, decode_hue_image_to_rgba, EcHuePackage, HUES_UOP_NAME,
+    atlas_coord_for_hue, decode_hue_image_to_rgba, huenames_hash, EcHuePackage, HUES_UOP_NAME,
 };
 use uocf::uop_container::package::{LoadMode, UopPackage};
 
 pub struct HuesOptions {
     pub compression: CompressionFlag,
 }
+
+#[cfg(test)]
+#[path = "hues/source_conversion_tests.rs"]
+mod source_conversion_tests;
 
 impl Default for HuesOptions {
     fn default() -> Self {
@@ -49,7 +53,7 @@ pub fn convert_hues_to_hues_uddp_from_sources(
         return convert_hues_mul_to_hues_uddp(&hues_path, out_file, options);
     }
 
-    let hues_path = find_first_existing_file(source_dirs, &[HUES_UOP_NAME])
+    let hues_path = find_first_existing_file(source_dirs, &[HUES_UOP_NAME, "Hues.uop"])
         .ok_or_else(|| eyre::eyre!("missing hues.mul or hues.uop"))?;
     println!("Using EC hues source file: {}", hues_path.display());
     convert_hues_uop_to_hues_uddp(&hues_path, out_file, options)
@@ -74,6 +78,11 @@ pub fn convert_hues_uop_to_hues_uddp(
     info!("Converting hues.uop to {}", out_file.display());
     let mut package =
         UopPackage::load_with_mode(hues_uop_path, LoadMode::Lazy).wrap_err("failed to load hues.uop")?;
+    // Indexing reads names immediately; bitmap payloads remain lazy until used.
+    let names = huenames_hash();
+    if package.get_file_by_hash(names).is_some() {
+        package.ensure_file_data_loaded_by_hash(names).wrap_err("failed to load huenames.csv payload")?;
+    }
     let ec_hues = EcHuePackage::from_package(&package).wrap_err("failed to index hues.uop")?;
     let (records, texture_bytes) = build_ec_hues_texture_and_records(&mut package, &ec_hues)?;
     write_hues_uddp(&records, &texture_bytes, out_file, options)
@@ -217,7 +226,9 @@ fn build_palette_row_from_rgba_image(
     }
 
     let mut row = vec![0u8; HUE_STRIP_WIDTH as usize * 4];
-    let sample_y = height / 2;
+    // Original EC 256x2 bitmaps put the palette gradient in row 0 and a
+    // solid UI preview color in row 1. The gradient matches hues.dds.
+    let sample_y = 0;
     for dst_x in 0..HUE_STRIP_WIDTH {
         let src_x = if HUE_STRIP_WIDTH <= 1 {
             0
