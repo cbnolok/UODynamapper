@@ -59,3 +59,32 @@ the complete raw stage lists are `cache-footprint-{full,cached}-shader-stats.jso
 release pair. All four diagnostic/timing previews verified Desktop 4 and cleanup,
 with no shader errors. This experiment used the shipped shader, independently
 of the rejected liquid-normal prototypes.
+
+## Active neighborhood attribution
+
+A subsequent diagnostic used one frozen release executable and changed only
+isolated shader function bodies. Replacing the fragment normal with the existing
+interpolated vertex normal leaves vertex work intact. Disabling relief returns
+zero from contact/cliff shadow helpers; disabling grime returns its input color.
+These alter lighting and are attribution probes, not accepted visual changes.
+
+| KR orthographic fixture | Production opaque ms | Vertex-normal probe | Relief-off probe | Grime-off probe |
+|---|---:|---:|---:|---:|
+| Bridge | 7.305 | 5.56 | 6.57 | 4.99 |
+| Lava | 9.81 | 8.12 | 8.65 | 6.26 |
+| Town | 8.90 | 7.18 | 7.84 | 5.77 |
+
+All use paused KR morning, EC art/map, 1280×800, zoom 0.8, twenty-second settling
+and twelve-second sampling. Opaque durations retain the smoothed, rounded
+diagnostic semantics. Rounded fragment counts stay constant (2.57M/1.18M/2.96M),
+with sixteen published chunks, matching metadata revisions and no pending writes.
+The twelve owned previews verified Desktop 4 and cleanup without shader errors.
+Raw data is `height-queries-profile.json` and `gpu-passes-height-queries-*` in
+the temporary evidence directory; its recorded executable hash identifies the
+pre-rebuild attribution baseline.
+
+The grime probe identifies a substantial active cost while preserving none of
+that effect. The exact neighbor-mask cache in `ec_terrain_stack_cache.md` instead
+preserves its eight decisions and original weight arithmetic. Production gains
+must be measured separately: diagnostic differences are not additive costs and
+do not predict the retained effect's shader allocation or full frame rate.

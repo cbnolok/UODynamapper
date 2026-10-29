@@ -381,3 +381,76 @@ removed the cold reconstruction call while preserving settled fixture output.
 It reduced static code/scratch substantially but changed opaque GPU time by less
 than one percent. That result does not justify a split cache-hit/miss render path;
 active height/material work needs further attribution.
+
+## Exact transition-grime neighbor cache
+
+The active-work probes in [ec_terrain_shader_footprint.md](ec_terrain_shader_footprint.md)
+identified transition grime as a useful target. The retained implementation
+caches only its eight neighbor decisions for each shaded layer and owning cell,
+using the completed stack's former sort-key word. It preserves raw aliases,
+wet/reviewed-liquid compatibility and original floating-point weight arithmetic.
+GPU allocation remains 9,461,760 bytes; liquid snapshots add about 18 KiB of
+bounded CPU storage. Uncached terrain and an extra bank material keep the
+original lookup path. See [ec_terrain_stack_cache.md](ec_terrain_stack_cache.md)
+for representation and publication requirements.
+
+Waiting for resident flags exposed a startup binding dependency. The first
+cache-image resize must invalidate the shared land material once; otherwise it
+can keep the sentinel GPU view despite sixteen CPU-published chunks. A diagnostic
+that marks actual cache misses magenta showed 308,234 affected bridge pixels
+on the first visit and none after revisiting. After the one-time rebind, the
+same first/lava/revisit probe has zero marked pixels in all three captures.
+Ordinary same-size bakes reuse the GPU texture/view and do not mutate materials.
+The initial `grime-initial` and `grime-order` timing sets expose this defect and
+are excluded from the accepted comparison.
+
+The accepted stable-release executable is rebuilt from the current source;
+its SHA256 is `44f02d3398d16a88b2d84404b506776346739acf1245d50c3c57ad841f287256`.
+Both shader variants use this executable and identical new CPU preparation.
+The baseline retains the old neighbor reads; the final shader consumes cached
+decisions. Settings remain KR morning, paused EC art/map, 1280×800, zoom 0.8,
+uncapped Desktop 4, twenty-second settling and twelve-second sampling. All
+windows have sixteen published chunks, matching metadata revisions, no pending
+writes and stable, matching rounded fragment counts. Orthographic values average
+two run medians per variant in baseline/final/final/baseline order; perspective
+has one pair. Durations and FPS retain the smoothed diagnostic semantics above.
+
+| KR camera / fixture | Baseline sampled FPS | Final sampled FPS | Baseline opaque ms | Final opaque ms |
+|---|---:|---:|---:|---:|
+| Orthographic bridge | 121.33 | 139.83 | 7.295 | 6.215 |
+| Orthographic lava | 95.76 | 113.84 | 9.788 | 8.085 |
+| Orthographic town | 98.14 | 115.81 | 8.895 | 7.328 |
+| Perspective bridge | 112.52 | 131.15 | 7.880 | 6.650 |
+| Perspective lava | 92.67 | 111.07 | 10.095 | 8.315 |
+
+The orthographic repeats establish roughly 15%/19%/18% higher sampled FPS
+and 15%/17%/18% lower opaque GPU time at bridge/lava/town. The perspective pair
+shows a similar benefit with less repetition. A factory-Classic control has
+opaque times 2.12→2.13 ms at bridge and 3.13→3.06 ms at lava, with no material
+GPU regression. Its sampled FPS is 226→228 and 233→271 respectively; those
+deltas do not track GPU time closely enough to claim a Classic speedup. The
+new executable also includes newer unrelated source changes, so its absolute
+Classic FPS is not directly comparable with the older 334-FPS measurement.
+
+The 400/144 targets, raw frame-time minima, movement and GTX 1060-class validation
+remain open. The accepted raw timing sets are `release-kr-passes-grime-final-*`
+and `gpu-passes-grime-final-*`; `grime-final-performance-index.json` gathers the
+twenty fixture/run summaries. All eight timing previews verified placement and
+cleanup without shader errors. The standalone startup probe is indexed by
+`grime-startup-{before,final}-result.json` and the corresponding preview metadata.
+
+All 136 renderer tests pass, including the Vulkan record/order, alpha-bit and
+grime-weight comparison. The native matrix has 48 comparisons across the six
+fixtures: all three styles, KR perspective, Enhanced CC, forced uncached KR,
+cached-versus-uncached final KR and one-upload-per-frame final KR. Classic,
+Enhanced and CC are byte-identical; KR stays within one channel byte. All
+thirteen capture previews verified Desktop 4 and cleanup, with no shader errors.
+The three `grime-native-{kr,other,controls}-matrix.json` files and
+`grime-native-{cache,upload}-control.json` retain the comparisons and metadata.
+
+The next architectural audit is documented in
+[terrain_shader_work_placement.md](terrain_shader_work_placement.md). The vertex
+normal path does not yet replace Enhanced/KR fragment reconstruction. Reusing
+the current one-vertex-per-tile normal is a measured lighting diagnostic, not
+an accepted fidelity-preserving optimization. Larger gains need a deliberate
+normal/height representation and an attribution of hidden terrain pixel work.

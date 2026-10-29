@@ -1,4 +1,4 @@
-//! Compare CPU-baked records with the untouched production reconstruction.
+//! Compare shading records, exact alpha and grime with the original reconstruction.
 use super::*;
 use bevy::{asset::{uuid::Uuid, AssetId}, shader::{Shader, ShaderCache, ShaderCacheError, ShaderCacheSource}};
 
@@ -36,7 +36,8 @@ fn cached_layers_and_alpha_match_original_gpu_reconstruction() {
                 if let Some(value) = value { raw[(y + 1) * HALO + x + 1] = value; }
             }
         }
-        let cached = build_stack_layer(UVec2::ONE, 0, &raw, &params, &available, [1, 60]).unwrap();
+        let liquids = std::array::from_fn(|index| raw[index] == 5 || (index < HALO && index % 2 != 0));
+        let cached = build_stack_layer(UVec2::ONE, 0, &raw, &params, &available, &liquids, [1, 60]).unwrap();
         let probe_at = 15 * WIDTH + 15 * RECORDS_PER_CORNER;
         assert_eq!(cached[probe_at][0], 17);
 
@@ -63,16 +64,19 @@ import package::shaders::world::land::land_bindings::TileUniform;
 @group(0) @binding(0) var cells: texture_2d<u32>;
 fn atlas_read_meta(x: i32, y: i32) -> TileUniform {
     let packed = textureLoad(cells, vec2<i32>(x, y), 0).x;
-    return TileUniform(0.0, packed >> 16u, 0u, 0u, vec2<u32>(0u), vec2<u32>(1u),
-        0u, 0u, packed & 65535u, 1.0);
+    return TileUniform(0.0, (packed >> 16u) & 15u, 0u, 0u, vec2<u32>(0u), vec2<u32>(1u),
+        (packed >> 20u) & 1u, (packed >> 21u) & 7u, packed & 65535u, 1.0);
 }
 "#, "shaders/world/land/atlas.wesl"));
+        shaders.set_shader(id(5), Shader::from_wesl(
+            include_str!("../../../../../../assets/shaders/world/land/transitions.wesl"), "shaders/world/land/transitions.wesl"));
         shaders.set_shader(id(0), Shader::from_wesl(r#"
-import package::shaders::world::land::coverage::{EcTerrainStack, ec_terrain_cache, ec_cache_layer, ec_terrain_stack_uncached};
+import package::shaders::world::land::coverage::{EcTerrainStack, ec_terrain_cache, ec_cache_layer, ec_cache_grime_mask, ec_layer_tile, ec_terrain_stack_uncached};
+import package::shaders::world::land::transitions::{ec_transition_boundary_weight, ec_transition_boundary_weight_from_mask};
 @group(0) @binding(4) var<storage, read_write> result: array<vec4<u32>>;
 @group(0) @binding(5) var<uniform> test_mode: vec4<u32>;
 // Adapt the compact production view to the original stack representation so
-// every layer and alpha bit can be compared independently of fragment shading.
+// every shading field and alpha bit can be compared independently of shading.
 fn cached_stack(world: vec2<f32>) -> EcTerrainStack {
     let cache = ec_terrain_cache(world);
     if (cache.count == 0u) { return ec_terrain_stack_uncached(world); }
@@ -102,11 +106,21 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let world = vec2<f32>(32.0 + f32(index % 32u) + offsets[subpixel % 3u],
         32.0 + f32((index / 32u) % 32u) + offsets[subpixel / 3u]);
     let cached = cached_stack(world);
+    let cache = ec_terrain_cache(world);
     let original = ec_terrain_stack_uncached(world);
     var difference = u32(cached.count != original.count);
     for (var layer = 0u; layer < min(cached.count, original.count); layer++) {
-        if (any(cached.layers[layer] != original.layers[layer])) { difference |= 2u; }
+        // The completed sort key word now stores four neighbor masks. Layer
+        // order/aliases still must match the original signed-key reconstruction.
+        if (any(cached.layers[layer].xzw != original.layers[layer].xzw)) { difference |= 2u; }
         if (bitcast<u32>(cached.alpha[layer]) != bitcast<u32>(original.alpha[layer])) { difference |= 4u; }
+        if (cache.count > 0u) {
+            let tile = ec_layer_tile(original.layers[layer], 0.0);
+            let before = ec_transition_boundary_weight(tile, vec2<i32>(floor(world)), fract(world));
+            let mask = ec_cache_grime_mask(cache, cached.layers[layer]);
+            let after = ec_transition_boundary_weight_from_mask(tile, fract(world), mask);
+            if (bitcast<u32>(before) != bitcast<u32>(after)) { difference |= 8u; }
+        }
     }
     result[index] = vec4<u32>(difference, cached.count, original.count, 0u);
 }
@@ -129,8 +143,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         for y in 0..HALO {
             for x in 0..HALO {
                 let payload = raw[y * HALO + x];
+                let liquid_bits = if !liquids[y * HALO + x] { 0 } else if (x + y) % 2 == 0 { 1 << 20 } else { 4 << 21 };
                 cell_data[(31 + y) * 96 + 31 + x] = if available[usize::from(payload)] {
-                    (2u32 << 16) | u32::from(payload)
+                    (2u32 << 16) | u32::from(payload) | liquid_bits
                 } else { 3u32 << 16 };
             }
         }

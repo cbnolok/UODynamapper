@@ -205,3 +205,10 @@ fn ec_cache_layer(cache: EcTerrainCache, index: u32) -> EcTerrainLayer {
     }
     return EcTerrainLayer(layer, alpha);
 }
+
+// Cached layers are already sorted. Their former key word stores four exact
+// grime-neighbor masks, selected with the same owning-cell delta as raw guards.
+fn ec_cache_grime_mask(cache: EcTerrainCache, material: vec4<u32>) -> u32 {
+    let shift = u32(cache.delta.y * 2 + cache.delta.x) * 8u;
+    return (material.y >> shift) & 255u;
+}

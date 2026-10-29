@@ -62,8 +62,14 @@ import package::shaders::world::effects::surface_effects::{apply_water_animation
 import package::shaders::world::ec_liquid::{sample_ec_liquid, ec_liquid_world_uv};
 import package::shaders::world::ec_liquid_camera::ec_liquid_camera_reflection_uv;
 import package::shaders::world::texture_data::texture_color_rgb;
-import package::shaders::world::land::coverage::{EcTerrainStack, EcTerrainCache, EcTerrainLayer, ec_coverage_params, ec_terrain_cache, ec_cache_layer, ec_terrain_stack_uncached, ec_layer_tile};
+import package::shaders::world::land::coverage::{EcTerrainStack, EcTerrainCache, EcTerrainLayer, ec_coverage_params, ec_terrain_cache, ec_cache_layer, ec_cache_grime_mask, ec_terrain_stack_uncached, ec_layer_tile};
 import package::shaders::world::land::liquid_bank::{ec_liquid_bank, ec_bank_vertex};
+
+import package::shaders::world::land::transitions::{
+  ec_transition_neighbor_weight, ec_transition_diagonal_weight,
+  ec_transition_materials_compatible, ec_transition_boundary_weight,
+  ec_transition_boundary_weight_from_mask,
+};
 
 // ============================================================================
 // Vertex shader
@@ -73,7 +79,6 @@ import package::shaders::world::land::liquid_bank::{ec_liquid_bank, ec_bank_vert
 // ============================================================================
 
 const TERRAIN_FLAG_REVIEWED_LIQUID: u32 = 0x4u;
-const EC_TERRAIN_TRANSITION_WIDTH: f32 = 0.82;
 const EC_TERRAIN_TRANSITION_BASE_WEIGHT: f32 = 0.35;
 
 fn land_cell_is_flat(world_tile: vec2<i32>, tile_height: f32) -> bool {
@@ -130,62 +135,6 @@ fn apply_kr_liquid_material_response(color: vec3<f32>,
   return out_color;
 }
 
-fn ec_transition_edge_weight(edge_distance: f32) -> f32 {
-  return 1.0 - smoothstep(0.0, EC_TERRAIN_TRANSITION_WIDTH, edge_distance);
-}
-
-fn ec_transition_neighbor_weight(offset: vec2<i32>, uv_in_tile: vec2<f32>) -> f32 {
-  var weight = 0.0;
-
-  if (offset.x < 0) {
-    weight = max(weight, ec_transition_edge_weight(uv_in_tile.x));
-  } else if (offset.x > 0) {
-    weight = max(weight, ec_transition_edge_weight(1.0 - uv_in_tile.x));
-  }
-
-  if (offset.y < 0) {
-    weight = max(weight, ec_transition_edge_weight(uv_in_tile.y));
-  } else if (offset.y > 0) {
-    weight = max(weight, ec_transition_edge_weight(1.0 - uv_in_tile.y));
-  }
-
-  return weight;
-}
-
-fn ec_transition_materials_compatible(current: TileUniform, neighbor: TileUniform) -> bool {
-  let current_liquid = current.is_wet == 1u || (current.terrain_flags & TERRAIN_FLAG_REVIEWED_LIQUID) != 0u;
-  let neighbor_liquid = neighbor.is_wet == 1u || (neighbor.terrain_flags & TERRAIN_FLAG_REVIEWED_LIQUID) != 0u;
-  // A liquid surface covers its substrate through authored coverage, not the
-  // solid-material neighbor blend. Mixing underwater sand into water paints
-  // a pale sawtooth border at the terrain/static ownership boundary.
-  return current_liquid == neighbor_liquid;
-}
-
-fn ec_transition_boundary_neighbor_weight(
-  current_tile: TileUniform,
-  neighbor_tile: TileUniform,
-  offset: vec2<i32>,
-  uv_in_tile: vec2<f32>,
-) -> f32 {
-  if (neighbor_tile.texture_size != 2u) {
-    return 0.0;
-  }
-
-  if (!ec_transition_materials_compatible(current_tile, neighbor_tile)) {
-    return 0.0;
-  }
-
-  if (neighbor_tile.texture_payload == current_tile.texture_payload) {
-    return 0.0;
-  }
-
-  if (neighbor_tile.texture_extent.x == 0u || neighbor_tile.texture_extent.y == 0u) {
-    return 0.0;
-  }
-
-  return ec_transition_neighbor_weight(offset, uv_in_tile);
-}
-
 fn ec_transition_neighbor_color(
   current_tile: TileUniform,
   neighbor_tile: TileUniform,
@@ -213,58 +162,6 @@ fn ec_transition_neighbor_color(
   return vec4<f32>(sample_ec_material_albedo_at_world(world_xz, neighbor_tile, world_gradients), weight);
 }
 
-fn ec_transition_diagonal_weight(offset: vec2<i32>, uv_in_tile: vec2<f32>) -> f32 {
-  let x_weight = ec_transition_neighbor_weight(vec2<i32>(offset.x, 0), uv_in_tile);
-  let y_weight = ec_transition_neighbor_weight(vec2<i32>(0, offset.y), uv_in_tile);
-  return min(x_weight, y_weight) * 0.75;
-}
-
-fn ec_transition_boundary_diagonal_weight(
-  current_tile: TileUniform,
-  neighbor_tile: TileUniform,
-  offset: vec2<i32>,
-  uv_in_tile: vec2<f32>,
-) -> f32 {
-  if (neighbor_tile.texture_size != 2u) {
-    return 0.0;
-  }
-
-  if (!ec_transition_materials_compatible(current_tile, neighbor_tile)) {
-    return 0.0;
-  }
-
-  if (neighbor_tile.texture_payload == current_tile.texture_payload) {
-    return 0.0;
-  }
-
-  if (neighbor_tile.texture_extent.x == 0u || neighbor_tile.texture_extent.y == 0u) {
-    return 0.0;
-  }
-
-  return ec_transition_diagonal_weight(offset, uv_in_tile);
-}
-
-fn ec_transition_boundary_weight(
-  current_tile: TileUniform,
-  world_tile: vec2<i32>,
-  uv_in_tile: vec2<f32>,
-) -> f32 {
-  if (current_tile.texture_size != 2u) {
-    return 0.0;
-  }
-
-  var weight = 0.0;
-  weight = max(weight, ec_transition_boundary_neighbor_weight(current_tile, atlas_read_meta(world_tile.x - 1, world_tile.y), vec2<i32>(-1, 0), uv_in_tile));
-  weight = max(weight, ec_transition_boundary_neighbor_weight(current_tile, atlas_read_meta(world_tile.x + 1, world_tile.y), vec2<i32>(1, 0), uv_in_tile));
-  weight = max(weight, ec_transition_boundary_neighbor_weight(current_tile, atlas_read_meta(world_tile.x, world_tile.y - 1), vec2<i32>(0, -1), uv_in_tile));
-  weight = max(weight, ec_transition_boundary_neighbor_weight(current_tile, atlas_read_meta(world_tile.x, world_tile.y + 1), vec2<i32>(0, 1), uv_in_tile));
-  weight = max(weight, ec_transition_boundary_diagonal_weight(current_tile, atlas_read_meta(world_tile.x - 1, world_tile.y - 1), vec2<i32>(-1, -1), uv_in_tile));
-  weight = max(weight, ec_transition_boundary_diagonal_weight(current_tile, atlas_read_meta(world_tile.x + 1, world_tile.y - 1), vec2<i32>(1, -1), uv_in_tile));
-  weight = max(weight, ec_transition_boundary_diagonal_weight(current_tile, atlas_read_meta(world_tile.x - 1, world_tile.y + 1), vec2<i32>(-1, 1), uv_in_tile));
-  weight = max(weight, ec_transition_boundary_diagonal_weight(current_tile, atlas_read_meta(world_tile.x + 1, world_tile.y + 1), vec2<i32>(1, 1), uv_in_tile));
-  return clamp(weight, 0.0, 1.0);
-}
-
 fn apply_kr_transition_grime(
   color: vec3<f32>,
   current_tile: TileUniform,
@@ -272,8 +169,14 @@ fn apply_kr_transition_grime(
   uv_in_tile: vec2<f32>,
   world_xz: vec2<f32>,
   strength: f32,
+  grime_mask: u32,
 ) -> vec3<f32> {
-  let boundary = ec_transition_boundary_weight(current_tile, world_tile, uv_in_tile);
+  var boundary: f32;
+  if (grime_mask <= 255u) {
+    boundary = ec_transition_boundary_weight_from_mask(current_tile, uv_in_tile, grime_mask);
+  } else {
+    boundary = ec_transition_boundary_weight(current_tile, world_tile, uv_in_tile);
+  }
   let grime_strength = clamp(strength, 0.0, 1.0);
   if (boundary <= 0.0001 || grime_strength <= 0.0001) {
     return color;
@@ -556,7 +459,7 @@ fn land_surface_normal(in: VertexOutput) -> vec3<f32> {
   return Nw;
 }
 
-fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool, world_gradients: LandGradients, surface_normal: vec3<f32>) -> vec3<f32> {
+fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool, world_gradients: LandGradients, surface_normal: vec3<f32>, grime_mask: u32) -> vec3<f32> {
   let shading_mode   = effects.shading_mode;
   let visual_profile = effects.post_process_profile;
 
@@ -788,6 +691,7 @@ fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool, world
         uv_in_tile,
         in.world_position.xz,
         effects.kr_transition_grime_strength,
+        grime_mask,
       );
     }
     let visual_grunge = textureSample(visual_grunge_texture, tex_small_sampler, visual_grunge_uv(in.world_position.xz, visual_profile)).rgb;
@@ -938,6 +842,11 @@ fn ec_composition_layer(cache: EcTerrainCache, stack: ptr<function, EcTerrainSta
   return EcTerrainLayer((*stack).layers[index], (*stack).alpha[index]);
 }
 
+fn ec_composition_grime_mask(cache: EcTerrainCache, material: vec4<u32>, cached: bool) -> u32 {
+  if (cached) { return ec_cache_grime_mask(cache, material); }
+  return 256u;
+}
+
 fn compose_ec_terrain(in: VertexOutput, tile: TileUniform, world_gradients: LandGradients, surface_normal: vec3<f32>,
     cache: EcTerrainCache, fallback: EcTerrainStack, cached: bool) -> vec3<f32> {
   var stack = fallback;
@@ -979,18 +888,23 @@ fn compose_ec_terrain(in: VertexOutput, tile: TileUniform, world_gradients: Land
   if (first == 0u && bank_weight > 0.0 && ec_composition_layer(cache, &stack, cached, 0u).material.x == liquid_material) {
     // An all-liquid chunk can meet a bank across its edge without having
     // a local solid base pass. Only that case needs the neighboring material.
-    hdr_rgb = shade_land(in, atlas_read_meta(bank_cell.x, bank_cell.y), true, world_gradients, surface_normal);
+    hdr_rgb = shade_land(in, atlas_read_meta(bank_cell.x, bank_cell.y), true, world_gradients, surface_normal, 256u);
     if (bank_weight < 1.0) {
-      hdr_rgb = mix(hdr_rgb, shade_land(in, ec_layer_tile(ec_composition_layer(cache, &stack, cached, 0u).material, tile.tile_height), true, world_gradients, surface_normal), 1.0 - bank_weight);
+      let layer = ec_composition_layer(cache, &stack, cached, 0u);
+      hdr_rgb = mix(hdr_rgb, shade_land(in, ec_layer_tile(layer.material, tile.tile_height), true, world_gradients, surface_normal,
+        ec_composition_grime_mask(cache, layer.material, cached)), 1.0 - bank_weight);
     }
   } else {
-    hdr_rgb = shade_land(in, ec_layer_tile(ec_composition_layer(cache, &stack, cached, first).material, tile.tile_height), true, world_gradients, surface_normal);
+    let layer = ec_composition_layer(cache, &stack, cached, first);
+    hdr_rgb = shade_land(in, ec_layer_tile(layer.material, tile.tile_height), true, world_gradients, surface_normal,
+      ec_composition_grime_mask(cache, layer.material, cached));
   }
   for (var index = first + 1u; index < count; index++) {
     let layer = ec_composition_layer(cache, &stack, cached, index);
     let alpha = layer.alpha * select(1.0, 1.0 - bank_weight, layer.material.x == liquid_material);
     if (alpha > 0.0) {
-      let layer_color = shade_land(in, ec_layer_tile(layer.material, tile.tile_height), true, world_gradients, surface_normal);
+      let layer_color = shade_land(in, ec_layer_tile(layer.material, tile.tile_height), true, world_gradients, surface_normal,
+        ec_composition_grime_mask(cache, layer.material, cached));
       hdr_rgb = mix(hdr_rgb, layer_color, alpha);
     }
   }
@@ -1024,6 +938,6 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
       }
     }
   }
-  if (!composed) { hdr_rgb = shade_land(in, tile, false, world_gradients, surface_normal); }
+  if (!composed) { hdr_rgb = shade_land(in, tile, false, world_gradients, surface_normal, 256u); }
   return finish_land(apply_global_lighting_rgb(hdr_rgb, scene.global_lighting));
 }

@@ -42,7 +42,8 @@ fn mask_byte(owners: &[u32; SIDE * SIDE], material: u32, x: usize, y: usize, wei
 }
 
 pub(super) fn build_stack_layer(chunk: UVec2, map: u32, raw: &[u16; HALO * HALO],
-    params: &[Option<EcTerrainParams>], available: &[bool], limits: [u16; 2]) -> Option<Vec<[u32; 4]>> {
+    params: &[Option<EcTerrainParams>], available: &[bool], liquids: &[bool; HALO * HALO],
+    limits: [u16; 2]) -> Option<Vec<[u32; 4]>> {
     // Base selection is independent of image residency, just as in the shader.
     let base = params.get(usize::from(limits[0]))?.as_ref()?.0;
     let last_key = params.get(usize::from(limits[1]))?.as_ref()?.0[1] as i32;
@@ -104,13 +105,33 @@ pub(super) fn build_stack_layer(chunk: UVec2, map: u32, raw: &[u16; HALO * HALO]
                         value.to_bits()
                     })
                 };
-                output[offset + 1 + index * 2] = layer;
+                let mut cached_layer = layer;
+                // Sorting is complete. Its key word can hold the exact eight
+                // grime-neighbor decisions for each of the four owning cells.
+                cached_layer[1] = [(x, y), (next_x, y), (x, next_y), (next_x, next_y)]
+                    .into_iter().enumerate().fold(0, |word, (corner, (px, py))| {
+                        word | (u32::from(grime_mask(raw, available, liquids, layer, px, py)) << (corner * 8))
+                    });
+                output[offset + 1 + index * 2] = cached_layer;
                 output[offset + 2 + index * 2] = alpha;
             }
         }
     }
     output[SIDE * WIDTH] = [chunk.x, chunk.y, map, 1];
     Some(output)
+}
+
+fn grime_mask(raw: &[u16; HALO * HALO], available: &[bool], liquids: &[bool; HALO * HALO],
+    layer: [u32; 4], x: usize, y: usize) -> u8 {
+    let flags = layer[3] >> 16;
+    let liquid = flags & 7 == 2 || flags & 64 != 0;
+    let offsets = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, -1), (-1, 1), (1, 1)];
+    offsets.into_iter().enumerate().fold(0, |mask, (bit, (dx, dy))| {
+        let at = (y as i32 + 1 + dy) as usize * HALO + (x as i32 + 1 + dx) as usize;
+        let neighbor = raw[at];
+        if u32::from(neighbor) != layer[2] && available.get(usize::from(neighbor)).copied().unwrap_or(false)
+            && liquids[at] == liquid { mask | (1 << bit) } else { mask }
+    })
 }
 
 #[cfg(test)]
@@ -131,11 +152,12 @@ mod tests {
     fn preserves_canonical_base_and_first_nonbase_alias() {
         let (params, available, mut raw) = fixture();
         raw[15 * HALO + 15] = 3; // First candidate for corner (15,15).
-        let output = build_stack_layer(UVec2::new(4, 5), 7, &raw, &params, &available, [1, 2]).unwrap();
+        let output = build_stack_layer(UVec2::new(4, 5), 7, &raw, &params, &available, &[false; HALO * HALO], [1, 2]).unwrap();
         let at = 15 * WIDTH + 15 * RECORDS_PER_CORNER;
         assert_eq!(output[at][0], 2);
         assert_eq!(output[at + 1][2], 1);
         assert_eq!(output[at + 3][2], 3);
+        assert_eq!(output[at + 3][1], 0xFFFF_FFEF); // The raw alias matches only NW of the first cell.
         assert_eq!(output[at + 4], [1.0f32.to_bits(); 4]);
         assert_eq!(output[SIDE * WIDTH], [4, 5, 7, 1]);
     }
@@ -146,10 +168,29 @@ mod tests {
         for x in 0..HALO { raw[x] = 1; }
         for y in 0..HALO { raw[y * HALO] = 1; }
         raw[HALO + 1] = 2;
-        let output = build_stack_layer(UVec2::ZERO, 0, &raw, &params, &available, [1, 2]).unwrap();
+        let output = build_stack_layer(UVec2::ZERO, 0, &raw, &params, &available, &[false; HALO * HALO], [1, 2]).unwrap();
         assert_eq!(output[4][0], 0.0f32.to_bits());
         params[2].as_mut().unwrap().0[3] = 1; // Point mask, no positive exponent.
-        let output = build_stack_layer(UVec2::ZERO, 0, &raw, &params, &available, [1, 2]).unwrap();
+        let output = build_stack_layer(UVec2::ZERO, 0, &raw, &params, &available, &[false; HALO * HALO], [1, 2]).unwrap();
         assert_eq!(output[4][0], 1.0f32.to_bits());
+    }
+
+    #[test]
+    fn grime_neighbors_preserve_raw_aliases_liquids_and_missing_sources() {
+        let (params, mut available, mut raw) = fixture();
+        let mut liquids = [false; HALO * HALO];
+        let center = 16 * HALO + 16;
+        liquids[center - 1] = true;
+        raw[center + 1] = 7;
+        available.resize(8, true);
+        available[7] = false;
+        raw[center - HALO] = 1;
+        let layer = packed_layer(1, params[1].unwrap().0);
+        assert_eq!(grime_mask(&raw, &available, &liquids, layer, 15, 15), 0xF8);
+        let mut liquid = layer;
+        liquid[3] = 2 << 16;
+        assert_eq!(grime_mask(&raw, &available, &liquids, liquid, 15, 15), 1);
+        liquid[3] = (1 | 64) << 16; // Reviewed liquid without the water class.
+        assert_eq!(grime_mask(&raw, &available, &liquids, liquid, 15, 15), 1);
     }
 }

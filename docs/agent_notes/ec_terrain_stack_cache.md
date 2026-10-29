@@ -42,7 +42,7 @@ Filtered native comparisons require the continuous footprint described in
 ## Exact inputs and representation
 
 The builder uses raw map cells, original per-material parameters, effective EC
-image availability, and the existing chunk's first/last retained passes. It
+image availability, resident wet/reviewed-liquid flags, and the existing chunk's first/last retained passes. It
 preserves canonical base aliases, first row-major non-base aliases, stable signed
 key ordering, the 49-pass key limit, positive-exponent exterior-edge membership,
 and the original cardinal/diagonal mask bytes. Point and bilinear filtering stay
@@ -52,12 +52,26 @@ in the cached shader produced repeatable precision differences in native capture
 A 34×34 raw halo supplies native chunk-border ownership.
 
 Each corner stores one header and two integer RGBA texels for each of at most
-17 layers: the original packed layer and four normalized mask values stored as
-float bits. One extra row identifies the chunk and map. Binding 118 is a
+17 layers: the shading record and four normalized ownership-mask values stored as
+float bits. Sorting finishes before the shading record is written: its former
+signed-key word holds four eight-bit transition-grime neighbor masks, selected
+by the same owning-cell delta as the raw guard. The other three words retain
+the canonical material, raw alias, weights and flags. One extra row identifies the chunk and map. Binding 118 is a
 1120×33×16 RGBA32Uint array, 9,461,760 bytes once allocated. CC-only sessions retain a one-texel sentinel.
 Binding 117's chunk LUT contains `[first, last, cache_slot, map]` in RGBA16Uint;
 65535 means no published slot. The shader checks chunk/map identity and the
 current raw payload before using a cache entry.
+
+Grime bits are west/east/north/south, then NW/NE/SW/SE. A neighbor qualifies only
+with a present, nonzero EC image extent, a different raw payload and matching
+liquid classification. The shaded stack layer derives its liquid status from
+its packed class/reviewed flag; neighbors use the resident metadata's wet or
+reviewed-liquid flag, exactly as the original shader does. Canonical aliases
+must not replace this raw-payload comparison. `land/transitions.wesl` retains
+the original cardinal/diagonal expressions and maximum accumulation order.
+Only the neighbor decisions move to the cache, with no extra texture or binding.
+Uncached/raw shading and an extra neighboring bank material retain the original
+metadata reads; a mask value of 256 identifies that fallback.
 
 ## Scheduling and coherence
 
@@ -74,6 +88,23 @@ Mapping changes invalidate residency just as pixel changes do. Map changes clear
 entries; changed chunk pass limits invalidate the corresponding LUT entry.
 No image or material mutation occurs while the cache is idle.
 
+Baking also waits for submitted metadata and a matching full halo, then snapshots
+its liquid flags. A later revision that changes these flags requires a rebake
+before publication. Height, smooth and follow-center flags do not affect grime
+decisions. Evicted or mismatched sources unpublish the entry while retaining its
+immutable data for reuse after residency returns. A deferred bake cannot publish
+an old entry with different pass limits.
+
+The first bake grows the one-texel sentinel to its final array size. That changes
+the GPU texture/view, so it must also invalidate the shared land material once.
+Bevy 0.20's `GpuImage::prepare_asset` reuses the texture/view for subsequent
+same-descriptor uploads, but replaces them on a resize. Changing image data alone
+does not refresh an already prepared material's binding. Without the one-time
+rebind, CPU telemetry can report sixteen published chunks while the first scene
+still samples the sentinel and reconstructs some terrain uncached. Teleporting
+can conceal this by refreshing other shared uniforms. A shader that marks actual
+cache misses magenta detects the problem; chunk-count telemetry alone cannot.
+
 The metadata uploader stages in `First`, before `Update` writes newer data.
 Therefore a staged batch carries its own revision and image identity: extraction
 must not label it with the current CPU revision. Budget backlogs retain their
@@ -89,13 +120,16 @@ readiness, not color-texture residency or shader compilation completion.
 
 ## Regression coverage
 
-The explicit Vulkan test compares every layer and bit-identical alpha against
-the production uncached shader at 9,216 positions. Its fixture includes native edges, aliases,
+The explicit Vulkan test compares ordered shading records and bit-identical alpha
+against the production uncached shader at 9,216 positions. It independently compares
+the mask-based grime weight with the original eight metadata lookups, bit for bit,
+for every layer. Its fixture includes native edges, aliases,
 signed keys, point masks, liquid masks, missing images, unsupported materials,
 excluded passes and the maximum 17-layer footprint. Removing the uncached lookup
 records proves that it actually exercises cache hits. Poisoned cache entries
 with wrong chunk, map or raw-owner guards prove fallback behavior.
 
-CPU regressions cover full-halo residency, source-mode changes, atlas eviction,
+CPU regressions cover raw-alias/liquid/missing-source grime decisions, wet and
+reviewed-liquid invalidation, full-halo residency, source-mode changes, atlas eviction,
 staged-versus-current revisions and atlas replacement with a pending backlog.
 For native images and measured gains, see `renderer_release_performance.md`.
