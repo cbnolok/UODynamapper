@@ -57,3 +57,23 @@ captures and upload diagnostics too. Use isolated settings to disable VSync,
 the frame limiter and unfocused throttling for uncapped comparisons. Record the
 build, camera, preset, package source, viewport and zoom in the label, keep other
 GPU work comparable, and benchmark after compilation finishes.
+
+For hardware pass measurements, enable `enable_render_diagnostics`,
+`dump_to_console` and `log_render_breakdown` in the isolated
+`world_rendering.toml` **before launch**. Set `dump_interval_sec = 1.0` and keep
+the owned preview's `app.log`. The benchmark records Unix timestamps for its
+measurement windows and replies, allowing the same-host console log to be
+correlated with each fixture:
+
+```sh
+python3 scripts/dev-helpers/renderer/pass_timings.py \
+  --benchmark /tmp/renderer-benchmark.json --app-log /tmp/my-preview/app.log \
+  --output /tmp/renderer-pass-timings.json
+```
+
+This requires the current benchmark report and available hardware GPU diagnostics
+(supported Vulkan/DX12 adapter). It rejects windows with insufficient GPU samples.
+Console times have one-second resolution, so correlation excludes both boundary
+seconds. Results retain smoothed, rounded pass durations. `reported_gpu_ms` sums
+the renderer's timed spans; it is not complete frame wall time and overlapping
+spans can count the same work. Use the named opaque-pass timing for comparisons.

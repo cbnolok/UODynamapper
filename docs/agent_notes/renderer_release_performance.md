@@ -100,3 +100,41 @@ follow the same paused KR/EC configuration, eight-second settling and twelve-sec
 sampling as the ownership experiment. The next performance work needs a measured
 pass breakdown or a larger ownership-cache change, rather than assuming helper
 call counts equal GPU memory traffic. The original FPS targets remain open.
+
+## Hardware pass breakdown
+
+The completed sprite-hue renderer was rebuilt with the same stable release
+recipe before profiling. Existing Bevy hardware diagnostics were enabled in
+isolated startup settings, with one-second console dumps. `benchmark.py` now
+records wall-clock measurement windows; `pass_timings.py` correlates those with
+the owned preview log, excluding both boundary seconds. The same paused KR/EC,
+1280×800, zoom-0.8 orthographic fixtures settle for eight seconds and sample for
+twelve seconds, with caps disabled and Desktop-4 ownership/cleanup verified.
+
+| Diagnostic variant | Bridge opaque GPU ms | Lava opaque GPU ms |
+|---|---:|---:|
+| Production renderer | 18.16 | 25.54 |
+| Statics disabled | 17.45 | 25.47 |
+| Flat terrain fragment | 1.20 | 0.52 |
+| Ownership/composition bypassed | 3.32 | 2.59 |
+| Terrain albedo before lighting | 8.42 | 9.98 |
+
+These are medians of **smoothed hardware opaque-pass durations**, rounded by the
+console, not raw frame percentiles. The reported sum of timed GPU spans is not
+frame wall time. The flat diagnostic reaches roughly 229/233 sampled FPS while
+its timed GPU work is shorter than a whole frame, exposing a different limit.
+
+The bypass retains terrain geometry, statics and `shade_land`, but selects the
+current raw tile instead of reconstructing ownership, layered composition and
+liquid-bank selection. It is visibly incorrect and was restored after each run.
+The albedo diagnostic retains reconstruction and texture work but skips the
+later terrain lighting/grunge/material response. Neither is a proposed fidelity
+change. Their costs cannot be added/subtracted as independent stage durations:
+shader compilation, register pressure and the number of shaded layers interact.
+
+The combined results identify terrain ownership/composition as a substantial
+optimization target, with statics and upscaling unable to explain the normal
+cost. A cache must preserve canonical/first aliases, original 49-pass selection,
+edge membership, point/bilinear alpha and bank behavior, while leaving the actual
+shading call sites intact. Temporary reports use `release-kr-passes-final-*` and
+`gpu-passes-final-*`; all production shaders/settings were restored.

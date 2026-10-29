@@ -42,11 +42,13 @@ def main():
             time.sleep(args.settle)
             samples = []
             started = time.monotonic()
+            started_at = time.time()
             while time.monotonic() - started < args.seconds:
                 status = request(args.socket, {'command': 'status'}, 10)
                 expected = [x, y, args.z, args.map]
                 if status['position'] != expected or status['rendered_position'] != expected:
                     raise RuntimeError(f'fixture moved or not rendered: {status}')
+                status['sampled_at_unix_seconds'] = time.time()
                 samples.append(status)
                 time.sleep(args.interval)
             fps = [sample['fps'] for sample in samples if sample['fps'] is not None]
@@ -54,6 +56,8 @@ def main():
                 raise RuntimeError(f'no frame diagnostics for {name}')
             summary = {'name': name, 'position': expected, 'samples': samples,
                        'elapsed_seconds': time.monotonic() - started,
+                       'measurement_started_at_unix_seconds': started_at,
+                       'measurement_finished_at_unix_seconds': time.time(),
                        'median_sampled_fps': statistics.median(fps),
                        'min_sampled_fps': min(fps), 'max_sampled_fps': max(fps)}
             report['fixtures'].append(summary)
