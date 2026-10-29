@@ -26,8 +26,12 @@ pub struct DecodedFrame {
 /// Represents a single frame entry optimized for memory layout.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FrameEntry {
-    pub frame: u16,
-    pub unknown: u16,
+    /// Action id of the frame; equal to the action of the entry name in every client file.
+    pub action: u16,
+    /// 1-based local frame number, `(direction - 3) * frame_count + frame + 1` for the stored
+    /// directions 3..7 of the `AnimationSequence` action (confirmed by the client data). Numbers
+    /// can have gaps: the number, not the entry position, gives the direction and frame.
+    pub frame_number: u16,
     pub init_coords_x: i16,
     pub init_coords_y: i16,
     pub end_coords_x: i16,
@@ -38,8 +42,8 @@ pub struct FrameEntry {
 #[repr(C, packed)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct RawFrameEntry {
-    frame: u16,
-    unknown: u16,
+    action: u16,
+    frame_number: u16,
     init_coords_x: i16,
     init_coords_y: i16,
     end_coords_x: i16,
@@ -148,8 +152,8 @@ impl AnimationFrame {
         for (i, raw) in raw_frames.iter().enumerate() {
             // Convert to native endianness and absolute offset
             frames.push(FrameEntry {
-                frame: u16::from_le(raw.frame),
-                unknown: u16::from_le(raw.unknown),
+                action: u16::from_le(raw.action),
+                frame_number: u16::from_le(raw.frame_number),
                 init_coords_x: i16::from_le(raw.init_coords_x),
                 init_coords_y: i16::from_le(raw.init_coords_y),
                 end_coords_x: i16::from_le(raw.end_coords_x),
@@ -207,8 +211,8 @@ impl AnimationFrame {
         let mut frames = Vec::with_capacity(frames_count);
         for (i, raw) in raw_frames.iter().enumerate() {
             frames.push(FrameEntry {
-                frame: u16::from_le(raw.frame),
-                unknown: u16::from_le(raw.unknown),
+                action: u16::from_le(raw.action),
+                frame_number: u16::from_le(raw.frame_number),
                 init_coords_x: i16::from_le(raw.init_coords_x),
                 init_coords_y: i16::from_le(raw.init_coords_y),
                 end_coords_x: i16::from_le(raw.end_coords_x),
@@ -470,8 +474,8 @@ mod tests {
         assert_eq!(animation.animation_id, 42);
         assert_eq!(animation.colours, vec![[255, 0, 0, 255], [0, 255, 0, 255]]);
         assert_eq!(animation.frames.len(), 1);
-        assert_eq!(animation.frames[0].frame, 9);
-        assert_eq!(animation.frames[0].unknown, 11);
+        assert_eq!(animation.frames[0].action, 9);
+        assert_eq!(animation.frames[0].frame_number, 11);
         assert_eq!(animation.frames[0].data_offset, 64);
         assert_eq!(metadata.version, animation.version);
         assert_eq!(metadata.total_size, animation.total_size);

@@ -225,6 +225,50 @@ unless the data becomes a stable package contract.
 - Formats, field meanings, confidence and verification against the client data
   are in `scripts/dev-helpers/ec-research/ghidra-effects/results/uosa_effects.md`.
 
+`AnimationSequence.uop`:
+
+- One entry per mobile body type (`build/animationsequence/%08d.bin`);
+  `animation_sequence::AnimationSequence::parse` decodes it and rejects
+  trailing bytes. The same format serves the Classic and the Enhanced Client.
+- Layout: u32 `stored_id`, 8 i8 and 8 i16 per-direction offset pairs, the
+  action table, then the action groups. An action record is u32 action, u32
+  frame count, i32 alias (-1 = own frames), f32 fps, its own 8 + 8 offset
+  pairs, frame effects (`{u32 frame, effect list}`, the
+  `EffectDefinitionCollection` format) and skipped frames (u32 list).
+- `stored_id` is the body under which the frames are stored in
+  `AnimationFrame*.uop` (146 -> 704, 1308 -> 29, 1309 -> 1254). It is the only
+  body redirect of the EC data path; the client loads no `bodyconv`,
+  `mobtypes` or `body.def`.
+- Frames: each plain action owns `5 * frame_count` frames for the stored
+  directions 3..7; directions 0..2 are horizontal mirrors of 6..4
+  (`direction_frames`). The `AnimationFrame` entry of (stored id, action)
+  numbers its frames `1..5 * frame_count` (`FrameEntry::frame_number`); the
+  number, not the entry position, gives direction and frame (some files have
+  gaps).
+- Aliases borrow another action's frames, one level only; action 19 is an
+  alias of 0 when flying animations are off; a broken alias falls back to the
+  lowest plain action (`resolve_action`). Missing actions play at 16 fps.
+- Groups (0 war, 1 peace, 2 mounted, 3 flying, 4/5 state, 6 seated) map
+  stand/walk/run, 0xE2 type/sub-type/variant and state transitions to actions
+  along a parent chain (`move_action`, `typed_action`, `transition_action`);
+  0x6E actions 200..269 go through type 11 of group 1
+  (`map_character_animation`).
+
+`AnimationDefinition.uop`:
+
+- One entry per animated item id (`build/animationdefinition/%08d.bin`),
+  decoded by `animation_definition::AnimationDefinition::parse`. It has
+  nothing to do with mobile bodies.
+- Layout: u32 `stored_id`, u32 start set, u32 second set, f32 value (>= 0),
+  then frame sets `{u32 key, i32 next (-1 none), f32 frame interval (s),
+  u32 count, count x {u32 tile id, u8 effect count, effects}}`.
+- Client data: one set (key 0) per entry, no effects; 3 entries store an id
+  other than their name (7905 -> 7897, 7923 -> 7916, 18153 -> 18150), with no
+  known use.
+- Layout, run-time semantics, confidence and verification against the client
+  data for both files are in
+  `scripts/dev-helpers/ec-research/ghidra-animation/results/uosa_animation.md`.
+
 `waypoint.uop`:
 
 - Stores waypoint definition tables and compact waypoint records under

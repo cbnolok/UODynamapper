@@ -36,7 +36,6 @@ pub struct ClientData {
     pub hues: Option<Arc<Vec<uocf::classic::hues::HueEntry>>>,
     pub animdata: Option<Arc<uocf::classic::animdata::AnimData>>,
     pub anim_map: Option<Arc<AnimMap>>,
-    pub anim_defs: Option<Arc<uocf::classic::anim::AnimationDefinition>>,
 }
 
 #[cfg(test)]

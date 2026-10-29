@@ -619,52 +619,6 @@ fn frame_pixel_offset(y: i32, x: i32, width: u16) -> eyre::Result<usize> {
         .ok_or_else(|| eyre!("Animation frame pixel offset overflow at {},{}", x, y))
 }
 
-/// Handles AnimationDefinition.uop parsing for Body ID redirects (aliasing).
-pub struct AnimationDefinition {
-    pub redirects: std::collections::HashMap<u32, u32>,
-}
-
-impl Default for AnimationDefinition {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl AnimationDefinition {
-    pub fn new() -> Self {
-        Self {
-            redirects: std::collections::HashMap::new(),
-        }
-    }
-
-    /// Parses an AnimationDefinition entry from a byte slice (usually from UOP).
-    pub fn parse(data: &[u8]) -> eyre::Result<Self> {
-        let mut reader = std::io::Cursor::new(data);
-        use byteorder::{LittleEndian, ReadBytesExt};
-
-        // Format: u32 version (usually 1), u32 count, then count * (u32 original_id, u32 new_id)
-        if data.len() < 8 {
-            eyre::bail!("AnimationDefinition data too small");
-        }
-        let _version = reader.read_u32::<LittleEndian>()?;
-        let count = reader.read_u32::<LittleEndian>()?;
-
-        let mut redirects = std::collections::HashMap::with_capacity(count as usize);
-        for _ in 0..count {
-            let original_id = reader.read_u32::<LittleEndian>()?;
-            let new_id = reader.read_u32::<LittleEndian>()?;
-            redirects.insert(original_id, new_id);
-        }
-
-        Ok(Self { redirects })
-    }
-
-    /// Resolves a Body ID to its redirected ID, if any.
-    pub fn resolve(&self, body_id: u32) -> u32 {
-        *self.redirects.get(&body_id).unwrap_or(&body_id)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

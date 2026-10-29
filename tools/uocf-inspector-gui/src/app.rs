@@ -1746,7 +1746,8 @@ pub struct UopInspectorApp {
     pub playback_speed: f32,
     pub loop_animation: bool,
 
-    pub selected_anim_sequence: Option<uocf::animation_sequence::AnimationSequence>,
+    /// `AnimationSequence.uop` entry of the selected body type, with that body type.
+    pub selected_anim_sequence: Option<(u32, uocf::animation_sequence::AnimationSequence)>,
     pub selected_action_id: u16,
     pub selected_direction: u8,
 
@@ -2067,25 +2068,6 @@ impl UopInspectorApp {
                             None
                         }
                     };
-                    let mut anim_defs = None;
-                    let anim_def_path = path.join("AnimationDefinition.uop");
-                    if anim_def_path.exists() {
-                        if let Ok(package) = UopPackage::load(&anim_def_path) {
-                            let hash = uocf::uop_container::hash::hash_file_name_single(
-                                "data/animationdefinition/animationdefinition.bin",
-                            );
-                            if let Some(file) = package.get_file_by_hash(hash) {
-                                if let Ok(data) = file.unpack() {
-                                    if let Ok(defs) =
-                                        uocf::classic::anim::AnimationDefinition::parse(&data)
-                                    {
-                                        anim_defs = Some(Arc::new(defs));
-                                    }
-                                }
-                            }
-                        }
-                    }
-
                     self.client_data = Some(ClientData {
                         path: path.clone(),
                         art: Arc::new(art),
@@ -2095,7 +2077,6 @@ impl UopInspectorApp {
                         hues,
                         animdata,
                         anim_map,
-                        anim_defs,
                     });
                     self.log("Loading CC assets... Success");
                 }
@@ -2251,7 +2232,6 @@ impl UopInspectorApp {
                                 hues: None,
                                 animdata: None,
                                 anim_map: None,
-                                anim_defs: None,
                             });
                             self.log("Loaded standalone Legacy Art UOP from EC folder.");
                         }
@@ -2284,7 +2264,6 @@ impl UopInspectorApp {
                                 hues: None,
                                 animdata: None,
                                 anim_map: None,
-                                anim_defs: None,
                             });
                             self.log("Loaded standalone Texture.uop from EC folder as KR/New UOP art.");
                         }

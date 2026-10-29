@@ -9,6 +9,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::time::Duration;
+use uocf::animation_sequence::{
+    AnimationSequence, DIRECTION_COUNT, FIRST_FRAME_NUMBER, FIRST_STORED_DIRECTION, MIRROR_DIRECTION_SUM,
+};
 use uocf::classic::animationframe_cc::AnimationFrameCc;
 use uocf::classic::michelangelo_uop_codec::{
     export_anim_blocks_from_mul, MichelangeloPatch, MichelangeloPatchEntry,
@@ -51,6 +54,8 @@ static ANIMATION_TREE_COLLAPSE_REVISION: AtomicU64 = AtomicU64::new(0);
 
 const ANIMATION_CONTROLS_PANEL_WIDTH: f32 = 280.0;
 const ANIMATION_ACTIONS_PANEL_WIDTH: f32 = 260.0;
+/// Client default of the `flying_animations` setting, used to resolve sequence actions.
+const FLYING_ANIMATIONS_ENABLED: bool = true;
 
 pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
     egui::Panel::left("anim_controls")
@@ -70,17 +75,13 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
                 }
             });
 
-            // Resolve redirect if available
-            if let Some(client) = &app.client_data {
-                if let Some(defs) = &client.anim_defs {
-                    let resolved = defs.resolve(body_id);
-                    if resolved != body_id {
-                        ui.colored_label(
-                            egui::Color32::YELLOW,
-                            format!("Redirected to: {}", resolved),
-                        );
-                    }
-                }
+            // Frames of a body type are stored under its AnimationSequence stored id.
+            let frames_body_id = selected_frames_body_id(app);
+            if frames_body_id != body_id {
+                ui.colored_label(
+                    egui::Color32::YELLOW,
+                    format!("Redirected to: {}", frames_body_id),
+                );
             }
 
             ui.horizontal(|ui| {
@@ -118,7 +119,7 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
 
             show_animation_navigation(app, ctx, ui);
 
-            if let Some(seq) = &app.selected_anim_sequence {
+            if let Some((_, seq)) = &app.selected_anim_sequence {
                 ui.separator();
                 ui.heading("Logical Sequence");
 
@@ -129,9 +130,8 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
                         egui::ComboBox::from_id_salt("action_combo")
                             .selected_text(format!("Action {}", app.selected_action_id))
                             .show_ui(ui, |ui| {
-                                let mut action_ids: Vec<_> = seq.actions.keys().collect();
-                                action_ids.sort();
-                                for &id in action_ids {
+                                let action_ids = seq.actions.keys().filter_map(|&id| u16::try_from(id).ok());
+                                for id in action_ids {
                                     ui.selectable_value(
                                         &mut app.selected_action_id,
                                         id,
@@ -143,7 +143,7 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
 
                         ui.label("Direction:");
                         ui.horizontal(|ui| {
-                            for d in 0..5 {
+                            for d in 0..DIRECTION_COUNT as u8 {
                                 ui.selectable_value(&mut app.selected_direction, d, d.to_string());
                             }
                         });
@@ -161,15 +161,10 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
 
     egui::CentralPanel::default().show(ui, |ui| {
         if app.client_data.is_some() {
-            let body_id = app
-                .client_data
-                .as_ref()
-                .and_then(|client| client.anim_defs.as_ref())
-                .map(|defs| defs.resolve(app.selected_anim_id))
-                .unwrap_or(app.selected_anim_id);
+            let body_type = app.selected_anim_id;
 
-            // Try to load AnimationSequence if not already loaded for this Body ID
-            if app.selected_anim_sequence.as_ref().map(|s| s.body_id) != Some(body_id) {
+            // Try to load AnimationSequence if not already loaded for this body type
+            if app.selected_anim_sequence.as_ref().map(|(id, _)| *id) != Some(body_type) {
                 let mut found_seq = None;
                 for loaded in &app.uop_cache.loaded_uops {
                     if loaded
@@ -179,14 +174,11 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
                         .to_string_lossy()
                         .contains("AnimationSequence")
                     {
-                        let path = format!("data/animationsequence/{:06}.bin", body_id);
-                        let hash = uocf::uop_container::hash::hash_file_name_single(&path);
+                        let hash = hash_file_name_single(&AnimationSequence::entry_path(body_type));
                         if let Some(file) = loaded.package.get_file_by_hash(hash) {
                             if let Ok(data) = file.unpack() {
-                                if let Ok(seq) = uocf::animation_sequence::AnimationSequence::parse(
-                                    &data, body_id,
-                                ) {
-                                    found_seq = Some(seq);
+                                if let Ok(seq) = AnimationSequence::parse(&data) {
+                                    found_seq = Some((body_type, seq));
                                     break;
                                 }
                             }
@@ -195,6 +187,7 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
                 }
                 app.selected_anim_sequence = found_seq;
             }
+            let body_id = selected_frames_body_id(app);
 
             let frames_res: eyre::Result<Vec<uocf::classic::anim::AnimFrame>> = match app
                 .selected_legacy_source
@@ -232,11 +225,12 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
                         ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr
                     ) && app.selected_animationframe_file_hash.is_none()
                     {
-                        if let Some(seq) = &app.selected_anim_sequence {
-                            seq.actions
-                                .get(&app.selected_action_id)
-                                .and_then(|a| a.directions.get(app.selected_direction as usize))
-                                .map(|d| &d.frame_indices)
+                        if let Some((_, seq)) = &app.selected_anim_sequence {
+                            sequence_direction_frame_positions(
+                                seq,
+                                app.selected_action_id,
+                                app.selected_direction,
+                            )
                         } else {
                             None
                         }
@@ -244,10 +238,10 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
                         None
                     };
 
-                    let frames = if let Some(indices) = logical_frames {
-                        indices
+                    let frames = if let Some(positions) = &logical_frames {
+                        positions
                             .iter()
-                            .filter_map(|&idx| all_frames.get(idx as usize))
+                            .filter_map(|&idx| all_frames.get(idx))
                             .cloned()
                             .collect::<Vec<_>>()
                     } else {
@@ -397,13 +391,7 @@ fn show_animation_action_column(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
     ui.separator();
 
     if app.selected_legacy_source != ArtSource::Any {
-        let export_context = app.client_data.as_ref().map(|client| {
-            client
-                .anim_defs
-                .as_ref()
-                .map(|defs| defs.resolve(app.selected_anim_id))
-                .unwrap_or(app.selected_anim_id)
-        });
+        let export_context = app.client_data.as_ref().map(|_| selected_frames_body_id(app));
 
         ui.heading("Patch Export");
         let can_export = export_context.is_some();
@@ -1929,13 +1917,12 @@ fn build_ec_sequence_hash_map(
     dict_seq_map: std::collections::HashMap<u64, u32>,
 ) -> (std::collections::HashMap<u64, (u32, u16)>, Vec<(u64, String)>) {
     use std::collections::HashMap;
-    use uocf::animation_sequence::{AnimationSequence, ec_sequence_path_6digit, ec_sequence_path_8digit};
     use uocf::enhanced::animationframe::{AnimationFrame, MAX_BODY_ID};
     use uocf::uop_container::hash::hash_file_name_simd_batch_strs_into;
 
     // Collect hashes of sequence files that are not yet in the dictionary.
     // For those already known, use the dict directly — no hashing needed.
-    let mut seq_hash_to_body: HashMap<u64, u32> = HashMap::with_capacity(dict_seq_map.len() + MAX_BODY_ID as usize * 2);
+    let mut seq_hash_to_body: HashMap<u64, u32> = HashMap::with_capacity(dict_seq_map.len() + MAX_BODY_ID as usize);
     seq_hash_to_body.extend(dict_seq_map.iter().map(|(&h, &b)| (h, b)));
 
     // Determine which body_ids are not yet covered by the dict so we can
@@ -1946,14 +1933,12 @@ fn build_ec_sequence_hash_map(
         .collect();
 
     if !unknown_bodies.is_empty() {
-        let seq_paths_6: Vec<String> = unknown_bodies.iter().copied().map(ec_sequence_path_6digit).collect();
-        let seq_paths_8: Vec<String> = unknown_bodies.iter().copied().map(ec_sequence_path_8digit).collect();
-        let seq_path_refs: Vec<&str> = seq_paths_6.iter().chain(seq_paths_8.iter()).map(|s| s.as_str()).collect();
+        let seq_paths: Vec<String> = unknown_bodies.iter().copied().map(AnimationSequence::entry_path).collect();
+        let seq_path_refs: Vec<&str> = seq_paths.iter().map(|s| s.as_str()).collect();
         let mut seq_hashes = vec![0u64; seq_path_refs.len()];
         hash_file_name_simd_batch_strs_into(&seq_path_refs, &mut seq_hashes);
 
-        for (i, hash) in seq_hashes.into_iter().enumerate() {
-            let body_id = unknown_bodies[i % unknown_bodies.len()];
+        for (&body_id, hash) in unknown_bodies.iter().zip(seq_hashes) {
             seq_hash_to_body.insert(hash, body_id);
         }
     }
@@ -1972,23 +1957,17 @@ fn build_ec_sequence_hash_map(
         let Ok(Some(data)) = sequence_package.unpack_file_by_hash(*file_hash) else {
             continue;
         };
-        let Some(count) = AnimationSequence::ec_action_count(&data) else {
+        let Ok(sequence) = AnimationSequence::parse(&data) else {
             continue;
         };
         if !dict_seq_map.contains_key(file_hash) {
-            // Determine which path format this hash corresponds to and record it.
-            let path_6 = ec_sequence_path_6digit(body_id);
-            let path_8 = ec_sequence_path_8digit(body_id);
-            use uocf::uop_container::hash::hash_file_name_single;
-            let canonical_path = if hash_file_name_single(&path_6) == *file_hash {
-                path_6
-            } else {
-                path_8
-            };
-            new_dic_entries.push((*file_hash, canonical_path));
+            new_dic_entries.push((*file_hash, AnimationSequence::entry_path(body_id)));
         }
-        for action_id in 0..count as u16 {
-            frame_pairs.push((body_id, action_id));
+        // Frame entries exist for the plain actions, under the sequence stored id.
+        for (&action_id, action) in &sequence.actions {
+            if let (None, Ok(action_id)) = (action.alias, u16::try_from(action_id)) {
+                frame_pairs.push((sequence.stored_id, action_id));
+            }
         }
     }
 
@@ -2053,7 +2032,7 @@ fn show_sequence_animation_tree(
     collapse_revision: u64,
     max_height: f32,
 ) {
-    let Some(seq) = app.selected_anim_sequence.clone() else {
+    let Some((body_type, seq)) = app.selected_anim_sequence.clone() else {
         ui.label("No AnimationSequence entry is loaded for the selected body.");
         return;
     };
@@ -2065,51 +2044,63 @@ fn show_sequence_animation_tree(
         .max_height(max_height)
         .show(ui, |ui| {
             ui.set_min_width(scroll_width);
-            let mut action_ids: Vec<_> = seq.actions.keys().copied().collect();
-            action_ids.sort_unstable();
+            let mut action_ids: Vec<u16> = seq.actions.keys().filter_map(|&id| u16::try_from(id).ok()).collect();
             if ordering == Some(true) {
                 action_ids.reverse();
             }
             for action_id in action_ids {
-                let Some(action) = seq.actions.get(&action_id) else {
+                let Some(action) = seq.actions.get(&u32::from(action_id)) else {
                     continue;
                 };
-                egui::CollapsingHeader::new(format!("Action {}", action.action_id))
+                let title = match action.alias {
+                    Some(target) => format!("Action {} (alias of {})", action_id, target),
+                    None => format!("Action {}", action_id),
+                };
+                egui::CollapsingHeader::new(title)
                     .id_salt((
                         "uocf_anim_sequence_action",
                         collapse_revision,
-                        seq.body_id,
-                        action.action_id,
+                        body_type,
+                        action_id,
                     ))
                     .default_open(
                         collapse_revision == 0
-                            && app.selected_action_id == action.action_id,
+                            && app.selected_action_id == action_id,
                     )
                     .show(ui, |ui| {
-                        for (direction, direction_data) in action.directions.iter().enumerate() {
-                            let direction = direction as u8;
-                            egui::CollapsingHeader::new(format!("Direction {}", direction))
+                        for direction in 0..DIRECTION_COUNT as u8 {
+                            let positions =
+                                sequence_direction_frame_positions(&seq, action_id, direction)
+                                    .unwrap_or_default();
+                            let title = if direction < FIRST_STORED_DIRECTION {
+                                format!(
+                                    "Direction {} (mirror of {})",
+                                    direction,
+                                    MIRROR_DIRECTION_SUM - direction
+                                )
+                            } else {
+                                format!("Direction {}", direction)
+                            };
+                            egui::CollapsingHeader::new(title)
                                 .id_salt((
                                     "uocf_anim_sequence_direction",
                                     collapse_revision,
-                                    seq.body_id,
-                                    action.action_id,
+                                    body_type,
+                                    action_id,
                                     direction,
                                 ))
                                 .default_open(
                                     collapse_revision == 0
-                                        && app.selected_action_id == action.action_id
+                                        && app.selected_action_id == action_id
                                         && app.selected_direction == direction,
                                 )
                                 .show(ui, |ui| {
-                                    if direction_data.frame_indices.is_empty() {
+                                    if positions.is_empty() {
                                         ui.label("No frames.");
                                     }
-                                    for (frame_index, source_frame) in
-                                        direction_data.frame_indices.iter().enumerate()
-                                    {
+                                    for (frame_index, source_frame) in positions.iter().enumerate() {
                                         let selected =
-                                            app.selected_action_id == action.action_id
+                                            app.selected_action_id == action_id
                                                 && app.selected_direction == direction
                                                 && app.current_frame_idx == frame_index;
                                         if ui
@@ -2122,7 +2113,7 @@ fn show_sequence_animation_tree(
                                             )
                                             .clicked()
                                         {
-                                            app.selected_action_id = action.action_id;
+                                            app.selected_action_id = action_id;
                                             app.selected_direction = direction;
                                             app.current_frame_idx = frame_index;
                                             app.last_frame_time = ctx.input(|input| input.time);
@@ -2133,6 +2124,29 @@ fn show_sequence_animation_tree(
                     });
             }
         });
+}
+
+/// Body under which the frames of the selected body type are stored: the stored id of its
+/// `AnimationSequence.uop` entry when one is loaded, else the selected id.
+fn selected_frames_body_id(app: &UopInspectorApp) -> u32 {
+    match &app.selected_anim_sequence {
+        Some((body_type, sequence)) if *body_type == app.selected_anim_id => sequence.stored_id,
+        _ => app.selected_anim_id,
+    }
+}
+
+/// Entry positions, in the action's `AnimationFrame` entry, of the frames of `direction` of
+/// `action`, resolved like the client. A mirrored direction lists the frames of its source
+/// direction, unflipped. Assumes frame numbers without gaps (position = number - 1).
+fn sequence_direction_frame_positions(
+    sequence: &AnimationSequence,
+    action: u16,
+    direction: u8,
+) -> Option<Vec<usize>> {
+    let action = sequence.resolve_action(u32::from(action), FLYING_ANIMATIONS_ENABLED)?;
+    let frames = sequence.direction_frames(action, direction)?;
+    let first = (frames.first_frame_number - FIRST_FRAME_NUMBER) as usize;
+    Some((first..first + frames.count as usize).collect())
 }
 
 fn selected_mul_source_index(app: &UopInspectorApp, body_id: u32) -> eyre::Result<u32> {

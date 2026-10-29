@@ -1096,18 +1096,12 @@ fn load_animation_sequences(
     pb.enable_steady_tick(Duration::from_millis(100));
     for body_id in body_ids {
         pb.inc(1);
-        for path in [
-            format!("data/animationsequence/{body_id:06}.bin"),
-            format!("build/animationsequence/{body_id:08}.bin"),
-        ] {
-            let hash = hash_file_name_single(&path);
-            let Some(data) = package.unpack_file_by_hash_cached(hash)? else {
-                continue;
-            };
-            if let Ok(sequence) = AnimationSequence::parse_ec(&data, body_id) {
-                sequences.insert(body_id, sequence);
-                break;
-            }
+        let hash = hash_file_name_single(&AnimationSequence::entry_path(body_id));
+        let Some(data) = package.unpack_file_by_hash_cached(hash)? else {
+            continue;
+        };
+        if let Ok(sequence) = AnimationSequence::parse(&data) {
+            sequences.insert(body_id, sequence);
         }
     }
     pb.finish_with_message(format!("EC mobile animation sequences loaded ({})", sequences.len()));
@@ -1134,67 +1128,43 @@ fn build_animation_records(
     build_animation_records_for_body_frames(&source_frame_indices_by_body, placements, sequences)
 }
 
+/// TEMPORARY (AnimationSequence rewrite, batch 1 of 2): `sequences` is not used yet.
+///
+/// The previous `AnimationSequence::parse_ec` decoded no client entry except bodies 0..2, which
+/// it read as actions without directions, so every other body took the single action 0 /
+/// direction 0 record below. The client-accurate parser decodes every entry, but its model has no
+/// per-direction frame lists; until this builder emits per-action, per-direction records from it
+/// (directions 3..7, mirrored 0..2, aliases, fps, skipped frames), every body keeps that record.
 fn build_animation_records_for_body_frames(
     source_frame_indices_by_body: &BTreeMap<u32, Vec<u16>>,
     placements: &HashMap<(u32, u16), FramePlacement>,
-    sequences: &HashMap<u32, AnimationSequence>,
+    _sequences: &HashMap<u32, AnimationSequence>,
 ) -> eyre::Result<(Vec<MobileAnimEcAnimationRecord>, Vec<MobileAnimEcFrameRecord>)> {
     let mut animations = Vec::new();
     let mut frames = Vec::new();
 
     for (&body_id, source_frame_indices) in source_frame_indices_by_body {
-        if let Some(sequence) = sequences.get(&body_id) {
-            let mut action_ids = sequence.actions.keys().copied().collect::<Vec<_>>();
-            action_ids.sort_unstable();
-            for action_id in action_ids {
-                let action = &sequence.actions[&action_id];
-                for (direction, direction_data) in action.directions.iter().enumerate() {
-                    if direction > u8::MAX as usize || direction_data.frame_indices.len() > u16::MAX as usize {
-                        continue;
-                    }
-                    let animation_index = animations.len() as u32;
-                    let frame_start = frames.len() as u32;
-                    for (frame_index, &source_frame_index) in direction_data.frame_indices.iter().enumerate() {
-                        frames.push(frame_record_from_placement(
-                            animation_index,
-                            frame_index as u16,
-                            source_frame_index,
-                            placements.get(&(body_id, source_frame_index)),
-                        ));
-                    }
-                    animations.push(MobileAnimEcAnimationRecord {
-                        body_id,
-                        action_id,
-                        direction: direction as u8,
-                        frame_start,
-                        frame_count: (frames.len() as u32 - frame_start) as u16,
-                        flags: 0,
-                    });
-                }
-            }
-        } else {
-            if source_frame_indices.len() > u16::MAX as usize {
-                continue;
-            }
-            let animation_index = animations.len() as u32;
-            let frame_start = frames.len() as u32;
-            for &source_frame_index in source_frame_indices {
-                frames.push(frame_record_from_placement(
-                    animation_index,
-                    source_frame_index,
-                    source_frame_index,
-                    placements.get(&(body_id, source_frame_index)),
-                ));
-            }
-            animations.push(MobileAnimEcAnimationRecord {
-                body_id,
-                action_id: 0,
-                direction: 0,
-                frame_start,
-                frame_count: (frames.len() as u32 - frame_start) as u16,
-                flags: 0,
-            });
+        if source_frame_indices.len() > u16::MAX as usize {
+            continue;
         }
+        let animation_index = animations.len() as u32;
+        let frame_start = frames.len() as u32;
+        for &source_frame_index in source_frame_indices {
+            frames.push(frame_record_from_placement(
+                animation_index,
+                source_frame_index,
+                source_frame_index,
+                placements.get(&(body_id, source_frame_index)),
+            ));
+        }
+        animations.push(MobileAnimEcAnimationRecord {
+            body_id,
+            action_id: 0,
+            direction: 0,
+            frame_start,
+            frame_count: (frames.len() as u32 - frame_start) as u16,
+            flags: 0,
+        });
     }
 
     Ok((animations, frames))

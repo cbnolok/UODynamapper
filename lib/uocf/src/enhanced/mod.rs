@@ -3,6 +3,7 @@
 //! For a detailed overview of the file relationships and architectural choices,
 //! see [ENHANCED_CLIENT_FILES.md](ENHANCED_CLIENT_FILES.md).
 
+pub mod animation_definition;
 pub mod animationframe;
 pub mod classic_tile_mapper;
 pub mod effect_definition;
