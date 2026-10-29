@@ -7,7 +7,9 @@ The Enhanced Client (`UOSA.exe`, Ghidra project `UOSA`) stores effect definition
 
 One recursive reader decodes both: `UOEffects::ParseEffectDefinition`, through a table of type-keyed
 factories. This document gives the format the client parses, what the fields mean, the verification
-against the shipped data, and a parser specification for the repo.
+against the shipped data, and a parser specification for the repo. The sections from "Load path" on
+describe how the client uses `EffectDefinitionCollection.uop` at run time: how an entry is loaded, which
+packets select it, how the composite types behave, and where particle names are resolved.
 
 Conventions:
 
@@ -119,7 +121,7 @@ item flies but not when it lies on the ground. The meaning of 0 versus 1 is not 
 | # | Type | Name | Meaning | Confidence |
 |---:|---|---|---|---|
 | 1 | u32 | count | number of children | confirmed |
-| 2 | count x definition | children | each child is appended through Init (vtable +0x18). Instantiate takes the child at index +0x14 and advances that index. | confirmed / probable |
+| 2 | count x definition | children | each child is appended through Init (vtable +0x18). Instantiate takes the child at index +0x14 and advances that index modulo the count (see "Runtime semantics"). | confirmed |
 
 The Create calls ParseEffectDefinition directly, but the bytes are the same as an effect list.
 
@@ -133,19 +135,20 @@ The Create calls ParseEffectDefinition directly, but the bytes are the same as a
 
 | # | Type | Name | Stored at | Meaning | Confidence |
 |---:|---|---|---|---|---|
-| 1 | list | children | +0x04 | effects fired by the timer | confirmed |
+| 1 | list | children | +0x04 | effects played when the throttle allows | confirmed |
 | 2 | u32 | min_delay_ms | +0x14 | default 2000 | confirmed |
 | 3 | u32 | max_delay_ms | +0x18 | default 4000 | confirmed |
-| 4 | u8 | aligned | +0x1c | stored as `value == 1`. Any value other than 0 or 1 clears the context's ok byte. When set, the next fire time is aligned to a multiple of min_delay_ms. | confirmed / probable |
+| 4 | u8 | aligned | +0x1c | stored as `value == 1`. Any value other than 0 or 1 clears the context's ok byte. When set, the next fire time is aligned to a multiple of min_delay_ms. | confirmed |
 
-`Instantiate` 0x0040d9b0 uses QueryPerformanceCounter milliseconds. It fires when now >= next (+0x20), then
-schedules the next time at a random point in [min, max].
+`Instantiate` 0x0040d9b0 uses QueryPerformanceCounter milliseconds. It plays the children only when
+now >= next (+0x20), then schedules the next time; it is a throttle, not a repeating timer (see "Runtime
+semantics").
 
 ### 11 LOD (Create 0x0083b9a6)
 
 | # | Type | Name | Meaning | Confidence |
 |---:|---|---|---|---|
-| 1 | map | levels | LOD level -> children. Instantiate runs the entry for the global effect LOD level. | confirmed / probable |
+| 1 | map | levels | LOD level -> children. Instantiate runs the entry for `g_UOParticleLODLevel`, falling back to lower keys (see "Runtime semantics"). | confirmed |
 
 ### 12 PropertyFlag (Create 0x0083bb65)
 
@@ -184,13 +187,13 @@ In mode 0, no match produces nothing.
 | # | Type | Name | Meaning | Confidence |
 |---:|---|---|---|---|
 | 1 | u32 | count | number of entries | confirmed |
-| 2 | count x {f32 weight, list} | entries | Instantiate picks one entry, weighted by these values | confirmed / probable |
+| 2 | count x {f32 weight, list} | entries | weights are percentages; Instantiate picks one entry or nothing (see "Runtime semantics") | confirmed |
 
 ### 17 UserPreference (Create 0x0083bcc1)
 
 | # | Type | Name | Stored at | Meaning | Confidence |
 |---:|---|---|---|---|---|
-| 1 | u32 | mask | +0x04 | the children are skipped when `(mask & user effect setting DAT_00e33584) == mask`, or when mask == 1 and object vt+0xa0 < 0 | probable |
+| 1 | u32 | mask | +0x04 | the children are skipped when `(mask & user effect setting `g_UOUserEffectFilter` 0x00e33584) == mask`, or when mask == 1 and object vt+0xa0 < 0. Bit 0 = footsteps disabled. | confirmed |
 | 2 | list | children | +0x08 | | confirmed |
 
 ## Verification against the shipped data
@@ -288,16 +291,200 @@ Value distributions:
   - +0x4: destructor;
   - +0xc: GetCount;
   - +0x10: GetDefinition.
-- **Lookup by effect id.** `FUN_004220c0` (not renamed) looks up an effect id:
-  - When the id is missing, it logs `Missing Effect Definition %d` and falls back to id 0.
-  - A collection with one definition returns that definition.
-  - Otherwise, all the definitions are wrapped in a `UOEffectContainerDefinition`.
-- **Server effect ids.** The collection ids are therefore the server's effect ids.
+- **Lookup by effect id.** `UOEffects::InstantiateEffectById` 0x004220c0 looks up an effect id; see
+  "Load path" below.
+- **Server effect ids.** The collection id is the 0xC0/0xC7 packet effect field minus 1; see "Keying".
 - **Other readers.** Two other readers of the same format exist:
   - `FUN_0083c0ba`, a larger asset that embeds effect collections per entry;
   - `FUN_004b93d0`, which reads u32 id, u8 count and that many definitions.
 
   Neither was decoded further.
+
+## Load path
+
+| Item | Address | What it does |
+|---|---|---|
+| `UOEffects::InstantiateEffectById` | 0x004220c0 | cdecl (out ok, u32 id, out effect shared_ptr, object). The only user of the string `Missing Effect Definition %d\n` (0x00c9e6e8). |
+| asset request | `FUN_004cb8c0` | builds the request {id, 0x0d000000} for `g_UOAssetManager` (0x00e37220) |
+| `UOEffects::InstantiateAndRegister` | 0x00421b70 | (ECX definition, ESI ok, EDI out, EDX object): definition Instantiate (vtable +8); on success pushes the effect into `g_UOActiveEffects` |
+| `UOEffects::InstantiateAndRegisterByValue` | 0x00421b20 | the same, taking the definition shared_ptr by value |
+| `g_UOActiveEffects` | 0x00e32d68 | `std::list` of every running effect (head pointer 0x00e32d6c) |
+| `UOEffects::UpdateActiveEffects` | 0x004218d0 | per frame: Update (+0x14) on each effect; if IsFinished (+0x10), Release (+0x18) and erase. It also updates the weather subsystem. |
+| `UOEffects::ReleaseActiveEffects` | 0x00421a20 | releases every effect and clears the list |
+
+`InstantiateEffectById` does the following (**confirmed**):
+
+1. **Load.** The entry is requested synchronously from the asset manager on first use, then served from the
+   manager's cache. There is no preload. The entry name is `build/effectdefinitioncollection/%08d.bin`
+   (asset type 0x0d000000).
+2. **Missing id.** It logs `Missing Effect Definition %d` and repeats the request with id 0 (a
+   `Placeholder01.ems` particle). If id 0 is missing too, ok is cleared and nothing plays.
+3. **One definition.** It is instantiated directly with the object argument and registered.
+4. **Several definitions.** A `UOEffectContainerDefinition` is instantiated and registered, and each
+   top-level definition is instantiated as a child of that one `UOEffectContainer`. **All the top-level
+   definitions of an entry play at the same time**; there is no sequencing.
+
+`UOEffectContainer` (vftable 0x00c9e15c) forwards Start, Stop, SetVisible, SetPosition and the +0x24 vector
+to every child. It is finished when it has no children left (Update releases and erases finished children).
+GetKind returns 6. Its +0x30 slot (lifetime ticks) is a shared no-op, so a packet duration does not reach the
+children of a multi-definition entry.
+
+## Keying: packets and fixed ids
+
+The collection id is the effect number. These are all the code paths that select an entry (the 5 call
+sites of `InstantiateEffectById`; **confirmed**):
+
+| Caller | Address | Effect id |
+|---|---|---|
+| `UOEffects::PlayEffectAtTile` | 0x00421130 | from `UOEffects::PlayGraphicalEffect` (packets 0x70/0xC0/0xC7): `effect - 1`, or 666 for lightning |
+| `UOProjectileEffect::SpawnExplosion` | 0x0044ca90 | `explode effect - 1` of a moving effect (0xC7); 0 selects the classic tile effect 0x36CB for 10 ticks instead |
+| `UOEffects::ShowTargetIndicator` | 0x005cfb70 | 10001 (`Splat_Golden.nif` + `Splat_Splash.nif`), attached to the new current target. It is called by the set-current-target function `FUN_005cfa70` when the target type is 2 and the option byte `DAT_00e33657` is 0. The effect is kept in a global and the previous one is stopped. |
+| `UOWaypoints::SetWaypointEffect` (probable) | 0x005d29e0, 2 sites | `FUN_005d49d0(waypoint type)`: a per-type id table (`[this+0x34]`, index from a map; an unknown type uses index 0). It is attached to the waypoint's mobile/item, or to a placeholder object created at its location. It is reached from the Lua `UOCreateUserWaypoint` paths. Probably ids 20000-20011. |
+
+### Packet handlers
+
+| Packet | Handler (`UOObjectManager` callback, registered in `FUN_005bc540`) | Reader | Field copier |
+|---|---|---|---|
+| 0x70 | `UOObjectManager::Receive_0x70_GraphicalEffect` 0x005c0140 | `UOPacket::Read_0x70_GraphicalEffect` 0x005bb1a0 | `UOEffects::PlayGraphicalEffect_0x70` 0x00421e60 |
+| 0xC0 | `UOObjectManager::Receive_0xC0_HuedEffect` 0x005c01c0 | `UOPacket::Read_0xC0_HuedEffect` 0x005bb4e0 | `UOEffects::PlayGraphicalEffect_0xC0` 0x00421f10 |
+| 0xC7 | `UOObjectManager::Receive_0xC7_ParticleEffect` 0x005c0240 | `UOPacket::Read_0xC7_ParticleEffect` 0x005bb770 | `UOEffects::PlayGraphicalEffect_0xC7` 0x00421fd0 |
+
+Each copier fills a 0x38-byte record from the parsed packet and calls `UOEffects::PlayGraphicalEffect`
+0x00421220. The 0x70 copier leaves hue, render mode and effect at 0. The 0xC0 copier adds hue and render
+mode. The 0xC7 copier also copies the effect, explode effect, explode sound, the serial, the layer and two
+trailing bytes. Only the three copiers call the dispatcher. No use of an effect id was found for 0x54
+(sound), 0xBF or the Lua API (Lua reaches the collection only through the waypoint path).
+
+`PlayGraphicalEffect` switches on the packet type (**confirmed**):
+
+| Type | Action |
+|---|---|
+| 0 moving | `UOEffects::MakeProjectileEffect` 0x00420a90: a `UOProjectileEffectDefinition` (item id, hue + 1, speed, serials, explode flags, explode effect and sound, render mode). It has its own particle filter test. |
+| 1 lightning | particle filter on the source serial, then `PlayEffectAtTile(666, ticks 0)` (`lightning.ems`) |
+| 2 fixed location, 3 fixed on mobile | Gets the source object (type 3 without an object plays nothing), then tests `UOEffects::IsParticleFiltered(serial, location = type == 2)`. Effect 9501 (0x251D) plays nothing. Effect 0 or 9502 (0x251E) plays the classic item effect `UOEffects::MakeTileEffect` 0x00420e10, if the item id is non-zero. Any other effect plays `PlayEffectAtTile(effect - 1)`, with the packet duration as lifetime ticks for type 2 and 0 for type 3; type 3 then attaches the effect to the object's effects component (`FUN_00443e90`). |
+| 4 | screen fade: a `UOFadeEffectDefinition` from the item id |
+
+Consequences:
+
+- **Packet effect value.** `effect - 1` is the collection id (verified by name: packet effect 5002 = id 5001
+  `00005001_clumsy`, and the like). Ids reachable from packets are 0..65534.
+- **Effect 0.** Packet effect 0 is not id -1: it means "no EC effect, use the item id".
+- **9501 and 9502.** Packet 9501 and 9502 never reach ids 9500/9501 through this path. Collection 9501
+  (`00009501_Null.nif`) and 9502 (`fizzle.ems`) are reached as packet values 9502 and 9503.
+- **Hue and render mode.** `PlayEffectAtTile` passes object 0, so collection effects ignore the packet hue
+  and render mode. A `hued` particle needs an object hue, so it is never hued on this path. PropertyFlag
+  has no object to read either.
+- **Position.** `PlayEffectAtTile` sets the effect at the packet location. Type 3 then follows the mobile,
+  because the effects component moves its effects when the object moves.
+
+`UOEffects::IsParticleFiltered` 0x0049a800 (serial, serial high, location effect) uses the user setting
+`g_UOParticleFilter` 0x00e33580. The setting comes from the settings file (`Particles` element, `filter`
+attribute, default 3) and from Lua `SystemData.Settings.Resolution.particleFilter`.
+
+| Value | UI (cliloc) | Shown |
+|---:|---|---|
+| 0 | None (1112331) | nothing |
+| 1 | Player/Target | effects on the player and on the current target, and location effects |
+| 2 | Party/Target | as 1, plus party members |
+| 3 | All (default) | everything |
+| 4 | Hide AoE (1158020) | everything except location effects |
+
+## Runtime semantics
+
+All of the following are **confirmed** in the assembly unless marked.
+
+- **Lifetime ticks.** IUOEffect vtable +0x30 (`SetLifetimeTicks`) stores an update countdown.
+  `UOParticleEffectNif` keeps it at +0x40 and `UOParticleEffectChaos` at +0x3c. Init sets it to -1 (no
+  limit). Update decrements it while it is positive, and IsFinished is true at 0. The packet duration
+  byte is therefore a count of update ticks (frames), not seconds. It applies only to single-definition
+  entries, because the container ignores it. The particle `duration` field (seconds) is independent of it.
+- **Chaos stop.** `UOParticleEffectChaos::Stop` clears active (+0x24) and sets stopping (+0x25); the loop
+  flag is +0x26. After Stop, Update advances a fade timer (+0x2c) and keeps updating the node until 5.0 s
+  (constant 0x00c98590). IsFinished (probable in detail) is true when the countdown is 0 or the fade
+  timer reached 5 s, and false while fading. While active, it is true once no particle system of the node is
+  alive.
+- **RoundRobin** (`UORoundRobinEffectCollection::Instantiate` 0x0040e330): instantiates child[index]
+  directly (no container), then sets `index = (index + 1) % count`. The index (+0x14) belongs to the
+  definition, so it is shared by every use of that definition: all objects of one tile id, and every play of
+  one collection entry.
+- **Wait** (`UOWaitCollectionDefinition::Instantiate` 0x0040d9b0): a throttle evaluated only when the
+  definition is instantiated. It never fires again by itself.
+  - The time base is QueryPerformanceCounter in ms. `next` (+0x20, per definition) starts at 0, so the
+    first use fires.
+  - When `now >= next`, it sets `next = now + min`. With `aligned`, it is instead `now + (min - now % min)`,
+    the next multiple of min. It then adds an MT19937 uniform integer in [0, max - min] and instantiates all
+    children in a new container.
+  - Otherwise it produces nothing, with ok still set.
+  - The only collection Wait is id 70003 (thunder flash plus two sounds 43; 500/2000 ms, not aligned).
+- **Random** (`UORandomEffectCollectionDefinition::Instantiate` 0x0040de80): `r = u32 * 2^-32 * 100`
+  (MT19937 `FUN_0099aa85`), so r is in [0, 100). It walks the entries in order: if `r < weight`, it plays
+  that entry's children; otherwise `r -= weight`. **Weights are percentages.** If the weights sum to less
+  than 100, the remainder plays nothing; any excess beyond 100 is unreachable.
+- **LOD** (`UOEffectLODDefinition::Instantiate` 0x0040cfd0): the key is `g_UOParticleLODLevel`
+  0x00e3357c. That comes from the settings file (`Particles` element, `lod` attribute, decimal, accepted
+  when < 4, default 3), and from Lua `SystemData.Settings.Resolution.particleLOD`, where the UI combo Low /
+  Medium / High (cliloc 1079210-1079212) maps to 1..3. A missing key falls back to the next lower key, down
+  to 0. If none matches, it plays nothing.
+- **UserPreference** (`UOUserPrefEffectFilterDefinition::Instantiate`): the setting is
+  `g_UOUserEffectFilter` 0x00e33584.
+  - It comes from the settings file (`Effects` element, `filter` attribute, hex, reset to 0 before reading;
+    default 0).
+  - Bit 0 is set when footsteps are disabled. Both the sound settings `Footsteps` element (`FUN_0048d330`)
+    and Lua `SystemData.Settings.Sound.footsteps.enabled` (`FUN_00499860`) set it. No other bit is
+    written.
+  - The children are skipped when `(mask & setting) == mask`, or when the mask is 1 and the object's
+    vtable +0xa0 is negative.
+- **PositionOffset:** `UOPositionOffset` (0x50 bytes) holds the 8 offsets but nothing reads them. There is no
+  dynamic_cast of its type descriptor (ProbeEffColl05), and it reports finished at once. It is inert in this
+  build, and no data uses it.
+- **PropertyFlag and Earthquake:** as documented under "Formats per type". PropertyFlag needs an object, so
+  in collection entries played from packets (object 0) only the default children of mode 1 can play.
+- **Double registration** (probable quirk, not checked at run time). The composite Instantiates (LOD, Wait,
+  UserPreference, Random, `UOEffectCollectionDefinition`) build their container through
+  `InstantiateAndRegisterByValue`, so it is registered in `g_UOActiveEffects`. The caller's
+  `InstantiateAndRegister` then registers the returned container again. A composite at top level is
+  therefore updated twice per frame, which halves tick-based lifetimes.
+
+## Particle resource resolution
+
+Both particle kinds build the path `"Data/Effects/" + name` (string 0x00c9e6d8, appended with
+`FUN_00423ec0`). The file is opened through Gamebryo's virtual file system (`NiFile::ms_pfnFileCreateFunc`),
+which the client points at its UOP packages (**confirmed**).
+
+- **`.nif` → `UOParticleEffectNif`** (`FUN_00421be0`): caches the loaded scene per name in the map
+  `DAT_00e32d74`, under the critical section 0x00e32d4c. It loads with `NiStream` (`FUN_00681960`,
+  `FUN_00683470`), and each instance clones the cached scene (`FUN_00420200`). A failure logs `Unable to
+  load particle nif %s`.
+- **`.ems` → `UOParticleEffectChaos`** (`FUN_00421d70`): the Chaos `ParticleSystemManager` (`DAT_00e32da8`).
+  1. `FUN_008a7920` uppercases the path and checks the manager's cache.
+  2. It requires the `EMS` extension (an `EMI` check also exists).
+  3. It parses the text script (`FUN_0089ec30`, a `particlesystem "<NAME>" <version> { eventSequence ...
+     }` file).
+  4. `_splitpath` gives the file name, and `FUN_008a7ca0` instantiates the cached system by its uppercase
+     name.
+
+  An `.ems` script names further `.nif` meshes and `.tga` textures, also resolved under `Data/Effects/`.
+- **Package.** The files are entries of **`EffectTexture.uop`** named `data/effects/<lowercase file name>`.
+  Checked with the UOP name hash for the collection's 258 distinct names: 254 resolve (233 `.nif`, 21 `.ems`).
+  The `.tga` and `.nif` names referenced from `.nif` and `.ems` files also resolve there.
+- **Missing names.** Four names have no entry: `00009011_TrailEarth1s.nif`, `00009500_ColorSwirl.nif`,
+  `00009501_Null.nif` (the "nothing" effect, apparently on purpose) and
+  `00009533_Life_Tap_Send_Impact.nif`. The client then logs the error and plays nothing.
+
+## Tileart effects vs collection effects
+
+| | Tileart effects | Collection effects |
+|---|---|---|
+| Source | the record of the item's graphic | an entry of `EffectDefinitionCollection.uop`, keyed by the packet effect - 1 or a fixed id |
+| Instantiated by | `UOObject::CreateComponents` 0x005befd0, once per world object creation; also `UOTileEffect::Init` 0x00466940 (classic 0x70/0xC0/0xC7 item effects and the projectile explosion 0x36CB) and `UOProjectileEffect::Init` 0x0044bb40 (the moving item) | `UOEffects::InstantiateEffectById` per packet or event |
+| Object | the world object: hue, `hued` and PropertyFlag work | none for packet effects (no hue, no PropertyFlag); the target or waypoint object for the indicator and waypoints |
+| attach_mode | `CreateComponents` skips particles with attach_mode 2 (`PARTICLE_ATTACH_PROJECTILE_ONLY`). `UOTileEffect::Init` and `UOProjectileEffect::Init` instantiate every particle. | not tested (all collection particles are 1) |
+| Ownership | registered in `g_UOActiveEffects` and added to the object's `UOObjectComponentEffects` (component id 4, vftable 0x00c9fb44; `FUN_00443e90` AddEffect). The component sets visibility and position, follows the object (`HandleNotify` message 1) and stops everything when the component is cleared (+0x8); it never updates the effects. | registered in `g_UOActiveEffects`; type 3, the indicator and waypoints are also added to the object's component |
+| Lifetime | the object's: started once; ends when the effect finishes or the component is cleared | the effect's own end, or the packet duration in ticks (type 2, single definition) |
+
+So a classic packet effect (effect field 0, or 0x70) still gets Enhanced Client particles, through the
+tileart effects of its item id. RoundRobin and Wait state in tileart effects advances per object creation
+and is shared by all objects of the same graphic.
 
 ## Rust parser specification
 
@@ -384,7 +571,6 @@ Some slots were left unnamed because of shared code. These are `UOParticleEffect
 The following are not renamed:
 
 - the registration function `FUN_004af590`;
-- the effect id lookup `FUN_004220c0`;
 - the other readers `FUN_0083c0ba` and `FUN_004b93d0`.
 
 ### Round 3 (unknown fields)
@@ -397,29 +583,117 @@ hand are kept). `--apply` updated 3 types and refreshed 2 plate comments
 reported no changes. `UOObject::CreateComponents` (named by `NameTileartCode.java`) now mentions the attach
 mode test in its plate comment.
 
+### Round 4 (run-time use)
+
+`NameEffectCode.java` step 7 (`runtimeUse`) names the effect-id lookup, the active-effect list and the
+graphical-effect packet chain from locators (no fixed addresses):
+
+| Evidence | Finds |
+|---|---|
+| only user of the string `Missing Effect Definition %d\n` | `UOEffects::InstantiateEffectById` |
+| callee of the lookup whose single callee makes the Instantiate virtual call (+8) | `UOEffects::InstantiateAndRegisterByValue`, `UOEffects::InstantiateAndRegister` |
+| address taken by InstantiateAndRegister and used by exactly two other functions, one with an Update (+0x14) virtual call | `g_UOActiveEffects`, `UOEffects::UpdateActiveEffects`, `UOEffects::ReleaseActiveEffects` |
+| callers of the lookup: scalar 10001 / callee of `UOProjectileEffect` +0x14 / virtual call +0x30 / the remaining one | `UOEffects::ShowTargetIndicator`, `UOProjectileEffect::SpawnExplosion`, `UOEffects::PlayEffectAtTile`, `UOWaypoints::SetWaypointEffect` (probable) |
+| single caller of PlayEffectAtTile | `UOEffects::PlayGraphicalEffect` |
+| dispatcher callees whose first instruction reads a global the dispatcher also reads / that write the `UOProjectileEffectDefinition` / `UOTileEffectDefinition` vftables | `UOEffects::IsParticleFiltered` + `g_UOParticleFilter`, `UOEffects::MakeProjectileEffect`, `UOEffects::MakeTileEffect` |
+| the three callers of the dispatcher, ordered by the largest packet field offset they read (0x1e, 0x24, 0x36) | `UOEffects::PlayGraphicalEffect_0x70` / `_0xC0` / `_0xC7` |
+| single caller of each copier; the call before the copier in it | `UOObjectManager::Receive_0x70_GraphicalEffect` / `Receive_0xC0_HuedEffect` / `Receive_0xC7_ParticleEffect`; `UOPacket::Read_0x70_GraphicalEffect` / `Read_0xC0_HuedEffect` / `Read_0xC7_ParticleEffect` |
+| the single global read by the LOD / UserPreference Instantiate | `g_UOParticleLODLevel`, `g_UOUserEffectFilter` |
+
+New vtable slots: `UOEffectContainer` (Start, Stop, SetVisible (probable), IsFinished, Update, Release,
+SetPosition, GetKind (probable), ScalarDeletingDestructor (probable), Init (probable)),
+`UOEffectContainerDefinition::Instantiate`, `UOEffectCollectionDefinition::Instantiate`,
+`UOParticleEffectChaos` (Start, Stop, IsFinished (probable), Release (probable), SetLifetimeTicks),
+`UOProjectileEffect` (Update, Init; probable), `UOTileEffect` (IsFinished (probable), Update, Init),
+`UOObjectComponentEffects::HandleNotify` (probable). `UOParticleEffectNif::SetLifetimeTicks` 0x0041af00 is
+shared with a second vtable and stays unnamed. The plate comments of the RoundRobin, LOD, Random and
+Chaos Update functions were refreshed (the old Chaos Update text called +0x25 the loop flag; it is the
+stopping flag).
+
+`virtualCallOffsets` now also recognises `MOV reg2, [vtable + disp]; CALL reg2`.
+
+`--apply` renamed 45 functions (tags and plate comments set), created 4 labels and 2 namespaces
+(`UOWaypoints`, `UOPacket`), and refreshed 4 plate comments, with no anomalies. A second `--apply`
+reported `Changes: none`. The program was saved.
+
 ## Proposed Rust changes
 
-Not applied; for `lib/uocf/src/enhanced/effect_definition.rs`.
+Not applied. The changes are for `lib/uocf/src/enhanced/effect_definition.rs` as of 914634cf, plus one
+line in `ENHANCED_CLIENT_FILES.md`. The earlier items (attach_mode, field_3c, value_08) are already in.
 
-1. `ParticleEffect::field_30: u8` -> `attach_mode: u8`, with
-   `pub const PARTICLE_ATTACH_PROJECTILE_ONLY: u8 = 2;` doc: "The client does not attach the effect to the
-   world object; it plays only while the item is shown in flight (thrown models). Client data: 2 on thrown
-   models, 0 on arrows, 1 elsewhere; the client treats 0 and 1 alike." Field doc: "Attach mode
-   (confirmed for `PARTICLE_ATTACH_PROJECTILE_ONLY`); see the constant."
-2. `ParticleEffect::field_3c` doc: "Must be 0: the client refuses to start a Nif effect when it is 1 and a
-   Chaos (`.ems`) effect when it is non-zero (confirmed); 0 in all client data. Meaning of other values
-   unknown."
-3. `SoundEffect::value_08` doc: "Copied into the sound instance but never read by the client (confirmed);
-   1.0 in all client data, probably an intended gain." Keep the name.
-4. Tests and fixtures that build `ParticleEffect { field_30: .. }` follow the rename.
+1. **Effect id constants** (module level, documented as client behaviour):
 
-## Uncertainties
+   ```rust
+   /// Collection id = packet (0xC0/0xC7) effect field - EFFECT_ID_PACKET_BIAS.
+   pub const EFFECT_ID_PACKET_BIAS: u32 = 1;
+   /// Packet effect value that plays nothing.
+   pub const PACKET_EFFECT_NONE: u16 = 9501;
+   /// Packet effect values that play the classic item (tileart) effect instead of a collection entry.
+   pub const PACKET_EFFECT_CLASSIC: u16 = 9502;   // 0 behaves the same
+   /// Collection id substituted for a missing id (Placeholder01.ems).
+   pub const EFFECT_ID_FALLBACK: u32 = 0;
+   /// Collection id of packet type 1 (lightning).
+   pub const EFFECT_ID_LIGHTNING: u32 = 666;
+   /// Collection id of the current-target indicator.
+   pub const EFFECT_ID_TARGET_INDICATOR: u32 = 10001;
+   ```
 
-- Particle attach mode: the difference between 0 (arrows) and 1 is not visible in the client.
-- field_3c: what a non-zero value was meant for (1 is rejected by the Nif effect, any non-zero value by the
-  Chaos effect). Always 0 in the data.
-- Sound value_08: not read by the client (settled); its intended use (probably a gain) is unknown.
-- The axis names of the particle offsets are inferred from the Nif Init math, not from a rendered check.
-- UserPreference mask semantics: the bit meanings of `DAT_00e33584` (the user effect settings) weren't
-  traced.
-- The 2 collection entries whose names weren't recovered.
+   Optionally add `pub fn collection_id_from_packet_effect(effect: u16) -> Option<u32>`. It returns `None`
+   for 0, `PACKET_EFFECT_NONE` and `PACKET_EFFECT_CLASSIC`, and `effect - EFFECT_ID_PACKET_BIAS`
+   otherwise.
+2. **`parse_effect_definition_collection` doc:** "All top-level definitions play at the same time (one
+   container); there is no sequencing. A missing entry falls back to `EFFECT_ID_FALLBACK`."
+3. **`RandomEffect` / `RandomEffectEntry::weight`:** `pub const RANDOM_WEIGHT_TOTAL: f32 = 100.0;`. Weight
+   doc: "Percent (confirmed): the client draws r in [0, RANDOM_WEIGHT_TOTAL) and plays the first entry with
+   r < weight after subtracting the previous weights. A sum below RANDOM_WEIGHT_TOTAL leaves a chance of
+   nothing." Remove "(probable)" from the struct doc.
+4. **`RoundRobinEffect` doc:** confirmed. Add "The cycle index belongs to the definition: it is shared by
+   every object of the same graphic and every play of the same collection entry."
+5. **`WaitEffect` doc:** replace "fires its children on a timer" with "Throttle (confirmed): when
+   instantiated, plays its children only if the per-definition next time has passed. It then sets the next
+   time to now + `min_delay_ms` (next multiple of `min_delay_ms` when `aligned`) + uniform [0, max - min]
+   ms. It never fires again by itself." `aligned` becomes confirmed.
+6. **`LodEffect` doc:** "Plays the entry for the particle LOD setting (0..=`PARTICLE_LOD_MAX`, client
+   default `PARTICLE_LOD_DEFAULT`; UI Low/Medium/High = 1..3), falling back to the next lower key; nothing
+   if no key is <= the setting (confirmed)." Add `pub const PARTICLE_LOD_MAX: u32 = 3;` and
+   `pub const PARTICLE_LOD_DEFAULT: u32 = 3;`.
+7. **`UserPreferenceEffect` doc:** "(confirmed)". Note that the client only ever sets bit 0, so the other
+   bits are never set by the client.
+8. **`PositionOffsetEffect` doc:** add "Inert in this client build: the runtime object stores the offsets
+   but nothing reads them."
+9. **`ParticleEffect::duration` doc:** add "Independent of the packet duration, which the client applies as
+   an update-tick countdown (single-definition entries only)."
+10. **`ParticleEffect::name_index` doc:** add `pub const PARTICLE_RESOURCE_DIR: &str = "data/effects/";`,
+    with the doc "the file is the `EffectTexture.uop` entry `PARTICLE_RESOURCE_DIR` + lowercase name;
+    `.ems` files are Chaos text scripts naming further `.nif`/`.tga` files there."
+11. **`ENHANCED_CLIENT_FILES.md`:** under `EffectDefinitionCollection.uop`, add one bullet: "Entry id =
+    0xC0/0xC7 packet effect - 1; all top-level definitions play together; particle files are in
+    `EffectTexture.uop` under `data/effects/`."
+
+No format change is needed: the parser is already correct for all 269 entries.
+
+## Uncertainties and open questions
+
+- **Particle attach mode:** the difference between 0 (arrows) and 1 is not visible in the client.
+  Collection particles are all 1, and attach_mode is not tested on the collection path.
+- **field_3c:** what a non-zero value was meant for (1 is rejected by the Nif effect, any non-zero value by
+  the Chaos effect). Always 0 in the data.
+- **Sound value_08:** not read by the client (settled); its intended use (probably a gain) is unknown.
+- **Particle offset axes:** the axis names are inferred from the Nif Init math, not from a rendered check.
+- **UserPreference bits:** bit 0 is footsteps (settled). The client sets no other bit, so other mask bits
+  could only come from a hand-edited settings file.
+- **Unnamed entries:** 2 collection entries have no recovered name (`firefield02.ems`,
+  `poisonfield_rotated.ems`).
+- **Ids with no caller:** no code path selects 70000-70006 (weather). The weather uses its own
+  `UORainEffectDefinition` / `UOSnowEffectDefinition` classes, and packet ids stop at 65534. 10002-10004,
+  18000-18006 and 9999/10000 have no constant caller either; they are reachable only as packet effects.
+- **Waypoint table:** the source of the waypoint type → effect id table (`FUN_005d49d0`, `[this+0x34]`) was
+  not traced; ids 20000-20011 are inferred from the names.
+- **Double registration:** composite effects registered twice in `g_UOActiveEffects` (see "Runtime
+  semantics"). This is from the code only; it was not observed at run time.
+- **LOD key 0:** whether settings value 0 (below the UI's Low) is ever used; the data has no LOD
+  definitions.
+- **Missing resources:** the four particle names with no `EffectTexture.uop` entry (see "Particle resource
+  resolution").
+- **Other readers:** `FUN_0041a610` and `FUN_004b93d0`/`FUN_0083c0ba` (other InstantiateAndRegister users
+  and readers of the format) were not decoded.

@@ -3,7 +3,8 @@
 Names the code in `UOSA.exe` (Enhanced Client) that decodes effect definitions. These are the binary
 effect records that close every `tileart.uop` record and that make up the entries of
 `EffectDefinitionCollection.uop`. The script also names the runtime effects that those definitions
-instantiate.
+instantiate, the effect-id lookup, the active-effect list and the 0x70/0xC0/0xC7 graphical-effect packet
+chain that selects collection entries.
 
 Findings: [results/uosa_effects.md](results/uosa_effects.md) has:
 
@@ -11,7 +12,9 @@ Findings: [results/uosa_effects.md](results/uosa_effects.md) has:
 - the wire format of every effect type, with field meanings;
 - the data verification;
 - how the format relates to `EffectDefinitionCollection.uop`;
-- a Rust parser specification.
+- the run-time use of the collection: load path, packet keying, composite semantics, particle resource
+  resolution, and tileart vs collection effects;
+- a Rust parser specification and proposed Rust changes.
 
 ## NameEffectCode.java
 
@@ -27,7 +30,12 @@ NameEffectCode.java OUTPUT_FILE [--apply]
   - adds the tag `UO_EFFECTS`;
   - sets a plate comment `NameEffectCode: UO_EFFECTS <name> [(probable)]: <evidence>` when the comment is empty;
   - creates or updates the `/UOEffects` structure types (definition classes, wire records, MSVC containers);
-  - labels `g_UOEffectDefinitionFactories`.
+  - labels `g_UOEffectDefinitionFactories`, `g_UOActiveEffects`, `g_UOParticleFilter`,
+    `g_UOParticleLODLevel` and `g_UOUserEffectFilter`.
+- New names may also go in the namespaces `UOObjectManager`, `UOPacket` and `UOWaypoints`, and in RTTI
+  class namespaces of runtime effects.
+- Its own single-line plate comments are refreshed when the evidence text changes; comments edited by hand
+  are kept.
 - Names with another source type are never changed; they are listed under "Kept names".
 - A second `--apply` reports `Changes: none`.
 
@@ -53,11 +61,17 @@ doesn't depend on its address:
 | Common callee of the Wait, PropertyFlag, Random and UserPreference Creates that calls ParseEffectDefinition | `UOEffects::ParseEffectList` |
 | Callee of the LOD Create that calls ParseEffectList | `UOEffects::ParseEffectMap` |
 | RTTI `UOEffectDefinitionCollectionBinaryFactory` +4, then its callee that calls ParseEffectDefinition | collection Create, `UOEffects::ParseEffectDefinitionCollection`, `AddDefinition` (probable) |
-| RTTI vtables of `UOParticleEffectNif`, `UOParticleEffectChaos`, `UOHuedParticleEffectNif`, `UOSoundEffect`, `UOPositionOffset`, `UOEarthquakeEffect`, `BinaryUOEffectDefinitionCollection` | runtime effect slots |
+| RTTI vtables of `UOParticleEffectNif`, `UOParticleEffectChaos`, `UOHuedParticleEffectNif`, `UOSoundEffect`, `UOPositionOffset`, `UOEarthquakeEffect`, `UOEffectContainer`, `UOEffectContainerDefinition`, `UOEffectCollectionDefinition`, `UOProjectileEffect`, `UOTileEffect`, `UOObjectComponentEffects`, `BinaryUOEffectDefinitionCollection` | runtime effect slots |
+| Only user of the string `Missing Effect Definition %d\n` | `UOEffects::InstantiateEffectById` |
+| Its callee whose single callee makes the Instantiate (+8) virtual call; the address that callee takes, shared with two other functions | `InstantiateAndRegisterByValue`, `InstantiateAndRegister`, `g_UOActiveEffects`, `UpdateActiveEffects` (the one with an Update +0x14 call), `ReleaseActiveEffects` |
+| Callers of the lookup: scalar 10001; callee of `UOProjectileEffect` +0x14; virtual call +0x30; the remaining one | `ShowTargetIndicator`, `UOProjectileEffect::SpawnExplosion`, `PlayEffectAtTile`, `UOWaypoints::SetWaypointEffect` (probable) |
+| Single caller of PlayEffectAtTile; its callees that read a global it also reads first, or write the `UOProjectileEffectDefinition` / `UOTileEffectDefinition` vftables | `PlayGraphicalEffect`, `IsParticleFiltered` + `g_UOParticleFilter`, `MakeProjectileEffect`, `MakeTileEffect` |
+| The three callers of PlayGraphicalEffect, ordered by the largest packet field offset read; their single callers; the call before the copier | `PlayGraphicalEffect_0x70/0xC0/0xC7`, `UOObjectManager::Receive_0x..._*`, `UOPacket::Read_0x..._*` |
+| The single global read by the LOD and UserPreference Instantiates | `g_UOParticleLODLevel`, `g_UOUserEffectFilter` |
 | Functions that write all the derived factory vtables | registration function (reported with its order, not renamed) |
 
 Vtable slot functions referenced from more tables than their class and base vtables (identical-code
-folding) are skipped and reported. In this build that applies to 5 `UOParticleEffectNif` slots.
+folding) are skipped and reported. In this build that applies to 6 `UOParticleEffectNif` slots.
 
 The report also lists other callers of the readers (not renamed):
 

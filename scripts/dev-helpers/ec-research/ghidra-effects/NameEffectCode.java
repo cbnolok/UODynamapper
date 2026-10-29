@@ -33,6 +33,7 @@ import ghidra.program.model.mem.Memory;
 import ghidra.program.model.mem.MemoryBlock;
 import ghidra.program.model.scalar.Scalar;
 import ghidra.program.model.symbol.Namespace;
+import ghidra.program.model.symbol.RefType;
 import ghidra.program.model.symbol.Reference;
 import ghidra.program.model.symbol.SourceType;
 import ghidra.program.model.symbol.Symbol;
@@ -97,6 +98,30 @@ public class NameEffectCode extends GhidraScript {
 
     private static final String COLLECTION_FACTORY = "UOEffectDefinitionCollectionBinaryFactory";
     private static final String COLLECTION = "BinaryUOEffectDefinitionCollection";
+    private static final String CONTAINER = "UOEffectContainer";
+    private static final String COMPONENT = "UOObjectComponentEffects";
+    private static final String PROJECTILE_EFFECT = "UOProjectileEffect";
+    private static final String PROJECTILE_DEFINITION = "UOProjectileEffectDefinition";
+    private static final String TILE_DEFINITION = "UOTileEffectDefinition";
+
+    // Runtime use of the definitions (InstantiateEffectById and the graphical effect packets).
+    private static final String MISSING_EFFECT_STRING = "Missing Effect Definition %d\n";
+    private static final int EFFECT_INSTANTIATE = 0x8;
+    private static final int EFFECT_UPDATE = 0x14;
+    private static final int EFFECT_SET_LIFETIME = 0x30;
+    private static final long TARGET_INDICATOR_EFFECT_ID = 10001;
+    private static final int PACKET_COPIER_COUNT = 3;
+    // Packet ids of the copiers ordered by the largest packet field offset they read (0x1e, 0x24, 0x36).
+    private static final String[][] EFFECT_PACKETS = {
+        {"0x70", "GraphicalEffect", "type, serials, item id, positions, speed, duration, fixed direction, explode"},
+        {"0xC0", "HuedEffect", "0x70 fields plus hue (+0x20) and render mode (+0x24)"},
+        {"0xC7", "ParticleEffect", "0xC0 fields plus effect (+0x28), explode effect (+0x2a), explode sound (+0x2c),"
+            + " serial (+0x30), layer (+0x34) and two bytes"},
+    };
+    private static final String ACTIVE_EFFECTS_LABEL = "g_UOActiveEffects";
+    private static final String LOD_LABEL = "g_UOParticleLODLevel";
+    private static final String FILTER_LABEL = "g_UOParticleFilter";
+    private static final String USER_FILTER_LABEL = "g_UOUserEffectFilter";
 
     // Effect type keys (the u32 before each definition body).
     private static final int KEY_PARTICLE = 0;
@@ -133,7 +158,9 @@ public class NameEffectCode extends GhidraScript {
             "UORoundRobinEffectCollection",
             "u32 count, count x ParseEffectDefinition, each appended through Init (vtable +0x18)",
             "appends one child definition to the vector at +4",
-            "instantiates the child at the index +0x14 and advances the index modulo the child count", true),
+            "instantiates the child at the index +0x14 directly (no container) and advances the index modulo the"
+                + " child count; the index lives in the definition, so it is shared by every use of the definition",
+            false),
         new EffectType(KEY_POSITION_OFFSET, "UOPositionOffsetBinaryFactory", "UOPositionOffsetBinaryBaseFactory",
             "UOPositionOffsetDefinition", "8 x {i8 x, i8 y} (sign-extended), Init(direction, x, y) per entry",
             "stores x[direction] at +4 + 4*direction and y[direction] at +0x24 + 4*direction",
@@ -146,7 +173,8 @@ public class NameEffectCode extends GhidraScript {
                 + " min) + MT19937 uniform [0, max - min]; instantiates all children", false),
         new EffectType(KEY_LOD, "UOLODEffectBinaryFactory", "UOLODEffectBinaryBaseFactory", "UOEffectLODDefinition",
             "effect map: u32 count, count x {u32 LOD level, effect list}", "inserts one level -> children entry",
-            "instantiates the children of the entry for the global LOD level, falling back to lower levels", true),
+            "instantiates the children of the entry for the particle LOD level (g_UOParticleLODLevel), falling back"
+                + " to lower keys down to 0", false),
         new EffectType(KEY_PROPERTY_FLAG, "UOPropertyFlagEffectBinaryFactory", "UOPropertyFlagEffectBinaryBaseFactory",
             "UOEffectPropertyFlagDefinition",
             "u8 mode (0/1; other values mark the parse context failed), u64 mask, u32 property, default effect list,"
@@ -161,8 +189,8 @@ public class NameEffectCode extends GhidraScript {
         new EffectType(KEY_RANDOM, "UORandomEffectCollectionBinaryFactory", "UORandomEffectCollectionBinaryBaseFactory",
             "UORandomEffectCollectionDefinition", "u32 count, count x {f32 weight, effect list}",
             "appends one {weight, children} entry (0x14 bytes)",
-            "random value scaled to the weight total; walks the entries subtracting weights; instantiates the first"
-                + " entry whose weight exceeds the remainder", true),
+            "r = MT19937 u32 * 2^-32 * 100 (a percentage); walks the entries subtracting weights; instantiates the"
+                + " first entry with r < weight; nothing when the weights sum to r or less", false),
         new EffectType(KEY_USER_PREFERENCE, "UOUserPreferenceEffectFilterBinaryFactory", "UOUserPreferenceEffectFilterBinaryBaseFactory",
             "UOUserPrefEffectFilterDefinition", "u32 mask, effect list", "stores mask (+4) and children (+8)",
             "skips the children when (mask & user effect setting) == mask, or mask == 1 and object vtable +0xa0 < 0;"
@@ -189,8 +217,22 @@ public class NameEffectCode extends GhidraScript {
         new Slot("UOParticleEffectNif", 0x38, "Init", "(out, definition): fails when definition +0x3c == 1; loads the"
             + " .nif, scale = definition +0x2c, loop/duration from +0x38/+0x34, offset from +0x20/+0x24/+0x28 and the"
             + " camera vectors", false),
-        new Slot("UOParticleEffectChaos", 0x14, "Update", "(out, dt): elapsed (+0x20) += dt; looping (+0x25)"
-            + " advances +0x2c; updates the node while +0x2c < 5.0", true),
+        new Slot("UOParticleEffectNif", 0x30, "SetLifetimeTicks", "(n): stores the update countdown +0x40 (Init sets"
+            + " -1, unlimited); Update decrements it while active and IsFinished is true at 0; set from the packet"
+            + " duration by UOEffects::PlayEffectAtTile", false),
+        new Slot("UOParticleEffectChaos", 0x0, "Start", "fade (+0x2c) and elapsed (+0x20) = 0; starts the Chaos"
+            + " system with (duration +0x28, !loop +0x26); active (+0x24) set, stopping (+0x25) cleared", false),
+        new Slot("UOParticleEffectChaos", 0x4, "Stop", "clears active (+0x24), sets stopping (+0x25), stops the"
+            + " system's emission", false),
+        new Slot("UOParticleEffectChaos", 0x10, "IsFinished", "true without a node, when the countdown (+0x3c) is 0"
+            + " or the fade timer (+0x2c) reached 5.0 s; false while stopping; while active, true once no particle"
+            + " system of the node is alive", true),
+        new Slot("UOParticleEffectChaos", 0x14, "Update", "(out, dt): elapsed (+0x20) += dt; countdown (+0x3c)"
+            + " decremented when > 0; after Stop (+0x25) the fade timer +0x2c advances; updates the node while the"
+            + " fade timer < 5.0", false),
+        new Slot("UOParticleEffectChaos", 0x18, "Release", "Stop, then releases the node (+0x1c)", true),
+        new Slot("UOParticleEffectChaos", 0x30, "SetLifetimeTicks", "(n): stores the update countdown +0x3c (Init"
+            + " sets -1, unlimited); IsFinished is true at 0", false),
         new Slot("UOParticleEffectChaos", 0x1c, "GetPosition", "node translation minus the offset (+0x10)", false),
         new Slot("UOParticleEffectChaos", 0x20, "SetPosition", "node translation = position + offset (+0x10)", false),
         new Slot("UOParticleEffectChaos", 0x34, "ScalarDeletingDestructor", "restores the vftables, releases the node", false),
@@ -217,6 +259,35 @@ public class NameEffectCode extends GhidraScript {
             + " (+0x10) * sin(elapsed * frequency (+0x20) * 2pi)", false),
         new Slot("UOEarthquakeEffect", 0x34, "Init", "(out, definition): copies amplitude, duration, frequency"
             + " (definition +8/+0x10/+0x18) to +0x10/+0x18/+0x20, elapsed = 0, active", false),
+        new Slot(CONTAINER, 0x0, "Start", "starts every child", false),
+        new Slot(CONTAINER, 0x4, "Stop", "stops every child", false),
+        new Slot(CONTAINER, 0x8, "SetVisible", "stores the flag at +0x1c and forwards it to every child", true),
+        new Slot(CONTAINER, 0x10, "IsFinished", "child count (+0x18) == 0", false),
+        new Slot(CONTAINER, 0x14, "Update", "(out, dt): updates every child, then releases and erases the finished"
+            + " ones", false),
+        new Slot(CONTAINER, 0x18, "Release", "releases every child", false),
+        new Slot(CONTAINER, 0x20, "SetPosition", "forwards the position to every child", false),
+        new Slot(CONTAINER, 0x2c, "GetKind", "returns 6", true),
+        new Slot(CONTAINER, 0x34, "ScalarDeletingDestructor", "destroys the child list", true),
+        new Slot(CONTAINER, 0x38, "Init", "creates the child list", true),
+        new Slot("UOEffectContainerDefinition", 0x8, "Instantiate", "(out ok, out effect, object): creates a"
+            + " UOEffectContainer (0x20 bytes) and initialises it; UOEffects::InstantiateEffectById then adds one"
+            + " child per collection definition", false),
+        new Slot("UOEffectCollectionDefinition", 0x8, "Instantiate", "(out ok, out effect, object): registers a"
+            + " container and instantiates every definition of the vector into it", false),
+        new Slot("UOProjectileEffect", 0x14, "Update", "(out, dt): moves the projectile; at the target spawns the"
+            + " explosion (UOProjectileEffect::SpawnExplosion) and, with the return flag (+0x2d), a projectile back", true),
+        new Slot("UOProjectileEffect", 0x38, "Init", "(out, definition): creates the moving item object and"
+            + " instantiates the tileart effects of its graphic without the attach_mode test", true),
+        new Slot("UOTileEffect", 0x10, "IsFinished", "true when the countdown (+0xc) is <= 0 and no attached effect"
+            + " remains", true),
+        new Slot("UOTileEffect", 0x14, "Update", "(out, dt): countdown (+0xc) -= 1 per update (packet duration in"
+            + " ticks)", false),
+        new Slot("UOTileEffect", 0x38, "Init", "(out, definition): creates a world object of the item id; when its"
+            + " tileart has effects, instantiates and registers each one (no attach_mode test), attaches and starts"
+            + " it; otherwise shows the animated art", false),
+        new Slot(COMPONENT, 0x14, "HandleNotify", "(message): 1 = moved: drops finished effects, moves the others to"
+            + " the object position; 0: forwards the object vector (vtable +0x28) to effect +0x24", true),
         new Slot(COLLECTION, 0x0, "GetMemorySize", "0x14 + 8 per definition", false),
         new Slot(COLLECTION, 0x4, "ScalarDeletingDestructor", "destroys the definition vector, IAsset vftable", false),
         new Slot(COLLECTION, 0xc, "GetCount", "size of the shared_ptr vector at +8", false),
@@ -487,9 +558,12 @@ public class NameEffectCode extends GhidraScript {
             nameSlots(slot.cls(), null, List.of(slot));
         }
 
+        // 7. Runtime use: effect id lookup, the active effect list and the graphical effect packets.
+        runtimeUse(apply);
+
         defineTypes(apply);
 
-        // 7. Apply names.
+        // 8. Apply names.
         if (apply) {
             ensureTag();
             for (Proposal proposal : proposals.values()) {
@@ -509,6 +583,300 @@ public class NameEffectCode extends GhidraScript {
             }
         }
         report(out, apply);
+    }
+
+    private void runtimeUse(boolean apply) throws Exception {
+        for (String cls : List.of(PROJECTILE_DEFINITION, TILE_DEFINITION)) {
+            vtables.put(cls, rttiVtable(cls));
+            anchors.add("RTTI `" + cls + "` vftable " + hexOrNone(vtables.get(cls)));
+        }
+        Function byId = single(stringUsers(MISSING_EFFECT_STRING), "effect id lookup (user of the missing-id string)");
+        propose(byId, NAMESPACE + SCOPE + "InstantiateEffectById", "(out ok, u32 id, out effect, object), cdecl:"
+            + " requests asset {id, 0x0d000000} (EffectDefinitionCollection.uop build/effectdefinitioncollection/%08d.bin);"
+            + " missing -> logs 'Missing Effect Definition %d' and retries id 0, then fails; one definition is"
+            + " instantiated directly, several go into one UOEffectContainer (they all play at once); the result is"
+            + " registered in g_UOActiveEffects", false);
+        if (byId == null) {
+            return;
+        }
+
+        // Registration: the callee of the lookup whose only callee makes the Instantiate virtual call.
+        List<Function> wrappers = new ArrayList<>();
+        for (Function callee : distinct(calls(byId))) {
+            List<Function> inner = distinct(calls(callee));
+            if (inner.size() == 1 && virtualCallOffsets(inner.get(0)).contains((long) EFFECT_INSTANTIATE)) {
+                wrappers.add(callee);
+            }
+        }
+        Function wrapper = single(wrappers, "instantiate-and-register wrapper");
+        Function register = wrapper == null ? null : distinct(calls(wrapper)).get(0);
+        propose(wrapper, NAMESPACE + SCOPE + "InstantiateAndRegisterByValue", "(EAX out, EDX object; ok, definition"
+            + " shared_ptr by value): UOEffects::InstantiateAndRegister, then releases the definition reference", false);
+        propose(register, NAMESPACE + SCOPE + "InstantiateAndRegister", "(ECX definition, ESI ok, EDI out, EDX"
+            + " object): definition Instantiate (vtable +8); on success pushes the effect into g_UOActiveEffects", false);
+        if (register != null) {
+            for (long list : addressTakenGlobals(register)) {
+                List<Function> users = referencingFunctions(list);
+                users.remove(register);
+                Function update = null;
+                for (Function user : users) {
+                    if (virtualCallOffsets(user).contains((long) EFFECT_UPDATE)) {
+                        update = user;
+                    }
+                }
+                if (users.size() != 2 || update == null) {
+                    continue;
+                }
+                users.remove(update);
+                label(list, ACTIVE_EFFECTS_LABEL, "std::list of every running IUOEffect shared_ptr; filled by"
+                    + " UOEffects::InstantiateAndRegister, updated each frame by UOEffects::UpdateActiveEffects", apply);
+                propose(update, NAMESPACE + SCOPE + "UpdateActiveEffects", "(float dt): Update (+0x14) of every active"
+                    + " effect; IsFinished (+0x10) -> Release (+0x18) and erase; then updates the weather subsystem with"
+                    + " dt * 1000", false);
+                propose(users.get(0), NAMESPACE + SCOPE + "ReleaseActiveEffects", "releases every active effect and"
+                    + " clears g_UOActiveEffects", false);
+            }
+        }
+
+        // Callers of the lookup, told apart by what they do.
+        long projectileVt = vtables.getOrDefault(PROJECTILE_EFFECT, -1L);
+        Function projectileUpdate = projectileVt < 0 ? null : slotFunction(projectileVt, EFFECT_UPDATE);
+        Function playAtTile = null;
+        List<Function> others = new ArrayList<>();
+        for (Function caller : callers(byId)) {
+            if (usesScalar(caller, TARGET_INDICATOR_EFFECT_ID)) {
+                propose(caller, NAMESPACE + SCOPE + "ShowTargetIndicator", "(serial): instantiates collection effect"
+                    + " 10001 into a global, attaches it to the new target mobile and stops the previous one; called"
+                    + " when the current target changes to target type 2 while an option byte is 0", false);
+            } else if (projectileUpdate != null && distinct(calls(projectileUpdate)).contains(caller)) {
+                propose(caller, PROJECTILE_EFFECT + SCOPE + "SpawnExplosion", "at the target: explode effect (+0x2e) =="
+                    + " 0 -> classic tile effect 0x36CB for 10 ticks, else InstantiateEffectById(explode effect - 1)"
+                    + " attached to the target; plays the explode sound (+0x30)", false);
+            } else if (virtualCallOffsets(caller).contains((long) EFFECT_SET_LIFETIME)) {
+                playAtTile = caller;
+            } else {
+                others.add(caller);
+            }
+        }
+        if (others.size() == 1) {
+            propose(others.get(0), "UOWaypoints" + SCOPE + "SetWaypointEffect", "(show): removes the waypoint effect,"
+                + " or instantiates the effect id the waypoint type (+0x12) selects and attaches it to the waypoint"
+                + " object or a placeholder object at its location", true);
+        } else {
+            anomalies.add("other InstantiateEffectById callers: " + names(others));
+        }
+        propose(playAtTile, NAMESPACE + SCOPE + "PlayEffectAtTile", "(EAX id, EDI tile x/y/z float3, ESI out; ticks,"
+            + " ok): InstantiateEffectById(id, object 0), SetPosition (+0x20) at the tile, ticks != 0 ->"
+            + " SetLifetimeTicks (+0x30), Start (+0)", false);
+        if (playAtTile == null) {
+            return;
+        }
+
+        // The graphical effect dispatcher and the per-packet field copiers, handlers and readers.
+        Function dispatcher = single(callers(playAtTile), "graphical effect dispatcher");
+        propose(dispatcher, NAMESPACE + SCOPE + "PlayGraphicalEffect", "(out ok, 0x38-byte effect record): type 0"
+            + " moving -> UOEffects::MakeProjectileEffect; 1 lightning -> PlayEffectAtTile(666); 2 fixed location /"
+            + " 3 fixed on mobile -> particle filter, then effect 9501 = nothing, 0 or 9502 = classic tile effect"
+            + " of the item id, else PlayEffectAtTile(effect - 1) (type 3 attaches it to the mobile); 4 -> screen"
+            + " fade", false);
+        if (dispatcher == null) {
+            return;
+        }
+        Set<Long> dispatcherReads = readGlobals(dispatcher);
+        for (Function callee : distinct(calls(dispatcher))) {
+            Instruction first = listing.getInstructionAt(callee.getEntryPoint());
+            Set<Long> firstReads = first == null ? Set.of() : readTargets(first);
+            if (firstReads.size() == 1 && dispatcherReads.containsAll(firstReads)) {
+                propose(callee, NAMESPACE + SCOPE + "IsParticleFiltered", "(serial, serial high, location effect):"
+                    + " particle filter 0 None -> filtered; 1 Player/Target -> shown for the player, the current"
+                    + " target or location effects; 2 Party/Target adds party members; 3 All -> shown; 4 Hide AoE ->"
+                    + " filtered for location effects", false);
+                label(firstReads.iterator().next(), FILTER_LABEL, "particle filter setting (settings file"
+                    + " Particles.filter, Lua SystemData.Settings.Resolution.particleFilter): 0 None, 1 Player/Target,"
+                    + " 2 Party/Target, 3 All (default), 4 Hide AoE", apply);
+            }
+        }
+        propose(writerAmong(dispatcher, PROJECTILE_DEFINITION), NAMESPACE + SCOPE + "MakeProjectileEffect",
+            "(record): UOProjectileEffectDefinition from the moving effect fields (item id, hue + 1, speed, serials,"
+            + " explode flags, explode effect and sound, render mode; effect 9502 flag); particle filter; then"
+            + " InstantiateAndRegister", false);
+        propose(writerAmong(dispatcher, TILE_DEFINITION), NAMESPACE + SCOPE + "MakeTileEffect", "(record):"
+            + " UOTileEffectDefinition (item id, hue + 1, position, duration ticks, on-mobile and effect-9502 flags);"
+            + " then InstantiateAndRegister", false);
+        List<Function> copiers = callers(dispatcher);
+        if (copiers.size() != PACKET_COPIER_COUNT) {
+            anomalies.add("graphical effect copiers: " + names(copiers));
+            return;
+        }
+        copiers.sort((a, b) -> Long.compare(maxFieldOffset(a), maxFieldOffset(b)));
+        for (int i = 0; i < PACKET_COPIER_COUNT; i++) {
+            Function copier = copiers.get(i);
+            String id = EFFECT_PACKETS[i][0];
+            String name = EFFECT_PACKETS[i][1];
+            propose(copier, NAMESPACE + SCOPE + "PlayGraphicalEffect_" + id, "(ESI parsed packet, EDI out): copies the "
+                + id + " " + EFFECT_PACKETS[i][2] + " into the 0x38-byte record (largest field +"
+                + hexShort(maxFieldOffset(copier)) + ") and calls UOEffects::PlayGraphicalEffect", false);
+            Function handler = single(callers(copier), id + " handler");
+            propose(handler, "UOObjectManager" + SCOPE + "Receive_" + id + "_" + name, "UOObjectManager packet callback"
+                + " for " + id + ": parses the packet, then UOEffects::PlayGraphicalEffect_" + id, false);
+            if (handler != null) {
+                propose(callBefore(handler, copier), "UOPacket" + SCOPE + "Read_" + id + "_" + name, "parses " + id
+                    + " (the call before the copier in its handler)", false);
+            }
+        }
+
+        // Settings read by the composite definitions.
+        labelSingleRead(definitionInstantiate("UOEffectLODDefinition"), LOD_LABEL, "particle LOD level (settings file"
+            + " Particles.lod, 0..3, default 3; Lua SystemData.Settings.Resolution.particleLOD 1 Low .. 3 High); the"
+            + " key UOEffectLODDefinition::Instantiate looks up", apply);
+        labelSingleRead(definitionInstantiate("UOUserPrefEffectFilterDefinition"), USER_FILTER_LABEL, "user effect"
+            + " filter bits (settings file Effects.filter, hex); bit 0 is set when footsteps are disabled; read by"
+            + " UOUserPrefEffectFilterDefinition::Instantiate", apply);
+    }
+
+    private Function definitionInstantiate(String cls) {
+        long vt = vtables.getOrDefault(cls, -1L);
+        return vt < 0 ? null : slotFunction(vt, DEFINITION_INSTANTIATE);
+    }
+
+    private void labelSingleRead(Function f, String name, String evidence, boolean apply) throws Exception {
+        Set<Long> reads = f == null ? Set.of() : readGlobals(f);
+        if (reads.size() != 1) {
+            anomalies.add("`" + name + "`: reads " + reads + " in " + entry(f));
+            return;
+        }
+        label(reads.iterator().next(), name, evidence, apply);
+    }
+
+    // The callee of f that writes the vftable of cls, directly or through one of its own callees.
+    private Function writerAmong(Function f, String cls) {
+        List<Function> writers = vtableWriters(cls);
+        List<Function> found = new ArrayList<>();
+        for (Function callee : distinct(calls(f))) {
+            if (writers.contains(callee)) {
+                found.add(callee);
+            }
+        }
+        if (found.isEmpty()) {
+            for (Function callee : distinct(calls(f))) {
+                for (Function inner : distinct(calls(callee))) {
+                    if (writers.contains(inner) && !found.contains(callee)) {
+                        found.add(callee);
+                    }
+                }
+            }
+        }
+        return single(found, cls + " builder");
+    }
+
+    // The function called right before the first call to target in f.
+    private Function callBefore(Function f, Function target) {
+        Function previous = null;
+        for (Instruction i : listing.getInstructions(f.getBody(), true)) {
+            if (!i.getFlowType().isCall() || i.getFlows().length == 0) {
+                continue;
+            }
+            Function callee = functions.getFunctionAt(i.getFlows()[0]);
+            if (callee != null && callee.equals(target)) {
+                return previous;
+            }
+            previous = callee;
+        }
+        return null;
+    }
+
+    // Largest displacement of a [reg + disp] operand whose base is not the stack (packet record field offsets).
+    private long maxFieldOffset(Function f) {
+        long max = 0;
+        for (Instruction i : listing.getInstructions(f.getBody(), true)) {
+            for (int op = 0; op < i.getNumOperands(); op++) {
+                if (!i.getDefaultOperandRepresentation(op).contains("[")) {
+                    continue;
+                }
+                boolean stack = false;
+                long displacement = 0;
+                for (Object o : i.getOpObjects(op)) {
+                    if (o instanceof Register r) {
+                        stack |= r.getName().equals("ESP") || r.getName().equals("EBP");
+                    } else if (o instanceof Scalar s) {
+                        displacement = s.getUnsignedValue();
+                    }
+                }
+                if (!stack) {
+                    max = Math.max(max, displacement);
+                }
+            }
+        }
+        return max;
+    }
+
+    private boolean usesScalar(Function f, long value) {
+        for (Instruction i : listing.getInstructions(f.getBody(), true)) {
+            for (int op = 0; op < i.getNumOperands(); op++) {
+                for (Object o : i.getOpObjects(op)) {
+                    if (o instanceof Scalar s && s.getUnsignedValue() == value) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private List<Function> stringUsers(String text) {
+        List<Function> users = new ArrayList<>();
+        for (long at : findBytes((text + "\0").getBytes(StandardCharsets.US_ASCII), true)) {
+            for (Function f : referencingFunctions(at)) {
+                if (!users.contains(f)) {
+                    users.add(f);
+                }
+            }
+        }
+        return users;
+    }
+
+    private List<Function> referencingFunctions(long address) {
+        List<Function> users = new ArrayList<>();
+        for (Reference r : getReferencesTo(toAddr(address))) {
+            Function f = getFunctionContaining(r.getFromAddress());
+            if (f != null && !users.contains(f)) {
+                users.add(f);
+            }
+        }
+        return users;
+    }
+
+    // Non-executable addresses whose address f takes (MOV reg, imm / PUSH imm references of type DATA).
+    private Set<Long> addressTakenGlobals(Function f) {
+        Set<Long> out = new LinkedHashSet<>();
+        for (Instruction i : listing.getInstructions(f.getBody(), true)) {
+            for (Reference r : i.getReferencesFrom()) {
+                long to = r.getToAddress().getOffset();
+                if (r.getReferenceType() == RefType.DATA && r.getToAddress().isMemoryAddress() && !isExec(to)) {
+                    out.add(to);
+                }
+            }
+        }
+        return out;
+    }
+
+    private Set<Long> readGlobals(Function f) {
+        Set<Long> out = new LinkedHashSet<>();
+        for (Instruction i : listing.getInstructions(f.getBody(), true)) {
+            out.addAll(readTargets(i));
+        }
+        return out;
+    }
+
+    private Set<Long> readTargets(Instruction i) {
+        Set<Long> out = new LinkedHashSet<>();
+        for (Reference r : i.getReferencesFrom()) {
+            long to = r.getToAddress().getOffset();
+            if (r.getReferenceType().isRead() && r.getToAddress().isMemoryAddress() && !isExec(to)) {
+                out.add(to);
+            }
+        }
+        return out;
     }
 
     // ---- code patterns ----
@@ -1095,16 +1463,41 @@ public class NameEffectCode extends GhidraScript {
         return null;
     }
 
-    // Vtable offsets of virtual calls: MOV reg, [object]; optional ADD reg, imm; CALL [reg + disp].
+    // Vtable offsets of virtual calls: MOV reg, [object]; optional ADD reg, imm; then CALL [reg + disp], or
+    // MOV reg2, [reg + disp]; CALL reg2.
     private Set<Long> virtualCallOffsets(Function f) {
         Set<Long> offsets = new LinkedHashSet<>();
         Map<Register, Long> added = new HashMap<>();
+        Map<Register, Long> loadedSlots = new HashMap<>();
         for (Instruction i : listing.getInstructions(f.getBody(), true)) {
             String m = i.getMnemonicString();
             Object[] dst = i.getNumOperands() > 0 ? i.getOpObjects(0) : new Object[0];
             Register reg = dst.length == 1 && dst[0] instanceof Register r ? r : null;
             if (m.equals("MOV") && reg != null) {
+                Long slot = null;
+                if (i.getNumOperands() > 1 && i.getDefaultOperandRepresentation(1).contains("[")) {
+                    Register base = null;
+                    long displacement = 0;
+                    for (Object o : i.getOpObjects(1)) {
+                        if (o instanceof Register r) {
+                            base = r;
+                        } else if (o instanceof Scalar s) {
+                            displacement = s.getUnsignedValue();
+                        }
+                    }
+                    if (base != null && added.containsKey(base)) {
+                        slot = added.get(base) + displacement;
+                    }
+                }
+                if (slot == null) {
+                    loadedSlots.remove(reg);
+                } else {
+                    loadedSlots.put(reg, slot);
+                }
                 added.put(reg, 0L);
+            } else if (i.getFlowType().isCall() && i.getFlows().length == 0 && reg != null
+                    && !i.getDefaultOperandRepresentation(0).contains("[") && loadedSlots.containsKey(reg)) {
+                offsets.add(loadedSlots.get(reg));
             } else if (m.equals("ADD") && reg != null && added.containsKey(reg) && i.getOpObjects(1).length == 1
                     && i.getOpObjects(1)[0] instanceof Scalar s) {
                 added.put(reg, added.get(reg) + s.getUnsignedValue());
