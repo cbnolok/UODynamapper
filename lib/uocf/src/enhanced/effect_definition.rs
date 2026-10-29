@@ -35,6 +35,22 @@ pub const EFFECT_TYPE_RANDOM: u32 = 16;
 /// Type key of a user effect setting filter (`UOUserPrefEffectFilterDefinition`).
 pub const EFFECT_TYPE_USER_PREFERENCE: u32 = 17;
 
+/// Collection id = 0xC7 packet effect field - `EFFECT_ID_PACKET_BIAS`; see
+/// `collection_id_from_packet_effect`.
+pub const EFFECT_ID_PACKET_BIAS: u32 = 1;
+/// Packet effect value that plays nothing.
+pub const PACKET_EFFECT_NONE: u16 = 9501;
+/// Packet effect value that plays the classic item (tileart) effect instead of a collection
+/// entry. Packet effect 0 (also what 0x70 carries) behaves the same.
+pub const PACKET_EFFECT_CLASSIC: u16 = 9502;
+/// Collection id the client loads instead of a missing id (a `Placeholder01.ems` particle);
+/// if it is missing too, nothing plays.
+pub const EFFECT_ID_FALLBACK: u32 = 0;
+/// Collection id of packet effect type 1 (lightning, `lightning.ems`).
+pub const EFFECT_ID_LIGHTNING: u32 = 666;
+/// Collection id of the current-target indicator (`Splat_Golden.nif` + `Splat_Splash.nif`).
+pub const EFFECT_ID_TARGET_INDICATOR: u32 = 10001;
+
 /// `UserPreferenceEffect::mask` bit set when the user disabled footsteps (user setting
 /// `Effects`, `Footsteps.enabled`); the other bits come only from the settings file.
 pub const USER_PREFERENCE_FOOTSTEPS: u32 = 0x1;
@@ -43,6 +59,19 @@ pub const USER_PREFERENCE_FOOTSTEPS: u32 = 0x1;
 /// object; it plays only while the item is shown in flight (thrown models). Client data: 2 on
 /// thrown models, 0 on arrows, 1 elsewhere; the client treats 0 and 1 alike.
 pub const PARTICLE_ATTACH_PROJECTILE_ONLY: u8 = 2;
+
+/// Directory of the particle files: the `.nif` or `.ems` file of a particle is the
+/// `EffectTexture.uop` entry `PARTICLE_RESOURCE_DIR` + lowercase name.
+pub const PARTICLE_RESOURCE_DIR: &str = "data/effects/";
+
+/// Highest particle level of detail the client accepts (settings file `Particles` element,
+/// `lod` attribute); the UI Low/Medium/High maps to 1..3.
+pub const PARTICLE_LOD_MAX: u32 = 3;
+/// Client default particle level of detail.
+pub const PARTICLE_LOD_DEFAULT: u32 = 3;
+
+/// Sum of the weights of a random effect that always plays an entry: weights are percentages.
+pub const RANDOM_WEIGHT_TOTAL: f32 = 100.0;
 
 /// Directions of a position offset effect, indexed 0..7.
 pub const POSITION_OFFSET_DIRECTION_COUNT: usize = 8;
@@ -87,7 +116,9 @@ pub enum EffectDefinition {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParticleEffect {
     /// Client string dictionary index of the `.nif` or `.ems` file name (confirmed);
-    /// see `name`.
+    /// see `name`. The file is the `EffectTexture.uop` entry `PARTICLE_RESOURCE_DIR` +
+    /// lowercase name; `.ems` files are Chaos text scripts naming further `.nif`/`.tga` files
+    /// there.
     pub name_index: u32,
     /// Added to the effect x (probable).
     pub offset_x: f32,
@@ -100,7 +131,8 @@ pub struct ParticleEffect {
     /// Attach mode (confirmed for `PARTICLE_ATTACH_PROJECTILE_ONLY`); see the constant.
     pub attach_mode: u8,
     /// Seconds (confirmed): a non-looping effect stops once elapsed >= duration, a looping one
-    /// wraps the elapsed time when duration is non-zero.
+    /// wraps the elapsed time when duration is non-zero. Independent of the packet duration,
+    /// which the client applies as an update-tick countdown (single-definition entries only).
     pub duration: f32,
     /// Restarts the effect when it ends; any non-zero byte is true (confirmed).
     pub looping: bool,
@@ -123,7 +155,10 @@ pub struct SoundEffect {
     pub value_08: f32,
 }
 
-/// Key 2: instantiates one child per use, cycling through them in order (probable).
+/// Key 2: instantiates one child per use, cycling through them in order (confirmed).
+///
+/// The cycle index belongs to the definition: it is shared by every object of the same graphic
+/// and every play of the same collection entry.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RoundRobinEffect {
     pub children: Vec<EffectDefinition>,
@@ -137,13 +172,18 @@ pub struct DirectionOffset {
 }
 
 /// Key 7: per-direction position offset (confirmed).
+///
+/// Inert in this client build: the runtime object stores the offsets but nothing reads them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PositionOffsetEffect {
     /// Offsets indexed by direction.
     pub offsets: [DirectionOffset; POSITION_OFFSET_DIRECTION_COUNT],
 }
 
-/// Key 10: fires its children on a timer (confirmed).
+/// Key 10: throttle (confirmed). When instantiated, plays its children only if the
+/// per-definition next time has passed. It then sets the next time to now + `min_delay_ms`
+/// (next multiple of `min_delay_ms` when `aligned`) + uniform [0, max - min] ms. It never fires
+/// again by itself.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WaitEffect {
     pub children: Vec<EffectDefinition>,
@@ -151,7 +191,7 @@ pub struct WaitEffect {
     pub min_delay_ms: u32,
     /// Upper bound of the random delay before the next fire (client default 4000).
     pub max_delay_ms: u32,
-    /// Aligns the next fire time to a multiple of `min_delay_ms` (probable).
+    /// Aligns the next fire time to a multiple of `min_delay_ms` (confirmed).
     pub aligned: bool,
 }
 
@@ -165,7 +205,9 @@ pub struct EffectMapEntry {
     pub children: Vec<EffectDefinition>,
 }
 
-/// Key 11: runs the entry whose key is the global effect level of detail (probable).
+/// Key 11: plays the entry for the particle LOD setting (0..=`PARTICLE_LOD_MAX`, client default
+/// `PARTICLE_LOD_DEFAULT`; UI Low/Medium/High = 1..3), falling back to the next lower key;
+/// nothing if no key is <= the setting (confirmed).
 #[derive(Debug, Clone, PartialEq)]
 pub struct LodEffect {
     pub levels: Vec<EffectMapEntry>,
@@ -208,22 +250,26 @@ pub struct EarthquakeEffect {
 /// One weighted entry of a random collection.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RandomEffectEntry {
+    /// Percent (confirmed): the client draws r in [0, `RANDOM_WEIGHT_TOTAL`) and plays the
+    /// first entry with r < weight after subtracting the previous weights. A sum below
+    /// `RANDOM_WEIGHT_TOTAL` leaves a chance of nothing.
     pub weight: f32,
     pub children: Vec<EffectDefinition>,
 }
 
-/// Key 16: instantiates one entry, picked by weight (probable).
+/// Key 16: instantiates one entry, picked by weight.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RandomEffect {
     pub entries: Vec<RandomEffectEntry>,
 }
 
-/// Key 17: filters its children by the user effect settings (probable).
+/// Key 17: filters its children by the user effect settings (confirmed).
 #[derive(Debug, Clone, PartialEq)]
 pub struct UserPreferenceEffect {
     /// The children are skipped when all of these user effect setting bits are set, or when it
-    /// is 1 and object vt+0xa0 is negative. Bit 0 is `USER_PREFERENCE_FOOTSTEPS`; the other
-    /// bit meanings are unknown. No client tileart or collection effect uses this type.
+    /// is 1 and object vt+0xa0 is negative. Bit 0 is `USER_PREFERENCE_FOOTSTEPS`; the client
+    /// only ever sets bit 0, so the other bits are never set by the client. No client tileart or
+    /// collection effect uses this type.
     pub mask: u32,
     pub children: Vec<EffectDefinition>,
 }
@@ -294,12 +340,28 @@ pub fn read_effect_list(reader: &mut Cursor<&[u8]>) -> Result<Vec<EffectDefiniti
 /// Parses the payload of one `EffectDefinitionCollection.uop` entry
 /// (`UOEffects::ParseEffectDefinitionCollection`): u32 count, then that many definitions,
 /// ending the payload exactly.
+///
+/// All top-level definitions play at the same time (one container); there is no sequencing.
+/// A missing entry falls back to `EFFECT_ID_FALLBACK`.
 pub fn parse_effect_definition_collection(data: &[u8]) -> Result<Vec<EffectDefinition>> {
     let mut reader = Cursor::new(data);
     let definitions = read_effect_list(&mut reader)?;
     let trailing = data.len() - reader.position() as usize;
     ensure!(trailing == 0, "{trailing} trailing bytes after the effect definition collection");
     Ok(definitions)
+}
+
+/// Maps the effect field of a 0xC7 packet (fixed location or fixed on mobile) to the
+/// `EffectDefinitionCollection.uop` entry id the client plays.
+///
+/// Returns `None` when the client plays no collection entry: `PACKET_EFFECT_NONE` plays
+/// nothing, while 0 and `PACKET_EFFECT_CLASSIC` play the classic item effect instead.
+pub fn collection_id_from_packet_effect(effect: u16) -> Option<u32> {
+    match effect {
+        PACKET_EFFECT_NONE | PACKET_EFFECT_CLASSIC => None,
+        // Effect 0 is not id -1: the subtraction fails exactly for the classic item effect.
+        _ => u32::from(effect).checked_sub(EFFECT_ID_PACKET_BIAS),
+    }
 }
 
 fn read_definition(reader: &mut Cursor<&[u8]>, depth: usize) -> Result<EffectDefinition> {
@@ -625,6 +687,20 @@ mod tests {
         writer.u8(0);
         let error = parse_effect_definition_collection(&writer.0).expect_err("trailing byte");
         assert!(error.to_string().contains("trailing bytes"), "{error}");
+    }
+
+    #[test]
+    fn packet_effect_maps_to_collection_id() {
+        let (clumsy_packet_effect, clumsy_collection_id) = (5002, 5001);
+        let classic_item_effect = 0;
+        assert_eq!(collection_id_from_packet_effect(clumsy_packet_effect), Some(clumsy_collection_id));
+        assert_eq!(collection_id_from_packet_effect(EFFECT_ID_PACKET_BIAS as u16), Some(EFFECT_ID_FALLBACK));
+        assert_eq!(collection_id_from_packet_effect(u16::MAX), Some(u32::from(u16::MAX) - EFFECT_ID_PACKET_BIAS));
+        assert_eq!(collection_id_from_packet_effect(classic_item_effect), None);
+        assert_eq!(collection_id_from_packet_effect(PACKET_EFFECT_NONE), None);
+        assert_eq!(collection_id_from_packet_effect(PACKET_EFFECT_CLASSIC), None);
+        // Collection 9501 and 9502 are reached one packet value higher.
+        assert_eq!(collection_id_from_packet_effect(PACKET_EFFECT_CLASSIC + 1), Some(u32::from(PACKET_EFFECT_CLASSIC)));
     }
 
     #[test]

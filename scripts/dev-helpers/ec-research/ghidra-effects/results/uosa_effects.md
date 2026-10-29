@@ -293,7 +293,7 @@ Value distributions:
   - +0x10: GetDefinition.
 - **Lookup by effect id.** `UOEffects::InstantiateEffectById` 0x004220c0 looks up an effect id; see
   "Load path" below.
-- **Server effect ids.** The collection id is the 0xC0/0xC7 packet effect field minus 1; see "Keying".
+- **Server effect ids.** The collection id is the 0xC7 packet effect field minus 1 (the 0x70/0xC0 copiers leave the effect at 0); see "Keying".
 - **Other readers.** Two other readers of the same format exist:
   - `FUN_0083c0ba`, a larger asset that embeds effect collections per entry;
   - `FUN_004b93d0`, which reads u32 id, u8 count and that many definitions.
@@ -624,7 +624,7 @@ line in `ENHANCED_CLIENT_FILES.md`. The earlier items (attach_mode, field_3c, va
 1. **Effect id constants** (module level, documented as client behaviour):
 
    ```rust
-   /// Collection id = packet (0xC0/0xC7) effect field - EFFECT_ID_PACKET_BIAS.
+   /// Collection id = 0xC7 packet effect field - EFFECT_ID_PACKET_BIAS.
    pub const EFFECT_ID_PACKET_BIAS: u32 = 1;
    /// Packet effect value that plays nothing.
    pub const PACKET_EFFECT_NONE: u16 = 9501;
@@ -667,7 +667,7 @@ line in `ENHANCED_CLIENT_FILES.md`. The earlier items (attach_mode, field_3c, va
     with the doc "the file is the `EffectTexture.uop` entry `PARTICLE_RESOURCE_DIR` + lowercase name;
     `.ems` files are Chaos text scripts naming further `.nif`/`.tga` files there."
 11. **`ENHANCED_CLIENT_FILES.md`:** under `EffectDefinitionCollection.uop`, add one bullet: "Entry id =
-    0xC0/0xC7 packet effect - 1; all top-level definitions play together; particle files are in
+    0xC7 packet effect - 1; all top-level definitions play together; particle files are in
     `EffectTexture.uop` under `data/effects/`."
 
 No format change is needed: the parser is already correct for all 269 entries.

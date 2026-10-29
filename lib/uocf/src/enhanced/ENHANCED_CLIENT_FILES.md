@@ -201,6 +201,9 @@ unless the data becomes a stable package contract.
   the payload is a u32 count, then that many effect definitions, ending the
   entry exactly. `effect_definition::parse_effect_definition_collection`
   decodes it.
+- Entry id = 0xC7 packet effect - 1 (0x70/0xC0 carry none) (`collection_id_from_packet_effect`);
+  all top-level definitions play together; particle files are in
+  `EffectTexture.uop` under `data/effects/`.
 - Effect definitions (`effect_definition.rs`) are a u32 type key and a body:
   0 Particle, 1 Sound, 2 RoundRobin, 7 PositionOffset, 10 Wait, 11 LOD,
   12 PropertyFlag, 15 Earthquake, 16 Random, 17 UserPreference. Lists and maps
