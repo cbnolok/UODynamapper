@@ -25,13 +25,7 @@ fn source_key(tile: &TileMetaItemTile, refs: &[TileMetaItemTextureRef]) -> Optio
 }
 
 pub(super) fn map_height(atlas: &TileAtlas, x: u32, y: u32) -> Option<i8> {
-    let p = &atlas.params;
-    if p.page_texels.x == 0 || p.page_texels.y == 0 { return None; }
-    let index = (y / p.page_texels.y) * p.world_pages_x + x / p.page_texels.x;
-    if index >= 256 { return None; }
-    let layer = p.page_to_layer[(index / 4) as usize][(index % 4) as usize];
-    let data = atlas.cpu_mirror.get(layer as usize)?.as_ref()?;
-    let texel = data.get(((y % p.page_texels.y) * p.page_texels.x + x % p.page_texels.x) as usize)?;
+    let texel = atlas.read_cell(x, y)?;
     if !matches!((texel.g >> 8) & 15, 2 | 4) { return None; }
     Some(((texel.g & 255) as i16 - 128) as i8)
 }

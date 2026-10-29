@@ -25,9 +25,12 @@ Use a separate terminal/tool call for commands while the bounded preview runs.
 Teleport validates loaded-map bounds and follows the same player/transform update
 and visible-chunk recompute as the UI dialog. `--z` and `--map` are explicit;
 currently unloaded maps are rejected. Status reports player/rendered positions,
-elapsed time, and existing smoothed frame diagnostics when enabled. It does not
-claim that all texture streaming has finished. Allow streaming to settle and
-compare multiple captures for animated fixtures.
+elapsed time, and existing smoothed frame diagnostics when enabled. Its `terrain`
+object reports CPU/submitted metadata revisions, pending metadata uploads and the
+number of published terrain-cache chunks. Equal revisions with no pending writes
+establish metadata submission, not completion of color-texture streaming or shader
+compilation. Allow the scene to settle and compare multiple captures for animated
+fixtures.
 
 Capture requests enqueue native Bevy screenshots. The client waits for the PNG
 signature and final IEND chunk before reporting completion. Destinations must

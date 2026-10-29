@@ -1,6 +1,7 @@
 //! Opt-in local test control. No socket or polling system exists unless the
 //! caller supplies DYNAMAPPER_CONTROL_SOCKET. The protocol never executes code.
 use super::teleport::teleport_player;
+use crate::core::{render::scene::world::land::{tile_atlas::TileAtlas, LandUploadTelemetry}, texture_cache::land::coverage::EcTerrainBases};
 use crate::core::{app_states::AppState, render::scene::{player::Player, world::WorldGeoData, RecomputeVisibleChunksEvent}, system_sets::MovementSysSet};
 use crate::prelude::*;
 use bevy::{diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin}, prelude::*, render::view::screenshot::{Screenshot, save_to_disk}};
@@ -88,6 +89,9 @@ fn poll_control(
     world: Res<WorldGeoData>,
     mut recompute: MessageWriter<RecomputeVisibleChunksEvent>,
     diagnostics: Option<Res<DiagnosticsStore>>,
+    atlas: Option<Res<TileAtlas>>,
+    uploads: Option<Res<LandUploadTelemetry>>,
+    terrain_bases: Option<Res<EcTerrainBases>>,
     mut capture_pending: Local<Option<(PathBuf, f64)>>,
     time: Res<Time<Real>>,
 ) {
@@ -120,10 +124,17 @@ fn poll_control(
                     let fps_path = FrameTimeDiagnosticsPlugin::FPS;
                     let frame_path = FrameTimeDiagnosticsPlugin::FRAME_TIME;
                     let metric = |path| diagnostics.as_ref().and_then(|store| store.get(path)).and_then(|value| value.smoothed());
+                    let terrain = atlas.as_ref().zip(uploads.as_ref()).map(|(atlas, uploads)| {
+                        let uploads = uploads.snapshot();
+                        json!({"metadata_revision": atlas.content_revision,
+                            "submitted_metadata_revision": uploads.submitted_metadata_revision,
+                            "metadata_pending": atlas.has_pending_uploads() || uploads.pending_ops != 0,
+                            "cached_chunks": terrain_bases.as_ref().map(|bases| bases.cached_chunk_count())})
+                    });
                     Ok(json!({"ok": true, "position": position, "rendered_position": rendered,
                         "elapsed_seconds": time.elapsed_secs_f64(),
                         "fps": metric(&fps_path),
-                        "frame_ms": metric(&frame_path)}))
+                        "frame_ms": metric(&frame_path), "terrain": terrain}))
                 }
                 ControlCommand::Capture { path } => {
                     capture_path(&path)?;

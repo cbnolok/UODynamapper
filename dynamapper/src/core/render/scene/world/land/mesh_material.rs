@@ -93,6 +93,10 @@ pub struct LandMaterialExtension {
     /// First/last sorted EC material payloads within the original 49-pass limit.
     #[texture(117, sample_type = "u_int", visibility(fragment))]
     pub ec_terrain_bases: Handle<Image>,
+
+    /// Exact sorted ownership layers and normalized masks for resident EC chunks.
+    #[texture(118, dimension = "2d_array", sample_type = "u_int", visibility(fragment))]
+    pub ec_terrain_stacks: Handle<Image>,
 }
 
 impl MaterialExtension for LandMaterialExtension {

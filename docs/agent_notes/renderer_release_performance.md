@@ -48,7 +48,7 @@ terrain shading there. This is a complementary temporary diagnostic, not a
 production optimization. These captures must not be used as fidelity results.
 All production settings were restored after each run.
 
-`land/coverage.wesl::ec_terrain_stack` currently reconstructs a 4×4 ownership
+The baseline `land/coverage.wesl::ec_terrain_stack` reconstructed a 4×4 ownership
 footprint and sorted local material stack per fragment, including atlas and
 material lookups and dynamic arrays. `liquid_bank.wesl` can search another
 4×4 footprint at liquid/solid boundaries. These are concrete candidates for
@@ -138,3 +138,71 @@ cost. A cache must preserve canonical/first aliases, original 49-pass selection,
 edge membership, point/bilinear alpha and bank behavior, while leaving the actual
 shading call sites intact. Temporary reports use `release-kr-passes-final-*` and
 `gpu-passes-final-*`; all production shaders/settings were restored.
+
+## Exact terrain stack cache
+
+The bounded cache described in [ec_terrain_stack_cache.md](ec_terrain_stack_cache.md)
+retains the original reconstruction as `ec_terrain_stack_uncached`. It moves
+ownership, sorting and mask normalization to chunk preparation, preserving
+the existing terrain shading calls and liquid-bank policy.
+
+Native comparisons use six fixtures: transition (2518,561), bridge (2834,987),
+lava (5744,2928), coast (1445,1790), swamp (1872,2416), town (1647,1682).
+Settings and screenshots are isolated, water is paused, and overlays are disabled
+for whole-image comparisons. Metadata revisions agree and no uploads are pending
+at capture; EC fixtures publish all sixteen cache chunks, CC publishes none.
+
+| Matched cached/uncached captures | Largest channel-byte difference |
+|---|---:|
+| Enhanced EC, orthographic, six fixtures | 0 |
+| Classic EC, orthographic, six fixtures | 0 |
+| KR EC, orthographic, six fixtures | 1 |
+| KR EC, perspective, six fixtures | 1 |
+| Enhanced CC, orthographic, six fixtures | 0 |
+| KR EC, one metadata upload/frame versus normal budget, six fixtures | 1 |
+
+The renderer suite passes 133 tests including the explicit Vulkan regressions.
+The cache test requires every packed layer and alpha bit to match the original
+GPU reconstruction at 9,216 positions, with separate cache-hit and stale-guard
+proofs. Native captures remain necessary: an earlier byte-mask representation
+passed a tolerance-based compute comparison but retained repeatable coastal
+pixel differences. It was replaced with normalized float bits in the existing
+RGBA record, without increasing the allocation or changing shading calls.
+
+Temporary accepted evidence uses `stack-float-kr-native-*`,
+`stack-original-kr-repeat-*`, `stack-final-*`, and `stack-final-matrix.json` under
+`/tmp/uodynamapper-ec-followup`. Earlier `stack-cache-kr-native-*`,
+`stack-symbolic-*` and diagnostic-color captures are investigation artifacts,
+not accepted visual baselines. Every final preview verified Desktop 4 placement
+and cleanup, with no shader/pipeline errors.
+
+The final stable-release comparison uses the same KR morning, paused EC art/map,
+1280×800, zoom-0.8 configuration and hardware above. Compilation finishes before
+measurement; caps and unfocused throttling are disabled. One binary runs both
+variants, changing only the cache-lookup guard in isolated shader assets. Both
+retain identical CPU preparation, with sixteen published chunks and equal
+CPU/submitted metadata revisions throughout every sample window.
+
+Orthographic runs use original/cached/cached/original order; table values average
+the two run medians. Perspective has one original/cached pair. Each fixture
+settles eight seconds and samples for twelve seconds. GPU values retain the
+existing smoothed, rounded opaque-pass diagnostic semantics.
+
+| Camera / fixture | Original sampled FPS | Cached sampled FPS | Original opaque GPU ms | Cached opaque GPU ms |
+|---|---:|---:|---:|---:|
+| Orthographic bridge | 51.99 | 78.63 | 18.11 | 11.68 |
+| Orthographic lava | 38.14 | 53.54 | 25.42 | 17.79 |
+| Perspective bridge | 47.86 | 71.80 | 19.52 | 12.86 |
+| Perspective lava | 36.82 | 51.82 | 26.19 | 18.42 |
+
+The orthographic repeats establish approximately 51%/40% higher sampled FPS and
+36%/30% lower opaque GPU time at bridge/lava respectively. The perspective pair
+shows a similar gain, with less repetition. This validates the cache's benefit
+in these settled fixtures, not arbitrary viewports or continuous movement.
+The 400/144 FPS targets remain open; cache misses retain the full reconstruction
+and the remaining material/bank/lighting cost still needs separate profiling.
+
+Raw status reports use `release-kr-passes-stack-final-*`; correlated hardware
+reports use `gpu-passes-stack-final-*`. `stack-final-performance.json` retains
+all run summaries. All six timing previews verified Desktop 4 and cleanup;
+production shaders and isolated settings were restored afterward.

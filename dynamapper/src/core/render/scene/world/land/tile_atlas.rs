@@ -203,6 +203,8 @@ pub struct TileAtlas {
     /// Staging buffer swapped into place by the clear system so that
     /// the extract system can take ownership without cloning.
     extract_staging: Vec<AtlasUpload>,
+    extract_revision: u64,
+    extract_image: Option<bevy::asset::AssetId<Image>>,
 
     /// When set, `sys_apply_tile_atlas_expansion` will create a new GPU image
     /// with this many layers, then clear all page mappings so they are
@@ -216,6 +218,20 @@ pub struct TileAtlas {
 }
 
 impl TileAtlas {
+    pub(crate) fn read_cell(&self, x: u32, y: u32) -> Option<Rg16u> {
+        let p = &self.params;
+        if p.page_texels.x == 0 || p.page_texels.y == 0 { return None; }
+        let index = (y / p.page_texels.y) * p.world_pages_x + x / p.page_texels.x;
+        if index >= 256 { return None; }
+        let layer = p.page_to_layer[(index / 4) as usize][(index % 4) as usize];
+        let data = self.cpu_mirror.get(layer as usize)?.as_ref()?;
+        data.get(((y % p.page_texels.y) * p.page_texels.x + x % p.page_texels.x) as usize).copied()
+    }
+
+    pub(crate) fn has_pending_uploads(&self) -> bool {
+        self.pending_dirty_write_count != 0 || !self.extract_staging.is_empty()
+    }
+
     pub fn new(params: AtlasParams, max_layers_limit: u32) -> Self {
         let max_layers = params.max_layers as usize;
         Self {
@@ -229,6 +245,8 @@ impl TileAtlas {
             dirty_regions: vec![Vec::new(); max_layers],
             pending_dirty_write_count: 0,
             extract_staging: Vec::new(),
+            extract_revision: 0,
+            extract_image: None,
             requested_expansion: None,
             max_layers_limit,
             last_high_usage_instant: std::time::Instant::now(),
@@ -294,6 +312,7 @@ impl TileAtlas {
             .binary_search_by_key(&page_u64, |(p, _)| *p)
             .unwrap_err();
         self.page_to_layer.insert(insert_pos, (page_u64, layer));
+        self.content_revision = self.content_revision.wrapping_add(1);
         self.layer_to_page[layer as usize] = page;
         self.layer_access_tick[layer as usize] = self.current_tick;
 
@@ -426,13 +445,36 @@ use bevy::render::texture::GpuImage;
 use bevy::render::Extract;
 
 /// Middle-man resource that holds uploaded data during the transition from Main world to Render world.
+/// Pending writes and the latest CPU revision captured with their snapshot.
 #[derive(Resource, Default)]
-pub struct RenderAtlasUploads(pub Vec<AtlasUpload>);
+pub struct RenderAtlasUploads {
+    pending: Vec<AtlasUpload>,
+    revision: Option<u64>,
+    image: Option<bevy::asset::AssetId<Image>>,
+}
+
+impl RenderAtlasUploads {
+    fn capture(&mut self, atlas: &TileAtlas, image: bevy::asset::AssetId<Image>) {
+        if self.image != Some(image) {
+            // A resized atlas has new layers. Never send its predecessor's
+            // rectangles to the replacement, including this frame's staging.
+            self.pending.clear();
+            self.revision = None;
+            self.image = Some(image);
+        }
+        if atlas.extract_image != Some(image) { return; }
+        // First stages the previous Update's writes. The current CPU revision
+        // may already include newer writes that have not been staged yet.
+        self.revision = Some(atlas.extract_revision);
+        self.pending.extend_from_slice(&atlas.extract_staging);
+    }
+}
 
 /// System that extracts pending uploads from the `TileAtlas` resource in the Main world
 /// and moves them into the `RenderAtlasUploads` resource in the Render world.
 pub fn sys_extract_atlas_uploads(
     tile_atlas: Extract<Res<TileAtlas>>,
+    atlas_image: Extract<Res<TileAtlasImageHandle>>,
     mut render_uploads: ResMut<RenderAtlasUploads>,
     diagnostics: Res<crate::core::diagnostics::WorldmapCrossAppDiagnostics>,
 ) {
@@ -441,25 +483,21 @@ pub fn sys_extract_atlas_uploads(
         &diagnostics,
         crate::core::diagnostics::WorldmapCrossAppTimedSystem::AtlasExtract,
     );
-
-    if !tile_atlas.extract_staging.is_empty() {
-        /*
-        let count = tile_atlas.extract_staging.len();
-        console_logger::one(
-            None,
-            LogSev::Debug,
-            LogAbout::Performance,
-            &format!("[DBG-extract] Extracting {count} texture array uploads"),
-        );
-        */
-        render_uploads
-            .0
-            .extend_from_slice(&tile_atlas.extract_staging);
-    }
+    /*
+    let count = tile_atlas.extract_staging.len();
+    console_logger::one(
+        None,
+        LogSev::Debug,
+        LogAbout::Performance,
+        &format!("[DBG-extract] Extracting {count} texture array uploads"),
+    );
+    */
+    render_uploads.capture(&tile_atlas, (**atlas_image).0.id());
 }
 
 pub fn sys_clear_atlas_uploads(
     mut tile_atlas: ResMut<TileAtlas>,
+    atlas_image: Res<TileAtlasImageHandle>,
     telemetry: Res<super::LandUploadTelemetry>,
     diagnostics: Res<crate::core::diagnostics::WorldmapCrossAppDiagnostics>,
 ) {
@@ -469,6 +507,8 @@ pub fn sys_clear_atlas_uploads(
         crate::core::diagnostics::WorldmapCrossAppTimedSystem::AtlasStage,
     );
 
+    tile_atlas.extract_revision = tile_atlas.content_revision;
+    tile_atlas.extract_image = Some(atlas_image.0.id());
     let TileAtlas {
         params,
         cpu_mirror,
@@ -550,13 +590,8 @@ pub fn sys_render_upload_tile_atlas(
         crate::core::diagnostics::WorldmapCrossAppTimedSystem::AtlasUpload,
     );
 
-    if uploads.0.is_empty() {
-        telemetry.record_submit(0, 0, 0, 0);
-        return;
-    }
-
     /*
-    let count = uploads.0.len();
+    let count = uploads.pending.len();
     console_logger::one(
         None,
         LogSev::Debug,
@@ -565,11 +600,20 @@ pub fn sys_render_upload_tile_atlas(
     );
     */
 
-    let Some(gpu_image) = gpu_images.get(&atlas_handle.0) else {
-        uploads.0.clear();
-        telemetry.record_submit(0, 0, 0, 0);
+    let gpu_image = gpu_images.get(&atlas_handle.0)
+        .filter(|_| uploads.image == Some(atlas_handle.0.id()));
+    let Some(gpu_image) = gpu_image else {
+        // Asset preparation may lag extraction. Retain the queued data and do
+        // not publish its revision until every write can actually be issued.
+        let bytes = uploads.pending.iter().map(|upload| upload.data.len() as u64).sum();
+        telemetry.record_submit(0, 0, uploads.pending.len() as u32, bytes);
         return;
     };
+    if uploads.pending.is_empty() {
+        telemetry.record_submit(0, 0, 0, 0);
+        if let Some(revision) = uploads.revision { telemetry.record_metadata_submission(revision); }
+        return;
+    }
 
     use bevy::render::render_resource::{Extent3d, Origin3d, TexelCopyBufferLayout, TexelCopyTextureInfo};
 
@@ -585,7 +629,7 @@ pub fn sys_render_upload_tile_atlas(
     let mut submitted_bytes = 0usize;
     let mut submitted_uploads = 0usize;
 
-    for upload in uploads.0.iter() {
+    for upload in uploads.pending.iter() {
         let upload_bytes = upload.data.len();
         let ops_would_overflow = submitted_ops >= max_ops;
         let bytes_would_overflow = submitted_bytes.saturating_add(upload_bytes) > max_bytes;
@@ -625,17 +669,55 @@ pub fn sys_render_upload_tile_atlas(
     }
 
     if submitted_uploads > 0 {
-        uploads.0.drain(0..submitted_uploads);
+        uploads.pending.drain(0..submitted_uploads);
+    }
+    if uploads.pending.is_empty() {
+        if let Some(revision) = uploads.revision { telemetry.record_metadata_submission(revision); }
     }
 
     let pending_bytes = uploads
-        .0
+        .pending
         .iter()
         .fold(0u64, |acc, upload| acc.saturating_add(upload.data.len() as u64));
     telemetry.record_submit(
         submitted_ops as u32,
         submitted_bytes as u64,
-        uploads.0.len() as u32,
+        uploads.pending.len() as u32,
         pending_bytes,
     );
+}
+
+#[cfg(test)]
+mod upload_tests {
+    use super::*;
+
+    #[test]
+    fn uploads_follow_the_staged_revision_and_never_cross_image_generations() {
+        let first = bevy::asset::AssetId::Uuid { uuid: bevy::asset::uuid::Uuid::from_u128(1) };
+        let second = bevy::asset::AssetId::Uuid { uuid: bevy::asset::uuid::Uuid::from_u128(2) };
+        let mut atlas = TileAtlas::new(AtlasParams::default(), 1);
+        let upload = |value| AtlasUpload { layer: 0, offset: UVec2::ZERO, size: UVec2::ONE, data: vec![value; 4] };
+        atlas.extract_image = Some(first);
+        atlas.extract_revision = 3;
+        atlas.content_revision = 4; // A newer Update has not reached staging.
+        atlas.extract_staging.push(upload(3));
+        let mut uploads = RenderAtlasUploads::default();
+        uploads.capture(&atlas, first);
+        assert_eq!(uploads.revision, Some(3));
+        atlas.extract_revision = 4;
+        atlas.extract_staging = vec![upload(4)];
+        uploads.capture(&atlas, first);
+        assert_eq!(uploads.revision, Some(4));
+        assert_eq!(uploads.pending.len(), 2); // Keep the earlier budget backlog.
+        uploads.capture(&atlas, second); // Resize between First and extraction.
+        assert!(uploads.pending.is_empty());
+        assert_eq!(uploads.revision, None);
+        atlas.extract_image = Some(second);
+        atlas.extract_revision = 5;
+        atlas.extract_staging = vec![upload(5)];
+        uploads.capture(&atlas, second);
+        assert_eq!(uploads.revision, Some(5));
+        assert_eq!(uploads.pending.len(), 1);
+        assert_eq!(uploads.pending[0].data, vec![5; 4]);
+    }
 }

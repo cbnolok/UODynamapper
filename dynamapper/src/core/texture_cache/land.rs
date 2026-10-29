@@ -1023,6 +1023,9 @@ impl Plugin for LandTextureCachePlugin {
         app.add_systems(First, cache::sys_clear_texture_array_uploads);
         app.add_systems(Update, cache::sys_drain_texture_upload_tasks);
         app.add_systems(Update, sys_apply_land_texture_source_changes);
+        app.add_systems(Update, coverage::sys_prepare_stack_cache
+            .after(SceneRenderLandSysSet::RenderLandChunks)
+            .run_if(in_state(crate::core::app_states::AppState::InGame)));
 
         let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) else {
             return;
@@ -1466,6 +1469,7 @@ pub fn sys_setup_terrain_cache(
     });
     let terrain_bases = coverage::EcTerrainBases::new(&mut images, base_dimensions, tex_land_ec_package.as_deref());
     let ec_terrain_bases = terrain_bases.image.clone();
+    let ec_terrain_stacks = terrain_bases.stack_image();
     cmd.insert_resource(terrain_bases);
     let visual_grunge_texture = images.add(crate::util_lib::image::visual_grunge_image(128));
 
@@ -1504,6 +1508,7 @@ pub fn sys_setup_terrain_cache(
                 classic_land_art_atlas: classic_land_art_images.atlas,
                 classic_land_art_lookup: classic_land_art_images.lookup,
                 ec_terrain_bases,
+                ec_terrain_stacks,
             },
         };
 

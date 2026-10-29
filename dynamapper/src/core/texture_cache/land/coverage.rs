@@ -3,6 +3,8 @@
 use bevy::prelude::*;
 use std::collections::BTreeMap;
 use udd_assets::tex_land_ec::TexLandEcPackage;
+mod cache;
+pub(crate) use cache::sys_prepare as sys_prepare_stack_cache;
 
 /// GPU role 6: material ID, signed sorting key, cardinal/diagonal bytes,
 /// then class (bits 0..2), positive exponent (3), terrain policy (4..6),
@@ -67,9 +69,10 @@ pub fn ec_land_shader_flags(package: &TexLandEcPackage, tile_id: u32) -> u16 {
 pub struct EcTerrainBases {
     pub image: Handle<Image>,
     pub params: Vec<Option<EcTerrainParams>>,
+    cache: cache::StackCache,
     dimensions: UVec2,
     map: Option<u32>,
-    values: Vec<[u16; 2]>,
+    values: Vec<[u16; 4]>,
     dirty: bool,
 }
 
@@ -77,20 +80,28 @@ impl EcTerrainBases {
     pub fn new(images: &mut Assets<Image>, dimensions: UVec2, package: Option<&TexLandEcPackage>) -> Self {
         use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
         let dimensions = dimensions.max(UVec2::ONE);
-        let values = vec![[u16::MAX; 2]; (dimensions.x * dimensions.y) as usize];
+        let values = vec![[u16::MAX; 4]; (dimensions.x * dimensions.y) as usize];
         let image = images.add(Image::new(
             Extent3d { width: dimensions.x, height: dimensions.y, depth_or_array_layers: 1 },
-            TextureDimension::D2, bytemuck::cast_slice(&values).to_vec(), TextureFormat::Rg16Uint,
+            TextureDimension::D2, bytemuck::cast_slice(&values).to_vec(), TextureFormat::Rgba16Uint,
             bevy::asset::RenderAssetUsages::MAIN_WORLD | bevy::asset::RenderAssetUsages::RENDER_WORLD,
         ));
         let params = (0..16_384).map(|id| package.and_then(|p| EcTerrainParams::for_tile(p, id))).collect();
-        Self { image, params, dimensions, map: None, values, dirty: false }
+        let cache = cache::StackCache::new(images, package);
+        Self { image, params, cache, dimensions, map: None, values, dirty: false }
+    }
+
+    pub fn stack_image(&self) -> Handle<Image> { self.cache.image.clone() }
+
+    pub fn cached_chunk_count(&self) -> usize {
+        self.values.iter().filter(|value| value[2] != u16::MAX).count()
     }
 
     pub fn begin_map(&mut self, map: u32) {
         if self.map != Some(map) {
             self.map = Some(map);
-            self.values.fill([u16::MAX; 2]);
+            self.values.fill([u16::MAX; 4]);
+            self.cache.clear();
             self.dirty = true;
         }
     }
@@ -98,8 +109,8 @@ impl EcTerrainBases {
     pub fn set(&mut self, chunk: UVec2, limits: [u16; 2]) {
         if chunk.x >= self.dimensions.x || chunk.y >= self.dimensions.y { return; }
         let value = &mut self.values[(chunk.y * self.dimensions.x + chunk.x) as usize];
-        if *value != limits {
-            *value = limits;
+        if [value[0], value[1]] != limits {
+            *value = [limits[0], limits[1], u16::MAX, u16::MAX];
             self.dirty = true;
         }
     }
@@ -172,6 +183,6 @@ mod tests {
         assert_eq!(&images.get(&bases.image).unwrap().data.as_ref().unwrap()[..2], &5u16.to_le_bytes());
         bases.begin_map(1);
         bases.flush(&mut images);
-        assert!(bases.values.iter().all(|&value| value == [u16::MAX; 2]));
+        assert!(bases.values.iter().all(|&value| value == [u16::MAX; 4]));
     }
 }

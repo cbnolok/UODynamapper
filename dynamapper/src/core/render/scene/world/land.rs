@@ -109,6 +109,7 @@ struct LandUploadTelemetryShared {
     submitted_bytes: AtomicU64,
     pending_ops: AtomicU32,
     pending_bytes: AtomicU64,
+    submitted_metadata_revision: AtomicU64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -120,6 +121,8 @@ pub struct LandUploadTelemetrySnapshot {
     pub submitted_bytes: u64,
     pub pending_ops: u32,
     pub pending_bytes: u64,
+    /// Last CPU metadata revision fully issued to the render queue.
+    pub submitted_metadata_revision: u64,
 }
 
 /// Shared telemetry for the land metadata-atlas upload path.
@@ -144,6 +147,7 @@ impl LandUploadTelemetry {
             submitted_bytes: self.shared.submitted_bytes.load(Ordering::Relaxed),
             pending_ops: self.shared.pending_ops.load(Ordering::Relaxed),
             pending_bytes: self.shared.pending_bytes.load(Ordering::Relaxed),
+            submitted_metadata_revision: self.shared.submitted_metadata_revision.load(Ordering::Acquire),
         }
     }
 
@@ -155,6 +159,10 @@ impl LandUploadTelemetry {
         self.shared
             .queued_bytes
             .store(queued_bytes, Ordering::Relaxed);
+    }
+
+    pub fn record_metadata_submission(&self, revision: u64) {
+        self.shared.submitted_metadata_revision.store(revision, Ordering::Release);
     }
 
     pub fn record_submit(

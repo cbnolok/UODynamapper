@@ -3,7 +3,7 @@
 // ownership cells. Keep every distinct material there and the chunk's base;
 // this bound does not truncate the chunk's (up to 49) original material passes.
 import package::shaders::world::land::land_bindings::{
-    TileUniform, land_page_lookup, ec_terrain_bases,
+    TileUniform, land_page_lookup, ec_terrain_bases, ec_terrain_stacks,
 };
 import package::shaders::world::land::atlas::atlas_read_meta;
 
@@ -64,7 +64,7 @@ fn ec_mask_byte(owners: array<u32, 16>, material: u32, point: vec2<i32>, corner:
     return 0.0;
 }
 
-fn ec_terrain_stack(world: vec2<f32>) -> EcTerrainStack {
+fn ec_terrain_stack_uncached(world: vec2<f32>) -> EcTerrainStack {
     var stack: EcTerrainStack;
     let chunk = vec2<i32>(floor(world / 32.0));
     let base_dims = vec2<i32>(textureDimensions(ec_terrain_bases));
@@ -142,4 +142,49 @@ fn ec_terrain_stack(world: vec2<f32>) -> EcTerrainStack {
         }
     }
     return stack;
+}
+
+fn ec_terrain_stack(world: vec2<f32>) -> EcTerrainStack {
+    let chunk = vec2<i32>(floor(world / 32.0));
+    let dims = vec2<i32>(textureDimensions(ec_terrain_bases));
+    if (all(chunk >= vec2<i32>(0)) && all(chunk < dims)) {
+        let limits = textureLoad(ec_terrain_bases, chunk, 0);
+        if (limits.z < 16u) {
+            let guard = textureLoad(ec_terrain_stacks, vec2<i32>(0, 32), i32(limits.z), 0);
+            if (all(guard.xy == vec2<u32>(chunk)) && guard.z == limits.w && guard.w == 1u) {
+                let local = world - vec2<f32>(chunk * 32);
+                let sample_position = clamp(local - vec2<f32>(0.5), vec2<f32>(0.0), vec2<f32>(31.0));
+                let corner = vec2<i32>(floor(sample_position));
+                let header_at = vec2<i32>(corner.x * 35, corner.y);
+                let header = textureLoad(ec_terrain_stacks, header_at, i32(limits.z), 0);
+                let nearest = clamp(vec2<i32>(floor(local)), vec2<i32>(0), vec2<i32>(31));
+                let delta = min(nearest - corner, vec2<i32>(1));
+                let pair = select(header.y, header.z, delta.y != 0);
+                let expected = (pair >> (u32(delta.x) * 16u)) & 65535u;
+                let cell = vec2<i32>(floor(world));
+                let current = atlas_read_meta(cell.x, cell.y);
+                if (header.x > 0u && header.x <= 17u && current.texture_size == 2u && current.texture_payload == expected) {
+                    var stack: EcTerrainStack;
+                    stack.count = header.x;
+                    let fraction = fract(sample_position);
+                    for (var index = 0u; index < stack.count; index++) {
+                        let at = header_at + vec2<i32>(1 + i32(index) * 2, 0);
+                        let layer = textureLoad(ec_terrain_stacks, at, i32(limits.z), 0);
+                        let values = bitcast<vec4<f32>>(textureLoad(ec_terrain_stacks, at + vec2<i32>(1, 0), i32(limits.z), 0));
+                        stack.layers[index] = layer;
+                        if (((layer.w >> 16u) & 128u) == 0u) {
+                            stack.alpha[index] = values[u32(delta.y * 2 + delta.x)];
+                        } else {
+                            stack.alpha[index] = mix(mix(values.x, values.y, fraction.x),
+                                mix(values.z, values.w, fraction.x), fraction.y);
+                        }
+                    }
+                    return stack;
+                }
+            }
+        }
+    }
+    // Keep the exact previous path for missing data, uploads in flight and
+    // positions outside the bounded cache. Shading call sites are unchanged.
+    return ec_terrain_stack_uncached(world);
 }

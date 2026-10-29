@@ -93,6 +93,7 @@ struct LandStaticLightUniform {
 @group(3) @binding(116) var classic_land_art_lookup: texture_2d<u32>;
 // First and last retained pass payloads per 32x32 chunk; 65535 means not prepared.
 @group(3) @binding(117) var ec_terrain_bases: texture_2d<u32>;
+@group(3) @binding(118) var ec_terrain_stacks: texture_2d_array<u32>;
 
 // ============================================================================
 // Grid / chunk constants
