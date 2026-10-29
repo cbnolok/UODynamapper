@@ -126,7 +126,7 @@ Important rule:
 
 ## Current EC Classification Notes
 
-- `Unused1` on EC tileart entries is currently treated as the strongest primary land hint when building the semantic translation table for EC land classification.
+- The `Rotated` flag (formerly `Unused1`) on EC tileart entries is currently treated as the strongest primary land hint when building the semantic translation table for EC land classification.
 - `TerrainTranscode.kdl` is still the active loose override for mapping Classic Client land ids to EC material ids at runtime.
 - `TerrainDefinition.kdl` is old override data from before this repo parsed `TerrainDefinition.uop` correctly. It may still be loaded for inspection or backward compatibility, but it is no longer the authoritative source for EC land semantics.
 - The current target architecture for EC textures is a three-way split built from one classification pass: `ec_textures_land.uddp`, `ec_textures_art.uddp`, and `ec_textures_layers.uddp`.

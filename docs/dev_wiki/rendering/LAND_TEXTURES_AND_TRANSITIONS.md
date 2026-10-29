@@ -243,11 +243,11 @@ Current parser rule:
 
 - `UOWaterShader` -> `TileType::Liquid`
 - `UOStaticTerrainShader` -> `TileType::Solid`
-- `UOSpriteShader` with `Unused1` -> `TileType::Solid`
+- `UOSpriteShader` with `Rotated` (formerly `Unused1`) -> `TileType::Solid`
 - `UOSpriteShader` with primary texture `stretch != 1.0` -> `TileType::Solid`
 - otherwise -> `TileType::Static`
 
-This rule was derived from verified EC examples such as wood boards (`1211`), sandstone floor (`2077`), and palm-frond roof (`1510`): all are flat 44x44 classic-style tiles with zero offsets, all carry `Unused1`, and all must be treated as surface-like in the EC path even though they do not come through `UOStaticTerrainShader`.
+This rule was derived from verified EC examples such as wood boards (`1211`), sandstone floor (`2077`), and palm-frond roof (`1510`): all are flat 44x44 classic-style tiles with zero offsets, all carry `Rotated`, and all must be treated as surface-like in the EC path even though they do not come through `UOStaticTerrainShader`.
 
 That avoids misclassifying bridge decks, suspended floors, under-land floors, roofs, and land-looking object overlays as map land while still keeping them out of the billboard/static path.
 
@@ -262,14 +262,14 @@ Useful examples:
 - `wet`: liquid-adjacent or water-like content
 - `background`: often flat/decal-like or floor-like placement behavior
 - `wall` / `roof`: structural art, not land
-- `unused1`: verified EC-side hint that some `tileart.uop` entries should be rendered as flat surface-like tiles even when their shader is `UOSpriteShader`
+- `Rotated` (formerly `Unused1`; the client applies `rotation_degrees` to the sprite with it): verified EC-side hint that some `tileart.uop` entries should be rendered as flat surface-like tiles even when their shader is `UOSpriteShader`
 
 Practical rule:
 
 - `surface` and `bridge` strongly suggest floor-like or deck-like object art when the owner is tileart/item data
 - `wet` plus water-oriented shader suggests liquid-style treatment, but still not necessarily map land if owned by tileart
 - `wall` and `roof` should rule out land classification immediately
-- `unused1` should be treated as a secondary EC render-mode hint, not as proof of land ownership
+- `Rotated` should be treated as a secondary EC render-mode hint, not as proof of land ownership
 
 Flags are therefore best treated as:
 
@@ -279,7 +279,7 @@ Flags are therefore best treated as:
 
 They are not the primary source of truth for deciding `land` versus `art`.
 
-In other words: `Unused1` says "render this tileart entry like a flat surface", not "this texture belongs to the land material system".
+In other words: `Rotated` says "render this tileart entry like a flat surface", not "this texture belongs to the land material system".
 
 ### 6.5 Decision Table
 
@@ -289,7 +289,7 @@ In other words: `Unused1` says "render this tileart entry like a flat surface", 
 | Referenced by classic item tiledata or EC `ArtData` | `art` | Even if flat, floor-like, or land-looking |
 | EC tileart record with `UOStaticTerrainShader` | `art`, subtype `land-like floor art` | Do not promote to map land automatically |
 | EC tileart record with `UOWaterShader` | `art`, subtype `liquid-like art` | Useful for special render handling, still item-owned |
-| EC tileart record with `UOSpriteShader` and `Unused1` | `art`, subtype `surface-like floor/roof art` | Covers flat boards, roofs, sandstone floor tiles, and similar EC land-like statics |
+| EC tileart record with `UOSpriteShader` and `Rotated` | `art`, subtype `surface-like floor/roof art` | Covers flat boards, roofs, sandstone floor tiles, and similar EC land-like statics |
 | EC tileart record with `UOSpriteShader` and walkable/surface-like flags | `art`, subtype `floor or deck art` | Covers docks, platforms, suspended floors |
 | `wall` or `roof` flags present | `art` | Strong negative evidence against land |
 | Same EC `worldart` texture id used by both domains | keep both semantic references | Shared texture content is valid; do not force exclusivity |
@@ -302,7 +302,7 @@ Do not classify as `land` merely because:
 - the numeric id is low
 - the numeric vpath matches a classic art id
 - the art looks like a flat diamond ground tile
-- the tile carries `Unused1`
+- the tile carries `Rotated`
 - the object is walkable
 
 Those signals are insufficient on their own. They are compatible with:
@@ -329,7 +329,7 @@ Current branch direction:
 
 - keep land ownership anchored in `TerrainDefinition.uop`
 - keep item/static ownership anchored in `tileart.uop`
-- use EC `Unused1` plus shader/type to decide whether a tileart entry is surface-like and should avoid the billboard/static path
+- use EC `Rotated` plus shader/type to decide whether a tileart entry is surface-like and should avoid the billboard/static path
 - use `TerrainTranscode.kdl` as the starting point for the hand-tuned Classic land family table
 
 That direction is specifically aimed at reconciling the shared EC texture pools with distinct semantic outputs instead of pretending the pools are disjoint.

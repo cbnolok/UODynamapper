@@ -4,13 +4,13 @@ Map 0 at (2518,561) contains map land 3 at Z=0 with cobblestone statics
 1301–1304 and grass statics 6018–6021, also at Z=0. These are item-owned
 material images, not missing terrain redirects. The installed original item
 metadata selects WorldArt 2000090, repetition 8, for cobblestone and 2000010,
-repetition 10, for grass. Both use world coordinates (`unk7=1`). Cobblestone
+repetition 10, for grass. Both use world coordinates (`uv_set=1`). Cobblestone
 names `UOSpriteShader`; grass names `UOStaticTerrainShader`. The routing
 inspector prints the retained material definitions alongside source references.
 
-The TileArt high-word bit 2 (combined bit 34, `Unused1`) takes the authored
-camera-plane quad branch in UOSA.exe at `0x45a080`; its callers include
-`0x42cbc0`, `0x449740` and `0x4592e0`. That constructor returns without building
+The TileArt high-word bit 2 (combined bit 34, `Rotated`, formerly `Unused1`)
+takes the authored camera-plane quad branch in UOSA.exe at `0x45a080`; its
+callers include `0x42cbc0`, `0x449740` and `0x4592e0`. That constructor returns without building
 neighbor coverage. This establishes the geometry branch, not the absence of
 blending elsewhere in the original pipeline. See `ec_original_water_code.md`
 for the quad's recovered coordinates and register-level evidence.

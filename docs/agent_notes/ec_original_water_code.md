@@ -61,8 +61,10 @@ not be substituted blindly for the serialized material's source indices.
 - Material-to-engine construction names its integer array `Technique` at
   `0x45db3b` and its floating-point array `Tweaks` at `0x45dbe6`, attaching
   them as extra data. The drawing method looks up those same names at
-  `0x59bd0c` and `0x59bd76`. These are the semantic names for the reader's
-  retained `unk8` and `unk9` arrays; preserve their raw values as well.
+  `0x59bd0c` and `0x59bd76`. These are the semantic names for the retained
+  arrays: tileart `technique` and `tweaks` (formerly `unk8` and `unk9`), still
+  `unk8` and `unk9` in the TerrainDefinition reader; preserve their raw values
+  as well.
 - Material source 0 is bound at `0x59be80`–`0x59be8d`. The color operation is
   `0x16` (22, `D3DTOP_BUMPENVMAP`) at `0x59bead`. Its bump matrix diagonal is
   1.0, with zero off-diagonal terms.
@@ -207,9 +209,10 @@ packing/UV windows remain separate validation work.
 
 The former `TileArtEntry::process` kept image refs while dropping each block's
 shader name, Technique and Tweaks. `ArtData.materials` now retains these as
-`ArtMaterial` records with original block indices and the additional raw `unk1`
-byte. The tilemeta converter writes `metadata/item_materials.json` separately
-from the existing dense image-ref table. `TileMetaPackage::item_materials` and
+`ArtMaterial` records with original block indices and the additional raw
+`field_04` byte (`unk1` in older packages). The tilemeta converter writes
+`metadata/item_materials.json` separately from the existing dense image-ref
+table. `TileMetaPackage::item_materials` and
 `item_material` expose the retained source data. Missing or malformed material
 metadata fails loading with an explicit rebuild message; rebuild packages with
 the matching original bundle. Terrain parameters remain distinct from item data.
@@ -217,8 +220,8 @@ the matching original bundle. Terrain parameters remain distinct from item data.
 The reusable `ec_research items 6038 6057` command reads the raw source blocks:
 both block-0 shaders are `UOWaterShader`, both have all-zero Technique/Tweaks,
 and both share source images 1000013/2000051/1000017. Their fourth images differ:
-6038 uses image 6038 and 6057 uses 2100014. The first three refs have raw `unk7=1`,
-while the fourth has `unk7=0`; retain that distinction while reconstructing UVs.
+6038 uses image 6038 and 6057 uses 2100014. The first three refs have raw `uv_set=1`,
+while the fourth has `uv_set=0`; retain that distinction while reconstructing UVs.
 Each item also has separate legacy and enhanced sprite blocks; a matching numeric
 image ID in those blocks is a different physical source.
 
@@ -245,7 +248,8 @@ Terrain's own extra input is deliberately separate and remains unfinished.
 
 ## Local UV construction is separate from the texture transform
 
-`0x45e1e4`–`0x45e1f8` copies the raw source descriptor's UV-set field (`unk7`)
+`0x45e1e4`–`0x45e1f8` copies the raw source descriptor's UV-set field (tileart `uv_set`,
+formerly `unk7`)
 into the shader map's low flag byte. `0x58dfc0` passes that byte to the texture
 coordinate-index state: cache field `+0xe8` corresponds to
 `0xbc + D3DTSS_TEXCOORDINDEX(11) * 4`. This establishes a coordinate-set index,
@@ -818,9 +822,9 @@ Item placement `0x4598d0` adds raw height times `0.12856454` along camera up,
 plus `(0.5, 0, -1.5)`. Terrain construction `0x460650` uses the same height
 vector, with a small direction-column priority displacement. Height therefore
 changes screen up without the large depth change caused by our world-Y relief.
-The item flag at `+0x3c & 4` (TileArt `Unused1`, bit 34) selects constructor
-`0x45a080`'s camera-plane quad: screen `(right, up)` vertices are
-`(0.707105,1.4742099)`, `(1.4742099,0.707105)`,
+The item flag at `+0x3c & 4` (TileArt `Rotated`, formerly `Unused1`, bit 34)
+selects constructor `0x45a080`'s camera-plane quad: screen `(right, up)`
+vertices are `(0.707105,1.4742099)`, `(1.4742099,0.707105)`,
 `(-0.06,0.707105)`, `(0.707105,-0.06)` with local UVs
 `(0,1)`, `(1,1)`, `(0,0)`, `(1,0)`. These include a small overlap margin.
 They are not evidence for an arbitrary rectangular billboard or a NIF mesh.
@@ -927,7 +931,7 @@ positional stage assumption can pass while displaying the wrong artwork.
 
 ### Authored crust geometry and edge treatment
 
-Art-owned EC surfaces carrying TileArt `Unused1` now use the screen right/up
+Art-owned EC surfaces carrying TileArt `Rotated` now use the screen right/up
 quad from `0x45a080`, including its overlap margin, instead of a horizontal
 unit cell. The original `(0.5,0,-1.5)` translation is converted into the
 runtime's signed-map convention. The camera right/up basis and projection's
