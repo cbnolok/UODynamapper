@@ -63,3 +63,28 @@ pub fn write_verdata(path: &PathBuf, entries: &[(VerFileId, i32, i32, Vec<u8>)])
 
     fs::write(path, bytes).unwrap();
 }
+
+/// Environment variables naming real client directories for the ignored client-data tests: an Enhanced Client
+/// and a Classic Client directory. Each is optional; at least one must be set.
+pub const CLIENT_DIR_ENVS: [&str; 2] = ["UO_EC_CLIENT_DIR", "UO_CC_CLIENT_DIR"];
+
+/// The path of `file_name` in each client directory named by [`CLIENT_DIR_ENVS`], with the variable naming the
+/// directory. Directories without the file are reported and skipped.
+pub fn client_files(file_name: &str) -> Vec<(&'static str, PathBuf)> {
+    let dirs: Vec<_> = CLIENT_DIR_ENVS
+        .into_iter()
+        .filter_map(|env| std::env::var_os(env).map(|dir| (env, PathBuf::from(dir))))
+        .collect();
+    assert!(!dirs.is_empty(), "set {} to a client directory", CLIENT_DIR_ENVS.join(" and/or "));
+    dirs.into_iter()
+        .filter_map(|(env, dir)| {
+            let path = dir.join(file_name);
+            if path.is_file() {
+                Some((env, path))
+            } else {
+                println!("{env}: no {file_name}, skipped");
+                None
+            }
+        })
+        .collect()
+}

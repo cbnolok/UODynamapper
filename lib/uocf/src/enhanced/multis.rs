@@ -16,7 +16,9 @@ use crate::uop_container::package::UopPackage;
 
 pub const MULTI_COLLECTION_UOP_NAME: &str = "MultiCollection.uop";
 pub const HOUSING_PATH: &str = "build/multicollection/housing.bin";
-pub const MAX_MULTI_COLLECTION_ID: u32 = 0x2200;
+/// Exclusive bound of the multi ids searched in the package: multi ids are 16-bit graphics. Recent clients
+/// (2026) ship multi 9000, above the 0x2200 bound used before.
+pub const MAX_MULTI_COLLECTION_ID: u32 = 0x10000;
 /// Bytes of a part before its string list: tile id, x, y, z, `not_drawn`, `flag2` and the string count.
 const MULTI_PART_FIXED_SIZE: usize = 14;
 const STRING_ID_SIZE: usize = size_of::<u32>();
@@ -213,6 +215,7 @@ pub fn housing_hash() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::uop_container::file::CompressionFlag;
     use byteorder::WriteBytesExt;
 
     #[test]
@@ -299,6 +302,20 @@ mod tests {
         bytes.truncate(bytes.len() - MULTI_PART_FIXED_SIZE - STRING_ID_SIZE);
 
         assert!(MultiItem::from_payload_bytes(TEST_HASH, multi_collection_path(TEST_MULTI_ID), &bytes).is_err());
+    }
+
+    #[test]
+    fn from_package_finds_the_highest_multi_id() {
+        let highest_id = u32::from(u16::MAX);
+        let mut package = UopPackage::new_default();
+        package
+            .add_file_from_memory(&entry_bytes(&test_parts()), &multi_collection_path(highest_id), CompressionFlag::None)
+            .unwrap();
+
+        let collection = MultiCollection::from_package(&package).unwrap();
+
+        assert_eq!(collection.items.len(), 1);
+        assert_eq!(collection.get(highest_id).map(|item| item.parts.len()), Some(test_parts().len()));
     }
 
     #[test]

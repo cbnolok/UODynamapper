@@ -1,18 +1,21 @@
-//! Parses every entry of a real Enhanced Client `AnimationSequence.uop` and
-//! `AnimationDefinition.uop`.
+//! Parses every entry of a real client `AnimationSequence.uop` (Enhanced and Classic clients ship the same
+//! format) and of an Enhanced Client `AnimationDefinition.uop`.
 //!
-//! The expected figures are the ones verified by
-//! `scripts/dev-helpers/ec-research/ghidra-animation/verify_animation.py`.
+//! The client directories come from the variables in `common::CLIENT_DIR_ENVS`; a directory without a file is
+//! skipped. Every entry must parse in any release. The expected figures are the ones verified by
+//! `scripts/dev-helpers/ec-research/ghidra-animation/verify_animation.py` on the reference release (the 2024
+//! Enhanced Client; the Classic Client of the same release has the same `AnimationSequence.uop` payloads); they
+//! are asserted only when the entry count identifies that release, and printed otherwise.
+
+mod common;
 
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::path::Path;
 use uocf::animation_sequence::AnimationSequence;
 use uocf::enhanced::animation_definition::AnimationDefinition;
 use uocf::uop_container::hash::hash_file_name_single;
 use uocf::uop_container::package::UopPackage;
 
-/// Environment variable naming the Enhanced Client directory.
-const EC_CLIENT_DIR_ENV: &str = "UO_EC_CLIENT_DIR";
 const SEQUENCE_UOP_NAME: &str = "AnimationSequence.uop";
 const DEFINITION_UOP_NAME: &str = "AnimationDefinition.uop";
 
@@ -35,20 +38,14 @@ const EXPECTED_SKIPPED_FRAME_ACTIONS: usize = 69;
 const EXPECTED_DEFINITIONS: usize = 1102;
 const EXPECTED_DEFINITION_REDIRECTS: [(u32, u32); 3] = [(7905, 7897), (7923, 7916), (18153, 18150)];
 
-fn client_dir() -> PathBuf {
-    let client_dir = std::env::var(EC_CLIENT_DIR_ENV)
-        .unwrap_or_else(|_| panic!("{EC_CLIENT_DIR_ENV} must name the Enhanced Client directory"));
-    PathBuf::from(client_dir)
-}
-
-/// Parses every non-empty entry of `uop_name`, keyed by the id its name hash resolves to.
+/// Parses every non-empty entry of the package at `path`, keyed by the id its name hash resolves to.
 fn parse_entries<T>(
-    uop_name: &str,
+    path: &Path,
     ids: impl Iterator<Item = u32>,
     entry_path: fn(u32) -> String,
     parse: fn(&[u8]) -> color_eyre::eyre::Result<T>,
 ) -> BTreeMap<u32, T> {
-    let package = UopPackage::load(client_dir().join(uop_name)).unwrap_or_else(|error| panic!("load {uop_name}: {error}"));
+    let package = UopPackage::load(path).unwrap_or_else(|error| panic!("load {}: {error}", path.display()));
     let names: HashMap<u64, u32> = ids.map(|id| (hash_file_name_single(&entry_path(id)), id)).collect();
     let mut entries = BTreeMap::new();
     let mut failures = Vec::new();
@@ -62,76 +59,85 @@ fn parse_entries<T>(
             Err(error) => failures.push(format!("{id}: {error}")),
         }
     }
-    assert!(failures.is_empty(), "{} entries failed: {failures:?}", failures.len());
+    assert!(failures.is_empty(), "{}: {} entries failed: {failures:?}", path.display(), failures.len());
     entries
 }
 
 #[test]
-#[ignore = "needs a real Enhanced Client: set UO_EC_CLIENT_DIR and run with --ignored"]
+#[ignore = "needs a real client: set UO_EC_CLIENT_DIR and/or UO_CC_CLIENT_DIR and run with --ignored"]
 fn animation_sequence_parses_every_client_entry() {
-    let sequences = parse_entries(
-        SEQUENCE_UOP_NAME,
-        0..MAX_SEQUENCE_ID,
-        AnimationSequence::entry_path,
-        AnimationSequence::parse,
-    );
-    assert_eq!(sequences.len(), EXPECTED_SEQUENCES);
+    for (env, path) in common::client_files(SEQUENCE_UOP_NAME) {
+        let sequences = parse_entries(&path, 0..MAX_SEQUENCE_ID, AnimationSequence::entry_path, AnimationSequence::parse);
 
-    let redirects: BTreeMap<u32, u32> = sequences
-        .iter()
-        .filter(|(id, sequence)| sequence.stored_id != **id)
-        .map(|(&id, sequence)| (id, sequence.stored_id))
-        .collect();
-    assert_eq!(redirects, BTreeMap::from(EXPECTED_SEQUENCE_REDIRECTS));
+        let redirects: BTreeMap<u32, u32> = sequences
+            .iter()
+            .filter(|(id, sequence)| sequence.stored_id != **id)
+            .map(|(&id, sequence)| (id, sequence.stored_id))
+            .collect();
 
-    let mut plain = 0usize;
-    let mut aliases = 0usize;
-    let mut alias_of_alias = 0usize;
-    let mut effect_frames = 0usize;
-    let mut skipped_frame_actions = 0usize;
-    for sequence in sequences.values() {
-        for (&action_id, action) in &sequence.actions {
-            effect_frames += action.frame_effects.len();
-            skipped_frame_actions += usize::from(!action.skipped_frames.is_empty());
-            let Some(target) = action.alias else {
-                plain += 1;
-                assert_eq!(sequence.resolve_action(action_id, true), Some(action_id));
-                continue;
-            };
-            aliases += 1;
-            let target_record = sequence.actions.get(&target).expect("no alias target is missing");
-            alias_of_alias += usize::from(target_record.alias.is_some());
-        }
-        for group in sequence.groups.values() {
-            for choices in group.typed.values() {
-                assert!(choices.iter().all(|choice| sequence.actions.contains_key(choice)));
+        let mut plain = 0usize;
+        let mut aliases = 0usize;
+        let mut alias_of_alias = 0usize;
+        let mut effect_frames = 0usize;
+        let mut skipped_frame_actions = 0usize;
+        for sequence in sequences.values() {
+            for (&action_id, action) in &sequence.actions {
+                effect_frames += action.frame_effects.len();
+                skipped_frame_actions += usize::from(!action.skipped_frames.is_empty());
+                let Some(target) = action.alias else {
+                    plain += 1;
+                    assert_eq!(sequence.resolve_action(action_id, true), Some(action_id));
+                    continue;
+                };
+                aliases += 1;
+                let target_record = sequence.actions.get(&target).expect("no alias target is missing");
+                alias_of_alias += usize::from(target_record.alias.is_some());
+            }
+            for group in sequence.groups.values() {
+                for choices in group.typed.values() {
+                    assert!(choices.iter().all(|choice| sequence.actions.contains_key(choice)));
+                }
             }
         }
+
+        println!(
+            "{env}: {} sequences, redirects {redirects:?}, {plain} plain and {aliases} alias actions, \
+             {alias_of_alias} aliases of aliases, {effect_frames} effect frames, \
+             {skipped_frame_actions} actions with skipped frames",
+            sequences.len()
+        );
+        if sequences.len() != EXPECTED_SEQUENCES {
+            println!("{env}: not the reference release, counts not checked");
+            continue;
+        }
+        assert_eq!(redirects, BTreeMap::from(EXPECTED_SEQUENCE_REDIRECTS));
+        assert_eq!(plain, EXPECTED_PLAIN_ACTIONS);
+        assert_eq!(aliases, EXPECTED_ALIAS_ACTIONS);
+        assert_eq!(alias_of_alias, EXPECTED_ALIAS_OF_ALIAS);
+        assert_eq!(effect_frames, EXPECTED_EFFECT_FRAMES);
+        assert_eq!(skipped_frame_actions, EXPECTED_SKIPPED_FRAME_ACTIONS);
     }
-    assert_eq!(plain, EXPECTED_PLAIN_ACTIONS);
-    assert_eq!(aliases, EXPECTED_ALIAS_ACTIONS);
-    assert_eq!(alias_of_alias, EXPECTED_ALIAS_OF_ALIAS);
-    assert_eq!(effect_frames, EXPECTED_EFFECT_FRAMES);
-    assert_eq!(skipped_frame_actions, EXPECTED_SKIPPED_FRAME_ACTIONS);
 }
 
 #[test]
 #[ignore = "needs a real Enhanced Client: set UO_EC_CLIENT_DIR and run with --ignored"]
 fn animation_definition_parses_every_client_entry() {
-    let ids = (0..MAX_ITEM_ID).chain((0..MAX_ITEM_ID).map(|id| MOBILE_DEFINITION_BASE + id));
-    let definitions = parse_entries(
-        DEFINITION_UOP_NAME,
-        ids,
-        AnimationDefinition::entry_path,
-        AnimationDefinition::parse,
-    );
-    assert_eq!(definitions.len(), EXPECTED_DEFINITIONS);
+    for (env, path) in common::client_files(DEFINITION_UOP_NAME) {
+        let ids = (0..MAX_ITEM_ID).chain((0..MAX_ITEM_ID).map(|id| MOBILE_DEFINITION_BASE + id));
+        let definitions = parse_entries(&path, ids, AnimationDefinition::entry_path, AnimationDefinition::parse);
+        assert!(definitions.values().all(|definition| definition.sets.values().all(|set| !set.frames.is_empty())));
 
-    let redirects: BTreeMap<u32, u32> = definitions
-        .iter()
-        .filter(|(id, definition)| definition.stored_id != **id)
-        .map(|(&id, definition)| (id, definition.stored_id))
-        .collect();
-    assert_eq!(redirects, BTreeMap::from(EXPECTED_DEFINITION_REDIRECTS));
-    assert!(definitions.values().all(|definition| definition.sets.values().all(|set| !set.frames.is_empty())));
+        let redirects: BTreeMap<u32, u32> = definitions
+            .iter()
+            .filter(|(id, definition)| definition.stored_id != **id)
+            .map(|(&id, definition)| (id, definition.stored_id))
+            .collect();
+
+        println!("{env}: {} definitions, redirects {redirects:?}", definitions.len());
+        if definitions.len() != EXPECTED_DEFINITIONS {
+            println!("{env}: not the reference release, counts not checked");
+            continue;
+        }
+        assert_eq!(redirects, BTreeMap::from(EXPECTED_DEFINITION_REDIRECTS));
+    }
 }
