@@ -90,24 +90,58 @@ unless the data becomes a stable package contract.
 - Record layout and field meanings follow the client parser
   (`UOTileArt::ParseObjectDefinition` in UOSA.exe), documented in
   `scripts/dev-helpers/ec-research/ghidra-tileart/results/uosa_tileart.md`
-  (sections 2, 5 and 6) and verified on all 37756 client records.
+  (sections 2, 5, 6 and 8) and verified on all 37756 client records.
 - Records are version 4; the client and `TileArtEntry::parse_raw` reject any
   other version.
 - The fixed part holds the name string index, tile id, `has_world_art`,
-  `uses_enhanced_tileart`, world/legacy art scales, `field_60` (always 0),
-  old id, `rotation_degrees`, `body_type` (default 400), `field_e8` (unknown),
-  `light_scale`, `light_field_70` (always 0), light x/y offsets,
+  `uses_enhanced_tileart`, world/legacy art scales, `field_60` (always 0, only
+  part of the client's legacy-art-data test), old id, `rotation_degrees`,
+  `body_type` (default 400; an equipment appearance is only worn by a mobile
+  with this body type), `alternate_animation` (formerly `field_e8`),
+  `light_scale`, `light_field_70` (always 0, not read), light x/y offsets,
   `house_join_bits`, two 64-bit flag fields, facing, and the EC and legacy
-  image windows. Light fields are probable, `body_type` is medium confidence.
+  image windows. `facing` is copied to the sprite component; its use was not
+  traced (medium confidence).
+- `alternate_animation`: when the item is equipped in layer 2 (two-handed),
+  the wearer's stand, walk and run actions use the alternate entry of the
+  animation action map. The client copies the raw byte and tests it for
+  non-zero (the parser reads any non-zero byte as true); client data holds
+  only 0 and 1, set on 30 records (gargoyle two-handed weapons, halberds,
+  creature placeholders).
+- Light fields: `light_scale` scales the light sprite; `light_offset_x/y` are
+  rotated by the view and added to the light sprite position. The client only
+  creates the light component when the light shader block (block 3) is set.
+- `house_join_bits` (`HOUSE_JOIN_*` constants): bits 1, 2 and 3 are required on
+  the north-west corner cell, the west edge (x = 0) and the north edge (y = 0)
+  of a house; bit 5 (probable) also requires a supporting floor; bit 14
+  (probable) flags the cell and its +x and +y neighbours; bits 6..13 are the
+  west, east, north and south connectors (two kinds per side, matched with the
+  same kind on the facing side). Bits 0, 4 and 15 are not read by the client.
+- `flags2` is not a copy of `flags1`; the client tests only bits 18 (paperdoll
+  partial hue), 19 (`UseNewArt`) and 24 (`Animation`) in it. Bit 38
+  (`TaeFlag::Unused2`) is never set and never tested.
+- Property keys (`PropertyKey`): 0 `Weight` (the client tests `weight > 90`),
+  3 `Height` (copied to the world object), 6 `Layer` (equipment layer,
+  formerly `Slot`), 8 `Appearance`, 9 `Race`, 10 `Gender`, 11 `Paperdoll`
+  (appearance override: the definition of `value + 10000000`, used before
+  `Appearance`). Keys 1, 2, 4, 5 and 7 (`Key7`, formerly `OffC8`; set on beds,
+  curtains, banners and cloth) have no constant-key reader. props2 mostly
+  mirrors props1; the client reads it only for the paperdoll gump (keys 11 and
+  8, before props1).
 - The variable part holds two property vectors, stack aliases, appearance
   filters, an optional sitting block, radar color, four shader blocks and the
   effects tail:
   - appearance filter subtypes: 0 = appearance by owner body type, 1 = by
     owner gender, 2 = animation appearance by owner body type; any other
     subtype is an error.
-  - sitting: a 0/1 flag (other values are errors), then 6 u32 words: probable
-    direction bitmask, `field_04`, `field_08`, `window_shift`, `field_10`,
-    `field_14`. Before this was fixed the repo read 4 words, which shifted the
+  - sitting: a 0/1 flag (other values are errors), then 6 32-bit words:
+    `direction_mask` (allowed seated facings, `SITTING_DIRECTION_*`: 1 north,
+    2 east, 4 south, 8 west; the client snaps the facing to the nearest allowed
+    one), signed `seat_offset_x` and `seat_offset_y` (formerly `field_04` and
+    `field_08`; the client draws the seated mobile at minus these values),
+    `window_shift` (moves the split column of the chair-back overlay for north
+    and west facings), and `field_10`, `field_14` (not read by the client).
+    Before this was fixed the repo read 4 words, which shifted the
     rest of all 170 sitting records: their radar color was garbage and all four
     shader blocks were lost.
   - effects: u8 count, then that many effect definitions (see
@@ -166,6 +200,9 @@ unless the data becomes a stable package contract.
   than `MAX_EFFECT_NESTING_DEPTH` is our own limit (the client has none).
 - Particle names are client string dictionary indices; `ParticleEffect::name`
   resolves them.
+- UserPreference `mask` bit 0 (`USER_PREFERENCE_FOOTSTEPS`) is set when the
+  user disabled footsteps; the other bits are unknown. Particle `field_30` and
+  sound `value_08` have no client reader and stay unknown.
 - Formats, field meanings, confidence and verification against the client data
   are in `scripts/dev-helpers/ec-research/ghidra-effects/results/uosa_effects.md`.
 

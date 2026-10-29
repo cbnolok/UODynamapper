@@ -69,7 +69,7 @@ Byte packed, little endian. The parser checks that the u16 version equals 4.
 | 0x18 | u32 | old_id | +0x64 | default 0xffffff; `GetOldId` +0x78; equals the tile id on 2236 records, another id on 141 (103->102, 129->128, 722->720); no virtual call to +0x78 on a definition was found | medium (data only) |
 | 0x1c | f32 | rotation | +0x68 | `GetRotation` +0x7c; 0/90/180/270; read by `BuildSpriteDescriptor` only when flags1 bit 34 is set | high |
 | 0x20 | u32 | body_type | +0xe4 | default 400; `GetBodyType` +0xb4. 400 = human male, 666 = gargoyle male; creature placeholders (ids >= 10000000) hold the body id. `FUN_004387f0` refuses an equipment appearance whose body type differs from the wearer's body ("Not letting a %u(sq %u) wear a %u(sq %u)"); `UOObject::InitFromDefinition` copies it to the world object (+0x50) | high |
-| 0x24 | u8 | alternate_animation (repo `field_e8`) | +0xe8 | `GetFieldE8` +0xb8 -> `UOObject::SetAlternateAnimation` (+0x54). `FUN_004386a0` reads it from the item in the wearer's layer 2 and passes it to the animation action lookup `FUN_008361ed` (alternate entry +0x14 instead of +0x10) for stand (0) and walk/run (1/2). Set on 30 records: gargoyle two-handed weapons (body 666), halberds 5182/5183, creature placeholders | high (mechanism) |
+| 0x24 | u8 | alternate_animation (repo `field_e8`) | +0xe8 | `GetAlternateAnimation` +0xb8 -> `UOObject::SetAlternateAnimation` (+0x54). `FUN_004386a0` reads it from the item in the wearer's layer 2 and passes it to the animation action lookup `FUN_008361ed` (alternate entry +0x14 instead of +0x10) for stand (0) and walk/run (1/2). Set on 30 records: gargoyle two-handed weapons (body 666), halberds 5182/5183, creature placeholders | high (mechanism) |
 | 0x25 | f32 | light_scale | +0x6c | default 1.0; `GetLightScale` +0x40; 2.0 on 866 records (windows, arrow loops). `UOObjectComponentLighting::Initialize` stores it as the light sprite scale | high |
 | 0x29 | u32 | light_field_70 | +0x70 | `GetLightField70` +0x44; 0 in all records; no virtual call on a definition reads it | unknown (unused) |
 | 0x2d | f32 | light_offset_x | +0x74 | `GetLightOffsetX` +0x48; non-zero only with block 3; e.g. -5, -1.35. `UOObjectComponentLighting::Initialize`: (0, y, x) times the view matrix, added to the light sprite position | high |
@@ -318,8 +318,21 @@ Totals: 179 functions proposed (51 probable), 171 renamed, 8 kept (names by anot
 179 tagged, 171 plate comments, 5 labels, 12 types plus 3 typed globals, 0 anomalies. A second `--apply`
 reports "Changes: none". Round 2 added the 14 world-object functions marked "renamed (round 2)" and
 updated the `UOTileArtSitting`, `UOObjectDefinition` and `TileArtRecordFixed` field names and comments.
-Plate comments set in round 1 keep their round-1 evidence text (the script only fills empty comments);
-the slot evidence in the script and in this document is the current one.
+
+Own names corrected: a name this script applied earlier (source ANALYSIS, tag `UO_TILEART`, plate comment
+written by the script for that exact name) is replaced when the proposal changes; the plate comment is
+refreshed only while it is still the script's single-line text. Names from other sources, tags or comments
+are never touched. Applied (plate comments refreshed):
+
+| Address | Old name | New name |
+|---|---|---|
+| 0x004c9740 | `UOObjectDefinitionBase::GetFieldE8` | `UOObjectDefinitionBase::GetAlternateAnimation` |
+| 0x004c9880 | `UOObjectDefinitionBase::GetSittingField04` | `UOObjectDefinitionBase::GetSeatOffsetX` |
+| 0x004c98a0 | `UOObjectDefinitionBase::GetSittingField08` | `UOObjectDefinitionBase::GetSeatOffsetY` |
+
+Other plate comments keep the evidence text they were written with (the script only fills empty comments,
+so e.g. `UOObject::InitFromDefinition` still says `GetFieldE8`); the slot evidence in the script and in this
+document is the current one.
 
 Kept names (another source type, not renamed; the proposed name is given for reference only):
 
@@ -387,7 +400,7 @@ Functions:
 | 0x004c96d0 | `UOObjectDefinitionBase::GetEnhancedShader` | renamed |
 | 0x004c9700 | `UOObjectDefinitionBase::GetLightShader` | renamed |
 | 0x004c9730 | `UOObjectDefinitionBase::GetBodyType` | renamed |
-| 0x004c9740 | `UOObjectDefinitionBase::GetFieldE8` | renamed |
+| 0x004c9740 | `UOObjectDefinitionBase::GetAlternateAnimation` | renamed from `GetFieldE8` |
 | 0x004c9750 | `UOObjectDefinitionBase::HasHouseJoinBit1` | renamed |
 | 0x004c9760 | `UOObjectDefinitionBase::HasHouseJoinBit2` | renamed |
 | 0x004c9770 | `UOObjectDefinitionBase::HasHouseJoinBit3` | renamed |
@@ -407,8 +420,8 @@ Functions:
 | 0x004c9850 | `UOObjectDefinitionBase::SetHouseJoinBits` | renamed |
 | 0x004c9860 | `UOObjectDefinitionBase::HasSitting` | renamed |
 | 0x004c9870 | `UOObjectDefinitionBase::GetSittingDirections` | renamed |
-| 0x004c9880 | `UOObjectDefinitionBase::GetSittingField04` | renamed |
-| 0x004c98a0 | `UOObjectDefinitionBase::GetSittingField08` | renamed |
+| 0x004c9880 | `UOObjectDefinitionBase::GetSeatOffsetX` | renamed from `GetSittingField04` |
+| 0x004c98a0 | `UOObjectDefinitionBase::GetSeatOffsetY` | renamed from `GetSittingField08` |
 | 0x004c98c0 | `UOObjectDefinitionBase::GetSittingField10` | renamed |
 | 0x004c98e0 | `UOObjectDefinitionBase::GetSittingField14` | renamed |
 | 0x004c9900 | `UOObjectDefinitionBase::GetSittingWindowShift` | renamed |
@@ -543,7 +556,7 @@ Data counts are over the 37756 records of the client's `tileart.uop`.
 
 ### 8.1 `field_e8` (record byte 0x24, +0xe8): alternate animation
 
-- `UOObject::InitFromDefinition` 0x005bdac0 copies `GetFieldE8` (+0xb8) into the world object with
+- `UOObject::InitFromDefinition` 0x005bdac0 copies `GetAlternateAnimation` (+0xb8) into the world object with
   `UOObject::SetAlternateAnimation` (vtable +0x74, byte +0x54).
 - `FUN_004386a0` (EBX = mobile): takes mobile component 6, the layer-2 item serial (+0x18/+0x1c), finds the
   object (`FUN_005bd9d0`) and returns its `UOObject::GetAlternateAnimation` (+0x78).
@@ -561,8 +574,8 @@ Data counts are over the 37756 records of the client's `tileart.uop`.
 | Word | Repo | Reader | Meaning | Conf. |
 |---|---|---|---|---|
 | 0 | `direction_mask` | `UOObject::SetDirection` 0x005b3690, `FUN_00437e60` -> `UOObject::NearestAllowedDirection` 0x0043a1a0; table 0x00dbaf2c maps direction 0 -> 1, 2 -> 2, 4 -> 4, 6 -> 8 | allowed seated facings: 1 north, 2 east, 4 south, 8 west; the requested facing snaps to the nearest allowed one | high |
-| 1 | `field_04` | `FUN_00436d40` 0x4375c2..0x437604 (`GetSittingField04` +0xec) | seated mobile sprite x offset; the client draws at `-value` instead of the animation's default | high |
-| 2 | `field_08` | same site (`GetSittingField08` +0xf0) | seated mobile sprite y offset, also negated | high |
+| 1 | `field_04` | `FUN_00436d40` 0x4375c2..0x437604 (`GetSeatOffsetX` +0xec) | seated mobile sprite x offset; the client draws at `-value` instead of the animation's default | high |
+| 2 | `field_08` | same site (`GetSeatOffsetY` +0xf0) | seated mobile sprite y offset, also negated | high |
 | 3 | `window_shift` | `BuildSpriteDescriptor` 0x4595b9..0x459684 (+0xf4) | for mask 1 (north) or 8 (west) the chair sprite is split into the chair and a chair-back overlay drawn over the mobile; this value moves the split column | high |
 | 4 | `field_10` | none on a definition (`GetSittingField10` +0xf8 has no call site) | not read by the client | medium |
 | 5 | `field_14` | none (`GetSittingField14` +0xfc) | not read by the client | medium |
@@ -741,7 +754,8 @@ and never tested: unused, high confidence.
 
 ### 8.9 Proposed tileart.rs changes
 
-Not applied (another agent owns `lib/uocf/src/enhanced/tileart.rs`).
+Applied in `lib/uocf` (`tileart.rs`, `effect_definition.rs`) by another agent, committed together with
+this round.
 
 1. `TileArtEntry::field_e8: u8` -> `alternate_animation: bool`, doc: "When this item is equipped in layer 2
    (two-handed), the wearer's stand, walk and run actions use the alternate entry of the animation action

@@ -899,7 +899,7 @@ fn ui_selected_tileart_details(app: &mut UopInspectorApp, ctx: &egui::Context, u
                 ui.label("Sitting Values");
                 ui.monospace(format!(
                     "{}, {}, {}, {}, {}, {}",
-                    sitting.direction_mask, sitting.field_04, sitting.field_08,
+                    sitting.direction_mask, sitting.seat_offset_x, sitting.seat_offset_y,
                     sitting.window_shift, sitting.field_10, sitting.field_14
                 ));
                 ui.end_row();
@@ -940,9 +940,9 @@ fn string_number(value: &str) -> u32 {
 fn tileart_sitting_summary(sitting: Option<&TaeSittingAnimation>) -> String {
     if let Some(sitting) = sitting {
         format!(
-            "yes (directions {}, window shift {}, fields {}, {}, {}, {})",
-            sitting.direction_mask, sitting.window_shift,
-            sitting.field_04, sitting.field_08, sitting.field_10, sitting.field_14
+            "yes (directions {}, seat offset {}, {}, window shift {}, unused {}, {})",
+            sitting.direction_mask, sitting.seat_offset_x, sitting.seat_offset_y,
+            sitting.window_shift, sitting.field_10, sitting.field_14
         )
     } else {
         "no".to_string()

@@ -39,6 +39,52 @@ pub const APPEARANCE_FILTER_ANIMATION_BY_OWNER_BODY_TYPE: u8 = 2;
 const TILEART_SITTING_ABSENT: u8 = 0;
 const TILEART_SITTING_PRESENT: u8 = 1;
 
+/// `TaeSittingAnimation::direction_mask` bit: the mobile may sit facing north.
+pub const SITTING_DIRECTION_NORTH: u32 = 1 << 0;
+/// `TaeSittingAnimation::direction_mask` bit: the mobile may sit facing east.
+pub const SITTING_DIRECTION_EAST: u32 = 1 << 1;
+/// `TaeSittingAnimation::direction_mask` bit: the mobile may sit facing south.
+pub const SITTING_DIRECTION_SOUTH: u32 = 1 << 2;
+/// `TaeSittingAnimation::direction_mask` bit: the mobile may sit facing west.
+pub const SITTING_DIRECTION_WEST: u32 = 1 << 3;
+
+// `TileArtEntry::house_join_bits` placement rules (`UOHouseCustomization::IsPlacementAllowed`).
+// Cells are relative to the house origin; x grows east, y grows south. Bits 0, 4 and 15 are
+// not read by the client.
+
+/// House placement: required on the north-west corner cell (0, 0).
+pub const HOUSE_JOIN_CORNER: u32 = 1 << 1;
+/// House placement: required on the west edge cells (x = 0).
+pub const HOUSE_JOIN_WEST_EDGE: u32 = 1 << 2;
+/// House placement: required on the north edge cells (y = 0).
+pub const HOUSE_JOIN_NORTH_EDGE: u32 = 1 << 3;
+/// House placement (probable): also needs a supporting floor (the cell floor type is not 6
+/// or 1 and the level below is not type 1).
+pub const HOUSE_JOIN_NEEDS_SUPPORT: u32 = 1 << 5;
+/// House placement (probable): the client flags the cell and its +x and +y neighbours.
+pub const HOUSE_JOIN_MARKS_NEIGHBOURS: u32 = 1 << 14;
+
+// House customization connectors (`UOHouseCustomization::TilesConnect`): two adjacent tiles
+// join when a connector of one matches the same-numbered connector on the facing side of the
+// other (west 1 with east 1, west 2 with east 2, north 1 with south 1, north 2 with south 2).
+
+/// House connector: west side, kind 1.
+pub const HOUSE_JOIN_WEST_1: u32 = 1 << 6;
+/// House connector: west side, kind 2.
+pub const HOUSE_JOIN_WEST_2: u32 = 1 << 7;
+/// House connector: east side, kind 1.
+pub const HOUSE_JOIN_EAST_1: u32 = 1 << 8;
+/// House connector: east side, kind 2.
+pub const HOUSE_JOIN_EAST_2: u32 = 1 << 9;
+/// House connector: north side, kind 1.
+pub const HOUSE_JOIN_NORTH_1: u32 = 1 << 10;
+/// House connector: north side, kind 2.
+pub const HOUSE_JOIN_NORTH_2: u32 = 1 << 11;
+/// House connector: south side, kind 1.
+pub const HOUSE_JOIN_SOUTH_1: u32 = 1 << 12;
+/// House connector: south side, kind 2.
+pub const HOUSE_JOIN_SOUTH_2: u32 = 1 << 13;
+
 /// Inferred tile classification used for high-level logic.
 ///
 /// This is a convenience abstraction, not a file field: `get_tile_type` derives it
@@ -58,17 +104,22 @@ pub enum TileType {
 /// `tileart.uop` format. These values are used byte-per-byte from the source.
 #[derive(Debug, Clone, Copy)]
 pub enum PropertyKey {
+    /// The client tests `weight > 90`; the consumer of that test was not traced.
     Weight = 0,
     Quality = 1,
     Quantity = 2,
+    /// Copied to the world object.
     Height = 3,
     Value = 4,
     AcVc = 5,
-    Slot = 6,
-    OffC8 = 7,
+    /// Equipment layer of a wearable item (formerly `Slot`).
+    Layer = 6,
+    /// No client meaning found; set on beds, curtains, banners and cloth (formerly `OffC8`).
+    Key7 = 7,
     Appearance = 8,
     Race = 9,
     Gender = 10,
+    /// Appearance override: the definition of `value + 10000000`, used before `Appearance`.
     Paperdoll = 11,
 }
 
@@ -207,6 +258,7 @@ bitflags! {
         const AlphaBlend = 0x800000000;
         const NoShadow = 0x1000000000;
         const PixelBleed = 0x2000000000;
+        /// Never set in client data and never tested by the client: unused.
         const Unused2 = 0x4000000000;
         const PlayAnimOnce = 0x8000000000;
         const MultiMovable = 0x10000000000;
@@ -273,20 +325,24 @@ impl TaeAppearanceFilter {
     }
 }
 
-/// Sitting block (`UOTileArtSitting`), `TILEART_SITTING_WORD_COUNT` u32 words.
+/// Sitting block (`UOTileArtSitting`), `TILEART_SITTING_WORD_COUNT` 32-bit words.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TaeSittingAnimation {
-    /// Word 0: probable sitting direction bitmask (1, 2, 4, 5, 6, 8, 10, 15 in client data).
+    /// Word 0: allowed seated facings (`SITTING_DIRECTION_*` bits: 1 north, 2 east, 4 south,
+    /// 8 west); the client snaps the mobile's facing to the nearest allowed one.
     pub direction_mask: u32,
-    /// Word 1 (`GetSittingField04`): meaning unknown; signed (-5..10 in client data).
-    pub field_04: i32,
-    /// Word 2 (`GetSittingField08`): meaning unknown (mostly 16, 18, 20 or 22 in client data).
-    pub field_08: u32,
-    /// Word 3: shifts the sprite window when `direction_mask` is 1 or 8 (probable); signed.
+    /// Word 1: seated mobile sprite x offset; the client draws the mobile at `-seat_offset_x`
+    /// (formerly `field_04`).
+    pub seat_offset_x: i32,
+    /// Word 2: seated mobile sprite y offset; the client draws the mobile at `-seat_offset_y`
+    /// (formerly `field_08`).
+    pub seat_offset_y: i32,
+    /// Word 3: for north (1) and west (8) facings the chair sprite is split into the chair and
+    /// a chair-back overlay drawn over the mobile; this moves the split column.
     pub window_shift: i32,
-    /// Word 4 (`GetSittingField10`): looks like a y offset; unconfirmed.
+    /// Word 4 (`GetSittingField10`): not read by the client.
     pub field_10: i32,
-    /// Word 5 (`GetSittingField14`): looks like a y offset; unconfirmed.
+    /// Word 5 (`GetSittingField14`): not read by the client.
     pub field_14: i32,
 }
 
@@ -354,33 +410,44 @@ pub struct TileArtEntry {
     pub world_art_scale: f32,
     /// Sprite scale when drawing legacy/enhanced tile art (client default 1.5).
     pub legacy_art_scale: f32,
-    /// Object field +0x60; 0 in all client records, meaning unknown.
+    /// Object field +0x60; 0 in all client records, only part of the client's legacy-art-data test.
     pub field_60: u32,
     pub old_id: i32,
     /// Sprite rotation in degrees, applied only with the `Rotated` flag.
     pub rotation_degrees: f32,
-    /// Owner body type (client default 400, human male; medium confidence).
+    /// An equipment appearance is only worn by a mobile with this body type (client default
+    /// 400, human male; 666 gargoyle male; creature placeholders hold their body id).
     pub body_type: u32,
-    /// Object field +0xe8; set on a few weapons and creatures, meaning unknown.
-    pub field_e8: u8,
-    /// Probable light scale (client default 1.0; 2.0 on windows and arrow loops).
+    /// When this item is equipped in layer 2 (two-handed), the wearer's stand, walk and run
+    /// actions use the alternate entry of the animation action map. Set on gargoyle two-handed
+    /// weapons and some halberds (formerly `field_e8`). The client copies the raw byte and tests
+    /// it for non-zero, so any non-zero byte is true; client data holds only 0 and 1.
+    pub alternate_animation: bool,
+    /// Scale of the light sprite (client default 1.0; 2.0 on windows and arrow loops).
     pub light_scale: f32,
-    /// Object field +0x70 next to the light fields; 0 in all client records, meaning unknown.
+    /// Object field +0x70 next to the light fields; 0 in all client records, not read by the client.
     pub light_field_70: u32,
-    /// Probable light x offset (non-zero only with a light texture block).
+    /// Light sprite x offset (rotated by the view, added to the sprite position); only used
+    /// with a light shader block.
     pub light_offset_x: f32,
-    /// Probable light y offset.
+    /// Light sprite y offset; see `light_offset_x`.
     pub light_offset_y: f32,
-    /// House customization join bits; bits 6..13 connect west, east, north and south.
+    /// House customization join bits: `HOUSE_JOIN_*` placement rules (bits 1, 2, 3, 5, 14)
+    /// and connectors (bits 6..13); bits 0, 4 and 15 are not read by the client.
     pub house_join_bits: u32,
     pub flags1: TaeFlag,
+    /// Not a copy of `flags1`; the client tests only bits 18 (paperdoll partial hue),
+    /// 19 (`UseNewArt`) and 24 (`Animation`) in it.
     pub flags2: TaeFlag,
+    /// Copied to the sprite component (client default 1); use not traced (medium).
     pub facing: i32,
     pub ec_img_offset: TaeImgOffset,
     pub cc_img_offset: TaeImgOffset,
     pub prop_count1: u8,
     pub prop_vector1: Vec<TaeProp>,
     pub prop_count2: u8,
+    /// Mostly mirrors `prop_vector1`; the client reads it only for the paperdoll gump
+    /// (keys 11 and 8, before `prop_vector1`).
     pub prop_vector2: Vec<TaeProp>,
     pub stack_alias_count_offset: u32,
     pub stack_alias_count: u32,
@@ -434,7 +501,7 @@ impl TileArtEntry {
         read_value!(entry.old_id, read_i32, LittleEndian);
         read_value!(entry.rotation_degrees, read_f32, LittleEndian);
         read_value!(entry.body_type, read_u32, LittleEndian);
-        entry.field_e8 = reader.read_u8()?;
+        entry.alternate_animation = reader.read_u8()? != 0;
         read_value!(entry.light_scale, read_f32, LittleEndian);
         read_value!(entry.light_field_70, read_u32, LittleEndian);
         read_value!(entry.light_offset_x, read_f32, LittleEndian);
@@ -510,11 +577,11 @@ impl TileArtEntry {
         if entry.has_sitting {
             let mut words = [0u32; TILEART_SITTING_WORD_COUNT];
             reader.read_u32_into::<LittleEndian>(&mut words)?;
-            let [direction_mask, field_04, field_08, window_shift, field_10, field_14] = words;
+            let [direction_mask, seat_offset_x, seat_offset_y, window_shift, field_10, field_14] = words;
             entry.sitting = Some(TaeSittingAnimation {
                 direction_mask,
-                field_04: field_04 as i32,
-                field_08,
+                seat_offset_x: seat_offset_x as i32,
+                seat_offset_y: seat_offset_y as i32,
                 window_shift: window_shift as i32,
                 field_10: field_10 as i32,
                 field_14: field_14 as i32,
@@ -932,9 +999,9 @@ mod tests {
                 appearance: 1234,
             }],
             sitting: Some(TaeSittingAnimation {
-                direction_mask: 1,
-                field_04: 2,
-                field_08: 3,
+                direction_mask: SITTING_DIRECTION_NORTH,
+                seat_offset_x: 2,
+                seat_offset_y: 3,
                 window_shift: 4,
                 field_10: 5,
                 field_14: 6,
@@ -946,7 +1013,7 @@ mod tests {
 
         assert_eq!(art_data.appearance.len(), 1);
         assert_eq!(art_data.appearance[0].subtype(), APPEARANCE_FILTER_BY_OWNER_GENDER);
-        assert_eq!(art_data.sitting.as_ref().map(|sitting| sitting.field_08), Some(3));
+        assert_eq!(art_data.sitting.as_ref().map(|sitting| sitting.seat_offset_y), Some(3));
     }
 
     fn sample_effect() -> EffectDefinition {
@@ -1000,7 +1067,7 @@ mod tests {
             .u8(APPEARANCE_FILTER_BY_OWNER_BODY_TYPE).u32(2).u32(400).u32(10).u32(401).u32(11)
             .u8(APPEARANCE_FILTER_BY_OWNER_GENDER).u8(1).u32(77)
             .u8(last_appearance_subtype).u32(1).u32(666).u32(12);
-        writer.u8(sitting_flag).u32(8).i32(-3).u32(20).i32(-6).i32(3).i32(-4);
+        writer.u8(sitting_flag).u32(SITTING_DIRECTION_WEST).i32(-3).i32(-20).i32(-6).i32(3).i32(-4);
         writer.u8(10).u8(20).u8(30).u8(255);
         writer.block(2, &[(3, 0, 2.0, 1, 1)], &[0, 2, -7, 9], &[-0.01, 0.0, 0.25, -0.5])
             .block(4, &[], &[], &[])
@@ -1024,7 +1091,7 @@ mod tests {
         assert!(!entry.uses_enhanced_tileart);
         assert_eq!((entry.world_art_scale, entry.legacy_art_scale), (1.4, 1.5));
         assert_eq!((entry.field_60, entry.old_id), (0, 1233));
-        assert_eq!((entry.rotation_degrees, entry.body_type, entry.field_e8), (90.0, 666, 3));
+        assert_eq!((entry.rotation_degrees, entry.body_type, entry.alternate_animation), (90.0, 666, true));
         assert_eq!((entry.light_scale, entry.light_field_70), (2.0, 0));
         assert_eq!((entry.light_offset_x, entry.light_offset_y), (-5.0, -4.0));
         assert_eq!(entry.house_join_bits, 0x3FC0);
@@ -1057,7 +1124,8 @@ mod tests {
 
         assert!(entry.has_sitting);
         assert_eq!(entry.sitting, Some(TaeSittingAnimation {
-            direction_mask: 8, field_04: -3, field_08: 20, window_shift: -6, field_10: 3, field_14: -4,
+            direction_mask: SITTING_DIRECTION_WEST, seat_offset_x: -3, seat_offset_y: -20, window_shift: -6,
+            field_10: 3, field_14: -4,
         }));
         assert_eq!((entry.radarcol.r, entry.radarcol.g, entry.radarcol.b, entry.radarcol.a), (10, 20, 30, 255));
 
@@ -1099,19 +1167,32 @@ mod tests {
         }
     }
 
-    #[test]
-    fn tileart_parse_bytes_without_sitting_or_effects() {
+    /// Builds a record without sitting data or effects; the argument is the alternate animation byte.
+    fn minimal_record(alternate_animation: u8) -> Vec<u8> {
         let mut writer = RecordWriter::default();
         writer.u16(TILEART_RECORD_VERSION).u32(1).u32(2).u8(0).u8(0).f32(1.0).f32(1.5).u32(0).i32(0xFFFFFF)
-            .f32(0.0).u32(400).u8(0).f32(1.0).u32(0).f32(0.0).f32(0.0).u32(0).u64(0).u64(0).u32(1);
+            .f32(0.0).u32(400).u8(alternate_animation).f32(1.0).u32(0).f32(0.0).f32(0.0).u32(0).u64(0).u64(0).u32(1);
         (0..12).for_each(|_| { writer.i32(0); });
         writer.u8(0).u8(0).u32(0).u32(0).u8(TILEART_SITTING_ABSENT).u8(0).u8(0).u8(0).u8(0);
         writer.u8(0).block(1, &[], &[], &[]).block(1, &[], &[], &[]).u8(0).u8(0);
+        writer.0
+    }
 
-        let entry = TileArtEntry::parse_bytes(&writer.0).expect("parse minimal record");
+    #[test]
+    fn tileart_parse_bytes_without_sitting_or_effects() {
+        let entry = TileArtEntry::parse_bytes(&minimal_record(0)).expect("parse minimal record");
 
         assert!(!entry.has_sitting);
         assert_eq!(entry.sitting, None);
         assert!(entry.effects.is_empty());
+        assert!(!entry.alternate_animation);
+    }
+
+    #[test]
+    fn tileart_parse_bytes_treats_any_non_zero_alternate_animation_byte_as_set() {
+        for byte in [1, 2, u8::MAX] {
+            let entry = TileArtEntry::parse_bytes(&minimal_record(byte)).expect("parse minimal record");
+            assert!(entry.alternate_animation, "byte {byte}");
+        }
     }
 }

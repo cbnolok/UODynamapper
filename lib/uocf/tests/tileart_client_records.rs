@@ -29,6 +29,8 @@ const EXPECTED_TILEART_EFFECTS_ALL_LEVELS: [(u32, usize); 3] =
 const EXPECTED_TILEART_EFFECTS_TOP_LEVEL: [(u32, usize); 3] =
     [(EFFECT_TYPE_PARTICLE, 321), (EFFECT_TYPE_LOD, 1), (EFFECT_TYPE_PROPERTY_FLAG, 23)];
 const EXPECTED_TILEART_PARTICLE_NAMES: usize = 202;
+/// Records with `alternate_animation` set (gargoyle two-handed weapons, halberds, creature placeholders).
+const EXPECTED_TILEART_ALTERNATE_ANIMATION_RECORDS: usize = 30;
 
 const EXPECTED_COLLECTION_ENTRIES: usize = 269;
 const EXPECTED_COLLECTION_TOP_LEVEL_DEFINITIONS: usize = 280;
@@ -90,6 +92,7 @@ fn tileart_parses_every_client_record() {
 
     let mut records = 0usize;
     let mut with_sitting = 0usize;
+    let mut with_alternate_animation = 0usize;
     let mut appearance_by_subtype = BTreeMap::<u8, usize>::new();
     let mut records_by_effect_count = BTreeMap::<usize, usize>::new();
     let mut effects = EffectTally::default();
@@ -104,6 +107,7 @@ fn tileart_parses_every_client_record() {
             }
         };
         with_sitting += usize::from(entry.has_sitting);
+        with_alternate_animation += usize::from(entry.alternate_animation);
         for filter in &entry.appearance_vector {
             *appearance_by_subtype.entry(filter.subtype()).or_default() += 1;
         }
@@ -115,12 +119,14 @@ fn tileart_parses_every_client_record() {
 
     println!("records: {records}");
     println!("with sitting: {with_sitting}");
+    println!("with alternate animation: {with_alternate_animation}");
     println!("appearance filters by subtype: {appearance_by_subtype:?}");
     println!("records by effect count: {records_by_effect_count:?}");
     println!("effects by type key, all levels: {:?}", effects.all_levels);
     println!("effects by type key, top level: {:?}", effects.top_level);
     println!("distinct particle names: {}", effects.particle_names.len());
     assert!(failures.is_empty(), "{} records failed to parse: {failures:?}", failures.len());
+    assert_eq!(with_alternate_animation, EXPECTED_TILEART_ALTERNATE_ANIMATION_RECORDS);
     assert_eq!(records_by_effect_count, BTreeMap::from(EXPECTED_TILEART_RECORDS_BY_EFFECT_COUNT));
     assert_eq!(effects.all_levels, BTreeMap::from(EXPECTED_TILEART_EFFECTS_ALL_LEVELS));
     assert_eq!(effects.top_level, BTreeMap::from(EXPECTED_TILEART_EFFECTS_TOP_LEVEL));

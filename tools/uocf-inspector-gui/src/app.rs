@@ -1329,8 +1329,8 @@ pub(crate) fn tileart_property_name(id: u8) -> &'static str {
         3 => "Height",
         4 => "Value",
         5 => "AC/VC",
-        6 => "Slot",
-        7 => "OffC8",
+        6 => "Layer",
+        7 => "Key7",
         8 => "Appearance",
         9 => "Race",
         10 => "Gender",
@@ -1437,9 +1437,9 @@ fn tileart_texture_summary(
 fn tileart_sitting_summary(sitting: Option<&TaeSittingAnimation>) -> String {
     if let Some(sitting) = sitting {
         format!(
-            "yes (directions {}, window shift {}, fields {}, {}, {}, {})",
-            sitting.direction_mask, sitting.window_shift,
-            sitting.field_04, sitting.field_08, sitting.field_10, sitting.field_14
+            "yes (directions {}, seat offset {}, {}, window shift {}, unused {}, {})",
+            sitting.direction_mask, sitting.seat_offset_x, sitting.seat_offset_y,
+            sitting.window_shift, sitting.field_10, sitting.field_14
         )
     } else {
         "no".to_string()

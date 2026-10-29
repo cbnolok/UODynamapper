@@ -170,7 +170,7 @@ public class NameTileartCode extends GhidraScript {
             + " UOObjectDefinition::GetBodyType", false),
         new Slot(0x70, "GetBodyType", "returns +0x50", false),
         new Slot(0x74, "SetAlternateAnimation", "stores byte +0x54; UOObject::InitFromDefinition passes"
-            + " UOObjectDefinition::GetFieldE8 (tileart byte +0xe8)", false),
+            + " UOObjectDefinitionBase::GetAlternateAnimation (tileart byte +0xe8)", false),
         new Slot(0x78, "GetAlternateAnimation", "returns byte +0x54; read on the item in the wearer's layer 2 to pick"
             + " the alternate entry of the animation action map", false),
         new Slot(0xb0, "GetFlags1", "returns the u64 at +0x38, copied from UOObjectDefinition::GetFlags1", true),
@@ -235,7 +235,7 @@ public class NameTileartCode extends GhidraScript {
         new Slot(0xb4, "GetBodyType", "returns +0xe4 (default 400 = human male body; 666 on gargoyle"
             + " items); copied to UOObject::SetBodyType; equipping refuses an appearance whose body type"
             + " differs from the wearer's body", false),
-        new Slot(0xb8, "GetFieldE8", "returns byte +0xe8; copied to UOObject::SetAlternateAnimation; for"
+        new Slot(0xb8, "GetAlternateAnimation", "returns byte +0xe8; copied to UOObject::SetAlternateAnimation; for"
             + " the item in layer 2 it selects the alternate entry of the wearer's animation action map", false),
         new Slot(0xbc, "GetAppearance", "prop1 key 8 or tile id, then non-animation appearance filters for the owner body", false),
         new Slot(0xc0, "GetAnimationAppearance", "applies appearance filters of type 2", false),
@@ -251,8 +251,8 @@ public class NameTileartCode extends GhidraScript {
         new Slot(0xe8, "GetSittingDirections", "sitting field 0 (+0x0): direction mask 1 = north (dir"
             + " 0), 2 = east (dir 2), 4 = south (dir 4), 8 = west (dir 6); UOObject::SetDirection snaps"
             + " to the nearest allowed direction", false),
-        new Slot(0xec, "GetSittingField04", "sitting field 1: seated mobile sprite x offset (negated)", false),
-        new Slot(0xf0, "GetSittingField08", "sitting field 2: seated mobile sprite y offset (negated)", false),
+        new Slot(0xec, "GetSeatOffsetX", "sitting field 1: seated mobile sprite x offset (negated)", false),
+        new Slot(0xf0, "GetSeatOffsetY", "sitting field 2: seated mobile sprite y offset (negated)", false),
         new Slot(0xf4, "GetSittingWindowShift", "sitting field 3: shifts the split column of the"
             + " chair-back overlay window for directions 1/8", false),
         new Slot(0xf8, "GetSittingField10", "sitting field 4; no caller on a definition was found", false),
@@ -356,6 +356,8 @@ public class NameTileartCode extends GhidraScript {
     private final Map<Long, Proposal> proposals = new TreeMap<>();
     private final List<String> anomalies = new ArrayList<>();
     private final List<String> kept = new ArrayList<>();
+    // Names this script applied earlier and now replaces.
+    private final List<String> corrected = new ArrayList<>();
     private final List<String> shared = new ArrayList<>();
     private final List<String> labels = new ArrayList<>();
     private final List<String> typeLines = new ArrayList<>();
@@ -762,7 +764,12 @@ public class NameTileartCode extends GhidraScript {
                 Function f = functions.getFunctionAt(toAddr(proposal.address));
                 proposal.status = f.getName(true).equals(proposal.path) ? "already named"
                     : f.getSymbol().getSource() == SourceType.DEFAULT ? "would rename"
+                    : isOwnName(f) ? "would rename from " + f.getName(true)
                     : "kept " + f.getName(true) + " (" + f.getSymbol().getSource() + ")";
+                if (proposal.status.startsWith("would rename from")) {
+                    corrected.add(hex(proposal.address) + " `" + f.getName(true) + "` -> `" + proposal.path + "`"
+                        + (isOwnCommentText(f.getComment(), f.getName(true)) ? "" : " (plate comment kept)"));
+                }
                 if (proposal.status.startsWith("kept")) {
                     kept.add(hex(proposal.address) + " `" + f.getName(true) + "` (" + f.getSymbol().getSource()
                         + "), proposed `" + proposal.path + "`");
@@ -808,9 +815,10 @@ public class NameTileartCode extends GhidraScript {
                     init.add(f);
                 }
             }
-            propose(single(init, "UOObject::GetObjectDefinition caller reading GetBodyType and GetFieldE8"),
+            propose(single(init, "UOObject::GetObjectDefinition caller reading GetBodyType and GetAlternateAnimation"),
                 WORLD_OBJECT + SCOPE + "InitFromDefinition", "copies GetFlags1, GetBodyType (SetBodyType),"
-                + " GetFieldE8 (SetAlternateAnimation) and property 3 (height) from the definition", true);
+                + " GetAlternateAnimation (SetAlternateAnimation) and property 3 (height) from the definition",
+                true);
         }
 
         Function setDirection = objectSlots.get(WORLD_OBJECT_SET_DIRECTION);
@@ -1071,6 +1079,17 @@ public class NameTileartCode extends GhidraScript {
             }
             proposal.status = "renamed";
             count("functions renamed");
+        } else if (isOwnName(function)) {
+            String old = symbol.getName(true);
+            String oldComment = function.getComment();
+            symbol.setNameAndNamespace(name, namespace, SourceType.ANALYSIS);
+            proposal.status = "renamed from " + old;
+            corrected.add(hex(proposal.address) + " `" + old + "` -> `" + proposal.path + "`");
+            count("own names corrected");
+            if (isOwnCommentText(oldComment, old)) {
+                function.setComment(plateComment(proposal));
+                count("plate comments refreshed");
+            }
         } else {
             proposal.status = "kept " + symbol.getName(true) + " (" + symbol.getSource() + ")";
             kept.add(hex(proposal.address) + " `" + symbol.getName(true) + "` (" + symbol.getSource()
@@ -1086,10 +1105,38 @@ public class NameTileartCode extends GhidraScript {
         }
         String comment = function.getComment();
         if (comment == null || comment.isBlank()) {
-            function.setComment(COMMENT_PREFIX + TAG + " `" + proposal.path + "`" + (proposal.probable ? PROBABLE : "")
-                + ": " + proposal.evidence);
+            function.setComment(plateComment(proposal));
             count("plate comments set");
         }
+    }
+
+    private static String plateComment(Proposal proposal) {
+        return COMMENT_PREFIX + TAG + " `" + proposal.path + "`" + (proposal.probable ? PROBABLE : "") + ": "
+            + proposal.evidence;
+    }
+
+    // A name this script applied earlier: source ANALYSIS, tag UO_TILEART and a plate comment written by this
+    // script for exactly the current name. Names from other sources, tags or comments are never touched.
+    private boolean isOwnName(Function function) {
+        Symbol symbol = function.getSymbol();
+        if (symbol.getSource() != SourceType.ANALYSIS) {
+            return false;
+        }
+        boolean tagged = false;
+        for (FunctionTag tag : function.getTags()) {
+            tagged |= tag.getName().equals(TAG);
+        }
+        String comment = function.getComment();
+        return tagged && comment != null && comment.startsWith(ownCommentHead(symbol.getName(true)));
+    }
+
+    // The comment is still the script's own text: its head for that name and one line, nothing added.
+    private static boolean isOwnCommentText(String comment, String path) {
+        return comment != null && comment.startsWith(ownCommentHead(path)) && !comment.contains("\n");
+    }
+
+    private static String ownCommentHead(String path) {
+        return COMMENT_PREFIX + TAG + " `" + path + "`";
     }
 
     private void ensureTag() {
@@ -1781,6 +1828,7 @@ public class NameTileartCode extends GhidraScript {
         out.println("| Slots not named (shared code) | " + shared.size() + " |");
         out.println("| Global labels | " + labels.size() + " |");
         out.println("| Types | " + typeLines.size() + " |");
+        out.println("| Own names corrected | " + corrected.size() + " |");
         out.println("| Kept non-default names | " + kept.size() + " |");
         out.println("| Anomalies | " + anomalies.size() + " |");
         out.println();
@@ -1841,6 +1889,7 @@ public class NameTileartCode extends GhidraScript {
                 + String.join(" ", offsets) + " | " + String.join(", ", strings) + " |");
         }
         section(out, "Slots not named (identical-code folding)", shared);
+        section(out, "Own names corrected (applied earlier by this script)", corrected);
         section(out, "Kept names (not renamed)", kept);
         section(out, "Anomalies", anomalies);
     }

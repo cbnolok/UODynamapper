@@ -24,6 +24,9 @@ NameTileartCode.java OUTPUT_FILE [--apply]
   - types the three default shader globals;
   - labels five globals.
 - Names with another source type are never changed; they are listed under "Kept names".
+- A name this script applied earlier (source ANALYSIS, tag `UO_TILEART`, plate comment written by the script
+  for that exact name) is replaced when the proposed name changes; its plate comment is refreshed only if it
+  is still the script's single-line text. These renames are listed under "Own names corrected".
 - A second `--apply` reports `Changes: none`.
 
 Run it through ghidra-mcp:

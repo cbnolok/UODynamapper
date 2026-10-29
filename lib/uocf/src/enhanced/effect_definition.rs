@@ -35,6 +35,10 @@ pub const EFFECT_TYPE_RANDOM: u32 = 16;
 /// Type key of a user effect setting filter (`UOUserPrefEffectFilterDefinition`).
 pub const EFFECT_TYPE_USER_PREFERENCE: u32 = 17;
 
+/// `UserPreferenceEffect::mask` bit set when the user disabled footsteps (user setting
+/// `Effects`, `Footsteps.enabled`); the other bits come only from the settings file.
+pub const USER_PREFERENCE_FOOTSTEPS: u32 = 0x1;
+
 /// Directions of a position offset effect, indexed 0..7.
 pub const POSITION_OFFSET_DIRECTION_COUNT: usize = 8;
 
@@ -88,7 +92,9 @@ pub struct ParticleEffect {
     pub camera_offset: f32,
     /// Scene node scale (confirmed).
     pub scale: f32,
-    /// Definition +0x30; no reader found, meaning unknown (1, 2 or 0 in client data).
+    /// Definition +0x30; no reader found (the Nif particle initializer skips it), meaning
+    /// unknown, probably a projectile kind used outside the client. Client data: 2 on thrown
+    /// models (boomerang, glaives, boulders), 0 on arrow projectiles, 1 on the rest.
     pub field_30: u8,
     /// Seconds (confirmed): a non-looping effect stops once elapsed >= duration, a looping one
     /// wraps the elapsed time when duration is non-zero.
@@ -108,7 +114,8 @@ pub struct ParticleEffect {
 pub struct SoundEffect {
     /// Sound id played with distance attenuation (confirmed).
     pub sound_id: u32,
-    /// Stored but never read by `UOSoundEffect::Start`; 1.0 in client data, possibly a volume (unknown).
+    /// Stored but no reader found (`UOSoundEffect::Start` does not read it); 1.0 on the 2
+    /// collection sounds, possibly a volume (unknown).
     pub value_08: f32,
 }
 
@@ -211,7 +218,8 @@ pub struct RandomEffect {
 #[derive(Debug, Clone, PartialEq)]
 pub struct UserPreferenceEffect {
     /// The children are skipped when all of these user effect setting bits are set, or when it
-    /// is 1 and object vt+0xa0 is negative; bit meanings unknown.
+    /// is 1 and object vt+0xa0 is negative. Bit 0 is `USER_PREFERENCE_FOOTSTEPS`; the other
+    /// bit meanings are unknown. No client tileart or collection effect uses this type.
     pub mask: u32,
     pub children: Vec<EffectDefinition>,
 }
@@ -547,9 +555,9 @@ mod tests {
     #[test]
     fn effect_reads_user_preference() {
         let mut writer = EffectWriter::default();
-        writer.u32(EFFECT_TYPE_USER_PREFERENCE).u32(1).u32(1).sound(5);
+        writer.u32(EFFECT_TYPE_USER_PREFERENCE).u32(USER_PREFERENCE_FOOTSTEPS).u32(1).sound(5);
         assert_eq!(decode(&writer.0).unwrap(), EffectDefinition::UserPreference(UserPreferenceEffect {
-            mask: 1, children: vec![sound(5)],
+            mask: USER_PREFERENCE_FOOTSTEPS, children: vec![sound(5)],
         }));
     }
 
