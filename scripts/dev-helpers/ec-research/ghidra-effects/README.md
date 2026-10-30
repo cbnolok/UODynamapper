@@ -79,6 +79,25 @@ The report also lists other callers of the readers (not renamed):
 - `FUN_004b93d0`, which reads u32 id, u8 count and that many effects;
 - `UOTileArt::ParseEffects`.
 
+## effects_variables.spec
+
+Applied by `../ApplyVariableSpecs.java` after `NameEffectCode.java` and the tileart spec (see
+[the shared description](../README.md#variable-names-prototypes-and-structures-applyvariablespecsjava)):
+
+```
+run_ghidra_script(program="UOSA.exe", script_name="<abs path>/ApplyVariableSpecs.java",
+                  args="<abs path>/ghidra-effects/effects_variables.spec <scratch>/effects_vars.md --apply")
+```
+
+- Adds `/UO/MsvcList` and the runtime effect types `/UO/UOEffectContainer`, `UOSoundEffect` and
+  `UOEarthquakeEffect`, and makes 14 namespaces (the effect definitions and those runtime effects) classes
+  whose `this` is their `/UOEffects` or `/UO` structure.
+- Sets 161 prototypes (342 named parameters, 5 globals); `UOEffects::ParseEffectDefinition` is in the
+  tileart spec.
+- The header of the spec lists the conventions: IUOEffect methods take an `ok` byte pointer first, factory
+  `Create` keeps the factory in ECX and takes (out, blob, position, ok), a factory `Init` receives the
+  definition shared_ptr as `definition` + `definition_refcount`.
+
 ## verify_effects.py
 
 This read-only checker decodes every effect in `tileart.uop`, and optionally in

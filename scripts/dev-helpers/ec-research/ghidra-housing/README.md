@@ -75,6 +75,22 @@ its address:
 | The only function using the object size 0x877b8; the global it writes; its single-caller callee | `UOHouseCustomization::Create`, `g_UOHouseCustomization`, the constructor |
 | The absolute global BuildPieceTables reads besides `g_UOAssetManager` | the 0xB9 server feature flags |
 
+## housing_variables.spec
+
+Applied by `../ApplyVariableSpecs.java` after `NameHousingCode.java` and the tileart spec (see
+[the shared description](../README.md#variable-names-prototypes-and-structures-applyvariablespecsjava)):
+
+```
+run_ghidra_script(program="UOSA.exe", script_name="<abs path>/ApplyVariableSpecs.java",
+                  args="<abs path>/ghidra-housing/housing_variables.spec <scratch>/housing_vars.md --apply")
+```
+
+- Creates `/UO/HousingPieceFilter`, `HousingSlotEntry`, `HousingPiece`, `UOCustomHousingPieces`,
+  `UOMultiPart` and `UOMultiCollection` from [results/uosa_housing.md](results/uosa_housing.md), and makes
+  `HousingPieceFilter` a class.
+- Sets 41 prototypes, 113 named parameters and 43 named locals (the filter, the piece lists and the loop
+  variables of the getters, found by stack offset or by the call that produces them).
+
 ## verify_housing.py
 
 Read-only checker that decodes `housing.bin` and every multi entry of `MultiCollection.uop` as the client

@@ -92,6 +92,27 @@ its address:
 | Only user of `Not letting a %u(sq %u) wear a %u(sq %u)\n` | `UOObjectComponentAnimationMob::BuildLayers` |
 | Only user of `data\definitions\hues\hue%04d.bmp`; its callee calling `UOAssets::ReadFileFromPath` and using 0x100 | `UOHues::LoadHueTables`, `UOHues::LoadHueBitmap` |
 
+## animation_variables.spec
+
+Applied by `../ApplyVariableSpecs.java` after `NameAnimationCode.java`, the tileart spec and the effects
+script (see [the shared description](../README.md#variable-names-prototypes-and-structures-applyvariablespecsjava)):
+
+```
+run_ghidra_script(program="UOSA.exe", script_name="<abs path>/ApplyVariableSpecs.java",
+                  args="<abs path>/ghidra-animation/animation_variables.spec <scratch>/animation_vars.md --apply")
+```
+
+- Creates `/UO/AnimationFrameFile`, `AnimationFrameEntry`, `UOMobFrameSet`, `AnimationActionRecord`,
+  `UOAnimationSequence`, `FrameSetLookup`, `UOAnimationDefinition`, `UOAnimationFrameSet`,
+  `CharacterAnimationPacket` (0x6E) and `NewCharacterAnimationPacket` (0xE2) from the layouts in
+  [results/uosa_animation.md](results/uosa_animation.md), and makes the five asset namespaces classes.
+- Sets 84 prototypes (233 named parameters) and names / types `g_UOIdleAnimation`, `g_UOFlyingAnimations`,
+  `g_UOFrameSetRestriction` and `g_UOEmptyFrameSetLookup` (the shared empty group returned by
+  `UOAnimationSequence::GetGroup`).
+- Many sequence lookups take the sequence in EAX, EDI or ECX (custom storage); the mobile and tile
+  components have no structure and take `component` explicitly. `GetActionFps` returns a float in XMM0,
+  which an x86-32 prototype cannot express: it stays `void`.
+
 ## verify_animation.py
 
 Read-only checker that decodes every entry of `AnimationSequence.uop` and `AnimationDefinition.uop` as the

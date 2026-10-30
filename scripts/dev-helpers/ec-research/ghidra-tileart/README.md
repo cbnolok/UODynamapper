@@ -63,9 +63,30 @@ The report also lists every caller of `UOTileArt::GetObjectDefinition`, with the
 uses (mapped to `UOObjectDefinition` slot names) and the strings it references. Offsets are reported per
 function, so some belong to other objects.
 
+## tileart_variables.spec
+
+Applied by `../ApplyVariableSpecs.java` after `NameTileartCode.java`, and before the effects, animation and
+housing specs (see [the shared description](../README.md#variable-names-prototypes-and-structures-applyvariablespecsjava)):
+
+```
+run_ghidra_script(program="UOSA.exe", script_name="<abs path>/ApplyVariableSpecs.java",
+                  args="<abs path>/ghidra-tileart/tileart_variables.spec <scratch>/tileart_vars.md --apply")
+```
+
+- Creates the shared types `/UO/SharedPtr`, `AssetBlob`, `AssetBlobSharedPtr`, `AssetKey`,
+  `ObjectDefinitionSharedPtr`, `UOObject`, `HouseCell` and `UOHouseCustomization`, and makes three namespaces
+  classes whose `this` is a structure.
+- Sets 184 prototypes (316 named parameters, 8 globals). Seven tagged functions are left out: their
+  parameters are not established or they are shared library code (`UOObjectDefinition::AddEffect`,
+  `UOObjectDefinitionBase::GetPrimaryArtScale`, `UOTileArt::RequestTileArtTexture`,
+  `UOTileArt::RequestLegacyTileArtTexture`, `SpriteTextureFileLocation::CopyConstruct`,
+  `UOAssets::LoadAssetBlob`, `UOP::Decompress`).
+- `UOEffects::ParseEffectDefinition` and `UOAssets::StreamRead` (stream in ECX, position in ESI, size in
+  EDI) are typed here because the other areas call them.
+
 ### Notes
 
 - Another agent named part of the UOP archive layer (`UOP::MypArchive_*`, `UOP::Decompress`,
   `UOP::OpenFilePtr`, `UOP::*_ctor`). This script finds the same functions and keeps those names.
-- Calling conventions and `this` types are not changed. The slot functions have no recovered parameters,
-  and typing `this` would mean turning the namespaces into classes.
+- `NameTileartCode.java` does not change calling conventions or `this` types; `tileart_variables.spec`
+  does, for the functions whose parameters are established.
