@@ -1,4 +1,7 @@
 pub mod dictionary;
+pub mod effect_files;
+pub mod effect_preview;
+pub mod effects_editor;
 pub mod housing_editor;
 pub mod uop_cache;
 

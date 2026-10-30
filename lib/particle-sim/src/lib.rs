@@ -3,6 +3,7 @@
 //! - [`chaos`]: the Chaos engine (`.ems` scripts): compiled description, runtime, render output.
 //! - [`effect`]: the effect layer (a `ParticleEffect` definition around any [`ParticleSystemInstance`]).
 //! - [`render`]: draw batches, sprites and mesh instances, and CPU quad expansion.
+//! - [`raster`]: a small software rasterizer of render frames, for previews.
 //! - [`rng`]: the client's MT19937, behind the [`rng::Rng`] trait.
 //!
 //! Simulation is deterministic for a given seed and update sequence. Time steps are whole milliseconds, as in
@@ -14,6 +15,7 @@
 pub mod chaos;
 pub mod effect;
 pub mod math;
+pub mod raster;
 pub mod render;
 pub mod rng;
 pub mod system;

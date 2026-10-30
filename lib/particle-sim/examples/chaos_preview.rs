@@ -18,7 +18,8 @@ use std::sync::Arc;
 use image::{Rgba, RgbaImage};
 use particle_sim::chaos::compile::compile_chaos_source;
 use particle_sim::chaos::{ChaosIssueSeverity, ChaosSystem};
-use particle_sim::render::{BlendFactor, BlendState, CameraFrame, QUAD_INDICES, QuadVertex, RenderFrame, expand_sprite};
+use particle_sim::raster::{Canvas, OVERLAY_BLEND, OrthoView, RasterTexture, frame_extent};
+use particle_sim::render::RenderFrame;
 use particle_sim::{ChaosEffectInstance, Mt19937, NodeTransform, ParticleSystemInstance, Vec3};
 use uocf::enhanced::effect_texture::{EffectFileKind, EffectTexturePackage};
 
@@ -45,15 +46,8 @@ const MESH_COLOR: [f32; 4] = [1.0, 0.0, 1.0, 1.0];
 const NODE_COLOR: [f32; 4] = [0.6, 0.6, 0.6, 1.0];
 /// Half side of the node dot, pixels.
 const NODE_DOT_HALF_PX: f32 = 1.5;
-/// Smallest half side of a mesh marker, pixels.
-const MESH_MARKER_MIN_HALF_PX: f32 = 2.0;
-/// Texture used when a texture is missing or undecodable: opaque white.
-const WHITE_TEXEL: [f32; 4] = [1.0; 4];
 const DDS_MAGIC: &[u8] = b"DDS ";
-/// Texel centres are at half-texel offsets (bilinear filtering).
-const TEXEL_CENTER_OFFSET: f32 = 0.5;
 const MS_PER_SECOND: f32 = 1000.0;
-const U8_MAX: f32 = 255.0;
 
 struct Options {
     target: Option<String>,
@@ -234,34 +228,7 @@ fn simulate(system: &Arc<ChaosSystem>, options: &Options) -> Vec<Capture> {
     captures
 }
 
-struct Texture {
-    width: usize,
-    height: usize,
-    texels: Vec<[f32; 4]>,
-}
-
-impl Texture {
-    /// Bilinear sample with wrap addressing (Gamebryo's default, probable for the client).
-    fn sample(&self, u: f32, v: f32) -> [f32; 4] {
-        let x = u * self.width as f32 - TEXEL_CENTER_OFFSET;
-        let y = v * self.height as f32 - TEXEL_CENTER_OFFSET;
-        let (x0, y0) = (x.floor(), y.floor());
-        let (fx, fy) = (x - x0, y - y0);
-        let texel = |dx: f32, dy: f32| {
-            let column = ((x0 + dx) as i64).rem_euclid(self.width as i64) as usize;
-            let row = ((y0 + dy) as i64).rem_euclid(self.height as i64) as usize;
-            self.texels[row * self.width + column]
-        };
-        let (a, b, c, d) = (texel(0.0, 0.0), texel(1.0, 0.0), texel(0.0, 1.0), texel(1.0, 1.0));
-        std::array::from_fn(|k| {
-            let top = a[k] + (b[k] - a[k]) * fx;
-            let bottom = c[k] + (d[k] - c[k]) * fx;
-            top + (bottom - top) * fy
-        })
-    }
-}
-
-struct Textures(Vec<(String, Texture)>);
+struct Textures(Vec<(String, RasterTexture)>);
 
 impl Textures {
     fn load(package: &EffectTexturePackage, names: &[&str]) -> Self {
@@ -282,12 +249,12 @@ impl Textures {
         Self(textures)
     }
 
-    fn get(&self, name: &str) -> Option<&Texture> {
+    fn get(&self, name: &str) -> Option<&RasterTexture> {
         self.0.iter().find(|(texture, _)| texture.eq_ignore_ascii_case(name)).map(|(_, texture)| texture)
     }
 }
 
-fn decode(payload: &[u8]) -> Result<Texture, String> {
+fn decode(payload: &[u8]) -> Result<RasterTexture, String> {
     let rgba = if payload.starts_with(DDS_MAGIC) {
         let mut decoder = dds::Decoder::new(std::io::Cursor::new(payload)).map_err(|error| error.to_string())?;
         let size = decoder.main_size();
@@ -301,61 +268,26 @@ fn decode(payload: &[u8]) -> Result<Texture, String> {
             .map_err(|error| error.to_string())?
             .into_rgba8()
     };
-    let texels = rgba.pixels().map(|pixel| pixel.0.map(|channel| f32::from(channel) / U8_MAX)).collect();
-    Ok(Texture { width: rgba.width() as usize, height: rgba.height() as usize, texels })
-}
-
-/// The orthographic view: camera axes and the fit of world space into a cell.
-struct View {
-    camera: CameraFrame,
-    center: Vec3,
-    pixels_per_unit: f32,
-    cell: f32,
-}
-
-impl View {
-    fn to_screen(&self, position: Vec3) -> (f32, f32) {
-        let offset = position - self.center;
-        let half = self.cell * 0.5;
-        (half + offset.dot(self.camera.right) * self.pixels_per_unit, half - offset.dot(self.camera.up) * self.pixels_per_unit)
-    }
-}
-
-fn camera_axes() -> (Vec3, Vec3, Vec3) {
-    let elevation = CAMERA_ELEVATION_DEGREES.to_radians();
-    let direction = Vec3::new(0.0, elevation.cos(), -elevation.sin());
-    let up = Vec3::new(0.0, elevation.sin(), elevation.cos());
-    (direction, up, direction.cross(up))
+    RasterTexture::from_rgba8(rgba.width() as usize, rgba.height() as usize, rgba.as_raw()).ok_or_else(|| "empty texture".to_owned())
 }
 
 /// Fits everything drawn over the run (sprite quads, meshes, the node) into a cell.
-fn fit_view(captures: &[Capture], cell: u32) -> View {
-    let (direction, up, right) = camera_axes();
-    let mut points: Vec<Vec3> = Vec::new();
+fn fit_view(captures: &[Capture], cell: u32) -> OrthoView {
+    let elevation = CAMERA_ELEVATION_DEGREES.to_radians();
+    let probe = OrthoView::new(elevation, Vec3::ZERO, CAMERA_DISTANCE, 1.0, cell as usize, cell as usize);
+    let mut extent: Option<[f32; 4]> = None;
     for capture in captures {
-        points.push(capture.node);
-        points.extend(capture.frame.sprites.iter().map(|sprite| sprite.position));
-        points.extend(capture.frame.meshes.iter().map(|mesh| mesh.translation));
+        let (x, y) = probe.project(capture.node);
+        for [min_x, max_x, min_y, max_y] in [Some([x, x, y, y]), frame_extent(&capture.frame, &probe.camera)].into_iter().flatten() {
+            let bounds = extent.get_or_insert([min_x, max_x, min_y, max_y]);
+            *bounds = [bounds[0].min(min_x), bounds[1].max(max_x), bounds[2].min(min_y), bounds[3].max(max_y)];
+        }
     }
-    let project = |point: &Vec3| (point.dot(right), point.dot(up));
-    let (mut min_x, mut max_x, mut min_y, mut max_y) = (f32::MAX, f32::MIN, f32::MAX, f32::MIN);
-    for point in &points {
-        let (x, y) = project(point);
-        min_x = min_x.min(x);
-        max_x = max_x.max(x);
-        min_y = min_y.min(y);
-        max_y = max_y.max(y);
-    }
-    // Pad by the largest sprite so quads at the edge stay inside.
-    let pad = captures
-        .iter()
-        .flat_map(|capture| capture.frame.sprites.iter().map(|sprite| sprite.size.abs() * 0.5 + sprite.length.abs()))
-        .fold(0.0f32, f32::max);
-    let extent = ((max_x - min_x).max(max_y - min_y) + 2.0 * pad).max(MIN_FIT_EXTENT);
-    let center = right * ((min_x + max_x) * 0.5) + up * ((min_y + max_y) * 0.5);
-    let camera = CameraFrame { position: center - direction * CAMERA_DISTANCE, direction, up, right };
+    let [min_x, max_x, min_y, max_y] = extent.unwrap_or_default();
+    let extent = (max_x - min_x).max(max_y - min_y).max(MIN_FIT_EXTENT);
+    let center = probe.camera.right * ((min_x + max_x) * 0.5) + probe.camera.up * ((min_y + max_y) * 0.5);
     let cell = cell as f32;
-    View { camera, center, pixels_per_unit: cell * (1.0 - 2.0 * FIT_MARGIN) / extent, cell }
+    OrthoView::new(elevation, center, CAMERA_DISTANCE, cell * (1.0 - 2.0 * FIT_MARGIN) / extent, cell as usize, cell as usize)
 }
 
 fn draw_sheet(captures: &[Capture], textures: &Textures, cell: u32) -> RgbaImage {
@@ -376,125 +308,10 @@ fn draw_sheet(captures: &[Capture], textures: &Textures, cell: u32) -> RgbaImage
     sheet
 }
 
-/// A float RGBA canvas with D3D-style blending.
-struct Canvas {
-    size: usize,
-    pixels: Vec<[f32; 4]>,
-}
-
-impl Canvas {
-    fn blend(&mut self, x: usize, y: usize, source: [f32; 4], blend: BlendState) {
-        let destination = &mut self.pixels[y * self.size + x];
-        let source_factor = blend_factor(blend.src, source, *destination);
-        let destination_factor = blend_factor(blend.dst, source, *destination);
-        *destination = std::array::from_fn(|k| {
-            (source[k] * source_factor[k] + destination[k] * destination_factor[k]).clamp(0.0, 1.0)
-        });
-    }
-}
-
-fn blend_factor(factor: BlendFactor, source: [f32; 4], destination: [f32; 4]) -> [f32; 4] {
-    let alpha = |value: f32| [value; 4];
-    let invert = |color: [f32; 4]| color.map(|channel| 1.0 - channel);
-    const ALPHA: usize = 3;
-    match factor {
-        BlendFactor::One => alpha(1.0),
-        BlendFactor::Zero => alpha(0.0),
-        BlendFactor::SrcColor => source,
-        BlendFactor::InvSrcColor => invert(source),
-        BlendFactor::DestColor => destination,
-        BlendFactor::InvDestColor => invert(destination),
-        BlendFactor::SrcAlpha => alpha(source[ALPHA]),
-        BlendFactor::InvSrcAlpha => alpha(1.0 - source[ALPHA]),
-        BlendFactor::DestAlpha => alpha(destination[ALPHA]),
-        BlendFactor::InvDestAlpha => alpha(1.0 - destination[ALPHA]),
-        BlendFactor::SrcAlphaSat => {
-            let f = source[ALPHA].min(1.0 - destination[ALPHA]);
-            [f, f, f, 1.0]
-        }
-    }
-}
-
-fn draw_frame(capture: &Capture, textures: &Textures, view: &View) -> RgbaImage {
-    let size = view.cell as usize;
-    let mut canvas = Canvas { size, pixels: vec![BACKGROUND; size * size] };
-    let opaque = BlendState { src: BlendFactor::SrcAlpha, dst: BlendFactor::InvSrcAlpha };
+fn draw_frame(capture: &Capture, textures: &Textures, view: &OrthoView) -> RgbaImage {
+    let mut canvas = Canvas::new(view.width, view.height, BACKGROUND);
     let (nx, ny) = view.to_screen(capture.node);
-    fill_square(&mut canvas, nx, ny, NODE_DOT_HALF_PX, NODE_COLOR, opaque);
-    for batch in &capture.frame.batches {
-        let texture = textures.get(&batch.texture);
-        for sprite in &capture.frame.sprites[batch.sprites.clone()] {
-            let vertices = expand_sprite(batch.kind, sprite, &view.camera);
-            for triangle in QUAD_INDICES.chunks_exact(3) {
-                let corners = [0, 1, 2].map(|k| vertices[triangle[k] as usize]);
-                fill_triangle(&mut canvas, view, &corners, texture, batch.blend);
-            }
-        }
-    }
-    for mesh in &capture.frame.meshes {
-        let (x, y) = view.to_screen(mesh.translation);
-        let half = (mesh.scale.abs() * view.pixels_per_unit * 0.5).max(MESH_MARKER_MIN_HALF_PX);
-        outline_square(&mut canvas, x, y, half, MESH_COLOR, opaque);
-    }
-    let pixels = canvas.pixels.iter().flat_map(|pixel| pixel.map(|channel| (channel * U8_MAX).round() as u8)).collect();
-    RgbaImage::from_raw(size as u32, size as u32, pixels).expect("canvas size")
-}
-
-fn fill_square(canvas: &mut Canvas, x: f32, y: f32, half: f32, color: [f32; 4], blend: BlendState) {
-    let limit = canvas.size as f32;
-    let (x0, x1) = ((x - half).max(0.0) as usize, (x + half).min(limit) as usize);
-    let (y0, y1) = ((y - half).max(0.0) as usize, (y + half).min(limit) as usize);
-    for py in y0..y1 {
-        for px in x0..x1 {
-            canvas.blend(px, py, color, blend);
-        }
-    }
-}
-
-/// A one-pixel square outline.
-fn outline_square(canvas: &mut Canvas, x: f32, y: f32, half: f32, color: [f32; 4], blend: BlendState) {
-    let limit = canvas.size as i64 - 1;
-    let clamp = |value: f32| (value.round() as i64).clamp(0, limit) as usize;
-    let (x0, x1, y0, y1) = (clamp(x - half), clamp(x + half), clamp(y - half), clamp(y + half));
-    for px in x0..=x1 {
-        canvas.blend(px, y0, color, blend);
-        canvas.blend(px, y1, color, blend);
-    }
-    for py in y0 + 1..y1 {
-        canvas.blend(x0, py, color, blend);
-        canvas.blend(x1, py, color, blend);
-    }
-}
-
-/// Rasterizes one textured triangle (pixel centres, both windings), modulating the texture by the vertex
-/// colour.
-fn fill_triangle(canvas: &mut Canvas, view: &View, corners: &[QuadVertex; 3], texture: Option<&Texture>, blend: BlendState) {
-    let screen = corners.map(|vertex| view.to_screen(vertex.position));
-    let [(ax, ay), (bx, by), (cx, cy)] = screen;
-    let area = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
-    if area.abs() < f32::EPSILON {
-        return;
-    }
-    let limit = canvas.size as f32 - 1.0;
-    let min_x = ax.min(bx).min(cx).floor().clamp(0.0, limit) as usize;
-    let max_x = ax.max(bx).max(cx).ceil().clamp(0.0, limit) as usize;
-    let min_y = ay.min(by).min(cy).floor().clamp(0.0, limit) as usize;
-    let max_y = ay.max(by).max(cy).ceil().clamp(0.0, limit) as usize;
-    let color = corners[0].color;
-    for py in min_y..=max_y {
-        for px in min_x..=max_x {
-            let (x, y) = (px as f32 + 0.5, py as f32 + 0.5);
-            let wa = ((bx - x) * (cy - y) - (by - y) * (cx - x)) / area;
-            let wb = ((cx - x) * (ay - y) - (cy - y) * (ax - x)) / area;
-            let wc = 1.0 - wa - wb;
-            if wa < 0.0 || wb < 0.0 || wc < 0.0 {
-                continue;
-            }
-            let u = wa * corners[0].uv[0] + wb * corners[1].uv[0] + wc * corners[2].uv[0];
-            let v = wa * corners[0].uv[1] + wb * corners[1].uv[1] + wc * corners[2].uv[1];
-            let texel = texture.map_or(WHITE_TEXEL, |texture| texture.sample(u, v));
-            let source = std::array::from_fn(|k| texel[k] * color[k]);
-            canvas.blend(px, py, source, blend);
-        }
-    }
+    canvas.fill_square(nx, ny, NODE_DOT_HALF_PX, NODE_COLOR, OVERLAY_BLEND);
+    canvas.draw_frame(view, &capture.frame, &|name| textures.get(name), MESH_COLOR);
+    RgbaImage::from_raw(view.width as u32, view.height as u32, canvas.to_rgba8()).expect("canvas size")
 }

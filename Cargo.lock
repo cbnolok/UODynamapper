@@ -7282,6 +7282,7 @@ dependencies = [
  "image-postprocess",
  "knuffel",
  "log",
+ "particle-sim",
  "rfd",
  "rodio",
  "serde",

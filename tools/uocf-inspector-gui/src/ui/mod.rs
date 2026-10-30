@@ -8,6 +8,7 @@ pub mod art_viewer;
 pub mod uop_browser;
 pub mod multis;
 pub mod housing;
+pub mod effects;
 pub mod multimap;
 pub mod hues;
 pub mod image_export;
@@ -207,6 +208,7 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Multis, "Multis");
             }
             ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Housing, "Housing");
+            ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Effects, "Effects");
             ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Multimap, "Multimap");
             if app.client_data.is_some() || app.ec_hues.is_some() {
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Hues, "Hues");
@@ -368,6 +370,9 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui
         }
         crate::app::ViewMode::Housing => {
             housing::ui_housing(app, ctx, ui);
+        }
+        crate::app::ViewMode::Effects => {
+            effects::ui_effects(app, ctx, ui);
         }
         crate::app::ViewMode::Multimap => {
             multimap::ui_multimap(app, ctx, ui);

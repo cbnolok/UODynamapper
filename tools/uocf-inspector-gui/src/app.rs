@@ -49,6 +49,7 @@ pub enum ViewMode {
     Gumps,
     Multis,
     Housing,
+    Effects,
     Multimap,
     Hues,
     Clilocs,
@@ -1822,6 +1823,7 @@ pub struct UopInspectorApp {
     pub housing_index: Option<Arc<HousingIndex>>,
     pub multi_part_filters: MultiPartFilters,
     pub housing_panel: crate::ui::housing::HousingPanelState,
+    pub effects_panel: crate::ui::effects::EffectsPanelState,
 }
 
 impl UopInspectorApp {
@@ -1899,6 +1901,7 @@ impl UopInspectorApp {
             housing_index: None,
             multi_part_filters: MultiPartFilters::default(),
             housing_panel: Default::default(),
+            effects_panel: Default::default(),
             texture_previews: HashMap::new(),
             ec_texture_previews: HashMap::new(),
             ec_texture_preview_source_keys: HashMap::new(),
@@ -4165,7 +4168,7 @@ impl eframe::App for UopInspectorApp {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn test_cliloc_payload(text: &str) -> Vec<u8> {
@@ -4179,7 +4182,7 @@ mod tests {
         bytes
     }
 
-    fn test_app() -> UopInspectorApp {
+    pub(crate) fn test_app() -> UopInspectorApp {
         UopInspectorApp {
             settings: AppSettings::default(),
             logs: Vec::new(),
@@ -4305,6 +4308,7 @@ mod tests {
             housing_index: None,
             multi_part_filters: MultiPartFilters::default(),
             housing_panel: Default::default(),
+            effects_panel: Default::default(),
         }
     }
 
