@@ -369,7 +369,7 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources_with_progress(
     }
 
     let package_timer = Instant::now();
-    build_and_write_package_with_progress(&mut package, out_file, &mut package_progress)?;
+    build_and_write_package_with_progress(package, out_file, &mut package_progress)?;
     info!(
         "CC mobile animation package build and write completed in {:.3}s",
         package_timer.elapsed().as_secs_f64()

@@ -5,9 +5,10 @@ use std::time::{Duration, Instant};
 use color_eyre::eyre::{self, WrapErr};
 use crate::progress::{ProgressBar, ProgressStyle};
 use log::info;
+use udd_container::uddp::BuildError;
 use udd_container::{
     BuildProgress, BuildProgressFile, BuildProgressPhase, CompressionFlag, CompressionSummary,
-    UddpBuilder,
+    UddpBuilder, UddpStreamingBuilder,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,12 +128,6 @@ fn build_style() -> ProgressStyle {
         .progress_chars("#>-")
 }
 
-fn save_style() -> ProgressStyle {
-    ProgressStyle::default_spinner()
-        .template("{spinner:.green} [{elapsed_precise}] {msg}")
-        .unwrap()
-}
-
 fn compression_message(summary: CompressionSummary) -> String {
     let zstd = summary.zstd_no_dict + summary.zstd_dict;
     let mut parts = Vec::new();
@@ -159,7 +154,7 @@ fn phase_message(phase: BuildProgressPhase, compression_summary: CompressionSumm
     match phase {
         BuildProgressPhase::TrainingDictionaries => "training compression dictionaries".to_string(),
         BuildProgressPhase::CompressingFiles => compression_message(compression_summary),
-        BuildProgressPhase::Assembling => "assembling package bytes".to_string(),
+        BuildProgressPhase::Assembling => "assembling and writing package".to_string(),
     }
 }
 
@@ -265,21 +260,52 @@ pub fn atlas_payload_finish_message(
     }
 }
 
-pub fn build_and_write_package(builder: &mut UddpBuilder, out_file: &Path) -> eyre::Result<()> {
+pub fn build_and_write_package(builder: UddpBuilder, out_file: &Path) -> eyre::Result<()> {
     build_and_write_package_with_progress(builder, out_file, |_| {})
 }
 
+/// Build the package and write it to `out_file`, one payload at a time.
 pub fn build_and_write_package_with_progress<F>(
-    builder: &mut UddpBuilder,
+    builder: UddpBuilder,
     out_file: &Path,
     progress_callback: F,
 ) -> eyre::Result<()>
 where
     F: FnMut(BuildProgress),
 {
+    let compression_summary = builder.compression_summary();
+    write_package_with_progress(out_file, compression_summary, progress_callback, |progress| {
+        builder.into_file_with_progress(out_file, progress)
+    })
+}
+
+/// Write a package whose payloads were compressed and spilled to disk as they were added.
+pub fn finish_streaming_package_with_progress<F>(
+    builder: UddpStreamingBuilder,
+    progress_callback: F,
+) -> eyre::Result<()>
+where
+    F: FnMut(BuildProgress),
+{
+    let out_file = builder.output_path().to_path_buf();
+    let compression_summary = builder.compression_summary();
+    write_package_with_progress(&out_file, compression_summary, progress_callback, |progress| {
+        builder.finish_with_progress(progress)
+    })
+}
+
+fn write_package_with_progress<F, W>(
+    out_file: &Path,
+    compression_summary: CompressionSummary,
+    progress_callback: F,
+    write: W,
+) -> eyre::Result<()>
+where
+    F: FnMut(BuildProgress),
+    W: FnOnce(&mut dyn FnMut(BuildProgress)) -> Result<(), BuildError>,
+{
     let bar = ProgressBar::new(1);
     bar.set_style(build_style());
-    let compression_summary = builder.compression_summary();
     let mut progress_callback = BuildProgressReporter::new(progress_callback);
 
     let mut active_phase = None;
@@ -287,7 +313,7 @@ where
     let mut dictionary_time = Duration::ZERO;
     let mut compression_time = Duration::ZERO;
     let mut assembly_time = Duration::ZERO;
-    let bytes = builder.build_with_progress(|progress: BuildProgress| {
+    write(&mut |progress: BuildProgress| {
         progress_callback.report(progress);
         let total = progress.total.max(1) as u64;
         if active_phase != Some(progress.phase) || bar.length() != Some(total) {
@@ -339,7 +365,8 @@ where
                 bar.set_position(progress.completed.min(progress.total) as u64);
             }
         }
-    })?;
+    })
+    .wrap_err_with(|| format!("save {}", out_file.display()))?;
     if let Some(phase) = active_phase {
         let elapsed = active_phase_started.elapsed();
         match phase {
@@ -349,20 +376,13 @@ where
         }
     }
 
-    bar.set_style(save_style());
-    bar.enable_steady_tick(Duration::from_millis(100));
-    bar.set_message(format!("writing {}", out_file.display()));
-    let write_timer = Instant::now();
-    std::fs::write(out_file, bytes).wrap_err_with(|| format!("save {}", out_file.display()))?;
-    let write_time = write_timer.elapsed();
     bar.finish_with_message(format!("saved {}", out_file.display()));
     info!(
-        "UDDP package timing for {}: dictionaries {:.3}s, compression {:.3}s, assembly {:.3}s, write {:.3}s",
+        "UDDP package timing for {}: dictionaries {:.3}s, compression {:.3}s, assembly and write {:.3}s",
         out_file.display(),
         dictionary_time.as_secs_f64(),
         compression_time.as_secs_f64(),
-        assembly_time.as_secs_f64(),
-        write_time.as_secs_f64()
+        assembly_time.as_secs_f64()
     );
 
     Ok(())

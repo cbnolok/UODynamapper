@@ -121,7 +121,7 @@ fn write_hues_uddp(
         })
         .context("add textures/hues.rgba8888")?;
 
-    build_and_write_package(&mut package, out_file)?;
+    build_and_write_package(package, out_file)?;
     Ok(())
 }
 

@@ -104,7 +104,7 @@ pub fn convert_client_lights_to_world_lights_uddp(
         data: &slot_manifest,
     })?;
 
-    build_and_write_package(&mut package, out_file)?;
+    build_and_write_package(package, out_file)?;
 
     Ok(())
 }

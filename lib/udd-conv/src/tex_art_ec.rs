@@ -641,7 +641,7 @@ pub fn convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources_with_progre
         total: progress_len,
     });
 
-    build_and_write_package_with_progress(&mut package, out_file, &mut package_progress)?;
+    build_and_write_package_with_progress(package, out_file, &mut package_progress)?;
 
     Ok(TexArtEcBuildSummary {
         slot_count,

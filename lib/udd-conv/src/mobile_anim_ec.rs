@@ -2,6 +2,7 @@
 
 use std::cmp::Reverse;
 use std::collections::{hash_map::Entry, BTreeMap, HashMap, HashSet};
+use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -14,7 +15,8 @@ use crate::progress::{ProgressBar, ProgressStyle};
 use log::{info, warn};
 use rayon::prelude::*;
 use udd_container::{
-    AddFileRequest, AddOwnedFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder,
+    AddFileRequest, AddOwnedFileRequest, CompressionFlag, DataType, LookupMode,
+    UddpStreamingBuilder,
 };
 use uocf::animation_sequence::{
     AnimationSequence, SequenceAction, FIRST_FRAME_NUMBER, FIRST_STORED_DIRECTION, MIRROR_DIRECTION_SUM,
@@ -31,7 +33,7 @@ use crate::bc7::{
     VramTextureEncoding,
 };
 use crate::package_progress::{
-    build_and_write_package_with_progress, AssetProgressReporter, AssetTaskProgress,
+    finish_streaming_package_with_progress, AssetProgressReporter, AssetTaskProgress,
     AssetTaskProgressStage,
 };
 use crate::rgba_bounds::{count_nonzero_alpha, nonzero_alpha_bounds, RgbaBounds};
@@ -420,7 +422,8 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progr
         planned_frames.len(),
         planning_timer.elapsed().as_secs_f64()
     );
-    let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
+    let mut package = UddpStreamingBuilder::create(LookupMode::VirtualPathHash, out_file)
+        .wrap_err_with(|| format!("create payload spill file for {}", out_file.display()))?;
     let pack_timer = Instant::now();
     let (packed_pages, placements) =
         pack_planned_frames_into_package(&mut package, planned_frames, options, &payload_progress)?;
@@ -461,7 +464,7 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progr
     }
 
     let package_timer = Instant::now();
-    build_and_write_package_with_progress(&mut package, out_file, &mut package_progress)?;
+    finish_streaming_package_with_progress(package, &mut package_progress)?;
     info!(
         "EC mobile animation package build and write completed in {:.3}s",
         package_timer.elapsed().as_secs_f64()
@@ -516,7 +519,7 @@ fn validate_options(options: &MobileAnimEcAtlasOptions) -> eyre::Result<()> {
 }
 
 fn encode_and_add_mobile_anim_page_chunk(
-    package: &mut UddpBuilder,
+    package: &mut UddpStreamingBuilder,
     pages: &mut Vec<BuiltMobileAnimEcPage>,
     options: &MobileAnimEcAtlasOptions,
     payload_progress: &(dyn Fn(AssetTaskProgress) + Sync),
@@ -534,24 +537,27 @@ fn encode_and_add_mobile_anim_page_chunk(
     } else {
         0
     };
-    for page in pages.iter_mut() {
-        let Some(hue_mask) = page.hue_mask.take() else {
-            continue;
-        };
-        package.add_owned_file(AddOwnedFileRequest {
-            data_type: DataType::Texture as u8,
-            compression: CompressionFlag::ZstdNoDict,
-            width: page.record.used_width,
-            height: page.record.used_height,
-            virtual_path: Some(hue_mask_entry_path(page.record.page_index)),
-            path_hash64: None,
-            id: None,
-            data: hue_mask,
-        })?;
-    }
+    let hue_mask_files = pages
+        .iter_mut()
+        .filter_map(|page| {
+            let hue_mask = page.hue_mask.take()?;
+            Some(AddOwnedFileRequest {
+                data_type: DataType::Texture as u8,
+                compression: CompressionFlag::ZstdNoDict,
+                width: page.record.used_width,
+                height: page.record.used_height,
+                virtual_path: Some(hue_mask_entry_path(page.record.page_index)),
+                path_hash64: None,
+                id: None,
+                data: hue_mask,
+            })
+        })
+        .collect::<Vec<_>>();
+    package.add_owned_files(hue_mask_files)?;
     if options.pixel_format != PagePixelFormat::Bc7 {
-        for page in pages.drain(..) {
-            package.add_owned_file(AddOwnedFileRequest {
+        let page_files = pages
+            .drain(..)
+            .map(|page| AddOwnedFileRequest {
                 data_type: DataType::Texture as u8,
                 compression: options.compression,
                 width: page.record.used_width,
@@ -560,8 +566,9 @@ fn encode_and_add_mobile_anim_page_chunk(
                 path_hash64: None,
                 id: None,
                 data: page.pixels,
-            })?;
-        }
+            })
+            .collect::<Vec<_>>();
+        package.add_owned_files(page_files)?;
         let completed = payload_completed
             .fetch_add(chunk_frames, Ordering::Relaxed)
             .saturating_add(chunk_frames)
@@ -612,8 +619,9 @@ fn encode_and_add_mobile_anim_page_chunk(
         },
     )?;
     let register_timer = Instant::now();
-    for (page_path, stored_page, width, height) in encoded_pages {
-        package.add_owned_file(AddOwnedFileRequest {
+    let page_files = encoded_pages
+        .into_iter()
+        .map(|(page_path, stored_page, width, height)| AddOwnedFileRequest {
             data_type: DataType::Texture as u8,
             compression: options.compression,
             width,
@@ -622,8 +630,9 @@ fn encode_and_add_mobile_anim_page_chunk(
             path_hash64: None,
             id: None,
             data: stored_page,
-        })?;
-    }
+        })
+        .collect::<Vec<_>>();
+    package.add_owned_files(page_files)?;
     let register_pages = register_timer.elapsed();
     pages.clear();
     let completed = payload_completed
@@ -917,7 +926,7 @@ fn apply_planned_transparent_trim(
         return Ok(());
     }
 
-    let mut animationframe_packages = HashMap::<Arc<PathBuf>, UopPackage>::new();
+    let mut animationframe_packages = HashMap::<Arc<PathBuf>, AnimationFrameSourcePackage>::new();
     let mut decoded_sources = HashMap::<PlannedMobileAnimEcSource, CachedPlannedAnimation>::new();
     let mut decoded_source_use_tick = 0u64;
 
@@ -1119,20 +1128,32 @@ fn planned_frame_from_entry(
     })
 }
 
+/// One lazily opened `AnimationFrame` UOP with a reader kept open for its payloads. Payloads are
+/// read on demand and not kept: frames are packed in source order and the decoded-animation
+/// cache already serves repeated reads of one source.
+struct AnimationFrameSourcePackage {
+    package: UopPackage,
+    reader: File,
+}
+
 fn decode_planned_animation_source(
     source: &PlannedMobileAnimEcSource,
-    animationframe_packages: &mut HashMap<Arc<PathBuf>, UopPackage>,
+    animationframe_packages: &mut HashMap<Arc<PathBuf>, AnimationFrameSourcePackage>,
 ) -> eyre::Result<AnimationFrame> {
-    let package = match animationframe_packages.entry(Arc::clone(&source.path)) {
+    let source_package = match animationframe_packages.entry(Arc::clone(&source.path)) {
         Entry::Occupied(entry) => entry.into_mut(),
         Entry::Vacant(entry) => {
             let package = UopPackage::load_with_mode(source.path.as_ref(), LoadMode::Lazy)
                 .wrap_err_with(|| format!("load {}", source.path.display()))?;
-            entry.insert(package)
+            let reader = package
+                .open_payload_reader()
+                .wrap_err_with(|| format!("open {}", source.path.display()))?;
+            entry.insert(AnimationFrameSourcePackage { package, reader })
         }
     };
-    let data = package
-        .unpack_file_by_hash_cached(source.file_hash)?
+    let data = source_package
+        .package
+        .unpack_file_by_hash_from_reader(source.file_hash, &mut source_package.reader)?
         .ok_or_else(|| eyre::eyre!(
             "EC AnimationFrame payload {:016x} not found in {}",
             source.file_hash,
@@ -1143,7 +1164,7 @@ fn decode_planned_animation_source(
 
 fn cached_decode_planned_animation_source(
     source: &PlannedMobileAnimEcSource,
-    animationframe_packages: &mut HashMap<Arc<PathBuf>, UopPackage>,
+    animationframe_packages: &mut HashMap<Arc<PathBuf>, AnimationFrameSourcePackage>,
     cache: &mut HashMap<PlannedMobileAnimEcSource, CachedPlannedAnimation>,
     use_tick: &mut u64,
 ) -> eyre::Result<Arc<AnimationFrame>> {
@@ -1864,7 +1885,7 @@ pub(crate) fn pack_frames_into_pages(
 }
 
 fn pack_planned_frames_into_package(
-    package: &mut UddpBuilder,
+    package: &mut UddpStreamingBuilder,
     frames: Vec<PlannedMobileAnimEcFrame>,
     options: &MobileAnimEcAtlasOptions,
     payload_progress: &(dyn Fn(AssetTaskProgress) + Sync),
@@ -1894,7 +1915,7 @@ fn pack_planned_frames_into_package(
     let mut page_index = 0u32;
     let mut pending_pages = Vec::new();
     let chunk_size = rayon::current_num_threads().max(1);
-    let mut animationframe_package_cache = HashMap::<Arc<PathBuf>, UopPackage>::new();
+    let mut animationframe_package_cache = HashMap::<Arc<PathBuf>, AnimationFrameSourcePackage>::new();
     let mut decoded_source_cache = HashMap::<PlannedMobileAnimEcSource, CachedPlannedAnimation>::new();
     let mut decoded_source_use_tick = 0u64;
     let mut packed_frames = 0u64;
@@ -2368,7 +2389,7 @@ fn build_planned_page(
     frames: Vec<PlannedMobileAnimEcFrame>,
     placements: &mut HashMap<(u32, u16), FramePlacement>,
     options: &MobileAnimEcAtlasOptions,
-    animationframe_packages: &mut HashMap<Arc<PathBuf>, UopPackage>,
+    animationframe_packages: &mut HashMap<Arc<PathBuf>, AnimationFrameSourcePackage>,
     decoded_sources: &mut HashMap<PlannedMobileAnimEcSource, CachedPlannedAnimation>,
     decoded_source_use_tick: &mut u64,
 ) -> eyre::Result<(BuiltMobileAnimEcPage, Vec<PlannedMobileAnimEcFrame>, u64)> {
@@ -3348,7 +3369,7 @@ pub fn serialize_body_manifest(bodies: &[MobileAnimEcBodyRecord]) -> eyre::Resul
 mod tests {
     use super::*;
     use udd_assets::MobileAnimEcPackage;
-    use udd_container::UddpReader;
+    use udd_container::{UddpBuilder, UddpReader};
 
     fn frame(body_id: u32, source_frame_index: u16, width: u16, height: u16) -> DecodedMobileAnimEcFrame {
         DecodedMobileAnimEcFrame {

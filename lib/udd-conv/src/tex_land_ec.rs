@@ -840,7 +840,7 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_prog
         total: progress_len,
     });
 
-    build_and_write_package_with_progress(&mut package, out_file, &mut package_progress)?;
+    build_and_write_package_with_progress(package, out_file, &mut package_progress)?;
 
     Ok(TexLandEcBuildSummary {
         terrain_entry_count,

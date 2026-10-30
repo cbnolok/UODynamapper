@@ -335,7 +335,7 @@ fn write_tilemeta_uddp_with_progress(
         id: None,
         data: item_texture_ref_bytes,
     })?;
-    build_and_write_package_with_progress(&mut package, out_file, &mut package_progress)?;
+    build_and_write_package_with_progress(package, out_file, &mut package_progress)?;
 
     Ok(())
 }

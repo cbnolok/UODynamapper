@@ -183,7 +183,7 @@ fn convert_ec_gumps_from_interface_uop(
         },
     )?;
     pb.finish_with_message("EC gumps extracted from Interface.uop");
-    build_and_write_package(&mut builder, output_path)?;
+    build_and_write_package(builder, output_path)?;
 
     Ok(EcGumpsBuildSummary {
         gump_count,
@@ -265,7 +265,7 @@ fn convert_ec_gumps_from_extracted_dir(
         },
     )?;
     pb.finish_with_message("EC gumps extracted from extracted files");
-    build_and_write_package(&mut builder, output_path)?;
+    build_and_write_package(builder, output_path)?;
 
     Ok(EcGumpsBuildSummary {
         gump_count,

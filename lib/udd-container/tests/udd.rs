@@ -516,3 +516,235 @@ fn uddf_roundtrip_preserves_flags_and_payload() {
     assert_eq!(loaded.typed_content_id(), Some(UddpContentId::Unknown));
     assert_eq!(loaded.codec_bits().raw(), 1);
 }
+
+/// Payload large enough to take the builder's multithreaded Zstd path.
+const STREAMING_TEST_LARGE_PAYLOAD_BYTES: usize = 12 * 1024 * 1024;
+const STREAMING_TEST_SMALL_FILE_COUNT: usize = 64;
+const STREAMING_TEST_JXL_SIDE: u32 = 4;
+const STREAMING_TEST_ZSTD_LEVEL: i32 = 9;
+
+fn streaming_test_dir(test_name: &str) -> std::path::PathBuf {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("udd-container-{test_name}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create test dir");
+    dir
+}
+
+/// Mixed synthetic files: raw, Zstd at default and explicit level, JPEG XL, a
+/// payload Zstd cannot shrink, and one large enough for multithreaded Zstd.
+fn streaming_test_files() -> Vec<AddOwnedFileRequest> {
+    let mut files = Vec::new();
+    for index in 0..STREAMING_TEST_SMALL_FILE_COUNT {
+        let compression = match index % 3 {
+            0 => CompressionFlag::None,
+            1 => CompressionFlag::ZstdNoDict,
+            _ => CompressionFlag::ZstdNoDictLevel(STREAMING_TEST_ZSTD_LEVEL),
+        };
+        files.push(AddOwnedFileRequest {
+            data_type: DataType::Metadata as u8,
+            compression,
+            width: 0,
+            height: 0,
+            virtual_path: Some(format!("files/{index:04}.bin")),
+            path_hash64: None,
+            id: None,
+            data: format!("payload {index} ").repeat(index + 1).into_bytes(),
+        });
+    }
+    let jxl_pixels = (0..STREAMING_TEST_JXL_SIDE * STREAMING_TEST_JXL_SIDE)
+        .flat_map(|pixel| [pixel as u8, 0x40, 0x80, 0xFF])
+        .collect::<Vec<_>>();
+    files.push(AddOwnedFileRequest {
+        data_type: DataType::Texture as u8,
+        compression: CompressionFlag::JpegXl,
+        width: STREAMING_TEST_JXL_SIDE,
+        height: STREAMING_TEST_JXL_SIDE,
+        virtual_path: Some("pages/jxl.rgba".to_string()),
+        path_hash64: None,
+        id: None,
+        data: jxl_pixels,
+    });
+    files.push(AddOwnedFileRequest {
+        data_type: DataType::Texture as u8,
+        compression: CompressionFlag::ZstdNoDict,
+        width: 0,
+        height: 0,
+        virtual_path: Some("pages/incompressible.bin".to_string()),
+        path_hash64: None,
+        id: None,
+        data: vec![0x5A],
+    });
+    files.push(AddOwnedFileRequest {
+        data_type: DataType::Texture as u8,
+        compression: CompressionFlag::ZstdNoDict,
+        width: 0,
+        height: 0,
+        virtual_path: Some("pages/large.bin".to_string()),
+        path_hash64: None,
+        id: None,
+        data: (0..STREAMING_TEST_LARGE_PAYLOAD_BYTES).map(|index| (index % 251) as u8).collect(),
+    });
+    files
+}
+
+fn assert_canonical_package_hash(bytes: &[u8]) {
+    const HEADER_PACKAGE_HASH_OFFSET: usize = 40;
+    let stored = u64::from_le_bytes(
+        bytes[HEADER_PACKAGE_HASH_OFFSET..HEADER_PACKAGE_HASH_OFFSET + 8]
+            .try_into()
+            .expect("hash bytes"),
+    );
+    assert_eq!(stored, canonical_package_hash64(bytes));
+}
+
+#[test]
+fn builder_into_file_matches_into_bytes() {
+    let dir = streaming_test_dir("into-file");
+    let output = dir.join("package.uddp");
+
+    let mut memory_builder = UddpBuilder::new(LookupMode::VirtualPathHash);
+    let mut file_builder = UddpBuilder::new(LookupMode::VirtualPathHash);
+    for file in streaming_test_files() {
+        memory_builder.add_owned_file(file.clone()).expect("add memory file");
+        file_builder.add_owned_file(file).expect("add file-backed file");
+    }
+    let expected = memory_builder.into_bytes().expect("build in memory");
+    file_builder.into_file(&output).expect("write package file");
+
+    let written = std::fs::read(&output).expect("read package file");
+    assert_eq!(written, expected);
+    assert_canonical_package_hash(&written);
+    std::fs::remove_dir_all(&dir).expect("remove test dir");
+}
+
+#[test]
+fn streaming_builder_matches_in_memory_builder() {
+    let dir = streaming_test_dir("streaming");
+    let output = dir.join("package.uddp");
+    let files = streaming_test_files();
+
+    let mut memory_builder = UddpBuilder::new(LookupMode::VirtualPathHash);
+    memory_builder.set_version(3, 1);
+    for file in &files {
+        memory_builder.add_owned_file(file.clone()).expect("add memory file");
+    }
+    let expected = memory_builder.build().expect("build in memory");
+
+    let mut streaming_builder =
+        UddpStreamingBuilder::create(LookupMode::VirtualPathHash, &output).expect("create streaming builder");
+    streaming_builder.set_version(3, 1);
+    let mut files = files.into_iter();
+    let first = files.next().expect("first file");
+    streaming_builder
+        .add_file(AddFileRequest {
+            data_type: first.data_type,
+            compression: first.compression,
+            width: first.width,
+            height: first.height,
+            virtual_path: first.virtual_path.as_deref(),
+            path_hash64: None,
+            id: None,
+            data: &first.data,
+        })
+        .expect("add borrowed file");
+    let second = files.next().expect("second file");
+    streaming_builder.add_owned_file(second).expect("add owned file");
+    streaming_builder
+        .add_owned_files(files.collect())
+        .expect("add owned file batch");
+
+    let spill_path = dir.join("package.uddp.payloads.tmp");
+    assert!(spill_path.exists());
+    let mut assembled_steps = Vec::new();
+    streaming_builder
+        .finish_with_progress(|progress| {
+            assert_eq!(progress.phase, BuildProgressPhase::Assembling);
+            assembled_steps.push(progress.completed);
+        })
+        .expect("finish streaming package");
+    assert!(!spill_path.exists());
+    assert_eq!(assembled_steps.first(), Some(&0));
+    assert_eq!(
+        assembled_steps.last().copied(),
+        Some(2 + STREAMING_TEST_SMALL_FILE_COUNT + 3)
+    );
+
+    let written = std::fs::read(&output).expect("read streamed package");
+    assert_eq!(written, expected);
+    assert_canonical_package_hash(&written);
+
+    let reader = UddpReader::open(written).expect("open streamed package");
+    for file in streaming_test_files() {
+        let path = file.virtual_path.as_deref().expect("test files have paths");
+        assert_eq!(
+            reader
+                .read_file_by_path_hash(xxh64_virtual_path(path))
+                .expect("read streamed file"),
+            file.data,
+            "{path}"
+        );
+    }
+    std::fs::remove_dir_all(&dir).expect("remove test dir");
+}
+
+#[test]
+fn streaming_builder_assigns_dense_ids_like_in_memory_builder() {
+    let dir = streaming_test_dir("streaming-dense");
+    let output = dir.join("package.uddp");
+    let payloads = [b"sector-0".as_slice(), b"sector-1-sector-1-sector-1", b"sector-2"];
+
+    let mut memory_builder = UddpBuilder::new(LookupMode::DenseId);
+    let mut streaming_builder =
+        UddpStreamingBuilder::create(LookupMode::DenseId, &output).expect("create streaming builder");
+    for payload in payloads {
+        let request = AddFileRequest {
+            data_type: DataType::Sector as u8,
+            compression: CompressionFlag::ZstdNoDict,
+            width: 0,
+            height: 0,
+            virtual_path: None,
+            path_hash64: None,
+            id: None,
+            data: payload,
+        };
+        memory_builder.add_file(request.clone()).expect("add memory file");
+        streaming_builder.add_file(request).expect("add streamed file");
+    }
+    streaming_builder.finish().expect("finish streaming package");
+
+    assert_eq!(
+        std::fs::read(&output).expect("read streamed package"),
+        memory_builder.build().expect("build in memory")
+    );
+    std::fs::remove_dir_all(&dir).expect("remove test dir");
+}
+
+#[test]
+fn streaming_builder_rejects_dictionary_compression_and_drops_spill() {
+    let dir = streaming_test_dir("streaming-dict");
+    let output = dir.join("package.uddp");
+    let spill_path = dir.join("package.uddp.payloads.tmp");
+    let mut streaming_builder =
+        UddpStreamingBuilder::create(LookupMode::VirtualPathHash, &output).expect("create streaming builder");
+    for compression in [CompressionFlag::ZstdDict, CompressionFlag::Auto] {
+        let result = streaming_builder.add_file(AddFileRequest {
+            data_type: DataType::Metadata as u8,
+            compression,
+            width: 0,
+            height: 0,
+            virtual_path: Some("metadata/dict.bin"),
+            path_hash64: None,
+            id: None,
+            data: b"dictionary candidate",
+        });
+        assert!(matches!(
+            result,
+            Err(udd_container::uddp::BuildError::DictionaryCompressionWhileStreaming(rejected)) if rejected == compression
+        ));
+    }
+    assert!(spill_path.exists());
+    drop(streaming_builder);
+    assert!(!spill_path.exists());
+    assert!(!output.exists());
+    std::fs::remove_dir_all(&dir).expect("remove test dir");
+}

@@ -183,7 +183,7 @@ pub fn convert_gumps_to_uddp_from_sources_with_patches_and_options(
         },
     )?;
     pb.finish_with_message("CC gumps extracted");
-    build_and_write_package(&mut builder, output_path)?;
+    build_and_write_package(builder, output_path)?;
 
     Ok(CcGumpsBuildSummary {
         gump_count,

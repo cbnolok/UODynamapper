@@ -220,7 +220,7 @@ fn convert_statics_mul_to_uddp_from_resolved_sources_with_dimensions(
 
     pb.finish_with_message("Statics chunks packed");
 
-    build_and_write_package(&mut builder, output_path)?;
+    build_and_write_package(builder, output_path)?;
 
     Ok(CcStaticsBuildSummary {
         map_id,

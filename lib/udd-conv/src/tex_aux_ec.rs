@@ -333,7 +333,7 @@ pub fn pack_tex_aux_ec(
         })?;
     }
 
-    build_and_write_package_with_progress(&mut package, output, &mut |_| {})?;
+    build_and_write_package_with_progress(package, output, &mut |_| {})?;
 
     info!(
         "tex_aux_ec: wrote {} auxiliary texture slots to '{}'",

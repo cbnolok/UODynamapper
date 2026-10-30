@@ -7,8 +7,12 @@
 //! next to the code that serializes the final package image.
 
 use std::collections::{HashMap, HashSet};
+use std::fs::File;
+use std::io::{BufWriter, Seek, SeekFrom, Write};
+use std::path::Path;
 
 use rayon::prelude::*;
+use xxhash_rust::xxh64::Xxh64;
 
 use super::support::{
     jxl_compress, jxl_compress_numeric_level, jxl_zstd_compress, jxl_zstd_compress_level,
@@ -23,37 +27,95 @@ const DICT_TRAIN_AUTO_MAX_SAMPLE_BYTES: usize = 48 * 1024;
 const DICT_TRAIN_MAX_SAMPLE_COUNT: usize = 1024;
 const DICT_TRAIN_MAX_TOTAL_BYTES: usize = 8 * 1024 * 1024;
 const PARALLEL_ZSTD_MIN_BYTES: usize = 10 * 1024 * 1024;
+/// Write buffer of package files written straight to disk.
+pub(super) const PACKAGE_FILE_WRITE_BUFFER_BYTES: usize = 8 * 1024 * 1024;
+/// Package hash seed, matching `canonical_package_hash64`.
+const PACKAGE_HASH_SEED: u64 = 0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PendingKey {
+pub(super) enum PendingKey {
     PathHash(u64),
     Id(u32),
 }
 
 #[derive(Debug, Clone)]
-struct PendingFile {
+pub(super) struct PendingFile {
     key: PendingKey,
     data_type: u8,
-    compression: CompressionFlag,
+    pub(super) compression: CompressionFlag,
     width: u32,
     height: u32,
     raw_data: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]
-struct BuiltDictionary {
+pub(super) struct BuiltDictionary {
     data_type: u8,
     codec: Codec,
     bytes: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]
-struct BuiltFile {
+pub(super) struct BuiltFile {
     key: PendingKey,
     data_type: u8,
     codec: Codec,
     raw_size: u32,
-    encoded_payload: Vec<u8>,
+    pub(super) encoded_payload: Vec<u8>,
+}
+
+impl BuiltFile {
+    pub(super) fn layout(&self) -> FileLayout {
+        FileLayout {
+            key: self.key,
+            data_type: self.data_type,
+            codec: self.codec,
+            raw_size: self.raw_size,
+            stored_size: self.encoded_payload.len() as u32,
+        }
+    }
+}
+
+/// Key, encoding and sizes of one stored payload: what the package head needs to locate it.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct FileLayout {
+    key: PendingKey,
+    data_type: u8,
+    codec: Codec,
+    raw_size: u32,
+    pub(super) stored_size: u32,
+}
+
+/// Writer that feeds every written byte to the package hash.
+pub(super) struct HashingWriter<W> {
+    inner: W,
+    state: Xxh64,
+}
+
+impl<W: Write> HashingWriter<W> {
+    pub(super) fn new(inner: W) -> Self {
+        Self {
+            inner,
+            state: Xxh64::new(PACKAGE_HASH_SEED),
+        }
+    }
+
+    /// The inner writer and the hash of everything written through this writer.
+    pub(super) fn finish(self) -> (W, u64) {
+        (self.inner, self.state.digest())
+    }
+}
+
+impl<W: Write> Write for HashingWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let written = self.inner.write(buf)?;
+        self.state.update(&buf[..written]);
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -94,6 +156,81 @@ pub struct CompressionSummary {
     pub zstd_dict: usize,
     pub jpeg_xl: usize,
     pub auto: usize,
+}
+
+impl CompressionSummary {
+    /// Count one file requesting `compression`.
+    pub(super) fn add(&mut self, compression: CompressionFlag) {
+        match compression {
+            CompressionFlag::None => self.raw += 1,
+            CompressionFlag::ZstdNoDict | CompressionFlag::ZstdNoDictLevel(_) => {
+                self.zstd_no_dict += 1
+            }
+            CompressionFlag::ZstdDict => self.zstd_dict += 1,
+            CompressionFlag::JpegXl | CompressionFlag::JpegXlLevel(_) => {
+                self.jpeg_xl += 1
+            }
+            CompressionFlag::JpegXlZstd | CompressionFlag::JpegXlZstdLevel(_) => {
+                self.jpeg_xl += 1;
+                self.zstd_no_dict += 1;
+            }
+            CompressionFlag::JpegXlZstdLevels { .. } => {
+                self.jpeg_xl += 1;
+                self.zstd_no_dict += 1;
+            }
+            CompressionFlag::Auto => self.auto += 1,
+        }
+    }
+}
+
+/// Validate one logical file and derive its lookup key.
+pub(super) fn make_pending_file(
+    lookup_mode: LookupMode,
+    next_dense_id: &mut u32,
+    data_type: u8,
+    compression: CompressionFlag,
+    width: u32,
+    height: u32,
+    virtual_path: Option<&str>,
+    path_hash64: Option<u64>,
+    id: Option<u32>,
+    raw_data: Vec<u8>,
+) -> Result<PendingFile, BuildError> {
+    if data_type as usize >= MAX_TYPES {
+        return Err(BuildError::InvalidType(data_type));
+    }
+
+    if raw_data.len() > MAX_RAW_FILE_SIZE as usize {
+        return Err(BuildError::FileTooLarge(raw_data.len() as u64));
+    }
+
+    let key = match lookup_mode {
+        LookupMode::VirtualPathHash => {
+            let hash = if let Some(hash) = path_hash64 {
+                hash
+            } else if let Some(path) = virtual_path {
+                xxh64_virtual_path(path)
+            } else {
+                return Err(BuildError::MissingPathForPathMode);
+            };
+            PendingKey::PathHash(hash)
+        }
+        LookupMode::DenseId => {
+            let id = id.unwrap_or(*next_dense_id);
+            *next_dense_id = id.saturating_add(1);
+            PendingKey::Id(id)
+        }
+        LookupMode::SparseId => PendingKey::Id(id.ok_or(BuildError::MissingIdForSparseMode)?),
+    };
+
+    Ok(PendingFile {
+        key,
+        data_type,
+        compression,
+        width,
+        height,
+        raw_data,
+    })
 }
 
 /// Builder for runtime `.uddp` containers.
@@ -174,41 +311,19 @@ impl UddpBuilder {
         id: Option<u32>,
         raw_data: Vec<u8>,
     ) -> Result<(), BuildError> {
-        if data_type as usize >= MAX_TYPES {
-            return Err(BuildError::InvalidType(data_type));
-        }
-
-        if raw_data.len() > MAX_RAW_FILE_SIZE as usize {
-            return Err(BuildError::FileTooLarge(raw_data.len() as u64));
-        }
-
-        let key = match self.lookup_mode {
-            LookupMode::VirtualPathHash => {
-                let hash = if let Some(hash) = path_hash64 {
-                    hash
-                } else if let Some(path) = virtual_path {
-                    xxh64_virtual_path(path)
-                } else {
-                    return Err(BuildError::MissingPathForPathMode);
-                };
-                PendingKey::PathHash(hash)
-            }
-            LookupMode::DenseId => {
-                let id = id.unwrap_or(self.next_dense_id);
-                self.next_dense_id = id.saturating_add(1);
-                PendingKey::Id(id)
-            }
-            LookupMode::SparseId => PendingKey::Id(id.ok_or(BuildError::MissingIdForSparseMode)?),
-        };
-
-        self.files.push(PendingFile {
-            key,
+        let file = make_pending_file(
+            self.lookup_mode,
+            &mut self.next_dense_id,
             data_type,
             compression,
             width,
             height,
+            virtual_path,
+            path_hash64,
+            id,
             raw_data,
-        });
+        )?;
+        self.files.push(file);
 
         Ok(())
     }
@@ -216,25 +331,7 @@ impl UddpBuilder {
     pub fn compression_summary(&self) -> CompressionSummary {
         let mut summary = CompressionSummary::default();
         for file in &self.files {
-            match file.compression {
-                CompressionFlag::None => summary.raw += 1,
-                CompressionFlag::ZstdNoDict | CompressionFlag::ZstdNoDictLevel(_) => {
-                    summary.zstd_no_dict += 1
-                }
-                CompressionFlag::ZstdDict => summary.zstd_dict += 1,
-                CompressionFlag::JpegXl | CompressionFlag::JpegXlLevel(_) => {
-                    summary.jpeg_xl += 1
-                }
-                CompressionFlag::JpegXlZstd | CompressionFlag::JpegXlZstdLevel(_) => {
-                    summary.jpeg_xl += 1;
-                    summary.zstd_no_dict += 1;
-                }
-                CompressionFlag::JpegXlZstdLevels { .. } => {
-                    summary.jpeg_xl += 1;
-                    summary.zstd_no_dict += 1;
-                }
-                CompressionFlag::Auto => summary.auto += 1,
-            }
+            summary.add(file.compression);
         }
         summary
     }
@@ -272,6 +369,37 @@ impl UddpBuilder {
         let files = std::mem::take(&mut self.files);
         let plan = plan_build_consuming_with_progress(files, &mut progress)?;
         self.emit_package_with_progress(plan, &mut progress)
+    }
+
+    /// Consume the builder and write the package to `path`.
+    ///
+    /// The written bytes match `into_bytes()`, but the package image is never
+    /// held in memory as a whole: each payload is written and dropped in turn.
+    pub fn into_file(self, path: impl AsRef<Path>) -> Result<(), BuildError> {
+        self.into_file_with_progress(path, |_| {})
+    }
+
+    /// Consume the builder and write the package to `path` while reporting
+    /// coarse progress for the expensive compression and assembly passes.
+    pub fn into_file_with_progress<F>(
+        mut self,
+        path: impl AsRef<Path>,
+        mut progress: F,
+    ) -> Result<(), BuildError>
+    where
+        F: FnMut(BuildProgress),
+    {
+        let files = std::mem::take(&mut self.files);
+        let plan = plan_build_consuming_with_progress(files, &mut progress)?;
+        let file = File::create(path).map_err(BuildError::Io)?;
+        let mut writer = HashingWriter::new(BufWriter::with_capacity(
+            PACKAGE_FILE_WRITE_BUFFER_BYTES,
+            file,
+        ));
+        let head = self.emit_package_head(&plan, &mut progress)?;
+        write_package_body(head, plan, &mut writer, &mut progress)?;
+        let (writer, package_hash64) = writer.finish();
+        patch_file_package_hash64(writer, package_hash64)
     }
 
     fn plan_build(&self) -> Result<BuildPlan, BuildError> {
@@ -330,183 +458,252 @@ impl UddpBuilder {
     where
         F: FnMut(BuildProgress),
     {
-        validate_keys(self.lookup_mode, &plan.files)?;
-
-        let total_steps = 2 + plan.dictionaries.len() + plan.files.len();
-        let mut completed = 0usize;
-        progress(BuildProgress {
-            phase: BuildProgressPhase::Assembling,
-            completed,
-            total: total_steps,
-            active_file: None,
-        });
-
-        let dict_table_offset = UddpHeader::SERIALIZED_SIZE as u64;
-        let dict_table_size = (plan.dictionaries.len() * UddpDictRef::SERIALIZED_SIZE) as u64;
-
-        let index_offset = dict_table_offset + dict_table_size;
-        let index_size = match self.lookup_mode {
-            LookupMode::DenseId => (plan.files.len() * UddpLocator::SERIALIZED_SIZE) as u64,
-            LookupMode::VirtualPathHash => (plan.files.len() * UddpPathEntry::SERIALIZED_SIZE) as u64,
-            LookupMode::SparseId => (plan.files.len() * UddpSparseIdEntry::SERIALIZED_SIZE) as u64,
-        };
-
-        let blob_offset = index_offset + index_size;
-        if blob_offset >= MAX_PACKAGE_SIZE {
-            return Err(BuildError::PackageTooLarge(blob_offset));
-        }
-
-        let mut dict_refs = Vec::with_capacity(plan.dictionaries.len());
-        let mut locator_records = Vec::with_capacity(plan.files.len());
-        let mut blob_cursor = blob_offset;
-
-        for dict in &plan.dictionaries {
-            dict_refs.push(UddpDictRef {
-                data_type: dict.data_type,
-                codec: dict.codec as u8,
-                reserved0: 0,
-                offset: blob_cursor,
-                size: dict.bytes.len() as u32,
-                reserved1: 0,
-            });
-            blob_cursor += dict.bytes.len() as u64;
-        }
-
-        for file in &plan.files {
-            let stored_size = file.encoded_payload.len() as u32;
-            let delta = file.raw_size - stored_size;
-            let meta32 = pack_meta32(file.data_type, file.codec, delta);
-            let pos64 = pack_pos64(blob_cursor, delta);
-            locator_records.push((
-                file.key,
-                UddpLocator {
-                    raw_size: file.raw_size,
-                    meta32,
-                    pos64,
-                },
-            ));
-            blob_cursor += stored_size as u64;
-        }
-
-        if blob_cursor > MAX_PACKAGE_SIZE {
-            return Err(BuildError::PackageTooLarge(blob_cursor));
-        }
-
-        completed += 1;
-        progress(BuildProgress {
-            phase: BuildProgressPhase::Assembling,
-            completed,
-            total: total_steps,
-            active_file: None,
-        });
-
-        let header = UddpHeader {
-            magic: UDDP_MAGIC,
-            version_major: self.version_major,
-            version_minor: self.version_minor,
-            lookup_mode: self.lookup_mode as u8,
-            reserved0: 0,
-            dict_count: plan.dictionaries.len() as u16,
-            file_count: plan.files.len() as u32,
-            dict_table_offset,
-            index_offset,
-            blob_offset,
-            package_hash64: 0,
-        };
-
-        let output_capacity = usize::try_from(blob_cursor)
-            .map_err(|_| BuildError::PackageTooLarge(blob_cursor))?;
-        let mut out = Vec::with_capacity(output_capacity);
-        header.write_to(&mut out);
-        for dict in &dict_refs {
-            dict.write_to(&mut out);
-        }
-
-        match self.lookup_mode {
-            LookupMode::DenseId => {
-                let mut dense = vec![None; plan.files.len()];
-                for (key, locator) in &locator_records {
-                    let PendingKey::Id(id) = key else {
-                        return Err(BuildError::WrongKeyForLookupMode);
-                    };
-                    let idx = *id as usize;
-                    if idx >= dense.len() {
-                        return Err(BuildError::DenseIdGap);
-                    }
-                    dense[idx] = Some(*locator);
-                }
-                for locator in dense {
-                    locator.ok_or(BuildError::DenseIdGap)?.write_to(&mut out);
-                }
-            }
-            LookupMode::VirtualPathHash => {
-                let mut entries = Vec::with_capacity(locator_records.len());
-                for (key, locator) in &locator_records {
-                    let PendingKey::PathHash(path_hash64) = key else {
-                        return Err(BuildError::WrongKeyForLookupMode);
-                    };
-                    entries.push(UddpPathEntry {
-                        path_hash64: *path_hash64,
-                        locator: *locator,
-                    });
-                }
-                entries.sort_by_key(|entry| entry.path_hash64);
-                for entry in &entries {
-                    entry.write_to(&mut out);
-                }
-            }
-            LookupMode::SparseId => {
-                let mut entries = Vec::with_capacity(locator_records.len());
-                for (key, locator) in &locator_records {
-                    let PendingKey::Id(id) = key else {
-                        return Err(BuildError::WrongKeyForLookupMode);
-                    };
-                    entries.push(UddpSparseIdEntry {
-                        id: *id,
-                        reserved0: 0,
-                        locator: *locator,
-                    });
-                }
-                entries.sort_by_key(|entry| entry.id);
-                for entry in &entries {
-                    entry.write_to(&mut out);
-                }
-            }
-        }
-
-        completed += 1;
-        progress(BuildProgress {
-            phase: BuildProgressPhase::Assembling,
-            completed,
-            total: total_steps,
-            active_file: None,
-        });
-
-        for dict in &plan.dictionaries {
-            out.extend_from_slice(&dict.bytes);
-            completed += 1;
-            progress(BuildProgress {
-                phase: BuildProgressPhase::Assembling,
-                completed,
-                total: total_steps,
-                active_file: None,
-            });
-        }
-        for file in &plan.files {
-            out.extend_from_slice(&file.encoded_payload);
-            completed += 1;
-            progress(BuildProgress {
-                phase: BuildProgressPhase::Assembling,
-                completed,
-                total: total_steps,
-                active_file: None,
-            });
-        }
-
-        let package_hash64 = canonical_package_hash64(&out);
+        let head = self.emit_package_head(&plan, &mut progress)?;
+        let package_size = head.len() as u64
+            + plan.dictionaries.iter().map(|dict| dict.bytes.len() as u64).sum::<u64>()
+            + plan.files.iter().map(|file| file.encoded_payload.len() as u64).sum::<u64>();
+        let output_capacity = usize::try_from(package_size)
+            .map_err(|_| BuildError::PackageTooLarge(package_size))?;
+        let mut writer = HashingWriter::new(Vec::with_capacity(output_capacity));
+        write_package_body(head, plan, &mut writer, progress)?;
+        let (mut out, package_hash64) = writer.finish();
         patch_header_package_hash64(&mut out, package_hash64)?;
         Ok(out)
     }
+
+    /// Validate the keys and serialize the package head of the planned payloads.
+    fn emit_package_head<F>(&self, plan: &BuildPlan, mut progress: F) -> Result<Vec<u8>, BuildError>
+    where
+        F: FnMut(BuildProgress),
+    {
+        let layouts = plan.files.iter().map(BuiltFile::layout).collect::<Vec<_>>();
+        validate_keys(self.lookup_mode, &layouts)?;
+
+        let total_steps = assembly_step_count(plan.dictionaries.len(), layouts.len());
+        progress(BuildProgress {
+            phase: BuildProgressPhase::Assembling,
+            completed: 0,
+            total: total_steps,
+            active_file: None,
+        });
+        let head = serialize_package_head(
+            self.lookup_mode,
+            self.version_major,
+            self.version_minor,
+            &plan.dictionaries,
+            &layouts,
+        )?;
+        for completed in 1..=PACKAGE_HEAD_ASSEMBLY_STEPS {
+            progress(BuildProgress {
+                phase: BuildProgressPhase::Assembling,
+                completed,
+                total: total_steps,
+                active_file: None,
+            });
+        }
+        Ok(head)
+    }
+}
+
+/// Assembly steps before the payloads: laying out the blobs, then writing the head.
+pub(super) const PACKAGE_HEAD_ASSEMBLY_STEPS: usize = 2;
+
+/// Assembly progress steps of a package: the head, then one per dictionary and file.
+pub(super) fn assembly_step_count(dictionary_count: usize, file_count: usize) -> usize {
+    PACKAGE_HEAD_ASSEMBLY_STEPS + dictionary_count + file_count
+}
+
+/// Serialize the header (with a zero package hash), the dictionary table and the
+/// index of a package whose blob region holds `dictionaries` and then `files`,
+/// in this order, right after the head.
+pub(super) fn serialize_package_head(
+    lookup_mode: LookupMode,
+    version_major: u16,
+    version_minor: u16,
+    dictionaries: &[BuiltDictionary],
+    files: &[FileLayout],
+) -> Result<Vec<u8>, BuildError> {
+    let dict_table_offset = UddpHeader::SERIALIZED_SIZE as u64;
+    let dict_table_size = (dictionaries.len() * UddpDictRef::SERIALIZED_SIZE) as u64;
+
+    let index_offset = dict_table_offset + dict_table_size;
+    let index_size = match lookup_mode {
+        LookupMode::DenseId => (files.len() * UddpLocator::SERIALIZED_SIZE) as u64,
+        LookupMode::VirtualPathHash => (files.len() * UddpPathEntry::SERIALIZED_SIZE) as u64,
+        LookupMode::SparseId => (files.len() * UddpSparseIdEntry::SERIALIZED_SIZE) as u64,
+    };
+
+    let blob_offset = index_offset + index_size;
+    if blob_offset >= MAX_PACKAGE_SIZE {
+        return Err(BuildError::PackageTooLarge(blob_offset));
+    }
+
+    let mut dict_refs = Vec::with_capacity(dictionaries.len());
+    let mut locator_records = Vec::with_capacity(files.len());
+    let mut blob_cursor = blob_offset;
+
+    for dict in dictionaries {
+        dict_refs.push(UddpDictRef {
+            data_type: dict.data_type,
+            codec: dict.codec as u8,
+            reserved0: 0,
+            offset: blob_cursor,
+            size: dict.bytes.len() as u32,
+            reserved1: 0,
+        });
+        blob_cursor += dict.bytes.len() as u64;
+    }
+
+    for file in files {
+        let stored_size = file.stored_size;
+        let delta = file.raw_size - stored_size;
+        let meta32 = pack_meta32(file.data_type, file.codec, delta);
+        let pos64 = pack_pos64(blob_cursor, delta);
+        locator_records.push((
+            file.key,
+            UddpLocator {
+                raw_size: file.raw_size,
+                meta32,
+                pos64,
+            },
+        ));
+        blob_cursor += stored_size as u64;
+    }
+
+    if blob_cursor > MAX_PACKAGE_SIZE {
+        return Err(BuildError::PackageTooLarge(blob_cursor));
+    }
+
+    let header = UddpHeader {
+        magic: UDDP_MAGIC,
+        version_major,
+        version_minor,
+        lookup_mode: lookup_mode as u8,
+        reserved0: 0,
+        dict_count: dictionaries.len() as u16,
+        file_count: files.len() as u32,
+        dict_table_offset,
+        index_offset,
+        blob_offset,
+        package_hash64: 0,
+    };
+
+    let head_capacity = usize::try_from(blob_offset)
+        .map_err(|_| BuildError::PackageTooLarge(blob_offset))?;
+    let mut out = Vec::with_capacity(head_capacity);
+    header.write_to(&mut out);
+    for dict in &dict_refs {
+        dict.write_to(&mut out);
+    }
+
+    match lookup_mode {
+        LookupMode::DenseId => {
+            let mut dense = vec![None; files.len()];
+            for (key, locator) in &locator_records {
+                let PendingKey::Id(id) = key else {
+                    return Err(BuildError::WrongKeyForLookupMode);
+                };
+                let idx = *id as usize;
+                if idx >= dense.len() {
+                    return Err(BuildError::DenseIdGap);
+                }
+                dense[idx] = Some(*locator);
+            }
+            for locator in dense {
+                locator.ok_or(BuildError::DenseIdGap)?.write_to(&mut out);
+            }
+        }
+        LookupMode::VirtualPathHash => {
+            let mut entries = Vec::with_capacity(locator_records.len());
+            for (key, locator) in &locator_records {
+                let PendingKey::PathHash(path_hash64) = key else {
+                    return Err(BuildError::WrongKeyForLookupMode);
+                };
+                entries.push(UddpPathEntry {
+                    path_hash64: *path_hash64,
+                    locator: *locator,
+                });
+            }
+            entries.sort_by_key(|entry| entry.path_hash64);
+            for entry in &entries {
+                entry.write_to(&mut out);
+            }
+        }
+        LookupMode::SparseId => {
+            let mut entries = Vec::with_capacity(locator_records.len());
+            for (key, locator) in &locator_records {
+                let PendingKey::Id(id) = key else {
+                    return Err(BuildError::WrongKeyForLookupMode);
+                };
+                entries.push(UddpSparseIdEntry {
+                    id: *id,
+                    reserved0: 0,
+                    locator: *locator,
+                });
+            }
+            entries.sort_by_key(|entry| entry.id);
+            for entry in &entries {
+                entry.write_to(&mut out);
+            }
+        }
+    }
+
+    Ok(out)
+}
+
+/// Write the package head, the dictionaries and the payloads, dropping each
+/// payload once written.
+fn write_package_body<W, F>(
+    head: Vec<u8>,
+    plan: BuildPlan,
+    writer: &mut W,
+    mut progress: F,
+) -> Result<(), BuildError>
+where
+    W: Write,
+    F: FnMut(BuildProgress),
+{
+    let total_steps = assembly_step_count(plan.dictionaries.len(), plan.files.len());
+    let mut completed = PACKAGE_HEAD_ASSEMBLY_STEPS;
+    writer.write_all(&head).map_err(BuildError::Io)?;
+    drop(head);
+
+    for dict in &plan.dictionaries {
+        writer.write_all(&dict.bytes).map_err(BuildError::Io)?;
+        completed += 1;
+        progress(BuildProgress {
+            phase: BuildProgressPhase::Assembling,
+            completed,
+            total: total_steps,
+            active_file: None,
+        });
+    }
+    for file in plan.files {
+        writer.write_all(&file.encoded_payload).map_err(BuildError::Io)?;
+        completed += 1;
+        progress(BuildProgress {
+            phase: BuildProgressPhase::Assembling,
+            completed,
+            total: total_steps,
+            active_file: None,
+        });
+    }
+    Ok(())
+}
+
+/// Flush a package written to disk and patch its header with the package hash.
+pub(super) fn patch_file_package_hash64(
+    writer: BufWriter<File>,
+    package_hash64: u64,
+) -> Result<(), BuildError> {
+    let mut file = writer
+        .into_inner()
+        .map_err(|error| BuildError::Io(error.into_error()))?;
+    file.seek(SeekFrom::Start(HEADER_PACKAGE_HASH_OFFSET as u64))
+        .map_err(BuildError::Io)?;
+    file.write_all(&package_hash64.to_le_bytes())
+        .map_err(BuildError::Io)?;
+    Ok(())
 }
 
 /// Convert an on-disk codec back into the user-facing builder preference.
@@ -658,7 +855,7 @@ where
         .collect()
 }
 
-fn compress_owned_files_with_progress<F>(
+pub(super) fn compress_owned_files_with_progress<F>(
     files: Vec<PendingFile>,
     dicts_by_type: &HashMap<u8, Vec<u8>>,
     mut progress: F,
@@ -805,7 +1002,7 @@ where
 }
 
 #[derive(Debug, Clone, Copy)]
-struct CompressionProgress {
+pub(super) struct CompressionProgress {
     completed: usize,
     active_file: Option<BuildProgressFile>,
 }
@@ -1274,7 +1471,7 @@ fn compression_is_worth_it(raw_size: usize, stored_size: usize) -> bool {
 }
 
 /// Validate that all file keys satisfy the invariants of the chosen lookup mode.
-fn validate_keys(mode: LookupMode, files: &[BuiltFile]) -> Result<(), BuildError> {
+pub(super) fn validate_keys(mode: LookupMode, files: &[FileLayout]) -> Result<(), BuildError> {
     match mode {
         LookupMode::DenseId => {
             let mut ids: Vec<u32> = files

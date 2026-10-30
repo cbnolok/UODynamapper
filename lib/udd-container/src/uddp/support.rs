@@ -476,6 +476,9 @@ pub enum BuildError {
     MalformedOutput,
     Io(std::io::Error),
     CodecError(String),
+    /// The streaming builder compresses files as they are added, before a type
+    /// dictionary could be trained over all of them.
+    DictionaryCompressionWhileStreaming(CompressionFlag),
 }
 
 impl fmt::Display for BuildError {
@@ -497,6 +500,10 @@ impl fmt::Display for BuildError {
             Self::MalformedOutput => write!(f, "malformed output buffer"),
             Self::Io(e) => write!(f, "{e}"),
             Self::CodecError(e) => write!(f, "Codec error: {e}"),
+            Self::DictionaryCompressionWhileStreaming(compression) => write!(
+                f,
+                "compression {compression:?} needs a type dictionary and is not supported by the streaming builder"
+            ),
         }
     }
 }

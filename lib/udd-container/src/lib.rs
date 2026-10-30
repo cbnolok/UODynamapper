@@ -24,6 +24,7 @@ pub use uddp::{
     UddpLocator,
     UddpReader,
     UddpReaderOptions,
+    UddpStreamingBuilder,
     UddpiApplier,
     UddpiBuilder,
     MAX_PACKAGE_SIZE,

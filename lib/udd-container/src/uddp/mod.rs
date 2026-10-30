@@ -45,6 +45,7 @@
 mod builder;
 mod patch;
 mod reader;
+mod streaming_builder;
 mod support;
 
 use self::support::{Cursor, write_u8, write_u16, write_u32, write_u64};
@@ -54,6 +55,7 @@ pub use self::builder::{
 };
 pub use self::patch::{UddpiApplier, UddpiBuilder};
 pub use self::reader::{UddpReader, UddpReaderOptions};
+pub use self::streaming_builder::UddpStreamingBuilder;
 pub use self::support::{
     BuildError,
     FormatError,

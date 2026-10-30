@@ -214,7 +214,7 @@ pub fn convert_map_mul_to_uddp_from_sources_with_patches(
         data: &metadata,
     })?;
 
-    build_and_write_package(&mut builder, output_path)?;
+    build_and_write_package(builder, output_path)?;
 
     Ok(CcMapBuildSummary {
         map_id,
