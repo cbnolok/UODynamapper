@@ -1223,7 +1223,7 @@ enum Commands {
         zstd: Option<i32>,
         #[arg(long, help = "Write every finding of the packer to this file, one line each.")]
         report: Option<PathBuf>,
-        #[arg(long, help = "Fail on error findings instead of writing flagged records.")]
+        #[arg(long, help = "Fail on error findings instead of writing flagged records (particle files missing from the client are warnings).")]
         strict: bool,
     },
     /// Packs CC tiledata and EC tileart into tilemeta.uddp.

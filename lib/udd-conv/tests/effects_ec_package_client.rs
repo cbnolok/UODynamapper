@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use gamebryo_nif::NifFile;
+use gamebryo_nif::{Link, NiPixelData, NifFile};
 use particle_sim::{
     ChaosEffectInstance, ChaosSystem, Mt19937, NifEffect, NifEffectInstance, NodeTransform, ParticleSystemInstance,
     RenderFrame, Vec3,
@@ -14,7 +14,7 @@ use particle_sim::{
 use udd_assets::effects_ec::{
     DefBranchRecord, EffectNode, EffectsEcPackage, SYSTEM_FLAG_DEFINITION_ROOT, SYSTEM_KIND_CHAOS, SYSTEM_KIND_NIF,
     TEXTURE_FLAG_AUTHORED_MIPS, TEXTURE_FLAG_EMBEDDED, TEXTURE_FORMAT_BC1, TEXTURE_FORMAT_BC3, TEXTURE_FORMAT_BC7,
-    TEXTURE_FORMAT_RGBA8, TEXTURE_SOURCE_DDS, TEXTURE_SOURCE_NIF_PIXEL_DATA, TEXTURE_SOURCE_TGA,
+    TEXTURE_FORMAT_RGBA8, TEXTURE_SOURCE_DDS, TEXTURE_SOURCE_NIF_FILE, TEXTURE_SOURCE_NIF_PIXEL_DATA, TEXTURE_SOURCE_TGA,
     normalize_resource_name,
 };
 use udd_container::UddpReader;
@@ -52,6 +52,9 @@ const DDS_MIP_COUNT_OFFSET: usize = 28;
 const DDS_FOURCC_OFFSET: usize = 84;
 const DDS_FOURCC_DXT1: &[u8; 4] = b"DXT1";
 const DDS_FOURCC_DXT5: &[u8; 4] = b"DXT5";
+/// External `.nif` textures of the client (a single `NiPixelData` each), used by `00001014_star_green.nif`,
+/// `00001013_circle_green.nif` and `00001015_glow_blue.nif`.
+const NIF_FILE_TEXTURES: [&str; 3] = ["03000017_star.nif", "03000018_circle_g.nif", "03002014_flare.nif"];
 
 fn client_dir() -> Option<PathBuf> {
     let client = std::env::var_os(EC_CLIENT_DIR_ENV).map(PathBuf::from);
@@ -314,6 +317,15 @@ fn real_package_systems_and_textures_match_their_sources() {
                 }
             }
             TEXTURE_SOURCE_NIF_PIXEL_DATA => assert!(record.flags & TEXTURE_FLAG_EMBEDDED != 0, "{name}: embedded"),
+            TEXTURE_SOURCE_NIF_FILE => {
+                let nif = NifFile::read(&files.read(name).unwrap().expect("NIF texture source")).unwrap();
+                let root = nif.roots[0].index().expect("top object");
+                let pixels = nif.blocks[root].get::<NiPixelData>().expect("NiPixelData top object");
+                let level0 = &pixels.mipmaps[0];
+                assert_eq!((texture.width, texture.height), (level0.width, level0.height), "{name}: size");
+                assert_eq!(texture.mip_count as usize, pixels.mipmaps.len(), "{name}: stored levels");
+                assert!(matches!(texture.format, TEXTURE_FORMAT_RGBA8 | TEXTURE_FORMAT_BC7), "{name}: format");
+            }
             source => panic!("{name}: source {source}"),
         }
         assert!(matches!(
@@ -321,6 +333,13 @@ fn real_package_systems_and_textures_match_their_sources() {
             TEXTURE_FORMAT_RGBA8 | TEXTURE_FORMAT_BC7 | TEXTURE_FORMAT_BC1 | TEXTURE_FORMAT_BC3
         ));
         textures += 1;
+    }
+
+    for name in NIF_FILE_TEXTURES {
+        let index = package.texture_by_name(name).unwrap_or_else(|| panic!("{name}: no texture record"));
+        let record = package.texture(index);
+        assert!(record.has_payload(), "{name}: no payload");
+        assert_eq!(record.source, TEXTURE_SOURCE_NIF_FILE, "{name}: source");
     }
 
     let node = |frame: usize| {

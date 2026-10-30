@@ -231,8 +231,8 @@ Names are normalized: the last path segment of the resource, trimmed and ASCII-l
 `system_by_name` and `texture_by_name` binary-search on it. `kind` is `SYSTEM_KIND_CHAOS` (`.ems`)
 or `SYSTEM_KIND_NIF` (`.nif`).
 
-- Flags: `MISSING` (no `EffectTexture.uop` entry; the client plays nothing), `COMPILE_FAILED`, and
-  `COMPILE_WARNINGS` (the packer report lists them). `DEFINITION_ROOT` means a particle definition
+- Flags: `MISSING` (no `EffectTexture.uop` entry: a client data gap, the client plays nothing),
+  `COMPILE_FAILED`, and `COMPILE_WARNINGS` (the packer report lists them). `DEFINITION_ROOT` means a particle definition
   names the system. When it is clear, only a Chaos MESH sequence uses the system.
 - Missing and failed systems have no payload.
 - Dependencies (`system_dependencies`):
@@ -257,10 +257,11 @@ payload is every level back to back (`texture_payload_len`). Flags:
 - `EMBEDDED`;
 - `OPAQUE` (every level-0 alpha is 255);
 - `AUTHORED_MIPS` (levels 1.. come from the source);
-- `MISSING`, `UNDECODED` (an embedded pixel format the packer does not decode) and `DECODE_FAILED`.
+- `MISSING`, `UNDECODED` (a `NiPixelData` pixel format the packer does not decode) and `DECODE_FAILED`.
   These three mean no payload.
 
-`source` is `TGA`, `DDS` or `NIF_PIXEL_DATA`.
+`source` is `TGA`, `DDS`, `NIF_PIXEL_DATA` (embedded in a NIF system) or `NIF_FILE` (a `.nif` texture
+file).
 
 - DDS DXT1 and DXT5 sources with a size that is a multiple of 4 pass through as BC1 and BC3 blocks.
   Other DDS sources decode to RGBA8. The levels kept follow `NiDDSReader` (`NiDDSReader.cpp:313-323`):
@@ -277,6 +278,12 @@ payload is every level back to back (`texture_payload_len`). Flags:
   - colour-map indices taken relative to the first entry.
 
   4-bit colour-mapped pixels are not supported.
+- A `.nif` texture file is read as `NiNIFImageReader::ReadFile` reads it (`NiNIFImageReader.cpp:42-70`):
+  the file must hold exactly one top object, and it must be a `NiPixelData`. Its pixels then follow the
+  rules of embedded `NiPixelData`: 32-bit RGBA and 24-bit RGB decode to RGBA8, other formats are
+  `UNDECODED`, and the stored levels are kept when their sizes halve level by level (else level 0
+  only). The client's three (`03000017_star.nif`, `03000018_circle_g.nif`, `03002014_flare.nif`) are
+  128x128 RGBA with 8 levels.
 - Mipmaps follow each texture's own `NiSourceTexture` format preferences, as the D3D9 renderer applies
   them (`NiDX9SourceTextureData.cpp:375-378`): a texture is mipmapped when a user says `YES`, or says
   `MIP_DEFAULT` and the default is on. The SDK default is off (`NiTexture.cpp:27`
@@ -300,12 +307,16 @@ use `CompressionFlag::Auto`, which takes a trained dictionary for small blobs wh
 
 The packer lists every finding with a severity:
 
-- errors: missing particle files, sources that do not decode, codec mismatches;
-- warnings: missing systems and textures, dropped hash-only entries, EMITTER sequences;
+- errors: sources that do not decode, codec mismatches, definition validation errors (the client
+  fails to play them, or the readers reject them);
+- warnings: missing particle files (one per file, listing every definition and Chaos MESH sequence
+  naming it; a client data gap, the system record keeps `MISSING`), missing textures, dropped
+  hash-only entries, EMITTER sequences;
 - info: compiler notes, alias records, mip conflicts, and the unreferenced `EffectTexture.uop`
   resources (`.ems`, `.nif`, `.tga`, `.dds` that nothing reaches; not packed).
 
-`--report FILE` writes the findings, one line each. `--strict` fails on any error finding.
+`--report FILE` writes the findings, one line each. `--strict` fails on any error finding; missing
+particle files never fail it.
 
 `tests/effects_ec_package_client.rs` in `udd-conv` (ignored) checks a package against the client. Set
 `UO_EC_CLIENT_DIR`; set `UDD_EFFECTS_EC_UDDP` to check a prebuilt package instead of packing in

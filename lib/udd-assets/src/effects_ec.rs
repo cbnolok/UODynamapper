@@ -115,7 +115,8 @@ pub const TEXTURE_FLAG_OPAQUE: u8 = 0x02;
 pub const TEXTURE_FLAG_AUTHORED_MIPS: u8 = 0x04;
 /// `TextureRecord::flags`: no `EffectTexture.uop` entry; no payload.
 pub const TEXTURE_FLAG_MISSING: u8 = 0x08;
-/// `TextureRecord::flags`: embedded pixel data in a format the packer does not decode; no payload.
+/// `TextureRecord::flags`: `NiPixelData` (embedded, or a `.nif` texture file) in a format the packer does not
+/// decode; no payload.
 pub const TEXTURE_FLAG_UNDECODED: u8 = 0x10;
 /// `TextureRecord::flags`: the source is present but does not decode; no payload.
 pub const TEXTURE_FLAG_DECODE_FAILED: u8 = 0x20;
@@ -127,6 +128,9 @@ pub const TEXTURE_SOURCE_TGA: u8 = 1;
 pub const TEXTURE_SOURCE_DDS: u8 = 2;
 /// `TextureRecord::source`: `NiPixelData` of a NIF.
 pub const TEXTURE_SOURCE_NIF_PIXEL_DATA: u8 = 3;
+/// `TextureRecord::source`: a `.nif` texture file, whose single top object is a `NiPixelData`
+/// (`NiNIFImageReader`).
+pub const TEXTURE_SOURCE_NIF_FILE: u8 = 4;
 
 /// Bytes per RGBA8 pixel.
 pub const RGBA8_BYTES_PER_PIXEL: usize = 4;

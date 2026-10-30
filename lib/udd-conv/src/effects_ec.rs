@@ -11,7 +11,7 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 use color_eyre::eyre::{self, WrapErr, bail, ensure, eyre};
-use gamebryo_nif::{MipFlag, NiPixelData, NiSourceTexture, NifFile};
+use gamebryo_nif::{Link, MipFlag, NiPixelData, NiSourceTexture, NifFile};
 use log::info;
 use particle_sim::chaos::compile::compile_chaos_source;
 use particle_sim::chaos::{ChaosParticleType, ChaosSystemDesc};
@@ -31,7 +31,7 @@ use udd_assets::effects_ec::{
     SequenceFrameRecord, SystemRecord, TEXTURE_FLAG_AUTHORED_MIPS, TEXTURE_FLAG_DECODE_FAILED,
     TEXTURE_FLAG_EMBEDDED, TEXTURE_FLAG_MISSING, TEXTURE_FLAG_OPAQUE, TEXTURE_FLAG_UNDECODED, TEXTURE_FORMAT_BC1,
     TEXTURE_FORMAT_BC3, TEXTURE_FORMAT_BC7, TEXTURE_FORMAT_NONE, TEXTURE_FORMAT_RGBA8, TEXTURE_SOURCE_DDS,
-    TEXTURE_SOURCE_NIF_PIXEL_DATA, TEXTURE_SOURCE_TGA, TEXTURES_ENTRY_PATH, TEXTURES_MAGIC,
+    TEXTURE_SOURCE_NIF_FILE, TEXTURE_SOURCE_NIF_PIXEL_DATA, TEXTURE_SOURCE_TGA, TEXTURES_ENTRY_PATH, TEXTURES_MAGIC,
     TILEART_ENTRY_PATH, TILEART_MAGIC, TextureRecord, TileArtRecord, BC_BLOCK_EDGE, earthquake_params,
     encode_manifest, encode_strings, mip_extent, normalize_resource_name, particle_params, position_offset_params,
     property_flag_params, system_entry_path, texture_entry_path, texture_payload_len,
@@ -39,8 +39,8 @@ use udd_assets::effects_ec::{
 use udd_container::{AddOwnedFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
 use uocf::animation_sequence::AnimationSequence;
 use uocf::enhanced::effect_definition::{
-    EFFECT_DEFINITION_COLLECTION_UOP_NAME, EffectDefinition, EffectDefinitionCollection, EffectEntryKey,
-    EffectIssueSeverity, EffectMapEntry, EffectValidationContext, PropertyFlagMode,
+    EFFECT_DEFINITION_COLLECTION_UOP_NAME, EffectDefinition, EffectDefinitionCollection, EffectEntryKey, EffectIssue,
+    EffectIssueKind, EffectIssueSeverity, EffectMapEntry, EffectValidationContext, PropertyFlagMode,
     validate_effect_definitions,
 };
 use uocf::enhanced::effect_texture::{EFFECT_TEXTURE_UOP_NAME, EffectTexturePackage};
@@ -364,22 +364,45 @@ struct DefinitionSources {
     tileart: Vec<(u32, Vec<EffectDefinition>)>,
     /// `(sequence_id, action, frame)`.
     frames: Vec<((u32, u16, u16), Vec<EffectDefinition>)>,
+    /// Particle files not in `EffectTexture.uop`, by normalized name: the definitions naming them
+    /// (`collection entry 9011 [0]`, `tile 6686 [0]`, ...). Reported once per file, not per definition.
+    missing_particle_files: BTreeMap<String, BTreeSet<String>>,
+}
+
+/// Where a validation issue is: `<prefix> entry <id> [<path>]`, or `<prefix> [<path>]` for a bare list.
+fn issue_location(prefix: &str, issue: &EffectIssue) -> String {
+    let mut location = match issue.entry {
+        Some(EffectEntryKey::Id(id)) => format!("{prefix} entry {id}"),
+        Some(EffectEntryKey::Hash(hash)) => format!("{prefix} entry {hash:016X}"),
+        None => prefix.to_owned(),
+    };
+    if !issue.path.is_empty() {
+        location.push_str(&format!(" [{}]", issue.path));
+    }
+    location
 }
 
 fn load_definitions(sources: &Sources, report: &mut Report) -> eyre::Result<DefinitionSources> {
     let file_exists = |name: &str| sources.effect_files.contains(name);
     let context = EffectValidationContext { strings: Some(&sources.strings), particle_file_exists: Some(&file_exists) };
-    let mut validation_findings = |issues: Vec<uocf::enhanced::effect_definition::EffectIssue>, prefix: &str| {
+    let mut missing_particle_files: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut validation_findings = |issues: Vec<EffectIssue>, prefix: &str| {
         for issue in issues {
+            // A client data gap, not a packer error: collected and reported once per file with the systems.
+            if let EffectIssueKind::MissingParticleFile { name } = &issue.kind {
+                let referrers = missing_particle_files.entry(normalize_resource_name(name)).or_default();
+                referrers.insert(issue_location(prefix, &issue));
+                continue;
+            }
             let severity = match issue.severity() {
                 EffectIssueSeverity::Error => FindingSeverity::Error,
                 EffectIssueSeverity::Warning => FindingSeverity::Warning,
             };
-            report.add(severity, format!("{prefix}{issue}"));
+            report.add(severity, format!("{prefix} {issue}"));
         }
     };
 
-    validation_findings(sources.collection.validate(&context), "collection ");
+    validation_findings(sources.collection.validate(&context), "collection");
     let mut collection = Vec::new();
     for entry in &sources.collection.entries {
         if let EffectEntryKey::Id(id) = entry.key {
@@ -415,7 +438,7 @@ fn load_definitions(sources: &Sources, report: &mut Report) -> eyre::Result<Defi
         tileart.insert(entry.tile_id, entry.effects);
     }
     for (tile_id, definitions) in &tileart {
-        validation_findings(validate_effect_definitions(definitions, &context), &format!("tile {tile_id} "));
+        validation_findings(validate_effect_definitions(definitions, &context), &format!("tile {tile_id}"));
     }
 
     let mut frames = Vec::new();
@@ -476,7 +499,7 @@ fn load_definitions(sources: &Sources, report: &mut Report) -> eyre::Result<Defi
     for ((sequence_id, action, frame), definitions) in &frames {
         validation_findings(
             validate_effect_definitions(definitions, &context),
-            &format!("sequence {sequence_id} action {action} frame {frame} "),
+            &format!("sequence {sequence_id} action {action} frame {frame}"),
         );
     }
     drop(validation_findings);
@@ -489,7 +512,7 @@ fn load_definitions(sources: &Sources, report: &mut Report) -> eyre::Result<Defi
             ));
         }
     }
-    Ok(DefinitionSources { collection, tileart: tileart.into_iter().collect(), frames })
+    Ok(DefinitionSources { collection, tileart: tileart.into_iter().collect(), frames, missing_particle_files })
 }
 
 /// The definition pools being built. Particle system indices are patched in once the system table is sorted.
@@ -680,12 +703,24 @@ impl SystemBuild {
     }
 }
 
-/// Embedded pixels of a NIF texture.
-enum EmbeddedPixels {
+/// The pixels of a `NiPixelData`: embedded in a NIF system, or the object of a `.nif` texture file.
+enum PixelDataPixels {
     /// RGBA8 levels as `NiPixelData` holds them, level 0 first.
     Decoded { levels: Vec<(u32, u32, Vec<u8>)> },
     /// A pixel format not decoded (`NifTextureSource::Undecoded`).
     Undecoded { format: u32 },
+}
+
+impl PixelDataPixels {
+    /// Every decodable level of `pixels`, or `Undecoded` when level 0 does not decode.
+    fn of(pixels: &NiPixelData) -> Self {
+        let levels = pixel_data_levels(pixels);
+        if levels.is_empty() {
+            Self::Undecoded { format: pixels.pixel_format.format.0 }
+        } else {
+            Self::Decoded { levels }
+        }
+    }
 }
 
 /// A texture being collected: who uses it and how.
@@ -693,7 +728,7 @@ enum EmbeddedPixels {
 struct TextureUse {
     /// `MipFlag` values of the `NiSourceTexture`s naming it; Chaos scripts count as `MIP_DEFAULT`.
     mip_flags: BTreeSet<u32>,
-    embedded: Option<EmbeddedPixels>,
+    embedded: Option<PixelDataPixels>,
     /// Systems using it (report only).
     users: BTreeSet<String>,
 }
@@ -739,6 +774,8 @@ pub fn compile_chaos_for_package(source: &[u8]) -> Result<(ChaosSystemDesc, Vec<
 struct Closure {
     systems: BTreeMap<String, SystemBuild>,
     textures: BTreeMap<String, TextureUse>,
+    /// The Chaos systems whose MESH sequences name each `.nif` (report only).
+    mesh_users: BTreeMap<String, BTreeSet<String>>,
 }
 
 impl Closure {
@@ -833,10 +870,10 @@ impl Closure {
                 source => {
                     let texture_name = embedded_texture_name(name, texture.index);
                     let pixels = match source {
-                        NifTextureSource::Undecoded { format } => EmbeddedPixels::Undecoded { format: *format },
+                        NifTextureSource::Undecoded { format } => PixelDataPixels::Undecoded { format: *format },
                         _ => {
                             let data = nif.get(source_texture.src_pixel_data).expect("embedded pixel data");
-                            EmbeddedPixels::Decoded { levels: pixel_data_levels(data) }
+                            PixelDataPixels::Decoded { levels: pixel_data_levels(data) }
                         }
                     };
                     self.texture(texture_name.clone(), name, mip_flag).embedded = Some(pixels);
@@ -871,13 +908,12 @@ impl Closure {
             let kind = system_kind(&name).expect("system names have a system extension");
             let mut system = SystemBuild { kind, flags: if root { SYSTEM_FLAG_DEFINITION_ROOT } else { 0 }, ..Default::default() };
             match files.read(&name).wrap_err_with(|| format!("read {name}"))? {
-                None => {
-                    system.flags |= SYSTEM_FLAG_MISSING;
-                    report.warning(format!("system {name}: not in {EFFECT_TEXTURE_UOP_NAME}: the client plays nothing"));
-                }
+                // Reported by `report_missing_files`, once per file.
+                None => system.flags |= SYSTEM_FLAG_MISSING,
                 Some(source) if kind == SYSTEM_KIND_CHAOS => {
                     let meshes = self.build_chaos(&name, &source, &mut system, report);
                     for mesh in meshes.into_iter().rev() {
+                        self.mesh_users.entry(mesh.clone()).or_default().insert(name.clone());
                         if !self.systems.contains_key(&mesh) {
                             bar.set_length(bar.length().unwrap_or_default() + 1);
                             queue.push((mesh, false));
@@ -891,6 +927,27 @@ impl Closure {
         }
         bar.finish_with_message(format!("effect systems compiled ({})", self.systems.len()));
         Ok(())
+    }
+
+    /// One warning per particle file missing from `EffectTexture.uop`, with every definition and Chaos MESH
+    /// sequence naming it. A client data gap (the client plays nothing for it), so never an error; the system
+    /// record keeps `SYSTEM_FLAG_MISSING`. `definition_referrers` holds the files the validation found missing.
+    fn report_missing_files(&self, definition_referrers: &BTreeMap<String, BTreeSet<String>>, report: &mut Report) {
+        let missing_systems =
+            self.systems.iter().filter(|(_, system)| system.flags & SYSTEM_FLAG_MISSING != 0).map(|(name, _)| name);
+        // Names the validation found missing that have no system (neither `.ems` nor `.nif`) are reported too.
+        let unbuilt = definition_referrers.keys().filter(|name| !self.systems.contains_key(*name));
+        let names: BTreeSet<&String> = missing_systems.chain(unbuilt).collect();
+        for name in names {
+            let definitions = definition_referrers.get(name).into_iter().flatten().cloned();
+            let meshes = self.mesh_users.get(name).into_iter().flatten().map(|user| format!("system {user} MESH"));
+            let referrers: Vec<String> = definitions.chain(meshes).collect();
+            report.warning(format!(
+                "particle file {name}: not in {EFFECT_TEXTURE_UOP_NAME}, the client plays nothing; named by {} ({})",
+                referrers.len(),
+                referrers.join(", ")
+            ));
+        }
     }
 }
 
@@ -1158,6 +1215,54 @@ fn generate_mips(width: u32, height: u32, level0: Vec<u8>) -> Vec<Vec<u8>> {
     levels
 }
 
+/// Reads a `.nif` texture file as Gamebryo 2.6 `NiNIFImageReader::ReadFile` does
+/// (`CoreLibs/NiMain/NiNIFImageReader.cpp:42-70`): the stream must hold exactly one top object, and it must be a
+/// `NiPixelData`. Its stored levels and pixel format are used as they are: `NiDevImageConverter::ConvertPixelData`
+/// generates a chain only for a single-level source (`NiDevImageConverter.cpp:453-470`).
+fn read_nif_texture(bytes: &[u8]) -> Result<PixelDataPixels, String> {
+    let nif = NifFile::read(bytes).map_err(|error| format!("NIF texture does not parse: {error}"))?;
+    let [root] = nif.roots.as_slice() else {
+        return Err(format!("NIF texture with {} top objects; NiNIFImageReader reads exactly one", nif.roots.len()));
+    };
+    let pixels = root
+        .index()
+        .and_then(|index| nif.blocks.get(index))
+        .and_then(|block| block.get::<NiPixelData>())
+        .ok_or_else(|| "the top object of the NIF texture is not a NiPixelData".to_owned())?;
+    Ok(PixelDataPixels::of(pixels))
+}
+
+/// The image of `NiPixelData` pixels read from `source` (`TEXTURE_SOURCE_*`): every level when the sizes halve level
+/// by level, else level 0 only. `None` when the pixel format is not decoded: the record is flagged `UNDECODED` and
+/// the report warns.
+fn pixel_data_image(
+    name: &str,
+    pixels: &PixelDataPixels,
+    source: u8,
+    record: &mut TextureRecord,
+    report: &mut Report,
+) -> Option<SourceImage> {
+    record.source = source;
+    let levels = match pixels {
+        PixelDataPixels::Undecoded { format } => {
+            record.flags |= TEXTURE_FLAG_UNDECODED;
+            report.warning(format!("texture {name}: NiPixelData pixel format {format} is not decoded; no payload"));
+            return None;
+        }
+        PixelDataPixels::Decoded { levels } => levels,
+    };
+    let (width, height, _) = levels[0];
+    let consistent =
+        levels.iter().enumerate().all(|(level, (w, h, _))| (*w, *h) == mip_extent(width, height, level as u32));
+    let mut rgba: Vec<Vec<u8>> = levels.iter().map(|(_, _, rgba)| rgba.clone()).collect();
+    if !consistent {
+        report.warning(format!("texture {name}: NiPixelData mip sizes are not a halving chain; level 0 only"));
+        rgba.truncate(1);
+    }
+    let opaque = is_opaque(&rgba[0]);
+    Some(SourceImage { width, height, pixels: SourcePixels::Rgba { levels: rgba, generatable: true }, opaque, source })
+}
+
 /// A texture record and its payload.
 struct BuiltTexture {
     record: TextureRecord,
@@ -1176,31 +1281,12 @@ fn build_texture(
     let mut record = TextureRecord::default();
     let users = texture.users.iter().cloned().collect::<Vec<_>>().join(", ");
     let decoded: Result<SourceImage, String> = match &texture.embedded {
-        Some(EmbeddedPixels::Undecoded { format }) => {
-            record.flags |= TEXTURE_FLAG_EMBEDDED | TEXTURE_FLAG_UNDECODED;
-            record.source = TEXTURE_SOURCE_NIF_PIXEL_DATA;
-            report.warning(format!("texture {name}: embedded pixel format {format} is not decoded; no payload"));
-            return Ok(BuiltTexture { record, payload: None, generated_mips: false });
-        }
-        Some(EmbeddedPixels::Decoded { levels }) => {
+        Some(pixels) => {
             record.flags |= TEXTURE_FLAG_EMBEDDED;
-            let (width, height, _) = levels[0];
-            let consistent = levels.iter().enumerate().all(|(level, (w, h, _))| {
-                (*w, *h) == mip_extent(width, height, level as u32)
-            });
-            let mut rgba: Vec<Vec<u8>> = levels.iter().map(|(_, _, rgba)| rgba.clone()).collect();
-            if !consistent {
-                report.warning(format!("texture {name}: embedded mip sizes are not a halving chain; level 0 only"));
-                rgba.truncate(1);
+            match pixel_data_image(name, pixels, TEXTURE_SOURCE_NIF_PIXEL_DATA, &mut record, report) {
+                Some(image) => Ok(image),
+                None => return Ok(BuiltTexture { record, payload: None, generated_mips: false }),
             }
-            let opaque = is_opaque(&rgba[0]);
-            Ok(SourceImage {
-                width,
-                height,
-                pixels: SourcePixels::Rgba { levels: rgba, generatable: true },
-                opaque,
-                source: TEXTURE_SOURCE_NIF_PIXEL_DATA,
-            })
         }
         None => match files.read(name).wrap_err_with(|| format!("read {name}"))? {
             None => {
@@ -1222,7 +1308,17 @@ fn build_texture(
                     source: TEXTURE_SOURCE_TGA,
                 })
             }
-            Some(_) => Err("neither a DDS nor a .tga file".to_owned()),
+            Some(bytes) if name.ends_with(NIF_EXTENSION) => {
+                record.source = TEXTURE_SOURCE_NIF_FILE;
+                match read_nif_texture(&bytes) {
+                    Ok(pixels) => match pixel_data_image(name, &pixels, TEXTURE_SOURCE_NIF_FILE, &mut record, report) {
+                        Some(image) => Ok(image),
+                        None => return Ok(BuiltTexture { record, payload: None, generated_mips: false }),
+                    },
+                    Err(error) => Err(error),
+                }
+            }
+            Some(_) => Err(format!("neither a DDS, a {TGA_EXTENSION} nor a {NIF_EXTENSION} file")),
         },
     };
     let image = match decoded {
@@ -1318,6 +1414,7 @@ fn build_effects_ec(source_dirs: &[PathBuf], options: &EffectsEcPackOptions) -> 
     let roots: BTreeSet<String> = tables.particle_systems.iter().map(|(_, name)| name.clone()).collect();
     let mut closure = Closure::default();
     closure.build_systems(&roots, &sources.effect_files, &mut report)?;
+    closure.report_missing_files(&definitions.missing_particle_files, &mut report);
     let system_index: HashMap<&str, u32> =
         closure.systems.keys().enumerate().map(|(index, name)| (name.as_str(), pool_index(index))).collect();
     for (slot, name) in &tables.particle_systems {
@@ -1452,6 +1549,9 @@ fn build_effects_ec(source_dirs: &[PathBuf], options: &EffectsEcPackOptions) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gamebryo_nif::{
+        Block, NiNode, NiPixelDataMipmap, NiPixelFormat, NiPixelFormatComponent, PixelFormatFormat, Ref,
+    };
     use uocf::enhanced::effect_definition::{LodEffect, ParticleEffect, SoundEffect};
 
     /// Bytes of an RGB24 pixel in a TGA file (B, G, R).
@@ -1608,6 +1708,81 @@ mod tests {
             }
             SourcePixels::Blocks { .. } => panic!("a 2x2 DXT1 is decoded"),
         }
+    }
+
+    /// Bits per pixel of the synthetic `NiPixelData` (32-bit RGBA).
+    const NIF_TEXTURE_BITS_PER_PIXEL: u8 = 32;
+    /// Components of an `NiPixelFormat` (always stored, used or not).
+    const NIF_PIXEL_FORMAT_COMPONENTS: usize = 4;
+
+    /// A `.nif` texture file: `roots` top objects, the first a 32-bit RGBA `NiPixelData` holding a 2x2 level and
+    /// a 1x1 level, the others `NiNode`s.
+    fn nif_texture(roots: usize) -> Vec<u8> {
+        let level0 = rgba(&[[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255], [255, 255, 255, 0]]);
+        let level1 = vec![10, 20, 30, 40];
+        let mipmaps = vec![
+            NiPixelDataMipmap { width: 2, height: 2, offset_in_bytes: 0 },
+            NiPixelDataMipmap { width: 1, height: 1, offset_in_bytes: level0.len() as u32 },
+        ];
+        let pixels = [level0, level1].concat();
+        let pixel_data = NiPixelData {
+            pixel_format: NiPixelFormat {
+                format: PixelFormatFormat::FORMAT_RGBA,
+                bits_per_pixel: NIF_TEXTURE_BITS_PER_PIXEL,
+                components: vec![NiPixelFormatComponent::default(); NIF_PIXEL_FORMAT_COMPONENTS],
+                ..Default::default()
+            },
+            mipmap_levels: mipmaps.len() as u32,
+            pixel_stride: RGBA8_BYTES_PER_PIXEL as u32,
+            mipmaps,
+            total_offset_in_bytes: pixels.len() as u32,
+            pixels,
+            ..Default::default()
+        };
+        let mut blocks = vec![Block::from(pixel_data)];
+        blocks.extend((1..roots).map(|_| Block::from(NiNode::default())));
+        let nif = NifFile { blocks, roots: (0..roots).map(Ref::new).collect(), ..Default::default() };
+        nif.write().unwrap()
+    }
+
+    #[test]
+    fn nif_texture_files_keep_their_levels_and_need_a_single_pixel_data_top_object() {
+        let pixels = read_nif_texture(&nif_texture(1)).unwrap();
+        let mut record = TextureRecord::default();
+        let mut report = Report::default();
+        let image = pixel_data_image("star.nif", &pixels, TEXTURE_SOURCE_NIF_FILE, &mut record, &mut report).unwrap();
+        assert_eq!((image.width, image.height, image.source, image.opaque), (2, 2, TEXTURE_SOURCE_NIF_FILE, false));
+        assert_eq!(record.source, TEXTURE_SOURCE_NIF_FILE);
+        match image.pixels {
+            SourcePixels::Rgba { levels, generatable } => {
+                assert!(generatable, "uncompressed NiPixelData");
+                assert_eq!(levels.len(), 2, "the stored levels are kept");
+                assert_eq!(levels[1], vec![10, 20, 30, 40]);
+            }
+            SourcePixels::Blocks { .. } => panic!("NiPixelData decodes to RGBA8"),
+        }
+        assert!(report.findings.is_empty());
+
+        assert!(read_nif_texture(&nif_texture(2)).is_err(), "NiNIFImageReader reads exactly one top object");
+        let node_only = NifFile { blocks: vec![Block::from(NiNode::default())], roots: vec![Ref::new(0)], ..Default::default() };
+        assert!(read_nif_texture(&node_only.write().unwrap()).is_err(), "the top object must be a NiPixelData");
+    }
+
+    #[test]
+    fn missing_particle_files_are_one_warning_each_with_every_referrer() {
+        let mut closure = Closure::default();
+        let missing = SystemBuild { kind: SYSTEM_KIND_NIF, flags: SYSTEM_FLAG_MISSING, ..Default::default() };
+        closure.systems.insert("lavafall.nif".to_owned(), missing);
+        closure.systems.insert("fire.ems".to_owned(), SystemBuild { kind: SYSTEM_KIND_CHAOS, ..Default::default() });
+        closure.mesh_users.entry("lavafall.nif".to_owned()).or_default().insert("fire.ems".to_owned());
+        let mut referrers: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        referrers.entry("lavafall.nif".to_owned()).or_default().extend(["tile 1 [0]".to_owned(), "tile 2 [0]".to_owned()]);
+        let mut report = Report::default();
+        closure.report_missing_files(&referrers, &mut report);
+        assert_eq!(report.findings.len(), 1);
+        let finding = &report.findings[0];
+        assert_eq!(finding.severity, FindingSeverity::Warning);
+        assert!(finding.message.ends_with("named by 3 (tile 1 [0], tile 2 [0], system fire.ems MESH)"), "{finding}");
     }
 
     fn dictionary(strings: &[&str]) -> UoStringDictionary {
