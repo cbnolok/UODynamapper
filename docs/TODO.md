@@ -195,6 +195,20 @@ Current execution decisions:
   - confidence
   - runtime routing
 
+### EC Effects: Manual Checks
+
+These need a person at the GUI or in a running client; the code side is done.
+
+- Open an `effects_ec.uddp` in `uddp-inspector-gui` (Effects view) and check the overview, tables, texture
+  view and preview on screen; nothing has been looked at outside headless tests.
+- Try the inspector Effects tab "Export glTF..." buttons (NIF editor and preview panel) and open the
+  results in Blender.
+- Check the "Known differences from the client" in `lib/particle-sim/README.md` against the real client
+  (in-game look or a frame capture, e.g. RenderDoc under Wine). Most valuable first:
+  - the pale halo on low-luminance edges of hued effects;
+  - the effects whose unlit parts draw black (E_A_D materials without emissive or glow);
+  - draw order where blended effects overlap (back-to-front by bound centre, unstable in the client).
+
 ### EC Runtime Staging
 
 - World-space repetition and stretch precedence:
