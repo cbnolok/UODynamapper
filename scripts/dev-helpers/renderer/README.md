@@ -35,6 +35,11 @@ establish metadata submission, not completion of color-texture streaming or shad
 compilation. Allow the scene to settle and compare multiple captures for animated
 fixtures.
 
+`status.render` exposes the effective preset name, global-light value and effect
+uniforms. `status.static_lights.instances` exposes the collector count. Use these
+to verify the source state for an effect comparison, then inspect actual pixels;
+the count does not establish visible light decals or GPU completion.
+
 Capture requests enqueue native Bevy screenshots. The client waits for the PNG
 signature and final IEND chunk before reporting completion. Destinations must
 be new absolute PNG paths with an existing parent; existing files are refused.

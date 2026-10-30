@@ -113,6 +113,8 @@ fn poll_control(
     pointer: Res<InjectedPointer>,
     mut capture_pending: Local<Option<(PathBuf, f64)>>,
     time: Res<Time<Real>>,
+    uniforms: Option<Res<crate::configs::shader_presets::UniformState>>,
+    static_lights: Option<Res<crate::core::render::scene::world::art::static_lights::RenderStaticLightInstances>>,
 ) {
     if capture_pending.as_ref().is_some_and(|(path, started)| path.exists() || time.elapsed_secs_f64() - started > 30.0) {
         *capture_pending = None;
@@ -154,6 +156,10 @@ fn poll_control(
                         "elapsed_seconds": time.elapsed_secs_f64(),
                         "fps": metric(&fps_path),
                         "frame_ms": metric(&frame_path), "terrain": terrain,
+                        "render": uniforms.as_ref().map(|state| json!({
+                            "preset": state.active_preset, "global_lighting": state.global_lighting,
+                            "effects": state.effects})),
+                        "static_lights": static_lights.as_ref().map(|lights| json!({"instances": lights.0.len()})),
                         "input": {"queued_frames": input.queued_frames(), "context_focus_override": input.focused,
                             "pointer": pointer.0.map(|position| [position.x, position.y])},
                         "window": windows.single().ok().map(|(_, window)| json!({

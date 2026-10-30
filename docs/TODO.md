@@ -53,7 +53,7 @@ Current execution decisions:
 
 ### Current Renderer Focus: Visual Fidelity
 
-- Validate static heights/anchors, non-KR fake-normal wall artifacts, effect visibility and static light decals against matched fixtures.
+- Validate static heights/anchors, non-KR fake-normal wall artifacts and remaining effect visibility against matched fixtures.
 - Use [the visual follow-up review](reviews/2026-10-29-visual-fidelity-followup.md) for current evidence and reconciliation of the unstaged user TODO. Historical repaired items must reproduce before being reopened.
 
 ### Baseline And Instrumentation
@@ -234,7 +234,6 @@ Current execution decisions:
 - Feed additive light decals before tonemap and bloom so KR-style local lights can survive the dark material profile.
 - Replace fixed warm local-light response with sampled or projected light color where practical.
 - Improve land response beyond the current first-16-light uniform cap:
-  - nearest or strongest light selection
   - tile/chunk-local light lists
   - stable sorting to avoid flicker when visible-light order changes
 - Improve art response beyond per-instance accumulated intensity by considering projected mask coverage or screen-space/local UV coverage.

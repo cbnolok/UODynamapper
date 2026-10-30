@@ -22,6 +22,12 @@ and the existing smoothed FPS/frame-time diagnostics when available. Rendered
 position equality does not establish completion of texture streaming. Keep
 settling time and multiple-frame inspection in the validation workflow.
 
+`status.render` reports the actual active preset, global lighting and effects
+uniform values; `status.static_lights.instances` reports collected lights. These
+read-only snapshots help detect a stale cached preset or an empty collector
+without temporarily instrumenting shaders. A positive instance count does not
+by itself prove visible mask composition or completion of GPU uploads.
+
 `capture` uses Bevy's native screenshot path, so hidden/off-desktop windows do
 not need activation. Existing files/symlinks, relative/non-PNG paths and missing
 parent directories are rejected. The reply acknowledges queuing; the Python
