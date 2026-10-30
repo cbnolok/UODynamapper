@@ -61,6 +61,8 @@ public class NameAnimationCode extends GhidraScript {
     private static final int HEX_RADIX = 16;
     // Instructions scanned after a setting load for the store into its run-time copy.
     private static final int COPY_WINDOW = 8;
+    // Instructions scanned after a vtable slot load for the call through it.
+    private static final int SLOT_CALL_WINDOW = 3;
 
     // Classes found through RTTI.
     private static final String SEQUENCE_FACTORY = "UOAnimationSequenceBinaryFactory";
@@ -73,8 +75,9 @@ public class NameAnimationCode extends GhidraScript {
     private static final String TILE_COMPONENT = "UOObjectComponentAnimationTile";
     private static final String FRAME_FACTORY = "UOAnimationFrameSetFactory";
     private static final String MOB_FRAME_SET = "UOMobFrameSet";
+    private static final String OBJECT = "UOObject";
     private static final String[] CLASSES = {SEQUENCE_FACTORY, DEFINITION_FACTORY, SEQUENCE, LOOKUP, DEFINITION,
-        FRAME_SET, MOB_COMPONENT, TILE_COMPONENT, FRAME_FACTORY, MOB_FRAME_SET};
+        FRAME_SET, MOB_COMPONENT, TILE_COMPONENT, FRAME_FACTORY, MOB_FRAME_SET, OBJECT};
     private static final String HUES = "UOHues";
 
     // Asset factory vtable: +4 Create(out, blob, ...). The definition factory adds +0x10 ReadFrame.
@@ -85,6 +88,15 @@ public class NameAnimationCode extends GhidraScript {
     private static final int COMPONENT_INITIALIZE = 0x4;
     private static final int COMPONENT_UPDATE = 0x18;
     private static final int COMPONENT_PLAY_ACTION = 0x5c;
+    // UOObjectComponentAnimationMob vtable +0x68: refreshes the movement action (GetMoveAction).
+    private static final int COMPONENT_REFRESH_MOVE_ACTION = 0x68;
+    // UOObject vtable +0xa0 / +0xa4: get / set the 0x77/0x78 mobile flags byte kept at object +0x6c.
+    private static final int OBJECT_GET_MOBILE_FLAGS = 0xa0;
+    private static final int OBJECT_SET_MOBILE_FLAGS = 0xa4;
+    // UOObject vtable +0x78: the item's alternate animation flag (tileart definition +0xe8).
+    private static final long OBJECT_GET_ALTERNATE_ANIMATION = 0x78;
+    // UOObjectDefinition vtable: HasRace +0xc8, HasGender +0xcc, GetRace +0xd0, GetGender +0xd4.
+    private static final long[] DEFINITION_RACE_GENDER_SLOTS = {0xc8, 0xcc, 0xd0, 0xd4};
 
     // Asset ids: {id, type << 24}.
     private static final int ASSET_TYPE_SHIFT = 24;
@@ -126,6 +138,14 @@ public class NameAnimationCode extends GhidraScript {
     private static final long HUE_BITMAP_WIDTH = 0x100;
     private static final String HUE_BITMAP_STRING = "data\\definitions\\hues\\hue%04d.bmp";
     private static final String WEAR_STRING = "Not letting a %u(sq %u) wear a %u(sq %u)\n";
+    private static final String GET_OBJECT_DEFINITION = "UOTileArt::GetObjectDefinition";
+    // Equipment layers: 0x1a draw-order entries; layer 0x19 is the mount, layer 0x1e is skipped.
+    private static final long EQUIPMENT_LAYER_COUNT = 0x1a;
+    private static final long MOUNT_LAYER = 0x19;
+    private static final long SKIPPED_LAYER = 0x1e;
+    // Actions 9..14 (0xe) are the weapon attack actions collected for an equipped weapon.
+    private static final long FIRST_ATTACK_ACTION = 0x9;
+    private static final long LAST_ATTACK_ACTION = 0xe;
     private static final String READ_FILE = "UOAssets::ReadFileFromPath";
 
     private static final long PACKET_CHARACTER_ANIMATION = 0x6e;
@@ -1012,7 +1032,10 @@ public class NameAnimationCode extends GhidraScript {
         Function palette = single(palettes, "palette builder (UpdateFrame callee using 0x4001)");
         propose(palette, NAMESPACE + SCOPE + "BuildFramePalette", "(ECX hue, EAX blob): entry [b0,b1,b2,b3] ->"
             + " A=0xff, R=b0, G=b1, B=b2; with a hue table and b3 == 0: table[b0] (b3 != 0 keeps the colour);"
-            + " hue 0x4001: black, alpha 60..190 from luminance; output BGRA", false);
+            + " hue 0x4001 (shadow): black; inv = 255 - trunc(b0*.34 + b2*.07 + b1*.59); over the palette min, max"
+            + " and integer mean of inv: x = 0 when mean-min or max-mean is 0, 0.5 at the mean, below it"
+            + " (inv-min)/(mean-min)*0.8*0.5, above it t = (inv-mean)/(max-mean), ((1-t)*0.2 + t + 1)*0.5;"
+            + " alpha = trunc(x*130 + 60); output BGRA", false);
         if (palette != null) {
             List<Function> tables = new ArrayList<>();
             for (Function c : realCalls(palette)) {
@@ -1041,7 +1064,12 @@ public class NameAnimationCode extends GhidraScript {
         Function layers = single(stringUsers(WEAR_STRING), "user of the wear-check string");
         propose(layers, MOB_COMPONENT + SCOPE + "BuildLayers", "body layer frames id = GetAppearance (definition"
             + " +0xbc) of the object type, overridden by GetAnimationAppearance (+0xc0); none -> body 0; ghost bodies"
-            + " 402/403/607/608/694/695 get hue 0x3e3; equipment needs body_type == sequence stored id", true);
+            + " 402/403/607/608/694/695 and objects with mobile flag 0x80 (GetMobileFlags) get hue 0x3e3; equipment"
+            + " needs body_type == sequence stored id", true);
+        if (layers != null) {
+            equipment(layers);
+        }
+        statusHue(palette);
 
         Function hueLoad = single(stringUsers(HUE_BITMAP_STRING), "user of the hue bitmap path");
         propose(hueLoad, HUES + SCOPE + "LoadHueTables", "reads data\\definitions\\hues\\huenames.csv and"
@@ -1057,6 +1085,122 @@ public class NameAnimationCode extends GhidraScript {
                 + " width 256, height 2; the second row (+0x400) gives the 256 entries, B,G,R,A -> A<<24|B<<16|G<<8|R"
                 + " (RGBA from the low byte)", false);
         }
+    }
+
+    // ---- equipment layers, mobile flags and the shadow hue selector ----
+
+    private void equipment(Function layers) {
+        Function getFrameSet = proposed(NAMESPACE + SCOPE + "GetAnimationFrameSet");
+        List<Function> serials = new ArrayList<>();
+        List<Function> attacks = new ArrayList<>();
+        for (Function c : realCalls(layers)) {
+            if (usesScalar(c, MOUNT_LAYER) && usesScalar(c, SKIPPED_LAYER)) {
+                serials.add(c);
+            }
+            if (getFrameSet != null && realCalls(c).contains(getFrameSet) && usesScalar(c, FIRST_ATTACK_ACTION)
+                    && usesScalar(c, LAST_ATTACK_ACTION)) {
+                attacks.add(c);
+            }
+        }
+        propose(single(serials, "layer item getter (BuildLayers callee using layers 0x19 and 0x1e)"), NAMESPACE
+            + SCOPE + "GetDrawLayerItemSerial", "(EAX object, draw-order index, out is-mount): layer = object"
+            + " +0xf8[index]; out = layer == 0x19 (mount); layer 0x1e -> 0; else the u64 serial of the layer item"
+            + " (object +8 + layer*8)", true);
+        propose(single(attacks, "attack action collector (BuildLayers callee, actions 9..14)"), MOB_COMPONENT
+            + SCOPE + "CollectWeaponAttackActions", "(EAX weapon item, component, ...): clears the set at component"
+            + " +0xe0, then adds every action 9..14 whose frame set exists for the weapon appearance (+0xbc,"
+            + " overridden by +0xc0); called when an item with tiledata flag 2 (weapon) changes", false);
+
+        List<Function> orders = new ArrayList<>();
+        for (Function f : functionsNamed(GET_OBJECT_DEFINITION)) {
+            for (Function caller : callers(f)) {
+                boolean all = usesScalar(caller, EQUIPMENT_LAYER_COUNT);
+                for (long slot : DEFINITION_RACE_GENDER_SLOTS) {
+                    all &= callsThroughSlot(caller, slot);
+                }
+                if (all) {
+                    orders.add(caller);
+                }
+            }
+        }
+        propose(single(orders, "equipment draw-order builder (race/gender slots and 0x1a layers)"), NAMESPACE + SCOPE
+            + "BuildEquipmentLayerOrder", "(object): the 26-entry layer draw orders at +0xf8 and +0x160 from the"
+            + " object definition's race and gender (HasRace +0xc8 / GetRace +0xd0, default 1; HasGender +0xcc /"
+            + " GetGender +0xd4, default 0)", true);
+
+        long mobVt = vtables.get(MOB_COMPONENT);
+        Function refresh = mobVt < 0 ? null : slotFunction(mobVt, COMPONENT_REFRESH_MOVE_ACTION);
+        propose(refresh, MOB_COMPONENT + SCOPE + "RefreshMoveAction", "vtable +0x68: GetMoveAction(group, 0,"
+            + " GetLayer2AlternateAnimation()); on a change in group 6 (seated) keeps the chair object at +0xb4 and"
+            + " turns to its allowed sitting directions", true);
+        if (refresh != null) {
+            List<Function> alternates = new ArrayList<>();
+            for (Function c : realCalls(refresh)) {
+                if (callsThroughSlot(c, OBJECT_GET_ALTERNATE_ANIMATION)) {
+                    alternates.add(c);
+                }
+            }
+            propose(single(alternates, "layer-2 alternate animation getter"), MOB_COMPONENT + SCOPE
+                + "GetLayer2AlternateAnimation", "(ECX component): equipment component (6) serial of layer 2 ->"
+                + " object vtable +0x78 GetAlternateAnimation; false when there is no such item", false);
+        }
+
+        long objectVt = vtables.get(OBJECT);
+        if (objectVt >= 0) {
+            propose(slotFunction(objectVt, OBJECT_GET_MOBILE_FLAGS), OBJECT + SCOPE + "GetMobileFlags", "vtable"
+                + " +0xa0: returns +0x6c, the flags byte of 0x77/0x78; BuildLayers forces hue 0x3e3 when bit 0x80"
+                + " (hidden) is set", true);
+            propose(slotFunction(objectVt, OBJECT_SET_MOBILE_FLAGS), OBJECT + SCOPE + "SetMobileFlags", "vtable"
+                + " +0xa4 (flags): stores +0x6c and notifies change 7 (vtable +0x1c) when it differs", true);
+        }
+    }
+
+    // The other users of hue 0x4001: the bonded-status handler sets it, the object updater keeps it.
+    private void statusHue(Function palette) {
+        Function table = proposed(HUES + SCOPE + "GetHueTable");
+        List<Function> called = new ArrayList<>();
+        List<Function> registered = new ArrayList<>();
+        for (Function f : scalarUsersInProgram(SPECIAL_HUE)) {
+            if (f.equals(palette) || f.equals(table)) {
+                continue;
+            }
+            (callers(f).isEmpty() ? registered : called).add(f);
+        }
+        Function handler = single(registered, "registered user of hue 0x4001 (bonded status handler)");
+        propose(handler, "UOMobileStatus" + SCOPE + "OnBondedStatus", "0xBF sub-command 0x19 callback: reads the"
+            + " packet, stores its flag byte at mobile status (component 5) +0x6d and, when set, SetHue(0x4001)"
+            + " (vtable +0x54) so the bonded pet draws as a shadow", true);
+        if (handler != null) {
+            List<Function> calls = realCalls(handler);
+            propose(calls.isEmpty() ? null : calls.get(0), "UOPacket" + SCOPE + "Read_0xBF_19_BondedStatus",
+                "first call of the bonded-status handler: serial and the flag byte", true);
+        }
+        propose(single(called, "called user of hue 0x4001 (object hue updater)"), "UOObjectManager" + SCOPE
+            + "ApplyGraphicAndHue", "(..., graphic, hue, ...): graphic 0x2006 (corpse) -> id + 10000000; when the"
+            + " mobile status +0x6d byte is set the hue becomes 0x4001; SetHue (vtable +0x54) when it changed;"
+            + " called by the 0x77/0x78-style object packets", true);
+    }
+
+    // MOV reg, [reg + displacement] followed within SLOT_CALL_WINDOW instructions by CALL reg.
+    private boolean callsThroughSlot(Function f, long displacement) {
+        for (Instruction i : listing.getInstructions(f.getBody(), true)) {
+            if (!i.getMnemonicString().equals("MOV") || i.getNumOperands() != 2 || i.getOpObjects(0).length != 1
+                    || !i.getDefaultOperandRepresentation(1).contains("[")) {
+                continue;
+            }
+            boolean match = false;
+            for (Object o : i.getOpObjects(1)) {
+                match |= o instanceof Scalar sc && sc.getUnsignedValue() == displacement;
+            }
+            Instruction n = i.getNext();
+            for (int k = 0; match && n != null && k < SLOT_CALL_WINDOW; k++, n = n.getNext()) {
+                if (n.getMnemonicString().equals("CALL") && n.getOpObjects(0).length == 1
+                        && i.getOpObjects(0)[0].equals(n.getOpObjects(0)[0])) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     // ---- 0x6E and 0xE2 ----

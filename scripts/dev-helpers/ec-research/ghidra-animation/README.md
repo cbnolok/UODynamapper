@@ -41,7 +41,11 @@ NameAnimationCode.java OUTPUT_FILE [--apply]
     `g_UOSettingCacheSize`, `g_UOSettingFlyingAnimations` and their run-time copies `g_UOIdleAnimation`,
     `g_UOFrameSetRestriction`, `g_UOFlyingAnimations`.
 - New names may also go in the namespaces `UOObjectManager`, `UOPacket`, `UOSettings`, `FrameSetLookup`,
-  `UOProjectileEffect`, `UOTileEffect` and `UOHues`.
+  `UOProjectileEffect`, `UOTileEffect`, `UOHues`, `UOObject` (the RTTI class: `GetMobileFlags` /
+  `SetMobileFlags`) and `UOMobileStatus` (the 0xBF sub-command 0x19 bonded-status handler).
+- Besides the sequence, frame and packet code, it names the creature drawing helpers: the equipment
+  draw-order builder and layer item getter, the weapon attack-action collector, the movement-action refresh
+  with its layer-2 alternate animation getter, and the two other users of the shadow hue 0x4001.
 - Its own single-line plate comments are refreshed when the evidence text changes; comments edited by hand
   are kept.
 - Names with another source type are never changed; they are listed under "Kept names".

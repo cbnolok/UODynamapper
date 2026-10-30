@@ -308,11 +308,37 @@ word = a << 24 | r << 16 | g << 8 | b   // B, G, R, A in memory
   near-grey skin colours and 74 brown flag-1 colours (the loincloth). **confirmed**.
 - Every palette colour is opaque. The hue table is indexed by the red byte b0 (hueable colours are
   near-grey, so R is their brightness).
-- Hue 0x4001 is special: every colour becomes black, with alpha derived from its luminance
-  (L = 0.34 * b0 + 0.59 * b1 + 0.07 * b2, inverted and normalized, alpha = t * 130 + 60, so 60..190). This
-  gives a translucent dark silhouette. `FUN_005ea110`, the mobile update from the 0x78/0x20/0x77 handlers,
-  sets hue 0x4001 when byte +0x6d of the mobile's component 5 is set. **confirmed** (formula shape),
-  **probable** (exact normalization), **unknown** (meaning of the flag).
+- Hue 0x4001 (shadow) is special: every colour becomes black (the flag byte b3 is ignored), with an alpha
+  computed from the whole palette. Read at the instruction level (0x0042b2c5..0x0042b3f0); **confirmed**:
+
+  ```
+  // constants: 0.34f 0x00d05294, 0.07f 0x00d05290, 0.59f 0x00d0528c, 0.5 0x00c95604,
+  //            0.2 0x00d04f28, 0.8 0x00d051cc, 130 0x00d05288, 60 0x00d04f60, 1.0 FLD1 0x0042b3bb
+  inv[i] = 0xff - trunc((b0 * 0.34 + b2 * 0.07) + b1 * 0.59)     // the 0xff immediate at 0x0042b354
+  min = min(inv) (starts at 0xff), max = max(inv) (starts at 0), mean = sum(inv) / count (unsigned DIV, 0x0042b39b)
+  below = mean - min, above = max - mean, d = inv - min           // u32
+  x = 0                                  when below == 0 or above == 0
+  x = 0.5                                when d == below (inv == mean)
+  x = ((1 - t) * 0.2 + t + 1) * 0.5      when d >  below, t = (d - below) / above
+  x = t * 0.8 * 0.5                      when d <  below, t = d / below
+  alpha = trunc(x * 130 + 60)            // FISTP with RC = truncate; 60..190
+  word = alpha << 24                     // black
+  ```
+
+  Precision: the x87 code runs with the precision control of the D3D9 device thread. The device is created
+  without `D3DCREATE_FPU_PRESERVE` (behaviour flags 0x28), so Direct3D sets single (24-bit) precision; the
+  only other `_controlfp` caller is the CRT `__setdefaultprecision`. Both palette callers (`UpdateFrame`
+  0x00437506 on the main loop, the paperdoll builders 0x0050b780 / 0x0050ba30 / 0x0050c550) run there, so
+  the client computes in f32 (**probable**). It matters: over the 31877 shipped palettes (7,441,059
+  colours), f32 and f64 evaluation give different alphas for 361,221 colours in 26,613 palettes (max
+  difference 16). The main cause is the luminance of a pure grey g, which truncates to g in f32 and to g - 1
+  in f64. `lib/uocf/src/enhanced/hues.rs` evaluates in f32 in the client's operation order.
+- What selects 0x4001: `UOMobileStatus::OnBondedStatus` 0x00630ba0, the 0xBF sub-command 0x19 callback
+  (bonded pet status), stores the packet's flag byte at byte +0x6d of the mobile status (component 5) and,
+  when it is set, calls `SetHue(0x4001)` (object vtable +0x54). `UOObjectManager::ApplyGraphicAndHue`
+  0x005ea110 (called by the 0x78 / 0x20 / 0x77 object handlers) replaces the packet hue with 0x4001 while
+  that byte is set (0x005ea647). So the shadow hue is the dead bonded pet look. **confirmed** (code),
+  **probable** (meaning).
 - `UOHues::GetHueTable` 0x00427ad0 maps a hue to a table key: 0x4001 -> 0x9c3; no 0xc000 bits -> hue - 1;
   0x8000 set -> (hue & 0x3fff) - 1; only 0x4000 set -> the hue itself, so no table and no hue. The palette
   builder skips hue 0. The classic 0x8000 "partial hue" bit is masked away: in the EC, partial hueing is the
@@ -405,7 +431,7 @@ The scratch decoder `probe_frames.py` (scratch folder, not in the repo) was run 
 
 1. Server body S arrives in 0x78 / 0x20 / 0x77 (and 0x1B for the player). The handlers
    (`FUN_005e9ae0`, `FUN_005e9db0`, `FUN_005eb220`, `UOPacket::Handle_0x1B_LoginConfirm` 0x00611950) add
-   10000000. `FUN_005ea110` compares the result with the object type (vtable +0x60). It then takes
+   10000000. `UOObjectManager::ApplyGraphicAndHue` 0x005ea110 compares the result with the object type (vtable +0x60). It then takes
    `UOTileArt::GetObjectDefinition(10000000 + S)` and calls `SetBodyType` (object vtable +0x6c, 0x005b3070)
    with the definition's `GetBodyType` (+0xb4 -> tileart record +0x20, default 400).
    `UOObject::InitFromDefinition` copies the same field. **confirmed**.
@@ -421,13 +447,25 @@ The scratch decoder `probe_frames.py` (scratch folder, not in the repo) was run 
 4. Equipment (26 layers, `0x1a`): frames id = the item definition's `GetAppearance` /
    `GetAnimationAppearance` for the wearer (minus 10000000). The record `10000000 + id` must exist, and its
    body type must equal the wearer sequence's stored id, else the item is not drawn.
-5. Ghost bodies 402, 403, 607, 608, 694, 695 (checked on the definition's tile id minus 10000000), and
-   mobiles with a flag in `BuildLayers`, are drawn with hue 0x3e3. Other mobiles use their hue (object vtable +0x58).
-   **confirmed** (code), **unknown** (the flag).
+5. Ghost bodies 402, 403, 607, 608, 694, 695 (checked on the definition's tile id minus 10000000) are
+   drawn with hue 0x3e3. So is any mobile whose mobile flags have bit 0x80 (0x004388e8:
+   `UOObject::GetMobileFlags` 0x005b3e80, object vtable +0xa0, returns object +0x6c, `>> 7 & 1`). Object
+   +0x6c is the flags byte of 0x77 / 0x78, stored by `UOObject::SetMobileFlags` 0x005b3e90 (vtable +0xa4);
+   bit 0x80 is the "hidden" bit of those packets. Equipment of such a mobile gets 0x3e3 too (0x00439267).
+   Other mobiles use their hue (object vtable +0x58). **confirmed** (code), **probable** (bit 0x80 =
+   hidden).
 
 The body type is plain data: no hardcoded table, gender or race substitution, or Lua mapping exists in
-this path. Race (props1 key 9) and gender (key 10) are set on the human placeholders, but this path does
-not read them.
+this path. Race (props1 key 9) and gender (key 10) are set on the human placeholders. They are read
+elsewhere:
+
+- `UOAnimations::BuildEquipmentLayerOrder` 0x00468810 builds the two 26-entry equipment draw orders
+  (object +0xf8 and +0x160) from the definition's race and gender (`HasRace` +0xc8 / `GetRace` +0xd0,
+  default 1 at 0x00842df1; `HasGender` +0xcc / `GetGender` +0xd4, default 0 at 0x00842e68).
+  `UOAnimations::GetDrawLayerItemSerial` 0x005b77c0 walks that order for `BuildLayers`: entry i -> layer
+  +0xf8[i]; layer 0x19 is the mount; layer 0x1e is skipped.
+- `AppearanceFilterByOwnerGender::Apply` 0x0084b485 reads the owner definition's `GetGender` to choose an
+  item appearance.
 
 ### Data (tileart.uop creature placeholders)
 
@@ -457,11 +495,45 @@ Examples:
   box.
 - Equipment layers come from the item's appearance, filtered by the wearer's body (appearance filters
   0/1/2), and their edges blend over the body.
-- Mount: `BuildLayers` builds the mount animation, using group 2 when it exists. The mount definition's
-  offsets (+0xec / +0xf0, negated) and the sequence's per-direction rider offsets place the rider, and
-  `UpdateFrame` subtracts 15 from y. A PositionOffset frame effect overrides the offsets. `FUN_004394a0`
-  preloads actions 9..14 of the mount.
+- Mount: `BuildLayers` gives the mount item's animation the rider's state, with group 2 when the rider
+  sequence has it (else group 1), then `GetMoveAction` and `PlayAction`. The rider's sequence offsets
+  (per direction, overridden per action by `GetOffsetX/Y` unless -0x80, plus `GetExtraOffsetX/Y` unless
+  -0x8000) place the attachments.
+- Frame effects (`UpdateFrame`, effect type 7 PositionOffset checked at 0x0043725c) are placed at: (x +
+  offset, y + offset - 15) when the effect has offsets (+0x2c); else, when seated on a chair (component
+  +0xb4), at the chair definition's negated seat offsets (`GetSeatOffsetX/Y`, definition vtable +0xec /
+  +0xf0: sitting record fields 1 and 2); else at (x, y - 15). The earlier reading of +0xec / +0xf0 as mount
+  offsets was wrong: they belong to the chair.
+- `UOObjectComponentAnimationMob::RefreshMoveAction` 0x00437e60 (vtable +0x68) recomputes the movement
+  action with `GetMoveAction(group, 0, alternate)`, where alternate comes from
+  `GetLayer2AlternateAnimation` 0x004386a0 (the layer-2 item's `GetAlternateAnimation`, object vtable
+  +0x78). In group 6 (seated) it keeps the chair and turns to its sitting directions (definition +0xe8).
+  The body's own `alternate_animation` placeholder field is not read on this path.
+- `UOObjectComponentAnimationMob::CollectWeaponAttackActions` 0x004394a0, called by `BuildLayers` when an
+  item with tiledata flag 2 (weapon) changes, collects which of actions 9..14 have frames for the weapon's
+  appearance (set at component +0xe0). It does not concern the mount.
 - Shadow frames: no separate shadow asset or decoder was found in this path.
+
+### Creature record fields
+
+Fields of the `10000000 + body` tileart records, the code that reads them for a mobile, and whether
+dynamapper needs them. Data from the reference client (1143 placeholders; the scratch
+`placeholder_fields.py` counts also include 2 non-creature records).
+
+| Field (tileart) | Definition getter | Reader in the mobile path | Data | dynamapper |
+|---|---|---|---|---|
+| body type (+0x20, definition +0xe4) | `GetBodyType` +0xb4 | `ApplyGraphicAndHue` -> object +0x50: the sequence | == body for 363, other sequence for 780 | yes (`sequence_id`, packed) |
+| sequence stored id | (sequence +0x10) | `BuildLayers` wear check: item body type must equal it | differs from the sequence id for 2 bodies | yes (`sequence_stored_id`, new in v5) |
+| appearance (props1 8) | `GetAppearance` +0xbc | `BuildLayers` frames id | 184 records set it | yes (`appearance_body_id`, packed) |
+| animation appearance | `GetAnimationAppearance` +0xc0 | `BuildLayers` overrides the appearance | filter-driven | yes (resolved by the packer) |
+| race (props1 9) | `HasRace` +0xc8 / `GetRace` +0xd0 (default 1) | `BuildEquipmentLayerOrder` | 13 records: 0, 1, 2 | yes (`race`, new in v5) |
+| gender (props1 10) | `HasGender` +0xcc / `GetGender` +0xd4 (default 0) | `BuildEquipmentLayerOrder`, owner-gender appearance filter | 18 records: 0, 1 | yes (`gender`, new in v5) |
+| alternate animation (definition +0xe8) | `GetAlternateAnimation` +0xb8 | only through the layer-2 item (`GetLayer2AlternateAnimation`) | set on 8 placeholders (323, 635, 1027, 1028, 1033, 1041, 1042, 1047) | no (item property) |
+| world / legacy / primary art scale | +0x2c / +0x30 / +0x84 | none found in `UOObjectComponentAnimationMob` | world 1.4 on 1076, legacy 1.0 on 1111 | no (open question) |
+| light scale / shader / offsets | +0x40 / +0xa0 | none found for mobiles | 1.0 / 0 on all | no |
+| flags1 PartialHue (0x40000) / AlphaBlend (0x800000000) | object +0x38/+0x3c | none found in the animation path | 10 / 3 records | no |
+| radar colour | +0xdc | not in the mobile path | | no |
+| sitting directions / seat offsets | +0xe8 / +0xec / +0xf0 | `RefreshMoveAction`, `UpdateFrame` (of the chair) | chairs only | no (not a creature field) |
 
 ## AnimationDefinition.uop
 
@@ -637,8 +709,8 @@ Neither file is described. Missing.
    (`data/definitions/hues/huenames.csv`, `hue%04d.bmp`, 32 bpp, 256 x 2, second stored row,
    B,G,R,A per entry). `hue_table(hue)` follows `GetHueTable`: 0 -> none; 0x4001 -> shadow; mask 0x3fff
    when 0x8000 is set; 0x4000 alone -> none; table of `hue{H:04}.bmp`. Hued colour of a hueable pixel =
-   `table[red]` (keep the edge alpha). Hue 0x4001 = black with alpha 60..190 from luminance (exact
-   normalization still open; see the open questions).
+   `table[red]` (keep the edge alpha). Hue 0x4001 = black with the palette-statistics alpha of "Palette"
+   (done: `ShadowPaletteStats`; the package stores min / mean / max per frame, format v5).
 9. Body mapping (new, from `tileart.uop`, no hardcoded table): for each placeholder `10000000 + body`,
    `sequence_id = body_type` (+0x20), `frames_body = props1[8]` (else body; minus 10000000 when above), and
    body 0 when no frames exist for it. In the packer (`mobile_anim_ec.rs`) and the package
@@ -649,6 +721,11 @@ Neither file is described. Missing.
    - share the pixel data when several bodies use the same frames body (402/403 reuse 400/401);
    - record ghost bodies 402, 403, 607, 608, 694, 695 as "draw with hue 0x3e3".
    The tileart parser already reads body type and props1 (see `../ghidra-tileart`).
+10. Creature fields (done, package format v5): body records carry the sequence stored id (the equipment
+    wear check), race and gender (equipment draw order); frame records carry the shadow palette
+    statistics. Still open: the mount item -> mount body mapping, mobile flag 0x80 (hue 0x3e3) from the
+    server flags, and the bonded flag (hue 0x4001) from 0xBF 0x19 belong to dynamapper's server state, not
+    to the package.
 
 ## Uncertainties and open questions
 
@@ -659,10 +736,13 @@ Neither file is described. Missing.
   0x00833f3d, not traced through it.
 - Header i8 pairs of the sequence and the `AnimationDefinition` `second_set` / `value` fields have no
   decoded consumer; all data values are trivial (zero).
-- The 0x4001 shadow hue's exact normalization step (the min / mean / max terms between the luminance and
-  `t * 130 + 60`) was read only in outline. The flag that selects it (component 5, byte +0x6d) was not
-  identified.
-- The `BuildLayers` flag that forces hue 0x3e3 on non-ghost bodies was not identified.
+- The 0x4001 formula is exact; its evaluation precision (f32, from the D3D9 FPU state) is probable, not
+  observed at run time.
+- Bit 0x80 of the 0x77 / 0x78 flags (hue 0x3e3) is read as "hidden" from the packet's known meaning; the
+  client code only tests the bit.
+- No reader of the art scales (+0x2c / +0x30 / +0x84) was found in the mobile drawing path; the scene graph
+  may apply them elsewhere.
+- The mount item -> mount body mapping and the rider offsets per action are not in the package.
 - The texture blend mode of the mobile atlas (premultiplied or straight alpha) was not traced. The atlas
   bytes over black are premultiplied.
 - `FUN_0050bd00` (`DecodeFrameRle` + `DecodeFrameMask`) is probably the hit-test / paperdoll path; not
