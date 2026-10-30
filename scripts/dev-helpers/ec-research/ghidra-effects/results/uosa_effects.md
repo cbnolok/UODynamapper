@@ -94,7 +94,7 @@ The positional math is in `UOParticleEffectNif::Init` 0x0041a8e0: (offset_x, off
 tile-space offset (dx, dy, dz) turned into world space the way `PlayEffectAtTile` turns a tile position
 (world x = tile x, world z = -tile y; camera_offset along the camera's up). The effect node's own rotation
 does not apply to it, so a viewer drawing in the effect's local frame converts the two tile axes with the
-world camera rotation (`client_world_camera_rotation` in `lib/particle-sim/src/effect.rs`).
+world camera rotation (`client_world_camera_rotation` in `lib/ec-effects/particle-sim/src/effect.rs`).
 
 #### Particle attach mode (definition +0x30)
 
@@ -633,7 +633,7 @@ mode was.
 Quirks (derived from the confirmed numbers and map flags, not observed in a frame capture):
 
 - The atlas column stride is 255 texels, not the 256-texel strips of `hues.dds` (`atlas_coord_for_hue` in
-  `lib/uocf/src/enhanced/hues.rs`). Assuming a 1024-texel-wide atlas, as the shader's 1/1024 scale implies,
+  `lib/uocf/src/enhanced/hues.rs`). The shipped atlas is 1024 texels wide (see "Hue atlas" below), so
   hues >= 1024 sample `column` texels to the left of their strip; at low luminance they reach the
   previous strip.
 - With bilinear filtering, u and v fall on texel edges: each sample is a 50/50 blend of rows `row - 1` and
@@ -642,8 +642,63 @@ Quirks (derived from the confirmed numbers and map flags, not observed in a fram
   UV set 0 spans the whole target (**confirmed**), so a hued effect is drawn about 1.21× taller than the
   plain one and squeezed horizontally by the screen aspect (1.21 / (w/h) as wide), and anything outside
   ±4 units vertically or ±4·w/h horizontally is clipped. The 512 × 512 target therefore has non-square
-  texels (w/h wider than tall); `lib/particle-sim` renders it with square texels and the same mapping,
+  texels (w/h wider than tall); `lib/ec-effects/particle-sim` renders it with square texels and the same mapping,
   which differs only in horizontal sampling density.
+
+### Hue atlas (`Hues.dds`)
+
+The texture (all **confirmed** on the shipped data and the binary unless marked):
+
+- Package `Hues.uop` (EC), version 4, 3003 entries, 12-byte timestamp headers. Entry
+  `build/hues/hues.dds`: DDS, 1024 × 1024, flags 0x81007 (no `MIPMAPCOUNT`), pitch 4194304, mip count 0,
+  pixel format flags 0x41 (RGB + alpha pixels), 32 bpp, masks R 0xff0000 / G 0xff00 / B 0xff / A
+  0xff000000 (A8R8G8B8, uncompressed), caps 0x1000. The other entries are `hue%04d.bmp` (1..3000),
+  `huenames.csv` (3000 lines) and the 64 × 64 A8R8G8B8 swatch texture with hash 0xFA5C6A1BC0D8B01B.
+- Layout: four 256-texel strips. Strip 0 holds rows 1..1023 = hues 1..1023 (row 0 is transparent black),
+  strip 1 rows 0..1023 = hues 1024..2047, strip 2 rows 0..952 = hues 2048..3000, strip 3 is empty
+  (transparent black). Filled texels have alpha 255. So hue H is at strip `H / 1024`, row `H % 1024`; each
+  row is a 32-colour gradient, colour i at x = 8·i within the strip, linearly interpolated between
+  neighbours (clamped at the ends). The bitmap `hue%04d.bmp`'s top row equals the atlas row (maximum
+  difference 0 for hues 33, 500, 1500, 2600, 3000). Against Classic `hues.mul` the gradients match colour
+  5-to-8-bit conversion `c << 3` (mean error 0.52, maximum 20 per channel over the atlas).
+- Load: the string `Build\Hues\Hues.dds` (0x00c9dfa0) is loaded through the texture manager
+  (`g_UOWorldViewer` +0xa8, vtable +4) from `BuildHueQuad` (0x0041e897), `FUN_0045cd80` (0x0045e5fc) and
+  `FUN_00595010` (0x005951d3, the sprite shader data setup that reads the `CustomShaderData`
+  `NiFloatsExtraData`). The texture goes through the normal Gamebryo DDS path; its size is never read back
+  into a shader constant (**high**: the `HueSampler` users `FUN_0058ebf0` (UOEffects setup), `FUN_00593b30`
+  (UOSprite) and `FUN_00594960` set no size constant).
+- The constants are hard-coded, in C++ and in the shaders. `BuildHueQuad` multiplies by 1/1024
+  (0x00d05158) and 255.0 (0x00d04ef0). The effects pixel shader (Shaders.uop entry 0xd6ebea59f37b1f2b)
+  says so itself:
+
+  ```text
+  // TODO: have c++ inform the shader of these constants so we can change the size of the hue
+  // texture if needed.
+  static const float c_fHueTextureHeight = 1024.0f;
+  static const float c_fNumHuePixels = 255.0f;
+  static const float c_fHuePixelUVOffset = (1.0f / c_fHueTextureHeight) * c_fNumHuePixels;
+  ```
+
+  The two sprite shaders (0x00e0ca9c950954a8 with `256.0f / 1024.0f`, 0xa2e9963e6d9a7e50 with
+  `255.0f / 1024.0f`) carry the comment "this is hardcoded for a 1024x1024 hue texture with four
+  255-pixel columns".
+
+Conclusion (**confirmed**): the atlas is 1024 × 1024, and `HUES_ATLAS_WIDTH = 1024` in
+`lib/uocf/src/enhanced/hues.rs` and the constants of `lib/ec-effects/particle-sim/src/hued.rs`
+(`HUE_ATLAS_ROWS` 1024, `HUE_ATLAS_UV_SCALE` 1/1024, `HUE_ATLAS_COLUMN_STRIDE` 255,
+`HUE_ATLAS_STRIP_WIDTH` 256) match the client. No code change is needed.
+
+Cross-check with the user's older converter `huesmul2uop` (`main.cpp` `createHuesDDS`, `uohues.*`):
+the same 1024 × 1024 uncompressed ARGB32 image and the same strip and row mapping (strip 0 from row 1,
+strips 1 and 2 from row 0), so it agrees with the shipped file and with `hues.rs`. Its pixels differ from
+EA's: it expands 5-bit colour as `c * 255 / 31` (EA: `c << 3`), blurs each 8-texel block (`customBlur`,
+radius 6) instead of a linear ramp, and `ARGB16::getR` masks `0xF800` instead of `0x7C00` before `>> 10`,
+which takes in the alpha bit and drops red's low bit. Only the red mask is a bug; the rest is a fidelity
+difference.
+
+Repo note: `lib/udd-conv/src/hues.rs` builds the atlas from Classic `hues.mul` with 8-texel blocks of
+`c5 * 8` (no ramp); the EC path copies the bitmaps' row 0, which is exact. A linear ramp between colours
+would match EA's atlas more closely (optional).
 
 ## Effect camera and lighting
 
@@ -682,7 +737,7 @@ Quirks (derived from the confirmed numbers and map flags, not observed in a fram
   - What that means for the data (survey of the 466 NIFs, 671 meshes and 1086 particle systems): files
     lit with `E_A_D` show only their emissive colour; the vertex colour modes (`SRC_EMISSIVE`) show the
     vertex colours; meshes with `E_A_D` / `SRC_IGNORE` and emissive 0 (33 + 4 meshes, about 10 particle
-    systems) draw black. `lib/particle-sim` defaults to this (`CLIENT_EFFECT_LIGHTING`).
+    systems) draw black. `lib/ec-effects/particle-sim` defaults to this (`CLIENT_EFFECT_LIGHTING`).
 - Hued effects render offscreen with no light set by the client (same result).
 
 ## Effect textures and mipmaps
@@ -716,6 +771,54 @@ All **confirmed** on the binary unless marked.
 - The three `.nif` texture files (`03000017_star.nif`, `03000018_circle_g.nif`, `03002014_flare.nif`) are
   Gamebryo 20.0.0.4 NIFs with one `NiPixelData`: RGBA, 128 × 128, 8 stored levels. They are referenced with
   `MIP YES`; their stored levels are used as they are.
+
+## Texture filtering and anisotropy
+
+Effect NIF maps (survey of the 466 shipped effect NIFs, all version 20.0.0.4: 991
+`NiTexturingProperty` blocks, 1509 maps; **confirmed**):
+
+| Map | NEAREST (0) | BILERP (1) | TRILERP (2) |
+|---|---|---|---|
+| base | 2 | 4 | 910 |
+| bump | | | 32 |
+| dark | | | 99 |
+| decal | | | 42 |
+| detail | | 1 | 213 |
+| gloss | | | 19 |
+| glow | | 1 | 186 |
+
+No map uses `FILTER_ANISOTROPIC` (6) or any mode above 2, and no shader map is present. The NEAREST base maps
+are in `615883b5d439d9c2`. Version 20.0.0.4 maps have no per-map max-anisotropy field.
+
+Renderer (`UOSA.exe`, Gamebryo 2.3 `NiDX9Renderer`):
+
+- The filter table `ms_akD3DFilterMapping` at 0x00e16648 (12-byte entries mag, min, mip) is filled by the
+  device caps setup `FUN_00756990` (called from `FUN_00754fb0`) with **six** entries only: NEAREST (POINT,
+  POINT, NONE), BILERP (LINEAR, LINEAR, NONE), TRILERP (LINEAR, LINEAR, LINEAR), NEAREST_MIPNEAREST (POINT,
+  POINT, POINT), NEAREST_MIPLERP (POINT, POINT, LINEAR), BILERP_MIPNEAREST (LINEAR, LINEAR, POINT). The
+  next words, 0x00e16690..0x00e166ac, are the clamp table `ms_akD3DAddressMapping` (CLAMP/CLAMP,
+  CLAMP/WRAP, WRAP/CLAMP, WRAP/WRAP). There is no FILTER_ANISOTROPIC entry: Gamebryo 2.6 adds one
+  (`NiDX9Renderer.cpp` 2056-2070), this build does not. **Confirmed.** A mode 6 map would index the clamp
+  table (**probable**, irrelevant since no map uses it).
+- The stage setters `FUN_0074d530` (three sampler states from the filter table) and `FUN_0074d4e0` (two from
+  the clamp table) read these tables; `FUN_0074d5d0` drops the mip filter to NONE for a texture without
+  mipmaps. **Confirmed.**
+- `FUN_00756990` reads `D3DCAPS9.TextureCaps` (renderer +0xe4: POW2, NONPOW2CONDITIONAL, PROJECTED,
+  MIPCUBEMAP), `MaxTextureBlendStages` and `MaxSimultaneousTextures`, but neither `TextureFilterCaps`'
+  anisotropic bits nor `MaxAnisotropy` (caps +0x6c). No TEST/AND with `D3DPTFILTERCAPS_MINFANISOTROPIC`
+  (0x400) or `MAGFANISOTROPIC` (0x4000000) on a caps field exists in the renderer (0x0074xxxx-0x0077xxxx).
+  **High.**
+- `D3DSAMP_MAXANISOTROPY`: the initial sampler state table at 0x00da8690 (read by
+  `NiDX9RenderState::InitTextureStageState` 0x00748e70) gives it 1 (pair at 0x00da86d8). Its slot in
+  `ms_auiSamplesStateMappings` (0x00da867c) has no reference, and no direct `SetSamplerState(…, 0xa, …)`
+  call exists (virtual-call scan for `+0x114` with the constant 0xa). So it stays 1. **High.**
+- The effect shaders in `Shaders.uop` set no sampler state (no `anisotrop` text). **Confirmed.**
+
+Conclusion: UOSA never filters effect textures anisotropically (max anisotropy 1). A faithful preview uses
+each map's own mode as plain point/linear min, mag and mip filters, with anisotropy off (wgpu
+`anisotropy_clamp` 1). Mapping a mode-6 map to trilinear, as
+`lib/ec-effects/particle-sim/src/nif/desc.rs` `TextureFilter::from_raw` does, is fine (no shipped map has
+it). No code change is needed.
 
 ## Draw order
 
@@ -795,7 +898,7 @@ out.a   = saturate(Kd.a * base.a)               // only the final alpha is clamp
 base map multiplies only the material colour). No stage is saturated before the end; the colour is clamped
 only by the render target.
 
-Differences from `lib/particle-sim/src/render.rs` (as reviewed in the visual report):
+Differences from `lib/ec-effects/particle-sim/src/render.rs` (as reviewed in the visual report):
 
 1. The decal lerp is applied **before** the `Kd` multiply.
 2. The detail map never contributes alpha, also when there is no base map.
@@ -838,7 +941,7 @@ blends with the same factors as colour.
   A looping controller [-0.0667, 3.0] in an effect of duration 3.0 never reaches [3.0, 3.0667).
 - Hued effects advance elapsed by dt × 0.5.
 
-`lib/particle-sim` (`keys.rs` `ComputeScaledTime`, `instance.rs` elapsed %= duration) matches.
+`lib/ec-effects/particle-sim` (`keys.rs` `ComputeScaledTime`, `instance.rs` elapsed %= duration) matches.
 
 ## Unreferenced marker NIFs
 
@@ -1061,6 +1164,20 @@ RTTI, so their vtables come from NiRTTI: the class name string, the static `NiRT
 comments set), created 2 labels and 1 namespace; `ApplyVariableSpecs` set the `SetBound` and
 `SetActiveCount` prototypes; second runs of both reported no changes. The program was saved.
 
+### Round 8 (texture filtering)
+
+`NameEffectCode.java` step `textureFiltering` (after `drawOrderAndMaterials`; see "Texture filtering and
+anisotropy").
+
+| Evidence | Finds |
+|---|---|
+| user of `"Creation failed: Device does not support single-pass multi-texture"` | `NiDX9Renderer::InitializeDeviceCaps` 0x00756990 |
+| the one run of 6 × 3 + 4 × 2 dwords that function writes | `NiDX9Renderer_ms_akD3DFilterMapping` 0x00e16648, `NiDX9Renderer_ms_akD3DAddressMapping` 0x00e16690 |
+| other function reading the filter table's words 0 and 2 / the address table's words 0 and 1 | `NiD3DTextureStage::SetFilterMode` 0x0074d530, `NiD3DTextureStage::SetClampMode` 0x0074d4e0 |
+| the data holding the 13 `{state, value}` pairs ADDRESSU..DMAPOFFSET with MAXANISOTROPY 1, then {-1, -1} | `NiDX9RenderState_ms_akInitialSamplerStateSettings` 0x00da8690 |
+
+`--apply` renamed 3 functions and created 3 labels (tags and comments set); the program was saved.
+
 ## Proposed Rust changes
 
 Not applied. The changes are for `lib/uocf/src/enhanced/effect_definition.rs` as of 914634cf, plus one
@@ -1123,10 +1240,12 @@ line in `ENHANCED_CLIENT_FILES.md`. The earlier items (attach_mode, field_3c, va
     `HUE_LUMINANCE_WEIGHTS: [f32; 3] = [0.2125, 0.7154, 0.0721]`, `HUED_EFFECT_ATLAS_COLUMN_STRIDE: f32 =
     255.0`, `HUE_ATLAS_ROWS: u32 = 1024`, and the rule "only `.nif` particles, only with an object hue
     != 0; output colour = hue gradient[luminance], alpha unchanged, alpha-blended". Whether to copy the
-    255-stride and texel-edge quirks or sample the intended entry is a renderer decision.
+    255-stride and texel-edge quirks or sample the intended entry is a renderer decision. (Now in
+    `lib/ec-effects/particle-sim/src/hued.rs`; the 1024 atlas width it and `lib/uocf` assume is confirmed,
+    see "Hue atlas".)
 13. **Packet hue:** the classic effect object hue is `packet hue + 1` (0 stays 0).
 
-14. **Effect renderer (`lib/particle-sim`)**, from "Draw order", "NiStandardMaterial texture combine" and
+14. **Effect renderer (`lib/ec-effects/particle-sim`)**, from "Draw order", "NiStandardMaterial texture combine" and
     "Destination alpha":
     - combine as `Kd.rgb × (dark × base × 2·detail, then decal lerp) + env + glow`, alpha
       `saturate(Kd.a × base.a)`; no intermediate saturation; detail never affects alpha;
@@ -1161,11 +1280,12 @@ No format change is needed: the parser is already correct for all 269 entries.
   resolution").
 - **Other readers:** `FUN_004b93d0`/`FUN_0083c0ba` (readers of the format) were not decoded.
   `FUN_0041a610` is now `IUOEffectDefinition::PlayOnObject`.
-- **Hue atlas sampling:** the map flags (BILERP + WRAP), the coordinate math and the absence of any hue
-  mask are confirmed; the resulting 50/50 texel-edge blend and the 255-texel column stride follow from them
-  for a 1024-texel-wide atlas (the width the `Hues.uop` loader in `lib/uocf` produces; the client's
-  `Hues.dds` size was not read in the binary). A frame capture of a hued effect with a hue >= 1024 would
-  show it.
+- **Hue atlas sampling:** the map flags (BILERP + WRAP), the coordinate math, the absence of any hue
+  mask and the atlas width (1024, shipped `Hues.dds` and hard-coded shader constants; see "Hue atlas") are
+  confirmed. The resulting 50/50 texel-edge blend and the 255-texel column stride follow from them; a frame
+  capture of a hued effect with a hue >= 1024 would show them.
+- **Anisotropic filtering:** settled: no effect map asks for it and the renderer never raises
+  `D3DSAMP_MAXANISOTROPY` above 1 (see "Texture filtering and anisotropy").
 - **Hued quad, shader map flags, target clear colour:** settled (see "Hued NIF effects").
 - **Lights inside effect NIFs** (**settled**): the client applies the two `NiDirectionalLight`s of
   `00005540_shadowstrike.nif` to that file's own meshes (the only shipped file with lights).
@@ -1173,7 +1293,7 @@ No format change is needed: the parser is already correct for all 269 entries.
   `NiAVObject::UpdateEffects` (`FUN_006641f0`, call at 0x0041aa53) on the scene root before attaching it to
   the render group, so the effect state (`NiNode` effect lists less each light's unaffected nodes:
   `NiNode::UpdateEffectsDownward` `FUN_00676480`, vtable +0x74; `PushLocalEffects` `FUN_00676120`) is built
-  once there. `lib/particle-sim` compiles the lights (`NifLight`, NIF desc and codec version 2) and adds them,
+  once there. `lib/ec-effects/particle-sim` compiles the lights (`NifLight`, NIF desc and codec version 2) and adds them,
   per vertex, to the meshes they reach; particles (no normals) get only ambient lights.
 - **Draw order, material combine, destination alpha, time origin:** settled (see their sections). The
   sort is unstable, so objects with equal depth may swap between frames in the client as well.

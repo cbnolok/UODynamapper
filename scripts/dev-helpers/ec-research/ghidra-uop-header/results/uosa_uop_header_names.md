@@ -2,7 +2,7 @@
 
 Program: `UOSA.exe`, SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`.
 
-Mode: report only.
+Mode: `--apply` (changes: none).
 
 | Address | Name | Checks | Result |
 |---|---|---|---|
@@ -30,3 +30,15 @@ Mode: report only.
 | `0x0088e39d` | `UOP::GetFileStamp` | calls:00989fdb, calls:0098a1f5 | already applied |
 | `0x0088e3ca` | `AudioConfig_CollectFileStamps` | string:audio/audio_filelist.csv, calls:0088e39d | already applied |
 | `0x009a310c` | `StringTable_BuildCache` | string:Called BuildCache() after loading!\n, calls:0098a1f5 | already applied |
+| `0x009a2f50` | `StringTable_Load` | calls:009a310c | already applied |
+| `0x009a2e69` | `StringTable_ctor` | calledby:00930727 | already applied |
+| `0x00930727` | `UIStringTable_ctor` | vftable:UIStringTable, calls:009308d4, calls:009a2e69 | already applied |
+| `0x009308d4` | `UIStringTable_ReplaceLangToken` | calledby:00930727 | already applied |
+| `0x008d72a5` | `UIStringTables_Create` | string:%s/%s.cache, calls:00930727, calls:009a2f50 | already applied |
+| `0x008d754e` | `UIStringTables_LoadStringTable` | calls:008d72a5, calledby:008d9781 | already applied |
+| `0x008d46eb` | `UIStringTables_ReloadAll` | calls:00930727, calls:009a2f50 | already applied |
+| `0x0088db6a` | `AudioConfig_Init` | calls:0088e3ca, calls:0088e519, calls:0088e87e | already applied |
+| `0x0088e519` | `AudioConfig_LoadCache` | calls:0088d2eb, calledby:0088db6a | already applied |
+| `0x0088d2eb` | `AudioConfig_CacheHeaderDiffers` | calls:0088d2d6, calledby:0088e519 | already applied |
+| `0x0088d2d6` | `FileStampDiffers` | calledby:0088d2eb | already applied |
+| `0x0088e87e` | `AudioConfig_SaveCache` | const:38, calledby:0088db6a | already applied |

@@ -307,11 +307,18 @@ unless the data becomes a stable package contract.
   134 to 137 bytes. The 12-byte timestamp headers belong to version-4 packages.
   - `data_block_hash` is the lookup3 `hashlittle` (initial value 0) of the
     header; 829 of 829 entries match. It covers the header, not the payload.
-  - The signature covers the payload, but its scheme and key are not in the
-    client, so it can be neither checked nor made.
+  - The signature is RSA (e = 65537, key id 20, 1025-bit modulus) over the
+    SHA-256 of the decompressed payload, padded as `0xFF × 32 ‖ digest ‖
+    0xFF × 32`. The public keys are in the patcher (`uopatch.exe`), not in
+    the client; without the private key a signature cannot be made.
   - The client never checks either: it skips `data_block_length` bytes to the
-    payload, never reads the signature, and uses `data_block_hash` only as a
-    cache stamp for the string table and audio caches. A missing header works.
+    payload, never reads the signature, and reads `data_block_hash` only as a
+    cache stamp for string table and audio caches that the shipped client
+    never uses. A missing header works.
+  - The patcher does check them: a normal run compares each entry's header
+    length and `data_block_hash` with its manifest and downloads entries that
+    differ; a full file check verifies every signature. Edited packages do not
+    survive a normal or full patcher run.
   - Replaced and added entries get a fresh timestamp header instead (type 3,
     the current FILETIME, 12 bytes; `data_block_hash` its Adler-32), in this
     version-5 package as in version-4 ones: a signature cannot be made for a
@@ -411,7 +418,11 @@ unless the data becomes a stable package contract.
   index past the palette is an error.
 - Hues (`enhanced::hues`): a hueable pixel takes `table[red]` of the hue
   table (`hue{N:04}.bmp`, 256x2, top row, key `hue - 1`, partial flag 0x8000
-  masks to 0x3fff) and keeps its edge alpha.
+  masks to 0x3fff) and keeps its edge alpha. The same rows form
+  `build/hues/hues.dds` in `Hues.uop`: 1024 x 1024 uncompressed A8R8G8B8, no
+  mipmaps, four 256-texel strips, hue H at strip `H / 1024`, row `H % 1024`
+  (strip 0 starts at row 1, strip 3 is empty). The client's 1024 width is
+  hard-coded in the hue UV math and the shaders, not read from the texture.
 - Hue 0x4001 (shadow; the server sets it for a dead bonded pet through 0xBF
   sub-command 0x19): every pixel is black. Its alpha comes from the inverse
   luminance `inv = 255 - trunc(b0 * .34 + b2 * .07 + b1 * .59)` and the

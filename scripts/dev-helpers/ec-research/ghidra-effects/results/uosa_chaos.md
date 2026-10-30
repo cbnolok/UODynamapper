@@ -850,7 +850,7 @@ Implementation notes:
 - Group quads per sequence with that sequence's blend pair. Use depth test on, depth write off, unlit
   vertex colour × texture, and two-sided rendering for AXIAL.
 - MESH particles need the `.nif` scene with its controllers evaluated at the particle age. That belongs to
-  the NIF renderer (`lib/gamebryo-nif`), with the particle giving translate, uniform scale and rotation.
+  the NIF renderer (`lib/ec-effects/gamebryo-nif`), with the particle giving translate, uniform scale and rotation.
 - For tests, `verify_chaos.py` replicates the lexer, classifier and compiler and reports per-file results.
   A Rust parser can be compared against its output. On the 61 shipped scripts it compiles all 135
   sequences. It finds 91 `at Random(...)` event times (shared per sequence), 9 emitrate ranges (only max

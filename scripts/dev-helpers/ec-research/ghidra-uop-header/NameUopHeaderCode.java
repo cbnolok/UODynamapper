@@ -1,5 +1,6 @@
 // Name the UOSA.exe code that reads UOP (MYP) package headers, entry tables, data block headers
-// and data_block_hash, and the two users of data_block_hash (string table and audio caches).
+// and data_block_hash, and the two users of data_block_hash (string table and audio caches); and the
+// signature check of the EC patcher (uopatch.exe) and the key set-up of the Classic patcher (UO.exe).
 // Address-based, so it refuses any other build; every address is verified with stated structural
 // checks first and a failed check is reported, not named. Findings: results/uosa_uop_header.md.
 // @category ECResearch
@@ -31,6 +32,11 @@ public class NameUopHeaderCode extends GhidraScript {
     private static final String ENCODED_SPACE = "%20";
     // SHA-256 of the UOSA.exe these addresses were traced in (same build as ghidra-source-names).
     private static final String TESTED_SHA256 = "5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50";
+    // SHA-256 of the EC patcher uopatch.exe (EAMythic libpatchclient; uopatch.bin is identical) and of the Classic
+    // patcher UO.exe the patcher entries were traced in.
+    private static final String UOPATCH_SHA256 = "7c4ec66d9c53a8e45e35b4eba8fcfd5a7ce96dbf4f3baaea4ae32823fcf44dad";
+    private static final String CLASSIC_PATCHER_SHA256 = "422c8fbbbe2105c4486bea88c9a6dea27a0e07d233ebd96f3f659143f3d83417";
+    private static final String PATCHER = "UOPatch";
     private static final String TAG = "UO_UOP";
     private static final String UOP = "UOP";
     private static final String GLOBAL = "";
@@ -49,6 +55,13 @@ public class NameUopHeaderCode extends GhidraScript {
     private static final long PACKAGE_MISC = 0xfd23ec43L;
     private static final String STRING_TABLE_CACHE_ERROR = "Called BuildCache() after loading!\n";
     private static final String AUDIO_FILE_LIST = "audio/audio_filelist.csv";
+    private static final String STRING_TABLE_CACHE_FORMAT = "%s/%s.cache";
+    // Size of the audio configuration cache header ({u32 version 2, u8 complete, 6 file stamps}).
+    private static final long AUDIO_CACHE_HEADER_SIZE = 0x38;
+    // libtomcrypt public key packet size of the patcher keys, and their key ids (EC 20, Classic 21).
+    private static final long PATCHER_KEY_BLOB_SIZE = 0x91;
+    private static final long EC_KEY_ID = 20;
+    private static final long CLASSIC_KEY_ID = 21;
 
     // Checks: "calls:ADDR" (the function references ADDR: call, pointer or jump),
     // "calledby:ADDR" (the function at ADDR references this one), "slot:CLASS:N" (vftable slot N
@@ -126,12 +139,118 @@ public class NameUopHeaderCode extends GhidraScript {
             "{data_block_hash, exists} of a path: FileExists then GetFileDataBlockHash",
             "calls:00989fdb", "calls:0098a1f5"),
         new Entry("0088e3ca", GLOBAL, "AudioConfig_CollectFileStamps",
-            "file stamps (data_block_hash) of audio_filelist(.csv, _vo.csv) and the sounds/groups/queues/loops CSVs, passed by the caller 0x0088db6a to the audio cache loader 0x0088e519, which reloads the cache only when its header matches (probable)",
+            "writes the 0x38-byte audio cache header: u32 version 2, u8 complete 1, then {data_block_hash, exists} of audio/audio_filelist.csv, audio/audio_filelist_vo.csv and dir/prefix + sounds/groups/queues/loops.csv; its caller AudioConfig_Init 0x0088db6a has no reference",
             "string:" + AUDIO_FILE_LIST, "calls:0088e39d"),
         new Entry("009a310c", GLOBAL, "StringTable_BuildCache",
             "keeps the string table cache when its stored data_block_hash of the table and fallback table match GetFileDataBlockHash, else rebuilds it",
             "string:" + STRING_TABLE_CACHE_ERROR, "calls:0098a1f5"),
+        new Entry("009a2f50", GLOBAL, "StringTable_Load",
+            "loads a string table: StringTable_BuildCache, then the cache",
+            "calls:009a310c"),
+        new Entry("009a2e69", GLOBAL, "StringTable_ctor",
+            "(table path, fallback table path, cache path), each with the language substituted",
+            "calledby:00930727"),
+        new Entry("00930727", GLOBAL, "UIStringTable_ctor",
+            "stores UIStringTable::vftable; substitutes <LANG> in the table path (language +0xc74), the fallback path (fallback language +0xcb4) and the cache path, then StringTable_ctor",
+            "vftable:UIStringTable", "calls:009308d4", "calls:009a2e69"),
+        new Entry("009308d4", GLOBAL, "UIStringTable_ReplaceLangToken",
+            "replaces <LANG> in a path with a language name",
+            "calledby:00930727"),
+        new Entry("008d72a5", GLOBAL, "UIStringTables_Create",
+            "(name, dir, file, cache dir): rejects a name already registered (list +0x44), table = \"dir/file\", cache = \"cacheDir/name.cache\", UIStringTable_ctor and StringTable_Load",
+            "string:" + STRING_TABLE_CACHE_FORMAT, "calls:00930727", "calls:009a2f50"),
+        new Entry("008d754e", GLOBAL, "UIStringTables_LoadStringTable",
+            "Lua LoadStringTable(name, dir, file, cacheDir, errTarget) body: UIStringTables_Create; no shipped Lua or XML calls LoadStringTable",
+            "calls:008d72a5", "calledby:008d9781"),
+        new Entry("008d46eb", GLOBAL, "UIStringTables_ReloadAll",
+            "interface reload: rebuilds every registered string table (UIStringTable_ctor, StringTable_Load)",
+            "calls:00930727", "calls:009a2f50"),
+        new Entry("0088db6a", GLOBAL, "AudioConfig_Init",
+            "(dir, prefix, cache path): stamps the audio CSVs, loads the cache when its header matches, else parses the CSVs and saves the cache; no code or data reference (Mythic engine code unused by UO)",
+            "calls:0088e3ca", "calls:0088e519", "calls:0088e87e"),
+        new Entry("0088e519", GLOBAL, "AudioConfig_LoadCache",
+            "UOP::OpenFilePtr(cache path, 1), reads the 0x38-byte header; on a match (AudioConfig_CacheHeaderDiffers 0) reads the 0x40-byte counts and the five record tables and strings",
+            "calls:0088d2eb", "calledby:0088db6a"),
+        new Entry("0088d2eb", GLOBAL, "AudioConfig_CacheHeaderDiffers",
+            "compares the u32 version, the u8 complete flag and the six {u32 data_block_hash, u8 exists} stamps of two cache headers; 1 = rebuild",
+            "calls:0088d2d6", "calledby:0088e519"),
+        new Entry("0088d2d6", GLOBAL, "FileStampDiffers",
+            "{u32 hash, u8 exists}: exists flags differ, or the hashes differ",
+            "calledby:0088d2eb"),
+        new Entry("0088e87e", GLOBAL, "AudioConfig_SaveCache",
+            "writes the 0x38-byte header with the complete flag 0, the 0x40-byte counts, the tables and strings, then rewrites the header with the flag 1",
+            "const:" + Long.toHexString(AUDIO_CACHE_HEADER_SIZE), "calledby:0088db6a"),
     };
+
+    // uopatch.exe: libtomcrypt 0.9x RSA + SHA-256 signature check of pack entries and whole files.
+    private static final Entry[] UOPATCH_ENTRIES = {
+        new Entry("0043e3e0", PATCHER, "RegisterKey20",
+            "builds the 0x91-byte libtomcrypt public key packet of key id 20 (N 1025 bits, e 65537) on the stack, imports it and adds it to the key store",
+            "const:" + Long.toHexString(PATCHER_KEY_BLOB_SIZE), "const:" + Long.toHexString(EC_KEY_ID), "calls:00458dc0", "calls:00407930"),
+        new Entry("00458dc0", PATCHER, "ImportPublicKey",
+            "rsa_import of a key packet into a new key",
+            "calls:00459250"),
+        new Entry("00459250", PATCHER, "rsa_import",
+            "libtomcrypt 0.9x rsa_import: packet header check, then N, e (and private parts) by mp_read_unsigned_bin",
+            "calls:0045ec80", "calls:0045b240"),
+        new Entry("00459050", PATCHER, "rsa_exptmod",
+            "libtomcrypt 0.9x rsa_exptmod; the patcher uses the public exponent only",
+            "calls:0045b240", "calledby:00458e00"),
+        new Entry("00458e00", PATCHER, "rsa_public_decrypt_chunks",
+            "for each [u16 BE length][bytes] chunk: rsa_exptmod, then the depad dispatch (mode 2 = rsa_signdepad)",
+            "calls:00459050", "calls:004599a0"),
+        new Entry("00458fe0", PATCHER, "rsa_verify_decrypt",
+            "public wrapper of rsa_public_decrypt_chunks in mode 2 (signature depad)",
+            "calls:00458e00"),
+        new Entry("00459690", PATCHER, "rsa_signdepad",
+            "libtomcrypt 0.9x rsa_signdepad: takes the middle third of the 3n-byte block (the 0xFF pads are not checked)",
+            "calledby:004599a0"),
+        new Entry("0045b240", PATCHER, "mp_read_unsigned_bin",
+            "big-endian bytes to a bignum",
+            "calledby:00459050"),
+        new Entry("00458b40", PATCHER, "sha256_memory",
+            "one-shot SHA-256 (init, update, final)",
+            "calls:00458900", "calls:004589d0"),
+        new Entry("0042aba0", PATCHER, "VerifySignature",
+            "(data, signature record): SHA-256 of the data, key lookup by id, s^e mod N depadded to 32 bytes, compared with the digest",
+            "calls:00458b40", "calls:0043e770", "calls:00458fe0"),
+        new Entry("0042acf0", PATCHER, "VerifyFileSignature",
+            "maps a whole file and calls VerifySignature; logs \"Signature failed for file [%hs]\"",
+            "calls:0042aba0"),
+        new Entry("0043e770", PATCHER, "GetKeyStore",
+            "the key store (global) the key ids are registered in",
+            "calledby:0042aba0"),
+        new Entry("00407930", PATCHER, "KeyStore_Add",
+            "adds a key under its id",
+            "calledby:0043e3e0"),
+        new Entry("00438d20", PATCHER, "PatchProduct",
+            "sets the check mode (+0xe0): 2 full file check (client.setting.fullfilecheck, a product file mismatch in quick mode, or a size threshold), 1 quick (product up to date and options unchanged, unless client.setting.skipquickcheck), else 0 normal",
+            "calledby:00439ff0"),
+        new Entry("00437c00", PATCHER, "DeterminePatchSet",
+            "per stage: ExamineUnpackedFiles and ExamineLocalPacks, then the download set",
+            "calls:0042e9e0", "calls:00437380"),
+        new Entry("00437380", PATCHER, "ExamineLocalPacks",
+            "ExaminePack for each pack of the manifest",
+            "calls:00436350", "calledby:00437c00"),
+        new Entry("00436350", PATCHER, "ExaminePack",
+            "quick mode: entry count only; otherwise merge-join of manifest and local entries: missing -> download, extra -> deleted, length or compression -> download, ml or mc (data_block_hash) -> state 2; full mode: VerifySignature of every entry (\"File [%08x-%08x] is corrupt.\" -> download)",
+            "calls:0042aba0", "calledby:00437380"),
+        new Entry("0042e9e0", PATCHER, "ExamineUnpackedFiles",
+            "whole files: size against ul; full mode, verifyunpacked or .exe/.dll -> VerifyFileSignature; else mtime against t (3600 s tolerance), then VerifyFileSignature when it differs",
+            "calls:0042acf0", "calledby:00437c00"),
+    };
+
+    // UO.exe (Classic patcher): same libpatchclient, key id 21.
+    private static final Entry[] CLASSIC_PATCHER_ENTRIES = {
+        new Entry("0043e240", PATCHER, "RegisterKey21",
+            "builds the 0x91-byte libtomcrypt public key packet of key id 21 (N 1026 bits, e 65537) on the stack, imports it and adds it to the key store",
+            "const:" + Long.toHexString(PATCHER_KEY_BLOB_SIZE), "const:" + Long.toHexString(CLASSIC_KEY_ID), "calls:00407930"),
+    };
+
+    private static final Map<String, Entry[]> TARGETS = Map.of(
+        TESTED_SHA256, ENTRIES,
+        UOPATCH_SHA256, UOPATCH_ENTRIES,
+        CLASSIC_PATCHER_SHA256, CLASSIC_PATCHER_ENTRIES);
 
     private final Map<String, Integer> changes = new LinkedHashMap<>();
 
@@ -142,9 +261,11 @@ public class NameUopHeaderCode extends GhidraScript {
             throw new IllegalArgumentException("Expected OUTPUT_FILE [" + APPLY_FLAG + "]");
         }
         String sha = currentProgram.getExecutableSHA256();
-        if (!TESTED_SHA256.equalsIgnoreCase(sha)) {
+        Entry[] entries = sha == null ? null : TARGETS.get(sha.toLowerCase());
+        if (entries == null) {
             throw new IllegalStateException("NameUopHeaderCode names fixed addresses of the tested UOSA.exe (SHA-256 "
-                + TESTED_SHA256 + "); " + currentProgram.getName() + " has SHA-256 " + sha + ". Nothing done.");
+                + TESTED_SHA256 + "), uopatch.exe (" + UOPATCH_SHA256 + ") and Classic UO.exe (" + CLASSIC_PATCHER_SHA256
+                + "); " + currentProgram.getName() + " has SHA-256 " + sha + ". Nothing done.");
         }
         boolean apply = args.length == 2;
         String outputPath = args[0].replace(ENCODED_SPACE, " ");
@@ -152,7 +273,7 @@ public class NameUopHeaderCode extends GhidraScript {
         try (PrintWriter output = new PrintWriter(Files.newBufferedWriter(Path.of(outputPath),
                 StandardOpenOption.CREATE_NEW))) {
             List<String> rows = new ArrayList<>();
-            for (Entry entry : ENTRIES) {
+            for (Entry entry : entries) {
                 rows.add(process(entry, apply));
             }
             output.println("# UOP header names");
@@ -221,12 +342,20 @@ public class NameUopHeaderCode extends GhidraScript {
             result.add(apply ? "tagged" : "would tag");
         }
         String plate = getPlateComment(address);
+        String comment = COMMENT_PREFIX + TAG + ": " + entry.evidence();
         if (plate == null || plate.isBlank()) {
             if (apply) {
-                setPlateComment(address, COMMENT_PREFIX + TAG + ": " + entry.evidence());
+                setPlateComment(address, comment);
                 count("plate comments set");
             }
             result.add(apply ? "comment set" : "would set comment");
+        } else if (plate.startsWith(COMMENT_PREFIX) && !plate.equals(comment)) {
+            // Our own comment from an earlier run with older evidence.
+            if (apply) {
+                setPlateComment(address, comment);
+                count("plate comments refreshed");
+            }
+            result.add(apply ? "comment refreshed" : "would refresh comment");
         } else if (!plate.contains(entry.evidence())) {
             result.add("plate comment from another source left alone");
         }

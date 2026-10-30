@@ -198,6 +198,22 @@ public class NameEffectCode extends GhidraScript {
     private static final String ALPHA_ACCUMULATOR = "NiAlphaAccumulator";
     private static final String SHADER_OVERRIDE_SORTER = "UOShaderOverrideSorter";
     private static final int SORTER_REGISTER_OBJECT_ARRAY = 0x50;
+
+    // Texture filtering (textureFiltering; results "Texture filtering and anisotropy").
+    private static final String DEVICE_CAPS_ERROR = "Creation failed: Device does not support single-pass multi-texture";
+    // Gamebryo 2.3 FilterMode count (NEAREST .. BILERP_MIPNEAREST; no ANISOTROPIC) and ClampMode count.
+    private static final int FILTER_MODES = 6;
+    private static final int CLAMP_MODES = 4;
+    // Words per NiDX9Renderer filter mapping entry (mag, min, mip) and address mapping entry (u, v).
+    private static final int FILTER_MAPPING_WORDS = 3;
+    private static final int ADDRESS_MAPPING_WORDS = 2;
+    private static final String FILTER_MAPPING_LABEL = "NiDX9Renderer_ms_akD3DFilterMapping";
+    private static final String ADDRESS_MAPPING_LABEL = "NiDX9Renderer_ms_akD3DAddressMapping";
+    private static final String INITIAL_SAMPLER_STATES_LABEL = "NiDX9RenderState_ms_akInitialSamplerStateSettings";
+    // NiDX9RenderState::ms_akInitialSamplerStateSettings: {D3DSAMPLERSTATETYPE, value} pairs, ADDRESSU .. DMAPOFFSET
+    // (value 10 = D3DSAMP_MAXANISOTROPY, initial 1), then the {-1, -1} terminator.
+    private static final long[] INITIAL_SAMPLER_STATES = {
+        1, 1, 2, 1, 3, 1, 4, 0, 5, 1, 6, 1, 7, 0, 8, 0, 9, 0, 10, 1, 11, 0, 12, 0, 13, 256, DWORD_MASK, DWORD_MASK};
     private static final String STANDARD_MATERIAL = "NiStandardMaterial";
     private static final String RENDERED_TEXTURE = "NiRenderedTexture";
     private static final String BUILD_HUE_QUAD = HUED_NIF + "::BuildHueQuad";
@@ -800,6 +816,7 @@ public class NameEffectCode extends GhidraScript {
         // 8. Chaos particle engine.
         chaosEngine();
         drawOrderAndMaterials(apply);
+        textureFiltering(apply);
 
         defineTypes(apply);
 
@@ -1751,6 +1768,80 @@ public class NameEffectCode extends GhidraScript {
                 + " LoadBinary / CreateObject; 0 keeps the NiImageConverter path", apply);
         } else {
             anomalies.add(LOAD_DIRECT_HINT_LABEL + ": byte reads " + hints);
+        }
+    }
+
+    // Round 8: the renderer's filter and clamp tables, the stage setters that read them and the initial sampler states
+    // (no FILTER_ANISOTROPIC entry; D3DSAMP_MAXANISOTROPY stays 1).
+    private void textureFiltering(boolean apply) throws Exception {
+        Function caps = single(stringUsers(DEVICE_CAPS_ERROR), "user of \"" + DEVICE_CAPS_ERROR + "\"");
+        propose(caps, DX9_RENDERER + SCOPE + "InitializeDeviceCaps", "GetDeviceCaps into the renderer (+0xa8); needs"
+            + " two or more blend stages and simultaneous textures; fills the filter mapping (six FilterModes: no"
+            + " FILTER_ANISOTROPIC entry) and the address mapping; reads TextureCaps but neither the anisotropic filter"
+            + " caps nor MaxAnisotropy", false);
+        if (caps == null) {
+            return;
+        }
+        // The two tables are one run of written dwords: six {mag, min, mip} entries, then four {u, v} entries.
+        TreeMap<Long, Boolean> written = new TreeMap<>();
+        for (Instruction i : listing.getInstructions(caps.getBody(), true)) {
+            Long target = i.getMnemonicString().equals("MOV") ? absoluteMemoryOperand(i, 0) : null;
+            if (target != null) {
+                written.put(target, true);
+            }
+        }
+        int runWords = FILTER_MODES * FILTER_MAPPING_WORDS + CLAMP_MODES * ADDRESS_MAPPING_WORDS;
+        List<Long> starts = new ArrayList<>();
+        for (long start : written.keySet()) {
+            if (written.containsKey(start - POINTER_SIZE)) {
+                continue;
+            }
+            int length = 0;
+            while (written.containsKey(start + (long) length * POINTER_SIZE)) {
+                length++;
+            }
+            if (length == runWords) {
+                starts.add(start);
+            }
+        }
+        if (starts.size() != 1) {
+            anomalies.add("filter/address mapping: runs of " + runWords + " written dwords in " + entry(caps) + ": " + starts);
+            return;
+        }
+        long filterMap = starts.get(0);
+        long addressMap = filterMap + (long) FILTER_MODES * FILTER_MAPPING_WORDS * POINTER_SIZE;
+        label(filterMap, FILTER_MAPPING_LABEL, "NiDX9Renderer::ms_akD3DFilterMapping, {mag, min, mip} per FilterMode:"
+            + " NEAREST (POINT, POINT, NONE), BILERP (LINEAR, LINEAR, NONE), TRILERP (LINEAR x3), NEAREST_MIPNEAREST"
+            + " (POINT x3), NEAREST_MIPLERP (POINT, POINT, LINEAR), BILERP_MIPNEAREST (LINEAR, LINEAR, POINT); six"
+            + " entries, no FILTER_ANISOTROPIC", apply);
+        label(addressMap, ADDRESS_MAPPING_LABEL, "NiDX9Renderer::ms_akD3DAddressMapping, {u, v} per ClampMode: CLAMP/CLAMP,"
+            + " CLAMP/WRAP, WRAP/CLAMP, WRAP/WRAP", apply);
+        List<Function> filterUsers = referencingFunctions(filterMap);
+        filterUsers.retainAll(referencingFunctions(filterMap + (long) (FILTER_MAPPING_WORDS - 1) * POINTER_SIZE));
+        // The caps set-up writes the tables; the setters only read them.
+        filterUsers.remove(caps);
+        propose(single(filterUsers, "function reading the filter mapping's mag and mip words"), "NiD3DTextureStage"
+            + SCOPE + "SetFilterMode", "sets MAGFILTER, MINFILTER and MIPFILTER of the stage from"
+            + " ms_akD3DFilterMapping[mode]; no MAXANISOTROPY", false);
+        List<Function> clampUsers = referencingFunctions(addressMap);
+        clampUsers.retainAll(referencingFunctions(addressMap + POINTER_SIZE));
+        clampUsers.remove(caps);
+        propose(single(clampUsers, "function reading the address mapping's u and v words"), "NiD3DTextureStage"
+            + SCOPE + "SetClampMode", "sets ADDRESSU and ADDRESSV of the stage from ms_akD3DAddressMapping[mode]", false);
+
+        byte[] pattern = new byte[INITIAL_SAMPLER_STATES.length * POINTER_SIZE];
+        for (int i = 0; i < INITIAL_SAMPLER_STATES.length; i++) {
+            for (int b = 0; b < POINTER_SIZE; b++) {
+                pattern[i * POINTER_SIZE + b] = (byte) (INITIAL_SAMPLER_STATES[i] >> (b * BITS_PER_BYTE) & BYTE_MASK);
+            }
+        }
+        List<Long> initial = findBytes(pattern, true);
+        if (initial.size() == 1) {
+            label(initial.get(0), INITIAL_SAMPLER_STATES_LABEL, "NiDX9RenderState::ms_akInitialSamplerStateSettings,"
+                + " {state, value} pairs applied to every stage at start-up; D3DSAMP_MAXANISOTROPY (10) = 1, and no code"
+                + " sets it later", apply);
+        } else {
+            anomalies.add(INITIAL_SAMPLER_STATES_LABEL + ": candidates " + initial);
         }
     }
 
