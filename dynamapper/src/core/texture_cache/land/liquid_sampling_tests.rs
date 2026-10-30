@@ -53,7 +53,28 @@ import package::shaders::world::land::land_bindings::TileUniform;
 fn bank_fixture_tile(payload: u32, height: f32, flags: u32, size: u32) -> TileUniform {
     return TileUniform(height, size, 0u, 0u, vec2<u32>(0u), vec2<u32>(2u), 0u, flags, payload, 1.0);
 }
+fn cc_fixture_tile(layer: u32, wet: u32, flags: u32, size: u32) -> TileUniform {
+    var tile = bank_fixture_tile(layer, 0.0, flags, size);
+    tile.texture_layer = layer;
+    tile.is_wet = wet;
+    return tile;
+}
 fn atlas_read_meta(x: i32, y: i32) -> TileUniform {
+    // Four distinct dry materials meet at one corner. Other fixtures isolate
+    // shoreline exclusion, missing sources and raw-ID/atlas-slot aliases.
+    if (x >= 40 && x <= 41 && y >= 40 && y <= 41) {
+        return cc_fixture_tile(u32(1 + x - 40 + (y - 40) * 2), 0u, 0u, 4u);
+    }
+    if (y == 50) {
+        if (x == 50 || x == 60 || x == 70 || x == 80 || x == 90 || x == 100 || x == 110) { return cc_fixture_tile(1u, 0u, 0u, 4u); }
+        if (x == 51) { return cc_fixture_tile(2u, 1u, 0u, 4u); }
+        if (x == 61) { return cc_fixture_tile(2u, 0u, 4u, 4u); }
+        if (x == 71) { var tile = cc_fixture_tile(2u, 0u, 0u, 4u); tile.texture_extent = vec2<u32>(0u); return tile; }
+        if (x == 81) { return cc_fixture_tile(2u, 0u, 0u, 2u); }
+        if (x == 91) { var tile = cc_fixture_tile(1u, 0u, 0u, 4u); tile.texture_payload = 99u; return tile; }
+        if (x == 101) { var tile = cc_fixture_tile(2u, 0u, 0u, 4u); tile.texture_payload = 1u; return tile; }
+        if (x == 111) { return cc_fixture_tile(5u, 0u, 0u, 4u); }
+    }
     if (x == 10 && y == 10) { return bank_fixture_tile(10u, 3.0, 4u, 2u); }
     if (x == 10 && y == 11) { return bank_fixture_tile(11u, 3.0, 4u, 2u); }
     if (x == 11 && y == 10) { return bank_fixture_tile(2u, 4.0, 0u, 2u); }
@@ -76,15 +97,34 @@ fn ec_coverage_params(payload: u32) -> vec4<u32> {
             include_str!("../../../../assets/shaders/world/art/surface_blend.wesl"),
             "shaders/world/art/surface_blend.wesl",
         ));
+        // Constant colors isolate production CC interpolation/eligibility.
+        // Native renderer captures separately exercise the real atlas sampler.
+        shaders.set_shader(shader_id(12), Shader::from_wesl(r#"
+import package::shaders::world::land::land_bindings::TileUniform;
+struct LandGradients { dx: vec2<f32>, dy: vec2<f32>, }
+fn sample_tile_albedo_grad(uv: vec2<f32>, tile: TileUniform, dx: vec2<f32>, dy: vec2<f32>) -> vec3<f32> {
+    if (tile.texture_layer == 1u) { return vec3<f32>(1.0, 0.0, 0.0); }
+    if (tile.texture_layer == 2u) { return vec3<f32>(0.0, 1.0, 0.0); }
+    if (tile.texture_layer == 3u) { return vec3<f32>(0.0, 0.0, 1.0); }
+    if (tile.texture_layer == 5u) { return vec3<f32>(uv, 0.0); }
+    return vec3<f32>(1.0, 1.0, 0.0);
+}
+"#, "shaders/world/land/sampling.wesl"));
+        shaders.set_shader(shader_id(13), Shader::from_wesl(
+            include_str!("../../../../assets/shaders/world/land/cc_transitions.wesl"),
+            "shaders/world/land/cc_transitions.wesl",
+        ));
         shaders.set_shader(shader_id(0), Shader::from_wesl(r#"
 import package::shaders::world::ec_liquid::{EcLiquidSlot, ec_liquid_sample, ec_liquid_reflection_uv, ec_liquid_original_view};
 import package::shaders::world::ec_item_surface::apply_ec_item_surface;
 import package::shaders::world::ec_item_liquid::apply_ec_item_liquid;
 import package::shaders::world::texture_data::texture_color_rgb;
 import package::shaders::world::ec_item_quad::{ec_item_quad_screen, ec_item_quad_world};
-import package::shaders::world::land::atlas::bank_fixture_tile;
+import package::shaders::world::land::atlas::{bank_fixture_tile, atlas_read_meta};
 import package::shaders::world::land::liquid_bank::{ec_liquid_bank, ec_bank_vertex, EcLiquidBank};
 import package::shaders::world::art::surface_blend::static_surface_coverage;
+import package::shaders::world::land::sampling::{LandGradients, sample_tile_albedo_grad};
+import package::shaders::world::land::cc_transitions::blend_cc_terrain_transitions;
 @group(0) @binding(0) var atlas: texture_2d_array<f32>;
 @group(0) @binding(1) var<storage, read_write> samples: array<vec4<f32>>;
 @group(0) @binding(2) var linear_sampler: sampler;
@@ -95,6 +135,12 @@ fn bank_result(bank: EcLiquidBank) -> vec4<f32> {
 }
 fn color_sample(value: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(texture_color_rgb(value.rgb), value.a);
+}
+fn cc_color(cell: vec2<i32>, uv: vec2<f32>) -> vec4<f32> {
+    let tile = atlas_read_meta(cell.x, cell.y);
+    let gradients = LandGradients(vec2<f32>(0.0), vec2<f32>(0.0));
+    let base = sample_tile_albedo_grad(uv, tile, gradients.dx, gradients.dy);
+    return vec4<f32>(blend_cc_terrain_transitions(base, tile, cell, uv, gradients), 1.0);
 }
 @compute @workgroup_size(1)
 fn main() {
@@ -207,6 +253,26 @@ fn main() {
     samples[78] = vec4<f32>(static_surface_coverage(vec2<f32>(1.0, 0.5), 247u), 0.0, 0.0, 0.0);
     samples[79] = vec4<f32>(static_surface_coverage(vec2<f32>(0.0, 0.5), 239u), 0.0, 0.0, 0.0);
     samples[80] = vec4<f32>(static_surface_coverage(vec2<f32>(0.5), 254u), 0.0, 0.0, 0.0);
+    samples[81] = cc_color(vec2<i32>(40, 40), vec2<f32>(0.5));
+    samples[82] = cc_color(vec2<i32>(40, 40), vec2<f32>(1.0, 0.5));
+    samples[83] = cc_color(vec2<i32>(41, 40), vec2<f32>(0.0, 0.5));
+    samples[84] = cc_color(vec2<i32>(40, 40), vec2<f32>(1.0));
+    samples[85] = cc_color(vec2<i32>(41, 41), vec2<f32>(0.0));
+    samples[86] = cc_color(vec2<i32>(40, 40), vec2<f32>(0.75, 0.5));
+    samples[87] = cc_color(vec2<i32>(50, 50), vec2<f32>(1.0, 0.5));
+    samples[88] = cc_color(vec2<i32>(60, 50), vec2<f32>(1.0, 0.5));
+    samples[89] = cc_color(vec2<i32>(70, 50), vec2<f32>(1.0, 0.5));
+    samples[90] = cc_color(vec2<i32>(80, 50), vec2<f32>(1.0, 0.5));
+    samples[91] = cc_color(vec2<i32>(90, 50), vec2<f32>(1.0, 0.5));
+    samples[92] = cc_color(vec2<i32>(100, 50), vec2<f32>(1.0, 0.5));
+    samples[93] = cc_color(vec2<i32>(51, 50), vec2<f32>(0.0, 0.5));
+    samples[94] = cc_color(vec2<i32>(81, 50), vec2<f32>(0.0, 0.5));
+    samples[95] = cc_color(vec2<i32>(40, 40), vec2<f32>(0.0, 0.5));
+    samples[96] = cc_color(vec2<i32>(41, 40), vec2<f32>(0.0, 1.0));
+    samples[97] = cc_color(vec2<i32>(40, 41), vec2<f32>(1.0, 0.0));
+    // UV-coded artwork catches sampling the neighbor's opposite edge.
+    samples[98] = cc_color(vec2<i32>(110, 50), vec2<f32>(1.0, 0.5));
+    samples[99] = cc_color(vec2<i32>(111, 50), vec2<f32>(0.0, 0.5));
 }
 "#, "shaders/test/liquid_sampling_gpu.wesl"));
         let wgsl = shaders.get(0, shader_id(0), &[]).unwrap();
@@ -265,7 +331,7 @@ fn main() {
             offset: 0, bytes_per_row: Some(6 * 16), rows_per_image: Some(1),
         }, item_lookup.size());
         let item_view = item_lookup.create_view(&wgpu::TextureViewDescriptor::default());
-        let result_size = 81 * 16;
+        let result_size = 100 * 16;
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: None, size: result_size, mapped_at_creation: false,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
@@ -365,7 +431,15 @@ fn main() {
             [0.0, 11.0, 10.0, 0.0], [1.0, 11.0, 10.0, 0.0], [0.0, 11.0, 10.0, 0.0],
             [1.0, 0.0, 0.0, 0.0], [0.0; 4], [0.5, 0.0, 0.0, 0.0],
             [0.0; 4], [0.75, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]];
+            [1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 1.0], [0.5, 0.5, 0.0, 1.0], [0.5, 0.5, 0.0, 1.0],
+            [0.5, 0.5, 0.25, 1.0], [0.5, 0.5, 0.25, 1.0], [0.84375, 0.15625, 0.0, 1.0],
+            [1.0, 0.0, 0.0, 1.0], [1.0, 0.0, 0.0, 1.0], [1.0, 0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0, 1.0], [1.0, 0.0, 0.0, 1.0], [0.5, 0.5, 0.0, 1.0],
+            [0.0, 1.0, 0.0, 1.0], [0.0, 1.0, 0.0, 1.0], [1.0, 0.0, 0.0, 1.0],
+            [0.5, 0.5, 0.25, 1.0], [0.5, 0.5, 0.25, 1.0],
+            [0.5, 0.25, 0.0, 1.0], [0.5, 0.25, 0.0, 1.0]];
+        assert_eq!(actual.len(), expected.len());
         for (sample, (actual, expected)) in actual.iter().zip(expected).enumerate() {
             for channel in 0..4 {
                 assert!((actual[channel] - expected[channel]).abs() < 0.001,

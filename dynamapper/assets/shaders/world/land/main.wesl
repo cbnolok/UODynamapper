@@ -43,6 +43,7 @@ import package::shaders::world::land::sampling::{
   ec_liquid_perturbed_base_uv,
   sample_ec_material_normal_world,
   sample_tile_albedo,
+  sample_tile_albedo_grad,
   sample_ec_material_albedo,
   sample_ec_material_albedo_at_world,
   apply_sharpening, blurred_albedo,
@@ -64,6 +65,7 @@ import package::shaders::world::ec_liquid_camera::ec_liquid_camera_reflection_uv
 import package::shaders::world::texture_data::texture_color_rgb;
 import package::shaders::world::land::coverage::{EcTerrainStack, EcTerrainCache, EcTerrainLayer, ec_coverage_params, ec_terrain_cache, ec_cache_layer, ec_cache_grime_mask, ec_terrain_stack_uncached, ec_layer_tile};
 import package::shaders::world::land::liquid_bank::{ec_liquid_bank, ec_bank_vertex};
+import package::shaders::world::land::cc_transitions::{blend_cc_terrain_transitions, cc_transition_dry_material};
 
 import package::shaders::world::land::transitions::{
   ec_transition_neighbor_weight, ec_transition_diagonal_weight,
@@ -525,6 +527,8 @@ fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool, world
   var sample_uv = uv_in_tile;
   var uv_gradients: LandGradients;
   if (tile.texture_size == 2u) { uv_gradients = ec_tile_gradients(world_gradients, tile); }
+  let cc_transitions = cc_transition_dry_material(tile) && (effects.terrain_transition_flags & 1u) != 0u;
+  if (cc_transitions) { uv_gradients = world_gradients; }
   if (tile.texture_size == 2u) {
     // Compute world-space tiling UV.  We use the (possibly water-distorted)
     // uv_in_tile offset so water animation stays coherent with EC textures too.
@@ -569,7 +573,7 @@ fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool, world
       enable_water == 1u, effects.enable_linear_filtering == 1u).rgb;
     let energy = ambient_strength + diffuse_strength * water_flat_wrapped_lambert(scene.light_direction);
     base_albedo = texture_color_rgb(clamp(base_albedo * energy, vec3<f32>(0.0), vec3<f32>(1.0)));
-  } else if (use_cheap_path) {
+  } else if (use_cheap_path && !cc_transitions) {
     // Quantize UV to a coarser grid and use direct nearest sample.
     // For EC tiles sample_uv is already world-space; we quantize in the same space.
     // We still run full lighting/fog/shadows below to keep visual consistency.
@@ -585,7 +589,7 @@ fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool, world
     if (tile.texture_size == 2u) {
       let world_xz = vec2<f32>(floor(in.world_position.x), floor(in.world_position.z)) + uv_in_tile;
       base_albedo = sample_ec_material_albedo(world_xz, sample_uv, tile, world_gradients);
-      if (!ordered_coverage) {
+      if (!ordered_coverage && (effects.terrain_transition_flags & 2u) == 0u) {
         base_albedo = blend_ec_terrain_transitions(
           base_albedo,
           tile,
@@ -595,6 +599,9 @@ fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool, world
           world_gradients,
         );
       }
+    } else if (cc_transitions) {
+      base_albedo = sample_tile_albedo_grad(sample_uv, tile, uv_gradients.dx, uv_gradients.dy);
+      base_albedo = blend_cc_terrain_transitions(base_albedo, tile, world_tile, uv_in_tile, uv_gradients);
     } else {
       base_albedo = sample_tile_albedo(sample_uv, tile, uv_gradients);
     }
@@ -925,7 +932,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
   let tile = atlas_read_meta(cell.x, cell.y);
   var hdr_rgb: vec3<f32>;
   var composed = false;
-  if (tile.texture_size == 2u && ec_coverage_params(tile.texture_payload).w != 0u) {
+  let ec_transitions = (effects.terrain_transition_flags & 2u) == 0u;
+  if (ec_transitions && tile.texture_size == 2u && ec_coverage_params(tile.texture_payload).w != 0u) {
     let cache = ec_terrain_cache(in.world_position.xz);
     if (cache.count > 0u) {
       hdr_rgb = compose_ec_terrain(in, tile, world_gradients, surface_normal, cache, EcTerrainStack(), true);
@@ -938,6 +946,18 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
       }
     }
   }
-  if (!composed) { hdr_rgb = shade_land(in, tile, false, world_gradients, surface_normal, 256u); }
+  if (!composed) {
+    hdr_rgb = shade_land(in, tile, false, world_gradients, surface_normal, 256u);
+    if (!ec_transitions && tile.texture_size == 2u && (tile.is_wet == 1u || (tile.terrain_flags & 4u) != 0u)) {
+      // Disabling neighbor smoothing must not put level lava back onto raised
+      // mountain quads. Keep the height/shore guard, using one dry bank material.
+      let bank = ec_liquid_bank(in.world_position.xyz, tile, ec_coverage_params(tile.texture_payload).x, 1.0);
+      if (bank.weight > 0.0) {
+        let bank_tile = atlas_read_meta(bank.cell.x, bank.cell.y);
+        let bank_color = shade_land(in, bank_tile, true, world_gradients, surface_normal, 256u);
+        hdr_rgb = mix(hdr_rgb, bank_color, bank.weight);
+      }
+    }
+  }
   return finish_land(apply_global_lighting_rgb(hdr_rgb, scene.global_lighting));
 }

@@ -4,4 +4,6 @@ vsync = false
 anti_aliasing = "off"
 art_texture_source = "ec"
 land_texture_source = "ec"
+cc_terrain_transitions = false
+ec_terrain_transitions = true
 sharpening_strength = 0.0

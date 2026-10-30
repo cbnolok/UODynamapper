@@ -188,8 +188,10 @@ pub struct LandEffectsUniform {
     /// Procedural world-space grunge/weathering multiplier.
     #[serde(default)]
     pub enable_grunge: u32,
-    #[serde(default)]
-    pub _pad_eff0: u32,
+    /// Source-wide controls from Graphics settings, not a style/time preset.
+    /// Bit 0 enables CC transitions; bit 1 disables EC transitions.
+    #[serde(skip)]
+    pub terrain_transition_flags: u32,
 
     // --- Atmosphere controls (vec4 slot 3) ---
     /// Strength of procedural grunge/weathering on terrain and art.

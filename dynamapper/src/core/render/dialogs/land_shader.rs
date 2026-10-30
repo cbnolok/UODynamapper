@@ -127,10 +127,12 @@ fn apply_render_preset(
     // Animation is an interactive playback preference, not part of the visual
     // time/style preset. Keep the user's current choice when changing either.
     let enable_water_animation = u.effects.enable_water_animation;
+    let terrain_transition_flags = u.effects.terrain_transition_flags;
     u.effects = preset.effects;
     u.effects.shading_mode = mode;
     u.effects.post_process_profile = profile;
     u.effects.enable_water_animation = enable_water_animation;
+    u.effects.terrain_transition_flags = terrain_transition_flags;
     u.lighting = preset.lighting;
     u.land_lighting = preset.land_lighting;
     u.global_lighting = preset.global_lighting;
@@ -901,7 +903,13 @@ fn push_uniforms_if_dirty(
     mut mats: ResMut<Assets<LandCustomMeshMaterial>>,
     _q_mat_handles: Query<&MeshMaterial3d<LandCustomMeshMaterial>>, // kept for parity; unused
     mut u: ResMut<UniformState>,
+    settings: Res<Settings>,
 ) {
+    let transitions = settings.graphics.terrain_transition_flags();
+    if u.effects.terrain_transition_flags != transitions {
+        u.effects.terrain_transition_flags = transitions;
+        u.dirty = true;
+    }
     if !u.dirty {
         return;
     }
@@ -1117,9 +1125,10 @@ mod tests {
     }
 
     #[test]
-    fn render_presets_preserve_animation_and_enforce_the_selected_style() {
+    fn render_presets_preserve_source_controls_and_enforce_the_selected_style() {
         let mut u = uniform_state();
         u.effects.enable_water_animation = 0;
+        u.effects.terrain_transition_flags = 3;
         let preset = LandMaterialUniformsPresets {
             global_lighting: 0.75,
             effects: LandEffectsUniform {
@@ -1149,6 +1158,7 @@ mod tests {
         assert_eq!(u.effects.shading_mode, 0);
         assert_eq!(u.effects.post_process_profile, 0);
         assert_eq!(u.effects.enable_water_animation, 0);
+        assert_eq!(u.effects.terrain_transition_flags, 3);
         assert_eq!(u.active_preset, "classic.morning");
         assert_eq!(u.global_lighting, 0.75);
         assert_eq!(u.lighting.exposure, 1.25);

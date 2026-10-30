@@ -39,6 +39,8 @@ pub struct PreferencesDialogState {
     pub anti_aliasing: AntiAliasingMode,
     pub art_texture_source: ClientTextureSource,
     pub land_texture_source: ClientTextureSource,
+    pub cc_terrain_transitions: bool,
+    pub ec_terrain_transitions: bool,
     pub perspective_camera: bool,
     pub enable_statics: bool,
     pub enable_static_lights: bool,
@@ -75,6 +77,8 @@ impl Default for PreferencesDialogState {
             anti_aliasing: AntiAliasingMode::default(),
             art_texture_source: ClientTextureSource::default(),
             land_texture_source: ClientTextureSource::default(),
+            cc_terrain_transitions: false,
+            ec_terrain_transitions: false,
             perspective_camera: false,
             enable_statics: true,
             enable_static_lights: false,
@@ -142,6 +146,8 @@ fn sys_sync_settings_to_state(
         state.anti_aliasing = settings.graphics.anti_aliasing;
         state.art_texture_source = settings.graphics.art_texture_source;
         state.land_texture_source = settings.graphics.land_texture_source;
+        state.cc_terrain_transitions = settings.graphics.cc_terrain_transitions;
+        state.ec_terrain_transitions = settings.graphics.ec_terrain_transitions;
         state.perspective_camera = settings.app.window.perspective_camera;
         state.enable_statics = settings.world_rendering.enable_statics;
         state.enable_static_lights = settings.world_rendering.enable_static_lights;
@@ -427,7 +433,17 @@ pub fn sys_render_preferences_dialog(
                     ui.add_space(4.0);
                     ui.heading("Texture");
                     ui.separator();
-
+                    ui.label("Smooth terrain transitions");
+                    if ui.checkbox(&mut state.cc_terrain_transitions, "Classic (CC)")
+                        .on_hover_text("Blend adjacent dry Classic terrain textures. Water keeps its authored edges.")
+                        .changed() {
+                        settings.graphics.cc_terrain_transitions = state.cc_terrain_transitions;
+                    }
+                    if ui.checkbox(&mut state.ec_terrain_transitions, "Enhanced (EC / KR)")
+                        .on_hover_text("Blend Enhanced terrain and ground patches. Item artwork masks and liquid-bank placement stay active.")
+                        .changed() {
+                        settings.graphics.ec_terrain_transitions = state.ec_terrain_transitions;
+                    }
 
                     ui.add_space(8.0);
                     ui.heading("World & Input");

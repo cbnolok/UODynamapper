@@ -493,7 +493,8 @@ fn sample_tile_albedo_grad(uv: vec2<f32>, tile: TileUniform, ddx_uv: vec2<f32>, 
     if (use_linear) {
       let atlas_dims = vec2<f32>(textureDimensions(land_page_atlas));
       var seam_uv: vec2<f32>;
-      if (tile.texture_size == 2u) {
+      if (tile.texture_size == 2u || (tile.texture_size == 4u && tile.is_wet == 0u
+          && (tile.terrain_flags & 4u) == 0u && (effects.terrain_transition_flags & 1u) != 0u)) {
         seam_uv = pixel_art_uv_iq_grad(uv, tile_dims, ddx_uv, ddy_uv);
       } else {
         seam_uv = pixel_art_uv_iq(uv, tile_dims);

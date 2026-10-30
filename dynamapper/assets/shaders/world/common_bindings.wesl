@@ -27,7 +27,8 @@ struct LandEffectsUniform {
     enable_water_animation: u32,
     post_process_profile: u32,
     enable_grunge: u32,
-    _pad_eff0: u32,
+    // Graphics settings: bit 0 enables CC transitions; bit 1 disables EC transitions.
+    terrain_transition_flags: u32,
     grunge_strength: f32,
     light_decal_intensity: f32,
     art_highlight_strength: f32,

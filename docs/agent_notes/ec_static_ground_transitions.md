@@ -22,6 +22,8 @@ at exposed boundaries. This is an intentional rendering improvement; it does
 not claim to reconstruct an original static-neighbor mask generator. The
 source art, repetition, authored geometry, masks and depth remain in their
 existing paths. Classic styling keeps its previous coverage.
+The independently saved EC terrain-transition control can disable this added
+fade; see [terrain_transition_controls.md](terrain_transition_controls.md).
 
 Eligibility requires a packed item-owned material slot, zero tile height,
 the authored terrain-item flag, a selected WorldArt Base with world UVs and a

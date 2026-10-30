@@ -310,7 +310,8 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
         let edge = min(uv_in_tile_for_shading, vec2<f32>(1.0) - uv_in_tile_for_shading);
         color.a *= smoothstep(0.0, 1.5, min(edge.x / surface_footprint.x, edge.y / surface_footprint.y));
     }
-    let blend_surface = (inst.is_wet_flags & 2u) != 0u && effects.post_process_profile != 0u;
+    let blend_surface = (inst.is_wet_flags & 2u) != 0u && effects.post_process_profile != 0u
+        && (effects.terrain_transition_flags & 2u) == 0u;
     if (blend_surface) {
         color.a *= static_surface_coverage(uv_in_tile_for_shading, (inst.is_wet_flags >> 2u) & 255u);
     }

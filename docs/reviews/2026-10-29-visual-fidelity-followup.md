@@ -12,7 +12,7 @@ their own runtime acceptance checks.
 | Priority | Issue | Evidence and next acceptance check |
 | --- | --- | --- |
 | Completed 2026-10-30 | Static/map blending at map 0 `(2518,561)` | Runtime probes verified eligibility and alpha composition. Widening the old 0.3-cell fade to 0.82 cell gives a visible soft edge; half-cell limits preserve isolated centers and filled shared edges. Orthographic/perspective and style/source controls are recorded in the ground-transition notes. No geometry or artwork substitution was needed. |
-| In progress, unvalidated | Independent EC/CC transition controls and CC terrain smoothing | The working tree contains partial settings, UI and uniform wiring. The shader field has no consumers yet, so these are not functioning controls and CC terrain blending remains unimplemented. Finish shader integration and validate source-independent persistence and actual on/off output. Treat this separately from the repaired static/map blend defect. |
+| Implemented 2026-10-30 | Independent EC/CC transition controls and CC terrain smoothing | Graphics settings, Options checkboxes and shader behavior are connected. CC dry texmaps use cell-center blending with adjacent-edge sampling; EC controls both map blending and the added static-ground fade. Settings/preset tests and paired native captures verify source independence and retained water/bank behavior. Direct Options interaction remains an acceptance check alongside the UI layout work below. See the transition-control notes. |
 | Next | Static height/anchors and non-KR fake-normal wall artifacts | General height parity remains unproven. The specific bridge/stair depth bug is repaired, so avoid a global height/bias change without a matched reference. Fake normals default off in Classic/Enhanced, but remain manually usable; wall-side artifacts need a bounded visual fixture. |
 | Next | Effects and light decals reported as invisible | Check each effect with the correct source, active preset, relevant strength and receiver. Normal maps only consume EC land in fragment modes; grime and color wash have KR gates. Trace decal collection, receiver and visible composition rather than declaring the switches broken from default output. |
 | Open geometry defect | Free perspective zoom | Source still changes RenderZoom while free-camera movement does not consume it and perspective FOV is fixed. Follow perspective has a separate dolly path. The corrected isometric pitch/roof alignment does not close free-camera zoom. |
@@ -24,6 +24,7 @@ their own runtime acceptance checks.
 
 Primary references:
 [static ground transitions](../agent_notes/ec_static_ground_transitions.md),
+[source-specific transition controls](../agent_notes/terrain_transition_controls.md),
 [liquid source evidence](../agent_notes/ec_original_water_code.md),
 [water resolution](../agent_notes/water_terrain_static_resolution.md), and
 [material reachability](../agent_notes/ec_material_family_reachability.md).
@@ -46,7 +47,7 @@ be stale. The following classification is based on current source and notes.
 | Part 1.3: effects have no visible impact | Keep as a targeted visual audit, not a blanket confirmed defect. Source/profile gates and effective cached settings must be recorded. Projected shadows have a prior visibility repair. |
 | Part 1.4: cursor inspection strings are too long | A recorded repair splits fields across lines; current `cursor_behavior.rs` retains that formatting. Recheck only if a specific long value still overflows. |
 | Part 2.1: statics seem too high | Open reference-validation item. Prior CC double-offset and bridge-priority repairs do not prove every EC/CC anchor or height is correct. |
-| Part 2.2: independent transition toggles and CC support | In progress, not working or validated yet: partial settings/UI/uniform wiring is present in the unstaged diff, but shader integration and CC blending are missing. Separate it from the repaired EC static/map blending. |
+| Part 2.2: independent transition toggles and CC support | Implemented with separate Graphics checkboxes, persistence and shader paths. Production GPU cases cover shared boundaries, source/wet/missing exclusions and neighbor UVs; native paired captures cover actual rendering and inactive-source controls. Off-desktop synthetic keyboard events were ignored, so direct Options interaction is still to be checked during the UI-layout follow-up. |
 | Part 3.1a: Render Static Items does not hide existing items | Recorded repair is present: disabling statics clears instance/batch outputs and invalidates reuse, with a regression in `statics_collect.rs`. |
 | Part 3.1b: static light decals are invisible | Open visual verification; confirm a loaded light source, collector output, receiver and intensity. |
 | Part 3.2: framerate measurement accuracy | Deferred with performance work. Existing FPS is explicitly smoothed; compare raw CPU/GPU/presentation data on the workstation without disabling pipelining. |
