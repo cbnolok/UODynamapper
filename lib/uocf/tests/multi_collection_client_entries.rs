@@ -5,16 +5,26 @@
 //! release. The expected counts are the ones verified by
 //! `scripts/dev-helpers/ec-research/ghidra-housing/verify_housing.py` on the reference release (the 2024 clients);
 //! they are asserted only when the multi count identifies that release, and printed otherwise.
+//!
+//! The housing editing tests also check that `housing.bin` re-serializes byte for byte (directly and through
+//! KDL), validates against the client's tileart, multis and clilocs, and that a rewritten package changes only
+//! `housing.bin`. The rewritten package goes to `std::env::temp_dir()` (set `TMPDIR` to choose it) and is
+//! deleted afterwards.
 
 mod common;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::ops::RangeInclusive;
+use std::path::Path;
+use uocf::classic::cliloc::Cliloc;
 use uocf::enhanced::housing::{
-    HousingPieces, HOUSING_TILE_TYPE_DOOR, HOUSING_TILE_TYPE_FLOOR, HOUSING_TILE_TYPE_MISC, HOUSING_TILE_TYPE_ROOF,
-    HOUSING_TILE_TYPE_STAIRS, HOUSING_TILE_TYPE_TELEPORTER, HOUSING_TILE_TYPE_WALL,
+    HousingIssue, HousingIssueSeverity, HousingPieces, HousingValidationContext, HOUSING_TILE_TYPE_DOOR,
+    HOUSING_TILE_TYPE_FLOOR, HOUSING_TILE_TYPE_MISC, HOUSING_TILE_TYPE_ROOF, HOUSING_TILE_TYPE_STAIRS,
+    HOUSING_TILE_TYPE_TELEPORTER, HOUSING_TILE_TYPE_WALL,
 };
-use uocf::enhanced::multis::{MultiCollection, MULTI_COLLECTION_UOP_NAME};
+use uocf::enhanced::localized_strings::LocalizedStringsPackage;
+use uocf::enhanced::multis::{MultiCollection, HOUSING_PATH, MULTI_COLLECTION_UOP_NAME};
+use uocf::enhanced::tileart::TileArtEntry;
 use uocf::uop_container::package::UopPackage;
 
 const EXPECTED_MULTI_ENTRIES: usize = 862;
@@ -38,6 +48,16 @@ const EXPECTED_HOUSING_PIECES: usize = 424;
 const EXPECTED_HOUSING_TILE_REFERENCES: usize = 3_567;
 const EXPECTED_HOUSING_MULTI_REFERENCES: usize = 74;
 const HOUSING_STAIR_MULTI_IDS: RangeInclusive<u32> = 7600..=7675;
+/// Categories whose groups have different feature masks (walls 2..5 and misc 11).
+const EXPECTED_MIXED_FEATURE_MASK_CATEGORIES: usize = 5;
+/// Repeated slots: misc category 25 group 1 has solid slot 2 twice (tiles 17340 and 17342).
+const EXPECTED_DUPLICATE_SLOTS: usize = 1;
+
+const TILEART_UOP_NAME: &str = "tileart.uop";
+const CLASSIC_CLILOC_NAME: &str = "Cliloc.enu";
+const LOCALIZED_STRINGS_FILE_NAME: &str = "LocalizedStrings.uop";
+/// Tooltip cliloc changed in the rewritten package.
+const REWRITTEN_TOOLTIP_CLILOC: u32 = 1061019;
 
 #[test]
 #[ignore = "needs a real client: set UO_EC_CLIENT_DIR and/or UO_CC_CLIENT_DIR and run with --ignored"]
@@ -103,5 +123,146 @@ fn every_multi_and_housing_bin_parse_exactly() {
             multi_references_by_tile_type,
             BTreeMap::from([(HOUSING_TILE_TYPE_STAIRS, EXPECTED_HOUSING_MULTI_REFERENCES)])
         );
+    }
+}
+
+#[test]
+#[ignore = "needs a real client: set UO_EC_CLIENT_DIR and/or UO_CC_CLIENT_DIR and run with --ignored"]
+fn housing_bin_reserializes_identically_directly_and_through_kdl() {
+    for (env, path) in common::client_files(MULTI_COLLECTION_UOP_NAME) {
+        let package = UopPackage::load(&path).expect("load MultiCollection.uop");
+        let original = package.get_file_by_name(HOUSING_PATH).expect("housing.bin entry").unpack().expect("unpack");
+
+        let housing = HousingPieces::from_payload_bytes(&original).expect("housing.bin parses");
+        assert!(housing.to_payload_bytes() == original, "{env}: re-serialized housing.bin differs");
+
+        let kdl = housing.to_kdl_string();
+        let from_kdl = HousingPieces::from_kdl_str(&kdl).expect("the written KDL parses");
+        assert!(from_kdl == housing, "{env}: KDL round trip changed the pieces");
+        assert!(from_kdl.to_payload_bytes() == original, "{env}: housing.bin from KDL differs");
+        let (bytes, lines) = (original.len(), kdl.lines().count());
+        println!("{env}: {bytes} bytes of housing.bin, {lines} KDL lines, {} KDL bytes", kdl.len());
+    }
+}
+
+#[test]
+#[ignore = "needs a real client: set UO_EC_CLIENT_DIR and/or UO_CC_CLIENT_DIR and run with --ignored"]
+fn housing_bin_validates_against_client_data() {
+    for (env, path) in common::client_files(MULTI_COLLECTION_UOP_NAME) {
+        let package = UopPackage::load(&path).expect("load MultiCollection.uop");
+        let housing = HousingPieces::from_package(&package).expect("housing.bin parses").expect("housing.bin entry");
+        let multis: HashSet<u32> = MultiCollection::from_package(&package)
+            .expect("multis parse")
+            .items
+            .iter()
+            .map(|item| item.id)
+            .collect();
+        let tiles = load_tileart_ids(&path.with_file_name(TILEART_UOP_NAME));
+        let clilocs = load_cliloc_ids(&path);
+        println!(
+            "{env}: {} multis, {} tileart records, {} clilocs",
+            multis.len(),
+            tiles.as_ref().map_or(0, HashSet::len),
+            clilocs.as_ref().map_or(0, HashSet::len)
+        );
+
+        let multi_exists = |id| multis.contains(&id);
+        let tile_exists = |id| tiles.as_ref().is_some_and(|tiles| tiles.contains(&id));
+        let cliloc_exists = |id| clilocs.as_ref().is_some_and(|clilocs| clilocs.contains(&id));
+        let context = HousingValidationContext {
+            tile_exists: tiles.is_some().then_some(&tile_exists as &dyn Fn(u32) -> bool),
+            multi_exists: Some(&multi_exists),
+            cliloc_exists: clilocs.is_some().then_some(&cliloc_exists as &dyn Fn(u32) -> bool),
+        };
+        let issues = housing.validate(&context);
+
+        for issue in &issues {
+            println!("{env}: {:?}: {issue}", issue.severity());
+        }
+        let errors: Vec<_> = issues.iter().filter(|issue| issue.severity() == HousingIssueSeverity::Error).collect();
+        assert!(errors.is_empty(), "{env}: {} errors: {errors:?}", errors.len());
+        if multis.len() != EXPECTED_MULTI_ENTRIES {
+            println!("{env}: not the reference release, warnings not checked");
+            continue;
+        }
+        let mixed_masks = issues.iter().filter(|issue| matches!(issue, HousingIssue::MixedFeatureMask { .. })).count();
+        let duplicate_slots = issues.iter().filter(|issue| matches!(issue, HousingIssue::DuplicateSlot { .. })).count();
+        assert_eq!(mixed_masks, EXPECTED_MIXED_FEATURE_MASK_CATEGORIES);
+        assert_eq!(duplicate_slots, EXPECTED_DUPLICATE_SLOTS);
+        assert_eq!(mixed_masks + duplicate_slots, issues.len(), "{env}: no other warnings");
+    }
+}
+
+#[test]
+#[ignore = "needs a real client: set UO_EC_CLIENT_DIR and/or UO_CC_CLIENT_DIR and run with --ignored"]
+fn rewritten_multi_collection_changes_only_housing_bin() {
+    for (env, path) in common::client_files(MULTI_COLLECTION_UOP_NAME) {
+        let source = UopPackage::load(&path).expect("load MultiCollection.uop");
+        let mut housing = HousingPieces::from_package(&source).expect("housing.bin parses").expect("housing.bin entry");
+        housing.tile_types[0].pieces[0].tooltip_cliloc = REWRITTEN_TOOLTIP_CLILOC;
+        let dir = common::temp_dir("housing_rewrite");
+        let output = dir.join(MULTI_COLLECTION_UOP_NAME);
+
+        housing.write_multi_collection(&path, &output).expect("write the new package");
+
+        let written = UopPackage::load(&output).expect("reload the new package");
+        assert_eq!(HousingPieces::from_package(&written).unwrap(), Some(housing.clone()), "{env}: housing.bin");
+        assert_eq!(written.file_count(), source.file_count(), "{env}: entry count");
+        let housing_hash = uocf::enhanced::multis::housing_hash();
+        for source_file in source.iter_files() {
+            let hash = source_file.filename_hash();
+            let written_file =
+                written.get_file_by_hash(hash).unwrap_or_else(|| panic!("{env}: entry {hash:016X} missing"));
+            assert_eq!(written_file.compression(), source_file.compression(), "{env}: entry {hash:016X} compression");
+            assert!(
+                written_file.data_block_header() == source_file.data_block_header()
+                    && written_file.data_block_hash() == source_file.data_block_hash(),
+                "{env}: entry {hash:016X} data block header differs"
+            );
+            if hash == housing_hash || !source_file.has_size() {
+                continue;
+            }
+            assert!(written_file.data() == source_file.data(), "{env}: entry {hash:016X} payload differs");
+        }
+        let source_multis = MultiCollection::from_package(&source).unwrap();
+        let written_multis = MultiCollection::from_package(&written).unwrap();
+        assert!(written_multis.items == source_multis.items, "{env}: multis differ");
+        println!("{env}: rewrote {} entries", written.file_count());
+        std::fs::remove_dir_all(&dir).expect("delete the new package");
+        assert!(housing.write_multi_collection(&path, &path).is_err(), "{env}: writing over the source must fail");
+    }
+}
+
+/// Tile ids of every record of `tileart.uop`; `None` when the client has no such file.
+fn load_tileart_ids(path: &Path) -> Option<HashSet<u32>> {
+    if !path.is_file() {
+        return None;
+    }
+    let package = UopPackage::load(path).expect("load tileart.uop");
+    let tile_id = |file| TileArtEntry::parse_raw(file).expect("tileart record parses").tile_id;
+    Some(package.iter_files().map(tile_id).collect())
+}
+
+/// Cliloc ids of the classic `Cliloc.enu`, or of the Enhanced Client `LocalizedStrings.uop`, next to `path`.
+/// `None` (cliloc check skipped) when neither exists or `LocalizedStrings.uop` does not parse: this test checks
+/// `housing.bin`, not the localized strings decoder.
+fn load_cliloc_ids(path: &Path) -> Option<HashSet<u32>> {
+    let classic = path.with_file_name(CLASSIC_CLILOC_NAME);
+    if classic.is_file() {
+        let cliloc = Cliloc::load(&classic).expect("load Cliloc.enu");
+        return Some(cliloc.entries.iter().filter_map(|entry| u32::try_from(entry.number).ok()).collect());
+    }
+    let localized = path.with_file_name(LOCALIZED_STRINGS_FILE_NAME);
+    if !localized.is_file() {
+        return None;
+    }
+    match LocalizedStringsPackage::load(&localized) {
+        Ok(package) => {
+            Some(package.files.iter().flat_map(|file| file.strings.entries.iter().map(|entry| entry.id)).collect())
+        }
+        Err(error) => {
+            println!("{}: {error:#}; tooltip clilocs not checked", localized.display());
+            None
+        }
     }
 }

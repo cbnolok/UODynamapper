@@ -308,7 +308,18 @@ unless the data becomes a stable package contract.
     Rustic / Time of Legends clilocs (`HOUSING_ENTITLEMENT_CLILOC_*`).
   - `tooltip_cliloc` is the category name.
   - Client data: 7 tile types, 424 pieces, 3,567 tile references, 74 multi
-    references.
+    references. Misc category 25 group 1 lists solid slot 2 twice (tiles
+    17340 and 17342; the client keeps the last).
+- Editing `housing.bin` (`housing` module): `to_payload_bytes` re-serializes
+  byte for byte; `validate` reports what the client drops or misreads
+  (repeated tile types and slots, lists outside their tile type, category
+  mask and tooltip conflicts, masks outside the expansion filter, category
+  gaps, and, through optional lookups, missing tiles, multis and clilocs);
+  `to_kdl_string` / `from_kdl_str` give a lossless KDL text form (schema in
+  `housing/kdl_text.rs`); `load_housing_bin` / `write_housing_bin` handle a
+  loose file and `write_multi_collection` writes a copy of a package with
+  only `housing.bin` replaced (the other entries keep payload, compression
+  flag and data block header).
 - Layouts, field meanings, confidence and verification against the client
   data are in
   [`uosa_housing.md`](../../../../scripts/dev-helpers/ec-research/ghidra-housing/results/uosa_housing.md)

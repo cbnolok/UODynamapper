@@ -44,6 +44,9 @@ serde.workspace = true
 csv.workspace = true
 toml.workspace = true
 memmap2 = "0.9"
+knuffel.workspace = true
+# Diagnostic trait of knuffel's parse errors, read for their line and column.
+miette = { version = "5", default-features = false }
 
 [dev-dependencies]
 rand = "*"
