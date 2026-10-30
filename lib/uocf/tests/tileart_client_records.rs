@@ -5,6 +5,9 @@
 //! skipped. Every record must parse in any release. The expected effect counts are the ones verified by
 //! `scripts/dev-helpers/ec-research/ghidra-effects/verify_effects.py` on the reference release (the 2024
 //! clients); they are asserted only when the record or entry count identifies that release.
+//!
+//! The tileart writer tests check that every record re-encodes byte for byte, and that a package rewritten with an edited, an added and a removed record changes only those entries. The
+//! rewritten package goes to `std::env::temp_dir()` (set `TMPDIR` to choose it) and is deleted afterwards.
 
 mod common;
 
@@ -14,7 +17,8 @@ use uocf::enhanced::effect_definition::{
     EFFECT_TYPE_PARTICLE, EFFECT_TYPE_PROPERTY_FLAG, EFFECT_TYPE_SOUND, EFFECT_TYPE_WAIT,
 };
 use uocf::enhanced::string_dictionary::UoStringDictionary;
-use uocf::enhanced::tileart::TileArtEntry;
+use uocf::enhanced::tileart::{tileart_entry_hash, write_tileart_package, TileArtChanges, TileArtEntry};
+use uocf::uop_container::data_block_header::{DataBlockHeader, DataBlockHeaderRecord};
 use uocf::uop_container::package::UopPackage;
 
 const TILEART_UOP_NAME: &str = "tileart.uop";
@@ -33,6 +37,14 @@ const EXPECTED_TILEART_EFFECTS_TOP_LEVEL: [(u32, usize); 3] =
 const EXPECTED_TILEART_PARTICLE_NAMES: usize = 202;
 /// Records with `alternate_animation` set (gargoyle two-handed weapons, halberds, creature placeholders).
 const EXPECTED_TILEART_ALTERNATE_ANIMATION_RECORDS: usize = 30;
+
+/// Records whose entry is named after another tile id than the one they store (all names are
+/// `build/tileart/%08d.bin`, checked by brute force over the ids up to `u32::MAX / 8`).
+const EXPECTED_TILEART_RECORDS_NAMED_AFTER_ANOTHER_TILE: usize = 25;
+/// Tile id given to the record added to the rewritten package (a free id above the client's art ids).
+const REWRITTEN_ADDED_TILE_ID: u32 = 0x10000 - 1;
+/// Body type written into the record edited in the rewritten package.
+const REWRITTEN_BODY_TYPE: u32 = 666;
 
 const EXPECTED_COLLECTION_ENTRIES: usize = 269;
 const EXPECTED_COLLECTION_TOP_LEVEL_DEFINITIONS: usize = 280;
@@ -131,6 +143,85 @@ fn tileart_parses_every_client_record() {
         assert_eq!(effects.all_levels, BTreeMap::from(EXPECTED_TILEART_EFFECTS_ALL_LEVELS));
         assert_eq!(effects.top_level, BTreeMap::from(EXPECTED_TILEART_EFFECTS_TOP_LEVEL));
         assert_eq!(effects.particle_names.len(), EXPECTED_TILEART_PARTICLE_NAMES);
+    }
+}
+
+#[test]
+#[ignore = "needs a real client: set UO_EC_CLIENT_DIR and/or UO_CC_CLIENT_DIR and run with --ignored"]
+fn tileart_reencodes_every_client_record() {
+    for (env, path) in common::client_files(TILEART_UOP_NAME) {
+        let package = UopPackage::load(&path).expect("load tileart.uop");
+        let mut records = 0usize;
+        let mut other_names = 0usize;
+        let mut failures = Vec::new();
+        for file in package.iter_files().filter(|file| file.has_size()) {
+            records += 1;
+            let payload = file.unpack().expect("unpack");
+            let entry = TileArtEntry::parse_bytes(&payload).expect("record parses");
+            other_names += usize::from(tileart_entry_hash(entry.tile_id) != file.filename_hash());
+            if entry.to_bytes().expect("record encodes") != payload {
+                failures.push(format!("{:016X}: tile {} re-encodes differently", file.filename_hash(), entry.tile_id));
+            }
+        }
+        println!("{env}: {records} records re-encode identically; {other_names} store another tile id than their name's");
+        assert!(failures.is_empty(), "{} failures: {failures:?}", failures.len());
+        if records != EXPECTED_TILEART_RECORDS {
+            println!("{env}: not the reference release, counts not checked");
+            continue;
+        }
+        assert_eq!(other_names, EXPECTED_TILEART_RECORDS_NAMED_AFTER_ANOTHER_TILE);
+    }
+}
+
+#[test]
+#[ignore = "needs a real client: set UO_EC_CLIENT_DIR and/or UO_CC_CLIENT_DIR and run with --ignored"]
+fn rewritten_tileart_changes_only_the_edited_records() {
+    for (env, path) in common::client_files(TILEART_UOP_NAME) {
+        let source = UopPackage::load(&path).expect("load tileart.uop");
+        let mut sized = source.iter_files().filter(|file| file.has_size());
+        let (first, second) = (sized.next().expect("a record"), sized.next().expect("a second record"));
+        let mut edited = TileArtEntry::parse_raw(first).expect("record parses");
+        let removed = TileArtEntry::parse_raw(second).expect("record parses").tile_id;
+        let added = TileArtEntry { tile_id: REWRITTEN_ADDED_TILE_ID, ..TileArtEntry::parse_raw(first).expect("record parses") };
+        assert!(source.get_file_by_hash(tileart_entry_hash(REWRITTEN_ADDED_TILE_ID)).is_none(), "{env}: id in use");
+        edited.body_type = REWRITTEN_BODY_TYPE;
+        let dir = common::temp_dir("tileart_rewrite");
+        let output = dir.join(TILEART_UOP_NAME);
+
+        let edits = [(first.filename_hash(), edited.clone()), (tileart_entry_hash(REWRITTEN_ADDED_TILE_ID), added.clone())];
+        let changes = write_tileart_package(&path, &output, &edits, &[second.filename_hash()])
+            .expect("write the new package");
+
+        assert_eq!(changes, TileArtChanges { replaced: 1, added: 1, removed: 1 }, "{env}");
+        let written = UopPackage::load(&output).expect("reload the new package");
+        let edited_hashes = [first.filename_hash(), second.filename_hash()];
+        for source_file in source.iter_files().filter(|file| file.has_size()) {
+            let hash = source_file.filename_hash();
+            if edited_hashes.contains(&hash) {
+                continue;
+            }
+            let written_file =
+                written.get_file_by_hash(hash).unwrap_or_else(|| panic!("{env}: entry {hash:016X} missing"));
+            assert!(
+                written_file.data() == source_file.data()
+                    && written_file.data_block_header() == source_file.data_block_header()
+                    && written_file.data_block_hash() == source_file.data_block_hash(),
+                "{env}: entry {hash:016X} changed"
+            );
+        }
+        assert!(written.get_file_by_hash(second.filename_hash()).is_none(), "{env}: removed record");
+        for (hash, record) in &edits {
+            let file = written.get_file_by_hash(*hash).expect("written record");
+            assert_eq!(file.unpack().unwrap(), record.to_bytes().unwrap(), "{env}: tile {}", record.tile_id);
+            let header = DataBlockHeader::parse(file.data_block_header().unwrap()).unwrap();
+            assert!(matches!(header.records(), [DataBlockHeaderRecord::Timestamp(_)]), "{env}: header");
+            assert_eq!(file.data_block_hash_matches_header().unwrap(), Some(true), "{env}: hash");
+        }
+        let source_len = std::fs::metadata(&path).unwrap().len();
+        let written_len = std::fs::metadata(&output).unwrap().len();
+        println!("{env}: tile {} edited, {removed} removed, {REWRITTEN_ADDED_TILE_ID} added; {source_len} -> {written_len} bytes", edited.tile_id);
+        std::fs::remove_dir_all(&dir).expect("delete the new package");
+        assert!(write_tileart_package(&path, &path, &[], &[]).is_err(), "{env}: writing over the source must fail");
     }
 }
 

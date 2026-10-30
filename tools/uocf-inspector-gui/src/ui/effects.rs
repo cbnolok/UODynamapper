@@ -237,7 +237,7 @@ struct PreviewKey {
     document: (u64, u64),
     files: (u64, u64),
     strings: usize,
-    tileart: usize,
+    tileart: (usize, u64),
     settings: SimulationSettings,
 }
 
@@ -322,11 +322,18 @@ impl Default for PreviewPanel {
 struct Lookups {
     strings: Option<Arc<UoStringDictionary>>,
     tileart: Option<Arc<Vec<TileArtFileEntry>>>,
+    /// Edits of the records in the Tile Metadata tab, which keep the records' address.
+    tileart_revision: u64,
     files: Option<Arc<EffectFiles>>,
     client_dir: Option<PathBuf>,
 }
 
 impl Lookups {
+    /// Cache key of the tileart records.
+    fn tileart_key(&self) -> (usize, u64) {
+        (arc_address(&self.tileart), self.tileart_revision)
+    }
+
     fn particle_name(&self, particle: &ParticleEffect) -> Option<String> {
         particle_name(particle, self.strings.as_deref())
     }
@@ -352,6 +359,7 @@ fn lookups(app: &UopInspectorApp) -> Lookups {
     Lookups {
         strings: app.uo_string_dictionary.clone(),
         tileart: app.ec_tileart_entries.clone(),
+        tileart_revision: app.tileart_editor.edits.revision(),
         files: app.effects_panel.files.clone(),
         client_dir: app.settings.ec_path.clone(),
     }
@@ -1027,7 +1035,7 @@ fn entry_rows(state: &mut EffectsPanelState, lookups: &Lookups) -> Arc<Vec<(u32,
 }
 
 fn tileart_rows(state: &mut EffectsPanelState, lookups: &Lookups) -> Arc<Vec<(u32, String)>> {
-    let key = hash_of(&(arc_address(&lookups.tileart), arc_address(&lookups.strings), format!("{:?}", state.tileart_filter)));
+    let key = hash_of(&(lookups.tileart_key(), arc_address(&lookups.strings), format!("{:?}", state.tileart_filter)));
     if let Some(cache) = state.tileart_cache.as_ref().filter(|cache| cache.key == key) {
         return Arc::clone(&cache.rows);
     }
@@ -1077,7 +1085,7 @@ fn file_users(state: &mut EffectsPanelState, lookups: &Lookups) -> Arc<HashMap<u
         state.document_generation,
         state.document.revision(),
         state.files_generation,
-        arc_address(&lookups.tileart),
+        lookups.tileart_key(),
         arc_address(&lookups.strings),
     ));
     if let Some(cache) = state.users_cache.as_ref().filter(|cache| cache.key == key) {
@@ -2352,7 +2360,7 @@ fn refresh_preview(state: &mut EffectsPanelState, lookups: &Lookups) {
         document: (state.document_generation, state.document.revision()),
         files: (state.files_generation, state.document.revision()),
         strings: arc_address(&lookups.strings),
-        tileart: arc_address(&lookups.tileart),
+        tileart: lookups.tileart_key(),
         settings: preview.settings,
     };
     if preview.key.as_ref() == Some(&key) {

@@ -7,6 +7,8 @@ pub mod animdata;
 pub mod art_viewer;
 pub mod uop_browser;
 pub mod multis;
+mod multi_editor;
+mod tileart_editor;
 pub mod housing;
 pub mod effects;
 pub mod effects_nif;

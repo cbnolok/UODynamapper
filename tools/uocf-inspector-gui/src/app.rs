@@ -1251,7 +1251,7 @@ fn collect_cc_tiledata_rows(tiledata: &TileData) -> Vec<CcTileDataRow> {
     rows
 }
 
-fn collect_tileart_display_rows(
+pub(crate) fn collect_tileart_display_rows(
     entries: &[TileArtFileEntry],
     string_dictionary: Option<&UoStringDictionary>,
 ) -> Vec<TileArtDisplayRow> {
@@ -1815,6 +1815,8 @@ pub struct UopInspectorApp {
     pub terrain_def_files: Option<Arc<Vec<TerrainDefinitionFileEntry>>>,
     pub ec_tileart_entries: Option<Arc<Vec<TileArtFileEntry>>>,
     pub ec_tileart_rows: Option<Arc<Vec<TileArtDisplayRow>>>,
+    /// The loaded tileart.uop, the source of the tileart editor's saved copies.
+    pub ec_tileart_path: Option<PathBuf>,
     pub ec_hues: Option<Arc<EcHuePackage>>,
     pub multi_collection: Option<Arc<MultiCollection>>,
     pub multi_collection_source: Option<MultiCollectionSource>,
@@ -1824,6 +1826,9 @@ pub struct UopInspectorApp {
     pub multi_part_filters: MultiPartFilters,
     pub housing_panel: crate::ui::housing::HousingPanelState,
     pub effects_panel: crate::ui::effects::EffectsPanelState,
+    pub multi_editor: crate::logic::multi_editor::MultiEditor,
+    pub tileart_editor: crate::logic::tileart_editor::TileArtEditor,
+    pub waypoint_document: Option<crate::logic::waypoint_editor::WaypointDocument>,
 }
 
 impl UopInspectorApp {
@@ -1893,6 +1898,7 @@ impl UopInspectorApp {
             terrain_def_files: None,
             ec_tileart_entries: None,
             ec_tileart_rows: None,
+            ec_tileart_path: None,
             ec_hues: None,
             multi_collection: None,
             multi_collection_source: None,
@@ -1902,6 +1908,9 @@ impl UopInspectorApp {
             multi_part_filters: MultiPartFilters::default(),
             housing_panel: Default::default(),
             effects_panel: Default::default(),
+            multi_editor: Default::default(),
+            tileart_editor: Default::default(),
+            waypoint_document: None,
             texture_previews: HashMap::new(),
             ec_texture_previews: HashMap::new(),
             ec_texture_preview_source_keys: HashMap::new(),
@@ -1999,6 +2008,10 @@ impl UopInspectorApp {
         self.art_viewer_rows_source = None;
         self.ec_tileart_entries = None;
         self.ec_tileart_rows = None;
+        self.ec_tileart_path = None;
+        self.multi_editor = Default::default();
+        self.tileart_editor = Default::default();
+        self.waypoint_document = None;
         self.selected_ec_hue_hash = None;
         self.cliloc = None;
         self.cliloc_files.clear();
@@ -2475,6 +2488,7 @@ impl UopInspectorApp {
                         let count = entries.len();
                         self.ec_tileart_entries = Some(Arc::new(entries));
                         self.ec_tileart_rows = Some(Arc::new(rows));
+                        self.ec_tileart_path = Some(tileart_path.clone());
                         self.log(format!(
                             "Parsed {} tileart.uop entries ({} skipped).",
                             count, failed
@@ -4300,6 +4314,7 @@ pub(crate) mod tests {
             terrain_def_files: None,
             ec_tileart_entries: None,
             ec_tileart_rows: None,
+            ec_tileart_path: None,
             ec_hues: None,
             multi_collection: None,
             multi_collection_source: None,
@@ -4309,6 +4324,9 @@ pub(crate) mod tests {
             multi_part_filters: MultiPartFilters::default(),
             housing_panel: Default::default(),
             effects_panel: Default::default(),
+            multi_editor: Default::default(),
+            tileart_editor: Default::default(),
+            waypoint_document: None,
         }
     }
 

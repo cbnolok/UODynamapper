@@ -3,14 +3,21 @@
 //! Layout and field meanings follow the client parser (`UOMultiCollection::Parse` in UOSA.exe), documented in
 //! `scripts/dev-helpers/ec-research/ghidra-housing/results/uosa_housing.md` (section 4). The `housing.bin` entry
 //! of the same package is decoded by [`super::housing`].
+//!
+//! Besides decoding, the module serves an editor: [`MultiItem::to_payload_bytes`] is the exact inverse of the
+//! parser, [`MultiCollection::set`] and [`MultiCollection::remove`] add, replace and remove multis, and
+//! [`MultiCollection::apply_to_package`] / [`MultiCollection::write_multi_collection`] write them back into a
+//! `MultiCollection.uop`, leaving `housing.bin` and unchanged multis untouched.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Read};
 use std::path::Path;
 
 use byteorder::{LittleEndian, ReadBytesExt};
 use color_eyre::eyre::{self, WrapErr};
 
+use crate::enhanced::uop_entries::{self, EntryPut};
+use crate::uop_container::file::CompressionFlag;
 use crate::uop_container::hash::hash_file_name_single;
 use crate::uop_container::package::UopPackage;
 
@@ -22,6 +29,10 @@ pub const MAX_MULTI_COLLECTION_ID: u32 = 0x10000;
 /// Bytes of a part before its string list: tile id, x, y, z, `not_drawn`, `flag2` and the string count.
 const MULTI_PART_FIXED_SIZE: usize = 14;
 const STRING_ID_SIZE: usize = size_of::<u32>();
+/// Bytes of an entry before its parts: the multi id and the part count.
+const MULTI_ENTRY_HEADER_SIZE: usize = 2 * size_of::<u32>();
+/// Compression of multis added to a package without multi entries (client entries are zlib-compressed).
+const DEFAULT_MULTI_COMPRESSION: CompressionFlag = CompressionFlag::Zlib;
 
 /// One part of a multi entry (client part, 0x1c bytes, written by `UOMultiCollection::SetPart`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,14 +123,138 @@ impl MultiCollection {
         })
     }
 
+    /// A collection of `items` without `housing.bin` information; the items are sorted by id, as
+    /// [`Self::from_package`] lists them. Fails on two items with the same id.
+    pub fn from_items(mut items: Vec<MultiItem>) -> eyre::Result<Self> {
+        items.sort_by_key(|item| item.id);
+        if let Some(pair) = items.windows(2).find(|pair| pair[0].id == pair[1].id) {
+            eyre::bail!("multi {} appears twice", pair[0].id);
+        }
+        let mut collection = Self { items, items_by_id: BTreeMap::new(), housing_hash: None, housing_byte_len: None };
+        collection.rebuild_index();
+        Ok(collection)
+    }
+
     pub fn get(&self, id: u32) -> Option<&MultiItem> {
         self.items_by_id
             .get(&id)
             .and_then(|index| self.items.get(*index))
     }
+
+    /// The parts of multi `id`, to edit them.
+    pub fn parts_mut(&mut self, id: u32) -> Option<&mut Vec<MultiItemPart>> {
+        let index = *self.items_by_id.get(&id)?;
+        self.items.get_mut(index).map(|item| &mut item.parts)
+    }
+
+    /// The multi ids, ascending.
+    pub fn ids(&self) -> impl Iterator<Item = u32> + '_ {
+        self.items_by_id.keys().copied()
+    }
+
+    /// Stores `item` under its id, with the entry path and hash of that id; returns the multi it replaces. A new
+    /// multi goes into id order.
+    pub fn set(&mut self, mut item: MultiItem) -> Option<MultiItem> {
+        item.path = multi_collection_path(item.id);
+        item.filename_hash = multi_collection_hash(item.id);
+        if let Some(&index) = self.items_by_id.get(&item.id) {
+            return Some(std::mem::replace(&mut self.items[index], item));
+        }
+        let index = self.items.partition_point(|existing| existing.id < item.id);
+        self.items.insert(index, item);
+        self.rebuild_index();
+        None
+    }
+
+    /// Removes multi `id`; returns it.
+    pub fn remove(&mut self, id: u32) -> Option<MultiItem> {
+        let index = self.items_by_id.remove(&id)?;
+        let item = self.items.remove(index);
+        self.rebuild_index();
+        Some(item)
+    }
+
+    fn rebuild_index(&mut self) {
+        self.items_by_id = self.items.iter().enumerate().map(|(index, item)| (item.id, index)).collect();
+    }
+
+    /// Makes the multi entries of `package` hold exactly these multis: unchanged entries are left untouched (same
+    /// compressed bytes and data block header), changed ones are replaced keeping their compression flag, new ones
+    /// are added with the compression of the package's multi entries; both get a fresh timestamp data block header
+    /// (the package's edit time). Multi entries missing from the collection are removed; `housing.bin` and any
+    /// other entry are kept. Fails on an id outside [`MAX_MULTI_COLLECTION_ID`] or listed twice.
+    pub fn apply_to_package(&self, package: &mut UopPackage) -> eyre::Result<MultiCollectionChanges> {
+        let ids_by_hash: BTreeMap<u64, u32> = (0..MAX_MULTI_COLLECTION_ID).map(|id| (multi_collection_hash(id), id)).collect();
+        let compression = package
+            .iter_files()
+            .find(|file| file.has_size() && ids_by_hash.contains_key(&file.filename_hash()))
+            .map_or(DEFAULT_MULTI_COMPRESSION, |file| file.compression());
+        let mut changes = MultiCollectionChanges::default();
+        let mut kept = BTreeSet::new();
+        for item in &self.items {
+            if item.id >= MAX_MULTI_COLLECTION_ID {
+                eyre::bail!("multi id {} is not below {MAX_MULTI_COLLECTION_ID}", item.id);
+            }
+            if !kept.insert(item.id) {
+                eyre::bail!("multi {} appears twice", item.id);
+            }
+            let hash = multi_collection_hash(item.id);
+            let payload = item.to_payload_bytes();
+            let path = multi_collection_path(item.id);
+            let current = package.unpack_file_by_hash(hash).wrap_err_with(|| format!("failed to unpack {path}"))?;
+            if current.as_deref() == Some(payload.as_slice()) {
+                continue;
+            }
+            match uop_entries::put_entry(package, hash, &payload, compression)? {
+                EntryPut::Replaced => changes.replaced += 1,
+                EntryPut::Added => changes.added += 1,
+            }
+        }
+        let stale: Vec<u64> = package
+            .iter_files()
+            .filter(|file| file.has_size())
+            .filter(|file| ids_by_hash.get(&file.filename_hash()).is_some_and(|id| !kept.contains(id)))
+            .map(|file| file.filename_hash())
+            .collect();
+        for hash in stale {
+            uop_entries::remove_entry(package, hash);
+            changes.removed += 1;
+        }
+        Ok(changes)
+    }
+
+    /// Writes a copy of the `source` `MultiCollection.uop` to `output` with these multis
+    /// ([`Self::apply_to_package`], stamped with the current time): `housing.bin` and the unchanged multis keep
+    /// their bytes and headers, the package keeps its version, block size and layout. `output` must not be
+    /// `source`.
+    pub fn write_multi_collection(
+        &self,
+        source: impl AsRef<Path>,
+        output: impl AsRef<Path>,
+    ) -> eyre::Result<MultiCollectionChanges> {
+        let (source, output) = (source.as_ref(), output.as_ref());
+        uop_entries::refuse_to_overwrite(source, output)?;
+        let mut package = UopPackage::load(source).wrap_err_with(|| format!("failed to load {}", source.display()))?;
+        let changes = self.apply_to_package(&mut package)?;
+        uop_entries::save_package_as(&mut package, source, output)?;
+        Ok(changes)
+    }
+}
+
+/// What [`MultiCollection::apply_to_package`] changed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MultiCollectionChanges {
+    pub replaced: usize,
+    pub added: usize,
+    pub removed: usize,
 }
 
 impl MultiItem {
+    /// A multi with the entry path and hash of `id`.
+    pub fn new(id: u32, parts: Vec<MultiItemPart>) -> Self {
+        Self { id, filename_hash: multi_collection_hash(id), path: multi_collection_path(id), parts }
+    }
+
     /// Decodes one `build/multicollection/%06d.bin` entry: u32 multi id, u32 part count, then the parts
     /// `{u16 tile, i16 x, i16 y, i16 z, u8 not_drawn, u8 flag2, u32 n, n x u32 string id}`. As in the client,
     /// the entry must end exactly after the last part.
@@ -174,6 +309,33 @@ impl MultiItem {
         })
     }
 
+    /// Encodes the entry payload: the exact inverse of [`Self::from_payload_bytes`] (`not_drawn` is written as
+    /// 0 or 1, the only values in client data; the client tests the byte for non-zero).
+    ///
+    /// # Panics
+    /// When a count does not fit the u32 of the format.
+    pub fn to_payload_bytes(&self) -> Vec<u8> {
+        let string_ids: usize = self.parts.iter().map(|part| part.string_ids.len()).sum();
+        let mut bytes = Vec::with_capacity(
+            MULTI_ENTRY_HEADER_SIZE + self.parts.len() * MULTI_PART_FIXED_SIZE + string_ids * STRING_ID_SIZE,
+        );
+        bytes.extend_from_slice(&self.id.to_le_bytes());
+        bytes.extend_from_slice(&count_u32(self.parts.len()).to_le_bytes());
+        for part in &self.parts {
+            bytes.extend_from_slice(&part.item_id.to_le_bytes());
+            bytes.extend_from_slice(&part.x.to_le_bytes());
+            bytes.extend_from_slice(&part.y.to_le_bytes());
+            bytes.extend_from_slice(&part.z.to_le_bytes());
+            bytes.push(u8::from(part.not_drawn));
+            bytes.push(part.flag2);
+            bytes.extend_from_slice(&count_u32(part.string_ids.len()).to_le_bytes());
+            for string_id in &part.string_ids {
+                bytes.extend_from_slice(&string_id.to_le_bytes());
+            }
+        }
+        bytes
+    }
+
     pub fn bounds(&self) -> Option<MultiBounds> {
         let first = self.parts.first()?;
         let mut bounds = MultiBounds {
@@ -194,6 +356,10 @@ impl MultiItem {
         }
         Some(bounds)
     }
+}
+
+fn count_u32(count: usize) -> u32 {
+    u32::try_from(count).expect("multi counts fit the u32 of the format")
 }
 
 fn remaining_len(reader: &Cursor<&[u8]>) -> usize {
@@ -316,6 +482,73 @@ mod tests {
 
         assert_eq!(collection.items.len(), 1);
         assert_eq!(collection.get(highest_id).map(|item| item.parts.len()), Some(test_parts().len()));
+    }
+
+    #[test]
+    fn to_payload_bytes_is_the_inverse_of_the_parser() {
+        let bytes = entry_bytes(&test_parts());
+        let item = MultiItem::from_payload_bytes(TEST_HASH, multi_collection_path(TEST_MULTI_ID), &bytes).unwrap();
+        assert_eq!(item.to_payload_bytes(), bytes);
+        assert_eq!(MultiItem::new(TEST_MULTI_ID, Vec::new()).to_payload_bytes(), entry_bytes(&[]));
+    }
+
+    #[test]
+    fn set_and_remove_keep_the_id_order_and_index() {
+        let parts = MultiItem::from_payload_bytes(TEST_HASH, String::new(), &entry_bytes(&test_parts())).unwrap().parts;
+        let mut collection = MultiCollection::from_items(vec![
+            MultiItem::new(5, parts.clone()),
+            MultiItem::new(1, Vec::new()),
+        ])
+        .unwrap();
+        assert_eq!(collection.ids().collect::<Vec<_>>(), [1, 5]);
+        assert!(collection.set(MultiItem::new(3, parts.clone())).is_none());
+        assert_eq!(collection.ids().collect::<Vec<_>>(), [1, 3, 5]);
+        assert_eq!(collection.items.iter().map(|item| item.id).collect::<Vec<_>>(), [1, 3, 5]);
+        let replaced = collection.set(MultiItem::new(1, parts.clone())).unwrap();
+        assert!(replaced.parts.is_empty());
+        assert_eq!(collection.get(3).unwrap().filename_hash, multi_collection_hash(3));
+        collection.parts_mut(5).unwrap().pop();
+        assert_eq!(collection.get(5).unwrap().parts.len(), parts.len() - 1);
+        assert_eq!(collection.remove(3).map(|item| item.id), Some(3));
+        assert!(collection.remove(3).is_none());
+        assert_eq!(collection.get(5).map(|item| item.id), Some(5), "the index follows the removal");
+        assert!(MultiCollection::from_items(vec![MultiItem::new(1, Vec::new()), MultiItem::new(1, Vec::new())]).is_err());
+    }
+
+    #[test]
+    fn apply_to_package_replaces_adds_and_removes_only_multis() {
+        const KEPT: u32 = 1;
+        const EDITED: u32 = 2;
+        const REMOVED: u32 = 3;
+        const ADDED: u32 = 4;
+        const HOUSING_PAYLOAD: &[u8] = b"housing pieces";
+        let parts = MultiItem::from_payload_bytes(TEST_HASH, String::new(), &entry_bytes(&test_parts())).unwrap().parts;
+        let mut package = UopPackage::new_default();
+        for id in [KEPT, EDITED, REMOVED] {
+            let payload = MultiItem::new(id, parts.clone()).to_payload_bytes();
+            package.add_file_from_memory(&payload, &multi_collection_path(id), CompressionFlag::Zlib).unwrap();
+        }
+        package.add_file_from_memory(HOUSING_PAYLOAD, HOUSING_PATH, CompressionFlag::None).unwrap();
+        let kept_before = package.get_file_by_hash(multi_collection_hash(KEPT)).unwrap().data().cloned();
+
+        let mut collection = MultiCollection::from_package(&package).unwrap();
+        assert_eq!(collection.housing_hash, Some(housing_hash()));
+        collection.parts_mut(EDITED).unwrap().truncate(1);
+        collection.remove(REMOVED);
+        collection.set(MultiItem::new(ADDED, Vec::new()));
+        let changes = collection.apply_to_package(&mut package).unwrap();
+
+        assert_eq!(changes, MultiCollectionChanges { replaced: 1, added: 1, removed: 1 });
+        assert_eq!(package.get_file_by_hash(multi_collection_hash(KEPT)).unwrap().data().cloned(), kept_before);
+        assert_eq!(package.get_file_by_hash(multi_collection_hash(ADDED)).unwrap().compression(), CompressionFlag::Zlib);
+        assert!(package.get_file_by_hash(multi_collection_hash(REMOVED)).is_none());
+        assert_eq!(package.get_file_by_hash(housing_hash()).unwrap().unpack().unwrap(), HOUSING_PAYLOAD);
+        let written = MultiCollection::from_package(&package).unwrap();
+        assert_eq!(written.items, collection.items);
+        assert_eq!(collection.apply_to_package(&mut package).unwrap(), MultiCollectionChanges::default());
+
+        collection.set(MultiItem::new(MAX_MULTI_COLLECTION_ID, Vec::new()));
+        assert!(collection.apply_to_package(&mut package).is_err(), "ids above the scanned range are refused");
     }
 
     #[test]

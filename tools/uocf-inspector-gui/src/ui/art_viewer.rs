@@ -2,13 +2,15 @@ use eframe::egui;
 use egui_extras::{Column, TableBuilder};
 use crate::app::{concrete_art_tile_source, tileart_flags_summary, tileart_property_name, ArtSource, ArtViewerRow, TileArtFileEntry, TileMetadataSource, UopInspectorApp, ViewMode};
 use crate::logic::ClientData;
-use super::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by};
+use super::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by, tileart_editor};
 use std::sync::Arc;
 use uocf::enhanced::tileart::{TaeAppearanceFilter, TaeSittingAnimation, TextureType};
 use uocf::classic::art::{static_art_id_for_source, STATIC_TILE_ID_BASE};
 
 const TILEDATA_TABLE_MIN_WIDTH: f32 = 980.0;
 const TILEART_TABLE_MIN_WIDTH: f32 = 1450.0;
+/// Height of the record editor above the read-only details; it scrolls beyond.
+const TILEART_EDITOR_MAX_HEIGHT: f32 = 320.0;
 const ART_VIEWER_LIST_PANEL_WIDTH: f32 = 300.0;
 
 pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
@@ -490,6 +492,10 @@ fn ui_cc_tiledata_table(app: &mut UopInspectorApp, ui: &mut egui::Ui, text_has_f
 
 fn ui_ec_tileart_table(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui, text_has_focus: bool) {
     ui.heading("EC TileArt Inspector");
+    let mut edits = Vec::new();
+    if app.ec_tileart_entries.is_some() {
+        ui.horizontal_wrapped(|ui| tileart_editor::toolbar(app, ctx, ui, &mut edits));
+    }
     if let (Some(entries), Some(rows)) = (app.ec_tileart_entries.clone(), app.ec_tileart_rows.clone()) {
         let query = app.search_query.trim();
         let sort = list_sort_controls(
@@ -636,12 +642,20 @@ fn ui_ec_tileart_table(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut 
         if let Some(selected_hash) = app.selected_tileart_hash {
             if let Some(file) = entries.iter().find(|file| file.filename_hash == selected_hash) {
                 ui.heading(format!("Selected TileArt {}", file.entry.tile_id));
+                if app.tileart_editor.enabled {
+                    egui::ScrollArea::vertical()
+                        .id_salt("tileart_record_editor")
+                        .max_height(TILEART_EDITOR_MAX_HEIGHT)
+                        .show(ui, |ui| tileart_editor::record_panel(ui, file, &mut edits));
+                }
                 ui_selected_tileart_details(app, ctx, ui, file);
             }
         }
     } else {
         ui.label("Select an Enhanced Client path containing tileart.uop.");
     }
+    // The edits go into the loaded records, which must not be shared then (the table's copies are dropped).
+    tileart_editor::apply_edits(app, edits);
 }
 
 fn ui_selected_tiledata_details(app: &UopInspectorApp, ui: &mut egui::Ui) {

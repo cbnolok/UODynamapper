@@ -1,7 +1,7 @@
 use crate::app::{
     ArtSource, HousingIndex, MultiCollectionSource, MultiPartFilters, MultisSource, UopInspectorApp, ViewMode,
 };
-use crate::ui::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by};
+use crate::ui::{arrow_delta, list_sort_controls, move_selection, multi_editor, sorted_indices_by};
 use eframe::egui;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -327,6 +327,7 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
     let mut show_housing = ctx
         .data_mut(|data| data.get_temp::<bool>(show_housing_id))
         .unwrap_or(false);
+    let mut edits = Vec::new();
     egui::Panel::top("multi_uop_raw_tabs").show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.selectable_value(&mut app.multis_source, MultisSource::Uop, "Specialized");
@@ -340,8 +341,16 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
                 ui.toggle_value(&mut show_housing, "housing.bin pieces");
             }
         });
+        ui.horizontal_wrapped(|ui| multi_editor::toolbar(app, ctx, ui, &mut edits));
     });
     ctx.data_mut(|data| data.insert_temp(show_housing_id, show_housing));
+
+    let part_id = multi_selected_part_id(app);
+    if let Some(item) = collection.get(app.selected_multi_id).filter(|_| app.multi_editor.enabled && !show_housing) {
+        let selected_part = ctx.data_mut(|data| data.get_temp::<usize>(part_id));
+        egui::Panel::bottom("multi_component_editor")
+            .show(ui, |ui| multi_editor::component_panel(ui, item, selected_part, &mut edits));
+    }
 
     egui::CentralPanel::default().show(ui, |ui| {
         if let Some(housing) = app.housing_pieces.clone().filter(|_| show_housing) {
@@ -381,6 +390,9 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
             });
         }
     });
+    // The edits go into the loaded collection, which must not be shared then.
+    drop(collection);
+    multi_editor::apply_edits(app, ctx, edits, part_id);
 }
 
 fn draw_housing_pieces(ui: &mut egui::Ui, housing: &HousingPieces) {

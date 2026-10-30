@@ -9,7 +9,8 @@
 //! The housing editing tests also check that `housing.bin` re-serializes byte for byte (directly and through
 //! KDL), validates against the client's tileart, multis and clilocs, and that a rewritten package changes only
 //! `housing.bin`. The rewritten package goes to `std::env::temp_dir()` (set `TMPDIR` to choose it) and is
-//! deleted afterwards.
+//! deleted afterwards. The multi writer tests check that every multi entry re-encodes byte for byte and that a
+//! package rewritten with an edited, an added and a removed multi changes only those entries.
 
 mod common;
 
@@ -23,7 +24,10 @@ use uocf::enhanced::housing::{
     HOUSING_TILE_TYPE_TELEPORTER, HOUSING_TILE_TYPE_WALL,
 };
 use uocf::enhanced::localized_strings::LocalizedStringsPackage;
-use uocf::enhanced::multis::{MultiCollection, HOUSING_PATH, MULTI_COLLECTION_UOP_NAME};
+use uocf::enhanced::multis::{
+    multi_collection_hash, multi_collection_path, MultiCollection, MultiCollectionChanges, MultiItem, HOUSING_PATH,
+    MAX_MULTI_COLLECTION_ID, MULTI_COLLECTION_UOP_NAME,
+};
 use uocf::enhanced::tileart::TileArtEntry;
 use uocf::uop_container::data_block_header::{DataBlockHeader, DataBlockHeaderRecord};
 use uocf::uop_container::package::UopPackage;
@@ -59,6 +63,8 @@ const CLASSIC_CLILOC_NAME: &str = "Cliloc.enu";
 const LOCALIZED_STRINGS_FILE_NAME: &str = "LocalizedStrings.uop";
 /// Tooltip cliloc changed in the rewritten package.
 const REWRITTEN_TOOLTIP_CLILOC: u32 = 1061019;
+/// Z offset given to the first part of the edited multi in the rewritten package.
+const REWRITTEN_PART_Z_DELTA: i16 = 1;
 
 #[test]
 #[ignore = "needs a real client: set UO_EC_CLIENT_DIR and/or UO_CC_CLIENT_DIR and run with --ignored"]
@@ -238,6 +244,80 @@ fn rewritten_multi_collection_changes_only_housing_bin() {
         println!("{env}: rewrote {} entries", written.file_count());
         std::fs::remove_dir_all(&dir).expect("delete the new package");
         assert!(housing.write_multi_collection(&path, &path).is_err(), "{env}: writing over the source must fail");
+    }
+}
+
+#[test]
+#[ignore = "needs a real client: set UO_EC_CLIENT_DIR and/or UO_CC_CLIENT_DIR and run with --ignored"]
+fn every_multi_reencodes_identically() {
+    for (env, path) in common::client_files(MULTI_COLLECTION_UOP_NAME) {
+        let package = UopPackage::load(&path).expect("load MultiCollection.uop");
+        let mut checked = 0usize;
+        for id in 0..MAX_MULTI_COLLECTION_ID {
+            let Some(file) = package.get_file_by_hash(multi_collection_hash(id)) else {
+                continue;
+            };
+            let payload = file.unpack().expect("unpack");
+            let item = MultiItem::from_payload_bytes(file.filename_hash(), multi_collection_path(id), &payload)
+                .expect("multi parses");
+            assert_eq!(item.id, id, "{env}: multi {id} stores another id");
+            assert!(item.to_payload_bytes() == payload, "{env}: multi {id} re-encodes differently");
+            checked += 1;
+        }
+        let entries = package.iter_files().filter(|file| file.has_size()).count();
+        assert_eq!(checked + 1, entries, "{env}: every entry but housing.bin is a multi");
+        println!("{env}: {checked} multis re-encode identically");
+    }
+}
+
+#[test]
+#[ignore = "needs a real client: set UO_EC_CLIENT_DIR and/or UO_CC_CLIENT_DIR and run with --ignored"]
+fn rewritten_multi_collection_changes_only_the_edited_multis() {
+    for (env, path) in common::client_files(MULTI_COLLECTION_UOP_NAME) {
+        let source = UopPackage::load(&path).expect("load MultiCollection.uop");
+        let mut collection = MultiCollection::from_package(&source).expect("multis parse");
+        let ids: Vec<u32> = collection.ids().collect();
+        let (edited, removed) = (ids[0], ids[1]);
+        let added = (0..MAX_MULTI_COLLECTION_ID).find(|id| collection.get(*id).is_none()).expect("a free multi id");
+        collection.parts_mut(edited).expect("edited multi")[0].z += REWRITTEN_PART_Z_DELTA;
+        let removed_item = collection.remove(removed).expect("removed multi");
+        collection.set(MultiItem::new(added, removed_item.parts.clone()));
+        let dir = common::temp_dir("multis_rewrite");
+        let output = dir.join(MULTI_COLLECTION_UOP_NAME);
+
+        let changes = collection.write_multi_collection(&path, &output).expect("write the new package");
+
+        assert_eq!(changes, MultiCollectionChanges { replaced: 1, added: 1, removed: 1 }, "{env}");
+        let written = UopPackage::load(&output).expect("reload the new package");
+        let written_collection = MultiCollection::from_package(&written).expect("written multis parse");
+        assert!(written_collection.items == collection.items, "{env}: written multis differ");
+        assert_eq!(written.file_count(), source.file_count(), "{env}: one entry removed, one added");
+        let edited_hashes = [multi_collection_hash(edited), multi_collection_hash(removed)];
+        for source_file in source.iter_files().filter(|file| file.has_size()) {
+            let hash = source_file.filename_hash();
+            if edited_hashes.contains(&hash) {
+                continue;
+            }
+            let written_file =
+                written.get_file_by_hash(hash).unwrap_or_else(|| panic!("{env}: entry {hash:016X} missing"));
+            assert!(
+                written_file.data() == source_file.data()
+                    && written_file.data_block_header() == source_file.data_block_header()
+                    && written_file.data_block_hash() == source_file.data_block_hash(),
+                "{env}: entry {hash:016X} changed"
+            );
+        }
+        for hash in [multi_collection_hash(edited), multi_collection_hash(added)] {
+            let file = written.get_file_by_hash(hash).expect("written entry");
+            let header = DataBlockHeader::parse(file.data_block_header().unwrap()).unwrap();
+            assert!(matches!(header.records(), [DataBlockHeaderRecord::Timestamp(_)]), "{env}: {hash:016X} header");
+            assert_eq!(file.data_block_hash_matches_header().unwrap(), Some(true), "{env}: {hash:016X} hash");
+        }
+        let source_len = std::fs::metadata(&path).unwrap().len();
+        let written_len = std::fs::metadata(&output).unwrap().len();
+        println!("{env}: multi {edited} edited, {removed} removed, {added} added; {source_len} -> {written_len} bytes");
+        std::fs::remove_dir_all(&dir).expect("delete the new package");
+        assert!(collection.write_multi_collection(&path, &path).is_err(), "{env}: writing over the source must fail");
     }
 }
 

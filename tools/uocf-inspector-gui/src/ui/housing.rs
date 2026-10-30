@@ -110,9 +110,13 @@ struct ValidationKey {
     document: (u64, u64),
     strings_generation: u64,
     tileart: usize,
+    /// Edits of the records in the Tile Metadata tab, which keep the records' address.
+    tileart_revision: u64,
     art: usize,
     art_source: ArtSource,
     multis: usize,
+    /// Edits of the multis in the Multis tab, which keep the collection's address.
+    multis_revision: u64,
 }
 
 struct ValidationCache {
@@ -552,9 +556,11 @@ fn refresh_validation(app: &mut UopInspectorApp) {
         document: (state.document_generation, document.revision()),
         strings_generation: state.strings_generation,
         tileart: arc_address(&app.ec_tileart_entries),
+        tileart_revision: app.tileart_editor.edits.revision(),
         art: app.client_data.as_ref().map_or(0, |client| Arc::as_ptr(&client.art) as usize),
         art_source: app.selected_legacy_source,
         multis: arc_address(&app.multi_collection),
+        multis_revision: app.multi_editor.edits.revision(),
     };
     if state.validation.as_ref().is_some_and(|cache| cache.key == key) {
         return;

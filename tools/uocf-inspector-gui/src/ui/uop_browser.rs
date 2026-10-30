@@ -4,11 +4,19 @@ use super::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by};
 use uocf::enhanced::tileart::TileArtEntry;
 use uocf::enhanced::waypoints::{
     WaypointClilocDefinition, WaypointTypeDefinition, WaypointsPackage,
-    KNOWN_WAYPOINTS_PAYLOAD_HASH, WAYPOINTS_PAYLOAD_PATH,
+    KNOWN_WAYPOINTS_PAYLOAD_HASH, WAYPOINTS_PAYLOAD_PATH, WAYPOINTS_UOP_NAME,
 };
+use crate::logic::waypoint_editor::{WaypointDocument, WaypointField};
+use super::UOP_PATCHER_NOTE;
 
 const UOP_BROWSER_PACKAGE_PANEL_WIDTH: f32 = 200.0;
 const UOP_BROWSER_ENTRY_PANEL_WIDTH: f32 = 350.0;
+const WAYPOINT_RECORDS_MAX_HEIGHT: f32 = 360.0;
+/// Drag speed of the waypoint number fields (typing is the main input).
+const WAYPOINT_DRAG_SPEED: f64 = 0.1;
+const WAYPOINT_ERROR_COLOR: egui::Color32 = egui::Color32::from_rgb(230, 90, 90);
+const WAYPOINT_WARNING_COLOR: egui::Color32 = egui::Color32::from_rgb(230, 180, 60);
+const UOP_FILTER: (&str, &[&str]) = ("UOP package", &["uop"]);
 
 pub fn has_visible_uop_explorer_package(app: &UopInspectorApp) -> bool {
     app.uop_cache
@@ -158,7 +166,7 @@ pub fn ui_uop_browser(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut e
 
                 // Specialized Visualizers
                 if is_waypoint_payload(hash, &resolved_name) {
-                    ui_integrated_waypoints_view(app, ui, file);
+                    ui_integrated_waypoints_view(app, ui, file, &loaded_uop.path);
                 } else if resolved_name.contains("tileart") && resolved_name.ends_with(".bin") {
                     ui_integrated_tileart_view(app, ctx, ui, file);
                 } else if resolved_name.contains("terraindefinition") && resolved_name.ends_with(".bin") {
@@ -198,9 +206,10 @@ fn is_waypoint_payload(hash: u64, resolved_name: &str) -> bool {
 }
 
 fn ui_integrated_waypoints_view(
-    app: &UopInspectorApp,
+    app: &mut UopInspectorApp,
     ui: &mut egui::Ui,
     file: &uocf::uop_container::file::UopFile,
+    source: &std::path::Path,
 ) {
     let bytes = match file.unpack() {
         Ok(bytes) => bytes,
@@ -231,10 +240,29 @@ fn ui_integrated_waypoints_view(
     }
 
     ui.separator();
+    let mut document = app.waypoint_document.take().filter(|document| document.source == source);
+    ui.horizontal_wrapped(|ui| match document.as_mut() {
+        None => {
+            if ui.button("Edit").on_hover_text("Edit the waypoint records and save a copy of waypoint.uop.").clicked() {
+                document = Some(WaypointDocument::new(source.to_path_buf(), package.clone()));
+            }
+        }
+        Some(editing) => {
+            if waypoint_toolbar(app, ui, editing) {
+                document = None;
+            }
+        }
+    });
+    if let Some(mut editing) = document {
+        egui::CollapsingHeader::new("Waypoint Records")
+            .default_open(true)
+            .show(ui, |ui| waypoint_editor_grid(app, ui, &mut editing));
+        app.waypoint_document = Some(editing);
+    } else {
     egui::CollapsingHeader::new("Waypoint Records")
         .default_open(true)
         .show(ui, |ui| {
-            egui::ScrollArea::both().max_height(360.0).show(ui, |ui| {
+            egui::ScrollArea::both().max_height(WAYPOINT_RECORDS_MAX_HEIGHT).show(ui, |ui| {
                 egui::Grid::new("waypoint_records_grid")
                     .striped(true)
                     .show(ui, |ui| {
@@ -264,6 +292,7 @@ fn ui_integrated_waypoints_view(
                     });
             });
         });
+    }
 
     ui.separator();
     draw_waypoint_cliloc_definitions(
@@ -304,6 +333,116 @@ fn ui_integrated_waypoints_view(
                 });
         });
     });
+}
+
+/// Undo, redo, save and close of the edited waypoints; true when the editor is closed.
+fn waypoint_toolbar(app: &mut UopInspectorApp, ui: &mut egui::Ui, document: &mut WaypointDocument) -> bool {
+    if ui.add_enabled(document.edits.can_undo(), egui::Button::new("Undo")).clicked() {
+        document.undo();
+    }
+    if ui.add_enabled(document.edits.can_redo(), egui::Button::new("Redo")).clicked() {
+        document.redo();
+    }
+    if ui
+        .button("Save waypoint.uop...")
+        .on_hover_text(format!(
+            "Writes a copy of the loaded waypoint.uop with these waypoints. The loaded package itself is refused \
+             as the target.\n{UOP_PATCHER_NOTE}"
+        ))
+        .clicked()
+    {
+        let (name, extensions) = UOP_FILTER;
+        let output = crate::dialog::file_dialog().add_filter(name, extensions).set_file_name(WAYPOINTS_UOP_NAME).save_file();
+        if let Some(output) = output {
+            match document.save(&output) {
+                Ok(()) => {
+                    document.error = None;
+                    let message = format!("Saved {}.", output.display());
+                    app.status_message = message.clone();
+                    app.log(message);
+                }
+                Err(error) => document.error = Some(format!("Save failed: {error}")),
+            }
+        }
+    }
+    let dirty = document.edits.is_dirty();
+    let close_label = if dirty { "Discard and close" } else { "Close editor" };
+    let close = ui.button(close_label).clicked();
+    if dirty {
+        ui.colored_label(WAYPOINT_WARNING_COLOR, "* unsaved changes");
+    }
+    if let Some(error) = &document.error {
+        ui.colored_label(WAYPOINT_ERROR_COLOR, error);
+    }
+    close
+}
+
+/// The waypoint records as editable rows, with duplicate and delete per row.
+fn waypoint_editor_grid(app: &UopInspectorApp, ui: &mut egui::Ui, document: &mut WaypointDocument) {
+    let mut add_after = None;
+    let mut remove = None;
+    if ui.button("Add waypoint").clicked() {
+        document.add_waypoint(None);
+    }
+    egui::ScrollArea::both().max_height(WAYPOINT_RECORDS_MAX_HEIGHT).show(ui, |ui| {
+        egui::Grid::new("waypoint_records_editor").striped(true).show(ui, |ui| {
+            for header in ["#", "x", "y", "z", "facet", "waypoint_type", "value_6", "name_id", "name", ""] {
+                ui.label(header);
+            }
+            ui.end_row();
+            for index in 0..document.package.waypoints.len() {
+                let mut waypoint = document.package.waypoints[index];
+                ui.label(index.to_string());
+                let mut changed = None;
+                for (field, response) in [
+                    (WaypointField::X, ui.add(egui::DragValue::new(&mut waypoint.x).speed(WAYPOINT_DRAG_SPEED))),
+                    (WaypointField::Y, ui.add(egui::DragValue::new(&mut waypoint.y).speed(WAYPOINT_DRAG_SPEED))),
+                    (WaypointField::Z, ui.add(egui::DragValue::new(&mut waypoint.z).speed(WAYPOINT_DRAG_SPEED))),
+                    (WaypointField::Facet, ui.add(egui::DragValue::new(&mut waypoint.facet).speed(WAYPOINT_DRAG_SPEED))),
+                    (
+                        WaypointField::Type,
+                        ui.add(egui::DragValue::new(&mut waypoint.waypoint_type).speed(WAYPOINT_DRAG_SPEED))
+                            .on_hover_text(waypoint_type_label(waypoint.waypoint_type)),
+                    ),
+                    (
+                        WaypointField::Value6,
+                        ui.add(egui::DragValue::new(&mut waypoint.value_6).speed(WAYPOINT_DRAG_SPEED))
+                            .on_hover_text("Meaning unknown; 1, or the shop kind on shop waypoints."),
+                    ),
+                    (
+                        WaypointField::NameCliloc,
+                        ui.add(egui::DragValue::new(&mut waypoint.name_cliloc).speed(WAYPOINT_DRAG_SPEED)),
+                    ),
+                ] {
+                    if response.drag_started() || response.gained_focus() {
+                        document.edits.break_coalescing();
+                    }
+                    if response.changed() {
+                        changed = Some(field);
+                    }
+                }
+                ui.label(resolve_localized_string(app, waypoint.name_cliloc));
+                ui.horizontal(|ui| {
+                    if ui.small_button("Duplicate").clicked() {
+                        add_after = Some(index);
+                    }
+                    if ui.small_button("Delete").clicked() {
+                        remove = Some(index);
+                    }
+                });
+                ui.end_row();
+                if let Some(field) = changed {
+                    document.edit_waypoint(index, field, |record| *record = waypoint);
+                }
+            }
+        });
+    });
+    if let Some(index) = add_after {
+        document.add_waypoint(Some(index));
+    }
+    if let Some(index) = remove {
+        document.remove_waypoint(index);
+    }
 }
 
 fn draw_waypoint_cliloc_definitions(

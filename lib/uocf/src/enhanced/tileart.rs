@@ -1,13 +1,18 @@
 //! Represents tile art data from a UOP file for Enhanced Client "Art Tiles" (statics).
 
 use crate::ec_material_axes::{EcLogicalFamily, EcPhysicalPackage};
-use crate::enhanced::effect_definition::{read_effect_definitions, EffectDefinition};
+use crate::enhanced::effect_definition::{encode_tileart_effects, read_effect_definitions, EffectDefinition};
 use crate::enhanced::string_dictionary::UoStringDictionary;
-use crate::uop_container::file::UopFile;
+use crate::enhanced::uop_entries::{self, EntryPut};
+use crate::uop_container::file::{CompressionFlag, UopFile};
+use crate::uop_container::hash::hash_file_name_single;
+use crate::uop_container::package::UopPackage;
 use bitflags::bitflags;
 use byteorder::{LittleEndian, ReadBytesExt};
-use color_eyre::eyre::{bail, ensure};
+use color_eyre::eyre::{self, bail, ensure, WrapErr};
+use std::collections::BTreeSet;
 use std::io::Cursor;
+use std::path::Path;
 
 // region: --- Public API (Convenience & Application Use)
 
@@ -25,6 +30,12 @@ pub fn load(
 
 /// Record version accepted by the client (`UOTileArt::ParseObjectDefinition` rejects any other).
 pub const TILEART_RECORD_VERSION: u16 = 4;
+/// Client package holding one record per tile id.
+pub const TILEART_UOP_NAME: &str = "tileart.uop";
+/// Shader block `has_texture` value of a present block; any other value is a block without data.
+pub const TILEART_SHADER_BLOCK_PRESENT: u8 = 1;
+/// Compression of records added to a package without records (client records are zlib-compressed).
+const DEFAULT_TILEART_COMPRESSION: CompressionFlag = CompressionFlag::Zlib;
 /// Shader blocks per record: 0 WorldArt, 1 TileArtLegacy, 2 TileArtEnhanced, 3 light texture.
 pub const TILEART_SHADER_BLOCK_COUNT: usize = 4;
 /// Number of u32 words in a sitting block (`UOTileArtSitting`).
@@ -278,7 +289,7 @@ bitflags! {
 }
 
 /// Direct mapping of the 4-byte radar color data (typically BGRA) found in the file.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct TaeRadarcol {
     pub r: u8,
     pub g: u8,
@@ -296,13 +307,13 @@ impl Default for TaeFlag {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct TaeProp {
     pub id: u8,
     pub val: u32,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct TaeStackAlias {
     pub amount: u32,
     pub amount_id: u32,
@@ -359,7 +370,7 @@ pub struct TaeSittingAnimation {
 }
 
 /// Texture item of a shader block (`UOTileArtTextureItem`).
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct TaeTextureImage {
     pub name_string_off: u32,
     /// 0 (`TEXTURE_SOURCE_NORMAL`) loads the texture; 2 (`TEXTURE_SOURCE_WRAP`) loads it and
@@ -376,7 +387,7 @@ pub struct TaeTextureImage {
 }
 
 /// Shader block (`UOShaderDefinition`).
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct TaeTexture {
     pub has_texture: u8,
     /// Byte at `UOShaderDefinition` +0x04 (`GetField04`); 0 in all client records, meaning unknown.
@@ -392,7 +403,7 @@ pub struct TaeTexture {
     pub tweaks: Vec<f32>,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct TaeImgOffset {
     pub x_start: i32,
     pub y_start: i32,
@@ -409,7 +420,7 @@ pub struct TaeImgOffset {
 /// without a known meaning are named after their in-memory offset. It is used internally
 /// for parsing and should not be exposed to the main application. Use `ArtData` instead
 /// for a cleaned-up version.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct TileArtEntry {
     pub uop_block: i32,
     pub uop_file: i32,
@@ -524,8 +535,8 @@ impl TileArtEntry {
         read_value!(entry.light_offset_x, read_f32, LittleEndian);
         read_value!(entry.light_offset_y, read_f32, LittleEndian);
         read_value!(entry.house_join_bits, read_u32, LittleEndian);
-        entry.flags1 = TaeFlag::from_bits_truncate(reader.read_u64::<LittleEndian>()?);
-        entry.flags2 = TaeFlag::from_bits_truncate(reader.read_u64::<LittleEndian>()?);
+        entry.flags1 = TaeFlag::from_bits_retain(reader.read_u64::<LittleEndian>()?);
+        entry.flags2 = TaeFlag::from_bits_retain(reader.read_u64::<LittleEndian>()?);
         read_value!(entry.facing, read_i32, LittleEndian);
 
         read_value!(entry.ec_img_offset.x_start, read_i32, LittleEndian);
@@ -614,7 +625,7 @@ impl TileArtEntry {
         for _ in 0..TILEART_SHADER_BLOCK_COUNT {
             let mut texture = TaeTexture::default();
             texture.has_texture = reader.read_u8()?;
-            if texture.has_texture == 1 {
+            if texture.has_texture == TILEART_SHADER_BLOCK_PRESENT {
                 texture.field_04 = reader.read_u8()?;
                 texture.type_string_off = reader.read_u32::<LittleEndian>()?;
                 texture.texture_items_count = reader.read_u8()?;
@@ -647,6 +658,143 @@ impl TileArtEntry {
         ensure!(trailing == 0, "{trailing} trailing bytes after the tileart effects");
 
         Ok(entry)
+    }
+
+    /// Encodes the record: the exact inverse of [`Self::parse_bytes`] for client records. The counts are taken from
+    /// the vectors (`prop_count1`, `prop_count2`, `stack_alias_count`, `appearance_count`, `has_sitting`,
+    /// `texture_items_count`, `technique_count` and `tweak_count` are ignored; [`Self::sync_counts`] updates them),
+    /// the booleans are written as 0 or 1 (the only values in client data; the client tests the bytes for
+    /// non-zero), and the derived `uop_block`, `uop_file`, `stack_alias_count_offset` and `radarcol_offset` are not
+    /// stored. Fails on another version than [`TILEART_RECORD_VERSION`], not exactly
+    /// [`TILEART_SHADER_BLOCK_COUNT`] shader blocks, or a list longer than its count field.
+    pub fn to_bytes(&self) -> eyre::Result<Vec<u8>> {
+        ensure!(
+            self.version == TILEART_RECORD_VERSION,
+            "tileart record {} has version {} (the client reads only {TILEART_RECORD_VERSION})",
+            self.tile_id,
+            self.version
+        );
+        ensure!(
+            self.texture_vector.len() == TILEART_SHADER_BLOCK_COUNT,
+            "tileart record {} has {} shader blocks (expected {TILEART_SHADER_BLOCK_COUNT})",
+            self.tile_id,
+            self.texture_vector.len()
+        );
+        let mut out = Vec::new();
+        out.extend_from_slice(&self.version.to_le_bytes());
+        put_u32(&mut out, self.string_dict_off);
+        put_u32(&mut out, self.tile_id);
+        out.push(u8::from(self.has_world_art));
+        out.push(u8::from(self.uses_enhanced_tileart));
+        put_f32(&mut out, self.world_art_scale);
+        put_f32(&mut out, self.legacy_art_scale);
+        put_u32(&mut out, self.field_60);
+        out.extend_from_slice(&self.old_id.to_le_bytes());
+        put_f32(&mut out, self.rotation_degrees);
+        put_u32(&mut out, self.body_type);
+        out.push(u8::from(self.alternate_animation));
+        put_f32(&mut out, self.light_scale);
+        put_u32(&mut out, self.light_field_70);
+        put_f32(&mut out, self.light_offset_x);
+        put_f32(&mut out, self.light_offset_y);
+        put_u32(&mut out, self.house_join_bits);
+        out.extend_from_slice(&self.flags1.bits().to_le_bytes());
+        out.extend_from_slice(&self.flags2.bits().to_le_bytes());
+        out.extend_from_slice(&self.facing.to_le_bytes());
+        for offset in [&self.ec_img_offset, &self.cc_img_offset] {
+            for value in [offset.x_start, offset.y_start, offset.x_end, offset.y_end, offset.x_off, offset.y_off] {
+                out.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+
+        for (props, name) in [(&self.prop_vector1, "props1"), (&self.prop_vector2, "props2")] {
+            out.push(count_u8(props.len(), name)?);
+            for prop in props {
+                out.push(prop.id);
+                put_u32(&mut out, prop.val);
+            }
+        }
+
+        put_u32(&mut out, count_u32(self.stack_alias_vector.len(), "stack aliases")?);
+        for alias in &self.stack_alias_vector {
+            put_u32(&mut out, alias.amount);
+            put_u32(&mut out, alias.amount_id);
+        }
+
+        put_u32(&mut out, count_u32(self.appearance_vector.len(), "appearance filters")?);
+        for filter in &self.appearance_vector {
+            out.push(filter.subtype());
+            match filter {
+                TaeAppearanceFilter::ByOwnerBodyType(appearances)
+                | TaeAppearanceFilter::AnimationByOwnerBodyType(appearances) => {
+                    put_u32(&mut out, count_u32(appearances.len(), "body appearances")?);
+                    for appearance in appearances {
+                        put_u32(&mut out, appearance.body_type);
+                        put_u32(&mut out, appearance.appearance);
+                    }
+                }
+                TaeAppearanceFilter::ByOwnerGender { gender, appearance } => {
+                    out.push(*gender);
+                    put_u32(&mut out, *appearance);
+                }
+            }
+        }
+
+        match &self.sitting {
+            None => out.push(TILEART_SITTING_ABSENT),
+            Some(sitting) => {
+                out.push(TILEART_SITTING_PRESENT);
+                put_u32(&mut out, sitting.direction_mask);
+                for word in [sitting.seat_offset_x, sitting.seat_offset_y, sitting.window_shift, sitting.field_10, sitting.field_14] {
+                    out.extend_from_slice(&word.to_le_bytes());
+                }
+            }
+        }
+
+        out.extend_from_slice(&[self.radarcol.r, self.radarcol.g, self.radarcol.b, self.radarcol.a]);
+
+        for block in &self.texture_vector {
+            out.push(block.has_texture);
+            if block.has_texture != TILEART_SHADER_BLOCK_PRESENT {
+                continue;
+            }
+            out.push(block.field_04);
+            put_u32(&mut out, block.type_string_off);
+            out.push(count_u8(block.texture_items.len(), "texture items")?);
+            for item in &block.texture_items {
+                put_u32(&mut out, item.name_string_off);
+                out.push(item.source_kind);
+                put_f32(&mut out, item.texture_stretch);
+                put_u32(&mut out, item.sampler_index);
+                put_u32(&mut out, item.uv_set);
+            }
+            put_u32(&mut out, count_u32(block.technique.len(), "technique values")?);
+            for value in &block.technique {
+                out.extend_from_slice(&value.to_le_bytes());
+            }
+            put_u32(&mut out, count_u32(block.tweaks.len(), "tweak values")?);
+            for value in &block.tweaks {
+                put_f32(&mut out, *value);
+            }
+        }
+
+        out.extend(encode_tileart_effects(&self.effects)?);
+        Ok(out)
+    }
+
+    /// Sets the count fields from the vectors they count, as [`Self::to_bytes`] writes them (saturating counts
+    /// that do not fit; `to_bytes` refuses those).
+    pub fn sync_counts(&mut self) {
+        self.prop_count1 = u8::try_from(self.prop_vector1.len()).unwrap_or(u8::MAX);
+        self.prop_count2 = u8::try_from(self.prop_vector2.len()).unwrap_or(u8::MAX);
+        self.stack_alias_count = u32::try_from(self.stack_alias_vector.len()).unwrap_or(u32::MAX);
+        self.appearance_count = u32::try_from(self.appearance_vector.len()).unwrap_or(u32::MAX);
+        self.has_sitting = self.sitting.is_some();
+        for block in &mut self.texture_vector {
+            block.texture_items_count = u8::try_from(block.texture_items.len()).unwrap_or(u8::MAX);
+            block.technique_count = u32::try_from(block.technique.len()).unwrap_or(u32::MAX);
+            block.tweak_count = u32::try_from(block.tweaks.len()).unwrap_or(u32::MAX);
+        }
     }
 
     pub fn process(&self, string_dictionary: &UoStringDictionary) -> ArtData {
@@ -862,6 +1010,104 @@ impl TileArtEntry {
 }
 
 /// Reads a body-type appearance list: u32 count, then count x {u32 body type, u32 appearance}.
+/// Entry path of the record of `tile_id` in `tileart.uop` (`data/assetmap.xml` of `MainMisc.uop`:
+/// `Build/TileArt/%08d.bin`, hashed lowercase). Ids above 8 digits keep all their digits, as with `%08d`. The client
+/// finds a tile's record by this name (the tile id is the asset id); the `tile_id` stored in the record is only
+/// copied (`GetTileId`). Every client entry is named after a tile id, and 25 client records store another id than
+/// their name's (e.g. 43957..=43963 store 43956), so edits are keyed by the entry, not by the stored id.
+pub fn tileart_entry_path(tile_id: u32) -> String {
+    format!("build/tileart/{tile_id:08}.bin")
+}
+
+/// Entry hash of the record of `tile_id` in `tileart.uop`.
+pub fn tileart_entry_hash(tile_id: u32) -> u64 {
+    hash_file_name_single(&tileart_entry_path(tile_id))
+}
+
+/// What [`apply_tileart_edits`] changed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TileArtChanges {
+    pub replaced: usize,
+    pub added: usize,
+    pub removed: usize,
+}
+
+/// Stores each `(entry hash, record)` of `records` as that entry (a new tile's hash is
+/// [`tileart_entry_hash`] of its id) and removes the entries of the `removed` hashes; every other entry is left
+/// untouched (same compressed bytes and data block header). A record whose entry already holds its bytes is left
+/// untouched; a changed one is replaced keeping its compression flag; a new one is added with the compression of
+/// the package's records. Both get a fresh timestamp data block header (the package's edit time). Fails on an
+/// entry listed twice or both stored and removed; a removed hash without an entry is not counted.
+pub fn apply_tileart_edits(
+    package: &mut UopPackage,
+    records: &[(u64, TileArtEntry)],
+    removed: &[u64],
+) -> eyre::Result<TileArtChanges> {
+    let mut stored = BTreeSet::new();
+    for (hash, record) in records {
+        ensure!(stored.insert(*hash), "tileart entry {hash:016X} (tile {}) appears twice", record.tile_id);
+    }
+    if let Some(hash) = removed.iter().find(|hash| stored.contains(*hash)) {
+        bail!("tileart entry {hash:016X} is both stored and removed");
+    }
+    let compression = package
+        .iter_files()
+        .find(|file| file.has_size())
+        .map_or(DEFAULT_TILEART_COMPRESSION, |file| file.compression());
+    let mut changes = TileArtChanges::default();
+    for (hash, record) in records {
+        let payload = record.to_bytes()?;
+        let current = package
+            .unpack_file_by_hash(*hash)
+            .wrap_err_with(|| format!("failed to unpack tileart entry {hash:016X}"))?;
+        if current.as_deref() == Some(payload.as_slice()) {
+            continue;
+        }
+        match uop_entries::put_entry(package, *hash, &payload, compression)? {
+            EntryPut::Replaced => changes.replaced += 1,
+            EntryPut::Added => changes.added += 1,
+        }
+    }
+    for hash in removed.iter().copied().collect::<BTreeSet<_>>() {
+        if uop_entries::remove_entry(package, hash) {
+            changes.removed += 1;
+        }
+    }
+    Ok(changes)
+}
+
+/// Writes a copy of the `source` `tileart.uop` to `output` with [`apply_tileart_edits`] applied (stamped with the
+/// current time); the package keeps its version, block size and layout. `output` must not be `source`.
+pub fn write_tileart_package(
+    source: impl AsRef<Path>,
+    output: impl AsRef<Path>,
+    records: &[(u64, TileArtEntry)],
+    removed: &[u64],
+) -> eyre::Result<TileArtChanges> {
+    let (source, output) = (source.as_ref(), output.as_ref());
+    uop_entries::refuse_to_overwrite(source, output)?;
+    let mut package = UopPackage::load(source).wrap_err_with(|| format!("failed to load {}", source.display()))?;
+    let changes = apply_tileart_edits(&mut package, records, removed)?;
+    uop_entries::save_package_as(&mut package, source, output)?;
+    Ok(changes)
+}
+
+fn put_u32(out: &mut Vec<u8>, value: u32) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn put_f32(out: &mut Vec<u8>, value: f32) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn count_u8(count: usize, what: &str) -> eyre::Result<u8> {
+    u8::try_from(count).map_err(|_| eyre::eyre!("{count} {what} do not fit the u8 count of a tileart record"))
+}
+
+fn count_u32(count: usize, what: &str) -> eyre::Result<u32> {
+    u32::try_from(count).map_err(|_| eyre::eyre!("{count} {what} do not fit the u32 count of a tileart record"))
+}
+
 fn read_body_appearances(reader: &mut Cursor<&[u8]>) -> color_eyre::eyre::Result<Vec<TaeBodyAppearance>> {
     let count = reader.read_u32::<LittleEndian>()?;
     let mut mappings = Vec::new();
@@ -1213,6 +1459,90 @@ mod tests {
         assert_eq!(entry.sitting, None);
         assert!(entry.effects.is_empty());
         assert!(!entry.alternate_animation);
+    }
+
+    #[test]
+    fn tileart_to_bytes_is_the_inverse_of_the_parser() {
+        /// Offset of the alternate animation byte: version, name index, tile id, two flag bytes, six words.
+        const ALTERNATE_ANIMATION_OFFSET: usize = 36;
+        // The sample record holds 3 there; the encoder writes the boolean as 1.
+        let mut sample = valid_sample_record();
+        sample[ALTERNATE_ANIMATION_OFFSET] = 1;
+        for record in [sample, minimal_record(0), minimal_record(1)] {
+            let entry = TileArtEntry::parse_bytes(&record).expect("parse record");
+            assert_eq!(entry.to_bytes().expect("encode record"), record);
+        }
+    }
+
+    #[test]
+    fn tileart_to_bytes_keeps_unknown_flag_bits() {
+        const UNKNOWN_FLAG_BIT: u64 = 1 << 63;
+        let mut record = minimal_record(0);
+        let entry = TileArtEntry::parse_bytes(&record).unwrap();
+        let mut flags = entry.flags1;
+        flags.insert(TaeFlag::from_bits_retain(UNKNOWN_FLAG_BIT));
+        let edited = TileArtEntry { flags1: flags, ..entry };
+        record = edited.to_bytes().unwrap();
+        assert_eq!(TileArtEntry::parse_bytes(&record).unwrap().flags1.bits(), UNKNOWN_FLAG_BIT);
+    }
+
+    #[test]
+    fn tileart_to_bytes_takes_the_counts_from_the_vectors() {
+        let mut entry = TileArtEntry::parse_bytes(&valid_sample_record()).unwrap();
+        entry.prop_vector1.push(TaeProp { id: PropertyKey::Weight as u8, val: 2 });
+        entry.sitting = None;
+        entry.texture_vector[0].tweaks.clear();
+        let reparsed = TileArtEntry::parse_bytes(&entry.to_bytes().unwrap()).unwrap();
+        assert_eq!((reparsed.prop_count1, reparsed.has_sitting, reparsed.texture_vector[0].tweak_count), (2, false, 0));
+        entry.sync_counts();
+        assert_eq!((entry.prop_count1, entry.has_sitting, entry.texture_vector[0].tweak_count), (2, false, 0));
+
+        entry.texture_vector.pop();
+        assert!(entry.to_bytes().is_err(), "a record needs every shader block");
+        let wrong_version = TileArtEntry { version: TILEART_RECORD_VERSION - 1, ..TileArtEntry::parse_bytes(&minimal_record(0)).unwrap() };
+        assert!(wrong_version.to_bytes().is_err());
+    }
+
+    #[test]
+    fn apply_tileart_edits_replaces_adds_and_removes_records() {
+        const KEPT: u32 = 2;
+        const EDITED: u32 = 3;
+        const REMOVED: u32 = 4;
+        const ADDED: u32 = 10_000_001;
+        let base = TileArtEntry::parse_bytes(&minimal_record(0)).unwrap();
+        let record = |tile_id| TileArtEntry { tile_id, ..base.clone() };
+        let mut package = UopPackage::new_default();
+        for tile_id in [KEPT, EDITED, REMOVED] {
+            let bytes = record(tile_id).to_bytes().unwrap();
+            package.add_file_from_memory(&bytes, &tileart_entry_path(tile_id), CompressionFlag::Zlib).unwrap();
+        }
+        let kept_before = package.get_file_by_hash(tileart_entry_hash(KEPT)).unwrap().data().cloned();
+        let edited = TileArtEntry { body_type: 666, ..record(EDITED) };
+
+        let keyed = |record: TileArtEntry| (tileart_entry_hash(record.tile_id), record);
+        let edits = [keyed(record(KEPT)), keyed(edited.clone()), keyed(record(ADDED))];
+        let changes = apply_tileart_edits(&mut package, &edits, &[tileart_entry_hash(REMOVED)]).unwrap();
+
+        assert_eq!(changes, TileArtChanges { replaced: 1, added: 1, removed: 1 });
+        assert_eq!(package.get_file_by_hash(tileart_entry_hash(KEPT)).unwrap().data().cloned(), kept_before);
+        let added = package.get_file_by_hash(tileart_entry_hash(ADDED)).unwrap();
+        assert_eq!(added.compression(), CompressionFlag::Zlib);
+        assert_eq!(TileArtEntry::parse_bytes(&added.unpack().unwrap()).unwrap().tile_id, ADDED);
+        let edited_bytes = package.unpack_file_by_hash(tileart_entry_hash(EDITED)).unwrap().unwrap();
+        assert_eq!(edited_bytes, edited.to_bytes().unwrap());
+        assert!(package.get_file_by_hash(tileart_entry_hash(REMOVED)).is_none());
+        assert_eq!(tileart_entry_path(ADDED), "build/tileart/10000001.bin");
+
+        assert!(apply_tileart_edits(&mut package, &[keyed(record(KEPT)), keyed(record(KEPT))], &[]).is_err());
+        assert!(apply_tileart_edits(&mut package, &[keyed(record(KEPT))], &[tileart_entry_hash(KEPT)]).is_err());
+
+        // A record is stored under the entry it is keyed by, whatever tile id it holds.
+        let stored_elsewhere = TileArtEntry { body_type: 401, ..record(KEPT) };
+        let edits = [(tileart_entry_hash(EDITED), stored_elsewhere.clone())];
+        assert_eq!(apply_tileart_edits(&mut package, &edits, &[]).unwrap().replaced, 1);
+        let bytes = package.unpack_file_by_hash(tileart_entry_hash(EDITED)).unwrap().unwrap();
+        assert_eq!(bytes, stored_elsewhere.to_bytes().unwrap());
+        assert_eq!(package.get_file_by_hash(tileart_entry_hash(KEPT)).unwrap().data().cloned(), kept_before);
     }
 
     #[test]
