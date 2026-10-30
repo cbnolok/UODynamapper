@@ -1456,3 +1456,20 @@ function ParticleEventLength::Apply
   param event /UO/ChaosParticleEvent* @ECX
   param particle /UO/ChaosParticle* @stack:0x4
 end
+
+# ---- effect rendering and texture loading (results/uosa_effects.md, "Effect textures and mipmaps") ----
+# GetBackgroundColor writes an NiColorA (4 floats) through `color`; ReadFile takes an NiFile and an optional
+# destination it ignores, and returns the NiPixelData or 0.
+
+function NiDX9Renderer::GetBackgroundColor
+  proto __thiscall void custom
+  param renderer void* @ECX
+  param color float* @stack:0x4
+end
+
+function NiNIFImageReader::ReadFile
+  proto __thiscall void* custom
+  param reader void* @ECX
+  param file void* @stack:0x4
+  param destination void* @stack:0x8
+end

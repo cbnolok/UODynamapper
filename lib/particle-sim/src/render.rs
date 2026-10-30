@@ -318,18 +318,29 @@ pub struct TextureStage {
     pub addressing: TextureAddressing,
 }
 
-/// The lights an effect is lit by. The client's effect lighting environment is not established: the default is
-/// a white ambient light and no diffuse light, so the usual `E_A_D` materials show `emissive + 0.5 * ambient`.
-/// Diffuse light is applied without direction (as if facing every surface).
+/// The lights an effect is lit by. Diffuse light is applied without direction (as if facing every surface).
+///
+/// The default, [`CLIENT_EFFECT_LIGHTING`], is the client's: no light at all (confirmed). Effect NIFs hang under
+/// render group node 7 (`g_UOEffectRenderGroups` 0x00e32e28), a parentless node with an empty effect list; no
+/// game code attaches a light to it (`NiDynamicEffect::AttachAffectedNode` 0x006a1900 is called only by NIF
+/// streaming, cloning and the UI's `NifDisplay`), and the world's day/night light does not reach it. With no
+/// light the renderer's ambient uniform is 0 (`SCM_DEF_AMBIENTLIGHT` sums the attached `NiAmbientLight`s) and
+/// so is the diffuse sum, so both of the client's pipelines (`NiStandardMaterial` on shader model 2 hardware,
+/// chosen by `NiDX9Renderer` init at 0x00755612, and the legacy fixed-function one) draw `saturate(emissive)`:
+/// `E_A_D` materials show only their emissive colour. Lights inside an effect NIF light its own subtree (one
+/// shipped file, `00005540_shadowstrike.nif`, has two white `NiDirectionalLight`s on its root); set them here.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SceneLighting {
     pub ambient: [f32; 3],
     pub diffuse: [f32; 3],
 }
 
+/// The client's effect lighting: no light (see [`SceneLighting`]).
+pub const CLIENT_EFFECT_LIGHTING: SceneLighting = SceneLighting { ambient: [0.0; 3], diffuse: [0.0; 3] };
+
 impl Default for SceneLighting {
     fn default() -> Self {
-        Self { ambient: [1.0; 3], diffuse: [0.0; 3] }
+        CLIENT_EFFECT_LIGHTING
     }
 }
 

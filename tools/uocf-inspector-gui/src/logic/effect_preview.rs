@@ -18,7 +18,8 @@ use particle_sim::chaos::compile::compile_chaos_source;
 use particle_sim::nif::default_camera;
 use particle_sim::nif::desc::NifTextureSource;
 use particle_sim::hued::{
-    draw_hued_frame, hue_mode, offscreen_camera, HueMode, HuedRenderSettings, HUED_EFFECT_TIME_SCALE, NO_HUE,
+    draw_hued_frame, hue_mode, offscreen_camera, HueMode, HuedRenderSettings, HUED_EFFECT_TIME_SCALE,
+    HUED_QUAD_HALF_SIZE, NO_HUE,
 };
 use particle_sim::raster::{
     frame_bounds, frame_extent, orbit_axes, Canvas, OrthoView, RasterTexture, SceneDrawOptions, CLIENT_VIEW_ELEVATION,
@@ -34,7 +35,7 @@ use uocf::enhanced::hues::{hues_atlas_hash, HUES_UOP_NAME};
 use uocf::uop_container::package::{LoadMode, UopPackage};
 use uocf::enhanced::string_dictionary::UoStringDictionary;
 
-use super::effect_files::{decode_texture, is_nif_name};
+use super::effect_files::{decode_nif_image, decode_texture, is_nif_name};
 use super::effects_editor::{is_chaos_name, particle_name, ChildList, DefinitionKind, PathStep};
 
 /// Simulation step: the preview always advances in whole steps of this many milliseconds.
@@ -73,8 +74,8 @@ const FULL_TURN_DEGREES: f32 = 360.0;
 const CAMERA_DISTANCE: f32 = 1000.0;
 /// How the meshes are lit (shown with the lighting controls).
 pub const LIGHTING_NOTE: &str = "Meshes and NIF particle colours use these lights without direction (diffuse \
-    as if facing every surface): the client's scene lights for effects are not established. The default, white \
-    ambient and no diffuse, shows the usual materials as emissive + 0.5 x ambient.";
+    as if facing every surface). The default is the client's: no light reaches effects, so lit (E_A_D) materials \
+    show only their emissive colour. Lights inside an effect NIF (one shipped file has two) are not applied.";
 /// Fraction of the canvas left free around the fitted bounds.
 const FIT_MARGIN: f32 = 0.08;
 /// Smallest world extent fitted into the canvas (an effect with a single point).
@@ -566,10 +567,12 @@ impl<'s, 'a> SceneBuilder<'s, 'a> {
 
     fn load_texture(&mut self, name: &str) {
         let key = name.to_ascii_lowercase();
-        if is_nif_name(&key) || self.scene.textures.contains_key(&key) {
+        if self.scene.textures.contains_key(&key) {
             return;
         }
-        match (self.input.payload)(name).map(|payload| decode_texture(&payload)) {
+        // A `.nif` texture is a NIF image (one `NiPixelData`), which the client's image converter reads too.
+        let decode = if is_nif_name(&key) { decode_nif_image } else { decode_texture };
+        match (self.input.payload)(name).map(|payload| decode(&payload)) {
             Some(Ok(image)) => {
                 let (width, height) = image.dimensions();
                 if let Some(texture) = RasterTexture::from_rgba8(width as usize, height as usize, image.as_raw()) {
@@ -617,7 +620,7 @@ impl PartInstance {
             Self::Nif { params, system, hued, position } => {
                 // `EffectInstance::node`.
                 let node = NodeTransform {
-                    position: placement.anchor + params.node_offset(placement.camera_down),
+                    position: placement.anchor + params.node_offset(placement),
                     rotation: placement.node_rotation,
                     scale: params.node_scale(),
                     velocity: placement.velocity,
@@ -785,9 +788,12 @@ fn emitter_at(move_speed: f32, time_ms: u32) -> Vec3 {
 pub type WorldBounds = [Vec3; 2];
 
 /// The world box around everything a scene draws over the timeline (sampled) and the emitter path, seen from
-/// the default orbit (NIF billboards turn with the camera; the box barely does).
+/// the default orbit (NIF billboards turn with the camera; the box barely does). A hued part draws its hue quad
+/// (`HUED_QUAD_HALF_SIZE` around its position along the camera right and up), which the box includes.
 pub fn fit_bounds(scene: &PreviewScene, settings: &SimulationSettings) -> WorldBounds {
     let mut simulation = PreviewSimulation::new(scene, settings, CameraOrbit::default());
+    let camera = simulation.orbit().camera();
+    let quad_diagonals = [camera.right + camera.up, camera.right - camera.up].map(|axis| axis * HUED_QUAD_HALF_SIZE);
     let mut bounds: Option<WorldBounds> = None;
     let mut include = |min: Vec3, max: Vec3| {
         let [low, high] = bounds.get_or_insert([min, max]);
@@ -802,6 +808,14 @@ pub fn fit_bounds(scene: &PreviewScene, settings: &SimulationSettings) -> WorldB
         if steps % FIT_SAMPLE_EVERY_STEPS == 0 {
             if let Some((min, max)) = frame_bounds(&simulation.render()) {
                 include(min, max);
+            }
+            for (part, _) in simulation.render_parts() {
+                if let Some(position) = simulation.hued_position(part) {
+                    for diagonal in quad_diagonals {
+                        include(position - diagonal, position - diagonal);
+                        include(position + diagonal, position + diagonal);
+                    }
+                }
             }
         }
         if simulation.time_ms() + PREVIEW_STEP_MS > end {
@@ -1078,7 +1092,17 @@ pub(crate) mod tests {
         let only_hued = scene(&definitions[1..2], &settings);
         let simulation = PreviewSimulation::at(&only_hued, &settings, CameraOrbit::default(), SCRUB_TIME_MS);
         let view_settings = ViewSettings { show_emitter: false, ..Default::default() };
-        let view = preview_view(fit_bounds(&only_hued, &settings), &view_settings, PREVIEW_RESOLUTION_PX, PREVIEW_RESOLUTION_PX);
+        let bounds = fit_bounds(&only_hued, &settings);
+        let position = simulation.hued_position(0).expect("the part plays hued");
+        let camera = CameraOrbit::default().camera();
+        for corner in [camera.right + camera.up, camera.right - camera.up].map(|axis| axis * HUED_QUAD_HALF_SIZE) {
+            for point in [position + corner, position - corner] {
+                let ([low, high], point) = (bounds.map(Vec3::to_array), point.to_array());
+                let inside = (0..3).all(|axis| low[axis] <= point[axis] && point[axis] <= high[axis]);
+                assert!(inside, "the hue quad corner {point:?} is in the bounds {bounds:?}");
+            }
+        }
+        let view = preview_view(bounds, &view_settings, PREVIEW_RESOLUTION_PX, PREVIEW_RESOLUTION_PX);
         let side = uocf::enhanced::hues::HUES_ATLAS_WIDTH as usize;
         let atlas = RasterTexture { width: side, height: side, texels: vec![TEST_HUE_COLOR; side * side] };
         let hued_canvas = render_canvas(&only_hued, &simulation, &view, &view_settings, Some(&atlas));

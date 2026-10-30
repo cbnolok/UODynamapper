@@ -583,6 +583,8 @@ mod tests {
 
     const SIDE: usize = 16;
     const BLACK: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
+    /// Emissive colour of the test triangle.
+    const TRIANGLE_EMISSIVE: [f32; 3] = [0.5; 3];
 
     fn frame_with_one_sprite(size: f32, blend: BlendState) -> RenderFrame {
         let mut frame = RenderFrame::default();
@@ -630,7 +632,7 @@ mod tests {
     fn frame_with_one_triangle(cull: CullMode) -> RenderFrame {
         use crate::math::Mat3;
         use crate::nif::desc::{CompareFunction, NifVertexColor};
-        use crate::render::{DEFAULT_MATERIAL_COLORS, DepthState, MeshDraw, MeshGeometry};
+        use crate::render::{DEFAULT_MATERIAL_COLORS, DepthState, MaterialColors, MeshDraw, MeshGeometry};
         let half = SIDE as f32 * 0.5;
         // The view looks along +y: x is right, z is up.
         let geometry = MeshGeometry {
@@ -647,7 +649,8 @@ mod tests {
             rotation: Mat3::IDENTITY,
             translation: Vec3::ZERO,
             scale: 1.0,
-            material: DEFAULT_MATERIAL_COLORS,
+            // Unlit by the client's (empty) lighting, the triangle shows its emissive colour.
+            material: MaterialColors { emissive: TRIANGLE_EMISSIVE, ..DEFAULT_MATERIAL_COLORS },
             vertex_color: NifVertexColor::default(),
             apply_mode: TextureApplyMode::Modulate,
             textures: Vec::new(),

@@ -2591,7 +2591,7 @@ fn preview_panel(app: &mut UopInspectorApp, lookups: &Lookups, ctx: &egui::Conte
             ui.label("ambient");
             ui.color_edit_button_rgb(&mut preview.view.lighting.diffuse).on_hover_text("Diffuse light (no direction)");
             ui.label("diffuse");
-            if ui.small_button("Default").clicked() {
+            if ui.small_button("Client").on_hover_text("No light, as the client").clicked() {
                 preview.view.lighting = particle_sim::render::SceneLighting::default();
             }
         });

@@ -14,9 +14,9 @@
 //!   hue alpha times the vertex alpha; blending is SRCALPHA / INVSRCALPHA with alpha test GREATER 0, whatever the
 //!   NIF's own blend modes.
 //!
-//! Choices where the client is not established (each a named constant): the target clear colour
-//! ([`HUED_TARGET_CLEAR`]), square target texels ([`offscreen_view`]), the quad mapping the whole target
-//! ([`draw_hued_quad`]) and the atlas sampling ([`HueAtlasSampling`]).
+//! The target clear colour, the quad's texture coordinates, the samplers and the hue coordinate are confirmed
+//! (`uosa_effects.md`, "Hued NIF effects"). The one departure from the client: the target keeps square texels
+//! ([`offscreen_view`]), which changes only its horizontal resolution.
 
 use crate::math::Vec3;
 use crate::raster::{Canvas, OVERLAY_BLEND, OrthoView, RasterTexture, SceneDrawOptions};
@@ -56,8 +56,9 @@ pub const HUED_CAMERA_FAR: f32 = 12.0;
 pub const HUED_CAMERA_DISTANCE: f32 = 10.0;
 /// Half side of the camera-facing hue quad along camera right and up (`float` 4.8541555 at 0x00d05360).
 pub const HUED_QUAD_HALF_SIZE: f32 = 4.854_155_5;
-/// Clear colour of the offscreen target. The client clears with the renderer's background colour, which was not
-/// traced (`uosa_effects.md`, open questions); transparent black keeps the target alpha the effect's own.
+/// Clear colour of the offscreen target: transparent black (confirmed). `RenderToTexture` 0x0041ebc0 saves the
+/// renderer's background colour, sets it to `NiColorA(0, 0, 0, 0)` (vtable +0x58, 0x00761580, which keeps the
+/// alpha), clears colour, depth and stencil (flags 7), and restores the saved colour after drawing.
 pub const HUED_TARGET_CLEAR: [f32; 4] = [0.0; 4];
 /// Alpha test of the hue quad (`NiAlphaProperty` flags 0x12ED): GREATER than this.
 pub const HUED_ALPHA_REFERENCE: f32 = 0.0;
@@ -97,10 +98,12 @@ pub fn hue_mode(chaos: bool, hued_flag: bool, hue: u32) -> HueMode {
 /// How the hue atlas is sampled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HueAtlasSampling {
-    /// As the client: bilinear with wrap addressing (base map flags 0x3100) at the shader's coordinate, which falls
-    /// on texel edges. Each sample blends rows `row - 1` and `row` (row 0 wraps to 1023, a transparent row of the
-    /// atlas) and, at whole luminance steps, two adjacent gradient entries; columns 1 and 2 sit `column` texels
-    /// left of their strip (probable, from the constants: `uosa_effects.md`, "Shader and formula").
+    /// As the client: bilinear with wrap addressing (base map flags 0x3100 = `WRAP_S_WRAP_T` + `FILTER_BILERP`,
+    /// `BuildHueQuad` 0x0041e922) at the shader's coordinate, which falls on texel edges. Each sample blends rows
+    /// `row - 1` and `row` (row 0 wraps to 1023, a transparent row of the atlas) and, at whole luminance steps, two
+    /// adjacent gradient entries; columns 1 and 2 sit `column` texels left of their strip. Nothing clamps or masks
+    /// the hue: a hue past the atlas's loaded rows samples whatever texels its coordinate reaches (u wraps past 1),
+    /// transparent where the atlas is empty (confirmed: `uosa_effects.md`, "Shader and formula").
     #[default]
     Client,
     /// The entry the formula aims at: texel (`column * 256 + round(lum * 255)`, `row`), unfiltered.
@@ -206,10 +209,12 @@ pub fn render_hued_target<'t>(
 
 /// Draws the hue quad of a target from [`render_hued_target`] into `canvas`: a square of half side
 /// `HUED_QUAD_HALF_SIZE` along the camera right and up of `view` at `effect_position`, each pixel the target sampled
-/// bilinearly with clamping (shader map flags `& 0xc1ff | 0x100`, probable) and run through [`hued_color`], alpha
-/// tested and alpha blended. The quad's texture coordinates (not traced) are taken to span the whole target, top
-/// at camera up: the effect shows `HUED_QUAD_HALF_SIZE / HUED_FRUSTUM_HALF_HEIGHT` (about 1.21) times taller than
-/// plain, and squeezed horizontally by the aspect.
+/// bilinearly with clamping (shader map flags `0x3100 & 0xc1ff | 0x100` = `CLAMP_S_CLAMP_T` + `FILTER_BILERP`,
+/// 0x0041e874) and run through [`hued_color`], alpha tested and alpha blended. The texture coordinates span the
+/// whole target with no half-texel offset (confirmed, `BuildHueQuad` 0x0041df40, UV writes 0x0041e420..0x0041e499:
+/// vertices top-left, top-right, bottom-left, bottom-right at camera up/right take (0, 0), (1, 0), (0, 1), (1, 1)).
+/// As the quad is square and the frustum is not, the effect shows `HUED_QUAD_HALF_SIZE / HUED_FRUSTUM_HALF_HEIGHT`
+/// (about 1.21) times taller than plain, and that divided by the aspect as wide.
 pub fn draw_hued_quad(
     canvas: &mut Canvas,
     view: &OrthoView,

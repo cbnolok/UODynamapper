@@ -58,7 +58,8 @@ pub enum EffectIssueKind {
     NestingTooDeep,
     /// The particle name index is not in the string dictionary.
     UnresolvedParticleName { name_index: u32 },
-    /// The particle file is not in `EffectTexture.uop`: the client plays nothing for it.
+    /// The particle file is not in `EffectTexture.uop`: the client plays nothing for it. A warning: the client's
+    /// own data has such gaps.
     MissingParticleFile { name: String },
     /// `field_3c` must be 0: the client refuses to start the particle otherwise.
     NonZeroField3c { value: u8 },
@@ -96,11 +97,11 @@ impl EffectIssue {
         match self.kind {
             EffectIssueKind::NestingTooDeep
             | EffectIssueKind::UnresolvedParticleName { .. }
-            | EffectIssueKind::MissingParticleFile { .. }
             | EffectIssueKind::NonZeroField3c { .. }
             | EffectIssueKind::NonFiniteValue { .. }
             | EffectIssueKind::WaitMinAboveMax { .. } => EffectIssueSeverity::Error,
             EffectIssueKind::EmptyEntry
+            | EffectIssueKind::MissingParticleFile { .. }
             | EffectIssueKind::UnknownAttachMode { .. }
             | EffectIssueKind::UnusedSoundValue { .. }
             | EffectIssueKind::RandomWeightSum { .. }

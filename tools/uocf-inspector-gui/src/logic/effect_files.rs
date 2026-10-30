@@ -6,8 +6,10 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::sync::Arc;
 
+use gamebryo_nif::{Block, Link, NifFile};
 use particle_sim::chaos::compile::compile_chaos_source;
 use particle_sim::chaos::ChaosIssueSeverity as CompileSeverity;
+use particle_sim::nif::compile::decode_pixel_level;
 use uocf::enhanced::chaos_script::{ChaosIssueSeverity as ParseSeverity, ChaosScript, ChaosValidationContext};
 use uocf::enhanced::effect_texture::{effect_texture_hash, EffectFileKind, EffectTexturePackage};
 use uocf::enhanced::string_dictionary::UoStringDictionary;
@@ -434,6 +436,22 @@ pub fn decode_texture(payload: &[u8]) -> Result<image::RgbaImage, String> {
         image_data_offset: 0,
     };
     file.decode_to_rgba8().map_err(|error| format!("{error:#}"))
+}
+
+/// A NIF image, as the client's `NiNIFImageReader::ReadFile` accepts it: a NIF file whose only top object is an
+/// `NiPixelData`. Returns its first stored level.
+pub fn decode_nif_image(payload: &[u8]) -> Result<image::RgbaImage, String> {
+    let nif = NifFile::read(payload).map_err(|error| error.to_string())?;
+    let [root] = nif.roots.as_slice() else {
+        return Err(format!("{} top objects, a NIF image has one", nif.roots.len()));
+    };
+    let pixels = match root.index().and_then(|index| nif.blocks.get(index)) {
+        Some(Block::NiPixelData(pixels)) => pixels,
+        _ => return Err("the top object is not an NiPixelData".to_owned()),
+    };
+    let (width, height, rgba) = decode_pixel_level(pixels, 0)
+        .ok_or_else(|| format!("NiPixelData format {} is not decoded", pixels.pixel_format.format.0))?;
+    image::RgbaImage::from_raw(width, height, rgba).ok_or_else(|| "NiPixelData level 0 is truncated".to_owned())
 }
 
 /// Reads a file to import into the package: its lowercase base name and payload. Scripts may have issues

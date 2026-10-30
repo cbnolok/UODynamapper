@@ -146,6 +146,43 @@ public class NameEffectCode extends GhidraScript {
     private static final String FILTER_LABEL = "g_UOParticleFilter";
     private static final String USER_FILTER_LABEL = "g_UOUserEffectFilter";
 
+    // Effect rendering: render groups, renderer background colour, texture loading (results/uosa_effects.md
+    // "Effect camera and lighting", "Effect textures and mipmaps").
+    private static final String NIF_EFFECT = "UOParticleEffectNif";
+    // IUOEffect +0x18 Release.
+    private static final int EFFECT_RELEASE = 0x18;
+    private static final String RENDER_GROUPS_LABEL = "g_UOEffectRenderGroups";
+    // The render group effect NIFs attach to.
+    private static final int EFFECT_RENDER_GROUP = 7;
+    private static final String DX9_RENDERER = "NiDX9Renderer";
+    private static final String DX9_GET_RTTI = DX9_RENDERER + "::GetRTTI";
+    // NiDX9Renderer vtable: +8 GetRTTI, +0x58 SetBackgroundColor(NiColorA), +0x5c SetBackgroundColor(NiColor),
+    // +0x60 GetBackgroundColor(NiColorA), +0x98 UseLegacyPipelineAsDefaultMaterial.
+    private static final int RENDERER_GET_RTTI = 0x8;
+    private static final int RENDERER_SET_BACKGROUND_RGBA = 0x58;
+    private static final int RENDERER_SET_BACKGROUND_RGB = 0x5c;
+    private static final int RENDERER_GET_BACKGROUND = 0x60;
+    private static final int RENDERER_USE_LEGACY_PIPELINE = 0x98;
+    private static final String RENDER_TO_TEXTURE = HUED_NIF + "::RenderToTexture";
+    private static final String SOURCE_TEXTURE_DATA = "NiDX9SourceTextureData";
+    private static final String CREATE_SURF_FROM_RENDERER_DATA = SOURCE_TEXTURE_DATA + "::CreateSurfFromRendererData";
+    private static final String MIPMAP_BY_DEFAULT_LABEL = "NiTexture_ms_bMipmapByDefault";
+    private static final String DEV_IMAGE_CONVERTER = "NiDevImageConverter";
+    private static final String GENERATE_MIPMAP_LEVELS = DEV_IMAGE_CONVERTER + "::GenerateMipmapLevels";
+    private static final String DEV_IMAGE_CONVERTER_DTOR = DEV_IMAGE_CONVERTER + "::~" + DEV_IMAGE_CONVERTER;
+    // NiImageConverter vtable: +0xc ReadImageFile, +0x14 ConvertPixelData.
+    private static final int CONVERTER_READ_IMAGE_FILE = 0xc;
+    private static final int CONVERTER_CONVERT_PIXEL_DATA = 0x14;
+    // Distance from the vtable start to the GenerateMipmapLevels slot is at most this many slots.
+    private static final int CONVERTER_MAX_SLOTS = 32;
+    private static final String NIF_IMAGE_READER = "NiNIFImageReader";
+    private static final String NIF_EXTENSION = ".nif";
+    // NiImageReader vtable: +0 ScalarDeletingDestructor, +4 CanReadFile, +8 ReadFile, +0xc ReadHeader.
+    private static final int READER_DESTRUCTOR = 0x0;
+    private static final int READER_CAN_READ_FILE = 0x4;
+    private static final int READER_READ_FILE = 0x8;
+    private static final int READER_READ_HEADER = 0xc;
+
     // Effect type keys (the u32 before each definition body).
     private static final int KEY_PARTICLE = 0;
     // Particle definition +0x30 value that UOObject::CreateComponents does not attach to the object.
@@ -699,6 +736,7 @@ public class NameEffectCode extends GhidraScript {
         // 7. Runtime use: effect id lookup, the active effect list and the graphical effect packets.
         runtimeUse(apply);
         huedEffects(apply);
+        effectRendering(apply);
 
         // 8. Chaos particle engine.
         chaosEngine();
@@ -1332,6 +1370,214 @@ public class NameEffectCode extends GhidraScript {
             + " map (Hues.dds) to sampler +0x140 (flag +0x160); sampler clamp = map flags >> 12 & 3, filter ="
             + " flags >> 8 & 0xf; clears SRGBWRITEENABLE",
             true)));
+    }
+
+    // Round 6: where effect NIFs are drawn, the renderer background colour of the hued pass, and how a texture
+    // named *.nif reaches the renderer (NiNIFImageReader) with its mipmap settings.
+    private void effectRendering(boolean apply) throws Exception {
+        // Render groups: the global array UOParticleEffectNif::Release indexes by group, whose entry 7 the hued
+        // Init reads (the plain Init's indexed read sits in a chunk Ghidra split off).
+        long nifVt = vtables.getOrDefault(NIF_EFFECT, -1L);
+        long huedVt = vtables.getOrDefault(HUED_NIF, -1L);
+        Function nifRelease = nifVt < 0 ? null : slotFunction(nifVt, EFFECT_RELEASE);
+        Function huedInit = huedVt < 0 ? null : slotFunction(huedVt, EFFECT_INIT);
+        Set<Long> groups = nifRelease == null ? new LinkedHashSet<>() : indexedTables(nifRelease);
+        Set<Long> huedReads = huedInit == null ? Set.of() : readGlobals(huedInit);
+        groups.removeIf(base -> !huedReads.contains(base + (long) EFFECT_RENDER_GROUP * POINTER_SIZE));
+        if (groups.size() == 1) {
+            label(groups.iterator().next(), RENDER_GROUPS_LABEL, "render group scene nodes (NiNode*[]), indexed by"
+                + " group; UOParticleEffectNif::Init attaches effect scenes to group 7, a parentless node with no"
+                + " dynamic effects (no lights)", apply);
+        } else {
+            anomalies.add("render groups: tables indexed by " + entry(nifRelease) + " with entry 7 read by "
+                + entry(huedInit) + ": " + groups);
+        }
+
+        // NiDX9Renderer slots, from the vtable holding GetRTTI.
+        Function getRtti = functionNamed(DX9_GET_RTTI);
+        List<Long> rttiSlots = getRtti == null ? List.of() : findDwords(getRtti.getEntryPoint().getOffset());
+        if (rttiSlots.size() == 1) {
+            long vt = rttiSlots.get(0) - RENDERER_GET_RTTI;
+            Function render = functionNamed(RENDER_TO_TEXTURE);
+            Set<Long> used = render == null ? Set.of() : virtualCallOffsets(render);
+            if (!used.contains((long) RENDERER_SET_BACKGROUND_RGBA) || !used.contains((long) RENDERER_GET_BACKGROUND)) {
+                anomalies.add(RENDER_TO_TEXTURE + " virtual calls " + used + " lack the background colour slots");
+            }
+            propose(slotFunctionCreating(vt, RENDERER_SET_BACKGROUND_RGBA, apply), DX9_RENDERER + SCOPE + "SetBackgroundColor",
+                "(NiColorA): packs r, g, b and a into the D3DCOLOR clear colour (+0x3fc); the hued pass sets"
+                + " (0, 0, 0, 0)", false);
+            propose(slotFunctionCreating(vt, RENDERER_SET_BACKGROUND_RGB, apply), DX9_RENDERER + SCOPE + "SetBackgroundColor",
+                "(NiColor): packs r, g, b into the D3DCOLOR clear colour (+0x3fc), alpha opaque", false);
+            propose(slotFunctionCreating(vt, RENDERER_GET_BACKGROUND, apply), DX9_RENDERER + SCOPE + "GetBackgroundColor",
+                "(NiColorA&): unpacks the D3DCOLOR clear colour (+0x3fc)", false);
+            propose(slotFunctionCreating(vt, RENDERER_USE_LEGACY_PIPELINE, apply), DX9_RENDERER + SCOPE
+                + "UseLegacyPipelineAsDefaultMaterial", "swaps the default material (+0x8a4) for the legacy one;"
+                + " no caller found, so effects keep NiStandardMaterial on SM2+ hardware", true);
+        } else {
+            anomalies.add(DX9_GET_RTTI + " vtable slots: " + rttiSlots.size());
+        }
+
+        // NiDX9SourceTextureData::Create and NiTexture::ms_bMipmapByDefault (the byte its MIP_DEFAULT test reads).
+        Function createSurf = functionNamed(CREATE_SURF_FROM_RENDERER_DATA);
+        Function create = createSurf == null ? null : single(distinct(callers(createSurf)),
+            "caller of " + CREATE_SURF_FROM_RENDERER_DATA);
+        propose(create, SOURCE_TEXTURE_DATA + SCOPE + "Create", "renderer data of an NiSourceTexture: .bmp/.tga/.dds"
+            + " with the load-direct hint through D3DX, otherwise NiImageConverter::ReadImageFile; mipmapped when"
+            + " the prefs say YES, or MIP_DEFAULT and ms_bMipmapByDefault", false);
+        Set<Long> flags = new LinkedHashSet<>();
+        if (create != null) {
+            for (Instruction i : listing.getInstructions(create.getBody(), true)) {
+                Long target = i.getMnemonicString().equals("CMP") && i.getDefaultOperandRepresentation(0)
+                    .startsWith("byte ptr") ? absoluteMemoryOperand(i, 0) : null;
+                if (target != null) {
+                    flags.add(target);
+                }
+            }
+        }
+        if (flags.size() == 1) {
+            label(flags.iterator().next(), MIPMAP_BY_DEFAULT_LABEL, "NiTexture::ms_bMipmapByDefault (bool): in .bss"
+                + " (0, false) and never written", apply);
+        } else {
+            anomalies.add("ms_bMipmapByDefault: byte globals compared in Create: " + flags);
+        }
+
+        // NiDevImageConverter: the vtable written by its destructor that holds GenerateMipmapLevels.
+        Function dtor = functionNamed(DEV_IMAGE_CONVERTER_DTOR);
+        Function mipmaps = functionNamed(GENERATE_MIPMAP_LEVELS);
+        long converterVt = -1;
+        if (dtor != null && mipmaps != null) {
+            for (long slot : findDwords(mipmaps.getEntryPoint().getOffset())) {
+                for (long vt : addressTakenGlobals(dtor)) {
+                    if (vt <= slot && slot - vt < (long) CONVERTER_MAX_SLOTS * POINTER_SIZE) {
+                        converterVt = vt;
+                    }
+                }
+            }
+        }
+        if (converterVt < 0) {
+            anomalies.add(DEV_IMAGE_CONVERTER + " vtable not found");
+            return;
+        }
+        List<Function> converterCtors = new ArrayList<>(referencingFunctions(converterVt));
+        converterCtors.remove(dtor);
+        Function converterCtor = single(converterCtors, DEV_IMAGE_CONVERTER + " vtable writer other than the destructor");
+        propose(converterCtor, DEV_IMAGE_CONVERTER + SCOPE + DEV_IMAGE_CONVERTER, "registers the image readers"
+            + " BMP, DDS, SGI, TGA and NIF (NiNIFImageReader, first in the list)", false);
+        propose(slotFunctionCreating(converterVt, CONVERTER_READ_IMAGE_FILE, apply), DEV_IMAGE_CONVERTER + SCOPE + "ReadImageFile",
+            "(file name, optional destination): opens the file through NiFile and asks the first reader whose"
+            + " CanReadFile accepts the extension", false);
+        // Ghidra splits the tail of ConvertPixelData (the part calling GenerateMipmapLevels) into a function that
+        // ConvertPixelData jumps to.
+        Function convert = slotFunction(converterVt, CONVERTER_CONVERT_PIXEL_DATA);
+        boolean reachesMipmaps = false;
+        for (Function caller : distinct(callers(mipmaps))) {
+            reachesMipmaps |= caller.equals(convert) || referencingFunctions(caller.getEntryPoint().getOffset())
+                .contains(convert);
+        }
+        if (convert != null && !reachesMipmaps) {
+            anomalies.add(DEV_IMAGE_CONVERTER + " +0x14 does not reach GenerateMipmapLevels");
+        }
+        propose(convert, DEV_IMAGE_CONVERTER + SCOPE + "ConvertPixelData", "(source, format, optional destination,"
+            + " mipmap): generates levels only when mipmap is set, the source has one level and power-of-two sides,"
+            + " and the format is RGB, RGBA or a bump format; stored levels are converted and kept", false);
+
+        // NiNIFImageReader: the reader vtable the converter constructor writes whose CanReadFile compares ".nif".
+        List<Long> readers = new ArrayList<>();
+        if (converterCtor != null) {
+            for (long vt : addressTakenGlobals(converterCtor)) {
+                long canRead = dwordAt(vt + READER_CAN_READ_FILE);
+                if (canRead >= 0 && isExec(canRead) && pushesString(canRead, NIF_EXTENSION)) {
+                    readers.add(vt);
+                }
+            }
+        }
+        if (readers.size() != 1) {
+            anomalies.add(NIF_IMAGE_READER + " vtables: " + readers);
+            return;
+        }
+        long readerVt = readers.get(0);
+        propose(slotFunctionCreating(readerVt, READER_DESTRUCTOR, apply), NIF_IMAGE_READER + SCOPE + "ScalarDeletingDestructor",
+            "destroys the stream and the critical section", true);
+        propose(slotFunctionCreating(readerVt, READER_CAN_READ_FILE, apply), NIF_IMAGE_READER + SCOPE + "CanReadFile",
+            "(extension): stricmp with \".nif\"", false);
+        propose(slotFunctionCreating(readerVt, READER_READ_FILE, apply), NIF_IMAGE_READER + SCOPE + "ReadFile", "(NiFile&, optional"
+            + " destination): loads the file as an NiStream; succeeds only when it holds exactly one object and that"
+            + " object is an NiPixelData, returned as stored (all its levels)", false);
+        propose(slotFunctionCreating(readerVt, READER_READ_HEADER, apply), NIF_IMAGE_READER + SCOPE + "ReadHeader", "reads the whole"
+            + " file (ReadFile) and reports width, height, format, mipmapped (levels > 1) and faces", false);
+    }
+
+    // Tables indexed as [reg * 4 + table] in f.
+    private Set<Long> indexedTables(Function f) {
+        Set<Long> out = new LinkedHashSet<>();
+        for (Instruction i : listing.getInstructions(f.getBody(), true)) {
+            for (int op = 0; op < i.getNumOperands(); op++) {
+                if (!i.getDefaultOperandRepresentation(op).contains("*0x4 + 0x")) {
+                    continue;
+                }
+                for (Object o : i.getOpObjects(op)) {
+                    long value = o instanceof Scalar sc ? sc.getUnsignedValue() & DWORD_MASK
+                        : o instanceof Address a ? a.getOffset() : -1;
+                    if (value >= 0 && memory.contains(toAddr(value)) && !isExec(value)) {
+                        out.add(value);
+                    }
+                }
+            }
+        }
+        return out;
+    }
+
+    // Whether the code at start pushes the address of a NUL-terminated copy of text before its first return
+    // (a small leaf such as CanReadFile, which may have no function yet).
+    private boolean pushesString(long start, String text) throws Exception {
+        byte[] expected = (text + "\0").getBytes(StandardCharsets.US_ASCII);
+        for (Instruction i = listing.getInstructionAt(toAddr(start)); i != null; i = i.getNext()) {
+            if (i.getMnemonicString().equals("PUSH") && i.getNumOperands() == 1) {
+                for (Object o : i.getOpObjects(0)) {
+                    long value = o instanceof Scalar sc ? sc.getUnsignedValue() & DWORD_MASK
+                        : o instanceof Address a ? a.getOffset() : -1;
+                    byte[] actual = new byte[expected.length];
+                    if (value >= 0 && memory.contains(toAddr(value))
+                        && memory.getBytes(toAddr(value), actual) == expected.length
+                        && java.util.Arrays.equals(actual, expected)) {
+                        return true;
+                    }
+                }
+            }
+            if (i.getFlowType().isTerminal()) {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    // The function at a vtable slot. With apply, creates it when the slot points at code with no function yet.
+    private Function slotFunctionCreating(long vt, int offset, boolean apply) throws Exception {
+        Function f = slotFunction(vt, offset);
+        long target = dwordAt(vt + offset);
+        if (f != null || target < 0 || !isExec(target)) {
+            return f;
+        }
+        if (!apply) {
+            anomalies.add("no function at " + hex(target) + " (vtable " + hex(vt) + " +" + hexShort(offset)
+                + "); --apply creates it");
+            return null;
+        }
+        f = createFunction(toAddr(target), null);
+        if (f != null) {
+            count("functions created");
+        }
+        return f;
+    }
+
+    private Function functionNamed(String path) {
+        for (Function f : functions.getFunctions(true)) {
+            if (f.getName(true).equals(path)) {
+                return f;
+            }
+        }
+        anomalies.add("function `" + path + "` not found");
+        return null;
     }
 
     private Function definitionInstantiate(String cls) {

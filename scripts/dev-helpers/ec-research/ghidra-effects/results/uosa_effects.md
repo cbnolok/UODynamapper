@@ -72,8 +72,8 @@ column gives the definition object offset.
 | # | Type | Name | Stored at | Meaning | Confidence |
 |---:|---|---|---|---|---|
 | 1 | u32 | name | +0x04 (std::string) | string dictionary index. It is resolved through `[0x00e37220]+0x154`, an array of 0x1c-byte std::string. The name is a `.nif` or `.ems` file. | confirmed |
-| 2 | f32 | offset_x | +0x20 | added to the effect x | probable |
-| 3 | f32 | offset_y | +0x24 | subtracted from the effect z, so it acts as a vertical offset | probable |
+| 2 | f32 | offset_x | +0x20 | tiles east: added to the world x of the effect offset (Nif Init 0x0041aa6a..0x0041aaf9, Chaos Init 0x0041b119..0x0041b1ba), as `UOEffects::PlayEffectAtTile` 0x00421130 converts a tile x | confirmed |
+| 3 | f32 | offset_y | +0x24 | tiles south: subtracted from the world z of the effect offset, as `PlayEffectAtTile` converts a tile y (world z = -tile y). On the client's camera one tile east is (0.706, 0.707) and one tile south (-0.708, 0.706) in (screen right, screen up) units, so neither is a pure screen axis | confirmed |
 | 4 | f32 | camera_offset | +0x28 | k = -0.0 (0x00d04fb0) - camera_offset * 0.12856 (0x00d050a0) times the camera down vector `g_UOWorldViewer` 0x00e37224 +0x24..+0x2c (= -up, written by `UOWorldViewer::CreateCamera` 0x00471580 at 0x004718ac..0x004718de as -(R·(0,1,0)), with +0x0c = R·(1,0,0) the direction). Nif Init 0x0041aa6a..0x0041aaf9 and Chaos Init 0x0041b119..0x0041b1ba store (offset_x + k·v.x, k·v.y, -offset_y + k·v.z) as the effect offset that `SetPosition` (Chaos 0x0041b500) adds to the position. Net: a positive value moves the effect camera_offset * 0.12856 units up on screen. | confirmed |
 | 5 | f32 | scale | +0x2c | scale of the scene node (`FUN_00419ca0`, node +0x5c) | confirmed |
 | 6 | u8 | attach_mode (was field_30) | +0x30 | stored as u32. Only reader: `UOObject::CreateComponents` 0x005befd0, which does not attach a particle with value 2 to the world object (`0x005bf69d CMP dword [EAX+0x30],2; JNZ`); such an effect plays only on the moving-effect (projectile) paths. 0 and 1 are not told apart. Data: 2 on thrown models, 0 on arrows, 1 elsewhere. See "Particle attach mode". | confirmed (value 2) |
@@ -90,8 +90,11 @@ Particle bytes aren't validated when they are parsed.
 - otherwise, object hue != 0 and hued give `UOHuedParticleEffectNif`;
 - otherwise, `UOParticleEffectNif`.
 
-The positional math is in `UOParticleEffectNif::Init` 0x0041a8e0. The axis names follow the code, not a
-proven world orientation.
+The positional math is in `UOParticleEffectNif::Init` 0x0041a8e0: (offset_x, offset_y, camera_offset) is a
+tile-space offset (dx, dy, dz) turned into world space the way `PlayEffectAtTile` turns a tile position
+(world x = tile x, world z = -tile y; camera_offset along the camera's up). The effect node's own rotation
+does not apply to it, so a viewer drawing in the effect's local frame converts the two tile axes with the
+world camera rotation (`client_world_camera_rotation` in `lib/particle-sim/src/effect.rs`).
 
 #### Particle attach mode (definition +0x30)
 
@@ -559,14 +562,20 @@ No 0x8000 / 0x4000 bit is tested or masked on this path. H = 0 is never hued.
      (`g_UOWorldViewer` +0x7c, NiAVObject +0x2c), translation = `g_UOWorldViewer` +0x18 (the -10 × view
      direction camera offset) + effect position;
   4. `UOHuedParticleEffectNif::BuildHueQuad` 0x0041df40: a 4-vertex camera-facing quad, half size
-     4.8541555 (0x00d05360) along camera right and up, vertex colour white, second UV set = hue coordinate
-     (below), material `UOEffectsShader`, a 512 × 512 render target as shader map 0, `Build\Hues\Hues.dds`
+     4.8541555 (0x00d05360) along camera right and up (vertices top-left, top-right, bottom-left,
+     bottom-right; triangles (0, 2, 1), (1, 2, 3)), centred on the effect position plus 2 × the depth bias
+     (+0x30), vertex colour white. Three texture coordinate sets are written in one array: set 0 = (0, 0),
+     (1, 0), (0, 1), (1, 1), the whole render target with no half-texel offset (0x0041e420..0x0041e499,
+     **confirmed**); set 1 = (0, 0) for every vertex (0x0041e4aa..0x0041e511); set 2 = the hue coordinate
+     (below) for every vertex (0x0041e593..0x0041e5b4). Material `UOEffectsShader`, a 512 × 512 render target as shader map 0, `Build\Hues\Hues.dds`
      (loaded through the texture manager, `g_UOWorldViewer` +0xa8, vtable +4) as base map, and an
      `NiAlphaProperty` with flags 0x12ED: blend SRCALPHA / INVSRCALPHA, alpha test GREATER, reference 0.
 
-  Map flags (Gamebryo `NiTexturingProperty::Map`: bits 12-13 clamp, bits 8-11 filter): base map 0x3100 =
-  WRAP_S_WRAP_T + BILERP; shader map then `& 0xc1ff | 0x100` = clamp + BILERP (probable reading of the
-  second mask).
+  Map flags (Gamebryo `NiTexturingProperty::Map`: bits 12-13 clamp, bits 8-11 filter), **confirmed**: the
+  render-target `ShaderMap` (vftable 0x00c9db18) is created with 0x3100 (0x0041e845), added
+  (`FUN_00416830`), then rewritten to `& 0xc1ff | 0x100` = CLAMP_S_CLAMP_T + BILERP (0x0041e874) before it is
+  set as shader map 0 (`FUN_00670bd0`); the `Hues.dds` base map (vftable 0x00cbf528) keeps 0x3100 =
+  WRAP_S_WRAP_T + BILERP (0x0041e922).
 
 ### Per frame
 
@@ -577,8 +586,12 @@ No 0x8000 / 0x4000 bit is tested or masked on this path. H = 0 is never hued.
   tick countdown (+0x80) is unaffected.
 - Skips rendering while hidden (vtable +0xc).
 - Updates the scene (`FUN_00663db0`), then `UOHuedParticleEffectNif::RenderToTexture` 0x0041ebc0: renderer
-  `DAT_00e31ff8`, clear flags 7 (colour, depth, stencil; the clear colour is the renderer's), camera data
-  from the offscreen camera, `NiDrawVisibleArray`. No light is set by this path.
+  `DAT_00e31ff8`; saves the background colour (`NiDX9Renderer::GetBackgroundColor`, vtable +0x60,
+  0x007614b0), sets it to `NiColorA(0, 0, 0, 0)` (`SetBackgroundColor`, +0x58, 0x00761580, which packs the
+  alpha into the D3DCOLOR at renderer +0x3fc), begins the render target with clear flags 7 (colour, depth,
+  stencil; `FUN_00416030` → renderer +0x168), sets the camera data from the offscreen camera, draws with
+  `NiDrawVisibleArray`, ends the target (`FUN_004160d0`) and restores the saved colour. **The target is
+  cleared to transparent black (confirmed).** No light is set by this path.
 - Updates the quad node (+0x10), which draws in the world.
 
 ### Shader and formula
@@ -598,6 +611,11 @@ uv2.u  = column * (1 / 1024) (0x00d05158) * 255.0 (0x00d04ef0)
 uv2.v  = row / 1024
 ```
 
+H is the signed 32-bit hue as stored: `/ 1024` and `% 1024` are signed (CDQ / AND 0x3ff / SAR 10 and
+AND 0x800003ff with the negative fix-up, 0x0041e53f..0x0041e56c). Nothing masks or clamps H, so a hue past
+the atlas's loaded rows samples whatever the atlas holds at its coordinate (u wraps past 1 with the WRAP
+base map): transparent where the atlas is empty.
+
 Pixel shader `uoeffects.psh` (Shaders.uop; **confirmed** from the source):
 
 ```text
@@ -612,7 +630,7 @@ So the hued effect replaces each pixel's colour with the hue gradient entry sele
 the rendered alpha, and is drawn with normal alpha blending (not additive), whatever the NIF's own blend
 mode was.
 
-Quirks (**probable**, derived from the numbers, not observed):
+Quirks (derived from the confirmed numbers and map flags, not observed in a frame capture):
 
 - The atlas column stride is 255 texels, not the 256-texel strips of `hues.dds` (`atlas_coord_for_hue` in
   `lib/uocf/src/enhanced/hues.rs`). Assuming a 1024-texel-wide atlas, as the shader's 1/1024 scale implies,
@@ -620,10 +638,12 @@ Quirks (**probable**, derived from the numbers, not observed):
   previous strip.
 - With bilinear filtering, u and v fall on texel edges: each sample is a 50/50 blend of rows `row - 1` and
   `row` (row 0 wraps to 1023) and of two adjacent gradient entries.
-- The offscreen frustum is 8 × 8·w/h world units but the quad is 9.708 × 9.708 (2 × 4.8541555). If the
-  quad's first UV set spans the whole target (not traced), a hued effect is drawn about 1.21× taller than
-  the plain one and squeezed horizontally by the screen aspect, and anything outside ±4 units vertically is
-  clipped.
+- The offscreen frustum is 8 × 8·w/h world units but the quad is 9.708 × 9.708 (2 × 4.8541555) and its
+  UV set 0 spans the whole target (**confirmed**), so a hued effect is drawn about 1.21× taller than the
+  plain one and squeezed horizontally by the screen aspect (1.21 / (w/h) as wide), and anything outside
+  ±4 units vertically or ±4·w/h horizontally is clipped. The 512 × 512 target therefore has non-square
+  texels (w/h wider than tall); `lib/particle-sim` renders it with square texels and the same mapping,
+  which differs only in horizontal sampling density.
 
 ## Effect camera and lighting
 
@@ -634,13 +654,67 @@ Quirks (**probable**, derived from the numbers, not observed):
   direction (into the screen), Z = camera up**: effects are camera-aligned billboards, not placed in world
   axes. A viewer reproduces the client by rendering the NIF orthographically along local +Y with local +Z
   up; Chaos gravity along local Z points along camera up.
-- **World camera** (**probable** in the exact composition): `UOWorldViewer::CreateCamera` 0x00471580 and
-  `SetCameraFrustum` 0x004712f0: orthographic, left/right ∓f / 0.75 (0x00db9754), top/bottom ±f, near 8,
-  far 12, f = 16.0 (+0x80) × the viewport height fraction (0x00e33590); rotation -π/2 about Z and a tilt of
-  π/4 - 0.001, with a -0.05 (0x00d051c0) term.
-- **Lighting** (**unknown** for plain effects): `UOParticleEffectNif::Init` 0x0041a8e0 attaches the scene to
-  render group `DAT_00e32e28[7]`; which lights that group gets was not traced. Hued effects render offscreen
-  with no light set by the client.
+- **World camera** (**confirmed**): `UOWorldViewer::CreateCamera` 0x00471580 and `SetCameraFrustum`
+  0x004712f0: orthographic, left/right ∓f / 0.75 (0x00db9754), top/bottom ±f, near 8, far 12, f = 16.0
+  (+0x80) × the viewport height fraction (0x00e33590). The rotation is built with `NiMatrix3` products
+  (0x00668f10) as C = Z(-π/2) · X(0.001 - π/2 × 0.5) · Z(-0.05), with `MakeZRotation(t)` =
+  [[c, s, 0], [-s, c, 0], [0, 0, 1]], `MakeXRotation(t)` = [[1, 0, 0], [0, c, s], [0, -s, c]], π/2 at
+  0x00dc1fd0, 0.001 at 0x00c9857c, 0.5 at 0x00c95604 and -0.05 at 0x00d051c0. C ≈
+  [[-0.0354, -0.7069, 0.7064], [0.9988, -0.0500, 0], [0.0353, 0.7055, 0.7078]]; its columns are the view
+  direction, up and right.
+- **Lighting of plain NIF effects** (**confirmed: no light**):
+  - `UOParticleEffectNif::Init` 0x0041a8e0 attaches the scene to `g_UOEffectRenderGroups` 0x00e32e28
+    entry 7, a parentless `NiNode` with an empty effect list. The only callers of
+    `NiDynamicEffect::AttachAffectedNode` 0x006a1900 are `LinkObject`, `ProcessClone`,
+    `NiNode::AttachEffect` 0x006768c0 (reached only through `CopyEffectListClones`) and
+    `MythUi::NifDisplay`; none adds a light to the group or the effect root. `MythicAmbientLight`
+    (factory 0x00a5db60) is a streamable `NiAmbientLight` subclass used only through NIF streaming.
+  - So no world sun, ambient or day/night level reaches effects: the effect lights are the lights inside the
+    NIF itself. Of the 466 shipped NIFs only `00005540_shadowstrike.nif` has lights: two white
+    `NiDirectionalLight`s (dimmer 1, ambient 0) on its root.
+  - The renderer keeps `NiStandardMaterial` as the default material on shader model 2+ hardware
+    (`FUN_00754fb0` 0x00755612..0x00755631 compares the VS/PS versions; otherwise it installs the legacy
+    material at 0x007556a2); `NiDX9Renderer::UseLegacyPipelineAsDefaultMaterial` 0x0075f800 has no caller.
+    With no lights, NiStandardMaterial (and the fixed-function pipeline) gives
+    `saturate(emissive + ambient × 0 + diffuse × 0)` = the material emissive, with the alpha from the
+    material or the vertex colours by the `NiVertexColorProperty` mode.
+  - What that means for the data (survey of the 466 NIFs, 671 meshes and 1086 particle systems): files
+    lit with `E_A_D` show only their emissive colour; the vertex colour modes (`SRC_EMISSIVE`) show the
+    vertex colours; meshes with `E_A_D` / `SRC_IGNORE` and emissive 0 (33 + 4 meshes, about 10 particle
+    systems) draw black. `lib/particle-sim` defaults to this (`CLIENT_EFFECT_LIGHTING`).
+- Hued effects render offscreen with no light set by the client (same result).
+
+## Effect textures and mipmaps
+
+All **confirmed** on the binary unless marked.
+
+- `NiTexture_ms_bMipmapByDefault` 0x00e31ea3 (`NiTexture::ms_bMipmapByDefault`) lies in `.data`'s
+  zero-filled part (false) and is never written (two reads: `NiDX9SourceTextureData::Create` 0x00770fe0 and
+  `FUN_00774a80`). No `SetMipmapByDefault` call exists.
+- The texture prefs come from each effect NIF's `NiSourceTexture` (`LoadBinary` 0x0068ac00 streams the
+  pixel layout, mip flag, alpha format and the load-direct hint). The `NiSourceTexture` blocks of the shipped effect NIFs: 1043
+  external `MIP YES`, 1 external `MIP YES` bump map, 6 external `MIP NO`, 5 internal `MIP YES`; none uses
+  `MIP_DEFAULT` and none sets the load-direct hint. So the default flag never decides.
+- `NiDX9SourceTextureData::Create` 0x00770b90: with the load-direct hint and a `.bmp`/`.tga`/`.dds` name it
+  loads through D3DX (`LoadTextureFile` 0x00771af0); otherwise (every effect texture) it calls
+  `NiDevImageConverter::ReadImageFile` 0x006942d0 (converter vtable 0x00cc0c60 +0xc), which opens the file
+  through `NiFile` (the UOP-backed file) and asks the first reader whose `CanReadFile` accepts the
+  extension. Mipmapped = prefs `YES`, or `MIP_DEFAULT` and the default flag (0x00770fcf..0x00770fee).
+- `NiDevImageConverter::NiDevImageConverter` 0x00693cf0 registers BMP, DDS, SGI, TGA and
+  `NiNIFImageReader` (vtable 0x00ccc1d8). `NiNIFImageReader::CanReadFile` 0x006ccde0 is
+  `stricmp(ext, ".nif")`; `ReadFile` 0x006cce00 loads the file as an `NiStream` and returns its object only
+  when the stream holds exactly one object (+0x188 == 1) and that object is an `NiPixelData` (RTTI chain
+  against `NiPixelData::ms_RTTI` 0x00ddf5cc); otherwise 0. `ReadHeader` 0x006cceb0 reads the whole file and
+  reports levels > 1 as mipmapped. So a texture named `*.nif` holding one `NiPixelData` loads.
+- `NiDevImageConverter::ConvertPixelData` 0x00694700 (vtable +0x14, tail at `FUN_00694796`) converts the
+  pixel data to the renderer format found for the prefs, keeping every stored level; it generates levels
+  (`GenerateMipmapLevels` 0x00695590, box filter) only when mipmapping is on, the source has one level,
+  both sides are powers of two and the target format is RGB, RGBA or a bump format (0x00694832..0x00694889).
+  `CreateSurf` then creates the D3D texture with that many levels (1 if the sides are not powers of two and
+  the device lacks non-power-of-two support).
+- The three `.nif` texture files (`03000017_star.nif`, `03000018_circle_g.nif`, `03002014_flare.nif`) are
+  Gamebryo 20.0.0.4 NIFs with one `NiPixelData`: RGBA, 128 × 128, 8 stored levels. They are referenced with
+  `MIP YES`; their stored levels are used as they are.
 
 ## Animation frame effects
 
@@ -804,6 +878,31 @@ functions, created 1 label and 2 types and updated 1; `ApplyVariableSpecs` made 
 reported no changes. The animation side (`NameAnimationCode.java` `frameEffects`) is listed in
 `uosa_animation.md`. The program was saved.
 
+### Round 6 (effect rendering, texture loading)
+
+`NameEffectCode.java` step `effectRendering` (after `huedEffects`) names from locators:
+
+| Evidence | Finds |
+|---|---|
+| table `UOParticleEffectNif::Release` indexes as `[reg*4 + table]` whose entry 7 the hued Init reads | `g_UOEffectRenderGroups` 0x00e32e28 |
+| vtable holding `NiDX9Renderer::GetRTTI` (+8); +0x58 and +0x60 checked against the `RenderToTexture` virtual calls | `NiDX9Renderer::SetBackgroundColor` 0x00761580 (NiColorA) and 0x00761520 (NiColor), `GetBackgroundColor` 0x007614b0, `UseLegacyPipelineAsDefaultMaterial` 0x0075f800 (probable) |
+| single caller of `NiDX9SourceTextureData::CreateSurfFromRendererData`; the one byte global it compares | `NiDX9SourceTextureData::Create` 0x00770b90, `NiTexture_ms_bMipmapByDefault` 0x00e31ea3 |
+| vtable written by `~NiDevImageConverter` that holds `GenerateMipmapLevels`; its other writer; slots +0xc, +0x14 | `NiDevImageConverter::NiDevImageConverter` 0x00693cf0, `ReadImageFile` 0x006942d0, `ConvertPixelData` 0x00694700 |
+| reader vtable written by that constructor whose +4 pushes `".nif"` | `NiNIFImageReader` vtable 0x00ccc1d8: `ScalarDeletingDestructor` 0x006ccd40 (probable), `CanReadFile` 0x006ccde0, `ReadFile` 0x006cce00, `ReadHeader` 0x006cceb0 |
+
+Slot functions Ghidra had not created (0x00761580, 0x00761520, 0x007614b0, 0x006942d0, 0x006ccde0,
+0x006cceb0) are created by `--apply`. `effects_variables.spec` adds the `GetBackgroundColor` and
+`NiNIFImageReader::ReadFile` prototypes. `--apply` created 6 functions, renamed 12 (tags and plate comments
+set), created 2 labels and 1 namespace; `ApplyVariableSpecs` set 2 prototypes; second runs of both reported
+no changes. `ApplyVariableSpecs` notes the two `SetBackgroundColor` overloads (same name, as in Gamebryo).
+The program was saved.
+
+Identified but not renamed (Gamebryo functions whose BSim match is ambiguous, or helpers):
+`NiDynamicEffect::AttachAffectedNode` 0x006a1900 (BSim proposes `AttachUnaffectedNode`; the call from
+`NiNode::AttachEffect` 0x006768c0 settles it), `NiMatrix3::operator*` 0x00668f10, the renderer set-up
+`FUN_00754fb0`, the render-target begin/end wrappers `FUN_00416030` / `FUN_004160d0`, the render group
+builder `FUN_0044e4d0` and drawer `FUN_00470430`.
+
 ## Proposed Rust changes
 
 Not applied. The changes are for `lib/uocf/src/enhanced/effect_definition.rs` as of 914634cf, plus one
@@ -878,7 +977,7 @@ No format change is needed: the parser is already correct for all 269 entries.
 - **field_3c:** what a non-zero value was meant for (1 is rejected by the Nif effect, any non-zero value by
   the Chaos effect). Always 0 in the data.
 - **Sound value_08:** not read by the client (settled); its intended use (probably a gain) is unknown.
-- **Particle offset axes:** the axis names are inferred from the Nif Init math, not from a rendered check.
+- **Particle offsets:** settled (tile offset like `PlayEffectAtTile`; see the Particle field table).
 - **UserPreference bits:** bit 0 is footsteps (settled). The client sets no other bit, so other mask bits
   could only come from a hand-edited settings file.
 - **Unnamed entries:** 2 collection entries have no recovered name (`firefield02.ems`,
@@ -896,18 +995,16 @@ No format change is needed: the parser is already correct for all 269 entries.
   resolution").
 - **Other readers:** `FUN_004b93d0`/`FUN_0083c0ba` (readers of the format) were not decoded.
   `FUN_0041a610` is now `IUOEffectDefinition::PlayOnObject`.
-- **Hue atlas sampling:** the 50/50 texel-edge blend and the 255-texel column stride follow from the
-  constants and the BILERP map flags; the atlas width (1024 assumed) was not read. A frame capture of a
-  hued effect (PIX / RenderDoc on the client) or a hued fireball with a hue >= 1024 would settle both.
-- **Hued quad size:** the quad UVs (set 0) were not traced, so the 1.21× / aspect distortion is inferred.
-  Reading the UV writes in `BuildHueQuad` 0x0041df40 settles it.
-- **Shader map flags:** the second mask on the render-target map (`& 0xc1ff | 0x100`) is read as clamp +
-  bilinear; the order of the two flag writes was not checked against the map object.
-- **Render target clear colour and alpha:** the renderer's background colour is used; with additive NIF
-  materials over a cleared target the resulting alpha depends on it. A frame capture settles it.
-- **Effect lighting:** the lights of render group `DAT_00e32e28[7]` (plain NIF effects) were not traced.
-- **World camera tilt:** the exact order of the -π/2, π/4 - 0.001 and -0.05 terms in `SetCameraFrustum`
-  0x004712f0 / `CreateCamera` 0x00471580 is probable; the effect billboard orientation (+0x30) does not
-  depend on it.
+- **Hue atlas sampling:** the map flags (BILERP + WRAP), the coordinate math and the absence of any hue
+  mask are confirmed; the resulting 50/50 texel-edge blend and the 255-texel column stride follow from them
+  for a 1024-texel-wide atlas (the width the `Hues.uop` loader in `lib/uocf` produces; the client's
+  `Hues.dds` size was not read in the binary). A frame capture of a hued effect with a hue >= 1024 would
+  show it.
+- **Hued quad, shader map flags, target clear colour:** settled (see "Hued NIF effects").
+- **Lights inside effect NIFs:** the client applies the two `NiDirectionalLight`s of
+  `00005540_shadowstrike.nif` to that file's own meshes (the only shipped file with lights);
+  `lib/particle-sim` does not compile NIF lights into `NifEffectDesc` (it would change the packed codec), so
+  that file previews unlit unless `SceneLighting` is set by the caller.
+- **World camera tilt:** settled (C = Z(-π/2) · X(0.001 - π/4) · Z(-0.05)).
 - **Hued constructor depth bias:** object vtable +0x11c / +0x124 (scaled by -0.001 and -1e-5) were not
   identified.
