@@ -25,6 +25,7 @@ use uocf::enhanced::housing::{
 use uocf::enhanced::localized_strings::LocalizedStringsPackage;
 use uocf::enhanced::multis::{MultiCollection, HOUSING_PATH, MULTI_COLLECTION_UOP_NAME};
 use uocf::enhanced::tileart::TileArtEntry;
+use uocf::uop_container::data_block_header::{DataBlockHeader, DataBlockHeaderRecord};
 use uocf::uop_container::package::UopPackage;
 
 const EXPECTED_MULTI_ENTRIES: usize = 862;
@@ -214,12 +215,19 @@ fn rewritten_multi_collection_changes_only_housing_bin() {
             let written_file =
                 written.get_file_by_hash(hash).unwrap_or_else(|| panic!("{env}: entry {hash:016X} missing"));
             assert_eq!(written_file.compression(), source_file.compression(), "{env}: entry {hash:016X} compression");
+            if hash == housing_hash {
+                // The edited entry gets a fresh timestamp header and its hash.
+                let header = DataBlockHeader::parse(written_file.data_block_header().unwrap()).unwrap();
+                assert!(matches!(header.records(), [DataBlockHeaderRecord::Timestamp(_)]), "{env}: housing header");
+                assert_eq!(written_file.data_block_hash_matches_header().unwrap(), Some(true), "{env}: housing hash");
+                continue;
+            }
             assert!(
                 written_file.data_block_header() == source_file.data_block_header()
                     && written_file.data_block_hash() == source_file.data_block_hash(),
                 "{env}: entry {hash:016X} data block header differs"
             );
-            if hash == housing_hash || !source_file.has_size() {
+            if !source_file.has_size() {
                 continue;
             }
             assert!(written_file.data() == source_file.data(), "{env}: entry {hash:016X} payload differs");

@@ -18,6 +18,8 @@ use uocf::enhanced::string_dictionary::UoStringDictionary;
 use uocf::enhanced::effect_texture::{
     effect_texture_hash, EffectFileKind, EffectTexturePackage, EntryPut, EFFECT_TEXTURE_UOP_NAME,
 };
+use uocf::uop_container::data_block_header::{DataBlockHeader, DataBlockHeaderRecord};
+use uocf::uop_container::file::UopFile;
 use uocf::uop_container::hash_dictionary::HashDictionary;
 use uocf::uop_container::package::UopPackage;
 
@@ -38,6 +40,19 @@ const ADDED_COLLECTION_ID: u32 = 65_000;
 const TEST_SOUND_ID: u32 = 43;
 /// Name of the entry the rewrite test adds.
 const ADDED_EFFECT_FILE: &str = "uocf_test_added.ems";
+/// FILETIME the rewrite test stamps into the entries it edits.
+const TEST_EDIT_FILETIME: u64 = 0x01db_2a3b_4c5d_6e7f;
+
+/// An entry a writer replaced or added: one timestamp record (of `filetime`, when given) hashed with Adler-32.
+fn assert_fresh_header(file: &UopFile, filetime: Option<u64>, context: &str) {
+    assert_eq!(file.data_block_length(), CLIENT_TIMESTAMP_HEADER_SIZE, "{context}");
+    let header = DataBlockHeader::parse(file.data_block_header().unwrap()).unwrap();
+    assert!(matches!(header.records(), [DataBlockHeaderRecord::Timestamp(_)]), "{context}");
+    if let Some(filetime) = filetime {
+        assert_eq!(header.timestamp(), Some(filetime), "{context}");
+    }
+    assert_eq!(file.data_block_hash_matches_header().unwrap(), Some(true), "{context}");
+}
 
 #[test]
 #[ignore = "needs a real client: set UO_EC_CLIENT_DIR and/or UO_CC_CLIENT_DIR and run with --ignored"]
@@ -88,6 +103,7 @@ fn chaos_scripts_round_trip() {
 fn effect_texture_package_rewrite() {
     for (env, path) in common::client_files(EFFECT_TEXTURE_UOP_NAME) {
         let mut package = EffectTexturePackage::load_with_names(path.parent().unwrap()).unwrap();
+        package.set_edit_filetime(Some(TEST_EDIT_FILETIME));
         let entries = package.entries();
         let scripts = entries
             .iter()
@@ -125,22 +141,19 @@ fn effect_texture_package_rewrite() {
             }
             let copy = rewritten.get_file_by_hash(hash).unwrap();
             assert_eq!(copy.compression(), file.compression(), "{env}: {hash:016X}");
-            assert_eq!(copy.data_block_header(), file.data_block_header(), "{env}: {hash:016X}");
-            assert_eq!(copy.data_block_hash(), file.data_block_hash(), "{env}: {hash:016X}");
             if hash == edited.hash {
                 assert_eq!(copy.unpack().unwrap(), edited_payload, "{env}: edited entry");
+                // The signature cannot be made for the new payload: a timestamp header replaces it.
+                assert_fresh_header(copy, Some(TEST_EDIT_FILETIME), &format!("{env}: edited entry"));
             } else {
+                assert_eq!(copy.data_block_header(), file.data_block_header(), "{env}: {hash:016X}");
+                assert_eq!(copy.data_block_hash(), file.data_block_hash(), "{env}: {hash:016X}");
                 assert_eq!(copy.data(), file.data(), "{env}: {hash:016X} keeps its payload bytes");
             }
         }
         let added = rewritten.get_file_by_hash(effect_texture_hash(ADDED_EFFECT_FILE)).unwrap();
         assert_eq!(added.unpack().unwrap(), added_payload, "{env}: added entry");
-        // New entries get a timestamp header only in packages with timestamp headers; EffectTexture.uop has the
-        // longer (signature?) headers, which cannot be made, so its new entries have none.
-        let timestamp_headers =
-            source.iter_files().any(|file| file.data_block_length() == CLIENT_TIMESTAMP_HEADER_SIZE);
-        let expected_header = if timestamp_headers { CLIENT_TIMESTAMP_HEADER_SIZE } else { 0 };
-        assert_eq!(added.data_block_length(), expected_header, "{env}");
+        assert_fresh_header(added, Some(TEST_EDIT_FILETIME), &format!("{env}: added entry"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
@@ -215,14 +228,16 @@ fn effect_definition_collection_rewrite() {
                 continue;
             }
             let copy = rewritten.get_file_by_hash(hash).unwrap();
+            if hash == EffectEntryKey::Id(edited).hash() {
+                assert_fresh_header(copy, None, &format!("{env}: edited entry"));
+                continue;
+            }
             assert_eq!(copy.data_block_header(), file.data_block_header(), "{env}: {hash:016X}");
             assert_eq!(copy.data_block_hash(), file.data_block_hash(), "{env}: {hash:016X}");
-            if hash != EffectEntryKey::Id(edited).hash() {
-                assert_eq!(copy.data(), file.data(), "{env}: {hash:016X} keeps its payload bytes");
-            }
+            assert_eq!(copy.data(), file.data(), "{env}: {hash:016X} keeps its payload bytes");
         }
         let added = rewritten.get_file_by_hash(EffectEntryKey::Id(ADDED_COLLECTION_ID).hash()).unwrap();
-        assert_eq!(added.data_block_length(), CLIENT_TIMESTAMP_HEADER_SIZE, "{env}: the added entry has a header");
+        assert_fresh_header(added, None, &format!("{env}: added entry"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

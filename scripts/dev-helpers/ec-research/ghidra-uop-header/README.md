@@ -6,7 +6,7 @@ caches). Checks every data block header of a set of packages against its `data_b
 
 Findings: [results/uosa_uop_header.md](results/uosa_uop_header.md) covers the header format, the two
 `data_block_hash` algorithms with their verification counts, what is known about the signature records,
-the client's behaviour with addresses and confidence, and a proposal for the repo's writer.
+the client's behaviour with addresses and confidence, and the repo's writer policy (option 4, implemented).
 [results/uosa_uop_header_names.md](results/uosa_uop_header_names.md) is the script report after `--apply`.
 
 ## NameUopHeaderCode.java

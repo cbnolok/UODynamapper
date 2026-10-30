@@ -135,9 +135,9 @@ impl EffectDefinitionCollection {
     }
 
     /// Makes `package` hold exactly these entries. Entries whose payload is unchanged are left untouched (same
-    /// compressed bytes); changed ones are replaced keeping their compression flag and data block header; new
-    /// ones are added with the compression of the existing entries and a client data block header; entries
-    /// missing from the collection are removed. Returns the number of entries replaced, added and removed.
+    /// compressed bytes); changed ones are replaced keeping their compression flag; new ones are added with the
+    /// compression of the existing entries. Both get a fresh timestamp data block header (the package's edit
+    /// time); entries missing from the collection are removed. Returns the number of entries replaced, added and removed.
     pub fn apply_to_package(&self, package: &mut UopPackage) -> eyre::Result<EffectCollectionChanges> {
         let mut changes = EffectCollectionChanges::default();
         let compression = package

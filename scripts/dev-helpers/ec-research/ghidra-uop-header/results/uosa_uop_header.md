@@ -145,15 +145,15 @@ What `UOSA.exe` contains (**high**):
 | `AudioConfig_CollectFileStamps` 0x0088e3ca collects the hashes (`UOP::GetFileStamp` 0x0088e39d, 0 for a missing file) of `audio/audio_filelist.csv`, `audio_filelist_vo.csv` and the sounds/groups/queues/loops CSVs; its caller 0x0088db6a passes them to the cache loader 0x0088e519, which reads a 0x38-byte cache header, compares it (0x0088d2eb) and uses the cache only on a match | decompiled | probable (the comparison at 0x0088d2eb was not read field by field) |
 | Hence: the value of `data_block_hash` matters only as a change detector for those caches. If one of those files changes and its hash does not, the client may keep a stale cache | the two users above | probable |
 
-## Writer policy (proposal; not implemented)
+## Writer policy (implemented: option 4)
 
-Current policy (`lib/uocf/src/enhanced/uop_entries.rs::put_entry`, used by the EffectTexture and
-EffectDefinitionCollection writers):
+Policy before option 4 was implemented (`lib/uocf/src/enhanced/uop_entries.rs::put_entry`, used by the
+EffectTexture and EffectDefinitionCollection writers):
 
-- A replaced entry keeps its header and its `data_block_hash`. In a version-5 package the kept signature no
-  longer matches the new payload.
-- An added entry gets a fresh 12-byte timestamp header (current FILETIME) and its Adler-32 when the package
-  already has 12-byte headers (version 4); otherwise (version 5, e.g. `EffectTexture.uop`) no header and
+- A replaced entry kept its header and its `data_block_hash`. In a version-5 package the kept signature no
+  longer matched the new payload.
+- An added entry got a fresh 12-byte timestamp header (current FILETIME) and its Adler-32 when the package
+  already had 12-byte headers (version 4); otherwise (version 5, e.g. `EffectTexture.uop`) no header and
   `data_block_hash` = Adler-32 of the stored payload.
 
 The client accepts all of these. Options:
@@ -169,13 +169,28 @@ The client accepts all of these. Options:
 4. **Write a fresh timestamp header** (type 3, current FILETIME) and set `data_block_hash` to its Adler-32,
    for replaced and added entries in both versions.
 
-Recommendation: **option 4.** It is the client's own version-4 convention, it replaces a signature we can
+Chosen: **option 4.** It is the client's own version-4 convention, it replaces a signature we can
 no longer make valid with a record the client knows how to read, and the new FILETIME changes the stamp on
 every write, so the string and audio caches rebuild when their files are edited. Mixed type-3/type-4
 headers in one version-5 package are harmless to the client (records are parsed generically). Its one
 unknown is the patcher: if it checks signatures it will flag the entry, but it would flag an edited payload
-under the old signature just as well. `DataBlockHeader` / `DataBlockHashAlgorithm` in
-`lib/uocf/src/uop_container/data_block_header.rs` already provide what this needs.
+under the old signature just as well.
+
+Implementation (`lib/uocf/src/uop_container/`):
+
+- `UopPackage::replace_file` replaces an entry's payload; `put_entry` (and through it the EffectTexture and
+  EffectDefinitionCollection writers), `HousingPieces::replace_in_package` (`MultiCollection.uop`) and
+  `uoppackage-cli replace` use it. `put_entry` gives added entries the same header.
+- The header is `UopPackage::edit_data_block_header`: `DataBlockHeader::from_timestamp` of the package's
+  edit FILETIME, hashed by `UopFile::set_data_block_header_and_hash` with the algorithm of its first record
+  (Adler-32). The FILETIME is the current system time (`filetime_from_system_time`), or a fixed value set
+  with `UopPackage::set_edit_filetime` for tests and reproducible output.
+- An entry replaced by the payload it already holds, with the same compression, is left untouched: re-saving
+  unchanged content does not change its stamp. Untouched entries keep header and hash byte for byte;
+  `UopPackage::recompress` (`uoppackage-cli rebuild`) keeps every header and hash too.
+- Checked on a copy of the EC `EffectTexture.uop` with one entry replaced by `uoppackage-cli replace`: 829 of
+  829 headers match their `data_block_hash` (`client_package_headers_match_their_data_block_hash`), the
+  replaced entry has a 12-byte timestamp header and the other 828 entries are byte-identical.
 
 ## Names applied
 

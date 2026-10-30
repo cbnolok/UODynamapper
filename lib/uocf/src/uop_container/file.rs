@@ -76,8 +76,8 @@ pub struct UopFile {
     decompressed_size: u32,
     /// The hash of the file's name.
     filename_hash: u64,
-    /// A hash of the data block header in client packages (`DataBlockHeader::data_block_hash`); of the
-    /// compressed data for entries created here.
+    /// A hash of the data block header in client packages and in entries replaced or added by the package
+    /// editors (`DataBlockHeader::data_block_hash`); of the compressed data for headerless entries created here.
     data_block_hash: u32,
     /// The compression method used.
     compression: CompressionFlag,
@@ -221,6 +221,20 @@ impl UopFile {
     pub fn set_data_block_header(&mut self, header: Arc<[u8]>) {
         self.data_block_length = header.len() as u32;
         self.data_block_header = Some(header);
+    }
+
+    /// Stores `header` before the payload and sets `data_block_hash` to its hash
+    /// (`DataBlockHeader::data_block_hash`). Fails when the header's hash algorithm is not known.
+    pub fn set_data_block_header_and_hash(&mut self, header: &DataBlockHeader) -> Result<(), std::io::Error> {
+        let hash = header.data_block_hash()?.ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "the data block header has no known hash algorithm",
+            )
+        })?;
+        self.set_data_block_header(Arc::from(header.to_bytes()));
+        self.data_block_hash = hash;
+        Ok(())
     }
 
     /// Parses the loaded data block header. None if not loaded or absent.

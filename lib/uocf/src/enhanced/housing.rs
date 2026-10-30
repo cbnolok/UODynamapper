@@ -29,7 +29,6 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use color_eyre::eyre::{self, WrapErr};
 
 use super::multis::HOUSING_PATH;
-use crate::uop_container::file::UopFile;
 use crate::uop_container::hash::hash_file_name_single;
 use crate::uop_container::package::UopPackage;
 
@@ -325,31 +324,25 @@ impl HousingPieces {
     }
 
     /// Replaces the `housing.bin` entry of a `MultiCollection.uop` package with these pieces, keeping the
-    /// entry's compression flag and data block header. Fails when the package has no `housing.bin`.
+    /// entry's compression flag (`UopPackage::replace_file`): a changed entry gets a fresh timestamp data block
+    /// header stamped with the package's edit FILETIME, an unchanged one is left untouched. Fails when the
+    /// package has no `housing.bin`.
     pub fn replace_in_package(&self, package: &mut UopPackage) -> eyre::Result<()> {
         let hash = hash_file_name_single(HOUSING_PATH);
-        if package.get_file_by_hash(hash).is_none() {
+        let Some(file) = package.get_file_by_hash(hash) else {
             eyre::bail!("the package has no {HOUSING_PATH}");
-        }
+        };
+        let compression = file.compression();
         package
-            .ensure_file_data_loaded_by_hash(hash)
-            .wrap_err_with(|| format!("failed to load the {HOUSING_PATH} entry"))?;
-        let file = package.get_file_by_hash_mut(hash).expect("the entry was just found");
-        let mut replacement = UopFile::new()
-            .create_file_from_bytes(&self.to_payload_bytes(), hash, file.compression())
-            .wrap_err_with(|| format!("failed to encode {HOUSING_PATH}"))?;
-        if let Some(header) = file.data_block_header() {
-            // Client packages hash the data block header, not the payload: header and hash stay valid.
-            replacement.set_data_block_header(std::sync::Arc::clone(header));
-            replacement.set_data_block_hash(file.data_block_hash());
-        }
-        *file = replacement;
+            .replace_file(hash, &self.to_payload_bytes(), compression)
+            .wrap_err_with(|| format!("failed to replace {HOUSING_PATH}"))?;
         Ok(())
     }
 
-    /// Writes a copy of the `source` `MultiCollection.uop` to `output` with only `housing.bin` replaced: every
-    /// other entry keeps its payload and compression flag, the package keeps its version and block size.
-    /// `output` must not be `source`.
+    /// Writes a copy of the `source` `MultiCollection.uop` to `output` with only `housing.bin` replaced
+    /// ([`Self::replace_in_package`], stamped with the current time): every other entry keeps its payload,
+    /// compression flag and data block header, the package keeps its version and block size. `output` must not
+    /// be `source`.
     pub fn write_multi_collection(&self, source: impl AsRef<Path>, output: impl AsRef<Path>) -> eyre::Result<()> {
         let (source, output) = (source.as_ref(), output.as_ref());
         let canonical_source = std::fs::canonicalize(source)

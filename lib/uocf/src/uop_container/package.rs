@@ -18,6 +18,8 @@
 //!   a 134- to 137-byte signature header in version-5 ones. `data_block_hash` is the
 //!   Adler-32 (timestamp) or lookup3 hash (signature) of that header. Loading keeps the
 //!   header bytes and saving writes them back, so a loaded package re-saves intact.
+//!   An entry whose payload `replace_file` changes gets a fresh timestamp header stamped
+//!   with the package's edit FILETIME (`set_edit_filetime`), in both versions.
 //! - Client packages pad their last block to the block size with all-zero entries; the header's file count
 //!   excludes them and saving keeps them all-zero (`UopFile::is_empty_slot`).
 
@@ -31,6 +33,7 @@ use indexmap::IndexMap;
 use nohash_hasher::BuildNoHashHasher;
 
 use crate::uop_container::block::UopBlock;
+use crate::uop_container::data_block_header::{filetime_from_system_time, DataBlockHeader};
 use crate::uop_container::file::{CompressionFlag, UopFile};
 use crate::uop_container::hash;
 
@@ -53,6 +56,15 @@ pub enum LoadMode {
     Eager,
 }
 
+/// What [`UopPackage::replace_file`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileReplacement {
+    /// The payload or compression changed: the entry was re-encoded with a fresh timestamp header.
+    Replaced,
+    /// The entry already held the payload with that compression: it was left untouched, header included.
+    Unchanged,
+}
+
 /// UOP package reader/writer with selectable payload loading and a package-level hash index.
 #[derive(Clone)]
 pub struct UopPackage {
@@ -67,6 +79,8 @@ pub struct UopPackage {
     blocks: Vec<UopBlock>,
     files_by_hash: IndexMap<u64, UopFile, BuildNoHashHasher<u64>>,
     hash_index_dirty: bool,
+    /// FILETIME stamped into the data block header of edited entries; None for the current system time.
+    edit_filetime: Option<u64>,
 }
 
 impl UopPackage {
@@ -104,6 +118,7 @@ impl UopPackage {
             blocks: Vec::new(),
             files_by_hash: IndexMap::with_hasher(BuildNoHashHasher::default()),
             hash_index_dirty: false,
+            edit_filetime: None,
         })
     }
 
@@ -177,6 +192,7 @@ impl UopPackage {
             blocks,
             files_by_hash: IndexMap::with_hasher(BuildNoHashHasher::default()),
             hash_index_dirty: false,
+            edit_filetime: None,
         };
         package.refresh_hash_index();
         Ok(package)
@@ -194,6 +210,25 @@ impl UopPackage {
     /// Return the maximum number of file records each block may hold.
     pub fn block_size(&self) -> u32 {
         self.block_size
+    }
+
+    /// Sets the FILETIME stamped into the data block header of the entries replaced or added from now on
+    /// ([`Self::edit_data_block_header`]); None (the default) stamps the current system time. A fixed value
+    /// makes edited packages reproducible.
+    pub fn set_edit_filetime(&mut self, filetime: Option<u64>) {
+        self.edit_filetime = filetime;
+    }
+
+    /// The FILETIME stamped into edited entries: the one set by [`Self::set_edit_filetime`], else now.
+    pub fn edit_filetime(&self) -> u64 {
+        self.edit_filetime.unwrap_or_else(|| filetime_from_system_time(std::time::SystemTime::now()))
+    }
+
+    /// The data block header of an entry replaced or added in this package: one timestamp record holding
+    /// [`Self::edit_filetime`], whatever the package version. A version-5 signature cannot be made for a new
+    /// payload, and the new FILETIME changes the `data_block_hash` the client uses as a cache stamp.
+    pub fn edit_data_block_header(&self) -> DataBlockHeader {
+        DataBlockHeader::from_timestamp(self.edit_filetime())
     }
 
     /// Return the total logical file count advertised by the package.
@@ -331,6 +366,35 @@ impl UopPackage {
         let file = UopFile::new().create_file_from_bytes(file_content, filename_hash, compression)?;
         self.push_file(file);
         Ok(())
+    }
+
+    /// Replaces the payload of the entry `filename_hash`, encoding it with `compression`.
+    ///
+    /// A changed entry gets [`Self::edit_data_block_header`] and its hash. An entry that already holds
+    /// `payload` with `compression` is left untouched, keeping its header and hash, so re-saving unchanged
+    /// content does not change its stamp. Fails with `NotFound` when there is no such entry.
+    pub fn replace_file(
+        &mut self,
+        filename_hash: u64,
+        payload: &[u8],
+        compression: CompressionFlag,
+    ) -> io::Result<FileReplacement> {
+        self.ensure_file_data_loaded_by_hash(filename_hash)?;
+        let header = self.edit_data_block_header();
+        let file = self.get_file_by_hash_mut(filename_hash).expect("the entry was just loaded");
+        if file.compression() == compression {
+            // Entries without stored bytes have nothing to load: their payload is empty. An entry that does not
+            // decode counts as changed, so it can still be replaced.
+            let unchanged =
+                file.data().map_or(payload.is_empty(), |_| file.unpack().is_ok_and(|current| current == payload));
+            if unchanged {
+                return Ok(FileReplacement::Unchanged);
+            }
+        }
+        let mut replacement = UopFile::new().create_file_from_bytes(payload, filename_hash, compression)?;
+        replacement.set_data_block_header_and_hash(&header)?;
+        *file = replacement;
+        Ok(FileReplacement::Replaced)
     }
 
     /// Finalize layout-sensitive fields and write a complete package to disk.
@@ -502,19 +566,26 @@ impl UopPackage {
     }
 
     /// Rebuild compressed payloads in-place using the current package file set.
+    ///
+    /// The payloads do not change, so every entry keeps its data block header and hash.
     pub fn recompress(&mut self, _compression_level: flate2::Compression) -> io::Result<()> {
         self.ensure_all_data_loaded()?;
 
-        for file in self.iter_files_mut() {
+        for file in self.iter_files_mut().filter(|file| !file.is_empty_slot()) {
             let unpacked = file.unpack_arc()?;
             let filename_hash = file.filename_hash();
             let recompressed_flag = file.compression();
 
-            *file = UopFile::new().create_file_from_bytes(
+            let mut recompressed = UopFile::new().create_file_from_bytes(
                 unpacked.as_ref(),
                 filename_hash,
                 recompressed_flag,
             )?;
+            if let Some(header) = file.data_block_header() {
+                recompressed.set_data_block_header(Arc::clone(header));
+                recompressed.set_data_block_hash(file.data_block_hash());
+            }
+            *file = recompressed;
         }
 
         self.refresh_hash_index();

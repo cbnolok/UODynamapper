@@ -10,7 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::{self, Context};
 use serde::Deserialize;
-use uocf::uop_container::file::{CompressionFlag, UopFile};
+use uocf::uop_container::file::CompressionFlag;
 use uocf::uop_container::hash_bruteforce;
 use uocf::uop_container::hash_dictionary::HashDictionary;
 use uocf::uop_container::package::UopPackage;
@@ -63,6 +63,9 @@ enum Commands {
         method: String,
     },
     /// Replace a file in the UOP package.
+    ///
+    /// The file is stored zlib-compressed. The entry gets a fresh timestamp data block header stamped with the
+    /// current time; an entry that already holds the file is left untouched.
     Replace {
         /// The path to the UOP file.
         #[arg(required = true)]
@@ -75,6 +78,8 @@ enum Commands {
         new_file: PathBuf,
     },
     /// Rebuild the UOP package, recompressing all files.
+    ///
+    /// Every entry keeps its data block header.
     Rebuild {
         /// The path to the UOP file.
         #[arg(required = true)]
@@ -217,17 +222,15 @@ fn main() -> eyre::Result<()> {
             let mut uop = UopPackage::load(uop_file)
                 .with_context(|| format!("Failed to load UOP file: {}", uop_file.display()))?;
 
-            let old_uop_file: &mut UopFile = uop.get_file_by_hash_mut(*hash).ok_or_else(|| {
-                eyre::eyre!("File with hash 0x{:016x} not found in UOP package", *hash)
-            })?;
+            if uop.get_file_by_hash(*hash).is_none() {
+                eyre::bail!("File with hash 0x{:016x} not found in UOP package", *hash);
+            }
 
-            let mut new_file_data = fs::File::open(new_file)
-                .with_context(|| format!("Failed to open new file: {}", new_file.display()))?;
+            let new_file_data = fs::read(new_file)
+                .with_context(|| format!("Failed to read new file: {}", new_file.display()))?;
 
-            let new_uop_file =
-                UopFile::new().create_file(&mut new_file_data, *hash, CompressionFlag::Zlib)?;
-
-            *old_uop_file = new_uop_file;
+            uop.replace_file(*hash, &new_file_data, CompressionFlag::Zlib)
+                .with_context(|| format!("Failed to replace file with hash 0x{:016x}", *hash))?;
 
             save_package_atomically(&mut uop, uop_file)?;
 

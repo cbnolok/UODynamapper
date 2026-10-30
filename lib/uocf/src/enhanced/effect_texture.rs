@@ -154,6 +154,12 @@ impl EffectTexturePackage {
         &self.package
     }
 
+    /// Sets the FILETIME stamped into the data block header of the entries [`Self::put`] stores from now on;
+    /// None (the default) stamps the current time (`UopPackage::set_edit_filetime`).
+    pub fn set_edit_filetime(&mut self, filetime: Option<u64>) {
+        self.package.set_edit_filetime(filetime);
+    }
+
     /// Resolves the entries whose hash matches one of `candidates` (file names or `data/effects/` paths,
     /// normalized by [`effect_texture_path`]); returns how many entries got a name.
     pub fn resolve_names<S: AsRef<str>>(&mut self, candidates: impl IntoIterator<Item = S>) -> usize {
@@ -244,8 +250,10 @@ impl EffectTexturePackage {
         self.package.unpack_file_by_hash(hash).wrap_err_with(|| format!("failed to read entry {hash:016X}"))
     }
 
-    /// Replaces the payload of `file_name` (keeping its compression flag and data block header) or adds it
-    /// ([`EFFECT_TEXTURE_NEW_ENTRY_COMPRESSION`], a client data block header stamped now).
+    /// Replaces the payload of `file_name` (keeping its compression flag) or adds it
+    /// ([`EFFECT_TEXTURE_NEW_ENTRY_COMPRESSION`]). Either way the entry gets a timestamp data block header
+    /// stamped now (or at [`Self::set_edit_filetime`]) instead of its signature header; an entry whose payload is
+    /// unchanged is left untouched.
     pub fn put(&mut self, file_name: &str, payload: &[u8]) -> eyre::Result<EntryPut> {
         let path = effect_texture_path(file_name);
         let hash = hash_file_name_single(&path);

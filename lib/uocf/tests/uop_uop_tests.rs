@@ -1,6 +1,7 @@
+use uocf::uop_container::data_block_header::{DataBlockHeader, DataBlockHeaderRecord};
 use uocf::uop_container::file::CompressionFlag;
-use uocf::uop_container::hash::hash_file_name_single;
-use uocf::uop_container::package::{LoadMode, UopPackage};
+use uocf::uop_container::hash::{hash_data_block, hash_file_name_single};
+use uocf::uop_container::package::{FileReplacement, LoadMode, UopPackage};
 use flate2::Compression;
 use std::io::Write;
 use std::fs;
@@ -319,6 +320,53 @@ fn resaving_preserves_data_block_headers() {
 
     let _ = fs::remove_file(first);
     let _ = fs::remove_file(second);
+}
+
+#[test]
+fn replacing_a_payload_stamps_a_fresh_header_and_recompressing_keeps_it() {
+    // Client packages store a 12-byte header (u16 3, u16 8, u64 FILETIME) before each payload.
+    const HEADER: [u8; 12] = [3, 0, 8, 0, 1, 2, 3, 4, 5, 6, 7, 8];
+    const EDIT_FILETIME: u64 = 0x01db_2a3b_4c5d_6e7f;
+    const REPLACED: &str = "build/replace/00000000.bin";
+    const UNCHANGED: &str = "build/replace/00000001.bin";
+
+    let mut package = UopPackage::new_default();
+    for path in [REPLACED, UNCHANGED] {
+        package
+            .add_file_from_memory(b"old payload", path, CompressionFlag::Zlib)
+            .expect("add entry");
+        let file = package.get_file_by_hash_mut(hash_file_name_single(path)).expect("entry");
+        file.set_data_block_header(Arc::from(HEADER.as_slice()));
+        file.set_data_block_hash(hash_data_block(&HEADER).expect("hash header"));
+    }
+    package.set_edit_filetime(Some(EDIT_FILETIME));
+
+    let replaced = hash_file_name_single(REPLACED);
+    let unchanged = hash_file_name_single(UNCHANGED);
+    assert_eq!(
+        package.replace_file(replaced, b"new payload", CompressionFlag::Zlib).expect("replace"),
+        FileReplacement::Replaced
+    );
+    assert_eq!(
+        package.replace_file(unchanged, b"old payload", CompressionFlag::Zlib).expect("replace"),
+        FileReplacement::Unchanged
+    );
+    assert!(package.replace_file(hash_file_name_single("build/missing.bin"), b"", CompressionFlag::Zlib).is_err());
+
+    let file = package.get_file_by_hash(replaced).expect("replaced entry");
+    let header = DataBlockHeader::parse(file.data_block_header().expect("header")).expect("parse header");
+    assert_eq!(header.records(), &[DataBlockHeaderRecord::Timestamp(EDIT_FILETIME)]);
+    assert_eq!(file.data_block_hash(), hash_data_block(&header.to_bytes()).expect("hash header"));
+    assert_eq!(file.unpack().expect("payload"), b"new payload");
+    let file = package.get_file_by_hash(unchanged).expect("unchanged entry");
+    assert_eq!(file.data_block_header().map(|header| &header[..]), Some(&HEADER[..]));
+
+    let before: Vec<_> =
+        package.iter_files().map(|file| (file.data_block_header().cloned(), file.data_block_hash())).collect();
+    package.recompress(Compression::default()).expect("recompress package");
+    let after: Vec<_> =
+        package.iter_files().map(|file| (file.data_block_header().cloned(), file.data_block_hash())).collect();
+    assert_eq!(after, before, "recompressing keeps every header and hash");
 }
 
 #[test]

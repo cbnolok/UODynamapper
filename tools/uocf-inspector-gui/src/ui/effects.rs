@@ -96,9 +96,8 @@ const PNG_FILTER: (&str, &[&str]) = ("PNG image", &["png"]);
 const IMPORT_FILTER_NAME: &str = "Effect file";
 const DEFAULT_KDL_FILE_NAME: &str = "effects.kdl";
 const DEFAULT_CONTACT_SHEET_FILE_NAME: &str = "effect_preview.png";
-const HEADER_HASH_NOTE: &str = "EffectTexture.uop entries carry an unknown 135-137 byte signed header whose hash is \
-    not recomputed: replaced entries keep their old header, new ones get a fresh data block header. How the client \
-    treats modified entries is untested.";
+const HEADER_HASH_NOTE: &str = "EffectTexture.uop entries carry a signature header that cannot be recreated. The \
+    client never checks it, so replaced and added entries get a fresh timestamp header instead.";
 
 const UNDO_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Z);
 const REDO_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Y);

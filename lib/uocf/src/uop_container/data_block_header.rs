@@ -23,8 +23,12 @@
 //! no code reads a signature record, and `data_block_hash` is only compared with copies stored in the string
 //! table and audio caches, to decide whether to rebuild them (see
 //! `scripts/dev-helpers/ec-research/ghidra-uop-header/results/uosa_uop_header.md`).
+//!
+//! Writers give every entry they replace or add a fresh timestamp header ([`DataBlockHeader::from_timestamp`])
+//! in both package versions: a signature cannot be made, and the new FILETIME changes the cache stamp.
 
 use std::io;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::uop_container::hash::{hash_data_block, hash_data_block_lookup3};
 
@@ -44,6 +48,21 @@ pub const SIGNATURE_PREFIX_SIZE: usize = 4;
 pub const SIGNATURE_KEY_ID_ENHANCED: u16 = 20;
 /// Signature key id of the Classic Client packages of the reference release.
 pub const SIGNATURE_KEY_ID_CLASSIC: u16 = 21;
+/// Nanoseconds per FILETIME tick: a FILETIME counts 100 ns intervals.
+pub const FILETIME_TICK_NANOSECONDS: u32 = 100;
+/// FILETIME of the Unix epoch (1970-01-01 UTC): the ticks since the FILETIME epoch, 1601-01-01 UTC.
+pub const FILETIME_UNIX_EPOCH: u64 = 116_444_736_000_000_000;
+
+/// The Windows FILETIME of `time`, saturating outside the FILETIME range.
+pub fn filetime_from_system_time(time: SystemTime) -> u64 {
+    fn ticks(duration: Duration) -> u64 {
+        u64::try_from(duration.as_nanos() / u128::from(FILETIME_TICK_NANOSECONDS)).unwrap_or(u64::MAX)
+    }
+    match time.duration_since(UNIX_EPOCH) {
+        Ok(since_epoch) => FILETIME_UNIX_EPOCH.saturating_add(ticks(since_epoch)),
+        Err(before_epoch) => FILETIME_UNIX_EPOCH.saturating_sub(ticks(before_epoch.duration())),
+    }
+}
 
 /// The signature of a signature record.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -145,6 +164,12 @@ impl DataBlockHeader {
     /// A header of `records`.
     pub fn new(records: Vec<DataBlockHeaderRecord>) -> Self {
         Self { records }
+    }
+
+    /// A header of one timestamp record holding `filetime`: what the writers store before every payload they
+    /// replace or add. Its hash algorithm is [`DataBlockHashAlgorithm::Adler32`].
+    pub fn from_timestamp(filetime: u64) -> Self {
+        Self::new(vec![DataBlockHeaderRecord::Timestamp(filetime)])
     }
 
     /// Parses header bytes. A record running past the end is an error; [`Self::to_bytes`] gives the bytes back.

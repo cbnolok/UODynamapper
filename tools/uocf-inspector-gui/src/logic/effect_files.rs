@@ -242,7 +242,7 @@ impl EffectFiles {
     }
 
     /// Writes a copy of the loaded package with the pending changes to `output`. Refuses to write over the
-    /// loaded package or any `protected` file. Replaced entries keep their old data block header.
+    /// loaded package or any `protected` file. Replaced and added entries get a fresh timestamp data block header.
     pub fn save_as(
         &self,
         overrides: &BTreeMap<u64, FileOverride>,

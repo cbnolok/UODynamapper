@@ -234,10 +234,11 @@ unless the data becomes a stable package contract.
   use it.
 - `write_effect_definition_collection(source, output)` writes a copy of the
   package and refuses to overwrite `source`. In the copy:
-  - unchanged entries keep their compressed bytes;
-  - edited entries keep their compression flag and their 12-byte data block
-    header (`u16 3`, `u16 8`, FILETIME; `data_block_hash` is its Adler-32);
-  - new entries get a fresh header stamped with the current time;
+  - unchanged entries keep their compressed bytes and data block header;
+  - edited entries keep their compression flag and get a fresh 12-byte data
+    block header (`u16 3`, `u16 8`, FILETIME of the current time;
+    `data_block_hash` is its Adler-32);
+  - new entries get the same fresh header;
   - removed entries leave an empty slot.
 
   The table layout is rebuilt, so the file is not byte-identical even without
@@ -311,10 +312,16 @@ unless the data becomes a stable package contract.
   - The client never checks either: it skips `data_block_length` bytes to the
     payload, never reads the signature, and uses `data_block_hash` only as a
     cache stamp for the string table and audio caches. A missing header works.
-  - A replaced entry keeps its header and hash, so its signature no longer
-    matches the new payload; added entries get no header. See
+  - Replaced and added entries get a fresh timestamp header instead (type 3,
+    the current FILETIME, 12 bytes; `data_block_hash` its Adler-32), in this
+    version-5 package as in version-4 ones: a signature cannot be made for a
+    new payload, and the new stamp lets the client's caches see the change.
+    `UopPackage::set_edit_filetime` (or `EffectTexturePackage::set_edit_filetime`)
+    fixes the FILETIME for reproducible output. An entry replaced by the same
+    payload, and every untouched entry, keeps its header and hash byte for
+    byte. See
     `scripts/dev-helpers/ec-research/ghidra-uop-header/results/uosa_uop_header.md`
-    for the evidence and a proposal for both.
+    for the evidence (option 4 of its writer policy).
 
 `.ems` Chaos particle scripts (in `EffectTexture.uop`):
 
@@ -488,7 +495,8 @@ unless the data becomes a stable package contract.
   `housing/kdl_text.rs`); `load_housing_bin` / `write_housing_bin` handle a
   loose file and `write_multi_collection` writes a copy of a package with
   only `housing.bin` replaced (the other entries keep payload, compression
-  flag and data block header).
+  flag and data block header; `housing.bin` keeps its compression flag and
+  gets a fresh timestamp data block header).
 - Layouts, field meanings, confidence and verification against the client
   data are in
   [`uosa_housing.md`](../../../../scripts/dev-helpers/ec-research/ghidra-housing/results/uosa_housing.md)

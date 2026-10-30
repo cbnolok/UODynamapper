@@ -6,18 +6,23 @@
 mod common;
 
 use std::fs;
+use std::time::{Duration, UNIX_EPOCH};
 
 use uocf::uop_container::data_block_header::{
-    DataBlockHashAlgorithm, DataBlockHeader, DataBlockHeaderRecord, DataBlockSignature, RECORD_TYPE_SIGNATURE,
-    SIGNATURE_KEY_ID_CLASSIC, SIGNATURE_KEY_ID_ENHANCED,
+    filetime_from_system_time, DataBlockHashAlgorithm, DataBlockHeader, DataBlockHeaderRecord, DataBlockSignature,
+    FILETIME_TICK_NANOSECONDS, FILETIME_UNIX_EPOCH, RECORD_TYPE_SIGNATURE, SIGNATURE_KEY_ID_CLASSIC,
+    SIGNATURE_KEY_ID_ENHANCED,
 };
 use uocf::uop_container::package::{LoadMode, UopPackage};
 
-/// A version-4 client timestamp header (`u16 3`, `u16 8`, FILETIME 2024-03-23) and its Adler-32, from the
+/// A version-4 client timestamp header (`u16 3`, `u16 8`, FILETIME 2024-04-09) and its Adler-32, from the
 /// reference release's `tileart.uop`.
 const TIMESTAMP_HEADER: [u8; 12] = [0x03, 0x00, 0x08, 0x00, 0x60, 0x8a, 0x6a, 0xed, 0xbf, 0x8a, 0xda, 0x01];
 const TIMESTAMP_HEADER_FILETIME: u64 = 0x01da_8abf_ed6a_8a60;
 const TIMESTAMP_HEADER_HASH: u32 = 0x14b2_0471;
+/// Unix time of `TIMESTAMP_HEADER_FILETIME`, and its sub-second FILETIME ticks.
+const TIMESTAMP_HEADER_UNIX_SECONDS: u64 = 1_712_695_988;
+const TIMESTAMP_HEADER_SUBSECOND_TICKS: u32 = 7_420_000;
 /// Length of the synthetic signature value; its bytes are `(i * SIGNATURE_BYTE_STEP + SIGNATURE_BYTE_BASE)`.
 const SIGNATURE_VALUE_LEN: usize = 128;
 const SIGNATURE_BYTE_STEP: usize = 7;
@@ -53,6 +58,19 @@ fn timestamp_header_parses_and_hashes_with_adler32() {
     assert_eq!(header.timestamp(), Some(TIMESTAMP_HEADER_FILETIME));
     assert_eq!(header.to_bytes(), TIMESTAMP_HEADER);
     assert_eq!(header.hash_algorithm(), Some(DataBlockHashAlgorithm::Adler32));
+    assert_eq!(header.data_block_hash().unwrap(), Some(TIMESTAMP_HEADER_HASH));
+}
+
+#[test]
+fn timestamp_headers_are_built_from_system_time() {
+    assert_eq!(filetime_from_system_time(UNIX_EPOCH), FILETIME_UNIX_EPOCH);
+    let subsecond_nanoseconds = TIMESTAMP_HEADER_SUBSECOND_TICKS * FILETIME_TICK_NANOSECONDS;
+    let time = UNIX_EPOCH + Duration::new(TIMESTAMP_HEADER_UNIX_SECONDS, subsecond_nanoseconds);
+    assert_eq!(filetime_from_system_time(time), TIMESTAMP_HEADER_FILETIME);
+    assert!(filetime_from_system_time(UNIX_EPOCH - Duration::from_secs(1)) < FILETIME_UNIX_EPOCH);
+
+    let header = DataBlockHeader::from_timestamp(TIMESTAMP_HEADER_FILETIME);
+    assert_eq!(header.to_bytes(), TIMESTAMP_HEADER);
     assert_eq!(header.data_block_hash().unwrap(), Some(TIMESTAMP_HEADER_HASH));
 }
 
