@@ -1765,6 +1765,10 @@ mod tests {
 
         let shaders = [
             Shader::from_wesl(
+                include_str!("../../../assets/shaders/world/uo_coords.wesl"),
+                "shaders/world/uo_coords.wesl",
+            ),
+            Shader::from_wesl(
                 include_str!("../../../assets/shaders/world/common_bindings.wesl"),
                 "shaders/world/common_bindings.wesl",
             ),

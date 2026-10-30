@@ -25,7 +25,8 @@ const CLASSIC_STATIC_ART_ID_OFFSET: u16 = 0x4000;
 const ISO_TILE_SCREEN_DIAGONAL_WORLD_UNITS: f32 = std::f32::consts::SQRT_2;
 const CC_TILE_PIXEL_WIDTH: f32 = 44.0;
 const EC_TILE_PIXEL_WIDTH: f32 = 64.0;
-const STATIC_WORLD_Y_PER_XZ_PIXEL: f32 = 7.5 * 0.1;
+// Original legacy art projects four square sprite pixels per raw Z unit.
+const STATIC_WORLD_Y_PER_XZ_PIXEL: f32 = UO_Z_TO_WORLD_SCALE / (4.0 * CC_WORLD_XZ_PER_PIXEL);
 const CC_WORLD_XZ_PER_PIXEL: f32 = ISO_TILE_SCREEN_DIAGONAL_WORLD_UNITS / CC_TILE_PIXEL_WIDTH;
 const CC_WORLD_Y_PER_PIXEL: f32 = STATIC_WORLD_Y_PER_XZ_PIXEL * CC_WORLD_XZ_PER_PIXEL;
 const EC_WORLD_XZ_PER_PIXEL: f32 = ISO_TILE_SCREEN_DIAGONAL_WORLD_UNITS / EC_TILE_PIXEL_WIDTH;
@@ -2794,9 +2795,9 @@ pub fn sys_collect_visible_statics(
 
     let is_dot_mode = zoom.0 >= 20.0;
     // Height conversion factor from UO units to our world Y units.
-    // Usually z is roughly 1 unit = 0.1 world units (or similar).
-    // The land shader does: world.y = z * 0.1
-    let height_scale = 0.1; // TODO: no magic numbers. also, don't we already have a fn for this?
+    // The old arbitrary value was roughly 1 unit = 0.1 world units.
+    // The land shader uses the same calibrated UO_Z_TO_WORLD_SCALE.
+    let height_scale = UO_Z_TO_WORLD_SCALE;
     let frame = StaticCollectFrameConfig {
         map_id,
         art_source,
@@ -2957,13 +2958,24 @@ mod tests {
     }
 
     #[test]
-    fn classic_billboard_bounds_keep_existing_scale() {
+    fn classic_billboard_offsets_use_the_calibrated_pixel_scale() {
         let bounds = resolve_static_billboard_bounds(ClientTextureSource::Cc, 11, 7, 44.0, 88.0);
 
         approx_eq(bounds.local_min_x, 11.0 * CC_WORLD_XZ_PER_PIXEL);
         approx_eq(bounds.local_max_x, (11.0 + 44.0) * CC_WORLD_XZ_PER_PIXEL);
         approx_eq(bounds.local_min_y, -(7.0 * CC_WORLD_Y_PER_PIXEL));
         approx_eq(bounds.local_max_y, (88.0 - 7.0) * CC_WORLD_Y_PER_PIXEL);
+    }
+
+    #[test]
+    fn upright_art_projects_square_pixels_and_four_pixels_per_z_unit() {
+        let vertical_projection = (2.0f32 / 3.0).sqrt()
+            * crate::core::render::scene::camera::ORTHO_WIDTH_SCALE_FACTOR;
+        for source in [ClientTextureSource::Cc, ClientTextureSource::Ec] {
+            approx_eq(static_world_y_per_pixel(source) * vertical_projection,
+                static_world_xz_per_pixel(source));
+        }
+        approx_eq(UO_Z_TO_WORLD_SCALE / CC_WORLD_Y_PER_PIXEL, 4.0);
     }
 
     #[test]

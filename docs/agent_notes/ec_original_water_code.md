@@ -859,21 +859,25 @@ configuration; a different tree or roof in the EC-art configuration does not by
 itself establish a selector defect. Asset build versions, filtering and shading
 still differ, so shared silhouettes do not establish identical packed pixels.
 
-Our ordinary cards currently use world-Y/XZ pixel ratio 0.75. At the default
-isometric pitch and 1.79 vertical lens stretch this projects to approximately
-1.096 vertical pixels per horizontal pixel. That is a scale hypothesis to check
-on individual matched sprites, not authority for changing raw terrain Z or every
-anchor. Whole-scene affine matching mixes ground positions, elevations and
-sprite interiors and cannot isolate that ratio. The temporary hybrid town,
-bridge and static/terrain-transition captures preserve the current baseline.
-Logical XYZ, object/tile heights and movement flags must remain independent of
-any eventual visual projection correction for the future walking client.
+Our former ordinary-card world-Y/XZ pixel ratio of 0.75, default isometric
+pitch and 1.79 vertical lens coefficient projected approximately 1.096 vertical
+pixels per horizontal pixel. Two individually matched legacy oak interiors
+independently confirmed its inverse aspect (0.912268 and 0.912495). The calibrated
+lens now uses sqrt(3), the tile correction sqrt(2), and legacy upright pixels
+use 1/44 world Y against sqrt(2)/44 in the horizontal XZ plane. Raw Z converts
+to 4/44 render world Y, matching the original four legacy pixels per Z unit.
+See [static height calibration](static_height_calibration.md) for measurements,
+tests and scope. Whole-scene affine matching still cannot isolate sprite aspect.
+Logical XYZ, object/tile heights and movement flags remain independent of this
+rendering conversion for the future walking client; individual new-art scales
+and anchors require their own evidence.
 
 
 The runtime reflection path now reconstructs this original view domain for the
 default orthographic isometric camera. `ec_liquid_original_view` projects signed
 map deltas onto the recovered right/up/direction basis, converts runtime height
-from its 0.1 scale, and uses the original camera distance 10. The common camera
+through the shared UO_Z_TO_WORLD_SCALE, and uses the original camera distance
+10. The common camera
 adapter derives the current focus from Bevy's existing per-frame view transform
 and the CPU camera's base offset length. That length occupies existing uniform
 padding, preserving the 48-byte layout. No camera movement causes a material

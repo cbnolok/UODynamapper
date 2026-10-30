@@ -4,6 +4,7 @@
 // ============================================================================
 
 import package::shaders::world::common_bindings::{SceneUniform, GlobalLightingUniforms, LandEffectsUniform};
+import package::shaders::world::uo_coords::UO_Z_TO_WORLD_SCALE;
 
 struct SpriteInstance {
     world_x: f32,
@@ -92,7 +93,7 @@ const BILLBOARD_RIGHT_XZ: vec2<f32> = vec2<f32>(INV_SQRT_2, -INV_SQRT_2);
 // lays a CC surface-like water static flat as an on-screen diamond matching the projected
 // terrain cell, undoing the isometric diamond baked into the sprite's pixels (see main.wesl).
 const FLAT_QUAD_FORWARD_XZ: vec2<f32> = vec2<f32>(INV_SQRT_2, INV_SQRT_2);
-const HEIGHT_SCALE: f32 = 0.1;
+const HEIGHT_SCALE: f32 = UO_Z_TO_WORLD_SCALE;
 const DEPTH_CLASS_REGULAR: u32 = 0u;
 const DEPTH_CLASS_BACKGROUND: u32 = 1u;
 const DEPTH_CLASS_FOLIAGE: u32 = 2u;

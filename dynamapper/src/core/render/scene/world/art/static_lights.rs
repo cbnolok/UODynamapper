@@ -7,6 +7,7 @@ use crate::core::render::scene::world::land::{
 use crate::core::render::scene::SceneStateData;
 use crate::core::statics::StaticsStoreRes;
 use crate::core::uo_files_loader::{HuesPackageRes, TileMetaPackageRes, WorldLightsPackageRes};
+use crate::util_lib::uo_coords::scale_uo_z_to_bevy_units;
 use bevy::camera::visibility::NoFrustumCulling;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, PrimitiveTopology, TextureDimension, TextureFormat};
@@ -305,7 +306,7 @@ pub fn sys_collect_visible_static_lights(
                         ),
                         world_x: tile_x as f32 + 0.5,
                         world_z: tile_y as f32 + 0.5,
-                        world_y: (tile.z as f32) * 0.1 + STATIC_LIGHT_Y_BIAS,
+                        world_y: scale_uo_z_to_bevy_units(tile.z as f32) + STATIC_LIGHT_Y_BIAS,
                         width_world: slot.width as f32 / LIGHT_PIXELS_PER_WORLD_TILE,
                         height_world: slot.height as f32 / LIGHT_PIXELS_PER_WORLD_TILE,
                     });

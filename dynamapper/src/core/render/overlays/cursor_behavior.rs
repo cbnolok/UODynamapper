@@ -789,7 +789,7 @@ fn hovered_static_match(
     let local_y = tile.y_offset() as f32;
     let world_x = block_x as f32 * 8.0 + local_x;
     let world_z = block_y as f32 * 8.0 + local_y;
-    let world_y = tile.z as f32 * 0.1 + depth_class_y_bias(depth_class);
+    let world_y = scale_uo_z_to_bevy_units(tile.z as f32) + depth_class_y_bias(depth_class);
     let (kind, corners) = resolve_hovered_static_geometry(
         settings,
         tex_art_cc_res,

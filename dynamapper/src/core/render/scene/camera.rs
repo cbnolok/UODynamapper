@@ -27,14 +27,16 @@ mod perspective;
 pub struct UiCameraResource(pub Option<Entity>);
 
 /* RENDERING MAGIC CONSTANTS */
-/// Magic number found through trial and error with the aim of rendering tiles of same width and height.
-pub(crate) const ORTHO_WIDTH_SCALE_FACTOR: f32 = 1.79;
+/// sqrt(3) makes the two ground diagonals project to equal lengths at the
+/// isometric pitch. The former trial-and-error value 1.79 stretched the grid.
+pub(crate) const ORTHO_WIDTH_SCALE_FACTOR: f32 = 1.7320508;
 
 /// Factor to correct the rendered tile size to our desired size.
 /// Due to the orthographic projection, pixel size is not 1:1 but it will be distorted.
 pub const TILE_SIZE_FACTOR: f32 = {
-    // Using ORTHO_WIDTH_SCALE_FACTOR, the tiles are rendered bigger than desired.
-    const MEASURED_TILE_PIXEL_SIZE: f32 = 62.0;
+    // Correct the isometric diagonal's size exactly; the old measured width
+    // of 62 approximated 44*sqrt(2), leaving a small horizontal scale error.
+    const MEASURED_TILE_PIXEL_SIZE: f32 = UO_TILE_PIXEL_SIZE * std::f32::consts::SQRT_2;
     // The pixel width and height of a diamond tile at neutral zoom (UO standard).
     const DESIRED_TILE_PIXEL_SIZE: f32 = UO_TILE_PIXEL_SIZE;
     MEASURED_TILE_PIXEL_SIZE / DESIRED_TILE_PIXEL_SIZE
@@ -65,8 +67,9 @@ impl RenderZoom {
 pub struct PlayerCamera;
 impl PlayerCamera {
     pub const BASE_OFFSET_FROM_PLAYER: Vec3 = Vec3::new(5.0, 5.0, 5.0);
-    pub const BASE_OFFSET_FROM_PLAYER_PERSP: Vec3 =
-        Vec3::new(50.0, 50.0 * ORTHO_WIDTH_SCALE_FACTOR, 50.0);
+    // Preserve the established perspective orbit length (old 50*1.79 Y)
+    // independently of the calibrated lens, which changes projected aspect.
+    pub const BASE_OFFSET_FROM_PLAYER_PERSP: Vec3 = Vec3::new(50.0, 89.5, 50.0);
 
     pub fn perspective_offset() -> Vec3 {
         // Preserve the orbit distance/zoom framing, with the art view's pitch.

@@ -18,6 +18,10 @@ fn liquid_sampling_gpu_preserves_data_and_source_edges() {
             Ok(wgsl)
         });
         let shader_id = |value| AssetId::<Shader>::Uuid { uuid: Uuid::from_u128(value) };
+        shaders.set_shader(shader_id(14), Shader::from_wesl(
+            include_str!("../../../../assets/shaders/world/uo_coords.wesl"),
+            "shaders/world/uo_coords.wesl",
+        ));
         shaders.set_shader(shader_id(1), Shader::from_wesl(
             include_str!("../../../../assets/shaders/world/texture_data.wesl"),
             "shaders/world/texture_data.wesl",
@@ -398,7 +402,8 @@ fn main() {
         let (sin_roll, cos_roll) = 0.05f64.sin_cos();
         let original_uv = |x: f64, height: f64, map_y: f64| {
             let right = sin_tilt * x - cos_tilt * map_y;
-            let up = -cos_tilt * cos_roll * x - sin_tilt * cos_roll * map_y + height * 1.2856454;
+            let raw_z = height / f64::from(crate::util_lib::uo_coords::UO_Z_TO_WORLD_SCALE);
+            let up = -cos_tilt * cos_roll * x - sin_tilt * cos_roll * map_y + raw_z * 0.12856454;
             let forward = 10.0 - cos_tilt * sin_roll * x - sin_tilt * sin_roll * map_y;
             let length = (right * right + up * up + forward * forward).sqrt();
             [(right / length) as f32, (up / length) as f32, 0.0, 0.0]

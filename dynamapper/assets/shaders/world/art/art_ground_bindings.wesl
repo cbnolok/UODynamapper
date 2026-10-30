@@ -4,6 +4,7 @@
 // ============================================================================
 
 import package::shaders::world::common_bindings::{SceneUniform, GlobalLightingUniforms, LandEffectsUniform};
+import package::shaders::world::uo_coords::UO_Z_TO_WORLD_SCALE;
 
 struct GroundTileInstance {
     world_x: f32,
@@ -60,7 +61,7 @@ struct SpriteParams {
 @group(3) @binding(115) var item_liquid_lookup: texture_2d<u32>;
 @group(3) @binding(116) var liquid_sampler: sampler;
 
-const HEIGHT_SCALE: f32 = 0.1;
+const HEIGHT_SCALE: f32 = UO_Z_TO_WORLD_SCALE;
 const DEPTH_CLASS_BACKGROUND: u32 = 1u;
 const DEPTH_CLASS_FOLIAGE: u32 = 2u;
 const DEPTH_CLASS_ROOF: u32 = 3u;

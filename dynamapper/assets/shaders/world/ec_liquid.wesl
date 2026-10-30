@@ -2,6 +2,8 @@
 // bump-environment surface (source 2). Both terrain and item water use this
 // sampler so source selection, displacement, and color are owner-independent.
 
+import package::shaders::world::uo_coords::UO_Z_TO_WORLD_SCALE;
+
 const LIQUID_LOOKUP_CAPACITY: u32 = 16384u;
 
 struct EcLiquidSlot {
@@ -71,7 +73,7 @@ fn ec_liquid_original_view(delta_world: vec3<f32>) -> vec3<f32> {
     let up = vec2<f32>(-0.706928952, -0.705516506);
     let direction = vec2<f32>(-0.0353759324, -0.0353052512);
     return vec3<f32>(dot(right, delta_world.xz),
-        dot(up, delta_world.xz) + delta_world.y * 1.2856454,
+        dot(up, delta_world.xz) + (delta_world.y / UO_Z_TO_WORLD_SCALE) * 0.12856454,
         10.0 + dot(direction, delta_world.xz));
 }
 

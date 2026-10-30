@@ -12,6 +12,7 @@
 // ============================================================================
 
 import package::shaders::world::land::land_bindings::{TileUniform, AtlasParams, ATLAS, tile_meta_atlas, land_page_lookup, CHUNK_TILE_NUM_DIM};
+import package::shaders::world::uo_coords::UO_Z_TO_WORLD_SCALE;
 
 // Query world-space (x,z) tile coordinates and map them, through the LRU
 // page table, to the physical GPU atlas layer.  Returns a zero'd TileUniform
@@ -52,10 +53,10 @@ fn atlas_read_meta(world_x: i32, world_z: i32) -> TileUniform {
 
   let texture_payload = r;
 
-  // G channel low byte: height biased by +128 (so 0 = -12.8, 128 = 0.0, 255 = +12.7)
+  // G channel low byte: raw signed height biased by +128; 128 means Z = 0.
   let height_biased = g & 0xFFu;
   let z_i32 = i32(height_biased) - 128;
-  let tile_height = f32(z_i32) * 0.1;
+  let tile_height = f32(z_i32) * UO_Z_TO_WORLD_SCALE;
 
   // G channel high byte: terrain texture source/mode, reviewed EC flags, and water flag.
   // Bits 0-3: tex_size / source mode (0=cc-small, 1=cc-big, 2=ec-atlas, 3=missing, 4=cc-atlas).

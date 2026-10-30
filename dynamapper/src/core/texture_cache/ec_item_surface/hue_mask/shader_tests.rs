@@ -16,6 +16,7 @@ fn original_hue_uses_encoded_red_mask_alpha_and_native_block_seams() {
         });
         let id = |value| AssetId::<Shader>::Uuid { uuid: Uuid::from_u128(value) };
         for (index, (path, source)) in [
+            ("shaders/world/uo_coords.wesl", include_str!("../../../../../assets/shaders/world/uo_coords.wesl")),
             ("shaders/world/art/hue.wesl", include_str!("../../../../../assets/shaders/world/art/hue.wesl")),
             ("shaders/world/ec_item_surface.wesl", include_str!("../../../../../assets/shaders/world/ec_item_surface.wesl")),
             ("shaders/world/ec_liquid.wesl", include_str!("../../../../../assets/shaders/world/ec_liquid.wesl")),

@@ -17,7 +17,8 @@ narrow perspective FOV, near/far limits, and vertical lens stretch. The follow
 camera uses the isometric orbit direction while retaining the previous orbit
 distance, preserving horizontal zoom framing. Terrain and art share the lens;
 no sprite-only scale, synthetic depth replacement or coordinate-specific roof
-rule is involved. Orthographic projection and upright-art painter priority are unchanged.
+rule is involved. That pitch repair retained the orthographic projection and
+upright-art painter priority at the time.
 
 The projection's frustum corners use the inverse vertical stretch. Off-center
 subviews scale the lens coefficient without scaling the crop-center offset.
@@ -72,3 +73,13 @@ renderer workspace. Zooming out and back restores identical baseline pixels
 in the Enhanced rotated and unrotated views. The existing lens/frustum/subview
 test and the normal debug build pass. This does not establish arbitrary-angle
 sprite fidelity or full-map streaming at maximum zoom.
+
+## Exact legacy pixel calibration
+
+The later [height calibration](static_height_calibration.md) replaces the
+empirical 1.79 lens coefficient with sqrt(3) for both cameras. The isometric
+pitch remains unchanged; the previous perspective orbit length is retained
+explicitly with `(50,89.5,50)`, independently of the lens coefficient. Exact
+sqrt(2) tile scaling, square upright sprite pixels and four pixels per raw Z
+form one coherent rendering conversion. Original logical XYZ and tile/object
+metadata remain unchanged.
