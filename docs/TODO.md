@@ -56,7 +56,7 @@ Current execution decisions:
 - Validate remaining individual static anchors/new-art scales and effect visibility against matched fixtures. Common legacy pixel/height calibration, the perspective bridge stair/deck tie-bias defect and stale hover quad construction are repaired.
 - Effect reachability is now checked for grunge, KR boundary grime/color wash and projected shadows. Keep remaining source/strength parity distinct from inactive controls; [the effect audit](agent_notes/effect_visibility_validation.md) records normal-layer eligibility and the morning lighting cap's suppressed snow response.
 - Finish texture-alpha and visible-depth picking and validate large-art/expanded-multi coverage; use the preserved logical surfaces and movement flags for future walking. See [hover geometry contracts](agent_notes/static_hover_geometry.md).
-- Diagnose the small history-sensitive KR town tree-edge difference using matched direct and snow/swamp/town sequences. Both old and repaired normal-role builds reproduce it; its residency/alpha/depth cause is still open in [the depth notes](agent_notes/static_depth_ordering.md).
+- Investigate the remaining small KR orthographic bridge-edge history difference (50 pixels above one byte). Equal-distance transparent static sorting now fixes the town tree-edge defect; matched controls isolate the retained bridge case in [the depth notes](agent_notes/static_depth_ordering.md).
 - Use [the visual follow-up review](reviews/2026-10-29-visual-fidelity-followup.md) for current evidence and reconciliation of the unstaged user TODO. Historical repaired items must reproduce before being reopened.
 
 ### Baseline And Instrumentation

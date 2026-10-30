@@ -119,9 +119,40 @@ their histories match. Restoring all old normal bindings in isolated data does
 not change the direct repaired frame. These controls separate the issue from
 the normal-layer fix.
 
-Its residency/alpha/depth cause is not established. Settled terrain metadata is
-insufficient to certify stable art texture residency or final transparent edge
-composition. Retain the two histories when investigating; do not attribute an
-unmatched-history pixel difference to a shader change. Native frames and the
-matched controls are indexed by `effects-accepted-evidence.json` in the temporary
-renderer workspace.
+The tree-edge cause is the stock transparent phase's equal-distance ties.
+`build_art_batch_mesh` contains only repeated unit-square corner positions;
+the art vertex shaders reconstruct world positions from instance buffers.
+Every batch entity has an identity transform. Bevy 0.20's material queue uses
+the transformed mesh AABB center for `TransparentSortingInfo3d::Sorted`, so
+these batches share the same placeholder center `(0.5,0,0.5)`. Its stable
+distance-only phase sort retains insertion order, which changes as chunks
+leave/re-enter the scene. That is insufficient for reproducible alpha edges.
+
+`art/transparent_order.rs` extracts a small order component on transparent
+sprite/ground batches and runs after Bevy's transparent sort. Camera distance
+and material depth bias remain primary. Equal-distance static ties use ground
+before upright art, then the collector's stable map/chunk `(gy,gx,scale)` key.
+Other transparent entries retain their relative order. Retained phases skip
+the additional sort when already canonical. This changes no instance order
+inside a chunk, shader depth, geometry, texture data, render pass, logical XYZ,
+tile height or movement metadata. Opaque batches and projected-shadow materials
+retain their existing paths.
+
+Native controls cover direct town/bridge and snow→swamp→town→bridge histories
+in all three styles, plus KR perspective and an enabled-shadow control. Town
+pairs are now byte-identical, including the original KR 234-pixel defect.
+Classic/Enhanced orthographic bridge pairs and the KR perspective bridge pair
+are byte-identical. Shadow strength 0.22 still changes 30785 town pixels above
+one byte (maximum 34), and 20795 bridge pixels (maximum 29). The normal build
+and 92 focused static-art tests pass; two adapter-dependent tests remain ignored.
+
+A separate 50-pixel KR orthographic bridge-edge history difference (maximum
+22, bounds `x=117..448`, `y=45..377`) remains. The unchanged pre-fix binary
+reproduces it, and old/new bridge frames are byte-identical for each matched
+history. Its remaining coverage/depth cause is not established. General
+pixel-alpha and original-client depth parity are not claimed by the tie fix.
+
+The follow-up acceptance set is 32 complete native frames from eleven owned
+Desktop-4 previews, indexed by `transparent-order-accepted-evidence.json` in
+`/tmp/uodynamapper-ec-followup`. The earlier effect-audit frames remain the
+before controls; metadata submission alone is not proof of stable final art.

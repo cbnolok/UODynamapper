@@ -1274,6 +1274,7 @@ pub fn sys_sync_static_sprite_transparent_entities(
                 MeshMaterial3d(render_assets.transparent_material.clone()),
                 Transform::IDENTITY,
                 NoFrustumCulling,
+                super::transparent_order::StaticTransparentBatchOrder { key: batch.key, kind: 1 },
                 StaticChunkBatchEntity {
                     key: batch.key,
                     start: batch.start,
@@ -1417,6 +1418,7 @@ pub fn sys_sync_static_ground_transparent_entities(
                 MeshMaterial3d(render_assets.transparent_material.clone()),
                 Transform::IDENTITY,
                 NoFrustumCulling,
+                super::transparent_order::StaticTransparentBatchOrder { key: batch.key, kind: 0 },
                 StaticChunkBatchEntity {
                     key: batch.key,
                     start: batch.start,

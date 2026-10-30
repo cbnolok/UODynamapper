@@ -115,8 +115,10 @@ direct-to-town launch and the snow-to-swamp-to-town sequence. With matched
 history, the old and repaired binaries are byte-identical. The new binary with
 explicit isolated overrides reproducing all old normal bindings also matches
 the direct repaired frame exactly; a package inventory verifies those bindings.
-Thus this is not a normal-role regression. Its actual residency/alpha/depth
-cause remains open; see [the depth notes](static_depth_ordering.md).
+Thus this is not a normal-role regression. The subsequent
+[transparent-batch follow-up](static_depth_ordering.md#history-sensitive-tree-edges)
+identifies and repairs insertion-dependent equal-distance sorting. Its matched
+town histories are now exact; the separate small bridge-edge case remains open.
 
 These checks establish control reachability and source ownership, not original
 client pixel parity, normal orientation/filtering parity, every caster's depth,

@@ -11,6 +11,7 @@ pub mod statics_draw;
 pub mod static_lights;
 mod static_surface;
 pub(crate) mod static_geometry;
+mod transparent_order;
 #[cfg(test)]
 mod shading_tests;
 #[cfg(test)]
@@ -36,6 +37,9 @@ impl Plugin for DrawStaticSpritesPlugin {
         app.init_resource::<statics_draw::StaticBatchEntitySyncState>();
         app.init_resource::<static_lights::RenderStaticLightInstances>();
         app.init_resource::<static_lights::StaticLightDrawDebugState>();
+        app.add_plugins(bevy::render::extract_component::ExtractComponentPlugin::<
+            transparent_order::StaticTransparentBatchOrder,
+        >::default());
         app.init_resource::<static_lights::StaticLightMaterialCache>();
         app.add_plugins(bevy::render::extract_resource::ExtractResourcePlugin::<
             crate::core::texture_cache::art::SpriteArtPageAtlasHandle,
@@ -93,6 +97,14 @@ impl Plugin for DrawStaticSpritesPlugin {
                 crate::core::texture_cache::art::sys_extract_sprite_art_page_uploads,
                 crate::core::texture_cache::art::sys_extract_ground_art_page_uploads,
             ),
+        );
+        render_app.add_systems(
+            bevy::render::Render,
+            transparent_order::stabilize_equal_depth_batches
+                .in_set(bevy::render::RenderSystems::PhaseSort)
+                .after(bevy::render::render_phase::sort_phase_system::<
+                    bevy::core_pipeline::core_3d::Transparent3d,
+                >),
         );
         render_app.add_systems(
             bevy::render::Render,
