@@ -12,6 +12,7 @@ pub mod facet_encoder;
 pub mod housing;
 pub mod hues;
 pub mod localized_strings;
+pub mod mobile_body;
 pub mod legacy_terrain_map;
 pub mod multis;
 pub mod string_dictionary;

@@ -235,16 +235,42 @@ unless the data becomes a stable package contract.
   frame count, i32 alias (-1 = own frames), f32 fps, its own 8 + 8 offset
   pairs, frame effects (`{u32 frame, effect list}`, the
   `EffectDefinitionCollection` format) and skipped frames (u32 list).
-- `stored_id` is the body under which the frames are stored in
-  `AnimationFrame*.uop` (146 -> 704, 1308 -> 29, 1309 -> 1254). It is the only
-  body redirect of the EC data path; the client loads no `bodyconv`,
-  `mobtypes` or `body.def`.
+- `stored_id` is the sequence's own body identity: the client checks
+  equipment body types against it (wear check) and logs it. It is not a frame
+  key.
+- Server body to sequence and frames (`enhanced::mobile_body`): the client
+  draws server body `S` through the `tileart.uop` creature placeholder
+  `10000000 + S`. The sequence is the placeholder's body type; the frame body
+  is its props1 key 8 appearance (else `S`, minus 10000000 when above it), a
+  non-zero animation appearance (filter subtype 2) replaces it, and body 0 is
+  used when the frame body has no frames (401 -> sequence 400, frames 401;
+  402 -> 400, 400; 146 -> 124, 124). Ghost bodies 402, 403, 607, 608, 694, 695
+  are drawn with hue 0x3e3. No `bodyconv`, `mobtypes` or `body.def` is loaded.
+  Reference client: 1143 placeholders, 52 falling back to body 0; frame
+  bodies 344 and 827 have no placeholder.
 - Frames: each plain action owns `5 * frame_count` frames for the stored
   directions 3..7; directions 0..2 are horizontal mirrors of 6..4
-  (`direction_frames`). The `AnimationFrame` entry of (stored id, action)
+  (`direction_frames`). The `AnimationFrame` entry of (frame body, action)
   numbers its frames `1..5 * frame_count` (`FrameEntry::frame_number`); the
   number, not the entry position, gives direction and frame (some files have
   gaps).
+
+`AnimationFrame*.uop` pixels (`enhanced::animationframe`):
+
+- Header +0x0c is the body of the entry name (`animation_id`); +0x10..+0x17
+  (`bounds`) are not read by the client. Frame entry box `x0, y0, x1, y1`:
+  size `x1 - x0` by `y1 - y0`, anchor `(-x0, -y0)`, mirrored anchor x `x1`.
+- Palette entries are BGRA-ordered RGB plus byte 3, a keep-colour flag: 0
+  marks a hueable colour; it is never alpha.
+- RLE: a byte `c < 0x80` skips `c` pixels (across rows); otherwise a flag byte
+  `F` follows, a leading edge pixel when `F >> 4` is non-zero, `c - 0x80`
+  solid pixels, a trailing edge pixel when `F & 15` is non-zero. Solid pixels
+  are opaque; an edge pixel keeps its palette RGB with alpha `255 * f >> 4`
+  (straight alpha). A coded run past the box, a truncated stream or a palette
+  index past the palette is an error.
+- Hues (`enhanced::hues`): a hueable pixel takes `table[red]` of the hue
+  table (`hue{N:04}.bmp`, 256x2, top row, key `hue - 1`, partial flag 0x8000
+  masks to 0x3fff) and keeps its edge alpha; hue 0x4001 is the shadow.
 - Aliases borrow another action's frames, one level only; action 19 is an
   alias of 0 when flying animations are off; a broken alias falls back to the
   lowest plain action (`resolve_action`). Missing actions play at 16 fps.

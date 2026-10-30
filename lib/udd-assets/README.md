@@ -27,20 +27,22 @@ validation).
 - `dynamapper` is the primary consumer at runtime. Tools use it mainly for
   inspection and validation.
 
-## `mobile_anim_ec.uddp` (metadata version 3)
+## `mobile_anim_ec.uddp` (metadata version 4)
 
-Built by `udd-conv` from the EC `AnimationFrame1..6.uop` and `AnimationSequence.uop`, following the
-client (`scripts/dev-helpers/ec-research/ghidra-animation/results/uosa_animation.md`). Every metadata
+Built by `udd-conv` from the EC `AnimationFrame1..6.uop`, `AnimationSequence.uop` and the
+`tileart.uop` creature placeholders, following the client (`scripts/dev-helpers/ec-research/ghidra-animation/results/uosa_animation.md`). Every metadata
 entry starts with a 4-byte magic and the u32 version; all values are little-endian.
 
 | Entry | Magic | Content |
 |---|---|---|
-| `metadata/pages.bin` | `MEPG` | atlas pages (unchanged since version 2) |
+| `metadata/pages.bin` | `MEPG` | atlas pages; version 4 adds `u8 flags` to each page record |
 | `metadata/animations.bin` | `MEAN` | `u32 count`, then `count` animation records (37 bytes) |
-| `metadata/frames.bin` | `MEFR` | `u32 count`, then `count` frame records (30 bytes) |
+| `metadata/frames.bin` | `MEFR` | `u32 count`, then `count` frame records (31 bytes) |
+| `metadata/bodies.bin` | `MEBD` | `u32 count`, then `count` body records (20 bytes), sorted by body |
 | `metadata/items.bin` | `MEIT` | `EcMobileAnimations.kdl` items (unchanged) |
 | `metadata/source_hints.bin` | `MESH` | `EcMobileAnimations.kdl` source hints (unchanged) |
 | `pages/NNNNN.{rgba8888,bc7}` | | atlas page payloads |
+| `masks/NNNNN.r8` | | hue mask of a page with `PAGE_FLAG_HUE_MASK` (zstd) |
 
 Animation record: `u32 body_id, u16 action_id, u8 direction, u32 frame_start, u16 frame_count,
 u16 flags, u32 source_body_id, u16 resolved_action_id, u16 alias_action_id,
@@ -48,19 +50,41 @@ u16 resolved_action_id_no_flying, f32 fps, f32 fps_no_flying, u32 skipped_frame_
 
 Frame record: `u32 animation_index, u16 frame_index, u16 source_frame_index, u16 source_action,
 u16 source_frame_number, u32 page_index, u16 page_frame_index, u16 x, u16 y, u16 width, u16 height,
-i16 center_x, i16 center_y`.
+i16 center_x, i16 center_y, u8 hue_mode`.
 
-Version 3 replaced the placeholder records of versions 1 and 2 (one action 0 / direction 0 record
-holding every frame of a body). The reader still accepts versions 1..3 for pages, items and source
-hints, but rejects animation and frame manifests older than 3: rebuild the package.
+Body record: `u32 body_id, u32 sequence_id, u32 frames_body_id, u32 appearance_body_id,
+u16 forced_hue, u16 flags`.
+
+Version 4 decodes the pixels like the client (palette byte 3 is a keep-colour flag, not alpha:
+solid pixels are opaque, edge pixels keep their colour with coverage alpha, straight alpha), sets
+the anchor to `(-x0, -y0)` of the frame box, adds the hue modes and masks, and maps server bodies
+through `tileart.uop` (`metadata/bodies.bin`). Version 3 replaced the placeholder records of
+versions 1 and 2. The reader still accepts versions 1..4 for pages, items and source hints, but
+rejects animation, frame and body manifests older than 4: rebuild the package.
+
+Bodies (`MobileAnimEcPackage::bodies` / `body`): the client draws server body `S` through the
+creature placeholder `10000000 + S`. `sequence_id` is its body type (the `AnimationSequence`
+entry); `appearance_body_id` the frame body it asks for (props1 key 8 appearance, or a non-zero
+animation appearance); `frames_body_id` the frame body used, body 0 when the appearance has no
+frames (`BODY_FLAG_FRAMES_FALLBACK`). Ghost bodies (402, 403, 607, 608, 694, 695) carry
+`BODY_FLAG_GHOST` and `forced_hue = 0x3e3`: draw them with that hue whatever the mobile hue.
+Bodies with frames or a sequence but no placeholder use their own sequence and frames
+(`BODY_FLAG_NO_PLACEHOLDER`; the client cannot show them); `BODY_FLAG_NO_SEQUENCE` marks bodies
+whose records are the no-sequence fallback below.
+
+Hues: `hue_mode` is `FRAME_HUE_NONE` (no pixel takes the hue), `FRAME_HUE_ALL` (every pixel with
+alpha > 0 does) or `FRAME_HUE_MASKED` (the R8 page mask `masks/NNNNN.r8`, sized like the used
+area of the page, is 255 on the pixels that do, inside the frame rect; gutters repeat the edge).
+`read_frame_hue_mask` returns the per-pixel mask for any mode. A hued pixel takes `table[red]` of
+the hue table and keeps its alpha (`uocf::enhanced::hues`).
 
 Resolving "body, action, direction" (`MobileAnimEcPackage::animation` /
 `resolve_animation`):
 
-- Records are keyed by body type (the `AnimationSequence` entry name) and sorted by
-  `(body_id, action_id, direction)`. Each sequence action has a record for each of the 8
-  directions. `source_body_id` is the sequence stored id under which the frames live
-  (146 -> 704, 1308 -> 29, 1309 -> 1254).
+- Records are keyed by server body and sorted by `(body_id, action_id, direction)`. Each action
+  of the body's sequence has a record for each of the 8 directions. `source_body_id` is the
+  frame body (`frames_body_id` of the body record); bodies with the same sequence and frame body
+  (402 and 400) share the frame records, and so the pixels.
 - `frame_start..frame_start + frame_count` index the frame records. For a sequence action every
   direction has exactly the sequence frame count of frames, so the position is the frame index
   within the direction; a frame number missing from the source entry is a placeholder
@@ -82,7 +106,7 @@ Resolving "body, action, direction" (`MobileAnimEcPackage::animation` /
   `action_id` in the sequence; frames at index 32 or above are dropped by the converter and
   counted in its summary). `ANIMATION_FLAG_STAND_ACTION` marks a resolved stand action, shown with
   one frame when the `idleAnimation` setting is off.
-- Bodies with frames but no sequence carry `ANIMATION_FLAG_NO_SEQUENCE` (the client cannot
+- Bodies whose sequence is missing carry `ANIMATION_FLAG_NO_SEQUENCE` (the client cannot
   animate them). Their actions come from the `FrameEntry` action and use fps 16 (the client value
   for a missing action). When the highest frame number is a positive multiple of 5 it is split
   into directions like a sequence action of `highest / 5` frames; otherwise every direction shows

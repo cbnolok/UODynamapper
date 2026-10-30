@@ -4,7 +4,9 @@
 //! [`AnimationSequence::entry_path`]). An entry holds the action table (frame count, fps,
 //! alias), per-direction pixel offsets, per-frame effects and skipped frames, and the action
 //! groups that map movement, packet animation types and state transitions to actions. The pixels
-//! live in `AnimationFrame1..6.uop`, one entry per (stored id, action).
+//! live in `AnimationFrame1..6.uop`, one entry per (frame body, action); which sequence and frame
+//! body a server body uses comes from its `tileart.uop` creature placeholder
+//! (`crate::enhanced::mobile_body`), not from this file.
 //!
 //! Layout, field meanings, run-time semantics and confidence levels follow
 //! `scripts/dev-helpers/ec-research/ghidra-animation/results/uosa_animation.md`, verified against
@@ -131,9 +133,10 @@ pub type ShortOffsets = [(i16, i16); DIRECTION_COUNT];
 /// One `AnimationSequence.uop` entry (`UOAnimationSequence`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnimationSequence {
-    /// Body id under which the frames are stored: `AnimationFrame` entries of this sequence are
-    /// keyed by it, not by the entry name (confirmed by the data: 146 -> 704, 1308 -> 29,
-    /// 1309 -> 1254; probable in the code). This is the only body redirect of the EC data path.
+    /// The sequence's own body identity (+0x10): `BuildLayers` checks equipment body types
+    /// against it (the equipment wear check) and logs it as "sq" (confirmed). It is not a frame
+    /// key: `AnimationFrame` entries are keyed by the frame body of the tileart placeholder
+    /// (`crate::enhanced::mobile_body`).
     pub stored_id: u32,
     /// Sequence i8 offsets; all zero in the data, no reader found besides the copy (unknown).
     pub offsets: ByteOffsets,

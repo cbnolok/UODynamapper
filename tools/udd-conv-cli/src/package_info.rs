@@ -6,7 +6,12 @@ use log::info;
 use color_eyre::eyre::{self, WrapErr};
 use udd_assets::mobile_anim_ec::{
     ANIMATION_FLAG_MIRRORED, ANIMATION_FLAG_NO_SEQUENCE, ANIMATION_FLAG_UNDIRECTED,
+    BODY_FLAG_FRAMES_FALLBACK, BODY_FLAG_GHOST, BODY_FLAG_NO_PLACEHOLDER, BODY_FLAG_NO_SEQUENCE,
+    FRAME_HUE_ALL, FRAME_HUE_MASKED, FRAME_HUE_NONE,
 };
+
+/// Manifests of `mobile_anim_ec.uddp`: pages, animations, frames, items, source hints, bodies.
+const MOBILE_ANIM_EC_METADATA_ENTRY_COUNT: usize = 6;
 use udd_assets::{
     HuesPackage, MobileAnimCcPackage, MobileAnimEcPackage, TexArtCcPackage, TexArtEcPackage,
     TexLandEcPackage, TileMetaPackage,
@@ -184,7 +189,11 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
 
     if let Ok(package) = MobileAnimEcPackage::from_uddp_package(package.clone()) {
         info!("Recognized package: mobile_anim_ec");
-        info!("Known logical files: metadata=5, textures={}", package.pages().len());
+        let hue_mask_pages = package.pages().iter().filter(|page| page.has_hue_mask()).count();
+        info!(
+            "Known logical files: metadata={MOBILE_ANIM_EC_METADATA_ENTRY_COUNT}, textures={}, hue_masks={hue_mask_pages}",
+            package.pages().len()
+        );
         info!(
             "Atlas: max={}x{}, gutter={}, pages={}, buckets={}",
             package.atlas_width(),
@@ -215,6 +224,24 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
             flagged(ANIMATION_FLAG_MIRRORED),
             flagged(ANIMATION_FLAG_NO_SEQUENCE),
             flagged(ANIMATION_FLAG_UNDIRECTED),
+        );
+        let bodies = package.bodies();
+        let body_flagged = |flag: u16| bodies.iter().filter(|body| body.flags & flag != 0).count();
+        info!(
+            "Body mapping: bodies={}, own_frames={}, frames_fallback={}, ghosts={}, no_placeholder={}, no_sequence={}",
+            bodies.len(),
+            bodies.iter().filter(|body| body.frames_body_id == body.body_id).count(),
+            body_flagged(BODY_FLAG_FRAMES_FALLBACK),
+            body_flagged(BODY_FLAG_GHOST),
+            body_flagged(BODY_FLAG_NO_PLACEHOLDER),
+            body_flagged(BODY_FLAG_NO_SEQUENCE),
+        );
+        let frames = package.frames();
+        info!(
+            "Frame hue modes: none={}, all={}, masked={}",
+            frames.iter().filter(|frame| frame.hue_mode == FRAME_HUE_NONE).count(),
+            frames.iter().filter(|frame| frame.hue_mode == FRAME_HUE_ALL).count(),
+            frames.iter().filter(|frame| frame.hue_mode == FRAME_HUE_MASKED).count(),
         );
         return Ok(true);
     }

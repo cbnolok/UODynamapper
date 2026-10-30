@@ -20,7 +20,8 @@ use uocf::animation_sequence::{
     AnimationSequence, SequenceAction, FIRST_FRAME_NUMBER, FIRST_STORED_DIRECTION, MIRROR_DIRECTION_SUM,
     MISSING_ACTION_FPS, STORED_DIRECTION_COUNT,
 };
-use uocf::enhanced::animationframe::{AnimationFrame, AnimationFrameMetadata, FrameEntry};
+use uocf::enhanced::animationframe::{AnimationFrame, AnimationFrameMetadata, DecodedFrame, FrameEntry};
+use uocf::enhanced::mobile_body::{MobileBodyDefinition, MobileBodyMap};
 use uocf::uop_container::hash::hash_file_name_single;
 use uocf::uop_container::package::{LoadMode, UopPackage};
 
@@ -40,14 +41,16 @@ use crate::upscale_profile::{UpscaleImageType, UpscaleProfile, UpscaleTarget};
 use crate::{extrude_rgba_rect_edges, resolve_packing_axis, AtlasPackingMode};
 use udd_assets::mobile_anim_ec::{
     EcMobileAnimationsKdl,
-    page_entry_path, MobileAnimEcAnimationRecord, MobileAnimEcFrameRecord,
-    MobileAnimEcItemRecord, MobileAnimEcPageRecord, MobileAnimEcSourceHintRecord,
-    ANIMATION_FLAG_MIRRORED, ANIMATION_FLAG_NO_SEQUENCE, ANIMATION_FLAG_STAND_ACTION,
-    ANIMATION_FLAG_UNDIRECTED, ANIMATION_MANIFEST_ENTRY_PATH, DIRECTION_COUNT,
-    FRAME_MANIFEST_ENTRY_PATH, ITEM_MANIFEST_ENTRY_PATH, MISSING_PAGE_FRAME_INDEX,
+    hue_mask_entry_path, page_entry_path, MobileAnimEcAnimationRecord, MobileAnimEcBodyRecord,
+    MobileAnimEcFrameRecord, MobileAnimEcItemRecord, MobileAnimEcPageRecord,
+    MobileAnimEcSourceHintRecord, ANIMATION_FLAG_MIRRORED, ANIMATION_FLAG_NO_SEQUENCE,
+    ANIMATION_FLAG_STAND_ACTION, ANIMATION_FLAG_UNDIRECTED, ANIMATION_MANIFEST_ENTRY_PATH,
+    BODY_FLAG_FRAMES_FALLBACK, BODY_FLAG_GHOST, BODY_FLAG_NO_PLACEHOLDER, BODY_FLAG_NO_SEQUENCE,
+    BODY_MANIFEST_ENTRY_PATH, DIRECTION_COUNT, FRAME_HUE_ALL, FRAME_HUE_MASKED, FRAME_HUE_NONE,
+    FRAME_MANIFEST_ENTRY_PATH, HUE_MASK_HUEABLE, ITEM_MANIFEST_ENTRY_PATH, MISSING_PAGE_FRAME_INDEX,
     MISSING_PAGE_INDEX, MISSING_SOURCE_FRAME_INDEX, MOBILE_ANIM_EC_METADATA_VERSION,
-    NO_ALIAS_ACTION, PAGE_MANIFEST_ENTRY_PATH, SKIPPED_FRAME_MASK_BITS,
-    SOURCE_HINT_MANIFEST_ENTRY_PATH,
+    NO_ALIAS_ACTION, NO_FORCED_HUE, PAGE_FLAG_HUE_MASK, PAGE_MANIFEST_ENTRY_PATH,
+    SKIPPED_FRAME_MASK_BITS, SOURCE_HINT_MANIFEST_ENTRY_PATH,
 };
 use udd_assets::tex_art_cc::PagePixelFormat;
 
@@ -60,6 +63,16 @@ const ANIMATION_MANIFEST_MAGIC: [u8; 4] = *b"MEAN";
 const FRAME_MANIFEST_MAGIC: [u8; 4] = *b"MEFR";
 const ITEM_MANIFEST_MAGIC: [u8; 4] = *b"MEIT";
 const SOURCE_HINT_MANIFEST_MAGIC: [u8; 4] = *b"MESH";
+const BODY_MANIFEST_MAGIC: [u8; 4] = *b"MEBD";
+/// Serialized sizes: manifest header (magic, version, count) and one record.
+const MANIFEST_HEADER_SIZE: usize = 12;
+const PAGE_MANIFEST_HEADER_SIZE: usize = 26;
+const PAGE_RECORD_SIZE: usize = 25;
+const FRAME_RECORD_SIZE: usize = 31;
+const BODY_RECORD_SIZE: usize = 20;
+const TILEART_UOP_NAMES: [&str; 2] = ["tileart.uop", "TileArt.uop"];
+const RGBA_CHANNELS: usize = 4;
+const RGBA_ALPHA_CHANNEL: usize = 3;
 /// Highest body type whose `AnimationSequence` entry name is looked up (body ids are u16).
 const MAX_SEQUENCE_BODY_TYPE: u32 = u16::MAX as u32;
 const PLANNED_SOURCE_CACHE_LIMIT: usize = 256;
@@ -82,7 +95,7 @@ const EC_ANIMATIONFRAME_FILES: [&str; 12] = [
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MobileAnimEcBuildSummary {
-    /// Bodies with animation records (sequence bodies plus no-sequence bodies).
+    /// Server bodies with animation records (`metadata/bodies.bin` records).
     pub body_count: u32,
     pub animation_count: u32,
     pub frame_count: u32,
@@ -104,9 +117,23 @@ pub struct MobileAnimEcBuildSummary {
 pub struct MobileAnimEcLayoutStats {
     /// `AnimationSequence` entries that failed to parse (their bodies get no sequence records).
     pub sequence_parse_error_count: u32,
-    /// Bodies with a sequence whose stored id has frames.
+    /// `tileart.uop` creature placeholders (server bodies the client can draw).
+    pub placeholder_body_count: u32,
+    /// Placeholder bodies whose appearance has no frames: they show the frames of body 0.
+    pub frames_fallback_body_count: u32,
+    /// Placeholder bodies without frames, even under body 0: no records.
+    pub body_without_frames_count: u32,
+    /// Bodies whose (sequence, frame body) set was already laid out by another body: their
+    /// records share its frame records and pixels.
+    pub shared_animation_set_body_count: u32,
+    /// Bodies with a sequence or frames but no placeholder: they use their own sequence and
+    /// frames (`BODY_FLAG_NO_PLACEHOLDER`).
+    pub unmapped_body_count: u32,
+    /// Ghost bodies (`BODY_FLAG_GHOST`).
+    pub ghost_body_count: u32,
+    /// Bodies with sequence records.
     pub sequence_body_count: u32,
-    /// Sequences whose stored id has no frames: no records.
+    /// Unmapped sequences whose own body has no frames: no records.
     pub sequence_without_frames_count: u32,
     /// Bodies with frames but no sequence: fallback records (`ANIMATION_FLAG_NO_SEQUENCE`).
     pub no_sequence_body_count: u32,
@@ -181,6 +208,9 @@ pub struct DecodedMobileAnimEcFrame {
     pub center_x: i16,
     pub center_y: i16,
     pub rgba: Vec<u8>,
+    /// One byte per pixel, `HUE_MASK_HUEABLE` where the pixel takes the hue; empty when none
+    /// does.
+    pub hue_mask: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -219,12 +249,16 @@ pub(crate) struct FramePlacement {
     height: u16,
     center_x: i16,
     center_y: i16,
+    /// `FRAME_HUE_*`, known once the frame is decoded.
+    hue_mode: u8,
 }
 
 #[derive(Debug, Clone)]
 pub struct BuiltMobileAnimEcPage {
     pub record: MobileAnimEcPageRecord,
     pub pixels: Vec<u8>,
+    /// R8 hue mask of the used area when some frame is `FRAME_HUE_MASKED`.
+    pub hue_mask: Option<Vec<u8>>,
 }
 
 struct PackedMobileAnimEcPages {
@@ -355,7 +389,8 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progr
     });
     let mut planned_by_body = plan_animationframe_packages(&animationframe_paths)?;
     let (sequences, sequence_parse_error_count) = load_animation_sequences(&client_dir)?;
-    let mut layout = build_animation_layout(&source_frames_by_body(&planned_by_body), &sequences)?;
+    let body_map = load_mobile_body_map(&client_dir)?;
+    let mut layout = build_animation_layout(&source_frames_by_body(&planned_by_body), &sequences, &body_map)?;
     layout.stats.sequence_parse_error_count = sequence_parse_error_count;
     let referenced_frames = layout.referenced_source_frames();
     for (&body_id, frames) in planned_by_body.iter_mut() {
@@ -396,13 +431,14 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progr
     );
     let packed_frame_count = placements.len() as u32;
     let layout_stats = layout.stats;
-    let (animations, frames) = layout.into_records(&placements)?;
+    let (bodies, animations, frames) = layout.into_records(&placements)?;
 
     let page_manifest = serialize_page_record_manifest(&packed_pages.records, options)?;
     let animation_manifest = serialize_animation_manifest(&animations)?;
     let frame_manifest = serialize_frame_manifest(&frames)?;
     let item_manifest = serialize_item_manifest(&items)?;
     let source_hint_manifest = serialize_source_hint_manifest(&source_hints)?;
+    let body_manifest = serialize_body_manifest(&bodies)?;
 
     for (path, data) in [
         (PAGE_MANIFEST_ENTRY_PATH, page_manifest.as_slice()),
@@ -410,6 +446,7 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progr
         (FRAME_MANIFEST_ENTRY_PATH, frame_manifest.as_slice()),
         (ITEM_MANIFEST_ENTRY_PATH, item_manifest.as_slice()),
         (SOURCE_HINT_MANIFEST_ENTRY_PATH, source_hint_manifest.as_slice()),
+        (BODY_MANIFEST_ENTRY_PATH, body_manifest.as_slice()),
     ] {
         package.add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,
@@ -431,7 +468,7 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progr
     );
 
     let summary = MobileAnimEcBuildSummary {
-        body_count: layout_stats.sequence_body_count + layout_stats.no_sequence_body_count,
+        body_count: bodies.len() as u32,
         animation_count: animations.len() as u32,
         frame_count: frames.len() as u32,
         packed_frame_count,
@@ -497,6 +534,21 @@ fn encode_and_add_mobile_anim_page_chunk(
     } else {
         0
     };
+    for page in pages.iter_mut() {
+        let Some(hue_mask) = page.hue_mask.take() else {
+            continue;
+        };
+        package.add_owned_file(AddOwnedFileRequest {
+            data_type: DataType::Texture as u8,
+            compression: CompressionFlag::ZstdNoDict,
+            width: page.record.used_width,
+            height: page.record.used_height,
+            virtual_path: Some(hue_mask_entry_path(page.record.page_index)),
+            path_hash64: None,
+            id: None,
+            data: hue_mask,
+        })?;
+    }
     if options.pixel_format != PagePixelFormat::Bc7 {
         for page in pages.drain(..) {
             package.add_owned_file(AddOwnedFileRequest {
@@ -1010,38 +1062,46 @@ fn plan_animationframe_package(
                     if index > u16::MAX as usize {
                         continue;
                     }
-                    frames.push(planned_frame_from_entry(
+                    match planned_frame_from_entry(
                         &animation,
                         entry,
                         index as u16,
                         Arc::clone(&source_path),
                         file_hash,
-                    ));
+                    ) {
+                        Ok(frame) => frames.push(frame),
+                        Err(error) => return Some(Err(error.wrap_err(format!(
+                            "EC animation {} frame entry {index} in {file_name}",
+                            animation.animation_id
+                        )))),
+                    }
                 }
-                Some((animation.animation_id, frames))
+                Some(Ok((animation.animation_id, frames)))
             },
         )
         .collect::<Vec<_>>();
 
     let mut planned_by_body = BTreeMap::<u32, Vec<PlannedMobileAnimEcFrame>>::new();
     for body_frames in parsed.into_iter().flatten() {
-        let (body_id, frames) = body_frames;
+        let (body_id, frames) = body_frames?;
         append_planned_body_frames(&mut planned_by_body, body_id, frames)?;
     }
     pb.finish_with_message(format!("EC mobile animations extracted from {file_name}"));
     Ok(planned_by_body)
 }
 
+/// Planned frame of one `FrameEntry`. The header `animation_id` is the body of the entry name in
+/// every client file, so it keys the frames by body. The anchor is `(-x0, -y0)`.
 fn planned_frame_from_entry(
     animation: &AnimationFrameMetadata,
     entry: &FrameEntry,
     source_entry_index: u16,
     path: Arc<PathBuf>,
     file_hash: u64,
-) -> PlannedMobileAnimEcFrame {
-    let width = (entry.end_coords_x - entry.init_coords_x).unsigned_abs();
-    let height = (entry.end_coords_y - entry.init_coords_y).unsigned_abs();
-    PlannedMobileAnimEcFrame {
+) -> eyre::Result<PlannedMobileAnimEcFrame> {
+    let (width, height) = entry.size()?;
+    let (center_x, center_y) = if width == 0 || height == 0 { (0, 0) } else { entry.center() };
+    Ok(PlannedMobileAnimEcFrame {
         body_id: animation.animation_id,
         source_frame_index: source_entry_index,
         source_entry_index,
@@ -1053,18 +1113,10 @@ fn planned_frame_from_entry(
         source_top: 0,
         source_width: width,
         source_height: height,
-        center_x: if width == 0 || height == 0 {
-            0
-        } else {
-            animation.init_coords_x - entry.init_coords_x
-        },
-        center_y: if width == 0 || height == 0 {
-            0
-        } else {
-            animation.init_coords_y - entry.init_coords_y
-        },
+        center_x,
+        center_y,
         source: PlannedMobileAnimEcSource { path, file_hash },
-    }
+    })
 }
 
 fn decode_planned_animation_source(
@@ -1143,11 +1195,39 @@ struct FrameSlot {
     source_frame_index: Option<u16>,
 }
 
-/// Animation records and their frame slots, built from the sequences before atlas packing.
+/// Body, animation records and their frame slots, built from the sequences before atlas packing.
+#[derive(Default)]
 struct AnimationLayout {
+    bodies: Vec<MobileAnimEcBodyRecord>,
     animations: Vec<MobileAnimEcAnimationRecord>,
     slots: Vec<FrameSlot>,
+    /// Frame slots of the animation sets already laid out, shared by the bodies that use them.
+    sets: HashMap<AnimationSetKey, AnimationSet>,
     stats: MobileAnimEcLayoutStats,
+}
+
+/// One animation set: the actions of a sequence (or the no-sequence fallback) over the frames of
+/// one frame body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum AnimationSetKey {
+    Sequence { sequence_id: u32, frames_body_id: u32 },
+    NoSequence { frames_body_id: u32 },
+}
+
+#[derive(Debug, Clone)]
+enum AnimationSet {
+    /// Plain action -> (first slot, frames per direction).
+    Sequence(BTreeMap<u32, (u32, u16)>),
+    NoSequence(Vec<NoSequenceActionSpan>),
+}
+
+#[derive(Debug, Clone, Copy)]
+struct NoSequenceActionSpan {
+    action: u16,
+    slot_start: u32,
+    frame_count: u16,
+    flags: u16,
+    directional: bool,
 }
 
 /// Frames of one action of a body, by `FrameEntry` frame number.
@@ -1245,47 +1325,65 @@ fn action_id_u16(action: u32) -> eyre::Result<u16> {
         .ok_or_else(|| eyre::eyre!("EC animation action {action} does not fit the package action ids"))
 }
 
-/// Builds the animation records the client resolves for "body, action, direction":
+/// Loads the creature placeholders of `tileart.uop`; an empty map (every body unmapped) when the
+/// file is missing.
+fn load_mobile_body_map(client_dir: &Path) -> eyre::Result<MobileBodyMap> {
+    let Some(tileart_path) = TILEART_UOP_NAMES
+        .iter()
+        .map(|name| client_dir.join(name))
+        .find(|path| path.is_file())
+    else {
+        warn!(
+            "tileart.uop not found in {}; EC bodies use their own sequence and frames instead of the client body mapping",
+            client_dir.display()
+        );
+        return Ok(MobileBodyMap::default());
+    };
+    let map = MobileBodyMap::load(&tileart_path).wrap_err_with(|| format!("load {}", tileart_path.display()))?;
+    info!("EC mobile body placeholders loaded ({})", map.definitions.len());
+    Ok(map)
+}
+
+/// Builds the records the client resolves for "server body, action, direction":
 ///
-/// - Bodies with an `AnimationSequence` entry are keyed by the entry name; their frames are
-///   those of the sequence stored id. Each plain action lays out
-///   `STORED_DIRECTION_COUNT * frame_count` frame slots, slot `n - 1` holding the frame whose
-///   `FrameEntry` number is `n` (directions 3..7, `frame_count` frames each); a missing number
-///   gets a placeholder, numbers beyond the slots and repeated numbers are not used.
+/// - A body with a `tileart.uop` creature placeholder (`MobileBodyDefinition`) takes the actions,
+///   directions and fps of the sequence named by its body type and the frames of its appearance,
+///   falling back to body 0 when the appearance has no frames. Bodies with the same sequence and
+///   frame body share one set of frame records (and so the pixels). Ghost bodies are flagged to
+///   be drawn with `GHOST_HUE`.
+/// - A body without a placeholder (the client cannot show it) uses the sequence of its own name
+///   and its own frames.
+/// - Each plain action lays out `STORED_DIRECTION_COUNT * frame_count` frame slots, slot `n - 1`
+///   holding the frame whose `FrameEntry` number is `n` (directions 3..7, `frame_count` frames
+///   each); a missing number gets a placeholder, numbers beyond the slots and repeated numbers are
+///   not used.
 /// - Every sequence action gets one record per direction. Directions below
 ///   `FIRST_STORED_DIRECTION` point at the frames of `MIRROR_DIRECTION_SUM - direction` and are
 ///   flagged mirrored. Alias actions point at the frames of `resolve_action` (flying enabled)
 ///   and keep the raw alias and the flying-disabled resolution.
-/// - Bodies with frames but no sequence (and not hidden by a sequence of the same name) get
-///   `ANIMATION_FLAG_NO_SEQUENCE` records per `FrameEntry` action, at `MISSING_ACTION_FPS`:
-///   when the highest frame number is a positive multiple of `STORED_DIRECTION_COUNT`, it is
-///   split into directions like a plain action of `highest / STORED_DIRECTION_COUNT` frames;
-///   otherwise every direction shows all frames in number order (`ANIMATION_FLAG_UNDIRECTED`).
+/// - A body whose sequence is missing gets `ANIMATION_FLAG_NO_SEQUENCE` records per `FrameEntry`
+///   action, at `MISSING_ACTION_FPS`: when the highest frame number is a positive multiple of
+///   `STORED_DIRECTION_COUNT`, it is split into directions like a plain action of
+///   `highest / STORED_DIRECTION_COUNT` frames; otherwise every direction shows all frames in
+///   number order (`ANIMATION_FLAG_UNDIRECTED`).
 fn build_animation_layout(
     frames_by_body: &BTreeMap<u32, Vec<SourceFrameIdentity>>,
     sequences: &BTreeMap<u32, AnimationSequence>,
+    body_map: &MobileBodyMap,
 ) -> eyre::Result<AnimationLayout> {
-    let mut layout = AnimationLayout {
-        animations: Vec::new(),
-        slots: Vec::new(),
-        stats: MobileAnimEcLayoutStats::default(),
-    };
-    let stored_ids = sequences.values().map(|sequence| sequence.stored_id).collect::<HashSet<_>>();
-    let no_sequence_bodies = frames_by_body
+    let mut layout = AnimationLayout::default();
+    let body_ids = body_map
+        .definitions
         .keys()
+        .chain(sequences.keys())
+        .chain(frames_by_body.keys())
         .copied()
-        .filter(|body_id| !stored_ids.contains(body_id) && !sequences.contains_key(body_id))
-        .collect::<HashSet<_>>();
-    let body_ids = sequences
-        .keys()
-        .copied()
-        .chain(no_sequence_bodies.iter().copied())
         .collect::<std::collections::BTreeSet<_>>();
     for body_id in body_ids {
-        if let Some(sequence) = sequences.get(&body_id) {
-            layout.add_sequence_body(body_id, sequence, frames_by_body.get(&sequence.stored_id))?;
-        } else if let Some(frames) = frames_by_body.get(&body_id) {
-            layout.add_no_sequence_body(body_id, frames)?;
+        if let Some(definition) = body_map.definition(body_id) {
+            layout.add_placeholder_body(definition, frames_by_body, sequences)?;
+        } else {
+            layout.add_unmapped_body(body_id, frames_by_body, sequences)?;
         }
     }
     let source_frame_count = frames_by_body.values().map(Vec::len).sum::<usize>();
@@ -1294,20 +1392,86 @@ fn build_animation_layout(
 }
 
 impl AnimationLayout {
-    fn add_sequence_body(
+    fn add_placeholder_body(
         &mut self,
-        body_id: u32,
-        sequence: &AnimationSequence,
-        frames: Option<&Vec<SourceFrameIdentity>>,
+        definition: &MobileBodyDefinition,
+        frames_by_body: &BTreeMap<u32, Vec<SourceFrameIdentity>>,
+        sequences: &BTreeMap<u32, AnimationSequence>,
     ) -> eyre::Result<()> {
-        let Some(frames) = frames else {
-            self.stats.sequence_without_frames_count += 1;
+        self.stats.placeholder_body_count += 1;
+        let Some(frames_body) = definition.resolve_frames_body(|body| frames_by_body.contains_key(&body)) else {
+            self.stats.body_without_frames_count += 1;
             return Ok(());
         };
-        self.stats.sequence_body_count += 1;
-        let frames_by_action = source_frames_by_action(frames);
+        let mut flags = 0u16;
+        if frames_body.fallback {
+            flags |= BODY_FLAG_FRAMES_FALLBACK;
+            self.stats.frames_fallback_body_count += 1;
+        }
+        if definition.is_ghost() {
+            flags |= BODY_FLAG_GHOST;
+            self.stats.ghost_body_count += 1;
+        }
+        let frames = &frames_by_body[&frames_body.body];
+        if let Some(sequence) = sequences.get(&definition.sequence_id) {
+            self.add_sequence_body(definition.body, definition.sequence_id, sequence, frames_body.body, frames)?;
+        } else {
+            flags |= BODY_FLAG_NO_SEQUENCE;
+            self.add_no_sequence_body(definition.body, frames_body.body, frames)?;
+        }
+        self.bodies.push(MobileAnimEcBodyRecord {
+            body_id: definition.body,
+            sequence_id: definition.sequence_id,
+            frames_body_id: frames_body.body,
+            appearance_body_id: definition.requested_frames_body(),
+            forced_hue: definition.forced_hue().unwrap_or(NO_FORCED_HUE),
+            flags,
+        });
+        Ok(())
+    }
 
-        // Frame slots of the plain actions: (first slot, frames per direction).
+    fn add_unmapped_body(
+        &mut self,
+        body_id: u32,
+        frames_by_body: &BTreeMap<u32, Vec<SourceFrameIdentity>>,
+        sequences: &BTreeMap<u32, AnimationSequence>,
+    ) -> eyre::Result<()> {
+        let sequence = sequences.get(&body_id);
+        let Some(frames) = frames_by_body.get(&body_id) else {
+            if sequence.is_some() {
+                self.stats.sequence_without_frames_count += 1;
+            }
+            return Ok(());
+        };
+        self.stats.unmapped_body_count += 1;
+        let mut flags = BODY_FLAG_NO_PLACEHOLDER;
+        if let Some(sequence) = sequence {
+            self.add_sequence_body(body_id, body_id, sequence, body_id, frames)?;
+        } else {
+            flags |= BODY_FLAG_NO_SEQUENCE;
+            self.add_no_sequence_body(body_id, body_id, frames)?;
+        }
+        self.bodies.push(MobileAnimEcBodyRecord {
+            body_id,
+            sequence_id: body_id,
+            frames_body_id: body_id,
+            appearance_body_id: body_id,
+            forced_hue: NO_FORCED_HUE,
+            flags,
+        });
+        Ok(())
+    }
+
+    /// Lays out the frame slots of the plain actions of `sequence` over `frames`; returns the
+    /// span (first slot, frames per direction) of each plain action.
+    fn push_sequence_slots(
+        &mut self,
+        sequence_id: u32,
+        sequence: &AnimationSequence,
+        frames_body_id: u32,
+        frames: &[SourceFrameIdentity],
+    ) -> eyre::Result<BTreeMap<u32, (u32, u16)>> {
+        let frames_by_action = source_frames_by_action(frames);
         let mut spans = BTreeMap::<u32, (u32, u16)>::new();
         for (&action, record) in sequence.actions.iter().filter(|(_, record)| record.alias.is_none()) {
             self.stats.plain_action_count += 1;
@@ -1318,15 +1482,40 @@ impl AnimationLayout {
                 spans.insert(action, (slot_start, 0));
                 continue;
             };
-            let frame_count = u16::try_from(record.frame_count)
-                .map_err(|_| eyre::eyre!("EC body {body_id} action {action} frame count {} exceeds u16", record.frame_count))?;
+            let frame_count = u16::try_from(record.frame_count).map_err(|_| {
+                eyre::eyre!("EC sequence {sequence_id} action {action} frame count {} exceeds u16", record.frame_count)
+            })?;
             let slot_count = STORED_DIRECTION_COUNT * u32::from(frame_count);
             if action_frames.entry_count != slot_count as usize {
                 self.stats.frame_count_mismatch_action_count += 1;
             }
-            self.push_numbered_slots(sequence.stored_id, action_id, action_frames, slot_count)?;
+            self.push_numbered_slots(frames_body_id, action_id, action_frames, slot_count)?;
             spans.insert(action, (slot_start, frame_count));
         }
+        Ok(spans)
+    }
+
+    fn add_sequence_body(
+        &mut self,
+        body_id: u32,
+        sequence_id: u32,
+        sequence: &AnimationSequence,
+        frames_body_id: u32,
+        frames: &[SourceFrameIdentity],
+    ) -> eyre::Result<()> {
+        self.stats.sequence_body_count += 1;
+        let key = AnimationSetKey::Sequence { sequence_id, frames_body_id };
+        let (spans, owns_frames) = match self.sets.get(&key) {
+            Some(AnimationSet::Sequence(spans)) => {
+                self.stats.shared_animation_set_body_count += 1;
+                (spans.clone(), false)
+            }
+            _ => {
+                let spans = self.push_sequence_slots(sequence_id, sequence, frames_body_id, frames)?;
+                self.sets.insert(key, AnimationSet::Sequence(spans.clone()));
+                (spans, true)
+            }
+        };
 
         for (&action, record) in &sequence.actions {
             let (Some(resolved), Some(resolved_no_flying)) =
@@ -1347,7 +1536,7 @@ impl AnimationLayout {
                 frame_start: 0,
                 frame_count,
                 flags,
-                source_body_id: sequence.stored_id,
+                source_body_id: frames_body_id,
                 resolved_action_id: action_id_u16(resolved)?,
                 alias_action_id: record.alias.map(action_id_u16).transpose()?.unwrap_or(NO_ALIAS_ACTION),
                 resolved_action_id_no_flying: action_id_u16(resolved_no_flying)?,
@@ -1358,7 +1547,7 @@ impl AnimationLayout {
             for direction in 0..DIRECTION_COUNT {
                 let direction_frames = sequence
                     .direction_frames(resolved, direction)
-                    .ok_or_else(|| eyre::eyre!("EC body {body_id} action {resolved} has no direction {direction}"))?;
+                    .ok_or_else(|| eyre::eyre!("EC sequence {sequence_id} action {resolved} has no direction {direction}"))?;
                 let frame_offset = if frame_count == 0 {
                     0
                 } else {
@@ -1369,15 +1558,20 @@ impl AnimationLayout {
                     direction,
                     span_start + frame_offset,
                     direction_frames.mirrored,
-                    record.alias.is_none() && !direction_frames.mirrored,
+                    owns_frames && record.alias.is_none() && !direction_frames.mirrored,
                 );
             }
         }
         Ok(())
     }
 
-    fn add_no_sequence_body(&mut self, body_id: u32, frames: &[SourceFrameIdentity]) -> eyre::Result<()> {
-        self.stats.no_sequence_body_count += 1;
+    /// Lays out the no-sequence fallback actions of `frames`.
+    fn push_no_sequence_slots(
+        &mut self,
+        frames_body_id: u32,
+        frames: &[SourceFrameIdentity],
+    ) -> eyre::Result<Vec<NoSequenceActionSpan>> {
+        let mut spans = Vec::new();
         for (action, action_frames) in source_frames_by_action(frames) {
             let highest_number = action_frames.by_number.keys().next_back().copied().unwrap_or(0);
             let slot_start = self.slots.len() as u32;
@@ -1385,7 +1579,7 @@ impl AnimationLayout {
                 highest_number != 0 && u32::from(highest_number) % STORED_DIRECTION_COUNT == 0;
             let (frame_count, flags) = if directional {
                 self.stats.fallback_directional_action_count += 1;
-                self.push_numbered_slots(body_id, action, &action_frames, u32::from(highest_number))?;
+                self.push_numbered_slots(frames_body_id, action, &action_frames, u32::from(highest_number))?;
                 (
                     (u32::from(highest_number) / STORED_DIRECTION_COUNT) as u16,
                     ANIMATION_FLAG_NO_SEQUENCE,
@@ -1396,7 +1590,7 @@ impl AnimationLayout {
                     self.slots.push(FrameSlot {
                         animation_index: None,
                         frame_index: 0,
-                        source_body_id: body_id,
+                        source_body_id: frames_body_id,
                         source_action: action,
                         source_frame_number: frame.frame_number,
                         source_frame_index: Some(frame.source_frame_index),
@@ -1407,29 +1601,67 @@ impl AnimationLayout {
                     ANIMATION_FLAG_NO_SEQUENCE | ANIMATION_FLAG_UNDIRECTED,
                 )
             };
-            let template = MobileAnimEcAnimationRecord {
-                body_id,
-                action_id: action,
-                direction: 0,
-                frame_start: 0,
+            spans.push(NoSequenceActionSpan {
+                action,
+                slot_start,
                 frame_count,
                 flags,
-                source_body_id: body_id,
-                resolved_action_id: action,
+                directional,
+            });
+        }
+        Ok(spans)
+    }
+
+    fn add_no_sequence_body(
+        &mut self,
+        body_id: u32,
+        frames_body_id: u32,
+        frames: &[SourceFrameIdentity],
+    ) -> eyre::Result<()> {
+        self.stats.no_sequence_body_count += 1;
+        let key = AnimationSetKey::NoSequence { frames_body_id };
+        let (spans, owns_frames) = match self.sets.get(&key) {
+            Some(AnimationSet::NoSequence(spans)) => {
+                self.stats.shared_animation_set_body_count += 1;
+                (spans.clone(), false)
+            }
+            _ => {
+                let spans = self.push_no_sequence_slots(frames_body_id, frames)?;
+                self.sets.insert(key, AnimationSet::NoSequence(spans.clone()));
+                (spans, true)
+            }
+        };
+        for span in spans {
+            let template = MobileAnimEcAnimationRecord {
+                body_id,
+                action_id: span.action,
+                direction: 0,
+                frame_start: 0,
+                frame_count: span.frame_count,
+                flags: span.flags,
+                source_body_id: frames_body_id,
+                resolved_action_id: span.action,
                 alias_action_id: NO_ALIAS_ACTION,
-                resolved_action_id_no_flying: action,
+                resolved_action_id_no_flying: span.action,
                 fps: MISSING_ACTION_FPS,
                 fps_no_flying: MISSING_ACTION_FPS,
                 skipped_frame_mask: 0,
             };
             for direction in 0..DIRECTION_COUNT {
-                if directional {
+                if span.directional {
                     let mirrored = direction < FIRST_STORED_DIRECTION;
                     let stored_direction = if mirrored { MIRROR_DIRECTION_SUM - direction } else { direction };
-                    let frame_offset = u32::from(stored_direction - FIRST_STORED_DIRECTION) * u32::from(frame_count);
-                    self.push_record(template, direction, slot_start + frame_offset, mirrored, !mirrored);
+                    let frame_offset =
+                        u32::from(stored_direction - FIRST_STORED_DIRECTION) * u32::from(span.frame_count);
+                    self.push_record(template, direction, span.slot_start + frame_offset, mirrored, owns_frames && !mirrored);
                 } else {
-                    self.push_record(template, direction, slot_start, false, direction == FIRST_STORED_DIRECTION);
+                    self.push_record(
+                        template,
+                        direction,
+                        span.slot_start,
+                        false,
+                        owns_frames && direction == FIRST_STORED_DIRECTION,
+                    );
                 }
             }
         }
@@ -1515,7 +1747,11 @@ impl AnimationLayout {
     fn into_records(
         self,
         placements: &HashMap<(u32, u16), FramePlacement>,
-    ) -> eyre::Result<(Vec<MobileAnimEcAnimationRecord>, Vec<MobileAnimEcFrameRecord>)> {
+    ) -> eyre::Result<(
+        Vec<MobileAnimEcBodyRecord>,
+        Vec<MobileAnimEcAnimationRecord>,
+        Vec<MobileAnimEcFrameRecord>,
+    )> {
         let frames = self
             .slots
             .iter()
@@ -1534,7 +1770,7 @@ impl AnimationLayout {
                 Ok(frame_record_from_placement(animation_index, slot, placement))
             })
             .collect::<eyre::Result<Vec<_>>>()?;
-        Ok((self.animations, frames))
+        Ok((self.bodies, self.animations, frames))
     }
 }
 
@@ -1559,6 +1795,7 @@ fn frame_record_from_placement(
             height: placement.height,
             center_x: placement.center_x,
             center_y: placement.center_y,
+            hue_mode: placement.hue_mode,
         }
     } else {
         MobileAnimEcFrameRecord {
@@ -1575,6 +1812,7 @@ fn frame_record_from_placement(
             height: 0,
             center_x: 0,
             center_y: 0,
+            hue_mode: FRAME_HUE_NONE,
         }
     }
 }
@@ -2033,6 +2271,7 @@ fn build_page(
     let mut filled_pixel_count = 0u64;
 
     let page_frames = decoded_page_frames_with_axes(frames, page_size, options)?;
+    let mut placed_hue_masks = Vec::new();
 
     for page_frame in page_frames {
         let frame = page_frame.frame;
@@ -2053,21 +2292,31 @@ fn build_page(
                 frame.height as u32,
                 &frame.rgba,
             )?;
-            extrude_rgba_rect_edges(
-                pixels,
-                page_size.width,
-                page_size.height,
-                allocation.rectangle.min.x as u32,
-                allocation.rectangle.min.y as u32,
-                width_axis.alloc_extent,
-                height_axis.alloc_extent,
-                inner_x as u32,
-                inner_y as u32,
-                frame.width as u32,
-                frame.height as u32,
-            );
+            let extrusion = RectExtrusion {
+                rect_x: allocation.rectangle.min.x as u32,
+                rect_y: allocation.rectangle.min.y as u32,
+                rect_width: width_axis.alloc_extent,
+                rect_height: height_axis.alloc_extent,
+                content_x: inner_x as u32,
+                content_y: inner_y as u32,
+                content_width: frame.width as u32,
+                content_height: frame.height as u32,
+            };
+            extrusion.extrude_rgba(pixels, page_size.width, page_size.height);
             used_width = used_width.max(allocation.rectangle.min.x as u32 + width_axis.alloc_extent);
             used_height = used_height.max(allocation.rectangle.min.y as u32 + height_axis.alloc_extent);
+            let hue_mode = frame_window_hue_mode(
+                &frame.rgba,
+                &frame.hue_mask,
+                u32::from(frame.width),
+                FrameWindow::full(frame.width, frame.height),
+            );
+            if hue_mode == FRAME_HUE_MASKED {
+                placed_hue_masks.push(PlacedHueMask {
+                    extrusion,
+                    mask: frame.hue_mask,
+                });
+            }
             placements.insert((frame.body_id, frame.source_frame_index), FramePlacement {
                 page_index,
                 page_frame_index,
@@ -2077,6 +2326,7 @@ fn build_page(
                 height: frame.height,
                 center_x: frame.center_x,
                 center_y: frame.center_y,
+                hue_mode,
             });
             page_frame_index += 1;
         } else {
@@ -2090,6 +2340,7 @@ fn build_page(
         used_width,
         used_height,
     );
+    let hue_mask = build_page_hue_mask(used_width, used_height, placed_hue_masks)?;
 
     Ok((
         BuiltMobileAnimEcPage {
@@ -2101,8 +2352,10 @@ fn build_page(
                 used_width,
                 used_height,
                 pixel_format: options.pixel_format,
+                flags: page_flags(&hue_mask),
             },
             pixels,
+            hue_mask,
         },
         leftovers,
         filled_pixel_count,
@@ -2133,6 +2386,7 @@ fn build_planned_page(
     struct PendingPlannedBlit {
         body_id: u32,
         source_frame_index: u16,
+        extrusion: RectExtrusion,
         inner_x: u32,
         inner_y: u32,
         expected_width: u16,
@@ -2148,22 +2402,15 @@ fn build_planned_page(
     struct PreparedPlannedBlit {
         body_id: u32,
         source_frame_index: u16,
+        extrusion: RectExtrusion,
         inner_x: u32,
         inner_y: u32,
         width: u32,
         height: u32,
         rgba: Vec<u8>,
-    }
-
-    struct PlannedExtrusion {
-        rect_x: u32,
-        rect_y: u32,
-        rect_width: u32,
-        rect_height: u32,
-        content_x: u32,
-        content_y: u32,
-        content_width: u32,
-        content_height: u32,
+        hue_mode: u8,
+        /// Frame-sized hue mask of a `FRAME_HUE_MASKED` frame.
+        hue_mask: Option<Vec<u8>>,
     }
 
     let page_frames = planned_page_frames_with_axes(frames, page_size, options)?;
@@ -2195,7 +2442,7 @@ fn build_planned_page(
             };
             let inner_x = allocation.rectangle.min.x + width_axis.leading_padding as i32;
             let inner_y = allocation.rectangle.min.y + height_axis.leading_padding as i32;
-            planned_extrusions.push(PlannedExtrusion {
+            let extrusion = RectExtrusion {
                 rect_x: allocation.rectangle.min.x as u32,
                 rect_y: allocation.rectangle.min.y as u32,
                 rect_width: width_axis.alloc_extent,
@@ -2204,10 +2451,12 @@ fn build_planned_page(
                 content_y: inner_y as u32,
                 content_width: frame.width as u32,
                 content_height: frame.height as u32,
-            });
+            };
+            planned_extrusions.push(extrusion);
             pending_blits.push(PendingPlannedBlit {
                 body_id: frame.body_id,
                 source_frame_index: frame.source_frame_index,
+                extrusion,
                 inner_x: inner_x as u32,
                 inner_y: inner_y as u32,
                 expected_width: frame.width,
@@ -2230,6 +2479,8 @@ fn build_planned_page(
                 height: frame.height,
                 center_x: frame.center_x,
                 center_y: frame.center_y,
+                // Set once the frame is decoded below.
+                hue_mode: FRAME_HUE_NONE,
             });
             page_frame_index += 1;
         } else {
@@ -2238,19 +2489,31 @@ fn build_planned_page(
     }
 
     let mut pixels = vec![0u8; used_width as usize * used_height as usize * 4];
+    let mut placed_hue_masks = Vec::new();
     if upscale_active {
         let prepared_blits = pending_blits
             .into_par_iter()
             .map(|pending| -> eyre::Result<PreparedPlannedBlit> {
                 let decoded = pending.animation.decode_frame(&pending.source_entry)?;
+                let window = FrameWindow {
+                    left: u32::from(pending.source_left),
+                    top: u32::from(pending.source_top),
+                    width: u32::from(pending.source_crop_width),
+                    height: u32::from(pending.source_crop_height),
+                };
+                let hue_mode =
+                    frame_window_hue_mode(&decoded.data, &decoded.hue_mask, u32::from(decoded.width), window);
+                let source_hue_mask = (hue_mode == FRAME_HUE_MASKED)
+                    .then(|| crop_hue_mask_window(&decoded, window))
+                    .transpose()?;
                 let rgba = crop_rgba_frame_window(
                     decoded.width,
                     decoded.height,
                     decoded.data,
-                    u32::from(pending.source_left),
-                    u32::from(pending.source_top),
-                    u32::from(pending.source_crop_width),
-                    u32::from(pending.source_crop_height),
+                    window.left,
+                    window.top,
+                    window.width,
+                    window.height,
                 )?;
                 let passes = mobile_upscale_passes_for(
                     options,
@@ -2274,14 +2537,19 @@ fn build_planned_page(
                         height
                     );
                 }
+                let hue_mask = source_hue_mask
+                    .map(|mask| resample_hue_mask_nearest(&mask, window.width, window.height, width, height));
                 Ok(PreparedPlannedBlit {
                     body_id: pending.body_id,
                     source_frame_index: pending.source_frame_index,
+                    extrusion: pending.extrusion,
                     inner_x: pending.inner_x,
                     inner_y: pending.inner_y,
                     width,
                     height,
                     rgba,
+                    hue_mode,
+                    hue_mask,
                 })
             })
             .collect::<Vec<_>>();
@@ -2302,10 +2570,31 @@ fn build_planned_page(
                 prepared.body_id,
                 prepared.source_frame_index
             ))?;
+            set_placement_hue_mode(placements, prepared.body_id, prepared.source_frame_index, prepared.hue_mode);
+            if let Some(mask) = prepared.hue_mask {
+                placed_hue_masks.push(PlacedHueMask {
+                    extrusion: prepared.extrusion,
+                    mask,
+                });
+            }
         }
     } else {
         for pending in pending_blits {
             let decoded = pending.animation.decode_frame(&pending.source_entry)?;
+            let window = FrameWindow {
+                left: u32::from(pending.source_left),
+                top: u32::from(pending.source_top),
+                width: u32::from(pending.source_crop_width),
+                height: u32::from(pending.source_crop_height),
+            };
+            let hue_mode = frame_window_hue_mode(&decoded.data, &decoded.hue_mask, u32::from(decoded.width), window);
+            set_placement_hue_mode(placements, pending.body_id, pending.source_frame_index, hue_mode);
+            if hue_mode == FRAME_HUE_MASKED {
+                placed_hue_masks.push(PlacedHueMask {
+                    extrusion: pending.extrusion,
+                    mask: crop_hue_mask_window(&decoded, window)?,
+                });
+            }
             filled_pixel_count += blit_rgba_frame_window(
                 &mut pixels,
                 used_width,
@@ -2327,20 +2616,9 @@ fn build_planned_page(
         }
     }
     for extrusion in planned_extrusions {
-        extrude_rgba_rect_edges(
-            &mut pixels,
-            used_width,
-            used_height,
-            extrusion.rect_x,
-            extrusion.rect_y,
-            extrusion.rect_width,
-            extrusion.rect_height,
-            extrusion.content_x,
-            extrusion.content_y,
-            extrusion.content_width,
-            extrusion.content_height,
-        );
+        extrusion.extrude_rgba(&mut pixels, used_width, used_height);
     }
+    let hue_mask = build_page_hue_mask(used_width, used_height, placed_hue_masks)?;
 
     Ok((
         BuiltMobileAnimEcPage {
@@ -2352,12 +2630,216 @@ fn build_planned_page(
                 used_width,
                 used_height,
                 pixel_format: options.pixel_format,
+                flags: page_flags(&hue_mask),
             },
             pixels,
+            hue_mask,
         },
         leftovers,
         filled_pixel_count,
     ))
+}
+
+/// Allocation rect of a frame in an atlas page and the frame content inside it; the gutter
+/// around the content repeats its nearest edge pixel.
+#[derive(Debug, Clone, Copy)]
+struct RectExtrusion {
+    rect_x: u32,
+    rect_y: u32,
+    rect_width: u32,
+    rect_height: u32,
+    content_x: u32,
+    content_y: u32,
+    content_width: u32,
+    content_height: u32,
+}
+
+impl RectExtrusion {
+    fn extrude_rgba(&self, pixels: &mut [u8], atlas_width: u32, atlas_height: u32) {
+        extrude_rgba_rect_edges(
+            pixels,
+            atlas_width,
+            atlas_height,
+            self.rect_x,
+            self.rect_y,
+            self.rect_width,
+            self.rect_height,
+            self.content_x,
+            self.content_y,
+            self.content_width,
+            self.content_height,
+        );
+    }
+
+    /// `extrude_rgba` for a one byte per pixel plane.
+    fn extrude_r8(&self, plane: &mut [u8], plane_width: u32, plane_height: u32) {
+        if self.content_width == 0 || self.content_height == 0 {
+            return;
+        }
+        let rect_right = (self.rect_x + self.rect_width).min(plane_width);
+        let rect_bottom = (self.rect_y + self.rect_height).min(plane_height);
+        let content_right = self.content_x + self.content_width;
+        let content_bottom = self.content_y + self.content_height;
+        for y in self.rect_y..rect_bottom {
+            let sample_y = y.clamp(self.content_y, content_bottom - 1);
+            for x in self.rect_x..rect_right {
+                if (self.content_x..content_right).contains(&x) && (self.content_y..content_bottom).contains(&y) {
+                    continue;
+                }
+                let sample_x = x.clamp(self.content_x, content_right - 1);
+                plane[y as usize * plane_width as usize + x as usize] =
+                    plane[sample_y as usize * plane_width as usize + sample_x as usize];
+            }
+        }
+    }
+}
+
+/// Window of a decoded frame that goes into the atlas (the transparent trim).
+#[derive(Debug, Clone, Copy)]
+struct FrameWindow {
+    left: u32,
+    top: u32,
+    width: u32,
+    height: u32,
+}
+
+impl FrameWindow {
+    fn full(width: u16, height: u16) -> Self {
+        Self {
+            left: 0,
+            top: 0,
+            width: u32::from(width),
+            height: u32::from(height),
+        }
+    }
+}
+
+/// Frame-sized hue mask of a `FRAME_HUE_MASKED` frame placed at `extrusion`.
+struct PlacedHueMask {
+    extrusion: RectExtrusion,
+    mask: Vec<u8>,
+}
+
+/// `FRAME_HUE_*` of a frame window: which coded (alpha > 0) pixels the hue mask marks.
+fn frame_window_hue_mode(rgba: &[u8], hue_mask: &[u8], source_width: u32, window: FrameWindow) -> u8 {
+    if hue_mask.is_empty() {
+        return FRAME_HUE_NONE;
+    }
+    let mut hueable = false;
+    let mut kept = false;
+    for row in window.top..window.top + window.height {
+        for column in window.left..window.left + window.width {
+            let pixel = row as usize * source_width as usize + column as usize;
+            if rgba[pixel * RGBA_CHANNELS + RGBA_ALPHA_CHANNEL] == 0 {
+                continue;
+            }
+            if hue_mask[pixel] == HUE_MASK_HUEABLE {
+                hueable = true;
+            } else {
+                kept = true;
+            }
+            if hueable && kept {
+                return FRAME_HUE_MASKED;
+            }
+        }
+    }
+    if hueable { FRAME_HUE_ALL } else { FRAME_HUE_NONE }
+}
+
+fn crop_hue_mask_window(frame: &DecodedFrame, window: FrameWindow) -> eyre::Result<Vec<u8>> {
+    let source_width = frame.width as usize;
+    if frame.hue_mask.len() != source_width * frame.height as usize
+        || window.left + window.width > u32::from(frame.width)
+        || window.top + window.height > u32::from(frame.height)
+    {
+        eyre::bail!(
+            "EC mobile animation hue mask crop {},{} {}x{} is outside source {}x{}",
+            window.left,
+            window.top,
+            window.width,
+            window.height,
+            frame.width,
+            frame.height
+        );
+    }
+    let mut cropped = Vec::with_capacity(window.width as usize * window.height as usize);
+    for row in window.top as usize..(window.top + window.height) as usize {
+        let start = row * source_width + window.left as usize;
+        cropped.extend_from_slice(&frame.hue_mask[start..start + window.width as usize]);
+    }
+    Ok(cropped)
+}
+
+/// Scales a hue mask to the upscaled frame size, nearest neighbour (the mask is binary).
+fn resample_hue_mask_nearest(
+    mask: &[u8],
+    source_width: u32,
+    source_height: u32,
+    width: u32,
+    height: u32,
+) -> Vec<u8> {
+    if source_width == width && source_height == height {
+        return mask.to_vec();
+    }
+    let mut scaled = Vec::with_capacity(width as usize * height as usize);
+    for y in 0..u64::from(height) {
+        let source_y = (y * u64::from(source_height) / u64::from(height)) as usize;
+        for x in 0..u64::from(width) {
+            let source_x = (x * u64::from(source_width) / u64::from(width)) as usize;
+            scaled.push(mask[source_y * source_width as usize + source_x]);
+        }
+    }
+    scaled
+}
+
+fn set_placement_hue_mode(
+    placements: &mut HashMap<(u32, u16), FramePlacement>,
+    body_id: u32,
+    source_frame_index: u16,
+    hue_mode: u8,
+) {
+    if let Some(placement) = placements.get_mut(&(body_id, source_frame_index)) {
+        placement.hue_mode = hue_mode;
+    }
+}
+
+/// R8 hue mask of a page's used area holding the masks of its `FRAME_HUE_MASKED` frames (and
+/// their gutters); `None` when the page has none.
+fn build_page_hue_mask(
+    used_width: u32,
+    used_height: u32,
+    placed: Vec<PlacedHueMask>,
+) -> eyre::Result<Option<Vec<u8>>> {
+    if placed.is_empty() {
+        return Ok(None);
+    }
+    let mut page_mask = vec![0u8; used_width as usize * used_height as usize];
+    for placed in placed {
+        let extrusion = placed.extrusion;
+        let (width, height) = (extrusion.content_width as usize, extrusion.content_height as usize);
+        if placed.mask.len() != width * height
+            || extrusion.content_x + extrusion.content_width > used_width
+            || extrusion.content_y + extrusion.content_height > used_height
+        {
+            eyre::bail!(
+                "EC mobile animation hue mask {}x{} does not fit its atlas rect at {},{}",
+                extrusion.content_width,
+                extrusion.content_height,
+                extrusion.content_x,
+                extrusion.content_y
+            );
+        }
+        for row in 0..height {
+            let start = (extrusion.content_y as usize + row) * used_width as usize + extrusion.content_x as usize;
+            page_mask[start..start + width].copy_from_slice(&placed.mask[row * width..(row + 1) * width]);
+        }
+        extrusion.extrude_r8(&mut page_mask, used_width, used_height);
+    }
+    Ok(Some(page_mask))
+}
+
+fn page_flags(hue_mask: &Option<Vec<u8>>) -> u8 {
+    if hue_mask.is_some() { PAGE_FLAG_HUE_MASK } else { 0 }
 }
 
 fn packing_axes(
@@ -2514,6 +2996,15 @@ fn trim_decoded_frame(frame: DecodedMobileAnimEcFrame) -> eyre::Result<DecodedMo
     )?;
     let body_id = frame.body_id;
     let source_frame_index = frame.source_frame_index;
+    let hue_mask = if frame.hue_mask.is_empty() {
+        Vec::new()
+    } else {
+        let source_width = usize::from(frame.width);
+        (bounds.top..bounds.bottom)
+            .flat_map(|row| &frame.hue_mask[row * source_width + bounds.left..row * source_width + bounds.right])
+            .copied()
+            .collect()
+    };
     let rgba = crop_rgba_frame_window(
         frame.width,
         frame.height,
@@ -2532,6 +3023,7 @@ fn trim_decoded_frame(frame: DecodedMobileAnimEcFrame) -> eyre::Result<DecodedMo
         center_x,
         center_y,
         rgba,
+        hue_mask,
     })
 }
 
@@ -2718,7 +3210,7 @@ fn serialize_page_record_manifest(
     records: &[MobileAnimEcPageRecord],
     options: &MobileAnimEcAtlasOptions,
 ) -> eyre::Result<Vec<u8>> {
-    let mut bytes = Vec::with_capacity(26 + records.len() * 24);
+    let mut bytes = Vec::with_capacity(PAGE_MANIFEST_HEADER_SIZE + records.len() * PAGE_RECORD_SIZE);
     bytes.extend_from_slice(&PAGE_MANIFEST_MAGIC);
     bytes.write_u32::<LittleEndian>(MOBILE_ANIM_EC_METADATA_VERSION)?;
     bytes.write_u32::<LittleEndian>(options.atlas_width)?;
@@ -2734,6 +3226,7 @@ fn serialize_page_record_manifest(
         bytes.write_u32::<LittleEndian>(record.atlas_height)?;
         bytes.write_u32::<LittleEndian>(record.used_width)?;
         bytes.write_u32::<LittleEndian>(record.used_height)?;
+        bytes.push(record.flags);
     }
     Ok(bytes)
 }
@@ -2764,7 +3257,7 @@ pub fn serialize_animation_manifest(
 }
 
 pub fn serialize_frame_manifest(frames: &[MobileAnimEcFrameRecord]) -> eyre::Result<Vec<u8>> {
-    let mut bytes = Vec::with_capacity(12 + frames.len() * 30);
+    let mut bytes = Vec::with_capacity(MANIFEST_HEADER_SIZE + frames.len() * FRAME_RECORD_SIZE);
     bytes.extend_from_slice(&FRAME_MANIFEST_MAGIC);
     bytes.write_u32::<LittleEndian>(MOBILE_ANIM_EC_METADATA_VERSION)?;
     bytes.write_u32::<LittleEndian>(frames.len() as u32)?;
@@ -2782,6 +3275,7 @@ pub fn serialize_frame_manifest(frames: &[MobileAnimEcFrameRecord]) -> eyre::Res
         bytes.write_u16::<LittleEndian>(frame.height)?;
         bytes.write_i16::<LittleEndian>(frame.center_x)?;
         bytes.write_i16::<LittleEndian>(frame.center_y)?;
+        bytes.push(frame.hue_mode);
     }
     Ok(bytes)
 }
@@ -2833,6 +3327,23 @@ pub fn serialize_source_hint_manifest(source_hints: &[MobileAnimEcSourceHintReco
     Ok(bytes)
 }
 
+/// `metadata/bodies.bin` ("MEBD"): `MobileAnimEcBodyRecord`s sorted by body id.
+pub fn serialize_body_manifest(bodies: &[MobileAnimEcBodyRecord]) -> eyre::Result<Vec<u8>> {
+    let mut bytes = Vec::with_capacity(MANIFEST_HEADER_SIZE + bodies.len() * BODY_RECORD_SIZE);
+    bytes.extend_from_slice(&BODY_MANIFEST_MAGIC);
+    bytes.write_u32::<LittleEndian>(MOBILE_ANIM_EC_METADATA_VERSION)?;
+    bytes.write_u32::<LittleEndian>(bodies.len() as u32)?;
+    for body in bodies {
+        bytes.write_u32::<LittleEndian>(body.body_id)?;
+        bytes.write_u32::<LittleEndian>(body.sequence_id)?;
+        bytes.write_u32::<LittleEndian>(body.frames_body_id)?;
+        bytes.write_u32::<LittleEndian>(body.appearance_body_id)?;
+        bytes.write_u16::<LittleEndian>(body.forced_hue)?;
+        bytes.write_u16::<LittleEndian>(body.flags)?;
+    }
+    Ok(bytes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2848,7 +3359,17 @@ mod tests {
             center_x: 1,
             center_y: -1,
             rgba: vec![255u8; width as usize * height as usize * 4],
+            hue_mask: Vec::new(),
         }
+    }
+
+    /// Opaque frame whose left half takes the hue.
+    fn half_hued_frame(body_id: u32, source_frame_index: u16, width: u16, height: u16) -> DecodedMobileAnimEcFrame {
+        let mut decoded = frame(body_id, source_frame_index, width, height);
+        decoded.hue_mask = (0..usize::from(height))
+            .flat_map(|_| (0..usize::from(width)).map(|x| if x < usize::from(width) / 2 { HUE_MASK_HUEABLE } else { 0 }))
+            .collect();
+        decoded
     }
 
     fn sparse_frame(body_id: u32, source_frame_index: u16) -> DecodedMobileAnimEcFrame {
@@ -2869,6 +3390,7 @@ mod tests {
             center_x: 4,
             center_y: 5,
             rgba,
+            hue_mask: Vec::new(),
         }
     }
 
@@ -3050,10 +3572,36 @@ mod tests {
         assert_eq!(placements[&(42, 0)].page_index, 0);
     }
 
+    /// Server body 146 draws with the sequence and frames of body 124 (its tileart placeholder);
+    /// the sequence stored id (an equipment wear-check id) plays no part.
     const SEQUENCE_BODY: u32 = 146;
+    const SEQUENCE_ID: u32 = 124;
+    const FRAMES_BODY: u32 = 124;
     const SEQUENCE_STORED_ID: u32 = 704;
     const NO_SEQUENCE_BODY: u32 = 42;
+    const HUMAN_MALE: u32 = 400;
+    const HUMAN_FEMALE: u32 = 401;
+    const MALE_GHOST: u32 = 402;
+    /// Placeholder whose appearance has no frames.
+    const FRAMELESS_APPEARANCE_BODY: u32 = 433;
+    const FALLBACK_BODY: u32 = uocf::enhanced::mobile_body::FALLBACK_FRAMES_BODY;
+    const GHOST_HUE: u16 = uocf::enhanced::mobile_body::GHOST_HUE;
 
+    /// `(body, sequence_id, appearance)` placeholders.
+    fn body_map(placeholders: &[(u32, u32, u32)]) -> MobileBodyMap {
+        MobileBodyMap {
+            definitions: placeholders
+                .iter()
+                .map(|&(body, sequence_id, appearance)| {
+                    (body, MobileBodyDefinition { body, sequence_id, appearance, animation_appearance: None })
+                })
+                .collect(),
+        }
+    }
+
+    fn sample_body_map() -> MobileBodyMap {
+        body_map(&[(SEQUENCE_BODY, SEQUENCE_ID, FRAMES_BODY)])
+    }
     fn source(source_frame_index: u16, action: u16, frame_number: u16) -> SourceFrameIdentity {
         SourceFrameIdentity { source_frame_index, action, frame_number }
     }
@@ -3111,11 +3659,11 @@ mod tests {
         }
     }
 
-    /// Body 146 (frames under 704): plain 3 (1 frame), 4 (2 frames, fps 12, skipped frame 0,
-    /// stand) and 19 (1 frame); alias 0 -> 4, 1 -> 4, 2 -> 1 (alias of an alias).
+    /// Sequence 124: plain 3 (1 frame), 4 (2 frames, fps 12, skipped frame 0, stand) and 19
+    /// (1 frame); alias 0 -> 4, 1 -> 4, 2 -> 1 (alias of an alias).
     fn sample_sequences() -> BTreeMap<u32, AnimationSequence> {
         BTreeMap::from([(
-            SEQUENCE_BODY,
+            SEQUENCE_ID,
             sequence(
                 SEQUENCE_STORED_ID,
                 &[
@@ -3136,7 +3684,7 @@ mod tests {
         push_sources(&mut frames, 3, 1..=5);
         push_sources(&mut frames, 4, 1..=10);
         push_sources(&mut frames, 19, 1..=5);
-        BTreeMap::from([(SEQUENCE_STORED_ID, frames)])
+        BTreeMap::from([(FRAMES_BODY, frames)])
     }
 
     fn record<'a>(
@@ -3165,32 +3713,63 @@ mod tests {
 
     #[test]
     fn sequence_layout_emits_stored_mirrored_and_alias_records() {
-        let layout = build_animation_layout(&sample_sequence_frames(), &sample_sequences()).unwrap();
+        let layout = build_animation_layout(&sample_sequence_frames(), &sample_sequences(), &sample_body_map()).unwrap();
 
-        assert_eq!(layout.animations.len(), 6 * usize::from(DIRECTION_COUNT));
+        // Body 124 (no placeholder: its own sequence and frames) and body 146 share one set.
+        let body_record_count = 6 * usize::from(DIRECTION_COUNT);
+        assert_eq!(layout.animations.len(), 2 * body_record_count);
         assert!(layout.animations.windows(2).all(|pair| {
             (pair[0].body_id, pair[0].action_id, pair[0].direction)
                 < (pair[1].body_id, pair[1].action_id, pair[1].direction)
         }));
-        assert_eq!(layout.stats.sequence_body_count, 1);
+        assert_eq!(layout.stats.sequence_body_count, 2);
+        assert_eq!(layout.stats.placeholder_body_count, 1);
+        assert_eq!(layout.stats.unmapped_body_count, 1);
+        assert_eq!(layout.stats.shared_animation_set_body_count, 1);
         assert_eq!(layout.stats.plain_action_count, 3);
-        assert_eq!(layout.stats.alias_action_count, 3);
-        assert_eq!(layout.stats.mirrored_record_count, 6 * 3);
+        assert_eq!(layout.stats.alias_action_count, 2 * 3);
+        assert_eq!(layout.stats.mirrored_record_count, 2 * 6 * 3);
         assert_eq!(layout.stats.unreferenced_frame_count, 0);
+        assert_eq!(
+            layout.bodies,
+            [
+                MobileAnimEcBodyRecord {
+                    body_id: FRAMES_BODY,
+                    sequence_id: SEQUENCE_ID,
+                    frames_body_id: FRAMES_BODY,
+                    appearance_body_id: FRAMES_BODY,
+                    forced_hue: NO_FORCED_HUE,
+                    flags: BODY_FLAG_NO_PLACEHOLDER,
+                },
+                MobileAnimEcBodyRecord {
+                    body_id: SEQUENCE_BODY,
+                    sequence_id: SEQUENCE_ID,
+                    frames_body_id: FRAMES_BODY,
+                    appearance_body_id: FRAMES_BODY,
+                    forced_hue: NO_FORCED_HUE,
+                    flags: 0,
+                },
+            ]
+        );
+        let (_, shared) = record(&layout, FRAMES_BODY, 4, 4);
 
         // Stored direction: frames numbered from (direction - 3) * frame_count + 1.
         let (owner_index, south) = record(&layout, SEQUENCE_BODY, 4, 4);
-        assert_eq!(south.source_body_id, SEQUENCE_STORED_ID);
+        assert_eq!(shared.frame_start, south.frame_start);
+        assert_eq!(south.source_body_id, FRAMES_BODY);
         assert_eq!(south.frame_count, 2);
         assert_eq!(slot_numbers(&layout, south), [(4, 3), (4, 4)]);
         assert!(!south.is_mirrored());
         assert_eq!((south.fps, south.skipped_frame_mask), (12.0, 1));
         assert_ne!(south.flags & ANIMATION_FLAG_STAND_ACTION, 0);
         let start = south.frame_start as usize;
+        // The first body laid out (124) owns the shared slots.
+        assert_ne!(owner_index, record(&layout, FRAMES_BODY, 4, 4).0);
+        let shared_owner_index = record(&layout, FRAMES_BODY, 4, 4).0;
         assert!(layout.slots[start..start + 2]
             .iter()
             .enumerate()
-            .all(|(index, slot)| slot.animation_index == Some(owner_index as u32) && slot.frame_index == index as u16));
+            .all(|(index, slot)| slot.animation_index == Some(shared_owner_index as u32) && slot.frame_index == index as u16));
 
         // Directions 0..2 mirror 6..4 and share their frames.
         let (_, east) = record(&layout, SEQUENCE_BODY, 4, 2);
@@ -3224,7 +3803,7 @@ mod tests {
     #[test]
     fn sequence_layout_handles_gaps_count_mismatches_and_missing_entries() {
         let sequences = BTreeMap::from([(
-            SEQUENCE_BODY,
+            SEQUENCE_ID,
             sequence(SEQUENCE_STORED_ID, &[(23, 2, None, 9.0, &[]), (24, 3, None, 9.0, &[])], 23),
         )]);
         let mut frames = Vec::new();
@@ -3232,7 +3811,8 @@ mod tests {
         push_sources(&mut frames, 23, [2, 3, 4, 5, 5, 6, 7, 8, 9, 10, 11]);
         push_sources(&mut frames, 30, [1, 2]);
         let first_number_five = frames[3].source_frame_index;
-        let layout = build_animation_layout(&BTreeMap::from([(SEQUENCE_STORED_ID, frames)]), &sequences).unwrap();
+        let layout =
+            build_animation_layout(&BTreeMap::from([(FRAMES_BODY, frames)]), &sequences, &sample_body_map()).unwrap();
 
         assert_eq!(layout.stats.frame_count_mismatch_action_count, 1);
         assert_eq!(layout.stats.missing_frame_count, 1);
@@ -3251,7 +3831,7 @@ mod tests {
         let (_, without_frames) = record(&layout, SEQUENCE_BODY, 24, 5);
         assert_eq!(without_frames.frame_count, 0);
 
-        let (_, frames) = layout.into_records(&HashMap::new()).unwrap();
+        let (_, _, frames) = layout.into_records(&HashMap::new()).unwrap();
         assert_eq!(frames.len(), 10);
         assert_eq!(frames[0].source_frame_index, MISSING_SOURCE_FRAME_INDEX);
         assert_eq!((frames[0].source_action, frames[0].source_frame_number), (23, 1));
@@ -3260,24 +3840,24 @@ mod tests {
 
     #[test]
     fn no_sequence_layout_derives_directions_or_falls_back_undirected() {
-        // Body 600 is hidden by the sequence of the same name, whose frames are under 601.
-        let hidden_body = 600;
-        let sequences = BTreeMap::from([(hidden_body, sequence(601, &[(0, 1, None, 9.0, &[])], 0))]);
+        // Body 600 has a sequence but no frames and no placeholder: no records.
+        let frameless_body = 600;
+        let sequences = BTreeMap::from([(frameless_body, sequence(601, &[(0, 1, None, 9.0, &[])], 0))]);
         let mut fallback = Vec::new();
         push_sources(&mut fallback, 0, [1, 2, 3, 5, 6, 7, 8, 9, 10]);
         push_sources(&mut fallback, 1, [1, 2, 3]);
-        let mut hidden = Vec::new();
-        push_sources(&mut hidden, 0, 1..=5);
-        let frames_by_body = BTreeMap::from([(NO_SEQUENCE_BODY, fallback), (hidden_body, hidden)]);
-        let layout = build_animation_layout(&frames_by_body, &sequences).unwrap();
+        let frames_by_body = BTreeMap::from([(NO_SEQUENCE_BODY, fallback)]);
+        let layout = build_animation_layout(&frames_by_body, &sequences, &MobileBodyMap::default()).unwrap();
 
         assert_eq!(layout.stats.no_sequence_body_count, 1);
         assert_eq!(layout.stats.sequence_without_frames_count, 1);
         assert_eq!(layout.stats.fallback_directional_action_count, 1);
         assert_eq!(layout.stats.fallback_undirected_action_count, 1);
         assert_eq!(layout.stats.missing_frame_count, 1);
-        assert_eq!(layout.stats.unreferenced_frame_count, 5);
+        assert_eq!(layout.stats.unreferenced_frame_count, 0);
         assert!(layout.animations.iter().all(|record| record.body_id == NO_SEQUENCE_BODY));
+        assert_eq!(layout.bodies.len(), 1);
+        assert_eq!(layout.bodies[0].flags, BODY_FLAG_NO_PLACEHOLDER | BODY_FLAG_NO_SEQUENCE);
 
         let (_, west) = record(&layout, NO_SEQUENCE_BODY, 0, 6);
         let (_, north) = record(&layout, NO_SEQUENCE_BODY, 0, 0);
@@ -3314,12 +3894,17 @@ mod tests {
         };
         let mut frames_by_body = sample_sequence_frames();
         frames_by_body.insert(NO_SEQUENCE_BODY, vec![source(0, 0, 1)]);
-        let layout = build_animation_layout(&frames_by_body, &sample_sequences()).unwrap();
-        let (pages, placements) = pack_frames_into_pages(vec![frame(NO_SEQUENCE_BODY, 0, 4, 4)], &options).unwrap();
-        let (animations, frames) = layout.into_records(&placements).unwrap();
+        let layout = build_animation_layout(&frames_by_body, &sample_sequences(), &sample_body_map()).unwrap();
+        let masked_frame = half_hued_frame(NO_SEQUENCE_BODY, 0, 4, 4);
+        let expected_mask = masked_frame.hue_mask.clone();
+        let (mut pages, placements) = pack_frames_into_pages(vec![masked_frame], &options).unwrap();
+        let (bodies, animations, frames) = layout.into_records(&placements).unwrap();
         let page_manifest = serialize_page_manifest(&pages, &options).unwrap();
         let animation_manifest = serialize_animation_manifest(&animations).unwrap();
         let frame_manifest = serialize_frame_manifest(&frames).unwrap();
+        let body_manifest = serialize_body_manifest(&bodies).unwrap();
+        let hue_mask_path = hue_mask_entry_path(0);
+        let stored_hue_mask = pages[0].hue_mask.take().expect("page with a masked frame has a hue mask");
         let (items, source_hints) = build_item_metadata(&EcMobileAnimationsKdl {
             items: vec![udd_assets::mobile_anim_ec::EcMobileAnimationItemKdl {
                 id: 42,
@@ -3349,7 +3934,9 @@ mod tests {
             (FRAME_MANIFEST_ENTRY_PATH, frame_manifest.as_slice(), DataType::Metadata),
             (ITEM_MANIFEST_ENTRY_PATH, item_manifest.as_slice(), DataType::Metadata),
             (SOURCE_HINT_MANIFEST_ENTRY_PATH, source_hint_manifest.as_slice(), DataType::Metadata),
+            (BODY_MANIFEST_ENTRY_PATH, body_manifest.as_slice(), DataType::Metadata),
             (page_path.as_str(), stored_page.as_slice(), DataType::Texture),
+            (hue_mask_path.as_str(), stored_hue_mask.as_slice(), DataType::Texture),
         ] {
             builder.add_file(AddFileRequest {
                 data_type: data_type as u8,
@@ -3368,11 +3955,18 @@ mod tests {
         ).unwrap();
 
         assert_eq!(package.pages().len(), 1);
+        assert!(package.pages()[0].has_hue_mask());
         assert_eq!(package.animations(), animations.as_slice());
         assert_eq!(package.frames(), frames.as_slice());
+        assert_eq!(package.bodies(), bodies.as_slice());
+        let serpent = package.body(SEQUENCE_BODY).unwrap();
+        assert_eq!((serpent.sequence_id, serpent.frames_body_id), (SEQUENCE_ID, FRAMES_BODY));
         let undirected = package.animation(NO_SEQUENCE_BODY, 0, 0).unwrap();
         assert_eq!(undirected.frame_count, 1);
-        assert_eq!(package.animation_frames(undirected)[0].center_y, -1);
+        let undirected_frame = &package.animation_frames(undirected)[0];
+        assert_eq!(undirected_frame.center_y, -1);
+        assert_eq!(undirected_frame.hue_mode, FRAME_HUE_MASKED);
+        assert_eq!(package.read_frame_hue_mask(undirected_frame).unwrap(), Some(expected_mask));
 
         // Client resolution: missing actions use the lowest plain action; flying disabled
         // uses the no-flying resolution and fps.
@@ -3401,6 +3995,7 @@ mod tests {
                 center_x: 0,
                 center_y: 0,
                 rgba: Vec::new(),
+                hue_mask: Vec::new(),
             },
         ];
         let options = MobileAnimEcAtlasOptions {
@@ -3422,9 +4017,10 @@ mod tests {
         let layout = build_animation_layout(
             &BTreeMap::from([(NO_SEQUENCE_BODY, vec![source(0, 0, 1), source(1, 0, 2)])]),
             &BTreeMap::new(),
+            &MobileBodyMap::default(),
         )
         .unwrap();
-        let (animations, frames) = layout.into_records(&placements).unwrap();
+        let (_, animations, frames) = layout.into_records(&placements).unwrap();
 
         assert_eq!(animations[0].frame_count, 2);
         assert_eq!(frames.len(), 2);
@@ -3452,5 +4048,117 @@ mod tests {
         assert_eq!(frames[2].source_frame_index, 2);
         assert_eq!(frames[1].width, 5);
         assert_eq!(frames[2].width, 6);
+    }
+
+    #[test]
+    fn placeholder_layout_shares_frames_falls_back_to_body_zero_and_flags_ghosts() {
+        let human = sequence(HUMAN_MALE, &[(4, 1, None, 9.0, &[])], 4);
+        let sequences = BTreeMap::from([(HUMAN_MALE, human)]);
+        let frames_by_body = BTreeMap::from([
+            (FALLBACK_BODY, vec![source(0, 4, 1)]),
+            (HUMAN_MALE, (0..5).map(|index| source(index, 4, index + 1)).collect()),
+            (HUMAN_FEMALE, (0..5).map(|index| source(index, 4, index + 1)).collect()),
+        ]);
+        let map = body_map(&[
+            (HUMAN_MALE, HUMAN_MALE, HUMAN_MALE),
+            (HUMAN_FEMALE, HUMAN_MALE, HUMAN_FEMALE),
+            (MALE_GHOST, HUMAN_MALE, HUMAN_MALE),
+            (FRAMELESS_APPEARANCE_BODY, HUMAN_MALE, FRAMELESS_APPEARANCE_BODY),
+        ]);
+        let layout = build_animation_layout(&frames_by_body, &sequences, &map).unwrap();
+
+        assert_eq!(layout.stats.placeholder_body_count, 4);
+        assert_eq!(layout.stats.unmapped_body_count, 1);
+        assert_eq!(layout.stats.frames_fallback_body_count, 1);
+        assert_eq!(layout.stats.ghost_body_count, 1);
+        assert_eq!(layout.stats.shared_animation_set_body_count, 1);
+
+        let body = |body_id| layout.bodies.iter().find(|body| body.body_id == body_id).unwrap();
+        let ghost = body(MALE_GHOST);
+        assert_eq!((ghost.frames_body_id, ghost.forced_hue), (HUMAN_MALE, GHOST_HUE));
+        assert_eq!(ghost.flags, BODY_FLAG_GHOST);
+        let female = body(HUMAN_FEMALE);
+        assert_eq!((female.sequence_id, female.frames_body_id), (HUMAN_MALE, HUMAN_FEMALE));
+        let fallback = body(FRAMELESS_APPEARANCE_BODY);
+        assert_eq!((fallback.frames_body_id, fallback.appearance_body_id), (FALLBACK_BODY, FRAMELESS_APPEARANCE_BODY));
+        assert_eq!(fallback.flags, BODY_FLAG_FRAMES_FALLBACK);
+        // Body 0 has frames but neither a sequence nor a placeholder.
+        assert_eq!(body(FALLBACK_BODY).flags, BODY_FLAG_NO_PLACEHOLDER | BODY_FLAG_NO_SEQUENCE);
+
+        // The ghost reuses the frame records (and so the pixels) of body 400.
+        let (_, male) = record(&layout, HUMAN_MALE, 4, 3);
+        let (_, ghost_record) = record(&layout, MALE_GHOST, 4, 3);
+        let (_, female_record) = record(&layout, HUMAN_FEMALE, 4, 3);
+        assert_eq!((ghost_record.frame_start, ghost_record.source_body_id), (male.frame_start, HUMAN_MALE));
+        assert_ne!(female_record.frame_start, male.frame_start);
+        assert_eq!(female_record.source_body_id, HUMAN_FEMALE);
+        let (_, fallback_record) = record(&layout, FRAMELESS_APPEARANCE_BODY, 4, 3);
+        assert_eq!(fallback_record.source_body_id, FALLBACK_BODY);
+        assert_eq!(slot_numbers(&layout, fallback_record), [(4, 1)]);
+        assert!(layout.slots.iter().all(|slot| slot.animation_index.is_some()));
+    }
+
+    #[test]
+    fn frame_hue_mode_follows_coded_pixels() {
+        let opaque = frame(NO_SEQUENCE_BODY, 0, 2, 1);
+        let window = FrameWindow::full(2, 1);
+        assert_eq!(frame_window_hue_mode(&opaque.rgba, &[], 2, window), FRAME_HUE_NONE);
+        assert_eq!(frame_window_hue_mode(&opaque.rgba, &[0, 0], 2, window), FRAME_HUE_NONE);
+        assert_eq!(
+            frame_window_hue_mode(&opaque.rgba, &[HUE_MASK_HUEABLE, HUE_MASK_HUEABLE], 2, window),
+            FRAME_HUE_ALL
+        );
+        assert_eq!(frame_window_hue_mode(&opaque.rgba, &[HUE_MASK_HUEABLE, 0], 2, window), FRAME_HUE_MASKED);
+
+        // Transparent pixels do not count; the window limits the pixels looked at.
+        let mut half_transparent = opaque.rgba.clone();
+        half_transparent[RGBA_CHANNELS + RGBA_ALPHA_CHANNEL] = 0;
+        assert_eq!(frame_window_hue_mode(&half_transparent, &[HUE_MASK_HUEABLE, 0], 2, window), FRAME_HUE_ALL);
+        let first_pixel = FrameWindow { left: 0, top: 0, width: 1, height: 1 };
+        assert_eq!(frame_window_hue_mode(&opaque.rgba, &[HUE_MASK_HUEABLE, 0], 2, first_pixel), FRAME_HUE_ALL);
+
+        assert_eq!(resample_hue_mask_nearest(&[HUE_MASK_HUEABLE, 0], 2, 1, 4, 2), [
+            HUE_MASK_HUEABLE, HUE_MASK_HUEABLE, 0, 0,
+            HUE_MASK_HUEABLE, HUE_MASK_HUEABLE, 0, 0,
+        ]);
+    }
+
+    #[test]
+    fn page_hue_mask_holds_masked_frames_with_extruded_gutters() {
+        let options = MobileAnimEcAtlasOptions {
+            atlas_width: 16,
+            atlas_height: 16,
+            gutter: 4,
+            crop_transparent_bounds: false,
+            compression: CompressionFlag::None,
+            pixel_format: PagePixelFormat::Rgba8888,
+            bc7_rdo_lambda: 0.0,
+            bc7_rdo_lookback_blocks: crate::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
+            upscale_passes: Vec::new(),
+            upscale_profile: None,
+            metadata_path: None,
+            tables_dir: None,
+            allow_missing_metadata: false,
+        };
+        let (pages, placements) = pack_frames_into_pages(vec![half_hued_frame(NO_SEQUENCE_BODY, 0, 4, 4)], &options).unwrap();
+        let page = &pages[0];
+        assert_eq!(page.record.flags, PAGE_FLAG_HUE_MASK);
+        let mask = page.hue_mask.as_ref().unwrap();
+        let used_width = page.record.used_width as usize;
+        assert_eq!(mask.len(), used_width * page.record.used_height as usize);
+        let placement = &placements[&(NO_SEQUENCE_BODY, 0)];
+        assert_eq!(placement.hue_mode, FRAME_HUE_MASKED);
+        let (x, y) = (usize::from(placement.x), usize::from(placement.y));
+        assert_eq!(mask[y * used_width + x], HUE_MASK_HUEABLE);
+        assert_eq!(mask[y * used_width + x + 3], 0);
+        if x > 0 {
+            assert_eq!(mask[y * used_width + x - 1], HUE_MASK_HUEABLE, "left gutter repeats the edge");
+        }
+
+        // Pages without masked frames carry no mask.
+        let (plain_pages, plain_placements) = pack_frames_into_pages(vec![frame(NO_SEQUENCE_BODY, 0, 4, 4)], &options).unwrap();
+        assert!(plain_pages[0].hue_mask.is_none());
+        assert_eq!(plain_pages[0].record.flags, 0);
+        assert_eq!(plain_placements[&(NO_SEQUENCE_BODY, 0)].hue_mode, FRAME_HUE_NONE);
     }
 }

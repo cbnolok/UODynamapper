@@ -1660,7 +1660,7 @@ where
             );
             let layout = summary.layout;
             info!(
-                "EC mobile animation records: {} sequence bodies ({} plain actions, {} aliases, {} unresolved, {} plain actions without frames, {} frame count mismatches), {} sequences without frames, {} sequence parse errors; {} no-sequence bodies ({} directional and {} undirected actions); {} mirrored records; {} missing frame placeholders; {} unreferenced source frames; {} dropped skipped frames.",
+                "EC mobile animation records: {} sequence bodies ({} plain actions, {} aliases, {} unresolved, {} plain actions without frames, {} frame count mismatches), {} unmapped sequences without frames, {} sequence parse errors; {} no-sequence bodies ({} directional and {} undirected actions); {} mirrored records; {} missing frame placeholders; {} unreferenced source frames; {} dropped skipped frames.",
                 layout.sequence_body_count,
                 layout.plain_action_count,
                 layout.alias_action_count,
@@ -1676,6 +1676,15 @@ where
                 layout.missing_frame_count,
                 layout.unreferenced_frame_count,
                 layout.dropped_skipped_frame_count,
+            );
+            info!(
+                "EC mobile body mapping: {} tileart placeholders ({} falling back to body 0 frames, {} without frames, {} ghosts), {} bodies sharing another body's animation set, {} bodies without placeholder.",
+                layout.placeholder_body_count,
+                layout.frames_fallback_body_count,
+                layout.body_without_frames_count,
+                layout.ghost_body_count,
+                layout.shared_animation_set_body_count,
+                layout.unmapped_body_count,
             );
         }
         Commands::PackEcTextures {

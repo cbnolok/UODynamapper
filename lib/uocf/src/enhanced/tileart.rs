@@ -785,6 +785,16 @@ impl TileArtEntry {
         }
     }
 
+    /// Value of `key` in `prop_vector1` only, as the client's definition getters read it
+    /// (for example `GetAppearance`, props1 key 8).
+    pub fn property1(&self, key: PropertyKey) -> Option<u32> {
+        let key_id = key as u8;
+        self.prop_vector1
+            .iter()
+            .find(|prop| prop.id == key_id)
+            .map(|prop| prop.val)
+    }
+
     fn get_property(&self, key: PropertyKey) -> Option<u32> {
         let key_id = key as u8;
         for prop in &self.prop_vector1 {

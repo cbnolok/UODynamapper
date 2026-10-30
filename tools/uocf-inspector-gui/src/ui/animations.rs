@@ -17,6 +17,7 @@ use uocf::classic::michelangelo_uop_codec::{
     export_anim_blocks_from_mul, MichelangeloPatch, MichelangeloPatchEntry,
 };
 use uocf::classic::vd_codec::VdFile;
+use uocf::enhanced::mobile_body::{MobileBodyDefinition, FALLBACK_FRAMES_BODY, MOBILE_DEFINITION_BASE};
 use uocf::uop_container::hash::hash_file_name_single;
 
 
@@ -75,13 +76,17 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
                 }
             });
 
-            // Frames of a body type are stored under its AnimationSequence stored id.
+            // The EC client draws a server body through its tileart.uop creature placeholder.
+            let sequence_id = selected_sequence_id(app);
             let frames_body_id = selected_frames_body_id(app);
-            if frames_body_id != body_id {
+            if sequence_id != body_id || frames_body_id != body_id {
                 ui.colored_label(
                     egui::Color32::YELLOW,
-                    format!("Redirected to: {}", frames_body_id),
+                    format!("Redirected to: sequence {sequence_id}, frames {frames_body_id}"),
                 );
+            }
+            if let Some(forced_hue) = selected_body_definition(app).and_then(|definition| definition.forced_hue()) {
+                ui.colored_label(egui::Color32::YELLOW, format!("Drawn with hue {forced_hue:#06x}"));
             }
 
             ui.horizontal(|ui| {
@@ -161,7 +166,7 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
 
     egui::CentralPanel::default().show(ui, |ui| {
         if app.client_data.is_some() {
-            let body_type = app.selected_anim_id;
+            let body_type = selected_sequence_id(app);
 
             // Try to load AnimationSequence if not already loaded for this body type
             if app.selected_anim_sequence.as_ref().map(|(id, _)| *id) != Some(body_type) {
@@ -209,7 +214,14 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
                     })
                 }
                 ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr => {
-                    let entry = selected_ec_animationframe_entry(app, body_id);
+                    // Like the client, a placeholder whose appearance has no frames shows body 0.
+                    let entry = selected_ec_animationframe_entry(app, body_id).or_else(|error| {
+                        if selected_body_definition(app).is_some() && body_id != FALLBACK_FRAMES_BODY {
+                            selected_ec_animationframe_entry(app, FALLBACK_FRAMES_BODY)
+                        } else {
+                            Err(error)
+                        }
+                    });
                     entry.and_then(|entry| {
                         let data = animationframe_payload(app, &entry)?;
                         decode_amo_animationframe_payload(&data)
@@ -1963,10 +1975,11 @@ fn build_ec_sequence_hash_map(
         if !dict_seq_map.contains_key(file_hash) {
             new_dic_entries.push((*file_hash, AnimationSequence::entry_path(body_id)));
         }
-        // Frame entries exist for the plain actions, under the sequence stored id.
+        // Candidate frame entries: the plain actions under the sequence's own body (frames are
+        // keyed by frame body; the stored id is an equipment wear-check id, not a frame key).
         for (&action_id, action) in &sequence.actions {
             if let (None, Ok(action_id)) = (action.alias, u16::try_from(action_id)) {
-                frame_pairs.push((sequence.stored_id, action_id));
+                frame_pairs.push((body_id, action_id));
             }
         }
     }
@@ -2126,13 +2139,32 @@ fn show_sequence_animation_tree(
         });
 }
 
-/// Body under which the frames of the selected body type are stored: the stored id of its
-/// `AnimationSequence.uop` entry when one is loaded, else the selected id.
+/// Creature placeholder `10000000 + body` of the selected server body, when `tileart.uop` is
+/// loaded.
+fn selected_body_definition(app: &UopInspectorApp) -> Option<MobileBodyDefinition> {
+    let entries = app.ec_tileart_entries.as_ref()?;
+    let tile_id = MOBILE_DEFINITION_BASE.checked_add(app.selected_anim_id)?;
+    let index = entries.binary_search_by_key(&tile_id, |file| file.entry.tile_id).ok()?;
+    MobileBodyDefinition::from_tileart_entry(&entries[index].entry)
+}
+
+fn is_ec_source(source: ArtSource) -> bool {
+    matches!(source, ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr)
+}
+
+/// `AnimationSequence.uop` entry of the selected server body: its placeholder body type, else
+/// the body itself.
+fn selected_sequence_id(app: &UopInspectorApp) -> u32 {
+    selected_body_definition(app).map_or(app.selected_anim_id, |definition| definition.sequence_id)
+}
+
+/// Body under which the frames of the selected server body are stored: for EC sources the
+/// placeholder appearance (body 0 is tried when it has no frames), else the selected id.
 fn selected_frames_body_id(app: &UopInspectorApp) -> u32 {
-    match &app.selected_anim_sequence {
-        Some((body_type, sequence)) if *body_type == app.selected_anim_id => sequence.stored_id,
-        _ => app.selected_anim_id,
+    if !is_ec_source(app.selected_legacy_source) {
+        return app.selected_anim_id;
     }
+    selected_body_definition(app).map_or(app.selected_anim_id, |definition| definition.requested_frames_body())
 }
 
 /// Entry positions, in the action's `AnimationFrame` entry, of the frames of `direction` of

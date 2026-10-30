@@ -18,6 +18,7 @@ pub const ANIMATION_MANIFEST_ENTRY_PATH: &str = "metadata/animations.bin";
 pub const FRAME_MANIFEST_ENTRY_PATH: &str = "metadata/frames.bin";
 pub const ITEM_MANIFEST_ENTRY_PATH: &str = "metadata/items.bin";
 pub const SOURCE_HINT_MANIFEST_ENTRY_PATH: &str = "metadata/source_hints.bin";
+pub const BODY_MANIFEST_ENTRY_PATH: &str = "metadata/bodies.bin";
 
 pub const MISSING_PAGE_INDEX: u32 = u32::MAX;
 pub const MISSING_PAGE_FRAME_INDEX: u16 = u16::MAX;
@@ -42,6 +43,30 @@ pub const ANIMATION_FLAG_UNDIRECTED: u16 = 1 << 2;
 /// shows only its first frame when the `idleAnimation` setting is off.
 pub const ANIMATION_FLAG_STAND_ACTION: u16 = 1 << 3;
 
+/// `MobileAnimEcFrameRecord::hue_mode`: no pixel of the frame takes the hue.
+pub const FRAME_HUE_NONE: u8 = 0;
+/// Every coded pixel (alpha > 0) of the frame takes the hue.
+pub const FRAME_HUE_ALL: u8 = 1;
+/// Some pixels take the hue: the hue mask page of the frame's page marks them.
+pub const FRAME_HUE_MASKED: u8 = 2;
+
+/// `MobileAnimEcPageRecord::flags`: the page has a hue mask page (`hue_mask_entry_path`).
+pub const PAGE_FLAG_HUE_MASK: u8 = 1 << 0;
+/// Hue mask byte of a pixel that takes the hue (`uocf` `HUE_MASK_HUEABLE`); other pixels are 0.
+pub const HUE_MASK_HUEABLE: u8 = uocf::enhanced::animationframe::HUE_MASK_HUEABLE;
+
+/// `MobileAnimEcBodyRecord::flags`: the body is a ghost and is drawn with `forced_hue`.
+pub const BODY_FLAG_GHOST: u16 = 1 << 0;
+/// The appearance has no frames; the client falls back to the frames of body 0.
+pub const BODY_FLAG_FRAMES_FALLBACK: u16 = 1 << 1;
+/// No `tileart.uop` creature placeholder: the body uses its own sequence and frames (the client
+/// cannot show it).
+pub const BODY_FLAG_NO_PLACEHOLDER: u16 = 1 << 2;
+/// The sequence has no `AnimationSequence` entry: the records carry `ANIMATION_FLAG_NO_SEQUENCE`.
+pub const BODY_FLAG_NO_SEQUENCE: u16 = 1 << 3;
+/// `MobileAnimEcBodyRecord::forced_hue` of a body drawn with its own hue.
+pub const NO_FORCED_HUE: u16 = 0;
+
 /// Directions of a mobile, in UO order (0 north .. 7 north-west); each has a record.
 pub const DIRECTION_COUNT: u8 = uocf::animation_sequence::DIRECTION_COUNT as u8;
 /// Directions below this one are mirrored (`ANIMATION_FLAG_MIRRORED`).
@@ -54,13 +79,16 @@ const ANIMATION_MANIFEST_MAGIC: [u8; 4] = *b"MEAN";
 const FRAME_MANIFEST_MAGIC: [u8; 4] = *b"MEFR";
 const ITEM_MANIFEST_MAGIC: [u8; 4] = *b"MEIT";
 const SOURCE_HINT_MANIFEST_MAGIC: [u8; 4] = *b"MESH";
+const BODY_MANIFEST_MAGIC: [u8; 4] = *b"MEBD";
 /// Metadata version written by the converter, in every manifest.
-pub const MOBILE_ANIM_EC_METADATA_VERSION: u32 = 3;
+pub const MOBILE_ANIM_EC_METADATA_VERSION: u32 = 4;
 const MOBILE_ANIM_EC_METADATA_VERSION_FIRST: u32 = 1;
 const MOBILE_ANIM_EC_METADATA_VERSION_DYNAMIC_PAGES: u32 = 2;
-/// First version whose animation and frame records follow the client `AnimationSequence`
-/// (actions, 8 directions, aliases, fps). Older records are not read: rebuild the package.
-const MOBILE_ANIM_EC_METADATA_VERSION_CLIENT_ANIMATIONS: u32 = 3;
+/// First version with the client pixel decoding (opaque colours, anchor centers, hue masks) and
+/// the `tileart.uop` body mapping (`metadata/bodies.bin`, records per server body). Version 3
+/// introduced the client `AnimationSequence` records (actions, 8 directions, aliases, fps).
+/// Older animation, frame and body data is not read: rebuild the package.
+const MOBILE_ANIM_EC_METADATA_VERSION_BODY_MAPPING: u32 = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MobileAnimEcPageRecord {
@@ -71,14 +99,46 @@ pub struct MobileAnimEcPageRecord {
     pub used_width: u32,
     pub used_height: u32,
     pub pixel_format: PagePixelFormat,
+    /// `PAGE_FLAG_*`.
+    pub flags: u8,
+}
+
+impl MobileAnimEcPageRecord {
+    pub fn has_hue_mask(&self) -> bool {
+        self.flags & PAGE_FLAG_HUE_MASK != 0
+    }
+}
+
+/// How the client draws one server body, from its `tileart.uop` creature placeholder
+/// `10000000 + body_id`. Records are sorted by `body_id`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MobileAnimEcBodyRecord {
+    pub body_id: u32,
+    /// `AnimationSequence` entry giving actions, directions and fps (the placeholder body type).
+    pub sequence_id: u32,
+    /// `AnimationFrame` body holding the pixels (`MobileAnimEcAnimationRecord::source_body_id`).
+    pub frames_body_id: u32,
+    /// Frame body the placeholder asks for (props1 key 8 appearance); differs from
+    /// `frames_body_id` with `BODY_FLAG_FRAMES_FALLBACK`.
+    pub appearance_body_id: u32,
+    /// Hue the client draws the body with regardless of the mobile hue (`GHOST_HUE` for
+    /// ghosts); `NO_FORCED_HUE` otherwise.
+    pub forced_hue: u16,
+    /// `BODY_FLAG_*`.
+    pub flags: u16,
+}
+
+impl MobileAnimEcBodyRecord {
+    pub fn is_ghost(&self) -> bool {
+        self.flags & BODY_FLAG_GHOST != 0
+    }
 }
 
 /// What the client shows for "body, action, direction" (one record per sequence action and
 /// direction 0..`DIRECTION_COUNT`). Records are sorted by `(body_id, action_id, direction)`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MobileAnimEcAnimationRecord {
-    /// Body type: the `AnimationSequence` entry name; for `ANIMATION_FLAG_NO_SEQUENCE` records
-    /// the `AnimationFrame` body.
+    /// Server body (see `MobileAnimEcBodyRecord`).
     pub body_id: u32,
     /// Requested action.
     pub action_id: u16,
@@ -92,8 +152,8 @@ pub struct MobileAnimEcAnimationRecord {
     pub frame_count: u16,
     /// `ANIMATION_FLAG_*`.
     pub flags: u16,
-    /// `AnimationFrame` body holding the frames (the sequence stored id: 146 -> 704,
-    /// 1308 -> 29, 1309 -> 1254; else `body_id`).
+    /// `AnimationFrame` body holding the frames: the tileart appearance of the body (401 -> 401,
+    /// 402 -> 400, 146 -> 124), body 0 when it has no frames. Bodies sharing it share the pixels.
     pub source_body_id: u32,
     /// Action whose frames are shown (`ResolveAction` with flying animations enabled).
     pub resolved_action_id: u16,
@@ -154,8 +214,14 @@ pub struct MobileAnimEcFrameRecord {
     pub y: u16,
     pub width: u16,
     pub height: u16,
+    /// Anchor inside the frame image: `(-x0, -y0)` of the `AnimationFrame` frame box (minus the
+    /// transparent trim, times the upscale). The pixels are straight-alpha RGBA: opaque solid
+    /// pixels, edge pixels with coverage alpha.
     pub center_x: i16,
     pub center_y: i16,
+    /// `FRAME_HUE_*`: which pixels take the mobile hue. The hue table key of a hueable pixel is
+    /// its red byte.
+    pub hue_mode: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -246,6 +312,7 @@ pub struct MobileAnimEcPackage {
     gutter: u16,
     packing_mode: AtlasPackingMode,
     pages: Vec<MobileAnimEcPageRecord>,
+    bodies: Vec<MobileAnimEcBodyRecord>,
     animations: Vec<MobileAnimEcAnimationRecord>,
     animation_lookup: HashMap<(u32, u16, u8), usize>,
     lowest_plain_actions: HashMap<u32, u16>,
@@ -284,6 +351,8 @@ impl MobileAnimEcPackage {
             .context("mobile_anim_ec.uddp missing metadata/items.bin")?;
         let source_hint_manifest = read_path_entry_cow(&package, SOURCE_HINT_MANIFEST_ENTRY_PATH)
             .context("mobile_anim_ec.uddp missing metadata/source_hints.bin")?;
+        let body_manifest = read_path_entry_cow(&package, BODY_MANIFEST_ENTRY_PATH)
+            .context("mobile_anim_ec.uddp missing metadata/bodies.bin; rebuild mobile_anim_ec.uddp")?;
 
         let (atlas_width, atlas_height, gutter, packing_mode, pages) =
             parse_page_manifest(&page_manifest)?;
@@ -291,6 +360,7 @@ impl MobileAnimEcPackage {
         let frames = parse_frame_manifest(&frame_manifest)?;
         let items = parse_item_manifest(&item_manifest)?;
         let source_hints = parse_source_hint_manifest(&source_hint_manifest)?;
+        let bodies = parse_body_manifest(&body_manifest)?;
         let mut animation_lookup = HashMap::with_capacity(animations.len());
         let mut lowest_plain_actions = HashMap::<u32, u16>::new();
         for (index, animation) in animations.iter().enumerate() {
@@ -308,6 +378,7 @@ impl MobileAnimEcPackage {
             gutter,
             packing_mode,
             pages,
+            bodies,
             animations,
             animation_lookup,
             lowest_plain_actions,
@@ -323,10 +394,19 @@ impl MobileAnimEcPackage {
     pub fn gutter(&self) -> u16 { self.gutter }
     pub fn packing_mode(&self) -> AtlasPackingMode { self.packing_mode }
     pub fn pages(&self) -> &[MobileAnimEcPageRecord] { &self.pages }
+    pub fn bodies(&self) -> &[MobileAnimEcBodyRecord] { &self.bodies }
     pub fn animations(&self) -> &[MobileAnimEcAnimationRecord] { &self.animations }
     pub fn frames(&self) -> &[MobileAnimEcFrameRecord] { &self.frames }
     pub fn items(&self) -> &[MobileAnimEcItemRecord] { &self.items }
     pub fn source_hints(&self) -> &[MobileAnimEcSourceHintRecord] { &self.source_hints }
+
+    /// Body mapping of a server body.
+    pub fn body(&self, body_id: u32) -> Option<&MobileAnimEcBodyRecord> {
+        self.bodies
+            .binary_search_by_key(&body_id, |body| body.body_id)
+            .ok()
+            .map(|index| &self.bodies[index])
+    }
 
     /// Record of exactly (body, action, direction); `None` when the sequence has no such action.
     pub fn animation(&self, body_id: u32, action_id: u16, direction: u8) -> Option<&MobileAnimEcAnimationRecord> {
@@ -433,6 +513,75 @@ impl MobileAnimEcPackage {
     }
 }
 
+impl MobileAnimEcPackage {
+    /// R8 hue mask of a page (`used_width * used_height` bytes), `None` when the page has none.
+    /// Only the rects of `FRAME_HUE_MASKED` frames (and their gutters) are meaningful.
+    pub fn read_page_hue_mask(&self, page_index: u32) -> eyre::Result<Option<Vec<u8>>> {
+        let page = self
+            .pages
+            .iter()
+            .find(|page| page.page_index == page_index)
+            .ok_or_else(|| eyre::eyre!("missing EC mobile animation atlas page metadata for {page_index}"))?;
+        if !page.has_hue_mask() {
+            return Ok(None);
+        }
+        let mask = read_path_entry(&self.package, &hue_mask_entry_path(page_index))
+            .wrap_err_with(|| format!("unpack EC mobile animation hue mask page {page_index}"))?;
+        let expected_len = page.used_width as usize * page.used_height as usize;
+        if mask.len() != expected_len {
+            eyre::bail!(
+                "EC mobile animation hue mask page {page_index} has {} bytes, expected {expected_len}",
+                mask.len()
+            );
+        }
+        Ok(Some(mask))
+    }
+
+    /// Hue mask of a frame, one byte per pixel (`HUE_MASK_HUEABLE` or 0); `None` for
+    /// `FRAME_HUE_NONE` or an empty frame.
+    pub fn read_frame_hue_mask(&self, frame: &MobileAnimEcFrameRecord) -> eyre::Result<Option<Vec<u8>>> {
+        if frame.page_index == MISSING_PAGE_INDEX || frame.width == 0 || frame.height == 0 {
+            return Ok(None);
+        }
+        match frame.hue_mode {
+            FRAME_HUE_NONE => Ok(None),
+            FRAME_HUE_ALL => {
+                let rgba = self.read_frame_rgba(frame)?;
+                Ok(Some(
+                    rgba.chunks_exact(RGBA_CHANNELS)
+                        .map(|pixel| if pixel[RGBA_ALPHA_CHANNEL] != 0 { HUE_MASK_HUEABLE } else { 0 })
+                        .collect(),
+                ))
+            }
+            FRAME_HUE_MASKED => {
+                let page = self
+                    .pages
+                    .iter()
+                    .find(|page| page.page_index == frame.page_index)
+                    .ok_or_else(|| eyre::eyre!("missing EC mobile animation atlas page metadata for {}", frame.page_index))?;
+                let mask = self.read_page_hue_mask(frame.page_index)?.ok_or_else(|| {
+                    eyre::eyre!("EC mobile animation page {} has masked frames but no hue mask", frame.page_index)
+                })?;
+                let stride = page.used_width as usize;
+                let (x, y) = (frame.x as usize, frame.y as usize);
+                let (width, height) = (frame.width as usize, frame.height as usize);
+                if x + width > stride || y + height > page.used_height as usize {
+                    eyre::bail!("EC mobile animation frame rect is outside hue mask page {}", frame.page_index);
+                }
+                let mut frame_mask = Vec::with_capacity(width * height);
+                for row in y..y + height {
+                    frame_mask.extend_from_slice(&mask[row * stride + x..row * stride + x + width]);
+                }
+                Ok(Some(frame_mask))
+            }
+            mode => eyre::bail!("invalid EC mobile animation frame hue mode {mode}"),
+        }
+    }
+}
+
+const RGBA_CHANNELS: usize = 4;
+const RGBA_ALPHA_CHANNEL: usize = 3;
+
 fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, AtlasPackingMode, Vec<MobileAnimEcPageRecord>)> {
     let mut cursor = Cursor::new(bytes);
     let mut magic = [0u8; 4];
@@ -466,6 +615,11 @@ fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, AtlasPackin
             used_width: cursor.read_u32::<LittleEndian>()?,
             used_height: cursor.read_u32::<LittleEndian>()?,
             pixel_format,
+            flags: if version >= MOBILE_ANIM_EC_METADATA_VERSION_BODY_MAPPING {
+                cursor.read_u8()?
+            } else {
+                0
+            },
         });
     }
     Ok((width, height, gutter, packing_mode, pages))
@@ -528,6 +682,7 @@ fn parse_frame_manifest(bytes: &[u8]) -> eyre::Result<Vec<MobileAnimEcFrameRecor
             height: cursor.read_u16::<LittleEndian>()?,
             center_x: cursor.read_i16::<LittleEndian>()?,
             center_y: cursor.read_i16::<LittleEndian>()?,
+            hue_mode: cursor.read_u8()?,
         });
     }
     Ok(frames)
@@ -598,16 +753,48 @@ fn parse_source_hint_manifest(bytes: &[u8]) -> eyre::Result<Vec<MobileAnimEcSour
     Ok(source_hints)
 }
 
+fn parse_body_manifest(bytes: &[u8]) -> eyre::Result<Vec<MobileAnimEcBodyRecord>> {
+    let mut cursor = Cursor::new(bytes);
+    let mut magic = [0u8; 4];
+    cursor.read_exact(&mut magic)?;
+    if magic != BODY_MANIFEST_MAGIC { eyre::bail!("invalid EC mobile animation body magic"); }
+    let version = cursor.read_u32::<LittleEndian>()?;
+    if !is_supported_animation_metadata_version(version) {
+        eyre::bail!("unsupported EC mobile animation body version {version}; rebuild mobile_anim_ec.uddp");
+    }
+    let count = cursor.read_u32::<LittleEndian>()? as usize;
+    let mut bodies = Vec::with_capacity(count);
+    for _ in 0..count {
+        bodies.push(MobileAnimEcBodyRecord {
+            body_id: cursor.read_u32::<LittleEndian>()?,
+            sequence_id: cursor.read_u32::<LittleEndian>()?,
+            frames_body_id: cursor.read_u32::<LittleEndian>()?,
+            appearance_body_id: cursor.read_u32::<LittleEndian>()?,
+            forced_hue: cursor.read_u16::<LittleEndian>()?,
+            flags: cursor.read_u16::<LittleEndian>()?,
+        });
+    }
+    if !bodies.windows(2).all(|pair| pair[0].body_id < pair[1].body_id) {
+        eyre::bail!("EC mobile animation body records are not sorted by body id");
+    }
+    Ok(bodies)
+}
+
 fn is_supported_metadata_version(version: u32) -> bool {
     (MOBILE_ANIM_EC_METADATA_VERSION_FIRST..=MOBILE_ANIM_EC_METADATA_VERSION).contains(&version)
 }
 
 fn is_supported_animation_metadata_version(version: u32) -> bool {
-    (MOBILE_ANIM_EC_METADATA_VERSION_CLIENT_ANIMATIONS..=MOBILE_ANIM_EC_METADATA_VERSION).contains(&version)
+    (MOBILE_ANIM_EC_METADATA_VERSION_BODY_MAPPING..=MOBILE_ANIM_EC_METADATA_VERSION).contains(&version)
 }
 
 pub fn page_entry_path(page_index: u32, fmt: PagePixelFormat) -> String {
     format!("pages/{page_index:05}.{}", fmt.extension())
+}
+
+/// R8 hue mask of a page with `PAGE_FLAG_HUE_MASK`, same size as the page's used area.
+pub fn hue_mask_entry_path(page_index: u32) -> String {
+    format!("masks/{page_index:05}.r8")
 }
 
 #[cfg(test)]
