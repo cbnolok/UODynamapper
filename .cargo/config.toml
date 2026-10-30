@@ -20,6 +20,9 @@ target-dir = "/home/claudio/rust-target/uodynamapper"
 # for both nightly (reccomended) and stable Rust toolchains.
 # !!!!!!!!!!
 
+# No "-C embed-bitcode=no" here: Cargo already skips bitcode when LTO is off, and forcing it makes
+#  plain `cargo build --release` fail, since the release profile uses thin LTO.
+
 
 # ----------
 # Linux, GNU libc (default)
@@ -36,7 +39,6 @@ linker = "aarch64-linux-gnu-gcc"
 rustflags = [
   # rustc flags
   "-C", "force-frame-pointers=yes",
-  "-C", "embed-bitcode=no",
   "-C", "symbol-mangling-version=v0",
   "-C", "split-debuginfo=packed",
   # linker flags
@@ -53,7 +55,6 @@ rustflags = [
 rustflags = [
   # rustc flags
   "-C", "force-frame-pointers=yes",
-  "-C", "embed-bitcode=no",
   "-C", "symbol-mangling-version=v0",
   "-C", "split-debuginfo=packed",
   # linker flags
@@ -73,7 +74,6 @@ rustflags = [
 rustflags = [
   # rustc flags
   "-C", "force-frame-pointers=yes",
-  "-C", "embed-bitcode=no",
   "-C", "symbol-mangling-version=v0",
   #"-C", "target-feature=+crt-static",
   # linker flags

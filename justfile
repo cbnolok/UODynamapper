@@ -170,10 +170,15 @@ rustflags_release_nightly_musl := ""
 rustflags_profile_stable_musl := ""
 rustflags_profile_nightly_musl := ""
 
+# Strip the local checkout path from optimized binaries. Skipped when the path contains spaces, since RUSTFLAGS
+#   is split on whitespace.
+workspace_dir        := justfile_directory()
+remap_workspace_flag := if replace(workspace_dir, " ", "") == workspace_dir { " --remap-path-prefix=" + workspace_dir + "=." } else { "" }
+
 # Specialized RUSTFLAGS for different build types (exported to be accessible in shell commands)
 rustflags_debug_common              := linker_debug_flags + " -Csplit-debuginfo=packed -Csymbol-mangling-version=v0 -Cembed-bitcode=no"   # llvm bitcode is unneeded since we are not using LTO in debug
-rustflags_optimized_common_stable   := linker_optimized_flags_stable  + " --remap-path-prefix -Csplit-debuginfo=packed -Csymbol-mangling-version=v0"
-rustflags_optimized_common_nightly  := linker_optimized_flags_nightly + " --remap-path-prefix -Csplit-debuginfo=packed -Csymbol-mangling-version=v0" +\
+rustflags_optimized_common_stable   := linker_optimized_flags_stable  + remap_workspace_flag + " -Csplit-debuginfo=packed -Csymbol-mangling-version=v0"
+rustflags_optimized_common_nightly  := linker_optimized_flags_nightly + remap_workspace_flag + " -Csplit-debuginfo=packed -Csymbol-mangling-version=v0" +\
                                         " -Zshare-generics=y -Zlocation-detail=none"
 export RUSTFLAGS_RELEASE_STABLE     := rustflags_optimized_common_stable  +\
                                         " -Cforce-unwind-tables=no"
