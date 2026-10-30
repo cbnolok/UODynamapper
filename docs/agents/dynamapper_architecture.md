@@ -64,6 +64,7 @@ In Enhanced Classic mode, missing EC terrain textures must remain explicit (blac
 
 ### General
 
+- Preserve logical map/object X, Y, raw Z, tile heights and movement flags losslessly for the future playable client. Billboard offsets, visual relief, camera-plane displacement and painter priority belong to rendering; they must not replace the world data used for walking, collision or surface selection.
 - **No backwards compatibility**: do not add code to support legacy `.udd` file versions. Always require the latest format.
 - **Do not remove existing comments.** Code is thoroughly commented for readers not versed in graphics programming.
 - **Logging**: use `log::trace!` / `debug!` / `info!` / `warn!` / `error!`. Do not use `println!` for diagnostics; `println!` is acceptable only for existing end-user CLI output following established convention.

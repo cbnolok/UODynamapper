@@ -831,6 +831,44 @@ They are not evidence for an arbitrary rectangular billboard or a NIF mesh.
 Keep reflection-coordinate reconstruction, projected height, overlap/depth and
 regular item image-window geometry as separately validated contracts.
 
+### Ordinary sprite windows and legacy artwork
+
+The live Ghidra project now identifies `0x4592e0` as
+`UOTileArt::BuildSpriteDescriptor` (the assigned name is probable; the address
+and operations are the evidence). Its explicit legacy branch selects descriptor
+mode 0, the legacy image/window and the legacy scale. The non-legacy branch
+tests `UseNewArt` (`0x80000`): that path selects mode 1 and the world-art window,
+adds one to its end coordinates, and uses a 44x44 window without world art.
+Otherwise the enhanced-tile-art branch selects mode 2, multiplies the legacy
+scale by `0.6666667`, and multiplies the legacy window ends by 1.5. Ordinary
+image-window geometry and the separately flagged camera quad must not share an
+assumed fixed 64-pixel scale solely because both come from EC packages.
+
+`0x45a080` passes descriptor `+0x44` as the scale to `0x459b00`. The latter
+uses `0.021427423` world units per scaled source pixel on **both** camera-plane
+axes. Horizontal offset is `offset_x * scale * 0.021427423`; the bottom vertical
+offset is `-offset_y * scale * 0.021427423`. It adds rounded scaled window width
+and height for the opposite corners, then transforms those coordinates through
+the camera matrix. This is equal-pixel camera-plane geometry, not an upright
+world-Y card. Placement `0x4598d0` separately displaces the raw Z along camera up
+by `0.12856454` per unit; neither value is collision height metadata.
+
+The supplied 2026-10-26 EC references use **classic/legacy object artwork**, as
+confirmed by the user. Compare them with an explicit CC-art/EC-land diagnostic
+configuration; a different tree or roof in the EC-art configuration does not by
+itself establish a selector defect. Asset build versions, filtering and shading
+still differ, so shared silhouettes do not establish identical packed pixels.
+
+Our ordinary cards currently use world-Y/XZ pixel ratio 0.75. At the default
+isometric pitch and 1.79 vertical lens stretch this projects to approximately
+1.096 vertical pixels per horizontal pixel. That is a scale hypothesis to check
+on individual matched sprites, not authority for changing raw terrain Z or every
+anchor. Whole-scene affine matching mixes ground positions, elevations and
+sprite interiors and cannot isolate that ratio. The temporary hybrid town,
+bridge and static/terrain-transition captures preserve the current baseline.
+Logical XYZ, object/tile heights and movement flags must remain independent of
+any eventual visual projection correction for the future walking client.
+
 
 The runtime reflection path now reconstructs this original view domain for the
 default orthographic isometric camera. `ec_liquid_original_view` projects signed
