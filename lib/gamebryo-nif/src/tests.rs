@@ -331,3 +331,36 @@ fn defaults_follow_sdk_constructors() {
     assert_eq!(flags.0, 0b1100);
     assert_eq!(flags.cycle_type(), 2);
 }
+
+#[test]
+fn round_trips_light_blocks() {
+    let mut point = NiPointLight::default();
+    // SDK constructor: constant 0, linear 1, quadratic 0.
+    assert_eq!((point.atten0, point.atten1, point.atten2), (0.0, 1.0, 0.0));
+    point.atten2 = NODE_SCALE;
+    point.dimmer = NODE_SCALE;
+    let mut spot = NiSpotLight::default();
+    assert_eq!(spot.spot_exponent, 1.0);
+    spot.outer_spot_angle = NODE_SCALE;
+    let mut color = NiLightColorController::default();
+    color.flags.set_is_ambient(true);
+    let nif = file_of(vec![
+        single_node().into(),
+        NiAmbientLight::default().into(),
+        point.clone().into(),
+        spot.into(),
+        color.into(),
+        NiLightDimmerController::default().into(),
+    ]);
+    let bytes = nif.write().unwrap();
+    let back = NifFile::read(&bytes).unwrap();
+    assert_eq!(back, nif);
+    assert_eq!(back.blocks_of::<NiLight>().count(), 3);
+    assert!(back.blocks[4].get::<NiLightColorController>().unwrap().flags.is_ambient());
+    // Version 20.0.0.4 stores no inner spot angle: a spot light adds the outer angle and the exponent.
+    let point_size = file_of(vec![point.into()]).write().unwrap().len();
+    let spot_size = file_of(vec![NiSpotLight::default().into()]).write().unwrap().len();
+    // The header names the block type: "NiSpotLight" is one byte shorter than "NiPointLight".
+    let name_bytes = "NiPointLight".len() - "NiSpotLight".len();
+    assert_eq!(spot_size + name_bytes - point_size, 2 * std::mem::size_of::<f32>());
+}

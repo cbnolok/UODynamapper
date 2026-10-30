@@ -1,5 +1,6 @@
 NiAlphaController
 NiAlphaProperty
+NiAmbientLight
 NiBillboardNode
 NiBoolData
 NiBoolInterpolator
@@ -13,6 +14,8 @@ NiFloatExtraData
 NiFloatInterpolator
 NiGeomMorpherController
 NiIntegersExtraData
+NiLightColorController
+NiLightDimmerController
 NiMaterialColorController
 NiMaterialProperty
 NiMeshPSysData
@@ -49,10 +52,12 @@ NiParticleSystem
 NiPathInterpolator
 NiPixelData
 NiPoint3Interpolator
+NiPointLight
 NiPosData
 NiSortAdjustNode
 NiSourceTexture
 NiSpecularProperty
+NiSpotLight
 NiStencilProperty
 NiStringExtraData
 NiTextureEffect

@@ -489,6 +489,21 @@ const KEY_TYPE_OPTIONS: &[EnumOption] = &[
 
 crate::nif_enum!(KeyType, u32, EnumKind::Enum(KEY_TYPE_OPTIONS));
 
+/// bitfield `LightColorFlags` (storage `u16`), from `CoreLibs/NiAnimation/NiLightColorController.h`.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct LightColorFlags(pub u16);
+
+impl LightColorFlags {
+    pub fn is_ambient(&self) -> bool { self.0 & 0x1 != 0 }
+    pub fn set_is_ambient(&mut self, value: bool) { if value { self.0 |= 0x1 } else { self.0 &= !0x1 } }
+}
+
+const LIGHT_COLOR_FLAGS_MEMBERS: &[BitfieldMember] = &[
+    BitfieldMember { name: "is_ambient", pos: 0, width: 1, nif_type: "bool" },
+];
+
+crate::nif_enum!(LightColorFlags, u16, EnumKind::Bitfield(LIGHT_COLOR_FLAGS_MEMBERS));
+
 /// enum `LightingMode` (storage `u32`), from `CoreLibs/NiMain/NiVertexColorProperty.h`.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct LightingMode(pub u32);

@@ -308,6 +308,19 @@ object NiLight : NiDynamicEffect abstract from "CoreLibs/NiMain/NiLight.cpp"
 
 object NiDirectionalLight : NiLight from "CoreLibs/NiMain/NiDirectionalLight.cpp"
 
+object NiAmbientLight : NiLight from "CoreLibs/NiMain/NiAmbientLight.cpp"
+
+object NiPointLight : NiLight from "CoreLibs/NiMain/NiPointLight.cpp"
+    atten0: f32
+    atten1: f32 = 1.0
+    atten2: f32
+
+# Angles in degrees. m_fInnerSpotAngle is streamed since 20.2.0.5 (default 0).
+object NiSpotLight : NiPointLight from "CoreLibs/NiMain/NiSpotLight.cpp"
+    outer_spot_angle: f32
+    inner_spot_angle: f32 since 20.2.0.5
+    spot_exponent: f32 = 1.0
+
 enum TextureType : u32 from "CoreLibs/NiMain/NiTextureEffect.h"
     PROJECTED_LIGHT
     PROJECTED_SHADOW

@@ -1001,10 +1001,14 @@ No format change is needed: the parser is already correct for all 269 entries.
   `Hues.dds` size was not read in the binary). A frame capture of a hued effect with a hue >= 1024 would
   show it.
 - **Hued quad, shader map flags, target clear colour:** settled (see "Hued NIF effects").
-- **Lights inside effect NIFs:** the client applies the two `NiDirectionalLight`s of
-  `00005540_shadowstrike.nif` to that file's own meshes (the only shipped file with lights);
-  `lib/particle-sim` does not compile NIF lights into `NifEffectDesc` (it would change the packed codec), so
-  that file previews unlit unless `SceneLighting` is set by the caller.
+- **Lights inside effect NIFs** (**settled**): the client applies the two `NiDirectionalLight`s of
+  `00005540_shadowstrike.nif` to that file's own meshes (the only shipped file with lights).
+  `UOParticleEffectNif::Init` runs `Update(0)`, `UpdateProperties` (`FUN_00663f10`, call at 0x0041aa4a) and
+  `NiAVObject::UpdateEffects` (`FUN_006641f0`, call at 0x0041aa53) on the scene root before attaching it to
+  the render group, so the effect state (`NiNode` effect lists less each light's unaffected nodes:
+  `NiNode::UpdateEffectsDownward` `FUN_00676480`, vtable +0x74; `PushLocalEffects` `FUN_00676120`) is built
+  once there. `lib/particle-sim` compiles the lights (`NifLight`, NIF desc and codec version 2) and adds them,
+  per vertex, to the meshes they reach; particles (no normals) get only ambient lights.
 - **World camera tilt:** settled (C = Z(-π/2) · X(0.001 - π/4) · Z(-0.05)).
 - **Hued constructor depth bias:** object vtable +0x11c / +0x124 (scaled by -0.001 and -1e-5) were not
   identified.

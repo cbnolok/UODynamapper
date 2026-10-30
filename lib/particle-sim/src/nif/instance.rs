@@ -3,16 +3,16 @@
 use std::sync::Arc;
 
 use super::desc::{
-    AV_FLAG_APP_CULLED, CullMode, NifEffectDesc, NifMaterial, NifModifierKind, NifNodeKind, NifRenderState, NifTextureTransform, TextureApplyMode,
-    TextureSlot, TextureTransformMethod,
+    AV_FLAG_APP_CULLED, CullMode, NifEffectDesc, NifLight, NifLightKind, NifMaterial, NifModifierKind, NifNodeKind,
+    NifRenderState, NifTextureTransform, TextureApplyMode, TextureSlot, TextureTransformMethod,
 };
 use super::particles::NifParticle;
 use super::scene::{SceneOrder, SceneState, Xf, make_rotation};
 use crate::math::{Mat3, Vec3};
 use crate::render::{
-    BatchState, BlendFactor, BlendState, CameraFrame, DepthState, DrawBatch, MaterialColors, MeshDraw,
-    MeshGeometry, RenderFrame, SceneLighting, SpriteInstance, SpriteKind, TextureStage, UvRect, UvTransform,
-    light_vertex,
+    BatchState, BlendFactor, BlendState, CameraFrame, DepthState, DrawBatch, EffectLight, EffectLightKind,
+    MaterialColors, MeshDraw, MeshGeometry, RenderFrame, SceneLighting, SpriteInstance, SpriteKind, TextureStage,
+    UvRect, UvTransform, accumulate_lights, light_vertex,
 };
 use crate::rng::{CrtRng, MsvcRand};
 use crate::system::{NodeTransform, ParticleSystemInstance, SECONDS_PER_MS};
@@ -42,6 +42,8 @@ pub struct NifEffect {
     order: SceneOrder,
     /// Per node: the depth-first draw position.
     draw_order: Vec<u32>,
+    /// Per node: the [`NifEffectDesc::lights`] that light it ([`affected_lights`]).
+    node_lights: Vec<Vec<usize>>,
 }
 
 impl NifEffect {
@@ -52,6 +54,7 @@ impl NifEffect {
             draw_order[node] = position as u32;
         }
         Self {
+            node_lights: affected_lights(&desc),
             geometries: desc.meshes.iter().map(|mesh| Arc::new(mesh.geometry.clone())).collect(),
             mesh_names: desc.meshes.iter().map(|mesh| Arc::from(desc.nodes[mesh.node].name.as_str())).collect(),
             texture_names: desc.textures.iter().map(|texture| Arc::from(texture.name())).collect(),
@@ -77,6 +80,74 @@ fn mesh_prototypes(desc: &NifEffectDesc, system: usize) -> &[usize] {
             })
         })
         .unwrap_or(&[])
+}
+
+/// The lights of each node: its effect state, as `NiAVObject::UpdateEffects` (UOSA.exe 0x006641f0) builds it on
+/// the scene root once, at `UOParticleEffectNif::Init` (the call at 0x0041aa53, after the time-0 update). Walking
+/// down (`NiNode::UpdateEffectsDownward`, `PushLocalEffects`), a node drops the inherited lights that list it as
+/// unaffected and adds those of its own effect list; children inherit the result. Mesh particle prototypes
+/// start from their particle system's state (the clones hang under it); other nodes outside the scene have
+/// only their own subtree's lists.
+fn affected_lights(desc: &NifEffectDesc) -> Vec<Vec<usize>> {
+    let count = desc.nodes.len();
+    let mut lights = vec![Vec::new(); count];
+    let mut visited = vec![false; count];
+    let mut walk = |top: usize, inherited: Vec<usize>, lights: &mut Vec<Vec<usize>>| {
+        let mut stack = vec![(top, inherited)];
+        while let Some((node, inherited)) = stack.pop() {
+            if node >= count || visited[node] {
+                continue;
+            }
+            visited[node] = true;
+            let unaffected = |light: usize| desc.lights.get(light).is_some_and(|l| l.unaffected_nodes.contains(&node));
+            let mut state: Vec<usize> = inherited.into_iter().filter(|&light| !unaffected(light)).collect();
+            for &light in &desc.nodes[node].lights {
+                if !state.contains(&light) {
+                    state.push(light);
+                }
+            }
+            stack.extend(desc.nodes[node].children.iter().map(|&child| (child, state.clone())));
+            lights[node] = state;
+        }
+    };
+    if let Some(root) = desc.root {
+        walk(root, Vec::new(), &mut lights);
+    }
+    for (index, system) in desc.particle_systems.iter().enumerate() {
+        let inherited = lights.get(system.node).cloned().unwrap_or_default();
+        for &prototype in mesh_prototypes(desc, index) {
+            walk(prototype, inherited.clone(), &mut lights);
+        }
+    }
+    for node in 0..count {
+        walk(node, Vec::new(), &mut lights);
+    }
+    lights
+}
+
+/// A light as the renderer applies it at the light node's world transform `world`; `None` when it is switched
+/// off (`NiDX9LightManager::UpdateLights` skips it; the ambient sum `SCM_DEF_AMBIENTLIGHT` too).
+fn effect_light(light: &NifLight, world: &Xf) -> Option<EffectLight> {
+    if !light.on {
+        return None;
+    }
+    let direction = world.rotation.col(0);
+    let position = world.translation;
+    let kind = match light.kind {
+        NifLightKind::Ambient => EffectLightKind::Ambient,
+        NifLightKind::Directional => EffectLightKind::Directional { direction },
+        NifLightKind::Point { attenuation } => EffectLightKind::Point { position, attenuation },
+        NifLightKind::Spot { attenuation, outer_angle, exponent } => EffectLightKind::Spot {
+            position,
+            direction,
+            attenuation,
+            // NiSpotLight::SetSpotAngle: cos(angle * NI_PI / 180).
+            cos_outer: outer_angle.to_radians().cos(),
+            exponent,
+        },
+    };
+    let dim = |color: [f32; 3]| color.map(|channel| channel * light.dimmer);
+    Some(EffectLight { kind, ambient: dim(light.ambient), diffuse: dim(light.diffuse) })
 }
 
 /// `NiTextureTransform::UpdateMatrix` as a [`UvTransform`] (`u' = col0.x u + col1.x v + col2.x`).
@@ -292,7 +363,24 @@ impl<R: CrtRng> NifEffectInstance<R> {
         (texturing.apply_mode, stages)
     }
 
-    fn mesh_draw(&self, scene: &SceneState, mesh: usize, world: &Xf, order: u32) -> MeshDraw {
+    /// The current world lights ([`effect_light`]), by [`NifEffectDesc::lights`] index.
+    fn world_lights(&self) -> Vec<Option<EffectLight>> {
+        self.scene
+            .lights
+            .iter()
+            .map(|light| self.scene.nodes.get(light.node).and_then(|node| effect_light(light, &node.world)))
+            .collect()
+    }
+
+    /// The lights reaching `node`, from the frame's [`Self::world_lights`].
+    fn node_lights(&self, lights: &[Option<EffectLight>], node: usize) -> Vec<EffectLight> {
+        self.effect
+            .node_lights
+            .get(node)
+            .map_or_else(Vec::new, |indices| indices.iter().filter_map(|&light| lights.get(light).copied().flatten()).collect())
+    }
+
+    fn mesh_draw(&self, scene: &SceneState, mesh: usize, world: &Xf, order: u32, lights: &[Option<EffectLight>]) -> MeshDraw {
         let desc = &self.effect.desc.meshes[mesh];
         let render = &desc.render_state;
         let (apply_mode, textures) = self.texture_stages(scene, render);
@@ -313,6 +401,7 @@ impl<R: CrtRng> NifEffectInstance<R> {
             depth: DepthState { test: render.z_buffer.test, write: render.z_buffer.write },
             depth_function: render.z_buffer.function,
             cull: render.cull,
+            lights: self.node_lights(lights, desc.node),
         }
     }
 
@@ -325,6 +414,7 @@ impl<R: CrtRng> NifEffectInstance<R> {
         parent: &Xf,
         local: Option<Xf>,
         order: u32,
+        lights: &[Option<EffectLight>],
         out: &mut RenderFrame,
     ) {
         let desc = &self.effect.desc;
@@ -334,14 +424,14 @@ impl<R: CrtRng> NifEffectInstance<R> {
         }
         let world = parent.mul(&local.unwrap_or(state.local));
         if let NifNodeKind::Mesh { mesh } = desc.nodes[node].kind {
-            out.mesh_draws.push(self.mesh_draw(scene, mesh, &world, order));
+            out.mesh_draws.push(self.mesh_draw(scene, mesh, &world, order, lights));
         }
         for &child in &desc.nodes[node].children {
-            self.draw_subtree(scene, child, &world, None, order, out);
+            self.draw_subtree(scene, child, &world, None, order, lights, out);
         }
     }
 
-    fn render_particles(&self, system: usize, order: u32, out: &mut RenderFrame) {
+    fn render_particles(&self, system: usize, order: u32, lights: &[Option<EffectLight>], out: &mut RenderFrame) {
         let desc = &self.effect.desc.particle_systems[system];
         let world = self.scene.nodes[desc.node].world;
         let particles = self.particles(system);
@@ -349,7 +439,7 @@ impl<R: CrtRng> NifEffectInstance<R> {
             return;
         }
         if desc.mesh_particles {
-            self.render_mesh_particles(system, &world, order, out);
+            self.render_mesh_particles(system, &world, order, lights, out);
             return;
         }
         let render = &desc.render_state;
@@ -358,13 +448,15 @@ impl<R: CrtRng> NifEffectInstance<R> {
         let base = stages.iter().find(|stage| stage.slot == TextureSlot::Base);
         let replaces = apply_mode == TextureApplyMode::Replace && base.is_some();
         let kind = if desc.has_rotation_angles { SpriteKind::RotatedBillboard } else { SpriteKind::Billboard };
+        // Particles have no normals: only the effect's ambient lights reach them, the same at every particle.
+        let lighting = accumulate_lights(&self.lighting, &self.node_lights(lights, desc.node), Vec3::ZERO, None);
         let start = out.sprites.len();
         for particle in particles {
             let color = if replaces {
                 [1.0; 4]
             } else {
                 let vertex = desc.has_colors.then_some(particle.color);
-                light_vertex(&material, vertex, render.vertex_color, &self.lighting)
+                light_vertex(&material, vertex, render.vertex_color, &lighting)
             };
             out.sprites.push(SpriteInstance {
                 position: world.point(particle.position),
@@ -400,7 +492,14 @@ impl<R: CrtRng> NifEffectInstance<R> {
     /// a clone of the mesh prototype of its generation, its local transform replaced by the particle's position,
     /// rotation (`MakeRotation(angle, axis)`) and `|radius × size|`, in the state of its clone (the prototype's
     /// controllers at the particle's age).
-    fn render_mesh_particles(&self, system: usize, world: &Xf, order: u32, out: &mut RenderFrame) {
+    fn render_mesh_particles(
+        &self,
+        system: usize,
+        world: &Xf,
+        order: u32,
+        lights: &[Option<EffectLight>],
+        out: &mut RenderFrame,
+    ) {
         let desc = &self.effect.desc.particle_systems[system];
         let prototypes = mesh_prototypes(&self.effect.desc, system);
         let Some(last) = prototypes.len().checked_sub(1) else { return };
@@ -414,13 +513,14 @@ impl<R: CrtRng> NifEffectInstance<R> {
             };
             let placement =
                 Xf { rotation, translation: particle.position, scale: (particle.radius * particle.size).abs() };
-            self.draw_subtree(pose, prototype, world, Some(placement), order, out);
+            self.draw_subtree(pose, prototype, world, Some(placement), order, lights, out);
         }
     }
 
     /// Appends the effect's draws: mesh draws and particle batches of the visible scene nodes, in scene order.
     pub fn render_frame(&self, out: &mut RenderFrame) {
         let effect = &self.effect;
+        let lights = self.world_lights();
         for &node in &effect.order.nodes {
             let state = &self.scene.nodes[node];
             if !state.visible {
@@ -428,8 +528,10 @@ impl<R: CrtRng> NifEffectInstance<R> {
             }
             let order = effect.draw_order[node];
             match effect.desc.nodes[node].kind {
-                NifNodeKind::Mesh { mesh } => out.mesh_draws.push(self.mesh_draw(&self.scene, mesh, &state.world, order)),
-                NifNodeKind::ParticleSystem { system } => self.render_particles(system, order, out),
+                NifNodeKind::Mesh { mesh } => {
+                    out.mesh_draws.push(self.mesh_draw(&self.scene, mesh, &state.world, order, &lights));
+                }
+                NifNodeKind::ParticleSystem { system } => self.render_particles(system, order, &lights, out),
                 _ => {}
             }
         }
@@ -483,7 +585,7 @@ mod tests {
     use crate::nif::desc::{
         BoolInterp, ControllerTarget, ControllerTiming, Curve, CycleType, EmitterShape, FloatInterp, Key, KeyKind,
         NifController, NifControllerKind, NifEmitter, NifMesh, NifModifier, NifModifierKind, NifNode,
-        NifParticleSystem, NifTransform, Tcb,
+        NifParticleSystem, NifTransform, Point3Interp, Tcb,
     };
 
     const SEED: u32 = 3;
@@ -501,6 +603,7 @@ mod tests {
             kind,
             extra_strings: Vec::new(),
             in_scene: true,
+            lights: Vec::new(),
         }
     }
 
@@ -706,5 +809,99 @@ mod tests {
             assert!((draw.translation - particle.position).length() < 1e-4);
             assert!((draw.scale - (particle.radius * particle.size).abs()).abs() < 1e-6);
         }
+    }
+
+    /// Root 0 lists directional lights 0 (node 4) and 1 (node 5); node 1 is unaffected by light 1. Mesh 0 (node 2)
+    /// hangs under node 1, mesh 1 (node 3) under the root.
+    fn lit_desc() -> NifEffectDesc {
+        let mut root = node("root", None, vec![1, 3, 4, 5], NifNodeKind::Node);
+        root.lights = vec![0, 1];
+        let mut light_node = node("light", Some(0), Vec::new(), NifNodeKind::Light { light: 0 });
+        // Model +X turned to world -Z: the light shines down.
+        light_node.transform.rotation = [[0.0, 0.0, 1.0], [0.0, 1.0, 0.0], [-1.0, 0.0, 0.0]];
+        let nodes = vec![
+            root,
+            node("shaded", Some(0), vec![2], NifNodeKind::Node),
+            node("mesh", Some(1), Vec::new(), NifNodeKind::Mesh { mesh: 0 }),
+            node("mesh", Some(0), Vec::new(), NifNodeKind::Mesh { mesh: 1 }),
+            light_node,
+            node("light", Some(0), Vec::new(), NifNodeKind::Light { light: 1 }),
+        ];
+        let mesh = |node| NifMesh {
+            node,
+            geometry: MeshGeometry {
+                positions: vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+                normals: vec![[0.0, 0.0, 1.0]; 3],
+                triangles: vec![[0, 1, 2]],
+                ..MeshGeometry::default()
+            },
+            morph: None,
+            render_state: NifRenderState::default(),
+        };
+        let light = |node, unaffected_nodes| NifLight {
+            node,
+            kind: NifLightKind::Directional,
+            on: true,
+            dimmer: 1.0,
+            ambient: [0.0; 3],
+            diffuse: [1.0; 3],
+            specular: [1.0; 3],
+            unaffected_nodes,
+        };
+        NifEffectDesc {
+            nodes,
+            root: Some(0),
+            meshes: vec![mesh(2), mesh(3)],
+            lights: vec![light(4, Vec::new()), light(5, vec![1])],
+            ..NifEffectDesc::default()
+        }
+    }
+
+    fn rendered_lights(desc: NifEffectDesc) -> Vec<Vec<EffectLight>> {
+        let instance = NifEffectInstance::with_seed(Arc::new(NifEffect::prepare(desc)), SEED);
+        let mut frame = RenderFrame::default();
+        instance.render(&mut frame);
+        frame.mesh_draws.into_iter().map(|draw| draw.lights).collect()
+    }
+
+    #[test]
+    fn effect_lists_light_their_subtrees_except_unaffected_nodes() {
+        let desc = lit_desc();
+        assert_eq!(affected_lights(&desc), vec![vec![0, 1], vec![0], vec![0], vec![0, 1], vec![0, 1], vec![0, 1]]);
+        let draws = rendered_lights(desc.clone());
+        assert_eq!(draws.iter().map(Vec::len).collect::<Vec<_>>(), [1, 2]);
+        // The direction is the light node's world rotation column 0.
+        assert_eq!(draws[0][0].kind, EffectLightKind::Directional { direction: -Vec3::Z });
+        assert_eq!(draws[1][1].kind, EffectLightKind::Directional { direction: Vec3::X });
+        // A switched-off light reaches nothing.
+        let mut off = desc;
+        off.lights[0].on = false;
+        assert_eq!(rendered_lights(off).iter().map(Vec::len).collect::<Vec<_>>(), [0, 1]);
+    }
+
+    #[test]
+    fn light_controllers_drive_colours_and_dimmer() {
+        const DIMMER: f32 = 0.5;
+        const COLOR: [f32; 3] = [0.25, 2.0, -1.0];
+        let mut desc = lit_desc();
+        let controller = |target, kind| NifController { owner: Some(0), target, timing: timing(), kind };
+        desc.controllers = vec![
+            controller(ControllerTarget::Light(0), NifControllerKind::LightDimmer(FloatInterp { pose: Some(DIMMER), keys: None })),
+            controller(
+                ControllerTarget::Light(0),
+                NifControllerKind::LightColor { ambient: false, interp: Point3Interp { pose: Some(COLOR), keys: None } },
+            ),
+            controller(
+                ControllerTarget::Light(1),
+                NifControllerKind::LightColor { ambient: true, interp: Point3Interp { pose: Some(COLOR), keys: None } },
+            ),
+        ];
+        let draws = rendered_lights(desc);
+        // Clamped to [0, 1], times the dimmer; the diffuse colour also sets the specular one and clears the
+        // ambient one, and the reverse.
+        let light = draws[1][0];
+        assert_eq!((light.ambient, light.diffuse), ([0.0; 3], [0.125, 0.5, 0.0]));
+        let light = draws[1][1];
+        assert_eq!((light.ambient, light.diffuse), ([0.25, 1.0, 0.0], [0.0; 3]));
     }
 }

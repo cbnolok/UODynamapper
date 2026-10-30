@@ -265,13 +265,19 @@ static FI_NI_TEXTURE_EFFECT_COORD_MODE: FieldInfo = FieldInfo { name: "coord_mod
 static FI_NI_TEXTURE_EFFECT_TEXTURE: FieldInfo = FieldInfo { name: "texture", nif_type: "Ref<NiTexture>", declared_in: "NiTextureEffect", length: None, condition: None };
 static FI_NI_TEXTURE_EFFECT_PLANE_ENABLE: FieldInfo = FieldInfo { name: "plane_enable", nif_type: "NiBool", declared_in: "NiTextureEffect", length: None, condition: None };
 static FI_NI_TEXTURE_EFFECT_MODEL_PLANE: FieldInfo = FieldInfo { name: "model_plane", nif_type: "NiPlane", declared_in: "NiTextureEffect", length: None, condition: None };
+static FI_NI_LIGHT_COLOR_CONTROLLER_FLAGS: FieldInfo = FieldInfo { name: "flags", nif_type: "LightColorFlags", declared_in: "NiLightColorController", length: None, condition: None };
 static FI_NI_MATERIAL_COLOR_CONTROLLER_FLAGS: FieldInfo = FieldInfo { name: "flags", nif_type: "MaterialColorFlags", declared_in: "NiMaterialColorController", length: None, condition: None };
 static FI_NI_P_SYS_EMITTER_CTLR_EMITTER_ACTIVE_INTERPOLATOR: FieldInfo = FieldInfo { name: "emitter_active_interpolator", nif_type: "Ref<NiInterpolator>", declared_in: "NiPSysEmitterCtlr", length: None, condition: None };
 static FI_NI_PARTICLE_SYSTEM_WORLD_SPACE: FieldInfo = FieldInfo { name: "world_space", nif_type: "NiBool", declared_in: "NiParticleSystem", length: None, condition: None };
 static FI_NI_PARTICLE_SYSTEM_MODIFIER_LIST: FieldInfo = FieldInfo { name: "modifier_list", nif_type: "Ref<NiPSysModifier>[u32]", declared_in: "NiParticleSystem", length: None, condition: None };
+static FI_NI_POINT_LIGHT_ATTEN0: FieldInfo = FieldInfo { name: "atten0", nif_type: "f32", declared_in: "NiPointLight", length: None, condition: None };
+static FI_NI_POINT_LIGHT_ATTEN1: FieldInfo = FieldInfo { name: "atten1", nif_type: "f32", declared_in: "NiPointLight", length: None, condition: None };
+static FI_NI_POINT_LIGHT_ATTEN2: FieldInfo = FieldInfo { name: "atten2", nif_type: "f32", declared_in: "NiPointLight", length: None, condition: None };
 static FI_NI_TEXTURE_TRANSFORM_CONTROLLER_SHADER_MAP: FieldInfo = FieldInfo { name: "shader_map", nif_type: "NiBool", declared_in: "NiTextureTransformController", length: None, condition: None };
 static FI_NI_TEXTURE_TRANSFORM_CONTROLLER_MAP_INDEX: FieldInfo = FieldInfo { name: "map_index", nif_type: "u32", declared_in: "NiTextureTransformController", length: None, condition: None };
 static FI_NI_TEXTURE_TRANSFORM_CONTROLLER_MEMBER: FieldInfo = FieldInfo { name: "member", nif_type: "TransformMember", declared_in: "NiTextureTransformController", length: None, condition: None };
+static FI_NI_SPOT_LIGHT_OUTER_SPOT_ANGLE: FieldInfo = FieldInfo { name: "outer_spot_angle", nif_type: "f32", declared_in: "NiSpotLight", length: None, condition: None };
+static FI_NI_SPOT_LIGHT_SPOT_EXPONENT: FieldInfo = FieldInfo { name: "spot_exponent", nif_type: "f32", declared_in: "NiSpotLight", length: None, condition: None };
 
 /// object `NiObject` (abstract).
 ///
@@ -311,6 +317,7 @@ impl NiObjectType for NiObject {
         match block {
             Block::NiAlphaController(x) => Some(&x.base.base.base.base.base),
             Block::NiAlphaProperty(x) => Some(&x.base.base.base),
+            Block::NiAmbientLight(x) => Some(&x.base.base.base.base.base),
             Block::NiBillboardNode(x) => Some(&x.base.base.base.base),
             Block::NiBoolData(x) => Some(&x.base),
             Block::NiBoolInterpolator(x) => Some(&x.base.base.base),
@@ -324,6 +331,8 @@ impl NiObjectType for NiObject {
             Block::NiFloatInterpolator(x) => Some(&x.base.base.base),
             Block::NiGeomMorpherController(x) => Some(&x.base.base.base),
             Block::NiIntegersExtraData(x) => Some(&x.base.base),
+            Block::NiLightColorController(x) => Some(&x.base.base.base.base.base),
+            Block::NiLightDimmerController(x) => Some(&x.base.base.base.base.base),
             Block::NiMaterialColorController(x) => Some(&x.base.base.base.base.base),
             Block::NiMaterialProperty(x) => Some(&x.base.base.base),
             Block::NiMeshPSysData(x) => Some(&x.base.base.base.base),
@@ -360,10 +369,12 @@ impl NiObjectType for NiObject {
             Block::NiPathInterpolator(x) => Some(&x.base.base.base),
             Block::NiPixelData(x) => Some(&x.base),
             Block::NiPoint3Interpolator(x) => Some(&x.base.base.base),
+            Block::NiPointLight(x) => Some(&x.base.base.base.base.base),
             Block::NiPosData(x) => Some(&x.base),
             Block::NiSortAdjustNode(x) => Some(&x.base.base.base.base),
             Block::NiSourceTexture(x) => Some(&x.base.base.base),
             Block::NiSpecularProperty(x) => Some(&x.base.base.base),
+            Block::NiSpotLight(x) => Some(&x.base.base.base.base.base.base),
             Block::NiStencilProperty(x) => Some(&x.base.base.base),
             Block::NiStringExtraData(x) => Some(&x.base.base),
             Block::NiTextureEffect(x) => Some(&x.base.base.base.base),
@@ -384,6 +395,7 @@ impl NiObjectType for NiObject {
         match block {
             Block::NiAlphaController(x) => Some(&mut x.base.base.base.base.base),
             Block::NiAlphaProperty(x) => Some(&mut x.base.base.base),
+            Block::NiAmbientLight(x) => Some(&mut x.base.base.base.base.base),
             Block::NiBillboardNode(x) => Some(&mut x.base.base.base.base),
             Block::NiBoolData(x) => Some(&mut x.base),
             Block::NiBoolInterpolator(x) => Some(&mut x.base.base.base),
@@ -397,6 +409,8 @@ impl NiObjectType for NiObject {
             Block::NiFloatInterpolator(x) => Some(&mut x.base.base.base),
             Block::NiGeomMorpherController(x) => Some(&mut x.base.base.base),
             Block::NiIntegersExtraData(x) => Some(&mut x.base.base),
+            Block::NiLightColorController(x) => Some(&mut x.base.base.base.base.base),
+            Block::NiLightDimmerController(x) => Some(&mut x.base.base.base.base.base),
             Block::NiMaterialColorController(x) => Some(&mut x.base.base.base.base.base),
             Block::NiMaterialProperty(x) => Some(&mut x.base.base.base),
             Block::NiMeshPSysData(x) => Some(&mut x.base.base.base.base),
@@ -433,10 +447,12 @@ impl NiObjectType for NiObject {
             Block::NiPathInterpolator(x) => Some(&mut x.base.base.base),
             Block::NiPixelData(x) => Some(&mut x.base),
             Block::NiPoint3Interpolator(x) => Some(&mut x.base.base.base),
+            Block::NiPointLight(x) => Some(&mut x.base.base.base.base.base),
             Block::NiPosData(x) => Some(&mut x.base),
             Block::NiSortAdjustNode(x) => Some(&mut x.base.base.base.base),
             Block::NiSourceTexture(x) => Some(&mut x.base.base.base),
             Block::NiSpecularProperty(x) => Some(&mut x.base.base.base),
+            Block::NiSpotLight(x) => Some(&mut x.base.base.base.base.base.base),
             Block::NiStencilProperty(x) => Some(&mut x.base.base.base),
             Block::NiStringExtraData(x) => Some(&mut x.base.base),
             Block::NiTextureEffect(x) => Some(&mut x.base.base.base.base),
@@ -1240,6 +1256,7 @@ impl NiObjectType for NiObjectNET {
     fn from_block(block: &Block) -> Option<&Self> {
         match block {
             Block::NiAlphaProperty(x) => Some(&x.base.base),
+            Block::NiAmbientLight(x) => Some(&x.base.base.base.base),
             Block::NiBillboardNode(x) => Some(&x.base.base.base),
             Block::NiDirectionalLight(x) => Some(&x.base.base.base.base),
             Block::NiDitherProperty(x) => Some(&x.base.base),
@@ -1247,9 +1264,11 @@ impl NiObjectType for NiObjectNET {
             Block::NiMeshParticleSystem(x) => Some(&x.base.base.base.base.base),
             Block::NiNode(x) => Some(&x.base.base),
             Block::NiParticleSystem(x) => Some(&x.base.base.base.base),
+            Block::NiPointLight(x) => Some(&x.base.base.base.base),
             Block::NiSortAdjustNode(x) => Some(&x.base.base.base),
             Block::NiSourceTexture(x) => Some(&x.base.base),
             Block::NiSpecularProperty(x) => Some(&x.base.base),
+            Block::NiSpotLight(x) => Some(&x.base.base.base.base.base),
             Block::NiStencilProperty(x) => Some(&x.base.base),
             Block::NiTextureEffect(x) => Some(&x.base.base.base),
             Block::NiTexturingProperty(x) => Some(&x.base.base),
@@ -1263,6 +1282,7 @@ impl NiObjectType for NiObjectNET {
     fn from_block_mut(block: &mut Block) -> Option<&mut Self> {
         match block {
             Block::NiAlphaProperty(x) => Some(&mut x.base.base),
+            Block::NiAmbientLight(x) => Some(&mut x.base.base.base.base),
             Block::NiBillboardNode(x) => Some(&mut x.base.base.base),
             Block::NiDirectionalLight(x) => Some(&mut x.base.base.base.base),
             Block::NiDitherProperty(x) => Some(&mut x.base.base),
@@ -1270,9 +1290,11 @@ impl NiObjectType for NiObjectNET {
             Block::NiMeshParticleSystem(x) => Some(&mut x.base.base.base.base.base),
             Block::NiNode(x) => Some(&mut x.base.base),
             Block::NiParticleSystem(x) => Some(&mut x.base.base.base.base),
+            Block::NiPointLight(x) => Some(&mut x.base.base.base.base),
             Block::NiSortAdjustNode(x) => Some(&mut x.base.base.base),
             Block::NiSourceTexture(x) => Some(&mut x.base.base),
             Block::NiSpecularProperty(x) => Some(&mut x.base.base),
+            Block::NiSpotLight(x) => Some(&mut x.base.base.base.base.base),
             Block::NiStencilProperty(x) => Some(&mut x.base.base),
             Block::NiTextureEffect(x) => Some(&mut x.base.base.base),
             Block::NiTexturingProperty(x) => Some(&mut x.base.base),
@@ -1721,6 +1743,8 @@ impl NiObjectType for NiTimeController {
         match block {
             Block::NiAlphaController(x) => Some(&x.base.base.base.base),
             Block::NiGeomMorpherController(x) => Some(&x.base.base),
+            Block::NiLightColorController(x) => Some(&x.base.base.base.base),
+            Block::NiLightDimmerController(x) => Some(&x.base.base.base.base),
             Block::NiMaterialColorController(x) => Some(&x.base.base.base.base),
             Block::NiPSysEmitterCtlr(x) => Some(&x.base.base.base.base),
             Block::NiPSysEmitterInitialRadiusCtlr(x) => Some(&x.base.base.base.base.base),
@@ -1743,6 +1767,8 @@ impl NiObjectType for NiTimeController {
         match block {
             Block::NiAlphaController(x) => Some(&mut x.base.base.base.base),
             Block::NiGeomMorpherController(x) => Some(&mut x.base.base),
+            Block::NiLightColorController(x) => Some(&mut x.base.base.base.base),
+            Block::NiLightDimmerController(x) => Some(&mut x.base.base.base.base),
             Block::NiMaterialColorController(x) => Some(&mut x.base.base.base.base),
             Block::NiPSysEmitterCtlr(x) => Some(&mut x.base.base.base.base),
             Block::NiPSysEmitterInitialRadiusCtlr(x) => Some(&mut x.base.base.base.base.base),
@@ -2002,12 +2028,15 @@ impl NiObjectType for NiAVObject {
 
     fn from_block(block: &Block) -> Option<&Self> {
         match block {
+            Block::NiAmbientLight(x) => Some(&x.base.base.base),
             Block::NiBillboardNode(x) => Some(&x.base.base),
             Block::NiDirectionalLight(x) => Some(&x.base.base.base),
             Block::NiMeshParticleSystem(x) => Some(&x.base.base.base.base),
             Block::NiNode(x) => Some(&x.base),
             Block::NiParticleSystem(x) => Some(&x.base.base.base),
+            Block::NiPointLight(x) => Some(&x.base.base.base),
             Block::NiSortAdjustNode(x) => Some(&x.base.base),
+            Block::NiSpotLight(x) => Some(&x.base.base.base.base),
             Block::NiTextureEffect(x) => Some(&x.base.base),
             Block::NiTriShape(x) => Some(&x.base.base.base),
             _ => None,
@@ -2016,12 +2045,15 @@ impl NiObjectType for NiAVObject {
 
     fn from_block_mut(block: &mut Block) -> Option<&mut Self> {
         match block {
+            Block::NiAmbientLight(x) => Some(&mut x.base.base.base),
             Block::NiBillboardNode(x) => Some(&mut x.base.base),
             Block::NiDirectionalLight(x) => Some(&mut x.base.base.base),
             Block::NiMeshParticleSystem(x) => Some(&mut x.base.base.base.base),
             Block::NiNode(x) => Some(&mut x.base),
             Block::NiParticleSystem(x) => Some(&mut x.base.base.base),
+            Block::NiPointLight(x) => Some(&mut x.base.base.base),
             Block::NiSortAdjustNode(x) => Some(&mut x.base.base),
+            Block::NiSpotLight(x) => Some(&mut x.base.base.base.base),
             Block::NiTextureEffect(x) => Some(&mut x.base.base),
             Block::NiTriShape(x) => Some(&mut x.base.base.base),
             _ => None,
@@ -2299,6 +2331,8 @@ impl NiObjectType for NiInterpController {
         match block {
             Block::NiAlphaController(x) => Some(&x.base.base.base),
             Block::NiGeomMorpherController(x) => Some(&x.base),
+            Block::NiLightColorController(x) => Some(&x.base.base.base),
+            Block::NiLightDimmerController(x) => Some(&x.base.base.base),
             Block::NiMaterialColorController(x) => Some(&x.base.base.base),
             Block::NiPSysEmitterCtlr(x) => Some(&x.base.base.base),
             Block::NiPSysEmitterInitialRadiusCtlr(x) => Some(&x.base.base.base.base),
@@ -2319,6 +2353,8 @@ impl NiObjectType for NiInterpController {
         match block {
             Block::NiAlphaController(x) => Some(&mut x.base.base.base),
             Block::NiGeomMorpherController(x) => Some(&mut x.base),
+            Block::NiLightColorController(x) => Some(&mut x.base.base.base),
+            Block::NiLightDimmerController(x) => Some(&mut x.base.base.base),
             Block::NiMaterialColorController(x) => Some(&mut x.base.base.base),
             Block::NiPSysEmitterCtlr(x) => Some(&mut x.base.base.base),
             Block::NiPSysEmitterInitialRadiusCtlr(x) => Some(&mut x.base.base.base.base),
@@ -4453,7 +4489,10 @@ impl NiObjectType for NiDynamicEffect {
 
     fn from_block(block: &Block) -> Option<&Self> {
         match block {
+            Block::NiAmbientLight(x) => Some(&x.base.base),
             Block::NiDirectionalLight(x) => Some(&x.base.base),
+            Block::NiPointLight(x) => Some(&x.base.base),
+            Block::NiSpotLight(x) => Some(&x.base.base.base),
             Block::NiTextureEffect(x) => Some(&x.base),
             _ => None,
         }
@@ -4461,7 +4500,10 @@ impl NiObjectType for NiDynamicEffect {
 
     fn from_block_mut(block: &mut Block) -> Option<&mut Self> {
         match block {
+            Block::NiAmbientLight(x) => Some(&mut x.base.base),
             Block::NiDirectionalLight(x) => Some(&mut x.base.base),
+            Block::NiPointLight(x) => Some(&mut x.base.base),
+            Block::NiSpotLight(x) => Some(&mut x.base.base.base),
             Block::NiTextureEffect(x) => Some(&mut x.base),
             _ => None,
         }
@@ -5473,6 +5515,8 @@ impl NiObjectType for NiSingleInterpController {
     fn from_block(block: &Block) -> Option<&Self> {
         match block {
             Block::NiAlphaController(x) => Some(&x.base.base),
+            Block::NiLightColorController(x) => Some(&x.base.base),
+            Block::NiLightDimmerController(x) => Some(&x.base.base),
             Block::NiMaterialColorController(x) => Some(&x.base.base),
             Block::NiPSysEmitterCtlr(x) => Some(&x.base.base),
             Block::NiPSysEmitterInitialRadiusCtlr(x) => Some(&x.base.base.base),
@@ -5492,6 +5536,8 @@ impl NiObjectType for NiSingleInterpController {
     fn from_block_mut(block: &mut Block) -> Option<&mut Self> {
         match block {
             Block::NiAlphaController(x) => Some(&mut x.base.base),
+            Block::NiLightColorController(x) => Some(&mut x.base.base),
+            Block::NiLightDimmerController(x) => Some(&mut x.base.base),
             Block::NiMaterialColorController(x) => Some(&mut x.base.base),
             Block::NiPSysEmitterCtlr(x) => Some(&mut x.base.base),
             Block::NiPSysEmitterInitialRadiusCtlr(x) => Some(&mut x.base.base.base),
@@ -6643,6 +6689,7 @@ impl NiObjectType for NiFloatInterpController {
     fn from_block(block: &Block) -> Option<&Self> {
         match block {
             Block::NiAlphaController(x) => Some(&x.base),
+            Block::NiLightDimmerController(x) => Some(&x.base),
             Block::NiTextureTransformController(x) => Some(&x.base),
             _ => None,
         }
@@ -6651,6 +6698,7 @@ impl NiObjectType for NiFloatInterpController {
     fn from_block_mut(block: &mut Block) -> Option<&mut Self> {
         match block {
             Block::NiAlphaController(x) => Some(&mut x.base),
+            Block::NiLightDimmerController(x) => Some(&mut x.base),
             Block::NiTextureTransformController(x) => Some(&mut x.base),
             _ => None,
         }
@@ -6737,14 +6785,20 @@ impl NiObjectType for NiLight {
 
     fn from_block(block: &Block) -> Option<&Self> {
         match block {
+            Block::NiAmbientLight(x) => Some(&x.base),
             Block::NiDirectionalLight(x) => Some(&x.base),
+            Block::NiPointLight(x) => Some(&x.base),
+            Block::NiSpotLight(x) => Some(&x.base.base),
             _ => None,
         }
     }
 
     fn from_block_mut(block: &mut Block) -> Option<&mut Self> {
         match block {
+            Block::NiAmbientLight(x) => Some(&mut x.base),
             Block::NiDirectionalLight(x) => Some(&mut x.base),
+            Block::NiPointLight(x) => Some(&mut x.base),
+            Block::NiSpotLight(x) => Some(&mut x.base.base),
             _ => None,
         }
     }
@@ -7285,6 +7339,7 @@ impl NiObjectType for NiPoint3InterpController {
 
     fn from_block(block: &Block) -> Option<&Self> {
         match block {
+            Block::NiLightColorController(x) => Some(&x.base),
             Block::NiMaterialColorController(x) => Some(&x.base),
             _ => None,
         }
@@ -7292,6 +7347,7 @@ impl NiObjectType for NiPoint3InterpController {
 
     fn from_block_mut(block: &mut Block) -> Option<&mut Self> {
         match block {
+            Block::NiLightColorController(x) => Some(&mut x.base),
             Block::NiMaterialColorController(x) => Some(&mut x.base),
             _ => None,
         }
@@ -7694,6 +7750,71 @@ impl NiObjectType for NiAlphaController {
 
 }
 
+/// object `NiAmbientLight`, inherits `NiLight`.
+///
+/// Layout from `CoreLibs/NiMain/NiAmbientLight.cpp`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NiAmbientLight {
+    pub base: NiLight,
+}
+
+impl Default for NiAmbientLight {
+    fn default() -> Self {
+        Self {
+            base: Default::default(),
+        }
+    }
+}
+
+impl std::ops::Deref for NiAmbientLight {
+    type Target = NiLight;
+
+    fn deref(&self) -> &NiLight { &self.base }
+}
+
+impl std::ops::DerefMut for NiAmbientLight {
+    fn deref_mut(&mut self) -> &mut NiLight { &mut self.base }
+}
+
+impl ObjectIo for NiAmbientLight {
+    fn read_fields(r: &mut Reader<'_>) -> Result<Self> {
+        let s = Self { base: NiLight::read_fields(r)?, ..Default::default() };
+        Ok(s)
+    }
+
+    fn write_fields(&self, w: &mut Writer) -> Result<()> {
+        self.base.write_fields(w)?;
+        Ok(())
+    }
+
+    fn collect_fields<'a>(&'a self, out: &mut Vec<Field<'a>>) {
+        self.base.collect_fields(out);
+    }
+
+    fn collect_fields_mut<'a>(&'a mut self, out: &mut Vec<FieldMut<'a>>) {
+        self.base.collect_fields_mut(out);
+    }
+}
+
+impl NiObjectType for NiAmbientLight {
+    const NAME: &'static str = "NiAmbientLight";
+
+    fn from_block(block: &Block) -> Option<&Self> {
+        match block {
+            Block::NiAmbientLight(x) => Some(x),
+            _ => None,
+        }
+    }
+
+    fn from_block_mut(block: &mut Block) -> Option<&mut Self> {
+        match block {
+            Block::NiAmbientLight(x) => Some(x),
+            _ => None,
+        }
+    }
+
+}
+
 /// object `NiDirectionalLight`, inherits `NiLight`.
 ///
 /// Layout from `CoreLibs/NiMain/NiDirectionalLight.cpp`.
@@ -7753,6 +7874,143 @@ impl NiObjectType for NiDirectionalLight {
     fn from_block_mut(block: &mut Block) -> Option<&mut Self> {
         match block {
             Block::NiDirectionalLight(x) => Some(x),
+            _ => None,
+        }
+    }
+
+}
+
+/// object `NiLightColorController`, inherits `NiPoint3InterpController`.
+///
+/// Layout from `CoreLibs/NiAnimation/NiLightColorController.cpp`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NiLightColorController {
+    pub base: NiPoint3InterpController,
+    /// `LightColorFlags`
+    pub flags: LightColorFlags,
+}
+
+impl Default for NiLightColorController {
+    fn default() -> Self {
+        Self {
+            base: Default::default(),
+            flags: Default::default(),
+        }
+    }
+}
+
+impl std::ops::Deref for NiLightColorController {
+    type Target = NiPoint3InterpController;
+
+    fn deref(&self) -> &NiPoint3InterpController { &self.base }
+}
+
+impl std::ops::DerefMut for NiLightColorController {
+    fn deref_mut(&mut self) -> &mut NiPoint3InterpController { &mut self.base }
+}
+
+impl ObjectIo for NiLightColorController {
+    fn read_fields(r: &mut Reader<'_>) -> Result<Self> {
+        let mut s = Self { base: NiPoint3InterpController::read_fields(r)?, ..Default::default() };
+        s.flags = rd(r, "flags", 0)?;
+        Ok(s)
+    }
+
+    fn write_fields(&self, w: &mut Writer) -> Result<()> {
+        self.base.write_fields(w)?;
+        wr(w, "flags", &self.flags, 0)?;
+        Ok(())
+    }
+
+    fn collect_fields<'a>(&'a self, out: &mut Vec<Field<'a>>) {
+        self.base.collect_fields(out);
+        out.push(field(&FI_NI_LIGHT_COLOR_CONTROLLER_FLAGS, true, self.flags.as_value(0)));
+    }
+
+    fn collect_fields_mut<'a>(&'a mut self, out: &mut Vec<FieldMut<'a>>) {
+        self.base.collect_fields_mut(out);
+        out.push(field_mut(&FI_NI_LIGHT_COLOR_CONTROLLER_FLAGS, true, self.flags.as_value_mut(0)));
+    }
+}
+
+impl NiObjectType for NiLightColorController {
+    const NAME: &'static str = "NiLightColorController";
+
+    fn from_block(block: &Block) -> Option<&Self> {
+        match block {
+            Block::NiLightColorController(x) => Some(x),
+            _ => None,
+        }
+    }
+
+    fn from_block_mut(block: &mut Block) -> Option<&mut Self> {
+        match block {
+            Block::NiLightColorController(x) => Some(x),
+            _ => None,
+        }
+    }
+
+}
+
+/// object `NiLightDimmerController`, inherits `NiFloatInterpController`.
+///
+/// Layout from `CoreLibs/NiAnimation/NiLightDimmerController.cpp`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NiLightDimmerController {
+    pub base: NiFloatInterpController,
+}
+
+impl Default for NiLightDimmerController {
+    fn default() -> Self {
+        Self {
+            base: Default::default(),
+        }
+    }
+}
+
+impl std::ops::Deref for NiLightDimmerController {
+    type Target = NiFloatInterpController;
+
+    fn deref(&self) -> &NiFloatInterpController { &self.base }
+}
+
+impl std::ops::DerefMut for NiLightDimmerController {
+    fn deref_mut(&mut self) -> &mut NiFloatInterpController { &mut self.base }
+}
+
+impl ObjectIo for NiLightDimmerController {
+    fn read_fields(r: &mut Reader<'_>) -> Result<Self> {
+        let s = Self { base: NiFloatInterpController::read_fields(r)?, ..Default::default() };
+        Ok(s)
+    }
+
+    fn write_fields(&self, w: &mut Writer) -> Result<()> {
+        self.base.write_fields(w)?;
+        Ok(())
+    }
+
+    fn collect_fields<'a>(&'a self, out: &mut Vec<Field<'a>>) {
+        self.base.collect_fields(out);
+    }
+
+    fn collect_fields_mut<'a>(&'a mut self, out: &mut Vec<FieldMut<'a>>) {
+        self.base.collect_fields_mut(out);
+    }
+}
+
+impl NiObjectType for NiLightDimmerController {
+    const NAME: &'static str = "NiLightDimmerController";
+
+    fn from_block(block: &Block) -> Option<&Self> {
+        match block {
+            Block::NiLightDimmerController(x) => Some(x),
+            _ => None,
+        }
+    }
+
+    fn from_block_mut(block: &mut Block) -> Option<&mut Self> {
+        match block {
+            Block::NiLightDimmerController(x) => Some(x),
             _ => None,
         }
     }
@@ -8118,6 +8376,94 @@ impl NiObjectType for NiParticleSystem {
         match block {
             Block::NiMeshParticleSystem(x) => Some(&mut x.base),
             Block::NiParticleSystem(x) => Some(x),
+            _ => None,
+        }
+    }
+
+}
+
+/// object `NiPointLight`, inherits `NiLight`.
+///
+/// Layout from `CoreLibs/NiMain/NiPointLight.cpp`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NiPointLight {
+    pub base: NiLight,
+    /// `f32`
+    pub atten0: f32,
+    /// `f32`
+    pub atten1: f32,
+    /// `f32`
+    pub atten2: f32,
+}
+
+impl Default for NiPointLight {
+    fn default() -> Self {
+        Self {
+            base: Default::default(),
+            atten0: Default::default(),
+            atten1: 1.0,
+            atten2: Default::default(),
+        }
+    }
+}
+
+impl std::ops::Deref for NiPointLight {
+    type Target = NiLight;
+
+    fn deref(&self) -> &NiLight { &self.base }
+}
+
+impl std::ops::DerefMut for NiPointLight {
+    fn deref_mut(&mut self) -> &mut NiLight { &mut self.base }
+}
+
+impl ObjectIo for NiPointLight {
+    fn read_fields(r: &mut Reader<'_>) -> Result<Self> {
+        let mut s = Self { base: NiLight::read_fields(r)?, ..Default::default() };
+        s.atten0 = rd(r, "atten0", 0)?;
+        s.atten1 = rd(r, "atten1", 0)?;
+        s.atten2 = rd(r, "atten2", 0)?;
+        Ok(s)
+    }
+
+    fn write_fields(&self, w: &mut Writer) -> Result<()> {
+        self.base.write_fields(w)?;
+        wr(w, "atten0", &self.atten0, 0)?;
+        wr(w, "atten1", &self.atten1, 0)?;
+        wr(w, "atten2", &self.atten2, 0)?;
+        Ok(())
+    }
+
+    fn collect_fields<'a>(&'a self, out: &mut Vec<Field<'a>>) {
+        self.base.collect_fields(out);
+        out.push(field(&FI_NI_POINT_LIGHT_ATTEN0, true, self.atten0.as_value(0)));
+        out.push(field(&FI_NI_POINT_LIGHT_ATTEN1, true, self.atten1.as_value(0)));
+        out.push(field(&FI_NI_POINT_LIGHT_ATTEN2, true, self.atten2.as_value(0)));
+    }
+
+    fn collect_fields_mut<'a>(&'a mut self, out: &mut Vec<FieldMut<'a>>) {
+        self.base.collect_fields_mut(out);
+        out.push(field_mut(&FI_NI_POINT_LIGHT_ATTEN0, true, self.atten0.as_value_mut(0)));
+        out.push(field_mut(&FI_NI_POINT_LIGHT_ATTEN1, true, self.atten1.as_value_mut(0)));
+        out.push(field_mut(&FI_NI_POINT_LIGHT_ATTEN2, true, self.atten2.as_value_mut(0)));
+    }
+}
+
+impl NiObjectType for NiPointLight {
+    const NAME: &'static str = "NiPointLight";
+
+    fn from_block(block: &Block) -> Option<&Self> {
+        match block {
+            Block::NiPointLight(x) => Some(x),
+            Block::NiSpotLight(x) => Some(&x.base),
+            _ => None,
+        }
+    }
+
+    fn from_block_mut(block: &mut Block) -> Option<&mut Self> {
+        match block {
+            Block::NiPointLight(x) => Some(x),
+            Block::NiSpotLight(x) => Some(&mut x.base),
             _ => None,
         }
     }
@@ -8854,6 +9200,85 @@ impl NiObjectType for NiPSysModifierActiveCtlr {
     fn from_block_mut(block: &mut Block) -> Option<&mut Self> {
         match block {
             Block::NiPSysModifierActiveCtlr(x) => Some(x),
+            _ => None,
+        }
+    }
+
+}
+
+/// object `NiSpotLight`, inherits `NiPointLight`.
+///
+/// Layout from `CoreLibs/NiMain/NiSpotLight.cpp`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NiSpotLight {
+    pub base: NiPointLight,
+    /// `f32`
+    pub outer_spot_angle: f32,
+    /// `f32`
+    pub spot_exponent: f32,
+}
+
+impl Default for NiSpotLight {
+    fn default() -> Self {
+        Self {
+            base: Default::default(),
+            outer_spot_angle: Default::default(),
+            spot_exponent: 1.0,
+        }
+    }
+}
+
+impl std::ops::Deref for NiSpotLight {
+    type Target = NiPointLight;
+
+    fn deref(&self) -> &NiPointLight { &self.base }
+}
+
+impl std::ops::DerefMut for NiSpotLight {
+    fn deref_mut(&mut self) -> &mut NiPointLight { &mut self.base }
+}
+
+impl ObjectIo for NiSpotLight {
+    fn read_fields(r: &mut Reader<'_>) -> Result<Self> {
+        let mut s = Self { base: NiPointLight::read_fields(r)?, ..Default::default() };
+        s.outer_spot_angle = rd(r, "outer_spot_angle", 0)?;
+        s.spot_exponent = rd(r, "spot_exponent", 0)?;
+        Ok(s)
+    }
+
+    fn write_fields(&self, w: &mut Writer) -> Result<()> {
+        self.base.write_fields(w)?;
+        wr(w, "outer_spot_angle", &self.outer_spot_angle, 0)?;
+        wr(w, "spot_exponent", &self.spot_exponent, 0)?;
+        Ok(())
+    }
+
+    fn collect_fields<'a>(&'a self, out: &mut Vec<Field<'a>>) {
+        self.base.collect_fields(out);
+        out.push(field(&FI_NI_SPOT_LIGHT_OUTER_SPOT_ANGLE, true, self.outer_spot_angle.as_value(0)));
+        out.push(field(&FI_NI_SPOT_LIGHT_SPOT_EXPONENT, true, self.spot_exponent.as_value(0)));
+    }
+
+    fn collect_fields_mut<'a>(&'a mut self, out: &mut Vec<FieldMut<'a>>) {
+        self.base.collect_fields_mut(out);
+        out.push(field_mut(&FI_NI_SPOT_LIGHT_OUTER_SPOT_ANGLE, true, self.outer_spot_angle.as_value_mut(0)));
+        out.push(field_mut(&FI_NI_SPOT_LIGHT_SPOT_EXPONENT, true, self.spot_exponent.as_value_mut(0)));
+    }
+}
+
+impl NiObjectType for NiSpotLight {
+    const NAME: &'static str = "NiSpotLight";
+
+    fn from_block(block: &Block) -> Option<&Self> {
+        match block {
+            Block::NiSpotLight(x) => Some(x),
+            _ => None,
+        }
+    }
+
+    fn from_block_mut(block: &mut Block) -> Option<&mut Self> {
+        match block {
+            Block::NiSpotLight(x) => Some(x),
             _ => None,
         }
     }

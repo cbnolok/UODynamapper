@@ -14,10 +14,13 @@ Reading a file and writing it back without changes gives the same bytes. This wa
 - **Version**: 20.0.0.4, user version 0, little-endian. This version has no block size table and
   no string table, and stores strings inline. Other versions are rejected with
   `ErrorKind::UnsupportedVersion` or `ErrorKind::UnsupportedUserVersion`.
-- **Block types**: the 68 types in [`codegen/allowlist.txt`](codegen/allowlist.txt). These are the
+- **Block types**: the 73 types in [`codegen/allowlist.txt`](codegen/allowlist.txt). These are the
   ones the EC effect NIFs use: nodes, geometry, properties, interpolators and controllers, plus
-  the `NiPSys*` particle systems, emitters, modifiers and controllers. Their ancestors (28 more
-  objects), 25 structs and 49 enums/bitflags/bitfields are generated with them.
+  the `NiPSys*` particle systems, emitters, modifiers and controllers. The other light types
+  (`NiAmbientLight`, `NiPointLight`, `NiSpotLight`) and the light controllers
+  (`NiLightColorController`, `NiLightDimmerController`) are included too, although the shipped
+  files use only `NiDirectionalLight`. Their ancestors (28 more objects), 25 structs and 50
+  enums/bitflags/bitfields are generated with them.
   A block of any other type fails with `ErrorKind::UnknownBlockType { name }`.
 
 ## API

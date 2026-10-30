@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use super::desc::{
     BillboardMode, ControllerTarget, CycleType, MaterialColorField, ModifierParam, NifControllerKind, NifEffectDesc,
-    NifInterpolator, NifMaterial, NifModifierKind, NifNodeKind, NifTextureTransform, NifTransform,
+    NifInterpolator, NifLight, NifMaterial, NifModifierKind, NifNodeKind, NifTextureTransform, NifTransform,
     TextureTransformMember, AV_FLAG_APP_CULLED,
 };
 use super::keys::{ControllerClock, Quat};
@@ -106,6 +106,8 @@ pub(crate) struct ControllerState {
 pub(crate) struct SceneState {
     pub nodes: Vec<NodeState>,
     pub materials: Vec<NifMaterial>,
+    /// The lights, with their animated colours and dimmer.
+    pub lights: Vec<NifLight>,
     /// Per texturing property, per map: the current texture transform.
     pub texture_transforms: Vec<Vec<Option<NifTextureTransform>>>,
     pub morph_weights: Vec<Vec<f32>>,
@@ -190,7 +192,7 @@ fn subtree_controllers(desc: &NifEffectDesc, root: usize) -> Vec<usize> {
             (_, ControllerTarget::Texturing(texturing)) => {
                 renders().any(|render| render.texturing == Some(texturing))
             }
-            (_, ControllerTarget::ParticleSystem(_)) => false,
+            (_, ControllerTarget::ParticleSystem(_) | ControllerTarget::Light(_)) => false,
         })
         .map(|(index, _)| index)
         .collect()
@@ -223,6 +225,7 @@ impl SceneState {
         Self {
             nodes,
             materials: desc.materials.clone(),
+            lights: desc.lights.clone(),
             texture_transforms,
             morph_weights,
             morphed: vec![None; desc.meshes.len()],
@@ -280,6 +283,7 @@ impl SceneState {
         let mut pose = Self {
             nodes: self.nodes.clone(),
             materials: self.materials.clone(),
+            lights: self.lights.clone(),
             texture_transforms: self.texture_transforms.clone(),
             morph_weights: self.morph_weights.clone(),
             morphed: self.morphed.clone(),
@@ -399,6 +403,25 @@ impl SceneState {
                     MaterialColorField::Diffuse => material.diffuse = color,
                     MaterialColorField::Specular => material.specular = color,
                     MaterialColorField::Emissive => material.emissive = color,
+                }
+            }
+            NifControllerKind::LightColor { ambient, interp } => {
+                let ControllerTarget::Light(light) = controller.target else { return };
+                let Some(scaled) = clock.tick(timing, timing.cycle, timing.range(), time) else { return };
+                let (Some(color), Some(light)) = (interp.eval(scaled), self.lights.get_mut(light)) else { return };
+                let color = color.map(|channel| channel.clamp(0.0, 1.0));
+                let black = [0.0; 3];
+                if *ambient {
+                    (light.ambient, light.diffuse, light.specular) = (color, black, black);
+                } else {
+                    (light.ambient, light.diffuse, light.specular) = (black, color, color);
+                }
+            }
+            NifControllerKind::LightDimmer(interp) => {
+                let ControllerTarget::Light(light) = controller.target else { return };
+                let Some(scaled) = clock.tick(timing, timing.cycle, timing.range(), time) else { return };
+                if let (Some(dimmer), Some(light)) = (interp.eval(scaled), self.lights.get_mut(light)) {
+                    light.dimmer = dimmer;
                 }
             }
             NifControllerKind::TextureTransform { slot, member, interp } => {

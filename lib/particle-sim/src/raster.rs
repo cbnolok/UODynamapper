@@ -659,6 +659,7 @@ mod tests {
             depth: DepthState { test: true, write: true },
             depth_function: CompareFunction::LessEqual,
             cull,
+            lights: Vec::new(),
         });
         frame
     }

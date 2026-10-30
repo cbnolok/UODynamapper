@@ -12,7 +12,9 @@
 //!   tables ([`NifEffectDesc::materials`], [`NifEffectDesc::texturings`]) that controllers target by index;
 //! - [`NifController`]: every time controller, with its timing and its interpolator's keys (key type, times,
 //!   tangents and TCB parameters as stored);
-//! - [`NifTexture`]: textures by name, referenced by file or embedded (`NiPixelData` decoded to RGBA8).
+//! - [`NifTexture`]: textures by name, referenced by file or embedded (`NiPixelData` decoded to RGBA8);
+//! - [`NifLight`]: the scene's lights (`NiLight`), with the nodes whose effect list holds them
+//!   ([`NifNode::lights`]) and the nodes they skip.
 //!
 //! Units and conventions are Gamebryo's: seconds, radians, row-major rotation matrices applied to column
 //! vectors (`p' = T + s * R * p`), quaternions as (w, x, y, z).
@@ -22,7 +24,7 @@
 use crate::render::{AlphaTest, BlendFactor, BlendState, MeshGeometry};
 
 /// Version of the [`NifEffectDesc`] layout.
-pub const NIF_DESC_VERSION: u32 = 1;
+pub const NIF_DESC_VERSION: u32 = 2;
 
 /// Name of an embedded texture: this prefix and the index of the texture in [`NifEffectDesc::textures`].
 pub const EMBEDDED_TEXTURE_PREFIX: &str = "#embedded:";
@@ -46,6 +48,7 @@ pub struct NifEffectDesc {
     pub materials: Vec<NifMaterial>,
     pub texturings: Vec<NifTexturing>,
     pub textures: Vec<NifTexture>,
+    pub lights: Vec<NifLight>,
     pub controllers: Vec<NifController>,
 }
 
@@ -123,7 +126,9 @@ pub enum NifNodeKind {
     Mesh { mesh: usize },
     /// `NiParticleSystem` / `NiMeshParticleSystem`: [`NifEffectDesc::particle_systems`] entry `system`.
     ParticleSystem { system: usize },
-    /// Anything else (lights, texture effects, unknown geometry): kept for the hierarchy, not drawn.
+    /// `NiLight`: [`NifEffectDesc::lights`] entry `light`; its world transform places the light.
+    Light { light: usize },
+    /// Anything else (texture effects, unknown geometry): kept for the hierarchy, not drawn.
     Other { type_name: String },
 }
 
@@ -142,6 +147,9 @@ pub struct NifNode {
     pub extra_strings: Vec<String>,
     /// Whether the node is the root or a descendant of it.
     pub in_scene: bool,
+    /// [`NifEffectDesc::lights`] entries of the node's effect list (`NiNode::m_kEffectList`; `NiNode::LinkObject`
+    /// makes the node an affected node of each): they light this node's subtree. Texture effects are not kept.
+    pub lights: Vec<usize>,
 }
 
 /// Triangle geometry with its render state.
@@ -824,10 +832,62 @@ pub struct ControllerTiming {
     pub stop_time: f32,
 }
 
+/// `NiPointLight` / `NiSpotLight` distance attenuation: `1 / max(1, constant + linear d + quadratic d²)`
+/// (`NiStandardMaterial` light fragment); the SDK constructor sets constant 0, linear 1, quadratic 0.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LightAttenuation {
+    pub constant: f32,
+    pub linear: f32,
+    pub quadratic: f32,
+}
+
+impl Default for LightAttenuation {
+    fn default() -> Self {
+        Self { constant: 0.0, linear: 1.0, quadratic: 0.0 }
+    }
+}
+
+/// The type of a light and its own fields.
+///
+/// Directions are those of the light's world rotation column 0 (model +X): `NiDirectionalLight::UpdateWorldData`
+/// and `NiSpotLight::UpdateWorldData` (`m_kWorld.m_Rotate.GetCol(0, m_kWorldDir)`); light travels along it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum NifLightKind {
+    /// `NiAmbientLight`: only its ambient colour counts (`SCM_DEF_AMBIENTLIGHT`).
+    Ambient,
+    /// `NiDirectionalLight`.
+    Directional,
+    /// `NiPointLight`, at the node's world position.
+    Point { attenuation: LightAttenuation },
+    /// `NiSpotLight`: a point light lit inside a cone around its direction. `outer_angle` is the half angle in
+    /// degrees (`m_fOuterSpotAngle`); NIF 20.0.0.4 stores no inner angle (streamed since 20.2.0.5), so it is 0.
+    Spot { attenuation: LightAttenuation, outer_angle: f32, exponent: f32 },
+}
+
+/// One light (`NiLight`). Colours are multiplied by the dimmer when applied (`NiDX9LightManager`,
+/// `SCM_OBJ_AMBIENT` / `DIFFUSE` / `SPECULAR`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct NifLight {
+    /// The light's node in [`NifEffectDesc::nodes`].
+    pub node: usize,
+    pub kind: NifLightKind,
+    /// `NiDynamicEffect` switch (`m_bOn`).
+    pub on: bool,
+    pub dimmer: f32,
+    pub ambient: [f32; 3],
+    pub diffuse: [f32; 3],
+    pub specular: [f32; 3],
+    /// Nodes of `m_kUnaffectedNodeList`: `NiNode::PushLocalEffects` drops the light at them, for their subtree.
+    pub unaffected_nodes: Vec<usize>,
+}
+
 /// What a controller drives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ControllerTarget {
     Node(usize),
+    /// A light by [`NifEffectDesc::lights`] index (its colour and dimmer controllers; transform and visibility
+    /// controllers of a light target its node).
+    Light(usize),
     Material(usize),
     Texturing(usize),
     /// A particle system by [`NifEffectDesc::particle_systems`] index.
@@ -881,6 +941,11 @@ pub enum NifControllerKind {
     Alpha(FloatInterp),
     /// `NiMaterialColorController`.
     MaterialColor { field: MaterialColorField, interp: Point3Interp },
+    /// `NiLightColorController::UpdateValue`: the value, clamped to [0, 1], becomes the ambient colour (with
+    /// `ambient`; diffuse and specular turn black) or the diffuse and specular colours (ambient turns black).
+    LightColor { ambient: bool, interp: Point3Interp },
+    /// `NiLightDimmerController`: the light's dimmer.
+    LightDimmer(FloatInterp),
     /// `NiTextureTransformController`.
     TextureTransform { slot: TextureSlot, member: TextureTransformMember, interp: FloatInterp },
     /// `NiGeomMorpherController`: one weight interpolator per target of mesh `mesh`.

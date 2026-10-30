@@ -35,6 +35,14 @@ bitfield MaterialColorFlags : u16 from "CoreLibs/NiAnimation/NiMaterialColorCont
 object NiMaterialColorController : NiPoint3InterpController from "CoreLibs/NiAnimation/NiMaterialColorController.cpp"
     flags: MaterialColorFlags
 
+bitfield LightColorFlags : u16 from "CoreLibs/NiAnimation/NiLightColorController.h"
+    is_ambient: bool @0
+
+object NiLightColorController : NiPoint3InterpController from "CoreLibs/NiAnimation/NiLightColorController.cpp"
+    flags: LightColorFlags
+
+object NiLightDimmerController : NiFloatInterpController from "CoreLibs/NiAnimation/NiLightDimmerController.cpp"
+
 enum TransformMember : u32 from "CoreLibs/NiAnimation/NiTextureTransformController.h"
     TT_TRANSLATE_U
     TT_TRANSLATE_V

@@ -75,7 +75,9 @@ const CAMERA_DISTANCE: f32 = 1000.0;
 /// How the meshes are lit (shown with the lighting controls).
 pub const LIGHTING_NOTE: &str = "Meshes and NIF particle colours use these lights without direction (diffuse \
     as if facing every surface). The default is the client's: no light reaches effects, so lit (E_A_D) materials \
-    show only their emissive colour. Lights inside an effect NIF (one shipped file has two) are not applied.";
+    show only their emissive colour. Lights inside an effect NIF (one shipped file has two) are applied on top, \
+    as the client does: per vertex on the meshes of the nodes whose effect list holds them; particles, which have \
+    no normals, only get ambient lights.";
 /// Fraction of the canvas left free around the fitted bounds.
 const FIT_MARGIN: f32 = 0.08;
 /// Smallest world extent fitted into the canvas (an effect with a single point).

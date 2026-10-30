@@ -38,9 +38,10 @@ use crate::chaos::desc::{
 };
 use crate::nif::desc::{
     BillboardMode, BombDecay, BombSymmetry, BoolInterp, BoolKey, CompareFunction, ControllerTarget, ControllerTiming,
-    CullMode, Curve, CycleType, EmitterShape, FloatInterp, Key, KeyKind, LightingMode, MaterialColorField,
-    MeshEmission, MeshEmitterVelocity, ModifierParam, NIF_DESC_VERSION, NifAlpha, NifController, NifControllerKind,
-    NifEffectDesc, NifEmitter, NifInterpolator, NifMaterial, NifMesh, NifModifier, NifModifierKind, NifMorph,
+    CullMode, Curve, CycleType, EmitterShape, FloatInterp, Key, KeyKind, LightAttenuation, LightingMode,
+    MaterialColorField, MeshEmission, MeshEmitterVelocity, ModifierParam, NIF_DESC_VERSION, NifAlpha, NifController,
+    NifControllerKind, NifEffectDesc, NifEmitter, NifInterpolator, NifLight, NifLightKind, NifMaterial, NifMesh,
+    NifModifier, NifModifierKind, NifMorph,
     NifMorphTarget, NifNode, NifNodeKind, NifParticleSystem, NifRenderState, NifSpawn, NifTexture, NifTextureMap,
     NifTextureSource, NifTextureTransform, NifTexturing, NifTransform, NifVertexColor, NifZBuffer, PathInterp,
     Point3Interp, RotKey, RotationCurve, Tcb, TextureAddressing, TextureApplyMode, TextureSlot,
@@ -48,8 +49,9 @@ use crate::nif::desc::{
 };
 use crate::render::{BlendFactor, MeshGeometry};
 
-/// Version of the body rules and tag tables of this module.
-pub const DESC_CODEC_VERSION: u32 = 1;
+/// Version of the body rules and tag tables of this module (2: light node kind, light controller target and
+/// kinds, light kinds).
+pub const DESC_CODEC_VERSION: u32 = 2;
 /// Magic of a [`ChaosSystemDesc`] blob.
 pub const CHAOS_BLOB_MAGIC: [u8; 4] = *b"PSCH";
 /// Magic of a [`NifEffectDesc`] blob.
@@ -74,6 +76,13 @@ const NODE_KIND_BILLBOARD: u8 = 1;
 const NODE_KIND_MESH: u8 = 2;
 const NODE_KIND_PARTICLE_SYSTEM: u8 = 3;
 const NODE_KIND_OTHER: u8 = 4;
+const NODE_KIND_LIGHT: u8 = 5;
+
+/// `NifLightKind` tags.
+const LIGHT_AMBIENT: u8 = 0;
+const LIGHT_DIRECTIONAL: u8 = 1;
+const LIGHT_POINT: u8 = 2;
+const LIGHT_SPOT: u8 = 3;
 
 /// `NifTextureSource` tags.
 const TEXTURE_SOURCE_EXTERNAL: u8 = 0;
@@ -117,6 +126,7 @@ const TARGET_NODE: u8 = 0;
 const TARGET_MATERIAL: u8 = 1;
 const TARGET_TEXTURING: u8 = 2;
 const TARGET_PARTICLE_SYSTEM: u8 = 3;
+const TARGET_LIGHT: u8 = 4;
 
 /// `NifControllerKind` tags.
 const CONTROLLER_TRANSFORM: u8 = 0;
@@ -131,6 +141,8 @@ const CONTROLLER_MODIFIER_ACTIVE: u8 = 8;
 const CONTROLLER_PARTICLE_UPDATE: u8 = 9;
 const CONTROLLER_RESET_ON_LOOP: u8 = 10;
 const CONTROLLER_UNSUPPORTED: u8 = 11;
+const CONTROLLER_LIGHT_COLOR: u8 = 12;
+const CONTROLLER_LIGHT_DIMMER: u8 = 13;
 
 /// Why a blob does not decode.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -229,6 +241,7 @@ pub fn validate_nif_desc(desc: &NifEffectDesc) -> DecodeResult<()> {
     let materials = desc.materials.len();
     let texturings = desc.texturings.len();
     let textures = desc.textures.len();
+    let lights = desc.lights.len();
     if let Some(root) = desc.root {
         check_index("scene root", root, nodes)?;
     }
@@ -239,10 +252,20 @@ pub fn validate_nif_desc(desc: &NifEffectDesc) -> DecodeResult<()> {
         for &child in &node.children {
             check_index("node child", child, nodes)?;
         }
+        for &light in &node.lights {
+            check_index("node light", light, lights)?;
+        }
         match node.kind {
             NifNodeKind::Mesh { mesh } => check_index("node mesh", mesh, meshes)?,
             NifNodeKind::ParticleSystem { system } => check_index("node particle system", system, systems)?,
+            NifNodeKind::Light { light } => check_index("node light kind", light, lights)?,
             _ => {}
+        }
+    }
+    for light in &desc.lights {
+        check_index("light node", light.node, nodes)?;
+        for &node in &light.unaffected_nodes {
+            check_index("light unaffected node", node, nodes)?;
         }
     }
     for mesh in &desc.meshes {
@@ -289,6 +312,7 @@ pub fn validate_nif_desc(desc: &NifEffectDesc) -> DecodeResult<()> {
         }
         let modifiers = match controller.target {
             ControllerTarget::Node(node) => check_index("controller node", node, nodes).map(|()| 0)?,
+            ControllerTarget::Light(light) => check_index("controller light", light, lights).map(|()| 0)?,
             ControllerTarget::Material(material) => check_index("controller material", material, materials).map(|()| 0)?,
             ControllerTarget::Texturing(texturing) => {
                 check_index("controller texturing", texturing, texturings).map(|()| 0)?
@@ -1212,6 +1236,10 @@ impl Codec for NifNodeKind {
                 writer.tag(NODE_KIND_PARTICLE_SYSTEM);
                 writer.index(*system);
             }
+            NifNodeKind::Light { light } => {
+                writer.tag(NODE_KIND_LIGHT);
+                writer.index(*light);
+            }
             NifNodeKind::Other { type_name } => {
                 writer.tag(NODE_KIND_OTHER);
                 type_name.encode(writer);
@@ -1225,6 +1253,7 @@ impl Codec for NifNodeKind {
             NODE_KIND_BILLBOARD => NifNodeKind::Billboard(Codec::decode(reader)?),
             NODE_KIND_MESH => NifNodeKind::Mesh { mesh: reader.index("node mesh")? },
             NODE_KIND_PARTICLE_SYSTEM => NifNodeKind::ParticleSystem { system: reader.index("node particle system")? },
+            NODE_KIND_LIGHT => NifNodeKind::Light { light: reader.index("node light kind")? },
             NODE_KIND_OTHER => NifNodeKind::Other { type_name: Codec::decode(reader)? },
             tag => return Err(DescDecodeError::InvalidTag { what: "node kind", tag: u32::from(tag) }),
         })
@@ -1233,7 +1262,7 @@ impl Codec for NifNodeKind {
 
 impl Codec for NifNode {
     fn encode(&self, writer: &mut Writer) {
-        let NifNode { name, parent, children, transform, flags, kind, extra_strings, in_scene } = self;
+        let NifNode { name, parent, children, transform, flags, kind, extra_strings, in_scene, lights } = self;
         name.encode(writer);
         writer.opt_index(*parent);
         writer.indices(children);
@@ -1242,6 +1271,7 @@ impl Codec for NifNode {
         kind.encode(writer);
         extra_strings.encode(writer);
         in_scene.encode(writer);
+        writer.indices(lights);
     }
 
     fn decode(reader: &mut Reader<'_>) -> DecodeResult<Self> {
@@ -1254,6 +1284,84 @@ impl Codec for NifNode {
             kind: Codec::decode(reader)?,
             extra_strings: Codec::decode(reader)?,
             in_scene: Codec::decode(reader)?,
+            lights: reader.indices("node lights")?,
+        })
+    }
+}
+
+impl Codec for LightAttenuation {
+    fn encode(&self, writer: &mut Writer) {
+        let LightAttenuation { constant, linear, quadratic } = self;
+        constant.encode(writer);
+        linear.encode(writer);
+        quadratic.encode(writer);
+    }
+
+    fn decode(reader: &mut Reader<'_>) -> DecodeResult<Self> {
+        Ok(LightAttenuation {
+            constant: Codec::decode(reader)?,
+            linear: Codec::decode(reader)?,
+            quadratic: Codec::decode(reader)?,
+        })
+    }
+}
+
+impl Codec for NifLightKind {
+    fn encode(&self, writer: &mut Writer) {
+        match self {
+            NifLightKind::Ambient => writer.tag(LIGHT_AMBIENT),
+            NifLightKind::Directional => writer.tag(LIGHT_DIRECTIONAL),
+            NifLightKind::Point { attenuation } => {
+                writer.tag(LIGHT_POINT);
+                attenuation.encode(writer);
+            }
+            NifLightKind::Spot { attenuation, outer_angle, exponent } => {
+                writer.tag(LIGHT_SPOT);
+                attenuation.encode(writer);
+                outer_angle.encode(writer);
+                exponent.encode(writer);
+            }
+        }
+    }
+
+    fn decode(reader: &mut Reader<'_>) -> DecodeResult<Self> {
+        Ok(match reader.u8()? {
+            LIGHT_AMBIENT => NifLightKind::Ambient,
+            LIGHT_DIRECTIONAL => NifLightKind::Directional,
+            LIGHT_POINT => NifLightKind::Point { attenuation: Codec::decode(reader)? },
+            LIGHT_SPOT => NifLightKind::Spot {
+                attenuation: Codec::decode(reader)?,
+                outer_angle: Codec::decode(reader)?,
+                exponent: Codec::decode(reader)?,
+            },
+            tag => return Err(DescDecodeError::InvalidTag { what: "light kind", tag: u32::from(tag) }),
+        })
+    }
+}
+
+impl Codec for NifLight {
+    fn encode(&self, writer: &mut Writer) {
+        let NifLight { node, kind, on, dimmer, ambient, diffuse, specular, unaffected_nodes } = self;
+        writer.index(*node);
+        kind.encode(writer);
+        on.encode(writer);
+        dimmer.encode(writer);
+        ambient.encode(writer);
+        diffuse.encode(writer);
+        specular.encode(writer);
+        writer.indices(unaffected_nodes);
+    }
+
+    fn decode(reader: &mut Reader<'_>) -> DecodeResult<Self> {
+        Ok(NifLight {
+            node: reader.index("light node")?,
+            kind: Codec::decode(reader)?,
+            on: Codec::decode(reader)?,
+            dimmer: Codec::decode(reader)?,
+            ambient: Codec::decode(reader)?,
+            diffuse: Codec::decode(reader)?,
+            specular: Codec::decode(reader)?,
+            unaffected_nodes: reader.indices("light unaffected nodes")?,
         })
     }
 }
@@ -1928,6 +2036,7 @@ impl Codec for ControllerTarget {
             ControllerTarget::Material(index) => (TARGET_MATERIAL, index),
             ControllerTarget::Texturing(index) => (TARGET_TEXTURING, index),
             ControllerTarget::ParticleSystem(index) => (TARGET_PARTICLE_SYSTEM, index),
+            ControllerTarget::Light(index) => (TARGET_LIGHT, index),
         };
         writer.tag(tag);
         writer.index(index);
@@ -1941,6 +2050,7 @@ impl Codec for ControllerTarget {
             TARGET_MATERIAL => ControllerTarget::Material(index),
             TARGET_TEXTURING => ControllerTarget::Texturing(index),
             TARGET_PARTICLE_SYSTEM => ControllerTarget::ParticleSystem(index),
+            TARGET_LIGHT => ControllerTarget::Light(index),
             tag => return Err(DescDecodeError::InvalidTag { what: "controller target", tag: u32::from(tag) }),
         })
     }
@@ -1964,6 +2074,15 @@ impl Codec for NifControllerKind {
             NifControllerKind::MaterialColor { field, interp } => {
                 writer.tag(CONTROLLER_MATERIAL_COLOR);
                 field.encode(writer);
+                interp.encode(writer);
+            }
+            NifControllerKind::LightColor { ambient, interp } => {
+                writer.tag(CONTROLLER_LIGHT_COLOR);
+                ambient.encode(writer);
+                interp.encode(writer);
+            }
+            NifControllerKind::LightDimmer(interp) => {
+                writer.tag(CONTROLLER_LIGHT_DIMMER);
                 interp.encode(writer);
             }
             NifControllerKind::TextureTransform { slot, member, interp } => {
@@ -2011,6 +2130,10 @@ impl Codec for NifControllerKind {
             CONTROLLER_MATERIAL_COLOR => {
                 NifControllerKind::MaterialColor { field: Codec::decode(reader)?, interp: Codec::decode(reader)? }
             }
+            CONTROLLER_LIGHT_COLOR => {
+                NifControllerKind::LightColor { ambient: Codec::decode(reader)?, interp: Codec::decode(reader)? }
+            }
+            CONTROLLER_LIGHT_DIMMER => NifControllerKind::LightDimmer(Codec::decode(reader)?),
             CONTROLLER_TEXTURE_TRANSFORM => NifControllerKind::TextureTransform {
                 slot: Codec::decode(reader)?,
                 member: Codec::decode(reader)?,
@@ -2070,6 +2193,7 @@ impl Codec for NifEffectDesc {
             materials,
             texturings,
             textures,
+            lights,
             controllers,
         } = self;
         name.encode(writer);
@@ -2080,6 +2204,7 @@ impl Codec for NifEffectDesc {
         materials.encode(writer);
         texturings.encode(writer);
         textures.encode(writer);
+        lights.encode(writer);
         controllers.encode(writer);
     }
 
@@ -2093,6 +2218,7 @@ impl Codec for NifEffectDesc {
             materials: Codec::decode(reader)?,
             texturings: Codec::decode(reader)?,
             textures: Codec::decode(reader)?,
+            lights: Codec::decode(reader)?,
             controllers: Codec::decode(reader)?,
         })
     }

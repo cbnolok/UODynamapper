@@ -4,16 +4,18 @@
 //! (mesh-particle prototypes) follow. Properties accumulate from the root down as in `NiPropertyState`: the
 //! nearest property of each type wins. Controllers are listed in the order the scene update runs them
 //! (`NiAVObject::UpdateObjectControllers`, then `UpdatePropertyControllers`). Particle system modifiers are
-//! stable-sorted by their order, as `NiParticleSystem::AddModifier` inserts them.
+//! stable-sorted by their order, as `NiParticleSystem::AddModifier` inserts them. Lights become
+//! [`NifEffectDesc::lights`]; node effect lists and unaffected node lists are resolved once every node is known.
 
 use std::collections::{HashMap, HashSet};
 
 use gamebryo_nif::{
     AnimType, ApplyMode, Block, ClampMode, CycleType as NifCycleType, DecayType, FieldType, ForceType,
     InitialVelocityType, KeyType, LightingMode as NifLightingMode, Link, MaterialColorField as NifMaterialColorField,
-    MeshEmissionType, NiAVObject, NiAlphaController, NiAlphaProperty, NiBillboardNode, NiBoolData,
-    NiBoolInterpolator, NiColorA, NiColorData, NiFloatData, NiFloatInterpolator, NiGeomMorpherController,
-    NiGeometry, NiGeometryData, NiKey, NiMaterialColorController, NiMaterialProperty, NiMeshParticleSystem, NiMorphData,
+    MeshEmissionType, NiAVObject, NiAlphaController, NiAlphaProperty, NiAmbientLight, NiBillboardNode, NiBoolData,
+    NiBoolInterpolator, NiColor, NiColorA, NiColorData, NiDirectionalLight, NiFloatData, NiFloatInterpolator,
+    NiGeomMorpherController, NiGeometry, NiGeometryData, NiKey, NiLight, NiLightColorController,
+    NiLightDimmerController, NiMaterialColorController, NiMaterialProperty, NiMeshParticleSystem, NiMorphData,
     NiNode, NiObjectNET, NiPSysAgeDeathModifier, NiPSysBombModifier, NiPSysBoundUpdateModifier, NiPSysBoxEmitter,
     NiPSysColorModifier, NiPSysCylinderEmitter, NiPSysData, NiPSysDragModifier, NiPSysEmitter, NiPSysEmitterCtlr,
     NiPSysEmitterInitialRadiusCtlr, NiPSysEmitterLifeSpanCtlr, NiPSysEmitterSpeedCtlr, NiPSysGravityModifier,
@@ -21,7 +23,8 @@ use gamebryo_nif::{
     NiPSysMeshEmitter, NiPSysMeshUpdateModifier, NiPSysModifier, NiPSysModifierActiveCtlr, NiPSysModifierCtlr,
     NiPSysPositionModifier, NiPSysResetOnLoopCtlr, NiPSysRotationModifier, NiPSysSpawnModifier, NiPSysSphereEmitter,
     NiPSysUpdateCtlr, NiParticleSystem, NiPathInterpolator, NiPixelData, NiPoint3, NiPoint3Interpolator, NiPosData,
-    NiSingleInterpController, NiSourceTexture, NiSpecularProperty, NiStencilProperty, NiStringExtraData,
+    NiPointLight, NiSingleInterpController, NiSourceTexture, NiSpecularProperty, NiSpotLight, NiStencilProperty,
+    NiStringExtraData,
     NiTextureTransformController, NiTexturingProperty, NiTimeController, NiTransformController, NiTransformData,
     NiTransformInterpolator, NiTriShapeData, NiVertexColorProperty, NiVisController, NiZBufferProperty, NifFile,
     PixelFormatFormat, SourceVertexMode, StencilDrawMode, SymmType, TexturingMap, TransformMember, TransformMethod,
@@ -29,9 +32,10 @@ use gamebryo_nif::{
 
 use super::desc::{
     BillboardMode, BombDecay, BombSymmetry, BoolInterp, BoolKey, CompareFunction, ControllerTarget, ControllerTiming,
-    CullMode, Curve, CycleType, EmitterShape, FloatInterp, INVALID_POSE_FLOAT, Key, KeyKind, LightingMode,
-    MaterialColorField, MeshEmission, MeshEmitterVelocity, ModifierParam, NifAlpha, NifController, NifControllerKind,
-    NifEffectDesc, NifEmitter, NifInterpolator, NifMaterial, NifMesh, NifModifier, NifModifierKind, NifMorph,
+    CullMode, Curve, CycleType, EmitterShape, FloatInterp, INVALID_POSE_FLOAT, Key, KeyKind, LightAttenuation,
+    LightingMode, MaterialColorField, MeshEmission, MeshEmitterVelocity, ModifierParam, NifAlpha, NifController,
+    NifControllerKind, NifEffectDesc, NifEmitter, NifInterpolator, NifLight, NifLightKind, NifMaterial, NifMesh,
+    NifModifier, NifModifierKind, NifMorph,
     NifMorphTarget, NifNode, NifNodeKind, NifParticleSystem, NifRenderState, NifSpawn, NifTexture, NifTextureMap,
     NifTextureSource, NifTextureTransform, NifTexturing, NifTransform, NifVertexColor, NifZBuffer, PathInterp,
     Point3Interp, RotKey, RotationCurve, Tcb, TextureAddressing, TextureApplyMode, TextureSlot,
@@ -107,6 +111,7 @@ struct Tables {
     material_of_block: HashMap<usize, usize>,
     texturing_of_block: HashMap<usize, usize>,
     texture_of_block: HashMap<usize, usize>,
+    light_of_block: HashMap<usize, usize>,
     /// Property blocks of each node, in property list order.
     node_properties: Vec<Vec<usize>>,
     /// The first scene node holding a property block.
@@ -127,6 +132,10 @@ fn point3(p: &NiPoint3) -> [f32; 3] {
 
 fn color4(c: &NiColorA) -> [f32; 4] {
     [c.r, c.g, c.b, c.a]
+}
+
+fn color3(c: &NiColor) -> [f32; 3] {
+    [c.r, c.g, c.b]
 }
 
 impl Compiler<'_> {
@@ -182,9 +191,77 @@ impl Compiler<'_> {
                 *spawn_modifier = link;
             }
         }
+        self.link_lights();
         for node in 0..self.desc.nodes.len() {
             self.compile_node_controllers(node);
         }
+    }
+
+    /// Resolves the node effect lists ([`NifNode::lights`]) and the lights' unaffected node lists.
+    fn link_lights(&mut self) {
+        let nif = self.nif;
+        for node in 0..self.desc.nodes.len() {
+            let Some(ni_node) = nif.blocks[self.tables.node_blocks[node]].get::<NiNode>() else { continue };
+            let mut lights = Vec::new();
+            for effect in &ni_node.effect_list {
+                let Some(&light) = link_index(*effect).and_then(|block| self.tables.light_of_block.get(&block)) else {
+                    continue;
+                };
+                if !lights.contains(&light) {
+                    lights.push(light);
+                }
+            }
+            self.desc.nodes[node].lights = lights;
+        }
+        for light in 0..self.desc.lights.len() {
+            let block = self.tables.node_blocks[self.desc.lights[light].node];
+            let Some(effect) = nif.blocks[block].get::<NiLight>() else { continue };
+            let unaffected = effect
+                .unaffected_node_list
+                .iter()
+                .filter_map(|node| link_index(*node).and_then(|block| self.tables.node_of_block.get(&block).copied()))
+                .collect();
+            self.desc.lights[light].unaffected_nodes = unaffected;
+        }
+    }
+
+    /// Adds the light of an `NiLight` node; `None` for another type of light.
+    fn add_light(&mut self, block: usize, node: usize, light: &NiLight) -> Option<usize> {
+        let b = &self.nif.blocks[block];
+        let attenuation = |point: &NiPointLight| LightAttenuation {
+            constant: point.atten0,
+            linear: point.atten1,
+            quadratic: point.atten2,
+        };
+        let kind = if let Some(spot) = b.get::<NiSpotLight>() {
+            NifLightKind::Spot {
+                attenuation: attenuation(spot),
+                outer_angle: spot.outer_spot_angle,
+                exponent: spot.spot_exponent,
+            }
+        } else if let Some(point) = b.get::<NiPointLight>() {
+            NifLightKind::Point { attenuation: attenuation(point) }
+        } else if b.get::<NiDirectionalLight>().is_some() {
+            NifLightKind::Directional
+        } else if b.get::<NiAmbientLight>().is_some() {
+            NifLightKind::Ambient
+        } else {
+            self.warn(format!("light {} is not supported", b.type_name()));
+            return None;
+        };
+        let index = self.desc.lights.len();
+        self.tables.light_of_block.insert(block, index);
+        self.desc.lights.push(NifLight {
+            node,
+            kind,
+            on: light.on.get(),
+            dimmer: light.dimmer,
+            ambient: color3(&light.amb),
+            diffuse: color3(&light.diff),
+            specular: color3(&light.spec),
+            unaffected_nodes: Vec::new(),
+        });
+        Some(index)
     }
 
     /// Adds the node of `block` and its subtree; returns its index.
@@ -219,6 +296,7 @@ impl Compiler<'_> {
             kind: NifNodeKind::Node,
             extra_strings,
             in_scene,
+            lights: Vec::new(),
         });
         let mut state = inherited.clone();
         let mut properties = Vec::new();
@@ -247,6 +325,8 @@ impl Compiler<'_> {
             }))
         } else if block_ref.get::<NiNode>().is_some() {
             NifNodeKind::Node
+        } else if let Some(light) = block_ref.get::<NiLight>().and_then(|light| self.add_light(block, index, light)) {
+            NifNodeKind::Light { light }
         } else {
             NifNodeKind::Other { type_name: block_ref.type_name().to_owned() }
         };
@@ -652,9 +732,10 @@ impl Compiler<'_> {
         let in_scene = self.desc.nodes[node].in_scene;
         let owner = in_scene.then_some(node);
         let block = self.tables.node_blocks[node];
-        let target = match self.tables.system_of_node.get(&node) {
-            Some(&system) => ControllerTarget::ParticleSystem(system),
-            None => ControllerTarget::Node(node),
+        let target = match (self.tables.system_of_node.get(&node), &self.desc.nodes[node].kind) {
+            (Some(&system), _) => ControllerTarget::ParticleSystem(system),
+            (None, NifNodeKind::Light { light }) => ControllerTarget::Light(*light),
+            (None, _) => ControllerTarget::Node(node),
         };
         if let Some(net) = nif.blocks[block].get::<NiObjectNET>() {
             self.compile_chain(net, owner, target, node);
@@ -711,11 +792,13 @@ impl Compiler<'_> {
             if let NifControllerKind::Unsupported { type_name } = &kind {
                 self.warnings.push(format!("controller {type_name} is not run"));
             }
-            // A particle system is also a scene node: its transform and visibility controllers drive the node.
+            // A particle system or a light is also a scene node: its transform and visibility controllers drive
+            // the node.
             let target = match (&kind, target) {
-                (NifControllerKind::Transform(_) | NifControllerKind::Visibility(_), ControllerTarget::ParticleSystem(_)) => {
-                    ControllerTarget::Node(node)
-                }
+                (
+                    NifControllerKind::Transform(_) | NifControllerKind::Visibility(_),
+                    ControllerTarget::ParticleSystem(_) | ControllerTarget::Light(_),
+                ) => ControllerTarget::Node(node),
                 _ => target,
             };
             self.desc.controllers.push(NifController { owner, target, timing, kind });
@@ -765,6 +848,13 @@ impl Compiler<'_> {
                 _ => MaterialColorField::Emissive,
             };
             NifControllerKind::MaterialColor { field, interp: interpolator.and_then(|i| self.point3_interp(i)).unwrap_or_default() }
+        } else if let Some(c) = b.get::<NiLightColorController>() {
+            NifControllerKind::LightColor {
+                ambient: c.flags.is_ambient(),
+                interp: interpolator.and_then(|i| self.point3_interp(i)).unwrap_or_default(),
+            }
+        } else if b.get::<NiLightDimmerController>().is_some() {
+            NifControllerKind::LightDimmer(interpolator.and_then(|i| self.float_interp(i)).unwrap_or_default())
         } else if let Some(c) = b.get::<NiTextureTransformController>() {
             let member = match c.member {
                 TransformMember::TT_TRANSLATE_U => TextureTransformMember::TranslateU,
@@ -980,4 +1070,85 @@ pub fn decode_pixel_level(pixels: &NiPixelData, level: usize) -> Option<(u32, u3
         source.chunks_exact(RGB_BYTES_PER_PIXEL).flat_map(|p| [p[0], p[1], p[2], OPAQUE_ALPHA]).collect()
     };
     Some((width, height, rgba))
+}
+
+#[cfg(test)]
+mod tests {
+    use gamebryo_nif::{Header, Ptr, Ref};
+
+    use super::*;
+
+    const DIMMER: f32 = 0.5;
+    const SPOT_ANGLE: f32 = 30.0;
+    const SPOT_EXPONENT: f32 = 2.0;
+
+    /// A root listing a point, a spot and an ambient light; the spot leaves out child node 4 and has a dimmer
+    /// controller; node 4 lists the ambient light.
+    fn lit_nif() -> NifFile {
+        let mut root = NiNode::default();
+        root.children = vec![Ref::new(1), Ref::new(2), Ref::new(3), Ref::new(4)];
+        root.effect_list = vec![Ptr::new(1), Ptr::new(2)];
+        let mut point = NiPointLight::default();
+        point.atten2 = DIMMER;
+        let mut spot = NiSpotLight::default();
+        spot.outer_spot_angle = SPOT_ANGLE;
+        spot.spot_exponent = SPOT_EXPONENT;
+        spot.unaffected_node_list = vec![Ptr::new(4)];
+        spot.controllers = Ref::new(5);
+        let mut ambient = NiAmbientLight::default();
+        ambient.on = false.into();
+        let mut child = NiNode::default();
+        child.effect_list = vec![Ptr::new(3)];
+        let mut dimmer = NiLightDimmerController::default();
+        dimmer.target = Ptr::new(2);
+        dimmer.interpolator = Ref::new(6);
+        let mut interpolator = NiFloatInterpolator::default();
+        interpolator.float_value = DIMMER;
+        let blocks = vec![
+            root.into(),
+            point.into(),
+            spot.into(),
+            ambient.into(),
+            child.into(),
+            dimmer.into(),
+            interpolator.into(),
+        ];
+        NifFile { header: Header::default(), blocks, roots: vec![Ref::new(0)] }
+    }
+
+    #[test]
+    fn lights_effect_lists_and_light_controllers_compile() {
+        let nif = NifFile::read(&lit_nif().write().expect("writes")).expect("reads");
+        let output = compile(&nif, "lit.nif");
+        assert!(output.warnings.is_empty(), "{:?}", output.warnings);
+        let desc = output.desc;
+        let kinds: Vec<&NifNodeKind> = desc.nodes.iter().map(|node| &node.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                &NifNodeKind::Node,
+                &NifNodeKind::Light { light: 0 },
+                &NifNodeKind::Light { light: 1 },
+                &NifNodeKind::Light { light: 2 },
+                &NifNodeKind::Node,
+            ]
+        );
+        assert_eq!(desc.nodes[0].lights, [0, 1]);
+        assert_eq!(desc.nodes[4].lights, [2]);
+        let attenuation = LightAttenuation { quadratic: DIMMER, ..LightAttenuation::default() };
+        assert_eq!(desc.lights[0].kind, NifLightKind::Point { attenuation });
+        assert_eq!(
+            desc.lights[1].kind,
+            NifLightKind::Spot { attenuation: LightAttenuation::default(), outer_angle: SPOT_ANGLE, exponent: SPOT_EXPONENT }
+        );
+        assert_eq!(desc.lights[1].unaffected_nodes, [4]);
+        assert_eq!(desc.lights[2].kind, NifLightKind::Ambient);
+        assert!(desc.lights[0].on && !desc.lights[2].on);
+        assert_eq!(desc.controllers.len(), 1);
+        assert_eq!(desc.controllers[0].target, ControllerTarget::Light(1));
+        assert_eq!(
+            desc.controllers[0].kind,
+            NifControllerKind::LightDimmer(FloatInterp { pose: Some(DIMMER), keys: None })
+        );
+    }
 }

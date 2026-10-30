@@ -24,8 +24,8 @@ use std::sync::Arc;
 
 use crate::math::{Mat3, Vec3};
 use crate::nif::desc::{
-    CompareFunction, CullMode, LightingMode, NifVertexColor, TextureAddressing, TextureApplyMode, TextureSlot,
-    VertexColorSource,
+    CompareFunction, CullMode, LightAttenuation, LightingMode, NifVertexColor, TextureAddressing, TextureApplyMode,
+    TextureSlot, VertexColorSource,
 };
 
 /// Half extent of a quad relative to the particle size (UOSA.exe constant 0.5 at 0x00c95604).
@@ -318,7 +318,8 @@ pub struct TextureStage {
     pub addressing: TextureAddressing,
 }
 
-/// The lights an effect is lit by. Diffuse light is applied without direction (as if facing every surface).
+/// The lights an effect is lit by. Diffuse light is applied without direction (as if facing every surface). The
+/// effect's own lights ([`EffectLight`], carried by each draw) add to it.
 ///
 /// The default, [`CLIENT_EFFECT_LIGHTING`], is the client's: no light at all (confirmed). Effect NIFs hang under
 /// render group node 7 (`g_UOEffectRenderGroups` 0x00e32e28), a parentless node with an empty effect list; no
@@ -328,7 +329,8 @@ pub struct TextureStage {
 /// so is the diffuse sum, so both of the client's pipelines (`NiStandardMaterial` on shader model 2 hardware,
 /// chosen by `NiDX9Renderer` init at 0x00755612, and the legacy fixed-function one) draw `saturate(emissive)`:
 /// `E_A_D` materials show only their emissive colour. Lights inside an effect NIF light its own subtree (one
-/// shipped file, `00005540_shadowstrike.nif`, has two white `NiDirectionalLight`s on its root); set them here.
+/// shipped file, `00005540_shadowstrike.nif`, has two white `NiDirectionalLight`s on its root): the NIF effect
+/// runtime puts them on its draws ([`MeshDraw::lights`]) and they add to this.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SceneLighting {
     pub ambient: [f32; 3],
@@ -342,6 +344,96 @@ impl Default for SceneLighting {
     fn default() -> Self {
         CLIENT_EFFECT_LIGHTING
     }
+}
+
+/// `NiSpotLight` inner cone cosine: NIF 20.0.0.4 stores no inner angle (streamed since 20.2.0.5), so it is the
+/// constructor's 0 degrees and its cosine 1 (`NiSpotLight::SetInnerSpotAngle`).
+pub const SPOT_INNER_COS: f32 = 1.0;
+
+/// The type and placement of an [`EffectLight`], in world space. A direction is the one light travels along (the
+/// light's world rotation column 0).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum EffectLightKind {
+    Ambient,
+    Directional { direction: Vec3 },
+    Point { position: Vec3, attenuation: LightAttenuation },
+    /// `cos_outer`: cosine of the outer half angle.
+    Spot { position: Vec3, direction: Vec3, attenuation: LightAttenuation, cos_outer: f32, exponent: f32 },
+}
+
+/// A light of the effect's own scene (an `NiLight` of an effect NIF) that is on, with its colours multiplied by
+/// its dimmer (`SCM_OBJ_AMBIENT` / `DIFFUSE`). Specular light is not applied: it needs an `NiSpecularProperty`,
+/// which no shipped effect with lights has.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EffectLight {
+    pub kind: EffectLightKind,
+    pub ambient: [f32; 3],
+    pub diffuse: [f32; 3],
+}
+
+/// The light reaching a vertex: `base` plus the effect lights, as the client's per-vertex `NiStandardMaterial`
+/// light fragment sums them (`StandardMaterialNodeLibraryFragments.xml`, fragment `Light`):
+/// - an ambient light adds its ambient colour (`SCM_DEF_AMBIENTLIGHT`);
+/// - another light adds `diffuse × max(0, N·L) × attenuation` to the diffuse light and `ambient × attenuation` to
+///   the ambient light, with `L = -direction` for a directional light (attenuation 1) and the unit vector to the
+///   light otherwise; point and spot lights attenuate by `1 / max(1, c + l d + q d²)`, spot lights also by
+///   `saturate((cos α - cos_outer) / (cos_inner - cos_outer))^exponent` (0 when that is 0), `α` the angle between
+///   the light direction and the light-to-vertex vector.
+///
+/// `normal` is the unit world normal; geometry without normals is lit by ambient lights only
+/// (`NiStandardMaterial` sets the light count to 0 without normals).
+pub fn accumulate_lights(base: &SceneLighting, lights: &[EffectLight], position: Vec3, normal: Option<Vec3>) -> SceneLighting {
+    let mut out = *base;
+    for light in lights {
+        let (to_light, attenuation) = match light.kind {
+            EffectLightKind::Ambient => (Vec3::ZERO, 1.0),
+            _ if normal.is_none() => continue,
+            EffectLightKind::Directional { direction } => (-direction, 1.0),
+            EffectLightKind::Point { position: light_position, attenuation } => {
+                let (to_light, distance) = toward(light_position, position);
+                (to_light, distance_attenuation(attenuation, distance))
+            }
+            EffectLightKind::Spot { position: light_position, direction, attenuation, cos_outer, exponent } => {
+                let (to_light, distance) = toward(light_position, position);
+                let cone = spot_attenuation((-to_light).dot(direction), cos_outer, exponent);
+                (to_light, distance_attenuation(attenuation, distance) * cone)
+            }
+        };
+        // An ambient light has no diffuse term (its zero vector gives intensity 0).
+        let intensity = normal.map_or(0.0, |normal| to_light.dot(normal).max(0.0));
+        for k in 0..3 {
+            out.diffuse[k] += light.diffuse[k] * intensity * attenuation;
+            out.ambient[k] += light.ambient[k] * attenuation;
+        }
+    }
+    out
+}
+
+/// The unit vector from `position` to `light` and the distance.
+fn toward(light: Vec3, position: Vec3) -> (Vec3, f32) {
+    let offset = light - position;
+    (offset.normalize_or_zero(), offset.length())
+}
+
+/// Smallest distance attenuation divisor of the light fragment (`Attenuate = max(1.0, Attenuate)`).
+const MIN_ATTENUATION_DIVISOR: f32 = 1.0;
+
+fn distance_attenuation(attenuation: LightAttenuation, distance: f32) -> f32 {
+    let LightAttenuation { constant, linear, quadratic } = attenuation;
+    1.0 / (constant + linear * distance + quadratic * distance * distance).max(MIN_ATTENUATION_DIVISOR)
+}
+
+/// The spot cone factor of the light fragment; a cone without width (outer cosine 1) lights only along its axis.
+fn spot_attenuation(cos_alpha: f32, cos_outer: f32, exponent: f32) -> f32 {
+    let width = SPOT_INNER_COS - cos_outer;
+    let factor = if width > 0.0 {
+        ((cos_alpha - cos_outer) / width).clamp(0.0, 1.0)
+    } else if cos_alpha >= SPOT_INNER_COS {
+        1.0
+    } else {
+        0.0
+    };
+    if factor <= 0.0 { 0.0 } else { factor.powf(exponent) }
 }
 
 /// A triangle mesh to draw.
@@ -369,6 +461,9 @@ pub struct MeshDraw {
     pub depth: DepthState,
     pub depth_function: CompareFunction,
     pub cull: CullMode,
+    /// The effect's own lights that reach this mesh (empty for nearly every effect), added per vertex to the
+    /// [`SceneLighting`] by [`expand_mesh_draw`].
+    pub lights: Vec<EffectLight>,
 }
 
 impl MeshDraw {
@@ -509,9 +604,10 @@ pub fn expand_mesh_stage_uvs(draw: &MeshDraw, stage: &TextureStage, out: &mut Ve
 }
 
 /// Appends the triangles of a mesh draw as a triangle list (3 vertices per triangle, in index order): world
-/// positions, base-map UVs with the map's transform, and lit colours ([`light_vertex`]; white when the texture
-/// replaces the colour). The texture is not applied; combine a sample with [`apply_texture`], or the samples of
-/// every stage ([`expand_mesh_stage_uvs`]) with [`combine_textures`].
+/// positions, base-map UVs with the map's transform, and lit colours ([`light_vertex`] with `lighting` plus the
+/// draw's own [`MeshDraw::lights`] at the vertex ([`accumulate_lights`], world normals from the mesh normals); white
+/// when the texture replaces the colour). The texture is not applied; combine a sample with [`apply_texture`], or
+/// the samples of every stage ([`expand_mesh_stage_uvs`]) with [`combine_textures`].
 pub fn expand_mesh_draw(draw: &MeshDraw, lighting: &SceneLighting, out: &mut Vec<QuadVertex>) {
     let positions = draw.local_positions();
     let geometry = &draw.geometry;
@@ -525,8 +621,15 @@ pub fn expand_mesh_draw(draw: &MeshDraw, lighting: &SceneLighting, out: &mut Vec
         let uv = uvs.and_then(|set| set.get(index)).map_or([0.0; 2], |&uv| uv_transform.apply(uv));
         let color = if replaces {
             [1.0; 4]
-        } else {
+        } else if draw.lights.is_empty() {
             light_vertex(&draw.material, geometry.colors.get(index).copied(), draw.vertex_color, lighting)
+        } else {
+            let normal = geometry
+                .normals
+                .get(index)
+                .map(|&normal| draw.rotation.mul_vec3(Vec3::from_array(normal)).normalize_or_zero());
+            let lit = accumulate_lights(lighting, &draw.lights, position, normal);
+            light_vertex(&draw.material, geometry.colors.get(index).copied(), draw.vertex_color, &lit)
         };
         QuadVertex { position, uv, color }
     };
@@ -751,6 +854,7 @@ mod tests {
             depth: DepthState { test: true, write: true },
             depth_function: CompareFunction::LessEqual,
             cull: CullMode::Back,
+            lights: Vec::new(),
         };
         let mut vertices = Vec::new();
         expand_mesh_draw(&draw, &SceneLighting::default(), &mut vertices);
@@ -765,5 +869,102 @@ mod tests {
         assert_eq!(uvs(&draw.textures[1]), vec![[0.5; 2]; TRIANGLE_VERTICES]);
         // A missing UV set gives zeros.
         assert_eq!(uvs(&draw.textures[2]), vec![[0.0; 2]; TRIANGLE_VERTICES]);
+    }
+
+    fn close3(actual: [f32; 3], expected: [f32; 3]) -> bool {
+        actual.iter().zip(&expected).all(|(a, e)| (a - e).abs() < EPSILON)
+    }
+
+    fn white(kind: EffectLightKind) -> EffectLight {
+        EffectLight { kind, ambient: [0.25; 3], diffuse: [1.0; 3] }
+    }
+
+    #[test]
+    fn effect_lights_add_by_normal_distance_and_cone() {
+        let base = SceneLighting { ambient: [0.1; 3], diffuse: [0.0; 3] };
+        let up = Some(Vec3::Z);
+        // A directional light shining down lights an upward normal fully, plus its ambient colour.
+        let down = white(EffectLightKind::Directional { direction: -Vec3::Z });
+        let lit = accumulate_lights(&base, &[down], Vec3::ZERO, up);
+        assert!(close3(lit.diffuse, [1.0; 3]) && close3(lit.ambient, [0.35; 3]));
+        // Facing away: no diffuse light, the ambient term stays.
+        let lit = accumulate_lights(&base, &[down], Vec3::ZERO, Some(-Vec3::Z));
+        assert!(close3(lit.diffuse, [0.0; 3]) && close3(lit.ambient, [0.35; 3]));
+        // Without normals only ambient lights count.
+        let ambient = white(EffectLightKind::Ambient);
+        let lit = accumulate_lights(&base, &[down, ambient], Vec3::ZERO, None);
+        assert!(close3(lit.diffuse, [0.0; 3]) && close3(lit.ambient, [0.35; 3]));
+        // A point light 2 above with linear attenuation 1: 1 / max(1, 2) = 0.5.
+        let attenuation = LightAttenuation::default();
+        let point = white(EffectLightKind::Point { position: Vec3::Z * 2.0, attenuation });
+        let lit = accumulate_lights(&base, &[point], Vec3::ZERO, up);
+        assert!(close3(lit.diffuse, [0.5; 3]));
+        // Close lights are not brightened beyond the colour (the divisor is at least 1).
+        let near = white(EffectLightKind::Point { position: Vec3::Z * 0.5, attenuation });
+        assert!(close3(accumulate_lights(&base, &[near], Vec3::ZERO, up).diffuse, [1.0; 3]));
+        // A 60-degree spot cone pointing down: full on its axis, (cos α - cos 60) / (1 - cos 60) off it, 0 outside.
+        let spot = |position: Vec3| {
+            let light = white(EffectLightKind::Spot {
+                position,
+                direction: -Vec3::Z,
+                attenuation: LightAttenuation { constant: 1.0, linear: 0.0, quadratic: 0.0 },
+                cos_outer: 0.5,
+                exponent: 1.0,
+            });
+            accumulate_lights(&SceneLighting::default(), &[light], Vec3::ZERO, up).ambient[0] / 0.25
+        };
+        assert!((spot(Vec3::Z) - 1.0).abs() < EPSILON);
+        let off_axis = Vec3::new(1.0, 0.0, 3.0_f32.sqrt());
+        let cos_alpha = 3.0_f32.sqrt() / 2.0;
+        assert!((spot(off_axis) - (cos_alpha - 0.5) / 0.5).abs() < EPSILON);
+        assert_eq!(spot(Vec3::new(1.0, 0.0, 0.1)), 0.0);
+    }
+
+    #[test]
+    fn mesh_draw_lights_follow_the_world_normals() {
+        let geometry = MeshGeometry {
+            positions: vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            normals: vec![[0.0, 0.0, 1.0]; 3],
+            triangles: vec![[0, 1, 2]],
+            ..MeshGeometry::default()
+        };
+        let mut draw = MeshDraw {
+            order: 0,
+            name: Arc::from("mesh"),
+            geometry: Arc::new(geometry),
+            positions: None,
+            // Turned upside down: the world normals point down.
+            rotation: Mat3::from_rows([[1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, -1.0]]),
+            translation: Vec3::ZERO,
+            scale: 1.0,
+            material: MaterialColors { diffuse: [0.5, 0.25, 1.0], emissive: [0.1; 3], ..DEFAULT_MATERIAL_COLORS },
+            vertex_color: NifVertexColor::default(),
+            apply_mode: TextureApplyMode::Modulate,
+            textures: Vec::new(),
+            blend: None,
+            alpha_test: None,
+            depth: DepthState { test: true, write: true },
+            depth_function: CompareFunction::LessEqual,
+            cull: CullMode::None,
+            lights: Vec::new(),
+        };
+        let colors = |draw: &MeshDraw| {
+            let mut vertices = Vec::new();
+            expand_mesh_draw(draw, &SceneLighting::default(), &mut vertices);
+            vertices.iter().map(|vertex| vertex.color).collect::<Vec<_>>()
+        };
+        let unlit = [0.1, 0.1, 0.1, 1.0];
+        assert!(colors(&draw).iter().all(|&color| close(color, unlit)));
+        let light = |direction| EffectLight {
+            kind: EffectLightKind::Directional { direction },
+            ambient: [0.0; 3],
+            diffuse: [1.0; 3],
+        };
+        // A light shining up reaches the downward normals: emissive + diffuse, clamped.
+        draw.lights = vec![light(Vec3::Z)];
+        assert!(colors(&draw).iter().all(|&color| close(color, [0.6, 0.35, 1.0, 1.0])));
+        // One shining down does not.
+        draw.lights = vec![light(-Vec3::Z)];
+        assert!(colors(&draw).iter().all(|&color| close(color, unlit)));
     }
 }

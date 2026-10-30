@@ -23,6 +23,7 @@ pub const NIF_USER_VERSION: u32 = 0;
 pub enum BlockType {
     NiAlphaController,
     NiAlphaProperty,
+    NiAmbientLight,
     NiBillboardNode,
     NiBoolData,
     NiBoolInterpolator,
@@ -36,6 +37,8 @@ pub enum BlockType {
     NiFloatInterpolator,
     NiGeomMorpherController,
     NiIntegersExtraData,
+    NiLightColorController,
+    NiLightDimmerController,
     NiMaterialColorController,
     NiMaterialProperty,
     NiMeshPSysData,
@@ -72,10 +75,12 @@ pub enum BlockType {
     NiPathInterpolator,
     NiPixelData,
     NiPoint3Interpolator,
+    NiPointLight,
     NiPosData,
     NiSortAdjustNode,
     NiSourceTexture,
     NiSpecularProperty,
+    NiSpotLight,
     NiStencilProperty,
     NiStringExtraData,
     NiTextureEffect,
@@ -95,6 +100,7 @@ impl BlockType {
     pub const ALL: &'static [BlockType] = &[
         BlockType::NiAlphaController,
         BlockType::NiAlphaProperty,
+        BlockType::NiAmbientLight,
         BlockType::NiBillboardNode,
         BlockType::NiBoolData,
         BlockType::NiBoolInterpolator,
@@ -108,6 +114,8 @@ impl BlockType {
         BlockType::NiFloatInterpolator,
         BlockType::NiGeomMorpherController,
         BlockType::NiIntegersExtraData,
+        BlockType::NiLightColorController,
+        BlockType::NiLightDimmerController,
         BlockType::NiMaterialColorController,
         BlockType::NiMaterialProperty,
         BlockType::NiMeshPSysData,
@@ -144,10 +152,12 @@ impl BlockType {
         BlockType::NiPathInterpolator,
         BlockType::NiPixelData,
         BlockType::NiPoint3Interpolator,
+        BlockType::NiPointLight,
         BlockType::NiPosData,
         BlockType::NiSortAdjustNode,
         BlockType::NiSourceTexture,
         BlockType::NiSpecularProperty,
+        BlockType::NiSpotLight,
         BlockType::NiStencilProperty,
         BlockType::NiStringExtraData,
         BlockType::NiTextureEffect,
@@ -168,6 +178,7 @@ impl BlockType {
         match self {
             BlockType::NiAlphaController => "NiAlphaController",
             BlockType::NiAlphaProperty => "NiAlphaProperty",
+            BlockType::NiAmbientLight => "NiAmbientLight",
             BlockType::NiBillboardNode => "NiBillboardNode",
             BlockType::NiBoolData => "NiBoolData",
             BlockType::NiBoolInterpolator => "NiBoolInterpolator",
@@ -181,6 +192,8 @@ impl BlockType {
             BlockType::NiFloatInterpolator => "NiFloatInterpolator",
             BlockType::NiGeomMorpherController => "NiGeomMorpherController",
             BlockType::NiIntegersExtraData => "NiIntegersExtraData",
+            BlockType::NiLightColorController => "NiLightColorController",
+            BlockType::NiLightDimmerController => "NiLightDimmerController",
             BlockType::NiMaterialColorController => "NiMaterialColorController",
             BlockType::NiMaterialProperty => "NiMaterialProperty",
             BlockType::NiMeshPSysData => "NiMeshPSysData",
@@ -217,10 +230,12 @@ impl BlockType {
             BlockType::NiPathInterpolator => "NiPathInterpolator",
             BlockType::NiPixelData => "NiPixelData",
             BlockType::NiPoint3Interpolator => "NiPoint3Interpolator",
+            BlockType::NiPointLight => "NiPointLight",
             BlockType::NiPosData => "NiPosData",
             BlockType::NiSortAdjustNode => "NiSortAdjustNode",
             BlockType::NiSourceTexture => "NiSourceTexture",
             BlockType::NiSpecularProperty => "NiSpecularProperty",
+            BlockType::NiSpotLight => "NiSpotLight",
             BlockType::NiStencilProperty => "NiStencilProperty",
             BlockType::NiStringExtraData => "NiStringExtraData",
             BlockType::NiTextureEffect => "NiTextureEffect",
@@ -241,6 +256,7 @@ impl BlockType {
         Some(match name {
             b"NiAlphaController" => BlockType::NiAlphaController,
             b"NiAlphaProperty" => BlockType::NiAlphaProperty,
+            b"NiAmbientLight" => BlockType::NiAmbientLight,
             b"NiBillboardNode" => BlockType::NiBillboardNode,
             b"NiBoolData" => BlockType::NiBoolData,
             b"NiBoolInterpolator" => BlockType::NiBoolInterpolator,
@@ -254,6 +270,8 @@ impl BlockType {
             b"NiFloatInterpolator" => BlockType::NiFloatInterpolator,
             b"NiGeomMorpherController" => BlockType::NiGeomMorpherController,
             b"NiIntegersExtraData" => BlockType::NiIntegersExtraData,
+            b"NiLightColorController" => BlockType::NiLightColorController,
+            b"NiLightDimmerController" => BlockType::NiLightDimmerController,
             b"NiMaterialColorController" => BlockType::NiMaterialColorController,
             b"NiMaterialProperty" => BlockType::NiMaterialProperty,
             b"NiMeshPSysData" => BlockType::NiMeshPSysData,
@@ -290,10 +308,12 @@ impl BlockType {
             b"NiPathInterpolator" => BlockType::NiPathInterpolator,
             b"NiPixelData" => BlockType::NiPixelData,
             b"NiPoint3Interpolator" => BlockType::NiPoint3Interpolator,
+            b"NiPointLight" => BlockType::NiPointLight,
             b"NiPosData" => BlockType::NiPosData,
             b"NiSortAdjustNode" => BlockType::NiSortAdjustNode,
             b"NiSourceTexture" => BlockType::NiSourceTexture,
             b"NiSpecularProperty" => BlockType::NiSpecularProperty,
+            b"NiSpotLight" => BlockType::NiSpotLight,
             b"NiStencilProperty" => BlockType::NiStencilProperty,
             b"NiStringExtraData" => BlockType::NiStringExtraData,
             b"NiTextureEffect" => BlockType::NiTextureEffect,
@@ -316,6 +336,7 @@ impl BlockType {
         match self {
             BlockType::NiAlphaController => &["NiAlphaController", "NiFloatInterpController", "NiSingleInterpController", "NiInterpController", "NiTimeController", "NiObject"],
             BlockType::NiAlphaProperty => &["NiAlphaProperty", "NiProperty", "NiObjectNET", "NiObject"],
+            BlockType::NiAmbientLight => &["NiAmbientLight", "NiLight", "NiDynamicEffect", "NiAVObject", "NiObjectNET", "NiObject"],
             BlockType::NiBillboardNode => &["NiBillboardNode", "NiNode", "NiAVObject", "NiObjectNET", "NiObject"],
             BlockType::NiBoolData => &["NiBoolData", "NiObject"],
             BlockType::NiBoolInterpolator => &["NiBoolInterpolator", "NiKeyBasedInterpolator", "NiInterpolator", "NiObject"],
@@ -329,6 +350,8 @@ impl BlockType {
             BlockType::NiFloatInterpolator => &["NiFloatInterpolator", "NiKeyBasedInterpolator", "NiInterpolator", "NiObject"],
             BlockType::NiGeomMorpherController => &["NiGeomMorpherController", "NiInterpController", "NiTimeController", "NiObject"],
             BlockType::NiIntegersExtraData => &["NiIntegersExtraData", "NiExtraData", "NiObject"],
+            BlockType::NiLightColorController => &["NiLightColorController", "NiPoint3InterpController", "NiSingleInterpController", "NiInterpController", "NiTimeController", "NiObject"],
+            BlockType::NiLightDimmerController => &["NiLightDimmerController", "NiFloatInterpController", "NiSingleInterpController", "NiInterpController", "NiTimeController", "NiObject"],
             BlockType::NiMaterialColorController => &["NiMaterialColorController", "NiPoint3InterpController", "NiSingleInterpController", "NiInterpController", "NiTimeController", "NiObject"],
             BlockType::NiMaterialProperty => &["NiMaterialProperty", "NiProperty", "NiObjectNET", "NiObject"],
             BlockType::NiMeshPSysData => &["NiMeshPSysData", "NiPSysData", "NiParticlesData", "NiGeometryData", "NiObject"],
@@ -365,10 +388,12 @@ impl BlockType {
             BlockType::NiPathInterpolator => &["NiPathInterpolator", "NiKeyBasedInterpolator", "NiInterpolator", "NiObject"],
             BlockType::NiPixelData => &["NiPixelData", "NiObject"],
             BlockType::NiPoint3Interpolator => &["NiPoint3Interpolator", "NiKeyBasedInterpolator", "NiInterpolator", "NiObject"],
+            BlockType::NiPointLight => &["NiPointLight", "NiLight", "NiDynamicEffect", "NiAVObject", "NiObjectNET", "NiObject"],
             BlockType::NiPosData => &["NiPosData", "NiObject"],
             BlockType::NiSortAdjustNode => &["NiSortAdjustNode", "NiNode", "NiAVObject", "NiObjectNET", "NiObject"],
             BlockType::NiSourceTexture => &["NiSourceTexture", "NiTexture", "NiObjectNET", "NiObject"],
             BlockType::NiSpecularProperty => &["NiSpecularProperty", "NiProperty", "NiObjectNET", "NiObject"],
+            BlockType::NiSpotLight => &["NiSpotLight", "NiPointLight", "NiLight", "NiDynamicEffect", "NiAVObject", "NiObjectNET", "NiObject"],
             BlockType::NiStencilProperty => &["NiStencilProperty", "NiProperty", "NiObjectNET", "NiObject"],
             BlockType::NiStringExtraData => &["NiStringExtraData", "NiExtraData", "NiObject"],
             BlockType::NiTextureEffect => &["NiTextureEffect", "NiDynamicEffect", "NiAVObject", "NiObjectNET", "NiObject"],
@@ -396,6 +421,7 @@ impl BlockType {
 pub enum Block {
     NiAlphaController(NiAlphaController),
     NiAlphaProperty(NiAlphaProperty),
+    NiAmbientLight(NiAmbientLight),
     NiBillboardNode(NiBillboardNode),
     NiBoolData(NiBoolData),
     NiBoolInterpolator(NiBoolInterpolator),
@@ -409,6 +435,8 @@ pub enum Block {
     NiFloatInterpolator(NiFloatInterpolator),
     NiGeomMorpherController(NiGeomMorpherController),
     NiIntegersExtraData(NiIntegersExtraData),
+    NiLightColorController(NiLightColorController),
+    NiLightDimmerController(NiLightDimmerController),
     NiMaterialColorController(NiMaterialColorController),
     NiMaterialProperty(NiMaterialProperty),
     NiMeshPSysData(NiMeshPSysData),
@@ -445,10 +473,12 @@ pub enum Block {
     NiPathInterpolator(NiPathInterpolator),
     NiPixelData(NiPixelData),
     NiPoint3Interpolator(NiPoint3Interpolator),
+    NiPointLight(NiPointLight),
     NiPosData(NiPosData),
     NiSortAdjustNode(NiSortAdjustNode),
     NiSourceTexture(NiSourceTexture),
     NiSpecularProperty(NiSpecularProperty),
+    NiSpotLight(NiSpotLight),
     NiStencilProperty(NiStencilProperty),
     NiStringExtraData(NiStringExtraData),
     NiTextureEffect(NiTextureEffect),
@@ -469,6 +499,7 @@ impl Block {
         match self {
             Block::NiAlphaController(_) => BlockType::NiAlphaController,
             Block::NiAlphaProperty(_) => BlockType::NiAlphaProperty,
+            Block::NiAmbientLight(_) => BlockType::NiAmbientLight,
             Block::NiBillboardNode(_) => BlockType::NiBillboardNode,
             Block::NiBoolData(_) => BlockType::NiBoolData,
             Block::NiBoolInterpolator(_) => BlockType::NiBoolInterpolator,
@@ -482,6 +513,8 @@ impl Block {
             Block::NiFloatInterpolator(_) => BlockType::NiFloatInterpolator,
             Block::NiGeomMorpherController(_) => BlockType::NiGeomMorpherController,
             Block::NiIntegersExtraData(_) => BlockType::NiIntegersExtraData,
+            Block::NiLightColorController(_) => BlockType::NiLightColorController,
+            Block::NiLightDimmerController(_) => BlockType::NiLightDimmerController,
             Block::NiMaterialColorController(_) => BlockType::NiMaterialColorController,
             Block::NiMaterialProperty(_) => BlockType::NiMaterialProperty,
             Block::NiMeshPSysData(_) => BlockType::NiMeshPSysData,
@@ -518,10 +551,12 @@ impl Block {
             Block::NiPathInterpolator(_) => BlockType::NiPathInterpolator,
             Block::NiPixelData(_) => BlockType::NiPixelData,
             Block::NiPoint3Interpolator(_) => BlockType::NiPoint3Interpolator,
+            Block::NiPointLight(_) => BlockType::NiPointLight,
             Block::NiPosData(_) => BlockType::NiPosData,
             Block::NiSortAdjustNode(_) => BlockType::NiSortAdjustNode,
             Block::NiSourceTexture(_) => BlockType::NiSourceTexture,
             Block::NiSpecularProperty(_) => BlockType::NiSpecularProperty,
+            Block::NiSpotLight(_) => BlockType::NiSpotLight,
             Block::NiStencilProperty(_) => BlockType::NiStencilProperty,
             Block::NiStringExtraData(_) => BlockType::NiStringExtraData,
             Block::NiTextureEffect(_) => BlockType::NiTextureEffect,
@@ -547,6 +582,7 @@ impl Block {
         Ok(match ty {
             BlockType::NiAlphaController => Block::NiAlphaController(NiAlphaController::read_fields(r)?),
             BlockType::NiAlphaProperty => Block::NiAlphaProperty(NiAlphaProperty::read_fields(r)?),
+            BlockType::NiAmbientLight => Block::NiAmbientLight(NiAmbientLight::read_fields(r)?),
             BlockType::NiBillboardNode => Block::NiBillboardNode(NiBillboardNode::read_fields(r)?),
             BlockType::NiBoolData => Block::NiBoolData(NiBoolData::read_fields(r)?),
             BlockType::NiBoolInterpolator => Block::NiBoolInterpolator(NiBoolInterpolator::read_fields(r)?),
@@ -560,6 +596,8 @@ impl Block {
             BlockType::NiFloatInterpolator => Block::NiFloatInterpolator(NiFloatInterpolator::read_fields(r)?),
             BlockType::NiGeomMorpherController => Block::NiGeomMorpherController(NiGeomMorpherController::read_fields(r)?),
             BlockType::NiIntegersExtraData => Block::NiIntegersExtraData(NiIntegersExtraData::read_fields(r)?),
+            BlockType::NiLightColorController => Block::NiLightColorController(NiLightColorController::read_fields(r)?),
+            BlockType::NiLightDimmerController => Block::NiLightDimmerController(NiLightDimmerController::read_fields(r)?),
             BlockType::NiMaterialColorController => Block::NiMaterialColorController(NiMaterialColorController::read_fields(r)?),
             BlockType::NiMaterialProperty => Block::NiMaterialProperty(NiMaterialProperty::read_fields(r)?),
             BlockType::NiMeshPSysData => Block::NiMeshPSysData(NiMeshPSysData::read_fields(r)?),
@@ -596,10 +634,12 @@ impl Block {
             BlockType::NiPathInterpolator => Block::NiPathInterpolator(NiPathInterpolator::read_fields(r)?),
             BlockType::NiPixelData => Block::NiPixelData(NiPixelData::read_fields(r)?),
             BlockType::NiPoint3Interpolator => Block::NiPoint3Interpolator(NiPoint3Interpolator::read_fields(r)?),
+            BlockType::NiPointLight => Block::NiPointLight(NiPointLight::read_fields(r)?),
             BlockType::NiPosData => Block::NiPosData(NiPosData::read_fields(r)?),
             BlockType::NiSortAdjustNode => Block::NiSortAdjustNode(NiSortAdjustNode::read_fields(r)?),
             BlockType::NiSourceTexture => Block::NiSourceTexture(NiSourceTexture::read_fields(r)?),
             BlockType::NiSpecularProperty => Block::NiSpecularProperty(NiSpecularProperty::read_fields(r)?),
+            BlockType::NiSpotLight => Block::NiSpotLight(NiSpotLight::read_fields(r)?),
             BlockType::NiStencilProperty => Block::NiStencilProperty(NiStencilProperty::read_fields(r)?),
             BlockType::NiStringExtraData => Block::NiStringExtraData(NiStringExtraData::read_fields(r)?),
             BlockType::NiTextureEffect => Block::NiTextureEffect(NiTextureEffect::read_fields(r)?),
@@ -620,6 +660,7 @@ impl Block {
         match self {
             Block::NiAlphaController(x) => x.write_fields(w),
             Block::NiAlphaProperty(x) => x.write_fields(w),
+            Block::NiAmbientLight(x) => x.write_fields(w),
             Block::NiBillboardNode(x) => x.write_fields(w),
             Block::NiBoolData(x) => x.write_fields(w),
             Block::NiBoolInterpolator(x) => x.write_fields(w),
@@ -633,6 +674,8 @@ impl Block {
             Block::NiFloatInterpolator(x) => x.write_fields(w),
             Block::NiGeomMorpherController(x) => x.write_fields(w),
             Block::NiIntegersExtraData(x) => x.write_fields(w),
+            Block::NiLightColorController(x) => x.write_fields(w),
+            Block::NiLightDimmerController(x) => x.write_fields(w),
             Block::NiMaterialColorController(x) => x.write_fields(w),
             Block::NiMaterialProperty(x) => x.write_fields(w),
             Block::NiMeshPSysData(x) => x.write_fields(w),
@@ -669,10 +712,12 @@ impl Block {
             Block::NiPathInterpolator(x) => x.write_fields(w),
             Block::NiPixelData(x) => x.write_fields(w),
             Block::NiPoint3Interpolator(x) => x.write_fields(w),
+            Block::NiPointLight(x) => x.write_fields(w),
             Block::NiPosData(x) => x.write_fields(w),
             Block::NiSortAdjustNode(x) => x.write_fields(w),
             Block::NiSourceTexture(x) => x.write_fields(w),
             Block::NiSpecularProperty(x) => x.write_fields(w),
+            Block::NiSpotLight(x) => x.write_fields(w),
             Block::NiStencilProperty(x) => x.write_fields(w),
             Block::NiStringExtraData(x) => x.write_fields(w),
             Block::NiTextureEffect(x) => x.write_fields(w),
@@ -695,6 +740,7 @@ impl Block {
         match self {
             Block::NiAlphaController(x) => x.collect_fields(&mut out),
             Block::NiAlphaProperty(x) => x.collect_fields(&mut out),
+            Block::NiAmbientLight(x) => x.collect_fields(&mut out),
             Block::NiBillboardNode(x) => x.collect_fields(&mut out),
             Block::NiBoolData(x) => x.collect_fields(&mut out),
             Block::NiBoolInterpolator(x) => x.collect_fields(&mut out),
@@ -708,6 +754,8 @@ impl Block {
             Block::NiFloatInterpolator(x) => x.collect_fields(&mut out),
             Block::NiGeomMorpherController(x) => x.collect_fields(&mut out),
             Block::NiIntegersExtraData(x) => x.collect_fields(&mut out),
+            Block::NiLightColorController(x) => x.collect_fields(&mut out),
+            Block::NiLightDimmerController(x) => x.collect_fields(&mut out),
             Block::NiMaterialColorController(x) => x.collect_fields(&mut out),
             Block::NiMaterialProperty(x) => x.collect_fields(&mut out),
             Block::NiMeshPSysData(x) => x.collect_fields(&mut out),
@@ -744,10 +792,12 @@ impl Block {
             Block::NiPathInterpolator(x) => x.collect_fields(&mut out),
             Block::NiPixelData(x) => x.collect_fields(&mut out),
             Block::NiPoint3Interpolator(x) => x.collect_fields(&mut out),
+            Block::NiPointLight(x) => x.collect_fields(&mut out),
             Block::NiPosData(x) => x.collect_fields(&mut out),
             Block::NiSortAdjustNode(x) => x.collect_fields(&mut out),
             Block::NiSourceTexture(x) => x.collect_fields(&mut out),
             Block::NiSpecularProperty(x) => x.collect_fields(&mut out),
+            Block::NiSpotLight(x) => x.collect_fields(&mut out),
             Block::NiStencilProperty(x) => x.collect_fields(&mut out),
             Block::NiStringExtraData(x) => x.collect_fields(&mut out),
             Block::NiTextureEffect(x) => x.collect_fields(&mut out),
@@ -770,6 +820,7 @@ impl Block {
         match self {
             Block::NiAlphaController(x) => x.collect_fields_mut(&mut out),
             Block::NiAlphaProperty(x) => x.collect_fields_mut(&mut out),
+            Block::NiAmbientLight(x) => x.collect_fields_mut(&mut out),
             Block::NiBillboardNode(x) => x.collect_fields_mut(&mut out),
             Block::NiBoolData(x) => x.collect_fields_mut(&mut out),
             Block::NiBoolInterpolator(x) => x.collect_fields_mut(&mut out),
@@ -783,6 +834,8 @@ impl Block {
             Block::NiFloatInterpolator(x) => x.collect_fields_mut(&mut out),
             Block::NiGeomMorpherController(x) => x.collect_fields_mut(&mut out),
             Block::NiIntegersExtraData(x) => x.collect_fields_mut(&mut out),
+            Block::NiLightColorController(x) => x.collect_fields_mut(&mut out),
+            Block::NiLightDimmerController(x) => x.collect_fields_mut(&mut out),
             Block::NiMaterialColorController(x) => x.collect_fields_mut(&mut out),
             Block::NiMaterialProperty(x) => x.collect_fields_mut(&mut out),
             Block::NiMeshPSysData(x) => x.collect_fields_mut(&mut out),
@@ -819,10 +872,12 @@ impl Block {
             Block::NiPathInterpolator(x) => x.collect_fields_mut(&mut out),
             Block::NiPixelData(x) => x.collect_fields_mut(&mut out),
             Block::NiPoint3Interpolator(x) => x.collect_fields_mut(&mut out),
+            Block::NiPointLight(x) => x.collect_fields_mut(&mut out),
             Block::NiPosData(x) => x.collect_fields_mut(&mut out),
             Block::NiSortAdjustNode(x) => x.collect_fields_mut(&mut out),
             Block::NiSourceTexture(x) => x.collect_fields_mut(&mut out),
             Block::NiSpecularProperty(x) => x.collect_fields_mut(&mut out),
+            Block::NiSpotLight(x) => x.collect_fields_mut(&mut out),
             Block::NiStencilProperty(x) => x.collect_fields_mut(&mut out),
             Block::NiStringExtraData(x) => x.collect_fields_mut(&mut out),
             Block::NiTextureEffect(x) => x.collect_fields_mut(&mut out),
@@ -902,6 +957,32 @@ impl NiAlphaProperty {
 
 impl Reflect for NiAlphaProperty {
     fn type_name(&self) -> &'static str { "NiAlphaProperty" }
+
+    fn fields(&self, _arg: i64) -> Vec<Field<'_>> {
+        let mut out = Vec::new();
+        self.collect_fields(&mut out);
+        out
+    }
+
+    fn fields_mut(&mut self, _arg: i64) -> Vec<FieldMut<'_>> {
+        let mut out = Vec::new();
+        self.collect_fields_mut(&mut out);
+        out
+    }
+}
+
+impl From<NiAmbientLight> for Block {
+    fn from(value: NiAmbientLight) -> Self {
+        Block::NiAmbientLight(value)
+    }
+}
+
+impl NiAmbientLight {
+    pub const BLOCK_TYPE: BlockType = BlockType::NiAmbientLight;
+}
+
+impl Reflect for NiAmbientLight {
+    fn type_name(&self) -> &'static str { "NiAmbientLight" }
 
     fn fields(&self, _arg: i64) -> Vec<Field<'_>> {
         let mut out = Vec::new();
@@ -1240,6 +1321,58 @@ impl NiIntegersExtraData {
 
 impl Reflect for NiIntegersExtraData {
     fn type_name(&self) -> &'static str { "NiIntegersExtraData" }
+
+    fn fields(&self, _arg: i64) -> Vec<Field<'_>> {
+        let mut out = Vec::new();
+        self.collect_fields(&mut out);
+        out
+    }
+
+    fn fields_mut(&mut self, _arg: i64) -> Vec<FieldMut<'_>> {
+        let mut out = Vec::new();
+        self.collect_fields_mut(&mut out);
+        out
+    }
+}
+
+impl From<NiLightColorController> for Block {
+    fn from(value: NiLightColorController) -> Self {
+        Block::NiLightColorController(value)
+    }
+}
+
+impl NiLightColorController {
+    pub const BLOCK_TYPE: BlockType = BlockType::NiLightColorController;
+}
+
+impl Reflect for NiLightColorController {
+    fn type_name(&self) -> &'static str { "NiLightColorController" }
+
+    fn fields(&self, _arg: i64) -> Vec<Field<'_>> {
+        let mut out = Vec::new();
+        self.collect_fields(&mut out);
+        out
+    }
+
+    fn fields_mut(&mut self, _arg: i64) -> Vec<FieldMut<'_>> {
+        let mut out = Vec::new();
+        self.collect_fields_mut(&mut out);
+        out
+    }
+}
+
+impl From<NiLightDimmerController> for Block {
+    fn from(value: NiLightDimmerController) -> Self {
+        Block::NiLightDimmerController(value)
+    }
+}
+
+impl NiLightDimmerController {
+    pub const BLOCK_TYPE: BlockType = BlockType::NiLightDimmerController;
+}
+
+impl Reflect for NiLightDimmerController {
+    fn type_name(&self) -> &'static str { "NiLightDimmerController" }
 
     fn fields(&self, _arg: i64) -> Vec<Field<'_>> {
         let mut out = Vec::new();
@@ -2190,6 +2323,32 @@ impl Reflect for NiPoint3Interpolator {
     }
 }
 
+impl From<NiPointLight> for Block {
+    fn from(value: NiPointLight) -> Self {
+        Block::NiPointLight(value)
+    }
+}
+
+impl NiPointLight {
+    pub const BLOCK_TYPE: BlockType = BlockType::NiPointLight;
+}
+
+impl Reflect for NiPointLight {
+    fn type_name(&self) -> &'static str { "NiPointLight" }
+
+    fn fields(&self, _arg: i64) -> Vec<Field<'_>> {
+        let mut out = Vec::new();
+        self.collect_fields(&mut out);
+        out
+    }
+
+    fn fields_mut(&mut self, _arg: i64) -> Vec<FieldMut<'_>> {
+        let mut out = Vec::new();
+        self.collect_fields_mut(&mut out);
+        out
+    }
+}
+
 impl From<NiPosData> for Block {
     fn from(value: NiPosData) -> Self {
         Block::NiPosData(value)
@@ -2280,6 +2439,32 @@ impl NiSpecularProperty {
 
 impl Reflect for NiSpecularProperty {
     fn type_name(&self) -> &'static str { "NiSpecularProperty" }
+
+    fn fields(&self, _arg: i64) -> Vec<Field<'_>> {
+        let mut out = Vec::new();
+        self.collect_fields(&mut out);
+        out
+    }
+
+    fn fields_mut(&mut self, _arg: i64) -> Vec<FieldMut<'_>> {
+        let mut out = Vec::new();
+        self.collect_fields_mut(&mut out);
+        out
+    }
+}
+
+impl From<NiSpotLight> for Block {
+    fn from(value: NiSpotLight) -> Self {
+        Block::NiSpotLight(value)
+    }
+}
+
+impl NiSpotLight {
+    pub const BLOCK_TYPE: BlockType = BlockType::NiSpotLight;
+}
+
+impl Reflect for NiSpotLight {
+    fn type_name(&self) -> &'static str { "NiSpotLight" }
 
     fn fields(&self, _arg: i64) -> Vec<Field<'_>> {
         let mut out = Vec::new();

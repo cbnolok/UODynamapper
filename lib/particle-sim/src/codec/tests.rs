@@ -231,7 +231,29 @@ fn node(name: &str, parent: Option<usize>, kind: NifNodeKind) -> NifNode {
         kind,
         extra_strings: vec!["zMode10".to_owned()],
         in_scene: parent.is_some(),
+        lights: Vec::new(),
     }
+}
+
+/// A light of every kind, on nodes 4 to 7.
+fn lights() -> Vec<NifLight> {
+    let attenuation = LightAttenuation { constant: 0.5, linear: 0.25, quadratic: 0.125 };
+    let light = |node, kind| NifLight {
+        node,
+        kind,
+        on: node % 2 == 0,
+        dimmer: 0.75,
+        ambient: [0.1, 0.2, 0.3],
+        diffuse: [1.0, 0.5, 0.25],
+        specular: [0.9; 3],
+        unaffected_nodes: vec![2],
+    };
+    vec![
+        light(4, NifLightKind::Point { attenuation }),
+        light(5, NifLightKind::Ambient),
+        light(6, NifLightKind::Directional),
+        light(7, NifLightKind::Spot { attenuation, outer_angle: 30.0, exponent: 2.0 }),
+    ]
 }
 
 /// Some `NiAVObject` flags value.
@@ -256,16 +278,23 @@ fn controller(target: ControllerTarget, kind: NifControllerKind) -> NifControlle
 }
 
 /// A desc that uses every node kind, texture source, modifier kind, emitter shape, interpolator, rotation curve,
-/// key kind, controller target and controller kind.
+/// key kind, light kind, controller target and controller kind.
 fn nif_desc() -> NifEffectDesc {
     let mut root = node("root", None, NifNodeKind::Node);
-    root.children = vec![1, 2, 3, 4];
+    root.children = vec![1, 2, 3, 4, 5, 6, 7, 8];
+    root.lights = vec![0, 2, 3];
+    let mut billboard = node("billboard", Some(0), NifNodeKind::Billboard(BillboardMode::RigidFaceCenter));
+    billboard.lights = vec![1];
     let nodes = vec![
         root,
-        node("billboard", Some(0), NifNodeKind::Billboard(BillboardMode::RigidFaceCenter)),
+        billboard,
         node("mesh", Some(0), NifNodeKind::Mesh { mesh: 0 }),
         node("particles", Some(0), NifNodeKind::ParticleSystem { system: 0 }),
-        node("light", Some(0), NifNodeKind::Other { type_name: "NiPointLight".to_owned() }),
+        node("point", Some(0), NifNodeKind::Light { light: 0 }),
+        node("ambient", Some(0), NifNodeKind::Light { light: 1 }),
+        node("directional", Some(0), NifNodeKind::Light { light: 2 }),
+        node("spot", Some(0), NifNodeKind::Light { light: 3 }),
+        node("texture effect", Some(0), NifNodeKind::Other { type_name: "NiTextureEffect".to_owned() }),
     ];
     let geometry = MeshGeometry {
         positions: vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
@@ -467,6 +496,8 @@ fn nif_desc() -> NifEffectDesc {
         controller(ControllerTarget::ParticleSystem(0), NifControllerKind::ParticleUpdate),
         controller(ControllerTarget::ParticleSystem(0), NifControllerKind::ResetOnLoop),
         controller(ControllerTarget::Node(0), NifControllerKind::Unsupported { type_name: "NiLookAtController".to_owned() }),
+        controller(ControllerTarget::Light(0), NifControllerKind::LightColor { ambient: true, interp: point3_interp() }),
+        controller(ControllerTarget::Light(3), NifControllerKind::LightDimmer(float_interp(KeyKind::Linear))),
     ];
     NifEffectDesc {
         name: "00005001_test.nif".to_owned(),
@@ -477,6 +508,7 @@ fn nif_desc() -> NifEffectDesc {
         materials,
         texturings,
         textures,
+        lights: lights(),
         controllers,
     }
 }
@@ -547,6 +579,27 @@ fn decoder_rejects_indices_out_of_range() {
     assert!(matches!(
         decode_nif_desc(&encode_nif_desc(&desc)),
         Err(DescDecodeError::IndexOutOfRange { what: "controller modifier", .. })
+    ));
+
+    let mut desc = nif_desc();
+    desc.nodes[0].lights.push(desc.lights.len());
+    assert!(matches!(
+        decode_nif_desc(&encode_nif_desc(&desc)),
+        Err(DescDecodeError::IndexOutOfRange { what: "node light", .. })
+    ));
+
+    let mut desc = nif_desc();
+    desc.lights[0].unaffected_nodes.push(desc.nodes.len());
+    assert!(matches!(
+        decode_nif_desc(&encode_nif_desc(&desc)),
+        Err(DescDecodeError::IndexOutOfRange { what: "light unaffected node", .. })
+    ));
+
+    let mut desc = nif_desc();
+    desc.controllers.push(controller(ControllerTarget::Light(desc.lights.len()), NifControllerKind::LightDimmer(FloatInterp::default())));
+    assert!(matches!(
+        decode_nif_desc(&encode_nif_desc(&desc)),
+        Err(DescDecodeError::IndexOutOfRange { what: "controller light", .. })
     ));
 
     let mut desc = nif_desc();
