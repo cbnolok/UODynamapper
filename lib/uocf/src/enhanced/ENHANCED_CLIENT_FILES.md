@@ -224,6 +224,128 @@ unless the data becomes a stable package contract.
   the data, probably an intended gain).
 - Formats, field meanings, confidence and verification against the client data
   are in `scripts/dev-helpers/ec-research/ghidra-effects/results/uosa_effects.md`.
+- `effect_definition::EffectDefinitionCollection` holds every entry in package
+  order. Entries are keyed by collection id, or by name hash when no id below
+  `EFFECT_COLLECTION_ID_SCAN_END` hashes to them. Client data has 269 entries,
+  with ids up to 70006; 2 entries hash to no id.
+- `encode_effect_definition_collection` is the exact inverse of the parser.
+  All 269 client payloads re-serialize byte for byte. `encode_tileart_effects`
+  writes the tileart effect tail (u8 count). There is no tileart writer yet to
+  use it.
+- `write_effect_definition_collection(source, output)` writes a copy of the
+  package and refuses to overwrite `source`. In the copy:
+  - unchanged entries keep their compressed bytes;
+  - edited entries keep their compression flag and their 12-byte data block
+    header (`u16 3`, `u16 8`, FILETIME; `data_block_hash` is its Adler-32);
+  - new entries get a fresh header stamped with the current time;
+  - removed entries leave an empty slot.
+
+  The table layout is rebuilt, so the file is not byte-identical even without
+  edits (the client package starts its first table at offset 40, ours at 32).
+- KDL text form (`to_kdl_string`, `from_kdl_str`, `load_kdl`, `write_kdl`):
+  - one `entry <id>` (or `entry hash=`) node per entry;
+  - one node per definition (`particle`, `sound`, `round-robin`,
+    `position-offset`, `wait`, `lod`, `property-flag`, `earthquake`,
+    `random`, `user-preference`);
+  - properties at their default value are omitted;
+  - NaN and the infinities are strings;
+  - with a string dictionary, particles carry an informational `name=`, which
+    is checked on reading and can replace the index.
+
+  The schema is in `effect_definition/kdl_text.rs`. The KDL round trip
+  reproduces the client collection exactly.
+- `EffectDefinitionCollection::validate` reports per-entry issues. With the
+  string dictionary and `EffectTexture.uop` given, the client data has only 4
+  errors: missing particle files in entries 9011, 9500, 9501 and 9533.
+  - Errors:
+    - unresolved particle names and missing particle files;
+    - non-zero `field_3c`;
+    - non-finite floats;
+    - Wait min above max;
+    - nesting too deep.
+  - Warnings:
+    - empty entries;
+    - unknown attach modes;
+    - `value_08` other than 1.0;
+    - Random weights not summing to `RANDOM_WEIGHT_TOTAL` (within
+      `RANDOM_WEIGHT_TOLERANCE`), or negative;
+    - unreachable LOD levels and flag-mask cases;
+    - duplicate map keys;
+    - unused flag-mask defaults;
+    - inert position offsets;
+    - UserPreference zero or unknown mask bits.
+
+  Unknown definition keys never reach the tree: the parser rejects them.
+
+`EffectTexture.uop`:
+
+- Version 5, one block of 1000 slots. It holds 829 entries, all zlib-compressed;
+  the remaining 171 slots are empty (all-zero records). The package writer
+  skips empty slots (`UopFile::is_empty_slot`) and does not count them in
+  `file_count`.
+- Entries are named `data/effects/<lowercase file name>`. The file kinds in
+  client data: 466 `.nif`, 62 `.dds`, 61 `.ems` (Chaos scripts), 2 `.psd`, 238
+  other.
+- `effect_texture::EffectTexturePackage` gives names to the entries in three
+  ways:
+  - from the string dictionary;
+  - from names harvested from the payloads, where NIF and Chaos files reference
+    their textures and meshes;
+  - optionally from a hash dictionary.
+
+  Without a hash dictionary, 704 of the 829 names resolve. With
+  `tools/_shared_assets/Dictionary.dic`, 721 resolve.
+- Reading and editing:
+  - `read` reads an entry by file name;
+  - `put` replaces an entry or adds one, filling an empty slot first;
+  - `remove` leaves an empty slot;
+  - `save_as` writes a new package, never the source.
+- Data block headers are not the 12-byte client headers: they are 135 to 137
+  bytes, starting `u16 4`, `u16 133`. They are probably a signature, and their
+  `data_block_hash` is not the Adler-32 of the header, the payload or both.
+  - A replaced entry keeps its header and hash, which may then no longer match
+    the new payload.
+  - Added entries get no header.
+  - Whether the client checks these headers is not established.
+
+`.ems` Chaos particle scripts (in `EffectTexture.uop`):
+
+- Played by the Chaos `ParticleSystemManager` for particle names containing
+  `.ems`. `chaos_script::ChaosScript` parses them into a typed tree. The
+  grammar (keywords from UOSA.exe strings, forms from the 61 client scripts):
+
+  ```text
+  script    := "particlesystem" STRING NUMBER "{" item* "}"
+  item      := statement | "eventsequence" STRING "{" statement* "}"
+  statement := lhs "=" value
+  lhs       := PROPERTY | "initial" PROPERTY
+             | ["fade" "so"] "final" PROPERTY | ["fade" "so"] "at" scalar PROPERTY
+  value     := scalar | "XYZ(" scalar x 3 ")" | "RGBA(" scalar x 4 ")"
+             | "CelSetup(" NUMBER x 7 ")" | IDENT | STRING
+  scalar    := NUMBER | "random(" NUMBER "," NUMBER ")"
+  ```
+
+- Keywords, properties and identifiers are case-insensitive. `//` comments run
+  to the end of the line. Client files use CRLF.
+- Statements and sequences interleave at system level.
+- Identifier values are:
+  - booleans (`TRUE`/`FALSE`/`YES`/`NO`; 0 and 1 are also accepted);
+  - the `ALPHA_*` blend modes;
+  - the particle types.
+- Strings are file names: `texture` and `meshName` name `EffectTexture.uop`
+  entries.
+- The parser keeps unknown statements and lines verbatim and reports errors
+  with line and column.
+- `to_lossless_string` reproduces the parsed text byte for byte, regenerating
+  only the edited elements. All 61 client scripts round-trip.
+- `to_canonical_string` pretty-prints the script; parsing it back gives an equal
+  tree.
+- `validate` reports issues in client data:
+  - the malformed number `0.0.5` in two scripts. It is read as its longest valid
+    prefix, as C `atof` would; this is assumed, not confirmed in the client;
+  - one missing mesh file: `00005045_mark.ems` names `00005054_mark.nif`.
+- What the properties do, and the `COLLISIONCHECK`/`INHERITED` syntax, are not
+  established.
 
 `AnimationSequence.uop`:
 

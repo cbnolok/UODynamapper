@@ -17,6 +17,8 @@
 //!   Client packages have 12 bytes there (`u16 3`, `u16 8`, `u64` FILETIME) and
 //!   their `data_block_hash` is the Adler-32 of that header. Loading keeps the
 //!   header bytes and saving writes them back, so a loaded package re-saves intact.
+//! - Client packages pad their last block to the block size with all-zero entries; the header's file count
+//!   excludes them and saving keeps them all-zero (`UopFile::is_empty_slot`).
 
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -551,7 +553,7 @@ impl UopPackage {
     }
 
     fn recompute_layout(&mut self) {
-        self.file_count = self.blocks.iter().map(|block| block.files().len() as u32).sum();
+        self.file_count = self.iter_files().filter(|file| !file.is_empty_slot()).count() as u32;
 
         if self.blocks.is_empty() {
             self.start_address = 0;
@@ -577,6 +579,11 @@ impl UopPackage {
             block.set_next_block_address(next_block_address);
 
             for file in block.files_mut() {
+                if file.is_empty_slot() {
+                    // Unused slots stay all-zero, as in client packages.
+                    file.set_data_block_address(0);
+                    continue;
+                }
                 file.set_data_block_address(payload_offset);
                 payload_offset += file.data_block_length() as u64 + file.compressed_size() as u64;
             }
@@ -622,7 +629,7 @@ impl UopPackage {
         // Payloads are emitted in the same order used during layout computation,
         // so every previously assigned `data_block_address` remains valid. A
         // data block header loaded from a source package precedes its payload.
-        for file in self.iter_files() {
+        for file in self.iter_files().filter(|file| !file.is_empty_slot()) {
             if file.data_block_length() != 0 {
                 let header = file
                     .data_block_header()

@@ -9,6 +9,25 @@
 //! count followed by that many definitions; an effect map is a u32 count followed by that many
 //! {u32 key, effect list} pairs.
 
+mod collection;
+mod encode;
+mod kdl_text;
+mod validation;
+
+pub use collection::{
+    effect_collection_entry_hash, effect_collection_entry_path, EffectCollectionChanges, EffectCollectionEntry,
+    EffectDefinitionCollection, EffectEntryKey, EFFECT_COLLECTION_ID_SCAN_END, EFFECT_DEFINITION_COLLECTION_UOP_NAME,
+};
+pub use encode::{
+    encode_effect_definition_collection, encode_effect_definitions, encode_tileart_effects, write_effect_definition,
+    write_effect_list, TILEART_EFFECT_COUNT_MAX,
+};
+pub use kdl_text::{effect_definitions_from_kdl, effect_definitions_to_kdl};
+pub use validation::{
+    validate_effect_definitions, EffectIssue, EffectIssueKind, EffectIssueSeverity, EffectValidationContext,
+    RANDOM_WEIGHT_TOLERANCE,
+};
+
 use crate::enhanced::string_dictionary::UoStringDictionary;
 use byteorder::{LittleEndian, ReadBytesExt};
 use color_eyre::eyre::{bail, ensure, Result};

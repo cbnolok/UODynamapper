@@ -235,6 +235,12 @@ impl UopFile {
         self.compressed_size != 0 && self.decompressed_size != 0
     }
 
+    /// Whether this is an unused slot of a block: client packages fill their last block up to the block size
+    /// with all-zero entries, which the package header's file count does not include.
+    pub fn is_empty_slot(&self) -> bool {
+        self.filename_hash == 0 && !self.has_size() && self.data_block_length == 0 && self.data.is_none()
+    }
+
     /// Returns the size of the decompressed file data.
     pub fn decompressed_size(&self) -> u32 {
         self.decompressed_size

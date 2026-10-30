@@ -5,8 +5,10 @@
 
 pub mod animation_definition;
 pub mod animationframe;
+pub mod chaos_script;
 pub mod classic_tile_mapper;
 pub mod effect_definition;
+pub mod effect_texture;
 pub mod facet_decoder;
 pub mod facet_encoder;
 pub mod housing;
@@ -22,4 +24,5 @@ pub mod terrain_definition;
 pub mod textures;
 pub mod tile_database;
 pub mod tileart;
+mod uop_entries;
 pub mod waypoints;
