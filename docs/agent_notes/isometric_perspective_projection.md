@@ -83,3 +83,8 @@ explicitly with `(50,89.5,50)`, independently of the lens coefficient. Exact
 sqrt(2) tile scaling, square upright sprite pixels and four pixels per raw Z
 form one coherent rendering conversion. Original logical XYZ and tile/object
 metadata remain unchanged.
+
+The later [perspective tie-bias repair](static_depth_ordering.md#perspective-tie-bias)
+closes the demonstrated bridge stair/deck overlap independently of lens, pitch,
+sprite geometry or height calibration. Do not use that old artifact alone as
+evidence that the follow camera needs another geometric correction.

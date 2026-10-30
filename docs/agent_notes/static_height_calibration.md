@@ -84,6 +84,12 @@ older EC-art perspective control also contains it. Keep this as a remaining
 geometry/priority issue, not a successful depth-parity check. Arbitrary-camera
 2D artwork and every EC window/source scale remain outside this acceptance.
 
+A subsequent [priority follow-up](static_depth_ordering.md#perspective-tie-bias)
+isolates and repairs that perspective deck overlap: the fixed NDC tie bias grew
+too large in perspective. A small projected view-space tie displacement fixes it
+without changing this calibration or sprite geometry. The failed perspective
+frames above remain historical before controls.
+
 Temporary evidence is under `/tmp/uodynamapper-ec-followup/`:
 `height-accepted-evidence.json`, `height-before-hybrid-*`,
 `height-before-hybrid-persp-*`, `height-after-*`, the individual sprite fits,

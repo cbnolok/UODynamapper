@@ -23,12 +23,12 @@ import package::shaders::world::art::art_bindings::{
     item_surface_atlas, item_surface_lookup, item_surface_sampler,
     INV_SQRT_2, BILLBOARD_RIGHT_XZ, FLAT_QUAD_FORWARD_XZ, HEIGHT_SCALE, DEPTH_CLASS_REGULAR, DEPTH_CLASS_BACKGROUND,
     DEPTH_CLASS_FOLIAGE, DEPTH_CLASS_ROOF, DEPTH_CLASS_SURFACE_LIKE_FLOOR, PASS_MODE_OPAQUE,
-    PASS_MODE_TRANSPARENT, PASS_MODE_SHADOW, SURFACE_LIKE_DEPTH_CLASS_OFFSET,
-    STATIC_DEPTH_TIE_BREAK_FRAG_EPSILON
+    PASS_MODE_TRANSPARENT, PASS_MODE_SHADOW, SURFACE_LIKE_DEPTH_CLASS_OFFSET
 };
 import package::shaders::world::art::hue::{apply_static_hue, apply_ec_sprite_hue, STATIC_HUE_FLAG_APPLY, STATIC_HUE_FLAG_EC_SPRITE};
 import package::shaders::world::art::shading::apply_art_surface_shading;
 import package::shaders::world::art::surface_blend::static_surface_coverage;
+import package::shaders::world::art::depth::static_priority_depth;
 
 struct ArtVertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -77,11 +77,8 @@ fn logical_depth_from_projected_priority(inst: SpriteInstance) -> f32 {
         inst.priority_z_units * HEIGHT_SCALE + depth_class_logical_offset(inst.depth_class),
         inst.tile_y,
     );
-    return clip_depth_to_frag_depth(view_transformations::position_world_to_clip(logical_world_pos));
-}
-
-fn apply_sort_bias_to_frag_depth(depth: f32, sort_bias_ordinal: u32) -> f32 {
-    return clamp(depth - f32(sort_bias_ordinal) * STATIC_DEPTH_TIE_BREAK_FRAG_EPSILON, 0.0, 1.0);
+    return static_priority_depth(view_transformations::position_world_to_clip(logical_world_pos),
+        view.clip_from_view, inst.sort_bias_ordinal);
 }
 
 @vertex
@@ -151,10 +148,7 @@ fn vertex(vertex: Vertex) -> ArtVertexOutput {
     if (sprite_params.pass_mode == PASS_MODE_SHADOW) {
         out.logical_depth = clip_depth_to_frag_depth(out.position);
     } else {
-        out.logical_depth = apply_sort_bias_to_frag_depth(
-            logical_depth_from_projected_priority(inst),
-            inst.sort_bias_ordinal,
-        );
+        out.logical_depth = logical_depth_from_projected_priority(inst);
     }
     out.depth_class = inst.depth_class;
     out.is_wet = inst.is_wet_flags & 1u;

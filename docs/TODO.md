@@ -53,7 +53,7 @@ Current execution decisions:
 
 ### Current Renderer Focus: Visual Fidelity
 
-- Validate remaining individual static anchors/new-art scales and effect visibility against matched fixtures. Common legacy pixel/height calibration is repaired; perspective bridge stair/deck overlap still needs a geometry/priority fix.
+- Validate remaining individual static anchors/new-art scales and effect visibility against matched fixtures. Common legacy pixel/height calibration and the perspective bridge stair/deck tie-bias defect are repaired.
 - Use [the visual follow-up review](reviews/2026-10-29-visual-fidelity-followup.md) for current evidence and reconciliation of the unstaged user TODO. Historical repaired items must reproduce before being reopened.
 
 ### Baseline And Instrumentation
