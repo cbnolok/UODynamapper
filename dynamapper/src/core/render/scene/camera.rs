@@ -462,6 +462,8 @@ fn sys_camera_zoom(
     mut kbd_events: MessageReader<KeyboardInput>,
     mut egui_contexts: EguiContexts,
     mut chunk_recompute_writer: MessageWriter<super::RecomputeVisibleChunksEvent>,
+    settings: Res<Settings>,
+    mut camera_q: Query<&mut Transform, With<Camera3d>>,
 ) {
     // If egui is using the mouse/keyboard, don't zoom
     let ctx = match egui_contexts.ctx_mut() {
@@ -499,8 +501,20 @@ fn sys_camera_zoom(
         // fine control when zoomed in. ~25 ticks to go from 1× to 50×.
         let factor = 1.15_f32; // ~15% per tick
         let multiplier = factor.powf(zoom_delta);
-        let new_zoom = zoom_res.0 * multiplier;
+        let previous_zoom = zoom_res.0;
+        let new_zoom = previous_zoom * multiplier;
         zoom_res.write_val(new_zoom);
+        if settings.app.window.free_camera && settings.app.window.perspective_camera {
+            if let Ok(mut transform) = camera_q.single_mut() {
+                // Follow perspective applies zoom to its orbit distance. Free
+                // perspective uses the same dolly distance along its current
+                // viewing direction, preserving any manual pan and rotation.
+                let distance = PlayerCamera::perspective_offset().length()
+                    * (zoom_res.0 - previous_zoom);
+                let backward = *transform.back();
+                transform.translation += backward * distance;
+            }
+        }
         chunk_recompute_writer.write(super::RecomputeVisibleChunksEvent {});
     }
 }

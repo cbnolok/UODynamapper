@@ -51,3 +51,24 @@ ground classification. No per-frame material mutation or package read is added.
 
 Native `perspective-ground-resident-enhanced-cc-` captures demonstrate continuous
 roads, bridge and town controls. Temporary routing instrumentation was removed.
+
+## Free perspective zoom
+
+Free perspective previously accepted scroll and +/- input into `RenderZoom`,
+but neither its fixed lens nor its free-movement system consumed that change.
+The input zoom system now moves the free camera along its current backward
+vector by `perspective_offset.length() * (new_zoom - previous_zoom)`. It uses
+the actual clamped zoom, so further input at either limit cannot move the camera.
+This matches the follow camera's distance change at its normal pose and also
+respects a manually panned or rotated free camera. The lens and camera rotation
+are preserved. Orthographic zoom and the follow camera retain their own paths.
+Only the camera transform changes; object and terrain positions are untouched.
+
+Native app-only scroll and text input checks cover Classic/CC, Enhanced with
+legacy objects and EC terrain, and KR/EC in free perspective, plus follow
+perspective and free orthographic controls. Enhanced also exercises rotation
+and both zoom limits. Accepted frames use `free-zoom-final-` in the temporary
+renderer workspace. Zooming out and back restores identical baseline pixels
+in the Enhanced rotated and unrotated views. The existing lens/frustum/subview
+test and the normal debug build pass. This does not establish arbitrary-angle
+sprite fidelity or full-map streaming at maximum zoom.
