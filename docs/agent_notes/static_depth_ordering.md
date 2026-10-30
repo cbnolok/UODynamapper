@@ -96,3 +96,19 @@ The demonstrated deck overlap is repaired. Individual EC source scales/windows,
 arbitrary-angle baked-art fidelity and general original-client depth parity remain
 separate questions. The original bridge reference remains the orthographic image
 above; there is no supplied original-client perspective reference.
+
+## Remaining hover-geometry mismatch
+
+The cursor overlay's active `find_hovered_static_object -> hovered_static_match ->
+resolve_hovered_static_geometry` path reconstructs its own card corners.
+Its CC branch still adds `(0.5,1.5)` to map X/Y, while the render collector's
+`apply_cc_static_world_anchor_translation` adds `(1,1)`. It also reconstructs
+CC water as an upright card and adds the same old translation before constructing
+EC ground bounds. The current renderer instead has separate upright, horizontal
+and authored camera-quad paths. Shared height units/classification do not make
+these independently built hover polygons identical to the drawn geometry.
+
+This is a source-confirmed discrepancy; its exact visible picking footprint still
+needs native cursor probes. Reuse the renderer's resolved geometry and retain the
+original object/tile XYZ and movement metadata when fixing it. Picking render
+offsets must not become walking or collision coordinates.
