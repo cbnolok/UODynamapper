@@ -1,6 +1,7 @@
 use crate::core::controls::input_actions::{
     ActionToggleCursorInspectPanel, ActionToggleCursorTeleportMode,
 };
+use crate::core::controls::{InjectedPointer, effective_cursor_position};
 use crate::core::render::scene::world::art::statics_collect::{
     depth_class_y_bias, resolve_priority_z_units, resolve_static_billboard_bounds,
     resolve_static_depth_class, resolve_surface_like_ground_quad_bounds, static_depth_key,
@@ -208,7 +209,7 @@ pub fn update_cursor_behavior_text(
     settings: Res<crate::configs::settings::Settings>,
     cursor: Res<CursorBehavior>,
     player_q: Query<&Player>,
-    windows: Query<&Window, With<PrimaryWindow>>,
+    windows: (Query<&Window, With<PrimaryWindow>>, Option<Res<InjectedPointer>>),
     camera_q: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
     map_planes_r: Res<MapPlanesRes>,
     mut mode_text_q: Query<
@@ -234,6 +235,7 @@ pub fn update_cursor_behavior_text(
     mut last_camera_translation: Local<Option<Vec3>>,
     mut last_player_map_id: Local<Option<u8>>,
 ) {
+    let (windows, injected_pointer) = windows;
     let current_scale = settings.app.window.cursor_position_scale;
     let scale_changed = (*last_scale - current_scale).abs() > 0.001;
 
@@ -289,7 +291,7 @@ pub fn update_cursor_behavior_text(
     let cursor_pos = windows
         .single()
         .ok()
-        .and_then(|window| window.cursor_position());
+        .and_then(|window| effective_cursor_position(window, injected_pointer.as_deref()));
     let player_map_id = player_q
         .single()
         .ok()
@@ -345,6 +347,7 @@ pub fn update_cursor_inspect_text(
     resources: CursorInspectResources,
     player_q: Query<&Player>,
     windows: Query<&Window, With<PrimaryWindow>>,
+    injected_pointer: Option<Res<InjectedPointer>>,
     camera_q: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
     mut inspect_text_q: Query<
         (&mut Text, &mut TextFont, &mut LineHeight),
@@ -389,7 +392,7 @@ pub fn update_cursor_inspect_text(
     let cursor_pos = windows
         .single()
         .ok()
-        .and_then(|window| window.cursor_position());
+        .and_then(|window| effective_cursor_position(window, injected_pointer.as_deref()));
     let player_map_id = player_q
         .single()
         .ok()
@@ -566,6 +569,7 @@ fn sys_draw_hovered_static_highlight(
     settings: Res<crate::configs::settings::Settings>,
     player_q: Query<&Player>,
     windows: Query<&Window, With<PrimaryWindow>>,
+    injected_pointer: Option<Res<InjectedPointer>>,
     camera_q: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
     statics_res: Res<StaticsStoreRes>,
     tex_art_cc_res: Option<Res<TexArtCcPackageRes>>,
@@ -583,7 +587,7 @@ fn sys_draw_hovered_static_highlight(
         return;
     }
 
-    let Some(cursor_pos) = windows.single().ok().and_then(|window| window.cursor_position()) else {
+    let Some(cursor_pos) = windows.single().ok().and_then(|window| effective_cursor_position(window, injected_pointer.as_deref())) else {
         return;
     };
     let Some((camera, camera_tf)) = camera_q.single().ok() else {
@@ -1363,6 +1367,7 @@ fn slot_record_summary_u32(art_id: u32, page_index: Option<u32>) -> String {
 fn sys_teleport_on_click(
     mouse: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window, With<PrimaryWindow>>,
+    injected_pointer: Option<Res<InjectedPointer>>,
     camera_q: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
     mut player_q: Query<(&mut Player, &mut Transform)>,
     cursor: Res<CursorBehavior>,
@@ -1391,7 +1396,7 @@ fn sys_teleport_on_click(
         return;
     };
 
-    let cursor_pos = match window.cursor_position() {
+    let cursor_pos = match effective_cursor_position(window, injected_pointer.as_deref()) {
         Some(pos) => pos,
         None => return,
     };

@@ -3,6 +3,7 @@ use crate::core::render::scene::player::Player;
 use crate::core::render::scene::world::WorldGeoData;
 use crate::core::render::scene::RecomputeVisibleChunksEvent;
 use crate::core::system_sets::*;
+use super::{InjectedPointer, effective_cursor_position};
 use crate::prelude::*;
 use crate::util_lib::uo_coords::UOVec4;
 use bevy::prelude::*;
@@ -61,6 +62,7 @@ fn sys_player_input(
     keyboard_input: Res<ButtonInput<KeyCode>>,
     mouse_input: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window, With<PrimaryWindow>>,
+    injected_pointer: Option<Res<InjectedPointer>>,
     camera_q: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
     player_q: Query<&Transform, With<Player>>,
     mut move_dir: ResMut<MoveDirection>,
@@ -90,7 +92,7 @@ fn sys_player_input(
 
     // Mouse-driven movement still works even if movement keys are held.
     if let Some((mouse_dir, mouse_speed)) =
-        parse_mouse_movement(&mouse_input, &windows, &camera_q, &player_q)
+        parse_mouse_movement(&mouse_input, &windows, &camera_q, &player_q, injected_pointer.as_deref())
     {
         move_dir.dir = Some(mouse_dir);
         move_dir.speed_multiplier = mouse_speed;
@@ -144,13 +146,14 @@ fn parse_mouse_movement(
     windows: &Query<&Window, With<PrimaryWindow>>,
     camera_q: &Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
     player_q: &Query<&Transform, With<Player>>,
+    injected_pointer: Option<&InjectedPointer>,
 ) -> Option<(IVec2, f32)> {
     if !mouse_input.pressed(MouseButton::Right) {
         return None;
     }
 
     let window = windows.single().ok()?;
-    let cursor_pos = window.cursor_position()?;
+    let cursor_pos = effective_cursor_position(window, injected_pointer)?;
     let (camera, camera_transform) = camera_q.single().ok()?;
     let player_transform = player_q.single().ok()?;
 

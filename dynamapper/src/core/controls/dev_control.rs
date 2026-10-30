@@ -1,10 +1,14 @@
 //! Opt-in local test control. No socket or polling system exists unless the
 //! caller supplies DYNAMAPPER_CONTROL_SOCKET. The protocol never executes code.
 use super::teleport::teleport_player;
+use super::InjectedPointer;
+mod input;
+use input::{ControlInput, InputState, PointerButton, inject_control_input, focus_control_context};
 use crate::core::{render::scene::world::land::{tile_atlas::TileAtlas, LandUploadTelemetry}, texture_cache::land::coverage::EcTerrainBases};
 use crate::core::{app_states::AppState, render::scene::{player::Player, world::WorldGeoData, RecomputeVisibleChunksEvent}, system_sets::MovementSysSet};
 use crate::prelude::*;
-use bevy::{diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin}, prelude::*, render::view::screenshot::{Screenshot, save_to_disk}};
+use bevy::{diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin}, input::{InputSystems, keyboard::KeyCode}, prelude::*, render::view::screenshot::{Screenshot, save_to_disk}, window::PrimaryWindow};
+use bevy_egui::EguiPreUpdateSet;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{fs, io, os::unix::{fs::{MetadataExt, PermissionsExt}, net::UnixDatagram}, path::{Path, PathBuf}};
@@ -18,6 +22,12 @@ enum ControlCommand {
     Teleport { x: u16, y: u16, z: i8, map: u8 },
     Status {},
     Capture { path: PathBuf },
+    Key { key: KeyCode, state: InputState, text: Option<String> },
+    Text { text: String },
+    Pointer { x: f32, y: f32 },
+    Click { x: f32, y: f32, button: PointerButton, state: InputState },
+    Scroll { x: f32, y: f32 },
+    ResetInput {},
 }
 
 #[derive(Resource)]
@@ -64,7 +74,13 @@ impl Plugin for DevControlPlugin {
         let socket = ControlSocket::bind(PathBuf::from(path))
             .unwrap_or_else(|error| panic!("Cannot bind development control socket: {error}"));
         log::info!("Development control socket: {}", socket.path.display());
-        app.insert_resource(socket).add_systems(Update,
+        app.insert_resource(socket)
+            .init_resource::<ControlInput>()
+            .init_resource::<InjectedPointer>()
+            .add_systems(PreUpdate, inject_control_input.before(InputSystems).run_if(in_state(AppState::InGame)))
+            .add_systems(PreUpdate, focus_control_context.after(EguiPreUpdateSet::ProcessInput)
+                .before(EguiPreUpdateSet::BeginPass).run_if(in_state(AppState::InGame)))
+            .add_systems(Update,
             poll_control.in_set(MovementSysSet::MovementActions).run_if(in_state(AppState::InGame)));
     }
 }
@@ -92,6 +108,9 @@ fn poll_control(
     atlas: Option<Res<TileAtlas>>,
     uploads: Option<Res<LandUploadTelemetry>>,
     terrain_bases: Option<Res<EcTerrainBases>>,
+    windows: Query<(Entity, &Window), With<PrimaryWindow>>,
+    mut input: ResMut<ControlInput>,
+    pointer: Res<InjectedPointer>,
     mut capture_pending: Local<Option<(PathBuf, f64)>>,
     time: Res<Time<Real>>,
 ) {
@@ -134,14 +153,25 @@ fn poll_control(
                     Ok(json!({"ok": true, "position": position, "rendered_position": rendered,
                         "elapsed_seconds": time.elapsed_secs_f64(),
                         "fps": metric(&fps_path),
-                        "frame_ms": metric(&frame_path), "terrain": terrain}))
+                        "frame_ms": metric(&frame_path), "terrain": terrain,
+                        "input": {"queued_frames": input.queued_frames(), "context_focus_override": input.focused,
+                            "pointer": pointer.0.map(|position| [position.x, position.y])},
+                        "window": windows.single().ok().map(|(_, window)| json!({
+                            "logical_size": [window.width(), window.height()], "scale_factor": window.scale_factor(),
+                            "focused": window.focused}))}))
                 }
                 ControlCommand::Capture { path } => {
                     capture_path(&path)?;
+                    if input.queued_frames() != 0 { return Err("input is still queued; wait for input.queued_frames == 0".into()); }
                     if capture_pending.is_some() { return Err("another capture is pending".into()); }
                     commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path.clone()));
                     *capture_pending = Some((path.clone(), time.elapsed_secs_f64()));
                     Ok(json!({"ok": true, "capture_queued": path}))
+                }
+                command => {
+                    let (entity, window) = windows.single().map_err(|error| error.to_string())?;
+                    input.enqueue(command, entity, Vec2::new(window.width(), window.height()))?;
+                    Ok(json!({"ok": true, "input_queued_frames": input.queued_frames()}))
                 }
             }
         })();
@@ -161,6 +191,9 @@ mod tests {
     #[test]
     fn protocol_rejects_unknown_actions_fields_and_coordinate_overflow() {
         for value in [r#"{"command":"execute","code":"bad"}"#, r#"{"command":"status","extra":true}"#,
+            r#"{"command":"key","key":"F2","state":"repeat"}"#,
+            r#"{"command":"key","key":"BadKey","state":"tap"}"#,
+            r#"{"command":"click","x":1,"y":1,"button":"bad","state":"tap"}"#,
             r#"{"command":"teleport","x":65536,"y":561,"z":0,"map":0}"#] {
             assert!(serde_json::from_str::<ControlCommand>(value).is_err(), "{value}");
         }

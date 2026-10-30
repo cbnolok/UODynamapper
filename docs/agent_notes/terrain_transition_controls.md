@@ -73,7 +73,10 @@ shading (maximum 55/29 bytes). Native pairs were inspected; their exact numerica
 cause has not been isolated. Keep them in the remaining liquid/filtering parity
 review rather than treating these captures as proof of original-client parity.
 
-Direct Options interaction remains unverified: the hidden XWayland window
-ignored synthetic keyboard events. Check actual dialog interaction/layout with
-the shader-UI follow-up. Source callbacks and persisted values are present;
-the configuration-driven native checks do not substitute for that UI check.
+The subsequent app-only control channel closes the direct Options check. Native
+Desktop-4 input opens Options with F2, clicks both controls through all four
+combinations, checks the debounced cached TOML and closes/reopens the dialog.
+The resulting CC-enabled town frame is byte-identical to the accepted
+configuration-driven CC frame. Both controls are visible at 1280x800. The broader
+shader-dialog organization remains separate work. Allow dialog fade-in to settle
+before judging a capture: input acknowledgement is not visual settling.

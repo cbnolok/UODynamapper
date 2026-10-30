@@ -9,6 +9,15 @@ use crate::prelude::*;
 use bevy::prelude::*;
 use bevy::ecs::message::MessageReader;
 
+/// App-only pointer for the opt-in controller. Never write it to Window: winit
+/// interprets a changed Window cursor position as a request to warp the OS cursor.
+#[derive(Resource, Default)]
+pub struct InjectedPointer(pub Option<Vec2>);
+
+pub(crate) fn effective_cursor_position(window: &Window, injected: Option<&InjectedPointer>) -> Option<Vec2> {
+    injected.and_then(|pointer| pointer.0).or_else(|| window.cursor_position())
+}
+
 pub struct ControlsPlugin {
     pub registered_by: &'static str,
 }

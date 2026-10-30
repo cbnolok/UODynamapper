@@ -19,6 +19,9 @@ DYNAMAPPER_CONTROL_SOCKET=/tmp/my-preview/control.sock \
 python3 scripts/dev-helpers/renderer/control.py --socket /tmp/my-preview/control.sock status
 python3 scripts/dev-helpers/renderer/control.py --socket /tmp/my-preview/control.sock teleport 2518 561
 python3 scripts/dev-helpers/renderer/control.py --socket /tmp/my-preview/control.sock capture /tmp/my-preview/transition.png
+python3 scripts/dev-helpers/renderer/control.py --socket /tmp/my-preview/control.sock key F2
+python3 scripts/dev-helpers/renderer/control.py --socket /tmp/my-preview/control.sock click 250 350
+python3 scripts/dev-helpers/renderer/control.py --socket /tmp/my-preview/control.sock reset-input
 ```
 
 Use a separate terminal/tool call for commands while the bounded preview runs.
@@ -35,7 +38,56 @@ fixtures.
 Capture requests enqueue native Bevy screenshots. The client waits for the PNG
 signature and final IEND chunk before reporting completion. Destinations must
 be new absolute PNG paths with an existing parent; existing files are refused.
-No arbitrary code, shell command or settings mutation is exposed.
+No arbitrary code, shell command or generic settings setter is exposed.
+
+## App-only keyboard and pointer input
+
+Input commands feed Bevy's normal typed messages and ordered window-event stream.
+They target the primary app window, including egui, on an inactive desktop. They
+use no OS input/focus APIs. Pointer state is held separately from `Window` so winit
+does not interpret a test click as a request to move the real desktop cursor.
+World cursor inspection, click teleporting and mouse movement use that app-only
+position as well.
+
+- `key F2`: tap a physical Bevy `KeyCode`. Use names such as `Escape`, `Enter`,
+  `ArrowDown`, `KeyG` and `ControlLeft`. `--state press|release` holds/releases a key;
+  the default `tap` uses separate press/release frames. `--text '+'` supplies
+  logical character input alongside a named key when needed.
+- `text '2518'`: insert text at the current UI text cursor. Use named keys for
+  Enter/Tab and other control characters.
+- `pointer X Y`: move only the app pointer. Coordinates are logical window pixels;
+  `status.window` reports logical size and the physical/logical scale factor.
+- `click X Y --button left`: click at that app position. Left is the default;
+  right, middle, back and forward are supported. `--state press|release` permits
+  dragging with intervening pointer commands.
+- `scroll X Y`: send horizontal/vertical line deltas at the current app pointer.
+- `reset-input`: discard pending input, release controller-held keys/buttons,
+  clear the app pointer override and restore egui's normal focus input.
+
+For a shortcut, press the modifier, tap the key, then release the modifier:
+
+```sh
+python3 scripts/dev-helpers/renderer/control.py --socket /tmp/my-preview/control.sock key ControlLeft --state press
+python3 scripts/dev-helpers/renderer/control.py --socket /tmp/my-preview/control.sock key KeyG
+python3 scripts/dev-helpers/renderer/control.py --socket /tmp/my-preview/control.sock key ControlLeft --state release
+```
+
+The server acknowledges queuing; the client waits until `status.input.queued_frames`
+is zero. At most 256 input frames may be queued, drained one per app
+update. Capture rejects pending input. egui receives an internal focus override
+after the first input command, while `Window.focused` and desktop focus stay
+unchanged. Run `reset-input` when finished, before using the app with real input.
+Settings saves may be debounced. An empty input queue does not establish that
+settings have reached disk, material updates have reached the GPU, or a dialog's
+fade-in animation has settled. Allow settling before evaluating a screenshot.
+
+Raw datagram examples (all input states/buttons are explicit):
+
+```json
+{"command":"key","key":"F2","state":"tap"}
+{"command":"click","x":250,"y":350,"button":"left","state":"tap"}
+{"command":"reset_input"}
+```
 
 The server refuses an occupied socket path and only unlinks its own inode during
 normal shutdown. A force-terminated process can leave a stale socket: keep each
