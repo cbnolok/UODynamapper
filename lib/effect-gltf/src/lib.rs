@@ -33,7 +33,7 @@
 //!   duration shorter than the clip is hidden at its end. Chaos (`.ems`) parts are a node with the script and a
 //!   summary of the compiled system in `extras`; their MESH particle NIFs are exported as meshes under it.
 //! - **Not exported:** skinning and strips (no shipped file has them; gamebryo-nif parses neither), the
-//!   fixed-function combine beyond the base and glow maps (dark, detail, decal, gloss, bump and environment maps
+//!   fixed-function combine beyond the base map (glow, dark, detail, decal, gloss, bump and environment maps
 //!   are embedded and described in `extras`), blend factors other than alpha blending, billboard turning,
 //!   depth-buffer and sorting state (in `extras`), light animation, and the live particle simulation (only the
 //!   optional bake).

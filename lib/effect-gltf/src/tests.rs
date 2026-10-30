@@ -4,9 +4,10 @@ use gamebryo_nif::{
     Header, NiBool, NiColor, NiMaterialProperty, NiNode, NiPoint3, NiTriShape, NiTriShapeData, NifFile, NifString, Ref,
 };
 use particle_sim::nif::desc::{
-    BoolInterp, BoolKey, CompareFunction, ControllerTarget, ControllerTiming, Curve, CycleType, Key, KeyKind, NifAlpha,
-    NifController, NifControllerKind, NifInterpolator, NifMaterial, NifMesh, NifNode, NifNodeKind, NifRenderState,
-    NifTextureTransform, NifTransform, Tcb, TextureTransformMethod, TransformInterp,
+    BoolInterp, BoolKey, CompareFunction, ControllerTarget, ControllerTiming, Curve, CycleType, FloatInterp, Key, KeyKind,
+    NifAlpha, NifController, NifControllerKind, NifInterpolator, NifMaterial, NifMesh, NifNode, NifNodeKind,
+    NifRenderState, NifTexture, NifTextureMap, NifTextureSource, NifTextureTransform, NifTexturing, NifTransform, Tcb,
+    TextureAddressing, TextureApplyMode, TextureSlot, TextureTransformMember, TextureTransformMethod, TransformInterp,
 };
 use particle_sim::nif::keys::Quat;
 use particle_sim::nif::texture_transform_matrix;
@@ -378,10 +379,9 @@ fn effects_place_their_parts() {
     assert_eq!(part_json["extras"]["gamebryo"]["effect_part"]["duration_s"], f64::from(DURATION));
 }
 
-#[test]
-fn baked_frames_toggle_their_visibility() {
+/// A box emitter firing particles that live the whole clip, on node "Particles".
+fn fountain_desc() -> NifEffectDesc {
     use particle_sim::nif::desc::{EmitterShape, NifEmitter, NifModifier, NifModifierKind, NifParticleSystem};
-    // A box emitter firing particles that live the whole clip.
     let emitter = NifEmitter {
         speed: 10.0,
         speed_var: 0.0,
@@ -429,7 +429,7 @@ fn baked_frames_toggle_their_visibility() {
         timing: timing(CycleType::Loop, 1.0),
         kind: NifControllerKind::ParticleUpdate,
     };
-    let desc = NifEffectDesc {
+    NifEffectDesc {
         name: "fountain.nif".to_owned(),
         nodes: vec![
             node("Root", None, vec![1], NifNodeKind::Node),
@@ -439,9 +439,13 @@ fn baked_frames_toggle_their_visibility() {
         particle_systems: vec![system],
         controllers: vec![birth, update],
         ..NifEffectDesc::default()
-    };
+    }
+}
+
+#[test]
+fn baked_frames_toggle_their_visibility() {
     let options = ExportOptions { bake: Some(BakeOptions::default()), ..ExportOptions::default() };
-    let export = export_nif(&desc, &no_textures, &options);
+    let export = export_nif(&fountain_desc(), &no_textures, &options);
     validate_glb(&export.bytes).unwrap_or_else(|errors| panic!("{errors:#?}"));
     let document = glb_json(&export.bytes).unwrap();
     let (_, particles) = node_named(&document, "Particles");
@@ -455,4 +459,145 @@ fn baked_frames_toggle_their_visibility() {
     assert_eq!(interpolation, "STEP");
     assert_eq!(values.chunks(3).map(|v| v[0]).collect::<Vec<_>>(), vec![0.0, 1.0, 0.0]);
     assert!(times[1] < times[2]);
+}
+
+#[test]
+fn baked_sprites_keep_their_texture_stages_in_extras() {
+    const TEXEL: [u8; 4] = [u8::MAX; 4];
+    // Glow map only, as the client's flash sprites: no base map to export.
+    let mut desc = fountain_desc();
+    desc.textures = vec![NifTexture {
+        index: 0,
+        source: NifTextureSource::Embedded { width: 1, height: 1, levels: vec![TEXEL.to_vec()] },
+        mipmapped: false,
+    }];
+    desc.texturings = vec![NifTexturing {
+        apply_mode: TextureApplyMode::Modulate,
+        maps: vec![NifTextureMap {
+            slot: TextureSlot::Glow,
+            texture: Some(0),
+            addressing: TextureAddressing { wrap_s: false, wrap_t: false },
+            filter: 1,
+            uv_set: 0,
+            transform: None,
+        }],
+    }];
+    desc.particle_systems[0].render_state.texturing = Some(0);
+    let options = ExportOptions { bake: Some(BakeOptions::default()), ..ExportOptions::default() };
+    let export = export_nif(&desc, &no_textures, &options);
+    validate_glb(&export.bytes).unwrap_or_else(|errors| panic!("{errors:#?}"));
+    let document = glb_json(&export.bytes).unwrap();
+    let sprites = document["materials"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|material| material["name"].as_str().unwrap().contains("sprites"))
+        .expect("a baked sprite material");
+    assert!(sprites["pbrMetallicRoughness"].get("baseColorTexture").is_none());
+    let gamebryo = &sprites["extras"]["gamebryo"];
+    assert_eq!(gamebryo["apply_mode"], "Modulate");
+    assert_eq!(gamebryo["stages"].as_array().unwrap().len(), 1);
+    assert_eq!(gamebryo["stages"][0]["slot"], "Glow");
+}
+
+/// [`animated_desc`] with an embedded texture as its base and glow maps, both scrolled by a texture transform
+/// controller.
+fn glowing_desc() -> NifEffectDesc {
+    const SCROLL_KEYS: [(f32, f32); 2] = [(0.0, 0.0), (1.0, 1.0)];
+    const TEXEL: [u8; 4] = [u8::MAX; 4];
+    let mut desc = animated_desc();
+    desc.textures = vec![NifTexture {
+        index: 0,
+        source: NifTextureSource::Embedded { width: 1, height: 1, levels: vec![TEXEL.to_vec()] },
+        mipmapped: false,
+    }];
+    let map = |slot| NifTextureMap {
+        slot,
+        texture: Some(0),
+        addressing: TextureAddressing { wrap_s: true, wrap_t: true },
+        filter: 1,
+        uv_set: 0,
+        transform: None,
+    };
+    desc.texturings = vec![NifTexturing {
+        apply_mode: TextureApplyMode::Modulate,
+        maps: vec![map(TextureSlot::Base), map(TextureSlot::Glow)],
+    }];
+    desc.meshes[0].render_state.texturing = Some(0);
+    for slot in [TextureSlot::Base, TextureSlot::Glow] {
+        desc.controllers.push(NifController {
+            owner: Some(2),
+            target: ControllerTarget::Texturing(0),
+            timing: timing(CycleType::Clamp, SCROLL_KEYS[1].0),
+            kind: NifControllerKind::TextureTransform {
+                slot,
+                member: TextureTransformMember::TranslateU,
+                interp: FloatInterp {
+                    pose: None,
+                    keys: Some(Curve { kind: KeyKind::Linear, keys: SCROLL_KEYS.iter().map(|&(t, u)| key(t, u)).collect() }),
+                },
+            },
+        });
+    }
+    desc
+}
+
+/// `bytes` with its JSON chunk replaced by `document`.
+fn with_document(bytes: &[u8], document: &Value) -> Vec<u8> {
+    let json_length = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
+    let bin = &bytes[glb::GLB_HEADER_BYTES + glb::CHUNK_HEADER_BYTES + json_length..];
+    let mut json = serde_json::to_vec(document).unwrap();
+    while json.len() % glb::GLB_ALIGNMENT != 0 {
+        json.push(b' ');
+    }
+    let total = glb::GLB_HEADER_BYTES + glb::CHUNK_HEADER_BYTES + json.len() + bin.len();
+    let mut out = Vec::with_capacity(total);
+    out.extend_from_slice(&glb::GLB_MAGIC.to_le_bytes());
+    out.extend_from_slice(&glb::GLB_VERSION.to_le_bytes());
+    out.extend_from_slice(&(total as u32).to_le_bytes());
+    out.extend_from_slice(&(json.len() as u32).to_le_bytes());
+    out.extend_from_slice(&glb::CHUNK_JSON.to_le_bytes());
+    out.extend_from_slice(&json);
+    out.extend_from_slice(bin);
+    out
+}
+
+#[test]
+fn unlit_materials_keep_only_the_base_map() {
+    let export = export_nif(&glowing_desc(), &no_textures, &ExportOptions::default());
+    validate_glb(&export.bytes).unwrap_or_else(|errors| panic!("{errors:#?}"));
+    let document = glb_json(&export.bytes).unwrap();
+    let material = &document["materials"][0];
+    assert!(material["pbrMetallicRoughness"]["baseColorTexture"]["extensions"][material::EXT_TEXTURE_TRANSFORM].is_object());
+    // The glow map is in extras only: no emissive texture or factor, no channel on them.
+    assert!(material.get("emissiveTexture").is_none() && material.get("emissiveFactor").is_none());
+    let approximations = material["extras"]["gamebryo"]["approximations"].as_array().unwrap();
+    assert!(approximations.iter().any(|approximation| approximation == "glow map in extras only"));
+    let pointers: Vec<&str> = document["animations"][0]["channels"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|channel| channel["target"]["extensions"]["KHR_animation_pointer"]["pointer"].as_str())
+        .collect();
+    assert!(pointers.contains(&"/materials/0/pbrMetallicRoughness/baseColorTexture/extensions/KHR_texture_transform/offset"));
+    assert!(pointers.iter().all(|pointer| !pointer.contains("emissive")), "{pointers:?}");
+
+    // The validator rejects an unlit material with an emissive texture, and a channel animating its transform.
+    let mut emissive = document.clone();
+    let base = material["pbrMetallicRoughness"]["baseColorTexture"].clone();
+    emissive["materials"][0]["emissiveTexture"] = base;
+    let errors = validate_glb(&with_document(&export.bytes, &emissive)).unwrap_err();
+    assert!(errors.iter().any(|error| error.contains("unlit with /emissiveTexture")), "{errors:#?}");
+    let channels = emissive["animations"][0]["channels"].as_array_mut().unwrap();
+    let mut channel = channels[0].clone();
+    channel["target"] = serde_json::json!({ "path": "pointer", "extensions": { "KHR_animation_pointer": {
+        "pointer": "/materials/0/emissiveTexture/extensions/KHR_texture_transform/offset",
+    }}});
+    channels.push(channel);
+    let errors = validate_glb(&with_document(&export.bytes, &emissive)).unwrap_err();
+    assert!(errors.iter().any(|error| error.contains("animates /emissiveTexture of unlit material 0")), "{errors:#?}");
+    // A zero emissive factor is the default, and allowed.
+    let mut zero = document.clone();
+    zero["materials"][0]["emissiveFactor"] = serde_json::json!([0.0, 0.0, 0.0]);
+    validate_glb(&with_document(&export.bytes, &zero)).unwrap_or_else(|errors| panic!("{errors:#?}"));
 }

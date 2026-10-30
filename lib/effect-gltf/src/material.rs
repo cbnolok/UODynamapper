@@ -21,10 +21,15 @@
 //! | apply mode REPLACE with a base  | (1, 1, 1, 1)            | none                  |
 //!
 //! Colours are clamped to [0, 1] (the raw values stay in `extras`; the raw vertex colours in the
-//! `_NIF_VERTEX_COLOR` attribute). The glow map is the `emissiveTexture` (factor 1); without one,
-//! `emissiveFactor` is the material emissive (unlit viewers ignore both). The dark, detail, decal, gloss and
-//! bump maps and the environment map (`NiTextureEffect`) are embedded and listed in `extras` only; apply mode
-//! `DECAL` is exported as `MODULATE`.
+//! `_NIF_VERTEX_COLOR` attribute). The glow map (which the client adds to the colour, and an unlit material
+//! cannot), the dark, detail, decal, gloss and bump maps and the environment map (`NiTextureEffect`) are
+//! embedded and listed in `extras` only; apply mode `DECAL` is exported as `MODULATE`.
+//!
+//! The PBR fallback follows the `KHR_materials_unlit` implementation note: metallic 0, roughness 1, no
+//! `emissiveTexture` and no `emissiveFactor` (zero). An emissive texture on an unlit material is valid glTF,
+//! but Blender 5.0's importer builds no node for it (unlit import reads the base colour only), so an animated
+//! `KHR_texture_transform` of it fails the whole import (`KeyError: 'blender_nodetree'`);
+//! [`crate::validate`] rejects both.
 //!
 //! - `alphaMode`: `BLEND` when blending is on (the blend factors are in `extras`: additive blending shows as
 //!   ordinary alpha blending), `MASK` with `alphaCutoff = reference / 255` when only the alpha test is on (its
@@ -32,9 +37,8 @@
 //! - `doubleSided`: stencil draw mode `BOTH`. Mode `CW` (front faces culled) flips the triangle winding.
 //! - Static texture transforms: `KHR_texture_transform` (offset, rotation, scale of the `NiTextureTransform`
 //!   matrix; the decomposition is exact for the Maya methods and for uniform-scale Max transforms).
-//! - Animated materials: alpha and colour controllers drive `baseColorFactor` and `emissiveFactor`, texture
-//!   transform controllers of the base and glow maps the `KHR_texture_transform` members, through
-//!   `KHR_animation_pointer`.
+//! - Animated materials: alpha and colour controllers drive `baseColorFactor`, texture transform controllers
+//!   of the base map the `KHR_texture_transform` members, through `KHR_animation_pointer`.
 
 use particle_sim::nif::desc::{
     ControllerTarget, CullMode, LightingMode, NifMaterial, NifRenderState, NifTextureTransform, TextureApplyMode,
@@ -118,11 +122,6 @@ fn base_factor(mode: ColorMode, replace: bool, material: &NifMaterial) -> [f32; 
         ColorMode::AlphaOnly => [r, g, b, 1.0],
         ColorMode::None => [r, g, b, alpha],
     }
-}
-
-/// `emissiveFactor` of a material state.
-fn emissive_factor(has_glow: bool, material: &NifMaterial) -> [f32; 3] {
-    if has_glow { [1.0; 3] } else { clamp3(material.emissive) }
 }
 
 /// `KHR_texture_transform` members (offset, rotation, scale) of a Gamebryo texture transform. glTF applies
@@ -259,10 +258,8 @@ impl Exporter<'_> {
         let mut material = Map::new();
         material.insert("name".into(), json!(format!("{} mesh {mesh}", part.label)));
         material.insert("pbrMetallicRoughness".into(), Value::Object(pbr));
-        material.insert("emissiveFactor".into(), json!(emissive_factor(glow_map.is_some(), &initial)));
-        if let Some(map) = glow_map {
-            let info = texture_info(self, map, "emissiveTexture", &mut approximations);
-            material.insert("emissiveTexture".into(), info);
+        if glow_map.is_some() {
+            approximations.push("glow map in extras only".to_owned());
         }
         if state.alpha.blend {
             material.insert("alphaMode".into(), json!("BLEND"));
@@ -325,17 +322,6 @@ impl Exporter<'_> {
                     &part.timeline.times,
                     &flatten(&bases),
                     4,
-                    Interpolation::Linear,
-                );
-            }
-            let emissives: Vec<[f32; 3]> = samples.iter().map(|m| emissive_factor(glow_map.is_some(), m)).collect();
-            if !is_constant(&emissives) {
-                self.animation.pointer_channel(
-                    &mut self.builder,
-                    format!("/materials/{material_index}/emissiveFactor"),
-                    &part.timeline.times,
-                    &flatten(&emissives),
-                    3,
                     Interpolation::Linear,
                 );
             }

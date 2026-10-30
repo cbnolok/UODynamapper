@@ -1,7 +1,10 @@
 //! A structural check of a `.glb` file (the Khronos validator is not a dependency): GLB header and chunks,
 //! JSON, object references, buffer view and accessor bounds, POSITION and animation input bounds, index ranges,
-//! animation inputs strictly increasing and outputs of the right size, a node hierarchy that is a forest, and
-//! embedded PNG signatures.
+//! animation inputs strictly increasing and outputs of the right size, a node hierarchy that is a forest,
+//! embedded PNG signatures, and unlit materials without the lit-only members the `KHR_materials_unlit`
+//! implementation note leaves out (emissive, normal, occlusion and metallic-roughness textures, a non-zero
+//! `emissiveFactor`), neither stored nor animated (Blender's importer fails on an animated transform of such a
+//! texture: see [`crate::material`]).
 
 use serde_json::Value;
 
@@ -28,6 +31,16 @@ const TYPE_COMPONENTS: [(&str, usize); 7] =
     [("SCALAR", 1), ("VEC2", 2), ("VEC3", 3), ("VEC4", 4), ("MAT2", 4), ("MAT3", 9), ("MAT4", 16)];
 /// Morph weights are animated as scalars.
 const WEIGHTS_PATH: &str = "weights";
+/// Members of an unlit material that only a lit fallback uses, as JSON pointers below the material.
+const UNLIT_FALLBACK_ONLY: [&str; 5] = [
+    "/emissiveTexture",
+    "/normalTexture",
+    "/occlusionTexture",
+    "/pbrMetallicRoughness/metallicRoughnessTexture",
+    "/emissiveFactor",
+];
+/// The default (and, for an unlit material, the only valid) `emissiveFactor`.
+const ZERO_EMISSIVE: [f64; 3] = [0.0; 3];
 
 /// Counts of a valid file.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -51,6 +64,25 @@ fn array<'a>(document: &'a Value, key: &str) -> &'a [Value] {
 
 fn index(value: Option<&Value>) -> Option<usize> {
     value.and_then(Value::as_u64).map(|value| value as usize)
+}
+
+fn is_unlit(material: &Value) -> bool {
+    material.pointer(&format!("/extensions/{}", crate::material::EXT_MATERIALS_UNLIT)).is_some()
+}
+
+/// The lit-only member of an unlit material that `pointer` (a document JSON pointer) targets.
+fn unlit_fallback_target(document: &Value, pointer: &str) -> Option<(usize, &'static str)> {
+    let rest = pointer.strip_prefix("/materials/")?;
+    let (material, member) = rest.split_once('/')?;
+    let material: usize = material.parse().ok()?;
+    if !array(document, "materials").get(material).is_some_and(is_unlit) {
+        return None;
+    }
+    let member = format!("/{member}");
+    UNLIT_FALLBACK_ONLY
+        .into_iter()
+        .find(|lit| member == *lit || member.starts_with(&format!("{lit}/")))
+        .map(|lit| (material, lit))
 }
 
 struct Checker<'a> {
@@ -276,6 +308,18 @@ impl Checker<'_> {
             for info in [pbr.and_then(|pbr| pbr.get("baseColorTexture")), material.get("emissiveTexture")].into_iter().flatten() {
                 self.reference(&what, info.get("index"), "textures");
             }
+            if is_unlit(material) {
+                for member in UNLIT_FALLBACK_ONLY {
+                    let Some(value) = material.pointer(member) else { continue };
+                    let zero = value.as_array().is_some_and(|factor| {
+                        factor.len() == ZERO_EMISSIVE.len()
+                            && factor.iter().zip(ZERO_EMISSIVE).all(|(value, zero)| value.as_f64() == Some(zero))
+                    });
+                    if !zero {
+                        self.errors.push(format!("{what}: unlit with {member}"));
+                    }
+                }
+            }
         }
     }
 
@@ -391,6 +435,9 @@ impl Checker<'_> {
                         .unwrap_or("");
                     if self.document.pointer(pointer).is_none() {
                         self.errors.push(format!("{what}: pointer {pointer:?} does not resolve"));
+                    }
+                    if let Some((material, member)) = unlit_fallback_target(self.document, pointer) {
+                        self.errors.push(format!("{what}: animates {member} of unlit material {material}"));
                     }
                     continue;
                 }

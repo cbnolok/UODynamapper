@@ -7,13 +7,21 @@
 //! - One random run (seed [`crate::BakeOptions::seed`]); the client's particles differ every time.
 //! - Sprites only: NIF triangle meshes are already exported as meshes, and Chaos MESH particles (`.nif` clones)
 //!   are not baked.
-//! - Materials: unlit, double-sided, `COLOR_0` the sprite colour, the batch texture; additive and other blend
-//!   factors show as alpha blending (the factors are in the material's `extras`).
+//! - Materials: unlit, double-sided, `COLOR_0` the sprite colour, the batch's base map (its transform baked into
+//!   `TEXCOORD_0`); additive and other blend factors show as alpha blending. The factors, the apply mode, the
+//!   alpha test and every texture stage of the batch (glow, detail and the others the client combines) are in the
+//!   material's `extras` only: a batch with a glow map but no base map (a fireball's flash) shows as its vertex
+//!   colour.
+//! - A frame's batches are its mesh's primitives in the client's draw order (the unsorted batches in scene
+//!   order, then the sorted ones far to near, as `particle_sim::raster::Canvas::draw_group` draws them); viewers
+//!   that draw an object's primitives in order (Blender) then blend them in that order.
 //! - The output grows with the frame count and the particle count: a long or dense effect makes a large file.
 
 use particle_sim::nif::default_camera;
 use particle_sim::nif::desc::{FILTER_BILERP, TextureAddressing};
-use particle_sim::render::{BlendFactor, QUAD_INDICES, QuadVertex, expand_frame};
+use particle_sim::render::{
+    BatchState, BlendFactor, CameraFrame, DrawBatch, QUAD_INDICES, QuadVertex, UvTransform, expand_frame,
+};
 use particle_sim::{NifEffectDesc, NodeTransform, ParticleSystemInstance, RenderFrame};
 use serde_json::{Value, json};
 
@@ -56,7 +64,7 @@ impl Exporter<'_> {
         let mut frame = RenderFrame::default();
         let mut vertices = Vec::new();
         let mut frame_nodes: Vec<(usize, f32)> = Vec::new();
-        let mut materials: Vec<(String, BlendFactor, BlendFactor, usize)> = Vec::new();
+        let mut materials: Vec<(Value, usize)> = Vec::new();
         let mut skipped_meshes = false;
         for index in 0..frames {
             job.instance.update(dt_ms, &job.node);
@@ -69,7 +77,7 @@ impl Exporter<'_> {
             }
             vertices.clear();
             expand_frame(&frame, &camera, &mut vertices);
-            let Some(mesh) = self.frame_mesh(&job, &frame, &vertices, &mut materials) else { continue };
+            let Some(mesh) = self.frame_mesh(&job, &frame, &camera, &vertices, &mut materials) else { continue };
             let mut node = Node::named(format!("{} frame {index}", job.label));
             node.mesh = Some(mesh);
             node.extras = Some(json!({ "gamebryo": { "baked_time": time, "sprites": frame.sprites.len() } }));
@@ -119,11 +127,18 @@ impl Exporter<'_> {
         &mut self,
         job: &BakeJob<'_>,
         frame: &RenderFrame,
+        camera: &CameraFrame,
         vertices: &[QuadVertex],
-        materials: &mut Vec<(String, BlendFactor, BlendFactor, usize)>,
+        materials: &mut Vec<(Value, usize)>,
     ) -> Option<usize> {
         let positions: Vec<[f32; 3]> = vertices.iter().map(|vertex| vertex.position.to_array()).collect();
-        let uvs: Vec<[f32; 2]> = vertices.iter().map(|vertex| vertex.uv).collect();
+        let mut uvs: Vec<[f32; 2]> = vertices.iter().map(|vertex| vertex.uv).collect();
+        for (index, batch) in frame.batches.iter().enumerate() {
+            let transform = frame.batch_state(index).map_or(UvTransform::IDENTITY, |state| state.uv_transform);
+            for uv in &mut uvs[batch.sprites.start * QUAD_VERTICES..batch.sprites.end * QUAD_VERTICES] {
+                *uv = transform.apply(*uv);
+            }
+        }
         let colors: Vec<[f32; 4]> = vertices.iter().map(|vertex| vertex.color.map(|c| c.clamp(0.0, 1.0))).collect();
         if positions.iter().flatten().any(|value| !value.is_finite()) {
             self.warnings.push(format!("{}: a baked frame has non-finite positions; skipped", job.label));
@@ -132,20 +147,24 @@ impl Exporter<'_> {
         let position = self.builder.vec3(&positions, Some(TARGET_ARRAY_BUFFER), true);
         let uv = self.builder.vec2(&uvs, Some(TARGET_ARRAY_BUFFER));
         let color = self.builder.vec4(&colors, Some(TARGET_ARRAY_BUFFER));
+        let mut order: Vec<(&DrawBatch, Option<&BatchState>)> =
+            frame.batches.iter().enumerate().map(|(index, batch)| (batch, frame.batch_state(index))).collect();
+        order.sort_by_key(|(_, state)| state.map_or(0, |state| state.order));
+        let (mut sorted, unsorted): (Vec<_>, Vec<_>) = order.into_iter().partition(|(batch, _)| batch.sort.sorted);
+        let depth = |batch: &DrawBatch| batch.sort.center.dot(camera.direction);
+        sorted.sort_by(|(a, _), (b, _)| depth(b).total_cmp(&depth(a)));
         let mut primitives = Vec::new();
-        let mut first_vertex = 0u32;
-        for batch in &frame.batches {
+        for (batch, state) in unsorted.into_iter().chain(sorted) {
             let count = batch.sprites.len();
             if count == 0 {
                 continue;
             }
             let mut indices = Vec::with_capacity(count * QUAD_INDICES.len());
-            for sprite in 0..count as u32 {
-                let base = first_vertex + sprite * QUAD_VERTICES as u32;
+            for sprite in batch.sprites.clone() {
+                let base = (sprite * QUAD_VERTICES) as u32;
                 indices.extend(QUAD_INDICES.iter().map(|&index| base + index));
             }
-            first_vertex += (count * QUAD_VERTICES) as u32;
-            let material = self.sprite_material(job, &batch.texture, batch.blend.src, batch.blend.dst, materials);
+            let material = self.sprite_material(job, batch, state, materials);
             let indices = self.builder.indices(&indices);
             primitives.push(json!({
                 "attributes": { "POSITION": position, "TEXCOORD_0": uv, "COLOR_0": color },
@@ -164,12 +183,29 @@ impl Exporter<'_> {
     fn sprite_material(
         &mut self,
         job: &BakeJob<'_>,
-        texture: &str,
-        src: BlendFactor,
-        dst: BlendFactor,
-        materials: &mut Vec<(String, BlendFactor, BlendFactor, usize)>,
+        batch: &DrawBatch,
+        state: Option<&BatchState>,
+        materials: &mut Vec<(Value, usize)>,
     ) -> usize {
-        if let Some(&(_, _, _, index)) = materials.iter().find(|(name, s, d, _)| name == texture && *s == src && *d == dst) {
+        let texture: &str = &batch.texture;
+        let (src, dst) = (batch.blend.src, batch.blend.dst);
+        let mut gamebryo = json!({
+            "texture": texture,
+            "src_blend": crate::describe::name(src),
+            "dst_blend": crate::describe::name(dst),
+        });
+        if let Some(state) = state {
+            gamebryo["apply_mode"] = crate::describe::name(state.apply_mode);
+            gamebryo["alpha_test"] = state.alpha_test.map_or(Value::Null, |test| {
+                json!({ "function": crate::describe::name(test.function), "reference": test.reference })
+            });
+            gamebryo["stages"] = state
+                .textures
+                .iter()
+                .map(|stage| json!({ "slot": crate::describe::name(stage.slot), "texture": &*stage.texture }))
+                .collect();
+        }
+        if let Some(&(_, index)) = materials.iter().find(|(key, _)| *key == gamebryo) {
             return index;
         }
         let gltf_texture = if texture.is_empty() {
@@ -192,16 +228,12 @@ impl Exporter<'_> {
             "alphaMode": if opaque { "OPAQUE" } else { "BLEND" },
             "doubleSided": true,
             "extensions": { EXT_MATERIALS_UNLIT: {} },
-            "extras": { "gamebryo": {
-                "texture": texture,
-                "src_blend": crate::describe::name(src),
-                "dst_blend": crate::describe::name(dst),
-            }},
+            "extras": { "gamebryo": gamebryo.clone() },
         });
         self.builder.extensions_used.insert(EXT_MATERIALS_UNLIT);
         self.builder.materials.push(material);
         let index = self.builder.materials.len() - 1;
-        materials.push((texture.to_owned(), src, dst, index));
+        materials.push((gamebryo, index));
         index
     }
 }
