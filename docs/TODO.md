@@ -54,7 +54,9 @@ Current execution decisions:
 ### Current Renderer Focus: Visual Fidelity
 
 - Validate remaining individual static anchors/new-art scales and effect visibility against matched fixtures. Common legacy pixel/height calibration, the perspective bridge stair/deck tie-bias defect and stale hover quad construction are repaired.
+- Effect reachability is now checked for grunge, KR boundary grime/color wash and projected shadows. Keep remaining source/strength parity distinct from inactive controls; [the effect audit](agent_notes/effect_visibility_validation.md) records normal-layer eligibility and the morning lighting cap's suppressed snow response.
 - Finish texture-alpha and visible-depth picking and validate large-art/expanded-multi coverage; use the preserved logical surfaces and movement flags for future walking. See [hover geometry contracts](agent_notes/static_hover_geometry.md).
+- Diagnose the small history-sensitive KR town tree-edge difference using matched direct and snow/swamp/town sequences. Both old and repaired normal-role builds reproduce it; its residency/alpha/depth cause is still open in [the depth notes](agent_notes/static_depth_ordering.md).
 - Use [the visual follow-up review](reviews/2026-10-29-visual-fidelity-followup.md) for current evidence and reconciliation of the unstaged user TODO. Historical repaired items must reproduce before being reopened.
 
 ### Baseline And Instrumentation
@@ -264,7 +266,7 @@ These need a person at the GUI or in a running client; the code side is done.
 - Continue soft local color and broad KR color-wash influence on nearby art and land: first shader pass adds bounded low-frequency warm/cool wash through `enable_kr_color_wash`, `kr_color_wash_strength`, and `kr_color_wash_scale`; remaining work is screenshot tuning and real additive dynamic light decals.
 - Add restrained elevation or distance atmosphere for large terrain views without obscuring tile readability.
 - Add material-class micro-contrast controls so grass, rock, snow, roads, and liquid surfaces can separate without one global sharpening curve.
-- Add normal-map validation views for KR/EC land families: water, lava, swamp, snow, rock, grass, and road. Compare `enable_normal_maps` on/off for channel orientation, BC7/RDO damage, and useful `land_normal_map_strength` ranges.
+- Extend normal-map source/orientation/filtering validation beyond the recorded snow receiver. Common dry grass/rock/road materials supply no authored normals; original liquid bump composition has a separate path. Seventeen false fourth-artwork normal bindings are repaired. Morning lighting caps can suppress real snow response; retain the lower-energy control in the effect audit before changing strengths.
 - Continue material-family wet response beyond generic specular: first shader pass separates water, lava-like liquid, swamp-like liquid, and ice/snow-like grazing highlights; remaining work is visual validation and metadata-backed material-family classification.
 - Continue light-color provenance for static lights: first pass feeds ClassicUO light-shader colors into land/art local response, with warm fallback; remaining work is package-hue and sampled-mask color provenance.
 - Continue terrain shadow/compression for vertical cliffs and high banks: first KR pass darkens steep neighbor-height transitions through `kr_land_relief_shadow_strength`; remaining work is screenshot validation and metadata-aware cliff family tuning.

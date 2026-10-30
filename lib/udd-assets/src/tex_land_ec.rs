@@ -657,8 +657,9 @@ impl TexLandEcPackage {
         cc_tile_id: u32,
     ) -> [Option<TexLandEcResolvedMaterialLayer>; 5] {
         let decision = self.resolve_material_decision(cc_tile_id);
-        let source_liquid = decision.material_id.and_then(|id| self.source_material(id))
-            .and_then(|entry| entry.texture.as_ref())
+        let source_texture = decision.material_id.and_then(|id| self.source_material(id))
+            .and_then(|entry| entry.texture.as_ref());
+        let source_liquid = source_texture
             .filter(|texture| texture.shader_name.as_deref() == Some("UOWaterTerrainLayer"));
         let reviewed_liquid = decision.override_actions.is_some_and(|actions| actions.has_liquid());
         std::array::from_fn(|index| {
@@ -685,6 +686,14 @@ impl TexLandEcPackage {
                 self.resolve_override_material_layer_slot_by_material(decision.material_id?, index as u32)
             } else {
                 if index == 4 { return None; }
+                // A fourth default-terrain source can be ordinary artwork (for
+                // example swamp/blue-floor tiles), not a tangent normal map.
+                // Only the authored bump family or an explicit normal override
+                // establishes that role. Keep raw source-layer access separate.
+                if index == 3 && !source_texture.is_some_and(|texture|
+                    texture.shader_name.as_deref() == Some("UOBumpMapTerrainLayer")) {
+                    return self.resolve_override_material_layer_slot_by_material(decision.material_id?, 3);
+                }
                 self.resolve_material_layer_slot(cc_tile_id, index as u32)
             }
         })
@@ -1775,6 +1784,43 @@ mod tests {
         assert!(detail.is_none() && mask.is_none());
         assert_eq!(package.source_liquid_payload([2000520, 2000510, 2000530]), Some(203));
         assert_eq!(package.source_liquid_payload([2000520, 2000510, 2000999]), None);
+    }
+
+    #[test]
+    fn default_terrain_fourth_art_source_is_not_a_normal_map() {
+        let mut package = test_package_with_source_map(Some(b"legacyId,newId,newSubType\n500,52,0\n"));
+        package.set_terrain_overrides(&EcTerrainOverrides { terrains: Vec::new() });
+        package.source_materials.get_mut(&52).unwrap().texture.as_mut().unwrap()
+            .shader_name = Some("UODefaultTerrainLayer".to_owned());
+        let mut fourth = package.terrain_provenance.iter()
+            .find(|record| record.selected_texture_id == 2000520).copied().unwrap();
+        fourth.selected_layer_index = 3;
+        package.terrain_provenance.push(fourth);
+        // Preserved source access still sees the authored fourth image.
+        assert_eq!(package.resolve_material_layer_slot(500, 3).unwrap().texture_id, 2000520);
+        assert!(package.resolve_material_render_layers(500)[3].is_none());
+
+        let overrides = EcTerrainOverrides::parse("normal.kdl",
+            "terrain 52 { layer \"n\" tex=2000510 stretch=7.0; }").unwrap();
+        package.set_terrain_overrides(&overrides);
+        let normal = package.resolve_material_render_layers(500)[3].unwrap();
+        assert_eq!(normal.texture_id, 2000510);
+        assert_eq!(normal.texture_repetition, 7.0);
+    }
+
+    #[test]
+    fn authored_bump_terrain_retains_its_fourth_normal_source() {
+        let mut package = test_package_with_source_map(Some(b"legacyId,newId,newSubType\n500,52,0\n"));
+        package.set_terrain_overrides(&EcTerrainOverrides { terrains: Vec::new() });
+        package.source_materials.get_mut(&52).unwrap().texture.as_mut().unwrap()
+            .shader_name = Some("UOBumpMapTerrainLayer".to_owned());
+        let mut fourth = package.terrain_provenance.iter()
+            .find(|record| record.selected_texture_id == 2000520).copied().unwrap();
+        fourth.selected_layer_index = 3;
+        package.terrain_provenance.push(fourth);
+        let normal = package.resolve_material_render_layers(500)[3].unwrap();
+        assert_eq!(normal.texture_id, 2000520);
+        assert_eq!(normal.runtime_slot_id, Some(100));
     }
 
     #[test]

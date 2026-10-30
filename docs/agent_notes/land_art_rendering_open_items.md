@@ -25,7 +25,9 @@ All user-verified in game and committed on `prereleases`:
 - **Issue B, land height scale (`0.1`).** The geometric derivation found it plausible, not
   wrong. This is a design decision between classic-faithful and exaggerated relief. The user
   wanted to set direction from screenshots first.
-- **Grunge.** Still needs source/preset/strength-specific visual checks. Explicit
+- **Grunge.** Source/profile/strength-specific native checks now show the
+  control working; see `effect_visibility_validation.md` for receivers,
+  dependencies and remaining original support-texture provenance. Explicit
   non-KR art-normal activation was reviewed later on stone/timber fixtures; see
   `art_fake_normal_validation.md` for the result and its limits.
 - **EC `lib/uocf/src/enhanced/tileart.rs` offsets.** The parser produced garbage offsets on

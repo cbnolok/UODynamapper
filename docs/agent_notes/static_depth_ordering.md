@@ -105,3 +105,23 @@ stale CC anchor, misplaced EC ground and upright geometry for flat art. The
 routing, anchor/bounds and flat-surface rules and tests projected mesh triangles.
 Logical object XYZ remains separate. Alpha-accurate selection, general overlap
 parity and expanded-multi/large-art coverage remain separate work.
+
+## History-sensitive tree edges
+
+The [effect audit](effect_visibility_validation.md) reproduces a small KR/EC-art
+town difference at map 0 `(1647,1682)`, orthographic 1280x800, zoom 0.8. A direct
+launch/teleport and a `(4050,500)` snow → `(1872,2416)` swamp → town sequence
+differ at 234 tree-edge pixels above one byte (maximum 36), within screen
+`x=1105..1238`, `y=527..784`. Normal maps, grunge, wash, fog, water animation,
+projected shadows and static light collection are disabled for this control.
+The unchanged old binary and normal-role repair produce identical frames when
+their histories match. Restoring all old normal bindings in isolated data does
+not change the direct repaired frame. These controls separate the issue from
+the normal-layer fix.
+
+Its residency/alpha/depth cause is not established. Settled terrain metadata is
+insufficient to certify stable art texture residency or final transparent edge
+composition. Retain the two histories when investigating; do not attribute an
+unmatched-history pixel difference to a shader change. Native frames and the
+matched controls are indexed by `effects-accepted-evidence.json` in the temporary
+renderer workspace.
