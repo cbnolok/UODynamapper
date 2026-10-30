@@ -18,6 +18,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
 use crate::uop_container::codec::{decode_payload, encode_payload, UopCompression};
+use crate::uop_container::data_block_header::DataBlockHeader;
 
 /// The compression method used for the file data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,14 +76,15 @@ pub struct UopFile {
     decompressed_size: u32,
     /// The hash of the file's name.
     filename_hash: u64,
-    /// A hash of the compressed data.
+    /// A hash of the data block header in client packages (`DataBlockHeader::data_block_hash`); of the
+    /// compressed data for entries created here.
     data_block_hash: u32,
     /// The compression method used.
     compression: CompressionFlag,
     /// The compressed file data. None if not yet loaded into memory.
     data: Option<Arc<[u8]>>,
-    /// The `data_block_length` bytes stored before the payload, loaded with it. Client packages have a 12-byte
-    /// header there and their `data_block_hash` is the Adler-32 of it. None if not loaded or absent.
+    /// The `data_block_length` bytes stored before the payload, loaded with it: a timestamp header in version-4
+    /// client packages, a signature header in version-5 ones (`data_block_header`). None if not loaded or absent.
     data_block_header: Option<Arc<[u8]>>,
 }
 
@@ -221,6 +223,20 @@ impl UopFile {
         self.data_block_header = Some(header);
     }
 
+    /// Parses the loaded data block header. None if not loaded or absent.
+    pub fn parse_data_block_header(&self) -> Option<Result<DataBlockHeader, std::io::Error>> {
+        self.data_block_header.as_deref().map(DataBlockHeader::parse)
+    }
+
+    /// Whether `data_block_hash` is the hash of the loaded data block header. None if no header is loaded or
+    /// its hash algorithm is not known (`DataBlockHeader::hash_algorithm`).
+    pub fn data_block_hash_matches_header(&self) -> Result<Option<bool>, std::io::Error> {
+        let Some(header) = self.parse_data_block_header().transpose()? else {
+            return Ok(None);
+        };
+        Ok(header.data_block_hash()?.map(|hash| hash == self.data_block_hash))
+    }
+
     /// Returns the size of the compressed file data.
     pub fn compressed_size(&self) -> u32 {
         self.compressed_size
@@ -266,12 +282,12 @@ impl UopFile {
         self.filename_hash
     }
 
-    /// Returns a hash of the compressed data.
+    /// Returns the stored data block hash.
     pub fn data_block_hash(&self) -> u32 {
         self.data_block_hash
     }
 
-    /// Sets the hash of the compressed data.
+    /// Sets the stored data block hash.
     pub fn set_data_block_hash(&mut self, hash: u32) {
         self.data_block_hash = hash;
     }

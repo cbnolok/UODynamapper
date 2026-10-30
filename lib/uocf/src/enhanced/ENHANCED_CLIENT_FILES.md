@@ -300,13 +300,21 @@ unless the data becomes a stable package contract.
   - `put` replaces an entry or adds one, filling an empty slot first;
   - `remove` leaves an empty slot;
   - `save_as` writes a new package, never the source.
-- Data block headers are not the 12-byte client headers: they are 135 to 137
-  bytes, starting `u16 4`, `u16 133`. They are probably a signature, and their
-  `data_block_hash` is not the Adler-32 of the header, the payload or both.
-  - A replaced entry keeps its header and hash, which may then no longer match
-    the new payload.
-  - Added entries get no header.
-  - Whether the client checks these headers is not established.
+- Data block headers are signature records, as in every version-5 package
+  (`uop_container::data_block_header`): `u16 4`, `u16 length`, then big-endian
+  `u16` key id 20 and `u16` signature length and a 126- to 129-byte integer, so
+  134 to 137 bytes. The 12-byte timestamp headers belong to version-4 packages.
+  - `data_block_hash` is the lookup3 `hashlittle` (initial value 0) of the
+    header; 829 of 829 entries match. It covers the header, not the payload.
+  - The signature covers the payload, but its scheme and key are not in the
+    client, so it can be neither checked nor made.
+  - The client never checks either: it skips `data_block_length` bytes to the
+    payload, never reads the signature, and uses `data_block_hash` only as a
+    cache stamp for the string table and audio caches. A missing header works.
+  - A replaced entry keeps its header and hash, so its signature no longer
+    matches the new payload; added entries get no header. See
+    `scripts/dev-helpers/ec-research/ghidra-uop-header/results/uosa_uop_header.md`
+    for the evidence and a proposal for both.
 
 `.ems` Chaos particle scripts (in `EffectTexture.uop`):
 

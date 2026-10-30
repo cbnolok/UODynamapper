@@ -13,9 +13,10 @@
 //! - File payload bytes do not live inside the header or inside the block header.
 //!   They are stored later in the file, after metadata, and each file entry points
 //!   at its own payload through `data_block_address`.
-//! - A payload may be preceded by a `data_block_length`-byte data block header.
-//!   Client packages have 12 bytes there (`u16 3`, `u16 8`, `u64` FILETIME) and
-//!   their `data_block_hash` is the Adler-32 of that header. Loading keeps the
+//! - A payload may be preceded by a `data_block_length`-byte data block header
+//!   (`data_block_header`): a 12-byte timestamp header in version-4 client packages,
+//!   a 134- to 137-byte signature header in version-5 ones. `data_block_hash` is the
+//!   Adler-32 (timestamp) or lookup3 hash (signature) of that header. Loading keeps the
 //!   header bytes and saving writes them back, so a loaded package re-saves intact.
 //! - Client packages pad their last block to the block size with all-zero entries; the header's file count
 //!   excludes them and saving keeps them all-zero (`UopFile::is_empty_slot`).

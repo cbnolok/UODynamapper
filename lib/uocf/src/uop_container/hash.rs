@@ -7,6 +7,12 @@ pub fn hash_data_block(data: &[u8]) -> std::io::Result<u32> {
     adler32::adler32(data)
 }
 
+/// lookup3 `hashlittle` with initial value 0 of non-empty `data`: the low 32 bits of the file name hash
+/// function. The `data_block_hash` of a signature data block header (see `data_block_header`).
+pub fn hash_data_block_lookup3(data: &[u8]) -> u32 {
+    hash_file_name_bytes(data) as u32
+}
+
 trait HashWord:
     Copy
     + std::ops::BitOr<Output = Self>

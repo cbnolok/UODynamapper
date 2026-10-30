@@ -1,5 +1,6 @@
 pub mod block;
 mod codec;
+pub mod data_block_header;
 pub mod file;
 pub mod package;
 pub mod template;
