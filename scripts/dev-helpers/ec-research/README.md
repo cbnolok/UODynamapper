@@ -77,7 +77,9 @@ loader are named and documented in [`ghidra-login-names`](ghidra-login-names/REA
 The `tileart.uop` load path, its record format as the client reads it and the code
 using tile definitions are named and documented in [`ghidra-tileart`](ghidra-tileart/README.md).
 The effect definitions at the end of tileart records, which share their format with
-`EffectDefinitionCollection.uop`, are decoded in [`ghidra-effects`](ghidra-effects/README.md).
+`EffectDefinitionCollection.uop`, are decoded in [`ghidra-effects`](ghidra-effects/README.md). The
+Chaos particle engine that plays `.ems` effects is documented in
+[`ghidra-effects/results/uosa_chaos.md`](ghidra-effects/results/uosa_chaos.md).
 `AnimationSequence.uop`, `AnimationDefinition.uop` and the 0x6E/0xE2 animation packets are traced in [`ghidra-animation`](ghidra-animation/README.md).
 `build/multicollection/housing.bin` (house customization pieces) and the `MultiCollection.uop` multis are decoded in [`ghidra-housing`](ghidra-housing/README.md).
 

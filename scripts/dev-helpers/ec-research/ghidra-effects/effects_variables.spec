@@ -44,6 +44,125 @@ type /UO/UOEarthquakeEffect 0x28 : runtime earthquake effect
   0x20 double frequency : Hz
 end
 
+# ---- Chaos particle engine (results/uosa_chaos.md) ----
+
+type /UO/ChaosRange 0x8 : value range; sampled as min + (max - min) * r when min < max
+  0x0 float min
+  0x4 float max
+end
+
+type /UO/ChaosIntRange 0x8 : integer range (BURST); parsed with atol & 0xffff
+  0x0 uint min
+  0x4 uint max
+end
+
+type /UO/ChaosVectorRange 0x18 : XYZ range, each component sampled separately
+  0x0 /Gamebryo26/NiPoint3 min
+  0xc /Gamebryo26/NiPoint3 max
+end
+
+type /UO/ChaosToken 0x20 : script token
+  0x0 /UOEffects/MsvcString text : uppercased by ChaosScript::ClassifyToken
+  0x1c uint type : token type (1 number, 2 '=', ... 0x2a other)
+end
+
+type /UO/ChaosCelSetup 0x18 : CelSetup(frames, u step, v step, columns, rows, fps, loop)
+  0x0 ushort frames
+  0x4 float u_step
+  0x8 float v_step
+  0xc byte columns
+  0xd byte rows
+  0x10 float fps
+  0x14 bool loop : last argument > 0
+end
+
+type /UO/ChaosParticleEvent 0x24 : event of an EventSequence (colour events 0x3c, vector events 0x34)
+  0x0 void* vftable : +4 Apply(particle), +8 SupportsFade, +0xc Parse
+  0x4 /UO/ChaosParticleEvent* next_fade : first later fade event of the same type
+  0x8 /UO/ChaosRange time_range : as written (INITIAL 0, FINAL = lifetime max, AT value)
+  0x10 float time : sampled once when the sequence is compiled
+  0x14 bool is_fade : FADE SO
+  0x18 uint type_id
+  0x1c /UO/ChaosRange value : colour events: RGBA min at +0x1c, max at +0x2c; vector events: min/max XYZ
+end
+
+type /UO/ChaosParticle 0xa8 : pooled particle
+  0x0 void* vftable
+  0x4 /UO/ChaosParticleEvent** next_event : iterator into the sequence's sorted events
+  0x8 float size : 1.0 by default
+  0xc float size_step : per second
+  0x10 float lifetime : seconds, sampled at creation
+  0x14 float age
+  0x18 float event_timer : advanced by dt; EVENTTIMER sets it
+  0x1c float birth_time
+  0x20 float last_update_time
+  0x24 float last_dt
+  0x28 float[4] color : RGBA, clamped to [0,1] only when rendered
+  0x38 float[4] color_step
+  0x48 /Gamebryo26/NiPoint3 velocity
+  0x54 /Gamebryo26/NiPoint3 velocity_step
+  0x60 float thrust
+  0x64 float thrust_step
+  0x68 /Gamebryo26/NiPoint3 position : world, or emitter-relative when Local
+  0x74 /Gamebryo26/NiPoint3 previous_position
+  0x80 /Gamebryo26/NiPoint3 rotation : radians; billboards use y only
+  0x8c /Gamebryo26/NiPoint3 rotation_step
+  0x98 float length : AXIAL quad length, 1.0 by default
+  0x9c float length_step
+  0xa4 uint pool_id
+end
+
+type /UO/ChaosEventSequence 0x11c : compiled EventSequence block
+  0x0 void* vftable
+  0x4 uint refcount
+  0x8 uint flags : bit1 CENTERED, 2 SORT, 3 ROTATION used, 4 STAYATEMITTER, 5 THRUST used, 6/7 multipliers set, 8 LOCAL, 9 CELANIMATE, 10 cel loop, 11 EMISSIONBOOST, 12 COLLISIONCHECK, 13 STOP, 14 REFLECT
+  0xc /UOEffects/MsvcString name
+  0x28 /UOEffects/MsvcString resource : TEXTURE, MESHNAME or EMITTERNAME
+  0x44 /UOEffects/MsvcVector events : /UO/ChaosParticleEvent*, sorted by time
+  0x54 /UO/ChaosCelSetup cel
+  0x6c uint dest_blend : ALPHA_* index
+  0x70 uint src_blend : ALPHA_* index
+  0x74 uint particle_type : POINT 1, MESH 2, BILLBOARD 3, EMITTER 4, AXIAL 5, LIGHT 6
+  0x78 /UO/ChaosRange lifetime
+  0x80 /UO/ChaosRange emit_rate : particles per second; the emitter uses max only
+  0x88 /UO/ChaosVectorRange gravity : sampled every update, multiplied by (0,0,1)
+  0xa0 /UO/ChaosVectorRange inherited : scales the emitter velocity per component
+  0xb8 /UO/ChaosVectorRange chaos_velocity
+  0xd0 /UO/ChaosVectorRange chaos_location
+  0xe8 ushort num_particles : live particle cap, 100 by default
+  0xec int emitted : particles created
+  0xf4 int loops : -1 by default, never read at run time
+  0xf8 float scale_multiplier : applied to SCALE events at parse time
+  0xfc float velocity_multiplier : applied to VELOCITY events at parse time
+  0x104 /UO/ChaosIntRange burst : particles per emission step, 1..1 by default
+  0x10c /UO/ChaosRange emission_boost : extra emit rate per unit of emitter movement
+  0x114 /UO/ChaosRange collision_absorption
+end
+
+type /UO/ChaosEmitter 0x7c : compiled .ems particle system (one per EmitterGroup clone)
+  0x0 void* vftable
+  0x4 void* renderer : ParticleSet
+  0x8 void* owner : EmitterEffect node, null when stopped
+  0x14 /UO/ChaosEventSequence** sequences_begin
+  0x18 /UO/ChaosEventSequence** sequences_end
+  0x24 void* particle_deques : std::deque<Particle*> per sequence, stride 0x14
+  0x34 float* last_emit_times : per sequence
+  0x44 float start_time
+  0x48 float last_update_time
+  0x4c /Gamebryo26/NiPoint3 previous_position : owner world translate of the previous update
+  0x58 /Gamebryo26/NiPoint3 node_velocity
+  0x64 float emission_remaining : seconds of emission left
+  0x68 bool infinite : duration <= 0
+  0x69 bool first_burst
+  0x6a bool one_shot
+  0x6c /UO/ChaosRange min_emit_time : MINEMITTIME
+  0x74 bool updated
+  0x75 bool skip_first_update
+  0x76 bool location_only : LOCATIONONLY, never read at run time
+  0x77 bool started
+  0x78 void* manager
+end
+
 class UOEffectLODDefinition /UOEffects/UOEffectLODDefinition
 class UOEffectPropertyFlagDefinition /UOEffects/UOEffectPropertyFlagDefinition
 class UOWaitCollectionDefinition /UOEffects/UOWaitCollectionDefinition
@@ -1053,3 +1172,262 @@ function UOEffects::ParseEffectMap
   param ok bool*
 end
 
+# ---- Chaos particle engine ----
+# Emitter methods are virtual __thiscall. The sequence, particle and parser helpers pass objects in registers
+# (EAX, ECX, EDX, ESI, EDI) or on the stack without ECX; their prototypes are custom.
+# CreateParticle also takes the particle pool in EDX (MOV ESI,EDX after the cap check, read by the allocator at
+# [ESI+0xbc]); the read sits behind a conditional branch, which the read-before-write check does not follow, so the
+# register is left out here.
+
+function Emitter::Start
+  proto __thiscall void custom
+  param emitter /UO/ChaosEmitter* @ECX
+  param start_time float @stack:0x4
+  param duration float @stack:0x8  # <= 0 means infinite
+  param not_looping bool @stack:0xc
+end
+
+function Emitter::ClearStarted
+  proto __thiscall void custom
+  param emitter /UO/ChaosEmitter* @ECX
+end
+
+function Emitter::Stop
+  proto __thiscall void custom
+  param emitter /UO/ChaosEmitter* @ECX
+  param pool void* @stack:0x4
+  param kill_stay_at_emitter bool @stack:0x8
+  param kill_all bool @stack:0xc
+end
+
+function Emitter::Update
+  proto __thiscall void custom
+  param emitter /UO/ChaosEmitter* @ECX
+  param time float @stack:0x4  # manager time in seconds (millisecond steps)
+  param dt float @stack:0x8
+end
+
+function Emitter::IsActive
+  proto __thiscall bool custom
+  param emitter /UO/ChaosEmitter* @ECX
+end
+
+function Emitter::CompileScript
+  proto __thiscall undefined4 custom
+  param emitter /UO/ChaosEmitter* @ECX
+  param - void* @stack:0x4
+  param - void* @stack:0x8
+  param status /UOEffects/MsvcString* @stack:0xc
+end
+
+function Emitter::CountParticles
+  proto __cdecl int custom
+  param emitter /UO/ChaosEmitter* @EDI
+end
+
+function ParticleEventSequence::ParticleEventSequence
+  proto __stdcall void* custom
+  param sequence /UO/ChaosEventSequence* @stack:0x4
+end
+
+function ParticleEventSequence::ResolveEventTimes
+  proto __cdecl void custom
+  param sequence /UO/ChaosEventSequence* @EDI
+end
+
+function ParticleEventSequence::CreateParticle
+  proto __stdcall bool custom
+  param sequence /UO/ChaosEventSequence* @stack:0x4
+  param particles void* @stack:0x8
+  param node_position /Gamebryo26/NiPoint3* @stack:0xc
+  param node_velocity /Gamebryo26/NiPoint3* @stack:0x10
+  param node_rotation float* @stack:0x14
+  param time float @stack:0x18
+  param node_scale float @stack:0x1c
+end
+
+function ParticleEventSequence::Update
+  proto __stdcall void custom
+  param sequence /UO/ChaosEventSequence* @stack:0x4
+  param pool void* @stack:0x8
+  param particles void* @stack:0xc
+  param node_position /Gamebryo26/NiPoint3* @stack:0x10
+  param time float @stack:0x14
+end
+
+function ParticleEventSequence::RunEvents
+  proto __stdcall void custom
+  param sequence /UO/ChaosEventSequence* @stack:0x4
+  param particle /UO/ChaosParticle* @EDI
+end
+
+function Particle::Update
+  proto __stdcall bool custom
+  param time float @stack:0x4
+  param gravity /Gamebryo26/NiPoint3* @stack:0x8
+  param sequence_flags uint* @stack:0xc
+  param node_position /Gamebryo26/NiPoint3* @ECX  # read only by StayAtEmitter
+  param particle /UO/ChaosParticle* @EDI
+end
+
+function ChaosScript::SampleIntRange
+  proto __cdecl int custom
+  param min int @EAX
+  param max int @ECX
+end
+
+function ChaosScript::SampleFloatRange
+  proto __cdecl float custom
+  param range /UO/ChaosRange* @EAX
+end
+
+function ChaosScript::ClassifyToken
+  proto __cdecl void custom
+  param token /UO/ChaosToken* @ESI
+end
+
+function ChaosScript::ParseRange
+  proto __cdecl bool custom
+  param tokens /UO/ChaosToken** @ESI
+  param token_end /UO/ChaosToken** @EDI
+  param out_range /UO/ChaosRange* @stack:0x4
+end
+
+function ChaosScript::ParseIntRange
+  proto __cdecl bool custom
+  param tokens /UO/ChaosToken** @ESI
+  param token_end /UO/ChaosToken** @EDI
+  param out_range /UO/ChaosIntRange* @stack:0x4
+end
+
+function ChaosScript::ParseCelSetup
+  proto __cdecl bool custom
+  param tokens /UO/ChaosToken** @ECX
+  param token_end /UO/ChaosToken** @EAX
+  param out_cel /UO/ChaosCelSetup* @stack:0x4
+end
+
+function MersenneTwister::NextU32
+  proto __cdecl uint
+end
+
+function ParticleSystemManager::Update
+  proto __stdcall void custom
+  param manager void* @stack:0x4
+  param dt_ms uint @stack:0x8
+end
+
+function EmitterEffect::Start
+  proto __thiscall void custom
+  param effect void* @ECX
+  param duration float @stack:0x4
+  param not_looping bool @stack:0x8
+end
+
+function EmitterEffect::Stop
+  proto __thiscall void custom
+  param effect void* @ECX
+end
+
+function EmitterEffect::GetVelocity
+  proto __thiscall /Gamebryo26/NiPoint3* custom
+  param effect void* @ECX
+  param dt float @stack:0x4
+end
+
+function ParticleTriShape::BuildVertices
+  proto __thiscall void custom
+  param shape void* @ECX
+end
+
+function ParticleTriShape::SetCelTexCoords
+  proto __stdcall void custom
+  param shape void* @stack:0x4
+  param index ushort @stack:0x8
+  param frame uint @ECX
+  param cel /UO/ChaosCelSetup* @EDI
+end
+
+function ParticleEventScale::Apply
+  proto __thiscall void custom
+  param event /UO/ChaosParticleEvent* @ECX
+  param particle /UO/ChaosParticle* @stack:0x4
+end
+
+function ParticleEventColor::Apply
+  proto __thiscall void custom
+  param event /UO/ChaosParticleEvent* @ECX
+  param particle /UO/ChaosParticle* @stack:0x4
+end
+
+function ParticleEventRedColor::Apply
+  proto __thiscall void custom
+  param event /UO/ChaosParticleEvent* @ECX
+  param particle /UO/ChaosParticle* @stack:0x4
+end
+
+function ParticleEventGreenColor::Apply
+  proto __thiscall void custom
+  param event /UO/ChaosParticleEvent* @ECX
+  param particle /UO/ChaosParticle* @stack:0x4
+end
+
+function ParticleEventBlueColor::Apply
+  proto __thiscall void custom
+  param event /UO/ChaosParticleEvent* @ECX
+  param particle /UO/ChaosParticle* @stack:0x4
+end
+
+function ParticleEventAlpha::Apply
+  proto __thiscall void custom
+  param event /UO/ChaosParticleEvent* @ECX
+  param particle /UO/ChaosParticle* @stack:0x4
+end
+
+function ParticleEventVelocity::Apply
+  proto __thiscall void custom
+  param event /UO/ChaosParticleEvent* @ECX
+  param particle /UO/ChaosParticle* @stack:0x4
+end
+
+function ParticleEventVelocityX::Apply
+  proto __thiscall void custom
+  param event /UO/ChaosParticleEvent* @ECX
+  param particle /UO/ChaosParticle* @stack:0x4
+end
+
+function ParticleEventVelocityY::Apply
+  proto __thiscall void custom
+  param event /UO/ChaosParticleEvent* @ECX
+  param particle /UO/ChaosParticle* @stack:0x4
+end
+
+function ParticleEventVelocityZ::Apply
+  proto __thiscall void custom
+  param event /UO/ChaosParticleEvent* @ECX
+  param particle /UO/ChaosParticle* @stack:0x4
+end
+
+function ParticleEventThrust::Apply
+  proto __thiscall void custom
+  param event /UO/ChaosParticleEvent* @ECX
+  param particle /UO/ChaosParticle* @stack:0x4
+end
+
+function ParticleEventEventTimer::Apply
+  proto __thiscall void custom
+  param event /UO/ChaosParticleEvent* @ECX
+  param particle /UO/ChaosParticle* @stack:0x4
+end
+
+function ParticleEventRotation::Apply
+  proto __thiscall void custom
+  param event /UO/ChaosParticleEvent* @ECX
+  param particle /UO/ChaosParticle* @stack:0x4
+end
+
+function ParticleEventLength::Apply
+  proto __thiscall void custom
+  param event /UO/ChaosParticleEvent* @ECX
+  param particle /UO/ChaosParticle* @stack:0x4
+end

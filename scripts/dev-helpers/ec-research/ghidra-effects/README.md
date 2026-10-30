@@ -16,6 +16,16 @@ Findings: [results/uosa_effects.md](results/uosa_effects.md) has:
   resolution, and tileart vs collection effects;
 - a Rust parser specification and proposed Rust changes.
 
+[results/uosa_chaos.md](results/uosa_chaos.md) covers the Chaos particle engine behind `.ems` effects
+(`UOParticleEffectChaos`):
+
+- the script language: lexer, classifier and grammar, with their quirks;
+- the compiled structures;
+- emission, spawn, integration and event/fade semantics;
+- the RNG and the time source;
+- quad and cel rendering and the render state;
+- a proposed Rust simulator design.
+
 ## NameEffectCode.java
 
 GhidraScript, category `ECResearch`.
@@ -69,6 +79,7 @@ doesn't depend on its address:
 | The three callers of PlayGraphicalEffect, ordered by the largest packet field offset read; their single callers; the call before the copier | `PlayGraphicalEffect_0x70/0xC0/0xC7`, `UOObjectManager::Receive_0x..._*`, `UOPacket::Read_0x..._*` |
 | The single global read by the LOD and UserPreference Instantiates | `g_UOParticleLODLevel`, `g_UOUserEffectFilter` |
 | Functions that write all the derived factory vtables | registration function (reported with its order, not renamed) |
+| Chaos engine (step 8, `chaosEngine()`): RTTI vftables of `Emitter`, `ParticleEventSequence`, the 14 `ParticleEvent*` classes, `EmitterEffect`, `ParticleSet`, `ParticleTriShape`, `ParticleBillboard`; callees of their slots; the MT19937 constants 0x6c078965 / 0x5d588b65 and `__time64`; the callee of `CompileScript` that calls `_isspace`; unique parser strings; the "Can't compile emitter script for " caller chain; callees of `UOParticleEffectChaos::Init` and `UpdateActiveEffects` | 95 functions in `Emitter`, `EmitterGroup`, `ParticleEventSequence`, `Particle`, `ParticleEvent*`, `ChaosScript`, `MersenneTwister`, `ParticleSystemManager`, `EmitterEffect`, `ParticleSet`, `ParticleTriShape`, `ParticleBillboard`, `MeshParticle`, `EmitterParticle`, `UOEffects::LoadChaosEmitterEffect` (see [the table in uosa_chaos.md](results/uosa_chaos.md#names-and-types-applied-in-ghidra)) |
 
 Vtable slot functions referenced from more tables than their class and base vtables (identical-code
 folding) are skipped and reported. In this build that applies to 6 `UOParticleEffectNif` slots.
@@ -92,8 +103,11 @@ run_ghidra_script(program="UOSA.exe", script_name="<abs path>/ApplyVariableSpecs
 - Adds `/UO/MsvcList` and the runtime effect types `/UO/UOEffectContainer`, `UOSoundEffect` and
   `UOEarthquakeEffect`, and makes 14 namespaces (the effect definitions and those runtime effects) classes
   whose `this` is their `/UOEffects` or `/UO` structure.
-- Sets 161 prototypes (342 named parameters, 5 globals); `UOEffects::ParseEffectDefinition` is in the
-  tileart spec.
+- Adds the Chaos types `/UO/ChaosEmitter`, `ChaosEventSequence`, `ChaosParticleEvent`, `ChaosParticle`,
+  `ChaosRange`, `ChaosIntRange`, `ChaosVectorRange`, `ChaosCelSetup` and `ChaosToken`.
+- Covers 201 functions (433 named parameters, 5 globals), 40 of them in the Chaos engine. Most Chaos
+  helpers pass objects in registers, so their prototypes are custom. `UOEffects::ParseEffectDefinition` is
+  in the tileart spec.
 - The header of the spec lists the conventions: IUOEffect methods take an `ok` byte pointer first, factory
   `Create` keeps the factory in ECX and takes (out, blob, position, ok), a factory `Init` receives the
   definition shared_ptr as `definition` + `definition_refcount`.
@@ -117,3 +131,23 @@ python3 -I verify_effects.py --tileart "$C/tileart.uop" \
 The script exits with code 1 and prints `FORMAT ERROR: ...` on the first violation. A violation is an
 unknown key, a read past the end of the data, trailing bytes, a bad tileart version, or a Wait/PropertyFlag
 flag that is not 0 or 1.
+
+## verify_chaos.py
+
+This read-only reference implementation of the Chaos script compiler follows
+[results/uosa_chaos.md](results/uosa_chaos.md). It reproduces the lexer, the classifier and the
+compiler, including their quirks. It compiles every file that starts with `PARTICLESYSTEM` under the given
+paths, for example the `.ems` payloads extracted from `EffectTexture.uop` to a scratch folder. It prints
+aggregate counts:
+
+- versions, keys and particle types;
+- blend pairs and events;
+- value forms and cel setups;
+- quirk hits.
+
+```
+python3 -I verify_chaos.py <folder with extracted EffectTexture.uop entries> [--dump]
+```
+
+The script exits with code 1 and prints `FAIL <file>: <message>` for any script the client would reject.
+

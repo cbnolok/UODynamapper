@@ -294,6 +294,102 @@ public class NameEffectCode extends GhidraScript {
         new Slot(COLLECTION, 0x10, "GetDefinition", "shared_ptr copy of definition i", false),
     };
 
+    // ---- Chaos particle engine (.ems scripts; results/uosa_chaos.md) ----
+    private static final String CHAOS_EMITTER = "Emitter";
+    private static final String CHAOS_SEQUENCE = "ParticleEventSequence";
+    private static final String CHAOS_EMITTER_EFFECT = "EmitterEffect";
+    private static final String CHAOS_PARTICLE_SET = "ParticleSet";
+    private static final String CHAOS_TRISHAPE = "ParticleTriShape";
+    private static final String CHAOS_BILLBOARD = "ParticleBillboard";
+    private static final String CHAOS_MESH_PARTICLE = "MeshParticle";
+    private static final String CHAOS_EMITTER_PARTICLE = "EmitterParticle";
+    private static final String CHAOS_MANAGER = "ParticleSystemManager";
+    private static final String CHAOS_SCRIPT = "ChaosScript";
+    private static final String MERSENNE_TWISTER = "MersenneTwister";
+    private static final String CHAOS_EFFECT = "UOParticleEffectChaos";
+    // Emitter vtable: +0xc Stop(pool, killStayAtEmitter, killAll), +0x14 Update(time, dt).
+    private static final int EMITTER_STOP = 0xc;
+    private static final int EMITTER_UPDATE = 0x14;
+    private static final int EMITTER_IS_ACTIVE = 0x1c;
+    private static final int EMITTER_COMPILE_SCRIPT = 0x20;
+    // ParticleEvent vtable: +4 Apply(particle), +0xc Parse(tokens).
+    private static final int EVENT_APPLY = 0x4;
+    private static final int EVENT_PARSE = 0xc;
+    private static final int TRISHAPE_BUILD_VERTICES = 0xa8;
+    private static final int CHAOS_EFFECT_INIT = 0x38;
+    // MT19937 seeding constants (init_genrand multiplier, init_by_array second multiplier); the CelSetup float
+    // to integer conversion sets the x87 rounding control to truncation.
+    private static final long MT_INIT_MULTIPLIER = 0x6c078965L;
+    private static final long MT_ARRAY_MULTIPLIER = 0x5d588b65L;
+    private static final long X87_TRUNCATE_CONTROL = 0xc00L;
+    private static final String PARSE_FLOAT = "_atof";
+    private static final String PARSE_INT = "_atol";
+    private static final String IS_SPACE = "_isspace";
+    private static final String TIME64 = "__time64";
+
+    // {event class, keyword, what Apply writes in the particle}
+    private static final String[][] CHAOS_EVENTS = {
+        {"ParticleEventScale", "SCALE", "size +0x8 / step +0xc"},
+        {"ParticleEventColor", "COLOR", "RGBA +0x28..+0x34 / steps +0x38..+0x44"},
+        {"ParticleEventRedColor", "REDCOLOR", "red +0x28 / step +0x38"},
+        {"ParticleEventGreenColor", "GREENCOLOR", "green +0x2c / step +0x3c"},
+        {"ParticleEventBlueColor", "BLUECOLOR", "blue +0x30 / step +0x40"},
+        {"ParticleEventAlpha", "ALPHA", "alpha +0x34 / step +0x44"},
+        {"ParticleEventVelocity", "VELOCITY", "velocity +0x48..+0x50 / steps +0x54..+0x5c"},
+        {"ParticleEventVelocityX", "VELOCITYX", "velocity x +0x48 / step +0x54"},
+        {"ParticleEventVelocityY", "VELOCITYY", "velocity y +0x4c / step +0x58"},
+        {"ParticleEventVelocityZ", "VELOCITYZ", "velocity z +0x50 / step +0x5c"},
+        {"ParticleEventThrust", "THRUST", "thrust +0x60 / step +0x64 (step reset without a later fade)"},
+        {"ParticleEventEventTimer", "EVENTTIMER", "event timer +0x18 (no fade)"},
+        {"ParticleEventRotation", "ROTATION", "rotation +0x80..+0x88 radians / steps +0x8c..+0x94 (step reset"
+            + " without a later fade)"},
+        {"ParticleEventLength", "LENGTH", "length +0x98 / step +0x9c (step reset without a later fade)"},
+    };
+
+    private static final String FADE_RULE = "non-fade: value = sample(range); a later fade event of the same type:"
+        + " step = (sample(fade range) - value) / (fade time - this time, 0 -> 1)";
+
+    private static final Slot[] CHAOS_SLOTS = {
+        new Slot(CHAOS_EMITTER, 0x0, "ScalarDeletingDestructor", "frees the sequences and deques", true),
+        new Slot(CHAOS_EMITTER, 0x4, "Start", "(startTime, duration, notLooping): MinEmitTime = sample(+0x6c/+0x70);"
+            + " notLooping and MinEmitTime > 0 -> continuous for MinEmitTime, else one-shot = notLooping; remaining"
+            + " (+0x64) = duration, infinite (+0x68) = duration <= 0, first burst (+0x69), skip-first-update (+0x75)",
+            false),
+        new Slot(CHAOS_EMITTER, 0x8, "ClearStarted", "started (+0x77) = 0, owner (+8) = null", false),
+        new Slot(CHAOS_EMITTER, EMITTER_STOP, "Stop", "(pool, killStayAtEmitter, killAll): ClearStarted; releases all"
+            + " particles, or only the StayAtEmitter sequences' particles", false),
+        new Slot(CHAOS_EMITTER, 0x10, "Clone", "copies the compiled sequences into a new emitter with its own"
+            + " renderers", true),
+        new Slot(CHAOS_EMITTER, EMITTER_UPDATE, "Update", "(time, dt): owner world position/velocity/rotation and"
+            + " local scale; first burst, continuous emission at 1/(emitrate max + boost) (>= 1/60 s) with 1/30 s"
+            + " sub-steps, Stop when the emission time runs out; then sequence updates and render buffer copies",
+            false),
+        new Slot(CHAOS_EMITTER, 0x18, "Reset", "resets every sequence", true),
+        new Slot(CHAOS_EMITTER, EMITTER_IS_ACTIVE, "IsActive", "returns started (+0x77)", false),
+        new Slot(CHAOS_EMITTER, EMITTER_COMPILE_SCRIPT, "CompileScript", "tokenizes the .ems text, then"
+            + " 'ParticleSystem name version {' and the system block; status '0 errors, started emitter.'", false),
+        new Slot(CHAOS_EMITTER, 0x24, "CopyTo", "copies the emitter settings", true),
+        new Slot(CHAOS_EMITTER_EFFECT, 0xa8, "Start", "(duration, notLooping): finds or clones an inactive emitter"
+            + " of the group, Emitter::Start(0, duration, notLooping), registers it with the manager", false),
+        new Slot(CHAOS_EMITTER_EFFECT, 0xac, "Stop", "Emitter::Stop(pool, 1, 0), emitter index (+0xe0) = -1", false),
+        new Slot(CHAOS_EMITTER_EFFECT, 0xb4, "GetMinEmitTime", "first emitter's MinEmitTime max, else 1.0", true),
+        new Slot(CHAOS_EMITTER_EFFECT, 0xb8, "GetVelocity", "(dt): (world translate - previous) / dt when dt > 0",
+            false),
+        new Slot(CHAOS_EMITTER_EFFECT, 0xbc, "GetEmitterGroup", "returns the group (+0xf0) with a reference", true),
+        new Slot(CHAOS_PARTICLE_SET, 0x0, "Update", "(time): updates the per-sequence renderers; bounds every"
+            + " 0.033 s", true),
+        new Slot(CHAOS_PARTICLE_SET, 0x4, "SetCount", "(sequence, count): live particle count of a renderer", true),
+        new Slot(CHAOS_PARTICLE_SET, 0x8, "AddSequence", "adds a per-sequence render buffer (stride 0x74)", true),
+        new Slot(CHAOS_TRISHAPE, 0x88, "Render", "draws the active quads", true),
+        new Slot(CHAOS_TRISHAPE, 0xa0, "InitBuffers", "(numparticles): 4 vertices per particle, template corners"
+            + " (-0.5,0,-0.5)..(0.5,0,-0.5), UVs (0,1),(0,0),(1,0),(1,1), triangles (n,n+2,n+1),(n,n+2,n+3)", false),
+        new Slot(CHAOS_TRISHAPE, 0xa4, "SetActiveCount", "number of quads drawn", true),
+        new Slot(CHAOS_TRISHAPE, TRISHAPE_BUILD_VERTICES, "BuildVertices", "camera-facing quads: AXIAL from the"
+            + " particle along its velocity by length, POINT camera right/up of size/2, rotated about the view"
+            + " axis by -rotation.y when ROTATION is used; colours clamped to [0,1]; CelSetup UVs", false),
+        new Slot(CHAOS_BILLBOARD, 0x10, "Init", "creates the node and its ParticleTriShape", true),
+    };
+
     private static final class Block {
         long start;
         byte[] bytes;
@@ -561,9 +657,12 @@ public class NameEffectCode extends GhidraScript {
         // 7. Runtime use: effect id lookup, the active effect list and the graphical effect packets.
         runtimeUse(apply);
 
+        // 8. Chaos particle engine.
+        chaosEngine();
+
         defineTypes(apply);
 
-        // 8. Apply names.
+        // 9. Apply names.
         if (apply) {
             ensureTag();
             for (Proposal proposal : proposals.values()) {
@@ -732,6 +831,326 @@ public class NameEffectCode extends GhidraScript {
         labelSingleRead(definitionInstantiate("UOUserPrefEffectFilterDefinition"), USER_FILTER_LABEL, "user effect"
             + " filter bits (settings file Effects.filter, hex); bit 0 is set when footsteps are disabled; read by"
             + " UOUserPrefEffectFilterDefinition::Instantiate", apply);
+    }
+
+    // Chaos particle engine: RTTI vtables, the unique parser strings and the call graph below Emitter::Update.
+    private void chaosEngine() {
+        List<String> classes = new ArrayList<>(List.of(CHAOS_EMITTER, CHAOS_SEQUENCE, CHAOS_EMITTER_EFFECT,
+            CHAOS_PARTICLE_SET, CHAOS_TRISHAPE, CHAOS_BILLBOARD, CHAOS_MESH_PARTICLE, CHAOS_EMITTER_PARTICLE,
+            CHAOS_MANAGER));
+        for (String[] event : CHAOS_EVENTS) {
+            classes.add(event[0]);
+        }
+        for (String cls : classes) {
+            if (!vtables.containsKey(cls)) {
+                long vt = rttiVtable(cls);
+                vtables.put(cls, vt);
+                anchors.add("RTTI `" + cls + "` vftable " + hexOrNone(vt));
+            }
+        }
+        for (Slot slot : CHAOS_SLOTS) {
+            nameSlots(slot.cls(), null, List.of(slot));
+        }
+        for (String[] event : CHAOS_EVENTS) {
+            boolean fades = !event[1].equals("EVENTTIMER");
+            nameSlots(event[0], null, List.of(
+                new Slot(event[0], EVENT_APPLY, "Apply", "(particle): " + event[2] + (fades ? "; " + FADE_RULE : ""),
+                    false),
+                new Slot(event[0], EVENT_PARSE, "Parse", "parses '" + event[1] + " = value' (number, Random(min,"
+                    + " max), XYZ or RGBA)", false)));
+        }
+
+        long emitterVt = vtables.get(CHAOS_EMITTER);
+        Function update = emitterVt < 0 ? null : slotFunction(emitterVt, EMITTER_UPDATE);
+        Function stop = emitterVt < 0 ? null : slotFunction(emitterVt, EMITTER_STOP);
+        Function compile = emitterVt < 0 ? null : slotFunction(emitterVt, EMITTER_COMPILE_SCRIPT);
+        if (update == null || stop == null || compile == null) {
+            anomalies.add("Chaos: Emitter Update/Stop/CompileScript slots not found");
+            return;
+        }
+
+        // Runtime: the sequence update is the callee of Emitter::Update that releases particles like Stop does.
+        List<Function> updateCalls = distinct(calls(update));
+        Set<Function> stopCalls = new LinkedHashSet<>(calls(stop));
+        List<Function> sequenceUpdates = new ArrayList<>();
+        for (Function c : updateCalls) {
+            for (Function inner : distinct(calls(c))) {
+                if (stopCalls.contains(inner) && !sequenceUpdates.contains(c)) {
+                    sequenceUpdates.add(c);
+                }
+            }
+        }
+        Function sequenceUpdate = single(sequenceUpdates, "Chaos sequence update");
+        if (sequenceUpdate == null) {
+            return;
+        }
+        List<Function> sequenceCalls = distinct(calls(sequenceUpdate));
+        List<Function> releases = new ArrayList<>(sequenceCalls);
+        releases.retainAll(stopCalls);
+        Function release = single(releases, "Chaos particle release (callee of Stop and the sequence update)");
+        propose(sequenceUpdate, CHAOS_SEQUENCE + SCOPE + "Update", "(sequence, pool, particles, node position,"
+            + " time): gravity = sample(+0x88..+0x9c) * (0,0,1) per call; each particle: Particle update, dead ->"
+            + " release and erase, alive -> events due by the event timer (COLLISIONCHECK loops forever)", false);
+        propose(release, CHAOS_MANAGER + SCOPE + "ReleaseParticle", "(particle, template): copies the pool template"
+            + " over the particle (all fields back to their defaults)", true);
+
+        List<Function> creates = new ArrayList<>();
+        for (Function c : updateCalls) {
+            if (!c.equals(sequenceUpdate) && !java.util.Collections.disjoint(calls(c), sequenceCalls)) {
+                creates.add(c);
+            }
+        }
+        Function create = single(creates, "Chaos particle creation (callee of Emitter::Update sharing a callee"
+            + " with the sequence update)");
+        if (create == null) {
+            return;
+        }
+        propose(create, CHAOS_SEQUENCE + SCOPE + "CreateParticle", "(sequence, particles, node position, node"
+            + " velocity, node rotation, time, node scale; pool in EDX): fails at numparticles (+0xe8); lifetime ="
+            + " sample(+0x78/+0x7c); position = R * (sample(chaoslocation) * scale) (+ node position unless Local);"
+            + " events at time 0; velocity = R * (v + sample(chaosvelocity)) + node velocity * sample(inherited);"
+            + " size, velocity and their steps * scale", false);
+        List<Function> samplers = new ArrayList<>(distinct(calls(create)));
+        samplers.retainAll(sequenceCalls);
+        Function sampleVector = single(samplers, "Chaos vector range sampler");
+        propose(sampleVector, CHAOS_SCRIPT + SCOPE + "SampleVectorRange", "(min xyz, max xyz) by value: per"
+            + " component sample(min, max) with one MT19937 draw each", false);
+        Function genRand = sampleVector == null ? null : single(distinct(calls(sampleVector)), "MT19937 output");
+        propose(genRand, MERSENNE_TWISTER + SCOPE + "NextU32", "global MT19937: next state word with the standard"
+            + " tempering; twists when the 624-word index runs out", false);
+
+        List<Function> intSamplers = new ArrayList<>();
+        List<Function> floatSamplers = new ArrayList<>();
+        for (Function c : updateCalls) {
+            if (genRand == null || c.equals(create) || !distinct(calls(c)).contains(genRand)) {
+                continue;
+            }
+            (usesScalar(c, X87_TRUNCATE_CONTROL) ? intSamplers : floatSamplers).add(c);
+        }
+        propose(single(intSamplers, "Chaos integer range sampler"), CHAOS_SCRIPT + SCOPE + "SampleIntRange",
+            "(min EAX, max ECX): min == max -> min; else r = u32 * 2^-32; min < max -> trunc(min + (max - min) * r),"
+            + " min > max -> trunc(r) = 0", false);
+        propose(single(floatSamplers, "Chaos float range sampler"), CHAOS_SCRIPT + SCOPE + "SampleFloatRange",
+            "(range* EAX): min == max -> min; min < max -> min + (max - min) * r; min > max -> r", false);
+
+        List<Function> particleUpdates = new ArrayList<>();
+        List<Function> eventRunners = new ArrayList<>();
+        for (Function c : sequenceCalls) {
+            if (c.equals(release) || c.equals(sampleVector) || !callers(c).equals(List.of(sequenceUpdate))) {
+                continue;
+            }
+            (calls(c).isEmpty() ? eventRunners : particleUpdates).add(c);
+        }
+        propose(single(particleUpdates, "Chaos particle update"), "Particle" + SCOPE + "Update", "(time, gravity,"
+            + " sequence flags; particle in EDI): age >= lifetime -> dead; event timer += dt; StayAtEmitter ->"
+            + " position = emitter; else thrust along the velocity, v += (gravity + velocity step + thrust) * dt,"
+            + " p += v * dt; rotation, colour, size and length += step * dt", false);
+        propose(single(eventRunners, "Chaos event runner"), CHAOS_SEQUENCE + SCOPE + "RunEvents", "(sequence;"
+            + " particle in EDI): applies the events whose time <= the event timer; an EVENTTIMER change restarts at"
+            + " the last event before the new timer", false);
+
+        Function twist = genRand == null ? null : single(distinct(calls(genRand)), "MT19937 twist");
+        propose(twist, MERSENNE_TWISTER + SCOPE + "Twist", "regenerates the 624 state words (0x9908b0df)", false);
+        if (twist != null) {
+            for (Function c : callers(twist)) {
+                if (callsNamed(c, TIME64)) {
+                    propose(c, MERSENNE_TWISTER + SCOPE + "SeedFromClock", "CRT initializer: seeds from a hash of"
+                        + " _time64() and clock(), then twists", false);
+                    for (Function inner : distinct(calls(c))) {
+                        if (usesScalar(inner, MT_INIT_MULTIPLIER)) {
+                            propose(inner, MERSENNE_TWISTER + SCOPE + "Seed", "init_genrand (1812433253)", false);
+                        }
+                    }
+                } else if (usesScalar(c, MT_ARRAY_MULTIPLIER)) {
+                    propose(c, MERSENNE_TWISTER + SCOPE + "SeedByArray", "init_by_array (1664525, 1566083941)", false);
+                }
+            }
+        }
+
+        // Script compiler.
+        List<Function> tokenizers = new ArrayList<>();
+        for (Function c : distinct(calls(compile))) {
+            if (callsNamed(c, IS_SPACE)) {
+                tokenizers.add(c);
+            }
+        }
+        Function tokenize = single(tokenizers, "Chaos tokenizer");
+        propose(tokenize, CHAOS_SCRIPT + SCOPE + "Tokenize", "(text, ...): whitespace, words, quoted strings, '//'"
+            + " comments; delimiters ( ) , \" { }; '=' is not a delimiter", false);
+        Function classify = single(stringUsers("EMITRADIUS"), "Chaos token classifier");
+        propose(classify, CHAOS_SCRIPT + SCOPE + "ClassifyToken", "(token in ESI): uppercases in place, token type"
+            + " (+0x1c) by ordered substring checks", false);
+        if (tokenize != null && classify != null) {
+            List<Function> adders = new ArrayList<>(distinct(calls(tokenize)));
+            adders.retainAll(callers(classify));
+            propose(single(adders, "Chaos token adder"), CHAOS_SCRIPT + SCOPE + "AddToken", "classifies and"
+                + " appends a non-empty token", false);
+        }
+        String[][] parserStrings = {
+            {"Unexpected \"%s\" in Particle System Block!", CHAOS_EMITTER + SCOPE + "CompileSystemBlock",
+                "MINEMITTIME (+0x6c/+0x70), LOCATIONONLY (+0x76), EVENTSEQUENCE blocks"},
+            {"Must name particle sequence block!", CHAOS_SEQUENCE + SCOPE + "CompileBlock", "properties before"
+                + " events; event times sampled once, events sorted by time, fades linked"},
+            {"Cannot have velocityX event when StayAtEmitter is true!", CHAOS_SEQUENCE + SCOPE + "CreateEvent",
+                "event factory by keyword"},
+            {"Expecting CELSETUP(...)!", CHAOS_SCRIPT + SCOPE + "ParseCelSetup", "CelSetup(frames, u step, v step,"
+                + " columns, rows, fps, loop > 0)"},
+            {"Expecting ( after COLLISIONCHECK!", CHAOS_SCRIPT + SCOPE + "ParseCollision", "CollisionCheck(...)"},
+            {"Expecting XYZ(...)!", CHAOS_SCRIPT + SCOPE + "ParseVector", "XYZ(x, y, z) of number | Random"},
+            {"Expecting RGBA(...)!", CHAOS_SCRIPT + SCOPE + "ParseColor", "RGBA(r, g, b, a) of number | Random"},
+            {"Expecting value boolean (true/false/yes/no/0/1 after boolean property!", CHAOS_SCRIPT + SCOPE
+                + "ParseBool", "true/false/yes/no/0/1"},
+            {"Expecting particle type (point, mesh, axial, emitter, etc..).", CHAOS_SCRIPT + SCOPE
+                + "ParseParticleType", "POINT 1, MESH 2, BILLBOARD 3, EMITTER 4, AXIAL 5, LIGHT 6"},
+            {"Expecting alpha blend mode (ALPHA_ZERO, ALPHA_ONE, etc.).", CHAOS_SCRIPT + SCOPE + "ParseBlendMode",
+                "ALPHA_* name table"},
+            {"Expected time specifier: \"[fade so] at\", \"initial\", or \"[fade so] final\"", CHAOS_SCRIPT + SCOPE
+                + "ParseTime", "INITIAL = 0, FINAL = lifetime max, AT number | Random, FADE SO prefix"},
+        };
+        Map<String, Function> parsers = new HashMap<>();
+        for (String[] p : parserStrings) {
+            Function f = single(stringUsers(p[0]), "user of '" + p[0] + "'");
+            parsers.put(p[1], f);
+            propose(f, p[1], p[2], false);
+        }
+        Function celSetup = parsers.get(CHAOS_SCRIPT + SCOPE + "ParseCelSetup");
+        Function sequenceBlock = parsers.get(CHAOS_SEQUENCE + SCOPE + "CompileBlock");
+        if (celSetup != null) {
+            List<Function> ranges = new ArrayList<>();
+            for (Function c : distinct(calls(celSetup))) {
+                if (callsNamed(c, PARSE_FLOAT)) {
+                    ranges.add(c);
+                }
+            }
+            propose(single(ranges, "Chaos float range parser"), CHAOS_SCRIPT + SCOPE + "ParseRange", "number |"
+                + " Random(min, max) -> {min, max} (atof)", false);
+        }
+        if (sequenceBlock != null) {
+            List<Function> intRanges = new ArrayList<>();
+            List<Function> resolvers = new ArrayList<>();
+            List<Function> sorters = new ArrayList<>();
+            for (Function c : distinct(calls(sequenceBlock))) {
+                List<Function> inner = distinct(calls(c));
+                if (callsNamed(c, PARSE_INT)) {
+                    intRanges.add(c);
+                }
+                if (twist != null && inner.contains(twist)) {
+                    resolvers.add(c);
+                }
+                if (inner.contains(c)) {
+                    sorters.add(c);
+                }
+            }
+            propose(single(intRanges, "Chaos integer range parser"), CHAOS_SCRIPT + SCOPE + "ParseIntRange", "number"
+                + " | Random(min, max) -> {min, max} (atol & 0xffff)", false);
+            propose(single(resolvers, "Chaos event time resolver"), CHAOS_SEQUENCE + SCOPE + "ResolveEventTimes",
+                "event time (+0x10) = sample(time range) once per compiled sequence (inlined MT19937)", false);
+            propose(single(sorters, "Chaos event sort"), CHAOS_SEQUENCE + SCOPE + "SortEvents", "introsort by event"
+                + " time", true);
+        }
+        List<Function> sequenceCtors = new ArrayList<>();
+        for (Function w : vtableWriters(CHAOS_SEQUENCE)) {
+            if (callsNamed(w, "InterlockedIncrement")) {
+                sequenceCtors.add(w);
+            }
+        }
+        propose(single(sequenceCtors, "ParticleEventSequence constructor"), CHAOS_SEQUENCE + SCOPE + CHAOS_SEQUENCE,
+            "(sequence on the stack): defaults numparticles 100, loops -1, multipliers 1.0, burst 1..1, cel 1 frame",
+            false);
+
+        // Loading: .ems -> EmitterGroup -> Emitter; the effect node; the per-sequence renderers.
+        Function loadEmitter = single(stringUsers("Can't compile emitter script for "), "Chaos emitter loader");
+        propose(loadEmitter, "EmitterGroup" + SCOPE + "LoadEmitter", "opens the .ems through UOP, CompileScript,"
+            + " builds one renderer per sequence", true);
+        Function createEmitter = loadEmitter == null ? null : single(callers(loadEmitter), "Chaos emitter creation");
+        propose(createEmitter, "EmitterGroup" + SCOPE + "CreateEmitter", "allocates an Emitter (0x7c) and loads it",
+            true);
+        Function loadGroup = createEmitter == null ? null : single(callers(createEmitter), "Chaos group loader");
+        propose(loadGroup, CHAOS_MANAGER + SCOPE + "LoadEmitterGroup", "(path): uppercased, cached; only paths"
+            + " containing EMS create an EmitterGroup", false);
+        long chaosVt = vtables.getOrDefault(CHAOS_EFFECT, -1L);
+        Function chaosInit = chaosVt < 0 ? null : slotFunction(chaosVt, CHAOS_EFFECT_INIT);
+        if (loadGroup != null && chaosInit != null) {
+            List<Function> effectLoaders = new ArrayList<>();
+            for (Function c : distinct(calls(chaosInit))) {
+                if (distinct(calls(c)).contains(loadGroup)) {
+                    effectLoaders.add(c);
+                }
+            }
+            Function effectLoader = single(effectLoaders, "Chaos effect loader");
+            propose(effectLoader, NAMESPACE + SCOPE + "LoadChaosEmitterEffect", "(path): LoadEmitterGroup, then an"
+                + " EmitterEffect node named after the file", true);
+            List<Function> groupCallers = callers(loadGroup);
+            if (effectLoader != null) {
+                List<Function> effectFactories = new ArrayList<>();
+                for (Function c : distinct(calls(effectLoader))) {
+                    if (!c.equals(loadGroup) && callers(c).equals(groupCallers)) {
+                        effectFactories.add(c);
+                    }
+                }
+                propose(single(effectFactories, "Chaos EmitterEffect factory"), CHAOS_MANAGER + SCOPE
+                    + "CreateEmitterEffect", "(group name): new EmitterEffect node over the cached group", false);
+                List<Function> rendererFactories = new ArrayList<>(groupCallers);
+                rendererFactories.remove(effectLoader);
+                Function rendererFactory = single(rendererFactories, "Chaos renderer factory");
+                propose(rendererFactory, CHAOS_PARTICLE_SET + SCOPE + "CreateSequenceRenderer", "POINT/AXIAL ->"
+                    + " ParticleBillboard (texture, alpha blend src/dst, z test without write, AXIAL draws both"
+                    + " sides), MESH -> MeshParticle (numparticles .nif clones), EMITTER -> EmitterParticle", true);
+                if (rendererFactory != null) {
+                    for (String cls : List.of(CHAOS_BILLBOARD, CHAOS_MESH_PARTICLE, CHAOS_EMITTER_PARTICLE)) {
+                        propose(writerAmong(rendererFactory, cls), cls + SCOPE + cls, "writes the " + cls
+                            + " vftable; called by the renderer factory", false);
+                    }
+                }
+            }
+        }
+
+        // Per-frame driver: the callee of UOEffects::UpdateActiveEffects calling Emitter Update and IsActive.
+        Function activeUpdate = null;
+        for (Proposal p : proposals.values()) {
+            if (p.path.equals(NAMESPACE + SCOPE + "UpdateActiveEffects")) {
+                activeUpdate = functions.getFunctionAt(toAddr(p.address));
+            }
+        }
+        if (activeUpdate != null) {
+            List<Function> drivers = new ArrayList<>();
+            for (Function c : distinct(calls(activeUpdate))) {
+                Set<Long> offsets = virtualCallOffsets(c);
+                if (offsets.contains((long) EMITTER_UPDATE) && offsets.contains((long) EMITTER_IS_ACTIVE)) {
+                    drivers.add(c);
+                }
+            }
+            Function driver = single(drivers, "Chaos manager update");
+            propose(driver, CHAOS_MANAGER + SCOPE + "Update", "(manager, dt ms): time (+0xc8) += ms * 0.001; every"
+                + " active emitter: Update(time, dt); inactive with no particles -> removed", false);
+            if (driver != null) {
+                List<Function> counters = new ArrayList<>();
+                for (Function c : distinct(calls(driver))) {
+                    if (!c.isExternal() && calls(c).isEmpty() && callers(c).contains(driver)
+                            && bodySize(c) < SMALL_FUNCTION * 2) {
+                        counters.add(c);
+                    }
+                }
+                propose(single(counters, "Chaos particle counter"), CHAOS_EMITTER + SCOPE + "CountParticles",
+                    "(emitter in EDI): sum of the per-sequence deque sizes", false);
+            }
+        } else {
+            anomalies.add("Chaos: UOEffects::UpdateActiveEffects not proposed");
+        }
+
+        long triVt = vtables.get(CHAOS_TRISHAPE);
+        Function build = triVt < 0 ? null : slotFunction(triVt, TRISHAPE_BUILD_VERTICES);
+        if (build != null) {
+            List<Function> cels = new ArrayList<>();
+            for (Function c : distinct(calls(build))) {
+                if (callers(c).equals(List.of(build))) {
+                    cels.add(c);
+                }
+            }
+            propose(single(cels, "Chaos cel UV writer"), CHAOS_TRISHAPE + SCOPE + "SetCelTexCoords", "(shape, index;"
+                + " frame in CX, cel setup in EDI): column = frame % columns, row = frame / columns, u0 = column * u"
+                + " step, v0 = row * v step; corners (u0,v0+v),(u0,v0),(u0+u,v0),(u0+u,v0+v)", false);
+        }
     }
 
     private Function definitionInstantiate(String cls) {
