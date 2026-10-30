@@ -29,7 +29,7 @@ udd-assets = { path = "../../lib/udd-assets" }
 udd-conv = { path = "../../lib/udd-conv" }
 udd-container = { path = "../../lib/udd-container" }
 # Simulates and rasterizes the effects of effects_ec.uddp; `dds` decodes the Hues.uop atlas.
-particle-sim = { path = "../../lib/particle-sim", default-features = false, features = ["dds"] }
+particle-sim = { path = "../../lib/ec-effects/particle-sim", default-features = false, features = ["dds"] }
 # BC1/BC3/BC7 decoding of effect textures.
 dds.workspace = true
 ktx2.workspace = true
@@ -48,4 +48,4 @@ image = { workspace = true, features = [
 
 [dev-dependencies]
 # Compiles the Chaos scripts of the synthetic test package.
-particle-sim = { path = "../../lib/particle-sim", features = ["uocf"] }
+particle-sim = { path = "../../lib/ec-effects/particle-sim", features = ["uocf"] }

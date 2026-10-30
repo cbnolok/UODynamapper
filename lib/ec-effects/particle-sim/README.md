@@ -2,8 +2,8 @@
 
 CPU simulation and preview rendering of the Ultima Online Enhanced Client particle effects, independent
 of any engine or GUI. The behaviour follows UOSA.exe (Gamebryo 2.3) as traced in
-[`uosa_chaos.md`](../../scripts/dev-helpers/ec-research/ghidra-effects/results/uosa_chaos.md) and
-[`uosa_effects.md`](../../scripts/dev-helpers/ec-research/ghidra-effects/results/uosa_effects.md). Doc
+[`uosa_chaos.md`](../../../scripts/dev-helpers/ec-research/ghidra-effects/results/uosa_chaos.md) and
+[`uosa_effects.md`](../../../scripts/dev-helpers/ec-research/ghidra-effects/results/uosa_effects.md). Doc
 comments cite the client addresses and the Gamebryo 2.6 SDK sources they rely on.
 
 ## Modules

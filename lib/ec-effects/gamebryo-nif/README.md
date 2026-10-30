@@ -146,7 +146,7 @@ byte, and every link points at a block of the declared type.
 ## Regenerating
 
 ```sh
-python3 -I lib/gamebryo-nif/codegen/generate.py
+python3 -I lib/ec-effects/gamebryo-nif/codegen/generate.py
 ```
 
 The defaults reproduce the checked-in `src/generated/` byte for byte. The output is

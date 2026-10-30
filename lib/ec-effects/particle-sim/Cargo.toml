@@ -26,13 +26,13 @@ nif = ["dep:gamebryo-nif"]
 dds = ["dep:dds"]
 
 [dependencies]
-uocf = { path = "../uocf", optional = true }
+uocf = { path = "../../uocf", optional = true }
 gamebryo-nif = { path = "../gamebryo-nif", optional = true }
 dds = { version = "0.2", default-features = false, optional = true }
 
 [dev-dependencies]
 # The ignored real-file test and the preview example read EffectTexture.uop through uocf.
-uocf = { path = "../uocf" }
+uocf = { path = "../../uocf" }
 image = { workspace = true, features = ["png", "tga"] }
 
 [[example]]

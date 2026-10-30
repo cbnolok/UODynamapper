@@ -3,9 +3,9 @@ resolver = "3"
 members = [
     "dynamapper",
     "lib/uocf",
-    "lib/gamebryo-nif",
-    "lib/particle-sim",
-    "lib/effect-gltf",
+    "lib/ec-effects/gamebryo-nif",
+    "lib/ec-effects/particle-sim",
+    "lib/ec-effects/effect-gltf",
     "lib/udd-conv",
     "lib/udd-image-codecs",
     "lib/udd-container",

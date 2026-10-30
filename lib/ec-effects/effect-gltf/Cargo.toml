@@ -23,7 +23,7 @@ image = { workspace = true, features = ["png", "tga"] }
 
 [dev-dependencies]
 # The ignored real-file test and the export example read EffectTexture.uop through uocf.
-uocf = { path = "../uocf" }
+uocf = { path = "../../uocf" }
 # The real-file test compiles the Chaos scripts (`uocf` feature) to export them as effects.
 particle-sim = { path = "../particle-sim", default-features = false, features = ["nif", "dds", "uocf"] }
 

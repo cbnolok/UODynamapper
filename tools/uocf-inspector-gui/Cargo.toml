@@ -25,9 +25,9 @@ udd-conv = { path = "../../lib/udd-conv" }
 udd-assets = { path = "../../lib/udd-assets" }
 udd-image-codecs = { path = "../../lib/udd-image-codecs", features = ["ktx2"] }
 uocf = { path = "../../lib/uocf" }
-particle-sim = { path = "../../lib/particle-sim" }
-effect-gltf = { path = "../../lib/effect-gltf" }
-gamebryo-nif = { path = "../../lib/gamebryo-nif" }
+particle-sim = { path = "../../lib/ec-effects/particle-sim" }
+effect-gltf = { path = "../../lib/ec-effects/effect-gltf" }
+gamebryo-nif = { path = "../../lib/ec-effects/gamebryo-nif" }
 rfd.workspace = true
 udd-logging = { path = "../../lib/udd-logging" }
 gui-shared = { path = "../../lib/gui-shared" }

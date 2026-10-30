@@ -204,7 +204,7 @@ These need a person at the GUI or in a running client; the code side is done.
   view and preview on screen; nothing has been looked at outside headless tests.
 - Try the inspector Effects tab "Export glTF..." buttons (NIF editor and preview panel) and open the
   results in Blender.
-- Check the "Known differences from the client" in `lib/particle-sim/README.md` against the real client
+- Check the "Known differences from the client" in `lib/ec-effects/particle-sim/README.md` against the real client
   (in-game look or a frame capture, e.g. RenderDoc under Wine). Most valuable first:
   - the pale halo on low-luminance edges of hued effects;
   - the effects whose unlit parts draw black (E_A_D materials without emissive or glow);

@@ -18,7 +18,7 @@ too_many_arguments = "allow"
 
 [dev-dependencies]
 # Only the ignored real-file test reads EffectTexture.uop through it.
-uocf = { path = "../uocf" }
+uocf = { path = "../../uocf" }
 
 #[lib]
 #crate-type = ["dylib", "rlib"]
