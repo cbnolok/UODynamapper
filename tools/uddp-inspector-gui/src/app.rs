@@ -57,6 +57,8 @@ pub struct InspectorApp {
     pub package_path: Option<PathBuf>,
     pub mobile_anim_cc_package: Option<Arc<MobileAnimCcPackage>>,
     pub mobile_anim_ec_package: Option<Arc<MobileAnimEcPackage>>,
+    /// The viewer of an `effects_ec.uddp` package.
+    pub effects_viewer: Option<crate::ui::effects::EffectsViewer>,
     pub gumps_package: Option<Arc<GumpsPackage>>,
     pub selected_mobile_anim_index: usize,
     pub selected_mobile_anim_frame_index: usize,
@@ -110,6 +112,7 @@ impl InspectorApp {
             package_path: None,
             mobile_anim_cc_package: None,
             mobile_anim_ec_package: None,
+            effects_viewer: None,
             gumps_package: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,
@@ -406,6 +409,8 @@ impl InspectorApp {
             ViewMode::Package => self.filtered_package_indices(),
             ViewMode::Virtual => self.filtered_virtual_indices(),
             ViewMode::MobileAnimCc | ViewMode::MobileAnimEc => self.filtered_mobile_anim_indices(),
+            // The effects tables keep their own selection.
+            ViewMode::Effects => return,
         };
 
         if filtered.is_empty() {
@@ -416,6 +421,7 @@ impl InspectorApp {
             ViewMode::Package => self.selected_idx,
             ViewMode::Virtual => self.selected_virtual_idx,
             ViewMode::MobileAnimCc | ViewMode::MobileAnimEc => Some(self.selected_mobile_anim_index),
+            ViewMode::Effects => None,
         };
 
         let current_pos = current
@@ -435,6 +441,7 @@ impl InspectorApp {
             ViewMode::MobileAnimCc | ViewMode::MobileAnimEc => {
                 self.select_mobile_animation_entry(ctx, target_idx);
             }
+            ViewMode::Effects => {}
         }
     }
 
@@ -504,6 +511,7 @@ impl InspectorApp {
                 self.mobile_anim_tree_order = MobileAnimTreeOrder::BodyType;
                 self.mobile_anim_tree_collapse_revision = 0;
                 self.detect_virtual_entries(&reader);
+                self.effects_viewer = crate::ui::effects::EffectsViewer::open(&path, &reader);
 
                 self.package = Some(reader);
                 self.remember_package_dir(&path);
@@ -511,7 +519,9 @@ impl InspectorApp {
                 self.selected_idx = None;
                 self.selected_virtual_idx = None;
                 self.clear_preview_state();
-                self.view_mode = if self.mobile_anim_cc_package.is_some() {
+                self.view_mode = if self.effects_viewer.is_some() {
+                    ViewMode::Effects
+                } else if self.mobile_anim_cc_package.is_some() {
                     ViewMode::MobileAnimCc
                 } else if self.mobile_anim_ec_package.is_some() {
                     ViewMode::MobileAnimEc
@@ -1715,6 +1725,7 @@ mod tests {
             package_path: None,
             mobile_anim_cc_package: None,
             mobile_anim_ec_package: None,
+            effects_viewer: None,
             gumps_package: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,
@@ -2070,6 +2081,7 @@ mod tests {
             package_path: None,
             mobile_anim_cc_package: None,
             mobile_anim_ec_package: None,
+            effects_viewer: None,
             gumps_package: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,
@@ -2164,6 +2176,7 @@ mod tests {
             package_path: None,
             mobile_anim_cc_package: None,
             mobile_anim_ec_package: None,
+            effects_viewer: None,
             gumps_package: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,
@@ -2240,6 +2253,7 @@ mod tests {
             package_path: None,
             mobile_anim_cc_package: None,
             mobile_anim_ec_package: None,
+            effects_viewer: None,
             gumps_package: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,
@@ -2505,6 +2519,7 @@ mod tests {
             package_path: None,
             mobile_anim_cc_package: None,
             mobile_anim_ec_package: None,
+            effects_viewer: None,
             gumps_package: None,
             selected_mobile_anim_index: 0,
             selected_mobile_anim_frame_index: 0,

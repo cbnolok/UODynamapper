@@ -75,8 +75,19 @@ impl eframe::App for InspectorApp {
         let selected_idx = match self.view_mode {
             ViewMode::Package => self.selected_idx,
             ViewMode::Virtual => self.selected_virtual_idx,
-            ViewMode::MobileAnimCc | ViewMode::MobileAnimEc => None,
+            ViewMode::MobileAnimCc | ViewMode::MobileAnimEc | ViewMode::Effects => None,
         };
+
+        if self.view_mode == ViewMode::Effects {
+            if let Some(viewer) = self.effects_viewer.as_mut().filter(|viewer| viewer.has_selection()) {
+                egui::Panel::right("effects_details_panel")
+                    .resizable(true)
+                    .default_size(MAIN_RIGHT_PANEL_DEFAULT_WIDTH)
+                    .show(ui, |ui| {
+                        viewer.ui_details(&ctx, ui);
+                    });
+            }
+        }
 
         // Right panel: Entry/Asset details (only shown if something is selected)
         if let Some(idx) = selected_idx {
@@ -95,6 +106,12 @@ impl eframe::App for InspectorApp {
                     ViewMode::Package | ViewMode::Virtual => self.render_table(&ctx, ui),
                     ViewMode::MobileAnimCc => ui_mobile_anim_cc(self, &ctx, ui),
                     ViewMode::MobileAnimEc => ui_mobile_anim_ec(self, &ctx, ui),
+                    ViewMode::Effects => match self.effects_viewer.as_mut() {
+                        Some(viewer) => viewer.ui_tables(&ctx, ui),
+                        None => {
+                            ui.label("Not an effects package.");
+                        }
+                    },
                 }
             } else {
                 ui.centered_and_justified(|ui| {
@@ -156,6 +173,7 @@ impl InspectorApp {
         if !self.virtual_entries.is_empty()
             || self.mobile_anim_cc_package.is_some()
             || self.mobile_anim_ec_package.is_some()
+            || self.effects_viewer.is_some()
         {
             ui.heading("View Mode");
             ui.selectable_value(&mut self.view_mode, ViewMode::Package, "Package");
@@ -178,6 +196,9 @@ impl InspectorApp {
             }
             if self.mobile_anim_ec_package.is_some() {
                 ui.selectable_value(&mut self.view_mode, ViewMode::MobileAnimEc, "EC Mobile Anim");
+            }
+            if self.effects_viewer.is_some() {
+                ui.selectable_value(&mut self.view_mode, ViewMode::Effects, "Effects");
             }
             ui.add_space(LEFT_PANEL_SECTION_SPACING);
         }

@@ -1,4 +1,5 @@
 pub mod details;
+pub mod effects;
 pub mod mobile_anim;
 pub mod table;
 

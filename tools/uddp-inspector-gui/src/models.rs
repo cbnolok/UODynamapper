@@ -8,6 +8,8 @@ pub enum ViewMode {
     Virtual,
     MobileAnimCc,
     MobileAnimEc,
+    /// An `effects_ec.uddp` package.
+    Effects,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

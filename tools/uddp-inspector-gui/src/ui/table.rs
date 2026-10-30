@@ -21,7 +21,7 @@ impl InspectorApp {
         match self.view_mode {
             ViewMode::Package => self.render_package_table(ctx, ui),
             ViewMode::Virtual => self.render_virtual_table(ctx, ui),
-            ViewMode::MobileAnimCc | ViewMode::MobileAnimEc => {}
+            ViewMode::MobileAnimCc | ViewMode::MobileAnimEc | ViewMode::Effects => {}
         }
     }
 

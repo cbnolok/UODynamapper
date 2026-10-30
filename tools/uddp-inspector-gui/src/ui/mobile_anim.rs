@@ -816,7 +816,7 @@ impl InspectorApp {
                 .as_ref()
                 .map(|package| filtered_ec_mobile_anim_indices(self, package))
                 .unwrap_or_default(),
-            ViewMode::Package | ViewMode::Virtual => Vec::new(),
+            ViewMode::Package | ViewMode::Virtual | ViewMode::Effects => Vec::new(),
         }
     }
 }
