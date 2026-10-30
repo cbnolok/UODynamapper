@@ -1,4 +1,4 @@
-//! Random numbers: the client's MT19937 and its `rand01`.
+//! Random numbers: the client's MT19937 and its `rand01`, and the C runtime's `rand()`.
 //!
 //! UOSA.exe has one global MT19937 (`MersenneTwister::NextU32` 0x0099aa85, `Twist` 0x0099ac5a, `Seed`
 //! 0x0099ac2a, `SeedByArray` 0x0099ab3e), seeded from the clock at startup and shared by every game system, so
@@ -13,6 +13,53 @@ pub trait Rng {
     /// 1.0 when `u >= 2^32 - 128`, as in the client.
     fn rand01(&mut self) -> f32 {
         (f64::from(self.next_u32()) * RAND01_SCALE) as f32
+    }
+}
+
+/// A source of C runtime `rand()` values in `0..=CRT_RAND_MAX`: the generator of the Gamebryo particle code
+/// (UOSA.exe's NiPSys modifiers and emitters call the statically linked MSVC `_rand`).
+pub trait CrtRng {
+    fn rand(&mut self) -> u16;
+}
+
+/// `RAND_MAX` of the MSVC C runtime.
+pub const CRT_RAND_MAX: u16 = 0x7fff;
+/// `srand`'s implicit seed: the state before any `srand` call.
+pub const MSVC_DEFAULT_SEED: u32 = 1;
+/// MSVC `rand()` linear congruential multiplier.
+const MSVC_RAND_MULTIPLIER: u32 = 214_013;
+/// MSVC `rand()` linear congruential increment.
+const MSVC_RAND_INCREMENT: u32 = 2_531_011;
+/// `rand()` returns bits 16..30 of the state.
+const MSVC_RAND_SHIFT: u32 = 16;
+
+/// The MSVC C runtime `rand()`: `state = state * 214013 + 2531011`, returns `(state >> 16) & 0x7fff`.
+///
+/// The client's generator is per thread and shared by everything that calls `rand()` on it (seeded by the
+/// client, never by an effect), so its sequence is not reproducible. A simulator may use any seed; the same
+/// seed gives the same stream.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MsvcRand {
+    state: u32,
+}
+
+impl Default for MsvcRand {
+    fn default() -> Self {
+        Self::new(MSVC_DEFAULT_SEED)
+    }
+}
+
+impl MsvcRand {
+    /// `srand(seed)`.
+    pub fn new(seed: u32) -> Self {
+        Self { state: seed }
+    }
+}
+
+impl CrtRng for MsvcRand {
+    fn rand(&mut self) -> u16 {
+        self.state = self.state.wrapping_mul(MSVC_RAND_MULTIPLIER).wrapping_add(MSVC_RAND_INCREMENT);
+        ((self.state >> MSVC_RAND_SHIFT) & u32::from(CRT_RAND_MAX)) as u16
     }
 }
 
@@ -170,6 +217,16 @@ mod tests {
         fn next_u32(&mut self) -> u32 {
             self.0
         }
+    }
+
+    /// `srand(1)`: the first outputs of the MSVC C runtime `rand()`.
+    const MSVC_SEED_1_OUTPUTS: [u16; 5] = [41, 18_467, 6_334, 26_500, 19_169];
+
+    #[test]
+    fn msvc_rand_matches_the_crt_stream() {
+        let mut generator = MsvcRand::default();
+        let outputs: Vec<u16> = (0..MSVC_SEED_1_OUTPUTS.len()).map(|_| generator.rand()).collect();
+        assert_eq!(outputs, MSVC_SEED_1_OUTPUTS);
     }
 
     #[test]
