@@ -53,7 +53,8 @@ Current execution decisions:
 
 ### Current Renderer Focus: Visual Fidelity
 
-- Validate remaining individual static anchors/new-art scales and effect visibility against matched fixtures. Common legacy pixel/height calibration and the perspective bridge stair/deck tie-bias defect are repaired.
+- Validate remaining individual static anchors/new-art scales and effect visibility against matched fixtures. Common legacy pixel/height calibration, the perspective bridge stair/deck tie-bias defect and stale hover quad construction are repaired.
+- Finish texture-alpha and visible-depth picking and validate large-art/expanded-multi coverage; use the preserved logical surfaces and movement flags for future walking. See [hover geometry contracts](agent_notes/static_hover_geometry.md).
 - Use [the visual follow-up review](reviews/2026-10-29-visual-fidelity-followup.md) for current evidence and reconciliation of the unstaged user TODO. Historical repaired items must reproduce before being reopened.
 
 ### Baseline And Instrumentation

@@ -3,10 +3,10 @@ use crate::core::controls::input_actions::{
 };
 use crate::core::controls::{InjectedPointer, effective_cursor_position};
 use crate::core::render::scene::world::art::statics_collect::{
-    depth_class_y_bias, resolve_priority_z_units, resolve_static_billboard_bounds,
-    resolve_static_depth_class, resolve_surface_like_ground_quad_bounds, static_depth_key,
+    resolve_priority_z_units, resolve_static_depth_class, static_depth_key,
     static_tile_is_surface_like,
 };
+use crate::core::render::scene::world::art::static_geometry::{StaticArtRoute, StaticPickingResources, projected_quad_contains};
 use crate::core::render::scene::player::Player;
 use crate::core::render::{
     dialogs,
@@ -28,13 +28,10 @@ use bevy::prelude::*;
 use bevy::text::{FontSmoothing, LineHeight};
 use bevy::window::PrimaryWindow;
 use bevy_egui::EguiContexts;
-use std::collections::{BTreeSet, HashMap};
 use uocf::classic::map::{MapCell, MapCellCoords};
 
 const FONT_SIZE: f32 = 13.0;
 const CLASSIC_STATIC_ART_ID_OFFSET: u16 = 0x4000;
-const INV_SQRT_2: f32 = std::f32::consts::FRAC_1_SQRT_2;
-const BILLBOARD_RIGHT_XZ: Vec2 = Vec2::new(INV_SQRT_2, -INV_SQRT_2);
 const HOVERED_STATIC_HIGHLIGHT_Y_LIFT: f32 = 0.01;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -92,13 +89,10 @@ pub struct CursorInspectLocals<'w, 's> {
     last_scale: Local<'s, f32>,
     last_cursor_pos: Local<'s, Option<Vec2>>,
     last_window_size: Local<'s, Option<(f32, f32)>>,
-    last_camera_translation: Local<'s, Option<Vec3>>,
+    last_camera_view: Local<'s, Option<(Mat4, Mat4)>>,
     last_player_map_id: Local<'s, Option<u8>>,
-    overlay_tex_land_ec_slot_cache: Local<'s, OverlayTexLandEcSlotCache>,
     _marker: std::marker::PhantomData<&'w ()>,
 }
-
-type OverlayTexLandEcSlotCache = HashMap<u32, Option<u32>>;
 
 impl Plugin for CursorBehaviorOverlayPlugin {
     fn build(&self, app: &mut App) {
@@ -112,8 +106,10 @@ impl Plugin for CursorBehaviorOverlayPlugin {
                 Update,
                 (
                     update_cursor_behavior_text.run_if(in_state(AppState::InGame)),
-                    update_cursor_inspect_text.run_if(in_state(AppState::InGame)),
-                    sys_draw_hovered_static_highlight.run_if(in_state(AppState::InGame)),
+                    update_cursor_inspect_text.after(crate::core::system_sets::SceneRenderArtSysSet::CollectVisibleStatics)
+                        .run_if(in_state(AppState::InGame)),
+                    sys_draw_hovered_static_highlight.after(crate::core::system_sets::SceneRenderArtSysSet::CollectVisibleStatics)
+                        .run_if(in_state(AppState::InGame)),
                     sys_teleport_on_click.run_if(in_state(AppState::InGame)),
                 ),
             );
@@ -343,8 +339,9 @@ pub fn update_cursor_behavior_text(
     }
 }
 
-pub fn update_cursor_inspect_text(
+pub(crate) fn update_cursor_inspect_text(
     resources: CursorInspectResources,
+    mut picking: StaticPickingResources,
     player_q: Query<&Player>,
     windows: Query<&Window, With<PrimaryWindow>>,
     injected_pointer: Option<Res<InjectedPointer>>,
@@ -385,10 +382,10 @@ pub fn update_cursor_inspect_text(
         .single()
         .ok()
         .map(|window| (window.width(), window.height()));
-    let camera_translation = camera_q
+    let camera_view = camera_q
         .single()
         .ok()
-        .map(|(_, camera_tf)| camera_tf.translation());
+        .map(|(camera, camera_tf)| (camera_tf.to_matrix(), camera.clip_from_view()));
     let cursor_pos = windows
         .single()
         .ok()
@@ -400,28 +397,19 @@ pub fn update_cursor_inspect_text(
 
     let needs_rebuild = *locals.last_cursor_pos != cursor_pos
         || *locals.last_window_size != window_size
-        || *locals.last_camera_translation != camera_translation
+        || *locals.last_camera_view != camera_view
         || *locals.last_player_map_id != player_map_id
         || scale_changed
-        || resources.inspect_state.is_changed();
+        || resources.inspect_state.is_changed()
+        || resources.settings.is_changed()
+        || picking.is_changed();
 
     if !show_inspect || !needs_rebuild {
         return;
     }
 
-    if resources
-        .tilemeta_res
-        .as_ref()
-        .is_some_and(|resource| resource.is_changed())
-        || resources
-            .tex_land_ec_res
-            .as_ref()
-            .is_some_and(|resource| resource.is_changed())
-    {
-        locals.overlay_tex_land_ec_slot_cache.clear();
-    }
-
     let inspect_label = build_cursor_inspect_label(
+        &mut picking,
         cursor_pos,
         camera_q.single().ok(),
         player_q.single().ok(),
@@ -432,7 +420,6 @@ pub fn update_cursor_inspect_text(
         resources.tex_art_ec_res.as_deref(),
         resources.tex_land_ec_res.as_deref(),
         resources.tilemeta_res.as_deref(),
-        &mut locals.overlay_tex_land_ec_slot_cache,
     );
 
     if let Ok((mut inspect_text, _, _)) = inspect_text_q.single_mut() {
@@ -443,7 +430,7 @@ pub fn update_cursor_inspect_text(
 
     *locals.last_cursor_pos = cursor_pos;
     *locals.last_window_size = window_size;
-    *locals.last_camera_translation = camera_translation;
+    *locals.last_camera_view = camera_view;
     *locals.last_player_map_id = player_map_id;
 }
 
@@ -492,6 +479,7 @@ fn sys_toggle_cursor_inspect_panel(
 }
 
 fn build_cursor_inspect_label(
+    picking: &mut StaticPickingResources,
     cursor_pos: Option<Vec2>,
     camera: Option<(&Camera, &GlobalTransform)>,
     player: Option<&Player>,
@@ -502,7 +490,6 @@ fn build_cursor_inspect_label(
     tex_art_ec_res: Option<&TexArtEcPackageRes>,
     tex_land_ec_res: Option<&TexLandEcPackageRes>,
     tilemeta_res: Option<&TileMetaPackageRes>,
-    tex_land_ec_slot_cache: &mut OverlayTexLandEcSlotCache,
 ) -> String {
     let Some((map_id, cursor_x, cursor_y)) =
         resolve_cursor_tile_coords(cursor_pos, camera, player, settings)
@@ -511,6 +498,7 @@ fn build_cursor_inspect_label(
     };
 
     let hovered_object_line = describe_hovered_object(
+        picking,
         cursor_pos,
         camera,
         settings,
@@ -519,14 +507,13 @@ fn build_cursor_inspect_label(
         tex_art_ec_res,
         tex_land_ec_res,
         tilemeta_res,
-        tex_land_ec_slot_cache,
         map_id,
         cursor_x,
         cursor_y,
     );
     let land_line = describe_land_tile(map_planes_r, tilemeta_res, map_id, cursor_x, cursor_y);
     let statics_line = describe_static_tiles(
-        settings,
+        picking,
         statics_res,
         tex_art_cc_res,
         tex_art_ec_res,
@@ -563,20 +550,18 @@ struct HoveredStaticMatch {
     depth_key: f32,
     global_x: u16,
     global_y: u16,
+    route: StaticArtRoute,
 }
 
 fn sys_draw_hovered_static_highlight(
+    mut picking: StaticPickingResources,
     settings: Res<crate::configs::settings::Settings>,
     player_q: Query<&Player>,
     windows: Query<&Window, With<PrimaryWindow>>,
     injected_pointer: Option<Res<InjectedPointer>>,
     camera_q: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
     statics_res: Res<StaticsStoreRes>,
-    tex_art_cc_res: Option<Res<TexArtCcPackageRes>>,
-    tex_art_ec_res: Option<Res<TexArtEcPackageRes>>,
-    tex_land_ec_res: Option<Res<TexLandEcPackageRes>>,
     tilemeta_res: Option<Res<TileMetaPackageRes>>,
-    mut tex_land_ec_slot_cache: Local<OverlayTexLandEcSlotCache>,
     mut gizmos: Gizmos,
 ) {
     if !settings
@@ -606,16 +591,13 @@ fn sys_draw_hovered_static_highlight(
     };
 
     let Some(best_match) = find_hovered_static_object(
+        &mut picking,
         cursor_pos,
         camera,
         camera_tf,
         &settings,
         &statics_res,
-        tex_art_cc_res.as_deref(),
-        tex_art_ec_res.as_deref(),
-        tex_land_ec_res.as_deref(),
         tilemeta_res.as_deref(),
-        &mut tex_land_ec_slot_cache,
         map_id,
         x,
         y,
@@ -643,6 +625,7 @@ fn sys_draw_hovered_static_highlight(
 }
 
 fn describe_hovered_object(
+    picking: &mut StaticPickingResources,
     cursor_pos: Option<Vec2>,
     camera: Option<(&Camera, &GlobalTransform)>,
     settings: &crate::configs::settings::Settings,
@@ -651,7 +634,6 @@ fn describe_hovered_object(
     tex_art_ec_res: Option<&TexArtEcPackageRes>,
     tex_land_ec_res: Option<&TexLandEcPackageRes>,
     tilemeta_res: Option<&TileMetaPackageRes>,
-    tex_land_ec_slot_cache: &mut OverlayTexLandEcSlotCache,
     map_id: u8,
     x: u16,
     y: u16,
@@ -664,16 +646,13 @@ fn describe_hovered_object(
     };
 
     let Some(best_match) = find_hovered_static_object(
+        picking,
         cursor_pos,
         camera,
         camera_tf,
         settings,
         statics_res,
-        tex_art_cc_res,
-        tex_art_ec_res,
-        tex_land_ec_res,
         tilemeta_res,
-        tex_land_ec_slot_cache,
         map_id,
         x,
         y,
@@ -686,33 +665,30 @@ fn describe_hovered_object(
         best_match.global_x,
         best_match.global_y,
         describe_static_tile_details(
-            settings,
             tex_art_cc_res,
             tex_art_ec_res,
             tex_land_ec_res,
             tilemeta_res,
             best_match.tile,
             Some(best_match.kind),
-            Some(tex_land_ec_slot_cache),
+            Some(best_match.route),
         )
     )
 }
 
 fn find_hovered_static_object(
+    picking: &mut StaticPickingResources,
     cursor_pos: Vec2,
     camera: &Camera,
     camera_tf: &GlobalTransform,
     settings: &crate::configs::settings::Settings,
     statics_res: &StaticsStoreRes,
-    tex_art_cc_res: Option<&TexArtCcPackageRes>,
-    tex_art_ec_res: Option<&TexArtEcPackageRes>,
-    tex_land_ec_res: Option<&TexLandEcPackageRes>,
     tilemeta_res: Option<&TileMetaPackageRes>,
-    tex_land_ec_slot_cache: &mut OverlayTexLandEcSlotCache,
     map_id: u8,
     x: u16,
     y: u16,
 ) -> Option<HoveredStaticMatch> {
+    if !settings.world_rendering.enable_statics { return None; }
     let store = statics_res
         .0
         .get(map_id as usize)
@@ -734,15 +710,11 @@ fn find_hovered_static_object(
 
             for tile in block_tiles.iter().copied() {
                 let Some(candidate) = hovered_static_match(
+                    picking,
                     cursor_pos,
                     camera,
                     camera_tf,
-                    settings,
-                    tex_art_cc_res,
-                    tex_art_ec_res,
-                    tex_land_ec_res,
                     tilemeta_res,
-                    tex_land_ec_slot_cache,
                     block_x as u32,
                     block_y as u32,
                     tile,
@@ -766,15 +738,11 @@ fn find_hovered_static_object(
 }
 
 fn hovered_static_match(
+    picking: &mut StaticPickingResources,
     cursor_pos: Vec2,
     camera: &Camera,
     camera_tf: &GlobalTransform,
-    settings: &crate::configs::settings::Settings,
-    tex_art_cc_res: Option<&TexArtCcPackageRes>,
-    tex_art_ec_res: Option<&TexArtEcPackageRes>,
-    tex_land_ec_res: Option<&TexLandEcPackageRes>,
     tilemeta_res: Option<&TileMetaPackageRes>,
-    tex_land_ec_slot_cache: &mut OverlayTexLandEcSlotCache,
     block_x: u32,
     block_y: u32,
     tile: uocf::classic::statics::PackedStaticTile,
@@ -789,27 +757,17 @@ fn hovered_static_match(
     let local_y = tile.y_offset() as f32;
     let world_x = block_x as f32 * 8.0 + local_x;
     let world_z = block_y as f32 * 8.0 + local_y;
-    let world_y = scale_uo_z_to_bevy_units(tile.z as f32) + depth_class_y_bias(depth_class);
-    let (kind, corners) = resolve_hovered_static_geometry(
-        settings,
-        tex_art_cc_res,
-        tex_art_ec_res,
-        tex_land_ec_res,
-        tilemeta_res,
-        tex_land_ec_slot_cache,
-        tilemeta,
-        graphic,
-        world_x,
-        world_y,
-        world_z,
-    )?;
+    let geometry = picking.resolve(graphic, world_x, world_z, tile.z)?;
+    let kind = if geometry.flat_quad == 0 { HoveredObjectKind::Sprite } else { HoveredObjectKind::Ground };
+    let corners = geometry.corners(camera, camera_tf);
 
     if !screen_polygon_contains(cursor_pos, camera, camera_tf, &corners) {
         return None;
     }
 
     let priority_z_units = resolve_priority_z_units(tile.z, tilemeta, depth_class);
-    let depth_key = static_depth_key(world_x, world_z, priority_z_units, depth_class);
+    let depth_key = static_depth_key(geometry.priority_anchor.x, geometry.priority_anchor.y,
+        priority_z_units, depth_class);
     Some(HoveredStaticMatch {
         tile,
         kind,
@@ -817,149 +775,8 @@ fn hovered_static_match(
         depth_key,
         global_x: world_x as u16,
         global_y: world_z as u16,
+        route: geometry.route,
     })
-}
-
-fn resolve_hovered_static_geometry(
-    settings: &crate::configs::settings::Settings,
-    tex_art_cc_res: Option<&TexArtCcPackageRes>,
-    tex_art_ec_res: Option<&TexArtEcPackageRes>,
-    tex_land_ec_res: Option<&TexLandEcPackageRes>,
-    tilemeta_res: Option<&TileMetaPackageRes>,
-    tex_land_ec_slot_cache: &mut OverlayTexLandEcSlotCache,
-    tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
-    graphic: u16,
-    world_x: f32,
-    world_y: f32,
-    world_z: f32,
-) -> Option<(HoveredObjectKind, [Vec3; 4])> {
-    match settings.graphics.art_texture_source {
-        crate::configs::settings::ClientTextureSource::Cc => {
-            let world_x = world_x + 0.5;
-            let world_z = world_z + 1.5;
-            let fallback_texture_id = tilemeta
-                .map(|meta| meta.cc_texture_id as u16)
-                .unwrap_or(graphic);
-            let art_id = graphic.saturating_add(CLASSIC_STATIC_ART_ID_OFFSET);
-            let fallback_art_id = fallback_texture_id.saturating_add(CLASSIC_STATIC_ART_ID_OFFSET);
-            let package = &tex_art_cc_res?.0;
-            let slot = package
-                .present_slot(art_id as u32)
-                .or_else(|| {
-                    (fallback_art_id != art_id)
-                        .then(|| package.present_slot(fallback_art_id as u32))
-                        .flatten()
-                })?;
-            let bounds = resolve_static_billboard_bounds(
-                crate::configs::settings::ClientTextureSource::Cc,
-                slot.draw_offset_x,
-                slot.draw_offset_y,
-                slot.logical_width(),
-                slot.logical_height(),
-            );
-            Some((
-                HoveredObjectKind::Sprite,
-                billboard_corners(
-                    world_x,
-                    world_y,
-                    world_z,
-                    bounds.local_min_x,
-                    bounds.local_max_x,
-                    bounds.local_min_y,
-                    bounds.local_max_y,
-                ),
-            ))
-        }
-        crate::configs::settings::ClientTextureSource::Ec => {
-            let world_x = world_x + 0.5;
-            let world_z = world_z + 1.5;
-            if let Some(runtime_slot_id) = resolve_overlay_tex_land_ec_runtime_slot_cached(
-                tex_land_ec_slot_cache,
-                graphic as u32,
-                tilemeta_res.map(|package| package.0.as_ref()),
-                tilemeta,
-                tex_land_ec_res.map(|package| package.0.as_ref()),
-            ) {
-                if tex_land_ec_res
-                    .and_then(|package| package.0.present_slot(runtime_slot_id))
-                    .is_some()
-                {
-                    let bounds = resolve_surface_like_ground_quad_bounds();
-                    return Some((
-                        HoveredObjectKind::Ground,
-                        [
-                            Vec3::new(
-                                world_x + bounds.local_min_x,
-                                world_y,
-                                world_z + bounds.local_min_z,
-                            ),
-                            Vec3::new(
-                                world_x + bounds.local_max_x,
-                                world_y,
-                                world_z + bounds.local_min_z,
-                            ),
-                            Vec3::new(
-                                world_x + bounds.local_min_x,
-                                world_y,
-                                world_z + bounds.local_max_z,
-                            ),
-                            Vec3::new(
-                                world_x + bounds.local_max_x,
-                                world_y,
-                                world_z + bounds.local_max_z,
-                            ),
-                        ],
-                    ));
-                }
-            }
-
-            let slot = tex_art_ec_res?.0.present_slot(graphic as u32)?;
-            let bounds = resolve_static_billboard_bounds(
-                crate::configs::settings::ClientTextureSource::Ec,
-                slot.draw_offset_x,
-                slot.draw_offset_y,
-                slot.logical_width(),
-                slot.logical_height(),
-            );
-            Some((
-                HoveredObjectKind::Sprite,
-                billboard_corners(
-                    world_x,
-                    world_y,
-                    world_z,
-                    bounds.local_min_x,
-                    bounds.local_max_x,
-                    bounds.local_min_y,
-                    bounds.local_max_y,
-                ),
-            ))
-        }
-    }
-}
-
-fn billboard_corners(
-    world_x: f32,
-    world_y: f32,
-    world_z: f32,
-    local_min_x: f32,
-    local_max_x: f32,
-    local_min_y: f32,
-    local_max_y: f32,
-) -> [Vec3; 4] {
-    [
-        billboard_corner(world_x, world_y, world_z, local_min_x, local_max_y),
-        billboard_corner(world_x, world_y, world_z, local_max_x, local_max_y),
-        billboard_corner(world_x, world_y, world_z, local_min_x, local_min_y),
-        billboard_corner(world_x, world_y, world_z, local_max_x, local_min_y),
-    ]
-}
-
-fn billboard_corner(world_x: f32, world_y: f32, world_z: f32, local_x: f32, local_y: f32) -> Vec3 {
-    Vec3::new(
-        world_x + local_x * BILLBOARD_RIGHT_XZ.x,
-        world_y + local_y,
-        world_z + local_x * BILLBOARD_RIGHT_XZ.y,
-    )
 }
 
 fn screen_polygon_contains(
@@ -968,118 +785,14 @@ fn screen_polygon_contains(
     camera_tf: &GlobalTransform,
     corners: &[Vec3; 4],
 ) -> bool {
-    let mut screen_points = Vec::with_capacity(corners.len());
-    for corner in corners {
+    let mut screen_points = [Vec2::ZERO; 4];
+    for (index, corner) in corners.iter().enumerate() {
         let Ok(screen) = camera.world_to_viewport(camera_tf, *corner) else {
             return false;
         };
-        screen_points.push(screen);
+        screen_points[index] = screen;
     }
-
-    let min_x = screen_points
-        .iter()
-        .map(|point| point.x)
-        .fold(f32::INFINITY, f32::min);
-    let max_x = screen_points
-        .iter()
-        .map(|point| point.x)
-        .fold(f32::NEG_INFINITY, f32::max);
-    let min_y = screen_points
-        .iter()
-        .map(|point| point.y)
-        .fold(f32::INFINITY, f32::min);
-    let max_y = screen_points
-        .iter()
-        .map(|point| point.y)
-        .fold(f32::NEG_INFINITY, f32::max);
-
-    cursor_pos.x >= min_x && cursor_pos.x <= max_x && cursor_pos.y >= min_y && cursor_pos.y <= max_y
-}
-
-fn resolve_overlay_tex_land_ec_runtime_slot(
-    tile_id: u32,
-    tilemeta_package: Option<&udd_assets::tilemeta::TileMetaPackage>,
-    tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
-    tex_land_ec: Option<&udd_assets::tex_land_ec::TexLandEcPackage>,
-) -> Option<u32> {
-    let meta = tilemeta?;
-    if !static_tile_is_surface_like(tilemeta) {
-        return None;
-    }
-
-    let package = tex_land_ec?;
-
-    let Some(main_ec_texture_id) = tilemeta_package
-        .and_then(|package| {
-            package
-                .main_ec_texture_id_role_aware(tile_id)
-                .map(|(id, _role, _reason)| id)
-        })
-    else {
-        return package.resolve_runtime_slot_id(meta.cc_texture_id);
-    };
-
-    if package.present_slot(main_ec_texture_id).is_some() {
-        return Some(main_ec_texture_id);
-    }
-
-    let mut canonical_slots = BTreeSet::new();
-    let mut alias_slots = BTreeSet::new();
-    for record in package
-        .terrain_provenance()
-        .iter()
-        .filter(|record| record.selected_texture_id == main_ec_texture_id)
-    {
-        if record.canonical_slot_id != 0
-            && record.canonical_slot_id != udd_assets::tex_land_ec::MISSING_SLOT_ID
-            && package.present_slot(record.canonical_slot_id).is_some()
-        {
-            canonical_slots.insert(record.canonical_slot_id);
-        }
-
-        if record.alias_slot_id != 0
-            && record.alias_slot_id != udd_assets::tex_land_ec::MISSING_SLOT_ID
-            && package.present_slot(record.alias_slot_id).is_some()
-        {
-            alias_slots.insert(record.alias_slot_id);
-        }
-    }
-
-    if canonical_slots.len() == 1 {
-        return canonical_slots.into_iter().next();
-    }
-
-    if canonical_slots.is_empty() && alias_slots.len() == 1 {
-        return alias_slots.into_iter().next();
-    }
-
-    package.resolve_runtime_slot_id(meta.cc_texture_id)
-}
-
-fn resolve_overlay_tex_land_ec_runtime_slot_cached(
-    cache: &mut OverlayTexLandEcSlotCache,
-    tile_id: u32,
-    tilemeta_package: Option<&udd_assets::tilemeta::TileMetaPackage>,
-    tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
-    tex_land_ec: Option<&udd_assets::tex_land_ec::TexLandEcPackage>,
-) -> Option<u32> {
-    if tilemeta_package.is_none() || tilemeta.is_none() || tex_land_ec.is_none() {
-        return resolve_overlay_tex_land_ec_runtime_slot(
-            tile_id,
-            tilemeta_package,
-            tilemeta,
-            tex_land_ec,
-        );
-    }
-
-    if let Some(resolved) = cache.get(&tile_id) {
-        return *resolved;
-    }
-
-    let resolved =
-        resolve_overlay_tex_land_ec_runtime_slot(tile_id, tilemeta_package, tilemeta, tex_land_ec);
-    cache.insert(tile_id, resolved);
-    resolved
+    projected_quad_contains(cursor_pos, screen_points)
 }
 
 fn resolve_cursor_tile_coords(
@@ -1151,7 +864,7 @@ fn describe_land_tile(
 }
 
 fn describe_static_tiles(
-    settings: &crate::configs::settings::Settings,
+    picking: &mut StaticPickingResources,
     statics_res: &StaticsStoreRes,
     tex_art_cc_res: Option<&TexArtCcPackageRes>,
     tex_art_ec_res: Option<&TexArtEcPackageRes>,
@@ -1195,14 +908,13 @@ fn describe_static_tiles(
         .take(3)
         .map(|tile| {
             describe_static_tile_details(
-                settings,
                 tex_art_cc_res,
                 tex_art_ec_res,
                 tex_land_ec_res,
                 tilemeta_res,
                 *tile,
                 None,
-                None,
+                picking.resolve(tile.graphic, f32::from(x), f32::from(y), tile.z).map(|geometry| geometry.route),
             )
         })
         .collect::<Vec<_>>()
@@ -1216,14 +928,13 @@ fn describe_static_tiles(
 }
 
 fn describe_static_tile_details(
-    settings: &crate::configs::settings::Settings,
     tex_art_cc_res: Option<&TexArtCcPackageRes>,
     tex_art_ec_res: Option<&TexArtEcPackageRes>,
     tex_land_ec_res: Option<&TexLandEcPackageRes>,
     tilemeta_res: Option<&TileMetaPackageRes>,
     tile: uocf::classic::statics::PackedStaticTile,
     hovered_kind: Option<HoveredObjectKind>,
-    tex_land_ec_slot_cache: Option<&mut OverlayTexLandEcSlotCache>,
+    route: Option<StaticArtRoute>,
 ) -> String {
     let graphic = tile.graphic;
     let z = tile.z;
@@ -1243,61 +954,19 @@ fn describe_static_tile_details(
     let cc_slot =
         tex_art_cc_id.and_then(|art_id| tex_art_cc_res.and_then(|package| package.0.present_slot(art_id)));
     let tex_art_ec_slot = tex_art_ec_res.and_then(|package| package.0.present_slot(graphic as u32));
-    let should_resolve_tex_land_ec_slot = matches!(hovered_kind, Some(HoveredObjectKind::Ground));
-    let tex_land_ec_runtime_slot = if should_resolve_tex_land_ec_slot {
-        tex_land_ec_slot_cache
-            .map(|cache| {
-                resolve_overlay_tex_land_ec_runtime_slot_cached(
-                    cache,
-                    graphic as u32,
-                    tilemeta_res.map(|meta_package| meta_package.0.as_ref()),
-                    meta,
-                    tex_land_ec_res.map(|res| res.0.as_ref()),
-                )
-            })
-            .unwrap_or_else(|| {
-                resolve_overlay_tex_land_ec_runtime_slot(
-                    graphic as u32,
-                    tilemeta_res.map(|meta_package| meta_package.0.as_ref()),
-                    meta,
-                    tex_land_ec_res.map(|res| res.0.as_ref()),
-                )
-            })
-    } else {
-        None
+    let tex_land_ec_runtime_slot = match route {
+        Some(StaticArtRoute::EcLand(slot)) => Some(slot),
+        _ => None,
     };
+    let should_resolve_tex_land_ec_slot = tex_land_ec_runtime_slot.is_some();
     let tex_land_ec_slot = tex_land_ec_runtime_slot
         .and_then(|slot_id| tex_land_ec_res.and_then(|package| package.0.present_slot(slot_id)));
     let tex_land_ec_direct_slot = tex_land_ec_res.and_then(|p| p.0.present_slot(graphic as u32));
-    let live_decision = match settings.graphics.art_texture_source {
-        crate::configs::settings::ClientTextureSource::Cc => {
-            format!(
-                "cc->art:{} {}",
-                tex_art_cc_id
-                    .map(|id| id.to_string())
-                    .unwrap_or_else(|| "?".to_string()),
-                slot_presence(cc_slot.is_some())
-            )
-        }
-        crate::configs::settings::ClientTextureSource::Ec => {
-            if tex_land_ec_runtime_slot.is_some() {
-                format!(
-                    "ec->land:{} {}",
-                    tex_land_ec_runtime_slot
-                        .map(|id| id.to_string())
-                        .unwrap_or_else(|| "unresolved".to_string()),
-                    slot_presence(tex_land_ec_slot.is_some())
-                )
-            } else if is_surface_like && !should_resolve_tex_land_ec_slot {
-                "ec->land:not_checked".to_string()
-            } else {
-                format!(
-                    "ec->art:{} {}",
-                    graphic,
-                    slot_presence(tex_art_ec_slot.is_some())
-                )
-            }
-        }
+    let live_decision = match route {
+        Some(StaticArtRoute::CcArt(slot)) => format!("cc->art:{}", slot),
+        Some(StaticArtRoute::EcArt(slot)) => format!("ec->art:{}", slot),
+        Some(StaticArtRoute::EcLand(slot)) => format!("ec->land:{}", slot),
+        None => "unresolved/not_rendered".to_string(),
     };
     let hovered_kind_label = match hovered_kind {
         Some(HoveredObjectKind::Sprite) => " kind=sprite",

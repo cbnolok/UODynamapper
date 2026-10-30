@@ -138,7 +138,7 @@ pub(crate) fn resolve_surface_like_ground_quad_bounds() -> GroundQuadBounds {
 /// exactly on the cell corners and seam with the terrain water beneath. A 44px-wide tile maps
 /// to a half-extent of `44 * 0.5 * (sqrt(2)/44) = sqrt(2)/2` along each diagonal axis, i.e. the
 /// visible diamond spans a full 1x1 world cell.
-fn resolve_cc_surface_like_flat_quad_bounds(
+pub(super) fn resolve_cc_surface_like_flat_quad_bounds(
     logical_width: f32,
     logical_height: f32,
 ) -> GroundQuadBounds {
@@ -165,7 +165,7 @@ fn resolve_cc_surface_like_flat_quad_bounds(
 /// 45px/89px `wave` sets 0x1fa3-0x1fca, whose crest content is deliberately off-center in the
 /// bitmap) get the anchor classic art actually assumes, instead of a hardcoded cell-center
 /// that silently assumed `h == 44` and pushed the ~89px breaking waves ~one cell up-screen.
-fn cc_surface_like_flat_quad_center_offsets(logical_height: f32) -> (f32, f32) {
+pub(super) fn cc_surface_like_flat_quad_center_offsets(logical_height: f32) -> (f32, f32) {
     let forward_half_height =
         logical_height * CC_WORLD_XZ_PER_PIXEL * std::f32::consts::FRAC_1_SQRT_2 * 0.5;
     (
@@ -188,7 +188,7 @@ fn apply_cc_static_world_anchor_translation(world_x: f32, world_z: f32) -> (f32,
     )
 }
 
-fn surface_like_static_world_anchor(
+pub(super) fn surface_like_static_world_anchor(
     visual_kind: StaticVisualKind,
     world_x: f32,
     world_z: f32,
@@ -208,7 +208,7 @@ fn surface_like_static_world_anchor(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum StaticVisualKind {
+pub(super) enum StaticVisualKind {
     CcRegular { art_id: u16, fallback_art_id: u16 },
     EcRegular { art_id: u32 },
     EcSurface { art_id: u32 },
@@ -344,7 +344,20 @@ fn cc_ground_diamond(tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>, 
         && width == CC_TILE_PIXEL_WIDTH && height == CC_TILE_PIXEL_WIDTH
 }
 
-fn ec_static_camera_quad(tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>) -> bool {
+// Picking and drawing must make the same residency/height decision for dry diamonds.
+pub(super) fn cc_static_uses_flat_geometry(
+    tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>, width: f32, height: f32,
+    world_x: f32, world_z: f32, z: i8, atlas: &TileAtlas,
+) -> bool {
+    cc_static_tile_renders_flat(tilemeta)
+        || (cc_ground_diamond(tilemeta, width, height)
+            && [(0, 0), (1, 0), (0, 1), (1, 1)].into_iter().all(|(dx, dy)| {
+                super::static_surface::map_height(atlas,
+                    world_x as u32 + dx, world_z as u32 + dy) == Some(z)
+            }))
+}
+
+pub(super) fn ec_static_camera_quad(tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>) -> bool {
     tilemeta.is_some_and(|meta| meta.flags & EC_CAMERA_QUAD_FLAG != 0)
 }
 
@@ -701,8 +714,8 @@ fn valid_texture_repetition(repetition: f32) -> f32 {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct SurfaceLikeTexLandEcResolution {
-    runtime_slot_id: u32,
+pub(super) struct SurfaceLikeTexLandEcResolution {
+    pub(super) runtime_slot_id: u32,
     texture_repetition: f32,
     liquid_payload: Option<u32>,
 }
@@ -801,7 +814,7 @@ fn resolve_static_visual_kind(
     }
 }
 
-fn resolve_static_visual_kind_cached(
+pub(super) fn resolve_static_visual_kind_cached(
     art_source: ClientTextureSource,
     tile_graphic: u16,
     tilemeta_package: Option<&udd_assets::tilemeta::TileMetaPackage>,
@@ -2244,14 +2257,10 @@ fn emit_art_static_tile(
     // upright CC sprite art and must stay billboards. See cc_static_tile_renders_flat.
     // Separately admit tile-sized dry diamonds only on a resident, level map cell.
     let cc_surface_like_flat = matches!(art_source, ClientTextureSource::Cc)
-        && (cc_static_tile_renders_flat(info.tilemeta)
-            || resolved_sprite.as_ref().is_some_and(|sprite| {
-                cc_ground_diamond(info.tilemeta, sprite.logical_width, sprite.logical_height)
-                    && [(0, 0), (1, 0), (0, 1), (1, 1)].into_iter().all(|(dx, dy)| {
-                        super::static_surface::map_height(resources.tile_atlas,
-                            info.tile.world_x as u32 + dx, info.tile.world_z as u32 + dy) == Some(info.tile.z)
-                    })
-            }));
+        && resolved_sprite.as_ref().is_some_and(|sprite| {
+            cc_static_uses_flat_geometry(info.tilemeta, sprite.logical_width, sprite.logical_height,
+                info.world_x, info.world_z, info.tile.z, resources.tile_atlas)
+        });
 
     let (anchored_world_x, anchored_world_z) = if cc_surface_like_flat {
         // Flat ground quad: no upright-billboard centering translation (mirrors TexLandEc).
@@ -3023,6 +3032,27 @@ mod tests {
 
         approx_eq(anchor.0, 10.0);
         approx_eq(anchor.1, 20.0);
+    }
+
+    #[test]
+    fn dry_cc_picking_and_rendering_require_all_four_resident_level_corners() {
+        use crate::core::render::scene::world::land::tile_atlas::{AtlasParams, Rg16u};
+        let mut tile = item_tile_with_flags(TILE_FLAG_BACKGROUND | TILE_FLAG_SURFACE,
+            udd_assets::tilemeta::TileMetaItemVisualKind::RegularArt);
+        tile.height = 0;
+        let mut atlas = TileAtlas::new(AtlasParams { page_texels: UVec2::splat(2),
+            max_layers: 1, world_pages_x: 1, ..Default::default() }, 1);
+        let flat = |tile: &_, atlas: &_| cc_static_uses_flat_geometry(Some(tile), 44.0, 44.0, 0.0, 0.0, -7, atlas);
+        assert!(!flat(&tile, &atlas));
+        let (layer, _) = atlas.ensure_layer_for_page(IVec2::ZERO);
+        atlas.cpu_mirror[layer as usize] = Some(vec![Rg16u::pack(3, -7, 2, false, 0); 4]);
+        assert!(flat(&tile, &atlas));
+        atlas.cpu_mirror[layer as usize].as_mut().unwrap()[3] = Rg16u::pack(3, -6, 2, false, 0);
+        assert!(!flat(&tile, &atlas));
+        atlas.cpu_mirror[layer as usize].as_mut().unwrap()[3] = Rg16u::pack(3, -7, 3, false, 0);
+        assert!(!flat(&tile, &atlas));
+        tile.flags |= TILE_FLAG_WET;
+        assert!(flat(&tile, &atlas));
     }
 
     #[test]

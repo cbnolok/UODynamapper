@@ -108,7 +108,8 @@ fn poll_control(
     atlas: Option<Res<TileAtlas>>,
     uploads: Option<Res<LandUploadTelemetry>>,
     terrain_bases: Option<Res<EcTerrainBases>>,
-    windows: Query<(Entity, &Window), With<PrimaryWindow>>,
+    view: (Query<(Entity, &Window), With<PrimaryWindow>>,
+        Query<&Text, With<crate::core::render::overlays::cursor_behavior::OverlayCursorInspectText>>),
     mut input: ResMut<ControlInput>,
     pointer: Res<InjectedPointer>,
     mut capture_pending: Local<Option<(PathBuf, f64)>>,
@@ -116,6 +117,7 @@ fn poll_control(
     uniforms: Option<Res<crate::configs::shader_presets::UniformState>>,
     static_lights: Option<Res<crate::core::render::scene::world::art::static_lights::RenderStaticLightInstances>>,
 ) {
+    let (windows, inspect_text) = view;
     if capture_pending.as_ref().is_some_and(|(path, started)| path.exists() || time.elapsed_secs_f64() - started > 30.0) {
         *capture_pending = None;
     }
@@ -162,6 +164,7 @@ fn poll_control(
                         "static_lights": static_lights.as_ref().map(|lights| json!({"instances": lights.0.len()})),
                         "input": {"queued_frames": input.queued_frames(), "context_focus_override": input.focused,
                             "pointer": pointer.0.map(|position| [position.x, position.y])},
+                        "cursor_inspect": inspect_text.single().ok().map(|text| &text.0),
                         "window": windows.single().ok().map(|(_, window)| json!({
                             "logical_size": [window.width(), window.height()], "scale_factor": window.scale_factor(),
                             "focused": window.focused}))}))

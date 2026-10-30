@@ -40,6 +40,12 @@ uniforms. `status.static_lights.instances` exposes the collector count. Use thes
 to verify the source state for an effect comparison, then inspect actual pixels;
 the count does not establish visible light decals or GPU completion.
 
+`status.cursor_inspect` exposes the current cursor-inspection label for native
+picking probes. Enable the cursor overlay in the isolated settings, tap `KeyI`,
+then send an app-only `pointer` command. Allow an update before reading status.
+The text is the displayed diagnostic label, including logical object coordinates;
+it is not a collision query and can be stale while the panel is hidden.
+
 Capture requests enqueue native Bevy screenshots. The client waits for the PNG
 signature and final IEND chunk before reporting completion. Destinations must
 be new absolute PNG paths with an existing parent; existing files are refused.
