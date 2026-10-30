@@ -5,6 +5,8 @@
 //! particle-sim's rasterizer, and PNG exports. No egui here.
 //!
 //! Chaos (`.ems`) scripts and NIF (`.nif`) effects play side by side, each part drawn in its own scene order.
+//! With an object hue, the NIF particles whose definition sets `hued` play as `UOHuedParticleEffectNif` (half speed,
+//! drawn through the `Hues.uop` atlas: particle-sim's [`particle_sim::hued`]).
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -14,8 +16,12 @@ use gamebryo_nif::NifFile;
 use image::RgbaImage;
 use particle_sim::chaos::compile::compile_chaos_source;
 use particle_sim::nif::desc::NifTextureSource;
+use particle_sim::hued::{
+    draw_hued_frame, hue_mode, offscreen_camera, HueMode, HuedRenderSettings, HUED_EFFECT_TIME_SCALE, NO_HUE,
+};
 use particle_sim::raster::{
-    frame_bounds, frame_extent, orbit_axes, Canvas, OrthoView, RasterTexture, SceneDrawOptions, OVERLAY_BLEND,
+    frame_bounds, frame_extent, orbit_axes, Canvas, OrthoView, RasterTexture, SceneDrawOptions, CLIENT_VIEW_ELEVATION,
+    CLIENT_VIEW_YAW, OVERLAY_BLEND,
 };
 use particle_sim::render::{CameraFrame, RenderFrame, SceneLighting};
 use particle_sim::{
@@ -23,6 +29,8 @@ use particle_sim::{
     NodeTransform, ParticleEffectParams, ParticleSystemInstance, Rng, Vec3,
 };
 use uocf::enhanced::effect_definition::{EffectDefinition, ParticleEffect, PropertyFlagMode, RANDOM_WEIGHT_TOTAL};
+use uocf::enhanced::hues::{hues_atlas_hash, HUES_UOP_NAME};
+use uocf::uop_container::package::{LoadMode, UopPackage};
 use uocf::enhanced::string_dictionary::UoStringDictionary;
 
 use super::effect_files::{decode_texture, is_nif_name};
@@ -46,11 +54,13 @@ pub const PREVIEW_RESOLUTION_PX: usize = 384;
 pub const DEFAULT_LOD_LEVEL: u32 = uocf::enhanced::effect_definition::PARTICLE_LOD_DEFAULT;
 pub const MAX_LOD_LEVEL: u32 = uocf::enhanced::effect_definition::PARTICLE_LOD_MAX;
 pub const DEFAULT_BACKGROUND: [f32; 4] = [0.10, 0.10, 0.12, 1.0];
-/// Default camera pitch, degrees below the horizon: the client's view (looking north, 45 degrees down), the
-/// camera particle-sim's NIF instances default to.
-pub const DEFAULT_CAMERA_PITCH_DEGREES: f32 = 45.0;
-/// Default camera yaw, degrees from north toward east.
-pub const DEFAULT_CAMERA_YAW_DEGREES: f32 = 0.0;
+/// Default camera pitch, degrees: the client's view. Every effect is a camera-aligned billboard (local x = camera
+/// right, y = view direction, z = camera up; `uosa_effects.md`, "Effect camera and lighting"), so the client sees
+/// the effect's frame orthographically along +y with +z up: particle-sim's `CameraFrame::client_view`, the camera
+/// its NIF instances default to.
+pub const DEFAULT_CAMERA_PITCH_DEGREES: f32 = CLIENT_VIEW_ELEVATION;
+/// Default camera yaw, degrees from +y toward +x: the client's view.
+pub const DEFAULT_CAMERA_YAW_DEGREES: f32 = CLIENT_VIEW_YAW;
 /// Pitch limits, short of straight down and up (the up axis would be undefined).
 pub const MIN_CAMERA_PITCH_DEGREES: f32 = -89.0;
 pub const MAX_CAMERA_PITCH_DEGREES: f32 = 89.0;
@@ -112,6 +122,8 @@ pub struct SimulationSettings {
     pub loop_mode: LoopMode,
     /// Seconds, replacing every particle's `duration`.
     pub duration_override: Option<f32>,
+    /// Hue of the object the effect plays on ([`NO_HUE`]: none). NIF particles whose definition sets `hued` take it.
+    pub hue: u32,
     /// World units per second along +x; 0 keeps the emitter still.
     pub move_speed: f32,
     /// UI particle LOD setting (1..3) for LOD definitions.
@@ -125,6 +137,7 @@ impl Default for SimulationSettings {
             seed: DEFAULT_PREVIEW_SEED,
             loop_mode: LoopMode::Definition,
             duration_override: None,
+            hue: NO_HUE,
             move_speed: 0.0,
             lod_level: DEFAULT_LOD_LEVEL,
             timeline_s: DEFAULT_TIMELINE_S,
@@ -138,12 +151,12 @@ impl SimulationSettings {
     }
 }
 
-/// The orbit of the preview camera about the view centre.
+/// The orbit of the preview camera about the view centre, from the client's view (the default).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CameraOrbit {
-    /// Degrees from north (+y) toward east (+x).
+    /// Degrees from +y toward +x about +z.
     pub yaw_degrees: f32,
-    /// Degrees below the horizon.
+    /// Degrees above the x-y plane (the camera looks down from positive pitch).
     pub pitch_degrees: f32,
 }
 
@@ -214,10 +227,10 @@ impl Default for ViewSettings {
 /// Why a part does or does not play.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PartStatus {
-    /// A Chaos particle that plays.
-    Chaos { name: String, sequences: usize },
+    /// A Chaos particle that plays (never hued: `hue` tells why when there is a hue).
+    Chaos { name: String, sequences: usize, hue: HueMode },
     /// A NIF effect that plays; `warnings` are the objects the compiler skipped or could not read.
-    Nif { name: String, particle_systems: usize, meshes: usize, warnings: Vec<String> },
+    Nif { name: String, particle_systems: usize, meshes: usize, warnings: Vec<String>, hue: HueMode },
     /// The NIF file does not parse: it plays nothing.
     NifRejected { name: String, error: String },
     /// The particle name is not in the string dictionary (or there is none).
@@ -245,10 +258,11 @@ impl PartStatus {
 
     pub fn describe(&self) -> String {
         match self {
-            Self::Chaos { name, sequences } => format!("{name}: Chaos, {sequences} sequence(s)"),
-            Self::Nif { name, particle_systems, meshes, warnings } => format!(
-                "{name}: NIF, {particle_systems} particle system(s), {meshes} mesh(es), {} compile warning(s)",
-                warnings.len()
+            Self::Chaos { name, sequences, hue } => format!("{name}: Chaos, {sequences} sequence(s){}", hue_note(*hue)),
+            Self::Nif { name, particle_systems, meshes, warnings, hue } => format!(
+                "{name}: NIF, {particle_systems} particle system(s), {meshes} mesh(es), {} compile warning(s){}",
+                warnings.len(),
+                hue_note(*hue)
             ),
             Self::NifRejected { name, error } => format!("{name}: NIF does not parse ({error})"),
             Self::NameUnresolved { name_index } => format!("name index {name_index} is not in the string dictionary"),
@@ -256,6 +270,16 @@ impl PartStatus {
             Self::ScriptRejected { name, errors } => format!("{name}: rejected by the client ({})", errors.join("; ")),
             Self::NotVisual => "not drawn".to_string(),
         }
+    }
+}
+
+/// What a part list says about the object hue: nothing without one.
+fn hue_note(hue: HueMode) -> &'static str {
+    match hue {
+        HueMode::Hued => ", hued (half speed)",
+        HueMode::Chaos => ", not hued (Chaos effects never are)",
+        HueMode::FlagNotSet => ", not hued (the definition's hued is not set)",
+        HueMode::NoHue => "",
     }
 }
 
@@ -277,6 +301,8 @@ pub enum PreparedSystem {
 
 struct PreparedPart {
     params: ParticleEffectParams,
+    /// Plays as `UOHuedParticleEffectNif` ([`HueMode::Hued`]).
+    hued: bool,
     seed: u32,
     system: PreparedSystem,
     /// Textures embedded in a NIF file, by lowercase render name (the names repeat across files).
@@ -467,8 +493,8 @@ impl<'s, 'a> SceneBuilder<'s, 'a> {
         let system = Arc::new(ChaosSystem::prepare(desc, &mut Mt19937::new(seed)));
         let params = self.params(particle, None);
         let system = PreparedSystem::Chaos(system);
-        self.scene.prepared.push(PreparedPart { params, seed, system, embedded: HashMap::new() });
-        PartStatus::Chaos { name, sequences }
+        self.scene.prepared.push(PreparedPart { params, hued: false, seed, system, embedded: HashMap::new() });
+        PartStatus::Chaos { name, sequences, hue: hue_mode(true, particle.hued, self.settings.hue) }
     }
 
     /// A NIF effect: the draft of the file, else its payload parsed.
@@ -509,8 +535,9 @@ impl<'s, 'a> SceneBuilder<'s, 'a> {
         let (particle_systems, meshes) = (desc.particle_systems.len(), desc.meshes.len());
         let seed = self.part_seed();
         let system = PreparedSystem::Nif(Arc::new(NifEffect::prepare(desc)));
-        self.scene.prepared.push(PreparedPart { params, seed, system, embedded });
-        PartStatus::Nif { name, particle_systems, meshes, warnings: output.warnings }
+        let hue = hue_mode(false, particle.hued, self.settings.hue);
+        self.scene.prepared.push(PreparedPart { params, hued: hue == HueMode::Hued, seed, system, embedded });
+        PartStatus::Nif { name, particle_systems, meshes, warnings: output.warnings, hue }
     }
 
     /// The seed of the next prepared part.
@@ -571,14 +598,22 @@ pub fn path_label(path: &[PathStep]) -> String {
 /// A running part: a Chaos effect, or a NIF effect kept concrete for its lights.
 enum PartInstance {
     Chaos(EffectInstance),
-    Nif { params: ParticleEffectParams, system: NifEffectInstance },
+    Nif {
+        params: ParticleEffectParams,
+        system: NifEffectInstance,
+        /// Plays as `UOHuedParticleEffectNif`: half speed, billboards facing the offscreen camera, drawn through
+        /// the hue atlas.
+        hued: bool,
+        /// The node position of the last update: where the hue quad is drawn.
+        position: Vec3,
+    },
 }
 
 impl PartInstance {
-    fn update(&mut self, dt_ms: u32, placement: &EffectPlacement) {
+    fn update(&mut self, dt_ms: u32, placement: &EffectPlacement, camera: &CameraFrame) {
         match self {
             Self::Chaos(instance) => instance.update(dt_ms, placement),
-            Self::Nif { params, system } => {
+            Self::Nif { params, system, hued, position } => {
                 // `EffectInstance::node`.
                 let node = NodeTransform {
                     position: placement.anchor + params.node_offset(placement.camera_vector),
@@ -586,6 +621,11 @@ impl PartInstance {
                     scale: params.node_scale(),
                     velocity: placement.velocity,
                 };
+                if *hued {
+                    // `UOHuedParticleEffectNif::Update` places the offscreen camera at the effect first.
+                    system.set_camera(offscreen_camera(camera, node.position));
+                }
+                *position = node.position;
                 system.update(dt_ms, &node);
             }
         }
@@ -623,8 +663,11 @@ impl PreviewSimulation {
                 PreparedSystem::Nif(effect) => {
                     let mut system = NifEffectInstance::with_seed(Arc::clone(effect), part.seed);
                     system.set_camera(orbit.camera());
+                    if part.hued {
+                        system.set_time_scale(HUED_EFFECT_TIME_SCALE);
+                    }
                     system.start(part.params.duration_s, part.params.looping);
-                    PartInstance::Nif { params: part.params, system }
+                    PartInstance::Nif { params: part.params, system, hued: part.hued, position: Vec3::ZERO }
                 }
             })
             .collect();
@@ -647,6 +690,24 @@ impl PreviewSimulation {
         self.orbit
     }
 
+    /// The object hue of the simulation ([`NO_HUE`]: none).
+    pub fn hue(&self) -> u32 {
+        self.settings.hue
+    }
+
+    /// Where the hue quad of part `part` is drawn, if the part plays hued.
+    pub fn hued_position(&self, part: usize) -> Option<Vec3> {
+        match self.instances.get(part) {
+            Some(PartInstance::Nif { hued: true, position, .. }) => Some(*position),
+            _ => None,
+        }
+    }
+
+    /// Whether any part plays hued.
+    pub fn has_hued_parts(&self) -> bool {
+        (0..self.instances.len()).any(|part| self.hued_position(part).is_some())
+    }
+
     /// The lights of the NIF parts (render time only).
     pub fn set_lighting(&mut self, lighting: SceneLighting) {
         for instance in &mut self.instances {
@@ -664,10 +725,10 @@ impl PreviewSimulation {
     /// One step.
     pub fn step(&mut self) {
         self.time_ms += PREVIEW_STEP_MS;
-        let (direction, _, _) = self.orbit.axes();
-        let placement = EffectPlacement { camera_vector: direction, ..EffectPlacement::at(self.emitter_position()) };
+        let camera = self.orbit.camera();
+        let placement = EffectPlacement { camera_vector: camera.direction, ..EffectPlacement::at(self.emitter_position()) };
         for instance in &mut self.instances {
-            instance.update(PREVIEW_STEP_MS, &placement);
+            instance.update(PREVIEW_STEP_MS, &placement, &camera);
         }
     }
 
@@ -773,17 +834,32 @@ pub fn preview_view(bounds: WorldBounds, view: &ViewSettings, width: usize, heig
     OrthoView::orbit(yaw_degrees.to_radians(), pitch_degrees.to_radians(), center, CAMERA_DISTANCE, pixels_per_unit, width, height)
 }
 
-/// Draws the current frame of a simulation with the overlays.
-pub fn render_canvas(scene: &PreviewScene, simulation: &PreviewSimulation, view: &OrthoView, settings: &ViewSettings) -> Canvas {
+/// Draws the current frame of a simulation with the overlays. Hued parts go through `hue_atlas` (the `Hues.uop`
+/// atlas, [`load_hue_atlas`]); without it they are drawn plain.
+pub fn render_canvas(
+    scene: &PreviewScene,
+    simulation: &PreviewSimulation,
+    view: &OrthoView,
+    settings: &ViewSettings,
+    hue_atlas: Option<&RasterTexture>,
+) -> Canvas {
     let mut canvas = Canvas::new(view.width, view.height, settings.background);
     let options = SceneDrawOptions {
         lighting: settings.lighting,
         sprites: settings.show_particles,
         meshes: settings.show_meshes,
         mesh_markers: Some(MESH_COLOR),
+        depth_clip: None,
     };
     for (part, frame) in simulation.render_parts() {
-        canvas.draw_scene(view, &frame, &|name| scene.texture(part, name), &options);
+        let texture = |name: &str| scene.texture(part, name);
+        match (simulation.hued_position(part), hue_atlas) {
+            (Some(position), Some(atlas)) => {
+                let hued = HuedRenderSettings::default();
+                draw_hued_frame(&mut canvas, view, &frame, &texture, &options, position, simulation.hue(), atlas, &hued);
+            }
+            _ => canvas.draw_scene(view, &frame, &texture, &options),
+        }
     }
     if settings.show_bounds {
         let frame = simulation.render();
@@ -823,6 +899,7 @@ pub fn render_frames(
     settings: &SimulationSettings,
     view: &OrthoView,
     view_settings: &ViewSettings,
+    hue_atlas: Option<&RasterTexture>,
     times: &[u32],
 ) -> Vec<RgbaImage> {
     let mut simulation = PreviewSimulation::new(scene, settings, view_settings.orbit);
@@ -831,9 +908,24 @@ pub fn render_frames(
         .iter()
         .map(|&time| {
             simulation.advance_to(time);
-            canvas_image(&render_canvas(scene, &simulation, view, view_settings))
+            canvas_image(&render_canvas(scene, &simulation, view, view_settings, hue_atlas))
         })
         .collect()
+}
+
+/// The hue atlas of hued NIF particles: `build/hues/hues.dds` of the client's `Hues.uop` (1024 x 1024 A8R8G8B8).
+pub fn load_hue_atlas(client_dir: &Path) -> Result<RasterTexture, String> {
+    let path = crate::app::find_client_file_case_insensitive(client_dir, HUES_UOP_NAME)
+        .ok_or_else(|| format!("{HUES_UOP_NAME} is not in {}", client_dir.display()))?;
+    let package = UopPackage::load_with_mode(&path, LoadMode::Lazy)
+        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    let payload = package
+        .unpack_file_by_hash(hues_atlas_hash())
+        .map_err(|error| format!("failed to unpack the hue atlas: {error}"))?
+        .ok_or_else(|| format!("{} has no hue atlas", path.display()))?;
+    let image = decode_texture(&payload)?;
+    let (width, height) = image.dimensions();
+    RasterTexture::from_rgba8(width as usize, height as usize, image.as_raw()).ok_or_else(|| "bad hue atlas size".to_string())
 }
 
 /// Frames side by side, [`CONTACT_SHEET_COLUMNS`] per row.
@@ -879,6 +971,9 @@ pub(crate) mod tests {
     const SCRIPT_INDEX: u32 = 1;
     const NIF_INDEX: u32 = 2;
     const SCRUB_TIME_MS: u32 = 1000;
+    const TEST_HUE: u32 = 5;
+    /// Every texel of the test hue atlas.
+    const TEST_HUE_COLOR: [f32; 4] = [0.25, 0.5, 0.75, 1.0];
 
     pub(crate) fn dictionary() -> UoStringDictionary {
         let strings = [SCRIPT_NAME, NIF_NAME];
@@ -951,6 +1046,45 @@ pub(crate) mod tests {
         assert!(matches!(drafted.parts[0].status, PartStatus::Nif { meshes: 0, .. }), "{:?}", drafted.parts[0].status);
     }
 
+    /// With an object hue, only NIF particles whose definition sets `hued` play hued, drawn through the atlas.
+    #[test]
+    fn hued_nif_parts_take_the_hue_and_chaos_parts_never() {
+        let hued = |name_index| {
+            let EffectDefinition::Particle(mut particle) = particle(name_index) else { unreachable!() };
+            particle.hued = true;
+            EffectDefinition::Particle(particle)
+        };
+        let definitions = [hued(SCRIPT_INDEX), hued(NIF_INDEX), particle(NIF_INDEX)];
+        let hue_of = |scene: &PreviewScene| -> Vec<Option<HueMode>> {
+            let mode = |status: &PartStatus| match status {
+                PartStatus::Chaos { hue, .. } | PartStatus::Nif { hue, .. } => Some(*hue),
+                _ => None,
+            };
+            scene.parts.iter().map(|part| mode(&part.status)).collect()
+        };
+        let plain_settings = SimulationSettings::default();
+        assert_eq!(hue_of(&scene(&definitions, &plain_settings)), [Some(HueMode::NoHue); 3]);
+        let settings = SimulationSettings { hue: TEST_HUE, ..plain_settings };
+        let hued_scene = scene(&definitions, &settings);
+        assert_eq!(hue_of(&hued_scene), [Some(HueMode::Chaos), Some(HueMode::Hued), Some(HueMode::FlagNotSet)]);
+        assert!(hued_scene.parts[1].status.describe().ends_with("hued (half speed)"));
+        let simulation = PreviewSimulation::at(&hued_scene, &settings, CameraOrbit::default(), SCRUB_TIME_MS);
+        let hued_parts: Vec<bool> = (0..definitions.len()).map(|part| simulation.hued_position(part).is_some()).collect();
+        assert_eq!(hued_parts, [false, true, false]);
+
+        // The hued mesh (the triangle covers the effect position) is drawn in the atlas colour.
+        let only_hued = scene(&definitions[1..2], &settings);
+        let simulation = PreviewSimulation::at(&only_hued, &settings, CameraOrbit::default(), SCRUB_TIME_MS);
+        let view_settings = ViewSettings { show_emitter: false, ..Default::default() };
+        let view = preview_view(fit_bounds(&only_hued, &settings), &view_settings, PREVIEW_RESOLUTION_PX, PREVIEW_RESOLUTION_PX);
+        let side = uocf::enhanced::hues::HUES_ATLAS_WIDTH as usize;
+        let atlas = RasterTexture { width: side, height: side, texels: vec![TEST_HUE_COLOR; side * side] };
+        let hued_canvas = render_canvas(&only_hued, &simulation, &view, &view_settings, Some(&atlas));
+        assert!(hued_canvas.pixels.contains(&TEST_HUE_COLOR));
+        let unhued_canvas = render_canvas(&only_hued, &simulation, &view, &view_settings, None);
+        assert!(!unhued_canvas.pixels.contains(&TEST_HUE_COLOR), "without the atlas the part is drawn plain");
+    }
+
     /// A Chaos script and a NIF mesh play together; the toggles hide particles or meshes, the orbit turns the
     /// view.
     #[test]
@@ -966,7 +1100,7 @@ pub(crate) mod tests {
             let mut simulation = PreviewSimulation::at(&scene, &settings, view_settings.orbit, SCRUB_TIME_MS);
             simulation.set_lighting(view_settings.lighting);
             assert_eq!(simulation.render_parts().len(), 2);
-            canvas_image(&render_canvas(&scene, &simulation, &view, &view_settings))
+            canvas_image(&render_canvas(&scene, &simulation, &view, &view_settings, None))
         };
         let plain = ViewSettings { show_emitter: false, ..Default::default() };
         let background = DEFAULT_BACKGROUND.map(|channel| (channel * 255.0).round() as u8);
@@ -1047,7 +1181,7 @@ pub(crate) mod tests {
         let times = export_times(&settings, DEFAULT_EXPORT_FRAMES);
         assert_eq!(times.len(), DEFAULT_EXPORT_FRAMES);
         assert_eq!(*times.last().unwrap(), settings.timeline_ms());
-        let frames = render_frames(&scene, &settings, &view, &view_settings, &times);
+        let frames = render_frames(&scene, &settings, &view, &view_settings, None, &times);
         let background = DEFAULT_BACKGROUND.map(|channel| (channel * 255.0).round() as u8);
         assert!(frames[DEFAULT_EXPORT_FRAMES / 2].pixels().any(|pixel| pixel.0 != background), "something is drawn");
         let sheet = contact_sheet(&frames);
@@ -1163,7 +1297,7 @@ pub(crate) mod tests {
         assert!(scene.texture_problems.is_empty(), "{:?}", scene.texture_problems);
         let view_settings = ViewSettings::default();
         let view = preview_view(fit_bounds(&scene, &settings), &view_settings, PREVIEW_RESOLUTION_PX, PREVIEW_RESOLUTION_PX);
-        let frames = render_frames(&scene, &settings, &view, &view_settings, &export_times(&settings, DEFAULT_EXPORT_FRAMES));
+        let frames = render_frames(&scene, &settings, &view, &view_settings, None, &export_times(&settings, DEFAULT_EXPORT_FRAMES));
         let background = DEFAULT_BACKGROUND.map(|channel| (channel * 255.0).round() as u8);
         assert!(frames.iter().any(|frame| frame.pixels().any(|pixel| pixel.0 != background)), "something is drawn");
         if let Some(base) = std::env::var_os(SCRATCH_DIR_ENV) {
@@ -1178,6 +1312,11 @@ pub(crate) mod tests {
     /// NIF effects of the real client previewed headlessly: a projectile, an explosion and a mesh-only one.
     const REAL_NIF_NAMES: [&str; 2] = ["00014052_smallfireball.nif", "00014026_explosion3.nif"];
     const REAL_NIF_SHEET_PREFIX: &str = "nif_preview_";
+    const TILEART_UOP_NAME: &str = "tileart.uop";
+    /// The object hue of the hued NIF preview.
+    const REAL_PREVIEW_HUE: u32 = 33;
+    /// Zoom of the hued NIF preview (the effect is small).
+    const REAL_HUED_PREVIEW_ZOOM: f32 = 4.0;
     /// The emitter speed edit: new speed = old * factor + offset (different from any old speed).
     const SPEED_EDIT_FACTOR: f32 = 2.0;
     const SPEED_EDIT_OFFSET: f32 = 1.0;
@@ -1198,6 +1337,8 @@ pub(crate) mod tests {
         use std::path::PathBuf;
         use uocf::enhanced::effect_definition::EFFECT_DEFINITION_COLLECTION_UOP_NAME;
         use uocf::enhanced::effect_texture::{effect_texture_hash, EFFECT_TEXTURE_UOP_NAME};
+        use uocf::enhanced::hues::{HUES_ATLAS_HEIGHT, HUES_ATLAS_WIDTH};
+        use uocf::enhanced::tileart::TileArtEntry;
 
         let client_dir = PathBuf::from(std::env::var_os(EC_CLIENT_DIR_ENV).expect("set UO_EC_CLIENT_DIR"));
         let strings = UoStringDictionary::load(&client_dir.join(STRING_DICTIONARY_UOP_NAME)).unwrap();
@@ -1242,7 +1383,7 @@ pub(crate) mod tests {
                 .find(|part| matches!(&part.status, PartStatus::Nif { name, .. } if name.eq_ignore_ascii_case(target)))
                 .unwrap_or_else(|| panic!("{target} plays: {:?}", scene.parts.iter().map(|part| part.status.describe()).collect::<Vec<_>>()));
             let view = preview_view(fit_bounds(&scene, &settings), &view_settings, PREVIEW_RESOLUTION_PX, PREVIEW_RESOLUTION_PX);
-            let frames = render_frames(&scene, &settings, &view, &view_settings, &export_times(&settings, DEFAULT_EXPORT_FRAMES));
+            let frames = render_frames(&scene, &settings, &view, &view_settings, None, &export_times(&settings, DEFAULT_EXPORT_FRAMES));
             assert!(frames.iter().any(|frame| frame.pixels().any(|pixel| pixel.0 != background)), "{target} draws");
             eprintln!(
                 "entry {:?} with {target}: {}; texture problems {:?}",
@@ -1254,6 +1395,55 @@ pub(crate) mod tests {
                 let stem = target.trim_end_matches(".nif");
                 contact_sheet(&frames).save(base.join(format!("{REAL_NIF_SHEET_PREFIX}{stem}.png"))).unwrap();
             }
+        }
+
+        // A NIF particle whose definition sets `hued` (only tileart effects do), previewed without and with an
+        // object hue.
+        let atlas = load_hue_atlas(&client_dir).unwrap();
+        assert_eq!((atlas.width, atlas.height), (HUES_ATLAS_WIDTH as usize, HUES_ATLAS_HEIGHT as usize));
+        let hued_settings = SimulationSettings { hue: REAL_PREVIEW_HUE, ..settings };
+        let hued_nif = |definitions: &[EffectDefinition]| {
+            let mut found = None;
+            for definition in definitions {
+                definition.visit(&mut |definition| {
+                    if let EffectDefinition::Particle(particle) = definition {
+                        let name = particle.name(&strings).map(str::to_ascii_lowercase);
+                        if particle.hued && found.is_none() {
+                            found = name.filter(|name| is_nif_name(name));
+                        }
+                    }
+                });
+            }
+            found
+        };
+        let tileart = UopPackage::load(client_dir.join(TILEART_UOP_NAME)).unwrap();
+        let tiles: Vec<TileArtEntry> = tileart.iter_files().filter_map(|file| TileArtEntry::parse_raw(file).ok()).collect();
+        let (tile, scene, hued_target) = tiles
+            .iter()
+            .filter_map(|tile| hued_nif(&tile.effects).map(|name| (tile, name)))
+            .find_map(|(tile, name)| {
+                let scene = PreviewScene::build(&tile.effects, &hued_settings, &input);
+                let hued = scene.parts.iter().any(|part| matches!(&part.status, PartStatus::Nif { hue: HueMode::Hued, .. }));
+                hued.then_some((tile, scene, name))
+            })
+            .expect("a tileart record plays a hued NIF particle");
+        let plain_scene = PreviewScene::build(&tile.effects, &settings, &input);
+        let hued_view_settings = ViewSettings { zoom: REAL_HUED_PREVIEW_ZOOM, ..view_settings };
+        let view = preview_view(fit_bounds(&plain_scene, &settings), &hued_view_settings, PREVIEW_RESOLUTION_PX, PREVIEW_RESOLUTION_PX);
+        let times = export_times(&settings, DEFAULT_EXPORT_FRAMES);
+        let plain = render_frames(&plain_scene, &settings, &view, &hued_view_settings, None, &times);
+        let hued = render_frames(&scene, &hued_settings, &view, &hued_view_settings, Some(&atlas), &times);
+        assert!(hued.iter().any(|frame| frame.pixels().any(|pixel| pixel.0 != background)), "{hued_target} draws hued");
+        assert_ne!(plain, hued, "the hue changes the frames");
+        eprintln!(
+            "hued tile 0x{:04X} with {hued_target}: {:?}",
+            tile.tile_id,
+            scene.parts.iter().map(|part| part.status.describe()).collect::<Vec<_>>()
+        );
+        if let Some(base) = &base {
+            let stem = hued_target.trim_end_matches(".nif");
+            contact_sheet(&plain).save(base.join(format!("{REAL_NIF_SHEET_PREFIX}{stem}.png"))).unwrap();
+            contact_sheet(&hued).save(base.join(format!("{REAL_NIF_SHEET_PREFIX}{stem}_hue{REAL_PREVIEW_HUE}.png"))).unwrap();
         }
 
         // Edit the first emitter's speed of the small fireball, save into scratch and read back.

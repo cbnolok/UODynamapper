@@ -54,14 +54,25 @@ pub const EFFECT_TYPE_RANDOM: u32 = 16;
 /// Type key of a user effect setting filter (`UOUserPrefEffectFilterDefinition`).
 pub const EFFECT_TYPE_USER_PREFERENCE: u32 = 17;
 
-/// Collection id = 0xC7 packet effect field - `EFFECT_ID_PACKET_BIAS`; see
-/// `collection_id_from_packet_effect`.
+/// Collection id = 0xC7 packet effect or explode effect field - `EFFECT_ID_PACKET_BIAS`
+/// (`(N - 1) & 0xffff`); see `PacketEffectPath`.
 pub const EFFECT_ID_PACKET_BIAS: u32 = 1;
-/// Packet effect value that plays nothing.
+/// Types 2/3 `effect` value that plays nothing (CMP at 0x00421391). Not special in the other
+/// fields: as an explode effect it plays collection 9500.
 pub const PACKET_EFFECT_NONE: u16 = 9501;
-/// Packet effect value that plays the classic item (tileart) effect instead of a collection
-/// entry. Packet effect 0 (also what 0x70 carries) behaves the same.
+/// Types 2/3 `effect` value that plays the classic item effect without its tileart effects (CMP
+/// at 0x004213a7; `suppress_tileart_effects`, CMP at 0x00420ea2); effect 0 (also what 0x70 and
+/// 0xC0 carry) plays it with them. Type 0 `effect` value: the projectile item without its
+/// tileart effects. Not special as an explode effect: it plays collection 9501.
 pub const PACKET_EFFECT_CLASSIC: u16 = 9502;
+/// Explode effect value that plays the classic explosion item (`EXPLOSION_ITEM_ID`) instead of
+/// a collection entry (`UOProjectileEffect::SpawnExplosion` 0x0044ca90); 0x70 and 0xC0 always
+/// carry it.
+pub const PACKET_EXPLODE_CLASSIC: u16 = 0;
+/// Item id of the classic explosion (`UOTileEffectDefinition` of `SpawnExplosion`).
+pub const EXPLOSION_ITEM_ID: u16 = 0x36CB;
+/// Update ticks the classic explosion lasts.
+pub const EXPLOSION_TICKS: u32 = 10;
 /// Collection id the client loads instead of a missing id (a `Placeholder01.ems` particle);
 /// if it is missing too, nothing plays.
 pub const EFFECT_ID_FALLBACK: u32 = 0;
@@ -371,15 +382,100 @@ pub fn parse_effect_definition_collection(data: &[u8]) -> Result<Vec<EffectDefin
 }
 
 /// Maps the effect field of a 0xC7 packet (fixed location or fixed on mobile) to the
-/// `EffectDefinitionCollection.uop` entry id the client plays.
+/// `EffectDefinitionCollection.uop` entry id the client plays:
+/// `PacketEffectPath::FixedEffect.collection_id(effect)`.
 ///
 /// Returns `None` when the client plays no collection entry: `PACKET_EFFECT_NONE` plays
 /// nothing, while 0 and `PACKET_EFFECT_CLASSIC` play the classic item effect instead.
 pub fn collection_id_from_packet_effect(effect: u16) -> Option<u32> {
-    match effect {
-        PACKET_EFFECT_NONE | PACKET_EFFECT_CLASSIC => None,
-        // Effect 0 is not id -1: the subtraction fails exactly for the classic item effect.
-        _ => u32::from(effect).checked_sub(EFFECT_ID_PACKET_BIAS),
+    PacketEffectPath::FixedEffect.collection_id(effect)
+}
+
+/// The object hue of a classic packet effect (the projectile or tile-effect object of
+/// `UOProjectileEffect::Init` / `UOTileEffect::Init`): packet hue + 1, 0 stays 0. The `hued`
+/// particles of the item's tileart effects take it. Collection effects played from packets
+/// have no object, so the packet hue never reaches them.
+pub fn classic_effect_object_hue(packet_hue: u32) -> u32 {
+    if packet_hue == 0 {
+        0
+    } else {
+        packet_hue.wrapping_add(1)
+    }
+}
+
+/// A packet field the client turns into an effect (`UOEffects::PlayGraphicalEffect` 0x00421220
+/// and the projectile's arrival; see "Effect fields per path" in `uosa_effects.md`). Only 0xC7
+/// carries the fields: 0x70 and 0xC0 leave both 0. Packet type 1 (lightning) reads no field
+/// and plays `EFFECT_ID_LIGHTNING`; type 4 (fade) plays no effect definition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum PacketEffectPath {
+    /// Types 2 (fixed location) and 3 (fixed on mobile): the `effect` field (+0x28).
+    #[default]
+    FixedEffect,
+    /// Type 0 (moving): the `effect` field (+0x28).
+    MovingEffect,
+    /// Type 0 arriving with the explode flag: the `explode effect` field (+0x2a).
+    MovingExplosion,
+}
+
+/// What the client plays for one value of a `PacketEffectPath`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PacketEffectOutcome {
+    /// The collection entry with this id (`PlayEffectAtTile`, no object: never hued).
+    Collection(u32),
+    /// Nothing (types 2/3 `PACKET_EFFECT_NONE`).
+    Nothing,
+    /// The classic tile effect of the packet item (`UOEffects::MakeTileEffect` 0x00420e10), when
+    /// the item id is non-zero; its tileart effects play unless suppressed.
+    ClassicTileEffect { suppress_tileart_effects: bool },
+    /// The projectile shows the packet item (`UOEffects::MakeProjectileEffect` 0x00420a90) with
+    /// its tileart effects unless suppressed.
+    Projectile { suppress_tileart_effects: bool },
+    /// The classic explosion: item `EXPLOSION_ITEM_ID` for `EXPLOSION_TICKS`, with the
+    /// projectile's hue and render mode, attached to the target.
+    ClassicExplosion,
+}
+
+impl PacketEffectPath {
+    pub const ALL: [Self; 3] = [Self::FixedEffect, Self::MovingEffect, Self::MovingExplosion];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::FixedEffect => "fixed effect (types 2/3)",
+            Self::MovingEffect => "moving effect (type 0)",
+            Self::MovingExplosion => "moving-effect explosion (type 0 explode effect)",
+        }
+    }
+
+    /// What the client plays for `value` in this field.
+    pub fn outcome(self, value: u16) -> PacketEffectOutcome {
+        match (self, value) {
+            (Self::FixedEffect, PACKET_EFFECT_NONE) => PacketEffectOutcome::Nothing,
+            (Self::FixedEffect, 0 | PACKET_EFFECT_CLASSIC) => {
+                PacketEffectOutcome::ClassicTileEffect { suppress_tileart_effects: value == PACKET_EFFECT_CLASSIC }
+            }
+            (Self::MovingEffect, _) => {
+                PacketEffectOutcome::Projectile { suppress_tileart_effects: value == PACKET_EFFECT_CLASSIC }
+            }
+            (Self::MovingExplosion, PACKET_EXPLODE_CLASSIC) => PacketEffectOutcome::ClassicExplosion,
+            (Self::FixedEffect | Self::MovingExplosion, _) => {
+                PacketEffectOutcome::Collection(u32::from(value) - EFFECT_ID_PACKET_BIAS)
+            }
+        }
+    }
+
+    /// The collection id `value` plays in this field, if any.
+    pub fn collection_id(self, value: u16) -> Option<u32> {
+        match self.outcome(value) {
+            PacketEffectOutcome::Collection(id) => Some(id),
+            _ => None,
+        }
+    }
+
+    /// The value of this field that plays collection `id`, if any (there is at most one).
+    pub fn packet_value_for_collection(self, id: u32) -> Option<u16> {
+        let value = u16::try_from(id.checked_add(EFFECT_ID_PACKET_BIAS)?).ok()?;
+        (self.collection_id(value) == Some(id)).then_some(value)
     }
 }
 
@@ -706,6 +802,50 @@ mod tests {
         writer.u8(0);
         let error = parse_effect_definition_collection(&writer.0).expect_err("trailing byte");
         assert!(error.to_string().contains("trailing bytes"), "{error}");
+    }
+
+    #[test]
+    fn packet_paths_map_every_special_value() {
+        use PacketEffectOutcome::*;
+        use PacketEffectPath::*;
+        let (clumsy_packet_effect, clumsy_collection_id) = (5002, 5001);
+        let fizzle_value = PACKET_EFFECT_CLASSIC + 1;
+        // Types 2/3 effect field.
+        assert_eq!(FixedEffect.outcome(0), ClassicTileEffect { suppress_tileart_effects: false });
+        assert_eq!(FixedEffect.outcome(PACKET_EFFECT_CLASSIC), ClassicTileEffect { suppress_tileart_effects: true });
+        assert_eq!(FixedEffect.outcome(PACKET_EFFECT_NONE), Nothing);
+        assert_eq!(FixedEffect.outcome(1), Collection(EFFECT_ID_FALLBACK));
+        assert_eq!(FixedEffect.outcome(clumsy_packet_effect), Collection(clumsy_collection_id));
+        assert_eq!(FixedEffect.outcome(fizzle_value), Collection(u32::from(PACKET_EFFECT_CLASSIC)));
+        assert_eq!(FixedEffect.outcome(u16::MAX), Collection(u32::from(u16::MAX) - EFFECT_ID_PACKET_BIAS));
+        // Type 0 effect field: only 9502 matters, and it never plays a collection entry.
+        assert_eq!(MovingEffect.outcome(PACKET_EFFECT_CLASSIC), Projectile { suppress_tileart_effects: true });
+        for value in [0, 1, PACKET_EFFECT_NONE, clumsy_packet_effect, u16::MAX] {
+            assert_eq!(MovingEffect.outcome(value), Projectile { suppress_tileart_effects: false }, "{value}");
+        }
+        // Type 0 explode effect field: no 9501/9502 intercept.
+        assert_eq!(MovingExplosion.outcome(PACKET_EXPLODE_CLASSIC), ClassicExplosion);
+        assert_eq!(MovingExplosion.outcome(PACKET_EFFECT_NONE), Collection(u32::from(PACKET_EFFECT_NONE) - EFFECT_ID_PACKET_BIAS));
+        assert_eq!(MovingExplosion.outcome(PACKET_EFFECT_CLASSIC), Collection(u32::from(PACKET_EFFECT_NONE)));
+        assert_eq!(MovingExplosion.outcome(fizzle_value), Collection(u32::from(PACKET_EFFECT_CLASSIC)));
+        // Inverse: collection 9501 is reachable only as explode effect 9502, 9500 only as 9501.
+        let collection_9501 = u32::from(PACKET_EFFECT_NONE);
+        assert_eq!(FixedEffect.packet_value_for_collection(collection_9501), None);
+        assert_eq!(MovingEffect.packet_value_for_collection(collection_9501), None);
+        assert_eq!(MovingExplosion.packet_value_for_collection(collection_9501), Some(PACKET_EFFECT_CLASSIC));
+        assert_eq!(FixedEffect.packet_value_for_collection(collection_9501 - 1), None);
+        assert_eq!(MovingExplosion.packet_value_for_collection(collection_9501 - 1), Some(PACKET_EFFECT_NONE));
+        assert_eq!(FixedEffect.packet_value_for_collection(u32::from(u16::MAX)), None, "above the u16 field");
+        for path in PacketEffectPath::ALL {
+            for value in 0..=u16::MAX {
+                if let Some(id) = path.collection_id(value) {
+                    assert_eq!(path.packet_value_for_collection(id), Some(value), "{path:?} {value}");
+                }
+            }
+        }
+        // Classic effect objects take packet hue + 1.
+        assert_eq!(classic_effect_object_hue(0), 0);
+        assert_eq!(classic_effect_object_hue(0x21), 0x22);
     }
 
     #[test]

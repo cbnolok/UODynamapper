@@ -8,12 +8,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use uocf::enhanced::effect_definition::{
-    collection_id_from_packet_effect, DirectionOffset, EarthquakeEffect, EffectCollectionChanges,
-    EffectCollectionEntry, EffectDefinition, EffectDefinitionCollection, EffectEntryKey, EffectIssue, EffectMapEntry,
-    LodEffect, ParticleEffect, PositionOffsetEffect, PropertyFlagEffect, PropertyFlagMode, RandomEffect,
-    RandomEffectEntry, RoundRobinEffect, SoundEffect, UserPreferenceEffect, WaitEffect, EFFECT_ID_PACKET_BIAS,
-    PACKET_EFFECT_CLASSIC, PACKET_EFFECT_NONE, POSITION_OFFSET_DIRECTION_COUNT,
-    RANDOM_WEIGHT_TOTAL,
+    DirectionOffset, EarthquakeEffect, EffectCollectionChanges, EffectCollectionEntry, EffectDefinition,
+    EffectDefinitionCollection, EffectEntryKey, EffectIssue, EffectMapEntry, LodEffect, PacketEffectOutcome,
+    PacketEffectPath, ParticleEffect, PositionOffsetEffect, PropertyFlagEffect, PropertyFlagMode, RandomEffect,
+    RandomEffectEntry, RoundRobinEffect, SoundEffect, UserPreferenceEffect, WaitEffect, EFFECT_ID_LIGHTNING,
+    EXPLOSION_ITEM_ID, EXPLOSION_TICKS, POSITION_OFFSET_DIRECTION_COUNT, RANDOM_WEIGHT_TOTAL,
 };
 use uocf::enhanced::string_dictionary::UoStringDictionary;
 
@@ -680,35 +679,63 @@ impl EffectsSelection {
     }
 }
 
-/// How the 0xC7 packet reaches a collection id.
+/// A way the effect packets play a collection id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PacketMapping {
-    /// The packet effect value that plays the id.
-    Packet(u16),
-    /// No packet value plays the id (the reason).
-    Unreachable(&'static str),
+pub enum PacketRoute {
+    /// A value of a 0xC7 field.
+    Field { path: PacketEffectPath, value: u16 },
+    /// Packet type 1 (lightning) plays `EFFECT_ID_LIGHTNING` whatever the fields.
+    Lightning,
 }
 
-/// The inverse of [`collection_id_from_packet_effect`]: packet effect = id + 1, except that packet 9501 plays
-/// nothing and 9502 plays the classic item effect (so ids 9500 and 9501 are not reachable by packet), and ids
-/// above 65534 do not fit the u16 field.
-pub fn packet_effect_for_collection_id(id: u32) -> PacketMapping {
-    let Some(packet) = id.checked_add(EFFECT_ID_PACKET_BIAS).and_then(|packet| u16::try_from(packet).ok()) else {
-        return PacketMapping::Unreachable("above the packet range: packets reach ids 0..65534 only");
-    };
-    match packet {
-        PACKET_EFFECT_NONE => PacketMapping::Unreachable("packet effect 9501 plays nothing"),
-        PACKET_EFFECT_CLASSIC => PacketMapping::Unreachable("packet effect 9502 plays the classic item effect instead"),
-        _ => PacketMapping::Packet(packet),
+impl PacketRoute {
+    pub fn label(&self) -> String {
+        match self {
+            Self::Field { path, value } => format!("{}: {value} (0x{value:04X})", path.label()),
+            Self::Lightning => "lightning (type 1)".to_string(),
+        }
     }
 }
 
-/// The collection id a packet effect value plays, with the reason when it plays none.
-pub fn describe_packet_effect(packet: u16) -> Result<u32, &'static str> {
-    collection_id_from_packet_effect(packet).ok_or(match packet {
-        PACKET_EFFECT_NONE => "plays nothing",
-        _ => "plays the classic item (tileart) effect",
-    })
+/// Why no packet plays a collection id with no [`packet_routes_for_collection_id`].
+pub const PACKET_UNREACHABLE_NOTE: &str = "above the packet range: the 16-bit fields reach ids 0..65534 only";
+
+/// Every packet path and value that plays collection id `id` (the inverse of [`PacketEffectPath::outcome`]): the
+/// fixed effect and the explode effect fields play id = value - 1, except that the fixed effect field intercepts
+/// 9501 and 9502 (so ids 9500 and 9501 play only as explode effects); the moving effect field plays no entry.
+pub fn packet_routes_for_collection_id(id: u32) -> Vec<PacketRoute> {
+    let mut routes: Vec<PacketRoute> = PacketEffectPath::ALL
+        .into_iter()
+        .filter_map(|path| path.packet_value_for_collection(id).map(|value| PacketRoute::Field { path, value }))
+        .collect();
+    if id == EFFECT_ID_LIGHTNING {
+        routes.push(PacketRoute::Lightning);
+    }
+    routes
+}
+
+/// What a value of a packet field plays: the collection id, or what the client does instead. `Err` texts end
+/// with the hue the classic object takes.
+pub fn describe_packet_effect(path: PacketEffectPath, value: u16) -> Result<u32, String> {
+    const OBJECT_HUE_NOTE: &str = "its object takes the packet hue + 1 (0 stays 0), which hued particles of its \
+        tileart effects take";
+    let tileart = |suppress: bool| if suppress { "without" } else { "with" };
+    match path.outcome(value) {
+        PacketEffectOutcome::Collection(id) => Ok(id),
+        PacketEffectOutcome::Nothing => Err("plays nothing".to_string()),
+        PacketEffectOutcome::ClassicTileEffect { suppress_tileart_effects } => Err(format!(
+            "plays the classic tile effect of the packet item (if non-zero), {} its tileart effects; {OBJECT_HUE_NOTE}",
+            tileart(suppress_tileart_effects)
+        )),
+        PacketEffectOutcome::Projectile { suppress_tileart_effects } => Err(format!(
+            "plays no collection entry: the projectile shows the packet item {} its tileart effects; {OBJECT_HUE_NOTE}",
+            tileart(suppress_tileart_effects)
+        )),
+        PacketEffectOutcome::ClassicExplosion => Err(format!(
+            "plays the classic explosion: item 0x{EXPLOSION_ITEM_ID:04X} for {EXPLOSION_TICKS} ticks with the \
+             projectile's hue and render mode"
+        )),
+    }
 }
 
 /// Parses an id typed as decimal or `0x` hex; `None` for empty or invalid text.
@@ -839,8 +866,10 @@ impl DefinitionFilter {
                 let mut ids = Vec::new();
                 if let Some(id) = entry.key.id() {
                     ids.push(id);
-                    if let PacketMapping::Packet(packet) = packet_effect_for_collection_id(id) {
-                        ids.push(u32::from(packet));
+                    for route in packet_routes_for_collection_id(id) {
+                        if let PacketRoute::Field { value, .. } = route {
+                            ids.push(u32::from(value));
+                        }
                     }
                 }
                 let hash = format!("{:016x}", entry.key.hash());
@@ -1322,23 +1351,46 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn packet_mapping_inverts_the_client_mapping() {
-        assert_eq!(packet_effect_for_collection_id(CLUMSY_ID), PacketMapping::Packet(CLUMSY_PACKET));
-        assert_eq!(packet_effect_for_collection_id(0), PacketMapping::Packet(1));
-        assert!(matches!(packet_effect_for_collection_id(u32::from(PACKET_EFFECT_NONE) - 1), PacketMapping::Unreachable(_)));
-        assert!(matches!(packet_effect_for_collection_id(u32::from(PACKET_EFFECT_CLASSIC) - 1), PacketMapping::Unreachable(_)));
+    fn packet_routes_invert_the_client_mapping() {
+        use uocf::enhanced::effect_definition::{
+            EFFECT_ID_PACKET_BIAS, PACKET_EFFECT_CLASSIC, PACKET_EFFECT_NONE, PACKET_EXPLODE_CLASSIC,
+        };
+        use PacketEffectPath::{FixedEffect, MovingEffect, MovingExplosion};
+        let field = |path, value| PacketRoute::Field { path, value };
         assert_eq!(
-            packet_effect_for_collection_id(u32::from(PACKET_EFFECT_CLASSIC)),
-            PacketMapping::Packet(PACKET_EFFECT_CLASSIC + 1)
+            packet_routes_for_collection_id(CLUMSY_ID),
+            [field(FixedEffect, CLUMSY_PACKET), field(MovingExplosion, CLUMSY_PACKET)]
         );
-        assert!(matches!(packet_effect_for_collection_id(u32::from(u16::MAX)), PacketMapping::Unreachable(_)));
-        for packet in 0..=u16::MAX {
-            match collection_id_from_packet_effect(packet) {
-                Some(id) => assert_eq!(packet_effect_for_collection_id(id), PacketMapping::Packet(packet)),
-                None => assert!(describe_packet_effect(packet).is_err()),
+        assert_eq!(packet_routes_for_collection_id(0), [field(FixedEffect, 1), field(MovingExplosion, 1)]);
+        let collection_9500 = u32::from(PACKET_EFFECT_NONE) - 1;
+        let collection_9501 = u32::from(PACKET_EFFECT_NONE);
+        assert_eq!(packet_routes_for_collection_id(collection_9500), [field(MovingExplosion, PACKET_EFFECT_NONE)]);
+        assert_eq!(
+            packet_routes_for_collection_id(collection_9501),
+            [field(MovingExplosion, PACKET_EFFECT_CLASSIC)],
+            "9501 only as explode effect 9502"
+        );
+        let lightning_value = u16::try_from(EFFECT_ID_LIGHTNING + EFFECT_ID_PACKET_BIAS).unwrap();
+        assert_eq!(
+            packet_routes_for_collection_id(EFFECT_ID_LIGHTNING),
+            [field(FixedEffect, lightning_value), field(MovingExplosion, lightning_value), PacketRoute::Lightning]
+        );
+        assert!(packet_routes_for_collection_id(u32::from(u16::MAX)).is_empty());
+        for path in PacketEffectPath::ALL {
+            for value in 0..=u16::MAX {
+                match describe_packet_effect(path, value) {
+                    Ok(id) => assert!(packet_routes_for_collection_id(id).contains(&field(path, value)), "{path:?} {value}"),
+                    Err(reason) => assert!(!reason.is_empty()),
+                }
             }
         }
-        assert_eq!(describe_packet_effect(CLUMSY_PACKET), Ok(CLUMSY_ID));
+        assert_eq!(describe_packet_effect(FixedEffect, CLUMSY_PACKET), Ok(CLUMSY_ID));
+        assert_eq!(describe_packet_effect(FixedEffect, PACKET_EFFECT_NONE), Err("plays nothing".to_string()));
+        assert!(describe_packet_effect(FixedEffect, PACKET_EFFECT_CLASSIC).unwrap_err().contains("without its tileart"));
+        assert!(describe_packet_effect(FixedEffect, 0).unwrap_err().contains("with its tileart"));
+        assert!(describe_packet_effect(MovingEffect, CLUMSY_PACKET).unwrap_err().contains("plays no collection entry"));
+        assert!(describe_packet_effect(MovingExplosion, PACKET_EXPLODE_CLASSIC).unwrap_err().contains("0x36CB"));
+        assert_eq!(describe_packet_effect(MovingExplosion, PACKET_EFFECT_CLASSIC), Ok(collection_9501));
     }
 
     #[test]

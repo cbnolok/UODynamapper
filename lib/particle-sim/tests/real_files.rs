@@ -46,13 +46,10 @@ const RUN_SECONDS: f32 = 8.0;
 const DRAIN_LIMIT_SECONDS: f32 = 120.0;
 const MS_PER_SECOND: f32 = 1000.0;
 
-/// A camera 45° above the horizon looking north (+y), 100 units from the origin.
+/// The client's view, 100 units behind the origin.
 fn camera() -> CameraFrame {
     const DISTANCE: f32 = 100.0;
-    let half = std::f32::consts::FRAC_1_SQRT_2;
-    let direction = Vec3::new(0.0, half, -half);
-    let up = Vec3::new(0.0, half, half);
-    CameraFrame { position: direction * -DISTANCE, direction, up, right: direction.cross(up) }
+    CameraFrame::client_view(DISTANCE)
 }
 
 #[derive(Debug, Default, Clone, Copy)]

@@ -5,6 +5,7 @@
 //! - [`effect`]: the effect layer (a `ParticleEffect` definition around any [`ParticleSystemInstance`]).
 //! - [`render`]: draw batches, sprites and mesh instances, and CPU quad expansion.
 //! - [`raster`]: a small software rasterizer of render frames, for previews.
+//! - [`hued`]: hued NIF effects (`UOHuedParticleEffectNif`): half-speed clock and the hue atlas render pass.
 //! - [`rng`]: the client's MT19937, behind the [`rng::Rng`] trait, and the C runtime `rand()` NIF effects draw
 //!   from ([`rng::MsvcRand`]).
 //!
@@ -18,6 +19,7 @@
 pub mod chaos;
 pub mod codec;
 pub mod effect;
+pub mod hued;
 pub mod math;
 pub mod nif;
 pub mod raster;

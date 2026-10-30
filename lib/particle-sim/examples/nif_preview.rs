@@ -10,8 +10,9 @@
 //!
 //! The client directory defaults to `UO_EC_CLIENT_DIR`. The run lasts `--seconds`, by default the effect's
 //! animation length (at least [`MIN_DEFAULT_SECONDS`]); the effect runs once with that duration unless `--loop`.
-//! The camera looks north (+y) from 30° above the horizon, orthographic, fitted to everything drawn over the run;
-//! billboards face it. There is no depth buffer: draws follow the scene order.
+//! The camera is the client's view (orthographic along the effect's local +y with +z up:
+//! `CameraFrame::client_view`), fitted to everything drawn over the run; billboards face it. There is no depth
+//! buffer: draws follow the scene order.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -20,7 +21,7 @@ use gamebryo_nif::NifFile;
 use image::{Rgba, RgbaImage};
 use particle_sim::nif::desc::NifTextureSource;
 use particle_sim::nif::{NifEffect, NifEffectInstance, compile};
-use particle_sim::raster::{Canvas, OrthoView, RasterTexture, SceneDrawOptions, frame_extent};
+use particle_sim::raster::{CLIENT_VIEW_ELEVATION, Canvas, OrthoView, RasterTexture, SceneDrawOptions, frame_extent};
 use particle_sim::render::RenderFrame;
 use particle_sim::{NodeTransform, ParticleSystemInstance, Vec3};
 use uocf::enhanced::effect_texture::{EffectFileKind, EffectTexturePackage};
@@ -39,8 +40,6 @@ const CELL_GAP_PX: u32 = 2;
 const FIT_MARGIN: f32 = 0.08;
 /// Smallest fitted extent, world units.
 const MIN_FIT_EXTENT: f32 = 0.5;
-/// Camera elevation above the horizon.
-const CAMERA_ELEVATION_DEGREES: f32 = 30.0;
 /// Camera distance from the fitted centre (orthographic: only billboards and axial sprites see it).
 const CAMERA_DISTANCE: f32 = 1000.0;
 const BACKGROUND: [f32; 4] = [0.10, 0.10, 0.12, 1.0];
@@ -249,7 +248,7 @@ fn simulate(effect: &Arc<NifEffect>, options: &Options) -> Vec<Capture> {
     let length = effect.desc().animation_length().max(MIN_DEFAULT_SECONDS);
     let seconds = options.seconds.unwrap_or(length);
     let duration = options.duration.unwrap_or(length);
-    let elevation = CAMERA_ELEVATION_DEGREES.to_radians();
+    let elevation = CLIENT_VIEW_ELEVATION;
     let view = OrthoView::new(elevation, Vec3::ZERO, CAMERA_DISTANCE, 1.0, 1, 1);
     let mut instance = NifEffectInstance::with_seed(Arc::clone(effect), options.seed);
     instance.set_camera(view.camera);
@@ -283,7 +282,7 @@ fn simulate(effect: &Arc<NifEffect>, options: &Options) -> Vec<Capture> {
 
 /// Fits everything drawn over the run into a cell.
 fn fit_view(captures: &[Capture], cell: u32) -> OrthoView {
-    let elevation = CAMERA_ELEVATION_DEGREES.to_radians();
+    let elevation = CLIENT_VIEW_ELEVATION;
     let probe = OrthoView::new(elevation, Vec3::ZERO, CAMERA_DISTANCE, 1.0, cell as usize, cell as usize);
     let mut extent: Option<[f32; 4]> = None;
     let (x, y) = probe.project(Vec3::ZERO);

@@ -18,8 +18,12 @@ use crate::system::NodeTransform;
 /// Most EVENTTIMER rewinds per particle and update. The client has no limit: an EVENTTIMER event that sets the
 /// timer to its own time hangs it. Here the particle stops running events for the update instead.
 pub const MAX_EVENT_TIMER_REWINDS: usize = 64;
-/// The world up axis `G` (`DAT_00de2810`, written by `FUN_004216b0` from column 2 of the global rotation at
-/// `DAT_00e37224+0x30`; probable). Gravity keeps only its component along it.
+/// The gravity axis `G` (`DAT_00de2810`, written by `FUN_004216b0` from column 2 of the effect rotation at
+/// `DAT_00e37224+0x30`). Gravity keeps only its component along it. That rotation is `C · P`, the rotation every
+/// effect node takes (`uosa_effects.md`, "Effect camera and lighting"), so `G` is camera up in the world and local
+/// +Z in the effect's frame, the frame this runtime simulates in (the client's view is
+/// [`crate::CameraFrame::client_view`]). `uosa_chaos.md` ("SequenceUpdate", open questions) left it as a probable
+/// world (0,0,1).
 pub const GRAVITY_AXIS: Vec3 = Vec3::Z;
 /// Size of a new particle before its events (pool template).
 const TEMPLATE_SIZE: f32 = 1.0;

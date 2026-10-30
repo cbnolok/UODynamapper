@@ -8,8 +8,8 @@
 //! cargo run -p particle-sim --example chaos_preview -- --list [--client DIR]
 //! ```
 //!
-//! The client directory defaults to `UO_EC_CLIENT_DIR`. The camera looks north (+y) from 30° above the horizon,
-//! orthographic, fitted to everything the effect draws over the run. MESH particles (no NIF renderer here) are
+//! The client directory defaults to `UO_EC_CLIENT_DIR`. The camera is the client's view (orthographic along the
+//! effect's local +y with +z up: `CameraFrame::client_view`), fitted to everything the effect draws over the run. MESH particles (no NIF renderer here) are
 //! drawn as magenta square outlines of their size; the node is a grey dot.
 
 use std::path::{Path, PathBuf};
@@ -18,7 +18,7 @@ use std::sync::Arc;
 use image::{Rgba, RgbaImage};
 use particle_sim::chaos::compile::compile_chaos_source;
 use particle_sim::chaos::{ChaosIssueSeverity, ChaosSystem};
-use particle_sim::raster::{Canvas, OVERLAY_BLEND, OrthoView, RasterTexture, frame_extent};
+use particle_sim::raster::{CLIENT_VIEW_ELEVATION, Canvas, OVERLAY_BLEND, OrthoView, RasterTexture, frame_extent};
 use particle_sim::render::RenderFrame;
 use particle_sim::{ChaosEffectInstance, Mt19937, NodeTransform, ParticleSystemInstance, Vec3};
 use uocf::enhanced::effect_texture::{EffectFileKind, EffectTexturePackage};
@@ -36,8 +36,6 @@ const CELL_GAP_PX: u32 = 2;
 const FIT_MARGIN: f32 = 0.08;
 /// Smallest world extent fitted into a cell (an effect with a single point).
 const MIN_FIT_EXTENT: f32 = 4.0;
-/// Camera elevation above the horizon.
-const CAMERA_ELEVATION_DEGREES: f32 = 30.0;
 /// Distance of the camera position from the fitted centre (for the axial view vector).
 const CAMERA_DISTANCE: f32 = 1000.0;
 const BACKGROUND: [f32; 4] = [0.10, 0.10, 0.12, 1.0];
@@ -273,7 +271,7 @@ fn decode(payload: &[u8]) -> Result<RasterTexture, String> {
 
 /// Fits everything drawn over the run (sprite quads, meshes, the node) into a cell.
 fn fit_view(captures: &[Capture], cell: u32) -> OrthoView {
-    let elevation = CAMERA_ELEVATION_DEGREES.to_radians();
+    let elevation = CLIENT_VIEW_ELEVATION;
     let probe = OrthoView::new(elevation, Vec3::ZERO, CAMERA_DISTANCE, 1.0, cell as usize, cell as usize);
     let mut extent: Option<[f32; 4]> = None;
     for capture in captures {

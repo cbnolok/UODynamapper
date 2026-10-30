@@ -1660,7 +1660,7 @@ const ANIMATIONFRAME_UOP_NAMES: [&str; 6] = [
     "AnimationFrame6.uop",
 ];
 
-fn find_client_file_case_insensitive(base_path: &Path, file_name: &str) -> Option<PathBuf> {
+pub(crate) fn find_client_file_case_insensitive(base_path: &Path, file_name: &str) -> Option<PathBuf> {
     let direct_path = base_path.join(file_name);
     if direct_path.exists() {
         return Some(direct_path);

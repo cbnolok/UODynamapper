@@ -541,6 +541,17 @@ pub struct CameraFrame {
     pub right: Vec3,
 }
 
+impl CameraFrame {
+    /// The client's view of an effect, in the effect's local frame: every NIF and Chaos effect node takes the
+    /// effect rotation `C · P` (`g_UOWorldViewer` 0x00e37224 +0x30, `UOWorldViewer::Init` 0x0046fa70), so
+    /// locally X is camera right, Y the view direction (into the screen) and Z camera up, and the world camera is
+    /// orthographic (`uosa_effects.md`, "Effect camera and lighting"). The camera stands `distance` behind the
+    /// origin; only axial sprites and face-centre billboards see its position.
+    pub fn client_view(distance: f32) -> Self {
+        Self { position: Vec3::Y * -distance, direction: Vec3::Y, up: Vec3::Z, right: Vec3::X }
+    }
+}
+
 /// One quad vertex.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct QuadVertex {
@@ -603,13 +614,19 @@ mod tests {
 
     const EPSILON: f32 = 1e-5;
 
+    /// Distance of the test camera behind the origin.
+    const TEST_CAMERA_DISTANCE: f32 = 10.0;
+
     fn camera_looking_along_y() -> CameraFrame {
-        CameraFrame {
-            position: Vec3::new(0.0, -10.0, 0.0),
-            direction: Vec3::Y,
-            up: Vec3::Z,
-            right: Vec3::X,
-        }
+        CameraFrame::client_view(TEST_CAMERA_DISTANCE)
+    }
+
+    #[test]
+    fn the_client_view_looks_along_local_y_with_z_up() {
+        let camera = camera_looking_along_y();
+        assert_eq!((camera.direction, camera.up, camera.right), (Vec3::Y, Vec3::Z, Vec3::X));
+        assert_close(camera.position, Vec3::new(0.0, -TEST_CAMERA_DISTANCE, 0.0));
+        assert_close(camera.direction.cross(camera.up), camera.right);
     }
 
     fn sprite() -> SpriteInstance {

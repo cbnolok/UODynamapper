@@ -56,13 +56,26 @@ impl RasterTexture {
 
     /// Bilinear sample with wrap addressing (Gamebryo's default, probable for the client).
     pub fn sample(&self, u: f32, v: f32) -> [f32; 4] {
+        self.sample_addressed(u, v, true)
+    }
+
+    /// Bilinear sample with clamp addressing: texels outside the texture repeat its edge.
+    pub fn sample_clamped(&self, u: f32, v: f32) -> [f32; 4] {
+        self.sample_addressed(u, v, false)
+    }
+
+    fn sample_addressed(&self, u: f32, v: f32, wrap: bool) -> [f32; 4] {
         let x = u * self.width as f32 - TEXEL_CENTER_OFFSET;
         let y = v * self.height as f32 - TEXEL_CENTER_OFFSET;
         let (x0, y0) = (x.floor(), y.floor());
         let (fx, fy) = (x - x0, y - y0);
+        let address = |index: f32, size: usize| {
+            let (index, size) = (index as i64, size as i64);
+            (if wrap { index.rem_euclid(size) } else { index.clamp(0, size - 1) }) as usize
+        };
         let texel = |dx: f32, dy: f32| {
-            let column = ((x0 + dx) as i64).rem_euclid(self.width as i64) as usize;
-            let row = ((y0 + dy) as i64).rem_euclid(self.height as i64) as usize;
+            let column = address(x0 + dx, self.width);
+            let row = address(y0 + dy, self.height);
             self.texels[row * self.width + column]
         };
         let (a, b, c, d) = (texel(0.0, 0.0), texel(1.0, 0.0), texel(0.0, 1.0), texel(1.0, 1.0));
@@ -74,14 +87,21 @@ impl RasterTexture {
     }
 }
 
-/// The camera axes of a view from the south looking north (+y), `elevation` radians above the horizon:
-/// (direction, up, right).
+/// Yaw of the client view ([`CameraFrame::client_view`]) for [`orbit_axes`].
+pub const CLIENT_VIEW_YAW: f32 = 0.0;
+/// Elevation of the client view ([`CameraFrame::client_view`]) for [`orbit_axes`]: effects are camera-aligned
+/// billboards, so the client sees an effect's local frame straight along +y.
+pub const CLIENT_VIEW_ELEVATION: f32 = 0.0;
+
+/// The camera axes of a view along +y, `elevation` radians above the x-y plane: (direction, up, right).
+/// Elevation [`CLIENT_VIEW_ELEVATION`] is the client view.
 pub fn camera_axes(elevation: f32) -> (Vec3, Vec3, Vec3) {
-    orbit_axes(0.0, elevation)
+    orbit_axes(CLIENT_VIEW_YAW, elevation)
 }
 
-/// The camera axes of a view `elevation` radians above the horizon, turned `yaw` radians from north (+y)
-/// toward east (+x) about the vertical (+z): (direction, up, right).
+/// The camera axes of a view `elevation` radians above the x-y plane, turned `yaw` radians from +y toward +x
+/// about +z: (direction, up, right). In an effect's local frame, yaw [`CLIENT_VIEW_YAW`] and elevation
+/// [`CLIENT_VIEW_ELEVATION`] are the client view (direction +y, up +z, right +x); other angles orbit it.
 pub fn orbit_axes(yaw: f32, elevation: f32) -> (Vec3, Vec3, Vec3) {
     let (sin_yaw, cos_yaw) = yaw.sin_cos();
     let (sin_elevation, cos_elevation) = elevation.sin_cos();
@@ -103,12 +123,17 @@ pub struct OrthoView {
 }
 
 impl OrthoView {
+    /// The client view ([`CameraFrame::client_view`]) of `center`, the camera `distance` away.
+    pub fn client_view(center: Vec3, distance: f32, pixels_per_unit: f32, width: usize, height: usize) -> Self {
+        Self::orbit(CLIENT_VIEW_YAW, CLIENT_VIEW_ELEVATION, center, distance, pixels_per_unit, width, height)
+    }
+
     /// A view looking at `center` from `elevation` radians above the horizon, the camera `distance` away.
     pub fn new(elevation: f32, center: Vec3, distance: f32, pixels_per_unit: f32, width: usize, height: usize) -> Self {
         Self::orbit(0.0, elevation, center, distance, pixels_per_unit, width, height)
     }
 
-    /// [`Self::new`] with the camera turned `yaw` radians from north toward east ([`orbit_axes`]).
+    /// [`Self::new`] with the camera turned `yaw` radians from +y toward +x ([`orbit_axes`]).
     pub fn orbit(
         yaw: f32,
         elevation: f32,
@@ -135,6 +160,17 @@ impl OrthoView {
     /// The view plane coordinates (right, up) of a world point, in world units.
     pub fn project(&self, position: Vec3) -> (f32, f32) {
         (position.dot(self.camera.right), position.dot(self.camera.up))
+    }
+
+    /// Depth of a world point along the view direction, relative to [`Self::center`].
+    pub fn depth(&self, position: Vec3) -> f32 {
+        (position - self.center).dot(self.camera.direction)
+    }
+
+    /// The world point on the view plane through [`Self::center`] under canvas pixel coordinates.
+    pub fn to_world(&self, (x, y): (f32, f32)) -> Vec3 {
+        self.center + self.camera.right * ((x - self.width as f32 * 0.5) / self.pixels_per_unit)
+            - self.camera.up * ((y - self.height as f32 * 0.5) / self.pixels_per_unit)
     }
 }
 
@@ -321,7 +357,7 @@ impl Canvas {
         for (_, triangles) in scene_triangles(frame, &view.camera, options) {
             let samplers: Vec<Option<&RasterTexture>> = triangles.stages.iter().map(|stage| texture(&stage.texture)).collect();
             for first in (0..triangles.vertices.len()).step_by(TRIANGLE_VERTICES) {
-                self.fill_scene_triangle(view, first, &triangles, &samplers);
+                self.fill_scene_triangle(view, first, &triangles, &samplers, options.depth_clip);
             }
         }
         if let (true, Some(color)) = (options.sprites, options.mesh_markers) {
@@ -335,7 +371,15 @@ impl Canvas {
 
     /// One triangle (vertices `first..first + 3` of `draw`) with per-vertex colours: every texture stage sampled
     /// (wrapped or clamped) and combined, alpha test, blend. Front faces are counter-clockwise on the view plane.
-    fn fill_scene_triangle(&mut self, view: &OrthoView, first: usize, draw: &Triangles, samplers: &[Option<&RasterTexture>]) {
+    /// Pixels whose depth ([`OrthoView::depth`]) is outside `depth_clip` are not drawn.
+    fn fill_scene_triangle(
+        &mut self,
+        view: &OrthoView,
+        first: usize,
+        draw: &Triangles,
+        samplers: &[Option<&RasterTexture>],
+        depth_clip: Option<[f32; 2]>,
+    ) {
         let corners = &draw.vertices[first..first + TRIANGLE_VERTICES];
         let [(ax, ay), (bx, by), (cx, cy)] = [0, 1, 2].map(|k| view.to_screen(corners[k].position));
         // Screen y points down: a counter-clockwise view-plane triangle has a negative screen area.
@@ -367,6 +411,12 @@ impl Canvas {
                 }
                 let weights = [wa, wb, wc];
                 let lerp = |value: &dyn Fn(usize) -> f32| (0..TRIANGLE_VERTICES).map(|k| weights[k] * value(k)).sum::<f32>();
+                if let Some([near, far]) = depth_clip {
+                    let depth = lerp(&|k| view.depth(corners[k].position));
+                    if !(near..=far).contains(&depth) {
+                        continue;
+                    }
+                }
                 let color: [f32; 4] = std::array::from_fn(|channel| lerp(&|k| corners[k].color[channel]));
                 samples.clear();
                 for (stage, sampler) in draw.stages.iter().zip(samplers) {
@@ -398,11 +448,14 @@ pub struct SceneDrawOptions {
     pub meshes: bool,
     /// Colour of the Chaos mesh particle outlines; `None` leaves them out.
     pub mesh_markers: Option<[f32; 4]>,
+    /// The near and far planes: the depth range ([`OrthoView::depth`], relative to the view centre) drawn;
+    /// `None` draws every depth.
+    pub depth_clip: Option<[f32; 2]>,
 }
 
 impl Default for SceneDrawOptions {
     fn default() -> Self {
-        Self { lighting: SceneLighting::default(), sprites: true, meshes: true, mesh_markers: None }
+        Self { lighting: SceneLighting::default(), sprites: true, meshes: true, mesh_markers: None, depth_clip: None }
     }
 }
 
@@ -642,6 +695,40 @@ mod tests {
         assert_eq!(texture.sample(0.25, 0.5), [0.0, 0.0, 0.0, 1.0]);
         assert_eq!(texture.sample(0.75, 0.5), [1.0; 4]);
         assert_eq!(texture.sample(0.5, 0.5)[0], 0.5);
+        // At the left edge, wrapping blends in the last texel; clamping repeats the first.
+        assert_eq!(texture.sample(0.0, 0.5)[0], 0.5);
+        assert_eq!(texture.sample_clamped(0.0, 0.5)[0], 0.0);
+        assert_eq!(texture.sample_clamped(1.0, 0.5)[0], 1.0);
         assert!(RasterTexture::from_rgba8(2, 2, &[0; 4]).is_none());
+    }
+
+    #[test]
+    fn the_client_view_draws_local_z_up_and_x_right() {
+        let distance = 100.0;
+        let view = OrthoView::client_view(Vec3::ZERO, distance, 1.0, SIDE, SIDE);
+        assert_eq!(view.camera, CameraFrame::client_view(distance));
+        let (center_x, center_y) = view.to_screen(Vec3::ZERO);
+        let (up_x, up_y) = view.to_screen(Vec3::Z);
+        let (right_x, right_y) = view.to_screen(Vec3::X);
+        assert!(up_y < center_y && up_x == center_x, "local +z is up on the canvas (canvas y points down)");
+        assert!(right_x > center_x && right_y == center_y, "local +x is right");
+        assert_eq!(view.to_screen(Vec3::Y), (center_x, center_y), "local +y is the view direction");
+        assert_eq!(view.depth(Vec3::Y), 1.0);
+        assert_eq!(view.to_world(view.to_screen(Vec3::new(3.0, 0.0, -2.0))), Vec3::new(3.0, 0.0, -2.0));
+    }
+
+    #[test]
+    fn depth_clipping_keeps_the_range_between_the_planes() {
+        let view = OrthoView::new(0.0, Vec3::ZERO, 100.0, 1.0, SIDE, SIDE);
+        let center = (SIDE / 2) * SIDE + SIDE / 2;
+        let draw = |depth_clip| {
+            let mut canvas = Canvas::new(SIDE, SIDE, BLACK);
+            let options = SceneDrawOptions { depth_clip, ..SceneDrawOptions::default() };
+            canvas.draw_scene(&view, &frame_with_one_sprite(4.0, OPAQUE_BLEND), &|_| None, &options);
+            canvas.pixels[center]
+        };
+        assert_ne!(draw(Some([-1.0, 1.0])), BLACK, "the sprite is at depth 0");
+        assert_eq!(draw(Some([0.5, 1.0])), BLACK, "in front of the near plane");
+        assert_eq!(draw(Some([-1.0, -0.5])), BLACK, "behind the far plane");
     }
 }

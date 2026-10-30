@@ -21,17 +21,15 @@ use crate::system::{NodeTransform, ParticleSystemInstance, SECONDS_PER_MS};
 const SPRITE_SIDE_PER_RADIUS: f32 = 2.0;
 /// Blending off: the source replaces the destination.
 const OPAQUE_BLEND: BlendState = BlendState { src: BlendFactor::One, dst: BlendFactor::Zero };
-/// Camera pitch of [`default_camera`]: 45 degrees down, looking north (+Y) with Z up.
-const DEFAULT_CAMERA_PITCH: f32 = std::f32::consts::FRAC_PI_4;
+/// Time scale of a plain `UOParticleEffectNif`.
+const NORMAL_TIME_SCALE: f32 = 1.0;
 /// Distance of [`default_camera`] from the origin.
 const DEFAULT_CAMERA_DISTANCE: f32 = 1000.0;
 
-/// A camera looking north (+Y) and 45 degrees down (Z up), right along +X: the billboard camera of an instance
-/// until [`NifEffectInstance::set_camera`].
+/// The client's view ([`CameraFrame::client_view`]: looking along local +Y with +Z up, right along +X): the
+/// billboard camera of an instance until [`NifEffectInstance::set_camera`].
 pub fn default_camera() -> CameraFrame {
-    let (sin, cos) = DEFAULT_CAMERA_PITCH.sin_cos();
-    let direction = Vec3::new(0.0, cos, -sin);
-    CameraFrame { position: direction * -DEFAULT_CAMERA_DISTANCE, direction, up: Vec3::new(0.0, sin, cos), right: Vec3::X }
+    CameraFrame::client_view(DEFAULT_CAMERA_DISTANCE)
 }
 
 /// A [`NifEffectDesc`] prepared for running: shared geometry and names, and the scene update order.
@@ -117,10 +115,10 @@ pub fn texture_transform_matrix(transform: &NifTextureTransform) -> UvTransform 
 ///
 /// - Creation is `Init`: the scene is updated once at time 0.
 /// - [`ParticleSystemInstance::start`] stores the definition's duration and loop flag and starts the clock at 0.
-/// - Each update adds `dt` to the clock, counts the lifetime ticks down, and stops a non-looping effect once
-///   `duration <= elapsed` (the effect is then finished and not updated again, as in the client: a non-looping
-///   effect with duration 0 stops at its first update); a looping effect with a duration wraps the clock
-///   (`fmod`). The scene is then updated at the clock time.
+/// - Each update adds `dt` (times the time scale: 0.5 for hued effects) to the clock, counts the lifetime ticks
+///   down, and stops a non-looping effect once `duration <= elapsed` (the effect is then finished and not updated
+///   again, as in the client: a non-looping effect with duration 0 stops at its first update); a looping effect
+///   with a duration wraps the clock (`fmod`). The scene is then updated at the clock time.
 /// - The node transform replaces the root's local transform (the client sets the root rotation, `fabs(scale)`
 ///   and position each frame).
 ///
@@ -137,6 +135,8 @@ pub struct NifEffectInstance<R: CrtRng = MsvcRand> {
     looping: bool,
     duration: f32,
     elapsed: f32,
+    /// Multiplies every update's time step ([`Self::set_time_scale`]).
+    time_scale: f32,
     lifetime_ticks: Option<u32>,
     /// Per particle system, per live particle of a mesh particle system: the state of its prototype clone.
     prototype_poses: Vec<Vec<SceneState>>,
@@ -162,6 +162,7 @@ impl<R: CrtRng> NifEffectInstance<R> {
             looping: false,
             duration: 0.0,
             elapsed: 0.0,
+            time_scale: NORMAL_TIME_SCALE,
             lifetime_ticks: None,
             prototype_poses: Vec::new(),
         };
@@ -180,6 +181,16 @@ impl<R: CrtRng> NifEffectInstance<R> {
 
     pub fn camera(&self) -> &CameraFrame {
         &self.camera
+    }
+
+    /// Multiplies the time step of every update: [`crate::hued::HUED_EFFECT_TIME_SCALE`] runs the effect as
+    /// `UOHuedParticleEffectNif` (half speed); the lifetime tick countdown still counts one tick per update.
+    pub fn set_time_scale(&mut self, scale: f32) {
+        self.time_scale = scale;
+    }
+
+    pub fn time_scale(&self) -> f32 {
+        self.time_scale
     }
 
     /// The lights of [`MeshDraw`] and particle colours.
@@ -222,12 +233,13 @@ impl<R: CrtRng> NifEffectInstance<R> {
         }
     }
 
-    /// Advances by `dt` seconds (`UOParticleEffectNif::Update`).
+    /// Advances by `dt` seconds times the time scale (`UOParticleEffectNif::Update`,
+    /// `UOHuedParticleEffectNif::Update` 0x0041edc0).
     pub fn update_seconds(&mut self, dt: f32, node: &NodeTransform) {
         if !self.running {
             return;
         }
-        self.elapsed += dt;
+        self.elapsed += dt * self.time_scale;
         if let Some(ticks) = &mut self.lifetime_ticks {
             *ticks = ticks.saturating_sub(1);
         }

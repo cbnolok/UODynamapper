@@ -11,7 +11,8 @@ use std::sync::Arc;
 
 use eframe::egui;
 use uocf::enhanced::effect_definition::{
-    EffectDefinition, EffectEntryKey, EffectIssueSeverity, EffectValidationContext, ParticleEffect, PropertyFlagMode,
+    EffectDefinition, EffectEntryKey, EffectIssueSeverity, EffectValidationContext, PacketEffectPath, ParticleEffect,
+    PropertyFlagMode,
     EFFECT_DEFINITION_COLLECTION_UOP_NAME, PARTICLE_ATTACH_PROJECTILE_ONLY, RANDOM_WEIGHT_TOTAL,
 };
 use uocf::enhanced::effect_texture::{effect_texture_hash, effect_texture_path, EFFECT_TEXTURE_UOP_NAME};
@@ -23,8 +24,8 @@ use crate::logic::effect_files::{
     FileKind, FileRow, FileStatus, ScriptIssue, ScriptSeverity, IMPORTABLE_EXTENSIONS,
 };
 use crate::logic::effect_preview::{
-    contact_sheet, export_times, fit_bounds, preview_view, render_canvas, render_frames, write_png_sequence,
-    CameraOrbit, LoopMode, PreviewInput, PreviewScene, PreviewSimulation, SimulationSettings, ViewSettings,
+    contact_sheet, export_times, fit_bounds, load_hue_atlas, preview_view, render_canvas, render_frames,
+    write_png_sequence, CameraOrbit, LoopMode, PreviewInput, PreviewScene, PreviewSimulation, SimulationSettings, ViewSettings,
     WorldBounds, DEFAULT_EXPORT_FRAMES, DEFAULT_MOVE_SPEED, LIGHTING_NOTE, MAX_CAMERA_PITCH_DEGREES,
     MAX_CAMERA_YAW_DEGREES, MAX_EXPORT_FRAMES, MAX_LOD_LEVEL, MAX_MOVE_SPEED, MAX_PLAYBACK_SPEED, MAX_TIMELINE_S,
     MAX_ZOOM, MIN_CAMERA_PITCH_DEGREES, MIN_CAMERA_YAW_DEGREES, MIN_PLAYBACK_SPEED, MIN_TIMELINE_S, MIN_ZOOM,
@@ -33,10 +34,10 @@ use crate::logic::effect_preview::{
 use crate::logic::effects_editor::{
     accepts_children, add_definition, add_entry, add_keyed_list, build_file_users, child_list_label, child_lists,
     definition_at, definition_at_mut, duplicate_definition, duplicate_entry, export_kdl, import_kdl, issue_selection,
-    describe_packet_effect, move_definition, next_free_entry_id, open_collection, packet_effect_for_collection_id, parse_id, particle_name,
+    describe_packet_effect, move_definition, next_free_entry_id, open_collection, packet_routes_for_collection_id, parse_id, particle_name,
     remove_definition, remove_entry, remove_keyed_list, same_file, save_collection, set_entry_id, BrowseView,
     ChildList, CollectionSource, DefinitionFilter, DefinitionKind, EffectsDocument, EffectsEditKey, EffectsSelection,
-    FileOverride, FileUser, NameIndex, PacketMapping, ParticleKindFilter, PathStep,
+    FileOverride, FileUser, NameIndex, PacketRoute, ParticleKindFilter, PathStep, PACKET_UNREACHABLE_NOTE,
 };
 
 const BROWSE_PANEL_WIDTH: f32 = 360.0;
@@ -73,6 +74,20 @@ const DIRTY_MARKER: &str = "*";
 const PLAY_ICON: &str = "▶";
 const PAUSE_ICON: &str = "⏸";
 const RESTART_ICON: &str = "⏮";
+/// Largest object hue the preview takes (object hues are 16-bit; the atlas holds 1..=`MAX_EC_HUES`).
+const MAX_PREVIEW_HUE: u32 = u16::MAX as u32;
+/// Gradient samples of a hue swatch.
+const HUE_SWATCH_SAMPLES: usize = 16;
+/// Size of a hue swatch, points.
+const HUE_SWATCH_SIZE: egui::Vec2 = egui::vec2(96.0, 14.0);
+/// Height of the hue picker list, points.
+const HUE_PICKER_HEIGHT: f32 = 320.0;
+const HUE_PICKER_ROW_HEIGHT: f32 = 18.0;
+const HUE_NOTE: &str = "The hue of the object the effect plays on. Only NIF particles whose definition sets hued \
+    take it (UOHuedParticleEffectNif: half speed, drawn offscreen through the Hues.uop atlas onto a camera-facing \
+    quad); Chaos particles never do. Collection entries played by 0xC7 have no object and are never hued; the item \
+    of a packet's tile effect or projectile takes the packet hue + 1, which reaches the hued particles of its \
+    tileart effects. Animation frame effects take the animated object's hue.";
 
 const UOP_FILTER: (&str, &[&str]) = ("UOP package", &["uop"]);
 const KDL_FILTER: (&str, &[&str]) = ("KDL text", &["kdl"]);
@@ -109,6 +124,8 @@ pub struct EffectsPanelState {
     pending_open: Option<OpenRequest>,
     add_kind: Option<DefinitionKind>,
     new_entry_id: String,
+    /// The packet field of [`Self::packet_lookup`].
+    packet_lookup_path: PacketEffectPath,
     /// A 0xC7 packet effect value typed to find the entry it plays.
     packet_lookup: String,
     /// The id typed for the selected entry, for the entry index and id it was taken from.
@@ -242,8 +259,29 @@ struct PreviewPanel {
     /// Increased on every scene rebuild, for the render stamp.
     build: u64,
     texture: Option<egui::TextureHandle>,
-    rendered: Option<(u64, u32, ViewSettings)>,
+    /// The scene build, the time, the view and whether the hue atlas was there.
+    rendered: Option<(u64, u32, ViewSettings, bool)>,
     export_frames: usize,
+    /// The hue atlas of a client directory, loaded when a hue is first set.
+    hue_atlas: Option<(PathBuf, Result<Arc<particle_sim::raster::RasterTexture>, String>)>,
+    /// Filter of the hue picker (number or name).
+    hue_filter: String,
+}
+
+impl PreviewPanel {
+    /// The hue atlas of `client_dir`, loading it once.
+    fn hue_atlas(&mut self, client_dir: Option<&Path>) -> Option<&Result<Arc<particle_sim::raster::RasterTexture>, String>> {
+        let dir = client_dir?;
+        if self.hue_atlas.as_ref().is_none_or(|(loaded, _)| loaded != dir) {
+            self.hue_atlas = Some((dir.to_path_buf(), load_hue_atlas(dir).map(Arc::new)));
+        }
+        self.hue_atlas.as_ref().map(|(_, atlas)| atlas)
+    }
+
+    /// The loaded hue atlas, if any.
+    fn loaded_hue_atlas(&self) -> Option<Arc<particle_sim::raster::RasterTexture>> {
+        self.hue_atlas.as_ref().and_then(|(_, atlas)| atlas.as_ref().ok()).cloned()
+    }
 }
 
 impl Default for PreviewPanel {
@@ -268,6 +306,8 @@ impl Default for PreviewPanel {
             texture: None,
             rendered: None,
             export_frames: DEFAULT_EXPORT_FRAMES,
+            hue_atlas: None,
+            hue_filter: String::new(),
         }
     }
 }
@@ -931,10 +971,19 @@ fn entry_key_label(key: EffectEntryKey) -> String {
     }
 }
 
+/// The packet value of a list row: the fixed effect field's, else the explode effect field's.
 fn packet_label(key: EffectEntryKey) -> String {
-    match key.id().map(packet_effect_for_collection_id) {
-        Some(PacketMapping::Packet(packet)) => format!("packet {packet}"),
-        Some(PacketMapping::Unreachable(_)) | None => "no packet".to_string(),
+    let routes = key.id().map(packet_routes_for_collection_id).unwrap_or_default();
+    let value = |wanted: PacketEffectPath| {
+        routes.iter().find_map(|route| match route {
+            PacketRoute::Field { path, value } if *path == wanted => Some(*value),
+            _ => None,
+        })
+    };
+    match (value(PacketEffectPath::FixedEffect), value(PacketEffectPath::MovingExplosion)) {
+        (Some(value), _) => format!("packet {value}"),
+        (None, Some(value)) => format!("explode {value}"),
+        (None, None) => "no packet".to_string(),
     }
 }
 
@@ -1160,13 +1209,29 @@ fn entries_list(app: &mut UopInspectorApp, lookups: &Lookups, ui: &mut egui::Ui)
     }
 }
 
-/// Finds the collection entry a 0xC7 packet effect value plays.
+/// Finds the collection entry a value of a 0xC7 packet field plays.
 fn packet_lookup_ui(state: &mut EffectsPanelState, ui: &mut egui::Ui) {
     let mut open = None;
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label("Packet effect");
-        ui.add(egui::TextEdit::singleline(&mut state.packet_lookup).hint_text("0xC7 value").desired_width(ID_FILTER_WIDTH))
-            .on_hover_text("The effect field of the 0xC7 packet (decimal or 0x hex): it plays collection id = value - 1.");
+        egui::ComboBox::from_id_salt("effects_packet_lookup_path")
+            .selected_text(state.packet_lookup_path.label())
+            .show_ui(ui, |ui| {
+                for path in PacketEffectPath::ALL {
+                    ui.selectable_value(&mut state.packet_lookup_path, path, path.label());
+                }
+            })
+            .response
+            .on_hover_text(
+                "The 0xC7 field: the effect of a fixed effect (types 2/3), the effect of a moving effect (type 0) \
+                 or its explode effect. 0x70 and 0xC0 leave both 0; type 1 (lightning) plays collection id 666.",
+            );
+        ui.add(egui::TextEdit::singleline(&mut state.packet_lookup).hint_text("value").desired_width(ID_FILTER_WIDTH))
+            .on_hover_text(
+                "Decimal or 0x hex. Fixed effects play collection id = value - 1 (9501: nothing, 0 and 9502: the \
+                 classic tile effect); explode effects play value - 1 (0: the classic explosion); moving effects \
+                 play no entry (9502 hides the projectile item's tileart effects).",
+            );
         if state.packet_lookup.trim().is_empty() {
             return;
         }
@@ -1174,7 +1239,7 @@ fn packet_lookup_ui(state: &mut EffectsPanelState, ui: &mut egui::Ui) {
             ui.colored_label(ERROR_COLOR, "not a 16-bit value");
             return;
         };
-        match describe_packet_effect(packet) {
+        match describe_packet_effect(state.packet_lookup_path, packet) {
             Ok(id) => {
                 let entry = state.document.collection().entries.iter().position(|entry| entry.key.id() == Some(id));
                 match entry {
@@ -1300,7 +1365,8 @@ fn details_panel(app: &mut UopInspectorApp, lookups: &Lookups, ctx: &egui::Conte
         None => {
             ui.label(
                 "Select a collection entry, a tileart record or a file on the left. The 0xC7 packet plays collection \
-                 id = packet effect - 1; tileart effects play on the items of that graphic.",
+                 id = packet field - 1 (see the packet paths of an entry); tileart effects play on the items of that \
+                 graphic.",
             );
         }
         Some(EffectsSelection::Entry { entry }) => entry_details(app, lookups, ui, entry, None),
@@ -1349,12 +1415,26 @@ fn entry_details(app: &mut UopInspectorApp, lookups: &Lookups, ui: &mut egui::Ui
         ui.label("Name hash");
         ui.monospace(format!("{:016x}", original.key.hash()));
         ui.end_row();
-        ui.label("0xC7 packet effect").on_hover_text("The packet plays collection id = effect - 1 (9501: none, 9502: classic).");
-        match original.key.id().map(packet_effect_for_collection_id) {
-            Some(PacketMapping::Packet(packet)) => ui.label(format!("{packet} (0x{packet:04X})")),
-            Some(PacketMapping::Unreachable(reason)) => ui.colored_label(WARNING_COLOR, reason),
-            None => ui.label("none"),
-        };
+        ui.label("Packet paths").on_hover_text(
+            "Every packet path and value that plays this entry: fixed effects (0xC7 types 2/3) and explode effects \
+             (type 0) play id = value - 1, except that fixed effects intercept 9501 (nothing) and 9502 (classic), so \
+             ids 9500 and 9501 play only as explode effects. Played entries have no object: never hued.",
+        );
+        match original.key.id().map(packet_routes_for_collection_id) {
+            Some(routes) if !routes.is_empty() => {
+                ui.vertical(|ui| {
+                    for route in routes {
+                        ui.label(route.label());
+                    }
+                });
+            }
+            Some(_) => {
+                ui.colored_label(WARNING_COLOR, PACKET_UNREACHABLE_NOTE);
+            }
+            None => {
+                ui.label("none");
+            }
+        }
         ui.end_row();
     });
     ui.horizontal(|ui| {
@@ -2318,9 +2398,14 @@ fn refresh_preview(state: &mut EffectsPanelState, lookups: &Lookups) {
 }
 
 fn preview_panel(app: &mut UopInspectorApp, lookups: &Lookups, ctx: &egui::Context, ui: &mut egui::Ui) {
+    let hue_names = app.ec_hues.clone();
     let state = &mut app.effects_panel;
     refresh_preview(state, lookups);
     let preview = &mut state.preview;
+    if preview.settings.hue != particle_sim::hued::NO_HUE {
+        preview.hue_atlas(lookups.client_dir.as_deref());
+    }
+    let hue_atlas = preview.loaded_hue_atlas();
     ui.heading("Preview");
     ui.label(&preview.label);
     let Some(scene) = preview.scene.clone() else {
@@ -2349,9 +2434,9 @@ fn preview_panel(app: &mut UopInspectorApp, lookups: &Lookups, ctx: &egui::Conte
     // Frame.
     let view = preview_view(preview.bounds, &preview.view, PREVIEW_RESOLUTION_PX, PREVIEW_RESOLUTION_PX);
     if let Some(simulation) = &preview.simulation {
-        let stamp = (preview.build, simulation.time_ms(), preview.view);
+        let stamp = (preview.build, simulation.time_ms(), preview.view, hue_atlas.is_some());
         if preview.rendered != Some(stamp) || preview.texture.is_none() {
-            let canvas = render_canvas(&scene, simulation, &view, &preview.view);
+            let canvas = render_canvas(&scene, simulation, &view, &preview.view, hue_atlas.as_deref());
             let image = egui::ColorImage::from_rgba_unmultiplied([canvas.width, canvas.height], &canvas.to_rgba8());
             match preview.texture.as_mut() {
                 Some(texture) => texture.set(image, egui::TextureOptions::LINEAR),
@@ -2456,6 +2541,9 @@ fn preview_panel(app: &mut UopInspectorApp, lookups: &Lookups, ctx: &egui::Conte
         ui.label("LOD setting").on_hover_text("The particle LOD setting LOD definitions play for (UI Low/Medium/High = 1..3).");
         ui.add(egui::Slider::new(&mut preview.settings.lod_level, 0..=MAX_LOD_LEVEL));
         ui.end_row();
+        ui.label("Hue").on_hover_text(HUE_NOTE);
+        hue_control(ui, preview, hue_atlas.as_deref(), hue_names.as_deref());
+        ui.end_row();
         ui.label("Background");
         ui.color_edit_button_rgba_unmultiplied(&mut preview.view.background);
         ui.end_row();
@@ -2472,8 +2560,9 @@ fn preview_panel(app: &mut UopInspectorApp, lookups: &Lookups, ctx: &egui::Conte
         });
         ui.end_row();
         ui.label("Camera").on_hover_text(
-            "Orbit about the view centre. The default is the client's view: looking north, 45 degrees down. \
-             Changing it re-simulates (NIF billboards face the camera).",
+            "Orbit about the view centre. The default is the client's view: effects are camera-aligned billboards, \
+             so the client sees an effect's local frame orthographically along +y with +z up (x right). Changing \
+             it re-simulates (NIF billboards face the camera).",
         );
         ui.horizontal(|ui| {
             let orbit = &mut preview.view.orbit;
@@ -2483,15 +2572,15 @@ fn preview_panel(app: &mut UopInspectorApp, lookups: &Lookups, ctx: &egui::Conte
                     .prefix("yaw ")
                     .suffix(" deg"),
             )
-            .on_hover_text("Degrees from north toward east.");
+            .on_hover_text("Degrees from the client's view direction (+y) toward +x, about +z.");
             ui.add(
                 egui::DragValue::new(&mut orbit.pitch_degrees)
                     .range(MIN_CAMERA_PITCH_DEGREES..=MAX_CAMERA_PITCH_DEGREES)
                     .prefix("pitch ")
                     .suffix(" deg"),
             )
-            .on_hover_text("Degrees below the horizon.");
-            if ui.small_button("Client view").clicked() {
+            .on_hover_text("Degrees above the client's view (looking down along +y from +z).");
+            if ui.small_button("Client view").on_hover_text("Orthographic along local +y, +z up.").clicked() {
                 *orbit = CameraOrbit::default();
             }
         });
@@ -2519,6 +2608,18 @@ fn preview_panel(app: &mut UopInspectorApp, lookups: &Lookups, ctx: &egui::Conte
     });
 
     ui.weak(LIGHTING_NOTE);
+    if preview.settings.hue != particle_sim::hued::NO_HUE {
+        match &preview.hue_atlas {
+            Some((_, Err(error))) => ui.colored_label(WARNING_COLOR, format!("Hued parts are drawn unhued: {error}")),
+            None => ui.colored_label(WARNING_COLOR, "Hued parts are drawn unhued: no client directory for Hues.uop."),
+            Some((_, Ok(_))) => match &preview.simulation {
+                Some(simulation) if !simulation.has_hued_parts() => {
+                    ui.weak("No part plays hued (see the parts: Chaos, or hued not set).")
+                }
+                _ => ui.weak("Hued NIF parts: half speed, drawn through the hue atlas."),
+            },
+        };
+    }
 
     ui.separator();
     ui.strong("Parts");
@@ -2557,7 +2658,7 @@ fn preview_panel(app: &mut UopInspectorApp, lookups: &Lookups, ctx: &egui::Conte
         let export_sheet = ui.button("Contact sheet...").clicked();
         if export_sequence || export_sheet {
             let times = export_times(&preview.settings, preview.export_frames);
-            let frames = render_frames(&scene, &preview.settings, &view, &preview.view, &times);
+            let frames = render_frames(&scene, &preview.settings, &view, &preview.view, hue_atlas.as_deref(), &times);
             let result = if export_sequence {
                 crate::dialog::pick_folder()
                     .map(|dir| write_png_sequence(&frames, &dir, "effect").map(|count| format!("Wrote {count} frames to {}.", dir.display())))
@@ -2579,6 +2680,72 @@ fn preview_panel(app: &mut UopInspectorApp, lookups: &Lookups, ctx: &egui::Conte
             }
         }
     });
+}
+
+/// The hue of the preview: a number, a swatch of its gradient and a picker of the client's hues.
+fn hue_control(
+    ui: &mut egui::Ui,
+    preview: &mut PreviewPanel,
+    atlas: Option<&particle_sim::raster::RasterTexture>,
+    names: Option<&uocf::enhanced::hues::EcHuePackage>,
+) {
+    ui.horizontal(|ui| {
+        ui.add(egui::DragValue::new(&mut preview.settings.hue).range(0..=MAX_PREVIEW_HUE))
+            .on_hover_text("0: no hue.");
+        hue_swatch(ui, atlas, preview.settings.hue);
+        let name = u16::try_from(preview.settings.hue).ok().and_then(|hue| names?.hue_name(hue));
+        if let Some(name) = name {
+            ui.weak(name);
+        }
+        ui.menu_button("Pick...", |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Filter");
+                ui.text_edit_singleline(&mut preview.hue_filter);
+            });
+            let filter = preview.hue_filter.trim().to_ascii_lowercase();
+            let hues: Vec<(u32, &str)> = (1..=u32::from(uocf::enhanced::hues::MAX_EC_HUES))
+                .map(|hue| (hue, u16::try_from(hue).ok().and_then(|hue| names?.hue_name(hue)).unwrap_or("")))
+                .filter(|(hue, name)| {
+                    filter.is_empty() || hue.to_string().contains(&filter) || name.to_ascii_lowercase().contains(&filter)
+                })
+                .collect();
+            egui::ScrollArea::vertical().max_height(HUE_PICKER_HEIGHT).show_rows(ui, HUE_PICKER_ROW_HEIGHT, hues.len(), |ui, rows| {
+                for &(hue, name) in &hues[rows] {
+                    ui.horizontal(|ui| {
+                        hue_swatch(ui, atlas, hue);
+                        if ui.selectable_label(preview.settings.hue == hue, format!("{hue} {name}")).clicked() {
+                            preview.settings.hue = hue;
+                            ui.close_kind(egui::UiKind::Menu);
+                        }
+                    });
+                }
+            });
+        });
+        if preview.settings.hue != particle_sim::hued::NO_HUE && ui.small_button("None").clicked() {
+            preview.settings.hue = particle_sim::hued::NO_HUE;
+        }
+    });
+}
+
+/// The gradient of hue `hue` in the atlas, dark to bright (the entries the shader aims at); empty without the
+/// atlas or a hue.
+fn hue_swatch(ui: &mut egui::Ui, atlas: Option<&particle_sim::raster::RasterTexture>, hue: u32) {
+    use particle_sim::hued::{hue_lookup, HueAtlasSampling, NO_HUE};
+    let (rect, _) = ui.allocate_exact_size(HUE_SWATCH_SIZE, egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    painter.rect_stroke(rect, 0.0, ui.visuals().widgets.noninteractive.bg_stroke, egui::StrokeKind::Inside);
+    let Some(atlas) = atlas.filter(|_| hue != NO_HUE) else {
+        return;
+    };
+    let width = rect.width() / HUE_SWATCH_SAMPLES as f32;
+    for sample in 0..HUE_SWATCH_SAMPLES {
+        let luminance = sample as f32 / (HUE_SWATCH_SAMPLES - 1) as f32;
+        let [red, green, blue, alpha] = hue_lookup(atlas, hue, luminance, HueAtlasSampling::IntendedEntry);
+        let color = egui::Rgba::from_rgba_unmultiplied(red, green, blue, alpha);
+        let left = rect.left() + sample as f32 * width;
+        let cell = egui::Rect::from_min_max(egui::pos2(left, rect.top()), egui::pos2(left + width, rect.bottom()));
+        painter.rect_filled(cell, 0.0, color);
+    }
 }
 
 /// Brings the simulation to the playback clock: forward in steps, or re-simulated from 0 when going back or when

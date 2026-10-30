@@ -15,6 +15,10 @@ pub const FIXED_PALETTE_NAME: &str = "0xFA5C6A1BC0D8B01B_.dds";
 pub const MAX_EC_HUES: u16 = 3000;
 pub const HUE_STRIP_WIDTH: u32 = 256;
 pub const HUES_ATLAS_HEIGHT: u32 = 1024;
+/// Width of `HUES_ATLAS_PATH`: four `HUE_STRIP_WIDTH` columns of `HUES_ATLAS_HEIGHT` hue rows
+/// (the client's `Hues.uop` holds a 1024 x 1024 uncompressed A8R8G8B8 DDS; columns 0..2 hold
+/// hues 1..3000, column 3 and row 0 of column 0 are transparent black).
+pub const HUES_ATLAS_WIDTH: u32 = 1024;
 
 /// Entries of one hue table; the table is indexed by the red byte of a hueable colour.
 pub const HUE_TABLE_ENTRIES: usize = 256;
