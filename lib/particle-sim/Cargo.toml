@@ -1,0 +1,42 @@
+[package]
+name = "particle-sim"
+version = "0.1.0"
+edition = "2024"
+description = "CPU simulation of the Enhanced Client particle effects (Chaos .ems scripts), engine-neutral render output"
+#resolver = "3"
+
+[lints.clippy]
+collapsible_if = "allow"
+empty_line_after_doc_comments = "allow"
+manual_div_ceil = "allow"
+manual_is_multiple_of = "allow"
+needless_lifetimes = "allow"
+needless_range_loop = "allow"
+nonminimal_bool = "allow"
+too_many_arguments = "allow"
+
+[features]
+default = ["uocf"]
+# Compiles uocf Chaos script syntax trees into `ChaosSystemDesc`. Runtime-only users (a renderer that loads
+# compiled descriptions from its own package) disable default features and do not pull uocf in.
+uocf = ["dep:uocf"]
+
+[dependencies]
+uocf = { path = "../uocf", optional = true }
+
+[dev-dependencies]
+# The ignored real-file test and the preview example read EffectTexture.uop through uocf.
+uocf = { path = "../uocf" }
+image = { workspace = true, features = ["png", "tga"] }
+dds = { version = "0.2", default-features = false }
+
+[[example]]
+name = "chaos_preview"
+required-features = ["uocf"]
+
+[[test]]
+name = "real_files"
+required-features = ["uocf"]
+
+#[lib]
+#crate-type = ["dylib", "rlib"]

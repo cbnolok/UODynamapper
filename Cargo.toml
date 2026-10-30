@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "dynamapper",
     "lib/uocf",
+    "lib/particle-sim",
     "lib/udd-conv",
     "lib/udd-image-codecs",
     "lib/udd-container",
@@ -225,6 +226,12 @@ debug-assertions = true
 
 [profile.dev.package.udd-conv-gui]
 opt-level = 1
+debug = "line-tables-only"
+debug-assertions = true
+#strip = "debuginfo"
+
+[profile.dev.package.particle-sim]
+opt-level = 2
 debug = "line-tables-only"
 debug-assertions = true
 #strip = "debuginfo"

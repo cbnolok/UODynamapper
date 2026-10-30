@@ -5524,6 +5524,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "particle-sim"
+version = "0.1.0"
+dependencies = [
+ "dds",
+ "image",
+ "uocf",
+]
+
+[[package]]
 name = "peniko"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
