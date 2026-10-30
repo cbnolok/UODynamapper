@@ -71,13 +71,7 @@ impl UopBlock {
         let current_pos = reader.stream_position()?;
 
         for file in &mut self.files {
-            if file.has_size() && file.data().is_none() {
-                let payload_address = file.data_block_address() + file.data_block_length() as u64;
-                reader.seek(SeekFrom::Start(payload_address))?;
-                let mut buffer = vec![0u8; file.compressed_size() as usize];
-                reader.read_exact(&mut buffer)?;
-                file.set_data(std::sync::Arc::from(buffer));
-            }
+            file.load_data_from(reader)?;
         }
 
         reader.seek(SeekFrom::Start(current_pos))?;

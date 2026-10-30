@@ -13,6 +13,10 @@
 //! - File payload bytes do not live inside the header or inside the block header.
 //!   They are stored later in the file, after metadata, and each file entry points
 //!   at its own payload through `data_block_address`.
+//! - A payload may be preceded by a `data_block_length`-byte data block header.
+//!   Client packages have 12 bytes there (`u16 3`, `u16 8`, `u64` FILETIME) and
+//!   their `data_block_hash` is the Adler-32 of that header. Loading keeps the
+//!   header bytes and saving writes them back, so a loaded package re-saves intact.
 
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -574,7 +578,7 @@ impl UopPackage {
 
             for file in block.files_mut() {
                 file.set_data_block_address(payload_offset);
-                payload_offset += file.compressed_size() as u64;
+                payload_offset += file.data_block_length() as u64 + file.compressed_size() as u64;
             }
         }
     }
@@ -616,8 +620,24 @@ impl UopPackage {
 
     fn write_payloads(&self, writer: &mut File) -> io::Result<()> {
         // Payloads are emitted in the same order used during layout computation,
-        // so every previously assigned `data_block_address` remains valid.
+        // so every previously assigned `data_block_address` remains valid. A
+        // data block header loaded from a source package precedes its payload.
         for file in self.iter_files() {
+            if file.data_block_length() != 0 {
+                let header = file
+                    .data_block_header()
+                    .filter(|header| header.len() == file.data_block_length() as usize)
+                    .ok_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!(
+                                "data block header for hash {:016X} has not been loaded into memory",
+                                file.filename_hash()
+                            ),
+                        )
+                    })?;
+                writer.write_all(header)?;
+            }
             let data = file.data().ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,

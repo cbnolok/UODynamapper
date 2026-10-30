@@ -282,6 +282,46 @@ fn package_recompress_preserves_mythic_and_zlib_bwt_entries() {
 }
 
 #[test]
+fn resaving_preserves_data_block_headers() {
+    // Client packages store a 12-byte header (u16 3, u16 8, u64 FILETIME) before each payload.
+    const HEADER: [u8; 12] = [3, 0, 8, 0, 1, 2, 3, 4, 5, 6, 7, 8];
+    const WITH_HEADER: &str = "build/header/00000000.bin";
+    const WITHOUT_HEADER: &str = "build/header/00000001.bin";
+    let first = temp_uop_path("uop_header_first");
+    let second = temp_uop_path("uop_header_second");
+
+    let mut package = UopPackage::new_default();
+    package
+        .add_file_from_memory(b"payload with header", WITH_HEADER, CompressionFlag::Zlib)
+        .expect("add entry with header");
+    package
+        .add_file_from_memory(b"payload without header", WITHOUT_HEADER, CompressionFlag::None)
+        .expect("add entry without header");
+    package
+        .get_file_by_hash_mut(hash_file_name_single(WITH_HEADER))
+        .expect("entry with header")
+        .set_data_block_header(Arc::from(HEADER.as_slice()));
+    package.finalize_and_save(&first).expect("save package");
+
+    for mode in [LoadMode::Eager, LoadMode::Lazy] {
+        let mut loaded = UopPackage::load_with_mode(&first, mode).expect("load package");
+        loaded.finalize_and_save(&second).expect("save the loaded package");
+
+        let resaved = UopPackage::load(&second).expect("load the saved package");
+        let file = resaved.get_file_by_name(WITH_HEADER).expect("entry with header");
+        assert_eq!(file.data_block_length() as usize, HEADER.len(), "{mode:?}");
+        assert_eq!(file.data_block_header().map(|header| &header[..]), Some(&HEADER[..]), "{mode:?}");
+        assert_eq!(file.unpack().expect("payload with header"), b"payload with header", "{mode:?}");
+        let file = resaved.get_file_by_name(WITHOUT_HEADER).expect("entry without header");
+        assert_eq!(file.data_block_header(), None, "{mode:?}");
+        assert_eq!(file.unpack().expect("payload without header"), b"payload without header", "{mode:?}");
+    }
+
+    let _ = fs::remove_file(first);
+    let _ = fs::remove_file(second);
+}
+
+#[test]
 fn get_file_by_hash_returns_none_for_missing_entry() {
     let mut package = UopPackage::new_default();
     package

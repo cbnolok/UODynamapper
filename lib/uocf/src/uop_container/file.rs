@@ -81,6 +81,9 @@ pub struct UopFile {
     compression: CompressionFlag,
     /// The compressed file data. None if not yet loaded into memory.
     data: Option<Arc<[u8]>>,
+    /// The `data_block_length` bytes stored before the payload, loaded with it. Client packages have a 12-byte
+    /// header there and their `data_block_hash` is the Adler-32 of it. None if not loaded or absent.
+    data_block_header: Option<Arc<[u8]>>,
 }
 
 impl UopFile {
@@ -95,6 +98,7 @@ impl UopFile {
             data_block_hash: 0,
             compression: CompressionFlag::None,
             data: None,
+            data_block_header: None,
         }
     }
 
@@ -168,20 +172,25 @@ impl UopFile {
             data_block_hash,
             compression,
             data: None,
+            data_block_header: None,
         })
     }
 
-    /// Load the compressed payload bytes referenced by this entry from a package reader.
+    /// Load the compressed payload bytes referenced by this entry, and the data block header before them, from a
+    /// package reader.
     pub fn load_data_from<R: Read + Seek>(&mut self, reader: &mut R) -> Result<(), std::io::Error> {
         if !self.has_size() || self.data.is_some() {
             return Ok(());
         }
 
-        let payload_address = self.data_block_address + self.data_block_length as u64;
-        reader.seek(SeekFrom::Start(payload_address))?;
-        let mut buffer = vec![0u8; self.compressed_size as usize];
+        reader.seek(SeekFrom::Start(self.data_block_address))?;
+        let header_length = self.data_block_length as usize;
+        let mut buffer = vec![0u8; header_length + self.compressed_size as usize];
         reader.read_exact(&mut buffer)?;
-        self.data = Some(Arc::from(buffer));
+        if header_length != 0 {
+            self.data_block_header = Some(Arc::from(&buffer[..header_length]));
+        }
+        self.data = Some(Arc::from(&buffer[header_length..]));
         Ok(())
     }
 
@@ -198,6 +207,18 @@ impl UopFile {
     /// Returns the length of the data block header.
     pub fn data_block_length(&self) -> u32 {
         self.data_block_length
+    }
+
+    /// Returns the data block header bytes stored before the payload, once loaded.
+    pub fn data_block_header(&self) -> Option<&Arc<[u8]>> {
+        self.data_block_header.as_ref()
+    }
+
+    /// Sets the data block header bytes stored before the payload, and `data_block_length` to their length.
+    /// The `data_block_hash` is left unchanged.
+    pub fn set_data_block_header(&mut self, header: Arc<[u8]>) {
+        self.data_block_length = header.len() as u32;
+        self.data_block_header = Some(header);
     }
 
     /// Returns the size of the compressed file data.
