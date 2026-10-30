@@ -31,6 +31,7 @@ use crate::logic::effect_preview::{
     MAX_ZOOM, MIN_CAMERA_PITCH_DEGREES, MIN_CAMERA_YAW_DEGREES, MIN_PLAYBACK_SPEED, MIN_TIMELINE_S, MIN_ZOOM,
     PREVIEW_RESOLUTION_PX,
 };
+use crate::logic::effect_gltf::{export_effect as export_gltf_effect, glb_file_name, write_glb, GltfSources, GLB_FILTER};
 use crate::logic::effects_editor::{
     accepts_children, add_definition, add_entry, add_keyed_list, build_file_users, child_list_label, child_lists,
     definition_at, definition_at_mut, duplicate_definition, duplicate_entry, export_kdl, import_kdl, issue_selection,
@@ -266,6 +267,8 @@ struct PreviewPanel {
     hue_atlas: Option<(PathBuf, Result<Arc<particle_sim::raster::RasterTexture>, String>)>,
     /// Filter of the hue picker (number or name).
     hue_filter: String,
+    /// glTF export: bake the particle simulation into per-frame meshes.
+    gltf_bake: bool,
 }
 
 impl PreviewPanel {
@@ -308,6 +311,7 @@ impl Default for PreviewPanel {
             export_frames: DEFAULT_EXPORT_FRAMES,
             hue_atlas: None,
             hue_filter: String::new(),
+            gltf_bake: false,
         }
     }
 }
@@ -2359,24 +2363,14 @@ fn refresh_preview(state: &mut EffectsPanelState, lookups: &Lookups) {
     let input = PreviewInput { strings: lookups.strings.as_deref(), payload: &payload, nif_drafts: Some(&nif_drafts) };
     let collection = state.document.collection();
     let settings = preview.settings;
+    let definitions = target_definitions(&target, &state.document, lookups);
     let (label, scene) = match &target {
         PreviewTarget::Entry(entry) => {
-            let definitions = collection.entries.get(*entry).map(|entry| entry.definitions.as_slice()).unwrap_or_default();
             let id = collection.entries.get(*entry).map_or_else(String::new, |entry| entry_key_label(entry.key));
-            (format!("Entry {id}: all top-level definitions"), PreviewScene::build(definitions, &settings, &input))
+            (format!("Entry {id}: all top-level definitions"), PreviewScene::build(&definitions, &settings, &input))
         }
-        PreviewTarget::Definition(entry, path) => {
-            let definition = collection.entries.get(*entry).and_then(|entry| definition_at(&entry.definitions, path));
-            let definitions: Vec<EffectDefinition> = definition.cloned().into_iter().collect();
-            ("Selected definition".to_string(), PreviewScene::build(&definitions, &settings, &input))
-        }
-        PreviewTarget::TileArt(tile_id, path) => {
-            let all = lookups.tileart(*tile_id).map(|file| file.entry.effects.as_slice()).unwrap_or_default();
-            let definitions: Vec<EffectDefinition> = if path.is_empty() {
-                all.to_vec()
-            } else {
-                definition_at(all, path).cloned().into_iter().collect()
-            };
+        PreviewTarget::Definition(..) => ("Selected definition".to_string(), PreviewScene::build(&definitions, &settings, &input)),
+        PreviewTarget::TileArt(tile_id, _) => {
             (format!("Tile 0x{tile_id:04X}"), PreviewScene::build_tileart(&definitions, &settings, &input))
         }
         PreviewTarget::Script(hash) => {
@@ -2685,7 +2679,81 @@ fn preview_panel(app: &mut UopInspectorApp, lookups: &Lookups, ctx: &egui::Conte
                 None => {}
             }
         }
+        ui.separator();
+        let target = preview.key.as_ref().map(|key| key.target.clone());
+        let gltf = ui
+            .add_enabled(target.is_some() && scene.has_playing_parts(), egui::Button::new("glTF..."))
+            .on_hover_text(format!("{}\n{EFFECT_GLTF_NOTE}", super::effects_nif::GLTF_EXPORT_NOTE))
+            .on_disabled_hover_text("Nothing previewable plays.");
+        ui.checkbox(&mut preview.gltf_bake, "bake particles").on_hover_text(super::effects_nif::GLTF_BAKE_NOTE);
+        if let (true, Some(target)) = (gltf.clicked(), target) {
+            let name = target_export_name(&target, &state.document, lookups);
+            if let Some(path) = save_file(GLB_FILTER, &glb_file_name(&name)) {
+                let definitions = target_definitions(&target, &state.document, lookups);
+                let overrides = state.document.files().clone();
+                let files = lookups.files.clone();
+                let payload =
+                    move |file: &str| files.as_ref().and_then(|files| files.payload(&overrides, effect_texture_hash(file)));
+                let drafts = state.document.nif_drafts().clone();
+                let nif_drafts = move |file: &str| drafts.get(&effect_texture_hash(file)).map(|draft| Arc::clone(&draft.nif));
+                let sources = GltfSources { payload: &payload, nif_drafts: &nif_drafts };
+                let options = super::effects_nif::gltf_options(preview.gltf_bake);
+                match write_glb(&path, &export_gltf_effect(&name, &scene, &definitions, &sources, &options)) {
+                    Ok(message) => {
+                        state.error = None;
+                        app.status_message = message;
+                    }
+                    Err(error) => state.error = Some(error),
+                }
+            }
+        }
     });
+}
+
+/// What the whole-effect glTF export adds.
+const EFFECT_GLTF_NOTE: &str = "Exports the parts this preview plays, each at its offset and scale as the client \
+     view places it (Chaos parts: their script and MESH .nif files). Position offsets and the preview's duration, \
+     loop and movement overrides are not applied.";
+
+/// The definition list the preview of `target` plays.
+fn target_definitions(target: &PreviewTarget, document: &EffectsDocument, lookups: &Lookups) -> Vec<EffectDefinition> {
+    let collection = document.collection();
+    match target {
+        PreviewTarget::Entry(entry) => collection.entries.get(*entry).map(|entry| entry.definitions.clone()).unwrap_or_default(),
+        PreviewTarget::Definition(entry, path) => collection
+            .entries
+            .get(*entry)
+            .and_then(|entry| definition_at(&entry.definitions, path))
+            .cloned()
+            .into_iter()
+            .collect(),
+        PreviewTarget::TileArt(tile_id, path) => {
+            let all = lookups.tileart(*tile_id).map(|file| file.entry.effects.as_slice()).unwrap_or_default();
+            if path.is_empty() {
+                all.to_vec()
+            } else {
+                definition_at(all, path).cloned().into_iter().collect()
+            }
+        }
+        // `PreviewScene::build_script` plays the file as one particle with default fields.
+        PreviewTarget::Script(_) => vec![DefinitionKind::Particle.new_definition()],
+    }
+}
+
+/// The name of a glTF export of `target`.
+fn target_export_name(target: &PreviewTarget, document: &EffectsDocument, lookups: &Lookups) -> String {
+    let collection = document.collection();
+    let entry_label = |entry: usize| collection.entries.get(entry).map_or_else(String::new, |entry| entry_key_label(entry.key));
+    match target {
+        PreviewTarget::Entry(entry) => format!("effect_{}", entry_label(*entry)),
+        PreviewTarget::Definition(entry, path) => {
+            format!("effect_{}_{}", entry_label(*entry), crate::logic::effect_preview::path_label(path))
+        }
+        PreviewTarget::TileArt(tile_id, _) => format!("tileart_0x{tile_id:04X}"),
+        PreviewTarget::Script(hash) => {
+            lookups.files.as_ref().and_then(|files| files.name(document.files(), *hash)).unwrap_or_else(|| format!("{hash:016x}"))
+        }
+    }
 }
 
 /// The hue of the preview: a number, a swatch of its gradient and a picker of the client's hues.

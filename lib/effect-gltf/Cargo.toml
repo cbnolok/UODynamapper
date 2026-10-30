@@ -1,0 +1,31 @@
+[package]
+name = "effect-gltf"
+version = "0.1.0"
+edition = "2024"
+description = "glTF 2.0 binary (.glb) export of the Enhanced Client effects (Gamebryo NIF scenes and whole particle effects)"
+#resolver = "3"
+
+[lints.clippy]
+collapsible_if = "allow"
+empty_line_after_doc_comments = "allow"
+manual_div_ceil = "allow"
+manual_is_multiple_of = "allow"
+needless_lifetimes = "allow"
+nonminimal_bool = "allow"
+too_many_arguments = "allow"
+
+[dependencies]
+gamebryo-nif = { path = "../gamebryo-nif" }
+# `nif` compiles the parsed files, `dds` decodes DDS textures; `uocf` is not needed here.
+particle-sim = { path = "../particle-sim", default-features = false, features = ["nif", "dds"] }
+serde_json.workspace = true
+image = { workspace = true, features = ["png", "tga"] }
+
+[dev-dependencies]
+# The ignored real-file test and the export example read EffectTexture.uop through uocf.
+uocf = { path = "../uocf" }
+# The real-file test compiles the Chaos scripts (`uocf` feature) to export them as effects.
+particle-sim = { path = "../particle-sim", default-features = false, features = ["nif", "dds", "uocf"] }
+
+#[lib]
+#crate-type = ["dylib", "rlib"]

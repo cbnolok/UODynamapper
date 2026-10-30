@@ -2909,6 +2909,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "effect-gltf"
+version = "0.1.0"
+dependencies = [
+ "gamebryo-nif",
+ "image",
+ "particle-sim",
+ "serde_json",
+ "uocf",
+]
+
+[[package]]
 name = "eframe"
 version = "0.37.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7132,6 +7143,7 @@ dependencies = [
  "bytemuck",
  "byteorder",
  "color-eyre",
+ "dds",
  "eframe",
  "egui 0.37.0",
  "egui_extras",
@@ -7139,6 +7151,7 @@ dependencies = [
  "image",
  "ktx2",
  "log",
+ "particle-sim",
  "serde",
  "udd-assets",
  "udd-container",
@@ -7278,6 +7291,7 @@ name = "uocf-inspector-gui"
 version = "0.1.0"
 dependencies = [
  "color-eyre",
+ "effect-gltf",
  "eframe",
  "egui 0.37.0",
  "egui_extras",

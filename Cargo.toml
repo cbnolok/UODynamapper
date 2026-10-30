@@ -5,6 +5,7 @@ members = [
     "lib/uocf",
     "lib/gamebryo-nif",
     "lib/particle-sim",
+    "lib/effect-gltf",
     "lib/udd-conv",
     "lib/udd-image-codecs",
     "lib/udd-container",

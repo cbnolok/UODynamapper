@@ -52,7 +52,7 @@ const BANK_SCALE: f32 = 4.0 / std::f32::consts::PI;
 
 /// The node channels a path interpolator sets: the translation, and the rotation with the follow flag.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct PathPose {
+pub struct PathPose {
     pub translation: Vec3,
     pub rotation: Option<Mat3>,
 }
@@ -170,7 +170,7 @@ impl PathInterp {
 
     /// `NiPathInterpolator::Update` at `time`; `None` without percentage or path keys (the node keeps its
     /// channels).
-    pub(crate) fn eval(&self, time: f32) -> Option<PathPose> {
+    pub fn eval(&self, time: f32) -> Option<PathPose> {
         let value = self.percent.as_ref()?.eval(time)?;
         let path = self.path.as_ref()?;
         let follow = self.flag(FLAG_FOLLOW);

@@ -9,8 +9,10 @@ use std::sync::Arc;
 use eframe::egui;
 use gamebryo_nif::reflect::{EnumKind, ListRef, StructRef};
 use gamebryo_nif::{Field, LinkKind, NifEnum, NifFile, Value, NULL_LINK};
+use uocf::enhanced::effect_texture::effect_texture_hash;
 
 use crate::logic::effect_files::{read_import, EffectFiles};
+use crate::logic::effect_gltf::{export_nif, glb_file_name, write_glb, GltfSources, GLB_FILTER};
 use crate::logic::effects_editor::EffectsDocument;
 use crate::logic::nif_editor::{
     block_label, current_nif, edit_nif_file, is_key_list, key_curves, link_candidates, ref_children, replace_nif_file,
@@ -68,6 +70,8 @@ pub struct NifEditorState {
     show_absent: bool,
     /// The outcome of the last edit (count fields updated or not).
     message: Option<String>,
+    /// glTF export: bake the particle simulation into per-frame meshes.
+    gltf_bake: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -143,10 +147,10 @@ pub fn nif_editor(
         Ok(nif) => Arc::clone(nif),
         Err(error) => {
             ui.colored_label(ERROR_COLOR, format!("Does not parse: {error}"));
-            return import_export_buttons(ui, document, hash, name, None);
+            return import_export_buttons(ui, document, files, hash, name, None, &mut editor.gltf_bake);
         }
     };
-    let mut result = import_export_buttons(ui, document, hash, name, Some(&nif));
+    let mut result = import_export_buttons(ui, document, files, hash, name, Some(&nif), &mut editor.gltf_bake);
     ui.label(format!(
         "{}, {} blocks, {} root(s).",
         nif.header.header_string.to_string_lossy(),
@@ -292,9 +296,11 @@ fn build_cache(key: (u64, u64, u64), document: &EffectsDocument, files: &EffectF
 fn import_export_buttons(
     ui: &mut egui::Ui,
     document: &mut EffectsDocument,
+    files: &EffectFiles,
     hash: u64,
     name: Option<&str>,
     nif: Option<&NifFile>,
+    gltf_bake: &mut bool,
 ) -> Option<Result<String, String>> {
     let mut result = None;
     ui.horizontal_wrapped(|ui| {
@@ -331,9 +337,44 @@ fn import_export_buttons(
                 });
             }
         }
+        ui.separator();
+        let gltf = ui
+            .add_enabled(nif.is_some(), egui::Button::new("Export glTF..."))
+            .on_hover_text(GLTF_EXPORT_NOTE)
+            .on_disabled_hover_text("The file does not parse.");
+        ui.checkbox(gltf_bake, "bake particles").on_hover_text(GLTF_BAKE_NOTE);
+        if gltf.clicked() {
+            let stem = name.map_or_else(|| format!("{hash:016x}"), str::to_owned);
+            let picked = crate::dialog::file_dialog()
+                .add_filter(GLB_FILTER.0, GLB_FILTER.1)
+                .set_file_name(glb_file_name(&stem))
+                .save_file();
+            if let (Some(nif), Some(path)) = (nif, picked) {
+                let overrides = document.files();
+                let payload = |file: &str| files.payload(overrides, effect_texture_hash(file));
+                let no_drafts = |_: &str| None;
+                let sources = GltfSources { payload: &payload, nif_drafts: &no_drafts };
+                let options = gltf_options(*gltf_bake);
+                result = Some(write_glb(&path, &export_nif(nif, &stem, &sources, &options)));
+            }
+        }
     });
     result
 }
+
+/// glTF export options of the Effects tab.
+pub fn gltf_options(bake: bool) -> effect_gltf::ExportOptions {
+    effect_gltf::ExportOptions { bake: bake.then(effect_gltf::BakeOptions::default), ..effect_gltf::ExportOptions::default() }
+}
+
+/// What the glTF export writes.
+pub const GLTF_EXPORT_NOTE: &str = "Writes a .glb for Blender and other glTF viewers: the node hierarchy, meshes with \
+     unlit materials and embedded textures, lights and the animation (Z-up turned to Y-up at the root). Particle \
+     systems are empty nodes with their full description in extras; the Gamebryo state glTF cannot express is \
+     in extras too.";
+/// What the bake option does.
+pub const GLTF_BAKE_NOTE: &str = "Also runs the particle simulation (fixed seed, 30 fps) and writes each frame's \
+     sprites as camera-facing quads shown during their frame. Larger files; the quads face the client view.";
 
 fn tree_node(ui: &mut egui::Ui, nif: &NifFile, block: usize, depth: usize, shown: &mut HashSet<usize>, selected: &mut usize) {
     let first = shown.insert(block);

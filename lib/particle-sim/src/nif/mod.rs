@@ -25,3 +25,4 @@ pub use compile::{NifCompileOutput, compile};
 pub use desc::NifEffectDesc;
 pub use instance::{NifEffect, NifEffectInstance, default_camera, texture_transform_matrix};
 pub use particles::NifParticle;
+pub use path::PathPose;
