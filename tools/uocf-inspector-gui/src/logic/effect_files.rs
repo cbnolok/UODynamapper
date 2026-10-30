@@ -16,7 +16,7 @@ use uocf::enhanced::textures::{ECImageFormat, TextureFile, TextureItem};
 use super::effects_editor::{refuse_protected, FileOverride};
 
 /// File name extensions that can be imported from disk into the package (lowercase).
-pub const IMPORTABLE_EXTENSIONS: [&str; 3] = ["ems", "tga", "dds"];
+pub const IMPORTABLE_EXTENSIONS: [&str; 4] = ["ems", "tga", "dds", "nif"];
 const EMS_EXTENSION: &str = "ems";
 const TGA_EXTENSION: &str = "tga";
 const NIF_EXTENSION: &str = "nif";
@@ -437,7 +437,7 @@ pub fn decode_texture(payload: &[u8]) -> Result<image::RgbaImage, String> {
 }
 
 /// Reads a file to import into the package: its lowercase base name and payload. Scripts may have issues
-/// (shown afterwards); textures must decode.
+/// (shown afterwards); textures must decode; NIF files must parse.
 pub fn read_import(path: &Path) -> Result<(String, Arc<[u8]>), String> {
     let name = path
         .file_name()
@@ -451,6 +451,8 @@ pub fn read_import(path: &Path) -> Result<(String, Arc<[u8]>), String> {
         if FileKind::detect(&payload, Some(&name)) != FileKind::Chaos {
             return Err(format!("{name}: not a Chaos script (it must start with particlesystem)"));
         }
+    } else if is_nif_name(&name) {
+        gamebryo_nif::NifFile::read(&payload).map_err(|error| format!("{name}: {error}"))?;
     } else {
         decode_texture(&payload).map_err(|error| format!("{name}: {error}"))?;
     }
@@ -545,6 +547,9 @@ mod tests {
         let text = dir.join("notes.txt");
         std::fs::write(&text, "x").unwrap();
         assert!(read_import(&text).is_err());
+        let bad_nif = dir.join("bad.nif");
+        std::fs::write(&bad_nif, "Gamebryo File Format, Version 20.0.0.4\n").unwrap();
+        assert!(read_import(&bad_nif).is_err());
         let bad_texture = dir.join("bad.dds");
         std::fs::write(&bad_texture, "DDS nope").unwrap();
         assert!(read_import(&bad_texture).is_err());

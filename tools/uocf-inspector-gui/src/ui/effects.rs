@@ -1,7 +1,8 @@
 //! Effects tab: browser, editor and previewer of the client effects: `EffectDefinitionCollection.uop` (the
 //! effects the 0xC7 packet plays), the effects of tileart records and the files of `EffectTexture.uop` (Chaos
-//! `.ems` scripts, textures, NIF scenes). Chaos particles play live with particle-sim. The editing model lives
-//! in `logic::effects_editor`, the files in `logic::effect_files`, the preview in `logic::effect_preview`.
+//! `.ems` scripts, textures, NIF scenes). Chaos and NIF effects play live with particle-sim. The editing model
+//! lives in `logic::effects_editor`, the files in `logic::effect_files`, NIF editing in `logic::nif_editor` (its
+//! UI in `ui::effects_nif`), the preview in `logic::effect_preview`.
 
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
@@ -22,10 +23,12 @@ use crate::logic::effect_files::{
     FileKind, FileRow, FileStatus, ScriptIssue, ScriptSeverity, IMPORTABLE_EXTENSIONS,
 };
 use crate::logic::effect_preview::{
-    contact_sheet, export_times, fit_extent, preview_view, render_canvas, render_frames, write_png_sequence,
-    LoopMode, PreviewInput, PreviewScene, PreviewSimulation, SimulationSettings, ViewSettings, DEFAULT_EXPORT_FRAMES,
-    DEFAULT_MOVE_SPEED, MAX_EXPORT_FRAMES, MAX_LOD_LEVEL, MAX_MOVE_SPEED, MAX_PLAYBACK_SPEED, MAX_TIMELINE_S,
-    MAX_ZOOM, MIN_PLAYBACK_SPEED, MIN_TIMELINE_S, MIN_ZOOM, PREVIEW_RESOLUTION_PX,
+    contact_sheet, export_times, fit_bounds, preview_view, render_canvas, render_frames, write_png_sequence,
+    CameraOrbit, LoopMode, PreviewInput, PreviewScene, PreviewSimulation, SimulationSettings, ViewSettings,
+    WorldBounds, DEFAULT_EXPORT_FRAMES, DEFAULT_MOVE_SPEED, LIGHTING_NOTE, MAX_CAMERA_PITCH_DEGREES,
+    MAX_CAMERA_YAW_DEGREES, MAX_EXPORT_FRAMES, MAX_LOD_LEVEL, MAX_MOVE_SPEED, MAX_PLAYBACK_SPEED, MAX_TIMELINE_S,
+    MAX_ZOOM, MIN_CAMERA_PITCH_DEGREES, MIN_CAMERA_YAW_DEGREES, MIN_PLAYBACK_SPEED, MIN_TIMELINE_S, MIN_ZOOM,
+    PREVIEW_RESOLUTION_PX,
 };
 use crate::logic::effects_editor::{
     accepts_children, add_definition, add_entry, add_keyed_list, build_file_users, child_list_label, child_lists,
@@ -53,10 +56,10 @@ const FLOAT_DRAG_SPEED: f64 = 0.01;
 const NO_DRAG_SPEED: f64 = 0.0;
 /// Zoom factor per scrolled point over the preview.
 const ZOOM_PER_SCROLL_POINT: f32 = 0.002;
+/// Camera turn per dragged point (secondary button) over the preview, degrees.
+const ORBIT_DEGREES_PER_POINT: f32 = 0.5;
 const SEED_DRAG_SPEED: f64 = 1.0;
 const MS_PER_SECOND: f32 = 1000.0;
-/// Bytes of a NIF header shown in its details (the version line).
-const NIF_HEADER_PREVIEW_BYTES: usize = 64;
 const ERROR_COLOR: egui::Color32 = egui::Color32::from_rgb(230, 90, 90);
 const WARNING_COLOR: egui::Color32 = egui::Color32::from_rgb(230, 180, 60);
 const NOTE_COLOR: egui::Color32 = egui::Color32::from_rgb(140, 170, 220);
@@ -124,6 +127,7 @@ pub struct EffectsPanelState {
     selected_issue: Option<usize>,
     script_editor: Option<ScriptEditor>,
     thumbnails: HashMap<u64, Thumbnail>,
+    nif_editor: super::effects_nif::NifEditorState,
     preview: PreviewPanel,
 }
 
@@ -234,7 +238,7 @@ struct PreviewPanel {
     label: String,
     scene: Option<Arc<PreviewScene>>,
     simulation: Option<PreviewSimulation>,
-    extent: [f32; 4],
+    bounds: WorldBounds,
     /// Increased on every scene rebuild, for the render stamp.
     build: u64,
     texture: Option<egui::TextureHandle>,
@@ -259,7 +263,7 @@ impl Default for PreviewPanel {
             label: String::new(),
             scene: None,
             simulation: None,
-            extent: [0.0; 4],
+            bounds: [particle_sim::Vec3::ZERO; 2],
             build: 0,
             texture: None,
             rendered: None,
@@ -682,6 +686,13 @@ fn save_files_to(app: &mut UopInspectorApp, lookups: &Lookups, output: &Path) {
     let Some(files) = state.files.clone() else {
         return;
     };
+    if let Some((_, draft)) = state.document.nif_drafts().iter().next() {
+        state.error = Some(format!(
+            "Save refused: {} does not write ({}). Fix the lengths or undo the edit.",
+            draft.name, draft.error
+        ));
+        return;
+    }
     let protected = protected_paths(state, lookups);
     let protected: Vec<&Path> = protected.iter().map(PathBuf::as_path).collect();
     match files.save_as(state.document.files(), output, &protected) {
@@ -776,6 +787,35 @@ fn refresh_validation(app: &mut UopInspectorApp, lookups: &Lookups) {
                     severity: issue.severity,
                     text: format!("{}: {issue}", row.label()),
                     target: Some(EffectsSelection::File { hash: row.hash }),
+                });
+            }
+        }
+        checked.push("edited NIF files (writing, links)");
+        for (&hash, draft) in state.document.nif_drafts() {
+            issues.push(PanelIssue {
+                severity: ScriptSeverity::Error,
+                text: format!("{}: does not write: {}", draft.name, draft.error),
+                target: Some(EffectsSelection::File { hash }),
+            });
+        }
+        for (&hash, change) in &overrides {
+            let Some(payload) = change.payload.as_ref().filter(|_| crate::logic::effect_files::is_nif_name(&change.name)) else {
+                continue;
+            };
+            let Ok(nif) = gamebryo_nif::NifFile::read(payload) else { continue };
+            for issue in nif.link_issues() {
+                let place = issue.block.map_or_else(|| "footer".to_owned(), |block| format!("block {block}"));
+                issues.push(PanelIssue {
+                    severity: ScriptSeverity::Warning,
+                    text: format!(
+                        "{}: {place} {} = {} points at {}, expected {}",
+                        change.name,
+                        issue.field,
+                        issue.raw,
+                        issue.found.unwrap_or("nothing"),
+                        issue.expected
+                    ),
+                    target: Some(EffectsSelection::File { hash }),
                 });
             }
         }
@@ -1244,9 +1284,7 @@ fn import_file(state: &mut EffectsPanelState, path: &Path, as_name: Option<&str>
         Ok((name, payload)) => {
             let name = as_name.map_or(name, str::to_owned);
             let hash = effect_texture_hash(&name);
-            state.document.edit(None, |data| {
-                data.files.insert(hash, FileOverride { name, payload: Some(payload) });
-            });
+            state.document.edit(None, |data| data.set_file(hash, FileOverride { name, payload: Some(payload) }));
             select(state, Some(EffectsSelection::File { hash }), true);
         }
         Err(error) => state.error = Some(format!("Import failed: {error}")),
@@ -1975,7 +2013,7 @@ fn file_details(app: &mut UopInspectorApp, lookups: &Lookups, ctx: &egui::Contex
     }
 
     let named = row.name.clone();
-    let overridden = state.document.files().contains_key(&hash);
+    let overridden = state.document.files().contains_key(&hash) || state.document.nif_drafts().contains_key(&hash);
     ui.horizontal_wrapped(|ui| {
         let replace = ui
             .add_enabled(named.is_some(), egui::Button::new("Replace from disk..."))
@@ -2000,15 +2038,11 @@ fn file_details(app: &mut UopInspectorApp, lookups: &Lookups, ctx: &egui::Contex
         let can_remove = named.is_some() && row.status != FileStatus::Removed;
         if ui.add_enabled(can_remove, egui::Button::new("Remove file")).clicked() {
             if let Some(name) = named.clone() {
-                state.document.edit(None, |data| {
-                    data.files.insert(hash, FileOverride { name, payload: None });
-                });
+                state.document.edit(None, |data| data.set_file(hash, FileOverride { name, payload: None }));
             }
         }
         if ui.add_enabled(overridden, egui::Button::new("Restore original")).on_hover_text("Drops the pending change of this file.").clicked() {
-            state.document.edit(None, |data| {
-                data.files.remove(&hash);
-            });
+            state.document.edit(None, |data| data.restore_file(hash));
         }
     });
     ui.separator();
@@ -2023,14 +2057,23 @@ fn file_details(app: &mut UopInspectorApp, lookups: &Lookups, ctx: &egui::Contex
         FileKind::Chaos => script_editor(state, lookups, ui, hash, row.label(), &payload),
         FileKind::Tga | FileKind::Dds => texture_view(state, ctx, ui, hash, &payload),
         FileKind::Nif => {
-            ui.label("NIF preview not available yet.");
-            let header: String = payload
-                .iter()
-                .take(NIF_HEADER_PREVIEW_BYTES)
-                .take_while(|&&byte| byte != b'\n')
-                .map(|&byte| char::from(byte))
-                .collect();
-            ui.monospace(header);
+            let outcome = super::effects_nif::nif_editor(
+                ui,
+                &mut state.nif_editor,
+                &mut state.document,
+                &files,
+                state.files_generation,
+                hash,
+                row.name.as_deref(),
+            );
+            match outcome {
+                Some(Ok(message)) => {
+                    state.error = None;
+                    app.status_message = message;
+                }
+                Some(Err(error)) => state.error = Some(error),
+                None => {}
+            }
         }
         FileKind::Psd | FileKind::Other | FileKind::Empty => {
             ui.weak("No viewer for this kind of file.");
@@ -2199,7 +2242,7 @@ fn preview_target(selection: &Option<EffectsSelection>, lookups: &Lookups, state
         EffectsSelection::File { hash } => {
             let files = lookups.files.as_ref()?;
             let payload = files.payload(state.document.files(), *hash)?;
-            (FileKind::detect(&payload, None) == FileKind::Chaos).then_some(PreviewTarget::Script(*hash))
+            matches!(FileKind::detect(&payload, None), FileKind::Chaos | FileKind::Nif).then_some(PreviewTarget::Script(*hash))
         }
     }
 }
@@ -2211,7 +2254,7 @@ fn refresh_preview(state: &mut EffectsPanelState, lookups: &Lookups) {
         state.preview.key = None;
         state.preview.scene = None;
         state.preview.simulation = None;
-        state.preview.label = "Select an entry, a definition, a tileart record or a Chaos script.".to_string();
+        state.preview.label = "Select an entry, a definition, a tileart record, a Chaos script or a NIF file.".to_string();
         return;
     };
     let preview = &mut state.preview;
@@ -2231,7 +2274,9 @@ fn refresh_preview(state: &mut EffectsPanelState, lookups: &Lookups) {
     let overrides = state.document.files().clone();
     let files = lookups.files.clone();
     let payload = move |name: &str| files.as_ref().and_then(|files| files.payload(&overrides, effect_texture_hash(name)));
-    let input = PreviewInput { strings: lookups.strings.as_deref(), payload: &payload };
+    let drafts = state.document.nif_drafts().clone();
+    let nif_drafts = move |name: &str| drafts.get(&effect_texture_hash(name)).map(|draft| Arc::clone(&draft.nif));
+    let input = PreviewInput { strings: lookups.strings.as_deref(), payload: &payload, nif_drafts: Some(&nif_drafts) };
     let collection = state.document.collection();
     let settings = preview.settings;
     let (label, scene) = match &target {
@@ -2256,7 +2301,7 @@ fn refresh_preview(state: &mut EffectsPanelState, lookups: &Lookups) {
         }
         PreviewTarget::Script(hash) => {
             let name = lookups.files.as_ref().and_then(|files| files.name(state.document.files(), *hash)).unwrap_or_default();
-            (format!("Script {name} (default particle fields)"), PreviewScene::build_script(&name, &settings, &input))
+            (format!("File {name} (default particle fields)"), PreviewScene::build_script(&name, &settings, &input))
         }
     };
     let target_changed = preview.key.as_ref().is_none_or(|old| old.target != target);
@@ -2264,8 +2309,8 @@ fn refresh_preview(state: &mut EffectsPanelState, lookups: &Lookups) {
         preview.clock_ms = 0.0;
         preview.view.pan = [0.0; 2];
     }
-    preview.extent = fit_extent(&scene, &settings);
-    preview.simulation = Some(PreviewSimulation::at(&scene, &settings, preview.clock_ms as u32));
+    preview.bounds = fit_bounds(&scene, &settings);
+    preview.simulation = None;
     preview.scene = Some(Arc::new(scene));
     preview.label = label;
     preview.key = Some(key);
@@ -2297,9 +2342,12 @@ fn preview_panel(app: &mut UopInspectorApp, lookups: &Lookups, ctx: &egui::Conte
         ctx.request_repaint();
     }
     advance_simulation(preview, &scene);
+    if let Some(simulation) = preview.simulation.as_mut() {
+        simulation.set_lighting(preview.view.lighting);
+    }
 
     // Frame.
-    let view = preview_view(preview.extent, &preview.view, PREVIEW_RESOLUTION_PX, PREVIEW_RESOLUTION_PX);
+    let view = preview_view(preview.bounds, &preview.view, PREVIEW_RESOLUTION_PX, PREVIEW_RESOLUTION_PX);
     if let Some(simulation) = &preview.simulation {
         let stamp = (preview.build, simulation.time_ms(), preview.view);
         if preview.rendered != Some(stamp) || preview.texture.is_none() {
@@ -2315,12 +2363,18 @@ fn preview_panel(app: &mut UopInspectorApp, lookups: &Lookups, ctx: &egui::Conte
     if let Some(texture) = &preview.texture {
         let side = ui.available_width().min(PREVIEW_RESOLUTION_PX as f32);
         let response = ui.add(egui::Image::new(texture).fit_to_exact_size(egui::vec2(side, side)).sense(egui::Sense::click_and_drag()));
-        let response = response.on_hover_text("Drag to pan, scroll to zoom, double-click to reset the view.");
-        if response.dragged() {
+        let response = response.on_hover_text(
+            "Drag to pan, right-drag to turn the camera, scroll to zoom, double-click to reset the view.",
+        );
+        if response.dragged_by(egui::PointerButton::Primary) {
             let scale = PREVIEW_RESOLUTION_PX as f32 / side;
             let delta = response.drag_delta() * scale;
             preview.view.pan[0] += delta.x;
             preview.view.pan[1] += delta.y;
+        }
+        if response.dragged_by(egui::PointerButton::Secondary) {
+            let delta = response.drag_delta() * ORBIT_DEGREES_PER_POINT;
+            preview.view.orbit = preview.view.orbit.turned(-delta.x, delta.y);
         }
         if response.hovered() {
             let scroll = ui.input(|input| input.smooth_scroll_delta.y);
@@ -2331,6 +2385,7 @@ fn preview_panel(app: &mut UopInspectorApp, lookups: &Lookups, ctx: &egui::Conte
         if response.double_clicked() {
             preview.view.zoom = 1.0;
             preview.view.pan = [0.0; 2];
+            preview.view.orbit = CameraOrbit::default();
         }
     }
 
@@ -2410,6 +2465,48 @@ fn preview_panel(app: &mut UopInspectorApp, lookups: &Lookups, ctx: &egui::Conte
             ui.checkbox(&mut preview.view.show_emitter, "emitter");
         });
         ui.end_row();
+        ui.label("Show");
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut preview.view.show_particles, "particles");
+            ui.checkbox(&mut preview.view.show_meshes, "meshes").on_hover_text("NIF geometry and mesh particles.");
+        });
+        ui.end_row();
+        ui.label("Camera").on_hover_text(
+            "Orbit about the view centre. The default is the client's view: looking north, 45 degrees down. \
+             Changing it re-simulates (NIF billboards face the camera).",
+        );
+        ui.horizontal(|ui| {
+            let orbit = &mut preview.view.orbit;
+            ui.add(
+                egui::DragValue::new(&mut orbit.yaw_degrees)
+                    .range(MIN_CAMERA_YAW_DEGREES..=MAX_CAMERA_YAW_DEGREES)
+                    .prefix("yaw ")
+                    .suffix(" deg"),
+            )
+            .on_hover_text("Degrees from north toward east.");
+            ui.add(
+                egui::DragValue::new(&mut orbit.pitch_degrees)
+                    .range(MIN_CAMERA_PITCH_DEGREES..=MAX_CAMERA_PITCH_DEGREES)
+                    .prefix("pitch ")
+                    .suffix(" deg"),
+            )
+            .on_hover_text("Degrees below the horizon.");
+            if ui.small_button("Client view").clicked() {
+                *orbit = CameraOrbit::default();
+            }
+        });
+        ui.end_row();
+        ui.label("Lighting").on_hover_text(LIGHTING_NOTE);
+        ui.horizontal(|ui| {
+            ui.color_edit_button_rgb(&mut preview.view.lighting.ambient).on_hover_text("Ambient light");
+            ui.label("ambient");
+            ui.color_edit_button_rgb(&mut preview.view.lighting.diffuse).on_hover_text("Diffuse light (no direction)");
+            ui.label("diffuse");
+            if ui.small_button("Default").clicked() {
+                preview.view.lighting = particle_sim::render::SceneLighting::default();
+            }
+        });
+        ui.end_row();
         ui.label("Zoom");
         ui.horizontal(|ui| {
             ui.add(egui::Slider::new(&mut preview.view.zoom, MIN_ZOOM..=MAX_ZOOM).logarithmic(true));
@@ -2421,14 +2518,26 @@ fn preview_panel(app: &mut UopInspectorApp, lookups: &Lookups, ctx: &egui::Conte
         ui.end_row();
     });
 
+    ui.weak(LIGHTING_NOTE);
+
     ui.separator();
     ui.strong("Parts");
-    for part in &scene.parts {
+    for (index, part) in scene.parts.iter().enumerate() {
         let color = if part.status.plays() { OK_COLOR } else { WARNING_COLOR };
         ui.horizontal_wrapped(|ui| {
             ui.monospace(crate::logic::effect_preview::path_label(&part.path));
             ui.colored_label(color, format!("{}: {}", part.kind.label(), part.status.describe()));
         });
+        let warnings = part.status.warnings();
+        if !warnings.is_empty() {
+            egui::CollapsingHeader::new(format!("{} compile warning(s)", warnings.len()))
+                .id_salt(("effects_preview_part_warnings", index))
+                .show(ui, |ui| {
+                    for warning in warnings {
+                        ui.colored_label(WARNING_COLOR, warning);
+                    }
+                });
+        }
     }
     if !scene.has_playing_parts() {
         ui.colored_label(WARNING_COLOR, "Nothing previewable plays (see the parts above).");
@@ -2472,12 +2581,18 @@ fn preview_panel(app: &mut UopInspectorApp, lookups: &Lookups, ctx: &egui::Conte
     });
 }
 
-/// Brings the simulation to the playback clock: forward in steps, or re-simulated from 0 when going back.
+/// Brings the simulation to the playback clock: forward in steps, or re-simulated from 0 when going back or when
+/// the camera turned.
 fn advance_simulation(preview: &mut PreviewPanel, scene: &PreviewScene) {
     let target = preview.clock_ms.max(0.0) as u32;
-    let rebuild = preview.simulation.as_ref().is_none_or(|simulation| target < simulation.time_ms());
+    let orbit = preview.view.orbit;
+    let rebuild = preview
+        .simulation
+        .as_ref()
+        .is_none_or(|simulation| target < simulation.time_ms() || simulation.orbit() != orbit);
     if rebuild {
-        preview.simulation = Some(PreviewSimulation::at(scene, &preview.settings, target));
+        preview.simulation = Some(PreviewSimulation::at(scene, &preview.settings, orbit, target));
+        preview.rendered = None;
     } else if let Some(simulation) = preview.simulation.as_mut() {
         simulation.advance_to(target);
     }
@@ -2487,13 +2602,17 @@ fn advance_simulation(preview: &mut PreviewPanel, scene: &PreviewScene) {
 mod tests {
     use super::*;
     use crate::logic::effect_preview::tests::{dictionary, SPARK_SCRIPT};
+    use crate::logic::effect_preview::PartStatus;
     use crate::logic::effects_editor::tests::scratch_dir;
+    use crate::logic::nif_editor::tests::{test_nif, test_nif_bytes, FLOAT_DATA_BLOCK, SHAPE_DATA_BLOCK};
     use uocf::enhanced::effect_definition::{EffectCollectionEntry, EffectDefinitionCollection};
     use uocf::uop_container::file::CompressionFlag;
     use uocf::uop_container::package::UopPackage;
 
     const SCRIPT_NAME: &str = "spark.ems";
     const NIF_NAME: &str = "smoke.nif";
+    /// A NIF that does not parse (not in the string dictionary: shown by hash).
+    const BROKEN_NIF_NAME: &str = "broken.nif";
     const TEXTURE_NAME: &str = "spark.tga";
     /// String dictionary indices of the names in [`dictionary`], shifted by one like the client data.
     const SCRIPT_NAME_INDEX: u32 = 1;
@@ -2554,8 +2673,12 @@ mod tests {
     fn files_package(dir: &Path) -> PathBuf {
         let path = dir.join(EFFECT_TEXTURE_UOP_NAME);
         let mut package = UopPackage::new_default();
-        let files: [(&str, Vec<u8>); 3] =
-            [(SCRIPT_NAME, SPARK_SCRIPT.as_bytes().to_vec()), (NIF_NAME, NIF_HEADER.to_vec()), (TEXTURE_NAME, tga())];
+        let files: [(&str, Vec<u8>); 4] = [
+            (SCRIPT_NAME, SPARK_SCRIPT.as_bytes().to_vec()),
+            (NIF_NAME, test_nif_bytes()),
+            (BROKEN_NIF_NAME, NIF_HEADER.to_vec()),
+            (TEXTURE_NAME, tga()),
+        ];
         for (name, payload) in files {
             package.add_file_from_memory(&payload, &effect_texture_path(name), CompressionFlag::None).unwrap();
         }
@@ -2592,7 +2715,8 @@ mod tests {
         let mut selections = vec![None, Some(EffectsSelection::Entry { entry: 0 })];
         selections.extend((0..top_level).map(|index| Some(EffectsSelection::Definition { entry: 0, path: vec![PathStep::top(index)] })));
         selections.extend(
-            [SCRIPT_NAME, NIF_NAME, TEXTURE_NAME].map(|name| Some(EffectsSelection::File { hash: effect_texture_hash(name) })),
+            [SCRIPT_NAME, NIF_NAME, BROKEN_NIF_NAME, TEXTURE_NAME]
+                .map(|name| Some(EffectsSelection::File { hash: effect_texture_hash(name) })),
         );
         for view in [BrowseView::Entries, BrowseView::TileArt, BrowseView::Files] {
             for selection in &selections {
@@ -2606,6 +2730,12 @@ mod tests {
         run_frames(&mut app, &ctx);
         let scene = app.effects_panel.preview.scene.clone().expect("the entry is previewed");
         assert!(scene.has_playing_parts());
+        let playing: Vec<_> = scene.parts.iter().filter(|part| part.status.plays()).map(|part| &part.status).collect();
+        assert!(
+            playing.iter().any(|status| matches!(status, PartStatus::Chaos { .. }))
+                && playing.iter().any(|status| matches!(status, PartStatus::Nif { .. })),
+            "the entry mixes Chaos and NIF parts: {playing:?}"
+        );
         assert!(app.effects_panel.preview.texture.is_some(), "a frame is shown");
         let validation = app.effects_panel.validation.as_ref().expect("validation ran");
         assert!(!validation.checked.is_empty());
@@ -2616,6 +2746,25 @@ mod tests {
         assert!(editor.text.contains("particlesystem"));
         let thumbnail = app.effects_panel.thumbnails.get(&effect_texture_hash(TEXTURE_NAME)).expect("the texture was shown");
         assert!(thumbnail.texture.is_ok(), "the texture decodes");
+
+        // The NIF file: editor (tree and block list, the key table and the shape data with absent fields) and
+        // its preview with a turned camera and meshes only.
+        let nif_hash = effect_texture_hash(NIF_NAME);
+        app.effects_panel.selection = Some(EffectsSelection::File { hash: nif_hash });
+        run_frames(&mut app, &ctx);
+        assert_eq!(app.effects_panel.nif_editor.shown().map(|nif| nif.blocks.len()), Some(test_nif().blocks.len()));
+        for (list, block) in [(false, FLOAT_DATA_BLOCK), (true, SHAPE_DATA_BLOCK)] {
+            app.effects_panel.nif_editor.show_block(list, block);
+            app.effects_panel.preview.view.orbit = CameraOrbit { yaw_degrees: 30.0, pitch_degrees: 20.0 };
+            app.effects_panel.preview.view.show_particles = false;
+            run_frames(&mut app, &ctx);
+        }
+        let scene = app.effects_panel.preview.scene.clone().expect("the NIF file is previewed");
+        assert!(matches!(scene.parts[0].status, PartStatus::Nif { meshes: 1, .. }), "{:?}", scene.parts[0].status);
+        assert_eq!(app.effects_panel.preview.simulation.as_ref().map(PreviewSimulation::orbit), Some(app.effects_panel.preview.view.orbit));
+        app.effects_panel.selection = Some(EffectsSelection::File { hash: effect_texture_hash(BROKEN_NIF_NAME) });
+        run_frames(&mut app, &ctx);
+        assert!(app.effects_panel.nif_editor.shown().is_none(), "the broken file does not parse");
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -7278,6 +7278,7 @@ dependencies = [
  "eframe",
  "egui 0.37.0",
  "egui_extras",
+ "gamebryo-nif",
  "gui-shared",
  "image",
  "image-postprocess",

@@ -18,13 +18,10 @@ use std::sync::Arc;
 
 use gamebryo_nif::NifFile;
 use image::{Rgba, RgbaImage};
-use particle_sim::nif::desc::{CullMode, NifTextureSource, TextureAddressing, TextureApplyMode, TextureSlot};
+use particle_sim::nif::desc::NifTextureSource;
 use particle_sim::nif::{NifEffect, NifEffectInstance, compile};
-use particle_sim::raster::{Canvas, OrthoView, RasterTexture, WHITE_TEXEL};
-use particle_sim::render::{
-    AlphaTest, BlendFactor, BlendState, QUAD_INDICES, QuadVertex, RenderFrame, SceneLighting, TRIANGLE_VERTICES,
-    combine_textures, expand_mesh_draw, expand_mesh_stage_uvs, expand_sprite,
-};
+use particle_sim::raster::{Canvas, OrthoView, RasterTexture, SceneDrawOptions, frame_extent};
+use particle_sim::render::RenderFrame;
 use particle_sim::{NodeTransform, ParticleSystemInstance, Vec3};
 use uocf::enhanced::effect_texture::{EffectFileKind, EffectTexturePackage};
 
@@ -50,12 +47,7 @@ const BACKGROUND: [f32; 4] = [0.10, 0.10, 0.12, 1.0];
 const GAP_COLOR: Rgba<u8> = Rgba([40, 40, 48, 255]);
 const DDS_MAGIC: &[u8] = b"DDS ";
 const MS_PER_SECOND: f32 = 1000.0;
-/// Blending off.
-const OPAQUE_BLEND: BlendState = BlendState { src: BlendFactor::One, dst: BlendFactor::Zero };
-/// Pixel centres are at half-pixel offsets.
-const PIXEL_CENTER_OFFSET: f32 = 0.5;
 const HALF: f32 = 0.5;
-const ALPHA: usize = 3;
 
 struct Options {
     targets: Vec<String>,
@@ -289,102 +281,17 @@ fn simulate(effect: &Arc<NifEffect>, options: &Options) -> Vec<Capture> {
     captures
 }
 
-/// One texture stage of a draw: the texture name and the stage's texture coordinates per vertex.
-struct Stage {
-    slot: TextureSlot,
-    texture: Arc<str>,
-    uvs: Vec<[f32; 2]>,
-    addressing: TextureAddressing,
-}
-
-/// The triangles of one draw (a mesh draw or a sprite batch) and their render state.
-struct Triangles {
-    vertices: Vec<QuadVertex>,
-    stages: Vec<Stage>,
-    apply_mode: TextureApplyMode,
-    blend: BlendState,
-    alpha_test: Option<AlphaTest>,
-    cull: CullMode,
-}
-
-/// The draws of a frame as triangle lists, in scene order.
-fn triangles(frame: &RenderFrame, view: &OrthoView) -> Vec<(u32, Triangles)> {
-    let lighting = SceneLighting::default();
-    let mut out = Vec::new();
-    for draw in &frame.mesh_draws {
-        let mut vertices = Vec::new();
-        expand_mesh_draw(draw, &lighting, &mut vertices);
-        let stages = draw
-            .textures
-            .iter()
-            .map(|stage| {
-                let mut uvs = Vec::with_capacity(vertices.len());
-                expand_mesh_stage_uvs(draw, stage, &mut uvs);
-                Stage { slot: stage.slot, texture: stage.texture.clone(), uvs, addressing: stage.addressing }
-            })
-            .collect();
-        out.push((
-            draw.order,
-            Triangles {
-                vertices,
-                stages,
-                apply_mode: draw.apply_mode,
-                blend: draw.blend.unwrap_or(OPAQUE_BLEND),
-                alpha_test: draw.alpha_test,
-                cull: draw.cull,
-            },
-        ));
-    }
-    for (index, batch) in frame.batches.iter().enumerate() {
-        let state = frame.batch_state(index).cloned().unwrap_or_default();
-        let mut vertices = Vec::new();
-        for sprite in &frame.sprites[batch.sprites.clone()] {
-            let quad = expand_sprite(batch.kind, sprite, &view.camera);
-            vertices.extend(QUAD_INDICES.iter().map(|&corner| quad[corner as usize]));
-        }
-        let stages = state
-            .textures
-            .iter()
-            .map(|stage| Stage {
-                slot: stage.slot,
-                texture: stage.texture.clone(),
-                uvs: vertices.iter().map(|vertex| stage.uv_transform.apply(vertex.uv)).collect(),
-                addressing: stage.addressing,
-            })
-            .collect();
-        out.push((
-            state.order,
-            Triangles {
-                vertices,
-                stages,
-                apply_mode: state.apply_mode,
-                blend: batch.blend,
-                alpha_test: state.alpha_test,
-                cull: CullMode::None,
-            },
-        ));
-    }
-    out.sort_by_key(|(order, _)| *order);
-    out
-}
-
 /// Fits everything drawn over the run into a cell.
 fn fit_view(captures: &[Capture], cell: u32) -> OrthoView {
     let elevation = CAMERA_ELEVATION_DEGREES.to_radians();
     let probe = OrthoView::new(elevation, Vec3::ZERO, CAMERA_DISTANCE, 1.0, cell as usize, cell as usize);
     let mut extent: Option<[f32; 4]> = None;
-    let mut include = |point: Vec3| {
-        let (x, y) = probe.project(point);
-        let bounds = extent.get_or_insert([x, x, y, y]);
-        *bounds = [bounds[0].min(x), bounds[1].max(x), bounds[2].min(y), bounds[3].max(y)];
-    };
-    include(Vec3::ZERO);
-    for capture in captures {
-        for (_, triangles) in triangles(&capture.frame, &probe) {
-            for vertex in &triangles.vertices {
-                include(vertex.position);
-            }
-        }
+    let (x, y) = probe.project(Vec3::ZERO);
+    for [min_x, max_x, min_y, max_y] in
+        std::iter::once([x, x, y, y]).chain(captures.iter().filter_map(|capture| frame_extent(&capture.frame, &probe.camera)))
+    {
+        let bounds = extent.get_or_insert([min_x, max_x, min_y, max_y]);
+        *bounds = [bounds[0].min(min_x), bounds[1].max(max_x), bounds[2].min(min_y), bounds[3].max(max_y)];
     }
     let [min_x, max_x, min_y, max_y] = extent.unwrap_or_default();
     let extent = (max_x - min_x).max(max_y - min_y).max(MIN_FIT_EXTENT);
@@ -402,13 +309,7 @@ fn draw_sheet(captures: &[Capture], textures: &Textures, cell: u32) -> RgbaImage
     let mut sheet = RgbaImage::from_pixel(width, height, GAP_COLOR);
     for (index, capture) in captures.iter().enumerate() {
         let mut canvas = Canvas::new(view.width, view.height, BACKGROUND);
-        for (_, triangles) in triangles(&capture.frame, &view) {
-            let samplers: Vec<Option<&RasterTexture>> =
-                triangles.stages.iter().map(|stage| textures.get(&stage.texture)).collect();
-            for first in (0..triangles.vertices.len()).step_by(TRIANGLE_VERTICES) {
-                fill_triangle(&mut canvas, &view, first, &triangles, &samplers);
-            }
-        }
+        canvas.draw_scene(&view, &capture.frame, &|name| textures.get(name), &SceneDrawOptions::default());
         let image = RgbaImage::from_raw(view.width as u32, view.height as u32, canvas.to_rgba8()).expect("canvas size");
         let x = (index % columns) as u32 * (cell + CELL_GAP_PX) + CELL_GAP_PX;
         let y = (index / columns) as u32 * (cell + CELL_GAP_PX) + CELL_GAP_PX;
@@ -417,64 +318,4 @@ fn draw_sheet(captures: &[Capture], textures: &Textures, cell: u32) -> RgbaImage
         }
     }
     sheet
-}
-
-/// One triangle (vertices `first..first + 3` of `state`) with per-vertex colours: every texture stage sampled
-/// (wrapped or clamped) and combined, alpha test, blend. Front faces are counter-clockwise on the view plane;
-/// a missing texture samples white.
-fn fill_triangle(
-    canvas: &mut Canvas,
-    view: &OrthoView,
-    first: usize,
-    state: &Triangles,
-    samplers: &[Option<&RasterTexture>],
-) {
-    let corners = &state.vertices[first..first + TRIANGLE_VERTICES];
-    let [(ax, ay), (bx, by), (cx, cy)] = [0, 1, 2].map(|k| view.to_screen(corners[k].position));
-    // Screen y points down: a counter-clockwise view-plane triangle has a negative screen area.
-    let area = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
-    if area.abs() < f32::EPSILON || !area.is_finite() {
-        return;
-    }
-    let front = area < 0.0;
-    match state.cull {
-        CullMode::Back if !front => return,
-        CullMode::Front if front => return,
-        _ => {}
-    }
-    let (limit_x, limit_y) = (canvas.width as f32 - 1.0, canvas.height as f32 - 1.0);
-    let min_x = ax.min(bx).min(cx).floor().clamp(0.0, limit_x) as usize;
-    let max_x = ax.max(bx).max(cx).ceil().clamp(0.0, limit_x) as usize;
-    let min_y = ay.min(by).min(cy).floor().clamp(0.0, limit_y) as usize;
-    let max_y = ay.max(by).max(cy).ceil().clamp(0.0, limit_y) as usize;
-    let address = |value: f32, wrap: bool| if wrap { value } else { value.clamp(0.0, 1.0) };
-    let mut samples = Vec::with_capacity(state.stages.len());
-    for py in min_y..=max_y {
-        for px in min_x..=max_x {
-            let (x, y) = (px as f32 + PIXEL_CENTER_OFFSET, py as f32 + PIXEL_CENTER_OFFSET);
-            let wa = ((bx - x) * (cy - y) - (by - y) * (cx - x)) / area;
-            let wb = ((cx - x) * (ay - y) - (cy - y) * (ax - x)) / area;
-            let wc = 1.0 - wa - wb;
-            if wa < 0.0 || wb < 0.0 || wc < 0.0 {
-                continue;
-            }
-            let weights = [wa, wb, wc];
-            let lerp = |value: &dyn Fn(usize) -> f32| (0..TRIANGLE_VERTICES).map(|k| weights[k] * value(k)).sum::<f32>();
-            let color: [f32; 4] = std::array::from_fn(|channel| lerp(&|k| corners[k].color[channel]));
-            samples.clear();
-            for (stage, sampler) in state.stages.iter().zip(samplers) {
-                let uvs = &stage.uvs[first..first + TRIANGLE_VERTICES];
-                let u = address(lerp(&|k| uvs[k][0]), stage.addressing.wrap_s);
-                let v = address(lerp(&|k| uvs[k][1]), stage.addressing.wrap_t);
-                samples.push((stage.slot, sampler.map_or(WHITE_TEXEL, |texture| texture.sample(u, v))));
-            }
-            let source = combine_textures(state.apply_mode, color, &samples);
-            if let Some(test) = state.alpha_test {
-                if !test.function.passes(source[ALPHA], test.reference) {
-                    continue;
-                }
-            }
-            canvas.blend(px, py, source, state.blend);
-        }
-    }
 }

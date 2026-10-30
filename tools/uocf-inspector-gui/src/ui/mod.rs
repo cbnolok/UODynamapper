@@ -9,6 +9,7 @@ pub mod uop_browser;
 pub mod multis;
 pub mod housing;
 pub mod effects;
+pub mod effects_nif;
 pub mod multimap;
 pub mod hues;
 pub mod image_export;

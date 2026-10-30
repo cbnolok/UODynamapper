@@ -1,21 +1,27 @@
 //! Preview of effect definitions with particle-sim: which particles of a definition list play (resolving
 //! random, LOD, round-robin, wait, property flag and user preference definitions the way one client play would),
 //! a fixed-step simulation that can be scrubbed (re-simulated from 0 with the same seed, so a time always shows
-//! the same frame), an orthographic camera fitted to the whole timeline, software rendering with particle-sim's
-//! rasterizer, and PNG exports. No egui here.
+//! the same frame), an orthographic orbit camera fitted to the whole timeline, software rendering with
+//! particle-sim's rasterizer, and PNG exports. No egui here.
 //!
-//! Chaos (`.ems`) particles play now. NIF particles are listed with [`PartStatus::Nif`]; a NIF particle system
-//! plugs in as another [`PreparedSystem`] variant producing a `ParticleSystemInstance`.
+//! Chaos (`.ems`) scripts and NIF (`.nif`) effects play side by side, each part drawn in its own scene order.
 
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
+use gamebryo_nif::NifFile;
 use image::RgbaImage;
 use particle_sim::chaos::compile::compile_chaos_source;
-use particle_sim::raster::{camera_axes, frame_extent, Canvas, OrthoView, RasterTexture, OVERLAY_BLEND};
-use particle_sim::render::RenderFrame;
-use particle_sim::{ChaosEffectInstance, ChaosSystem, EffectInstance, EffectPlacement, Mt19937, ParticleEffectParams, Rng, Vec3};
+use particle_sim::nif::desc::NifTextureSource;
+use particle_sim::raster::{
+    frame_bounds, frame_extent, orbit_axes, Canvas, OrthoView, RasterTexture, SceneDrawOptions, OVERLAY_BLEND,
+};
+use particle_sim::render::{CameraFrame, RenderFrame, SceneLighting};
+use particle_sim::{
+    ChaosEffectInstance, ChaosSystem, EffectInstance, EffectPlacement, Mt19937, NifEffect, NifEffectInstance,
+    NodeTransform, ParticleEffectParams, ParticleSystemInstance, Rng, Vec3,
+};
 use uocf::enhanced::effect_definition::{EffectDefinition, ParticleEffect, PropertyFlagMode, RANDOM_WEIGHT_TOTAL};
 use uocf::enhanced::string_dictionary::UoStringDictionary;
 
@@ -40,10 +46,24 @@ pub const PREVIEW_RESOLUTION_PX: usize = 384;
 pub const DEFAULT_LOD_LEVEL: u32 = uocf::enhanced::effect_definition::PARTICLE_LOD_DEFAULT;
 pub const MAX_LOD_LEVEL: u32 = uocf::enhanced::effect_definition::PARTICLE_LOD_MAX;
 pub const DEFAULT_BACKGROUND: [f32; 4] = [0.10, 0.10, 0.12, 1.0];
-/// Camera elevation above the horizon, looking north.
-pub const CAMERA_ELEVATION_DEGREES: f32 = 30.0;
+/// Default camera pitch, degrees below the horizon: the client's view (looking north, 45 degrees down), the
+/// camera particle-sim's NIF instances default to.
+pub const DEFAULT_CAMERA_PITCH_DEGREES: f32 = 45.0;
+/// Default camera yaw, degrees from north toward east.
+pub const DEFAULT_CAMERA_YAW_DEGREES: f32 = 0.0;
+/// Pitch limits, short of straight down and up (the up axis would be undefined).
+pub const MIN_CAMERA_PITCH_DEGREES: f32 = -89.0;
+pub const MAX_CAMERA_PITCH_DEGREES: f32 = 89.0;
+/// Yaw range, degrees.
+pub const MIN_CAMERA_YAW_DEGREES: f32 = -180.0;
+pub const MAX_CAMERA_YAW_DEGREES: f32 = 180.0;
+const FULL_TURN_DEGREES: f32 = 360.0;
 /// Distance of the camera from the view centre (for the axial view vector).
 const CAMERA_DISTANCE: f32 = 1000.0;
+/// How the meshes are lit (shown with the lighting controls).
+pub const LIGHTING_NOTE: &str = "Meshes and NIF particle colours use these lights without direction (diffuse \
+    as if facing every surface): the client's scene lights for effects are not established. The default, white \
+    ambient and no diffuse, shows the usual materials as emissive + 0.5 x ambient.";
 /// Fraction of the canvas left free around the fitted bounds.
 const FIT_MARGIN: f32 = 0.08;
 /// Smallest world extent fitted into the canvas (an effect with a single point).
@@ -118,12 +138,57 @@ impl SimulationSettings {
     }
 }
 
-/// How the frame is drawn: no effect on the simulation.
+/// The orbit of the preview camera about the view centre.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CameraOrbit {
+    /// Degrees from north (+y) toward east (+x).
+    pub yaw_degrees: f32,
+    /// Degrees below the horizon.
+    pub pitch_degrees: f32,
+}
+
+impl Default for CameraOrbit {
+    fn default() -> Self {
+        Self { yaw_degrees: DEFAULT_CAMERA_YAW_DEGREES, pitch_degrees: DEFAULT_CAMERA_PITCH_DEGREES }
+    }
+}
+
+impl CameraOrbit {
+    /// The orbit turned by a drag: yaw wraps around, pitch stays in its limits.
+    pub fn turned(self, yaw_degrees: f32, pitch_degrees: f32) -> Self {
+        let yaw = (self.yaw_degrees + yaw_degrees - MIN_CAMERA_YAW_DEGREES).rem_euclid(FULL_TURN_DEGREES);
+        Self {
+            yaw_degrees: yaw + MIN_CAMERA_YAW_DEGREES,
+            pitch_degrees: (self.pitch_degrees + pitch_degrees).clamp(MIN_CAMERA_PITCH_DEGREES, MAX_CAMERA_PITCH_DEGREES),
+        }
+    }
+
+    /// (direction, up, right).
+    pub fn axes(&self) -> (Vec3, Vec3, Vec3) {
+        orbit_axes(self.yaw_degrees.to_radians(), self.pitch_degrees.to_radians())
+    }
+
+    /// The camera looking at the origin from [`CAMERA_DISTANCE`] (the billboard camera of NIF effects).
+    pub fn camera(&self) -> CameraFrame {
+        let (direction, up, right) = self.axes();
+        CameraFrame { position: direction * -CAMERA_DISTANCE, direction, up, right }
+    }
+}
+
+/// How the frame is drawn. Changing the orbit re-simulates (NIF billboards face the camera while they update);
+/// the rest only redraws.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ViewSettings {
     pub background: [f32; 4],
     pub show_bounds: bool,
     pub show_emitter: bool,
+    /// Draw the particles (sprite batches).
+    pub show_particles: bool,
+    /// Draw the meshes (NIF geometry and mesh particles).
+    pub show_meshes: bool,
+    pub orbit: CameraOrbit,
+    /// Lights of the meshes and NIF particle colours ([`LIGHTING_NOTE`]).
+    pub lighting: SceneLighting,
     /// Multiplies the fitted scale.
     pub zoom: f32,
     /// Canvas pixels.
@@ -132,7 +197,17 @@ pub struct ViewSettings {
 
 impl Default for ViewSettings {
     fn default() -> Self {
-        Self { background: DEFAULT_BACKGROUND, show_bounds: false, show_emitter: true, zoom: 1.0, pan: [0.0; 2] }
+        Self {
+            background: DEFAULT_BACKGROUND,
+            show_bounds: false,
+            show_emitter: true,
+            show_particles: true,
+            show_meshes: true,
+            orbit: CameraOrbit::default(),
+            lighting: SceneLighting::default(),
+            zoom: 1.0,
+            pan: [0.0; 2],
+        }
     }
 }
 
@@ -141,8 +216,10 @@ impl Default for ViewSettings {
 pub enum PartStatus {
     /// A Chaos particle that plays.
     Chaos { name: String, sequences: usize },
-    /// A NIF particle: not previewable yet.
-    Nif { name: String },
+    /// A NIF effect that plays; `warnings` are the objects the compiler skipped or could not read.
+    Nif { name: String, particle_systems: usize, meshes: usize, warnings: Vec<String> },
+    /// The NIF file does not parse: it plays nothing.
+    NifRejected { name: String, error: String },
     /// The particle name is not in the string dictionary (or there is none).
     NameUnresolved { name_index: u32 },
     /// The file is not in `EffectTexture.uop`.
@@ -155,13 +232,25 @@ pub enum PartStatus {
 
 impl PartStatus {
     pub fn plays(&self) -> bool {
-        matches!(self, Self::Chaos { .. })
+        matches!(self, Self::Chaos { .. } | Self::Nif { .. })
+    }
+
+    /// Compile warnings of a NIF part.
+    pub fn warnings(&self) -> &[String] {
+        match self {
+            Self::Nif { warnings, .. } => warnings,
+            _ => &[],
+        }
     }
 
     pub fn describe(&self) -> String {
         match self {
             Self::Chaos { name, sequences } => format!("{name}: Chaos, {sequences} sequence(s)"),
-            Self::Nif { name } => format!("{name}: NIF preview not available yet"),
+            Self::Nif { name, particle_systems, meshes, warnings } => format!(
+                "{name}: NIF, {particle_systems} particle system(s), {meshes} mesh(es), {} compile warning(s)",
+                warnings.len()
+            ),
+            Self::NifRejected { name, error } => format!("{name}: NIF does not parse ({error})"),
             Self::NameUnresolved { name_index } => format!("name index {name_index} is not in the string dictionary"),
             Self::MissingFile { name } => format!("{name}: not in EffectTexture.uop"),
             Self::ScriptRejected { name, errors } => format!("{name}: rejected by the client ({})", errors.join("; ")),
@@ -183,12 +272,15 @@ pub struct PreviewPart {
 #[derive(Clone)]
 pub enum PreparedSystem {
     Chaos(Arc<ChaosSystem>),
+    Nif(Arc<NifEffect>),
 }
 
 struct PreparedPart {
     params: ParticleEffectParams,
     seed: u32,
     system: PreparedSystem,
+    /// Textures embedded in a NIF file, by lowercase render name (the names repeat across files).
+    embedded: HashMap<String, RasterTexture>,
 }
 
 /// What a play of a definition list draws: the reached parts, the choices made and the prepared systems with
@@ -208,6 +300,8 @@ pub struct PreviewInput<'a> {
     pub strings: Option<&'a UoStringDictionary>,
     /// The payload of an `EffectTexture.uop` file by name, with pending changes applied.
     pub payload: &'a dyn Fn(&str) -> Option<Arc<[u8]>>,
+    /// Edited NIF files that do not write yet, by name: played instead of their payload.
+    pub nif_drafts: Option<&'a dyn Fn(&str) -> Option<Arc<NifFile>>>,
 }
 
 impl PreviewScene {
@@ -218,12 +312,14 @@ impl PreviewScene {
         builder.scene
     }
 
-    /// One Chaos script (an `EffectTexture.uop` file) played as a particle with default fields.
+    /// One Chaos script or NIF file (an `EffectTexture.uop` file) played as a particle with default fields; a
+    /// NIF without a duration plays its animation length (or the timeline).
     pub fn build_script(name: &str, settings: &SimulationSettings, input: &PreviewInput<'_>) -> Self {
         let EffectDefinition::Particle(particle) = DefinitionKind::Particle.new_definition() else {
             unreachable!("a particle kind makes a particle")
         };
         let mut builder = SceneBuilder::new(settings, input);
+        builder.standalone = true;
         let status = builder.particle_named(&particle, name.to_owned());
         builder.scene.parts.push(PreviewPart { path: vec![PathStep::top(0)], kind: DefinitionKind::Particle, status });
         builder.scene
@@ -234,8 +330,10 @@ impl PreviewScene {
         !self.prepared.is_empty()
     }
 
-    fn texture(&self, name: &str) -> Option<&RasterTexture> {
-        self.textures.get(&name.to_ascii_lowercase())
+    /// A texture of part `part`: its embedded textures first, then the package's.
+    fn texture(&self, part: usize, name: &str) -> Option<&RasterTexture> {
+        let key = name.to_ascii_lowercase();
+        self.prepared.get(part).and_then(|part| part.embedded.get(&key)).or_else(|| self.textures.get(&key))
     }
 }
 
@@ -244,6 +342,8 @@ struct SceneBuilder<'s, 'a> {
     input: &'s PreviewInput<'a>,
     /// Draws of random definitions, seeded by the preview seed.
     draw: Mt19937,
+    /// One file previewed on its own ([`PreviewScene::build_script`]).
+    standalone: bool,
     scene: PreviewScene,
 }
 
@@ -253,6 +353,7 @@ impl<'s, 'a> SceneBuilder<'s, 'a> {
             settings,
             input,
             draw: Mt19937::new(settings.seed),
+            standalone: false,
             scene: PreviewScene {
                 parts: Vec::new(),
                 notes: Vec::new(),
@@ -348,11 +449,7 @@ impl<'s, 'a> SceneBuilder<'s, 'a> {
 
     fn particle_named(&mut self, particle: &ParticleEffect, name: String) -> PartStatus {
         if !is_chaos_name(&name) {
-            return if is_nif_name(&name) || (self.input.payload)(&name).is_some() {
-                PartStatus::Nif { name }
-            } else {
-                PartStatus::MissingFile { name }
-            };
+            return self.nif_particle(particle, name);
         }
         let Some(payload) = (self.input.payload)(&name) else {
             return PartStatus::MissingFile { name };
@@ -366,9 +463,68 @@ impl<'s, 'a> SceneBuilder<'s, 'a> {
             self.load_texture(resource);
         }
         let sequences = desc.sequences.len();
-        let seed = self.settings.seed.wrapping_add(self.scene.prepared.len() as u32);
+        let seed = self.part_seed();
         let system = Arc::new(ChaosSystem::prepare(desc, &mut Mt19937::new(seed)));
+        let params = self.params(particle, None);
+        let system = PreparedSystem::Chaos(system);
+        self.scene.prepared.push(PreparedPart { params, seed, system, embedded: HashMap::new() });
+        PartStatus::Chaos { name, sequences }
+    }
+
+    /// A NIF effect: the draft of the file, else its payload parsed.
+    fn nif_particle(&mut self, particle: &ParticleEffect, name: String) -> PartStatus {
+        let draft = self.input.nif_drafts.and_then(|drafts| drafts(&name));
+        let nif = match draft {
+            Some(nif) => nif,
+            None => match (self.input.payload)(&name) {
+                None => return PartStatus::MissingFile { name },
+                Some(payload) => match NifFile::read(&payload) {
+                    Ok(nif) => Arc::new(nif),
+                    Err(error) => return PartStatus::NifRejected { name, error: error.to_string() },
+                },
+            },
+        };
+        let output = particle_sim::nif::compile(&nif, &name);
+        let desc = output.desc;
+        let mut embedded = HashMap::new();
+        for texture in &desc.textures {
+            match &texture.source {
+                NifTextureSource::External { file_name } => self.load_texture(file_name),
+                NifTextureSource::Embedded { width, height, rgba } => {
+                    match RasterTexture::from_rgba8(*width as usize, *height as usize, rgba) {
+                        Some(raster) => {
+                            embedded.insert(texture.name().to_ascii_lowercase(), raster);
+                        }
+                        None => self.scene.texture_problems.push(format!("{name}: {}: bad size", texture.name())),
+                    }
+                }
+                NifTextureSource::Undecoded { format } => self
+                    .scene
+                    .texture_problems
+                    .push(format!("{name}: {}: pixel format {format} not decoded (drawn white)", texture.name())),
+            }
+        }
+        let fallback_duration = if desc.animation_length() > 0.0 { desc.animation_length() } else { self.settings.timeline_s };
+        let params = self.params(particle, self.standalone.then_some(fallback_duration));
+        let (particle_systems, meshes) = (desc.particle_systems.len(), desc.meshes.len());
+        let seed = self.part_seed();
+        let system = PreparedSystem::Nif(Arc::new(NifEffect::prepare(desc)));
+        self.scene.prepared.push(PreparedPart { params, seed, system, embedded });
+        PartStatus::Nif { name, particle_systems, meshes, warnings: output.warnings }
+    }
+
+    /// The seed of the next prepared part.
+    fn part_seed(&self) -> u32 {
+        self.settings.seed.wrapping_add(self.scene.prepared.len() as u32)
+    }
+
+    /// The definition's fields with the preview's duration and loop overrides; `fallback_duration` replaces a
+    /// duration that is not positive.
+    fn params(&self, particle: &ParticleEffect, fallback_duration: Option<f32>) -> ParticleEffectParams {
         let mut params = ParticleEffectParams::from(particle);
+        if let Some(duration) = fallback_duration.filter(|_| params.duration_s <= 0.0) {
+            params.duration_s = duration;
+        }
         if let Some(duration) = self.settings.duration_override {
             params.duration_s = duration;
         }
@@ -377,8 +533,7 @@ impl<'s, 'a> SceneBuilder<'s, 'a> {
             LoopMode::Loop => params.looping = true,
             LoopMode::Once => params.looping = false,
         }
-        self.scene.prepared.push(PreparedPart { params, seed, system: PreparedSystem::Chaos(system) });
-        PartStatus::Chaos { name, sequences }
+        params
     }
 
     fn load_texture(&mut self, name: &str) {
@@ -413,42 +568,92 @@ pub fn path_label(path: &[PathStep]) -> String {
         .join("/")
 }
 
+/// A running part: a Chaos effect, or a NIF effect kept concrete for its lights.
+enum PartInstance {
+    Chaos(EffectInstance),
+    Nif { params: ParticleEffectParams, system: NifEffectInstance },
+}
+
+impl PartInstance {
+    fn update(&mut self, dt_ms: u32, placement: &EffectPlacement) {
+        match self {
+            Self::Chaos(instance) => instance.update(dt_ms, placement),
+            Self::Nif { params, system } => {
+                // `EffectInstance::node`.
+                let node = NodeTransform {
+                    position: placement.anchor + params.node_offset(placement.camera_vector),
+                    rotation: placement.node_rotation,
+                    scale: params.node_scale(),
+                    velocity: placement.velocity,
+                };
+                system.update(dt_ms, &node);
+            }
+        }
+    }
+
+    fn system(&self) -> &dyn ParticleSystemInstance {
+        match self {
+            Self::Chaos(instance) => instance.system(),
+            Self::Nif { system, .. } => system,
+        }
+    }
+}
+
 /// The running preview: every playing part of a scene, advanced in fixed steps.
 pub struct PreviewSimulation {
-    instances: Vec<EffectInstance>,
+    instances: Vec<PartInstance>,
     settings: SimulationSettings,
+    orbit: CameraOrbit,
     time_ms: u32,
-    camera_vector: Vec3,
 }
 
 impl PreviewSimulation {
-    /// Starts every playing part at time 0.
-    pub fn new(scene: &PreviewScene, settings: &SimulationSettings) -> Self {
+    /// Starts every playing part at time 0, seen from `orbit` (NIF billboards face it).
+    pub fn new(scene: &PreviewScene, settings: &SimulationSettings, orbit: CameraOrbit) -> Self {
         let instances = scene
             .prepared
             .iter()
-            .map(|part| {
-                let system = match &part.system {
-                    PreparedSystem::Chaos(system) => ChaosEffectInstance::with_seed(Arc::clone(system), part.seed),
-                };
-                let mut instance = EffectInstance::new(part.params, Box::new(system));
-                instance.start();
-                instance
+            .map(|part| match &part.system {
+                PreparedSystem::Chaos(system) => {
+                    let system = ChaosEffectInstance::with_seed(Arc::clone(system), part.seed);
+                    let mut instance = EffectInstance::new(part.params, Box::new(system));
+                    instance.start();
+                    PartInstance::Chaos(instance)
+                }
+                PreparedSystem::Nif(effect) => {
+                    let mut system = NifEffectInstance::with_seed(Arc::clone(effect), part.seed);
+                    system.set_camera(orbit.camera());
+                    system.start(part.params.duration_s, part.params.looping);
+                    PartInstance::Nif { params: part.params, system }
+                }
             })
             .collect();
-        let (direction, _, _) = camera_axes(CAMERA_ELEVATION_DEGREES.to_radians());
-        Self { instances, settings: *settings, time_ms: 0, camera_vector: direction }
+        Self { instances, settings: *settings, orbit, time_ms: 0 }
     }
 
     /// A simulation advanced to `time_ms` (rounded down to whole steps): the same frame every time.
-    pub fn at(scene: &PreviewScene, settings: &SimulationSettings, time_ms: u32) -> Self {
-        let mut simulation = Self::new(scene, settings);
+    pub fn at(scene: &PreviewScene, settings: &SimulationSettings, orbit: CameraOrbit, time_ms: u32) -> Self {
+        let mut simulation = Self::new(scene, settings, orbit);
         simulation.advance_to(time_ms);
         simulation
     }
 
     pub fn time_ms(&self) -> u32 {
         self.time_ms
+    }
+
+    /// The orbit the simulation was built for.
+    pub fn orbit(&self) -> CameraOrbit {
+        self.orbit
+    }
+
+    /// The lights of the NIF parts (render time only).
+    pub fn set_lighting(&mut self, lighting: SceneLighting) {
+        for instance in &mut self.instances {
+            if let PartInstance::Nif { system, .. } = instance {
+                system.set_lighting(lighting);
+            }
+        }
     }
 
     /// Where the emitter is now.
@@ -459,7 +664,8 @@ impl PreviewSimulation {
     /// One step.
     pub fn step(&mut self) {
         self.time_ms += PREVIEW_STEP_MS;
-        let placement = EffectPlacement { camera_vector: self.camera_vector, ..EffectPlacement::at(self.emitter_position()) };
+        let (direction, _, _) = self.orbit.axes();
+        let placement = EffectPlacement { camera_vector: direction, ..EffectPlacement::at(self.emitter_position()) };
         for instance in &mut self.instances {
             instance.update(PREVIEW_STEP_MS, &placement);
         }
@@ -473,18 +679,36 @@ impl PreviewSimulation {
     }
 
     pub fn particle_count(&self) -> usize {
-        self.instances.iter().map(EffectInstance::particle_count).sum()
+        self.instances.iter().map(|instance| instance.system().particle_count()).sum()
     }
 
-    /// Every part stopped emitting and has no particles left.
+    /// Every part stopped emitting and has no particles left (a finished NIF effect is released whatever it
+    /// shows, as the client does).
     pub fn is_drained(&self) -> bool {
-        self.instances.iter().all(|instance| instance.is_finished() && instance.is_drained())
+        self.instances.iter().all(|instance| instance.system().is_finished() && instance.system().is_drained())
     }
 
+    /// The frame of each part still shown, with the part index (scene orders are local to a part).
+    pub fn render_parts(&self) -> Vec<(usize, RenderFrame)> {
+        self.instances
+            .iter()
+            .enumerate()
+            .filter(|(_, instance)| !(instance.system().is_finished() && instance.system().is_drained()))
+            .map(|(part, instance)| {
+                let mut frame = RenderFrame::default();
+                instance.system().render(&mut frame);
+                (part, frame)
+            })
+            .collect()
+    }
+
+    /// Every part in one frame (for bounds; draw [`Self::render_parts`]).
     pub fn render(&self) -> RenderFrame {
         let mut frame = RenderFrame::default();
         for instance in &self.instances {
-            instance.render(&mut frame);
+            if !(instance.system().is_finished() && instance.system().is_drained()) {
+                instance.system().render(&mut frame);
+            }
         }
         frame
     }
@@ -494,24 +718,27 @@ fn emitter_at(move_speed: f32, time_ms: u32) -> Vec3 {
     Vec3::new(move_speed * time_ms as f32 / MS_PER_SECOND, 0.0, 0.0)
 }
 
-/// The view plane extent of everything a scene draws over the timeline (sampled), with the emitter path:
-/// (min right, max right, min up, max up).
-pub fn fit_extent(scene: &PreviewScene, settings: &SimulationSettings) -> [f32; 4] {
-    let probe = probe_view();
-    let mut simulation = PreviewSimulation::new(scene, settings);
-    let mut extent: Option<[f32; 4]> = None;
-    let mut include = |bounds: [f32; 4]| {
-        let current = extent.get_or_insert(bounds);
-        *current = [current[0].min(bounds[0]), current[1].max(bounds[1]), current[2].min(bounds[2]), current[3].max(bounds[3])];
+/// A world-space box: (min, max).
+pub type WorldBounds = [Vec3; 2];
+
+/// The world box around everything a scene draws over the timeline (sampled) and the emitter path, seen from
+/// the default orbit (NIF billboards turn with the camera; the box barely does).
+pub fn fit_bounds(scene: &PreviewScene, settings: &SimulationSettings) -> WorldBounds {
+    let mut simulation = PreviewSimulation::new(scene, settings, CameraOrbit::default());
+    let mut bounds: Option<WorldBounds> = None;
+    let mut include = |min: Vec3, max: Vec3| {
+        let [low, high] = bounds.get_or_insert([min, max]);
+        *low = Vec3::new(low.x.min(min.x), low.y.min(min.y), low.z.min(min.z));
+        *high = Vec3::new(high.x.max(max.x), high.y.max(max.y), high.z.max(max.z));
     };
     let end = settings.timeline_ms();
     let mut steps = 0;
     loop {
-        let (x, y) = probe.project(simulation.emitter_position());
-        include([x, x, y, y]);
+        let emitter = simulation.emitter_position();
+        include(emitter, emitter);
         if steps % FIT_SAMPLE_EVERY_STEPS == 0 {
-            if let Some(bounds) = frame_extent(&simulation.render(), &probe.camera) {
-                include(bounds);
+            if let Some((min, max)) = frame_bounds(&simulation.render()) {
+                include(min, max);
             }
         }
         if simulation.time_ms() + PREVIEW_STEP_MS > end {
@@ -520,31 +747,46 @@ pub fn fit_extent(scene: &PreviewScene, settings: &SimulationSettings) -> [f32; 
         simulation.step();
         steps += 1;
     }
-    extent.unwrap_or_default()
+    bounds.unwrap_or([Vec3::ZERO; 2])
 }
 
-fn probe_view() -> OrthoView {
-    OrthoView::new(CAMERA_ELEVATION_DEGREES.to_radians(), Vec3::ZERO, CAMERA_DISTANCE, 1.0, 1, 1)
-}
-
-/// The view of a `width` x `height` canvas showing `extent` (from [`fit_extent`]), zoomed and panned.
-pub fn preview_view(extent: [f32; 4], view: &ViewSettings, width: usize, height: usize) -> OrthoView {
-    let probe = probe_view();
-    let [min_x, max_x, min_y, max_y] = extent;
-    let size = (max_x - min_x).max(max_y - min_y).max(MIN_FIT_EXTENT);
+/// The view of a `width` x `height` canvas showing `bounds` (from [`fit_bounds`]) from the view's orbit,
+/// zoomed and panned.
+pub fn preview_view(bounds: WorldBounds, view: &ViewSettings, width: usize, height: usize) -> OrthoView {
+    let (_, up, right) = view.orbit.axes();
+    let [min, max] = bounds;
+    let corners = (0..8).map(|corner: u32| {
+        let pick = |bit: u32, low: f32, high: f32| if corner & (1 << bit) == 0 { low } else { high };
+        Vec3::new(pick(0, min.x, max.x), pick(1, min.y, max.y), pick(2, min.z, max.z))
+    });
+    let (mut extent_x, mut extent_y) = ([f32::MAX, f32::MIN], [f32::MAX, f32::MIN]);
+    for corner in corners {
+        let (x, y) = (corner.dot(right), corner.dot(up));
+        extent_x = [extent_x[0].min(x), extent_x[1].max(x)];
+        extent_y = [extent_y[0].min(y), extent_y[1].max(y)];
+    }
+    let size = (extent_x[1] - extent_x[0]).max(extent_y[1] - extent_y[0]).max(MIN_FIT_EXTENT);
     let pixels = width.min(height) as f32;
     let pixels_per_unit = pixels * (1.0 - 2.0 * FIT_MARGIN) / size * view.zoom.clamp(MIN_ZOOM, MAX_ZOOM);
-    let center = probe.camera.right * ((min_x + max_x) * 0.5 - view.pan[0] / pixels_per_unit)
-        + probe.camera.up * ((min_y + max_y) * 0.5 + view.pan[1] / pixels_per_unit);
-    OrthoView::new(CAMERA_ELEVATION_DEGREES.to_radians(), center, CAMERA_DISTANCE, pixels_per_unit, width, height)
+    let center = (min + max) * 0.5 - right * (view.pan[0] / pixels_per_unit) + up * (view.pan[1] / pixels_per_unit);
+    let CameraOrbit { yaw_degrees, pitch_degrees } = view.orbit;
+    OrthoView::orbit(yaw_degrees.to_radians(), pitch_degrees.to_radians(), center, CAMERA_DISTANCE, pixels_per_unit, width, height)
 }
 
 /// Draws the current frame of a simulation with the overlays.
 pub fn render_canvas(scene: &PreviewScene, simulation: &PreviewSimulation, view: &OrthoView, settings: &ViewSettings) -> Canvas {
     let mut canvas = Canvas::new(view.width, view.height, settings.background);
-    let frame = simulation.render();
-    canvas.draw_frame(view, &frame, &|name| scene.texture(name), MESH_COLOR);
+    let options = SceneDrawOptions {
+        lighting: settings.lighting,
+        sprites: settings.show_particles,
+        meshes: settings.show_meshes,
+        mesh_markers: Some(MESH_COLOR),
+    };
+    for (part, frame) in simulation.render_parts() {
+        canvas.draw_scene(view, &frame, &|name| scene.texture(part, name), &options);
+    }
     if settings.show_bounds {
+        let frame = simulation.render();
         if let Some([min_x, max_x, min_y, max_y]) = frame_extent(&frame, &view.camera) {
             let origin = view.project(view.center);
             let to_screen = |x: f32, y: f32| {
@@ -583,7 +825,8 @@ pub fn render_frames(
     view_settings: &ViewSettings,
     times: &[u32],
 ) -> Vec<RgbaImage> {
-    let mut simulation = PreviewSimulation::new(scene, settings);
+    let mut simulation = PreviewSimulation::new(scene, settings, view_settings.orbit);
+    simulation.set_lighting(view_settings.lighting);
     times
         .iter()
         .map(|&time| {
@@ -622,6 +865,7 @@ pub fn write_png_sequence(frames: &[RgbaImage], dir: &Path, stem: &str) -> Resul
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::logic::nif_editor::tests::{test_nif_bytes, TEST_MESH_HALF_SIZE};
     use uocf::enhanced::effect_definition::{
         EffectMapEntry, LodEffect, RandomEffect, RandomEffectEntry, RoundRobinEffect, SoundEffect,
     };
@@ -659,13 +903,14 @@ pub(crate) mod tests {
     fn files(name: &str) -> Option<Arc<[u8]>> {
         match name.to_ascii_lowercase().as_str() {
             SCRIPT_NAME => Some(Arc::from(SPARK_SCRIPT.as_bytes())),
+            NIF_NAME => Some(Arc::from(test_nif_bytes())),
             _ => None,
         }
     }
 
     fn scene(definitions: &[EffectDefinition], settings: &SimulationSettings) -> PreviewScene {
         let strings = dictionary();
-        PreviewScene::build(definitions, settings, &PreviewInput { strings: Some(&strings), payload: &files })
+        PreviewScene::build(definitions, settings, &PreviewInput { strings: Some(&strings), payload: &files, nif_drafts: None })
     }
 
     #[test]
@@ -673,7 +918,7 @@ pub(crate) mod tests {
         let settings = SimulationSettings::default();
         let scene = scene(&[particle(SCRIPT_INDEX)], &settings);
         assert!(matches!(scene.parts[0].status, PartStatus::Chaos { .. }), "{:?}", scene.parts[0].status);
-        assert!(PreviewSimulation::at(&scene, &settings, SCRUB_TIME_MS).particle_count() > 0);
+        assert!(PreviewSimulation::at(&scene, &settings, CameraOrbit::default(), SCRUB_TIME_MS).particle_count() > 0);
         assert_eq!(scene.texture_problems.len(), 1, "spark.tga is missing: {:?}", scene.texture_problems);
     }
 
@@ -682,10 +927,62 @@ pub(crate) mod tests {
         let settings = SimulationSettings::default();
         let sound = EffectDefinition::Sound(SoundEffect { sound_id: 1, value_08: 1.0 });
         let scene = scene(&[particle(NIF_INDEX), particle(99), sound], &settings);
-        assert!(matches!(&scene.parts[0].status, PartStatus::Nif { name } if name == NIF_NAME));
+        assert!(
+            matches!(&scene.parts[0].status, PartStatus::Nif { name, meshes: 1, .. } if name == NIF_NAME),
+            "{:?}",
+            scene.parts[0].status
+        );
         assert!(matches!(scene.parts[1].status, PartStatus::NameUnresolved { name_index: 99 }));
         assert_eq!(scene.parts[2].status, PartStatus::NotVisual);
-        assert!(!scene.has_playing_parts());
+        assert!(scene.has_playing_parts());
+        let broken = |name: &str| (name == NIF_NAME).then(|| Arc::from(&b"Gamebryo File Format, Version 20.0.0.4\n"[..]));
+        let strings = dictionary();
+        let input = PreviewInput { strings: Some(&strings), payload: &broken, nif_drafts: None };
+        let rejected = PreviewScene::build(&[particle(NIF_INDEX)], &settings, &input);
+        assert!(matches!(rejected.parts[0].status, PartStatus::NifRejected { .. }));
+        assert!(!rejected.has_playing_parts());
+        // A draft replaces the payload.
+        let mut draft = crate::logic::nif_editor::tests::test_nif();
+        draft.blocks.truncate(crate::logic::nif_editor::tests::SHAPE_BLOCK);
+        let draft = Arc::new(draft);
+        let drafts = |name: &str| (name == NIF_NAME).then(|| Arc::clone(&draft));
+        let input = PreviewInput { strings: Some(&strings), payload: &broken, nif_drafts: Some(&drafts) };
+        let drafted = PreviewScene::build(&[particle(NIF_INDEX)], &settings, &input);
+        assert!(matches!(drafted.parts[0].status, PartStatus::Nif { meshes: 0, .. }), "{:?}", drafted.parts[0].status);
+    }
+
+    /// A Chaos script and a NIF mesh play together; the toggles hide particles or meshes, the orbit turns the
+    /// view.
+    #[test]
+    fn mixed_entries_play_every_part() {
+        let settings = SimulationSettings::default();
+        let scene = scene(&[particle(SCRIPT_INDEX), particle(NIF_INDEX)], &settings);
+        assert!(scene.parts.iter().all(|part| part.status.plays()));
+        let bounds = fit_bounds(&scene, &settings);
+        let half = TEST_MESH_HALF_SIZE;
+        assert!(bounds[0].x <= -half && bounds[1].x >= half && bounds[0].z <= -half, "{bounds:?}");
+        let draw = |view_settings: ViewSettings| {
+            let view = preview_view(bounds, &view_settings, PREVIEW_RESOLUTION_PX, PREVIEW_RESOLUTION_PX);
+            let mut simulation = PreviewSimulation::at(&scene, &settings, view_settings.orbit, SCRUB_TIME_MS);
+            simulation.set_lighting(view_settings.lighting);
+            assert_eq!(simulation.render_parts().len(), 2);
+            canvas_image(&render_canvas(&scene, &simulation, &view, &view_settings))
+        };
+        let plain = ViewSettings { show_emitter: false, ..Default::default() };
+        let background = DEFAULT_BACKGROUND.map(|channel| (channel * 255.0).round() as u8);
+        let drawn = |image: &RgbaImage| image.pixels().filter(|pixel| pixel.0 != background).count();
+        let both = draw(plain);
+        let meshes = draw(ViewSettings { show_particles: false, ..plain });
+        let particles = draw(ViewSettings { show_meshes: false, ..plain });
+        let nothing = draw(ViewSettings { show_meshes: false, show_particles: false, ..plain });
+        assert_eq!(drawn(&nothing), 0);
+        assert!(drawn(&meshes) > 0 && drawn(&particles) > 0);
+        assert!(drawn(&both) > drawn(&meshes).max(drawn(&particles)));
+        // Seen edge-on from the east, the triangle (in the x-z plane) disappears.
+        let east = CameraOrbit { yaw_degrees: -90.0, pitch_degrees: 0.0 };
+        let edge_on = draw(ViewSettings { show_particles: false, orbit: east, ..plain });
+        assert!(drawn(&edge_on) < drawn(&meshes) / 4, "{} vs {}", drawn(&edge_on), drawn(&meshes));
+        assert_eq!(CameraOrbit::default().turned(270.0, 90.0), CameraOrbit { yaw_degrees: -90.0, pitch_degrees: MAX_CAMERA_PITCH_DEGREES });
     }
 
     #[test]
@@ -715,11 +1012,11 @@ pub(crate) mod tests {
         let settings = SimulationSettings { move_speed: DEFAULT_MOVE_SPEED, ..Default::default() };
         let definitions = [particle(SCRIPT_INDEX), particle(SCRIPT_INDEX)];
         let scene = scene(&definitions, &settings);
-        let mut played = PreviewSimulation::new(&scene, &settings);
+        let mut played = PreviewSimulation::new(&scene, &settings, CameraOrbit::default());
         for target in (0..=SCRUB_TIME_MS).step_by(37) {
             played.advance_to(target);
         }
-        let scrubbed = PreviewSimulation::at(&scene, &settings, SCRUB_TIME_MS);
+        let scrubbed = PreviewSimulation::at(&scene, &settings, CameraOrbit::default(), SCRUB_TIME_MS);
         assert_eq!(played.time_ms(), scrubbed.time_ms());
         assert!(!scrubbed.render().sprites.is_empty());
         assert_eq!(frame_content(&played.render()), frame_content(&scrubbed.render()));
@@ -736,17 +1033,17 @@ pub(crate) mod tests {
     }
 
     fn scene_frame(definitions: &[EffectDefinition], settings: &SimulationSettings) -> FrameContent {
-        frame_content(&PreviewSimulation::at(&scene(definitions, settings), settings, SCRUB_TIME_MS).render())
+        frame_content(&PreviewSimulation::at(&scene(definitions, settings), settings, CameraOrbit::default(), SCRUB_TIME_MS).render())
     }
 
     #[test]
     fn view_fits_and_exports_frames() {
         let settings = SimulationSettings::default();
         let scene = scene(&[particle(SCRIPT_INDEX)], &settings);
-        let extent = fit_extent(&scene, &settings);
-        assert!(extent[3] > extent[2], "the particles rise: {extent:?}");
+        let bounds = fit_bounds(&scene, &settings);
+        assert!(bounds[1].z > bounds[0].z, "the particles rise: {bounds:?}");
         let view_settings = ViewSettings { show_bounds: true, ..Default::default() };
-        let view = preview_view(extent, &view_settings, PREVIEW_RESOLUTION_PX, PREVIEW_RESOLUTION_PX);
+        let view = preview_view(bounds, &view_settings, PREVIEW_RESOLUTION_PX, PREVIEW_RESOLUTION_PX);
         let times = export_times(&settings, DEFAULT_EXPORT_FRAMES);
         assert_eq!(times.len(), DEFAULT_EXPORT_FRAMES);
         assert_eq!(*times.last().unwrap(), settings.timeline_ms());
@@ -849,7 +1146,7 @@ pub(crate) mod tests {
         // Preview of a real entry, preferring the flame strike.
         let settings = SimulationSettings::default();
         let payload = |name: &str| files.payload(&no_overrides, effect_texture_hash(name));
-        let input = PreviewInput { strings: Some(&strings), payload: &payload };
+        let input = PreviewInput { strings: Some(&strings), payload: &payload, nif_drafts: None };
         let names = |definitions: &[EffectDefinition]| -> Vec<String> {
             let mut names = Vec::new();
             collect_particle_names(definitions, &strings, &mut names);
@@ -865,7 +1162,7 @@ pub(crate) mod tests {
         let scene = PreviewScene::build(&entry.definitions, &settings, &input);
         assert!(scene.texture_problems.is_empty(), "{:?}", scene.texture_problems);
         let view_settings = ViewSettings::default();
-        let view = preview_view(fit_extent(&scene, &settings), &view_settings, PREVIEW_RESOLUTION_PX, PREVIEW_RESOLUTION_PX);
+        let view = preview_view(fit_bounds(&scene, &settings), &view_settings, PREVIEW_RESOLUTION_PX, PREVIEW_RESOLUTION_PX);
         let frames = render_frames(&scene, &settings, &view, &view_settings, &export_times(&settings, DEFAULT_EXPORT_FRAMES));
         let background = DEFAULT_BACKGROUND.map(|channel| (channel * 255.0).round() as u8);
         assert!(frames.iter().any(|frame| frame.pixels().any(|pixel| pixel.0 != background)), "something is drawn");
@@ -876,6 +1173,145 @@ pub(crate) mod tests {
             let shown: Vec<String> = names(&entry.definitions);
             eprintln!("preview of collection entry {:?} ({shown:?}) written to {}", entry.key, base.display());
         }
+    }
+
+    /// NIF effects of the real client previewed headlessly: a projectile, an explosion and a mesh-only one.
+    const REAL_NIF_NAMES: [&str; 2] = ["00014052_smallfireball.nif", "00014026_explosion3.nif"];
+    const REAL_NIF_SHEET_PREFIX: &str = "nif_preview_";
+    /// The emitter speed edit: new speed = old * factor + offset (different from any old speed).
+    const SPEED_EDIT_FACTOR: f32 = 2.0;
+    const SPEED_EDIT_OFFSET: f32 = 1.0;
+    const EMITTER_TYPE: &str = "NiPSysEmitter";
+    const SPEED_FIELD: &str = "speed";
+
+    /// Previews collection entries playing NIF effects (contact sheets into `UOCF_INSPECTOR_TEST_SCRATCH_DIR`),
+    /// then edits the emitter speed of a NIF, saves `EffectTexture.uop` into a scratch directory and reads it
+    /// back: the edit is there, every other file is byte-identical.
+    #[test]
+    #[ignore = "needs a real Enhanced Client: set UO_EC_CLIENT_DIR and run with --ignored"]
+    fn client_nif_effects_preview_edit_and_save() {
+        use crate::logic::effect_files::{EffectFiles, FileKind};
+        use crate::logic::effects_editor::tests::{scratch_dir, EC_CLIENT_DIR_ENV, SCRATCH_DIR_ENV};
+        use crate::logic::effects_editor::{open_collection, CollectionSource, EffectsDocument};
+        use crate::logic::nif_editor::{current_nif, edit_nif_file, FieldStep, NifEdit, ScalarValue};
+        use std::collections::BTreeMap;
+        use std::path::PathBuf;
+        use uocf::enhanced::effect_definition::EFFECT_DEFINITION_COLLECTION_UOP_NAME;
+        use uocf::enhanced::effect_texture::{effect_texture_hash, EFFECT_TEXTURE_UOP_NAME};
+
+        let client_dir = PathBuf::from(std::env::var_os(EC_CLIENT_DIR_ENV).expect("set UO_EC_CLIENT_DIR"));
+        let strings = UoStringDictionary::load(&client_dir.join(STRING_DICTIONARY_UOP_NAME)).unwrap();
+        let collection = open_collection(&client_dir.join(EFFECT_DEFINITION_COLLECTION_UOP_NAME)).unwrap();
+        let files_source = client_dir.join(EFFECT_TEXTURE_UOP_NAME);
+        let files = EffectFiles::open(&files_source, Some(&strings)).unwrap();
+        let no_overrides = BTreeMap::new();
+        let payload = |name: &str| files.payload(&no_overrides, effect_texture_hash(name));
+        let input = PreviewInput { strings: Some(&strings), payload: &payload, nif_drafts: None };
+        let settings = SimulationSettings::default();
+        let names = |definitions: &[EffectDefinition]| -> Vec<String> {
+            let mut names = Vec::new();
+            collect_particle_names(definitions, &strings, &mut names);
+            names
+        };
+
+        // A mesh-only NIF some entry plays.
+        let mut nif_kinds: BTreeMap<String, bool> = BTreeMap::new();
+        let mesh_only = collection.entries.iter().find_map(|entry| {
+            names(&entry.definitions).into_iter().filter(|name| is_nif_name(name)).find(|name| {
+                *nif_kinds.entry(name.clone()).or_insert_with(|| {
+                    let Some(Ok(nif)) = payload(name).map(|bytes| NifFile::read(&bytes)) else { return false };
+                    let desc = particle_sim::nif::compile(&nif, name).desc;
+                    desc.particle_systems.is_empty() && !desc.meshes.is_empty()
+                })
+            })
+        });
+        let mesh_only = mesh_only.expect("an entry plays a mesh-only NIF");
+        let base = std::env::var_os(SCRATCH_DIR_ENV).map(PathBuf::from);
+        let view_settings = ViewSettings::default();
+        let background = DEFAULT_BACKGROUND.map(|channel| (channel * 255.0).round() as u8);
+        for target in REAL_NIF_NAMES.iter().copied().chain([mesh_only.as_str()]) {
+            let entry = collection
+                .entries
+                .iter()
+                .find(|entry| names(&entry.definitions).iter().any(|name| name == target))
+                .unwrap_or_else(|| panic!("an entry plays {target}"));
+            let scene = PreviewScene::build(&entry.definitions, &settings, &input);
+            let nif_part = scene
+                .parts
+                .iter()
+                .find(|part| matches!(&part.status, PartStatus::Nif { name, .. } if name.eq_ignore_ascii_case(target)))
+                .unwrap_or_else(|| panic!("{target} plays: {:?}", scene.parts.iter().map(|part| part.status.describe()).collect::<Vec<_>>()));
+            let view = preview_view(fit_bounds(&scene, &settings), &view_settings, PREVIEW_RESOLUTION_PX, PREVIEW_RESOLUTION_PX);
+            let frames = render_frames(&scene, &settings, &view, &view_settings, &export_times(&settings, DEFAULT_EXPORT_FRAMES));
+            assert!(frames.iter().any(|frame| frame.pixels().any(|pixel| pixel.0 != background)), "{target} draws");
+            eprintln!(
+                "entry {:?} with {target}: {}; texture problems {:?}",
+                entry.key,
+                nif_part.status.describe(),
+                scene.texture_problems
+            );
+            if let Some(base) = &base {
+                let stem = target.trim_end_matches(".nif");
+                contact_sheet(&frames).save(base.join(format!("{REAL_NIF_SHEET_PREFIX}{stem}.png"))).unwrap();
+            }
+        }
+
+        // Edit the first emitter's speed of the small fireball, save into scratch and read back.
+        let edited_name = REAL_NIF_NAMES[0];
+        let hash = effect_texture_hash(edited_name);
+        let mut document = EffectsDocument::new(collection.clone(), CollectionSource::None);
+        let nif = current_nif(&document, &files, hash).unwrap();
+        let (block, old_speed, field) = nif
+            .blocks
+            .iter()
+            .enumerate()
+            .filter(|(_, block)| block.block_type().is_a(EMITTER_TYPE))
+            .find_map(|(index, block)| {
+                block.fields().iter().enumerate().find_map(|(field, value)| match value.value {
+                    gamebryo_nif::Value::F32(&speed) if value.name() == SPEED_FIELD => Some((index, speed, field)),
+                    _ => None,
+                })
+            })
+            .expect("the fireball has an emitter");
+        let new_speed = old_speed * SPEED_EDIT_FACTOR + SPEED_EDIT_OFFSET;
+        let edit = (vec![FieldStep::Field(field)], NifEdit::Set(ScalarValue::Float(new_speed)));
+        edit_nif_file(&mut document, &files, hash, block, &[edit]).unwrap();
+        assert!(document.nif_drafts().is_empty(), "a speed edit writes");
+        let dir = scratch_dir("client_nif");
+        let output = dir.join(EFFECT_TEXTURE_UOP_NAME);
+        let report = files.save_as(document.files(), &output, &[files_source.as_path()]).unwrap();
+        assert_eq!((report.replaced, report.added, report.removed), (1, 0, 0));
+        let saved = EffectFiles::open(&output, Some(&strings)).unwrap();
+        let back = NifFile::read(&saved.payload(&no_overrides, hash).unwrap()).unwrap();
+        let speed = back.blocks[block].fields().iter().find_map(|value| match value.value {
+            gamebryo_nif::Value::F32(&speed) if value.name() == SPEED_FIELD => Some(speed),
+            _ => None,
+        });
+        assert_eq!(speed, Some(new_speed));
+        let mut expected = Arc::unwrap_or_clone(nif);
+        crate::logic::nif_editor::apply_edit(
+            &mut expected,
+            block,
+            &[FieldStep::Field(field)],
+            &NifEdit::Set(ScalarValue::Float(new_speed)),
+        )
+        .unwrap();
+        assert_eq!(back, expected, "nothing else changed in the NIF");
+        let rows = files.rows(&no_overrides);
+        let mut compared = 0;
+        for row in rows.iter().filter(|row| row.hash != hash) {
+            assert_eq!(
+                saved.payload(&no_overrides, row.hash),
+                files.payload(&no_overrides, row.hash),
+                "{} is byte-identical",
+                row.label()
+            );
+            compared += 1;
+        }
+        assert_eq!(saved.rows(&no_overrides).len(), rows.len());
+        assert!(rows.iter().any(|row| row.kind == FileKind::Nif));
+        eprintln!("{edited_name}: block {block} speed {old_speed} -> {new_speed}; {compared} other files identical");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     fn collect_particle_names(definitions: &[EffectDefinition], strings: &UoStringDictionary, names: &mut Vec<String>) {

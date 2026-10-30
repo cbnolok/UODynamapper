@@ -115,11 +115,39 @@ pub struct FileOverride {
     pub payload: Option<Arc<[u8]>>,
 }
 
-/// Everything the panel edits: the collection and the pending file changes by name hash.
+/// An edited NIF that does not write (a list length disagrees with its count field): kept until an edit
+/// makes it writable again, when it becomes the file's payload. The file's payload stays the last version that
+/// wrote; saving refuses while a draft exists.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NifDraft {
+    /// The file name, as in [`FileOverride::name`].
+    pub name: String,
+    pub nif: Arc<gamebryo_nif::NifFile>,
+    /// Why it does not write.
+    pub error: String,
+}
+
+/// Everything the panel edits: the collection, the pending file changes and the unwritable NIF drafts, by
+/// name hash.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct EffectsData {
     pub collection: EffectDefinitionCollection,
     pub files: BTreeMap<u64, FileOverride>,
+    pub nif_drafts: BTreeMap<u64, NifDraft>,
+}
+
+impl EffectsData {
+    /// Stores a file change, dropping the NIF draft of the file.
+    pub fn set_file(&mut self, hash: u64, change: FileOverride) {
+        self.nif_drafts.remove(&hash);
+        self.files.insert(hash, change);
+    }
+
+    /// Drops the file change and NIF draft of a file.
+    pub fn restore_file(&mut self, hash: u64) {
+        self.nif_drafts.remove(&hash);
+        self.files.remove(&hash);
+    }
 }
 
 /// Where the edited collection was opened from.
@@ -161,6 +189,8 @@ pub enum EffectsEditKey {
     Field { entry: usize, path: Vec<PathStep>, field: &'static str },
     /// The text of a script file.
     FileText { hash: u64 },
+    /// A field of a NIF file block (`path` names the field inside the block).
+    NifField { hash: u64, block: usize, path: String },
 }
 
 /// The edited data, its opened and saved states and the undo history.
@@ -184,7 +214,7 @@ impl Default for EffectsDocument {
 
 impl EffectsDocument {
     pub fn new(collection: EffectDefinitionCollection, source: CollectionSource) -> Self {
-        let data = EffectsData { collection: collection.clone(), files: BTreeMap::new() };
+        let data = EffectsData { collection: collection.clone(), files: BTreeMap::new(), nif_drafts: BTreeMap::new() };
         Self {
             opened: data.clone(),
             saved_collection: collection,
@@ -217,9 +247,14 @@ impl EffectsDocument {
         self.data.collection != self.saved_collection
     }
 
-    /// The pending file changes differ from the last saved ones.
+    /// The pending file changes differ from the last saved ones, or a NIF draft is pending.
     pub fn files_dirty(&self) -> bool {
-        self.data.files != self.saved_files
+        self.data.files != self.saved_files || !self.data.nif_drafts.is_empty()
+    }
+
+    /// The edited NIFs that do not write.
+    pub fn nif_drafts(&self) -> &BTreeMap<u64, NifDraft> {
+        &self.data.nif_drafts
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -298,7 +333,9 @@ impl EffectsDocument {
     /// Drops every pending file change (another `EffectTexture.uop` was opened); the undo history restarts.
     pub fn reset_files(&mut self) {
         self.data.files.clear();
+        self.data.nif_drafts.clear();
         self.opened.files.clear();
+        self.opened.nif_drafts.clear();
         self.saved_files.clear();
         self.history = UndoHistory::default();
         self.revision += 1;

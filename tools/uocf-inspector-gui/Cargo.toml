@@ -26,6 +26,7 @@ udd-assets = { path = "../../lib/udd-assets" }
 udd-image-codecs = { path = "../../lib/udd-image-codecs", features = ["ktx2"] }
 uocf = { path = "../../lib/uocf" }
 particle-sim = { path = "../../lib/particle-sim" }
+gamebryo-nif = { path = "../../lib/gamebryo-nif" }
 rfd.workspace = true
 udd-logging = { path = "../../lib/udd-logging" }
 gui-shared = { path = "../../lib/gui-shared" }
