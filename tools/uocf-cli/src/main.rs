@@ -1,3 +1,4 @@
+mod facet;
 mod hues;
 mod legacy_mul;
 mod mul_convert;
@@ -89,6 +90,9 @@ enum Commands {
     /// Classic hues.mul <-> Enhanced Client Hues.uop converter.
     #[command(subcommand)]
     Hues(hues::HuesCmd),
+    /// Enhanced Client facets: facetN.uop squares, facetNN.dds radar images, facets.uop definitions.
+    #[command(subcommand)]
+    Facet(facet::FacetCmd),
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -150,6 +154,7 @@ fn main() -> eyre::Result<()> {
         Commands::Multimap(cmd) => multimap::run(cmd)?,
         Commands::MulConvert(cmd) => mul_convert::run(cmd)?,
         Commands::Hues(cmd) => hues::run(cmd)?,
+        Commands::Facet(cmd) => facet::run(cmd)?,
     }
 
     Ok(())

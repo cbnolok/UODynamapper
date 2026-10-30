@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 
 use clap::{Args as ClapArgs, ValueEnum};
 use color_eyre::eyre::{self, Context};
-use uocf::classic::map::{MapBlockRelPos, MapPlane, MapSizeCells};
+use uocf::classic::map::{MapBlock, MapBlockRelPos, MapPlane, MapSizeCells};
+use uocf::enhanced::facet_sector::{square_index, FacetGeometry, SECTOR_SIDE};
 use uocf::enhanced::terrain_definition::TerrainDefinitionPackage;
 use uocf::uop_container::package::UopPackage;
 
@@ -147,23 +148,29 @@ fn extract_ec_evidence(args: &Args, map_index: u8, size: MapSizeCells) -> eyre::
     let package = UopPackage::load(facet)
         .wrap_err_with(|| format!("load {}", facet.display()))?;
     let mut evidence = Evidence::default();
+    // EC sectors are numbered column-major over ceil(w / 64) x ceil(h / 64), with the squares past the map edge
+    // padded (Tokuno's 1448 squares end inside a sector).
+    let geometry = FacetGeometry::new(size.width, size.height);
 
-    for block_id in 0..facet_block_count(size) {
-        load_cc_chunk_blocks(&mut cc_plane, block_id, size)?;
+    for block_id in 0..geometry.sector_count() {
+        let (origin_x, origin_y) = geometry.sector_origin(block_id);
+        load_cc_chunk_blocks_at(&mut cc_plane, origin_x, origin_y, size)?;
         let facet = uocf::enhanced::facet_decoder::read_facet_block_raw(
             &package,
             map_index,
             block_id,
         )
         .wrap_err_with(|| format!("decode EC facet block {block_id}"))?;
-        let (chunk_x, chunk_y) = facet_chunk_coords(block_id, size);
 
-        for x in 0..64_u32 {
-            for y in 0..64_u32 {
-                let global_x = chunk_x * 64 + x;
-                let global_y = chunk_y * 64 + y;
+        for x in 0..SECTOR_SIDE {
+            for y in 0..SECTOR_SIDE {
+                let global_x = origin_x + x;
+                let global_y = origin_y + y;
+                if !geometry.contains(global_x, global_y) {
+                    continue;
+                }
                 let cc_land_id = cc_land_id_at(&mut cc_plane, global_x, global_y)?;
-                let tile = &facet.tiles[(x * 64 + y) as usize];
+                let tile = &facet.tiles[square_index(x, y)];
                 let key = TranscodeKey {
                     cc_land_id,
                     client_land_id: tile.land_graphic as u32,
@@ -367,6 +374,24 @@ fn load_cc_chunk_blocks(
             });
         }
     }
+    plane.load_blocks(&mut blocks)
+}
+
+/// Loads the Classic blocks of the EC sector at square `(origin_x, origin_y)` that lie on the map.
+fn load_cc_chunk_blocks_at(
+    plane: &mut MapPlane,
+    origin_x: u32,
+    origin_y: u32,
+    size: MapSizeCells,
+) -> eyre::Result<()> {
+    let cells_per_block = MapBlock::CELLS_PER_ROW;
+    let blocks_per_side = SECTOR_SIDE / cells_per_block;
+    let (first_x, first_y) = (origin_x / cells_per_block, origin_y / cells_per_block);
+    let end_x = (first_x + blocks_per_side).min(size.width.div_ceil(cells_per_block));
+    let end_y = (first_y + blocks_per_side).min(size.height.div_ceil(cells_per_block));
+    let mut blocks: Vec<MapBlockRelPos> = (first_x..end_x)
+        .flat_map(|x| (first_y..end_y).map(move |y| MapBlockRelPos { x, y }))
+        .collect();
     plane.load_blocks(&mut blocks)
 }
 

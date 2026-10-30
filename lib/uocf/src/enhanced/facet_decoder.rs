@@ -21,7 +21,8 @@
 //!     - **Delimiters** (Variable size)
 //!         - `BYTE`: `count` of delimiter entries.
 //!         - For each entry:
-//!             - `BYTE`: `direction` (0-7). If > 7, no further data for this entry.
+//!             - `BYTE`: `direction` (0-7). The client rejects the whole sector when it is above 7, and so does
+//!               this decoder.
 //!             - `BYTE`: Z-coordinate of the adjacent tile.
 //!             - `DWORD`: Graphic ID of the adjacent tile.
 //!
@@ -32,10 +33,15 @@
 //!             - `DWORD`: Graphic ID of the static item.
 //!             - `BYTE`: Z-coordinate of the static item.
 //!             - `DWORD`: Hue of the static item.
+//!
+//! The payload must end right after the last square: the client rejects a sector with bytes left over, and so
+//! does this decoder. `facet_sector` has the geometry, the column-major sector numbering, the encoder and the
+//! remaining client rules.
 
 //#![allow(dead_code)]
 crate::eyre_imports!();
 use crate::classic::map::MapBlock;
+use crate::enhanced::facet_sector::{sector_entry_path, DELIMITER_DIRECTION_COUNT};
 use crate::uop_container as uop;
 use crate::uop_container::package::UopPackage;
 use byteorder::{LittleEndian, ReadBytesExt};
@@ -44,7 +50,7 @@ use std::io::{Cursor, Seek, SeekFrom};
 // region: --- Public API (Convenience & Application Use)
 
 /// Represents a single static item on the map, including its graphic, position, and hue.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StaticTile {
     /// The graphic ID of the static item.
     pub graphic_id: u32,
@@ -72,14 +78,14 @@ pub struct DecodedFacet {
     pub blocks: Vec<DecodedBlockClassic>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EcFacetDelimiter {
     pub direction: u8,
     pub z: i8,
     pub graphic_id: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EcFacetTile {
     pub z: i8,
     pub land_graphic: u16,
@@ -87,7 +93,7 @@ pub struct EcFacetTile {
     pub statics: Vec<StaticTile>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecodedEcFacet {
     pub facet_id: u8,
     pub file_id: u16,
@@ -124,27 +130,32 @@ fn read_facet_block_bytes(
     block_id: u32,
 ) -> eyre::Result<Vec<u8>> {
     // Construct the internal path to the .bin file within the UOP package.
-    use std::io::Write;
-    let mut path_buf = [0u8; 64];
-    let mut slice = &mut path_buf[..];
-    write!(
-        slice,
-        "build/sectors/facet_0{}/{:08}.bin",
-        map_index, block_id
-    )
-    .unwrap();
-    let len = 64 - slice.len();
-    let target_path = unsafe { std::str::from_utf8_unchecked(&path_buf[..len]) };
-    let target_hash: u64 = uop::hash::hash_file_name_single(target_path);
-
-    // Iterate through the files in the package to find the correct entry.
-    for file in package.iter_files() {
-        if file.filename_hash() == target_hash {
-            return Ok(file.unpack()?);
-        }
+    let target_path = sector_entry_path(map_index, block_id);
+    let target_hash: u64 = uop::hash::hash_file_name_single(&target_path);
+    match package.unpack_file_by_hash(target_hash)? {
+        Some(data) => Ok(data),
+        None => Err(eyre!("File not found in package: {}", target_path)),
     }
+}
 
-    Err(eyre!("File not found in package: {}", target_path))
+/// Fails when a delimiter direction is above 7: the client rejects the whole sector (`Sector_ReadDelimiter`).
+fn check_delimiter_direction(direction: u8, x: u32, y: u32) -> eyre::Result<()> {
+    if direction >= DELIMITER_DIRECTION_COUNT {
+        return Err(eyre!(
+            "square ({x}, {y}): delimiter direction {direction} is above {}; the client rejects the sector",
+            DELIMITER_DIRECTION_COUNT - 1
+        ));
+    }
+    Ok(())
+}
+
+/// Fails when bytes are left after the last square: the client rejects the sector (`Sector_Read`).
+fn check_fully_consumed(cursor: &Cursor<&[u8]>) -> eyre::Result<()> {
+    let left = cursor.get_ref().len() as u64 - cursor.position();
+    if left != 0 {
+        return Err(eyre!("{left} bytes after the last square; the client rejects the sector"));
+    }
+    Ok(())
 }
 
 pub fn decode_facet_bin_raw(data: &[u8]) -> eyre::Result<DecodedEcFacet> {
@@ -163,13 +174,12 @@ pub fn decode_facet_bin_raw(data: &[u8]) -> eyre::Result<DecodedEcFacet> {
             let mut delimiters = Vec::with_capacity(delimiter_count as usize);
             for _ in 0..delimiter_count {
                 let direction: u8 = cursor.read_u8()?;
-                if direction <= 7 {
-                    delimiters.push(EcFacetDelimiter {
-                        direction,
-                        z: cursor.read_i8()?,
-                        graphic_id: cursor.read_u32::<LittleEndian>()?,
-                    });
-                }
+                check_delimiter_direction(direction, x_64, y_64)?;
+                delimiters.push(EcFacetDelimiter {
+                    direction,
+                    z: cursor.read_i8()?,
+                    graphic_id: cursor.read_u32::<LittleEndian>()?,
+                });
             }
 
             let statics_count: u8 = cursor.read_u8()?;
@@ -193,6 +203,7 @@ pub fn decode_facet_bin_raw(data: &[u8]) -> eyre::Result<DecodedEcFacet> {
         }
     }
 
+    check_fully_consumed(&cursor)?;
     Ok(DecodedEcFacet {
         facet_id,
         file_id,
@@ -257,10 +268,9 @@ pub fn decode_facet_bin(data: &[u8]) -> eyre::Result<DecodedFacet> {
             let delimiter_count: u8 = cursor.read_u8()?;
             for _ in 0..delimiter_count {
                 let direction: u8 = cursor.read_u8()?;
-                if direction <= 7 {
-                    // If the direction is valid, skip the Z (1 byte) and Graphic (4 bytes).
-                    cursor.seek(SeekFrom::Current(5))?;
-                }
+                check_delimiter_direction(direction, x_64, y_64)?;
+                // Skip the Z (1 byte) and Graphic (4 bytes).
+                cursor.seek(SeekFrom::Current(5))?;
             }
 
             // --- Statics ---
@@ -286,6 +296,7 @@ pub fn decode_facet_bin(data: &[u8]) -> eyre::Result<DecodedFacet> {
             }
         }
     }
+    check_fully_consumed(&cursor)?;
     Ok(DecodedFacet {
         blocks: decoded_blocks,
     })

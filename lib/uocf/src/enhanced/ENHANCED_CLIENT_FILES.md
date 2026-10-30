@@ -36,6 +36,37 @@ Editing `.uop` packages (`uop_container::package`):
   `SaveLayout::Compact` writes the old gap-free layout.
 - **Patcher:** the official patcher re-downloads edited entries and deletes
   added ones. Keep edited packages in a client copy the patcher never runs on.
+- Compression (`uop_container::codec::encode_payload`): the client stores
+  classic zlib level-6 streams (`78 9C`). Classic zlib (libz-sys) at level 6
+  reproduces every client entry byte for byte (all entries of `waypoint`,
+  `MultiCollection`, `tileart`, `string_dictionary`,
+  `EffectDefinitionCollection`, `AnimationDefinition`, `AnimationSequence`,
+  `TerrainDefinition`, `facets`, `LocalizedStrings` and `facet4`). The repo
+  uses the zlib-ng backend of flate2, whose level 6 is often a few bytes
+  longer, so an edited entry leaves its slot and moves to the end of the file.
+  `encode_payload` therefore keeps the smallest of levels 6..=9
+  (`ZLIB_LEVELS`). Re-compressed client entries that fit their stored size
+  (level 6 alone / levels 6..=9):
+
+  | Package | Entries | zlib-ng 6 | zlib-ng 6..=9 |
+  | --- | ---: | ---: | ---: |
+  | `waypoint.uop` | 1 | 0 | 1 |
+  | `MultiCollection.uop` | 863 | 448 | 800 |
+  | `tileart.uop` | 37,756 | 4,811 | 35,176 |
+  | `string_dictionary.uop` | 1 | 1 | 1 |
+  | `EffectDefinitionCollection.uop` | 269 | 1 | 27 |
+  | `AnimationDefinition.uop` | 1,102 | 17 | 1,089 |
+  | `AnimationSequence.uop` | 370 | 322 | 370 |
+  | `TerrainDefinition.uop` | 201 | 78 | 189 |
+  | `facets.uop` | 7 | 3 | 5 |
+  | `LocalizedStrings.uop` | 8 | 1 | 7 |
+  | `facet4.uop` | 529 | 481 | 529 |
+
+  Level 9 alone fits 783 multis and 34,949 tileart records; levels 1..=9 add
+  one tileart record; miniz_oxide level 6 fits only 411 tileart records. An
+  edited v5 entry also trades its ~134-byte signature header for the 12-byte
+  timestamp header, so it nearly always fits. Switching the backend to classic
+  zlib (a flate2 feature change) would give exact client bytes.
 
 `string_dictionary.uop`:
 
@@ -53,13 +84,39 @@ Editing `.uop` packages (`uop_container::package`):
 `facet*.uop`:
 
 - Stores KR/EC map chunks under paths like `build/sectors/facet_0M/XXXXXXXX.bin`.
-- EC:
+- EC (client trace and measurements:
+  [uosa_facets.md](../../../../scripts/dev-helpers/ec-research/ghidra-facets/results/uosa_facets.md)):
   - Each decompressed `.bin` is a 64x64 tile chunk in column-major order.
   - Header: facet id byte and file id word.
   - Each cell stores land z, land graphic id, delimiter records, and static
     records. Static records store graphic id, z, and hue.
   - The decoder converts this to classic-style 8x8 map blocks plus statics. The
     land graphic id from the facet/map is the terrain query id used by runtime.
+  - Entries `build/sectors/facet_%02d/%08d.bin` (zlib), sector id column-major:
+    `ceil(h / 64) * (x >> 6) + (y >> 6)`; Tokuno's last sector row and column
+    are partial, padded with land 0 at z 0. `build/sectors/facet_%02d/data.map`
+    (uncompressed) holds `u32 height, u32 width`. Packages are UOP version 5,
+    1000 entries per block. The variants `facet0x/1x/2x/5x.uop` use the base
+    facet's names, ids and header byte.
+  - Square: `i8 z, u16 land, u8 n, n x {u8 dir, i8 z, u32 land}, u8 m,
+    m x {u32 graphic, i8 z, u32 hue}`. The client rejects a whole sector for a
+    direction above 7 or for bytes left after the last square; a missing
+    sector is a hole.
+  - Delimiters copy the neighbour's land z and id: a direction is present
+    when every nonzero component of its offset leaves the sector and the
+    neighbour is on the map, in ascending direction order (offsets
+    `(-1,0) (-1,-1) (0,-1) (1,0) (1,1) (0,1) (-1,1) (1,-1)`). All 34,841 shipped
+    sectors (10 packages) re-encode byte for byte; some delimiters are stale
+    (facets 0-4: 0.004-0.08% of squares; TerMur: 2.0%, including off-map ones).
+    A facet built from the Classic Tokuno files matches the shipped one in
+    every land, z and static, and in all but those stale delimiters.
+  - UOCF: `facet_sector` (geometry, numbering, encoder, validation, the
+    delimiter rule), `facet_package` (`EcFacetPackage`: edit land and
+    statics by map coordinates, neighbour delimiters kept in step across
+    sectors, layout-preserving save, from-scratch packages with `data.map`),
+    `facet_encoder` (Classic map + statics to `facetN.uop` + `facetNN.dds`),
+    and `uocf-cli facet` (`dump-cell`, `patch-cell`, `rebuild-radar`,
+    `from-classic`, `dump-def`, `patch-def`).
   - Runtime static art collection preserves placed static hue ids. Art shaders
     apply those ids through the preconverted `hues.uddp` lookup texture
     (`textures/hues.rgba8888`), where each hue occupies a 256-pixel strip
@@ -69,6 +126,34 @@ Editing `.uop` packages (`uop_container::package`):
   - KR world maps and statics are stored as compressed facet sectors inside `facet*.uop` packages.
   - Slightly different file format than EC.
   - UOCF decodes and can encode those facet sectors, loads the KR tile/static dictionaries, and translates KR land/static ids toward Classic-style 8x8 map blocks and statics where a mapping is known. The tile dictionary maps KR land tile ids to Classic land tile ids; the static dictionary is a known-static whitelist used when decoding or encoding KR facet statics.
+  - Unverified: the `kr::facet` square layout does not parse the sectors of the
+    `UO - Old KR` facet packages tried (it overruns the first sector), and its
+    encoder numbers sectors row-major, so neither is known to match KR.
+
+`facetNN.dds` (loose files, `facet%02d.dds`):
+
+- The radar image: DXT1, one pixel per square, full mip chain of
+  `floor(log2(min(w, h))) + 1` levels, NVTT header. The client copies the raw
+  blocks and never recomputes land colours.
+- Regeneration recipe (fitted offline, 0.977-0.992 palette-index agreement):
+  colour `radarcol.mul[land]`, or `radarcol.mul[0x4000 + graphic]` of the
+  highest static at or above the land (the later on equal z; hue ignored);
+  land only is shaded by `D = z(x+1, y) - z(x, y+1)`: x0.6 for `D <= -3`, x1.4
+  for `D >= 3` on the 5-bit channels; `c << 3 | c >> 2`; mips from 2x2 averages
+  of the decoded level above. `facet_radar` implements it (with the `dds`
+  crate's BC1 encoder), writes the shipped header, parses and writes the shipped
+  files back byte for byte, and updates only the pixels around edited squares
+  (identical to a full rebuild at every level).
+
+`facets.uop`:
+
+- `build/facetdefinition/%08d.bin`, ids 0..6: `u8 id, u32 name cliloc,
+  u32 width, u32 height, u8[3] unknown (0x40 0x40 0x01), u32 n`, then regions
+  `{u32 index, u32 name cliloc, u8 r, g, b, u8 physical facet (0xff = self),
+  u32 m, m x {u32 x1, y1, x2, y2} inclusive}`. The unknown bytes and the region
+  index are stored but never read by the client; `facet_definition` keeps them
+  verbatim and re-encodes all 7 records byte for byte. Facet 2 region 5 ships an
+  inverted rect.
 
 
 `TerrainDefinition.uop`:
@@ -213,6 +298,33 @@ Editing `.uop` packages (`uop_container::package`):
     client data.
   - item `uv_set`: the texture coordinate set index (low byte of the Gamebryo
     texture map flags), 0 or 1.
+- Writing (`tileart` module): `TileArtEntry::to_bytes` is the exact inverse of
+  `parse_raw`; all 37,756 client records re-encode byte for byte (ignored test
+  `tileart_client_records`). The counts are written from the vectors
+  (`sync_counts` updates the stored count fields), booleans as 0/1, unknown
+  flag bits kept. `apply_tileart_edits` / `write_tileart_package(source,
+  output, records, removed)` replace, add and remove records in a copy of the
+  package; untouched records keep their bytes, edited ones keep their
+  compression flag and get a timestamp data block header.
+- Entry names: every record is `build/tileart/%08d.bin`
+  (`tileart_entry_path`), and the client looks a definition up by that id; the
+  stored tile id is only copied (`GetTileId`). 25 client records store another
+  tile's id than their entry name (names 43957..43963 store 43956, 43965..43974
+  store 43964; 39777 -> 39676, 39854 -> 39852, 40146 -> 40147, 42091 -> 41516,
+  42092 -> 41517, 10000344 -> 10000332, 10000584 -> 100000584, 10000945 ->
+  10000877), so edits are keyed by entry hash, not by stored id. A missing id
+  falls back to definition 99999999.
+- Adding a tile id: add `build/tileart/%08d.bin` with the stored tile id set
+  to it (the inspector's "Duplicate selected" does this). Nothing else is
+  required: no other file lists the tile ids, and `precachelist.dat` only
+  preloads.
+  A new name needs a `string_dictionary.uop` string (the record stores its
+  1-based index) and new art needs `Texture.uop` / `LegacyTexture.uop`
+  entries for the texture paths; a copy can keep the source's name and
+  textures. The client also reads a loose
+  `Data/Definitions/TileArt/%08d.tileart` override. Servers send item graphics
+  as u16, so ids above 0xFFFF are client-side only (paperdoll overrides,
+  placeholders).
 
 `EffectDefinitionCollection.uop`:
 
@@ -249,8 +361,7 @@ Editing `.uop` packages (`uop_container::package`):
   with ids up to 70006; 2 entries hash to no id.
 - `encode_effect_definition_collection` is the exact inverse of the parser.
   All 269 client payloads re-serialize byte for byte. `encode_tileart_effects`
-  writes the tileart effect tail (u8 count). There is no tileart writer yet to
-  use it.
+  writes the tileart effect tail (u8 count); `TileArtEntry::to_bytes` uses it.
 - `write_effect_definition_collection(source, output)` writes a copy of the
   package and refuses to overwrite `source`. In the copy:
   - unchanged entries keep their compressed bytes and data block header;
@@ -535,6 +646,15 @@ Editing `.uop` packages (`uop_container::package`):
   only `housing.bin` replaced (the other entries keep payload, compression
   flag and data block header; `housing.bin` keeps its compression flag and
   gets a fresh timestamp data block header).
+- Editing multis (`multis` module): `MultiItem::to_payload_bytes` re-encodes
+  all 862 client multis byte for byte (stored id equals the path id in all of
+  them; ignored test `multi_collection_client_entries`).
+  `MultiCollection::from_items`, `set`, `remove` and `parts_mut` edit the
+  collection; `apply_to_package` writes the changed, added and removed multis
+  into a package (unchanged multis and `housing.bin` keep their bytes, new
+  entries take the compression of the existing multis, ids must be below
+  `MAX_MULTI_COLLECTION_ID`) and `MultiCollection::write_multi_collection`
+  writes a copy of a package.
 - Layouts, field meanings, confidence and verification against the client
   data are in
   [`uosa_housing.md`](../../../../scripts/dev-helpers/ec-research/ghidra-housing/results/uosa_housing.md)
@@ -547,7 +667,19 @@ Editing `.uop` packages (`uop_container::package`):
 - The waypoint record section has verified `x`, `y`, signed `z`, `facet`, and
   `name_cliloc` fields. EC `mapcommon.lua` confirms the record `waypoint_type`
   is the client `wtype` used for default display behavior. The remaining small
-  field is preserved as `value_6` until its UI role is verified.
+  field is preserved as `value_6`: it is 1 on every waypoint except the type 13
+  (Shops) ones, which hold 1 or one of 24 values in 10..=59, probably the shop
+  kind. Its client reader was not located.
+- Client data: 645 waypoints, 16 type definitions (among them 1 Corpse, 2 Party Members,
+  3 Rally Point, 4 Quest Giver, 5 Quest Destination, 6 Resurrection, 7 Points
+  of Interest, 8 Landmarks, 9 Towns, 10 Dungeons, 11 Shrines, 12 Moongates,
+  13 Shops (499 waypoints), 14 Player, 15 Custom), 106 icons, 12 effects, no
+  trailing bytes.
+- Writing: `WaypointsPackage::to_payload_bytes` re-encodes the client payload
+  byte for byte (ignored test `waypoints_client_file`), keeping `value_6` and
+  any trailing bytes; `replace_in_package` and `write_waypoints_package(source,
+  output)` replace `waypoint.bin` in a copy of the package (compression flag
+  kept, timestamp data block header).
 - The extracted EC `waypoints.lua` table exposes the client-facing schema as
   facet-local `x`, `y`, `z`, `type`, `Name`, `Icon`, `Scale`, and optional
   `flag`, but it is not a byte-for-byte copy of the UOP payload.

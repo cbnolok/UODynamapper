@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use color_eyre::eyre::{self, WrapErr};
 use udd_assets::tex_land_ec::{TexLandEcPackage, TexLandEcTerrainProvenanceRecord};
 use uocf::enhanced::facet_decoder::read_facet_block;
+use uocf::enhanced::facet_sector::FacetGeometry;
 use uocf::uop_container::package::UopPackage;
 
 const DEFAULT_TOP_N: usize = 25;
@@ -228,15 +229,11 @@ fn facet_uop_path(ecdir: &Path, map_index: u32) -> PathBuf {
     ecdir.join(format!("facet{map_index}.uop"))
 }
 
+/// Sectors of the EC facet: ceil(w / 64) x ceil(h / 64) (Tokuno's last row and column are partial).
 fn facet_block_count(map_index: u32) -> eyre::Result<u32> {
-    let (width, height) = match map_index {
-        0 | 1 => (7168, 4096),
-        2 => (2304, 1600),
-        3 => (2560, 2048),
-        4 => (1448, 1448),
-        5 => (1280, 4096),
-        _ => eyre::bail!("unsupported map_index {}", map_index),
-    };
-
-    Ok((width / 64) * (height / 64))
+    u8::try_from(map_index)
+        .ok()
+        .and_then(FacetGeometry::client_facet)
+        .map(|geometry| geometry.sector_count())
+        .ok_or_else(|| eyre::eyre!("unsupported map_index {}", map_index))
 }

@@ -1,473 +1,138 @@
-use byteorder::{LittleEndian, WriteBytesExt};
-use color_eyre::eyre::{self, eyre};
-use std::collections::HashMap;
-use std::fs;
-use std::io::Cursor;
+//! Builds an Enhanced Client facet package (`facetN.uop`) and its radar image (`facetNN.dds`) from a Classic
+//! map and statics.
+//!
+//! The package follows the client rules in `facet_sector`: column-major sector numbering, the
+//! `build/sectors/facet_%02d/%08d.bin` entries with the `u8 facet, u16 sector id` header, the `data.map` entry,
+//! partial sectors padded with `z 0, land 0` squares, and the shipped delimiters. Classic land ids are written as
+//! they are, and statics keep their order in `statics.mul`, graphic and hue widened to u32. The radar image
+//! follows the recipe in `facet_radar`.
+
 use std::path::Path;
 
-use crate::classic::hues::{load_hues, HueEntry};
-use crate::classic::map::{MapBlockRelPos, MapCell, MapPlane};
-use crate::classic::radarcol::load_radarcol;
-use crate::classic::tiledata::{ItemTile, TileData};
-use crate::enhanced::facet_decoder::StaticTile;
-use crate::uop_container::file::CompressionFlag;
-use crate::uop_container::package::UopPackage;
-use crate::utils::color::Rgb555;
+use crate::classic::map::{MapBlock, MapBlockRelPos, MapCell, MapPlane};
+use crate::classic::statics::{StaticTile as ClassicStaticTile, StaticsReader};
+use crate::enhanced::facet_decoder::{DecodedEcFacet, EcFacetDelimiter, StaticTile};
+use crate::enhanced::facet_package::EcFacetPackage;
+use crate::enhanced::facet_radar::{radar_dds_file_name, FacetRadarDds, FacetRadarSource, RadarPalette};
+use crate::enhanced::facet_sector::{
+    delimiter_targets, empty_ec_sector, facet_package_file_name, square_index, FacetGeometry, MAX_SQUARE_RECORDS,
+    SECTOR_SIDE,
+};
 
-use ddsfile::{D3DFormat, Dds, NewD3dParams};
+crate::eyre_imports!();
 
-// region: --- Public API (Convenience & Application Use)
+/// Classic map blocks along a sector side.
+const BLOCKS_PER_SECTOR_SIDE: u32 = SECTOR_SIDE / MapBlock::CELLS_PER_ROW;
 
-/// Encodes a classic map plane and its associated statics into Enhanced Client formats.
-///
-/// This utility orchestrates the conversion of classic land blocks and statics into
-/// both the binary `.bin` blocks for `facet.uop` and a high-resolution `facet.dds`
-/// texture for the terrain renderer.
+/// Encodes a Classic map plane and its statics into `facet{map_index}.uop` and `facet{map_index:02}.dds` in
+/// `output_dir`, with the radar colours of `radarcol_path` (Classic `radarcol.mul`).
 pub fn encode_map_plane(
-    map_plane: &mut MapPlane, // Needs to be mutable to load blocks on demand
-    all_statics: &[StaticTile],
+    map_plane: &mut MapPlane,
+    statics: &StaticsReader,
     radarcol_path: &Path,
-    hues_path: &Path,
     output_dir: &Path,
     map_index: u8,
 ) -> eyre::Result<()> {
-    encode_map_plane_inner(
-        map_plane,
-        all_statics,
-        radarcol_path,
-        hues_path,
-        None,
-        output_dir,
-        map_index,
-    )
+    let palette = RadarPalette::load_radarcol(radarcol_path)?;
+    let (mut package, radar) = build_facet_from_classic(map_plane, statics, map_index, &palette)?;
+    package.save(output_dir.join(facet_package_file_name(map_index, false)))?;
+    radar.save(&output_dir.join(radar_dds_file_name(map_index)))
 }
 
-/// Encodes a classic map plane into Enhanced Client formats using tiledata heights
-/// for radar static priority.
-pub fn encode_map_plane_with_tiledata(
+/// Builds the facet package (in memory) and the radar image of a Classic map plane and its statics. The facet
+/// size is the map plane's.
+pub fn build_facet_from_classic(
     map_plane: &mut MapPlane,
-    all_statics: &[StaticTile],
-    radarcol_path: &Path,
-    hues_path: &Path,
-    tiledata: &TileData,
-    output_dir: &Path,
-    map_index: u8,
-) -> eyre::Result<()> {
-    encode_map_plane_inner(
-        map_plane,
-        all_statics,
-        radarcol_path,
-        hues_path,
-        Some(tiledata.item_tiles()),
-        output_dir,
-        map_index,
-    )
-}
-
-fn encode_map_plane_inner(
-    map_plane: &mut MapPlane,
-    all_statics: &[StaticTile],
-    radarcol_path: &Path,
-    hues_path: &Path,
-    item_tiles: Option<&[ItemTile]>,
-    output_dir: &Path,
-    map_index: u8,
-) -> eyre::Result<()> {
-    // 1. Load supporting files
-    let radarcol_data: Vec<Rgb555> = load_radarcol(radarcol_path)?;
-    let hues_data: Vec<HueEntry> = load_hues(hues_path)?;
-
-    // 2. Pre-process statics into a HashMap for efficient lookup by tile coordinate.
-    let mut statics_map: HashMap<(u32, u32), Vec<&StaticTile>> = HashMap::new();
-    for static_item in all_statics {
-        let key = (static_item.x as u32, static_item.y as u32);
-        statics_map.entry(key).or_default().push(static_item);
+    statics: &StaticsReader,
+    facet: u8,
+    palette: &RadarPalette,
+) -> eyre::Result<(EcFacetPackage, FacetRadarDds)> {
+    let size = map_plane.size_cells();
+    let geometry = FacetGeometry::new(size.width, size.height);
+    let mut package = EcFacetPackage::new(facet, geometry)?;
+    let mut radar = FacetRadarSource::new(geometry);
+    for sector in 0..geometry.sector_count() {
+        let decoded = classic_sector(map_plane, statics, &geometry, facet, sector)?;
+        radar.add_sector(sector, &decoded, palette);
+        package.put_sector(&decoded)?;
     }
+    let image = FacetRadarDds::encode_rgb8(geometry.width, geometry.height, &radar.rgb8())?;
+    Ok((package, image))
+}
 
-    // 3. Initialize UOP Package and DDS image buffer
-    let mut package = UopPackage::new_default();
-    let map_size_cells = crate::classic::map::MapSizeCells {
-        width: map_plane.size_blocks.width * 8,
-        height: map_plane.size_blocks.height * 8,
-    };
-    let mut dds_pixel_buffer: Vec<u8> =
-        vec![0u8; (map_size_cells.width * map_size_cells.height * 4) as usize]; // RGBA8
+/// Builds sector `sector` from the Classic map and statics.
+fn classic_sector(
+    map_plane: &mut MapPlane,
+    statics: &StaticsReader,
+    geometry: &FacetGeometry,
+    facet: u8,
+    sector: u32,
+) -> eyre::Result<DecodedEcFacet> {
+    let (origin_x, origin_y) = geometry.sector_origin(sector);
+    let size_blocks = map_plane.size_blocks;
+    let first_block_x = (origin_x / MapBlock::CELLS_PER_ROW).saturating_sub(1);
+    let first_block_y = (origin_y / MapBlock::CELLS_PER_COLUMN).saturating_sub(1);
+    // One extra ring of blocks for the delimiters, which read the neighbouring sectors' edge squares.
+    let end_block_x = (origin_x / MapBlock::CELLS_PER_ROW + BLOCKS_PER_SECTOR_SIDE + 1).min(size_blocks.width);
+    let end_block_y = (origin_y / MapBlock::CELLS_PER_COLUMN + BLOCKS_PER_SECTOR_SIDE + 1).min(size_blocks.height);
+    let mut blocks: Vec<MapBlockRelPos> = (first_block_x..end_block_x)
+        .flat_map(|x| (first_block_y..end_block_y).map(move |y| MapBlockRelPos { x, y }))
+        .collect();
+    map_plane.load_blocks(&mut blocks)?;
 
-    let chunks_x: u32 = map_size_cells.width / 64;
-    let chunks_y: u32 = map_size_cells.height / 64;
-    let mut file_id: u32 = 0;
-
-    // 4. Loop through the map in 64x64 tile chunks
-    for chunk_y in 0..chunks_y {
-        for chunk_x in 0..chunks_x {
-            let chunk_base_x: u32 = chunk_x * 64;
-            let chunk_base_y: u32 = chunk_y * 64;
-
-            // Pre-load all necessary 8x8 blocks for this 64x64 chunk
-            let mut blocks_to_load = Vec::new();
-            for y in 0..=8 {
-                // Load an extra row/col for delimiter checks
-                for x in 0..=8 {
-                    let block_x_to_load: u32 = chunk_x * 8 + x;
-                    let block_y_to_load: u32 = chunk_y * 8 + y;
-                    if block_x_to_load < (map_size_cells.width / 8)
-                        && block_y_to_load < (map_size_cells.height / 8)
-                    {
-                        blocks_to_load.push(MapBlockRelPos {
-                            x: block_x_to_load,
-                            y: block_y_to_load,
-                        });
+    let mut decoded = empty_ec_sector(facet, sector)?;
+    for block_x in 0..BLOCKS_PER_SECTOR_SIDE {
+        for block_y in 0..BLOCKS_PER_SECTOR_SIDE {
+            let map_block_x = origin_x / MapBlock::CELLS_PER_ROW + block_x;
+            let map_block_y = origin_y / MapBlock::CELLS_PER_COLUMN + block_y;
+            if map_block_x >= size_blocks.width || map_block_y >= size_blocks.height {
+                continue;
+            }
+            let block_statics = statics.read_block(map_block_x, map_block_y)?;
+            for cell_x in 0..MapBlock::CELLS_PER_ROW {
+                for cell_y in 0..MapBlock::CELLS_PER_COLUMN {
+                    let local_x = block_x * MapBlock::CELLS_PER_ROW + cell_x;
+                    let local_y = block_y * MapBlock::CELLS_PER_COLUMN + cell_y;
+                    let (x, y) = (origin_x + local_x, origin_y + local_y);
+                    let cell = cell_at(map_plane, x, y)?;
+                    let mut delimiters = Vec::new();
+                    for (direction, nx, ny) in delimiter_targets(geometry, x, y) {
+                        let neighbour = cell_at(map_plane, nx, ny)?;
+                        delimiters.push(EcFacetDelimiter { direction, z: neighbour.z, graphic_id: u32::from(neighbour.id) });
                     }
-                }
-            }
-            map_plane.load_blocks(&mut blocks_to_load)?;
-
-            // 5a. Generate .bin data in a Vec<u8>
-            let bin_data = generate_bin_data(
-                map_plane,
-                &statics_map,
-                chunk_base_x,
-                chunk_base_y,
-                map_index,
-                file_id,
-            )?;
-
-            // 5c. Calculate tile colors and write to DDS buffer
-            for y_offset in 0..64 {
-                for x_offset in 0..64 {
-                    let global_x: u32 = chunk_base_x + x_offset;
-                    let global_y: u32 = chunk_base_y + y_offset;
-                    let color_rgb555: Rgb555 = calculate_tile_color(
-                        map_plane,
-                        &statics_map,
-                        &radarcol_data,
-                        &hues_data,
-                        item_tiles,
-                        global_x,
-                        global_y,
-                    )?;
-                    let (r, g, b, a) = color_rgb555.as_rgba8888().components();
-                    let dds_index: usize =
-                        ((global_y * map_size_cells.width + global_x) * 4) as usize;
-                    dds_pixel_buffer[dds_index] = r;
-                    dds_pixel_buffer[dds_index + 1] = g;
-                    dds_pixel_buffer[dds_index + 2] = b;
-                    dds_pixel_buffer[dds_index + 3] = a; // Alpha
-                }
-            }
-
-            // 5d. Add the .bin buffer to the UopPackage
-            use std::io::Write;
-            let mut path_buf = [0u8; 64];
-            let mut slice = &mut path_buf[..];
-            write!(
-                slice,
-                "build/sectors/facet_0{}/{:08}.bin",
-                map_index, file_id
-            )
-            .unwrap();
-            let len = 64 - slice.len();
-            let internal_path = unsafe { std::str::from_utf8_unchecked(&path_buf[..len]) };
-            package.add_file_from_memory(&bin_data, internal_path, CompressionFlag::Zlib)?;
-
-            file_id += 1;
-        }
-    }
-
-    // 6. Save the UopPackage
-    use std::io::Write;
-    let mut package_path_buf = [0u8; 32];
-    let facet_filename = {
-        let mut slice = &mut package_path_buf[..];
-        write!(slice, "facet{}.uop", map_index).unwrap();
-        let written = 32 - slice.len();
-        unsafe { std::str::from_utf8_unchecked(&package_path_buf[..written]) }
-    };
-    let uop_path: std::path::PathBuf = output_dir.join(facet_filename);
-    package.finalize_and_save(&uop_path)?;
-
-    // 7. Save the DDS buffer
-    let mut dds_path_buf = [0u8; 32];
-    let dds_filename = {
-        let mut slice = &mut dds_path_buf[..];
-        write!(slice, "facet{}.dds", map_index).unwrap();
-        let written = 32 - slice.len();
-        unsafe { std::str::from_utf8_unchecked(&dds_path_buf[..written]) }
-    };
-    let dds_path: std::path::PathBuf = output_dir.join(dds_filename);
-    save_dds(
-        &dds_path,
-        &dds_pixel_buffer,
-        map_size_cells.width,
-        map_size_cells.height,
-    )?;
-
-    Ok(())
-}
-
-/// Saves a raw RGBA8 pixel buffer as a DXT1 compressed DDS file.
-fn save_dds(path: &Path, data: &[u8], width: u32, height: u32) -> eyre::Result<()> {
-    // This requires the `ddsfile` crate. Add `ddsfile = "0.6.1"` to Cargo.toml
-    let params = NewD3dParams {
-        height,
-        width,
-        depth: None,
-        format: D3DFormat::DXT1,
-        mipmap_levels: None,
-        caps2: None,
-    };
-    let mut dds = Dds::new_d3d(params)?;
-    dds.data = data.to_vec();
-
-    let mut file = fs::File::create(path)?;
-    dds.write(&mut file)?;
-    Ok(())
-}
-
-/// Calculates the final color of a map tile for the DDS texture.
-fn calculate_tile_color(
-    map_plane: &mut MapPlane,
-    statics_map: &HashMap<(u32, u32), Vec<&StaticTile>>,
-    radarcol: &[Rgb555],
-    hues: &[HueEntry],
-    item_tiles: Option<&[ItemTile]>,
-    global_x: u32,
-    global_y: u32,
-) -> eyre::Result<Rgb555> {
-    let land_cell: &MapCell = get_cell_from_plane(map_plane, global_x, global_y)
-        .ok_or_else(|| eyre!("Missing land cell at ({}, {})", global_x, global_y))?;
-
-    let statics_on_tile: Option<&Vec<&StaticTile>> = statics_map.get(&(global_x, global_y));
-
-    let highest_static = statics_on_tile
-        .and_then(|statics| select_radar_static(statics, |graphic| item_height(item_tiles, graphic)));
-
-    if let Some(static_item) = highest_static {
-        if radar_static_top_z(static_item, item_height(item_tiles, static_item.graphic_id))
-            > i16::from(land_cell.z)
-        {
-            let graphic: u32 = static_item.graphic_id;
-            if graphic as usize >= radarcol.len() {
-                return Ok(Rgb555::new_from_val(0)); // Invalid graphic ID
-            }
-
-            if static_item.hue > 0 && (static_item.hue as usize) < hues.len() {
-                let hue_entry: &HueEntry = &hues[static_item.hue as usize];
-                let color_index: u8 = radarcol[graphic as usize].r();
-                return Ok(Rgb555::new_from_val(
-                    hue_entry.color_table[color_index as usize],
-                ));
-            } else {
-                return Ok(radarcol[graphic as usize]);
-            }
-        }
-    }
-
-    let graphic: u16 = land_cell.id;
-    if graphic as usize >= radarcol.len() {
-        return Ok(Rgb555::new_from_val(0)); // Invalid graphic ID
-    }
-    Ok(radarcol[graphic as usize])
-}
-
-fn item_height(item_tiles: Option<&[ItemTile]>, graphic: u32) -> i8 {
-    item_tiles
-        .and_then(|tiles| tiles.get(graphic as usize))
-        .map(|tile| tile.height_raw())
-        .unwrap_or(0)
-}
-
-fn radar_static_top_z(static_item: &StaticTile, height: i8) -> i16 {
-    i16::from(static_item.z) + i16::from(height)
-}
-
-// EC radar selection follows classic radar behavior: compare rendered top, then base Z.
-fn select_radar_static<'a, F>(statics: &'a [&'a StaticTile], mut item_height: F) -> Option<&'a StaticTile>
-where
-    F: FnMut(u32) -> i8,
-{
-    statics.iter().copied().max_by(|left, right| {
-        let left_top = radar_static_top_z(left, item_height(left.graphic_id));
-        let right_top = radar_static_top_z(right, item_height(right.graphic_id));
-
-        left_top
-            .cmp(&right_top)
-            .then_with(|| left.z.cmp(&right.z))
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn static_tile(graphic_id: u32, z: i8) -> StaticTile {
-        StaticTile {
-            graphic_id,
-            x: 0,
-            y: 0,
-            z,
-            hue: 0,
-        }
-    }
-
-    fn height_for(graphic: u32) -> i8 {
-        match graphic {
-            1 => 20,
-            2 => 1,
-            3 => 4,
-            _ => 0,
-        }
-    }
-
-    #[test]
-    fn ec_radar_static_selection_prefers_highest_top_not_highest_base_z() {
-        let low_tall = static_tile(1, 0);
-        let high_short = static_tile(2, 15);
-        let statics = [&low_tall, &high_short];
-
-        let selected = select_radar_static(&statics, height_for).expect("selected static");
-
-        assert_eq!(selected.graphic_id, 1);
-    }
-
-    #[test]
-    fn ec_radar_static_selection_uses_base_z_as_tie_break() {
-        let lower = static_tile(3, 6);
-        let higher = static_tile(0, 10);
-        let statics = [&lower, &higher];
-
-        let selected = select_radar_static(&statics, height_for).expect("selected static");
-
-        assert_eq!(selected.graphic_id, 0);
-    }
-}
-
-/// Helper to safely get a map cell from the plane, assuming blocks are pre-cached.
-fn get_cell_from_plane(map_plane: &mut MapPlane, global_x: u32, global_y: u32) -> Option<&MapCell> {
-    // TODO: comment divisions and reminders and implement them with bitwise operations for speed.
-    let block_x: u32 = global_x / 8;
-    let block_y: u32 = global_y / 8;
-    let cell_x: u32 = global_x % 8;
-    let cell_y: u32 = global_y % 8;
-
-    map_plane
-        .block(MapBlockRelPos {
-            x: block_x,
-            y: block_y,
-        })
-        .and_then(|block: &crate::classic::map::MapBlock| block.cell(cell_x, cell_y).ok())
-}
-
-/// Writes the delimiter data for a single tile.
-fn write_delimiters(
-    cursor: &mut Cursor<&mut Vec<u8>>,
-    map_plane: &mut MapPlane,
-    global_x: u32,
-    global_y: u32,
-) -> eyre::Result<()> {
-    // TODO: comment divisions and reminders and implement them with bitwise operations for speed.
-
-    let map_size_tiles = crate::classic::map::MapSizeCells {
-        width: map_plane.size_blocks.width * 8,
-        height: map_plane.size_blocks.height * 8,
-    };
-    let mut delimiters: Vec<(u8, i8, u16)> = Vec::new();
-
-    let on_left_edge: bool = global_x % 64 == 0;
-    let on_top_edge: bool = global_y % 64 == 0;
-    let on_right_edge: bool = global_x % 64 == 63;
-    let on_bottom_edge: bool = global_y % 64 == 63;
-
-    if !on_left_edge && !on_top_edge && !on_right_edge && !on_bottom_edge {
-        cursor.write_u8(0)?;
-        return Ok(());
-    }
-
-    let neighbors = [
-        (global_x.wrapping_sub(1), global_y, 0), // Left
-        (global_x.wrapping_sub(1), global_y.wrapping_sub(1), 1), // TopLeft
-        (global_x, global_y.wrapping_sub(1), 2), // Top
-        (global_x + 1, global_y, 3),             // Right
-        (global_x + 1, global_y + 1, 4),         // BottomRight
-        (global_x, global_y + 1, 5),             // Bottom
-        (global_x.wrapping_sub(1), global_y + 1, 6), // BottomLeft
-        (global_x + 1, global_y.wrapping_sub(1), 7), // TopRight
-    ];
-
-    for (nx, ny, direction) in neighbors.iter() {
-        if *nx < map_size_tiles.width && *ny < map_size_tiles.height {
-            let should_check = match *direction {
-                0 => on_left_edge,
-                1 => on_left_edge && on_top_edge,
-                2 => on_top_edge,
-                3 => on_right_edge,
-                4 => on_right_edge && on_bottom_edge,
-                5 => on_bottom_edge,
-                6 => on_left_edge && on_bottom_edge,
-                7 => on_right_edge && on_top_edge,
-                _ => false,
-            };
-
-            if should_check {
-                if let Some(cell) = get_cell_from_plane(map_plane, *nx, *ny) {
-                    delimiters.push((*direction, cell.z, cell.id));
+                    let square_statics: Vec<StaticTile> = block_statics
+                        .iter()
+                        .filter(|item| u32::from(item.x_offset) == cell_x && u32::from(item.y_offset) == cell_y)
+                        .map(|item: &ClassicStaticTile| StaticTile {
+                            graphic_id: u32::from(item.graphic),
+                            x: local_x as u8,
+                            y: local_y as u8,
+                            z: item.z,
+                            hue: u32::from(item.hue),
+                        })
+                        .collect();
+                    if square_statics.len() > MAX_SQUARE_RECORDS {
+                        eyre::bail!(
+                            "square ({x}, {y}) has {} statics, at most {MAX_SQUARE_RECORDS}",
+                            square_statics.len()
+                        );
+                    }
+                    let tile = &mut decoded.tiles[square_index(local_x, local_y)];
+                    tile.z = cell.z;
+                    tile.land_graphic = cell.id;
+                    tile.delimiters = delimiters;
+                    tile.statics = square_statics;
                 }
             }
         }
     }
-
-    cursor.write_u8(delimiters.len() as u8)?;
-    for (direction, z, graphic) in delimiters {
-        cursor.write_u8(direction)?;
-        cursor.write_i8(z)?;
-        cursor.write_u32::<LittleEndian>(graphic as u32)?;
-    }
-
-    Ok(())
+    Ok(decoded)
 }
 
-/// Generates the in-memory `.bin` data for a single 64x64 map chunk.
-fn generate_bin_data(
-    map_plane: &mut MapPlane,
-    statics_map: &HashMap<(u32, u32), Vec<&StaticTile>>,
-    chunk_base_x: u32,
-    chunk_base_y: u32,
-    map_index: u8,
-    file_id: u32,
-) -> eyre::Result<Vec<u8>> {
-    let mut data: Vec<u8> = Vec::new();
-    let mut cursor: Cursor<&mut Vec<u8>> = Cursor::new(&mut data);
-
-    cursor.write_u8(map_index)?;
-    cursor.write_u16::<LittleEndian>(file_id as u16)?;
-
-    for x_offset in 0..64 {
-        for y_offset in 0..64 {
-            let global_x: u32 = chunk_base_x + x_offset;
-            let global_y: u32 = chunk_base_y + y_offset;
-
-            let cell: &MapCell = get_cell_from_plane(map_plane, global_x, global_y)
-                .ok_or_else(|| eyre!("Cell not found at ({}, {})", global_x, global_y))?;
-
-            cursor.write_i8(cell.z)?;
-            cursor.write_u16::<LittleEndian>(cell.id)?;
-
-            write_delimiters(&mut cursor, map_plane, global_x, global_y)?;
-
-            if let Some(statics_on_tile) = statics_map.get(&(global_x, global_y)) {
-                cursor.write_u8(statics_on_tile.len() as u8)?;
-                for static_item in statics_on_tile {
-                    cursor.write_u32::<LittleEndian>(static_item.graphic_id)?;
-                    cursor.write_i8(static_item.z)?;
-                    cursor.write_u32::<LittleEndian>(static_item.hue)?;
-                }
-            } else {
-                cursor.write_u8(0)?;
-            }
-        }
-    }
-
-    Ok(data)
+/// The map cell at `(x, y)`; its block must be loaded.
+fn cell_at(map_plane: &mut MapPlane, x: u32, y: u32) -> eyre::Result<MapCell> {
+    let block = map_plane
+        .block(MapBlockRelPos { x: x / MapBlock::CELLS_PER_ROW, y: y / MapBlock::CELLS_PER_COLUMN })
+        .ok_or_else(|| eyre!("map block of ({x}, {y}) is not loaded"))?;
+    Ok(*block.cell(x % MapBlock::CELLS_PER_ROW, y % MapBlock::CELLS_PER_COLUMN)?)
 }
-
-// endregion: --- Public API
