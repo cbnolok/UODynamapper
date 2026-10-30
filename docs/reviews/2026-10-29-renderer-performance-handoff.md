@@ -19,6 +19,12 @@ optimization or benchmark campaign from these hypotheses alone.
   Those diagnostics predate the grime cache and cannot be added to its gain.
 - Classic/Gouraud presets are substantially cheaper than KR, but they also change
   lighting and postprocessing. They do not isolate normal reconstruction.
+- A narrower accepted Classic test skipped unused fragment-normal evaluation
+  while retaining vertex/Gouraud lighting. At bridge/lava, sampled FPS changed
+  from 218.72/185.20 to 334.50/268.22 and opaque GPU time from 3.69/4.73 ms to
+  2.09/3.07 ms. This demonstrates redundant work in that Classic path; it does
+  not isolate bent normals or establish a corresponding KR gain. The active
+  KR-profile shadow-weathering exception still requires fragment normals.
 - A cache-only diagnostic greatly reduced static shader code/spill statistics
   while changing opaque GPU time by less than 1%. Static instruction counts do
   not identify the dominant executed work.
@@ -36,6 +42,11 @@ Temporary structured indexes are `grime-final-performance-index.json` and
 must not depend on that temporary directory surviving the workstation move.
 
 ## Hypotheses and discriminating tests
+
+The fragment-to-vertex migration is not complete. Bicubic and bent normals still
+have fragment consumers; authored normal maps, coverage, filtering and reflection
+sampling also retain pixel detail. Treat moving these computations as a measured
+visual approximation or a representation change, rather than a blanket cleanup.
 
 | Hypothesis | Test before choosing an implementation | Possible follow-up if supported |
 | --- | --- | --- |

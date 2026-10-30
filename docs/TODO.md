@@ -53,7 +53,7 @@ Current execution decisions:
 
 ### Current Renderer Focus: Visual Fidelity
 
-- Add independently controlled CC/EC terrain transitions and the requested CC blending support.
+- Finish independently controlled CC/EC terrain transitions and the requested CC blending support; partial settings/UI wiring is not yet backed by shader behavior or validation.
 - Validate static heights/anchors, non-KR fake-normal wall artifacts, effect visibility and static light decals against matched fixtures.
 - Fix free perspective zoom; distinguish it from follow-camera dolly and the already corrected isometric pitch.
 - Use [the visual follow-up review](reviews/2026-10-29-visual-fidelity-followup.md) for current evidence and reconciliation of the unstaged user TODO. Historical repaired items must reproduce before being reopened.
