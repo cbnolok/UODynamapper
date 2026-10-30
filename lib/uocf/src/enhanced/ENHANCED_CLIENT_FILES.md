@@ -24,6 +24,19 @@ unless the data becomes a stable package contract.
 
 ## 2. EC Source Files
 
+Editing `.uop` packages (`uop_container::package`):
+
+- `UopPackage` replaces (`replace_file`), adds (`add_entry`,
+  `add_entry_by_name`), removes (`remove_entry`) and lists (`list_entries`)
+  entries. Edited and added entries get a fresh timestamp data block header.
+- `finalize_and_save` keeps the source file's layout: an unchanged package
+  re-saves byte for byte (all 40 client packages), and an edit rewrites only
+  the edited entry's record and bytes. An entry that no longer fits moves to the
+  end of the file. The module documentation gives the full policy;
+  `SaveLayout::Compact` writes the old gap-free layout.
+- **Patcher:** the official patcher re-downloads edited entries and deletes
+  added ones. Keep edited packages in a client copy the patcher never runs on.
+
 `string_dictionary.uop`:
 
 - Stores strings used by many EC records.
@@ -31,6 +44,11 @@ unless the data becomes a stable package contract.
   `n` through dictionary index `n - 1`.
 - Typical values are virtual paths such as `Data\WorldArt\02000130_...tga`,
   shader names such as `UOStaticTerrainShader`, or material names.
+- One entry, `build/stringdictionary/string_dictionary.bin`: `u64` (looks like a
+  FILETIME), `u32` declared count, `u32`, then `u16` length + UTF-8 strings. The
+  client file declares 110856 strings and stores 110855. `UoStringDictionary`
+  keeps both counts (`declared_count`, `len`), and `to_payload_bytes` writes the
+  client payload back byte for byte.
 
 `facet*.uop`:
 
@@ -45,7 +63,8 @@ unless the data becomes a stable package contract.
   - Runtime static art collection preserves placed static hue ids. Art shaders
     apply those ids through the preconverted `hues.uddp` lookup texture
     (`textures/hues.rgba8888`), where each hue occupies a 256-pixel strip
-    containing the 32 classic hue entries expanded to 8 pixels each.
+    containing the 32 classic hue entries expanded to 8 pixels each (linear
+    ramp between entries by default, as EA's atlas, or flat blocks).
 - KR:
   - KR world maps and statics are stored as compressed facet sectors inside `facet*.uop` packages.
   - Slightly different file format than EC.
@@ -241,8 +260,8 @@ unless the data becomes a stable package contract.
   - new entries get the same fresh header;
   - removed entries leave an empty slot.
 
-  The table layout is rebuilt, so the file is not byte-identical even without
-  edits (the client package starts its first table at offset 40, ours at 32).
+  The copy keeps the source layout, so without edits it is byte-identical to
+  the source.
 - KDL text form (`to_kdl_string`, `from_kdl_str`, `load_kdl`, `write_kdl`):
   - one `entry <id>` (or `entry hash=`) node per entry;
   - one node per definition (`particle`, `sound`, `round-robin`,
@@ -423,6 +442,14 @@ unless the data becomes a stable package contract.
   mipmaps, four 256-texel strips, hue H at strip `H / 1024`, row `H % 1024`
   (strip 0 starts at row 1, strip 3 is empty). The client's 1024 width is
   hard-coded in the hue UV math and the shaders, not read from the texture.
+- `Hues.uop` from and to `hues.mul` (`enhanced::hues_mul_uop`): a table row
+  puts colour i at x = 8i as `c << 3` and ramps linearly to colour i + 1
+  (colour 31 held to the end); bitmap row 1 and the 64 x 64 swatch texture
+  `0xFA5C6A1BC0D8B01B` (hue h at x = h / 64, y = h % 64) hold the larger of
+  colour 0 and colour 31. This reproduces every shipped bitmap whose colours
+  still match the Classic file of the same release. EA's format drops bit 15,
+  table start/end, raw names and group headers; the converter keeps them in
+  `build/hues/huesmul_metadata.bin`, which the client never reads.
 - Hue 0x4001 (shadow; the server sets it for a dead bonded pet through 0xBF
   sub-command 0x19): every pixel is black. Its alpha comes from the inverse
   luminance `inv = 255 - trunc(b0 * .34 + b2 * .07 + b1 * .59)` and the

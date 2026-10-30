@@ -12,6 +12,15 @@ use std::io::{Read, Seek, SeekFrom};
 use byteorder::{LittleEndian, ReadBytesExt};
 use crate::uop_container::file::UopFile;
 
+/// Where a block's table was in the package file it was loaded from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlockSource {
+    /// The offset of the block header.
+    pub address: u64,
+    /// The block's `file_count`: how many entry records its table held.
+    pub file_count: u32,
+}
+
 /// Represents a block of files within a UOP package.
 #[derive(Clone)]
 pub struct UopBlock {
@@ -19,6 +28,8 @@ pub struct UopBlock {
     next_block_address: u64,
     /// The files contained within this block.
     files: Vec<UopFile>,
+    /// Where the block was in the package file it was read from; None for blocks made in memory.
+    source: Option<BlockSource>,
 }
 
 impl UopBlock {
@@ -27,6 +38,7 @@ impl UopBlock {
         UopBlock {
             next_block_address: 0,
             files: Vec::new(),
+            source: None,
         }
     }
 
@@ -48,6 +60,7 @@ impl UopBlock {
     ///
     /// * `reader` - The reader to read from.
     pub fn read(reader: &mut File) -> Result<Self, std::io::Error> {
+        let address = reader.stream_position()?;
         let file_count = reader.read_u32::<LittleEndian>()?;
         let next_block_address = reader.read_u64::<LittleEndian>()?;
 
@@ -60,6 +73,7 @@ impl UopBlock {
         Ok(UopBlock {
             next_block_address,
             files,
+            source: Some(BlockSource { address, file_count }),
         })
     }
 
@@ -86,6 +100,11 @@ impl UopBlock {
     /// Sets the address of the next block in the UOP file.
     pub fn set_next_block_address(&mut self, address: u64) {
         self.next_block_address = address;
+    }
+
+    /// Where the block was in the package file it was read from (see [`BlockSource`]).
+    pub fn source(&self) -> Option<BlockSource> {
+        self.source
     }
 
     /// Returns a reference to the files in the block.

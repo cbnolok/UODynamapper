@@ -244,6 +244,37 @@ impl DataBlockHeader {
     }
 }
 
+/// What an entry's data block header holds, as package listings report it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DataBlockHeaderKind {
+    /// No header: `data_block_length` is 0.
+    None,
+    /// A header starting with a timestamp record: version-4 client entries and every entry the writers replace
+    /// or add. Holds its FILETIME.
+    Timestamp(u64),
+    /// A header starting with a signature record: version-5 client entries. Holds the signing key id.
+    Signature { key_id: u16 },
+    /// A header starting with another record, or bytes that do not parse.
+    Other,
+}
+
+impl DataBlockHeaderKind {
+    /// The kind of the header `bytes` (empty for no header).
+    pub fn of_bytes(bytes: &[u8]) -> Self {
+        if bytes.is_empty() {
+            return Self::None;
+        }
+        match DataBlockHeader::parse(bytes) {
+            Ok(header) => match header.records().first() {
+                Some(DataBlockHeaderRecord::Timestamp(filetime)) => Self::Timestamp(*filetime),
+                Some(DataBlockHeaderRecord::Signature(signature)) => Self::Signature { key_id: signature.key_id },
+                _ => Self::Other,
+            },
+            Err(_) => Self::Other,
+        }
+    }
+}
+
 fn invalid(message: String) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
 }

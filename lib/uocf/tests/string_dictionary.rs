@@ -1,5 +1,11 @@
+mod common;
+
 use uocf::enhanced::string_dictionary::UoStringDictionary;
-use uocf::uop_container::{file::CompressionFlag, package::UopPackage};
+use uocf::uop_container::hash::hash_file_name_single;
+use uocf::uop_container::{
+    file::CompressionFlag,
+    package::{FileReplacement, UopPackage},
+};
 use std::{
     fs,
     path::PathBuf,
@@ -139,4 +145,38 @@ fn string_dictionary_load_reads_single_nonzero_hash_payload_package() {
     assert_eq!(dictionary.get_string(1), Some("UOSpriteShader"));
 
     let _ = fs::remove_file(path);
+}
+
+/// The client's string dictionary package and its one entry.
+const STRING_DICTIONARY_UOP_NAME: &str = "string_dictionary.uop";
+const STRING_DICTIONARY_ENTRY: &str = "build/stringdictionary/string_dictionary.bin";
+
+/// The client dictionary keeps its declared count, which exceeds the stored strings, and writes its payload back
+/// byte for byte; replacing the entry with that payload leaves it untouched.
+#[test]
+#[ignore = "needs a real client: set UO_EC_CLIENT_DIR and/or UO_CC_CLIENT_DIR and run with --ignored"]
+fn client_string_dictionary_writes_back_byte_for_byte() {
+    for (env, path) in common::client_files(STRING_DICTIONARY_UOP_NAME) {
+        let mut package = UopPackage::load(&path).expect("load string dictionary package");
+        let hash = hash_file_name_single(STRING_DICTIONARY_ENTRY);
+        let file = package.get_file_by_hash(hash).expect("string dictionary entry");
+        let compression = file.compression();
+        let payload = file.unpack().expect("unpack string dictionary");
+        let dictionary = UoStringDictionary::from_payload_bytes(&payload, &path.display().to_string())
+            .expect("parse string dictionary");
+        let written = dictionary.to_payload_bytes().expect("write string dictionary");
+        assert!(written == payload, "{env}: the written payload differs from the client's");
+        assert_eq!(
+            package.replace_file(hash, &written, compression).expect("replace"),
+            FileReplacement::Unchanged,
+            "{env}"
+        );
+        assert_eq!(dictionary.len(), UoStringDictionary::load(&path).expect("load").len(), "{env}");
+        println!(
+            "{env}: {} strings declared, {} stored; the {}-byte payload is written back byte for byte",
+            dictionary.declared_count(),
+            dictionary.len(),
+            payload.len()
+        );
+    }
 }

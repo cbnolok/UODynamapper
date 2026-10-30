@@ -24,7 +24,7 @@ use crate::logic::housing_editor::{
     remove_slot, remove_tile_type, save_housing_bin, save_multi_collection, HousingDocument, HousingDocumentSource,
     HousingEditKey, HousingField, HousingIssueTarget, HousingPieceFilter, HousingSelection,
 };
-use crate::ui::multis;
+use crate::ui::{multis, UOP_PATCHER_NOTE};
 
 const TREE_PANEL_WIDTH: f32 = 380.0;
 const VALIDATION_PANEL_HEIGHT: f32 = 170.0;
@@ -421,10 +421,10 @@ fn toolbar(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
         ui.label("Save:");
         if ui
             .add_enabled(has_document && save_source.is_some(), egui::Button::new("MultiCollection.uop..."))
-            .on_hover_text(
+            .on_hover_text(format!(
                 "Writes a copy of the loaded client's MultiCollection.uop with only housing.bin replaced. The \
-                 loaded package itself is refused as the target.",
-            )
+                 loaded package itself is refused as the target.\n{UOP_PATCHER_NOTE}"
+            ))
             .on_disabled_hover_text("Needs a loaded client MultiCollection.uop as the source of the copy.")
             .clicked()
         {

@@ -1,14 +1,14 @@
 //! Entry-level edits of client UOP packages shared by the effect file writers: replace, add or remove one entry
-//! and save the package to a new path. Untouched entries keep their data block headers; replaced and added ones
-//! get a fresh timestamp header (`UopPackage::edit_data_block_header`).
+//! and save the package to a new path. Untouched entries keep their data block headers and their place in the file
+//! (`SaveLayout::Preserve`); replaced and added ones get a fresh timestamp header
+//! (`UopPackage::edit_data_block_header`).
 
 use std::path::Path;
 
 use color_eyre::eyre::{self, WrapErr};
 
-use crate::uop_container::block::UopBlock;
-use crate::uop_container::file::{CompressionFlag, UopFile};
-use crate::uop_container::package::UopPackage;
+use crate::uop_container::file::CompressionFlag;
+use crate::uop_container::package::{NewEntryCompression, UopPackage};
 
 /// What [`put_entry`] did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,37 +38,15 @@ pub(crate) fn put_entry(
         return Ok(EntryPut::Replaced);
     }
 
-    let mut file = UopFile::new()
-        .create_file_from_bytes(payload, hash, compression)
-        .wrap_err_with(|| format!("failed to encode entry {hash:016X}"))?;
-    file.set_data_block_header_and_hash(&package.edit_data_block_header())?;
-    let block_size = package.block_size() as usize;
-    let blocks = package.blocks_mut();
-    // Client packages pad their last block with empty slots: fill one, as the client's packer would.
-    if let Some(slot) = blocks.iter_mut().flat_map(|block| block.files_mut().iter_mut()).find(|file| file.is_empty_slot()) {
-        *slot = file;
-        return Ok(EntryPut::Added);
-    }
-    match blocks.last_mut() {
-        Some(block) if block.files().len() < block_size => block.add_file(file),
-        _ => {
-            let mut block = UopBlock::new();
-            block.add_file(file);
-            blocks.push(block);
-        }
-    }
+    package
+        .add_entry(hash, payload, NewEntryCompression::Flag(compression))
+        .wrap_err_with(|| format!("failed to add entry {hash:016X}"))?;
     Ok(EntryPut::Added)
 }
 
 /// Removes the entry `hash`; returns whether it existed. Its slot becomes an empty slot, as in client packages.
 pub(crate) fn remove_entry(package: &mut UopPackage, hash: u64) -> bool {
-    if package.get_file_by_hash(hash).is_none() {
-        return false;
-    }
-    for file in package.iter_files_mut().filter(|file| file.filename_hash() == hash) {
-        *file = UopFile::new();
-    }
-    true
+    package.remove_entry(hash)
 }
 
 /// Fails when `output` is the `source` package (or a link to it): writers never overwrite client files.
@@ -92,6 +70,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+    use crate::uop_container::file::UopFile;
     use crate::uop_container::data_block_header::{
         DataBlockHeader, DataBlockHeaderRecord, DataBlockSignature, RECORD_PREFIX_SIZE, SIGNATURE_KEY_ID_ENHANCED,
         TIMESTAMP_SIZE,

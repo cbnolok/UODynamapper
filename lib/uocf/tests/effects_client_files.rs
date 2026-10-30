@@ -206,7 +206,7 @@ fn effect_definition_collection_rewrite() {
         let changes = collection.write_effect_definition_collection(&path, &unchanged).unwrap();
         assert_eq!(changes, EffectCollectionChanges::default(), "{env}");
         let identical = std::fs::read(&unchanged).unwrap() == std::fs::read(&path).unwrap();
-        println!("{env}: unchanged rewrite is byte-identical to the source: {identical}");
+        assert!(identical, "{env}: an unchanged rewrite is byte-identical to the source");
 
         let ids = collection.ids().collect::<Vec<_>>();
         let (edited, removed) = (ids[1], ids[2]);

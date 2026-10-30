@@ -13,15 +13,19 @@ use serde::Deserialize;
 use uocf::uop_container::file::CompressionFlag;
 use uocf::uop_container::hash_bruteforce;
 use uocf::uop_container::hash_dictionary::HashDictionary;
-use uocf::uop_container::package::UopPackage;
+use uocf::uop_container::package::{SaveLayout, UopPackage};
 use uocf::uop_container::template::UopTemplate;
 use udd_logging::progress::{ProgressBar, ProgressStyle};
 
 use uoppackage_cli::parse_hex_u64;
 
+/// Shown after the help: what the official patcher does to edited packages.
+const PATCHER_NOTE: &str = "Edited packages: the official patcher re-downloads edited entries and deletes added \
+                            ones, so keep edited packages in a client copy the patcher never runs on.";
+
 /// UO Package Tool — inspect, hash, modify, and populate dictionaries for Ultima Online .uop files.
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version, about, long_about = None, after_help = PATCHER_NOTE)]
 struct Cli {
     #[command(subcommand)]
     subcommand: Commands,
@@ -65,7 +69,9 @@ enum Commands {
     /// Replace a file in the UOP package.
     ///
     /// The file is stored zlib-compressed. The entry gets a fresh timestamp data block header stamped with the
-    /// current time; an entry that already holds the file is left untouched.
+    /// current time; an entry that already holds the file is left untouched. The package keeps its layout: the
+    /// entry stays in place when it fits, else it moves to the end of the file.
+    #[command(after_help = PATCHER_NOTE)]
     Replace {
         /// The path to the UOP file.
         #[arg(required = true)]
@@ -79,7 +85,9 @@ enum Commands {
     },
     /// Rebuild the UOP package, recompressing all files.
     ///
-    /// Every entry keeps its data block header.
+    /// Every entry keeps its data block header. The package is laid out compactly: block tables first, then the
+    /// payloads, without gaps.
+    #[command(after_help = PATCHER_NOTE)]
     Rebuild {
         /// The path to the UOP file.
         #[arg(required = true)]
@@ -232,7 +240,7 @@ fn main() -> eyre::Result<()> {
             uop.replace_file(*hash, &new_file_data, CompressionFlag::Zlib)
                 .with_context(|| format!("Failed to replace file with hash 0x{:016x}", *hash))?;
 
-            save_package_atomically(&mut uop, uop_file)?;
+            save_package_atomically(&mut uop, uop_file, SaveLayout::Preserve)?;
 
             log::info!("Successfully replaced file and saved the UOP package.");
         }
@@ -245,7 +253,7 @@ fn main() -> eyre::Result<()> {
             uop.recompress(flate2::Compression::best())
                 .with_context(|| "Failed to recompress UOP package")?;
 
-            save_package_atomically(&mut uop, uop_file)?;
+            save_package_atomically(&mut uop, uop_file, SaveLayout::Compact)?;
 
             log::info!("Successfully rebuilt and saved the UOP package.");
         }
@@ -497,10 +505,10 @@ fn check_extract_containment(canonical_root: &Path, destination: &Path) -> eyre:
     }
 }
 
-fn save_package_atomically(package: &mut UopPackage, target_path: &Path) -> eyre::Result<()> {
+fn save_package_atomically(package: &mut UopPackage, target_path: &Path, layout: SaveLayout) -> eyre::Result<()> {
     let temp_path = unique_temp_path_for(target_path)?;
     package
-        .finalize_and_save(&temp_path)
+        .finalize_and_save_with_layout(&temp_path, layout)
         .with_context(|| format!("Failed to save temporary UOP file: {}", temp_path.display()))?;
 
     if let Err(error) = fs::rename(&temp_path, target_path) {

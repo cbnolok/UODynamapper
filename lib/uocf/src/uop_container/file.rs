@@ -63,6 +63,22 @@ impl From<i16> for CompressionFlag {
     }
 }
 
+/// Where an entry's data block header and stored payload were in the package file it was loaded from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StoredExtent {
+    /// The entry's `data_block_address` in that file.
+    pub address: u64,
+    /// `data_block_length + compressed_size`: the bytes the entry occupied from `address`.
+    pub length: u64,
+}
+
+impl StoredExtent {
+    /// The offset just past the extent.
+    pub fn end(&self) -> u64 {
+        self.address + self.length
+    }
+}
+
 /// Represents a single file within a UOP package.
 #[derive(Debug, Clone)]
 pub struct UopFile {
@@ -86,6 +102,9 @@ pub struct UopFile {
     /// The `data_block_length` bytes stored before the payload, loaded with it: a timestamp header in version-4
     /// client packages, a signature header in version-5 ones (`data_block_header`). None if not loaded or absent.
     data_block_header: Option<Arc<[u8]>>,
+    /// Where the entry was stored in the package file it was read from; None for entries made in memory and
+    /// entries that stored no bytes. The layout-preserving writer keeps the entry there when it still fits.
+    source_extent: Option<StoredExtent>,
 }
 
 impl UopFile {
@@ -101,6 +120,7 @@ impl UopFile {
             compression: CompressionFlag::None,
             data: None,
             data_block_header: None,
+            source_extent: None,
         }
     }
 
@@ -164,6 +184,9 @@ impl UopFile {
         let compression_flag = reader.read_i16::<LittleEndian>()?;
 
         let compression = CompressionFlag::from_raw_i16(compression_flag)?;
+        let stored_length = u64::from(data_block_length) + u64::from(compressed_size);
+        let source_extent =
+            (stored_length != 0).then_some(StoredExtent { address: data_block_address, length: stored_length });
 
         Ok(UopFile {
             data_block_address,
@@ -175,6 +198,7 @@ impl UopFile {
             compression,
             data: None,
             data_block_header: None,
+            source_extent,
         })
     }
 
@@ -204,6 +228,21 @@ impl UopFile {
     /// Sets the address of the file's data in the UOP file.
     pub fn set_data_block_address(&mut self, address: u64) {
         self.data_block_address = address;
+    }
+
+    /// Where the entry was stored in the package file it was read from (see [`StoredExtent`]). Replacing or
+    /// recompressing the entry keeps it, so the layout-preserving writer can leave the new bytes in place.
+    pub fn source_extent(&self) -> Option<StoredExtent> {
+        self.source_extent
+    }
+
+    pub(crate) fn set_source_extent(&mut self, extent: Option<StoredExtent>) {
+        self.source_extent = extent;
+    }
+
+    /// `data_block_length + compressed_size`: the bytes the entry stores at its `data_block_address`.
+    pub fn stored_length(&self) -> u64 {
+        u64::from(self.data_block_length) + u64::from(self.compressed_size)
     }
 
     /// Returns the length of the data block header.

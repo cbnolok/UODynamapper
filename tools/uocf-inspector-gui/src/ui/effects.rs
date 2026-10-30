@@ -40,6 +40,7 @@ use crate::logic::effects_editor::{
     ChildList, CollectionSource, DefinitionFilter, DefinitionKind, EffectsDocument, EffectsEditKey, EffectsSelection,
     FileOverride, FileUser, NameIndex, PacketRoute, ParticleKindFilter, PathStep, PACKET_UNREACHABLE_NOTE,
 };
+use crate::ui::UOP_PATCHER_NOTE;
 
 const BROWSE_PANEL_WIDTH: f32 = 360.0;
 const PREVIEW_PANEL_WIDTH: f32 = 420.0;
@@ -628,10 +629,10 @@ fn toolbar(app: &mut UopInspectorApp, lookups: &Lookups, ui: &mut egui::Ui) {
         let save_source = state.document.source().package_path().map(Path::to_path_buf).or(client_source);
         if ui
             .add_enabled(save_source.is_some(), egui::Button::new("Collection .uop..."))
-            .on_hover_text(
+            .on_hover_text(format!(
                 "Writes a copy of the source EffectDefinitionCollection.uop with exactly the edited entries. The \
-                 loaded client files are refused as the target.",
-            )
+                 loaded client files are refused as the target.\n{UOP_PATCHER_NOTE}"
+            ))
             .on_disabled_hover_text("Needs an EffectDefinitionCollection.uop as the source of the copy.")
             .clicked()
         {
@@ -642,7 +643,9 @@ fn toolbar(app: &mut UopInspectorApp, lookups: &Lookups, ui: &mut egui::Ui) {
         let has_files = app.effects_panel.files.is_some();
         if ui
             .add_enabled(has_files, egui::Button::new("EffectTexture .uop..."))
-            .on_hover_text(format!("Writes a copy of the opened EffectTexture.uop with the file changes.\n{HEADER_HASH_NOTE}"))
+            .on_hover_text(format!(
+                "Writes a copy of the opened EffectTexture.uop with the file changes.\n{HEADER_HASH_NOTE}\n{UOP_PATCHER_NOTE}"
+            ))
             .on_disabled_hover_text("No EffectTexture.uop is open.")
             .clicked()
         {

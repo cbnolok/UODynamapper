@@ -20,6 +20,10 @@ pub mod string_dictionary;
 pub mod sounds;
 pub mod upscale_preview;
 
+/// Hint shown wherever a `.uop` package is saved.
+pub(crate) const UOP_PATCHER_NOTE: &str = "The official patcher re-downloads edited entries and deletes added ones: \
+                                           keep edited packages in a client copy the patcher never runs on.";
+
 pub(super) fn arrow_delta(ui: &egui::Ui, disabled: bool) -> Option<isize> {
     if disabled {
         return None;
