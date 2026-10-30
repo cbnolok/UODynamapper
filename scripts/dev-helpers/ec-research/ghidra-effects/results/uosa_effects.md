@@ -293,7 +293,9 @@ Value distributions:
   - +0x10: GetDefinition.
 - **Lookup by effect id.** `UOEffects::InstantiateEffectById` 0x004220c0 looks up an effect id; see
   "Load path" below.
-- **Server effect ids.** The collection id is the 0xC7 packet effect field minus 1 (the 0x70/0xC0 copiers leave the effect at 0); see "Keying".
+- **Server effect ids.** The collection id is a 0xC7 packet effect field minus 1 (the 0x70/0xC0 copiers leave
+  both effect fields at 0). Which field and which special values apply depend on the packet type; see
+  "Effect fields per path" under "Keying".
 - **Other readers.** Two other readers of the same format exist:
   - `FUN_0083c0ba`, a larger asset that embeds effect collections per entry;
   - `FUN_004b93d0`, which reads u32 id, u8 count and that many definitions.
@@ -336,8 +338,8 @@ sites of `InstantiateEffectById`; **confirmed**):
 
 | Caller | Address | Effect id |
 |---|---|---|
-| `UOEffects::PlayEffectAtTile` | 0x00421130 | from `UOEffects::PlayGraphicalEffect` (packets 0x70/0xC0/0xC7): `effect - 1`, or 666 for lightning |
-| `UOProjectileEffect::SpawnExplosion` | 0x0044ca90 | `explode effect - 1` of a moving effect (0xC7); 0 selects the classic tile effect 0x36CB for 10 ticks instead |
+| `UOEffects::PlayEffectAtTile` | 0x00421130 | from `UOEffects::PlayGraphicalEffect` (packets 0x70/0xC0/0xC7): `effect - 1` for types 2/3 (9501 and 9502 intercepted first), or 666 for type 1 lightning |
+| `UOProjectileEffect::SpawnExplosion` | 0x0044ca90 | `(explode effect - 1) & 0xffff` of a moving effect with the explode flag, with no 9501/9502 intercept; explode effect 0 (always for 0x70/0xC0) selects the classic tile effect 0x36CB for 10 ticks instead |
 | `UOEffects::ShowTargetIndicator` | 0x005cfb70 | 10001 (`Splat_Golden.nif` + `Splat_Splash.nif`), attached to the new current target. It is called by the set-current-target function `FUN_005cfa70` when the target type is 2 and the option byte `DAT_00e33657` is 0. The effect is kept in a global and the previous one is stopped. |
 | `UOWaypoints::SetWaypointEffect` (probable) | 0x005d29e0, 2 sites | `FUN_005d49d0(waypoint type)`: a per-type id table (`[this+0x34]`, index from a map; an unknown type uses index 0). It is attached to the waypoint's mobile/item, or to a placeholder object created at its location. It is reached from the Lua `UOCreateUserWaypoint` paths. Probably ids 20000-20011. |
 
@@ -359,9 +361,9 @@ trailing bytes. Only the three copiers call the dispatcher. No use of an effect 
 
 | Type | Action |
 |---|---|
-| 0 moving | `UOEffects::MakeProjectileEffect` 0x00420a90: a `UOProjectileEffectDefinition` (item id, hue + 1, speed, serials, explode flags, explode effect and sound, render mode). It has its own particle filter test. |
+| 0 moving | `UOEffects::MakeProjectileEffect` 0x00420a90: a `UOProjectileEffectDefinition` (item id, hue + 1, speed, serials, explode flags, explode effect and sound, render mode; effect 9502 sets `suppress_tileart_effects`, any other effect value is ignored, and the fixed-direction byte is not read). It has its own particle filter test. On arrival, see "Effect fields per path". |
 | 1 lightning | particle filter on the source serial, then `PlayEffectAtTile(666, ticks 0)` (`lightning.ems`) |
-| 2 fixed location, 3 fixed on mobile | Gets the source object (type 3 without an object plays nothing), then tests `UOEffects::IsParticleFiltered(serial, location = type == 2)`. Effect 9501 (0x251D) plays nothing. Effect 0 or 9502 (0x251E) plays the classic item effect `UOEffects::MakeTileEffect` 0x00420e10, if the item id is non-zero. Any other effect plays `PlayEffectAtTile(effect - 1)`, with the packet duration as lifetime ticks for type 2 and 0 for type 3; type 3 then attaches the effect to the object's effects component (`FUN_00443e90`). |
+| 2 fixed location, 3 fixed on mobile | Gets the source object (type 3 without an object plays nothing), then tests `UOEffects::IsParticleFiltered(serial, location = type == 2)`. Effect 9501 (0x251D) plays nothing. Effect 0 or 9502 (0x251E) plays the classic item effect `UOEffects::MakeTileEffect` 0x00420e10, if the item id is non-zero. Any other effect plays `PlayEffectAtTile((effect - 1) & 0xffff)`, with the packet duration as lifetime ticks for type 2 and 0 for type 3; type 3 then attaches the effect to the object's effects component (`UOObjectComponentEffects::AddEffect` 0x00443e90). |
 | 4 | screen fade: a `UOFadeEffectDefinition` from the item id |
 
 Consequences:
@@ -369,11 +371,40 @@ Consequences:
 - **Packet effect value.** `effect - 1` is the collection id (verified by name: packet effect 5002 = id 5001
   `00005001_clumsy`, and the like). Ids reachable from packets are 0..65534.
 - **Effect 0.** Packet effect 0 is not id -1: it means "no EC effect, use the item id".
-- **9501 and 9502.** Packet 9501 and 9502 never reach ids 9500/9501 through this path. Collection 9501
-  (`00009501_Null.nif`) and 9502 (`fizzle.ems`) are reached as packet values 9502 and 9503.
+- **9501 and 9502.** These values are special only in the `effect` field of types 2/3 (and 9502 in the
+  `effect` field of type 0). The explode-effect path has no intercept. See the table below.
 - **Hue and render mode.** `PlayEffectAtTile` passes object 0, so collection effects ignore the packet hue
   and render mode. A `hued` particle needs an object hue, so it is never hued on this path. PropertyFlag
-  has no object to read either.
+  has no object to read either. The classic paths do carry them: the projectile and tile-effect objects get
+  hue = packet hue + 1 (0 stays 0) and the render mode, and the `hued` particles of their item's tileart
+  effects are hued with that value (see "Hued NIF effects").
+
+### Effect fields per path
+
+**confirmed** (instruction level). Copier record offsets: +0 type, +4 source serial, +8 target serial, +0xc
+item id, +0xe/+0x10/+0x12 source x/y/z (u16, u16, i8), +0x14/+0x16/+0x18 target x/y/z, +0x19 speed, +0x1a
+duration, +0x1d fixed direction, +0x1e explode; 0xC0 adds +0x20 hue and +0x24 render mode; 0xC7 adds
++0x28 effect, +0x2a explode effect, +0x2c explode sound, +0x30 serial and +0x34 layer.
+
+| Type | Field read | Value | Result |
+|---|---|---|---|
+| 0 moving | effect (+0x28) | 9502 (0x251E) | projectile `suppress_tileart_effects` = 1 (its item shows without its tileart particles) |
+| 0 moving | effect | anything else | ignored; the projectile shows the item id with its tileart effects |
+| 0, on arrival with explode set | explode effect (+0x2a) | 0 | `UOTileEffectDefinition` item 0x36CB, projectile hue and render mode, 10 ticks, attached to the target |
+| 0, on arrival with explode set | explode effect | N != 0 | collection `(N - 1) & 0xffff` at the target, no intercept: 9501 → 9500 (`ColorSwirl`, missing file), 9502 → 9501 (`Null.nif`, missing file), 9503 → 9502 (`fizzle.ems`) |
+| 0, on arrival | explode sound (+0x2c) | any | played when exploding; a return flag sends a projectile back |
+| 1 lightning | none | | collection 666 |
+| 2 / 3 | effect (+0x28) | 9501 (0x251D, CMP at 0x00421391) | nothing |
+| 2 / 3 | effect | 0 or 9502 (0x251E, CMP at 0x004213a7) | `MakeTileEffect` 0x00420e10 if item id != 0; 9502 sets `suppress_tileart_effects` (CMP at 0x00420ea2, tested by `UOTileEffect` at 0x00466c04) |
+| 2 / 3 | effect | N, other | collection `(N - 1) & 0xffff`; ticks = duration (type 2) or 0 (type 3, then attached to the source object) |
+| 4 fade | item id | | `UOFadeEffectDefinition` |
+
+Reachability of the special entries: collection 9500 and 9501 only through the explode effect (9501, 9502;
+both files are missing, so nothing plays after the error log); collection 9502 (`fizzle.ems`) as effect or
+explode effect 9503. 0x70 and 0xC0 packets never reach the collection except through type 1 (666).
+
+New types in `/UOEffects`: `UOProjectileEffectDefinition` (0x40) and `UOTileEffectDefinition` (0x24), with
+the fields above (hue, render mode, `suppress_tileart_effects`, `on_mobile`, `duration_ticks`).
 - **Position.** `PlayEffectAtTile` sets the effect at the packet location. Type 3 then follows the mobile,
   because the effects component moves its effects when the object moves.
 
@@ -434,9 +465,12 @@ All of the following are **confirmed** in the assembly unless marked.
     written.
   - The children are skipped when `(mask & setting) == mask`, or when the mask is 1 and the object's
     vtable +0xa0 is negative.
-- **PositionOffset:** `UOPositionOffset` (0x50 bytes) holds the 8 offsets but nothing reads them. There is no
-  dynamic_cast of its type descriptor (ProbeEffColl05), and it reports finished at once. It is inert in this
-  build, and no data uses it.
+- **PositionOffset:** the runtime `UOPositionOffset` (0x50 bytes) holds the 8 offsets, reports finished at
+  once and is never read (no dynamic_cast of its type descriptor, ProbeEffColl05). The *definition* is not
+  inert, though: `UOObjectComponentAnimationMob::UpdateFrame` 0x00436d40 reads type 7 definitions from the
+  mount's sequence frame effects to place the rider (test at 0x0043725c; see `uosa_animation.md`, "Body to
+  sequence and frames"). No collection, tileart or sequence data uses it (all 56 frame effects are
+  UserPreference + Sound).
 - **PropertyFlag and Earthquake:** as documented under "Formats per type". PropertyFlag needs an object, so
   in collection entries played from packets (object 0) only the default children of mode 1 can play.
 - **Double registration** (probable quirk, not checked at run time). The composite Instantiates (LOD, Wait,
@@ -477,14 +511,146 @@ which the client points at its UOP packages (**confirmed**).
 |---|---|---|
 | Source | the record of the item's graphic | an entry of `EffectDefinitionCollection.uop`, keyed by the packet effect - 1 or a fixed id |
 | Instantiated by | `UOObject::CreateComponents` 0x005befd0, once per world object creation; also `UOTileEffect::Init` 0x00466940 (classic 0x70/0xC0/0xC7 item effects and the projectile explosion 0x36CB) and `UOProjectileEffect::Init` 0x0044bb40 (the moving item) | `UOEffects::InstantiateEffectById` per packet or event |
-| Object | the world object: hue, `hued` and PropertyFlag work | none for packet effects (no hue, no PropertyFlag); the target or waypoint object for the indicator and waypoints |
+| Object | the world object: hue, `hued` and PropertyFlag work. For classic packet effects this is the projectile or tile-effect object, whose hue is packet hue + 1 | none for packet effects (no hue, no PropertyFlag); the target or waypoint object for the indicator and waypoints; the animated object for animation frame effects |
 | attach_mode | `CreateComponents` skips particles with attach_mode 2 (`PARTICLE_ATTACH_PROJECTILE_ONLY`). `UOTileEffect::Init` and `UOProjectileEffect::Init` instantiate every particle. | not tested (all collection particles are 1) |
-| Ownership | registered in `g_UOActiveEffects` and added to the object's `UOObjectComponentEffects` (component id 4, vftable 0x00c9fb44; `FUN_00443e90` AddEffect). The component sets visibility and position, follows the object (`HandleNotify` message 1) and stops everything when the component is cleared (+0x8); it never updates the effects. | registered in `g_UOActiveEffects`; type 3, the indicator and waypoints are also added to the object's component |
+| Ownership | registered in `g_UOActiveEffects` and added to the object's `UOObjectComponentEffects` (component id 4, vftable 0x00c9fb44; `UOObjectComponentEffects::AddEffect` 0x00443e90). The component sets visibility and position, follows the object (`HandleNotify` message 1) and stops everything when the component is cleared (+0x8); it never updates the effects. | registered in `g_UOActiveEffects`; type 3, the indicator and waypoints are also added to the object's component |
 | Lifetime | the object's: started once; ends when the effect finishes or the component is cleared | the effect's own end, or the packet duration in ticks (type 2, single definition) |
 
 So a classic packet effect (effect field 0, or 0x70) still gets Enhanced Client particles, through the
 tileart effects of its item id. RoundRobin and Wait state in tileart effects advances per object creation
 and is shared by all objects of the same graphic.
+
+## Hued NIF effects
+
+### Selection
+
+`UOParticleEffectDefinition::Instantiate` 0x0040e490 (**confirmed**):
+
+- a name ending in `.ems` → `UOParticleEffectChaos` (Init 0x0041aff0). The object is not passed, so **Chaos
+  effects are never hued**, whatever the `hued` flag says;
+- object != 0, object hue (`UOObject::GetHue`, vtable +0x58 0x005b3930, field +0x44) != 0 and `hued` set →
+  `UOHuedParticleEffectNif` (0x84 bytes, constructor 0x0041d9c0, ESI = effect, EDI = object);
+- otherwise → `UOParticleEffectNif`.
+
+Hue sources (the object passed down to Instantiate):
+
+| Path | Object | Hue H |
+|---|---|---|
+| tileart effects (`UOObject::CreateComponents`) | the world object | its stored hue (`SetHue` 0x005b3940), not masked |
+| classic packet effects (`UOProjectileEffect::Init`, `UOTileEffect::Init`) | the projectile / tile-effect object | packet hue + 1, 0 stays 0 (0xC0/0xC7; 0x70 has hue 0) |
+| animation frame effects (`IUOEffectDefinition::PlayOnObject`) | the animated object | its stored hue |
+| collection effects from packets (`PlayEffectAtTile`) | none | never hued |
+| target indicator, waypoints | target / waypoint object | its hue (no `hued` particle in those entries) |
+
+No 0x8000 / 0x4000 bit is tested or masked on this path. H = 0 is never hued.
+
+### Construction and Init
+
+- **Constructor** 0x0041d9c0: +0x14 = H (raw), +0x18 = object position (vtable +0x28), +0x30 = camera
+  direction × (object vtable +0x11c × -0.001 - object vtable +0x124 × 1e-5 (0x00da7b24)), a depth bias.
+  **confirmed** (the meaning of the two object values is unknown).
+- **Init** 0x0041dc30 (**confirmed**):
+  1. clones the NIF scene (+0x44) as for the plain effect;
+  2. `UOHuedParticleEffectNif::CreateOffscreenCamera` 0x00472160: a new `NiCamera`, viewport (0, 1, 1, 0),
+     orthographic frustum left/right ∓4·w/h, top 4.0 (0x00c9b2c8), bottom -4.0 (0x00d05258), near 8
+     (0x00c9c3a4), far 12 (0x00c9c3a8), where w/h is the screen size (0x00e3352c when the byte 0x00e33538 is
+     set, else 0x00e33520);
+  3. `UOHuedParticleEffectNif::PlaceOffscreenCamera` 0x004722a0: rotation copied from the world camera
+     (`g_UOWorldViewer` +0x7c, NiAVObject +0x2c), translation = `g_UOWorldViewer` +0x18 (the -10 × view
+     direction camera offset) + effect position;
+  4. `UOHuedParticleEffectNif::BuildHueQuad` 0x0041df40: a 4-vertex camera-facing quad, half size
+     4.8541555 (0x00d05360) along camera right and up, vertex colour white, second UV set = hue coordinate
+     (below), material `UOEffectsShader`, a 512 × 512 render target as shader map 0, `Build\Hues\Hues.dds`
+     (loaded through the texture manager, `g_UOWorldViewer` +0xa8, vtable +4) as base map, and an
+     `NiAlphaProperty` with flags 0x12ED: blend SRCALPHA / INVSRCALPHA, alpha test GREATER, reference 0.
+
+  Map flags (Gamebryo `NiTexturingProperty::Map`: bits 12-13 clamp, bits 8-11 filter): base map 0x3100 =
+  WRAP_S_WRAP_T + BILERP; shader map then `& 0xc1ff | 0x100` = clamp + BILERP (probable reading of the
+  second mask).
+
+### Per frame
+
+`UOHuedParticleEffectNif::Update` 0x0041edc0 (**confirmed**):
+
+- `elapsed (+0x48) += dt × 0.5` (0x00c95604): **hued NIF effects run at half speed**, and a non-looping
+  effect (`duration` +0x5c compared with elapsed) lasts twice as long in real time. Looping uses fmod. The
+  tick countdown (+0x80) is unaffected.
+- Skips rendering while hidden (vtable +0xc).
+- Updates the scene (`FUN_00663db0`), then `UOHuedParticleEffectNif::RenderToTexture` 0x0041ebc0: renderer
+  `DAT_00e31ff8`, clear flags 7 (colour, depth, stencil; the clear colour is the renderer's), camera data
+  from the offscreen camera, `NiDrawVisibleArray`. No light is set by this path.
+- Updates the quad node (+0x10), which draws in the world.
+
+### Shader and formula
+
+`UOEffectsShaderHLSL` (constructor 0x0058ec40, vtable 0x00cb3bac; FFP variant 0x0058e350, vtable 0x00cb3b04).
+`UOEffectsShaderHLSL::UpdatePipeline` 0x0058f110 (vtable +0x1c): shader map 0 → sampler +0x120, base map →
+sampler +0x140 and the "has hue texture" constant +0x160 = 1; each sampler takes clamp = flags >> 12 & 3 and
+filter = flags >> 8 & 0xf; it then sets D3DRS_SRGBWRITEENABLE (0xc2) to 0.
+
+Hue coordinate from `BuildHueQuad` (**confirmed**), with H the raw object hue:
+
+```text
+column = H / 1024          (integer)
+row    = H % 1024
+uv2    = (0, 0)                                   if H == 0
+uv2.u  = column * (1 / 1024) (0x00d05158) * 255.0 (0x00d04ef0)
+uv2.v  = row / 1024
+```
+
+Pixel shader `uoeffects.psh` (Shaders.uop; **confirmed** from the source):
+
+```text
+c    = tex2D(render target, uv)                    // the effect as rendered offscreen
+lum  = dot(c.rgb, (0.2125, 0.7154, 0.0721))
+if (uv2.x > 0 || uv2.y > 0)                        // HAS_HUE_TEX branch
+    h   = tex2D(HueSampler, uv2 + (lum * 255 / 1024, 0))
+    out = (h.rgb, c.a * h.a * vertex.a)
+```
+
+So the hued effect replaces each pixel's colour with the hue gradient entry selected by its luminance, keeps
+the rendered alpha, and is drawn with normal alpha blending (not additive), whatever the NIF's own blend
+mode was.
+
+Quirks (**probable**, derived from the numbers, not observed):
+
+- The atlas column stride is 255 texels, not the 256-texel strips of `hues.dds` (`atlas_coord_for_hue` in
+  `lib/uocf/src/enhanced/hues.rs`). Assuming a 1024-texel-wide atlas, as the shader's 1/1024 scale implies,
+  hues >= 1024 sample `column` texels to the left of their strip; at low luminance they reach the
+  previous strip.
+- With bilinear filtering, u and v fall on texel edges: each sample is a 50/50 blend of rows `row - 1` and
+  `row` (row 0 wraps to 1023) and of two adjacent gradient entries.
+- The offscreen frustum is 8 × 8·w/h world units but the quad is 9.708 × 9.708 (2 × 4.8541555). If the
+  quad's first UV set spans the whole target (not traced), a hued effect is drawn about 1.21× taller than
+  the plain one and squeezed horizontally by the screen aspect, and anything outside ±4 units vertically is
+  clipped.
+
+## Effect camera and lighting
+
+- **Effect orientation** (**confirmed**): `g_UOWorldViewer` 0x00e37224 (`UOWorldViewer`, constructor
+  0x0046f870, `Init` 0x0046fa70) keeps the camera direction (+0xc), the camera offset -10 × direction
+  (+0x18), -up (+0x24) and the effect rotation (+0x30) = C · P with P = [[0,1,0],[0,0,1],[1,0,0]]. Every
+  NIF and Chaos effect node takes this rotation, so in the NIF's local frame **X = camera right, Y = view
+  direction (into the screen), Z = camera up**: effects are camera-aligned billboards, not placed in world
+  axes. A viewer reproduces the client by rendering the NIF orthographically along local +Y with local +Z
+  up; Chaos gravity along local Z points along camera up.
+- **World camera** (**probable** in the exact composition): `UOWorldViewer::CreateCamera` 0x00471580 and
+  `SetCameraFrustum` 0x004712f0: orthographic, left/right ∓f / 0.75 (0x00db9754), top/bottom ±f, near 8,
+  far 12, f = 16.0 (+0x80) × the viewport height fraction (0x00e33590); rotation -π/2 about Z and a tilt of
+  π/4 - 0.001, with a -0.05 (0x00d051c0) term.
+- **Lighting** (**unknown** for plain effects): `UOParticleEffectNif::Init` 0x0041a8e0 attaches the scene to
+  render group `DAT_00e32e28[7]`; which lights that group gets was not traced. Hued effects render offscreen
+  with no light set by the client.
+
+## Animation frame effects
+
+Frame effects of `AnimationSequence.uop` actions are played on the animated object by
+`UOAnimationFrameSet::PlayFrameEffects` 0x0083390f through `IUOEffectDefinition::PlayOnObject` 0x0041a610
+(the +4 slot of every definition vtable; the interface slot is `_purecall`). PlayOnObject requires the
+object's effects component (id 4), instantiates and registers the definition with the object (so `hued`
+particles take the object's hue), adds it with `UOObjectComponentEffects::AddEffect` 0x00443e90, sets its
+position to the object's tile position and starts it. When frames fire is in `uosa_animation.md`, "Frame
+effects and skipped frames".
 
 ## Rust parser specification
 
@@ -616,6 +782,28 @@ stopping flag).
 (`UOWaypoints`, `UOPacket`), and refreshed 4 plate comments, with no anomalies. A second `--apply`
 reported `Changes: none`. The program was saved.
 
+### Round 5 (hued effects, object playback)
+
+`NameEffectCode.java` step `huedEffects` (after `runtimeUse`) names from locators:
+
+| Evidence | Finds |
+|---|---|
+| RTTI vtables | `UOObject` slots +0x54/+0x58 `SetHue`/`GetHue`, +0x138/+0x13c `Set`/`GetRenderMode`, +0x140/+0x144 `Set`/`GetSuppressTileartEffects` |
+| +4 slot shared by every definition vtable (`IUOEffectDefinition` +4 is `_purecall`) | `IUOEffectDefinition::PlayOnObject` 0x0041a610 |
+| callee of PlayOnObject also called by `UOTileEffect::Init`, making the +8 virtual call | `UOObjectComponentEffects::AddEffect` 0x00443e90 |
+| writer of the `UOHuedParticleEffectNif` vftable among the callees of `UOParticleEffectDefinition::Instantiate` | `UOHuedParticleEffectNif::UOHuedParticleEffectNif` 0x0041d9c0 |
+| Init callee using `Build\Hues\Hues.dds` / calling `SetViewFrustum` / called before the quad | `BuildHueQuad` 0x0041df40, `CreateOffscreenCamera` 0x00472160, `PlaceOffscreenCamera` 0x004722a0 |
+| Update callee calling `NiDrawVisibleArray`; vtable +0x14 | `UOHuedParticleEffectNif::RenderToTexture` 0x0041ebc0, `::Update` 0x0041edc0 |
+| single global read by the hued constructor and Init; string `UOWorldViewer::Init()` | `g_UOWorldViewer` 0x00e37224, `UOWorldViewer::Init` 0x0046fa70, `CreateCamera` 0x00471580, `SetCameraFrustum` 0x004712f0 |
+| vtable writers that use the string `UOEffectsShader` | `UOEffectsShaderHLSL` / `UOEffectsShaderFFP` constructors, `UOEffectsShaderHLSL::UpdatePipeline` (probable) |
+
+Types: `UOProjectileEffectDefinition` (0x40) and `UOTileEffectDefinition` (0x24) created in `/UOEffects`;
+`UOParticleEffectDefinition.hued` comment updated. `effects_variables.spec` adds the hued constructor
+(ESI effect, EDI object), Update, RenderToTexture and PlayOnObject signatures. `--apply` renamed 20
+functions, created 1 label and 2 types and updated 1; `ApplyVariableSpecs` made 4 changes; second runs
+reported no changes. The animation side (`NameAnimationCode.java` `frameEffects`) is listed in
+`uosa_animation.md`. The program was saved.
+
 ## Proposed Rust changes
 
 Not applied. The changes are for `lib/uocf/src/enhanced/effect_definition.rs` as of 914634cf, plus one
@@ -624,12 +812,16 @@ line in `ENHANCED_CLIENT_FILES.md`. The earlier items (attach_mode, field_3c, va
 1. **Effect id constants** (module level, documented as client behaviour):
 
    ```rust
-   /// Collection id = 0xC7 packet effect field - EFFECT_ID_PACKET_BIAS.
+   /// Collection id = 0xC7 packet effect / explode effect field - EFFECT_ID_PACKET_BIAS.
    pub const EFFECT_ID_PACKET_BIAS: u32 = 1;
-   /// Packet effect value that plays nothing.
+   /// Types 2/3 packet effect value that plays nothing (not special as an explode effect).
    pub const PACKET_EFFECT_NONE: u16 = 9501;
-   /// Packet effect values that play the classic item (tileart) effect instead of a collection entry.
-   pub const PACKET_EFFECT_CLASSIC: u16 = 9502;   // 0 behaves the same
+   /// Types 2/3: plays the classic item effect without its tileart effects (0 plays it with them);
+   /// type 0: the projectile item without its tileart effects. Not special as an explode effect.
+   pub const PACKET_EFFECT_CLASSIC: u16 = 9502;
+   /// Explode effect 0: classic explosion item, played for this many ticks.
+   pub const EXPLOSION_ITEM_ID: u16 = 0x36CB;
+   pub const EXPLOSION_TICKS: u32 = 10;
    /// Collection id substituted for a missing id (Placeholder01.ems).
    pub const EFFECT_ID_FALLBACK: u32 = 0;
    /// Collection id of packet type 1 (lightning).
@@ -638,9 +830,9 @@ line in `ENHANCED_CLIENT_FILES.md`. The earlier items (attach_mode, field_3c, va
    pub const EFFECT_ID_TARGET_INDICATOR: u32 = 10001;
    ```
 
-   Optionally add `pub fn collection_id_from_packet_effect(effect: u16) -> Option<u32>`. It returns `None`
-   for 0, `PACKET_EFFECT_NONE` and `PACKET_EFFECT_CLASSIC`, and `effect - EFFECT_ID_PACKET_BIAS`
-   otherwise.
+   Optionally add `pub fn collection_id_from_packet_effect(effect: u16) -> Option<u32>` for types 2/3. It
+   returns `None` for 0, `PACKET_EFFECT_NONE` and `PACKET_EFFECT_CLASSIC`, and `effect -
+   EFFECT_ID_PACKET_BIAS` otherwise; the explode effect maps every non-zero value.
 2. **`parse_effect_definition_collection` doc:** "All top-level definitions play at the same time (one
    container); there is no sequencing. A missing entry falls back to `EFFECT_ID_FALLBACK`."
 3. **`RandomEffect` / `RandomEffectEntry::weight`:** `pub const RANDOM_WEIGHT_TOTAL: f32 = 100.0;`. Weight
@@ -659,8 +851,8 @@ line in `ENHANCED_CLIENT_FILES.md`. The earlier items (attach_mode, field_3c, va
    `pub const PARTICLE_LOD_DEFAULT: u32 = 3;`.
 7. **`UserPreferenceEffect` doc:** "(confirmed)". Note that the client only ever sets bit 0, so the other
    bits are never set by the client.
-8. **`PositionOffsetEffect` doc:** add "Inert in this client build: the runtime object stores the offsets
-   but nothing reads them."
+8. **`PositionOffsetEffect` doc:** add "Played as an effect it does nothing in this client build; the
+   client reads the definition from a mount's sequence frame effects to place the rider."
 9. **`ParticleEffect::duration` doc:** add "Independent of the packet duration, which the client applies as
    an update-tick countdown (single-definition entries only)."
 10. **`ParticleEffect::name_index` doc:** add `pub const PARTICLE_RESOURCE_DIR: &str = "data/effects/";`,
@@ -669,6 +861,13 @@ line in `ENHANCED_CLIENT_FILES.md`. The earlier items (attach_mode, field_3c, va
 11. **`ENHANCED_CLIENT_FILES.md`:** under `EffectDefinitionCollection.uop`, add one bullet: "Entry id =
     0xC7 packet effect - 1; all top-level definitions play together; particle files are in
     `EffectTexture.uop` under `data/effects/`."
+
+12. **Hued particles** (for the effect renderer): `HUED_EFFECT_TIME_SCALE: f32 = 0.5`,
+    `HUE_LUMINANCE_WEIGHTS: [f32; 3] = [0.2125, 0.7154, 0.0721]`, `HUED_EFFECT_ATLAS_COLUMN_STRIDE: f32 =
+    255.0`, `HUE_ATLAS_ROWS: u32 = 1024`, and the rule "only `.nif` particles, only with an object hue
+    != 0; output colour = hue gradient[luminance], alpha unchanged, alpha-blended". Whether to copy the
+    255-stride and texel-edge quirks or sample the intended entry is a renderer decision.
+13. **Packet hue:** the classic effect object hue is `packet hue + 1` (0 stays 0).
 
 No format change is needed: the parser is already correct for all 269 entries.
 
@@ -695,5 +894,20 @@ No format change is needed: the parser is already correct for all 269 entries.
   definitions.
 - **Missing resources:** the four particle names with no `EffectTexture.uop` entry (see "Particle resource
   resolution").
-- **Other readers:** `FUN_0041a610` and `FUN_004b93d0`/`FUN_0083c0ba` (other InstantiateAndRegister users
-  and readers of the format) were not decoded.
+- **Other readers:** `FUN_004b93d0`/`FUN_0083c0ba` (readers of the format) were not decoded.
+  `FUN_0041a610` is now `IUOEffectDefinition::PlayOnObject`.
+- **Hue atlas sampling:** the 50/50 texel-edge blend and the 255-texel column stride follow from the
+  constants and the BILERP map flags; the atlas width (1024 assumed) was not read. A frame capture of a
+  hued effect (PIX / RenderDoc on the client) or a hued fireball with a hue >= 1024 would settle both.
+- **Hued quad size:** the quad UVs (set 0) were not traced, so the 1.21× / aspect distortion is inferred.
+  Reading the UV writes in `BuildHueQuad` 0x0041df40 settles it.
+- **Shader map flags:** the second mask on the render-target map (`& 0xc1ff | 0x100`) is read as clamp +
+  bilinear; the order of the two flag writes was not checked against the map object.
+- **Render target clear colour and alpha:** the renderer's background colour is used; with additive NIF
+  materials over a cleared target the resulting alpha depends on it. A frame capture settles it.
+- **Effect lighting:** the lights of render group `DAT_00e32e28[7]` (plain NIF effects) were not traced.
+- **World camera tilt:** the exact order of the -π/2, π/4 - 0.001 and -0.05 terms in `SetCameraFrustum`
+  0x004712f0 / `CreateCamera` 0x00471580 is probable; the effect billboard orientation (+0x30) does not
+  depend on it.
+- **Hued constructor depth bias:** object vtable +0x11c / +0x124 (scaled by -0.001 and -1e-5) were not
+  identified.

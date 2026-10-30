@@ -210,15 +210,77 @@ Data:
 
 ### Frame effects and skipped frames
 
-- Effect frames: 56 entries in 22 actions, each a `UserPreference` wrapping one `Sound` (body 400 action 0:
-  frame 1 sound 299, frame 5 sound 300, the footstep pair).
-  The frame key is always below the frame count. `GetFrameEffects` 0x00837311 returns the collection;
-  `UOAnimationFrameSet` vtable +8 (0x00833bc0) starts it when the frame is shown.
+- Effect frames: 56 entries in 22 actions (bodies 400, 666, 1253; frames 1..9), each a `UserPreference`
+  (mask 1, footsteps) wrapping one `Sound` 297..300 (body 400 action 0: frame 1 sound 299, frame 5 sound 300,
+  the footstep pair). The frame key is always below the frame count. `GetFrameEffects` 0x00837311 returns
+  the collection. When and how they play is in "Frame effect playback" below.
 - Skipped frames: 69 actions, always the single frame 0. `UOObjectComponentAnimationMob::Update`
   0x00434c90 asks `IsFrameSkipped(action, index)` with the frame index computed from the frame set at the
   current time; when true it adds one frame interval and recomputes. The index is 0-based within the
   direction, so the first frame of these actions is never shown. **probable** (index base inferred from the
   frame-set helper 0x00833f3d).
+
+### Frame effect playback
+
+All **confirmed** at instruction level unless marked.
+
+**Attaching** (`UOObjectComponentAnimationMob::BuildMobileAnimation` 0x00433a40). Frame sets are built per
+(requested action, direction 0..7) from the frames of the alias-resolved action. The requested action's
+*own* record decides the effects:
+
+- no frame effects → `SetFrameInterval(1 / fps)`;
+- otherwise `UOAnimationFrameSet::AttachFrameEffects` 0x00833bc0 (vtable +8; ECX frame set, frame count,
+  sequence shared_ptr). It builds its own timing with `UOAnimationFrameSet::BuildTiming` 0x0083369f (+0 = -1,
+  +4 count, +8 rows of 12 bytes holding the interval three times, +0xc total = count × interval; fps of the
+  requested action) and, for each frame, stores `GetFrameEffects(sequence, requested action, frame)` with
+  `UOAnimationFrameSet::SetFrameEffects` 0x00833cac (frames +0x2c, entry `frame * 0x14 + 0xc`), which sets
+  `has_frame_effects` (+0x40) when a collection is non-empty.
+
+Consequences:
+
+- **Requested vs resolved action:** the effects are looked up under the *requested* action id. An alias
+  record has no frame effects of its own, so an aliased action plays none, even when its target has some.
+  The effects are not inherited. In the data, body 1253 actions 2 → 0 and 3 → 1 are aliases of footstep
+  actions and get no footsteps (**probable**: from the data plus the code, not observed).
+- **Directions:** every direction (including the mirrored ones, which share the frames of their source
+  direction) gets the same per-frame effects; the frame key has no direction.
+
+**Firing** (`UOAnimationFrameSet::PlayEffectsBetween` 0x008339a1: EAX frame set, XMM0 old time; stack out,
+new time, column, object; RET 0x10). Callers: `UOObjectComponentAnimationMob::Update` 0x00434c90,
+`UOObjectComponentAnimationTile::Update` 0x0042e5a0, the `UOObjectComponentAnimationCorpse` slot 0x00439830
+and the unreferenced 0x00439970 (probably another component's slot).
+
+```text
+i = FrameAtTime(old)            // UOAnimationFrameSet::FrameAtTime 0x00833654, capped at count - 1
+n = FrameAtTime(new)
+while i != n:
+    if i == 0: PlayFrameEffects(0)
+    i += 1
+    PlayFrameEffects(i)
+```
+
+- Each frame entered fires once per pass. When the update skips frames (lag, high speed), every crossed frame
+  still fires, in order.
+- Frame 0 fires when the animation leaves it, not when it is shown. A single-frame action never fires.
+- On loop restart the caller calls again with old time 0.0, so each loop fires the frames again.
+
+`UOAnimationFrameSet::PlayFrameEffects` 0x0083390f (ECX frame index, EDI frame set, stack object, out ok):
+for each definition of the frame, `IUOEffectDefinition::PlayOnObject` 0x0041a610 (definition vtable +4)
+with the owner object. PlayOnObject needs the object's effects component (id 4), instantiates the
+definition with the object (so `hued` particles take the object's hue and PropertyFlag can read it),
+registers it, adds it with `UOObjectComponentEffects::AddEffect` 0x00443e90, sets its position to the
+object's tile position (vtable +0x28, integer to float) and starts it.
+
+**Layers** (**probable**): only the body frame set of the component runs `PlayEffectsBetween`; equipment
+layers and the mount frame set do not fire effects. The mount's sequence frame effects are read only by
+`UpdateFrame` 0x00436d40 for type 7 (PositionOffset) definitions, whose per-direction offsets replace the
+rider offsets (see "Body to sequence and frames").
+
+Names: `NameAnimationCode.java` step `frameEffects` names `AttachFrameEffects` (vtable +8, checked to call
+`GetFrameEffects`), `SetFrameEffects`, `BuildTiming`, `PlayEffectsBetween` (callee shared by the mob and
+tile `Update` with two callees, one of them `FrameAtTime` also called by `UpdateFrame`) and
+`PlayFrameEffects`; `animation_variables.spec` adds their signatures and `UOAnimationFrameSet.has_frame_effects`
+(+0x40). Applied (6 renames, 5 variable changes; second runs reported no changes) and saved.
 
 ### Stored id
 
@@ -734,6 +796,9 @@ Neither file is described. Missing.
 - The exact predicate that selects groups 4 and 5 in `SelectAnimationGroup` was not decoded.
 - The skipped-frame index base (0-based frame within the direction) is inferred from the frame-set helper
   0x00833f3d, not traced through it.
+- Frame effects: the owner of 0x00439970 (a `PlayEffectsBetween` caller with no reference) and whether
+  equipment or mount frame sets ever reach `PlayEffectsBetween` were not traced. Body 1253's aliased
+  footstep actions playing silently is inferred, not observed in the client.
 - Header i8 pairs of the sequence and the `AnimationDefinition` `second_set` / `value` fields have no
   decoded consumer; all data values are trivial (zero).
 - The 0x4001 formula is exact; its evaluation precision (f32, from the D3D9 FPU state) is probable, not

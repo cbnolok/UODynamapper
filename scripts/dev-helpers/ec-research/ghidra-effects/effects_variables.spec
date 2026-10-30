@@ -475,6 +475,31 @@ function UOHuedParticleEffectNif::Init
   param definition /UOEffects/UOParticleEffectDefinition* @stack:0x8
 end
 
+function UOHuedParticleEffectNif::UOHuedParticleEffectNif
+  proto __cdecl void custom
+  param effect void* @ESI
+  param object void* @EDI
+end
+
+function UOHuedParticleEffectNif::Update
+  proto __thiscall undefined4 custom
+  param effect void* @ECX
+  param ok bool* @stack:0x4
+  param dt float @stack:0x8
+end
+
+function UOHuedParticleEffectNif::RenderToTexture
+  proto __stdcall void
+  param effect void*
+end
+
+function IUOEffectDefinition::PlayOnObject
+  proto __thiscall bool* custom
+  param definition void* @ECX
+  param ok bool* @stack:0x4
+  param object void* @stack:0x8
+end
+
 function UOEffects::MakeProjectileEffect
   proto __cdecl void
   param record void*

@@ -99,6 +99,7 @@ type /UO/UOAnimationFrameSet 0x44 : frame set of a UOAnimationDefinition
   0x2c void* frames : frame_count entries of 0x14 bytes
   0x30 /UO/SharedPtr timing : SetFrameInterval (GetSharedTiming)
   0x38 /UO/SharedPtr next : SetNext; the set played after this one
+  0x40 bool has_frame_effects : SetFrameEffects with a non-empty collection
 end
 
 type /UO/CharacterAnimationPacket 0x10 : packet 0x6E as read by UOPacket::Read_0x6E_CharacterAnimation
@@ -450,6 +451,37 @@ function UOAnimationFrameSet::SetFrameInterval
   proto __stdcall void custom
   param frame_set /UO/UOAnimationFrameSet* @ESI
   param interval float @stack:0x4
+end
+
+function UOAnimationFrameSet::AttachFrameEffects
+  proto __thiscall void custom
+  param frame_set /UO/UOAnimationFrameSet* @ECX
+  param frame_count uint @stack:0x4
+  param sequence void* @stack:0x8
+  param sequence_refcount void* @stack:0xc
+end
+
+function UOAnimationFrameSet::SetFrameEffects
+  proto __stdcall void
+  param frame_set /UO/UOAnimationFrameSet*
+  param frame uint
+  param effects void*
+  param effects_refcount void*
+end
+
+function UOAnimationFrameSet::BuildTiming
+  proto __stdcall void* custom
+  param timing void* @ESI
+  param frame_count uint @EAX
+  param interval float @stack:0x4
+end
+
+function UOAnimationFrameSet::PlayFrameEffects
+  proto __stdcall void custom
+  param frame uint @ECX
+  param frame_set /UO/UOAnimationFrameSet* @EDI
+  param object void* @stack:0x4
+  param ok bool* @stack:0x8
 end
 
 function UOAnimationDefinition::GetFrameSet

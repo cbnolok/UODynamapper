@@ -22,6 +22,7 @@ import ghidra.program.model.data.QWordDataType;
 import ghidra.program.model.data.SignedByteDataType;
 import ghidra.program.model.data.StructureDataType;
 import ghidra.program.model.data.UnsignedIntegerDataType;
+import ghidra.program.model.data.UnsignedShortDataType;
 import ghidra.program.model.data.VoidDataType;
 import ghidra.program.model.lang.Register;
 import ghidra.program.model.listing.Function;
@@ -118,6 +119,28 @@ public class NameEffectCode extends GhidraScript {
         {"0xC7", "ParticleEffect", "0xC0 fields plus effect (+0x28), explode effect (+0x2a), explode sound (+0x2c),"
             + " serial (+0x30), layer (+0x34) and two bytes"},
     };
+    // Hued Nif effects, the camera every effect node faces and effects played on objects (results/uosa_effects.md
+    // "Hued NIF effects", "Effect camera and lighting", "Frame effects on objects").
+    private static final String PARTICLE_DEFINITION = "UOParticleEffectDefinition";
+    private static final String HUED_NIF = "UOHuedParticleEffectNif";
+    private static final String TILE_EFFECT = "UOTileEffect";
+    private static final String DEFINITION_INTERFACE = "IUOEffectDefinition";
+    private static final String WORLD_OBJECT = "UOObject";
+    private static final String WORLD_VIEWER = "UOWorldViewer";
+    private static final String EFFECTS_SHADER_HLSL = "UOEffectsShaderHLSL";
+    private static final String EFFECTS_SHADER_FFP = "UOEffectsShaderFFP";
+    private static final String HUE_ATLAS_STRING = "Build\\Hues\\Hues.dds";
+    private static final String EFFECTS_SHADER_STRING = "UOEffectsShader";
+    private static final String WORLD_VIEWER_INIT_STRING = "UOWorldViewer::Init()\n";
+    private static final String DRAW_VISIBLE_ARRAY = "NiDrawVisibleArray";
+    private static final String SET_VIEW_FRUSTUM = "SetViewFrustum";
+    private static final String WORLD_VIEWER_LABEL = "g_UOWorldViewer";
+    // IUOEffectDefinition +4 PlayOnObject(out ok, object); IUOEffect +8 SetVisible, +0x38 Init(out ok, definition).
+    private static final int DEFINITION_PLAY_ON_OBJECT = 0x4;
+    private static final int EFFECT_SET_VISIBLE = 0x8;
+    private static final int EFFECT_INIT = 0x38;
+    // NiD3DShader +0x1c UpdatePipeline.
+    private static final int SHADER_UPDATE_PIPELINE = 0x1c;
     private static final String ACTIVE_EFFECTS_LABEL = "g_UOActiveEffects";
     private static final String LOD_LABEL = "g_UOParticleLODLevel";
     private static final String FILTER_LABEL = "g_UOParticleFilter";
@@ -239,7 +262,12 @@ public class NameEffectCode extends GhidraScript {
         new Slot("UOParticleEffectChaos", 0x38, "Init", "(out, definition): requires definition +0x3c == 0; loads the"
             + " .ems, scale, loop/duration and offset as for the Nif effect", false),
         new Slot("UOHuedParticleEffectNif", 0x34, "ScalarDeletingDestructor", "destroys the hued effect", false),
-        new Slot("UOHuedParticleEffectNif", 0x38, "Init", "(out, definition): Nif init with the object hue applied", true),
+        new Slot("UOHuedParticleEffectNif", 0x38, "Init", "(out, definition): loads the .nif into a private scene"
+            + " (+0x44) with the camera-facing node rotation, scale, loop and duration of the Nif effect; creates the"
+            + " offscreen orthographic camera (+0x74) and the hue quad drawn in the world", false),
+        new Slot("UOHuedParticleEffectNif", 0x14, "Update", "(out, dt): elapsed (+0x48) += dt * 0.5 (hued effects"
+            + " run at half speed); countdown, loop and duration as the Nif Update; then updates the private scene and"
+            + " renders it into the 512x512 texture of the quad", false),
         new Slot("UOSoundEffect", 0x0, "Start", "plays sound id (+4) at the position (+8..+0x10) when sound is"
             + " enabled; stores the handle at +0x18", false),
         new Slot("UOSoundEffect", 0x4, "Stop", "stops and clears the sound handle (+0x18)", false),
@@ -292,6 +320,20 @@ public class NameEffectCode extends GhidraScript {
         new Slot(COLLECTION, 0x4, "ScalarDeletingDestructor", "destroys the definition vector, IAsset vftable", false),
         new Slot(COLLECTION, 0xc, "GetCount", "size of the shared_ptr vector at +8", false),
         new Slot(COLLECTION, 0x10, "GetDefinition", "shared_ptr copy of definition i", false),
+    };
+
+    // UOObject accessors the effect code calls through the vtable.
+    private static final Slot[] OBJECT_SLOTS = {
+        new Slot(WORLD_OBJECT, 0x54, "SetHue", "stores +0x44; when it changed, notifies the components (vtable +0x1c,"
+            + " message 3)", false),
+        new Slot(WORLD_OBJECT, 0x58, "GetHue", "returns +0x44; the hue UOParticleEffectDefinition::Instantiate tests"
+            + " (non-zero and hued -> UOHuedParticleEffectNif)", false),
+        new Slot(WORLD_OBJECT, 0x138, "SetRenderMode", "stores +0x8c (graphical effect render mode)", false),
+        new Slot(WORLD_OBJECT, 0x13c, "GetRenderMode", "returns +0x8c", false),
+        new Slot(WORLD_OBJECT, 0x140, "SetSuppressTileartEffects", "stores byte +0x90; the projectile and tile effect"
+            + " Init set it from the effect-9502 flag of their definition", false),
+        new Slot(WORLD_OBJECT, 0x144, "GetSuppressTileartEffects", "returns byte +0x90; when set, the projectile and"
+            + " tile effect Init skip the tileart effects of the item", false),
     };
 
     // ---- Chaos particle engine (.ems scripts; results/uosa_chaos.md) ----
@@ -656,6 +698,7 @@ public class NameEffectCode extends GhidraScript {
 
         // 7. Runtime use: effect id lookup, the active effect list and the graphical effect packets.
         runtimeUse(apply);
+        huedEffects(apply);
 
         // 8. Chaos particle engine.
         chaosEngine();
@@ -1153,6 +1196,144 @@ public class NameEffectCode extends GhidraScript {
         }
     }
 
+    // Hued Nif effects (offscreen render + hue quad), the world camera effect nodes face, the effects shader and the
+    // shared definition slot that plays an effect on an object (animation frame effects).
+    private void huedEffects(boolean apply) throws Exception {
+        for (String cls : List.of(WORLD_OBJECT, DEFINITION_INTERFACE, EFFECTS_SHADER_HLSL, EFFECTS_SHADER_FFP)) {
+            vtables.put(cls, rttiVtable(cls));
+            anchors.add("RTTI `" + cls + "` vftable " + hexOrNone(vtables.get(cls)));
+        }
+        nameSlots(WORLD_OBJECT, null, List.of(OBJECT_SLOTS));
+
+        // Every definition class points its +4 at one function (the interface slot itself is pure), so nameSlots
+        // would skip it as folded code.
+        long particleVt = vtables.getOrDefault(PARTICLE_DEFINITION, -1L);
+        Function playOnObject = particleVt < 0 ? null : slotFunction(particleVt, DEFINITION_PLAY_ON_OBJECT);
+        for (EffectType t : EFFECT_TYPES) {
+            long vt = vtables.getOrDefault(t.definition(), -1L);
+            if (playOnObject != null && vt >= 0 && !playOnObject.equals(slotFunction(vt, DEFINITION_PLAY_ON_OBJECT))) {
+                anomalies.add(t.definition() + " +4 differs from " + PARTICLE_DEFINITION + " +4");
+                playOnObject = null;
+            }
+        }
+        propose(playOnObject, DEFINITION_INTERFACE + SCOPE + "PlayOnObject", "vtable +4 (out ok, object), shared by"
+            + " every definition class: requires object component 4 (effects); InstantiateAndRegister with the object"
+            + " (so a hued particle takes the object hue), UOObjectComponentEffects::AddEffect, SetPosition (+0x20) at"
+            + " the object tile position (vtable +0x28, ints to float), Start; called for the frame effects of"
+            + " mobile and item animations", false);
+        long tileVt = vtables.getOrDefault(TILE_EFFECT, -1L);
+        Function tileInit = tileVt < 0 ? null : slotFunction(tileVt, EFFECT_INIT);
+        if (playOnObject != null && tileInit != null) {
+            List<Function> adders = new ArrayList<>();
+            List<Function> tileCalls = distinct(calls(tileInit));
+            for (Function callee : distinct(calls(playOnObject))) {
+                if (tileCalls.contains(callee) && virtualCallOffsets(callee).contains((long) EFFECT_SET_VISIBLE)) {
+                    adders.add(callee);
+                }
+            }
+            propose(single(adders, "AddEffect (called by PlayOnObject and UOTileEffect::Init, SetVisible call)"),
+                COMPONENT + SCOPE + "AddEffect", "(component, effect shared_ptr): pushes the effect into the list"
+                + " (+0xc), SetVisible (+8) from the component flag (+0x18), notifies the owner", true);
+        }
+
+        // UOHuedParticleEffectNif: constructor (from UOParticleEffectDefinition::Instantiate), Init callees, Update.
+        Function instantiate = definitionInstantiate(PARTICLE_DEFINITION);
+        Function ctor = instantiate == null ? null : writerAmong(instantiate, HUED_NIF);
+        propose(ctor, HUED_NIF + SCOPE + HUED_NIF, "(object): built by UOParticleEffectDefinition::Instantiate when"
+            + " the object hue (vtable +0x58) != 0 and the definition is hued; +0x14 = the object hue as stored,"
+            + " +0x18 = object position (vtable +0x28), +0x30 = camera direction * depth bias from the object", false);
+        long huedVt = vtables.getOrDefault(HUED_NIF, -1L);
+        Function init = huedVt < 0 ? null : slotFunction(huedVt, EFFECT_INIT);
+        Function update = huedVt < 0 ? null : slotFunction(huedVt, EFFECT_UPDATE);
+        List<Function> quads = new ArrayList<>();
+        for (Function user : stringUsers(HUE_ATLAS_STRING)) {
+            if (init != null && distinct(calls(init)).contains(user)) {
+                quads.add(user);
+            }
+        }
+        Function quad = single(quads, "Init callee using '" + HUE_ATLAS_STRING + "'");
+        propose(quad, HUED_NIF + SCOPE + "BuildHueQuad", "camera-facing quad of half size 4.854 (camera right/up),"
+            + " vertex colour white, UV2 = hue atlas origin (H / 1024 * 255 / 1024, (H % 1024) / 1024; 0 = unhued);"
+            + " material UOEffectsShader with the 512x512 render target as shader map 0 and Build\\Hues\\Hues.dds as"
+            + " base map (map flags 0x3100: bilinear, wrap); alpha blend SRCALPHA/INVSRCALPHA, alpha test > 0", false);
+        List<Function> cameras = new ArrayList<>();
+        if (init != null) {
+            for (Function callee : distinct(calls(init))) {
+                if (callsNamed(callee, SET_VIEW_FRUSTUM)) {
+                    cameras.add(callee);
+                }
+            }
+        }
+        propose(single(cameras, "offscreen camera builder (Init callee calling SetViewFrustum)"), HUED_NIF + SCOPE
+            + "CreateOffscreenCamera", "NiCamera with an orthographic frustum: left/right -/+4 * width/height,"
+            + " top/bottom +/-4, near 8, far 12", false);
+        propose(quad == null ? null : callBefore(init, quad), HUED_NIF + SCOPE + "PlaceOffscreenCamera", "copies the"
+            + " world camera rotation and puts the camera at the world camera offset (UOWorldViewer +0x18) from the"
+            + " effect position", true);
+        List<Function> renders = new ArrayList<>();
+        if (update != null) {
+            for (Function callee : distinct(calls(update))) {
+                if (callsNamed(callee, DRAW_VISIBLE_ARRAY)) {
+                    renders.add(callee);
+                }
+            }
+        }
+        propose(single(renders, "hued render-to-texture (Update callee calling " + DRAW_VISIBLE_ARRAY + ")"), HUED_NIF
+            + SCOPE + "RenderToTexture", "begins the render target group (+0x40) with a full clear, sets the offscreen"
+            + " camera (+0x74), culls and draws the private scene (+0x44); no lights are set", false);
+
+        // UOWorldViewer: the global both the hued constructor and Init read; Init builds the world camera.
+        Set<Long> viewerGlobals = new LinkedHashSet<>();
+        if (ctor != null && init != null) {
+            viewerGlobals.addAll(readGlobals(ctor));
+            viewerGlobals.retainAll(readGlobals(init));
+        }
+        if (viewerGlobals.size() == 1) {
+            label(viewerGlobals.iterator().next(), WORLD_VIEWER_LABEL, "UOWorldViewer singleton (0xb4 bytes): +0xc"
+                + " camera direction, +0x18 camera offset (-10 * direction), +0x24 -camera up, +0x30 effect node"
+                + " rotation (camera rotation * permutation: node x -> right, y -> view direction, z -> up), +0x7c"
+                + " world NiCamera, +0x80 ortho half-height 16", apply);
+        } else {
+            anomalies.add("UOWorldViewer global: globals read by both the hued constructor and Init: "
+                + viewerGlobals);
+        }
+        Function viewerInit = single(stringUsers(WORLD_VIEWER_INIT_STRING), "user of 'UOWorldViewer::Init()'");
+        propose(viewerInit, WORLD_VIEWER + SCOPE + "Init", "creates the world camera, the texture manager and the"
+            + " sprite shaders; stores the camera vectors and the effect node rotation (+0x30)", false);
+        if (viewerInit != null) {
+            List<Function> creators = new ArrayList<>();
+            Function frustum = null;
+            for (Function callee : distinct(calls(viewerInit))) {
+                for (Function inner : distinct(calls(callee))) {
+                    if (callsNamed(inner, SET_VIEW_FRUSTUM) && !creators.contains(callee)) {
+                        creators.add(callee);
+                        frustum = inner;
+                    }
+                }
+            }
+            Function creator = single(creators, "world camera builder");
+            propose(creator, WORLD_VIEWER + SCOPE + "CreateCamera", "world NiCamera: rotation about z by -pi/2, tilt"
+                + " pi/4 - 0.001 and -0.05, then SetCameraFrustum", true);
+            propose(creator == null ? null : frustum, WORLD_VIEWER + SCOPE + "SetCameraFrustum", "orthographic"
+                + " frustum: top/bottom +/-f, left/right -/+f / 0.75 (aspect), near 8, far 12; f = +0x80 (16) * the"
+                + " viewport height fraction", true);
+        }
+
+        // UOEffectsShader (the hued quad material): constructors and the stage binding slot.
+        List<Function> named = stringUsers(EFFECTS_SHADER_STRING);
+        for (String cls : List.of(EFFECTS_SHADER_HLSL, EFFECTS_SHADER_FFP)) {
+            List<Function> ctors = new ArrayList<>(vtableWriters(cls));
+            ctors.retainAll(named);
+            propose(single(ctors, cls + " vftable writer using '" + EFFECTS_SHADER_STRING + "'"), cls + SCOPE + cls,
+                "writes the " + cls + " vftable and names the shader '" + EFFECTS_SHADER_STRING + "'", false);
+        }
+        nameSlots(EFFECTS_SHADER_HLSL, null, List.of(new Slot(EFFECTS_SHADER_HLSL, SHADER_UPDATE_PIPELINE,
+            "UpdatePipeline", "binds texturing shader map 0 (the effect render target) to sampler +0x120 and the base"
+            + " map (Hues.dds) to sampler +0x140 (flag +0x160); sampler clamp = map flags >> 12 & 3, filter ="
+            + " flags >> 8 & 0xf; clears SRGBWRITEENABLE",
+            true)));
+    }
+
     private Function definitionInstantiate(String cls) {
         long vt = vtables.getOrDefault(cls, -1L);
         return vt < 0 ? null : slotFunction(vt, DEFINITION_INSTANTIATE);
@@ -1563,6 +1744,7 @@ public class NameEffectCode extends GhidraScript {
     private void defineTypes(boolean apply) throws Exception {
         DataType u8 = ByteDataType.dataType;
         DataType i8 = SignedByteDataType.dataType;
+        DataType u16 = UnsignedShortDataType.dataType;
         DataType u32 = UnsignedIntegerDataType.dataType;
         DataType i32 = IntegerDataType.dataType;
         DataType f32 = FloatDataType.dataType;
@@ -1604,7 +1786,8 @@ public class NameEffectCode extends GhidraScript {
         field(particle, 0x38, bool, "loop", null);
         field(particle, 0x3c, u32, "field_3c", "record u8, 0 in the data; 1 fails the Nif init, non-zero fails Chaos;"
             + " no other reader");
-        field(particle, 0x40, bool, "hued", "apply the object hue (UOHuedParticleEffectNif)");
+        field(particle, 0x40, bool, "hued", "with a non-zero object hue the .nif becomes a UOHuedParticleEffectNif"
+            + " (luminance remapped through Hues.dds); ignored for .ems");
         StructureDataType sound = struct("UOSoundEffectDefinition", 0xc, "effect type 1");
         field(sound, 0x0, voidPtr, "vftable", null);
         field(sound, 0x4, u32, "sound_id", null);
@@ -1650,6 +1833,40 @@ public class NameEffectCode extends GhidraScript {
         field(filter, 0x0, voidPtr, "vftable", null);
         field(filter, 0x4, u32, "mask", "user effect setting bits that suppress the children");
         field(filter, 0x8, vector, "children", null);
+        StructureDataType projectile = struct(PROJECTILE_DEFINITION, 0x40, "built by UOEffects::MakeProjectileEffect"
+            + " from a type 0 (moving) graphical effect record");
+        field(projectile, 0x0, voidPtr, "vftable", null);
+        field(projectile, 0x4, i32, "source_x", "packet source x (u16)");
+        field(projectile, 0x8, i32, "source_y", "packet source y (u16)");
+        field(projectile, 0xc, i32, "source_z", "packet source z (i8)");
+        field(projectile, 0x10, i32, "target_x", "packet target x (u16)");
+        field(projectile, 0x14, i32, "target_y", "packet target y (u16)");
+        field(projectile, 0x18, i32, "target_z", "packet target z (i8)");
+        field(projectile, 0x1c, f32, "speed", "packet speed byte; <= 0 -> 1.0");
+        field(projectile, 0x20, u32, "item_id", "graphic of the moving item");
+        field(projectile, 0x24, u32, "hue", "packet hue + 1, 0 when the packet hue is 0 (UOObject::SetHue)");
+        field(projectile, 0x28, u32, "target_serial", null);
+        field(projectile, 0x2c, u32, "source_serial", null);
+        field(projectile, 0x30, bool, "explode", "packet explode byte & 1");
+        field(projectile, 0x31, bool, "return_to_source", "(packet explode byte >> 1) & 1");
+        field(projectile, 0x32, u16, "explode_effect", "0xC7 only: 0 -> classic tile effect 0x36CB, else collection"
+            + " id explode_effect - 1 (no 9501/9502 special case)");
+        field(projectile, 0x34, u16, "explode_sound", null);
+        field(projectile, 0x38, u32, "render_mode", "0xC0/0xC7 render mode (UOObject::SetRenderMode)");
+        field(projectile, 0x3c, bool, "suppress_tileart_effects", "packet effect == 9502"
+            + " (UOObject::SetSuppressTileartEffects)");
+        StructureDataType tile = struct(TILE_DEFINITION, 0x24, "built by UOEffects::MakeTileEffect from a type 2/3"
+            + " graphical effect record with effect 0 or 9502");
+        field(tile, 0x0, voidPtr, "vftable", null);
+        field(tile, 0x4, u32, "item_id", null);
+        field(tile, 0x8, u32, "hue", "packet hue + 1, 0 when the packet hue is 0");
+        field(tile, 0xc, i32, "x", "packet source x (u16)");
+        field(tile, 0x10, i32, "y", "packet source y (u16)");
+        field(tile, 0x14, i32, "z", "packet source z (i8)");
+        field(tile, 0x18, i32, "duration_ticks", "packet duration byte; UOTileEffect::Update counts it down");
+        field(tile, 0x1c, bool, "suppress_tileart_effects", "packet effect == 9502");
+        field(tile, 0x1d, bool, "on_mobile", "record type 3: attached to the source object, lifetime 200");
+        field(tile, 0x20, u32, "render_mode", null);
         StructureDataType collection = struct(COLLECTION, 0x14, "EffectDefinitionCollection.uop entry");
         field(collection, 0x0, voidPtr, "vftable", null);
         field(collection, 0x4, vector, "definitions", null);
@@ -1667,7 +1884,8 @@ public class NameEffectCode extends GhidraScript {
             {f64, "amplitude", null}, {f64, "duration", null}, {f64, "frequency", null}});
 
         for (StructureDataType t : List.of(string, vector, map, particle, sound, roundRobin, offset, wait, lod, flag,
-                quake, randomEntry, random, filter, collection, particleRecord, soundRecord, offsetRecord, quakeRecord)) {
+                quake, randomEntry, random, filter, projectile, tile, collection, particleRecord, soundRecord,
+                offsetRecord, quakeRecord)) {
             DataType existing = dtm.getDataType(CATEGORY, t.getName());
             String status;
             if (existing != null && existing.isEquivalent(t)) {

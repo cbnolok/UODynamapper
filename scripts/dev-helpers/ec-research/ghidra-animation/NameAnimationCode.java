@@ -129,6 +129,10 @@ public class NameAnimationCode extends GhidraScript {
     private static final long EXTRA_Y_FIELD = 0xa8;
     // UOAnimationFrameSet +0x38: next frame set written by SetNext.
     private static final long FRAME_SET_NEXT_FIELD = 0x38;
+    // UOAnimationFrameSet vtable +8: (frame count, sequence) builds the timing and attaches the frame effects.
+    private static final int FRAME_SET_ATTACH_EFFECTS = 0x8;
+    // Frame timing rows: three f32 durations per frame.
+    private static final long FRAME_TIMING_ROW_SIZE = 0xc;
 
     // AnimationFrame pixels: the RLE decoders blend with the packed red/blue mask and test run bytes against 0x80;
     // hue 0x4001 is the palette builder's special (shadow) hue; hue bitmaps are 256 entries wide.
@@ -219,6 +223,7 @@ public class NameAnimationCode extends GhidraScript {
         assets(seq, def);
         components(seq);
         frames();
+        frameEffects();
         packets(seq, runtime);
 
         if (apply) {
@@ -775,7 +780,7 @@ public class NameAnimationCode extends GhidraScript {
         propose(build, NAMESPACE + SCOPE + "BuildMobileAnimation", "(object): sequence id = GetBodyType (vtable"
             + " +0x70); cache map keyed by body -> {definition, sequence}; requests the sequence (status 1 aborts);"
             + " builds a UOAnimationDefinition with one frame set per action and direction: frames base + i,"
-            + " interval 1/fps", false);
+            + " interval 1/fps (AttachFrameEffects instead when the requested action has frame effects)", false);
         if (build == null) {
             return;
         }
@@ -924,6 +929,80 @@ public class NameAnimationCode extends GhidraScript {
         propose(frameToAction, SEQUENCE + SCOPE + "FrameToAction", "(global frame, out action, out frame): the"
             + " record whose base <= frame; local frame = frame - base + 1 (the AnimationFrame entry's second u16)",
             false);
+    }
+
+    // Frame effects: attached per frame set when the mobile animation is built, played by the animation components
+    // for every frame entered (results/uosa_animation.md "Frame effects").
+    private void frameEffects() {
+        long setVt = vtables.get(FRAME_SET);
+        Function attach = setVt < 0 ? null : slotFunction(setVt, FRAME_SET_ATTACH_EFFECTS);
+        Function getEffects = proposed(SEQUENCE + SCOPE + "GetFrameEffects");
+        if (attach != null && getEffects != null && !realCalls(attach).contains(getEffects)) {
+            anomalies.add(FRAME_SET + " +8 does not call GetFrameEffects");
+            attach = null;
+        }
+        propose(attach, FRAME_SET + SCOPE + "AttachFrameEffects", "vtable +8 (frame count, sequence): called by"
+            + " BuildMobileAnimation instead of SetFrameInterval when the requested action's record has frame"
+            + " effects; own timing of 1/fps per frame, then for each frame GetFrameEffects(sequence, the requested"
+            + " (unresolved) action +4, frame) -> SetFrameEffects", false);
+        if (attach == null) {
+            return;
+        }
+        propose(singleCallerCallAfter(attach, getEffects), FRAME_SET + SCOPE + "SetFrameEffects", "(frame set, frame,"
+            + " effect collection shared_ptr): stores it at frames (+0x2c)[frame] +0xc; a non-empty collection sets"
+            + " the has-effects flag (+0x40)", false);
+        Function sharedTiming = proposed(FRAME_SET + SCOPE + "GetSharedTiming");
+        List<Function> timings = new ArrayList<>();
+        for (Function callee : realCalls(attach)) {
+            if (sharedTiming != null && realCalls(sharedTiming).contains(callee) && callers(callee).size() == 2
+                    && usesScalar(callee, FRAME_TIMING_ROW_SIZE)) {
+                timings.add(callee);
+            }
+        }
+        propose(single(timings, "frame timing constructor (called by GetSharedTiming and AttachFrameEffects)"),
+            FRAME_SET + SCOPE + "BuildTiming", "(count, interval): timing object with per-frame rows of three f32"
+            + " durations (12 bytes) and the total (+0xc)", false);
+
+        // PlayEffectsBetween: called by the mob and tile component Updates; its two callees are FrameAtTime (also
+        // called by UpdateFrame) and PlayFrameEffects.
+        long mobVt = vtables.get(MOB_COMPONENT);
+        long tileVt = vtables.get(TILE_COMPONENT);
+        Function mobUpdate = mobVt < 0 ? null : slotFunction(mobVt, COMPONENT_UPDATE);
+        Function tileUpdate = tileVt < 0 ? null : slotFunction(tileVt, COMPONENT_UPDATE);
+        Function updateFrame = proposed(MOB_COMPONENT + SCOPE + "UpdateFrame");
+        if (mobUpdate == null || tileUpdate == null || updateFrame == null) {
+            anomalies.add("frame effect playback: component Update or UpdateFrame not found");
+            return;
+        }
+        List<Function> players = new ArrayList<>();
+        Function frameAtTime = null;
+        Function playFrame = null;
+        for (Function callee : realCalls(mobUpdate)) {
+            List<Function> inner = realCalls(callee);
+            if (!realCalls(tileUpdate).contains(callee) || inner.size() != 2) {
+                continue;
+            }
+            for (int i = 0; i < inner.size(); i++) {
+                if (realCalls(updateFrame).contains(inner.get(i))) {
+                    players.add(callee);
+                    frameAtTime = inner.get(i);
+                    playFrame = inner.get(1 - i);
+                }
+            }
+        }
+        Function player = single(players, "frame effect player (mob and tile Update callee)");
+        propose(player, FRAME_SET + SCOPE + "PlayEffectsBetween", "(EAX frame set, XMM0 old time; out, new time,"
+            + " column, object): i = FrameAtTime(old), n = FrameAtTime(new); while i != n: i == 0 ->"
+            + " PlayFrameEffects(0); PlayFrameEffects(++i). Every frame entered fires once, also when several are"
+            + " crossed in one update; frame 0 fires on leaving it", false);
+        if (player == null) {
+            return;
+        }
+        propose(frameAtTime, FRAME_SET + SCOPE + "FrameAtTime", "(EDX timing, XMM0 time, column): subtracts the"
+            + " frame durations of the column (0..2) until the time is negative; capped at count - 1", false);
+        propose(playFrame, FRAME_SET + SCOPE + "PlayFrameEffects", "(ECX frame, EDI frame set; object, out ok): for"
+            + " each definition of the frame's collection, IUOEffectDefinition::PlayOnObject (vtable +4) with the"
+            + " owner object", false);
     }
 
     // ---- AnimationFrame asset, pixel decoding, palette and hue tables ----
