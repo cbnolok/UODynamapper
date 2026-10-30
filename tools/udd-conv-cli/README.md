@@ -27,6 +27,12 @@ packages consumed by Dynamapper and the other tools at runtime.
 | `pack-gumps-ec` | `gumps_ec.uddp` | EC `interface.uop` gumpart |
 | `pack-radar` | `facet0X.dds` | Classic map and statics radar image |
 
+Output paths (`--output`, `--art-output`, `--land-output`, `--map-output`, ...) and the
+default file names above resolve against the current working directory, like any
+command-line tool; absolute paths are used as given. Packers never write into
+`--ccdir` / `--ecdir` unless an output path explicitly points there. `pack-radar --outdir`
+puts the output file name in that folder instead.
+
 ### Upscale profiles
 
 Image packers that support upscale passes also accept `--upscale-profile

@@ -87,10 +87,13 @@ use udd_conv::{
 const DEFAULT_ZSTD_LEVEL: i32 = 7;
 const DEFAULT_ZSTD_LEVEL_VALUE: &str = "7";
 const DEFAULT_JXL_LEVEL: u8 = 6;
+const OUTPUT_PATH_HELP: &str = "Output paths (--output, --art-output, --land-output, ...) and their default \
+file names resolve against the current working directory; absolute paths are used as given. \
+Nothing is written into --ccdir or --ecdir unless an output path points there.";
 
 /// Pack UODynamapper runtime packages from Classic and Enhanced Client assets.
 #[derive(Parser)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version, about, long_about = None, after_help = OUTPUT_PATH_HELP)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -1423,7 +1426,7 @@ where
             upscale_profile,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
-            let out_file = resolve_output_path(&paths, &output);
+            let out_file = resolve_output_path(&output);
             let output_format = resolve_texture_output_format(
                 raw,
                 jxl,
@@ -1487,7 +1490,7 @@ where
             upscale_profile,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
-            let out_file = resolve_output_path(&paths, &output);
+            let out_file = resolve_output_path(&output);
             let output_format = resolve_texture_output_format(
                 raw,
                 jxl,
@@ -1552,7 +1555,7 @@ where
             upscale_profile,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
-            let out_file = resolve_output_path(&paths, &output);
+            let out_file = resolve_output_path(&output);
             let output_format =
                 resolve_mobile_anim_output_format(
                     raw,
@@ -1621,7 +1624,7 @@ where
             upscale_profile,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
-            let out_file = resolve_output_path(&paths, &output);
+            let out_file = resolve_output_path(&output);
             let output_format =
                 resolve_mobile_anim_output_format(
                     raw,
@@ -1758,11 +1761,11 @@ where
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let ec_paths = collect_ec_source_dirs(&source_dir_args)?;
-            let art_out_file = resolve_output_path(&ec_paths, &art_output);
-            let land_out_file = resolve_output_path(&ec_paths, &land_output);
+            let art_out_file = resolve_output_path(&art_output);
+            let land_out_file = resolve_output_path(&land_output);
             let tilemeta_out_file = tilemeta_output
                 .as_ref()
-                .map(|output| resolve_output_path(&paths, output));
+                .map(|output| resolve_output_path(output));
             if tilemeta_out_file.is_some() && source_dir_args.ccdir.is_none() {
                 eyre::bail!("--tilemeta-output requires --ccdir for tiledata.mul");
             }
@@ -1925,7 +1928,7 @@ where
             output,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
-            let out_file = resolve_output_path(&paths, &output);
+            let out_file = resolve_output_path(&output);
             audit_ec_material_refs(&paths, &out_file)?;
         }
         Commands::InventoryEcSupportTextures {
@@ -1935,17 +1938,17 @@ where
             summary_output,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
-            let terrain_out_file = resolve_output_path(&paths, &terrain_output);
-            let effect_out_file = resolve_output_path(&paths, &effect_output);
-            let summary_out_file = resolve_output_path(&paths, &summary_output);
+            let terrain_out_file = resolve_output_path(&terrain_output);
+            let effect_out_file = resolve_output_path(&effect_output);
+            let summary_out_file = resolve_output_path(&summary_output);
             inventory_ec_support_textures(&paths, &terrain_out_file, &effect_out_file, &summary_out_file)?;
         }
         Commands::ReportEcMaterialBaseline {
             source_dirs: source_dir_args,
             output,
         } => {
-            let paths = collect_ec_source_dirs(&source_dir_args)?;
-            let out_file = resolve_output_path(&paths, &output);
+            collect_ec_source_dirs(&source_dir_args)?;
+            let out_file = resolve_output_path(&output);
             write_ec_material_baseline_report(&out_file)?;
         }
         Commands::AuditEcTerrainPrimarySelection {
@@ -1955,7 +1958,7 @@ where
             output,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
-            let out_file = resolve_output_path(&paths, &output);
+            let out_file = resolve_output_path(&output);
             let terrain_overrides = terrain_overrides.exists().then_some(terrain_overrides);
             audit_ec_terrain_primary_selection(
                 &paths,
@@ -1971,7 +1974,7 @@ where
             output,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
-            let out_file = resolve_output_path(&paths, &output);
+            let out_file = resolve_output_path(&output);
             let terrain_overrides = terrain_overrides.exists().then_some(terrain_overrides);
             write_ec_terrain_practical_review(
                 &paths,
@@ -1987,7 +1990,7 @@ where
             output,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
-            let out_file = resolve_output_path(&paths, &output);
+            let out_file = resolve_output_path(&output);
             let terrain_overrides = terrain_overrides.exists().then_some(terrain_overrides);
             audit_ec_terrain_definition_kdl(
                 &paths,
@@ -2002,7 +2005,7 @@ where
             output,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
-            let out_file = resolve_output_path(&paths, &output);
+            let out_file = resolve_output_path(&output);
             write_ec_terrain_override_candidates(&paths, &terrain_definition_kdl, &out_file)?;
         }
         Commands::AuditEcTerrainOverrides {
@@ -2011,7 +2014,7 @@ where
             output,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
-            let out_file = resolve_output_path(&paths, &output);
+            let out_file = resolve_output_path(&output);
             audit_ec_terrain_overrides(&paths, &terrain_overrides, &out_file)?;
         }
         Commands::AuditLandRoutingKdl {
@@ -2030,7 +2033,7 @@ where
             output,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
-            let out_file = resolve_output_path(&paths, &output);
+            let out_file = resolve_output_path(&output);
             let surface_overrides = surface_overrides.exists().then_some(surface_overrides);
             audit_ec_surface_redirection(
                 &paths,
@@ -2046,7 +2049,7 @@ where
             output,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
-            let out_file = resolve_output_path(&paths, &output);
+            let out_file = resolve_output_path(&output);
             let terrain_definition_path =
                 udd_conv::source_paths::find_first_existing_file(&paths, &["TerrainDefinition.uop"])
                     .ok_or_else(|| eyre::eyre!("missing required file: TerrainDefinition.uop"))?;
@@ -2062,7 +2065,7 @@ where
             output,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
-            let out_file = resolve_output_path(&paths, &output);
+            let out_file = resolve_output_path(&output);
             write_ec_effect_meta_manifest(&paths, &out_file)?;
         }
         Commands::WriteEcAbnormalityReport {
@@ -2072,7 +2075,7 @@ where
             output,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
-            let out_file = resolve_output_path(&paths, &output);
+            let out_file = resolve_output_path(&output);
             let overrides = ec_overrides_dir
                 .as_deref()
                 .map(udd_conv::ec_overrides::EcOverrides::load_from_dir)
@@ -2084,7 +2087,7 @@ where
             output,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
-            let out_file = resolve_output_path(&paths, &output);
+            let out_file = resolve_output_path(&output);
             write_tileart_owner_audit(&paths, &out_file)?;
         }
         Commands::WriteTerrainDefinitionOwnerAudit {
@@ -2092,7 +2095,7 @@ where
             output,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
-            let out_file = resolve_output_path(&paths, &output);
+            let out_file = resolve_output_path(&output);
             write_terrain_definition_owner_audit(&paths, &out_file)?;
         }
         Commands::WriteTerrainDefinitionReview {
@@ -2100,7 +2103,7 @@ where
             output,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
-            let out_file = resolve_output_path(&paths, &output);
+            let out_file = resolve_output_path(&output);
             write_terrain_definition_review(&paths, &out_file)?;
         }
         Commands::WriteTileartLiquidSurfaceReport {
@@ -2109,7 +2112,7 @@ where
             output,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
-            let out_file = resolve_output_path(&paths, &output);
+            let out_file = resolve_output_path(&output);
             write_tileart_liquid_surface_report(&paths, tilemeta.as_deref(), &out_file)?;
         }
         Commands::PackEcTexAux {
@@ -2127,7 +2130,7 @@ where
             upscale_passes,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
-            let out_file = resolve_output_path(&paths, &output);
+            let out_file = resolve_output_path(&output);
             let output_format = resolve_texture_output_format(
                 raw, jxl, jxl_level, zstd, bc7, bc7_rdo, bc7_rdo_lambda, bc7_rdo_lookback_blocks,
             )?;
@@ -2157,7 +2160,7 @@ where
         }
         Commands::PackEcEffects { source_dirs: source_dir_args, output, bc7, zstd, report, strict } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
-            let out_file = resolve_output_path(&paths, &output);
+            let out_file = resolve_output_path(&output);
             let summary = pack_effects_ec(
                 &paths,
                 &out_file,
@@ -2179,7 +2182,7 @@ where
             use_ec_radarcol,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
-            let out_file = resolve_output_path(&paths, &output);
+            let out_file = resolve_output_path(&output);
             let options = TileMetaBuildOptions {
                 adjust_tex_art_ec_sampling: ec_art_cropped,
                 use_ec_radarcol,
@@ -2206,7 +2209,7 @@ where
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let default_output = PathBuf::from(format!("map{}.uddp", map_id));
-            let out_file = resolve_output_path(&paths, output.as_ref().unwrap_or(&default_output));
+            let out_file = resolve_output_path(output.as_ref().unwrap_or(&default_output));
             let summary = convert_map_mul_to_uddp_from_sources_with_patches(
                 &paths,
                 &out_file,
@@ -2236,7 +2239,7 @@ where
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let default_output = PathBuf::from(format!("statics{}.uddp", map_id));
-            let out_file = resolve_output_path(&paths, output.as_ref().unwrap_or(&default_output));
+            let out_file = resolve_output_path(output.as_ref().unwrap_or(&default_output));
             let summary = convert_statics_mul_to_uddp_from_sources_with_patches(
                 &paths,
                 &out_file,
@@ -2264,9 +2267,8 @@ where
             let default_map_output = PathBuf::from(format!("map{}.uddp", map_id));
             let default_statics_output = PathBuf::from(format!("statics{}.uddp", map_id));
             let map_out_file =
-                resolve_output_path(&paths, map_output.as_ref().unwrap_or(&default_map_output));
+                resolve_output_path(map_output.as_ref().unwrap_or(&default_map_output));
             let statics_out_file = resolve_output_path(
-                &paths,
                 statics_output.as_ref().unwrap_or(&default_statics_output),
             );
             let patch_options: ClassicPatchOptions = classic_patches.into();
@@ -2334,7 +2336,7 @@ where
             let out_file = if let Some(dir) = &outdir {
                 dir.join(output_path_to_use)
             } else {
-                resolve_output_path(&paths, output_path_to_use)
+                resolve_output_path(output_path_to_use)
             };
 
             let uddp_dir = uddp_dir.unwrap_or_else(|| PathBuf::from("."));
@@ -2377,8 +2379,8 @@ where
             no_compression,
             zstd,
         } => {
-            let paths = collect_source_dirs(&source_dir_args)?;
-            let out_file = resolve_output_path(&paths, &output);
+            collect_source_dirs(&source_dir_args)?;
+            let out_file = resolve_output_path(&output);
             let compression = if no_compression {
                 CompressionFlag::None
             } else if let Some(level) = zstd {
@@ -2404,7 +2406,7 @@ where
             zstd,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
-            let out_file = resolve_output_path(&paths, &output);
+            let out_file = resolve_output_path(&output);
             let compression = if no_compression {
                 CompressionFlag::None
             } else if let Some(level) = zstd {
@@ -2433,7 +2435,7 @@ where
             upscale_profile,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
-            let out_file = resolve_output_path(&paths, &output);
+            let out_file = resolve_output_path(&output);
             let upscale_profile = load_optional_upscale_profile(upscale_profile)?;
             let summary = convert_gumps_to_uddp_from_sources_with_patches_and_options(
                 &paths,
@@ -2484,7 +2486,7 @@ where
             upscale_profile,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
-            let out_file = resolve_output_path(&paths, &output);
+            let out_file = resolve_output_path(&output);
             let upscale_profile = load_optional_upscale_profile(upscale_profile)?;
             let summary = convert_ec_gumps_to_uddp_from_sources(
                 &paths,

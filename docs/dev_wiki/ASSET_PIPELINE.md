@@ -20,6 +20,10 @@ Common commands:
 - `pack-statics`: pack Classic Client statics data into a block-based `.uddp` package.
 - `pack-map-statics`: pack Classic Client map and statics packages together, sharing map dimensions discovered by the map pass.
 
+Relative output paths and default output file names resolve against the current working
+directory; absolute paths are used as given. Nothing is written into the client folders
+passed as `--ccdir` / `--ecdir` unless an output path points there.
+
 Typical Enhanced Client texture and metadata workflow:
 
 ```text

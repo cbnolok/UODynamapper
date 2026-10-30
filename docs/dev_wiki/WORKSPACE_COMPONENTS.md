@@ -74,6 +74,14 @@ KTX2 texture handling used by the conversion pipeline.
 
 Image processing support code used by texture packaging work, including BC7-related paths.
 
+### `lib/gamebryo-nif/`
+
+Reader and writer for Gamebryo NIF files (version 20.0.0.4), with block types generated from a schema written against the Gamebryo 2.6 SDK. It reads the Enhanced Client effect NIFs and writes them back byte-identically.
+
+### `lib/particle-sim/`
+
+CPU simulation and preview rendering of the Enhanced Client particle effects: the Chaos `.ems` engine, the NIF effect runtime, hued effects, a software rasterizer, the `effects_ec.uddp` description codec and texture mip rules. Known differences from the client are listed in its README.
+
 ## Distributed Binaries
 
 Release packages are expected to ship `dynamapper` and each tool as separate binaries. Some executable names differ from the Cargo crate names.
