@@ -1,4 +1,5 @@
 pub mod dictionary;
+pub mod housing_editor;
 pub mod uop_cache;
 
 pub use dictionary::Dictionary;

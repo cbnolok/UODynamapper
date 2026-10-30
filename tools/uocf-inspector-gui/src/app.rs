@@ -48,6 +48,7 @@ pub enum ViewMode {
     AnimData,
     Gumps,
     Multis,
+    Housing,
     Multimap,
     Hues,
     Clilocs,
@@ -1820,6 +1821,7 @@ pub struct UopInspectorApp {
     pub housing_pieces: Option<Arc<HousingPieces>>,
     pub housing_index: Option<Arc<HousingIndex>>,
     pub multi_part_filters: MultiPartFilters,
+    pub housing_panel: crate::ui::housing::HousingPanelState,
 }
 
 impl UopInspectorApp {
@@ -1896,6 +1898,7 @@ impl UopInspectorApp {
             housing_pieces: None,
             housing_index: None,
             multi_part_filters: MultiPartFilters::default(),
+            housing_panel: Default::default(),
             texture_previews: HashMap::new(),
             ec_texture_previews: HashMap::new(),
             ec_texture_preview_source_keys: HashMap::new(),
@@ -4301,6 +4304,7 @@ mod tests {
             housing_pieces: None,
             housing_index: None,
             multi_part_filters: MultiPartFilters::default(),
+            housing_panel: Default::default(),
         }
     }
 

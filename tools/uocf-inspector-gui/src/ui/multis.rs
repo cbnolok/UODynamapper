@@ -1,4 +1,6 @@
-use crate::app::{ArtSource, HousingIndex, MultiCollectionSource, MultiPartFilters, MultisSource, UopInspectorApp};
+use crate::app::{
+    ArtSource, HousingIndex, MultiCollectionSource, MultiPartFilters, MultisSource, UopInspectorApp, ViewMode,
+};
 use crate::ui::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by};
 use eframe::egui;
 use std::collections::hash_map::DefaultHasher;
@@ -65,6 +67,8 @@ const HIDDEN_PART_TINT_ALPHA: u8 = 96;
 const HIDDEN_PART_OUTLINE_WIDTH: f32 = 1.0;
 const HIDDEN_PART_OUTLINE_COLOR: egui::Color32 = egui::Color32::from_rgb(255, 64, 255);
 const MISSING_PART_FILL_COLOR: egui::Color32 = egui::Color32::BLUE;
+/// Context data key of the "housing.bin pieces" toggle of the MultiCollection.uop view.
+const SHOW_HOUSING_PIECES_ID_SALT: &str = "multi_uop_show_housing_pieces";
 
 pub fn ui_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
     app.selected_legacy_source = concrete_art_tile_source(app.selected_legacy_source);
@@ -319,7 +323,7 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
             });
         });
 
-    let show_housing_id = egui::Id::unique("multi_uop_show_housing_pieces");
+    let show_housing_id = egui::Id::unique(SHOW_HOUSING_PIECES_ID_SALT);
     let mut show_housing = ctx
         .data_mut(|data| data.get_temp::<bool>(show_housing_id))
         .unwrap_or(false);
@@ -478,6 +482,68 @@ fn part_notes(part: &PreviewPart) -> String {
         notes.push("housing.bin");
     }
     notes.join(", ")
+}
+
+/// Switches to the Multis tab with a MultiCollection.uop multi selected.
+pub(crate) fn show_multi_in_multis_tab(app: &mut UopInspectorApp, ctx: &egui::Context, multi_id: u32) {
+    let hash = app
+        .multi_collection
+        .as_ref()
+        .and_then(|collection| collection.get(multi_id))
+        .map(|item| item.filename_hash);
+    app.multis_source = MultisSource::Uop;
+    select_multi(app, multi_id, hash);
+    ctx.data_mut(|data| data.insert_temp(egui::Id::unique(SHOW_HOUSING_PIECES_ID_SALT), false));
+    app.view_mode = ViewMode::Multis;
+}
+
+/// Draws the 2D preview of a MultiCollection.uop multi (the parts the client draws) as the Multis tab does;
+/// false when the multi is not in the loaded collection.
+pub(crate) fn draw_collection_multi_preview(
+    app: &mut UopInspectorApp,
+    ctx: &egui::Context,
+    ui: &mut egui::Ui,
+    multi_id: u32,
+) -> bool {
+    app.selected_legacy_source = concrete_art_tile_source(app.selected_legacy_source);
+    let Some(collection) = app.multi_collection.clone() else {
+        return false;
+    };
+    let Some(item) = collection.get(multi_id) else {
+        return false;
+    };
+    let parts: Vec<_> = item
+        .parts
+        .iter()
+        .enumerate()
+        .filter(|(_, part)| !part.not_drawn)
+        .map(|(source_index, part)| PreviewPart {
+            source_index,
+            item_id: part.item_id,
+            x: part.x,
+            y: part.y,
+            z: part.z,
+            original_z: part.z,
+            flags: String::new(),
+            hidden: false,
+            housing_piece: is_housing_piece(app.housing_index.as_deref(), part.item_id),
+        })
+        .collect();
+    draw_preview(app, ctx, ui, &parts, None, false, "housing");
+    true
+}
+
+/// Art of a static tile id in the art source of the Multis tab, from the multi preview texture cache. Unlike
+/// the preview, a missing tile is not logged.
+pub(crate) fn static_tile_thumbnail(
+    app: &mut UopInspectorApp,
+    ctx: &egui::Context,
+    tile_id: u32,
+) -> Option<egui::TextureHandle> {
+    let item_id = u16::try_from(tile_id).ok()?;
+    let source = concrete_art_tile_source(app.selected_legacy_source);
+    let info = part_render_info(app, item_id, source);
+    cached_multi_part_texture(app, ctx, item_id, &info)
 }
 
 fn select_multi(app: &mut UopInspectorApp, multi_id: u32, uop_hash: Option<u64>) {
@@ -941,12 +1007,30 @@ fn get_multi_part_texture(
     item_id: u16,
     info: &PartRenderInfo,
 ) -> Option<egui::TextureHandle> {
+    let texture = cached_multi_part_texture(app, ctx, item_id, info);
+    if texture.is_none() {
+        let source = concrete_art_tile_source(app.selected_legacy_source);
+        let art_id = multi_part_art_id(item_id, info, source);
+        log_missing_multi_part_texture(app, item_id, art_id, source);
+    }
+    texture
+}
+
+fn multi_part_art_id(item_id: u16, info: &PartRenderInfo, source: ArtSource) -> u32 {
+    info.texture_id
+        .unwrap_or_else(|| static_art_id_for_source(item_id as u32, source))
+}
+
+fn cached_multi_part_texture(
+    app: &mut UopInspectorApp,
+    ctx: &egui::Context,
+    item_id: u16,
+    info: &PartRenderInfo,
+) -> Option<egui::TextureHandle> {
     let source = concrete_art_tile_source(app.selected_legacy_source);
-    let art_id = info
-        .texture_id
-        .unwrap_or_else(|| static_art_id_for_source(item_id as u32, source));
+    let art_id = multi_part_art_id(item_id, info, source);
     let key = multi_preview_texture_key(art_id, source, info.clip_rect);
-    let texture = app.texture_previews.get(&key).cloned().or_else(|| {
+    app.texture_previews.get(&key).cloned().or_else(|| {
         let (width, height, pixels) = decode_multi_part_rgba(app, art_id, source, info.clip_rect)?;
         let image = egui::ColorImage::from_rgba_unmultiplied(
             [width as usize, height as usize],
@@ -959,11 +1043,7 @@ fn get_multi_part_texture(
         );
         app.texture_previews.insert(key, handle.clone());
         Some(handle)
-    });
-    if texture.is_none() {
-        log_missing_multi_part_texture(app, item_id, art_id, source);
-    }
-    texture
+    })
 }
 
 fn multi_preview_texture_key(art_id: u32, source: ArtSource, clip_rect: Option<MultiSourceClip>) -> u64 {
