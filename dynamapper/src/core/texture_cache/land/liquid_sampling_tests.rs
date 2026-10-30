@@ -199,10 +199,14 @@ fn main() {
     // Static ground patches expose map terrain only at unoccupied boundaries.
     samples[72] = vec4<f32>(static_surface_coverage(vec2<f32>(0.0), 255u), 0.0, 0.0, 0.0);
     samples[73] = vec4<f32>(static_surface_coverage(vec2<f32>(0.0, 0.5), 247u), 0.0, 0.0, 0.0);
-    samples[74] = vec4<f32>(static_surface_coverage(vec2<f32>(0.15, 0.5), 247u), 0.0, 0.0, 0.0);
+    samples[74] = vec4<f32>(static_surface_coverage(vec2<f32>(0.41, 0.5), 247u), 0.0, 0.0, 0.0);
     samples[75] = vec4<f32>(static_surface_coverage(vec2<f32>(0.0), 254u), 0.0, 0.0, 0.0);
-    samples[76] = vec4<f32>(static_surface_coverage(vec2<f32>(0.15), 254u), 0.0, 0.0, 0.0);
+    samples[76] = vec4<f32>(static_surface_coverage(vec2<f32>(0.25), 254u), 0.0, 0.0, 0.0);
     samples[77] = vec4<f32>(static_surface_coverage(vec2<f32>(0.5), 0u), 0.0, 0.0, 0.0);
+    // Adjacent edge cells meet opaquely; a missing diagonal cannot fade the center.
+    samples[78] = vec4<f32>(static_surface_coverage(vec2<f32>(1.0, 0.5), 247u), 0.0, 0.0, 0.0);
+    samples[79] = vec4<f32>(static_surface_coverage(vec2<f32>(0.0, 0.5), 239u), 0.0, 0.0, 0.0);
+    samples[80] = vec4<f32>(static_surface_coverage(vec2<f32>(0.5), 254u), 0.0, 0.0, 0.0);
 }
 "#, "shaders/test/liquid_sampling_gpu.wesl"));
         let wgsl = shaders.get(0, shader_id(0), &[]).unwrap();
@@ -261,7 +265,7 @@ fn main() {
             offset: 0, bytes_per_row: Some(6 * 16), rows_per_image: Some(1),
         }, item_lookup.size());
         let item_view = item_lookup.create_view(&wgpu::TextureViewDescriptor::default());
-        let result_size = 78 * 16;
+        let result_size = 81 * 16;
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: None, size: result_size, mapped_at_creation: false,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
@@ -360,7 +364,8 @@ fn main() {
             [0.5, 11.0, 10.0, 0.0], [0.0, 11.0, 10.0, 0.0],
             [0.0, 11.0, 10.0, 0.0], [1.0, 11.0, 10.0, 0.0], [0.0, 11.0, 10.0, 0.0],
             [1.0, 0.0, 0.0, 0.0], [0.0; 4], [0.5, 0.0, 0.0, 0.0],
-            [0.0; 4], [0.75, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]];
+            [0.0; 4], [0.75, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]];
         for (sample, (actual, expected)) in actual.iter().zip(expected).enumerate() {
             for channel in 0..4 {
                 assert!((actual[channel] - expected[channel]).abs() < 0.001,

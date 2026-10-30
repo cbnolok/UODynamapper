@@ -37,25 +37,51 @@ share coverage. Bits use spare space in `SpriteInstance.is_wet_flags`, keeping
 its 128-byte stride. The terrain atlas CPU mirror supplies map height without
 another package reader or GPU readback.
 
-`art/surface_blend.wesl` fades exposed borders over 0.3 local cell and rounds
-missing diagonal corners. Occupied interiors remain opaque, avoiding a visible
+`art/surface_blend.wesl` fades exposed borders over 0.82 local cell, matching
+the existing terrain edge-transition reach. When both sides of an axis are
+exposed, each ramp finishes at the half-cell so a narrow path or isolated tile
+retains an opaque center. Missing-diagonal corner falloff also ends at the
+half-cell. Occupied interiors and shared filled edges remain opaque, avoiding a visible
 tile grid. Existing opaque/transparent passes preserve fractional straight
 alpha. There is no new draw, texture, binding or per-frame material mutation.
 Different static-material patches each reveal their underlying map at their
 boundary; this is not direct cross-sampling of neighboring item artwork.
 
-## Remaining visible gap
+## Wider visible transition
 
 The native KR checkpoint at (2518,561), `stack-final-kr-upload-one-transition.png`,
-still shows a hard static-cobblestone/grass boundary. The existing eligibility,
-neighbor-mask and alpha tests do not establish that this scene achieves the
-requested blend. Treat that issue as open: its acceptance reference is the soft
-terrain cobblestone/dirt-to-grass transition visible in the town fixture, including
-under perspective. Recheck emitted static eligibility, coverage and actual
-opaque/transparent composition before changing the fade width. Renderer FPS
-optimization is now deferred; this is the first visual-fidelity follow-up.
+showed a hard-looking static-cobblestone/grass boundary despite the original
+0.3-cell fade. Native eligibility and grayscale-coverage probes establish that
+the road instances carry the blend flag and correct neighborhood coverage.
+Disabling the fade changes 37,693 pixels by more than one byte in the matched
+fixture, so the existing path was not inert. A ground-plane geometry control
+did not resolve the narrow transition; no geometry/depth change was retained.
+
+The wider fade makes the blend visible at ordinary zoom in both orthographic
+and perspective views. Its acceptance comparison is the soft terrain blend in
+the town fixture, not merely a successful alpha test. The half-cell limits are
+essential: multiplying two 0.82-cell ramps would make isolated tiles translucent
+even at their centers. The shader regression checks the broad edge midpoint,
+isolated center, missing-diagonal center and matching shared edges independently.
+This remains an intentional styling improvement, not newly recovered UOSA mask
+generation. Original artwork, eligibility, repetition, ordering and geometry
+remain in their established paths.
 
 ## Validation
+
+The wider-transition follow-up executes 81 production GPU cases, including the
+new shared-edge and opaque-center checks. Thirty native captures cover the
+six established fixtures in KR orthographic/perspective, Enhanced EC, Classic EC
+and Enhanced CC. The target transition changes in Enhanced/KR; the five other
+EC control fixtures stay within one channel byte, and all CC controls are exact.
+Current-slot Classic before/after controls are separate from the older
+factory-Classic reference and are byte-identical at the road and bridge.
+Previews use the same frozen executable and isolated
+settings, with actual metadata readiness and Desktop-4 placement/cleanup checked.
+Temporary evidence uses `static-boundary-` and `static-boundary-final-matrix.json`
+under `/tmp/uodynamapper-ec-followup/`. No Rust runtime or binding change is needed.
+
+Earlier implementation validation:
 
 The renderer suite passes 123 tests, including the explicitly run Vulkan
 regression with 78 actual production-shader samples. CPU checks cover source

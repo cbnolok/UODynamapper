@@ -3,13 +3,15 @@
 This review supplies evidence and scope for the active items in `docs/TODO.md`.
 Performance optimization is deferred to the workstation profiling session in
 [the performance handoff](2026-10-29-renderer-performance-handoff.md).
-This inventory is a source/document review, not a new runtime acceptance pass.
+The initial inventory was a source/document review. The 2026-10-30 static-ground
+follow-up below has native rendering validation; the other open rows still need
+their own runtime acceptance checks.
 
 ## Current visual priorities
 
 | Priority | Issue | Evidence and next acceptance check |
 | --- | --- | --- |
-| First | Static ground patches do not visibly blend into map terrain at map 0 `(2518,561)` | The user's checkpoint shows a hard cobblestone/grass edge despite existing neighbor-mask code. Trace emitted eligibility, actual coverage and opaque/transparent composition. Match the soft terrain transition in the supplied town reference in orthographic and perspective views. |
+| Completed 2026-10-30 | Static/map blending at map 0 `(2518,561)` | Runtime probes verified eligibility and alpha composition. Widening the old 0.3-cell fade to 0.82 cell gives a visible soft edge; half-cell limits preserve isolated centers and filled shared edges. Orthographic/perspective and style/source controls are recorded in the ground-transition notes. No geometry or artwork substitution was needed. |
 | Next | Independent EC/CC transition controls and CC terrain smoothing | The requested separate controls are absent. Existing ordered EC coverage does not implement CC terrain blending. Treat this separately from the static/map blend defect. |
 | Next | Static height/anchors and non-KR fake-normal wall artifacts | General height parity remains unproven. The specific bridge/stair depth bug is repaired, so avoid a global height/bias change without a matched reference. Fake normals default off in Classic/Enhanced, but remain manually usable; wall-side artifacts need a bounded visual fixture. |
 | Next | Effects and light decals reported as invisible | Check each effect with the correct source, active preset, relevant strength and receiver. Normal maps only consume EC land in fragment modes; grime and color wash have KR gates. Trace decal collection, receiver and visible composition rather than declaring the switches broken from default output. |

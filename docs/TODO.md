@@ -53,7 +53,6 @@ Current execution decisions:
 
 ### Current Renderer Focus: Visual Fidelity
 
-- Fix the demonstrated static-cobblestone/map-grass transition at map 0 `(2518,561)` against the supplied soft terrain-blend reference.
 - Add independently controlled CC/EC terrain transitions and the requested CC blending support.
 - Validate static heights/anchors, non-KR fake-normal wall artifacts, effect visibility and static light decals against matched fixtures.
 - Fix free perspective zoom; distinguish it from follow-camera dolly and the already corrected isometric pitch.
