@@ -556,8 +556,7 @@ fn set_modifier_param(kind: &mut NifModifierKind, param: ModifierParam, value: f
 }
 
 /// `NiTransformController::Update`: each valid channel replaces the node's local one. A path interpolator
-/// places the node along its path at the percentage curve's value (constant velocity, follow and bank are not
-/// applied).
+/// sets the translation, and the rotation with its follow flag (`PathInterp::eval`).
 fn apply_transform(interp: &NifInterpolator, time: f32, local: &mut Xf) {
     match interp {
         NifInterpolator::Transform(transform) => {
@@ -578,14 +577,10 @@ fn apply_transform(interp: &NifInterpolator, time: f32, local: &mut Xf) {
             }
         }
         NifInterpolator::Path(path) => {
-            let Some(curve) = path.path.as_ref() else { return };
-            let Some((first, last)) = curve.time_range() else { return };
-            let path_time = match path.percent.as_ref().and_then(|percent| percent.eval(time)) {
-                Some(percent) => first + (last - first) * percent,
-                None => time,
-            };
-            if let Some(position) = curve.eval(path_time) {
-                local.translation = Vec3::from_array(position);
+            let Some(pose) = path.eval(time) else { return };
+            local.translation = pose.translation;
+            if let Some(rotation) = pose.rotation {
+                local.rotation = rotation;
             }
         }
         NifInterpolator::Point3(point) => {

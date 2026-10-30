@@ -6,10 +6,10 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::sync::Arc;
 
-use gamebryo_nif::{Block, Link, NifFile};
 use particle_sim::chaos::compile::compile_chaos_source;
 use particle_sim::chaos::ChaosIssueSeverity as CompileSeverity;
-use particle_sim::nif::compile::decode_pixel_level;
+use particle_sim::mips::decode_dds_levels;
+use particle_sim::nif::compile::decode_nif_image;
 use uocf::enhanced::chaos_script::{ChaosIssueSeverity as ParseSeverity, ChaosScript, ChaosValidationContext};
 use uocf::enhanced::effect_texture::{effect_texture_hash, EffectFileKind, EffectTexturePackage};
 use uocf::enhanced::string_dictionary::UoStringDictionary;
@@ -438,20 +438,33 @@ pub fn decode_texture(payload: &[u8]) -> Result<image::RgbaImage, String> {
     file.decode_to_rgba8().map_err(|error| format!("{error:#}"))
 }
 
-/// A NIF image, as the client's `NiNIFImageReader::ReadFile` accepts it: a NIF file whose only top object is an
-/// `NiPixelData`. Returns its first stored level.
-pub fn decode_nif_image(payload: &[u8]) -> Result<image::RgbaImage, String> {
-    let nif = NifFile::read(payload).map_err(|error| error.to_string())?;
-    let [root] = nif.roots.as_slice() else {
-        return Err(format!("{} top objects, a NIF image has one", nif.roots.len()));
-    };
-    let pixels = match root.index().and_then(|index| nif.blocks.get(index)) {
-        Some(Block::NiPixelData(pixels)) => pixels,
-        _ => return Err("the top object is not an NiPixelData".to_owned()),
-    };
-    let (width, height, rgba) = decode_pixel_level(pixels, 0)
-        .ok_or_else(|| format!("NiPixelData format {} is not decoded", pixels.pixel_format.format.0))?;
-    image::RgbaImage::from_raw(width, height, rgba).ok_or_else(|| "NiPixelData level 0 is truncated".to_owned())
+/// A texture file decoded with the levels the client's readers keep, RGBA8, level 0 first.
+pub struct TextureLevels {
+    pub width: u32,
+    pub height: u32,
+    pub levels: Vec<Vec<u8>>,
+    /// Whether the client would generate a mip chain from a single level (not for a DXT1 / DXT5 source).
+    pub generatable: bool,
+}
+
+/// Decodes a texture file of `EffectTexture.uop` with its stored levels: a DDS file's levels as `NiDDSReader`
+/// keeps them, a `.nif` file as a NIF image (one `NiPixelData`, `NiNIFImageReader`), anything else as TGA (one
+/// level).
+pub fn decode_texture_levels(name: &str, payload: &[u8]) -> Result<TextureLevels, String> {
+    if payload.starts_with(DDS_MAGIC) {
+        let dds = decode_dds_levels(payload)?;
+        let generatable = dds.generatable();
+        return Ok(TextureLevels { width: dds.width, height: dds.height, levels: dds.levels, generatable });
+    }
+    if is_nif_name(name) {
+        let levels = decode_nif_image(payload)?;
+        let (width, height) = (levels[0].0, levels[0].1);
+        let levels = levels.into_iter().map(|(_, _, rgba)| rgba).collect();
+        return Ok(TextureLevels { width, height, levels, generatable: true });
+    }
+    let image = decode_texture(payload)?;
+    let (width, height) = image.dimensions();
+    Ok(TextureLevels { width, height, levels: vec![image.into_raw()], generatable: true })
 }
 
 /// Reads a file to import into the package: its lowercase base name and payload. Scripts may have issues

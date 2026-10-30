@@ -11,8 +11,12 @@
 //! The client directory defaults to `UO_EC_CLIENT_DIR`. The run lasts `--seconds`, by default the effect's
 //! animation length (at least [`MIN_DEFAULT_SECONDS`]); the effect runs once with that duration unless `--loop`.
 //! The camera is the client's view (orthographic along the effect's local +y with +z up:
-//! `CameraFrame::client_view`), fitted to everything drawn over the run; billboards face it. There is no depth
-//! buffer: draws follow the scene order.
+//! `CameraFrame::client_view`), fitted to everything drawn over the run; billboards face it. Draws follow the
+//! scene order with the client's depth test and write, and textures have the client's mip levels
+//! (`common/textures.rs`) sampled with each map's filter mode.
+
+#[path = "common/textures.rs"]
+mod textures;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -44,7 +48,6 @@ const MIN_FIT_EXTENT: f32 = 0.5;
 const CAMERA_DISTANCE: f32 = 1000.0;
 const BACKGROUND: [f32; 4] = [0.10, 0.10, 0.12, 1.0];
 const GAP_COLOR: Rgba<u8> = Rgba([40, 40, 48, 255]);
-const DDS_MAGIC: &[u8] = b"DDS ";
 const MS_PER_SECOND: f32 = 1000.0;
 const HALF: f32 = 0.5;
 
@@ -200,11 +203,12 @@ impl Textures {
             let name = texture.name();
             let decoded = match &texture.source {
                 NifTextureSource::External { file_name } => match package.read(file_name).ok().flatten() {
-                    Some(payload) => decode(&payload),
+                    Some(payload) => textures::load_texture(file_name, &payload, texture.mipmapped),
                     None => Err("not in the package".to_owned()),
                 },
+                // Level 0 of the embedded pixels; a mipmapped one gets the generated chain.
                 NifTextureSource::Embedded { width, height, rgba } => {
-                    RasterTexture::from_rgba8(*width as usize, *height as usize, rgba).ok_or_else(|| "bad size".to_owned())
+                    textures::raster_texture(*width, *height, vec![rgba.clone()], texture.mipmapped, true)
                 }
                 NifTextureSource::Undecoded { format } => Err(format!("pixel format {format} not decoded")),
             };
@@ -219,23 +223,6 @@ impl Textures {
     fn get(&self, name: &str) -> Option<&RasterTexture> {
         self.0.iter().find(|(texture, _)| texture.eq_ignore_ascii_case(name)).map(|(_, texture)| texture)
     }
-}
-
-fn decode(payload: &[u8]) -> Result<RasterTexture, String> {
-    let rgba = if payload.starts_with(DDS_MAGIC) {
-        let mut decoder = dds::Decoder::new(std::io::Cursor::new(payload)).map_err(|error| error.to_string())?;
-        let size = decoder.main_size();
-        let length = dds::ColorFormat::RGBA_U8.buffer_size(size).ok_or("DDS too large")?;
-        let mut rgba = vec![0u8; length];
-        let view = dds::ImageViewMut::new(&mut rgba, size, dds::ColorFormat::RGBA_U8).ok_or("DDS buffer")?;
-        decoder.read_surface(view).map_err(|error| error.to_string())?;
-        RgbaImage::from_raw(size.width, size.height, rgba).ok_or("DDS size")?
-    } else {
-        image::load_from_memory_with_format(payload, image::ImageFormat::Tga)
-            .map_err(|error| error.to_string())?
-            .into_rgba8()
-    };
-    RasterTexture::from_rgba8(rgba.width() as usize, rgba.height() as usize, rgba.as_raw()).ok_or_else(|| "empty texture".to_owned())
 }
 
 struct Capture {

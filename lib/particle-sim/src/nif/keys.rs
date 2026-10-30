@@ -254,15 +254,32 @@ fn tcb_tangents<T: KeyValue>(keys: &[Key<T>], i: usize) -> (T, T) {
     (incoming.scale(previous_length * inverse), outgoing.scale(next_length * inverse))
 }
 
+/// First and second derivative of the Hermite cubic of [`hermite`] at `t`: `dp + (2a + 3b t) t` and
+/// `2a + 6b t` (`NiBezPosKey` / `NiTCBPosKey::InterpolateD1` and `InterpolateD2`).
+fn hermite_derivatives<T: KeyValue>(t: f32, p: T, q: T, dp: T, dq: T) -> (T, T) {
+    let diff = q.sub(p);
+    let a = diff.scale(3.0).sub(dq.add(dp.scale(2.0)));
+    let b = dp.add(dq).sub(diff.scale(2.0));
+    let d1 = dp.add(a.scale(2.0).add(b.scale(3.0 * t)).scale(t));
+    let d2 = a.scale(2.0).add(b.scale(6.0 * t));
+    (d1, d2)
+}
+
 impl<T: KeyValue> Curve<T> {
     /// `GenInterp` at `time`; `None` without keys.
     pub fn eval(&self, time: f32) -> Option<T> {
         let keys = &self.keys;
-        let (index, t) = match segment(|i| keys[i].time, keys.len(), time)? {
-            Segment::Hold(index) => return Some(keys[index].value),
-            Segment::Between(index, t) => (index, t),
-        };
-        let (k0, k1) = (&keys[index], &keys[index + 1]);
+        match segment(|i| keys[i].time, keys.len(), time)? {
+            Segment::Hold(index) => Some(keys[index].value),
+            Segment::Between(index, t) => self.segment_value(index, t),
+        }
+    }
+
+    /// The interpolation function of the key type between keys `index` and `index + 1` at the normalized
+    /// time `t`; `None` when `index + 1` is not a key.
+    pub(crate) fn segment_value(&self, index: usize, t: f32) -> Option<T> {
+        let keys = &self.keys;
+        let (k0, k1) = (keys.get(index)?, keys.get(index + 1)?);
         Some(match self.kind {
             KeyKind::Linear => k0.value.add(k1.value.sub(k0.value).scale(t)),
             KeyKind::Step => {
@@ -277,6 +294,25 @@ impl<T: KeyValue> Curve<T> {
                 let (_, outgoing) = tcb_tangents(keys, index);
                 let (incoming, _) = tcb_tangents(keys, index + 1);
                 hermite(t, k0.value, k1.value, outgoing, incoming)
+            }
+        })
+    }
+
+    /// The first and second derivative of [`Self::segment_value`] by the normalized time, as the key type's
+    /// `InterpolateD1` / `InterpolateD2` give them. Linear: `p1 - p0` and zero (`NiLinPosKey`); step: `p0 - p1`
+    /// and zero, the sign as `NiStepPosKey::InterpolateD1` has it.
+    pub(crate) fn segment_derivatives(&self, index: usize, t: f32) -> Option<(T, T)> {
+        let keys = &self.keys;
+        let (k0, k1) = (keys.get(index)?, keys.get(index + 1)?);
+        let zero = k0.value.scale(0.0);
+        Some(match self.kind {
+            KeyKind::Linear => (k1.value.sub(k0.value), zero),
+            KeyKind::Step => (k0.value.sub(k1.value), zero),
+            KeyKind::Bezier => hermite_derivatives(t, k0.value, k1.value, k0.out_tangent, k1.in_tangent),
+            KeyKind::Tcb => {
+                let (_, outgoing) = tcb_tangents(keys, index);
+                let (incoming, _) = tcb_tangents(keys, index + 1);
+                hermite_derivatives(t, k0.value, k1.value, outgoing, incoming)
             }
         })
     }

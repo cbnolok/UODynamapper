@@ -21,6 +21,7 @@ pub mod codec;
 pub mod effect;
 pub mod hued;
 pub mod math;
+pub mod mips;
 pub mod nif;
 pub mod raster;
 pub mod render;

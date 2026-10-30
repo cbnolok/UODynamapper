@@ -17,6 +17,7 @@ pub mod desc;
 pub mod instance;
 pub mod keys;
 pub mod particles;
+mod path;
 pub(crate) mod scene;
 
 #[cfg(feature = "nif")]

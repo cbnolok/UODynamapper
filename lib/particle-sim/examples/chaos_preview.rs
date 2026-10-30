@@ -12,12 +12,15 @@
 //! effect's local +y with +z up: `CameraFrame::client_view`), fitted to everything the effect draws over the run. MESH particles (no NIF renderer here) are
 //! drawn as magenta square outlines of their size; the node is a grey dot.
 
+#[path = "common/textures.rs"]
+mod textures;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use image::{Rgba, RgbaImage};
 use particle_sim::chaos::compile::compile_chaos_source;
-use particle_sim::chaos::{ChaosIssueSeverity, ChaosSystem};
+use particle_sim::chaos::{ChaosIssueSeverity, ChaosParticleType, ChaosSystem};
 use particle_sim::raster::{CLIENT_VIEW_ELEVATION, Canvas, OVERLAY_BLEND, OrthoView, RasterTexture, frame_extent};
 use particle_sim::render::RenderFrame;
 use particle_sim::{ChaosEffectInstance, Mt19937, NodeTransform, ParticleSystemInstance, Vec3};
@@ -44,7 +47,6 @@ const MESH_COLOR: [f32; 4] = [1.0, 0.0, 1.0, 1.0];
 const NODE_COLOR: [f32; 4] = [0.6, 0.6, 0.6, 1.0];
 /// Half side of the node dot, pixels.
 const NODE_DOT_HALF_PX: f32 = 1.5;
-const DDS_MAGIC: &[u8] = b"DDS ";
 const MS_PER_SECOND: f32 = 1000.0;
 
 struct Options {
@@ -140,7 +142,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             sequence.flags.0
         );
     }
-    let textures = Textures::load(&package, &desc.resources());
+    // MESH sequences name `.nif` scenes, drawn as outlines; the other resources are textures.
+    let is_texture = |name: &str| {
+        let mut users = desc.sequences.iter().filter(|sequence| sequence.resource == name);
+        users.any(|sequence| sequence.particle_type != ChaosParticleType::Mesh)
+    };
+    let texture_names: Vec<&str> = desc.resources().into_iter().filter(|name| is_texture(name)).collect();
+    let textures = Textures::load(&package, &texture_names);
     let mut rng = Mt19937::new(options.seed);
     let system = Arc::new(ChaosSystem::prepare(desc, &mut rng));
     let frames = simulate(&system, &options);
@@ -232,10 +240,8 @@ impl Textures {
     fn load(package: &EffectTexturePackage, names: &[&str]) -> Self {
         let mut textures = Vec::new();
         for name in names {
-            if name.to_ascii_lowercase().ends_with(".nif") {
-                continue;
-            }
-            match package.read(name).ok().flatten().map(|payload| decode(&payload)) {
+            // Chaos textures are not mipmapped (`MIP_DEFAULT` prefs, the default flag off).
+            match package.read(name).ok().flatten().map(|payload| textures::load_texture(name, &payload, false)) {
                 Some(Ok(texture)) => {
                     println!("texture {name}: {}x{}", texture.width, texture.height);
                     textures.push((name.to_string(), texture));
@@ -250,23 +256,6 @@ impl Textures {
     fn get(&self, name: &str) -> Option<&RasterTexture> {
         self.0.iter().find(|(texture, _)| texture.eq_ignore_ascii_case(name)).map(|(_, texture)| texture)
     }
-}
-
-fn decode(payload: &[u8]) -> Result<RasterTexture, String> {
-    let rgba = if payload.starts_with(DDS_MAGIC) {
-        let mut decoder = dds::Decoder::new(std::io::Cursor::new(payload)).map_err(|error| error.to_string())?;
-        let size = decoder.main_size();
-        let length = dds::ColorFormat::RGBA_U8.buffer_size(size).ok_or("DDS too large")?;
-        let mut rgba = vec![0u8; length];
-        let view = dds::ImageViewMut::new(&mut rgba, size, dds::ColorFormat::RGBA_U8).ok_or("DDS buffer")?;
-        decoder.read_surface(view).map_err(|error| error.to_string())?;
-        RgbaImage::from_raw(size.width, size.height, rgba).ok_or("DDS size")?
-    } else {
-        image::load_from_memory_with_format(payload, image::ImageFormat::Tga)
-            .map_err(|error| error.to_string())?
-            .into_rgba8()
-    };
-    RasterTexture::from_rgba8(rgba.width() as usize, rgba.height() as usize, rgba.as_raw()).ok_or_else(|| "empty texture".to_owned())
 }
 
 /// Fits everything drawn over the run (sprite quads, meshes, the node) into a cell.

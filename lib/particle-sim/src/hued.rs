@@ -204,7 +204,7 @@ pub fn render_hued_target<'t>(
     let mut target = Canvas::new(view.width, view.height, HUED_TARGET_CLEAR);
     let depth_clip = Some([HUED_CAMERA_NEAR - HUED_CAMERA_DISTANCE, HUED_CAMERA_FAR - HUED_CAMERA_DISTANCE]);
     target.draw_scene(&view, frame, texture, &SceneDrawOptions { depth_clip, ..*options });
-    RasterTexture { width: target.width, height: target.height, texels: target.pixels }
+    RasterTexture { width: target.width, height: target.height, texels: target.pixels, mips: Vec::new() }
 }
 
 /// Draws the hue quad of a target from [`render_hued_target`] into `canvas`: a square of half side
@@ -291,7 +291,7 @@ mod tests {
         let texels = (0..ATLAS_SIDE * ATLAS_SIDE)
             .map(|index| [(index % ATLAS_SIDE) as f32 / side, (index / ATLAS_SIDE) as f32 / side, 0.5, 1.0])
             .collect();
-        RasterTexture { width: ATLAS_SIDE, height: ATLAS_SIDE, texels }
+        RasterTexture { width: ATLAS_SIDE, height: ATLAS_SIDE, texels, mips: Vec::new() }
     }
 
     fn assert_texel(actual: [f32; 4], x: f32, y: f32) {
@@ -389,7 +389,7 @@ mod tests {
         const SIDE: usize = 64;
         const BACKGROUND: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
         let hue_color = [0.25, 0.5, 0.75, 1.0];
-        let atlas = RasterTexture { width: ATLAS_SIDE, height: ATLAS_SIDE, texels: vec![hue_color; ATLAS_SIDE * ATLAS_SIDE] };
+        let atlas = RasterTexture::from_texels(ATLAS_SIDE, ATLAS_SIDE, vec![hue_color; ATLAS_SIDE * ATLAS_SIDE]).unwrap();
         let pixels_per_unit = 4.0;
         let view = OrthoView::client_view(Vec3::ZERO, 100.0, pixels_per_unit, SIDE, SIDE);
         let settings = HuedRenderSettings { aspect: 1.0, sampling: HueAtlasSampling::Client };

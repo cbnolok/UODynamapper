@@ -7,7 +7,6 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
-use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 use color_eyre::eyre::{self, WrapErr, bail, ensure, eyre};
@@ -16,6 +15,7 @@ use log::info;
 use particle_sim::chaos::compile::compile_chaos_source;
 use particle_sim::chaos::{ChaosParticleType, ChaosSystemDesc};
 use particle_sim::codec::{decode_chaos_desc, decode_nif_desc, encode_chaos_desc, encode_nif_desc};
+use particle_sim::mips::{client_mip_levels, decode_dds_levels};
 use particle_sim::nif::compile::decode_pixel_level;
 use particle_sim::nif::desc::NifTextureSource;
 use particle_sim::nif::{NifCompileOutput, compile as compile_nif};
@@ -116,21 +116,18 @@ const DDS_HEADER_END: usize = 128;
 /// Bytes of the `DDS_HEADER_DXT10` extension that follows when the FourCC is `DX10`.
 const DDS_DXT10_HEADER_SIZE: usize = 20;
 /// File offsets of the `DDS_HEADER` fields read here.
-const DDS_MIP_COUNT_OFFSET: usize = 28;
 const DDS_FOURCC_OFFSET: usize = 84;
 const DDS_CAPS_OFFSET: usize = 108;
 const DDS_FOURCC_DX10: &[u8; 4] = b"DX10";
-/// `DDSCAPS_COMPLEX` and `DDSCAPS_MIPMAP`: `NiDDSReader::ReadHeader` keeps the file's levels only when both are set
-/// and the count is not 1 (`NiDDSReader.cpp:313-323`).
-const DDSCAPS_COMPLEX: u32 = 0x8;
-const DDSCAPS_MIPMAP: u32 = 0x40_0000;
 
 /// Whether textures that only Chaos scripts (or NIFs with `MIP_DEFAULT`) reference get mipmaps.
 ///
 /// Gamebryo 2.6 `NiTexture::ms_bMipmapByDefault` is `false` (`CoreLibs/NiMain/NiTexture.cpp:27`), and the DX9
 /// renderer mipmaps a source texture only when its format preferences say `YES`, or `MIP_DEFAULT` with that
 /// default set (`NiDX9Renderer/NiDX9SourceTextureData.cpp:375-378`); `FormatPrefs` default to `MIP_DEFAULT`
-/// (`NiTexture.inl:31`). Whether UOSA.exe calls `NiTexture::SetMipmapByDefault` is not verified.
+/// (`NiTexture.inl:31`). UOSA.exe leaves it false: `NiTexture::ms_bMipmapByDefault` 0x00e31ea3 lies in the
+/// zero-filled `.data` and is never written; no `SetMipmapByDefault` call exists (`uosa_effects.md`, "Effect
+/// textures and mipmaps").
 const MIPMAP_BY_DEFAULT: bool = false;
 
 /// Severity of a packer finding.
@@ -992,10 +989,6 @@ fn read_u16(bytes: &[u8], offset: usize) -> u16 {
     u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
 }
 
-fn read_u32(bytes: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes(bytes[offset..offset + size_of::<u32>()].try_into().expect("u32 bytes"))
-}
-
 /// Decodes a Targa file as Gamebryo 2.6 `NiTGAReader` does (`CoreLibs/NiMain/NiTGAReader.cpp`), to RGBA8 rows, top
 /// row first:
 /// - types 1/9 (colour mapped), 2/10 (true colour), 3/11 (greyscale), RLE runs may cross rows (`LoadRLERow`);
@@ -1135,27 +1128,11 @@ fn decode_dds(bytes: &[u8]) -> Result<SourceImage, String> {
     if bytes.len() < DDS_HEADER_END || &bytes[..DDS_MAGIC.len()] != DDS_MAGIC {
         return Err("not a DDS file".to_owned());
     }
-    let caps = read_u32(bytes, DDS_CAPS_OFFSET);
-    let file_mips = read_u32(bytes, DDS_MIP_COUNT_OFFSET);
-    let levels = if caps & DDSCAPS_COMPLEX != 0 && caps & DDSCAPS_MIPMAP != 0 && file_mips != 1 {
-        file_mips.max(1)
-    } else {
-        1
-    };
-    let mut decoder = dds::Decoder::new(Cursor::new(bytes)).map_err(|error| error.to_string())?;
-    let size = decoder.main_size();
-    let (width, height) = (size.width, size.height);
-    let format = decoder.format();
-    let mut rgba_levels = Vec::new();
-    for _ in 0..levels {
-        let size = decoder.surface_info().ok_or_else(|| "fewer surfaces than mip levels".to_owned())?.size();
-        let len = dds::ColorFormat::RGBA_U8.buffer_size(size).ok_or_else(|| "DDS too large".to_owned())?;
-        let mut rgba = vec![0u8; len];
-        let view = dds::ImageViewMut::new(&mut rgba, size, dds::ColorFormat::RGBA_U8)
-            .ok_or_else(|| "DDS buffer".to_owned())?;
-        decoder.read_surface(view).map_err(|error| error.to_string())?;
-        rgba_levels.push(rgba);
-    }
+    let decoded = decode_dds_levels(bytes)?;
+    let (width, height, format) = (decoded.width, decoded.height, decoded.format);
+    let generatable = decoded.generatable();
+    let rgba_levels = decoded.levels;
+    let levels = rgba_levels.len() as u32;
     let opaque = is_opaque(&rgba_levels[0]);
     let block_format = match format {
         dds::Format::BC1_UNORM => Some(TEXTURE_FORMAT_BC1),
@@ -1176,43 +1153,9 @@ fn decode_dds(bytes: &[u8]) -> Result<SourceImage, String> {
             SourcePixels::Blocks { format, data, mip_count: levels }
         }
         // A compressed source keeps its levels: the SDK generates chains only for RGB(A) destinations.
-        Some(_) => SourcePixels::Rgba { levels: rgba_levels, generatable: false },
-        None => SourcePixels::Rgba { levels: rgba_levels, generatable: true },
+        _ => SourcePixels::Rgba { levels: rgba_levels, generatable },
     };
     Ok(SourceImage { width, height, pixels, opaque, source: TEXTURE_SOURCE_DDS })
-}
-
-/// The full mip chain of a power-of-two RGBA8 image as `NiDevImageConverter::GenerateMipmapLevels` builds it
-/// (`CoreLibs/NiMain/NiDevImageConverter.cpp:1108-1290`): each level from the previous one by a truncating 2x2 box
-/// (`(a + b + c + d) >> 2`), or `(a + b) >> 1` when the previous level is one pixel wide or high, down to 1x1.
-fn generate_mips(width: u32, height: u32, level0: Vec<u8>) -> Vec<Vec<u8>> {
-    let mut levels = vec![level0];
-    let (mut fine_width, mut fine_height) = (width as usize, height as usize);
-    while fine_width > 1 || fine_height > 1 {
-        let fine = levels.last().expect("level 0");
-        let (coarse_width, coarse_height) = ((fine_width / 2).max(1), (fine_height / 2).max(1));
-        let pixel = |x: usize, y: usize| &fine[(y * fine_width + x) * RGBA8_BYTES_PER_PIXEL..][..RGBA8_BYTES_PER_PIXEL];
-        let mut coarse = Vec::with_capacity(coarse_width * coarse_height * RGBA8_BYTES_PER_PIXEL);
-        for y in 0..coarse_height {
-            for x in 0..coarse_width {
-                for channel in 0..RGBA8_BYTES_PER_PIXEL {
-                    let value = |x: usize, y: usize| u32::from(pixel(x, y)[channel]);
-                    let average = if fine_width == 1 {
-                        (value(0, 2 * y) + value(0, 2 * y + 1)) >> 1
-                    } else if fine_height == 1 {
-                        (value(2 * x, 0) + value(2 * x + 1, 0)) >> 1
-                    } else {
-                        (value(2 * x, 2 * y) + value(2 * x + 1, 2 * y) + value(2 * x, 2 * y + 1) + value(2 * x + 1, 2 * y + 1))
-                            >> 2
-                    };
-                    coarse.push(average as u8);
-                }
-            }
-        }
-        levels.push(coarse);
-        (fine_width, fine_height) = (coarse_width, coarse_height);
-    }
-    levels
 }
 
 /// Reads a `.nif` texture file as Gamebryo 2.6 `NiNIFImageReader::ReadFile` does
@@ -1353,11 +1296,9 @@ fn build_texture(
     let mut generated_mips = false;
     let (format, mip_count, payload) = match image.pixels {
         SourcePixels::Blocks { format, data, mip_count } => (format, mip_count, data),
-        SourcePixels::Rgba { mut levels, generatable } => {
-            if levels.len() == 1 && wants_mips && generatable && width.is_power_of_two() && height.is_power_of_two() {
-                levels = generate_mips(width, height, levels.pop().expect("level 0"));
-                generated_mips = true;
-            }
+        SourcePixels::Rgba { levels: stored, generatable } => {
+            let levels;
+            (levels, generated_mips) = client_mip_levels(width, height, stored, wants_mips, generatable);
             let mip_count = levels.len() as u32;
             if options.bc7 && width % BC_BLOCK_EDGE == 0 && height % BC_BLOCK_EDGE == 0 {
                 let mut blocks = Vec::new();
@@ -1549,6 +1490,7 @@ fn build_effects_ec(source_dirs: &[PathBuf], options: &EffectsEcPackOptions) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use particle_sim::mips::generate_mip_chain;
     use gamebryo_nif::{
         Block, NiNode, NiPixelDataMipmap, NiPixelFormat, NiPixelFormatComponent, PixelFormatFormat, Ref,
     };
@@ -1663,11 +1605,11 @@ mod tests {
     #[test]
     fn generated_mips_truncate_box_averages_down_to_one_pixel() {
         let level0 = rgba(&[[0, 0, 0, 255], [1, 0, 0, 255], [2, 0, 0, 255], [4, 255, 0, 0]]);
-        let levels = generate_mips(2, 2, level0.clone());
+        let levels = generate_mip_chain(2, 2, level0.clone());
         assert_eq!(levels, vec![level0, vec![1, 63, 0, 191]]);
 
         let row = rgba(&[[10, 0, 0, 0], [21, 0, 0, 0], [30, 0, 0, 0], [41, 0, 0, 0]]);
-        let levels = generate_mips(4, 1, row);
+        let levels = generate_mip_chain(4, 1, row);
         assert_eq!(levels[1], rgba(&[[15, 0, 0, 0], [35, 0, 0, 0]]), "pairs when one pixel high");
         assert_eq!(levels[2], vec![25, 0, 0, 0]);
         assert_eq!(levels.len(), 3);

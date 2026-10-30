@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use super::desc::{
     AV_FLAG_APP_CULLED, CullMode, NifEffectDesc, NifLight, NifLightKind, NifMaterial, NifModifierKind, NifNodeKind,
-    NifRenderState, NifTextureTransform, TextureApplyMode, TextureSlot, TextureTransformMethod,
+    NifRenderState, NifTextureTransform, TextureApplyMode, TextureFilter, TextureSlot, TextureTransformMethod,
 };
 use super::particles::NifParticle;
 use super::scene::{SceneOrder, SceneState, Xf, make_rotation};
@@ -357,6 +357,7 @@ impl<R: CrtRng> NifEffectInstance<R> {
                     uv_set: map.uv_set,
                     uv_transform: transform.as_ref().map_or(UvTransform::IDENTITY, texture_transform_matrix),
                     addressing: map.addressing,
+                    filter: TextureFilter::from_raw(map.filter),
                 })
             })
             .collect();

@@ -84,7 +84,8 @@ pub const CHAOS_CEL_SETUP_ARGUMENTS: usize = 7;
 pub struct ChaosScript {
     /// The particle system name. The client looks a compiled system up by its uppercase name.
     pub name: String,
-    /// The number after the name (client files: 0, 1, 2 or 4; meaning unknown).
+    /// The number after the name (client files: 0, 1, 2 or 4). The client requires it, then ignores it
+    /// (`uosa_chaos.md`, "Grammar").
     pub version: f64,
     /// System-level statements and the event sequences, in file order.
     pub items: Vec<ChaosItem>,
@@ -178,8 +179,10 @@ pub enum ChaosValue {
     Call { name: String, args: Vec<ChaosValue> },
 }
 
-/// `CelSetup(cel_count, cel_u, cel_v, columns, rows, fps, looping)`: a texture atlas animation. The field names
-/// follow the argument order; their meaning is not verified in the client.
+/// `CelSetup(cel_count, cel_u, cel_v, columns, rows, fps, looping)`: a texture atlas animation. As
+/// `ParseCelSetup` 0x008b0b20 stores them (`uosa_chaos.md`, "Sequence properties"): the frame count (u16), the
+/// cell size in UV units, the columns and rows (u8; rows is never read at run time), the frames per second and
+/// looping when the argument is > 0. A `RANDOM` argument gives its minimum.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ChaosCelSetup {
     pub cel_count: f64,

@@ -150,9 +150,11 @@ pub struct ParticleEffect {
     /// lowercase name; `.ems` files are Chaos text scripts naming further `.nif`/`.tga` files
     /// there.
     pub name_index: u32,
-    /// Added to the effect x (probable).
+    /// Tiles east: added to the world x of the effect offset (confirmed; `uosa_effects.md`, Particle field 2:
+    /// Nif Init 0x0041aa6a, Chaos Init 0x0041b119).
     pub offset_x: f32,
-    /// Subtracted from the effect z, so it acts as a vertical offset (probable).
+    /// Tiles south: subtracted from the world z of the effect offset, as a tile y converts to world z = -y
+    /// (confirmed; `uosa_effects.md`, Particle field 3: Nif Init 0x0041aa6a, Chaos Init 0x0041b119).
     pub offset_y: f32,
     /// Moves the effect by `-camera_offset * 0.12856` along the client's camera down vector, i.e. a positive value
     /// moves it up on screen (confirmed; `uosa_effects.md`, Particle field 4).

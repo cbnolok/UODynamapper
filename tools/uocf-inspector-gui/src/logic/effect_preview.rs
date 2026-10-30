@@ -8,13 +8,15 @@
 //! With an object hue, the NIF particles whose definition sets `hued` play as `UOHuedParticleEffectNif` (half speed,
 //! drawn through the `Hues.uop` atlas: particle-sim's [`particle_sim::hued`]).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
 use gamebryo_nif::NifFile;
 use image::RgbaImage;
 use particle_sim::chaos::compile::compile_chaos_source;
+use particle_sim::chaos::ChaosParticleType;
+use particle_sim::mips::client_mip_levels;
 use particle_sim::nif::default_camera;
 use particle_sim::nif::desc::NifTextureSource;
 use particle_sim::hued::{
@@ -30,12 +32,15 @@ use particle_sim::{
     ChaosEffectInstance, ChaosSystem, EffectInstance, EffectPlacement, Mt19937, NifEffect, NifEffectInstance,
     NodeTransform, ParticleEffectParams, ParticleSystemInstance, Rng, Vec3,
 };
-use uocf::enhanced::effect_definition::{EffectDefinition, ParticleEffect, PropertyFlagMode, RANDOM_WEIGHT_TOTAL};
+use uocf::enhanced::effect_definition::{
+    EffectDefinition, ParticleEffect, PropertyFlagEffect, PropertyFlagMode, PARTICLE_ATTACH_PROJECTILE_ONLY,
+    RANDOM_WEIGHT_TOTAL,
+};
 use uocf::enhanced::hues::{hues_atlas_hash, HUES_UOP_NAME};
 use uocf::uop_container::package::{LoadMode, UopPackage};
 use uocf::enhanced::string_dictionary::UoStringDictionary;
 
-use super::effect_files::{decode_nif_image, decode_texture, is_nif_name};
+use super::effect_files::{decode_texture, decode_texture_levels};
 use super::effects_editor::{is_chaos_name, particle_name, ChildList, DefinitionKind, PathStep};
 
 /// Simulation step: the preview always advances in whole steps of this many milliseconds.
@@ -97,6 +102,10 @@ const CONTACT_SHEET_GAP_COLOR: image::Rgba<u8> = image::Rgba([40, 40, 48, 255]);
 pub const DEFAULT_EXPORT_FRAMES: usize = 12;
 pub const MAX_EXPORT_FRAMES: usize = 240;
 
+/// `PropertyFlagEffect::property` that keys the cases by the object hue (`UOObject::GetHue`, vtable +0x58;
+/// `uosa_effects.md`, "12 PropertyFlag").
+const PROPERTY_FLAG_OBJECT_HUE: u32 = 7;
+
 /// The loop flag the preview gives the particles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LoopMode {
@@ -133,6 +142,8 @@ pub struct SimulationSettings {
     /// UI particle LOD setting (1..3) for LOD definitions.
     pub lod_level: u32,
     pub timeline_s: f32,
+    /// Play the attach mode 2 particles of tileart effects, which the client does not play on the world object.
+    pub play_projectile_only: bool,
 }
 
 impl Default for SimulationSettings {
@@ -145,6 +156,7 @@ impl Default for SimulationSettings {
             move_speed: 0.0,
             lod_level: DEFAULT_LOD_LEVEL,
             timeline_s: DEFAULT_TIMELINE_S,
+            play_projectile_only: false,
         }
     }
 }
@@ -245,6 +257,9 @@ pub enum PartStatus {
     ScriptRejected { name: String, errors: Vec<String> },
     /// A sound, earthquake or position offset: nothing to draw.
     NotVisual,
+    /// A tileart particle with attach mode 2: `UOObject::CreateComponents` does not play it on the world object
+    /// (`uosa_effects.md`, "Particle attach mode"); it plays only in flight (projectiles).
+    ProjectileOnly { name: String },
 }
 
 impl PartStatus {
@@ -273,6 +288,9 @@ impl PartStatus {
             Self::MissingFile { name } => format!("{name}: not in EffectTexture.uop"),
             Self::ScriptRejected { name, errors } => format!("{name}: rejected by the client ({})", errors.join("; ")),
             Self::NotVisual => "not drawn".to_string(),
+            Self::ProjectileOnly { name } => {
+                format!("{name}: attach mode 2, not played by the client on the tileart object (only in flight)")
+            }
         }
     }
 }
@@ -311,6 +329,8 @@ struct PreparedPart {
     system: PreparedSystem,
     /// Textures embedded in a NIF file, by lowercase render name (the names repeat across files).
     embedded: HashMap<String, RasterTexture>,
+    /// The package textures the part's NIF file mipmaps (`NiSourceTexture` prefs `YES`), lowercase.
+    mipmapped: HashSet<String>,
 }
 
 /// What a play of a definition list draws: the reached parts, the choices made and the prepared systems with
@@ -322,7 +342,8 @@ pub struct PreviewScene {
     /// Textures that are missing or do not decode.
     pub texture_problems: Vec<String>,
     prepared: Vec<PreparedPart>,
-    textures: HashMap<String, RasterTexture>,
+    /// Package textures with the client's mip levels, by lowercase name and whether they are mipmapped.
+    textures: HashMap<(String, bool), RasterTexture>,
 }
 
 /// File access of the scene builder.
@@ -338,6 +359,19 @@ impl PreviewScene {
     /// Resolves a definition list the way one play does and prepares its particles.
     pub fn build(definitions: &[EffectDefinition], settings: &SimulationSettings, input: &PreviewInput<'_>) -> Self {
         let mut builder = SceneBuilder::new(settings, input);
+        builder.list(definitions, &[], ChildList::Top);
+        builder.scene
+    }
+
+    /// The effects of a tileart record played on its world object (`UOObject::CreateComponents`): as
+    /// [`Self::build`], but attach mode 2 particles do not play unless `play_projectile_only` is set.
+    pub fn build_tileart(
+        definitions: &[EffectDefinition],
+        settings: &SimulationSettings,
+        input: &PreviewInput<'_>,
+    ) -> Self {
+        let mut builder = SceneBuilder::new(settings, input);
+        builder.tileart = true;
         builder.list(definitions, &[], ChildList::Top);
         builder.scene
     }
@@ -363,7 +397,9 @@ impl PreviewScene {
     /// A texture of part `part`: its embedded textures first, then the package's.
     fn texture(&self, part: usize, name: &str) -> Option<&RasterTexture> {
         let key = name.to_ascii_lowercase();
-        self.prepared.get(part).and_then(|part| part.embedded.get(&key)).or_else(|| self.textures.get(&key))
+        let part = self.prepared.get(part)?;
+        let mipmapped = part.mipmapped.contains(&key);
+        part.embedded.get(&key).or_else(|| self.textures.get(&(key, mipmapped)))
     }
 }
 
@@ -374,6 +410,8 @@ struct SceneBuilder<'s, 'a> {
     draw: Mt19937,
     /// One file previewed on its own ([`PreviewScene::build_script`]).
     standalone: bool,
+    /// Tileart effects played on the world object ([`PreviewScene::build_tileart`]).
+    tileart: bool,
     scene: PreviewScene,
 }
 
@@ -384,6 +422,7 @@ impl<'s, 'a> SceneBuilder<'s, 'a> {
             input,
             draw: Mt19937::new(settings.seed),
             standalone: false,
+            tileart: false,
             scene: PreviewScene {
                 parts: Vec::new(),
                 notes: Vec::new(),
@@ -406,6 +445,19 @@ impl<'s, 'a> SceneBuilder<'s, 'a> {
         let kind = DefinitionKind::of(definition);
         let label = path_label(&path);
         match definition {
+            EffectDefinition::Particle(particle)
+                if self.tileart && particle.attach_mode == PARTICLE_ATTACH_PROJECTILE_ONLY =>
+            {
+                if self.settings.play_projectile_only {
+                    self.scene.notes.push(format!("{label} particle: attach mode 2, played although the client does not"));
+                    let status = self.particle(particle);
+                    self.scene.parts.push(PreviewPart { path, kind, status });
+                } else {
+                    let name = particle_name(particle, self.input.strings)
+                        .unwrap_or_else(|| format!("name index {}", particle.name_index));
+                    self.scene.parts.push(PreviewPart { path, kind, status: PartStatus::ProjectileOnly { name } });
+                }
+            }
             EffectDefinition::Particle(particle) => {
                 let status = self.particle(particle);
                 self.scene.parts.push(PreviewPart { path, kind, status });
@@ -443,14 +495,7 @@ impl<'s, 'a> SceneBuilder<'s, 'a> {
                     None => self.scene.notes.push(format!("{label} LOD: no level <= {setting}, plays nothing")),
                 }
             }
-            EffectDefinition::PropertyFlag(effect) => {
-                if effect.mode == PropertyFlagMode::Property {
-                    self.scene.notes.push(format!("{label} property flag: default children (no object here)"));
-                    self.list(&effect.default_children, &path, ChildList::Default);
-                } else {
-                    self.scene.notes.push(format!("{label} property flag (flag mask): no object flags, plays nothing"));
-                }
-            }
+            EffectDefinition::PropertyFlag(effect) => self.property_flag(effect, &label, &path),
             EffectDefinition::Random(effect) => {
                 let mut draw = self.draw.rand01() * RANDOM_WEIGHT_TOTAL;
                 let rolled = draw;
@@ -489,16 +534,55 @@ impl<'s, 'a> SceneBuilder<'s, 'a> {
             let errors = report.errors().map(ToString::to_string).collect();
             return PartStatus::ScriptRejected { name, errors };
         };
+        // MESH sequences name `.nif` scenes; the other resources are textures, not mipmapped (`MIP_DEFAULT`
+        // prefs, `NiTexture::ms_bMipmapByDefault` left false).
         for resource in desc.resources() {
-            self.load_texture(resource);
+            let is_texture = desc
+                .sequences
+                .iter()
+                .any(|sequence| sequence.resource == resource && sequence.particle_type != ChaosParticleType::Mesh);
+            if is_texture {
+                self.load_texture(resource, false);
+            }
         }
         let sequences = desc.sequences.len();
         let seed = self.part_seed();
         let system = Arc::new(ChaosSystem::prepare(desc, &mut Mt19937::new(seed)));
         let params = self.params(particle, None);
         let system = PreparedSystem::Chaos(system);
-        self.scene.prepared.push(PreparedPart { params, hued: false, seed, system, embedded: HashMap::new() });
+        let (embedded, mipmapped) = (HashMap::new(), HashSet::new());
+        self.scene.prepared.push(PreparedPart { params, hued: false, seed, system, embedded, mipmapped });
         PartStatus::Chaos { name, sequences, hue: hue_mode(true, particle.hued, self.settings.hue) }
+    }
+
+    /// A property flag definition (`uosa_effects.md`, "12 PropertyFlag"): with property 7 the key is the object
+    /// hue (the preview hue), and the matching case plays, else the default children. Other properties and the
+    /// flag mask mode read object values the preview has no counterpart for.
+    fn property_flag(&mut self, effect: &PropertyFlagEffect, label: &str, path: &[PathStep]) {
+        if effect.mode == PropertyFlagMode::FlagMask {
+            self.scene.notes.push(format!("{label} property flag (flag mask): no object flags, plays nothing"));
+            return;
+        }
+        if effect.property != PROPERTY_FLAG_OBJECT_HUE {
+            let property = effect.property;
+            self.scene.notes.push(format!("{label} property flag (property {property}): not modelled, default children"));
+            self.list(&effect.default_children, path, ChildList::Default);
+            return;
+        }
+        let hue = self.settings.hue;
+        match effect.cases.iter().position(|case| case.key == hue) {
+            Some(index) => {
+                self.scene.notes.push(format!("{label} property flag (hue): case {hue} for object hue {hue}"));
+                self.list(&effect.cases[index].children, path, ChildList::Case(index));
+            }
+            None => {
+                let children = effect.default_children.len();
+                self.scene.notes.push(format!(
+                    "{label} property flag (hue): no case for object hue {hue}, {children} default child(ren)"
+                ));
+                self.list(&effect.default_children, path, ChildList::Default);
+            }
+        }
     }
 
     /// A NIF effect: the draft of the file, else its payload parsed.
@@ -516,12 +600,19 @@ impl<'s, 'a> SceneBuilder<'s, 'a> {
         };
         let output = particle_sim::nif::compile(&nif, &name);
         let desc = output.desc;
-        let mut embedded = HashMap::new();
+        let (mut embedded, mut mipmapped) = (HashMap::new(), HashSet::new());
         for texture in &desc.textures {
             match &texture.source {
-                NifTextureSource::External { file_name } => self.load_texture(file_name),
+                NifTextureSource::External { file_name } => {
+                    self.load_texture(file_name, texture.mipmapped);
+                    if texture.mipmapped {
+                        mipmapped.insert(file_name.to_ascii_lowercase());
+                    }
+                }
+                // Level 0 of the embedded pixels; a mipmapped one gets the generated chain.
                 NifTextureSource::Embedded { width, height, rgba } => {
-                    match RasterTexture::from_rgba8(*width as usize, *height as usize, rgba) {
+                    let (levels, _) = client_mip_levels(*width, *height, vec![rgba.clone()], texture.mipmapped, true);
+                    match RasterTexture::from_rgba8_levels(*width as usize, *height as usize, &levels) {
                         Some(raster) => {
                             embedded.insert(texture.name().to_ascii_lowercase(), raster);
                         }
@@ -540,7 +631,8 @@ impl<'s, 'a> SceneBuilder<'s, 'a> {
         let seed = self.part_seed();
         let system = PreparedSystem::Nif(Arc::new(NifEffect::prepare(desc)));
         let hue = hue_mode(false, particle.hued, self.settings.hue);
-        self.scene.prepared.push(PreparedPart { params, hued: hue == HueMode::Hued, seed, system, embedded });
+        let hued = hue == HueMode::Hued;
+        self.scene.prepared.push(PreparedPart { params, hued, seed, system, embedded, mipmapped });
         PartStatus::Nif { name, particle_systems, meshes, warnings: output.warnings, hue }
     }
 
@@ -567,17 +659,19 @@ impl<'s, 'a> SceneBuilder<'s, 'a> {
         params
     }
 
-    fn load_texture(&mut self, name: &str) {
-        let key = name.to_ascii_lowercase();
+    /// Loads a package texture with the client's mip levels: its stored levels, or a chain generated from one
+    /// level when `mipmapped` (the packer's rules, [`particle_sim::mips`]).
+    fn load_texture(&mut self, name: &str, mipmapped: bool) {
+        let key = (name.to_ascii_lowercase(), mipmapped);
         if self.scene.textures.contains_key(&key) {
             return;
         }
         // A `.nif` texture is a NIF image (one `NiPixelData`), which the client's image converter reads too.
-        let decode = if is_nif_name(&key) { decode_nif_image } else { decode_texture };
-        match (self.input.payload)(name).map(|payload| decode(&payload)) {
-            Some(Ok(image)) => {
-                let (width, height) = image.dimensions();
-                if let Some(texture) = RasterTexture::from_rgba8(width as usize, height as usize, image.as_raw()) {
+        match (self.input.payload)(name).map(|payload| decode_texture_levels(name, &payload)) {
+            Some(Ok(decoded)) => {
+                let (width, height) = (decoded.width, decoded.height);
+                let (levels, _) = client_mip_levels(width, height, decoded.levels, mipmapped, decoded.generatable);
+                if let Some(texture) = RasterTexture::from_rgba8_levels(width as usize, height as usize, &levels) {
                     self.scene.textures.insert(key, texture);
                 }
             }
@@ -868,6 +962,8 @@ pub fn render_canvas(
         meshes: settings.show_meshes,
         mesh_markers: Some(MESH_COLOR),
         depth_clip: None,
+        // The client's depth buffer and texture filtering.
+        ..SceneDrawOptions::default()
     };
     for (part, frame) in simulation.render_parts() {
         let texture = |name: &str| scene.texture(part, name);
@@ -975,6 +1071,7 @@ pub fn write_png_sequence(frames: &[RgbaImage], dir: &Path, stem: &str) -> Resul
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::logic::effect_files::is_nif_name;
     use crate::logic::nif_editor::tests::{test_nif_bytes, TEST_MESH_HALF_SIZE};
     use uocf::enhanced::effect_definition::{
         EffectMapEntry, LodEffect, RandomEffect, RandomEffectEntry, RoundRobinEffect, SoundEffect,
@@ -1106,11 +1203,55 @@ pub(crate) mod tests {
         }
         let view = preview_view(bounds, &view_settings, PREVIEW_RESOLUTION_PX, PREVIEW_RESOLUTION_PX);
         let side = uocf::enhanced::hues::HUES_ATLAS_WIDTH as usize;
-        let atlas = RasterTexture { width: side, height: side, texels: vec![TEST_HUE_COLOR; side * side] };
+        let atlas = RasterTexture::from_texels(side, side, vec![TEST_HUE_COLOR; side * side]).expect("atlas size");
         let hued_canvas = render_canvas(&only_hued, &simulation, &view, &view_settings, Some(&atlas));
         assert!(hued_canvas.pixels.contains(&TEST_HUE_COLOR));
         let unhued_canvas = render_canvas(&only_hued, &simulation, &view, &view_settings, None);
         assert!(!unhued_canvas.pixels.contains(&TEST_HUE_COLOR), "without the atlas the part is drawn plain");
+    }
+
+    /// A property flag keyed by the hue plays the case of the preview hue, else its default children.
+    #[test]
+    fn property_flags_pick_the_case_of_the_object_hue() {
+        let sound = EffectDefinition::Sound(SoundEffect { sound_id: 1, value_08: 1.0 });
+        let flag = EffectDefinition::PropertyFlag(PropertyFlagEffect {
+            mode: PropertyFlagMode::Property,
+            mask: 0,
+            property: PROPERTY_FLAG_OBJECT_HUE,
+            default_children: vec![sound],
+            cases: vec![
+                EffectMapEntry { key: NO_HUE, children: vec![particle(SCRIPT_INDEX)] },
+                EffectMapEntry { key: TEST_HUE, children: vec![particle(NIF_INDEX)] },
+            ],
+        });
+        let played = |hue: u32| {
+            let scene = scene(std::slice::from_ref(&flag), &SimulationSettings { hue, ..Default::default() });
+            let part = &scene.parts[0];
+            (part.path.last().unwrap().list, part.status.plays())
+        };
+        assert_eq!(played(NO_HUE), (ChildList::Case(0), true));
+        assert_eq!(played(TEST_HUE), (ChildList::Case(1), true));
+        assert_eq!(played(TEST_HUE + 1), (ChildList::Default, false));
+    }
+
+    /// Tileart particles with attach mode 2 do not play on the world object unless the preview asks for them.
+    #[test]
+    fn tileart_projectile_particles_play_only_on_request() {
+        let mut thrown = particle(SCRIPT_INDEX);
+        if let EffectDefinition::Particle(particle) = &mut thrown {
+            particle.attach_mode = PARTICLE_ATTACH_PROJECTILE_ONLY;
+        }
+        let strings = dictionary();
+        let input = PreviewInput { strings: Some(&strings), payload: &files, nif_drafts: None };
+        let tileart = |settings: &SimulationSettings| {
+            PreviewScene::build_tileart(std::slice::from_ref(&thrown), settings, &input)
+        };
+        let skipped = tileart(&SimulationSettings::default());
+        assert!(matches!(&skipped.parts[0].status, PartStatus::ProjectileOnly { name } if name == SCRIPT_NAME));
+        assert!(!skipped.has_playing_parts());
+        let forced = tileart(&SimulationSettings { play_projectile_only: true, ..Default::default() });
+        assert!(forced.parts[0].status.plays());
+        assert!(scene(std::slice::from_ref(&thrown), &SimulationSettings::default()).parts[0].status.plays());
     }
 
     /// A Chaos script and a NIF mesh play together; the toggles hide particles or meshes, the orbit turns the

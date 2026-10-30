@@ -23,8 +23,8 @@
 
 use crate::render::{AlphaTest, BlendFactor, BlendState, MeshGeometry};
 
-/// Version of the [`NifEffectDesc`] layout.
-pub const NIF_DESC_VERSION: u32 = 2;
+/// Version of the [`NifEffectDesc`] layout (3: path interpolator bank and smoothing, texture mipmap flag).
+pub const NIF_DESC_VERSION: u32 = 3;
 
 /// Name of an embedded texture: this prefix and the index of the texture in [`NifEffectDesc::textures`].
 pub const EMBEDDED_TEXTURE_PREFIX: &str = "#embedded:";
@@ -421,6 +421,73 @@ pub struct TextureAddressing {
     pub wrap_t: bool,
 }
 
+/// One D3D9 texel filter (`D3DTEXF_POINT` / `D3DTEXF_LINEAR`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TexelFilter {
+    /// The nearest texel.
+    Point,
+    /// Bilinear: the four nearest texels.
+    Linear,
+}
+
+/// The D3D9 mip filter (`D3DSAMP_MIPFILTER`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MipFilter {
+    /// Level 0 only.
+    None,
+    /// The nearest level.
+    Point,
+    /// A blend of the two nearest levels.
+    Linear,
+}
+
+/// The sampler filters of a texture map: magnification, minification and mip filter, as Gamebryo's DX9 renderer
+/// sets them from `NiTexturingProperty::FilterMode` (`NiDX9Renderer.cpp:2003-2070`). The renderer switches the
+/// mip filter off for a texture with one level (`NiD3DTextureStage::ModifyFilterMode` with the level count of
+/// `NiDX9TextureManager::PrepareTextureForRendering`), so a single-level texture samples level 0 whatever the
+/// mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TextureFilter {
+    pub mag: TexelFilter,
+    pub min: TexelFilter,
+    pub mip: MipFilter,
+}
+
+/// `FilterMode::FILTER_NEAREST`.
+pub const FILTER_NEAREST: u32 = 0;
+/// `FilterMode::FILTER_BILERP`.
+pub const FILTER_BILERP: u32 = 1;
+/// `FilterMode::FILTER_TRILERP`.
+pub const FILTER_TRILERP: u32 = 2;
+/// `FilterMode::FILTER_NEAREST_MIPNEAREST`.
+pub const FILTER_NEAREST_MIPNEAREST: u32 = 3;
+/// `FilterMode::FILTER_NEAREST_MIPLERP`.
+pub const FILTER_NEAREST_MIPLERP: u32 = 4;
+/// `FilterMode::FILTER_BILERP_MIPNEAREST`.
+pub const FILTER_BILERP_MIPNEAREST: u32 = 5;
+/// `FilterMode::FILTER_ANISOTROPIC`.
+pub const FILTER_ANISOTROPIC: u32 = 6;
+
+impl TextureFilter {
+    /// `FILTER_BILERP`: the default of `NiTexturingProperty::Map` (`NiTexturingProperty.cpp:900`).
+    pub const BILERP: Self = Self { mag: TexelFilter::Linear, min: TexelFilter::Linear, mip: MipFilter::None };
+
+    /// The sampler filters of a raw `FilterMode`. Anisotropic filtering is drawn trilinear (its fallback when
+    /// the device has no anisotropy); an unknown mode as the map default, bilinear.
+    pub fn from_raw(mode: u32) -> Self {
+        let (mag, min, mip) = match mode {
+            FILTER_NEAREST => (TexelFilter::Point, TexelFilter::Point, MipFilter::None),
+            FILTER_BILERP => return Self::BILERP,
+            FILTER_TRILERP | FILTER_ANISOTROPIC => (TexelFilter::Linear, TexelFilter::Linear, MipFilter::Linear),
+            FILTER_NEAREST_MIPNEAREST => (TexelFilter::Point, TexelFilter::Point, MipFilter::Point),
+            FILTER_NEAREST_MIPLERP => (TexelFilter::Point, TexelFilter::Point, MipFilter::Linear),
+            FILTER_BILERP_MIPNEAREST => (TexelFilter::Linear, TexelFilter::Linear, MipFilter::Point),
+            _ => return Self::BILERP,
+        };
+        Self { mag, min, mip }
+    }
+}
+
 /// `NiTextureTransform::TransformMethod`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TextureTransformMethod {
@@ -495,6 +562,9 @@ pub struct NifTexture {
     /// Index of the texture in [`NifEffectDesc::textures`].
     pub index: usize,
     pub source: NifTextureSource,
+    /// The renderer mipmaps the texture: `FormatPrefs::m_eMipMapped` is `YES`. `MIP_DEFAULT` is not mipmapped:
+    /// UOSA.exe never sets `NiTexture::ms_bMipmapByDefault` (0x00e31ea3, false). See [`crate::mips`].
+    pub mipmapped: bool,
 }
 
 impl NifTexture {
@@ -789,14 +859,27 @@ pub struct TransformInterp {
     pub scale: Option<Curve<f32>>,
 }
 
-/// `NiPathInterpolator`: a position along a path curve, by a percentage curve.
-#[derive(Debug, Clone, Default, PartialEq)]
+/// `NiPathInterpolator`: a position along a path curve, by a percentage curve, and with the follow flag a
+/// rotation that turns the node along the path. Built by [`PathInterp::new`], which derives the arc lengths
+/// and the maximum curvature the client computes when it links the interpolator.
+#[derive(Debug, Clone, PartialEq)]
 pub struct PathInterp {
     pub path: Option<Curve<[f32; 3]>>,
     pub percent: Option<Curve<f32>>,
     /// `NiPathInterpolator` flags (follow, bank, constant velocity, ...).
     pub flags: u16,
     pub follow_axis: i16,
+    /// `NiPathInterpolator::BankDir`: -1 (negative) or 1 (positive).
+    pub bank_dir: i32,
+    /// Bank angle at the maximum curvature, radians.
+    pub max_bank_angle: f32,
+    /// Fraction of a segment, at each end, over which the follow frame blends the neighbour's normal
+    /// (used with the allow-flip flag).
+    pub smoothing: f32,
+    /// Derived: arc length from the first path key to each key (`m_pfPartialLength`, `GetTotalPathLength`).
+    pub(crate) partial_lengths: Vec<f32>,
+    /// Derived: the path's maximum pseudo-curvature (`m_fMaxCurvature`, the key type's curvature function).
+    pub(crate) max_curvature: f32,
 }
 
 /// An interpolator of a single-interpolator controller.

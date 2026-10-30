@@ -425,9 +425,13 @@ fn nif_desc() -> NifEffectDesc {
         ],
     }];
     let textures = vec![
-        NifTexture { index: 0, source: NifTextureSource::External { file_name: "flare.tga".to_owned() } },
-        NifTexture { index: 1, source: NifTextureSource::Embedded { width: 2, height: 1, rgba: (0..8).collect() } },
-        NifTexture { index: 2, source: NifTextureSource::Undecoded { format: 4 } },
+        NifTexture { index: 0, source: NifTextureSource::External { file_name: "flare.tga".to_owned() }, mipmapped: true },
+        NifTexture {
+            index: 1,
+            source: NifTextureSource::Embedded { width: 2, height: 1, rgba: (0..8).collect() },
+            mipmapped: false,
+        },
+        NifTexture { index: 2, source: NifTextureSource::Undecoded { format: 4 }, mipmapped: true },
     ];
     let transform = TransformInterp {
         translation_pose: Some([1.0, 2.0, 3.0]),
@@ -446,12 +450,15 @@ fn nif_desc() -> NifEffectDesc {
         }),
         ..TransformInterp::default()
     };
-    let path = PathInterp {
-        path: Some(curve(KeyKind::Bezier, [[0.0; 3], [1.0; 3]], [0.25; 3])),
-        percent: Some(curve(KeyKind::Linear, [0.0, 1.0], 0.0)),
-        flags: 0x13,
-        follow_axis: -1,
-    };
+    let path = PathInterp::new(
+        Some(curve(KeyKind::Bezier, [[0.0; 3], [1.0; 3]], [0.25; 3])),
+        Some(curve(KeyKind::Linear, [0.0, 1.0], 0.0)),
+        0x13,
+        -1,
+        -1,
+        0.5,
+        0.02,
+    );
     let controllers = vec![
         controller(ControllerTarget::Node(1), NifControllerKind::Transform(NifInterpolator::Transform(transform))),
         controller(ControllerTarget::Node(1), NifControllerKind::Transform(NifInterpolator::Transform(euler))),

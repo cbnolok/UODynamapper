@@ -87,7 +87,8 @@ const HUE_NOTE: &str = "The hue of the object the effect plays on. Only NIF part
     take it (UOHuedParticleEffectNif: half speed, drawn offscreen through the Hues.uop atlas onto a camera-facing \
     quad); Chaos particles never do. Collection entries played by 0xC7 have no object and are never hued; the item \
     of a packet's tile effect or projectile takes the packet hue + 1, which reaches the hued particles of its \
-    tileart effects. Animation frame effects take the animated object's hue.";
+    tileart effects. Animation frame effects take the animated object's hue. PropertyFlag definitions keyed by \
+    the hue (property 7) play the case for this hue, else their default children.";
 
 const UOP_FILTER: (&str, &[&str]) = ("UOP package", &["uop"]);
 const KDL_FILTER: (&str, &[&str]) = ("KDL text", &["kdl"]);
@@ -1702,13 +1703,13 @@ fn definition_fields(
             field(ui, "Name index", "Client string dictionary index of the file name.", "name_index", &mut |ui| {
                 ui.add(egui::DragValue::new(&mut particle.name_index).speed(VALUE_DRAG_SPEED)).changed()
             });
-            field(ui, "Offset x", "Added to the effect x (probable).", "offset_x", &mut |ui| {
+            field(ui, "Offset x", "Tiles east: added to the world x of the effect (confirmed; Nif Init 0x0041aa6a, Chaos Init 0x0041b119).", "offset_x", &mut |ui| {
                 ui.add(egui::DragValue::new(&mut particle.offset_x).speed(FLOAT_DRAG_SPEED)).changed()
             });
-            field(ui, "Offset y", "Subtracted from the effect z: a vertical offset (probable).", "offset_y", &mut |ui| {
+            field(ui, "Offset y", "Tiles south: subtracted from the world z of the effect (confirmed; Nif Init 0x0041aa6a, Chaos Init 0x0041b119).", "offset_y", &mut |ui| {
                 ui.add(egui::DragValue::new(&mut particle.offset_y).speed(FLOAT_DRAG_SPEED)).changed()
             });
-            field(ui, "Camera offset", "Moves the effect along the camera vector by -camera_offset * 0.12856 (probable).", "camera_offset", &mut |ui| {
+            field(ui, "Camera offset", "Moves the effect along the camera down vector by -camera_offset * 0.12856: a positive value moves it up on screen (confirmed; Nif Init 0x0041aa6a, Chaos Init 0x0041b119).", "camera_offset", &mut |ui| {
                 ui.add(egui::DragValue::new(&mut particle.camera_offset).speed(FLOAT_DRAG_SPEED)).changed()
             });
             field(ui, "Scale", "Scene node scale (confirmed); the client uses its absolute value.", "scale", &mut |ui| {
@@ -2376,7 +2377,7 @@ fn refresh_preview(state: &mut EffectsPanelState, lookups: &Lookups) {
             } else {
                 definition_at(all, path).cloned().into_iter().collect()
             };
-            (format!("Tile 0x{tile_id:04X}"), PreviewScene::build(&definitions, &settings, &input))
+            (format!("Tile 0x{tile_id:04X}"), PreviewScene::build_tileart(&definitions, &settings, &input))
         }
         PreviewTarget::Script(hash) => {
             let name = lookups.files.as_ref().and_then(|files| files.name(state.document.files(), *hash)).unwrap_or_default();
@@ -2542,6 +2543,12 @@ fn preview_panel(app: &mut UopInspectorApp, lookups: &Lookups, ctx: &egui::Conte
         ui.end_row();
         ui.label("Hue").on_hover_text(HUE_NOTE);
         hue_control(ui, preview, hue_atlas.as_deref(), hue_names.as_deref());
+        ui.end_row();
+        ui.label("Tileart").on_hover_text(
+            "Tileart particles with attach mode 2 (thrown models): UOObject::CreateComponents does not play them on \
+             the world object; they play only in flight.",
+        );
+        ui.checkbox(&mut preview.settings.play_projectile_only, "play attach mode 2 particles anyway");
         ui.end_row();
         ui.label("Background");
         ui.color_edit_button_rgba_unmultiplied(&mut preview.view.background);

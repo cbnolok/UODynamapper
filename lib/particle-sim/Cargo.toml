@@ -16,30 +16,33 @@ nonminimal_bool = "allow"
 too_many_arguments = "allow"
 
 [features]
-default = ["uocf", "nif"]
+default = ["uocf", "nif", "dds"]
 # Compiles uocf Chaos script syntax trees into `ChaosSystemDesc`. Runtime-only users (a renderer that loads
 # compiled descriptions from its own package) disable default features and do not pull uocf in.
 uocf = ["dep:uocf"]
 # Compiles gamebryo-nif's parsed NIF files into `NifEffectDesc`. The NIF runtime itself needs no dependency.
 nif = ["dep:gamebryo-nif"]
+# Decodes a DDS file's stored levels (`mips::decode_dds_levels`) for the packer and the previews.
+dds = ["dep:dds"]
 
 [dependencies]
 uocf = { path = "../uocf", optional = true }
 gamebryo-nif = { path = "../gamebryo-nif", optional = true }
+dds = { version = "0.2", default-features = false, optional = true }
 
 [dev-dependencies]
 # The ignored real-file test and the preview example read EffectTexture.uop through uocf.
 uocf = { path = "../uocf" }
 image = { workspace = true, features = ["png", "tga"] }
-dds = { version = "0.2", default-features = false }
 
 [[example]]
 name = "chaos_preview"
-required-features = ["uocf"]
+# `nif`, `dds`: its texture loader reads `.nif` images and DDS levels (`examples/common/textures.rs`).
+required-features = ["uocf", "nif", "dds"]
 
 [[example]]
 name = "nif_preview"
-required-features = ["uocf", "nif"]
+required-features = ["uocf", "nif", "dds"]
 
 [[test]]
 name = "real_files"

@@ -6,8 +6,10 @@
 //!   [`expand_sprite`]), or
 //! - calls [`expand_frame`] to get 4 [`QuadVertex`]es per sprite (draw them with [`QUAD_INDICES`]).
 //!
-//! Positions are in the client's world space (Z is up, probable). Batches are drawn in order, and sprites
-//! within a batch in order (the client sorts nothing: oldest particle first, one batch per sequence).
+//! Positions are in the effect's space. The client turns every effect node to its camera, so there X is camera
+//! right, Y the view direction and Z camera up (confirmed: the effect rotation of `g_UOWorldViewer` 0x00e37224;
+//! `uosa_effects.md`, "Effect camera and lighting"). Batches are drawn in order, and sprites within a batch in
+//! order (the client sorts nothing: oldest particle first, one batch per sequence).
 //!
 //! Quad layout (Chaos `ParticleTriShape::BuildVertices` 0x008c4c30): vertex k has base UV (0,1), (0,0), (1,0),
 //! (1,1), mapped into the sprite's [`UvRect`]; triangles are (0, 2, 1) and (0, 2, 3). Colour is per sprite
@@ -25,7 +27,7 @@ use std::sync::Arc;
 use crate::math::{Mat3, Vec3};
 use crate::nif::desc::{
     CompareFunction, CullMode, LightAttenuation, LightingMode, NifVertexColor, TextureAddressing, TextureApplyMode,
-    TextureSlot, VertexColorSource,
+    TextureFilter, TextureSlot, VertexColorSource,
 };
 
 /// Half extent of a quad relative to the particle size (UOSA.exe constant 0.5 at 0x00c95604).
@@ -316,6 +318,8 @@ pub struct TextureStage {
     pub uv_set: u32,
     pub uv_transform: UvTransform,
     pub addressing: TextureAddressing,
+    /// The map's sampler filters (`NiTexturingProperty::FilterMode`).
+    pub filter: TextureFilter,
 }
 
 /// The lights an effect is lit by. Diffuse light is applied without direction (as if facing every surface). The
@@ -679,7 +683,8 @@ pub struct QuadVertex {
 /// - Billboard: `v0 = p - R·h - U·h`, `v1 = p - R·h + U·h`, `v2 = p + R·h + U·h`, `v3 = p + R·h - U·h` with
 ///   `h = size / 2`.
 /// - Rotated billboard: the same with R and U turned by `rotation` about the view direction (the client builds
-///   `MakeRotation(-rotation, D) × camera_rotation`; the sign is probable).
+///   `MakeRotation(-rotation, D) × camera_rotation`; `NiMatrix3::MakeRotation` turns clockwise
+///   (`NiMatrix3.cpp:113-138`), so R and U turn counterclockwise by `rotation` about D: confirmed).
 /// - Axial: `S = h · cross(view, direction)` with `view = normalize(camera - p)` (not normalized again, so the
 ///   quad narrows when seen along the motion), `front = p + direction · length`;
 ///   `v0 = front - S`, `v1 = front + S`, `v2 = p + S`, `v3 = p - S`.
@@ -836,6 +841,7 @@ mod tests {
             uv_set,
             uv_transform: UvTransform::IDENTITY,
             addressing: TextureAddressing { wrap_s: true, wrap_t: true },
+            filter: TextureFilter::BILERP,
         };
         let draw = MeshDraw {
             order: 0,

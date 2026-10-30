@@ -1,18 +1,21 @@
 //! A small software rasterizer for previews: draws a [`RenderFrame`] into a float RGBA canvas with an
-//! orthographic camera, bilinear textures and the client's blend factors (D3D blend math).
+//! orthographic camera and the client's D3D9 state: per-axis wrap or clamp addressing, each map's filter mode
+//! over the texture's mip levels ([`TextureFilter`], [`crate::mips`]), the depth test and write of each draw
+//! (`NiDX9RenderState::ApplyZBuffer`), alpha test and the blend factors (D3D blend math).
 //!
-//! It is a preview tool, not the client's renderer: no depth buffer (draws follow the scene order, sprites the
-//! frame order, as the client does with depth writes off), no mip-mapping, unlit-by-direction meshes (see
-//! [`SceneLighting`]), and Chaos MESH particles (their `.nif` scenes are not drawn) are square outlines of their
-//! size.
+//! It is a preview tool, not the client's renderer: draws follow the scene order (sprites the frame order),
+//! meshes are unlit by direction (see [`SceneLighting`]), and Chaos MESH particles (their `.nif` scenes are not
+//! drawn) are square outlines of their size.
 
 use std::sync::Arc;
 
 use crate::math::Vec3;
-use crate::nif::desc::{CullMode, TextureAddressing, TextureApplyMode, TextureSlot};
+use crate::nif::desc::{
+    CompareFunction, CullMode, MipFilter, TexelFilter, TextureAddressing, TextureApplyMode, TextureFilter, TextureSlot,
+};
 use crate::render::{
-    AlphaTest, BlendFactor, BlendState, CameraFrame, QUAD_INDICES, QuadVertex, RenderFrame, SceneLighting,
-    TRIANGLE_VERTICES, combine_textures, expand_mesh_draw, expand_mesh_stage_uvs, expand_sprite,
+    AlphaTest, BlendFactor, BlendState, CameraFrame, DepthState, QUAD_INDICES, QuadVertex, RenderFrame,
+    SceneLighting, TRIANGLE_VERTICES, combine_textures, expand_mesh_draw, expand_mesh_stage_uvs, expand_sprite,
 };
 
 /// Texel centres are at half-texel offsets (bilinear filtering).
@@ -30,61 +33,189 @@ const MESH_MARKER_MIN_HALF_PX: f32 = 2.0;
 pub const OVERLAY_BLEND: BlendState = BlendState { src: BlendFactor::SrcAlpha, dst: BlendFactor::InvSrcAlpha };
 /// Blending off: the source replaces the destination (opaque mesh draws).
 pub const OPAQUE_BLEND: BlendState = BlendState { src: BlendFactor::One, dst: BlendFactor::Zero };
-/// Sprite textures of batches without a [`crate::render::BatchState`] (Chaos scripts) repeat.
+/// Sprite textures of batches without a [`crate::render::BatchState`] (Chaos scripts) repeat: the address mode of
+/// the Chaos base map was not traced; Gamebryo's default is `WRAP_S_WRAP_T` (probable, `uosa_chaos.md`, "Render state of
+/// quads").
 const SPRITE_ADDRESSING: TextureAddressing = TextureAddressing { wrap_s: true, wrap_t: true };
+/// Sprite textures of batches without a [`crate::render::BatchState`] (Chaos scripts) filter as the
+/// `NiTexturingProperty::Map` default, bilinear (probable: the filtering of the Chaos quads was not traced,
+/// `uosa_chaos.md`, "Open questions").
+const SPRITE_FILTER: TextureFilter = TextureFilter::BILERP;
+/// Depth comparison of batches without a [`crate::render::BatchState`] (Chaos scripts): `NiZBufferProperty` 0xd,
+/// LESSEQUAL (`uosa_chaos.md`, "Render state of quads").
+const SPRITE_DEPTH_FUNCTION: CompareFunction = CompareFunction::LessEqual;
+/// The cleared depth buffer: farther than anything (D3D clears to the far plane).
+const DEPTH_CLEAR: f32 = f32::INFINITY;
 
-/// A decoded texture, RGBA in [0, 1].
+/// Addressing on both axes: wrap (`D3DTADDRESS_WRAP`).
+const WRAP_ADDRESSING: TextureAddressing = TextureAddressing { wrap_s: true, wrap_t: true };
+/// Addressing on both axes: clamp (`D3DTADDRESS_CLAMP`).
+const CLAMP_ADDRESSING: TextureAddressing = TextureAddressing { wrap_s: false, wrap_t: false };
+
+/// One mip level below level 0 of a [`RasterTexture`], RGBA in [0, 1].
 #[derive(Debug, Clone, PartialEq)]
-pub struct RasterTexture {
+pub struct RasterLevel {
     pub width: usize,
     pub height: usize,
     pub texels: Vec<[f32; 4]>,
 }
 
+/// A decoded texture, RGBA in [0, 1]: level 0, and the levels below it when the texture has mip levels.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RasterTexture {
+    pub width: usize,
+    pub height: usize,
+    pub texels: Vec<[f32; 4]>,
+    /// Levels 1 and below, each half the size of the one above (at least 1); empty for one level. The client
+    /// samples a single-level texture with the mip filter off.
+    pub mips: Vec<RasterLevel>,
+}
+
+/// 8-bit RGBA to texels; `None` when the length does not match.
+fn texels_of_rgba8(width: usize, height: usize, rgba: &[u8]) -> Option<Vec<[f32; 4]>> {
+    if rgba.len() != width * height * crate::mips::RGBA8_BYTES_PER_PIXEL {
+        return None;
+    }
+    let texels = rgba
+        .chunks_exact(crate::mips::RGBA8_BYTES_PER_PIXEL)
+        .map(|pixel| std::array::from_fn(|k| f32::from(pixel[k]) / U8_MAX))
+        .collect();
+    Some(texels)
+}
+
+/// The texel index of a texel coordinate on an axis of `size` texels: wrapped, or clamped to the edge texel
+/// (`D3DTADDRESS_CLAMP` repeats the edge colour outside [0, 1]).
+fn address(index: f32, size: usize, wrap: bool) -> usize {
+    let (index, size) = (index as i64, size as i64);
+    (if wrap { index.rem_euclid(size) } else { index.clamp(0, size - 1) }) as usize
+}
+
+/// One level: texel lookup with point or bilinear filtering and per-axis addressing.
+fn sample_level(
+    width: usize,
+    height: usize,
+    texels: &[[f32; 4]],
+    u: f32,
+    v: f32,
+    addressing: TextureAddressing,
+    filter: TexelFilter,
+) -> [f32; 4] {
+    let texel = |x: f32, y: f32| {
+        texels[address(y, height, addressing.wrap_t) * width + address(x, width, addressing.wrap_s)]
+    };
+    let (x, y) = (u * width as f32, v * height as f32);
+    if filter == TexelFilter::Point {
+        return texel(x.floor(), y.floor());
+    }
+    let (x, y) = (x - TEXEL_CENTER_OFFSET, y - TEXEL_CENTER_OFFSET);
+    let (x0, y0) = (x.floor(), y.floor());
+    let (fx, fy) = (x - x0, y - y0);
+    let (a, b, c, d) = (texel(x0, y0), texel(x0 + 1.0, y0), texel(x0, y0 + 1.0), texel(x0 + 1.0, y0 + 1.0));
+    std::array::from_fn(|k| {
+        let top = a[k] + (b[k] - a[k]) * fx;
+        let bottom = c[k] + (d[k] - c[k]) * fx;
+        top + (bottom - top) * fy
+    })
+}
+
 impl RasterTexture {
-    /// A texture from 8-bit RGBA rows; `None` when the sizes do not match or are zero.
-    pub fn from_rgba8(width: usize, height: usize, rgba: &[u8]) -> Option<Self> {
-        if width == 0 || height == 0 || rgba.len() != width * height * 4 {
+    /// A single-level texture of texels; `None` when the sizes do not match or are zero.
+    pub fn from_texels(width: usize, height: usize, texels: Vec<[f32; 4]>) -> Option<Self> {
+        if width == 0 || height == 0 || texels.len() != width * height {
             return None;
         }
-        let texels = rgba
-            .chunks_exact(4)
-            .map(|pixel| std::array::from_fn(|k| f32::from(pixel[k]) / U8_MAX))
-            .collect();
-        Some(Self { width, height, texels })
+        Some(Self { width, height, texels, mips: Vec::new() })
     }
 
-    /// Bilinear sample with wrap addressing (Gamebryo's default, probable for the client).
+    /// A single-level texture from 8-bit RGBA rows; `None` when the sizes do not match or are zero.
+    pub fn from_rgba8(width: usize, height: usize, rgba: &[u8]) -> Option<Self> {
+        Self::from_rgba8_levels(width, height, std::slice::from_ref(&rgba))
+    }
+
+    /// A texture from 8-bit RGBA levels, level 0 first, each level half the size of the one above (at least
+    /// 1); `None` when level 0 does not match its size or the size is zero. Levels after the first one whose
+    /// size does not match are dropped. Use [`crate::mips::client_mip_levels`] for the levels the client has.
+    pub fn from_rgba8_levels(width: usize, height: usize, levels: &[impl AsRef<[u8]>]) -> Option<Self> {
+        if width == 0 || height == 0 {
+            return None;
+        }
+        let mut texture = Self::from_texels(width, height, texels_of_rgba8(width, height, levels.first()?.as_ref())?)?;
+        let (mut level_width, mut level_height) = (width, height);
+        for rgba in &levels[1..] {
+            (level_width, level_height) = ((level_width / 2).max(1), (level_height / 2).max(1));
+            let Some(texels) = texels_of_rgba8(level_width, level_height, rgba.as_ref()) else { break };
+            texture.mips.push(RasterLevel { width: level_width, height: level_height, texels });
+        }
+        Some(texture)
+    }
+
+    /// Mip levels, level 0 included.
+    pub fn level_count(&self) -> usize {
+        1 + self.mips.len()
+    }
+
+    /// Bilinear sample of level 0 with wrap addressing.
     pub fn sample(&self, u: f32, v: f32) -> [f32; 4] {
-        self.sample_addressed(u, v, true)
+        self.sample_addressed(u, v, WRAP_ADDRESSING)
     }
 
-    /// Bilinear sample with clamp addressing: texels outside the texture repeat its edge.
+    /// Bilinear sample of level 0 with clamp addressing: texels outside the texture repeat its edge.
     pub fn sample_clamped(&self, u: f32, v: f32) -> [f32; 4] {
-        self.sample_addressed(u, v, false)
+        self.sample_addressed(u, v, CLAMP_ADDRESSING)
     }
 
-    fn sample_addressed(&self, u: f32, v: f32, wrap: bool) -> [f32; 4] {
-        let x = u * self.width as f32 - TEXEL_CENTER_OFFSET;
-        let y = v * self.height as f32 - TEXEL_CENTER_OFFSET;
-        let (x0, y0) = (x.floor(), y.floor());
-        let (fx, fy) = (x - x0, y - y0);
-        let address = |index: f32, size: usize| {
-            let (index, size) = (index as i64, size as i64);
-            (if wrap { index.rem_euclid(size) } else { index.clamp(0, size - 1) }) as usize
-        };
-        let texel = |dx: f32, dy: f32| {
-            let column = address(x0 + dx, self.width);
-            let row = address(y0 + dy, self.height);
-            self.texels[row * self.width + column]
-        };
-        let (a, b, c, d) = (texel(0.0, 0.0), texel(1.0, 0.0), texel(0.0, 1.0), texel(1.0, 1.0));
-        std::array::from_fn(|k| {
-            let top = a[k] + (b[k] - a[k]) * fx;
-            let bottom = c[k] + (d[k] - c[k]) * fx;
-            top + (bottom - top) * fy
-        })
+    /// Bilinear sample of level 0, each axis wrapped or clamped.
+    pub fn sample_addressed(&self, u: f32, v: f32, addressing: TextureAddressing) -> [f32; 4] {
+        self.sample_level(0, u, v, addressing, TexelFilter::Linear)
     }
+
+    /// One level (clamped to the last), point or bilinear.
+    fn sample_level(&self, level: usize, u: f32, v: f32, addressing: TextureAddressing, filter: TexelFilter) -> [f32; 4] {
+        match level.checked_sub(1).and_then(|index| self.mips.get(index).or(self.mips.last())) {
+            Some(mip) => sample_level(mip.width, mip.height, &mip.texels, u, v, addressing, filter),
+            None => sample_level(self.width, self.height, &self.texels, u, v, addressing, filter),
+        }
+    }
+
+    /// The D3D9 sampler: `lod` is the level of detail, log2 of the texels of level 0 one pixel step covers
+    /// ([`texture_lod`]). At or below 0 the texture is magnified (the mag filter on level 0); above it the min
+    /// filter samples level 0 (mip filter off, or a single level), the nearest level (`floor(lod + 0.5)`), or a
+    /// blend of the two levels around `lod`.
+    pub fn sample_filtered(
+        &self,
+        u: f32,
+        v: f32,
+        lod: f32,
+        addressing: TextureAddressing,
+        filter: TextureFilter,
+    ) -> [f32; 4] {
+        if !(lod > 0.0) {
+            return self.sample_level(0, u, v, addressing, filter.mag);
+        }
+        let mip = if self.mips.is_empty() { MipFilter::None } else { filter.mip };
+        match mip {
+            MipFilter::None => self.sample_level(0, u, v, addressing, filter.min),
+            MipFilter::Point => self.sample_level((lod + 0.5).floor() as usize, u, v, addressing, filter.min),
+            MipFilter::Linear => {
+                let fine = lod.floor();
+                let blend = lod - fine;
+                let fine = fine as usize;
+                let a = self.sample_level(fine, u, v, addressing, filter.min);
+                let b = self.sample_level(fine + 1, u, v, addressing, filter.min);
+                std::array::from_fn(|k| a[k] + (b[k] - a[k]) * blend)
+            }
+        }
+    }
+}
+
+/// The level of detail of a texture of `width` x `height` texels mapped with texture coordinates whose screen
+/// derivatives are `du` = (du/dx, du/dy) and `dv` = (dv/dx, dv/dy): `log2` of the longer of the two pixel steps
+/// in texels (the D3D9 reference rasterizer's scale factor).
+pub fn texture_lod(width: usize, height: usize, du: [f32; 2], dv: [f32; 2]) -> f32 {
+    let (w, h) = (width as f32, height as f32);
+    let step_x = (du[0] * w).hypot(dv[0] * h);
+    let step_y = (du[1] * w).hypot(dv[1] * h);
+    step_x.max(step_y).log2()
 }
 
 /// Yaw of the client view ([`CameraFrame::client_view`]) for [`orbit_axes`].
@@ -220,17 +351,19 @@ fn each_drawn_point(frame: &RenderFrame, mut include: impl FnMut(Vec3, f32)) {
     }
 }
 
-/// A float RGBA canvas with D3D-style blending.
+/// A float RGBA canvas with D3D-style blending and a depth buffer.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Canvas {
     pub width: usize,
     pub height: usize,
     pub pixels: Vec<[f32; 4]>,
+    /// Per pixel, the depth ([`OrthoView::depth`]) of the nearest depth write; [`DEPTH_CLEAR`] where none.
+    depth: Vec<f32>,
 }
 
 impl Canvas {
     pub fn new(width: usize, height: usize, background: [f32; 4]) -> Self {
-        Self { width, height, pixels: vec![background; width * height] }
+        Self { width, height, pixels: vec![background; width * height], depth: vec![DEPTH_CLEAR; width * height] }
     }
 
     /// `out = src * src_factor + dst * dst_factor`, clamped to [0, 1].
@@ -340,8 +473,9 @@ impl Canvas {
 
     /// Draws a frame in scene order: the mesh draws and sprite batches sorted by their scene order (stable, so
     /// batches without a [`crate::render::BatchState`] keep the frame order), each triangle with every texture
-    /// stage sampled and combined ([`combine_textures`]), alpha test, face culling and blending; then the Chaos
-    /// mesh particle outlines. Textures are looked up by name; a missing one samples white.
+    /// stage sampled and combined ([`combine_textures`]), alpha test, face culling, depth test and write against
+    /// the canvas depth buffer, and blending; then the Chaos mesh particle outlines. Textures are looked up by
+    /// name; a missing one samples white.
     ///
     /// The draws of one effect share a scene order: draw several effects with one call each.
     pub fn draw_scene<'t>(
@@ -357,7 +491,7 @@ impl Canvas {
         for (_, triangles) in scene_triangles(frame, &view.camera, options) {
             let samplers: Vec<Option<&RasterTexture>> = triangles.stages.iter().map(|stage| texture(&stage.texture)).collect();
             for first in (0..triangles.vertices.len()).step_by(TRIANGLE_VERTICES) {
-                self.fill_scene_triangle(view, first, &triangles, &samplers, options.depth_clip);
+                self.fill_scene_triangle(view, first, &triangles, &samplers, options);
             }
         }
         if let (true, Some(color)) = (options.sprites, options.mesh_markers) {
@@ -370,15 +504,16 @@ impl Canvas {
     }
 
     /// One triangle (vertices `first..first + 3` of `draw`) with per-vertex colours: every texture stage sampled
-    /// (wrapped or clamped) and combined, alpha test, blend. Front faces are counter-clockwise on the view plane.
-    /// Pixels whose depth ([`OrthoView::depth`]) is outside `depth_clip` are not drawn.
+    /// (each axis wrapped or clamped, the map's filters over the mip levels) and combined, alpha test, depth test
+    /// and write, blend. Front faces are counter-clockwise on the view plane. Pixels whose depth
+    /// ([`OrthoView::depth`]) is outside the options' depth clip are not drawn.
     fn fill_scene_triangle(
         &mut self,
         view: &OrthoView,
         first: usize,
         draw: &Triangles,
         samplers: &[Option<&RasterTexture>],
-        depth_clip: Option<[f32; 2]>,
+        options: &SceneDrawOptions,
     ) {
         let corners = &draw.vertices[first..first + TRIANGLE_VERTICES];
         let [(ax, ay), (bx, by), (cx, cy)] = [0, 1, 2].map(|k| view.to_screen(corners[k].position));
@@ -398,7 +533,26 @@ impl Canvas {
         let max_x = ax.max(bx).max(cx).ceil().clamp(0.0, limit_x) as usize;
         let min_y = ay.min(by).min(cy).floor().clamp(0.0, limit_y) as usize;
         let max_y = ay.max(by).max(cy).ceil().clamp(0.0, limit_y) as usize;
-        let address = |value: f32, wrap: bool| if wrap { value } else { value.clamp(0.0, 1.0) };
+        // The rasterizer is orthographic and affine: texture coordinates change at a constant rate per triangle,
+        // so each stage has one level of detail.
+        let weight_dx = [(by - cy) / area, (cy - ay) / area, (ay - by) / area];
+        let weight_dy = [(cx - bx) / area, (ax - cx) / area, (bx - ax) / area];
+        let lods: Vec<f32> = draw
+            .stages
+            .iter()
+            .zip(samplers)
+            .map(|(stage, sampler)| {
+                let Some(texture) = sampler.filter(|_| options.client_filtering) else { return 0.0 };
+                let uvs = &stage.uvs[first..first + TRIANGLE_VERTICES];
+                let rate = |axis: usize, weights: &[f32; 3]| {
+                    (0..TRIANGLE_VERTICES).map(|k| uvs[k][axis] * weights[k]).sum::<f32>()
+                };
+                let du = [rate(0, &weight_dx), rate(0, &weight_dy)];
+                let dv = [rate(1, &weight_dx), rate(1, &weight_dy)];
+                texture_lod(texture.width, texture.height, du, dv)
+            })
+            .collect();
+        let depth_test = if options.depth_buffer { draw.depth } else { None };
         let mut samples = Vec::with_capacity(draw.stages.len());
         for py in min_y..=max_y {
             for px in min_x..=max_x {
@@ -411,24 +565,39 @@ impl Canvas {
                 }
                 let weights = [wa, wb, wc];
                 let lerp = |value: &dyn Fn(usize) -> f32| (0..TRIANGLE_VERTICES).map(|k| weights[k] * value(k)).sum::<f32>();
-                if let Some([near, far]) = depth_clip {
-                    let depth = lerp(&|k| view.depth(corners[k].position));
+                let depth = lerp(&|k| view.depth(corners[k].position));
+                if let Some([near, far]) = options.depth_clip {
                     if !(near..=far).contains(&depth) {
                         continue;
                     }
                 }
                 let color: [f32; 4] = std::array::from_fn(|channel| lerp(&|k| corners[k].color[channel]));
                 samples.clear();
-                for (stage, sampler) in draw.stages.iter().zip(samplers) {
+                for ((stage, sampler), &lod) in draw.stages.iter().zip(samplers).zip(&lods) {
                     let uvs = &stage.uvs[first..first + TRIANGLE_VERTICES];
-                    let u = address(lerp(&|k| uvs[k][0]), stage.addressing.wrap_s);
-                    let v = address(lerp(&|k| uvs[k][1]), stage.addressing.wrap_t);
-                    samples.push((stage.slot, sampler.map_or(WHITE_TEXEL, |texture| texture.sample(u, v))));
+                    let (u, v) = (lerp(&|k| uvs[k][0]), lerp(&|k| uvs[k][1]));
+                    let texel = sampler.map_or(WHITE_TEXEL, |texture| {
+                        if options.client_filtering {
+                            texture.sample_filtered(u, v, lod, stage.addressing, stage.filter)
+                        } else {
+                            texture.sample_addressed(u, v, stage.addressing)
+                        }
+                    });
+                    samples.push((stage.slot, texel));
                 }
                 let source = combine_textures(draw.apply_mode, color, &samples);
                 if let Some(test) = draw.alpha_test {
                     if !test.function.passes(source[ALPHA], test.reference) {
                         continue;
+                    }
+                }
+                let pixel = py * self.width + px;
+                if let Some(test) = depth_test {
+                    if !test.function.passes(depth, self.depth[pixel]) {
+                        continue;
+                    }
+                    if test.write {
+                        self.depth[pixel] = depth;
                     }
                 }
                 self.blend(px, py, source, draw.blend);
@@ -451,11 +620,41 @@ pub struct SceneDrawOptions {
     /// The near and far planes: the depth range ([`OrthoView::depth`], relative to the view centre) drawn;
     /// `None` draws every depth.
     pub depth_clip: Option<[f32; 2]>,
+    /// Test and write depth as each draw's `NiZBufferProperty` says (the client's); off, draws only follow the
+    /// scene order.
+    pub depth_buffer: bool,
+    /// Sample with each map's filter mode over the texture's mip levels (the client's); off, level 0 bilinear.
+    pub client_filtering: bool,
 }
 
 impl Default for SceneDrawOptions {
     fn default() -> Self {
-        Self { lighting: SceneLighting::default(), sprites: true, meshes: true, mesh_markers: None, depth_clip: None }
+        Self {
+            lighting: SceneLighting::default(),
+            sprites: true,
+            meshes: true,
+            mesh_markers: None,
+            depth_clip: None,
+            depth_buffer: true,
+            client_filtering: true,
+        }
+    }
+}
+
+/// The depth buffer use of a draw, as `NiDX9RenderState::ApplyZBuffer` sets D3D9 (`NiDX9RenderState.cpp:611-632`):
+/// the depth buffer is on when the property tests or writes; the comparison is the property's function when it
+/// tests, `ALWAYS` when it only writes. A fragment passes when `depth <function> stored depth`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct DepthTest {
+    function: CompareFunction,
+    write: bool,
+}
+
+impl DepthTest {
+    /// `None` when the property neither tests nor writes (`D3DRS_ZENABLE` false).
+    fn of(state: DepthState, function: CompareFunction) -> Option<Self> {
+        (state.test || state.write)
+            .then(|| Self { function: if state.test { function } else { CompareFunction::Always }, write: state.write })
     }
 }
 
@@ -465,6 +664,7 @@ struct Stage {
     texture: Arc<str>,
     uvs: Vec<[f32; 2]>,
     addressing: TextureAddressing,
+    filter: TextureFilter,
 }
 
 /// The triangles of one draw (a mesh draw or a sprite batch) and their render state.
@@ -475,6 +675,7 @@ struct Triangles {
     blend: BlendState,
     alpha_test: Option<AlphaTest>,
     cull: CullMode,
+    depth: Option<DepthTest>,
 }
 
 /// The draws of a frame as triangle lists with their scene order, sorted (stable) by it.
@@ -490,7 +691,13 @@ fn scene_triangles(frame: &RenderFrame, camera: &CameraFrame, options: &SceneDra
                 .map(|stage| {
                     let mut uvs = Vec::with_capacity(vertices.len());
                     expand_mesh_stage_uvs(draw, stage, &mut uvs);
-                    Stage { slot: stage.slot, texture: stage.texture.clone(), uvs, addressing: stage.addressing }
+                    Stage {
+                        slot: stage.slot,
+                        texture: stage.texture.clone(),
+                        uvs,
+                        addressing: stage.addressing,
+                        filter: stage.filter,
+                    }
                 })
                 .collect();
             let triangles = Triangles {
@@ -500,6 +707,7 @@ fn scene_triangles(frame: &RenderFrame, camera: &CameraFrame, options: &SceneDra
                 blend: draw.blend.unwrap_or(OPAQUE_BLEND),
                 alpha_test: draw.alpha_test,
                 cull: draw.cull,
+                depth: DepthTest::of(draw.depth, draw.depth_function),
             };
             out.push((draw.order, triangles));
         }
@@ -521,6 +729,7 @@ fn scene_triangles(frame: &RenderFrame, camera: &CameraFrame, options: &SceneDra
                             texture: stage.texture.clone(),
                             uvs: vertices.iter().map(|vertex| stage.uv_transform.apply(vertex.uv)).collect(),
                             addressing: stage.addressing,
+                            filter: stage.filter,
                         })
                         .collect(),
                     vertices,
@@ -528,6 +737,7 @@ fn scene_triangles(frame: &RenderFrame, camera: &CameraFrame, options: &SceneDra
                     blend: batch.blend,
                     alpha_test: state.alpha_test,
                     cull: CullMode::None,
+                    depth: DepthTest::of(batch.depth, state.depth_function),
                 },
                 None => Triangles {
                     stages: (!batch.texture.is_empty())
@@ -536,6 +746,7 @@ fn scene_triangles(frame: &RenderFrame, camera: &CameraFrame, options: &SceneDra
                             texture: batch.texture.clone(),
                             uvs: vertices.iter().map(|vertex| vertex.uv).collect(),
                             addressing: SPRITE_ADDRESSING,
+                            filter: SPRITE_FILTER,
                         })
                         .into_iter()
                         .collect(),
@@ -544,6 +755,7 @@ fn scene_triangles(frame: &RenderFrame, camera: &CameraFrame, options: &SceneDra
                     blend: batch.blend,
                     alpha_test: None,
                     cull: CullMode::None,
+                    depth: DepthTest::of(batch.depth, SPRITE_DEPTH_FUNCTION),
                 },
             };
             out.push((frame.batch_state(index).map_or(0, |state| state.order), triangles));
@@ -704,6 +916,74 @@ mod tests {
         assert_eq!(texture.sample_clamped(0.0, 0.5)[0], 0.0);
         assert_eq!(texture.sample_clamped(1.0, 0.5)[0], 1.0);
         assert!(RasterTexture::from_rgba8(2, 2, &[0; 4]).is_none());
+    }
+
+    #[test]
+    fn clamped_axes_repeat_the_edge_texel_and_axes_address_separately() {
+        // Black, white in a row; one row.
+        let texture = RasterTexture::from_rgba8(2, 1, &[0, 0, 0, 255, 255, 255, 255, 255]).unwrap();
+        let clamp_s = TextureAddressing { wrap_s: false, wrap_t: true };
+        // At u = 1 the clamped axis stays on the last texel; wrapping blends the first one in.
+        assert_eq!(texture.sample_addressed(1.0, 0.5, clamp_s)[0], 1.0);
+        assert_eq!(texture.sample_addressed(1.0, 0.5, WRAP_ADDRESSING)[0], 0.5);
+        assert_eq!(texture.sample_addressed(1.7, 0.5, clamp_s)[0], 1.0, "outside [0, 1] the edge repeats");
+        assert_eq!(texture.sample_addressed(-0.5, 0.5, clamp_s)[0], 0.0);
+    }
+
+    #[test]
+    fn map_filters_pick_texels_and_mip_levels() {
+        // Level 0: black, white; level 1: grey.
+        let levels = [vec![0, 0, 0, 255, 255, 255, 255, 255], vec![100, 100, 100, 255]];
+        let texture = RasterTexture::from_rgba8_levels(2, 1, &levels).unwrap();
+        assert_eq!(texture.level_count(), 2);
+        let grey = 100.0 / U8_MAX;
+        let trilinear = TextureFilter::from_raw(crate::nif::desc::FILTER_TRILERP);
+        let nearest = TextureFilter::from_raw(crate::nif::desc::FILTER_NEAREST);
+        let mip_nearest = TextureFilter::from_raw(crate::nif::desc::FILTER_BILERP_MIPNEAREST);
+        // Magnified: level 0 with the mag filter.
+        assert_eq!(texture.sample_filtered(0.5, 0.5, -1.0, CLAMP_ADDRESSING, trilinear)[0], 0.5);
+        assert_eq!(texture.sample_filtered(0.5, 0.5, -1.0, CLAMP_ADDRESSING, nearest)[0], 1.0, "point: the texel under u");
+        // Minified one level: level 1; half way: a blend of the levels; bilinear without mips: level 0.
+        assert_eq!(texture.sample_filtered(0.5, 0.5, 1.0, CLAMP_ADDRESSING, trilinear)[0], grey);
+        assert!((texture.sample_filtered(0.5, 0.5, 0.5, CLAMP_ADDRESSING, trilinear)[0] - (0.5 + grey) / 2.0).abs() < 1e-6);
+        assert_eq!(texture.sample_filtered(0.5, 0.5, 1.0, CLAMP_ADDRESSING, TextureFilter::BILERP)[0], 0.5);
+        // Mip nearest rounds the level of detail; past the last level the last one is used.
+        assert_eq!(texture.sample_filtered(0.5, 0.5, 0.4, CLAMP_ADDRESSING, mip_nearest)[0], 0.5);
+        assert_eq!(texture.sample_filtered(0.5, 0.5, 0.6, CLAMP_ADDRESSING, mip_nearest)[0], grey);
+        assert_eq!(texture.sample_filtered(0.5, 0.5, 5.0, CLAMP_ADDRESSING, trilinear)[0], grey);
+        // A single-level texture samples level 0 whatever the mip filter.
+        let single = RasterTexture::from_rgba8(2, 1, &[0, 0, 0, 255, 255, 255, 255, 255]).unwrap();
+        assert_eq!(single.sample_filtered(0.5, 0.5, 1.0, CLAMP_ADDRESSING, trilinear)[0], 0.5);
+        // One pixel step covering two texels of a 2-wide texture is level 1.
+        assert_eq!(texture_lod(2, 1, [1.0, 0.0], [0.0, 0.0]), 1.0);
+    }
+
+    #[test]
+    fn the_depth_buffer_hides_sprites_behind_depth_writing_meshes() {
+        let view = OrthoView::new(0.0, Vec3::ZERO, 100.0, 1.0, SIDE, SIDE);
+        // Inside both the triangle (lower left half) and the 4-pixel sprite quad.
+        let pixel = (SIDE / 2 + 1) * SIDE + SIDE / 2 - 1;
+        let draw = |sprite_depth: f32, depth_buffer: bool| {
+            let mut frame = frame_with_one_triangle(CullMode::None);
+            let sprites = frame_with_one_sprite(4.0, OPAQUE_BLEND);
+            frame.sprites = sprites.sprites;
+            frame.sprites[0].position = Vec3::new(0.0, sprite_depth, 0.0);
+            frame.batches = sprites.batches;
+            let mut canvas = Canvas::new(SIDE, SIDE, BLACK);
+            let options = SceneDrawOptions { depth_buffer, ..SceneDrawOptions::default() };
+            canvas.draw_scene(&view, &frame, &|_| None, &options);
+            canvas.pixels[pixel]
+        };
+        let triangle = [0.5, 0.5, 0.5, 1.0];
+        let sprite = [1.0, 0.5, 0.0, 1.0];
+        // The view looks along +y: a sprite at y = 1 is behind the triangle's depth write at y = 0.
+        assert_eq!(draw(1.0, true), triangle);
+        assert_eq!(draw(-1.0, true), sprite);
+        assert_eq!(draw(1.0, false), sprite, "without the depth buffer the later draw covers");
+        // Depth state as NiDX9RenderState::ApplyZBuffer maps it.
+        assert_eq!(DepthTest::of(DepthState { test: false, write: false }, CompareFunction::Less), None);
+        let write_only = DepthTest::of(DepthState { test: false, write: true }, CompareFunction::Less).unwrap();
+        assert_eq!(write_only, DepthTest { function: CompareFunction::Always, write: true });
     }
 
     #[test]

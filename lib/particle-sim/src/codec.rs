@@ -1148,20 +1148,27 @@ impl Codec for TransformInterp {
 
 impl Codec for PathInterp {
     fn encode(&self, writer: &mut Writer) {
-        let PathInterp { path, percent, flags, follow_axis } = self;
+        // The arc lengths and the maximum curvature are derived again on decode.
+        let PathInterp { path, percent, flags, follow_axis, bank_dir, max_bank_angle, smoothing, .. } = self;
         path.encode(writer);
         percent.encode(writer);
         flags.encode(writer);
         follow_axis.encode(writer);
+        bank_dir.encode(writer);
+        max_bank_angle.encode(writer);
+        smoothing.encode(writer);
     }
 
     fn decode(reader: &mut Reader<'_>) -> DecodeResult<Self> {
-        Ok(PathInterp {
-            path: Codec::decode(reader)?,
-            percent: Codec::decode(reader)?,
-            flags: Codec::decode(reader)?,
-            follow_axis: Codec::decode(reader)?,
-        })
+        Ok(PathInterp::new(
+            Codec::decode(reader)?,
+            Codec::decode(reader)?,
+            Codec::decode(reader)?,
+            Codec::decode(reader)?,
+            Codec::decode(reader)?,
+            Codec::decode(reader)?,
+            Codec::decode(reader)?,
+        ))
     }
 }
 
@@ -1595,8 +1602,9 @@ impl Codec for NifTexturing {
 
 impl Codec for NifTexture {
     fn encode(&self, writer: &mut Writer) {
-        let NifTexture { index, source } = self;
+        let NifTexture { index, source, mipmapped } = self;
         writer.index(*index);
+        mipmapped.encode(writer);
         match source {
             NifTextureSource::External { file_name } => {
                 writer.tag(TEXTURE_SOURCE_EXTERNAL);
@@ -1618,6 +1626,7 @@ impl Codec for NifTexture {
 
     fn decode(reader: &mut Reader<'_>) -> DecodeResult<Self> {
         let index = reader.index("texture index")?;
+        let mipmapped = Codec::decode(reader)?;
         let source = match reader.u8()? {
             TEXTURE_SOURCE_EXTERNAL => NifTextureSource::External { file_name: Codec::decode(reader)? },
             TEXTURE_SOURCE_EMBEDDED => {
@@ -1629,7 +1638,7 @@ impl Codec for NifTexture {
             TEXTURE_SOURCE_UNDECODED => NifTextureSource::Undecoded { format: Codec::decode(reader)? },
             tag => return Err(DescDecodeError::InvalidTag { what: "texture source", tag: u32::from(tag) }),
         };
-        Ok(NifTexture { index, source })
+        Ok(NifTexture { index, source, mipmapped })
     }
 }
 

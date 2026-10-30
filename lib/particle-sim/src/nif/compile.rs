@@ -12,8 +12,8 @@ use std::collections::{HashMap, HashSet};
 use gamebryo_nif::{
     AnimType, ApplyMode, Block, ClampMode, CycleType as NifCycleType, DecayType, FieldType, ForceType,
     InitialVelocityType, KeyType, LightingMode as NifLightingMode, Link, MaterialColorField as NifMaterialColorField,
-    MeshEmissionType, NiAVObject, NiAlphaController, NiAlphaProperty, NiAmbientLight, NiBillboardNode, NiBoolData,
-    NiBoolInterpolator, NiColor, NiColorA, NiColorData, NiDirectionalLight, NiFloatData, NiFloatInterpolator,
+    MeshEmissionType, MipFlag, NiAVObject, NiAlphaController, NiAlphaProperty, NiAmbientLight, NiBillboardNode,
+    NiBoolData, NiBoolInterpolator, NiColor, NiColorA, NiColorData, NiDirectionalLight, NiFloatData, NiFloatInterpolator,
     NiGeomMorpherController, NiGeometry, NiGeometryData, NiKey, NiLight, NiLightColorController,
     NiLightDimmerController, NiMaterialColorController, NiMaterialProperty, NiMeshParticleSystem, NiMorphData,
     NiNode, NiObjectNET, NiPSysAgeDeathModifier, NiPSysBombModifier, NiPSysBoundUpdateModifier, NiPSysBoxEmitter,
@@ -492,6 +492,7 @@ impl Compiler<'_> {
             return None;
         };
         let index = self.desc.textures.len();
+        let mipmapped = source.format_prefs.mip_mapped == MipFlag::YES;
         let source = if source.external.get() || source.src_pixel_data.is_none() {
             NifTextureSource::External { file_name: source.filename.to_string_lossy() }
         } else {
@@ -500,7 +501,7 @@ impl Compiler<'_> {
                 None => NifTextureSource::External { file_name: source.filename.to_string_lossy() },
             }
         };
-        self.desc.textures.push(NifTexture { index, source });
+        self.desc.textures.push(NifTexture { index, source, mipmapped });
         self.tables.texture_of_block.insert(block, index);
         Some(index)
     }
@@ -905,7 +906,15 @@ impl Compiler<'_> {
             let path = nif.get(i.path_data).and_then(|data: &NiPosData| self.curve(data.key_type, &data.keys, point3));
             let percent =
                 nif.get(i.pct_data).and_then(|data: &NiFloatData| self.curve(data.key_type, &data.keys, |v: &f32| *v));
-            Some(NifInterpolator::Path(PathInterp { path, percent, flags: i.flags.0, follow_axis: i.follow_axis }))
+            Some(NifInterpolator::Path(PathInterp::new(
+                path,
+                percent,
+                i.flags.0,
+                i.follow_axis,
+                i.bank_dir.0,
+                i.max_bank_angle,
+                i.smoothing,
+            )))
         } else if b.get::<NiPoint3Interpolator>().is_some() {
             self.point3_interp(block).map(NifInterpolator::Point3)
         } else if b.get::<NiFloatInterpolator>().is_some() {
@@ -1070,6 +1079,25 @@ pub fn decode_pixel_level(pixels: &NiPixelData, level: usize) -> Option<(u32, u3
         source.chunks_exact(RGB_BYTES_PER_PIXEL).flat_map(|p| [p[0], p[1], p[2], OPAQUE_ALPHA]).collect()
     };
     Some((width, height, rgba))
+}
+
+/// A `.nif` image as the client's `NiNIFImageReader::ReadFile` accepts it (`NiNIFImageReader.cpp:42-70`;
+/// UOSA.exe 0x006cce00): a NIF file whose only top object is an `NiPixelData`. Returns its stored levels as RGBA8
+/// rows (width, height, pixels), level 0 first, up to the first level [`decode_pixel_level`] does not decode.
+pub fn decode_nif_image(bytes: &[u8]) -> Result<Vec<(u32, u32, Vec<u8>)>, String> {
+    let nif = NifFile::read(bytes).map_err(|error| error.to_string())?;
+    let [root] = nif.roots.as_slice() else {
+        return Err(format!("{} top objects, a NIF image has one", nif.roots.len()));
+    };
+    let Some(pixels) = root.index().and_then(|index| nif.blocks.get(index)).and_then(|block| block.get::<NiPixelData>())
+    else {
+        return Err("the top object is not an NiPixelData".to_owned());
+    };
+    let levels: Vec<_> = (0..pixels.mipmaps.len()).map_while(|level| decode_pixel_level(pixels, level)).collect();
+    if levels.is_empty() {
+        return Err(format!("NiPixelData format {} is not decoded", pixels.pixel_format.format.0));
+    }
+    Ok(levels)
 }
 
 #[cfg(test)]

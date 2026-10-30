@@ -39,7 +39,7 @@ const GRAVITY_FORCE_SCALE: f32 = 1.6;
 const TURBULENCE_SCALE: f32 = 500.0;
 /// `NiPSysDragModifier` time scale (0x00819540, `DAT_00d0522c`, about 30 per second).
 const DRAG_TIME_SCALE: f32 = 30.000_029;
-/// Centroid weight of a mesh emitter face (0x008216f0, `DAT_00cdb4f0`; assumed 1/3).
+/// Centroid weight of a mesh emitter face (0x008216f0, `DAT_00cdb4f0` = 0x3eaaaaab = 1/3, read from memory).
 const FACE_CENTER_WEIGHT: f32 = 1.0 / 3.0;
 /// Midpoint weight of a mesh emitter edge (0x00821c50, `DAT_00c95604`).
 const EDGE_CENTER_WEIGHT: f32 = 0.5;
@@ -49,7 +49,7 @@ const MESH_FACE_ATTEMPTS: u32 = 6;
 const TRIANGLE_EDGES: u16 = 3;
 /// Fast inverse square root magic of the face surface sampling (0x008216f0).
 const RSQRT_MAGIC: u32 = 0x5f37_59df;
-/// Its Newton step constant (`DAT_00c803d0`; assumed 1.5).
+/// Its Newton step constant (`DAT_00c803d0` = 0x3fc00000 = 1.5, read from memory).
 const RSQRT_NEWTON: f32 = 1.5;
 /// Size of an emitted particle (0x00828e20, `DAT_00c981c8`).
 const EMITTED_SIZE: f32 = 1.0;
