@@ -83,6 +83,8 @@ Chaos particle engine that plays `.ems` effects is documented in
 `AnimationSequence.uop`, `AnimationDefinition.uop` and the 0x6E/0xE2 animation packets are traced in [`ghidra-animation`](ghidra-animation/README.md).
 `build/multicollection/housing.bin` (house customization pieces) and the `MultiCollection.uop` multis are decoded in [`ghidra-housing`](ghidra-housing/README.md).
 UOP data block headers (version-4 timestamps, version-5 signatures) and `data_block_hash` are decoded in [`ghidra-uop-header`](ghidra-uop-header/README.md).
+Facet sectors (`facetN.uop`, the unread `data.map` entry, the `facetNx.uop` variants), `facets.uop`
+FacetDefinition records and the `facetNN.dds` radar images are decoded in [`ghidra-facets`](ghidra-facets/README.md).
 
 ### Variable names, prototypes and structures (ApplyVariableSpecs.java)
 
