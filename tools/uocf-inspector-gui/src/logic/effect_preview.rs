@@ -15,6 +15,7 @@ use std::sync::Arc;
 use gamebryo_nif::NifFile;
 use image::RgbaImage;
 use particle_sim::chaos::compile::compile_chaos_source;
+use particle_sim::nif::default_camera;
 use particle_sim::nif::desc::NifTextureSource;
 use particle_sim::hued::{
     draw_hued_frame, hue_mode, offscreen_camera, HueMode, HuedRenderSettings, HUED_EFFECT_TIME_SCALE, NO_HUE,
@@ -616,7 +617,7 @@ impl PartInstance {
             Self::Nif { params, system, hued, position } => {
                 // `EffectInstance::node`.
                 let node = NodeTransform {
-                    position: placement.anchor + params.node_offset(placement.camera_vector),
+                    position: placement.anchor + params.node_offset(placement.camera_down),
                     rotation: placement.node_rotation,
                     scale: params.node_scale(),
                     velocity: placement.velocity,
@@ -726,7 +727,8 @@ impl PreviewSimulation {
     pub fn step(&mut self) {
         self.time_ms += PREVIEW_STEP_MS;
         let camera = self.orbit.camera();
-        let placement = EffectPlacement { camera_vector: camera.direction, ..EffectPlacement::at(self.emitter_position()) };
+        // `camera_offset` follows the client's camera, not the orbit.
+        let placement = EffectPlacement::seen_by(self.emitter_position(), &default_camera());
         for instance in &mut self.instances {
             instance.update(PREVIEW_STEP_MS, &placement, &camera);
         }

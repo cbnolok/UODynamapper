@@ -154,7 +154,8 @@ pub struct ParticleEffect {
     pub offset_x: f32,
     /// Subtracted from the effect z, so it acts as a vertical offset (probable).
     pub offset_y: f32,
-    /// Moves the effect along the camera vector by `-camera_offset * 0.12856` (probable).
+    /// Moves the effect by `-camera_offset * 0.12856` along the client's camera down vector, i.e. a positive value
+    /// moves it up on screen (confirmed; `uosa_effects.md`, Particle field 4).
     pub camera_offset: f32,
     /// Scene node scale (confirmed).
     pub scale: f32,
