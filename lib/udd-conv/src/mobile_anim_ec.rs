@@ -23,6 +23,7 @@ use uocf::animation_sequence::{
     MISSING_ACTION_FPS, STORED_DIRECTION_COUNT,
 };
 use uocf::enhanced::animationframe::{AnimationFrame, AnimationFrameMetadata, DecodedFrame, FrameEntry};
+use uocf::enhanced::hues::ShadowPaletteStats;
 use uocf::enhanced::mobile_body::{MobileBodyDefinition, MobileBodyMap};
 use uocf::uop_container::hash::hash_file_name_single;
 use uocf::uop_container::package::{LoadMode, UopPackage};
@@ -47,7 +48,8 @@ use udd_assets::mobile_anim_ec::{
     MobileAnimEcFrameRecord, MobileAnimEcItemRecord, MobileAnimEcPageRecord,
     MobileAnimEcSourceHintRecord, ANIMATION_FLAG_MIRRORED, ANIMATION_FLAG_NO_SEQUENCE,
     ANIMATION_FLAG_STAND_ACTION, ANIMATION_FLAG_UNDIRECTED, ANIMATION_MANIFEST_ENTRY_PATH,
-    BODY_FLAG_FRAMES_FALLBACK, BODY_FLAG_GHOST, BODY_FLAG_NO_PLACEHOLDER, BODY_FLAG_NO_SEQUENCE,
+    BODY_FLAG_FRAMES_FALLBACK, BODY_FLAG_GHOST, BODY_FLAG_HAS_GENDER, BODY_FLAG_HAS_RACE,
+    BODY_FLAG_NO_PLACEHOLDER, BODY_FLAG_NO_SEQUENCE,
     BODY_MANIFEST_ENTRY_PATH, DIRECTION_COUNT, FRAME_HUE_ALL, FRAME_HUE_MASKED, FRAME_HUE_NONE,
     FRAME_MANIFEST_ENTRY_PATH, HUE_MASK_HUEABLE, ITEM_MANIFEST_ENTRY_PATH, MISSING_PAGE_FRAME_INDEX,
     MISSING_PAGE_INDEX, MISSING_SOURCE_FRAME_INDEX, MOBILE_ANIM_EC_METADATA_VERSION,
@@ -70,8 +72,10 @@ const BODY_MANIFEST_MAGIC: [u8; 4] = *b"MEBD";
 const MANIFEST_HEADER_SIZE: usize = 12;
 const PAGE_MANIFEST_HEADER_SIZE: usize = 26;
 const PAGE_RECORD_SIZE: usize = 25;
-const FRAME_RECORD_SIZE: usize = 31;
-const BODY_RECORD_SIZE: usize = 20;
+/// 31 bytes up to `hue_mode`, then the three shadow palette statistics.
+const FRAME_RECORD_SIZE: usize = 34;
+/// 20 bytes up to `flags`, then `sequence_stored_id` (u32), `race` and `gender` (u8 each).
+const BODY_RECORD_SIZE: usize = 26;
 const TILEART_UOP_NAMES: [&str; 2] = ["tileart.uop", "TileArt.uop"];
 const RGBA_CHANNELS: usize = 4;
 const RGBA_ALPHA_CHANNEL: usize = 3;
@@ -224,6 +228,8 @@ struct PlannedMobileAnimEcSource {
 #[derive(Debug, Clone)]
 struct PlannedMobileAnimEcFrame {
     body_id: u32,
+    /// Shadow hue statistics of the palette of the frame's `AnimationFrame` file.
+    shadow: ShadowPaletteStats,
     source_frame_index: u16,
     source_entry_index: u16,
     /// `FrameEntry::action`.
@@ -393,6 +399,7 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progr
     let (sequences, sequence_parse_error_count) = load_animation_sequences(&client_dir)?;
     let body_map = load_mobile_body_map(&client_dir)?;
     let mut layout = build_animation_layout(&source_frames_by_body(&planned_by_body), &sequences, &body_map)?;
+    let shadow_by_source = shadow_stats_by_source(&planned_by_body);
     layout.stats.sequence_parse_error_count = sequence_parse_error_count;
     let referenced_frames = layout.referenced_source_frames();
     for (&body_id, frames) in planned_by_body.iter_mut() {
@@ -434,7 +441,7 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progr
     );
     let packed_frame_count = placements.len() as u32;
     let layout_stats = layout.stats;
-    let (bodies, animations, frames) = layout.into_records(&placements)?;
+    let (bodies, animations, frames) = layout.into_records(&placements, &shadow_by_source)?;
 
     let page_manifest = serialize_page_record_manifest(&packed_pages.records, options)?;
     let animation_manifest = serialize_animation_manifest(&animations)?;
@@ -1067,12 +1074,14 @@ fn plan_animationframe_package(
                     return None;
                 };
                 let mut frames = Vec::with_capacity(animation.frames.len());
+                let shadow = ShadowPaletteStats::from_palette(&animation.colours);
                 for (index, entry) in animation.frames.iter().enumerate() {
                     if index > u16::MAX as usize {
                         continue;
                     }
                     match planned_frame_from_entry(
                         &animation,
+                        shadow,
                         entry,
                         index as u16,
                         Arc::clone(&source_path),
@@ -1103,6 +1112,7 @@ fn plan_animationframe_package(
 /// every client file, so it keys the frames by body. The anchor is `(-x0, -y0)`.
 fn planned_frame_from_entry(
     animation: &AnimationFrameMetadata,
+    shadow: ShadowPaletteStats,
     entry: &FrameEntry,
     source_entry_index: u16,
     path: Arc<PathBuf>,
@@ -1112,6 +1122,7 @@ fn planned_frame_from_entry(
     let (center_x, center_y) = if width == 0 || height == 0 { (0, 0) } else { entry.center() };
     Ok(PlannedMobileAnimEcFrame {
         body_id: animation.animation_id,
+        shadow,
         source_frame_index: source_entry_index,
         source_entry_index,
         action: entry.action,
@@ -1281,6 +1292,16 @@ fn source_frames_by_body(
         .collect()
 }
 
+/// Shadow hue palette statistics of every source `AnimationFrame` file, keyed by (body, action).
+fn shadow_stats_by_source(
+    planned_by_body: &BTreeMap<u32, Vec<PlannedMobileAnimEcFrame>>,
+) -> HashMap<(u32, u16), ShadowPaletteStats> {
+    planned_by_body
+        .iter()
+        .flat_map(|(&body_id, frames)| frames.iter().map(move |frame| ((body_id, frame.action), frame.shadow)))
+        .collect()
+}
+
 fn source_frames_by_action(frames: &[SourceFrameIdentity]) -> BTreeMap<u16, ActionSourceFrames> {
     let mut by_action = BTreeMap::<u16, ActionSourceFrames>::new();
     for frame in frames {
@@ -1434,11 +1455,20 @@ impl AnimationLayout {
             self.stats.ghost_body_count += 1;
         }
         let frames = &frames_by_body[&frames_body.body];
-        if let Some(sequence) = sequences.get(&definition.sequence_id) {
+        let sequence = sequences.get(&definition.sequence_id);
+        if let Some(sequence) = sequence {
             self.add_sequence_body(definition.body, definition.sequence_id, sequence, frames_body.body, frames)?;
         } else {
             flags |= BODY_FLAG_NO_SEQUENCE;
             self.add_no_sequence_body(definition.body, frames_body.body, frames)?;
+        }
+        let race = placeholder_byte(definition.body, "race", definition.race)?;
+        let gender = placeholder_byte(definition.body, "gender", definition.gender)?;
+        if race.is_some() {
+            flags |= BODY_FLAG_HAS_RACE;
+        }
+        if gender.is_some() {
+            flags |= BODY_FLAG_HAS_GENDER;
         }
         self.bodies.push(MobileAnimEcBodyRecord {
             body_id: definition.body,
@@ -1447,6 +1477,9 @@ impl AnimationLayout {
             appearance_body_id: definition.requested_frames_body(),
             forced_hue: definition.forced_hue().unwrap_or(NO_FORCED_HUE),
             flags,
+            sequence_stored_id: sequence.map_or(definition.sequence_id, |sequence| sequence.stored_id),
+            race: race.unwrap_or_default(),
+            gender: gender.unwrap_or_default(),
         });
         Ok(())
     }
@@ -1479,6 +1512,9 @@ impl AnimationLayout {
             appearance_body_id: body_id,
             forced_hue: NO_FORCED_HUE,
             flags,
+            sequence_stored_id: sequence.map_or(body_id, |sequence| sequence.stored_id),
+            race: 0,
+            gender: 0,
         });
         Ok(())
     }
@@ -1768,6 +1804,7 @@ impl AnimationLayout {
     fn into_records(
         self,
         placements: &HashMap<(u32, u16), FramePlacement>,
+        shadow_by_source: &HashMap<(u32, u16), ShadowPaletteStats>,
     ) -> eyre::Result<(
         Vec<MobileAnimEcBodyRecord>,
         Vec<MobileAnimEcAnimationRecord>,
@@ -1788,17 +1825,31 @@ impl AnimationLayout {
                 let placement = slot
                     .source_frame_index
                     .and_then(|index| placements.get(&(slot.source_body_id, index)));
-                Ok(frame_record_from_placement(animation_index, slot, placement))
+                let shadow = shadow_by_source
+                    .get(&(slot.source_body_id, slot.source_action))
+                    .copied()
+                    .unwrap_or_default();
+                Ok(frame_record_from_placement(animation_index, slot, placement, shadow))
             })
             .collect::<eyre::Result<Vec<_>>>()?;
         Ok((self.bodies, self.animations, frames))
     }
 }
 
+/// A placeholder property stored as one byte in the body record (every client value fits).
+fn placeholder_byte(body: u32, name: &str, value: Option<u32>) -> eyre::Result<Option<u8>> {
+    value
+        .map(|value| {
+            u8::try_from(value).map_err(|_| eyre::eyre!("EC body {body} placeholder {name} {value} does not fit a byte"))
+        })
+        .transpose()
+}
+
 fn frame_record_from_placement(
     animation_index: u32,
     slot: &FrameSlot,
     placement: Option<&FramePlacement>,
+    shadow: ShadowPaletteStats,
 ) -> MobileAnimEcFrameRecord {
     let source_frame_index = slot.source_frame_index.unwrap_or(MISSING_SOURCE_FRAME_INDEX);
     if let Some(placement) = placement {
@@ -1817,6 +1868,7 @@ fn frame_record_from_placement(
             center_x: placement.center_x,
             center_y: placement.center_y,
             hue_mode: placement.hue_mode,
+            shadow,
         }
     } else {
         MobileAnimEcFrameRecord {
@@ -1834,6 +1886,7 @@ fn frame_record_from_placement(
             center_x: 0,
             center_y: 0,
             hue_mode: FRAME_HUE_NONE,
+            shadow,
         }
     }
 }
@@ -3297,6 +3350,9 @@ pub fn serialize_frame_manifest(frames: &[MobileAnimEcFrameRecord]) -> eyre::Res
         bytes.write_i16::<LittleEndian>(frame.center_x)?;
         bytes.write_i16::<LittleEndian>(frame.center_y)?;
         bytes.push(frame.hue_mode);
+        bytes.push(frame.shadow.min_inverse);
+        bytes.push(frame.shadow.mean_inverse);
+        bytes.push(frame.shadow.max_inverse);
     }
     Ok(bytes)
 }
@@ -3361,6 +3417,9 @@ pub fn serialize_body_manifest(bodies: &[MobileAnimEcBodyRecord]) -> eyre::Resul
         bytes.write_u32::<LittleEndian>(body.appearance_body_id)?;
         bytes.write_u16::<LittleEndian>(body.forced_hue)?;
         bytes.write_u16::<LittleEndian>(body.flags)?;
+        bytes.write_u32::<LittleEndian>(body.sequence_stored_id)?;
+        bytes.push(body.race);
+        bytes.push(body.gender);
     }
     Ok(bytes)
 }
@@ -3614,7 +3673,14 @@ mod tests {
             definitions: placeholders
                 .iter()
                 .map(|&(body, sequence_id, appearance)| {
-                    (body, MobileBodyDefinition { body, sequence_id, appearance, animation_appearance: None })
+                    (body, MobileBodyDefinition {
+                        body,
+                        sequence_id,
+                        appearance,
+                        animation_appearance: None,
+                        race: None,
+                        gender: None,
+                    })
                 })
                 .collect(),
         }
@@ -3761,6 +3827,9 @@ mod tests {
                     appearance_body_id: FRAMES_BODY,
                     forced_hue: NO_FORCED_HUE,
                     flags: BODY_FLAG_NO_PLACEHOLDER,
+                    sequence_stored_id: SEQUENCE_STORED_ID,
+                    race: 0,
+                    gender: 0,
                 },
                 MobileAnimEcBodyRecord {
                     body_id: SEQUENCE_BODY,
@@ -3769,6 +3838,9 @@ mod tests {
                     appearance_body_id: FRAMES_BODY,
                     forced_hue: NO_FORCED_HUE,
                     flags: 0,
+                    sequence_stored_id: SEQUENCE_STORED_ID,
+                    race: 0,
+                    gender: 0,
                 },
             ]
         );
@@ -3852,7 +3924,7 @@ mod tests {
         let (_, without_frames) = record(&layout, SEQUENCE_BODY, 24, 5);
         assert_eq!(without_frames.frame_count, 0);
 
-        let (_, _, frames) = layout.into_records(&HashMap::new()).unwrap();
+        let (_, _, frames) = layout.into_records(&HashMap::new(), &HashMap::new()).unwrap();
         assert_eq!(frames.len(), 10);
         assert_eq!(frames[0].source_frame_index, MISSING_SOURCE_FRAME_INDEX);
         assert_eq!((frames[0].source_action, frames[0].source_frame_number), (23, 1));
@@ -3919,7 +3991,13 @@ mod tests {
         let masked_frame = half_hued_frame(NO_SEQUENCE_BODY, 0, 4, 4);
         let expected_mask = masked_frame.hue_mask.clone();
         let (mut pages, placements) = pack_frames_into_pages(vec![masked_frame], &options).unwrap();
-        let (bodies, animations, frames) = layout.into_records(&placements).unwrap();
+        let shadow = ShadowPaletteStats {
+            min_inverse: 10,
+            mean_inverse: 100,
+            max_inverse: 200,
+        };
+        let shadow_by_source = HashMap::from([((NO_SEQUENCE_BODY, 0), shadow)]);
+        let (bodies, animations, frames) = layout.into_records(&placements, &shadow_by_source).unwrap();
         let page_manifest = serialize_page_manifest(&pages, &options).unwrap();
         let animation_manifest = serialize_animation_manifest(&animations).unwrap();
         let frame_manifest = serialize_frame_manifest(&frames).unwrap();
@@ -3987,6 +4065,7 @@ mod tests {
         let undirected_frame = &package.animation_frames(undirected)[0];
         assert_eq!(undirected_frame.center_y, -1);
         assert_eq!(undirected_frame.hue_mode, FRAME_HUE_MASKED);
+        assert_eq!(undirected_frame.shadow, shadow);
         assert_eq!(package.read_frame_hue_mask(undirected_frame).unwrap(), Some(expected_mask));
 
         // Client resolution: missing actions use the lowest plain action; flying disabled
@@ -4041,7 +4120,7 @@ mod tests {
             &MobileBodyMap::default(),
         )
         .unwrap();
-        let (_, animations, frames) = layout.into_records(&placements).unwrap();
+        let (_, animations, frames) = layout.into_records(&placements, &HashMap::new()).unwrap();
 
         assert_eq!(animations[0].frame_count, 2);
         assert_eq!(frames.len(), 2);
@@ -4117,6 +4196,23 @@ mod tests {
         assert_eq!(fallback_record.source_body_id, FALLBACK_BODY);
         assert_eq!(slot_numbers(&layout, fallback_record), [(4, 1)]);
         assert!(layout.slots.iter().all(|slot| slot.animation_index.is_some()));
+    }
+
+    #[test]
+    fn placeholder_race_and_gender_reach_the_body_record() {
+        let elf_race = 2;
+        let female_gender = 1;
+        let mut body_map = sample_body_map();
+        let definition = body_map.definitions.get_mut(&SEQUENCE_BODY).unwrap();
+        definition.race = Some(elf_race);
+        definition.gender = Some(female_gender);
+        let layout = build_animation_layout(&sample_sequence_frames(), &sample_sequences(), &body_map).unwrap();
+        let body = layout.bodies.iter().find(|body| body.body_id == SEQUENCE_BODY).unwrap();
+        assert_eq!((body.race(), body.gender()), (Some(elf_race as u8), Some(female_gender as u8)));
+        assert_eq!(body.sequence_stored_id, SEQUENCE_STORED_ID);
+
+        body_map.definitions.get_mut(&SEQUENCE_BODY).unwrap().race = Some(u32::from(u8::MAX) + 1);
+        assert!(build_animation_layout(&sample_sequence_frames(), &sample_sequences(), &body_map).is_err());
     }
 
     #[test]

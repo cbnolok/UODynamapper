@@ -3,6 +3,7 @@ use std::path::Path;
 
 use color_eyre::eyre::{self, WrapErr};
 
+use crate::enhanced::animationframe::{EDGE_FACTOR_BITS, EDGE_FACTOR_ONE};
 use crate::uop_container::hash::hash_file_name_single;
 use crate::uop_container::package::{LoadMode, UopPackage};
 
@@ -35,17 +36,44 @@ pub const SHADOW_HUE: u16 = 0x4001;
 pub const SHADOW_HUE_TABLE_KEY: u16 = 0x9c3;
 /// Hue the client draws ghost bodies with.
 pub const GHOST_HUE: u16 = 0x3e3;
-/// Shadow alpha = `t * SHADOW_ALPHA_RANGE + SHADOW_ALPHA_MIN` for the inverted, normalized luminance
-/// `t` in 0..1, so 60..190.
+// Shadow hue (`SHADOW_HUE`), `UOAnimations::BuildFramePalette` 0x0042b270 (instruction level):
+// every palette colour becomes black with an alpha from its inverted luminance, normalized against
+// the minimum, mean and maximum of the whole palette of the `AnimationFrame` file (one body and
+// action). The code runs on the x87 FPU with truncating conversions; the precision control is the
+// Direct3D 9 default (single precision: the device is created without `D3DCREATE_FPU_PRESERVE`),
+// so every step below is one `f32` operation in the client's order (probable: the precision is
+// inferred from the device flags, not observed).
+
+/// Luminance weight of palette byte 0 (red): `float` at 0x00d05294.
+pub const SHADOW_LUMINANCE_WEIGHT_B0: f32 = 0.34;
+/// Luminance weight of palette byte 1 (green): `float` at 0x00d0528c.
+pub const SHADOW_LUMINANCE_WEIGHT_B1: f32 = 0.59;
+/// Luminance weight of palette byte 2 (blue): `float` at 0x00d05290.
+pub const SHADOW_LUMINANCE_WEIGHT_B2: f32 = 0.07;
+/// Inverted luminance = `SHADOW_INVERSE_BASE - trunc(L)` (immediate 0xff at 0x0042b354).
+pub const SHADOW_INVERSE_BASE: u8 = 0xff;
+/// Level of a colour exactly at the palette mean, and the final scale of both halves: `float` at
+/// 0x00c95604.
+pub const SHADOW_MEAN_LEVEL: f32 = 0.5;
+/// Below the mean, `level = t * SHADOW_DARK_SCALE * SHADOW_MEAN_LEVEL` (0..0.4): `float` at 0x00d051cc.
+pub const SHADOW_DARK_SCALE: f32 = 0.8;
+/// Above the mean, `level = ((SHADOW_UNIT - t) * SHADOW_LIGHT_FLOOR + t + SHADOW_UNIT) * SHADOW_MEAN_LEVEL`
+/// (0.6..1.0): `float` at 0x00d04f28.
+pub const SHADOW_LIGHT_FLOOR: f32 = 0.2;
+/// The `FLD1` constant of the above-the-mean level (0x0042b3bb).
+pub const SHADOW_UNIT: f32 = 1.0;
+/// Level of every colour when the palette has no spread below or above its mean.
+pub const SHADOW_FLAT_LEVEL: f32 = 0.0;
+/// Shadow alpha = `trunc(level * SHADOW_ALPHA_RANGE + SHADOW_ALPHA_MIN)`, so 60..190: `float`s at
+/// 0x00d04f60 (min) and 0x00d05288 (range).
 pub const SHADOW_ALPHA_MIN: f32 = 60.0;
 pub const SHADOW_ALPHA_RANGE: f32 = 130.0;
-/// Luminance weights of the shadow hue, `L = 0.34 * b0 + 0.59 * b1 + 0.07 * b2`.
-pub const SHADOW_LUMINANCE_WEIGHTS: [f32; 3] = [0.34, 0.59, 0.07];
 
 const RGBA_CHANNELS: usize = 4;
 const RGB_CHANNELS: usize = 3;
 const ALPHA_CHANNEL: usize = 3;
-const MAX_CHANNEL: f32 = u8::MAX as f32;
+/// Rounds `alpha * EDGE_FACTOR_ONE / 255` up so it inverts the decoder's `255 * f >> 4`.
+const EDGE_FACTOR_ROUND_UP: u16 = EDGE_FACTOR_ONE - 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EcHueBitmapEntry {
@@ -257,9 +285,10 @@ impl EcHueTables {
     }
 
     /// Hues straight-alpha RGBA pixels in place. `hue_mask` has one byte per pixel; a non-zero
-    /// byte marks a hueable pixel.
-    pub fn apply(&self, hue: u16, rgba: &mut [u8], hue_mask: &[u8]) {
-        self.hue_table(hue).apply(rgba, hue_mask);
+    /// byte marks a hueable pixel. `shadow` is the palette statistics of the pixels' source
+    /// `AnimationFrame` file, read only by `SHADOW_HUE`.
+    pub fn apply(&self, hue: u16, rgba: &mut [u8], hue_mask: &[u8], shadow: &ShadowPaletteStats) {
+        self.hue_table(hue).apply(rgba, hue_mask, shadow);
     }
 }
 
@@ -268,9 +297,9 @@ impl EcHueTableRef<'_> {
     ///
     /// A table replaces the colour of each hueable pixel with `table[red]` and keeps its edge
     /// alpha (scaled by the table alpha, 255 in every client table). The shadow hue turns every
-    /// coded pixel black with alpha `t * 130 + 60` from the inverted luminance; the client's exact
-    /// normalization of `t` was read only in outline, so this is `1 - L / 255`.
-    pub fn apply(self, rgba: &mut [u8], hue_mask: &[u8]) {
+    /// coded pixel, hueable or not, black with the alpha of its colour under `shadow`; an edge
+    /// pixel keeps its coverage (`alpha * f >> 4`, as the client's edge blend over the cleared atlas).
+    pub fn apply(self, rgba: &mut [u8], hue_mask: &[u8], shadow: &ShadowPaletteStats) {
         match self {
             Self::None => {}
             Self::Table(table) => {
@@ -288,24 +317,90 @@ impl EcHueTableRef<'_> {
                     if pixel[ALPHA_CHANNEL] == 0 {
                         continue;
                     }
-                    let alpha = shadow_alpha([pixel[0], pixel[1], pixel[2]]);
+                    let alpha = u16::from(shadow.alpha([pixel[0], pixel[1], pixel[2]]));
+                    let coverage = edge_factor(pixel[ALPHA_CHANNEL]);
                     pixel[..RGB_CHANNELS].fill(0);
-                    pixel[ALPHA_CHANNEL] = scale_channel(pixel[ALPHA_CHANNEL], alpha);
+                    pixel[ALPHA_CHANNEL] = ((alpha * coverage) >> EDGE_FACTOR_BITS) as u8;
                 }
             }
         }
     }
 }
 
-/// Alpha of an opaque colour under `SHADOW_HUE`.
-pub fn shadow_alpha(rgb: [u8; 3]) -> u8 {
-    let luminance: f32 = rgb
-        .iter()
-        .zip(SHADOW_LUMINANCE_WEIGHTS)
-        .map(|(&channel, weight)| channel as f32 * weight)
-        .sum();
-    let inverted = 1.0 - (luminance / MAX_CHANNEL).clamp(0.0, 1.0);
-    (inverted * SHADOW_ALPHA_RANGE + SHADOW_ALPHA_MIN).round() as u8
+/// Inverted luminance of a palette colour under `SHADOW_HUE`:
+/// `SHADOW_INVERSE_BASE - trunc((b0 * 0.34 + b2 * 0.07) + b1 * 0.59)` in `f32`, in the client's order.
+pub fn shadow_inverse_luminance(rgb: [u8; 3]) -> u8 {
+    let [b0, b1, b2] = rgb.map(f32::from);
+    let luminance = (b0 * SHADOW_LUMINANCE_WEIGHT_B0 + b2 * SHADOW_LUMINANCE_WEIGHT_B2) + b1 * SHADOW_LUMINANCE_WEIGHT_B1;
+    // `as` truncates toward zero like the client's `FISTP` with the rounding control set to chop.
+    SHADOW_INVERSE_BASE.saturating_sub(luminance as u8)
+}
+
+/// Palette statistics `SHADOW_HUE` normalizes against: minimum, integer mean and maximum of the
+/// inverted luminance over every palette entry of one `AnimationFrame` file (the "keep colour"
+/// flag is ignored).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct ShadowPaletteStats {
+    pub min_inverse: u8,
+    pub mean_inverse: u8,
+    pub max_inverse: u8,
+}
+
+impl ShadowPaletteStats {
+    /// Statistics of a palette of `[b0, b1, b2, keep_colour]` entries. An empty palette (no coded
+    /// pixel can use it) gives the flat default.
+    pub fn from_palette(colours: &[[u8; 4]]) -> Self {
+        if colours.is_empty() {
+            return Self::default();
+        }
+        let mut min_inverse = u8::MAX;
+        let mut max_inverse = u8::MIN;
+        let mut sum = 0u64;
+        for colour in colours {
+            let inverse = shadow_inverse_luminance([colour[0], colour[1], colour[2]]);
+            min_inverse = min_inverse.min(inverse);
+            max_inverse = max_inverse.max(inverse);
+            sum += u64::from(inverse);
+        }
+        // Integer division (`DIV` at 0x0042b39b): the mean of u8 values fits in a u8.
+        let mean_inverse = (sum / colours.len() as u64) as u8;
+        Self {
+            min_inverse,
+            mean_inverse,
+            max_inverse,
+        }
+    }
+
+    /// Normalized level (0..1) of an inverted luminance.
+    pub fn level(&self, inverse: u8) -> f32 {
+        let below = u32::from(self.mean_inverse).wrapping_sub(u32::from(self.min_inverse));
+        let above = u32::from(self.max_inverse).wrapping_sub(u32::from(self.mean_inverse));
+        let offset = u32::from(inverse).wrapping_sub(u32::from(self.min_inverse));
+        if below == 0 || above == 0 {
+            SHADOW_FLAT_LEVEL
+        } else if offset == below {
+            SHADOW_MEAN_LEVEL
+        } else if offset > below {
+            let t = (offset - below) as f32 / above as f32;
+            ((SHADOW_UNIT - t) * SHADOW_LIGHT_FLOOR + t + SHADOW_UNIT) * SHADOW_MEAN_LEVEL
+        } else {
+            let t = offset as f32 / below as f32;
+            t * SHADOW_DARK_SCALE * SHADOW_MEAN_LEVEL
+        }
+    }
+
+    /// Alpha of an opaque colour of this palette under `SHADOW_HUE`.
+    pub fn alpha(&self, rgb: [u8; 3]) -> u8 {
+        let level = self.level(shadow_inverse_luminance(rgb));
+        // Truncating conversion, as the client's `FISTP` with the rounding control set to chop.
+        (level * SHADOW_ALPHA_RANGE + SHADOW_ALPHA_MIN) as u8
+    }
+}
+
+/// Edge coverage `f` (0..=`EDGE_FACTOR_ONE`) of a decoded straight-alpha pixel, inverting the
+/// decoder's `alpha = 255 * f >> 4`; `EDGE_FACTOR_ONE` for solid pixels.
+fn edge_factor(alpha: u8) -> u16 {
+    (u16::from(alpha) * EDGE_FACTOR_ONE + EDGE_FACTOR_ROUND_UP) / u16::from(u8::MAX)
 }
 
 fn scale_channel(value: u8, scale: u8) -> u8 {
@@ -605,7 +700,7 @@ mod tests {
             200, 30, 30, 255, // keeps its colour
             0, 0, 0, 0, // transparent
         ];
-        tables.apply(GHOST_HUE, &mut rgba, &[1, 1, 0, 1]);
+        tables.apply(GHOST_HUE, &mut rgba, &[1, 1, 0, 1], &ShadowPaletteStats::default());
 
         assert_eq!(rgba, vec![0, 90, 0, 255, 0, 120, 0, 127, 200, 30, 30, 255, 0, 0, 0, 0]);
         assert_eq!(tables.hue_table(0), EcHueTableRef::None);
@@ -614,12 +709,49 @@ mod tests {
     }
 
     #[test]
-    fn shadow_hue_turns_coded_pixels_into_translucent_black() {
-        assert_eq!(shadow_alpha([0, 0, 0]), (SHADOW_ALPHA_MIN + SHADOW_ALPHA_RANGE) as u8);
-        assert_eq!(shadow_alpha([255, 255, 255]), SHADOW_ALPHA_MIN as u8);
+    fn shadow_inverse_luminance_follows_the_client_float_order() {
+        assert_eq!(shadow_inverse_luminance([0, 0, 0]), SHADOW_INVERSE_BASE);
+        // In f32 the weights of a grey sum back to the grey (in f64 they would give 254).
+        assert_eq!(shadow_inverse_luminance([255, 255, 255]), 0);
+        assert_eq!(shadow_inverse_luminance([128, 128, 128]), 127);
+        assert_eq!(shadow_inverse_luminance([200, 10, 10]), 181);
+    }
 
-        let mut rgba = vec![255, 255, 255, 255, 0, 0, 0, 0];
-        EcHueTables::default().apply(SHADOW_HUE, &mut rgba, &[0, 0]);
-        assert_eq!(rgba, vec![0, 0, 0, SHADOW_ALPHA_MIN as u8, 0, 0, 0, 0]);
+    #[test]
+    fn shadow_palette_stats_normalize_below_and_above_the_mean() {
+        let palette = [[0, 0, 0, 0], [255, 255, 255, 0], [128, 128, 128, 0], [64, 64, 64, 1]];
+        let stats = ShadowPaletteStats::from_palette(&palette);
+        assert_eq!(stats, ShadowPaletteStats { min_inverse: 0, mean_inverse: 143, max_inverse: 255 });
+        let alphas = palette.map(|c| stats.alpha([c[0], c[1], c[2]]));
+        assert_eq!(alphas, [190, 60, 106, 160]);
+        assert_eq!(stats.level(stats.mean_inverse), SHADOW_MEAN_LEVEL);
+
+        let flat = ShadowPaletteStats::from_palette(&[[10, 200, 30, 0], [10, 200, 30, 0]]);
+        assert_eq!(flat.alpha([10, 200, 30]), SHADOW_ALPHA_MIN as u8);
+        assert_eq!(ShadowPaletteStats::from_palette(&[]), ShadowPaletteStats::default());
+
+        // Single precision matters: in f64 the first colour would get alpha 82.
+        let palette = [[200, 10, 10, 0], [0, 0, 0, 0], [90, 90, 90, 0]];
+        let stats = ShadowPaletteStats::from_palette(&palette);
+        assert_eq!(palette.map(|c| stats.alpha([c[0], c[1], c[2]])), [83, 190, 60]);
+    }
+
+    #[test]
+    fn shadow_hue_turns_coded_pixels_into_translucent_black() {
+        let stats = ShadowPaletteStats::from_palette(&[[0, 0, 0, 0], [255, 255, 255, 0], [128, 128, 128, 0]]);
+        let black = stats.alpha([0, 0, 0]);
+        assert_eq!(black, (SHADOW_ALPHA_MIN + SHADOW_ALPHA_RANGE) as u8);
+        let edge_alpha = 127; // decoder alpha of edge factor 8
+        let mut rgba = vec![255, 255, 255, 255, 0, 0, 0, edge_alpha, 0, 0, 0, 0];
+        EcHueTables::default().apply(SHADOW_HUE, &mut rgba, &[0, 0, 0], &stats);
+        assert_eq!(rgba, vec![0, 0, 0, SHADOW_ALPHA_MIN as u8, 0, 0, 0, black / 2, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn edge_factor_inverts_the_decoder_edge_alpha() {
+        for factor in 0..=EDGE_FACTOR_ONE {
+            let alpha = (u16::from(u8::MAX) * factor) >> EDGE_FACTOR_BITS;
+            assert_eq!(edge_factor(alpha as u8), factor);
+        }
     }
 }

@@ -12,6 +12,7 @@ use crate::common::{
     AtlasPageCache,
 };
 use crate::tex_art_cc::{AtlasPackingMode, PagePixelFormat};
+pub use uocf::enhanced::hues::ShadowPaletteStats;
 
 pub const PAGE_MANIFEST_ENTRY_PATH: &str = "metadata/pages.bin";
 pub const ANIMATION_MANIFEST_ENTRY_PATH: &str = "metadata/animations.bin";
@@ -64,6 +65,10 @@ pub const BODY_FLAG_FRAMES_FALLBACK: u16 = 1 << 1;
 pub const BODY_FLAG_NO_PLACEHOLDER: u16 = 1 << 2;
 /// The sequence has no `AnimationSequence` entry: the records carry `ANIMATION_FLAG_NO_SEQUENCE`.
 pub const BODY_FLAG_NO_SEQUENCE: u16 = 1 << 3;
+/// The placeholder has a race (props1 key 9): `MobileAnimEcBodyRecord::race` is meaningful.
+pub const BODY_FLAG_HAS_RACE: u16 = 1 << 4;
+/// The placeholder has a gender (props1 key 10): `MobileAnimEcBodyRecord::gender` is meaningful.
+pub const BODY_FLAG_HAS_GENDER: u16 = 1 << 5;
 /// `MobileAnimEcBodyRecord::forced_hue` of a body drawn with its own hue.
 pub const NO_FORCED_HUE: u16 = 0;
 
@@ -81,14 +86,17 @@ const ITEM_MANIFEST_MAGIC: [u8; 4] = *b"MEIT";
 const SOURCE_HINT_MANIFEST_MAGIC: [u8; 4] = *b"MESH";
 const BODY_MANIFEST_MAGIC: [u8; 4] = *b"MEBD";
 /// Metadata version written by the converter, in every manifest.
-pub const MOBILE_ANIM_EC_METADATA_VERSION: u32 = 4;
+pub const MOBILE_ANIM_EC_METADATA_VERSION: u32 = 5;
 const MOBILE_ANIM_EC_METADATA_VERSION_FIRST: u32 = 1;
 const MOBILE_ANIM_EC_METADATA_VERSION_DYNAMIC_PAGES: u32 = 2;
 /// First version with the client pixel decoding (opaque colours, anchor centers, hue masks) and
 /// the `tileart.uop` body mapping (`metadata/bodies.bin`, records per server body). Version 3
 /// introduced the client `AnimationSequence` records (actions, 8 directions, aliases, fps).
-/// Older animation, frame and body data is not read: rebuild the package.
 const MOBILE_ANIM_EC_METADATA_VERSION_BODY_MAPPING: u32 = 4;
+/// First version with the shadow hue palette statistics in the frame records and the creature
+/// fields (sequence stored id, race, gender) in the body records. Older animation, frame and body
+/// data is not read: rebuild the package.
+const MOBILE_ANIM_EC_METADATA_VERSION_CREATURE_FIELDS: u32 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MobileAnimEcPageRecord {
@@ -126,11 +134,34 @@ pub struct MobileAnimEcBodyRecord {
     pub forced_hue: u16,
     /// `BODY_FLAG_*`.
     pub flags: u16,
+    /// Id stored inside the `AnimationSequence` entry `sequence_id` (sequence +0x10); equals
+    /// `sequence_id` except for a few entries (146 -> 704, 1308 -> 29, 1309 -> 1254) and for
+    /// `BODY_FLAG_NO_SEQUENCE`. The client draws an equipment item on the body only when the item
+    /// appearance's body type equals it (`BuildLayers`, "Not letting a %u(sq %u) wear a %u(sq %u)").
+    pub sequence_stored_id: u32,
+    /// props1 key 9 with `BODY_FLAG_HAS_RACE` (see [`Self::race`]).
+    pub race: u8,
+    /// props1 key 10 with `BODY_FLAG_HAS_GENDER` (see [`Self::gender`]).
+    pub gender: u8,
 }
 
 impl MobileAnimEcBodyRecord {
     pub fn is_ghost(&self) -> bool {
         self.flags & BODY_FLAG_GHOST != 0
+    }
+
+    /// Race of the placeholder (props1 key 9; the client's `GetRace` gives
+    /// `uocf::enhanced::mobile_body::DEFAULT_RACE` without it). Read by the client for the
+    /// equipment layer order (`FUN_00468810`).
+    pub fn race(&self) -> Option<u8> {
+        (self.flags & BODY_FLAG_HAS_RACE != 0).then_some(self.race)
+    }
+
+    /// Gender of the placeholder (props1 key 10, 0 male, 1 female; the client's `GetGender`
+    /// gives `uocf::enhanced::mobile_body::DEFAULT_GENDER` without it). Read by the client for
+    /// equipment appearance filters by owner gender and the equipment layer order.
+    pub fn gender(&self) -> Option<u8> {
+        (self.flags & BODY_FLAG_HAS_GENDER != 0).then_some(self.gender)
     }
 }
 
@@ -222,6 +253,10 @@ pub struct MobileAnimEcFrameRecord {
     /// `FRAME_HUE_*`: which pixels take the mobile hue. The hue table key of a hueable pixel is
     /// its red byte.
     pub hue_mode: u8,
+    /// Palette statistics of the source `AnimationFrame` file (source body and `source_action`)
+    /// that the shadow hue `uocf::enhanced::hues::SHADOW_HUE` normalizes against; the default for
+    /// a placeholder frame without a source file.
+    pub shadow: ShadowPaletteStats,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -683,6 +718,11 @@ fn parse_frame_manifest(bytes: &[u8]) -> eyre::Result<Vec<MobileAnimEcFrameRecor
             center_x: cursor.read_i16::<LittleEndian>()?,
             center_y: cursor.read_i16::<LittleEndian>()?,
             hue_mode: cursor.read_u8()?,
+            shadow: ShadowPaletteStats {
+                min_inverse: cursor.read_u8()?,
+                mean_inverse: cursor.read_u8()?,
+                max_inverse: cursor.read_u8()?,
+            },
         });
     }
     Ok(frames)
@@ -772,6 +812,9 @@ fn parse_body_manifest(bytes: &[u8]) -> eyre::Result<Vec<MobileAnimEcBodyRecord>
             appearance_body_id: cursor.read_u32::<LittleEndian>()?,
             forced_hue: cursor.read_u16::<LittleEndian>()?,
             flags: cursor.read_u16::<LittleEndian>()?,
+            sequence_stored_id: cursor.read_u32::<LittleEndian>()?,
+            race: cursor.read_u8()?,
+            gender: cursor.read_u8()?,
         });
     }
     if !bodies.windows(2).all(|pair| pair[0].body_id < pair[1].body_id) {
@@ -785,7 +828,7 @@ fn is_supported_metadata_version(version: u32) -> bool {
 }
 
 fn is_supported_animation_metadata_version(version: u32) -> bool {
-    (MOBILE_ANIM_EC_METADATA_VERSION_BODY_MAPPING..=MOBILE_ANIM_EC_METADATA_VERSION).contains(&version)
+    (MOBILE_ANIM_EC_METADATA_VERSION_CREATURE_FIELDS..=MOBILE_ANIM_EC_METADATA_VERSION).contains(&version)
 }
 
 pub fn page_entry_path(page_index: u32, fmt: PagePixelFormat) -> String {
@@ -820,5 +863,49 @@ mod tests {
                 && animation.block == 0
                 && animation.file == 1213
         }));
+    }
+
+    fn body_manifest_bytes(version: u32, records: &[(u32, u16, u32, u8, u8)]) -> Vec<u8> {
+        let mut bytes = BODY_MANIFEST_MAGIC.to_vec();
+        bytes.extend_from_slice(&version.to_le_bytes());
+        bytes.extend_from_slice(&(records.len() as u32).to_le_bytes());
+        for &(body_id, flags, sequence_stored_id, race, gender) in records {
+            for value in [body_id, body_id, body_id, body_id] {
+                bytes.extend_from_slice(&value.to_le_bytes());
+            }
+            bytes.extend_from_slice(&NO_FORCED_HUE.to_le_bytes());
+            bytes.extend_from_slice(&flags.to_le_bytes());
+            bytes.extend_from_slice(&sequence_stored_id.to_le_bytes());
+            bytes.extend_from_slice(&[race, gender]);
+        }
+        bytes
+    }
+
+    #[test]
+    fn body_manifest_reads_creature_fields() {
+        let human_female = 401;
+        let creature = 12;
+        let elf_race = 2;
+        let female_gender = 1;
+        let bytes = body_manifest_bytes(MOBILE_ANIM_EC_METADATA_VERSION, &[
+            (creature, 0, creature, 0, 0),
+            (human_female, BODY_FLAG_HAS_RACE | BODY_FLAG_HAS_GENDER, 400, elf_race, female_gender),
+        ]);
+        let bodies = parse_body_manifest(&bytes).unwrap();
+        assert_eq!((bodies[0].race(), bodies[0].gender()), (None, None));
+        assert_eq!(bodies[1].sequence_stored_id, 400);
+        assert_eq!((bodies[1].race(), bodies[1].gender()), (Some(elf_race), Some(female_gender)));
+    }
+
+    #[test]
+    fn older_animation_manifests_ask_for_a_rebuild() {
+        let bytes = body_manifest_bytes(MOBILE_ANIM_EC_METADATA_VERSION_BODY_MAPPING, &[]);
+        let error = parse_body_manifest(&bytes).unwrap_err().to_string();
+        assert!(error.contains("rebuild"), "{error}");
+
+        let mut frames = FRAME_MANIFEST_MAGIC.to_vec();
+        frames.extend_from_slice(&MOBILE_ANIM_EC_METADATA_VERSION_BODY_MAPPING.to_le_bytes());
+        frames.extend_from_slice(&0u32.to_le_bytes());
+        assert!(parse_frame_manifest(&frames).unwrap_err().to_string().contains("rebuild"));
     }
 }

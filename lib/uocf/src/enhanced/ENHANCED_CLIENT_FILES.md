@@ -245,7 +245,11 @@ unless the data becomes a stable package contract.
   non-zero animation appearance (filter subtype 2) replaces it, and body 0 is
   used when the frame body has no frames (401 -> sequence 400, frames 401;
   402 -> 400, 400; 146 -> 124, 124). Ghost bodies 402, 403, 607, 608, 694, 695
-  are drawn with hue 0x3e3. No `bodyconv`, `mobtypes` or `body.def` is loaded.
+  are drawn with hue 0x3e3, and so is a mobile whose 0x77/0x78 flags have bit
+  0x80. No `bodyconv`, `mobtypes` or `body.def` is loaded.
+- Placeholder race (props1 key 9, default 1) and gender (key 10, default 0)
+  order the equipment layers and filter item appearances by the owner's
+  gender; `MobileBodyDefinition::race` / `gender` keep them.
   Reference client: 1143 placeholders, 52 falling back to body 0; frame
   bodies 344 and 827 have no placeholder.
 - Frames: each plain action owns `5 * frame_count` frames for the stored
@@ -270,7 +274,16 @@ unless the data becomes a stable package contract.
   index past the palette is an error.
 - Hues (`enhanced::hues`): a hueable pixel takes `table[red]` of the hue
   table (`hue{N:04}.bmp`, 256x2, top row, key `hue - 1`, partial flag 0x8000
-  masks to 0x3fff) and keeps its edge alpha; hue 0x4001 is the shadow.
+  masks to 0x3fff) and keeps its edge alpha.
+- Hue 0x4001 (shadow; the server sets it for a dead bonded pet through 0xBF
+  sub-command 0x19): every pixel is black. Its alpha comes from the inverse
+  luminance `inv = 255 - trunc(b0 * .34 + b2 * .07 + b1 * .59)` and the
+  palette's min, integer mean and max of `inv`
+  (`hues::ShadowPaletteStats`): a level x of 0.5 at the mean, 0..0.4 below
+  it, 0.6..1 above it, 0 when the mean equals the min or the max; alpha
+  `trunc(x * 130 + 60)`, so 60..190, evaluated in f32 like the client. The
+  `mobile_anim_ec.uddp` frame records (version 5) carry the statistics of
+  their source file's palette.
 - Aliases borrow another action's frames, one level only; action 19 is an
   alias of 0 when flying animations are off; a broken alias falls back to the
   lowest plain action (`resolve_action`). Missing actions play at 16 fps.

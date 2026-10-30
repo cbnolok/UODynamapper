@@ -27,7 +27,7 @@ validation).
 - `dynamapper` is the primary consumer at runtime. Tools use it mainly for
   inspection and validation.
 
-## `mobile_anim_ec.uddp` (metadata version 4)
+## `mobile_anim_ec.uddp` (metadata version 5)
 
 Built by `udd-conv` from the EC `AnimationFrame1..6.uop`, `AnimationSequence.uop` and the
 `tileart.uop` creature placeholders, following the client (`scripts/dev-helpers/ec-research/ghidra-animation/results/uosa_animation.md`). Every metadata
@@ -37,8 +37,8 @@ entry starts with a 4-byte magic and the u32 version; all values are little-endi
 |---|---|---|
 | `metadata/pages.bin` | `MEPG` | atlas pages; version 4 adds `u8 flags` to each page record |
 | `metadata/animations.bin` | `MEAN` | `u32 count`, then `count` animation records (37 bytes) |
-| `metadata/frames.bin` | `MEFR` | `u32 count`, then `count` frame records (31 bytes) |
-| `metadata/bodies.bin` | `MEBD` | `u32 count`, then `count` body records (20 bytes), sorted by body |
+| `metadata/frames.bin` | `MEFR` | `u32 count`, then `count` frame records (34 bytes) |
+| `metadata/bodies.bin` | `MEBD` | `u32 count`, then `count` body records (26 bytes), sorted by body |
 | `metadata/items.bin` | `MEIT` | `EcMobileAnimations.kdl` items (unchanged) |
 | `metadata/source_hints.bin` | `MESH` | `EcMobileAnimations.kdl` source hints (unchanged) |
 | `pages/NNNNN.{rgba8888,bc7}` | | atlas page payloads |
@@ -50,17 +50,21 @@ u16 resolved_action_id_no_flying, f32 fps, f32 fps_no_flying, u32 skipped_frame_
 
 Frame record: `u32 animation_index, u16 frame_index, u16 source_frame_index, u16 source_action,
 u16 source_frame_number, u32 page_index, u16 page_frame_index, u16 x, u16 y, u16 width, u16 height,
-i16 center_x, i16 center_y, u8 hue_mode`.
+i16 center_x, i16 center_y, u8 hue_mode, u8 shadow_min, u8 shadow_mean, u8 shadow_max`.
 
 Body record: `u32 body_id, u32 sequence_id, u32 frames_body_id, u32 appearance_body_id,
-u16 forced_hue, u16 flags`.
+u16 forced_hue, u16 flags, u32 sequence_stored_id, u8 race, u8 gender`.
+
+Both records are fixed-size; nothing in them is variable-length.
 
 Version 4 decodes the pixels like the client (palette byte 3 is a keep-colour flag, not alpha:
 solid pixels are opaque, edge pixels keep their colour with coverage alpha, straight alpha), sets
 the anchor to `(-x0, -y0)` of the frame box, adds the hue modes and masks, and maps server bodies
 through `tileart.uop` (`metadata/bodies.bin`). Version 3 replaced the placeholder records of
-versions 1 and 2. The reader still accepts versions 1..4 for pages, items and source hints, but
-rejects animation, frame and body manifests older than 4: rebuild the package.
+versions 1 and 2. Version 5 adds the creature fields: the shadow palette statistics of each frame
+and the sequence stored id, race and gender of each body. The reader still accepts versions 1..5 for
+pages, items and source hints, but rejects animation, frame and body manifests older than 5: rebuild
+the package.
 
 Bodies (`MobileAnimEcPackage::bodies` / `body`): the client draws server body `S` through the
 creature placeholder `10000000 + S`. `sequence_id` is its body type (the `AnimationSequence`
@@ -72,11 +76,30 @@ Bodies with frames or a sequence but no placeholder use their own sequence and f
 (`BODY_FLAG_NO_PLACEHOLDER`; the client cannot show them); `BODY_FLAG_NO_SEQUENCE` marks bodies
 whose records are the no-sequence fallback below.
 
+Creature fields (version 5):
+
+- `sequence_stored_id`: the stored id of the body's `AnimationSequence` entry (the sequence id
+  when the body has no sequence). The client draws an equipment item only when the item's body
+  type equals the wearer's stored id.
+- `race` / `gender`: props1 keys 9 and 10 of the placeholder, valid when `BODY_FLAG_HAS_RACE` /
+  `BODY_FLAG_HAS_GENDER` is set (`race()` / `gender()` return `None` otherwise; the client then
+  uses race 1 and gender 0). The client orders the equipment layers by them and filters item
+  appearances by the owner's gender.
+- `tests/mobile_anim_ec_package_client.rs` (ignored) checks a built package against the client
+  files: set `UO_EC_CLIENT_DIR` and `UDD_MOBILE_ANIM_EC_UDDP` and run with `--ignored`.
+
 Hues: `hue_mode` is `FRAME_HUE_NONE` (no pixel takes the hue), `FRAME_HUE_ALL` (every pixel with
 alpha > 0 does) or `FRAME_HUE_MASKED` (the R8 page mask `masks/NNNNN.r8`, sized like the used
 area of the page, is 255 on the pixels that do, inside the frame rect; gutters repeat the edge).
 `read_frame_hue_mask` returns the per-pixel mask for any mode. A hued pixel takes `table[red]` of
 the hue table and keeps its alpha (`uocf::enhanced::hues`).
+
+Shadow hue 0x4001 (the client's look for a dead bonded pet): every pixel turns black, and its alpha
+depends on its palette colour and on statistics of the whole palette of the source
+`AnimationFrame` file. The frame record stores those statistics (`shadow`, a
+`ShadowPaletteStats` of the inverse luminance: min, integer mean, max). A pixel's shadow alpha is
+`shadow.alpha(rgb)` of its decoded colour, times its edge coverage; `EcHueTables::apply(..,
+&frame.shadow)` does both.
 
 Resolving "body, action, direction" (`MobileAnimEcPackage::animation` /
 `resolve_animation`):

@@ -11,7 +11,11 @@
 //!   replaces it, and body 0 is used when the frame body has no frames;
 //! - ghost bodies are drawn with `GHOST_HUE`.
 //!
-//! No hardcoded table, gender or race substitution is involved.
+//! No hardcoded table, gender or race substitution is involved. The placeholder's race and gender
+//! (props1 keys 9 and 10) are not part of the body mapping: the client reads them for the
+//! equipment drawn on the body (`AppearanceFilterByOwnerGender::Apply` 0x0084b485 tests the
+//! wearer definition's `GetGender`; `FUN_00468810` orders the equipment layers by `GetRace` /
+//! `GetGender`).
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -30,6 +34,10 @@ pub const MOBILE_DEFINITION_BASE: u32 = 10_000_000;
 pub const FALLBACK_FRAMES_BODY: u32 = 0;
 /// Bodies the client draws with `GHOST_HUE` (checked on the definition's tile id).
 pub const GHOST_BODIES: [u32; 6] = [402, 403, 607, 608, 694, 695];
+/// Race `UOObjectDefinitionBase::GetRace` (0x00842df1) returns without props1 key 9.
+pub const DEFAULT_RACE: u32 = 1;
+/// Gender `UOObjectDefinitionBase::GetGender` (0x00842e68) returns without props1 key 10.
+pub const DEFAULT_GENDER: u32 = 0;
 
 /// Byte offset of the tile id in a tileart record (after the u16 version and u32 string offset).
 const TILEART_TILE_ID_OFFSET: usize = 6;
@@ -48,6 +56,11 @@ pub struct MobileBodyDefinition {
     /// Non-zero animation appearance (filter subtype 2) matching the placeholder's own body type;
     /// replaces `appearance`.
     pub animation_appearance: Option<u32>,
+    /// props1 key 9 (`GetRace`; `DEFAULT_RACE` when absent). Set on the human, elf and gargoyle
+    /// placeholders only.
+    pub race: Option<u32>,
+    /// props1 key 10 (`GetGender`, 0 male, 1 female; `DEFAULT_GENDER` when absent).
+    pub gender: Option<u32>,
 }
 
 /// Frame body after the client's fallback.
@@ -75,6 +88,8 @@ impl MobileBodyDefinition {
             sequence_id: entry.body_type,
             appearance,
             animation_appearance,
+            race: entry.property1(PropertyKey::Race),
+            gender: entry.property1(PropertyKey::Gender),
         })
     }
 
@@ -225,6 +240,26 @@ mod tests {
             ..TileArtEntry::default()
         })
         .is_none());
+    }
+
+    #[test]
+    fn placeholder_keeps_race_and_gender() {
+        let mut entry = placeholder(HUMAN_FEMALE, HUMAN_MALE, None);
+        let female_gender = 1;
+        let elf_race = 2;
+        entry.prop_vector1.push(TaeProp {
+            id: PropertyKey::Race as u8,
+            val: elf_race,
+        });
+        entry.prop_vector1.push(TaeProp {
+            id: PropertyKey::Gender as u8,
+            val: female_gender,
+        });
+        let definition = MobileBodyDefinition::from_tileart_entry(&entry).unwrap();
+        assert_eq!((definition.race, definition.gender), (Some(elf_race), Some(female_gender)));
+
+        let creature = MobileBodyDefinition::from_tileart_entry(&placeholder(12, 59, None)).unwrap();
+        assert_eq!((creature.race, creature.gender), (None, None));
     }
 
     #[test]

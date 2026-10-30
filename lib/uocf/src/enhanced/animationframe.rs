@@ -189,6 +189,8 @@ pub struct AnimationFrameMetadata {
     pub bounds: AnimationBounds,
     pub frames_count: u32,
     pub frames_offset: u32,
+    /// Palette entries, as `AnimationFrame::colours` (the shadow hue normalizes against them).
+    pub colours: Vec<[u8; 4]>,
     pub frames: Vec<FrameEntry>,
 }
 
@@ -205,19 +207,7 @@ impl AnimationFrame {
     pub fn load(data: &[u8]) -> eyre::Result<Self> {
         let header = parse_header(data)?;
 
-        let colours_offset = header.colours_offset as usize;
-        let colours_count = header.colours_count as usize;
-        let expected_colours_end = colours_offset + colours_count * PALETTE_ENTRY_SIZE;
-        if data.len() < expected_colours_end {
-            eyre::bail!("Data too small for color palette");
-        }
-
-        let mut colours = Vec::with_capacity(colours_count);
-        let palette_slice = &data[colours_offset..expected_colours_end];
-        for chunk in palette_slice.chunks_exact(PALETTE_ENTRY_SIZE) {
-            colours.push([chunk[0], chunk[1], chunk[2], chunk[3]]);
-        }
-
+        let colours = parse_palette(data, header)?;
         let (frames, expected_frames_end) = parse_frame_entries(data, header)?;
         let image_data: Arc<[u8]> = data[expected_frames_end..].into();
 
@@ -238,6 +228,7 @@ impl AnimationFrame {
 
     pub fn load_metadata(data: &[u8]) -> eyre::Result<AnimationFrameMetadata> {
         let header = parse_header(data)?;
+        let colours = parse_palette(data, header)?;
         let (frames, _) = parse_frame_entries(data, header)?;
 
         Ok(AnimationFrameMetadata {
@@ -247,6 +238,7 @@ impl AnimationFrame {
             bounds: AnimationBounds::from_header(header),
             frames_count: u32::from_le(header.frames_count),
             frames_offset: u32::from_le(header.frames_offset),
+            colours,
             frames,
         })
     }
@@ -354,6 +346,20 @@ fn parse_header(data: &[u8]) -> eyre::Result<&AnimationFrameHeader> {
         eyre::bail!("Invalid animation frame signature");
     }
     Ok(header)
+}
+
+/// Palette entries `[b0, b1, b2, keep_colour]`.
+fn parse_palette(data: &[u8], header: &AnimationFrameHeader) -> eyre::Result<Vec<[u8; 4]>> {
+    let colours_offset = u32::from_le(header.colours_offset) as usize;
+    let colours_count = u32::from_le(header.colours_count) as usize;
+    let expected_colours_end = colours_offset + colours_count * PALETTE_ENTRY_SIZE;
+    if data.len() < expected_colours_end {
+        eyre::bail!("Data too small for color palette");
+    }
+    Ok(data[colours_offset..expected_colours_end]
+        .chunks_exact(PALETTE_ENTRY_SIZE)
+        .map(|chunk| [chunk[0], chunk[1], chunk[2], chunk[3]])
+        .collect())
 }
 
 /// Frame entries with absolute data offsets, and the end of the frame table.

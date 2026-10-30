@@ -12,7 +12,9 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 use uocf::animation_sequence::AnimationSequence;
 use uocf::enhanced::animationframe::{AnimationFrame, MAX_ACTION_ID_FALLBACK, MAX_BODY_ID, OPAQUE_ALPHA};
-use uocf::enhanced::hues::{EcHueTableRef, EcHueTables, SHADOW_HUE};
+use uocf::enhanced::hues::{
+    EcHueTableRef, EcHueTables, ShadowPaletteStats, SHADOW_ALPHA_MIN, SHADOW_ALPHA_RANGE, SHADOW_HUE,
+};
 use uocf::enhanced::mobile_body::{MobileBodyMap, FALLBACK_FRAMES_BODY, GHOST_HUE};
 use uocf::uop_container::hash::hash_file_name_single;
 use uocf::uop_container::package::UopPackage;
@@ -44,6 +46,8 @@ const EXPECTED_FRAME_ONLY_WITHOUT_PLACEHOLDER: [u32; 2] = [344, 827];
 const HUMAN_MALE: u32 = 400;
 const HUMAN_FEMALE: u32 = 401;
 const MALE_GHOST: u32 = 402;
+/// props1 key 10 of the female human placeholder.
+const FEMALE_GENDER: u32 = 1;
 const MALE_GHOST_SEQUENCE: u32 = 400;
 const MALE_GHOST_FRAMES: u32 = 400;
 const GIANT_SERPENT: u32 = 146;
@@ -129,8 +133,13 @@ fn every_placeholder_maps_body_to_sequence_and_frames() {
             frame_only.len(),
         );
 
+        let with_race = definitions.values().filter(|definition| definition.race.is_some()).count();
+        let with_gender = definitions.values().filter(|definition| definition.gender.is_some()).count();
+        println!("{env}: {with_race} placeholders with a race, {with_gender} with a gender");
+
         let female = map.definition(HUMAN_FEMALE).unwrap();
         assert_eq!((female.sequence_id, female.requested_frames_body()), (HUMAN_MALE, HUMAN_FEMALE));
+        assert_eq!(female.gender, Some(FEMALE_GENDER));
         let ghost = map.definition(MALE_GHOST).unwrap();
         assert_eq!((ghost.sequence_id, ghost.requested_frames_body()), (MALE_GHOST_SEQUENCE, MALE_GHOST_FRAMES));
         assert_eq!(ghost.forced_hue(), Some(GHOST_HUE));
@@ -180,6 +189,13 @@ fn real_frames_decode_opaque_with_soft_edges_and_hue_masks() {
         }
         println!("{env}: body {HUMAN_MALE} stand: {opaque} opaque, {edges} edge and {hueable} hueable pixels");
         assert!(opaque > 0 && edges > 0 && hueable > 0);
+
+        let stats = ShadowPaletteStats::from_palette(&animation.colours);
+        let alphas: BTreeSet<u8> = animation.colours.iter().map(|c| stats.alpha([c[0], c[1], c[2]])).collect();
+        println!("{env}: body {HUMAN_MALE} stand shadow {stats:?}, alphas {:?}..{:?}", alphas.first(), alphas.last());
+        assert!(stats.min_inverse <= stats.mean_inverse && stats.mean_inverse <= stats.max_inverse);
+        let alpha_range = SHADOW_ALPHA_MIN as u8..=(SHADOW_ALPHA_MIN + SHADOW_ALPHA_RANGE) as u8;
+        assert!(alphas.iter().all(|alpha| alpha_range.contains(alpha)));
     }
 }
 
