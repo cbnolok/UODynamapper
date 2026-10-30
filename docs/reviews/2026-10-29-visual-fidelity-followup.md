@@ -16,7 +16,7 @@ their own runtime acceptance checks.
 | Next | Static height/anchors and non-KR fake-normal wall artifacts | General height parity remains unproven. User confirmed the EC references use legacy objects: compare CC art + EC terrain. Original ordinary-sprite geometry uses equal camera-plane pixel scales; our upright-card projected aspect is a measured hypothesis requiring individual-sprite validation. Do not alter logical XYZ, collision heights or movement flags to imitate a render projection. The bridge/stair depth repair remains a control. Fake normals default off in Classic/Enhanced; manual activation still needs a bounded wall fixture. |
 | Next | Effects and light decals reported as invisible | Check each effect with the correct source, active preset, relevant strength and receiver. Normal maps only consume EC land in fragment modes; grime and color wash have KR gates. Trace decal collection, receiver and visible composition rather than declaring the switches broken from default output. |
 | Completed 2026-10-30 | Free perspective zoom | Input now applies the actual clamped zoom delta as a dolly along the free camera's current view direction. Native scroll/text checks cover all three styles, rotated and unrotated views, both limits, and follow/orthographic controls. Object/terrain positions and the lens remain unchanged; see the perspective notes. |
-| Open UI work | Shader-dialog organization | Scope groups exist, but standard/KR art separation, water-animation placement and the mixed-scope advanced Effects section remain unfinished. Review the effective layout as well as source grouping. |
+| Completed 2026-10-30 | Shader-dialog organization | Standard/KR-style art columns stack at narrower widths. Water has its own shared terrain/static group; advanced Effects/Graphics separate scopes. Native three-style, resize, save and side-window checks pass; see the shader-control layout notes. Effect fidelity remains separate. |
 | Later parity work | Liquid reflection interpolation, clocks, per-stage filtering, projected geometry and color/lighting | Default original reflection-camera coordinates, source selection, signed UVs, owner-specific streams and liquid filtering have repairs. Full pixel parity across different triangulations, item anchors and original per-stage sampler choices remains unproven. Do not reopen the repaired camera formula without new evidence. |
 | Unimplemented | Foam, waterfall, lava-bubble and refraction effects | `land/main.wesl` still marks these extra passes TODO. Recover actual effect-definition/spawn and NIF/EMS ownership before assigning support images to materials. |
 | Revalidation | Classic partial-water transparency and a stray authored wave | Recorded as separate follow-ups in the water-resolution notes. Reproduce first; the accepted terrain/static lighting and fog ownership are regression controls. |
@@ -25,6 +25,7 @@ their own runtime acceptance checks.
 Primary references:
 [static ground transitions](../agent_notes/ec_static_ground_transitions.md),
 [source-specific transition controls](../agent_notes/terrain_transition_controls.md),
+[shader-control layout](../agent_notes/shader_control_layout.md),
 [liquid source evidence](../agent_notes/ec_original_water_code.md),
 [water resolution](../agent_notes/water_terrain_static_resolution.md), and
 [material reachability](../agent_notes/ec_material_family_reachability.md).
@@ -42,8 +43,8 @@ be stale. The following classification is based on current source and notes.
 
 | Text-file item | Current classification |
 | --- | --- |
-| Part 1.1: less crowded art controls / separate standard and KR columns | Partially addressed by collapsible Terrain, Objects and Everything groups. The requested standard/KR art columns are not present; usability still needs review. |
-| Part 1.2: categorize effect toggles | Basic Controls now groups them by scope. Water Animation remains in the whole-scene group and advanced Effects mixes scopes, so the requested organization is not fully settled. |
+| Part 1.1: less crowded art controls / separate standard and KR columns | Completed with responsive Standard art / KR-style art columns and a stacked narrow layout. Native checks cover all three styles and actual resize drags. |
+| Part 1.2: categorize effect toggles | Completed: Basic Controls separates Terrain, Objects, Water and Everything; advanced Effects/Graphics label their scopes. Water animation explicitly covers map and static water. Moved toggles save through the existing preset path. |
 | Part 1.3: effects have no visible impact | Keep as a targeted visual audit, not a blanket confirmed defect. Source/profile gates and effective cached settings must be recorded. Projected shadows have a prior visibility repair. |
 | Part 1.4: cursor inspection strings are too long | A recorded repair splits fields across lines; current `cursor_behavior.rs` retains that formatting. Recheck only if a specific long value still overflows. |
 | Part 2.1: statics seem too high | Open reference-validation item. Prior CC double-offset and bridge-priority repairs do not prove every EC/CC anchor or height is correct. |
