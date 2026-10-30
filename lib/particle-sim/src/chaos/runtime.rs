@@ -4,13 +4,15 @@
 use std::sync::Arc;
 
 use super::desc::{ChaosEventKind, ChaosParticleType, ChaosSequenceDesc, ChaosSequenceFlags};
+use super::mesh::{MeshClones, MeshPlacement, MeshSource, euler_xyz};
 use super::{
     ChaosSystem, MIN_EMIT_INTERVAL_S, PreparedEvent, SUBSTEP_INTERVAL_S, sample_components, sample_int_range,
     sample_range,
 };
 use crate::math::{Mat3, Vec3};
 use crate::render::{
-    BlendState, DrawBatch, MeshInstance, PARTICLE_DEPTH_STATE, RenderFrame, SpriteInstance, SpriteKind, UvRect,
+    BlendState, DrawBatch, MeshInstance, PARTICLE_DEPTH_STATE, RenderFrame, SortKey, SpriteInstance, SpriteKind,
+    UvRect,
 };
 use crate::rng::Rng;
 use crate::system::NodeTransform;
@@ -39,6 +41,11 @@ const ZERO_SPAN_REPLACEMENT: f32 = 1.0;
 const COLOR_RANGE: (f32, f32) = (0.0, 1.0);
 /// Node scale used while the emitter has no owner (after Stop).
 const DETACHED_NODE_SCALE: f32 = 1.0;
+/// `ParticleSet::Update` (0x008b2de0) recomputes the bounds of the quad sequences when this many seconds have
+/// passed since the last time (`DAT_00d05214`).
+pub const BOUND_INTERVAL_S: f32 = 0.033;
+/// Added to the bound radius (`DAT_00d05120`, same function).
+pub const BOUND_RADIUS_MARGIN: f32 = 0.01;
 
 /// One particle (`Particle`, 0xa8 bytes in the client; field offsets in the comments).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -80,6 +87,8 @@ pub struct ChaosParticle {
     pub length: f32,
     /// +0x9c
     pub length_step: f32,
+    /// Seconds of the last update step (MESH clones sub-step over it).
+    pub step: f32,
     /// Index of the next event to run.
     pub next_event: usize,
 }
@@ -107,6 +116,7 @@ impl ChaosParticle {
             rotation_step: [0.0; 3],
             length: TEMPLATE_LENGTH,
             length_step: 0.0,
+            step: 0.0,
             next_event: 0,
         }
     }
@@ -150,6 +160,7 @@ impl ChaosParticle {
             return false;
         }
         let dt = time - self.last_update;
+        self.step = dt;
         self.event_timer += dt;
         self.previous_position = self.position;
         if flags.contains(ChaosSequenceFlags::STAY_AT_EMITTER) {
@@ -257,6 +268,11 @@ struct SequenceState {
     particles: Vec<ChaosParticle>,
     /// `last_emit` time of the sequence.
     last_emit: f32,
+    /// Bound of the quad shape (centre and radius, in render space), from the last refresh; `None` before
+    /// the first.
+    bound: Option<(Vec3, f32)>,
+    /// The clones of a MESH sequence whose `.nif` the [`MeshSource`] resolved.
+    meshes: Option<MeshClones>,
 }
 
 /// The client's `Emitter`: one running instance of a compiled script.
@@ -275,6 +291,8 @@ pub struct ChaosEmitter {
     node: NodeSample,
     /// Node position at the previous update (+0x4c).
     previous_node_position: Option<Vec3>,
+    /// Time of the last bound refresh (`ParticleSet` +0x24).
+    bound_time: f32,
 }
 
 impl ChaosEmitter {
@@ -292,7 +310,24 @@ impl ChaosEmitter {
             remaining: 0.0,
             node: NodeSample::default(),
             previous_node_position: None,
+            bound_time: 0.0,
         }
+    }
+
+    /// Gives the MESH sequences whose `.nif` `source` resolves a clone per particle; the others keep drawing
+    /// [`MeshInstance`] placements.
+    pub fn set_mesh_source(&mut self, source: &MeshSource) {
+        for (state, sequence) in self.sequences.iter_mut().zip(0..) {
+            if self.system.desc().sequences[sequence].particle_type == ChaosParticleType::Mesh {
+                let name = &self.system.prepared(sequence).resource;
+                state.meshes = source.resolve(name).map(MeshClones::new);
+            }
+        }
+    }
+
+    /// The bound of sequence `sequence`'s quads (centre, radius) at the last refresh.
+    pub fn bound(&self, sequence: usize) -> Option<(Vec3, f32)> {
+        self.sequences[sequence].bound
     }
 
     pub fn system(&self) -> &Arc<ChaosSystem> {
@@ -371,7 +406,56 @@ impl ChaosEmitter {
         for sequence in 0..self.sequences.len() {
             self.update_sequence(rng, sequence, time);
         }
+        self.update_set(time);
         self.previous_node_position = Some(self.node.position);
+    }
+
+    /// Where sequence `sequence` draws a particle: its position, plus the node position for LOCAL sequences.
+    fn render_position(&self, sequence: usize, particle: &ChaosParticle) -> Vec3 {
+        if self.system.desc().sequences[sequence].flags.contains(ChaosSequenceFlags::LOCAL) {
+            particle.position + self.node.position
+        } else {
+            particle.position
+        }
+    }
+
+    /// `ParticleSet::Update` (0x008b2de0): every [`BOUND_INTERVAL_S`], the bound of each quad sequence
+    /// (POINT, AXIAL) with live particles: centre = the centre of the box of the particle positions, radius =
+    /// the largest distance from it plus [`BOUND_RADIUS_MARGIN`]; every update, the MESH clones.
+    fn update_set(&mut self, time: f32) {
+        let refresh = time - self.bound_time >= BOUND_INTERVAL_S;
+        if refresh {
+            self.bound_time = time;
+        }
+        for sequence in 0..self.sequences.len() {
+            let desc = &self.system.desc().sequences[sequence];
+            let positions: Vec<Vec3> =
+                self.sequences[sequence].particles.iter().map(|particle| self.render_position(sequence, particle)).collect();
+            match desc.particle_type {
+                ChaosParticleType::Point | ChaosParticleType::Axial if refresh && !positions.is_empty() => {
+                    self.sequences[sequence].bound = Some(bound_of(&positions));
+                }
+                ChaosParticleType::Mesh => {
+                    let rotates = desc.flags.contains(ChaosSequenceFlags::ROTATION);
+                    let node_rotation = self.node.rotation;
+                    let state = &mut self.sequences[sequence];
+                    let Some(meshes) = &mut state.meshes else { continue };
+                    meshes.update(state.particles.iter().zip(positions).map(|(particle, position)| MeshPlacement {
+                        position,
+                        // `ParticleSet::Update` case 2 multiplies Euler · node rotation (row-major, M · v).
+                        rotation: if rotates {
+                            euler_xyz(particle.rotation).mul_mat3(&node_rotation)
+                        } else {
+                            node_rotation
+                        },
+                        size: particle.size,
+                        age: particle.age,
+                        step: particle.step,
+                    }));
+                }
+                _ => {}
+            }
+        }
     }
 
     /// Reads the node like the client: position, velocity, scale and rotation from the owner; stale values and
@@ -504,6 +588,8 @@ impl ChaosEmitter {
     /// `SetCelTexCoords` 0x008c5970, `MeshParticle`): one batch per drawn sequence, in sequence order.
     pub fn render(&self, out: &mut RenderFrame) {
         let node = self.node;
+        // Mesh clone draws are numbered after the quad batches (which have no `BatchState`: order 0).
+        let mut order = 1;
         for (sequence, state) in self.sequences.iter().enumerate() {
             if state.particles.is_empty() {
                 continue;
@@ -512,13 +598,16 @@ impl ChaosEmitter {
             let resource = &self.system.prepared(sequence).resource;
             let local = desc.flags.contains(ChaosSequenceFlags::LOCAL);
             let rotates = desc.flags.contains(ChaosSequenceFlags::ROTATION);
-            let render_position =
-                |particle: &ChaosParticle| if local { particle.position + node.position } else { particle.position };
+            let render_position = |particle: &ChaosParticle| self.render_position(sequence, particle);
             let kind = match desc.particle_type {
                 ChaosParticleType::Point if rotates => SpriteKind::RotatedBillboard,
                 ChaosParticleType::Point => SpriteKind::Billboard,
                 ChaosParticleType::Axial => SpriteKind::Axial,
                 ChaosParticleType::Mesh => {
+                    if let Some(meshes) = &state.meshes {
+                        order = meshes.render(out, order);
+                        continue;
+                    }
                     for particle in &state.particles {
                         out.meshes.push(MeshInstance {
                             mesh: Arc::clone(resource),
@@ -572,10 +661,23 @@ impl ChaosEmitter {
                     two_sided: kind == SpriteKind::Axial,
                     kind,
                     sprites: start..out.sprites.len(),
+                    // Before the first refresh the client's bound is the template quads' (at the shape origin).
+                    sort: SortKey::sorted(state.bound.map_or(if local { node.position } else { Vec3::ZERO }, |(center, _)| center)),
                 });
             }
         }
     }
+}
+
+/// Centre of the box of `positions` and the largest distance from it plus [`BOUND_RADIUS_MARGIN`].
+fn bound_of(positions: &[Vec3]) -> (Vec3, f32) {
+    let first = positions[0];
+    let (min, max) = positions.iter().fold((first, first), |(min, max), p| {
+        (Vec3::new(min.x.min(p.x), min.y.min(p.y), min.z.min(p.z)), Vec3::new(max.x.max(p.x), max.y.max(p.y), max.z.max(p.z)))
+    });
+    let center = (min + max) * 0.5;
+    let squared = positions.iter().map(|&p| (p - center).dot(p - center)).fold(0.0, f32::max);
+    (center, squared.sqrt() + BOUND_RADIUS_MARGIN)
 }
 
 fn clamp_color(color: [f32; 4]) -> [f32; 4] {

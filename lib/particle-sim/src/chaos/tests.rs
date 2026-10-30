@@ -390,6 +390,143 @@ fn mesh_particles_become_mesh_instances() {
     assert!((frame.meshes[0].animation_time - STEP_S).abs() < EPSILON);
 }
 
+/// A NIF with one triangle whose material alpha is its controller time over [0, `ALPHA_KEY_TIME`].
+fn alpha_keyed_nif() -> Arc<crate::nif::NifEffect> {
+    use crate::nif::desc::{
+        ControllerTarget, ControllerTiming, Curve, CycleType, FloatInterp, Key, KeyKind, NifController,
+        NifControllerKind, NifMaterial, NifMesh, NifNode, NifNodeKind, NifRenderState, NifTransform, Tcb,
+    };
+    use crate::render::MeshGeometry;
+    let key = |time: f32| Key { time, value: time / ALPHA_KEY_TIME, in_tangent: 0.0, out_tangent: 0.0, tcb: Tcb::default() };
+    let desc = crate::nif::NifEffectDesc {
+        nodes: vec![NifNode {
+            name: "bolt".to_owned(),
+            parent: None,
+            children: Vec::new(),
+            transform: NifTransform::IDENTITY,
+            flags: 0,
+            kind: NifNodeKind::Mesh { mesh: 0 },
+            extra_strings: Vec::new(),
+            in_scene: true,
+            lights: Vec::new(),
+            texture_effects: Vec::new(),
+            sort_adjust: None,
+        }],
+        root: Some(0),
+        meshes: vec![NifMesh {
+            node: 0,
+            geometry: MeshGeometry {
+                positions: vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+                triangles: vec![[0, 1, 2]],
+                ..MeshGeometry::default()
+            },
+            bound_center: [0.0; 3],
+            morph: None,
+            render_state: NifRenderState { material: Some(0), ..NifRenderState::default() },
+        }],
+        materials: vec![NifMaterial::default()],
+        controllers: vec![NifController {
+            owner: Some(0),
+            target: ControllerTarget::Material(0),
+            timing: ControllerTiming {
+                cycle: CycleType::Clamp,
+                active: true,
+                app_init: false,
+                reverse_direction: false,
+                frequency: 1.0,
+                phase: 0.0,
+                start_time: 0.0,
+                stop_time: ALPHA_KEY_TIME,
+            },
+            kind: NifControllerKind::Alpha(FloatInterp {
+                pose: None,
+                keys: Some(Curve { kind: KeyKind::Linear, keys: vec![key(0.0), key(ALPHA_KEY_TIME)] }),
+            }),
+        }],
+        ..crate::nif::NifEffectDesc::default()
+    };
+    Arc::new(crate::nif::NifEffect::prepare(desc))
+}
+
+/// End of the alpha keys of [`alpha_keyed_nif`].
+const ALPHA_KEY_TIME: f32 = 4.0;
+
+#[test]
+fn mesh_particles_draw_a_clone_of_their_nif_at_their_age() {
+    const SIZE: f32 = 2.0;
+    let mut effect = instance(&one_sequence(&format!(
+        "type = mesh\nmeshName = \"bolt.nif\"\nlifetime = 10\nburst = 2\ninitial scale = {SIZE}\n\
+         initial rotation = XYZ(0, 0, 90)\ninitial velocity = XYZ(1, 0, 0)"
+    )));
+    let nif = alpha_keyed_nif();
+    let resolved = Arc::clone(&nif);
+    effect.set_mesh_source(&MeshSource::new(move |name| (name == "bolt.nif").then(|| Arc::clone(&resolved))));
+    run(&mut effect, true, 0.0, 3, STEP_MS, &NodeTransform::default());
+    let mut frame = RenderFrame::default();
+    effect.render(&mut frame);
+    assert!(frame.meshes.is_empty(), "resolved meshes draw no placements");
+    let live = particles(&effect);
+    assert_eq!(frame.mesh_draws.len(), live.len());
+    assert!(live.len() >= 2);
+    for (draw, particle) in frame.mesh_draws.iter().zip(live) {
+        // The NIF's own material, its controllers at the particle age; no particle colour.
+        assert!((draw.material.alpha - particle.age / ALPHA_KEY_TIME).abs() < EPSILON, "{draw:?} {particle:?}");
+        assert!((draw.translation - particle.position).length() < EPSILON);
+        assert_eq!(draw.scale, SIZE);
+        // Rotation flag set: Euler(rotation) · node rotation (identity).
+        let expected = euler_xyz(particle.rotation);
+        assert_eq!(draw.rotation, expected);
+        // Each clone geometry is its own sort item, at its world bound centre.
+        assert_eq!(draw.sort.center, particle.position);
+    }
+    // Clones keep the deque order and their own scene order numbers.
+    assert!(frame.mesh_draws.windows(2).all(|pair| pair[0].order < pair[1].order));
+    // A name the source does not resolve keeps drawing placements.
+    let mut unresolved = instance(&one_sequence("type = mesh\nmeshName = \"other.nif\"\nlifetime = 10"));
+    unresolved.set_mesh_source(&MeshSource::new(move |name| (name == "bolt.nif").then(|| Arc::clone(&nif))));
+    run(&mut unresolved, true, 0.0, 3, STEP_MS, &NodeTransform::default());
+    let mut frame = RenderFrame::default();
+    unresolved.render(&mut frame);
+    assert_eq!(frame.meshes.len(), 1);
+    assert!(frame.mesh_draws.is_empty());
+}
+
+#[test]
+fn euler_rotations_follow_the_sdk_xyz_order() {
+    use crate::math::Mat3;
+    // A quarter turn about z alone maps x to -y in the SDK's (row-major, M · v) matrices.
+    let z = euler_xyz([0.0, 0.0, FRAC_PI_2]);
+    assert!((z.mul_vec3(Vec3::X) - Vec3::new(0.0, -1.0, 0.0)).length() < EPSILON);
+    // X · (Y · Z): z applies first.
+    let xz = euler_xyz([FRAC_PI_2, 0.0, FRAC_PI_2]);
+    let expected = euler_xyz([FRAC_PI_2, 0.0, 0.0]).mul_mat3(&z);
+    let close = |a: &Mat3, b: &Mat3| a.rows.iter().flatten().zip(b.rows.iter().flatten()).all(|(x, y)| (x - y).abs() < EPSILON);
+    assert!(close(&xz, &expected));
+}
+
+#[test]
+fn quad_sequences_sort_by_the_box_centre_of_their_particles() {
+    let mut effect = instance(&one_sequence(
+        "type = point\nlifetime = 10\nburst = 3\ninitial velocity = XYZ(random(-4, 4), random(-4, 4), random(-4, 4))",
+    ));
+    run(&mut effect, true, 0.0, 3, STEP_MS, &NodeTransform::default());
+    let mut frame = RenderFrame::default();
+    effect.render(&mut frame);
+    let live = particles(&effect);
+    let axis = |f: fn(&runtime::ChaosParticle) -> f32| {
+        let values = live.iter().map(f);
+        (values.clone().fold(f32::INFINITY, f32::min) + values.fold(f32::NEG_INFINITY, f32::max)) * 0.5
+    };
+    let center = Vec3::new(axis(|p| p.position.x), axis(|p| p.position.y), axis(|p| p.position.z));
+    let batch = &frame.batches[0];
+    assert!(batch.sort.sorted);
+    assert!((batch.sort.center - center).length() < EPSILON, "{:?} {center:?}", batch.sort);
+    let (bound_center, radius) = effect.emitter().bound(0).unwrap();
+    assert_eq!(bound_center, batch.sort.center);
+    let farthest = live.iter().map(|p| (p.position - center).length()).fold(0.0, f32::max);
+    assert!((radius - (farthest + BOUND_RADIUS_MARGIN)).abs() < EPSILON);
+}
+
 // --- Start and stop.
 
 #[test]

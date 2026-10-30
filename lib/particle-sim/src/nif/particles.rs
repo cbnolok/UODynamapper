@@ -683,7 +683,7 @@ fn update_modifier(
         }
         NifModifierKind::Emitter(_)
         | NifModifierKind::Spawn(_)
-        | NifModifierKind::BoundUpdate
+        | NifModifierKind::BoundUpdate { .. }
         | NifModifierKind::MeshUpdate { .. }
         | NifModifierKind::Unsupported { .. } => {}
     }
@@ -1035,6 +1035,7 @@ mod tests {
                 .collect(),
             render_state: NifRenderState::default(),
             mesh_particles: false,
+            bound_center: [0.0; 3],
         }
     }
 
@@ -1136,7 +1137,7 @@ mod tests {
             triangles: vec![[0, 1, 2]],
             ..Default::default()
         };
-        let mesh = NifMesh { node: 1, geometry, morph: None, render_state: NifRenderState::default() };
+        let mesh = NifMesh { node: 1, geometry, bound_center: [0.0; 3], morph: None, render_state: NifRenderState::default() };
         let meshes = [mesh];
         for emission in [MeshEmission::Vertices, MeshEmission::FaceCenter, MeshEmission::FaceSurface, MeshEmission::EdgeSurface] {
             let fixture = Fixture::new(vec![NifModifierKind::Emitter(emitter(EmitterShape::Mesh {

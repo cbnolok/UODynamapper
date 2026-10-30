@@ -4,7 +4,9 @@
 //! the same frame), an orthographic orbit camera fitted to the whole timeline, software rendering with
 //! particle-sim's rasterizer, and PNG exports. No egui here.
 //!
-//! Chaos (`.ems`) scripts and NIF (`.nif`) effects play side by side, each part drawn in its own scene order.
+//! Chaos (`.ems`) scripts and NIF (`.nif`) effects play side by side; the drawables of every part are drawn in one
+//! list, unsorted ones first, then blended ones far to near (particle-sim's [`Canvas::draw_group`]). Chaos MESH
+//! particles draw clones of their `.nif`.
 //! With an object hue, the NIF particles whose definition sets `hued` play as `UOHuedParticleEffectNif` (half speed,
 //! drawn through the `Hues.uop` atlas: particle-sim's [`particle_sim::hued`]).
 
@@ -15,17 +17,17 @@ use std::sync::Arc;
 use gamebryo_nif::NifFile;
 use image::RgbaImage;
 use particle_sim::chaos::compile::compile_chaos_source;
-use particle_sim::chaos::ChaosParticleType;
+use particle_sim::chaos::{ChaosParticleType, MeshSource};
 use particle_sim::mips::client_mip_levels;
 use particle_sim::nif::default_camera;
 use particle_sim::nif::desc::NifTextureSource;
 use particle_sim::hued::{
-    draw_hued_frame, hue_mode, offscreen_camera, HueMode, HuedRenderSettings, HUED_EFFECT_TIME_SCALE,
-    HUED_QUAD_HALF_SIZE, NO_HUE,
+    draw_hued_quad, hue_mode, hue_quad_sort_key, offscreen_camera, render_hued_target, HueMode, HuedRenderSettings,
+    HUED_EFFECT_TIME_SCALE, HUED_QUAD_HALF_SIZE, NO_HUE,
 };
 use particle_sim::raster::{
-    frame_bounds, frame_extent, orbit_axes, Canvas, OrthoView, RasterTexture, SceneDrawOptions, CLIENT_VIEW_ELEVATION,
-    CLIENT_VIEW_YAW, OVERLAY_BLEND,
+    frame_bounds, frame_extent, orbit_axes, Canvas, GroupItem, OrthoView, RasterTexture, SceneDrawOptions,
+    CLIENT_VIEW_ELEVATION, CLIENT_VIEW_YAW, OVERLAY_BLEND,
 };
 use particle_sim::render::{CameraFrame, RenderFrame, SceneLighting};
 use particle_sim::{
@@ -331,6 +333,8 @@ struct PreparedPart {
     embedded: HashMap<String, RasterTexture>,
     /// The package textures the part's NIF file mipmaps (`NiSourceTexture` prefs `YES`), lowercase.
     mipmapped: HashSet<String>,
+    /// The `.nif` of a Chaos part's MESH sequences.
+    meshes: Option<MeshSource>,
 }
 
 /// What a play of a definition list draws: the reached parts, the choices made and the prepared systems with
@@ -534,24 +538,36 @@ impl<'s, 'a> SceneBuilder<'s, 'a> {
             let errors = report.errors().map(ToString::to_string).collect();
             return PartStatus::ScriptRejected { name, errors };
         };
-        // MESH sequences name `.nif` scenes; the other resources are textures, not mipmapped (`MIP_DEFAULT`
-        // prefs, `NiTexture::ms_bMipmapByDefault` left false).
+        // MESH sequences name `.nif` scenes, compiled once per name (`ParticleSystemManager::LoadMesh`) with their
+        // textures; the other resources are textures, not mipmapped (`MIP_DEFAULT` prefs,
+        // `NiTexture::ms_bMipmapByDefault` left false).
+        let (mut embedded, mut mipmapped) = (HashMap::new(), HashSet::new());
+        let mut meshes = HashMap::new();
         for resource in desc.resources() {
-            let is_texture = desc
+            let is_mesh = desc
                 .sequences
                 .iter()
-                .any(|sequence| sequence.resource == resource && sequence.particle_type != ChaosParticleType::Mesh);
-            if is_texture {
+                .any(|sequence| sequence.resource == resource && sequence.particle_type == ChaosParticleType::Mesh);
+            if !is_mesh {
                 self.load_texture(resource, false);
+                continue;
+            }
+            match self.read_nif(resource) {
+                Ok(nif) => {
+                    let desc = particle_sim::nif::compile(&nif, resource).desc;
+                    self.nif_textures(resource, &desc, &mut embedded, &mut mipmapped);
+                    meshes.insert(resource.to_ascii_lowercase(), Arc::new(NifEffect::prepare(desc)));
+                }
+                Err(status) => self.scene.notes.push(format!("{name}: MESH {}, drawn as outlines", status.describe())),
             }
         }
+        let meshes = Some(MeshSource::new(move |name| meshes.get(&name.to_ascii_lowercase()).cloned()));
         let sequences = desc.sequences.len();
         let seed = self.part_seed();
         let system = Arc::new(ChaosSystem::prepare(desc, &mut Mt19937::new(seed)));
         let params = self.params(particle, None);
         let system = PreparedSystem::Chaos(system);
-        let (embedded, mipmapped) = (HashMap::new(), HashSet::new());
-        self.scene.prepared.push(PreparedPart { params, hued: false, seed, system, embedded, mipmapped });
+        self.scene.prepared.push(PreparedPart { params, hued: false, seed, system, embedded, mipmapped, meshes });
         PartStatus::Chaos { name, sequences, hue: hue_mode(true, particle.hued, self.settings.hue) }
     }
 
@@ -585,22 +601,25 @@ impl<'s, 'a> SceneBuilder<'s, 'a> {
         }
     }
 
-    /// A NIF effect: the draft of the file, else its payload parsed.
-    fn nif_particle(&mut self, particle: &ParticleEffect, name: String) -> PartStatus {
-        let draft = self.input.nif_drafts.and_then(|drafts| drafts(&name));
-        let nif = match draft {
-            Some(nif) => nif,
-            None => match (self.input.payload)(&name) {
-                None => return PartStatus::MissingFile { name },
-                Some(payload) => match NifFile::read(&payload) {
-                    Ok(nif) => Arc::new(nif),
-                    Err(error) => return PartStatus::NifRejected { name, error: error.to_string() },
-                },
-            },
-        };
-        let output = particle_sim::nif::compile(&nif, &name);
-        let desc = output.desc;
-        let (mut embedded, mut mipmapped) = (HashMap::new(), HashSet::new());
+    /// A NIF file: its draft, else its payload parsed; the part status when it does not load.
+    fn read_nif(&self, name: &str) -> Result<Arc<NifFile>, PartStatus> {
+        if let Some(nif) = self.input.nif_drafts.and_then(|drafts| drafts(name)) {
+            return Ok(nif);
+        }
+        let name = name.to_owned();
+        let payload = (self.input.payload)(&name).ok_or_else(|| PartStatus::MissingFile { name: name.clone() })?;
+        NifFile::read(&payload).map(Arc::new).map_err(|error| PartStatus::NifRejected { name, error: error.to_string() })
+    }
+
+    /// Loads the textures of NIF `name`: package files into the scene (recording the mipmapped ones), embedded
+    /// pixels into `embedded` with their stored levels (a mipmapped single level gets the generated chain).
+    fn nif_textures(
+        &mut self,
+        name: &str,
+        desc: &particle_sim::NifEffectDesc,
+        embedded: &mut HashMap<String, RasterTexture>,
+        mipmapped: &mut HashSet<String>,
+    ) {
         for texture in &desc.textures {
             match &texture.source {
                 NifTextureSource::External { file_name } => {
@@ -609,9 +628,8 @@ impl<'s, 'a> SceneBuilder<'s, 'a> {
                         mipmapped.insert(file_name.to_ascii_lowercase());
                     }
                 }
-                // Level 0 of the embedded pixels; a mipmapped one gets the generated chain.
-                NifTextureSource::Embedded { width, height, rgba } => {
-                    let (levels, _) = client_mip_levels(*width, *height, vec![rgba.clone()], texture.mipmapped, true);
+                NifTextureSource::Embedded { width, height, levels } => {
+                    let (levels, _) = client_mip_levels(*width, *height, levels.clone(), texture.mipmapped, true);
                     match RasterTexture::from_rgba8_levels(*width as usize, *height as usize, &levels) {
                         Some(raster) => {
                             embedded.insert(texture.name().to_ascii_lowercase(), raster);
@@ -625,6 +643,18 @@ impl<'s, 'a> SceneBuilder<'s, 'a> {
                     .push(format!("{name}: {}: pixel format {format} not decoded (drawn white)", texture.name())),
             }
         }
+    }
+
+    /// A NIF effect: the draft of the file, else its payload parsed.
+    fn nif_particle(&mut self, particle: &ParticleEffect, name: String) -> PartStatus {
+        let nif = match self.read_nif(&name) {
+            Ok(nif) => nif,
+            Err(status) => return status,
+        };
+        let output = particle_sim::nif::compile(&nif, &name);
+        let desc = output.desc;
+        let (mut embedded, mut mipmapped) = (HashMap::new(), HashSet::new());
+        self.nif_textures(&name, &desc, &mut embedded, &mut mipmapped);
         let fallback_duration = if desc.animation_length() > 0.0 { desc.animation_length() } else { self.settings.timeline_s };
         let params = self.params(particle, self.standalone.then_some(fallback_duration));
         let (particle_systems, meshes) = (desc.particle_systems.len(), desc.meshes.len());
@@ -632,7 +662,7 @@ impl<'s, 'a> SceneBuilder<'s, 'a> {
         let system = PreparedSystem::Nif(Arc::new(NifEffect::prepare(desc)));
         let hue = hue_mode(false, particle.hued, self.settings.hue);
         let hued = hue == HueMode::Hued;
-        self.scene.prepared.push(PreparedPart { params, hued, seed, system, embedded, mipmapped });
+        self.scene.prepared.push(PreparedPart { params, hued, seed, system, embedded, mipmapped, meshes: None });
         PartStatus::Nif { name, particle_systems, meshes, warnings: output.warnings, hue }
     }
 
@@ -755,7 +785,10 @@ impl PreviewSimulation {
             .iter()
             .map(|part| match &part.system {
                 PreparedSystem::Chaos(system) => {
-                    let system = ChaosEffectInstance::with_seed(Arc::clone(system), part.seed);
+                    let mut system = ChaosEffectInstance::with_seed(Arc::clone(system), part.seed);
+                    if let Some(meshes) = &part.meshes {
+                        system.set_mesh_source(meshes);
+                    }
                     let mut instance = EffectInstance::new(part.params, Box::new(system));
                     instance.start();
                     PartInstance::Chaos(instance)
@@ -965,16 +998,35 @@ pub fn render_canvas(
         // The client's depth buffer and texture filtering.
         ..SceneDrawOptions::default()
     };
-    for (part, frame) in simulation.render_parts() {
-        let texture = |name: &str| scene.texture(part, name);
-        match (simulation.hued_position(part), hue_atlas) {
-            (Some(position), Some(atlas)) => {
-                let hued = HuedRenderSettings::default();
-                draw_hued_frame(&mut canvas, view, &frame, &texture, &options, position, simulation.hue(), atlas, &hued);
-            }
-            _ => canvas.draw_scene(view, &frame, &texture, &options),
-        }
-    }
+    // One draw list over every part (the client's accumulator gathers the whole scene): a hued part is its hue
+    // quad, rendered from its offscreen target when drawn.
+    let parts = simulation.render_parts();
+    let textures: Vec<_> = parts.iter().map(|&(part, _)| part_textures(scene, part)).collect();
+    let hued = HuedRenderSettings::default();
+    let hued_draws: Vec<Option<(Vec3, Box<dyn Fn(&mut Canvas) + '_>)>> = parts
+        .iter()
+        .zip(&textures)
+        .map(|((part, frame), texture)| {
+            let position = simulation.hued_position(*part)?;
+            let atlas = hue_atlas?;
+            let (options, hued) = (&options, &hued);
+            let draw = move |canvas: &mut Canvas| {
+                let target = render_hued_target(frame, texture.as_ref(), options, &view.camera, position, hued.aspect);
+                draw_hued_quad(canvas, view, &target, position, simulation.hue(), atlas, hued.sampling);
+            };
+            Some((position, Box::new(draw) as Box<dyn Fn(&mut Canvas)>))
+        })
+        .collect();
+    let items: Vec<GroupItem<'_, '_>> = parts
+        .iter()
+        .zip(&textures)
+        .zip(&hued_draws)
+        .map(|(((_, frame), texture), hued_draw)| match hued_draw {
+            Some((position, draw)) => GroupItem::Custom { sort: hue_quad_sort_key(*position), draw: draw.as_ref() },
+            None => GroupItem::Frame { frame, textures: texture.as_ref() },
+        })
+        .collect();
+    canvas.draw_group(view, &items, &options);
     if settings.show_bounds {
         let frame = simulation.render();
         if let Some([min_x, max_x, min_y, max_y]) = frame_extent(&frame, &view.camera) {
@@ -993,6 +1045,11 @@ pub fn render_canvas(
         canvas.fill_square(x, y, EMITTER_MARKER_HALF_PX, EMITTER_COLOR, OVERLAY_BLEND);
     }
     canvas
+}
+
+/// The texture lookup of part `part` of a scene.
+fn part_textures<'a>(scene: &'a PreviewScene, part: usize) -> Box<dyn Fn(&str) -> Option<&'a RasterTexture> + 'a> {
+    Box::new(move |name| scene.texture(part, name))
 }
 
 /// A canvas as an image.
@@ -1130,6 +1187,26 @@ pub(crate) mod tests {
         assert!(matches!(scene.parts[0].status, PartStatus::Chaos { .. }), "{:?}", scene.parts[0].status);
         assert!(PreviewSimulation::at(&scene, &settings, CameraOrbit::default(), SCRUB_TIME_MS).particle_count() > 0);
         assert_eq!(scene.texture_problems.len(), 1, "spark.tga is missing: {:?}", scene.texture_problems);
+    }
+
+    #[test]
+    fn chaos_mesh_particles_draw_their_nif() {
+        const MESH_SCRIPT_NAME: &str = "mesh.ems";
+        let script = format!(
+            "particlesystem \"mesh\" 1\n{{\neventsequence \"a\"\n{{\ntype = mesh\nmeshName = \"{NIF_NAME}\"\n\
+             lifetime = 10\nburst = 1\n}}\n}}\n"
+        );
+        let payload = |name: &str| match name {
+            MESH_SCRIPT_NAME => Some(Arc::from(script.as_bytes())),
+            _ => files(name),
+        };
+        let settings = SimulationSettings::default();
+        let input = PreviewInput { strings: None, payload: &payload, nif_drafts: None };
+        let scene = PreviewScene::build_script(MESH_SCRIPT_NAME, &settings, &input);
+        assert!(matches!(scene.parts[0].status, PartStatus::Chaos { .. }), "{:?}", scene.parts[0].status);
+        let frame = PreviewSimulation::at(&scene, &settings, CameraOrbit::default(), SCRUB_TIME_MS).render();
+        assert!(frame.meshes.is_empty(), "the NIF resolves: no outlines");
+        assert!(!frame.mesh_draws.is_empty(), "the particle draws its NIF");
     }
 
     #[test]

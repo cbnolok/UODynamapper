@@ -20,7 +20,7 @@
 
 use crate::math::Vec3;
 use crate::raster::{Canvas, OVERLAY_BLEND, OrthoView, RasterTexture, SceneDrawOptions};
-use crate::render::{CameraFrame, RenderFrame};
+use crate::render::{CameraFrame, RenderFrame, SortKey};
 
 /// Hue value of an object without a hue: never hued.
 pub const NO_HUE: u32 = 0;
@@ -191,7 +191,10 @@ pub fn offscreen_view(world: &CameraFrame, effect_position: Vec3, aspect: f32) -
 }
 
 /// `UOHuedParticleEffectNif::RenderToTexture` (0x0041ebc0): `frame` drawn into a cleared offscreen target, clipped
-/// to the near and far planes. `options` are the scene options of the draw (the client sets no light here).
+/// to the near and far planes, in the order of [`Canvas::draw_group`]. The target is `A8R8G8B8`
+/// (`NiRenderedTexture::Create` 0x0067f480): its alpha starts at the clear alpha 0 and accumulates with the
+/// draws' blend factors ([`crate::raster::DestinationAlpha::Accumulate`]). `options` are the scene options of the
+/// draw (the client sets no light here).
 pub fn render_hued_target<'t>(
     frame: &RenderFrame,
     texture: &dyn Fn(&str) -> Option<&'t RasterTexture>,
@@ -201,7 +204,7 @@ pub fn render_hued_target<'t>(
     aspect: f32,
 ) -> RasterTexture {
     let view = offscreen_view(world, effect_position, aspect);
-    let mut target = Canvas::new(view.width, view.height, HUED_TARGET_CLEAR);
+    let mut target = Canvas::render_target(view.width, view.height, HUED_TARGET_CLEAR);
     let depth_clip = Some([HUED_CAMERA_NEAR - HUED_CAMERA_DISTANCE, HUED_CAMERA_FAR - HUED_CAMERA_DISTANCE]);
     target.draw_scene(&view, frame, texture, &SceneDrawOptions { depth_clip, ..*options });
     RasterTexture { width: target.width, height: target.height, texels: target.pixels, mips: Vec::new() }
@@ -248,6 +251,12 @@ pub fn draw_hued_quad(
             }
         }
     }
+}
+
+/// The place of a hue quad in the world draw group ([`crate::raster::GroupItem::Custom`]): it blends (flags
+/// 0x12ED: blending on, no-sorter bit 0x2000 clear), so it is sorted, by its bound centre, the effect position.
+pub fn hue_quad_sort_key(effect_position: Vec3) -> SortKey {
+    SortKey::sorted(effect_position)
 }
 
 /// A hued NIF effect's frame drawn as the client does: [`render_hued_target`] with the camera of `view` (the
@@ -380,6 +389,7 @@ mod tests {
             two_sided: false,
             kind: SpriteKind::Billboard,
             sprites: 0..1,
+            sort: SortKey::sorted(Vec3::ZERO),
         });
         frame
     }

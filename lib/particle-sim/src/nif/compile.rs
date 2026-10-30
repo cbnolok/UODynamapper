@@ -5,7 +5,8 @@
 //! nearest property of each type wins. Controllers are listed in the order the scene update runs them
 //! (`NiAVObject::UpdateObjectControllers`, then `UpdatePropertyControllers`). Particle system modifiers are
 //! stable-sorted by their order, as `NiParticleSystem::AddModifier` inserts them. Lights become
-//! [`NifEffectDesc::lights`]; node effect lists and unaffected node lists are resolved once every node is known.
+//! [`NifEffectDesc::lights`] and texture effects [`NifEffectDesc::texture_effects`]; node effect lists and unaffected
+//! node lists are resolved once every node is known.
 
 use std::collections::{HashMap, HashSet};
 
@@ -13,9 +14,9 @@ use gamebryo_nif::{
     AnimType, ApplyMode, Block, ClampMode, CycleType as NifCycleType, DecayType, FieldType, ForceType,
     InitialVelocityType, KeyType, LightingMode as NifLightingMode, Link, MaterialColorField as NifMaterialColorField,
     MeshEmissionType, MipFlag, NiAVObject, NiAlphaController, NiAlphaProperty, NiAmbientLight, NiBillboardNode,
-    NiBoolData, NiBoolInterpolator, NiColor, NiColorA, NiColorData, NiDirectionalLight, NiFloatData, NiFloatInterpolator,
+    NiBoolData, NiBoolInterpolator, NiColor, NiColorA, NiDynamicEffect, NiColorData, NiDirectionalLight, NiFloatData, NiFloatInterpolator,
     NiGeomMorpherController, NiGeometry, NiGeometryData, NiKey, NiLight, NiLightColorController,
-    NiLightDimmerController, NiMaterialColorController, NiMaterialProperty, NiMeshParticleSystem, NiMorphData,
+    NiLightDimmerController, NiMatrix3, NiMaterialColorController, NiMaterialProperty, NiMeshParticleSystem, NiMorphData,
     NiNode, NiObjectNET, NiPSysAgeDeathModifier, NiPSysBombModifier, NiPSysBoundUpdateModifier, NiPSysBoxEmitter,
     NiPSysColorModifier, NiPSysCylinderEmitter, NiPSysData, NiPSysDragModifier, NiPSysEmitter, NiPSysEmitterCtlr,
     NiPSysEmitterInitialRadiusCtlr, NiPSysEmitterLifeSpanCtlr, NiPSysEmitterSpeedCtlr, NiPSysGravityModifier,
@@ -23,11 +24,11 @@ use gamebryo_nif::{
     NiPSysMeshEmitter, NiPSysMeshUpdateModifier, NiPSysModifier, NiPSysModifierActiveCtlr, NiPSysModifierCtlr,
     NiPSysPositionModifier, NiPSysResetOnLoopCtlr, NiPSysRotationModifier, NiPSysSpawnModifier, NiPSysSphereEmitter,
     NiPSysUpdateCtlr, NiParticleSystem, NiPathInterpolator, NiPixelData, NiPoint3, NiPoint3Interpolator, NiPosData,
-    NiPointLight, NiSingleInterpController, NiSourceTexture, NiSpecularProperty, NiSpotLight, NiStencilProperty,
-    NiStringExtraData,
+    NiPointLight, NiSingleInterpController, NiSortAdjustNode, NiSourceTexture, NiSpecularProperty, NiSpotLight, NiStencilProperty,
+    NiStringExtraData, NiTextureEffect,
     NiTextureTransformController, NiTexturingProperty, NiTimeController, NiTransformController, NiTransformData,
     NiTransformInterpolator, NiTriShapeData, NiVertexColorProperty, NiVisController, NiZBufferProperty, NifFile,
-    PixelFormatFormat, SourceVertexMode, StencilDrawMode, SymmType, TexturingMap, TransformMember, TransformMethod,
+    PixelFormatFormat, Ptr, SortingMode as NifSortingMode, SourceVertexMode, StencilDrawMode, SymmType, TexturingMap, TransformMember, TransformMethod,
 };
 
 use super::desc::{
@@ -37,9 +38,9 @@ use super::desc::{
     NifControllerKind, NifEffectDesc, NifEmitter, NifInterpolator, NifLight, NifLightKind, NifMaterial, NifMesh,
     NifModifier, NifModifierKind, NifMorph,
     NifMorphTarget, NifNode, NifNodeKind, NifParticleSystem, NifRenderState, NifSpawn, NifTexture, NifTextureMap,
-    NifTextureSource, NifTextureTransform, NifTexturing, NifTransform, NifVertexColor, NifZBuffer, PathInterp,
-    Point3Interp, RotKey, RotationCurve, Tcb, TextureAddressing, TextureApplyMode, TextureSlot,
-    TextureTransformMember, TextureTransformMethod, TransformInterp, VertexColorSource,
+    NifTextureEffect, NifTextureSource, NifTextureTransform, NifTexturing, NifTransform, NifVertexColor, NifZBuffer, PathInterp,
+    Point3Interp, RotKey, RotationCurve, Tcb, TextureAddressing, TextureApplyMode, TextureCoordGen, TextureEffectKind, TextureSlot,
+    TextureTransformMember, TextureTransformMethod, TransformInterp, VertexColorSource, SortingMode,
 };
 use crate::render::{BlendFactor, MeshGeometry, TRIANGLE_VERTICES};
 
@@ -112,6 +113,7 @@ struct Tables {
     texturing_of_block: HashMap<usize, usize>,
     texture_of_block: HashMap<usize, usize>,
     light_of_block: HashMap<usize, usize>,
+    texture_effect_of_block: HashMap<usize, usize>,
     /// Property blocks of each node, in property list order.
     node_properties: Vec<Vec<usize>>,
     /// The first scene node holding a property block.
@@ -136,6 +138,18 @@ fn color4(c: &NiColorA) -> [f32; 4] {
 
 fn color3(c: &NiColor) -> [f32; 3] {
     [c.r, c.g, c.b]
+}
+
+fn rows(m: &NiMatrix3) -> [[f32; 3]; 3] {
+    [[m.m00, m.m01, m.m02], [m.m10, m.m11, m.m12], [m.m20, m.m21, m.m22]]
+}
+
+/// The addressing of a `TexClampMode`.
+fn addressing(clamp: ClampMode) -> TextureAddressing {
+    TextureAddressing {
+        wrap_s: clamp == ClampMode::WRAP_S_CLAMP_T || clamp == ClampMode::WRAP_S_WRAP_T,
+        wrap_t: clamp == ClampMode::CLAMP_S_WRAP_T || clamp == ClampMode::WRAP_S_WRAP_T,
+    }
 }
 
 impl Compiler<'_> {
@@ -197,32 +211,70 @@ impl Compiler<'_> {
         }
     }
 
-    /// Resolves the node effect lists ([`NifNode::lights`]) and the lights' unaffected node lists.
+    /// Resolves the node effect lists ([`NifNode::lights`], [`NifNode::texture_effects`]) and the effects'
+    /// unaffected node lists.
     fn link_lights(&mut self) {
         let nif = self.nif;
-        for node in 0..self.desc.nodes.len() {
-            let Some(ni_node) = nif.blocks[self.tables.node_blocks[node]].get::<NiNode>() else { continue };
-            let mut lights = Vec::new();
-            for effect in &ni_node.effect_list {
-                let Some(&light) = link_index(*effect).and_then(|block| self.tables.light_of_block.get(&block)) else {
-                    continue;
-                };
-                if !lights.contains(&light) {
-                    lights.push(light);
+        let listed = |effects: &[Ptr<NiDynamicEffect>], table: &HashMap<usize, usize>| {
+            let mut indices = Vec::new();
+            for &index in effects.iter().filter_map(|effect| link_index(*effect).and_then(|block| table.get(&block))) {
+                if !indices.contains(&index) {
+                    indices.push(index);
                 }
             }
-            self.desc.nodes[node].lights = lights;
+            indices
+        };
+        for node in 0..self.desc.nodes.len() {
+            let Some(ni_node) = nif.blocks[self.tables.node_blocks[node]].get::<NiNode>() else { continue };
+            self.desc.nodes[node].lights = listed(&ni_node.effect_list, &self.tables.light_of_block);
+            self.desc.nodes[node].texture_effects = listed(&ni_node.effect_list, &self.tables.texture_effect_of_block);
         }
-        for light in 0..self.desc.lights.len() {
-            let block = self.tables.node_blocks[self.desc.lights[light].node];
-            let Some(effect) = nif.blocks[block].get::<NiLight>() else { continue };
-            let unaffected = effect
+        let unaffected = |node: usize| -> Vec<usize> {
+            let block = self.tables.node_blocks[node];
+            let Some(effect) = nif.blocks[block].get::<NiDynamicEffect>() else { return Vec::new() };
+            effect
                 .unaffected_node_list
                 .iter()
                 .filter_map(|node| link_index(*node).and_then(|block| self.tables.node_of_block.get(&block).copied()))
-                .collect();
-            self.desc.lights[light].unaffected_nodes = unaffected;
+                .collect()
+        };
+        for light in 0..self.desc.lights.len() {
+            self.desc.lights[light].unaffected_nodes = unaffected(self.desc.lights[light].node);
         }
+        for effect in 0..self.desc.texture_effects.len() {
+            self.desc.texture_effects[effect].unaffected_nodes = unaffected(self.desc.texture_effects[effect].node);
+        }
+    }
+
+    /// Adds the texture effect of an `NiTextureEffect` node.
+    fn add_texture_effect(&mut self, block: usize, node: usize, effect: &NiTextureEffect) -> usize {
+        let kind = TextureEffectKind::from_raw(effect.texture_mode.0).unwrap_or_else(|| {
+            self.warnings.push(format!("texture effect {node}: unknown texture type {}", effect.texture_mode.0));
+            TextureEffectKind::ProjectedLight
+        });
+        let coord_gen = TextureCoordGen::from_raw(effect.coord_mode.0).unwrap_or_else(|| {
+            self.warnings.push(format!("texture effect {node}: unknown coordinate generation {}", effect.coord_mode.0));
+            TextureCoordGen::WorldParallel
+        });
+        if kind != TextureEffectKind::EnvironmentMap {
+            self.warn(format!("texture effect {node}: {kind:?} is not drawn"));
+        }
+        let texture = link_index(effect.texture).and_then(|texture| self.texture(texture));
+        let index = self.desc.texture_effects.len();
+        self.tables.texture_effect_of_block.insert(block, index);
+        self.desc.texture_effects.push(NifTextureEffect {
+            node,
+            kind,
+            coord_gen,
+            on: effect.on.get(),
+            texture,
+            model_projection: rows(&effect.model_proj_mat),
+            model_translation: point3(&effect.model_proj_trans),
+            filter: effect.filter.0,
+            addressing: addressing(effect.clamp),
+            unaffected_nodes: Vec::new(),
+        });
+        index
     }
 
     /// Adds the light of an `NiLight` node; `None` for another type of light.
@@ -271,16 +323,7 @@ impl Compiler<'_> {
         let index = self.desc.nodes.len();
         self.tables.node_of_block.insert(block, index);
         self.tables.node_blocks.push(block);
-        let rotate = &av.rotate;
-        let transform = NifTransform {
-            translation: point3(&av.translate),
-            rotation: [
-                [rotate.m00, rotate.m01, rotate.m02],
-                [rotate.m10, rotate.m11, rotate.m12],
-                [rotate.m20, rotate.m21, rotate.m22],
-            ],
-            scale: av.scale,
-        };
+        let transform = NifTransform { translation: point3(&av.translate), rotation: rows(&av.rotate), scale: av.scale };
         let extra_strings = av
             .extra
             .iter()
@@ -297,6 +340,10 @@ impl Compiler<'_> {
             extra_strings,
             in_scene,
             lights: Vec::new(),
+            texture_effects: Vec::new(),
+            sort_adjust: nif.blocks[block].get::<NiSortAdjustNode>().map(|node| {
+                if node.sorting_mode == NifSortingMode::SORTING_OFF { SortingMode::Off } else { SortingMode::Inherit }
+            }),
         });
         let mut state = inherited.clone();
         let mut properties = Vec::new();
@@ -327,6 +374,8 @@ impl Compiler<'_> {
             NifNodeKind::Node
         } else if let Some(light) = block_ref.get::<NiLight>().and_then(|light| self.add_light(block, index, light)) {
             NifNodeKind::Light { light }
+        } else if let Some(effect) = block_ref.get::<NiTextureEffect>() {
+            NifNodeKind::TextureEffect { effect: self.add_texture_effect(block, index, effect) }
         } else {
             NifNodeKind::Other { type_name: block_ref.type_name().to_owned() }
         };
@@ -453,7 +502,6 @@ impl Compiler<'_> {
 
     fn compile_map(&mut self, slot: TextureSlot, map: &TexturingMap) -> NifTextureMap {
         let texture = link_index(map.texture).and_then(|block| self.texture(block));
-        let clamp = map.clamp_mode;
         let transform = map.has_texture_transform.get().then(|| {
             let transform = &map.texture_transform;
             NifTextureTransform {
@@ -471,10 +519,7 @@ impl Compiler<'_> {
         NifTextureMap {
             slot,
             texture,
-            addressing: TextureAddressing {
-                wrap_s: clamp == ClampMode::WRAP_S_CLAMP_T || clamp == ClampMode::WRAP_S_WRAP_T,
-                wrap_t: clamp == ClampMode::CLAMP_S_WRAP_T || clamp == ClampMode::WRAP_S_WRAP_T,
-            },
+            addressing: addressing(map.clamp_mode),
             filter: map.filter_mode.0,
             uv_set: map.texture_index,
             transform,
@@ -523,7 +568,8 @@ impl Compiler<'_> {
             triangles: shape.tri_list.chunks_exact(TRIANGLE_VERTICES).map(|t| [t[0], t[1], t[2]]).collect(),
         };
         let mesh = self.desc.meshes.len();
-        self.desc.meshes.push(NifMesh { node, geometry, morph: None, render_state: state.clone() });
+        let bound_center = point3(&data.bound.center);
+        self.desc.meshes.push(NifMesh { node, geometry, bound_center, morph: None, render_state: state.clone() });
         self.tables.mesh_of_node.insert(node, mesh);
         Some(mesh)
     }
@@ -547,6 +593,7 @@ impl Compiler<'_> {
             modifiers: Vec::new(),
             render_state: state.clone(),
             mesh_particles: nif.blocks[block].get::<NiMeshParticleSystem>().is_some(),
+            bound_center: data.map_or([0.0; 3], |data| point3(&data.bound.center)),
         });
         self.tables.system_of_node.insert(node, index);
         self.tables.system_blocks.push(block);
@@ -661,8 +708,8 @@ impl Compiler<'_> {
             })
         } else if b.get::<NiPSysPositionModifier>().is_some() {
             NifModifierKind::Position
-        } else if b.get::<NiPSysBoundUpdateModifier>().is_some() {
-            NifModifierKind::BoundUpdate
+        } else if let Some(bound) = b.get::<NiPSysBoundUpdateModifier>() {
+            NifModifierKind::BoundUpdate { skip: bound.update_skip }
         } else if let Some(m) = b.get::<NiPSysGrowFadeModifier>() {
             NifModifierKind::GrowFade {
                 grow_time: m.grow_time,
@@ -1052,9 +1099,14 @@ fn morph(data: &NiMorphData) -> NifMorph {
 }
 
 /// `NiPixelData` mip level 0 as RGBA8 (32-bit RGBA and 24-bit RGB; other formats are left undecoded).
+/// Every stored level of `NiPixelData` that decodes (up to the first that does not), or `Undecoded` when level 0
+/// does not.
 fn decode_pixels(pixels: &NiPixelData) -> NifTextureSource {
-    match decode_pixel_level(pixels, 0) {
-        Some((width, height, rgba)) => NifTextureSource::Embedded { width, height, rgba },
+    let levels: Vec<_> = (0..pixels.mipmaps.len()).map_while(|level| decode_pixel_level(pixels, level)).collect();
+    match levels.first() {
+        Some(&(width, height, _)) => {
+            NifTextureSource::Embedded { width, height, levels: levels.into_iter().map(|(_, _, rgba)| rgba).collect() }
+        }
         None => NifTextureSource::Undecoded { format: pixels.pixel_format.format.0 },
     }
 }

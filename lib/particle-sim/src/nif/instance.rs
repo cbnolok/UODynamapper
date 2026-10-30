@@ -3,16 +3,17 @@
 use std::sync::Arc;
 
 use super::desc::{
-    AV_FLAG_APP_CULLED, CullMode, NifEffectDesc, NifLight, NifLightKind, NifMaterial, NifModifierKind, NifNodeKind,
-    NifRenderState, NifTextureTransform, TextureApplyMode, TextureFilter, TextureSlot, TextureTransformMethod,
+    AV_FLAG_APP_CULLED, CullMode, NifEffectDesc, NifLight, NifLightKind, NifMaterial, NifModifierKind, NifNode,
+    NifNodeKind, NifRenderState, NifTextureEffect, NifTextureTransform, SortingMode, TextureApplyMode,
+    TextureCoordGen, TextureEffectKind, TextureFilter, TextureSlot, TextureTransformMethod,
 };
 use super::particles::NifParticle;
-use super::scene::{SceneOrder, SceneState, Xf, make_rotation};
+use super::scene::{SceneOrder, SceneState, Xf, make_rotation, transpose};
 use crate::math::{Mat3, Vec3};
 use crate::render::{
     BatchState, BlendFactor, BlendState, CameraFrame, DepthState, DrawBatch, EffectLight, EffectLightKind,
-    MaterialColors, MeshDraw, MeshGeometry, RenderFrame, SceneLighting, SpriteInstance, SpriteKind, TextureStage,
-    UvRect, UvTransform, accumulate_lights, light_vertex,
+    EnvironmentMap, MaterialColors, MeshDraw, MeshGeometry, RenderFrame, SceneLighting, SortKey, SpriteInstance,
+    SpriteKind, TextureStage, UvRect, UvTransform, accumulate_lights, light_vertex,
 };
 use crate::rng::{CrtRng, MsvcRand};
 use crate::system::{NodeTransform, ParticleSystemInstance, SECONDS_PER_MS};
@@ -25,6 +26,10 @@ const OPAQUE_BLEND: BlendState = BlendState { src: BlendFactor::One, dst: BlendF
 const NORMAL_TIME_SCALE: f32 = 1.0;
 /// Distance of [`default_camera`] from the origin.
 const DEFAULT_CAMERA_DISTANCE: f32 = 1000.0;
+/// Sphere map projection (`NiTextureEffect::UpdateProjection`, `NiTextureEffect.cpp:94-117`): scale and offset of
+/// the effect-space reflection vector's z (u) and -y (v).
+const SPHERE_MAP_SCALE: f32 = 0.5;
+const SPHERE_MAP_OFFSET: f32 = 0.5;
 
 /// The client's view ([`CameraFrame::client_view`]: looking along local +Y with +Z up, right along +X): the
 /// billboard camera of an instance until [`NifEffectInstance::set_camera`].
@@ -42,8 +47,12 @@ pub struct NifEffect {
     order: SceneOrder,
     /// Per node: the depth-first draw position.
     draw_order: Vec<u32>,
-    /// Per node: the [`NifEffectDesc::lights`] that light it ([`affected_lights`]).
+    /// Per node: the [`NifEffectDesc::lights`] that light it ([`affected_effects`]).
     node_lights: Vec<Vec<usize>>,
+    /// Per node: the [`NifEffectDesc::texture_effects`] that reach it, in push order ([`affected_effects`]).
+    node_texture_effects: Vec<Vec<usize>>,
+    /// Per node: whether its blended drawables are sorted ([`node_sorting`]).
+    node_sorted: Vec<bool>,
 }
 
 impl NifEffect {
@@ -54,7 +63,13 @@ impl NifEffect {
             draw_order[node] = position as u32;
         }
         Self {
-            node_lights: affected_lights(&desc),
+            node_lights: affected_effects(&desc, |node| &node.lights, |light| {
+                desc.lights.get(light).map_or(&[][..], |light| &light.unaffected_nodes)
+            }),
+            node_texture_effects: affected_effects(&desc, |node| &node.texture_effects, |effect| {
+                desc.texture_effects.get(effect).map_or(&[][..], |effect| &effect.unaffected_nodes)
+            }),
+            node_sorted: node_sorting(&desc),
             geometries: desc.meshes.iter().map(|mesh| Arc::new(mesh.geometry.clone())).collect(),
             mesh_names: desc.meshes.iter().map(|mesh| Arc::from(desc.nodes[mesh.node].name.as_str())).collect(),
             texture_names: desc.textures.iter().map(|texture| Arc::from(texture.name())).collect(),
@@ -82,47 +97,93 @@ fn mesh_prototypes(desc: &NifEffectDesc, system: usize) -> &[usize] {
         .unwrap_or(&[])
 }
 
-/// The lights of each node: its effect state, as `NiAVObject::UpdateEffects` (UOSA.exe 0x006641f0) builds it on
-/// the scene root once, at `UOParticleEffectNif::Init` (the call at 0x0041aa53, after the time-0 update). Walking
-/// down (`NiNode::UpdateEffectsDownward`, `PushLocalEffects`), a node drops the inherited lights that list it as
-/// unaffected and adds those of its own effect list; children inherit the result. Mesh particle prototypes
-/// start from their particle system's state (the clones hang under it); other nodes outside the scene have
-/// only their own subtree's lists.
-fn affected_lights(desc: &NifEffectDesc) -> Vec<Vec<usize>> {
+/// A value of each node inherited down the scene: `own(node, inherited)` gives the node's from its parent's.
+/// The scene is walked from the root; mesh particle prototypes start from their particle system's value (the
+/// clones hang under it); other nodes outside the scene start from `T::default()`.
+fn inherit_down<T: Clone + Default>(desc: &NifEffectDesc, own: impl Fn(usize, T) -> T) -> Vec<T> {
     let count = desc.nodes.len();
-    let mut lights = vec![Vec::new(); count];
+    let mut values = vec![T::default(); count];
     let mut visited = vec![false; count];
-    let mut walk = |top: usize, inherited: Vec<usize>, lights: &mut Vec<Vec<usize>>| {
+    let mut walk = |top: usize, inherited: T, values: &mut Vec<T>| {
         let mut stack = vec![(top, inherited)];
         while let Some((node, inherited)) = stack.pop() {
             if node >= count || visited[node] {
                 continue;
             }
             visited[node] = true;
-            let unaffected = |light: usize| desc.lights.get(light).is_some_and(|l| l.unaffected_nodes.contains(&node));
-            let mut state: Vec<usize> = inherited.into_iter().filter(|&light| !unaffected(light)).collect();
-            for &light in &desc.nodes[node].lights {
-                if !state.contains(&light) {
-                    state.push(light);
-                }
-            }
-            stack.extend(desc.nodes[node].children.iter().map(|&child| (child, state.clone())));
-            lights[node] = state;
+            let value = own(node, inherited);
+            stack.extend(desc.nodes[node].children.iter().map(|&child| (child, value.clone())));
+            values[node] = value;
         }
     };
     if let Some(root) = desc.root {
-        walk(root, Vec::new(), &mut lights);
+        walk(root, T::default(), &mut values);
     }
     for (index, system) in desc.particle_systems.iter().enumerate() {
-        let inherited = lights.get(system.node).cloned().unwrap_or_default();
+        let inherited = values.get(system.node).cloned().unwrap_or_default();
         for &prototype in mesh_prototypes(desc, index) {
-            walk(prototype, inherited.clone(), &mut lights);
+            walk(prototype, inherited.clone(), &mut values);
         }
     }
     for node in 0..count {
-        walk(node, Vec::new(), &mut lights);
+        walk(node, T::default(), &mut values);
     }
-    lights
+    values
+}
+
+/// The dynamic effects (lights or texture effects) of each node: its effect state, as `NiAVObject::UpdateEffects`
+/// (UOSA.exe 0x006641f0) builds it on the scene root once, at `UOParticleEffectNif::Init` (the call at
+/// 0x0041aa53, after the time-0 update). Walking down (`NiNode::UpdateEffectsDownward`, `PushLocalEffects`), a
+/// node drops the inherited effects that list it as unaffected and adds those of its own effect list (`own`);
+/// children inherit the result.
+fn affected_effects<'d>(
+    desc: &'d NifEffectDesc,
+    own: impl Fn(&'d NifNode) -> &'d [usize],
+    unaffected: impl Fn(usize) -> &'d [usize],
+) -> Vec<Vec<usize>> {
+    inherit_down(desc, |node, inherited: Vec<usize>| {
+        let mut state: Vec<usize> = inherited.into_iter().filter(|&effect| !unaffected(effect).contains(&node)).collect();
+        for &effect in own(&desc.nodes[node]) {
+            if !state.contains(&effect) {
+                state.push(effect);
+            }
+        }
+        state
+    })
+}
+
+/// Whether each node's blended drawables are sorted: the outermost `NiSortAdjustNode` above (or at) the node
+/// decides (`NiSortAdjustNode::OnVisible`, UOSA.exe 0x006e3130, sets the flag of its subtree after culling it,
+/// so an outer node overrides an inner one); without one they are.
+fn node_sorting(desc: &NifEffectDesc) -> Vec<bool> {
+    let modes = inherit_down(desc, |node, inherited: Option<SortingMode>| inherited.or(desc.nodes[node].sort_adjust));
+    modes.into_iter().map(|mode| mode != Some(SortingMode::Off)).collect()
+}
+
+/// The world projection of a texture effect at its node's world transform `world`
+/// (`NiTextureEffect::UpdateProjection`, `NiTextureEffect.cpp:92-144`): (matrix, translation).
+fn world_projection(effect: &NifTextureEffect, world: &Xf) -> (Mat3, Vec3) {
+    let rotation = &world.rotation;
+    let model = Mat3::from_rows(effect.model_projection);
+    match effect.coord_gen {
+        // Orthographic, at infinity: u = 0.5 + 0.5 s.z, v = 0.5 - 0.5 s.y with s in the effect's space.
+        TextureCoordGen::SphereMap => {
+            let column = |k: usize| {
+                Vec3::new(SPHERE_MAP_SCALE * rotation.rows[k][2], -SPHERE_MAP_SCALE * rotation.rows[k][1], 0.0)
+            };
+            (Mat3::from_cols(column(0), column(1), column(2)), Vec3::new(SPHERE_MAP_OFFSET, SPHERE_MAP_OFFSET, 0.0))
+        }
+        TextureCoordGen::SpecularCubeMap | TextureCoordGen::DiffuseCubeMap => {
+            (model.mul_mat3(&transpose(rotation)), Vec3::ZERO)
+        }
+        TextureCoordGen::WorldParallel | TextureCoordGen::WorldPerspective => {
+            let inverse_scale = 1.0 / world.scale;
+            let projection = model.mul_mat3(&transpose(rotation));
+            let projection = Mat3::from_rows(projection.rows.map(|row| row.map(|value| value * inverse_scale)));
+            let translation = Vec3::from_array(effect.model_translation) - projection.mul_vec3(world.translation);
+            (projection, translation)
+        }
+    }
 }
 
 /// A light as the renderer applies it at the light node's world transform `world`; `None` when it is switched
@@ -195,6 +256,7 @@ pub fn texture_transform_matrix(transform: &NifTextureTransform) -> UvTransform 
 ///
 /// Simulation is deterministic for a seed: the client draws from the C runtime `rand()` shared by the whole
 /// process; [`MsvcRand`] is that generator.
+#[derive(Debug, Clone)]
 pub struct NifEffectInstance<R: CrtRng = MsvcRand> {
     effect: Arc<NifEffect>,
     rng: R,
@@ -324,11 +386,24 @@ impl<R: CrtRng> NifEffectInstance<R> {
         if self.duration != 0.0 && self.looping {
             self.elapsed %= self.duration;
         }
+        self.place_root(node);
+        self.update_scene();
+    }
+
+    /// Updates the scene at effect time `time` with the root at `node`, outside the effect clock rules (no
+    /// start, duration or ticks): a Chaos MESH particle's clone, updated with the particle age
+    /// ([`crate::chaos::MeshSource`]).
+    pub fn pose_at(&mut self, time: f32, node: &NodeTransform) {
+        self.elapsed = time;
+        self.place_root(node);
+        self.update_scene();
+    }
+
+    fn place_root(&mut self, node: &NodeTransform) {
         if let Some(root) = self.effect.desc.root {
             let state = &mut self.scene.nodes[root];
             state.local = Xf { rotation: node.rotation, translation: node.position, scale: node.scale.abs() };
         }
-        self.update_scene();
     }
 
     fn material_colors(scene: &SceneState, render: &NifRenderState) -> MaterialColors {
@@ -373,6 +448,72 @@ impl<R: CrtRng> NifEffectInstance<R> {
             .collect()
     }
 
+    /// The current environment maps, by [`NifEffectDesc::texture_effects`] index: `None` for other texture
+    /// effects, switched off ones and ones without a texture.
+    fn world_env_maps(&self) -> Vec<Option<EnvironmentMap>> {
+        let desc = &self.effect.desc;
+        desc.texture_effects
+            .iter()
+            .map(|effect| {
+                let texture = self.effect.texture_names.get(effect.texture?)?.clone();
+                if effect.kind != TextureEffectKind::EnvironmentMap || !effect.on {
+                    return None;
+                }
+                let (projection, translation) = world_projection(effect, &self.scene.nodes.get(effect.node)?.world);
+                Some(EnvironmentMap {
+                    texture,
+                    coord_gen: effect.coord_gen,
+                    projection,
+                    translation,
+                    addressing: effect.addressing,
+                    filter: TextureFilter::from_raw(effect.filter),
+                })
+            })
+            .collect()
+    }
+
+    /// The environment map of a mesh at `node`: the last environment map pushed on its effect state
+    /// (`NiDynamicEffectState::AddEffect` keeps one), when it is on (`SetEnvMapDescriptor`) and the geometry has
+    /// the normals its coordinates need (`NiStandardMaterial.cpp:523-538`).
+    fn node_env_map(&self, env_maps: &[Option<EnvironmentMap>], node: usize, geometry: &MeshGeometry) -> Option<EnvironmentMap> {
+        let desc = &self.effect.desc;
+        let last = self.effect.node_texture_effects.get(node)?.iter().rev().find(|&&effect| {
+            desc.texture_effects.get(effect).is_some_and(|effect| effect.kind == TextureEffectKind::EnvironmentMap)
+        })?;
+        let env = env_maps.get(*last)?.clone()?;
+        (!env.coord_gen.needs_normals() || !geometry.normals.is_empty()).then_some(env)
+    }
+
+    /// Whether a drawable at `node` with `render` state is sorted ([`SortKey::sorted`]).
+    fn sorted(&self, node: usize, render: &NifRenderState) -> bool {
+        render.alpha.blend && !render.alpha.no_sorter && self.effect.node_sorted.get(node).copied().unwrap_or(true)
+    }
+
+    /// The bound centre of particle system `system` in world space (`world`: the system's transform): with an
+    /// `NiPSysBoundUpdateModifier`, the centre of the box of the particle positions sampled every `skip`
+    /// particles (`Update`, UOSA.exe 0x00815930); otherwise the bound stored in the file.
+    fn system_bound_center(&self, system: usize, world: &Xf) -> Vec3 {
+        let desc = &self.effect.desc.particle_systems[system];
+        let skip = desc.modifiers.iter().find_map(|modifier| match modifier.kind {
+            NifModifierKind::BoundUpdate { skip } if modifier.active => Some(skip),
+            _ => None,
+        });
+        let particles = self.particles(system);
+        let local = match skip {
+            Some(skip) if !particles.is_empty() => {
+                let step = usize::try_from(skip).unwrap_or(0).max(1);
+                let mut sampled = particles.iter().step_by(step).map(|particle| particle.position);
+                let first = sampled.next().unwrap_or(Vec3::ZERO);
+                let (min, max) = sampled.fold((first, first), |(min, max), p| {
+                    (Vec3::new(min.x.min(p.x), min.y.min(p.y), min.z.min(p.z)), Vec3::new(max.x.max(p.x), max.y.max(p.y), max.z.max(p.z)))
+                });
+                (min + max) * 0.5
+            }
+            _ => Vec3::from_array(desc.bound_center),
+        };
+        world.point(local)
+    }
+
     /// The lights reaching `node`, from the frame's [`Self::world_lights`].
     fn node_lights(&self, lights: &[Option<EffectLight>], node: usize) -> Vec<EffectLight> {
         self.effect
@@ -381,10 +522,12 @@ impl<R: CrtRng> NifEffectInstance<R> {
             .map_or_else(Vec::new, |indices| indices.iter().filter_map(|&light| lights.get(light).copied().flatten()).collect())
     }
 
-    fn mesh_draw(&self, scene: &SceneState, mesh: usize, world: &Xf, order: u32, lights: &[Option<EffectLight>]) -> MeshDraw {
+    fn mesh_draw(&self, scene: &SceneState, mesh: usize, world: &Xf, order: u32, effects: &FrameEffects) -> MeshDraw {
         let desc = &self.effect.desc.meshes[mesh];
         let render = &desc.render_state;
         let (apply_mode, textures) = self.texture_stages(scene, render);
+        let geometry = &self.effect.geometries[mesh];
+        let center = world.point(Vec3::from_array(desc.bound_center));
         MeshDraw {
             order,
             name: self.effect.mesh_names[mesh].clone(),
@@ -402,7 +545,9 @@ impl<R: CrtRng> NifEffectInstance<R> {
             depth: DepthState { test: render.z_buffer.test, write: render.z_buffer.write },
             depth_function: render.z_buffer.function,
             cull: render.cull,
-            lights: self.node_lights(lights, desc.node),
+            lights: self.node_lights(&effects.lights, desc.node),
+            env_map: self.node_env_map(&effects.env_maps, desc.node, geometry),
+            sort: SortKey { sorted: self.sorted(desc.node, render), center },
         }
     }
 
@@ -415,7 +560,7 @@ impl<R: CrtRng> NifEffectInstance<R> {
         parent: &Xf,
         local: Option<Xf>,
         order: u32,
-        lights: &[Option<EffectLight>],
+        effects: &FrameEffects,
         out: &mut RenderFrame,
     ) {
         let desc = &self.effect.desc;
@@ -425,14 +570,14 @@ impl<R: CrtRng> NifEffectInstance<R> {
         }
         let world = parent.mul(&local.unwrap_or(state.local));
         if let NifNodeKind::Mesh { mesh } = desc.nodes[node].kind {
-            out.mesh_draws.push(self.mesh_draw(scene, mesh, &world, order, lights));
+            out.mesh_draws.push(self.mesh_draw(scene, mesh, &world, order, effects));
         }
         for &child in &desc.nodes[node].children {
-            self.draw_subtree(scene, child, &world, None, order, lights, out);
+            self.draw_subtree(scene, child, &world, None, order, effects, out);
         }
     }
 
-    fn render_particles(&self, system: usize, order: u32, lights: &[Option<EffectLight>], out: &mut RenderFrame) {
+    fn render_particles(&self, system: usize, order: u32, effects: &FrameEffects, out: &mut RenderFrame) {
         let desc = &self.effect.desc.particle_systems[system];
         let world = self.scene.nodes[desc.node].world;
         let particles = self.particles(system);
@@ -440,7 +585,7 @@ impl<R: CrtRng> NifEffectInstance<R> {
             return;
         }
         if desc.mesh_particles {
-            self.render_mesh_particles(system, &world, order, lights, out);
+            self.render_mesh_particles(system, &world, order, effects, out);
             return;
         }
         let render = &desc.render_state;
@@ -450,7 +595,7 @@ impl<R: CrtRng> NifEffectInstance<R> {
         let replaces = apply_mode == TextureApplyMode::Replace && base.is_some();
         let kind = if desc.has_rotation_angles { SpriteKind::RotatedBillboard } else { SpriteKind::Billboard };
         // Particles have no normals: only the effect's ambient lights reach them, the same at every particle.
-        let lighting = accumulate_lights(&self.lighting, &self.node_lights(lights, desc.node), Vec3::ZERO, None);
+        let lighting = accumulate_lights(&self.lighting, &self.node_lights(&effects.lights, desc.node), Vec3::ZERO, None);
         let start = out.sprites.len();
         for particle in particles {
             let color = if replaces {
@@ -477,6 +622,7 @@ impl<R: CrtRng> NifEffectInstance<R> {
             two_sided: render.cull == CullMode::None,
             kind,
             sprites: start..out.sprites.len(),
+            sort: SortKey { sorted: self.sorted(desc.node, render), center: self.system_bound_center(system, &world) },
         });
         out.batch_states.push(BatchState {
             batch,
@@ -498,7 +644,7 @@ impl<R: CrtRng> NifEffectInstance<R> {
         system: usize,
         world: &Xf,
         order: u32,
-        lights: &[Option<EffectLight>],
+        effects: &FrameEffects,
         out: &mut RenderFrame,
     ) {
         let desc = &self.effect.desc.particle_systems[system];
@@ -514,14 +660,14 @@ impl<R: CrtRng> NifEffectInstance<R> {
             };
             let placement =
                 Xf { rotation, translation: particle.position, scale: (particle.radius * particle.size).abs() };
-            self.draw_subtree(pose, prototype, world, Some(placement), order, lights, out);
+            self.draw_subtree(pose, prototype, world, Some(placement), order, effects, out);
         }
     }
 
     /// Appends the effect's draws: mesh draws and particle batches of the visible scene nodes, in scene order.
     pub fn render_frame(&self, out: &mut RenderFrame) {
         let effect = &self.effect;
-        let lights = self.world_lights();
+        let effects = FrameEffects { lights: self.world_lights(), env_maps: self.world_env_maps() };
         for &node in &effect.order.nodes {
             let state = &self.scene.nodes[node];
             if !state.visible {
@@ -530,13 +676,21 @@ impl<R: CrtRng> NifEffectInstance<R> {
             let order = effect.draw_order[node];
             match effect.desc.nodes[node].kind {
                 NifNodeKind::Mesh { mesh } => {
-                    out.mesh_draws.push(self.mesh_draw(&self.scene, mesh, &state.world, order, &lights));
+                    out.mesh_draws.push(self.mesh_draw(&self.scene, mesh, &state.world, order, &effects));
                 }
-                NifNodeKind::ParticleSystem { system } => self.render_particles(system, order, &lights, out),
+                NifNodeKind::ParticleSystem { system } => self.render_particles(system, order, &effects, out),
                 _ => {}
             }
         }
     }
+}
+
+/// The dynamic effects of a frame at their current world transforms.
+struct FrameEffects {
+    /// By [`NifEffectDesc::lights`] index ([`NifEffectInstance::world_lights`]).
+    lights: Vec<Option<EffectLight>>,
+    /// By [`NifEffectDesc::texture_effects`] index ([`NifEffectInstance::world_env_maps`]).
+    env_maps: Vec<Option<EnvironmentMap>>,
 }
 
 impl<R: CrtRng + Send + Sync> ParticleSystemInstance for NifEffectInstance<R> {
@@ -605,6 +759,8 @@ mod tests {
             extra_strings: Vec::new(),
             in_scene: true,
             lights: Vec::new(),
+            texture_effects: Vec::new(),
+            sort_adjust: None,
         }
     }
 
@@ -661,6 +817,7 @@ mod tests {
             ],
             render_state: NifRenderState::default(),
             mesh_particles: false,
+            bound_center: [0.0; 3],
         };
         let target = ControllerTarget::ParticleSystem(0);
         let desc = NifEffectDesc {
@@ -780,6 +937,7 @@ mod tests {
                 triangles: vec![[0, 1, 2]],
                 ..MeshGeometry::default()
             },
+            bound_center: [0.0; 3],
             morph: None,
             render_state: NifRenderState { material: Some(0), ..NifRenderState::default() },
         });
@@ -836,6 +994,7 @@ mod tests {
                 triangles: vec![[0, 1, 2]],
                 ..MeshGeometry::default()
             },
+            bound_center: [0.0; 3],
             morph: None,
             render_state: NifRenderState::default(),
         };
@@ -868,7 +1027,8 @@ mod tests {
     #[test]
     fn effect_lists_light_their_subtrees_except_unaffected_nodes() {
         let desc = lit_desc();
-        assert_eq!(affected_lights(&desc), vec![vec![0, 1], vec![0], vec![0], vec![0, 1], vec![0, 1], vec![0, 1]]);
+        let lights = affected_effects(&desc, |node| &node.lights, |light| &desc.lights[light].unaffected_nodes);
+        assert_eq!(lights, vec![vec![0, 1], vec![0], vec![0], vec![0, 1], vec![0, 1], vec![0, 1]]);
         let draws = rendered_lights(desc.clone());
         assert_eq!(draws.iter().map(Vec::len).collect::<Vec<_>>(), [1, 2]);
         // The direction is the light node's world rotation column 0.
@@ -904,5 +1064,149 @@ mod tests {
         assert_eq!((light.ambient, light.diffuse), ([0.0; 3], [0.125, 0.5, 0.0]));
         let light = draws[1][1];
         assert_eq!((light.ambient, light.diffuse), ([0.25, 1.0, 0.0], [0.0; 3]));
+    }
+
+    /// A one-triangle mesh on `node` with normals, blended or not, `no_sorter` as given.
+    fn triangle_mesh(node: usize, blend: bool, no_sorter: bool) -> NifMesh {
+        use crate::nif::desc::NifAlpha;
+        NifMesh {
+            node,
+            geometry: MeshGeometry {
+                positions: vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+                normals: vec![[0.0, 0.0, 1.0]; 3],
+                triangles: vec![[0, 1, 2]],
+                ..MeshGeometry::default()
+            },
+            bound_center: [0.25, 0.25, 0.0],
+            morph: None,
+            render_state: NifRenderState {
+                alpha: NifAlpha { blend, no_sorter, ..NifAlpha::default() },
+                ..NifRenderState::default()
+            },
+        }
+    }
+
+    fn rendered(desc: NifEffectDesc) -> RenderFrame {
+        let instance = NifEffectInstance::with_seed(Arc::new(NifEffect::prepare(desc)), SEED);
+        let mut frame = RenderFrame::default();
+        instance.render(&mut frame);
+        frame
+    }
+
+    #[test]
+    fn blended_drawables_sort_unless_no_sorter_or_under_a_sorting_off_node() {
+        // 0 root: 1 (sorting off) > 2 (sort-adjust inherit) > 3 mesh; root > 4 blended, 5 no-sorter, 6 opaque.
+        let mut off = node("off", Some(0), vec![2], NifNodeKind::Node);
+        off.sort_adjust = Some(SortingMode::Off);
+        let mut inherit = node("inherit", Some(1), vec![3], NifNodeKind::Node);
+        inherit.sort_adjust = Some(SortingMode::Inherit);
+        let mut blended = node("blended", Some(0), Vec::new(), NifNodeKind::Mesh { mesh: 1 });
+        blended.transform.translation = [10.0, 0.0, 0.0];
+        let desc = NifEffectDesc {
+            nodes: vec![
+                node("root", None, vec![1, 4, 5, 6], NifNodeKind::Node),
+                off,
+                inherit,
+                node("under off", Some(2), Vec::new(), NifNodeKind::Mesh { mesh: 0 }),
+                blended,
+                node("no sorter", Some(0), Vec::new(), NifNodeKind::Mesh { mesh: 2 }),
+                node("opaque", Some(0), Vec::new(), NifNodeKind::Mesh { mesh: 3 }),
+            ],
+            root: Some(0),
+            meshes: vec![triangle_mesh(3, true, false), triangle_mesh(4, true, false), triangle_mesh(5, true, true), triangle_mesh(6, false, false)],
+            ..NifEffectDesc::default()
+        };
+        let frame = rendered(desc);
+        let sorted: Vec<(&str, bool)> = frame.mesh_draws.iter().map(|draw| (&*draw.name, draw.sort.sorted)).collect();
+        assert_eq!(sorted, [("under off", false), ("blended", true), ("no sorter", false), ("opaque", false)]);
+        // The bound centre is the model bound's in world space.
+        assert_eq!(frame.mesh_draws[1].sort.center, Vec3::new(10.25, 0.25, 0.0));
+    }
+
+    #[test]
+    fn environment_maps_reach_meshes_with_normals_in_their_effect_lists() {
+        // Root lists env maps 0 and 1 (the last pushed wins); 1 skips node 2. Mesh 1 (node 3) has no normals.
+        let env = |node, texture, unaffected_nodes| NifTextureEffect {
+            node,
+            kind: TextureEffectKind::EnvironmentMap,
+            coord_gen: TextureCoordGen::SphereMap,
+            on: true,
+            texture: Some(texture),
+            model_projection: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            model_translation: [0.0; 3],
+            filter: crate::nif::desc::FILTER_TRILERP,
+            addressing: crate::nif::desc::TextureAddressing { wrap_s: true, wrap_t: true },
+            unaffected_nodes,
+        };
+        let mut root = node("root", None, vec![1, 2, 3, 4, 5], NifNodeKind::Node);
+        root.texture_effects = vec![0, 1];
+        let texture = |index, name: &str| crate::nif::desc::NifTexture {
+            index,
+            source: crate::nif::desc::NifTextureSource::External { file_name: name.to_owned() },
+            mipmapped: false,
+        };
+        let mut bare = triangle_mesh(3, false, false);
+        bare.geometry.normals.clear();
+        let mut desc = NifEffectDesc {
+            nodes: vec![
+                root,
+                node("mirror", Some(0), Vec::new(), NifNodeKind::Mesh { mesh: 0 }),
+                node("skipped", Some(0), Vec::new(), NifNodeKind::Mesh { mesh: 2 }),
+                node("bare", Some(0), Vec::new(), NifNodeKind::Mesh { mesh: 1 }),
+                node("env 0", Some(0), Vec::new(), NifNodeKind::TextureEffect { effect: 0 }),
+                node("env 1", Some(0), Vec::new(), NifNodeKind::TextureEffect { effect: 1 }),
+            ],
+            root: Some(0),
+            meshes: vec![triangle_mesh(1, false, false), bare, triangle_mesh(2, false, false)],
+            textures: vec![texture(0, "first.dds"), texture(1, "second.tga")],
+            texture_effects: vec![env(4, 0, Vec::new()), env(5, 1, vec![2])],
+            ..NifEffectDesc::default()
+        };
+        let maps = |desc: NifEffectDesc| -> Vec<Option<String>> {
+            rendered(desc).mesh_draws.iter().map(|draw| draw.env_map.as_ref().map(|env| env.texture.to_string())).collect()
+        };
+        // Scene order: mirror, skipped, bare.
+        assert_eq!(maps(desc.clone()), [Some("second.tga".to_owned()), Some("first.dds".to_owned()), None]);
+        // The sphere map projection of an effect at the identity.
+        let frame = rendered(desc.clone());
+        let env_map = frame.mesh_draws[0].env_map.as_ref().unwrap();
+        assert_eq!(env_map.projection, Mat3::from_rows([[0.0, 0.0, 0.5], [0.0, -0.5, 0.0], [0.0, 0.0, 0.0]]));
+        assert_eq!(env_map.translation, Vec3::new(0.5, 0.5, 0.0));
+        assert_eq!(env_map.filter, TextureFilter::TRILERP);
+        // A switched-off effect still takes the slot (`NiDynamicEffectState::AddEffect`), so nothing is mapped.
+        desc.texture_effects[1].on = false;
+        assert_eq!(maps(desc), [None, Some("first.dds".to_owned()), None]);
+    }
+
+    #[test]
+    fn particle_batches_sort_by_their_bound_centre() {
+        // Without a bound update modifier: the file's bound.
+        let mut desc = fountain_desc();
+        desc.particle_systems[0].bound_center = [1.0, 2.0, 3.0];
+        desc.particle_systems[0].render_state.alpha.blend = true;
+        let mut instance = NifEffectInstance::with_seed(Arc::new(NifEffect::prepare(desc.clone())), SEED);
+        instance.start(0.0, true);
+        for _ in 0..FRAMES {
+            instance.update(FRAME_MS, &NodeTransform::default());
+        }
+        let mut frame = RenderFrame::default();
+        instance.render(&mut frame);
+        assert_eq!(frame.batches[0].sort, SortKey::sorted(Vec3::new(1.0, 2.0, 3.0)));
+        // With one: the centre of the box of every particle (skip 0 samples them all).
+        desc.particle_systems[0].modifiers.push(modifier(NifModifierKind::BoundUpdate { skip: 0 }, 8000));
+        let mut instance = NifEffectInstance::with_seed(Arc::new(NifEffect::prepare(desc)), SEED);
+        instance.start(0.0, true);
+        for _ in 0..FRAMES {
+            instance.update(FRAME_MS, &NodeTransform::default());
+        }
+        let mut frame = RenderFrame::default();
+        instance.render(&mut frame);
+        let particles = instance.particles(0);
+        let axis = |f: fn(&NifParticle) -> f32| {
+            let values = particles.iter().map(f);
+            (values.clone().fold(f32::INFINITY, f32::min) + values.fold(f32::NEG_INFINITY, f32::max)) * 0.5
+        };
+        let expected = Vec3::new(axis(|p| p.position.x), axis(|p| p.position.y), axis(|p| p.position.z));
+        assert!((frame.batches[0].sort.center - expected).length() < 1e-5, "{:?} {expected:?}", frame.batches[0].sort);
     }
 }

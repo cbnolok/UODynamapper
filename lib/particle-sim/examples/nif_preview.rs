@@ -23,7 +23,6 @@ use std::sync::Arc;
 
 use gamebryo_nif::NifFile;
 use image::{Rgba, RgbaImage};
-use particle_sim::nif::desc::NifTextureSource;
 use particle_sim::nif::{NifEffect, NifEffectInstance, compile};
 use particle_sim::raster::{CLIENT_VIEW_ELEVATION, Canvas, OrthoView, RasterTexture, SceneDrawOptions, frame_extent};
 use particle_sim::render::RenderFrame;
@@ -188,6 +187,18 @@ fn describe(desc: &particle_sim::NifEffectDesc) {
             system.render_state.alpha.blend_state()
         );
     }
+    for (index, effect) in desc.texture_effects.iter().enumerate() {
+        let affected: Vec<&str> =
+            desc.nodes.iter().filter(|node| node.texture_effects.contains(&index)).map(|node| node.name.as_str()).collect();
+        println!(
+            "  texture effect {:?}: {:?} {:?}, on {}, texture {:?}, listed by {affected:?}",
+            desc.nodes[effect.node].name,
+            effect.kind,
+            effect.coord_gen,
+            effect.on,
+            effect.texture.and_then(|texture| desc.textures.get(texture)).map(|texture| texture.name()),
+        );
+    }
     for texture in &desc.textures {
         println!("  texture {}", texture.name());
     }
@@ -198,26 +209,7 @@ struct Textures(Vec<(String, RasterTexture)>);
 
 impl Textures {
     fn load(package: &EffectTexturePackage, desc: &particle_sim::NifEffectDesc) -> Self {
-        let mut textures = Vec::new();
-        for texture in &desc.textures {
-            let name = texture.name();
-            let decoded = match &texture.source {
-                NifTextureSource::External { file_name } => match package.read(file_name).ok().flatten() {
-                    Some(payload) => textures::load_texture(file_name, &payload, texture.mipmapped),
-                    None => Err("not in the package".to_owned()),
-                },
-                // Level 0 of the embedded pixels; a mipmapped one gets the generated chain.
-                NifTextureSource::Embedded { width, height, rgba } => {
-                    textures::raster_texture(*width, *height, vec![rgba.clone()], texture.mipmapped, true)
-                }
-                NifTextureSource::Undecoded { format } => Err(format!("pixel format {format} not decoded")),
-            };
-            match decoded {
-                Ok(raster) => textures.push((name, raster)),
-                Err(error) => println!("  texture {name}: {error}"),
-            }
-        }
-        Self(textures)
+        Self(textures::load_nif_textures(package, desc))
     }
 
     fn get(&self, name: &str) -> Option<&RasterTexture> {

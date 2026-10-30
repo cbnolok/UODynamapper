@@ -7,7 +7,8 @@
 //! - [`ChaosSystem`]: a description prepared for running: event times drawn, events sorted and fade links
 //!   resolved. The client does this once per compiled (cached) script, so every instance of a script shares
 //!   it; share it with an `Arc`.
-//! - [`ChaosEmitter`] ([`runtime`]): the client's `Emitter` (start, update, stop, particles).
+//! - [`ChaosEmitter`] ([`runtime`]): the client's `Emitter` (start, update, stop, particles), with the
+//!   per-sequence bounds and MESH clones (`mesh`, resolved through a [`MeshSource`]) of its `ParticleSet`.
 //! - [`ChaosEffectInstance`] ([`instance`]): `UOParticleEffectChaos`, the effect around an emitter, with its own
 //!   RNG and clock; a [`crate::system::ParticleSystemInstance`].
 //!
@@ -20,6 +21,7 @@ pub mod desc;
 mod instance;
 mod issues;
 pub mod lexer_check;
+mod mesh;
 mod runtime;
 
 #[cfg(all(test, feature = "uocf"))]
@@ -30,7 +32,10 @@ use std::sync::Arc;
 pub use desc::*;
 pub use instance::ChaosEffectInstance;
 pub use issues::{ChaosIssue, ChaosIssueKind, ChaosIssueSeverity, SourceLocation};
-pub use runtime::{ChaosEmitter, ChaosParticle, GRAVITY_AXIS, MAX_EVENT_TIMER_REWINDS};
+pub use mesh::{MESH_CLONE_SEED, MESH_SUBSTEP_S, MeshSource, euler_xyz};
+pub use runtime::{
+    BOUND_INTERVAL_S, BOUND_RADIUS_MARGIN, ChaosEmitter, ChaosParticle, GRAVITY_AXIS, MAX_EVENT_TIMER_REWINDS,
+};
 
 use crate::rng::Rng;
 

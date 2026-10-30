@@ -232,7 +232,42 @@ fn node(name: &str, parent: Option<usize>, kind: NifNodeKind) -> NifNode {
         extra_strings: vec!["zMode10".to_owned()],
         in_scene: parent.is_some(),
         lights: Vec::new(),
+        texture_effects: Vec::new(),
+        sort_adjust: None,
     }
+}
+
+/// Texture effects of every kind and coordinate generation, on node 8.
+fn texture_effects() -> Vec<NifTextureEffect> {
+    TextureEffectKind::ALL
+        .iter()
+        .zip(TextureCoordGen::ALL.iter().cycle())
+        .enumerate()
+        .map(|(index, (&kind, &coord_gen))| NifTextureEffect {
+            node: 8,
+            kind,
+            coord_gen,
+            on: index % 2 == 0,
+            texture: (index % 2 == 0).then_some(0),
+            model_projection: [[1.0, 0.0, 0.0], [0.0, 0.5, 0.0], [0.0, 0.0, 2.0]],
+            model_translation: [0.25, 0.5, 0.0],
+            filter: 2,
+            addressing: TextureAddressing { wrap_s: index % 2 == 0, wrap_t: true },
+            unaffected_nodes: vec![2],
+        })
+        .chain(TextureCoordGen::ALL.iter().map(|&coord_gen| NifTextureEffect {
+            node: 8,
+            kind: TextureEffectKind::EnvironmentMap,
+            coord_gen,
+            on: true,
+            texture: Some(0),
+            model_projection: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            model_translation: [0.0; 3],
+            filter: 3,
+            addressing: TextureAddressing { wrap_s: true, wrap_t: true },
+            unaffected_nodes: Vec::new(),
+        }))
+        .collect()
 }
 
 /// A light of every kind, on nodes 4 to 7.
@@ -281,10 +316,13 @@ fn controller(target: ControllerTarget, kind: NifControllerKind) -> NifControlle
 /// key kind, light kind, controller target and controller kind.
 fn nif_desc() -> NifEffectDesc {
     let mut root = node("root", None, NifNodeKind::Node);
-    root.children = vec![1, 2, 3, 4, 5, 6, 7, 8];
+    root.children = vec![1, 2, 3, 4, 5, 6, 7, 8, 9];
     root.lights = vec![0, 2, 3];
+    root.texture_effects = vec![0, 4];
+    root.sort_adjust = Some(SortingMode::Inherit);
     let mut billboard = node("billboard", Some(0), NifNodeKind::Billboard(BillboardMode::RigidFaceCenter));
     billboard.lights = vec![1];
+    billboard.sort_adjust = Some(SortingMode::Off);
     let nodes = vec![
         root,
         billboard,
@@ -294,7 +332,8 @@ fn nif_desc() -> NifEffectDesc {
         node("ambient", Some(0), NifNodeKind::Light { light: 1 }),
         node("directional", Some(0), NifNodeKind::Light { light: 2 }),
         node("spot", Some(0), NifNodeKind::Light { light: 3 }),
-        node("texture effect", Some(0), NifNodeKind::Other { type_name: "NiTextureEffect".to_owned() }),
+        node("texture effect", Some(0), NifNodeKind::TextureEffect { effect: 0 }),
+        node("other", Some(0), NifNodeKind::Other { type_name: "NiCamera".to_owned() }),
     ];
     let geometry = MeshGeometry {
         positions: vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
@@ -310,7 +349,8 @@ fn nif_desc() -> NifEffectDesc {
             NifMorphTarget { name: "up".to_owned(), initial_weight: 0.0, vertices: vec![[0.0, 0.0, 1.0]; 3] },
         ],
     };
-    let meshes = vec![NifMesh { node: 2, geometry, morph: Some(morph), render_state: render_state() }];
+    let meshes =
+        vec![NifMesh { node: 2, geometry, bound_center: [0.5, 0.25, 0.0], morph: Some(morph), render_state: render_state() }];
     let modifiers = vec![
         emitter(EmitterShape::Box { object: Some(4), width: 1.0, height: 2.0, depth: 3.0 }),
         emitter(EmitterShape::Sphere { object: None, radius: 1.5 }),
@@ -337,7 +377,7 @@ fn nif_desc() -> NifEffectDesc {
             }),
         ),
         modifier("position", NifModifierKind::Position),
-        modifier("bounds", NifModifierKind::BoundUpdate),
+        modifier("bounds", NifModifierKind::BoundUpdate { skip: 3 }),
         modifier(
             "grow",
             NifModifierKind::GrowFade { grow_time: 0.1, grow_generation: 1, fade_time: 0.2, fade_generation: 2 },
@@ -401,6 +441,7 @@ fn nif_desc() -> NifEffectDesc {
         modifiers,
         render_state: render_state(),
         mesh_particles: true,
+        bound_center: [0.0, 1.0, 2.0],
     }];
     let materials = vec![NifMaterial { name: "material".to_owned(), emissive: [1.0; 3], ..NifMaterial::default() }];
     let texturings = vec![NifTexturing {
@@ -428,7 +469,7 @@ fn nif_desc() -> NifEffectDesc {
         NifTexture { index: 0, source: NifTextureSource::External { file_name: "flare.tga".to_owned() }, mipmapped: true },
         NifTexture {
             index: 1,
-            source: NifTextureSource::Embedded { width: 2, height: 1, rgba: (0..8).collect() },
+            source: NifTextureSource::Embedded { width: 2, height: 1, levels: vec![(0..8).collect(), (8..12).collect()] },
             mipmapped: false,
         },
         NifTexture { index: 2, source: NifTextureSource::Undecoded { format: 4 }, mipmapped: true },
@@ -516,6 +557,7 @@ fn nif_desc() -> NifEffectDesc {
         texturings,
         textures,
         lights: lights(),
+        texture_effects: texture_effects(),
         controllers,
     }
 }
@@ -610,7 +652,27 @@ fn decoder_rejects_indices_out_of_range() {
     ));
 
     let mut desc = nif_desc();
+    desc.nodes[0].texture_effects.push(desc.texture_effects.len());
+    assert!(matches!(
+        decode_nif_desc(&encode_nif_desc(&desc)),
+        Err(DescDecodeError::IndexOutOfRange { what: "node texture effect", .. })
+    ));
+
+    let mut desc = nif_desc();
+    desc.texture_effects[0].texture = Some(desc.textures.len());
+    assert!(matches!(
+        decode_nif_desc(&encode_nif_desc(&desc)),
+        Err(DescDecodeError::IndexOutOfRange { what: "texture effect texture", .. })
+    ));
+
+    let mut desc = nif_desc();
     desc.meshes[0].geometry.triangles.push([0, 1, 3]);
+    assert!(decode_nif_desc(&encode_nif_desc(&desc)).is_err());
+
+    // Every stored level of an embedded texture has the size of its level.
+    let mut desc = nif_desc();
+    let NifTextureSource::Embedded { levels, .. } = &mut desc.textures[1].source else { unreachable!() };
+    levels[1].push(0);
     assert!(decode_nif_desc(&encode_nif_desc(&desc)).is_err());
 }
 

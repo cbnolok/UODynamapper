@@ -238,7 +238,8 @@ or `SYSTEM_KIND_NIF` (`.nif`).
 - Dependencies (`system_dependencies`):
   - Chaos POINT and AXIAL sequences depend on their texture.
   - Chaos MESH sequences depend on their `.nif`, which is packed as a NIF system.
-  - A NIF depends on each texture it uses, in texture-index order.
+  - A NIF depends on each texture it uses, in texture-index order, including the environment maps of
+    its `NiTextureEffect`s.
   - EMITTER sequences are not simulated by `particle-sim`. They are reported and not packed.
 - Blobs are `particle_sim::codec` (`encode_chaos_desc` / `encode_nif_desc`). The module documentation
   holds the binary rules and tag tables. A blob decodes exactly to what `particle_sim` compiles from

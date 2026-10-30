@@ -9,18 +9,22 @@
 //! ```
 //!
 //! The client directory defaults to `UO_EC_CLIENT_DIR`. The camera is the client's view (orthographic along the
-//! effect's local +y with +z up: `CameraFrame::client_view`), fitted to everything the effect draws over the run. MESH particles (no NIF renderer here) are
-//! drawn as magenta square outlines of their size; the node is a grey dot.
+//! effect's local +y with +z up: `CameraFrame::client_view`), fitted to everything the effect draws over the run.
+//! MESH particles draw a clone of their `.nif` from the package (`MeshSource`); those whose `.nif` does not load
+//! are drawn as magenta square outlines of their size. The node is a grey dot.
 
 #[path = "common/textures.rs"]
 mod textures;
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use gamebryo_nif::NifFile;
 use image::{Rgba, RgbaImage};
 use particle_sim::chaos::compile::compile_chaos_source;
-use particle_sim::chaos::{ChaosIssueSeverity, ChaosParticleType, ChaosSystem};
+use particle_sim::chaos::{ChaosIssueSeverity, ChaosParticleType, ChaosSystem, MeshSource};
+use particle_sim::nif::{NifEffect, compile};
 use particle_sim::raster::{CLIENT_VIEW_ELEVATION, Canvas, OVERLAY_BLEND, OrthoView, RasterTexture, frame_extent};
 use particle_sim::render::RenderFrame;
 use particle_sim::{ChaosEffectInstance, Mt19937, NodeTransform, ParticleSystemInstance, Vec3};
@@ -142,16 +146,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             sequence.flags.0
         );
     }
-    // MESH sequences name `.nif` scenes, drawn as outlines; the other resources are textures.
-    let is_texture = |name: &str| {
+    // MESH sequences name `.nif` scenes; the other resources are textures.
+    let is_mesh = |name: &str| {
         let mut users = desc.sequences.iter().filter(|sequence| sequence.resource == name);
-        users.any(|sequence| sequence.particle_type != ChaosParticleType::Mesh)
+        users.any(|sequence| sequence.particle_type == ChaosParticleType::Mesh)
     };
-    let texture_names: Vec<&str> = desc.resources().into_iter().filter(|name| is_texture(name)).collect();
-    let textures = Textures::load(&package, &texture_names);
+    let texture_names: Vec<&str> = desc.resources().into_iter().filter(|name| !is_mesh(name)).collect();
+    let mut textures = Textures::load(&package, &texture_names);
+    let mesh_names: Vec<&str> = desc.resources().into_iter().filter(|name| is_mesh(name)).collect();
+    let meshes = load_meshes(&package, &mesh_names, &mut textures);
     let mut rng = Mt19937::new(options.seed);
     let system = Arc::new(ChaosSystem::prepare(desc, &mut rng));
-    let frames = simulate(&system, &options);
+    let frames = simulate(&system, &meshes, &options);
     let sheet = draw_sheet(&frames, &textures, options.cell);
     std::fs::create_dir_all(&out_dir)?;
     let path = out_dir.join(format!("{}.png", label.trim_end_matches(".ems")));
@@ -202,8 +208,36 @@ struct Capture {
     particles: usize,
 }
 
-fn simulate(system: &Arc<ChaosSystem>, options: &Options) -> Vec<Capture> {
+/// The `.nif` of the MESH sequences, compiled and prepared once per name (`ParticleSystemManager::LoadMesh`), their
+/// textures added to `textures`.
+fn load_meshes(package: &EffectTexturePackage, names: &[&str], textures: &mut Textures) -> MeshSource {
+    let mut meshes = HashMap::new();
+    for name in names {
+        let Some(payload) = package.read(name).ok().flatten() else {
+            println!("mesh {name}: not in the package");
+            continue;
+        };
+        let nif = match NifFile::read(&payload) {
+            Ok(nif) => nif,
+            Err(error) => {
+                println!("mesh {name}: {error}");
+                continue;
+            }
+        };
+        let output = compile(&nif, name);
+        for warning in &output.warnings {
+            println!("mesh {name}: {warning}");
+        }
+        println!("mesh {name}: {} meshes, {} particle systems", output.desc.meshes.len(), output.desc.particle_systems.len());
+        textures.0.extend(textures::load_nif_textures(package, &output.desc));
+        meshes.insert(name.to_ascii_lowercase(), Arc::new(NifEffect::prepare(output.desc)));
+    }
+    MeshSource::new(move |name| meshes.get(&name.to_ascii_lowercase()).cloned())
+}
+
+fn simulate(system: &Arc<ChaosSystem>, meshes: &MeshSource, options: &Options) -> Vec<Capture> {
     let mut effect = ChaosEffectInstance::with_seed(Arc::clone(system), options.seed);
+    effect.set_mesh_source(meshes);
     effect.start(options.duration, options.looping);
     let dt = options.frame_ms as f32 / MS_PER_SECOND;
     let updates = (options.seconds / dt).ceil().max(1.0) as usize;
@@ -224,10 +258,11 @@ fn simulate(system: &Arc<ChaosSystem>, options: &Options) -> Vec<Capture> {
     }
     for capture in &captures {
         println!(
-            "t = {:.3} s: {} particles, {} sprites, {} meshes",
+            "t = {:.3} s: {} particles, {} sprites, {} mesh draws, {} unresolved meshes",
             capture.time,
             capture.particles,
             capture.frame.sprites.len(),
+            capture.frame.mesh_draws.len(),
             capture.frame.meshes.len()
         );
     }

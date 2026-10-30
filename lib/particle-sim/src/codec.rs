@@ -42,16 +42,17 @@ use crate::nif::desc::{
     MaterialColorField, MeshEmission, MeshEmitterVelocity, ModifierParam, NIF_DESC_VERSION, NifAlpha, NifController,
     NifControllerKind, NifEffectDesc, NifEmitter, NifInterpolator, NifLight, NifLightKind, NifMaterial, NifMesh,
     NifModifier, NifModifierKind, NifMorph,
-    NifMorphTarget, NifNode, NifNodeKind, NifParticleSystem, NifRenderState, NifSpawn, NifTexture, NifTextureMap,
-    NifTextureSource, NifTextureTransform, NifTexturing, NifTransform, NifVertexColor, NifZBuffer, PathInterp,
-    Point3Interp, RotKey, RotationCurve, Tcb, TextureAddressing, TextureApplyMode, TextureSlot,
+    NifMorphTarget, NifNode, NifNodeKind, NifParticleSystem, NifRenderState, NifSpawn, NifTexture, NifTextureEffect,
+    NifTextureMap, NifTextureSource, NifTextureTransform, NifTexturing, NifTransform, NifVertexColor, NifZBuffer,
+    PathInterp, Point3Interp, RotKey, RotationCurve, Tcb, TextureAddressing, TextureApplyMode, TextureCoordGen,
+    TextureEffectKind, TextureSlot, SortingMode, embedded_level_size,
     TextureTransformMember, TextureTransformMethod, TransformInterp, VertexColorSource,
 };
 use crate::render::{BlendFactor, MeshGeometry};
 
-/// Version of the body rules and tag tables of this module (2: light node kind, light controller target and
-/// kinds, light kinds).
-pub const DESC_CODEC_VERSION: u32 = 2;
+/// Version of the body rules and tag tables of this module (3: texture effect node kind and table, embedded
+/// texture levels, bound update skip).
+pub const DESC_CODEC_VERSION: u32 = 3;
 /// Magic of a [`ChaosSystemDesc`] blob.
 pub const CHAOS_BLOB_MAGIC: [u8; 4] = *b"PSCH";
 /// Magic of a [`NifEffectDesc`] blob.
@@ -77,6 +78,7 @@ const NODE_KIND_MESH: u8 = 2;
 const NODE_KIND_PARTICLE_SYSTEM: u8 = 3;
 const NODE_KIND_OTHER: u8 = 4;
 const NODE_KIND_LIGHT: u8 = 5;
+const NODE_KIND_TEXTURE_EFFECT: u8 = 6;
 
 /// `NifLightKind` tags.
 const LIGHT_AMBIENT: u8 = 0;
@@ -242,6 +244,7 @@ pub fn validate_nif_desc(desc: &NifEffectDesc) -> DecodeResult<()> {
     let texturings = desc.texturings.len();
     let textures = desc.textures.len();
     let lights = desc.lights.len();
+    let texture_effects = desc.texture_effects.len();
     if let Some(root) = desc.root {
         check_index("scene root", root, nodes)?;
     }
@@ -255,10 +258,14 @@ pub fn validate_nif_desc(desc: &NifEffectDesc) -> DecodeResult<()> {
         for &light in &node.lights {
             check_index("node light", light, lights)?;
         }
+        for &effect in &node.texture_effects {
+            check_index("node texture effect", effect, texture_effects)?;
+        }
         match node.kind {
             NifNodeKind::Mesh { mesh } => check_index("node mesh", mesh, meshes)?,
             NifNodeKind::ParticleSystem { system } => check_index("node particle system", system, systems)?,
             NifNodeKind::Light { light } => check_index("node light kind", light, lights)?,
+            NifNodeKind::TextureEffect { effect } => check_index("node texture effect kind", effect, texture_effects)?,
             _ => {}
         }
     }
@@ -289,14 +296,29 @@ pub fn validate_nif_desc(desc: &NifEffectDesc) -> DecodeResult<()> {
         if texture.index != index {
             return Err(DescDecodeError::Invalid(format!("texture {index} stores index {}", texture.index)));
         }
-        if let NifTextureSource::Embedded { width, height, rgba } = &texture.source {
-            let expected = u64::from(*width) * u64::from(*height) * RGBA_BYTES_PER_PIXEL;
-            if rgba.len() as u64 != expected {
-                return Err(DescDecodeError::Invalid(format!(
-                    "embedded texture {index}: {} bytes for {width}x{height}",
-                    rgba.len()
-                )));
+        if let NifTextureSource::Embedded { width, height, levels } = &texture.source {
+            if levels.is_empty() {
+                return Err(DescDecodeError::Invalid(format!("embedded texture {index} has no level")));
             }
+            for (level, rgba) in levels.iter().enumerate() {
+                let (level_width, level_height) = embedded_level_size(*width, *height, level);
+                let expected = u64::from(level_width) * u64::from(level_height) * RGBA_BYTES_PER_PIXEL;
+                if rgba.len() as u64 != expected {
+                    return Err(DescDecodeError::Invalid(format!(
+                        "embedded texture {index} level {level}: {} bytes for {level_width}x{level_height}",
+                        rgba.len()
+                    )));
+                }
+            }
+        }
+    }
+    for effect in &desc.texture_effects {
+        check_index("texture effect node", effect.node, nodes)?;
+        if let Some(texture) = effect.texture {
+            check_index("texture effect texture", texture, textures)?;
+        }
+        for &node in &effect.unaffected_nodes {
+            check_index("texture effect unaffected node", node, nodes)?;
         }
     }
     for system in &desc.particle_systems {
@@ -1247,6 +1269,10 @@ impl Codec for NifNodeKind {
                 writer.tag(NODE_KIND_LIGHT);
                 writer.index(*light);
             }
+            NifNodeKind::TextureEffect { effect } => {
+                writer.tag(NODE_KIND_TEXTURE_EFFECT);
+                writer.index(*effect);
+            }
             NifNodeKind::Other { type_name } => {
                 writer.tag(NODE_KIND_OTHER);
                 type_name.encode(writer);
@@ -1261,6 +1287,7 @@ impl Codec for NifNodeKind {
             NODE_KIND_MESH => NifNodeKind::Mesh { mesh: reader.index("node mesh")? },
             NODE_KIND_PARTICLE_SYSTEM => NifNodeKind::ParticleSystem { system: reader.index("node particle system")? },
             NODE_KIND_LIGHT => NifNodeKind::Light { light: reader.index("node light kind")? },
+            NODE_KIND_TEXTURE_EFFECT => NifNodeKind::TextureEffect { effect: reader.index("node texture effect kind")? },
             NODE_KIND_OTHER => NifNodeKind::Other { type_name: Codec::decode(reader)? },
             tag => return Err(DescDecodeError::InvalidTag { what: "node kind", tag: u32::from(tag) }),
         })
@@ -1269,7 +1296,19 @@ impl Codec for NifNodeKind {
 
 impl Codec for NifNode {
     fn encode(&self, writer: &mut Writer) {
-        let NifNode { name, parent, children, transform, flags, kind, extra_strings, in_scene, lights } = self;
+        let NifNode {
+            name,
+            parent,
+            children,
+            transform,
+            flags,
+            kind,
+            extra_strings,
+            in_scene,
+            lights,
+            texture_effects,
+            sort_adjust,
+        } = self;
         name.encode(writer);
         writer.opt_index(*parent);
         writer.indices(children);
@@ -1279,6 +1318,8 @@ impl Codec for NifNode {
         extra_strings.encode(writer);
         in_scene.encode(writer);
         writer.indices(lights);
+        writer.indices(texture_effects);
+        sort_adjust.encode(writer);
     }
 
     fn decode(reader: &mut Reader<'_>) -> DecodeResult<Self> {
@@ -1292,6 +1333,8 @@ impl Codec for NifNode {
             extra_strings: Codec::decode(reader)?,
             in_scene: Codec::decode(reader)?,
             lights: reader.indices("node lights")?,
+            texture_effects: reader.indices("node texture effects")?,
+            sort_adjust: Codec::decode(reader)?,
         })
     }
 }
@@ -1342,6 +1385,70 @@ impl Codec for NifLightKind {
                 exponent: Codec::decode(reader)?,
             },
             tag => return Err(DescDecodeError::InvalidTag { what: "light kind", tag: u32::from(tag) }),
+        })
+    }
+}
+
+tagged_enum!(SortingMode, "sorting mode", {
+    Inherit => SortingMode::Inherit as u8,
+    Off => SortingMode::Off as u8,
+});
+
+tagged_enum!(TextureEffectKind, "texture effect kind", {
+    ProjectedLight => TextureEffectKind::ProjectedLight as u8,
+    ProjectedShadow => TextureEffectKind::ProjectedShadow as u8,
+    EnvironmentMap => TextureEffectKind::EnvironmentMap as u8,
+    FogMap => TextureEffectKind::FogMap as u8,
+});
+
+tagged_enum!(TextureCoordGen, "texture coordinate generation", {
+    WorldParallel => TextureCoordGen::WorldParallel as u8,
+    WorldPerspective => TextureCoordGen::WorldPerspective as u8,
+    SphereMap => TextureCoordGen::SphereMap as u8,
+    SpecularCubeMap => TextureCoordGen::SpecularCubeMap as u8,
+    DiffuseCubeMap => TextureCoordGen::DiffuseCubeMap as u8,
+});
+
+impl Codec for NifTextureEffect {
+    fn encode(&self, writer: &mut Writer) {
+        let NifTextureEffect {
+            node,
+            kind,
+            coord_gen,
+            on,
+            texture,
+            model_projection,
+            model_translation,
+            filter,
+            addressing,
+            unaffected_nodes,
+        } = self;
+        let TextureAddressing { wrap_s, wrap_t } = addressing;
+        writer.index(*node);
+        kind.encode(writer);
+        coord_gen.encode(writer);
+        on.encode(writer);
+        writer.opt_index(*texture);
+        model_projection.encode(writer);
+        model_translation.encode(writer);
+        filter.encode(writer);
+        wrap_s.encode(writer);
+        wrap_t.encode(writer);
+        writer.indices(unaffected_nodes);
+    }
+
+    fn decode(reader: &mut Reader<'_>) -> DecodeResult<Self> {
+        Ok(NifTextureEffect {
+            node: reader.index("texture effect node")?,
+            kind: Codec::decode(reader)?,
+            coord_gen: Codec::decode(reader)?,
+            on: Codec::decode(reader)?,
+            texture: reader.opt_index()?,
+            model_projection: Codec::decode(reader)?,
+            model_translation: Codec::decode(reader)?,
+            filter: Codec::decode(reader)?,
+            addressing: TextureAddressing { wrap_s: Codec::decode(reader)?, wrap_t: Codec::decode(reader)? },
+            unaffected_nodes: reader.indices("texture effect unaffected nodes")?,
         })
     }
 }
@@ -1500,9 +1607,10 @@ impl Codec for NifRenderState {
 
 impl Codec for NifMesh {
     fn encode(&self, writer: &mut Writer) {
-        let NifMesh { node, geometry, morph, render_state } = self;
+        let NifMesh { node, geometry, bound_center, morph, render_state } = self;
         writer.index(*node);
         geometry.encode(writer);
+        bound_center.encode(writer);
         morph.encode(writer);
         render_state.encode(writer);
     }
@@ -1511,6 +1619,7 @@ impl Codec for NifMesh {
         Ok(NifMesh {
             node: reader.index("mesh node")?,
             geometry: Codec::decode(reader)?,
+            bound_center: Codec::decode(reader)?,
             morph: Codec::decode(reader)?,
             render_state: Codec::decode(reader)?,
         })
@@ -1610,12 +1719,15 @@ impl Codec for NifTexture {
                 writer.tag(TEXTURE_SOURCE_EXTERNAL);
                 file_name.encode(writer);
             }
-            NifTextureSource::Embedded { width, height, rgba } => {
+            NifTextureSource::Embedded { width, height, levels } => {
                 writer.tag(TEXTURE_SOURCE_EMBEDDED);
                 width.encode(writer);
                 height.encode(writer);
-                writer.len(rgba.len());
-                writer.bytes.extend_from_slice(rgba);
+                writer.len(levels.len());
+                for rgba in levels {
+                    writer.len(rgba.len());
+                    writer.bytes.extend_from_slice(rgba);
+                }
             }
             NifTextureSource::Undecoded { format } => {
                 writer.tag(TEXTURE_SOURCE_UNDECODED);
@@ -1632,8 +1744,13 @@ impl Codec for NifTexture {
             TEXTURE_SOURCE_EMBEDDED => {
                 let width = u32::decode(reader)?;
                 let height = u32::decode(reader)?;
-                let len = reader.count("embedded pixels")?;
-                NifTextureSource::Embedded { width, height, rgba: reader.take(len)?.to_vec() }
+                let count = reader.count("embedded levels")?;
+                let mut levels = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let len = reader.count("embedded pixels")?;
+                    levels.push(reader.take(len)?.to_vec());
+                }
+                NifTextureSource::Embedded { width, height, levels }
             }
             TEXTURE_SOURCE_UNDECODED => NifTextureSource::Undecoded { format: Codec::decode(reader)? },
             tag => return Err(DescDecodeError::InvalidTag { what: "texture source", tag: u32::from(tag) }),
@@ -1821,7 +1938,10 @@ impl Codec for NifModifierKind {
                 spawn.encode(writer);
             }
             NifModifierKind::Position => writer.tag(MODIFIER_POSITION),
-            NifModifierKind::BoundUpdate => writer.tag(MODIFIER_BOUND_UPDATE),
+            NifModifierKind::BoundUpdate { skip } => {
+                writer.tag(MODIFIER_BOUND_UPDATE);
+                skip.encode(writer);
+            }
             NifModifierKind::GrowFade { grow_time, grow_generation, fade_time, fade_generation } => {
                 writer.tag(MODIFIER_GROW_FADE);
                 grow_time.encode(writer);
@@ -1898,7 +2018,7 @@ impl Codec for NifModifierKind {
             },
             MODIFIER_SPAWN => NifModifierKind::Spawn(Codec::decode(reader)?),
             MODIFIER_POSITION => NifModifierKind::Position,
-            MODIFIER_BOUND_UPDATE => NifModifierKind::BoundUpdate,
+            MODIFIER_BOUND_UPDATE => NifModifierKind::BoundUpdate { skip: Codec::decode(reader)? },
             MODIFIER_GROW_FADE => NifModifierKind::GrowFade {
                 grow_time: Codec::decode(reader)?,
                 grow_generation: Codec::decode(reader)?,
@@ -1979,6 +2099,7 @@ impl Codec for NifParticleSystem {
             modifiers,
             render_state,
             mesh_particles,
+            bound_center,
         } = self;
         writer.index(*node);
         world_space.encode(writer);
@@ -1991,6 +2112,7 @@ impl Codec for NifParticleSystem {
         modifiers.encode(writer);
         render_state.encode(writer);
         mesh_particles.encode(writer);
+        bound_center.encode(writer);
     }
 
     fn decode(reader: &mut Reader<'_>) -> DecodeResult<Self> {
@@ -2006,6 +2128,7 @@ impl Codec for NifParticleSystem {
             modifiers: Codec::decode(reader)?,
             render_state: Codec::decode(reader)?,
             mesh_particles: Codec::decode(reader)?,
+            bound_center: Codec::decode(reader)?,
         })
     }
 }
@@ -2203,6 +2326,7 @@ impl Codec for NifEffectDesc {
             texturings,
             textures,
             lights,
+            texture_effects,
             controllers,
         } = self;
         name.encode(writer);
@@ -2214,6 +2338,7 @@ impl Codec for NifEffectDesc {
         texturings.encode(writer);
         textures.encode(writer);
         lights.encode(writer);
+        texture_effects.encode(writer);
         controllers.encode(writer);
     }
 
@@ -2228,6 +2353,7 @@ impl Codec for NifEffectDesc {
             texturings: Codec::decode(reader)?,
             textures: Codec::decode(reader)?,
             lights: Codec::decode(reader)?,
+            texture_effects: Codec::decode(reader)?,
             controllers: Codec::decode(reader)?,
         })
     }

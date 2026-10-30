@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use super::runtime::ChaosEmitter;
-use super::{ChaosSystem, EFFECT_FADE_SECONDS};
+use super::{ChaosSystem, EFFECT_FADE_SECONDS, MeshSource};
 use crate::render::RenderFrame;
 use crate::rng::{Mt19937, Rng};
 use crate::system::{NodeTransform, ParticleSystemInstance, SECONDS_PER_MS};
@@ -54,6 +54,11 @@ impl<R: Rng> ChaosEffectInstance<R> {
             fade: 0.0,
             lifetime_ticks: None,
         }
+    }
+
+    /// Resolves the `.nif` of the MESH sequences ([`ChaosEmitter::set_mesh_source`]).
+    pub fn set_mesh_source(&mut self, source: &MeshSource) {
+        self.emitter.set_mesh_source(source);
     }
 
     pub fn emitter(&self) -> &ChaosEmitter {

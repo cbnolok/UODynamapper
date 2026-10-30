@@ -6,9 +6,12 @@
 //! - `.nif`: one `NiPixelData` with its stored levels ([`decode_nif_image`], `NiNIFImageReader`).
 //! - Anything else: TGA, one level.
 
+use particle_sim::NifEffectDesc;
 use particle_sim::mips::{client_mip_levels, decode_dds_levels};
 use particle_sim::nif::compile::decode_nif_image;
+use particle_sim::nif::desc::NifTextureSource;
 use particle_sim::raster::RasterTexture;
+use uocf::enhanced::effect_texture::EffectTexturePackage;
 
 const DDS_MAGIC: &[u8] = b"DDS ";
 const NIF_EXTENSION: &str = ".nif";
@@ -56,4 +59,29 @@ pub fn raster_texture(
 ) -> Result<RasterTexture, String> {
     let (levels, _) = client_mip_levels(width, height, levels, mipmapped, generatable);
     RasterTexture::from_rgba8_levels(width as usize, height as usize, &levels).ok_or_else(|| "empty texture".to_owned())
+}
+
+/// The textures of a NIF effect by render name ([`particle_sim::nif::desc::NifTexture::name`]): package files and
+/// the stored levels of embedded pixels (a mipmapped single level gets the generated chain). Failures are
+/// printed and skipped.
+pub fn load_nif_textures(package: &EffectTexturePackage, desc: &NifEffectDesc) -> Vec<(String, RasterTexture)> {
+    let mut textures = Vec::new();
+    for texture in &desc.textures {
+        let name = texture.name();
+        let decoded = match &texture.source {
+            NifTextureSource::External { file_name } => match package.read(file_name).ok().flatten() {
+                Some(payload) => load_texture(file_name, &payload, texture.mipmapped),
+                None => Err("not in the package".to_owned()),
+            },
+            NifTextureSource::Embedded { width, height, levels } => {
+                raster_texture(*width, *height, levels.clone(), texture.mipmapped, true)
+            }
+            NifTextureSource::Undecoded { format } => Err(format!("pixel format {format} not decoded")),
+        };
+        match decoded {
+            Ok(raster) => textures.push((name, raster)),
+            Err(error) => println!("  texture {name}: {error}"),
+        }
+    }
+    textures
 }

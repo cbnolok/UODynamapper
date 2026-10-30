@@ -8,8 +8,10 @@
 //!
 //! Positions are in the effect's space. The client turns every effect node to its camera, so there X is camera
 //! right, Y the view direction and Z camera up (confirmed: the effect rotation of `g_UOWorldViewer` 0x00e37224;
-//! `uosa_effects.md`, "Effect camera and lighting"). Batches are drawn in order, and sprites within a batch in
-//! order (the client sorts nothing: oldest particle first, one batch per sequence).
+//! `uosa_effects.md`, "Effect camera and lighting"). Sprites within a batch are drawn in order (oldest particle
+//! first, one batch per sequence). Every batch and mesh draw carries a [`SortKey`]: the client's alpha accumulator
+//! draws the unsorted drawables first, in scene order, then the sorted ones far to near by their bound centre
+//! (`uosa_effects.md`, "Draw order"; [`crate::raster::Canvas::draw_group`]).
 //!
 //! Quad layout (Chaos `ParticleTriShape::BuildVertices` 0x008c4c30): vertex k has base UV (0,1), (0,0), (1,0),
 //! (1,1), mapped into the sprite's [`UvRect`]; triangles are (0, 2, 1) and (0, 2, 3). Colour is per sprite
@@ -19,7 +21,8 @@
 //! transform, material, texture stages and render state) and [`RenderFrame::batch_states`] (the render state
 //! of their sprite batches that [`DrawBatch`] does not carry). Both carry a scene `order`: draw batches and mesh
 //! draws interleaved by it reproduce the scene graph's draw order. [`expand_mesh_draw`] lights and transforms a
-//! mesh draw into a triangle list for software rasterizers.
+//! mesh draw into a triangle list for software rasterizers, and [`combine_textures`] is the client's pixel colour
+//! (`NiStandardMaterial`).
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -27,7 +30,7 @@ use std::sync::Arc;
 use crate::math::{Mat3, Vec3};
 use crate::nif::desc::{
     CompareFunction, CullMode, LightAttenuation, LightingMode, NifVertexColor, TextureAddressing, TextureApplyMode,
-    TextureFilter, TextureSlot, VertexColorSource,
+    TextureCoordGen, TextureFilter, TextureSlot, VertexColorSource,
 };
 
 /// Half extent of a quad relative to the particle size (UOSA.exe constant 0.5 at 0x00c95604).
@@ -112,6 +115,31 @@ pub struct DepthState {
 /// Chaos quads: depth test on, depth write off (`NiZBufferProperty` 0xd on `ParticleSystemRoot` and each shape).
 pub const PARTICLE_DEPTH_STATE: DepthState = DepthState { test: true, write: false };
 
+/// Where a drawable goes in the draw order of the effect render group (`NiAlphaAccumulator`, UOSA.exe
+/// `FinishAccumulating` 0x006d6990; `uosa_effects.md`, "Draw order").
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SortKey {
+    /// Drawn with the sorted drawables (alpha blending on, no `NoSorter` flag, not under an `NiSortAdjustNode`
+    /// with sorting off: `NiAlphaAccumulator::RegisterObjectArray`, `NiAlphaAccumulator.cpp:33-66`); otherwise
+    /// drawn first, in scene order.
+    pub sorted: bool,
+    /// World centre of the drawable's bound: the sorted drawables are drawn far to near by its depth along the
+    /// camera direction (`NiAlphaAccumulator.cpp:68-110`, `SortByClosestPoint` off).
+    pub center: Vec3,
+}
+
+impl SortKey {
+    /// An unsorted drawable (blending off) at `center`.
+    pub fn unsorted(center: Vec3) -> Self {
+        Self { sorted: false, center }
+    }
+
+    /// A sorted drawable at `center`.
+    pub fn sorted(center: Vec3) -> Self {
+        Self { sorted: true, center }
+    }
+}
+
 /// How a sprite becomes a quad.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SpriteKind {
@@ -167,9 +195,13 @@ pub struct DrawBatch {
     /// The sprites of the batch in [`RenderFrame::sprites`]; their vertices are `4 * start .. 4 * end` in the
     /// output of [`expand_frame`].
     pub sprites: Range<usize>,
+    /// The batch's place in the draw order: its whole set of sprites is one drawable.
+    pub sort: SortKey,
 }
 
-/// A particle drawn as a mesh (Chaos MESH sequences): a clone of the `.nif` scene per particle.
+/// A particle drawn as a mesh (Chaos MESH sequences): a clone of the `.nif` scene per particle. A Chaos effect
+/// that can load its mesh NIFs draws the clones' own [`MeshDraw`]s and batches instead
+/// ([`crate::chaos::MeshSource`]); these instances are the placements of the others.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MeshInstance {
     /// Mesh file name (`.nif`, as in the script).
@@ -184,7 +216,8 @@ pub struct MeshInstance {
     pub euler: Option<Vec3>,
     /// Time for the mesh controllers: the particle age in seconds (the client sub-steps them at 1/30 s).
     pub animation_time: f32,
-    /// Particle colour, RGBA in [0, 1]; whether the client applies it to the mesh is not established.
+    /// Particle colour, RGBA in [0, 1]. The client does not apply it to the clone (`uosa_chaos.md`, "MESH
+    /// particles").
     pub color: [f32; 4],
 }
 
@@ -217,6 +250,27 @@ impl RenderFrame {
     /// The extra state of batch `batch`, if any.
     pub fn batch_state(&self, batch: usize) -> Option<&BatchState> {
         self.batch_states.iter().find(|state| state.batch == batch)
+    }
+
+    /// Appends `other`'s draws after this frame's, its scene orders shifted by `order`; returns the next free
+    /// order number (`order` past the highest appended one).
+    pub fn append(&mut self, other: &RenderFrame, order: u32) -> u32 {
+        let sprites = self.sprites.len();
+        let batches = self.batches.len();
+        self.sprites.extend_from_slice(&other.sprites);
+        self.batches.extend(other.batches.iter().map(|batch| DrawBatch {
+            sprites: batch.sprites.start + sprites..batch.sprites.end + sprites,
+            ..batch.clone()
+        }));
+        self.batch_states.extend(other.batch_states.iter().map(|state| BatchState {
+            batch: state.batch + batches,
+            order: state.order + order,
+            ..state.clone()
+        }));
+        self.meshes.extend_from_slice(&other.meshes);
+        self.mesh_draws.extend(other.mesh_draws.iter().map(|draw| MeshDraw { order: draw.order + order, ..draw.clone() }));
+        let orders = other.mesh_draws.iter().map(|draw| draw.order).chain(other.batch_states.iter().map(|state| state.order));
+        orders.max().map_or(order, |last| order + last + 1)
     }
 }
 
@@ -468,6 +522,52 @@ pub struct MeshDraw {
     /// The effect's own lights that reach this mesh (empty for nearly every effect), added per vertex to the
     /// [`SceneLighting`] by [`expand_mesh_draw`].
     pub lights: Vec<EffectLight>,
+    /// The environment map reaching this mesh (an `NiTextureEffect`), when the mesh has the normals it needs.
+    pub env_map: Option<EnvironmentMap>,
+    /// The draw's place in the draw order (bound centre: the model bound's, in world space).
+    pub sort: SortKey,
+}
+
+/// An environment map (`NiTextureEffect` with type `ENVIRONMENT_MAP`) as `NiStandardMaterial` applies it: texture
+/// coordinates generated per vertex from a world-space source vector `s` (`HandleTextureEffectUVSetGen`,
+/// `NiStandardMaterial.cpp:4827`) through the effect's world projection, `uv = projection * s + translation`
+/// (`ProjectTextureCoordinates` with `SCM_OBJ_WORLDPROJECTIONTRANSFORM`, `NiD3DShaderConstantMap.cpp:3658`);
+/// the sample, times the gloss map when there is one, is added to the colour ([`combine_textures`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnvironmentMap {
+    pub texture: Arc<str>,
+    pub coord_gen: TextureCoordGen,
+    /// `m_kWorldProjMat` (`NiTextureEffect::UpdateProjection`, `NiTextureEffect.cpp:92-144`).
+    pub projection: Mat3,
+    /// `m_kWorldProjTrans`.
+    pub translation: Vec3,
+    pub addressing: TextureAddressing,
+    pub filter: TextureFilter,
+}
+
+impl EnvironmentMap {
+    /// The texture coordinates of a vertex at world `position` with unit world `normal`, seen from
+    /// `camera_position`:
+    /// - world parallel: the position projected;
+    /// - world perspective: the position projected, divided by the third component (`tex2Dproj`);
+    /// - sphere map: the unit reflection of the camera-to-vertex vector about the normal (`WorldReflect`,
+    ///   `reflect(-(CameraPos - WorldPos), N)`, normalized) projected;
+    /// - cube maps are looked up by a direction, not a coordinate pair: their maps are not drawn (`None`).
+    pub fn uv(&self, position: Vec3, normal: Vec3, camera_position: Vec3) -> Option<[f32; 2]> {
+        let source = match self.coord_gen {
+            TextureCoordGen::WorldParallel | TextureCoordGen::WorldPerspective => position,
+            TextureCoordGen::SphereMap => {
+                let incident = position - camera_position;
+                (incident - normal * (2.0 * normal.dot(incident))).normalize_or_zero()
+            }
+            TextureCoordGen::SpecularCubeMap | TextureCoordGen::DiffuseCubeMap => return None,
+        };
+        let projected = self.projection.mul_vec3(source) + self.translation;
+        if self.coord_gen == TextureCoordGen::WorldPerspective {
+            return (projected.z != 0.0).then(|| [projected.x / projected.z, projected.y / projected.z]);
+        }
+        Some([projected.x, projected.y])
+    }
 }
 
 impl MeshDraw {
@@ -475,9 +575,10 @@ impl MeshDraw {
         self.textures.iter().find(|stage| stage.slot == TextureSlot::Base)
     }
 
-    /// Whether lighting is off because the base texture replaces the colour (`NiDX9LightManager::SetState`).
+    /// Whether lighting and the vertex and material colours are off because the textures replace the colour
+    /// (`NiStandardMaterial`: apply mode `REPLACE`, `NiStandardMaterial.cpp:949`, `:3244`).
     pub fn texture_replaces_color(&self) -> bool {
-        self.apply_mode == TextureApplyMode::Replace && self.base_texture().is_some()
+        self.apply_mode == TextureApplyMode::Replace
     }
 
     /// Local vertex positions (morphed when morphed).
@@ -486,15 +587,15 @@ impl MeshDraw {
     }
 }
 
-/// The lit vertex colour of the fixed-function pipeline, as `NiDX9LightManager::SetState` configures it:
-/// - lighting mode `E` with vertex source `IGNORE` or `AMB_DIFF`: material emissive and alpha (the ambient and
-///   diffuse terms are off);
-/// - `E` with source `EMISSIVE`: lighting off, the vertex colour (white without one);
+/// The per-vertex colour `Kd` of `NiStandardMaterial` (per-vertex lighting, `HandleVertexLightingAndMaterials`):
+/// - lighting mode `E`: the emissive colour, which is the vertex colour with source `EMISSIVE` and the material
+///   emissive otherwise (the ambient and diffuse terms are off);
 /// - `E_A_D`: `emissive + ambient * La + diffuse * Ld`, where the vertex colour replaces the ambient and diffuse
-///   material colours (source `AMB_DIFF`, alpha from the vertex) or the emissive colour (source `EMISSIVE`).
+///   material colours (source `AMB_DIFF`) or the emissive colour (source `EMISSIVE`).
 ///
-/// Without vertex colours the material colours are used (D3D falls back to the material). The result is
-/// clamped to [0, 1].
+/// The alpha is the vertex alpha for (`E`, `EMISSIVE`) and (`E_A_D`, `AMB_DIFF`), the material alpha otherwise.
+/// Without vertex colours the material colours are used. Nothing is clamped: the client's material does not
+/// saturate the shading (`m_bSaturateShading` off), and only the pixel alpha is saturated ([`combine_textures`]).
 pub fn light_vertex(
     material: &MaterialColors,
     vertex_color: Option<[f32; 4]>,
@@ -508,7 +609,7 @@ pub fn light_vertex(
     let (color, alpha) = match (mode.lighting, mode.source) {
         (LightingMode::Emissive, VertexColorSource::Emissive) => match vertex_color {
             Some(vertex) => (rgb(vertex), vertex[3]),
-            None => ([1.0; 3], 1.0),
+            None => (material.emissive, material.alpha),
         },
         (LightingMode::Emissive, _) => (material.emissive, material.alpha),
         (LightingMode::EmissiveAmbientDiffuse, VertexColorSource::AmbientDiffuse) => match vertex_color {
@@ -523,63 +624,64 @@ pub fn light_vertex(
             (lit(material.emissive, material.ambient, material.diffuse), material.alpha)
         }
     };
-    [color[0].clamp(0.0, 1.0), color[1].clamp(0.0, 1.0), color[2].clamp(0.0, 1.0), alpha.clamp(0.0, 1.0)]
+    [color[0], color[1], color[2], alpha]
 }
 
-/// The texture stage of the fixed-function pipeline (`NiTexturingProperty::ApplyMode`): `color` is the lit vertex
-/// colour, `texel` the base texture sample.
-pub fn apply_texture(mode: TextureApplyMode, color: [f32; 4], texel: [f32; 4]) -> [f32; 4] {
-    match mode {
-        TextureApplyMode::Replace => texel,
-        TextureApplyMode::Decal => {
-            let a = texel[3];
-            [
-                color[0] + (texel[0] - color[0]) * a,
-                color[1] + (texel[1] - color[1]) * a,
-                color[2] + (texel[2] - color[2]) * a,
-                color[3],
-            ]
-        }
-        TextureApplyMode::Modulate => std::array::from_fn(|k| color[k] * texel[k]),
-    }
-}
-
-/// `D3DTOP_MODULATE2X`: the scale of a detail map's modulation.
+/// Scale of a detail map's modulation: `NiStandardMaterial::HandleDetailMap` multiplies by `2 * texel`
+/// (`NiStandardMaterial.cpp:4296`).
 const DETAIL_MODULATE_SCALE: f32 = 2.0;
 
-/// The texture stages of the fixed-function pipeline as `NiD3DDefaultShader::ConstructPipeline` chains them,
-/// folded into one pass: `color` is the lit vertex colour and `samples` the texel of each map of the draw.
-/// - base: [`apply_texture`] with the apply mode;
-/// - dark: colour × texel (`D3DTOP_MODULATE`; alpha kept);
-/// - detail: colour × 2 × texel (`D3DTOP_MODULATE2X`); without a base map it is the first stage and its alpha is
-///   modulated the same way;
-/// - decals: colour blended toward the texel by its alpha (`D3DTOP_BLENDTEXTUREALPHA`; alpha kept);
-/// - glow: colour + texel (`D3DTOP_ADD`; alpha kept). The SDK draws it in an extra pass (source factor of the
-///   alpha property, destination `ONE`) unless the draw already blends `ONE`/`ONE`; here it is a stage.
-/// - gloss and bump maps need the environment and specular lighting and are ignored.
+/// The pixel colour of `NiStandardMaterial` (shader model 2, the client's pipeline): `kd` is the interpolated
+/// vertex colour ([`light_vertex`]), `samples` the texel of each map of the draw, `env` the environment map
+/// sample ([`EnvironmentMap`]).
+/// - the texture colour: `tex = dark × base × 2·detail` (missing maps count as 1; `HandleBaseMap`,
+///   `HandleDarkMap`, `HandleDetailMap`), then each decal blends it toward its texel by the texel alpha
+///   (`HandleDecalMap`); no map contributes alpha but the base map;
+/// - apply mode `MODULATE` (and `DECAL`, which the material treats as `MODULATE`,
+///   `NiStandardMaterialDescriptor.cpp:863-872`): `rgb = Kd.rgb × tex`, `a = Kd.a × base.a`;
+///   `REPLACE`: `rgb = tex`, `a = base.a` (`HandleColorAccumulation`, `NiStandardMaterial.cpp:3224`);
+/// - the environment map, times the gloss map's colour when there is one, adds to the colour (`HandleEnvMap`
+///   `:4374`, `HandleGlossMap` `:4308`), then the glow map's colour adds (`HandleGlowMap` `:4344`), both in the
+///   same pass (`HandlePostLightTextureApplication` `:5099`);
+/// - bump maps are ignored.
 ///
-/// Each stage result is clamped to [0, 1], as the D3D stages are.
-pub fn combine_textures(mode: TextureApplyMode, color: [f32; 4], samples: &[(TextureSlot, [f32; 4])]) -> [f32; 4] {
+/// Nothing is saturated in between (the client's material saturates neither shading nor textures); only the
+/// alpha is saturated here. The colour may exceed 1: the render target clamps it ([`crate::raster::Canvas::blend`]).
+pub fn combine_textures(
+    mode: TextureApplyMode,
+    kd: [f32; 4],
+    samples: &[(TextureSlot, [f32; 4])],
+    env: Option<[f32; 4]>,
+) -> [f32; 4] {
     let sample = |slot: TextureSlot| samples.iter().find(|(stage, _)| *stage == slot).map(|(_, texel)| *texel);
-    let saturate = |c: [f32; 4]| c.map(|channel| channel.clamp(0.0, 1.0));
+    let rgb = |c: [f32; 4]| [c[0], c[1], c[2]];
     let base = sample(TextureSlot::Base);
-    let mut out = base.map_or(color, |texel| apply_texture(mode, color, texel));
-    if let Some(texel) = sample(TextureSlot::Dark) {
-        out = saturate([out[0] * texel[0], out[1] * texel[1], out[2] * texel[2], out[3]]);
+    let mut tex = base.map_or([1.0; 3], rgb);
+    if let Some(dark) = sample(TextureSlot::Dark) {
+        tex = std::array::from_fn(|k| tex[k] * dark[k]);
     }
-    if let Some(texel) = sample(TextureSlot::Detail) {
-        let alpha = if base.is_some() { out[3] } else { out[3] * texel[3] * DETAIL_MODULATE_SCALE };
-        out = saturate(std::array::from_fn(|k| {
-            if k == ALPHA_CHANNEL { alpha } else { out[k] * texel[k] * DETAIL_MODULATE_SCALE }
-        }));
+    if let Some(detail) = sample(TextureSlot::Detail) {
+        tex = std::array::from_fn(|k| tex[k] * DETAIL_MODULATE_SCALE * detail[k]);
     }
-    for (_, texel) in samples.iter().filter(|(slot, _)| matches!(slot, TextureSlot::Decal(_))) {
-        out = apply_texture(TextureApplyMode::Decal, out, *texel);
+    for (_, decal) in samples.iter().filter(|(slot, _)| matches!(slot, TextureSlot::Decal(_))) {
+        let a = decal[ALPHA_CHANNEL];
+        tex = std::array::from_fn(|k| tex[k] + (decal[k] - tex[k]) * a);
     }
-    if let Some(texel) = sample(TextureSlot::Glow) {
-        out = saturate([out[0] + texel[0], out[1] + texel[1], out[2] + texel[2], out[3]]);
+    let base_alpha = base.map_or(1.0, |texel| texel[ALPHA_CHANNEL]);
+    let (mut color, alpha) = match mode {
+        TextureApplyMode::Replace => (tex, base_alpha),
+        TextureApplyMode::Modulate | TextureApplyMode::Decal => {
+            (std::array::from_fn(|k| kd[k] * tex[k]), kd[ALPHA_CHANNEL] * base_alpha)
+        }
+    };
+    if let Some(env) = env {
+        let gloss = sample(TextureSlot::Gloss).map_or([1.0; 3], rgb);
+        color = std::array::from_fn(|k| color[k] + env[k] * gloss[k]);
     }
-    out
+    if let Some(glow) = sample(TextureSlot::Glow) {
+        color = std::array::from_fn(|k| color[k] + glow[k]);
+    }
+    [color[0], color[1], color[2], alpha.clamp(0.0, 1.0)]
 }
 
 /// Index of the alpha channel of an RGBA colour.
@@ -607,11 +709,36 @@ pub fn expand_mesh_stage_uvs(draw: &MeshDraw, stage: &TextureStage, out: &mut Ve
     }
 }
 
+/// Appends the environment map coordinates ([`EnvironmentMap::uv`]) for the vertices [`expand_mesh_draw`] emits
+/// (same order and count), seen from `camera_position`; nothing when the draw has no environment map, the map is
+/// a cube map, or the mesh has no normals.
+pub fn expand_mesh_env_uvs(draw: &MeshDraw, camera_position: Vec3, out: &mut Vec<[f32; 2]>) {
+    let Some(env) = &draw.env_map else { return };
+    let normals = &draw.geometry.normals;
+    let positions = draw.local_positions();
+    if normals.len() < positions.len() {
+        return;
+    }
+    let start = out.len();
+    for triangle in drawn_triangles(draw) {
+        for index in triangle {
+            let position = draw.translation + draw.rotation.mul_vec3(Vec3::from_array(positions[index])) * draw.scale;
+            let normal = draw.rotation.mul_vec3(Vec3::from_array(normals[index])).normalize_or_zero();
+            let Some(uv) = env.uv(position, normal, camera_position) else {
+                out.truncate(start);
+                return;
+            };
+            out.push(uv);
+        }
+    }
+}
+
 /// Appends the triangles of a mesh draw as a triangle list (3 vertices per triangle, in index order): world
-/// positions, base-map UVs with the map's transform, and lit colours ([`light_vertex`] with `lighting` plus the
-/// draw's own [`MeshDraw::lights`] at the vertex ([`accumulate_lights`], world normals from the mesh normals); white
-/// when the texture replaces the colour). The texture is not applied; combine a sample with [`apply_texture`], or
-/// the samples of every stage ([`expand_mesh_stage_uvs`]) with [`combine_textures`].
+/// positions, base-map UVs with the map's transform, and vertex colours `Kd` ([`light_vertex`] with `lighting`
+/// plus the draw's own [`MeshDraw::lights`] at the vertex ([`accumulate_lights`], world normals from the mesh
+/// normals); white when the textures replace the colour). The textures are not applied: combine the samples of
+/// every stage ([`expand_mesh_stage_uvs`]) and the environment map ([`expand_mesh_env_uvs`]) with
+/// [`combine_textures`].
 pub fn expand_mesh_draw(draw: &MeshDraw, lighting: &SceneLighting, out: &mut Vec<QuadVertex>) {
     let positions = draw.local_positions();
     let geometry = &draw.geometry;
@@ -798,32 +925,78 @@ mod tests {
     }
 
     #[test]
-    fn texture_stages_combine_like_the_fixed_function_pipeline() {
+    fn texture_stages_combine_like_the_standard_material() {
+        let modulate = |kd, samples: &[(TextureSlot, [f32; 4])]| combine_textures(TextureApplyMode::Modulate, kd, samples, None);
         let color = [0.5, 0.25, 1.0, 0.5];
         let texel = [0.5, 1.0, 0.5, 0.5];
-        // Base map alone: the apply mode.
-        let base = combine_textures(TextureApplyMode::Modulate, color, &[(TextureSlot::Base, texel)]);
-        assert!(close(base, [0.25, 0.25, 0.5, 0.25]));
-        // Detail without a base map: colour and alpha modulated by 2 x texel, clamped.
-        let detail = combine_textures(TextureApplyMode::Modulate, color, &[(TextureSlot::Detail, texel)]);
-        assert!(close(detail, [0.5, 0.5, 1.0, 0.5]));
-        // Detail after a base map keeps the alpha.
-        let both = combine_textures(
+        // Base map alone: Kd x base, alpha Kd.a x base.a.
+        assert!(close(modulate(color, &[(TextureSlot::Base, texel)]), [0.25, 0.25, 0.5, 0.25]));
+        // Detail: 2 x texel on the colour, never on the alpha (even without a base map), nothing clamped.
+        let detail = [0.75, 0.75, 0.75, 0.25];
+        assert!(close(modulate(color, &[(TextureSlot::Detail, detail)]), [0.75, 0.375, 1.5, 0.5]));
+        let both = modulate(color, &[(TextureSlot::Base, [1.0; 4]), (TextureSlot::Detail, [0.25; 4])]);
+        assert!(close(both, [0.25, 0.125, 0.5, 0.5]));
+        // Dark modulates the colour only.
+        assert!(close(modulate(color, &[(TextureSlot::Dark, texel)]), [0.25, 0.25, 0.5, 0.5]));
+        // Glow adds after the Kd multiply, unclamped.
+        assert!(close(modulate(color, &[(TextureSlot::Glow, texel)]), [1.0, 1.25, 1.5, 0.5]));
+        // A decal blends the texture colour toward its texel by its alpha, before the Kd multiply:
+        // Kd x lerp(1, texel, 0.5).
+        assert!(close(modulate(color, &[(TextureSlot::Decal(0), texel)]), [0.375, 0.25, 0.75, 0.5]));
+        let decal_over_base = modulate(color, &[(TextureSlot::Base, [0.0, 0.0, 0.0, 1.0]), (TextureSlot::Decal(1), [1.0; 4])]);
+        assert!(close(decal_over_base, [0.5, 0.25, 1.0, 0.5]));
+        // DECAL is MODULATE for the material.
+        let decal_mode = combine_textures(TextureApplyMode::Decal, color, &[(TextureSlot::Base, texel)], None);
+        assert!(close(decal_mode, [0.25, 0.25, 0.5, 0.25]));
+        // REPLACE: the texture colour and the base alpha; glow still adds.
+        let replace = combine_textures(
+            TextureApplyMode::Replace,
+            color,
+            &[(TextureSlot::Base, texel), (TextureSlot::Glow, [0.25; 4])],
+            None,
+        );
+        assert!(close(replace, [0.75, 1.25, 0.75, 0.5]));
+        // The environment map adds, times the gloss map.
+        let env = combine_textures(
             TextureApplyMode::Modulate,
             color,
-            &[(TextureSlot::Base, [1.0; 4]), (TextureSlot::Detail, [0.25; 4])],
+            &[(TextureSlot::Base, [1.0; 4]), (TextureSlot::Gloss, [0.5; 4])],
+            Some([0.25; 4]),
         );
-        assert!(close(both, [0.25, 0.125, 0.5, 0.5]));
-        // Dark modulates the colour only; glow adds (clamped); decals blend by the texel alpha.
-        let dark = combine_textures(TextureApplyMode::Modulate, color, &[(TextureSlot::Dark, texel)]);
-        assert!(close(dark, [0.25, 0.25, 0.5, 0.5]));
-        let glow = combine_textures(TextureApplyMode::Modulate, color, &[(TextureSlot::Glow, texel)]);
-        assert!(close(glow, [1.0, 1.0, 1.0, 0.5]));
-        let decal = combine_textures(TextureApplyMode::Modulate, color, &[(TextureSlot::Decal(0), texel)]);
-        assert!(close(decal, [0.5, 0.625, 0.75, 0.5]));
-        // Gloss and bump maps are ignored.
-        let gloss = combine_textures(TextureApplyMode::Modulate, color, &[(TextureSlot::Gloss, texel)]);
-        assert!(close(gloss, color));
+        assert!(close(env, [0.625, 0.375, 1.125, 0.5]));
+        // Gloss without an environment map and bump maps change nothing.
+        assert!(close(modulate(color, &[(TextureSlot::Gloss, texel)]), color));
+        // Only the final alpha is saturated.
+        assert!(close(modulate([2.0, 2.0, 2.0, 2.0], &[(TextureSlot::Base, [1.0, 1.0, 1.0, 0.75])]), [2.0, 2.0, 2.0, 1.0]));
+    }
+
+    #[test]
+    fn sphere_environment_maps_reflect_the_view_about_the_normal() {
+        let env = EnvironmentMap {
+            texture: Arc::from("env"),
+            coord_gen: TextureCoordGen::SphereMap,
+            // The sphere map projection of an effect at the identity (`NiTextureEffect::UpdateProjection`):
+            // u = 0.5 + 0.5 r.z, v = 0.5 - 0.5 r.y.
+            projection: Mat3::from_rows([[0.0, 0.0, 0.5], [0.0, -0.5, 0.0], [0.0, 0.0, 0.0]]),
+            translation: Vec3::new(0.5, 0.5, 0.0),
+            addressing: TextureAddressing { wrap_s: true, wrap_t: true },
+            filter: TextureFilter::BILERP,
+        };
+        // The effect's model space looks along +X (the Gamebryo camera axis): the sphere map ignores x.
+        let camera = Vec3::new(-10.0, 0.0, 0.0);
+        // Seen head-on, the reflection points back at the camera (-X): the centre of the map.
+        let uv = env.uv(Vec3::ZERO, -Vec3::X, camera).unwrap();
+        assert!((uv[0] - 0.5).abs() < EPSILON && (uv[1] - 0.5).abs() < EPSILON, "{uv:?}");
+        // A normal tilted 45 degrees toward +Z reflects the view along +Z: u = 1.
+        let tilted = Vec3::new(-1.0, 0.0, 1.0).normalize_or_zero();
+        let uv = env.uv(Vec3::ZERO, tilted, camera).unwrap();
+        assert!((uv[0] - 1.0).abs() < EPSILON && (uv[1] - 0.5).abs() < EPSILON, "{uv:?}");
+        // Tilted toward +Y: v = 0.
+        let tilted = Vec3::new(-1.0, 1.0, 0.0).normalize_or_zero();
+        let uv = env.uv(Vec3::ZERO, tilted, camera).unwrap();
+        assert!((uv[0] - 0.5).abs() < EPSILON && uv[1].abs() < EPSILON, "{uv:?}");
+        // Cube maps are not generated.
+        assert!(EnvironmentMap { coord_gen: TextureCoordGen::SpecularCubeMap, ..env }.uv(Vec3::ZERO, -Vec3::X, camera).is_none());
     }
 
     #[test]
@@ -861,6 +1034,8 @@ mod tests {
             depth_function: CompareFunction::LessEqual,
             cull: CullMode::Back,
             lights: Vec::new(),
+            env_map: None,
+            sort: SortKey::unsorted(Vec3::ZERO),
         };
         let mut vertices = Vec::new();
         expand_mesh_draw(&draw, &SceneLighting::default(), &mut vertices);
@@ -927,6 +1102,39 @@ mod tests {
     }
 
     #[test]
+    fn vertex_colours_feed_kd_by_lighting_mode_and_source() {
+        use crate::nif::desc::{LightingMode, VertexColorSource};
+        let material = MaterialColors {
+            ambient: [0.5; 3],
+            diffuse: [0.25; 3],
+            emissive: [0.125, 0.25, 0.5],
+            alpha: 0.75,
+            ..DEFAULT_MATERIAL_COLORS
+        };
+        let lighting = SceneLighting { ambient: [1.0; 3], diffuse: [2.0; 3] };
+        let vertex = Some([2.0, 1.0, 0.5, 0.25]);
+        let mode = |lighting, source| NifVertexColor { lighting, source };
+        let kd = |vertex, lighting_mode, source| light_vertex(&material, vertex, mode(lighting_mode, source), &lighting);
+        // E with source EMISSIVE: the vertex colour and alpha, unclamped; without vertex colours the material's.
+        assert!(close(kd(vertex, LightingMode::Emissive, VertexColorSource::Emissive), [2.0, 1.0, 0.5, 0.25]));
+        assert!(close(kd(None, LightingMode::Emissive, VertexColorSource::Emissive), [0.125, 0.25, 0.5, 0.75]));
+        // E with another source: the material emissive and alpha.
+        assert!(close(kd(vertex, LightingMode::Emissive, VertexColorSource::AmbientDiffuse), [0.125, 0.25, 0.5, 0.75]));
+        // E_A_D with AMB_DIFF: the vertex colour lights as ambient and diffuse; its alpha.
+        let lit = |c: f32, e: f32| e + c * 1.0 + c * 2.0;
+        let expected = [lit(2.0, 0.125), lit(1.0, 0.25), lit(0.5, 0.5), 0.25];
+        assert!(close(kd(vertex, LightingMode::EmissiveAmbientDiffuse, VertexColorSource::AmbientDiffuse), expected));
+        // E_A_D with EMISSIVE: the vertex colour is the emissive term; the material alpha.
+        let expected = [2.0 + 0.5 + 0.5, 1.0 + 0.5 + 0.5, 0.5 + 0.5 + 0.5, 0.75];
+        assert!(close(kd(vertex, LightingMode::EmissiveAmbientDiffuse, VertexColorSource::Emissive), expected));
+        // E_A_D without lights and emissive: black, so a texture shows only through glow (`0 x tex + glow`).
+        let dark = MaterialColors { emissive: [0.0; 3], ..material };
+        let unlit = light_vertex(&dark, None, mode(LightingMode::EmissiveAmbientDiffuse, VertexColorSource::Ignore), &CLIENT_EFFECT_LIGHTING);
+        let pixel = combine_textures(TextureApplyMode::Modulate, unlit, &[(TextureSlot::Base, [1.0; 4]), (TextureSlot::Glow, [0.25; 4])], None);
+        assert!(close(pixel, [0.25, 0.25, 0.25, 0.75]));
+    }
+
+    #[test]
     fn mesh_draw_lights_follow_the_world_normals() {
         let geometry = MeshGeometry {
             positions: vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
@@ -953,6 +1161,8 @@ mod tests {
             depth_function: CompareFunction::LessEqual,
             cull: CullMode::None,
             lights: Vec::new(),
+            env_map: None,
+            sort: SortKey::unsorted(Vec3::ZERO),
         };
         let colors = |draw: &MeshDraw| {
             let mut vertices = Vec::new();
@@ -966,9 +1176,9 @@ mod tests {
             ambient: [0.0; 3],
             diffuse: [1.0; 3],
         };
-        // A light shining up reaches the downward normals: emissive + diffuse, clamped.
+        // A light shining up reaches the downward normals: emissive + diffuse, unclamped (the target clamps).
         draw.lights = vec![light(Vec3::Z)];
-        assert!(colors(&draw).iter().all(|&color| close(color, [0.6, 0.35, 1.0, 1.0])));
+        assert!(colors(&draw).iter().all(|&color| close(color, [0.6, 0.35, 1.1, 1.0])));
         // One shining down does not.
         draw.lights = vec![light(-Vec3::Z)];
         assert!(colors(&draw).iter().all(|&color| close(color, unlit)));

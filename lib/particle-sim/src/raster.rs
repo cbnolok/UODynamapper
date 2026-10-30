@@ -3,9 +3,10 @@
 //! over the texture's mip levels ([`TextureFilter`], [`crate::mips`]), the depth test and write of each draw
 //! (`NiDX9RenderState::ApplyZBuffer`), alpha test and the blend factors (D3D blend math).
 //!
-//! It is a preview tool, not the client's renderer: draws follow the scene order (sprites the frame order),
-//! meshes are unlit by direction (see [`SceneLighting`]), and Chaos MESH particles (their `.nif` scenes are not
-//! drawn) are square outlines of their size.
+//! It is a preview tool, not the client's renderer: the draw order is the client's alpha accumulator's
+//! ([`Canvas::draw_group`]), pixel colours are `NiStandardMaterial`'s ([`combine_textures`]), triangles cover
+//! pixels by D3D's top-left rule, meshes are unlit by direction (see [`SceneLighting`]), and Chaos MESH particles
+//! whose `.nif` scenes are not loaded are square outlines of their size.
 
 use std::sync::Arc;
 
@@ -15,13 +16,12 @@ use crate::nif::desc::{
 };
 use crate::render::{
     AlphaTest, BlendFactor, BlendState, CameraFrame, DepthState, QUAD_INDICES, QuadVertex, RenderFrame,
-    SceneLighting, TRIANGLE_VERTICES, combine_textures, expand_mesh_draw, expand_mesh_stage_uvs, expand_sprite,
+    SceneLighting, SortKey, TRIANGLE_VERTICES, combine_textures, expand_mesh_draw, expand_mesh_env_uvs,
+    expand_mesh_stage_uvs, expand_sprite,
 };
 
 /// Texel centres are at half-texel offsets (bilinear filtering).
 const TEXEL_CENTER_OFFSET: f32 = 0.5;
-/// Pixel centres are at half-pixel offsets.
-const PIXEL_CENTER_OFFSET: f32 = 0.5;
 /// Texture used when a texture is missing or undecodable: opaque white.
 pub const WHITE_TEXEL: [f32; 4] = [1.0; 4];
 /// Index of the alpha channel.
@@ -33,14 +33,13 @@ const MESH_MARKER_MIN_HALF_PX: f32 = 2.0;
 pub const OVERLAY_BLEND: BlendState = BlendState { src: BlendFactor::SrcAlpha, dst: BlendFactor::InvSrcAlpha };
 /// Blending off: the source replaces the destination (opaque mesh draws).
 pub const OPAQUE_BLEND: BlendState = BlendState { src: BlendFactor::One, dst: BlendFactor::Zero };
-/// Sprite textures of batches without a [`crate::render::BatchState`] (Chaos scripts) repeat: the address mode of
-/// the Chaos base map was not traced; Gamebryo's default is `WRAP_S_WRAP_T` (probable, `uosa_chaos.md`, "Render state of
-/// quads").
+/// Sprite textures of batches without a [`crate::render::BatchState`] (Chaos scripts) repeat: the Chaos base map
+/// is created with flags 0x3100, `WRAP_S_WRAP_T` (`FUN_004169a0`; `uosa_chaos.md`, "Render state of quads").
 const SPRITE_ADDRESSING: TextureAddressing = TextureAddressing { wrap_s: true, wrap_t: true };
-/// Sprite textures of batches without a [`crate::render::BatchState`] (Chaos scripts) filter as the
-/// `NiTexturingProperty::Map` default, bilinear (probable: the filtering of the Chaos quads was not traced,
-/// `uosa_chaos.md`, "Open questions").
-const SPRITE_FILTER: TextureFilter = TextureFilter::BILERP;
+/// Sprite textures of batches without a [`crate::render::BatchState`] (Chaos scripts) filter trilinearly:
+/// `CreateSequenceRenderer` sets the base map filter to `FILTER_TRILERP` (`FUN_0041a590(map, 2)`, UOSA.exe
+/// 0x008b3c52..0x008b3c5d), which samples a single-level texture bilinearly.
+const SPRITE_FILTER: TextureFilter = TextureFilter::TRILERP;
 /// Depth comparison of batches without a [`crate::render::BatchState`] (Chaos scripts): `NiZBufferProperty` 0xd,
 /// LESSEQUAL (`uosa_chaos.md`, "Render state of quads").
 const SPRITE_DEPTH_FUNCTION: CompareFunction = CompareFunction::LessEqual;
@@ -351,29 +350,146 @@ fn each_drawn_point(frame: &RenderFrame, mut include: impl FnMut(Vec3, f32)) {
     }
 }
 
+/// How the canvas keeps destination alpha.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DestinationAlpha {
+    /// The client's back buffer, `X8R8G8B8` (`NiDX9Renderer::InitializePresentParams` 0x007565b0): no alpha is
+    /// stored, `DESTALPHA` reads 1 and the stored alpha of the canvas is left as cleared.
+    Opaque,
+    /// An `A8R8G8B8` render target (the hued effects' offscreen target, `NiRenderedTexture::Create` 0x0067f480):
+    /// alpha is blended with the same factors as the colour.
+    Accumulate,
+}
+
+/// Sub-pixel bits of the rasterizer's fixed-point vertex positions (8, as D3D10 requires; D3D9 hardware snaps to
+/// at least 4). Edge functions are then exact integers, so the fill rule is exact.
+const SUBPIXEL_BITS: u32 = 8;
+/// Fixed-point steps per pixel.
+const SUBPIXEL_STEPS: i64 = 1 << SUBPIXEL_BITS;
+/// Largest screen coordinate a drawn triangle may have, pixels: the fixed-point edge products then fit an `i64`.
+/// Triangles beyond it are not drawn (there is no clipping).
+const MAX_SCREEN_COORDINATE_PX: f32 = (1 << 20) as f32;
+
+/// A triangle on the canvas in fixed point.
+struct ScreenTriangle {
+    corners: [[i64; 2]; TRIANGLE_VERTICES],
+    /// Twice the signed area, fixed point squared: `(b - a) x (c - a)`, negative when the corners run
+    /// counter-clockwise on the view plane (screen y points down).
+    area: i64,
+}
+
+impl ScreenTriangle {
+    /// `None` for a degenerate triangle or one beyond [`MAX_SCREEN_COORDINATE_PX`].
+    fn new(screen: [(f32, f32); TRIANGLE_VERTICES]) -> Option<Self> {
+        let snap = |value: f32| {
+            (value.is_finite() && value.abs() <= MAX_SCREEN_COORDINATE_PX)
+                .then(|| (value * SUBPIXEL_STEPS as f32).round() as i64)
+        };
+        let mut corners = [[0; 2]; TRIANGLE_VERTICES];
+        for (corner, (x, y)) in corners.iter_mut().zip(screen) {
+            *corner = [snap(x)?, snap(y)?];
+        }
+        let [a, b, c] = corners;
+        let area = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+        (area != 0).then_some(Self { corners, area })
+    }
+
+    /// Counter-clockwise on the view plane: a front face (`NiStencilProperty::DRAW_CCW`).
+    fn front(&self) -> bool {
+        self.area < 0
+    }
+
+    /// Calls `pixel(x, y, weights)` for every canvas pixel whose centre the triangle covers, with the barycentric
+    /// weights of the corners there. A centre on an edge is covered only when the edge is a top edge (horizontal,
+    /// the triangle below it) or a left edge (the triangle to its right): D3D's top-left rule, so triangles sharing
+    /// an edge cover each pixel along it exactly once.
+    fn cover(&self, width: usize, height: usize, mut pixel: impl FnMut(usize, usize, [f32; TRIANGLE_VERTICES])) {
+        if width == 0 || height == 0 {
+            return;
+        }
+        let sign = self.area.signum();
+        let corners = self.corners;
+        // Edge k runs between the two corners other than k; its function is the weight of corner k times the area.
+        let edges: [([i64; 2], [i64; 2]); TRIANGLE_VERTICES] =
+            [(corners[1], corners[2]), (corners[2], corners[0]), (corners[0], corners[1])];
+        let top_left = edges.map(|(from, to)| {
+            let (dx, dy) = ((to[0] - from[0]) * sign, (to[1] - from[1]) * sign);
+            (dy == 0 && dx > 0) || dy < 0
+        });
+        let pixel_range = |axis: usize, size: usize| {
+            let low = corners.iter().map(|corner| corner[axis]).min().unwrap_or(0).div_euclid(SUBPIXEL_STEPS);
+            let high = corners.iter().map(|corner| corner[axis]).max().unwrap_or(0).div_euclid(SUBPIXEL_STEPS);
+            let last = size as i64 - 1;
+            (low.clamp(0, last) as usize, high.clamp(0, last) as usize)
+        };
+        let ((min_x, max_x), (min_y, max_y)) = (pixel_range(0, width), pixel_range(1, height));
+        let area = (self.area * sign) as f32;
+        let center = |index: usize| index as i64 * SUBPIXEL_STEPS + SUBPIXEL_STEPS / 2;
+        for py in min_y..=max_y {
+            let y = center(py);
+            'pixels: for px in min_x..=max_x {
+                let x = center(px);
+                let mut weights = [0.0; TRIANGLE_VERTICES];
+                for (k, (from, to)) in edges.iter().enumerate() {
+                    let value = ((to[0] - from[0]) * (y - from[1]) - (to[1] - from[1]) * (x - from[0])) * sign;
+                    if value < 0 || (value == 0 && !top_left[k]) {
+                        continue 'pixels;
+                    }
+                    weights[k] = value as f32 / area;
+                }
+                pixel(px, py, weights);
+            }
+        }
+    }
+}
+
 /// A float RGBA canvas with D3D-style blending and a depth buffer.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Canvas {
     pub width: usize,
     pub height: usize,
     pub pixels: Vec<[f32; 4]>,
+    /// How [`Self::blend`] reads and writes alpha.
+    pub destination_alpha: DestinationAlpha,
     /// Per pixel, the depth ([`OrthoView::depth`]) of the nearest depth write; [`DEPTH_CLEAR`] where none.
     depth: Vec<f32>,
 }
 
 impl Canvas {
+    /// A world canvas: the client's back buffer ([`DestinationAlpha::Opaque`]).
     pub fn new(width: usize, height: usize, background: [f32; 4]) -> Self {
-        Self { width, height, pixels: vec![background; width * height], depth: vec![DEPTH_CLEAR; width * height] }
+        Self::with_destination_alpha(width, height, background, DestinationAlpha::Opaque)
     }
 
-    /// `out = src * src_factor + dst * dst_factor`, clamped to [0, 1].
+    /// A render target that keeps alpha ([`DestinationAlpha::Accumulate`]), cleared to `clear`.
+    pub fn render_target(width: usize, height: usize, clear: [f32; 4]) -> Self {
+        Self::with_destination_alpha(width, height, clear, DestinationAlpha::Accumulate)
+    }
+
+    pub fn with_destination_alpha(width: usize, height: usize, clear: [f32; 4], alpha: DestinationAlpha) -> Self {
+        Self {
+            width,
+            height,
+            pixels: vec![clear; width * height],
+            destination_alpha: alpha,
+            depth: vec![DEPTH_CLEAR; width * height],
+        }
+    }
+
+    /// `out = src * src_factor + dst * dst_factor`, the source first clamped to [0, 1] (the 8-bit target clamps
+    /// the pixel shader output) and the result clamped to [0, 1]. With [`DestinationAlpha::Opaque`] the
+    /// destination alpha reads 1 and the stored alpha is kept.
     pub fn blend(&mut self, x: usize, y: usize, source: [f32; 4], blend: BlendState) {
-        let destination = &mut self.pixels[y * self.width + x];
-        let source_factor = blend_factor(blend.src, source, *destination);
-        let destination_factor = blend_factor(blend.dst, source, *destination);
-        *destination = std::array::from_fn(|k| {
+        let source = source.map(|channel| channel.clamp(0.0, 1.0));
+        let opaque = self.destination_alpha == DestinationAlpha::Opaque;
+        let stored = &mut self.pixels[y * self.width + x];
+        let destination = if opaque { [stored[0], stored[1], stored[2], 1.0] } else { *stored };
+        let source_factor = blend_factor(blend.src, source, destination);
+        let destination_factor = blend_factor(blend.dst, source, destination);
+        let out: [f32; 4] = std::array::from_fn(|k| {
             (source[k] * source_factor[k] + destination[k] * destination_factor[k]).clamp(0.0, 1.0)
         });
+        *stored = if opaque { [out[0], out[1], out[2], stored[ALPHA]] } else { out };
     }
 
     /// 8-bit RGBA rows.
@@ -415,8 +531,8 @@ impl Canvas {
         }
     }
 
-    /// Rasterizes one textured triangle (pixel centres, both windings), modulating the texture by the vertex
-    /// colour.
+    /// Rasterizes one textured triangle (pixel centres, top-left rule, both windings), modulating the texture by
+    /// the colour of its first corner.
     pub fn fill_triangle(
         &mut self,
         view: &OrthoView,
@@ -424,37 +540,14 @@ impl Canvas {
         texture: Option<&RasterTexture>,
         blend: BlendState,
     ) {
-        if self.width == 0 || self.height == 0 {
-            return;
-        }
-        let screen = corners.map(|vertex| view.to_screen(vertex.position));
-        let [(ax, ay), (bx, by), (cx, cy)] = screen;
-        let area = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
-        if area.abs() < f32::EPSILON || !area.is_finite() {
-            return;
-        }
-        let (limit_x, limit_y) = (self.width as f32 - 1.0, self.height as f32 - 1.0);
-        let min_x = ax.min(bx).min(cx).floor().clamp(0.0, limit_x) as usize;
-        let max_x = ax.max(bx).max(cx).ceil().clamp(0.0, limit_x) as usize;
-        let min_y = ay.min(by).min(cy).floor().clamp(0.0, limit_y) as usize;
-        let max_y = ay.max(by).max(cy).ceil().clamp(0.0, limit_y) as usize;
+        let Some(triangle) = ScreenTriangle::new(corners.map(|vertex| view.to_screen(vertex.position))) else { return };
         let color = corners[0].color;
-        for py in min_y..=max_y {
-            for px in min_x..=max_x {
-                let (x, y) = (px as f32 + PIXEL_CENTER_OFFSET, py as f32 + PIXEL_CENTER_OFFSET);
-                let wa = ((bx - x) * (cy - y) - (by - y) * (cx - x)) / area;
-                let wb = ((cx - x) * (ay - y) - (cy - y) * (ax - x)) / area;
-                let wc = 1.0 - wa - wb;
-                if wa < 0.0 || wb < 0.0 || wc < 0.0 {
-                    continue;
-                }
-                let u = wa * corners[0].uv[0] + wb * corners[1].uv[0] + wc * corners[2].uv[0];
-                let v = wa * corners[0].uv[1] + wb * corners[1].uv[1] + wc * corners[2].uv[1];
-                let texel = texture.map_or(WHITE_TEXEL, |texture| texture.sample(u, v));
-                let source = std::array::from_fn(|k| texel[k] * color[k]);
-                self.blend(px, py, source, blend);
-            }
-        }
+        triangle.cover(self.width, self.height, |px, py, weights| {
+            let lerp = |axis: usize| (0..TRIANGLE_VERTICES).map(|k| weights[k] * corners[k].uv[axis]).sum::<f32>();
+            let texel = texture.map_or(WHITE_TEXEL, |texture| texture.sample(lerp(0), lerp(1)));
+            let source = std::array::from_fn(|k| texel[k] * color[k]);
+            self.blend(px, py, source, blend);
+        });
     }
 
     /// Draws every sprite batch of `frame` (textures by batch texture name; missing ones draw white), its mesh
@@ -471,13 +564,7 @@ impl Canvas {
         self.draw_scene(view, frame, texture, &options);
     }
 
-    /// Draws a frame in scene order: the mesh draws and sprite batches sorted by their scene order (stable, so
-    /// batches without a [`crate::render::BatchState`] keep the frame order), each triangle with every texture
-    /// stage sampled and combined ([`combine_textures`]), alpha test, face culling, depth test and write against
-    /// the canvas depth buffer, and blending; then the Chaos mesh particle outlines. Textures are looked up by
-    /// name; a missing one samples white.
-    ///
-    /// The draws of one effect share a scene order: draw several effects with one call each.
+    /// Draws one frame as a draw group ([`Self::draw_group`]).
     pub fn draw_scene<'t>(
         &mut self,
         view: &OrthoView,
@@ -485,20 +572,62 @@ impl Canvas {
         texture: &dyn Fn(&str) -> Option<&'t RasterTexture>,
         options: &SceneDrawOptions,
     ) {
+        self.draw_group(view, &[GroupItem::Frame { frame, textures: texture }], options);
+    }
+
+    /// Draws the drawables of several effects as the client's effect render group (group 7) does with its
+    /// alpha accumulator (`NiAlphaAccumulator`, `uosa_effects.md`, "Draw order"): first the unsorted drawables
+    /// ([`SortKey::sorted`] false) in scene order (item by item, each frame's mesh draws and batches by their
+    /// scene order), then the sorted ones far to near by the depth of their bound centre along the camera
+    /// direction. The client sorts with an unstable quicksort (`NiBackToFrontAccumulator.cpp:111`); here equal
+    /// depths keep the scene order.
+    ///
+    /// Each triangle has every texture stage and the environment map sampled and combined ([`combine_textures`]),
+    /// then alpha test, face culling, depth test and write against the canvas depth buffer, and blending. Textures
+    /// are looked up by name; a missing one samples white (a missing environment map adds nothing). The Chaos mesh
+    /// particle outlines of the options are drawn last.
+    pub fn draw_group<'t>(&mut self, view: &OrthoView, items: &[GroupItem<'_, 't>], options: &SceneDrawOptions) {
         if self.width == 0 || self.height == 0 {
             return;
         }
-        for (_, triangles) in scene_triangles(frame, &view.camera, options) {
-            let samplers: Vec<Option<&RasterTexture>> = triangles.stages.iter().map(|stage| texture(&stage.texture)).collect();
-            for first in (0..triangles.vertices.len()).step_by(TRIANGLE_VERTICES) {
-                self.fill_scene_triangle(view, first, &triangles, &samplers, options);
+        enum Work<'w, 't> {
+            Triangles { triangles: Triangles, samplers: Vec<Option<&'t RasterTexture>>, env: Option<&'t RasterTexture> },
+            Custom(&'w dyn Fn(&mut Canvas)),
+        }
+        let mut entries: Vec<(SortKey, Work<'_, 't>)> = Vec::new();
+        for item in items {
+            match item {
+                GroupItem::Frame { frame, textures } => {
+                    for (sort, triangles) in scene_triangles(frame, &view.camera, options) {
+                        let samplers = triangles.stages.iter().map(|stage| textures(&stage.texture)).collect();
+                        let env = triangles.env.as_ref().and_then(|stage| textures(&stage.texture));
+                        entries.push((sort, Work::Triangles { triangles, samplers, env }));
+                    }
+                }
+                GroupItem::Custom { sort, draw } => entries.push((*sort, Work::Custom(*draw))),
+            }
+        }
+        let (mut sorted, unsorted): (Vec<_>, Vec<_>) = entries.into_iter().partition(|(sort, _)| sort.sorted);
+        let direction = view.camera.direction;
+        sorted.sort_by(|(a, _), (b, _)| b.center.dot(direction).total_cmp(&a.center.dot(direction)));
+        for (_, work) in unsorted.into_iter().chain(sorted) {
+            match work {
+                Work::Triangles { triangles, samplers, env } => {
+                    for first in (0..triangles.vertices.len()).step_by(TRIANGLE_VERTICES) {
+                        self.fill_scene_triangle(view, first, &triangles, &samplers, env, options);
+                    }
+                }
+                Work::Custom(draw) => draw(self),
             }
         }
         if let (true, Some(color)) = (options.sprites, options.mesh_markers) {
-            for mesh in &frame.meshes {
-                let (x, y) = view.to_screen(mesh.translation);
-                let half = (mesh.scale.abs() * view.pixels_per_unit * 0.5).max(MESH_MARKER_MIN_HALF_PX);
-                self.outline_rect((x - half, y - half), (x + half, y + half), color, OVERLAY_BLEND);
+            for item in items {
+                let GroupItem::Frame { frame, .. } = item else { continue };
+                for mesh in &frame.meshes {
+                    let (x, y) = view.to_screen(mesh.translation);
+                    let half = (mesh.scale.abs() * view.pixels_per_unit * 0.5).max(MESH_MARKER_MIN_HALF_PX);
+                    self.outline_rect((x - half, y - half), (x + half, y + half), color, OVERLAY_BLEND);
+                }
             }
         }
     }
@@ -513,97 +642,86 @@ impl Canvas {
         first: usize,
         draw: &Triangles,
         samplers: &[Option<&RasterTexture>],
+        env_sampler: Option<&RasterTexture>,
         options: &SceneDrawOptions,
     ) {
         let corners = &draw.vertices[first..first + TRIANGLE_VERTICES];
-        let [(ax, ay), (bx, by), (cx, cy)] = [0, 1, 2].map(|k| view.to_screen(corners[k].position));
-        // Screen y points down: a counter-clockwise view-plane triangle has a negative screen area.
-        let area = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
-        if area.abs() < f32::EPSILON || !area.is_finite() {
-            return;
-        }
-        let front = area < 0.0;
+        let screen = [0, 1, 2].map(|k| view.to_screen(corners[k].position));
+        let Some(triangle) = ScreenTriangle::new(screen) else { return };
         match draw.cull {
-            CullMode::Back if !front => return,
-            CullMode::Front if front => return,
+            CullMode::Back if !triangle.front() => return,
+            CullMode::Front if triangle.front() => return,
             _ => {}
         }
-        let (limit_x, limit_y) = (self.width as f32 - 1.0, self.height as f32 - 1.0);
-        let min_x = ax.min(bx).min(cx).floor().clamp(0.0, limit_x) as usize;
-        let max_x = ax.max(bx).max(cx).ceil().clamp(0.0, limit_x) as usize;
-        let min_y = ay.min(by).min(cy).floor().clamp(0.0, limit_y) as usize;
-        let max_y = ay.max(by).max(cy).ceil().clamp(0.0, limit_y) as usize;
         // The rasterizer is orthographic and affine: texture coordinates change at a constant rate per triangle,
         // so each stage has one level of detail.
+        let [(ax, ay), (bx, by), (cx, cy)] = screen;
+        let area = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
         let weight_dx = [(by - cy) / area, (cy - ay) / area, (ay - by) / area];
         let weight_dy = [(cx - bx) / area, (ax - cx) / area, (bx - ax) / area];
-        let lods: Vec<f32> = draw
-            .stages
-            .iter()
-            .zip(samplers)
-            .map(|(stage, sampler)| {
-                let Some(texture) = sampler.filter(|_| options.client_filtering) else { return 0.0 };
-                let uvs = &stage.uvs[first..first + TRIANGLE_VERTICES];
-                let rate = |axis: usize, weights: &[f32; 3]| {
-                    (0..TRIANGLE_VERTICES).map(|k| uvs[k][axis] * weights[k]).sum::<f32>()
-                };
-                let du = [rate(0, &weight_dx), rate(0, &weight_dy)];
-                let dv = [rate(1, &weight_dx), rate(1, &weight_dy)];
-                texture_lod(texture.width, texture.height, du, dv)
-            })
-            .collect();
+        let lod = |stage: &Stage, sampler: Option<&RasterTexture>| {
+            let Some(texture) = sampler.filter(|_| options.client_filtering) else { return 0.0 };
+            let uvs = &stage.uvs[first..first + TRIANGLE_VERTICES];
+            let rate = |axis: usize, weights: &[f32; 3]| (0..TRIANGLE_VERTICES).map(|k| uvs[k][axis] * weights[k]).sum::<f32>();
+            let du = [rate(0, &weight_dx), rate(0, &weight_dy)];
+            let dv = [rate(1, &weight_dx), rate(1, &weight_dy)];
+            texture_lod(texture.width, texture.height, du, dv)
+        };
+        let lods: Vec<f32> = draw.stages.iter().zip(samplers).map(|(stage, &sampler)| lod(stage, sampler)).collect();
+        let env = draw.env.as_ref().zip(env_sampler).map(|(stage, sampler)| (stage, sampler, lod(stage, Some(sampler))));
         let depth_test = if options.depth_buffer { draw.depth } else { None };
         let mut samples = Vec::with_capacity(draw.stages.len());
-        for py in min_y..=max_y {
-            for px in min_x..=max_x {
-                let (x, y) = (px as f32 + PIXEL_CENTER_OFFSET, py as f32 + PIXEL_CENTER_OFFSET);
-                let wa = ((bx - x) * (cy - y) - (by - y) * (cx - x)) / area;
-                let wb = ((cx - x) * (ay - y) - (cy - y) * (ax - x)) / area;
-                let wc = 1.0 - wa - wb;
-                if wa < 0.0 || wb < 0.0 || wc < 0.0 {
-                    continue;
+        triangle.cover(self.width, self.height, |px, py, weights| {
+            let lerp = |value: &dyn Fn(usize) -> f32| (0..TRIANGLE_VERTICES).map(|k| weights[k] * value(k)).sum::<f32>();
+            let depth = lerp(&|k| view.depth(corners[k].position));
+            if let Some([near, far]) = options.depth_clip {
+                if !(near..=far).contains(&depth) {
+                    return;
                 }
-                let weights = [wa, wb, wc];
-                let lerp = |value: &dyn Fn(usize) -> f32| (0..TRIANGLE_VERTICES).map(|k| weights[k] * value(k)).sum::<f32>();
-                let depth = lerp(&|k| view.depth(corners[k].position));
-                if let Some([near, far]) = options.depth_clip {
-                    if !(near..=far).contains(&depth) {
-                        continue;
-                    }
-                }
-                let color: [f32; 4] = std::array::from_fn(|channel| lerp(&|k| corners[k].color[channel]));
-                samples.clear();
-                for ((stage, sampler), &lod) in draw.stages.iter().zip(samplers).zip(&lods) {
-                    let uvs = &stage.uvs[first..first + TRIANGLE_VERTICES];
-                    let (u, v) = (lerp(&|k| uvs[k][0]), lerp(&|k| uvs[k][1]));
-                    let texel = sampler.map_or(WHITE_TEXEL, |texture| {
-                        if options.client_filtering {
-                            texture.sample_filtered(u, v, lod, stage.addressing, stage.filter)
-                        } else {
-                            texture.sample_addressed(u, v, stage.addressing)
-                        }
-                    });
-                    samples.push((stage.slot, texel));
-                }
-                let source = combine_textures(draw.apply_mode, color, &samples);
-                if let Some(test) = draw.alpha_test {
-                    if !test.function.passes(source[ALPHA], test.reference) {
-                        continue;
-                    }
-                }
-                let pixel = py * self.width + px;
-                if let Some(test) = depth_test {
-                    if !test.function.passes(depth, self.depth[pixel]) {
-                        continue;
-                    }
-                    if test.write {
-                        self.depth[pixel] = depth;
-                    }
-                }
-                self.blend(px, py, source, draw.blend);
             }
-        }
+            let sample = |stage: &Stage, sampler: Option<&RasterTexture>, lod: f32| {
+                let uvs = &stage.uvs[first..first + TRIANGLE_VERTICES];
+                let (u, v) = (lerp(&|k| uvs[k][0]), lerp(&|k| uvs[k][1]));
+                sampler.map_or(WHITE_TEXEL, |texture| {
+                    if options.client_filtering {
+                        texture.sample_filtered(u, v, lod, stage.addressing, stage.filter)
+                    } else {
+                        texture.sample_addressed(u, v, stage.addressing)
+                    }
+                })
+            };
+            let color: [f32; 4] = std::array::from_fn(|channel| lerp(&|k| corners[k].color[channel]));
+            samples.clear();
+            for ((stage, &sampler), &lod) in draw.stages.iter().zip(samplers).zip(&lods) {
+                samples.push((stage.slot, sample(stage, sampler, lod)));
+            }
+            let env = env.map(|(stage, sampler, lod)| sample(stage, Some(sampler), lod));
+            let source = combine_textures(draw.apply_mode, color, &samples, env);
+            if let Some(test) = draw.alpha_test {
+                if !test.function.passes(source[ALPHA], test.reference) {
+                    return;
+                }
+            }
+            let pixel = py * self.width + px;
+            if let Some(test) = depth_test {
+                if !test.function.passes(depth, self.depth[pixel]) {
+                    return;
+                }
+                if test.write {
+                    self.depth[pixel] = depth;
+                }
+            }
+            self.blend(px, py, source, draw.blend);
+        });
     }
+}
+
+/// One member of a draw group ([`Canvas::draw_group`]).
+pub enum GroupItem<'a, 't> {
+    /// The batches and mesh draws of an effect's frame, textures looked up by name.
+    Frame { frame: &'a RenderFrame, textures: &'a dyn Fn(&str) -> Option<&'t RasterTexture> },
+    /// A drawable drawn by its own code at its place in the order (the hue quad of a hued effect).
+    Custom { sort: SortKey, draw: &'a dyn Fn(&mut Canvas) },
 }
 
 /// What [`Canvas::draw_scene`] draws, and the lights of the meshes.
@@ -621,7 +739,7 @@ pub struct SceneDrawOptions {
     /// `None` draws every depth.
     pub depth_clip: Option<[f32; 2]>,
     /// Test and write depth as each draw's `NiZBufferProperty` says (the client's); off, draws only follow the
-    /// scene order.
+    /// draw order.
     pub depth_buffer: bool,
     /// Sample with each map's filter mode over the texture's mip levels (the client's); off, level 0 bilinear.
     pub client_filtering: bool,
@@ -671,6 +789,8 @@ struct Stage {
 struct Triangles {
     vertices: Vec<QuadVertex>,
     stages: Vec<Stage>,
+    /// The environment map ([`crate::render::EnvironmentMap`]; its slot is unused).
+    env: Option<Stage>,
     apply_mode: TextureApplyMode,
     blend: BlendState,
     alpha_test: Option<AlphaTest>,
@@ -678,8 +798,9 @@ struct Triangles {
     depth: Option<DepthTest>,
 }
 
-/// The draws of a frame as triangle lists with their scene order, sorted (stable) by it.
-fn scene_triangles(frame: &RenderFrame, camera: &CameraFrame, options: &SceneDrawOptions) -> Vec<(u32, Triangles)> {
+/// The draws of a frame as triangle lists with their sort keys, in scene order (sorted, stable, by the scene
+/// order: batches without a [`crate::render::BatchState`] keep the frame order).
+fn scene_triangles(frame: &RenderFrame, camera: &CameraFrame, options: &SceneDrawOptions) -> Vec<(SortKey, Triangles)> {
     let mut out = Vec::new();
     if options.meshes {
         for draw in &frame.mesh_draws {
@@ -700,16 +821,28 @@ fn scene_triangles(frame: &RenderFrame, camera: &CameraFrame, options: &SceneDra
                     }
                 })
                 .collect();
+            let env = draw.env_map.as_ref().and_then(|env| {
+                let mut uvs = Vec::with_capacity(vertices.len());
+                expand_mesh_env_uvs(draw, camera.position, &mut uvs);
+                (uvs.len() == vertices.len()).then(|| Stage {
+                    slot: TextureSlot::Base,
+                    texture: env.texture.clone(),
+                    uvs,
+                    addressing: env.addressing,
+                    filter: env.filter,
+                })
+            });
             let triangles = Triangles {
                 vertices,
                 stages,
+                env,
                 apply_mode: draw.apply_mode,
                 blend: draw.blend.unwrap_or(OPAQUE_BLEND),
                 alpha_test: draw.alpha_test,
                 cull: draw.cull,
                 depth: DepthTest::of(draw.depth, draw.depth_function),
             };
-            out.push((draw.order, triangles));
+            out.push((draw.order, draw.sort, triangles));
         }
     }
     if options.sprites {
@@ -733,6 +866,7 @@ fn scene_triangles(frame: &RenderFrame, camera: &CameraFrame, options: &SceneDra
                         })
                         .collect(),
                     vertices,
+                    env: None,
                     apply_mode: state.apply_mode,
                     blend: batch.blend,
                     alpha_test: state.alpha_test,
@@ -751,6 +885,7 @@ fn scene_triangles(frame: &RenderFrame, camera: &CameraFrame, options: &SceneDra
                         .into_iter()
                         .collect(),
                     vertices,
+                    env: None,
                     apply_mode: TextureApplyMode::Modulate,
                     blend: batch.blend,
                     alpha_test: None,
@@ -758,11 +893,11 @@ fn scene_triangles(frame: &RenderFrame, camera: &CameraFrame, options: &SceneDra
                     depth: DepthTest::of(batch.depth, SPRITE_DEPTH_FUNCTION),
                 },
             };
-            out.push((frame.batch_state(index).map_or(0, |state| state.order), triangles));
+            out.push((frame.batch_state(index).map_or(0, |state| state.order), batch.sort, triangles));
         }
     }
-    out.sort_by_key(|(order, _)| *order);
-    out
+    out.sort_by_key(|(order, _, _)| *order);
+    out.into_iter().map(|(_, sort, triangles)| (sort, triangles)).collect()
 }
 
 /// The factor of a blend function for one source and destination colour.
@@ -816,6 +951,7 @@ mod tests {
             two_sided: false,
             kind: SpriteKind::Billboard,
             sprites: 0..1,
+            sort: SortKey::sorted(Vec3::ZERO),
         });
         frame
     }
@@ -872,6 +1008,8 @@ mod tests {
             depth_function: CompareFunction::LessEqual,
             cull,
             lights: Vec::new(),
+            env_map: None,
+            sort: SortKey::unsorted(Vec3::ZERO),
         });
         frame
     }
@@ -1014,5 +1152,124 @@ mod tests {
         assert_ne!(draw(Some([-1.0, 1.0])), BLACK, "the sprite is at depth 0");
         assert_eq!(draw(Some([0.5, 1.0])), BLACK, "in front of the near plane");
         assert_eq!(draw(Some([-1.0, -0.5])), BLACK, "behind the far plane");
+    }
+
+    /// Additive white triangles with alpha `ALPHA_STEP` at the screen corners `corners` (pixels).
+    fn screen_triangle_frame(view: &OrthoView, triangles: &[[(f32, f32); 3]], alpha: f32) -> RenderFrame {
+        use crate::math::Mat3;
+        use crate::nif::desc::{CompareFunction, LightingMode, NifVertexColor, VertexColorSource};
+        use crate::render::{DEFAULT_MATERIAL_COLORS, DepthState, MeshDraw, MeshGeometry};
+        let positions: Vec<[f32; 3]> =
+            triangles.iter().flatten().map(|&corner| view.to_world(corner).to_array()).collect();
+        let indices = (0..triangles.len() as u16).map(|t| [3 * t, 3 * t + 1, 3 * t + 2]).collect();
+        let geometry = MeshGeometry {
+            colors: vec![[1.0, 1.0, 1.0, alpha]; positions.len()],
+            positions,
+            triangles: indices,
+            ..MeshGeometry::default()
+        };
+        let mut frame = RenderFrame::default();
+        frame.mesh_draws.push(MeshDraw {
+            order: 0,
+            name: Arc::from("triangles"),
+            geometry: Arc::new(geometry),
+            positions: None,
+            rotation: Mat3::IDENTITY,
+            translation: Vec3::ZERO,
+            scale: 1.0,
+            material: DEFAULT_MATERIAL_COLORS,
+            vertex_color: NifVertexColor { source: VertexColorSource::Emissive, lighting: LightingMode::Emissive },
+            apply_mode: TextureApplyMode::Modulate,
+            textures: Vec::new(),
+            blend: Some(BlendState { src: BlendFactor::SrcAlpha, dst: BlendFactor::One }),
+            alpha_test: None,
+            depth: DepthState { test: false, write: false },
+            depth_function: CompareFunction::Always,
+            cull: CullMode::None,
+            lights: Vec::new(),
+            env_map: None,
+            sort: SortKey::sorted(Vec3::ZERO),
+        });
+        frame
+    }
+
+    #[test]
+    fn triangles_sharing_an_edge_cover_each_pixel_once() {
+        const ALPHA: f32 = 0.25;
+        let view = OrthoView::new(0.0, Vec3::ZERO, 100.0, 1.0, SIDE, SIDE);
+        let side = SIDE as f32;
+        // A quad split along its diagonal, a fan around the centre with edges through pixel centres, and two
+        // triangles meeting on a horizontal and a vertical edge at pixel centres.
+        let (center, mid) = (side * 0.5, 4.5);
+        let cases: [Vec<[(f32, f32); 3]>; 3] = [
+            vec![[(0.0, 0.0), (side, 0.0), (side, side)], [(0.0, 0.0), (side, side), (0.0, side)]],
+            vec![
+                [(center, center), (0.0, 0.0), (side, 0.0)],
+                [(center, center), (side, 0.0), (side, side)],
+                [(center, center), (side, side), (0.0, side)],
+                [(center, center), (0.0, side), (0.0, 0.0)],
+            ],
+            vec![
+                [(0.0, 0.0), (side, 0.0), (side, mid)],
+                [(0.0, 0.0), (side, mid), (0.0, mid)],
+                [(0.0, mid), (mid, mid), (mid, side)],
+                [(0.0, mid), (mid, side), (0.0, side)],
+                [(mid, mid), (side, mid), (side, side)],
+                [(mid, mid), (side, side), (mid, side)],
+            ],
+        ];
+        for (case, triangles) in cases.iter().enumerate() {
+            let mut canvas = Canvas::new(SIDE, SIDE, BLACK);
+            canvas.draw_scene(&view, &screen_triangle_frame(&view, triangles, ALPHA), &|_| None, &SceneDrawOptions::default());
+            for (index, pixel) in canvas.pixels.iter().enumerate() {
+                assert!((pixel[0] - ALPHA).abs() < 1e-6, "case {case}: pixel {index} drawn {} times", pixel[0] / ALPHA);
+            }
+        }
+    }
+
+    #[test]
+    fn destination_alpha_reads_one_on_the_back_buffer_and_accumulates_on_targets() {
+        let blend = BlendState { src: BlendFactor::DestAlpha, dst: BlendFactor::InvSrcAlpha };
+        let source = [0.5, 0.5, 0.5, 0.25];
+        // Back buffer (X8R8G8B8): DESTALPHA reads 1 whatever was cleared, and the stored alpha is not written.
+        let mut world = Canvas::new(1, 1, [0.0, 0.0, 0.0, 0.0]);
+        world.blend(0, 0, source, blend);
+        assert_eq!(world.pixels[0], [0.5, 0.5, 0.5, 0.0]);
+        // Render target (A8R8G8B8) cleared to alpha 0: DESTALPHA reads 0, then the blended alpha.
+        let mut target = Canvas::render_target(1, 1, [0.0; 4]);
+        target.blend(0, 0, source, blend);
+        assert_eq!(target.pixels[0], [0.0, 0.0, 0.0, 0.0]);
+        target.blend(0, 0, source, OVERLAY_BLEND);
+        assert_eq!(target.pixels[0], [0.125, 0.125, 0.125, 0.0625]);
+        target.blend(0, 0, source, blend);
+        let expected_alpha = 0.25 * 0.0625 + 0.0625 * 0.75;
+        assert!((target.pixels[0][3] - expected_alpha).abs() < 1e-6, "{:?}", target.pixels[0]);
+        assert!((target.pixels[0][0] - (0.5 * 0.0625 + 0.125 * 0.75)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn draw_groups_draw_unsorted_items_first_then_sorted_ones_far_to_near() {
+        use std::cell::RefCell;
+        let view = OrthoView::new(0.0, Vec3::ZERO, 100.0, 1.0, SIDE, SIDE);
+        // The view looks along +y: larger y is farther.
+        let log = RefCell::new(Vec::new());
+        let log = &log;
+        let item = |name: &'static str| move |_: &mut Canvas| log.borrow_mut().push(name);
+        let (near, far, middle, first, second) = (item("near"), item("far"), item("middle"), item("first"), item("second"));
+        let (equal_a, equal_b) = (item("equal a"), item("equal b"));
+        let at = |y: f32| Vec3::new(0.0, y, 0.0);
+        let items = [
+            GroupItem::Custom { sort: SortKey::sorted(at(-5.0)), draw: &near },
+            GroupItem::Custom { sort: SortKey::unsorted(at(-9.0)), draw: &first },
+            GroupItem::Custom { sort: SortKey::sorted(at(5.0)), draw: &far },
+            GroupItem::Custom { sort: SortKey::sorted(at(1.0)), draw: &equal_a },
+            GroupItem::Custom { sort: SortKey::sorted(at(0.0)), draw: &middle },
+            GroupItem::Custom { sort: SortKey::unsorted(at(9.0)), draw: &second },
+            GroupItem::Custom { sort: SortKey::sorted(at(1.0)), draw: &equal_b },
+        ];
+        let mut canvas = Canvas::new(SIDE, SIDE, BLACK);
+        canvas.draw_group(&view, &items, &SceneDrawOptions::default());
+        // Equal depths keep their order (the client's quicksort does not promise it).
+        assert_eq!(*log.borrow(), ["first", "second", "far", "equal a", "equal b", "middle", "near"]);
     }
 }

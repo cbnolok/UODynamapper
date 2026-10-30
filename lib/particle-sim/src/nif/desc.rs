@@ -14,7 +14,9 @@
 //!   tangents and TCB parameters as stored);
 //! - [`NifTexture`]: textures by name, referenced by file or embedded (`NiPixelData` decoded to RGBA8);
 //! - [`NifLight`]: the scene's lights (`NiLight`), with the nodes whose effect list holds them
-//!   ([`NifNode::lights`]) and the nodes they skip.
+//!   ([`NifNode::lights`]) and the nodes they skip;
+//! - [`NifTextureEffect`]: the scene's texture effects (`NiTextureEffect`), referenced the same way
+//!   ([`NifNode::texture_effects`]).
 //!
 //! Units and conventions are Gamebryo's: seconds, radians, row-major rotation matrices applied to column
 //! vectors (`p' = T + s * R * p`), quaternions as (w, x, y, z).
@@ -23,8 +25,9 @@
 
 use crate::render::{AlphaTest, BlendFactor, BlendState, MeshGeometry};
 
-/// Version of the [`NifEffectDesc`] layout (3: path interpolator bank and smoothing, texture mipmap flag).
-pub const NIF_DESC_VERSION: u32 = 3;
+/// Version of the [`NifEffectDesc`] layout (4: texture effects, sort-adjust nodes, geometry and particle system
+/// bounds, bound update skip, every stored level of embedded pixels).
+pub const NIF_DESC_VERSION: u32 = 4;
 
 /// Name of an embedded texture: this prefix and the index of the texture in [`NifEffectDesc::textures`].
 pub const EMBEDDED_TEXTURE_PREFIX: &str = "#embedded:";
@@ -49,6 +52,7 @@ pub struct NifEffectDesc {
     pub texturings: Vec<NifTexturing>,
     pub textures: Vec<NifTexture>,
     pub lights: Vec<NifLight>,
+    pub texture_effects: Vec<NifTextureEffect>,
     pub controllers: Vec<NifController>,
 }
 
@@ -118,7 +122,8 @@ impl BillboardMode {
 /// What a node is.
 #[derive(Debug, Clone, PartialEq)]
 pub enum NifNodeKind {
-    /// `NiNode` and subclasses without behaviour of their own here (`NiSortAdjustNode`, ...).
+    /// `NiNode` and subclasses without behaviour of their own here (`NiSortAdjustNode` keeps its mode in
+    /// [`NifNode::sorting_off`]).
     Node,
     /// `NiBillboardNode`: its world rotation turns to face the camera every frame.
     Billboard(BillboardMode),
@@ -128,7 +133,10 @@ pub enum NifNodeKind {
     ParticleSystem { system: usize },
     /// `NiLight`: [`NifEffectDesc::lights`] entry `light`; its world transform places the light.
     Light { light: usize },
-    /// Anything else (texture effects, unknown geometry): kept for the hierarchy, not drawn.
+    /// `NiTextureEffect`: [`NifEffectDesc::texture_effects`] entry `effect`; its world transform places the
+    /// projection.
+    TextureEffect { effect: usize },
+    /// Anything else (unknown geometry, ...): kept for the hierarchy, not drawn.
     Other { type_name: String },
 }
 
@@ -148,8 +156,24 @@ pub struct NifNode {
     /// Whether the node is the root or a descendant of it.
     pub in_scene: bool,
     /// [`NifEffectDesc::lights`] entries of the node's effect list (`NiNode::m_kEffectList`; `NiNode::LinkObject`
-    /// makes the node an affected node of each): they light this node's subtree. Texture effects are not kept.
+    /// makes the node an affected node of each): they light this node's subtree.
     pub lights: Vec<usize>,
+    /// [`NifEffectDesc::texture_effects`] entries of the node's effect list: they reach this node's subtree.
+    pub texture_effects: Vec<usize>,
+    /// The mode of an `NiSortAdjustNode`. `NiSortAdjustNode::OnVisible` (UOSA.exe 0x006e3130,
+    /// `NiSortAdjustNode.cpp:33-60`) sets the sort flag of every drawable of its subtree after culling it, so
+    /// the outermost sort-adjust node decides; with [`SortingMode::Off`] the subtree's blended drawables are drawn
+    /// unsorted, in scene order.
+    pub sort_adjust: Option<SortingMode>,
+}
+
+/// `NiSortAdjustNode::SortingMode`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SortingMode {
+    /// `SORTING_INHERIT`: the subtree's drawables are sorted.
+    Inherit,
+    /// `SORTING_OFF`.
+    Off,
 }
 
 /// Triangle geometry with its render state.
@@ -158,6 +182,9 @@ pub struct NifMesh {
     /// The `NiTriShape` node.
     pub node: usize,
     pub geometry: MeshGeometry,
+    /// Centre of the model bound stored in the file (`NiGeometryData`'s `NiBound`), in the mesh's space: the
+    /// sort position of the drawable (`NiAlphaAccumulator` sorts by the world bound centre).
+    pub bound_center: [f32; 3],
     pub morph: Option<NifMorph>,
     pub render_state: NifRenderState,
 }
@@ -272,7 +299,8 @@ pub struct NifAlpha {
     pub test_function: CompareFunction,
     /// Reference value 0..=255.
     pub test_reference: u8,
-    /// `NoSorter` flag (draw order hint; unused here).
+    /// `NoSorter` flag (alpha flags bit 13): `NiAlphaAccumulator` (`ObserveNoSortHint` on) draws the blended
+    /// drawable unsorted, in scene order.
     pub no_sorter: bool,
 }
 
@@ -471,6 +499,8 @@ pub const FILTER_ANISOTROPIC: u32 = 6;
 impl TextureFilter {
     /// `FILTER_BILERP`: the default of `NiTexturingProperty::Map` (`NiTexturingProperty.cpp:900`).
     pub const BILERP: Self = Self { mag: TexelFilter::Linear, min: TexelFilter::Linear, mip: MipFilter::None };
+    /// `FILTER_TRILERP`.
+    pub const TRILERP: Self = Self { mag: TexelFilter::Linear, min: TexelFilter::Linear, mip: MipFilter::Linear };
 
     /// The sampler filters of a raw `FilterMode`. Anisotropic filtering is drawn trilinear (its fallback when
     /// the device has no anisotropy); an unknown mode as the map default, bilinear.
@@ -478,7 +508,7 @@ impl TextureFilter {
         let (mag, min, mip) = match mode {
             FILTER_NEAREST => (TexelFilter::Point, TexelFilter::Point, MipFilter::None),
             FILTER_BILERP => return Self::BILERP,
-            FILTER_TRILERP | FILTER_ANISOTROPIC => (TexelFilter::Linear, TexelFilter::Linear, MipFilter::Linear),
+            FILTER_TRILERP | FILTER_ANISOTROPIC => return Self::TRILERP,
             FILTER_NEAREST_MIPNEAREST => (TexelFilter::Point, TexelFilter::Point, MipFilter::Point),
             FILTER_NEAREST_MIPLERP => (TexelFilter::Point, TexelFilter::Point, MipFilter::Linear),
             FILTER_BILERP_MIPNEAREST => (TexelFilter::Linear, TexelFilter::Linear, MipFilter::Point),
@@ -550,10 +580,18 @@ impl NifTexturing {
 pub enum NifTextureSource {
     /// A file of the client's packages, by base name as stored (`03002012_flare.tga`).
     External { file_name: String },
-    /// `NiPixelData` inside the NIF, decoded to RGBA8 rows (top row first), mip level 0.
-    Embedded { width: u32, height: u32, rgba: Vec<u8> },
+    /// `NiPixelData` inside the NIF, decoded to RGBA8 rows (top row first): every stored mip level, level 0
+    /// (`width` x `height`) first, level `k` [`embedded_level_size`]. The client keeps the stored levels
+    /// (`NiDevImageConverter`) and generates a chain from a single one only for a mipmapped texture.
+    Embedded { width: u32, height: u32, levels: Vec<Vec<u8>> },
     /// Embedded pixel data in a format not decoded here.
     Undecoded { format: u32 },
+}
+
+/// Width and height of mip level `level` of a `width` x `height` texture: each level halves, down to 1.
+pub fn embedded_level_size(width: u32, height: u32, level: usize) -> (u32, u32) {
+    let halve = |size: u32| size.checked_shr(level as u32).unwrap_or(0).max(1);
+    (halve(width), halve(height))
 }
 
 /// `NiSourceTexture`.
@@ -599,6 +637,9 @@ pub struct NifParticleSystem {
     pub render_state: NifRenderState,
     /// `NiMeshParticleSystem`: each particle draws a mesh subtree.
     pub mesh_particles: bool,
+    /// Centre of the bound stored in the file (`NiPSysData`'s `NiBound`), in the system's space: the sort
+    /// position of a system without a [`NifModifierKind::BoundUpdate`] modifier.
+    pub bound_center: [f32; 3],
 }
 
 impl NifParticleSystem {
@@ -628,7 +669,9 @@ pub enum NifModifierKind {
     },
     Spawn(NifSpawn),
     Position,
-    BoundUpdate,
+    /// `NiPSysBoundUpdateModifier` (UOSA.exe `Update` 0x00815930): the system's bound is the box of the particle
+    /// positions sampled every `skip` particles (every particle for 0 or 1), centred on the box centre.
+    BoundUpdate { skip: i16 },
     GrowFade {
         grow_time: f32,
         grow_generation: u16,
@@ -961,6 +1004,80 @@ pub struct NifLight {
     pub diffuse: [f32; 3],
     pub specular: [f32; 3],
     /// Nodes of `m_kUnaffectedNodeList`: `NiNode::PushLocalEffects` drops the light at them, for their subtree.
+    pub unaffected_nodes: Vec<usize>,
+}
+
+/// `NiTextureEffect::TextureType`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TextureEffectKind {
+    ProjectedLight,
+    ProjectedShadow,
+    /// The only kind the client's effects use: `NiStandardMaterial::HandleEnvMap` adds the map to the colour.
+    EnvironmentMap,
+    FogMap,
+}
+
+impl TextureEffectKind {
+    /// In `TextureType` order.
+    pub const ALL: [Self; 4] = [Self::ProjectedLight, Self::ProjectedShadow, Self::EnvironmentMap, Self::FogMap];
+
+    pub fn from_raw(value: u32) -> Option<Self> {
+        Self::ALL.get(value as usize).copied()
+    }
+}
+
+/// `NiTextureEffect::CoordGenType`: how the texture coordinates are generated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TextureCoordGen {
+    /// The world position through the parallel projection.
+    WorldParallel,
+    /// The world position through the perspective projection (divided by its third component).
+    WorldPerspective,
+    /// The world reflection vector through the sphere map projection.
+    SphereMap,
+    /// A cube map looked up by the world reflection vector.
+    SpecularCubeMap,
+    /// A cube map looked up by the world normal.
+    DiffuseCubeMap,
+}
+
+impl TextureCoordGen {
+    /// In `CoordGenType` order.
+    pub const ALL: [Self; 5] =
+        [Self::WorldParallel, Self::WorldPerspective, Self::SphereMap, Self::SpecularCubeMap, Self::DiffuseCubeMap];
+
+    pub fn from_raw(value: u32) -> Option<Self> {
+        Self::ALL.get(value as usize).copied()
+    }
+
+    /// Whether the coordinates come from the normal (`NiStandardMaterial` drops such a map on geometry without
+    /// normals, `NiStandardMaterial.cpp:523-538`).
+    pub fn needs_normals(self) -> bool {
+        matches!(self, Self::SphereMap | Self::SpecularCubeMap | Self::DiffuseCubeMap)
+    }
+}
+
+/// One texture effect (`NiTextureEffect`). It reaches the subtrees of the nodes whose effect list holds it
+/// ([`NifNode::texture_effects`]), minus its unaffected nodes; of the environment maps reaching a drawable, the
+/// last one pushed applies (`NiDynamicEffectState::AddEffect`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct NifTextureEffect {
+    /// The effect's node in [`NifEffectDesc::nodes`].
+    pub node: usize,
+    pub kind: TextureEffectKind,
+    pub coord_gen: TextureCoordGen,
+    /// `NiDynamicEffect` switch (`m_bOn`); `SetEnvMapDescriptor` skips an effect that is off.
+    pub on: bool,
+    /// Index in [`NifEffectDesc::textures`]; `None` when the effect names no texture.
+    pub texture: Option<usize>,
+    /// `m_kModelProjMat`, rows.
+    pub model_projection: [[f32; 3]; 3],
+    /// `m_kModelProjTrans`.
+    pub model_translation: [f32; 3],
+    /// `FilterMode` raw value, as [`NifTextureMap::filter`].
+    pub filter: u32,
+    pub addressing: TextureAddressing,
+    /// Nodes of `m_kUnaffectedNodeList`.
     pub unaffected_nodes: Vec<usize>,
 }
 
