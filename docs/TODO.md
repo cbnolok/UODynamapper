@@ -53,7 +53,7 @@ Current execution decisions:
 
 ### Current Renderer Focus: Visual Fidelity
 
-- Validate static heights/anchors, non-KR fake-normal wall artifacts and remaining effect visibility against matched fixtures.
+- Validate static heights/anchors and remaining effect visibility against matched fixtures.
 - Use [the visual follow-up review](reviews/2026-10-29-visual-fidelity-followup.md) for current evidence and reconciliation of the unstaged user TODO. Historical repaired items must reproduce before being reopened.
 
 ### Baseline And Instrumentation

@@ -25,8 +25,9 @@ All user-verified in game and committed on `prereleases`:
 - **Issue B, land height scale (`0.1`).** The geometric derivation found it plausible, not
   wrong. This is a design decision between classic-faithful and exaggerated relief. The user
   wanted to set direction from screenshots first.
-- **Grunge / Art Fake Normals.** No hard gate was found; they may just be subtle. Needs an
-  in-app A/B at maximum strength, not more static analysis.
+- **Grunge.** Still needs source/preset/strength-specific visual checks. Explicit
+  non-KR art-normal activation was reviewed later on stone/timber fixtures; see
+  `art_fake_normal_validation.md` for the result and its limits.
 - **EC `lib/uocf/src/enhanced/tileart.rs` offsets.** The parser produced garbage offsets on
   the real EC client. Optional, low priority: its motivating CC caveat was closed as
   by-design (comment above `apply_slot_aliases` in `lib/udd-conv/src/tex_art_cc.rs`).
