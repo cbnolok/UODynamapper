@@ -10,7 +10,8 @@
 //!   vertex colours as `_NIF_VERTEX_COLOR`, and morph targets (`NiGeomMorpherController`: relative targets
 //!   become the base target 0 plus deltas, absolute targets a zero base plus every target).
 //! - Lights: `KHR_lights_punctual` on a child node turned so that glTF's -Z is Gamebryo's +X (the light
-//!   direction); colour = diffuse, intensity = dimmer. Ambient lights are in `extras` only.
+//!   direction); colour = diffuse converted to linear ([`crate::material`], colour space), intensity = dimmer
+//!   (unconverted: a multiplier of the linear colour). Ambient lights are in `extras` only.
 //! - `APP_CULLED` nodes have scale 0 (and `app_culled` in `extras`).
 //! - Mesh-particle prototypes (objects outside the scene graph) are written under a
 //!   `mesh_particle_prototypes` node, visible, animated on the clip time (the client animates each clone with
@@ -25,7 +26,7 @@ use serde_json::{Value, json};
 
 use crate::anim::{self, AnimationBuilder, Interpolation, LocalTransform, Timeline, flatten, is_constant};
 use crate::glb::{Builder, MODE_TRIANGLES, Node, TARGET_ARRAY_BUFFER};
-use crate::material::ColorMode;
+use crate::material::{ColorMode, DISPLAY_SPACE_NOTE, linear_rgb};
 use crate::texture::{TextureCache, TextureLoader};
 use crate::{ExportOptions, describe};
 
@@ -181,6 +182,7 @@ impl Exporter<'_> {
             NifNodeKind::Light { light } => {
                 let light_desc = &desc.lights[*light];
                 extras["light"] = describe::light(light_desc);
+                extras["light"]["color_space"] = json!(DISPLAY_SPACE_NOTE);
                 extras["light"]["controllers"] =
                     json!(describe::controllers_of(desc, |target, _| target == ControllerTarget::Light(*light)));
                 if let Some(child) = self.export_light(part, *light) {
@@ -364,7 +366,8 @@ impl Exporter<'_> {
     /// The `KHR_lights_punctual` node of light `light`, or `None` for an ambient light.
     fn export_light(&mut self, part: &Part<'_>, light: usize) -> Option<usize> {
         let light_desc = &part.desc.lights[light];
-        let color = light_desc.diffuse.map(|value| value.clamp(0.0, 1.0));
+        let color = linear_rgb(light_desc.diffuse);
+        // The dimmer scales the colour as it is (not converted).
         // A light that is off shines with intensity 0 (node scale does not dim a glTF light).
         let intensity = if light_desc.on { light_desc.dimmer.max(0.0) } else { 0.0 };
         let name = format!("{} light {light}", part.label);

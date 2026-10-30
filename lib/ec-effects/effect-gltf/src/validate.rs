@@ -4,7 +4,8 @@
 //! embedded PNG signatures, and unlit materials without the lit-only members the `KHR_materials_unlit`
 //! implementation note leaves out (emissive, normal, occlusion and metallic-roughness textures, a non-zero
 //! `emissiveFactor`), neither stored nor animated (Blender's importer fails on an animated transform of such a
-//! texture: see [`crate::material`]).
+//! texture: see [`crate::material`]), and a `COLOR_0` next to the raw vertex colours that is them converted to
+//! linear exactly once (colour space: see [`crate::material`]).
 
 use serde_json::Value;
 
@@ -41,6 +42,14 @@ const UNLIT_FALLBACK_ONLY: [&str; 5] = [
 ];
 /// The default (and, for an unlit material, the only valid) `emissiveFactor`.
 const ZERO_EMISSIVE: [f64; 3] = [0.0; 3];
+/// The vertex colour attribute.
+const COLOR_ATTRIBUTE: &str = "COLOR_0";
+/// RGBA components of a vertex colour.
+const COLOR_COMPONENTS: usize = 4;
+/// A `COLOR_0` component farther than this from the converted raw one is an error.
+const COLOR_TOLERANCE: f32 = 1e-5;
+/// A `COLOR_0` component the colour mode replaces (white, opaque) instead of taking it from the raw colour.
+const COLOR_MODE_FILL: f32 = 1.0;
 
 /// Counts of a valid file.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -266,6 +275,7 @@ impl Checker<'_> {
                         None => self.errors.push(format!("{what}: unreadable indices")),
                     }
                 }
+                self.check_vertex_colors(&what, attributes);
                 self.optional_reference(&what, primitive.get("material"), "materials");
                 let targets = array(primitive, "targets");
                 for target in targets {
@@ -284,6 +294,31 @@ impl Checker<'_> {
                         self.errors.push(format!("{what}: {} weights for {} targets", weights.len(), targets.len()));
                     }
                 }
+            }
+        }
+    }
+
+    /// `COLOR_0` next to the raw vertex colours ([`crate::scene::RAW_COLOR_ATTRIBUTE`]): each component is the raw
+    /// one clamped and converted to linear once (alpha only clamped), or the white / opaque fill of the colour mode.
+    /// A missing or a repeated conversion changes every mid-tone.
+    fn check_vertex_colors(&mut self, what: &str, attributes: &serde_json::Map<String, Value>) {
+        let accessors = array(self.document, "accessors").len();
+        let valid = |name: &str| index(attributes.get(name)).filter(|&accessor| accessor < accessors);
+        let (Some(color), Some(raw)) = (valid(COLOR_ATTRIBUTE), valid(crate::scene::RAW_COLOR_ATTRIBUTE)) else { return };
+        let (Some(color), Some(raw)) = (self.floats(color), self.floats(raw)) else { return };
+        for (vertex, (color, raw)) in
+            color.chunks_exact(COLOR_COMPONENTS).zip(raw.chunks_exact(COLOR_COMPONENTS)).enumerate()
+        {
+            let expected = crate::material::linear_rgba([raw[0], raw[1], raw[2], raw[3]]);
+            let converted_once = color
+                .iter()
+                .zip(expected)
+                .all(|(&value, expected)| (value - expected).abs() <= COLOR_TOLERANCE || value == COLOR_MODE_FILL);
+            if !converted_once {
+                self.errors.push(format!(
+                    "{what}: {COLOR_ATTRIBUTE} of vertex {vertex} is not the raw vertex colour converted to linear once"
+                ));
+                return;
             }
         }
     }

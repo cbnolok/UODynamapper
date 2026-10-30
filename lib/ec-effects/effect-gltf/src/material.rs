@@ -20,10 +20,10 @@
 //! | otherwise / no vertex colours   | (emissive, alpha)       | none                  |
 //! | apply mode REPLACE with a base  | (1, 1, 1, 1)            | none                  |
 //!
-//! Colours are clamped to [0, 1] (the raw values stay in `extras`; the raw vertex colours in the
-//! `_NIF_VERTEX_COLOR` attribute). The glow map (which the client adds to the colour, and an unlit material
-//! cannot), the dark, detail, decal, gloss and bump maps and the environment map (`NiTextureEffect`) are
-//! embedded and listed in `extras` only; apply mode `DECAL` is exported as `MODULATE`.
+//! Colours are clamped to [0, 1] and converted to linear (see below; the raw values stay in `extras`, the raw
+//! vertex colours in the `_NIF_VERTEX_COLOR` attribute). The glow map (which the client adds to the colour, and
+//! an unlit material cannot), the dark, detail, decal, gloss and bump maps and the environment map
+//! (`NiTextureEffect`) are embedded and listed in `extras` only; apply mode `DECAL` is exported as `MODULATE`.
 //!
 //! The PBR fallback follows the `KHR_materials_unlit` implementation note: metallic 0, roughness 1, no
 //! `emissiveTexture` and no `emissiveFactor` (zero). An emissive texture on an unlit material is valid glTF,
@@ -39,6 +39,33 @@
 //!   matrix; the decomposition is exact for the Maya methods and for uniform-scale Max transforms).
 //! - Animated materials: alpha and colour controllers drive `baseColorFactor`, texture transform controllers
 //!   of the base map the `KHR_texture_transform` members, through `KHR_animation_pointer`.
+//!
+//! # Colour space
+//!
+//! The client's colours (material colours, vertex colours, light colours, particle colours) are display-space
+//! values: the fixed-function combine and the blending run on the sRGB-encoded framebuffer values without any
+//! conversion. glTF's colour factors, `COLOR_0` and `KHR_lights_punctual` colours are linear (only
+//! `baseColorTexture` is sRGB-encoded, so the textures are written as they are). Every colour written to those
+//! slots is therefore clamped to [0, 1] and converted once with the exact sRGB EOTF ([`srgb_to_linear`]); alpha is
+//! not converted. Where:
+//!
+//! - `baseColorFactor`, static and every sample of its `KHR_animation_pointer` channel;
+//! - `COLOR_0` of meshes ([`ColorMode::apply`]) and of baked particle frames ([`crate::bake`]);
+//! - light colours ([`crate::scene`]): the colour is converted, the intensity stays the dimmer (a plain
+//!   multiplier, now of the linear colour; the client scales the display-space colour by it, so a dimmer below 1
+//!   is lighter here than in the client);
+//! - morph targets carry positions only, so no morphed colour exists.
+//!
+//! Animated colours are never written as key control values: every channel is sampled (LINEAR keys at the sample
+//! rate plus the key times, see [`crate::anim`]) and each sample is converted, so Bezier and TCB colour keys are
+//! exact at every sample; between samples glTF interpolates in linear space where the client interpolates the
+//! display-space value, a difference within the sampling error. The original client values are kept in `extras`
+//! (`render_state`, `material_at_start`, `controllers`, `light`, the particle system description), which say so
+//! in `color_space` ([`DISPLAY_SPACE_NOTE`]); the baked particle colours are not stored raw, but the conversion is
+//! invertible on [0, 1].
+//!
+//! The viewer still blends in linear space where the client blends display-space values, so translucent and
+//! additive draws keep their hue but not their exact brightness (no colour value can make up for that).
 
 use particle_sim::nif::desc::{
     ControllerTarget, CullMode, LightingMode, NifMaterial, NifRenderState, NifTextureTransform, TextureApplyMode,
@@ -66,6 +93,38 @@ const FALLBACK_METALLIC: f32 = 0.0;
 const FALLBACK_ROUGHNESS: f32 = 1.0;
 /// White, opaque.
 const WHITE: [f32; 4] = [1.0; 4];
+/// sRGB EOTF (IEC 61966-2-1): encoded values up to this lie on the linear segment.
+const SRGB_LINEAR_SEGMENT_END: f32 = 0.04045;
+/// sRGB EOTF: the linear segment divides by this.
+const SRGB_LINEAR_SEGMENT_SLOPE: f32 = 12.92;
+/// sRGB EOTF: the power segment is `((c + offset) / (1 + offset))^exponent`, this the offset.
+const SRGB_POWER_OFFSET: f32 = 0.055;
+/// sRGB EOTF: the power segment's exponent.
+const SRGB_POWER_EXPONENT: f32 = 2.4;
+/// The `extras` note on the colour space of the Gamebryo colours.
+pub const DISPLAY_SPACE_NOTE: &str = "Gamebryo colours in extras are the client's display-space (sRGB-encoded) values; \
+    the glTF colours (baseColorFactor, COLOR_0, light colours and their animation) are them clamped to [0, 1] and \
+    converted to linear with the sRGB EOTF, alpha unconverted";
+
+/// The sRGB EOTF: a display-space (sRGB-encoded) channel in [0, 1] as a linear one.
+pub fn srgb_to_linear(value: f32) -> f32 {
+    if value <= SRGB_LINEAR_SEGMENT_END {
+        value / SRGB_LINEAR_SEGMENT_SLOPE
+    } else {
+        ((value + SRGB_POWER_OFFSET) / (1.0 + SRGB_POWER_OFFSET)).powf(SRGB_POWER_EXPONENT)
+    }
+}
+
+/// A display-space colour clamped to [0, 1] and converted to linear.
+pub fn linear_rgb(color: [f32; 3]) -> [f32; 3] {
+    color.map(|value| srgb_to_linear(value.clamp(0.0, 1.0)))
+}
+
+/// A display-space colour clamped to [0, 1], its colour converted to linear, its alpha kept.
+pub fn linear_rgba(color: [f32; 4]) -> [f32; 4] {
+    let [r, g, b] = linear_rgb([color[0], color[1], color[2]]);
+    [r, g, b, color[3].clamp(0.0, 1.0)]
+}
 
 /// How the vertex colours go into `COLOR_0`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,8 +140,9 @@ pub enum ColorMode {
 }
 
 impl ColorMode {
+    /// The `COLOR_0` value of a raw vertex colour (clamped, converted to linear).
     pub fn apply(self, color: [f32; 4]) -> Option<[f32; 4]> {
-        let color = color.map(|value| value.clamp(0.0, 1.0));
+        let color = linear_rgba(color);
         match self {
             Self::Rgba => Some(color),
             Self::RgbOpaque => Some([color[0], color[1], color[2], 1.0]),
@@ -105,16 +165,12 @@ fn color_mode(state: &NifRenderState, has_colors: bool, replace: bool) -> ColorM
     }
 }
 
-fn clamp3(color: [f32; 3]) -> [f32; 3] {
-    color.map(|value| value.clamp(0.0, 1.0))
-}
-
-/// `baseColorFactor` of a material state.
+/// `baseColorFactor` of a material state (its colour converted to linear).
 fn base_factor(mode: ColorMode, replace: bool, material: &NifMaterial) -> [f32; 4] {
     if replace {
         return WHITE;
     }
-    let [r, g, b] = clamp3(material.emissive);
+    let [r, g, b] = linear_rgb(material.emissive);
     let alpha = material.alpha.clamp(0.0, 1.0);
     match mode {
         ColorMode::Rgba => WHITE,
@@ -293,22 +349,6 @@ impl Exporter<'_> {
             approximations.push("environment map in extras only".to_owned());
             json!({ "texture_effect": effect_index, "description": describe::texture_effect(desc, effect, texture) })
         });
-        let controllers = describe::controllers_of(desc, |target, _| {
-            Some(target) == state.material.map(ControllerTarget::Material)
-                || Some(target) == state.texturing.map(ControllerTarget::Texturing)
-        });
-        material.insert(
-            "extras".into(),
-            json!({ "gamebryo": {
-                "render_state": describe::render_state(desc, state, &gltf_textures),
-                "material_at_start": state.material.map(|_| describe::material(&initial)),
-                "environment_map": environment,
-                "controllers": controllers,
-                "approximations": approximations,
-            }}),
-        );
-        self.builder.materials.push(Value::Object(material));
-
         let animated = state.material.is_some_and(|material| {
             anim::controllers_on(desc, ControllerTarget::Material(material)).next().is_some()
         });
@@ -325,7 +365,28 @@ impl Exporter<'_> {
                     Interpolation::Linear,
                 );
             }
+            let rgb: Vec<[f32; 3]> = bases.iter().map(|base| [base[0], base[1], base[2]]).collect();
+            if !is_constant(&rgb) {
+                approximations.push("animated colour interpolated in linear space between samples".to_owned());
+            }
         }
+        let controllers = describe::controllers_of(desc, |target, _| {
+            Some(target) == state.material.map(ControllerTarget::Material)
+                || Some(target) == state.texturing.map(ControllerTarget::Texturing)
+        });
+        material.insert(
+            "extras".into(),
+            json!({ "gamebryo": {
+                "render_state": describe::render_state(desc, state, &gltf_textures),
+                "material_at_start": state.material.map(|_| describe::material(&initial)),
+                "environment_map": environment,
+                "controllers": controllers,
+                "approximations": approximations,
+                "color_space": DISPLAY_SPACE_NOTE,
+            }}),
+        );
+        self.builder.materials.push(Value::Object(material));
+
         MeshMaterial { index: material_index, colors }
     }
 

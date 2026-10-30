@@ -15,6 +15,12 @@
 //!   glTF Y-up into Blender Z-up) gives back the Gamebryo coordinates, so Blender's front view is the client
 //!   view.
 //! - **Scene, meshes, lights:** see [`scene`]. **Materials and textures:** see [`material`] and [`texture`].
+//! - **Colour space.** The client's colours are display-space (sRGB-encoded) values; glTF's colour factors,
+//!   `COLOR_0` and light colours are linear. Every colour written there (material factors and their animation,
+//!   mesh and baked vertex colours, light colours) is converted once with the exact sRGB EOTF
+//!   ([`material::srgb_to_linear`]), alpha and light intensity are not; textures stay sRGB-encoded, as glTF reads
+//!   `baseColorTexture`. The client values stay in `extras` (`color_space` says so), and [`validate`] checks that
+//!   `COLOR_0` is the raw vertex colour converted exactly once. See [`material`], colour space.
 //! - **Animation** ([`anim`]): one animation per export, named after the NIF or the effect. Node transforms,
 //!   paths (`NiPathInterpolator`) and morph weights are sampled at [`ExportOptions::sample_rate`] plus the
 //!   key times (LINEAR), visibility (`NiVisController`) becomes STEP scale-0 keys (an approximation: a hidden
@@ -22,7 +28,8 @@
 //!   `KHR_animation_pointer`. Cycle type, frequency and phase are applied when sampling (the clip shows the
 //!   controllers as the client runs them over [`ExportOptions::clip_length`] seconds); the raw timing and keys
 //!   of every controller are in the owning node's or material's `extras`. Light and particle system
-//!   controllers are in `extras` only.
+//!   controllers are in `extras` only. Colour channels are sampled like the others and each sample converted to
+//!   linear, so curved colour keys are exact at the samples (glTF interpolates linear values between them).
 //! - **Particles.** A particle system is a node without a mesh whose `extras.gamebryo.particle_system` holds the
 //!   full system: emitter, modifiers in order, render state, controllers. With [`ExportOptions::bake`] the
 //!   simulation is also baked into per-frame quad meshes (see [`bake`] for the limits). Mesh-particle
@@ -177,6 +184,7 @@ fn finish(mut exporter: Exporter<'_>, name: &str, root: usize, clip: f32, animat
     let asset_extras = json!({
         "source": name,
         "coordinates": "Gamebryo Z-up under a -90 degree X rotation of the root node",
+        "color_space": material::DISPLAY_SPACE_NOTE,
         "warnings": exporter.warnings,
     });
     let bytes = exporter.builder.finish(name, vec![root], asset_extras);

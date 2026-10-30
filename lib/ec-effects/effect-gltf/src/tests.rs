@@ -5,9 +5,11 @@ use gamebryo_nif::{
 };
 use particle_sim::nif::desc::{
     BoolInterp, BoolKey, CompareFunction, ControllerTarget, ControllerTiming, Curve, CycleType, FloatInterp, Key, KeyKind,
-    NifAlpha, NifController, NifControllerKind, NifInterpolator, NifMaterial, NifMesh, NifNode, NifNodeKind,
-    NifRenderState, NifTexture, NifTextureMap, NifTextureSource, NifTextureTransform, NifTexturing, NifTransform, Tcb,
+    LightingMode, MaterialColorField, NifAlpha, NifController, NifControllerKind, NifInterpolator, NifLight,
+    NifLightKind, NifMaterial, NifMesh, NifNode, NifNodeKind, NifRenderState, NifTexture, NifTextureMap,
+    NifTextureSource, NifTextureTransform, NifTexturing, NifTransform, NifVertexColor, Point3Interp, Tcb,
     TextureAddressing, TextureApplyMode, TextureSlot, TextureTransformMember, TextureTransformMethod, TransformInterp,
+    VertexColorSource,
 };
 use particle_sim::nif::keys::Quat;
 use particle_sim::nif::texture_transform_matrix;
@@ -220,10 +222,11 @@ fn parsed_nif_exports_hierarchy_mesh_and_material() {
     let position = mesh["primitives"][0]["attributes"]["POSITION"].as_u64().unwrap() as usize;
     assert_eq!(document["accessors"][position]["count"], 3);
     assert_eq!(document["accessors"][position]["max"][0], f64::from(HALF));
-    // Material: unlit, the emissive as the base colour, the Gamebryo state in extras.
+    // Material: unlit, the emissive (converted to linear) as the base colour, the Gamebryo state in extras.
     let material = &document["materials"][mesh["primitives"][0]["material"].as_u64().unwrap() as usize];
     let base: Vec<f32> = material["pbrMetallicRoughness"]["baseColorFactor"].as_array().unwrap().iter().map(f).collect();
-    assert_eq!(base, vec![EMISSIVE.r, EMISSIVE.g, EMISSIVE.b, 1.0]);
+    let [r, g, b] = material::linear_rgb([EMISSIVE.r, EMISSIVE.g, EMISSIVE.b]);
+    assert_eq!(base, vec![r, g, b, 1.0]);
     assert!(material["extensions"].get(material::EXT_MATERIALS_UNLIT).is_some());
     assert_eq!(material.get("alphaMode"), None);
     let render_state = &material["extras"]["gamebryo"]["render_state"];
@@ -600,4 +603,148 @@ fn unlit_materials_keep_only_the_base_map() {
     let mut zero = document.clone();
     zero["materials"][0]["emissiveFactor"] = serde_json::json!([0.0, 0.0, 0.0]);
     validate_glb(&with_document(&export.bytes, &zero)).unwrap_or_else(|errors| panic!("{errors:#?}"));
+}
+
+/// A display-space mid-tone, RGBA (its linear value differs from it).
+const MID_TONE: [f32; 4] = [0.5, 0.25, 0.75, 0.5];
+/// The emissive colour controller's Bezier keys: (time, display-space colour).
+const EMISSIVE_KEYS: [(f32, [f32; 3]); 2] = [(0.0, [0.2, 0.4, 0.6]), (1.0, [0.8, 0.6, 0.4])];
+/// The light's display-space diffuse colour.
+const LIGHT_DIFFUSE: [f32; 3] = [0.5, 0.2, 0.8];
+const LIGHT_DIMMER: f32 = 0.6;
+/// Tolerance of a conversion compared with its reference.
+const CONVERSION_EPSILON: f32 = 1e-6;
+
+/// The values of the `KHR_animation_pointer` channel of `pointer`: (times, values).
+fn pointer_channel(bytes: &[u8], document: &Value, pointer: &str) -> Option<(Vec<f32>, Vec<f32>)> {
+    let animation = &document["animations"][0];
+    let channel = animation["channels"]
+        .as_array()?
+        .iter()
+        .find(|c| c["target"]["extensions"]["KHR_animation_pointer"]["pointer"] == pointer)?;
+    let sampler = &animation["samplers"][channel["sampler"].as_u64()? as usize];
+    let times = accessor_floats(bytes, document, sampler["input"].as_u64()? as usize);
+    Some((times, accessor_floats(bytes, document, sampler["output"].as_u64()? as usize)))
+}
+
+#[test]
+fn srgb_eotf_matches_its_reference_values() {
+    // IEC 61966-2-1: the segments meet at 0.04045 (linear 0.0031308); display mid-grey is linear 0.2140.
+    const SEGMENT_END: f32 = 0.04045;
+    const SEGMENT_END_LINEAR: f32 = 0.003_130_8;
+    const MID_GREY: f32 = 0.5;
+    const MID_GREY_LINEAR: f32 = 0.214_041_14;
+    assert_eq!(material::srgb_to_linear(0.0), 0.0);
+    assert!((material::srgb_to_linear(1.0) - 1.0).abs() < CONVERSION_EPSILON);
+    assert!((material::srgb_to_linear(MID_GREY) - MID_GREY_LINEAR).abs() < CONVERSION_EPSILON);
+    assert!((material::srgb_to_linear(SEGMENT_END) - SEGMENT_END_LINEAR).abs() < CONVERSION_EPSILON);
+    assert!((material::srgb_to_linear(SEGMENT_END + f32::EPSILON) - SEGMENT_END_LINEAR).abs() < CONVERSION_EPSILON);
+    // Clamped, alpha kept.
+    assert_eq!(material::linear_rgba([2.0, -1.0, 0.0, MID_GREY]), [1.0, 0.0, 0.0, MID_GREY]);
+}
+
+#[test]
+fn colours_are_converted_to_linear_once() {
+    // Vertex colours drawn as RGBA: COLOR_0 is the raw colour converted, the raw one kept.
+    let mut desc = animated_desc();
+    desc.meshes[0].geometry.colors = vec![MID_TONE; 3];
+    desc.meshes[0].render_state.vertex_color =
+        NifVertexColor { source: VertexColorSource::Emissive, lighting: LightingMode::Emissive };
+    let export = export_nif(&desc, &no_textures, &ExportOptions::default());
+    validate_glb(&export.bytes).unwrap_or_else(|errors| panic!("{errors:#?}"));
+    let document = glb_json(&export.bytes).unwrap();
+    let attributes = &document["meshes"][0]["primitives"][0]["attributes"];
+    let color = accessor_floats(&export.bytes, &document, attributes["COLOR_0"].as_u64().unwrap() as usize);
+    let raw_accessor = attributes[scene::RAW_COLOR_ATTRIBUTE].as_u64().unwrap();
+    let raw = accessor_floats(&export.bytes, &document, raw_accessor as usize);
+    assert!(color.chunks(4).all(|c| c == material::linear_rgba(MID_TONE)), "{color:?}");
+    assert!(raw.chunks(4).all(|c| c == MID_TONE), "{raw:?}");
+    assert!(document["materials"][0]["extras"]["gamebryo"]["color_space"].is_string());
+    // The validator rejects unconverted vertex colours.
+    let mut unconverted = document.clone();
+    unconverted["meshes"][0]["primitives"][0]["attributes"]["COLOR_0"] = serde_json::json!(raw_accessor);
+    let errors = validate_glb(&with_document(&export.bytes, &unconverted)).unwrap_err();
+    assert!(errors.iter().any(|error| error.contains("converted to linear once")), "{errors:#?}");
+
+    // An emissive colour controller with Bezier keys, and a light.
+    let mut desc = animated_desc();
+    desc.controllers[2] = NifController {
+        owner: Some(2),
+        target: ControllerTarget::Material(0),
+        timing: timing(CycleType::Clamp, EMISSIVE_KEYS[1].0),
+        kind: NifControllerKind::MaterialColor {
+            field: MaterialColorField::Emissive,
+            interp: Point3Interp {
+                pose: None,
+                keys: Some(Curve { kind: KeyKind::Bezier, keys: EMISSIVE_KEYS.iter().map(|&(t, c)| key(t, c)).collect() }),
+            },
+        },
+    };
+    let lamp = desc.nodes.len();
+    desc.nodes[0].children.push(lamp);
+    desc.nodes.push(node("Lamp", Some(0), vec![], NifNodeKind::Light { light: 0 }));
+    desc.lights = vec![NifLight {
+        node: lamp,
+        kind: NifLightKind::Directional,
+        on: true,
+        dimmer: LIGHT_DIMMER,
+        ambient: [0.0; 3],
+        diffuse: LIGHT_DIFFUSE,
+        specular: [0.0; 3],
+        unaffected_nodes: Vec::new(),
+    }];
+    let export = export_nif(&desc, &no_textures, &ExportOptions::default());
+    validate_glb(&export.bytes).unwrap_or_else(|errors| panic!("{errors:#?}"));
+    let document = glb_json(&export.bytes).unwrap();
+    // The static factor and every sample of the channel: the client's colour at that time, converted once.
+    let material = &document["materials"][0];
+    let base: Vec<f32> = material["pbrMetallicRoughness"]["baseColorFactor"].as_array().unwrap().iter().map(f).collect();
+    let [r, g, b] = material::linear_rgb(EMISSIVE_KEYS[0].1);
+    assert_eq!(base, vec![r, g, b, MATERIAL_ALPHA]);
+    let (times, values) =
+        pointer_channel(&export.bytes, &document, "/materials/0/pbrMetallicRoughness/baseColorFactor").unwrap();
+    for (&t, value) in times.iter().zip(values.chunks(4)) {
+        let [r, g, b] = material::linear_rgb(anim::material_state(&desc, 0, t).emissive);
+        assert_eq!(value, [r, g, b, MATERIAL_ALPHA], "at {t}");
+    }
+    let approximations = material["extras"]["gamebryo"]["approximations"].as_array().unwrap();
+    assert!(approximations.iter().any(|a| a.as_str().unwrap().contains("linear space")), "{approximations:?}");
+    // The raw keys stay in extras.
+    let controller = &material["extras"]["gamebryo"]["controllers"][0];
+    assert_eq!(controller["kind"]["type"], "MaterialColor", "{controller:#}");
+    // The light: colour converted, intensity the dimmer, the raw colour in the node's extras.
+    let light = &document["extensions"][scene::EXT_LIGHTS_PUNCTUAL]["lights"][0];
+    let color: Vec<f32> = light["color"].as_array().unwrap().iter().map(f).collect();
+    assert_eq!(color, material::linear_rgb(LIGHT_DIFFUSE));
+    assert_eq!(f(&light["intensity"]), LIGHT_DIMMER);
+    let (_, lamp) = node_named(&document, "Lamp");
+    let diffuse: Vec<f32> = lamp["extras"]["gamebryo"]["light"]["diffuse"].as_array().unwrap().iter().map(f).collect();
+    assert_eq!(diffuse, LIGHT_DIFFUSE);
+    assert!(lamp["extras"]["gamebryo"]["light"]["color_space"].is_string());
+}
+
+#[test]
+fn baked_particle_colours_are_converted_to_linear() {
+    let mut desc = fountain_desc();
+    let particle_sim::nif::desc::NifModifierKind::Emitter(emitter) = &mut desc.particle_systems[0].modifiers[0].kind
+    else {
+        unreachable!("the fountain's first modifier is its emitter")
+    };
+    emitter.initial_color = MID_TONE;
+    // The sprites take the particle colour as it is.
+    desc.particle_systems[0].render_state.vertex_color =
+        NifVertexColor { source: VertexColorSource::Emissive, lighting: LightingMode::Emissive };
+    let options = ExportOptions { bake: Some(BakeOptions::default()), ..ExportOptions::default() };
+    let export = export_nif(&desc, &no_textures, &options);
+    validate_glb(&export.bytes).unwrap_or_else(|errors| panic!("{errors:#?}"));
+    let document = glb_json(&export.bytes).unwrap();
+    let (_, baked) = node_named(&document, "fountain.nif baked particles");
+    assert!(baked["extras"]["gamebryo"]["color_space"].is_string());
+    let expected = material::linear_rgba(MID_TONE);
+    for frame in baked["children"].as_array().unwrap() {
+        let mesh = &document["meshes"][document["nodes"][frame.as_u64().unwrap() as usize]["mesh"].as_u64().unwrap() as usize];
+        let accessor = mesh["primitives"][0]["attributes"]["COLOR_0"].as_u64().unwrap() as usize;
+        let colors = accessor_floats(&export.bytes, &document, accessor);
+        assert!(colors.chunks(4).all(|c| c.iter().zip(expected).all(|(a, b)| (a - b).abs() < CONVERSION_EPSILON)), "{colors:?}");
+    }
 }

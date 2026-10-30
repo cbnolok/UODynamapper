@@ -7,7 +7,8 @@
 //! - One random run (seed [`crate::BakeOptions::seed`]); the client's particles differ every time.
 //! - Sprites only: NIF triangle meshes are already exported as meshes, and Chaos MESH particles (`.nif` clones)
 //!   are not baked.
-//! - Materials: unlit, double-sided, `COLOR_0` the sprite colour, the batch's base map (its transform baked into
+//! - Materials: unlit, double-sided, `COLOR_0` the sprite colour (converted to linear, see [`crate::material`]:
+//!   the raw display-space colours are not stored), the batch's base map (its transform baked into
 //!   `TEXCOORD_0`); additive and other blend factors show as alpha blending. The factors, the apply mode, the
 //!   alpha test and every texture stage of the batch (glow, detail and the others the client combines) are in the
 //!   material's `extras` only: a batch with a glow map but no base map (a fireball's flash) shows as its vertex
@@ -27,7 +28,7 @@ use serde_json::{Value, json};
 
 use crate::anim::Interpolation;
 use crate::glb::{MODE_TRIANGLES, Node, TARGET_ARRAY_BUFFER};
-use crate::material::EXT_MATERIALS_UNLIT;
+use crate::material::{DISPLAY_SPACE_NOTE, EXT_MATERIALS_UNLIT, linear_rgba};
 use crate::scene::Exporter;
 
 /// Vertices of a sprite quad.
@@ -119,6 +120,7 @@ impl Exporter<'_> {
             "frame_seconds": dt,
             "frames": frames,
             "note": "particle simulation baked to camera-facing quads for the default client view; one random run",
+            "color_space": DISPLAY_SPACE_NOTE,
         }}));
         Some(self.builder.add_node(holder))
     }
@@ -139,7 +141,7 @@ impl Exporter<'_> {
                 *uv = transform.apply(*uv);
             }
         }
-        let colors: Vec<[f32; 4]> = vertices.iter().map(|vertex| vertex.color.map(|c| c.clamp(0.0, 1.0))).collect();
+        let colors: Vec<[f32; 4]> = vertices.iter().map(|vertex| linear_rgba(vertex.color)).collect();
         if positions.iter().flatten().any(|value| !value.is_finite()) {
             self.warnings.push(format!("{}: a baked frame has non-finite positions; skipped", job.label));
             return None;
