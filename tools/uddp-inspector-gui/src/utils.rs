@@ -29,6 +29,7 @@ pub fn data_type_to_str(t: u8) -> &'static str {
         9 => "Texture",
         11 => "Metadata",
         14 => "Static",
+        15 => "Effect",
         _ => "Other",
     }
 }

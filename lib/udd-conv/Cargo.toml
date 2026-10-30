@@ -28,6 +28,8 @@ rayon.workspace = true
 tracing.workspace = true
 tracing-indicatif.workspace = true
 uocf = { path = "../uocf" }
+particle-sim = { path = "../particle-sim" }
+gamebryo-nif = { path = "../gamebryo-nif" }
 udd-assets = { path = "../udd-assets" }
 udd-container = { path = "../udd-container" }
 udd-image-codecs = { path = "../udd-image-codecs", features = ["bc7-encode"] }

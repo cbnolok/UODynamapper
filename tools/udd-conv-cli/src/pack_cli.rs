@@ -30,6 +30,7 @@ use udd_conv::{
         convert_statics_mul_to_uddp_from_sources_with_dimensions_and_patches,
         convert_statics_mul_to_uddp_from_sources_with_patches,
     },
+    effects_ec::{pack_effects_ec, EffectsEcPackOptions},
     ec_gumps::{
         convert_ec_gumps_to_uddp_from_sources, EcGumpsOptions, EC_GUMP_DEFAULT_MAX_ID,
         GUMPS_EC_DEFAULT_OUTPUT,
@@ -1209,6 +1210,22 @@ enum Commands {
         #[arg(long = "upscale-pass", value_enum, help = "Add an upscale pass. Repeat to chain filters.")]
         upscale_passes: Vec<CliUpscaleFilter>,
     },
+    /// Packs the EC particle effects (definitions, compiled Chaos and NIF systems, textures) into effects_ec.uddp.
+    #[command(name = "pack-ec-effects")]
+    PackEcEffects {
+        #[command(flatten)]
+        source_dirs: SourceDirArgs,
+        #[arg(long, default_value = "effects_ec.uddp")]
+        output: PathBuf,
+        #[arg(long, help = "Encode uncompressed textures whose size is a multiple of 4 to BC7 (default: RGBA8). DXT1/DXT5 sources stay BC1/BC3.")]
+        bc7: bool,
+        #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Zstd level of the manifests and textures. Optionally pass --zstd=LEVEL.")]
+        zstd: Option<i32>,
+        #[arg(long, help = "Write every finding of the packer to this file, one line each.")]
+        report: Option<PathBuf>,
+        #[arg(long, help = "Fail on error findings instead of writing flagged records.")]
+        strict: bool,
+    },
     /// Packs CC tiledata and EC tileart into tilemeta.uddp.
     #[command(name = "pack-tilemeta")]
     PackTilemeta {
@@ -2137,6 +2154,21 @@ where
                 summary.excluded_duplicate_id,
                 out_file.display()
             );
+        }
+        Commands::PackEcEffects { source_dirs: source_dir_args, output, bc7, zstd, report, strict } => {
+            let paths = collect_ec_source_dirs(&source_dir_args)?;
+            let out_file = resolve_output_path(&paths, &output);
+            let summary = pack_effects_ec(
+                &paths,
+                &out_file,
+                &EffectsEcPackOptions {
+                    bc7,
+                    compression: zstd.map(zstd_compression).unwrap_or(CompressionFlag::ZstdNoDict),
+                    strict,
+                    report,
+                },
+            )?;
+            info!("effects_ec: {summary}; wrote '{}'.", out_file.display());
         }
         Commands::PackTilemeta {
             source_dirs: source_dir_args,
@@ -3559,6 +3591,33 @@ mod tests {
                     Some(PathBuf::from("/tables/EcMobileAnimations.kdl"))
                 );
                 assert!(crop_transparent_bounds);
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_pack_ec_effects() {
+        let cli = Cli::try_parse_from([
+            "uddpack",
+            "pack-ec-effects",
+            "--ecdir",
+            "/ec",
+            "--bc7",
+            "--zstd=12",
+            "--report",
+            "/out/effects_report.txt",
+            "--strict",
+        ])
+        .expect("parse pack-ec-effects");
+
+        match cli.command {
+            Commands::PackEcEffects { source_dirs, output, bc7, zstd, report, strict } => {
+                assert_eq!(source_dirs.ecdir, Some(PathBuf::from("/ec")));
+                assert_eq!(output, PathBuf::from("effects_ec.uddp"));
+                assert!(bc7 && strict);
+                assert_eq!(zstd, Some(12));
+                assert_eq!(report, Some(PathBuf::from("/out/effects_report.txt")));
             }
             _ => panic!("unexpected command parsed"),
         }

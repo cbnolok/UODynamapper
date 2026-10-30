@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use gamebryo_nif::NifFile;
+use particle_sim::codec::{decode_nif_desc, encode_nif_desc};
 use particle_sim::nif::{NifEffect, NifEffectInstance, compile};
 use particle_sim::render::{QuadVertex, RenderFrame, SceneLighting, expand_frame, expand_mesh_draw};
 use particle_sim::{NifEffectDesc, NodeTransform, ParticleSystemInstance};
@@ -113,6 +114,8 @@ fn every_client_nif_compiles_and_simulates() {
         let name = entry.file_name().map_or_else(|| format!("{:016x}", entry.hash), str::to_owned);
         let nif = NifFile::read(&payload).unwrap_or_else(|error| panic!("{name} does not parse: {error}"));
         let output = compile(&nif, &name);
+        let decoded = decode_nif_desc(&encode_nif_desc(&output.desc));
+        assert_eq!(decoded.as_ref(), Ok(&output.desc), "{name}: codec round trip");
         for warning in output.warnings {
             *warnings.entry(warning).or_default() += 1;
         }

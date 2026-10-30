@@ -8,7 +8,7 @@ validation).
 ## Responsibilities
 
 - Typed package wrappers for each runtime asset type: `MobileAnimCcPackage`,
-  `MobileAnimEcPackage`, `GumpsPackage`, `AtlasCacheOptions`, and the tilemeta
+  `MobileAnimEcPackage`, `EffectsEcPackage`, `GumpsPackage`, `AtlasCacheOptions`, and the tilemeta
   readers (`TileMetaLandTile`, `TileMetaItemTile`).
 - Lazy/cached atlas page decoding with configurable cache options.
 - BC7-aware texture decoding for atlas pages (via `udd-image-codecs`).
@@ -139,3 +139,180 @@ Not carried: sequence frame effects (footstep sounds), per-direction rider offse
 groups (move, typed 0xE2 and transition lookups that choose the action). A consumer that needs to
 pick actions from movement or packets must read them from `AnimationSequence.uop` with
 `uocf::animation_sequence` for now.
+
+## `effects_ec.uddp` (metadata version 1)
+
+Built by `udd-conv` (`udd_conv::effects_ec`, CLI `udd-cli pack pack-ec-effects`) from the EC
+`EffectDefinitionCollection.uop`, `tileart.uop`, `AnimationSequence.uop`, `string_dictionary.uop` and
+`EffectTexture.uop`, following the client research in
+`scripts/dev-helpers/ec-research/ghidra-effects/results/uosa_effects.md`. Read it with `EffectsEcPackage`
+(`effects_ec.rs`). The package is shaped for the runtime and is not meant to be turned back into NIF or
+`.ems` files. It holds:
+
+- the effect definition trees, flattened into index tables;
+- every Chaos and NIF system the trees reach, compiled with `particle-sim` and stored as codec blobs that
+  go straight to `ChaosSystem::prepare` / `NifEffect::prepare`;
+- the textures of those systems, decoded and ready for upload.
+
+Packing is deterministic: the same client always gives the same bytes. All values are little-endian.
+
+### Manifests
+
+Each `metadata/*.bin` entry starts with a 16-byte `ManifestHeader`: `[u8; 4] magic, u32 version (1),
+u32 record_count, u32 record_size`. The tightly packed records follow. The reader opens a package only
+when every magic, version and record size matches its own, and every cross-index is in range.
+
+| Entry | Magic | Records |
+|---|---|---|
+| `metadata/package.bin` | `EFPK` | one `PackageRecord`: `u32 chaos_desc_version, u32 nif_desc_version, u32 desc_codec_version` |
+| `metadata/strings.bin` | `EFST` | `StringRecord { u32 offset, u32 len }`, then the UTF-8 bytes they point into |
+| `metadata/collection.bin` | `EFCO` | `CollectionRecord { u32 collection_id, u32 list_first, u32 list_count }`, sorted by id |
+| `metadata/tileart.bin` | `EFTA` | `TileArtRecord { u32 tile_id, u32 list_first, u32 list_count }`, sorted by tile |
+| `metadata/sequence_frames.bin` | `EFSF` | `SequenceFrameRecord { u32 sequence_id, u16 action_id, u16 frame, u32 list_first, u32 list_count }`, sorted by key |
+| `metadata/def_nodes.bin` | `EFDN` | `DefNodeRecord { u8 type_key, u8 flags, u16 reserved, u32 param, u32 first, u32 count }` |
+| `metadata/def_lists.bin` | `EFDL` | `u32` node indices; every list is a contiguous run |
+| `metadata/def_branches.bin` | `EFDB` | `DefBranchRecord { u32 key, u32 list_first, u32 list_count }` |
+| `metadata/def_params.bin` | `EFDP` | `u32` parameter words |
+| `metadata/systems.bin` | `EFSY` | `SystemRecord { u32 name, u8 kind, u8 flags, u16 dep_count, u32 dep_first }`, sorted by name |
+| `metadata/deps.bin` | `EFDE` | `u32` dependencies: `DEP_SYSTEM_BIT` (bit 31) and a system index, or a texture index |
+| `metadata/textures.bin` | `EFTX` | `TextureRecord { u32 name, u16 width, u16 height, u8 format, u8 mip_count, u8 flags, u8 source }`, sorted by name |
+| `systems/NNNNN.chaos`, `systems/NNNNN.nif` | `PSCH` / `PSNF` | the codec blob of system `NNNNN` (`DataType::Effect`) |
+| `textures/NNNNN.tex` | | the levels of texture `NNNNN`, level 0 first (`DataType::Texture`) |
+
+`NONE` (`u32::MAX`) marks a missing index. Payload numbers are indices into `systems.bin` and
+`textures.bin`. A record without a payload has no entry.
+
+`package.bin` records the desc and codec versions of the blobs. A package built with another
+`particle-sim` desc or codec version is rejected with a "rebuild" error. The blob decoder checks the
+same versions again in each blob header.
+
+### Definition trees
+
+Roots: `collection_roots(id)` (the effect ids of packets; see below), `tileart_roots(tile)`, and
+`frame_roots(sequence, action, frame)`. Each returns a list, and every list value is a node index.
+`node(index)` decodes a node into an `EffectNode` by its client type key (`uocf` `EFFECT_TYPE_*`):
+
+| Type | Params (`u32` words at `param`) | `first`/`count` |
+|---|---|---|
+| Particle (0) | system index (or `NONE`), offset_x, offset_y, camera_offset, scale, duration (f32 bits), attach_mode, field_3c | — |
+| Sound | sound_id, value_08 (f32 bits) | — |
+| RoundRobin | — | list |
+| PositionOffset | 16 bytes `x0 y0 .. x7 y7` (`i8`, per direction from north) | — |
+| Wait | min_delay_ms, max_delay_ms | list |
+| Lod | — | branches: key = level, ascending |
+| PropertyFlag | mask low, mask high, property, default list first, default list count | branches: key = case, ascending |
+| Earthquake | amplitude, duration, frequency (f64, low word first) | — |
+| Random | — | branches in file order, key = weight (f32 bits) |
+| UserPreference | mask | list |
+
+Node flags: `NODE_FLAG_LOOPING`, `NODE_FLAG_HUED` (Particle), `NODE_FLAG_WAIT_ALIGNED`, and
+`NODE_FLAG_PROPERTY_MODE` (PropertyFlag `Property` mode; clear means `FlagMask`).
+
+- Lod levels and PropertyFlag cases are client `std::map`s. When a key repeats, the packer keeps its
+  last list, as the client does, and reports the repeat. Random weights stay in file order.
+- A Particle node names its system by index. The index is `NONE` when the string dictionary lacks the
+  name, or when the name is neither `.ems` nor `.nif`. The client plays nothing for such a node.
+- `hued`: only NIF effects are ever hued. A hued NIF runs at half speed and is drawn through an
+  offscreen pass with a `Hues.dds` lookup. That is runtime behaviour, so the package keeps only the
+  flag. `.ems` effects are never hued.
+- Collection: only entries named by id are stored. Entries known only by hash cannot be reached by id
+  and are reported. The explode field of a 0xC7 moving effect plays collection `(N - 1) & 0xffff`
+  (0 is the classic item 0x36CB).
+- Sequence frames are keyed by the `AnimationSequence` entry id (`MobileAnimEcBodyRecord::sequence_id`),
+  by the action of the record that holds them, and by the frame index. Aliases are not resolved. The
+  client looks a frame's effects up under the requested action's own record, and alias records carry
+  no effects, so nothing is inherited. Frame effects play on the animated object, so `hued` applies
+  to them.
+
+### Systems
+
+Names are normalized: the last path segment of the resource, trimmed and ASCII-lowercased
+(`normalize_resource_name`). That is the client's `data/effects/<name>` lookup.
+`system_by_name` and `texture_by_name` binary-search on it. `kind` is `SYSTEM_KIND_CHAOS` (`.ems`)
+or `SYSTEM_KIND_NIF` (`.nif`).
+
+- Flags: `MISSING` (no `EffectTexture.uop` entry; the client plays nothing), `COMPILE_FAILED`, and
+  `COMPILE_WARNINGS` (the packer report lists them). `DEFINITION_ROOT` means a particle definition
+  names the system. When it is clear, only a Chaos MESH sequence uses the system.
+- Missing and failed systems have no payload.
+- Dependencies (`system_dependencies`):
+  - Chaos POINT and AXIAL sequences depend on their texture.
+  - Chaos MESH sequences depend on their `.nif`, which is packed as a NIF system.
+  - A NIF depends on each texture it uses, in texture-index order.
+  - EMITTER sequences are not simulated by `particle-sim`. They are reported and not packed.
+- Blobs are `particle_sim::codec` (`encode_chaos_desc` / `encode_nif_desc`). The module documentation
+  holds the binary rules and tag tables. A blob decodes exactly to what `particle_sim` compiles from
+  the source; the packer checks this round trip for every system.
+- Embedded NIF textures (`NiPixelData`) are stored as the textures `<nif name>#<index>`. Their desc
+  sources are rewritten to `External { "<nif name>#<index>" }`, so a renderer resolves every texture
+  of a desc by name through `texture_by_name`. `udd_conv::effects_ec::compile_nif_for_package`
+  compiles a NIF the same way.
+
+### Textures
+
+Formats: `RGBA8` (top row first, straight alpha), `BC7`, `BC1`, and `BC3`. All are gamma-space
+`Unorm` with no sRGB, like the D3D9 fixed-function client. Level `n` is `max(1, size >> n)`, and a
+payload is every level back to back (`texture_payload_len`). Flags:
+
+- `EMBEDDED`;
+- `OPAQUE` (every level-0 alpha is 255);
+- `AUTHORED_MIPS` (levels 1.. come from the source);
+- `MISSING`, `UNDECODED` (an embedded pixel format the packer does not decode) and `DECODE_FAILED`.
+  These three mean no payload.
+
+`source` is `TGA`, `DDS` or `NIF_PIXEL_DATA`.
+
+- DDS DXT1 and DXT5 sources with a size that is a multiple of 4 pass through as BC1 and BC3 blocks.
+  Other DDS sources decode to RGBA8. The levels kept follow `NiDDSReader` (`NiDDSReader.cpp:313-323`):
+  the file's levels when `DDSCAPS_COMPLEX | DDSCAPS_MIPMAP` is set and the count is not 1.
+- TGA is decoded as Gamebryo 2.6 `NiTGAReader` decodes it (`CoreLibs/NiMain/NiTGAReader.cpp`):
+  - types 1, 2, 3, 9, 10 and 11;
+  - RLE runs that cross rows;
+  - rows flipped unless attribute bit 0x20 is set;
+  - 8-bit greyscale expanded to R = G = B with alpha 255 (`Unpack8BitSourceRowGray`, `:176-189`, into
+    RGB24);
+  - alpha only from 32-bit pixels or colour-map entries (`ReadHeader`, `:453-466`);
+  - 15/16-bit pixels as `(hi & 0x7C) << 1, ((hi & 3) << 6) + ((lo & 0xE0) >> 2), (lo & 0x1F) << 3`,
+    without bit replication;
+  - colour-map indices taken relative to the first entry.
+
+  4-bit colour-mapped pixels are not supported.
+- Mipmaps follow each texture's own `NiSourceTexture` format preferences, as the D3D9 renderer applies
+  them (`NiDX9SourceTextureData.cpp:375-378`): a texture is mipmapped when a user says `YES`, or says
+  `MIP_DEFAULT` and the default is on. The SDK default is off (`NiTexture.cpp:27`
+  `ms_bMipmapByDefault = false`), and Chaos-only textures count as `MIP_DEFAULT`. When users disagree
+  and one says `YES`, the texture gets mipmaps and the report notes the conflict.
+- A chain is generated only as `NiDevImageConverter` generates one (`NiDevImageConverter.cpp:453-470`):
+  - the source has a single level;
+  - the source is uncompressed (not a block-compressed DDS);
+  - width and height are powers of two.
+
+  It is a truncating 2x2 box (`(a + b + c + d) >> 2`, or `(a + b) >> 1` once a side is 1) down to 1x1
+  (`GenerateMipmapLevels`, `:1108-1290`). Authored levels are kept as they are.
+- RGBA8 is the default. With `--bc7`, RGBA8 textures whose size is a multiple of 4 are encoded to BC7,
+  every level included. BC1 and BC3 sources stay as they are. Sizes that are not a multiple of 4 stay
+  RGBA8.
+
+### Compression and the packer report
+
+Manifests and textures use the CLI compression (`ZstdNoDict` by default, `--zstd=LEVEL`). System blobs
+use `CompressionFlag::Auto`, which takes a trained dictionary for small blobs when one is worth training.
+
+The packer lists every finding with a severity:
+
+- errors: missing particle files, sources that do not decode, codec mismatches;
+- warnings: missing systems and textures, dropped hash-only entries, EMITTER sequences;
+- info: compiler notes, alias records, mip conflicts, and the unreferenced `EffectTexture.uop`
+  resources (`.ems`, `.nif`, `.tga`, `.dds` that nothing reaches; not packed).
+
+`--report FILE` writes the findings, one line each. `--strict` fails on any error finding.
+
+`tests/effects_ec_package_client.rs` in `udd-conv` (ignored) checks a package against the client. Set
+`UO_EC_CLIENT_DIR`; set `UDD_EFFECTS_EC_UDDP` to check a prebuilt package instead of packing in
+memory; run with `--ignored`. It checks that:
+
+- every collection entry equals the client tree;
+- every tile and frame resolves;
+- every blob equals a fresh compile;
+- textures match their sources' size, format and levels;
+- decoded and freshly compiled systems simulate identical frames from the same seed.

@@ -221,6 +221,8 @@ pub enum DataType {
     Sector = 12,
     Tile = 13,
     Static = 14,
+    /// Compiled particle effect systems (`effects_ec.uddp` system blobs).
+    Effect = 15,
 }
 
 // =============================================================================

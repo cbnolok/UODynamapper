@@ -59,6 +59,9 @@ pub struct NifCompileOutput {
     pub desc: NifEffectDesc,
     /// Unsupported or malformed objects, one line each.
     pub warnings: Vec<String>,
+    /// NIF block index of the `NiSourceTexture` of each [`NifEffectDesc::textures`] entry, by texture index
+    /// (for converters that need what the desc does not keep: format preferences, embedded mip levels).
+    pub texture_blocks: Vec<usize>,
 }
 
 impl NifEffectDesc {
@@ -77,7 +80,11 @@ pub fn compile(nif: &NifFile, name: &str) -> NifCompileOutput {
         tables: Tables::default(),
     };
     compiler.run();
-    NifCompileOutput { desc: compiler.desc, warnings: compiler.warnings }
+    let mut texture_blocks = vec![0; compiler.desc.textures.len()];
+    for (&block, &index) in &compiler.tables.texture_of_block {
+        texture_blocks[index] = block;
+    }
+    NifCompileOutput { desc: compiler.desc, warnings: compiler.warnings, texture_blocks }
 }
 
 struct Compiler<'a> {
@@ -947,25 +954,30 @@ fn morph(data: &NiMorphData) -> NifMorph {
 
 /// `NiPixelData` mip level 0 as RGBA8 (32-bit RGBA and 24-bit RGB; other formats are left undecoded).
 fn decode_pixels(pixels: &NiPixelData) -> NifTextureSource {
+    match decode_pixel_level(pixels, 0) {
+        Some((width, height, rgba)) => NifTextureSource::Embedded { width, height, rgba },
+        None => NifTextureSource::Undecoded { format: pixels.pixel_format.format.0 },
+    }
+}
+
+/// Mip level `level` of `NiPixelData` as RGBA8 rows (width, height, pixels), or `None` when the level is absent,
+/// out of the pixel bytes, or in a format other than 32-bit RGBA and 24-bit RGB (alpha 255).
+pub fn decode_pixel_level(pixels: &NiPixelData, level: usize) -> Option<(u32, u32, Vec<u8>)> {
     let format = &pixels.pixel_format;
-    let Some(level) = pixels.mipmaps.first() else {
-        return NifTextureSource::Undecoded { format: format.format.0 };
-    };
+    let level = pixels.mipmaps.get(level)?;
     let (width, height) = (level.width, level.height);
     let count = width as usize * height as usize;
     let offset = level.offset_in_bytes as usize;
     let bytes_per_pixel = match (format.format, format.bits_per_pixel) {
         (PixelFormatFormat::FORMAT_RGBA, RGBA_BITS_PER_PIXEL) => RGBA_BYTES_PER_PIXEL,
         (PixelFormatFormat::FORMAT_RGB, RGB_BITS_PER_PIXEL) => RGB_BYTES_PER_PIXEL,
-        _ => return NifTextureSource::Undecoded { format: format.format.0 },
+        _ => return None,
     };
-    let Some(source) = pixels.pixels.get(offset..offset + count * bytes_per_pixel) else {
-        return NifTextureSource::Undecoded { format: format.format.0 };
-    };
+    let source = pixels.pixels.get(offset..offset + count * bytes_per_pixel)?;
     let rgba = if bytes_per_pixel == RGBA_BYTES_PER_PIXEL {
         source.to_vec()
     } else {
         source.chunks_exact(RGB_BYTES_PER_PIXEL).flat_map(|p| [p[0], p[1], p[2], OPAQUE_ALPHA]).collect()
     };
-    NifTextureSource::Embedded { width, height, rgba }
+    Some((width, height, rgba))
 }

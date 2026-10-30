@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use particle_sim::chaos::compile::compile_chaos_source;
 use particle_sim::chaos::lexer_check::check_client_lexer;
+use particle_sim::codec::{decode_chaos_desc, encode_chaos_desc};
 use particle_sim::chaos::{ChaosIssueKind, ChaosSystem, ChaosSystemDesc};
 use particle_sim::render::{CameraFrame, QuadVertex, RenderFrame, expand_frame};
 use particle_sim::{ChaosEffectInstance, NodeTransform, ParticleSystemInstance, Vec3};
@@ -162,6 +163,7 @@ fn compile_and_simulate_every_chaos_script() {
         }
         let errors: Vec<String> = report.errors().map(ToString::to_string).collect();
         let desc = report.desc.unwrap_or_else(|| panic!("{name} does not compile: {errors:?}"));
+        assert_eq!(decode_chaos_desc(&encode_chaos_desc(&desc)).as_ref(), Ok(&desc), "{name}: codec round trip");
         scripts.push((name, desc));
     }
     scripts.sort_by(|a, b| a.0.cmp(&b.0));

@@ -55,6 +55,7 @@ fn data_type_name(data_type: u8) -> &'static str {
         12 => "Sector",
         13 => "Tile",
         14 => "Static",
+        15 => "Effect",
         _ => "Custom",
     }
 }

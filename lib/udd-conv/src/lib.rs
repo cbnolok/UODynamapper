@@ -29,6 +29,7 @@ pub mod world_lights;
 pub mod hues;
 pub mod mobile_anim_cc;
 pub mod mobile_anim_ec;
+pub mod effects_ec;
 mod rgba_bounds;
 pub use image_postprocess::upscaling;
 pub mod upscale {

@@ -17,6 +17,7 @@ pub mod world_lights;
 pub mod hues;
 pub mod mobile_anim_cc;
 pub mod mobile_anim_ec;
+pub mod effects_ec;
 pub mod gumps;
 pub mod map_metadata;
 
@@ -30,4 +31,5 @@ pub use world_lights::WorldLightsPackage;
 pub use hues::HuesPackage;
 pub use mobile_anim_cc::MobileAnimCcPackage;
 pub use mobile_anim_ec::MobileAnimEcPackage;
+pub use effects_ec::EffectsEcPackage;
 pub use gumps::GumpsPackage;

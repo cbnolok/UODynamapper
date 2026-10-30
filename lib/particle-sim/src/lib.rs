@@ -16,6 +16,7 @@
 //! crate only runs descriptions it is given.
 
 pub mod chaos;
+pub mod codec;
 pub mod effect;
 pub mod math;
 pub mod nif;
