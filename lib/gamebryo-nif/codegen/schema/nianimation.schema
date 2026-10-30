@@ -1,0 +1,203 @@
+# Stream layout of the NiAnimation classes (interpolator controllers, interpolators, key data).
+#
+# Written from the LoadBinary functions of the Gamebryo 2.6 SDK; `from` paths are relative to the
+# SDK root. Defaults are the values the SDK constructors set.
+
+# ---------------------------------------------------------------------------- controllers
+
+object NiInterpController : NiTimeController abstract from "CoreLibs/NiAnimation/NiInterpController.cpp"
+
+object NiSingleInterpController : NiInterpController abstract from "CoreLibs/NiAnimation/NiSingleInterpController.cpp"
+    interpolator: Ref<NiInterpolator>
+
+object NiBoolInterpController : NiSingleInterpController abstract from "CoreLibs/NiAnimation/NiBoolInterpController.cpp"
+
+object NiFloatInterpController : NiSingleInterpController abstract from "CoreLibs/NiAnimation/NiFloatInterpController.cpp"
+
+object NiPoint3InterpController : NiSingleInterpController abstract from "CoreLibs/NiAnimation/NiPoint3InterpController.cpp"
+
+object NiAlphaController : NiFloatInterpController from "CoreLibs/NiAnimation/NiAlphaController.cpp"
+
+object NiVisController : NiBoolInterpController from "CoreLibs/NiAnimation/NiVisController.cpp"
+
+object NiTransformController : NiSingleInterpController from "CoreLibs/NiAnimation/NiTransformController.cpp"
+
+# NiMaterialColorController::Field.
+enum MaterialColorField : u32 from "CoreLibs/NiAnimation/NiMaterialColorController.h"
+    AMB
+    DIFF
+    SPEC
+    SELF_ILLUM
+
+bitfield MaterialColorFlags : u16 from "CoreLibs/NiAnimation/NiMaterialColorController.h"
+    field: MaterialColorField @0:3
+
+object NiMaterialColorController : NiPoint3InterpController from "CoreLibs/NiAnimation/NiMaterialColorController.cpp"
+    flags: MaterialColorFlags
+
+enum TransformMember : u32 from "CoreLibs/NiAnimation/NiTextureTransformController.h"
+    TT_TRANSLATE_U
+    TT_TRANSLATE_V
+    TT_ROTATE
+    TT_SCALE_U
+    TT_SCALE_V
+
+# Before 20.2.0.5 the SDK shifts a stored map index >= NORMAL_INDEX up by two after reading it.
+object NiTextureTransformController : NiFloatInterpController from "CoreLibs/NiAnimation/NiTextureTransformController.cpp"
+    shader_map: NiBool
+    map_index: u32
+    member: TransformMember
+
+bitfield GeomMorpherFlags : u16 from "CoreLibs/NiAnimation/NiGeomMorpherController.h"
+    update_normals: bool @0
+
+# m_aspInterpolators is read with ReadMultipleLinkIDs (from 10.1.0.104 until 20.1.0.3).
+object NiGeomMorpherController : NiInterpController from "CoreLibs/NiAnimation/NiGeomMorpherController.cpp"
+    flags: GeomMorpherFlags
+    morph_data: Ref<NiMorphData>
+    always_update: NiBool
+    interpolators: Ref<NiInterpolator>[u32]
+
+# ---------------------------------------------------------------------------- interpolators
+
+# Channel types are stored only from NiAnimationConstants::GetPoseVersion() (20.5.0.1) until
+# GetScratchPadVersion() (20.5.0.2), above the supported range.
+object NiInterpolator : NiObject abstract from "CoreLibs/NiAnimation/NiInterpolator.cpp"
+
+object NiKeyBasedInterpolator : NiInterpolator abstract from "CoreLibs/NiAnimation/NiKeyBasedInterpolator.cpp"
+
+object NiBoolInterpolator : NiKeyBasedInterpolator from "CoreLibs/NiAnimation/NiBoolInterpolator.cpp"
+    bool_value: NiBool
+    bool_data: Ref<NiBoolData>
+
+object NiBoolTimelineInterpolator : NiBoolInterpolator from "CoreLibs/NiAnimation/NiBoolTimelineInterpolator.cpp"
+
+object NiFloatInterpolator : NiKeyBasedInterpolator from "CoreLibs/NiAnimation/NiFloatInterpolator.cpp"
+    float_value: f32
+    float_data: Ref<NiFloatData>
+
+object NiPoint3Interpolator : NiKeyBasedInterpolator from "CoreLibs/NiAnimation/NiPoint3Interpolator.cpp"
+    point3_value: NiPoint3
+    point3_data: Ref<NiPosData>
+
+object NiTransformInterpolator : NiKeyBasedInterpolator from "CoreLibs/NiAnimation/NiTransformInterpolator.cpp"
+    transform_value: NiQuatTransform
+    data: Ref<NiTransformData>
+
+bitfield PathFlags : u16 from "CoreLibs/NiAnimation/NiPathInterpolator.h"
+    cv_data_update: bool @0
+    open_curve: bool @1
+    allow_flip: bool @2
+    bank: bool @3
+    const_velocity: bool @4
+    follow: bool @5
+    flip: bool @6
+
+enum BankDir : i32 from "CoreLibs/NiAnimation/NiPathInterpolator.h"
+    NEGATIVE = -1
+    POSITIVE = 1
+
+object NiPathInterpolator : NiKeyBasedInterpolator from "CoreLibs/NiAnimation/NiPathInterpolator.cpp"
+    flags: PathFlags = {cv_data_update: 1, open_curve: 1}
+    bank_dir: BankDir = BankDir.POSITIVE
+    max_bank_angle: f32
+    smoothing: f32
+    follow_axis: i16
+    path_data: Ref<NiPosData>
+    pct_data: Ref<NiFloatData>
+
+# ---------------------------------------------------------------------------- keys
+
+# NiAnimationKey::KeyType: selects the key class the key arrays are made of.
+enum KeyType : u32 from "CoreLibs/NiAnimation/NiAnimationKey.h"
+    NOINTERP
+    LINKEY
+    BEZKEY
+    TCBKEY
+    EULERKEY
+    STEPKEY
+
+# NiEulerRotKey streams one float key list per axis.
+const EULER_AXES = 3
+
+# One float, position or color key; `arg` is the KeyType of the list. NiAnimationKey streams
+# m_fTime, the value class its value, NiBez*Key the in and out tangents, NiTCB*Key the tension,
+# continuity and bias.
+struct NiKey<T> from "CoreLibs/NiAnimation/NiAnimationKey.cpp" "CoreLibs/NiAnimation/NiFloatKey.cpp" "CoreLibs/NiAnimation/NiBezFloatKey.cpp" "CoreLibs/NiAnimation/NiTCBFloatKey.cpp" "CoreLibs/NiAnimation/NiPosKey.cpp" "CoreLibs/NiAnimation/NiBezPosKey.cpp" "CoreLibs/NiAnimation/NiTCBPosKey.cpp" "CoreLibs/NiAnimation/NiColorKey.cpp"
+    time: f32
+    value: T
+    in_tan: T if arg == KeyType.BEZKEY
+    out_tan: T if arg == KeyType.BEZKEY
+    tension: f32 if arg == KeyType.TCBKEY
+    continuity: f32 if arg == KeyType.TCBKEY
+    bias: f32 if arg == KeyType.TCBKEY
+
+# NiBoolKey streams its value as a NiBool.
+struct NiBoolKey from "CoreLibs/NiAnimation/NiBoolKey.cpp"
+    time: f32
+    bool: NiBool
+
+# One axis of a NiEulerRotKey: m_uiNumKeys[axis], m_eType[axis] if there are keys, the keys.
+struct NiEulerRotKeyAxis from "CoreLibs/NiAnimation/NiEulerRotKey.cpp"
+    num_keys: u32
+    key_type: KeyType if num_keys > 0
+    keys: NiKey<f32>[num_keys] arg key_type
+
+# One rotation key; `arg` is the KeyType of the list. NiRotKey streams m_fTime and m_quat
+# (NiBezRotKey adds nothing), NiTCBRotKey adds tension, continuity and bias, and NiEulerRotKey
+# streams its three axis key lists instead.
+struct NiRotKey from "CoreLibs/NiAnimation/NiRotKey.cpp" "CoreLibs/NiAnimation/NiTCBRotKey.cpp" "CoreLibs/NiAnimation/NiEulerRotKey.cpp"
+    time: f32 if arg != KeyType.EULERKEY
+    quat: NiQuaternion if arg != KeyType.EULERKEY
+    tension: f32 if arg == KeyType.TCBKEY
+    continuity: f32 if arg == KeyType.TCBKEY
+    bias: f32 if arg == KeyType.TCBKEY
+    axes: NiEulerRotKeyAxis[EULER_AXES] if arg == KeyType.EULERKEY
+
+# ---------------------------------------------------------------------------- key data
+
+# The key type is stored only when there are keys; bool keys default to step keys.
+object NiBoolData : NiObject from "CoreLibs/NiAnimation/NiBoolData.cpp"
+    num_keys: u32
+    key_type: KeyType = KeyType.STEPKEY if num_keys > 0
+    keys: NiBoolKey[num_keys] arg key_type
+
+object NiFloatData : NiObject from "CoreLibs/NiAnimation/NiFloatData.cpp"
+    num_keys: u32
+    key_type: KeyType if num_keys > 0
+    keys: NiKey<f32>[num_keys] arg key_type
+
+object NiColorData : NiObject from "CoreLibs/NiAnimation/NiColorData.cpp"
+    num_keys: u32
+    key_type: KeyType if num_keys > 0
+    keys: NiKey<NiColorA>[num_keys] arg key_type
+
+object NiPosData : NiObject from "CoreLibs/NiAnimation/NiPosData.cpp"
+    num_keys: u32
+    key_type: KeyType if num_keys > 0
+    keys: NiKey<NiPoint3>[num_keys] arg key_type
+
+# Three key lists in a row: rotation, position (translation) and scale.
+object NiTransformData : NiObject from "CoreLibs/NiAnimation/NiTransformData.cpp"
+    num_rot_keys: u32
+    rot_type: KeyType if num_rot_keys > 0
+    rot_keys: NiRotKey[num_rot_keys] arg rot_type
+    num_pos_keys: u32
+    pos_type: KeyType if num_pos_keys > 0
+    pos_keys: NiKey<NiPoint3>[num_pos_keys] arg pos_type
+    num_scale_keys: u32
+    scale_type: KeyType if num_scale_keys > 0
+    scale_keys: NiKey<f32>[num_scale_keys] arg scale_type
+
+# NiMorphData::MorphTarget::LoadBinary(stream, m_uiNumVertsPerTarget); `arg` is the vertex
+# count. The legacy weight is stored from 10.1.0.104 until 20.1.0.3.
+struct NiMorphTarget from "CoreLibs/NiAnimation/NiMorphData.cpp"
+    name: string
+    legacy_weight: f32
+    target_verts: NiPoint3[arg]
+
+object NiMorphData : NiObject from "CoreLibs/NiAnimation/NiMorphData.cpp"
+    num_targets: u32
+    num_verts_per_target: u32
+    relative_targets: NiBool
+    morph_targets: NiMorphTarget[num_targets] arg num_verts_per_target

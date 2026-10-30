@@ -1,0 +1,219 @@
+# Stream layout of the NiParticle system classes (the "_Deprecated" particle system of 2.6, the
+# one NIF files up to 20.2 store).
+#
+# Written from the LoadBinary functions of the Gamebryo 2.6 SDK; `from` paths are relative to the
+# SDK root. Defaults are the values the SDK constructors set.
+
+# ---------------------------------------------------------------------------- particle data
+
+# The rotation axis moved out of NiParticleInfo in 10.3.0.5; older files still store one.
+struct NiParticleInfo from "CoreLibs/NiParticle/_Deprecated/NiParticleInfo.cpp"
+    velocity: NiPoint3
+    rotation_axis: NiPoint3 before 10.3.0.5
+    age: f32
+    life_span: f32
+    last_update: f32
+    generation: u16
+    code: u16
+
+object NiPSysData : NiParticlesData from "CoreLibs/NiParticle/_Deprecated/NiPSysData.cpp"
+    particle_info: NiParticleInfo[vertices]
+    has_rotation_speeds: NiBool since 20.0.0.2
+    rotation_speeds: f32[vertices] if has_rotation_speeds since 20.0.0.2
+    num_added_particles: u16
+    added_particles_base: u16
+
+# The pool sizes of the generations are read and discarded by the SDK.
+object NiMeshPSysData : NiPSysData from "CoreLibs/NiParticle/_Deprecated/NiMeshPSysData.cpp"
+    default_pool_size: u32
+    fill_pools_on_load: NiBool
+    generation_pool_size: u32[u32]
+    particle_meshes: Ref<NiNode>
+
+# ---------------------------------------------------------------------------- particle systems
+
+object NiParticleSystem : NiParticles from "CoreLibs/NiParticle/_Deprecated/NiParticleSystem.cpp"
+    world_space: NiBool
+    modifier_list: Ref<NiPSysModifier>[u32]
+
+object NiMeshParticleSystem : NiParticleSystem from "CoreLibs/NiParticle/_Deprecated/NiMeshParticleSystem.cpp"
+
+# ---------------------------------------------------------------------------- modifiers
+
+# NiPSysModifier's ORDER_* constants; m_uiOrder is an unsigned int that may hold other values.
+enum ModifierOrder : u32 from "CoreLibs/NiParticle/_Deprecated/NiPSysModifier.h"
+    ORDER_KILLOLDPARTICLES = 0
+    ORDER_EMITTER = 1000
+    ORDER_SPAWN = 2000
+    ORDER_GENERAL = 3000
+    ORDER_FORCE = 4000
+    ORDER_COLLIDER = 5000
+    ORDER_POSUPDATE = 6000
+    ORDER_POSTPOSUPDATE = 6500
+    ORDER_BOUNDUPDATE = 7000
+
+# m_pkTarget is a raw NiParticleSystem pointer.
+object NiPSysModifier : NiObject abstract from "CoreLibs/NiParticle/_Deprecated/NiPSysModifier.cpp"
+    name: string
+    order: ModifierOrder
+    target: Ptr<NiParticleSystem>
+    active: NiBool = true
+
+object NiPSysAgeDeathModifier : NiPSysModifier from "CoreLibs/NiParticle/_Deprecated/NiPSysAgeDeathModifier.cpp"
+    spawn_on_death: NiBool
+    spawn_modifier: Ptr<NiPSysSpawnModifier>
+
+enum DecayType : u32 from "CoreLibs/NiParticle/_Deprecated/NiPSysBombModifier.h"
+    NONE
+    LINEAR
+    EXPONENTIAL
+
+enum SymmType : u32 from "CoreLibs/NiParticle/_Deprecated/NiPSysBombModifier.h"
+    SPHERICAL
+    CYLINDRICAL
+    PLANAR
+
+object NiPSysBombModifier : NiPSysModifier from "CoreLibs/NiParticle/_Deprecated/NiPSysBombModifier.cpp"
+    bomb_obj: Ptr<NiAVObject>
+    bomb_axis: NiPoint3
+    decay: f32
+    delta_v: f32
+    decay_type: DecayType
+    symm_type: SymmType
+
+# After 10.1.0.100 the update skip is streamed as the signed m_sUpdateSkip.
+object NiPSysBoundUpdateModifier : NiPSysModifier from "CoreLibs/NiParticle/_Deprecated/NiPSysBoundUpdateModifier.cpp"
+    update_skip: i16
+
+object NiPSysColorModifier : NiPSysModifier from "CoreLibs/NiParticle/_Deprecated/NiPSysColorModifier.cpp"
+    color_data: Ref<NiColorData>
+
+object NiPSysDragModifier : NiPSysModifier from "CoreLibs/NiParticle/_Deprecated/NiPSysDragModifier.cpp"
+    drag_obj: Ptr<NiAVObject>
+    drag_axis: NiPoint3
+    percentage: f32
+    range: f32
+    falloff: f32
+
+enum ForceType : u32 from "CoreLibs/NiParticle/_Deprecated/NiPSysGravityModifier.h"
+    FORCE_PLANAR
+    FORCE_SPHERICAL
+
+object NiPSysGravityModifier : NiPSysModifier from "CoreLibs/NiParticle/_Deprecated/NiPSysGravityModifier.cpp"
+    gravity_obj: Ptr<NiAVObject>
+    gravity_axis: NiPoint3
+    decay: f32
+    strength: f32
+    type: ForceType
+    turbulence: f32
+    scale: f32
+
+object NiPSysGrowFadeModifier : NiPSysModifier from "CoreLibs/NiParticle/_Deprecated/NiPSysGrowFadeModifier.cpp"
+    grow_time: f32
+    grow_generation: u16
+    fade_time: f32
+    fade_generation: u16
+
+object NiPSysMeshUpdateModifier : NiPSysModifier from "CoreLibs/NiParticle/_Deprecated/NiPSysMeshUpdateModifier.cpp"
+    meshes: Ref<NiAVObject>[u32]
+
+object NiPSysPositionModifier : NiPSysModifier from "CoreLibs/NiParticle/_Deprecated/NiPSysPositionModifier.cpp"
+
+object NiPSysRotationModifier : NiPSysModifier from "CoreLibs/NiParticle/_Deprecated/NiPSysRotationModifier.cpp"
+    initial_rot_speed: f32
+    initial_rot_speed_var: f32 since 20.0.0.2
+    initial_rot_angle: f32 since 20.0.0.2
+    initial_rot_angle_var: f32 since 20.0.0.2
+    random_rot_speed_sign: NiBool since 20.0.0.2
+    random_initial_axis: NiBool
+    initial_axis: NiPoint3
+
+object NiPSysSpawnModifier : NiPSysModifier from "CoreLibs/NiParticle/_Deprecated/NiPSysSpawnModifier.cpp"
+    num_spawn_generations: u16
+    percentage_spawned: f32
+    min_num_to_spawn: u16
+    max_num_to_spawn: u16
+    spawn_speed_chaos: f32
+    spawn_dir_chaos: f32
+    life_span: f32
+    life_span_var: f32
+
+# ---------------------------------------------------------------------------- emitters
+
+object NiPSysEmitter : NiPSysModifier abstract from "CoreLibs/NiParticle/_Deprecated/NiPSysEmitter.cpp"
+    speed: f32
+    speed_var: f32
+    declination: f32
+    declination_var: f32
+    planar_angle: f32
+    planar_angle_var: f32
+    initial_color: NiColorA = {1.0, 1.0, 1.0, 1.0}
+    initial_radius: f32 = 1.0
+    radius_var: f32 since 10.3.0.2
+    life_span: f32
+    life_span_var: f32
+
+object NiPSysVolumeEmitter : NiPSysEmitter abstract from "CoreLibs/NiParticle/_Deprecated/NiPSysVolumeEmitter.cpp"
+    emitter_obj: Ptr<NiAVObject>
+
+object NiPSysBoxEmitter : NiPSysVolumeEmitter from "CoreLibs/NiParticle/_Deprecated/NiPSysBoxEmitter.cpp"
+    emitter_width: f32
+    emitter_height: f32
+    emitter_depth: f32
+
+object NiPSysCylinderEmitter : NiPSysVolumeEmitter from "CoreLibs/NiParticle/_Deprecated/NiPSysCylinderEmitter.cpp"
+    emitter_radius: f32
+    emitter_height: f32
+
+object NiPSysSphereEmitter : NiPSysVolumeEmitter from "CoreLibs/NiParticle/_Deprecated/NiPSysSphereEmitter.cpp"
+    emitter_radius: f32
+
+enum InitialVelocityType : u32 from "CoreLibs/NiParticle/_Deprecated/NiPSysMeshEmitter.h"
+    NI_VELOCITY_USE_NORMALS
+    NI_VELOCITY_USE_RANDOM
+    NI_VELOCITY_USE_DIRECTION
+
+enum MeshEmissionType : u32 from "CoreLibs/NiParticle/_Deprecated/NiPSysMeshEmitter.h"
+    NI_EMIT_FROM_VERTICES
+    NI_EMIT_FROM_FACE_CENTER
+    NI_EMIT_FROM_EDGE_CENTER
+    NI_EMIT_FROM_FACE_SURFACE
+    NI_EMIT_FROM_EDGE_SURFACE
+
+# m_kGeomEmitterArray is a NiTObjectArray<NiGeometryPtr>.
+object NiPSysMeshEmitter : NiPSysEmitter from "CoreLibs/NiParticle/_Deprecated/NiPSysMeshEmitter.cpp"
+    geom_emitter_array: Ref<NiGeometry>[u32]
+    init_velocity_type: InitialVelocityType
+    emission_type: MeshEmissionType
+    emit_axis: NiPoint3
+
+# ---------------------------------------------------------------------------- controllers
+
+object NiPSysUpdateCtlr : NiTimeController from "CoreLibs/NiParticle/_Deprecated/NiPSysUpdateCtlr.cpp"
+
+object NiPSysResetOnLoopCtlr : NiTimeController from "CoreLibs/NiParticle/_Deprecated/NiPSysResetOnLoopCtlr.cpp"
+
+object NiPSysModifierCtlr : NiSingleInterpController abstract from "CoreLibs/NiParticle/_Deprecated/NiPSysModifierCtlr.cpp"
+    modifier_name: string
+
+# Before 10.1.0.104 a data link takes the interpolator's place.
+object NiPSysEmitterCtlr : NiPSysModifierCtlr from "CoreLibs/NiParticle/_Deprecated/NiPSysEmitterCtlr.cpp"
+    emitter_active_interpolator: Ref<NiInterpolator>
+
+object NiPSysModifierBoolCtlr : NiPSysModifierCtlr abstract from "CoreLibs/NiParticle/_Deprecated/NiPSysModifierBoolCtlr.cpp"
+
+object NiPSysModifierFloatCtlr : NiPSysModifierCtlr abstract from "CoreLibs/NiParticle/_Deprecated/NiPSysModifierFloatCtlr.cpp"
+
+object NiPSysModifierActiveCtlr : NiPSysModifierBoolCtlr from "CoreLibs/NiParticle/_Deprecated/NiPSysModifierActiveCtlr.cpp"
+
+object NiPSysEmitterInitialRadiusCtlr : NiPSysModifierFloatCtlr from "CoreLibs/NiParticle/_Deprecated/NiPSysEmitterInitialRadiusCtlr.cpp"
+
+object NiPSysEmitterLifeSpanCtlr : NiPSysModifierFloatCtlr from "CoreLibs/NiParticle/_Deprecated/NiPSysEmitterLifeSpanCtlr.cpp"
+
+object NiPSysEmitterSpeedCtlr : NiPSysModifierFloatCtlr from "CoreLibs/NiParticle/_Deprecated/NiPSysEmitterSpeedCtlr.cpp"
+
+object NiPSysGravityStrengthCtlr : NiPSysModifierFloatCtlr from "CoreLibs/NiParticle/_Deprecated/NiPSysGravityStrengthCtlr.cpp"
+
+object NiPSysInitialRotSpeedCtlr : NiPSysModifierFloatCtlr from "CoreLibs/NiParticle/_Deprecated/NiPSysInitialRotSpeedCtlr.cpp"
+
+object NiPSysInitialRotSpeedVarCtlr : NiPSysModifierFloatCtlr from "CoreLibs/NiParticle/_Deprecated/NiPSysInitialRotSpeedVarCtlr.cpp"

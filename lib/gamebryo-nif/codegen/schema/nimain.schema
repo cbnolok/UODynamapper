@@ -1,0 +1,620 @@
+# Stream layout of the NiMain classes (scene graph, properties, extra data, effects, textures,
+# geometry and the time controller base).
+#
+# Written from the LoadBinary functions of the Gamebryo 2.6 SDK; `from` paths are relative to the
+# SDK root. Defaults are the values the SDK constructors set. Members read into locals take the
+# local's name without its type prefix (NiBool bHasMap -> has_map).
+
+# ---------------------------------------------------------------------------- object roots
+
+# NiObject::LoadBinary reads a group id only before 10.1.0.114, below the supported range.
+object NiObject abstract from "CoreLibs/NiMain/NiObject.cpp"
+
+# NiExtraData** m_ppkExtra is read with ReadMultipleLinkIDs (u32 count, then link ids); the
+# object holds a reference to each entry.
+object NiObjectNET : NiObject abstract from "CoreLibs/NiMain/NiObjectNET.cpp"
+    name: string
+    extra: Ref<NiExtraData>[u32]
+    controllers: Ref<NiTimeController>
+
+# m_kLocal is the NiTransform (translate, rotate, scale) streamed member by member.
+object NiAVObject : NiObjectNET abstract from "CoreLibs/NiMain/NiAVObject.cpp"
+    flags: u16
+    translate: NiPoint3
+    rotate: NiMatrix3 = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0}
+    scale: f32 = 1.0
+    property_list: Ref<NiProperty>[u32]
+    collision_object: Ref<NiCollisionObject>
+
+# m_kEffectList is a NiTPointerList<NiDynamicEffect*>: the node does not own its effects.
+object NiNode : NiAVObject from "CoreLibs/NiMain/NiNode.cpp"
+    children: Ref<NiAVObject>[u32]
+    effect_list: Ptr<NiDynamicEffect>[u32]
+
+enum FaceMode : u32 from "CoreLibs/NiMain/NiBillboardNode.h"
+    ALWAYS_FACE_CAMERA
+    ROTATE_ABOUT_UP
+    RIGID_FACE_CAMERA
+    ALWAYS_FACE_CENTER
+    RIGID_FACE_CENTER
+
+bitfield BillboardFlags : u16 from "CoreLibs/NiMain/NiBillboardNode.h"
+    face_mode: FaceMode @0:3
+    update_controllers: bool @3
+
+object NiBillboardNode : NiNode from "CoreLibs/NiMain/NiBillboardNode.cpp"
+    flags: BillboardFlags
+
+enum SortingMode : u32 from "CoreLibs/NiMain/NiSortAdjustNode.h"
+    SORTING_INHERIT
+    SORTING_OFF
+
+object NiSortAdjustNode : NiNode from "CoreLibs/NiMain/NiSortAdjustNode.cpp"
+    sorting_mode: SortingMode
+    accum: Ref<NiAccumulator> before 20.0.0.4
+
+# ---------------------------------------------------------------------------- properties
+
+object NiProperty : NiObjectNET abstract from "CoreLibs/NiMain/NiProperty.cpp"
+
+enum AlphaFunction : u32 from "CoreLibs/NiMain/NiAlphaProperty.h"
+    ALPHA_ONE
+    ALPHA_ZERO
+    ALPHA_SRCCOLOR
+    ALPHA_INVSRCCOLOR
+    ALPHA_DESTCOLOR
+    ALPHA_INVDESTCOLOR
+    ALPHA_SRCALPHA
+    ALPHA_INVSRCALPHA
+    ALPHA_DESTALPHA
+    ALPHA_INVDESTALPHA
+    ALPHA_SRCALPHASAT
+
+# NiAlphaProperty::TestFunction.
+enum AlphaTestFunction : u32 from "CoreLibs/NiMain/NiAlphaProperty.h"
+    TEST_ALWAYS
+    TEST_LESS
+    TEST_EQUAL
+    TEST_LESSEQUAL
+    TEST_GREATER
+    TEST_NOTEQUAL
+    TEST_GREATEREQUAL
+    TEST_NEVER
+
+bitfield AlphaFlags : u16 from "CoreLibs/NiMain/NiAlphaProperty.h"
+    alpha_blend: bool @0
+    src_blend: AlphaFunction @1:4
+    dest_blend: AlphaFunction @5:4
+    test_enable: bool @9
+    test_func: AlphaTestFunction @10:3
+    no_sorter: bool @13
+
+object NiAlphaProperty : NiProperty from "CoreLibs/NiMain/NiAlphaProperty.cpp"
+    flags: AlphaFlags = {src_blend: AlphaFunction.ALPHA_SRCALPHA, dest_blend: AlphaFunction.ALPHA_INVSRCALPHA}
+    alpha_test_ref: u8
+
+bitfield DitherFlags : u16 from "CoreLibs/NiMain/NiDitherProperty.h"
+    dither: bool @0
+
+object NiDitherProperty : NiProperty from "CoreLibs/NiMain/NiDitherProperty.cpp"
+    flags: DitherFlags
+
+object NiMaterialProperty : NiProperty from "CoreLibs/NiMain/NiMaterialProperty.cpp"
+    amb: NiColor = {0.5, 0.5, 0.5}
+    diff: NiColor = {0.5, 0.5, 0.5}
+    spec: NiColor
+    emit: NiColor
+    shine: f32 = 4.0
+    alpha: f32 = 1.0
+
+bitfield SpecularFlags : u16 from "CoreLibs/NiMain/NiSpecularProperty.h"
+    specular: bool @0
+
+object NiSpecularProperty : NiProperty from "CoreLibs/NiMain/NiSpecularProperty.cpp"
+    flags: SpecularFlags
+
+# NiStencilProperty::TestFunc.
+enum StencilTestFunc : u32 from "CoreLibs/NiMain/NiStencilProperty.h"
+    TEST_NEVER
+    TEST_LESS
+    TEST_EQUAL
+    TEST_LESSEQUAL
+    TEST_GREATER
+    TEST_NOTEQUAL
+    TEST_GREATEREQUAL
+    TEST_ALWAYS
+
+# NiStencilProperty::Action.
+enum StencilAction : u32 from "CoreLibs/NiMain/NiStencilProperty.h"
+    ACTION_KEEP
+    ACTION_ZERO
+    ACTION_REPLACE
+    ACTION_INCREMENT
+    ACTION_DECREMENT
+    ACTION_INVERT
+
+# NiStencilProperty::DrawMode.
+enum StencilDrawMode : u32 from "CoreLibs/NiMain/NiStencilProperty.h"
+    DRAW_CCW_OR_BOTH
+    DRAW_CCW
+    DRAW_CW
+    DRAW_BOTH
+
+# Before 20.1.0.2 the settings are streamed one by one; later versions pack them into m_uFlags.
+object NiStencilProperty : NiProperty from "CoreLibs/NiMain/NiStencilProperty.cpp"
+    enable: NiBool
+    test_func: StencilTestFunc = StencilTestFunc.TEST_GREATER
+    ref: u32
+    mask: u32 = 0xffffffff
+    fail_action: StencilAction = StencilAction.ACTION_KEEP
+    pass_z_fail_action: StencilAction = StencilAction.ACTION_KEEP
+    pass_action: StencilAction = StencilAction.ACTION_INCREMENT
+    draw_mode: StencilDrawMode
+
+enum SourceVertexMode : u32 from "CoreLibs/NiMain/NiVertexColorProperty.h"
+    SOURCE_IGNORE
+    SOURCE_EMISSIVE
+    SOURCE_AMB_DIFF
+
+enum LightingMode : u32 from "CoreLibs/NiMain/NiVertexColorProperty.h"
+    LIGHTING_E
+    LIGHTING_E_A_D
+
+bitfield VertexColorFlags : u16 from "CoreLibs/NiMain/NiVertexColorProperty.h"
+    color_mode: uint @0:3
+    lighting_mode: LightingMode @3
+    source_vertex_mode: SourceVertexMode @4:2
+
+object NiVertexColorProperty : NiProperty from "CoreLibs/NiMain/NiVertexColorProperty.cpp"
+    flags: VertexColorFlags = {lighting_mode: LightingMode.LIGHTING_E_A_D}
+    source_mode: SourceVertexMode
+    lighting_mode: LightingMode = LightingMode.LIGHTING_E_A_D
+
+# NiZBufferProperty::TestFunction.
+enum ZBufferTestFunction : u32 from "CoreLibs/NiMain/NiZBufferProperty.h"
+    TEST_ALWAYS
+    TEST_LESS
+    TEST_EQUAL
+    TEST_LESSEQUAL
+    TEST_GREATER
+    TEST_NOTEQUAL
+    TEST_GREATEREQUAL
+    TEST_NEVER
+
+bitfield ZBufferFlags : u16 from "CoreLibs/NiMain/NiZBufferProperty.h"
+    z_buffer_test: bool @0
+    z_buffer_write: bool @1
+    test_function: ZBufferTestFunction @2:4
+
+object NiZBufferProperty : NiProperty from "CoreLibs/NiMain/NiZBufferProperty.cpp"
+    flags: ZBufferFlags = {z_buffer_test: 1, z_buffer_write: 1, test_function: ZBufferTestFunction.TEST_LESSEQUAL}
+    test_function: ZBufferTestFunction = ZBufferTestFunction.TEST_LESSEQUAL
+
+# ---------------------------------------------------------------------------- texturing
+
+# NiTexturingProperty::MapEnum: the slot of each map in the streamed map list.
+const BASE_INDEX = 0
+const DARK_INDEX = 1
+const DETAIL_INDEX = 2
+const GLOSS_INDEX = 3
+const GLOW_INDEX = 4
+const BUMP_INDEX = 5
+const NORMAL_INDEX = 6
+# Two shorts (the PS2 L and K values) stored before 10.3.0.4.
+const L_AND_K_COUNT = 2
+
+enum ApplyMode : u32 from "CoreLibs/NiMain/NiTexturingProperty.h"
+    APPLY_REPLACE
+    APPLY_DECAL
+    APPLY_MODULATE
+    APPLY_DEPRECATED
+    APPLY_DEPRECATED2
+
+enum ClampMode : u32 from "CoreLibs/NiMain/NiTexturingProperty.h"
+    CLAMP_S_CLAMP_T
+    CLAMP_S_WRAP_T
+    WRAP_S_CLAMP_T
+    WRAP_S_WRAP_T
+
+enum FilterMode : u32 from "CoreLibs/NiMain/NiTexturingProperty.h"
+    FILTER_NEAREST
+    FILTER_BILERP
+    FILTER_TRILERP
+    FILTER_NEAREST_MIPNEAREST
+    FILTER_NEAREST_MIPLERP
+    FILTER_BILERP_MIPNEAREST
+    FILTER_ANISOTROPIC
+
+# NiTexturingProperty::Map. Before 20.1.0.2 the clamp mode, filter mode and texture coordinate
+# set are streamed one by one; later versions pack them into m_uFlags.
+struct TexturingMap from "CoreLibs/NiMain/NiTexturingProperty.cpp"
+    texture: Ref<NiTexture>
+    clamp_mode: ClampMode = ClampMode.WRAP_S_WRAP_T
+    filter_mode: FilterMode = FilterMode.FILTER_BILERP
+    texture_index: u32
+    l_and_k: i16[L_AND_K_COUNT] before 10.3.0.4
+    has_texture_transform: NiBool
+    texture_transform: NiTextureTransform if has_texture_transform == 1
+
+# NiTexturingProperty::BumpMap.
+struct TexturingBumpMap : TexturingMap from "CoreLibs/NiMain/NiTexturingProperty.cpp"
+    luma_scale: f32 = 1.0
+    luma_offset: f32
+    bump_mat00: f32 = 0.5
+    bump_mat01: f32
+    bump_mat10: f32
+    bump_mat11: f32 = 0.5
+
+# NiTexturingProperty::ShaderMap.
+struct TexturingShaderMap : TexturingMap from "CoreLibs/NiMain/NiTexturingProperty.cpp"
+    id: u32
+
+# One entry of the streamed map lists: a NiBool bHasMap, then the map if set.
+struct TexturingMapSlot<T> from "CoreLibs/NiMain/NiTexturingProperty.cpp"
+    has_map: NiBool
+    map: T if has_map
+
+# LoadBinary reads uiListSize map slots (the bump map slot as a BumpMap), then a counted list of
+# shader map slots. The slots are spelled out up to the bump map; before 20.2.0.5 the slots from
+# NORMAL_INDEX on hold the decal maps.
+object NiTexturingProperty : NiProperty from "CoreLibs/NiMain/NiTexturingProperty.cpp"
+    apply_mode: ApplyMode = ApplyMode.APPLY_MODULATE
+    map_count: u32
+    has_base_map: NiBool if map_count > BASE_INDEX
+    base_map: TexturingMap if has_base_map
+    has_dark_map: NiBool if map_count > DARK_INDEX
+    dark_map: TexturingMap if has_dark_map
+    has_detail_map: NiBool if map_count > DETAIL_INDEX
+    detail_map: TexturingMap if has_detail_map
+    has_gloss_map: NiBool if map_count > GLOSS_INDEX
+    gloss_map: TexturingMap if has_gloss_map
+    has_glow_map: NiBool if map_count > GLOW_INDEX
+    glow_map: TexturingMap if has_glow_map
+    has_bump_map: NiBool if map_count > BUMP_INDEX
+    bump_map: TexturingBumpMap if has_bump_map
+    decal_maps: TexturingMapSlot<TexturingMap>[(map_count > NORMAL_INDEX) * (map_count - NORMAL_INDEX)]
+    shader_maps: TexturingMapSlot<TexturingShaderMap>[u32]
+
+# ---------------------------------------------------------------------------- extra data
+
+object NiExtraData : NiObject from "CoreLibs/NiMain/NiExtraData.cpp"
+    name: string
+
+object NiBooleanExtraData : NiExtraData from "CoreLibs/NiMain/NiBooleanExtraData.cpp"
+    value: NiBool
+
+object NiFloatExtraData : NiExtraData from "CoreLibs/NiMain/NiFloatExtraData.cpp"
+    value: f32
+
+# m_uiSize, then m_piValue (int[m_uiSize]).
+object NiIntegersExtraData : NiExtraData from "CoreLibs/NiMain/NiIntegersExtraData.cpp"
+    value: i32[u32]
+
+object NiStringExtraData : NiExtraData from "CoreLibs/NiMain/NiStringExtraData.cpp"
+    string: string
+
+# ---------------------------------------------------------------------------- dynamic effects
+
+# m_kUnaffectedNodeList is a NiTPointerList<NiNode*>.
+object NiDynamicEffect : NiAVObject abstract from "CoreLibs/NiMain/NiDynamicEffect.cpp"
+    on: NiBool = true
+    unaffected_node_list: Ptr<NiNode>[u32]
+
+object NiLight : NiDynamicEffect abstract from "CoreLibs/NiMain/NiLight.cpp"
+    dimmer: f32 = 1.0
+    amb: NiColor = {1.0, 1.0, 1.0}
+    diff: NiColor = {1.0, 1.0, 1.0}
+    spec: NiColor = {1.0, 1.0, 1.0}
+
+object NiDirectionalLight : NiLight from "CoreLibs/NiMain/NiDirectionalLight.cpp"
+
+enum TextureType : u32 from "CoreLibs/NiMain/NiTextureEffect.h"
+    PROJECTED_LIGHT
+    PROJECTED_SHADOW
+    ENVIRONMENT_MAP
+    FOG_MAP
+
+enum CoordGenType : u32 from "CoreLibs/NiMain/NiTextureEffect.h"
+    WORLD_PARALLEL
+    WORLD_PERSPECTIVE
+    SPHERE_MAP
+    SPECULAR_CUBE_MAP
+    DIFFUSE_CUBE_MAP
+
+object NiTextureEffect : NiDynamicEffect from "CoreLibs/NiMain/NiTextureEffect.cpp"
+    model_proj_mat: NiMatrix3 = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0}
+    model_proj_trans: NiPoint3
+    filter: FilterMode = FilterMode.FILTER_NEAREST
+    clamp: ClampMode = ClampMode.WRAP_S_WRAP_T
+    texture_mode: TextureType
+    coord_mode: CoordGenType
+    texture: Ref<NiTexture>
+    plane_enable: NiBool
+    model_plane: NiPlane
+    l_and_k: i16[L_AND_K_COUNT] before 10.3.0.4
+
+# ---------------------------------------------------------------------------- textures
+
+object NiTexture : NiObjectNET abstract from "CoreLibs/NiMain/NiTexture.cpp"
+
+enum PixelLayout : u32 from "CoreLibs/NiMain/NiTexture.h"
+    PALETTIZED_8
+    HIGH_COLOR_16
+    TRUE_COLOR_32
+    COMPRESSED
+    BUMPMAP
+    PALETTIZED_4
+    PIX_DEFAULT
+    SINGLE_COLOR_8
+    SINGLE_COLOR_16
+    SINGLE_COLOR_32
+    DOUBLE_COLOR_32
+    DOUBLE_COLOR_64
+    FLOAT_COLOR_32
+    FLOAT_COLOR_64
+    FLOAT_COLOR_128
+    SINGLE_COLOR_4
+
+enum MipFlag : u32 from "CoreLibs/NiMain/NiTexture.h"
+    NO
+    YES
+    MIP_DEFAULT
+
+enum AlphaFormat : u32 from "CoreLibs/NiMain/NiTexture.h"
+    NONE
+    BINARY
+    SMOOTH
+    ALPHA_DEFAULT
+
+# NiTexture::FormatPrefs, streamed by NiSourceTexture::LoadBinary.
+struct FormatPrefs from "CoreLibs/NiMain/NiTexture.h" "CoreLibs/NiMain/NiSourceTexture.cpp"
+    pixel_layout: PixelLayout = PixelLayout.PIX_DEFAULT
+    mip_mapped: MipFlag = MipFlag.MIP_DEFAULT
+    alpha_fmt: AlphaFormat = AlphaFormat.ALPHA_DEFAULT
+
+# The link resolves to m_spSrcPixelData (before 20.2.0.4, always the case in range).
+object NiSourceTexture : NiTexture from "CoreLibs/NiMain/NiSourceTexture.cpp"
+    external: NiBool
+    filename: string
+    src_pixel_data: Ref<NiPixelData>
+    format_prefs: FormatPrefs
+    static: NiBool = true
+    load_direct_to_renderer_hint: NiBool
+
+# NiPixelFormat::Format.
+enum PixelFormatFormat : u32 from "CoreLibs/NiMain/NiPixelFormat.h"
+    FORMAT_RGB
+    FORMAT_RGBA
+    FORMAT_PAL
+    FORMAT_PALALPHA
+    FORMAT_DXT1
+    FORMAT_DXT3
+    FORMAT_DXT5
+    FORMAT_RGB24NONINTERLEAVED
+    FORMAT_BUMP
+    FORMAT_BUMPLUMA
+    FORMAT_RENDERERSPECIFIC
+    FORMAT_ONE_CHANNEL
+    FORMAT_TWO_CHANNEL
+    FORMAT_THREE_CHANNEL
+    FORMAT_FOUR_CHANNEL
+    FORMAT_DEPTH_STENCIL
+    FORMAT_UNKNOWN
+    FORMAT_BUMPLUMA_WII
+
+# NiPixelFormat::Component.
+enum PixelComponent : u32 from "CoreLibs/NiMain/NiPixelFormat.h"
+    COMP_RED
+    COMP_GREEN
+    COMP_BLUE
+    COMP_ALPHA
+    COMP_COMPRESSED
+    COMP_OFFSET_U
+    COMP_OFFSET_V
+    COMP_OFFSET_W
+    COMP_OFFSET_Q
+    COMP_LUMA
+    COMP_HEIGHT
+    COMP_VECTOR_X
+    COMP_VECTOR_Y
+    COMP_VECTOR_Z
+    COMP_PADDING
+    COMP_INTENSITY
+    COMP_INDEX
+    COMP_DEPTH
+    COMP_STENCIL
+    COMP_EMPTY
+
+# NiPixelFormat::Representation.
+enum PixelRepresentation : u32 from "CoreLibs/NiMain/NiPixelFormat.h"
+    REP_NORM_INT
+    REP_HALF
+    REP_FLOAT
+    REP_INDEX
+    REP_COMPRESSED
+    REP_UNKNOWN
+    REP_INT
+
+# NiPixelFormat::Tiling.
+enum PixelTiling : u32 from "CoreLibs/NiMain/NiPixelFormat.h"
+    TILE_NONE
+    TILE_XENON
+    TILE_WII
+    TILE_NV_SWIZZLED
+
+# NiPixelFormat::NUM_COMPS.
+const NUM_COMPS = 4
+# Two unsigned ints of a former fast-compare cache, stored before 10.3.0.3.
+const OLD_FAST_COMPARE_COUNT = 2
+
+# NiPixelFormat::NiComponentSpec, streamed by NiPixelFormat::LoadBinary.
+struct NiPixelFormatComponent from "CoreLibs/NiMain/NiPixelFormat.h" "CoreLibs/NiMain/NiPixelFormat.cpp"
+    component: PixelComponent
+    representation: PixelRepresentation
+    bits_per_component: u8
+    signed: NiBool
+
+# A member of NiPixelData (not a streamable object).
+struct NiPixelFormat from "CoreLibs/NiMain/NiPixelFormat.cpp"
+    format: PixelFormatFormat
+    color_masks: u32[NUM_COMPS] before 10.3.0.3
+    old_bits_per_pixel: u32 before 10.3.0.3
+    old_fast_compare: u32[OLD_FAST_COMPARE_COUNT] before 10.3.0.3
+    bits_per_pixel: u8 since 10.3.0.3
+    renderer_hint: u32 since 10.3.0.3
+    extra_data: u32 since 10.3.0.3
+    flags: u8 since 10.3.0.3
+    tiling: PixelTiling
+    components: NiPixelFormatComponent[NUM_COMPS] since 10.3.0.3
+
+# One entry of the auiWidth/auiHeight/auiOffsetInBytes arrays NiPixelData::LoadBinary reads.
+struct NiPixelDataMipmap from "CoreLibs/NiMain/NiPixelData.cpp"
+    width: u32
+    height: u32
+    offset_in_bytes: u32
+
+# total_offset_in_bytes is auiOffsetInBytes[m_uiMipmapLevels], the size of one face.
+object NiPixelData : NiObject from "CoreLibs/NiMain/NiPixelData.cpp"
+    pixel_format: NiPixelFormat
+    palette: Ref<NiPalette>
+    mipmap_levels: u32
+    pixel_stride: u32
+    mipmaps: NiPixelDataMipmap[mipmap_levels]
+    total_offset_in_bytes: u32
+    faces: u32 = 1 since 10.3.0.6
+    pixels: u8[total_offset_in_bytes * faces]
+
+# ---------------------------------------------------------------------------- geometry
+
+# Before 20.2.0.5 the material is a single optional shader: bShader, then its name and
+# implementation.
+object NiGeometry : NiAVObject abstract from "CoreLibs/NiMain/NiGeometry.cpp"
+    model_data: Ref<NiGeometryData>
+    skin_instance: Ref<NiSkinInstance>
+    shader: NiBool
+    shader_name: string if shader
+    implementation: u32 if shader
+
+object NiTriBasedGeom : NiGeometry abstract from "CoreLibs/NiMain/NiTriBasedGeom.cpp"
+
+object NiTriShape : NiTriBasedGeom from "CoreLibs/NiMain/NiTriShape.cpp"
+
+object NiParticles : NiGeometry from "CoreLibs/NiMain/NiParticles.cpp"
+
+bitflags KeepFlags : u8 from "CoreLibs/NiMain/NiGeometryData.h"
+    KEEP_XYZ = 0x01
+    KEEP_NORM = 0x02
+    KEEP_COLOR = 0x04
+    KEEP_UV = 0x08
+    KEEP_INDICES = 0x10
+    KEEP_BONEDATA = 0x20
+
+bitflags CompressFlags : u8 from "CoreLibs/NiMain/NiGeometryData.h"
+    COMPRESS_NORM = 0x01
+    COMPRESS_COLOR = 0x02
+    COMPRESS_UV = 0x04
+    COMPRESS_WEIGHT = 0x08
+    COMPRESS_POSITION = 0x10
+
+# NiShaderRequirementDesc: the texture set count and normal/binormal/tangent method share
+# m_usDataFlags.
+const TEXTURE_SET_MASK = 0x003F
+const NBT_METHOD_MASK = 0xF000
+# With an NBT method, the normal array also holds the binormals and tangents.
+const NBT_NORMAL_ARRAYS = 3
+
+bitfield GeometryDataFlags : u16 from "CoreLibs/NiMain/NiShaderRequirementDesc.h"
+    texture_sets: uint @0:6
+    nbt_method: uint @12:4
+
+# NiGeometryData::Consistency, stored in m_usDirtyFlags.
+enum Consistency : u16 from "CoreLibs/NiMain/NiGeometryData.h"
+    MUTABLE = 0x0000
+    STATIC = 0x4000
+    VOLATILE = 0x8000
+
+# The texture coordinates are one NiPoint2 array of m_usVertices * GetTextureSets() entries,
+# set after set.
+object NiGeometryData : NiObject abstract from "CoreLibs/NiMain/NiGeometryData.cpp"
+    group_id: u32
+    vertices: u16
+    keep_flags: KeepFlags
+    compress_flags: CompressFlags
+    has_vertex: NiBool
+    vertex: NiPoint3[vertices] if has_vertex
+    data_flags: GeometryDataFlags
+    has_normal: NiBool
+    normal: NiPoint3[vertices * (1 + (NBT_NORMAL_ARRAYS - 1) * ((data_flags & NBT_METHOD_MASK) != 0))] if has_normal
+    bound: NiBound
+    has_color: NiBool
+    color: NiColorA[vertices] if has_color
+    texture: NiPoint2[data_flags & TEXTURE_SET_MASK][vertices]
+    dirty_flags: Consistency
+    additional_geom_data: Ref<NiAdditionalGeometryData> since 10.3.0.7
+
+object NiTriBasedGeomData : NiGeometryData abstract from "CoreLibs/NiMain/NiTriBasedGeomData.cpp"
+    triangles: u16
+
+# NiTriShapeData::SharedNormalArray: a u16 count, then that many vertex indices.
+struct SharedNormalArray from "CoreLibs/NiMain/NiTriShapeData.cpp"
+    indices: u16[u16]
+
+object NiTriShapeData : NiTriBasedGeomData from "CoreLibs/NiMain/NiTriShapeData.cpp"
+    tri_list_length: u32
+    has_list: NiBool
+    tri_list: u16[tri_list_length] if has_list && tri_list_length > 0
+    shared_normals: SharedNormalArray[u16]
+
+# Rotation angles and axes replaced the quaternion rotations in 10.3.0.5; older files store
+# only the quaternions.
+object NiParticlesData : NiGeometryData from "CoreLibs/NiMain/NiParticlesData.cpp"
+    has_radii: NiBool
+    radii: f32[vertices] if has_radii
+    active_vertices: u16
+    has_sizes: NiBool
+    sizes: f32[vertices] if has_sizes
+    has_rotations: NiBool
+    rotations: NiQuaternion[vertices] if has_rotations
+    has_rotation_angles: NiBool since 10.3.0.5
+    rotation_angles: f32[vertices] if has_rotation_angles since 10.3.0.5
+    has_rotation_axes: NiBool since 10.3.0.5
+    rotation_axes: NiPoint3[vertices] if has_rotation_axes since 10.3.0.5
+
+# ---------------------------------------------------------------------------- time controllers
+
+enum AnimType : u32 from "CoreLibs/NiMain/NiTimeController.h"
+    APP_TIME
+    APP_INIT
+
+enum CycleType : u32 from "CoreLibs/NiMain/NiTimeController.h"
+    LOOP
+    REVERSE
+    CLAMP
+
+bitfield TimeControllerFlags : u16 from "CoreLibs/NiMain/NiTimeController.h"
+    anim_type: AnimType @0
+    cycle_type: CycleType @1:2
+    active: bool @3
+    direction: bool @4
+    manager_controlled: bool @5
+    compute_scaled_time: bool @6
+    force_update: bool @7
+
+# m_pkTarget is a raw NiObjectNET pointer.
+object NiTimeController : NiObject abstract from "CoreLibs/NiMain/NiTimeController.cpp"
+    next: Ref<NiTimeController>
+    flags: TimeControllerFlags = {cycle_type: CycleType.CLAMP, active: 1, compute_scaled_time: 1}
+    frequency: f32 = 1.0
+    phase: f32
+    lo_key_time: f32 = NI_INFINITY
+    hi_key_time: f32 = -NI_INFINITY
+    target: Ptr<NiObjectNET>
+
+# ---------------------------------------------------------------------------- link-only types
+
+# Link targets of the classes above whose layout this schema does not describe.
+extern object NiCollisionObject : NiObject from "CoreLibs/NiMain/NiCollisionObject.cpp"
+extern object NiSkinInstance : NiObject from "CoreLibs/NiMain/NiSkinInstance.cpp"
+extern object NiAdditionalGeometryData : NiObject from "CoreLibs/NiMain/NiAdditionalGeometryData.cpp"
+extern object NiPalette : NiObject from "CoreLibs/NiMain/NiPalette.cpp"
+extern object NiAccumulator : NiObject from "CoreLibs/NiMain/NiAccumulator.cpp"

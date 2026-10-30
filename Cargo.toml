@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "dynamapper",
     "lib/uocf",
+    "lib/gamebryo-nif",
     "lib/particle-sim",
     "lib/udd-conv",
     "lib/udd-image-codecs",
@@ -225,6 +226,12 @@ debug-assertions = true
 #strip = "debuginfo"
 
 [profile.dev.package.udd-conv-gui]
+opt-level = 1
+debug = "line-tables-only"
+debug-assertions = true
+#strip = "debuginfo"
+
+[profile.dev.package.gamebryo-nif]
 opt-level = 1
 debug = "line-tables-only"
 debug-assertions = true

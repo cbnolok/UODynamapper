@@ -1,0 +1,72 @@
+# Stream layout of the Gamebryo math and helper types used by the block schemas.
+#
+# Written from the LoadBinary functions of the Gamebryo 2.6 SDK; every `from` path is relative to
+# the SDK root. The format is described in ../generate.py. Field names are the SDK member names
+# in snake_case (m_fRadius -> radius).
+
+# NiMath.h: const float NI_INFINITY = FLT_MAX.
+const NI_INFINITY = 3.402823466e+38
+
+struct NiPoint2 from "CoreLibs/NiMain/NiPoint2.cpp"
+    x: f32
+    y: f32
+
+struct NiPoint3 from "CoreLibs/NiMain/NiPoint3.cpp"
+    x: f32
+    y: f32
+    z: f32
+
+# NiMatrix3::LoadBinary reads m_pEntry[row][col] row by row; mRC is row R, column C.
+struct NiMatrix3 from "CoreLibs/NiMain/Win32/NiMatrix3.cpp"
+    m00: f32
+    m01: f32
+    m02: f32
+    m10: f32
+    m11: f32
+    m12: f32
+    m20: f32
+    m21: f32
+    m22: f32
+
+struct NiColor from "CoreLibs/NiMain/NiColor.cpp"
+    r: f32
+    g: f32
+    b: f32
+
+struct NiColorA from "CoreLibs/NiMain/NiColor.cpp"
+    r: f32
+    g: f32
+    b: f32
+    a: f32
+
+struct NiQuaternion from "CoreLibs/NiMain/NiQuaternion.cpp"
+    w: f32 = 1.0
+    x: f32
+    y: f32
+    z: f32
+
+struct NiBound from "CoreLibs/NiMain/NiBound.cpp"
+    center: NiPoint3
+    radius: f32
+
+struct NiPlane from "CoreLibs/NiMain/NiPlane.cpp"
+    normal: NiPoint3
+    constant: f32
+
+struct NiQuatTransform from "CoreLibs/NiAnimation/NiQuatTransform.cpp"
+    translate: NiPoint3
+    rotate: NiQuaternion
+    scale: f32 = 1.0
+
+enum TransformMethod : u32 from "CoreLibs/NiMain/NiTextureTransform.h"
+    MAYA_DEPRECATED_TRANSFORM = 0
+    MAX_TRANSFORM
+    MAYA_TRANSFORM
+
+# Defaults: NiTextureTransform() in NiTextureTransform.inl.
+struct NiTextureTransform from "CoreLibs/NiMain/NiTextureTransform.cpp"
+    translate: NiPoint2
+    scale: NiPoint2 = {1.0, 1.0}
+    rotate: f32
+    method: TransformMethod = TransformMethod.MAYA_TRANSFORM
+    center: NiPoint2 = {0.5, 0.5}

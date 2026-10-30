@@ -1,0 +1,24 @@
+[package]
+name = "gamebryo-nif"
+version = "0.1.0"
+edition = "2024"
+description = "Gamebryo NIF reader and writer, generated from a schema written from the Gamebryo SDK stream loading code"
+#resolver = "3"
+
+[lints.clippy]
+collapsible_if = "allow"
+empty_line_after_doc_comments = "allow"
+manual_div_ceil = "allow"
+manual_is_multiple_of = "allow"
+needless_lifetimes = "allow"
+nonminimal_bool = "allow"
+too_many_arguments = "allow"
+
+[dependencies]
+
+[dev-dependencies]
+# Only the ignored real-file test reads EffectTexture.uop through it.
+uocf = { path = "../uocf" }
+
+#[lib]
+#crate-type = ["dylib", "rlib"]
