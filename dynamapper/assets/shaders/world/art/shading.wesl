@@ -94,7 +94,10 @@ fn apply_art_surface_shading(
 
     var out_rgb = rgb;
     out_rgb *= 1.0 - shadow_strength * (0.35 * lower_occlusion + 0.15 * side_contact) * contact_noise;
-    out_rgb += rgb * light_color * vertical_light * highlight_strength * (0.25 + 0.25 * light_static);
+    // Global light catch belongs to its own strength control. Local-light
+    // intensity must not brighten every sprite when the collector is empty.
+    // 0.5 preserves the existing response at neutral interaction intensity 1.
+    out_rgb += rgb * light_color * vertical_light * highlight_strength * 0.5;
     // Atmosphere tint uses `lower_occlusion` (a per-V-coordinate gradient) which is
     // only meaningful on an upright billboard. On flat floor/ground/background tiles
     // it would darken/tint by an arbitrary vertical gradient, so skip it there.

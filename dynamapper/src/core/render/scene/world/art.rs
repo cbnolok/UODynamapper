@@ -10,6 +10,8 @@ pub mod statics_collect;
 pub mod statics_draw;
 pub mod static_lights;
 mod static_surface;
+#[cfg(test)]
+mod shading_tests;
 
 pub struct DrawStaticSpritesPlugin {
     pub registered_by: &'static str,

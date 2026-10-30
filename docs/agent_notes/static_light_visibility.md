@@ -33,9 +33,11 @@ It reads actual placed statics, tile metadata and mask-slot availability.
   alpha. Style and `global_lighting` also affect alpha. Classic/KR masks vanish
   at full daylight by design; Enhanced retains a small daylight contribution.
 - `light_decal_intensity` controls approximate land/art light response; it does
-  not scale the additive mask quad. Its art helper also scales the ordinary
-  highlight term when fake normals are off, so changing pixels across a whole
-  scene does not by itself establish correct local-light receiving.
+  not scale the additive mask quad. Ordinary art highlights have an independent
+  `art_highlight_strength` control. The old art helper incorrectly multiplied
+  those global highlights by local-light intensity when fake normals were off.
+  The helper now retains the neutral intensity-1 highlight coefficient (0.5)
+  independently of local-light intensity, which scales only collected light.
 - `enable_static_art_local_lights` separately opts art into collected local
   illumination. It defaults off. Original liquid/flat-water ownership exclusions
   remain intentional controls against terrain/static water seams.
@@ -64,3 +66,30 @@ This closes the missing-package cause of invisible masks. The separate roadmap
 for projected receiver-aware decals, wider content/day/cave coverage and final
 original-client lighting/color parity remains open. Other reported inactive
 effects require their own source/strength/receiver checks.
+
+## Local-light intensity isolation
+
+The global-highlight coupling made `Light/Static Interaction` brighten unlit
+walls and trees even with static-light collection disabled. It also made a
+whole-scene pixel difference misleading evidence for actual land/art receiving.
+Removing that coupling preserves the previous art response at interaction 1;
+other interaction values no longer change ordinary global highlights. This is
+a shared art helper used by upright and ground art, with both fake-normal modes.
+
+An explicit Vulkan regression executes the production WESL helper for 20
+combinations of five depth classes, upright/ground geometry, and fake normals
+off/on. Its 121 samples verify invariant unlit color at intensity 0/1/2,
+zero-intensity equivalence, increasing and proportional collected-light
+contribution, and retained effectiveness of the ordinary highlight control.
+Run `cargo test -p dynamapper local_light_intensity_preserves_unlit_art_and_scales_collected_light -- --ignored`.
+
+Eight native Desktop-4 night captures compare intensity 0 and 2. With collection
+disabled, Classic/CC and Enhanced legacy-art/EC-land pairs are byte-identical.
+KR/EC retains its animated cloud fog and differs by at most one color byte at
+702 pixels between separate runs; exact KR pixel identity is not claimed.
+Enabling collection and art local lighting gives a visible local contribution
+(13309 pixels change by more than one byte, maximum 55), while the zero-intensity
+frame exactly matches the no-collector Enhanced frame. Additive mask visibility
+is zero throughout, separating receiver illumination from glow composition.
+The debug build and production-module GPU test pass. Native input states, frames
+and logs are indexed by `local-light-isolation-accepted-evidence.json`.
