@@ -15,7 +15,9 @@ Three conversion defects were reproduced against the inspected FP bundle:
   Selecting row 1 produces flat recoloring and removes authored sprite detail.
 
 The converter now recognizes the official filename, loads names before indexing
-and reads the first bitmap row. Classic 32-color strip expansion is unchanged.
+and reads the first bitmap row. Classic 32-color strips now ramp linearly
+between colours by default, exactly as EA's atlas (`HueRampMode`, shared with
+`uocf::enhanced::hues_mul_uop`); `--hue-ramp flat` keeps 8-texel blocks.
 A synthetic compressed `Hues.uop` with a gradient top row and distinct solid
 bottom row exercises discovery, lazy names, decoding and UDDP round-trip colors.
 

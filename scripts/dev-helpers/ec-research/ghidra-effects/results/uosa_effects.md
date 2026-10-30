@@ -696,9 +696,20 @@ radius 6) instead of a linear ramp, and `ARGB16::getR` masks `0xF800` instead of
 which takes in the alpha bit and drops red's low bit. Only the red mask is a bug; the rest is a fidelity
 difference.
 
-Repo note: `lib/udd-conv/src/hues.rs` builds the atlas from Classic `hues.mul` with 8-texel blocks of
-`c5 * 8` (no ramp); the EC path copies the bitmaps' row 0, which is exact. A linear ramp between colours
-would match EA's atlas more closely (optional).
+The ramp is exact (**confirmed**): texel `8·i + w` (w = 0..7) is `(c_i·(8 - w) + c_(i+1)·w) / 8` per channel
+with `c = c5 << 3` and colour 31 held to the end. Both ends are multiples of 8, so the division never rounds.
+Bitmap row 1 (the swatch) is the larger of colour 0 and colour 31 as 15-bit values, and the 64 × 64 texture
+0xFA5C6A1BC0D8B01B is the swatch grid: hue h at x = h / 64, y = h % 64 (column-major, texel 0 empty). Against
+the Classic `hues.mul` of the same release, 2635 of 3000 hues (2024 clients) have matching colours, and for
+every one of them the atlas row, the swatch texel and the whole 2102-byte bitmap are reproduced byte for byte.
+The other 365 were repainted in the EC: their bitmaps have other headers (2104 bytes with 96 dpi, or a 124-byte
+V5 header) and colours off the `c << 3` grid, although `v >> 3` at x = 8·i still gives back the Classic colour
+for all 3000. `huenames.csv` is hand-edited (lines without a comma, names one byte longer than the Classic
+20-byte field allows). The KR `Hues.uop` (2016) has the same entries, order, atlas layout and swatch grid.
+
+Repo note: `lib/uocf/src/enhanced/hues_mul_uop.rs` converts `hues.mul` to and from `Hues.uop` with these
+rules, and `lib/udd-conv/src/hues.rs` builds the Classic atlas with them (`HueRampMode::Linear` by default;
+`Flat` keeps the old 8-texel blocks). The EC path copies the bitmaps' row 0, which is exact.
 
 ## Effect camera and lighting
 

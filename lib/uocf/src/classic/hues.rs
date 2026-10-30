@@ -31,8 +31,22 @@ const HUE_ENTRY_SIZE: usize = 88;
 const HUE_BLOCK_SIZE: usize = 708; // 4 byte header + 8 * 88 byte entries
 const HUES_PER_BLOCK: usize = 8;
 
+/// Colours of one hue's table.
+pub const HUE_COLOR_COUNT: usize = 32;
+/// Bytes of a hue name.
+pub const HUE_NAME_LEN: usize = 20;
+/// Hue entries in one group of `hues.mul`.
+pub const HUES_PER_GROUP: usize = HUES_PER_BLOCK;
+/// Bytes of one group: the `u32` header, then `HUES_PER_GROUP` entries.
+pub const HUE_GROUP_SIZE: usize = HUE_BLOCK_SIZE;
+const HUE_GROUP_HEADER_SIZE: usize = 4;
+const HUE_COLOR_SIZE: usize = 2;
+const HUE_TABLE_START_OFFSET: usize = HUE_COLOR_COUNT * HUE_COLOR_SIZE;
+const HUE_TABLE_END_OFFSET: usize = HUE_TABLE_START_OFFSET + HUE_COLOR_SIZE;
+const HUE_NAME_OFFSET: usize = HUE_TABLE_END_OFFSET + HUE_COLOR_SIZE;
+
 /// Represents a single hue entry from hues.mul, containing a color table and metadata.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HueEntry {
     pub id: u32,
     pub color_table: [u16; 32],
@@ -94,6 +108,138 @@ pub fn load_hues(path: &Path) -> eyre::Result<Vec<HueEntry>> {
     Ok(hues)
 }
 
+/// One group of `hues.mul`: a `u32` header and `HUES_PER_GROUP` entries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HueGroup {
+    pub header: u32,
+    pub entries: [HueEntry; HUES_PER_GROUP],
+}
+
+/// A whole `hues.mul`, kept bit for bit: every group header and entry field (colour bit 15 included) and the bytes
+/// after the last whole group, so [`HuesMul::to_bytes`] gives back the parsed file.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HuesMul {
+    pub groups: Vec<HueGroup>,
+    /// Bytes after the last whole group (none in client files).
+    pub trailing: Vec<u8>,
+}
+
+impl HueEntry {
+    /// An all-zero entry for hue `id`.
+    pub fn empty(id: u32) -> Self {
+        Self {
+            id,
+            color_table: [0; HUE_COLOR_COUNT],
+            table_start: 0,
+            table_end: 0,
+            name: [0; HUE_NAME_LEN],
+        }
+    }
+
+    fn parse(id: u32, bytes: &[u8]) -> Self {
+        let read_u16 = |offset: usize| u16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
+        let mut color_table = [0u16; HUE_COLOR_COUNT];
+        for (index, color) in color_table.iter_mut().enumerate() {
+            *color = read_u16(index * HUE_COLOR_SIZE);
+        }
+        let mut name = [0u8; HUE_NAME_LEN];
+        name.copy_from_slice(&bytes[HUE_NAME_OFFSET..HUE_NAME_OFFSET + HUE_NAME_LEN]);
+        Self {
+            id,
+            color_table,
+            table_start: read_u16(HUE_TABLE_START_OFFSET),
+            table_end: read_u16(HUE_TABLE_END_OFFSET),
+            name,
+        }
+    }
+
+    fn write(&self, out: &mut Vec<u8>) {
+        for color in self.color_table {
+            out.extend_from_slice(&color.to_le_bytes());
+        }
+        out.extend_from_slice(&self.table_start.to_le_bytes());
+        out.extend_from_slice(&self.table_end.to_le_bytes());
+        out.extend_from_slice(&self.name);
+    }
+
+    /// The name up to its first NUL byte.
+    pub fn name_bytes(&self) -> &[u8] {
+        let end = self.name.iter().position(|&byte| byte == 0).unwrap_or(HUE_NAME_LEN);
+        &self.name[..end]
+    }
+}
+
+impl HuesMul {
+    /// `group_count` all-zero groups (hues `1..=group_count * HUES_PER_GROUP`).
+    pub fn with_group_count(group_count: usize) -> Self {
+        let groups = (0..group_count)
+            .map(|group| HueGroup {
+                header: 0,
+                entries: std::array::from_fn(|entry| HueEntry::empty((group * HUES_PER_GROUP + entry + 1) as u32)),
+            })
+            .collect();
+        Self { groups, trailing: Vec::new() }
+    }
+
+    /// Parses a `hues.mul`. Every byte is kept, so parsing cannot fail.
+    pub fn parse(bytes: &[u8]) -> Self {
+        let mut groups = Vec::with_capacity(bytes.len() / HUE_GROUP_SIZE);
+        let mut chunks = bytes.chunks_exact(HUE_GROUP_SIZE);
+        for (group_index, chunk) in chunks.by_ref().enumerate() {
+            let header = u32::from_le_bytes(chunk[..HUE_GROUP_HEADER_SIZE].try_into().expect("4-byte header"));
+            let entries = std::array::from_fn(|entry_index| {
+                let offset = HUE_GROUP_HEADER_SIZE + entry_index * HUE_ENTRY_SIZE;
+                let id = (group_index * HUES_PER_GROUP + entry_index + 1) as u32;
+                HueEntry::parse(id, &chunk[offset..offset + HUE_ENTRY_SIZE])
+            });
+            groups.push(HueGroup { header, entries });
+        }
+        Self { groups, trailing: chunks.remainder().to_vec() }
+    }
+
+    pub fn load(path: &Path) -> eyre::Result<Self> {
+        let bytes = std::fs::read(path).wrap_err_with(|| format!("failed to read {}", path.display()))?;
+        Ok(Self::parse(&bytes))
+    }
+
+    /// The file bytes: the groups in order, then the trailing bytes.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.groups.len() * HUE_GROUP_SIZE + self.trailing.len());
+        for group in &self.groups {
+            out.extend_from_slice(&group.header.to_le_bytes());
+            for entry in &group.entries {
+                entry.write(&mut out);
+            }
+        }
+        out.extend_from_slice(&self.trailing);
+        out
+    }
+
+    pub fn save(&self, path: &Path) -> eyre::Result<()> {
+        std::fs::write(path, self.to_bytes()).wrap_err_with(|| format!("failed to write {}", path.display()))
+    }
+
+    /// Number of hues (`HUES_PER_GROUP` per whole group).
+    pub fn hue_count(&self) -> usize {
+        self.groups.len() * HUES_PER_GROUP
+    }
+
+    /// Every hue in id order; hue ids start at 1.
+    pub fn hues(&self) -> impl Iterator<Item = &HueEntry> {
+        self.groups.iter().flat_map(|group| group.entries.iter())
+    }
+
+    /// Hue `id` (1-based).
+    pub fn hue(&self, id: u32) -> Option<&HueEntry> {
+        let index = (id as usize).checked_sub(1)?;
+        self.groups.get(index / HUES_PER_GROUP).map(|group| &group.entries[index % HUES_PER_GROUP])
+    }
+
+    pub fn hue_mut(&mut self, id: u32) -> Option<&mut HueEntry> {
+        let index = (id as usize).checked_sub(1)?;
+        self.groups.get_mut(index / HUES_PER_GROUP).map(|group| &mut group.entries[index % HUES_PER_GROUP])
+    }
+}
 
 impl HueEntry {
     /// Applies the hue to a 16-bit color value (ARGB1555).
@@ -183,6 +329,34 @@ mod tests {
             table_end: color_table[31],
             name: [0; 20],
         }
+    }
+
+    #[test]
+    fn hues_mul_round_trips_every_byte() {
+        let partial_group = HUE_GROUP_SIZE / 2;
+        let bytes: Vec<u8> = (0..2 * HUE_GROUP_SIZE + partial_group).map(|index| (index * 7 + 3) as u8).collect();
+        let hues = HuesMul::parse(&bytes);
+        assert_eq!(hues.groups.len(), 2);
+        assert_eq!(hues.trailing.len(), partial_group);
+        assert_eq!(hues.hue_count(), 2 * HUES_PER_GROUP);
+        assert_eq!(hues.to_bytes(), bytes);
+
+        let second = hues.hue(2).expect("hue 2");
+        assert_eq!(second.id, 2);
+        let offset = HUE_GROUP_HEADER_SIZE + HUE_ENTRY_SIZE;
+        assert_eq!(second.color_table[0], u16::from_le_bytes([bytes[offset], bytes[offset + 1]]));
+        assert_eq!(hues.hue(0), None);
+        assert_eq!(hues.hue(2 * HUES_PER_GROUP as u32 + 1), None);
+    }
+
+    #[test]
+    fn hue_name_bytes_stop_at_the_first_nul() {
+        let mut hue = HueEntry::empty(1);
+        hue.name[..3].copy_from_slice(b"Red");
+        hue.name[5] = b'x';
+        assert_eq!(hue.name_bytes(), b"Red");
+        hue.name = [b'a'; HUE_NAME_LEN];
+        assert_eq!(hue.name_bytes().len(), HUE_NAME_LEN);
     }
 
     #[test]

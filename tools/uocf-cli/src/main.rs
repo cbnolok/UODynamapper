@@ -1,3 +1,4 @@
+mod hues;
 mod legacy_mul;
 mod mul_convert;
 mod multimap;
@@ -85,6 +86,9 @@ enum Commands {
     /// UO Legacy MUL/UOP format converter.
     #[command(subcommand)]
     MulConvert(mul_convert::MulConvertCmd),
+    /// Classic hues.mul <-> Enhanced Client Hues.uop converter.
+    #[command(subcommand)]
+    Hues(hues::HuesCmd),
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -145,6 +149,7 @@ fn main() -> eyre::Result<()> {
         Commands::Sound(cmd) => sound::run(cmd)?,
         Commands::Multimap(cmd) => multimap::run(cmd)?,
         Commands::MulConvert(cmd) => mul_convert::run(cmd)?,
+        Commands::Hues(cmd) => hues::run(cmd)?,
     }
 
     Ok(())

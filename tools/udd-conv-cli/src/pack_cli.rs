@@ -35,7 +35,7 @@ use udd_conv::{
         convert_ec_gumps_to_uddp_from_sources, EcGumpsOptions, EC_GUMP_DEFAULT_MAX_ID,
         GUMPS_EC_DEFAULT_OUTPUT,
     },
-    hues::{convert_hues_to_hues_uddp_from_sources, HuesOptions},
+    hues::{convert_hues_to_hues_uddp_from_sources, HueRampMode, HuesOptions},
     mobile_anim_cc::{
         convert_anim_mul_to_mobile_anim_cc_uddp_from_sources, MobileAnimCcAtlasOptions,
         DEFAULT_ATLAS_GUTTER as CC_MOBILE_ANIM_DEFAULT_ATLAS_GUTTER,
@@ -486,6 +486,25 @@ fn find_raw_tilemeta_package(uddp_dir: &Path) -> eyre::Result<PathBuf> {
                 uddp_dir.display()
             )
         })
+}
+
+/// How `pack-hues` spreads the 32 Classic `hues.mul` colours over a 256-texel palette row.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CliHueRamp {
+    /// Colour i at x = 8i, ramping linearly to colour i + 1 (EA's Hues.uop).
+    #[default]
+    Linear,
+    /// Each colour repeated over 8 texels.
+    Flat,
+}
+
+impl From<CliHueRamp> for HueRampMode {
+    fn from(ramp: CliHueRamp) -> Self {
+        match ramp {
+            CliHueRamp::Linear => HueRampMode::Linear,
+            CliHueRamp::Flat => HueRampMode::Flat,
+        }
+    }
 }
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1332,6 +1351,8 @@ enum Commands {
         source_dirs: SourceDirArgs,
         #[arg(long, default_value = "hues.uddp")]
         output: PathBuf,
+        #[arg(long, value_enum, default_value_t = CliHueRamp::Linear, help = "How hues.mul colours fill a palette row: linear ramp between colours (EA's Hues.uop) or flat 8-texel blocks. EC Hues.uop sources are copied as they are.")]
+        hue_ramp: CliHueRamp,
         #[arg(long, default_value_t = false, help = "Do not use compression.")]
         no_compression: bool,
         #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Use Zstd package compression. Optionally pass --zstd=LEVEL.")]
@@ -2402,6 +2423,7 @@ where
         Commands::PackHues {
             source_dirs: source_dir_args,
             output,
+            hue_ramp,
             no_compression,
             zstd,
         } => {
@@ -2417,7 +2439,7 @@ where
             convert_hues_to_hues_uddp_from_sources(
                 &paths,
                 &out_file,
-                &HuesOptions { compression },
+                &HuesOptions { compression, ramp: hue_ramp.into() },
             )?;
             info!("Wrote hues.uddp to '{}'.", out_file.display());
         }
@@ -3528,9 +3550,23 @@ mod tests {
         .expect("parse hues args");
 
         match cli.command {
-            Commands::PackHues { source_dirs, output, .. } => {
+            Commands::PackHues { source_dirs, output, hue_ramp, .. } => {
                 assert_eq!(source_dirs.ccdir, Some(PathBuf::from("/cc")));
                 assert_eq!(output, PathBuf::from("hues.uddp"));
+                assert_eq!(hue_ramp, CliHueRamp::Linear);
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_pack_hues_flat_ramp() {
+        let cli = Cli::try_parse_from(["uddpack", "pack-hues", "--ccdir", "/cc", "--hue-ramp", "flat"])
+            .expect("parse hues args");
+
+        match cli.command {
+            Commands::PackHues { hue_ramp, .. } => {
+                assert_eq!(HueRampMode::from(hue_ramp), HueRampMode::Flat);
             }
             _ => panic!("unexpected command parsed"),
         }

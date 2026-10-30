@@ -22,7 +22,7 @@ packages consumed by Dynamapper and the other tools at runtime.
 | `pack-statics` | `staticsX.uddp` | Classic `staticsX.mul` |
 | `pack-map-statics` | `mapX.uddp` + `staticsX.uddp` | Combined map+statics pass |
 | `pack-lights` | `world_lights.uddp` | CC and EC lighting textures |
-| `pack-hues` | `hues.uddp` | Classic `hues.mul` or EC `hues.uop` |
+| `pack-hues` | `hues.uddp` | Classic `hues.mul` (`--hue-ramp linear`, the default, or `flat`) or EC `hues.uop` |
 | `pack-gumps-cc` | `gumps_cc.uddp` | Classic `gumpart.mul` / `gumpidx.mul` |
 | `pack-gumps-ec` | `gumps_ec.uddp` | EC `interface.uop` gumpart |
 | `pack-radar` | `facet0X.dds` | Classic map and statics radar image |

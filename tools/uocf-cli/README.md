@@ -6,6 +6,11 @@
 
 - `export-anim-patch`: export animation payloads as single-entry `.vd` files or
   Michelangelo/UOAnimTool `.uop` patch streams.
+- `hues mul-to-uop` / `hues uop-to-mul`: convert Classic `hues.mul` to an Enhanced
+  Client `Hues.uop` (EA's layout; `--hue-ramp linear` (default, EA's) or `flat`) and
+  back. Packages written by `mul-to-uop` carry `build/hues/huesmul_metadata.bin`, so
+  `uop-to-mul` gives back the identical `hues.mul`; EA's packages give exact colours
+  with defaulted table start/end, names and group headers.
 
 Supported animation sources:
 

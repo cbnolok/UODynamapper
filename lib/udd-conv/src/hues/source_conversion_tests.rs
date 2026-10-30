@@ -24,7 +24,7 @@ fn official_archive_name_and_lazy_names_survive_full_conversion() {
     archive.finalize_and_save(directory.join("Hues.uop")).unwrap();
     let output = directory.join("hues.uddp");
     convert_hues_to_hues_uddp_from_sources(&[directory.clone()], &output,
-        &HuesOptions { compression: CompressionFlag::None }).unwrap();
+        &HuesOptions { compression: CompressionFlag::None, ..Default::default() }).unwrap();
     let package = udd_assets::hues::HuesPackage::load(&output).unwrap();
     assert_eq!(package.hue_name(1), Some("masked flowers"));
     let texture = package.read_texture_bytes().unwrap();

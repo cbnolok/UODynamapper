@@ -14,10 +14,14 @@ use uocf::classic::hues::{load_hues, HueEntry};
 use uocf::enhanced::hues::{
     atlas_coord_for_hue, decode_hue_image_to_rgba, huenames_hash, EcHuePackage, HUES_UOP_NAME,
 };
+pub use uocf::enhanced::hues_mul_uop::HueRampMode;
+use uocf::enhanced::hues_mul_uop::hue_palette_row;
 use uocf::uop_container::package::{LoadMode, UopPackage};
 
 pub struct HuesOptions {
     pub compression: CompressionFlag,
+    /// How Classic `hues.mul` colours spread over a palette row; EC bitmaps are copied as they are.
+    pub ramp: HueRampMode,
 }
 
 #[cfg(test)]
@@ -28,6 +32,7 @@ impl Default for HuesOptions {
     fn default() -> Self {
         Self {
             compression: CompressionFlag::ZstdNoDict,
+            ramp: HueRampMode::default(),
         }
     }
 }
@@ -66,7 +71,7 @@ pub fn convert_hues_mul_to_hues_uddp(
 ) -> eyre::Result<()> {
     info!("Converting hues.mul to {}", out_file.display());
     let hues = load_hues(hues_mul_path).wrap_err("failed to load hues.mul")?;
-    let (records, texture_bytes) = build_hues_texture_and_records(&hues)?;
+    let (records, texture_bytes) = build_hues_texture_and_records(&hues, options.ramp)?;
     write_hues_uddp(&records, &texture_bytes, out_file, options)
 }
 
@@ -160,14 +165,17 @@ fn build_ec_hues_texture_and_records(
     Ok((records, texture_bytes))
 }
 
-fn build_hues_texture_and_records(hues: &[HueEntry]) -> eyre::Result<(Vec<HueSlotRecord>, Vec<u8>)> {
+fn build_hues_texture_and_records(
+    hues: &[HueEntry],
+    ramp: HueRampMode,
+) -> eyre::Result<(Vec<HueSlotRecord>, Vec<u8>)> {
     let mut texture_bytes = vec![0u8; HUES_TEXTURE_WIDTH as usize * HUES_TEXTURE_HEIGHT as usize * 4];
     let mut records = Vec::new();
 
     for hue in hues.iter().filter(|hue| hue.id >= 1 && hue.id <= u32::from(MAX_HUE_ID)) {
         let coord = uocf::enhanced::hues::atlas_coord_for_hue(hue.id as u16)
             .ok_or_else(|| eyre::eyre!("failed to compute atlas coord for hue {}", hue.id))?;
-        let row = build_palette_row_rgba(&hue.color_table);
+        let row = hue_palette_row(&hue.color_table, ramp).concat();
         blit_palette_row(&mut texture_bytes, coord.x, coord.y, &row)?;
 
         records.push(HueSlotRecord {
@@ -191,19 +199,6 @@ fn decode_hue_name(name: &[u8; 20]) -> String {
         .trim_matches('\0')
         .trim_end()
         .to_string()
-}
-
-fn build_palette_row_rgba(color_table: &[u16; 32]) -> Vec<u8> {
-    let mut out = vec![0u8; HUE_STRIP_WIDTH as usize * 4];
-    for (index, color16) in color_table.iter().copied().enumerate() {
-        let rgba = argb1555_to_rgba8888_reference(color16);
-        let start = index * 8 * 4;
-        for repeat in 0..8 {
-            let offset = start + repeat * 4;
-            out[offset..offset + 4].copy_from_slice(&rgba);
-        }
-    }
-    out
 }
 
 fn build_palette_row_from_rgba_image(
@@ -240,18 +235,6 @@ fn build_palette_row_from_rgba_image(
         row[dst_offset..dst_offset + 4].copy_from_slice(&pixels[src_offset..src_offset + 4]);
     }
     Ok(row)
-}
-
-fn argb1555_to_rgba8888_reference(color16: u16) -> [u8; 4] {
-    let r5 = ((color16 >> 10) & 0x1F) as u32;
-    let g5 = ((color16 >> 5) & 0x1F) as u32;
-    let b5 = (color16 & 0x1F) as u32;
-    [
-        (r5 * 8) as u8,
-        (g5 * 8) as u8,
-        (b5 * 8) as u8,
-        255,
-    ]
 }
 
 fn blit_palette_row(texture_bytes: &mut [u8], x: u32, y: u32, row: &[u8]) -> eyre::Result<()> {
@@ -303,7 +286,7 @@ mod tests {
             hue_entry(1024, "second", second_colors),
         ];
 
-        let (records, texture) = build_hues_texture_and_records(&hues).expect("build hues texture");
+        let (records, texture) = build_hues_texture_and_records(&hues, HueRampMode::Linear).expect("build hues texture");
         assert_eq!(records.len(), 2);
         assert_eq!(
             texture.len(),
@@ -327,7 +310,7 @@ mod tests {
     #[test]
     fn package_roundtrip_loads_csv_and_texture() {
         let hues = vec![hue_entry(1, "alpha,beta", [0x7FFF; 32])];
-        let (records, texture) = build_hues_texture_and_records(&hues).expect("build texture");
+        let (records, texture) = build_hues_texture_and_records(&hues, HueRampMode::Linear).expect("build texture");
         let csv = encode_hues_csv(&records).expect("encode csv");
         let parsed = parse_hues_csv(&csv).expect("parse csv");
         assert_eq!(parsed[1].as_ref().expect("hue 1").name, "alpha,beta");
@@ -377,7 +360,7 @@ mod tests {
         colors.fill(0x7C00);
         let hues = vec![hue_entry(1, "red", colors)];
 
-        let (records, texture) = build_hues_texture_and_records(&hues).expect("build texture");
+        let (records, texture) = build_hues_texture_and_records(&hues, HueRampMode::Linear).expect("build texture");
         let coord = records
             .iter()
             .find(|record| record.hue_id == 1)
@@ -398,7 +381,7 @@ mod tests {
         colors[1] = 0x7C00;
         let hues = vec![hue_entry(1, "red edge", colors)];
 
-        let (records, texture) = build_hues_texture_and_records(&hues).expect("build texture");
+        let (records, texture) = build_hues_texture_and_records(&hues, HueRampMode::Flat).expect("build texture");
         let coord = records
             .iter()
             .find(|record| record.hue_id == 1)
@@ -412,6 +395,28 @@ mod tests {
             assert_eq!(pixel, &[0, 0, 0, 255]);
         }
         assert_eq!(&strip[8 * 4..9 * 4], &[248, 0, 0, 255]);
+    }
+
+    #[test]
+    fn hues_uddp_creation_ramps_linearly_between_palette_colours() {
+        const TEXELS_PER_COLOR: usize = 8;
+        const RED_MAX: u8 = 248;
+        let mut colors = [0u16; 32];
+        colors[1] = 0x7C00;
+        let hues = vec![hue_entry(1, "red ramp", colors)];
+
+        let (records, texture) = build_hues_texture_and_records(&hues, HueRampMode::Linear).expect("build texture");
+        let coord = &records[0];
+        let row_start = ((coord.texture_row * HUES_TEXTURE_WIDTH
+            + coord.texture_column * HUE_STRIP_WIDTH)
+            * 4) as usize;
+        let strip = &texture[row_start..row_start + HUE_STRIP_WIDTH as usize * 4];
+
+        for (x, pixel) in strip[..2 * TEXELS_PER_COLOR * 4].chunks_exact(4).enumerate() {
+            let rising = (usize::from(RED_MAX) * (x % TEXELS_PER_COLOR) / TEXELS_PER_COLOR) as u8;
+            let red = if x < TEXELS_PER_COLOR { rising } else { RED_MAX - rising };
+            assert_eq!(pixel, &[red, 0, 0, 255], "texel {x}");
+        }
     }
 
     #[test]
