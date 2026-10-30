@@ -3,11 +3,15 @@
 
 Read-only verification of the layouts documented in results/uosa_animation.md. Every entry must be consumed
 to its exact last byte. With --frames, the AnimationFrame*.uop headers are cross-checked against the
-sequences (frame counts, action ids and 1-based frame numbers).
+sequences (frame counts, action ids and 1-based frame numbers). With --pixels (needs --frames), every frame's
+RLE stream is walked as UOSA.exe decodes it and must end exactly where the next frame's data starts. With
+--tileart, the creature placeholder definitions (tile id 10000000 + body) are checked as the body -> sequence
+and body -> frames mapping.
 
 Usage:
     python3 -I verify_animation.py --sequence ANIMATION_SEQUENCE_UOP [--definition ANIMATION_DEFINITION_UOP]
-                                   [--frames ENHANCED_CLIENT_DIR] [--dump BODY]
+                                   [--frames ENHANCED_CLIENT_DIR [--pixels]] [--tileart TILEART_UOP]
+                                   [--dump BODY]
 """
 
 import argparse
@@ -61,6 +65,26 @@ FRAME_SIGNATURE = b"AMOU"
 FRAME_HEADER_FORMAT = "<4sIIIhhhhIIII"
 FRAME_ENTRY_FORMAT = "<HHhhhhI"
 FRAME_ENTRY_SIZE = struct.calcsize(FRAME_ENTRY_FORMAT)
+
+# AnimationFrame pixel data (DecodeFrameRle): a byte below 0x80 skips that many pixels; otherwise it is a run of
+# (byte - 0x80) solid pixels, preceded by an edge pixel when the flag byte's high nibble is set and followed by one
+# when its low nibble is set. Each pixel is one palette index byte. Palette entries are 4 bytes; byte 3 is the
+# "keep colour" flag (0 = hueable), never alpha.
+RLE_RUN_FLAG = 0x80
+NIBBLE_BITS = 4
+NIBBLE_MASK = 0xF
+PALETTE_ENTRY_SIZE = 4
+PALETTE_FLAG_BYTE = 3
+
+# tileart.uop creature placeholders (see ../ghidra-tileart/results/uosa_tileart.md)
+TILEART_VERSION = 4
+TILEART_VERSION_FORMAT = "<H"
+TILEART_TILE_ID_OFFSET = 0x06
+TILEART_BODY_TYPE_OFFSET = 0x20
+TILEART_FIXED_SIZE = 0x7D
+TILEART_PROPERTY_FORMAT = "<BI"
+TILEART_APPEARANCE_KEY = 8
+DEFAULT_FRAMES_BODY = 0  # BuildLayers falls back to body 0 when the appearance has no frames
 
 # AnimationDefinition
 NO_NEXT_SET = -1
@@ -286,7 +310,8 @@ def verify_sequences(path, dump):
         seq = parse_sequence(data, f"sequence {name}", effect_counts)
         sequences[name] = seq
         if seq["id"] != name:
-            notes.append(f"sequence {name} stores id {seq['id']} (frames are keyed by the stored id)")
+            notes.append(f"sequence {name} stores id {seq['id']}"
+                         " (wear-check id; frames are keyed by the tileart appearance)")
         stats["header offsets set"][any(p != (0, 0) for p in seq["offsets"] + seq["extra"])] += 1
         stats["action count"][len(seq["actions"])] += 1
         by_id = {}
@@ -352,13 +377,61 @@ def dump_sequence(name, seq):
               f" moves {g['moves']}, typed {g['typed']}")
 
 
-def verify_frames(directory, sequences):
+def walk_rle(data, start, pixels, colours):
+    """Walk one frame's RLE stream as DecodeFrameRle does; return (end offset, solid count, edge count)."""
+    pos = start
+    pixel = 0
+    solid = edge = 0
+    while pixel < pixels:
+        code = data[pos]
+        pos += 1
+        if code < RLE_RUN_FLAG:
+            pixel += code
+            continue
+        flags = data[pos]
+        pos += 1
+        count = (code - RLE_RUN_FLAG) + (1 if flags >> NIBBLE_BITS else 0) + (1 if flags & NIBBLE_MASK else 0)
+        indices = data[pos:pos + count]
+        if len(indices) != count or (count and max(indices) >= colours):
+            raise FormatError(f"RLE at {pos}: palette index out of range or stream truncated")
+        pos += count
+        pixel += count
+        edge += count - (code - RLE_RUN_FLAG)
+        solid += code - RLE_RUN_FLAG
+        if pixel > pixels:
+            raise FormatError(f"RLE at {pos}: run writes pixel {pixel} past {pixels}")
+    return pos, solid, edge
+
+
+def verify_pixels(data, key, stats):
+    *_head, colours, colours_offset, count, offset = struct.unpack_from(FRAME_HEADER_FORMAT, data, 0)
+    flags = collections.Counter(data[colours_offset + i * PALETTE_ENTRY_SIZE + PALETTE_FLAG_BYTE]
+                                for i in range(colours))
+    stats["palette flag byte values"][tuple(sorted(flags))] += 1
+    entries = []
+    for i in range(count):
+        at = offset + i * FRAME_ENTRY_SIZE
+        _action, _number, x0, y0, x1, y1, data_offset = struct.unpack_from(FRAME_ENTRY_FORMAT, data, at)
+        entries.append((at + data_offset, (x1 - x0) * (y1 - y0)))
+    starts = sorted(start for start, _ in entries) + [len(data)]
+    for start, pixels in entries:
+        try:
+            end, solid, edge = walk_rle(data, start, pixels, colours)
+        except FormatError as error:
+            raise FormatError(f"frame file {key}: {error}") from None
+        stats["RLE stream ends at the next frame's data"][end == starts[starts.index(start) + 1]] += 1
+        stats["frames with edge pixels"][edge > 0] += 1
+        stats["frames with solid pixels"][solid > 0] += 1
+
+
+def verify_frames(directory, sequences, pixels=False):
     names = {}
     for body in range(MAX_BODY):
         for action in range(MAX_ACTION):
             names[hashlittle2(FRAME_NAME % (body, action))] = (body, action)
     frames = {}
     unnamed = 0
+    pixel_stats = collections.defaultdict(collections.Counter)
     for path in sorted(glob.glob(os.path.join(directory, FRAME_FILE_GLOB))):
         for name_hash, data in uop_entries(path):
             key = names.get(name_hash)
@@ -372,6 +445,8 @@ def verify_frames(directory, sequences):
             entries = [struct.unpack_from(FRAME_ENTRY_FORMAT, data, offset + i * FRAME_ENTRY_SIZE)[:2]
                        for i in range(count)]
             frames[key] = (animation_id, count, entries)
+            if pixels:
+                verify_pixels(data, key, pixel_stats)
     stats = collections.defaultdict(collections.Counter)
     for name, seq in sequences.items():
         for a in seq["actions"]:
@@ -392,6 +467,52 @@ def verify_frames(directory, sequences):
     print(f"AnimationFrame: {len(frames)} named entries, {unnamed} unnamed, {len(bodies)} bodies,"
           f" {len(bodies - stored)} bodies without a sequence")
     print_stats(stats)
+    if pixels:
+        print("AnimationFrame pixels:")
+        print_stats(pixel_stats)
+    return bodies
+
+
+# ---- tileart creature placeholders: body -> sequence and body -> frames ----
+
+def read_placeholders(path):
+    """{body: (body_type, appearance)} for the tileart records with tile id >= 10000000."""
+    placeholders = {}
+    for _name_hash, data in uop_entries(path):
+        r = Reader(data, f"{path} record")
+        if r.take(TILEART_VERSION_FORMAT) != TILEART_VERSION:
+            raise FormatError(f"{path}: tileart record version is not {TILEART_VERSION}")
+        tile_id = struct.unpack_from("<I", data, TILEART_TILE_ID_OFFSET)[0]
+        if tile_id < MOBILE_DEFINITION_BASE:
+            continue
+        body_type = struct.unpack_from("<I", data, TILEART_BODY_TYPE_OFFSET)[0]
+        r.pos = TILEART_FIXED_SIZE
+        properties = dict(r.take(TILEART_PROPERTY_FORMAT) for _ in range(r.take("<B")))
+        appearance = properties.get(TILEART_APPEARANCE_KEY, tile_id)
+        if appearance >= MOBILE_DEFINITION_BASE:
+            appearance -= MOBILE_DEFINITION_BASE
+        placeholders[tile_id - MOBILE_DEFINITION_BASE] = (body_type, appearance)
+    return placeholders
+
+
+def verify_body_mapping(path, sequences, frame_bodies):
+    placeholders = read_placeholders(path)
+    stats = collections.defaultdict(collections.Counter)
+    for body, (body_type, appearance) in placeholders.items():
+        stats["body_type has a sequence"][body_type in sequences] += 1
+        stats["body_type == body"][body_type == body] += 1
+        stats["appearance (props1 key 8, else body)"]["key 8" if appearance != body else "body"] += 1
+        if frame_bodies is not None:
+            stats["frames under the appearance id"][appearance in frame_bodies] += 1
+    print(f"tileart: {len(placeholders)} creature placeholders")
+    print_stats(stats)
+    if frame_bodies is not None:
+        reached = {a for _, a in placeholders.values()}
+        print(f"  frame bodies reached by a placeholder appearance: {len(frame_bodies & reached)} of"
+              f" {len(frame_bodies)}; bodies without a placeholder:"
+              f" {sorted(frame_bodies - set(placeholders))[:MAX_SHOWN_VALUES]}")
+        print(f"  placeholders whose appearance has no frames (client falls back to body {DEFAULT_FRAMES_BODY}):"
+              f" {sorted(b for b, (_, a) in placeholders.items() if a not in frame_bodies)[:MAX_SHOWN_VALUES]}")
 
 
 # ---- AnimationDefinition ----
@@ -454,12 +575,19 @@ def main():
     parser.add_argument("--sequence", required=True, help="path to AnimationSequence.uop")
     parser.add_argument("--definition", help="path to AnimationDefinition.uop")
     parser.add_argument("--frames", help="Enhanced Client folder holding AnimationFrame*.uop")
+    parser.add_argument("--pixels", action="store_true", help="with --frames: walk every frame's RLE stream")
+    parser.add_argument("--tileart", help="path to tileart.uop: check the body -> sequence / frames mapping")
     parser.add_argument("--dump", type=int, help="print the decoded sequence with this entry id")
     args = parser.parse_args()
+    if args.pixels and not args.frames:
+        parser.error("--pixels needs --frames")
     try:
         sequences = verify_sequences(args.sequence, args.dump)
+        frame_bodies = None
         if args.frames:
-            verify_frames(args.frames, sequences)
+            frame_bodies = verify_frames(args.frames, sequences, args.pixels)
+        if args.tileart:
+            verify_body_mapping(args.tileart, sequences, frame_bodies)
         if args.definition:
             verify_definitions(args.definition)
     except FormatError as error:

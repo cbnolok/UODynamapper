@@ -1,8 +1,9 @@
 // Name the mobile/item animation code of UOSA.exe: the AnimationSequence.uop and AnimationDefinition.uop asset
 // factories and parsers, the UOAnimationSequence / FrameSetLookup / UOAnimationDefinition / UOAnimationFrameSet
 // methods that give the parsed fields their meaning, the asset getters, the mobile animation builder, the
-// animation components' entry points, the 0x6E / 0xE2 animation packets and the animation settings. With --apply,
-// rename DEFAULT functions, add the UO_ANIMATION tag, plate comments and the setting labels.
+// animation components' entry points, the 0x6E / 0xE2 animation packets, the animation settings, the
+// AnimationFrame asset (RLE decoders, palette builder, frame atlas, layer frame-set loader) and the hue tables.
+// With --apply, rename DEFAULT functions, add the UO_ANIMATION tag, plate comments and the setting labels.
 // @category ECResearch
 import ghidra.app.script.GhidraScript;
 import ghidra.program.model.address.Address;
@@ -70,8 +71,11 @@ public class NameAnimationCode extends GhidraScript {
     private static final String FRAME_SET = "UOAnimationFrameSet";
     private static final String MOB_COMPONENT = "UOObjectComponentAnimationMob";
     private static final String TILE_COMPONENT = "UOObjectComponentAnimationTile";
+    private static final String FRAME_FACTORY = "UOAnimationFrameSetFactory";
+    private static final String MOB_FRAME_SET = "UOMobFrameSet";
     private static final String[] CLASSES = {SEQUENCE_FACTORY, DEFINITION_FACTORY, SEQUENCE, LOOKUP, DEFINITION,
-        FRAME_SET, MOB_COMPONENT, TILE_COMPONENT};
+        FRAME_SET, MOB_COMPONENT, TILE_COMPONENT, FRAME_FACTORY, MOB_FRAME_SET};
+    private static final String HUES = "UOHues";
 
     // Asset factory vtable: +4 Create(out, blob, ...). The definition factory adds +0x10 ReadFrame.
     private static final int FACTORY_CREATE = 0x4;
@@ -113,6 +117,16 @@ public class NameAnimationCode extends GhidraScript {
     private static final long EXTRA_Y_FIELD = 0xa8;
     // UOAnimationFrameSet +0x38: next frame set written by SetNext.
     private static final long FRAME_SET_NEXT_FIELD = 0x38;
+
+    // AnimationFrame pixels: the RLE decoders blend with the packed red/blue mask and test run bytes against 0x80;
+    // hue 0x4001 is the palette builder's special (shadow) hue; hue bitmaps are 256 entries wide.
+    private static final long PACKED_RED_BLUE_MASK = 0xff00ff;
+    private static final long RLE_RUN_FLAG = 0x80;
+    private static final long SPECIAL_HUE = 0x4001;
+    private static final long HUE_BITMAP_WIDTH = 0x100;
+    private static final String HUE_BITMAP_STRING = "data\\definitions\\hues\\hue%04d.bmp";
+    private static final String WEAR_STRING = "Not letting a %u(sq %u) wear a %u(sq %u)\n";
+    private static final String READ_FILE = "UOAssets::ReadFileFromPath";
 
     private static final long PACKET_CHARACTER_ANIMATION = 0x6e;
     private static final long PACKET_NEW_CHARACTER_ANIMATION = 0xe2;
@@ -184,6 +198,7 @@ public class NameAnimationCode extends GhidraScript {
         sequenceRuntime(seq, runtime);
         assets(seq, def);
         components(seq);
+        frames();
         packets(seq, runtime);
 
         if (apply) {
@@ -891,6 +906,159 @@ public class NameAnimationCode extends GhidraScript {
             false);
     }
 
+    // ---- AnimationFrame asset, pixel decoding, palette and hue tables ----
+
+    private void frames() {
+        long factoryVt = vtables.get(FRAME_FACTORY);
+        Function create = factoryVt < 0 ? null : slotFunction(factoryVt, FACTORY_CREATE);
+        propose(create, FRAME_FACTORY + SCOPE + "Create", "asset factory vtable +4 (asset type 0x10): allocates a"
+            + " UOMobFrameSet over the blob", false);
+        if (create != null) {
+            List<Function> ctors = new ArrayList<>();
+            for (Function w : vtableWriters(MOB_FRAME_SET)) {
+                if (realCalls(create).contains(w)) {
+                    ctors.add(w);
+                }
+            }
+            propose(single(ctors, "UOMobFrameSet constructor"), MOB_FRAME_SET + SCOPE + MOB_FRAME_SET, "reads u32"
+                + " signature (+4), version (+8), total size (+0xc); keeps the blob (+0x10)", false);
+        }
+
+        // The two RLE decoders: no calls, packed red/blue blend mask, 0x80 run test; the atlas builder calls both.
+        List<Function> decoders = new ArrayList<>();
+        for (Function f : scalarUsersInProgram(PACKED_RED_BLUE_MASK)) {
+            if (calls(f).isEmpty() && usesScalar(f, RLE_RUN_FLAG)) {
+                decoders.add(f);
+            }
+        }
+        List<Function> atlases = new ArrayList<>();
+        for (Function d : decoders) {
+            for (Function caller : callers(d)) {
+                int both = 0;
+                for (Function other : decoders) {
+                    both += realCalls(caller).contains(other) ? 1 : 0;
+                }
+                if (both == decoders.size() && decoders.size() > 1 && !atlases.contains(caller)) {
+                    atlases.add(caller);
+                }
+            }
+        }
+        Function atlas = single(atlases, "frame atlas builder (caller of every RLE decoder)");
+        propose(atlas, NAMESPACE + SCOPE + "BuildFrameAtlas", "draws the layers (body, equipment) in order into a"
+            + " zeroed BGRA8888 NiPixelData (power-of-2 size); layer +0xc mirrored -> mirrored decoder; palette"
+            + " **(layer +0x10)", false);
+        if (atlas == null) {
+            return;
+        }
+        Function normal = null;
+        Function mirrored = null;
+        for (Function d : decoders) {
+            if (callers(d).size() > 1) {
+                normal = d;
+            } else {
+                mirrored = d;
+            }
+        }
+        propose(normal, NAMESPACE + SCOPE + "DecodeFrameRle", "(EAX frame entry, palette, canvas, pitch): byte c <"
+            + " 0x80 skips c pixels; else flag byte F: F>>4 edge pixel, c-0x80 solid pixels, F&15 edge pixel; edge"
+            + " = per-channel (src*f + dst*(16-f))>>4", false);
+        propose(mirrored, NAMESPACE + SCOPE + "DecodeFrameRleMirrored", "same RLE, columns written right to left"
+            + " from -x0-1 (x -> -1-x)", false);
+        List<Function> bounds = new ArrayList<>();
+        for (Function c : realCalls(atlas)) {
+            boolean shared = !c.isExternal() && calls(c).isEmpty();
+            for (Function caller : callers(atlas)) {
+                shared &= realCalls(caller).contains(c);
+            }
+            if (shared && !decoders.contains(c)) {
+                bounds.add(c);
+            }
+        }
+        propose(single(bounds, "layer bounds helper"), NAMESPACE + SCOPE + "GetLayerBounds", "union of the layers'"
+            + " frame boxes (mirrored: [-x1, -x0]) minus the layer offsets +0x18/+0x1c, 1-pixel margin", true);
+        if (normal != null) {
+            List<Function> masks = new ArrayList<>();
+            for (Function caller : callers(normal)) {
+                if (caller.equals(atlas)) {
+                    continue;
+                }
+                for (Function c : realCalls(caller)) {
+                    if (!c.equals(normal) && calls(c).isEmpty() && usesScalar(c, RLE_RUN_FLAG)
+                            && !usesScalar(c, PACKED_RED_BLUE_MASK)) {
+                        masks.add(c);
+                    }
+                }
+            }
+            propose(single(masks, "RLE mask decoder"), NAMESPACE + SCOPE + "DecodeFrameMask", "same RLE into a"
+                + " 1-byte-per-pixel mask; every coded pixel (solid and edge) is marked", true);
+        }
+
+        Function updateFrame = proposed(MOB_COMPONENT + SCOPE + "UpdateFrame");
+        Function getFrameSet = proposed(NAMESPACE + SCOPE + "GetAnimationFrameSet");
+        Function frameToAction = proposed(SEQUENCE + SCOPE + "FrameToAction");
+        if (updateFrame == null) {
+            return;
+        }
+        List<Function> palettes = new ArrayList<>();
+        List<Function> loaders = new ArrayList<>();
+        for (Function c : realCalls(updateFrame)) {
+            if (usesScalar(c, SPECIAL_HUE)) {
+                palettes.add(c);
+            }
+            if (getFrameSet != null && realCalls(c).contains(getFrameSet)) {
+                loaders.add(c);
+            }
+        }
+        Function palette = single(palettes, "palette builder (UpdateFrame callee using 0x4001)");
+        propose(palette, NAMESPACE + SCOPE + "BuildFramePalette", "(ECX hue, EAX blob): entry [b0,b1,b2,b3] ->"
+            + " A=0xff, R=b0, G=b1, B=b2; with a hue table and b3 == 0: table[b0] (b3 != 0 keeps the colour);"
+            + " hue 0x4001: black, alpha 60..190 from luminance; output BGRA", false);
+        if (palette != null) {
+            List<Function> tables = new ArrayList<>();
+            for (Function c : realCalls(palette)) {
+                if (usesScalar(c, SPECIAL_HUE)) {
+                    tables.add(c);
+                }
+            }
+            propose(single(tables, "hue table getter"), HUES + SCOPE + "GetHueTable", "(ECX hue): 0x4001 -> 0x9c3;"
+                + " no 0xc000 bits -> hue-1; else (hue & 0x3fff)-1 unless only 0x4000 is set; map lookup of 256"
+                + " u32 entries", false);
+        }
+        Function loader = single(loaders, "layer frame-set loader (UpdateFrame callee calling GetAnimationFrameSet)");
+        propose(loader, NAMESPACE + SCOPE + "LoadLayerFrameSet", "(owner, out, id, any-action flag, sequence, ...):"
+            + " id >= 10000000 loses 10000000; GetAnimationFrameSet(id, action); flag set and missing -> the first"
+            + " of actions 0..0x33 that exists", false);
+        if (loader != null && frameToAction != null) {
+            List<Function> actions = new ArrayList<>();
+            for (Function c : realCalls(loader)) {
+                if (realCalls(c).contains(frameToAction)) {
+                    actions.add(c);
+                }
+            }
+            propose(single(actions, "layer action helper"), NAMESPACE + SCOPE + "GetLayerAction", "frame-set time"
+                + " -> global frame -> FrameToAction: the action whose frames the layer loads", true);
+        }
+        Function layers = single(stringUsers(WEAR_STRING), "user of the wear-check string");
+        propose(layers, MOB_COMPONENT + SCOPE + "BuildLayers", "body layer frames id = GetAppearance (definition"
+            + " +0xbc) of the object type, overridden by GetAnimationAppearance (+0xc0); none -> body 0; ghost bodies"
+            + " 402/403/607/608/694/695 get hue 0x3e3; equipment needs body_type == sequence stored id", true);
+
+        Function hueLoad = single(stringUsers(HUE_BITMAP_STRING), "user of the hue bitmap path");
+        propose(hueLoad, HUES + SCOPE + "LoadHueTables", "reads data\\definitions\\hues\\huenames.csv and"
+            + " hue%04d.bmp; key = hue number - 1", false);
+        if (hueLoad != null) {
+            List<Function> bitmaps = new ArrayList<>();
+            for (Function c : realCalls(hueLoad)) {
+                if (callsNamed(c, READ_FILE) && usesScalar(c, HUE_BITMAP_WIDTH)) {
+                    bitmaps.add(c);
+                }
+            }
+            propose(single(bitmaps, "hue bitmap reader"), HUES + SCOPE + "LoadHueBitmap", "(path): 32-bpp BMP,"
+                + " width 256, height 2; the second row (+0x400) gives the 256 entries, B,G,R,A -> A<<24|B<<16|G<<8|R"
+                + " (RGBA from the low byte)", false);
+        }
+    }
+
     // ---- 0x6E and 0xE2 ----
 
     private void packets(Map<String, Function> seq, Map<String, Long> runtime) {
@@ -1002,6 +1170,15 @@ public class NameAnimationCode extends GhidraScript {
     }
 
     // ---- naming ----
+
+    private Function proposed(String path) {
+        for (Proposal p : proposals.values()) {
+            if (p.path.equals(path)) {
+                return functions.getFunctionAt(toAddr(p.address));
+            }
+        }
+        return null;
+    }
 
     private void propose(Function f, String path, String evidence, boolean probable) {
         if (f == null) {
@@ -1390,6 +1567,24 @@ public class NameAnimationCode extends GhidraScript {
             }
         }
         return false;
+    }
+
+    // Functions containing an instruction with the scalar operand, over the whole program.
+    private List<Function> scalarUsersInProgram(long value) {
+        List<Function> out = new ArrayList<>();
+        for (Instruction i : listing.getInstructions(true)) {
+            for (int op = 0; op < i.getNumOperands(); op++) {
+                for (Object o : i.getOpObjects(op)) {
+                    if (o instanceof Scalar s && (s.getUnsignedValue() & DWORD_MASK) == value) {
+                        Function f = getFunctionContaining(i.getAddress());
+                        if (f != null && !out.contains(f)) {
+                            out.add(f);
+                        }
+                    }
+                }
+            }
+        }
+        return out;
     }
 
     private boolean readsGlobal(Function f, long address) {

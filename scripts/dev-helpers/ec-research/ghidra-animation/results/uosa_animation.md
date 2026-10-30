@@ -10,7 +10,8 @@ The Enhanced Client (`UOSA.exe`, Ghidra project `UOSA`) drives animations from t
 
 The mobile pixels come from `AnimationFrame1..6.uop`, one entry per (body, action). This document gives
 the layout of both files as the client parses them, the verification against the shipped data, the
-run-time semantics, the relation to the frame files and packets, and the mismatches with the repo parsers.
+run-time semantics, the relation to the frame files and packets, the frame pixel decoding (palette, RLE,
+alpha, hue), how a server body becomes a sequence and a frame key, and the mismatches with the repo parsers.
 
 Conventions:
 
@@ -92,7 +93,7 @@ group_count x {                                    // FrameSetLookup
 
 | Field | Stored at | Run-time use | Confidence |
 |---|---|---|---|
-| `stored_id` | +4 | body id under which the frames are stored (see below) | confirmed (data), probable (code) |
+| `stored_id` | +0x10 (constructor 0x00836694, second argument) | the sequence's own body identity: `BuildLayers` checks equipment body types against it and logs it as "sq" (see "Stored id") | confirmed (code) |
 | header i8 pairs | object | all zero in the data; read by Parse; no reader found besides the copy | unknown |
 | header i16 pairs | object | default for the action i16 pair when the action's is -0x8000 (`UpdateFrame` 0x00436d40); all zero in the data | probable |
 | `action` | map key (+0xb8, `std::map<u32, record>`) | action id | confirmed |
@@ -221,16 +222,28 @@ Data:
 
 ### Stored id
 
-Three entries store an id different from their name: 146 -> 704, 1308 -> 29, 1309 -> 1254. The frames of
-those bodies exist only under the stored id (`animationframe/000704/...`); every `AnimationFrame` header's
-animation id equals the stored id of the sequence that uses it (5485 of 5485). This is the only body
-redirect in the EC data path: the binary contains no `bodyconv`, `mobtypes` or `body.def` strings.
+Three entries store an id different from their name: 146 -> 704, 1308 -> 29, 1309 -> 1254. The stored id
+is kept at sequence +0x10. It is **not** the frame key: the frame files are keyed by the tileart appearance
+of the mobile (see "Body to sequence and frames"). Bodies 1308 and 1309 have their own frame files (the
+same action sets as 29 and 1254), and no creature placeholder uses sequence 146 (placeholder 146 has body
+type 124). The stored id is read by `UOObjectComponentAnimationMob::BuildLayers` 0x004387f0:
+
+- an equipment layer is drawn only when the equipment definition's body type (tileart +0xe4) equals the
+  wearer sequence's stored id, else it logs "Not letting a %u(sq %u) wear a %u(sq %u)";
+- the cached mount animation is rebuilt when the mount's `GetBodyType` differs from its sequence's
+  stored id.
+
+The 5485 frame files the sequences reference under their stored id all exist, and every
+`AnimationFrame` header's animation id equals the body in its own entry name (31877 of 31877). The binary
+contains no `bodyconv`, `mobtypes` or `body.def` strings: the body redirects come from `tileart.uop`.
 
 ## Relation to AnimationFrame*.uop
 
-The frame file of (body, action) is keyed by the sequence's stored id and the resolved action:
+The frame file of (body, action) is keyed by the mobile's appearance id (see "Body to sequence and
+frames"; usually the body itself) and the resolved action:
 
-- Header u32 at +0x0c (animation id) = stored id. **confirmed** (data).
+- Header u32 at +0x0c (animation id) = the body in the entry name (31877 of 31877). The client never reads
+  it. **confirmed** (data).
 - Frame entry `{u16 action, u16 number, i16 x0, i16 y0, i16 x1, i16 y1, u32 offset}`: the first u16 is the
   action id (5485 of 5485 files), the second is the 1-based local frame number `1..5 * frame_count`.
   **confirmed** (data), matching `FrameToAction`.
@@ -241,18 +254,214 @@ The frame file of (body, action) is keyed by the sequence's stored id and the re
 - 5384 of 5485 files have exactly `5 * frame_count` entries. Body 679 has 50 frames for actions whose
   sequence frame count is 1; the client shows only the first frame of each 10. 61 plain actions have no
   frame file (bodies 842, 778, 666, 0, 241, 1253).
-- 561 bodies have frame files but no sequence. The client cannot animate them through this path.
+- 559 bodies have frame files but no sequence of their own. 557 of them are animated through the sequence
+  of their tileart body type (401 -> sequence 400, for example). Only 344 and 827 have no creature
+  placeholder, so the client cannot show them.
 
-Resolving "body B, action A, direction D" as the client does:
+Resolving "server body S, action A, direction D" as the client does:
 
-1. Sequence = `build/animationsequence/%08d.bin` of B (the body type); frames body = stored id.
+1. Definition = tileart record `10000000 + S`. Sequence = `build/animationsequence/%08d.bin` of its
+   body type (+0x20 in the record). Frames body F = its appearance (props1 key 8, else S; minus 10000000
+   when above it). When F has no frames, body 0 is used.
 2. Group = `SelectAnimationGroup`; A comes from the packet or movement lookups above.
 3. `R = ResolveAction(A)`; frame count `fc` and fps from R.
 4. `mirrored = D < 3`; `d = mirrored ? 6 - D : D`.
-5. Frame file `build/animationframe/%06d/%02d.bin` of (stored id, R); frames numbered
+5. Frame file `build/animationframe/%06d/%02d.bin` of (F, R); frames numbered
    `(d - 3) * fc + 1 .. (d - 3) * fc + fc`; drop skipped frames; flip horizontally when mirrored.
 6. Interval `1 / fps` (16 fps when the action is missing); `fc = 1` for stand actions when idle animation
    is off.
+
+## AnimationFrame*.uop pixel decoding
+
+### Asset
+
+- `UOAnimationFrameSetFactory::Create` 0x0084217e (factory vtable 0x00cdf0b4 +4, asset type 0x10) creates
+  a `UOMobFrameSet` (vtable 0x00cdf0c8). `UOMobFrameSet::UOMobFrameSet` 0x00842078 reads u32 +4
+  (signature `AMOU`), +8 (version, 1 in every file) and +0xc (total size, equal to the entry size in every
+  file), and keeps the blob at +0x10. **confirmed**.
+- The client reads these header fields only: +0x18 colours count and +0x1c colours offset (palette
+  builder), +0x20 frames count and +0x24 frames offset (`FindFrameEntry` 0x00430f60, a binary search on
+  `(u16 action, u16 number)`, ascending). No reader was found for +0x0c (animation id) or the +0x10..+0x17
+  box. The box always contains the union of the frame boxes (31877 of 31877) but equals it in only 4495
+  files. **confirmed** (code: no other reader found).
+- Frame entry, 16 bytes: `u16 action, u16 number, i16 x0, i16 y0, i16 x1, i16 y1, u32 offset`. The pixel
+  data starts at `entry address + offset`. width = x1 - x0, height = y1 - y0. The box is anchor-relative:
+  pixel (0, 0) of the frame is drawn at (x0, y0) from the mobile's anchor point (body 400 action 0 frame 1:
+  x -15..15, y -74..-10). **confirmed**.
+
+### Palette
+
+`UOAnimations::BuildFramePalette` 0x0042b270 (ECX = hue, EAX = blob; confirmed at instruction level) turns
+the `colours_count` 4-byte entries into 32-bit words for a BGRA8888 surface:
+
+```
+entry = [b0, b1, b2, b3]
+r, g, b, a = b0, b1, b2, 0xff
+if hue != 0 and (table = GetHueTable(hue)) and b3 == 0:
+    t = table[b0]                       // u32: R | G << 8 | B << 16 | A << 24
+    r, g, b, a = t & 0xff, t >> 8 & 0xff, t >> 16 & 0xff, t >> 24
+word = a << 24 | r << 16 | g << 8 | b   // B, G, R, A in memory
+```
+
+- Byte 3 is a "keep colour" flag, never alpha: 0 = the colour takes the hue, non-zero = it keeps its
+  colour. Values in the data: only 0 (29248 files) or 0 and 1 (2629 files). Body 400 has 182 hueable
+  near-grey skin colours and 74 brown flag-1 colours (the loincloth). **confirmed**.
+- Every palette colour is opaque. The hue table is indexed by the red byte b0 (hueable colours are
+  near-grey, so R is their brightness).
+- Hue 0x4001 is special: every colour becomes black, with alpha derived from its luminance
+  (L = 0.34 * b0 + 0.59 * b1 + 0.07 * b2, inverted and normalized, alpha = t * 130 + 60, so 60..190). This
+  gives a translucent dark silhouette. `FUN_005ea110`, the mobile update from the 0x78/0x20/0x77 handlers,
+  sets hue 0x4001 when byte +0x6d of the mobile's component 5 is set. **confirmed** (formula shape),
+  **probable** (exact normalization), **unknown** (meaning of the flag).
+- `UOHues::GetHueTable` 0x00427ad0 maps a hue to a table key: 0x4001 -> 0x9c3; no 0xc000 bits -> hue - 1;
+  0x8000 set -> (hue & 0x3fff) - 1; only 0x4000 set -> the hue itself, so no table and no hue. The palette
+  builder skips hue 0. The classic 0x8000 "partial hue" bit is masked away: in the EC, partial hueing is the
+  per-colour flag. **confirmed**.
+- `UOHues::LoadHueTables` 0x004274a0 reads `data\definitions\hues\huenames.csv` and, for each number N,
+  `hue%04d.bmp` through `UOHues::LoadHueBitmap` 0x004271f0, stored under key N - 1. So server hue H uses
+  `hue{H:04}.bmp`. The bitmap must be 32 bpp, 256 x 2. The table is the second stored row (top image row),
+  B,G,R,A bytes -> `A << 24 | B << 16 | G << 8 | R`. Hues.uop holds 3000 bitmaps (1..3000), the csv and 2 other entries.
+  Every table entry has alpha 255. **confirmed**.
+- The palette is rebuilt when the layer hue (+0x20) differs from the cached one (+0x1c)
+  (`UpdateFrame` 0x004374e0).
+
+### RLE
+
+`UOAnimations::DecodeFrameRle` 0x0042b620 (EAX = frame entry, then palette words, canvas, pitch; confirmed
+at instruction level):
+
+```
+dst = canvas + y0 * pitch + x0 * 4               // anchor-relative, the canvas origin is the anchor
+for each of height rows:                         // a skip may run past the row end; the excess carries over
+    while dst < row_end:
+        c = *src++
+        if c < 0x80: dst += c                    // transparent, left untouched
+        else:
+            F = *src++
+            if F >> 4:  *dst = lerp(*dst, pal[*src++], F >> 4); dst++
+            repeat c - 0x80: *dst++ = pal[*src++]                 // solid, opaque copy
+            if F & 15:  *dst = lerp(*dst, pal[*src++], F & 15); dst++
+lerp(d, s, f) = per byte, all four channels: (s * f + d * (16 - f)) >> 4
+```
+
+Because a skip carries over to the next row, the row loop is the same as a linear pixel index
+`0..width * height` over the frame box. Edge factors 1..15 occur in both nibbles.
+
+- `UOAnimations::DecodeFrameRleMirrored` 0x0042b810 is the same loop, writing right to left from column
+  `-x0 - 1`: pixel x of the frame lands at `-1 - x`, so a mirrored frame covers `[-x1, -x0)`.
+- `UOAnimations::DecodeFrameMask` 0x0042ba20 runs the same RLE into a byte mask and marks every coded
+  pixel, edges included. Its caller `FUN_0050bd00` also calls `DecodeFrameRle`. **probable**: hit testing.
+
+### Layers and the atlas
+
+`UOAnimations::BuildFrameAtlas` 0x00431a10:
+
+- `UOAnimations::GetLayerBounds` 0x0042b170 computes the union of the layer boxes. It uses `[-x1, -x0]`
+  for mirrored layers, subtracts the layer offsets (+0x18, +0x1c) and adds a 1-pixel margin.
+- The atlas is a `NiPixelData` with a power-of-2 size (at least 4) and format BGRA8888 (`DAT_00dded60`:
+  32 bits, B,G,R,A of 8 bits). It is zeroed (`memset`). An empty layer set gives a 64 x 64 surface.
+- Layers are drawn in list order (body first, then equipment). Layer +0xc chooses the mirrored decoder, and
+  `**(layer + 0x10)` is the palette. Edge pixels of an upper layer blend over the lower layer's pixels,
+  alpha included.
+
+Over the zeroed atlas, a single layer gives: solid = (R, G, B, 255); edge with factor f =
+(R*f >> 4, G*f >> 4, B*f >> 4, 255*f >> 4). That is premultiplied over black. The straight-alpha
+equivalent is (R, G, B, 255*f >> 4).
+
+### Frame-set loading per layer
+
+`UOAnimations::LoadLayerFrameSet` 0x00439b70 (owner, out, id, any-action flag, animation definition
+shared_ptr):
+
+- the id loses 10000000 when it is >= 10000000;
+- the action comes from `UOAnimations::GetLayerAction` 0x00439a70 (frame-set time -> global frame ->
+  `FrameToAction`);
+- then `GetAnimationFrameSet(id, action)`;
+- with the flag set and no file, it takes the first of actions 0..0x33 that exists;
+- without an animation definition (no sequence) the result is an empty frame set: nothing is drawn.
+
+`BuildLayers` passes the flag 1 and `UpdateFrame` passes 0. **confirmed** (the id at instruction level).
+
+### Data check
+
+`verify_animation.py --frames ... --pixels` walks every frame of the 31877 files (1,572,711 frames):
+
+- every stream ends exactly where the next frame's data starts, or at the end of the file;
+- no run passes the frame box;
+- every palette index is below the colour count;
+- 1571702 frames have edge pixels.
+
+The scratch decoder `probe_frames.py` (scratch folder, not in the repo) was run on bodies 1, 2, 9, 260,
+400 and 401. It decodes by the client algorithm, on a magenta background:
+
+- the silhouettes are opaque and the edges are blended;
+- no stray pixels appear;
+- the human skin is grey (hueable), the loincloth is brown (flag 1);
+- creatures with all-zero flags show their natural colours.
+
+## Body to sequence and frames
+
+### Code path
+
+1. Server body S arrives in 0x78 / 0x20 / 0x77 (and 0x1B for the player). The handlers
+   (`FUN_005e9ae0`, `FUN_005e9db0`, `FUN_005eb220`, `UOPacket::Handle_0x1B_LoginConfirm` 0x00611950) add
+   10000000. `FUN_005ea110` compares the result with the object type (vtable +0x60). It then takes
+   `UOTileArt::GetObjectDefinition(10000000 + S)` and calls `SetBodyType` (object vtable +0x6c, 0x005b3070)
+   with the definition's `GetBodyType` (+0xb4 -> tileart record +0x20, default 400).
+   `UOObject::InitFromDefinition` copies the same field. **confirmed**.
+2. `UOObject::GetBodyType` 0x005b3080 (vtable +0x70, object +0x50) is the sequence id
+   `BuildMobileAnimation` requests. **confirmed**.
+3. `UOObjectComponentAnimationMob::BuildLayers` 0x004387f0 builds the body layer (confirmed at instruction
+   level, 0x00438ad1..0x00438c53):
+   - frames id = `GetAppearance` (definition vtable +0xbc: props1 key 8, else the tile id, then the
+     non-animation appearance filters);
+   - a non-zero `GetAnimationAppearance` (+0xc0, filter subtype 2) replaces it;
+   - then `LoadLayerFrameSet(id, flag 1)`;
+   - when that fails, it retries with id 0 (body 0); when that fails too, the mobile gets no layers.
+4. Equipment (26 layers, `0x1a`): frames id = the item definition's `GetAppearance` /
+   `GetAnimationAppearance` for the wearer (minus 10000000). The record `10000000 + id` must exist, and its
+   body type must equal the wearer sequence's stored id, else the item is not drawn.
+5. Ghost bodies 402, 403, 607, 608, 694, 695 (checked on the definition's tile id minus 10000000), and
+   mobiles with a flag in `BuildLayers`, are drawn with hue 0x3e3. Other mobiles use their hue (object vtable +0x58).
+   **confirmed** (code), **unknown** (the flag).
+
+The body type is plain data: no hardcoded table, gender or race substitution, or Lua mapping exists in
+this path. Race (props1 key 9) and gender (key 10) are set on the human placeholders, but this path does
+not read them.
+
+### Data (tileart.uop creature placeholders)
+
+`verify_animation.py --tileart` and the scratch `probe_bodies*.py`:
+
+| Check | Result |
+|---|---|
+| placeholders (tile id >= 10000000) | 1143 |
+| body type has a sequence | 1143 of 1143 |
+| body type == body | 363; 780 map to another sequence (401 -> 400, 10 -> 9, 146 -> 124) |
+| appearance (props1 key 8) differs from the body | 172 (402 -> 400, 403 -> 401, 607 -> 605, 146 -> 124) |
+| frames exist under the appearance | 1091; 52 have none and fall back to body 0 (433, 484, 507, ...; human or gargoyle body types) |
+| frame bodies reached by an appearance | 919 of 926; 344 and 827 have no placeholder |
+| sequences no placeholder uses | 10, 146, 567, 679, 833, 842, 1551 |
+
+Examples:
+
+- 401 (female human): body type 400, appearance 401, gender 1 -> sequence 400, frames 401.
+- 605 / 606 (elves): sequence 400, own frames.
+- 667: sequence 666, own frames.
+
+### Other things in the path the repo does not handle
+
+- Per-colour hue flag (palette byte 3) and hue tables by red byte (see "Palette").
+- Shadow / translucent hue 0x4001 and the ghost hue 0x3e3.
+- Mirrored directions are mirrored around the anchor (x -> -1 - x). They are not flipped inside the frame
+  box.
+- Equipment layers come from the item's appearance, filtered by the wearer's body (appearance filters
+  0/1/2), and their edges blend over the body.
+- Mount: `BuildLayers` builds the mount animation, using group 2 when it exists. The mount definition's
+  offsets (+0xec / +0xf0, negated) and the sequence's per-direction rider offsets place the rider, and
+  `UpdateFrame` subtracts 15 from y. A PositionOffset frame effect overrides the offsets. `FUN_004394a0`
+  preloads actions 9..14 of the mount.
+- Shadow frames: no separate shadow asset or decoder was found in this path.
 
 ## AnimationDefinition.uop
 
@@ -344,7 +553,7 @@ copied into run-time globals in the packet registration function 0x005bc540:
 | `parse_cc` tail | one u32 count + u32 list after all actions | the u32 skipped list is per action; the tail is the group table | wrong |
 | `parse_ec` | starts at offset 0 with `u8, u8, i32, u32` and three counted lists per "action" | resembles the group record (`i8 key, i8 parent, u32 default`, then three counted lists) with an extra u32, read at offset 0 instead of after the action table | wrong |
 | `DirectionData::frame_indices` | per-direction list of frame indices read from the file | the file has no per-direction frame list: direction frames are computed (`base + (dir - 3) * frame_count`, mirroring for 0..2) | wrong (model) |
-| `body_id` | the requested body | frames live under the stored id (146 -> 704, 1308 -> 29, 1309 -> 1254) | missing |
+| `body_id` | the requested body | sequence id = tileart body type of `10000000 + body`; frames under the tileart appearance; stored id is the wear-check identity | missing |
 | alias, fps, offsets, frame effects, skipped frames, groups | ignored | see Layout | missing |
 | `ec_action_count` | first u32 = action count | first u32 = stored id | wrong |
 
@@ -359,7 +568,8 @@ copied into run-time globals in the packet registration function 0x005bc540:
 
 | Item | Repo | Client | Severity |
 |---|---|---|---|
-| `load_animation_sequences` (~1076) | `parse_ec`, keyed by the requested body | Layout above; keyed by the sequence entry name, frames by the stored id | wrong |
+| `load_animation_sequences` (~1076) | `parse_ec`, keyed by the requested body | Layout above; keyed by the sequence entry name; a body reaches its sequence through the tileart body type and its frames through the tileart appearance | wrong |
+| Bodies without an own sequence | dropped (559 frame bodies) | animated with the body type's sequence (557 of them) | missing |
 | Frame identity | `source_frame_index` = entry position in the frame file | the entry's second u16 (1-based number) gives direction and frame; gaps exist | wrong (10 files) |
 | Records | one record per parsed "direction", or one action 0 / direction 0 record with all frames | 5 stored directions per action, directions 0..2 mirrored, alias actions share frames, fps per action | missing |
 
@@ -369,6 +579,11 @@ copied into run-time globals in the packet registration function 0x005bc540:
 |---|---|---|---|
 | `FrameEntry::frame` | "frame" | action id | naming only |
 | `FrameEntry::unknown` | unknown | 1-based local frame number (`(dir - 3) * frame_count + frame + 1`) | naming only |
+| Palette byte 3 | alpha (`u32::from_le_bytes`, `blend_pixel`) | "keep colour" flag (0 = hueable); every colour is opaque | wrong: every decoded frame is transparent |
+| Edge pixels | `c * f >> 4` on all four bytes, alpha from byte 3 | coverage f/16 over the destination; alpha 255 * f >> 4 | wrong |
+| `center_x` / `center_y` | header x0 - frame x0 (relative to the header box) | anchor = (-x0, -y0) from the frame's top-left; the header box is unused | wrong (constant shift per file) |
+| Width / height | `abs(x1 - x0)` | `x1 - x0` (never negative in the data) | harmless |
+| Hue | none | per-colour flag + hue table indexed by the red byte; specials 0x4001, 0x3e3 | missing |
 
 ### `lib/uocf/src/enhanced/ENHANCED_CLIENT_FILES.md`
 
@@ -392,7 +607,8 @@ Neither file is described. Missing.
 2. Add `resolve_action(action, flying_enabled)` (one alias level, action 19 rule, fallback to the lowest
    plain action) and `direction_frames(action, dir) -> (first_number, count, mirrored)`, plus group lookups
    `move_action`, `typed_action(group, type, sub, variant, restriction)` and `map_character_animation`.
-3. In `mobile_anim_ec.rs`, key sequences by entry name (body type) and frames by `stored_id`; derive
+3. In `mobile_anim_ec.rs`, key sequences by entry name (body type) and frames by the tileart appearance
+   (item 8); derive
    direction and frame from `FrameEntry` number; emit records for directions 3..7 and mark 0..2 as mirrors;
    emit alias actions as references to the resolved action; carry fps and skipped frames.
 4. Rename `FrameEntry::frame` -> `action` and `unknown` -> `frame_number` (1-based), with doc comments.
@@ -401,6 +617,38 @@ Neither file is described. Missing.
    `FrameSet { next: Option<u32>, frame_interval: f32, frames: Vec<(u32 tile_id, Vec<EffectDefinition>)> }`,
    keyed by item id. Remove `resolve`; nothing in the EC data maps bodies through this file.
 6. Document both files in `ENHANCED_CLIENT_FILES.md` and link this note.
+7. `AnimationFrame::decode_frame` (`lib/uocf/src/enhanced/animationframe.rs`), with named constants
+   `RLE_RUN_FLAG = 0x80`, `EDGE_FACTOR_BITS = 4`, `EDGE_FACTOR_MASK = 0x0f`, `EDGE_FACTOR_ONE = 16`,
+   `OPAQUE_ALPHA = 0xff`, `PALETTE_KEEP_COLOUR_BYTE = 3`:
+   - palette word = `[b0, b1, b2, OPAQUE_ALPHA]` (RGBA8888 bytes). Never use byte 3 as alpha;
+   - solid pixel: copy the word; edge pixel with factor f: RGB = palette RGB and A = `255 * f >> 4`
+     (straight alpha). That is the client's premultiplied-over-black result, `(c * f >> 4, 255 * f >> 4)`,
+     un-premultiplied. Keep straight alpha so the red byte stays usable as the hue key on edges;
+   - decode over the linear pixel index `0..width * height` (as now), width = `x1 - x0`, and fail when a run
+     passes the box or the stream ends early, instead of silently clamping;
+   - return a per-pixel hue mask next to the RGBA: `hueable = palette[i][3] == 0` (1 bit or 1 byte per
+     pixel). The hue key of a hueable pixel is its red byte;
+   - `center_x = -x0`, `center_y = -y0` (the anchor inside the frame image); drop the header-box
+     subtraction. Mirrored directions: draw the frame at x from `-x1` to `-x0` around the anchor
+     (pixel x -> `-1 - x`), so the mirrored `center_x = x1`;
+   - rename the header fields: +0x0c `animation_id` (unused by the client), +0x10..+0x17 `bounds`
+     (unused; contains every frame box).
+8. Hue support (new, e.g. `lib/uocf/src/enhanced/hues.rs`): read `Hues.uop`
+   (`data/definitions/hues/huenames.csv`, `hue%04d.bmp`, 32 bpp, 256 x 2, second stored row,
+   B,G,R,A per entry). `hue_table(hue)` follows `GetHueTable`: 0 -> none; 0x4001 -> shadow; mask 0x3fff
+   when 0x8000 is set; 0x4000 alone -> none; table of `hue{H:04}.bmp`. Hued colour of a hueable pixel =
+   `table[red]` (keep the edge alpha). Hue 0x4001 = black with alpha 60..190 from luminance (exact
+   normalization still open; see the open questions).
+9. Body mapping (new, from `tileart.uop`, no hardcoded table): for each placeholder `10000000 + body`,
+   `sequence_id = body_type` (+0x20), `frames_body = props1[8]` (else body; minus 10000000 when above), and
+   body 0 when no frames exist for it. In the packer (`mobile_anim_ec.rs`) and the package
+   (`lib/udd-assets/src/mobile_anim_ec.rs`):
+   - emit one animation per server body: the frames of `frames_body` with the actions, fps, aliases and
+     offsets of `sequence_id`;
+   - stop dropping frame-only bodies (557 become drawable);
+   - share the pixel data when several bodies use the same frames body (402/403 reuse 400/401);
+   - record ghost bodies 402, 403, 607, 608, 694, 695 as "draw with hue 0x3e3".
+   The tileart parser already reads body type and props1 (see `../ghidra-tileart`).
 
 ## Uncertainties and open questions
 
@@ -411,7 +659,14 @@ Neither file is described. Missing.
   0x00833f3d, not traced through it.
 - Header i8 pairs of the sequence and the `AnimationDefinition` `second_set` / `value` fields have no
   decoded consumer; all data values are trivial (zero).
-- How `GetBodyType` (object vtable +0x70) maps the server body to the sequence id was not traced. No
-  classic remap file is loaded, so it is probably the body id itself.
+- The 0x4001 shadow hue's exact normalization step (the min / mean / max terms between the luminance and
+  `t * 130 + 60`) was read only in outline. The flag that selects it (component 5, byte +0x6d) was not
+  identified.
+- The `BuildLayers` flag that forces hue 0x3e3 on non-ghost bodies was not identified.
+- The texture blend mode of the mobile atlas (premultiplied or straight alpha) was not traced. The atlas
+  bytes over black are premultiplied.
+- `FUN_0050bd00` (`DecodeFrameRle` + `DecodeFrameMask`) is probably the hit-test / paperdoll path; not
+  traced.
+- The sequence stored id is the wear-check identity; no other reader of sequence +0x10 was searched for.
 - `cacheSize` eviction of these assets was not traced.
 - `AnimationDefinition` entry 10000400 has no consumer found.

@@ -6,7 +6,10 @@ Names the code in `UOSA.exe` (Enhanced Client) that loads and plays mobile and i
 - the sequence action table, the group lookups (`FrameSetLookup`) and the frame mapping helpers;
 - the mobile and tile animation components;
 - the 0x6E / 0xE2 animation packet chain;
-- the animation settings (`idleAnimation`, `frameSetRestriction`, `cacheSize`, `flying_animations`).
+- the animation settings (`idleAnimation`, `frameSetRestriction`, `cacheSize`, `flying_animations`);
+- the `AnimationFrame` asset: RLE decoders, palette builder, frame atlas, layer frame-set loader and the
+  mobile layer builder;
+- the hue tables (`Hues.uop`).
 
 Findings: [results/uosa_animation.md](results/uosa_animation.md) has:
 
@@ -15,6 +18,8 @@ Findings: [results/uosa_animation.md](results/uosa_animation.md) has:
 - the run-time semantics: action resolution, directions and mirroring, frame numbering, timing, groups,
   packets and settings;
 - how the files relate to `AnimationFrame*.uop`;
+- the frame pixel decoding (palette flag byte, RLE, edge alpha, mirroring, hue tables);
+- how a server body maps to a sequence and a frame key through the `tileart.uop` creature placeholders;
 - the mismatches with the repo parsers and the proposed Rust changes.
 
 ## NameAnimationCode.java
@@ -36,7 +41,7 @@ NameAnimationCode.java OUTPUT_FILE [--apply]
     `g_UOSettingCacheSize`, `g_UOSettingFlyingAnimations` and their run-time copies `g_UOIdleAnimation`,
     `g_UOFrameSetRestriction`, `g_UOFlyingAnimations`.
 - New names may also go in the namespaces `UOObjectManager`, `UOPacket`, `UOSettings`, `FrameSetLookup`,
-  `UOProjectileEffect` and `UOTileEffect`.
+  `UOProjectileEffect`, `UOTileEffect` and `UOHues`.
 - Its own single-line plate comments are refreshed when the evidence text changes; comments edited by hand
   are kept.
 - Names with another source type are never changed; they are listed under "Kept names".
@@ -44,7 +49,8 @@ NameAnimationCode.java OUTPUT_FILE [--apply]
 
 The script relies on names applied by the tileart and effects scripts (`UOAssets::GetAsset`,
 `g_UOAssetManager`, `UOAssets::StreamRead`, `UOEffects::ParseEffectDefinitionCollection`,
-`UOProjectileEffect::Init`, `UOTileEffect::Init`, the `Receive_0x70/0xC0/0xC7` handlers). Run those first.
+`UOProjectileEffect::Init`, `UOTileEffect::Init`, the `Receive_0x70/0xC0/0xC7` handlers,
+`UOAssets::ReadFileFromPath`). Run those first.
 
 Run it through ghidra-mcp:
 
@@ -79,6 +85,12 @@ its address:
 | OnNewCharacterAnimation callee that calls HasGroup; the caller of GetTransitionAction that calls it | `SelectAnimationGroup`, `PlayTransitionAction` |
 | The two readers of `g_UOFrameSetRestriction` (besides the copier): the one whose caller calls exactly it and GetGroup, and the other | `GetTypedAction` + `MapCharacterAnimationAction`, `GetTransitionAction` |
 | Only user of the string `, mounted`; the caller of NextBaseFrame's map iterator step that UpdateFrame calls | `UpdateFrame`, `FrameToAction` |
+| RTTI vtables of `UOAnimationFrameSetFactory` (+4) and `UOMobFrameSet` (the vftable writer Create calls) | `UOAnimationFrameSetFactory::Create`, `UOMobFrameSet::UOMobFrameSet` |
+| Functions without calls that use the packed mask 0xff00ff and the scalar 0x80; their common caller; the one with another caller is the normal decoder | `DecodeFrameRle`, `DecodeFrameRleMirrored`, `BuildFrameAtlas` |
+| Callee without calls shared by the atlas and both atlas callers; callee of the other DecodeFrameRle caller using 0x80 but not 0xff00ff | `GetLayerBounds`, `DecodeFrameMask` |
+| UpdateFrame callee using 0x4001, and its callee using 0x4001; UpdateFrame callee calling GetAnimationFrameSet, and its callee calling FrameToAction | `BuildFramePalette`, `UOHues::GetHueTable`, `LoadLayerFrameSet`, `GetLayerAction` |
+| Only user of `Not letting a %u(sq %u) wear a %u(sq %u)\n` | `UOObjectComponentAnimationMob::BuildLayers` |
+| Only user of `data\definitions\hues\hue%04d.bmp`; its callee calling `UOAssets::ReadFileFromPath` and using 0x100 | `UOHues::LoadHueTables`, `UOHues::LoadHueBitmap` |
 
 ## verify_animation.py
 
@@ -86,15 +98,25 @@ Read-only checker that decodes every entry of `AnimationSequence.uop` and `Anima
 client does and requires each entry to end exactly where its last field ends. It prints value
 distributions per field, the entries whose stored id differs from their name, and the alias, group and
 typed-action consistency checks. With `--frames` it also reads the `AnimationFrame*.uop` headers and checks
-them against the sequences (frame counts, action ids, 1-based frame numbers). `--dump BODY` prints one
-decoded sequence with the first frame of every direction.
+them against the sequences (frame counts, action ids, 1-based frame numbers). `--pixels` (with `--frames`)
+walks every frame's RLE stream as `DecodeFrameRle` does: each stream must end where the next frame's data
+starts, no run may pass the frame box, every palette index must be below the colour count. It also prints
+the palette flag byte values (about 1.5 minutes). `--tileart` reads the creature placeholders
+(`10000000 + body`) of `tileart.uop` and checks the body -> sequence (body type) and body -> frames
+(appearance) mapping. `--dump BODY` prints one decoded sequence with the first frame of every direction.
 
 ```
 C="<Enhanced Client folder>"
 python3 -I verify_animation.py --sequence "$C/AnimationSequence.uop" \
-    --definition "$C/AnimationDefinition.uop" --frames "$C" [--dump 400]
+    --definition "$C/AnimationDefinition.uop" --frames "$C" --pixels --tileart "$C/tileart.uop" [--dump 400]
 ```
 
-The script exits with code 1 and prints `FORMAT ERROR: ...` on the first violation: a read past the end of
-an entry, trailing bytes, an unknown effect key or an entry name that is not `build/<type>/%08d.bin`.
+The script exits with code 1 and prints `FORMAT ERROR: ...` on the first violation:
+
+- a read past the end of an entry;
+- trailing bytes;
+- an unknown effect key;
+- an entry name that is not `build/<type>/%08d.bin`;
+- an RLE run past the frame box, or a palette index out of range;
+- a tileart record whose version is not 4.
 Standard library only; no client data is stored.
