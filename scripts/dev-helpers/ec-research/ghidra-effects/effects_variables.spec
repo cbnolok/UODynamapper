@@ -1473,3 +1473,22 @@ function NiNIFImageReader::ReadFile
   param file void* @stack:0x4
   param destination void* @stack:0x8
 end
+
+# ---- draw order and Chaos render resources (results/uosa_effects.md "Draw order", results/uosa_chaos.md) ----
+# SetBound copies an NiBound (centre, radius) into the billboard shape (+0x10) at +0x1c and into its geometry data
+# (+0xc0) at +0x10; SetActiveCount culls the clones past `count`.
+
+function ParticleBillboard::SetBound
+  proto __thiscall void custom
+  param billboard void* @ECX
+  param centerX float @stack:0x4
+  param centerY float @stack:0x8
+  param centerZ float @stack:0xc
+  param radius float @stack:0x10
+end
+
+function MeshParticle::SetActiveCount
+  proto __thiscall void custom
+  param renderer void* @ECX
+  param count ushort @stack:0x4
+end

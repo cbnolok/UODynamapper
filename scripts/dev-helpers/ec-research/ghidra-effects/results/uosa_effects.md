@@ -676,8 +676,9 @@ Quirks (derived from the confirmed numbers and map flags, not observed in a fram
     (`FUN_00754fb0` 0x00755612..0x00755631 compares the VS/PS versions; otherwise it installs the legacy
     material at 0x007556a2); `NiDX9Renderer::UseLegacyPipelineAsDefaultMaterial` 0x0075f800 has no caller.
     With no lights, NiStandardMaterial (and the fixed-function pipeline) gives
-    `saturate(emissive + ambient × 0 + diffuse × 0)` = the material emissive, with the alpha from the
-    material or the vertex colours by the `NiVertexColorProperty` mode.
+    `emissive + ambient × 0 + diffuse × 0` = the material emissive, with the alpha from the
+    material or the vertex colours by the `NiVertexColorProperty` mode (full formula with the texture
+    maps in "NiStandardMaterial texture combine").
   - What that means for the data (survey of the 466 NIFs, 671 meshes and 1086 particle systems): files
     lit with `E_A_D` show only their emissive colour; the vertex colour modes (`SRC_EMISSIVE`) show the
     vertex colours; meshes with `E_A_D` / `SRC_IGNORE` and emissive 0 (33 + 4 meshes, about 10 particle
@@ -715,6 +716,140 @@ All **confirmed** on the binary unless marked.
 - The three `.nif` texture files (`03000017_star.nif`, `03000018_circle_g.nif`, `03002014_flare.nif`) are
   Gamebryo 20.0.0.4 NIFs with one `NiPixelData`: RGBA, 128 × 128, 8 stored levels. They are referenced with
   `MIP YES`; their stored levels are used as they are.
+
+## Draw order
+
+All **confirmed** on the binary; the SDK references are Gamebryo 2.6 (`CoreLibs/NiMain`), which matches the
+2.3 code at these points.
+
+- **World pass.** `DrawWorldRenderGroups` 0x00470430 (probable name) draws the render groups of
+  `g_UOEffectRenderGroups` 0x00e32e28 in the order 0, 1, 2, 3, 11, 6, then **7** (all NIF effects and the
+  Chaos `ParticleSystemRoot`; skipped while the viewer +0x54 is set), then 9. Each group gets its own cull
+  and its own `NiDrawVisibleArray` 0x0067f330 call, so **each group is sorted on its own**; groups share
+  only the depth buffer. Group 1 and group 10 have an optional first pass through `UOShaderOverrideSorter`
+  (`RegisterObjectArray` 0x00455ed0: every object at once in array order, no sort); effects never take it.
+- **Sorter.** `UOGraphics::CreateRendererAndSorter` 0x0058a950 (probable name) creates the renderer and sets
+  a new `NiAlphaAccumulator` (constructor 0x00698f70, vtable 0x00cc0cf8) as its sorter, with the defaults
+  `ObserveNoSortHint = true`, `SortByClosestPoint = false` (`NiAlphaAccumulator.cpp:26-27`).
+- **Per object** (`NiAlphaAccumulator::RegisterObjectArray`, `NiAlphaAccumulator.cpp:33-66`): an object is
+  queued for sorting when its `NiAlphaProperty` has blending on, its no-sorter flag (alpha flags bit 13) is
+  clear, and the object's no-sort bit (0x40 at `NiAVObject` +0xac in 2.3) is clear. **Every other object
+  (opaque, alpha-tested only, no-sorter, or under an `NiSortAdjustNode` with `SORTING_OFF`) is drawn at once,
+  in scene traversal order**, before any sorted object of the same group.
+- **Sort key** (`NiAlphaAccumulator::Sort`, `NiAlphaAccumulator.cpp:68-110`): depth = world bound centre ·
+  camera world direction. The queue is sorted by depth with an unstable quicksort
+  (`NiBackToFrontAccumulator::SortObjectsByDepth`, `NiBackToFrontAccumulator.cpp:111`) and drawn from the
+  largest depth down: **far to near by bound centre**, ties in unspecified order
+  (`NiBackToFrontAccumulator::FinishAccumulating` 0x006d6990, `NiBackToFrontAccumulator.cpp:52-76`).
+- **Sort items.** Each `NiGeometry` is one item with its own world bound:
+  - a mesh: the bound of its vertices (computed when the NIF loads, then transformed);
+  - an `NiParticleSystem`: the bound written by `NiPSysBoundUpdateModifier::Update` 0x00815930 (vtable
+    0x00cdc610 +0x48) when the system has that modifier: the AABB of the particle positions (sampled every
+    `skip` particles), centre = AABB centre, radius = half diagonal; otherwise the bound stored in the file;
+  - Chaos: one item per sequence (see `uosa_chaos.md`, "Draw order").
+- **`NiSortAdjustNode::OnVisible`** 0x006e3130 (vtable 0x00cccbe0 +0x80, `NiSortAdjustNode.cpp:33-43`):
+  with mode (+0xe0) `SORTING_OFF` it sets the no-sort bit on its subtree.
+
+## NiStandardMaterial texture combine
+
+The client renders effects with `NiStandardMaterial` (vtable 0x00ccbd88, found through its NiRTTI 0x00ddf704;
+see "Effect camera and lighting"), not with the fixed-function `NiD3DDefaultShader`. **Confirmed** on the
+binary: the constructor 0x006b6980 leaves `m_bSaturateShading` and `m_bSaturateTextures` (+0x3bc..+0x3be)
+false (`NiStandardMaterial.cpp:40-48`), and the map handlers sit at the 2.6 slots:
+
+| Slot | Function | SDK |
+|---|---|---|
+| +0xc8 | `HandlePostLightTextureApplication` 0x006c1600 | `NiStandardMaterial.cpp:5099` |
+| +0xd0 | `HandleParallaxMap` 0x006beb90 | `:3996` |
+| +0xd4 | `HandleBaseMap` 0x006bede0 | `:4036` |
+| +0xd8 | `HandleNormalMap` 0x006bee70 | `:4065` |
+| +0xdc | `HandleDarkMap` 0x006bf400 | `:4125` |
+| +0xe0 | `HandleDetailMap` 0x006bf990 | `:4296` |
+| +0xe4 | `HandleGlossMap` 0x006bfa60 | `:4308` |
+| +0xe8 | `HandleBumpMap` 0x006bfaa0 | `:4317` |
+| +0xec | `HandleGlowMap` 0x006bfc60 | `:4344` |
+| +0xf0 | `HandleCustomMaps` 0x006bfca0 | `:4354` |
+| +0xf4 | `HandleEnvMap` 0x006bfcb0 | `:4374` |
+| +0xf8 | `HandleDecalMap` 0x006bffb0 | `:4483` |
+| +0xfc | `HandleProjLightMap` 0x006bfff0 | `:4494` |
+| +0x100 | `HandleProjShadowMap` 0x006c01d0 | `:4533` |
+| +0x104 | `HandleLighting` 0x006c1b30 | `:5245` |
+
+With no light reaching the effect (every effect NIF but `00005540_shadowstrike.nif`), the pixel shader the
+material generates computes (`HandlePreLightTextureApplication` `:4891`, `HandleColorAccumulation` `:3224`,
+`InsertTexture` `:4135`):
+
+```text
+Kd.rgb = emissive source                       // material emissive, or the vertex colour with SRC_EMISSIVE
+Kd.a   = vertex alpha                           // vertex colours present and (E, SRC_EMISSIVE) or (E_A_D, SRC_AMB_DIFF)
+       | material alpha                         // otherwise
+tex    = dark.rgb                               // dark map first: it multiplies the later maps
+tex   *= base.rgb                               // base map (MULTIPLY); opacity *= base.a
+tex   *= detail.rgb * 2                         // detail map; alpha untouched
+tex    = lerp(tex, decal.rgb, decal.a)          // each decal map, before the material colour; alpha untouched
+out.rgb = Kd.rgb * tex + env + glow.rgb         // env from an NiTextureEffect, glow added in the same pass
+out.a   = saturate(Kd.a * base.a)               // only the final alpha is clamped; colour is clamped by the target
+```
+
+`APPLY_REPLACE`: `out.rgb = tex (+ glow)`, `out.a = base.a`. Maps that are absent drop out (a dark map with no
+base map multiplies only the material colour). No stage is saturated before the end; the colour is clamped
+only by the render target.
+
+Differences from `lib/particle-sim/src/render.rs` (as reviewed in the visual report):
+
+1. The decal lerp is applied **before** the `Kd` multiply.
+2. The detail map never contributes alpha, also when there is no base map.
+3. No intermediate saturation.
+4. Env maps: `00005036_magicreflection.nif`, `splat_blue_sizeb.nif` and `splat_blue_sizec.nif` carry an
+   `NiTextureEffect` environment map that is added to their colour.
+5. The glow map is one additive term in the same pass, not a second draw.
+
+**"No lights gives black" re-verified.** With `E_A_D` lighting and no emissive source the result is
+`0 * tex + glow`, so these drawables show only their glow map, or nothing visible with additive blending /
+black with alpha blending. Survey of the shipped NIFs (`effects-re3/survey2.txt`): 207 drawables have a black
+emissive source; 174 of them have a glow map and show only the glow, 33 have neither and draw black (11
+opaque meshes such as `splat_blue_sizeb/c.nif`, `00009970_airelemental.nif`, `10000790_sandvortex.nif`; the
+rest blended, e.g. `00007193_oilflask.nif`, `000273_fetid_essence.nif`). Of the blended ones, One/One and
+SrcAlpha/One add nothing; SrcAlpha/InvSrcAlpha darkens what is behind. No drawable uses `E` +
+`SRC_EMISSIVE` without vertex colours.
+
+## Destination alpha
+
+**Confirmed.** `NiDX9Renderer::InitializePresentParams` 0x007565b0 receives `FBFMT_UNKNOWN` from the UO
+set-up and replaces it with the nearest display-mode format (`NiDX9DeviceDesc::GetNearestFrameBufferFormat`):
+X8R8G8B8 on any 32-bit desktop. So in the world pass **DestAlpha reads 1** (`D3DBLEND_DESTALPHA` = 1,
+`INVDESTALPHA` = 0). The hued effects render into an `NiRenderedTexture` (`Create` 0x0067f480, vtable
+0x00cbff70) of 512 × 512 A8R8G8B8 cleared to (0, 0, 0, 0), where the destination alpha is the alpha
+accumulated by the effect's own draws. No separate alpha blend state or colour write mask is set, so alpha
+blends with the same factors as colour.
+
+## Effect time origin
+
+**Confirmed.** `UOParticleEffectNif` (vtable 0x00c9e0cc):
+
+- `Start` 0x0041ab40 sets elapsed (+0x14) = 0, active (+0x24) and started (+0x2c).
+- `Init` 0x0041a8e0 runs `Update(0)` on the scene first, so every controller's first `ComputeScaledTime`
+  sees t = 0 (`NiTimeController.cpp:92-175`).
+- `Update` 0x0041ab90: elapsed += dt; countdown (+0x40) -= 1. When not looping (+0x25) and duration (+0x28)
+  <= elapsed, it stops without a scene update. Otherwise, unless hidden: when looping with a duration,
+  elapsed = fmod(elapsed, duration); then `NiAVObject::Update(elapsed)` (vtable +0x64) and vtable +0x98.
+- Controllers use `ComputeScaledTime` with the APP_TIME delta, so the scaled time telescopes to
+  `elapsed × frequency + phase`; when elapsed wraps, the delta is negative and the scaled time goes back.
+  A looping controller [-0.0667, 3.0] in an effect of duration 3.0 never reaches [3.0, 3.0667).
+- Hued effects advance elapsed by dt × 0.5.
+
+`lib/particle-sim` (`keys.rs` `ComputeScaledTime`, `instance.rs` elapsed %= duration) matches.
+
+## Unreferenced marker NIFs
+
+**Probable (high).** The eight hash-only NIFs of `EffectTexture.uop` (`0bb3e38a43964673`, `11b3e30c743b0256`,
+`8666a645e0b6553a`, `9c97240a70eabd8e`, `e507689dcaa26e64`, `f46baaa128fd8807`, `f82d4cca4638f957`,
+`fb998db1b3677a30`) have no name in the string dictionary, and nothing names them: no definition in
+`EffectDefinitionCollection.uop` or `tileart.uop` (a named reference would resolve the hash), no string in
+`UOSA.exe` (its only `.nif` strings are Rain/Snow, `LabelGeometry.nif` and the fixtures/regions formats), no
+UI XML. Waypoints reach effects only through effect ids (`UOWaypoints::SetWaypointEffect` 0x005d29e0). The
+client never plays them, so their emitter set-up is moot; their textures `03000017_star.nif` and
+`03000018_circle_g.nif` are otherwise unreferenced.
 
 ## Animation frame effects
 
@@ -901,7 +1036,30 @@ Identified but not renamed (Gamebryo functions whose BSim match is ambiguous, or
 `NiDynamicEffect::AttachAffectedNode` 0x006a1900 (BSim proposes `AttachUnaffectedNode`; the call from
 `NiNode::AttachEffect` 0x006768c0 settles it), `NiMatrix3::operator*` 0x00668f10, the renderer set-up
 `FUN_00754fb0`, the render-target begin/end wrappers `FUN_00416030` / `FUN_004160d0`, the render group
-builder `FUN_0044e4d0` and drawer `FUN_00470430`.
+builder `FUN_0044e4d0` and drawer `FUN_00470430` (named `DrawWorldRenderGroups` in round 7).
+
+### Round 7 (draw order, materials, render targets, Chaos resources)
+
+`NameEffectCode.java` step `drawOrderAndMaterials` (after the Chaos step). Gamebryo classes have no MSVC
+RTTI, so their vtables come from NiRTTI: the class name string, the static `NiRTTI` holding it, the small
+`GetRTTI` returning that object, and the vtable slot +8 holding `GetRTTI` (`niRttiVtable`).
+
+| Evidence | Finds |
+|---|---|
+| caller of `NiDrawVisibleArray` reading render groups 7 and 9 | `DrawWorldRenderGroups` 0x00470430 (probable) |
+| user of `"Data/Effects"` reading render group 7 | `UOEffects::InitParticleSystemRoot` 0x004216b0 (probable) |
+| `NiAlphaAccumulator` vtable writer called by `CreateObject`; its UO caller | `NiAlphaAccumulator::NiAlphaAccumulator` 0x00698f70, `UOGraphics::CreateRendererAndSorter` 0x0058a950 (probable) |
+| NiRTTI vtables: `NiSortAdjustNode` +0x80, `NiPSysBoundUpdateModifier` +0x48; MSVC RTTI `UOShaderOverrideSorter` +0x50 | `NiSortAdjustNode::OnVisible` 0x006e3130, `NiPSysBoundUpdateModifier::Update` 0x00815930, `UOShaderOverrideSorter::RegisterObjectArray` 0x00455ed0 |
+| NiRTTI vtable `NiStandardMaterial` +0xd0..+0x100 | the 13 handlers in "NiStandardMaterial texture combine" |
+| `NiRenderedTexture` vtable writer called by `BuildHueQuad` | `NiRenderedTexture::Create` 0x0067f480 |
+| common caller of `GetNearestFrameBufferFormat` and `GetMultiSampleType` | `NiDX9Renderer::InitializePresentParams` 0x007565b0 |
+| `CreateSequenceRenderer` callees: the one calling an `NiSourceTexture` vtable writer that calls `CreateRendererData`; the recursive one; the one with a single caller making a +0x64 call | `ParticleSystemManager::LoadTexture` 0x008a8630, `NiSourceTexture::Create` 0x0068a8b0, `ParticleSet::UnshareAnimatedGeometry` 0x008b2820, `ParticleSystemManager::LoadMesh` 0x008a8440 |
+| MSVC RTTI `ParticleBillboard` +0x14, `MeshParticle` +0x4 | `ParticleBillboard::SetBound` 0x008c6300, `MeshParticle::SetActiveCount` 0x008c6520 |
+| address-taken global in `LoadTexture` holding {6, 3, 2}; the byte it reads with MOVZX | `NiSourceTexture_ms_kDefaultPrefs` 0x00dde184, `g_UOTextureLoadDirectHint` 0x00e31e9b |
+
+`--apply` created 7 functions (0x006e3130 and six `NiStandardMaterial` handlers), renamed 28 (tags and plate
+comments set), created 2 labels and 1 namespace; `ApplyVariableSpecs` set the `SetBound` and
+`SetActiveCount` prototypes; second runs of both reported no changes. The program was saved.
 
 ## Proposed Rust changes
 
@@ -968,6 +1126,14 @@ line in `ENHANCED_CLIENT_FILES.md`. The earlier items (attach_mode, field_3c, va
     255-stride and texel-edge quirks or sample the intended entry is a renderer decision.
 13. **Packet hue:** the classic effect object hue is `packet hue + 1` (0 stays 0).
 
+14. **Effect renderer (`lib/particle-sim`)**, from "Draw order", "NiStandardMaterial texture combine" and
+    "Destination alpha":
+    - combine as `Kd.rgb × (dark × base × 2·detail, then decal lerp) + env + glow`, alpha
+      `saturate(Kd.a × base.a)`; no intermediate saturation; detail never affects alpha;
+    - draw every effect drawable of one frame in one list: unsorted ones (no blending, or no-sorter) first
+      in scene order, then the blended ones far to near by world bound centre · view direction;
+    - DestAlpha = 1 in the world pass; the hued target accumulates alpha from (0, 0, 0, 0).
+
 No format change is needed: the parser is already correct for all 269 entries.
 
 ## Uncertainties and open questions
@@ -1009,6 +1175,10 @@ No format change is needed: the parser is already correct for all 269 entries.
   `NiNode::UpdateEffectsDownward` `FUN_00676480`, vtable +0x74; `PushLocalEffects` `FUN_00676120`) is built
   once there. `lib/particle-sim` compiles the lights (`NifLight`, NIF desc and codec version 2) and adds them,
   per vertex, to the meshes they reach; particles (no normals) get only ambient lights.
+- **Draw order, material combine, destination alpha, time origin:** settled (see their sections). The
+  sort is unstable, so objects with equal depth may swap between frames in the client as well.
+- **Marker NIFs:** the eight hash-only NIFs are unreferenced (probable, high; see "Unreferenced marker
+  NIFs").
 - **World camera tilt:** settled (C = Z(-π/2) · X(0.001 - π/4) · Z(-0.05)).
 - **Hued constructor depth bias:** object vtable +0x11c / +0x124 (scaled by -0.001 and -1e-5) were not
   identified.

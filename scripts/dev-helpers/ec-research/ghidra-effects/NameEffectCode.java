@@ -183,6 +183,58 @@ public class NameEffectCode extends GhidraScript {
     private static final int READER_READ_FILE = 0x8;
     private static final int READER_READ_HEADER = 0xc;
 
+    // Draw order, NiStandardMaterial texture handlers, render targets and Chaos resources (drawOrderAndMaterials).
+    // Gamebryo classes carry no MSVC RTTI: their vtables come from the NiRTTI object (name pointer at +0) that
+    // GetRTTI returns, GetRTTI sitting at vtable +8.
+    private static final int NI_GET_RTTI_SLOT = 0x8;
+    // Byte size above which a function cannot be a GetRTTI (MOV EAX, imm32; RET).
+    private static final int GET_RTTI_MAX_SIZE = 8;
+    // Render group drawn after the effects group (7) in the world pass.
+    private static final int GROUP_AFTER_EFFECTS = 9;
+    private static final String SORT_ADJUST_NODE = "NiSortAdjustNode";
+    private static final int NODE_ON_VISIBLE = 0x80;
+    private static final String BOUND_UPDATE_MODIFIER = "NiPSysBoundUpdateModifier";
+    private static final int MODIFIER_UPDATE = 0x48;
+    private static final String ALPHA_ACCUMULATOR = "NiAlphaAccumulator";
+    private static final String SHADER_OVERRIDE_SORTER = "UOShaderOverrideSorter";
+    private static final int SORTER_REGISTER_OBJECT_ARRAY = 0x50;
+    private static final String STANDARD_MATERIAL = "NiStandardMaterial";
+    private static final String RENDERED_TEXTURE = "NiRenderedTexture";
+    private static final String BUILD_HUE_QUAD = HUED_NIF + "::BuildHueQuad";
+    private static final String NEAREST_FRAME_BUFFER_FORMAT = "NiDX9DeviceDesc::GetNearestFrameBufferFormat";
+    private static final String MULTISAMPLE_TYPE = DX9_RENDERER + "::GetMultiSampleType";
+    private static final String SOURCE_TEXTURE = "NiSourceTexture";
+    private static final String CREATE_RENDERER_DATA = SOURCE_TEXTURE + "::CreateRendererData";
+    private static final String DEFAULT_PREFS_LABEL = "NiSourceTexture_ms_kDefaultPrefs";
+    private static final String LOAD_DIRECT_HINT_LABEL = "g_UOTextureLoadDirectHint";
+    // NiTexture::FormatPrefs {PixelLayout, AlphaFormat, MipFlag} defaults: PIX_DEFAULT, ALPHA_DEFAULT, MIP_DEFAULT.
+    private static final long[] DEFAULT_FORMAT_PREFS = {6, 3, 2};
+    // NiAVObject vtable +0x64: Update(time, update controllers).
+    private static final int AV_OBJECT_UPDATE = 0x64;
+    private static final String EFFECTS_DIRECTORY = "Data/Effects";
+    // NiStandardMaterial texture handlers (vtable offset, name, evidence); the order matches the Gamebryo 2.6 header
+    // (HandleParallaxMap .. HandleProjShadowMap), and the decompiled InsertTexture arguments confirm the map slots.
+    private static final String[][] STANDARD_MATERIAL_HANDLERS = {
+        {"0xd0", "HandleParallaxMap", "parallax map (map 0): offsets the UVs; not used by effect NIFs"},
+        {"0xd4", "HandleBaseMap", "base map (map 1): InsertTexture MULTIPLY into the texture accumulator, RGBA (alpha"
+            + " only when the opacity is wanted), then opacity *= base alpha"},
+        {"0xd8", "HandleNormalMap", "normal map (map 2): only with lights and tangents"},
+        {"0xdc", "HandleDarkMap", "dark map (map 3): InsertTexture ADD into the RGB accumulator; first stage, so it"
+            + " acts as a multiplier of the later stages"},
+        {"0xe0", "HandleDetailMap", "detail map (map 4): accumulator.rgb *= detail.rgb * 2.0; alpha untouched"},
+        {"0xe4", "HandleGlossMap", "gloss map (map 6): scales the specular/env term; RGB"},
+        {"0xe8", "HandleBumpMap", "bump map (map 5): perturbs the env map lookup; RGB"},
+        {"0xec", "HandleGlowMap", "glow map (map 7): InsertTexture ADD of glow.rgb after lighting (same pass);"
+            + " alpha untouched"},
+        {"0xf0", "HandleCustomMaps", "returns true: no custom maps"},
+        {"0xf4", "HandleEnvMap", "environment map from an NiTextureEffect (sphere, specular cube, diffuse cube,"
+            + " world parallel/perspective) in the effect state; added to the specular term"},
+        {"0xf8", "HandleDecalMap", "decal map n (map 0xd + n): InsertTexture LERP rgb by decal alpha into the texture"
+            + " accumulator (before the material colour multiply); alpha untouched"},
+        {"0xfc", "HandleProjLightMap", "projected light map from an NiTextureEffect"},
+        {"0x100", "HandleProjShadowMap", "projected shadow map from an NiTextureEffect"},
+    };
+
     // Effect type keys (the u32 before each definition body).
     private static final int KEY_PARTICLE = 0;
     // Particle definition +0x30 value that UOObject::CreateComponents does not attach to the object.
@@ -467,6 +519,11 @@ public class NameEffectCode extends GhidraScript {
             + " particle along its velocity by length, POINT camera right/up of size/2, rotated about the view"
             + " axis by -rotation.y when ROTATION is used; colours clamped to [0,1]; CelSetup UVs", false),
         new Slot(CHAOS_BILLBOARD, 0x10, "Init", "creates the node and its ParticleTriShape", true),
+        new Slot(CHAOS_BILLBOARD, 0x14, "SetBound", "(cx, cy, cz, radius): model bound of the shape and of its"
+            + " geometry data; ParticleSet::Update sets it every 0.033 s to the AABB centre of the particle positions"
+            + " and the largest distance + 0.01, so each sequence sorts as one object by that centre", false),
+        new Slot(CHAOS_MESH_PARTICLE, 0x4, "SetActiveCount", "(n): clears APP_CULLED (NiAVObject +0xac bit 0) on the"
+            + " first n clones and sets it on the rest", false),
     };
 
     private static final class Block {
@@ -492,6 +549,8 @@ public class NameEffectCode extends GhidraScript {
     // Aligned pointers into executable code found in non-executable blocks (vtables, tables).
     private final Map<Long, Integer> codePointerCounts = new HashMap<>();
     private final Map<String, Long> vtables = new LinkedHashMap<>();
+    // g_UOEffectRenderGroups, found by effectRendering (-1 when not found).
+    private long renderGroups = -1;
     private final Map<Long, Proposal> proposals = new TreeMap<>();
     private final List<String> anomalies = new ArrayList<>();
     private final List<String> kept = new ArrayList<>();
@@ -740,6 +799,7 @@ public class NameEffectCode extends GhidraScript {
 
         // 8. Chaos particle engine.
         chaosEngine();
+        drawOrderAndMaterials(apply);
 
         defineTypes(apply);
 
@@ -1385,7 +1445,8 @@ public class NameEffectCode extends GhidraScript {
         Set<Long> huedReads = huedInit == null ? Set.of() : readGlobals(huedInit);
         groups.removeIf(base -> !huedReads.contains(base + (long) EFFECT_RENDER_GROUP * POINTER_SIZE));
         if (groups.size() == 1) {
-            label(groups.iterator().next(), RENDER_GROUPS_LABEL, "render group scene nodes (NiNode*[]), indexed by"
+            renderGroups = groups.iterator().next();
+            label(renderGroups, RENDER_GROUPS_LABEL, "render group scene nodes (NiNode*[]), indexed by"
                 + " group; UOParticleEffectNif::Init attaches effect scenes to group 7, a parentless node with no"
                 + " dynamic effects (no lights)", apply);
         } else {
@@ -1505,6 +1566,218 @@ public class NameEffectCode extends GhidraScript {
             + " object is an NiPixelData, returned as stored (all its levels)", false);
         propose(slotFunctionCreating(readerVt, READER_READ_HEADER, apply), NIF_IMAGE_READER + SCOPE + "ReadHeader", "reads the whole"
             + " file (ReadFile) and reports width, height, format, mipmapped (levels > 1) and faces", false);
+    }
+
+    private void drawOrderAndMaterials(boolean apply) throws Exception {
+        // World pass: the caller of NiDrawVisibleArray that reads the effects group and the group drawn after it.
+        Function draw = functionNamed(DRAW_VISIBLE_ARRAY);
+        Function world = null;
+        if (draw != null && renderGroups >= 0) {
+            List<Function> drawers = new ArrayList<>();
+            for (Function caller : distinct(callers(draw))) {
+                Set<Long> reads = readGlobals(caller);
+                if (reads.contains(renderGroups + (long) EFFECT_RENDER_GROUP * POINTER_SIZE)
+                    && reads.contains(renderGroups + (long) GROUP_AFTER_EFFECTS * POINTER_SIZE)) {
+                    drawers.add(caller);
+                }
+            }
+            world = single(drawers, "caller of " + DRAW_VISIBLE_ARRAY + " reading render groups 7 and 9");
+        }
+        propose(world, "DrawWorldRenderGroups", "draws the render groups 0, 1, 2, 3, 11, 6, then 7 (effects and"
+            + " ParticleSystemRoot, skipped while the viewer +0x54 is set) and 9: each with its own culling and"
+            + " NiDrawVisibleArray through the renderer's NiAlphaAccumulator, so each group is sorted on its own and"
+            + " only the depth buffer is shared", true);
+
+        // ParticleSystemRoot set-up: the user of "Data/Effects" that reads the effects group slot.
+        List<Function> roots = new ArrayList<>();
+        for (Function f : stringUsers(EFFECTS_DIRECTORY)) {
+            if (renderGroups >= 0 && readGlobals(f).contains(renderGroups + (long) EFFECT_RENDER_GROUP * POINTER_SIZE)) {
+                roots.add(f);
+            }
+        }
+        propose(single(roots, "user of \"" + EFFECTS_DIRECTORY + "\" reading render group 7"),
+            "UOEffects::InitParticleSystemRoot", "sets the Chaos gravity axis and resource directories, then attaches"
+            + " ParticleSystemRoot to render group 7, so Chaos sequences sort together with the NIF effects", true);
+
+        // Sorting: NiAlphaAccumulator constructor and its UO creator, NiSortAdjustNode, the bound update modifier and
+        // the UO sorter used for the optional first pass.
+        long accumulatorVt = niRttiVtable(ALPHA_ACCUMULATOR);
+        Function createObject = functionNamed(ALPHA_ACCUMULATOR + SCOPE + "CreateObject");
+        Function accumulatorCtor = null;
+        if (accumulatorVt >= 0 && createObject != null) {
+            List<Function> ctors = new ArrayList<>(referencingFunctions(accumulatorVt));
+            ctors.retainAll(distinct(calls(createObject)));
+            accumulatorCtor = single(ctors, ALPHA_ACCUMULATOR + " vtable writer called by CreateObject");
+        }
+        propose(accumulatorCtor, ALPHA_ACCUMULATOR + SCOPE + ALPHA_ACCUMULATOR, "ObserveNoSortHint = 1,"
+            + " SortByClosestPoint = 0: blended objects without the no-sort bit are sorted far to near by world bound"
+            + " centre along the camera direction; the others are drawn at once", false);
+        if (accumulatorCtor != null) {
+            List<Function> creators = new ArrayList<>();
+            for (Function caller : distinct(callers(accumulatorCtor))) {
+                if (!caller.getName(true).startsWith(ALPHA_ACCUMULATOR + SCOPE)) {
+                    creators.add(caller);
+                }
+            }
+            propose(single(creators, "UO caller of the " + ALPHA_ACCUMULATOR + " constructor"),
+                "UOGraphics::CreateRendererAndSorter", "creates the DX9 renderer, then a new NiAlphaAccumulator that"
+                + " it sets as the renderer's sorter", true);
+        }
+        long sortAdjustVt = niRttiVtable(SORT_ADJUST_NODE);
+        propose(sortAdjustVt < 0 ? null : slotFunctionCreating(sortAdjustVt, NODE_ON_VISIBLE, apply),
+            SORT_ADJUST_NODE + SCOPE + "OnVisible", "mode (+0xe0) SORTING_OFF: sets the no-sort bit (0x40 at"
+            + " NiAVObject +0xac) so the accumulator draws the subtree unsorted in traversal order", false);
+        long boundVt = niRttiVtable(BOUND_UPDATE_MODIFIER);
+        propose(boundVt < 0 ? null : slotFunctionCreating(boundVt, MODIFIER_UPDATE, apply),
+            BOUND_UPDATE_MODIFIER + SCOPE + "Update", "AABB of the particle positions +- radius * size, sampled every"
+            + " skip particles (auto: count / 50 + 1); centre = AABB centre, radius = half diagonal: the sort key of a"
+            + " particle system", false);
+        long sorterVt = rttiVtable(SHADER_OVERRIDE_SORTER);
+        propose(sorterVt < 0 ? null : slotFunctionCreating(sorterVt, SORTER_REGISTER_OBJECT_ARRAY, apply),
+            SHADER_OVERRIDE_SORTER + SCOPE + "RegisterObjectArray", "draws every object at once in array order"
+            + " (no sort), each wrapped in a shader override; used only by the optional first pass of groups 1 and"
+            + " 10", false);
+
+        // NiStandardMaterial texture handlers.
+        long materialVt = niRttiVtable(STANDARD_MATERIAL);
+        for (String[] handler : STANDARD_MATERIAL_HANDLERS) {
+            int offset = Integer.decode(handler[0]);
+            propose(materialVt < 0 ? null : slotFunctionCreating(materialVt, offset, apply),
+                STANDARD_MATERIAL + SCOPE + handler[1], handler[2], false);
+        }
+
+        // Render targets: NiRenderedTexture::Create (called by BuildHueQuad, writes the vtable) and the present
+        // parameters (the caller of both GetNearestFrameBufferFormat and GetMultiSampleType).
+        long renderedVt = niRttiVtable(RENDERED_TEXTURE);
+        Function hueQuad = functionNamed(BUILD_HUE_QUAD);
+        if (renderedVt >= 0 && hueQuad != null) {
+            List<Function> creates = new ArrayList<>(referencingFunctions(renderedVt));
+            creates.retainAll(distinct(calls(hueQuad)));
+            propose(single(creates, RENDERED_TEXTURE + " vtable writer called by " + BUILD_HUE_QUAD),
+                RENDERED_TEXTURE + SCOPE + "Create", "(width, height, renderer, prefs): the hue pass asks 512 x 512,"
+                + " TRUE_COLOR_32 / SMOOTH / NO mip, i.e. A8R8G8B8 with destination alpha", false);
+        }
+        Function nearest = functionNamed(NEAREST_FRAME_BUFFER_FORMAT);
+        Function multisample = functionNamed(MULTISAMPLE_TYPE);
+        if (nearest != null && multisample != null) {
+            List<Function> present = distinct(callers(nearest));
+            present.retainAll(callers(multisample));
+            propose(single(present, "caller of " + NEAREST_FRAME_BUFFER_FORMAT + " and " + MULTISAMPLE_TYPE),
+                DX9_RENDERER + SCOPE + "InitializePresentParams", "back buffer format: FBFMT_UNKNOWN from the UO"
+                + " renderer set-up becomes the nearest display mode format (X8R8G8B8 on a 32-bit desktop), so the"
+                + " world pass has no destination alpha (DestAlpha reads 1)", false);
+        }
+
+        // Chaos resources: NiSourceTexture::Create (vtable writer calling CreateRendererData), the Chaos texture
+        // cache calling it from CreateSequenceRenderer, its prefs and load-direct globals, and the mesh cache.
+        // NiSourceTexture creators: vtable writers calling CreateRendererData (the file name and pixel data overloads).
+        long sourceVt = niRttiVtable(SOURCE_TEXTURE);
+        Function createRendererData = functionNamed(CREATE_RENDERER_DATA);
+        List<Function> sourceCreates = new ArrayList<>();
+        if (sourceVt >= 0 && createRendererData != null) {
+            sourceCreates.addAll(referencingFunctions(sourceVt));
+            sourceCreates.retainAll(distinct(callers(createRendererData)));
+        }
+        Function sequenceRenderer = functionNamed(CHAOS_PARTICLE_SET + SCOPE + "CreateSequenceRenderer");
+        if (sequenceRenderer == null) {
+            return;
+        }
+        List<Function> rendererCallees = distinct(calls(sequenceRenderer));
+        List<Function> textureLoaders = new ArrayList<>();
+        List<Function> meshLoaders = new ArrayList<>();
+        List<Function> unsharers = new ArrayList<>();
+        for (Function callee : rendererCallees) {
+            List<Function> calleeCalls = distinct(calls(callee));
+            List<Function> creates = new ArrayList<>(sourceCreates);
+            creates.retainAll(calleeCalls);
+            if (!creates.isEmpty()) {
+                textureLoaders.add(callee);
+            }
+            if (calleeCalls.contains(callee)) {
+                unsharers.add(callee);
+            }
+            if (callers(callee).equals(List.of(sequenceRenderer))
+                && virtualCallOffsets(callee).contains((long) AV_OBJECT_UPDATE) && !calleeCalls.contains(callee)) {
+                meshLoaders.add(callee);
+            }
+        }
+        Function textureLoader = single(textureLoaders, "callee of CreateSequenceRenderer calling NiSourceTexture::Create");
+        Function sourceCreate = null;
+        if (textureLoader != null) {
+            List<Function> creates = new ArrayList<>(sourceCreates);
+            creates.retainAll(distinct(calls(textureLoader)));
+            sourceCreate = single(creates, SOURCE_TEXTURE + " creator called by the Chaos texture loader");
+        }
+        propose(sourceCreate, SOURCE_TEXTURE + SCOPE + "Create", "(name, load-direct hint; prefs in EAX): copies the"
+            + " prefs, sets the hint, standardises the path and preloads (CreateRendererData) when ms_bPreload", false);
+        propose(textureLoader, CHAOS_MANAGER + SCOPE + "LoadTexture", "(name): cached by name; otherwise"
+            + " NiSourceTexture::Create with ms_kDefaultPrefs (PIX_DEFAULT, ALPHA_DEFAULT, MIP_DEFAULT) and the"
+            + " load-direct hint byte (0): image converter path, mipmapped only when ms_bMipmapByDefault (false), so"
+            + " Chaos textures get no generated levels", false);
+        propose(single(meshLoaders, "callee of CreateSequenceRenderer updating a loaded scene"), CHAOS_MANAGER + SCOPE
+            + "LoadMesh", "(name): loads the .nif once through NiStream (cached by name), Update(0, 1),"
+            + " UpdateProperties, UpdateEffects; returns a clone updated the same way", false);
+        propose(single(unsharers, "recursive callee of CreateSequenceRenderer"), CHAOS_PARTICLE_SET + SCOPE
+            + "UnshareAnimatedGeometry", "walks the clone: an NiGeometry whose properties have controllers gets a deep"
+            + " copy of its geometry data (NiStream copy), so each MESH particle animates on its own", false);
+        if (textureLoader == null) {
+            return;
+        }
+        List<Long> prefs = new ArrayList<>();
+        for (long global : addressTakenGlobals(textureLoader)) {
+            boolean match = true;
+            for (int i = 0; i < DEFAULT_FORMAT_PREFS.length; i++) {
+                match &= dwordAt(global + (long) i * POINTER_SIZE) == DEFAULT_FORMAT_PREFS[i];
+            }
+            if (match) {
+                prefs.add(global);
+            }
+        }
+        if (prefs.size() == 1) {
+            label(prefs.get(0), DEFAULT_PREFS_LABEL, "NiSourceTexture::ms_kDefaultPrefs (NiTexture::FormatPrefs):"
+                + " PIX_DEFAULT, ALPHA_DEFAULT, MIP_DEFAULT; passed by the Chaos texture loader", apply);
+        } else {
+            anomalies.add(DEFAULT_PREFS_LABEL + ": candidates " + prefs);
+        }
+        Set<Long> hints = new LinkedHashSet<>();
+        for (Instruction i : listing.getInstructions(textureLoader.getBody(), true)) {
+            if (i.getMnemonicString().equals("MOVZX")) {
+                hints.addAll(readTargets(i));
+            }
+        }
+        if (hints.size() == 1) {
+            label(hints.iterator().next(), LOAD_DIRECT_HINT_LABEL, "bool, .bss (0) and never written: passed as"
+                + " bLoadDirectToRendererHint by the Chaos texture loader and 6 other UO loaders, and read by NiSourceTexture"
+                + " LoadBinary / CreateObject; 0 keeps the NiImageConverter path", apply);
+        } else {
+            anomalies.add(LOAD_DIRECT_HINT_LABEL + ": byte reads " + hints);
+        }
+    }
+
+    // The vtable of a Gamebryo class from its NiRTTI: the NUL-terminated name, the static NiRTTI holding a pointer
+    // to it, the small GetRTTI returning that NiRTTI, and the vtable slot +8 holding GetRTTI.
+    private long niRttiVtable(String cls) throws Exception {
+        Set<Long> found = new LinkedHashSet<>();
+        for (long name : findBytes((cls + "\0").getBytes(StandardCharsets.US_ASCII), true)) {
+            if (memory.getByte(toAddr(name - 1)) != 0) {
+                continue;
+            }
+            for (long rtti : findDwords(name)) {
+                for (Function getRtti : referencingFunctions(rtti)) {
+                    if (bodySize(getRtti) > GET_RTTI_MAX_SIZE) {
+                        continue;
+                    }
+                    for (long slot : findDwords(getRtti.getEntryPoint().getOffset())) {
+                        found.add(slot - NI_GET_RTTI_SLOT);
+                    }
+                }
+            }
+        }
+        if (found.size() != 1) {
+            anomalies.add(cls + " NiRTTI vtables: " + found);
+            return -1;
+        }
+        return found.iterator().next();
     }
 
     // Tables indexed as [reg * 4 + table] in f.

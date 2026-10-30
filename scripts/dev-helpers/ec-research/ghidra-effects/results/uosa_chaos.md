@@ -45,7 +45,9 @@ Conventions:
 | `EmitterParticle` | ctor `0x008c66c0` | one sub-`.ems` effect per particle for EMITTER |
 
 All particles are rendered under the global `ParticleSystemRoot` node (`DAT_00e347c0`) in world space,
-not under the effect's node. **confirmed**
+not under the effect's node. `UOEffects::InitParticleSystemRoot` 0x004216b0 (called by `UOWorldViewer::Init`
+0x0046fa70 and `FUN_00470970`) attaches that node to render group 7, the group of the NIF effects, so Chaos
+quads and NIF effects are sorted together (see "Draw order"). **confirmed**
 
 ## Script language
 
@@ -562,13 +564,13 @@ The data uses only POINT (96), AXIAL (30) and MESH (9).
 
 | Property | Value |
 |---|---|
-| Texture | `NiTexturingProperty`, base map, apply MODULATE; texture cache 0x008a8630. The address mode was not traced; Gamebryo's default is WRAP_S_WRAP_T (probable). |
-| Blending | `NiAlphaProperty`: blending on, src = sourceblendmode, dst = destblendmode, alpha test off |
+| Texture | `NiTexturingProperty` base map, texture coordinate set 0, apply MODULATE (flags `& 0xfff5 \| 4`). `FUN_004169a0` creates the map with flags 0x3100 (WRAP_S_WRAP_T, BILERP); `CreateSequenceRenderer` then sets the filter to 2 = FILTER_TRILERP (`FUN_0041a590(map, 2)`, 0x008b3c52..0x008b3c5d): bilinear on the single-level textures, trilinear where the DDS stores mips. Loaded by `ParticleSystemManager::LoadTexture` 0x008a8630 (see "Texture loading"). |
+| Blending | `NiAlphaProperty` (`FUN_00419f70`, flags 0xec then `& 0xfdff \| 1`, src << 1, dst << 5): blending on, src = sourceblendmode, dst = destblendmode, alpha test off, no-sorter clear (sorted) |
 | Depth | `NiZBufferProperty` 0xd: test on (LESSEQUAL), write **off**. It is set on `ParticleSystemRoot` and on each shape. |
 | Vertex colour | `NiVertexColorProperty` (ctor 0x00416bf0): flags `& 0xffd7 | 0x10`, i.e. source EMISSIVE and lighting E (probable enum mapping): unlit, the colour comes from the vertices |
 | Culling | AXIAL adds `NiStencilProperty` draw mode BOTH (two-sided); POINT keeps the default back-face culling |
 | Shader | "SimpleFFP" |
-| Sorting | none found: quads are drawn in deque order (oldest first), each sequence as its own shape (probable) |
+| Sorting | each sequence shape is one item of the render group 7 sort (see "Draw order"); inside a shape the quads are drawn in deque order (oldest first), with no per-quad sort |
 | Hue | no hue path found in the Chaos code: Chaos effects are not hued (probable) |
 
 ### Blending
@@ -667,6 +669,33 @@ So u = 0 at the front (leading) end and u = 1 at the particle position. The quad
 
 Colours are clamped to [0, 1], and all four vertices share them.
 
+### Draw order — confirmed
+
+- `ParticleSystemRoot` is in render group 7 with the NIF effects (see `uosa_effects.md`, "Draw order"):
+  one `NiAlphaAccumulator` sort, far to near by world bound centre · view direction, over the effect
+  geometry and the Chaos shapes together.
+- Each sequence's `ParticleTriShape` is one sort item. `ParticleSet::Update` 0x008b2de0 (cases 1 and 5)
+  recomputes its bound every 0.033 s (`DAT_00d05214`): centre = the AABB centre of the live particle
+  positions, radius = sqrt(max squared distance from it) + 0.01 (`DAT_00d05120`). It stores it through
+  `ParticleBillboard::SetBound` 0x008c6300 (vtable +0x14: shape +0x1c..+0x28 and its data (+0xc0)
+  +0x10..+0x1c) and updates the shape (`Update(0, 0)`). Before the first refresh the bound comes from the
+  template quads (`ParticleTriShape::InitBuffers`, `NiBound::ComputeFromData` `FUN_0068e750`).
+  `BuildVertices` does not touch it.
+- Within a shape, quads keep the deque order (oldest first).
+
+### Texture loading — confirmed
+
+`ParticleSystemManager::LoadTexture` 0x008a8630 (only caller `CreateSequenceRenderer`) looks the name up in
+the cache map (0x00e347e8 / 0x00e347ec); otherwise it calls `NiSourceTexture::Create` 0x0068a8b0 with
+`NiSourceTexture_ms_kDefaultPrefs` 0x00dde184 = {PIX_DEFAULT, ALPHA_DEFAULT, MIP_DEFAULT} and the load-direct
+hint `g_UOTextureLoadDirectHint` 0x00e31e9b (`.bss`, read only: false). `ms_bPreload` (0x00da7b79 = 1)
+creates the renderer data at once. Without the hint, the texture goes through `NiDevImageConverter`, and
+mipmapping is on only for `YES`, or `MIP_DEFAULT` with `NiTexture_ms_bMipmapByDefault` 0x00e31ea3 (false,
+never written). `ConvertPixelData` keeps the stored levels and generates none
+(`NiDX9SourceTextureData.cpp:375-378`, `NiDevImageConverter.cpp:450-475`). So a Chaos texture has exactly
+the levels its file stores: the 16 single-level power-of-two Chaos-only textures have no mips in the client
+either, and packing them without mips is correct.
+
 ### Cel animation (flag bit 9) — confirmed
 
 `ParticleTriShape::SetCelTexCoords` (0x008c5970) runs per particle (CX = frame, EDI = cel descriptor):
@@ -693,8 +722,15 @@ Example: `CelSetup(4, 1, 0.25, 1, 4, 24, 1)` is a vertical strip of 4 frames at 
   - rotation = node world rotation, × Euler(rotation) when bit 3 is set (0x0066b640).
 
   The clone's controllers are sub-stepped at 1/30 s and then updated with the **particle age**, so a mesh
-  animation starts at the particle's birth. Whether the particle colour or alpha reaches the mesh was not
-  established.
+  animation starts at the particle's birth; the controllers' own cycle types apply.
+- **Mesh look** (confirmed): `ParticleSystemManager::LoadMesh` 0x008a8440 loads the `.nif` once (cached by
+  name), runs `Update(0, 1)`, `UpdateProperties` and `UpdateEffects`, and returns a clone.
+  `ParticleSet::UnshareAnimatedGeometry` 0x008b2820 gives each geometry whose properties have controllers
+  its own copy of the geometry data. The particle colour and alpha are **not** written to the clone: the
+  mesh is drawn with the NIF's own properties (material, vertex colours, alpha, z-buffer, textures) through
+  `NiStandardMaterial`, like a NIF effect. `MeshParticle::SetActiveCount` 0x008c6520 culls (APP_CULLED,
+  `NiAVObject` +0xac bit 0) the clones past the live count. Each geometry of each clone is its own sort
+  item with its own bound.
 - **EmitterParticle** (ctor 0x008c66c0) starts one `EmitterEffect` of the sub-script per particle and moves
   it with the particle. No data uses it.
 
@@ -846,16 +882,22 @@ The locators use no addresses:
 | UpdateActiveEffects callee with virtual calls +0x14 and +0x1c | ParticleSystemManager::Update, Emitter::CountParticles |
 | BuildVertices callee with BuildVertices as only caller | ParticleTriShape::SetCelTexCoords |
 
+Round 7 (`drawOrderAndMaterials()` in `NameEffectCode.java`; table in `uosa_effects.md`, "Round 7") adds
+`UOEffects::InitParticleSystemRoot` 0x004216b0 (probable), `ParticleSystemManager::LoadTexture` 0x008a8630
+and `LoadMesh` 0x008a8440, `ParticleSet::UnshareAnimatedGeometry` 0x008b2820, `ParticleBillboard::SetBound`
+0x008c6300 and `MeshParticle::SetActiveCount` 0x008c6520 (both with prototypes in `effects_variables.spec`),
+`NiSourceTexture::Create` 0x0068a8b0 and the labels `NiSourceTexture_ms_kDefaultPrefs` and
+`g_UOTextureLoadDirectHint`.
+
 ## Open questions
 
 - **Gravity axis.** `DAT_00de2810` is copied from column 2 of the 3×3 at `DAT_00e37224+0x30`. That is also
   the matrix the effect node takes as its local rotation. Whether it is (0,0,1) in every view was not
   checked in a running client.
 - **Rotation sign** of rotated POINT quads (`MakeRotation(-rot.y, D)`): probable, compare in the client.
-- **MeshParticle** colour/alpha, the blend state of the mesh, and how the controller time is clamped.
-- **Texture address mode** and filtering of the quad textures (Gamebryo defaults assumed).
 - **Blend enum → D3D** mapping assumed from Gamebryo; the DX9 renderer was not traced.
-- **Draw order** between sequences and against other transparent geometry (no sorting found).
+- **Settled:** MeshParticle look (the NIF's own properties, no particle colour), quad texture address mode
+  and filter, draw order (render group 7 sort, one item per sequence), texture mips.
 - **CreateParticle pool** in EDX is read behind the cap check, so the spec leaves it out (see the spec
   comment). The behaviour is clear in the assembly.
 - `EmitterEffect::GetMinEmitTime` (+0xb4) returns the first emitter's MinEmitTime max, or 1.0. Its caller
