@@ -15,10 +15,13 @@ struct Args {
     client: PathBuf,
     #[arg(long)]
     package: PathBuf,
+    /// Matching metadata, for source-origin and hue-mask eligibility checks.
+    #[arg(long)]
+    tilemeta: Option<PathBuf>,
     /// Write a new evidence file; existing output is never overwritten.
     #[arg(long)]
     output: PathBuf,
-    /// Compare lossless, untrimmed, native-size sprite pixels with original source windows.
+    /// Compare native sprite pixels, alpha trims and placement with original source windows.
     #[arg(long)]
     verify_pixels: Vec<u16>,
 }
@@ -29,6 +32,7 @@ fn main() -> Result<()> {
     let package = UopPackage::load(args.client.join("tileart.uop"))?;
     let strings = UoStringDictionary::load(&args.client.join("string_dictionary.uop"))?;
     let packed = TexArtEcPackage::load(&args.package)?;
+    let meta = args.tilemeta.as_ref().map(udd_assets::tilemeta::TileMetaPackage::load).transpose()?;
     let catalog = ArtDefinition::from_package(&package, &strings)?;
     let asset_ids: BTreeMap<_, _> = (u16::MIN..=u16::MAX)
         .map(|id| (tileart_entry_hash(u32::from(id)), id)).collect();
@@ -92,6 +96,19 @@ fn main() -> Result<()> {
                 "upscale_factor":slot.upscale_factor,
             })),
             "packed_geometry":owner.and_then(|id| packed.sprite_geometry(u32::from(id))),
+            "packed_sampling_start":owner.and_then(|id| meta.as_ref()?.item_tile(u32::from(id)))
+                .map(|tile| [tile.ec_start_x, tile.ec_start_y]),
+            "packed_flags":owner.and_then(|id| meta.as_ref()?.item_tile(u32::from(id))).map(|tile|tile.flags),
+            "sprite_hue_mask":owner.and_then(|id| {
+                let meta = meta.as_ref()?;
+                let material = meta.item_material(u32::from(id), 0)?;
+                if material.shader_name.as_deref() != Some("UOSpriteShader") { return None; }
+                meta.item_texture_refs(u32::from(id)).iter().find(|r| r.block_index == 0
+                    && r.sampler_index == 2 && r.is_world_art() && r.uv_set == 0
+                    && r.texture_stretch == 1.0
+                    && r.physical_package() == udd_assets::tilemeta::EcMaterialPhysicalPackage::Texture)
+                    .map(|r| r.texture_id)
+            }),
         }));
     }
     rows.sort_by_key(|row| (row["owner_id"].as_u64(), row["tile_id"].as_u64()));
@@ -116,14 +133,30 @@ fn main() -> Result<()> {
         let [left, top, mut right, mut bottom, offset_x, offset_y] = window;
         ensure!(right > left && bottom > top, "degenerate authored window for {id}");
         if geometry.source_is_world_art { right = right.saturating_add(1); bottom = bottom.saturating_add(1); }
-        let left = left.clamp(0, source.width() as i32) as u32;
-        let top = top.clamp(0, source.height() as i32) as u32;
-        let right = right.clamp(0, source.width() as i32) as u32;
-        let bottom = bottom.clamp(0, source.height() as i32) as u32;
+        let clip_left = left.clamp(0, source.width() as i32) as u32;
+        let clip_top = top.clamp(0, source.height() as i32) as u32;
+        let clip_right = right.clamp(0, source.width() as i32) as u32;
+        let clip_bottom = bottom.clamp(0, source.height() as i32) as u32;
+        ensure!(clip_right > clip_left && clip_bottom > clip_top, "empty clipped source window for {id}");
+        let (mut left, mut top, mut right, mut bottom) = (clip_right, clip_bottom, clip_left, clip_top);
+        for y in clip_top..clip_bottom {
+            for x in clip_left..clip_right {
+                if source.get_pixel(x,y)[3] == 0 { continue; }
+                left = left.min(x); top = top.min(y); right = right.max(x + 1); bottom = bottom.max(y + 1);
+            }
+        }
+        if right <= left || bottom <= top { (left,top,right,bottom) = (clip_left,clip_top,clip_right,clip_bottom); }
         ensure!(u32::from(slot.width) == right - left && u32::from(slot.height) == bottom - top,
-            "packed dimensions do not match the untrimmed source window for {id}");
-        ensure!(i32::from(slot.draw_offset_x) == offset_x && i32::from(slot.draw_offset_y) == offset_y,
-            "packed offsets do not match untrimmed source for {id}");
+            "packed dimensions do not match the trimmed source window for {id}");
+        ensure!(i32::from(slot.draw_offset_x) == offset_x + (left - clip_left) as i32
+            && i32::from(slot.draw_offset_y) == offset_y - (clip_bottom - bottom) as i32,
+            "packed offsets do not preserve the source window placement for {id}");
+        if geometry.source_is_world_art {
+            let tile = meta.as_ref().and_then(|meta|meta.item_tile(u32::from(*id)))
+                .ok_or_else(||color_eyre::eyre::eyre!("world-source check needs matching --tilemeta for {id}"))?;
+            ensure!(i32::from(tile.ec_start_x) == left as i32 && i32::from(tile.ec_start_y) == top as i32,
+                "tilemeta source origin differs from the trimmed image for {id}");
+        }
         let pixels = packed.read_page_rgba(slot.page_index)?;
         let stride = packed.pages()[slot.page_index as usize].used_width as usize * 4;
         for y in 0..usize::from(slot.height) {
@@ -134,11 +167,14 @@ fn main() -> Result<()> {
             ensure!(actual == expected, "source pixel mismatch for sprite {id}, row {y}");
         }
         pixel_checks.push(json!({"owner":id,"source":filename,"texture":geometry.texture_id,
-            "extent":[slot.width,slot.height],"exact_rgba_match":true}));
+            "extent":[slot.width,slot.height],"source_origin":[left,top],
+            "trim":[left-clip_left,top-clip_top,clip_right-right,clip_bottom-bottom],
+            "draw_offset":[slot.draw_offset_x,slot.draw_offset_y],"exact_rgba_match":true,
+            "world_source_origin_verified":geometry.source_is_world_art}));
     }
     let output = OpenOptions::new().write(true).create_new(true).open(&args.output)?;
-    serde_json::to_writer_pretty(output, &json!({"client":args.client, "package":args.package,
-        "scope":"Authored descriptors and packed slots; not proof of runtime routing, alpha trims or visible pixel parity.",
+    serde_json::to_writer_pretty(output, &json!({"client":args.client, "package":args.package, "tilemeta":args.tilemeta,
+        "scope":"Full records inventory is metadata only. Selected pixel_checks independently verify source pixels, trims and placement; neither establishes rendered pixel parity.",
         "former_fixed_ec_pixel_ratio_to_44px_legacy":44.0 / 64.0,
         "summary":summary, "pixel_checks":pixel_checks, "records":rows}))?;
     println!("{summary}");

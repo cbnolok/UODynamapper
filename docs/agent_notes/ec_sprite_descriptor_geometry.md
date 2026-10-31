@@ -121,7 +121,9 @@ cargo run -p udd-conv-cli --example rebuild_ec_sprite_assets -- \
 
 The helper emits lossless RGBA/Zstd pages and validates matching metadata. Use
 both output files together. The inventory supports repeated `--verify-pixels ID`
-for exact original-source comparisons of native-size, untrimmed ordinary art.
+with matching `--tilemeta` for exact original-source comparisons of native-size
+ordinary art, including mandatory alpha trims, source origins and placement
+offsets.
 `find_hued_statics --include-unhued --ec-source legacy` (or `scaled-world`)
 locates actual placements from packed source metadata.
 
@@ -166,3 +168,34 @@ The source/slot inventory and original-function snapshots are retained under
 `/tmp/uodynamapper-ec-followup/`. This inventory establishes authored metadata
 and packed coverage; it does not establish actual runtime routing, trims or
 visible pixel parity by itself.
+
+## Mandatory-trim handoff
+
+The subsequent converter change makes alpha trimming unconditional after the
+owner's source window. Tilemeta `ec_start_x/y` are the resulting source-space
+left/top, not billboard offsets. Slot X adds the left trim; slot Y subtracts
+the bottom trim. The runtime must consume a matching art/tilemeta pair; it
+must not reapply either correction. See [the format contract](../dev_wiki/rendering/tex_art_ec_trimming.md).
+
+Independent source checks cover bridge pieces 1993/1874, scaled plant 3240,
+legacy owner 2739 and shifted hue-mask owners 3239/5118/11532. All seven packed
+images match original RGBA exactly, with independently derived trim bounds and
+placement corrections. All six world-art source origins match tilemeta. The
+banana tree's original positive window is 274x220; its packed 273x218 image
+removes one right column and two bottom rows, with draw offset `[-94,-14]`.
+The earlier window/geometry acceptance above used an untrimmed atlas.
+
+`inspect_ec_sprite_hue_crops` audits the runtime's actual source gates, decoded
+auxiliary images and crop bounds. A count of changed source starts is not a
+count of recovered masks: many entries lack a supported UOSprite source-2
+binding, and missing source images remain distinct from invalid crop bounds.
+
+Fourteen matched native placement frames cover the scaled plant, both legacy
+cranes, town, road and perspective bridge/town. Eight additional frames disable
+optional UV-normalized art shading to separate it from placement. The unlit
+crane differs at only six edge pixels; source-space alignment remains intact.
+Trimming changes normalized shading coordinates and boundary filtering, so
+the full shaded frames are not byte-identical. Do not describe those changes
+as an anchor correction or claim original-client sampler parity. The matching
+pair and preservation-safe auxiliary extension are installed with verified
+backups; see [the hue-mask integration](ec_hue_palette_conversion.md#sprite-mask-crops-and-auxiliary-coverage).
