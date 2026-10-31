@@ -180,7 +180,7 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
     let page_manifest = serialize_page_manifest(&pages, &options).unwrap();
     let slot_manifest = serialize_slot_manifest(&slots, &options).unwrap();
     let geometry_manifest = serde_json::to_vec(&serde_json::json!({"0":{
-        "source_is_world_art":true, "texture_id":77, "descriptor":{
+        "texture_id":77, "descriptor":{
             "source_tile_id":9, "world_art_scale":0.8, "legacy_art_scale":1.5,
             "world_window":[1,2,8,9,-3,-4], "legacy_window":[0,0,44,44,-22,0],
         }

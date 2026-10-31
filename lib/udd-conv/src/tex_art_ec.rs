@@ -778,7 +778,7 @@ fn build_sprite_geometry(slots: &[TexArtEcSlotRecord], art: &ArtDefinition)
         let (TextureSourceKey::World(texture_id), _) = selected_art_source(definition)
             .context("packed sprite has no selected source")?;
         let descriptor = art.sprite_descriptors.get(&id).context("missing authored sprite descriptor")?.clone();
-        let geometry = TexArtEcSpriteGeometry { source_is_world_art: true, texture_id, descriptor };
+        let geometry = TexArtEcSpriteGeometry { texture_id, descriptor };
         let ratio = geometry.legacy_pixel_ratio();
         if !ratio.is_finite() || ratio <= 0.0 {
             eyre::bail!("art {} has invalid authored sprite scale", slot.art_id);
@@ -2109,7 +2109,6 @@ mod tests {
         let slots = [first, TexArtEcSlotRecord { art_id: 2, ..first }];
         let world = build_sprite_geometry(&slots, &art).unwrap();
         assert_eq!(world[&1].texture_id, 77);
-        assert!(world[&1].source_is_world_art);
         assert!((world[&1].legacy_pixel_ratio() - 0.8 / 1.5).abs() < 0.000001);
         assert!((world[&2].legacy_pixel_ratio() - 1.2 / 1.5).abs() < 0.000001);
         let mut classic_only = art.clone();

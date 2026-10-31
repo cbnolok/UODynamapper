@@ -288,7 +288,6 @@ impl ArtPageAtlas {
         )?;
         let geometry = tex_art_ec.sprite_geometry(art_id)?;
         resolved.source_pixel_ratio = geometry.legacy_pixel_ratio();
-        resolved.legacy_art = !geometry.source_is_world_art;
         Some(resolved)
     }
 

@@ -200,50 +200,6 @@ impl EcMaterialStableRole {
     }
 }
 
-/// Names of the file-name roles that format 1 had, kept only until dynapper stops naming them.
-///
-/// Each maps to the position role that took its place; none is ever `Base`, so a check that rejects
-/// "a support image as the primary" keeps rejecting non-colour inputs. Remove this block once
-/// dynapper (statics_collect.rs, static_surface.rs) uses the roles above.
-#[allow(non_upper_case_globals)]
-impl EcMaterialStableRole {
-    #[deprecated(note = "file-name role; use BlendAlpha or CoverageAlpha")]
-    #[doc(hidden)]
-    pub const AlphaMask: Self = Self::BlendAlpha;
-    #[deprecated(note = "file-name role; use HueMask")]
-    #[doc(hidden)]
-    pub const GenericMask: Self = Self::HueMask;
-    #[deprecated(note = "file-name role; use WaterBump")]
-    #[doc(hidden)]
-    pub const NormalLike: Self = Self::WaterBump;
-    #[deprecated(note = "file-name role; use the position roles")]
-    #[doc(hidden)]
-    pub const ImageSupport: Self = Self::Unused;
-    #[deprecated(note = "file-name role; use the position roles")]
-    #[doc(hidden)]
-    pub const EffectOnlyMetadata: Self = Self::Unknown;
-}
-
-/// Format 1's file-name "speculative role" (the words "ripple", "foam", "water" ... in the path).
-///
-/// Format 2 no longer stores it: `TileMetaItemTextureRef::speculative_role` always returns
-/// `UnknownSupport`. Kept only until dynapper (statics_collect.rs) stops naming it; then remove it.
-#[deprecated(note = "file-name role, no longer stored; use EcMaterialStableRole and the block shader")]
-#[doc(hidden)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EcMaterialSpeculativeRole {
-    UnknownSupport,
-    LiquidRipple,
-    LiquidReflectionSupport,
-    LiquidEnvProbe,
-    FoamHighlight,
-    FlowMapLike,
-    RefractionDistortionLike,
-    WaterfallSupport,
-    LavaBubbleSupport,
-    PostBlendSupport,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TileMetaMainEcTextureReason {
     RoleBaseExactTileId,
@@ -455,14 +411,6 @@ const _: () = {
 };
 
 impl TileMetaItemTextureRef {
-    /// Always `UnknownSupport`: format 2 stores no file-name role.
-    #[deprecated(note = "file-name role, no longer stored; use stable_role")]
-    #[doc(hidden)]
-    #[allow(deprecated)]
-    pub fn speculative_role(&self) -> EcMaterialSpeculativeRole {
-        EcMaterialSpeculativeRole::UnknownSupport
-    }
-
     pub fn is_auxiliary(&self) -> bool {
         self.flags & TILEMETA_ITEM_TEXTURE_FLAG_AUXILIARY != 0
     }

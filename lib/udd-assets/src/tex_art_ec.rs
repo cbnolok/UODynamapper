@@ -24,19 +24,21 @@ const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"EASL";
 /// Required source-geometry metadata is also part of this package contract.
 pub const TEX_ART_EC_METADATA_VERSION: u32 = 7;
 
+/// The original window builder's legacy pixel unit, against which the descriptor scales are given.
+const LEGACY_PIXEL_UNIT: f32 = 1.5;
+
+/// Source geometry of a packed sprite. Its source is always the block-0 WorldArt image; packages
+/// written before that was implied also carry `source_is_world_art: true`, which parsing ignores.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TexArtEcSpriteGeometry {
-    pub source_is_world_art: bool,
     pub texture_id: u32,
     pub descriptor: uocf::enhanced::tile_database::ArtSpriteDescriptor,
 }
 
 impl TexArtEcSpriteGeometry {
-    /// Original window builder uses descriptor scale; legacy's pixel unit is 1.5.
+    /// The WorldArt scale over the legacy pixel unit (1.5) the original window builder uses.
     pub fn legacy_pixel_ratio(&self) -> f32 {
-        let scale = if self.source_is_world_art { self.descriptor.world_art_scale }
-            else { self.descriptor.legacy_art_scale };
-        scale / 1.5
+        self.descriptor.world_art_scale / LEGACY_PIXEL_UNIT
     }
 }
 
@@ -358,6 +360,7 @@ mod tests {
         let mut slot = TexArtEcSlotRecord::absent(77);
         slot.flags = SLOT_FLAG_PRESENT;
         assert!(parse_sprite_geometry(b"{}", &[slot]).is_err());
+        // Older packages carry `source_is_world_art`; it must still parse.
         let mut manifest = serde_json::json!({"77":{
             "source_is_world_art":true, "texture_id":123, "descriptor":{
                 "source_tile_id":77, "world_art_scale":0.8, "legacy_art_scale":1.5,

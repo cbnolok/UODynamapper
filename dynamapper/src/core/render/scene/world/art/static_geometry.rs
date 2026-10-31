@@ -139,7 +139,7 @@ impl<'w> StaticPickingResources<'w> {
                 let slot = self.ec.as_ref()?.0.present_slot(art_id)?;
                 let source = self.ec.as_ref()?.0.sprite_geometry(art_id)?;
                 (slot.draw_offset_x, slot.draw_offset_y, slot.logical_width(), slot.logical_height(),
-                    source.legacy_pixel_ratio(), !source.source_is_world_art)
+                    source.legacy_pixel_ratio(), false)
             }
             StaticVisualKind::TexLandEc { .. } => unreachable!(),
         };

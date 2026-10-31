@@ -9,6 +9,9 @@ use uocf::{enhanced::{string_dictionary::UoStringDictionary, tile_database::ArtD
     tileart::{TaeFlag, TileArtEntry, tileart_entry_hash}},
     uop_container::package::UopPackage};
 
+/// The archive holding the block-0 WorldArt images that tex_art_ec packs.
+const WORLD_ART_SOURCE_FILE: &str = "Texture.uop";
+
 #[derive(Parser)]
 struct Args {
     #[arg(long)]
@@ -125,14 +128,13 @@ fn main() -> Result<()> {
         let slot = packed.present_slot(u32::from(*id)).ok_or_else(|| color_eyre::eyre::eyre!("missing sprite {id}"))?;
         ensure!(slot.is_static() && slot.upscale_factor == 1, "pixel check requires a native ordinary sprite: {id}");
         let geometry = packed.sprite_geometry(u32::from(*id)).unwrap();
-        let filename = if geometry.source_is_world_art { "Texture.uop" } else { "LegacyTexture.uop" };
+        let filename = WORLD_ART_SOURCE_FILE;
         let textures = uocf::enhanced::textures::Textures::new(&args.client.join(filename), None, None)?;
         let source = textures.get_from_id(geometry.texture_id)?.ok_or_else(|| color_eyre::eyre::eyre!("missing source image {id}"))?.decode_to_rgba8()?;
-        let window = if geometry.source_is_world_art { geometry.descriptor.world_window }
-            else { geometry.descriptor.legacy_window };
-        let [left, top, mut right, mut bottom, offset_x, offset_y] = window;
+        let [left, top, right, bottom, offset_x, offset_y] = geometry.descriptor.world_window;
         ensure!(right > left && bottom > top, "degenerate authored window for {id}");
-        if geometry.source_is_world_art { right = right.saturating_add(1); bottom = bottom.saturating_add(1); }
+        // The WorldArt window's right and bottom edges are inclusive.
+        let (right, bottom) = (right.saturating_add(1), bottom.saturating_add(1));
         let clip_left = left.clamp(0, source.width() as i32) as u32;
         let clip_top = top.clamp(0, source.height() as i32) as u32;
         let clip_right = right.clamp(0, source.width() as i32) as u32;
@@ -151,12 +153,10 @@ fn main() -> Result<()> {
         ensure!(i32::from(slot.draw_offset_x) == offset_x + (left - clip_left) as i32
             && i32::from(slot.draw_offset_y) == offset_y - (clip_bottom - bottom) as i32,
             "packed offsets do not preserve the source window placement for {id}");
-        if geometry.source_is_world_art {
-            let tile = meta.as_ref().and_then(|meta|meta.item_tile(u32::from(*id)))
-                .ok_or_else(||color_eyre::eyre::eyre!("world-source check needs matching --tilemeta for {id}"))?;
-            ensure!(i32::from(tile.ec_start_x) == left as i32 && i32::from(tile.ec_start_y) == top as i32,
-                "tilemeta source origin differs from the trimmed image for {id}");
-        }
+        let tile = meta.as_ref().and_then(|meta|meta.item_tile(u32::from(*id)))
+            .ok_or_else(||color_eyre::eyre::eyre!("world-source check needs matching --tilemeta for {id}"))?;
+        ensure!(i32::from(tile.ec_start_x) == left as i32 && i32::from(tile.ec_start_y) == top as i32,
+            "tilemeta source origin differs from the trimmed image for {id}");
         let pixels = packed.read_page_rgba(slot.page_index)?;
         let stride = packed.pages()[slot.page_index as usize].used_width as usize * 4;
         for y in 0..usize::from(slot.height) {
@@ -170,7 +170,7 @@ fn main() -> Result<()> {
             "extent":[slot.width,slot.height],"source_origin":[left,top],
             "trim":[left-clip_left,top-clip_top,clip_right-right,clip_bottom-bottom],
             "draw_offset":[slot.draw_offset_x,slot.draw_offset_y],"exact_rgba_match":true,
-            "world_source_origin_verified":geometry.source_is_world_art}));
+            "world_source_origin_verified":true}));
     }
     let output = OpenOptions::new().write(true).create_new(true).open(&args.output)?;
     serde_json::to_writer_pretty(output, &json!({"client":args.client, "package":args.package, "tilemeta":args.tilemeta,

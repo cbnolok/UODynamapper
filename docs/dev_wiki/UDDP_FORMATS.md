@@ -111,7 +111,7 @@ Avoid BC7 RDO for art and mobile-animation sprites unless a specific asset class
 
 Current EC packing semantics:
 
-- `tex_art_ec.uddp` is keyed by tileart/static ownership and uses per-entry sampling windows. It holds only block-0 `WorldArt` images (`Texture.uop`): the KR art. An item without one has no slot; its Classic art is in `tex_art_cc.uddp`. `LegacyTexture.uop` (the EC legacy-art set) is not read, so `TexArtEcSpriteGeometry::source_is_world_art` is always true.
+- `tex_art_ec.uddp` is keyed by tileart/static ownership and uses per-entry sampling windows. It holds only block-0 `WorldArt` images (`Texture.uop`): the KR art. An item without one has no slot; its Classic art is in `tex_art_cc.uddp`. `LegacyTexture.uop` (the EC legacy-art set) is not read. `metadata/sprite_geometry.json` therefore has no source flag any more; packages that still carry `source_is_world_art: true` parse, and the field is ignored.
 - `tex_land_ec.uddp` reads terrain layer images from `Texture.uop` only. On the shipped client every TerrainDefinition and override layer id (207) resolves there; classic land comes from `tex_land_cc.uddp`.
 - `tex_land_ec.uddp` is keyed by TerrainDefinition semantics and may pack sparse slot ids plus alias/provenance metadata.
 - `tex_land_ec.uddp` also carries EC land material roles in the runtime lookup table: role `0` is base/diffuse, role `1` is detail, role `2` is mask/alpha, and role `3` is normal/normal_map. These role entries point into the same page atlas and are selected by semantic material id, not by raw texture-id ranges.

@@ -7,6 +7,8 @@ use uocf::enhanced::tileart::ArtMaterial;
 
 const ITEM_CAPACITY: usize = 65_536;
 const LOOKUP_WIDTH: usize = 256;
+/// Item position of the static terrain shader's fourth map (coverage alpha).
+const FOURTH_SOURCE_POSITION: u8 = 3;
 mod hue_mask;
 pub(super) use hue_mask::append as append_sprite_hues;
 
@@ -16,17 +18,18 @@ pub struct EcItemSurfaceImages {
     pub lookup: Handle<Image>,
 }
 
-fn source(refs: &[TileMetaItemTextureRef], stage: u32) -> Option<&TileMetaItemTextureRef> {
-    refs.iter().find(|r| r.block_index == 0 && r.sampler_index == stage && r.is_world_art()
+/// The block-0 item at position `stage`: the client binds item i to the shader's map i.
+fn source(refs: &[TileMetaItemTextureRef], stage: u8) -> Option<&TileMetaItemTextureRef> {
+    refs.iter().find(|r| r.block_index == 0 && r.item_index == stage && r.is_world_art()
         && r.physical_package() == EcMaterialPhysicalPackage::Texture
         && r.uv_set <= 1 && r.texture_stretch.is_finite() && r.texture_stretch > 0.0)
 }
 
-fn has_source(refs: &[TileMetaItemTextureRef], stage: u32) -> bool {
-    refs.iter().any(|r| r.block_index == 0 && r.sampler_index == stage)
+fn has_source(refs: &[TileMetaItemTextureRef], stage: u8) -> bool {
+    refs.iter().any(|r| r.block_index == 0 && r.item_index == stage)
 }
 
-fn sprite_source(refs: &[TileMetaItemTextureRef], stage: u32) -> Option<&TileMetaItemTextureRef> {
+fn sprite_source(refs: &[TileMetaItemTextureRef], stage: u8) -> Option<&TileMetaItemTextureRef> {
     source(refs, stage).filter(|r| r.uv_set == 0 && r.texture_stretch == 1.0)
 }
 
@@ -46,8 +49,8 @@ fn append_material(
     // The base comes from the item-owned art slot. Never reinterpret a slot that
     // conversion populated from a different source in the material graph.
     if !base.is_primary_selected() { return; }
-    let fourth = source(refs, 3);
-    if fourth.is_none() && refs.iter().any(|r| r.block_index == 0 && r.sampler_index == 3) { return; }
+    let fourth = source(refs, FOURTH_SOURCE_POSITION);
+    if fourth.is_none() && has_source(refs, FOURTH_SOURCE_POSITION) { return; }
     let temporary_is_base = same_sample(base, temporary);
     let fourth_is_mask = fourth.is_some_and(|r| same_sample(mask, r));
     let mut descriptors = [[0u32; 4]; 6];
@@ -95,7 +98,7 @@ mod tests {
         let refs = std::array::from_fn(|stage| TileMetaItemTextureRef {
             texture_id: if stage < 2 { 2000103 } else { 12943 },
             texture_type: 1, physical_package: EcMaterialPhysicalPackage::Texture as u8,
-            flags: if stage == 0 { 2 } else { 0 }, sampler_index: stage as u32,
+            flags: if stage == 0 { 2 } else { 0 }, item_index: stage as u8,
             texture_stretch: if stage < 2 { 4.0 } else { 1.0 },
             uv_set: u32::from(stage < 2), ..Default::default()
         });

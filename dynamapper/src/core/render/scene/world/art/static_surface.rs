@@ -99,7 +99,7 @@ mod tests {
             texture_stretch: 8.0, uv_set: 1, ..Default::default() };
         assert_eq!(source_key(&tile, &[base]), Some((2000090, 8.0f32.to_bits())));
         for invalid in [TileMetaItemTextureRef { uv_set: 0, ..base },
-            TileMetaItemTextureRef { stable_role: EcMaterialStableRole::AlphaMask as u8, ..base }] {
+            TileMetaItemTextureRef { stable_role: EcMaterialStableRole::BlendAlpha as u8, ..base }] {
             assert_eq!(source_key(&tile, &[invalid]), None);
         }
         tile.height = 1;

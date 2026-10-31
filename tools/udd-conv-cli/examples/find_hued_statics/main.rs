@@ -6,6 +6,9 @@ use udd_assets::map_metadata::decode_map_package_metadata;
 use udd_container::{FileKey, UddpReader};
 use uocf::classic::statics::StaticTile;
 
+/// A WorldArt descriptor scale of 1: the sprite is drawn at its native size.
+const NATIVE_WORLD_ART_SCALE: f32 = 1.0;
+
 #[derive(Parser)]
 struct Args {
     #[arg(long)]
@@ -19,8 +22,8 @@ struct Args {
     /// Include ordinary placements when locating a source-geometry fixture.
     #[arg(long)]
     include_unhued: bool,
-    /// Match the packed EC sprite's actual source rather than guessing from its ID.
-    #[arg(long, value_parser = ["legacy", "scaled-world"])]
+    /// Keep only packed EC sprites whose WorldArt source is drawn scaled.
+    #[arg(long, value_parser = ["scaled-world"])]
     ec_source: Option<String>,
 }
 
@@ -56,8 +59,7 @@ fn main() -> Result<()> {
                 if tilemeta.as_ref().and_then(|meta| meta.item_tile(id)).is_some_and(|meta| meta.is_nodraw()) { continue; }
                 let Some(geometry) = art.sprite_geometry(id) else { continue; };
                 let matches = match args.ec_source.as_deref() {
-                    Some("legacy") => !geometry.source_is_world_art,
-                    Some("scaled-world") => geometry.source_is_world_art && geometry.descriptor.world_art_scale != 1.0,
+                    Some("scaled-world") => geometry.descriptor.world_art_scale != NATIVE_WORLD_ART_SCALE,
                     _ => false,
                 };
                 if !matches { continue; }

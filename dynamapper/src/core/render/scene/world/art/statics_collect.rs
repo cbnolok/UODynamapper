@@ -855,11 +855,13 @@ fn tileart_surface_has_visible_primary(
     // The packer uses ArtData.ec_texture, preserved as PRIMARY_SELECTED. The
     // runtime's role-aware main selector can choose a different source image;
     // it cannot change the pixels already stored in the tileart atlas.
+    // The rejected roles are the shader inputs that the former file-name roles (alpha mask, generic
+    // mask, noise, normal-like, image support, effect-only) were mapped to.
     !refs.iter().find(|texture_ref| texture_ref.is_world_art() && texture_ref.is_primary_selected())
         .is_some_and(|texture_ref| matches!(texture_ref.stable_role(),
-        EcMaterialStableRole::AlphaMask | EcMaterialStableRole::GenericMask
-            | EcMaterialStableRole::Noise | EcMaterialStableRole::NormalLike
-            | EcMaterialStableRole::ImageSupport | EcMaterialStableRole::EffectOnlyMetadata
+        EcMaterialStableRole::BlendAlpha | EcMaterialStableRole::HueMask
+            | EcMaterialStableRole::Noise | EcMaterialStableRole::WaterBump
+            | EcMaterialStableRole::Unused | EcMaterialStableRole::Unknown
     ))
 }
 
@@ -2128,29 +2130,10 @@ fn emit_static_render_tile(
         world_x: render_tile.world_x,
         world_z: render_tile.world_z,
         depth_class: resolve_static_depth_class(tilemeta),
-        is_wet_flags: {
-            let classic_wet = tilemeta.map_or(false, |meta| meta.flags & TILE_FLAG_WET != 0);
-            let ec_wet = tilemeta_package.map_or(false, |pkg| {
-                pkg.item_texture_refs(render_tile.graphic as u32).iter().any(|r| {
-                    use udd_assets::tilemeta::EcMaterialSpeculativeRole;
-                    matches!(
-                        r.speculative_role(),
-                        EcMaterialSpeculativeRole::LiquidRipple
-                            | EcMaterialSpeculativeRole::LiquidReflectionSupport
-                            | EcMaterialSpeculativeRole::LiquidEnvProbe
-                            | EcMaterialSpeculativeRole::FoamHighlight
-                            | EcMaterialSpeculativeRole::WaterfallSupport
-                            | EcMaterialSpeculativeRole::LavaBubbleSupport
-                    )
-                })
-            });
-            // TODO Phase 10G: FoamHighlight, WaterfallSupport, LavaBubbleSupport, and
-            // RefractionDistortionLike roles currently contribute to is_wet_flags (water
-            // animation) but deserve dedicated extra-pass rendering (additive post-lighting
-            // compositing for emissive/foam, screen-space copy for refraction).  The
-            // speculative_role data is already stored in TileMetaItemTextureRef.
-            u32::from(classic_wet || ec_wet)
-        },
+        // Only the classic wet flag. EC tileart no longer adds wetness: the file-name liquid roles
+        // (ripple, foam, waterfall, lava bubble ...) are gone, and taking it from the water shader is
+        // an open decision.
+        is_wet_flags: u32::from(tilemeta.map_or(false, |meta| meta.flags & TILE_FLAG_WET != 0)),
         base_world_y: (render_tile.z as f32) * frame.height_scale,
     };
 
@@ -2402,9 +2385,6 @@ fn resolve_art_static_sprite(
                 resources.tilemeta_package()
                     .and_then(|package| package.item_texture_refs(art_id).iter()
                         .find(|texture_ref| texture_ref.is_world_art() && texture_ref.is_primary_selected()))
-                    // Ripple-like inputs on small authored stains are not tiled albedo.
-                    .filter(|texture_ref| texture_ref.speculative_role()
-                        != udd_assets::tilemeta::EcMaterialSpeculativeRole::LiquidRipple)
                     .map(|texture_ref| valid_texture_repetition(texture_ref.texture_stretch))
                     .unwrap_or(0.0)
             } else {
@@ -3180,7 +3160,7 @@ mod tests {
         let refs = [
             texture_ref_with_role(
                 200,
-                udd_assets::tilemeta::EcMaterialStableRole::NormalLike,
+                udd_assets::tilemeta::EcMaterialStableRole::WaterBump,
                 udd_assets::tilemeta::TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
             ),
             texture_ref_with_role(
@@ -3278,7 +3258,7 @@ mod tests {
     fn tileart_water_support_slot_uses_visible_terrain_material() {
         let primary = texture_ref_with_role(
             1000013,
-            udd_assets::tilemeta::EcMaterialStableRole::AlphaMask,
+            udd_assets::tilemeta::EcMaterialStableRole::BlendAlpha,
             udd_assets::tilemeta::TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
         );
         let resolution = test_surface_like_resolution();
@@ -3406,7 +3386,7 @@ mod tests {
         let refs = [
             texture_ref_with_role(
                 200,
-                udd_assets::tilemeta::EcMaterialStableRole::NormalLike,
+                udd_assets::tilemeta::EcMaterialStableRole::WaterBump,
                 udd_assets::tilemeta::TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
             ),
             texture_ref_with_role(201, udd_assets::tilemeta::EcMaterialStableRole::Base, 0),

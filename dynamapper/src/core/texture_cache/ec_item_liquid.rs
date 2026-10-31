@@ -7,6 +7,8 @@ use uocf::enhanced::tileart::ArtMaterial;
 
 const LOOKUP_WIDTH: u32 = 256;
 const ITEM_CAPACITY: u32 = 65_536;
+/// Item position of the water shader's fourth map: the client binds item i to map i.
+const FOURTH_SOURCE_POSITION: u8 = 3;
 
 #[derive(Resource, Clone)]
 pub struct EcItemLiquidImages {
@@ -20,7 +22,7 @@ fn fourth_source<'a>(material: &ArtMaterial, refs: &'a [TileMetaItemTextureRef])
     if material.block_index != 0 || material.shader_name.as_deref() != Some("UOWaterShader") {
         return None;
     }
-    refs.iter().find(|r| r.block_index == material.block_index && r.sampler_index == 3
+    refs.iter().find(|r| r.block_index == material.block_index && r.item_index == FOURTH_SOURCE_POSITION
         && r.is_world_art() && r.physical_package() == EcMaterialPhysicalPackage::Texture
         && r.uv_set <= 1 && r.texture_stretch.is_finite() && r.texture_stretch > 0.0)
 }
@@ -60,17 +62,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fourth_source_uses_original_shader_sampler_and_physical_family() {
+    fn fourth_source_uses_original_shader_position_and_physical_family() {
         let material = ArtMaterial { shader_name: Some("UOWaterShader".into()), ..Default::default() };
         let source = TileMetaItemTextureRef {
             texture_id: 6038, texture_type: 1, physical_package: EcMaterialPhysicalPackage::Texture as u8,
-            sampler_index: 3, uv_set: 0, texture_stretch: 1.0, ..Default::default()
+            item_index: FOURTH_SOURCE_POSITION, uv_set: 0, texture_stretch: 1.0, ..Default::default()
         };
         let refs = [TileMetaItemTextureRef { block_index: 1, ..source }, source];
         assert_eq!(fourth_source(&material, &refs).unwrap().block_index, 0);
         for wrong in [
             TileMetaItemTextureRef { physical_package: EcMaterialPhysicalPackage::LegacyTexture as u8, ..source },
-            TileMetaItemTextureRef { sampler_index: 2, ..source },
+            TileMetaItemTextureRef { item_index: FOURTH_SOURCE_POSITION - 1, ..source },
             TileMetaItemTextureRef { uv_set: 2, ..source },
             TileMetaItemTextureRef { texture_stretch: f32::NAN, ..source },
         ] {
@@ -93,7 +95,7 @@ mod tests {
         spans[17001] = TileMetaItemTextureRefSpan { start: 1, len: 1, ..Default::default() };
         let refs = [6038, 2100014].map(|texture_id| TileMetaItemTextureRef {
             texture_id, texture_type: 1, physical_package: EcMaterialPhysicalPackage::Texture as u8,
-            sampler_index: 3, texture_stretch: 1.0, ..Default::default()
+            item_index: FOURTH_SOURCE_POSITION, texture_stretch: 1.0, ..Default::default()
         });
         let source = br#"{"17000":[{"block_index":0,"shader_name":"UOWaterShader","technique":[0,1],"tweaks":[0,0,-0.02,0.001],"field_04":0}],"17001":[{"block_index":0,"shader_name":"UOWaterShader","technique":[0,2],"tweaks":[0,0,0,0],"field_04":0}]}"#;
         let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
