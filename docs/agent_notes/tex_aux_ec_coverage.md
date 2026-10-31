@@ -10,8 +10,7 @@ texture number alone, and the first ref seen wins.
 The runtime consumers in dynapper are the EC item liquid (UOWaterShader sampler 3), the static
 terrain surface (UOStaticTerrainShader samplers 1-3) and the sprite hue mask (UOSpriteShader
 sampler 2). All of them read block-0 WorldArt refs from `Texture.uop` and check
-`slot.logical_family == 1`. Nothing reads TileArtLegacy (family 2) aux slots. They are most of
-the package, but no current consumer uses them.
+`slot.logical_family == 1`. Nothing reads TileArtLegacy (family 2) aux slots. They are 38,771 of the 39,620 slots in a clean build, but no current consumer uses them.
 
 ## PRIMARY_SELECTED (lib/udd-conv/src/tilemeta.rs)
 
