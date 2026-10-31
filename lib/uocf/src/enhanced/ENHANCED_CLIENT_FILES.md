@@ -1363,9 +1363,15 @@ Active KDL files live in `dynamapper/assets/cc_ec_convtables/`.
   client on void (431-434 hidden; 11996-12000 drawn as tree bark), on the
   embank tiles (46/47 instead of the client's Dirt Cliff 58/60, same textures)
   and on 1072 (terra cotta 82 instead of grey tiles 71) were removed so the
-  client's route applies. Still differing: 181 same-family variant/orientation
-  rows (tree bark/path, cave walls, snow, tiles, swamp2 edges, acid), and 41 ids
-  with no client row (the KDL adds them, e.g. 435-437 to void).
+  client's route applies. So were the same-family rows that draw the same
+  items as the client's material (the per-tile terra cotta and blue slate
+  materials 74-103 for 1046-1077, embank snow 65/67 for 778-789, swamp2 edges
+  131/133 for 15834/15837) and acid 49 for 11834/11835 (client: 168/169, the
+  water materials whose own aliases name those ids). Still differing: 138
+  same-family variant/orientation rows with different textures (tree
+  bark/path, cave walls, snow 378/379, planks 699, terra cotta 1071), pending
+  review, and 41 ids with no client row (the KDL adds them, e.g. 435-437 to
+  void).
 
 Legacy KDL files:
 
