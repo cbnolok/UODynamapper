@@ -19,8 +19,13 @@ leave state untouched. This does not add loading for previously unloaded maps.
 
 `status` exposes current and previously rendered player positions, elapsed time,
 and the existing smoothed FPS/frame-time diagnostics when available. Rendered
-position equality does not establish completion of texture streaming. Keep
-settling time and multiple-frame inspection in the validation workflow.
+position equality does not establish completion of texture streaming. The
+`art` snapshot reports the collector's map/chunk/instance counts, atlas misses
+and pending sprite/ground pages. A terrain-only wait captured an empty bridge
+while its sprite pages were still loading. `control.py wait-ready` now requires
+position agreement, submitted metadata and settled art over three stable
+snapshots. It has a bounded timeout; it does not fence GPU completion or shader
+compilation. Keep actual-frame inspection in the validation workflow.
 
 `status.render` reports the actual active preset, global lighting and effects
 uniform values; `status.static_lights.instances` reports collected lights. These

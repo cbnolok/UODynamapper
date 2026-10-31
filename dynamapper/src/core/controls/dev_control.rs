@@ -114,9 +114,13 @@ fn poll_control(
     pointer: Res<InjectedPointer>,
     mut capture_pending: Local<Option<(PathBuf, f64)>>,
     time: Res<Time<Real>>,
-    uniforms: Option<Res<crate::configs::shader_presets::UniformState>>,
-    static_lights: Option<Res<crate::core::render::scene::world::art::static_lights::RenderStaticLightInstances>>,
+    render_state: (Option<Res<crate::configs::shader_presets::UniformState>>,
+        Option<Res<crate::core::render::scene::world::art::static_lights::RenderStaticLightInstances>>,
+        Option<Res<crate::core::render::scene::world::art::statics_collect::StaticArtCollectDebugState>>,
+        Option<Res<crate::core::texture_cache::art::SpriteArtPageAtlas>>,
+        Option<Res<crate::core::texture_cache::art::GroundArtPageAtlas>>),
 ) {
+    let (uniforms, static_lights, art_stats, sprite_atlas, ground_atlas) = render_state;
     let (windows, inspect_text) = view;
     if capture_pending.as_ref().is_some_and(|(path, started)| path.exists() || time.elapsed_secs_f64() - started > 30.0) {
         *capture_pending = None;
@@ -154,10 +158,18 @@ fn poll_control(
                             "metadata_pending": atlas.has_pending_uploads() || uploads.pending_ops != 0,
                             "cached_chunks": terrain_bases.as_ref().map(|bases| bases.cached_chunk_count())})
                     });
+                    // Terrain metadata can settle before sprite pages and
+                    // collection retries. Capture clients must wait for both.
+                    let art = art_stats.as_ref().and_then(|state| state.last.as_ref()).map(|stats| json!({
+                        "map_id": stats.map_id, "visible_chunks": stats.visible_chunks,
+                        "atlas_misses": stats.atlas_misses, "emitted_instances": stats.emitted_instances,
+                        "pending_pages": sprite_atlas.as_ref().map_or(0, |a| a.pending_page_count())
+                            + ground_atlas.as_ref().map_or(0, |a| a.pending_page_count()),
+                    }));
                     Ok(json!({"ok": true, "position": position, "rendered_position": rendered,
                         "elapsed_seconds": time.elapsed_secs_f64(),
                         "fps": metric(&fps_path),
-                        "frame_ms": metric(&frame_path), "terrain": terrain,
+                        "frame_ms": metric(&frame_path), "terrain": terrain, "art": art,
                         "render": uniforms.as_ref().map(|state| json!({
                             "preset": state.active_preset, "global_lighting": state.global_lighting,
                             "effects": state.effects})),

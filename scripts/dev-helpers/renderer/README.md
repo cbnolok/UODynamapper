@@ -18,6 +18,7 @@ DYNAMAPPER_CONTROL_SOCKET=/tmp/my-preview/control.sock \
 
 python3 scripts/dev-helpers/renderer/control.py --socket /tmp/my-preview/control.sock status
 python3 scripts/dev-helpers/renderer/control.py --socket /tmp/my-preview/control.sock teleport 2518 561
+python3 scripts/dev-helpers/renderer/control.py --socket /tmp/my-preview/control.sock wait-ready
 python3 scripts/dev-helpers/renderer/control.py --socket /tmp/my-preview/control.sock capture /tmp/my-preview/transition.png
 python3 scripts/dev-helpers/renderer/control.py --socket /tmp/my-preview/control.sock key F2
 python3 scripts/dev-helpers/renderer/control.py --socket /tmp/my-preview/control.sock click 250 350
@@ -31,9 +32,17 @@ currently unloaded maps are rejected. Status reports player/rendered positions,
 elapsed time, and existing smoothed frame diagnostics when enabled. Its `terrain`
 object reports CPU/submitted metadata revisions, pending metadata uploads and the
 number of published terrain-cache chunks. Equal revisions with no pending writes
-establish metadata submission, not completion of color-texture streaming or shader
-compilation. Allow the scene to settle and compare multiple captures for animated
-fixtures.
+establish metadata submission. Its `art` object reports the last collected map,
+visible chunk and emitted-instance counts, atlas misses, and queued sprite/ground
+pages. Terrain can be ready while the bridge's sprites are still streaming.
+
+Run `wait-ready` after teleporting and before capturing. It requires current and
+rendered positions to agree, submitted terrain metadata, and art with no misses
+or pending pages across three stable snapshots. The timeout is bounded by
+`--timeout` (30 seconds by default). This guards known CPU collection/upload
+queues; it is not a GPU fence or proof that shader compilation and every color
+texture have finished. Inspect actual frames and compare multiple captures for
+animated fixtures.
 
 `status.render` exposes the effective preset name, global-light value and effect
 uniforms. `status.static_lights.instances` exposes the collector count. Use these

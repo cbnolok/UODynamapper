@@ -43,6 +43,38 @@ def wait_for_input(endpoint, timeout):
         time.sleep(0.01)
 
 
+def wait_for_scene(endpoint, timeout, position=None):
+    """Wait for matching terrain and art state across three stable snapshots."""
+    deadline = time.monotonic() + timeout
+    stable = 0
+    previous = None
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError('terrain and art did not settle')
+        status = request(endpoint, {'command': 'status'}, remaining)
+        if position is None:
+            position = status.get('position')
+        terrain = status.get('terrain')
+        art = status.get('art')
+        if (position is not None and status.get('position') == list(position)
+                and status.get('rendered_position') == list(position) and terrain and art
+                and not terrain['metadata_pending']
+                and terrain['metadata_revision'] == terrain['submitted_metadata_revision']
+                and art['map_id'] == position[3] and art['visible_chunks'] > 0
+                and art['atlas_misses'] == 0 and art['pending_pages'] == 0):
+            fingerprint = (tuple(position), terrain['metadata_revision'],
+                           art['emitted_instances'], art['visible_chunks'])
+            stable = stable + 1 if fingerprint == previous else 1
+            previous = fingerprint
+            if stable >= 3:
+                return status
+        else:
+            stable = 0
+            previous = None
+        time.sleep(0.1)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--socket', type=Path, required=True)
@@ -54,6 +86,7 @@ def main():
     teleport.add_argument('--z', type=int, default=0)
     teleport.add_argument('--map', type=int, default=0)
     actions.add_parser('status')
+    actions.add_parser('wait-ready', help='Wait for stable terrain and sprite readiness before capture')
     capture = actions.add_parser('capture')
     capture.add_argument('path', type=Path)
     key = actions.add_parser('key', help='Send a named Bevy KeyCode, for example F2 or ControlLeft')
@@ -92,7 +125,8 @@ def main():
         command.update(button=args.button, state=args.state)
     if args.command == 'reset-input':
         command['command'] = 'reset_input'
-    result = request(args.socket, command, args.timeout)
+    result = (wait_for_scene(args.socket, args.timeout) if args.command == 'wait-ready'
+              else request(args.socket, command, args.timeout))
     if args.command in ['key', 'text', 'pointer', 'click', 'scroll', 'reset-input']:
         # Acknowledgement means queued. Drain press/release frames; UI animation,
         # settings saves and GPU uploads may still need settling before capture.
