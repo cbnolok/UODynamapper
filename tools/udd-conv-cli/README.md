@@ -90,10 +90,6 @@ packaging. These produce JSON or KDL reports rather than `.uddp` packages:
   `TerrainDefinition` primary texture selection and layer reasoning.
 - `report-ec-terrain-practical-review`: write a short JSON queue of terrain material
   decisions needed before runtime use.
-- `audit-ec-terrain-definition-kdl`: compare `TerrainDefinition.kdl` against
-  `TerrainDefinition.uop` and report manual-only fields.
-- `report-ec-terrain-override-candidates`: write a KDL review skeleton for
-  `TerrainDefinition` manual integration candidates.
 - `audit-ec-terrain-overrides`: validate `EcTerrainOverrides.kdl` against
   source-derived `TerrainDefinition` evidence.
 - `audit-land-routing-kdl`: validate a terrain routing KDL against a

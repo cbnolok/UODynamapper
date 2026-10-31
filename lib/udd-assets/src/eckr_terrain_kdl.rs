@@ -150,131 +150,6 @@ fn parse_eckr_terrain_routing_kdl(source_name: &str, content: &str) -> eyre::Res
     Ok(EckrTerrainRouting { entries })
 }
 
-#[derive(Decode, Debug, Clone)]
-pub struct LayerDef {
-    #[knuffel(argument)]
-    pub id: u32,
-    #[knuffel(argument)]
-    pub stretch: f32,
-}
-
-#[derive(Decode, Debug, Clone)]
-pub struct TerrainDefEntry {
-    #[knuffel(argument)]
-    pub id: u32,
-    #[knuffel(argument)]
-    pub terrain_type: String,
-    
-    #[knuffel(property)]
-    pub speed: Option<f32>,
-    #[knuffel(property)]
-    pub waveheight: Option<f32>,
-    #[knuffel(property)]
-    pub textureid: Option<u32>,
-
-    #[knuffel(child)]
-    pub t0: Option<LayerDef>,
-    #[knuffel(child)]
-    pub t1: Option<LayerDef>,
-    #[knuffel(child)]
-    pub m: Option<LayerDef>,
-    #[knuffel(child)]
-    pub s: Option<LayerDef>,
-    #[knuffel(child)]
-    pub n: Option<LayerDef>,
-}
-
-#[derive(Decode, Debug, Clone)]
-pub struct TerrainDefinitionKdl {
-    #[knuffel(children(name = "d"))]
-    pub entries: Vec<TerrainDefEntry>,
-}
-
-impl TerrainDefinitionKdl {
-    pub fn load(path: impl AsRef<Path>) -> eyre::Result<Self> {
-        let content = std::fs::read_to_string(path.as_ref())
-            .wrap_err_with(|| format!("Failed to read KDL file: {:?}", path.as_ref()))?;
-        let content = strip_c_style_block_comments(&content);
-        let content = strip_cpp_style_line_comments(&content);
-        let source_name = path.as_ref().to_str().unwrap_or(TERRAIN_DEFINITION_SOURCE_NAME);
-        parse_terrain_definition_kdl(&content).map_err(|error| udd_kdl::strict::in_file(source_name, error))
-    }
-
-    pub fn to_map(&self) -> HashMap<u32, TerrainDefEntry> {
-        self.entries.iter().map(|e| (e.id, e.clone())).collect()
-    }
-}
-
-/// Name given to the KDL parser for its diagnostics.
-const TERRAIN_DEFINITION_SOURCE_NAME: &str = "TerrainDefinition.kdl";
-/// `d <terrain id> "<type flags>" [speed=] [waveheight=] [textureid=] { <role> <texture id> <stretch> }`.
-const TERRAIN_DEFINITION_NODE: &str = "d";
-const TERRAIN_DEFINITION_PROPERTIES: [&str; 3] = ["speed", "waveheight", "textureid"];
-const TERRAIN_LAYER_ROLES: [&str; 5] = ["t0", "t1", "m", "s", "n"];
-const TERRAIN_DEFINITION_SCHEMA: &[NodeSchema] = &[NodeSchema {
-    name: TERRAIN_DEFINITION_NODE,
-    properties: &TERRAIN_DEFINITION_PROPERTIES,
-    children: &[
-        NodeSchema::leaf(TERRAIN_LAYER_ROLES[0], &[]),
-        NodeSchema::leaf(TERRAIN_LAYER_ROLES[1], &[]),
-        NodeSchema::leaf(TERRAIN_LAYER_ROLES[2], &[]),
-        NodeSchema::leaf(TERRAIN_LAYER_ROLES[3], &[]),
-        NodeSchema::leaf(TERRAIN_LAYER_ROLES[4], &[]),
-    ],
-}];
-
-fn parse_terrain_definition_kdl(content: &str) -> eyre::Result<TerrainDefinitionKdl> {
-    use udd_kdl::ast::Node;
-    use udd_kdl::span::LineSpan;
-    use udd_kdl::strict::{arguments, error_at, property, value_f32, value_string, value_u32};
-
-    fn layer_from_node(node: &Node<LineSpan>) -> eyre::Result<LayerDef> {
-        let [id, stretch] = arguments::<2>(node)?;
-        Ok(LayerDef { id: value_u32(id, "layer id")?, stretch: value_f32(stretch, "layer stretch")? })
-    }
-
-    let document = udd_kdl::parse_ast_line_span(TERRAIN_DEFINITION_SOURCE_NAME, content)
-        .map_err(|error| udd_kdl::strict::describe_error(content, &error))?;
-    udd_kdl::strict::check_document(&document, TERRAIN_DEFINITION_SCHEMA)?;
-
-    let mut entries = Vec::new();
-    for node in &document.nodes {
-        let [id, terrain_type] = arguments::<2>(node)?;
-        let mut entry = TerrainDefEntry {
-            id: value_u32(id, "terrain id")?,
-            terrain_type: value_string(terrain_type, "terrain type")?,
-            speed: property(node, "speed").map(|value| value_f32(value, "speed")).transpose()?,
-            waveheight: property(node, "waveheight").map(|value| value_f32(value, "waveheight")).transpose()?,
-            textureid: property(node, "textureid").map(|value| value_u32(value, "textureid")).transpose()?,
-            t0: None,
-            t1: None,
-            m: None,
-            s: None,
-            n: None,
-        };
-
-        for child in node.children() {
-            let role: &str = &child.node_name;
-            let slot = match role {
-                "t0" => &mut entry.t0,
-                "t1" => &mut entry.t1,
-                "m" => &mut entry.m,
-                "s" => &mut entry.s,
-                "n" => &mut entry.n,
-                _ => unreachable!("the schema check admits only layer roles"),
-            };
-            if slot.is_some() {
-                return Err(error_at(child.node_name.span(), format!("second `{role}` layer in the same `d`")));
-            }
-            *slot = Some(layer_from_node(child)?);
-        }
-
-        entries.push(entry);
-    }
-
-    Ok(TerrainDefinitionKdl { entries })
-}
-
 /// Removes `/* */` comments, keeping their line breaks so error lines still match the file.
 fn strip_c_style_block_comments(content: &str) -> String {
     let mut stripped = String::with_capacity(content.len());
@@ -381,23 +256,19 @@ t 6 170
     }
 
     #[test]
-    fn terrain_definition_loader_accepts_header_block_comments() {
-        let content = r#"
+    fn routing_loader_accepts_header_block_comments() {
+        let parsed = EckrTerrainRouting::from_str(
+            "routing.kdl",
+            r#"
 /*
     Header prose for humans.
 */
-d 5 "Liquid,Smooth" speed=0 waveheight=0.3 {
-    t0 01000017 30
-}
-"#;
-        let stripped = strip_c_style_block_comments(content);
-        let stripped = strip_cpp_style_line_comments(&stripped);
-        let parsed = parse_terrain_definition_kdl(&stripped).expect("parse stripped KDL");
+t 5 168 // trailing note
+"#,
+        )
+        .expect("parse routing with comments");
 
-        assert_eq!(parsed.entries.len(), 1);
-        assert_eq!(parsed.entries[0].id, 5);
-        assert_eq!(parsed.entries[0].speed, Some(0.0));
-        assert_eq!(parsed.entries[0].waveheight, Some(0.3));
+        assert_eq!(parsed.to_map().get(&168), Some(&5));
     }
 
     fn routing_error(content: &str) -> String {
@@ -462,42 +333,6 @@ d 5 "Liquid,Smooth" speed=0 waveheight=0.3 {
         assert_eq!(
             routing_error("t 7 cc=168 kr=5\n"),
             "routing.kdl: line 1, column 3: `t` takes 0 arguments, found 1"
-        );
-    }
-
-    #[test]
-    fn legacy_terrain_definition_file_loads() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../dynamapper/assets/cc_ec_convtables/legacy/TerrainDefinition.kdl");
-        let parsed = TerrainDefinitionKdl::load(path).unwrap_or_else(|error| panic!("{error}"));
-        assert!(!parsed.entries.is_empty());
-    }
-
-    #[test]
-    fn terrain_definition_rejects_unknown_layers_on_their_line() {
-        let content = r#"
-/*
-    Header prose for humans.
-*/
-d 5 "Liquid,Smooth" {
-    t0 01000017 30
-    t2 01000018 30
-}
-"#;
-        let stripped = strip_c_style_block_comments(content);
-        let stripped = strip_cpp_style_line_comments(&stripped);
-        assert_eq!(
-            parse_terrain_definition_kdl(&stripped).expect_err("unknown layer").to_string(),
-            "line 7, column 5: unknown node `t2` in `d`: expected one of `t0`, `t1`, `m`, `s`, `n`"
-        );
-
-        let duplicate = "d 5 \"Liquid\" {\n    t0 1 30\n    t0 2 30\n}\n";
-        assert_eq!(
-            parse_terrain_definition_kdl(duplicate).expect_err("duplicate layer").to_string(),
-            "line 3, column 5: second `t0` layer in the same `d`"
-        );
-        assert_eq!(
-            parse_terrain_definition_kdl("d 5 \"Liquid\" wave=1\n").expect_err("unknown property").to_string(),
-            "line 1, column 14: unknown property `wave` of `d`: expected one of `speed`, `waveheight`, `textureid`"
         );
     }
 }

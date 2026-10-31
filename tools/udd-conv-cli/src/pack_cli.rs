@@ -6,10 +6,10 @@ use std::sync::Arc;
 use log::info;
 
 use crate::ec_material_audit::{
-    audit_ec_material_refs, audit_ec_surface_redirection, audit_ec_terrain_definition_kdl,
+    audit_ec_material_refs, audit_ec_surface_redirection,
     audit_ec_terrain_overrides, audit_ec_terrain_primary_selection, inventory_ec_support_textures,
     write_ec_abnormality_report, write_ec_effect_meta_manifest, write_ec_material_baseline_report,
-    write_ec_terrain_override_candidates, write_ec_terrain_practical_review,
+    write_ec_terrain_practical_review,
     write_terrain_definition_owner_audit, write_tileart_owner_audit,
     write_terrain_definition_review, write_tileart_liquid_surface_report,
 };
@@ -1098,35 +1098,6 @@ enum Commands {
         #[arg(long, default_value = "ec_terrain_practical_review.json")]
         output: PathBuf,
     },
-    /// Compares TerrainDefinition.kdl against TerrainDefinition.uop and reports manual-only fields.
-    AuditEcTerrainDefinitionKdl {
-        #[command(flatten)]
-        source_dirs: SourceDirArgs,
-        #[arg(
-            long = "terrain-definition-kdl",
-            default_value = "dynamapper/assets/cc_ec_convtables/TerrainDefinition.kdl"
-        )]
-        terrain_definition_kdl: PathBuf,
-        #[arg(
-            long = "terrain-overrides",
-            default_value = "dynamapper/assets/cc_ec_convtables/EcTerrainOverrides.kdl"
-        )]
-        terrain_overrides: PathBuf,
-        #[arg(long, default_value = "ec_terrain_definition_kdl_audit.json")]
-        output: PathBuf,
-    },
-    /// Writes a KDL review skeleton for TerrainDefinition manual integration candidates.
-    ReportEcTerrainOverrideCandidates {
-        #[command(flatten)]
-        source_dirs: SourceDirArgs,
-        #[arg(
-            long = "terrain-definition-kdl",
-            default_value = "dynamapper/assets/cc_ec_convtables/TerrainDefinition.kdl"
-        )]
-        terrain_definition_kdl: PathBuf,
-        #[arg(long, default_value = "EcTerrainOverrides.review.kdl")]
-        output: PathBuf,
-    },
     /// Validates EcTerrainOverrides.kdl against source-derived TerrainDefinition evidence.
     AuditEcTerrainOverrides {
         #[command(flatten)]
@@ -2024,31 +1995,6 @@ where
                 tex_land_ec.as_deref(),
                 &out_file,
             )?;
-        }
-        Commands::AuditEcTerrainDefinitionKdl {
-            source_dirs: source_dir_args,
-            terrain_definition_kdl,
-            terrain_overrides,
-            output,
-        } => {
-            let paths = collect_ec_source_dirs(&source_dir_args)?;
-            let out_file = resolve_output_path(&output);
-            let terrain_overrides = terrain_overrides.exists().then_some(terrain_overrides);
-            audit_ec_terrain_definition_kdl(
-                &paths,
-                &terrain_definition_kdl,
-                terrain_overrides.as_deref(),
-                &out_file,
-            )?;
-        }
-        Commands::ReportEcTerrainOverrideCandidates {
-            source_dirs: source_dir_args,
-            terrain_definition_kdl,
-            output,
-        } => {
-            let paths = collect_ec_source_dirs(&source_dir_args)?;
-            let out_file = resolve_output_path(&output);
-            write_ec_terrain_override_candidates(&paths, &terrain_definition_kdl, &out_file)?;
         }
         Commands::AuditEcTerrainOverrides {
             source_dirs: source_dir_args,
