@@ -10,6 +10,10 @@
 //!   `staidx0.mul` and `statics0.mul` with the facet-1 difs applied. When a facet's own map is missing and the facet
 //!   has such a base ([`SHARED_BASE_FACETS`]), it is built the same way whatever the options say, since that is the
 //!   only way to read it, and the resolver warns.
+//! - [`MapEdition::Variant`] reads the facet's `x` files (`mapNxLegacyMUL.uop`/`mapNx.mul`, `staidxNx.mul`,
+//!   `staticsNx.mul`), the alternate edition the server selects with the 0xA9 flag 0x8000. It never falls back to the
+//!   standard files. Difs are applied to whichever edition is selected; verdata patches the standard `map0`,
+//!   `staidx0` and `statics0` only.
 
 crate::eyre_imports!();
 use std::path::{Path, PathBuf};
@@ -21,6 +25,7 @@ use crate::classic::map::{MapPlane, MapSizeCells};
 use crate::classic::map_statics_diff::{MapDiff, StaticDiff};
 use crate::classic::statics::StaticsReader;
 use crate::classic::verdata::Verdata;
+use crate::map_edition::MapEdition;
 use crate::utils::path::find_file_ignoring_case;
 
 /// Felucca's map index.
@@ -38,6 +43,11 @@ pub const SHARED_BASE_FACETS: [(u32, u32); 1] = [(TRAMMEL, FELUCCA)];
 /// The facet whose files `verdata.mul` patches: its map, staidx and statics file ids (0, 1, 2) name `map0.mul`,
 /// `staidx0.mul` and `statics0.mul`.
 pub const VERDATA_FACET: u32 = FELUCCA;
+
+/// Facets with a variant edition: those whose entry in the second facet table of Classic 7.0.50 and later names `x`
+/// files (7.0.20 ships them for map0 and map1 only). The other facets read their standard files in both editions.
+/// The Enhanced Client swaps the same facets' packages (`crate::enhanced::facet_sector::VARIANT_PACKAGE_FACETS`).
+pub const CLASSIC_VARIANT_FACETS: [u32; 4] = [0, 1, 2, 5];
 
 /// The base facet whose files stand in for `facet` when its own map is missing ([`SHARED_BASE_FACETS`]).
 pub fn shared_base_facet(facet: u32) -> Option<u32> {
@@ -69,17 +79,25 @@ impl ClassicMapFormat {
     }
 }
 
-/// The file names map `map_index` can have in `format`, in the order they are looked for.
+/// The file names standard map `map_index` can have in `format`, in the order they are looked for.
 pub fn map_file_names(map_index: u32, format: ClassicMapFormat) -> Vec<String> {
+    edition_map_file_names(map_index, format, MapEdition::Standard)
+}
+
+/// The file names map `map_index` can have in `format` and `edition`, in the order they are looked for. A variant
+/// `mapNxLegacyMUL.uop` keeps the standard entry names (`build/mapNlegacymul/...`).
+pub fn edition_map_file_names(map_index: u32, format: ClassicMapFormat, edition: MapEdition) -> Vec<String> {
+    let x = edition.file_suffix();
     match format {
-        ClassicMapFormat::Mul => vec![format!("map{map_index}.mul")],
-        ClassicMapFormat::Uop => vec![
-            format!("map{map_index}LegacyMUL.uop"),
-            format!("map{map_index}.uop"),
-            format!("map{map_index}xLegacyMUL.uop"),
-            format!("map{map_index}x.uop"),
-        ],
+        ClassicMapFormat::Mul => vec![format!("map{map_index}{x}.mul")],
+        ClassicMapFormat::Uop => vec![format!("map{map_index}{x}LegacyMUL.uop"), format!("map{map_index}{x}.uop")],
     }
+}
+
+/// The statics index and data file names of map `map_index` in `edition`.
+pub fn statics_file_names(map_index: u32, edition: MapEdition) -> [String; 2] {
+    let x = edition.file_suffix();
+    [format!("staidx{map_index}{x}.mul"), format!("statics{map_index}{x}.mul")]
 }
 
 /// Which of a facet's own dif files to apply. A facet built from a base facet's files always has its difs
@@ -185,6 +203,8 @@ pub struct ClassicFacetSources {
     pub static_difs: Option<StaticDifFiles>,
     /// The facet whose map and statics stand in for this facet's missing ones ([`SHARED_BASE_FACETS`]).
     pub base_facet: Option<u32>,
+    /// The edition the map and statics files belong to.
+    pub edition: MapEdition,
 }
 
 impl ClassicFacetSources {
@@ -192,14 +212,30 @@ impl ClassicFacetSources {
     /// `formats` order. The facet's own difs are included as `difs` asks; if the facet's map is missing and it has a
     /// base facet whose map is there along with all the facet's dif files, the facet is built from the base facet's
     /// files and its difs, with a warning. Fails naming the files missing.
+    ///
+    /// [`MapEdition::Variant`] reads the facet's `x` files when it is one of [`CLASSIC_VARIANT_FACETS`] (the others
+    /// have none and read their standard files, as the client does), and fails naming them when they are missing.
+    /// The difs `difs` asks for are applied to whichever edition is selected.
     pub fn resolve(
         dirs: &[PathBuf],
         facet: u32,
         formats: &[ClassicMapFormat],
         difs: ClassicDifOptions,
+        edition: MapEdition,
     ) -> eyre::Result<Self> {
-        if let Some(map) = find_map_file(dirs, facet, formats) {
-            return Ok(Self::with_own_difs(facet, map, find_statics_files(dirs, facet), dirs, difs));
+        if edition.is_variant() {
+            if CLASSIC_VARIANT_FACETS.contains(&facet) {
+                return Self::resolve_variant(dirs, facet, formats, difs);
+            }
+            info!(
+                "{} has no variant edition (no client's variant facet table names x files for it): reading its \
+                 standard files, as the client does.",
+                facet_label(facet)
+            );
+        }
+        if let Some(map) = find_map_file(dirs, facet, formats, MapEdition::Standard) {
+            let statics = find_statics_files(dirs, facet, MapEdition::Standard);
+            return Ok(Self::with_own_difs(facet, map, statics, dirs, difs, MapEdition::Standard));
         }
 
         let own_names = formats.iter().flat_map(|&format| map_file_names(facet, format)).collect::<Vec<_>>();
@@ -211,7 +247,7 @@ impl ClassicFacetSources {
             );
         };
 
-        let base_map = find_map_file(dirs, base, formats);
+        let base_map = find_map_file(dirs, base, formats, MapEdition::Standard);
         let map_difs = MapDifFiles::find(dirs, facet);
         let static_difs = StaticDifFiles::find(dirs, facet);
         match (base_map, map_difs, static_difs) {
@@ -219,10 +255,11 @@ impl ClassicFacetSources {
                 let sources = Self {
                     facet,
                     map,
-                    statics: find_statics_files(dirs, base),
+                    statics: find_statics_files(dirs, base, MapEdition::Standard),
                     map_difs: Some(map_difs),
                     static_difs: Some(static_difs),
                     base_facet: Some(base),
+                    edition: MapEdition::Standard,
                 };
                 if let Some(warning) = sources.base_facet_warning() {
                     warn!("{warning}");
@@ -249,7 +286,8 @@ impl ClassicFacetSources {
     }
 
     /// The facet read from files given by name: `map` and `statics`, with the facet's own difs looked for in
-    /// `dif_dirs` as `difs` asks.
+    /// `dif_dirs` as `difs` asks. A map named like a variant (`mapNx.mul`, `mapNxLegacyMUL.uop`) is read as the
+    /// variant edition.
     pub fn from_files(
         facet: u32,
         map: ClassicMapFile,
@@ -257,7 +295,36 @@ impl ClassicFacetSources {
         dif_dirs: &[PathBuf],
         difs: ClassicDifOptions,
     ) -> Self {
-        Self::with_own_difs(facet, map, statics, dif_dirs, difs)
+        let edition = map_file_edition(&map);
+        Self::with_own_difs(facet, map, statics, dif_dirs, difs, edition)
+    }
+
+    /// The variant edition of a facet of [`CLASSIC_VARIANT_FACETS`]: its `x` map and statics, never the standard
+    /// files, with the facet's own difs as `difs` asks.
+    fn resolve_variant(
+        dirs: &[PathBuf],
+        facet: u32,
+        formats: &[ClassicMapFormat],
+        difs: ClassicDifOptions,
+    ) -> eyre::Result<Self> {
+        let Some(map) = find_map_file(dirs, facet, formats, MapEdition::Variant) else {
+            let names: Vec<String> = formats
+                .iter()
+                .flat_map(|&format| edition_map_file_names(facet, format, MapEdition::Variant))
+                .collect();
+            let [index, statics] = statics_file_names(facet, MapEdition::Variant);
+            eyre::bail!(
+                "Missing the variant edition of map{facet}: none of {} in {} (with {index} and {statics}). The \
+                 variant is never read from the standard files; 7.0.20 clients ship x files for map0 and map1 only, \
+                 7.0.50 and later for map0, map1, map2 and map5. Ask for the standard edition to read {}.",
+                names.join(", "),
+                dirs_label(dirs),
+                facet_label(facet)
+            );
+        };
+        let statics = find_statics_files(dirs, facet, MapEdition::Variant);
+        info!("Reading the variant edition of {}: {}", facet_label(facet), file_name(&map.path));
+        Ok(Self::with_own_difs(facet, map, statics, dirs, difs, MapEdition::Variant))
     }
 
     fn with_own_difs(
@@ -266,6 +333,7 @@ impl ClassicFacetSources {
         statics: Option<StaticsFiles>,
         dirs: &[PathBuf],
         difs: ClassicDifOptions,
+        edition: MapEdition,
     ) -> Self {
         let map_difs = difs
             .map_difs
@@ -283,7 +351,7 @@ impl ClassicFacetSources {
         if let Some(static_difs) = &static_difs {
             info!("Applying the static difs of map{facet}: {}", static_difs.names());
         }
-        Self { facet, map, statics, map_difs, static_difs, base_facet: None }
+        Self { facet, map, statics, map_difs, static_difs, base_facet: None, edition }
     }
 
     /// The warning given when the facet is built from its base facet's files, naming them.
@@ -309,13 +377,14 @@ impl ClassicFacetSources {
     /// The statics files, or an error naming the missing ones.
     pub fn statics_files(&self) -> eyre::Result<&StaticsFiles> {
         let base = self.base_facet.unwrap_or(self.facet);
+        let [index, statics] = statics_file_names(base, self.edition);
         self.statics.as_ref().ok_or_else(|| {
-            eyre!("Missing statics for map{}: staidx{base}.mul and statics{base}.mul are needed", self.facet)
+            eyre!("Missing statics for map{}: {index} and {statics} are needed", self.facet)
         })
     }
 
     /// Opens the map plane with the map difs applied, sized as the file says unless `size` overrides it.
-    /// `verdata` is applied to `map0.mul` only ([`VERDATA_FACET`]), and never to a UOP map.
+    /// `verdata` is applied to `map0.mul` only ([`VERDATA_FACET`]), never to a UOP or variant map.
     pub fn load_map_plane(
         &self,
         size: Option<MapSizeCells>,
@@ -333,6 +402,9 @@ impl ClassicFacetSources {
         if let Some(verdata) = verdata {
             if self.map.format == ClassicMapFormat::Uop {
                 warn!("verdata.mul is not applied to the UOP map {}.", self.map.path.display());
+            } else if self.edition.is_variant() {
+                let name = file_name(&self.map.path);
+                info!("verdata.mul patches map{VERDATA_FACET}.mul only; the variant {name} is read without it.");
             } else if self.map.map_index != VERDATA_FACET {
                 info!("verdata.mul patches map{VERDATA_FACET}.mul only; map{} is read without it.", self.map.map_index);
             } else {
@@ -343,7 +415,7 @@ impl ClassicFacetSources {
     }
 
     /// Opens the statics of a `width` x `height` map with the static difs applied. `verdata` is applied to
-    /// `staidx0.mul`/`statics0.mul` only ([`VERDATA_FACET`]).
+    /// `staidx0.mul`/`statics0.mul` only ([`VERDATA_FACET`]), not to their variant.
     pub fn load_statics_reader(
         &self,
         width: u32,
@@ -354,11 +426,12 @@ impl ClassicFacetSources {
         let static_diff = self.static_difs.as_ref().map(StaticDifFiles::load).transpose()?;
         let statics_map_index = self.base_facet.unwrap_or(self.facet);
         let verdata = verdata.filter(|_| {
-            let applies = statics_map_index == VERDATA_FACET;
+            let applies = statics_map_index == VERDATA_FACET && !self.edition.is_variant();
             if !applies {
                 info!(
                     "verdata.mul patches staidx{VERDATA_FACET}.mul/statics{VERDATA_FACET}.mul only; \
-                     statics{statics_map_index} are read without it."
+                     statics{statics_map_index}{} are read without it.",
+                    self.edition.file_suffix()
                 );
             }
             applies
@@ -379,9 +452,17 @@ fn find_all<const N: usize>(dirs: &[PathBuf], names: [String; N]) -> Result<[Pat
     if missing.is_empty() { Ok(found.map(|path| path.expect("every file was found"))) } else { Err(missing) }
 }
 
-fn find_map_file(dirs: &[PathBuf], map_index: u32, formats: &[ClassicMapFormat]) -> Option<ClassicMapFile> {
+fn find_map_file(
+    dirs: &[PathBuf],
+    map_index: u32,
+    formats: &[ClassicMapFormat],
+    edition: MapEdition,
+) -> Option<ClassicMapFile> {
     let (position, format, path) = formats.iter().enumerate().find_map(|(position, &format)| {
-        map_file_names(map_index, format).iter().find_map(|name| find_in_dirs(dirs, name)).map(|path| (position, format, path))
+        edition_map_file_names(map_index, format, edition)
+            .iter()
+            .find_map(|name| find_in_dirs(dirs, name))
+            .map(|path| (position, format, path))
     })?;
     if position > 0 {
         warn!(
@@ -393,9 +474,18 @@ fn find_map_file(dirs: &[PathBuf], map_index: u32, formats: &[ClassicMapFormat])
     Some(ClassicMapFile { format, path, map_index })
 }
 
-fn find_statics_files(dirs: &[PathBuf], map_index: u32) -> Option<StaticsFiles> {
-    let [index, statics] = find_all(dirs, [format!("staidx{map_index}.mul"), format!("statics{map_index}.mul")]).ok()?;
+fn find_statics_files(dirs: &[PathBuf], map_index: u32, edition: MapEdition) -> Option<StaticsFiles> {
+    let [index, statics] = find_all(dirs, statics_file_names(map_index, edition)).ok()?;
     Some(StaticsFiles { index, statics })
+}
+
+/// The edition a map file given by name belongs to: the variant if it has a variant file name.
+fn map_file_edition(map: &ClassicMapFile) -> MapEdition {
+    let name = file_name(&map.path);
+    let is_variant = edition_map_file_names(map.map_index, map.format, MapEdition::Variant)
+        .iter()
+        .any(|variant| variant.eq_ignore_ascii_case(&name));
+    if is_variant { MapEdition::Variant } else { MapEdition::Standard }
 }
 
 /// The dif files of a facet whose difs were asked for: a missing set is no error, and an incomplete one is not

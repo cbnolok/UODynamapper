@@ -1,6 +1,11 @@
 use crate::app::UddConvApp;
 use eframe::egui;
 use udd_conv::cc_radar::RadarFormat;
+use uocf::map_edition::MapEdition;
+
+const MAP_EDITION_HINT: &str = "Standard: mapN, staidxN, staticsN. Variant: the x files (mapNx, staidxNx, staticsNx) \
+the server selects with the 0xA9 flag 0x8000, for maps 0, 1, 2 and 5 (the others read their standard files); a \
+missing x file is an error, never a fallback. The dif options apply to whichever edition is selected.";
 
 impl UddConvApp {
     pub fn ui_world(&mut self, ui: &mut egui::Ui) {
@@ -40,6 +45,13 @@ impl UddConvApp {
                     ui.checkbox(&mut self.settings.include_verdata, "verdata.mul");
                     ui.checkbox(&mut self.settings.include_map_difs, "map difs");
                     ui.checkbox(&mut self.settings.include_static_difs, "static difs");
+                });
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Map edition:").on_hover_text(MAP_EDITION_HINT);
+                    for edition in MapEdition::ALL {
+                        ui.radio_value(&mut self.settings.map_edition, edition, edition.label())
+                            .on_hover_text(MAP_EDITION_HINT);
+                    }
                 });
             });
 

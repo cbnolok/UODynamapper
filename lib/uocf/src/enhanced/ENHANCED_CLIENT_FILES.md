@@ -107,6 +107,23 @@ Editing `.uop` packages (`uop_container::package`):
     `facet_encoder` (Classic map + statics to `facetN.uop` + `facetNN.dds`),
     and `uocf-cli facet` (`dump-cell`, `patch-cell`, `rebuild-radar`,
     `from-classic`, `dump-def`, `patch-def`).
+  - Map editions (`uocf::map_edition::MapEdition`): `facetNx.uop` (N = 0, 1,
+    2, 5) is an alternate edition the server selects with the 0xA9 flag
+    0x8000 (the client mounts it in place of `facetN.uop`), never a patch layer
+    and never a fallback. `facet_sector::facet_package_path(dir, facet,
+    edition)` picks the package and fails naming `facetNx.uop` when the variant
+    is missing (facets 3 and 4 have none and read `facetN.uop` in both
+    editions). The Classic side reads `mapNxLegacyMUL.uop`/`mapNx.mul`,
+    `staidxNx.mul`, `staticsNx.mul` (`ClassicFacetSources::resolve` with
+    `MapEdition::Variant`); difs are applied to whichever edition is selected.
+    `uocf-cli facet from-classic --map-edition variant` writes `facetNx.uop`
+    and `facetNNx.dds` (the `facet00x.dds` name of newer installs; the traced
+    client opens `facetNN.dds` in both editions); `udd-cli pack-map`,
+    `pack-statics`, `pack-map-statics` and `pack-radar` take `--map-edition`,
+    and udd-conv-gui has a map edition selector in the world tab. The radar
+    converters build from the Classic map and statics; no tool reads an EC
+    radar image, so there is no variant radar source to select. Packages keep
+    no source description, so the edition is not recorded in them.
   - Runtime static art collection preserves placed static hue ids. Art shaders
     apply those ids through the preconverted `hues.uddp` lookup texture
     (`textures/hues.rgba8888`), where each hue occupies a 256-pixel strip

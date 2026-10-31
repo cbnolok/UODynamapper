@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use clap::Subcommand;
+use clap::{Subcommand, ValueEnum};
 use color_eyre::eyre::{self, WrapErr};
 use uocf::classic::facet_sources::{
     ClassicDifOptions, ClassicFacetSources, ClassicMapFile, ClassicMapFormat, StaticsFiles,
@@ -14,6 +14,7 @@ use uocf::enhanced::facet_radar::{radar_index_agreement, FacetRadarDds, FacetRad
 use uocf::enhanced::facet_sector::FacetGeometry;
 use uocf::kr::facet::facet_encoder as kr_facet_encoder;
 use uocf::kr::facet::kr_land_map::KrLandMap;
+use uocf::map_edition::MapEdition;
 use uocf::uop_container::package::UopPackage;
 
 /// Values in a `--add-static` / `--add-rect` list.
@@ -26,6 +27,26 @@ const HEX_RADIX: u32 = 16;
 /// The map containers `facet from-classic --client-dir` looks for, in order.
 const CLASSIC_MAP_FORMATS: [ClassicMapFormat; 2] = [ClassicMapFormat::Mul, ClassicMapFormat::Uop];
 const RADARCOL_NAME: &str = "radarcol.mul";
+
+/// `--map-edition`: which edition of the Classic facet files `facet from-classic --client-dir` reads.
+#[derive(ValueEnum, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CliMapEdition {
+    /// The standard files (mapN, staidxN, staticsN).
+    #[default]
+    Standard,
+    /// The x files (mapNxLegacyMUL.uop or mapNx.mul, staidxNx, staticsNx) the server selects with the 0xA9 flag
+    /// 0x8000. Never falls back to the standard files.
+    Variant,
+}
+
+impl From<CliMapEdition> for MapEdition {
+    fn from(edition: CliMapEdition) -> Self {
+        match edition {
+            CliMapEdition::Standard => MapEdition::Standard,
+            CliMapEdition::Variant => MapEdition::Variant,
+        }
+    }
+}
 
 #[derive(Subcommand, Debug)]
 pub enum FacetCmd {
@@ -109,7 +130,8 @@ pub enum FacetCmd {
     /// Build facetN.uop and facetNN.dds from a Classic map, staidx and statics (Enhanced Client, or Kingdom Reborn
     /// with --kr). The files come from --client-dir, or from --map, --staidx and --statics. From a client
     /// directory with no map1 file (UO Gold, Mondain's Legacy), facet 1 is built from map0, staidx0 and statics0
-    /// with the facet-1 difs applied, as those clients do.
+    /// with the facet-1 difs applied, as those clients do. The variant map edition (--map-edition variant, or a
+    /// --map named mapNx) writes facetNx.uop and facetNNx.dds.
     FromClassic {
         /// Classic client directory to find the facet's files in (mapN.mul or mapNLegacyMUL.uop, staidxN.mul,
         /// staticsN.mul, the dif files and radarcol.mul).
@@ -134,6 +156,12 @@ pub enum FacetCmd {
         /// present.
         #[arg(long = "include-static-difs", default_value_t = false)]
         include_static_difs: bool,
+        /// Map edition to read from --client-dir: standard, or variant (the x files the server selects with the
+        /// 0xA9 flag 0x8000; facets 0, 1, 2 and 5 only, the others read their standard files). The variant never
+        /// falls back to the standard files. The dif options apply to whichever edition is selected. With --map,
+        /// the file name gives the edition.
+        #[arg(long = "map-edition", value_enum, default_value_t = CliMapEdition::Standard, conflicts_with = "map")]
+        map_edition: CliMapEdition,
         /// Map size in squares; defaults to the size the map file holds (UO Gold's map0.mul is 6144x4096).
         #[arg(long, requires = "height")]
         width: Option<u32>,
@@ -298,6 +326,7 @@ pub fn run(cmd: FacetCmd) -> eyre::Result<()> {
             facet,
             include_map_difs,
             include_static_difs,
+            map_edition,
             width,
             height,
             output_dir,
@@ -309,7 +338,13 @@ pub fn run(cmd: FacetCmd) -> eyre::Result<()> {
             let (sources, radarcol) = match client_dir {
                 Some(client_dir) => {
                     let dirs = [client_dir];
-                    let sources = ClassicFacetSources::resolve(&dirs, u32::from(facet), &CLASSIC_MAP_FORMATS, difs)?;
+                    let sources = ClassicFacetSources::resolve(
+                        &dirs,
+                        u32::from(facet),
+                        &CLASSIC_MAP_FORMATS,
+                        difs,
+                        map_edition.into(),
+                    )?;
                     let radarcol = match radarcol {
                         Some(radarcol) => radarcol,
                         None => find_file_ignoring_case(&dirs[0], RADARCOL_NAME)
@@ -332,7 +367,14 @@ pub fn run(cmd: FacetCmd) -> eyre::Result<()> {
                     (sources, radarcol.expect("clap requires --radarcol without --client-dir"))
                 }
             };
-            println!("Reading facet {facet} from {}.", sources.map.path.display());
+            if kr && sources.edition.is_variant() {
+                eyre::bail!(
+                    "{} is the variant map edition, but Kingdom Reborn has no variant facet packages; build the \
+                     variant without --kr, or read the standard edition",
+                    sources.map.path.display()
+                );
+            }
+            println!("Reading facet {facet} ({} edition) from {}.", sources.edition, sources.map.path.display());
             let mut plane = sources.load_map_plane(size, None)?;
             let size = plane.size_cells();
             let geometry = FacetGeometry::new(size.width, size.height);
@@ -348,7 +390,7 @@ pub fn run(cmd: FacetCmd) -> eyre::Result<()> {
                 }
                 kr_facet_encoder::encode_map_plane(&mut plane, &statics, &radarcol, &output_dir, facet, &land_map)?;
             } else {
-                encode_map_plane(&mut plane, &statics, &radarcol, &output_dir, facet)?;
+                encode_map_plane(&mut plane, &statics, &radarcol, &output_dir, facet, sources.edition)?;
             }
             let client = if kr { "Kingdom Reborn" } else { "Enhanced Client" };
             println!(

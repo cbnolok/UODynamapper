@@ -44,6 +44,7 @@ map_preferences = [
 include_verdata = false
 include_map_difs = false
 include_static_difs = false
+map_edition = "Standard"
 ec_mobile_anim_allow_missing_kdl = false
 
 [upscale_tex_land_cc_64]

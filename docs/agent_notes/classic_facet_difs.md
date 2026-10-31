@@ -16,3 +16,13 @@
 - `verdata.mul` file ids 0..2 are `map0`/`staidx0`/`statics0` only; the resolver applies verdata to facet 0 files
   only (also to a Trammel built from them).
 - 7.0+ Classic clients ("_Ultima Online Classic") still ship `stadif0..2` but no `mapdif`; applying them is opt-in.
+- Map editions: `ClassicFacetSources::resolve` takes a `uocf::map_edition::MapEdition`. `Variant` reads the facet's
+  `x` files (`mapNxLegacyMUL.uop` with the standard `build/mapNlegacymul/` entry names, or `mapNx.mul`, plus
+  `staidxNx.mul`/`staticsNx.mul`), the alternate edition the server selects with the 0xA9 flag 0x8000. It is not a
+  patch layer and never falls back: a facet of `CLASSIC_VARIANT_FACETS` (0, 1, 2, 5) without its `x` map is an
+  error naming the files (7.0.20 ships only 0x/1x as MUL; 7.0.50+ ships 0x/1x/2x/5x); facets 3 and 4 have no
+  variant and read their standard files, as the client does. Difs are applied to whichever edition is selected,
+  with the same rules; verdata patches the standard map0/staidx0/statics0 only. `map_file_names` lists standard
+  names only (it used to include the `x` names as a UOP fallback). `from_files` infers the edition from the map's
+  file name. The options: `--map-edition standard|variant` (udd-cli map/statics/radar pack commands,
+  `uocf-cli facet from-classic`), the udd-conv-gui world tab selector, `ClassicPatchOptions::map_edition`.

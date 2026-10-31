@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use uocf::classic::facet_sources::{ClassicDifOptions, ClassicFacetSources, ClassicMapFormat, FELUCCA, TRAMMEL};
 use uocf::classic::map::{MapBlock, MapBlockRelPos, MapCell, MapPlane};
 use uocf::classic::statics::{StaticTile, StaticsReader, StaticsStore};
+use uocf::map_edition::MapEdition;
 
 const CLIENT_DIR_ENV: &str = "UO_PRE7_CLIENT_DIR";
 const MUL_FIRST: [ClassicMapFormat; 2] = [ClassicMapFormat::Mul, ClassicMapFormat::Uop];
@@ -148,8 +149,14 @@ fn check_statics(patched: &StaticsStore, base: &StaticsStore, dir: &Path, dif_fa
 }
 
 fn base_felucca(dir: &Path) -> (MapPlane, StaticsStore) {
-    let felucca = ClassicFacetSources::resolve(&[dir.to_path_buf()], FELUCCA, &MUL_FIRST, ClassicDifOptions::NONE)
-        .expect("resolve Felucca");
+    let felucca = ClassicFacetSources::resolve(
+        &[dir.to_path_buf()],
+        FELUCCA,
+        &MUL_FIRST,
+        ClassicDifOptions::NONE,
+        MapEdition::Standard,
+    )
+    .expect("resolve Felucca");
     assert!(felucca.map_difs.is_none() && felucca.static_difs.is_none(), "Felucca unpatched without the options");
     let plane = felucca.load_map_plane(None, None).expect("open map0");
     let size = plane.size_cells();
@@ -170,8 +177,14 @@ fn trammel_is_felucca_with_the_facet_1_difs() {
     let dir = client_dir();
     let (mut felucca_plane, felucca_statics) = base_felucca(&dir);
 
-    let trammel = ClassicFacetSources::resolve(&[dir.clone()], TRAMMEL, &MUL_FIRST, ClassicDifOptions::NONE)
-        .expect("resolve Trammel");
+    let trammel = ClassicFacetSources::resolve(
+        &[dir.clone()],
+        TRAMMEL,
+        &MUL_FIRST,
+        ClassicDifOptions::NONE,
+        MapEdition::Standard,
+    )
+    .expect("resolve Trammel");
     assert_eq!(trammel.base_facet, Some(FELUCCA), "{} has a map1 file", dir.display());
     println!("{}", trammel.base_facet_warning().expect("warning"));
     let mut trammel_plane = trammel.load_map_plane(None, None).expect("open Trammel");
@@ -207,8 +220,14 @@ fn felucca_with_its_difs_asked_for_holds_the_facet_0_difs() {
     let dir = client_dir();
     let (mut base_plane, base_statics) = base_felucca(&dir);
 
-    let felucca = ClassicFacetSources::resolve(&[dir.clone()], FELUCCA, &MUL_FIRST, ClassicDifOptions::ALL)
-        .expect("resolve Felucca with difs");
+    let felucca = ClassicFacetSources::resolve(
+        &[dir.clone()],
+        FELUCCA,
+        &MUL_FIRST,
+        ClassicDifOptions::ALL,
+        MapEdition::Standard,
+    )
+    .expect("resolve Felucca with difs");
     assert!(felucca.map_difs.is_some() && felucca.static_difs.is_some(), "{} has the facet-0 difs", dir.display());
     let mut plane = felucca.load_map_plane(None, None).expect("open patched Felucca");
     let statics = patched_store(&felucca, &plane);

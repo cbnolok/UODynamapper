@@ -25,9 +25,13 @@
 //! delimiter rule and order, `data.map`; checked on every shipped sector), with 3 more bytes per square after the
 //! land id ([`KrSquareLand`]); their padding squares are all zero bytes.
 
+use std::path::{Path, PathBuf};
+
 use byteorder::{LittleEndian, WriteBytesExt};
 
 use crate::enhanced::client_dialect::ClientDialect;
+use crate::map_edition::MapEdition;
+use crate::utils::path::find_file_ignoring_case;
 use crate::enhanced::facet_decoder::{DecodedEcFacet, EcFacetDelimiter, EcFacetTile, KrSquareLand};
 
 crate::eyre_imports!();
@@ -182,6 +186,24 @@ pub fn data_map_entry_path(facet: u8) -> String {
 /// The package file name: `facetN.uop`, or `facetNx.uop` for a variant package.
 pub fn facet_package_file_name(facet: u8, variant: bool) -> String {
     format!("facet{facet}{}.uop", if variant { "x" } else { "" })
+}
+
+/// The package of facet `facet` in `edition` in `dir` (the name matched ignoring ASCII case): `facetN.uop`, or for
+/// the variant of a facet of [`VARIANT_PACKAGE_FACETS`] `facetNx.uop`. The other facets have no variant package and
+/// read `facetN.uop` in both editions, as the client does. Fails naming the file when it is missing: the variant
+/// never falls back to the standard package.
+pub fn facet_package_path(dir: &Path, facet: u8, edition: MapEdition) -> eyre::Result<PathBuf> {
+    let variant = edition.is_variant() && VARIANT_PACKAGE_FACETS.contains(&facet);
+    let name = facet_package_file_name(facet, variant);
+    find_file_ignoring_case(dir, &name).ok_or_else(|| match variant {
+        true => eyre!(
+            "Missing the variant edition of facet {facet}: no {name} in '{}'. The variant is never read from {}; \
+             ask for the standard edition to read it.",
+            dir.display(),
+            facet_package_file_name(facet, false)
+        ),
+        false => eyre!("Missing facet {facet}: no {name} in '{}'", dir.display()),
+    })
 }
 
 /// A sector the client would not use, as it would read it.
@@ -423,6 +445,22 @@ mod tests {
         assert_eq!(sector_entry_path(3, 17), "build/sectors/facet_03/00000017.bin");
         assert_eq!(data_map_entry_path(5), "build/sectors/facet_05/data.map");
         assert_eq!(facet_package_file_name(1, true), "facet1x.uop");
+    }
+
+    #[test]
+    fn the_variant_edition_picks_facet_nx_and_never_falls_back() {
+        let dir = std::env::temp_dir().join(format!("uocf_facet_package_path_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ["facet0.uop", "facet0x.uop", "facet1.uop", "facet4.uop"] {
+            std::fs::write(dir.join(name), b"").unwrap();
+        }
+        assert_eq!(facet_package_path(&dir, FELUCCA, MapEdition::Standard).unwrap(), dir.join("facet0.uop"));
+        assert_eq!(facet_package_path(&dir, FELUCCA, MapEdition::Variant).unwrap(), dir.join("facet0x.uop"));
+        // Tokuno has no variant package: both editions read facet4.uop.
+        assert_eq!(facet_package_path(&dir, TOKUNO, MapEdition::Variant).unwrap(), dir.join("facet4.uop"));
+        let message = format!("{:#}", facet_package_path(&dir, 1, MapEdition::Variant).unwrap_err());
+        assert!(message.contains("no facet1x.uop") && message.contains("never read from facet1.uop"), "{message}");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

@@ -17,6 +17,7 @@ use crate::upscale_profile_config::load_upscale_profile;
 use clap::{ArgGroup, Args, Parser, Subcommand};
 use color_eyre::eyre;
 use serde::Serialize;
+use uocf::map_edition::MapEdition;
 use udd_conv::{
     classic_patches::ClassicPatchOptions,
     tex_aux_ec::pack_tex_aux_ec,
@@ -123,8 +124,38 @@ impl From<ClassicPatchArgs> for ClassicPatchOptions {
             verdata: value.include_verdata,
             map_difs: value.include_map_difs,
             static_difs: value.include_static_difs,
+            ..ClassicPatchOptions::NONE
         }
     }
+}
+
+/// `--map-edition` of the map, statics and radar commands.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CliMapEdition {
+    /// The standard facet files (mapN, staidxN, staticsN).
+    #[default]
+    Standard,
+    /// The x files (mapNxLegacyMUL.uop or mapNx.mul, staidxNx, staticsNx) the server selects with the 0xA9 flag
+    /// 0x8000. Never falls back to the standard files.
+    Variant,
+}
+
+impl From<CliMapEdition> for MapEdition {
+    fn from(edition: CliMapEdition) -> Self {
+        match edition {
+            CliMapEdition::Standard => MapEdition::Standard,
+            CliMapEdition::Variant => MapEdition::Variant,
+        }
+    }
+}
+
+const MAP_EDITION_HELP: &str = "Map edition to read: standard, or variant (the x files mapNx / staidxNx / staticsNx \
+the server selects with the 0xA9 flag 0x8000; facets 0, 1, 2 and 5 only, the others read their standard files). The \
+variant never falls back to the standard files. The dif options apply to whichever edition is selected.";
+
+/// The Classic options of a map, statics or radar command.
+fn facet_patch_options(classic_patches: ClassicPatchArgs, map_edition: CliMapEdition) -> ClassicPatchOptions {
+    ClassicPatchOptions { map_edition: map_edition.into(), ..classic_patches.into() }
 }
 
 #[derive(Clone, Copy)]
@@ -1270,6 +1301,8 @@ enum Commands {
         source_dirs: SourceDirArgs,
         #[command(flatten)]
         classic_patches: ClassicPatchArgs,
+        #[arg(long = "map-edition", value_enum, default_value_t = CliMapEdition::Standard, help = MAP_EDITION_HELP)]
+        map_edition: CliMapEdition,
         #[arg(long)]
         map_id: u32,
         #[arg(long = "uddpdir")]
@@ -1293,6 +1326,8 @@ enum Commands {
         source_dirs: SourceDirArgs,
         #[command(flatten)]
         classic_patches: ClassicPatchArgs,
+        #[arg(long = "map-edition", value_enum, default_value_t = CliMapEdition::Standard, help = MAP_EDITION_HELP)]
+        map_edition: CliMapEdition,
         #[arg(long)]
         map_id: u32,
         #[arg(long)]
@@ -1308,6 +1343,8 @@ enum Commands {
         source_dirs: SourceDirArgs,
         #[command(flatten)]
         classic_patches: ClassicPatchArgs,
+        #[arg(long = "map-edition", value_enum, default_value_t = CliMapEdition::Standard, help = MAP_EDITION_HELP)]
+        map_edition: CliMapEdition,
         #[arg(long)]
         map_id: u32,
         #[arg(long)]
@@ -1321,6 +1358,8 @@ enum Commands {
         source_dirs: SourceDirArgs,
         #[command(flatten)]
         classic_patches: ClassicPatchArgs,
+        #[arg(long = "map-edition", value_enum, default_value_t = CliMapEdition::Standard, help = MAP_EDITION_HELP)]
+        map_edition: CliMapEdition,
         #[arg(long)]
         map_id: u32,
         #[arg(long)]
@@ -2223,6 +2262,7 @@ where
         Commands::PackMap {
             source_dirs: source_dir_args,
             classic_patches,
+            map_edition,
             map_id,
             output,
             uop,
@@ -2240,7 +2280,7 @@ where
                 } else {
                     SourceFormatPreference::Mul
                 },
-                &classic_patches.into(),
+                &facet_patch_options(classic_patches, map_edition),
             )?;
             info!(
                 "Wrote {} chunks for map {} to '{}' ({}x{} package chunks).",
@@ -2254,6 +2294,7 @@ where
         Commands::PackStatics {
             source_dirs: source_dir_args,
             classic_patches,
+            map_edition,
             map_id,
             output,
             zstd: _,
@@ -2265,7 +2306,7 @@ where
                 &paths,
                 &out_file,
                 map_id,
-                &classic_patches.into(),
+                &facet_patch_options(classic_patches, map_edition),
             )?;
             info!(
                 "Wrote {} chunks with {} total statics for map {} to '{}'.",
@@ -2278,6 +2319,7 @@ where
         Commands::PackMapStatics {
             source_dirs: source_dir_args,
             classic_patches,
+            map_edition,
             map_id,
             map_output,
             statics_output,
@@ -2292,7 +2334,7 @@ where
             let statics_out_file = resolve_output_path(
                 statics_output.as_ref().unwrap_or(&default_statics_output),
             );
-            let patch_options: ClassicPatchOptions = classic_patches.into();
+            let patch_options = facet_patch_options(classic_patches, map_edition);
             let map_summary = convert_map_mul_to_uddp_from_sources_with_patches(
                 &paths,
                 &map_out_file,
@@ -2333,6 +2375,7 @@ where
         Commands::PackRadar {
             source_dirs: source_dir_args,
             classic_patches,
+            map_edition,
             map_id,
             uddp_dir,
             outdir,
@@ -2374,7 +2417,7 @@ where
                     &tilemeta_path,
                     map_id,
                     map_source_preference,
-                    &classic_patches.into(),
+                    &facet_patch_options(classic_patches, map_edition),
                 )?;
                 udd_image_codecs::ktx2::write_ktx2_bc7_zstd(bc7_data, &out_file, zstd_level)?;
                 info!("Successfully created facet0{}.ktx2 (BC7 + Zstd)", map_id);
@@ -2387,7 +2430,7 @@ where
                     &udd_conv::cc_radar::RadarBuildOptions {
                         format: radar_format,
                         zstd_level,
-                        classic_patches: classic_patches.into(),
+                        classic_patches: facet_patch_options(classic_patches, map_edition),
                         map_source_preference,
                     },
                 )?;
@@ -3676,8 +3719,37 @@ mod tests {
                 verdata: true,
                 map_difs: false,
                 static_difs: true,
+                map_edition: MapEdition::Standard,
             }
         );
+    }
+
+    #[test]
+    fn cli_parses_the_map_edition_of_map_statics_and_radar_commands() {
+        let parse = |command: &str, edition: Option<&str>| {
+            let mut args = vec!["uddpack", command, "--ccdir", "/cc", "--map-id", "1", "--include-static-difs"];
+            if let Some(edition) = edition {
+                args.extend(["--map-edition", edition]);
+            }
+            Cli::try_parse_from(args).expect("parse map edition args").command
+        };
+        for command in ["pack-map", "pack-statics", "pack-map-statics", "pack-radar"] {
+            for (edition, expected) in [(None, CliMapEdition::Standard), (Some("variant"), CliMapEdition::Variant)] {
+                let (classic_patches, map_edition) = match parse(command, edition) {
+                    Commands::PackMap { classic_patches, map_edition, .. }
+                    | Commands::PackStatics { classic_patches, map_edition, .. }
+                    | Commands::PackMapStatics { classic_patches, map_edition, .. }
+                    | Commands::PackRadar { classic_patches, map_edition, .. } => (classic_patches, map_edition),
+                    _ => panic!("unexpected command parsed"),
+                };
+                assert_eq!(map_edition, expected, "{command}");
+                // The edition and the difs are independent choices.
+                let options = facet_patch_options(classic_patches, map_edition);
+                assert_eq!(options.map_edition, MapEdition::from(expected), "{command}");
+                assert!(options.static_difs && !options.map_difs, "{command}");
+            }
+        }
+        assert!(Cli::try_parse_from(["uddpack", "pack-art", "--ccdir", "/cc", "--map-edition", "variant"]).is_err());
     }
 
     #[test]

@@ -13,6 +13,7 @@ mod client_exe_facet_dimensions;
 mod client_login_servers;
 mod effects_client_files;
 mod facet_client_files;
+mod facet_variants;
 mod hues_mul_uop_client;
 mod kr_client_files;
 mod kr_facet_client_files;

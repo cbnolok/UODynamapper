@@ -36,6 +36,7 @@ use uocf::classic::tiledata::TileData;
 use uocf::classic::verdata::Verdata;
 use uocf::enhanced::facet_decoder::decode_facet_bin_raw;
 use uocf::enhanced::facet_sector::{data_map_entry_path, sector_entry_path, validate_ec_sector, FacetGeometry, SECTOR_SIDE};
+use uocf::map_edition::MapEdition;
 use uocf::uop_container::hash::hash_file_name_single;
 use uocf::uop_container::package::UopPackage;
 
@@ -488,6 +489,7 @@ fn facet_built_from_classic_matches_its_map() {
                 u32::from(facet),
                 &FACET_MAP_FORMATS,
                 ClassicDifOptions::NONE,
+                MapEdition::Standard,
             )
             .expect("resolve the facet");
             (sources.map.path.clone(), sources.load_map_plane(None, None).expect("open map"))

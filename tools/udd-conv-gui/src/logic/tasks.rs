@@ -175,6 +175,7 @@ fn classic_patch_options(settings: &crate::models::AppSettings) -> ClassicPatchO
         verdata: settings.include_verdata,
         map_difs: settings.include_map_difs,
         static_difs: settings.include_static_difs,
+        map_edition: settings.map_edition,
     }
 }
 

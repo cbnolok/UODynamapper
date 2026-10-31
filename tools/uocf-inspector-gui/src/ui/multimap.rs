@@ -650,6 +650,7 @@ fn load_source_rgba(request: &GenerateRequest) -> color_eyre::eyre::Result<(Deco
                 verdata: *include_verdata,
                 map_difs: *include_map_difs,
                 static_difs: *include_static_difs,
+                ..udd_conv::classic_patches::ClassicPatchOptions::NONE
             };
             let radar_result = udd_conv::cc_radar::build_facet_radar_rgba_with_options(
                 &source_dirs,
@@ -701,6 +702,7 @@ fn resolve_tilemeta_path(
         verdata: include_verdata,
         map_difs: include_map_difs,
         static_difs: include_static_difs,
+        ..udd_conv::classic_patches::ClassicPatchOptions::NONE
     };
     let options = udd_conv::tilemeta::TileMetaBuildOptions {
         use_ec_radarcol,

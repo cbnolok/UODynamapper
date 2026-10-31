@@ -4,14 +4,19 @@ use std::sync::Arc;
 use log::{info, warn};
 use uocf::classic::facet_sources::ClassicDifOptions;
 use uocf::classic::verdata::Verdata;
+use uocf::map_edition::MapEdition;
 
 use crate::source_paths::find_first_existing_file;
 
+/// The patch files to apply to Classic sources, and the edition of the facet files to read. The edition is no
+/// patch: the variant reads the facets' `x` files in place of the standard ones (`uocf::map_edition`), and is used
+/// by the map, statics and radar converters only.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ClassicPatchOptions {
     pub verdata: bool,
     pub map_difs: bool,
     pub static_difs: bool,
+    pub map_edition: MapEdition,
 }
 
 impl ClassicPatchOptions {
@@ -19,6 +24,7 @@ impl ClassicPatchOptions {
         verdata: false,
         map_difs: false,
         static_difs: false,
+        map_edition: MapEdition::Standard,
     };
 
     pub fn any(self) -> bool {
@@ -95,6 +101,7 @@ mod tests {
             verdata: true,
             map_difs: true,
             static_difs: true,
+            map_edition: MapEdition::Standard,
         };
 
         assert!(options.any());
@@ -115,8 +122,7 @@ mod tests {
             std::slice::from_ref(&dir),
             &ClassicPatchOptions {
                 verdata: true,
-                map_difs: false,
-                static_difs: false,
+                ..ClassicPatchOptions::NONE
             },
         )
         .expect("load verdata");

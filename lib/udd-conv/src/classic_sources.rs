@@ -96,8 +96,8 @@ impl ClassicMapSource {
 }
 
 /// Finds Classic facet `map_id` in `source_dirs` through the shared resolver
-/// ([`ClassicFacetSources::resolve`]): the facet's own difs are included as `patch_options` asks, and a Trammel
-/// with no map1 file is built from map0 and the facet-1 difs.
+/// ([`ClassicFacetSources::resolve`]): the facet's own difs and the map edition are as `patch_options` asks, and a
+/// standard Trammel with no map1 file is built from map0 and the facet-1 difs.
 pub fn resolve_classic_map_source(
     source_dirs: &[PathBuf],
     map_id: u32,
@@ -105,7 +105,8 @@ pub fn resolve_classic_map_source(
     patch_options: &ClassicPatchOptions,
 ) -> eyre::Result<ClassicMapSource> {
     let formats = preference.preferred_first().map(SourceFormat::map_format);
-    let facet = ClassicFacetSources::resolve(source_dirs, map_id, &formats, patch_options.difs())?;
+    let facet =
+        ClassicFacetSources::resolve(source_dirs, map_id, &formats, patch_options.difs(), patch_options.map_edition)?;
     Ok(ClassicMapSource {
         map_id,
         format: SourceFormat::from_map_format(facet.map.format),
@@ -246,6 +247,7 @@ mod tests {
     use super::*;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+    use uocf::map_edition::MapEdition;
 
     fn temp_source_dir(test_name: &str) -> PathBuf {
         let unique = SystemTime::now()
@@ -340,6 +342,30 @@ mod tests {
         let message = format!("{error:#}");
         assert!(message.contains("Missing map data for map1"), "{message}");
         assert!(message.contains("stadif1.mul is missing"), "{message}");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn map_edition_variant_selects_the_x_files_without_fallback() {
+        let dir = temp_source_dir("map_variant");
+        for name in ["map1.mul", "staidx1.mul", "statics1.mul", "map1xLegacyMUL.uop", "staidx1x.mul", "statics1x.mul"] {
+            fs::write(dir.join(name), b"").unwrap();
+        }
+        let variant = ClassicPatchOptions { map_edition: MapEdition::Variant, ..ClassicPatchOptions::NONE };
+
+        let selected =
+            resolve_classic_map_source(std::slice::from_ref(&dir), 1, SourceFormatPreference::Mul, &variant).unwrap();
+        assert_eq!(selected.format, SourceFormat::Uop);
+        assert_eq!(selected.path, dir.join("map1xLegacyMUL.uop"));
+        assert_eq!(selected.facet.statics_files().unwrap().index, dir.join("staidx1x.mul"));
+
+        let message = format!(
+            "{:#}",
+            resolve_classic_map_source(std::slice::from_ref(&dir), 0, SourceFormatPreference::Mul, &variant)
+                .unwrap_err()
+        );
+        assert!(message.contains("variant edition of map0") && message.contains("map0x.mul"), "{message}");
+
         fs::remove_dir_all(dir).unwrap();
     }
 

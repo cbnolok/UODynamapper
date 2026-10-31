@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use udd_conv::classic_sources::SourceFormatPreference;
 use udd_conv::cc_radar::RadarFormat;
 use udd_conv::upscale::UpscaleFilter;
+use uocf::map_edition::MapEdition;
 
 #[derive(Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TextureOptimization {
@@ -67,6 +68,8 @@ pub struct AppSettings {
     pub include_verdata: bool,
     pub include_map_difs: bool,
     pub include_static_difs: bool,
+    /// The edition of the Classic facet files the map, statics and radar conversions read.
+    pub map_edition: MapEdition,
     pub ec_mobile_anim_allow_missing_kdl: bool,
 }
 
@@ -122,6 +125,7 @@ impl Default for AppSettings {
             include_verdata: false,
             include_map_difs: false,
             include_static_difs: false,
+            map_edition: MapEdition::Standard,
             ec_mobile_anim_allow_missing_kdl: false,
         }
     }
@@ -247,6 +251,7 @@ mod tests {
         assert!(!settings.include_verdata);
         assert!(!settings.include_map_difs);
         assert!(!settings.include_static_difs);
+        assert_eq!(settings.map_edition, MapEdition::Standard);
         assert!(!settings.ec_mobile_anim_allow_missing_kdl);
         assert_eq!(settings.dynamapper_routing_dir, None);
         assert_eq!(settings.upscale_profile_path, None);
@@ -265,6 +270,7 @@ mod tests {
         settings.include_verdata = true;
         settings.include_map_difs = true;
         settings.include_static_difs = true;
+        settings.map_edition = MapEdition::Variant;
         settings.ec_mobile_anim_allow_missing_kdl = true;
         settings.dynamapper_routing_dir = Some(PathBuf::from("dynamapper/assets/cc_ec_convtables"));
         settings.upscale_profile_path = Some(PathBuf::from("profiles/mobile-upscale.toml"));
@@ -276,6 +282,7 @@ mod tests {
         assert!(restored.include_verdata);
         assert!(restored.include_map_difs);
         assert!(restored.include_static_difs);
+        assert_eq!(restored.map_edition, MapEdition::Variant);
         assert!(restored.ec_mobile_anim_allow_missing_kdl);
         assert_eq!(
             restored.dynamapper_routing_dir,

@@ -36,6 +36,7 @@ use crate::classic::radarcol::load_radarcol;
 use crate::enhanced::facet_decoder::{DecodedEcFacet, EcFacetTile, StaticTile};
 use crate::enhanced::facet_package::EcFacetPackage;
 use crate::enhanced::facet_sector::{FacetGeometry, SECTOR_SIDE};
+use crate::map_edition::MapEdition;
 use crate::utils::color::Rgb555;
 
 crate::eyre_imports!();
@@ -98,6 +99,12 @@ const DDS_OFFSET_CAPS: usize = 108;
 /// The radar file name of facet `facet`: `facet%02d.dds`.
 pub fn radar_dds_file_name(facet: u8) -> String {
     format!("facet{facet:02}.dds")
+}
+
+/// The radar file name of facet `facet` in `edition`: `facet%02d.dds`, or `facet%02dx.dds` for the variant, the
+/// name of the `facet00x.dds` newer installs ship. The traced client opens `facet%02d.dds` in both editions.
+pub fn edition_radar_dds_file_name(facet: u8, edition: MapEdition) -> String {
+    format!("facet{facet:02}{}.dds", edition.file_suffix())
 }
 
 /// Mip levels of a radar image: `floor(log2(min(w, h))) + 1`.

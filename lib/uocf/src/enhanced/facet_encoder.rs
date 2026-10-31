@@ -14,10 +14,11 @@ use std::path::Path;
 
 use crate::classic::map::{MapBlock, MapBlockRelPos, MapCell, MapPlane};
 use crate::classic::statics::{StaticTile as ClassicStaticTile, StaticsReader};
+use crate::map_edition::MapEdition;
 use crate::enhanced::client_dialect::ClientDialect;
 use crate::enhanced::facet_decoder::{DecodedEcFacet, EcFacetDelimiter, KrSquareLand, StaticTile};
 use crate::enhanced::facet_package::EcFacetPackage;
-use crate::enhanced::facet_radar::{radar_dds_file_name, FacetRadarDds, FacetRadarSource, RadarPalette};
+use crate::enhanced::facet_radar::{edition_radar_dds_file_name, FacetRadarDds, FacetRadarSource, RadarPalette};
 use crate::enhanced::facet_sector::{
     delimiter_targets, empty_sector, facet_package_file_name, square_index, FacetGeometry, MAX_SQUARE_RECORDS,
     SECTOR_SIDE,
@@ -32,18 +33,20 @@ const BLOCKS_PER_SECTOR_SIDE: u32 = SECTOR_SIDE / MapBlock::CELLS_PER_ROW;
 pub(crate) type SquareLandOf<'a> = &'a dyn Fn(u16) -> eyre::Result<(u16, Option<KrSquareLand>)>;
 
 /// Encodes a Classic map plane and its statics into `facet{map_index}.uop` and `facet{map_index:02}.dds` in
-/// `output_dir`, with the radar colours of `radarcol_path` (Classic `radarcol.mul`).
+/// `output_dir` (`facet{map_index}x.uop` and `facet{map_index:02}x.dds` for the variant `edition`, with the
+/// standard entry names), with the radar colours of `radarcol_path` (Classic `radarcol.mul`).
 pub fn encode_map_plane(
     map_plane: &mut MapPlane,
     statics: &StaticsReader,
     radarcol_path: &Path,
     output_dir: &Path,
     map_index: u8,
+    edition: MapEdition,
 ) -> eyre::Result<()> {
     let palette = RadarPalette::load_radarcol(radarcol_path)?;
     let (mut package, radar) = build_facet_from_classic(map_plane, statics, map_index, &palette)?;
-    package.save(output_dir.join(facet_package_file_name(map_index, false)))?;
-    radar.save(&output_dir.join(radar_dds_file_name(map_index)))
+    package.save(output_dir.join(facet_package_file_name(map_index, edition.is_variant())))?;
+    radar.save(&output_dir.join(edition_radar_dds_file_name(map_index, edition)))
 }
 
 /// Builds the facet package (in memory) and the radar image of a Classic map plane and its statics. The facet
