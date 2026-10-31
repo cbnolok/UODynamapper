@@ -205,6 +205,14 @@ fn decode_uop_gump_header(raw_data: &[u8]) -> eyre::Result<(GumpDimensions, &[u8
     ))
 }
 
+/// Decodes one `gumpartLegacyMUL.uop` entry (its width/height header, then the Classic gump rows) to RGBA; returns
+/// the width, the height and the pixels.
+pub fn decode_uop_gump(payload: &[u8]) -> eyre::Result<(u16, u16, Vec<u8>)> {
+    let (dimensions, rows) = decode_uop_gump_header(payload)?;
+    let pixels = decode_gump_from_raw(rows, dimensions.width, dimensions.height)?;
+    Ok((dimensions.width, dimensions.height, pixels))
+}
+
 impl GumpMap {
     pub fn load_standalone_uop(uop: UopPackage) -> Self {
         Self {

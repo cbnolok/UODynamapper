@@ -276,6 +276,14 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         check: |bytes, _| ok(crate::enhanced::localized_strings::LocalizedStringTable::from_payload_bytes(bytes)),
     },
     ParseCheck {
+        label: "Classic gump",
+        packages: &["gumpartlegacymul"],
+        kinds: &[ContentFormat::Binary],
+        name: None,
+        dialects: false,
+        check: |bytes, _| ok(crate::classic::gump::decode_uop_gump(bytes)),
+    },
+    ParseCheck {
         label: "static chunk",
         packages: &["staticchunk"],
         kinds: &[ContentFormat::Binary],
