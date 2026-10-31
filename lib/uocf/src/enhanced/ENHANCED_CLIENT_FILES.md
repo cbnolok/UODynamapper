@@ -1480,6 +1480,43 @@ Header conventions (`DdsHeaderStyle` in `dds_writer.rs`; flags/caps hex):
   (0x41 / 0x40), bit count and masks.
 - X1R5G5B5 texels (the KR login backgrounds) leave the X bit clear.
 
+### How the client picks the decoder
+
+The EC never sniffs content. Every texture goes through Gamebryo's
+`NiDevImageConverter::ReadImageFile`, which picks the reader by a `stricmp` of
+the requested path's extension (`.tga`/`.targa`, `.dds`, `.bmp`, `.sgi`,
+`.nif`). The UOP lookup hashes that path with its extension, so the entry name
+decides the decoder. The D3DX loaders that would sniff are unreachable. The
+caller fixes the extension:
+
+- tile textures: `assetmap.xml` patterns `Build/{WorldArt,TerrainTexture,TileArtLegacy,TileArtEnhanced}/%08d.dds`,
+  whatever extension the tileart record's source path has;
+- gumps: `%08d.tga`;
+- UI XML, ManagedTextures, effects and NIFs: the name as written;
+- SystemTextures and `Hues.dds`: literal names.
+
+The hue BMPs skip Gamebryo. `UOHues::LoadHueBitmap` checks only 32 bpp, width
+256 and height +2, and reads 2,048 bytes from `bfOffBits`.
+
+Classic reads `artLegacyMUL.uop` by MUL file id, so its `.tga` is only part of
+the hashed name.
+
+A content/extension mismatch fails in the reader's header check. The client
+then shows Gamebryo's magenta replacement and logs nothing (no fallback to
+another reader).
+
+Consequences for writers:
+
+- store the format the extension names;
+- TGA trailing bytes and footers are never read;
+- a 0x0 TGA loads as a 1x1 texture with an undefined texel (write a 1x1
+  transparent image to blank one);
+- the BMP file size field is ignored by both BMP paths, though a writer should
+  still store the true size.
+
+Details and addresses:
+[`ghidra-image-decoders`](../../../../scripts/dev-helpers/ec-research/ghidra-image-decoders/results/uosa_image_decoders.md).
+
 ### Writing textures
 
 `dds_writer::replace_dds_entry` keeps the entry's pixel format, mip rule (one
