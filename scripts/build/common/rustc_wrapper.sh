@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 # scripts/build/common/rustc_wrapper.sh
 #
 # --- PURPOSE ---
@@ -24,9 +24,11 @@ RUSTC=$1
 shift
 
 # Pass through version/query flags directly without interception to keep cargo probes clean
-if [[ "$*" == *"-vV"* ]] || [[ "$*" == *"--version"* ]] || [[ "$#" -eq 0 ]]; then
-    exec "$RUSTC" "$@"
-fi
+case " $* " in
+    *" -vV "* | *" --version "* | "  ")
+        exec "$RUSTC" "$@"
+        ;;
+esac
 
 # Execute the actual compiler
 exec "$RUSTC" "$@"

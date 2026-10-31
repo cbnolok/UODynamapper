@@ -628,6 +628,10 @@ bevy-lint:
     @echo "Running Bevy lints..."
     bevy lint
 
+# Check that the standalone shell scripts are portable POSIX sh (ENGINEERING.md, "Shell scripts").
+check-shell:
+    git ls-files -z '*.sh' | xargs -0 shellcheck -s sh
+
 # Check that the workspace's dependencies, direct and transitive, resolve to the versions bevy and bevy_egui use
 # (e.g. egui pulled by eframe), so no crate is compiled twice. Fails on a mismatch; CI runs it.
 check-dep-alignment *args:

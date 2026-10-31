@@ -67,6 +67,9 @@ jobs:
       - name: Check dependency versions against bevy and bevy_egui
         run: just check-dep-alignment
 
+      - name: Check that the shell scripts are portable POSIX sh
+        run: just check-shell
+
       - name: Build release binary
         env:
           CC: "clang"

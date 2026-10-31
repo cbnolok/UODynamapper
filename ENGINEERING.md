@@ -74,6 +74,9 @@ Every TOML or KDL file a user or developer writes by hand (bundled settings, sha
 
 Only files an app writes itself and nobody edits (dynamapper's cache `settings/*.toml`, the udd-conv-gui config) are lenient, through `config_toml::parse_app_state`: a missing key is filled from the defaults and an unknown key is dropped, each with a logged warning, and the app rewrites the file complete on its next save, so a file from another version still loads.
 
+### Shell scripts
+Standalone shell scripts are POSIX sh (`#!/bin/sh`, no bashisms: no `[[ ]]`, arrays, `BASH_SOURCE` or `pipefail`), so they behave the same whether run directly or as `sh`, `dash`, `bash` or `zsh` followed by the script path. Find the script's own folder with `$(dirname "$0")`, quote every expansion, and call `python3`, not `python`. `just check-shell` (run in CI) checks them with `shellcheck -s sh`. Justfile recipes are exempt: just runs them with bash.
+
 ### Git
 Do not revert, reformat, or absorb pre-existing uncommitted user changes unless directly required. Stage only files relevant to the completed work. Never use `git reset --hard`, `git clean`, force pushes, or history rewrites unless explicitly instructed.
 

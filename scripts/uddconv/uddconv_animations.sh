@@ -1,8 +1,8 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-exec python "$ROOT_DIR/scripts/uddconv/uddconv.py" animations \
+ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+exec python3 "$ROOT_DIR/scripts/uddconv/uddconv.py" animations \
     --ccdir "/mnt/dati/_proj_local/_uo_clients/_Ultima Online Classic fp/" \
     --ecdir "/mnt/dati/_proj_local/_uo_clients/_Ultima Online Enhanced fp/" \
     --output-dir "/home/claudio/test/uddp/" \
