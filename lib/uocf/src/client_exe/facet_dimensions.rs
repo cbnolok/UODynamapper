@@ -1,31 +1,40 @@
-//! The facet size table of the client executables (`UOFacet::g_FacetDimensions`) and the hard-coded Felucca/Trammel
-//! split at x = 5120: locate, report and patch them in a copy of the executable.
+//! The facet size tables of the client executables and the hard-coded values that go with them: locate and report
+//! them in any 32-bit build. Patching a copy: [`super::patch`].
 //!
 //! Traced in `scripts/dev-helpers/ec-research/ghidra-facets/results/uosa_facets.md` ("Other dimension sites",
-//! "Constraints", "Builds and the cross-build patch recipe") and `uokr_facets.md`. Both are located by structure,
-//! in any build; the SHA-256 of a traced build ([`KNOWN_BUILDS`]) is only a label:
+//! "Constraints", "Builds and the cross-build patch recipe"), `uokr_facets.md` and
+//! `scripts/dev-helpers/ec-research/ghidra-classic-facets/results/classic_facets.md`. Everything is located by
+//! structure; the SHA-256 of a traced build ([`KNOWN_BUILDS`]) is only a label. The family ([`ClientFamily`]) is told
+//! by the table found:
 //!
-//! - The table is a run of 12-byte records `{char* name, u32 width, u32 height}` in a data section: the name
-//!   pointer resolves to a short NUL-terminated ASCII name in a readable section, and the sizes are legal facet
-//!   sizes. Exactly one run of [`MIN_FACET_RECORDS`]..=[`MAX_FACET_RECORDS`] records is required (the shipped
-//!   builds have 7: Felucca, Trammel, Ilshenar, Malas, Tokuno, Gargoyle, Test). The client sizes its sector grid
-//!   and chunk bounds from it. Classic 2D clients keep their map sizes in another, 48-byte record table, which
-//!   this locator does not match.
+//! - Enhanced Client and Kingdom Reborn (`UOFacet::g_FacetDimensions`): a run of 12-byte records
+//!   `{char* name, u32 width, u32 height}` in a data section. The name pointer resolves to a short NUL-terminated
+//!   ASCII name in a readable section, and the sizes are legal facet sizes. Exactly one run of
+//!   [`MIN_FACET_RECORDS`]..=[`MAX_FACET_RECORDS`] records is required (the shipped builds have 7: Felucca, Trammel,
+//!   Ilshenar, Malas, Tokuno, Gargoyle, Test). The client sizes its sector grid and chunk bounds from it. The
+//!   Enhanced Client carries the RTTI name of its FacetDefinition class ([`ENHANCED_CLIENT_MARKER`]); Kingdom Reborn
+//!   does not.
 //! - `UOFacet::IsSameFeluccaTrammelHalf` (UOSA 0x005df670) returns false, for facets 0 and 1, when two x lie on
 //!   different sides of 5120; `BuildChunkFromSector` then does not build the chunk. The 5120 is three imm32 in one
 //!   `.text` sequence, found by decoding its instructions ([`SPLIT_SIGNATURE`]); 0x8000, above any legal width,
 //!   disables the split. Kingdom Reborn has no split.
+//! - Classic clients (`client.exe`, UO Gold to the current client): 48-byte records with wrap rectangle, file ids
+//!   and a flag, in one copy or two ([`super::classic_facets`]), plus the startup copy of facet 0 and the x = 5120
+//!   wrap seam, which the patcher treats as the Classic split.
 //! - The PE checksum is recomputed (the client does not verify it: `UOSA_eclo.exe` ships a wrong one and runs).
 //!   A signed (Authenticode) build is refused, since any patch breaks its signature; no shipped build is signed.
 //!
 //! The executable alone is not enough: the facet data must have the new size too ([`super::facet_data`]).
 
 crate::eyre_imports!();
-use std::path::{Path, PathBuf};
 
+use crate::client_exe::classic_facets::{
+    classic_copies_agree, is_classic_stock, locate_classic_facet_tables, locate_classic_file_names,
+    locate_classic_seam, locate_classic_startup_facet, ClassicLayout, ClassicRecord, MAX_CLASSIC_TABLE_COPIES,
+    UNLOCATED_FILE_ID_LIMIT,
+};
 use crate::client_exe::pe::{pe_checksum, read_u32, PeImage, PeSection, MACHINE_I386};
 use crate::client_exe::sha256::sha256_hex;
-use crate::enhanced::client_dialect::ClientDialect;
 use crate::enhanced::facet_sector::{FacetGeometry, CLIENT_FACET_DIMENSIONS, SECTOR_SIDE};
 
 /// Records of the shipped tables (Enhanced Client and Kingdom Reborn); every reader there rejects a facet >= 7.
@@ -35,32 +44,36 @@ pub const MIN_FACET_RECORDS: usize = 4;
 /// The most records of a table: the facet nibble of the client's chunk key holds 16 facets.
 pub const MAX_FACET_RECORDS: usize = 16;
 /// The name pointer of a record (32-bit images only).
-const NAME_POINTER_SIZE: usize = size_of::<u32>();
+pub(crate) const NAME_POINTER_SIZE: usize = size_of::<u32>();
 /// Bytes of a table record: `char* name, u32 width, u32 height`.
 pub const FACET_RECORD_SIZE: usize = NAME_POINTER_SIZE + 2 * size_of::<u32>();
-const FACET_RECORD_WIDTH_OFFSET: usize = NAME_POINTER_SIZE;
-const FACET_RECORD_HEIGHT_OFFSET: usize = FACET_RECORD_WIDTH_OFFSET + size_of::<u32>();
-/// The table is pointer aligned.
-const TABLE_SCAN_STEP: usize = NAME_POINTER_SIZE;
-/// Facet names are short ASCII words ("Felucca", "Ter Mur"): a letter, then letters, digits or
+/// The width and height follow the name pointer, in both record layouts.
+pub const FACET_RECORD_WIDTH_OFFSET: usize = NAME_POINTER_SIZE;
+pub const FACET_RECORD_HEIGHT_OFFSET: usize = FACET_RECORD_WIDTH_OFFSET + size_of::<u32>();
+/// The tables are pointer aligned.
+pub(crate) const TABLE_SCAN_STEP: usize = NAME_POINTER_SIZE;
+/// Facet names are short ASCII words ("Felucca", "Ter Mur", "Tokuno Islands"): a letter, then letters, digits or
 /// [`FACET_NAME_PUNCTUATION`], NUL terminated.
 const MIN_FACET_NAME_LEN: usize = 2;
 const MAX_FACET_NAME_LEN: usize = 31;
 const FACET_NAME_PUNCTUATION: &[u8] = b" _'-";
-const CODE_SECTION: &str = ".text";
+pub(crate) const CODE_SECTION: &str = ".text";
+/// The RTTI type name of the class that reads the FacetDefinition of `facets.uop`: only the Enhanced Client has it.
+pub const ENHANCED_CLIENT_MARKER: &[u8] = b".?AVUOFacetDefinition@@";
 
 /// The largest width or height: the land accessors reject x or y > 0x7fe0, and the side is a multiple of 64.
 pub const MAX_FACET_SIDE: u32 = 32704;
-/// Widths and heights must be multiples of this (Tokuno, 1448, is not a multiple of 64; DXT1 needs 4).
+/// Widths and heights must be multiples of this (Tokuno, 1448, is not a multiple of 64; DXT1 needs 4; the Classic
+/// map block is 8 x 8).
 pub const FACET_SIDE_ALIGNMENT: u32 = 8;
 /// Sector ids are u16.
 pub const MAX_SECTOR_COUNT: u32 = u16::MAX as u32 + 1;
 
-/// The stock split x of facets 0 and 1.
+/// The stock split x of facets 0 and 1 (Enhanced Client), and the stock wrap seam (Classic).
 pub const STOCK_SPLIT_X: u32 = 5120;
 /// A split x above any legal width: no chunk is split.
 pub const DISABLED_SPLIT_X: u32 = 0x8000;
-/// The facets the split applies to.
+/// The facets the split applies to, and the Classic facets with a flat strip past the wrap.
 pub const SPLIT_FACETS: [u8; 2] = [0, 1];
 /// The three imm32 of the split.
 pub const SPLIT_IMMEDIATE_COUNT: usize = 3;
@@ -80,7 +93,7 @@ pub const SPLIT_IMMEDIATE_COUNT: usize = 3;
 pub const SPLIT_SIGNATURE: &str = "CMP r/m,1; JG T; CMP r/m,S; JGE B; CMP X,S; JL T; F: XOR AL,AL; .. \
                                    B: CMP X,S; JL F; .. T: POP*; MOV AL,1";
 
-/// x86 (32-bit) encodings the split matcher decodes.
+/// x86 (32-bit) encodings the matchers decode.
 const OPCODE_CMP_RM32_IMM32: u8 = 0x81;
 const OPCODE_CMP_RM32_IMM8: u8 = 0x83;
 const OPCODE_CMP_EAX_IMM32: u8 = 0x3d;
@@ -93,13 +106,13 @@ const MODRM_REG_FIELD: u8 = MODRM_FIELD_MASK << MODRM_REG_SHIFT;
 const MOD_INDIRECT: u8 = 0;
 const MOD_DISP8: u8 = 1;
 const MOD_DISP32: u8 = 2;
-const MOD_REGISTER: u8 = 3;
+pub(crate) const MOD_REGISTER: u8 = 3;
 /// rm = 100: a SIB byte follows; rm = 101 with mod 00 (or SIB base 101 with mod 00): a disp32 without base.
 const RM_SIB: u8 = 0b100;
 const RM_DISP32: u8 = 0b101;
 const REGISTER_EAX: u8 = 0;
 const OPCODE_JCC_SHORT: u8 = 0x70;
-const OPCODE_TWO_BYTE: u8 = 0x0f;
+pub(crate) const OPCODE_TWO_BYTE: u8 = 0x0f;
 const OPCODE_JCC_NEAR: u8 = 0x80;
 const JCC_CONDITION_MASK: u8 = 0x0f;
 const JCC_SHORT_SIZE: usize = 2;
@@ -120,22 +133,42 @@ const SET_RESULT: [u8; 2] = [0xb0, 0x01];
 const POP_REGISTER_OPCODES: std::ops::RangeInclusive<u8> = 0x58..=0x5f;
 const MAX_POPS_BEFORE_RESULT: usize = 4;
 
-/// Appended to the file name of a patched copy for its manifest.
-pub const MANIFEST_SUFFIX: &str = ".facet-dims.json";
-pub const MANIFEST_FORMAT: &str = "uocf-facet-dims";
-pub const MANIFEST_VERSION: u32 = 1;
+/// Which client an executable is, told by its structure ([`ClientExeInspection::inspect`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClientFamily {
+    /// `UOSA.exe` builds: the 12-byte table, the FacetDefinition class and the x = 5120 chunk split.
+    Enhanced,
+    /// `UOKR.exe`: the 12-byte table, without the FacetDefinition class or a split.
+    KingdomReborn,
+    /// `client.exe`, UO Gold to the current Classic client: the 48-byte table, in one or two copies.
+    Classic,
+}
 
-/// A client build whose layout was traced. Only a label for reports and a reference for the tests: the table and
-/// the split are always located by structure.
+impl ClientFamily {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Enhanced => "Enhanced Client",
+            Self::KingdomReborn => "Kingdom Reborn",
+            Self::Classic => "Classic",
+        }
+    }
+}
+
+/// A client build whose layout was traced. Only a label for reports and a reference for the tests: everything is
+/// always located by structure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KnownBuild {
     pub name: &'static str,
     pub sha256: &'static str,
-    pub dialect: ClientDialect,
-    /// File offset of the table.
-    pub table_offset: usize,
-    /// File offsets of the three split imm32; `None` in Kingdom Reborn.
-    pub split_offsets: Option<[usize; SPLIT_IMMEDIATE_COUNT]>,
+    pub family: ClientFamily,
+    /// File offsets of the tables (two copies in Classic 7.0 and later).
+    pub table_offsets: &'static [usize],
+    /// File offsets of the split imm32 (Enhanced Client) or of the wrap seam imm32 (Classic); empty in Kingdom
+    /// Reborn.
+    pub split_offsets: &'static [usize],
+    /// File offset of the Classic startup copy of facet 0; `None` in the other families.
+    pub startup_offset: Option<usize>,
     /// File offset of the PE checksum.
     pub checksum_offset: usize,
 }
@@ -144,48 +177,116 @@ pub struct KnownBuild {
 const EC_CHECKSUM_OFFSET: usize = 0x158;
 const KR_CHECKSUM_OFFSET: usize = 0x168;
 
-/// The builds of the research (`uosa_facets.md`); the `fp` folder's `UOSA_TC.exe` and `UOSA_eclo.exe` are the same
-/// files as the main folder's.
-pub const KNOWN_BUILDS: [KnownBuild; 5] = [
+/// The builds of the research (`uosa_facets.md`, `classic_facets.md`); the `fp` folder's `UOSA_TC.exe` and
+/// `UOSA_eclo.exe` are the same files as the main folder's, and the Classic folder's `client.exe` is 7.0.103.0.
+pub const KNOWN_BUILDS: [KnownBuild; 12] = [
     KnownBuild {
         name: "Enhanced Client UOSA.exe",
         sha256: "5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50",
-        dialect: ClientDialect::Enhanced,
-        table_offset: 0x9a72a8,
-        split_offsets: Some([0x1df6db, 0x1df6e3, 0x1df6f5]),
+        family: ClientFamily::Enhanced,
+        table_offsets: &[0x9a72a8],
+        split_offsets: &[0x1df6db, 0x1df6e3, 0x1df6f5],
+        startup_offset: None,
         checksum_offset: EC_CHECKSUM_OFFSET,
     },
     KnownBuild {
         name: "Enhanced Client UOSA_TC.exe",
         sha256: "4e38c1cb834083c18050ca9fc85f1ebf77cf4d8bcb1a39a1f37878ea314553d0",
-        dialect: ClientDialect::Enhanced,
-        table_offset: 0x98f870,
-        split_offsets: Some([0x1cfceb, 0x1cfcf3, 0x1cfd05]),
+        family: ClientFamily::Enhanced,
+        table_offsets: &[0x98f870],
+        split_offsets: &[0x1cfceb, 0x1cfcf3, 0x1cfd05],
+        startup_offset: None,
         checksum_offset: EC_CHECKSUM_OFFSET,
     },
     KnownBuild {
         name: "Enhanced Client UOSA_eclo.exe",
         sha256: "5aaa654c517adc3aab88467f8bc869e9b048c78c0c195caf085723fecbb8fdf0",
-        dialect: ClientDialect::Enhanced,
-        table_offset: 0x9a72a8,
-        split_offsets: Some([0x1df6db, 0x1df6e3, 0x1df6f5]),
+        family: ClientFamily::Enhanced,
+        table_offsets: &[0x9a72a8],
+        split_offsets: &[0x1df6db, 0x1df6e3, 0x1df6f5],
+        startup_offset: None,
         checksum_offset: EC_CHECKSUM_OFFSET,
     },
     KnownBuild {
         name: "Enhanced Client fp UOSA.exe",
         sha256: "9692f6ae95dd55338985caabf247f3a2490ba2ef4d0cfe2d75694b56ba65e3dd",
-        dialect: ClientDialect::Enhanced,
-        table_offset: 0x9ad2e0,
-        split_offsets: Some([0x1e1a0b, 0x1e1a13, 0x1e1a25]),
+        family: ClientFamily::Enhanced,
+        table_offsets: &[0x9ad2e0],
+        split_offsets: &[0x1e1a0b, 0x1e1a13, 0x1e1a25],
+        startup_offset: None,
         checksum_offset: EC_CHECKSUM_OFFSET,
     },
     KnownBuild {
         name: "Kingdom Reborn UOKR.exe",
         sha256: "1b802e5c00f3bf89a771778b9c6c57406be0703808eeb4cd983e2f5baa348a43",
-        dialect: ClientDialect::KingdomReborn,
-        table_offset: 0x7fb688,
-        split_offsets: None,
+        family: ClientFamily::KingdomReborn,
+        table_offsets: &[0x7fb688],
+        split_offsets: &[],
+        startup_offset: None,
         checksum_offset: KR_CHECKSUM_OFFSET,
+    },
+    KnownBuild {
+        name: "Classic UO Gold client.exe",
+        sha256: "aa21bb3ea16b6c5e00837569466b052e978baa6e38fd945e2694af4f14fa28c2",
+        family: ClientFamily::Classic,
+        table_offsets: &[0x16f918],
+        split_offsets: &[0xa80ab, 0xef339],
+        startup_offset: Some(0x1cd66c),
+        checksum_offset: 0x190,
+    },
+    KnownBuild {
+        name: "Classic Mondain's Legacy client.exe",
+        sha256: "17ab35e10bf38077fa101938a4a0b85d1b4caa505245fc6bc83d3b131a0c2918",
+        family: ClientFamily::Classic,
+        table_offsets: &[0x17d260],
+        split_offsets: &[0xaf3f7, 0xfb3b9],
+        startup_offset: Some(0x1dbe68),
+        checksum_offset: 0x180,
+    },
+    KnownBuild {
+        name: "Classic 5.0.9.1 client.exe",
+        sha256: "6250963022ec03855dedf89176c54dc7ad603e230b415edaa4b08d1509f568e9",
+        family: ClientFamily::Classic,
+        table_offsets: &[0x190610],
+        split_offsets: &[0xb4617, 0x1061b9],
+        startup_offset: Some(0x1f15d8),
+        checksum_offset: 0x180,
+    },
+    KnownBuild {
+        name: "Classic 6.0.14.3 client.exe",
+        sha256: "9104cea0ea14bd8ee81ee5aa111f1e3f39eca50ac33f818813202fadfdd3718d",
+        family: ClientFamily::Classic,
+        table_offsets: &[0x1a6db0],
+        split_offsets: &[0xb30bb, 0x100ea0],
+        startup_offset: Some(0x2124c8),
+        checksum_offset: 0x178,
+    },
+    KnownBuild {
+        name: "Classic 7.0.20.0 client.exe",
+        sha256: "27eef2c0a4679f204b923f29dd1506bb2c7e649410054aefad680264bb504c9e",
+        family: ClientFamily::Classic,
+        table_offsets: &[0x285088, 0x2851d8],
+        split_offsets: &[0x12309b, 0x18ded9],
+        startup_offset: Some(0x308cc8),
+        checksum_offset: 0x188,
+    },
+    KnownBuild {
+        name: "Classic 7.0.50.0 client.exe",
+        sha256: "8b3af41390d34930ac1dc914b865edb7961c5448e0592b43a912790814987940",
+        family: ClientFamily::Classic,
+        table_offsets: &[0x2a2338, 0x2a2488],
+        split_offsets: &[0x12329b, 0x190749],
+        startup_offset: Some(0x329848),
+        checksum_offset: 0x178,
+    },
+    KnownBuild {
+        name: "Classic 7.0.103.0 client.exe",
+        sha256: "4d857f2f5f8bf350bc50a87ee66b2236bfa480e712e9546c740ff04f9106690a",
+        family: ClientFamily::Classic,
+        table_offsets: &[0x2b7478, 0x2b75c8],
+        split_offsets: &[0x12b5fb, 0x19c680],
+        startup_offset: Some(0x34229c),
+        checksum_offset: 0x180,
     },
 ];
 
@@ -200,6 +301,8 @@ pub struct FacetTableRecord {
     /// The name the record points to.
     pub name: String,
     pub geometry: FacetGeometry,
+    /// The fields of a Classic record; `None` in a 12-byte record.
+    pub classic: Option<ClassicRecord>,
 }
 
 /// A run of facet records in a data section.
@@ -209,7 +312,16 @@ pub struct FacetTable {
     /// File offset and virtual address of the first record.
     pub offset: usize,
     pub va: u32,
+    /// Bytes of a record: [`FACET_RECORD_SIZE`] or [`super::classic_facets::CLASSIC_FACET_RECORD_SIZE`].
+    pub record_size: usize,
     pub records: Vec<FacetTableRecord>,
+}
+
+impl FacetTable {
+    /// File offset of record `facet`.
+    pub fn record_offset(&self, facet: usize) -> usize {
+        self.offset + self.record_size * facet
+    }
 }
 
 /// One match of [`SPLIT_SIGNATURE`]: the file offsets of the facet compare and of the three imm32, and their values.
@@ -220,88 +332,116 @@ pub struct SplitCandidate {
     pub values: [u32; SPLIT_IMMEDIATE_COUNT],
 }
 
-/// The split of a build: the file offsets of its three imm32 and their (equal) value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The split of a build (Enhanced Client) or its wrap seam (Classic): the file offsets of its imm32 and their (equal)
+/// value.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FacetSplit {
-    /// File offset of the facet compare that starts [`SPLIT_SIGNATURE`].
-    pub signature_offset: usize,
-    pub offsets: [usize; SPLIT_IMMEDIATE_COUNT],
+    /// File offsets of the matched sequences: the facet compare that starts [`SPLIT_SIGNATURE`], or each seam compare
+    /// ([`super::classic_facets::CLASSIC_SEAM_SIGNATURE`]).
+    pub signature_offsets: Vec<usize>,
+    pub offsets: Vec<usize>,
     pub x: u32,
 }
 
-/// The facet sizes and split of a build, as stored in a manifest.
+/// The facet sizes, wraps and split of a build, as stored in a manifest.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct FacetDimsValues {
-    pub facets: Vec<FacetDimsRecord>,
-    /// The split x of facets 0 and 1; `None` for a build without split (Kingdom Reborn).
+pub struct ExeValues {
+    pub facets: Vec<FacetValues>,
+    /// The split x of facets 0 and 1 (Enhanced Client) or the wrap seam (Classic); `None` for a build without
+    /// (Kingdom Reborn).
     pub split_x: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct FacetDimsRecord {
+pub struct FacetValues {
     pub facet: u8,
     pub name: String,
     pub width: u32,
     pub height: u32,
+    /// The wrap rectangle (Classic only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrap_width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrap_height: Option<u32>,
 }
 
-/// What a client executable stores about the facet sizes.
+/// What a client executable stores about the facet sizes. The login and encryption findings will extend it.
 #[derive(Debug, Clone)]
-pub struct ClientExeFacets {
+pub struct ClientExeInspection {
     pub sha256: String,
     pub file_size: usize,
+    pub family: ClientFamily,
     /// The traced build of the same SHA-256, as a label.
     pub known: Option<&'static KnownBuild>,
     pub pe: PeImage,
     /// The checksum the file should store.
     pub computed_checksum: u32,
-    pub table: FacetTable,
+    /// The facet tables: one, or two equal-sized copies (Classic 7.0 and later; the second is read when the server
+    /// sets 0xA9 flag 0x8000). Every size edit writes each.
+    pub tables: Vec<FacetTable>,
+    /// The Enhanced Client split, or the Classic wrap seam.
     pub split: Option<FacetSplit>,
+    /// The Classic startup copy of facet 0 and file name table; `None` in the other families.
+    pub classic: Option<ClassicLayout>,
 }
 
-impl ClientExeFacets {
-    /// Locates the table and the split of the client executable `bytes` (PE32 i386) by their structure. Fails
-    /// without exactly one table, with more than one split or a split whose three values differ. The SHA-256 only
+/// The single element of `items`, or `None`.
+pub(crate) fn single<T>(mut items: Vec<T>) -> Option<T> {
+    if items.len() == 1 { items.pop() } else { None }
+}
+
+impl ClientExeInspection {
+    /// Locates the tables, the split or seam and the Classic startup values of the client executable `bytes` (PE32
+    /// i386) by their structure, and tells the family. Fails without exactly one 12-byte table or one or two agreeing
+    /// Classic tables (not both), with more than one split, or with split or seam values that differ. The SHA-256 only
     /// selects the [`KnownBuild`] label.
     pub fn inspect(bytes: &[u8]) -> eyre::Result<Self> {
         let pe = PeImage::parse(bytes)?;
         eyre::ensure!(pe.machine == MACHINE_I386, "COFF machine {:#x}: not an i386 image", pe.machine);
-        let mut tables = locate_facet_tables(bytes, &pe);
-        eyre::ensure!(
-            tables.len() == 1,
-            "{} facet size tables found, expected exactly 1 (a run of {MIN_FACET_RECORDS}..={MAX_FACET_RECORDS} \
-             {FACET_RECORD_SIZE}-byte {{name pointer, width, height}} records; Classic 2D clients store their map \
-             sizes differently and are not supported)",
-            tables.len()
-        );
-        let table = tables.remove(0);
-        let split = match locate_split_candidates(bytes, &pe)?[..] {
-            [] => None,
-            [candidate] => {
-                let [first, ..] = candidate.values;
-                eyre::ensure!(
-                    candidate.values.iter().all(|value| *value == first),
-                    "the three split values at {:#x} differ: {:?}",
-                    candidate.signature_offset,
-                    candidate.values
-                );
-                Some(FacetSplit { signature_offset: candidate.signature_offset, offsets: candidate.offsets, x: first })
+        let ec_tables = locate_facet_tables(bytes, &pe);
+        let file_names = single(locate_classic_file_names(bytes, &pe));
+        let id_limit = file_names.as_ref().map_or(UNLOCATED_FILE_ID_LIMIT, |names| names.names.len() as u32);
+        let classic_tables = locate_classic_facet_tables(bytes, &pe, id_limit);
+        let (family, tables, split, classic) = match (ec_tables.len(), classic_tables.len()) {
+            (1, 0) => {
+                let marked = bytes.windows(ENHANCED_CLIENT_MARKER.len()).any(|window| window == ENHANCED_CLIENT_MARKER);
+                let family = if marked { ClientFamily::Enhanced } else { ClientFamily::KingdomReborn };
+                (family, ec_tables, locate_split(bytes, &pe)?, None)
             }
-            ref candidates => eyre::bail!("{} x = 5120 split sequences found, expected at most 1", candidates.len()),
+            (0, 1..=MAX_CLASSIC_TABLE_COPIES) => {
+                classic_copies_agree(&classic_tables)?;
+                let startup = locate_classic_startup_facet(bytes, &pe, &classic_tables[0])?;
+                let split = match &startup {
+                    Some(startup) => locate_classic_seam(bytes, &pe, startup)?,
+                    None => None,
+                };
+                (ClientFamily::Classic, classic_tables, split, Some(ClassicLayout { startup, file_names }))
+            }
+            (ec, classic) => eyre::bail!(
+                "{ec} Enhanced Client / Kingdom Reborn facet tables (runs of {MIN_FACET_RECORDS}..={MAX_FACET_RECORDS} \
+                 {FACET_RECORD_SIZE}-byte {{name pointer, width, height}} records) and {classic} Classic facet tables \
+                 found: expected exactly one of the first, or one or {MAX_CLASSIC_TABLE_COPIES} agreeing copies of the \
+                 second"
+            ),
         };
         let sha256 = sha256_hex(bytes);
         let known = known_build(&sha256);
         let computed_checksum = pe_checksum(bytes, pe.checksum_offset);
-        Ok(Self { sha256, file_size: bytes.len(), known, pe, computed_checksum, table, split })
+        Ok(Self { sha256, file_size: bytes.len(), family, known, pe, computed_checksum, tables, split, classic })
+    }
+
+    /// The first table: the only one, or the copy the Classic client reads without the 0xA9 flag.
+    pub fn table(&self) -> &FacetTable {
+        &self.tables[0]
     }
 
     /// Records of the table.
     pub fn facet_count(&self) -> usize {
-        self.table.records.len()
+        self.table().records.len()
     }
 
     pub fn dimensions(&self) -> Vec<FacetGeometry> {
-        self.table.records.iter().map(|record| record.geometry).collect()
+        self.table().records.iter().map(|record| record.geometry).collect()
     }
 
     /// True when the stored PE checksum is the computed one.
@@ -309,40 +449,48 @@ impl ClientExeFacets {
         self.pe.stored_checksum == self.computed_checksum
     }
 
-    pub fn values(&self) -> FacetDimsValues {
-        FacetDimsValues {
+    pub fn values(&self) -> ExeValues {
+        ExeValues {
             facets: self
-                .table
+                .table()
                 .records
                 .iter()
                 .enumerate()
-                .map(|(facet, record)| FacetDimsRecord {
+                .map(|(facet, record)| FacetValues {
                     facet: facet as u8,
                     name: record.name.clone(),
                     width: record.geometry.width,
                     height: record.geometry.height,
+                    wrap_width: record.classic.map(|classic| classic.wrap.width),
+                    wrap_height: record.classic.map(|classic| classic.wrap.height),
                 })
                 .collect(),
-            split_x: self.split.map(|split| split.x),
+            split_x: self.split.as_ref().map(|split| split.x),
         }
     }
 
-    /// True when every record has the shipped size of its facet ([`CLIENT_FACET_DIMENSIONS`]) and the split (if
-    /// any) is at 5120.
+    /// True when every record has the shipped size of its facet and the split (if any) is at 5120. Enhanced Client
+    /// and Kingdom Reborn: [`CLIENT_FACET_DIMENSIONS`]; Classic: [`super::classic_facets::is_classic_stock`].
     pub fn is_stock(&self) -> bool {
-        self.facet_count() <= STOCK_FACET_COUNT
-            && self.table.records.iter().zip(CLIENT_FACET_DIMENSIONS).all(|(record, stock)| record.geometry == stock)
-            && self.split.is_none_or(|split| split.x == STOCK_SPLIT_X)
+        let split_stock = self.split.as_ref().is_none_or(|split| split.x == STOCK_SPLIT_X);
+        let records_stock = match &self.classic {
+            Some(classic) => is_classic_stock(&self.tables, classic),
+            None => {
+                self.facet_count() <= STOCK_FACET_COUNT
+                    && self.table().records.iter().zip(CLIENT_FACET_DIMENSIONS).all(|(record, stock)| record.geometry == stock)
+            }
+        };
+        split_stock && records_stock
     }
 }
 
 /// A legal facet width or height.
-fn plausible_side(side: u32) -> bool {
+pub(crate) fn plausible_side(side: u32) -> bool {
     (1..=MAX_FACET_SIDE).contains(&side) && side % FACET_SIDE_ALIGNMENT == 0
 }
 
 /// The facet name at virtual address `va`: NUL-terminated ASCII in a readable section (see [`MIN_FACET_NAME_LEN`]).
-fn facet_name_at(bytes: &[u8], pe: &PeImage, va: u32) -> Option<String> {
+pub(crate) fn facet_name_at(bytes: &[u8], pe: &PeImage, va: u32) -> Option<String> {
     let section = pe.section_of_va(va).filter(|section| section.is_readable())?;
     let start = section.raw_offset as usize + (va - section.virtual_address) as usize;
     let end = section.raw_range().end.min(bytes.len()).min(start + MAX_FACET_NAME_LEN + 1);
@@ -355,7 +503,7 @@ fn facet_name_at(bytes: &[u8], pe: &PeImage, va: u32) -> Option<String> {
     valid.then(|| String::from_utf8_lossy(name).into_owned())
 }
 
-/// The record at file offset `offset` of `section`, when it is one.
+/// The 12-byte record at file offset `offset` of `section`, when it is one.
 fn facet_record_at(bytes: &[u8], pe: &PeImage, section: &PeSection, offset: usize) -> Option<FacetTableRecord> {
     if offset + FACET_RECORD_SIZE > section.raw_range().end.min(bytes.len()) {
         return None;
@@ -366,45 +514,61 @@ fn facet_record_at(bytes: &[u8], pe: &PeImage, section: &PeSection, offset: usiz
         return None;
     }
     let name = facet_name_at(bytes, pe, read_u32(bytes, offset).ok()?)?;
-    Some(FacetTableRecord { name, geometry: FacetGeometry::new(width, height) })
+    Some(FacetTableRecord { name, geometry: FacetGeometry::new(width, height), classic: None })
 }
 
-/// Every candidate table: the maximal runs of [`MIN_FACET_RECORDS`]..=[`MAX_FACET_RECORDS`] consecutive records, at
-/// pointer steps, in the data sections.
-pub fn locate_facet_tables(bytes: &[u8], pe: &PeImage) -> Vec<FacetTable> {
+/// The maximal runs of [`MIN_FACET_RECORDS`]..=[`MAX_FACET_RECORDS`] consecutive `record_size`-byte records, at
+/// pointer steps, in the data sections; `record_at` reads one record.
+pub(crate) fn locate_record_runs(
+    bytes: &[u8],
+    pe: &PeImage,
+    record_size: usize,
+    record_at: impl Fn(&PeSection, usize) -> Option<FacetTableRecord>,
+) -> Vec<FacetTable> {
     let mut tables = Vec::new();
     for section in pe.sections.iter().filter(|section| section.is_data()) {
         let range = section.raw_range();
         for start in (range.start..range.end.min(bytes.len())).step_by(TABLE_SCAN_STEP) {
-            let continues_a_run = start >= range.start + FACET_RECORD_SIZE
-                && facet_record_at(bytes, pe, section, start - FACET_RECORD_SIZE).is_some();
+            let continues_a_run = start >= range.start + record_size && record_at(section, start - record_size).is_some();
             if continues_a_run {
                 continue;
             }
             let records: Vec<FacetTableRecord> = (0..)
-                .map_while(|index| facet_record_at(bytes, pe, section, start + FACET_RECORD_SIZE * index))
+                .map_while(|index| record_at(section, start + record_size * index))
                 .take(MAX_FACET_RECORDS + 1)
                 .collect();
             if (MIN_FACET_RECORDS..=MAX_FACET_RECORDS).contains(&records.len()) {
                 let va = pe.offset_to_va(start).expect("the table lies in its section");
-                tables.push(FacetTable { section: section.name.clone(), offset: start, va, records });
+                tables.push(FacetTable { section: section.name.clone(), offset: start, va, record_size, records });
             }
         }
     }
     tables
 }
 
+/// Every candidate 12-byte table (Enhanced Client, Kingdom Reborn).
+pub fn locate_facet_tables(bytes: &[u8], pe: &PeImage) -> Vec<FacetTable> {
+    locate_record_runs(bytes, pe, FACET_RECORD_SIZE, |section, offset| facet_record_at(bytes, pe, section, offset))
+}
+
+/// The `.text` bytes of `pe` and their file offset.
+pub(crate) fn code_section<'a>(bytes: &'a [u8], pe: &PeImage) -> eyre::Result<(&'a [u8], usize)> {
+    let text = pe.section(CODE_SECTION).ok_or_else(|| eyre!("no {CODE_SECTION} section"))?;
+    let range = text.raw_range();
+    Ok((bytes.get(range.start..range.end.min(bytes.len())).unwrap_or_default(), range.start))
+}
+
 /// The operand of a decoded compare: a register, or the ModRM (reg field cleared), SIB and displacement bytes of a
 /// memory operand. Equal operands are equal locations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Operand<'a> {
+pub(crate) enum Operand<'a> {
     Register(u8),
     Memory(u8, &'a [u8]),
 }
 
 /// The r/m operand of the ModRM byte at `at`: its ModRM reg field, the operand and the bytes ModRM, SIB and
 /// displacement take.
-fn decode_modrm(code: &[u8], at: usize) -> Option<(u8, Operand<'_>, usize)> {
+pub(crate) fn decode_modrm(code: &[u8], at: usize) -> Option<(u8, Operand<'_>, usize)> {
     let modrm = *code.get(at)?;
     let (mode, reg, rm) =
         (modrm >> MODRM_MOD_SHIFT, (modrm >> MODRM_REG_SHIFT) & MODRM_FIELD_MASK, modrm & MODRM_FIELD_MASK);
@@ -429,14 +593,14 @@ fn decode_modrm(code: &[u8], at: usize) -> Option<(u8, Operand<'_>, usize)> {
 }
 
 /// A decoded `CMP r/m32, imm32` (or `CMP EAX, imm32`).
-struct CompareImm32<'a> {
-    operand: Operand<'a>,
-    imm_offset: usize,
-    imm: u32,
-    end: usize,
+pub(crate) struct CompareImm32<'a> {
+    pub operand: Operand<'a>,
+    pub imm_offset: usize,
+    pub imm: u32,
+    pub end: usize,
 }
 
-fn decode_cmp_imm32(code: &[u8], at: usize) -> Option<CompareImm32<'_>> {
+pub(crate) fn decode_cmp_imm32(code: &[u8], at: usize) -> Option<CompareImm32<'_>> {
     let (operand, imm_offset) = match *code.get(at)? {
         OPCODE_CMP_EAX_IMM32 => (Operand::Register(REGISTER_EAX), at + 1),
         OPCODE_CMP_RM32_IMM32 => {
@@ -501,74 +665,44 @@ fn match_split(code: &[u8], at: usize) -> Option<[CompareImm32<'_>; SPLIT_IMMEDI
 
 /// Every match of [`SPLIT_SIGNATURE`] in `.text`, whatever its registers, displacements, jump forms and values.
 pub fn locate_split_candidates(bytes: &[u8], pe: &PeImage) -> eyre::Result<Vec<SplitCandidate>> {
-    let text = pe.section(CODE_SECTION).ok_or_else(|| eyre!("no {CODE_SECTION} section"))?;
-    let range = text.raw_range();
-    let code = bytes.get(range.start..range.end.min(bytes.len())).unwrap_or_default();
+    let (code, start) = code_section(bytes, pe)?;
     Ok((0..code.len())
         .filter(|&at| code[at] == OPCODE_CMP_RM32_IMM8)
         .filter_map(|at| {
             let compares = match_split(code, at)?;
             Some(SplitCandidate {
-                signature_offset: range.start + at,
-                offsets: compares.each_ref().map(|compare| range.start + compare.imm_offset),
+                signature_offset: start + at,
+                offsets: compares.each_ref().map(|compare| start + compare.imm_offset),
                 values: compares.each_ref().map(|compare| compare.imm),
             })
         })
         .collect())
 }
 
-/// What a patch does to the split.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SplitEdit {
-    Keep,
-    /// Moves the split of facets 0 and 1 to this x.
-    Set(u32),
-    /// Sets the split to [`DISABLED_SPLIT_X`].
-    Disable,
+/// The split of an Enhanced Client build: at most one match of [`SPLIT_SIGNATURE`], with three equal values.
+fn locate_split(bytes: &[u8], pe: &PeImage) -> eyre::Result<Option<FacetSplit>> {
+    match locate_split_candidates(bytes, pe)?[..] {
+        [] => Ok(None),
+        [candidate] => {
+            let [first, ..] = candidate.values;
+            eyre::ensure!(
+                candidate.values.iter().all(|value| *value == first),
+                "the three split values at {:#x} differ: {:?}",
+                candidate.signature_offset,
+                candidate.values
+            );
+            Ok(Some(FacetSplit {
+                signature_offsets: vec![candidate.signature_offset],
+                offsets: candidate.offsets.to_vec(),
+                x: first,
+            }))
+        }
+        ref candidates => eyre::bail!("{} x = 5120 split sequences found, expected at most 1", candidates.len()),
+    }
 }
 
-/// A new size for one facet.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FacetDimsPatch {
-    pub facet: u8,
-    pub width: u32,
-    pub height: u32,
-    pub split: SplitEdit,
-}
-
-/// The record written next to a patched copy (`<copy>.facet-dims.json`): the stock build it derives from, the
-/// build it was patched from and the result, and the values of the result. A later patch of the copy needs it.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct FacetDimsManifest {
-    pub format: String,
-    pub version: u32,
-    /// The known build the chain started from, when it is one.
-    pub build: Option<String>,
-    /// SHA-256 of the stock executable the chain of patches started from.
-    pub original_sha256: String,
-    /// SHA-256 of the executable this patch was applied to.
-    pub source_sha256: String,
-    /// SHA-256 of the patched copy.
-    pub patched_sha256: String,
-    pub values: FacetDimsValues,
-    /// The PE checksum written.
-    pub checksum: u32,
-}
-
-/// A patched executable.
-#[derive(Debug, Clone)]
-pub struct PatchedClientExe {
-    pub bytes: Vec<u8>,
-    pub before: ClientExeFacets,
-    pub after: ClientExeFacets,
-    /// File offsets of the bytes that differ from the input.
-    pub changed_offsets: Vec<usize>,
-    /// Allowed but unusual requests.
-    pub warnings: Vec<String>,
-    pub manifest: FacetDimsManifest,
-}
-
-/// Fails on a size the client cannot hold; returns the warnings of an allowed but unusual one.
+/// Fails on an Enhanced Client or Kingdom Reborn size the client cannot hold; returns the warnings of an allowed but
+/// unusual one.
 pub fn validate_facet_size(width: u32, height: u32) -> eyre::Result<Vec<String>> {
     for (what, side) in [("width", width), ("height", height)] {
         eyre::ensure!((1..=MAX_FACET_SIDE).contains(&side), "{what} {side} is outside 1..={MAX_FACET_SIDE}");
@@ -583,167 +717,14 @@ pub fn validate_facet_size(width: u32, height: u32) -> eyre::Result<Vec<String>>
         .collect())
 }
 
-/// Patches the size of one facet (and optionally the split) in a copy of the executable `bytes` and recomputes the
-/// PE checksum. The input must have the stock values, or the values `previous` (the manifest of the copy) records
-/// for it. Refuses a signed build. Only the record's width and height, the split imm32 and the checksum change.
-pub fn patch_facet_dimensions(
-    bytes: &[u8],
-    patch: &FacetDimsPatch,
-    previous: Option<&FacetDimsManifest>,
-) -> eyre::Result<PatchedClientExe> {
-    let facet = usize::from(patch.facet);
-    let before = ClientExeFacets::inspect(bytes)?;
-    let facet_count = before.facet_count();
-    eyre::ensure!(facet < facet_count, "facet {facet}: the table has facets 0..{facet_count}");
-    eyre::ensure!(!before.pe.is_signed(), "the executable is Authenticode signed; a patch would break the signature");
-    let previous = previous.filter(|manifest| manifest.patched_sha256 == before.sha256);
-    let (original_sha256, build) = match previous {
-        Some(manifest) => {
-            eyre::ensure!(
-                manifest.values == before.values(),
-                "the executable's facet values differ from the ones its manifest records"
-            );
-            (manifest.original_sha256.clone(), manifest.build.clone())
-        }
-        None => {
-            eyre::ensure!(
-                before.is_stock(),
-                "the executable's facet values are not the stock ones and no manifest of an earlier patch records them"
-            );
-            (before.sha256.clone(), before.known.map(|build| build.name.to_owned()))
-        }
-    };
-    let mut warnings = validate_facet_size(patch.width, patch.height)?;
-    let split_x = match patch.split {
-        SplitEdit::Keep => None,
-        SplitEdit::Set(x) => Some(x),
-        SplitEdit::Disable => Some(DISABLED_SPLIT_X),
-    };
-    if split_x.is_none() && before.split.is_none() && SPLIT_FACETS.contains(&patch.facet) {
-        warnings.push(format!(
-            "no x = {STOCK_SPLIT_X} split sequence found: right for Kingdom Reborn; in an Enhanced Client build, the \
-             split code differs from the known sequence"
-        ));
-    }
-    let mut patched = bytes.to_vec();
-    let record = before.table.offset + FACET_RECORD_SIZE * facet;
-    let mut allowed = vec![record + FACET_RECORD_WIDTH_OFFSET..record + FACET_RECORD_SIZE];
-    patched[record + FACET_RECORD_WIDTH_OFFSET..][..size_of::<u32>()].copy_from_slice(&patch.width.to_le_bytes());
-    patched[record + FACET_RECORD_HEIGHT_OFFSET..][..size_of::<u32>()].copy_from_slice(&patch.height.to_le_bytes());
-    if let Some(x) = split_x {
-        eyre::ensure!(
-            SPLIT_FACETS.contains(&patch.facet),
-            "the split concerns facets {SPLIT_FACETS:?}, not facet {facet}"
-        );
-        let split = before.split.ok_or_else(|| eyre!("no x = {STOCK_SPLIT_X} split sequence found in this build"))?;
-        eyre::ensure!((1..=DISABLED_SPLIT_X).contains(&x), "split x {x} is outside 1..={DISABLED_SPLIT_X}");
-        if x != DISABLED_SPLIT_X && x >= patch.width {
-            warnings.push(format!("split x {x} is not inside the new width {}: nothing is split", patch.width));
-        }
-        for offset in split.offsets {
-            patched[offset..offset + size_of::<u32>()].copy_from_slice(&x.to_le_bytes());
-            allowed.push(offset..offset + size_of::<u32>());
-        }
-    }
-    let checksum_offset = before.pe.checksum_offset;
-    let checksum = pe_checksum(&patched, checksum_offset);
-    patched[checksum_offset..checksum_offset + size_of::<u32>()].copy_from_slice(&checksum.to_le_bytes());
-    allowed.push(checksum_offset..checksum_offset + size_of::<u32>());
-
-    let changed_offsets: Vec<usize> =
-        bytes.iter().zip(&patched).enumerate().filter(|(_, (old, new))| old != new).map(|(offset, _)| offset).collect();
-    let stray = changed_offsets.iter().find(|offset| !allowed.iter().any(|range| range.contains(offset)));
-    eyre::ensure!(stray.is_none(), "internal error: byte {stray:?} changed outside the patched fields");
-    let after = ClientExeFacets::inspect(&patched)?;
-    eyre::ensure!(after.checksum_valid(), "internal error: the written checksum does not verify");
-    let same_split = after.split.map(|split| split.offsets) == before.split.map(|split| split.offsets);
-    eyre::ensure!(
-        after.table.offset == before.table.offset && same_split,
-        "internal error: the patched copy's table or split is located elsewhere"
-    );
-    let manifest = FacetDimsManifest {
-        format: MANIFEST_FORMAT.to_owned(),
-        version: MANIFEST_VERSION,
-        build,
-        original_sha256,
-        source_sha256: before.sha256.clone(),
-        patched_sha256: after.sha256.clone(),
-        values: after.values(),
-        checksum,
-    };
-    Ok(PatchedClientExe { bytes: patched, before, after, changed_offsets, warnings, manifest })
-}
-
-/// The manifest path of the patched copy `exe`: its file name plus [`MANIFEST_SUFFIX`].
-pub fn manifest_path(exe: &Path) -> PathBuf {
-    let mut name = exe.file_name().unwrap_or_default().to_os_string();
-    name.push(MANIFEST_SUFFIX);
-    exe.with_file_name(name)
-}
-
-/// The manifest of `exe`, when it has one.
-pub fn read_manifest(exe: &Path) -> eyre::Result<Option<FacetDimsManifest>> {
-    let path = manifest_path(exe);
-    if !path.is_file() {
-        return Ok(None);
-    }
-    let text = std::fs::read_to_string(&path).wrap_err_with(|| format!("read {}", path.display()))?;
-    let manifest: FacetDimsManifest =
-        serde_json::from_str(&text).wrap_err_with(|| format!("parse {}", path.display()))?;
-    eyre::ensure!(
-        manifest.format == MANIFEST_FORMAT && manifest.version == MANIFEST_VERSION,
-        "{}: not a {MANIFEST_FORMAT} version {MANIFEST_VERSION} manifest",
-        path.display()
-    );
-    Ok(Some(manifest))
-}
-
-/// Fails unless `output` is a new file outside the folder of `input` (the client folder), and its manifest path is
-/// free too.
-fn check_output_path(input: &Path, output: &Path) -> eyre::Result<()> {
-    let input = std::fs::canonicalize(input).wrap_err_with(|| format!("resolve {}", input.display()))?;
-    let client_dir = input.parent().ok_or_else(|| eyre!("{} has no folder", input.display()))?;
-    for path in [output.to_path_buf(), manifest_path(output)] {
-        eyre::ensure!(path.symlink_metadata().is_err(), "{} exists: write to a new path", path.display());
-    }
-    let output_dir = match output.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => parent,
-        _ => Path::new("."),
-    };
-    let output_dir =
-        std::fs::canonicalize(output_dir).wrap_err_with(|| format!("resolve the folder of {}", output.display()))?;
-    eyre::ensure!(
-        !output_dir.starts_with(client_dir),
-        "refusing to write inside the folder of the input executable ({}): write the copy elsewhere",
-        client_dir.display()
-    );
-    Ok(())
-}
-
-/// Patches a copy of `input` to the new file `output` (outside the input's folder) and writes its manifest
-/// `<output>.facet-dims.json`. The input is only read; when it is an earlier patched copy, its manifest is read too.
-pub fn write_patched_client_exe(input: &Path, output: &Path, patch: &FacetDimsPatch) -> eyre::Result<PatchedClientExe> {
-    check_output_path(input, output)?;
-    let bytes = std::fs::read(input).wrap_err_with(|| format!("read {}", input.display()))?;
-    let previous = read_manifest(input)?;
-    let patched = patch_facet_dimensions(&bytes, patch, previous.as_ref())?;
-    let manifest = serde_json::to_string_pretty(&patched.manifest)?;
-    std::fs::write(output, &patched.bytes).wrap_err_with(|| format!("write {}", output.display()))?;
-    let manifest_file = manifest_path(output);
-    std::fs::write(&manifest_file, manifest).wrap_err_with(|| format!("write {}", manifest_file.display()))?;
-    Ok(patched)
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
     use crate::client_exe::pe::tests::{synthetic_pe, TEST_IMAGE_BASE, TEST_SECTION_ALIGNMENT};
 
     /// Offset of the table inside the synthetic `.data`.
-    const TABLE_DATA_OFFSET: usize = 16;
-    const NEW_WIDTH: u32 = 8192;
-    const NEW_HEIGHT: u32 = 4608;
-    const NEW_SPLIT: u32 = 6144;
+    pub const TABLE_DATA_OFFSET: usize = 16;
+    pub const NEW_SPLIT: u32 = 6144;
     /// The shipped facet names.
     const STOCK_NAMES: [&str; STOCK_FACET_COUNT] =
         ["Felucca", "Trammel", "Ilshenar", "Malas", "Tokuno", "Gargoyle", "Test"];
@@ -776,9 +757,16 @@ pub(crate) mod tests {
         code
     }
 
-    /// A client-like image: `.text` (`text`, or a nop sled), `.rdata` with the names, `.data` with `records`
-    /// stock records.
-    fn synthetic_image(text: Option<Vec<u8>>, records: usize, signed: bool) -> Vec<u8> {
+    /// Writes the computed PE checksum into `image`.
+    pub fn fix_checksum(image: &mut [u8]) {
+        let pe = PeImage::parse(image).unwrap();
+        let checksum = pe_checksum(image, pe.checksum_offset);
+        image[pe.checksum_offset..pe.checksum_offset + 4].copy_from_slice(&checksum.to_le_bytes());
+    }
+
+    /// A 12-byte-table client: `.text` (`text`, or a nop sled), `.rdata` with the names (and the Enhanced Client
+    /// marker when `enhanced`), `.data` with `records` stock records.
+    fn synthetic_image(text: Option<Vec<u8>>, records: usize, enhanced: bool, signed: bool) -> Vec<u8> {
         let text = text.unwrap_or_else(|| vec![0x90; 64]);
         // The sections are laid out at aligned offsets equal to their RVAs: .text, then .rdata, then .data.
         let rdata_rva = TEST_SECTION_ALIGNMENT * (1 + (text.len() as u32).div_ceil(TEST_SECTION_ALIGNMENT));
@@ -787,6 +775,10 @@ pub(crate) mod tests {
         for name in &STOCK_NAMES[..records] {
             pointers.push(TEST_IMAGE_BASE + rdata_rva + rdata.len() as u32);
             rdata.extend_from_slice(name.as_bytes());
+            rdata.push(0);
+        }
+        if enhanced {
+            rdata.extend_from_slice(ENHANCED_CLIENT_MARKER);
             rdata.push(0);
         }
         let mut data = vec![0u8; TABLE_DATA_OFFSET];
@@ -798,64 +790,70 @@ pub(crate) mod tests {
         // Room for a second table, so a test can copy one there.
         data.extend(vec![0; FACET_RECORD_SIZE * STOCK_FACET_COUNT + TABLE_DATA_OFFSET]);
         let mut image = synthetic_pe(&[(".text", text), (".rdata", rdata), (".data", data)], signed);
-        let pe = PeImage::parse(&image).unwrap();
-        let checksum = pe_checksum(&image, pe.checksum_offset);
-        image[pe.checksum_offset..pe.checksum_offset + 4].copy_from_slice(&checksum.to_le_bytes());
+        fix_checksum(&mut image);
         image
     }
 
-    /// A client-like image with the 7 stock records and, when `split` is set, the UOSA split sequence.
+    /// An Enhanced Client-like image with the 7 stock records and, when `split` is set, the UOSA split sequence.
     pub fn synthetic_client(split: Option<u32>, signed: bool) -> Vec<u8> {
-        synthetic_image(split.map(|x| split_code(x, &[])), STOCK_FACET_COUNT, signed)
+        synthetic_image(split.map(|x| split_code(x, &[])), STOCK_FACET_COUNT, true, signed)
+    }
+
+    /// A Kingdom Reborn-like image: the 7 stock records, no marker, no split.
+    pub fn synthetic_kr_client() -> Vec<u8> {
+        synthetic_image(None, STOCK_FACET_COUNT, false, false)
     }
 
     #[test]
     fn table_and_split_are_located() {
         let image = synthetic_client(Some(STOCK_SPLIT_X), false);
-        let facets = ClientExeFacets::inspect(&image).unwrap();
+        let facets = ClientExeInspection::inspect(&image).unwrap();
         assert!(facets.known.is_none());
+        assert_eq!(facets.family, ClientFamily::Enhanced);
         assert_eq!(facets.dimensions(), CLIENT_FACET_DIMENSIONS);
-        assert_eq!(facets.table.records.iter().map(|record| record.name.as_str()).collect::<Vec<_>>(), STOCK_NAMES);
-        assert_eq!(facets.split.unwrap().x, STOCK_SPLIT_X);
+        assert_eq!(facets.table().records.iter().map(|record| record.name.as_str()).collect::<Vec<_>>(), STOCK_NAMES);
+        assert_eq!(facets.split.as_ref().unwrap().x, STOCK_SPLIT_X);
         assert!(facets.is_stock() && facets.checksum_valid());
         let data = facets.pe.section(".data").unwrap();
-        assert_eq!(facets.table.offset, data.raw_offset as usize + TABLE_DATA_OFFSET);
+        assert_eq!(facets.table().offset, data.raw_offset as usize + TABLE_DATA_OFFSET);
         let text = facets.pe.section(CODE_SECTION).unwrap().raw_offset as usize + SPLIT_CODE_START;
-        assert_eq!(facets.split.unwrap().signature_offset, text);
-        assert_eq!(facets.split.unwrap().offsets, SPLIT_IMMEDIATES.map(|offset| text + offset));
+        let split = facets.split.clone().unwrap();
+        assert_eq!(split.signature_offsets, [text]);
+        assert_eq!(split.offsets, SPLIT_IMMEDIATES.map(|offset| text + offset));
 
-        let no_split = ClientExeFacets::inspect(&synthetic_client(None, false)).unwrap();
-        assert!(no_split.split.is_none() && no_split.is_stock());
+        let kr = ClientExeInspection::inspect(&synthetic_kr_client()).unwrap();
+        assert!(kr.split.is_none() && kr.is_stock());
+        assert_eq!(kr.family, ClientFamily::KingdomReborn);
 
         let mut unequal = image.clone();
-        let offset = facets.split.unwrap().offsets[2];
+        let offset = split.offsets[2];
         unequal[offset] ^= 1;
-        assert!(ClientExeFacets::inspect(&unequal).is_err(), "differing split values");
+        assert!(ClientExeInspection::inspect(&unequal).is_err(), "differing split values");
         let mut two_tables = image.clone();
-        let (table, table_size) = (facets.table.offset, FACET_RECORD_SIZE * STOCK_FACET_COUNT);
+        let (table, table_size) = (facets.table().offset, FACET_RECORD_SIZE * STOCK_FACET_COUNT);
         two_tables.copy_within(table..table + table_size, table + table_size + TABLE_DATA_OFFSET);
-        assert!(ClientExeFacets::inspect(&two_tables).is_err(), "two tables");
+        assert!(ClientExeInspection::inspect(&two_tables).is_err(), "two tables");
     }
 
     #[test]
     fn shorter_tables_are_located_and_too_short_runs_are_not() {
         for records in MIN_FACET_RECORDS..=STOCK_FACET_COUNT {
-            let facets = ClientExeFacets::inspect(&synthetic_image(None, records, false)).unwrap();
+            let facets = ClientExeInspection::inspect(&synthetic_image(None, records, true, false)).unwrap();
             assert_eq!(facets.facet_count(), records);
             assert!(facets.is_stock());
         }
-        assert!(ClientExeFacets::inspect(&synthetic_image(None, MIN_FACET_RECORDS - 1, false)).is_err());
+        assert!(ClientExeInspection::inspect(&synthetic_image(None, MIN_FACET_RECORDS - 1, true, false)).is_err());
 
         // A record with an illegal size ends a run: record 3 leaves two runs of 3 records, both too short.
         let image = synthetic_client(None, false);
-        let facets = ClientExeFacets::inspect(&image).unwrap();
+        let facets = ClientExeInspection::inspect(&image).unwrap();
         let mut broken = image.clone();
-        let width = facets.table.offset + FACET_RECORD_SIZE * 3 + FACET_RECORD_WIDTH_OFFSET;
+        let width = facets.table().record_offset(3) + FACET_RECORD_WIDTH_OFFSET;
         broken[width..width + 4].copy_from_slice(&(MAX_FACET_SIDE + FACET_SIDE_ALIGNMENT).to_le_bytes());
         assert!(locate_facet_tables(&broken, &facets.pe).is_empty());
         // A name that is not a word does not count either.
         let mut unnamed = image.clone();
-        let name = facets.pe.va_to_offset(read_u32(&image, facets.table.offset).unwrap()).unwrap();
+        let name = facets.pe.va_to_offset(read_u32(&image, facets.table().offset).unwrap()).unwrap();
         unnamed[name] = b'#';
         let tables = locate_facet_tables(&unnamed, &facets.pe);
         assert_eq!(tables.len(), 1);
@@ -864,102 +862,21 @@ pub(crate) mod tests {
 
     #[test]
     fn the_split_matcher_takes_any_register_and_needs_the_same_x_operand() {
-        let stock = ClientExeFacets::inspect(&synthetic_client(Some(STOCK_SPLIT_X), false)).unwrap();
-        let variant = synthetic_image(Some(split_code(NEW_SPLIT, &VARIANT_BYTES)), STOCK_FACET_COUNT, false);
-        let split = ClientExeFacets::inspect(&variant).unwrap().split.unwrap();
+        let stock = ClientExeInspection::inspect(&synthetic_client(Some(STOCK_SPLIT_X), false)).unwrap();
+        let variant = synthetic_image(Some(split_code(NEW_SPLIT, &VARIANT_BYTES)), STOCK_FACET_COUNT, true, false);
+        let split = ClientExeInspection::inspect(&variant).unwrap().split.unwrap();
         assert_eq!(split.x, NEW_SPLIT);
         assert_eq!(split.offsets, stock.split.unwrap().offsets);
 
         let code = split_code(STOCK_SPLIT_X, &[MISMATCHED_OPERAND]);
-        let mismatched = synthetic_image(Some(code), STOCK_FACET_COUNT, false);
+        let mismatched = synthetic_image(Some(code), STOCK_FACET_COUNT, true, false);
         assert!(locate_split_candidates(&mismatched, &PeImage::parse(&mismatched).unwrap()).unwrap().is_empty());
-        assert!(ClientExeFacets::inspect(&mismatched).unwrap().split.is_none());
+        assert!(ClientExeInspection::inspect(&mismatched).unwrap().split.is_none());
 
         let mut twice = split_code(STOCK_SPLIT_X, &[]);
         twice.extend(split_code(STOCK_SPLIT_X, &VARIANT_BYTES));
-        let image = synthetic_image(Some(twice), STOCK_FACET_COUNT, false);
+        let image = synthetic_image(Some(twice), STOCK_FACET_COUNT, true, false);
         assert_eq!(locate_split_candidates(&image, &PeImage::parse(&image).unwrap()).unwrap().len(), 2);
-        assert!(ClientExeFacets::inspect(&image).is_err(), "two split sequences");
-    }
-
-    #[test]
-    fn a_patch_changes_only_the_record_the_split_and_the_checksum() {
-        let image = synthetic_client(Some(STOCK_SPLIT_X), false);
-        let patch = FacetDimsPatch { facet: 0, width: NEW_WIDTH, height: NEW_HEIGHT, split: SplitEdit::Set(NEW_SPLIT) };
-        let patched = patch_facet_dimensions(&image, &patch, None).unwrap();
-        assert_eq!(patched.after.dimensions()[0], FacetGeometry::new(NEW_WIDTH, NEW_HEIGHT));
-        assert_eq!(patched.after.dimensions()[1..], CLIENT_FACET_DIMENSIONS[1..]);
-        assert_eq!(patched.after.split.unwrap().x, NEW_SPLIT);
-        assert!(patched.after.checksum_valid() && !patched.after.is_stock());
-        assert!(patched.warnings.is_empty());
-        assert_eq!(patched.manifest.original_sha256, sha256_hex(&image));
-        assert_eq!(patched.manifest.patched_sha256, sha256_hex(&patched.bytes));
-        let record = patched.before.table.offset;
-        assert!(patched.changed_offsets.iter().all(|offset| {
-            (record + FACET_RECORD_WIDTH_OFFSET..record + FACET_RECORD_SIZE).contains(offset)
-                || patched.before.split.unwrap().offsets.iter().any(|imm| (*imm..*imm + 4).contains(offset))
-                || (patched.before.pe.checksum_offset..patched.before.pe.checksum_offset + 4).contains(offset)
-        }));
-
-        // A patched copy needs its manifest; with it, it patches again and keeps the original hash.
-        let again = FacetDimsPatch { facet: 2, width: 2304, height: 1608, split: SplitEdit::Keep };
-        assert!(patch_facet_dimensions(&patched.bytes, &again, None).is_err());
-        let chained = patch_facet_dimensions(&patched.bytes, &again, Some(&patched.manifest)).unwrap();
-        assert_eq!(chained.manifest.original_sha256, patched.manifest.original_sha256);
-        assert_eq!(chained.manifest.source_sha256, patched.manifest.patched_sha256);
-        assert_eq!(chained.warnings.len(), 1, "1608 is not a multiple of 64");
-        let disabled = FacetDimsPatch { split: SplitEdit::Disable, ..patch };
-        assert_eq!(patch_facet_dimensions(&image, &disabled, None).unwrap().after.split.unwrap().x, DISABLED_SPLIT_X);
-
-        // Without split code, resizing facet 0 warns that the seam was not found.
-        let keep = FacetDimsPatch { split: SplitEdit::Keep, ..patch };
-        assert_eq!(patch_facet_dimensions(&synthetic_client(None, false), &keep, None).unwrap().warnings.len(), 1);
-    }
-
-    #[test]
-    fn bad_requests_and_builds_are_refused() {
-        let image = synthetic_client(Some(STOCK_SPLIT_X), false);
-        let good = FacetDimsPatch { facet: 3, width: NEW_WIDTH, height: NEW_HEIGHT, split: SplitEdit::Keep };
-        for bad in [
-            FacetDimsPatch { facet: STOCK_FACET_COUNT as u8, ..good },
-            FacetDimsPatch { width: MAX_FACET_SIDE + SECTOR_SIDE, ..good },
-            FacetDimsPatch { width: NEW_WIDTH + FACET_SIDE_ALIGNMENT / 2, ..good },
-            FacetDimsPatch { width: 0, ..good },
-            FacetDimsPatch { width: MAX_FACET_SIDE, height: MAX_FACET_SIDE, ..good },
-            FacetDimsPatch { split: SplitEdit::Set(NEW_SPLIT), ..good },
-            FacetDimsPatch { facet: 0, split: SplitEdit::Set(DISABLED_SPLIT_X + 1), ..good },
-        ] {
-            assert!(patch_facet_dimensions(&image, &bad, None).is_err(), "{bad:?}");
-        }
-        assert!(patch_facet_dimensions(&image, &good, None).is_ok());
-        let short = synthetic_image(None, MIN_FACET_RECORDS, false);
-        let past_the_table = FacetDimsPatch { facet: MIN_FACET_RECORDS as u8, ..good };
-        assert!(patch_facet_dimensions(&short, &past_the_table, None).is_err(), "facet past a shorter table");
-        let kr_like = synthetic_client(None, false);
-        let split = FacetDimsPatch { facet: 0, split: SplitEdit::Disable, ..good };
-        assert!(patch_facet_dimensions(&kr_like, &split, None).is_err(), "no split to patch");
-        assert!(patch_facet_dimensions(&synthetic_client(Some(STOCK_SPLIT_X), true), &good, None).is_err(), "signed");
-    }
-
-    #[test]
-    fn the_copy_goes_to_a_new_path_outside_the_client_folder() {
-        let root = std::env::temp_dir().join(format!("uocf_facet_dims_{}", std::process::id()));
-        let (client, copies) = (root.join("client"), root.join("copies"));
-        std::fs::create_dir_all(&client).unwrap();
-        std::fs::create_dir_all(&copies).unwrap();
-        let exe = client.join("UOSA.exe");
-        std::fs::write(&exe, synthetic_client(Some(STOCK_SPLIT_X), false)).unwrap();
-        let patch = FacetDimsPatch { facet: 5, width: 1280, height: 4160, split: SplitEdit::Keep };
-        assert!(write_patched_client_exe(&exe, &exe, &patch).is_err());
-        assert!(write_patched_client_exe(&exe, &client.join("copy.exe"), &patch).is_err());
-        let output = copies.join("UOSA.exe");
-        let patched = write_patched_client_exe(&exe, &output, &patch).unwrap();
-        assert_eq!(std::fs::read(&output).unwrap(), patched.bytes);
-        assert_eq!(read_manifest(&output).unwrap().unwrap(), patched.manifest);
-        assert!(write_patched_client_exe(&exe, &output, &patch).is_err(), "the copy exists");
-        let second = root.join("second.exe");
-        let again = write_patched_client_exe(&output, &second, &FacetDimsPatch { facet: 6, width: 512, height: 512, ..patch });
-        assert_eq!(again.unwrap().manifest.original_sha256, patched.manifest.original_sha256);
-        let _ = std::fs::remove_dir_all(root);
+        assert!(ClientExeInspection::inspect(&image).is_err(), "two split sequences");
     }
 }

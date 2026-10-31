@@ -130,8 +130,9 @@ fn uop_map_entry_name(map_index: u32, entry_index: u32) -> String {
 }
 
 /// The bytes of block data in a `map{map_index}LegacyMUL.uop` package: its entries from the first, in order,
-/// up to the first missing one.
-fn uop_map_data_size(package: &crate::uop_container::package::UopPackage, map_index: u32) -> u64 {
+/// up to the first missing one. The `x` variant packages (`map0xLegacyMUL.uop`, ...) name their entries like the
+/// base map's.
+pub fn uop_map_data_size(package: &crate::uop_container::package::UopPackage, map_index: u32) -> u64 {
     (0..)
         .map_while(|entry_index| package.get_file_by_name(&uop_map_entry_name(map_index, entry_index)))
         .map(|file| u64::from(file.decompressed_size()))

@@ -214,6 +214,12 @@ tables 0x006a2338 / 0x006a2488 (0x006f820c, stride 60).
 
 These are not implemented; `lib/**` is owned by another agent.
 
+Implemented since: the facet size patcher (`lib/uocf/src/client_exe/classic_facets.rs`, `uocf-cli exe
+show|patch|check-data`) locates the table copies, the file name table, the startup copy of facet 0 (the
+`.data` `{wrap_width, wrap_height, width, height}` block `SetFacet` fills, initial values = Felucca) and the
+two x = 5120 wrap seam compares by structure, and patches sizes and wraps in both copies. See
+`lib/uocf/src/enhanced/ENHANCED_CLIENT_FILES.md`, "Facet sizes in the executable".
+
 1. **Pre-6.0 clients.** Detect them by the tiledata/era, or by the absence of `map1.mul`:
    - Trammel (map 1) is derived as map0/staidx0/statics0 with the mapdif1/mapdifl1 land patches and the
      stadif1/stadifl1/stadifi1 statics patches;

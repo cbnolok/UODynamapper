@@ -75,6 +75,10 @@ impl PeSection {
     pub fn is_readable(&self) -> bool {
         self.characteristics & SECTION_READ != 0
     }
+
+    pub fn is_writable(&self) -> bool {
+        self.characteristics & SECTION_WRITE != 0
+    }
 }
 
 /// The headers of a PE32 image.

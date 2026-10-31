@@ -169,7 +169,8 @@ Editing `.uop` packages (`uop_container::package`):
   verbatim and re-encodes all 7 records byte for byte. Facet 2 region 5 ships an
   inverted rect.
 
-Facet sizes in the executable (`client_exe::facet_dimensions`, `uocf-cli exe`):
+Facet sizes in the executable (`client_exe::facet_dimensions`,
+`client_exe::classic_facets`, `client_exe::patch`, `uocf-cli exe`):
 
 - The client sizes each facet from `UOFacet::g_FacetDimensions`, 7 records
   `{char* name, u32 width, u32 height}` in `.data` (EC `UOSA.exe` file
@@ -179,18 +180,30 @@ Facet sizes in the executable (`client_exe::facet_dimensions`, `uocf-cli exe`):
   a readable section and whose sizes are legal (1..=32704, multiples of 8),
   in any initialized data section; names and record count are read from the
   executable. Every EC and KR build has exactly one such run (7 records) and
-  no other executable in the client folders has any. 64-bit (PE32+) images
-  are refused. Changing a map size
-  means patching a copy of the executable: `uocf-cli exe patch <exe> --output
-  <copy> --facet N --width W --height H [--split X | --no-split]` writes the
-  copy (a new file outside the client folder) and `<copy>.facet-dims.json`
-  (original, source and patched SHA-256, the values); a copy is patched again
-  only with its manifest. Sizes: at most 32704, multiples of 8 (64 avoids
-  padded sectors), at most 65536 sectors. The PE checksum is recomputed
-  (`UOSA_eclo.exe` ships a wrong one); signed builds are refused. `exe show`
-  prints the table, split and checksum of a build and how each was located;
-  the SHA-256 of the 5 traced builds is only a label (`build known: ...`)
-  and the tests' reference for their offsets.
+  no other executable in the client folders has any. The family is told by
+  structure too (`ClientFamily`): the EC carries the RTTI name
+  `.?AVUOFacetDefinition@@`, KR does not, Classic has the 48-byte table
+  below. 64-bit (PE32+) images are refused. `exe show` prints the tables,
+  split or seam and checksum of a build and how each was located; the SHA-256
+  of the 12 traced builds (5 EC/KR, 7 Classic) is only a label (`build known:
+  ...`) and the tests' reference for their offsets.
+- Changing a map size means patching a copy of the executable. A patch is a
+  list of edits written in one step (`ExePatch`: `FacetSize`, `Split`,
+  `ClassicWrap`; login and encryption edits will be more variants):
+  `uocf-cli exe patch <exe> --output <copy> [--size N=WxH]... [--wrap
+  N=WxH]... [--split X | --no-split] [--dry-run]`. The whole set is
+  validated first, then planned as exact byte changes (offset, old and new
+  bytes, the edit causing each; `--dry-run` prints them and writes nothing),
+  then written to a new file outside the client folder with
+  `<copy>.facet-dims.json` (version 2: family, values, the original, source
+  and patched SHA-256 and every step with its edits; version 1 manifests are
+  still read). A copy is patched again only with its manifest. EC/KR sizes:
+  at most 32704, multiples of 8 (64 avoids padded sectors), at most 65536
+  sectors. The PE checksum is recomputed (`UOSA_eclo.exe` and Classic
+  6.0.14.3 ship a wrong one, Classic up to 5.0.9.1 none); signed builds are
+  refused. After writing, the copy is inspected again: tables, split or seam
+  and Classic startup globals must be found at the same places with the
+  planned values.
 - The x = 5120 seam: `IsSameFeluccaTrammelHalf` makes facets 0 and 1 not
   build a chunk across x = 5120 (three imm32 0x1400 in UOSA, none in KR).
   A new layout must move it (`--split X`) or disable it (`--no-split`,
@@ -199,24 +212,44 @@ Facet sizes in the executable (`client_exe::facet_dimensions`, `uocf-cli exe`):
   JL|JB F; T: POP* MOV AL,1` (any registers, displacements, short or near
   jumps; both `CMP X` on the same operand; the three S equal). UOSA:
   `83 FF 01 7F ?? 81 7C 24 ?? [S] 7D ?? 81 FB [S] 7C ?? 32 C0 .. 81 FB [S]
-  7C ?? 5E B0 01`. At most one match is accepted; KR has none (patching
-  facet 0 or 1 without one warns).
-- Classic 2D clients (`client.exe` 5.0.9.1 to 7.0.103, Gold, Mondain's
-  Legacy, `client_tc.exe`) keep their map sizes in another table: 48-byte
-  records `{char* name, u32 width, u32 height, u32 wrap width, u32 wrap
-  height, 6 u32 ids, u32 flag}` in `.rdata` ("Felucca", ..., "Tokuno
-  Islands", "Ter Mur"; 5 records before Stygian Abyss, two 6-record copies
-  from 7.0 on, chosen by a global flag; Gold has 6144-wide Felucca and
-  Trammel, wrap width 5120). In 7.0.103 the accessors (0x5a0380 width,
-  0x5a03c0 height, facet <= 5) feed the current map's block counts
-  (0x593eb0). Not supported: the locator does not match it.
+  7C ?? 5E B0 01`. At most one match is accepted; KR has none (resizing
+  facet 0 or 1 of an EC build without one warns).
+- Classic 2D clients (`client.exe` Gold, Mondain's Legacy, 5.0.9.1 to
+  7.0.103 and the current one, `client_tc.exe`) keep their map sizes in
+  48-byte records `{char* name, u32 width, u32 height, u32 wrap width, u32
+  wrap height, u32 file ids [statics, staidx, mapdif, stadif, stadifi, map],
+  u32 felucca_rules}` in `.rdata`: one 5-record copy up to 6.0.14.3, two
+  6-record copies from 7.0 on (the second, read with 0xA9 flag 0x8000, names
+  the `x` files). Located like the EC table (wrap within the size, ids within
+  the client's file name table, flag 0 or 1); one run, or two runs agreeing
+  on everything but the ids, is required. The ids index the file name table
+  (entries of 56 bytes up to 7.0.20, 60 from 7.0.50: u32 record size, the
+  name at +4, the ordinal index + 1 8 bytes before the end), shown decoded.
+  Two more values derive from the sizes:
+  - the startup copy of facet 0, `.data` `{wrap w, wrap h, width, height}`
+    (7.0.103 VA 0x74229c): `SetFacet` returns early while the facet stays 0,
+    so Felucca uses these initial values; found from the call to the wrap
+    width accessor followed by `MOV [moffs32],EAX`;
+  - the wrap seam, two `CMP r32,0x1400; [MOV r32,m]; SETGE r8` near the
+    reads of those globals (radar half and walk probe); the patcher treats it
+    as the Classic split and warns when it is not Felucca's and Trammel's
+    wrap width.
+  Every size or wrap edit writes both copies (and the startup globals for
+  facet 0); a wrap side equal to the old size follows a new size. Classic
+  limits: sides 8..=32704, multiples of 8; wraps multiples of 8 within the
+  size; map file (blocks × 196 bytes) below 2 GiB, since block offsets are
+  32-bit and MUL files are mapped whole (a map larger than stock Felucca
+  warns). No other size is hard-coded.
 - The executable alone is not enough. The data must have the new size too:
   `facetN.uop` (and `facetNx.uop`) with ceil(w/64)·ceil(h/64) sectors in
   column-major order (a new height renumbers every sector), `data.map`,
   the FacetDefinition width/height (and region rects) in `facets.uop` (EC; it
   sizes the radar), and `facetNN.dds` at 1 pixel per square with the full
-  mip chain; plus the server's map. `uocf-cli exe check-data <exe> <client
-  dir>` compares them with the table (all shipped EC and KR data agree).
+  mip chain; plus the server's map. Classic: the map (blocks × 196 bytes, or
+  the `LegacyMUL.uop` entries, also `build/mapNlegacymul/` in the `x`
+  packages), `staidx` (blocks × 12 bytes) and the `statics` ranges, for the
+  files both copies name. `uocf-cli exe check-data <exe> <client dir>`
+  compares them with the tables (all shipped EC, KR and Classic data agree).
 
 
 `TerrainDefinition.uop` (`enhanced::terrain_definition`):

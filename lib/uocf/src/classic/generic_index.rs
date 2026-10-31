@@ -19,7 +19,7 @@ pub struct IndexElement {
 }
 impl IndexElement {
     const INVALID_LOOKUP: u32 = 0xFFFFFFFF;
-    const PACKED_SIZE: u32 = 4 + 4 + 4;
+    pub const PACKED_SIZE: u32 = 4 + 4 + 4;
 
     pub fn lookup(&self) -> Option<u32> {
         if self.lookup == Self::INVALID_LOOKUP || self.extra == Self::INVALID_LOOKUP {
