@@ -480,8 +480,8 @@ impl TexLandEcPackage {
         self.source_materials.values().filter(|entry| {
             entry.texture.as_ref().is_some_and(|texture| {
                 texture.shader_name.as_deref() == Some("UOWaterTerrainLayer")
-                    && texture.unk8.first().copied() == Some(technique)
-                    && texture.unk9.get(..2) == Some(scroll.as_slice())
+                    && texture.techniques.first().copied() == Some(technique)
+                    && texture.tweaks.get(..2) == Some(scroll.as_slice())
                     && [0, 2].into_iter().zip(sources).all(|(index, (id, repetition))| {
                         texture.layers.get(index).is_some_and(|layer|
                             layer.texture_id == Some(id) && layer.texture_repetition == repetition)
@@ -1827,8 +1827,8 @@ mod tests {
     fn source_liquid_active_match_excludes_item_fallback_and_other_material_parameters() {
         let mut package = test_package_with_source_map(Some(b"legacyId,newId,newSubType\n500,52,0\n"));
         let texture = package.source_materials.get_mut(&52).unwrap().texture.as_mut().unwrap();
-        texture.unk8 = vec![2, 1, 0, 0];
-        texture.unk9 = vec![-0.012, 0.0012, 0.0, 0.0];
+        texture.techniques = vec![2, 1, 0, 0];
+        texture.tweaks = vec![-0.012, 0.0012, 0.0, 0.0];
         let sources = [(2000520, 16.0), (2000530, 1.0)];
         let scroll = [-0.012, 0.0012];
         // A local fallback mask has no bearing on the active bump/surface pair.

@@ -24,8 +24,8 @@ fn serialize_entry_payload(
     aliases: &[(u32, u32, u64)],
     shader_name_string_off: i32,
     texture_images: &[(i32, u8, f32, i32, i32)],
-    unk8: &[i32],
-    unk9: &[f32],
+    techniques: &[i32],
+    tweaks: &[f32],
 ) -> Vec<u8> {
     let mut bytes = Vec::new();
     bytes.write_i32::<LittleEndian>(name_id).unwrap();
@@ -50,12 +50,12 @@ fn serialize_entry_payload(
         bytes.write_i32::<LittleEndian>(*unk6).unwrap();
         bytes.write_i32::<LittleEndian>(*unk7).unwrap();
     }
-    bytes.write_u32::<LittleEndian>(unk8.len() as u32).unwrap();
-    for value in unk8 {
+    bytes.write_u32::<LittleEndian>(techniques.len() as u32).unwrap();
+    for value in techniques {
         bytes.write_i32::<LittleEndian>(*value).unwrap();
     }
-    bytes.write_u32::<LittleEndian>(unk9.len() as u32).unwrap();
-    for value in unk9 {
+    bytes.write_u32::<LittleEndian>(tweaks.len() as u32).unwrap();
+    for value in tweaks {
         bytes.write_f32::<LittleEndian>(*value).unwrap();
     }
     bytes
@@ -121,8 +121,8 @@ fn terrain_definition_decoder_reads_ids_aliases_and_texture_path() {
     assert_eq!(texture.layers[0].path.as_deref(), Some("01000013_water_alpha.tga"));
     assert_eq!(texture.layers[1].texture_id, Some(2_000_051));
     assert_eq!(texture.layers[1].texture_repetition, 4.0);
-    assert_eq!(texture.unk8, vec![0, 1, 0, 0]);
-    assert_eq!(texture.unk9, vec![-0.01, 0.0, 0.0, 0.0]);
+    assert_eq!(texture.techniques, vec![0, 1, 0, 0]);
+    assert_eq!(texture.tweaks, vec![-0.01, 0.0, 0.0, 0.0]);
     assert_eq!(package.land_tile_ids().into_iter().collect::<Vec<_>>(), vec![3, 433, 561]);
     assert_eq!(package.land_slot_ids().into_iter().collect::<Vec<_>>(), vec![3, 433, 561]);
     assert_eq!(

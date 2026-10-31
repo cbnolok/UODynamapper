@@ -226,15 +226,14 @@ Facet sizes in the executable (`client_exe::facet_dimensions`, `uocf-cli exe`):
   in the Enhanced Client, 191 in Kingdom Reborn. Layout traced in
   `scripts/dev-helpers/ec-research/ghidra-terrain/results/uosa_terrain.md`
   (`TerrainDefinition_Read` 0x00845c25): u32 name (string index), u32 id,
-  f32 `field_34` (no reader, always 0), f32 `coverage_exponent` (stored as
-  the compatibility field `unk2`), f32 `field_3c` (no reader, always 0), u32
+  f32 `field_34` (no reader, always 0), f32 `coverage_exponent`, f32
+  `field_3c` (no reader, always 0), u32
   alias count + aliases `{u32 subtype, u32 legacy_land_id, u64 flags}`
   (Kingdom Reborn: u32 flags), u8 shader block present (1 in every record),
   u8 `field_04`, u32 shader name index, u8 texture item count + items
   `{u32 path index, u8 source_kind, f32 stretch, u32 sampler_index, u32
-  uv_set}`, u32 + i32 techniques, u32 + f32 tweaks (4 each in every record;
-  compatibility fields `unk8`, `unk9`, accessors `techniques()`,
-  `tweaks()`). Nothing follows; trailing bytes are rejected.
+  uv_set}`, u32 + i32 techniques, u32 + f32 tweaks (4 each in every record).
+  Nothing follows; trailing bytes are rejected.
 - String indices are 1-based: index N is the dictionary's string N - 1
   (record 0 names index 110548, string 110547 `void_no_draw`).
 - A square names `(material, subtype)` (Kingdom Reborn sectors directly, EC
@@ -898,8 +897,8 @@ The current primary visible texture selector ranks layers in this order:
 1. Layers with a resolved texture id.
 2. Non-support names before support names.
 3. Preferred repetition before non-preferred repetition.
-4. Lower `unk6`.
-5. Lower `name_string_off`.
+4. Lower `sampler_index`.
+5. Lower `path_index`.
 
 Current support-name heuristic:
 

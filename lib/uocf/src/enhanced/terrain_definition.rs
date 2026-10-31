@@ -168,11 +168,9 @@ pub enum TerrainTextureType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct TerrainDefinitionTileAlias {
     /// The subtype squares and `legacyterrainmap.csv` name; equals the alias position in every shipped record.
-    #[serde(alias = "count_index")]
     pub subtype: u32,
     /// A representative Classic land id mapped to `(material, subtype)` by the csv (0 in 104 aliases); no client
     /// reader, kept for tools.
-    #[serde(alias = "alias")]
     pub legacy_land_id: u32,
     /// The cell flags ([`TERRAIN_FLAG_NAMES`]); u32 in Kingdom Reborn records, in the KR layout
     /// ([`kr_terrain_flags_to_enhanced`]).
@@ -182,7 +180,6 @@ pub struct TerrainDefinitionTileAlias {
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct TerrainDefinitionTextureLayer {
     /// String index of the texture path (`02000010_Grass_C.tga`, ...).
-    #[serde(alias = "name_string_off")]
     pub path_index: u32,
     /// Resolved from the path.
     pub texture_id: Option<u32>,
@@ -191,16 +188,13 @@ pub struct TerrainDefinitionTextureLayer {
     /// Resolved from the path.
     pub texture_type: TerrainTextureType,
     /// Read by `UOTerrain::LoadTerrainLayerTexture` 0x004613b0; 0 in every shipped item.
-    #[serde(alias = "unk4")]
     pub source_kind: u8,
     /// The client's `stretch`: the UV scale is 1 / stretch, so it is the tile repeat (4, 16, 5, 1, 6, ...).
     pub texture_repetition: f32,
     /// Equals the item position in 625 of 657 shipped items (the rest are 4-item blocks `0, 1, 2, 4`); no terrain
     /// reader found.
-    #[serde(alias = "unk6")]
     pub sampler_index: u32,
     /// 0 in every shipped item.
-    #[serde(alias = "unk7")]
     pub uv_set: u32,
 }
 
@@ -273,58 +267,52 @@ impl TerrainDefinitionPrimaryLayerReason {
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct TerrainDefinitionTexture {
     /// Shader +0x04; no terrain reader, 0 in every shipped record.
-    #[serde(alias = "unk1")]
     pub field_04: u8,
     /// String index of the layer shader name.
-    #[serde(alias = "shader_name_id")]
     pub shader_name_index: u32,
     /// Resolved from `shader_name_index`.
     pub shader_name: Option<String>,
     /// The texture items (at most 255).
     pub layers: Vec<TerrainDefinitionTextureLayer>,
-    /// The shader techniques (`int[4]`; [`Self::techniques`]). The field keeps its old name because dynamapper
-    /// reads it.
-    pub unk8: Vec<i32>,
-    /// The shader tweaks (`float[4]`; [`Self::tweaks`]). The field keeps its old name because dynamapper reads it.
-    pub unk9: Vec<f32>,
+    /// The shader techniques (`int[4]`).
+    pub techniques: Vec<i32>,
+    /// The shader tweaks (`float[4]`).
+    pub tweaks: Vec<f32>,
 }
 
 impl TerrainDefinitionTexture {
     /// The shader technique values.
     pub fn techniques(&self) -> &[i32] {
-        &self.unk8
+        &self.techniques
     }
 
     pub fn techniques_mut(&mut self) -> &mut Vec<i32> {
-        &mut self.unk8
+        &mut self.techniques
     }
 
     /// The shader tweak values.
     pub fn tweaks(&self) -> &[f32] {
-        &self.unk9
+        &self.tweaks
     }
 
     pub fn tweaks_mut(&mut self) -> &mut Vec<f32> {
-        &mut self.unk9
+        &mut self.tweaks
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct TerrainDefinitionEntry {
     /// String index of the material name (`void_no_draw`, `grass`, ...).
-    #[serde(alias = "name_id")]
     pub name_index: u32,
     /// The material id; the entry name is `build/terraindefinition/{id}.bin`.
     pub id: u32,
     /// Object +0x34; no reader, 0.0 in every shipped record.
-    #[serde(alias = "unk")]
     pub field_34: f32,
-    /// The per-layer coverage exponent (object +0x38, [`Self::coverage_exponent`]; `UOTerrain::BuildTerrainCoverage`
-    /// 0x00461060): positive values expand ownership with distinct cardinal/diagonal bytes and blend softer and
-    /// wider; 0 keeps a binary mask (a hard edge). The field keeps its old name because dynamapper reads it.
-    pub unk2: f32,
+    /// The per-layer coverage exponent (object +0x38; `UOTerrain::BuildTerrainCoverage` 0x00461060): positive
+    /// values expand ownership with distinct cardinal/diagonal bytes and blend softer and wider; 0 keeps a binary
+    /// mask (a hard edge).
+    pub coverage_exponent: f32,
     /// Object +0x3c; no reader, 0.0 in every shipped record.
-    #[serde(alias = "unk3")]
     pub field_3c: f32,
     /// Resolved from `name_index`.
     pub name: Option<String>,
@@ -474,11 +462,11 @@ impl TerrainDefinitionEntry {
 
     /// The coverage exponent (object +0x38).
     pub fn coverage_exponent(&self) -> f32 {
-        self.unk2
+        self.coverage_exponent
     }
 
     pub fn set_coverage_exponent(&mut self, exponent: f32) {
-        self.unk2 = exponent;
+        self.coverage_exponent = exponent;
     }
 
     /// The alias of `subtype`, whose flags the cells naming it get.
@@ -526,7 +514,7 @@ impl TerrainDefinitionEntry {
             name_index,
             id,
             field_34,
-            unk2: coverage_exponent,
+            coverage_exponent,
             field_3c,
             name: None,
             aliases,
@@ -681,7 +669,7 @@ fn read_shader_block(reader: &mut Cursor<&[u8]>) -> eyre::Result<TerrainDefiniti
     for _ in 0..tweak_count {
         tweaks.push(reader.read_f32::<LittleEndian>()?);
     }
-    Ok(TerrainDefinitionTexture { field_04, shader_name_index, shader_name: None, layers, unk8: techniques, unk9: tweaks })
+    Ok(TerrainDefinitionTexture { field_04, shader_name_index, shader_name: None, layers, techniques, tweaks })
 }
 
 /// Parses an Enhanced Client entry and resolves its strings ([`parse_entry_dialect`]).
@@ -1012,7 +1000,7 @@ mod tests {
         TerrainDefinitionEntry {
             name_index: NAME_INDEX,
             id: MATERIAL,
-            unk2: COVERAGE_EXPONENT,
+            coverage_exponent: COVERAGE_EXPONENT,
             aliases: vec![
                 TerrainDefinitionTileAlias { subtype: 0, legacy_land_id: LEGACY_LAND, tile_flags: TERRAIN_FLAG_IMPASSABLE },
                 TerrainDefinitionTileAlias { subtype: 1, legacy_land_id: 0, tile_flags: TERRAIN_FLAG_NO_DRAW },
@@ -1025,8 +1013,8 @@ mod tests {
                     sampler_index: 0,
                     ..TerrainDefinitionTextureLayer::default()
                 }],
-                unk8: vec![0; SHADER_PARAMETER_COUNT],
-                unk9: vec![TWEAK, 0.0, 0.0, 0.0],
+                techniques: vec![0; SHADER_PARAMETER_COUNT],
+                tweaks: vec![TWEAK, 0.0, 0.0, 0.0],
                 ..TerrainDefinitionTexture::default()
             }),
             ..TerrainDefinitionEntry::default()
@@ -1073,7 +1061,7 @@ mod tests {
         let mut definition = definition();
         assert!(definition.validate().is_empty());
         definition.aliases[0].subtype = 1;
-        definition.texture.as_mut().unwrap().unk8.push(0);
+        definition.texture.as_mut().unwrap().techniques.push(0);
         let issues = definition.validate();
         assert!(issues.contains(&TerrainDefinitionIssue::NoBaseSubtype { material: MATERIAL }));
         assert!(issues.contains(&TerrainDefinitionIssue::DuplicateSubtype { material: MATERIAL, subtype: 1 }));

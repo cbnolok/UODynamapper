@@ -22,7 +22,7 @@ impl EcTerrainParams {
             "UOBumpMapTerrainLayer" => 3,
             _ => return None,
         };
-        let b = source.unk2;
+        let b = source.coverage_exponent();
         if !b.is_finite() { return None; }
         let weights = coverage_weights(b);
         let key = if class == 2 { id.checked_mul(1000)? } else { id };

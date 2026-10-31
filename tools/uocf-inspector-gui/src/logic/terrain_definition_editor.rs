@@ -233,8 +233,8 @@ mod tests {
             aliases: vec![TerrainDefinitionTileAlias { subtype: BASE_SUBTYPE, ..TerrainDefinitionTileAlias::default() }],
             texture: Some(TerrainDefinitionTexture {
                 shader_name_index,
-                unk8: vec![0; SHADER_PARAMETER_COUNT],
-                unk9: vec![0.0; SHADER_PARAMETER_COUNT],
+                techniques: vec![0; SHADER_PARAMETER_COUNT],
+                tweaks: vec![0.0; SHADER_PARAMETER_COUNT],
                 ..TerrainDefinitionTexture::default()
             }),
             ..TerrainDefinitionEntry::default()

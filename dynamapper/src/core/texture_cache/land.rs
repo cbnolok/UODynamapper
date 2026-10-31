@@ -915,9 +915,9 @@ fn create_land_shader_images(
                     // Original Technique[0] selects coordinates; Tweaks[0..2]
                     // scrolls the bump texture in UV units per second.
                     write_land_lookup_entry(&mut lookup_bytes, tile_id, LAND_PAGE_LOOKUP_ROLE_LIQUID_PARAMS, [
-                        source.unk8.first().copied().unwrap_or(0) as u32,
-                        source.unk9.first().copied().unwrap_or(0.0).to_bits(),
-                        source.unk9.get(1).copied().unwrap_or(0.0).to_bits(),
+                        source.techniques().first().copied().unwrap_or(0) as u32,
+                        source.tweaks().first().copied().unwrap_or(0.0).to_bits(),
+                        source.tweaks().get(1).copied().unwrap_or(0.0).to_bits(),
                         1,
                     ]);
                 }

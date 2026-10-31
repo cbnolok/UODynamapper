@@ -93,7 +93,7 @@ def main():
     masks = []
     for material_id in ids:
         material = materials[material_id]
-        parameter = material["unk2"]
+        parameter = material["coverage_exponent"]
         pixels = reconstruct_coverage(cells, material_id, parameter)
         masks.append((layer_sort_key(material), material_id, parameter, pixels))
     from PIL import Image
