@@ -20,7 +20,7 @@ gamebryo-nif = { path = "../gamebryo-nif" }
 particle-sim = { path = "../particle-sim", default-features = false, features = ["nif", "dds"] }
 serde_json.workspace = true
 image = { workspace = true, features = ["png", "tga"] }
-workspace-hack = { version = "0.1", path = "../../workspace-hack" }
+workspace-hack.workspace = true
 
 [dev-dependencies]
 # The ignored real-file test and the export example read EffectTexture.uop through uocf.

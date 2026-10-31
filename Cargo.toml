@@ -27,6 +27,10 @@ members = [
 ]
 
 [workspace.dependencies]
+# Members depend on the empty stub published on crates.io (exact version, so a later release can't change what external
+# users get). The [patch] below swaps in lib/workspace-hack, but only when building this workspace: projects that use
+# our crates as path or git dependencies get the stub, and none of the hack's feature unification.
+workspace-hack = "=0.1.0"
 zstd = { version = "0.13", features = ["zstdmt"] }
 eframe = { version = "0.37", default-features = false, features = ["clipboard", "default_fonts", "wayland", "wgpu", "x11", "persistence", "glow"] }
 egui = { version = "0.37", features = ["bytemuck"] }
@@ -63,6 +67,9 @@ rodio = { version = "0.22", default-features = false, features = ["playback"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 walkdir = "2.5.0"
+
+[patch.crates-io]
+workspace-hack = { path = "lib/workspace-hack" }
 
 [workspace.lints.clippy]
 collapsible_if = "allow"

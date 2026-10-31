@@ -44,7 +44,9 @@ just bevy-lint                                   # Bevy-specific lints
 
 **Feature unification (`lib/workspace-hack`)**: every member depends on the `workspace-hack` crate that cargo-hakari generates. It
 turns on the union of the third-party features, so the workspace build, `-p dynamapper` and each tool share one copy of each
-dependency instead of rebuilding it per feature set. After adding, removing or changing a dependency or its features, run
+dependency instead of rebuilding it per feature set. Members name it as `workspace-hack.workspace = true`, the empty stub
+on crates.io; the root `[patch.crates-io]` swaps in `lib/workspace-hack`, but only inside this workspace, so projects that
+use our crates as path or git dependencies don't inherit the unified features. After adding, removing or changing a dependency or its features, run
 `cargo hakari generate`; a new member also needs `cargo hakari manage-deps`. `.config/hakari.toml` lists the platforms, and the
 crates kept out because only opt-in features would pull them in (tracy, GPU profiling, vendored libjxl). Never set
 compile-time log level features (`log`/`tracing` `max_level_*`): unification would apply them to every tool.

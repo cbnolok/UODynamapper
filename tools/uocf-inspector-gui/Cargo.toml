@@ -44,4 +44,4 @@ color-eyre.workspace = true
 # Only for the Decode derives: their code names the knuffel crate. Parse through udd-kdl.
 knuffel.workspace = true
 log.workspace = true
-workspace-hack = { version = "0.1", path = "../../lib/workspace-hack" }
+workspace-hack.workspace = true

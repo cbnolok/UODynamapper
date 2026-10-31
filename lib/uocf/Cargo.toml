@@ -49,7 +49,7 @@ memmap2 = "0.9"
 udd-kdl = { path = "../udd-kdl" }
 # Diagnostic trait of knuffel's parse errors, read for their line and column.
 miette = { version = "5", default-features = false }
-workspace-hack = { version = "0.1", path = "../workspace-hack" }
+workspace-hack.workspace = true
 
 [dev-dependencies]
 rand = "*"

@@ -23,4 +23,4 @@ uocf = { path = "../../lib/uocf" }
 color-eyre.workspace = true
 log.workspace = true
 serde.workspace = true
-workspace-hack = { version = "0.1", path = "../../lib/workspace-hack" }
+workspace-hack.workspace = true

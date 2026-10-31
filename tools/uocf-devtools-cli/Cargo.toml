@@ -26,7 +26,7 @@ dds.workspace = true
 ddsfile.workspace = true
 log.workspace = true
 walkdir.workspace = true
-workspace-hack = { version = "0.1", path = "../../lib/workspace-hack" }
+workspace-hack.workspace = true
 
 [[bin]]
 name = "uocf-devtools-cli"
