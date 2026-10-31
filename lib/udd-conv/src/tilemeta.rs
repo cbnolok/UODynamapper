@@ -44,7 +44,7 @@ use uocf::classic::tiledata::{
     TileData, TILE_FLAG_ALPHA_BLEND, TILE_FLAG_MULTI_MOVABLE, TILE_FLAG_NO_DRAW, TILE_FLAG_NO_HOUSE,
     TILE_FLAG_NO_SHADOW, TILE_FLAG_PIXEL_BLEED, TILE_FLAG_PLAY_ANIM_ONCE, TILE_FLAG_ROTATED,
 };
-use uocf::enhanced::tileart::{ArtData, TaeFlag};
+use uocf::enhanced::tileart::{ArtData, TaeFlag, TextureItem};
 
 pub struct TileMetaBuildOptions {
     /// When `true`, use radar colors from `tileart.uop` (EC data).
@@ -156,6 +156,35 @@ mod tests {
             stable_role_for_tileart_texture_ref(&item, TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED),
             EcMaterialStableRole::Base
         );
+    }
+
+    #[test]
+    fn only_the_selected_block_zero_item_is_primary() {
+        // Owner 1364 (stone roof): its base also feeds sampler 2, and block 1 names
+        // LegacyTexture image 1364, the legacy art set's counterpart.
+        const BASE_ID: u32 = 1364;
+        const OTHER_ID: u32 = 1372;
+        let item = |block_index, item_index, id, texture_type, is_auxiliary| TextureItem {
+            block_index, item_index, id, texture_type, is_auxiliary, ..TextureItem::default()
+        };
+        let mut art = ArtData::default();
+        art.texture_items = vec![
+            vec![item(0, 0, BASE_ID, TextureType::WorldArt, true),
+                item(0, 1, BASE_ID, TextureType::WorldArt, false),
+                item(0, 2, OTHER_ID, TextureType::WorldArt, false),
+                item(0, 3, BASE_ID, TextureType::WorldArt, false)],
+            vec![item(1, 0, BASE_ID, TextureType::TileArtLegacy, false)],
+        ];
+        let primary = primary_ec_texture_item(&art, BASE_ID);
+        assert_eq!(primary, Some((0, 1)));
+        let flagged: Vec<(u8, u8)> = art.texture_items.iter().flatten()
+            .filter(|item| is_primary_selected_texture_item(item, primary, BASE_ID))
+            .map(|item| (item.block_index, item.item_index)).collect();
+        assert_eq!(flagged, [(0, 1), (1, 0)], "block 0 keeps only its selected item; the legacy counterpart stays primary");
+        art.texture_items[0].retain(|item| item.is_auxiliary || item.id != BASE_ID);
+        assert_eq!(primary_ec_texture_item(&art, BASE_ID), Some((0, 0)), "all-auxiliary block keeps its first item");
+        assert_eq!(primary_ec_texture_item(&art, 0), None);
+        assert_eq!(primary_ec_texture_item(&art, OTHER_ID + 1), None);
     }
 
     #[test]
@@ -525,12 +554,13 @@ fn build_tilemeta_tables_with_ec_sources(
                 tile_meta_item.cc_start_y = cc_tex.start_y as i16;
             }
 
+            let primary_item = primary_ec_texture_item(ec_data, tile_meta_item.ec_texture_id);
             item_texture_refs.extend(ec_data.texture_items.iter().flatten().map(|item| {
                 let mut flags = 0u8;
                 if item.is_auxiliary {
                     flags |= TILEMETA_ITEM_TEXTURE_FLAG_AUXILIARY;
                 }
-                if tile_meta_item.ec_texture_id != 0 && item.id == tile_meta_item.ec_texture_id {
+                if is_primary_selected_texture_item(item, primary_item, tile_meta_item.ec_texture_id) {
                     flags |= TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED;
                 }
 
@@ -636,6 +666,41 @@ fn ec_logical_family_as_material_u8(family: uocf::ec_material_axes::EcLogicalFam
         EcLogicalFamily::SystemTextures => EcMaterialLogicalFamily::SystemTextures as u8,
         EcLogicalFamily::ShaderResources => EcMaterialLogicalFamily::ShaderResources as u8,
     }
+}
+
+/// Texture block the EC primary image is selected from (`ArtData::ec_texture`, the first tileart block).
+const EC_PRIMARY_TEXTURE_BLOCK_INDEX: u8 = 0;
+
+/// Whether a texture ref gets `PRIMARY_SELECTED`.
+///
+/// In the EC block only the item `ec_texture_id` was selected from is primary. Another sampler of that
+/// block naming the same number reuses the base image as a support input (a terrain mask, say); flagged
+/// primary it would take the `Base` role, and `tex_aux_ec` skips `Base` images, which drops the runtime
+/// input. In the other blocks (the `TileArtLegacy`/`TileArtEnhanced` art sets) an item with the same
+/// number is that set's counterpart of the primary image and stays primary, as the main-texture
+/// selectors and the `tex_aux_ec` `Base` exclusion expect.
+fn is_primary_selected_texture_item(item: &TextureItem, primary_item: Option<(u8, u8)>, ec_texture_id: u32) -> bool {
+    if item.block_index == EC_PRIMARY_TEXTURE_BLOCK_INDEX {
+        primary_item == Some((item.block_index, item.item_index))
+    } else {
+        ec_texture_id != 0 && item.id == ec_texture_id
+    }
+}
+
+/// Returns `(block_index, item_index)` of the one texture item `ec_texture_id` was selected from.
+///
+/// The tileart parser takes the first non-auxiliary item of the first block, or the first item when
+/// all are auxiliary. Other items of that block may name the same number, as a sampler reusing the
+/// base image; those are support refs, not the selected primary.
+fn primary_ec_texture_item(ec_data: &ArtData, ec_texture_id: u32) -> Option<(u8, u8)> {
+    if ec_texture_id == 0 {
+        return None;
+    }
+    let mut candidates = ec_data.texture_items.iter().flatten()
+        .filter(|item| item.block_index == EC_PRIMARY_TEXTURE_BLOCK_INDEX && item.id == ec_texture_id);
+    let first = candidates.clone().next()?;
+    let primary = candidates.find(|item| !item.is_auxiliary).unwrap_or(first);
+    Some((primary.block_index, primary.item_index))
 }
 
 fn physical_package_for_tileart_texture_type(
