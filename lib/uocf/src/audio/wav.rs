@@ -303,6 +303,19 @@ pub(crate) mod tests {
         wav
     }
 
+    /// A canonical 22050 Hz mono WAV of `data` with another format tag and sample size.
+    pub(crate) fn wav_with_format(format_tag: u16, bits: u16, data: &[u8]) -> Vec<u8> {
+        const SAMPLE_RATE: u32 = 22_050;
+        let fmt = RIFF_HEADER_SIZE + CHUNK_HEADER_SIZE;
+        let block = bits.div_ceil(BITS_PER_BYTE);
+        let mut wav = encode_pcm_wav(SAMPLE_RATE, 1, data);
+        wav[fmt..fmt + size_of::<u16>()].copy_from_slice(&format_tag.to_le_bytes());
+        wav[fmt + FMT_BYTE_RATE_OFFSET..fmt + FMT_BLOCK_ALIGN_OFFSET].copy_from_slice(&(SAMPLE_RATE * u32::from(block)).to_le_bytes());
+        wav[fmt + FMT_BLOCK_ALIGN_OFFSET..fmt + FMT_BITS_OFFSET].copy_from_slice(&block.to_le_bytes());
+        wav[fmt + FMT_BITS_OFFSET..fmt + FMT_PCM_SIZE as usize].copy_from_slice(&bits.to_le_bytes());
+        wav
+    }
+
     #[test]
     fn walks_chunks_with_an_unpadded_odd_chunk() {
         let pcm = [1u8, 0, 2, 0, 3, 0];

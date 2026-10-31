@@ -1,5 +1,6 @@
 //! Decoding audio payloads to interleaved 16-bit PCM ([`decode`]): MP3 through Symphonia (pure Rust, so it builds
-//! on every release target, the static musl CLI builds included), PCM WAV and Classic PCM directly.
+//! on every release target, the static musl CLI builds included), WAV (integer PCM of 8, 16, 24 or 32 bits, IEEE
+//! float of 32 or 64 bits, plain or `WAVE_FORMAT_EXTENSIBLE`) and Classic PCM directly.
 
 use std::io::Cursor;
 
@@ -12,7 +13,7 @@ use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
 use super::mp3::MpegLayer;
-use super::wav::{WavAnalysis, PCM_WAV_BITS_PER_SAMPLE};
+use super::wav::{WavAnalysis, PCM_WAV_BITS_PER_SAMPLE, WAVE_FORMAT_IEEE_FLOAT};
 use super::AudioContent;
 use crate::classic::sound::{CHANNELS as CLASSIC_CHANNELS, SAMPLE_RATE as CLASSIC_RATE};
 
@@ -25,6 +26,16 @@ const PCM8_MIDPOINT: i16 = 128;
 const PCM8_TO_16_SHIFT: u32 = 8;
 const PCM8_BITS: u16 = 8;
 const PCM16_BYTES: usize = 2;
+const PCM24_BITS: u16 = 24;
+const PCM24_BYTES: usize = 3;
+const PCM32_BITS: u16 = 32;
+const PCM32_BYTES: usize = 4;
+const FLOAT64_BITS: u16 = 64;
+const FLOAT64_BYTES: usize = 8;
+/// The bits a 32-bit sample (or a 24-bit one in the top bytes of 32) loses to fit 16 bits.
+const PCM32_TO_16_SHIFT: u32 = 16;
+/// Full scale of a 16-bit sample, for float samples (clamped to -1.0..1.0).
+const PCM16_FULL_SCALE: f64 = i16::MAX as f64;
 
 /// Interleaved 16-bit samples.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,17 +94,41 @@ pub fn decode_classic_pcm(pcm: &[u8]) -> DecodedAudio {
     }
 }
 
-/// Integer PCM WAV of 8 or 16 bits.
+/// A float sample scaled to 16 bits.
+fn float_to_pcm16(sample: f64) -> i16 {
+    (sample.clamp(-1.0, 1.0) * PCM16_FULL_SCALE).round() as i16
+}
+
+/// WAV of integer PCM (8, 16, 24 or 32 bits) or IEEE float (32 or 64 bits). Samples wider than 16 bits keep their
+/// top 16 bits; float samples are clamped to -1.0..1.0 and rounded.
 pub fn decode_wav(payload: &[u8], analysis: &WavAnalysis) -> eyre::Result<DecodedAudio> {
     let format = analysis.format.ok_or_else(|| eyre!("WAV without a fmt chunk"))?;
     let data = analysis.data(payload).ok_or_else(|| eyre!("WAV without a data chunk"))?;
-    if !format.is_pcm() || format.channels == 0 {
+    if format.channels == 0 {
         eyre::bail!("unsupported WAV format: {}", format.label());
     }
-    let samples = match format.bits_per_sample {
-        PCM8_BITS => data.iter().map(|&byte| (i16::from(byte) - PCM8_MIDPOINT) << PCM8_TO_16_SHIFT).collect(),
-        PCM_WAV_BITS_PER_SAMPLE => data.chunks_exact(PCM16_BYTES).map(|pair| i16::from_le_bytes([pair[0], pair[1]])).collect(),
-        bits => eyre::bail!("unsupported WAV sample size: {bits} bit"),
+    let samples: Vec<i16> = match (format.is_pcm(), format.effective_tag() == WAVE_FORMAT_IEEE_FLOAT, format.bits_per_sample) {
+        (true, _, PCM8_BITS) => data.iter().map(|&byte| (i16::from(byte) - PCM8_MIDPOINT) << PCM8_TO_16_SHIFT).collect(),
+        (true, _, PCM_WAV_BITS_PER_SAMPLE) => {
+            data.chunks_exact(PCM16_BYTES).map(|pair| i16::from_le_bytes([pair[0], pair[1]])).collect()
+        }
+        (true, _, PCM24_BITS) => data
+            .chunks_exact(PCM24_BYTES)
+            .map(|triple| (i32::from_le_bytes([0, triple[0], triple[1], triple[2]]) >> PCM32_TO_16_SHIFT) as i16)
+            .collect(),
+        (true, _, PCM32_BITS) => data
+            .chunks_exact(PCM32_BYTES)
+            .map(|quad| (i32::from_le_bytes(quad.try_into().expect("four bytes")) >> PCM32_TO_16_SHIFT) as i16)
+            .collect(),
+        (_, true, PCM32_BITS) => data
+            .chunks_exact(PCM32_BYTES)
+            .map(|quad| float_to_pcm16(f64::from(f32::from_le_bytes(quad.try_into().expect("four bytes")))))
+            .collect(),
+        (_, true, FLOAT64_BITS) => data
+            .chunks_exact(FLOAT64_BYTES)
+            .map(|octet| float_to_pcm16(f64::from_le_bytes(octet.try_into().expect("eight bytes"))))
+            .collect(),
+        _ => eyre::bail!("unsupported WAV format: {}", format.label()),
     };
     Ok(DecodedAudio { sample_rate: format.sample_rate, channels: format.channels, samples, skipped_packets: 0 })
 }
@@ -178,6 +213,28 @@ mod tests {
         assert_eq!((decoded.sample_rate, decoded.channels), (22_050, 1));
         assert_eq!(decoded.frames(), analysis.samples());
         assert!(decoded.samples.iter().all(|&sample| sample == 0));
+    }
+
+    #[test]
+    fn decodes_wide_and_float_wav_samples() {
+        let pcm24: Vec<u8> = [0x7f_ffffi32, -0x80_0000, 0x00_0100].iter().flat_map(|sample| sample.to_le_bytes()[..3].to_vec()).collect();
+        let wav = wav::tests::wav_with_format(wav::WAVE_FORMAT_PCM, 24, &pcm24);
+        assert_eq!(decode(&wav, &probe_audio(&wav)).unwrap().samples, [i16::MAX, i16::MIN, 1]);
+
+        let pcm32: Vec<u8> = [0x7fff_0000i32, -0x8000_0000].iter().flat_map(|sample| sample.to_le_bytes()).collect();
+        let wav = wav::tests::wav_with_format(wav::WAVE_FORMAT_PCM, 32, &pcm32);
+        assert_eq!(decode(&wav, &probe_audio(&wav)).unwrap().samples, [i16::MAX, i16::MIN]);
+
+        let float: Vec<u8> = [1.5f32, -1.0, 0.5].iter().flat_map(|sample| sample.to_le_bytes()).collect();
+        let wav = wav::tests::wav_with_format(wav::WAVE_FORMAT_IEEE_FLOAT, 32, &float);
+        assert_eq!(decode(&wav, &probe_audio(&wav)).unwrap().samples, [i16::MAX, -i16::MAX, 16_384]);
+
+        let double: Vec<u8> = [-0.25f64].iter().flat_map(|sample| sample.to_le_bytes()).collect();
+        let wav = wav::tests::wav_with_format(wav::WAVE_FORMAT_IEEE_FLOAT, 64, &double);
+        assert_eq!(decode(&wav, &probe_audio(&wav)).unwrap().samples, [-8_192]);
+
+        let wav = wav::tests::wav_with_format(wav::WAVE_FORMAT_ADPCM, 4, &[0, 0]);
+        assert!(decode(&wav, &probe_audio(&wav)).is_err());
     }
 
     #[test]

@@ -1,11 +1,14 @@
 //! Audio in the client files, shared by the Classic, Kingdom Reborn and Enhanced readers: what a payload holds by
 //! its bytes alone ([`probe_audio`]: MPEG audio with its tags and info header, RIFF WAVE with its chunks, OGG, Bink
-//! video, text), decoding to 16-bit PCM ([`decode`]), and the census of a client's audio files ([`census`]).
+//! video, text), decoding to 16-bit PCM ([`decode`]), the census of a client's audio files ([`census`]), the formats
+//! the Enhanced Client is known to play ([`validate`]) and conversions to them ([`convert`]).
 //! `docs/agent_notes/ec_audio_formats.md` summarizes what the shipped clients hold.
 
 pub mod census;
+pub mod convert;
 pub mod decode;
 pub mod mp3;
+pub mod validate;
 pub mod wav;
 
 use crate::classic::sound::{BITS_PER_SAMPLE as CLASSIC_BITS, CHANNELS as CLASSIC_CHANNELS, SAMPLE_RATE as CLASSIC_RATE};

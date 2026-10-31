@@ -22,6 +22,7 @@ pub mod gump;
 pub mod map_statics_diff;
 pub mod facet_sources;
 pub mod sound;
+pub mod sound_edit;
 pub mod audio_def;
 pub mod music;
 pub mod vd_codec;

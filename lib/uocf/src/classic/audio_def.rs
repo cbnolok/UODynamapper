@@ -20,6 +20,11 @@
 //! [`DefTranslation::unclosed`] group of every integer up to the line end (331 and 0), the first slot of which is
 //! the one played; how the client reads it is not known. `Music.def` holds the single line `0 {0} 0` without a
 //! line end. Comments, blank lines with spaces and anything else are errors: the shipped files have none.
+//!
+//! [`DefTranslationTable::to_text`] writes a table back in the shipped form: lines in file order (blank lines kept),
+//! `id {target} extra` with `, ` between several targets, an unclosed group as read (`805 {331 0`), the file's line
+//! end (that of its first line; CRLF for a file of one line) and its final line end or none. Every shipped
+//! `Sound.def` and `Music.def` round-trips byte for byte; other spacing is normalized.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -34,6 +39,11 @@ const GROUP_SEPARATOR: char = ',';
 const NEGATIVE_SIGN: char = '-';
 /// The target naming no slot.
 pub const NO_TARGET: i32 = -1;
+const CRLF: &str = "\r\n";
+const LF: &str = "\n";
+/// Between several targets of a closed group, and of an unclosed one.
+const TARGET_JOINER: &str = ", ";
+const UNCLOSED_TARGET_JOINER: &str = " ";
 
 /// One line of a `.def` translation table.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,8 +54,15 @@ pub struct DefTranslation {
     pub extra: Option<i32>,
     /// The group has no `}`: the targets run to the line end.
     pub unclosed: bool,
-    /// The 1-based line number.
+    /// The 1-based line number in the parsed file; 0 for an entry set after parsing.
     pub line: usize,
+}
+
+/// One line of the file, for writing it back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DefLine {
+    Entry(u32),
+    Blank,
 }
 
 impl DefTranslation {
@@ -53,12 +70,30 @@ impl DefTranslation {
     pub fn slots(&self) -> impl Iterator<Item = u32> + '_ {
         self.targets.iter().filter_map(|&target| u32::try_from(target).ok())
     }
+
+    /// The line as the table writes it.
+    pub fn to_line(&self) -> String {
+        let join = |joiner: &str| self.targets.iter().map(i32::to_string).collect::<Vec<_>>().join(joiner);
+        match self.extra {
+            Some(extra) if !self.unclosed => format!("{} {GROUP_OPEN}{}{GROUP_CLOSE} {extra}", self.id, join(TARGET_JOINER)),
+            _ => format!("{} {GROUP_OPEN}{}", self.id, join(UNCLOSED_TARGET_JOINER)),
+        }
+    }
 }
 
-/// The translations of a `Sound.def` or `Music.def`, by id.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// The translations of a `Sound.def` or `Music.def`, by id, with the layout of the file they were read from.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DefTranslationTable {
     entries: BTreeMap<u32, DefTranslation>,
+    lines: Vec<DefLine>,
+    line_end: &'static str,
+    final_line_end: bool,
+}
+
+impl Default for DefTranslationTable {
+    fn default() -> Self {
+        Self { entries: BTreeMap::new(), lines: Vec::new(), line_end: CRLF, final_line_end: true }
+    }
 }
 
 impl DefTranslationTable {
@@ -74,10 +109,18 @@ impl DefTranslationTable {
     /// Parses `text`; errors name `source`, the line and the column.
     pub fn parse(source: &str, text: &str) -> eyre::Result<Self> {
         let mut entries: BTreeMap<u32, DefTranslation> = BTreeMap::new();
-        for (index, raw) in text.split('\n').enumerate() {
+        let mut lines = Vec::new();
+        let final_line_end = text.ends_with(LF);
+        let body = text.strip_suffix(LF).unwrap_or(text);
+        let line_end = match text.find(LF) {
+            Some(end) if !text[..end].ends_with('\r') => LF,
+            _ => CRLF,
+        };
+        for (index, raw) in body.split(LF).enumerate().filter(|_| !text.is_empty()) {
             let line_number = index + 1;
             let line = raw.strip_suffix('\r').unwrap_or(raw);
             if line.is_empty() {
+                lines.push(DefLine::Blank);
                 continue;
             }
             let entry = parse_line(line, line_number).map_err(|(column, message)| {
@@ -86,9 +129,58 @@ impl DefTranslationTable {
             if let Some(previous) = entries.get(&entry.id) {
                 eyre::bail!("{source}:{line_number}:1: id {} is already defined on line {}", entry.id, previous.line);
             }
+            lines.push(DefLine::Entry(entry.id));
             entries.insert(entry.id, entry);
         }
-        Ok(Self { entries })
+        Ok(Self { entries, lines, line_end, final_line_end })
+    }
+
+    /// The text of the table (see the module documentation).
+    pub fn to_text(&self) -> String {
+        let lines: Vec<String> = self
+            .lines
+            .iter()
+            .map(|line| match line {
+                DefLine::Entry(id) => self.entries[id].to_line(),
+                DefLine::Blank => String::new(),
+            })
+            .collect();
+        let mut text = lines.join(self.line_end);
+        if self.final_line_end && !lines.is_empty() {
+            text.push_str(self.line_end);
+        }
+        text
+    }
+
+    /// Writes [`Self::to_text`] to `path`.
+    pub fn save(&self, path: &Path) -> eyre::Result<()> {
+        std::fs::write(path, self.to_text()).wrap_err_with(|| format!("Failed to write {}", path.display()))
+    }
+
+    /// Sets the closed group of `id`: in its line when it has one, else in a new line before the first entry of a
+    /// greater id (after the last entry when none is greater).
+    pub fn set(&mut self, id: u32, targets: Vec<i32>, extra: i32) -> eyre::Result<()> {
+        if targets.is_empty() {
+            eyre::bail!("id {id}: a group needs a target");
+        }
+        let line = self.entries.get(&id).map_or(0, |entry| entry.line);
+        if !self.entries.contains_key(&id) {
+            let position = self
+                .lines
+                .iter()
+                .position(|line| matches!(line, DefLine::Entry(other) if *other > id))
+                .or_else(|| self.lines.iter().rposition(|line| matches!(line, DefLine::Entry(_))).map(|last| last + 1))
+                .unwrap_or(0);
+            self.lines.insert(position, DefLine::Entry(id));
+        }
+        self.entries.insert(id, DefTranslation { id, targets, extra: Some(extra), unclosed: false, line });
+        Ok(())
+    }
+
+    /// Removes the line of `id`; returns whether it had one.
+    pub fn remove(&mut self, id: u32) -> bool {
+        self.lines.retain(|line| *line != DefLine::Entry(id));
+        self.entries.remove(&id).is_some()
     }
 
     pub fn len(&self) -> usize {
@@ -232,6 +324,33 @@ mod tests {
         assert_eq!((unclosed.targets.as_slice(), unclosed.extra, unclosed.unclosed), (&[331, 0][..], None, true));
         let music = DefTranslationTable::parse("Music.def", "0 {0} 0").unwrap();
         assert_eq!(music.get(0).unwrap().targets, [0]);
+    }
+
+    #[test]
+    fn writes_the_shipped_layout_back() {
+        for text in [
+            "654 {487} 0\r\n778 {-1} 0\r\n805 {331 0\r\n1440 {-1} 0\r\n\r\n",
+            "654 {487} 0\r\n805 {331 0\r\n",
+            "0 {0} 0",
+            "1 {2, 3} 0\n2 {4} 1\n",
+            "",
+        ] {
+            assert_eq!(DefTranslationTable::parse("Sound.def", text).unwrap().to_text(), text);
+        }
+        let spaced = DefTranslationTable::parse("Sound.def", "1  {2 ,3}\t0\r\n").unwrap();
+        assert_eq!(spaced.to_text(), "1 {2, 3} 0\r\n", "other spacing is normalized");
+
+        let mut table = DefTranslationTable::parse("Sound.def", "10 {1} 0\r\n30 {3} 0\r\n\r\n").unwrap();
+        table.set(20, vec![2], 0).unwrap();
+        table.set(40, vec![NO_TARGET], 0).unwrap();
+        table.set(5, vec![0, 9], 0).unwrap();
+        table.set(10, vec![11], 1).unwrap();
+        assert!(table.remove(30) && !table.remove(30));
+        assert_eq!(table.to_text(), "5 {0, 9} 0\r\n10 {11} 1\r\n20 {2} 0\r\n40 {-1} 0\r\n\r\n");
+        assert!(table.set(1, Vec::new(), 0).is_err());
+        let mut empty = DefTranslationTable::default();
+        empty.set(0, vec![0], 0).unwrap();
+        assert_eq!(empty.to_text(), "0 {0} 0\r\n");
     }
 
     #[test]

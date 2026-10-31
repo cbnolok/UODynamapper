@@ -13,7 +13,8 @@
 //! music ids from 10000): [`AudioTables::KingdomReborn`] keeps them unread, and its entries are reached by name.
 //!
 //! Entries keep their stored bytes and compression flag ([`AudioEntry::stored`]), so a replacement can be written
-//! with the original flag.
+//! with the original flag ([`crate::enhanced::audio_edit`]). [`write_table`] writes a table back: header and rows in
+//! id order, each ended by CRLF, which reproduces the shipped tables byte for byte.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -44,6 +45,15 @@ const KR_COMMENT_MARK: char = ';';
 const FIELD_SEPARATOR: char = ',';
 const LOOP_OFF: &str = "0";
 const LOOP_ON: &str = "1";
+const TABLE_LINE_END: &str = "\r\n";
+/// How the sound table's paths start, and their separator.
+pub const SOUND_PATH_ROOT: &str = "Sounds\\";
+pub const SOUND_PATH_SEPARATOR: char = '\\';
+/// How the music table's paths start, and their separator.
+pub const MUSIC_PATH_ROOT: &str = "Music/";
+pub const MUSIC_PATH_SEPARATOR: char = '/';
+/// The extension of every path of the shipped tables.
+pub const TABLE_PATH_EXTENSION: &str = ".mp3";
 
 /// The entry name a table path stands for: [`AUDIO_ENTRY_ROOT`] and the path lowercased with `/` separators.
 pub fn table_path_entry_name(path: &str) -> String {
@@ -135,6 +145,70 @@ pub fn parse_table(source: &str, text: &str, header: &str, with_loop: bool) -> e
     Ok(rows)
 }
 
+/// The text of a table: `header`, then one row per id in id order (`id,path`, `id,path,0|1` with `with_loop`), each
+/// line ended by CRLF.
+pub fn write_table(header: &str, rows: &BTreeMap<u32, AudioTableRow>, with_loop: bool) -> String {
+    let mut text = format!("{header}{TABLE_LINE_END}");
+    for row in rows.values() {
+        text.push_str(&format!("{}{FIELD_SEPARATOR}{}", row.id, row.path));
+        if with_loop {
+            let flag = if row.loops == Some(true) { LOOP_ON } else { LOOP_OFF };
+            text.push_str(&format!("{FIELD_SEPARATOR}{flag}"));
+        }
+        text.push_str(TABLE_LINE_END);
+    }
+    text
+}
+
+/// Checks a path for a new row of the sound table (`music` false) or of the music table, by the shipped rows'
+/// rules: `Sounds\` and `\` separators, or `Music/` and `/` separators; the `.mp3` extension (any case); printable
+/// ASCII without commas.
+pub fn check_table_path(path: &str, music: bool) -> eyre::Result<()> {
+    let (root, separator, other) = if music {
+        (MUSIC_PATH_ROOT, MUSIC_PATH_SEPARATOR, SOUND_PATH_SEPARATOR)
+    } else {
+        (SOUND_PATH_ROOT, SOUND_PATH_SEPARATOR, MUSIC_PATH_SEPARATOR)
+    };
+    let table = if music { MUSIC_TABLE_ENTRY } else { SOUND_TABLE_ENTRY };
+    let lower = path.to_ascii_lowercase();
+    if !lower.starts_with(&root.to_ascii_lowercase()) || lower.len() <= root.len() {
+        eyre::bail!("`{path}`: the paths of {table} start with `{root}`");
+    }
+    if path.contains(other) {
+        eyre::bail!("`{path}`: the paths of {table} separate folders with `{separator}`");
+    }
+    if !lower.ends_with(TABLE_PATH_EXTENSION) {
+        eyre::bail!("`{path}`: every path of {table} names a {TABLE_PATH_EXTENSION} file");
+    }
+    if let Some(bad) = path.chars().find(|&c| c == FIELD_SEPARATOR || !(' '..='~').contains(&c)) {
+        eyre::bail!("`{path}`: `{}` is not allowed in a table path (printable ASCII without commas)", bad.escape_default());
+    }
+    Ok(())
+}
+
+/// The tables of `package`, read from `path`.
+pub(crate) fn read_tables(package: &UopPackage, path: &Path) -> eyre::Result<AudioTables> {
+    let read_table = |name: &str| -> eyre::Result<Option<String>> {
+        let Some(bytes) = package.unpack_file_by_hash(hash_file_name_single(name))? else {
+            return Ok(None);
+        };
+        String::from_utf8(bytes).map(Some).map_err(|_| eyre!("{}:{name}: not UTF-8", path.display()))
+    };
+    let source = |name: &str| format!("{}:{name}", path.display());
+    Ok(match read_table(SOUND_TABLE_ENTRY)? {
+        None => AudioTables::Missing,
+        Some(text) if is_kingdom_reborn_table(&text) => AudioTables::KingdomReborn,
+        Some(text) => {
+            let sounds = parse_table(&source(SOUND_TABLE_ENTRY), &text, SOUND_TABLE_HEADER, false)?;
+            let music = match read_table(MUSIC_TABLE_ENTRY)? {
+                Some(text) => parse_table(&source(MUSIC_TABLE_ENTRY), &text, MUSIC_TABLE_HEADER, true)?,
+                None => BTreeMap::new(),
+            };
+            AudioTables::Enhanced { sounds, music }
+        }
+    })
+}
+
 fn is_kingdom_reborn_table(text: &str) -> bool {
     let first = text.lines().next().unwrap_or_default();
     first.starts_with(KR_SOUND_HEADER_START) || first.starts_with(KR_COMMENT_MARK)
@@ -180,25 +254,7 @@ impl AudioPackage {
 
     pub fn load_file(path: &Path) -> eyre::Result<Self> {
         let package = UopPackage::load_with_mode(path, LoadMode::Lazy).wrap_err_with(|| format!("Failed to load {}", path.display()))?;
-        let read_table = |name: &str| -> eyre::Result<Option<String>> {
-            let Some(bytes) = package.unpack_file_by_hash(hash_file_name_single(name))? else {
-                return Ok(None);
-            };
-            String::from_utf8(bytes).map(Some).map_err(|_| eyre!("{}:{name}: not UTF-8", path.display()))
-        };
-        let source = |name: &str| format!("{}:{name}", path.display());
-        let tables = match read_table(SOUND_TABLE_ENTRY)? {
-            None => AudioTables::Missing,
-            Some(text) if is_kingdom_reborn_table(&text) => AudioTables::KingdomReborn,
-            Some(text) => {
-                let sounds = parse_table(&source(SOUND_TABLE_ENTRY), &text, SOUND_TABLE_HEADER, false)?;
-                let music = match read_table(MUSIC_TABLE_ENTRY)? {
-                    Some(text) => parse_table(&source(MUSIC_TABLE_ENTRY), &text, MUSIC_TABLE_HEADER, true)?,
-                    None => BTreeMap::new(),
-                };
-                AudioTables::Enhanced { sounds, music }
-            }
-        };
+        let tables = read_tables(&package, path)?;
         let mut names = HashMap::new();
         for name in [SOUND_TABLE_ENTRY, MUSIC_TABLE_ENTRY] {
             names.insert(hash_file_name_single(name), name.to_owned());
@@ -336,6 +392,27 @@ mod tests {
         assert!(error("#ID,FilePath\n1,a\n1,b\n", SOUND_TABLE_HEADER, false).contains("already defined on line 2"));
         assert!(is_kingdom_reborn_table("w,s,id,filename,rate\n"));
         assert!(is_kingdom_reborn_table(";,,Music start ID: 10000\n"));
+    }
+
+    #[test]
+    fn writes_tables_back_and_checks_new_paths() {
+        let text = "#ID,FilePath\r\n0,Sounds\\a\\b.mp3\r\n7,Sounds\\flame04 .mp3\r\n";
+        let rows = parse_table("s.csv", text, SOUND_TABLE_HEADER, false).unwrap();
+        assert_eq!(write_table(SOUND_TABLE_HEADER, &rows, false), text);
+        let music = "#ID,FilePath,Loop\r\n0,Music/turfin.mp3,1\r\n1,Music/x.mp3,0\r\n";
+        let rows = parse_table("m.csv", music, MUSIC_TABLE_HEADER, true).unwrap();
+        assert_eq!(write_table(MUSIC_TABLE_HEADER, &rows, true), music);
+        let lf = parse_table("m.csv", "#ID,FilePath,Loop\n1,Music/x.mp3,0\n\n0,Music/turfin.mp3,1", MUSIC_TABLE_HEADER, true).unwrap();
+        assert_eq!(write_table(MUSIC_TABLE_HEADER, &lf, true), music, "LF, blank lines and order are normalized");
+
+        check_table_path("Sounds\\custom\\bell.mp3", false).unwrap();
+        check_table_path("Music/custom.MP3", true).unwrap();
+        let error = |path: &str, music: bool| check_table_path(path, music).unwrap_err().to_string();
+        assert!(error("Music/x.mp3", false).contains("start with `Sounds\\`"));
+        assert!(error("Sounds\\a/b.mp3", false).contains("separate folders with `\\`"));
+        assert!(error("Music/x.wav", true).contains(".mp3 file"));
+        assert!(error("Music/a,b.mp3", true).contains("`,` is not allowed"));
+        assert!(error("Sounds\\", false).contains("start with"));
         assert!(!is_kingdom_reborn_table("#ID,FilePath\r\n"));
     }
 }
