@@ -468,12 +468,6 @@ pub fn write_ec_terrain_practical_review(
         }
 
         if let Some(manual_override) = manual_override {
-            if !manual_override.policies.is_empty() {
-                findings.push("manual_policy_override_present".to_string());
-            }
-            if manual_override.liquid.is_some() {
-                findings.push("manual_liquid_override_present".to_string());
-            }
             if !manual_override.layers.is_empty() {
                 findings.push("manual_layer_override_present".to_string());
             }
@@ -1839,24 +1833,9 @@ struct TerrainLayerReport {
 #[derive(Serialize)]
 struct TerrainDefinitionOverrideEntryReport {
     action_count: usize,
-    policies: Vec<TerrainDefinitionPolicyOverrideReport>,
-    liquid: Option<TerrainDefinitionLiquidOverrideReport>,
     layers: Vec<TerrainDefinitionLayerOverrideReport>,
     textures: Vec<TerrainDefinitionTextureOverrideReport>,
     ignore_reason_code: Option<String>,
-}
-
-#[derive(Serialize)]
-struct TerrainDefinitionPolicyOverrideReport {
-    policy: String,
-    reason_code: Option<String>,
-}
-
-#[derive(Serialize)]
-struct TerrainDefinitionLiquidOverrideReport {
-    speed: Option<f32>,
-    waveheight: Option<f32>,
-    reason_code: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -2600,22 +2579,6 @@ fn terrain_definition_override_entry_report(
 ) -> TerrainDefinitionOverrideEntryReport {
     TerrainDefinitionOverrideEntryReport {
         action_count: entry.active_action_count(),
-        policies: entry
-            .policies
-            .iter()
-            .map(|policy| TerrainDefinitionPolicyOverrideReport {
-                policy: policy.policy.clone(),
-                reason_code: policy.code.clone(),
-            })
-            .collect(),
-        liquid: entry
-            .liquid
-            .as_ref()
-            .map(|liquid| TerrainDefinitionLiquidOverrideReport {
-                speed: liquid.speed,
-                waveheight: liquid.waveheight,
-                reason_code: liquid.code.clone(),
-            }),
         layers: entry
             .layers
             .iter()
@@ -2721,12 +2684,6 @@ fn terrain_resolved_override_texture_reports(
 
 fn terrain_override_action_flags_vec(flags: u16) -> Vec<&'static str> {
     let mut names = Vec::new();
-    if flags & udd_assets::tex_land_ec::TERRAIN_OVERRIDE_ACTION_POLICY != 0 {
-        names.push("policy");
-    }
-    if flags & udd_assets::tex_land_ec::TERRAIN_OVERRIDE_ACTION_LIQUID != 0 {
-        names.push("liquid");
-    }
     if flags & udd_assets::tex_land_ec::TERRAIN_OVERRIDE_ACTION_LAYER != 0 {
         names.push("layer");
     }
@@ -2848,10 +2805,7 @@ fn terrain_practical_review_priority(findings: &[String]) -> &'static str {
     } else if findings.iter().any(|finding| {
         matches!(
             finding.as_str(),
-            "manual_layer_override_present"
-                | "manual_texture_override_present"
-                | "manual_policy_override_present"
-                | "manual_liquid_override_present"
+            "manual_layer_override_present" | "manual_texture_override_present"
         )
     }) {
         "runtime_integration"
@@ -2885,10 +2839,6 @@ fn terrain_practical_review_next_action_for_findings(findings: &[String]) -> &'s
         finding == "manual_layer_override_present" || finding == "manual_texture_override_present"
     }) {
         "wire reviewed texture/layer override into runtime material resolver"
-    } else if findings.iter().any(|finding| {
-        finding == "manual_policy_override_present" || finding == "manual_liquid_override_present"
-    }) {
-        "wire reviewed policy metadata into runtime material/effect resolver"
     } else {
         "keep as selection audit evidence; no manual override is required yet"
     }
@@ -2935,36 +2885,8 @@ fn terrain_override_findings(
         findings.push(terrain_override_finding(
             "ignore",
             "ignore_conflicts_with_actions",
-            "ignore should not be combined with policy, liquid, layer, or texture overrides",
+            "ignore should not be combined with layer or texture overrides",
         ));
-    }
-
-    for policy in &terrain.policies {
-        if accepted_terrain_policy(&policy.policy) {
-            findings.push(terrain_override_finding(
-                "policy",
-                "valid_policy",
-                format!("policy={}", policy.policy),
-            ));
-        } else {
-            findings.push(terrain_override_finding(
-                "policy",
-                "unknown_policy",
-                format!("policy={}", policy.policy),
-            ));
-        }
-        findings.extend(terrain_override_code_findings("policy.code", policy.code.as_deref()));
-    }
-
-    if let Some(liquid) = &terrain.liquid {
-        if liquid.speed.is_none() && liquid.waveheight.is_none() {
-            findings.push(terrain_override_finding(
-                "liquid",
-                "empty_liquid_override",
-                "liquid override has neither speed nor waveheight",
-            ));
-        }
-        findings.extend(terrain_override_code_findings("liquid.code", liquid.code.as_deref()));
     }
 
     for layer in &terrain.layers {
@@ -3083,15 +3005,9 @@ fn terrain_override_code_findings(
 }
 
 fn terrain_override_action_count(terrain: &EcTerrainOverrideTerrainEntry) -> usize {
-    terrain.policies.len()
-        + usize::from(terrain.liquid.is_some())
-        + terrain.layers.len()
+    terrain.layers.len()
         + terrain.textures.len()
         + usize::from(terrain.ignore.is_some())
-}
-
-fn accepted_terrain_policy(policy: &str) -> bool {
-    matches!(policy, "single")
 }
 
 fn accepted_terrain_layer_role(role: &str) -> bool {
@@ -3108,10 +3024,7 @@ fn accepted_terrain_texture_role(role: &str) -> bool {
 fn accepted_terrain_override_code(code: &str) -> bool {
     matches!(
         code,
-        "reviewed_runtime_policy"
-            | "reviewed_single_policy"
-            | "reviewed_liquid_motion"
-            | "reviewed_layer_texture"
+        "reviewed_layer_texture"
             | "reviewed_mask_texture"
             | "reviewed_normal_texture"
             | "reviewed_textureid"

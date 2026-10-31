@@ -26,32 +26,13 @@
 //
 // Supported child nodes:
 //
-// 1. `policy`
+// There are no `policy` or `liquid` nodes. Neither had a client basis: edge
+// softness is each material's TerrainDefinition.uop `coverage_exponent` (no
+// "smooth" policy), and a water material scrolls its distortion map (item 0) by
+// its tweaks 0/1 per second (UOWaterTerrainLayer::Draw; no "follow-center"
+// policy, no liquid speed or wave height). The renderer reads both directly.
 //
-//     policy "KEYWORD" code="reason_code"
-//
-// - Argument: policy keyword string. No keyword is currently read.
-// - There is no "follow-center" policy: the client scrolls a water material's
-//   distortion map (item 0) by its TerrainDefinition.uop tweaks 0/1 per second
-//   (UOWaterTerrainLayer::Draw), which the renderer reads directly.
-// - There is no "smooth" policy: the client's edge softness is each material's
-//   TerrainDefinition.uop `coverage_exponent` (0: hard edge, point filtering;
-//   larger: soft falloff, bilinear filtering), which the renderer reads directly.
-// - `code`: optional short reason code emitted into metadata/audits.
-// - Unknown policy strings still parse and are preserved. They only do
-//   something if runtime code recognizes them.
-//
-// 2. `liquid`
-//
-//     liquid speed=0.01 waveheight=0.3 code="reviewed_liquid_motion"
-//
-// - Properties:
-//   - `speed`: optional float. Liquid animation speed.
-//   - `waveheight`: optional float. Liquid wave/displacement amplitude.
-//   - `code`: optional short reason code.
-// - Omitted numeric properties leave that part unspecified.
-//
-// 3. `layer`
+// 1. `layer`
 //
 //     layer "t0" tex=2000510 stretch=5.0 code="reviewed_layer_texture"
 //
@@ -76,7 +57,7 @@
 //     values when known; wrong stretch makes large textures shrink into one tile.
 //   - `code`: optional short reason code.
 //
-// 4. `texture`
+// 2. `texture`
 //
 //     texture 1269 role="base" code="reviewed_textureid"
 //
@@ -90,7 +71,7 @@
 // - Use `texture` when a reviewed texture relationship must be preserved but it
 //   is not yet tied to a concrete runtime layer override.
 //
-// 5. `ignore`
+// 3. `ignore`
 //
 //     ignore code="intentionally_hidden"
 //
@@ -102,9 +83,7 @@
 // Reason code guidance:
 // - Keep `code` values short, enumerable, and machine-greppable.
 // - Current codes in use:
-//   - `reviewed_liquid_motion`
 //   - `reviewed_layer_texture`
-//   - `reviewed_liquid_texture`
 // - Suggested additional codes when needed:
 //   - `reviewed_textureid`
 //   - `intentionally_hidden`
@@ -118,44 +97,20 @@
 //
 // Earlier versions of this file are in git history.
 //
-// Liquid texture notes:
-// - The reviewed liquid layers first mirrored the third-party
-//   UOClient-stefanomerotta terrain data. They are now checked against the
-//   client's water positions in TerrainDefinition.uop: `t0` is item 1 (the
-//   fallback colour) and `n` is item 0 (the distortion map):
-//   - water  5:  t0=02000051 stretch=4, n=01000013 stretch=16 (unchanged)
-//   - lava  10:  t0=02000100 stretch=4 (was stretch 6, item 2's), n=01000012 stretch=12
-//   - acid  49:  t0=02000490 stretch=8, n=01000012 stretch=12 (unchanged)
-//   - swamp 70:  t0=02000700 stretch=4 (was 02000702 stretch 20: item 2's texture,
-//                no item's stretch), n=02000703 stretch=16
-// - These layers now equal the source items, which the renderer already binds
-//   by position for every water material; they can be removed.
-
-terrain 5 {
-    liquid waveheight=0.3 code="reviewed_liquid_motion"
-    layer "t0" tex=2000051 stretch=4.0 code="reviewed_liquid_texture"
-    layer "n" tex=1000013 stretch=16.0 code="reviewed_liquid_texture"
-}
-
-terrain 10 {
-    liquid speed=0.01 waveheight=0.2 code="reviewed_liquid_motion"
-    layer "t0" tex=2000100 stretch=4.0 code="reviewed_liquid_texture"
-    layer "n" tex=1000012 stretch=12.0 code="reviewed_liquid_texture"
-}
-
-terrain 49 {
-    liquid speed=0.01 waveheight=0.3 code="reviewed_liquid_motion"
-    layer "t0" tex=2000490 stretch=8.0 code="reviewed_liquid_texture"
-    layer "n" tex=1000012 stretch=12.0 code="reviewed_liquid_texture"
-}
+// Removed liquid entries:
+// - Terrains 5 (water), 10 (lava), 49 (acid) and 70 (swamp) had `liquid`
+//   speed/wave values (never read by the renderer) and `t0`/`n` layers that
+//   equalled the source water items 1 and 0, which the renderer binds by
+//   position for every water material. They first mirrored the third-party
+//   UOClient-stefanomerotta terrain data.
+//
+// Open entry:
+// - Terrain 52 ("tan no-name", classic NoName land 76..) draws the obsidian
+//   textures of material 51 (02000510/02000511) instead of its source items
+//   (02000520 twice, mask 01000003). The client draws the source items. It is
+//   kept until it is reviewed.
 
 terrain 52 {
     layer "t0" tex=2000510 stretch=5.0 code="reviewed_layer_texture"
     layer "t1" tex=2000511 stretch=5.0 code="reviewed_layer_texture"
-}
-
-terrain 70 {
-    liquid speed=0.01 waveheight=0.3 code="reviewed_liquid_motion"
-    layer "t0" tex=2000700 stretch=4.0 code="reviewed_liquid_texture"
-    layer "n" tex=2000703 stretch=16.0 code="reviewed_liquid_texture"
 }

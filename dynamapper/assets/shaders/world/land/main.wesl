@@ -637,7 +637,7 @@ fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool, world
   // Guard conditions (all must be true for the ripple path to activate):
   //   1. EC texture (texture_size == 2)
   //   2. Water animation not already disabled at this zoom level
-  //   3. Tile has a reviewed liquid override (reviewed_liquid) OR aux.is_liquid == 1
+  //   3. Tile is a water layer class material (reviewed_liquid) OR aux.is_liquid == 1
   //   4. The tile has a ripple layer in the aux lookup
   //   5. The tile does NOT already have a normal-map-driven base UV perturbation
   //      (ec_liquid_normal path) — that path already handles its own animated UV.

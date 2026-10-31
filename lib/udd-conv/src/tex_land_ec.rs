@@ -58,7 +58,7 @@ use udd_assets::tex_land_ec::{
 };
 use udd_assets::ec_terrain_overrides::{
     EcTerrainOverrideEntry, EcTerrainOverrides, TerrainIgnoreOverride, TerrainLayerOverride,
-    TerrainLiquidOverride, TerrainPolicyOverride, TerrainTextureOverride,
+    TerrainTextureOverride,
 };
 use udd_container::xxh64_virtual_path;
 use udd_container::{
@@ -119,24 +119,9 @@ struct TerrainOverridesMetadata {
 struct TerrainOverrideMetadataEntry {
     material_id: u32,
     active_action_count: u32,
-    policies: Vec<TerrainPolicyMetadata>,
-    liquid: Option<TerrainLiquidMetadata>,
     layers: Vec<TerrainLayerMetadata>,
     textures: Vec<TerrainTextureMetadata>,
     ignore: Option<TerrainIgnoreMetadata>,
-}
-
-#[derive(Debug, Serialize)]
-struct TerrainPolicyMetadata {
-    policy: String,
-    code: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct TerrainLiquidMetadata {
-    speed: Option<f32>,
-    waveheight: Option<f32>,
-    code: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -948,12 +933,6 @@ fn terrain_override_metadata_entry(entry: EcTerrainOverrideEntry) -> TerrainOver
     TerrainOverrideMetadataEntry {
         material_id: entry.id,
         active_action_count: entry.active_action_count() as u32,
-        policies: entry
-            .policies
-            .into_iter()
-            .map(terrain_policy_metadata)
-            .collect(),
-        liquid: entry.liquid.map(terrain_liquid_metadata),
         layers: entry
             .layers
             .into_iter()
@@ -965,21 +944,6 @@ fn terrain_override_metadata_entry(entry: EcTerrainOverrideEntry) -> TerrainOver
             .map(terrain_texture_metadata)
             .collect(),
         ignore: entry.ignore.map(terrain_ignore_metadata),
-    }
-}
-
-fn terrain_policy_metadata(policy: TerrainPolicyOverride) -> TerrainPolicyMetadata {
-    TerrainPolicyMetadata {
-        policy: policy.policy,
-        code: policy.code,
-    }
-}
-
-fn terrain_liquid_metadata(liquid: TerrainLiquidOverride) -> TerrainLiquidMetadata {
-    TerrainLiquidMetadata {
-        speed: liquid.speed,
-        waveheight: liquid.waveheight,
-        code: liquid.code,
     }
 }
 
@@ -1941,7 +1905,6 @@ mod tests {
             &path,
             r#"
 terrain 52 {
-    policy "follow-center" code="reviewed_runtime_policy"
     layer "t0" tex=2000510 stretch=5.0 code="reviewed_layer_texture"
 }
 "#,

@@ -46,8 +46,7 @@ pub const MISSING_TERRAIN_LAYER_INDEX: u32 = u32::MAX;
 /// The provenance byte of a selected texture that is not a source item (an override or a missing layer).
 pub const TERRAIN_LAYER_ROLE_NONE: u8 = u8::MAX;
 
-pub const TERRAIN_OVERRIDE_ACTION_POLICY: u16 = 1 << 0;
-pub const TERRAIN_OVERRIDE_ACTION_LIQUID: u16 = 1 << 1;
+// Bits 0 and 1 were the removed `policy` and `liquid` override nodes.
 pub const TERRAIN_OVERRIDE_ACTION_LAYER: u16 = 1 << 2;
 pub const TERRAIN_OVERRIDE_ACTION_TEXTURE: u16 = 1 << 3;
 pub const TERRAIN_OVERRIDE_ACTION_IGNORE: u16 = 1 << 4;
@@ -121,14 +120,6 @@ pub struct TexLandEcTerrainOverrideActions {
 }
 
 impl TexLandEcTerrainOverrideActions {
-    pub fn has_policy(self) -> bool {
-        (self.action_flags & TERRAIN_OVERRIDE_ACTION_POLICY) != 0
-    }
-
-    pub fn has_liquid(self) -> bool {
-        (self.action_flags & TERRAIN_OVERRIDE_ACTION_LIQUID) != 0
-    }
-
     pub fn has_layer(self) -> bool {
         (self.action_flags & TERRAIN_OVERRIDE_ACTION_LAYER) != 0
     }
@@ -174,25 +165,8 @@ pub struct TexLandEcTerrainOverrideTextureRef {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct TexLandEcTerrainOverridePolicy {
-    pub material_id: u32,
-    pub policy: String,
-    pub code: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct TexLandEcTerrainOverrideLiquid {
-    pub material_id: u32,
-    pub speed: Option<f32>,
-    pub waveheight: Option<f32>,
-    pub code: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub struct TexLandEcTerrainOverrideDetails {
     pub material_id: u32,
-    pub policies: Vec<TexLandEcTerrainOverridePolicy>,
-    pub liquid: Option<TexLandEcTerrainOverrideLiquid>,
     pub ignore_code: Option<String>,
 }
 
@@ -652,9 +626,7 @@ impl TexLandEcPackage {
     }
 
     /// Shader roles `[fallback/base, detail, mask, normal, animated liquid]`,
-    /// distinct from source layer indices.
-    /// Reviewed liquid overrides define their own base/normal pair; their raw
-    /// layers may instead contain ripple, reflection, or environment inputs.
+    /// distinct from source layer indices. Water materials bind by position.
     pub fn resolve_material_render_layers(
         &self,
         cc_tile_id: u32,
@@ -664,7 +636,6 @@ impl TexLandEcPackage {
             .and_then(|entry| entry.texture.as_ref());
         let source_liquid = source_texture
             .filter(|texture| texture.layer_class() == TerrainLayerClass::Water);
-        let reviewed_liquid = decision.override_actions.is_some_and(|actions| actions.has_liquid());
         std::array::from_fn(|index| {
             if let Some(source) = source_liquid {
                 let material_id = decision.material_id?;
@@ -687,23 +658,16 @@ impl TexLandEcPackage {
                     texture_repetition: layer.texture_repetition,
                 });
             }
-            if reviewed_liquid {
-                if index == 1 || index == 2 {
-                    return None;
-                }
-                self.resolve_override_material_layer_slot_by_material(decision.material_id?, index as u32)
-            } else {
-                if index == 4 { return None; }
-                // A fourth default-terrain source can be ordinary artwork (for
-                // example swamp/blue-floor tiles), not a tangent normal map.
-                // Only the authored bump family or an explicit normal override
-                // establishes that role. Keep raw source-layer access separate.
-                if index == 3 && !source_texture.is_some_and(|texture|
-                    texture.layer_class() == TerrainLayerClass::Bump) {
-                    return self.resolve_override_material_layer_slot_by_material(decision.material_id?, 3);
-                }
-                self.resolve_material_layer_slot(cc_tile_id, index as u32)
+            if index == 4 { return None; }
+            // A fourth default-terrain source can be ordinary artwork (for
+            // example swamp/blue-floor tiles), not a tangent normal map.
+            // Only the authored bump family or an explicit normal override
+            // establishes that role. Keep raw source-layer access separate.
+            if index == 3 && !source_texture.is_some_and(|texture|
+                texture.layer_class() == TerrainLayerClass::Bump) {
+                return self.resolve_override_material_layer_slot_by_material(decision.material_id?, 3);
             }
+            self.resolve_material_layer_slot(cc_tile_id, index as u32)
         })
     }
 
@@ -1250,37 +1214,8 @@ fn terrain_override_maps_from_overrides(
             .entry(material_id)
             .or_insert_with(|| TexLandEcTerrainOverrideDetails {
                 material_id,
-                policies: Vec::new(),
-                liquid: None,
                 ignore_code: None,
             });
-
-        if !terrain.policies.is_empty() {
-            action.action_count += terrain.policies.len() as u32;
-            action.action_flags |= TERRAIN_OVERRIDE_ACTION_POLICY;
-            detail
-                .policies
-                .extend(terrain.policies.iter().map(|policy| {
-                    TexLandEcTerrainOverridePolicy {
-                        material_id,
-                        policy: policy.policy.clone(),
-                        code: policy.code.clone(),
-                    }
-                }));
-        }
-
-        if let Some(liquid) = terrain.liquid.as_ref() {
-            if !action.has_liquid() {
-                action.action_count += 1;
-            }
-            action.action_flags |= TERRAIN_OVERRIDE_ACTION_LIQUID;
-            detail.liquid = Some(TexLandEcTerrainOverrideLiquid {
-                material_id,
-                speed: liquid.speed,
-                waveheight: liquid.waveheight,
-                code: liquid.code.clone(),
-            });
-        }
 
         if !terrain.layers.is_empty() {
             action.action_count += terrain.layers.len() as u32;
@@ -1381,12 +1316,6 @@ fn parse_terrain_overrides_metadata_maps(
 
         let action_count = json_u32(entry, "active_action_count").unwrap_or(0);
         let mut action_flags = 0u16;
-        if json_array_is_non_empty(entry, "policies") {
-            action_flags |= TERRAIN_OVERRIDE_ACTION_POLICY;
-        }
-        if !entry.get("liquid").unwrap_or(&serde_json::Value::Null).is_null() {
-            action_flags |= TERRAIN_OVERRIDE_ACTION_LIQUID;
-        }
         if json_array_is_non_empty(entry, "layers") {
             action_flags |= TERRAIN_OVERRIDE_ACTION_LAYER;
         }
@@ -1406,31 +1335,6 @@ fn parse_terrain_overrides_metadata_maps(
             },
         );
 
-        let policies = entry
-            .get("policies")
-            .and_then(|value| value.as_array())
-            .into_iter()
-            .flatten()
-            .filter_map(|policy| {
-                let policy_name = policy.get("policy").and_then(|value| value.as_str())?;
-                Some(TexLandEcTerrainOverridePolicy {
-                    material_id,
-                    policy: policy_name.to_string(),
-                    code: json_string(policy, "code"),
-                })
-            })
-            .collect::<Vec<_>>();
-
-        let liquid = entry
-            .get("liquid")
-            .filter(|value| !value.is_null())
-            .map(|liquid| TexLandEcTerrainOverrideLiquid {
-                material_id,
-                speed: json_f32(liquid, "speed"),
-                waveheight: json_f32(liquid, "waveheight"),
-                code: json_string(liquid, "code"),
-            });
-
         let ignore_code = entry
             .get("ignore")
             .filter(|value| !value.is_null())
@@ -1440,8 +1344,6 @@ fn parse_terrain_overrides_metadata_maps(
             material_id,
             TexLandEcTerrainOverrideDetails {
                 material_id,
-                policies,
-                liquid,
                 ignore_code,
             },
         );
@@ -1690,9 +1592,7 @@ mod tests {
   "entries": [
     {
       "material_id": 52,
-      "active_action_count": 4,
-      "policies": [{"policy": "follow-center", "code": "reviewed_runtime_policy"}],
-      "liquid": {"speed": 0.01, "waveheight": 0.3, "code": "reviewed_liquid_motion"},
+      "active_action_count": 1,
       "layers": [{"role": "t0", "texture_id": 2000510}],
       "textures": [],
       "ignore": null
@@ -1920,32 +1820,32 @@ terrain 52 {
             .expect("parse override actions");
         let action = actions.get(&52).expect("material 52 override");
 
-        assert_eq!(action.action_count, 4);
+        assert_eq!(action.action_count, 1);
         assert!(action.has_layer());
-        assert!(action.has_policy());
-        assert!(action.has_liquid());
     }
 
     #[test]
-    fn terrain_override_metadata_parser_preserves_policy_and_liquid_details() {
-        let details = parse_terrain_override_details_metadata(&terrain_overrides_json())
-            .expect("parse override details");
-        let detail = details.get(&52).expect("material 52 override details");
-
-        assert_eq!(detail.policies.len(), 1);
-        assert_eq!(detail.policies[0].policy, "follow-center");
-        assert_eq!(
-            detail.policies[0].code.as_deref(),
-            Some("reviewed_runtime_policy")
-        );
-        assert_eq!(
-            detail.liquid.as_ref().and_then(|liquid| liquid.speed),
-            Some(0.01)
-        );
-        assert_eq!(
-            detail.liquid.as_ref().and_then(|liquid| liquid.code.as_deref()),
-            Some("reviewed_liquid_motion")
-        );
+    fn terrain_override_metadata_parser_ignores_removed_policy_and_liquid_fields() {
+        // Packages built before the `policy` and `liquid` nodes were removed still carry them.
+        let json = br#"{
+  "schema": "tex_land_ec_terrain_overrides",
+  "schema_version": 1,
+  "entries": [
+    {
+      "material_id": 52,
+      "active_action_count": 3,
+      "policies": [{"policy": "follow-center", "code": "reviewed_runtime_policy"}],
+      "liquid": {"speed": 0.01, "waveheight": 0.3, "code": "reviewed_liquid_motion"},
+      "layers": [{"role": "t0", "texture_id": 2000510}],
+      "textures": [],
+      "ignore": null
+    }
+  ]
+}"#;
+        let actions = parse_terrain_override_actions_metadata(json).expect("parse override actions");
+        assert_eq!(actions[&52].action_flags, TERRAIN_OVERRIDE_ACTION_LAYER);
+        let details = parse_terrain_override_details_metadata(json).expect("parse override details");
+        assert!(details[&52].ignore_code.is_none());
     }
 
     #[test]
@@ -1963,19 +1863,7 @@ terrain 52 {
         assert_eq!(decision.layer_class, Some(TerrainLayerClass::Default));
         assert_eq!(
             decision.override_actions.map(|actions| actions.action_flags),
-            Some(
-                TERRAIN_OVERRIDE_ACTION_POLICY
-                    | TERRAIN_OVERRIDE_ACTION_LIQUID
-                    | TERRAIN_OVERRIDE_ACTION_LAYER
-            )
-        );
-        let details = package
-            .terrain_override_details_for(52)
-            .expect("material 52 override details");
-        assert_eq!(details.policies[0].policy, "follow-center");
-        assert_eq!(
-            details.liquid.as_ref().and_then(|liquid| liquid.waveheight),
-            Some(0.3)
+            Some(TERRAIN_OVERRIDE_ACTION_LAYER)
         );
         assert_eq!(override_slots.len(), 1);
         assert_eq!(override_slots[0].role, "t0");
@@ -2006,46 +1894,14 @@ terrain 52 {
     }
 
     #[test]
-    fn reviewed_liquid_render_layers_do_not_reuse_raw_reflection_as_solid_blend() {
-        let package = test_package();
-        assert!(package.resolve_material_layer_slot(77, 1).is_some());
-        let [base, detail, mask, normal, animated] = package.resolve_material_render_layers(77);
-        assert_eq!(base.unwrap().texture_id, 2000510);
-        assert!(detail.is_none());
-        assert!(mask.is_none());
-        assert!(normal.is_none());
-        assert!(animated.is_none());
-    }
-
-    #[test]
-    fn reviewed_liquid_render_layers_preserve_explicit_normal_and_repetition() {
-        let mut package = test_package();
-        let overrides = EcTerrainOverrides::parse(
-            "liquid.kdl",
-            "terrain 52 {\n liquid\n layer \"t0\" tex=2000510 stretch=7.0\n layer \"n\" tex=2000520 stretch=12.0\n}\n",
-        ).unwrap();
-        package.set_terrain_overrides(&overrides);
-        let [base, detail, mask, normal, animated] = package.resolve_material_render_layers(77);
-        assert_eq!(base.unwrap().texture_repetition, 7.0);
-        assert!(detail.is_none());
-        assert!(mask.is_none());
-        assert!(animated.is_none());
-        let normal = normal.unwrap();
-        assert_eq!(normal.texture_id, 2000520);
-        assert_eq!(normal.runtime_slot_id, Some(100));
-        assert_eq!(normal.texture_repetition, 12.0);
-    }
-
-    #[test]
     fn loose_terrain_overrides_replace_embedded_metadata_and_resolve_packed_textures() {
         let mut package = test_package();
         let overrides = EcTerrainOverrides::parse(
             "loose.kdl",
             r#"
 terrain 52 {
-    policy "follow-center" code="reviewed_runtime_policy"
     layer "t0" tex=2000510 stretch=7.0 code="reviewed_layer_texture"
-    layer "n" tex=2000520 stretch=12.0 code="reviewed_liquid_texture"
+    layer "n" tex=2000520 stretch=12.0 code="reviewed_layer_texture"
     texture 9999999 role="detail" code="missing_from_package"
 }
 "#,
@@ -2065,12 +1921,11 @@ terrain 52 {
         let override_slots = package.resolve_override_texture_slots(52);
 
         assert_eq!(summary.entry_count, 1);
-        assert_eq!(summary.action_count, 4);
+        assert_eq!(summary.action_count, 3);
         assert_eq!(summary.texture_ref_count, 3);
         assert_eq!(summary.resolved_texture_ref_count, 2);
         assert_eq!(summary.unresolved_texture_refs[0].texture_id, 9999999);
-        assert_eq!(details.policies[0].policy, "follow-center");
-        assert!(details.liquid.is_none());
+        assert!(details.ignore_code.is_none());
         assert_eq!(layer.texture_id, 2000510);
         assert_eq!(layer.runtime_slot_id, Some(101));
         assert_eq!(layer.texture_repetition, 7.0);
@@ -2089,14 +1944,11 @@ terrain 52 {
             "loose.kdl",
             r#"
 terrain 52 {
-    policy "follow-center"
-    liquid speed=1.0 code="old_liquid"
     layer "unknown_a" tex=2000510
     texture 9999999 role="detail"
     ignore code="old_ignore"
 }
 terrain 52 {
-    liquid waveheight=2.0 code="new_liquid"
     layer "unknown_b" tex=2000520
     texture 2000510 role="base"
     ignore code="new_ignore"
@@ -2112,22 +1964,9 @@ terrain 52 {
         let refs = package.terrain_override_texture_refs_for(52);
 
         assert_eq!(summary.entry_count, 1);
-        assert_eq!(summary.action_count, 7);
+        assert_eq!(summary.action_count, 5);
         assert_eq!(summary.texture_ref_count, 4);
         assert_eq!(summary.resolved_texture_ref_count, 3);
-        assert_eq!(details.policies[0].policy, "follow-center");
-        assert_eq!(
-            details.liquid.as_ref().and_then(|liquid| liquid.speed),
-            None
-        );
-        assert_eq!(
-            details.liquid.as_ref().and_then(|liquid| liquid.waveheight),
-            Some(2.0)
-        );
-        assert_eq!(
-            details.liquid.as_ref().and_then(|liquid| liquid.code.as_deref()),
-            Some("new_liquid")
-        );
         assert_eq!(details.ignore_code.as_deref(), Some("new_ignore"));
         assert_eq!(refs[0].role, "unknown_a");
         assert_eq!(refs[0].layer_index, Some(0));

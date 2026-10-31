@@ -19,8 +19,7 @@ pub struct Rg16u {
 // reader; edge softness comes from the TerrainDefinition `coverage_exponent` (coverage params,
 // land/coverage.wesl). The old repo `policy "follow-center"` (bit 1) had no client basis either;
 // water scrolls by the material's tweaks (UOWaterTerrainLayer::Draw, ec_liquid.wesl).
-/// EC liquid terrain: the TerrainDefinition material is the water layer class (`UOWaterTerrainLayer`),
-/// or a reviewed `EcTerrainOverrides` liquid entry (all of which are water layer materials). The
+/// EC liquid terrain: the TerrainDefinition material is the water layer class (`UOWaterTerrainLayer`). The
 /// EC wetness flag; the `is_wet` bit carries the classic IsWet tiledata flag in classic mode only.
 pub const TERRAIN_SHADER_FLAG_REVIEWED_LIQUID: u16 = 1 << 2;
 

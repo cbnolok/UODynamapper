@@ -156,7 +156,7 @@ fn ec_material_mask_value(mask_sample: vec4<f32>) -> f32 {
 //   y: alpha-mask atlas layer (0 = absent)
 //   z: lower 16 bits = ripple/perturbation atlas layer (0 = absent)
 //      upper 16 bits = ripple_rep_q8 (stretch × 256, fixed-point)
-//   w: is_liquid flag (1 = liquid terrain material with reviewed override, 0 = solid)
+//   w: is_liquid flag (1 = water layer class terrain material, 0 = solid)
 //
 // The aux atlas is a texture_2d_array<f32> where layer 0 is a transparent
 // sentinel.  All layers share AUX_ATLAS_TILE_SIZE × AUX_ATLAS_TILE_SIZE px.

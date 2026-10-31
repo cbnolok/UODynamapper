@@ -279,15 +279,13 @@ fn create_aux_atlas_images(
             let alpha_mask = alpha_mask_texture_id(tile_id, terrain_meta);
             let ripple = ripple_texture_id(tile_id, terrain_meta);
 
-            // Determine whether this tile has a reviewed liquid material override.
-            let is_liquid: u32 = {
-                let decision = tex_land_ec.resolve_material_decision(tile_id);
-                let has_liquid_override = decision
-                    .material_id
-                    .and_then(|mid| tex_land_ec.terrain_override_details_for(mid))
-                    .is_some_and(|details| details.liquid.is_some());
-                u32::from(has_liquid_override)
-            };
+            // Liquid terrain: the material is the water layer class (UOWaterTerrainLayer).
+            let is_liquid: u32 = u32::from(
+                tex_land_ec.resolve_material_decision(tile_id).material_id
+                    .and_then(|mid| tex_land_ec.source_material(mid))
+                    .and_then(|entry| entry.texture.as_ref())
+                    .is_some_and(|texture| texture.layer_class() == TerrainLayerClass::Water),
+            );
 
             if sec_base.is_none() && alpha_mask.is_none() && ripple.is_none() && is_liquid == 0 {
                 continue;

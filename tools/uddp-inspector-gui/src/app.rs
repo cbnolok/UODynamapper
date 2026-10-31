@@ -1861,8 +1861,6 @@ mod tests {
     {
       "material_id": 52,
       "active_action_count": 1,
-      "policies": [],
-      "liquid": null,
       "layers": [{"role": "n", "texture_id": 2000521, "stretch": 2.5}],
       "textures": [{"role": "noise", "texture_id": 2000520}],
       "ignore": null

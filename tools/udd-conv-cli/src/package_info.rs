@@ -262,16 +262,6 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
             .filter(|texture| texture.runtime_slot_id.is_some())
             .count();
         let effective_slot_changes = package.effective_override_slot_changes();
-        let policy_count = package
-            .terrain_override_details()
-            .values()
-            .map(|details| details.policies.len())
-            .sum::<usize>();
-        let liquid_count = package
-            .terrain_override_details()
-            .values()
-            .filter(|details| details.liquid.is_some())
-            .count();
         let ignore_count = package
             .terrain_override_details()
             .values()
@@ -290,10 +280,8 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
         );
         info!("Terrain provenance rows: {}", package.terrain_provenance().len());
         info!(
-            "Terrain override metadata: entries={}, policies={}, liquids={}, ignores={}, texture_refs={} (resolved={}), effective_slot_changes={}",
+            "Terrain override metadata: entries={}, ignores={}, texture_refs={} (resolved={}), effective_slot_changes={}",
             override_entries,
-            policy_count,
-            liquid_count,
             ignore_count,
             override_texture_refs,
             resolved_override_texture_refs,
@@ -305,20 +293,8 @@ fn print_known_package_summary(package: &UddpReader) -> eyre::Result<bool> {
             .collect::<Vec<_>>();
         override_details.sort_by_key(|details| details.material_id);
         for details in override_details.into_iter().take(8) {
-            if !details.policies.is_empty() || details.liquid.is_some() || details.ignore_code.is_some() {
-                let policies = details
-                    .policies
-                    .iter()
-                    .map(|policy| policy.policy.as_str())
-                    .collect::<Vec<_>>()
-                    .join("|");
-                info!(
-                    "  material {} override details: policies={} liquid={} ignore={}",
-                    details.material_id,
-                    if policies.is_empty() { "none" } else { policies.as_str() },
-                    details.liquid.is_some(),
-                    details.ignore_code.is_some()
-                );
+            if let Some(ignore_code) = details.ignore_code.as_deref() {
+                info!("  material {} override details: ignore={}", details.material_id, ignore_code);
             }
         }
         for change in effective_slot_changes.iter().take(8) {

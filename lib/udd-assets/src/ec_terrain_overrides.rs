@@ -31,8 +31,6 @@ impl EcTerrainOverrides {
             let entry = map
                 .entry(terrain.id)
                 .or_insert_with(|| EcTerrainOverrideEntry::new(terrain.id));
-            entry.policies.extend(terrain.policies.clone());
-            entry.liquid = terrain.liquid.clone().or_else(|| entry.liquid.clone());
             entry.layers.extend(terrain.layers.clone());
             entry.textures.extend(terrain.textures.clone());
             entry.ignore = terrain.ignore.clone().or_else(|| entry.ignore.clone());
@@ -46,8 +44,6 @@ const EC_TERRAIN_OVERRIDES_SCHEMA: &[NodeSchema] = &[NodeSchema {
     name: "terrain",
     properties: &[],
     children: &[
-        NodeSchema::leaf("policy", &["code"]),
-        NodeSchema::leaf("liquid", &["speed", "waveheight", "code"]),
         NodeSchema::leaf("layer", &["tex", "stretch", "code"]),
         NodeSchema::leaf("texture", &["role", "code"]),
         NodeSchema::leaf("ignore", &["code"]),
@@ -58,34 +54,12 @@ const EC_TERRAIN_OVERRIDES_SCHEMA: &[NodeSchema] = &[NodeSchema {
 pub struct EcTerrainOverrideTerrainEntry {
     #[knuffel(argument)]
     pub id: u32,
-    #[knuffel(children(name = "policy"))]
-    pub policies: Vec<TerrainPolicyOverride>,
-    #[knuffel(child)]
-    pub liquid: Option<TerrainLiquidOverride>,
     #[knuffel(children(name = "layer"))]
     pub layers: Vec<TerrainLayerOverride>,
     #[knuffel(children(name = "texture"))]
     pub textures: Vec<TerrainTextureOverride>,
     #[knuffel(child)]
     pub ignore: Option<TerrainIgnoreOverride>,
-}
-
-#[derive(Decode, Debug, Clone)]
-pub struct TerrainPolicyOverride {
-    #[knuffel(argument)]
-    pub policy: String,
-    #[knuffel(property)]
-    pub code: Option<String>,
-}
-
-#[derive(Decode, Debug, Clone)]
-pub struct TerrainLiquidOverride {
-    #[knuffel(property)]
-    pub speed: Option<f32>,
-    #[knuffel(property)]
-    pub waveheight: Option<f32>,
-    #[knuffel(property)]
-    pub code: Option<String>,
 }
 
 #[derive(Decode, Debug, Clone)]
@@ -119,8 +93,6 @@ pub struct TerrainIgnoreOverride {
 #[derive(Debug, Clone)]
 pub struct EcTerrainOverrideEntry {
     pub id: u32,
-    pub policies: Vec<TerrainPolicyOverride>,
-    pub liquid: Option<TerrainLiquidOverride>,
     pub layers: Vec<TerrainLayerOverride>,
     pub textures: Vec<TerrainTextureOverride>,
     pub ignore: Option<TerrainIgnoreOverride>,
@@ -130,8 +102,6 @@ impl EcTerrainOverrideEntry {
     fn new(id: u32) -> Self {
         Self {
             id,
-            policies: Vec::new(),
-            liquid: None,
             layers: Vec::new(),
             textures: Vec::new(),
             ignore: None,
@@ -139,9 +109,7 @@ impl EcTerrainOverrideEntry {
     }
 
     pub fn active_action_count(&self) -> usize {
-        self.policies.len()
-            + usize::from(self.liquid.is_some())
-            + self.layers.len()
+        self.layers.len()
             + self.textures.len()
             + usize::from(self.ignore.is_some())
     }
@@ -156,10 +124,6 @@ mod tests {
         let overrides = EcTerrainOverrides::parse(
             "test.kdl",
             r#"
-terrain 5 {
-    policy "follow-center" code="reviewed_runtime_policy"
-    liquid speed=0.01 waveheight=0.3 code="reviewed_liquid_motion"
-}
 terrain 52 {
     layer "t0" tex=2000510 stretch=1.0 code="reviewed_layer_texture"
 }
@@ -174,9 +138,7 @@ terrain 201 {
         .expect("parse terrain overrides");
         let map = overrides.to_map();
 
-        assert_eq!(map.len(), 4);
-        assert_eq!(map[&5].policies[0].policy, "follow-center");
-        assert_eq!(map[&5].liquid.as_ref().and_then(|liquid| liquid.speed), Some(0.01));
+        assert_eq!(map.len(), 3);
         assert_eq!(map[&52].layers[0].texture, 2000510);
         assert_eq!(map[&75].textures[0].role.as_deref(), Some("base"));
         assert_eq!(
@@ -202,13 +164,19 @@ terrain 201 {
     fn terrain_overrides_reject_unknown_nodes_and_properties_with_their_position() {
         assert_eq!(
             parse_error("terrain 5 {\n    shader \"x\"\n}\n"),
-            "test.kdl: line 2, column 5: unknown node `shader` in `terrain`: expected one of `policy`, `liquid`, \
-             `layer`, `texture`, `ignore`"
+            "test.kdl: line 2, column 5: unknown node `shader` in `terrain`: expected one of `layer`, `texture`, \
+             `ignore`"
+        );
+        // The removed `policy` and `liquid` nodes (no client basis, no reader) are now unknown.
+        assert_eq!(
+            parse_error("terrain 5 {\n    liquid speed=0.1\n}\n"),
+            "test.kdl: line 2, column 5: unknown node `liquid` in `terrain`: expected one of `layer`, `texture`, \
+             `ignore`"
         );
         assert_eq!(
-            parse_error("terrain 5 {\n    liquid speed=0.1 height=0.3\n}\n"),
-            "test.kdl: line 2, column 22: unknown property `height` of `liquid`: expected one of `speed`, \
-             `waveheight`, `code`"
+            parse_error("terrain 52 {\n    layer \"t0\" tex=1 height=0.3\n}\n"),
+            "test.kdl: line 2, column 22: unknown property `height` of `layer`: expected one of `tex`, \
+             `stretch`, `code`"
         );
         assert_eq!(
             parse_error("terrian 5\n"),

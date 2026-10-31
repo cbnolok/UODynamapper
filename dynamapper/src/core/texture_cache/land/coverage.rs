@@ -58,10 +58,6 @@ pub fn ec_land_shader_flags(package: &TexLandEcPackage, tile_id: u32) -> u16 {
         .is_some_and(|texture| texture.layer_class() == TerrainLayerClass::Water) {
         flags |= TERRAIN_SHADER_FLAG_REVIEWED_LIQUID;
     }
-    let Some(details) = package.terrain_override_details_for(material_id) else {
-        return flags;
-    };
-    if details.liquid.is_some() { flags |= TERRAIN_SHADER_FLAG_REVIEWED_LIQUID; }
     flags
 }
 
