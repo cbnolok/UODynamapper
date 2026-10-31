@@ -1342,8 +1342,8 @@ Active KDL files live in `dynamapper/assets/cc_ec_convtables/`.
 - There are no `policy` or `liquid` actions: edge softness is
   `coverage_exponent` and the water scroll is tweaks 0/1 per second, both read
   from the source data. The four liquid entries (5, 10, 49, 70) equalled the
-  source water items and are gone; terrain 52's `t0`/`t1` (material 51's
-  obsidian textures, not its own items) is the only entry left.
+  source water items and are gone, as is terrain 52's `t0`/`t1` (material 51's
+  obsidian textures, not its own items). The file has no entries.
 - The packer embeds it into `tex_land_ec.uddp` as
   `metadata/terrain_overrides.json` and also packs referenced override textures.
 - Runtime also loads the loose file and applies it over the embedded defaults.

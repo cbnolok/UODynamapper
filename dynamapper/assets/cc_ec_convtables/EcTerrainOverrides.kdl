@@ -82,9 +82,9 @@
 //
 // Reason code guidance:
 // - Keep `code` values short, enumerable, and machine-greppable.
-// - Current codes in use:
+// - No codes are in use (the file has no entries).
+// - Suggested codes when needed:
 //   - `reviewed_layer_texture`
-// - Suggested additional codes when needed:
 //   - `reviewed_textureid`
 //   - `intentionally_hidden`
 //   - `not_derivable_from_source`
@@ -97,20 +97,17 @@
 //
 // Earlier versions of this file are in git history.
 //
-// Removed liquid entries:
+// Removed entries:
 // - Terrains 5 (water), 10 (lava), 49 (acid) and 70 (swamp) had `liquid`
 //   speed/wave values (never read by the renderer) and `t0`/`n` layers that
 //   equalled the source water items 1 and 0, which the renderer binds by
 //   position for every water material. They first mirrored the third-party
 //   UOClient-stefanomerotta terrain data.
+// - Terrain 52 ("tan no-name", classic NoName land 76..) drew the obsidian
+//   textures of material 51 (02000510/02000511 at stretch 5) instead of its
+//   source items (02000520 twice, mask 01000003). The client draws the source
+//   items, so the entry is gone.
 //
-// Open entry:
-// - Terrain 52 ("tan no-name", classic NoName land 76..) draws the obsidian
-//   textures of material 51 (02000510/02000511) instead of its source items
-//   (02000520 twice, mask 01000003). The client draws the source items. It is
-//   kept until it is reviewed.
-
-terrain 52 {
-    layer "t0" tex=2000510 stretch=5.0 code="reviewed_layer_texture"
-    layer "t1" tex=2000511 stretch=5.0 code="reviewed_layer_texture"
-}
+// The file has no entries: every EC terrain material draws its
+// TerrainDefinition.uop items. Add `terrain` blocks after this comment only
+// for reviewed facts the source data does not carry.
