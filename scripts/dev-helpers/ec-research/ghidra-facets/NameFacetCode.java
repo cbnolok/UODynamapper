@@ -1,7 +1,9 @@
 // Name the UOSA.exe code that reads facet sectors (facetN.uop, asset type 9), FacetDefinition records
-// (facets.uop, asset type 23) and the facetNN.dds radar images, and the radar code that uses them.
-// Address-based, so it refuses any other build; every address is verified with stated structural
-// checks first and a failed check is reported, not named. Findings: results/uosa_facets.md.
+// (facets.uop, asset type 23) and the facetNN.dds radar images, the radar code that uses them and the
+// readers of the hard-coded facet size table; and the same family in UOKR.exe (Kingdom Reborn).
+// Address-based: one entry set per tested build, selected by SHA-256, any other build is refused; every
+// address is verified with stated structural checks first and a failed check is reported, not named.
+// Findings: results/uosa_facets.md, results/uokr_facets.md.
 // @category ECResearch
 import ghidra.app.script.GhidraScript;
 import ghidra.program.model.address.Address;
@@ -30,7 +32,9 @@ public class NameFacetCode extends GhidraScript {
     // Script arguments are split on whitespace, so a path with spaces is passed with %20.
     private static final String ENCODED_SPACE = "%20";
     // SHA-256 of the UOSA.exe these addresses were traced in (same build as ghidra-uop-header).
-    private static final String TESTED_SHA256 = "5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50";
+    private static final String UOSA_SHA256 = "5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50";
+    // SHA-256 of the UOKR.exe in "UO - Old KR".
+    private static final String UOKR_SHA256 = "1b802e5c00f3bf89a771778b9c6c57406be0703808eeb4cd983e2f5baa348a43";
     private static final String TAG = "UO_FACET";
     private static final String FACET = "UOFacet";
     private static final String COMMENT_PREFIX = "NameFacetCode: ";
@@ -49,6 +53,12 @@ public class NameFacetCode extends GhidraScript {
     private static final String FACET_TABLE = "00da72a8";
     private static final String FACET_TABLE_WIDTHS = "00da72ac";
     private static final String FACET_TABLE_HEIGHTS = "00da72b0";
+    private static final String KR_FACET_TABLE = "00bfcc88";
+    private static final String KR_FACET_TABLE_WIDTHS = "00bfcc8c";
+    private static final String KR_FACET_TABLE_HEIGHTS = "00bfcc90";
+    // Felucca/Trammel x split (UOSA only): CMP imm32 0x1400 = 5120.
+    private static final long FELUCCA_SPLIT_X = 0x1400;
+    private static final String TABLE_COMMENT_DIMS = "7 x {char *name, u32 width, u32 height}: Felucca and Trammel 7168 x 4096, Ilshenar 2304 x 1600, Malas 2560 x 2048, Tokuno 1448 x 1448, Gargoyle 1280 x 4096, Test 256 x 256; the name field is never read";
     private static final String FIRST_FACET_NAME = "Felucca";
     private static final long FIRST_FACET_WIDTH = 7168;
     private static final long FIRST_FACET_HEIGHT = 4096;
@@ -63,12 +73,18 @@ public class NameFacetCode extends GhidraScript {
     private record Entry(String address, String namespace, String name, String evidence, String... checks) {
     }
 
+    // One tested build: its SHA-256, the facet table (address, width and height field addresses, a function
+    // reading each field, the table comment) and the function entries.
+    private record Build(String label, String sha256, String table, String widths, String heights,
+            String widthReader, String heightReader, String tableComment, Entry[] entries) {
+    }
+
     private static final String FACET_DEFINITION = "UOFacetDefinition";
     private static final String FACET_DEFINITION_FACTORY = "UOFacetDefinitionBinaryFactory";
     private static final String SECTOR_FACTORY = "UOSectorInstanceBinaryFactory";
     private static final String SECTOR_INSTANCE = "UOSectorClientInstance";
 
-    private static final Entry[] ENTRIES = {
+    private static final Entry[] UOSA_ENTRIES = {
         // FacetDefinition (facets.uop, build/facetdefinition/%08d.bin).
         new Entry("0083c82f", FACET, "FacetDefinitionFactory_Create",
             "UOFacetDefinitionBinaryFactory slot 1: FacetDefinition_Read of the asset blob; on failure TryResolvers",
@@ -247,6 +263,102 @@ public class NameFacetCode extends GhidraScript {
         new Entry("00487410", FACET, "Dxt1_EncodeBlock",
             "16 RGBA pixels to an 8-byte DXT1 block (min/max endpoints, nearest of 4 colours)",
             "calledby:00535500", "calledby:00534d90"),
+        // Other readers of g_FacetDimensions and the hard-coded Felucca/Trammel split.
+        new Entry("005df060", FACET, "SetPlayerChunkPosition",
+            "facet < 7 and x < width, y < height from g_FacetDimensions (0x5df0d6, 0x5df0de), else the position is rejected (no wrap); stores the chunk position and QueueNeighbourChunks",
+            "calls:" + FACET_TABLE_WIDTHS, "calls:" + FACET_TABLE_HEIGHTS, "calls:005dfef0"),
+        new Entry("005dfef0", FACET, "QueueNeighbourChunks",
+            "queues the chunks around the player that lie inside g_FacetDimensions (0x5dff42, 0x5dff4a; facet < 7 at 0x5dff36)",
+            "calls:" + FACET_TABLE_WIDTHS, "calls:" + FACET_TABLE_HEIGHTS, "calledby:005df060"),
+        new Entry("005d3d90", FACET, "LoadWaypoints",
+            "waypoint loader: drops a waypoint whose facet is >= 7 or whose x/y lies outside g_FacetDimensions (0x5d3fdb, 0x5d3fe7)",
+            "calls:" + FACET_TABLE_WIDTHS, "calls:" + FACET_TABLE_HEIGHTS, "calledby:005d2ef0"),
+        new Entry("005df670", FACET, "IsSameFeluccaTrammelHalf",
+            "(facet, x1, x2): facets 0 and 1 only, false when x1 and x2 lie on different sides of x = 5120 (imm32 at 0x5df6db, 0x5df6e3, 0x5df6f5); BuildChunkFromSector skips a chunk on false",
+            "const:" + Long.toHexString(FELUCCA_SPLIT_X), "calledby:005e2f00", "calledby:005db3f0"),
+        new Entry("005e94a0", FACET, "Handle_0xBF_08_SetFacet",
+            "0xBF subcommand 8 handler (registered in 005e7ed0): reads a u8 facet with no range check and calls SetFacet",
+            "calls:005dc720", "calls:005e7c80", "calledby:005e7ed0"),
+        new Entry("005dc720", FACET, "SetFacet",
+            "stores the facet at world +8 and posts GameData::FacetChangeEvent (vftable 0x00cb6254)",
+            "calls:00cb6254", "calledby:005e94a0"),
+    };
+
+    // UOKR.exe: no FacetDefinition and no facetNx variants; the radar reads the table directly.
+    private static final Entry[] UOKR_ENTRIES = {
+        new Entry("007b6789", FACET, "SectorFactory_Create",
+            "UOSectorInstanceBinaryFactory slot 1: Sector_Read of the asset blob",
+            "slot:" + SECTOR_FACTORY + ":1", "calls:007b688f"),
+        new Entry("007b688f", FACET, "Sector_Read",
+            "u8 facet, u16 sector id, SectorClientInstance_ctor, then Sector_ReadSquare for x 0..63 (outer), y 0..63 (inner); a read failure deletes the sector and returns null; leftover bytes are only logged (no-op logger 0x408ba0), not rejected",
+            "calledby:007b6789", "calls:007b663f", "calls:007b6994", "const:" + Long.toHexString(SECTOR_SIDE)),
+        new Entry("007b6994", FACET, "Sector_ReadSquare",
+            "i8 z, u16 material (TerrainDefinition id), u8 subtype (alias index), u16 legacy land id, AddSquare; u8 delimiter count + Sector_ReadDelimiter each; u8 static count + Sector_ReadStatic each",
+            "calledby:007b688f", "calls:007bfeae", "calls:007b6ac9", "calls:007b6ba6"),
+        new Entry("007b6ac9", FACET, "Sector_ReadDelimiter",
+            "u8 direction; < 8: i8 z, u32 land, (dx, dy) as in EC; >= 8: only logged and nothing more is read (the stream desyncs, the sector is not rejected); no order or presence check",
+            "calledby:007b6994", "calls:007c032b"),
+        new Entry("007b6ba6", FACET, "Sector_ReadStatic",
+            "u32 graphic, u8 z, u32 hue, added to the square",
+            "calledby:007b6994", "calls:007c0120"),
+        new Entry("007b663f", FACET, "SectorClientInstance_ctor",
+            "sector object constructor (facet, sector id)",
+            "calledby:007b688f"),
+        new Entry("007bfeae", FACET, "SectorClientInstance_AddSquare",
+            "allocates a 0x44-byte UOSectorClientInstanceSquare (z, material, subtype, legacy id) and inserts it",
+            "calledby:007b6994"),
+        new Entry("0058a080", FACET, "RequestSector",
+            "UOResourceRequest for asset (sector << 6 | facet & 0x3f, 0x09000000)",
+            "const:" + Long.toHexString(SECTOR_KEY), "calledby:0058d890"),
+        new Entry("00589ef0", FACET, "SectorIndexFromXY",
+            "sector = ceil(height / 64) * (x >> 6) + (y >> 6), height from the facet table (0x589f03; facet < 7)",
+            "calls:" + KR_FACET_TABLE_HEIGHTS, "calledby:0058d890"),
+        new Entry("0058a860", FACET, "QueueSectorChunks",
+            "sector index -> origin with rows = ceil(height / 64) from the facet table (0x58a876)",
+            "calls:" + KR_FACET_TABLE_HEIGHTS),
+        new Entry("0058d890", FACET, "BuildChunkFromSector",
+            "32 x 32 chunk (key = cx << 10 | cy): SectorIndexFromXY, RequestSector; a sector id or facet mismatch is only logged; empty squares get material 0, legacy 1; cell flags from the TerrainDefinition alias of (material, subtype)",
+            "calls:00589ef0", "calls:0058a080"),
+        new Entry("0058d880", FACET, "ChunkLoadRequest_Execute",
+            "ChunkLoadRequest slot 1: BuildChunkFromSector",
+            "slot:ChunkLoadRequest:1", "calls:0058d890"),
+        new Entry("00589bd0", FACET, "SetPlayerChunkPosition",
+            "facet < 7 and x < width, y < height from the facet table (0x589c13, 0x589c1f, neighbours 0x589cd5, 0x589ce1), else rejected (no wrap)",
+            "calls:" + KR_FACET_TABLE_WIDTHS, "calls:" + KR_FACET_TABLE_HEIGHTS),
+        new Entry("0057eed0", FACET, "LoadWaypoints",
+            "waypoint loader: drops a waypoint outside the facet table (0x57f194, 0x57f1a0; facet < 7)",
+            "calls:" + KR_FACET_TABLE_WIDTHS, "calls:" + KR_FACET_TABLE_HEIGHTS),
+        new Entry("004f8b30", FACET, "FacetDds_GetMipOffset",
+            "byte offset of a mip in facet%02d.dds from the table width and height (0x4f8bb9, 0x4f8bc0): header 0x80 then DXT1 mips of 8-byte 4 x 4 blocks",
+            "calls:" + KR_FACET_TABLE_WIDTHS, "calls:" + KR_FACET_TABLE_HEIGHTS),
+        new Entry("004f88e0", FACET, "FacetDds_Open",
+            "opens <base dir>facet%02d.dds (\"%s%s%02d%s\")",
+            "string:%s%s%02d%s"),
+        // Chunk work requests: built from the in-memory sector, no file IO.
+        new Entry("00457f60", FACET, "StaticChunkBuildRequest_ctor",
+            "WorkRequest for a 32 x 32 chunk key (+0x14); debug name \"StaticChunkBuildRequest(\"",
+            "string:StaticChunkBuildRequest(", "vftable:StaticChunkBuildRequest"),
+        new Entry("004580c0", FACET, "StaticChunkBuildRequest_Execute",
+            "StaticChunkBuildRequest slot 1: finds the loaded chunk by key and builds its static objects from it (no file read or write)",
+            "slot:StaticChunkBuildRequest:1"),
+        new Entry("00458720", FACET, "TerrainChunkBuildRequest_ctor",
+            "WorkRequest for a 32 x 32 chunk key; debug name \"TerrainChunkBuildRequest(\"",
+            "string:TerrainChunkBuildRequest(", "vftable:TerrainChunkBuildRequest"),
+        new Entry("00458890", FACET, "TerrainChunkBuildRequest_Execute",
+            "TerrainChunkBuildRequest slot 1: x = (key >> 10 & 0x3ff) << 5, y = (key & 0x3ff) << 5; builds the terrain mesh of the loaded chunk",
+            "slot:TerrainChunkBuildRequest:1"),
+        new Entry("006095b6", FACET, "MountPackages",
+            "mounts the client UOP list in order, among them StaticChunk.uop and TerrainChunk.uop (the latter is absent in the shipped client)",
+            "string:StaticChunk.uop", "string:TerrainChunk.uop", "calls:00609552"),
+    };
+
+    private static final Build[] BUILDS = {
+        new Build("UOSA.exe", UOSA_SHA256, FACET_TABLE, FACET_TABLE_WIDTHS, FACET_TABLE_HEIGHTS, "005dfef0", "005df210",
+            TABLE_COMMENT_DIMS + "; readers: SetPlayerChunkPosition, QueueNeighbourChunks, SectorIndexFromXY, QueueSectorChunks, LoadWaypoints (radar and DDS use FacetDefinition)",
+            UOSA_ENTRIES),
+        new Build("UOKR.exe", UOKR_SHA256, KR_FACET_TABLE, KR_FACET_TABLE_WIDTHS, KR_FACET_TABLE_HEIGHTS, "00589bd0", "00589ef0",
+            TABLE_COMMENT_DIMS + "; readers: SetPlayerChunkPosition, SectorIndexFromXY, QueueSectorChunks, LoadWaypoints, FacetDds_GetMipOffset (no FacetDefinition in KR)",
+            UOKR_ENTRIES),
     };
 
     private final Map<String, Integer> changes = new LinkedHashMap<>();
@@ -258,9 +370,19 @@ public class NameFacetCode extends GhidraScript {
             throw new IllegalArgumentException("Expected OUTPUT_FILE [" + APPLY_FLAG + "]");
         }
         String sha = currentProgram.getExecutableSHA256();
-        if (sha == null || !sha.equalsIgnoreCase(TESTED_SHA256)) {
-            throw new IllegalStateException("NameFacetCode names fixed addresses of the tested UOSA.exe (SHA-256 "
-                + TESTED_SHA256 + "); " + currentProgram.getName() + " has SHA-256 " + sha + ". Nothing done.");
+        Build build = null;
+        for (Build candidate : BUILDS) {
+            if (sha != null && sha.equalsIgnoreCase(candidate.sha256())) {
+                build = candidate;
+            }
+        }
+        if (build == null) {
+            List<String> tested = new ArrayList<>();
+            for (Build candidate : BUILDS) {
+                tested.add(candidate.label() + " " + candidate.sha256());
+            }
+            throw new IllegalStateException("NameFacetCode names fixed addresses of the tested builds (SHA-256 "
+                + String.join(", ", tested) + "); " + currentProgram.getName() + " has SHA-256 " + sha + ". Nothing done.");
         }
         boolean apply = args.length == 2;
         String outputPath = args[0].replace(ENCODED_SPACE, " ");
@@ -268,13 +390,13 @@ public class NameFacetCode extends GhidraScript {
         try (PrintWriter output = new PrintWriter(Files.newBufferedWriter(Path.of(outputPath),
                 StandardOpenOption.CREATE_NEW))) {
             List<String> rows = new ArrayList<>();
-            rows.add(processTable(apply));
-            for (Entry entry : ENTRIES) {
+            rows.add(processTable(build, apply));
+            for (Entry entry : build.entries()) {
                 rows.add(process(entry, apply));
             }
             output.println("# Facet names");
             output.println();
-            output.println("Program: `" + currentProgram.getName() + "`, SHA-256 `" + sha + "`.");
+            output.println("Program: `" + currentProgram.getName() + "` (tested build " + build.label() + "), SHA-256 `" + sha + "`.");
             output.println();
             output.println("Mode: " + (apply ? "`--apply` (changes: " + (changes.isEmpty() ? "none" : changes) + ")"
                 : "report only") + ".");
@@ -287,24 +409,24 @@ public class NameFacetCode extends GhidraScript {
     }
 
     // The facet dimension table: checked by its first record and the code reading its fields, then labelled.
-    private String processTable(boolean apply) throws Exception {
+    private String processTable(Build build, boolean apply) throws Exception {
         String name = "g_FacetDimensions";
         String qualified = FACET + Namespace.DELIMITER + name;
         String checks = "first record {\"" + FIRST_FACET_NAME + "\", " + FIRST_FACET_WIDTH + ", " + FIRST_FACET_HEIGHT
-            + "}, width field read by 005dfef0, height field read by 005df210";
-        String row = "| `0x" + FACET_TABLE + "` | `" + qualified + "` | " + checks + " | ";
-        Address table = toAddr(Long.parseLong(FACET_TABLE, HEX_RADIX));
+            + "}, width field read by " + build.widthReader() + ", height field read by " + build.heightReader();
+        String row = "| `0x" + build.table() + "` | `" + qualified + "` | " + checks + " | ";
+        Address table = toAddr(Long.parseLong(build.table(), HEX_RADIX));
         Address namePointer = toAddr(getInt(table) & UNSIGNED_INT_MASK);
         Data nameData = getDataAt(namePointer);
         boolean recordOk = nameData != null && StringDataInstance.isString(nameData)
             && FIRST_FACET_NAME.equals(StringDataInstance.getStringDataInstance(nameData).getStringValue())
             && (getInt(table.add(TABLE_WIDTH_OFFSET)) & UNSIGNED_INT_MASK) == FIRST_FACET_WIDTH
             && (getInt(table.add(TABLE_HEIGHT_OFFSET)) & UNSIGNED_INT_MASK) == FIRST_FACET_HEIGHT;
-        Function widthReader = getFunctionAt(toAddr(0x005dfef0L));
-        Function heightReader = getFunctionAt(toAddr(0x005df210L));
+        Function widthReader = getFunctionAt(toAddr(Long.parseLong(build.widthReader(), HEX_RADIX)));
+        Function heightReader = getFunctionAt(toAddr(Long.parseLong(build.heightReader(), HEX_RADIX)));
         boolean readersOk = widthReader != null && heightReader != null
-            && references(widthReader, toAddr(Long.parseLong(FACET_TABLE_WIDTHS, HEX_RADIX)))
-            && references(heightReader, toAddr(Long.parseLong(FACET_TABLE_HEIGHTS, HEX_RADIX)));
+            && references(widthReader, toAddr(Long.parseLong(build.widths(), HEX_RADIX)))
+            && references(heightReader, toAddr(Long.parseLong(build.heights(), HEX_RADIX)));
         if (!recordOk || !readersOk) {
             return row + "mismatch: " + (recordOk ? "" : "first record ") + (readersOk ? "" : "readers ") + "failed; not named |";
         }
@@ -323,7 +445,7 @@ public class NameFacetCode extends GhidraScript {
             }
             result.add(apply ? "named" : "would name");
         }
-        String comment = COMMENT_PREFIX + TAG + ": 7 x {char *name, u32 width, u32 height}: Felucca and Trammel 7168 x 4096, Ilshenar 2304 x 1600, Malas 2560 x 2048, Tokuno 1448 x 1448, TerMur 1280 x 4096, Test 256 x 256";
+        String comment = COMMENT_PREFIX + TAG + ": " + build.tableComment();
         result.add(plate(table, comment, apply));
         return row + String.join(", ", result.stream().filter(s -> !s.isEmpty()).toList()).replaceFirst("^$", "already applied") + " |";
     }

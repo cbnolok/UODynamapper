@@ -1,12 +1,12 @@
 # Facet names
 
-Program: `UOSA.exe`, SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`.
+Program: `UOSA.exe` (tested build UOSA.exe), SHA-256 `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50`.
 
-Mode: `--apply` (changes: none).
+Mode: `--apply` (changes: {plate comments refreshed=1, functions renamed=6, tags added=6, plate comments set=6}).
 
 | Address | Name | Checks | Result |
 |---|---|---|---|
-| `0x00da72a8` | `UOFacet::g_FacetDimensions` | first record {"Felucca", 7168, 4096}, width field read by 005dfef0, height field read by 005df210 | already applied |
+| `0x00da72a8` | `UOFacet::g_FacetDimensions` | first record {"Felucca", 7168, 4096}, width field read by 005dfef0, height field read by 005df210 | comment refreshed |
 | `0x0083c82f` | `UOFacet::FacetDefinitionFactory_Create` | slot:UOFacetDefinitionBinaryFactory:1, calls:0083c933, calls:00a749ed | already applied |
 | `0x0083c933` | `UOFacet::FacetDefinition_Read` | calledby:0083c82f, calls:0083c7a7, calls:0083ca5f, calls:00a6fe55 | already applied |
 | `0x0083c7a7` | `UOFacet::FacetDefinition_ctor` | calledby:0083c933 | already applied |
@@ -65,3 +65,9 @@ Mode: `--apply` (changes: none).
 | `0x005110c0` | `UOFacet::Radar_CollectObjectColors` | calls:005bda40, calledby:00511380 | already applied |
 | `0x00487970` | `UOFacet::Dxt1_DecodeBlock` | calledby:00535500 | already applied |
 | `0x00487410` | `UOFacet::Dxt1_EncodeBlock` | calledby:00535500, calledby:00534d90 | already applied |
+| `0x005df060` | `UOFacet::SetPlayerChunkPosition` | calls:00da72ac, calls:00da72b0, calls:005dfef0 | named, tagged, comment set |
+| `0x005dfef0` | `UOFacet::QueueNeighbourChunks` | calls:00da72ac, calls:00da72b0, calledby:005df060 | named, tagged, comment set |
+| `0x005d3d90` | `UOFacet::LoadWaypoints` | calls:00da72ac, calls:00da72b0, calledby:005d2ef0 | named, tagged, comment set |
+| `0x005df670` | `UOFacet::IsSameFeluccaTrammelHalf` | const:1400, calledby:005e2f00, calledby:005db3f0 | named, tagged, comment set |
+| `0x005e94a0` | `UOFacet::Handle_0xBF_08_SetFacet` | calls:005dc720, calls:005e7c80, calledby:005e7ed0 | named, tagged, comment set |
+| `0x005dc720` | `UOFacet::SetFacet` | calls:00cb6254, calledby:005e94a0 | named, tagged, comment set |

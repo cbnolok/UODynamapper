@@ -43,11 +43,14 @@ read from the code only, **low** means inferred.
   nothing in the exe holds a precomputed hash. The only sector request is `UOFacet::RequestSector`.
   Dimensions come from the hard-coded table `UOFacet::g_FacetDimensions` (0x00da72a8, 7 records
   `{char *name, u32 width, u32 height}`: Felucca and Trammel 7168×4096, Ilshenar 2304×1600, Malas
-  2560×2048, Tokuno 1448×1448, TerMur 1280×4096, Test 256×256) and from FacetDefinition. Only the width
-  (+4) and height (+8) fields are read. High.
+  2560×2048, Tokuno 1448×1448, Gargoyle 1280×4096, Test 256×256; the name strings are "Felucca" ..
+  "Gargoyle", "Test") and from FacetDefinition. Only the width (+4) and height (+8) fields are read. High.
+  The table, its readers and patching it are covered in [Map sizes](#map-sizes-g_facetdimensions-its-readers-and-patching).
 - A writer should still emit it, matching the shipped packages and the patcher. Its only consumer is
   offline tools.
-- KR: `facet0..4.uop` (version 4) carry the same entry with the same names and hashes.
+- KR: `facet0..4.uop` (version 4) carry the same entry with the same names and hashes. The hash of
+  `build/sectors/facet_%02d/data.map` matches all 5 KR facets (for example `FB6AC9BE9FE7BD97` for facet 0,
+  payload 4096, 7168). `UOKR.exe` does not contain `data.map` either. See [uokr_facets.md](uokr_facets.md).
 
 ## Q3: sector entries, the client's constraints
 
@@ -225,12 +228,151 @@ Anomalies in the shipped records:
 
 KR has no `facets.uop` and no FacetDefinition.
 
+## Map sizes: g_FacetDimensions, its readers and patching
+
+Purpose: what a tool must change in a client copy so that it supports custom facet sizes. The program
+facts are high unless marked otherwise.
+
+### The table
+
+`UOFacet::g_FacetDimensions`, VA 0x00da72a8, file offset 0x009a72a8 (`.data`). It holds 7 records of 12 bytes
+`{u32 char *name, u32 width, u32 height}`:
+
+| Facet | Name (VA) | Width × height |
+|---|---|---|
+| 0 | "Felucca" (0x00cdf548) | 7168 × 4096 |
+| 1 | "Trammel" (0x00cdf540) | 7168 × 4096 |
+| 2 | "Ilshenar" (0x00cdf534) | 2304 × 1600 |
+| 3 | "Malas" (0x00cdf52c) | 2560 × 2048 |
+| 4 | "Tokuno" (0x00cdf524) | 1448 × 1448 |
+| 5 | "Gargoyle" (0x00cdf518) | 1280 × 4096 |
+| 6 | "Test" (0x00cdf510) | 256 × 256 |
+
+- The name field has no reader.
+- The table cannot grow: other data (0x00c7d5f8) follows at 0x00da72fc.
+
+### Every reader
+
+Each reader indexes `[facet*12 + 0xda72ac]` (width) or `[... + 0xda72b0]` (height) after a `facet < 7` test.
+
+| Function | Width / height reads | Facet test | Use |
+|---|---|---|---|
+| `UOFacet::SetPlayerChunkPosition` 0x005df060 | 0x005df0d6 `3b 98 ac 72 da 00`, 0x005df0de `3b a8 b0 72 da 00` | 0x005df0ca `CMP ESI,7` | rejects x ≥ width or y ≥ height: **no wrap** |
+| `UOFacet::QueueNeighbourChunks` 0x005dfef0 | 0x005dff42, 0x005dff4a | 0x005dff36 | neighbour chunks inside the map |
+| `UOFacet::SectorIndexFromXY` 0x005df210 | 0x005df223 `[EAX*4+0xda72b0]` | 0x005df21b | rows = (height + 0x3f) >> 6, column-major numbering |
+| `UOFacet::QueueSectorChunks` 0x005dfc40 | 0x005dfc59 | | sector index → origin |
+| `UOFacet::LoadWaypoints` 0x005d3d90 | 0x005d3fdb, 0x005d3fe7 | 0x005d3fcb | drops waypoints outside the map |
+
+Callers: `SetPlayerChunkPosition` is called by 0x00470970, 0x005def50, 0x005ef2e0, 0x005f4f00 and
+0x005f5c10. `QueueNeighbourChunks` is called by `SetPlayerChunkPosition` (0x005df11e), and `LoadWaypoints`
+by FUN_005d2ef0 (0x005d3a81).
+
+### Other dimension sites
+
+- **Felucca/Trammel split at x = 5120.** `UOFacet::IsSameFeluccaTrammelHalf` 0x005df670 takes
+  `(facet, x1, x2)`. For facets 0 and 1 only, it returns false when x1 and x2 lie on different sides of
+  5120. `BuildChunkFromSector` (call 0x005e2f7f) does not build the chunk on false (0x005e2f86).
+  FUN_005db3f0 (0x005db44b) also calls it. The split is hard-coded as three imm32 0x1400:
+  - 0x005df6d7 `81 7c 24 08 00 14 00 00` (`CMP [ESP+8],0x1400`, imm at VA 0x005df6db, file 0x001df6db);
+  - 0x005df6e1 `81 fb 00 14 00 00` (imm at 0x005df6e3, file 0x001df6e3);
+  - 0x005df6f3 `81 fb 00 14 00 00` (imm at 0x005df6f5, file 0x001df6f5).
+
+  They are preceded by 0x005df6d2 `83 ff 01` (`CMP EDI,1`).
+- **Radar and DDS (EC).** They use FacetDefinition (`UOFacet::GetFacetDimensions` 0x005dfe80, slots 5/6)
+  and no longer the table. `FacetDds_CopyRegionBlocks` computes mip offsets from those dimensions, and
+  `Radar_FindAreaAtLocation` 0x00535960 checks facet ≤ 6. So `facets.uop` and `facetNN.dds` must carry
+  the new size: DXT1, 1 pixel per tile, full mip chain, with the data at +0x80.
+- **Coordinate guards.** Every land accessor rejects x or y > 0x7fe0 (32736). There is no other width or
+  height immediate in the facet code. A search over `.text` found no further 7168/4096/2304/1600/2560/
+  2048/1448/1280 compare tied to facets (medium: a byte-pattern search, so a computed constant could be
+  missed).
+- **Packets.**
+  - 0xBF subcommand 8, `UOFacet::Handle_0xBF_08_SetFacet` 0x005e94a0 (registered at 0x005e87ba in
+    FUN_005e7ed0), reads a u8 facet through FUN_005e7c80 (0x005e94d0) **with no range check**. It calls
+    `UOFacet::SetFacet` 0x005dc720 (0x005e9539), which stores world +8 and posts
+    `GameData::FacetChangeEvent` (vftable 0x00cb6254).
+  - A facet ≥ 7 is then rejected by every `CMP 7` reader above.
+  - Coordinates in packets are u16.
+  - The 0x1B login handler 0x00611950 does not use the map size (medium).
+- **Sectors.** The sector header id is a u16. The asset id is `sector << 6 | facet`. The 64-square sector
+  side is fixed (`Sector_Read` loops 64×64).
+
+### Is changing the table enough?
+
+No. Also needed:
+
+1. On facets 0 and 1, the x = 5120 split, whenever the new map has a different layout. Patch the three
+   imm32 to the new split x, or to 0x8000 (above any legal width) to disable it.
+2. The data must match:
+   - facetN.uop with ceil(w/64)·ceil(h/64) sectors, numbered column-major, with the header facet and id;
+   - `data.map` (not read, but keep it);
+   - the FacetDefinition in facets.uop (width/height, and region rects inside the map);
+   - facetNN.dds at the new size;
+   - the server's own map size.
+
+### Constraints
+
+| Limit | Value | Source | Conf. |
+|---|---|---|---|
+| Max width/height | 32704 (multiple of 64 ≤ 0x7fe0) | accessor guards x, y ≤ 0x7fe0 | high |
+| Alignment | a multiple of 8 works (Tokuno 1448); a multiple of 64 avoids padded partial sectors; DXT1 needs a multiple of 4 | shipped data, `SectorIndexFromXY` | medium |
+| Sector count | ceil(w/64)·ceil(h/64) ≤ 65536 (u16 sector id); for example 16384 × 16384 at most for a square map | `Sector_Read` header | high |
+| Packet coordinates | < 65536 | u16 fields | high |
+| Facet count | fixed at 7 (indices 0..6): `CMP 7` in every reader, radar ≤ 6, mount list facet0..6. Facet 6 "Test" (256×256) can be repurposed | readers | high |
+| Chunk key | 32×32 chunks, the facet nibble allows 16; not a limit below 7 | chunk cache | medium |
+
+### Builds and the cross-build patch recipe
+
+All builds were located offline (`patch_locate.py`): the table by its 7 name pointers, the split by the
+signature below. The client files were only read.
+
+| Build | SHA-256 | Table file / VA | Split signature file / imm32 VAs |
+|---|---|---|---|
+| EC `UOSA.exe` | `5a5e9dc536c836d1bf10b6f86bb88f61a6ae078f519d4060d3bc47aecbebad50` | 0x9a72a8 / 0xda72a8 | 0x1df6d2 / 0x5df6db, 0x5df6e3, 0x5df6f5 |
+| `UOSA_TC.exe` (both EC folders) | `4e38c1cb834083c18050ca9fc85f1ebf77cf4d8bcb1a39a1f37878ea314553d0` | 0x98f870 / 0xd8f870 | 0x1cfce2 / 0x5cfceb, 0x5cfcf3, 0x5cfd05 |
+| `UOSA_eclo.exe` (both EC folders) | `5aaa654c517adc3aab88467f8bc869e9b048c78c0c195caf085723fecbb8fdf0` | 0x9a72a8 / 0xda72a8 | as EC |
+| `Ultima Online Enhanced fp/UOSA.exe` | `9692f6ae95dd55338985caabf247f3a2490ba2ef4d0cfe2d75694b56ba65e3dd` | 0x9ad2e0 / 0xdad2e0 | 0x1e1a02 / 0x5e1a0b, 0x5e1a13, 0x5e1a25 |
+| `UO - Old KR/UOKR.exe` | `1b802e5c00f3bf89a771778b9c6c57406be0703808eeb4cd983e2f5baa348a43` | 0x7fb688 / 0xbfcc88 | none (KR has no split) |
+
+Recipe:
+
+1. Hash the input (SHA-256). A known hash selects its row. An unknown hash falls back to the signature
+   search, and the tool says so.
+2. Locate the table. Scan `.data` at 4-byte steps for 7 consecutive 12-byte records whose pointer field
+   resolves (VA → section → file offset) to the NUL-terminated strings "Felucca", "Trammel", "Ilshenar",
+   "Malas", "Tokuno", "Gargoyle", "Test", in that order. Exactly one hit is required.
+3. Locate the split in `.text`:
+   - signature `83 FF 01 7F ?? 81 7C 24 08 [imm32] 7D ?? 81 FB [imm32] 7C ?? 32 C0`;
+   - then, within 32 bytes, the tail `81 FB [imm32] 7C EE 5E B0 01`.
+
+   UOSA builds need exactly one hit with all three imm32 equal. KR needs zero hits.
+4. Refuse when:
+   - the file is not PE32 i386;
+   - the table hit count is not exactly 1;
+   - the table values are neither the stock ones above nor the ones recorded by an earlier run of the
+     tool (keep a manifest next to the copy);
+   - the split hit count is wrong, or its three imm32 differ;
+   - a requested size breaks the constraints;
+   - the facet index is ≥ 7;
+   - the target is the original client file. Always work on a copy.
+5. Patch: u32 width at `table + 12·facet + 4` and u32 height at `+ 8`. For facets 0 and 1, optionally the
+   three split imm32. Change nothing else.
+6. PE checksum: set the optional-header `CheckSum` (file offset e_lfanew + 0x58: 0x158 in the EC builds,
+   0x168 in KR) to the standard PE checksum. That is the 16-bit one's-complement folding sum of the file
+   with the field zeroed, plus the file length. All builds have a valid checksum except `UOSA_eclo.exe`
+   (stored 0x00a4afd4, computed 0x00a53e9a), which still runs, so the client does not verify it. Recompute
+   it anyway.
+7. Authenticode: no build has a security directory (no signature), so nothing is invalidated. If a future
+   build is signed, any patch breaks the signature: refuse, or strip the directory explicitly.
+
 ## KR differences (`UO - Old KR`)
 
 - `facet0..4.uop`, version 4. They have the same `data.map` entry, names and hashes.
-- Sector payloads are larger: a different, KR-era square format (according to the converter below, a KR
-  tile id plus the classic id). Not decoded here, so whether the EC parser rejects them is not verified.
-- `facet00..04.dds` have the same sizes and mips as the EC files but different bytes.
+- The sector square is `i8 z, u16 material, u8 subtype, u16 legacy land id` (EC: `i8 z, u16 land`).
+  Delimiters and statics are as in EC. Decoded from the `UOKR.exe` parser and validated on every sector
+  of the 5 facets: see [uokr_facets.md](uokr_facets.md).
+- `facet00..04.dds` have the same sizes and mips as the EC files but different bytes. KR computes their
+  mip offsets from its own `g_FacetDimensions`.
 - No `facets.uop`.
 
 ## ManawydanMapConverter (third-party, read only)
