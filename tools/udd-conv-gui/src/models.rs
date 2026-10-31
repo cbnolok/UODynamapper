@@ -20,6 +20,9 @@ pub enum TextureOptimization {
 #[serde(deny_unknown_fields)]
 pub struct AppSettings {
     pub cc_dir: Option<PathBuf>,
+    /// The Classic client executable the world tab's dif check reads instead of the folder's `client.exe`; cleared
+    /// when the Classic folder changes.
+    pub classic_client_exe: Option<PathBuf>,
     pub ec_dir: Option<PathBuf>,
     pub dynamapper_routing_dir: Option<PathBuf>,
     pub upscale_profile_path: Option<PathBuf>,
@@ -77,6 +80,7 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             cc_dir: None,
+            classic_client_exe: None,
             ec_dir: None,
             dynamapper_routing_dir: None,
             upscale_profile_path: None,
@@ -255,6 +259,7 @@ mod tests {
         assert!(!settings.ec_mobile_anim_allow_missing_kdl);
         assert_eq!(settings.dynamapper_routing_dir, None);
         assert_eq!(settings.upscale_profile_path, None);
+        assert_eq!(settings.classic_client_exe, None);
         assert!(settings.bc7_rdo_enabled);
         assert_eq!(
             settings.bc7_rdo_lookback_blocks,
@@ -274,6 +279,7 @@ mod tests {
         settings.ec_mobile_anim_allow_missing_kdl = true;
         settings.dynamapper_routing_dir = Some(PathBuf::from("dynamapper/assets/cc_ec_convtables"));
         settings.upscale_profile_path = Some(PathBuf::from("profiles/mobile-upscale.toml"));
+        settings.classic_client_exe = Some(PathBuf::from("/uo/classic/client_tc.exe"));
         settings.bc7_rdo_lookback_blocks = 128;
 
         let serialized = toml::to_string(&settings).expect("serialize settings");
@@ -292,6 +298,7 @@ mod tests {
             restored.upscale_profile_path,
             Some(PathBuf::from("profiles/mobile-upscale.toml"))
         );
+        assert_eq!(restored.classic_client_exe, Some(PathBuf::from("/uo/classic/client_tc.exe")));
         assert_eq!(restored.bc7_rdo_lookback_blocks, 128);
     }
 }

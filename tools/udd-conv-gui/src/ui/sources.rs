@@ -21,6 +21,9 @@ impl UddConvApp {
                                 "Select Classic Client (CC) Directory",
                                 self.settings.cc_dir.as_deref(),
                             ) {
+                                if self.settings.cc_dir.as_ref() != Some(&path) {
+                                    self.settings.classic_client_exe = None;
+                                }
                                 self.settings.cc_dir = Some(path);
                                 self.persist_settings();
                             }

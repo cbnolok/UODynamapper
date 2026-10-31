@@ -1,11 +1,17 @@
 use crate::app::UddConvApp;
+use crate::logic::dif_check::{exe_line, status_detail, status_line, DifCheckRequest, CLASSIC_CLIENT_EXE_NAME};
 use eframe::egui;
 use udd_conv::cc_radar::RadarFormat;
+use uocf::client_exe::classic_difs::DifKind;
 use uocf::map_edition::MapEdition;
 
 const MAP_EDITION_HINT: &str = "Standard: mapN, staidxN, staticsN. Variant: the x files (mapNx, staidxNx, staticsNx) \
 the server selects with the 0xA9 flag 0x8000, for maps 0, 1, 2 and 5 (the others read their standard files); a \
 missing x file is an error, never a fallback. The dif options apply to whichever edition is selected.";
+const DIF_CHECK_HINT: &str = "What the Classic client executable does with the map and static dif files, read from \
+its code (information only: the dif options above stay your choice). A client applies them only once the server \
+sends the patch counts (0xBF/0x18).";
+const DIF_CHECK_INDENT: f32 = 16.0;
 
 impl UddConvApp {
     pub fn ui_world(&mut self, ui: &mut egui::Ui) {
@@ -54,6 +60,8 @@ impl UddConvApp {
                     }
                 });
             });
+
+            self.ui_dif_check(ui);
 
             ui.add_space(10.0);
 
@@ -106,6 +114,79 @@ impl UddConvApp {
                 });
                 ui.add_space(5.0);
             }
+        });
+    }
+
+    /// The Classic client's dif usage: the executable it was read from, one line per kind and the evidence.
+    fn ui_dif_check(&mut self, ui: &mut egui::Ui) {
+        let request = DifCheckRequest {
+            cc_dir: self.settings.cc_dir.clone(),
+            chosen_exe: self.settings.classic_client_exe.clone(),
+        };
+        let repaint_ctx = ui.ctx().clone();
+        self.dif_check.update(request, move || repaint_ctx.request_repaint());
+
+        let automatic_label = format!("Automatic ({CLASSIC_CLIENT_EXE_NAME})");
+        let folder_exes = self.dif_check.report.as_ref().map(|report| report.folder_exes.clone()).unwrap_or_default();
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Client dif usage:").on_hover_text(DIF_CHECK_HINT);
+            let selected = match &self.settings.classic_client_exe {
+                Some(path) => path.file_name().map_or_else(|| path.display().to_string(), |name| name.to_string_lossy().into_owned()),
+                None => automatic_label.clone(),
+            };
+            egui::ComboBox::from_id_salt("dif_check_exe")
+                .selected_text(selected)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.settings.classic_client_exe, None, automatic_label.as_str());
+                    for path in &folder_exes {
+                        let name = path.file_name().map_or_else(|| path.display().to_string(), |name| name.to_string_lossy().into_owned());
+                        ui.selectable_value(&mut self.settings.classic_client_exe, Some(path.clone()), name);
+                    }
+                });
+            if ui.button("Browse...").clicked() {
+                if let Some(path) = gui_shared::open_filtered_file_dialog(
+                    self.settings.cc_dir.as_deref(),
+                    "Executable",
+                    &["exe"],
+                ) {
+                    self.settings.classic_client_exe = Some(path);
+                }
+            }
+            if ui.button("Re-check").clicked() {
+                let repaint_ctx = ui.ctx().clone();
+                self.dif_check.recheck(move || repaint_ctx.request_repaint());
+            }
+            if self.dif_check.is_running() {
+                ui.spinner();
+            }
+        });
+
+        let Some(report) = &self.dif_check.report else {
+            return;
+        };
+        ui.horizontal(|ui| {
+            ui.add_space(DIF_CHECK_INDENT);
+            ui.vertical(|ui| {
+                ui.label(egui::RichText::new(exe_line(&report.exe, &report.folder_exes)).weak());
+                match report.result.as_deref() {
+                    None => {}
+                    Some(Err(error)) => {
+                        ui.label(format!("Cannot check the executable: {error}"));
+                    }
+                    Some(Ok(usage)) => {
+                        for kind in DifKind::ALL {
+                            let status = usage.status(kind);
+                            ui.label(status_line(kind, status)).on_hover_text(status_detail(kind, status));
+                        }
+                        egui::CollapsingHeader::new("Dif check evidence").id_salt("dif_check_evidence").show(ui, |ui| {
+                            ui.label(egui::RichText::new(usage.advice()).weak());
+                            for line in &usage.evidence {
+                                ui.label(egui::RichText::new(line.as_str()).weak());
+                            }
+                        });
+                    }
+                }
+            });
         });
     }
 

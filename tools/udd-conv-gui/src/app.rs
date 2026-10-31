@@ -21,6 +21,7 @@ pub struct UddConvApp {
     pub preview_path: Option<PathBuf>,
     pub preview_texture: Option<egui::TextureHandle>,
     pub upscale_preview: Option<crate::models::UpscalePreviewState>,
+    pub dif_check: crate::logic::dif_check::DifCheckState,
 }
 
 impl UddConvApp {
@@ -58,6 +59,7 @@ impl UddConvApp {
             preview_path: None,
             preview_texture: None,
             upscale_preview: None,
+            dif_check: Default::default(),
         }
     }
 
