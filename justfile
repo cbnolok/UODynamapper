@@ -634,11 +634,13 @@ check-shell:
 
 # Check that the workspace's dependencies, direct and transitive, resolve to the versions bevy and bevy_egui use
 # (e.g. egui pulled by eframe), so no crate is compiled twice. Fails on a mismatch; CI runs it.
+# Both recipes run cargo without RUSTC_WRAPPER: they compile nothing, and on CI the wrapper is sccache, whose server
+# would start inside the pipe, inherit it and keep it open, so python3 would wait for the end of input forever.
 check-dep-alignment *args:
     @echo "Checking workspace dependency alignment against bevy and bevy_egui..."
-    cargo metadata --format-version 1 | python3 scripts/dev-helpers/check_dep_alignment.py {{args}}
+    RUSTC_WRAPPER= cargo metadata --format-version 1 | RUSTC_WRAPPER= python3 scripts/dev-helpers/check_dep_alignment.py {{args}}
 
 # Check workspace direct dependency versions against a selected reference crate.
 check-dep-alignment-ref ref *args:
     @echo "Checking workspace dependency alignment against {{ref}}..."
-    cargo metadata --format-version 1 | python3 scripts/dev-helpers/check_dep_alignment.py --reference {{ref}} {{args}}
+    RUSTC_WRAPPER= cargo metadata --format-version 1 | RUSTC_WRAPPER= python3 scripts/dev-helpers/check_dep_alignment.py --reference {{ref}} {{args}}

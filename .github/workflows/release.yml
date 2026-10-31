@@ -65,6 +65,7 @@ jobs:
       # Cargo can't pin a dependency to "the version bevy_egui uses": this fails when a bevy or bevy_egui bump
       # leaves egui, glam or another shared crate on two versions.
       - name: Check dependency versions against bevy and bevy_egui
+        timeout-minutes: 10
         run: just check-dep-alignment
 
       - name: Check that the shell scripts are portable POSIX sh
