@@ -118,9 +118,10 @@ replace or add, every other entry or slot keeps its bytes.
   - WAV: 16-bit PCM (`fmt ` tag 1, size 16 or 18) at 22,048 or 22,050 Hz mono, 44,100 Hz mono, 22,050 or 44,100 Hz
     stereo; consistent byte rate and block align, `data` after `fmt `, whole sample frames, the RIFF size of the
     file, nothing after the last chunk. Extra chunks are kept.
-  - The file's format must match the entry name's extension.
-- Anything else is refused; `--allow-unverified-format` (`FormatPolicy::AllowUnverified`) turns the problems into
-  warnings. It exists because the lists are what the release ships, not what the client's decoder accepts (Ghidra
+  - The file's format must match the entry name's extension (`validate::kind_mismatch`): this one holds under
+    either policy.
+- Anything else is refused; `--allow-unverified-format` (`FormatPolicy::AllowUnverified`) turns the other problems
+  into warnings. It exists because the lists are what the release ships, not what the client's decoder accepts (Ghidra
   question 3): a format outside them may play, and trying one in a test client needs a way to write it.
 - `--convert`: a WAV entry takes any WAV `audio::decode` reads (8/16/24/32-bit PCM, 32/64-bit float, extensible)
   or an MP3, rewritten as a canonical 16-bit PCM WAV of the same rate and channels. No resampling (a pure-Rust

@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use crate::audio::convert::to_pcm16_wav;
 use crate::audio::mp3::MpegLayer;
-use crate::audio::validate::{enhanced_format_problems, expected_format, FormatPolicy};
+use crate::audio::validate::{enhanced_format_problems, expected_format, kind_mismatch, FormatPolicy};
 use crate::audio::{probe_audio, AudioContent, AudioFormat};
 use crate::enhanced::audio::{
     check_table_path, legacy_sound_entry_name, read_tables, write_table, AudioKind, AudioTableRow,
@@ -178,12 +178,17 @@ impl AudioPackageEditor {
             content = probe_audio(&payload);
             converted = true;
         }
-        let mut problems = enhanced_format_problems(name, &content);
-        let mp3 = AudioFormat::Mpeg(MpegLayer::L3);
-        if expected_format(name) == Some(mp3) && content.format() != mp3 {
-            problems.push("there is no MP3 encoder here: encode the file with LAME or ffmpeg (CBR) first".to_owned());
+        if let Some(mismatch) = kind_mismatch(name, &content) {
+            let hint = if expected_format(name) == Some(AudioFormat::Mpeg(MpegLayer::L3)) {
+                " There is no MP3 encoder here: encode the file with LAME or ffmpeg (CBR) first."
+            } else if options.convert {
+                ""
+            } else {
+                " --convert turns an MP3 into a WAV."
+            };
+            eyre::bail!("{name}: {mismatch}; a file of another kind is never stored under the name.{hint}");
         }
-        let warnings = options.policy.apply(name, problems)?;
+        let warnings = options.policy.apply(name, enhanced_format_problems(name, &content))?;
         Ok((payload, content, converted, warnings))
     }
 
@@ -344,6 +349,10 @@ mod tests {
         let error = editor.replace(&AudioTarget::Id(AudioKind::Sound, 0), &louder, options).unwrap_err().to_string();
         assert!(error.contains("the name asks for MP3, the file is WAV"), "{error}");
         assert!(error.contains("no MP3 encoder"), "{error}");
+        let allowed = AudioImportOptions { policy: FormatPolicy::AllowUnverified, ..options };
+        assert!(editor.replace(&AudioTarget::Id(AudioKind::Sound, 0), &louder, allowed).is_err(), "never a WAV as an MP3");
+        let ogg = NewAudio::Name("data/audio/sounds/a/b.ogg".to_owned());
+        assert!(editor.add(&ogg, &mp3_file(), allowed).unwrap_err().to_string().contains("neither"));
 
         let new = NewAudio::Id { kind: AudioKind::Sound, id: 5, path: Some("Sounds\\custom\\Bell.mp3".to_owned()), loops: None };
         let added = editor.add(&new, &mp3_file(), options).unwrap();

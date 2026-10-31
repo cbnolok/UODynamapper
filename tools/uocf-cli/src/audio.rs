@@ -160,7 +160,8 @@ pub struct EditArgs {
     #[arg(long)]
     convert: bool,
     /// Accept a format the shipped package does not show the client playing, with warnings: the client's
-    /// decoder limits are not known, so this is for trying a file out in a test client, not for a release.
+    /// decoder limits are not known, so this is for trying a file out in a test client, not for a release. A file
+    /// of another kind than the entry's extension (a WAV for an .mp3) is refused all the same.
     #[arg(long)]
     allow_unverified_format: bool,
 }

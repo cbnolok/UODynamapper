@@ -5,7 +5,8 @@
 //! The lists are what the reference release ships, not what the client's decoder accepts: that is a question for
 //! the client code (the decoder and its limits are not known yet). Until then anything else is refused, unless the
 //! caller asks for [`FormatPolicy::AllowUnverified`], which turns the problems into warnings: for trying a format
-//! out in a test client, never for a release.
+//! out in a test client, never for a release. A file of another kind than its entry name says ([`kind_mismatch`])
+//! is refused under either policy.
 
 use std::ops::RangeInclusive;
 
@@ -68,16 +69,22 @@ pub fn expected_format(name: &str) -> Option<AudioFormat> {
     }
 }
 
-/// Why `content`, stored as the entry `name`, is not like the shipped entries: empty when it is.
-pub fn enhanced_format_problems(name: &str, content: &AudioContent) -> Vec<String> {
-    let mut problems = Vec::new();
+/// Why `content` cannot be stored as the entry `name` under any policy: the name has neither audio extension, or
+/// the file is of another kind than the extension says.
+pub fn kind_mismatch(name: &str, content: &AudioContent) -> Option<String> {
     match expected_format(name) {
         Some(expected) if expected != content.format() => {
-            problems.push(format!("the name asks for {}, the file is {}", expected.label(), content.format().label()));
+            Some(format!("the name asks for {}, the file is {}", expected.label(), content.format().label()))
         }
-        Some(_) => {}
-        None => problems.push(format!("`{name}` has neither the .mp3 nor the .wav extension")),
+        Some(_) => None,
+        None => Some(format!("`{name}` has neither the .mp3 nor the .wav extension")),
     }
+}
+
+/// Why `content`, stored as the entry `name`, is not like the shipped entries: empty when it is. The first problem
+/// is the [`kind_mismatch`] when there is one.
+pub fn enhanced_format_problems(name: &str, content: &AudioContent) -> Vec<String> {
+    let mut problems: Vec<String> = kind_mismatch(name, content).into_iter().collect();
     match content {
         AudioContent::Mpeg(analysis) => problems.extend(mpeg_problems(analysis)),
         AudioContent::Wav(analysis) => problems.extend(wav_problems(analysis)),
@@ -186,6 +193,8 @@ mod tests {
         let mismatch = enhanced_format_problems(MP3_NAME, &probe_audio(&wav::encode_pcm_wav(22_050, 1, &[0, 0])));
         assert!(mismatch[0].contains("the name asks for MP3, the file is WAV"), "{mismatch:?}");
         assert!(enhanced_format_problems("data/audio/a.ogg", &AudioContent::Ogg).len() == 2);
+        assert!(kind_mismatch("data/audio/a.ogg", &AudioContent::Ogg).is_some());
+        assert!(kind_mismatch(WAV_NAME, &probe_audio(&wav_48k)).is_none(), "a WAV of another rate is still a WAV");
 
         let mut cut = mp3::tests::frames(mp3::tests::MPEG2_L3_64K_MONO_HEADER, mp3::tests::MPEG2_L3_64K_MONO_FRAME, 4);
         cut.truncate(cut.len() - 1);
