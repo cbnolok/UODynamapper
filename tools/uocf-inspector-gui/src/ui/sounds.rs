@@ -3,13 +3,19 @@ use std::sync::Arc;
 use color_eyre::eyre;
 use eframe::egui;
 use uocf::audio::decode::{decode, decode_classic_pcm, DecodedAudio};
+use uocf::audio::validate::FormatPolicy;
 use uocf::audio::{AudioContent, AudioFormat};
+use uocf::classic::sound_edit::ClassicSoundEditor;
 use uocf::enhanced::audio::{AudioKind, AudioPackage, AUDIO_ENTRY_ROOT};
+use uocf::enhanced::audio_edit::{AudioImportOptions, AudioPackageEditor, AudioTarget};
 
 use crate::app::{SoundPlayer, SoundSource, UopInspectorApp};
 use crate::ui::{list_sort_controls, sorted_indices_by};
 
 const SOUNDS_LIST_PANEL_WIDTH: f32 = 280.0;
+/// The replace options, kept in the egui memory.
+const CONVERT_OPTION_ID: &str = "sounds_replace_convert";
+const ALLOW_UNVERIFIED_OPTION_ID: &str = "sounds_replace_allow_unverified";
 
 pub fn ui_sounds(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
     if app.cc_sounds.is_none() && app.ec_audio.is_none() {
@@ -83,6 +89,72 @@ fn save_file(app: &mut UopInspectorApp, default_name: String, filter: (&str, &st
         Ok(()) => format!("Exported to {}.", path.display()),
         Err(e) => format!("Failed to export: {e:#}"),
     };
+}
+
+/// A checkbox whose state lives in the egui memory under `id`.
+fn option_checkbox(ui: &mut egui::Ui, id: &str, label: &str, hover: &str) -> bool {
+    let id = egui::Id::new(id);
+    let mut value = ui.data_mut(|data| *data.get_temp_mut_or_default::<bool>(id));
+    ui.checkbox(&mut value, label).on_hover_text(hover);
+    ui.data_mut(|data| data.insert_temp(id, value));
+    value
+}
+
+fn convert_checkbox(ui: &mut egui::Ui, hover: &str) -> bool {
+    option_checkbox(ui, CONVERT_OPTION_ID, "Convert", hover)
+}
+
+/// Picks the replacement file (WAV, or MP3 when `mp3`).
+fn pick_input(mp3: bool) -> Option<std::path::PathBuf> {
+    let dialog = crate::dialog::file_dialog().add_filter("Wave Audio", &["wav"]);
+    let dialog = if mp3 { dialog.add_filter("MPEG Layer III", &["mp3"]) } else { dialog };
+    dialog.pick_file()
+}
+
+/// Writes copies of the Classic sound files with `slot` replaced by a picked WAV, into a picked folder.
+fn replace_classic_slot(app: &mut UopInspectorApp, slot: u32, convert: bool) {
+    let Some(client) = app.settings.cc_path.clone() else {
+        app.status_message = "No Classic Client path.".to_owned();
+        return;
+    };
+    let Some(input) = pick_input(convert) else { return };
+    let Some(output) = crate::dialog::pick_folder() else { return };
+    let result = (|| -> eyre::Result<String> {
+        let file = std::fs::read(&input)?;
+        let mut editor = ClassicSoundEditor::load(&client)?;
+        let put = editor.put_sound(slot, &file, None, convert)?;
+        let written = editor.save_to(&output)?;
+        let names: Vec<String> = written.iter().map(|path| path.display().to_string()).collect();
+        Ok(format!("{:?} slot {slot} '{}'{}; wrote {}.", put.write, put.name, if put.converted { " (converted)" } else { "" }, names.join(", ")))
+    })();
+    app.status_message = result.unwrap_or_else(|e| format!("Failed to replace slot {slot}: {e:#}"));
+}
+
+/// Writes a copy of the Audio.uop with the entry `name` replaced by a picked file, to a picked path.
+fn replace_ec_entry(app: &mut UopInspectorApp, source: &std::path::Path, name: &str, options: AudioImportOptions) {
+    let Some(input) = pick_input(true) else { return };
+    let Some(output) = crate::dialog::file_dialog()
+        .add_filter("UOP package", &["uop"])
+        .set_file_name(uocf::enhanced::audio::AUDIO_UOP_FILE_NAME)
+        .save_file()
+    else {
+        return;
+    };
+    let result = (|| -> eyre::Result<String> {
+        let file = std::fs::read(&input)?;
+        let mut editor = AudioPackageEditor::load(source)?;
+        let put = editor.replace(&AudioTarget::Name(name.to_owned()), &file, options)?;
+        editor.save_as(&output)?;
+        let warnings = if put.warnings.is_empty() { String::new() } else { format!(" Warnings: {}.", put.warnings.join("; ")) };
+        Ok(format!(
+            "{:?} {name} ({:?}{}) in {}.{warnings}",
+            put.write,
+            put.compression,
+            if put.converted { ", converted" } else { "" },
+            output.display()
+        ))
+    })();
+    app.status_message = result.unwrap_or_else(|e| format!("Failed to replace {name}: {e:#}"));
 }
 
 fn ui_classic_sounds(app: &mut UopInspectorApp, _ctx: &egui::Context, ui: &mut egui::Ui) {
@@ -204,6 +276,15 @@ fn ui_classic_sounds(app: &mut UopInspectorApp, _ctx: &egui::Context, ui: &mut e
                     format!("sound_{:04}_{}.wav", sound.slot_id, sanitize_file_stem(&sound.name))
                 };
                 save_file(app, default_name, ("Wave Audio", "wav"), || Ok(sound.wav_bytes()));
+            }
+        });
+        ui.horizontal(|ui| {
+            let convert = convert_checkbox(ui, "Decode any WAV or MP3 at 22050 Hz and downmix it to mono (no resampling)");
+            let button = ui.button("Replace slot...").on_hover_text(
+                "Write copies of the sound files, with this slot set from a 16-bit PCM mono 22050 Hz WAV, into another folder",
+            );
+            if button.clicked() {
+                replace_classic_slot(app, sound.slot_id, convert);
             }
         });
 
@@ -336,6 +417,23 @@ fn ui_enhanced_audio(app: &mut UopInspectorApp, _ctx: &egui::Context, ui: &mut e
                 save_file(app, format!("{}.wav", sanitize_file_stem(stem)), ("Wave Audio", "wav"), || {
                     Ok(decode(&entry.payload, &entry.content)?.to_wav())
                 });
+            }
+        });
+        ui.horizontal(|ui| {
+            let convert = convert_checkbox(ui, "Convert a file a WAV entry cannot take to 16-bit PCM WAV (no MP3 encoding, no resampling)");
+            let allow = option_checkbox(
+                ui,
+                ALLOW_UNVERIFIED_OPTION_ID,
+                "Allow unverified format",
+                "Accept a format the shipped Audio.uop does not show the client playing, with warnings: for a test client only",
+            );
+            let policy = if allow { FormatPolicy::AllowUnverified } else { FormatPolicy::VerifiedOnly };
+            let button = ui
+                .add_enabled(entry.name.is_some(), egui::Button::new("Replace..."))
+                .on_hover_text("Write a copy of the Audio.uop with this entry replaced (keeping its compression)")
+                .on_disabled_hover_text("Only named entries can be replaced");
+            if button.clicked() {
+                replace_ec_entry(app, audio.path(), &name, AudioImportOptions { policy, convert });
             }
         });
 
