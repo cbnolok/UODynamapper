@@ -158,6 +158,11 @@ build_features := \
         if jxl_vendored_feat != "" { linux_features + "," + jxl_vendored_feat } \
         else { linux_features } \
     } else { jxl_vendored_feat }
+# Sound playback in uocf-inspector-gui, for the builds that include the tools. The musl builds leave it out: it needs
+# ALSA, and no static ALSA library exists for musl (Alpine ships none). Builds of dynamapper alone can't name it,
+# since cargo rejects a feature of a package outside the build.
+audio_playback_feat := "uocf-inspector-gui/audio-playback"
+workspace_features := if build_features != "" { build_features + "," + audio_playback_feat } else { audio_playback_feat }
 # Musl targets always require vendored libjxl (no system package available)
 musl_features := if linux_features != "" { linux_features + ",udd-container/vendored-jpegxl" } \
                  else { "udd-container/vendored-jpegxl" }
@@ -248,16 +253,16 @@ build-local-udd-pack-debug *args:
 build-local-workspace-release *args:
     @echo "Building workspace release with the stable toolchain on {{os}}..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_STABLE}}"
-    @echo "Using features: {{build_features}}"
-    {{cargo_release_stable}} build --release --locked --workspace --no-default-features {{features_args}} {{args}}
+    @echo "Using features: {{workspace_features}}"
+    {{cargo_release_stable}} build --release --locked --workspace --no-default-features --features "{{workspace_features}}" {{args}}
 
 # Build the full workspace in release mode with nightly build-std optimizations.
 build-local-workspace-release-nightly *args:
     @echo "Building workspace release with the nightly toolchain on {{os}}..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_NIGHTLY}}"
-    @echo "Using features: {{build_features}}"
-    @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
-    {{cargo_release_nightly}} build --release --locked --workspace --no-default-features {{features_args}} {{CARGO_FLAGS_NIGHTLY}} {{args}}
+    @echo "Using features: {{workspace_features}}"
+    @echo 'Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}'
+    {{cargo_release_nightly}} build --release --locked --workspace --no-default-features --features "{{workspace_features}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
 
 # Build the full workspace for a Linux musl release target with the stable toolchain.
 build-linux-musl-release target *args:
@@ -274,7 +279,7 @@ build-linux-musl-release-nightly target *args:
     @echo "Building workspace release for musl target {{target}} with the nightly toolchain..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_NIGHTLY}}{{linux_musl_rustflags}}{{rustflags_release_nightly_musl}}"
     @echo "Using features: {{build_features}}"
-    @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
+    @echo 'Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}'
     @echo "Adding musl RUSTFLAGS: {{linux_musl_rustflags}} {{rustflags_release_nightly_musl}}"
     RUSTFLAGS="{{RUSTFLAGS_RELEASE_NIGHTLY}}{{linux_musl_rustflags}}{{rustflags_release_nightly_musl}}" \
         cargo +nightly build --target "{{target}}" --release --locked --workspace --no-default-features --features \
@@ -290,7 +295,7 @@ build-ci-dynamapper *args:
     @echo "Building CI dynamapper release on {{os}}..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_NIGHTLY}}"
     @echo "Using features: {{build_features}}"
-    @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
+    @echo 'Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}'
     {{cargo_release_nightly}} build --release --locked --no-default-features {{features_args}} {{CARGO_FLAGS_NIGHTLY}} \
         -p dynamapper --bin dynamapper {{args}}
 
@@ -298,9 +303,9 @@ build-ci-dynamapper *args:
 build-ci-tools *args:
     @echo "Building CI tool releases on {{os}}..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_NIGHTLY}}"
-    @echo "Using features: {{build_features}}"
-    @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
-    {{cargo_release_nightly}} build --release --locked --no-default-features {{features_args}} {{CARGO_FLAGS_NIGHTLY}} \
+    @echo "Using features: {{workspace_features}}"
+    @echo 'Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}'
+    {{cargo_release_nightly}} build --release --locked --no-default-features --features "{{workspace_features}}" {{CARGO_FLAGS_NIGHTLY}} \
         {{tool_packages}} --bins {{args}}
 
 # Build the Dynamapper app and shipped tools used in release artifacts.
@@ -313,8 +318,8 @@ build-ci-shipping *args:
 build-local-workspace-profile *args:
     @echo "Building workspace profiling profile with the stable toolchain on {{os}}..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS_PROFILE_STABLE}}"
-    @echo "Using features: profiling,{{build_features}}"
-    {{cargo_profile_stable}} build --profile profiling --locked --workspace --no-default-features --features "profiling,{{build_features}}" {{args}}
+    @echo "Using features: profiling,{{workspace_features}}"
+    {{cargo_profile_stable}} build --profile profiling --locked --workspace --no-default-features --features "profiling,{{workspace_features}}" {{args}}
 
 # Build the full workspace for a Linux musl profiling target with the stable toolchain.
 build-linux-musl-profile target *args:
@@ -331,15 +336,15 @@ build-local-workspace-profile-nightly *args:
     @echo "Building workspace profiling profile with the nightly toolchain on {{os}}..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS_PROFILE_NIGHTLY}}"
     @echo "Using features: profiling,{{build_features}}"
-    @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
-    {{cargo_profile_nightly}} build --profile profiling --locked --workspace --no-default-features --features "profiling,{{build_features}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
+    @echo 'Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}'
+    {{cargo_profile_nightly}} build --profile profiling --locked --workspace --no-default-features --features "profiling,{{workspace_features}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
 
 # Build the full workspace for a Linux musl profiling target with the nightly toolchain.
 build-linux-musl-profile-nightly target *args:
     @echo "Building workspace profiling profile for musl target {{target}} with the nightly toolchain..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS_PROFILE_NIGHTLY}}{{linux_musl_rustflags}}{{rustflags_profile_nightly_musl}}"
     @echo "Using features: profiling,{{build_features}}"
-    @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
+    @echo 'Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}'
     @echo "Adding musl RUSTFLAGS: {{linux_musl_rustflags}} {{rustflags_profile_nightly_musl}}"
     RUSTFLAGS="{{RUSTFLAGS_PROFILE_NIGHTLY}}{{linux_musl_rustflags}}{{rustflags_profile_nightly_musl}}" \
         cargo +nightly build --target "{{target}}" --profile profiling --locked --workspace --no-default-features --features \
@@ -350,7 +355,7 @@ profile-dynamapper-flamegraph *args:
     @echo "Generating dynamapper flamegraph on {{os}}..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS_PROFILE_NIGHTLY}}"
     @echo "Using features: profiling,{{build_features}}"
-    @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
+    @echo 'Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}'
     {{cargo_profile_nightly}} flamegraph --profile profiling --no-default-features --features "profiling,{{build_features}}" {{CARGO_FLAGS_NIGHTLY}} \
         --bin dynamapper --package dynamapper {{args}}
 
@@ -368,7 +373,7 @@ bloat-nightly *args:
     @echo "Running cargo-bloat nightly release analysis on {{os}}..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_NIGHTLY}}"
     @echo "Using features: {{build_features}}"
-    @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
+    @echo 'Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}'
     {{cargo_release_nightly}} bloat --profile profiling --no-default-features --features "profiling,{{build_features}}" {{CARGO_FLAGS_NIGHTLY}} \
         --config 'profile.profiling.strip=false' --config 'profile.profiling.debug=true' \
         {{args}}
@@ -499,7 +504,7 @@ run-dynamapper-release *args:
     @echo "Running dynamapper in release mode with the nightly toolchain on {{os}}..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_NIGHTLY}}"
     @echo "Using features: {{build_features}}"
-    @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
+    @echo 'Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}'
     {{cargo_release_nightly}} run --release --no-default-features --features "{{build_features}}" {{CARGO_FLAGS_NIGHTLY}} \
         --bin dynamapper {{args}}
 
@@ -526,9 +531,9 @@ run-tool-debug tool *args:
 run-tool-release tool *args:
     @echo "Running tool {{tool}} in release mode with the nightly toolchain on {{os}}..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_NIGHTLY}}"
-    @echo "Using features: {{build_features}}"
-    @echo "Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}"
-    {{cargo_release_nightly}} run --release --no-default-features --features "{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} \
+    @echo "Using features: {{linux_features}},{{audio_playback_feat}}"
+    @echo 'Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}'
+    {{cargo_release_nightly}} run --release --no-default-features --features "{{linux_features}},{{audio_playback_feat}}" {{CARGO_FLAGS_NIGHTLY}} \
         --bin {{tool}} -- {{args}}
 
 # Convert all supported Classic and Enhanced Client assets into UDDP packages.

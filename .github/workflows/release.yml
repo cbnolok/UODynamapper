@@ -162,7 +162,7 @@ jobs:
               apk add --no-cache \
                 bash build-base cmake gcc g++ clang mold \
                 curl ca-certificates pkgconf just \
-                alsa-lib-dev alsa-lib-static eudev-dev libx11-dev libxkbcommon-dev
+                eudev-dev libx11-dev libxkbcommon-dev
               curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain nightly
               . "$HOME/.cargo/env"
               rustup target add x86_64-unknown-linux-musl
@@ -213,7 +213,7 @@ jobs:
               apk add --no-cache \
                 bash build-base cmake gcc g++ clang mold \
                 curl ca-certificates pkgconf just \
-                alsa-lib-dev alsa-lib-static eudev-dev libx11-dev libxkbcommon-dev
+                eudev-dev libx11-dev libxkbcommon-dev
               curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain nightly
               . "$HOME/.cargo/env"
               rustup target add aarch64-unknown-linux-musl
