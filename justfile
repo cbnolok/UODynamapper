@@ -60,10 +60,9 @@ lld_llvm_major := if has_lld != "" {
 # RUSTC_WRAPPER logic (needed for sccache)
 wrapper_path := "scripts/build/common/rustc_wrapper.sh"
 
-# Determine if sccache should be used. CI uses it except on Windows: sccache expands cargo's @argfile and spawns rustc
-# with every argument, and with one -L per dependency build directory that passes Windows' 32767-character command
-# line limit (os error 206).
-sccache_requested := if sccache == "true" { "true" } else if is_windows == "true" { "false" } else { is_ci }
+# Determine if sccache should be used: on CI by default. The Windows CI jobs pin sccache 0.16, since later releases
+#   expand cargo's @argfile past Windows' command line limit (see release.yml).
+sccache_requested := if sccache == "true" { "true" } else { is_ci }
 sccache_available := if has_sccache != "" { "true" } else { "false" }
 sccache_effective := if sccache_requested == "true" { sccache_available } else { "false" }
 

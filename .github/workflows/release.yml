@@ -51,7 +51,7 @@ jobs:
           components: rust-src
 
       - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.9
+        uses: mozilla-actions/sccache-action@v0.0.11
 
       - name: Install Just
         uses: extractions/setup-just@v2
@@ -116,7 +116,7 @@ jobs:
           components: rust-src
 
       - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.9
+        uses: mozilla-actions/sccache-action@v0.0.11
 
       - name: Install Just
         uses: extractions/setup-just@v2
@@ -260,6 +260,14 @@ jobs:
         with:
           components: rust-src
 
+      # Pinned: sccache 0.17+ expands cargo's @argfile and spawns rustc with every argument, which passes Windows'
+      # 32767-character command line limit (os error 206). 0.16 forwards an oversized argfile to rustc and leaves
+      # just that call uncached. Remove once https://github.com/mozilla/sccache/issues/2397 is fixed in a release.
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: "v0.16.0"
+
       - name: Install Just
         uses: extractions/setup-just@v2
 
@@ -315,6 +323,14 @@ jobs:
           targets: x86_64-pc-windows-gnu
           components: rust-src
 
+      # Pinned: sccache 0.17+ expands cargo's @argfile and spawns rustc with every argument, which passes Windows'
+      # 32767-character command line limit (os error 206). 0.16 forwards an oversized argfile to rustc and leaves
+      # just that call uncached. Remove once https://github.com/mozilla/sccache/issues/2397 is fixed in a release.
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: "v0.16.0"
+
       - name: Install Just
         uses: extractions/setup-just@v2
 
@@ -367,6 +383,14 @@ jobs:
           targets: aarch64-pc-windows-msvc
           components: rust-src
 
+      # Pinned: sccache 0.17+ expands cargo's @argfile and spawns rustc with every argument, which passes Windows'
+      # 32767-character command line limit (os error 206). 0.16 forwards an oversized argfile to rustc and leaves
+      # just that call uncached. Remove once https://github.com/mozilla/sccache/issues/2397 is fixed in a release.
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: "v0.16.0"
+
       - name: Install Just
         run: cargo install just --locked
 
@@ -412,7 +436,7 @@ jobs:
           components: rust-src
 
       - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.9
+        uses: mozilla-actions/sccache-action@v0.0.11
 
       - name: Install Just
         uses: extractions/setup-just@v2
@@ -459,7 +483,7 @@ jobs:
           components: rust-src
 
       - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.9
+        uses: mozilla-actions/sccache-action@v0.0.11
 
       - name: Install Just
         uses: extractions/setup-just@v2
