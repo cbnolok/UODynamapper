@@ -62,9 +62,8 @@ not be substituted blindly for the serialized material's source indices.
   `0x45db3b` and its floating-point array `Tweaks` at `0x45dbe6`, attaching
   them as extra data. The drawing method looks up those same names at
   `0x59bd0c` and `0x59bd76`. These are the semantic names for the retained
-  arrays: tileart `technique` and `tweaks` (formerly `unk8` and `unk9`), still
-  `unk8` and `unk9` in the TerrainDefinition reader; preserve their raw values
-  as well.
+  arrays: tileart `technique` and `tweaks` (formerly `unk8` and `unk9`), and
+  TerrainDefinition `techniques` and `tweaks`; preserve their raw values as well.
 - Material source 0 is bound at `0x59be80`–`0x59be8d`. The color operation is
   `0x16` (22, `D3DTOP_BUMPENVMAP`) at `0x59bead`. Its bump matrix diagonal is
   1.0, with zero off-diagonal terms.
@@ -392,9 +391,9 @@ original executable and Ghidra program were not modified.
 Definition reader `0x845c25` reads name, material ID, then three float fields.
 The stores at `0x845cde`–`0x845cf5` put the ID at object `+0x30` and the floats at
 `+0x34/+0x38/+0x3c`. Loader `0x461800` passes `+0x38` to `0x461060`. Therefore
-`TerrainDefinitionEntry.unk2`, already retained in `source_materials.json`, is
-the terrain coverage exponent. It is independent of texture repetition and
-the shader's `Tweaks` vector.
+`TerrainDefinitionEntry.coverage_exponent` (formerly `unk2`), already retained
+in `source_materials.json`, is the terrain coverage exponent. It is independent
+of texture repetition and the shader's `Tweaks` vector.
 
 For positive exponent `b`, the coverage bytes are:
 

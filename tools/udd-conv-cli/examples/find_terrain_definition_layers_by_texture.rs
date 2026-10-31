@@ -63,7 +63,7 @@ fn main() -> eyre::Result<()> {
             println!("    shader_name={:?}", texture.shader_name);
             for (index, layer) in matching_layers {
                 println!(
-                    "    layer[{}]: path={:?} repetition={} unk4={} unk6={} unk7={}",
+                    "    layer[{}]: path={:?} repetition={} source_kind={} sampler_index={} uv_set={}",
                     index,
                     layer.path,
                     layer.texture_repetition,

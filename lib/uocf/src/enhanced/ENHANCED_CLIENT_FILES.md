@@ -912,11 +912,11 @@ albedo/detail layers better than choosing the first layer blindly. It prevents
 the old failures where an alpha mask, normal map, displacement-like texture, or
 red diagnostic-looking support texture became the visible terrain base.
 
-`unk6` is only a deterministic final tie-breaker after the support and
+`sampler_index` is only a deterministic final tie-breaker after the support and
 repetition rules. It is not treated as semantic policy. The packer marks
-`TERRAIN_PRIMARY_FLAG_OPAQUE_UNK6_TIEBREAKER` when multiple layers have the
-same current rank, so those cases stay visible for audit. Do not promote `unk6`
-unless an audit proves it works in at least 3/4 of reviewed cases.
+`TERRAIN_PRIMARY_FLAG_SAMPLER_INDEX_TIEBREAKER` when multiple layers have the
+same current rank, so those cases stay visible for audit. Do not promote
+`sampler_index` unless an audit proves it works in at least 3/4 of reviewed cases.
 
 Reason codes written to metadata:
 
@@ -933,7 +933,7 @@ Diagnostic flags written to metadata include:
 - fallback reason
 - multiple preferred non-support layers
 - support-like clue outside current heuristic
-- opaque `unk6` tie-breaker
+- `sampler_index` tie-breaker
 
 ## 5. Layer Roles
 
@@ -1154,8 +1154,7 @@ Runtime:
   `source_kind`, `sampler_index`, and `uv_set` (formerly `unk4`, `unk6` and
   `unk7`; the binary layout is unchanged).
 - `metadata/item_materials.json`: per-item shader block material (block index,
-  shader name, Technique, Tweaks, `field_04`). Packages that still use the old
-  `unk1` key load through a serde alias.
+  shader name, Technique, Tweaks, `field_04`).
 
 `tex_art_ec.uddp`:
 
@@ -1257,7 +1256,7 @@ When a case is unclear:
 
 Known weak signals:
 
-- `unk6` is only a tie-breaker and audit flag today.
+- `sampler_index` is only a tie-breaker and audit flag today.
 - Tileart texture-block `field_04` (formerly `unk1`) is 0 in every client
   record; it carries no routing signal.
 - Physical package names are not semantic ownership.

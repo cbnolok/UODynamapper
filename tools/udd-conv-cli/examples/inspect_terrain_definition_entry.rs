@@ -77,7 +77,7 @@ fn main() -> eyre::Result<()> {
                 println!("  layers:");
                 for (index, layer) in texture.layers.iter().enumerate() {
                     println!(
-                        "    [{}] path={:?} texture_id={:?} type={:?} repetition={} current_support={} support_like_clue={} preferred_repetition={} unk4={} unk6={} unk7={}",
+                        "    [{}] path={:?} texture_id={:?} type={:?} repetition={} current_support={} support_like_clue={} preferred_repetition={} source_kind={} sampler_index={} uv_set={}",
                         index,
                         layer.path,
                         layer.texture_id,

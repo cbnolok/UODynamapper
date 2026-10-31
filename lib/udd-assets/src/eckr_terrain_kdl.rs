@@ -42,9 +42,6 @@ impl EckrTerrainRouting {
     }
 }
 
-pub type TranscodeEntry = EckrTerrainRouteEntry;
-pub type TerrainTranscode = EckrTerrainRouting;
-
 fn parse_eckr_terrain_routing_kdl(source_name: &str, content: &str) -> eyre::Result<EckrTerrainRouting> {
     use knuffel::ast::{Literal, Node, Value};
     use knuffel::span::{Span, Spanned};

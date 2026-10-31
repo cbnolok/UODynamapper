@@ -99,9 +99,9 @@ impl TerrainMetaPackage {
             let has_name_clue = reader.read_u8()?;
             let has_pref_rep = reader.read_u8()?;
             let _pad = reader.read_u8()?;
-            let _unk4 = reader.read_u32::<LittleEndian>()?;
-            let _unk6 = reader.read_u32::<LittleEndian>()?;
-            let _unk7 = reader.read_u32::<LittleEndian>()?;
+            let _source_kind = reader.read_u32::<LittleEndian>()?;
+            let _sampler_index = reader.read_u32::<LittleEndian>()?;
+            let _uv_set = reader.read_u32::<LittleEndian>()?;
             layers.push(TerrainMetaLayerRef {
                 texture_id,
                 texture_repetition,

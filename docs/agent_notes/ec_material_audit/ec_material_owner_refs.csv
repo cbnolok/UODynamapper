@@ -1,4 +1,4 @@
-owner_kind,owner_id,owner_name,owner_aliases,shader_name,tile_type,tile_flags,ref_block_index,ref_item_index,texture_id,raw_path,normalized_path,physical_package_guess,logical_family,is_auxiliary_or_support,stretch_or_repetition,unk4,unk6,unk7,directness
+owner_kind,owner_id,owner_name,owner_aliases,shader_name,tile_type,tile_flags,ref_block_index,ref_item_index,texture_id,raw_path,normalized_path,physical_package_guess,logical_family,is_auxiliary_or_support,stretch_or_repetition,source_kind,sampler_index,uv_set,directness
 tileart,0,,,,Static,TaeFlag(NoDraw),0,0,8600,Data\WorldArt\00008600_NO_DRAW.tga,data\worldart\00008600_no_draw.tga,Texture.uop,WorldArt,false,1.000000,0,0,0,direct-textual
 tileart,0,,,,Static,TaeFlag(NoDraw),0,1,1000045,Data\WorldArt\01000045_noise.tga,data\worldart\01000045_noise.tga,Texture.uop,WorldArt,true,16.000000,0,1,1,direct-textual
 tileart,0,,,,Static,TaeFlag(NoDraw),1,0,0,Data\TileArtLegacy\0.tga,data\tileartlegacy\0.tga,LegacyTexture.uop,TileArtLegacy,false,1.000000,0,0,0,direct-textual

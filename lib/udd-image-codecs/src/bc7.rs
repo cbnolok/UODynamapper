@@ -106,8 +106,8 @@ impl Bc7RdoOptions {
         }
     }
 
-    fn to_rdo_params(&self) -> crate::bc7_rdo::Bc7RdoParams {
-        crate::bc7_rdo::Bc7RdoParams {
+    fn to_rdo_params(&self) -> crate::bc7::rdo::Bc7RdoParams {
+        crate::bc7::rdo::Bc7RdoParams {
             lambda: self.lambda,
             lookback_window_size: bc7_rdo_lookback_window_size(self.lookback_blocks),
             skip_zero_mse_blocks: self.skip_zero_mse_blocks,
@@ -1127,7 +1127,7 @@ fn rgba8888_to_rgb888(rgba: &[u8]) -> Vec<u8> {
 
 #[cfg(feature = "bc7-encode")]
 fn encode_with_analytical(rgba_pixels: &[u8], extent: ImageExtent) -> EncodedBc7Blocks {
-    use crate::bc7_analytical::{
+    use crate::bc7::analytical::{
         pack_bc7_rgba, Pixel, FLAG_PBIT_OPT_M6, FLAG_USE_DUAL_PLANE, FLAG_USE_TRIVIAL_M6,
     };
     use rayon::prelude::*;
@@ -1163,7 +1163,7 @@ fn encode_with_analytical_and_progress<F>(
 where
     F: Fn(usize) + Sync,
 {
-    use crate::bc7_analytical::{
+    use crate::bc7::analytical::{
         pack_bc7_rgba, Pixel, FLAG_PBIT_OPT_M6, FLAG_USE_DUAL_PLANE, FLAG_USE_TRIVIAL_M6,
     };
     use rayon::prelude::*;
@@ -1195,10 +1195,10 @@ where
 
 #[cfg(feature = "bc7-encode")]
 fn encode_with_analytical_wide(rgba_pixels: &[u8], extent: ImageExtent) -> EncodedBc7Blocks {
-    use crate::bc7_analytical::{FLAG_PBIT_OPT_M6, FLAG_USE_DUAL_PLANE, FLAG_USE_TRIVIAL_M6};
+    use crate::bc7::analytical::{FLAG_PBIT_OPT_M6, FLAG_USE_DUAL_PLANE, FLAG_USE_TRIVIAL_M6};
 
     let mut blocks = vec![[0u8; 16]; extent.blocks_wide() as usize * extent.blocks_high() as usize];
-    crate::bc7_analytical_wide::pack_bc7_rgba_blocks_wide(
+    crate::bc7::analytical_wide::pack_bc7_rgba_blocks_wide(
         blocks.as_flattened_mut(),
         rgba_pixels,
         extent.width(),
@@ -1220,10 +1220,10 @@ fn encode_with_analytical_wide_and_progress<F>(
 where
     F: Fn(usize) + Sync,
 {
-    use crate::bc7_analytical::{FLAG_PBIT_OPT_M6, FLAG_USE_DUAL_PLANE, FLAG_USE_TRIVIAL_M6};
+    use crate::bc7::analytical::{FLAG_PBIT_OPT_M6, FLAG_USE_DUAL_PLANE, FLAG_USE_TRIVIAL_M6};
 
     let mut blocks = vec![[0u8; 16]; extent.blocks_wide() as usize * extent.blocks_high() as usize];
-    crate::bc7_analytical_wide::pack_bc7_rgba_blocks_wide_with_progress(
+    crate::bc7::analytical_wide::pack_bc7_rgba_blocks_wide_with_progress(
         blocks.as_flattened_mut(),
         rgba_pixels,
         extent.width(),
@@ -1257,7 +1257,7 @@ fn apply_bc7_rdo(
         }
     };
     let params = rdo_options.to_rdo_params();
-    crate::bc7_rdo::reduce_entropy_bc7_parallel(
+    crate::bc7::rdo::reduce_entropy_bc7_parallel(
         &mut encoded.blocks,
         rgba_blocks,
         extent.blocks_wide() as usize,
@@ -1289,7 +1289,7 @@ fn apply_bc7_rdo_with_progress<F>(
         }
     };
     let params = rdo_options.to_rdo_params();
-    crate::bc7_rdo::reduce_entropy_bc7_parallel_with_progress(
+    crate::bc7::rdo::reduce_entropy_bc7_parallel_with_progress(
         &mut encoded.blocks,
         rgba_blocks,
         extent.blocks_wide() as usize,

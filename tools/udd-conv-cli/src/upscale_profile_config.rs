@@ -41,7 +41,6 @@ struct TomlPassSection {
 
 #[derive(Debug, Deserialize)]
 struct TomlOverride {
-    #[serde(alias = "type")]
     image_type: String,
     family: Option<u32>,
     id: u32,
@@ -51,7 +50,6 @@ struct TomlOverride {
 
 #[derive(Debug, Clone, Deserialize, Default)]
 struct PassConfig {
-    #[serde(alias = "algorithm")]
     filter: String,
     factor: Option<f32>,
     radius: Option<f32>,
@@ -163,9 +161,7 @@ fn parse_kdl_profile(path: &Path, content: &str) -> eyre::Result<UpscaleProfile>
     }
 
     fn parse_pass_node(node: &Node<Span>) -> eyre::Result<PassConfig> {
-        let filter = if let Some(value) = property_string(node, "filter")?
-            .or(property_string(node, "algorithm")?)
-        {
+        let filter = if let Some(value) = property_string(node, "filter")? {
             value
         } else {
             let value = node.arguments.first().context("pass: missing filter argument")?;
@@ -204,7 +200,6 @@ fn parse_kdl_profile(path: &Path, content: &str) -> eyre::Result<UpscaleProfile>
     for node in &document.nodes {
         if node.node_name.as_ref() == "override" {
             let image_type = property_string(node, "type")?
-                .or(property_string(node, "image_type")?)
                 .context("override: missing type property")?;
             let image_type = UpscaleImageType::parse(&image_type)
                 .ok_or_else(|| eyre::eyre!("unknown upscale image type '{image_type}'"))?;
@@ -292,7 +287,7 @@ impl PassConfig {
             CliUpscaleFilter::HighPassSharpen => {
                 UpscalePass::from(EnhancementFilter::HighPassSharpen {
                     radius: self.radius.unwrap_or(2.0),
-                    strength: self.strength.or(self.amount).unwrap_or(0.18),
+                    strength: self.strength.unwrap_or(0.18),
                 })
             }
             CliUpscaleFilter::ScaleFxSmartDeblur => {

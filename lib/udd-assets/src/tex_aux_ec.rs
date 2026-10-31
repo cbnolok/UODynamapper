@@ -45,7 +45,7 @@ pub struct TexAuxEcSlotRecord {
     pub logical_family: u8,
     /// Stable role byte (`EcMaterialStableRole as u8`).
     pub stable_role: u8,
-    /// Pixel format: 0 = Rgba8888 (backward compat, was _pad byte), 1 = Bc7.
+    /// Pixel format: 0 = Rgba8888, 1 = Bc7.
     pub pixel_format: u8,
     pub _pad: u8,
 }

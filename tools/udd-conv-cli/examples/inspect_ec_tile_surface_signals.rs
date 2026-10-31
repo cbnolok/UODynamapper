@@ -442,15 +442,15 @@ fn print_terrain_meta_layers(terrain_meta: &TerrainMetaPackage, terrain_tile_id:
     println!("  terrain_meta.layers.count={}", layers.len());
     for (index, layer) in layers.iter().enumerate() {
         println!(
-            "    layer[{index}] texture_id={} repetition={} is_support={} has_name_clue={} has_pref_rep={} unk4={} unk6={} unk7={}",
+            "    layer[{index}] texture_id={} repetition={} is_support={} has_name_clue={} has_pref_rep={} source_kind={} sampler_index={} uv_set={}",
             layer.texture_id,
             layer.texture_repetition,
             layer.is_support,
             layer.has_name_clue,
             layer.has_pref_rep,
-            layer.unk4,
-            layer.unk6,
-            layer.unk7,
+            layer.source_kind,
+            layer.sampler_index,
+            layer.uv_set,
         );
     }
 }

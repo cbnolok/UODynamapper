@@ -19,38 +19,38 @@ crate::eyre_imports!();
 
 /// Raw metadata header for a texture entry as stored in `Texture.uop`.
 ///
-/// This structure mirrors the binary layout of the texture metadata, including
-/// several "unknown" fields (`unk1`, `unk8`, `unk9`). It is used internally
+/// This structure mirrors the binary layout of the texture metadata, which is the
+/// tileart shader block layout (see [`tileart::TaeTexture`]). It is used internally
 /// for parsing and should not be used directly by high-level rendering code.
 #[derive(Debug, Clone)]
 pub struct TextureItem {
     pub texture_present: bool,
-    pub unk1: u8,
+    pub field_04: u8,
     pub name_index: i32,
     pub images: Vec<TextureItemImage>,
-    pub unk8: Vec<i32>,
-    pub unk9: Vec<f32>,
+    pub technique: Vec<i32>,
+    pub tweaks: Vec<f32>,
 }
 
 /// Represents an image within a texture item's metadata.
 #[derive(Debug, Clone)]
 pub struct TextureItemImage {
     pub string_dictionary_offset: i32,
-    pub unk4: u8,
+    pub source_kind: u8,
     pub texture_repetition: f32,
-    pub unk6: i32,
-    pub unk7: i32,
+    pub sampler_index: i32,
+    pub uv_set: i32,
 }
 
 impl TextureItem {
     pub fn absent() -> Self {
         Self {
             texture_present: false,
-            unk1: 0,
+            field_04: 0,
             name_index: 0,
             images: vec![],
-            unk8: vec![],
-            unk9: vec![],
+            technique: vec![],
+            tweaks: vec![],
         }
     }
 
@@ -61,39 +61,39 @@ impl TextureItem {
             return Ok(Self::absent());
         }
 
-        let unk1 = reader.read_u8()?;
+        let field_04 = reader.read_u8()?;
         let name_index = reader.read_i32::<LittleEndian>()?;
         let count1 = reader.read_u8()?;
         let mut images = Vec::with_capacity(count1 as usize);
         for _ in 0..count1 {
             images.push(TextureItemImage {
                 string_dictionary_offset: reader.read_i32::<LittleEndian>()?,
-                unk4: reader.read_u8()?,
+                source_kind: reader.read_u8()?,
                 texture_repetition: reader.read_f32::<LittleEndian>()?,
-                unk6: reader.read_i32::<LittleEndian>()?,
-                unk7: reader.read_i32::<LittleEndian>()?,
+                sampler_index: reader.read_i32::<LittleEndian>()?,
+                uv_set: reader.read_i32::<LittleEndian>()?,
             });
         }
 
         let count2 = reader.read_u32::<LittleEndian>()?;
-        let mut unk8 = Vec::with_capacity(count2 as usize);
+        let mut technique = Vec::with_capacity(count2 as usize);
         for _ in 0..count2 {
-            unk8.push(reader.read_i32::<LittleEndian>()?);
+            technique.push(reader.read_i32::<LittleEndian>()?);
         }
 
         let count3 = reader.read_u32::<LittleEndian>()?;
-        let mut unk9 = Vec::with_capacity(count3 as usize);
+        let mut tweaks = Vec::with_capacity(count3 as usize);
         for _ in 0..count3 {
-            unk9.push(reader.read_f32::<LittleEndian>()?);
+            tweaks.push(reader.read_f32::<LittleEndian>()?);
         }
 
         Ok(Self {
             texture_present: true,
-            unk1,
+            field_04,
             name_index,
             images,
-            unk8,
-            unk9,
+            technique,
+            tweaks,
         })
     }
 }

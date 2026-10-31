@@ -28,7 +28,7 @@ use udd_assets::{
         TexLandEcTerrainProvenanceRecord, MISSING_SLOT_ID, MISSING_TERRAIN_LAYER_INDEX,
         MISSING_TEXTURE_ID, TERRAIN_PRIMARY_FLAG_FALLBACK_REASON,
         TERRAIN_PRIMARY_FLAG_MULTIPLE_PREFERRED_NON_SUPPORT,
-        TERRAIN_PRIMARY_FLAG_OPAQUE_UNK6_TIEBREAKER,
+        TERRAIN_PRIMARY_FLAG_SAMPLER_INDEX_TIEBREAKER,
         TERRAIN_PRIMARY_FLAG_SELECTED_CURRENT_SUPPORT,
         TERRAIN_PRIMARY_FLAG_SELECTED_PREFERRED_REPETITION,
         TERRAIN_PRIMARY_FLAG_SELECTED_SUPPORT_LIKE,
@@ -72,9 +72,9 @@ pub fn audit_ec_material_refs(source_dirs: &[PathBuf], output: &Path) -> eyre::R
         "logical_family",
         "is_auxiliary_or_support",
         "stretch_or_repetition",
-        "unk4",
-        "unk6",
-        "unk7",
+        "source_kind",
+        "sampler_index",
+        "uv_set",
         "directness",
     ])?;
 
@@ -363,9 +363,9 @@ pub fn audit_ec_terrain_primary_selection(
                 support_like_clue: layer.has_support_like_name_clue(),
                 preferred_repetition: layer.has_preferred_primary_repetition(),
                 texture_repetition: layer.texture_repetition,
-                unk4: layer.source_kind,
-                unk6_opaque_order: layer.sampler_index,
-                unk7: layer.uv_set,
+                source_kind: layer.source_kind,
+                sampler_index: layer.sampler_index,
+                uv_set: layer.uv_set,
                 physical_package_guess: selected_package.to_string(),
                 logical_family: selected_family.to_string(),
             }),
@@ -2087,9 +2087,9 @@ struct TerrainSelectedLayerReport {
     support_like_clue: bool,
     preferred_repetition: bool,
     texture_repetition: f32,
-    unk4: u8,
-    unk6_opaque_order: u32,
-    unk7: u32,
+    source_kind: u8,
+    sampler_index: u32,
+    uv_set: u32,
     physical_package_guess: String,
     logical_family: String,
 }
@@ -2115,9 +2115,9 @@ struct TerrainLayerReport {
     support_like_clue: bool,
     preferred_repetition: bool,
     texture_repetition: f32,
-    unk4: u8,
-    unk6_opaque_order: u32,
-    unk7: u32,
+    source_kind: u8,
+    sampler_index: u32,
+    uv_set: u32,
     physical_package_guess: String,
     logical_family: String,
 }
@@ -2193,9 +2193,9 @@ struct TerrainDefinitionUopLayerReport {
     path: Option<String>,
     support_like_name: bool,
     current_support_heuristic: bool,
-    unk4: u8,
-    unk6: u32,
-    unk7: u32,
+    source_kind: u8,
+    sampler_index: u32,
+    uv_set: u32,
 }
 
 #[derive(Serialize)]
@@ -2946,8 +2946,8 @@ fn terrain_primary_flags_vec(flags: u16) -> Vec<&'static str> {
     if flags & TERRAIN_PRIMARY_FLAG_SUPPORT_LIKE_OUTSIDE_CURRENT_HEURISTIC != 0 {
         names.push("support_like_outside_current_heuristic");
     }
-    if flags & TERRAIN_PRIMARY_FLAG_OPAQUE_UNK6_TIEBREAKER != 0 {
-        names.push("opaque_unk6_tiebreaker");
+    if flags & TERRAIN_PRIMARY_FLAG_SAMPLER_INDEX_TIEBREAKER != 0 {
+        names.push("sampler_index_tiebreaker");
     }
     names
 }
@@ -3020,9 +3020,9 @@ fn terrain_layer_report(
         support_like_clue: layer.has_support_like_name_clue(),
         preferred_repetition: layer.has_preferred_primary_repetition(),
         texture_repetition: layer.texture_repetition,
-        unk4: layer.source_kind,
-        unk6_opaque_order: layer.sampler_index,
-        unk7: layer.uv_set,
+        source_kind: layer.source_kind,
+        sampler_index: layer.sampler_index,
+        uv_set: layer.uv_set,
         physical_package_guess: physical_package.to_string(),
         logical_family: terrain_texture_family_name(layer.texture_type, physical_package)
             .to_string(),
@@ -3078,9 +3078,9 @@ fn terrain_definition_uop_entry_report(
                         support_like_name: layer.has_support_like_name_clue(),
                         current_support_heuristic: layer
                             .is_support_layer_by_current_name_heuristic(),
-                        unk4: layer.source_kind,
-                        unk6: layer.sampler_index,
-                        unk7: layer.uv_set,
+                        source_kind: layer.source_kind,
+                        sampler_index: layer.sampler_index,
+                        uv_set: layer.uv_set,
                     })
                     .collect()
             })
@@ -3153,9 +3153,9 @@ fn terrain_selected_layer_report(
         support_like_clue: layer.has_support_like_name_clue(),
         preferred_repetition: layer.has_preferred_primary_repetition(),
         texture_repetition: layer.texture_repetition,
-        unk4: layer.source_kind,
-        unk6_opaque_order: layer.sampler_index,
-        unk7: layer.uv_set,
+        source_kind: layer.source_kind,
+        sampler_index: layer.sampler_index,
+        uv_set: layer.uv_set,
         physical_package_guess: selected_package.to_string(),
         logical_family: terrain_texture_family_name(layer.texture_type, selected_package)
             .to_string(),
@@ -4174,7 +4174,7 @@ fn terrain_primary_audit_flags(
         })
         .count();
     if selected_rank_peer_count > 1 {
-        flags.push("opaque_unk6_order_tiebreaker_involved");
+        flags.push("sampler_index_tiebreaker_involved");
     }
 
     let support_like_not_current_count = texture

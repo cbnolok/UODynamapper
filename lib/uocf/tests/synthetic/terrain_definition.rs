@@ -43,12 +43,12 @@ fn serialize_entry_payload(
     bytes.write_u8(0).unwrap();
     bytes.write_i32::<LittleEndian>(shader_name_string_off).unwrap();
     bytes.write_u8(texture_images.len() as u8).unwrap();
-    for (name_string_off, unk4, texture_repetition, unk6, unk7) in texture_images {
+    for (name_string_off, source_kind, texture_repetition, sampler_index, uv_set) in texture_images {
         bytes.write_i32::<LittleEndian>(*name_string_off).unwrap();
-        bytes.write_u8(*unk4).unwrap();
+        bytes.write_u8(*source_kind).unwrap();
         bytes.write_f32::<LittleEndian>(*texture_repetition).unwrap();
-        bytes.write_i32::<LittleEndian>(*unk6).unwrap();
-        bytes.write_i32::<LittleEndian>(*unk7).unwrap();
+        bytes.write_i32::<LittleEndian>(*sampler_index).unwrap();
+        bytes.write_i32::<LittleEndian>(*uv_set).unwrap();
     }
     bytes.write_u32::<LittleEndian>(techniques.len() as u32).unwrap();
     for value in techniques {

@@ -102,8 +102,6 @@ passes = [
 ]
 ```
 
-`algorithm` is accepted as an alias for `filter`.
-
 ## KDL Format
 
 In KDL, image type nodes contain `pass` children. Override nodes use properties
@@ -132,8 +130,8 @@ override type="cc_mobile_animation_frames" family=42 id=3 {
 }
 ```
 
-A KDL pass may also use `filter="..."` or `algorithm="..."` instead of the
-first positional argument.
+A KDL pass may also use `filter="..."` instead of the first positional
+argument.
 
 ## Pass Ordering
 
@@ -174,7 +172,7 @@ parameters are accepted only for filters that support them; adding `radius` or
 | `unity-contrast-enhance20`, `unity-contrast-enhance35`, `unity-contrast-enhance50` | `intensity`, `threshold`, `blur_spread` | Threshold prevents enhancement in flat regions. |
 | `adaptive-log-contrast75`, `adaptive-log-contrast80`, `adaptive-log-contrast90` | `radius`, `gamma` | Useful for uneven lighting; lower gamma is stronger. |
 | `unsharp-mask-small` | `radius`, `amount` | Simple sharpening, more direct than local clarity. |
-| `high-pass-sharpen` | `radius`, `strength` | `amount` is accepted as a fallback alias for `strength`. |
+| `high-pass-sharpen` | `radius`, `strength` | |
 | `scale-fx-smart-deblur` | `deblur_offset`, `deblur_strength`, `smart_deblur` | Deblur-oriented 1x pass for ScaleFX-like sources. |
 
 The preset names encode conservative defaults. For example,

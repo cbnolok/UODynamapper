@@ -41,12 +41,12 @@ pub struct TerrainMetaLayerRef {
     /// `layer.has_preferred_primary_repetition() as u8`.
     pub has_pref_rep: u8,
     pub _pad: u8,
-    /// `layer.unk4` (stored as u32 for alignment).
-    pub unk4: u32,
-    /// `layer.unk6` (stored as u32, source is i32 but bitwise identical).
-    pub unk6: u32,
-    /// `layer.unk7` (stored as u32, source is i32 but bitwise identical).
-    pub unk7: u32,
+    /// `layer.source_kind` (stored as u32 for alignment).
+    pub source_kind: u32,
+    /// `layer.sampler_index`.
+    pub sampler_index: u32,
+    /// `layer.uv_set`.
+    pub uv_set: u32,
 }
 
 /// Index into the flat `TerrainMetaLayerRef` table, one per terrain tile id.
@@ -120,9 +120,9 @@ impl TerrainMetaPackage {
             let has_name_clue = reader.read_u8()?;
             let has_pref_rep = reader.read_u8()?;
             let _pad = reader.read_u8()?;
-            let unk4 = reader.read_u32::<LittleEndian>()?;
-            let unk6 = reader.read_u32::<LittleEndian>()?;
-            let unk7 = reader.read_u32::<LittleEndian>()?;
+            let source_kind = reader.read_u32::<LittleEndian>()?;
+            let sampler_index = reader.read_u32::<LittleEndian>()?;
+            let uv_set = reader.read_u32::<LittleEndian>()?;
             layers.push(TerrainMetaLayerRef {
                 texture_id,
                 texture_repetition,
@@ -130,9 +130,9 @@ impl TerrainMetaPackage {
                 has_name_clue,
                 has_pref_rep,
                 _pad,
-                unk4,
-                unk6,
-                unk7,
+                source_kind,
+                sampler_index,
+                uv_set,
             });
         }
 
@@ -210,9 +210,9 @@ pub fn build_terrain_meta_tables(
                 has_name_clue: layer.has_support_like_name_clue() as u8,
                 has_pref_rep: layer.has_preferred_primary_repetition() as u8,
                 _pad: 0,
-                unk4: layer.source_kind as u32,
-                unk6: layer.sampler_index,
-                unk7: layer.uv_set,
+                source_kind: layer.source_kind as u32,
+                sampler_index: layer.sampler_index,
+                uv_set: layer.uv_set,
             };
             layers.push(layer_ref);
         }
@@ -267,9 +267,9 @@ pub fn serialize_terrain_meta(tables: &TerrainMetaTables) -> eyre::Result<Vec<u8
         bytes.write_u8(layer.has_name_clue)?;
         bytes.write_u8(layer.has_pref_rep)?;
         bytes.write_u8(layer._pad)?;
-        bytes.write_u32::<LittleEndian>(layer.unk4)?;
-        bytes.write_u32::<LittleEndian>(layer.unk6)?;
-        bytes.write_u32::<LittleEndian>(layer.unk7)?;
+        bytes.write_u32::<LittleEndian>(layer.source_kind)?;
+        bytes.write_u32::<LittleEndian>(layer.sampler_index)?;
+        bytes.write_u32::<LittleEndian>(layer.uv_set)?;
     }
 
     Ok(bytes)
@@ -356,7 +356,7 @@ mod tests {
         assert_eq!(layers[0].has_pref_rep, 1);
         assert_eq!(layers[1].texture_id, 2000002);
         assert_eq!(layers[1].has_name_clue, 1);
-        assert_eq!(layers[1].unk6, 1);
+        assert_eq!(layers[1].sampler_index, 1);
 
         // Entry 20 has no texture block — layers_for_tile returns empty.
         let layers_20 = loaded.layers_for_tile(20);

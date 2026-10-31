@@ -209,8 +209,6 @@ pub struct ArtMaterial {
     pub technique: Vec<i32>,
     pub tweaks: Vec<f32>,
     /// Shader block byte at `UOShaderDefinition` +0x04; 0 in all client records, meaning unknown.
-    /// Older tilemeta packages stored it as `unk1`.
-    #[serde(alias = "unk1")]
     pub field_04: u8,
 }
 

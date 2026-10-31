@@ -890,14 +890,6 @@ mod tests {
     }
 
     #[test]
-    fn item_materials_from_packages_written_with_unk1_still_load() {
-        let source = br#"{"6038":[{"block_index":0,"shader_name":"UOWaterShader","technique":[0,2,0,0],"tweaks":[0,0,0.25,-0.5],"unk1":7}]}"#;
-        let materials: std::collections::BTreeMap<u32, Vec<uocf::enhanced::tileart::ArtMaterial>> =
-            serde_json::from_slice(source).expect("parse item materials with the old unk1 key");
-        assert_eq!(materials[&6038][0].field_04, 7);
-    }
-
-    #[test]
     fn item_texture_ref_material_axes_decode_from_dense_bytes() {
         let texture_ref = TileMetaItemTextureRef {
             texture_id: 42,

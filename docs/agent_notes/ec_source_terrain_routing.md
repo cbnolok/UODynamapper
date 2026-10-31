@@ -82,8 +82,8 @@ ownership changes. Source-backed composition instead uses per-layer coverage.
 
 This separation describes the current heuristic's guard, not the original
 client's complete transition model. Original terrain creates one 32×32 RGBA
-ownership mask per material. `TerrainDefinitionEntry.unk2` is its coverage
-exponent: positive values supply separate cardinal/diagonal neighbor bytes;
+ownership mask per material. `TerrainDefinitionEntry.coverage_exponent` is its
+coverage exponent: positive values supply separate cardinal/diagonal neighbor bytes;
 zero retains binary ownership. The original terrain comparator sorts normal
 layers by material ID and water by `1000 * material_id`. UVs, chunk-edge tests,
 filtering and pass-index evidence are documented in `ec_original_water_code.md`.

@@ -310,7 +310,7 @@ retains raw land IDs and material definitions, so routing choices remain visible
 This does not establish original-client correctness of manual mapping overlays.
 
 The Python model reconstructs `0x461060`'s raw coverage bytes from the original
-`unk2` exponent and its exact chunk-edge/neighborhood rules. Pillow exports one
+`coverage_exponent` and its exact chunk-edge/neighborhood rules. Pillow exports one
 32×32 PNG per material; `.rgba` contains the corresponding four-channel bytes.
 `manifest.json` records layer sort keys, cardinal/diagonal bytes and histograms.
 All outputs stay outside the repository. See the executable evidence and

@@ -235,7 +235,7 @@ fn resolve_runtime_slot_for_material(
 
 fn print_matching_layer(index: usize, layer: &TerrainDefinitionTextureLayer) {
     println!(
-        "    layer[{index}] path={:?} repetition={} current_support={} support_like_clue={} preferred_repetition={} unk4={} unk6={} unk7={}",
+        "    layer[{index}] path={:?} repetition={} current_support={} support_like_clue={} preferred_repetition={} source_kind={} sampler_index={} uv_set={}",
         layer.path,
         layer.texture_repetition,
         layer.is_support_layer_by_current_name_heuristic(),

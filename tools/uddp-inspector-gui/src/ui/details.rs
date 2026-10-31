@@ -573,8 +573,8 @@ fn terrain_primary_flags_label(flags: u16) -> String {
     if flags & TERRAIN_PRIMARY_FLAG_SUPPORT_LIKE_OUTSIDE_CURRENT_HEURISTIC != 0 {
         parts.push("support-like-outside-heuristic");
     }
-    if flags & TERRAIN_PRIMARY_FLAG_OPAQUE_UNK6_TIEBREAKER != 0 {
-        parts.push("unk6-tiebreaker");
+    if flags & TERRAIN_PRIMARY_FLAG_SAMPLER_INDEX_TIEBREAKER != 0 {
+        parts.push("sampler-index-tiebreaker");
     }
     let unknown = flags & !0x7F;
     if unknown != 0 {

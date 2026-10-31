@@ -1,10 +1,6 @@
 #![allow(unused)]
 pub mod bc7;
 pub mod tex_art_cc;
-pub mod eckr_terrain_kdl;
-pub mod cc_tex_land_ec_transcode {
-    pub use crate::eckr_terrain_kdl::*;
-}
 pub mod cc_map;
 pub mod cc_gumps;
 pub mod ec_gumps;
@@ -31,7 +27,6 @@ pub mod mobile_anim_cc;
 pub mod mobile_anim_ec;
 pub mod effects_ec;
 mod rgba_bounds;
-pub use image_postprocess::upscaling;
 pub mod upscale {
 	pub use crate::upscale_pipeline::{
 		apply_upscale_passes, apply_upscale_passes_owned, UpscalePass,

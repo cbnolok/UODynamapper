@@ -5,9 +5,6 @@ pub mod tex_land_cc;
 pub mod tex_art_ec;
 pub mod tex_land_ec;
 pub mod eckr_terrain_kdl;
-pub mod cc_tex_land_ec_transcode {
-    pub use crate::eckr_terrain_kdl::*;
-}
 pub mod ec_surface_overrides;
 pub mod ec_terrain_overrides;
 pub mod tex_aux_ec;
