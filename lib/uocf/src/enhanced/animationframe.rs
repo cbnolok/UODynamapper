@@ -4,7 +4,19 @@
 //! These files contain the animation data for creatures and characters.
 //!
 
-// TODO: the format should be the same also for KR!
+//! The Kingdom Reborn client reads the same format with the same code (`UOKR.exe`,
+//! `scripts/dev-helpers/ec-research/ghidra-animation-frames/`); only its hue key differs.
+//!
+//! Writing: [`encode`] (container and RLE encoder), [`quantize`] (RGBA to palette indices), [`folder`] (PNG folder
+//! plus KDL sidecar) and [`package`] (UOP entry and `AnimationSequence` frame count edits).
+
+pub mod encode;
+pub mod folder;
+pub mod package;
+pub mod quantize;
+
+pub use encode::{AmouFile, AmouFrameRecord, AmouLayout, IndexedFrame, COVERAGE_SOLID, COVERAGE_TRANSPARENT};
+pub use quantize::{index_frames, IndexingReport, RgbaFrame};
 
 pub const MAX_BODY_ID: u32 = 2048;
 pub const MAX_ACTION_ID_FALLBACK: u16 = 100;
@@ -331,6 +343,78 @@ impl AnimationFrame {
             data: decoded_data,
             hue_mask,
         })
+    }
+}
+
+impl AnimationFrame {
+    /// Decodes a frame into palette indices and coverage ([`IndexedFrame`]), the form the encoder takes back
+    /// ([`AmouFile::from_indexed_frames`]); same walk and errors as [`Self::decode_frame`].
+    pub fn decode_frame_indexed(&self, frame_entry: &FrameEntry) -> eyre::Result<IndexedFrame> {
+        let (width, height) = frame_entry.size()?;
+        let (center_x, center_y) = frame_entry.center();
+        let pixel_count = width as usize * height as usize;
+        let mut indices = vec![0u8; pixel_count];
+        let mut coverage = vec![COVERAGE_TRANSPARENT; pixel_count];
+        if pixel_count == 0 {
+            return Ok(IndexedFrame { width, height, center_x, center_y, indices, coverage });
+        }
+
+        let start_pos = self.frames_offset as usize + self.frames_count as usize * FRAME_ENTRY_SIZE;
+        let relative_offset = (frame_entry.data_offset as usize)
+            .checked_sub(start_pos)
+            .filter(|&offset| offset < self.image_data.len())
+            .ok_or_else(|| eyre::eyre!("Frame data offset out of bounds"))?;
+        let colour_count = self.colours.len().min(MAX_PALETTE_COLOURS);
+        let check = |index: u8| {
+            if usize::from(index) >= colour_count {
+                eyre::bail!("Palette index {} past the {} colours", index, colour_count);
+            }
+            Ok(index)
+        };
+        let mut stream = RleStream {
+            source: &self.image_data[relative_offset..],
+            pos: 0,
+        };
+        let mut pixel_index = 0usize;
+        while pixel_index < pixel_count {
+            let code = stream.next_byte()?;
+            if code < RLE_RUN_FLAG {
+                pixel_index += code as usize;
+                continue;
+            }
+            let factors = stream.next_byte()?;
+            let leading_factor = factors >> EDGE_FACTOR_BITS;
+            let trailing_factor = factors & EDGE_FACTOR_MASK;
+            let solid_count = (code - RLE_RUN_FLAG) as usize;
+            let run_end = pixel_index
+                + solid_count
+                + usize::from(leading_factor != 0)
+                + usize::from(trailing_factor != 0);
+            if run_end > pixel_count {
+                eyre::bail!(
+                    "RLE run writes pixel {} past the {}x{} frame box",
+                    run_end,
+                    width,
+                    height
+                );
+            }
+            if leading_factor != 0 {
+                indices[pixel_index] = check(stream.next_byte()?)?;
+                coverage[pixel_index] = leading_factor;
+                pixel_index += 1;
+            }
+            for &index in stream.take(solid_count)? {
+                indices[pixel_index] = check(index)?;
+                coverage[pixel_index] = COVERAGE_SOLID;
+                pixel_index += 1;
+            }
+            if trailing_factor != 0 {
+                indices[pixel_index] = check(stream.next_byte()?)?;
+                coverage[pixel_index] = trailing_factor;
+                pixel_index += 1;
+            }
+        }
+        Ok(IndexedFrame { width, height, center_x, center_y, indices, coverage })
     }
 }
 
