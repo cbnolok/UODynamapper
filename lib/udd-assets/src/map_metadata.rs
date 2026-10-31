@@ -49,7 +49,10 @@ pub fn decode_map_package_metadata(bytes: &[u8]) -> Result<MapPackageMetadata, S
 
     let version = u16::from_le_bytes(bytes[4..6].try_into().expect("slice length checked"));
     if version != MAP_METADATA_VERSION {
-        return Err(format!("unsupported map metadata version {version}"));
+        return Err(format!(
+            "map metadata: package version {version} is not supported (current is {MAP_METADATA_VERSION}); \
+             repack with the current udd-cli"
+        ));
     }
 
     Ok(MapPackageMetadata {

@@ -189,6 +189,12 @@ impl UddpReader {
         if header.magic != UDDP_MAGIC && header.magic != UDPI_MAGIC {
             return Err(FormatError::InvalidMagic(header.magic));
         }
+        if header.version_major != UDDP_VERSION_MAJOR || header.version_minor != UDDP_VERSION_MINOR {
+            return Err(FormatError::UnsupportedVersion {
+                major: header.version_major,
+                minor: header.version_minor,
+            });
+        }
 
         let lookup_mode = LookupMode::from_u8(header.lookup_mode)?;
 

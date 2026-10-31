@@ -550,19 +550,20 @@ impl InspectorApp {
         self.virtual_material_entries.clear();
         self.atlas_pages.clear();
 
-        if let Some(data) = self.read_file_by_path(reader, "metadata/pages.bin") {
-            self.atlas_pages = parse_atlas_page_manifest(&data);
-        }
-
-        if let Some(data) = self.read_file_by_path(reader, "metadata/slots.bin") {
-            let atlas_entries = parse_virtual_entries_from_slot_manifest(&data);
-            if !atlas_entries.is_empty() {
-                if let Ok(package) = udd_assets::TexLandEcPackage::from_uddp_package(reader.clone()) {
-                    self.virtual_material_entries = self.detect_tex_land_ec_material_entries(&package);
+        match load_atlas_package(reader) {
+            Some(Ok(package)) => {
+                self.atlas_pages = package.page_infos();
+                let atlas_entries = package.virtual_entries();
+                if !atlas_entries.is_empty() {
+                    if let AtlasPackage::EcLand(package) = &package {
+                        self.virtual_material_entries = self.detect_tex_land_ec_material_entries(package);
+                    }
+                    self.virtual_entries = atlas_entries;
+                    return;
                 }
-                self.virtual_entries = atlas_entries;
-                return;
             }
+            Some(Err(e)) => log::error!("Error reading atlas package: {e:#}"),
+            None => {}
         }
 
         if let Some(package) = self.gumps_package.as_ref() {
@@ -2061,6 +2062,7 @@ mod tests {
             udd_assets::tex_land_ec::UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH,
             &ec_land_terrain_overrides_json(),
         );
+        add_metadata_file(&mut builder, udd_assets::tex_land_ec::UDDP_SOURCE_MATERIALS_ENTRY_VPATH, b"[]");
         let bytes = builder.build().expect("build test package");
         udd_assets::TexLandEcPackage::from_uddp_package(
             UddpReader::open(bytes).expect("open test package"),

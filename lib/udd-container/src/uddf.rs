@@ -156,7 +156,7 @@ impl UddfFile {
         if version != UDDF_VERSION {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("unsupported UDDF version {version}"),
+                format!("UDDF version {version} is not supported; repack with the current udd-cli"),
             ));
         }
 

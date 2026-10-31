@@ -165,8 +165,8 @@ impl UddpiBuilder {
         let mut out = Vec::new();
         let header = PatchManifestHeader {
             magic: PMAN_MAGIC,
-            version_major: 1,
-            version_minor: 0,
+            version_major: PMAN_VERSION_MAJOR,
+            version_minor: PMAN_VERSION_MINOR,
             old_package_hash64: self.old_package_hash64,
             new_package_hash64: self.new_package_hash64,
             record_count: self.replacements.len() as u32,
@@ -271,7 +271,6 @@ impl UddpiApplier {
         }
 
         let mut builder = UddpBuilder::new(base_reader.lookup_mode());
-        builder.set_version(base_reader.header().version_major, base_reader.header().version_minor);
 
         // Canonical package hashes depend on physical blob order, not just logical key order.
         // Rebuild in original payload-offset order so unchanged files stay byte-for-byte stable.
@@ -348,6 +347,12 @@ fn parse_patch_manifest(bytes: &[u8]) -> Result<ParsedPatchManifest, PatchError>
     let header = PatchManifestHeader::read_from(&mut cur).map_err(PatchError::Format)?;
     if header.magic != PMAN_MAGIC {
         return Err(PatchError::InvalidPatchManifest);
+    }
+    if header.version_major != PMAN_VERSION_MAJOR || header.version_minor != PMAN_VERSION_MINOR {
+        return Err(PatchError::Format(FormatError::UnsupportedVersion {
+            major: header.version_major,
+            minor: header.version_minor,
+        }));
     }
 
     let mode = LookupMode::from_u8(header.target_lookup_mode as u8).map_err(PatchError::Format)?;

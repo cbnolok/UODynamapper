@@ -60,6 +60,7 @@ use udd_assets::tex_land_ec::{
     TERRAIN_PRIMARY_REASON_NON_SUPPORT_REPETITION_FALLBACK,
     TERRAIN_PRIMARY_REASON_SUPPORT_PREFERRED_REPETITION_FALLBACK,
     TERRAIN_PRIMARY_REASON_SUPPORT_REPETITION_FALLBACK, TERRAIN_PRIMARY_REASON_UNKNOWN,
+    TERRAIN_OVERRIDES_SCHEMA, TERRAIN_OVERRIDES_SCHEMA_VERSION,
     UDDP_PAGE_MANIFEST_ENTRY_VPATH, UDDP_SLOT_MANIFEST_ENTRY_VPATH,
     UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH, UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH,
     UDDP_TRANSCODE_ENTRY_VPATH, UDDP_LEGACY_TERRAIN_MAP_ENTRY_VPATH, UDDP_SOURCE_MATERIALS_ENTRY_VPATH,
@@ -104,7 +105,6 @@ const TERRAIN_PROVENANCE_MAGIC: [u8; 4] = *b"ELTP";
 /// Bump version when the binary layout of either manifest changes.
 const TEX_LAND_EC_METADATA_VERSION: u32 = 3;
 const TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION: u32 = 3;
-const TEX_LAND_EC_TERRAIN_OVERRIDES_SCHEMA_VERSION: u32 = 1;
 
 pub const DEFAULT_ATLAS_PAGE_WIDTH: u32 = 2048;
 pub const DEFAULT_ATLAS_PAGE_HEIGHT: u32 = 2048;
@@ -924,8 +924,8 @@ fn serialize_terrain_overrides_metadata_from_overrides(
         .map(|entry| entry.active_action_count)
         .sum::<u32>();
     let metadata = TerrainOverridesMetadata {
-        schema: "tex_land_ec_terrain_overrides",
-        schema_version: TEX_LAND_EC_TERRAIN_OVERRIDES_SCHEMA_VERSION,
+        schema: TERRAIN_OVERRIDES_SCHEMA,
+        schema_version: TERRAIN_OVERRIDES_SCHEMA_VERSION,
         source_path: path.display().to_string(),
         override_count: entries.len() as u32,
         active_action_count,

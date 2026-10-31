@@ -32,6 +32,8 @@ pub use uddp::{
     MAX_TYPES,
     PMAN_MAGIC,
     UDDP_MAGIC,
+    UDDP_VERSION_MAJOR,
+    UDDP_VERSION_MINOR,
     UDPI_MAGIC,
     canonical_package_hash64,
     pack_meta32,

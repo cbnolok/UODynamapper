@@ -41,6 +41,15 @@ pub fn read_path_entry_cow<'a>(package: &'a UddpReader, path: &str) -> eyre::Res
         .wrap_err_with(|| format!("read {path}"))
 }
 
+/// Fail unless a package manifest is at the only version this build reads.
+pub(crate) fn ensure_manifest_version(manifest: &str, version: u32, current: u32) -> eyre::Result<()> {
+    eyre::ensure!(
+        version == current,
+        "{manifest}: package version {version} is not supported (current is {current}); repack with the current udd-cli"
+    );
+    Ok(())
+}
+
 pub(crate) struct AtlasPageCache {
     enabled: bool,
     pages: RwLock<HashMap<u32, Arc<[u8]>>>,

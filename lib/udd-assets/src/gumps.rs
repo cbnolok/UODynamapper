@@ -6,6 +6,8 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use udd_container::{DataType, FileKey, UddpReader};
 
+use crate::common::ensure_manifest_version;
+
 const GUMP_ATLAS_PAGE_MANIFEST_ID: u32 = 0xE000_0000;
 const GUMP_ATLAS_SLOT_MANIFEST_ID: u32 = 0xE000_0001;
 const GUMP_ATLAS_PAGE_ID_BASE: u32 = 0xF000_0000;
@@ -318,9 +320,7 @@ fn parse_slot_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, Vec<GumpAtl
 
 fn parse_common_manifest_header<R: Read>(reader: &mut R) -> eyre::Result<(u32, u32, u16, u32)> {
     let version = reader.read_u32::<LittleEndian>()?;
-    if version != GUMP_ATLAS_METADATA_VERSION {
-        eyre::bail!("unsupported gump atlas metadata version {version}");
-    }
+    ensure_manifest_version("gump atlas manifest", version, GUMP_ATLAS_METADATA_VERSION)?;
     let width = reader.read_u32::<LittleEndian>()?;
     let height = reader.read_u32::<LittleEndian>()?;
     let gutter = reader.read_u32::<LittleEndian>()? as u16;

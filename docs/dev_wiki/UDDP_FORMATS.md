@@ -2,6 +2,8 @@
 
 This document describes the structure of custom binary `.uddp` formats used by UODynamapper for fast parsing/ram/vram upload and fast rendering. All `.uddp` files are packaged using the core `UddpBuilder` and compressed (typically with `ZstdNoDict`), containing multiple virtual files (metadata tables and texture payloads).
 
+The container header (version 1.0) and every binary metadata manifest carry a version. Readers accept only the current one and reject any other with "package version N is not supported; repack with the current udd-cli": there are no readers for older layouts.
+
 The current implementation still uses a unified `flags` field in `tilemeta.uddp`, but the active design direction is to separate CC and EC metadata fields more explicitly when the schema is bumped. Treat the tables below as the current wire format, not the final semantic model.
 
 For EC-specific content, remember that the UOP source set is mixed and semantic:

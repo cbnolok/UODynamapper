@@ -3,7 +3,10 @@ use std::path::Path;
 use color_eyre::eyre::{self, WrapErr};
 use byteorder::{LittleEndian, ReadBytesExt};
 use udd_container::UddpReader;
-use crate::common::{AtlasCacheOptions, AtlasPageCache, decode_atlas_page_rgba, extract_atlas_subrect_rgba, read_path_entry, read_path_entry_cow};
+use crate::common::{
+    AtlasCacheOptions, AtlasPageCache, decode_atlas_page_rgba, ensure_manifest_version, extract_atlas_subrect_rgba,
+    read_path_entry, read_path_entry_cow,
+};
 use crate::tex_art_cc::{AtlasPackingMode, PagePixelFormat};
 
 pub const PAGE_MANIFEST_ENTRY_PATH: &str = "metadata/pages.bin";
@@ -238,9 +241,7 @@ fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, AtlasPackin
     cursor.read_exact(&mut magic)?;
     if magic != PAGE_MANIFEST_MAGIC { eyre::bail!("invalid magic"); }
     let version = cursor.read_u32::<LittleEndian>()?;
-    if version != TEX_LAND_CC_METADATA_VERSION {
-        eyre::bail!("invalid version");
-    }
+    ensure_manifest_version("tex_land_cc page manifest", version, TEX_LAND_CC_METADATA_VERSION)?;
     let w = cursor.read_u32::<LittleEndian>()?;
     let h = cursor.read_u32::<LittleEndian>()?;
     let g = cursor.read_u32::<LittleEndian>()? as u16;
@@ -266,9 +267,7 @@ fn parse_slot_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, AtlasPackin
     cursor.read_exact(&mut magic)?;
     if magic != SLOT_MANIFEST_MAGIC { eyre::bail!("invalid magic"); }
     let version = cursor.read_u32::<LittleEndian>()?;
-    if version != TEX_LAND_CC_METADATA_VERSION {
-        eyre::bail!("invalid version");
-    }
+    ensure_manifest_version("tex_land_cc slot manifest", version, TEX_LAND_CC_METADATA_VERSION)?;
     let w = cursor.read_u32::<LittleEndian>()?;
     let h = cursor.read_u32::<LittleEndian>()?;
     let g = cursor.read_u32::<LittleEndian>()? as u16;

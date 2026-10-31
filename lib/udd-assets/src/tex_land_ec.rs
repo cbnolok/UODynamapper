@@ -8,7 +8,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use color_eyre::eyre::{self, WrapErr};
 use byteorder::{LittleEndian, ReadBytesExt};
 use udd_container::{xxh64_virtual_path, UddpReader};
-use crate::common::{AtlasCacheOptions, AtlasPageCache, decode_atlas_page_rgba, read_path_entry, read_path_entry_cow};
+use crate::common::{
+    AtlasCacheOptions, AtlasPageCache, decode_atlas_page_rgba, ensure_manifest_version, read_path_entry, read_path_entry_cow,
+};
 use crate::ec_terrain_overrides::EcTerrainOverrides;
 use crate::tex_art_cc::{AtlasPackingMode, PagePixelFormat};
 
@@ -25,6 +27,9 @@ pub const UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH: &str = "metadata/terrain_overrides
 pub const UDDP_TRANSCODE_ENTRY_VPATH: &str = "metadata/transcode.bin";
 pub const UDDP_LEGACY_TERRAIN_MAP_ENTRY_VPATH: &str = "metadata/legacy_terrain_map.csv";
 pub const UDDP_SOURCE_MATERIALS_ENTRY_VPATH: &str = "metadata/source_materials.json";
+/// `schema` and `schema_version` of the optional terrain overrides JSON entry.
+pub const TERRAIN_OVERRIDES_SCHEMA: &str = "tex_land_ec_terrain_overrides";
+pub const TERRAIN_OVERRIDES_SCHEMA_VERSION: u32 = 1;
 
 pub const SLOT_FLAG_PRESENT: u16 = 1 << 0;
 pub const SLOT_FLAG_LAND: u16 = 1 << 1;
@@ -378,23 +383,22 @@ impl TexLandEcPackage {
         } else {
             None
         };
-        let source_materials = if package.find_by_path_hash(xxh64_virtual_path(UDDP_SOURCE_MATERIALS_ENTRY_VPATH)).is_some() {
-            let bytes = read_path_entry_cow(&package, UDDP_SOURCE_MATERIALS_ENTRY_VPATH)?;
-            let entries: Vec<uocf::enhanced::terrain_definition::TerrainDefinitionEntry> = serde_json::from_slice(&bytes)?;
-            entries.into_iter().map(|entry| (entry.id, entry)).collect()
-        } else {
-            HashMap::new()
-        };
+        let source_materials_bytes = read_path_entry_cow(&package, UDDP_SOURCE_MATERIALS_ENTRY_VPATH)
+            .context("tex_land_ec.uddp missing metadata/source_materials.json; repack with the current udd-cli")?;
+        let source_materials: Vec<uocf::enhanced::terrain_definition::TerrainDefinitionEntry> =
+            serde_json::from_slice(&source_materials_bytes)
+                .wrap_err_with(|| format!("parse {UDDP_SOURCE_MATERIALS_ENTRY_VPATH}"))?;
+        let source_materials = source_materials.into_iter().map(|entry| (entry.id, entry)).collect();
         let mut transcode: HashMap<u32, u32> = source_terrain_map.as_ref()
             .into_iter().flat_map(|map| map.routes.values())
             .map(|route| (u32::from(route.legacy_id), route.material_id)).collect();
         // Explicit embedded/loose KDL remains a policy overlay, never the source census.
-        transcode.extend(read_transcode_from_package(&package).unwrap_or_default());
+        transcode.extend(read_transcode_from_package(&package)?);
         let (
             terrain_override_actions,
             terrain_override_details,
             terrain_override_texture_refs,
-        ) = read_terrain_overrides_metadata_maps_from_package(&package).unwrap_or_default();
+        ) = read_terrain_overrides_metadata_maps_from_package(&package)?;
         Ok(Self {
             package,
             atlas_width: page_width,
@@ -1101,9 +1105,7 @@ fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, AtlasPackin
     cursor.read_exact(&mut magic)?;
     if magic != PAGE_MANIFEST_MAGIC { eyre::bail!("invalid magic"); }
     let version = cursor.read_u32::<LittleEndian>()?;
-    if version != TEX_LAND_EC_METADATA_VERSION {
-        eyre::bail!("invalid version");
-    }
+    ensure_manifest_version("tex_land_ec page manifest", version, TEX_LAND_EC_METADATA_VERSION)?;
     let w = cursor.read_u32::<LittleEndian>()?;
     let h = cursor.read_u32::<LittleEndian>()?;
     let g = cursor.read_u32::<LittleEndian>()? as u16;
@@ -1133,9 +1135,7 @@ fn parse_slot_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, AtlasPackin
     cursor.read_exact(&mut magic)?;
     if magic != SLOT_MANIFEST_MAGIC { eyre::bail!("invalid magic"); }
     let version = cursor.read_u32::<LittleEndian>()?;
-    if version != TEX_LAND_EC_METADATA_VERSION {
-        eyre::bail!("invalid version");
-    }
+    ensure_manifest_version("tex_land_ec slot manifest", version, TEX_LAND_EC_METADATA_VERSION)?;
     let w = cursor.read_u32::<LittleEndian>()?;
     let h = cursor.read_u32::<LittleEndian>()?;
     let g = cursor.read_u32::<LittleEndian>()? as u16;
@@ -1163,7 +1163,7 @@ fn parse_terrain_provenance_manifest(bytes: &[u8]) -> eyre::Result<Vec<TexLandEc
     cursor.read_exact(&mut magic)?;
     if magic != TERRAIN_PROVENANCE_MAGIC { eyre::bail!("invalid magic"); }
     let version = cursor.read_u32::<LittleEndian>()?;
-    if !(1..=TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION).contains(&version) { eyre::bail!("invalid version"); }
+    ensure_manifest_version("tex_land_ec terrain provenance", version, TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION)?;
     let count = cursor.read_u32::<LittleEndian>()? as usize;
     let mut records = Vec::with_capacity(count);
     for _ in 0..count {
@@ -1175,79 +1175,42 @@ fn parse_terrain_provenance_manifest(bytes: &[u8]) -> eyre::Result<Vec<TexLandEc
             alias_tile_flags: cursor.read_u64::<LittleEndian>()?,
             selected_texture_id: cursor.read_u32::<LittleEndian>()?,
             canonical_slot_id: cursor.read_u32::<LittleEndian>()?,
-            selected_layer_index: if version >= 3 {
-                cursor.read_u32::<LittleEndian>()?
-            } else {
-                MISSING_TERRAIN_LAYER_INDEX
-            },
-            selected_texture_repetition: if version >= 3 {
-                cursor.read_f32::<LittleEndian>()?
-            } else {
-                0.0
-            },
-            primary_texture_id: if version >= 2 {
-                cursor.read_u32::<LittleEndian>()?
-            } else {
-                MISSING_TEXTURE_ID
-            },
-            primary_layer_index: if version >= 2 {
-                cursor.read_u32::<LittleEndian>()?
-            } else {
-                MISSING_TERRAIN_LAYER_INDEX
-            },
-            primary_selection_reason: if version >= 2 {
-                cursor.read_u8()?
-            } else {
-                TERRAIN_PRIMARY_REASON_UNKNOWN
-            },
-            primary_selection_flags: if version >= 2 {
-                cursor.read_u16::<LittleEndian>()?
-            } else {
-                0
-            },
+            selected_layer_index: cursor.read_u32::<LittleEndian>()?,
+            selected_texture_repetition: cursor.read_f32::<LittleEndian>()?,
+            primary_texture_id: cursor.read_u32::<LittleEndian>()?,
+            primary_layer_index: cursor.read_u32::<LittleEndian>()?,
+            primary_selection_reason: cursor.read_u8()?,
+            primary_selection_flags: cursor.read_u16::<LittleEndian>()?,
         });
     }
     Ok(records)
 }
 
-fn read_transcode_from_package(package: &UddpReader) -> Option<HashMap<u32, u32>> {
-    let bytes = read_path_entry_cow(package, UDDP_TRANSCODE_ENTRY_VPATH).ok()?;
-    let text = std::str::from_utf8(bytes.as_ref()).ok()?;
-    if let Ok(transcode) = crate::eckr_terrain_kdl::EckrTerrainRouting::from_str(
-        UDDP_TRANSCODE_ENTRY_VPATH,
-        text,
-    ) {
-        return Some(transcode.to_map());
+/// The optional embedded KDL routing overlay; an entry that is present must parse.
+fn read_transcode_from_package(package: &UddpReader) -> eyre::Result<HashMap<u32, u32>> {
+    if package.find_by_path_hash(xxh64_virtual_path(UDDP_TRANSCODE_ENTRY_VPATH)).is_none() {
+        return Ok(HashMap::new());
     }
-    parse_legacy_pair_transcode(text)
+    let bytes = read_path_entry_cow(package, UDDP_TRANSCODE_ENTRY_VPATH)?;
+    let text = std::str::from_utf8(bytes.as_ref())
+        .wrap_err_with(|| format!("{UDDP_TRANSCODE_ENTRY_VPATH}: not UTF-8 text"))?;
+    Ok(crate::eckr_terrain_kdl::EckrTerrainRouting::from_str(UDDP_TRANSCODE_ENTRY_VPATH, text)?.to_map())
 }
 
-fn parse_legacy_pair_transcode(text: &str) -> Option<HashMap<u32, u32>> {
-    let mut transcode = HashMap::new();
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with("//") || line.starts_with("#") {
-            continue;
-        }
-        let parts = line.split_whitespace().collect::<Vec<_>>();
-        if parts.len() >= 2 {
-            if let (Ok(cc_id), Ok(mat_id)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>()) {
-                transcode.insert(cc_id, mat_id);
-            }
-        }
-    }
-    Some(transcode)
-}
-
+/// The optional terrain overrides entry; an entry that is present must parse.
 fn read_terrain_overrides_metadata_maps_from_package(
     package: &UddpReader,
-) -> Option<(
+) -> eyre::Result<(
     HashMap<u32, TexLandEcTerrainOverrideActions>,
     HashMap<u32, TexLandEcTerrainOverrideDetails>,
     HashMap<u32, Vec<TexLandEcTerrainOverrideTextureRef>>,
 )> {
-    let bytes = read_path_entry_cow(package, UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH).ok()?;
-    parse_terrain_overrides_metadata_maps(bytes.as_ref()).ok()
+    if package.find_by_path_hash(xxh64_virtual_path(UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH)).is_none() {
+        return Ok(Default::default());
+    }
+    let bytes = read_path_entry_cow(package, UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH)?;
+    parse_terrain_overrides_metadata_maps(bytes.as_ref())
+        .wrap_err_with(|| format!("parse {UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH}"))
 }
 
 fn terrain_override_maps_from_overrides(
@@ -1384,6 +1347,14 @@ fn parse_terrain_overrides_metadata_maps(
     HashMap<u32, Vec<TexLandEcTerrainOverrideTextureRef>>,
 )> {
     let value = serde_json::from_slice::<serde_json::Value>(bytes)?;
+    let schema = value.get("schema").and_then(|value| value.as_str());
+    eyre::ensure!(
+        schema == Some(TERRAIN_OVERRIDES_SCHEMA),
+        "schema {schema:?}, expected {TERRAIN_OVERRIDES_SCHEMA:?}"
+    );
+    let schema_version = json_u32(&value, "schema_version")
+        .ok_or_else(|| eyre::eyre!("missing schema_version"))?;
+    ensure_manifest_version("tex_land_ec terrain overrides", schema_version, TERRAIN_OVERRIDES_SCHEMA_VERSION)?;
     let mut actions = HashMap::new();
     let mut details_by_material = HashMap::<u32, TexLandEcTerrainOverrideDetails>::new();
     let mut refs_by_material = HashMap::<u32, Vec<TexLandEcTerrainOverrideTextureRef>>::new();
@@ -1589,6 +1560,8 @@ mod tests {
     use byteorder::WriteBytesExt;
     use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
 
+    const EMPTY_SOURCE_MATERIALS_JSON: &[u8] = b"[]";
+
     fn add_metadata_file(
         package: &mut UddpBuilder,
         virtual_path: &str,
@@ -1746,6 +1719,8 @@ mod tests {
                 ..Default::default()
             }];
             add_metadata_file(&mut builder, UDDP_SOURCE_MATERIALS_ENTRY_VPATH, &serde_json::to_vec(&source).unwrap());
+        } else {
+            add_metadata_file(&mut builder, UDDP_SOURCE_MATERIALS_ENTRY_VPATH, EMPTY_SOURCE_MATERIALS_JSON);
         }
         let bytes = builder.build().expect("build test package");
         TexLandEcPackage::from_uddp_package(UddpReader::open(bytes).expect("open package"))
@@ -1886,28 +1861,35 @@ terrain 52 {
     }
 
     #[test]
-    fn terrain_provenance_parser_accepts_v1_records_with_unknown_primary_fields() {
+    fn terrain_provenance_parser_rejects_older_versions() {
+        let older_version = TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION - 1;
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&TERRAIN_PROVENANCE_MAGIC);
-        bytes.write_u32::<LittleEndian>(1).unwrap();
-        bytes.write_u32::<LittleEndian>(1).unwrap();
-        bytes.write_u32::<LittleEndian>(12).unwrap();
-        bytes.write_i32::<LittleEndian>(34).unwrap();
+        bytes.write_u32::<LittleEndian>(older_version).unwrap();
         bytes.write_u32::<LittleEndian>(0).unwrap();
-        bytes.write_u32::<LittleEndian>(56).unwrap();
-        bytes.write_u64::<LittleEndian>(0x55).unwrap();
-        bytes.write_u32::<LittleEndian>(2_000_540).unwrap();
-        bytes.write_u32::<LittleEndian>(56).unwrap();
 
-        let records = parse_terrain_provenance_manifest(&bytes).expect("parse v1 provenance");
+        let error = parse_terrain_provenance_manifest(&bytes).unwrap_err().to_string();
 
-        assert_eq!(records.len(), 1);
-        assert_eq!(records[0].material_id, 12);
-        assert_eq!(records[0].selected_texture_id, 2_000_540);
-        assert_eq!(records[0].primary_texture_id, MISSING_TEXTURE_ID);
-        assert_eq!(records[0].primary_layer_index, MISSING_TERRAIN_LAYER_INDEX);
-        assert_eq!(records[0].primary_selection_reason, TERRAIN_PRIMARY_REASON_UNKNOWN);
-        assert_eq!(records[0].primary_selection_flags, 0);
+        assert_eq!(
+            error,
+            format!(
+                "tex_land_ec terrain provenance: package version {older_version} is not supported \
+                 (current is {TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION}); repack with the current udd-cli"
+            )
+        );
+    }
+
+    #[test]
+    fn terrain_override_metadata_parser_rejects_other_schema_versions() {
+        let json = format!(
+            r#"{{"schema": "{TERRAIN_OVERRIDES_SCHEMA}", "schema_version": {}, "entries": []}}"#,
+            TERRAIN_OVERRIDES_SCHEMA_VERSION + 1
+        );
+        let error = parse_terrain_override_actions_metadata(json.as_bytes()).unwrap_err().to_string();
+        assert!(error.contains("repack"), "{error}");
+
+        let json = format!(r#"{{"schema": "other", "schema_version": {TERRAIN_OVERRIDES_SCHEMA_VERSION}, "entries": []}}"#);
+        assert!(parse_terrain_override_actions_metadata(json.as_bytes()).is_err());
     }
 
     #[test]

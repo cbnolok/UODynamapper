@@ -243,8 +243,6 @@ pub(super) fn make_pending_file(
 ///   have been finalized
 pub struct UddpBuilder {
     lookup_mode: LookupMode,
-    version_major: u16,
-    version_minor: u16,
     files: Vec<PendingFile>,
     next_dense_id: u32,
 }
@@ -254,17 +252,9 @@ impl UddpBuilder {
     pub fn new(lookup_mode: LookupMode) -> Self {
         Self {
             lookup_mode,
-            version_major: 1,
-            version_minor: 0,
             files: Vec::new(),
             next_dense_id: 0,
         }
-    }
-
-    /// Override the version written into the output package header.
-    pub fn set_version(&mut self, major: u16, minor: u16) {
-        self.version_major = major;
-        self.version_minor = minor;
     }
 
     /// Add one logical file to the package.
@@ -486,13 +476,7 @@ impl UddpBuilder {
             total: total_steps,
             active_file: None,
         });
-        let head = serialize_package_head(
-            self.lookup_mode,
-            self.version_major,
-            self.version_minor,
-            &plan.dictionaries,
-            &layouts,
-        )?;
+        let head = serialize_package_head(self.lookup_mode, &plan.dictionaries, &layouts)?;
         for completed in 1..=PACKAGE_HEAD_ASSEMBLY_STEPS {
             progress(BuildProgress {
                 phase: BuildProgressPhase::Assembling,
@@ -518,8 +502,6 @@ pub(super) fn assembly_step_count(dictionary_count: usize, file_count: usize) ->
 /// in this order, right after the head.
 pub(super) fn serialize_package_head(
     lookup_mode: LookupMode,
-    version_major: u16,
-    version_minor: u16,
     dictionaries: &[BuiltDictionary],
     files: &[FileLayout],
 ) -> Result<Vec<u8>, BuildError> {
@@ -576,8 +558,8 @@ pub(super) fn serialize_package_head(
 
     let header = UddpHeader {
         magic: UDDP_MAGIC,
-        version_major,
-        version_minor,
+        version_major: UDDP_VERSION_MAJOR,
+        version_minor: UDDP_VERSION_MINOR,
         lookup_mode: lookup_mode as u8,
         reserved0: 0,
         dict_count: dictionaries.len() as u16,

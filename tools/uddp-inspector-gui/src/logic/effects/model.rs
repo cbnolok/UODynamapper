@@ -745,6 +745,6 @@ mod tests {
         let message = versions.mismatch_message().unwrap();
         assert!(message.contains("Rebuild needed") && message.contains("desc codec"), "{message}");
         let error = EffectsEcPackage::from_reader(reader).err().unwrap().to_string();
-        assert!(error.contains("rebuild"), "{error}");
+        assert!(error.contains("repack"), "{error}");
     }
 }

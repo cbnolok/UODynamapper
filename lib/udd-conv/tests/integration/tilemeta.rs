@@ -115,6 +115,19 @@ fn tilemeta_package_roundtrip_preserves_metadata_records() {
             data: bytemuck::cast_slice(&item_tiles),
         })
         .expect("add item metadata");
+    for path in [TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH, TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH] {
+        package
+            .add_file(AddFileRequest {
+                data_type: DataType::Metadata as u8,
+                compression: CompressionFlag::ZstdNoDict,
+                width: 0, height: 0,
+                virtual_path: Some(path),
+                path_hash64: None,
+                id: None,
+                data: &[],
+            })
+            .expect("add empty item texture refs");
+    }
 
     let package = TileMetaPackage::from_uddp_package(
         UddpReader::open(package.build().expect("build package")).expect("open package"),

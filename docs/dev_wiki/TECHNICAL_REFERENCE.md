@@ -194,6 +194,7 @@ Dynamapper currently sets Bevy's default image sampler to nearest for ordinary i
 
 - Container package: `UDDP`
 - Single-object wrapper: `UDDF`
+- Readers accept only the current container and manifest versions; repack older packages with the current `udd-cli`.
 - Keep index and dictionary sections near the header for fast startup lookup.
 - Keep visual payload and logic payload physically separable in package layout where practical.
 

@@ -34,8 +34,6 @@ const SPILL_COPY_BUFFER_BYTES: usize = 8 * 1024 * 1024;
 /// dictionary trained over all files (`ZstdDict`, `Auto`) are rejected.
 pub struct UddpStreamingBuilder {
     lookup_mode: LookupMode,
-    version_major: u16,
-    version_minor: u16,
     next_dense_id: u32,
     files: Vec<FileLayout>,
     compression_summary: CompressionSummary,
@@ -58,8 +56,6 @@ impl UddpStreamingBuilder {
         let spill = File::create(&spill_path).map_err(BuildError::Io)?;
         Ok(Self {
             lookup_mode,
-            version_major: 1,
-            version_minor: 0,
             next_dense_id: 0,
             files: Vec::new(),
             compression_summary: CompressionSummary::default(),
@@ -68,12 +64,6 @@ impl UddpStreamingBuilder {
             spill: Some(BufWriter::with_capacity(SPILL_WRITE_BUFFER_BYTES, spill)),
             spill_size: 0,
         })
-    }
-
-    /// Override the version written into the output package header.
-    pub fn set_version(&mut self, major: u16, minor: u16) {
-        self.version_major = major;
-        self.version_minor = minor;
     }
 
     /// Path the package is written to by `finish()`.
@@ -183,13 +173,7 @@ impl UddpStreamingBuilder {
             total: total_steps,
             active_file: None,
         });
-        let head = serialize_package_head(
-            self.lookup_mode,
-            self.version_major,
-            self.version_minor,
-            &[],
-            &self.files,
-        )?;
+        let head = serialize_package_head(self.lookup_mode, &[], &self.files)?;
         let mut completed = 0;
         while completed < PACKAGE_HEAD_ASSEMBLY_STEPS {
             completed += 1;

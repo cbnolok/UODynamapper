@@ -33,7 +33,6 @@ fn rewrite_package(
     let reader = UddpReader::open(source_bytes).wrap_err_with(|| format!("open {}", input.display()))?;
 
     let mut builder = UddpBuilder::new(reader.lookup_mode());
-    builder.set_version(reader.header().version_major, reader.header().version_minor);
 
     let mut records = reader.records();
     records.sort_by_key(|record| unpack_offset40(record.locator.pos64));

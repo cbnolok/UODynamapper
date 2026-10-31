@@ -377,6 +377,35 @@ fn dense_id_package_roundtrip_reads_entries() {
     );
 }
 
+/// Byte offset of `version_major` in the serialized package header (after the magic).
+const HEADER_VERSION_MAJOR_OFFSET: usize = 4;
+
+#[test]
+fn reader_rejects_other_package_versions() {
+    let mut builder = UddpBuilder::new(LookupMode::DenseId);
+    builder
+        .add_file(AddFileRequest {
+            data_type: DataType::Sector as u8,
+            compression: CompressionFlag::None,
+            width: 0, height: 0,
+            virtual_path: None,
+            path_hash64: None,
+            id: Some(0),
+            data: b"sector-0",
+        })
+        .expect("add id 0");
+    let mut bytes = builder.build().expect("build dense package");
+    let old_major = UDDP_VERSION_MAJOR - 1;
+    bytes[HEADER_VERSION_MAJOR_OFFSET..HEADER_VERSION_MAJOR_OFFSET + size_of::<u16>()]
+        .copy_from_slice(&old_major.to_le_bytes());
+
+    let message = UddpReader::open(bytes).err().expect("old version must be rejected").to_string();
+    assert_eq!(
+        message,
+        format!("package version {old_major}.{UDDP_VERSION_MINOR} is not supported; repack with the current udd-cli")
+    );
+}
+
 #[test]
 fn sparse_id_package_roundtrip_reads_entries() {
     let mut builder = UddpBuilder::new(LookupMode::SparseId);
@@ -624,7 +653,6 @@ fn streaming_builder_matches_in_memory_builder() {
     let files = streaming_test_files();
 
     let mut memory_builder = UddpBuilder::new(LookupMode::VirtualPathHash);
-    memory_builder.set_version(3, 1);
     for file in &files {
         memory_builder.add_owned_file(file.clone()).expect("add memory file");
     }
@@ -632,7 +660,6 @@ fn streaming_builder_matches_in_memory_builder() {
 
     let mut streaming_builder =
         UddpStreamingBuilder::create(LookupMode::VirtualPathHash, &output).expect("create streaming builder");
-    streaming_builder.set_version(3, 1);
     let mut files = files.into_iter();
     let first = files.next().expect("first file");
     streaming_builder

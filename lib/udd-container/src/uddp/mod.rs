@@ -102,6 +102,14 @@ pub const UDDP_MAGIC: u32 = u32::from_le_bytes(*b"UDDP");
 pub const UDPI_MAGIC: u32 = u32::from_le_bytes(*b"UDPI");
 pub const PMAN_MAGIC: u32 = u32::from_le_bytes(*b"PMAN");
 
+/// The only package header version readers accept and builders write (`.uddp` and `.uddpi`).
+pub const UDDP_VERSION_MAJOR: u16 = 1;
+pub const UDDP_VERSION_MINOR: u16 = 0;
+
+/// The only patch manifest version readers accept and builders write.
+pub const PMAN_VERSION_MAJOR: u16 = 1;
+pub const PMAN_VERSION_MINOR: u16 = 0;
+
 /// Offset of `package_hash64` inside the serialized header.
 ///
 /// The package hash is computed canonically by zeroing these 8 bytes before

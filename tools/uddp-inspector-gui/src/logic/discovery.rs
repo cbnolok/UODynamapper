@@ -1,201 +1,236 @@
 use std::collections::HashMap;
-use std::io::{Cursor, Read};
-use byteorder::{LittleEndian, ReadBytesExt};
-// use udd_container::xxh64_virtual_path;
+use color_eyre::eyre;
+use udd_assets::tex_art_cc::{MISSING_PAGE_INDEX, PagePixelFormat, SLOT_MANIFEST_ENTRY_PATH};
+use udd_assets::{TexArtCcPackage, TexArtEcPackage, TexLandCcPackage, TexLandEcPackage};
+use udd_container::{DataType, UddpReader, xxh64_virtual_path};
 
 use crate::models::{AtlasPageInfo, AtlasPixelFormat, VirtualEntry, VirtualEntryData};
 
-const PACKING_MODE_HEADER_VERSION: u32 = 3;
-
-pub fn parse_atlas_page_manifest(data: &[u8]) -> HashMap<u32, AtlasPageInfo> {
-    if data.len() < 25 {
-        return HashMap::new();
-    }
-
-    let mut cursor = Cursor::new(data);
-    let mut magic = [0u8; 4];
-    if cursor.read_exact(&mut magic).is_err() {
-        return HashMap::new();
-    }
-
-    if !matches!(&magic, b"CAPG" | b"EAPG" | b"ELPG" | b"CTXP") {
-        return HashMap::new();
-    }
-
-    let version = cursor.read_u32::<LittleEndian>().unwrap_or(0);
-    let atlas_width = cursor.read_u32::<LittleEndian>().unwrap_or(0);
-    let atlas_height = cursor.read_u32::<LittleEndian>().unwrap_or(0);
-    let _gutter = cursor.read_u32::<LittleEndian>().unwrap_or(0);
-    let pixel_format = match cursor.read_u8().ok() {
-        Some(0) => AtlasPixelFormat::Rgba8888,
-        Some(1) => AtlasPixelFormat::Bc7,
-        _ => return HashMap::new(),
-    };
-    if version >= PACKING_MODE_HEADER_VERSION || magic == *b"CTXP" {
-        match cursor.read_u8().ok() {
-            Some(0 | 1) => {}
-            _ => return HashMap::new(),
-        }
-    }
-    let page_count = cursor.read_u32::<LittleEndian>().unwrap_or(0);
-
-    let mut pages = HashMap::new();
-    for _ in 0..page_count {
-        let Ok(page_index) = cursor.read_u32::<LittleEndian>() else {
-            break;
-        };
-        let Ok(_tile_count) = cursor.read_u32::<LittleEndian>() else {
-            break;
-        };
-        let Ok(used_width) = cursor.read_u32::<LittleEndian>() else {
-            break;
-        };
-        let Ok(used_height) = cursor.read_u32::<LittleEndian>() else {
-            break;
-        };
-        pages.insert(
-            page_index,
-            AtlasPageInfo {
-                atlas_width,
-                atlas_height,
-                used_width,
-                used_height,
-                pixel_format,
-            },
-        );
-    }
-
-    pages
-}
+const KIND_CC_ART: &str = "CC Art";
+const KIND_EC_ART: &str = "EC Art";
+const KIND_EC_LAND: &str = "EC Land";
+const KIND_CC_TEXMAPS: &str = "CC Texmaps";
+const SLOT_MANIFEST_MAGIC_LEN: usize = 4;
+/// Upscale factor and algorithm shown for land slots, which store neither.
+const NOT_UPSCALED_FACTOR: u16 = 1;
+const NOT_UPSCALED_ALGORITHM: u16 = 0;
 
 pub fn slot_manifest_kind(magic: &[u8; 4]) -> Option<&'static str> {
     match magic {
-        b"CASL" => Some("CC Art"),
-        b"EASL" => Some("EC Art"),
-        b"ELSL" => Some("EC Land"),
-        b"CTXS" => Some("CC Texmaps"),
+        b"CASL" => Some(KIND_CC_ART),
+        b"EASL" => Some(KIND_EC_ART),
+        b"ELSL" => Some(KIND_EC_LAND),
+        b"CTXS" => Some(KIND_CC_TEXMAPS),
         _ => None,
     }
 }
 
-pub fn parse_virtual_entries_from_slot_manifest(data: &[u8]) -> Vec<VirtualEntry> {
-    if data.len() < 24 {
-        return Vec::new();
+/// An atlas package (art or land, Classic or Enhanced) read with its typed udd-assets reader.
+pub enum AtlasPackage {
+    CcArt(TexArtCcPackage),
+    EcArt(TexArtEcPackage),
+    EcLand(TexLandEcPackage),
+    CcTexmaps(TexLandCcPackage),
+}
+
+/// Open `reader` as the atlas package its slot manifest names.
+///
+/// `None` when the package has no slot manifest of an atlas package; an error when it is an
+/// atlas package the reader rejects, such as one packed in an older format version.
+pub fn load_atlas_package(reader: &UddpReader) -> Option<eyre::Result<AtlasPackage>> {
+    let slot_manifest = reader.read_file_by_path_hash(xxh64_virtual_path(SLOT_MANIFEST_ENTRY_PATH)).ok()?;
+    let magic: [u8; SLOT_MANIFEST_MAGIC_LEN] = slot_manifest.get(..SLOT_MANIFEST_MAGIC_LEN)?.try_into().ok()?;
+    let reader = reader.clone();
+    Some(match slot_manifest_kind(&magic)? {
+        KIND_CC_ART => TexArtCcPackage::from_uddp_package(reader).map(AtlasPackage::CcArt),
+        KIND_EC_ART => TexArtEcPackage::from_uddp_package(reader).map(AtlasPackage::EcArt),
+        KIND_EC_LAND => TexLandEcPackage::from_uddp_package(reader).map(AtlasPackage::EcLand),
+        _ => TexLandCcPackage::from_uddp_package(reader).map(AtlasPackage::CcTexmaps),
+    })
+}
+
+impl AtlasPackage {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::CcArt(_) => KIND_CC_ART,
+            Self::EcArt(_) => KIND_EC_ART,
+            Self::EcLand(_) => KIND_EC_LAND,
+            Self::CcTexmaps(_) => KIND_CC_TEXMAPS,
+        }
     }
 
-    let mut cursor = Cursor::new(data);
-    let mut magic = [0u8; 4];
-    if cursor.read_exact(&mut magic).is_err() {
-        return Vec::new();
+    pub fn page_infos(&self) -> HashMap<u32, AtlasPageInfo> {
+        macro_rules! pages {
+            ($package:expr) => {{
+                let (atlas_width, atlas_height) = ($package.atlas_width(), $package.atlas_height());
+                $package
+                    .pages()
+                    .iter()
+                    .map(|page| {
+                        let info = AtlasPageInfo {
+                            atlas_width,
+                            atlas_height,
+                            used_width: page.used_width,
+                            used_height: page.used_height,
+                            pixel_format: atlas_pixel_format(page.pixel_format),
+                        };
+                        (page.page_index, info)
+                    })
+                    .collect()
+            }};
+        }
+        match self {
+            Self::CcArt(package) => pages!(package),
+            Self::EcArt(package) => pages!(package),
+            Self::EcLand(package) => pages!(package),
+            Self::CcTexmaps(package) => pages!(package),
+        }
     }
 
-    let Some(kind) = slot_manifest_kind(&magic) else {
-        return Vec::new();
+    /// One entry per present slot.
+    pub fn virtual_entries(&self) -> Vec<VirtualEntry> {
+        let kind = self.kind();
+        let slots: Vec<AtlasSlot> = match self {
+            Self::CcArt(package) => package
+                .slots()
+                .iter()
+                .filter(|slot| slot.is_present())
+                .map(|slot| AtlasSlot {
+                    id: slot.art_id,
+                    page_index: slot.page_index,
+                    page_tile_index: slot.page_tile_index,
+                    flags: slot.flags,
+                    x: slot.x,
+                    y: slot.y,
+                    width: slot.width,
+                    height: slot.height,
+                    upscale: Some((slot.upscale_factor.max(NOT_UPSCALED_FACTOR), slot.upscale_algorithm)),
+                })
+                .collect(),
+            Self::EcArt(package) => package
+                .slots()
+                .iter()
+                .filter(|slot| slot.is_present())
+                .map(|slot| AtlasSlot {
+                    id: slot.art_id,
+                    page_index: slot.page_index,
+                    page_tile_index: slot.page_tile_index,
+                    flags: slot.flags,
+                    x: slot.x,
+                    y: slot.y,
+                    width: slot.width,
+                    height: slot.height,
+                    upscale: Some((slot.upscale_factor.max(NOT_UPSCALED_FACTOR), slot.upscale_algorithm)),
+                })
+                .collect(),
+            Self::EcLand(package) => package
+                .slots()
+                .iter()
+                .filter(|slot| slot.is_present())
+                .map(|slot| AtlasSlot {
+                    id: slot.art_id,
+                    page_index: slot.page_index,
+                    page_tile_index: slot.page_tile_index,
+                    flags: slot.flags,
+                    x: slot.x,
+                    y: slot.y,
+                    width: slot.width,
+                    height: slot.height,
+                    upscale: None,
+                })
+                .collect(),
+            Self::CcTexmaps(package) => package
+                .slots()
+                .iter()
+                .filter(|slot| slot.is_present())
+                .map(|slot| AtlasSlot {
+                    id: slot.id,
+                    page_index: slot.page_index,
+                    page_tile_index: slot.page_tile_index,
+                    flags: slot.flags,
+                    x: slot.x,
+                    y: slot.y,
+                    width: slot.width,
+                    height: slot.height,
+                    upscale: None,
+                })
+                .collect(),
+        };
+        let data_type = match self {
+            Self::CcArt(_) | Self::EcArt(_) => DataType::Art,
+            Self::EcLand(_) | Self::CcTexmaps(_) => DataType::Texture,
+        };
+        slots.into_iter().map(|slot| atlas_virtual_entry(kind, data_type, slot)).collect()
+    }
+}
+
+/// A present slot of any atlas package; `upscale` is `(factor, algorithm)` for art slots.
+#[derive(Debug, Clone, Copy)]
+struct AtlasSlot {
+    id: u32,
+    page_index: u32,
+    page_tile_index: u16,
+    flags: u16,
+    x: u16,
+    y: u16,
+    width: u16,
+    height: u16,
+    upscale: Option<(u16, u16)>,
+}
+
+fn atlas_pixel_format(format: PagePixelFormat) -> AtlasPixelFormat {
+    match format {
+        PagePixelFormat::Rgba8888 => AtlasPixelFormat::Rgba8888,
+        PagePixelFormat::Bc7 => AtlasPixelFormat::Bc7,
+    }
+}
+
+fn atlas_virtual_entry(kind: &str, data_type: DataType, slot: AtlasSlot) -> VirtualEntry {
+    let AtlasSlot { id, page_index, page_tile_index, flags, x, y, width, height, upscale } = slot;
+    let (upscale_factor, upscale_algorithm) = upscale.unwrap_or((NOT_UPSCALED_FACTOR, NOT_UPSCALED_ALGORITHM));
+    let is_empty = page_index == MISSING_PAGE_INDEX || width == 0 || height == 0;
+    let summary = if is_empty {
+        "empty".to_string()
+    } else if upscale.is_some() {
+        let logical_width = width as f32 / f32::from(upscale_factor);
+        let logical_height = height as f32 / f32::from(upscale_factor);
+        format!(
+            "{}x{} at {},{}; logical {:.1}x{:.1}; upscale {} {}x",
+            width,
+            height,
+            x,
+            y,
+            logical_width,
+            logical_height,
+            upscale_algorithm_name(upscale_algorithm),
+            upscale_factor
+        )
+    } else {
+        format!("{}x{} at {},{}", width, height, x, y)
     };
-
-    let version = cursor.read_u32::<LittleEndian>().unwrap_or(0);
-    let _atlas_w = cursor.read_u32::<LittleEndian>().unwrap_or(0);
-    let _atlas_h = cursor.read_u32::<LittleEndian>().unwrap_or(0);
-    let _gutter = cursor.read_u32::<LittleEndian>().unwrap_or(0);
-    if version >= PACKING_MODE_HEADER_VERSION || magic == *b"CTXS" {
-        match cursor.read_u8().ok() {
-            Some(0 | 1) => {}
-            _ => return Vec::new(),
-        }
+    let location = if page_index == MISSING_PAGE_INDEX {
+        "missing page".to_string()
+    } else {
+        format!("page {}", page_index)
+    };
+    VirtualEntry {
+        id,
+        _data_type: data_type as u8,
+        kind: kind.to_string(),
+        summary,
+        location,
+        data: VirtualEntryData::AtlasRect {
+            page_index,
+            page_tile_idx: page_tile_index,
+            x,
+            y,
+            width,
+            height,
+            flags,
+            upscale_factor,
+            upscale_algorithm,
+        },
     }
-    let count = cursor.read_u32::<LittleEndian>().unwrap_or(0);
-
-    let mut entries = Vec::new();
-    for _ in 0..count {
-        let Ok(id) = cursor.read_u32::<LittleEndian>() else {
-            break;
-        };
-        let Ok(page_index) = cursor.read_u32::<LittleEndian>() else {
-            break;
-        };
-        let Ok(page_tile_idx) = cursor.read_u16::<LittleEndian>() else {
-            break;
-        };
-        let Ok(flags) = cursor.read_u16::<LittleEndian>() else {
-            break;
-        };
-        let Ok(x) = cursor.read_u16::<LittleEndian>() else {
-            break;
-        };
-        let Ok(y) = cursor.read_u16::<LittleEndian>() else {
-            break;
-        };
-        let Ok(width) = cursor.read_u16::<LittleEndian>() else {
-            break;
-        };
-        let Ok(height) = cursor.read_u16::<LittleEndian>() else {
-            break;
-        };
-        let (upscale_factor, upscale_algorithm) = if matches!(kind, "CC Art" | "EC Art") && version >= 4 {
-            let Ok(upscale_factor) = cursor.read_u16::<LittleEndian>() else {
-                break;
-            };
-            let upscale_algorithm = if version >= 5 {
-                let Ok(upscale_algorithm) = cursor.read_u16::<LittleEndian>() else {
-                    break;
-                };
-                upscale_algorithm
-            } else {
-                0
-            };
-            (upscale_factor.max(1), upscale_algorithm)
-        } else {
-            (1, 0)
-        };
-
-        if (flags & 1) != 0 {
-            let is_empty = page_index == u32::MAX || width == 0 || height == 0;
-            let summary = if is_empty {
-                "empty".to_string()
-            } else if matches!(kind, "CC Art" | "EC Art") {
-                let logical_width = width as f32 / f32::from(upscale_factor);
-                let logical_height = height as f32 / f32::from(upscale_factor);
-                format!(
-                    "{}x{} at {},{}; logical {:.1}x{:.1}; upscale {} {}x",
-                    width,
-                    height,
-                    x,
-                    y,
-                    logical_width,
-                    logical_height,
-                    upscale_algorithm_name(upscale_algorithm),
-                    upscale_factor
-                )
-            } else {
-                format!("{}x{} at {},{}", width, height, x, y)
-            };
-            let location = if page_index == u32::MAX {
-                "missing page".to_string()
-            } else {
-                format!("page {}", page_index)
-            };
-            entries.push(VirtualEntry {
-                id,
-                _data_type: if kind == "EC Land" || kind == "CC Texmaps" { 9 } else { 1 },
-                kind: kind.to_string(),
-                summary,
-                location,
-                data: VirtualEntryData::AtlasRect {
-                    page_index,
-                    page_tile_idx,
-                    x,
-                    y,
-                    width,
-                    height,
-                    flags,
-                    upscale_factor,
-                    upscale_algorithm,
-                },
-            });
-        }
-    }
-
-    entries
 }
 
 pub(crate) fn upscale_algorithm_name(code: u16) -> &'static str {
@@ -235,203 +270,60 @@ pub(crate) fn upscale_algorithm_name(code: u16) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use byteorder::{LittleEndian, WriteBytesExt};
 
-    fn build_slot_manifest(magic: &[u8; 4], version: u32, packing_mode: Option<u8>, flags: u16) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(magic);
-        bytes.write_u32::<LittleEndian>(version).unwrap();
-        bytes.write_u32::<LittleEndian>(2048).unwrap();
-        bytes.write_u32::<LittleEndian>(2048).unwrap();
-        bytes.write_u32::<LittleEndian>(1).unwrap();
-        if let Some(packing_mode) = packing_mode {
-            bytes.write_u8(packing_mode).unwrap();
+    fn slot(width: u16, upscale: Option<(u16, u16)>) -> AtlasSlot {
+        AtlasSlot {
+            id: 42,
+            page_index: 7,
+            page_tile_index: 3,
+            flags: 1,
+            x: 11,
+            y: 22,
+            width,
+            height: 44,
+            upscale,
         }
-        bytes.write_u32::<LittleEndian>(1).unwrap();
-        bytes.write_u32::<LittleEndian>(42).unwrap();
-        bytes.write_u32::<LittleEndian>(7).unwrap();
-        bytes.write_u16::<LittleEndian>(3).unwrap();
-        bytes.write_u16::<LittleEndian>(flags).unwrap();
-        bytes.write_u16::<LittleEndian>(11).unwrap();
-        bytes.write_u16::<LittleEndian>(22).unwrap();
-        bytes.write_u16::<LittleEndian>(33).unwrap();
-        bytes.write_u16::<LittleEndian>(44).unwrap();
-        if matches!(magic, b"CASL" | b"EASL") && version >= 4 {
-            bytes.write_u16::<LittleEndian>(2).unwrap();
-            if version >= 5 {
-                bytes.write_u16::<LittleEndian>(6).unwrap();
-            }
-        }
-        bytes
-    }
-
-    fn build_page_manifest(
-        magic: &[u8; 4],
-        version: u32,
-        pixel_format: u8,
-        packing_mode: Option<u8>,
-        used_width: u32,
-        used_height: u32,
-    ) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(magic);
-        bytes.write_u32::<LittleEndian>(version).unwrap();
-        bytes.write_u32::<LittleEndian>(4096).unwrap();
-        bytes.write_u32::<LittleEndian>(2048).unwrap();
-        bytes.write_u32::<LittleEndian>(1).unwrap();
-        bytes.write_u8(pixel_format).unwrap();
-        if let Some(packing_mode) = packing_mode {
-            bytes.write_u8(packing_mode).unwrap();
-        }
-        bytes.write_u32::<LittleEndian>(1).unwrap();
-        bytes.write_u32::<LittleEndian>(7).unwrap();
-        bytes.write_u32::<LittleEndian>(3).unwrap();
-        bytes.write_u32::<LittleEndian>(used_width).unwrap();
-        bytes.write_u32::<LittleEndian>(used_height).unwrap();
-        bytes
     }
 
     #[test]
     fn slot_manifest_kind_recognizes_current_package_types() {
-        assert_eq!(slot_manifest_kind(b"CASL"), Some("CC Art"));
-        assert_eq!(slot_manifest_kind(b"EASL"), Some("EC Art"));
-        assert_eq!(slot_manifest_kind(b"ELSL"), Some("EC Land"));
-        assert_eq!(slot_manifest_kind(b"CTXS"), Some("CC Texmaps"));
+        assert_eq!(slot_manifest_kind(b"CASL"), Some(KIND_CC_ART));
+        assert_eq!(slot_manifest_kind(b"EASL"), Some(KIND_EC_ART));
+        assert_eq!(slot_manifest_kind(b"ELSL"), Some(KIND_EC_LAND));
+        assert_eq!(slot_manifest_kind(b"CTXS"), Some(KIND_CC_TEXMAPS));
         assert_eq!(slot_manifest_kind(b"NOPE"), None);
     }
 
     #[test]
-    fn parse_virtual_entries_accepts_tex_land_ec_manifests() {
-        let manifest = build_slot_manifest(b"ELSL", 3, Some(1), 1);
-        let entries = parse_virtual_entries_from_slot_manifest(&manifest);
+    fn atlas_entries_report_slot_rects() {
+        let entry = atlas_virtual_entry(KIND_EC_LAND, DataType::Texture, slot(33, None));
 
-        assert_eq!(entries.len(), 1);
-        let entry = &entries[0];
         assert_eq!(entry.id, 42);
-        assert_eq!(entry.kind, "EC Land");
+        assert_eq!(entry.kind, KIND_EC_LAND);
+        assert_eq!(entry.summary, "33x44 at 11,22");
+        assert_eq!(entry.location, "page 7");
         match &entry.data {
-            VirtualEntryData::AtlasRect {
-                page_index,
-                x,
-                y,
-                width,
-                height,
-                ..
-            } => {
-                assert_eq!(*page_index, 7);
-                assert_eq!(*x, 11);
-                assert_eq!(*y, 22);
-                assert_eq!(*width, 33);
-                assert_eq!(*height, 44);
+            VirtualEntryData::AtlasRect { page_index, x, y, width, height, upscale_factor, .. } => {
+                assert_eq!((*page_index, *x, *y, *width, *height), (7, 11, 22, 33, 44));
+                assert_eq!(*upscale_factor, NOT_UPSCALED_FACTOR);
             }
             other => panic!("expected atlas rect, got {other:?}"),
         }
     }
 
     #[test]
-    fn parse_virtual_entries_accepts_tex_land_cc_v2_manifests() {
-        let manifest = build_slot_manifest(b"CTXS", 2, Some(1), 1);
-        let entries = parse_virtual_entries_from_slot_manifest(&manifest);
+    fn atlas_entries_keep_present_slots_without_displayable_rects() {
+        let entry = atlas_virtual_entry(KIND_EC_LAND, DataType::Texture, slot(0, None));
 
-        assert_eq!(entries.len(), 1);
-        let entry = &entries[0];
-        assert_eq!(entry.id, 42);
-        assert_eq!(entry.kind, "CC Texmaps");
-        match &entry.data {
-            VirtualEntryData::AtlasRect {
-                page_index,
-                x,
-                y,
-                width,
-                height,
-                ..
-            } => {
-                assert_eq!(*page_index, 7);
-                assert_eq!(*x, 11);
-                assert_eq!(*y, 22);
-                assert_eq!(*width, 33);
-                assert_eq!(*height, 44);
-            }
-            other => panic!("expected atlas rect, got {other:?}"),
-        }
+        assert_eq!(entry.summary, "empty");
     }
 
     #[test]
-    fn parse_virtual_entries_skips_non_present_slots() {
-        let manifest = build_slot_manifest(b"CASL", 3, Some(1), 0);
-        let entries = parse_virtual_entries_from_slot_manifest(&manifest);
+    fn atlas_entries_report_art_upscale_metadata() {
+        let fsr_easu = 6;
+        let entry = atlas_virtual_entry(KIND_EC_ART, DataType::Art, slot(33, Some((2, fsr_easu))));
 
-        assert!(entries.is_empty());
-    }
-
-    #[test]
-    fn parse_virtual_entries_keeps_present_slots_without_displayable_rects() {
-        let mut manifest = build_slot_manifest(b"ELSL", 3, Some(1), 1);
-        let width_offset = manifest.len() - 4;
-        manifest[width_offset..width_offset + 2].copy_from_slice(&0u16.to_le_bytes());
-
-        let entries = parse_virtual_entries_from_slot_manifest(&manifest);
-
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].summary, "empty");
-    }
-
-    #[test]
-    fn parse_virtual_entries_reports_art_upscale_metadata() {
-        let manifest = build_slot_manifest(b"EASL", 5, Some(1), 1);
-        let entries = parse_virtual_entries_from_slot_manifest(&manifest);
-
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].kind, "EC Art");
-        assert!(entries[0].summary.contains("logical 16.5x22.0"));
-        assert!(entries[0].summary.contains("upscale FsrEasu 2x"));
-    }
-
-    #[test]
-    fn parse_atlas_page_manifest_reads_shared_dimensions_and_format() {
-        let manifest = build_page_manifest(b"EAPG", 3, 1, Some(1), 3000, 1500);
-        let pages = parse_atlas_page_manifest(&manifest);
-        let info = pages.get(&7).unwrap();
-
-        assert_eq!(info.atlas_width, 4096);
-        assert_eq!(info.atlas_height, 2048);
-        assert_eq!(info.used_width, 3000);
-        assert_eq!(info.used_height, 1500);
-        assert_eq!(info.pixel_format, AtlasPixelFormat::Bc7);
-    }
-
-    #[test]
-    fn parse_atlas_page_manifest_accepts_tex_land_cc_v2_manifest() {
-        let manifest = build_page_manifest(b"CTXP", 2, 0, Some(1), 3000, 1500);
-        let pages = parse_atlas_page_manifest(&manifest);
-        let info = pages.get(&7).unwrap();
-
-        assert_eq!(info.atlas_width, 4096);
-        assert_eq!(info.atlas_height, 2048);
-        assert_eq!(info.used_width, 3000);
-        assert_eq!(info.used_height, 1500);
-        assert_eq!(info.pixel_format, AtlasPixelFormat::Rgba8888);
-    }
-
-    #[test]
-    fn parse_virtual_entries_accepts_legacy_slot_manifests_without_packing_mode() {
-        let manifest = build_slot_manifest(b"CASL", 2, None, 1);
-        let entries = parse_virtual_entries_from_slot_manifest(&manifest);
-
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].kind, "CC Art");
-    }
-
-    #[test]
-    fn parse_atlas_page_manifest_accepts_legacy_headers_without_packing_mode() {
-        let manifest = build_page_manifest(b"CAPG", 2, 0, None, 512, 256);
-        let pages = parse_atlas_page_manifest(&manifest);
-        let info = pages.get(&7).unwrap();
-
-        assert_eq!(info.atlas_width, 4096);
-        assert_eq!(info.atlas_height, 2048);
-        assert_eq!(info.used_width, 512);
-        assert_eq!(info.used_height, 256);
-        assert_eq!(info.pixel_format, AtlasPixelFormat::Rgba8888);
+        assert!(entry.summary.contains("logical 16.5x22.0"));
+        assert!(entry.summary.contains("upscale FsrEasu 2x"));
     }
 }

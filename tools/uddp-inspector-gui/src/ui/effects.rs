@@ -1158,7 +1158,7 @@ mod tests {
     fn a_package_of_other_versions_shows_the_error() {
         let other = PackageRecord { nif_desc_version: PackageRecord::CURRENT.nif_desc_version + 1, ..PackageRecord::CURRENT };
         let mut viewer = viewer(TestPackage { versions: other, ..TestPackage::standard() });
-        assert!(viewer.open_error().is_some_and(|error| error.contains("rebuild")));
+        assert!(viewer.open_error().is_some_and(|error| error.contains("repack")));
         assert!(viewer.versions.as_ref().unwrap().mismatch_message().is_some());
         frame(&egui::Context::default(), &mut viewer);
     }

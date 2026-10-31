@@ -8,8 +8,8 @@ use knuffel::Decode;
 use udd_container::UddpReader;
 
 use crate::common::{
-    decode_atlas_page_rgba, extract_atlas_subrect_rgba, read_path_entry, read_path_entry_cow, AtlasCacheOptions,
-    AtlasPageCache,
+    decode_atlas_page_rgba, ensure_manifest_version, extract_atlas_subrect_rgba, read_path_entry, read_path_entry_cow,
+    AtlasCacheOptions, AtlasPageCache,
 };
 use crate::tex_art_cc::{AtlasPackingMode, PagePixelFormat};
 pub use uocf::enhanced::hues::ShadowPaletteStats;
@@ -87,16 +87,6 @@ const SOURCE_HINT_MANIFEST_MAGIC: [u8; 4] = *b"MESH";
 const BODY_MANIFEST_MAGIC: [u8; 4] = *b"MEBD";
 /// Metadata version written by the converter, in every manifest.
 pub const MOBILE_ANIM_EC_METADATA_VERSION: u32 = 5;
-const MOBILE_ANIM_EC_METADATA_VERSION_FIRST: u32 = 1;
-const MOBILE_ANIM_EC_METADATA_VERSION_DYNAMIC_PAGES: u32 = 2;
-/// First version with the client pixel decoding (opaque colours, anchor centers, hue masks) and
-/// the `tileart.uop` body mapping (`metadata/bodies.bin`, records per server body). Version 3
-/// introduced the client `AnimationSequence` records (actions, 8 directions, aliases, fps).
-const MOBILE_ANIM_EC_METADATA_VERSION_BODY_MAPPING: u32 = 4;
-/// First version with the shadow hue palette statistics in the frame records and the creature
-/// fields (sequence stored id, race, gender) in the body records. Older animation, frame and body
-/// data is not read: rebuild the package.
-const MOBILE_ANIM_EC_METADATA_VERSION_CREATURE_FIELDS: u32 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MobileAnimEcPageRecord {
@@ -630,7 +620,7 @@ fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, AtlasPackin
     cursor.read_exact(&mut magic)?;
     if magic != PAGE_MANIFEST_MAGIC { eyre::bail!("invalid EC mobile animation page magic"); }
     let version = cursor.read_u32::<LittleEndian>()?;
-    if !is_supported_metadata_version(version) { eyre::bail!("invalid EC mobile animation page version"); }
+    ensure_manifest_version("EC mobile animation page manifest", version, MOBILE_ANIM_EC_METADATA_VERSION)?;
     let width = cursor.read_u32::<LittleEndian>()?;
     let height = cursor.read_u32::<LittleEndian>()?;
     let gutter = cursor.read_u32::<LittleEndian>()? as u16;
@@ -644,24 +634,12 @@ fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, AtlasPackin
         pages.push(MobileAnimEcPageRecord {
             page_index: cursor.read_u32::<LittleEndian>()?,
             frame_count: cursor.read_u32::<LittleEndian>()?,
-            atlas_width: if version >= MOBILE_ANIM_EC_METADATA_VERSION_DYNAMIC_PAGES {
-                cursor.read_u32::<LittleEndian>()?
-            } else {
-                width
-            },
-            atlas_height: if version >= MOBILE_ANIM_EC_METADATA_VERSION_DYNAMIC_PAGES {
-                cursor.read_u32::<LittleEndian>()?
-            } else {
-                height
-            },
+            atlas_width: cursor.read_u32::<LittleEndian>()?,
+            atlas_height: cursor.read_u32::<LittleEndian>()?,
             used_width: cursor.read_u32::<LittleEndian>()?,
             used_height: cursor.read_u32::<LittleEndian>()?,
             pixel_format,
-            flags: if version >= MOBILE_ANIM_EC_METADATA_VERSION_BODY_MAPPING {
-                cursor.read_u8()?
-            } else {
-                0
-            },
+            flags: cursor.read_u8()?,
         });
     }
     Ok((width, height, gutter, packing_mode, pages))
@@ -673,9 +651,7 @@ fn parse_animation_manifest(bytes: &[u8]) -> eyre::Result<Vec<MobileAnimEcAnimat
     cursor.read_exact(&mut magic)?;
     if magic != ANIMATION_MANIFEST_MAGIC { eyre::bail!("invalid EC mobile animation manifest magic"); }
     let version = cursor.read_u32::<LittleEndian>()?;
-    if !is_supported_animation_metadata_version(version) {
-        eyre::bail!("unsupported EC mobile animation manifest version {version}; rebuild mobile_anim_ec.uddp");
-    }
+    ensure_manifest_version("EC mobile animation manifest", version, MOBILE_ANIM_EC_METADATA_VERSION)?;
     let count = cursor.read_u32::<LittleEndian>()? as usize;
     let mut animations = Vec::with_capacity(count);
     for _ in 0..count {
@@ -704,9 +680,7 @@ fn parse_frame_manifest(bytes: &[u8]) -> eyre::Result<Vec<MobileAnimEcFrameRecor
     cursor.read_exact(&mut magic)?;
     if magic != FRAME_MANIFEST_MAGIC { eyre::bail!("invalid EC mobile animation frame magic"); }
     let version = cursor.read_u32::<LittleEndian>()?;
-    if !is_supported_animation_metadata_version(version) {
-        eyre::bail!("unsupported EC mobile animation frame version {version}; rebuild mobile_anim_ec.uddp");
-    }
+    ensure_manifest_version("EC mobile animation frame manifest", version, MOBILE_ANIM_EC_METADATA_VERSION)?;
     let count = cursor.read_u32::<LittleEndian>()? as usize;
     let mut frames = Vec::with_capacity(count);
     for _ in 0..count {
@@ -741,7 +715,7 @@ fn parse_item_manifest(bytes: &[u8]) -> eyre::Result<Vec<MobileAnimEcItemRecord>
     cursor.read_exact(&mut magic)?;
     if magic != ITEM_MANIFEST_MAGIC { eyre::bail!("invalid EC mobile animation item magic"); }
     let version = cursor.read_u32::<LittleEndian>()?;
-    if !is_supported_metadata_version(version) { eyre::bail!("invalid EC mobile animation item version"); }
+    ensure_manifest_version("EC mobile animation item manifest", version, MOBILE_ANIM_EC_METADATA_VERSION)?;
     let count = cursor.read_u32::<LittleEndian>()? as usize;
     let string_len = cursor.read_u32::<LittleEndian>()? as usize;
     let mut raw_records = Vec::with_capacity(count);
@@ -785,7 +759,7 @@ fn parse_source_hint_manifest(bytes: &[u8]) -> eyre::Result<Vec<MobileAnimEcSour
     cursor.read_exact(&mut magic)?;
     if magic != SOURCE_HINT_MANIFEST_MAGIC { eyre::bail!("invalid EC mobile animation source hint magic"); }
     let version = cursor.read_u32::<LittleEndian>()?;
-    if !is_supported_metadata_version(version) { eyre::bail!("invalid EC mobile animation source hint version"); }
+    ensure_manifest_version("EC mobile animation source hint manifest", version, MOBILE_ANIM_EC_METADATA_VERSION)?;
     let count = cursor.read_u32::<LittleEndian>()? as usize;
     let mut source_hints = Vec::with_capacity(count);
     for _ in 0..count {
@@ -806,9 +780,7 @@ fn parse_body_manifest(bytes: &[u8]) -> eyre::Result<Vec<MobileAnimEcBodyRecord>
     cursor.read_exact(&mut magic)?;
     if magic != BODY_MANIFEST_MAGIC { eyre::bail!("invalid EC mobile animation body magic"); }
     let version = cursor.read_u32::<LittleEndian>()?;
-    if !is_supported_animation_metadata_version(version) {
-        eyre::bail!("unsupported EC mobile animation body version {version}; rebuild mobile_anim_ec.uddp");
-    }
+    ensure_manifest_version("EC mobile animation body manifest", version, MOBILE_ANIM_EC_METADATA_VERSION)?;
     let count = cursor.read_u32::<LittleEndian>()? as usize;
     let mut bodies = Vec::with_capacity(count);
     for _ in 0..count {
@@ -828,14 +800,6 @@ fn parse_body_manifest(bytes: &[u8]) -> eyre::Result<Vec<MobileAnimEcBodyRecord>
         eyre::bail!("EC mobile animation body records are not sorted by body id");
     }
     Ok(bodies)
-}
-
-fn is_supported_metadata_version(version: u32) -> bool {
-    (MOBILE_ANIM_EC_METADATA_VERSION_FIRST..=MOBILE_ANIM_EC_METADATA_VERSION).contains(&version)
-}
-
-fn is_supported_animation_metadata_version(version: u32) -> bool {
-    (MOBILE_ANIM_EC_METADATA_VERSION_CREATURE_FIELDS..=MOBILE_ANIM_EC_METADATA_VERSION).contains(&version)
 }
 
 pub fn page_entry_path(page_index: u32, fmt: PagePixelFormat) -> String {
@@ -905,15 +869,21 @@ mod tests {
     }
 
     #[test]
-    fn older_animation_manifests_ask_for_a_rebuild() {
-        let bytes = body_manifest_bytes(MOBILE_ANIM_EC_METADATA_VERSION_BODY_MAPPING, &[]);
+    fn older_manifests_ask_for_a_repack() {
+        let older_version = MOBILE_ANIM_EC_METADATA_VERSION - 1;
+        let bytes = body_manifest_bytes(older_version, &[]);
         let error = parse_body_manifest(&bytes).unwrap_err().to_string();
-        assert!(error.contains("rebuild"), "{error}");
+        assert_eq!(
+            error,
+            format!(
+                "EC mobile animation body manifest: package version {older_version} is not supported \
+                 (current is {MOBILE_ANIM_EC_METADATA_VERSION}); repack with the current udd-cli"
+            )
+        );
 
-        let mut frames = FRAME_MANIFEST_MAGIC.to_vec();
-        frames.extend_from_slice(&MOBILE_ANIM_EC_METADATA_VERSION_BODY_MAPPING.to_le_bytes());
-        frames.extend_from_slice(&0u32.to_le_bytes());
-        assert!(parse_frame_manifest(&frames).unwrap_err().to_string().contains("rebuild"));
+        let mut pages = PAGE_MANIFEST_MAGIC.to_vec();
+        pages.extend_from_slice(&older_version.to_le_bytes());
+        assert!(parse_page_manifest(&pages).unwrap_err().to_string().contains("repack"));
     }
 
     fn animations_error(content: &str) -> String {

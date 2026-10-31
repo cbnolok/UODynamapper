@@ -15,6 +15,8 @@ use std::io::{Cursor, Read};
 use std::path::Path;
 use byteorder::{LittleEndian, ReadBytesExt};
 
+use crate::common::ensure_manifest_version;
+
 const TERRAIN_META_MAGIC: [u8; 4] = *b"TMLY";
 const TERRAIN_META_VERSION: u32 = 1;
 
@@ -70,11 +72,7 @@ impl TerrainMetaPackage {
             );
         }
         let version = reader.read_u32::<LittleEndian>()?;
-        if version != TERRAIN_META_VERSION {
-            eyre::bail!(
-                "terrain meta: unsupported version {version}, expected {TERRAIN_META_VERSION}"
-            );
-        }
+        ensure_manifest_version("terrain meta", version, TERRAIN_META_VERSION)?;
 
         let span_count = reader.read_u32::<LittleEndian>()? as usize;
         let mut spans = Vec::with_capacity(span_count);

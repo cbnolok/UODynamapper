@@ -8,7 +8,7 @@ use udd_assets::{
     tex_land_ec::{
         TexLandEcTerrainProvenanceRecord,
         UDDP_PAGE_MANIFEST_ENTRY_VPATH, UDDP_SLOT_MANIFEST_ENTRY_VPATH,
-        UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH,
+        UDDP_SOURCE_MATERIALS_ENTRY_VPATH, UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH,
     },
     tex_art_cc::{MISSING_PAGE_INDEX, page_entry_path, PagePixelFormat},
     TexLandEcPackage,
@@ -16,6 +16,8 @@ use udd_assets::{
 use udd_container::CompressionFlag;
 
 fn ignore_asset_progress(_: udd_conv::package_progress::AssetTaskProgress) {}
+
+const EMPTY_SOURCE_MATERIALS_JSON: &[u8] = b"[]";
 
 #[test]
 fn conversion_embeds_original_game_data_routes_and_subtypes() {
@@ -196,6 +198,17 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
             path_hash64: None,
             id: None,
             data: &terrain_provenance_manifest,
+        })
+        .unwrap();
+    package
+        .add_file(AddFileRequest {
+            data_type: DataType::Metadata as u8,
+            compression: CompressionFlag::ZstdNoDict,
+            width: 0, height: 0,
+            virtual_path: Some(UDDP_SOURCE_MATERIALS_ENTRY_VPATH),
+            path_hash64: None,
+            id: None,
+            data: EMPTY_SOURCE_MATERIALS_JSON,
         })
         .unwrap();
     let page_path = page_entry_path(0, PagePixelFormat::Rgba8888);
@@ -464,6 +477,17 @@ fn runtime_slot_resolution_uses_direct_slots_before_provenance_fallback() {
             path_hash64: None,
             id: None,
             data: &terrain_provenance_manifest,
+        })
+        .unwrap();
+    package
+        .add_file(AddFileRequest {
+            data_type: DataType::Metadata as u8,
+            compression: CompressionFlag::ZstdNoDict,
+            width: 0, height: 0,
+            virtual_path: Some(UDDP_SOURCE_MATERIALS_ENTRY_VPATH),
+            path_hash64: None,
+            id: None,
+            data: EMPTY_SOURCE_MATERIALS_JSON,
         })
         .unwrap();
 

@@ -483,14 +483,17 @@ impl TileMetaPackage {
     pub fn from_uddp_package(package: UddpReader) -> eyre::Result<Self> {
         let land_bytes = read_path_entry_cow(&package, TILEMETA_LAND_ENTRY_PATH)?;
         let item_bytes = read_path_entry_cow(&package, TILEMETA_ITEM_ENTRY_PATH)?;
+        let item_texture_ref_span_bytes = read_path_entry_cow(&package, TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH)
+            .wrap_err("tilemeta missing item texture refs; repack with the current udd-cli")?;
+        let item_texture_ref_bytes = read_path_entry_cow(&package, TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH)
+            .wrap_err("tilemeta missing item texture refs; repack with the current udd-cli")?;
         let item_texture_ref_spans =
-            read_optional_pod_vec(&package, TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH)?;
-        let item_texture_refs =
-            read_optional_pod_vec(&package, TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH)?;
+            read_pod_vec(item_texture_ref_span_bytes.as_ref(), TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH)?;
+        let item_texture_refs = read_pod_vec(item_texture_ref_bytes.as_ref(), TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH)?;
         let land_tiles = read_pod_vec(land_bytes.as_ref(), TILEMETA_LAND_ENTRY_PATH)?;
         let item_tiles = read_pod_vec(item_bytes.as_ref(), TILEMETA_ITEM_ENTRY_PATH)?;
         let material_bytes = read_path_entry_cow(&package, TILEMETA_ITEM_MATERIAL_ENTRY_PATH)
-            .wrap_err("tilemeta missing source item materials; rebuild tilemeta.uddp")?;
+            .wrap_err("tilemeta missing source item materials; repack with the current udd-cli")?;
         let item_materials = serde_json::from_slice(material_bytes.as_ref())
             .wrap_err("parse source item material metadata")?;
 
@@ -851,13 +854,6 @@ fn choose_main_ec_texture_id_role_aware(
     None
 }
 
-fn read_optional_pod_vec<T: Pod>(package: &UddpReader, path: &str) -> eyre::Result<Vec<T>> {
-    match read_path_entry_cow(package, path) {
-        Ok(bytes) => read_pod_vec(bytes.as_ref(), path),
-        Err(_) => Ok(Vec::new()),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -869,6 +865,8 @@ mod tests {
             let entries = [
                 (TILEMETA_LAND_ENTRY_PATH, Some(b"".as_slice())),
                 (TILEMETA_ITEM_ENTRY_PATH, Some(b"".as_slice())),
+                (TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH, Some(b"".as_slice())),
+                (TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH, Some(b"".as_slice())),
                 (TILEMETA_ITEM_MATERIAL_ENTRY_PATH, source),
             ];
             for (path, data) in entries {
@@ -885,7 +883,7 @@ mod tests {
                 UddpReader::open(builder.build().expect("build test metadata")).expect("open test metadata"),
             );
             let message = result.err().expect("reject incomplete material metadata").to_string();
-            assert!(message.contains(if source.is_none() { "rebuild tilemeta.uddp" } else { "parse source item material" }));
+            assert!(message.contains(if source.is_none() { "repack" } else { "parse source item material" }));
         }
     }
 

@@ -427,6 +427,7 @@ pub(crate) fn checked_region(
 #[derive(Debug)]
 pub enum FormatError {
     InvalidMagic(u32),
+    UnsupportedVersion { major: u16, minor: u16 },
     InvalidLookupMode(u8),
     InvalidType(u8),
     InvalidCodec(u8),
@@ -443,6 +444,10 @@ impl fmt::Display for FormatError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidMagic(v) => write!(f, "invalid magic: {v:#010x}"),
+            Self::UnsupportedVersion { major, minor } => write!(
+                f,
+                "package version {major}.{minor} is not supported; repack with the current udd-cli"
+            ),
             Self::InvalidLookupMode(v) => write!(f, "invalid lookup mode: {v}"),
             Self::InvalidType(v) => write!(f, "invalid type {v}"),
             Self::InvalidCodec(v) => write!(f, "invalid codec: {v}"),

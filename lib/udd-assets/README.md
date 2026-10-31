@@ -31,11 +31,12 @@ validation).
 
 Built by `udd-conv` from the EC `AnimationFrame1..6.uop`, `AnimationSequence.uop` and the
 `tileart.uop` creature placeholders, following the client (`scripts/dev-helpers/ec-research/ghidra-animation/results/uosa_animation.md`). Every metadata
-entry starts with a 4-byte magic and the u32 version; all values are little-endian.
+entry starts with a 4-byte magic and the u32 version; all values are little-endian. The reader
+accepts only version 5 and asks for a repack with the current `udd-cli` otherwise.
 
 | Entry | Magic | Content |
 |---|---|---|
-| `metadata/pages.bin` | `MEPG` | atlas pages; version 4 adds `u8 flags` to each page record |
+| `metadata/pages.bin` | `MEPG` | atlas pages; each page record ends with `u8 flags` |
 | `metadata/animations.bin` | `MEAN` | `u32 count`, then `count` animation records (37 bytes) |
 | `metadata/frames.bin` | `MEFR` | `u32 count`, then `count` frame records (34 bytes) |
 | `metadata/bodies.bin` | `MEBD` | `u32 count`, then `count` body records (26 bytes), sorted by body |
@@ -57,14 +58,11 @@ u16 forced_hue, u16 flags, u32 sequence_stored_id, u8 race, u8 gender`.
 
 Both records are fixed-size; nothing in them is variable-length.
 
-Version 4 decodes the pixels like the client (palette byte 3 is a keep-colour flag, not alpha:
-solid pixels are opaque, edge pixels keep their colour with coverage alpha, straight alpha), sets
-the anchor to `(-x0, -y0)` of the frame box, adds the hue modes and masks, and maps server bodies
-through `tileart.uop` (`metadata/bodies.bin`). Version 3 replaced the placeholder records of
-versions 1 and 2. Version 5 adds the creature fields: the shadow palette statistics of each frame
-and the sequence stored id, race and gender of each body. The reader still accepts versions 1..5 for
-pages, items and source hints, but rejects animation, frame and body manifests older than 5: rebuild
-the package.
+Pixels are decoded like the client (palette byte 3 is a keep-colour flag, not alpha: solid pixels
+are opaque, edge pixels keep their colour with coverage alpha, straight alpha), the anchor is
+`(-x0, -y0)` of the frame box, pages carry hue modes and masks, and server bodies are mapped
+through `tileart.uop` (`metadata/bodies.bin`). Frames carry the shadow palette statistics and
+bodies the sequence stored id, race and gender.
 
 Bodies (`MobileAnimEcPackage::bodies` / `body`): the client draws server body `S` through the
 creature placeholder `10000000 + S`. `sequence_id` is its body type (the `AnimationSequence`

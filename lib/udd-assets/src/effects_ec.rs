@@ -381,7 +381,7 @@ fn decode_manifest<'a, T: Pod>(
     );
     ensure!(
         header.version == EFFECTS_EC_METADATA_VERSION,
-        "{entry_path}: metadata version {}, this build reads {EFFECTS_EC_METADATA_VERSION}; rebuild {EFFECTS_EC_PACKAGE_FILE_NAME}",
+        "{entry_path}: package version {} is not supported (current is {EFFECTS_EC_METADATA_VERSION}); repack with the current udd-cli",
         header.version
     );
     let record_size = std::mem::size_of::<T>();
@@ -614,7 +614,7 @@ impl EffectsEcPackage {
         ensure!(package.len() == 1, "{PACKAGE_ENTRY_PATH}: {} records, expected 1", package.len());
         ensure!(
             package[0] == PackageRecord::CURRENT,
-            "system blob versions {:?}, this build reads {:?}; rebuild {EFFECTS_EC_PACKAGE_FILE_NAME}",
+            "system blob versions {:?} are not supported (current is {:?}); repack {EFFECTS_EC_PACKAGE_FILE_NAME} with the current udd-cli",
             package[0],
             PackageRecord::CURRENT
         );
@@ -959,7 +959,7 @@ mod tests {
         };
         let version_offset = std::mem::offset_of!(ManifestHeader, version);
         let error = decode(&field(version_offset)).unwrap_err().to_string();
-        assert!(error.contains("metadata version"), "{error}");
+        assert!(error.contains("package version"), "{error}");
         assert!(decode(&field(std::mem::offset_of!(ManifestHeader, record_size))).is_err());
         assert!(decode(&field(std::mem::offset_of!(ManifestHeader, record_count))).is_err());
         assert!(decode(&bytes[..bytes.len() - 1]).is_err());
@@ -1039,7 +1039,7 @@ mod tests {
 
         let other_desc = PackageRecord { nif_desc_version: NIF_DESC_VERSION + 1, ..PackageRecord::CURRENT };
         let error = open(package_bytes(other_desc, collection())).err().unwrap().to_string();
-        assert!(error.contains("rebuild"), "{error}");
+        assert!(error.contains("repack"), "{error}");
         let other_codec = PackageRecord { desc_codec_version: DESC_CODEC_VERSION + 1, ..PackageRecord::CURRENT };
         assert!(open(package_bytes(other_codec, collection())).is_err());
 

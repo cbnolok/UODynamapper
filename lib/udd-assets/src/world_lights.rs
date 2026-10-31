@@ -3,7 +3,7 @@ use std::path::Path;
 use color_eyre::eyre::{self, WrapErr};
 use byteorder::{LittleEndian, ReadBytesExt};
 use udd_container::UddpReader;
-use crate::common::{read_path_entry, read_path_entry_cow};
+use crate::common::{ensure_manifest_version, read_path_entry, read_path_entry_cow};
 
 pub const SLOT_MANIFEST_ENTRY_PATH: &str = "metadata/slots.bin";
 
@@ -91,7 +91,7 @@ fn parse_slot_manifest(bytes: &[u8]) -> eyre::Result<Vec<WorldLightSlotRecord>> 
     cursor.read_exact(&mut magic)?;
     if magic != SLOT_MANIFEST_MAGIC { eyre::bail!("invalid magic"); }
     let version = cursor.read_u32::<LittleEndian>()?;
-    if version != WORLD_LIGHTS_METADATA_VERSION { eyre::bail!("invalid version"); }
+    ensure_manifest_version("world_lights slot manifest", version, WORLD_LIGHTS_METADATA_VERSION)?;
     
     let count = cursor.read_u32::<LittleEndian>()? as usize;
     let mut slots = Vec::with_capacity(count);
