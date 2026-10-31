@@ -1874,7 +1874,7 @@ mod tests {
       "active_action_count": 1,
       "policies": [],
       "liquid": null,
-      "layers": [{"role": "normal", "texture_id": 2000521, "stretch": 2.5}],
+      "layers": [{"role": "n", "texture_id": 2000521, "stretch": 2.5}],
       "textures": [{"role": "noise", "texture_id": 2000520}],
       "ignore": null
     }
@@ -2399,7 +2399,7 @@ mod tests {
         }));
         assert_eq!(info.override_textures.len(), 2);
         assert!(info.override_textures.iter().any(|texture| {
-            texture.role == "normal"
+            texture.role == "n"
                 && texture.layer_index == Some(3)
                 && texture.texture_id == 2_000_521
                 && texture.runtime_slot_id == Some(100)

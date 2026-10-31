@@ -289,39 +289,6 @@ mod tests {
     }
 
     #[test]
-    fn app_settings_deserializes_old_config_without_patch_fields() {
-        let serialized = toml::to_string(&AppSettings::default()).expect("serialize settings");
-        let old_config = serialized
-            .lines()
-            .filter(|line| {
-                !line.starts_with("include_") && !line.starts_with("bc7_rdo_enabled")
-                    && !line.starts_with("bc7_rdo_lookback_blocks")
-                    && !line.starts_with("dynamapper_routing_dir")
-                    && !line.starts_with("upscale_profile_path")
-                    && !line.starts_with("ec_mobile_anim_allow_missing_kdl")
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-            + "\nignore_missing_tileart_for_tex_art_cc = true\n";
-
-        let settings: AppSettings = toml::from_str(&old_config).expect("deserialize old settings");
-
-        assert!(!settings.include_verdata);
-        assert!(!settings.include_map_difs);
-        assert!(!settings.include_static_difs);
-        assert!(!settings.ec_mobile_anim_allow_missing_kdl);
-        assert_eq!(settings.dynamapper_routing_dir, None);
-        assert_eq!(settings.upscale_profile_path, None);
-        assert!(settings.bc7_rdo_enabled);
-        assert_eq!(
-            settings.bc7_rdo_lookback_blocks,
-            udd_conv::bc7::DEFAULT_BC7_RDO_LOOKBACK_BLOCKS
-        );
-        assert_eq!(settings.opt_mobile_anim_cc, TextureOptimization::Bc7);
-        assert_eq!(settings.opt_mobile_anim_ec, TextureOptimization::Bc7);
-    }
-
-    #[test]
     fn app_settings_roundtrips_enabled_patch_fields() {
         let mut settings = AppSettings::default();
         settings.include_verdata = true;

@@ -45,9 +45,7 @@ Profiles group defaults by image type. The supported type names are:
 Mobile animation overrides may also set `family`, which is the body id. For
 non-mobile targets, omit `family`.
 
-Type names are normalized when parsed, so `art_items`, `art-items`, and
-`artItems` all resolve to the same type. The canonical names above should be
-used in committed profile files.
+Type names must be spelled exactly as above.
 
 ## Resolution Order
 

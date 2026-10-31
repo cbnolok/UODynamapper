@@ -482,10 +482,7 @@ pub fn load_from_files() -> Settings {
     let gfx_contents = read_user_settings_file(GRAPHICS_CONFIG_FILE).expect(
         "Failed to read settings/graphics.toml — please ensure assets/settings/graphics.toml exists",
     );
-
-    let bundled_graphics = std::fs::read_to_string(assets_path.join(GRAPHICS_CONFIG_FILE))
-        .expect("Failed to read bundled settings/graphics.toml");
-    let graphics = parse_graphics_settings(&gfx_contents, &bundled_graphics);
+    let graphics = parse_graphics_settings(&gfx_contents);
 
     // Keybindings file
     let kb_path = assets_path.join(KEYBINDINGS_CONFIG_FILE);
@@ -517,27 +514,16 @@ pub fn load_from_files() -> Settings {
     }
 }
 
-fn parse_graphics_settings(contents: &str, bundled: &str) -> SectGraphics {
-    // Preserve the loader's existing wrapped/flat file forms. New source
-    // controls inherit explicit bundled TOML values when an older saved file
-    // lacks them; never substitute Rust defaults or overwrite other user edits.
-    let table = |text: &str| {
-        let value: toml::Value = toml::from_str(text).expect("Invalid settings/graphics.toml");
-        let graphics = match value.get("graphics").or_else(|| value.get("core").and_then(|c| c.get("graphics"))) {
-            Some(graphics) => graphics,
-            None => &value,
-        };
-        graphics.as_table().expect("Expected graphics settings table").clone()
-    };
-    let mut values = table(contents);
-    let defaults = table(bundled);
-    for key in ["cc_terrain_transitions", "ec_terrain_transitions"] {
-        if !values.contains_key(key) {
-            values.insert(key.to_string(), defaults.get(key)
-                .expect("Bundled graphics.toml must declare both terrain transition controls").clone());
-        }
+fn parse_graphics_settings(contents: &str) -> SectGraphics {
+    // Graphics settings live in a `[graphics]` table, as `save_graphics_settings` writes them.
+    #[derive(Deserialize)]
+    struct GraphicsWrapper {
+        graphics: SectGraphics,
     }
-    toml::Value::Table(values).try_into().expect("Invalid graphics settings")
+    let wrapper: GraphicsWrapper = toml::from_str(contents).expect(
+        "Failed to parse settings/graphics.toml — please fix the file in assets/settings/graphics.toml",
+    );
+    wrapper.graphics
 }
 
 pub fn apply_logging_settings(logging: &SectLogging) {
@@ -1183,38 +1169,33 @@ mod tests {
     const BUNDLED_GRAPHICS: &str = include_str!("../../assets/settings/graphics.toml");
 
     #[test]
-    fn terrain_transitions_inherit_explicit_toml_values_without_losing_saved_edits() {
-        let mut saved: toml::Value = toml::from_str(BUNDLED_GRAPHICS).unwrap();
-        let graphics = saved.get_mut("graphics").unwrap().as_table_mut().unwrap();
-        graphics.remove("cc_terrain_transitions");
-        graphics.remove("ec_terrain_transitions");
-        graphics.insert("sharpening_strength".into(), toml::Value::Float(0.27));
-        graphics.insert("land_texture_source".into(), toml::Value::String("cc".into()));
-        let loaded = parse_graphics_settings(&toml::to_string(&saved).unwrap(), BUNDLED_GRAPHICS);
+    fn settings_files_load() {
+        let settings = load_from_files();
 
-        assert!(!loaded.cc_terrain_transitions);
-        assert!(loaded.ec_terrain_transitions);
-        assert_eq!(loaded.sharpening_strength, 0.27);
-        assert_eq!(loaded.land_texture_source, ClientTextureSource::Cc);
+        assert!(!settings.logging.filters.is_empty());
+        assert!(settings.app.window.ui_scale > 0.0);
+    }
+
+    #[test]
+    fn bundled_graphics_settings_parse() {
+        let settings = parse_graphics_settings(BUNDLED_GRAPHICS);
+
+        assert!(!settings.cc_terrain_transitions);
+        assert!(settings.ec_terrain_transitions);
+        assert_eq!(settings.land_texture_source, ClientTextureSource::Ec);
     }
 
     #[test]
     fn terrain_transition_controls_round_trip_independently_of_source_and_presets() {
         for (cc, ec, flags) in [(false, true, 0), (true, true, 1), (false, false, 2), (true, false, 3)] {
-            let mut settings = parse_graphics_settings(BUNDLED_GRAPHICS, BUNDLED_GRAPHICS);
+            let mut settings = parse_graphics_settings(BUNDLED_GRAPHICS);
             settings.cc_terrain_transitions = cc;
             settings.ec_terrain_transitions = ec;
-            let serialized = toml::to_string(&settings).unwrap();
-            let loaded = parse_graphics_settings(&serialized, BUNDLED_GRAPHICS);
+            let serialized = format!("[graphics]\n{}", toml::to_string(&settings).unwrap());
+            let loaded = parse_graphics_settings(&serialized);
             assert_eq!((loaded.cc_terrain_transitions, loaded.ec_terrain_transitions), (cc, ec));
             assert_eq!(loaded.terrain_transition_flags(), flags);
         }
-    }
-
-    #[test]
-    #[should_panic(expected = "Bundled graphics.toml must declare both terrain transition controls")]
-    fn terrain_transitions_require_values_in_saved_or_bundled_toml() {
-        parse_graphics_settings("[graphics]\n", "[graphics]\n");
     }
 
     #[test]

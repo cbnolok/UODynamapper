@@ -15,18 +15,20 @@ pub enum UpscaleImageType {
 }
 
 impl UpscaleImageType {
+    pub const ALL: &'static [Self] = &[
+        Self::ArtLand,
+        Self::ArtItems,
+        Self::GumpsEquip,
+        Self::GumpsNonEquip,
+        Self::CcMobileAnimationFrames,
+        Self::EcMobileAnimationFrames,
+        Self::CcLandTextures,
+        Self::EcLandTextures,
+    ];
+
+    /// The image type named exactly by `value` (see [`Self::as_str`]).
     pub fn parse(value: &str) -> Option<Self> {
-        match normalize_name(value).as_str() {
-            "artland" => Some(Self::ArtLand),
-            "artitems" | "artitem" => Some(Self::ArtItems),
-            "gumpsequip" | "gumpequip" | "paperdollgumps" => Some(Self::GumpsEquip),
-            "gumpsnonequip" | "gumpnonequip" | "singlegumps" => Some(Self::GumpsNonEquip),
-            "ccmobileanimationframes" | "ccmobileanimframes" => Some(Self::CcMobileAnimationFrames),
-            "ecmobileanimationframes" | "ecmobileanimframes" => Some(Self::EcMobileAnimationFrames),
-            "cclandtextures" | "cctexland" => Some(Self::CcLandTextures),
-            "eclandtextures" | "ectexland" => Some(Self::EcLandTextures),
-            _ => None,
-        }
+        Self::ALL.iter().copied().find(|image_type| image_type.as_str() == value)
     }
 
     pub fn as_str(self) -> &'static str {
@@ -121,14 +123,6 @@ impl UpscaleProfileOverride {
     }
 }
 
-fn normalize_name(value: &str) -> String {
-    value
-        .chars()
-        .filter(|ch| ch.is_ascii_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
@@ -136,6 +130,16 @@ mod tests {
     };
     use crate::upscale_pipeline::UpscalePass;
     use image_postprocess::upscaling::UpscaleFilter;
+
+    #[test]
+    fn image_types_parse_only_their_canonical_names() {
+        for image_type in UpscaleImageType::ALL.iter().copied() {
+            assert_eq!(UpscaleImageType::parse(image_type.as_str()), Some(image_type));
+        }
+        for other_spelling in ["artItems", "art-items", "paperdollgumps", "cctexland", "ecmobileanimframes"] {
+            assert_eq!(UpscaleImageType::parse(other_spelling), None);
+        }
+    }
 
     #[test]
     fn override_takes_precedence_over_default_and_fallback() {

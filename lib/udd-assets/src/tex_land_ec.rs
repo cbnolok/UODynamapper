@@ -895,10 +895,7 @@ impl TexLandEcPackage {
                 .resolve_override_texture_slots(material_id)
                 .into_iter()
                 .find(|texture| {
-                    matches!(
-                        texture.role.as_str(),
-                        "base" | "t0" | "diffuse" | "albedo"
-                    )
+                    matches!(texture.role.as_str(), "base" | "t0")
                 })
                 .and_then(|texture| texture.runtime_slot_id)
             {
@@ -1559,24 +1556,21 @@ fn optional_terrain_layer_index(value: u32) -> Option<u32> {
     (value != MISSING_TERRAIN_LAYER_INDEX).then_some(value)
 }
 
+/// Whether a `texture` override's role (`base`, `detail`, `mask`, `normal`) names the material layer.
 fn terrain_override_role_matches_layer(role: &str, layer_index: u32) -> bool {
     matches!(
         (layer_index, role),
-        (0, "base" | "diffuse" | "albedo" | "t0")
-            | (1, "detail" | "t1")
-            | (2, "mask" | "alpha" | "t2")
-            | (3, "normal" | "normal_map" | "n")
-            | (4, "animated" | "reflection")
+        (0, "base") | (1, "detail") | (2, "mask") | (3, "normal")
     )
 }
 
+/// The material layer of a `layer` override's role (`t0`, `t1`, `m`, `n`); `s` and unknown roles have none.
 fn terrain_override_role_layer_index(role: &str) -> Option<u32> {
     match role {
-        "base" | "diffuse" | "albedo" | "t0" => Some(0),
-        "detail" | "t1" => Some(1),
-        "mask" | "alpha" | "t2" => Some(2),
-        "animated" | "reflection" => Some(4),
-        "normal" | "normal_map" | "n" => Some(3),
+        "t0" => Some(0),
+        "t1" => Some(1),
+        "m" => Some(2),
+        "n" => Some(3),
         _ => None,
     }
 }
@@ -2046,7 +2040,7 @@ terrain 52 {
             r#"
 terrain 52 {
     policy "follow-center" code="reviewed_runtime_policy"
-    layer "base" tex=2000510 stretch=7.0 code="reviewed_layer_texture"
+    layer "t0" tex=2000510 stretch=7.0 code="reviewed_layer_texture"
     layer "n" tex=2000520 stretch=12.0 code="reviewed_liquid_texture"
     texture 9999999 role="detail" code="missing_from_package"
 }

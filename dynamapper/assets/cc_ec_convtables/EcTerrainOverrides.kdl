@@ -61,6 +61,9 @@
 //   - `"m"`: mask/alpha blend-control layer.
 //   - `"s"`: support/specular-like or future support role.
 //   - `"n"`: normal-map-like support role.
+// - `t0`, `t1`, `m` and `n` override material layers 0, 1, 2 and 3. Any other
+//   role string (including `s`) takes the layer at its position among the
+//   material's `layer` overrides.
 // - Properties:
 //   - `tex`: required unsigned integer EC texture id.
 //   - `stretch`: optional float. Authored repetition/stretch. Preserve source
@@ -75,7 +78,8 @@
 // - Properties:
 //   - `role`: optional free-form role string, useful for metadata and future
 //     diagnostics. Common values are `"base"`, `"detail"`, `"mask"`,
-//     `"normal"`, `"support"`.
+//     `"normal"`, `"support"`. `base`, `detail`, `mask` and `normal` stand in
+//     for material layers 0, 1, 2 and 3 when no `layer` override sets them.
 //   - `code`: optional short reason code.
 // - Use `texture` when a reviewed texture relationship must be preserved but it
 //   is not yet tied to a concrete runtime layer override.
