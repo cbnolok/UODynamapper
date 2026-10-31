@@ -46,12 +46,23 @@ save_program(program="UOSA.exe")
 
 ## terrain_layers_census.rs
 
-The data census (shader classes, items per position with stretch, which items the repo heuristics mark, which
-item the repo's primary selection picks). It is a `src/bin` of a scratch crate outside the workspace, with
-path dependencies on `lib/uocf` and `color-eyre`:
+The data census: per layer class (from the shader name), the role of each item position
+(`TerrainLayerClass::role`), the repetitions per position, the primary item and the tweaks. The repo's former
+name/repetition heuristics are gone, so it no longer reports them.
+
+It is not a workspace member. To build it, copy it into the `src/bin/` of a scratch crate outside the
+workspace (for example `~/rust-target/uodynamapper-scratch/terrain-layers`) whose `Cargo.toml` has an empty
+`[workspace]` table and these dependencies:
+
+```toml
+[dependencies]
+uocf = { path = "<repo>/lib/uocf" }
+color-eyre = "0.6"
+```
 
 ```
-terrain_layers <EC client dir>
+cp terrain_layers_census.rs <scratch crate>/src/bin/terrain_layers.rs
+cargo run --bin terrain_layers -- "<EC client dir>"
 ```
 
 ## UoAppTimeWriterProbe20261031.java
