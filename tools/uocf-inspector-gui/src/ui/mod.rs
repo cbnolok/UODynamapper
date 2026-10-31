@@ -254,7 +254,7 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui
             if app.uo_string_dictionary.is_some() {
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::StringDictionary, "String Dict");
             }
-            if app.cc_sounds.is_some() {
+            if app.cc_sounds.is_some() || app.ec_audio.is_some() {
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Sounds, "Sounds");
             }
         });

@@ -14,7 +14,7 @@ pub enum SoundCmd {
             .args(["slot", "id"])
     ))]
     Export {
-        /// Classic Client directory containing soundidx.mul and sound.mul.
+        /// Classic Client directory containing soundidx.mul and sound.mul, or soundLegacyMUL.uop.
         #[arg(long)]
         ccdir: PathBuf,
         /// Direct soundidx.mul slot.

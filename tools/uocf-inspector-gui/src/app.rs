@@ -18,6 +18,8 @@ use uocf::classic::gump::GumpMap;
 use uocf::classic::multimap_render::SourceRect;
 use uocf::classic::multimap_rle::MultimapRleImage;
 use uocf::classic::sound::SoundMap;
+use uocf::audio::decode::DecodedAudio;
+use uocf::enhanced::audio::{AudioEntry, AudioKind, AudioPackage, AudioTables};
 use uocf::enhanced::hues::EcHuePackage;
 use uocf::enhanced::localized_strings::{LocalizedStringsPackage, LOCALIZED_STRINGS_UOP_NAME};
 use uocf::enhanced::housing::HousingPieces;
@@ -1078,6 +1080,24 @@ pub struct SoundListEntry {
     pub duration_seconds: f64,
 }
 
+/// One `Audio.uop` entry of the sounds view: a table id's file, or an entry no table row names.
+#[derive(Clone, Debug)]
+pub struct EcAudioListEntry {
+    pub hash: u64,
+    /// The name the tables give.
+    pub table_name: Option<String>,
+    pub kind: Option<AudioKind>,
+    pub id: Option<u32>,
+}
+
+/// Which client's sounds the sounds view shows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SoundSource {
+    #[default]
+    Classic,
+    Enhanced,
+}
+
 #[derive(Clone)]
 pub struct ClilocFileEntry {
     pub label: String,
@@ -1109,17 +1129,12 @@ impl SoundPlayer {
         })
     }
 
-    pub fn play_pcm(&mut self, pcm_data: &[u8]) -> color_eyre::eyre::Result<()> {
+    /// Plays decoded audio (MP3, WAV or Classic PCM, decoded by `uocf::audio::decode`).
+    pub fn play(&mut self, audio: &DecodedAudio) -> color_eyre::eyre::Result<()> {
         self.stop();
-        let samples: Vec<f32> = pcm_data
-            .chunks_exact(2)
-            .map(|sample| i16::from_le_bytes([sample[0], sample[1]]) as f32 / 32768.0)
-            .collect();
-        let source = rodio::buffer::SamplesBuffer::new(
-            NonZero::new(uocf::classic::sound::CHANNELS).unwrap(),
-            NonZero::new(uocf::classic::sound::SAMPLE_RATE).unwrap(),
-            samples,
-        );
+        let channels = NonZero::new(audio.channels).ok_or_else(|| color_eyre::eyre::eyre!("audio without channels"))?;
+        let sample_rate = NonZero::new(audio.sample_rate).ok_or_else(|| color_eyre::eyre::eyre!("audio without a sample rate"))?;
+        let source = rodio::buffer::SamplesBuffer::new(channels, sample_rate, audio.samples_f32());
         let player = rodio::Player::connect_new(self.device_sink.mixer());
         player.append(source);
         self.player = Some(player);
@@ -1157,6 +1172,31 @@ fn collect_sound_entries(sounds: &SoundMap) -> Vec<SoundListEntry> {
                 pcm_bytes,
                 duration_seconds,
             });
+        }
+    }
+    entries
+}
+
+/// The table ids' entries in id order (sound, its legacy WAV, music), then the entries no row names.
+fn collect_ec_audio_entries(audio: &AudioPackage) -> Vec<EcAudioListEntry> {
+    let mut entries = Vec::new();
+    let mut listed = HashSet::new();
+    if let AudioTables::Enhanced { sounds, music } = audio.tables() {
+        let ids = sounds
+            .keys()
+            .flat_map(|&id| [(AudioKind::Sound, id), (AudioKind::LegacySound, id)])
+            .chain(music.keys().map(|&id| (AudioKind::Music, id)));
+        for (kind, id) in ids {
+            let Some(name) = audio.entry_name_for(kind, id) else { continue };
+            let hash = hash_file_name_single(&name);
+            if audio.package().get_file_by_hash(hash).is_some() && listed.insert(hash) {
+                entries.push(EcAudioListEntry { hash, table_name: Some(name), kind: Some(kind), id: Some(id) });
+            }
+        }
+    }
+    for hash in audio.hashes() {
+        if listed.insert(hash) {
+            entries.push(EcAudioListEntry { hash, table_name: audio.name_of(hash).map(str::to_owned), kind: None, id: None });
         }
     }
     entries
@@ -1718,6 +1758,12 @@ pub struct UopInspectorApp {
     pub cc_gumps: Option<Arc<GumpMap>>,
     pub cc_sounds: Option<Arc<SoundMap>>,
     pub cc_sound_entries: Option<Arc<Vec<SoundListEntry>>>,
+    pub ec_audio: Option<Arc<AudioPackage>>,
+    pub ec_audio_entries: Option<Arc<Vec<EcAudioListEntry>>>,
+    /// The selected `Audio.uop` entry, read.
+    pub ec_audio_selected: Option<Arc<AudioEntry>>,
+    pub selected_ec_audio_hash: Option<u64>,
+    pub sound_source: SoundSource,
     pub cc_multimap: Option<Arc<MultimapRleImage>>,
     pub cc_multimap_path: Option<PathBuf>,
     pub generated_multimap_plain: Option<GeneratedMultimapPreview>,
@@ -1876,6 +1922,11 @@ impl UopInspectorApp {
             cc_gumps: None,
             cc_sounds: None,
             cc_sound_entries: None,
+            ec_audio: None,
+            ec_audio_entries: None,
+            ec_audio_selected: None,
+            selected_ec_audio_hash: None,
+            sound_source: SoundSource::default(),
             cc_multimap: None,
             cc_multimap_path: None,
             generated_multimap_plain: None,
@@ -2044,6 +2095,10 @@ impl UopInspectorApp {
         self.selected_localized_file_hash = None;
         self.cc_sounds = None;
         self.cc_sound_entries = None;
+        self.ec_audio = None;
+        self.ec_audio_entries = None;
+        self.ec_audio_selected = None;
+        self.selected_ec_audio_hash = None;
         self.cc_gumps_package = None;
         self.ec_gumps_package = None;
         self.cc_gumps = None;
@@ -2102,7 +2157,14 @@ impl UopInspectorApp {
                     self.log(format!("Loading CC gump art... Failed: {}", e));
                 }
             }
-            let loaded_sounds = SoundMap::load(&path).ok().map(Arc::new);
+            let loaded_sounds = match SoundMap::has_sound_files(&path).then(|| SoundMap::load(&path)) {
+                Some(Ok(sounds)) => Some(Arc::new(sounds)),
+                Some(Err(e)) => {
+                    self.log(format!("Loading CC sounds... Failed: {e:#}"));
+                    None
+                }
+                None => None,
+            };
             let loaded_sound_entries = loaded_sounds
                 .as_ref()
                 .map(|sounds| Arc::new(collect_sound_entries(sounds)));
@@ -2277,6 +2339,19 @@ impl UopInspectorApp {
             ));
             if let Some(package) = load_optional_gumps_package(&ec_base_path, "gumps_ec.uddp", |msg| self.log(msg)) {
                 self.ec_gumps_package = Some(Arc::new(package));
+            }
+
+            match AudioPackage::load(&ec_base_path) {
+                Ok(Some(audio)) => {
+                    self.ec_audio_entries = Some(Arc::new(collect_ec_audio_entries(&audio)));
+                    self.log(format!("Loaded EC audio from {}", audio.path().display()));
+                    self.ec_audio = Some(Arc::new(audio));
+                    if self.cc_sounds.is_none() {
+                        self.sound_source = SoundSource::Enhanced;
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => self.log(format!("Loading EC audio... Failed: {e:#}")),
             }
 
             // Try load string dictionary
@@ -4225,6 +4300,11 @@ pub(crate) mod tests {
             cc_gumps: None,
             cc_sounds: None,
             cc_sound_entries: None,
+            ec_audio: None,
+            ec_audio_entries: None,
+            ec_audio_selected: None,
+            selected_ec_audio_hash: None,
+            sound_source: SoundSource::default(),
             cc_multimap: None,
             cc_multimap_path: None,
             generated_multimap_plain: None,

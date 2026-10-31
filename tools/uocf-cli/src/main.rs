@@ -1,4 +1,5 @@
 mod animdef;
+mod audio;
 mod exe;
 mod facet;
 mod hues;
@@ -83,9 +84,13 @@ enum Commands {
         #[arg(short, long)]
         output: PathBuf,
     },
-    /// Classic Client sound.mul/soundidx.mul utility.
+    /// Classic Client sounds (sound.mul/soundidx.mul or soundLegacyMUL.uop): export one as WAV.
     #[command(subcommand)]
     Sound(sound::SoundCmd),
+    /// Client audio (Audio.uop, Classic sounds, Music/): the census by content, the list, and exports as stored
+    /// and decoded to WAV.
+    #[command(subcommand)]
+    Audio(audio::AudioCmd),
     /// Classic Client multimap.rle converter.
     #[command(subcommand)]
     Multimap(multimap::MultimapCmd),
@@ -172,6 +177,7 @@ fn main() -> eyre::Result<()> {
             );
         }
         Commands::Sound(cmd) => sound::run(cmd)?,
+        Commands::Audio(cmd) => audio::run(cmd)?,
         Commands::Multimap(cmd) => multimap::run(cmd)?,
         Commands::MulConvert(cmd) => mul_convert::run(cmd)?,
         Commands::Hues(cmd) => hues::run(cmd)?,
