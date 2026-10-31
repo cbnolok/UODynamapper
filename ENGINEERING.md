@@ -48,7 +48,8 @@ dependency instead of rebuilding it per feature set. Members name it as `workspa
 on crates.io; the root `[patch.crates-io]` swaps in `lib/workspace-hack`, but only inside this workspace, so projects that
 use our crates as path or git dependencies don't inherit the unified features. After adding, removing or changing a dependency or its features, run
 `cargo hakari generate`; a new member also needs `cargo hakari manage-deps`. `.config/hakari.toml` lists the platforms, and the
-crates kept out because only opt-in features would pull them in (tracy, GPU profiling, vendored libjxl). Never set
+crates kept out because only opt-in features would pull them in (tracy, GPU profiling, vendored libjxl). Because of those
+excludes `cargo hakari verify` reports differences by design; the check is `cargo hakari generate --diff`. Never set
 compile-time log level features (`log`/`tracing` `max_level_*`): unification would apply them to every tool.
 
 **Do not run `cargo fmt`, `rustfmt`, or `cargo clippy` automatically.** These are privileged maintainer actions. Maintain local style manually in the lines you touch. If a validation command would implicitly reformat code, do not run it.
