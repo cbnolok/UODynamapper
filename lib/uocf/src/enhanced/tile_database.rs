@@ -103,6 +103,17 @@ impl TileDatabase {
 #[derive(Debug, Clone)]
 pub struct ArtDefinition {
     pub definitions: HashMap<u16, ArtData>,
+    pub sprite_descriptors: std::collections::BTreeMap<u16, ArtSpriteDescriptor>,
+}
+
+/// Authored geometry, independent of shader parameters or a packed image's trims.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ArtSpriteDescriptor {
+    pub source_tile_id: u32,
+    pub world_art_scale: f32,
+    pub legacy_art_scale: f32,
+    pub world_window: [i32; 6],
+    pub legacy_window: [i32; 6],
 }
 
 impl ArtDefinition {
@@ -118,6 +129,7 @@ impl ArtDefinition {
     /// Resolve the 16-bit static-art namespace by asset name, as the client does.
     pub fn from_package(package: &UopPackage, strings: &UoStringDictionary) -> eyre::Result<Self> {
         let mut definitions = HashMap::new();
+        let mut sprite_descriptors = std::collections::BTreeMap::new();
         for id in u16::MIN..=u16::MAX {
             let Some(file) = package.get_file_by_hash(tileart_entry_hash(u32::from(id))) else { continue; };
             // Some original records store another tile's ID. Large creature
@@ -126,9 +138,18 @@ impl ArtDefinition {
                 .wrap_err_with(|| format!("parse tileart asset {id}"))?;
             let mut art_data = entry.process(strings);
             art_data.id = id;
+            let window = |value: &crate::enhanced::tileart::TaeImgOffset|
+                [value.x_start, value.y_start, value.x_end, value.y_end, value.x_off, value.y_off];
+            sprite_descriptors.insert(id, ArtSpriteDescriptor {
+                source_tile_id: entry.tile_id,
+                world_art_scale: entry.world_art_scale,
+                legacy_art_scale: entry.legacy_art_scale,
+                world_window: window(&entry.ec_img_offset),
+                legacy_window: window(&entry.cc_img_offset),
+            });
             definitions.insert(id, art_data);
         }
-        Ok(Self { definitions })
+        Ok(Self { definitions, sprite_descriptors })
     }
 }
 
@@ -149,6 +170,7 @@ mod tests {
         for (asset, stored) in [(43956, 43956), (43957, 43956),
             (u32::from(wrapped), u32::from(wrapped)), (creature, creature)] {
             let entry = TileArtEntry { version: TILEART_RECORD_VERSION, tile_id: stored,
+                world_art_scale: 0.8, legacy_art_scale: 1.5,
                 texture_vector: vec![TaeTexture::default(); 4], ..TileArtEntry::default() };
             package.add_file_from_memory(&entry.to_bytes().unwrap(), &tileart_entry_path(asset),
                 CompressionFlag::Zlib).unwrap();
@@ -159,6 +181,9 @@ mod tests {
         assert_eq!(art.definitions[&43957].id, 43957);
         assert_eq!(art.definitions[&43957].source_tile_id, 43956);
         assert_eq!(art.definitions[&wrapped].source_tile_id, u32::from(wrapped));
+        assert_eq!(art.sprite_descriptors[&43957].source_tile_id, 43956);
+        assert_eq!(art.sprite_descriptors[&43957].world_art_scale, 0.8);
+        assert_eq!(art.sprite_descriptors[&43957].legacy_art_scale, 1.5);
     }
 
     #[test]

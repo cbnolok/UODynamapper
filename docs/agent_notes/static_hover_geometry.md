@@ -16,7 +16,9 @@ cards and did not implement the EC bit-34 authored camera quad.
 ## Shape and projection contracts
 
 - CC upright and ordinary EC art use their actual slot's draw offset and logical
-  dimensions with the existing source-specific pixel scales.
+  dimensions. EC art uses the version-7 package's actual world/legacy source and
+  per-owner descriptor scale, shared with collection; see
+  [the source geometry contracts](ec_sprite_descriptor_geometry.md).
 - CC wet sprites lie horizontally on the diagonal basis. Dry 44-by-44 diamonds
   require the collector's metadata gate and all four resident map corners at the
   object's raw Z. Missing, raised or sloping corners do not admit dry flat art.

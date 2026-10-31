@@ -7,7 +7,7 @@ use udd_container::{
 use udd_conv::tex_art_ec::*;
 use udd_conv::upscale::UpscaleFilter;
 use udd_assets::{
-    tex_art_ec::{TexArtEcCropAdjustment, PAGE_MANIFEST_ENTRY_PATH, SLOT_MANIFEST_ENTRY_PATH},
+    tex_art_ec::{TexArtEcCropAdjustment, PAGE_MANIFEST_ENTRY_PATH, SLOT_MANIFEST_ENTRY_PATH, SPRITE_GEOMETRY_ENTRY_PATH},
     tex_art_cc::{MISSING_PAGE_INDEX, page_entry_path, PagePixelFormat},
     TexArtEcPackage,
 };
@@ -184,6 +184,12 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
     let (pages, slots) = pack_tiles_into_pages(tiles, 1, &options, &ignore_asset_progress).unwrap();
     let page_manifest = serialize_page_manifest(&pages, &options).unwrap();
     let slot_manifest = serialize_slot_manifest(&slots, &options).unwrap();
+    let geometry_manifest = serde_json::to_vec(&serde_json::json!({"0":{
+        "source_is_world_art":true, "texture_id":77, "descriptor":{
+            "source_tile_id":9, "world_art_scale":0.8, "legacy_art_scale":1.5,
+            "world_window":[1,2,8,9,-3,-4], "legacy_window":[0,0,44,44,-22,0],
+        }
+    }})).unwrap();
 
     let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
     package
@@ -208,6 +214,11 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
             data: &slot_manifest,
         })
         .unwrap();
+    package.add_file(AddFileRequest {
+        data_type: DataType::Metadata as u8, compression: CompressionFlag::ZstdNoDict,
+        width: 0, height: 0, virtual_path: Some(SPRITE_GEOMETRY_ENTRY_PATH),
+        path_hash64: None, id: None, data: &geometry_manifest,
+    }).unwrap();
     let page_path = page_entry_path(0, PagePixelFormat::Rgba8888);
     let stored_page = crop_rgba_page(
         &pages[0].pixels,
@@ -237,6 +248,10 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
     assert_eq!(slot.upscale_algorithm_name(), "FsrEasu");
     assert_eq!(slot.logical_width(), 2.0);
     assert_eq!(slot.logical_height(), 2.0);
+    let geometry = package.sprite_geometry(0).unwrap();
+    assert_eq!(geometry.descriptor.world_window, [1,2,8,9,-3,-4]);
+    assert_eq!(geometry.descriptor.source_tile_id, 9);
+    assert!((geometry.legacy_pixel_ratio() - 0.8 / 1.5).abs() < 0.000001);
     let page = &package.pages()[0];
     assert_eq!(package.read_page_bytes(0).unwrap().len(), (page.used_width * page.used_height * 4) as usize);
 }

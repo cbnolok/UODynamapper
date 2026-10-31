@@ -7033,6 +7033,7 @@ dependencies = [
  "dds",
  "knuffel",
  "particle-sim",
+ "serde",
  "serde_json",
  "udd-container",
  "udd-image-codecs",

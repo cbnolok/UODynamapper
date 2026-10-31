@@ -69,17 +69,18 @@ impl StaticPickingResources<'_> {
             geometry.route = StaticArtRoute::EcLand(resolution.runtime_slot_id);
             return Some(geometry);
         }
-        let (offset_x, offset_y, width, height) = match kind {
+        let (offset_x, offset_y, width, height, pixel_ratio) = match kind {
             StaticVisualKind::CcRegular { art_id, fallback_art_id } => {
                 let package = &self.cc.as_ref()?.0;
                 let selected = if package.present_slot(u32::from(art_id)).is_some() { art_id } else { fallback_art_id };
                 let slot = package.present_slot(u32::from(selected))?;
                 geometry.route = StaticArtRoute::CcArt(u32::from(selected));
-                (slot.draw_offset_x, slot.draw_offset_y, slot.logical_width(), slot.logical_height())
+                (slot.draw_offset_x, slot.draw_offset_y, slot.logical_width(), slot.logical_height(), 1.0)
             }
             StaticVisualKind::EcRegular { art_id } | StaticVisualKind::EcSurface { art_id } => {
                 let slot = self.ec.as_ref()?.0.present_slot(art_id)?;
-                (slot.draw_offset_x, slot.draw_offset_y, slot.logical_width(), slot.logical_height())
+                let ratio = self.ec.as_ref()?.0.sprite_geometry(art_id)?.legacy_pixel_ratio();
+                (slot.draw_offset_x, slot.draw_offset_y, slot.logical_width(), slot.logical_height(), ratio)
             }
             StaticVisualKind::TexLandEc { .. } => unreachable!(),
         };
@@ -96,7 +97,7 @@ impl StaticPickingResources<'_> {
             geometry.local_max = Vec2::new(bounds.local_max_x, bounds.local_max_z);
             geometry.flat_quad = 1;
         } else {
-            let bounds = statics_collect::resolve_static_billboard_bounds(source,
+            let bounds = statics_collect::resolve_static_billboard_bounds(pixel_ratio,
                 offset_x, offset_y, width, height);
             geometry.local_min = Vec2::new(bounds.local_min_x, bounds.local_min_y);
             geometry.local_max = Vec2::new(bounds.local_max_x, bounds.local_max_y);

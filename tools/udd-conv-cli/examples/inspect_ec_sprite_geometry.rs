@@ -18,6 +18,9 @@ struct Args {
     /// Write a new evidence file; existing output is never overwritten.
     #[arg(long)]
     output: PathBuf,
+    /// Compare lossless, untrimmed, native-size sprite pixels with original source windows.
+    #[arg(long)]
+    verify_pixels: Vec<u16>,
 }
 
 fn main() -> Result<()> {
@@ -88,6 +91,7 @@ fn main() -> Result<()> {
                 "draw_offset":[slot.draw_offset_x,slot.draw_offset_y],
                 "upscale_factor":slot.upscale_factor,
             })),
+            "packed_geometry":owner.and_then(|id| packed.sprite_geometry(u32::from(id))),
         }));
     }
     rows.sort_by_key(|row| (row["owner_id"].as_u64(), row["tile_id"].as_u64()));
@@ -99,11 +103,44 @@ fn main() -> Result<()> {
             row["owner_id"].as_u64().is_some_and(|owner| Some(owner) != row["tile_id"].as_u64())).count(),
         "world_scale_counts":world_scales, "legacy_scale_counts":legacy_scales,
         "packed_family_source_counts":packed_families});
+    let mut pixel_checks = Vec::new();
+    for id in &args.verify_pixels {
+        let slot = packed.present_slot(u32::from(*id)).ok_or_else(|| color_eyre::eyre::eyre!("missing sprite {id}"))?;
+        ensure!(slot.is_static() && slot.upscale_factor == 1, "pixel check requires a native ordinary sprite: {id}");
+        let geometry = packed.sprite_geometry(u32::from(*id)).unwrap();
+        let filename = if geometry.source_is_world_art { "Texture.uop" } else { "LegacyTexture.uop" };
+        let textures = uocf::enhanced::textures::Textures::new(&args.client.join(filename), None, None)?;
+        let source = textures.get_from_id(geometry.texture_id)?.ok_or_else(|| color_eyre::eyre::eyre!("missing source image {id}"))?.decode_to_rgba8()?;
+        let window = if geometry.source_is_world_art { geometry.descriptor.world_window }
+            else { geometry.descriptor.legacy_window };
+        let [left, top, mut right, mut bottom, offset_x, offset_y] = window;
+        ensure!(right > left && bottom > top, "degenerate authored window for {id}");
+        if geometry.source_is_world_art { right = right.saturating_add(1); bottom = bottom.saturating_add(1); }
+        let left = left.clamp(0, source.width() as i32) as u32;
+        let top = top.clamp(0, source.height() as i32) as u32;
+        let right = right.clamp(0, source.width() as i32) as u32;
+        let bottom = bottom.clamp(0, source.height() as i32) as u32;
+        ensure!(u32::from(slot.width) == right - left && u32::from(slot.height) == bottom - top,
+            "packed dimensions do not match the untrimmed source window for {id}");
+        ensure!(i32::from(slot.draw_offset_x) == offset_x && i32::from(slot.draw_offset_y) == offset_y,
+            "packed offsets do not match untrimmed source for {id}");
+        let pixels = packed.read_page_rgba(slot.page_index)?;
+        let stride = packed.pages()[slot.page_index as usize].used_width as usize * 4;
+        for y in 0..usize::from(slot.height) {
+            let start = (usize::from(slot.y) + y) * stride + usize::from(slot.x) * 4;
+            let actual = &pixels[start..start + usize::from(slot.width) * 4];
+            let start = ((top as usize + y) * source.width() as usize + left as usize) * 4;
+            let expected = &source.as_raw()[start..start + usize::from(slot.width) * 4];
+            ensure!(actual == expected, "source pixel mismatch for sprite {id}, row {y}");
+        }
+        pixel_checks.push(json!({"owner":id,"source":filename,"texture":geometry.texture_id,
+            "extent":[slot.width,slot.height],"exact_rgba_match":true}));
+    }
     let output = OpenOptions::new().write(true).create_new(true).open(&args.output)?;
     serde_json::to_writer_pretty(output, &json!({"client":args.client, "package":args.package,
         "scope":"Authored descriptors and packed slots; not proof of runtime routing, alpha trims or visible pixel parity.",
-        "current_ec_pixel_ratio_to_44px_legacy":44.0 / 64.0,
-        "summary":summary, "records":rows}))?;
+        "former_fixed_ec_pixel_ratio_to_44px_legacy":44.0 / 64.0,
+        "summary":summary, "pixel_checks":pixel_checks, "records":rows}))?;
     println!("{summary}");
     Ok(())
 }

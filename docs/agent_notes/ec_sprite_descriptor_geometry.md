@@ -14,7 +14,7 @@ cargo run -p udd-conv-cli --example inspect_ec_sprite_geometry -- \
 ```
 
 The installed EC source has 37756 records, including 36611 assets in the 16-bit
-static namespace. With the inspected packed atlas and named asset ownership:
+static namespace. The earlier, pre-rebuild atlas had this named owner coverage:
 
 | Packed family/source | Owners |
 | --- | ---: |
@@ -48,21 +48,19 @@ asset-namespace correction; creature records remain available through the raw
 
 The earlier raw-record inventory counted 20179 packed legacy occurrences because
 it counted repeated stored IDs. Named ownership reduces that to 20158 distinct
-packed static owners. Neither count proves that an existing atlas was rebuilt:
-the inspected installed package still lacks all 22 misnamed-owner slots. Rebuild
-EC art and tilemeta together before claiming those repaired source owners render.
+packed static owners. At that checkpoint the atlas lacked all 22 misnamed-owner
+slots. The matching art/tilemeta rebuild below now packs 21 of them; asset 39777
+still has no selected image base and is not filled with guessed artwork.
 
 Focused catalog tests cover two named assets sharing a stored ID, a creature ID
 that would overwrite a real static after truncation, and malformed named data.
 The full original-source inventory checks each resolved owner's stored ID.
 
 The raw source explicitly distinguishes `world_art_scale` and
-`legacy_art_scale`. The source parser preserves them, but `TileArtEntry::process`
-currently drops them from `ArtData`; neither packed sprite slots nor runtime
-geometry carry them. Conversion chooses world pixels when an EC base and world
-package are available, otherwise legacy pixels. Runtime applies one 64-pixel EC
-normalization to either source. This is a source/geometry metadata gap, not a
-reason to substitute different artwork.
+`legacy_art_scale`. Before the repair, high-level processing dropped those
+scales and runtime applied one 64-pixel normalization to both world and legacy
+pixels. `ArtDefinition::sprite_descriptors` now preserves the source ID, both
+scales and both original six-word windows under the named owner.
 
 ## Scale and window evidence
 
@@ -74,18 +72,84 @@ legacy pixel unit. Thus a selected source pixel has relative size
 `descriptor_scale / 1.5` in that unit. This is not the camera-quad material's
 world repetition/stretch scale.
 
-For a default world-art sprite, the original ratio is 2/3; current `44/64`
+For a default world-art sprite, the original ratio is 2/3; the former `44/64`
 normalization is 3.125 percent larger. A default legacy-source sprite retains
 full legacy pixel size; applying `44/64` instead shrinks it by 31.25 percent.
 Non-default world-art scales require per-owner metadata, so changing 64 to 66
 globally would leave most of the source distinction unresolved.
 
-The original mode-1 world window adds one to both end coordinates. The
-converter's `ArtTexture`/clip rectangle currently treats raw ends as exclusive.
-Packed alpha trims, image extent clamps and aliases must be checked before
-changing this independently of scale. Examples 1993 and 1874 have raw world
-windows 67x73 and 68x93 and packed logical extents matching those raw differences;
-the ordinary source-window path must stay separate from the bit-34 camera quad.
+The original mode-1 world window adds one to both end coordinates. Source
+images for planks 1993 and stairs 1874 confirm visible alpha in the formerly
+omitted final row/column: 7/2 and 4/4 pixels respectively. The converter now
+includes both end pixels for positive ordinary world-art windows. Their packed
+extents become 68x74 and 69x94, and match the original source crops byte for byte.
+Legacy windows keep their existing exclusive ends. Degenerate windows,
+material surfaces and the separately flagged bit-34 camera quad retain their
+own handling; their policies are not established by this ordinary-sprite proof.
+
+## Required package geometry and runtime bounds
+
+EC art metadata version 7 requires `metadata/sprite_geometry.json`. Each present
+slot has its named owner's original descriptor, actual selected source family
+and texture ID. The converter shares the source decision with image decoding:
+if the world package is unavailable and legacy pixels are packed instead, the
+record carries legacy scale. Aliased image rectangles retain separate owner
+records and can therefore have different scales. Inferring this from the
+logical EC texture ID alone is unsafe.
+
+The reader rejects missing geometry or a nonpositive/nonfinite selected scale
+with a rebuild diagnostic. It does not invent a scale for an older package.
+Collection passes `descriptor_scale / 1.5` relative to the calibrated legacy
+pixel unit into ordinary billboard bounds. Picking reads the same per-owner
+value. CC art uses ratio 1; camera/material quads keep their existing world-cell
+or authored camera geometry. The GPU instance layout, shader bias and logical
+XYZ/raw-Z/height/movement metadata are unchanged by this bounds correction.
+
+The rebuilt atlas has 34616 present owners: 11664 ordinary world-art sprites,
+21305 ordinary legacy-source sprites, 1606 camera quads and 41 other surfaces.
+436 of the ordinary world-art owners have non-default scale. The old atlas's
+counts above describe a different coverage set, not a scale fallback rule.
+
+Rebuild matching art and tilemeta without regenerating the unrelated terrain
+atlas, writing to a new directory:
+
+```sh
+cargo run -p udd-conv-cli --example rebuild_ec_sprite_assets -- \
+  --ec-client /path/to/enhanced-client --cc-client /path/to/classic-client \
+  --output /new/output/directory
+```
+
+The helper emits lossless RGBA/Zstd pages and validates matching metadata. Use
+both output files together. The inventory supports repeated `--verify-pixels ID`
+for exact original-source comparisons of native-size, untrimmed ordinary art.
+`find_hued_statics --include-unhued --ec-source legacy` (or `scaled-world`)
+locates actual placements from packed source metadata.
+
+## Native acceptance and scope
+
+The 0.8-scale banana tree at map 0 `(1046,2253)` exercises a non-default world
+scale. Legacy crane assemblies at `(500,768)` and `(4569,2308)` visibly join
+after applying their native pixel unit; an identical-image control restoring
+the old 64-pixel treatment separates their parts. The first legacy fixture at
+`(285,977)` is roof-occluded and is not positive evidence for that scale.
+
+Forty-two native frames from thirteen verified Desktop-4 runs cover three styles,
+perspective, matched teleport histories, independent scale/window controls and
+projected shadows. Eight Classic/Enhanced CC-art frames exactly match earlier
+town, bridge, road and lava baselines. Corrected KR town/bridge histories also
+match exactly. An installed-package smoke test also matches the isolated final
+town/bridge output exactly. App-only picking selects raw crane piece `(500,769)`, graphic
+18911, Z=0 and plant `(1046,2253)`, graphic 3240, Z=0 with matching quad bounds;
+OS focus and pointer are unchanged. Two additional picking captures are retained.
+123 focused tests pass; two adapter-dependent tests remain ignored. Four sampled
+packed sprites have exact source RGBA/window matches. Acceptance evidence is
+`sprite-geometry-accepted-evidence.json` under `/tmp/uodynamapper-ec-followup`.
+
+This establishes source-specific scales and positive ordinary window edges.
+Every individual anchor, original extent-rounding/sampler choice, degenerate
+window, arbitrary-angle baked-art projection and visible-alpha/depth picking
+still needs its own evidence. The original supplied scenes use legacy artwork
+and cannot establish pixel parity for newly selected world art.
 
 `UseNewArt` is tested in **flags2**, not the logical flags1 table. Original
 non-legacy descriptor selection chooses mode 1 for 795 records, mode 2 for zero,

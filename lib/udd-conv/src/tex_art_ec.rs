@@ -7,6 +7,7 @@
 //! - `pages/{page_index}.rgba8888` or `pages/{page_index}.bc7`: atlas page payloads.
 //! - `metadata/pages.bin`: page table with atlas dimensions, occupancy and pixel format.
 //! - `metadata/slots.bin`: sparse slot table with one record per art_id.
+//! - `metadata/sprite_geometry.json`: per-owner selected source, scales and original windows.
 //!
 //! This module deliberately separates three concerns:
 //! - source selection: decide which EC tileart definitions are actually static art
@@ -54,6 +55,7 @@ use udd_assets::tex_art_ec::{
     TexArtEcCropAdjustment, TexArtEcPageRecord, TexArtEcSlotRecord, MISSING_PAGE_INDEX,
     MISSING_PAGE_TILE_INDEX, PAGE_MANIFEST_ENTRY_PATH, SLOT_FLAG_LAND, SLOT_FLAG_PRESENT,
     SLOT_FLAG_STATIC, SLOT_MANIFEST_ENTRY_PATH,
+    SPRITE_GEOMETRY_ENTRY_PATH, TEX_ART_EC_METADATA_VERSION, TexArtEcSpriteGeometry,
 };
 use udd_container::xxh64_virtual_path;
 use udd_container::{
@@ -72,8 +74,6 @@ use crate::tex_art_cc::upscale_algorithm_code;
 
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"EAPG";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"EASL";
-/// Bump version when the binary layout of either manifest changes.
-const TEX_ART_EC_METADATA_VERSION: u32 = 6;
 
 pub const DEFAULT_ATLAS_PAGE_WIDTH: u32 = 4096;
 pub const DEFAULT_ATLAS_PAGE_HEIGHT: u32 = 2048;
@@ -416,6 +416,9 @@ pub fn convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources_with_progre
     let populated_slot_count = slot_records.iter().filter(|slot| slot.is_present()).count() as u32;
     let page_manifest = serialize_page_manifest(&pages, options)?;
     let slot_manifest = serialize_slot_manifest(&slot_records, options)?;
+    let sprite_geometry = build_sprite_geometry(&slot_records, &sources.art_definition,
+        sources.world_textures.is_some(), sources.legacy_textures.is_some())?;
+    let geometry_manifest = serde_json::to_vec(&sprite_geometry)?;
 
     let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
     package.add_file(AddFileRequest {
@@ -437,6 +440,12 @@ pub fn convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources_with_progre
         path_hash64: None,
         id: None,
         data: &slot_manifest,
+    })?;
+
+    package.add_file(AddFileRequest {
+        data_type: DataType::Metadata as u8, compression: CompressionFlag::ZstdNoDict,
+        width: 0, height: 0, virtual_path: Some(SPRITE_GEOMETRY_ENTRY_PATH),
+        path_hash64: None, id: None, data: &geometry_manifest,
     })?;
 
     // Determine the final pixel format and encoding for atlas pages.
@@ -776,6 +785,50 @@ fn adjusted_draw_offset_values(
     ))
 }
 
+fn selected_art_source(art: &ArtData, world_available: bool, legacy_available: bool)
+    -> Option<(TextureSourceKey, &ArtTexture)> {
+    if let Some(texture) = art.ec_texture.as_ref().filter(|_| world_available) {
+        Some((TextureSourceKey::World(texture.texture_id), texture))
+    } else {
+        art.cc_texture.as_ref().filter(|_| legacy_available)
+            .map(|texture| (TextureSourceKey::Legacy(texture.texture_id), texture))
+    }
+}
+
+fn selected_art_window(art: &ArtData, source: TextureSourceKey, texture: &ArtTexture) -> ArtTexture {
+    let mut window = texture.clone();
+    // The original ordinary world-art descriptor includes both end pixels.
+    // Material/camera quads have a different window contract; retain their
+    // current full-image/empty-window handling rather than clipping them here.
+    if matches!(source, TextureSourceKey::World(_))
+        && art_tile_kind_for_tileart(art.tile_type, art.flags) == ArtTileKind::Static
+        && window.end_x > window.start_x && window.end_y > window.start_y {
+        window.end_x = window.end_x.saturating_add(1);
+        window.end_y = window.end_y.saturating_add(1);
+    }
+    window
+}
+
+fn build_sprite_geometry(slots: &[TexArtEcSlotRecord], art: &ArtDefinition,
+    world_available: bool, legacy_available: bool)
+    -> eyre::Result<std::collections::BTreeMap<u32, TexArtEcSpriteGeometry>> {
+    slots.iter().filter(|slot| slot.is_present()).map(|slot| {
+        let id = u16::try_from(slot.art_id)?;
+        let definition = art.definitions.get(&id).context("missing sprite owner")?;
+        let (source, _) = selected_art_source(definition, world_available, legacy_available)
+            .context("packed sprite has no selected source")?;
+        let descriptor = art.sprite_descriptors.get(&id).context("missing authored sprite descriptor")?.clone();
+        let texture_id = match source { TextureSourceKey::World(id) | TextureSourceKey::Legacy(id) => id };
+        let geometry = TexArtEcSpriteGeometry { source_is_world_art: matches!(source, TextureSourceKey::World(_)),
+            texture_id, descriptor };
+        let ratio = geometry.legacy_pixel_ratio();
+        if !ratio.is_finite() || ratio <= 0.0 {
+            eyre::bail!("art {} has invalid authored sprite scale", slot.art_id);
+        }
+        Ok((slot.art_id, geometry))
+    }).collect()
+}
+
 fn base_draw_offset(art_id: u32, texture: &ArtTexture) -> eyre::Result<(i16, i16)> {
     adjusted_draw_offset(art_id, texture, TexArtEcCropAdjustment::default())
 }
@@ -869,25 +922,18 @@ fn decode_present_tiles(
             }
             liquid_included_count += 1;
         }
-        let resolved = if let (Some(texture), Some(_)) =
-            (art_data.ec_texture.as_ref(), world_textures)
-        {
-            Some((TextureSourceKey::World(texture.texture_id), texture))
-        } else if let (Some(texture), Some(_)) = (art_data.cc_texture.as_ref(), legacy_textures) {
-            Some((TextureSourceKey::Legacy(texture.texture_id), texture))
-        } else {
-            None
-        };
+        let resolved = selected_art_source(art_data, world_textures.is_some(), legacy_textures.is_some());
 
         if let Some((source_key, texture_bounds)) = resolved {
+            let texture_bounds = selected_art_window(art_data, source_key, texture_bounds);
             // Tileart ownership is authoritative for tex_art_ec packing.
             // A source texture id may legitimately appear in both terrain and tileart
             // metadata, and shared ids should survive in both packages.
             let canonical_key = CanonicalTileKey {
                 source: source_key,
-                window: requested_source_window(texture_bounds),
+                window: requested_source_window(&texture_bounds),
             };
-            let (draw_offset_x, draw_offset_y) = base_draw_offset(art_id as u32, texture_bounds)?;
+            let (draw_offset_x, draw_offset_y) = base_draw_offset(art_id as u32, &texture_bounds)?;
 
             if let Some(&group_index) = canonical_by_source.get(&canonical_key) {
                 decode_groups[group_index]
@@ -917,7 +963,7 @@ fn decode_present_tiles(
 
             if should_skip_terrain_material_static(
                 art_data,
-                texture_bounds,
+                &texture_bounds,
                 &file,
                 terrain_source_texture_ids,
             )? {
@@ -2161,6 +2207,53 @@ mod tests {
 
         let ids = merged.into_iter().map(|tile| tile.art_id).collect::<Vec<_>>();
         assert_eq!(ids, vec![10, 15, 20, 30]);
+    }
+
+    #[test]
+    fn aliased_pixels_keep_owner_scales_and_actual_fallback_source() {
+        use uocf::enhanced::tile_database::ArtSpriteDescriptor;
+        let descriptor = |scale| ArtSpriteDescriptor {
+            source_tile_id: 77, world_art_scale: scale, legacy_art_scale: 1.5,
+            world_window: [0,0,66,66,-33,0], legacy_window: [0,0,44,44,-22,0],
+        };
+        let art = ArtDefinition {
+            definitions: [1u16,2].map(|id| (id, ArtData {
+                ec_texture: Some(ArtTexture { texture_id: 77, ..ArtTexture::default() }),
+                cc_texture: Some(ArtTexture { texture_id: 88, ..ArtTexture::default() }),
+                ..ArtData::default()
+            })).into_iter().collect(),
+            sprite_descriptors: [(1,descriptor(0.8)),(2,descriptor(1.2))].into_iter().collect(),
+        };
+        let mut first = TexArtEcSlotRecord::absent(1);
+        first.flags = SLOT_FLAG_PRESENT;
+        let slots = [first, TexArtEcSlotRecord { art_id: 2, ..first }];
+        let world = build_sprite_geometry(&slots, &art, true, true).unwrap();
+        assert!((world[&1].legacy_pixel_ratio() - 0.8 / 1.5).abs() < 0.000001);
+        assert!((world[&2].legacy_pixel_ratio() - 1.2 / 1.5).abs() < 0.000001);
+        let legacy = build_sprite_geometry(&slots, &art, false, true).unwrap();
+        assert_eq!(legacy[&1].texture_id, 88);
+        assert!(!legacy[&1].source_is_world_art);
+        assert_eq!(legacy[&1].legacy_pixel_ratio(), 1.0);
+        assert_eq!(legacy[&2].legacy_pixel_ratio(), 1.0);
+        assert!(build_sprite_geometry(&slots, &art, false, false).is_err());
+    }
+
+    #[test]
+    fn ordinary_world_windows_retain_the_authored_last_row_and_column() {
+        let art = ArtData { tile_type: TileType::Static, ..ArtData::default() };
+        let texture = ArtTexture { end_x: 2, end_y: 2, ..ArtTexture::default() };
+        let window = selected_art_window(&art, TextureSourceKey::World(77), &texture);
+        let clip = normalized_source_clip_rect(4, 4, &window);
+        let rgba = vec![255; 4 * 4 * 4];
+        let (width, height, pixels, _) = apply_requested_clip_rect(4, 4, rgba, clip).unwrap();
+        assert_eq!((width, height, pixels.len()), (3, 3, 36));
+        let legacy = selected_art_window(&art, TextureSourceKey::Legacy(77), &texture);
+        assert_eq!((legacy.end_x, legacy.end_y), (2, 2));
+        let quad = ArtData { flags: TaeFlag::Rotated, ..art.clone() };
+        let window = selected_art_window(&quad, TextureSourceKey::World(77), &texture);
+        assert_eq!((window.end_x, window.end_y), (2, 2));
+        let empty = selected_art_window(&art, TextureSourceKey::World(77), &ArtTexture::default());
+        assert_eq!(requested_source_window(&empty), requested_source_window(&ArtTexture::default()));
     }
 
     #[test]

@@ -8,6 +8,7 @@ use crate::tex_art_cc::{upscale_algorithm_name, AtlasPackingMode, PagePixelForma
 
 pub const PAGE_MANIFEST_ENTRY_PATH: &str = "metadata/pages.bin";
 pub const SLOT_MANIFEST_ENTRY_PATH: &str = "metadata/slots.bin";
+pub const SPRITE_GEOMETRY_ENTRY_PATH: &str = "metadata/sprite_geometry.json";
 
 pub const SLOT_FLAG_PRESENT: u16 = 1 << 0;
 pub const SLOT_FLAG_LAND: u16 = 1 << 1;
@@ -17,7 +18,25 @@ pub const MISSING_PAGE_TILE_INDEX: u16 = u16::MAX;
 
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"EAPG";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"EASL";
-const TEX_ART_EC_METADATA_VERSION: u32 = 6;
+/// Bump version when the binary layout of either manifest changes.
+/// Required source-geometry metadata is also part of this package contract.
+pub const TEX_ART_EC_METADATA_VERSION: u32 = 7;
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct TexArtEcSpriteGeometry {
+    pub source_is_world_art: bool,
+    pub texture_id: u32,
+    pub descriptor: uocf::enhanced::tile_database::ArtSpriteDescriptor,
+}
+
+impl TexArtEcSpriteGeometry {
+    /// Original window builder uses descriptor scale; legacy's pixel unit is 1.5.
+    pub fn legacy_pixel_ratio(&self) -> f32 {
+        let scale = if self.source_is_world_art { self.descriptor.world_art_scale }
+            else { self.descriptor.legacy_art_scale };
+        scale / 1.5
+    }
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TexArtEcCropAdjustment {
@@ -105,6 +124,7 @@ pub struct TexArtEcPackage {
     packing_mode: AtlasPackingMode,
     pages: Vec<TexArtEcPageRecord>,
     slots: Vec<TexArtEcSlotRecord>,
+    sprite_geometry: std::collections::BTreeMap<u32, TexArtEcSpriteGeometry>,
     page_cache: AtlasPageCache,
 }
 
@@ -149,6 +169,9 @@ impl TexArtEcPackage {
             parse_page_manifest(&page_manifest)?;
         let (slot_width, slot_height, slot_gutter, slot_packing_mode, slots) =
             parse_slot_manifest(&slot_manifest)?;
+        let geometry_bytes = read_path_entry_cow(&package, SPRITE_GEOMETRY_ENTRY_PATH)
+            .context("tex_art_ec missing source sprite geometry; rebuild tex_art_ec.uddp")?;
+        let sprite_geometry = parse_sprite_geometry(&geometry_bytes, &slots)?;
 
         if (page_width, page_height, page_gutter) != (slot_width, slot_height, slot_gutter) {
             eyre::bail!("tex_art_ec metadata headers disagree on atlas dimensions or gutter");
@@ -165,6 +188,7 @@ impl TexArtEcPackage {
             packing_mode: page_packing_mode,
             pages,
             slots,
+            sprite_geometry,
             page_cache: AtlasPageCache::new(options),
         })
     }
@@ -195,6 +219,10 @@ impl TexArtEcPackage {
 
     pub fn slots(&self) -> &[TexArtEcSlotRecord] {
         &self.slots
+    }
+
+    pub fn sprite_geometry(&self, art_id: u32) -> Option<&TexArtEcSpriteGeometry> {
+        self.sprite_geometry.get(&art_id)
     }
 
     pub fn atlas_cache_enabled(&self) -> bool {
@@ -242,6 +270,21 @@ impl TexArtEcPackage {
     }
 }
 
+fn parse_sprite_geometry(bytes: &[u8], slots: &[TexArtEcSlotRecord])
+    -> eyre::Result<std::collections::BTreeMap<u32, TexArtEcSpriteGeometry>> {
+    let records: std::collections::BTreeMap<u32, TexArtEcSpriteGeometry> = serde_json::from_slice(bytes)
+        .context("parse EC sprite geometry")?;
+    for slot in slots.iter().filter(|slot| slot.is_present()) {
+        let geometry = records.get(&slot.art_id)
+            .ok_or_else(|| eyre::eyre!("art {} missing source sprite geometry; rebuild tex_art_ec.uddp", slot.art_id))?;
+        let ratio = geometry.legacy_pixel_ratio();
+        if !ratio.is_finite() || ratio <= 0.0 {
+            eyre::bail!("art {} has invalid authored sprite scale", slot.art_id);
+        }
+    }
+    Ok(records)
+}
+
 fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, AtlasPackingMode, Vec<TexArtEcPageRecord>)> {
     let mut cursor = Cursor::new(bytes);
     let mut magic = [0u8; 4];
@@ -249,7 +292,7 @@ fn parse_page_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, AtlasPackin
     if magic != PAGE_MANIFEST_MAGIC { eyre::bail!("invalid magic"); }
     let version = cursor.read_u32::<LittleEndian>()?;
     if version != TEX_ART_EC_METADATA_VERSION {
-        eyre::bail!("invalid version");
+        eyre::bail!("tex_art_ec requires metadata version {TEX_ART_EC_METADATA_VERSION}; rebuild tex_art_ec.uddp");
     }
     let w = cursor.read_u32::<LittleEndian>()?;
     let h = cursor.read_u32::<LittleEndian>()?;
@@ -281,7 +324,7 @@ fn parse_slot_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, AtlasPackin
     if magic != SLOT_MANIFEST_MAGIC { eyre::bail!("invalid magic"); }
     let version = cursor.read_u32::<LittleEndian>()?;
     if version != TEX_ART_EC_METADATA_VERSION {
-        eyre::bail!("invalid version");
+        eyre::bail!("tex_art_ec requires metadata version {TEX_ART_EC_METADATA_VERSION}; rebuild tex_art_ec.uddp");
     }
     let w = cursor.read_u32::<LittleEndian>()?;
     let h = cursor.read_u32::<LittleEndian>()?;
@@ -306,4 +349,30 @@ fn parse_slot_manifest(bytes: &[u8]) -> eyre::Result<(u32, u32, u16, AtlasPackin
         });
     }
     Ok((w, h, g, packing_mode, slots))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn present_sprites_require_complete_positive_source_geometry() {
+        let mut slot = TexArtEcSlotRecord::absent(77);
+        slot.flags = SLOT_FLAG_PRESENT;
+        assert!(parse_sprite_geometry(b"{}", &[slot]).is_err());
+        let mut manifest = serde_json::json!({"77":{
+            "source_is_world_art":true, "texture_id":123, "descriptor":{
+                "source_tile_id":77, "world_art_scale":0.8, "legacy_art_scale":1.5,
+                "world_window":[0,0,100,200,-50,0], "legacy_window":[0,0,44,44,-22,0],
+            }
+        }});
+        let records = parse_sprite_geometry(&serde_json::to_vec(&manifest).unwrap(), &[slot]).unwrap();
+        assert!((records[&77].legacy_pixel_ratio() - 0.8 / 1.5).abs() < 0.000001);
+        for scale in [0.0, -0.8] {
+            manifest["77"]["descriptor"]["world_art_scale"] = serde_json::json!(scale);
+            assert!(parse_sprite_geometry(&serde_json::to_vec(&manifest).unwrap(), &[slot]).is_err());
+        }
+        manifest["77"]["descriptor"].as_object_mut().unwrap().remove("world_art_scale");
+        assert!(parse_sprite_geometry(&serde_json::to_vec(&manifest).unwrap(), &[slot]).is_err());
+    }
 }

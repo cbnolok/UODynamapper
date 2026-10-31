@@ -53,8 +53,10 @@ Logical map/object XYZ, tile/object heights, IDs and movement flags are not
 rewritten. Walking/collision must consume those preserved values; billboard
 bounds, small depth biases and lens parameters remain rendering data. This
 calibration does not establish every EC world-art source scale or anchor: the
-existing 64-pixel EC normalization is a separate contract from the original
-window/descriptor branches.
+former 64-pixel EC normalization was a separate assumption from the original
+window/descriptor branches. The subsequent
+[source-geometry repair](ec_sprite_descriptor_geometry.md) replaces it with
+the selected owner's authored scale and restores positive ordinary window ends.
 
 ## Validation
 

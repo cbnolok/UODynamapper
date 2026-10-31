@@ -24,6 +24,7 @@ color-eyre.workspace = true
 byteorder.workspace = true
 knuffel.workspace = true
 serde_json.workspace = true
+serde.workspace = true
 dds.workspace = true
 
 [features]

@@ -54,6 +54,7 @@ pub struct ResolvedArtSprite {
     pub logical_height: f32,
     pub offset_x: i16,
     pub offset_y: i16,
+    pub source_pixel_ratio: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -265,7 +266,7 @@ impl ArtPageAtlas {
 
     pub fn resolve_ec(&mut self, tex_art_ec: &TexArtEcPackage, art_id: u32) -> Option<ResolvedArtSprite> {
         let slot = tex_art_ec.present_slot(art_id)?;
-        self.resolve_slot(
+        let mut resolved = self.resolve_slot(
             slot.page_index,
             slot.x,
             slot.y,
@@ -281,7 +282,9 @@ impl ArtPageAtlas {
             tex_art_ec.pages().get(slot.page_index as usize)?.used_height,
             tex_art_ec.pages().get(slot.page_index as usize)?.pixel_format,
             || tex_art_ec.read_page_bytes(slot.page_index),
-        )
+        )?;
+        resolved.source_pixel_ratio = tex_art_ec.sprite_geometry(art_id)?.legacy_pixel_ratio();
+        Some(resolved)
     }
 
     pub fn resolve_tex_land_ec(
@@ -400,6 +403,7 @@ impl ArtPageAtlas {
             logical_height,
             offset_x,
             offset_y,
+            source_pixel_ratio: 1.0,
         })
     }
 

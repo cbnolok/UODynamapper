@@ -24,13 +24,10 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 const CLASSIC_STATIC_ART_ID_OFFSET: u16 = 0x4000;
 const ISO_TILE_SCREEN_DIAGONAL_WORLD_UNITS: f32 = std::f32::consts::SQRT_2;
 const CC_TILE_PIXEL_WIDTH: f32 = 44.0;
-const EC_TILE_PIXEL_WIDTH: f32 = 64.0;
 // Original legacy art projects four square sprite pixels per raw Z unit.
 const STATIC_WORLD_Y_PER_XZ_PIXEL: f32 = UO_Z_TO_WORLD_SCALE / (4.0 * CC_WORLD_XZ_PER_PIXEL);
 const CC_WORLD_XZ_PER_PIXEL: f32 = ISO_TILE_SCREEN_DIAGONAL_WORLD_UNITS / CC_TILE_PIXEL_WIDTH;
 const CC_WORLD_Y_PER_PIXEL: f32 = STATIC_WORLD_Y_PER_XZ_PIXEL * CC_WORLD_XZ_PER_PIXEL;
-const EC_WORLD_XZ_PER_PIXEL: f32 = ISO_TILE_SCREEN_DIAGONAL_WORLD_UNITS / EC_TILE_PIXEL_WIDTH;
-const EC_WORLD_Y_PER_PIXEL: f32 = STATIC_WORLD_Y_PER_XZ_PIXEL * EC_WORLD_XZ_PER_PIXEL;
 const STATIC_ART_Y_BIAS: f32 = 0.002;
 // Ground quads use rasterized depth and need the same small geometric separation
 // from terrain as flat sprite quads to avoid coplanar depth fighting.
@@ -78,29 +75,23 @@ pub(crate) struct GroundQuadBounds {
     pub local_max_z: f32,
 }
 
-fn static_world_xz_per_pixel(source: ClientTextureSource) -> f32 {
-    match source {
-        ClientTextureSource::Cc => CC_WORLD_XZ_PER_PIXEL,
-        ClientTextureSource::Ec => EC_WORLD_XZ_PER_PIXEL,
-    }
+fn static_world_xz_per_pixel(source_pixel_ratio: f32) -> f32 {
+    CC_WORLD_XZ_PER_PIXEL * source_pixel_ratio
 }
 
-fn static_world_y_per_pixel(source: ClientTextureSource) -> f32 {
-    match source {
-        ClientTextureSource::Cc => CC_WORLD_Y_PER_PIXEL,
-        ClientTextureSource::Ec => EC_WORLD_Y_PER_PIXEL,
-    }
+fn static_world_y_per_pixel(source_pixel_ratio: f32) -> f32 {
+    CC_WORLD_Y_PER_PIXEL * source_pixel_ratio
 }
 
 pub(crate) fn resolve_static_billboard_bounds(
-    source: ClientTextureSource,
+    source_pixel_ratio: f32,
     offset_x_pixels: i16,
     offset_y_pixels: i16,
     logical_width: f32,
     logical_height: f32,
 ) -> StaticBillboardBounds {
-    let world_xz_per_pixel = static_world_xz_per_pixel(source);
-    let world_y_per_pixel = static_world_y_per_pixel(source);
+    let world_xz_per_pixel = static_world_xz_per_pixel(source_pixel_ratio);
+    let world_y_per_pixel = static_world_y_per_pixel(source_pixel_ratio);
     let local_min_x = offset_x_pixels as f32 * world_xz_per_pixel;
     let local_max_x = local_min_x + logical_width * world_xz_per_pixel;
     let local_min_y = -(offset_y_pixels as f32 * world_y_per_pixel);
@@ -2475,7 +2466,7 @@ fn emit_billboard_static_instance(
         }
     } else {
         resolve_static_billboard_bounds(
-            billboard_source,
+            resolved.source_pixel_ratio,
             resolved.offset_x,
             resolved.offset_y,
             resolved.logical_width,
@@ -2966,7 +2957,7 @@ mod tests {
 
     #[test]
     fn classic_billboard_offsets_use_the_calibrated_pixel_scale() {
-        let bounds = resolve_static_billboard_bounds(ClientTextureSource::Cc, 11, 7, 44.0, 88.0);
+        let bounds = resolve_static_billboard_bounds(1.0, 11, 7, 44.0, 88.0);
 
         approx_eq(bounds.local_min_x, 11.0 * CC_WORLD_XZ_PER_PIXEL);
         approx_eq(bounds.local_max_x, (11.0 + 44.0) * CC_WORLD_XZ_PER_PIXEL);
@@ -2978,17 +2969,17 @@ mod tests {
     fn upright_art_projects_square_pixels_and_four_pixels_per_z_unit() {
         let vertical_projection = (2.0f32 / 3.0).sqrt()
             * crate::core::render::scene::camera::ORTHO_WIDTH_SCALE_FACTOR;
-        for source in [ClientTextureSource::Cc, ClientTextureSource::Ec] {
-            approx_eq(static_world_y_per_pixel(source) * vertical_projection,
-                static_world_xz_per_pixel(source));
+        for ratio in [1.0, 2.0 / 3.0, 0.8 / 1.5, 1.2 / 1.5] {
+            approx_eq(static_world_y_per_pixel(ratio) * vertical_projection,
+                static_world_xz_per_pixel(ratio));
         }
         approx_eq(UO_Z_TO_WORLD_SCALE / CC_WORLD_Y_PER_PIXEL, 4.0);
     }
 
     #[test]
     fn enhanced_billboard_bounds_normalize_to_classic_world_footprint() {
-        let cc_bounds = resolve_static_billboard_bounds(ClientTextureSource::Cc, 0, 0, 44.0, 44.0);
-        let ec_bounds = resolve_static_billboard_bounds(ClientTextureSource::Ec, 0, 0, 64.0, 64.0);
+        let cc_bounds = resolve_static_billboard_bounds(1.0, 0, 0, 44.0, 44.0);
+        let ec_bounds = resolve_static_billboard_bounds(2.0 / 3.0, 0, 0, 66.0, 66.0);
 
         approx_eq(
             ec_bounds.local_max_x - ec_bounds.local_min_x,
@@ -3002,10 +2993,10 @@ mod tests {
 
     #[test]
     fn enhanced_billboard_offsets_use_enhanced_pixel_ratio() {
-        let bounds = resolve_static_billboard_bounds(ClientTextureSource::Ec, 64, 32, 64.0, 64.0);
+        let bounds = resolve_static_billboard_bounds(2.0 / 3.0, 66, 33, 66.0, 66.0);
 
         approx_eq(bounds.local_min_x, ISO_TILE_SCREEN_DIAGONAL_WORLD_UNITS);
-        approx_eq(bounds.local_min_y, -(32.0 * EC_WORLD_Y_PER_PIXEL));
+        approx_eq(bounds.local_min_y, -(22.0 * CC_WORLD_Y_PER_PIXEL));
     }
 
     #[test]
