@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
-use udd_conv::cc_map::CcMapSourcePreference;
+use udd_conv::classic_sources::SourceFormatPreference;
 use udd_conv::cc_radar::RadarFormat;
 use udd_conv::upscale::UpscaleFilter;
 
@@ -85,7 +85,7 @@ pub struct AppSettings {
     pub upscale_tex_aux_ec: UpscaleFilter,
     pub radar_format: RadarFormat,
     pub radar_zstd: i32,
-    pub map_preferences: [CcMapSourcePreference; 6],
+    pub map_preferences: [SourceFormatPreference; 6],
     #[serde(default)]
     pub include_verdata: bool,
     #[serde(default)]
@@ -144,7 +144,7 @@ impl Default for AppSettings {
             upscale_tex_aux_ec: UpscaleFilter::None,
             radar_format: RadarFormat::Bc7,
             radar_zstd: 3,
-            map_preferences: [CcMapSourcePreference::Mul; 6],
+            map_preferences: [SourceFormatPreference::Mul; 6],
             include_verdata: false,
             include_map_difs: false,
             include_static_difs: false,

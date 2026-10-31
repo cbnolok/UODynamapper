@@ -12,6 +12,7 @@ mod common;
 mod art;
 mod classic_body_def;
 mod classic_bodyconv_def;
+mod classic_facet_sources;
 mod classic_map_difs;
 mod classic_static_difs;
 mod classic_verdata;

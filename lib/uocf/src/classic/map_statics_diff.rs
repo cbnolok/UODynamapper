@@ -65,6 +65,9 @@ impl StaticDiff {
         })
     }
 
+    /// The statics of block `block_id` if the diff patches it, `None` if it does not. A patched block whose
+    /// `stadifiN` entry is invalid or empty has no statics: it replaces the base block with nothing, as the
+    /// clients do (UO Gold's `stadif1` empties 180 Felucca blocks this way).
     pub fn raw_block(&self, block_id: u32) -> eyre::Result<Option<&[u8]>> {
         let Some(diff_index) = self.lookup_table.get(&block_id).copied() else {
             return Ok(None);
@@ -72,10 +75,10 @@ impl StaticDiff {
 
         let entry = self.index_file.element(diff_index as usize)?;
         let (Some(lookup), Some(length)) = (entry.lookup(), entry.len()) else {
-            return Ok(None);
+            return Ok(Some(&[]));
         };
         if length == 0 {
-            return Ok(None);
+            return Ok(Some(&[]));
         }
 
         let start = lookup as usize;

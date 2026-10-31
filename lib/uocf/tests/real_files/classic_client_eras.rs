@@ -7,7 +7,9 @@
 //! The second test checks an Enhanced Client facet written by `uocf-cli facet from-classic` against the map it was
 //! built from (`UO_CLASSIC_FACET_MAP`, `UO_CLASSIC_FACET_PACKAGE`, `UO_CLASSIC_FACET_ID`): the `data.map` size and
 //! the sector count come from the map file, every sector validates, and the land of the first and last sector
-//! columns equals the map.
+//! columns equals the map. With `UO_CLASSIC_FACET_CLIENT_DIR` in place of `UO_CLASSIC_FACET_MAP`, the map is
+//! the facet the client directory resolves to (`facet from-classic --client-dir`, which builds a pre-7.0 Trammel
+//! from map0 and the facet-1 difs).
 //!
 //! Run them with `--ignored --release`.
 
@@ -24,6 +26,7 @@ use uocf::classic::gump::GumpMap;
 use uocf::classic::hues::{HuesMul, HUE_GROUP_SIZE};
 use uocf::classic::land_texture::TexMap;
 use uocf::classic::light::LightMap;
+use uocf::classic::facet_sources::{ClassicDifOptions, ClassicFacetSources, ClassicMapFormat};
 use uocf::classic::map::{MapBlock, MapBlockRelPos, MapPlane, MapSizeCells};
 use uocf::classic::map_statics_diff::{MapDiff, StaticDiff};
 use uocf::classic::multi::MultiMap;
@@ -40,6 +43,9 @@ const CLIENT_ROOTS_ENV: &str = "UO_CLASSIC_CLIENT_ROOTS";
 const FACET_MAP_ENV: &str = "UO_CLASSIC_FACET_MAP";
 const FACET_PACKAGE_ENV: &str = "UO_CLASSIC_FACET_PACKAGE";
 const FACET_ID_ENV: &str = "UO_CLASSIC_FACET_ID";
+const FACET_CLIENT_DIR_ENV: &str = "UO_CLASSIC_FACET_CLIENT_DIR";
+/// The map containers `facet from-classic --client-dir` looks for, in order.
+const FACET_MAP_FORMATS: [ClassicMapFormat; 2] = [ClassicMapFormat::Mul, ClassicMapFormat::Uop];
 
 /// Classic map indices (Felucca to Ter Mur).
 const MAP_INDICES: std::ops::Range<u32> = 0..6;
@@ -469,20 +475,35 @@ fn classic_client_files_parse_fully() {
 }
 
 #[test]
-#[ignore = "needs a facet built by `uocf-cli facet from-classic`: set UO_CLASSIC_FACET_MAP, UO_CLASSIC_FACET_PACKAGE and UO_CLASSIC_FACET_ID and run with --ignored --release"]
+#[ignore = "needs a facet built by `uocf-cli facet from-classic`: set UO_CLASSIC_FACET_MAP (or UO_CLASSIC_FACET_CLIENT_DIR), UO_CLASSIC_FACET_PACKAGE and UO_CLASSIC_FACET_ID and run with --ignored --release"]
 fn facet_built_from_classic_matches_its_map() {
     let var = |name: &str| std::env::var_os(name).unwrap_or_else(|| panic!("set {name}"));
-    let map_path = PathBuf::from(var(FACET_MAP_ENV));
     let package_path = PathBuf::from(var(FACET_PACKAGE_ENV));
     let facet: u8 = var(FACET_ID_ENV).to_string_lossy().parse().expect("facet id");
 
-    let is_uop = map_path.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("uop"));
-    let mut plane = if is_uop {
-        MapPlane::init_uop(map_path.clone(), u32::from(facet))
-    } else {
-        MapPlane::init(map_path.clone(), u32::from(facet))
-    }
-    .expect("open map");
+    let (map_path, mut plane) = match std::env::var_os(FACET_CLIENT_DIR_ENV) {
+        Some(client_dir) => {
+            let sources = ClassicFacetSources::resolve(
+                &[PathBuf::from(client_dir)],
+                u32::from(facet),
+                &FACET_MAP_FORMATS,
+                ClassicDifOptions::NONE,
+            )
+            .expect("resolve the facet");
+            (sources.map.path.clone(), sources.load_map_plane(None, None).expect("open map"))
+        }
+        None => {
+            let map_path = PathBuf::from(var(FACET_MAP_ENV));
+            let is_uop = map_path.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("uop"));
+            let plane = if is_uop {
+                MapPlane::init_uop(map_path.clone(), u32::from(facet))
+            } else {
+                MapPlane::init(map_path.clone(), u32::from(facet))
+            }
+            .expect("open map");
+            (map_path, plane)
+        }
+    };
     let size = plane.size_cells();
 
     let package = UopPackage::load(&package_path).expect("load facet package");

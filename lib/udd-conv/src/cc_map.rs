@@ -76,8 +76,6 @@ const PACKAGE_CHUNK_BLOCK_DIM: u32 = 4;
 const PACKAGE_CHUNK_TILE_DIM: usize = 32;
 const PACKAGE_CHUNK_TEXEL_COUNT: usize = PACKAGE_CHUNK_TILE_DIM * PACKAGE_CHUNK_TILE_DIM;
 
-pub use crate::classic_sources::SourceFormatPreference as CcMapSourcePreference;
-
 pub struct CcMapBuildSummary {
     pub map_id: u32,
     pub chunk_count: u32,
@@ -91,7 +89,7 @@ pub fn convert_map_mul_to_uddp_from_sources(
     source_dirs: &[PathBuf],
     output_path: &Path,
     map_id: u32,
-    preference: CcMapSourcePreference,
+    preference: SourceFormatPreference,
 ) -> eyre::Result<CcMapBuildSummary> {
     convert_map_mul_to_uddp_from_sources_with_patches(
         source_dirs,
@@ -109,7 +107,7 @@ pub fn convert_map_mul_to_uddp_from_sources_with_patches(
     preference: SourceFormatPreference,
     patch_options: &ClassicPatchOptions,
 ) -> eyre::Result<CcMapBuildSummary> {
-    let map_source = resolve_classic_map_source(source_dirs, map_id, preference)?;
+    let map_source = resolve_classic_map_source(source_dirs, map_id, preference, patch_options)?;
 
     info!(
         "Converting map {} ({}) to {}",

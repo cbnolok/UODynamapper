@@ -2,8 +2,11 @@ use std::path::{Path, PathBuf};
 
 use clap::Subcommand;
 use color_eyre::eyre::{self, WrapErr};
-use uocf::classic::map::{MapPlane, MapSizeCells};
-use uocf::classic::statics::StaticsReader;
+use uocf::classic::facet_sources::{
+    ClassicDifOptions, ClassicFacetSources, ClassicMapFile, ClassicMapFormat, StaticsFiles,
+};
+use uocf::classic::map::MapSizeCells;
+use uocf::utils::path::find_file_ignoring_case;
 use uocf::enhanced::facet_definition::{read_facet_definition, write_facet_definition, FacetDefinition, FacetRect};
 use uocf::enhanced::facet_encoder::encode_map_plane;
 use uocf::enhanced::facet_package::{detect_facet_dialect, EcFacetPackage};
@@ -20,6 +23,9 @@ const RECT_FIELDS: usize = 4;
 const RGB_FIELDS: usize = 3;
 const HEX_PREFIX: &str = "0x";
 const HEX_RADIX: u32 = 16;
+/// The map containers `facet from-classic --client-dir` looks for, in order.
+const CLASSIC_MAP_FORMATS: [ClassicMapFormat; 2] = [ClassicMapFormat::Mul, ClassicMapFormat::Uop];
+const RADARCOL_NAME: &str = "radarcol.mul";
 
 #[derive(Subcommand, Debug)]
 pub enum FacetCmd {
@@ -101,19 +107,33 @@ pub enum FacetCmd {
         compare: Option<PathBuf>,
     },
     /// Build facetN.uop and facetNN.dds from a Classic map, staidx and statics (Enhanced Client, or Kingdom Reborn
-    /// with --kr).
+    /// with --kr). The files come from --client-dir, or from --map, --staidx and --statics. From a client
+    /// directory with no map1 file (UO Gold, Mondain's Legacy), facet 1 is built from map0, staidx0 and statics0
+    /// with the facet-1 difs applied, as those clients do.
     FromClassic {
+        /// Classic client directory to find the facet's files in (mapN.mul or mapNLegacyMUL.uop, staidxN.mul,
+        /// staticsN.mul, the dif files and radarcol.mul).
+        #[arg(long, conflicts_with_all = ["map", "staidx", "statics"], required_unless_present_all = ["map", "staidx", "statics"])]
+        client_dir: Option<PathBuf>,
         /// mapN.mul or mapNLegacyMUL.uop.
+        #[arg(long, requires_all = ["staidx", "statics"])]
+        map: Option<PathBuf>,
         #[arg(long)]
-        map: PathBuf,
+        staidx: Option<PathBuf>,
         #[arg(long)]
-        staidx: PathBuf,
-        #[arg(long)]
-        statics: PathBuf,
-        #[arg(long)]
-        radarcol: PathBuf,
+        statics: Option<PathBuf>,
+        /// radarcol.mul; defaults to the one in --client-dir.
+        #[arg(long, required_unless_present = "client_dir")]
+        radarcol: Option<PathBuf>,
         #[arg(long)]
         facet: u8,
+        /// Apply the facet's mapdifN.mul/mapdiflN.mul (from --client-dir, or next to --map) when present.
+        #[arg(long = "include-map-difs", default_value_t = false)]
+        include_map_difs: bool,
+        /// Apply the facet's stadifN.mul/stadiflN.mul/stadifiN.mul (from --client-dir, or next to --map) when
+        /// present.
+        #[arg(long = "include-static-difs", default_value_t = false)]
+        include_static_difs: bool,
         /// Map size in squares; defaults to the size the map file holds (UO Gold's map0.mul is 6144x4096).
         #[arg(long, requires = "height")]
         width: Option<u32>,
@@ -270,11 +290,14 @@ pub fn run(cmd: FacetCmd) -> eyre::Result<()> {
             }
         }
         FacetCmd::FromClassic {
+            client_dir,
             map,
             staidx,
             statics,
             radarcol,
             facet,
+            include_map_difs,
+            include_static_difs,
             width,
             height,
             output_dir,
@@ -282,15 +305,38 @@ pub fn run(cmd: FacetCmd) -> eyre::Result<()> {
             kr_fallback_land,
         } => {
             let size = width.zip(height).map(|(width, height)| MapSizeCells { width, height });
-            let is_uop = map.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("uop"));
-            let mut plane = if is_uop {
-                MapPlane::init_uop_with_size(map.clone(), u32::from(facet), size)?
-            } else {
-                MapPlane::init_with_size(map.clone(), u32::from(facet), size)?
+            let difs = ClassicDifOptions { map_difs: include_map_difs, static_difs: include_static_difs };
+            let (sources, radarcol) = match client_dir {
+                Some(client_dir) => {
+                    let dirs = [client_dir];
+                    let sources = ClassicFacetSources::resolve(&dirs, u32::from(facet), &CLASSIC_MAP_FORMATS, difs)?;
+                    let radarcol = match radarcol {
+                        Some(radarcol) => radarcol,
+                        None => find_file_ignoring_case(&dirs[0], RADARCOL_NAME)
+                            .ok_or_else(|| eyre::eyre!("{} has no {RADARCOL_NAME}", dirs[0].display()))?,
+                    };
+                    (sources, radarcol)
+                }
+                None => {
+                    let (map, index, statics) = (
+                        map.expect("clap requires --map without --client-dir"),
+                        staidx.expect("clap requires --staidx with --map"),
+                        statics.expect("clap requires --statics with --map"),
+                    );
+                    let is_uop = map.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("uop"));
+                    let format = if is_uop { ClassicMapFormat::Uop } else { ClassicMapFormat::Mul };
+                    let dif_dirs: Vec<PathBuf> = map.parent().map(Path::to_path_buf).into_iter().collect();
+                    let map = ClassicMapFile { format, path: map, map_index: u32::from(facet) };
+                    let statics = StaticsFiles { index, statics };
+                    let sources = ClassicFacetSources::from_files(u32::from(facet), map, Some(statics), &dif_dirs, difs);
+                    (sources, radarcol.expect("clap requires --radarcol without --client-dir"))
+                }
             };
+            println!("Reading facet {facet} from {}.", sources.map.path.display());
+            let mut plane = sources.load_map_plane(size, None)?;
             let size = plane.size_cells();
             let geometry = FacetGeometry::new(size.width, size.height);
-            let statics = StaticsReader::new(&staidx, &statics, geometry.width, geometry.height)?;
+            let statics = sources.load_statics_reader(geometry.width, geometry.height, None)?;
             std::fs::create_dir_all(&output_dir).wrap_err_with(|| format!("create {}", output_dir.display()))?;
             if kr {
                 let mut land_map = KrLandMap::shipped();

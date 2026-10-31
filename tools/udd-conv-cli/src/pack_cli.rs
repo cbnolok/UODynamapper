@@ -25,7 +25,7 @@ use udd_conv::{
         convert_gumps_to_uddp_from_sources_with_patches_and_options, CcGumpsOptions,
         GUMPS_CC_DEFAULT_OUTPUT,
     },
-    cc_map::{convert_map_mul_to_uddp_from_sources_with_patches, CcMapSourcePreference},
+    cc_map::convert_map_mul_to_uddp_from_sources_with_patches,
     cc_statics::{
         convert_statics_mul_to_uddp_from_sources_with_dimensions_and_patches,
         convert_statics_mul_to_uddp_from_sources_with_patches,
@@ -111,9 +111,9 @@ struct SourceDirArgs {
 struct ClassicPatchArgs {
     #[arg(long = "include-verdata", default_value_t = false, help = "Include verdata.mul patches when present.")]
     include_verdata: bool,
-    #[arg(long = "include-map-difs", default_value_t = false, help = "Include mapdif/mapdifl patch files when present.")]
+    #[arg(long = "include-map-difs", default_value_t = false, help = "Include each facet's mapdifN/mapdiflN patch files when present (pack-map, pack-map-statics, pack-radar). A facet 1 with no map1 file is always built from map0 with its facet-1 difs.")]
     include_map_difs: bool,
-    #[arg(long = "include-static-difs", default_value_t = false, help = "Include stadif/stadifi/stadifl patch files when present.")]
+    #[arg(long = "include-static-difs", default_value_t = false, help = "Include each facet's stadifN/stadifiN/stadiflN patch files when present (pack-statics, pack-map-statics, pack-radar).")]
     include_static_difs: bool,
 }
 
@@ -2236,9 +2236,9 @@ where
                 &out_file,
                 map_id,
                 if uop {
-                    CcMapSourcePreference::Uop
+                    SourceFormatPreference::Uop
                 } else {
-                    CcMapSourcePreference::Mul
+                    SourceFormatPreference::Mul
                 },
                 &classic_patches.into(),
             )?;
@@ -2298,9 +2298,9 @@ where
                 &map_out_file,
                 map_id,
                 if uop {
-                    CcMapSourcePreference::Uop
+                    SourceFormatPreference::Uop
                 } else {
-                    CcMapSourcePreference::Mul
+                    SourceFormatPreference::Mul
                 },
                 &patch_options,
             )?;
@@ -2363,9 +2363,9 @@ where
             let uddp_dir = uddp_dir.unwrap_or_else(|| PathBuf::from("."));
             let tilemeta_path = find_raw_tilemeta_package(&uddp_dir)?;
             let map_source_preference = if uop {
-                CcMapSourcePreference::Uop
+                SourceFormatPreference::Uop
             } else {
-                CcMapSourcePreference::Mul
+                SourceFormatPreference::Mul
             };
 
             if radar_format == udd_conv::cc_radar::RadarFormat::Bc7Ktx2 {

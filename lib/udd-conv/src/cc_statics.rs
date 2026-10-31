@@ -13,13 +13,10 @@ use crate::progress::{ProgressBar, ProgressStyle};
 use log::info;
 use std::path::{Path, PathBuf};
 
-use crate::classic_patches::{
-    load_static_diff_if_enabled, load_verdata_if_enabled, ClassicPatchOptions,
-};
-use crate::classic_sources::{resolve_classic_map_source, SourceFormatPreference};
+use crate::classic_patches::ClassicPatchOptions;
+use crate::classic_sources::{resolve_classic_map_source, ClassicMapSource, SourceFormatPreference};
 use crate::package_progress::build_and_write_package;
-use crate::source_paths::find_first_existing_file;
-use uocf::classic::statics::{StaticTile, StaticsReader};
+use uocf::classic::statics::StaticTile;
 use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
 
 const PACKAGE_CHUNK_BLOCK_DIM: u32 = 4;
@@ -49,15 +46,12 @@ pub fn convert_statics_mul_to_uddp_from_sources_with_patches(
     map_id: u32,
     patch_options: &ClassicPatchOptions,
 ) -> eyre::Result<CcStaticsBuildSummary> {
-    let idx_file_name = format!("staidx{}.mul", map_id);
-    let mul_file_name = format!("statics{}.mul", map_id);
-
-    let map_source =
-        resolve_classic_map_source(source_dirs, map_id, SourceFormatPreference::Mul)?;
-    let idx_path = find_first_existing_file(source_dirs, &[&idx_file_name])
-        .ok_or_else(|| eyre::eyre!("missing {}", idx_file_name))?;
-    let mul_path = find_first_existing_file(source_dirs, &[&mul_file_name])
-        .ok_or_else(|| eyre::eyre!("missing {}", mul_file_name))?;
+    let map_source = resolve_classic_map_source(
+        source_dirs,
+        map_id,
+        SourceFormatPreference::Mul,
+        patch_options,
+    )?;
 
     info!(
         "Converting statics for map {} to {}",
@@ -70,8 +64,6 @@ pub fn convert_statics_mul_to_uddp_from_sources_with_patches(
         map_source.format.label(),
         map_source.path.display()
     );
-    println!("Using CC staidx{} source file: {}", map_id, idx_path.display());
-    println!("Using CC statics{} source file: {}", map_id, mul_path.display());
 
     // We use MapPlane just to resolve the map dimensions correctly.
     let plane = map_source.load_plane(source_dirs, &ClassicPatchOptions::NONE)?;
@@ -81,9 +73,7 @@ pub fn convert_statics_mul_to_uddp_from_sources_with_patches(
     convert_statics_mul_to_uddp_from_resolved_sources_with_dimensions(
         source_dirs,
         output_path,
-        map_id,
-        &idx_path,
-        &mul_path,
+        &map_source,
         width_blocks,
         height_blocks,
         patch_options,
@@ -98,23 +88,17 @@ pub fn convert_statics_mul_to_uddp_from_sources_with_dimensions_and_patches(
     height_blocks: u32,
     patch_options: &ClassicPatchOptions,
 ) -> eyre::Result<CcStaticsBuildSummary> {
-    let idx_file_name = format!("staidx{}.mul", map_id);
-    let mul_file_name = format!("statics{}.mul", map_id);
-
-    let idx_path = find_first_existing_file(source_dirs, &[&idx_file_name])
-        .ok_or_else(|| eyre::eyre!("missing {}", idx_file_name))?;
-    let mul_path = find_first_existing_file(source_dirs, &[&mul_file_name])
-        .ok_or_else(|| eyre::eyre!("missing {}", mul_file_name))?;
-
-    println!("Using CC staidx{} source file: {}", map_id, idx_path.display());
-    println!("Using CC statics{} source file: {}", map_id, mul_path.display());
+    let map_source = resolve_classic_map_source(
+        source_dirs,
+        map_id,
+        SourceFormatPreference::Mul,
+        patch_options,
+    )?;
 
     convert_statics_mul_to_uddp_from_resolved_sources_with_dimensions(
         source_dirs,
         output_path,
-        map_id,
-        &idx_path,
-        &mul_path,
+        &map_source,
         width_blocks,
         height_blocks,
         patch_options,
@@ -124,24 +108,25 @@ pub fn convert_statics_mul_to_uddp_from_sources_with_dimensions_and_patches(
 fn convert_statics_mul_to_uddp_from_resolved_sources_with_dimensions(
     source_dirs: &[PathBuf],
     output_path: &Path,
-    map_id: u32,
-    idx_path: &Path,
-    mul_path: &Path,
+    map_source: &ClassicMapSource,
     width_blocks: u32,
     height_blocks: u32,
     patch_options: &ClassicPatchOptions,
 ) -> eyre::Result<CcStaticsBuildSummary> {
+    let map_id = map_source.map_id;
+    let statics_files = map_source.facet.statics_files()?;
+    println!("Using CC staidx{} source file: {}", map_id, statics_files.index.display());
+    println!("Using CC statics{} source file: {}", map_id, statics_files.statics.display());
+
     let width_chunks = width_blocks.div_ceil(PACKAGE_CHUNK_BLOCK_DIM);
     let height_chunks = height_blocks.div_ceil(PACKAGE_CHUNK_BLOCK_DIM);
     let total_chunks = width_chunks * height_chunks;
 
-    let reader = StaticsReader::new_with_patches(
-        idx_path,
-        mul_path,
+    let reader = map_source.load_statics_reader(
+        source_dirs,
         width_blocks * 8,
         height_blocks * 8,
-        load_static_diff_if_enabled(source_dirs, map_id, patch_options)?,
-        load_verdata_if_enabled(source_dirs, patch_options)?,
+        patch_options,
     )?;
     info!("Loading statics into memory...");
     let store = reader.load_all()?;

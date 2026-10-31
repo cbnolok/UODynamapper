@@ -20,6 +20,7 @@ pub mod generic_index;
 pub mod fonts;
 pub mod gump;
 pub mod map_statics_diff;
+pub mod facet_sources;
 pub mod sound;
 pub mod vd_codec;
 pub mod michelangelo_uop_codec;

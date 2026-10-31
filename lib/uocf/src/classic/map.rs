@@ -286,6 +286,9 @@ pub struct MapPlane {
     read_buffer: Vec<u8>,
     pub blocks_loaded_version: u64,
     pub source: MapSource,
+    /// The map index the file was written for, which names the entries of a UOP package. It differs from
+    /// `index` when another facet's file stands in for this facet ([`MapPlane::for_facet`]).
+    file_map_index: u32,
     map_diff: Option<MapDiff>,
     verdata: Option<Arc<Verdata>>,
 }
@@ -542,6 +545,24 @@ impl MapPlane {
         self
     }
 
+    /// Applies `map_diff` (a facet's `mapdifN`/`mapdiflN`): its blocks replace the file's.
+    pub fn with_map_diff(mut self, map_diff: MapDiff) -> Self {
+        self.map_diff = Some(map_diff);
+        self
+    }
+
+    /// Reads this plane as facet `facet`, while the file keeps the map index it was opened with: pre-7.0 clients
+    /// read Trammel from `map0.mul` (with the facet-1 difs).
+    pub fn for_facet(mut self, facet: u32) -> Self {
+        self.index = facet;
+        self
+    }
+
+    /// The map index the file was written for (see [`MapPlane::for_facet`]).
+    pub fn file_map_index(&self) -> u32 {
+        self.file_map_index
+    }
+
     pub fn init_with_size_and_diff(
         map_file_mul_path: PathBuf,
         map_index: u32,
@@ -640,6 +661,7 @@ impl MapPlane {
             read_buffer: Vec::new(),
             blocks_loaded_version: 0,
             source: MapSource::Mul(map_mmap),
+            file_map_index: map_index,
             map_diff: None,
             verdata: None,
         };
@@ -708,6 +730,7 @@ impl MapPlane {
             ],
             read_buffer: Vec::new(),
             blocks_loaded_version: 0,
+            file_map_index: map_index,
             map_diff: None,
             verdata: None,
         };
@@ -901,7 +924,7 @@ impl MapPlane {
             let arena_idx = self.cached_block_indices[idx as usize];
             if arena_idx == u32::MAX {
                 // Find the chunk in the UOP package.
-                let chunk_name = uop_map_entry_name(self.index, chunk_idx);
+                let chunk_name = uop_map_entry_name(self.file_map_index, chunk_idx);
                 let file_entry = package
                     .get_file_by_name(&chunk_name)
                     .ok_or_else(|| eyre::eyre!("Missing UOP chunk: {}", chunk_name))?;
@@ -920,7 +943,17 @@ impl MapPlane {
                 let raw_block: &RawMapBlock = &cast_slice(&data[start..end])[0];
 
                 let mut new_block = MapBlock::default();
-                MapBlock::from_raw_block(raw_block, &mut new_block)?;
+                if let Some(diff_bytes) = self
+                    .map_diff
+                    .as_ref()
+                    .map(|diff| diff.raw_block(idx))
+                    .transpose()?
+                    .flatten()
+                {
+                    MapBlock::from_packed_bytes(diff_bytes, &mut new_block)?;
+                } else {
+                    MapBlock::from_raw_block(raw_block, &mut new_block)?;
+                }
                 new_block.internal_coords = pos;
 
                 let new_arena_idx = if let Some(free_idx) = self.cached_blocks_free_list.pop() {

@@ -12,14 +12,12 @@ use crate::bc7::{
     encode_to_bc7, preferred_bc7_encoder_backend, Bc7EncoderBackend, Bc7TextureData, ImageExtent,
     RawImageFormat,
 };
-use crate::classic_patches::{
-    load_static_diff_if_enabled, load_verdata_if_enabled, ClassicPatchOptions,
-};
+use crate::classic_patches::ClassicPatchOptions;
 use crate::classic_sources::{resolve_classic_map_source, SourceFormatPreference};
 use crate::source_paths::find_first_existing_file;
 use udd_assets::TileMetaPackage;
 use uocf::classic::hues::load_hues;
-use uocf::classic::statics::{PackedStaticTile, StaticsReader};
+use uocf::classic::statics::PackedStaticTile;
 
 const fn bc7_backend_label(backend: Bc7EncoderBackend) -> &'static str {
     match backend {
@@ -102,15 +100,15 @@ fn build_radar_rgba_pixels(
     patch_options: &ClassicPatchOptions,
 ) -> eyre::Result<(u32, u32, Vec<u8>)> {
     // 1. Locate source files
-    let map_source = resolve_classic_map_source(source_dirs, map_id, map_source_preference)?;
-
-    let statics_file_name = format!("statics{}.mul", map_id);
-    let statics_path = find_first_existing_file(source_dirs, &[&statics_file_name])
-        .ok_or_else(|| eyre::eyre!("missing {}", statics_file_name))?;
-
-    let staidx_file_name = format!("staidx{}.mul", map_id);
-    let staidx_path = find_first_existing_file(source_dirs, &[&staidx_file_name])
-        .ok_or_else(|| eyre::eyre!("missing {}", staidx_file_name))?;
+    let map_source = resolve_classic_map_source(
+        source_dirs,
+        map_id,
+        map_source_preference,
+        patch_options,
+    )?;
+    let statics_files = map_source.facet.statics_files()?;
+    let statics_path = &statics_files.statics;
+    let staidx_path = &statics_files.index;
 
     let hues_path = find_first_existing_file(source_dirs, &["hues.mul"])
         .ok_or_else(|| eyre::eyre!("missing hues.mul"))?;
@@ -136,14 +134,8 @@ fn build_radar_rgba_pixels(
     let height_tiles = plane.size_cells().height;
 
     println!("Loading all statics into memory...");
-    let statics_reader = StaticsReader::new_with_patches(
-        &staidx_path,
-        &statics_path,
-        width_tiles,
-        height_tiles,
-        load_static_diff_if_enabled(source_dirs, map_id, patch_options)?,
-        load_verdata_if_enabled(source_dirs, patch_options)?,
-    )?;
+    let statics_reader =
+        map_source.load_statics_reader(source_dirs, width_tiles, height_tiles, patch_options)?;
     let statics_store = statics_reader.load_all()?;
 
     println!(

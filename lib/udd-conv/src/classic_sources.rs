@@ -1,17 +1,15 @@
 use std::path::{Path, PathBuf};
 
 use color_eyre::eyre;
-use log::warn;
 use serde::{Deserialize, Serialize};
 use uocf::classic::art::{ArtMap, ArtSource};
 use uocf::classic::gump::GumpMap;
+use uocf::classic::facet_sources::{ClassicFacetSources, ClassicMapFormat};
 use uocf::classic::map::MapPlane;
+use uocf::classic::statics::StaticsReader;
 use uocf::uop_container::package::{LoadMode, UopPackage};
 
-use crate::classic_patches::{
-    load_map_diff_if_enabled, load_verdata_if_enabled, ClassicPatchOptions,
-};
-use crate::source_paths::find_first_existing_file;
+use crate::classic_patches::{load_verdata_if_enabled, ClassicPatchOptions};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SourceFormatPreference {
@@ -43,84 +41,77 @@ impl SourceFormat {
     }
 }
 
+impl SourceFormat {
+    fn from_map_format(format: ClassicMapFormat) -> Self {
+        match format {
+            ClassicMapFormat::Mul => Self::Mul,
+            ClassicMapFormat::Uop => Self::Uop,
+        }
+    }
+
+    fn map_format(self) -> ClassicMapFormat {
+        match self {
+            Self::Mul => ClassicMapFormat::Mul,
+            Self::Uop => ClassicMapFormat::Uop,
+        }
+    }
+}
+
+/// A Classic facet's map, statics and dif files, found by [`resolve_classic_map_source`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClassicMapSource {
     pub map_id: u32,
     pub format: SourceFormat,
+    /// The map file (`map0.mul` for a Trammel built from Felucca's files).
     pub path: PathBuf,
+    pub facet: ClassicFacetSources,
 }
 
 impl ClassicMapSource {
+    /// Opens the map plane with the facet's map difs and, as `patch_options` asks, verdata.
     pub fn load_plane(
         &self,
         source_dirs: &[PathBuf],
         patch_options: &ClassicPatchOptions,
     ) -> eyre::Result<MapPlane> {
-        let mut plane = match self.format {
-            SourceFormat::Uop => MapPlane::init_uop(self.path.clone(), self.map_id)?,
-            SourceFormat::Mul => {
-                if let Some(map_diff) =
-                    load_map_diff_if_enabled(source_dirs, self.map_id, patch_options)?
-                {
-                    MapPlane::init_with_diff(self.path.clone(), self.map_id, map_diff)?
-                } else {
-                    MapPlane::init(self.path.clone(), self.map_id)?
-                }
-            }
-        };
+        self.facet
+            .load_map_plane(None, load_verdata_if_enabled(source_dirs, patch_options)?)
+    }
 
-        if self.format == SourceFormat::Mul {
-            if let Some(verdata) = load_verdata_if_enabled(source_dirs, patch_options)? {
-                plane = plane.with_verdata(verdata);
-            }
-        } else if patch_options.any() {
-            warn!(
-                "Classic map patch files are ignored when converting map{} from UOP.",
-                self.map_id
-            );
-        }
-
-        Ok(plane)
+    /// Opens the facet's statics for a `width` x `height` map with its static difs and, as `patch_options` asks,
+    /// verdata.
+    pub fn load_statics_reader(
+        &self,
+        source_dirs: &[PathBuf],
+        width: u32,
+        height: u32,
+        patch_options: &ClassicPatchOptions,
+    ) -> eyre::Result<StaticsReader> {
+        self.facet.load_statics_reader(
+            width,
+            height,
+            load_verdata_if_enabled(source_dirs, patch_options)?,
+        )
     }
 }
 
+/// Finds Classic facet `map_id` in `source_dirs` through the shared resolver
+/// ([`ClassicFacetSources::resolve`]): the facet's own difs are included as `patch_options` asks, and a Trammel
+/// with no map1 file is built from map0 and the facet-1 difs.
 pub fn resolve_classic_map_source(
     source_dirs: &[PathBuf],
     map_id: u32,
     preference: SourceFormatPreference,
+    patch_options: &ClassicPatchOptions,
 ) -> eyre::Result<ClassicMapSource> {
-    let mul_name = format!("map{}.mul", map_id);
-    let uop_names = [
-        format!("map{}LegacyMUL.uop", map_id),
-        format!("map{}.uop", map_id),
-        format!("map{}xLegacyMUL.uop", map_id),
-        format!("map{}x.uop", map_id),
-    ];
-    let uop_name_refs = uop_names.iter().map(|name| name.as_str()).collect::<Vec<_>>();
-
-    for format in preference.preferred_first() {
-        let path = match format {
-            SourceFormat::Mul => find_first_existing_file(source_dirs, &[&mul_name]),
-            SourceFormat::Uop => find_first_existing_file(source_dirs, &uop_name_refs),
-        };
-        if let Some(path) = path {
-            if format != source_format_from_preference(preference) {
-                warn!(
-                    "map{} {} source not found, falling back to {}",
-                    map_id,
-                    source_format_from_preference(preference).label(),
-                    format.label()
-                );
-            }
-            return Ok(ClassicMapSource {
-                map_id,
-                format,
-                path,
-            });
-        }
-    }
-
-    eyre::bail!("Missing map data for map{} (tried .mul and .uop)", map_id)
+    let formats = preference.preferred_first().map(SourceFormat::map_format);
+    let facet = ClassicFacetSources::resolve(source_dirs, map_id, &formats, patch_options.difs())?;
+    Ok(ClassicMapSource {
+        map_id,
+        format: SourceFormat::from_map_format(facet.map.format),
+        path: facet.map.path.clone(),
+        facet,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -243,13 +234,6 @@ fn resolve_classic_gump_source_for_format(
     })
 }
 
-fn source_format_from_preference(preference: SourceFormatPreference) -> SourceFormat {
-    match preference {
-        SourceFormatPreference::Mul => SourceFormat::Mul,
-        SourceFormatPreference::Uop => SourceFormat::Uop,
-    }
-}
-
 fn first_existing(dir: &Path, names: &[&str]) -> Option<PathBuf> {
     names
         .iter()
@@ -284,7 +268,13 @@ mod tests {
         fs::write(dir.join("map0LegacyMUL.uop"), b"").unwrap();
 
         let selected =
-            resolve_classic_map_source(std::slice::from_ref(&dir), 0, SourceFormatPreference::Uop).unwrap();
+            resolve_classic_map_source(
+                std::slice::from_ref(&dir),
+                0,
+                SourceFormatPreference::Uop,
+                &ClassicPatchOptions::NONE,
+            )
+            .unwrap();
 
         assert_eq!(selected.format, SourceFormat::Uop);
         assert_eq!(selected.path, dir.join("map0LegacyMUL.uop"));
@@ -297,10 +287,59 @@ mod tests {
         fs::write(dir.join("map0LegacyMUL.uop"), b"").unwrap();
 
         let selected =
-            resolve_classic_map_source(std::slice::from_ref(&dir), 0, SourceFormatPreference::Mul).unwrap();
+            resolve_classic_map_source(
+                std::slice::from_ref(&dir),
+                0,
+                SourceFormatPreference::Mul,
+                &ClassicPatchOptions::NONE,
+            )
+            .unwrap();
 
         assert_eq!(selected.format, SourceFormat::Uop);
         assert_eq!(selected.path, dir.join("map0LegacyMUL.uop"));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn map1_falls_back_to_map0_with_the_facet_1_difs() {
+        let dir = temp_source_dir("map1_from_map0");
+        for name in [
+            "map0.mul",
+            "staidx0.mul",
+            "statics0.mul",
+            "mapdif1.mul",
+            "mapdifl1.mul",
+            "stadif1.mul",
+            "stadifl1.mul",
+            "stadifi1.mul",
+        ] {
+            fs::write(dir.join(name), b"").unwrap();
+        }
+
+        let selected = resolve_classic_map_source(
+            std::slice::from_ref(&dir),
+            1,
+            SourceFormatPreference::Mul,
+            &ClassicPatchOptions::NONE,
+        )
+        .unwrap();
+
+        assert_eq!(selected.format, SourceFormat::Mul);
+        assert_eq!(selected.path, dir.join("map0.mul"));
+        assert_eq!(selected.facet.base_facet, Some(0));
+        assert!(selected.facet.map_difs.is_some() && selected.facet.static_difs.is_some());
+
+        fs::remove_file(dir.join("stadif1.mul")).unwrap();
+        let error = resolve_classic_map_source(
+            std::slice::from_ref(&dir),
+            1,
+            SourceFormatPreference::Mul,
+            &ClassicPatchOptions::NONE,
+        )
+        .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("Missing map data for map1"), "{message}");
+        assert!(message.contains("stadif1.mul is missing"), "{message}");
         fs::remove_dir_all(dir).unwrap();
     }
 
