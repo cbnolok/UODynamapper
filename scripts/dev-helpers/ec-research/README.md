@@ -85,6 +85,7 @@ Chaos particle engine that plays `.ems` effects is documented in
 UOP data block headers (version-4 timestamps, version-5 signatures) and `data_block_hash` are decoded in [`ghidra-uop-header`](ghidra-uop-header/README.md).
 How the client picks the decoder for each image it loads from a UOP (the extension of the requested path, the `assetmap.xml` suffixes of tile textures, the hue bitmap parser) and what each decoder checks are traced in [`ghidra-image-decoders`](ghidra-image-decoders/README.md).
 How tileart texture items reach the shaders (item position to shader map index, per shader class), and the check that the client never infers a texture's role from its file name, are traced in [`ghidra-texture-roles`](ghidra-texture-roles/README.md).
+How the client sizes and places classic (TileArtLegacy) art next to EC world art (descriptor modes, pixel unit, Z step, legacy window anchors) and how TileArtLegacy images compare with Classic art are traced in [`ghidra-legacy-art-scale`](ghidra-legacy-art-scale/README.md).
 Facet sectors (`facetN.uop`, the unread `data.map` entry, the `facetNx.uop` variants), `facets.uop`
 FacetDefinition records and the `facetNN.dds` radar images are decoded in [`ghidra-facets`](ghidra-facets/README.md).
 The same document covers the facet size table, with a cross-build recipe for patching map sizes, and the
