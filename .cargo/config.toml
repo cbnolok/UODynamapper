@@ -40,7 +40,9 @@ rustflags = [
   # rustc flags
   "-C", "force-frame-pointers=yes",
   "-C", "symbol-mangling-version=v0",
-  "-C", "split-debuginfo=packed",
+  # unpacked: each crate's .dwo files are written once under deps/ and shared by every binary; packed
+  #  copied them into a .dwp per binary (about 340 MB per test binary). Binaries need deps/ to stay put.
+  "-C", "split-debuginfo=unpacked",
   # linker flags
   "-Clink-arg=-fuse-ld=wild", # "-Clink-arg=-fuse-ld=mold",
   "-Clink-arg=-Wl,--gc-sections",
@@ -56,7 +58,9 @@ rustflags = [
   # rustc flags
   "-C", "force-frame-pointers=yes",
   "-C", "symbol-mangling-version=v0",
-  "-C", "split-debuginfo=packed",
+  # unpacked: each crate's .dwo files are written once under deps/ and shared by every binary; packed
+  #  copied them into a .dwp per binary (about 340 MB per test binary). Binaries need deps/ to stay put.
+  "-C", "split-debuginfo=unpacked",
   # linker flags
   "-Clink-arg=-Wl,-dead_strip",
   "-Clink-arg=-Wl,--compress-debug-sections=zlib",
