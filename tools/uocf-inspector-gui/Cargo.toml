@@ -15,12 +15,6 @@ needless_lifetimes = "allow"
 nonminimal_bool = "allow"
 too_many_arguments = "allow"
 
-[features]
-default = ["audio-playback"]
-# Sound playback in the Sounds view (rodio, which needs ALSA on Linux). The static musl builds leave it out:
-# there is no static ALSA library to link.
-audio-playback = ["dep:rodio"]
-
 [dependencies]
 eframe.workspace = true
 egui.workspace = true
@@ -38,7 +32,7 @@ gamebryo-nif = { path = "../../lib/ec-effects/gamebryo-nif" }
 rfd.workspace = true
 udd-logging = { path = "../../lib/udd-logging" }
 gui-shared = { path = "../../lib/gui-shared" }
-rodio = { workspace = true, optional = true }
+rodio.workspace = true
 serde.workspace = true
 color-eyre.workspace = true
 # Only for the Decode derives: their code names the knuffel crate. Parse through udd-kdl.

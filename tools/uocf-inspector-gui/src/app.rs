@@ -5,7 +5,6 @@ use image_postprocess::palette::{
     TransparencyPolicy,
 };
 use image_postprocess::upscaling::{EnhancementFilter, UpscaleFilter};
-#[cfg(feature = "audio-playback")]
 use std::num::NonZero;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -1086,15 +1085,10 @@ pub struct ClilocFileEntry {
     pub cliloc: Arc<Cliloc>,
 }
 
-#[cfg(feature = "audio-playback")]
 pub struct SoundPlayer {
     device_sink: rodio::MixerDeviceSink,
     player: Option<rodio::Player>,
 }
-
-/// Stands in for the player in builds without the `audio-playback` feature: opening it always fails.
-#[cfg(not(feature = "audio-playback"))]
-pub struct SoundPlayer;
 
 #[derive(Clone)]
 pub struct InspectorImagePreview {
@@ -1105,7 +1099,6 @@ pub struct InspectorImagePreview {
     pub rgba: Arc<[u8]>,
 }
 
-#[cfg(feature = "audio-playback")]
 impl SoundPlayer {
     pub fn new() -> color_eyre::eyre::Result<Self> {
         let mut device_sink = rodio::DeviceSinkBuilder::open_default_sink()?;
@@ -1141,23 +1134,6 @@ impl SoundPlayer {
 
     pub fn is_playing(&self) -> bool {
         self.player.as_ref().is_some_and(|player| !player.empty())
-    }
-}
-
-#[cfg(not(feature = "audio-playback"))]
-impl SoundPlayer {
-    pub fn new() -> color_eyre::eyre::Result<Self> {
-        Err(color_eyre::eyre::eyre!("this build has no audio playback (built without the audio-playback feature)"))
-    }
-
-    pub fn play_pcm(&mut self, _pcm_data: &[u8]) -> color_eyre::eyre::Result<()> {
-        Ok(())
-    }
-
-    pub fn stop(&mut self) {}
-
-    pub fn is_playing(&self) -> bool {
-        false
     }
 }
 

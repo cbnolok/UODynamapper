@@ -142,7 +142,7 @@ jobs:
           retention-days: ${{ github.ref_name == 'prereleases' && 7 || 90 }}
 
   build-linux-musl-x86_64:
-    name: Build (Linux x86_64 musl - static)
+    name: Build (Linux x86_64 musl - static, CLI tools)
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout repository
@@ -175,15 +175,8 @@ jobs:
               chown -R "$HOST_UID:$HOST_GID" /work/target
             '
 
-      - name: Package binary and assets
-        run: just package-release dynamapper-linux-x86_64-musl x86_64-unknown-linux-musl
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v6
-        with:
-          name: dynamapper-linux-x86_64-musl
-          path: artifact/dynamapper-linux-x86_64-musl/*
-          retention-days: ${{ github.ref_name == 'prereleases' && 7 || 90 }}
+      - name: Package CLI tools
+        run: just package-release-cli dynamapper-linux-x86_64-musl x86_64-unknown-linux-musl
 
       - name: Upload tools artifact
         uses: actions/upload-artifact@v6
@@ -193,7 +186,7 @@ jobs:
           retention-days: ${{ github.ref_name == 'prereleases' && 7 || 90 }}
 
   build-linux-musl-arm64:
-    name: Build (Linux aarch64 musl - static)
+    name: Build (Linux aarch64 musl - static, CLI tools)
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Checkout repository
@@ -226,15 +219,8 @@ jobs:
               chown -R "$HOST_UID:$HOST_GID" /work/target
             '
 
-      - name: Package binary and assets
-        run: just package-release dynamapper-linux-arm64-musl aarch64-unknown-linux-musl
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v6
-        with:
-          name: dynamapper-linux-arm64-musl
-          path: artifact/dynamapper-linux-arm64-musl/*
-          retention-days: ${{ github.ref_name == 'prereleases' && 7 || 90 }}
+      - name: Package CLI tools
+        run: just package-release-cli dynamapper-linux-arm64-musl aarch64-unknown-linux-musl
 
       - name: Upload tools artifact
         uses: actions/upload-artifact@v6

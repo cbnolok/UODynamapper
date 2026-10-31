@@ -158,14 +158,8 @@ build_features := \
         if jxl_vendored_feat != "" { linux_features + "," + jxl_vendored_feat } \
         else { linux_features } \
     } else { jxl_vendored_feat }
-# Sound playback in uocf-inspector-gui, for the builds that include the tools. The musl builds leave it out: it needs
-# ALSA, and no static ALSA library exists for musl (Alpine ships none). Builds of dynamapper alone can't name it,
-# since cargo rejects a feature of a package outside the build.
-audio_playback_feat := "uocf-inspector-gui/audio-playback"
-workspace_features := if build_features != "" { build_features + "," + audio_playback_feat } else { audio_playback_feat }
 # Musl targets always require vendored libjxl (no system package available)
-musl_features := if linux_features != "" { linux_features + ",udd-container/vendored-jpegxl" } \
-                 else { "udd-container/vendored-jpegxl" }
+musl_features := "udd-container/vendored-jpegxl"
 # Avoids passing --features "" on platforms where build_features is empty (Windows PowerShell can't handle empty quoted args)
 features_args  := if build_features != "" { "--features " + build_features } else { "" }
 # Added -Clink-arg=-lgcc to musl RUSTFLAGS to satisfy compiler builtins like __popcountdi2 emitted by vendored libjxl C++ objects
@@ -218,6 +212,10 @@ app_docs := "docs/keybindings.md docs/USER_TROUBLESHOOTING.md"
 tool_docs := "README.md docs/USER_TROUBLESHOOTING.md"
 tool_bins := "udd-cli udd-conv-gui uddp-inspector-gui uocf-cli uocf-inspector-gui uop-dict-populator-gui uoppackage-cli"
 tool_packages := "-p udd-conv-cli -p uocf-cli -p udd-conv-gui -p uddp-inspector-gui -p uocf-inspector-gui -p uop-dict-populator-gui -p uoppackage-cli"
+# The static musl builds ship only these. A static musl binary can't load shared libraries (dlopen fails with "Dynamic
+# loading not supported"), and dynamapper and the GUI tools load their windowing, GPU and audio libraries that way.
+cli_bins := "udd-cli uocf-cli uoppackage-cli"
+cli_packages := "-p udd-conv-cli -p uocf-cli -p uoppackage-cli"
 
 # --- Recipes ---
 
@@ -253,36 +251,36 @@ build-local-udd-pack-debug *args:
 build-local-workspace-release *args:
     @echo "Building workspace release with the stable toolchain on {{os}}..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_STABLE}}"
-    @echo "Using features: {{workspace_features}}"
-    {{cargo_release_stable}} build --release --locked --workspace --no-default-features --features "{{workspace_features}}" {{args}}
+    @echo "Using features: {{build_features}}"
+    {{cargo_release_stable}} build --release --locked --workspace --no-default-features {{features_args}} {{args}}
 
 # Build the full workspace in release mode with nightly build-std optimizations.
 build-local-workspace-release-nightly *args:
     @echo "Building workspace release with the nightly toolchain on {{os}}..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_NIGHTLY}}"
-    @echo "Using features: {{workspace_features}}"
+    @echo "Using features: {{build_features}}"
     @echo 'Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}'
-    {{cargo_release_nightly}} build --release --locked --workspace --no-default-features --features "{{workspace_features}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
+    {{cargo_release_nightly}} build --release --locked --workspace --no-default-features {{features_args}} {{CARGO_FLAGS_NIGHTLY}} {{args}}
 
-# Build the full workspace for a Linux musl release target with the stable toolchain.
+# Build the CLI tools for a Linux musl release target with the stable toolchain (see cli_packages).
 build-linux-musl-release target *args:
-    @echo "Building workspace release for musl target {{target}} with the stable toolchain..."
+    @echo "Building CLI tools release for musl target {{target}} with the stable toolchain..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_STABLE}}{{linux_musl_rustflags}}{{rustflags_release_stable_musl}}"
     @echo "Using features: {{build_features}}"
     @echo "Adding musl RUSTFLAGS: {{linux_musl_rustflags}} {{rustflags_release_stable_musl}}"
     RUSTFLAGS="{{RUSTFLAGS_RELEASE_STABLE}}{{linux_musl_rustflags}}{{rustflags_release_stable_musl}}" \
-        cargo build --target "{{target}}" --release --locked --workspace --no-default-features --features \
+        cargo build --target "{{target}}" --release --locked {{cli_packages}} --bins --no-default-features --features \
         "{{musl_features}}" {{args}}
 
-# Build the full workspace for a Linux musl release target with the nightly toolchain.
+# Build the CLI tools for a Linux musl release target with the nightly toolchain (see cli_packages).
 build-linux-musl-release-nightly target *args:
-    @echo "Building workspace release for musl target {{target}} with the nightly toolchain..."
+    @echo "Building CLI tools release for musl target {{target}} with the nightly toolchain..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_NIGHTLY}}{{linux_musl_rustflags}}{{rustflags_release_nightly_musl}}"
     @echo "Using features: {{build_features}}"
     @echo 'Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}'
     @echo "Adding musl RUSTFLAGS: {{linux_musl_rustflags}} {{rustflags_release_nightly_musl}}"
     RUSTFLAGS="{{RUSTFLAGS_RELEASE_NIGHTLY}}{{linux_musl_rustflags}}{{rustflags_release_nightly_musl}}" \
-        cargo +nightly build --target "{{target}}" --release --locked --workspace --no-default-features --features \
+        cargo +nightly build --target "{{target}}" --release --locked {{cli_packages}} --bins --no-default-features --features \
         "{{musl_features}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
 
 # Build the full workspace with the same nightly release settings used by CI.
@@ -303,9 +301,9 @@ build-ci-dynamapper *args:
 build-ci-tools *args:
     @echo "Building CI tool releases on {{os}}..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_NIGHTLY}}"
-    @echo "Using features: {{workspace_features}}"
+    @echo "Using features: {{build_features}}"
     @echo 'Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}'
-    {{cargo_release_nightly}} build --release --locked --no-default-features --features "{{workspace_features}}" {{CARGO_FLAGS_NIGHTLY}} \
+    {{cargo_release_nightly}} build --release --locked --no-default-features {{features_args}} {{CARGO_FLAGS_NIGHTLY}} \
         {{tool_packages}} --bins {{args}}
 
 # Build the Dynamapper app and shipped tools used in release artifacts.
@@ -318,18 +316,18 @@ build-ci-shipping *args:
 build-local-workspace-profile *args:
     @echo "Building workspace profiling profile with the stable toolchain on {{os}}..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS_PROFILE_STABLE}}"
-    @echo "Using features: profiling,{{workspace_features}}"
-    {{cargo_profile_stable}} build --profile profiling --locked --workspace --no-default-features --features "profiling,{{workspace_features}}" {{args}}
+    @echo "Using features: profiling,{{build_features}}"
+    {{cargo_profile_stable}} build --profile profiling --locked --workspace --no-default-features --features "profiling,{{build_features}}" {{args}}
 
-# Build the full workspace for a Linux musl profiling target with the stable toolchain.
+# Build the CLI tools for a Linux musl profiling target with the stable toolchain (see cli_packages).
 build-linux-musl-profile target *args:
-    @echo "Building workspace profiling profile for musl target {{target}} with the stable toolchain..."
+    @echo "Building CLI tools profiling profile for musl target {{target}} with the stable toolchain..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS_PROFILE_STABLE}}{{linux_musl_rustflags}}{{rustflags_profile_stable_musl}}"
     @echo "Using features: profiling,{{build_features}}"
     @echo "Adding musl RUSTFLAGS: {{linux_musl_rustflags}} {{rustflags_profile_stable_musl}}"
     RUSTFLAGS="{{RUSTFLAGS_PROFILE_STABLE}}{{linux_musl_rustflags}}{{rustflags_profile_stable_musl}}" \
-        cargo build --target "{{target}}" --profile profiling --locked --workspace --no-default-features --features \
-        "profiling,{{musl_features}}" {{args}}
+        cargo build --target "{{target}}" --profile profiling --locked {{cli_packages}} --bins --no-default-features --features \
+        "uocf/profiling,{{musl_features}}" {{args}}
 
 # Build the full workspace in profiling mode with nightly build-std optimizations.
 build-local-workspace-profile-nightly *args:
@@ -337,18 +335,18 @@ build-local-workspace-profile-nightly *args:
     @echo "Using RUSTFLAGS: {{RUSTFLAGS_PROFILE_NIGHTLY}}"
     @echo "Using features: profiling,{{build_features}}"
     @echo 'Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}'
-    {{cargo_profile_nightly}} build --profile profiling --locked --workspace --no-default-features --features "profiling,{{workspace_features}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
+    {{cargo_profile_nightly}} build --profile profiling --locked --workspace --no-default-features --features "profiling,{{build_features}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
 
-# Build the full workspace for a Linux musl profiling target with the nightly toolchain.
+# Build the CLI tools for a Linux musl profiling target with the nightly toolchain (see cli_packages).
 build-linux-musl-profile-nightly target *args:
-    @echo "Building workspace profiling profile for musl target {{target}} with the nightly toolchain..."
+    @echo "Building CLI tools profiling profile for musl target {{target}} with the nightly toolchain..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS_PROFILE_NIGHTLY}}{{linux_musl_rustflags}}{{rustflags_profile_nightly_musl}}"
     @echo "Using features: profiling,{{build_features}}"
     @echo 'Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}'
     @echo "Adding musl RUSTFLAGS: {{linux_musl_rustflags}} {{rustflags_profile_nightly_musl}}"
     RUSTFLAGS="{{RUSTFLAGS_PROFILE_NIGHTLY}}{{linux_musl_rustflags}}{{rustflags_profile_nightly_musl}}" \
-        cargo +nightly build --target "{{target}}" --profile profiling --locked --workspace --no-default-features --features \
-        "profiling,{{musl_features}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
+        cargo +nightly build --target "{{target}}" --profile profiling --locked {{cli_packages}} --bins --no-default-features --features \
+        "uocf/profiling,{{musl_features}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
 
 # Generate a Dynamapper SVG flamegraph with cargo-flamegraph and nightly profiling settings.
 profile-dynamapper-flamegraph *args:
@@ -428,6 +426,35 @@ verify-package-inputs target="":
     Require-File 'tools/_shared_assets/Dictionary.dic'; \
     foreach ($doc in ('{{app_docs}} {{tool_docs}}'.Split(' '))) { Require-File $doc }; \
     if ($missing) { exit 1 }"
+
+# Validate and package the CLI tools artifact of a CLI-only build (the musl targets).
+[unix]
+package-release-cli name="dynamapper-pkg" target="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    RELEASE_DIR="target/release"
+    if [ -n "{{target}}" ]; then
+        RELEASE_DIR="target/{{target}}/release"
+    fi
+    TOOLS_DIR="artifact/{{name}}-tools/UODynamapper-tools"
+    missing=0
+    for input in $(printf "$RELEASE_DIR/%s " {{cli_bins}}) tools/_shared_assets/Dictionary.dic {{tool_docs}}; do
+        if [ ! -f "$input" ]; then
+            echo "missing file: $input"
+            missing=1
+        fi
+    done
+    [ "$missing" = 0 ] || exit 1
+    rm -rf "artifact/{{name}}-tools"
+    mkdir -p "$TOOLS_DIR/bin" "$TOOLS_DIR/shared" "$TOOLS_DIR/docs"
+    for util in {{cli_bins}}; do
+        cp "$RELEASE_DIR/$util" "$TOOLS_DIR/bin/"
+    done
+    cp tools/_shared_assets/Dictionary.dic "$TOOLS_DIR/shared/"
+    for doc in {{tool_docs}}; do
+        cp "$doc" "$TOOLS_DIR/docs/"
+    done
+    echo "Packaging complete: $TOOLS_DIR"
 
 # Validate release inputs, then package app and tool artifacts.
 package-release name="dynamapper-pkg" target="":
@@ -531,9 +558,9 @@ run-tool-debug tool *args:
 run-tool-release tool *args:
     @echo "Running tool {{tool}} in release mode with the nightly toolchain on {{os}}..."
     @echo "Using RUSTFLAGS: {{RUSTFLAGS_RELEASE_NIGHTLY}}"
-    @echo "Using features: {{linux_features}},{{audio_playback_feat}}"
+    @echo "Using features: {{build_features}}"
     @echo 'Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}'
-    {{cargo_release_nightly}} run --release --no-default-features --features "{{linux_features}},{{audio_playback_feat}}" {{CARGO_FLAGS_NIGHTLY}} \
+    {{cargo_release_nightly}} run --release --no-default-features --features "{{linux_features}}" {{CARGO_FLAGS_NIGHTLY}} \
         --bin {{tool}} -- {{args}}
 
 # Convert all supported Classic and Enhanced Client assets into UDDP packages.
