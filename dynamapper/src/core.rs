@@ -251,7 +251,13 @@ pub fn run_bevy_app() -> ExitCode {
         assets_folder.as_os_str().to_str().unwrap_or("N/A")
     ));
 
-    let settings_data = settings::load_from_files();
+    let settings_data = match settings::load_from_files() {
+        Ok(settings_data) => settings_data,
+        Err(error) => {
+            settings::report_startup_config_error(&error);
+            return ExitCode::from(settings::STARTUP_CONFIG_ERROR_EXIT_CODE);
+        }
+    };
     settings::apply_logging_settings(&settings_data.logging);
     // Configure plugin log toggles (controls flat per-plugin lines and tree dump)
     set_plugin_log_toggles(

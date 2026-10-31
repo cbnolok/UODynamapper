@@ -24,8 +24,14 @@ use std::path::Path;
 
 use color_eyre::eyre::{self, WrapErr};
 use knuffel::Decode;
+use udd_kdl::strict::NodeSchema;
 
 // region: --- KDL node structs
+
+/// The nodes and properties of each file, for error messages that name them.
+const BASE_CHOICE_SCHEMA: &[NodeSchema] = &[NodeSchema::leaf("art", &["base-texture", "reason"])];
+const ROLE_SCHEMA: &[NodeSchema] = &[NodeSchema::leaf("texture", &["stable-role", "speculative-role", "reason"])];
+const METADATA_ONLY_SCHEMA: &[NodeSchema] = &[NodeSchema::leaf("texture", &["reason"])];
 
 #[derive(Decode, Debug, Clone)]
 struct BaseChoiceOverridesKdl {
@@ -145,8 +151,7 @@ fn load_base_choice_overrides(dir: &Path) -> eyre::Result<Vec<BaseChoiceOverride
     let content = std::fs::read_to_string(&path)
         .wrap_err_with(|| format!("Failed to read {:?}", path))?;
     let name = path.to_str().unwrap_or("base_choice_overrides.kdl");
-    let parsed: BaseChoiceOverridesKdl =
-        udd_kdl::parse(name, &content).wrap_err("Failed to parse base_choice_overrides.kdl")?;
+    let parsed: BaseChoiceOverridesKdl = udd_kdl::strict::decode(name, &content, BASE_CHOICE_SCHEMA)?;
     Ok(parsed
         .entries
         .into_iter()
@@ -166,8 +171,7 @@ fn load_role_overrides(dir: &Path) -> eyre::Result<Vec<RoleOverride>> {
     let content = std::fs::read_to_string(&path)
         .wrap_err_with(|| format!("Failed to read {:?}", path))?;
     let name = path.to_str().unwrap_or("role_overrides.kdl");
-    let parsed: RoleOverridesKdl =
-        udd_kdl::parse(name, &content).wrap_err("Failed to parse role_overrides.kdl")?;
+    let parsed: RoleOverridesKdl = udd_kdl::strict::decode(name, &content, ROLE_SCHEMA)?;
     Ok(parsed
         .entries
         .into_iter()
@@ -188,8 +192,7 @@ fn load_metadata_only_overrides(dir: &Path) -> eyre::Result<Vec<MetadataOnlyOver
     let content = std::fs::read_to_string(&path)
         .wrap_err_with(|| format!("Failed to read {:?}", path))?;
     let name = path.to_str().unwrap_or("metadata_only_overrides.kdl");
-    let parsed: MetadataOnlyOverridesKdl =
-        udd_kdl::parse(name, &content).wrap_err("Failed to parse metadata_only_overrides.kdl")?;
+    let parsed: MetadataOnlyOverridesKdl = udd_kdl::strict::decode(name, &content, METADATA_ONLY_SCHEMA)?;
     Ok(parsed
         .entries
         .into_iter()
@@ -201,3 +204,37 @@ fn load_metadata_only_overrides(dir: &Path) -> eyre::Result<Vec<MetadataOnlyOver
 }
 
 // endregion: --- Loaders
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const BUNDLED_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../dynamapper/assets/ec_overrides");
+
+    #[test]
+    fn bundled_override_files_load() {
+        // The bundled files are commented templates; they must still parse.
+        EcOverrides::load_from_dir(Path::new(BUNDLED_DIR)).unwrap_or_else(|error| panic!("{error}"));
+    }
+
+    #[test]
+    fn override_files_reject_unknown_nodes_properties_and_missing_values() {
+        let error = |content: &str| {
+            udd_kdl::strict::decode::<RoleOverridesKdl>("role_overrides.kdl", content, ROLE_SCHEMA)
+                .expect_err("parse error")
+                .to_string()
+        };
+        assert_eq!(
+            error("texture 1 reason=\"x\"\nart 2 reason=\"y\"\n"),
+            "role_overrides.kdl: line 2, column 1: unknown node `art` at the top level: expected `texture`"
+        );
+        assert_eq!(
+            error("texture 1 role=\"base\" reason=\"x\"\n"),
+            "role_overrides.kdl: line 1, column 11: unknown property `role` of `texture`: expected one of \
+             `stable-role`, `speculative-role`, `reason`"
+        );
+        let missing = error("texture 1 stable-role=\"base\"\n");
+        assert!(missing.starts_with("role_overrides.kdl: invalid KDL: line 1, column 1:"), "{missing}");
+        assert!(missing.contains("reason"), "{missing}");
+    }
+}

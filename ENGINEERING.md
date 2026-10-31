@@ -60,6 +60,11 @@ Do not leave behind debug prints, scratch functions, commented-out experiments, 
 ### Validation
 Use the narrowest meaningful check: `cargo check -p <crate>`, a targeted test, or a type check. After any change, verify: does it implement the intended behavior? Is it minimal and consistent with the repository? Did it introduce unnecessary complexity?
 
+### Configuration files
+Every TOML or KDL file a user or developer writes by hand (bundled settings, shader presets, conversion tables, profiles, tool configs) is read strictly: an unknown key, node or property is an error, and so is a missing required key. Use `#[serde(deny_unknown_fields)]` without `#[serde(default)]` (unless the format makes a key optional by design, then prefer `Option<T>` and say why), read TOML through `uocf::utils::config_toml::parse_strict`, and decode KDL through `udd_kdl::strict` (a `NodeSchema` names the allowed nodes and properties for the error message). Errors name the file, the line and column, the offending name and the allowed names; apps print them and exit with a non-zero code instead of panicking.
+
+Only files an app writes itself and nobody edits (dynamapper's cache `settings/*.toml`, the udd-conv-gui config) are lenient, through `config_toml::parse_app_state`: a missing key is filled from the defaults and an unknown key is dropped, each with a logged warning, and the app rewrites the file complete on its next save, so a file from another version still loads.
+
 ### Git
 Do not revert, reformat, or absorb pre-existing uncommitted user changes unless directly required. Stage only files relevant to the completed work. Never use `git reset --hard`, `git clean`, force pushes, or history rewrites unless explicitly instructed.
 

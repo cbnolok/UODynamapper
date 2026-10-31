@@ -50,19 +50,13 @@ light_color = [
     0.99,
     0.92,
 ]
-_pad0_ = 0.0
 atmosphere_tint = [
     0.17,
     0.22,
     0.29,
 ]
-_pad1_ = 0.0
 exposure = 1.05
 ambient_strength = 0.16
-_pad2_ = [
-    0.0,
-    0.0,
-]
 grade_warm_color = [
     1.08,
     0.98,
@@ -117,12 +111,10 @@ fog_night_color = [
     0.0,
     0.0,
 ]
+kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [classic.morning.land_lighting]
 enable_bent = 0
-_pad0_ = 0
-_pad1_ = 0
-_pad2_ = 0
 diffuse_strength = 0.97
 specular_strength = 0.0375
 rim_strength = 0.0675
@@ -130,7 +122,6 @@ fill_strength = 0.33
 sharpness_factor = 1.06
 sharpness_mix = 0.022
 diffuse_wrap = 0.1155
-_pad4_ = 0.0
 fill_sky_color = [
     0.5,
     0.7,
@@ -200,19 +191,13 @@ light_color = [
     0.99,
     0.9,
 ]
-_pad0_ = 0.0
 atmosphere_tint = [
     0.18,
     0.22,
     0.28,
 ]
-_pad1_ = 0.0
 exposure = 1.1
 ambient_strength = 0.18
-_pad2_ = [
-    0.0,
-    0.0,
-]
 grade_warm_color = [
     1.08,
     0.98,
@@ -267,12 +252,10 @@ fog_night_color = [
     0.0,
     0.0,
 ]
+kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [classic.afternoon.land_lighting]
 enable_bent = 1
-_pad0_ = 0
-_pad1_ = 0
-_pad2_ = 0
 diffuse_strength = 1.0
 specular_strength = 0.0
 rim_strength = 0.0
@@ -280,7 +263,6 @@ fill_strength = 0.0
 sharpness_factor = 1.0
 sharpness_mix = 0.0
 diffuse_wrap = 0.0
-_pad4_ = 0.0
 fill_sky_color = [
     0.48,
     0.68,
@@ -350,19 +332,13 @@ light_color = [
     0.88,
     1.05,
 ]
-_pad0_ = 0.0
 atmosphere_tint = [
     0.12,
     0.16,
     0.24,
 ]
-_pad1_ = 0.0
 exposure = 1.0
 ambient_strength = 0.1
-_pad2_ = [
-    0.0,
-    0.0,
-]
 grade_warm_color = [
     1.08,
     0.98,
@@ -417,12 +393,10 @@ fog_night_color = [
     0.0,
     0.0,
 ]
+kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [classic.night.land_lighting]
 enable_bent = 1
-_pad0_ = 0
-_pad1_ = 0
-_pad2_ = 0
 diffuse_strength = 0.7
 specular_strength = 0.0
 rim_strength = 0.0
@@ -430,7 +404,6 @@ fill_strength = 0.0
 sharpness_factor = 1.0
 sharpness_mix = 0.0
 diffuse_wrap = 0.0
-_pad4_ = 0.0
 fill_sky_color = [
     0.4,
     0.6,
@@ -500,19 +473,13 @@ light_color = [
     0.95,
     1.05,
 ]
-_pad0_ = 0.0
 atmosphere_tint = [
     0.1,
     0.14,
     0.2,
 ]
-_pad1_ = 0.0
 exposure = 0.95
 ambient_strength = 0.06
-_pad2_ = [
-    0.0,
-    0.0,
-]
 grade_warm_color = [
     1.08,
     0.98,
@@ -567,12 +534,10 @@ fog_night_color = [
     0.0,
     0.0,
 ]
+kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [classic.cave.land_lighting]
 enable_bent = 1
-_pad0_ = 0
-_pad1_ = 0
-_pad2_ = 0
 diffuse_strength = 0.85
 specular_strength = 0.0
 rim_strength = 0.0
@@ -580,7 +545,6 @@ fill_strength = 0.0
 sharpness_factor = 1.0
 sharpness_mix = 0.0
 diffuse_wrap = 0.0
-_pad4_ = 0.0
 fill_sky_color = [
     0.38,
     0.6,
@@ -650,19 +614,13 @@ light_color = [
     0.99,
     0.92,
 ]
-_pad0_ = 0.0
 atmosphere_tint = [
     0.17,
     0.22,
     0.29,
 ]
-_pad1_ = 0.0
 exposure = 1.05
 ambient_strength = 0.18
-_pad2_ = [
-    0.0,
-    0.0,
-]
 grade_warm_color = [
     1.08,
     0.98,
@@ -717,12 +675,10 @@ fog_night_color = [
     0.0,
     0.0,
 ]
+kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [enhanced.morning.land_lighting]
 enable_bent = 1
-_pad0_ = 0
-_pad1_ = 0
-_pad2_ = 0
 diffuse_strength = 1.05
 specular_strength = 0.03
 rim_strength = 0.06
@@ -730,7 +686,6 @@ fill_strength = 0.28
 sharpness_factor = 1.5
 sharpness_mix = 0.25
 diffuse_wrap = 0.0
-_pad4_ = 0.0
 fill_sky_color = [
     0.5,
     0.7,
@@ -800,19 +755,13 @@ light_color = [
     0.99,
     0.9,
 ]
-_pad0_ = 0.0
 atmosphere_tint = [
     0.18,
     0.22,
     0.28,
 ]
-_pad1_ = 0.0
 exposure = 1.1
 ambient_strength = 0.18
-_pad2_ = [
-    0.0,
-    0.0,
-]
 grade_warm_color = [
     1.08,
     0.98,
@@ -867,12 +816,10 @@ fog_night_color = [
     0.0,
     0.0,
 ]
+kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [enhanced.afternoon.land_lighting]
 enable_bent = 1
-_pad0_ = 0
-_pad1_ = 0
-_pad2_ = 0
 diffuse_strength = 1.05
 specular_strength = 0.03
 rim_strength = 0.06
@@ -880,7 +827,6 @@ fill_strength = 0.28
 sharpness_factor = 1.5
 sharpness_mix = 0.25
 diffuse_wrap = 0.0
-_pad4_ = 0.0
 fill_sky_color = [
     0.48,
     0.68,
@@ -950,19 +896,13 @@ light_color = [
     0.88,
     1.05,
 ]
-_pad0_ = 0.0
 atmosphere_tint = [
     0.12,
     0.16,
     0.24,
 ]
-_pad1_ = 0.0
 exposure = 1.0
 ambient_strength = 0.08
-_pad2_ = [
-    0.0,
-    0.0,
-]
 grade_warm_color = [
     1.08,
     0.98,
@@ -1017,12 +957,10 @@ fog_night_color = [
     0.0,
     0.0,
 ]
+kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [enhanced.night.land_lighting]
 enable_bent = 1
-_pad0_ = 0
-_pad1_ = 0
-_pad2_ = 0
 diffuse_strength = 0.45
 specular_strength = 0.03
 rim_strength = 0.22
@@ -1030,7 +968,6 @@ fill_strength = 0.18
 sharpness_factor = 1.5
 sharpness_mix = 0.25
 diffuse_wrap = 0.0
-_pad4_ = 0.0
 fill_sky_color = [
     0.4,
     0.6,
@@ -1100,19 +1037,13 @@ light_color = [
     0.95,
     1.05,
 ]
-_pad0_ = 0.0
 atmosphere_tint = [
     0.1,
     0.14,
     0.2,
 ]
-_pad1_ = 0.0
 exposure = 0.85
 ambient_strength = 0.04
-_pad2_ = [
-    0.0,
-    0.0,
-]
 grade_warm_color = [
     1.08,
     0.98,
@@ -1167,12 +1098,10 @@ fog_night_color = [
     0.0,
     0.0,
 ]
+kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [enhanced.cave.land_lighting]
 enable_bent = 1
-_pad0_ = 0
-_pad1_ = 0
-_pad2_ = 0
 diffuse_strength = 0.5
 specular_strength = 0.02
 rim_strength = 0.14
@@ -1180,7 +1109,6 @@ fill_strength = 0.12
 sharpness_factor = 1.5
 sharpness_mix = 0.25
 diffuse_wrap = 0.0
-_pad4_ = 0.0
 fill_sky_color = [
     0.38,
     0.6,
@@ -1250,19 +1178,13 @@ light_color = [
     0.99,
     0.92,
 ]
-_pad0_ = 0.0
 atmosphere_tint = [
     0.17,
     0.22,
     0.29,
 ]
-_pad1_ = 0.0
 exposure = 1.03
 ambient_strength = 0.24
-_pad2_ = [
-    0.0,
-    0.0,
-]
 grade_warm_color = [
     1.08,
     0.98,
@@ -1317,12 +1239,10 @@ fog_night_color = [
     0.024,
     0.25,
 ]
+kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [kr.morning.land_lighting]
 enable_bent = 1
-_pad0_ = 0
-_pad1_ = 0
-_pad2_ = 0
 diffuse_strength = 1.28
 specular_strength = 0.035
 rim_strength = 0.13
@@ -1330,7 +1250,6 @@ fill_strength = 0.32
 sharpness_factor = 2.0
 sharpness_mix = 0.55
 diffuse_wrap = 0.35
-_pad4_ = 0.0
 fill_sky_color = [
     0.5,
     0.7,
@@ -1400,19 +1319,13 @@ light_color = [
     0.99,
     0.9,
 ]
-_pad0_ = 0.0
 atmosphere_tint = [
     0.18,
     0.22,
     0.28,
 ]
-_pad1_ = 0.0
 exposure = 1.06
 ambient_strength = 0.25
-_pad2_ = [
-    0.0,
-    0.0,
-]
 grade_warm_color = [
     1.08,
     0.98,
@@ -1467,12 +1380,10 @@ fog_night_color = [
     0.026,
     0.22,
 ]
+kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [kr.afternoon.land_lighting]
 enable_bent = 1
-_pad0_ = 0
-_pad1_ = 0
-_pad2_ = 0
 diffuse_strength = 1.35
 specular_strength = 0.04
 rim_strength = 0.15
@@ -1480,7 +1391,6 @@ fill_strength = 0.34
 sharpness_factor = 2.0
 sharpness_mix = 0.55
 diffuse_wrap = 0.35
-_pad4_ = 0.0
 fill_sky_color = [
     0.48,
     0.68,
@@ -1550,19 +1460,13 @@ light_color = [
     0.88,
     1.05,
 ]
-_pad0_ = 0.0
 atmosphere_tint = [
     0.12,
     0.16,
     0.24,
 ]
-_pad1_ = 0.0
 exposure = 1.06
 ambient_strength = 0.12
-_pad2_ = [
-    0.0,
-    0.0,
-]
 grade_warm_color = [
     1.08,
     0.98,
@@ -1617,12 +1521,10 @@ fog_night_color = [
     0.018,
     0.55,
 ]
+kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [kr.night.land_lighting]
 enable_bent = 1
-_pad0_ = 0
-_pad1_ = 0
-_pad2_ = 0
 diffuse_strength = 0.62
 specular_strength = 0.025
 rim_strength = 0.16
@@ -1630,7 +1532,6 @@ fill_strength = 0.22
 sharpness_factor = 2.0
 sharpness_mix = 0.55
 diffuse_wrap = 0.2
-_pad4_ = 0.0
 fill_sky_color = [
     0.4,
     0.6,
@@ -1700,19 +1601,13 @@ light_color = [
     0.95,
     1.05,
 ]
-_pad0_ = 0.0
 atmosphere_tint = [
     0.1,
     0.14,
     0.2,
 ]
-_pad1_ = 0.0
 exposure = 0.92
 ambient_strength = 0.07
-_pad2_ = [
-    0.0,
-    0.0,
-]
 grade_warm_color = [
     1.08,
     0.98,
@@ -1767,12 +1662,10 @@ fog_night_color = [
     0.014,
     0.6,
 ]
+kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [kr.cave.land_lighting]
 enable_bent = 1
-_pad0_ = 0
-_pad1_ = 0
-_pad2_ = 0
 diffuse_strength = 0.54
 specular_strength = 0.02
 rim_strength = 0.11
@@ -1780,7 +1673,6 @@ fill_strength = 0.18
 sharpness_factor = 2.0
 sharpness_mix = 0.55
 diffuse_wrap = 0.15
-_pad4_ = 0.0
 fill_sky_color = [
     0.38,
     0.6,

@@ -196,6 +196,7 @@ pub enum EnhancementFilter {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct UpscaleConfig {
     /// Target width/height for upscaling. 0 means use original size or scale factor.
     pub target_size: u32,

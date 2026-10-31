@@ -18,6 +18,8 @@ use knuffel::span::{LineSpan, Span};
 pub use knuffel::{Decode, DecodeChildren, DecodeScalar, Error};
 pub use knuffel::{ast, decode, errors, span, traits};
 
+pub mod strict;
+
 /// Parses KDL text into an AST with byte-offset spans.
 #[inline(never)]
 pub fn parse_ast(file_name: &str, text: &str) -> Result<Document<Span>, Error> {

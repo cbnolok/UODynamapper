@@ -27,8 +27,7 @@ impl ClassicTileMapper {
     }
 
     pub fn from_toml_str(content: &str) -> eyre::Result<Self> {
-        let file: MapperFile =
-            toml::from_str(content).wrap_err("Failed to parse classic tile mapping TOML")?;
+        let file: MapperFile = crate::utils::config_toml::parse_strict("classic tile mapping TOML", content)?;
 
         Ok(Self::from_mapper_file(file))
     }
@@ -51,12 +50,14 @@ impl ClassicTileMapper {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct MapperFile {
     #[serde(rename = "mapping")]
     mapping: Vec<MappingEntry>,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct MappingEntry {
     new_id: u16,
     old_ids: Vec<u16>,

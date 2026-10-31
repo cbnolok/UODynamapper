@@ -83,141 +83,125 @@ struct PaperdollWearableRules {
     wearable_rules: Vec<WearableRule>,
 }
 
+const PAPERDOLL_SPECS_DIR: &str = "runtime_specs/paperdoll";
+const WEARABLE_RULES_FILE_NAME: &str = "WearableRules.kdl";
+const PAPERDOLL_PROFILES_FILE_NAME: &str = "PaperdollProfiles.kdl";
+/// The draw-order table this dialog reads.
+const PAPERDOLL_DIRECTION: &str = "paperdoll";
+const WEARABLE_ITEMS_PROPERTY: &str = "items";
+const WEARABLE_PRIORITY_PROPERTY: &str = "priority";
+
+/// `draworder "<direction>" { slot "<slot>" priority=N }`, and
+/// `wearable "<slot>" items="..." { override priority=N [race=] [direction=] { when "<slot>" items="..." } }`.
+const WEARABLE_RULES_SCHEMA: &[udd_kdl::strict::NodeSchema] = &[
+    udd_kdl::strict::NodeSchema {
+        name: "draworder",
+        properties: &[],
+        children: &[udd_kdl::strict::NodeSchema::leaf("slot", &[WEARABLE_PRIORITY_PROPERTY])],
+    },
+    udd_kdl::strict::NodeSchema {
+        name: "wearable",
+        properties: &[WEARABLE_ITEMS_PROPERTY],
+        children: &[udd_kdl::strict::NodeSchema {
+            name: "override",
+            properties: &[WEARABLE_PRIORITY_PROPERTY, "race", "direction"],
+            children: &[udd_kdl::strict::NodeSchema::leaf("when", &[WEARABLE_ITEMS_PROPERTY])],
+        }],
+    },
+];
+
+/// `profile "<id>" equipment_offset=N [label=] [canvas_width=] [canvas_height=] [body_x=] [body_y=] [equipment_x=]
+/// [equipment_y=]`, decoded by `PaperdollProfilesKdl`.
+pub(crate) const PAPERDOLL_PROFILES_SCHEMA: &[udd_kdl::strict::NodeSchema] = &[udd_kdl::strict::NodeSchema::leaf(
+    "profile",
+    &[
+        "label",
+        "equipment_offset",
+        "canvas_width",
+        "canvas_height",
+        "body_x",
+        "body_y",
+        "equipment_x",
+        "equipment_y",
+    ],
+)];
+
 impl PaperdollWearableRules {
     fn load_from_path(path: &Path) -> color_eyre::eyre::Result<Self> {
-        let content = std::fs::read_to_string(path)?;
-        Self::load_from_str(path.to_str().unwrap_or("WearableRules.kdl"), &content)
+        let content = std::fs::read_to_string(path)
+            .map_err(|error| color_eyre::eyre::eyre!("{}: cannot read: {error}", path.display()))?;
+        Self::load_from_str(&path.display().to_string(), &content)
     }
 
     fn load_from_str(source_name: &str, content: &str) -> color_eyre::eyre::Result<Self> {
-        use knuffel::ast::{Literal, Node, Value};
-        use knuffel::span::Span;
+        Self::parse(content).map_err(|error| udd_kdl::strict::in_file(source_name, error))
+    }
 
-        fn value_string(value: &Value<Span>, field: &str) -> color_eyre::eyre::Result<String> {
-            match &*value.literal {
-                Literal::String(value) => Ok(value.to_string()),
-                _ => color_eyre::eyre::bail!("{field}: expected string"),
-            }
-        }
+    fn parse(content: &str) -> color_eyre::eyre::Result<Self> {
+        use color_eyre::eyre;
+        use udd_kdl::ast::{Node, Value};
+        use udd_kdl::span::LineSpan;
+        use udd_kdl::strict::{arguments, error_at, property, required_property, value_string, value_u16};
 
-        fn value_u16(value: &Value<Span>, field: &str) -> color_eyre::eyre::Result<u16> {
-            match &*value.literal {
-                Literal::Int(value) => u16::try_from(value)
-                    .map_err(|_| color_eyre::eyre::eyre!("{field}: invalid u16")),
-                _ => color_eyre::eyre::bail!("{field}: expected integer"),
-            }
-        }
-
-        fn argument_string(node: &Node<Span>, index: usize, field: &str) -> color_eyre::eyre::Result<String> {
-            let value = node
-                .arguments
-                .get(index)
-                .ok_or_else(|| color_eyre::eyre::eyre!("{field}: missing argument"))?;
+        fn argument_string(node: &Node<LineSpan>, field: &str) -> eyre::Result<String> {
+            let [value] = arguments::<1>(node)?;
             value_string(value, field)
         }
 
-        fn property_string(node: &Node<Span>, name: &str) -> color_eyre::eyre::Result<Option<String>> {
-            node.properties
-                .iter()
-                .find(|(key, _)| key.as_ref() == name)
-                .map(|(_, value)| value_string(value, name))
-                .transpose()
+        fn items(value: &Value<LineSpan>) -> eyre::Result<WearableItemMatcher> {
+            let text = value_string(value, WEARABLE_ITEMS_PROPERTY)?;
+            parse_wearable_items(&text).map_err(|error| error_at(value.literal.span(), error))
         }
 
-        fn property_u16(node: &Node<Span>, name: &str) -> color_eyre::eyre::Result<Option<u16>> {
-            node.properties
-                .iter()
-                .find(|(key, _)| key.as_ref() == name)
-                .map(|(_, value)| value_u16(value, name))
-                .transpose()
+        fn parse_when(node: &Node<LineSpan>) -> eyre::Result<WearableCondition> {
+            Ok(WearableCondition {
+                slot: argument_string(node, "when slot")?,
+                items: items(required_property(node, WEARABLE_ITEMS_PROPERTY)?)?,
+            })
         }
 
-        fn parse_when(node: &Node<Span>) -> color_eyre::eyre::Result<Option<WearableCondition>> {
-            let slot = argument_string(node, 0, "when slot")?;
-            let Some(items) = property_string(node, "items")? else {
-                return Ok(None);
-            };
-            Ok(parse_wearable_items(&items).map(|items| WearableCondition { slot, items }))
+        fn parse_override(node: &Node<LineSpan>) -> eyre::Result<WearableOverrideRule> {
+            arguments::<0>(node)?;
+            let optional_string = |name: &str| property(node, name).map(|value| value_string(value, name)).transpose();
+            Ok(WearableOverrideRule {
+                draw_order_priority: value_u16(required_property(node, WEARABLE_PRIORITY_PROPERTY)?, "priority")?,
+                race: optional_string("race")?.map(|race| race.to_ascii_lowercase()),
+                direction: optional_string("direction")?.map(|direction| direction.to_ascii_lowercase()),
+                conditions: node.children().map(|child| parse_when(child)).collect::<eyre::Result<_>>()?,
+            })
         }
 
-        fn parse_override(node: &Node<Span>) -> color_eyre::eyre::Result<Option<WearableOverrideRule>> {
-            let Some(draw_order_priority) = property_u16(node, "priority")? else {
-                return Ok(None);
-            };
-            let mut conditions = Vec::new();
+        fn parse_wearable(node: &Node<LineSpan>) -> eyre::Result<WearableRule> {
+            Ok(WearableRule {
+                target_slot: argument_string(node, "wearable slot")?,
+                target_items: items(required_property(node, WEARABLE_ITEMS_PROPERTY)?)?,
+                overrides: node.children().map(|child| parse_override(child)).collect::<eyre::Result<_>>()?,
+            })
+        }
+
+        fn parse_draworder(node: &Node<LineSpan>, paperdoll_draw_order: &mut HashMap<String, u16>) -> eyre::Result<()> {
+            // Only the paperdoll direction is drawn here; other directions' tables are valid but unused.
+            let is_paperdoll = argument_string(node, "draworder direction")? == PAPERDOLL_DIRECTION;
             for child in node.children() {
-                if child.node_name.as_ref() == "when" {
-                    if let Some(condition) = parse_when(child)? {
-                        conditions.push(condition);
-                    }
-                }
-            }
-
-            Ok(Some(WearableOverrideRule {
-                draw_order_priority,
-                race: property_string(node, "race")?.map(|race| race.to_ascii_lowercase()),
-                direction: property_string(node, "direction")?
-                    .map(|direction| direction.to_ascii_lowercase()),
-                conditions,
-            }))
-        }
-
-        fn parse_wearable(node: &Node<Span>) -> color_eyre::eyre::Result<Option<WearableRule>> {
-            let target_slot = argument_string(node, 0, "wearable slot")?;
-            let Some(items) = property_string(node, "items")? else {
-                return Ok(None);
-            };
-            let Some(target_items) = parse_wearable_items(&items) else {
-                return Ok(None);
-            };
-            let mut overrides = Vec::new();
-            for child in node.children() {
-                if child.node_name.as_ref() == "override" {
-                    if let Some(override_rule) = parse_override(child)? {
-                        overrides.push(override_rule);
-                    }
-                }
-            }
-
-            Ok(Some(WearableRule {
-                target_slot,
-                target_items,
-                overrides,
-            }))
-        }
-
-        fn parse_draworder(
-            node: &Node<Span>,
-            paperdoll_draw_order: &mut HashMap<String, u16>,
-        ) -> color_eyre::eyre::Result<()> {
-            if argument_string(node, 0, "draworder direction")? != "paperdoll" {
-                return Ok(());
-            }
-
-            for child in node.children() {
-                if child.node_name.as_ref() != "slot" {
-                    continue;
-                }
-                let slot = argument_string(child, 0, "draworder slot")?;
-                if let Some(priority) = property_u16(child, "priority")? {
+                let slot = argument_string(child, "draworder slot")?;
+                let priority = value_u16(required_property(child, WEARABLE_PRIORITY_PROPERTY)?, "priority")?;
+                if is_paperdoll {
                     paperdoll_draw_order.insert(slot, priority);
                 }
             }
             Ok(())
         }
 
-        let document = udd_kdl::parse_ast(source_name, content)?;
+        let document = udd_kdl::parse_ast_line_span(WEARABLE_RULES_FILE_NAME, content)
+            .map_err(|error| udd_kdl::strict::describe_error(content, &error))?;
+        udd_kdl::strict::check_document(&document, WEARABLE_RULES_SCHEMA)?;
         let mut paperdoll_draw_order = HashMap::new();
         let mut wearable_rules = Vec::new();
         for node in document.nodes.iter() {
-            match node.node_name.as_ref() {
+            match &**node.node_name {
                 "draworder" => parse_draworder(node, &mut paperdoll_draw_order)?,
-                "wearable" => {
-                    if let Some(rule) = parse_wearable(node)? {
-                        wearable_rules.push(rule);
-                    }
-                }
-                _ => {}
+                "wearable" => wearable_rules.push(parse_wearable(node)?),
+                _ => unreachable!("the schema check admits only draworder and wearable"),
             }
         }
 
@@ -279,11 +263,11 @@ mod tests {
 
     #[test]
     fn bundled_paperdoll_specs_parse() {
-        let profiles = udd_kdl::parse::<PaperdollProfilesKdl>(
+        let profiles = PaperdollProfilesRes::load_from_str(
             "PaperdollProfiles.kdl",
             include_str!("../../../../assets/runtime_specs/paperdoll/PaperdollProfiles.kdl"),
         )
-        .expect("profiles parse");
+        .unwrap_or_else(|error| panic!("profiles parse: {error}"));
         assert!(!profiles.profiles.is_empty());
 
         let rules = PaperdollWearableRules::load_from_str(
@@ -324,6 +308,70 @@ mod tests {
             rules.priority_for("neck", 4232, &equipped, "human", 10),
             18100
         );
+    }
+
+    fn rules_error(content: &str) -> String {
+        PaperdollWearableRules::load_from_str("WearableRules.kdl", content).err().expect("rules error").to_string()
+    }
+
+    fn profiles_error(content: &str) -> String {
+        PaperdollProfilesRes::load_from_str("PaperdollProfiles.kdl", content).err().expect("profiles error").to_string()
+    }
+
+    #[test]
+    fn wearable_rules_reject_unknown_nodes_and_properties_with_their_position() {
+        assert_eq!(
+            rules_error("draworder \"paperdoll\" {\n    slot \"cape\" priority=500\n}\nwearables \"neck\" items=\"any\"\n"),
+            "WearableRules.kdl: line 4, column 1: unknown node `wearables` at the top level: expected `draworder` or \
+             `wearable`"
+        );
+        assert_eq!(
+            rules_error("wearable \"neck\" items=\"any\" {\n    override priority=1 gender=\"male\"\n}\n"),
+            "WearableRules.kdl: line 2, column 25: unknown property `gender` of `override`: expected one of \
+             `priority`, `race`, `direction`"
+        );
+        assert_eq!(
+            rules_error("wearable \"neck\" items=\"any\" {\n    override priority=1 {\n        unless \"chest\"\n    }\n}\n"),
+            "WearableRules.kdl: line 3, column 9: unknown node `unless` in `override`: expected `when`"
+        );
+    }
+
+    #[test]
+    fn wearable_rules_reject_missing_and_invalid_values() {
+        assert_eq!(
+            rules_error("wearable \"neck\"\n"),
+            "WearableRules.kdl: line 1, column 1: `wearable`: missing items="
+        );
+        assert_eq!(
+            rules_error("wearable \"neck\" items=\"any\" {\n    override race=\"elf\"\n}\n"),
+            "WearableRules.kdl: line 2, column 5: `override`: missing priority="
+        );
+        assert_eq!(
+            rules_error("wearable \"neck\" items=\"4232,abc\"\n"),
+            "WearableRules.kdl: line 1, column 23: items: `abc` is not an item id; expected `any` or ids like \
+             0x1F03,7939"
+        );
+        assert_eq!(
+            rules_error("draworder \"paperdoll\" {\n    slot priority=500\n}\n"),
+            "WearableRules.kdl: line 2, column 5: `slot` takes 1 arguments, found 0"
+        );
+    }
+
+    #[test]
+    fn paperdoll_profiles_reject_unknown_properties_and_missing_values() {
+        assert_eq!(
+            profiles_error("profile \"human_male\" equipment_offset=50000 canvas_w=260\n"),
+            "PaperdollProfiles.kdl: line 1, column 45: unknown property `canvas_w` of `profile`: expected one of \
+             `label`, `equipment_offset`, `canvas_width`, `canvas_height`, `body_x`, `body_y`, `equipment_x`, \
+             `equipment_y`"
+        );
+        assert_eq!(
+            profiles_error("profiles \"human_male\" equipment_offset=50000\n"),
+            "PaperdollProfiles.kdl: line 1, column 1: unknown node `profiles` at the top level: expected `profile`"
+        );
+        let missing = profiles_error("profile \"human_male\" label=\"Human Male\"\n");
+        assert!(missing.starts_with("PaperdollProfiles.kdl: invalid KDL: line 1, column 1:"), "{missing}");
+        assert!(missing.contains("equipment_offset"), "{missing}");
     }
 }
 
@@ -384,31 +432,28 @@ struct PaperdollEquippedItem {
 }
 
 impl PaperdollProfilesRes {
+    /// The bundled profiles are required: a missing or invalid file stops the app.
     fn load() -> Self {
-        let path = constants::valid_asset_dir().join("runtime_specs/paperdoll/PaperdollProfiles.kdl");
-        match Self::load_from_path(&path) {
-            Ok(profiles) => profiles,
-            Err(error) => {
-                bevy::log::warn!(
-                    "Failed to load PaperdollProfiles.kdl from {}: {error}. Using built-in profiles.",
-                    path.display()
-                );
-                Self::default()
-            }
-        }
+        let path = constants::valid_asset_dir().join(PAPERDOLL_SPECS_DIR).join(PAPERDOLL_PROFILES_FILE_NAME);
+        Self::load_from_path(&path)
+            .unwrap_or_else(|error| crate::configs::settings::exit_on_startup_config_error(&error))
     }
 
     fn load_from_path(path: &Path) -> color_eyre::eyre::Result<Self> {
-        let content = std::fs::read_to_string(path)?;
-        let decoded: PaperdollProfilesKdl =
-            udd_kdl::parse(path.to_str().unwrap_or("PaperdollProfiles.kdl"), &content)?;
+        let content = std::fs::read_to_string(path)
+            .map_err(|error| color_eyre::eyre::eyre!("{}: cannot read: {error}", path.display()))?;
+        Self::load_from_str(&path.display().to_string(), &content)
+    }
+
+    fn load_from_str(source_name: &str, content: &str) -> color_eyre::eyre::Result<Self> {
+        let decoded: PaperdollProfilesKdl = udd_kdl::strict::decode(source_name, content, PAPERDOLL_PROFILES_SCHEMA)?;
         let profiles = decoded
             .profiles
             .into_iter()
             .map(PaperdollProfile::from)
             .collect::<Vec<_>>();
         if profiles.is_empty() {
-            color_eyre::eyre::bail!("PaperdollProfiles.kdl contains no profile nodes");
+            color_eyre::eyre::bail!("{source_name}: contains no profile nodes");
         }
 
         Ok(Self { profiles })
@@ -423,21 +468,6 @@ impl PaperdollProfilesRes {
     }
 }
 
-impl Default for PaperdollProfilesRes {
-    fn default() -> Self {
-        Self {
-            profiles: vec![
-                PaperdollProfile::new("human_male", "Human Male", 50_000, 260, 300),
-                PaperdollProfile::new("human_female", "Human Female", 60_000, 260, 300),
-                PaperdollProfile::new("elf_male", "Elf Male", 50_000, 260, 300),
-                PaperdollProfile::new("elf_female", "Elf Female", 60_000, 260, 300),
-                PaperdollProfile::new("gargoyle_male", "Gargoyle Male", 50_000, 300, 340),
-                PaperdollProfile::new("gargoyle_female", "Gargoyle Female", 60_000, 300, 340),
-            ],
-        }
-    }
-}
-
 #[derive(Clone)]
 struct PaperdollProfile {
     id: String,
@@ -449,28 +479,6 @@ struct PaperdollProfile {
     body_y: i32,
     equipment_x: i32,
     equipment_y: i32,
-}
-
-impl PaperdollProfile {
-    fn new(
-        id: impl Into<String>,
-        label: impl Into<String>,
-        equipment_offset: u32,
-        canvas_width: u32,
-        canvas_height: u32,
-    ) -> Self {
-        Self {
-            id: id.into(),
-            label: label.into(),
-            equipment_offset,
-            canvas_width,
-            canvas_height,
-            body_x: 0,
-            body_y: 0,
-            equipment_x: 0,
-            equipment_y: 0,
-        }
-    }
 }
 
 #[derive(Decode)]
@@ -517,16 +525,20 @@ impl From<PaperdollProfileKdl> for PaperdollProfile {
     }
 }
 
-fn parse_wearable_items(value: &str) -> Option<WearableItemMatcher> {
+/// `any`, or a comma-separated list of item ids (decimal or `0x` hex).
+fn parse_wearable_items(value: &str) -> Result<WearableItemMatcher, String> {
     if value.trim().eq_ignore_ascii_case("any") {
-        return Some(WearableItemMatcher::Any);
+        return Ok(WearableItemMatcher::Any);
     }
 
     let ids = value
         .split(',')
-        .filter_map(|part| parse_u32_field(part.trim()).ok())
-        .collect::<Vec<_>>();
-    (!ids.is_empty()).then_some(WearableItemMatcher::Ids(ids))
+        .map(|part| {
+            parse_u32_field(part.trim())
+                .map_err(|_| format!("items: `{}` is not an item id; expected `any` or ids like 0x1F03,7939", part.trim()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(WearableItemMatcher::Ids(ids))
 }
 
 fn paperdoll_slot_from_tiledata_layer(layer: u8) -> &'static str {
@@ -589,22 +601,18 @@ impl Plugin for GumpDialogPlugin {
     }
 }
 
+/// The bundled wearable rules are required: a missing or invalid file stops the app.
 fn sys_load_paperdoll_wearable_rules(
     mut rules_res: ResMut<PaperdollWearableRulesRes>,
 ) {
-    let path = constants::valid_asset_dir().join("runtime_specs/paperdoll/WearableRules.kdl");
+    let path = constants::valid_asset_dir().join(PAPERDOLL_SPECS_DIR).join(WEARABLE_RULES_FILE_NAME);
 
     match PaperdollWearableRules::load_from_path(&path) {
         Ok(rules) => {
             log::info!("Loaded paperdoll wearable rules from {}", path.display());
             rules_res.rules = Some(rules);
         }
-        Err(error) => {
-            log::warn!(
-                "Failed to load paperdoll wearable rules from {}: {error}; using tiledata layer order only.",
-                path.display()
-            );
-        }
+        Err(error) => crate::configs::settings::exit_on_startup_config_error(&error),
     }
 }
 

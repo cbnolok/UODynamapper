@@ -742,18 +742,40 @@ fn is_paperdoll_sprite_id(gump_id: u32) -> bool {
 fn paperdoll_profiles() -> &'static [PaperdollProfile] {
     static PROFILES: OnceLock<Vec<PaperdollProfile>> = OnceLock::new();
     PROFILES.get_or_init(|| {
-        udd_kdl::parse::<PaperdollProfilesKdl>("PaperdollProfiles.kdl", PAPERDOLL_PROFILE_KDL)
-            .ok()
-            .map(|decoded| {
-                decoded
-                    .profiles
-                    .into_iter()
-                    .map(PaperdollProfile::from)
-                    .collect::<Vec<_>>()
-            })
-            .filter(|profiles| !profiles.is_empty())
-            .unwrap_or_else(default_profiles)
+        // The file is embedded and a test decodes it, so the fallback only guards a broken build.
+        match decode_paperdoll_profiles(PAPERDOLL_PROFILE_KDL) {
+            Ok(profiles) => profiles,
+            Err(error) => {
+                log::error!("{error}; using the built-in paperdoll profiles");
+                default_profiles()
+            }
+        }
     })
+}
+
+/// The `profile` nodes and their properties, for error messages that name them.
+const PAPERDOLL_PROFILES_SCHEMA: &[udd_kdl::strict::NodeSchema] = &[udd_kdl::strict::NodeSchema::leaf(
+    "profile",
+    &[
+        "label",
+        "equipment_offset",
+        "canvas_width",
+        "canvas_height",
+        "body_x",
+        "body_y",
+        "equipment_x",
+        "equipment_y",
+    ],
+)];
+
+fn decode_paperdoll_profiles(text: &str) -> color_eyre::eyre::Result<Vec<PaperdollProfile>> {
+    let decoded: PaperdollProfilesKdl =
+        udd_kdl::strict::decode("PaperdollProfiles.kdl", text, PAPERDOLL_PROFILES_SCHEMA)?;
+    let profiles: Vec<_> = decoded.profiles.into_iter().map(PaperdollProfile::from).collect();
+    if profiles.is_empty() {
+        color_eyre::eyre::bail!("PaperdollProfiles.kdl: contains no profile nodes");
+    }
+    Ok(profiles)
 }
 
 fn default_profiles() -> Vec<PaperdollProfile> {
@@ -1287,6 +1309,23 @@ fn parse_optional_hue(text: &str) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn embedded_paperdoll_profiles_decode_strictly() {
+        let profiles = decode_paperdoll_profiles(PAPERDOLL_PROFILE_KDL).unwrap_or_else(|error| panic!("{error}"));
+        assert!(!profiles.is_empty());
+    }
+
+    #[test]
+    fn paperdoll_profiles_reject_unknown_properties_and_missing_values() {
+        let error = decode_paperdoll_profiles("profile \"human_male\" equipment_offset=50000 body_z=1\n")
+            .err()
+            .expect("unknown property")
+            .to_string();
+        assert!(error.starts_with("PaperdollProfiles.kdl: line 1, column 45: unknown property `body_z`"), "{error}");
+        let error = decode_paperdoll_profiles("profile \"human_male\"\n").err().expect("missing").to_string();
+        assert!(error.contains("equipment_offset"), "{error}");
+    }
 
     #[test]
     fn ec_gump_path_uses_interface_gumpart_folder() {

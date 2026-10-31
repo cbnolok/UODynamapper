@@ -8,9 +8,10 @@ use uocf::uop_container::hash_dictionary::HashDictionary;
 use uocf::uop_container::package::UopPackage;
 use uocf::uop_container::template::UopTemplate;
 
+/// Package name -> its candidates. `transparent` instead of `flatten`, so the package tables can deny unknown keys.
 #[derive(Deserialize, Debug, Clone)]
+#[serde(transparent)]
 pub struct PopulatorConfig {
-    #[serde(flatten)]
     pub packages: HashMap<String, PackageConfig>,
 }
 
@@ -47,6 +48,7 @@ impl PopulatorConfig {
 }
 
 #[derive(Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct PackageConfig {
     pub candidates: Vec<String>,
     pub range: Option<[u64; 2]>,
@@ -304,5 +306,21 @@ mod tests {
         assert_eq!(events, vec!["missing:0"]);
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn config_rejects_unknown_package_keys_with_their_position() {
+        let text = "[\"MainMisc.uop\"]\ncandidates = [\"build/a/%08u.bin\"]\nrnage = [0, 10]\n";
+        let error = uocf::utils::config_toml::parse_strict::<PopulatorConfig>("config.toml", text)
+            .expect_err("unknown key")
+            .to_string();
+        assert!(error.contains("line 3, column 1"), "{error}");
+        assert!(error.contains("unknown field `rnage`, expected `candidates` or `range`"), "{error}");
+
+        let text = "[\"MainMisc.uop\"]\nrange = [0, 10]\n";
+        let error = uocf::utils::config_toml::parse_strict::<PopulatorConfig>("config.toml", text)
+            .expect_err("missing key")
+            .to_string();
+        assert!(error.contains("missing field `candidates`"), "{error}");
     }
 }

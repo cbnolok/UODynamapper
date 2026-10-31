@@ -12,13 +12,15 @@ pub enum TextureOptimization {
     JpegXl,
 }
 
+/// The GUI writes this file itself (on every change and on exit), so it is read leniently: keys missing from an
+/// older file take their `Default` value and unknown keys are dropped, each with a warning
+/// (see `logic::settings::load_settings_from_path`).
 #[derive(Deserialize, Serialize, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct AppSettings {
     pub cc_dir: Option<PathBuf>,
     pub ec_dir: Option<PathBuf>,
-    #[serde(default)]
     pub dynamapper_routing_dir: Option<PathBuf>,
-    #[serde(default)]
     pub upscale_profile_path: Option<PathBuf>,
     pub input_uddp_dir: PathBuf,
     pub output_uddp_dir: PathBuf,
@@ -27,47 +29,26 @@ pub struct AppSettings {
     pub opt_tex_land_cc: TextureOptimization,
     pub opt_tex_art_ec: TextureOptimization,
     pub opt_tex_land_ec: TextureOptimization,
-    #[serde(default = "default_mobile_anim_optimization")]
     pub opt_mobile_anim_cc: TextureOptimization,
-    #[serde(default = "default_mobile_anim_optimization")]
     pub opt_mobile_anim_ec: TextureOptimization,
-    #[serde(default = "default_tex_aux_ec_optimization")]
     pub opt_tex_aux_ec: TextureOptimization,
-    #[serde(default = "default_zstd_level")]
     pub zstd_tex_art_cc: i32,
-    #[serde(default = "default_zstd_level")]
     pub zstd_tex_land_cc: i32,
-    #[serde(default = "default_zstd_level")]
     pub zstd_tex_art_ec: i32,
-    #[serde(default = "default_zstd_level")]
     pub zstd_tex_land_ec: i32,
-    #[serde(default = "default_zstd_level")]
     pub zstd_tilemeta: i32,
-    #[serde(default = "default_zstd_level")]
     pub zstd_mobile_anim_cc: i32,
-    #[serde(default = "default_zstd_level")]
     pub zstd_mobile_anim_ec: i32,
-    #[serde(default = "default_zstd_level")]
     pub zstd_tex_aux_ec: i32,
-    #[serde(default = "default_jxl_level")]
     pub jxl_tex_art_cc: u8,
-    #[serde(default = "default_jxl_level")]
     pub jxl_tex_land_cc: u8,
-    #[serde(default = "default_jxl_level")]
     pub jxl_tex_art_ec: u8,
-    #[serde(default = "default_jxl_level")]
     pub jxl_tex_land_ec: u8,
-    #[serde(default = "default_jxl_level")]
     pub jxl_mobile_anim_cc: u8,
-    #[serde(default = "default_jxl_level")]
     pub jxl_mobile_anim_ec: u8,
-    #[serde(default = "default_jxl_level")]
     pub jxl_tex_aux_ec: u8,
-    #[serde(default = "default_bc7_rdo_lambda")]
     pub bc7_rdo_lambda: f32,
-    #[serde(default = "default_bc7_rdo_lookback_blocks")]
     pub bc7_rdo_lookback_blocks: usize,
-    #[serde(default = "default_bc7_rdo_enabled")]
     pub bc7_rdo_enabled: bool,
     pub upscale_tex_art_cc: UpscaleFilter,
     pub upscale_tex_land_cc_64: udd_conv::upscale::UpscaleConfig,
@@ -77,22 +58,15 @@ pub struct AppSettings {
     pub upscale_tex_land_ec_128: udd_conv::upscale::UpscaleConfig,
     pub upscale_tex_land_ec_256: udd_conv::upscale::UpscaleConfig,
     pub upscale_tex_land_ec_512: udd_conv::upscale::UpscaleConfig,
-    #[serde(default)]
     pub upscale_mobile_anim_cc: UpscaleFilter,
-    #[serde(default)]
     pub upscale_mobile_anim_ec: UpscaleFilter,
-    #[serde(default)]
     pub upscale_tex_aux_ec: UpscaleFilter,
     pub radar_format: RadarFormat,
     pub radar_zstd: i32,
     pub map_preferences: [SourceFormatPreference; 6],
-    #[serde(default)]
     pub include_verdata: bool,
-    #[serde(default)]
     pub include_map_difs: bool,
-    #[serde(default)]
     pub include_static_difs: bool,
-    #[serde(default)]
     pub ec_mobile_anim_allow_missing_kdl: bool,
 }
 
@@ -177,9 +151,6 @@ fn default_mobile_anim_optimization() -> TextureOptimization {
     TextureOptimization::Bc7
 }
 
-fn default_tex_aux_ec_optimization() -> TextureOptimization {
-    TextureOptimization::None
-}
 
 pub struct LogMessage {
     pub text: String,

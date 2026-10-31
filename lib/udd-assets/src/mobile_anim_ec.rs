@@ -296,9 +296,16 @@ impl EcMobileAnimationsKdl {
     }
 
     pub fn parse(name: &str, content: &str) -> eyre::Result<Self> {
-        udd_kdl::parse(name, content).wrap_err("Failed to parse EcMobileAnimations KDL")
+        udd_kdl::strict::decode(name, content, EC_MOBILE_ANIMATIONS_SCHEMA)
     }
 }
+
+/// The nodes and properties the decoders below accept, for error messages that name them.
+const EC_MOBILE_ANIMATIONS_SCHEMA: &[udd_kdl::strict::NodeSchema] = &[udd_kdl::strict::NodeSchema {
+    name: "item",
+    properties: &["name", "type", "layer", "male", "female", "gargoyle"],
+    children: &[udd_kdl::strict::NodeSchema::leaf("anim", &["uop", "block", "file"])],
+}];
 
 #[derive(Decode, Debug, Clone)]
 pub struct EcMobileAnimationItemKdl {
@@ -907,5 +914,25 @@ mod tests {
         frames.extend_from_slice(&MOBILE_ANIM_EC_METADATA_VERSION_BODY_MAPPING.to_le_bytes());
         frames.extend_from_slice(&0u32.to_le_bytes());
         assert!(parse_frame_manifest(&frames).unwrap_err().to_string().contains("rebuild"));
+    }
+
+    fn animations_error(content: &str) -> String {
+        EcMobileAnimationsKdl::parse("test.kdl", content).expect_err("parse error").to_string()
+    }
+
+    #[test]
+    fn mobile_animations_reject_unknown_nodes_properties_and_missing_values() {
+        assert_eq!(
+            animations_error("item 400 name=\"Human Male\" type=3 layer=0 {\n    frame 0\n}\n"),
+            "test.kdl: line 2, column 5: unknown node `frame` in `item`: expected `anim`"
+        );
+        assert_eq!(
+            animations_error("item 400 name=\"Human Male\" type=3 layer=0 elf=true\n"),
+            "test.kdl: line 1, column 43: unknown property `elf` of `item`: expected one of `name`, `type`, \
+             `layer`, `male`, `female`, `gargoyle`"
+        );
+        let missing = animations_error("item 400 name=\"Human Male\" type=3\n");
+        assert!(missing.starts_with("test.kdl: invalid KDL: line 1, column 1:"), "{missing}");
+        assert!(missing.contains("layer"), "{missing}");
     }
 }

@@ -154,6 +154,7 @@ pub struct SceneUniform {
 
 #[repr(C, align(16))]
 #[derive(Clone, Copy, PartialEq, ShaderType, Deserialize, Serialize, Default)]
+#[serde(deny_unknown_fields)]
 #[allow(dead_code)] // ShaderType derive generates internal `check` functions that appear unused
 pub struct LandEffectsUniform {
     // Non-lighting rendering controls only.  Lighting toggles and intensities
@@ -170,7 +171,6 @@ pub struct LandEffectsUniform {
 
     // --- Graphics controls (vec4 slot 1) ---
     /// Fake per-art vertical/occlusion shading strength.
-    #[serde(default = "default_art_shadow_strength")]
     pub art_shadow_strength: f32,
     pub sharpening_amount: f32,
     /// Mix factor (0..1) with blurred albedo.
@@ -183,10 +183,8 @@ pub struct LandEffectsUniform {
     /// Automatically suppressed at high zoom (> 10) in the shader.
     pub enable_water_animation: u32,
     /// 0 = neutral/current, 1 = Enhanced Client, 2 = Kingdom Reborn.
-    #[serde(default)]
     pub post_process_profile: u32,
     /// Procedural world-space grunge/weathering multiplier.
-    #[serde(default)]
     pub enable_grunge: u32,
     /// Source-wide controls from Graphics settings, not a style/time preset.
     /// Bit 0 enables CC transitions; bit 1 disables EC transitions.
@@ -195,28 +193,22 @@ pub struct LandEffectsUniform {
 
     // --- Atmosphere controls (vec4 slot 3) ---
     /// Strength of procedural grunge/weathering on terrain and art.
-    #[serde(default)]
     pub grunge_strength: f32,
     /// Reserved for future additive light decals.
-    #[serde(default)]
     pub light_decal_intensity: f32,
     /// Fake per-art light catch strength.
-    #[serde(default = "default_art_highlight_strength")]
     pub art_highlight_strength: f32,
     /// Fake atmosphere/depth tint on art sprites and ground statics.
-    #[serde(default = "default_art_depth_tint_strength")]
     pub art_depth_tint_strength: f32,
 
     // --- Reserved future controls (vec4 slot 4) ---
     /// Reserved for future texture normal-map atlas sampling.
-    #[serde(default)]
     pub enable_normal_maps: u32,
     /// 1 = use KR-style fake normal lighting on 2D art sprites/ground art.
     pub enable_art_fake_normals: u32,
     /// KR-style contact darkening for static art bases, walls, foliage, and ground art.
     pub art_contact_shadow_strength: f32,
     /// Strength of procedural variation applied to art shading and roof repetition.
-    #[serde(default)]
     pub art_mottle_strength: f32,
 
     // --- KR style controls (vec4 slot 5) ---
@@ -231,27 +223,20 @@ pub struct LandEffectsUniform {
 
     // --- Texture normal / art projected shadow controls (vec4 slot 6) ---
     /// Strength for EC land role-3 texture normal contribution.
-    #[serde(default = "default_land_normal_map_strength")]
     pub land_normal_map_strength: f32,
     /// 1 = render KR-style projected bounds shadows for tall art sprites.
-    #[serde(default)]
     pub enable_art_projected_shadows: u32,
     /// Opacity multiplier for projected art shadows.
-    #[serde(default = "default_art_projected_shadow_strength")]
     pub art_projected_shadow_strength: f32,
     /// Directional projection length in world tiles per sprite height unit.
-    #[serde(default = "default_art_projected_shadow_length")]
     pub art_projected_shadow_length: f32,
 
     // --- Art projected shadow softness (vec4 slot 7) ---
     /// Edge softness for bounds-projected art shadows.
-    #[serde(default = "default_art_projected_shadow_softness")]
     pub art_projected_shadow_softness: f32,
     /// 0 disables KR material-family micro contrast; 1 preserves preset strength.
-    #[serde(default = "default_kr_land_material_contrast_strength")]
     pub kr_land_material_contrast_strength: f32,
     /// Visible static-light mask opacity independent from local light response.
-    #[serde(default = "default_static_light_decal_visibility")]
     pub static_light_decal_visibility: f32,
     /// 1 = add KR-style edge grime where textured land materials meet.
     pub enable_kr_transition_grime: u32,
@@ -267,52 +252,13 @@ pub struct LandEffectsUniform {
     pub kr_color_wash_scale: f32,
 }
 
-fn default_art_shadow_strength() -> f32 {
-    0.12
-}
-
-fn default_art_highlight_strength() -> f32 {
-    0.08
-}
-
-fn default_art_depth_tint_strength() -> f32 {
-    0.10
-}
-
-fn default_land_normal_map_strength() -> f32 {
-    0.45
-}
-
-fn default_art_projected_shadow_strength() -> f32 {
-    0.22
-}
-
-fn default_art_projected_shadow_length() -> f32 {
-    0.42
-}
-
-fn default_art_projected_shadow_softness() -> f32 {
-    0.62
-}
-
-fn default_kr_land_material_contrast_strength() -> f32 {
-    0.55
-}
-
-fn default_static_light_decal_visibility() -> f32 {
-    1.0
-}
-
-fn default_atmosphere_tint() -> Vec3 {
-    Vec3::new(0.17, 0.22, 0.29)
-}
-
 /// Global lighting parameters shared across all shader types (land, art tiles, etc.).
 /// Art tiles are 2D sprites with a predefined bounding box — no 3D mesh — so they
 /// don't need view/normal–dependent lighting, but they share grading, fog, gloom,
 /// tonemapping, and base light/ambient colors with the land shader.
 #[repr(C, align(16))]
 #[derive(Clone, Copy, PartialEq, ShaderType, Deserialize, Serialize, Default)]
+#[serde(deny_unknown_fields)]
 #[allow(dead_code)]
 pub struct GlobalLightingUniforms {
     // --- Toggles (vec4 slot 0) ---
@@ -323,17 +269,16 @@ pub struct GlobalLightingUniforms {
 
     // --- Colors ---
     pub light_color: Vec3,
-    #[serde(default)]
+    #[serde(skip)]
     pub _pad0_: f32,
-    #[serde(default = "default_atmosphere_tint")]
     pub atmosphere_tint: Vec3,
-    #[serde(default)]
+    #[serde(skip)]
     pub _pad1_: f32,
 
     // --- Exposure / ambient ---
     pub exposure: f32,
     pub ambient_strength: f32,
-    #[serde(default)]
+    #[serde(skip)]
     pub _pad2_: Vec2,
 
     // --- Grading ---
@@ -371,9 +316,8 @@ pub struct GlobalLightingUniforms {
     //   old fixed value crushed KR ~11x darker than EC). y/z/w reserved.
     //   A full vec4 slot is used (not a trailing scalar + vec3) to match the other
     //   *_params blocks — naga-oil mis-composes this struct with a trailing vec3.
-    //   Appended as a new trailing slot so pre-existing saved presets deserialize
-    //   unchanged (serde default fills it in).
-    #[serde(default = "default_kr_tonemap_params")]
+    //   Appended as a new trailing slot. Hand-written preset files must set it; a cached
+    //   land.toml from an older build gets it from the bundled presets.
     pub kr_tonemap_params: Vec4,
 }
 
@@ -383,23 +327,20 @@ pub struct GlobalLightingUniforms {
 /// box; the "KR Tonemap Brightness" knob can still lower it for a moodier look.
 pub const DEFAULT_KR_TONEMAP_GAIN: f32 = 0.9;
 
-fn default_kr_tonemap_params() -> Vec4 {
-    Vec4::new(DEFAULT_KR_TONEMAP_GAIN, 0.0, 0.0, 0.0)
-}
-
 /// Land-specific lighting: parameters that require a 3D mesh with surface normals
 /// and a view vector, so they only apply to the terrain (not to flat art tiles).
 #[repr(C, align(16))]
 #[derive(Clone, Copy, PartialEq, ShaderType, Deserialize, Serialize, Default)]
+#[serde(deny_unknown_fields)]
 #[allow(dead_code)]
 pub struct LandLightingUniforms {
     // --- Toggle ---
     pub enable_bent: u32,
-    #[serde(default)]
+    #[serde(skip)]
     pub _pad0_: u32,
-    #[serde(default)]
+    #[serde(skip)]
     pub _pad1_: u32,
-    #[serde(default)]
+    #[serde(skip)]
     pub _pad2_: u32,
 
     // --- Intensities ---
@@ -412,7 +353,7 @@ pub struct LandLightingUniforms {
     pub sharpness_mix: f32,
     /// Half-Lambert wrap factor: 0.0 = standard Lambert, 0.3–0.5 = KR-style soft shadow terminator.
     pub diffuse_wrap: f32,
-    #[serde(default)]
+    #[serde(skip)]
     pub _pad4_: f32,
 
     // --- Hemisphere fill & rim colors (need N / V) ---
@@ -453,6 +394,7 @@ pub enum LandShaderMode {
 }
 
 #[derive(Resource, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct LandShaderModePresets {
     pub classic: LandRenderStylePresetsPerMode,
     pub enhanced: LandRenderStylePresetsPerMode,
@@ -461,6 +403,7 @@ pub struct LandShaderModePresets {
 }
 
 #[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct LandRenderStylePresetsPerMode {
     pub morning: LandMaterialUniformsPresets,
     pub afternoon: LandMaterialUniformsPresets,
@@ -468,6 +411,7 @@ pub struct LandRenderStylePresetsPerMode {
     pub cave: LandMaterialUniformsPresets,
 }
 #[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct LandMaterialUniformsPresets {
     pub global_lighting: f32,
     pub effects: LandEffectsUniform,

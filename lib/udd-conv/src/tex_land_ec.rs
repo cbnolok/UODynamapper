@@ -600,6 +600,10 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_prog
 
     if let Some(transcode_path) = transcode_kdl_path {
         let transcode_bytes = fs::read(&transcode_path)?;
+        // The runtime reads the embedded copy strictly; reject a file it would not read.
+        let transcode_text = std::str::from_utf8(&transcode_bytes)
+            .wrap_err_with(|| format!("{}: not UTF-8 text", transcode_path.display()))?;
+        udd_assets::eckr_terrain_kdl::EckrTerrainRouting::from_str(&transcode_path.display().to_string(), transcode_text)?;
         package.add_file(AddFileRequest {
             data_type: DataType::Metadata as u8,
             compression: CompressionFlag::ZstdNoDict,

@@ -35,6 +35,7 @@ impl UOVec3 {
 }
 
 #[derive(Clone, Copy, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct UOVec4 {
     pub x: u16,
     pub y: u16,

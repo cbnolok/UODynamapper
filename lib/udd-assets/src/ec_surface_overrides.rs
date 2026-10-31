@@ -3,6 +3,7 @@ use std::path::Path;
 
 use color_eyre::eyre::{self, WrapErr};
 use knuffel::Decode;
+use udd_kdl::strict::NodeSchema;
 
 #[derive(Decode, Debug, Clone)]
 pub struct EcSurfaceOverrides {
@@ -25,7 +26,7 @@ impl EcSurfaceOverrides {
     }
 
     pub fn parse(name: &str, content: &str) -> eyre::Result<Self> {
-        udd_kdl::parse(name, content).wrap_err("Failed to parse EcSurfaceOverrides KDL")
+        udd_kdl::strict::decode(name, content, EC_SURFACE_OVERRIDES_SCHEMA)
     }
 
     pub fn to_map(&self) -> HashMap<u32, EcSurfaceOverrideEntry> {
@@ -58,6 +59,13 @@ impl EcSurfaceOverrides {
         map
     }
 }
+
+/// The nodes and properties the decoders below accept, for error messages that name them.
+const EC_SURFACE_OVERRIDES_SCHEMA: &[NodeSchema] = &[
+    NodeSchema::leaf("cc_art", &["mode", "code"]),
+    NodeSchema::leaf("ec_material", &["package", "code"]),
+    NodeSchema::leaf("ignore", &["code"]),
+];
 
 #[derive(Decode, Debug, Clone)]
 pub struct CcArtOverrideEntry {
@@ -211,5 +219,36 @@ ignore 39805 code="not_ported"
             panic!("expected ignore action");
         };
         assert_eq!(ignore.reason_code.as_deref(), Some("not_ported"));
+    }
+
+    fn parse_error(content: &str) -> String {
+        EcSurfaceOverrides::parse("test.kdl", content).expect_err("parse error").to_string()
+    }
+
+    #[test]
+    fn bundled_surface_overrides_parse() {
+        EcSurfaceOverrides::parse(
+            "EcSurfaceOverrides.kdl",
+            include_str!("../../../dynamapper/assets/cc_ec_convtables/EcSurfaceOverrides.kdl"),
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+    }
+
+    #[test]
+    fn surface_overrides_reject_unknown_nodes_properties_and_missing_values() {
+        assert_eq!(
+            parse_error("cc_art 1 2 mode=\"raw-cc\"\nec_art 3 4\n"),
+            "test.kdl: line 2, column 1: unknown node `ec_art` at the top level: expected one of `cc_art`, \
+             `ec_material`, `ignore`"
+        );
+        assert_eq!(
+            parse_error("ignore 39805 reason=\"x\"\n"),
+            "test.kdl: line 1, column 14: unknown property `reason` of `ignore`: expected `code`"
+        );
+        let missing = parse_error("cc_art 39698 1170\n");
+        assert!(missing.starts_with("test.kdl: invalid KDL: line 1, column 1:"), "{missing}");
+        assert!(missing.contains("mode"), "{missing}");
+        let extra = parse_error("ignore 1 2\n");
+        assert!(extra.starts_with("test.kdl: invalid KDL: line 1, column 10: unexpected argument"), "{extra}");
     }
 }

@@ -8,7 +8,7 @@ use crate::{
     util_lib::tracked_plugin::*,
 };
 use bevy::prelude::*;
-use std::path::PathBuf;
+use color_eyre::eyre;
 
 
 const SHADER_PRESETS_FILE_NAME: &str = "defaults/shader_presets.toml";
@@ -78,8 +78,9 @@ impl_tracked_plugin!(ShaderPresetsPlugin);
 impl Plugin for ShaderPresetsPlugin {
     fn build(&self, app: &mut App) {
         log_plugin_build(self);
-        let factory_presets = load_factory_presets();
-        let effective_presets = load_effective_presets(&factory_presets);
+        let exit = |error: eyre::Report| crate::configs::settings::exit_on_startup_config_error(&error);
+        let factory_presets = load_factory_presets().unwrap_or_else(exit);
+        let effective_presets = load_effective_presets(&factory_presets).unwrap_or_else(exit);
 
         app.insert_resource(effective_presets)
             .insert_resource(FactoryShaderPresets(factory_presets))
@@ -87,49 +88,62 @@ impl Plugin for ShaderPresetsPlugin {
     }
 }
 
-pub fn load_from_file() -> LandShaderModePresets {
-    let factory_presets = load_factory_presets();
+pub fn load_from_file() -> eyre::Result<LandShaderModePresets> {
+    let factory_presets = load_factory_presets()?;
     load_effective_presets(&factory_presets)
 }
 
-fn load_effective_presets(factory_presets: &LandShaderModePresets) -> LandShaderModePresets {
-    load_shader_settings().unwrap_or_else(|| clone_presets(factory_presets))
+fn load_effective_presets(factory_presets: &LandShaderModePresets) -> eyre::Result<LandShaderModePresets> {
+    Ok(load_shader_settings(factory_presets)?.unwrap_or_else(|| clone_presets(factory_presets)))
 }
 
-fn load_factory_presets() -> LandShaderModePresets {
-    let presets_with_rel_path: PathBuf =
-        crate::core::constants::valid_asset_dir().join(SHADER_PRESETS_FILE_NAME);
-
-    let contents = std::fs::read_to_string(&presets_with_rel_path)
-        .expect("Failed to read shader presets file");
-    let presets: LandShaderModePresets = match toml::from_str(&contents) {
-        Ok(cont) => cont,
-        Err(e) => {
-            eprintln!(
-                "Failed to parse shader presets TOML. Error: {}",
-                e.message()
-            );
-            panic!();
-        }
-    };
-
-    presets
+/// The factory presets: hand-written and required, read strictly.
+fn load_factory_presets() -> eyre::Result<LandShaderModePresets> {
+    crate::configs::settings::load_bundled_settings(SHADER_PRESETS_FILE_NAME)
 }
 
 // ---------------------------------------------------------------------------
 //  User shader settings persistence (land.toml)
 // ---------------------------------------------------------------------------
 
-/// Try to load user-saved shader settings from `settings/shaders/land.toml`,
-/// preferring the cache copy (where the app writes) and falling back to the bundled
-/// default under `assets/`. Returns `None` if neither exists; panics on a parse error.
-pub fn load_shader_settings() -> Option<LandShaderModePresets> {
-    let contents =
-        crate::configs::settings::read_user_settings_file(SHADER_SETTINGS_FILE_NAME).ok()?;
-    match toml::from_str::<LandShaderModePresets>(&contents) {
-        Ok(p) => Some(p),
-        Err(e) => {
-            panic!("Failed to parse land.toml: {}", e.message());
+/// Try to load user-saved shader settings from `settings/shaders/land.toml`.
+///
+/// The bundled copy under `assets/` is hand-written and read strictly; it is optional and stands in for the
+/// factory presets when present. The cache copy the app writes is read over it leniently: keys it lacks keep the
+/// bundled values, unknown keys are dropped, each with a warning, and the file is rewritten complete right away.
+/// Returns `None` if neither copy exists.
+pub fn load_shader_settings(
+    factory_presets: &LandShaderModePresets,
+) -> eyre::Result<Option<LandShaderModePresets>> {
+    let bundled_path = crate::core::constants::valid_asset_dir().join(SHADER_SETTINGS_FILE_NAME);
+    let bundled = if bundled_path.exists() {
+        Some(crate::configs::settings::load_bundled_settings::<LandShaderModePresets>(SHADER_SETTINGS_FILE_NAME)?)
+    } else {
+        None
+    };
+
+    let cache_path = crate::core::constants::valid_cache_dir().join(SHADER_SETTINGS_FILE_NAME);
+    let Ok(contents) = std::fs::read_to_string(&cache_path) else {
+        return Ok(bundled);
+    };
+    let defaults = bundled.as_ref().unwrap_or(factory_presets);
+    match uocf::utils::config_toml::parse_app_state(&cache_path.display().to_string(), &contents, defaults) {
+        Ok(load) => {
+            for warning in &load.warnings {
+                console_logger::one(LogSev::Warn, LogAbout::Settings, warning);
+            }
+            if !load.warnings.is_empty() {
+                save_shader_settings(&load.value);
+            }
+            Ok(Some(load.value))
+        }
+        Err(error) => {
+            console_logger::one(
+                LogSev::Warn,
+                LogAbout::Settings,
+                &format!("{error:#}; using the bundled shader presets, the file is rewritten on the next save"),
+            );
+            Ok(Some(clone_presets(defaults)))
         }
     }
 }
@@ -422,5 +436,52 @@ mod tests {
         assert_eq!(effective.classic.cave.lighting.exposure, 1.3);
         assert_eq!(effective.enhanced.afternoon.global_lighting, 7.0);
         assert_eq!(effective.default_preset, "classic.cave");
+    }
+
+    const BUNDLED_FACTORY_PRESETS: &str = include_str!("../../assets/defaults/shader_presets.toml");
+    const BUNDLED_LAND_SETTINGS: &str = include_str!("../../assets/settings/shaders/land.toml");
+
+    fn parse(text: &str) -> eyre::Result<LandShaderModePresets> {
+        uocf::utils::config_toml::parse_strict("shader_presets.toml", text)
+    }
+
+    #[test]
+    fn bundled_shader_preset_files_parse_strictly() {
+        parse(BUNDLED_FACTORY_PRESETS).unwrap_or_else(|error| panic!("{error}"));
+        parse(BUNDLED_LAND_SETTINGS).unwrap_or_else(|error| panic!("{error}"));
+    }
+
+    #[test]
+    fn shader_presets_reject_unknown_and_missing_keys() {
+        let unknown = BUNDLED_FACTORY_PRESETS.replacen("exposure = ", "exposur = ", 1);
+        let error = parse(&unknown).err().expect("unknown key").to_string();
+        assert!(error.contains("unknown field `exposur`, expected one of `enable_fog`"), "{error}");
+        assert!(error.contains("line "), "{error}");
+
+        let padded = BUNDLED_FACTORY_PRESETS.replacen("exposure = ", "_pad0_ = 0.0\nexposure = ", 1);
+        let error = parse(&padded).err().expect("layout padding is not a setting").to_string();
+        assert!(error.contains("unknown field `_pad0_`"), "{error}");
+
+        let missing = BUNDLED_FACTORY_PRESETS.replacen("kr_tonemap_params = ", "# kr_tonemap_params = ", 1);
+        let error = parse(&missing).err().expect("missing key").to_string();
+        assert!(error.contains("missing field `kr_tonemap_params`"), "{error}");
+    }
+
+    #[test]
+    fn cached_shader_settings_drop_retired_keys_and_fill_new_ones() {
+        let bundled = parse(BUNDLED_LAND_SETTINGS).expect("bundled");
+        let cache = BUNDLED_LAND_SETTINGS
+            .replacen("[classic.morning.effects]\n", "[classic.morning.effects]\n_pad_eff0 = 0.0\n", 1)
+            .replacen("kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]\n", "", 1);
+        let load = uocf::utils::config_toml::parse_app_state("land.toml", &cache, &bundled).expect("lenient load");
+        assert_eq!(
+            load.warnings,
+            [
+                "land.toml: missing key `classic.morning.lighting.kr_tonemap_params` filled from the default",
+                "land.toml: unknown key `classic.morning.effects._pad_eff0` dropped",
+            ]
+        );
+        let rewritten = toml::to_string_pretty(&load.value).expect("serialize");
+        parse(&rewritten).expect("rewritten file is complete");
     }
 }

@@ -28,6 +28,7 @@ bitflags! {
 }
 
 #[derive(Debug, Deserialize, Default, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct SolidLandData {
     pub id: u16,
     pub name: String,
@@ -38,6 +39,7 @@ pub struct SolidLandData {
 }
 
 #[derive(Debug, Deserialize, Default, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct LiquidLandData {
     pub id: u16,
     pub name: String,
@@ -50,6 +52,7 @@ pub struct LiquidLandData {
 }
 
 #[derive(Debug, Deserialize, Default, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct SingleLandData {
     pub id: u16,
     pub name: String,
@@ -65,7 +68,9 @@ pub struct TerrainDefinition {
     pub single_data: Vec<SingleLandData>,
 }
 
+/// Each tile kind's list is optional: a file may define only some kinds.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct TerrainDefinitionFile {
     #[serde(default)]
     solid: Vec<SolidLandData>,
@@ -85,7 +90,7 @@ impl TerrainDefinition {
         })?;
 
         let definition_file: TerrainDefinitionFile =
-            toml::from_str(&content).wrap_err("Failed to parse terrain definition TOML")?;
+            crate::utils::config_toml::parse_strict(&path.as_ref().display().to_string(), &content)?;
 
         Ok(TerrainDefinition {
             solid_data: definition_file.solid,

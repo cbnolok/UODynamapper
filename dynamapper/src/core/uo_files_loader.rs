@@ -545,9 +545,8 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
 
                 commands.insert_resource(EckrTerrainRoutingRes(Arc::new(transcode_map)));
             }
-            Err(e) => {
-                bevy::log::error!("Failed to load {transcode_filename}: {e}");
-            }
+            // Optional when absent; a file that is present must be valid.
+            Err(e) => crate::configs::settings::exit_on_startup_config_error(&e),
         }
     } else {
         lg(&format!(
@@ -594,9 +593,8 @@ pub fn sys_setup_uo_data(mut commands: Commands, settings: Res<Settings>) {
                         );
                     }
                 }
-                Err(e) => {
-                    bevy::log::error!("Failed to load EcTerrainOverrides.kdl: {e}");
-                }
+                // Optional when absent; a file that is present must be valid.
+                Err(e) => crate::configs::settings::exit_on_startup_config_error(&e),
             }
         } else {
             bevy::log::warn!(

@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use clap::ValueEnum;
-use color_eyre::eyre::{self, ContextCompat, WrapErr};
+use color_eyre::eyre::{self, WrapErr};
 use serde::Deserialize;
 use udd_conv::upscale::{EnhancementFilter, UpscalePass};
 use udd_conv::upscale_profile::{
@@ -11,44 +11,41 @@ use udd_conv::upscale_profile::{
 
 use crate::pack_cli::CliUpscaleFilter;
 
-#[derive(Debug, Deserialize, Default)]
+// Profiles are hand-written: unknown keys are errors, and every pass list must be spelled out, because an explicit
+// empty `passes` disables the command-line fallback.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct TomlUpscaleProfile {
-    #[serde(default)]
     art_land: Option<TomlPassSection>,
-    #[serde(default)]
     art_items: Option<TomlPassSection>,
-    #[serde(default)]
     gumps_equip: Option<TomlPassSection>,
-    #[serde(default)]
     gumps_non_equip: Option<TomlPassSection>,
-    #[serde(default)]
     cc_mobile_animation_frames: Option<TomlPassSection>,
-    #[serde(default)]
     ec_mobile_animation_frames: Option<TomlPassSection>,
-    #[serde(default)]
     cc_land_textures: Option<TomlPassSection>,
-    #[serde(default)]
     ec_land_textures: Option<TomlPassSection>,
+    /// Optional: a profile may have no overrides.
     #[serde(default)]
     overrides: Vec<TomlOverride>,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct TomlPassSection {
-    #[serde(default)]
     passes: Vec<PassConfig>,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct TomlOverride {
     image_type: String,
     family: Option<u32>,
     id: u32,
-    #[serde(default)]
     passes: Vec<PassConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct PassConfig {
     filter: String,
     factor: Option<f32>,
@@ -64,22 +61,38 @@ struct PassConfig {
     smart_deblur: Option<f32>,
 }
 
+const PASS_FILTER_KEY: &str = "filter";
+/// The tunable pass parameters, as spelled in TOML keys and KDL properties.
+const PASS_PARAMETERS: [&str; 11] = [
+    "factor",
+    "radius",
+    "amount",
+    "intensity",
+    "threshold",
+    "blur_spread",
+    "gamma",
+    "strength",
+    "deblur_offset",
+    "deblur_strength",
+    "smart_deblur",
+];
+
 pub fn load_upscale_profile(path: &Path) -> eyre::Result<UpscaleProfile> {
     let content = fs::read_to_string(path)
         .wrap_err_with(|| format!("read upscale profile {}", path.display()))?;
-    match path.extension().and_then(|ext| ext.to_str()).map(str::to_ascii_lowercase).as_deref() {
+    let profile = match path.extension().and_then(|ext| ext.to_str()).map(str::to_ascii_lowercase).as_deref() {
         Some("toml") => parse_toml_profile(path, &content),
         Some("kdl") => parse_kdl_profile(path, &content),
         _ => eyre::bail!(
             "unsupported upscale profile extension for {}; expected .toml or .kdl",
             path.display()
         ),
-    }
+    };
+    profile.map_err(|error| udd_kdl::strict::in_file(&path.display().to_string(), error))
 }
 
-fn parse_toml_profile(path: &Path, content: &str) -> eyre::Result<UpscaleProfile> {
-    let config = toml::from_str::<TomlUpscaleProfile>(content)
-        .wrap_err_with(|| format!("parse TOML upscale profile {}", path.display()))?;
+fn parse_toml_profile(_path: &Path, content: &str) -> eyre::Result<UpscaleProfile> {
+    let config = toml::from_str::<TomlUpscaleProfile>(content).map_err(|error| eyre::eyre!("{error}"))?;
     let mut profile = UpscaleProfile::new();
     for (image_type, section) in [
         (UpscaleImageType::ArtLand, config.art_land),
@@ -92,161 +105,192 @@ fn parse_toml_profile(path: &Path, content: &str) -> eyre::Result<UpscaleProfile
         (UpscaleImageType::EcLandTextures, config.ec_land_textures),
     ] {
         if let Some(section) = section {
-            profile.set_default(image_type, parse_passes(&section.passes)?);
+            let passes = parse_passes(&section.passes)
+                .wrap_err_with(|| format!("[{}] passes", image_type.as_str()))
+                .map_err(flatten)?;
+            profile.set_default(image_type, passes);
         }
     }
-    for entry in config.overrides {
-        let image_type = UpscaleImageType::parse(&entry.image_type)
-            .ok_or_else(|| eyre::eyre!("unknown upscale image type '{}'", entry.image_type))?;
-        profile.add_override(UpscaleProfileOverride {
-            image_type,
-            family: entry.family,
-            id: entry.id,
-            passes: parse_passes(&entry.passes)?,
-        });
+    for (index, entry) in config.overrides.into_iter().enumerate() {
+        let location = format!("[[overrides]] entry {}", index + 1);
+        let image_type = parse_image_type(&entry.image_type)
+            .wrap_err_with(|| format!("{location}: image_type"))
+            .map_err(flatten)?;
+        let passes = parse_passes(&entry.passes).wrap_err_with(|| format!("{location}: passes")).map_err(flatten)?;
+        profile.add_override(UpscaleProfileOverride { image_type, family: entry.family, id: entry.id, passes });
     }
     Ok(profile)
 }
 
+/// `context: cause` as one message, so the whole text shows wherever the error is printed with `{}`.
+fn flatten(error: eyre::Report) -> eyre::Report {
+    let parts: Vec<String> = error.chain().map(ToString::to_string).collect();
+    eyre::eyre!("{}", parts.join(": "))
+}
+
+fn parse_image_type(name: &str) -> eyre::Result<UpscaleImageType> {
+    UpscaleImageType::parse(name).ok_or_else(|| {
+        let names: Vec<_> = UpscaleImageType::ALL.iter().map(|image_type| image_type.as_str()).collect();
+        eyre::eyre!("unknown upscale image type '{name}': expected one of {}", names.join(", "))
+    })
+}
+
+/// Image type nodes hold `pass` children; `override` nodes select one target.
+const KDL_PASS_NODE: &str = "pass";
+const KDL_OVERRIDE_NODE: &str = "override";
+const KDL_OVERRIDE_PROPERTIES: [&str; 3] = ["type", "family", "id"];
+
 fn parse_kdl_profile(path: &Path, content: &str) -> eyre::Result<UpscaleProfile> {
-    use udd_kdl::ast::{Literal, Node, Value};
-    use udd_kdl::span::{Span, Spanned};
+    use udd_kdl::ast::Node;
+    use udd_kdl::span::LineSpan;
+    use udd_kdl::strict::{check_properties, error_at, property, required_property, value_f32, value_string, value_u32};
 
-    fn value_string(value: &Value<Span>, field: &str) -> eyre::Result<String> {
-        match &*value.literal {
-            Literal::String(value) => Ok(value.to_string()),
-            _ => eyre::bail!("{field}: expected string"),
-        }
+    fn pass_properties() -> Vec<&'static str> {
+        std::iter::once(PASS_FILTER_KEY).chain(PASS_PARAMETERS).collect()
     }
 
-    fn value_u32(value: &Value<Span>, field: &str) -> eyre::Result<u32> {
-        match &*value.literal {
-            Literal::Int(value) => u32::try_from(value)
-                .wrap_err_with(|| format!("{field}: invalid unsigned integer")),
-            _ => eyre::bail!("{field}: expected integer"),
-        }
-    }
-
-    fn value_f32(value: &Value<Span>, field: &str) -> eyre::Result<f32> {
-        match &*value.literal {
-            Literal::Int(value) => {
-                let value = i32::try_from(value)
-                    .wrap_err_with(|| format!("{field}: invalid integer number"))?;
-                Ok(value as f32)
+    fn parse_pass_node(node: &Node<LineSpan>) -> eyre::Result<UpscalePass> {
+        check_properties(node, &pass_properties())?;
+        udd_kdl::strict::reject_children(node)?;
+        let filter = match (property(node, PASS_FILTER_KEY), node.arguments.as_slice()) {
+            (Some(filter), []) => value_string(filter, PASS_FILTER_KEY)?,
+            (None, [filter]) => value_string(filter, "pass filter")?,
+            (Some(_), [extra, ..]) => {
+                return Err(error_at(extra.literal.span(), "`pass`: give the filter as an argument or filter=, not both"));
             }
-            Literal::Decimal(value) => {
-                f32::try_from(value).wrap_err_with(|| format!("{field}: invalid number"))
+            (None, []) => return Err(error_at(node.node_name.span(), "`pass`: missing the filter name")),
+            (None, [_, extra, ..]) => {
+                return Err(error_at(extra.literal.span(), format!("`pass` takes 1 argument, found {}", node.arguments.len())));
             }
-            _ => eyre::bail!("{field}: expected number"),
-        }
-    }
-
-    fn property<'a>(node: &'a Node<Span>, name: &str) -> Option<&'a Value<Span>> {
-        node.properties
-            .iter()
-            .find(|(key, _)| key.as_ref() == name)
-            .map(|(_, value)| value)
-    }
-
-    fn property_string(node: &Node<Span>, name: &str) -> eyre::Result<Option<String>> {
-        property(node, name).map(|value| value_string(value, name)).transpose()
-    }
-
-    fn property_u32(node: &Node<Span>, name: &str) -> eyre::Result<Option<u32>> {
-        property(node, name).map(|value| value_u32(value, name)).transpose()
-    }
-
-    fn property_f32(node: &Node<Span>, name: &str) -> eyre::Result<Option<f32>> {
-        property(node, name).map(|value| value_f32(value, name)).transpose()
-    }
-
-    fn parse_pass_node(node: &Node<Span>) -> eyre::Result<PassConfig> {
-        let filter = if let Some(value) = property_string(node, "filter")? {
-            value
-        } else {
-            let value = node.arguments.first().context("pass: missing filter argument")?;
-            value_string(value, "pass filter")?
         };
-        Ok(PassConfig {
+        let parameter = |name: &str| property(node, name).map(|value| value_f32(value, name)).transpose();
+        let config = PassConfig {
             filter,
-            factor: property_f32(node, "factor")?,
-            radius: property_f32(node, "radius")?,
-            amount: property_f32(node, "amount")?,
-            intensity: property_f32(node, "intensity")?,
-            threshold: property_f32(node, "threshold")?,
-            blur_spread: property_f32(node, "blur_spread")?,
-            gamma: property_f32(node, "gamma")?,
-            strength: property_f32(node, "strength")?,
-            deblur_offset: property_f32(node, "deblur_offset")?,
-            deblur_strength: property_f32(node, "deblur_strength")?,
-            smart_deblur: property_f32(node, "smart_deblur")?,
-        })
+            factor: parameter("factor")?,
+            radius: parameter("radius")?,
+            amount: parameter("amount")?,
+            intensity: parameter("intensity")?,
+            threshold: parameter("threshold")?,
+            blur_spread: parameter("blur_spread")?,
+            gamma: parameter("gamma")?,
+            strength: parameter("strength")?,
+            deblur_offset: parameter("deblur_offset")?,
+            deblur_strength: parameter("deblur_strength")?,
+            smart_deblur: parameter("smart_deblur")?,
+        };
+        parse_pass(&config).map_err(|error| error_at(node.node_name.span(), error))
     }
 
-    fn pass_nodes<'a, I>(nodes: I) -> eyre::Result<Vec<PassConfig>>
-    where
-        I: IntoIterator<Item = &'a Spanned<Node<Span>, Span>>,
-    {
-        nodes
-            .into_iter()
-            .filter(|node| node.node_name.as_ref() == "pass")
-            .map(|node| parse_pass_node(node))
+    fn pass_nodes(parent: &Node<LineSpan>) -> eyre::Result<Vec<UpscalePass>> {
+        parent
+            .children()
+            .map(|node| match &**node.node_name {
+                KDL_PASS_NODE => parse_pass_node(node),
+                _ => Err(udd_kdl::strict::unknown_node(node, Some(&**parent.node_name), &[KDL_PASS_NODE])),
+            })
             .collect()
     }
 
-    let document = udd_kdl::parse_ast(&path.display().to_string(), content)
-        .wrap_err_with(|| format!("parse KDL upscale profile {}", path.display()))?;
+    let document = udd_kdl::parse_ast_line_span(&path.display().to_string(), content)
+        .map_err(|error| udd_kdl::strict::describe_error(content, &error))?;
     let mut profile = UpscaleProfile::new();
     for node in &document.nodes {
-        if node.node_name.as_ref() == "override" {
-            let image_type = property_string(node, "type")?
-                .context("override: missing type property")?;
-            let image_type = UpscaleImageType::parse(&image_type)
-                .ok_or_else(|| eyre::eyre!("unknown upscale image type '{image_type}'"))?;
-            let id = property_u32(node, "id")?.context("override: missing id property")?;
-            profile.add_override(UpscaleProfileOverride {
-                image_type,
-                family: property_u32(node, "family")?,
-                id,
-                passes: parse_passes(&pass_nodes(node.children())?)?,
-            });
+        let name: &str = &node.node_name;
+        if name == KDL_OVERRIDE_NODE {
+            check_properties(node, &KDL_OVERRIDE_PROPERTIES)?;
+            udd_kdl::strict::arguments::<0>(node)?;
+            let image_type_value = required_property(node, "type")?;
+            let image_type = parse_image_type(&value_string(image_type_value, "type")?)
+                .map_err(|error| error_at(image_type_value.literal.span(), error))?;
+            let id = value_u32(required_property(node, "id")?, "id")?;
+            let family = property(node, "family").map(|value| value_u32(value, "family")).transpose()?;
+            profile.add_override(UpscaleProfileOverride { image_type, family, id, passes: pass_nodes(node)? });
             continue;
         }
 
-        if let Some(image_type) = UpscaleImageType::parse(node.node_name.as_ref()) {
-            profile.set_default(image_type, parse_passes(&pass_nodes(node.children())?)?);
-        }
+        let Some(image_type) = UpscaleImageType::parse(name) else {
+            let allowed: Vec<_> = UpscaleImageType::ALL
+                .iter()
+                .map(|image_type| image_type.as_str())
+                .chain([KDL_OVERRIDE_NODE])
+                .collect();
+            return Err(udd_kdl::strict::unknown_node(node, None, &allowed));
+        };
+        check_properties(node, &[])?;
+        udd_kdl::strict::arguments::<0>(node)?;
+        profile.set_default(image_type, pass_nodes(node)?);
     }
     Ok(profile)
 }
 
 fn parse_passes(passes: &[PassConfig]) -> eyre::Result<Vec<UpscalePass>> {
-    passes.iter().map(parse_pass).collect()
+    passes
+        .iter()
+        .enumerate()
+        .map(|(index, pass)| parse_pass(pass).wrap_err_with(|| format!("pass {}", index + 1)).map_err(flatten))
+        .collect()
 }
 
 fn parse_pass(pass: &PassConfig) -> eyre::Result<UpscalePass> {
     let cli_filter = CliUpscaleFilter::from_str(&pass.filter, true)
         .map_err(|error| eyre::eyre!("invalid upscale filter '{}': {error}", pass.filter))?;
-    pass.pass_for_filter(cli_filter)
+    pass.check_parameters(cli_filter)?;
+    Ok(pass.pass_for_filter(cli_filter))
+}
+
+/// The parameters each tunable filter reads; other filters take none.
+fn supported_parameters(filter: CliUpscaleFilter) -> &'static [&'static str] {
+    match filter {
+        CliUpscaleFilter::Vibrance
+        | CliUpscaleFilter::Saturation
+        | CliUpscaleFilter::SelectiveWarm
+        | CliUpscaleFilter::SelectiveGreen => &["factor"],
+        CliUpscaleFilter::LocalLaplacianClarity | CliUpscaleFilter::UnsharpMask => &["radius", "amount"],
+        CliUpscaleFilter::ContrastEnhance => &["intensity", "threshold", "blur_spread"],
+        CliUpscaleFilter::AdaptiveLogContrast => &["radius", "gamma"],
+        CliUpscaleFilter::HighPassSharpen => &["radius", "strength"],
+        CliUpscaleFilter::ScaleFxSmartDeblur => &["deblur_offset", "deblur_strength", "smart_deblur"],
+        _ => &[],
+    }
 }
 
 impl PassConfig {
-    fn has_custom_params(&self) -> bool {
-        self.factor.is_some()
-            || self.radius.is_some()
-            || self.amount.is_some()
-            || self.intensity.is_some()
-            || self.threshold.is_some()
-            || self.blur_spread.is_some()
-            || self.gamma.is_some()
-            || self.strength.is_some()
-            || self.deblur_offset.is_some()
-            || self.deblur_strength.is_some()
-            || self.smart_deblur.is_some()
+    /// The names of the parameters this pass sets.
+    fn set_parameters(&self) -> impl Iterator<Item = &'static str> {
+        let values = [
+            self.factor,
+            self.radius,
+            self.amount,
+            self.intensity,
+            self.threshold,
+            self.blur_spread,
+            self.gamma,
+            self.strength,
+            self.deblur_offset,
+            self.deblur_strength,
+            self.smart_deblur,
+        ];
+        PASS_PARAMETERS.into_iter().zip(values).filter_map(|(name, value)| value.map(|_| name))
     }
 
-    fn pass_for_filter(&self, filter: CliUpscaleFilter) -> eyre::Result<UpscalePass> {
-        let pass = match filter {
+    /// Rejects parameters the filter does not read, which would otherwise be ignored.
+    fn check_parameters(&self, filter: CliUpscaleFilter) -> eyre::Result<()> {
+        let supported = supported_parameters(filter);
+        match self.set_parameters().find(|name| !supported.contains(name)) {
+            None => Ok(()),
+            Some(name) if supported.is_empty() => {
+                eyre::bail!("upscale filter '{}' takes no parameters, found `{name}`", self.filter)
+            }
+            Some(name) => eyre::bail!(
+                "upscale filter '{}' does not take `{name}`: expected {}",
+                self.filter,
+                supported.join(", ")
+            ),
+        }
+    }
+
+    fn pass_for_filter(&self, filter: CliUpscaleFilter) -> UpscalePass {
+        match filter {
             CliUpscaleFilter::Vibrance => {
                 UpscalePass::from(EnhancementFilter::Vibrance { factor: self.factor.unwrap_or(0.30) })
             }
@@ -298,17 +342,8 @@ impl PassConfig {
                 })
             }
             CliUpscaleFilter::GuestrDeblur => UpscalePass::from(EnhancementFilter::GuestrDeblur),
-            _ => {
-                if self.has_custom_params() {
-                    eyre::bail!(
-                        "upscale filter '{}' does not support custom pass parameters",
-                        self.filter
-                    );
-                }
-                filter.into_pass()
-            }
-        };
-        Ok(pass)
+            _ => filter.into_pass(),
+        }
     }
 }
 
@@ -388,5 +423,74 @@ override type="cc_mobile_animation_frames" family=42 id=3 {
             )[0].filter(),
             Some(UpscaleFilter::Nearest2x)
         );
+    }
+
+    fn toml_error(content: &str) -> String {
+        parse_toml_profile(Path::new("profile.toml"), content).expect_err("profile error").to_string()
+    }
+
+    fn kdl_error(content: &str) -> String {
+        parse_kdl_profile(Path::new("profile.kdl"), content).expect_err("profile error").to_string()
+    }
+
+    #[test]
+    fn toml_profile_rejects_unknown_and_missing_keys() {
+        let unknown = toml_error("[art_items]\npasses = []\n\n[art_itemz]\npasses = []\n");
+        assert!(unknown.contains("line 4, column 2"), "{unknown}");
+        assert!(unknown.contains("unknown field `art_itemz`, expected one of `art_land`, `art_items`"), "{unknown}");
+
+        let unknown_param = toml_error("[art_items]\npasses = [{ filter = \"vibrance\", factr = 0.3 }]\n");
+        assert!(unknown_param.contains("line 2, column 34"), "{unknown_param}");
+        assert!(unknown_param.contains("unknown field `factr`"), "{unknown_param}");
+
+        let missing = toml_error("[art_items]\n");
+        assert!(missing.contains("missing field `passes`"), "{missing}");
+    }
+
+    #[test]
+    fn profiles_reject_parameters_the_filter_does_not_read() {
+        assert_eq!(
+            toml_error("[art_items]\npasses = [{ filter = \"nearest2x\" }, { filter = \"vibrance\", radius = 2 }]\n"),
+            "[art_items] passes: pass 2: upscale filter 'vibrance' does not take `radius`: expected factor"
+        );
+        assert_eq!(
+            kdl_error("art_items {\n    pass \"xbr2x\" factor=0.3\n}\n"),
+            "line 2, column 5: upscale filter 'xbr2x' takes no parameters, found `factor`"
+        );
+        assert_eq!(
+            toml_error("[[overrides]]\nimage_type = \"art_item\"\nid = 1\npasses = []\n"),
+            "[[overrides]] entry 1: image_type: unknown upscale image type 'art_item': expected one of art_land, \
+             art_items, gumps_equip, gumps_non_equip, cc_mobile_animation_frames, ec_mobile_animation_frames, \
+             cc_land_textures, ec_land_textures"
+        );
+    }
+
+    #[test]
+    fn kdl_profile_rejects_unknown_nodes_and_properties_with_their_position() {
+        assert_eq!(
+            kdl_error("art_items {\n    pass \"nearest2x\"\n}\nart_itemz {\n}\n"),
+            "line 4, column 1: unknown node `art_itemz` at the top level: expected one of `art_land`, `art_items`, \
+             `gumps_equip`, `gumps_non_equip`, `cc_mobile_animation_frames`, `ec_mobile_animation_frames`, \
+             `cc_land_textures`, `ec_land_textures`, `override`"
+        );
+        assert_eq!(
+            kdl_error("art_items {\n    step \"nearest2x\"\n}\n"),
+            "line 2, column 5: unknown node `step` in `art_items`: expected `pass`"
+        );
+        assert_eq!(
+            kdl_error("art_items {\n    pass \"vibrance\" factr=0.3\n}\n"),
+            "line 2, column 21: unknown property `factr` of `pass`: expected one of `filter`, `factor`, `radius`, \
+             `amount`, `intensity`, `threshold`, `blur_spread`, `gamma`, `strength`, `deblur_offset`, \
+             `deblur_strength`, `smart_deblur`"
+        );
+        assert_eq!(
+            kdl_error("override type=\"art_items\" ids=4000 {\n}\n"),
+            "line 1, column 27: unknown property `ids` of `override`: expected one of `type`, `family`, `id`"
+        );
+        assert_eq!(
+            kdl_error("override type=\"art_items\" {\n}\n"),
+            "line 1, column 1: `override`: missing id="
+        );
+        assert_eq!(kdl_error("art_items {\n    pass\n}\n"), "line 2, column 5: `pass`: missing the filter name");
     }
 }

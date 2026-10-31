@@ -58,6 +58,12 @@ For each image target, the packer chooses passes in this order:
 An explicit empty `passes` list is meaningful: it disables the fallback for that
 matched target or type.
 
+Profiles are read strictly: an unknown table, key, KDL node or property, an
+unknown image type or filter name, or a parameter the pass's filter does not
+read is an error that names the file, the place and the allowed names. Every
+image-type table and every override needs its `passes`; `[[overrides]]` itself
+is optional.
+
 ## TOML Format
 
 Each image type can be a table with a `passes` array. Overrides are entries in

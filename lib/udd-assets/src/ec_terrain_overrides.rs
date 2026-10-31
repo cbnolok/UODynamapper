@@ -3,6 +3,7 @@ use std::path::Path;
 
 use color_eyre::eyre::{self, WrapErr};
 use knuffel::Decode;
+use udd_kdl::strict::NodeSchema;
 
 #[derive(Decode, Debug, Clone)]
 pub struct EcTerrainOverrides {
@@ -21,7 +22,7 @@ impl EcTerrainOverrides {
     }
 
     pub fn parse(name: &str, content: &str) -> eyre::Result<Self> {
-        udd_kdl::parse(name, content).wrap_err("Failed to parse EcTerrainOverrides KDL")
+        udd_kdl::strict::decode(name, content, EC_TERRAIN_OVERRIDES_SCHEMA)
     }
 
     pub fn to_map(&self) -> HashMap<u32, EcTerrainOverrideEntry> {
@@ -39,6 +40,19 @@ impl EcTerrainOverrides {
         map
     }
 }
+
+/// The nodes and properties the decoders below accept, for error messages that name them.
+const EC_TERRAIN_OVERRIDES_SCHEMA: &[NodeSchema] = &[NodeSchema {
+    name: "terrain",
+    properties: &[],
+    children: &[
+        NodeSchema::leaf("policy", &["code"]),
+        NodeSchema::leaf("liquid", &["speed", "waveheight", "code"]),
+        NodeSchema::leaf("layer", &["tex", "stretch", "code"]),
+        NodeSchema::leaf("texture", &["role", "code"]),
+        NodeSchema::leaf("ignore", &["code"]),
+    ],
+}];
 
 #[derive(Decode, Debug, Clone)]
 pub struct EcTerrainOverrideTerrainEntry {
@@ -169,5 +183,46 @@ terrain 201 {
             map[&201].ignore.as_ref().and_then(|ignore| ignore.code.as_deref()),
             Some("intentionally_hidden")
         );
+    }
+
+    fn parse_error(content: &str) -> String {
+        EcTerrainOverrides::parse("test.kdl", content).expect_err("parse error").to_string()
+    }
+
+    #[test]
+    fn bundled_terrain_overrides_parse() {
+        EcTerrainOverrides::parse(
+            "EcTerrainOverrides.kdl",
+            include_str!("../../../dynamapper/assets/cc_ec_convtables/EcTerrainOverrides.kdl"),
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+    }
+
+    #[test]
+    fn terrain_overrides_reject_unknown_nodes_and_properties_with_their_position() {
+        assert_eq!(
+            parse_error("terrain 5 {\n    shader \"x\"\n}\n"),
+            "test.kdl: line 2, column 5: unknown node `shader` in `terrain`: expected one of `policy`, `liquid`, \
+             `layer`, `texture`, `ignore`"
+        );
+        assert_eq!(
+            parse_error("terrain 5 {\n    liquid speed=0.1 height=0.3\n}\n"),
+            "test.kdl: line 2, column 22: unknown property `height` of `liquid`: expected one of `speed`, \
+             `waveheight`, `code`"
+        );
+        assert_eq!(
+            parse_error("terrian 5\n"),
+            "test.kdl: line 1, column 1: unknown node `terrian` at the top level: expected `terrain`"
+        );
+    }
+
+    #[test]
+    fn terrain_overrides_reject_missing_and_extra_values() {
+        let missing = parse_error("terrain 52 {\n    layer \"t0\" stretch=1.0\n}\n");
+        assert!(missing.starts_with("test.kdl: invalid KDL: line 2, column 5:"), "{missing}");
+        assert!(missing.contains("tex"), "{missing}");
+
+        let extra = parse_error("terrain 5 6\n");
+        assert!(extra.starts_with("test.kdl: invalid KDL: line 1, column 11: unexpected argument"), "{extra}");
     }
 }

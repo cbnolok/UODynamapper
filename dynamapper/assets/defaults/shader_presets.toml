@@ -93,6 +93,10 @@ enable_art_projected_shadows = 0
 art_projected_shadow_strength = 0.0
 art_projected_shadow_length = 0.42
 art_projected_shadow_softness = 0.62
+art_shadow_strength = 0.12
+art_highlight_strength = 0.08
+art_depth_tint_strength = 0.1
+art_mottle_strength = 0.0
 
 [classic.morning.lighting]
 enable_fog = 0
@@ -112,6 +116,7 @@ fog_color = [0.75, 0.85, 0.95, 0.5]
 fog_params = [0.02, 0.0, 0.0, 0.0]
 gloom_color = [0.0, 0.0, 0.0, 0.0]
 fog_night_color = [0.0, 0.0, 0.0, 0.0]
+kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [classic.morning.land_lighting]
 enable_bent = 1
@@ -161,6 +166,10 @@ enable_art_projected_shadows = 0
 art_projected_shadow_strength = 0.0
 art_projected_shadow_length = 0.42
 art_projected_shadow_softness = 0.62
+art_shadow_strength = 0.12
+art_highlight_strength = 0.08
+art_depth_tint_strength = 0.1
+art_mottle_strength = 0.0
 
 [classic.afternoon.lighting]
 enable_fog = 0
@@ -180,6 +189,7 @@ fog_color = [0.75, 0.85, 0.95, 0.5]
 fog_params = [0.02, 0.0, 0.0, 0.0]
 gloom_color = [0.0, 0.0, 0.0, 0.0]
 fog_night_color = [0.0, 0.0, 0.0, 0.0]
+kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [classic.afternoon.land_lighting]
 enable_bent = 1
@@ -229,6 +239,10 @@ enable_art_projected_shadows = 0
 art_projected_shadow_strength = 0.0
 art_projected_shadow_length = 0.42
 art_projected_shadow_softness = 0.62
+art_shadow_strength = 0.12
+art_highlight_strength = 0.08
+art_depth_tint_strength = 0.1
+art_mottle_strength = 0.0
 
 [classic.night.lighting]
 enable_fog = 0
@@ -248,6 +262,7 @@ fog_color = [0.75, 0.85, 0.95, 0.5]
 fog_params = [0.02, 0.0, 0.0, 0.0]
 gloom_color = [0.0, 0.0, 0.0, 0.0]
 fog_night_color = [0.0, 0.0, 0.0, 0.0]
+kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [classic.night.land_lighting]
 enable_bent = 1
@@ -297,6 +312,10 @@ enable_art_projected_shadows = 0
 art_projected_shadow_strength = 0.0
 art_projected_shadow_length = 0.42
 art_projected_shadow_softness = 0.62
+art_shadow_strength = 0.12
+art_highlight_strength = 0.08
+art_depth_tint_strength = 0.1
+art_mottle_strength = 0.0
 
 [classic.cave.lighting]
 enable_fog = 0
@@ -316,6 +335,7 @@ fog_color = [0.75, 0.85, 0.95, 0.5]
 fog_params = [0.02, 0.0, 0.0, 0.0]
 gloom_color = [0.0, 0.0, 0.0, 0.0]
 fog_night_color = [0.0, 0.0, 0.0, 0.0]
+kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [classic.cave.land_lighting]
 enable_bent = 1
@@ -370,6 +390,10 @@ enable_art_projected_shadows = 0
 art_projected_shadow_strength = 0.0
 art_projected_shadow_length = 0.42
 art_projected_shadow_softness = 0.62
+art_shadow_strength = 0.12
+art_highlight_strength = 0.08
+art_depth_tint_strength = 0.1
+art_mottle_strength = 0.0
 
 [enhanced.morning.lighting]
 enable_fog = 0
@@ -389,6 +413,7 @@ fog_color = [0.75, 0.85, 0.95, 0.5]
 fog_params = [0.02, 0.0, 0.0, 0.0]
 gloom_color = [0.0, 0.0, 0.0, 0.0]
 fog_night_color = [0.0, 0.0, 0.0, 0.0]
+kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [enhanced.morning.land_lighting]
 enable_bent = 1
@@ -437,6 +462,10 @@ enable_art_projected_shadows = 0
 art_projected_shadow_strength = 0.0
 art_projected_shadow_length = 0.42
 art_projected_shadow_softness = 0.62
+art_shadow_strength = 0.12
+art_highlight_strength = 0.08
+art_depth_tint_strength = 0.1
+art_mottle_strength = 0.0
 
 [enhanced.afternoon.lighting]
 enable_fog = 0
@@ -456,6 +485,7 @@ fog_color = [0.75, 0.85, 0.95, 0.5]
 fog_params = [0.02, 0.0, 0.0, 0.0]
 gloom_color = [0.0, 0.0, 0.0, 0.0]
 fog_night_color = [0.0, 0.0, 0.0, 0.0]
+kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [enhanced.afternoon.land_lighting]
 enable_bent = 1
@@ -504,6 +534,10 @@ enable_art_projected_shadows = 0
 art_projected_shadow_strength = 0.0
 art_projected_shadow_length = 0.42
 art_projected_shadow_softness = 0.62
+art_shadow_strength = 0.12
+art_highlight_strength = 0.08
+art_depth_tint_strength = 0.1
+art_mottle_strength = 0.0
 
 [enhanced.night.lighting]
 enable_fog = 0
@@ -523,6 +557,7 @@ fog_color = [0.75, 0.85, 0.95, 0.5]
 fog_params = [0.02, 0.0, 0.0, 0.0]
 gloom_color = [0.0, 0.0, 0.0, 0.0]
 fog_night_color = [0.0, 0.0, 0.0, 0.0]
+kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [enhanced.night.land_lighting]
 enable_bent = 1
@@ -571,6 +606,10 @@ enable_art_projected_shadows = 0
 art_projected_shadow_strength = 0.0
 art_projected_shadow_length = 0.42
 art_projected_shadow_softness = 0.62
+art_shadow_strength = 0.12
+art_highlight_strength = 0.08
+art_depth_tint_strength = 0.1
+art_mottle_strength = 0.0
 
 [enhanced.cave.lighting]
 enable_fog = 0
@@ -590,6 +629,7 @@ fog_color = [0.75, 0.85, 0.95, 0.5]
 fog_params = [0.02, 0.0, 0.0, 0.0]
 gloom_color = [0.0, 0.0, 0.0, 0.0]
 fog_night_color = [0.0, 0.0, 0.0, 0.0]
+kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [enhanced.cave.land_lighting]
 enable_bent = 1
@@ -647,6 +687,7 @@ enable_art_projected_shadows = 1
 art_projected_shadow_strength = 0.22
 art_projected_shadow_length = 0.42
 art_projected_shadow_softness = 0.62
+art_mottle_strength = 0.0
 
 [kr.morning.lighting]
 enable_fog = 1
@@ -666,6 +707,7 @@ fog_color = [0.035, 0.045, 0.060, 0.30]
 fog_params = [0.040, 0.012, 0.55, 0.16]
 gloom_color = [0.15, 0.18, 0.28, 0.12]
 fog_night_color = [0.010, 0.014, 0.024, 0.25]
+kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [kr.morning.land_lighting]
 enable_bent = 1
@@ -717,6 +759,7 @@ enable_art_projected_shadows = 1
 art_projected_shadow_strength = 0.24
 art_projected_shadow_length = 0.44
 art_projected_shadow_softness = 0.62
+art_mottle_strength = 0.0
 
 [kr.afternoon.lighting]
 enable_fog = 1
@@ -736,6 +779,7 @@ fog_color = [0.040, 0.050, 0.065, 0.28]
 fog_params = [0.035, 0.010, 0.50, 0.14]
 gloom_color = [0.14, 0.16, 0.24, 0.10]
 fog_night_color = [0.012, 0.016, 0.026, 0.22]
+kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [kr.afternoon.land_lighting]
 enable_bent = 1
@@ -787,6 +831,7 @@ enable_art_projected_shadows = 1
 art_projected_shadow_strength = 0.18
 art_projected_shadow_length = 0.36
 art_projected_shadow_softness = 0.68
+art_mottle_strength = 0.0
 
 [kr.night.lighting]
 enable_fog = 1
@@ -806,6 +851,7 @@ fog_color = [0.020, 0.026, 0.040, 0.36]
 fog_params = [0.055, 0.020, 0.48, 0.22]
 gloom_color = [0.08, 0.10, 0.18, 0.22]
 fog_night_color = [0.006, 0.008, 0.018, 0.55]
+kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [kr.night.land_lighting]
 enable_bent = 1
@@ -857,6 +903,7 @@ enable_art_projected_shadows = 1
 art_projected_shadow_strength = 0.16
 art_projected_shadow_length = 0.28
 art_projected_shadow_softness = 0.74
+art_mottle_strength = 0.0
 
 [kr.cave.lighting]
 enable_fog = 1
@@ -876,6 +923,7 @@ fog_color = [0.018, 0.022, 0.034, 0.34]
 fog_params = [0.040, 0.026, 0.42, 0.20]
 gloom_color = [0.06, 0.08, 0.14, 0.28]
 fog_night_color = [0.004, 0.006, 0.014, 0.60]
+kr_tonemap_params = [0.9, 0.0, 0.0, 0.0]
 
 [kr.cave.land_lighting]
 enable_bent = 1

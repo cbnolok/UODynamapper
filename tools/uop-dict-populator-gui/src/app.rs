@@ -258,7 +258,7 @@ impl eframe::App for UopPopulatorApp {
                         } else if self.dictionary_path.is_none() {
                             self.add_log("Error: No dictionary output file selected.");
                         } else {
-                            match toml::from_str::<PopulatorConfig>(&self.config_text) {
+                            match uocf::utils::config_toml::parse_strict::<PopulatorConfig>("config", &self.config_text) {
                                 Ok(config) => {
                                     if let Err(e) = config.validate() {
                                         self.add_log(format!("Config Error: {}", e));

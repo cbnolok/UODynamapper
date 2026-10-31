@@ -3296,7 +3296,7 @@ mod tests {
         use bevy::ecs::system::RunSystemOnce;
         use udd_assets::tex_art_cc::PagePixelFormat;
         let mut world = World::new();
-        let mut settings = crate::configs::settings::load_from_files();
+        let mut settings = crate::configs::settings::load_from_files().expect("settings load");
         settings.world_rendering.enable_statics = false;
         let key = StaticChunkBatchKey { map_id: 0, gx: 1, gy: 2, scale: 1 };
         let batch = StaticChunkBatch { key, start: 0, count: 1 };

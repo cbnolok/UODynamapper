@@ -131,13 +131,15 @@ enum Commands {
     },
 }
 
+/// Package name -> its candidates. `transparent` instead of `flatten`, so the package tables can deny unknown keys.
 #[derive(Deserialize, Debug)]
+#[serde(transparent)]
 struct PopulatorConfig {
-    #[serde(flatten)]
     packages: HashMap<String, PackageConfig>,
 }
 
 #[derive(Deserialize, Debug)]
+#[serde(deny_unknown_fields)]
 struct PackageConfig {
     candidates: Vec<String>,
     range: Option<[u64; 2]>,
@@ -383,7 +385,8 @@ fn main() -> eyre::Result<()> {
             input,
         } => {
             let config_content = std::fs::read_to_string(config)?;
-            let cfg: PopulatorConfig = toml::from_str(&config_content)?;
+            let cfg: PopulatorConfig =
+                uocf::utils::config_toml::parse_strict(&config.display().to_string(), &config_content)?;
 
             let mut hash_dictionary = if let Some(input_path) = input {
                 HashDictionary::load(input_path)?

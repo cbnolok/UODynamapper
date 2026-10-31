@@ -37,10 +37,10 @@ impl UddConvApp {
                 text: "Application started. Please configure your source directories.".to_string(),
                 level: LogLevel::Info,
             });
-            if let Some(warning) = settings_warning {
+            for warning in settings_warning {
                 logs_guard.push(LogMessage {
                     text: warning,
-                    level: LogLevel::Error,
+                    level: LogLevel::Warning,
                 });
             }
         }

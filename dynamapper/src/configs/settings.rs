@@ -10,6 +10,7 @@ use bevy::{
     prelude::*,
     window::WindowResolution,
 };
+use color_eyre::eyre;
 use serde::{Deserialize, Serialize};
 
 #[derive(Asset, Clone, Deserialize, Serialize, Resource, TypePath)]
@@ -25,6 +26,7 @@ pub struct Settings {
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct SectKeybindings {
     pub shader_settings: KeyCode,
     pub user_settings: KeyCode,
@@ -34,15 +36,16 @@ pub struct SectKeybindings {
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct SectCore {
     pub world: SectWorld,
 }
 
-// User-settings section: `#[serde(default)]` lets a cache file written by an older
-// build (missing newly-added keys) load with defaults instead of panicking. Applied
-// only to user settings + session state, not to bundled/system config.
+// User-settings section. The bundled file is hand-written and read strictly; the cache copy the app writes
+// is read leniently (see `load_user_settings`), so a cache file written by an older build (missing
+// newly-added keys) loads with the bundled values instead of stopping the app.
 #[derive(Clone, Default, Deserialize, Serialize, PartialEq)]
-#[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct SectApp {
     pub input: SectInput,
     pub window: SectWindow,
@@ -50,20 +53,22 @@ pub struct SectApp {
     pub performance: SectPerformance,
 }
 
-// Session state: relocated to the cache dir and made tolerant to missing keys.
+// Session state: relocated to the cache dir, where it is read leniently like the user settings.
 #[derive(Clone, Default, Deserialize, Serialize, PartialEq)]
-#[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct SectSessionState {
     pub world: SectSessionWorld,
     pub window: SectSessionWindow,
 }
 
 #[derive(Clone, Default, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct SectSessionWorld {
     pub last_p: UOVec4,
 }
 
 #[derive(Clone, Default, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct SectSessionWindow {
     pub height: f32,
     pub width: f32,
@@ -71,18 +76,21 @@ pub struct SectSessionWindow {
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct SectRuntimeAssets {
     pub udd_path: String,
     pub load_gumps: bool,
 }
 
 #[derive(Clone, Default, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct SectInput {
     pub movement_speed_multiplier: f32,
     pub smooth_movement: bool,
 }
 
 #[derive(Clone, Default, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct SectWindow {
     pub ui_scale: f32,
     /// Per-overlay scale for the player position overlay.
@@ -98,181 +106,91 @@ pub struct SectWindow {
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct SectWorld {
     pub start_p: UOVec4,
     pub hide_player: bool,
 }
 
-#[derive(Clone, Deserialize, Serialize, Default, PartialEq)]
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct SectWorldRendering {
-    #[serde(default = "default_enable_statics")]
     pub enable_statics: bool,
-    #[serde(default = "default_enable_static_lights")]
     pub enable_static_lights: bool,
-    #[serde(default = "default_enable_static_art_local_lights")]
     pub enable_static_art_local_lights: bool,
     /// Also draws the multi parts the client never draws (classic parts without the visible
     /// flag, EC `not_drawn` parts).
-    #[serde(default)]
     pub show_hidden_multi_parts: bool,
-    #[serde(default)]
     pub land_streaming: SectLandStreaming,
-    #[serde(default)]
     pub diagnostics: SectWorldRenderingDiagnostics,
-    #[serde(default)]
     pub shader_simplification: SectWorldRenderingShaderSimplification,
 }
 
-fn default_enable_statics() -> bool {
-    false
-}
-
-fn default_enable_static_lights() -> bool {
-    false
-}
-
-fn default_enable_static_art_local_lights() -> bool {
-    false
-}
-
-#[derive(Clone, Deserialize, Serialize, PartialEq, Eq, Default)]
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct SectWorldRenderingShaderSimplification {
     /// Forces a temporary minimal land shader configuration on the shared land material.
-    #[serde(default)]
     pub force_minimal_shader: bool,
     /// Forces the land fragment shader to return a flat debug color immediately.
-    #[serde(default)]
     pub force_flat_fragment_shader: bool,
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct SectWorldRenderingDiagnostics {
     /// Enables Bevy's low-level render diagnostics plugin.
     ///
     /// This gathers GPU pass timings and pipeline statistics. It is useful when profiling, but
     /// on some drivers it can perturb frame time noticeably. Restart required after changing it.
-    #[serde(default = "default_worldmap_diagnostics_enable_render_diagnostics")]
     pub enable_render_diagnostics: bool,
     /// Enables compact periodic worldmap diagnostics in the console.
-    #[serde(default)]
     pub dump_to_console: bool,
     /// Period between compact diagnostics dumps.
-    #[serde(default = "default_worldmap_diagnostics_dump_interval_sec")]
     pub dump_interval_sec: f32,
     /// Include a compact render-pass GPU breakdown in the dump.
-    #[serde(default = "default_worldmap_diagnostics_log_render_breakdown")]
     pub log_render_breakdown: bool,
     /// Include compact world/chunk state in the dump.
-    #[serde(default = "default_worldmap_diagnostics_log_world_state")]
     pub log_world_state: bool,
     /// Include compact CPU-side system timing in the dump, plus auxiliary
     /// upload/extract helpers and a residual frame-gap estimate.
-    #[serde(default = "default_worldmap_diagnostics_log_system_timers")]
     pub log_system_timers: bool,
     /// Draw a debug outline around the currently hovered static-world object.
-    #[serde(default)]
     pub highlight_hovered_static_object: bool,
 }
 
-impl Default for SectWorldRenderingDiagnostics {
-    fn default() -> Self {
-        Self {
-            enable_render_diagnostics: default_worldmap_diagnostics_enable_render_diagnostics(),
-            dump_to_console: false,
-            dump_interval_sec: default_worldmap_diagnostics_dump_interval_sec(),
-            log_render_breakdown: default_worldmap_diagnostics_log_render_breakdown(),
-            log_world_state: default_worldmap_diagnostics_log_world_state(),
-            log_system_timers: default_worldmap_diagnostics_log_system_timers(),
-            highlight_hovered_static_object: false,
-        }
-    }
-}
-
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct SectLandStreaming {
     /// Main-world land preparation budget measured in equivalent 8x8 map blocks.
     ///
     /// This limits how many ready chunks we are allowed to expand, precache and enqueue
     /// into the atlas in a single frame. Set to 0 to disable the cap entirely.
-    #[serde(default = "default_land_prepare_max_blocks_per_frame")]
     pub prepare_max_blocks_per_frame: usize,
     /// Maximum number of metadata-atlas `write_texture` uploads that may be submitted
     /// during a single render-world queue pass. Set to 0 to disable the cap.
-    #[serde(default = "default_land_upload_max_ops_per_frame")]
     pub upload_max_ops_per_frame: usize,
     /// Maximum number of metadata-atlas bytes that may be uploaded in a single render
     /// frame. Set to 0 to disable the byte cap.
-    #[serde(default = "default_land_upload_max_bytes_per_frame")]
     pub upload_max_bytes_per_frame: usize,
 }
 
-impl Default for SectLandStreaming {
-    fn default() -> Self {
-        Self {
-            prepare_max_blocks_per_frame: default_land_prepare_max_blocks_per_frame(),
-            upload_max_ops_per_frame: default_land_upload_max_ops_per_frame(),
-            upload_max_bytes_per_frame: default_land_upload_max_bytes_per_frame(),
-        }
-    }
-}
-
 #[derive(Clone, Default, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct SectDebug {
     pub map_render_wireframe: bool,
 }
 
-fn default_emit_true() -> bool {
-    true
-}
-
-fn default_land_prepare_max_blocks_per_frame() -> usize {
-    32_768
-}
-
-fn default_worldmap_diagnostics_dump_interval_sec() -> f32 {
-    2.0
-}
-
-fn default_worldmap_diagnostics_enable_render_diagnostics() -> bool {
-    true
-}
-
-fn default_worldmap_diagnostics_log_render_breakdown() -> bool {
-    true
-}
-
-fn default_worldmap_diagnostics_log_world_state() -> bool {
-    true
-}
-
-fn default_worldmap_diagnostics_log_system_timers() -> bool {
-    true
-}
-
-fn default_land_upload_max_ops_per_frame() -> usize {
-    8
-}
-
-fn default_land_upload_max_bytes_per_frame() -> usize {
-    16 * 1024 * 1024
-}
-
-// Derived `Default` exists only to satisfy the `#[serde(default)]` on `SectApp`; in
-// practice the `[performance]` table is always present (bundled default has it), so
-// these zero/false defaults are never the effective values. Per-field `serde(default)`
-// still governs individually-missing keys.
+// Derived `Default` exists only to satisfy the `Default` of `SectApp`; the effective
+// values always come from the settings files.
 #[derive(Clone, Default, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct SectPerformance {
     /// Master toggle for all on-screen overlays. When off, every overlay is hidden
     /// regardless of the per-overlay flags below.
     pub show_overlay: bool,
-    /// Per-overlay toggles, gated behind `show_overlay`. Defaulted to `true` so configs
-    /// written before these existed keep showing every overlay (prior behavior).
-    #[serde(default = "default_emit_true")]
+    /// Per-overlay toggles, gated behind `show_overlay`.
     pub show_perf_stats_overlay: bool,
-    #[serde(default = "default_emit_true")]
     pub show_player_position_overlay: bool,
-    #[serde(default = "default_emit_true")]
     pub show_cursor_inspect_overlay: bool,
     pub frame_limit_enabled: bool,
     pub target_fps: u32,
@@ -294,14 +212,12 @@ impl SectPerformance {
 }
 
 #[derive(Clone, Default, Deserialize, Serialize, PartialEq)]
-#[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct SectGraphics {
     pub reduce_unfocused_fps: bool,
     pub vsync: bool, // Added vsync control
     pub anti_aliasing: AntiAliasingMode,
-    #[serde(default = "default_client_texture_source")]
     pub art_texture_source: ClientTextureSource,
-    #[serde(default = "default_client_texture_source")]
     pub land_texture_source: ClientTextureSource,
     pub cc_terrain_transitions: bool,
     pub ec_terrain_transitions: bool,
@@ -314,10 +230,6 @@ impl SectGraphics {
     pub fn terrain_transition_flags(&self) -> u32 {
         u32::from(self.cc_terrain_transitions) | (u32::from(!self.ec_terrain_transitions) << 1)
     }
-}
-
-fn default_client_texture_source() -> ClientTextureSource {
-    ClientTextureSource::default()
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]
@@ -395,16 +307,16 @@ pub struct SettingsSaveTimer(pub Timer);
 
 /// Tracks file modification times for hot-reload detection.
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct SectLogging {
     pub min_severity: LogSev,
-    #[serde(default = "default_emit_true")]
     pub emit_flat_plugin_build: bool,
-    #[serde(default = "default_emit_true")]
     pub emit_tree_plugin_build: bool,
     pub filters: Vec<LogFilterSetting>,
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct LogFilterSetting {
     pub sev: Option<LogSev>,
     pub about: Option<LogAbout>,
@@ -426,83 +338,91 @@ const KEYBINDINGS_CONFIG_FILE: &str = "settings/keybindings.toml";
 const GRAPHICS_CONFIG_FILE: &str = "settings/graphics.toml";
 const WORLD_RENDERING_CONFIG_FILE: &str = "settings/world_rendering.toml";
 
-/// Read a user-side settings file, preferring the cache copy (where the app writes
-/// runtime changes) and falling back to the bundled default under `assets/`. Used
-/// for user settings, session state, and user-saved shader settings; system/bundled
-/// config reads `assets/` directly.
-pub(crate) fn read_user_settings_file(rel: &str) -> std::io::Result<String> {
+/// Process exit code when a settings file or a bundled spec file cannot be read.
+pub const STARTUP_CONFIG_ERROR_EXIT_CODE: u8 = 2;
+
+/// Shows a configuration error that stops the app: logged, and printed to stderr.
+pub fn report_startup_config_error(error: &eyre::Report) {
+    let message = format!("{error:#}");
+    console_logger::one(LogSev::Error, LogAbout::Startup, &message);
+    eprintln!("dynamapper: {message}");
+}
+
+/// Reports a configuration error and exits, for loaders that run inside the Bevy app (plugin build, startup
+/// systems), where no error can be returned to `main`.
+pub fn exit_on_startup_config_error(error: &eyre::Report) -> ! {
+    report_startup_config_error(error);
+    std::process::exit(i32::from(STARTUP_CONFIG_ERROR_EXIT_CODE));
+}
+
+/// Reads and strictly parses a hand-written file under `assets/`: unknown and missing keys are errors.
+pub(crate) fn load_bundled_settings<T: serde::de::DeserializeOwned>(rel: &str) -> eyre::Result<T> {
+    let path = crate::core::constants::valid_asset_dir().join(rel);
+    let contents =
+        std::fs::read_to_string(&path).map_err(|error| eyre::eyre!("{}: cannot read: {error}", path.display()))?;
+    uocf::utils::config_toml::parse_strict(&path.display().to_string(), &contents)
+}
+
+/// Reads a user-side settings file: the bundled default under `assets/` (hand-written, strict), then the cache
+/// copy the app writes, if any. The cache copy is lenient: keys it lacks keep the bundled values, unknown keys are
+/// dropped, each with a warning; the app rewrites it complete on its next save. A cache copy that cannot be read
+/// at all is replaced by the bundled values, with a warning.
+pub(crate) fn load_user_settings<T>(rel: &str) -> eyre::Result<T>
+where
+    T: Serialize + serde::de::DeserializeOwned,
+{
+    let bundled: T = load_bundled_settings(rel)?;
     let cache_path = crate::core::constants::valid_cache_dir().join(rel);
-    match std::fs::read_to_string(&cache_path) {
-        Ok(contents) => Ok(contents),
-        Err(_) => std::fs::read_to_string(crate::core::constants::valid_asset_dir().join(rel)),
+    let Ok(contents) = std::fs::read_to_string(&cache_path) else {
+        return Ok(bundled);
+    };
+    match uocf::utils::config_toml::parse_app_state(&cache_path.display().to_string(), &contents, &bundled) {
+        Ok(load) => {
+            for warning in &load.warnings {
+                console_logger::one(LogSev::Warn, LogAbout::Settings, warning);
+            }
+            Ok(load.value)
+        }
+        Err(error) => {
+            console_logger::one(
+                LogSev::Warn,
+                LogAbout::Settings,
+                &format!("{error:#}; using the bundled settings, the file is rewritten on the next save"),
+            );
+            Ok(bundled)
+        }
     }
 }
 
-pub fn load_from_files() -> Settings {
-    let assets_path = crate::core::constants::valid_asset_dir();
+/// Core settings file contains top-level core and logging sections.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CoreFile {
+    core: SectCore,
+    logging: SectLogging,
+}
 
-    let core_path = assets_path.join(CORE_CONFIG_FILE);
-    let runtime_assets_path = assets_path.join(RUNTIME_ASSETS_CONFIG_FILE);
-    let world_rendering_path = assets_path.join(WORLD_RENDERING_CONFIG_FILE);
+/// Graphics settings live in a `[graphics]` table, as `save_graphics_settings` writes them.
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct GraphicsFile {
+    graphics: SectGraphics,
+}
 
-    let core_contents =
-        std::fs::read_to_string(&core_path).expect("Failed to read settings/core.toml");
-
-    // Core settings file contains top-level core and logging sections.
-    #[derive(Deserialize)]
-    struct CoreWrapper {
-        core: SectCore,
-        logging: SectLogging,
-    }
-    let core_data: CoreWrapper = toml::from_str(&core_contents).expect(
-        "Failed to parse settings/core.toml — please fix the file in assets/settings/core.toml",
-    );
-
+pub fn load_from_files() -> eyre::Result<Settings> {
+    let core_data: CoreFile = load_bundled_settings(CORE_CONFIG_FILE)?;
     // Runtime asset package settings (assets/settings/runtime_assets.toml)
-    let runtime_assets_contents = std::fs::read_to_string(&runtime_assets_path)
-        .expect("Failed to read settings/runtime_assets.toml — please ensure assets/settings/runtime_assets.toml exists");
-    let runtime_assets: SectRuntimeAssets = toml::from_str(&runtime_assets_contents)
-        .expect("Failed to parse settings/runtime_assets.toml — please fix the file in assets/settings/runtime_assets.toml");
-
+    let runtime_assets: SectRuntimeAssets = load_bundled_settings(RUNTIME_ASSETS_CONFIG_FILE)?;
     // User preferences file contains SectApp fields directly at top level
-    // (loaded from the cache dir if present, else the bundled default).
-    let user_contents = read_user_settings_file(USER_PREFERENCES_CONFIG_FILE)
-        .expect("Failed to read settings/user_preferences.toml — please ensure assets/settings/user_preferences.toml exists and is valid");
+    // (loaded from the cache dir if present, over the bundled default).
+    let user_app: SectApp = load_user_settings(USER_PREFERENCES_CONFIG_FILE)?;
+    let session_state: SectSessionState = load_user_settings(SESSION_STATE_CONFIG_FILE)?;
+    // Graphics settings loader (cache dir if present, over the bundled default).
+    let graphics = load_user_settings::<GraphicsFile>(GRAPHICS_CONFIG_FILE)?.graphics;
+    let keybindings: SectKeybindings = load_bundled_settings(KEYBINDINGS_CONFIG_FILE)?;
+    let world_rendering: SectWorldRendering = load_bundled_settings(WORLD_RENDERING_CONFIG_FILE)?;
 
-    let user_app: SectApp = toml::from_str(&user_contents)
-        .expect("Failed to parse settings/user_preferences.toml — please fix the file in assets/settings/user_preferences.toml");
-
-    let session_state_contents = read_user_settings_file(SESSION_STATE_CONFIG_FILE)
-        .expect("Failed to read settings/session_state.toml — please ensure assets/settings/session_state.toml exists and is valid");
-
-    let session_state: SectSessionState = toml::from_str(&session_state_contents)
-        .expect("Failed to parse settings/session_state.toml — please fix the file in assets/settings/session_state.toml");
-
-    // Graphics settings loader (cache dir if present, else the bundled default).
-    let gfx_contents = read_user_settings_file(GRAPHICS_CONFIG_FILE).expect(
-        "Failed to read settings/graphics.toml — please ensure assets/settings/graphics.toml exists",
-    );
-    let graphics = parse_graphics_settings(&gfx_contents);
-
-    // Keybindings file
-    let kb_path = assets_path.join(KEYBINDINGS_CONFIG_FILE);
-    let kb_contents = std::fs::read_to_string(&kb_path)
-        .expect("Failed to read keybindings.toml — please ensure assets/keybindings.toml exists and is valid");
-
-    let keybindings: SectKeybindings = toml::from_str(&kb_contents).expect(
-        "Failed to parse keybindings.toml — please fix the file in assets/keybindings.toml",
-    );
-
-    let world_rendering_contents = std::fs::read_to_string(&world_rendering_path).expect(
-        "Failed to read settings/world_rendering.toml — please ensure assets/settings/world_rendering.toml exists",
-    );
-
-    let world_rendering: SectWorldRendering = toml::from_str(&world_rendering_contents)
-        .expect(
-            "Failed to parse settings/world_rendering.toml — please fix the file in assets/settings/world_rendering.toml",
-        );
-
-    Settings {
+    Ok(Settings {
         core: core_data.core,
         graphics,
         runtime_assets,
@@ -511,19 +431,7 @@ pub fn load_from_files() -> Settings {
         logging: core_data.logging,
         keybindings,
         world_rendering,
-    }
-}
-
-fn parse_graphics_settings(contents: &str) -> SectGraphics {
-    // Graphics settings live in a `[graphics]` table, as `save_graphics_settings` writes them.
-    #[derive(Deserialize)]
-    struct GraphicsWrapper {
-        graphics: SectGraphics,
-    }
-    let wrapper: GraphicsWrapper = toml::from_str(contents).expect(
-        "Failed to parse settings/graphics.toml — please fix the file in assets/settings/graphics.toml",
-    );
-    wrapper.graphics
+    })
 }
 
 pub fn apply_logging_settings(logging: &SectLogging) {
@@ -637,13 +545,8 @@ pub fn save_graphics_settings(settings: &Settings) {
         let _ = std::fs::create_dir_all(parent);
     }
 
-    #[derive(Serialize)]
-    struct GraphicsWrapper<'a> {
-        graphics: &'a SectGraphics,
-    }
-
-    match toml::to_string_pretty(&GraphicsWrapper {
-        graphics: &settings.graphics,
+    match toml::to_string_pretty(&GraphicsFile {
+        graphics: settings.graphics.clone(),
     }) {
         Ok(toml_str) => {
             if let Err(e) = std::fs::write(&graphics_path, toml_str) {
@@ -936,7 +839,7 @@ fn sync_runtime_resources_to_settings(
 }
 
 fn sys_startup_load_file(mut commands: Commands) {
-    let data = load_from_files();
+    let data = load_from_files().unwrap_or_else(|error| exit_on_startup_config_error(&error));
 
     // Initialize logger settings
     apply_logging_settings(&data.logging);
@@ -1165,15 +1068,37 @@ fn sys_debounced_save(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uocf::utils::config_toml::{parse_app_state, parse_strict};
 
     const BUNDLED_GRAPHICS: &str = include_str!("../../assets/settings/graphics.toml");
+    const BUNDLED_USER_PREFERENCES: &str = include_str!("../../assets/settings/user_preferences.toml");
+    const BUNDLED_WORLD_RENDERING: &str = include_str!("../../assets/settings/world_rendering.toml");
+    const BUNDLED_CORE: &str = include_str!("../../assets/settings/core.toml");
+
+    fn parse_graphics_settings(contents: &str) -> SectGraphics {
+        parse_strict::<GraphicsFile>(GRAPHICS_CONFIG_FILE, contents).unwrap_or_else(|error| panic!("{error}")).graphics
+    }
 
     #[test]
     fn settings_files_load() {
-        let settings = load_from_files();
+        let settings = load_from_files().unwrap_or_else(|error| panic!("{error:#}"));
 
         assert!(!settings.logging.filters.is_empty());
         assert!(settings.app.window.ui_scale > 0.0);
+    }
+
+    #[test]
+    fn bundled_settings_files_parse_strictly() {
+        fn check<T: serde::de::DeserializeOwned>(rel: &str) {
+            load_bundled_settings::<T>(rel).unwrap_or_else(|error| panic!("{error:#}"));
+        }
+        check::<CoreFile>(CORE_CONFIG_FILE);
+        check::<SectRuntimeAssets>(RUNTIME_ASSETS_CONFIG_FILE);
+        check::<SectApp>(USER_PREFERENCES_CONFIG_FILE);
+        check::<SectSessionState>(SESSION_STATE_CONFIG_FILE);
+        check::<GraphicsFile>(GRAPHICS_CONFIG_FILE);
+        check::<SectKeybindings>(KEYBINDINGS_CONFIG_FILE);
+        check::<SectWorldRendering>(WORLD_RENDERING_CONFIG_FILE);
     }
 
     #[test]
@@ -1183,6 +1108,67 @@ mod tests {
         assert!(!settings.cc_terrain_transitions);
         assert!(settings.ec_terrain_transitions);
         assert_eq!(settings.land_texture_source, ClientTextureSource::Ec);
+    }
+
+    #[test]
+    fn bundled_settings_reject_unknown_keys_with_their_position() {
+        let graphics = BUNDLED_GRAPHICS.replace("vsync", "v_sync");
+        let error = parse_strict::<GraphicsFile>(GRAPHICS_CONFIG_FILE, &graphics).err().expect("unknown key").to_string();
+        assert!(error.starts_with("settings/graphics.toml: TOML parse error at line"), "{error}");
+        assert!(error.contains("unknown field `v_sync`, expected one of `reduce_unfocused_fps`, `vsync`"), "{error}");
+
+        let preferences = format!("{BUNDLED_USER_PREFERENCES}\n[debug2]\nmap_render_wireframe = false\n");
+        let error = parse_strict::<SectApp>(USER_PREFERENCES_CONFIG_FILE, &preferences)
+            .err().expect("unknown table")
+            .to_string();
+        assert!(error.contains("unknown field `debug2`, expected one of `input`, `window`, `debug`, `performance`"), "{error}");
+
+        let core = BUNDLED_CORE.replace("hide_player", "hide_players");
+        let error = parse_strict::<CoreFile>(CORE_CONFIG_FILE, &core).err().expect("unknown key").to_string();
+        assert!(error.contains("unknown field `hide_players`, expected `start_p` or `hide_player`"), "{error}");
+    }
+
+    #[test]
+    fn bundled_settings_reject_missing_keys() {
+        let error = parse_strict::<SectWorldRendering>(
+            WORLD_RENDERING_CONFIG_FILE,
+            "enable_statics = true\nenable_static_lights = true\n",
+        )
+        .err().expect("missing keys")
+        .to_string();
+        assert!(error.contains("missing field `enable_static_art_local_lights`"), "{error}");
+
+        let graphics = BUNDLED_GRAPHICS.lines().filter(|line| !line.starts_with("vsync")).collect::<Vec<_>>().join("\n");
+        let error = parse_strict::<GraphicsFile>(GRAPHICS_CONFIG_FILE, &graphics).err().expect("missing key").to_string();
+        assert!(error.contains("missing field `vsync`"), "{error}");
+    }
+
+    #[test]
+    fn cached_user_settings_are_filled_from_the_bundled_file_and_rewritten_complete() {
+        let bundled: SectApp = parse_strict(USER_PREFERENCES_CONFIG_FILE, BUNDLED_USER_PREFERENCES).expect("bundled");
+        // A cache file from another build: one key missing, one key this build does not know.
+        let cache = BUNDLED_USER_PREFERENCES
+            .lines()
+            .filter(|line| !line.starts_with("target_fps"))
+            .chain(["retired_key = true"])
+            .collect::<Vec<_>>()
+            .join("\n")
+            .replace("ui_scale = 1.15", "ui_scale = 1.5");
+        let load = parse_app_state("user_preferences.toml", &cache, &bundled).expect("lenient load");
+
+        assert_eq!(load.value.window.ui_scale, 1.5);
+        assert_eq!(load.value.performance.target_fps, bundled.performance.target_fps);
+        assert_eq!(
+            load.warnings,
+            [
+                "user_preferences.toml: missing key `performance.target_fps` filled from the default",
+                "user_preferences.toml: unknown key `performance.retired_key` dropped",
+            ]
+        );
+
+        let rewritten = toml::to_string_pretty(&load.value).expect("serialize");
+        let reread: SectApp = parse_strict(USER_PREFERENCES_CONFIG_FILE, &rewritten).expect("rewritten file is complete");
+        assert!(reread == load.value);
     }
 
     #[test]
@@ -1206,13 +1192,15 @@ mod tests {
 
         assert_eq!(settings.udd_path, "/tmp/uddp");
         assert!(!settings.load_gumps);
+
+        let error = toml::from_str::<SectRuntimeAssets>("udd_path = \"/tmp/uddp\"\n").err().expect("missing key");
+        assert!(error.to_string().contains("missing field `load_gumps`"), "{error}");
     }
 
     #[test]
     fn world_rendering_settings_default_static_art_local_lights_off() {
         let settings: SectWorldRendering =
-            toml::from_str("enable_statics = true\nenable_static_lights = true\n")
-                .expect("parse world rendering settings");
+            parse_strict(WORLD_RENDERING_CONFIG_FILE, BUNDLED_WORLD_RENDERING).expect("parse world rendering settings");
 
         assert!(settings.enable_statics);
         assert!(settings.enable_static_lights);
@@ -1222,10 +1210,10 @@ mod tests {
 
     #[test]
     fn world_rendering_settings_accept_static_art_local_lights_opt_in() {
-        let settings: SectWorldRendering = toml::from_str(
-            "enable_statics = true\nenable_static_lights = true\nenable_static_art_local_lights = true\n",
-        )
-        .expect("parse world rendering settings");
+        let text = BUNDLED_WORLD_RENDERING
+            .replace("enable_static_art_local_lights = false", "enable_static_art_local_lights = true");
+        let settings: SectWorldRendering =
+            parse_strict(WORLD_RENDERING_CONFIG_FILE, &text).expect("parse world rendering settings");
 
         assert!(settings.enable_static_art_local_lights);
     }

@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use color_eyre::eyre;
 use crate::models::AppSettings;
+use uocf::utils::config_toml::{parse_app_state, AppStateLoad};
 
 const CONFIG_FILE_NAME: &str = "udd_conv_gui_config.toml";
 const CONFIG_ENV_VAR: &str = "UDD_CONV_GUI_CONFIG";
@@ -17,29 +18,28 @@ pub fn config_file_path() -> PathBuf {
     PathBuf::from(CONFIG_FILE_NAME)
 }
 
-pub fn load_settings_report() -> (AppSettings, Option<String>) {
+/// The settings, and the warnings to show: keys filled or dropped while reading the file, or why the file could
+/// not be read at all.
+pub fn load_settings_report() -> (AppSettings, Vec<String>) {
     let path = config_file_path();
     match load_settings_from_path(&path) {
-        Ok(settings) => (settings, None),
+        Ok(load) => (load.value, load.warnings),
         Err(error) => (
             AppSettings::default(),
-            Some(format!(
-                "Could not load settings from {}: {}. Using defaults.",
-                path.display(),
-                error
-            )),
+            vec![format!("Could not load settings: {error}. Using defaults.")],
         ),
     }
 }
 
-pub fn load_settings_from_path(path: &std::path::Path) -> eyre::Result<AppSettings> {
+/// Reads the file the GUI writes itself. Keys an older file lacks take their default, unknown keys are dropped,
+/// each with a warning; the GUI rewrites the file complete on its next save. A missing file gives the defaults.
+pub fn load_settings_from_path(path: &std::path::Path) -> eyre::Result<AppStateLoad<AppSettings>> {
     if !path.exists() {
-        return Ok(AppSettings::default());
+        return Ok(AppStateLoad { value: AppSettings::default(), warnings: Vec::new() });
     }
 
     let contents = std::fs::read_to_string(path)?;
-    let settings = toml::from_str(&contents)?;
-    Ok(settings)
+    parse_app_state(&path.display().to_string(), &contents, &AppSettings::default())
 }
 
 pub fn save_settings(settings: &AppSettings) -> eyre::Result<()> {
@@ -71,17 +71,20 @@ mod tests {
     fn missing_settings_file_loads_defaults() {
         let path = temp_config_path("missing");
 
-        let settings = load_settings_from_path(&path).expect("load default settings");
+        let settings = load_settings_from_path(&path).expect("load default settings").value;
 
         assert_eq!(settings.input_uddp_dir, PathBuf::from("packages"));
         assert_eq!(settings.output_uddp_dir, PathBuf::from("packages"));
     }
 
+    /// The checked-in file is complete: every key the GUI writes is present.
     #[test]
     fn checked_in_default_config_deserializes() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(CONFIG_FILE_NAME);
 
-        let settings = load_settings_from_path(&path).expect("load checked-in default settings");
+        let load = load_settings_from_path(&path).expect("load checked-in default settings");
+        assert!(load.warnings.is_empty(), "{:?}", load.warnings);
+        let settings = load.value;
 
         assert_eq!(settings.input_uddp_dir, PathBuf::from("packages"));
         assert_eq!(settings.output_uddp_dir, PathBuf::from("packages"));
@@ -111,7 +114,7 @@ mod tests {
         settings.ec_mobile_anim_allow_missing_kdl = true;
 
         save_settings_to_path(&settings, &path).expect("save settings");
-        let loaded = load_settings_from_path(&path).expect("load settings");
+        let loaded = load_settings_from_path(&path).expect("load settings").value;
         let _ = std::fs::remove_file(&path);
 
         assert_eq!(loaded.cc_dir, Some(PathBuf::from("/uo/classic")));
@@ -134,5 +137,20 @@ mod tests {
         save_settings_to_path(&AppSettings::default(), &path).expect("save nested settings");
         assert!(path.exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn older_settings_file_is_filled_and_unknown_keys_dropped() {
+        let path = temp_config_path("older");
+        std::fs::write(&path, "input_uddp_dir = \"runtime-assets\"\nretired_option = true\n").expect("write config");
+
+        let load = load_settings_from_path(&path).expect("lenient load");
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(load.value.input_uddp_dir, PathBuf::from("runtime-assets"));
+        assert_eq!(load.value.output_uddp_dir, AppSettings::default().output_uddp_dir);
+        let name = path.display().to_string();
+        assert!(load.warnings.contains(&format!("{name}: missing key `output_uddp_dir` filled from the default")));
+        assert!(load.warnings.contains(&format!("{name}: unknown key `retired_option` dropped")));
     }
 }
