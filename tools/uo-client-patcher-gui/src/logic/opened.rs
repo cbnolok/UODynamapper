@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use color_eyre::eyre::{self, WrapErr};
+use uocf::client_exe::classic_difs::DifKind;
 use uocf::client_exe::classic_facets::{ClassicFileRole, CLASSIC_FACET_RECORD_SIZE};
 use uocf::client_exe::version::ExeVersion;
 use uocf::client_exe::facet_dimensions::{
@@ -179,6 +180,16 @@ pub fn version_label(version: Option<&ExeVersion>) -> String {
         Some(version) => format!("{version} (version resource; information only)"),
         None => "none (no version resource)".to_owned(),
     }
+}
+
+/// Classic: whether the code applies the mapdif / stadif patches, one line per kind, then what a converted map
+/// should do with the dif files. `None` in the other families.
+pub fn dif_lines(inspection: &ClientExeInspection) -> Option<Vec<String>> {
+    let difs = inspection.difs.as_ref()?;
+    let mut lines: Vec<String> =
+        DifKind::ALL.into_iter().map(|kind| format!("{}: {}", kind.label(), difs.status(kind).describe())).collect();
+    lines.push(difs.advice().to_owned());
+    Some(lines)
 }
 
 /// One line per manifest step.

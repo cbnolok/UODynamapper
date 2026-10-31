@@ -8,6 +8,7 @@ mod common;
 
 mod animation_client_entries;
 mod classic_client_eras;
+mod classic_dif_usage;
 mod classic_facet_difs;
 mod client_exe_facet_dimensions;
 mod client_login_servers;

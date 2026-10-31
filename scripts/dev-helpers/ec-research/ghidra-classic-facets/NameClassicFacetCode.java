@@ -155,8 +155,20 @@ public class NameClassicFacetCode extends GhidraScript {
         new Entry("0047dfd0", "Handle_0xA9_CharList", "characters, cities, then u32 flags passed to ApplyCharListFlags", "calls:00559c20"),
         new Entry("00585de0", "SetFacet", "width, height, wrap width and wrap height of the facet from the accessors",
             "calls:00591fc0", "calls:00592000", "calls:00592040", "calls:00592080", "calledby:00479440"),
-        new Entry("00479440", "Handle_0xBF_GeneralInfo", "sub 8 SetFacet, sub 0x18 map patch counts", "calls:00585de0"),
-        new Entry("00561850", "MapdifBlockLookup", "block -> mapdif record; no caller: land patches are never applied", "refs:0"),
+        new Entry("00479440", "Handle_0xBF_GeneralInfo", "sub 8 SetFacet, sub 0x18 map patch counts, then ReloadDifLists",
+            "calls:00585de0", "calls:005625b0"),
+        new Entry("005625b0", "ReloadDifLists", "LoadStadifLists then LoadMapdifLists; called only from 0xBF/0x18",
+            "calls:00562300", "calls:00562440", "calledby:00479440"),
+        new Entry("00562300", "LoadStadifLists", "for each map: stadifl%d.mul u32 block numbers into the stadif map array 0x00a2e2c8, at most the 0xBF/0x18 statics patch count",
+            "string:" + STRING_STADIFL, "calls:00a2e2c8", "calledby:005625b0"),
+        new Entry("00562440", "LoadMapdifLists", "mapdifl%d.mul into the mapdif map array 0x00a2e310, same as LoadStadifLists with the land patch count",
+            "string:" + STRING_MAPDIFL, "calls:00a2e310", "calledby:005625b0"),
+        // An earlier run named 0x00561850 MapdifBlockLookup; it reads the stadif map array (Ghidra made no function at
+        // the mapdif lookup 0x005618e0, created with create_function before naming).
+        new Entry("00561850", "StadifBlockLookup", "block -> stadif record from the stadifl map array 0x00a2e2c8; no caller: statics patches are loaded but never applied",
+            "calls:00a2e2c8", "refs:0"),
+        new Entry("005618e0", "MapdifBlockLookup", "block -> mapdif record from the mapdifl map array 0x00a2e310; no caller: land patches are loaded but never applied",
+            "calls:00a2e310", "refs:0"),
     };
 
     // classic_6.0.14.3 (single table, Trammel on map1/statics1/staidx1).
@@ -375,9 +387,10 @@ public class NameClassicFacetCode extends GhidraScript {
         Symbol symbol = function.getSymbol();
         boolean named = symbol.getName(true).equals(qualified);
         if (!named) {
-            if (symbol.getSource() != SourceType.DEFAULT) {
+            if (symbol.getSource() != SourceType.DEFAULT && !isOwnEarlierName(function, symbol)) {
                 return row + "kept `" + symbol.getName(true) + "` (" + symbol.getSource() + ") |";
             }
+            String earlier = symbol.getSource() == SourceType.DEFAULT ? null : symbol.getName(true);
             Namespace namespace = currentProgram.getSymbolTable().getNamespace(FACET,
                 currentProgram.getGlobalNamespace());
             if (namespace != null && !currentProgram.getSymbolTable().getSymbols(entry.name(), namespace).isEmpty()) {
@@ -385,9 +398,13 @@ public class NameClassicFacetCode extends GhidraScript {
             }
             if (apply) {
                 symbol.setNameAndNamespace(entry.name(), facetNamespace(), SourceType.ANALYSIS);
-                count("functions renamed");
+                count(earlier == null ? "functions renamed" : "own earlier names corrected");
             }
-            result.add(apply ? "named" : "would name");
+            if (earlier == null) {
+                result.add(apply ? "named" : "would name");
+            } else {
+                result.add((apply ? "renamed" : "would rename") + " from `" + earlier + "`");
+            }
         }
         boolean tagged = false;
         for (FunctionTag tag : function.getTags()) {
@@ -405,6 +422,19 @@ public class NameClassicFacetCode extends GhidraScript {
             result.add(plateResult);
         }
         return row + (result.isEmpty() ? "already applied" : String.join(", ", result)) + " |";
+    }
+
+    // A name this script set in an earlier run (source ANALYSIS in our namespace, our tag and our plate comment): it
+    // may be corrected when the entry at the address changed.
+    private boolean isOwnEarlierName(Function function, Symbol symbol) {
+        boolean tagged = false;
+        for (FunctionTag tag : function.getTags()) {
+            tagged |= tag.getName().equals(TAG);
+        }
+        String plate = getPlateComment(function.getEntryPoint());
+        return tagged && symbol.getSource() == SourceType.ANALYSIS
+            && symbol.getParentNamespace().getName().equals(FACET)
+            && plate != null && plate.startsWith(COMMENT_PREFIX);
     }
 
     private static String checkList(Entry entry) {

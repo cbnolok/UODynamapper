@@ -12,6 +12,7 @@ use uocf::client_exe::classic_facets::{
     CLASSIC_RECORD_FLAG_OFFSET, CLASSIC_RECORD_WRAP_HEIGHT_OFFSET, CLASSIC_RECORD_WRAP_WIDTH_OFFSET,
     CLASSIC_STOCK_WIDTHS, CLASSIC_STOCK_WRAP,
 };
+use uocf::client_exe::classic_difs::{LAND_LIST_FORMAT, STATICS_LIST_FORMAT};
 use uocf::client_exe::facet_dimensions::{
     ENHANCED_CLIENT_MARKER, FACET_RECORD_HEIGHT_OFFSET, FACET_RECORD_WIDTH_OFFSET, SPLIT_IMMEDIATE_COUNT,
     STOCK_FACET_COUNT, STOCK_SPLIT_X,
@@ -100,6 +101,19 @@ const CMP_EDX_IMM32: [u8; 2] = [0x81, 0xfa];
 const SETGE_AL: [u8; 3] = [0x0f, 0x9d, 0xc0];
 const CMP_EAX_IMM32: u8 = 0x3d;
 const MOV_ECX_ESP4_SETGE_CL: [u8; 7] = [0x8b, 0x4c, 0x24, 0x04, 0x0f, 0x9d, 0xc1];
+/// The dif code of [`synthetic_classic_with_difs`], per kind (land, statics): the loader `MOV ESI,maps; PUSH format;
+/// ADD ESI,12; RET`, the lookup `MOV ECX,[ESI*4+maps]; RET` and its caller `CALL lookup; RET`, each at its own
+/// 16-byte aligned function after the seam sites.
+const DIF_LOADER_AT: [usize; 2] = [0x240, 0x2a0];
+const DIF_LOOKUP_FROM_LOADER: usize = 0x20;
+const DIF_CALLER_FROM_LOADER: usize = 0x40;
+const OPCODE_MOV_ESI_IMM32: u8 = 0xbe;
+const ADD_ESI_IMM8: [u8; 2] = [0x83, 0xc6];
+/// `MOV ECX,[ESI*4+disp32]`.
+const MOV_ECX_ESI4_DISP32: [u8; 3] = [0x8b, 0x0c, 0xb5];
+/// The size of a std::map in the clients, and the maps per kind.
+const DIF_MAP_SIZE: u8 = 12;
+const DIF_MAP_COUNT: usize = 6;
 
 /// The Time of Legends hosts of UOSA 4.0.102.3, in 16-byte slots.
 pub const TOL_HOSTS: [&str; 2] = ["107.23.85.115", "107.23.176.74"];
@@ -381,8 +395,18 @@ fn file_names() -> Vec<String> {
 }
 
 /// A Classic 7.0-like client: two copies of the 6 stock records, the file name table, the startup globals, the wrap
-/// width accessor, the `SetFacet` stores and the two seam compares at x = 5120.
+/// width accessor, the `SetFacet` stores and the two seam compares at x = 5120. It has no dif loader.
 pub fn synthetic_classic() -> Vec<u8> {
+    classic_image(None)
+}
+
+/// [`synthetic_classic`] with the mapdif / stadif loaders and lookups; `called` gives each lookup a caller (an
+/// Age of Shadows-like client that applies the patches), else they are dead (7.0-like).
+pub fn synthetic_classic_with_difs(called: bool) -> Vec<u8> {
+    classic_image(Some(called))
+}
+
+fn classic_image(difs: Option<bool>) -> Vec<u8> {
     let rdata_rva = next_rva(SECTION_ALIGNMENT, CLASSIC_CODE_SIZE);
     let mut rdata = Vec::new();
     let mut pointers = Vec::new();
@@ -400,6 +424,12 @@ pub fn synthetic_classic() -> Vec<u8> {
         rdata.extend(entry);
     }
     rdata.extend([0; FILE_NAME_STRIDE]);
+    let mut format_vas = Vec::new();
+    for format in difs.iter().flat_map(|_| [LAND_LIST_FORMAT, STATICS_LIST_FORMAT]) {
+        format_vas.push(IMAGE_BASE + rdata_rva + rdata.len() as u32);
+        rdata.extend_from_slice(format.as_bytes());
+        rdata.push(0);
+    }
     let data_va = IMAGE_BASE + next_rva(rdata_rva, rdata.len());
     let mut data = vec![0u8; TABLES_DATA_OFFSET];
     let (wrap, size) = (classic_stock_wrap(0), classic_stock_size(0));
@@ -426,6 +456,11 @@ pub fn synthetic_classic() -> Vec<u8> {
     }
     let table_va = data_va + TABLES_DATA_OFFSET as u32;
     let startup_va = data_va + STARTUP_DATA_OFFSET as u32;
+    let mut maps_vas = Vec::new();
+    for _ in &format_vas {
+        maps_vas.push(data_va + data.len() as u32);
+        data.extend([0; DIF_MAP_COUNT * DIF_MAP_SIZE as usize]);
+    }
 
     let mut code = vec![NOP; CLASSIC_CODE_SIZE];
     code[..MOV_EAX_ECX_DISP32.len()].copy_from_slice(&MOV_EAX_ECX_DISP32);
@@ -452,6 +487,30 @@ pub fn synthetic_classic() -> Vec<u8> {
     put(&mut code, second + 1, STOCK_SPLIT_X);
     let after = second + 1 + WORD;
     code[after..after + MOV_ECX_ESP4_SETGE_CL.len()].copy_from_slice(&MOV_ECX_ESP4_SETGE_CL);
+    if let Some(called) = difs {
+        for ((loader, format_va), maps_va) in DIF_LOADER_AT.into_iter().zip(format_vas).zip(maps_vas) {
+            let mut at = loader;
+            code[at] = OPCODE_MOV_ESI_IMM32;
+            put(&mut code, at + 1, maps_va);
+            at += 1 + WORD;
+            code[at] = OPCODE_PUSH_IMM32;
+            put(&mut code, at + 1, format_va);
+            at += 1 + WORD;
+            code[at..at + ADD_ESI_IMM8.len()].copy_from_slice(&ADD_ESI_IMM8);
+            code[at + ADD_ESI_IMM8.len()] = DIF_MAP_SIZE;
+            code[at + ADD_ESI_IMM8.len() + 1] = RET;
+            let lookup = loader + DIF_LOOKUP_FROM_LOADER;
+            code[lookup..lookup + MOV_ECX_ESI4_DISP32.len()].copy_from_slice(&MOV_ECX_ESI4_DISP32);
+            put(&mut code, lookup + MOV_ECX_ESI4_DISP32.len(), maps_va);
+            code[lookup + MOV_ECX_ESI4_DISP32.len() + WORD] = RET;
+            if called {
+                let caller = loader + DIF_CALLER_FROM_LOADER;
+                code[caller] = OPCODE_CALL_REL32;
+                put(&mut code, caller + 1, (lookup as i32 - (caller + CALL_REL32_SIZE) as i32) as u32);
+                code[caller + CALL_REL32_SIZE] = RET;
+            }
+        }
+    }
 
     synthetic_pe(&[(".text", code), (".rdata", rdata), (".data", data)], false)
 }

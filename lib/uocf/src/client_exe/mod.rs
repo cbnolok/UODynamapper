@@ -4,6 +4,7 @@
 //! ([`patch`]), the check of the facet data against them ([`facet_data`]), the version resource ([`version`],
 //! information only), and the PE helpers they use. Executables are only read; patches go to new copies.
 
+pub mod classic_difs;
 pub mod classic_facets;
 pub mod facet_data;
 pub mod facet_dimensions;

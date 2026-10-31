@@ -33,6 +33,7 @@ use crate::client_exe::classic_facets::{
     locate_classic_seam, locate_classic_startup_facet, ClassicLayout, ClassicRecord, MAX_CLASSIC_TABLE_COPIES,
     UNLOCATED_FILE_ID_LIMIT,
 };
+use crate::client_exe::classic_difs::{inspect_classic_difs, ClassicDifUsage};
 use crate::client_exe::login::{locate_login_sites, LoginSites, LoginValues};
 use crate::client_exe::version::{read_exe_version, ExeVersion};
 use crate::client_exe::pe::{pe_checksum, read_u32, PeImage, PeSection, MACHINE_I386};
@@ -397,6 +398,9 @@ pub struct ClientExeInspection {
     pub login: Option<LoginSites>,
     /// The file and product versions of the version resource, when it has one (information only).
     pub version: Option<ExeVersion>,
+    /// Classic: whether the code applies the mapdif / stadif patches ([`inspect_classic_difs`]); `None` in the other
+    /// families.
+    pub difs: Option<ClassicDifUsage>,
 }
 
 /// The single element of `items`, or `None`.
@@ -443,6 +447,7 @@ impl ClientExeInspection {
         let computed_checksum = pe_checksum(bytes, pe.checksum_offset);
         let login = locate_login_sites(bytes, &pe, family)?;
         let version = read_exe_version(bytes, &pe);
+        let difs = (family == ClientFamily::Classic).then(|| inspect_classic_difs(bytes, &pe));
         Ok(Self {
             sha256,
             file_size: bytes.len(),
@@ -455,6 +460,7 @@ impl ClientExeInspection {
             classic,
             login,
             version,
+            difs,
         })
     }
 

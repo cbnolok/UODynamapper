@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use clap::Subcommand;
 use color_eyre::eyre::{self, eyre, WrapErr};
+use uocf::client_exe::classic_difs::DifKind;
 use uocf::client_exe::classic_facets::{ClassicFileRole, CLASSIC_FACET_RECORD_SIZE};
 use uocf::client_exe::facet_data::{check_client_facet_data, FacetDataStatus};
 use uocf::client_config::login_servers::LoginServerAddress;
@@ -28,7 +29,7 @@ pub enum ExeCmd {
     /// Print the facet size tables, the split (Enhanced Client) or wrap seam (Classic), the built-in login server
     /// (Enhanced Client, Kingdom Reborn) and the PE checksum of a client executable (UOSA*.exe, UOKR.exe, Classic
     /// client.exe; any 32-bit build, located by structure). Classic: both table copies with wrap, file ids and flag,
-    /// and the startup copy of facet 0. Only reads the file.
+    /// the startup copy of facet 0 and whether the code applies the mapdif / stadif patches. Only reads the file.
     Show {
         exe: PathBuf,
     },
@@ -321,6 +322,7 @@ fn print_inspection(inspection: &ClientExeInspection) {
         }
     }
     print_login(inspection);
+    print_difs(inspection);
     let what = if inspection.family == ClientFamily::Classic { "wrap seam" } else { "split" };
     match &inspection.split {
         None => match inspection.family {
@@ -340,6 +342,21 @@ fn print_inspection(inspection: &ClientExeInspection) {
                 split_label(split.x)
             );
         }
+    }
+}
+
+/// Classic: whether the code applies the mapdif / stadif patches, and why.
+fn print_difs(inspection: &ClientExeInspection) {
+    let Some(difs) = &inspection.difs else {
+        return;
+    };
+    for (index, kind) in DifKind::ALL.into_iter().enumerate() {
+        let head = if index == 0 { "difs" } else { "" };
+        println!("{head:<9} {}: {}", kind.label(), difs.status(kind).describe());
+    }
+    println!("{:<9} {}", "", difs.advice());
+    for line in &difs.evidence {
+        println!("{:<9}   {line}", "");
     }
 }
 

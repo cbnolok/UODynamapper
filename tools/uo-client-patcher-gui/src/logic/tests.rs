@@ -10,11 +10,11 @@ use uocf::enhanced::facet_sector::{FacetGeometry, CLIENT_FACET_DIMENSIONS};
 
 use super::edits::{EditState, SeamChoice};
 use super::login::{login_mode, login_site_rows, stock_login, ClassicLogin, LoginEdit, LoginMode, KR_IPV4_ONLY};
-use super::opened::{classic_files, manifest_steps, seam_status, table_locations, ManifestState, OpenedExe};
+use super::opened::{classic_files, dif_lines, manifest_steps, seam_status, table_locations, ManifestState, OpenedExe};
 use super::preview::{change_rows, preview, seam_warnings, DataCheck, Preview, PreviewCache};
 use super::synthetic::{
-    classic_stock_size, classic_stock_wrap, synthetic_classic, synthetic_enhanced, synthetic_enhanced_login,
-    synthetic_kingdom_reborn, synthetic_kingdom_reborn_login, SyntheticLogin, TOL_HOSTS,
+    classic_stock_size, classic_stock_wrap, synthetic_classic, synthetic_classic_with_difs, synthetic_enhanced,
+    synthetic_enhanced_login, synthetic_kingdom_reborn, synthetic_kingdom_reborn_login, SyntheticLogin, TOL_HOSTS,
 };
 
 const NEW_WIDTH: u32 = 8192;
@@ -257,6 +257,27 @@ fn classic_wraps_follow_the_size_until_typed() {
     assert_eq!(plan.patch.edits.len(), 2);
     assert_eq!(seam_warnings(&plan.warnings).len(), 1, "{:?}", plan.warnings);
     assert_eq!(plan.expected.split_x, Some(NEW_SPLIT));
+}
+
+#[test]
+fn the_executable_section_says_whether_the_difs_apply() {
+    assert_eq!(dif_lines(&opened_from(synthetic_enhanced(false), ManifestState::None).inspection), None);
+    for (image, status, advice) in [
+        (synthetic_classic(), "absent", "convert the map without"),
+        (synthetic_classic_with_difs(false), "loaded, never applied", "convert the map without"),
+        (synthetic_classic_with_difs(true), "applied", "convert the map with the dif files"),
+    ] {
+        let opened = opened_from(image, ManifestState::None);
+        let lines = dif_lines(&opened.inspection).unwrap();
+        let evidence = &opened.inspection.difs.as_ref().unwrap().evidence;
+        assert_eq!(lines.len(), 3, "{lines:?}");
+        for (line, kind) in lines.iter().zip(["land (mapdif): ", "statics (stadif): "]) {
+            assert!(line.starts_with(&format!("{kind}{status}")), "{line} / {evidence:#?}");
+        }
+        assert!(lines[2].starts_with(advice), "{}", lines[2]);
+        // The dif code does not disturb the rest of the inspection.
+        assert!(opened.blockers().is_empty(), "{:?}", opened.blockers());
+    }
 }
 
 #[test]

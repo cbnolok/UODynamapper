@@ -6,7 +6,7 @@ use uocf::client_exe::patch::manifest_path;
 use super::{error_label, info_grid, muted_label, warning_label, ITEM_SPACING, SUCCESS_COLOR};
 use crate::app::Session;
 use crate::logic::opened::{
-    checksum_status, manifest_steps, seam_status, table_locations, version_label, ManifestState,
+    checksum_status, dif_lines, manifest_steps, seam_status, table_locations, version_label, ManifestState,
 };
 
 pub fn ui_executable(ui: &mut egui::Ui, session: &Session) {
@@ -40,8 +40,18 @@ pub fn ui_executable(ui: &mut egui::Ui, session: &Session) {
         };
         rows.push(("Startup copy", startup));
     }
+    for (index, line) in dif_lines(inspection).into_iter().flatten().enumerate() {
+        rows.push((if index == 0 { "Dif patches" } else { "" }, line));
+    }
     rows.push(("Split / seam", seam_status(inspection)));
     info_grid(ui, "executable_grid", &rows);
+    if let Some(difs) = &inspection.difs {
+        egui::CollapsingHeader::new("Dif patch evidence").id_salt("dif_evidence").show(ui, |ui| {
+            for line in &difs.evidence {
+                muted_label(ui, line.as_str());
+            }
+        });
+    }
 
     ui.add_space(ITEM_SPACING);
     let blockers = opened.blockers();

@@ -121,7 +121,9 @@ Server interaction: none. The wrap is client-side only and is chosen by the 0xBF
 - **Mapdif/stadif in 7.0.x.**
   - The patch counts still arrive with 0xBF/0x18, and `ReloadDifLists` still loads the lists.
   - But `StadifBlockLookup` 0x0056cf50 and `MapdifBlockLookup` 0x0056cfe0 (7.0.103) have **no caller**.
-    7.0.20 has the same dead `MapdifBlockLookup` 0x00561850. No code reads record +0x1c..+0x24.
+    7.0.20 has the same dead pair: `StadifBlockLookup` 0x00561850 and `MapdifBlockLookup` 0x005618e0. No
+    code reads record +0x1c..+0x24. (An earlier pass called 0x00561850 the mapdif lookup; it reads the
+    stadif maps 0x00a2e2c8. Ghidra had not made a function at 0x005618e0; it does now.)
   - So the difs are never applied from 6.0.14.3 on, and the variant flag does not interact with them.
   - Traced: the imm32 scans of the record fields find no other reader, and the xrefs of the lookups are
     empty.
@@ -202,9 +204,9 @@ and [uokr_facets.md](../../ghidra-facets/results/uokr_facets.md#no-facetnx-varia
 | Handle_0xBF_GeneralInfo | 0x0041ff90 | 0x00430ae0 | 0x00479440 | 0x00477f80 |
 | SetFacet | 0x004eab40 | 0x004face0 | 0x00585de0 | 0x00593eb0 |
 | g_WrapWidth / g_WrapHeight | 0x005cd66c / 0x005cd670 | | | 0x0074229c / 0x007422a0 |
-| dif list loader | 0x004d0cb0 | 0x004e0eb0, 0x004e0ff0 | | 0x0056e5c0, 0x0056e700 |
-| MapdifBlockLookup | 0x004d1230 (used) | none | 0x00561850 (dead) | 0x0056cfe0 (dead) |
-| StadifBlockLookup | 0x004d1140 (used) | none | | 0x0056cf50 (dead) |
+| dif list loader | 0x004d0cb0 | 0x004e0eb0, 0x004e0ff0 | 0x00562300, 0x00562440 | 0x0056e5c0, 0x0056e700 |
+| MapdifBlockLookup | 0x004d1230 (used) | none | 0x005618e0 (dead) | 0x0056cfe0 (dead) |
+| StadifBlockLookup | 0x004d1140 (used) | none | 0x00561850 (dead) | 0x0056cf50 (dead) |
 | file name table (names) | 0x0059bd1c, stride 56 | 0x005e1324, 56 | 0x006d77dc, 56 | 0x00710904, 60 |
 
 Bytes only: ML table 0x0057d260 (file names 0x005aa4d4), 5.0.9.1 table 0x00590610 (0x005bfbc4), 7.0.50
@@ -248,3 +250,46 @@ two x = 5120 wrap seam compares by structure, and patches sizes and wraps in bot
    x ≥ 5120 does not wrap, and the client renders cells at x < 5120 as void when viewed from there.
 5. **Ter Mur's dif ids.** Ter Mur's dif ids point to `mapdif4`/`stadif4`. Do not treat them as Ter Mur
    patches.
+
+## Dif usage checker
+
+`lib/uocf/src/client_exe/classic_difs.rs` (`inspect_classic_difs`, part of `ClientExeInspection::difs`,
+printed by `uocf-cli exe show` and the patcher GUI) answers, per kind, whether a Classic `client.exe`
+applies the mapdif / stadif patches. It reads the bytes only; it never runs the client.
+
+- **Loader.** The `PUSH imm32` of the `mapdifl%d.mul` / `stadifl%d.mul` string, with a `MOV r32,imm32`
+  (not ESP) of a writable VA in the 0x40 bytes before it and an `ADD r32,imm8` of that register in the
+  0x200 bytes after it: the immediate is the map array, the ADD its map size (12 in every build). The
+  static constructor `PUSH count; PUSH 12; PUSH array` (MSVC 6 guarded registrations put an `OR CL,AL`
+  after the count) gives the map count: 5 up to 6.0.14.3, 6 in 7.0.
+- **Lookups.** Every other u32 in `.text` inside the array is classified. A no-base SIB operand
+  `[index*4 + disp32]` is a read of a facet's map (`MOV ECX,[ESI*4+maps]` up to 5.0.9.1, two per lookup;
+  `LEA ESI,[EAX*4+maps]` in 7.0). Its function starts at the nearest 16-aligned address after a `RET`,
+  `RET imm16` or `JMP` and its padding (NOP in MSVC 6, INT3 in MSVC 8).
+- **Callers.** `CALL rel32` and `JMP rel32` to the start, the callers of a thunk (a `JMP rel32` that is
+  itself a function start), and any stored u32 equal to the start in any section.
+- **Status.** `Applied` when a lookup has a caller (the patches then apply once the server sends
+  0xBF/0x18); `LoadedNotApplied` when the lists load but no lookup exists or none has a caller and every
+  reference is explained; `Absent` with no format string; `Unknown` when the string is never pushed, the
+  loader has another shape, or a reference is not explained (e.g. a direct `MOV EAX,[maps+12]`).
+
+Every reference to the arrays in every build below is explained (loader, constructor / destructor,
+indexed read). The ignored test `lib/uocf/tests/real_files/classic_dif_usage.rs` checks the table.
+
+| Build | Land / statics | Loader | Maps (land / statics) | Lookups (land / statics) | Callers |
+|---|---|---|---|---|---|
+| UO Gold | applied / applied | 0x004d0cb0 | 0x00768e60 / 0x00768eb8, 5 | 0x004d1230 / 0x004d1140 | 7 / 2 CALL |
+| Mondain's Legacy folder | applied / applied | 0x004dbf00 | 0x00777da8 / 0x00777e00, 5 | 0x004dc480 / 0x004dc390 | 7 / 2 CALL |
+| 5.0.9.1 | applied / applied | 0x004e5240 | 0x00793a80 / 0x00793ad8, 5 | 0x004e57c0 / 0x004e56d0 | 7 / 2 CALL |
+| 6.0.14.3 | loaded, never applied | 0x004e0ff0 / 0x004e0eb0 | 0x007aeeac / 0x007aee70, 5 | none | |
+| 7.0.20.0 | loaded, never applied | 0x00562440 / 0x00562300 | 0x00a2e310 / 0x00a2e2c8, 6 | 0x005618e0 / 0x00561850 | 0 |
+| 7.0.29.97 (`client_tc.exe`) | loaded, never applied | 0x005650b0 / 0x00564f70 | 0x00a319e8 / 0x00a319a0, 6 | 0x00563990 / 0x00563900 | 0 |
+| 7.0.50.0 | loaded, never applied | 0x005643f0 / 0x005642b0 | 0x00a51778 / 0x00a51730, 6 | 0x00562cd0 / 0x00562c40 | 0 |
+| 7.0.103.0 | loaded, never applied | 0x0056e700 / 0x0056e5c0 | 0x00a6b720 / 0x00a6b6d8, 6 | 0x0056cfe0 / 0x0056cf50 | 0 |
+| 7.0.115.0 (Classic fp folder) | loaded, never applied | 0x00577fa0 / 0x00577e60 | 0x009b9100 / 0x009b90b8, 6 | 0x00575fe0 / 0x00575f50 | 0 |
+
+The Gold, 6.0.14.3, 7.0.20 and 7.0.103 rows agree with Ghidra (decompiled lookups and their xrefs). The
+ML and 5.0.9.1 rows confirm the call-count inference of Q3 from the lookups themselves.
+
+A converter should apply the dif files only to a kind the client applies; for 6.0.14.3 and later it should
+leave them out (recommendation 2).
