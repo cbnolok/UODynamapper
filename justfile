@@ -416,19 +416,20 @@ verify-package-inputs target="":
 
 # Verify Windows release package inputs before creating artifacts.
 [windows]
+[script("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File")]
+[extension(".ps1")]
 verify-package-inputs target="":
-    @powershell -NoProfile -Command " \
-    $releaseDir = if ('{{target}}' -ne '') { 'target/{{target}}/release' } else { 'target/release' }; \
-    Write-Host \"Verifying release package inputs in $releaseDir...\"; \
-    $missing = $false; \
-    function Require-File([string]$path) { if (-not (Test-Path -Path $path -PathType Leaf)) { Write-Host \"missing file: $path\"; $script:missing = $true } }; \
-    function Require-Dir([string]$path) { if (-not (Test-Path -Path $path -PathType Container)) { Write-Host \"missing directory: $path\"; $script:missing = $true } }; \
-    Require-File \"$releaseDir/dynamapper.exe\"; \
-    foreach ($util in '{{tool_bins}}'.Split(' ')) { Require-File \"$releaseDir/$util.exe\" }; \
-    Require-Dir 'dynamapper/assets'; \
-    Require-File 'tools/_shared_assets/Dictionary.dic'; \
-    foreach ($doc in ('{{app_docs}} {{tool_docs}}'.Split(' '))) { Require-File $doc }; \
-    if ($missing) { exit 1 }"
+    $releaseDir = if ('{{target}}' -ne '') { 'target/{{target}}/release' } else { 'target/release' }
+    Write-Host "Verifying release package inputs in $releaseDir..."
+    $missing = $false
+    function Require-File([string]$path) { if (-not (Test-Path -Path $path -PathType Leaf)) { Write-Host "missing file: $path"; $script:missing = $true } }
+    function Require-Dir([string]$path) { if (-not (Test-Path -Path $path -PathType Container)) { Write-Host "missing directory: $path"; $script:missing = $true } }
+    Require-File "$releaseDir/dynamapper.exe"
+    foreach ($util in '{{tool_bins}}'.Split(' ')) { Require-File "$releaseDir/$util.exe" }
+    Require-Dir 'dynamapper/assets'
+    Require-File 'tools/_shared_assets/Dictionary.dic'
+    foreach ($doc in ('{{app_docs}} {{tool_docs}}'.Split(' '))) { Require-File $doc }
+    if ($missing) { exit 1 }
 
 # Validate and package the CLI tools artifact of a CLI-only build (the musl targets).
 [unix]
@@ -498,22 +499,24 @@ package name="dynamapper-pkg" target="":
 
 # Package Windows app and tool release artifacts.
 [windows]
+[script("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File")]
+[extension(".ps1")]
 package name="dynamapper-pkg" target="":
-    @powershell -NoProfile -Command " \
-    $releaseDir = if ('{{target}}' -ne '') { 'target/{{target}}/release' } else { 'target/release' }; \
-    $appDir = 'artifact/{{name}}/UODynamapper'; \
-    $toolsDir = 'artifact/{{name}}-tools/UODynamapper-tools'; \
-    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue 'artifact/{{name}}', 'artifact/{{name}}-tools'; \
-    New-Item -ItemType Directory -Force -Path \"$appDir\", \"$appDir/docs\", \"$toolsDir/bin\", \"$toolsDir/shared\", \"$toolsDir/docs\" | Out-Null; \
-    Write-Host \"Packaging {{name}} from $releaseDir...\"; \
-    if (Test-Path \"$releaseDir/dynamapper.exe\") { Copy-Item \"$releaseDir/dynamapper.exe\" \"$appDir/\" }; \
-    Copy-Item -Recurse 'dynamapper/assets' \"$appDir/assets\"; \
-    if (Test-Path 'README.md') { Copy-Item 'README.md' \"$appDir/\" }; \
-    foreach ($doc in '{{app_docs}}'.Split(' ')) { if (Test-Path $doc) { Copy-Item $doc \"$appDir/docs/\" } }; \
-    foreach ($util in '{{tool_bins}}'.Split(' ')) { if (Test-Path \"$releaseDir/$util.exe\") { Copy-Item \"$releaseDir/$util.exe\" \"$toolsDir/bin/\" } }; \
-    if (Test-Path 'tools/_shared_assets/Dictionary.dic') { Copy-Item 'tools/_shared_assets/Dictionary.dic' \"$toolsDir/shared/\" }; \
-    foreach ($doc in '{{tool_docs}}'.Split(' ')) { if (Test-Path $doc) { Copy-Item $doc \"$toolsDir/docs/\" } }; \
-    Write-Host \"Packaging complete: $appDir and $toolsDir\""
+    $ErrorActionPreference = 'Stop'
+    $releaseDir = if ('{{target}}' -ne '') { 'target/{{target}}/release' } else { 'target/release' }
+    $appDir = 'artifact/{{name}}/UODynamapper'
+    $toolsDir = 'artifact/{{name}}-tools/UODynamapper-tools'
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue 'artifact/{{name}}', 'artifact/{{name}}-tools'
+    New-Item -ItemType Directory -Force -Path "$appDir", "$appDir/docs", "$toolsDir/bin", "$toolsDir/shared", "$toolsDir/docs" | Out-Null
+    Write-Host "Packaging {{name}} from $releaseDir..."
+    if (Test-Path "$releaseDir/dynamapper.exe") { Copy-Item "$releaseDir/dynamapper.exe" "$appDir/" }
+    Copy-Item -Recurse 'dynamapper/assets' "$appDir/assets"
+    if (Test-Path 'README.md') { Copy-Item 'README.md' "$appDir/" }
+    foreach ($doc in '{{app_docs}}'.Split(' ')) { if (Test-Path $doc) { Copy-Item $doc "$appDir/docs/" } }
+    foreach ($util in '{{tool_bins}}'.Split(' ')) { if (Test-Path "$releaseDir/$util.exe") { Copy-Item "$releaseDir/$util.exe" "$toolsDir/bin/" } }
+    if (Test-Path 'tools/_shared_assets/Dictionary.dic') { Copy-Item 'tools/_shared_assets/Dictionary.dic' "$toolsDir/shared/" }
+    foreach ($doc in '{{tool_docs}}'.Split(' ')) { if (Test-Path $doc) { Copy-Item $doc "$toolsDir/docs/" } }
+    Write-Host "Packaging complete: $appDir and $toolsDir"
 
 
 # --- Development Run Recipes ---
