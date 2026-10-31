@@ -21,7 +21,7 @@ impl EcTerrainOverrides {
     }
 
     pub fn parse(name: &str, content: &str) -> eyre::Result<Self> {
-        knuffel::parse(name, content).wrap_err("Failed to parse EcTerrainOverrides KDL")
+        udd_kdl::parse(name, content).wrap_err("Failed to parse EcTerrainOverrides KDL")
     }
 
     pub fn to_map(&self) -> HashMap<u32, EcTerrainOverrideEntry> {

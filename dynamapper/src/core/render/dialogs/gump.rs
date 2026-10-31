@@ -206,7 +206,7 @@ impl PaperdollWearableRules {
             Ok(())
         }
 
-        let document = knuffel::parse_ast::<Span>(source_name, content)?;
+        let document = udd_kdl::parse_ast(source_name, content)?;
         let mut paperdoll_draw_order = HashMap::new();
         let mut wearable_rules = Vec::new();
         for node in document.nodes.iter() {
@@ -279,7 +279,7 @@ mod tests {
 
     #[test]
     fn bundled_paperdoll_specs_parse() {
-        let profiles = knuffel::parse::<PaperdollProfilesKdl>(
+        let profiles = udd_kdl::parse::<PaperdollProfilesKdl>(
             "PaperdollProfiles.kdl",
             include_str!("../../../../assets/runtime_specs/paperdoll/PaperdollProfiles.kdl"),
         )
@@ -401,7 +401,7 @@ impl PaperdollProfilesRes {
     fn load_from_path(path: &Path) -> color_eyre::eyre::Result<Self> {
         let content = std::fs::read_to_string(path)?;
         let decoded: PaperdollProfilesKdl =
-            knuffel::parse(path.to_str().unwrap_or("PaperdollProfiles.kdl"), &content)?;
+            udd_kdl::parse(path.to_str().unwrap_or("PaperdollProfiles.kdl"), &content)?;
         let profiles = decoded
             .profiles
             .into_iter()

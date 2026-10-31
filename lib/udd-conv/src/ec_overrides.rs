@@ -146,7 +146,7 @@ fn load_base_choice_overrides(dir: &Path) -> eyre::Result<Vec<BaseChoiceOverride
         .wrap_err_with(|| format!("Failed to read {:?}", path))?;
     let name = path.to_str().unwrap_or("base_choice_overrides.kdl");
     let parsed: BaseChoiceOverridesKdl =
-        knuffel::parse(name, &content).wrap_err("Failed to parse base_choice_overrides.kdl")?;
+        udd_kdl::parse(name, &content).wrap_err("Failed to parse base_choice_overrides.kdl")?;
     Ok(parsed
         .entries
         .into_iter()
@@ -167,7 +167,7 @@ fn load_role_overrides(dir: &Path) -> eyre::Result<Vec<RoleOverride>> {
         .wrap_err_with(|| format!("Failed to read {:?}", path))?;
     let name = path.to_str().unwrap_or("role_overrides.kdl");
     let parsed: RoleOverridesKdl =
-        knuffel::parse(name, &content).wrap_err("Failed to parse role_overrides.kdl")?;
+        udd_kdl::parse(name, &content).wrap_err("Failed to parse role_overrides.kdl")?;
     Ok(parsed
         .entries
         .into_iter()
@@ -189,7 +189,7 @@ fn load_metadata_only_overrides(dir: &Path) -> eyre::Result<Vec<MetadataOnlyOver
         .wrap_err_with(|| format!("Failed to read {:?}", path))?;
     let name = path.to_str().unwrap_or("metadata_only_overrides.kdl");
     let parsed: MetadataOnlyOverridesKdl =
-        knuffel::parse(name, &content).wrap_err("Failed to parse metadata_only_overrides.kdl")?;
+        udd_kdl::parse(name, &content).wrap_err("Failed to parse metadata_only_overrides.kdl")?;
     Ok(parsed
         .entries
         .into_iter()

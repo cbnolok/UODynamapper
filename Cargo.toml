@@ -10,6 +10,7 @@ members = [
     "lib/udd-image-codecs",
     "lib/udd-container",
     "lib/udd-assets",
+    "lib/udd-kdl",
     "lib/udd-logging",
     "lib/gui-shared",
     "lib/image-postprocess",
@@ -117,6 +118,11 @@ strip = false # "debuginfo"
 #[profile.profiling.package.image-postprocess]
 #opt-level = 3
 
+# knuffel's KDL grammar, compiled only in udd-kdl: its generic type names run to about a megabyte each, so even
+# line tables for it would dwarf the rest of the debug info.
+[profile.profiling.package.udd-kdl]
+debug = false
+
 # for those we don't tipically need debug info for profiling
 #[profile.profiling.package.uocf]
 #debug = false
@@ -209,6 +215,12 @@ opt-level = 3
 debug = "line-tables-only"
 debug-assertions = false
 #strip = "debuginfo"
+
+# knuffel's KDL grammar, compiled only in udd-kdl: its generic type names run to about a megabyte each, so even
+# line tables for it would dwarf the rest of the debug info. Optimized, since every KDL file goes through it.
+[profile.dev.package.udd-kdl]
+opt-level = 3
+debug = false
 
 [profile.dev.package.udd-logging]
 opt-level = 1

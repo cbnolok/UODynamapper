@@ -25,7 +25,7 @@ impl EcSurfaceOverrides {
     }
 
     pub fn parse(name: &str, content: &str) -> eyre::Result<Self> {
-        knuffel::parse(name, content).wrap_err("Failed to parse EcSurfaceOverrides KDL")
+        udd_kdl::parse(name, content).wrap_err("Failed to parse EcSurfaceOverrides KDL")
     }
 
     pub fn to_map(&self) -> HashMap<u32, EcSurfaceOverrideEntry> {

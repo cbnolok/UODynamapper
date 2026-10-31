@@ -21,6 +21,7 @@ type_complexity = "allow"
 udd-assets = { path = "../lib/udd-assets" }
 udd-container = { path = "../lib/udd-container" }
 uocf = { path = "../lib/uocf" }
+udd-kdl = { path = "../lib/udd-kdl" }
 bevy_egui = { version = "0.43" } #, features = ["immutable_ctx"] }
 bytemuck = { version = "1.*", default-features = false, features = ["derive", "aarch64_simd", "avx512_simd"] }
 chrono = { version = "0.4", default-features = false, features = [
@@ -30,6 +31,7 @@ chrono = { version = "0.4", default-features = false, features = [
 color-eyre = { workspace = true, features = ["track-caller"] }
 #lru = "0.16"
 indexmap = "2.14.2"
+# Only for the Decode derives: their code names the knuffel crate. Parse through udd-kdl.
 knuffel.workspace = true
 log = { version = "*", features = [
   "max_level_debug",

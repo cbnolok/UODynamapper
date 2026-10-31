@@ -23,6 +23,7 @@ image = { workspace = true, features = ["png"] }
 image-postprocess = { path = "../../lib/image-postprocess" }
 udd-conv = { path = "../../lib/udd-conv" }
 udd-assets = { path = "../../lib/udd-assets" }
+udd-kdl = { path = "../../lib/udd-kdl" }
 udd-image-codecs = { path = "../../lib/udd-image-codecs", features = ["ktx2"] }
 uocf = { path = "../../lib/uocf" }
 particle-sim = { path = "../../lib/ec-effects/particle-sim" }
@@ -34,5 +35,6 @@ gui-shared = { path = "../../lib/gui-shared" }
 rodio.workspace = true
 serde.workspace = true
 color-eyre.workspace = true
+# Only for the Decode derives: their code names the knuffel crate. Parse through udd-kdl.
 knuffel.workspace = true
 log.workspace = true

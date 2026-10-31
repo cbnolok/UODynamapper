@@ -109,8 +109,8 @@ fn parse_toml_profile(path: &Path, content: &str) -> eyre::Result<UpscaleProfile
 }
 
 fn parse_kdl_profile(path: &Path, content: &str) -> eyre::Result<UpscaleProfile> {
-    use knuffel::ast::{Literal, Node, Value};
-    use knuffel::span::{Span, Spanned};
+    use udd_kdl::ast::{Literal, Node, Value};
+    use udd_kdl::span::{Span, Spanned};
 
     fn value_string(value: &Value<Span>, field: &str) -> eyre::Result<String> {
         match &*value.literal {
@@ -194,7 +194,7 @@ fn parse_kdl_profile(path: &Path, content: &str) -> eyre::Result<UpscaleProfile>
             .collect()
     }
 
-    let document = knuffel::parse_ast::<Span>(&path.display().to_string(), content)
+    let document = udd_kdl::parse_ast(&path.display().to_string(), content)
         .wrap_err_with(|| format!("parse KDL upscale profile {}", path.display()))?;
     let mut profile = UpscaleProfile::new();
     for node in &document.nodes {

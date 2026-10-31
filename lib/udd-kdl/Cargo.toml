@@ -1,0 +1,16 @@
+[package]
+name = "udd-kdl"
+version = "0.1.0"
+edition = "2024"
+
+[lints.clippy]
+collapsible_if = "allow"
+empty_line_after_doc_comments = "allow"
+manual_div_ceil = "allow"
+manual_is_multiple_of = "allow"
+needless_lifetimes = "allow"
+nonminimal_bool = "allow"
+too_many_arguments = "allow"
+
+[dependencies]
+knuffel.workspace = true

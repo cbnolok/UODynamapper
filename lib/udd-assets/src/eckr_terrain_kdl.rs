@@ -102,7 +102,7 @@ fn parse_eckr_terrain_routing_kdl(source_name: &str, content: &str) -> eyre::Res
         Ok(())
     }
 
-    let document = knuffel::parse_ast::<Span>(source_name, content)
+    let document = udd_kdl::parse_ast(source_name, content)
         .wrap_err_with(|| format!("parse {source_name} AST"))?;
     let mut entries = Vec::new();
     collect_t_nodes(document.nodes.iter(), &mut entries)?;
@@ -223,7 +223,7 @@ fn parse_terrain_definition_kdl(content: &str) -> eyre::Result<TerrainDefinition
     }
 
     let mut entries = Vec::new();
-    let document = knuffel::parse_ast::<Span>("TerrainDefinition.kdl", content)
+    let document = udd_kdl::parse_ast("TerrainDefinition.kdl", content)
         .wrap_err("parse TerrainDefinition.kdl AST")?;
 
     for node in &document.nodes {

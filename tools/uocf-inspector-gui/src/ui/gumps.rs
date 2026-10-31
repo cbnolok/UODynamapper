@@ -742,7 +742,7 @@ fn is_paperdoll_sprite_id(gump_id: u32) -> bool {
 fn paperdoll_profiles() -> &'static [PaperdollProfile] {
     static PROFILES: OnceLock<Vec<PaperdollProfile>> = OnceLock::new();
     PROFILES.get_or_init(|| {
-        knuffel::parse::<PaperdollProfilesKdl>("PaperdollProfiles.kdl", PAPERDOLL_PROFILE_KDL)
+        udd_kdl::parse::<PaperdollProfilesKdl>("PaperdollProfiles.kdl", PAPERDOLL_PROFILE_KDL)
             .ok()
             .map(|decoded| {
                 decoded

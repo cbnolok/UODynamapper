@@ -296,7 +296,7 @@ impl EcMobileAnimationsKdl {
     }
 
     pub fn parse(name: &str, content: &str) -> eyre::Result<Self> {
-        knuffel::parse(name, content).wrap_err("Failed to parse EcMobileAnimations KDL")
+        udd_kdl::parse(name, content).wrap_err("Failed to parse EcMobileAnimations KDL")
     }
 }
 

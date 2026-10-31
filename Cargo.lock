@@ -2881,6 +2881,7 @@ dependencies = [
  "tracing-subscriber",
  "udd-assets",
  "udd-container",
+ "udd-kdl",
  "uocf",
  "wgpu",
  "wgpu-profiler",
@@ -7037,6 +7038,7 @@ dependencies = [
  "serde_json",
  "udd-container",
  "udd-image-codecs",
+ "udd-kdl",
  "uocf",
 ]
 
@@ -7075,6 +7077,7 @@ dependencies = [
  "udd-assets",
  "udd-container",
  "udd-image-codecs",
+ "udd-kdl",
  "uocf",
  "wgpu-types",
 ]
@@ -7087,7 +7090,6 @@ dependencies = [
  "color-eyre",
  "csv",
  "image",
- "knuffel",
  "log",
  "rayon",
  "serde",
@@ -7097,6 +7099,7 @@ dependencies = [
  "udd-container",
  "udd-conv",
  "udd-image-codecs",
+ "udd-kdl",
  "udd-logging",
  "uocf",
 ]
@@ -7134,6 +7137,13 @@ dependencies = [
  "wgpu-types",
  "wide",
  "zstd",
+]
+
+[[package]]
+name = "udd-kdl"
+version = "0.1.0"
+dependencies = [
+ "knuffel",
 ]
 
 [[package]]
@@ -7255,7 +7265,6 @@ dependencies = [
  "getset",
  "image",
  "indexmap",
- "knuffel",
  "libz-sys",
  "log",
  "memmap2",
@@ -7266,6 +7275,7 @@ dependencies = [
  "serde",
  "serde_json",
  "toml",
+ "udd-kdl",
  "wide",
 ]
 
@@ -7323,6 +7333,7 @@ dependencies = [
  "udd-assets",
  "udd-conv",
  "udd-image-codecs",
+ "udd-kdl",
  "udd-logging",
  "uocf",
 ]
