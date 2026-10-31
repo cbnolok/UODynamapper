@@ -68,7 +68,9 @@ nearest-interior/bilinear-seam filter; its finite-difference UV footprint is an
 approximation to GPU derivatives at rasterization boundaries. Wet art uses the
 same wrapped clock and UV breathing formula. Coverage below 0.0001 passes
 through to another candidate, matching the two sprite passes' shared discard.
-Fractional but visible alpha remains selectable.
+Fractional but visible alpha remains selectable. Legacy Translucent material
+opacity is multiplied into sampled coverage using the collector's shared
+source-gated rule; it does not change logical hit positions or movement flags.
 
 Decoded pages retain alpha only, load on a geometric hit and share a bounded
 LRU cache (32 MiB target, 128 records; one oversized page can occupy the cache

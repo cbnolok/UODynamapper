@@ -896,6 +896,18 @@ fn static_hue_payload(hue_id: u16) -> (u32, u32) {
     }
 }
 
+pub(crate) fn static_sprite_opacity(tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
+    legacy_art: bool) -> f32 {
+    use uocf::enhanced::tileart::TaeFlag;
+    if !legacy_art { return 1.0; }
+    let Some(tile) = tilemeta else { return 1.0; };
+    if tile.flags & TaeFlag::Translucent.bits() == 0 { return 1.0; }
+    // Original CC art dispatcher 0x44e3a0 selects the 3/4-source blitter
+    // 0x5d8000, or its reverse at 0x5d8050 for Foliage. Keep original flags
+    // intact; this is sprite material opacity, never a movement property.
+    if tile.flags & TaeFlag::Foliage.bits() != 0 { 0.25 } else { 0.75 }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable, ShaderType)]
 pub struct SpriteInstance {
@@ -2537,7 +2549,7 @@ fn emit_billboard_static_instance(
         texture_stretch,
         material_item_id: info.tile.graphic as u32,
         local_light_rgba,
-        color_rgba: [1.0, 1.0, 1.0, 1.0],
+        color_rgba: [1.0, 1.0, 1.0, static_sprite_opacity(info.tilemeta, resolved.legacy_art && !ec_surface)],
     });
 }
 
@@ -2611,7 +2623,7 @@ fn emit_cc_surface_like_flat_static_instance(
         texture_stretch: 0.0,
         material_item_id: 0,
         local_light_rgba,
-        color_rgba: [1.0, 1.0, 1.0, 1.0],
+        color_rgba: [1.0, 1.0, 1.0, static_sprite_opacity(info.tilemeta, resolved.legacy_art)],
     });
 }
 
@@ -3310,6 +3322,26 @@ mod tests {
             resolve_ec_static_visual_kind(196, false, false, Some(resolution)),
             StaticVisualKind::TexLandEc { resolution },
         );
+    }
+
+    #[test]
+    fn legacy_translucency_follows_original_foliage_and_source_dispatch() {
+        use uocf::enhanced::tileart::TaeFlag;
+        let tile = |flags| item_tile_with_flags(flags, udd_assets::tilemeta::TileMetaItemVisualKind::RegularArt);
+        let wave = tile((TaeFlag::Translucent | TaeFlag::Wet).bits());
+        let foliage = tile((TaeFlag::Translucent | TaeFlag::Foliage).bits());
+        let surface = tile((TaeFlag::Translucent | TaeFlag::Surface).bits());
+        let partial = tile((TaeFlag::Translucent | TaeFlag::PartialHue).bits());
+        assert_eq!(TaeFlag::Foliage.bits(), 0x20000);
+        assert_eq!(TaeFlag::Surface.bits(), 0x200);
+        assert_eq!(static_sprite_opacity(Some(&wave), true), 0.75);
+        assert_eq!(static_sprite_opacity(Some(&foliage), true), 0.25);
+        assert_eq!(static_sprite_opacity(Some(&surface), true), 0.75);
+        assert_eq!(static_sprite_opacity(Some(&partial), true), 0.75);
+        assert_eq!(static_sprite_opacity(Some(&wave), false), 1.0);
+        assert_eq!(static_sprite_opacity(Some(&tile(TaeFlag::Wet.bits())), true), 1.0);
+        assert_eq!(static_sprite_opacity(Some(&tile(TaeFlag::Transparent.bits())), true), 1.0);
+        assert_eq!(static_sprite_opacity(None, true), 1.0);
     }
 
     #[test]

@@ -55,6 +55,7 @@ pub struct ResolvedArtSprite {
     pub offset_x: i16,
     pub offset_y: i16,
     pub source_pixel_ratio: f32,
+    pub legacy_art: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -245,7 +246,7 @@ impl ArtPageAtlas {
     pub fn resolve_cc(&mut self, tex_art_cc: &TexArtCcPackage, graphic: u16) -> Option<ResolvedArtSprite> {
         let art_id = graphic as u32;
         let slot = tex_art_cc.present_slot(art_id)?;
-        self.resolve_slot(
+        let mut resolved = self.resolve_slot(
             slot.page_index,
             slot.x,
             slot.y,
@@ -261,7 +262,9 @@ impl ArtPageAtlas {
             tex_art_cc.pages().get(slot.page_index as usize)?.used_height,
             tex_art_cc.pages().get(slot.page_index as usize)?.pixel_format,
             || tex_art_cc.read_page_bytes(slot.page_index),
-        )
+        )?;
+        resolved.legacy_art = true;
+        Some(resolved)
     }
 
     pub fn resolve_ec(&mut self, tex_art_ec: &TexArtEcPackage, art_id: u32) -> Option<ResolvedArtSprite> {
@@ -283,7 +286,9 @@ impl ArtPageAtlas {
             tex_art_ec.pages().get(slot.page_index as usize)?.pixel_format,
             || tex_art_ec.read_page_bytes(slot.page_index),
         )?;
-        resolved.source_pixel_ratio = tex_art_ec.sprite_geometry(art_id)?.legacy_pixel_ratio();
+        let geometry = tex_art_ec.sprite_geometry(art_id)?;
+        resolved.source_pixel_ratio = geometry.legacy_pixel_ratio();
+        resolved.legacy_art = !geometry.source_is_world_art;
         Some(resolved)
     }
 
@@ -404,6 +409,7 @@ impl ArtPageAtlas {
             offset_x,
             offset_y,
             source_pixel_ratio: 1.0,
+            legacy_art: false,
         })
     }
 

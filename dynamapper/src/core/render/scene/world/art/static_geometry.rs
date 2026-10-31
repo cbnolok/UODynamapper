@@ -44,6 +44,7 @@ pub(crate) struct StaticArtGeometry {
     pub flat_quad: u32,
     pub priority_anchor: Vec2,
     pub route: StaticArtRoute,
+    pub opacity: f32,
 }
 
 impl<'w> StaticPickingResources<'w> {
@@ -101,7 +102,7 @@ impl<'w> StaticPickingResources<'w> {
         };
         // Both sprite passes discard below this coverage; a failed page is not
         // silently treated as an opaque rectangle.
-        alpha.is_some_and(|value| value >= 0.0001)
+        alpha.is_some_and(|value| value * geometry.opacity >= 0.0001)
     }
 
     pub(crate) fn resolve(&mut self, graphic: u16, x: f32, y: f32, z: i8) -> Option<StaticArtGeometry> {
@@ -119,25 +120,26 @@ impl<'w> StaticPickingResources<'w> {
         let (anchor_x, anchor_y) = statics_collect::surface_like_static_world_anchor(kind, x, y);
         let mut geometry = StaticArtGeometry { origin: Vec3::new(anchor_x, height, anchor_y),
             local_min: Vec2::ZERO, local_max: Vec2::ONE, flat_quad: 2,
-            priority_anchor: Vec2::new(anchor_x, anchor_y), route: StaticArtRoute::EcArt(u32::from(graphic)) };
+            priority_anchor: Vec2::new(anchor_x, anchor_y), route: StaticArtRoute::EcArt(u32::from(graphic)), opacity: 1.0 };
         // Ground material slots cover the owning cell, without a billboard translation.
         if let StaticVisualKind::TexLandEc { resolution } = kind {
             self.land.as_ref()?.0.present_slot(resolution.runtime_slot_id)?;
             geometry.route = StaticArtRoute::EcLand(resolution.runtime_slot_id);
             return Some(geometry);
         }
-        let (offset_x, offset_y, width, height, pixel_ratio) = match kind {
+        let (offset_x, offset_y, width, height, pixel_ratio, legacy_art) = match kind {
             StaticVisualKind::CcRegular { art_id, fallback_art_id } => {
                 let package = &self.cc.as_ref()?.0;
                 let selected = if package.present_slot(u32::from(art_id)).is_some() { art_id } else { fallback_art_id };
                 let slot = package.present_slot(u32::from(selected))?;
                 geometry.route = StaticArtRoute::CcArt(u32::from(selected));
-                (slot.draw_offset_x, slot.draw_offset_y, slot.logical_width(), slot.logical_height(), 1.0)
+                (slot.draw_offset_x, slot.draw_offset_y, slot.logical_width(), slot.logical_height(), 1.0, true)
             }
             StaticVisualKind::EcRegular { art_id } | StaticVisualKind::EcSurface { art_id } => {
                 let slot = self.ec.as_ref()?.0.present_slot(art_id)?;
-                let ratio = self.ec.as_ref()?.0.sprite_geometry(art_id)?.legacy_pixel_ratio();
-                (slot.draw_offset_x, slot.draw_offset_y, slot.logical_width(), slot.logical_height(), ratio)
+                let source = self.ec.as_ref()?.0.sprite_geometry(art_id)?;
+                (slot.draw_offset_x, slot.draw_offset_y, slot.logical_width(), slot.logical_height(),
+                    source.legacy_pixel_ratio(), !source.source_is_world_art)
             }
             StaticVisualKind::TexLandEc { .. } => unreachable!(),
         };
@@ -159,6 +161,9 @@ impl<'w> StaticPickingResources<'w> {
             geometry.local_min = Vec2::new(bounds.local_min_x, bounds.local_min_y);
             geometry.local_max = Vec2::new(bounds.local_max_x, bounds.local_max_y);
             geometry.flat_quad = 0;
+        }
+        if !matches!(kind, StaticVisualKind::EcSurface { .. }) {
+            geometry.opacity = statics_collect::static_sprite_opacity(meta, legacy_art);
         }
         Some(geometry)
     }
@@ -270,7 +275,7 @@ mod tests {
             let transform = GlobalTransform::from(Transform::from_xyz(10.0, 10.0, 10.0)
                 .looking_at(Vec3::ZERO, Vec3::Y));
             let ground = StaticArtGeometry { origin, local_min: Vec2::ZERO,
-                local_max: Vec2::ONE, flat_quad: 2, priority_anchor: Vec2::new(12.0, 20.0), route: StaticArtRoute::EcArt(1304) };
+                local_max: Vec2::ONE, flat_quad: 2, priority_anchor: Vec2::new(12.0, 20.0), route: StaticArtRoute::EcArt(1304), opacity: 1.0 };
             assert_eq!(ground.corners(&camera, &transform), [origin, origin + Vec3::X,
                 origin + Vec3::Z, origin + Vec3::X + Vec3::Z]);
             // The 44px baked CC diamond uses diagonal, centered bounds. Its
@@ -296,7 +301,7 @@ mod tests {
             .looking_at(Vec3::ZERO, Vec3::Y));
         let geometry = StaticArtGeometry { origin: Vec3::new(2.0, -0.5, 3.0),
             local_min: Vec2::ZERO, local_max: Vec2::ONE, flat_quad: 3,
-            priority_anchor: Vec2::new(2.0, 3.0), route: StaticArtRoute::EcArt(1304) };
+            priority_anchor: Vec2::new(2.0, 3.0), route: StaticArtRoute::EcArt(1304), opacity: 1.0 };
         for perspective in [false, true] {
             let camera = test_camera(perspective);
             for transform in [&iso, &rotated] {

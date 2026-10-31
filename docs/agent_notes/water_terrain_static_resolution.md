@@ -105,15 +105,20 @@ before the production commit.
 - Diagnostic-free desktop/Vulkan run reached `InGame` without shader, module,
   binding, or pipeline errors.
 
-## Separate follow-ups
+## Separate follow-ups resolved on 2026-10-31
 
-These were observed during the investigation but are not part of the resolved
-terrain/static seam:
+Legacy Translucent static art now carries the original Classic dispatcher's
+source weight into the blended pass: 3/4 normally, 1/4 with Foliage. Original
+executable blitters establish those weights; the GPU does not claim their
+5-bit quantization or exact gamma-space composition. New EC world art and
+authored surface materials retain their separate paths.
 
-- partially transparent/see-through Classic water statics may lose their
-  intended transparency;
-- a stray authored wave sprite may require separate map-data or animation-frame
-  routing analysis if it still reproduces.
+The isolated coast mark is original graphic 6061 at `(1447,1790,-5)`. App-only
+ownership probes and an exact original-UOP/packed-RGBA comparison establish
+that it is authored water detail. It is not evidence for changing map data or
+selecting a different animation frame.
 
-Treat either as a new bounded task. Do not reopen the accepted source,
-lighting, grunge, or fog ownership decisions without new evidence.
+See [the translucency source proof and native controls](classic_static_translucency.md).
+The current matching-pair Classic, Enhanced and KR coast/bridge controls are
+byte-identical across the repair. Keep the accepted source, lighting, grunge
+and fog ownership decisions unless new evidence contradicts them.

@@ -240,7 +240,7 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
         } else if (in.depth_class == DEPTH_CLASS_ROOF) {
             family_breakup = 0.82;
         }
-        let alpha = mask * silhouette * height_profile * depth_profile * family_breakup * clamp(effects.art_projected_shadow_strength, 0.0, 1.0);
+        let alpha = mask * silhouette * height_profile * depth_profile * family_breakup * clamp(effects.art_projected_shadow_strength, 0.0, 1.0) * in.color.a;
         if (alpha <= 0.001) {
             discard;
         }
@@ -309,14 +309,17 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
     if (blend_surface) {
         color.a *= static_surface_coverage(uv_in_tile_for_shading, (inst.is_wet_flags >> 2u) & 255u);
     }
-    // Preserve fractional coverage in the blended pass for authored materials.
-    let alpha_cutoff = select(sprite_params.alpha_cutoff, 0.9999, surface_header.x != 0u || blend_surface);
+    // Preserve fractional coverage and explicit material opacity in the blended
+    // pass. Testing image alpha alone would make translucent legacy art opaque.
+    let visible_alpha = color.a * in.color.a;
+    let alpha_cutoff = select(sprite_params.alpha_cutoff, 0.9999,
+        surface_header.x != 0u || blend_surface || in.color.a < 0.9999);
     if (sprite_params.pass_mode == PASS_MODE_OPAQUE) {
-        if color.a < 0.0001 || color.a < alpha_cutoff {
+        if visible_alpha < 0.0001 || visible_alpha < alpha_cutoff {
             discard;
         }
     } else {
-        if color.a < 0.0001 || color.a >= alpha_cutoff {
+        if visible_alpha < 0.0001 || visible_alpha >= alpha_cutoff {
             discard;
         }
     }
@@ -342,7 +345,10 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
             hue_sampler,
         );
     }
-    if (sprite_params.pass_mode == PASS_MODE_TRANSPARENT && surface_header.x == 0u && !blend_surface) {
+    // The existing fractional-edge color adjustment is not a material opacity
+    // rule. Explicitly translucent art keeps straight RGB for standard blending.
+    if (sprite_params.pass_mode == PASS_MODE_TRANSPARENT && surface_header.x == 0u && !blend_surface
+        && in.color.a >= 0.9999) {
         shaded = vec4<f32>(shaded.rgb * shaded.a * 2.0, shaded.a);
     }
     // CC surface-like water statics lie flat and must read as a continuous water
