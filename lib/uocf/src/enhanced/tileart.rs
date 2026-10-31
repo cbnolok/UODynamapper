@@ -210,7 +210,11 @@ pub struct ArtData {
     /// ID stored in the source record; it can differ from the asset lookup ID.
     pub source_tile_id: u32,
     pub tile_type: TileType,
+    /// The record's `flags1`.
     pub flags: TaeFlag,
+    /// The record's `flags2`: the client tests bits 18 (paperdoll partial hue), 19 (`UseNewArt`,
+    /// draw the block-0 KR art instead of the classic-style art) and 24 (`Animation`).
+    pub flags2: TaeFlag,
     pub height: u8,
     pub ec_texture: Option<ArtTexture>,
     pub cc_texture: Option<ArtTexture>,
@@ -903,6 +907,7 @@ impl TileArtEntry {
         art_data.id = self.tile_id as u16;
         art_data.source_tile_id = self.tile_id;
         art_data.flags = self.flags1;
+        art_data.flags2 = self.flags2;
         art_data.radar_color = self.radarcol.clone();
         art_data.height = self.get_property(PropertyKey::Height).unwrap_or(0) as u8;
         art_data.texture_items = self.get_texture_item_vector(string_dictionary);

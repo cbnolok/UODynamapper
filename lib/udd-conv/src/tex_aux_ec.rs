@@ -1,7 +1,7 @@
 //! Build-time packer for `tex_aux_ec.uddp`.
 //!
-//! Packs image-bearing auxiliary texture refs from tileart entries — those whose
-//! `EcMaterialStableRole` is not `Base` or `SecondaryBase` and whose logical family a
+//! Packs image-bearing auxiliary texture refs from tileart entries — those that are not
+//! `PRIMARY_SELECTED` (the primary image is in `tex_art_ec`) and whose logical family a
 //! runtime consumer reads ([`TEX_AUX_EC_PACKED_FAMILIES`]) — into a UDDP keyed
 //! by virtual path hash. Each payload is raw pixel bytes (RGBA8888 or BC7) stored
 //! at the virtual path `textures/{texture_id:08x}`.
@@ -13,8 +13,8 @@
 //! - `metadata/slots.bin`: flat sorted array of `TexAuxEcSlotRecord`.
 //! - `textures/{texture_id:08x}`: raw pixel bytes per `texture_id`.
 //! - the client's `Data\SystemTextures\missing.tga` under `TEX_AUX_EC_MISSING_TEXTURE_ID`;
-//! - `metadata/absent_sources.bin`: referenced ids the EC archive lacks, which the client
-//!   replaces with `missing.tga`.
+//! - an alias slot (`TEX_AUX_EC_SLOT_FLAG_MISSING_SOURCE`, no payload) for each referenced id the
+//!   EC archive lacks, which the client replaces with `missing.tga`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -26,8 +26,8 @@ use rayon::prelude::*;
 
 use udd_assets::tex_art_cc::PagePixelFormat;
 use udd_assets::tex_aux_ec::{
-    encode_absent_sources, texture_entry_path, TexAuxEcAbsentSourceRecord, TexAuxEcSlotRecord,
-    TEX_AUX_EC_ABSENT_SOURCES_ENTRY_PATH, TEX_AUX_EC_MISSING_TEXTURE_ID, TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH,
+    texture_entry_path, TexAuxEcSlotRecord, TEX_AUX_EC_MISSING_TEXTURE_ID, TEX_AUX_EC_SLOT_FLAG_MISSING_SOURCE,
+    TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH,
 };
 use udd_assets::tilemeta::{
     EcMaterialLogicalFamily, EcMaterialPhysicalPackage, EcMaterialStableRole, TileMetaItemTextureRef, TileMetaPackage,
@@ -98,8 +98,8 @@ pub struct TexAuxEcPackSummary {
     pub excluded_unread_family: u64,
     /// Refs with no resolvable EC client path or unknown physical package.
     pub excluded_no_path: u64,
-    /// Distinct source ids the EC archive does not contain. They are listed in
-    /// `metadata/absent_sources.bin`; the client draws `missing.tga` for them.
+    /// Distinct source ids the EC archive does not contain. Each gets an alias slot of the
+    /// missing-texture image; the client draws `missing.tga` for them.
     pub excluded_source_absent: u64,
     /// Distinct source ids whose file is present but could not be read or decoded to RGBA8888.
     pub excluded_decode_error: u64,
@@ -210,40 +210,23 @@ pub fn pack_tex_aux_ec(
 
     let mut slot_records: Vec<TexAuxEcSlotRecord> = Vec::new();
     let mut image_entries: Vec<(u32, u32, u32, PagePixelFormat, Vec<u8>)> = Vec::new();
-    let mut absent_sources: Vec<TexAuxEcAbsentSourceRecord> = Vec::new();
 
-    let mut push_entry = |entry: DecodedEntry| {
-        slot_records.push(TexAuxEcSlotRecord {
+    let mut push_entry = |entry: DecodedEntry| -> TexAuxEcSlotRecord {
+        let record = TexAuxEcSlotRecord {
             texture_id: entry.texture_id,
             width: entry.width as u16,
             height: entry.height as u16,
             logical_family: entry.logical_family,
             stable_role: entry.stable_role,
             pixel_format: entry.pixel_format as u8,
-            _pad: 0,
-        });
+            flags: 0,
+        };
+        slot_records.push(record);
         image_entries.push((entry.texture_id, entry.width, entry.height, entry.pixel_format, entry.data));
+        record
     };
-    for decoded in decoded {
-        match decoded {
-            Decoded::Entry(entry) => {
-                summary.included += 1;
-                push_entry(entry);
-            }
-            Decoded::SourceAbsent(q) => {
-                summary.excluded_source_absent += 1;
-                absent_sources.push(TexAuxEcAbsentSourceRecord {
-                    texture_id: q.texture_id,
-                    logical_family: q.logical_family,
-                    physical_package: q.physical_package as u8,
-                    _pad: [0; 2],
-                });
-            }
-            Decoded::DecodeError => summary.excluded_decode_error += 1,
-        }
-    }
-    // The client's fallback image, stored under the reserved key; not counted in `included`.
-    push_entry(
+    // The client's fallback image, stored once under the reserved key; not counted in `included`.
+    let missing_slot = push_entry(
         encode(
             TEX_AUX_EC_MISSING_TEXTURE_ID,
             EcMaterialLogicalFamily::SystemTextures as u8,
@@ -252,6 +235,21 @@ pub fn pack_tex_aux_ec(
         )
         .ok_or_else(|| eyre::eyre!("encode {EC_MISSING_TEXTURE_UOP_ENTRY}"))?,
     );
+    let mut alias_records = Vec::new();
+    for decoded in decoded {
+        match decoded {
+            Decoded::Entry(entry) => {
+                summary.included += 1;
+                push_entry(entry);
+            }
+            Decoded::SourceAbsent(q) => {
+                summary.excluded_source_absent += 1;
+                alias_records.push(missing_source_alias(&missing_slot, &q));
+            }
+            Decoded::DecodeError => summary.excluded_decode_error += 1,
+        }
+    }
+    slot_records.extend(alias_records);
 
     // Sort by texture_id for binary-search at runtime.
     slot_records.sort_by_key(|slot| slot.texture_id);
@@ -259,7 +257,7 @@ pub fn pack_tex_aux_ec(
 
     info!(
         "tex_aux_ec: {} included plus the missing-texture fallback; excluded: primary {}, unread family {}, no path {}, \
-         source absent {} (listed for the fallback), decode error {}, duplicates {}",
+         source absent {} (aliased to the missing texture), decode error {}, duplicates {}",
         summary.included,
         summary.excluded_primary,
         summary.excluded_unread_family,
@@ -281,18 +279,6 @@ pub fn pack_tex_aux_ec(
         path_hash64: None,
         id: None,
         data: slot_bytes,
-    })?;
-
-    let absent_bytes = encode_absent_sources(&absent_sources);
-    package.add_file(AddFileRequest {
-        data_type: DataType::Metadata as u8,
-        compression: CompressionFlag::ZstdNoDict,
-        width: 0,
-        height: 0,
-        virtual_path: Some(TEX_AUX_EC_ABSENT_SOURCES_ENTRY_PATH),
-        path_hash64: None,
-        id: None,
-        data: &absent_bytes,
     })?;
 
     for (texture_id, width, height, _pixel_format, data) in image_entries {
@@ -318,6 +304,18 @@ pub fn pack_tex_aux_ec(
     );
 
     Ok(summary)
+}
+
+/// The slot of a source the EC archive lacks: the ref's id, family and role, with the missing-texture
+/// image's extent and pixel format, and no payload of its own.
+fn missing_source_alias(missing_slot: &TexAuxEcSlotRecord, absent: &QualifiedRef) -> TexAuxEcSlotRecord {
+    TexAuxEcSlotRecord {
+        texture_id: absent.texture_id,
+        logical_family: absent.logical_family,
+        stable_role: absent.stable_role,
+        flags: TEX_AUX_EC_SLOT_FLAG_MISSING_SOURCE,
+        ..*missing_slot
+    }
 }
 
 /// Classifies tilemeta refs and returns the distinct ids to decode, in first-seen order.
@@ -475,6 +473,26 @@ mod tests {
         assert_eq!(summary.excluded_unread_family, 2, "legacy and enhanced refs are counted, not packed");
         assert_eq!(summary.excluded_no_path, 1);
         Ok(())
+    }
+
+    #[test]
+    fn an_absent_source_aliases_the_missing_texture_image() {
+        const MISSING_SIDE: u16 = 256;
+        let missing = TexAuxEcSlotRecord {
+            texture_id: TEX_AUX_EC_MISSING_TEXTURE_ID, width: MISSING_SIDE, height: MISSING_SIDE,
+            logical_family: EcMaterialLogicalFamily::SystemTextures as u8, pixel_format: PagePixelFormat::Bc7 as u8,
+            ..TexAuxEcSlotRecord::default()
+        };
+        let absent = QualifiedRef {
+            texture_id: MASK_ID, logical_family: EcMaterialLogicalFamily::WorldArt as u8,
+            stable_role: EcMaterialStableRole::HueMask as u8, physical_package: EcMaterialPhysicalPackage::Texture,
+        };
+        let alias = missing_source_alias(&missing, &absent);
+        assert_eq!((alias.texture_id, alias.logical_family, alias.stable_role),
+            (MASK_ID, absent.logical_family, absent.stable_role));
+        assert_eq!((alias.width, alias.height, alias.pixel_format), (MISSING_SIDE, MISSING_SIDE, missing.pixel_format));
+        assert!(alias.is_missing_source());
+        assert_eq!(alias.payload_texture_id(), TEX_AUX_EC_MISSING_TEXTURE_ID);
     }
 
     #[test]

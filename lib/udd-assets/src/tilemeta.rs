@@ -8,9 +8,11 @@ pub const TILEMETA_LAND_ENTRY_PATH: &str = "metadata/land.bin";
 pub const TILEMETA_ITEM_ENTRY_PATH: &str = "metadata/items.bin";
 pub const TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH: &str = "metadata/item_texture_refs_index.bin";
 /// Carries `TILEMETA_FORMAT_VERSION`: a package of another format has no entry at this path.
-pub const TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH: &str = "metadata/item_texture_refs.v2.bin";
-/// Format 1's texture refs (roles from file names), rejected with a repack message.
-const TILEMETA_FORMAT_1_ITEM_TEXTURE_REF_ENTRY_PATH: &str = "metadata/item_texture_refs.bin";
+pub const TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH: &str = "metadata/item_texture_refs.v3.bin";
+/// Texture-ref paths of older formats, each rejected with a repack message: format 1 (roles from
+/// file names) and format 2 (no `TileMetaItemTile::ec_art_flags`).
+const TILEMETA_OLDER_FORMAT_ITEM_TEXTURE_REF_ENTRY_PATHS: [(u32, &str); 2] =
+    [(1, "metadata/item_texture_refs.bin"), (2, "metadata/item_texture_refs.v2.bin")];
 pub const TILEMETA_ITEM_MATERIAL_ENTRY_PATH: &str = "metadata/item_materials.json";
 
 /// The item is not at its block's primary position (`uocf::enhanced::tileart::primary_texture_position`).
@@ -78,8 +80,14 @@ impl EcMaterialLogicalFamily {
 /// Version of the tilemeta texture-ref semantics, named in `TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH`.
 ///
 /// 2: `stable_role` comes from (block, shader name, item position) and `AUXILIARY` from the position;
-/// the file-name roles and the speculative role byte are gone. Older packages are rejected.
-pub const TILEMETA_FORMAT_VERSION: u32 = 2;
+/// the file-name roles and the speculative role byte are gone.
+/// 3: `TileMetaItemTile::ec_art_flags` (formerly padding) carries the tileart `flags2` `UseNewArt` bit.
+/// Older packages are rejected.
+pub const TILEMETA_FORMAT_VERSION: u32 = 3;
+
+/// `TileMetaItemTile::ec_art_flags`: the tileart record sets `UseNewArt` in `flags2` (bit 19), so the
+/// official Enhanced Client draws its block-0 KR art; without it the client draws classic-style art.
+pub const TILEMETA_ITEM_EC_ART_FLAG_USE_NEW_ART: u16 = 1 << 0;
 
 /// Role of a tileart texture item: the shader input it feeds.
 ///
@@ -346,7 +354,8 @@ pub struct TileMetaItemTile {
     pub value: u8,
     pub height: i8,
     pub _pad1: u8,
-    pub _pad2: u16,
+    /// `TILEMETA_ITEM_EC_ART_FLAG_*` bits from the tileart record.
+    pub ec_art_flags: u16,
     pub radar_color: [u8; 4],
     pub name: [u8; 20],
 
@@ -386,6 +395,12 @@ impl TileMetaItemTile {
 
     pub fn is_surface_like(&self) -> bool {
         self.visual_kind() == TileMetaItemVisualKind::SurfaceLike
+    }
+
+    /// The tileart record sets `UseNewArt`: the official Enhanced Client draws this item's block-0
+    /// KR art (`tex_art_ec`), otherwise its classic-style art.
+    pub fn uses_new_art(&self) -> bool {
+        self.ec_art_flags & TILEMETA_ITEM_EC_ART_FLAG_USE_NEW_ART != 0
     }
 
     pub fn set_visual_kind(&mut self, kind: TileMetaItemVisualKind) {
@@ -497,9 +512,10 @@ impl TileMetaPackage {
     }
 
     pub fn from_uddp_package(package: UddpReader) -> eyre::Result<Self> {
-        eyre::ensure!(package.find_by_path_hash(udd_container::xxh64_virtual_path(TILEMETA_FORMAT_1_ITEM_TEXTURE_REF_ENTRY_PATH)).is_none(),
-            "tilemeta format 1 (texture roles from file names), expected format {TILEMETA_FORMAT_VERSION}; \
-             repack with the current udd-cli");
+        for (version, path) in TILEMETA_OLDER_FORMAT_ITEM_TEXTURE_REF_ENTRY_PATHS {
+            eyre::ensure!(package.find_by_path_hash(udd_container::xxh64_virtual_path(path)).is_none(),
+                "tilemeta format {version}, expected format {TILEMETA_FORMAT_VERSION}; repack with the current udd-cli");
+        }
         let land_bytes = read_path_entry_cow(&package, TILEMETA_LAND_ENTRY_PATH)?;
         let item_bytes = read_path_entry_cow(&package, TILEMETA_ITEM_ENTRY_PATH)?;
         let item_texture_ref_span_bytes = read_path_entry_cow(&package, TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH)
@@ -549,6 +565,12 @@ impl TileMetaPackage {
 
     pub fn item_tile(&self, tile_id: u32) -> Option<&TileMetaItemTile> {
         self.item_tiles.get(tile_id as usize)
+    }
+
+    /// Whether the official Enhanced Client draws the KR art (`tex_art_ec`) of `art_id`
+    /// (`TileMetaItemTile::uses_new_art`); false for an id outside the item table.
+    pub fn uses_new_art(&self, art_id: u32) -> bool {
+        self.item_tile(art_id).is_some_and(TileMetaItemTile::uses_new_art)
     }
 
     pub fn item_texture_refs(&self, tile_id: u32) -> &[TileMetaItemTextureRef] {
@@ -934,9 +956,10 @@ mod tests {
     fn only_the_current_format_version_loads() {
         assert!(TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH.contains(&format!(".v{TILEMETA_FORMAT_VERSION}.")));
         assert!(package_with_refs_at(TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH).is_ok());
-        let message = package_with_refs_at(TILEMETA_FORMAT_1_ITEM_TEXTURE_REF_ENTRY_PATH)
-            .err().expect("reject a format 1 tilemeta").to_string();
-        assert!(message.contains("format 1") && message.contains("repack"), "{message}");
+        for (version, path) in TILEMETA_OLDER_FORMAT_ITEM_TEXTURE_REF_ENTRY_PATHS {
+            let message = package_with_refs_at(path).err().expect("reject an older tilemeta").to_string();
+            assert!(message.contains(&format!("format {version}")) && message.contains("repack"), "{message}");
+        }
     }
 
     #[test]

@@ -39,8 +39,8 @@ udd-pack pack-ec-tex-aux --ecdir /path/to/ec --tilemeta tilemeta.uddp --zstd --o
 ```
 
 When building all EC texture outputs plus `tilemeta.uddp`, prefer the grouped form so
-`tileart.uop`, `TerrainDefinition.uop`, `string_dictionary.uop`, `Texture.uop`, and
-`LegacyTexture.uop` are loaded once for the shared EC classification pass:
+`tileart.uop`, `TerrainDefinition.uop`, `string_dictionary.uop` and `Texture.uop` are loaded
+once for the shared EC classification pass:
 
 ```text
 udd-pack pack-ec-textures --ccdir /path/to/cc --ecdir /path/to/ec --art-output tex_art_ec.uddp --land-output tex_land_ec.uddp --tilemeta-output tilemeta.uddp
@@ -93,7 +93,10 @@ Stores Classic Client land/static atlas pages plus a sparse slot table keyed by 
 
 ### `tex_art_ec.uddp`
 
-Stores Enhanced Client static/art textures from the shared EC texture classification pass.
+Stores Enhanced Client static/art textures from the shared EC texture classification pass: the block-0 `WorldArt` image of each item (`Texture.uop`), which is the KR art.
+
+- **KR art only.** The official EC draws an item's KR art only when its tileart record sets `UseNewArt` (795 items; `TileMetaPackage::uses_new_art`), otherwise classic-style art. The project does not use the EC's legacy-art set (`LegacyTexture.uop`): Classic art comes from `tex_art_cc.uddp`. On the plain clients 13,311 statics have a KR slot (all of them also have Classic art) and 23,216 have Classic art only.
+- **Renderer fallback in Enhanced mode:** KR slot, then the `tex_art_cc` art at classic scale, then the client's magenta `missing.tga` (the reserved slot of `tex_aux_ec`).
 
 ### `tex_land_ec.uddp`
 
@@ -115,8 +118,8 @@ Normal maps are stored in the same UDDP page-atlas infrastructure as visible EC 
 Stores the non-base support images that tileart refs name and that a runtime consumer reads: sprite hue masks, static terrain-surface masks and EC item liquid inputs. All of them are WorldArt images from `Texture.uop`, keyed by texture id.
 
 - **No legacy-art images.** TileArtLegacy and TileArtEnhanced refs are not packed. They are the EC's legacy-art mode, which the project does not convert; Classic art comes from the Classic Client files (`tex_art_cc.uddp`).
-- **The client's fallback image.** When a texture request returns no data, the client draws `Data\SystemTextures\missing.tga` instead. The package carries that image under a reserved id, and lists the referenced ids that `Texture.uop` lacks.
-- **Lookup.** Renderers resolve refs with `TexAuxEcPackage::get_or_missing`. Layout details are in [UDDP_FORMATS.md](UDDP_FORMATS.md) section 2.5.
+- **The client's fallback image.** When a texture request returns no data, the client draws `Data\SystemTextures\missing.tga` instead. The package carries that image once under a reserved id, and each referenced id that `Texture.uop` lacks is an alias slot of it.
+- **Lookup.** `TexAuxEcPackage::slot_for_texture_id` and `load_rgba` return the magenta image for an absent id, as the client does. Layout details are in [UDDP_FORMATS.md](UDDP_FORMATS.md) section 2.5.
 
 ### `tilemeta.uddp`
 
@@ -137,7 +140,7 @@ Ownership and linkage sources:
 Shared or support texture pools:
 
 - `Texture.uop`: shared texture pool used by both EC land and EC static-art classification.
-- `LegacyTexture.uop`: classic-style shared texture pool of the EC's legacy-art mode. That mode is not converted into `tex_aux_ec`; Classic art comes from the Classic Client files.
+- `LegacyTexture.uop`: classic-style shared texture pool of the EC's legacy-art mode. No package reads it (`tex_art_ec`, `tex_land_ec` and `tex_aux_ec` take `Texture.uop` only); Classic art and land come from the Classic Client files.
 - `SystemTextures.uop`: client system images; `missing.tga` is packed into `tex_aux_ec` as the missing-texture fallback.
 - `TerrainTexture.uop`: land support-resource pool. Package origin alone does not prove land ownership.
 - `EffectTexture.uop`: mixed effect-resource pool containing image and non-image resources.

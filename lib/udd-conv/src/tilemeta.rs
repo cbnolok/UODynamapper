@@ -36,8 +36,8 @@ use udd_assets::tilemeta::{
     EcMaterialLogicalFamily, EcMaterialPhysicalPackage,
     EcMaterialStableRole, TileMetaItemTextureRef, TileMetaItemTextureRefSpan, TileMetaItemTile,
     TileMetaItemVisualKind, TileMetaLandTile, TILEMETA_ITEM_ENTRY_PATH,
-    TILEMETA_ITEM_TEXTURE_FLAG_AUXILIARY, TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
-    TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH, TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH,
+    TILEMETA_ITEM_EC_ART_FLAG_USE_NEW_ART, TILEMETA_ITEM_TEXTURE_FLAG_AUXILIARY,
+    TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED, TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH, TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH,
     TILEMETA_LAND_ENTRY_PATH, TILEMETA_ITEM_MATERIAL_ENTRY_PATH,
 };
 use udd_container::{
@@ -97,10 +97,27 @@ fn read_path_entry(package: &UddpReader, path: &str) -> eyre::Result<Vec<u8>> {
         .wrap_err_with(|| format!("unpack {path}"))
 }
 
+/// `TILEMETA_ITEM_EC_ART_FLAG_*` bits of a tileart record. `UseNewArt` is read from `flags2`, the
+/// set the client tests; the same bit in `flags1` (merged into `TileMetaItemTile::flags`) is not it.
+fn ec_art_flags(art: &ArtData) -> u16 {
+    if art.flags2.contains(TaeFlag::UseNewArt) { TILEMETA_ITEM_EC_ART_FLAG_USE_NEW_ART } else { 0 }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use uocf::enhanced::tileart::{TextureItem, TextureType};
+
+    #[test]
+    fn use_new_art_comes_from_flags2_only() {
+        let kr = ArtData { flags2: TaeFlag::UseNewArt, ..ArtData::default() };
+        let flags1_only = ArtData { flags: TaeFlag::UseNewArt, ..ArtData::default() };
+        assert_eq!(ec_art_flags(&kr), TILEMETA_ITEM_EC_ART_FLAG_USE_NEW_ART);
+        assert_eq!(ec_art_flags(&flags1_only), 0);
+        let item = TileMetaItemTile { ec_art_flags: ec_art_flags(&kr), ..bytemuck::Zeroable::zeroed() };
+        assert!(item.uses_new_art());
+        assert!(!<TileMetaItemTile as bytemuck::Zeroable>::zeroed().uses_new_art());
+    }
 
     #[test]
     fn classic_upper_flags_survive_the_tilemeta_mapping() {
@@ -486,7 +503,7 @@ fn build_tilemeta_tables_with_ec_sources(
             value: tile.value,
             height: tile.height_raw(),
             _pad1: 0,
-            _pad2: 0,
+            ec_art_flags: 0,
             radar_color: [0, 0, 0, 0],
             name: tile.name,
             ec_texture_id: 0,
@@ -505,6 +522,7 @@ fn build_tilemeta_tables_with_ec_sources(
                 item_materials.insert(tile.tile_id as u32, ec_data.materials.clone());
             }
             tile_meta_item.flags |= ec_data.flags.bits();
+            tile_meta_item.ec_art_flags = ec_art_flags(ec_data);
             tile_meta_item.set_visual_kind(classify_item_visual_kind(
                 tile.tile_id as u32,
                 Some(ec_data),

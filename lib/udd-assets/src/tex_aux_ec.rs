@@ -11,12 +11,14 @@
 //!   The virtual path is hashed for lookup in the UDDP path-hash index.
 //! - The client's missing-texture image (`Data\SystemTextures\missing.tga`) under the reserved
 //!   id [`TEX_AUX_EC_MISSING_TEXTURE_ID`], with a slot record like any other image.
-//! - `metadata/absent_sources.bin`: the referenced source ids whose image the EC archive lacks
-//!   (see [`TexAuxEcAbsentSourceRecord`]). The client substitutes `missing.tga` for exactly those;
-//!   [`TexAuxEcPackage::get_or_missing`] does the same.
+//! - One alias slot per referenced source id whose image the EC archive lacks
+//!   ([`TEX_AUX_EC_SLOT_FLAG_MISSING_SOURCE`]). It has no payload of its own: its pixels are the
+//!   missing-texture image, which the client substitutes in that case. A normal lookup
+//!   ([`TexAuxEcPackage::slot_for_texture_id`], [`TexAuxEcPackage::load_rgba`]) therefore returns
+//!   the magenta image for an absent id.
 //!
-//! Packages built before the fallback existed have neither the reserved entry nor the absent list;
-//! they read as having no fallback.
+//! Packages built before the aliases existed lack them (and may carry an unread
+//! `metadata/absent_sources.bin`); absent ids then have no slot.
 
 use bytemuck::{Pod, Zeroable};
 use color_eyre::eyre::{self, WrapErr};
@@ -24,14 +26,13 @@ use std::path::Path;
 use udd_container::{xxh64_virtual_path, UddpReader};
 use udd_image_codecs::bc7::{decode_from_vram, RawImageFormat, VramTextureData};
 
-use crate::common::{ensure_manifest_version, read_pod_vec};
+use crate::common::read_pod_vec;
 
 pub const TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH: &str = "metadata/slots.bin";
-pub const TEX_AUX_EC_ABSENT_SOURCES_ENTRY_PATH: &str = "metadata/absent_sources.bin";
-/// Bump when the layout of `metadata/absent_sources.bin` changes.
-pub const TEX_AUX_EC_ABSENT_SOURCES_VERSION: u32 = 1;
-/// Byte size of the `u32` version that starts `metadata/absent_sources.bin`.
-const ABSENT_SOURCES_HEADER_SIZE: usize = std::mem::size_of::<u32>();
+/// `TexAuxEcSlotRecord::flags`: the EC archive lacks this id's image. The slot is an alias of the
+/// reserved missing-texture slot: width, height and pixel format are that image's, and its pixels
+/// are read from the reserved payload, which is stored once.
+pub const TEX_AUX_EC_SLOT_FLAG_MISSING_SOURCE: u8 = 1 << 0;
 
 /// Reserved key of the client's missing-texture image (`Data\SystemTextures\missing.tga`).
 ///
@@ -50,8 +51,8 @@ pub fn texture_entry_path(texture_id: u32) -> String {
 /// One record per packed auxiliary texture ref.
 /// Records are sorted by `texture_id` for runtime binary search.
 ///
-/// The first padding byte carries `pixel_format` (0 = Rgba8888, 1 = Bc7).
-/// Old UDDP files with all-zero padding read as Rgba8888.
+/// The first padding byte carries `pixel_format` (0 = Rgba8888, 1 = Bc7); old UDDP files with
+/// all-zero padding read as Rgba8888. The second carries `flags` (`TEX_AUX_EC_SLOT_FLAG_*`).
 #[repr(C, align(4))]
 #[derive(Debug, Clone, Copy, Default, Pod, Zeroable)]
 pub struct TexAuxEcSlotRecord {
@@ -67,67 +68,19 @@ pub struct TexAuxEcSlotRecord {
     pub stable_role: u8,
     /// Pixel format: 0 = Rgba8888, 1 = Bc7.
     pub pixel_format: u8,
-    pub _pad: u8,
+    /// `TEX_AUX_EC_SLOT_FLAG_*` bits.
+    pub flags: u8,
 }
 
-/// Binary record of `metadata/absent_sources.bin`, after its `u32` version.
-///
-/// One record per distinct source image a packed-family tileart ref names but the EC archive
-/// (`physical_package`) does not contain. Records are sorted by `texture_id`. A source that exists
-/// but fails to decode is not listed: the client shows Gamebryo's default texture for those, not
-/// `missing.tga`.
-#[repr(C, align(4))]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Pod, Zeroable)]
-pub struct TexAuxEcAbsentSourceRecord {
-    /// Source texture id from `TileMetaItemTextureRef.texture_id`.
-    pub texture_id: u32,
-    /// Logical family byte of the referencing ref (`EcMaterialLogicalFamily as u8`).
-    pub logical_family: u8,
-    /// Archive the image was looked up in (`EcMaterialPhysicalPackage as u8`).
-    pub physical_package: u8,
-    pub _pad: [u8; 2],
-}
-
-/// Serializes `metadata/absent_sources.bin`: the version, then `records` sorted by `texture_id`.
-pub fn encode_absent_sources(records: &[TexAuxEcAbsentSourceRecord]) -> Vec<u8> {
-    let mut sorted = records.to_vec();
-    sorted.sort_by_key(|record| record.texture_id);
-    let mut bytes = TEX_AUX_EC_ABSENT_SOURCES_VERSION.to_le_bytes().to_vec();
-    bytes.extend_from_slice(bytemuck::cast_slice(&sorted));
-    bytes
-}
-
-fn decode_absent_sources(bytes: &[u8]) -> eyre::Result<Vec<TexAuxEcAbsentSourceRecord>> {
-    eyre::ensure!(bytes.len() >= ABSENT_SOURCES_HEADER_SIZE, "{TEX_AUX_EC_ABSENT_SOURCES_ENTRY_PATH} has no version");
-    let (version, records) = bytes.split_at(ABSENT_SOURCES_HEADER_SIZE);
-    let version = u32::from_le_bytes(version.try_into().expect("header size"));
-    ensure_manifest_version("tex_aux_ec absent sources", version, TEX_AUX_EC_ABSENT_SOURCES_VERSION)?;
-    let records: Vec<TexAuxEcAbsentSourceRecord> = read_pod_vec(records, TEX_AUX_EC_ABSENT_SOURCES_ENTRY_PATH)?;
-    eyre::ensure!(records.windows(2).all(|pair| pair[0].texture_id <= pair[1].texture_id),
-        "{TEX_AUX_EC_ABSENT_SOURCES_ENTRY_PATH} is not sorted by texture id");
-    Ok(records)
-}
-
-/// Result of [`TexAuxEcPackage::get_or_missing`].
-#[derive(Debug, Clone)]
-pub enum TexAuxEcLookup {
-    /// The source image itself is packed.
-    Packed(SlotInfo),
-    /// The EC archive lacks the source image; this is the reserved missing-texture slot, which the
-    /// client substitutes in that case.
-    MissingSource(SlotInfo),
-}
-
-impl TexAuxEcLookup {
-    /// The slot to read: pass its `texture_id` to [`TexAuxEcPackage::load_rgba`].
-    pub fn slot(&self) -> &SlotInfo {
-        match self {
-            Self::Packed(slot) | Self::MissingSource(slot) => slot,
-        }
+impl TexAuxEcSlotRecord {
+    /// The EC archive lacks the source image; the slot reads the missing-texture image.
+    pub fn is_missing_source(&self) -> bool {
+        self.flags & TEX_AUX_EC_SLOT_FLAG_MISSING_SOURCE != 0
     }
 
-    pub fn is_missing_source(&self) -> bool {
-        matches!(self, Self::MissingSource(_))
+    /// The id whose `textures/{id:08x}` payload holds this slot's pixels.
+    pub fn payload_texture_id(&self) -> u32 {
+        if self.is_missing_source() { TEX_AUX_EC_MISSING_TEXTURE_ID } else { self.texture_id }
     }
 }
 
@@ -140,13 +93,22 @@ pub struct SlotInfo {
     pub logical_family: u8,
     pub stable_role: u8,
     pub pixel_format: u8,
+    /// The id of the payload holding the pixels: `texture_id`, or the reserved missing-texture id
+    /// for an absent source. Images can be cached by it.
+    pub payload_texture_id: u32,
+}
+
+impl SlotInfo {
+    /// The EC archive lacks the source image; the pixels are the client's missing-texture image.
+    pub fn is_missing_source(&self) -> bool {
+        self.payload_texture_id != self.texture_id
+    }
 }
 
 /// Runtime reader for `tex_aux_ec.uddp`.
 pub struct TexAuxEcPackage {
     package: UddpReader,
     slots: Vec<TexAuxEcSlotRecord>,
-    absent_sources: Vec<TexAuxEcAbsentSourceRecord>,
 }
 
 impl From<&TexAuxEcSlotRecord> for SlotInfo {
@@ -158,6 +120,7 @@ impl From<&TexAuxEcSlotRecord> for SlotInfo {
             logical_family: slot.logical_family,
             stable_role: slot.stable_role,
             pixel_format: slot.pixel_format,
+            payload_texture_id: slot.payload_texture_id(),
         }
     }
 }
@@ -172,17 +135,18 @@ impl TexAuxEcPackage {
     pub fn from_uddp_package(package: UddpReader) -> eyre::Result<Self> {
         let slot_bytes = crate::common::read_path_entry_cow(&package, TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH)
             .wrap_err("read tex_aux_ec slot manifest")?;
-        let slots = read_pod_vec(slot_bytes.as_ref(), TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH)?;
-        let absent_sources = if package.find_by_path_hash(xxh64_virtual_path(TEX_AUX_EC_ABSENT_SOURCES_ENTRY_PATH)).is_some() {
-            let bytes = crate::common::read_path_entry_cow(&package, TEX_AUX_EC_ABSENT_SOURCES_ENTRY_PATH)?;
-            decode_absent_sources(bytes.as_ref())?
-        } else {
-            Vec::new()
-        };
-        Ok(Self { package, slots, absent_sources })
+        let slots: Vec<TexAuxEcSlotRecord> = read_pod_vec(slot_bytes.as_ref(), TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH)?;
+        eyre::ensure!(slots.windows(2).all(|pair| pair[0].texture_id < pair[1].texture_id),
+            "{TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH} is not sorted by unique texture id");
+        let aliases_missing = slots.iter().any(TexAuxEcSlotRecord::is_missing_source);
+        let has_missing = slots.binary_search_by_key(&TEX_AUX_EC_MISSING_TEXTURE_ID, |slot| slot.texture_id).is_ok();
+        eyre::ensure!(!aliases_missing || has_missing,
+            "tex_aux_ec has missing-source aliases but no missing-texture slot {TEX_AUX_EC_MISSING_TEXTURE_ID:#x}");
+        Ok(Self { package, slots })
     }
 
-    /// Return slot metadata for the given `texture_id`, if packed.
+    /// Return slot metadata for the given `texture_id`, if packed. For a source the EC archive
+    /// lacks, this is the alias of the missing-texture image (`SlotInfo::is_missing_source`).
     pub fn slot_for_texture_id(&self, texture_id: u32) -> Option<SlotInfo> {
         let pos = self
             .slots
@@ -196,46 +160,18 @@ impl TexAuxEcPackage {
         self.slot_for_texture_id(TEX_AUX_EC_MISSING_TEXTURE_ID)
     }
 
-    /// Source ids the EC archive lacks, sorted by `texture_id`.
-    pub fn absent_sources(&self) -> &[TexAuxEcAbsentSourceRecord] {
-        &self.absent_sources
-    }
-
-    /// Whether a ref of `logical_family` names a source image the EC archive lacks.
-    pub fn is_absent_source(&self, texture_id: u32, logical_family: u8) -> bool {
-        let start = self.absent_sources.partition_point(|record| record.texture_id < texture_id);
-        self.absent_sources[start..].iter().take_while(|record| record.texture_id == texture_id)
-            .any(|record| record.logical_family == logical_family)
-    }
-
-    /// The image to sample for a ref's `texture_id` and `logical_family`, as the client resolves it.
-    ///
-    /// Returns the packed slot when its family matches. When the EC archive lacks the source
-    /// image (it is listed in `metadata/absent_sources.bin`), returns the reserved missing-texture
-    /// slot, which the client loads in that case. Returns `None` otherwise: the id is not packed
-    /// for this family (another family's image, a base image, an undecodable source), or the
-    /// package predates the fallback.
-    pub fn get_or_missing(&self, texture_id: u32, logical_family: u8) -> Option<TexAuxEcLookup> {
-        if let Some(slot) = self.slot_for_texture_id(texture_id) {
-            return (slot.logical_family == logical_family && texture_id != TEX_AUX_EC_MISSING_TEXTURE_ID)
-                .then_some(TexAuxEcLookup::Packed(slot));
-        }
-        if !self.is_absent_source(texture_id, logical_family) {
-            return None;
-        }
-        self.missing_texture_slot().map(TexAuxEcLookup::MissingSource)
-    }
-
     /// Load the RGBA8888 pixels for the given `texture_id`.
     ///
-    /// Returns `None` when the id is not present in the package.
-    /// Transparently decodes BC7-encoded entries so callers always receive RGBA8888.
+    /// Returns `None` when the id is not present in the package. A missing-source alias returns the
+    /// missing-texture image. Transparently decodes BC7-encoded entries so callers always receive
+    /// RGBA8888.
     pub fn load_rgba(&self, texture_id: u32) -> eyre::Result<Option<Vec<u8>>> {
         let slot_pos = self
             .slots
             .binary_search_by_key(&texture_id, |s| s.texture_id)
             .ok();
-        let path = texture_entry_path(texture_id);
+        let payload_texture_id = slot_pos.map_or(texture_id, |pos| self.slots[pos].payload_texture_id());
+        let path = texture_entry_path(payload_texture_id);
         let hash = xxh64_virtual_path(&path);
         match self.package.read_file_by_path_hash(hash) {
             Ok(bytes) => {
@@ -267,7 +203,6 @@ mod tests {
 
     const WORLD_ART: u8 = crate::tilemeta::EcMaterialLogicalFamily::WorldArt as u8;
     const SYSTEM_TEXTURES: u8 = crate::tilemeta::EcMaterialLogicalFamily::SystemTextures as u8;
-    const TEXTURE_PACKAGE: u8 = crate::tilemeta::EcMaterialPhysicalPackage::Texture as u8;
     const PACKED_ID: u32 = 20_002_472;
     const ABSENT_ID: u32 = 20_004_039;
     const UNLISTED_ID: u32 = 20_000_001;
@@ -280,78 +215,58 @@ mod tests {
         TexAuxEcSlotRecord { texture_id, width: IMAGE_SIDE, height: IMAGE_SIDE, logical_family, ..Default::default() }
     }
 
-    fn package(with_fallback: bool, absent_bytes: Option<Vec<u8>>) -> eyre::Result<TexAuxEcPackage> {
-        let mut slots = vec![slot(PACKED_ID, WORLD_ART)];
-        let mut images = vec![(PACKED_ID, PACKED_PIXEL)];
-        if with_fallback {
-            slots.push(slot(TEX_AUX_EC_MISSING_TEXTURE_ID, SYSTEM_TEXTURES));
-            images.push((TEX_AUX_EC_MISSING_TEXTURE_ID, MISSING_PIXEL));
-        }
+    fn alias(texture_id: u32) -> TexAuxEcSlotRecord {
+        TexAuxEcSlotRecord { flags: TEX_AUX_EC_SLOT_FLAG_MISSING_SOURCE, ..slot(texture_id, WORLD_ART) }
+    }
+
+    /// `slots` must be sorted; payloads are written for the non-alias slots only.
+    fn package(slots: &[TexAuxEcSlotRecord]) -> eyre::Result<TexAuxEcPackage> {
         let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
-        fn metadata<'a>(path: &'a str, data: &'a [u8]) -> AddFileRequest<'a> {
-            AddFileRequest {
-                data_type: DataType::Metadata as u8, compression: CompressionFlag::None, width: 0, height: 0,
-                virtual_path: Some(path), path_hash64: None, id: None, data,
-            }
-        }
-        builder.add_file(metadata(TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH, bytemuck::cast_slice(&slots)))?;
-        if let Some(bytes) = &absent_bytes {
-            builder.add_file(metadata(TEX_AUX_EC_ABSENT_SOURCES_ENTRY_PATH, bytes))?;
-        }
-        let paths: Vec<String> = images.iter().map(|(id, _)| texture_entry_path(*id)).collect();
-        for ((_, pixel), path) in images.iter().zip(&paths) {
-            let data = pixel.repeat(usize::from(IMAGE_SIDE) * usize::from(IMAGE_SIDE));
+        builder.add_file(AddFileRequest {
+            data_type: DataType::Metadata as u8, compression: CompressionFlag::None, width: 0, height: 0,
+            virtual_path: Some(TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH), path_hash64: None, id: None,
+            data: bytemuck::cast_slice(slots),
+        })?;
+        let images: Vec<(String, Vec<u8>)> = slots.iter().filter(|slot| !slot.is_missing_source()).map(|slot| {
+            let pixel = if slot.texture_id == TEX_AUX_EC_MISSING_TEXTURE_ID { MISSING_PIXEL } else { PACKED_PIXEL };
+            (texture_entry_path(slot.texture_id), pixel.repeat(usize::from(IMAGE_SIDE) * usize::from(IMAGE_SIDE)))
+        }).collect();
+        for (path, data) in &images {
             builder.add_file(AddFileRequest {
                 data_type: DataType::Texture as u8, compression: CompressionFlag::None,
                 width: IMAGE_SIDE.into(), height: IMAGE_SIDE.into(), virtual_path: Some(path),
-                path_hash64: None, id: None, data: &data,
+                path_hash64: None, id: None, data,
             })?;
         }
         TexAuxEcPackage::from_uddp_package(UddpReader::open(builder.build()?)?)
     }
 
-    fn absent(texture_id: u32) -> TexAuxEcAbsentSourceRecord {
-        TexAuxEcAbsentSourceRecord { texture_id, logical_family: WORLD_ART, physical_package: TEXTURE_PACKAGE, _pad: [0; 2] }
-    }
-
     #[test]
-    fn absent_sources_resolve_to_the_missing_texture() -> eyre::Result<()> {
-        let package = package(true, Some(encode_absent_sources(&[absent(ABSENT_ID)])))?;
-        let packed = package.get_or_missing(PACKED_ID, WORLD_ART).expect("packed slot");
+    fn an_absent_source_reads_the_missing_texture_through_a_normal_lookup() -> eyre::Result<()> {
+        let package = package(&[slot(PACKED_ID, WORLD_ART), alias(ABSENT_ID), slot(TEX_AUX_EC_MISSING_TEXTURE_ID, SYSTEM_TEXTURES)])?;
+        let packed = package.slot_for_texture_id(PACKED_ID).expect("packed slot");
         assert!(!packed.is_missing_source());
-        assert_eq!(packed.slot().texture_id, PACKED_ID);
+        assert_eq!(&package.load_rgba(PACKED_ID)?.expect("packed pixels")[..RGBA_CHANNELS], &PACKED_PIXEL);
 
-        let fallback = package.get_or_missing(ABSENT_ID, WORLD_ART).expect("missing-texture fallback");
-        assert!(fallback.is_missing_source());
-        assert_eq!(fallback.slot().texture_id, TEX_AUX_EC_MISSING_TEXTURE_ID);
-        let rgba = package.load_rgba(fallback.slot().texture_id)?.expect("fallback pixels");
-        assert_eq!(&rgba[..RGBA_CHANNELS], &MISSING_PIXEL);
+        let absent = package.slot_for_texture_id(ABSENT_ID).expect("alias slot");
+        assert!(absent.is_missing_source());
+        assert_eq!(absent.logical_family, WORLD_ART, "the alias keeps the ref family consumers check");
+        assert_eq!(absent.payload_texture_id, TEX_AUX_EC_MISSING_TEXTURE_ID);
+        assert_eq!(&package.load_rgba(ABSENT_ID)?.expect("missing-texture pixels")[..RGBA_CHANNELS], &MISSING_PIXEL);
 
-        assert!(package.get_or_missing(ABSENT_ID, SYSTEM_TEXTURES).is_none(), "absence is per family");
-        assert!(package.get_or_missing(PACKED_ID, SYSTEM_TEXTURES).is_none(), "another family's image is not substituted");
-        assert!(package.get_or_missing(UNLISTED_ID, WORLD_ART).is_none(), "an unlisted id is not an absent source");
-        assert!(package.get_or_missing(TEX_AUX_EC_MISSING_TEXTURE_ID, SYSTEM_TEXTURES).is_none(), "the reserved key is not a ref target");
+        assert!(package.slot_for_texture_id(UNLISTED_ID).is_none());
+        assert!(package.load_rgba(UNLISTED_ID)?.is_none());
+        assert!(package.missing_texture_slot().is_some_and(|slot| !slot.is_missing_source()));
         Ok(())
     }
 
     #[test]
-    fn packages_without_the_fallback_read_as_having_none() -> eyre::Result<()> {
-        let package = package(false, None)?;
-        assert!(package.absent_sources().is_empty());
-        assert!(package.missing_texture_slot().is_none());
-        assert!(package.get_or_missing(ABSENT_ID, WORLD_ART).is_none());
-        assert!(package.get_or_missing(PACKED_ID, WORLD_ART).is_some());
-        Ok(())
-    }
-
-    #[test]
-    fn absent_sources_are_versioned_and_sorted() -> eyre::Result<()> {
-        let bytes = encode_absent_sources(&[absent(ABSENT_ID), absent(UNLISTED_ID)]);
-        let records = decode_absent_sources(&bytes)?;
-        assert_eq!(records.iter().map(|record| record.texture_id).collect::<Vec<_>>(), [UNLISTED_ID, ABSENT_ID]);
-        let mut wrong_version = bytes.clone();
-        wrong_version[..ABSENT_SOURCES_HEADER_SIZE].copy_from_slice(&(TEX_AUX_EC_ABSENT_SOURCES_VERSION + 1).to_le_bytes());
-        assert!(package(true, Some(wrong_version)).is_err());
+    fn aliases_need_the_missing_texture_slot() -> eyre::Result<()> {
+        assert!(package(&[slot(PACKED_ID, WORLD_ART), alias(ABSENT_ID)]).is_err());
+        let without_fallback = package(&[slot(PACKED_ID, WORLD_ART)])?;
+        assert!(without_fallback.missing_texture_slot().is_none());
+        assert!(without_fallback.slot_for_texture_id(ABSENT_ID).is_none());
+        assert!(package(&[slot(TEX_AUX_EC_MISSING_TEXTURE_ID, SYSTEM_TEXTURES), slot(PACKED_ID, WORLD_ART)]).is_err(), "unsorted");
         Ok(())
     }
 }

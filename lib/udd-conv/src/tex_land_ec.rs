@@ -334,14 +334,13 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_sources_with_progress(
     let terrain_definition_path = find_first_existing_file(source_dirs, &["TerrainDefinition.uop"])
         .ok_or_else(|| eyre::eyre!("missing required file: TerrainDefinition.uop"))?;
     let texture_uop_path = find_first_existing_file(source_dirs, &["Texture.uop"]);
-    let legacy_texture_uop_path = find_first_existing_file(source_dirs, &["LegacyTexture.uop"]);
 
-    if texture_uop_path.is_none() && legacy_texture_uop_path.is_none() {
-        eyre::bail!("missing required files: Texture.uop and LegacyTexture.uop not found");
+    if texture_uop_path.is_none() {
+        eyre::bail!("missing required file: Texture.uop");
     }
 
     info!(
-        "Converting EC Land from TerrainDefinition.uop / Texture.uop / LegacyTexture.uop to {}",
+        "Converting EC Land from TerrainDefinition.uop / Texture.uop to {}",
         out_file.display()
     );
     println!(
@@ -351,23 +350,11 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_sources_with_progress(
     if let Some(path) = texture_uop_path.as_ref() {
         println!("Using Texture.uop: {}", source_path_label_from_dirs(source_dirs, path));
     }
-    if let Some(path) = legacy_texture_uop_path.as_ref() {
-        println!("Using LegacyTexture.uop: {}", source_path_label_from_dirs(source_dirs, path));
-    }
 
     let world_textures = if let Some(texture_uop_path) = texture_uop_path.as_ref() {
         Some(
             Textures::new(texture_uop_path, None, None)
                 .wrap_err_with(|| format!("load {}", texture_uop_path.display()))?,
-        )
-    } else {
-        None
-    };
-
-    let legacy_textures = if let Some(legacy_texture_uop_path) = legacy_texture_uop_path.as_ref() {
-        Some(
-            Textures::new(legacy_texture_uop_path, None, None)
-                .wrap_err_with(|| format!("load {}", legacy_texture_uop_path.display()))?,
         )
     } else {
         None
@@ -380,10 +367,8 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_sources_with_progress(
         source_dirs,
         &terrain_definition_path,
         texture_uop_path.as_deref(),
-        legacy_texture_uop_path.as_deref(),
         &terrain_definition,
         world_textures.as_ref(),
-        legacy_textures.as_ref(),
         out_file,
         options,
         payload_progress,
@@ -395,10 +380,8 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources(
     source_dirs: &[PathBuf],
     terrain_definition_path: &Path,
     texture_uop_path: Option<&Path>,
-    legacy_texture_uop_path: Option<&Path>,
     terrain_definition: &TerrainDefinitionPackage,
     world_textures: Option<&Textures>,
-    legacy_textures: Option<&Textures>,
     out_file: &Path,
     options: &TexLandEcAtlasOptions,
 ) -> eyre::Result<TexLandEcBuildSummary> {
@@ -406,10 +389,8 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources(
         source_dirs,
         terrain_definition_path,
         texture_uop_path,
-        legacy_texture_uop_path,
         terrain_definition,
         world_textures,
-        legacy_textures,
         out_file,
         options,
         |_| {},
@@ -421,10 +402,8 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_prog
     source_dirs: &[PathBuf],
     terrain_definition_path: &Path,
     texture_uop_path: Option<&Path>,
-    legacy_texture_uop_path: Option<&Path>,
     terrain_definition: &TerrainDefinitionPackage,
     world_textures: Option<&Textures>,
-    legacy_textures: Option<&Textures>,
     out_file: &Path,
     options: &TexLandEcAtlasOptions,
     payload_progress: impl Fn(AssetTaskProgress) + Sync,
@@ -481,7 +460,6 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_prog
     let (decoded_tiles, aliases, texture_slot_by_texture_id, ignored_source_texture_ids) =
         decode_present_tiles(
             world_textures,
-            legacy_textures,
             terrain_definition,
             &terrain_override_texture_ids,
             options,
@@ -540,7 +518,7 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_prog
     };
 
     info!(
-        "Converting EC Land from TerrainDefinition.uop / Texture.uop / LegacyTexture.uop to {}",
+        "Converting EC Land from TerrainDefinition.uop / Texture.uop to {}",
         out_file.display()
     );
     println!(
@@ -549,9 +527,6 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_prog
     );
     if let Some(path) = texture_uop_path {
         println!("Using Texture.uop: {}", source_path_label_from_dirs(source_dirs, path));
-    }
-    if let Some(path) = legacy_texture_uop_path {
-        println!("Using LegacyTexture.uop: {}", source_path_label_from_dirs(source_dirs, path));
     }
 
     let mut package = UddpBuilder::new(LookupMode::VirtualPathHash);
@@ -1257,7 +1232,6 @@ fn terrain_primary_flags(
 
 fn decode_present_tiles(
     world_textures: Option<&Textures>,
-    legacy_textures: Option<&Textures>,
     terrain_definition: &TerrainDefinitionPackage,
     override_texture_ids: &BTreeSet<u32>,
     options: &TexLandEcAtlasOptions,
@@ -1306,7 +1280,7 @@ fn decode_present_tiles(
         .map(
             |&texture_id| -> eyre::Result<(u32, Option<DecodedLayerTexture>)> {
                 let decoded =
-                    decode_layer_texture_rgba(texture_id, world_textures, legacy_textures)?;
+                    decode_layer_texture_rgba(texture_id, world_textures)?;
                 texture_pb.inc(1);
                 let completed = texture_completed
                     .fetch_add(1, Ordering::Relaxed)
@@ -1452,10 +1426,12 @@ fn decode_present_tiles(
     ))
 }
 
+/// A terrain layer image from `Texture.uop`. Classic land comes from `tex_land_cc.uddp`, so the EC
+/// legacy-art pool (`LegacyTexture.uop`) is not read; on the shipped client every terrain layer id
+/// resolves from `Texture.uop`.
 fn decode_layer_texture_rgba(
     texture_id: u32,
     world_textures: Option<&Textures>,
-    legacy_textures: Option<&Textures>,
 ) -> eyre::Result<Option<DecodedLayerTexture>> {
     let file = if let Some(wt) = world_textures {
         let world_terrain_hash =
@@ -1470,34 +1446,8 @@ fn decode_layer_texture_rgba(
     };
 
     let file = if file.is_none() {
-        if let Some(lt) = legacy_textures {
-            let legacy_terrain_hash =
-                texture_path_hash("build/legacyland/", texture_id, ".dat");
-            lt.get_from_hash(
-                legacy_terrain_hash,
-                None,
-                ECImageFormat::DDS,
-            )?
-        } else {
-            None
-        }
-    } else {
-        file
-    };
-
-    let file = if file.is_none() {
         if let Some(wt) = world_textures {
             wt.get_from_id(texture_id)?
-        } else {
-            None
-        }
-    } else {
-        file
-    };
-
-    let file = if file.is_none() {
-        if let Some(lt) = legacy_textures {
-            lt.get_from_id(texture_id)?
         } else {
             None
         }

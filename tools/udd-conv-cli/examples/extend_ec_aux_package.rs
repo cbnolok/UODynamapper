@@ -3,7 +3,7 @@ use std::{collections::{BTreeMap, BTreeSet}, path::PathBuf};
 use clap::Parser;
 use color_eyre::eyre::{Result, ensure};
 use udd_assets::tex_aux_ec::{TexAuxEcPackage, TexAuxEcSlotRecord,
-    TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH, texture_entry_path};
+    TEX_AUX_EC_MISSING_TEXTURE_ID, TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH, texture_entry_path};
 use udd_container::{AddOwnedFileRequest, CompressionFlag, DataType, FileKey,
     LookupMode, UddpReader, UddpStreamingBuilder, xxh64_virtual_path};
 
@@ -28,7 +28,7 @@ fn main() -> Result<()> {
     let additions = UddpReader::load(&args.additions)?;
     // Validate both manifests through the current runtime format reader.
     TexAuxEcPackage::load(&args.base)?;
-    TexAuxEcPackage::load(&args.additions)?;
+    let additions_package = TexAuxEcPackage::load(&args.additions)?;
     let manifest_hash = xxh64_virtual_path(TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH);
     let requested: BTreeSet<_> = args.texture.iter().copied().collect();
     let mut slots = BTreeMap::new();
@@ -71,7 +71,14 @@ fn main() -> Result<()> {
         };
         if hash != manifest_hash { append(&base, hash)?; }
     }
-    for id in &added { append(&additions, xxh64_virtual_path(&texture_entry_path(*id)))?; }
+    for id in &added {
+        // A missing-source alias has no payload: it reads the base package's missing-texture image.
+        if additions_package.slot_for_texture_id(*id).is_some_and(|slot| slot.is_missing_source()) {
+            ensure!(slots.contains_key(&TEX_AUX_EC_MISSING_TEXTURE_ID), "added alias {id} needs the missing-texture slot");
+            continue;
+        }
+        append(&additions, xxh64_virtual_path(&texture_entry_path(*id)))?;
+    }
     drop(append);
     output.add_owned_files(batch)?;
     output.finish()?;

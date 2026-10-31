@@ -72,7 +72,7 @@ fn tilemeta_package_roundtrip_preserves_metadata_records() {
         value: 7,
         height: 8,
         _pad1: 0,
-        _pad2: 0,
+        ec_art_flags: 0,
         radar_color: [9, 10, 11, 12],
         name: {
             let mut name = [0u8; 20];

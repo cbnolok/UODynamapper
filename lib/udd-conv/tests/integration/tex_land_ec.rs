@@ -33,10 +33,10 @@ fn conversion_embeds_original_game_data_routes_and_subtypes() {
     source.finalize_and_save(&root.join("GameData.uop")).unwrap();
     let output = root.join("tex_land_ec.uddp");
     convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources(
-        &[root.clone()], &root.join("TerrainDefinition.uop"), None, None,
+        &[root.clone()], &root.join("TerrainDefinition.uop"), None,
         &TerrainDefinitionPackage { entries: vec![uocf::enhanced::terrain_definition::TerrainDefinitionEntry {
             id: 999, name: Some("source material evidence".into()), ..Default::default()
-        }] }, None, None,
+        }] }, None,
         &output, &TexLandEcAtlasOptions::default(),
     ).unwrap();
     let package = TexLandEcPackage::load(&output).unwrap();

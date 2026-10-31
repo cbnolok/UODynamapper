@@ -1232,7 +1232,7 @@ enum Commands {
         output: PathBuf,
     },
     /// Packs non-base WorldArt auxiliary EC texture refs from tilemeta.uddp into tex_aux_ec.uddp, plus the
-    /// client's missing-texture fallback (SystemTextures.uop) and the list of absent source ids.
+    /// client's missing-texture fallback (SystemTextures.uop), aliased by every absent source id.
     #[command(name = "pack-ec-tex-aux")]
     #[command(group(ArgGroup::new("output_format").args(["raw", "jxl", "bc7", "bc7_rdo"])))]
     PackEcTexAux {
@@ -1882,11 +1882,9 @@ where
             let land_summary = convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources(
                 &paths,
                 &shared_sources.terrain_definition_path,
-                shared_sources.texture_uop_path.as_deref(),
-                shared_sources.legacy_texture_uop_path.as_deref(),
+                Some(shared_sources.texture_uop_path.as_path()),
                 shared_sources.terrain_definition(),
-                shared_sources.world_textures.as_ref(),
-                shared_sources.legacy_textures.as_ref(),
+                Some(&shared_sources.world_textures),
                 &land_out_file,
                 &TexLandEcAtlasOptions {
                     atlas_width: land_atlas_width,
@@ -2192,7 +2190,7 @@ where
                 },
             )?;
             info!(
-                "tex_aux_ec: packed {} auxiliary textures plus the missing-texture fallback ({} refs considered, {} primary excluded, {} unread-family (legacy) excluded, {} no-path excluded, {} source-absent ids listed for the fallback, {} decode errors, {} duplicates) to '{}'.",
+                "tex_aux_ec: packed {} auxiliary textures plus the missing-texture fallback ({} refs considered, {} primary excluded, {} unread-family (legacy) excluded, {} no-path excluded, {} source-absent ids aliased to the missing texture, {} decode errors, {} duplicates) to '{}'.",
                 summary.included,
                 summary.refs_considered,
                 summary.excluded_primary,

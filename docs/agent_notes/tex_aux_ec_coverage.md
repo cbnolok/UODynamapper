@@ -49,13 +49,15 @@ from the block shader and the item position.
   `tex_art_ec`), and the bump map 1000020 joined the aux package. Pixels of the 650 common ids
   are unchanged.
 - Unavailable sources: tileart names WorldArt ids that `Texture.uop` lacks. Of the non-base ones
-  the plain client has 21, among them the hue masks 2003211, 2003212, 20003979, 20004038 and 20004039.
+  the plain client has 19, among them the hue masks 2003211, 2003212, 20003979, 20004038 and 20004039.
   - When a texture request returns no data, UOSA.exe's tile material builder (FUN_0045cd80,
     0x0045ddf8 and 0x0045e42e) asks again for `Data\SystemTextures\missing.tga`, a 256x256
     opaque magenta pattern. A decode failure instead falls back to Gamebryo's default texture.
-  - `tex_aux_ec` mirrors this. It stores `missing.tga` under `TEX_AUX_EC_MISSING_TEXTURE_ID`
-    (`u32::MAX`) and lists the absent ids in `metadata/absent_sources.bin`.
-    `TexAuxEcPackage::get_or_missing(id, family)` returns the fallback only for listed ids.
+  - `tex_aux_ec` mirrors this. It stores `missing.tga` once under `TEX_AUX_EC_MISSING_TEXTURE_ID`
+    (`u32::MAX`), and each absent id is an alias slot of it (`TEX_AUX_EC_SLOT_FLAG_MISSING_SOURCE`).
+    A normal `slot_for_texture_id`/`load_rgba` returns the magenta image for those ids; the plain
+    client has 19 (9 of them sprite hue masks, which now resolve; the hue crop audit went from
+    331 available + 9 missing to 340 available).
 - Two installed EC clients differ: `_Ultima Online Enhanced` (canonical, and the one Ghidra
   analyses) and `... fp`, a fully patched newer copy with a larger tileart, Texture and
   LegacyTexture. An aux package built from one client is not a regression baseline for the

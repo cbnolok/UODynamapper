@@ -48,7 +48,7 @@ The long-term schema direction is to keep CC and EC ownership/behavior separate 
 
 - `metadata/land.bin`: Dense array of `TileMetaLandTile` structs.
 - `metadata/items.bin`: Dense array of `TileMetaItemTile` structs.
-- `metadata/item_texture_refs_index.bin` and `metadata/item_texture_refs.v2.bin`: the per-item span table and the EC tileart texture refs (`TileMetaItemTextureRef`, 24 bytes). The `.v2` in the path is `TILEMETA_FORMAT_VERSION` 2: `stable_role` is the shader input the item feeds, from the block's shader name and the item position (`EcMaterialStableRole::for_texture_position`; the table is in `lib/uocf/src/enhanced/ENHANCED_CLIENT_FILES.md` §5). The loader rejects format 1 (`metadata/item_texture_refs.bin`, roles guessed from file names) and asks for a repack. Byte 0x0F, format 1's file-name `speculative_role`, is reserved (zero). Flags: `AUXILIARY` (1) = the item is not at its block's primary position (1 for `UOWaterShader`, else 0); `PRIMARY_SELECTED` (2) = the block-0 item `ec_texture_id` comes from, or a block-1/2 item with the same id.
+- `metadata/item_texture_refs_index.bin` and `metadata/item_texture_refs.v3.bin`: the per-item span table and the EC tileart texture refs (`TileMetaItemTextureRef`, 24 bytes). The `.v3` in the path is `TILEMETA_FORMAT_VERSION` 3. Since format 2, `stable_role` is the shader input the item feeds, from the block's shader name and the item position (`EcMaterialStableRole::for_texture_position`; the table is in `lib/uocf/src/enhanced/ENHANCED_CLIENT_FILES.md` §5). Format 3 adds `TileMetaItemTile::ec_art_flags`. The loader rejects format 1 (`metadata/item_texture_refs.bin`, roles guessed from file names) and format 2 (`.v2`, no `ec_art_flags`) and asks for a repack. Byte 0x0F, format 1's file-name `speculative_role`, is reserved (zero). Flags: `AUXILIARY` (1) = the item is not at its block's primary position (1 for `UOWaterShader`, else 0); `PRIMARY_SELECTED` (2) = the block-0 item `ec_texture_id` comes from, or a block-1/2 item with the same id.
 - `metadata/item_materials.json`: per-item shader block material.
 
 ### 2.1 `TileMetaLandTile` Struct (48 Bytes, 8-Byte Aligned)
@@ -82,7 +82,7 @@ Represents static map items and artwork.
 | 0x13 | `u8` | `value` | Item value. |
 | 0x14 | `i8` | `height` | Z-buffer physical height. |
 | 0x15 | `u8` | `_pad1` | Padding. |
-| 0x16 | `u16` | `_pad2` | Padding. |
+| 0x16 | `u16` | `ec_art_flags` | `TILEMETA_ITEM_EC_ART_FLAG_*` from the tileart record. Bit 0 (`USE_NEW_ART`): `flags2` has `UseNewArt` (bit 19), so the official EC draws the block-0 KR art (`tex_art_ec`); otherwise it draws classic-style art. 795 items in the shipped client. Read it with `TileMetaItemTile::uses_new_art` or `TileMetaPackage::uses_new_art(art_id)`. The `UseNewArt`-named bit in `flags` is not it: `flags` merges the Classic tiledata flags and the tileart `flags1`. |
 | 0x18 | `[u8; 4]` | `radar_color` | RGBA minimap colors. |
 | 0x1C | `[u8; 20]`| `name` | Null-terminated classic ASCII name. |
 | 0x30 | `u32` | `ec_texture_id` | EC Texture slot ID. |
@@ -111,7 +111,8 @@ Avoid BC7 RDO for art and mobile-animation sprites unless a specific asset class
 
 Current EC packing semantics:
 
-- `tex_art_ec.uddp` is keyed by tileart/static ownership and uses per-entry sampling windows.
+- `tex_art_ec.uddp` is keyed by tileart/static ownership and uses per-entry sampling windows. It holds only block-0 `WorldArt` images (`Texture.uop`): the KR art. An item without one has no slot; its Classic art is in `tex_art_cc.uddp`. `LegacyTexture.uop` (the EC legacy-art set) is not read, so `TexArtEcSpriteGeometry::source_is_world_art` is always true.
+- `tex_land_ec.uddp` reads terrain layer images from `Texture.uop` only. On the shipped client every TerrainDefinition and override layer id (207) resolves there; classic land comes from `tex_land_cc.uddp`.
 - `tex_land_ec.uddp` is keyed by TerrainDefinition semantics and may pack sparse slot ids plus alias/provenance metadata.
 - `tex_land_ec.uddp` also carries EC land material roles in the runtime lookup table: role `0` is base/diffuse, role `1` is detail, role `2` is mask/alpha, and role `3` is normal/normal_map. These role entries point into the same page atlas and are selected by semantic material id, not by raw texture-id ranges.
 - `tex_aux_ec.uddp` holds the support images (masks, liquid and surface inputs) that tileart refs name but that do not belong to the art or land atlases (section 2.5). `ec_textures_layers.uddp` was the planned name for that third split.
@@ -218,9 +219,10 @@ Contents:
 
 - `metadata/slots.bin`: array of `TexAuxEcSlotRecord`, sorted by `texture_id` (the reserved entry sorts last). It has no version header.
 - `textures/{texture_id:08x}`: raw pixels for one slot, RGBA8888 or a BC7 container according to the slot's `pixel_format`.
-- `metadata/absent_sources.bin`: a `u32` version (currently 1), then `TexAuxEcAbsentSourceRecord`s sorted by `texture_id`.
-  - It lists each distinct referenced id of a packed family whose image the EC archive does not contain.
-  - A source that exists but fails to decode is not listed: the client shows Gamebryo's default texture for those, not `missing.tga`.
+- Missing-source aliases: each distinct referenced id of a packed family whose image the EC archive does not contain gets a slot record with `TEX_AUX_EC_SLOT_FLAG_MISSING_SOURCE`, and no payload of its own. Its pixels are the reserved missing-texture payload, stored once.
+  - The alias keeps the ref's id, family and role, and copies the missing image's `width`, `height` and `pixel_format`.
+  - A source that exists but fails to decode gets no alias: the client shows Gamebryo's default texture for those, not `missing.tga`.
+  - The reader rejects a slot table with aliases but no reserved missing-texture slot, or one not sorted by unique id.
 
 **`TexAuxEcSlotRecord` (12 Bytes)**
 
@@ -232,26 +234,15 @@ Contents:
 | 0x08 | `u8` | `logical_family` | `EcMaterialLogicalFamily`: 1 = WorldArt; 6 = SystemTextures (reserved entry only). |
 | 0x09 | `u8` | `stable_role` | `EcMaterialStableRole` of the first ref that named the id (from the block shader and the item position). |
 | 0x0A | `u8` | `pixel_format` | 0 = RGBA8888, 1 = BC7. |
-| 0x0B | `u8` | `_pad` | Zero. |
-
-**`TexAuxEcAbsentSourceRecord` (8 Bytes)**
-
-| Offset | Type | Name | Description |
-|--------|------|------|-------------|
-| 0x00 | `u32` | `texture_id` | Referenced source id the archive lacks. |
-| 0x04 | `u8` | `logical_family` | Family of the ref (1 = WorldArt). |
-| 0x05 | `u8` | `physical_package` | `EcMaterialPhysicalPackage` it was looked up in (1 = `Texture.uop`). |
-| 0x06 | `u8[2]` | `_pad` | Zero. |
+| 0x0B | `u8` | `flags` | `TEX_AUX_EC_SLOT_FLAG_*`. Bit 0 (`MISSING_SOURCE`): alias of the reserved missing-texture slot; read the payload `textures/ffffffff`. |
 
 Tilemeta refs keep their true source ids; nothing is substituted at build time.
 
 **Reading:**
 
-- Readers resolve a ref with `TexAuxEcPackage::get_or_missing(texture_id, logical_family)`, which returns one of:
-  - the packed slot, when its family matches;
-  - the reserved missing-texture slot, when the id is listed as absent for that family (what the client draws);
-  - `None` otherwise.
-- Packages built before the fallback existed have neither the reserved entry nor `metadata/absent_sources.bin`. They read as having no absent sources.
+- A normal lookup resolves a ref as the client does. `TexAuxEcPackage::slot_for_texture_id(id)` returns the packed slot or, for an absent source, its alias (`SlotInfo::is_missing_source`, `SlotInfo::payload_texture_id` = the reserved id, for caching). `load_rgba(id)` returns the alias's magenta pixels.
+- `TexAuxEcPackage::missing_texture_slot()` returns the reserved slot itself, e.g. for art with no image in any package.
+- Packages built before the aliases existed have none (some carry an unread `metadata/absent_sources.bin`); absent ids then have no slot.
 
 ---
 

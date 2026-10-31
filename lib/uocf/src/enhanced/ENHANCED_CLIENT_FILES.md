@@ -405,8 +405,16 @@ Facet sizes in the executable (`client_exe::facet_dimensions`,
     have 1 effect and 16 have 2.
 - Shader blocks: 0 = WorldArt (present exactly when `has_world_art` is set),
   1 = TileArtLegacy, 2 = TileArtEnhanced, 3 = light texture
-  (`*_light_window.tga`). Block 0 is used as the primary EC visual block and
-  block 1 as the preferred classic/legacy visual block. Each block stores
+  (`*_light_window.tga`). Block 0 holds the KR art (`ArtData::ec_texture`) and
+  block 1 the legacy-art set (`ArtData::cc_texture`). The client builds an
+  item's sprite from block 0 only when `flags2` has `UseNewArt` (bit 19, 795
+  records; ghidra-tileart §4.1 `BuildSpriteDescriptor`), otherwise from the
+  classic-style art. `tilemeta` stores that bit as
+  `TileMetaItemTile::ec_art_flags` (`uses_new_art`). Newer Classic art often
+  has no block-0 image. The project packs block 0 only (`tex_art_ec`) and takes
+  Classic art from the Classic Client (`tex_art_cc`), so a renderer can draw
+  KR art for every item that has it, or only for `UseNewArt` items as the
+  official client does. Each block stores
   `field_04` (formerly `unk1`), the shader name index, texture items, Technique
   (i32 values, formerly `unk8`) and Tweaks (f32 values, formerly `unk9`).
 - Each texture item stores string offset, `source_kind` (formerly `unk4`),
@@ -953,8 +961,10 @@ Facet sizes in the executable (`client_exe::facet_dimensions`,
 - `LegacyTexture.uop` and tileart shader block 1 (TileArtLegacy) are the EC's
   legacy-art mode: the client can draw the classic-looking art set from them.
   The project does not convert that mode. Classic art comes from the Classic
-  Client files (`tex_art_cc.uddp`), and `tex_aux_ec.uddp` packs no
-  TileArtLegacy or TileArtEnhanced images. Tilemeta still records the block 1
+  Client files (`tex_art_cc.uddp`); no package reads `LegacyTexture.uop`:
+  `tex_art_ec` packs block 0 only, `tex_aux_ec` packs no TileArtLegacy or
+  TileArtEnhanced images, and `tex_land_ec` takes terrain layers from
+  `Texture.uop` (all 207 shipped layer ids resolve there). Tilemeta still records the block 1
   and 2 refs; the main-texture selectors and `cc_texture_id` (the legacy
   block's image) read them.
 - Payloads are raw DDS or TGA image data. Tooling decodes them for packing, but
@@ -1251,12 +1261,13 @@ Runtime:
 - `metadata/items.bin`: dense `TileMetaItemTile` table from classic item
   metadata plus EC tileart facts.
 - `metadata/item_texture_refs_index.bin`: per-item span table into refs.
-- `metadata/item_texture_refs.v2.bin`: all EC tileart texture refs. The path
-  names the format (`TILEMETA_FORMAT_VERSION`); a package with the format 1
-  `metadata/item_texture_refs.bin` (file-name roles) is rejected with a repack
-  message.
+- `metadata/item_texture_refs.v3.bin`: all EC tileart texture refs. The path
+  names the format (`TILEMETA_FORMAT_VERSION`); a package of format 1
+  (`metadata/item_texture_refs.bin`, file-name roles) or 2 (`.v2`, no
+  `ec_art_flags`) is rejected with a repack message.
 - Item records store EC and CC texture ids, crop starts, offsets, radar color,
-  flags, height, visual kind, and names.
+  flags, height, visual kind, names, and `ec_art_flags` (bit 0: tileart
+  `flags2` `UseNewArt`).
 - Texture refs store texture id, logical family, physical package, stable role,
   a reserved byte (format 1's file-name speculative role), block/item index,
   primary/auxiliary flags, stretch,
@@ -1267,7 +1278,10 @@ Runtime:
 
 `tex_art_ec.uddp`:
 
-- Contains tileart-owned EC static/art images.
+- Contains tileart-owned EC static/art images: the block-0 `WorldArt` image
+  (`Texture.uop`) of each item, i.e. the KR art. An item with no block-0 image
+  has no slot (on the plain client 23,216 statics with Classic art, against
+  13,311 with a KR slot); its art comes from `tex_art_cc.uddp`.
 - It must not drop a tileart-owned surface entry just because its visual role is
   land-like. Runtime may choose the land path for that tile, but tileart remains
   the semantic owner.
@@ -1310,9 +1324,10 @@ Runtime:
   mode is not converted (see `Texture.uop` and `LegacyTexture.uop` above).
 - When a texture request returns no data, the client substitutes
   `Data\SystemTextures\missing.tga` (`SystemTextures.uop`, a 256x256 TGA).
-  The package stores that image under the reserved id `u32::MAX`, and lists
-  the referenced ids that `Texture.uop` lacks in
-  `metadata/absent_sources.bin`. Tilemeta refs keep their true ids. The layout
+  The package stores that image once under the reserved id `u32::MAX`, and
+  each referenced id that `Texture.uop` lacks is an alias slot of it
+  (`TEX_AUX_EC_SLOT_FLAG_MISSING_SOURCE`), so a normal lookup returns the
+  magenta image. Tilemeta refs keep their true ids. The layout
   is in `docs/dev_wiki/UDDP_FORMATS.md`.
 
 `tex_art_cc.uddp`:
