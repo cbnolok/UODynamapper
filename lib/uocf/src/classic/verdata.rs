@@ -3,10 +3,17 @@
 crate::eyre_imports!();
 
 use byteorder::{LittleEndian, ReadBytesExt};
+use log::{info, warn};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use crate::utils::path::find_file_ignoring_case;
+
+/// The patch file's name, matched ignoring ASCII case (some clients ship `Verdata.mul`).
+pub const VERDATA_FILE_NAME: &str = "verdata.mul";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(i32)]
@@ -117,6 +124,17 @@ impl Verdata {
         }
 
         Ok(Self { path, entries })
+    }
+
+    /// Loads the [`VERDATA_FILE_NAME`] of the first of `dirs` that has one. Only clients of the verdata era ship
+    /// it, so a missing file is no error: it returns `None` and warns that the sources are read without it.
+    pub fn load_from_dirs(dirs: &[PathBuf]) -> eyre::Result<Option<Arc<Self>>> {
+        let Some(path) = dirs.iter().find_map(|dir| find_file_ignoring_case(dir, VERDATA_FILE_NAME)) else {
+            warn!("verdata.mul was requested but not found; reading without it.");
+            return Ok(None);
+        };
+        info!("Using verdata patch file: {}", path.display());
+        Ok(Some(Arc::new(Self::load(path)?)))
     }
 
     pub fn entry(&self, file_id: VerFileId, index: i32) -> Option<&VerdataEntry> {

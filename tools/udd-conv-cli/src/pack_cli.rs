@@ -108,10 +108,15 @@ struct SourceDirArgs {
     ecdir: Option<PathBuf>,
 }
 
+const USE_VERDATA_HELP: &str = "Apply verdata.mul, the patch file only clients of that era ship. It patches only the \
+standard map0.mul, staidx0.mul and statics0.mul and the other files whose ids it lists (art, texmaps, gumps, anims, \
+sounds, multis, lights, tiledata, animdata), never a UOP map or the x variant files. Ignored by default; when \
+requested but absent, a warning is printed and the sources are read without it.";
+
 #[derive(Args, Clone, Copy, Debug, Default)]
 struct ClassicPatchArgs {
-    #[arg(long = "include-verdata", default_value_t = false, help = "Include verdata.mul patches when present.")]
-    include_verdata: bool,
+    #[arg(long = "use-verdata", default_value_t = false, help = USE_VERDATA_HELP)]
+    use_verdata: bool,
     #[arg(long = "include-map-difs", default_value_t = false, help = "Include each facet's mapdifN/mapdiflN patch files when present (pack-map, pack-map-statics, pack-radar). A facet 1 with no map1 file is always built from map0 with its facet-1 difs.")]
     include_map_difs: bool,
     #[arg(long = "include-static-difs", default_value_t = false, help = "Include each facet's stadifN/stadifiN/stadiflN patch files when present (pack-statics, pack-map-statics, pack-radar).")]
@@ -121,7 +126,7 @@ struct ClassicPatchArgs {
 impl From<ClassicPatchArgs> for ClassicPatchOptions {
     fn from(value: ClassicPatchArgs) -> Self {
         Self {
-            verdata: value.include_verdata,
+            verdata: value.use_verdata,
             map_difs: value.include_map_difs,
             static_difs: value.include_static_difs,
             ..ClassicPatchOptions::NONE
@@ -879,8 +884,6 @@ enum Commands {
         atlas_height: u32,
         #[arg(long, default_value_t = CC_MOBILE_ANIM_DEFAULT_ATLAS_GUTTER)]
         gutter: u16,
-        #[arg(long = "crop-transparent-bounds", default_value_t = false, help = "Trim transparent mobile animation frame borders before atlas packing and adjust frame centers.")]
-        crop_transparent_bounds: bool,
         #[arg(long, help = "Write uncompressed RGBA8888 atlas pages.")]
         raw: bool,
         #[arg(long, help = "Write RGBA8888 atlas pages with lossless JPEG XL payload compression.")]
@@ -915,8 +918,6 @@ enum Commands {
         atlas_height: u32,
         #[arg(long, default_value_t = EC_MOBILE_ANIM_DEFAULT_ATLAS_GUTTER)]
         gutter: u16,
-        #[arg(long = "crop-transparent-bounds", default_value_t = false, help = "Trim transparent EC mobile animation frame borders before atlas packing and adjust frame centers.")]
-        crop_transparent_bounds: bool,
         #[arg(long, help = "Write uncompressed RGBA8888 atlas pages.")]
         raw: bool,
         #[arg(long, help = "Write RGBA8888 atlas pages with lossless JPEG XL payload compression.")]
@@ -957,8 +958,6 @@ enum Commands {
         land_output: PathBuf,
         #[arg(long, help = "Also build tilemeta.uddp from the same loaded EC tileart/TerrainDefinition sources. Requires --ccdir.")]
         tilemeta_output: Option<PathBuf>,
-        #[arg(long = "tilemeta-ec-art-cropped", default_value_t = false)]
-        tilemeta_ec_art_cropped: bool,
         #[arg(long = "tilemeta-use-ec-radarcol", default_value_t = false)]
         tilemeta_use_ec_radarcol: bool,
         #[arg(long, help = "Embed this terrain routing KDL in tex_land_ec.uddp instead of auto-discovered TerrainTranscode.kdl.")]
@@ -969,8 +968,6 @@ enum Commands {
         art_atlas_height: u32,
         #[arg(long, default_value_t = EC_ART_DEFAULT_ATLAS_GUTTER)]
         art_gutter: u16,
-        #[arg(long = "art-crop-transparent-bounds", default_value_t = false, help = "Trim transparent EC art borders inside tileart sampling windows before atlas packing.")]
-        art_crop_transparent_bounds: bool,
         #[arg(long, default_value_t = EC_LAND_DEFAULT_ATLAS_PAGE_WIDTH)]
         land_atlas_width: u32,
         #[arg(long, default_value_t = EC_LAND_DEFAULT_ATLAS_PAGE_HEIGHT)]
@@ -1291,8 +1288,6 @@ enum Commands {
         #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = "Accepted for parity with package helper scripts; tilemeta currently keeps its internal package compression policy.")]
         zstd: Option<i32>,
         #[arg(long, default_value_t = false)]
-        ec_art_cropped: bool,
-        #[arg(long, default_value_t = false)]
         use_ec_radarcol: bool,
     },
     /// Generates a radar map (facet0X.dds) from Classic map and statics.
@@ -1602,7 +1597,6 @@ where
             atlas_width,
             atlas_height,
             gutter,
-            crop_transparent_bounds,
             raw,
             jxl,
             jxl_level,
@@ -1635,7 +1629,6 @@ where
                     atlas_width,
                     atlas_height,
                     gutter,
-                    crop_transparent_bounds,
                     compression: output_format.compression,
                     pixel_format: output_format.pixel_format,
                     bc7_rdo_lambda: output_format.bc7_rdo_lambda,
@@ -1669,7 +1662,6 @@ where
             atlas_width,
             atlas_height,
             gutter,
-            crop_transparent_bounds,
             raw,
             jxl,
             jxl_level,
@@ -1704,7 +1696,6 @@ where
                     atlas_width,
                     atlas_height,
                     gutter,
-                    crop_transparent_bounds,
                     compression: output_format.compression,
                     pixel_format: output_format.pixel_format,
                     bc7_rdo_lambda: output_format.bc7_rdo_lambda,
@@ -1773,13 +1764,11 @@ where
             art_output,
             land_output,
             tilemeta_output,
-            tilemeta_ec_art_cropped,
             tilemeta_use_ec_radarcol,
             land_transcode_kdl,
             art_atlas_width,
             art_atlas_height,
             art_gutter,
-            art_crop_transparent_bounds,
             land_atlas_width,
             land_atlas_height,
             land_gutter,
@@ -1871,7 +1860,6 @@ where
                     atlas_width: art_atlas_width,
                     atlas_height: art_atlas_height,
                     gutter: art_gutter,
-                    crop_transparent_bounds: art_crop_transparent_bounds,
                     compression: art_output_format.compression,
                     upscale: upscale_filter,
                     upscale_passes: convert_upscale_passes(art_upscale_passes),
@@ -1961,17 +1949,12 @@ where
                     .ccdir
                     .as_ref()
                     .expect("--ccdir validated for tilemeta output");
-                let ecdir = source_dir_args
-                    .ecdir
-                    .as_ref()
-                    .expect("--ecdir validated for EC texture output");
                 build_tilemeta_uddp_from_split_sources_with_loaded_ec_sources(
                     ccdir,
-                    ecdir,
                     &shared_sources,
+                    &art_summary.ec_crop_adjustments,
                     tilemeta_out_file,
                     &TileMetaBuildOptions {
-                        adjust_tex_art_ec_sampling: tilemeta_ec_art_cropped,
                         use_ec_radarcol: tilemeta_use_ec_radarcol,
                         classic_patches: classic_patches.into(),
                         package_compression: CompressionFlag::ZstdNoDict,
@@ -2238,13 +2221,11 @@ where
             classic_patches,
             output,
             zstd,
-            ec_art_cropped,
             use_ec_radarcol,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&output);
             let options = TileMetaBuildOptions {
-                adjust_tex_art_ec_sampling: ec_art_cropped,
                 use_ec_radarcol,
                 classic_patches: classic_patches.into(),
                 package_compression: zstd.map(zstd_compression).unwrap_or(CompressionFlag::ZstdNoDict),
@@ -2678,17 +2659,15 @@ mod tests {
                 source_dirs,
                 classic_patches,
                 output,
-                ec_art_cropped,
                 use_ec_radarcol,
                 ..
             } => {
                 assert_eq!(source_dirs.ccdir, Some(PathBuf::from("/cc")));
                 assert_eq!(source_dirs.ecdir, Some(PathBuf::from("/ec")));
-                assert!(!classic_patches.include_verdata);
+                assert!(!classic_patches.use_verdata);
                 assert!(!classic_patches.include_map_difs);
                 assert!(!classic_patches.include_static_difs);
                 assert_eq!(output, PathBuf::from("tilemeta.uddp"));
-                assert!(!ec_art_cropped);
                 assert!(!use_ec_radarcol);
             }
             _ => panic!("unexpected command parsed"),
@@ -2708,7 +2687,6 @@ mod tests {
             "tex_land_ec.uddp",
             "--land-transcode-kdl",
             "dynamapper/assets/cc_ec_convtables/KrTerrainRouting.generated.kdl",
-            "--art-crop-transparent-bounds",
             "--bc7",
         ])
         .expect("parse unified ec texture args");
@@ -2719,8 +2697,7 @@ mod tests {
                 art_output,
                 land_output,
                 land_transcode_kdl,
-                art_crop_transparent_bounds,
-                bc7,
+                    bc7,
                 bc7_rdo,
                 raw,
                 jxl,
@@ -2736,7 +2713,6 @@ mod tests {
                         "dynamapper/assets/cc_ec_convtables/KrTerrainRouting.generated.kdl"
                     ))
                 );
-                assert!(art_crop_transparent_bounds);
                 assert!(bc7);
                 assert!(!bc7_rdo);
                 assert!(!raw);
@@ -2792,7 +2768,7 @@ mod tests {
             "--tilemeta-output",
             "tilemeta.uddp",
             "--tilemeta-use-ec-radarcol",
-            "--include-verdata",
+            "--use-verdata",
         ])
         .expect("parse EC texture group with tilemeta output");
 
@@ -2808,7 +2784,7 @@ mod tests {
                 assert_eq!(source_dirs.ecdir, Some(PathBuf::from("/ec")));
                 assert_eq!(tilemeta_output, Some(PathBuf::from("tilemeta.uddp")));
                 assert!(tilemeta_use_ec_radarcol);
-                assert!(classic_patches.include_verdata);
+                assert!(classic_patches.use_verdata);
             }
             _ => panic!("unexpected command parsed"),
         }
@@ -2908,7 +2884,6 @@ mod tests {
             "/cc",
             "--output",
             "mobile_anim_cc.uddp",
-            "--crop-transparent-bounds",
         ])
         .expect("mobile animation pack commands default to BC7 output");
 
@@ -2919,7 +2894,6 @@ mod tests {
                 zstd,
                 bc7,
                 bc7_rdo,
-                crop_transparent_bounds,
                 ..
             } => {
                 assert!(!raw);
@@ -2927,7 +2901,6 @@ mod tests {
                 assert!(zstd.is_none());
                 assert!(!bc7);
                 assert!(!bc7_rdo);
-                assert!(crop_transparent_bounds);
                 let output_format = resolve_mobile_anim_output_format(
                     raw,
                     jxl,
@@ -3655,7 +3628,6 @@ mod tests {
             "/tables",
             "--ec-mobile-animations-kdl",
             "/tables/EcMobileAnimations.kdl",
-            "--crop-transparent-bounds",
         ])
         .expect("parse ec mobile animation metadata paths");
 
@@ -3663,7 +3635,6 @@ mod tests {
             Commands::PackEcMobileAnims {
                 tables,
                 ec_mobile_animations_kdl,
-                crop_transparent_bounds,
                 ..
             } => {
                 assert_eq!(tables, Some(PathBuf::from("/tables")));
@@ -3671,7 +3642,6 @@ mod tests {
                     ec_mobile_animations_kdl,
                     Some(PathBuf::from("/tables/EcMobileAnimations.kdl"))
                 );
-                assert!(crop_transparent_bounds);
             }
             _ => panic!("unexpected command parsed"),
         }
@@ -3707,7 +3677,7 @@ mod tests {
     #[test]
     fn classic_patch_args_convert_to_shared_options() {
         let options: ClassicPatchOptions = ClassicPatchArgs {
-            include_verdata: true,
+            use_verdata: true,
             include_map_difs: false,
             include_static_difs: true,
         }
@@ -3783,7 +3753,7 @@ mod tests {
             "/cc",
             "--map-id",
             "2",
-            "--include-verdata",
+            "--use-verdata",
             "--include-map-difs",
             "--include-static-difs",
         ])
@@ -3796,7 +3766,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(map_id, 2);
-                assert!(classic_patches.include_verdata);
+                assert!(classic_patches.use_verdata);
                 assert!(classic_patches.include_map_difs);
                 assert!(classic_patches.include_static_difs);
             }
@@ -3826,11 +3796,31 @@ mod tests {
                 ..
             } => {
                 assert_eq!(map_id, 1);
-                assert!(!classic_patches.include_verdata);
+                assert!(!classic_patches.use_verdata);
                 assert!(classic_patches.include_map_difs);
                 assert!(!classic_patches.include_static_difs);
             }
             _ => panic!("unexpected command parsed"),
+        }
+    }
+
+    #[test]
+    fn verdata_is_off_by_default_and_has_no_old_name() {
+        for command in ["pack-map", "pack-statics", "pack-map-statics"] {
+            let cli = Cli::try_parse_from(["uddpack", command, "--ccdir", "/cc", "--map-id", "0"])
+                .expect("parse map args");
+            let classic_patches = match cli.command {
+                Commands::PackMap { classic_patches, .. }
+                | Commands::PackStatics { classic_patches, .. }
+                | Commands::PackMapStatics { classic_patches, .. } => classic_patches,
+                _ => panic!("unexpected command parsed"),
+            };
+            assert!(!classic_patches.use_verdata, "{command}");
+            assert!(
+                Cli::try_parse_from(["uddpack", command, "--ccdir", "/cc", "--map-id", "0", "--include-verdata"])
+                    .is_err(),
+                "{command}"
+            );
         }
     }
 
@@ -3841,7 +3831,7 @@ mod tests {
             "pack-lights",
             "--ccdir",
             "/cc",
-            "--include-verdata",
+            "--use-verdata",
         ])
         .expect("parse lights patch args");
 
@@ -3849,7 +3839,7 @@ mod tests {
             Commands::PackLights {
                 classic_patches, ..
             } => {
-                assert!(classic_patches.include_verdata);
+                assert!(classic_patches.use_verdata);
                 assert!(!classic_patches.include_map_difs);
                 assert!(!classic_patches.include_static_difs);
             }

@@ -1,12 +1,9 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use log::{info, warn};
 use uocf::classic::facet_sources::ClassicDifOptions;
 use uocf::classic::verdata::Verdata;
 use uocf::map_edition::MapEdition;
-
-use crate::source_paths::find_first_existing_file;
 
 /// The patch files to apply to Classic sources, and the edition of the facet files to read. The edition is no
 /// patch: the variant reads the facets' `x` files in place of the standard ones (`uocf::map_edition`), and is used
@@ -47,14 +44,7 @@ pub(crate) fn load_verdata_if_enabled(
     if !options.verdata {
         return Ok(None);
     }
-
-    let Some(path) = find_first_existing_file(source_dirs, &["verdata.mul", "Verdata.mul"]) else {
-        warn!("Classic patch option verdata enabled, but verdata.mul was not found.");
-        return Ok(None);
-    };
-
-    info!("Using verdata patch file: {}", path.display());
-    Ok(Some(Arc::new(Verdata::load(path)?)))
+    Verdata::load_from_dirs(source_dirs)
 }
 
 #[cfg(test)]

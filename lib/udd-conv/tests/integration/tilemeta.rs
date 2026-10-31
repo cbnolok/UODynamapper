@@ -145,23 +145,30 @@ fn tilemeta_package_roundtrip_preserves_metadata_records() {
 }
 
 #[test]
-fn tilemeta_crop_adjustment_shifts_ec_sampling_start_only() {
-    let adjusted = adjusted_ec_sampling_start(
-        42,
-        12,
-        18,
-        Some(TexArtEcCropAdjustment {
-            source_left: 5,
-            source_top: 7,
-            trim_left: 2,
-            trim_top: 3,
-            trim_right: 4,
-            trim_bottom: 6,
-        }),
-    )
-    .expect("adjust EC sampling start");
+fn tilemeta_crop_adjustment_shifts_ec_sampling_start_to_the_trimmed_image() {
+    const TILE_ID: u32 = 42;
+    const START_X: i32 = 12;
+    const START_Y: i32 = 18;
+    const TRIM_LEFT: i16 = 2;
+    const TRIM_TOP: i16 = 3;
+    let trimmed = TexArtEcCropAdjustment {
+        source_left: START_X as i16 + TRIM_LEFT,
+        source_top: START_Y as i16 + TRIM_TOP,
+        trim_left: TRIM_LEFT,
+        trim_top: TRIM_TOP,
+        trim_right: 4,
+        trim_bottom: 6,
+    };
 
-    assert_eq!(adjusted, (7, 11));
+    assert_eq!(
+        adjusted_ec_sampling_start(TILE_ID, START_X, START_Y, Some(trimmed)).expect("shift EC sampling start"),
+        (START_X as i16 + TRIM_LEFT, START_Y as i16 + TRIM_TOP)
+    );
+    assert_eq!(
+        adjusted_ec_sampling_start(TILE_ID, START_X, START_Y, None).expect("keep EC sampling start"),
+        (START_X as i16, START_Y as i16)
+    );
+    assert!(adjusted_ec_sampling_start(TILE_ID, i32::from(i16::MAX) + 1, START_Y, None).is_err());
 }
 
 #[test]

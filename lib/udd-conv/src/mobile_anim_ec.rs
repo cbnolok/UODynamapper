@@ -173,7 +173,6 @@ pub struct MobileAnimEcAtlasOptions {
     pub atlas_width: u32,
     pub atlas_height: u32,
     pub gutter: u16,
-    pub crop_transparent_bounds: bool,
     pub compression: CompressionFlag,
     pub pixel_format: PagePixelFormat,
     pub bc7_rdo_lambda: f32,
@@ -191,7 +190,6 @@ impl Default for MobileAnimEcAtlasOptions {
             atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
             atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
             gutter: DEFAULT_ATLAS_GUTTER,
-            crop_transparent_bounds: false,
             compression: CompressionFlag::ZstdNoDict,
             pixel_format: PagePixelFormat::Bc7,
             bc7_rdo_lambda: 0.0,
@@ -929,10 +927,6 @@ fn apply_planned_transparent_trim(
     planned_by_body: &mut BTreeMap<u32, Vec<PlannedMobileAnimEcFrame>>,
     options: &MobileAnimEcAtlasOptions,
 ) -> eyre::Result<()> {
-    if !options.crop_transparent_bounds {
-        return Ok(());
-    }
-
     let mut animationframe_packages = HashMap::<Arc<PathBuf>, AnimationFrameSourcePackage>::new();
     let mut decoded_sources = HashMap::<PlannedMobileAnimEcSource, CachedPlannedAnimation>::new();
     let mut decoded_source_use_tick = 0u64;
@@ -3037,10 +3031,6 @@ fn prepare_decoded_frames(
     frames: Vec<DecodedMobileAnimEcFrame>,
     options: &MobileAnimEcAtlasOptions,
 ) -> eyre::Result<Vec<DecodedMobileAnimEcFrame>> {
-    if !options.crop_transparent_bounds {
-        return Ok(frames);
-    }
-
     frames.into_iter().map(trim_decoded_frame).collect()
 }
 
@@ -3539,7 +3529,6 @@ mod tests {
             atlas_width: 16,
             atlas_height: 16,
             gutter: 0,
-            crop_transparent_bounds: false,
             compression: CompressionFlag::None,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
@@ -3568,7 +3557,6 @@ mod tests {
             atlas_width: 16,
             atlas_height: 16,
             gutter: 4,
-            crop_transparent_bounds: false,
             compression: CompressionFlag::None,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
@@ -3602,7 +3590,6 @@ mod tests {
             atlas_width: 16,
             atlas_height: 16,
             gutter: 0,
-            crop_transparent_bounds: true,
             compression: CompressionFlag::None,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
@@ -3632,7 +3619,6 @@ mod tests {
             atlas_width: 2048,
             atlas_height: 2048,
             gutter: 4,
-            crop_transparent_bounds: false,
             compression: CompressionFlag::None,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
@@ -3976,7 +3962,6 @@ mod tests {
             atlas_width: 16,
             atlas_height: 16,
             gutter: 4,
-            crop_transparent_bounds: false,
             compression: CompressionFlag::ZstdNoDict,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
@@ -4104,7 +4089,6 @@ mod tests {
             atlas_width: 16,
             atlas_height: 16,
             gutter: 4,
-            crop_transparent_bounds: false,
             compression: CompressionFlag::None,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,
@@ -4248,7 +4232,6 @@ mod tests {
             atlas_width: 16,
             atlas_height: 16,
             gutter: 4,
-            crop_transparent_bounds: false,
             compression: CompressionFlag::None,
             pixel_format: PagePixelFormat::Rgba8888,
             bc7_rdo_lambda: 0.0,

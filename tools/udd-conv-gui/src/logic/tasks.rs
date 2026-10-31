@@ -495,7 +495,6 @@ impl UddConvApp {
                     atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
                     atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
                     gutter: DEFAULT_ATLAS_GUTTER,
-                    crop_transparent_bounds: false,
                     compression,
                     upscale: settings.upscale_tex_art_ec,
                     upscale_passes: Vec::new(),
@@ -582,7 +581,6 @@ impl UddConvApp {
                         ec_dir,
                         &output,
                         &TileMetaBuildOptions {
-                            adjust_tex_art_ec_sampling: false,
                             use_ec_radarcol: false,
                             classic_patches: classic_patch_options(&settings),
                             package_compression: CompressionFlag::ZstdNoDictLevel(settings.zstd_tilemeta),
@@ -597,7 +595,6 @@ impl UddConvApp {
                         &sources,
                         &output,
                         &TileMetaBuildOptions {
-                            adjust_tex_art_ec_sampling: false,
                             use_ec_radarcol: false,
                             classic_patches: classic_patch_options(&settings),
                             package_compression: CompressionFlag::ZstdNoDictLevel(settings.zstd_tilemeta),
@@ -639,7 +636,6 @@ impl UddConvApp {
                     atlas_width: CC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_WIDTH,
                     atlas_height: CC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_HEIGHT,
                     gutter: CC_MOBILE_ANIM_DEFAULT_ATLAS_GUTTER,
-                    crop_transparent_bounds: false,
                     compression,
                     pixel_format: match settings.opt_mobile_anim_cc {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,
@@ -692,7 +688,6 @@ impl UddConvApp {
                     atlas_width: EC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_WIDTH,
                     atlas_height: EC_MOBILE_ANIM_DEFAULT_ATLAS_PAGE_HEIGHT,
                     gutter: EC_MOBILE_ANIM_DEFAULT_ATLAS_GUTTER,
-                    crop_transparent_bounds: false,
                     compression,
                     pixel_format: match settings.opt_mobile_anim_ec {
                         TextureOptimization::Bc7 | TextureOptimization::Bc7Zstd => PagePixelFormat::Bc7,

@@ -84,13 +84,13 @@ Represents static map items and artwork.
 | 0x18 | `[u8; 4]` | `radar_color` | RGBA minimap colors. |
 | 0x1C | `[u8; 20]`| `name` | Null-terminated classic ASCII name. |
 | 0x30 | `u32` | `ec_texture_id` | EC Texture slot ID. |
-| 0x34 | `i16` | `ec_start_x` | X sampling-window start for EC. Shifted when paired with cropped `tex_art_ec`. |
-| 0x36 | `i16` | `ec_start_y` | Y sampling-window start for EC. Shifted when paired with cropped `tex_art_ec`. |
+| 0x34 | `i16` | `ec_start_x` | X sampling-window start for EC: the start of the trimmed `tex_art_ec` image in the source texture (the tileart start shifted by the left trim). |
+| 0x36 | `i16` | `ec_start_y` | Y sampling-window start for EC: the start of the trimmed `tex_art_ec` image in the source texture (the tileart start shifted by the top trim). |
 | 0x38 | `u32` | `cc_texture_id` | CC Fallback texture slot ID. |
 | 0x3C | `i16` | `cc_start_x` | X bounding box start for CC. |
 | 0x3E | `i16` | `cc_start_y` | Y bounding box start for CC. |
 
-When `tilemeta.uddp` is generated for the historical cropped EC-static layout, only `ec_start_x` and `ec_start_y` are adjusted to match the cropped source payload. Art draw offsets are package-local metadata in `tex_art_cc.uddp` and `tex_art_ec.uddp`.
+Art draw offsets are package-local metadata in `tex_art_cc.uddp` and `tex_art_ec.uddp`. EC art is always alpha-trimmed: the `tex_art_ec` draw offsets keep placement, and `ec_start_x`/`ec_start_y` locate the trimmed image in its source texture, so a source-space crop at that start with the slot's extent gives the slot's pixels (the EC sprite hue masks rely on it). Tiles not packed from their `Texture.uop` texture keep the tileart start. See `docs/dev_wiki/rendering/tex_art_ec_trimming.md`.
 
 Future work is expected to keep the original source texture intact for EC art and let runtime sampling windows handle subrect selection, so cropped packing here should be understood as the current behavior, not the final target.
 When the schema is eventually widened, the CC texture coordinates, EC texture coordinates, and the CC/EC flags should be split into explicit fields rather than compressed into one mixed record layout.
@@ -125,7 +125,7 @@ Normal-map format note:
 - `metadata/slots.bin`: Binary array of `SlotRecord` structs indexed by `art_id` containing the UV mapping.
 - `pages/{page_id}.rgba8888`: Raw RGBA8888 pixel payloads (compressed by Zstd via UDDP).
 
-For cropped EC art layouts, cropping is performed per art entry, not per decoded source texture. The correct order is:
+EC art is always cropped, per art entry, not per decoded source texture. The order is:
 
 1. apply the tileart `start_x/start_y/end_x/end_y` clip rect for that art entry
 2. alpha-trim inside that clipped rectangle
@@ -204,7 +204,7 @@ To mitigate the inherent size increase of the 8bpp BC7 format, UODynamapper uses
 
 ## 3. Animation Atlas Trimming
 
-`mobile_anim_cc.uddp` and `mobile_anim_ec.uddp` can trim fully transparent frame borders before atlas packing. The frame payload keeps only the non-empty visual bounds, while the existing frame `center_x`/`center_y` fields are shifted by the removed left/top transparent border so the original animation pivot remains stable. BC7 output still uses the existing 4x4-oriented allocation path, so trimmed frame rectangles reduce atlas occupancy without breaking block alignment.
+`mobile_anim_cc.uddp` and `mobile_anim_ec.uddp` always trim fully transparent frame borders before atlas packing. The frame payload keeps only the non-empty visual bounds, while the existing frame `center_x`/`center_y` fields are shifted by the removed left/top transparent border so the original animation pivot remains stable. BC7 output still uses the existing 4x4-oriented allocation path, so trimmed frame rectangles reduce atlas occupancy without breaking block alignment.
 
 Mobile animation atlas pages store edge-extruded allocation gutters, including BC7 alignment padding, so linear previewers and block compression do not sample transparent-black padding around frame edges. This is an on-disk package invariant, not a runtime repair step.
 

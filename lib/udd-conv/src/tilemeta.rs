@@ -25,9 +25,7 @@ use crate::classic_patches::{load_verdata_if_enabled, ClassicPatchOptions};
 use crate::package_progress::build_and_write_package_with_progress;
 use crate::source_paths::find_first_existing_file;
 use crate::tex_art_ec::{
-    compute_tex_art_ec_crop_adjustments_from_loaded_sources,
-    compute_tex_art_ec_crop_adjustments_from_sources,
-    TexArtEcLoadedSources,
+    compute_tex_art_ec_crop_adjustments_from_loaded_sources, load_tex_art_ec_sources, TexArtEcLoadedSources,
 };
 use udd_assets::tex_art_ec::TexArtEcCropAdjustment;
 use udd_assets::tilemeta::{
@@ -46,12 +44,9 @@ use uocf::classic::tiledata::{
     TileData, TILE_FLAG_ALPHA_BLEND, TILE_FLAG_MULTI_MOVABLE, TILE_FLAG_NO_DRAW, TILE_FLAG_NO_HOUSE,
     TILE_FLAG_NO_SHADOW, TILE_FLAG_PIXEL_BLEED, TILE_FLAG_PLAY_ANIM_ONCE, TILE_FLAG_ROTATED,
 };
-use uocf::enhanced::{tile_database::ArtDefinition, tileart::{ArtData, TaeFlag}};
+use uocf::enhanced::tileart::{ArtData, TaeFlag};
 
 pub struct TileMetaBuildOptions {
-    /// When `true`, subtract the EC-art crop delta from the stored EC sampling
-    /// start coordinates so they remain aligned with the shared EC texture pass.
-    pub adjust_tex_art_ec_sampling: bool,
     /// When `true`, use radar colors from `tileart.uop` (EC data).
     /// When `false`, use radar colors from `radarcol.mul` (Classic data).
     pub use_ec_radarcol: bool,
@@ -62,17 +57,11 @@ pub struct TileMetaBuildOptions {
 impl Default for TileMetaBuildOptions {
     fn default() -> Self {
         Self {
-            adjust_tex_art_ec_sampling: false,
             use_ec_radarcol: false,
             classic_patches: ClassicPatchOptions::default(),
             package_compression: CompressionFlag::ZstdNoDict,
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct TileMetaBuildSummary {
-    pub adjusted_ec_item_count: u32,
 }
 
 struct BuiltTileMetaTables {
@@ -82,7 +71,6 @@ struct BuiltTileMetaTables {
     item_texture_refs: Vec<TileMetaItemTextureRef>,
     item_materials: std::collections::BTreeMap<u32, Vec<uocf::enhanced::tileart::ArtMaterial>>,
     package_compression: CompressionFlag,
-    summary: TileMetaBuildSummary,
 }
 
 pub fn classify_item_visual_kind(
@@ -131,7 +119,6 @@ mod tests {
             item_texture_ref_spans: Vec::new(), item_texture_refs: Vec::new(),
             item_materials: [(6038, vec![material.clone()])].into_iter().collect(),
             package_compression: CompressionFlag::ZstdNoDict,
-            summary: TileMetaBuildSummary::default(),
         }).expect("write source material metadata");
         let package = udd_assets::tilemeta::TileMetaPackage::load(&path).expect("read source material metadata");
         assert_eq!(package.item_material(6038, 0), Some(&material));
@@ -263,17 +250,19 @@ pub fn build_tilemeta_uddp_from_split_sources_with_progress(
     write_tilemeta_uddp_with_progress(out_file, built, package_progress)
 }
 
+/// Builds `tilemeta.uddp` from EC sources the EC art atlas was just packed from, with the trims it recorded
+/// ([`crate::tex_art_ec::TexArtEcBuildSummary::ec_crop_adjustments`]), so nothing is decoded twice.
 pub fn build_tilemeta_uddp_from_split_sources_with_loaded_ec_sources(
     cc_source_dir: &Path,
-    ec_source_dir: &Path,
     ec_sources: &TexArtEcLoadedSources,
+    ec_crop_adjustments: &[Option<TexArtEcCropAdjustment>],
     out_file: &Path,
     options: &TileMetaBuildOptions,
 ) -> eyre::Result<()> {
-    let built = build_tilemeta_tables_from_split_sources_with_loaded_ec_sources(
-        cc_source_dir,
-        ec_source_dir,
+    let built = build_tilemeta_tables_with_ec_sources(
+        &[cc_source_dir.to_path_buf()],
         ec_sources,
+        ec_crop_adjustments,
         options,
         "unifying tiledata",
     )?;
@@ -352,41 +341,14 @@ fn write_tilemeta_uddp_with_progress(
     Ok(())
 }
 
-pub fn build_tilemeta_item_payload_from_sources(
-    source_dirs: &[PathBuf],
-    options: &TileMetaBuildOptions,
-) -> eyre::Result<(Vec<u8>, TileMetaBuildSummary)> {
-    let built = build_tilemeta_tables_from_sources(source_dirs, options, "updating tilemeta")?;
-    Ok((
-        bytemuck::cast_slice(&built.item_tiles).to_vec(),
-        built.summary,
-    ))
-}
-
 fn build_tilemeta_tables_from_sources(
     source_dirs: &[PathBuf],
     options: &TileMetaBuildOptions,
     progress_label: &str,
 ) -> eyre::Result<BuiltTileMetaTables> {
-    let tiledata_path = find_first_existing_file(source_dirs, &["tiledata.mul"])
-        .ok_or_else(|| eyre::eyre!("missing tiledata.mul"))?;
-    let tileart_path = find_first_existing_file(source_dirs, &["tileart.uop"])
-        .ok_or_else(|| eyre::eyre!("missing tileart.uop"))?;
-    let stringdict_path = find_string_dictionary_path(source_dirs)
-        .ok_or_else(|| eyre::eyre!("missing string_dictionary.uop"))?;
-    let radarcol_path = find_first_existing_file(source_dirs, &["radarcol.mul"]);
-
-    build_tilemeta_tables_from_resolved_paths(
-        tiledata_path,
-        tileart_path,
-        stringdict_path,
-        radarcol_path,
-        source_dirs,
-        source_dirs,
-        None,
-        options,
-        progress_label,
-    )
+    let ec_sources = load_tex_art_ec_sources(source_dirs)?;
+    let ec_crop_adjustments = compute_tex_art_ec_crop_adjustments_from_loaded_sources(&ec_sources)?;
+    build_tilemeta_tables_with_ec_sources(source_dirs, &ec_sources, &ec_crop_adjustments, options, progress_label)
 }
 
 fn build_tilemeta_tables_from_split_sources(
@@ -395,69 +357,33 @@ fn build_tilemeta_tables_from_split_sources(
     options: &TileMetaBuildOptions,
     progress_label: &str,
 ) -> eyre::Result<BuiltTileMetaTables> {
-    let cc_source_dirs = [cc_source_dir.to_path_buf()];
-    let ec_source_dirs = [ec_source_dir.to_path_buf()];
-    let tiledata_path = find_first_existing_file(&cc_source_dirs, &["tiledata.mul"])
-        .ok_or_else(|| eyre::eyre!("missing tiledata.mul"))?;
-    let tileart_path = find_first_existing_file(&ec_source_dirs, &["tileart.uop"])
-        .ok_or_else(|| eyre::eyre!("missing tileart.uop"))?;
-    let stringdict_path = find_string_dictionary_path(&ec_source_dirs)
-        .ok_or_else(|| eyre::eyre!("missing string_dictionary.uop"))?;
-    let radarcol_path = find_first_existing_file(&cc_source_dirs, &["radarcol.mul"]);
-
-    build_tilemeta_tables_from_resolved_paths(
-        tiledata_path,
-        tileart_path,
-        stringdict_path,
-        radarcol_path,
-        &cc_source_dirs,
-        &ec_source_dirs,
-        None,
+    let ec_sources = load_tex_art_ec_sources(&[ec_source_dir.to_path_buf()])?;
+    let ec_crop_adjustments = compute_tex_art_ec_crop_adjustments_from_loaded_sources(&ec_sources)?;
+    build_tilemeta_tables_with_ec_sources(
+        &[cc_source_dir.to_path_buf()],
+        &ec_sources,
+        &ec_crop_adjustments,
         options,
         progress_label,
     )
 }
 
-fn build_tilemeta_tables_from_split_sources_with_loaded_ec_sources(
-    cc_source_dir: &Path,
-    ec_source_dir: &Path,
-    ec_sources: &TexArtEcLoadedSources,
-    options: &TileMetaBuildOptions,
-    progress_label: &str,
-) -> eyre::Result<BuiltTileMetaTables> {
-    let cc_source_dirs = [cc_source_dir.to_path_buf()];
-    let ec_source_dirs = [ec_source_dir.to_path_buf()];
-    let tiledata_path = find_first_existing_file(&cc_source_dirs, &["tiledata.mul"])
-        .ok_or_else(|| eyre::eyre!("missing tiledata.mul"))?;
-    let radarcol_path = find_first_existing_file(&cc_source_dirs, &["radarcol.mul"]);
-
-    build_tilemeta_tables_from_resolved_paths(
-        tiledata_path,
-        ec_sources.tileart_path.clone(),
-        ec_sources.stringdict_path.clone(),
-        radarcol_path,
-        &cc_source_dirs,
-        &ec_source_dirs,
-        Some(ec_sources),
-        options,
-        progress_label,
-    )
-}
-
-fn build_tilemeta_tables_from_resolved_paths(
-    tiledata_path: PathBuf,
-    tileart_path: PathBuf,
-    stringdict_path: PathBuf,
-    radarcol_path: Option<PathBuf>,
+/// Builds the tables from `tiledata.mul` (and `radarcol.mul`) in `cc_source_dirs` and the loaded EC sources. The
+/// EC sampling starts are shifted by `ec_crop_adjustments`, the trims the EC art atlas applied to the same sources
+/// ([`adjusted_ec_sampling_start`]).
+fn build_tilemeta_tables_with_ec_sources(
     cc_source_dirs: &[PathBuf],
-    ec_source_dirs: &[PathBuf],
-    loaded_ec_sources: Option<&TexArtEcLoadedSources>,
+    ec_sources: &TexArtEcLoadedSources,
+    ec_crop_adjustments: &[Option<TexArtEcCropAdjustment>],
     options: &TileMetaBuildOptions,
     progress_label: &str,
 ) -> eyre::Result<BuiltTileMetaTables> {
+    let tiledata_path = find_first_existing_file(cc_source_dirs, &["tiledata.mul"])
+        .ok_or_else(|| eyre::eyre!("missing tiledata.mul"))?;
+    let radarcol_path = find_first_existing_file(cc_source_dirs, &["radarcol.mul"]);
     info!("Using tiledata.mul: {}", tiledata_path.display());
-    info!("Using tileart.uop: {}", tileart_path.display());
-    info!("Using string dictionary: {}", stringdict_path.display());
+    info!("Using tileart.uop: {}", ec_sources.tileart_path.display());
+    info!("Using string dictionary: {}", ec_sources.stringdict_path.display());
     if let Some(ref p) = radarcol_path {
         info!("Using radarcol.mul: {}", p.display());
     }
@@ -472,22 +398,7 @@ fn build_tilemeta_tables_from_resolved_paths(
         tiledata_path.clone(),
         load_verdata_if_enabled(cc_source_dirs, &options.classic_patches)?,
     )?;
-    let loaded_art_definition;
-    let tex_art_ec = if let Some(sources) = loaded_ec_sources {
-        &sources.art_definition
-    } else {
-        loaded_art_definition = ArtDefinition::load(&tileart_path, &stringdict_path)?;
-        &loaded_art_definition
-    };
-    let tex_art_ec_crop_adjustments = if options.adjust_tex_art_ec_sampling {
-        if let Some(sources) = loaded_ec_sources {
-            compute_tex_art_ec_crop_adjustments_from_loaded_sources(sources)?
-        } else {
-            compute_tex_art_ec_crop_adjustments_from_sources(ec_source_dirs)?
-        }
-    } else {
-        Vec::new()
-    };
+    let tex_art_ec = &ec_sources.art_definition;
 
     let cc_radarcol = if !options.use_ec_radarcol || radarcol_path.is_some() {
         if let Some(p) = radarcol_path {
@@ -553,7 +464,6 @@ fn build_tilemeta_tables_from_resolved_paths(
     let mut item_texture_ref_spans = Vec::with_capacity(cc_tiledata.item_tiles().len());
     let mut item_texture_refs = Vec::new();
     let mut item_materials = std::collections::BTreeMap::new();
-    let mut adjusted_ec_item_count = 0u32;
     for tile in cc_tiledata.item_tiles() {
         pb.inc(1);
         let mut tile_meta_item = TileMetaItemTile {
@@ -599,26 +509,13 @@ fn build_tilemeta_tables_from_resolved_paths(
             // Unify EC Texture
             if let Some(ec_tex) = &ec_data.ec_texture {
                 tile_meta_item.ec_texture_id = ec_tex.texture_id;
-                let crop_adjustment = tex_art_ec_crop_adjustments
-                    .get(tile.tile_id as usize)
-                    .and_then(|adjustment| *adjustment);
-                let (ec_start_x, ec_start_y) = adjusted_ec_sampling_start(
+                let crop_adjustment = ec_crop_adjustments.get(tile.tile_id as usize).copied().flatten();
+                (tile_meta_item.ec_start_x, tile_meta_item.ec_start_y) = adjusted_ec_sampling_start(
                     tile.tile_id as u32,
                     ec_tex.start_x,
                     ec_tex.start_y,
-                    if options.adjust_tex_art_ec_sampling {
-                        crop_adjustment
-                    } else {
-                        None
-                    },
+                    crop_adjustment,
                 )?;
-                tile_meta_item.ec_start_x = ec_start_x;
-                tile_meta_item.ec_start_y = ec_start_y;
-                if ec_start_x != ec_tex.start_x as i16
-                    || ec_start_y != ec_tex.start_y as i16
-                {
-                    adjusted_ec_item_count += 1;
-                }
             }
 
             // Unify CC Texture override
@@ -687,9 +584,6 @@ fn build_tilemeta_tables_from_resolved_paths(
         item_texture_refs,
         item_materials,
         package_compression: options.package_compression,
-        summary: TileMetaBuildSummary {
-            adjusted_ec_item_count,
-        },
     })
 }
 
@@ -811,23 +705,25 @@ fn tilemeta_progress_bar(total: u64, progress_label: &str) -> ProgressBar {
     pb
 }
 
+/// The EC sampling start `tilemeta.uddp` stores for a tile: where its packed, alpha-trimmed image starts in the
+/// source texture, i.e. the tileart start shifted by the top/left trim ([`TexArtEcCropAdjustment::source_left`] and
+/// `source_top`, the window start clamped to the texture plus the trim). Consumers that crop the source texture at
+/// this start with the packed slot's extent (the EC sprite hue masks) get the pixels the slot holds. A tile the
+/// atlas did not pack from its EC texture keeps its tileart start.
 pub fn adjusted_ec_sampling_start(
-    texture_id: u32,
+    tile_id: u32,
     start_x: i32,
     start_y: i32,
     adjustment: Option<TexArtEcCropAdjustment>,
 ) -> eyre::Result<(i16, i16)> {
-    let adjusted_x =
-        start_x - adjustment.map_or(0, |adjustment| i32::from(adjustment.source_left));
-    let adjusted_y =
-        start_y - adjustment.map_or(0, |adjustment| i32::from(adjustment.source_top));
+    if let Some(adjustment) = adjustment {
+        return Ok((adjustment.source_left, adjustment.source_top));
+    }
     Ok((
-        i16::try_from(adjusted_x).map_err(|_| {
-            eyre::eyre!("tile {texture_id} adjusted EC start_x {adjusted_x} does not fit in i16")
-        })?,
-        i16::try_from(adjusted_y).map_err(|_| {
-            eyre::eyre!("tile {texture_id} adjusted EC start_y {adjusted_y} does not fit in i16")
-        })?,
+        i16::try_from(start_x)
+            .map_err(|_| eyre::eyre!("tile {tile_id} EC start_x {start_x} does not fit in i16"))?,
+        i16::try_from(start_y)
+            .map_err(|_| eyre::eyre!("tile {tile_id} EC start_y {start_y} does not fit in i16"))?,
     ))
 }
 

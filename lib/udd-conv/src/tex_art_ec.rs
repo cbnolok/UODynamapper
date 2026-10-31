@@ -78,15 +78,13 @@ const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"EASL";
 pub const DEFAULT_ATLAS_PAGE_WIDTH: u32 = 4096;
 pub const DEFAULT_ATLAS_PAGE_HEIGHT: u32 = 2048;
 pub const DEFAULT_ATLAS_GUTTER: u16 = 1;
+/// Art ids the slot table covers: every id tileart can give.
+pub const TEX_ART_EC_SLOT_COUNT: u32 = 0x10000;
 
 pub struct TexArtEcAtlasOptions {
     pub atlas_width: u32,
     pub atlas_height: u32,
     pub gutter: u16,
-    /// When `true`, trim transparent borders from decoded EC art textures after
-    /// applying their tileart sampling windows. Matching tile metadata should apply
-    /// the visual trim delta to EC draw offsets when consumed with the packed atlas.
-    pub crop_transparent_bounds: bool,
     pub compression: CompressionFlag,
     pub upscale: UpscaleFilter,
     pub upscale_passes: Vec<UpscalePass>,
@@ -102,7 +100,6 @@ impl Default for TexArtEcAtlasOptions {
             atlas_width: DEFAULT_ATLAS_PAGE_WIDTH,
             atlas_height: DEFAULT_ATLAS_PAGE_HEIGHT,
             gutter: DEFAULT_ATLAS_GUTTER,
-            crop_transparent_bounds: false,
             compression: CompressionFlag::JpegXl,
             upscale: UpscaleFilter::default(),
             upscale_passes: Vec::new(),
@@ -142,7 +139,7 @@ fn effective_packing_mode(options: &TexArtEcAtlasOptions) -> AtlasPackingMode {
     texture_atlas_packing_mode(options.pixel_format)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TexArtEcBuildSummary {
     pub slot_count: u32,
     pub populated_slot_count: u32,
@@ -150,6 +147,9 @@ pub struct TexArtEcBuildSummary {
     pub atlas_width: u32,
     pub atlas_height: u32,
     pub cropped_slot_count: u32,
+    /// The alpha trim of each art id packed from its `Texture.uop` texture, by art id
+    /// ([`build_crop_adjustment_lookup`]), for `tilemeta.uddp`'s EC sampling starts.
+    pub ec_crop_adjustments: Vec<Option<TexArtEcCropAdjustment>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -217,6 +217,7 @@ struct DecodedArtDecodeGroup {
     draw_offset_x: i16,
     draw_offset_y: i16,
     rgba: Vec<u8>,
+    source: TextureSourceKey,
     crop_adjustment: TexArtEcCropAdjustment,
     alias_art_ids: Vec<(u32, i16, i16)>,
 }
@@ -400,8 +401,8 @@ pub fn convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources_with_progre
         println!("Using LegacyTexture.uop: {}", source_file_label(path));
     }
 
-    let slot_count = 0x10000_u32; // 65536 max art items in EC
-    let (decoded_tiles, aliases, crop_adjustments) = decode_present_tiles(
+    let slot_count = TEX_ART_EC_SLOT_COUNT;
+    let (decoded_tiles, aliases, crop_adjustments, ec_crop_adjustments) = decode_present_tiles(
         &sources.art_definition,
         &sources.terrain_source_texture_ids,
         sources.world_textures.as_ref(),
@@ -662,9 +663,12 @@ pub fn convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources_with_progre
             .values()
             .filter(|adjustment| **adjustment != TexArtEcCropAdjustment::default())
             .count() as u32,
+        ec_crop_adjustments: build_crop_adjustment_lookup(slot_count, &ec_crop_adjustments),
     })
 }
 
+/// The alpha trim of each art id packed from its `Texture.uop` texture, by art id, as the EC art packer
+/// records it ([`TexArtEcBuildSummary::ec_crop_adjustments`]), without building the atlas.
 pub fn compute_tex_art_ec_crop_adjustments_from_sources(
     source_dirs: &[PathBuf],
 ) -> eyre::Result<Vec<Option<TexArtEcCropAdjustment>>> {
@@ -672,26 +676,19 @@ pub fn compute_tex_art_ec_crop_adjustments_from_sources(
     compute_tex_art_ec_crop_adjustments_from_loaded_sources(&sources)
 }
 
+/// [`compute_tex_art_ec_crop_adjustments_from_sources`] from sources already loaded.
 pub fn compute_tex_art_ec_crop_adjustments_from_loaded_sources(
     sources: &TexArtEcLoadedSources,
 ) -> eyre::Result<Vec<Option<TexArtEcCropAdjustment>>> {
-    let mut options = TexArtEcAtlasOptions::default();
-    options.crop_transparent_bounds = true;
-
-    let (_decoded_tiles, aliases, canonical_adjustments) = decode_present_tiles(
+    let (_decoded_tiles, _aliases, _canonical_adjustments, ec_crop_adjustments) = decode_present_tiles(
         &sources.art_definition,
         &sources.terrain_source_texture_ids,
         sources.world_textures.as_ref(),
         sources.legacy_textures.as_ref(),
-        &options,
+        &TexArtEcAtlasOptions::default(),
         &|_| {},
     )?;
-
-    Ok(build_crop_adjustment_lookup(
-        0x10000,
-        &canonical_adjustments,
-        &aliases,
-    ))
+    Ok(build_crop_adjustment_lookup(TEX_ART_EC_SLOT_COUNT, &ec_crop_adjustments))
 }
 
 pub fn load_tex_art_ec_sources(source_dirs: &[PathBuf]) -> eyre::Result<TexArtEcLoadedSources> {
@@ -844,6 +841,7 @@ fn decode_present_tiles(
     Vec<DecodedArtTile>,
     Vec<SlotAlias>,
     HashMap<u32, TexArtEcCropAdjustment>,
+    HashMap<u32, TexArtEcCropAdjustment>,
 )> {
     // Art ownership comes from tileart definitions. Resolve each item/static's
     // selected EC or CC texture payload, but keep the slot table keyed by art id.
@@ -856,6 +854,8 @@ fn decode_present_tiles(
     let mut canonical_by_source: HashMap<CanonicalTileKey, usize> = HashMap::new();
     let mut canonical_by_rendered_tile = HashMap::with_capacity(art_definition.definitions.len());
     let mut crop_adjustments = HashMap::new();
+    // Each art id's own trim, aliases included: a rendered alias shares another window's pixels, not its origin.
+    let mut ec_crop_adjustments = HashMap::new();
     let mut texture_files_by_source = HashMap::<TextureSourceKey, Option<Arc<TextureFile>>>::new();
 
     let mut art_ids = art_definition
@@ -1057,21 +1057,8 @@ fn decode_present_tiles(
             let source_height = source.height;
             let clip_rect =
                 normalized_source_clip_rect(source_width, source_height, &group.texture_bounds);
-            let (width, height, rgba, crop_adjustment) = if options.crop_transparent_bounds {
-                crop_rgba_tile_to_bounds_from_slice(
-                    source_width,
-                    source_height,
-                    &source.rgba,
-                    clip_rect,
-                )?
-            } else {
-                apply_requested_clip_rect_from_slice(
-                    source_width,
-                    source_height,
-                    &source.rgba,
-                    clip_rect,
-                )?
-            };
+            let (width, height, rgba, crop_adjustment) =
+                crop_rgba_tile_to_bounds_from_slice(source_width, source_height, &source.rgba, clip_rect)?;
             let (draw_offset_x, draw_offset_y) =
                 adjusted_draw_offset(group.canonical_art_id, &group.texture_bounds, crop_adjustment)?;
             let mut alias_art_ids = Vec::with_capacity(group.alias_art_ids.len());
@@ -1113,6 +1100,7 @@ fn decode_present_tiles(
                 draw_offset_x,
                 draw_offset_y,
                 rgba,
+                source: group.source,
                 crop_adjustment,
                 alias_art_ids,
             })
@@ -1122,6 +1110,13 @@ fn decode_present_tiles(
 
     for decoded_group in decoded_groups {
         let decoded_group = decoded_group?;
+        if matches!(decoded_group.source, TextureSourceKey::World(_)) {
+            let owners = std::iter::once(decoded_group.canonical_art_id)
+                .chain(decoded_group.alias_art_ids.iter().map(|&(alias_art_id, _, _)| alias_art_id));
+            for art_id in owners {
+                ec_crop_adjustments.insert(art_id, decoded_group.crop_adjustment);
+            }
+        }
         let canonical_art_id = if let Some(rendered_canonical_art_id) = register_rendered_tile_alias(
             decoded_group.canonical_art_id,
             decoded_group.width,
@@ -1173,7 +1168,7 @@ fn decode_present_tiles(
             .then_with(|| left.art_id.cmp(&right.art_id))
     });
 
-    Ok((decoded_tiles, aliases, crop_adjustments))
+    Ok((decoded_tiles, aliases, crop_adjustments, ec_crop_adjustments))
 }
 
 /// Reason a liquid tileart entry is excluded from `tex_art_ec` packing.
@@ -1558,56 +1553,6 @@ fn crop_rgba_tile_to_bounds_from_slice(
     )
 }
 
-pub fn apply_requested_clip_rect(
-    width: u16,
-    height: u16,
-    rgba: Vec<u8>,
-    clip_rect: Option<SourceClipRect>,
-) -> eyre::Result<(u16, u16, Vec<u8>, TexArtEcCropAdjustment)> {
-    if let Some(clip) = clip_rect {
-        crop_rgba_subrect(
-            width,
-            height,
-            &rgba,
-            clip.left as usize,
-            clip.top as usize,
-            clip.right as usize,
-            clip.bottom as usize,
-            clip.left as usize,
-            clip.top as usize,
-            clip.right as usize,
-            clip.bottom as usize,
-        )
-    } else {
-        Ok((width, height, rgba, TexArtEcCropAdjustment::default()))
-    }
-}
-
-fn apply_requested_clip_rect_from_slice(
-    width: u16,
-    height: u16,
-    rgba: &[u8],
-    clip_rect: Option<SourceClipRect>,
-) -> eyre::Result<(u16, u16, Vec<u8>, TexArtEcCropAdjustment)> {
-    if let Some(clip) = clip_rect {
-        crop_rgba_subrect(
-            width,
-            height,
-            rgba,
-            clip.left as usize,
-            clip.top as usize,
-            clip.right as usize,
-            clip.bottom as usize,
-            clip.left as usize,
-            clip.top as usize,
-            clip.right as usize,
-            clip.bottom as usize,
-        )
-    } else {
-        Ok((width, height, rgba.to_vec(), TexArtEcCropAdjustment::default()))
-    }
-}
-
 fn crop_rgba_subrect(
     width: u16,
     _height: u16,
@@ -1648,26 +1593,18 @@ fn crop_rgba_subrect(
     ))
 }
 
+/// `adjustments` by art id as a dense table of `slot_count` entries.
 pub fn build_crop_adjustment_lookup(
     slot_count: u32,
-    canonical_adjustments: &HashMap<u32, TexArtEcCropAdjustment>,
-    aliases: &[SlotAlias],
+    adjustments: &HashMap<u32, TexArtEcCropAdjustment>,
 ) -> Vec<Option<TexArtEcCropAdjustment>> {
-    let mut adjustments = vec![None; slot_count as usize];
-    for (&art_id, &adjustment) in canonical_adjustments {
-        if let Some(slot) = adjustments.get_mut(art_id as usize) {
+    let mut lookup = vec![None; slot_count as usize];
+    for (&art_id, &adjustment) in adjustments {
+        if let Some(slot) = lookup.get_mut(art_id as usize) {
             *slot = Some(adjustment);
         }
     }
-    for alias in aliases {
-        let Some(adjustment) = canonical_adjustments.get(&alias.canonical_art_id).copied() else {
-            continue;
-        };
-        if let Some(slot) = adjustments.get_mut(alias.art_id as usize) {
-            *slot = Some(adjustment);
-        }
-    }
-    adjustments
+    lookup
 }
 
 pub fn apply_slot_aliases(
@@ -2167,7 +2104,6 @@ pub fn encode_slot_manifest(
             atlas_width,
             atlas_height,
             gutter,
-            crop_transparent_bounds: false,
             compression: CompressionFlag::None,
             upscale: UpscaleFilter::default(),
             upscale_passes: Vec::new(),
@@ -2245,7 +2181,7 @@ mod tests {
         let window = selected_art_window(&art, TextureSourceKey::World(77), &texture);
         let clip = normalized_source_clip_rect(4, 4, &window);
         let rgba = vec![255; 4 * 4 * 4];
-        let (width, height, pixels, _) = apply_requested_clip_rect(4, 4, rgba, clip).unwrap();
+        let (width, height, pixels, _) = crop_rgba_tile_to_bounds(4, 4, rgba, clip).unwrap();
         assert_eq!((width, height, pixels.len()), (3, 3, 36));
         let legacy = selected_art_window(&art, TextureSourceKey::Legacy(77), &texture);
         assert_eq!((legacy.end_x, legacy.end_y), (2, 2));
@@ -2262,7 +2198,6 @@ mod tests {
             atlas_width: 16,
             atlas_height: 16,
             gutter: 1,
-            crop_transparent_bounds: false,
             compression: CompressionFlag::None,
             upscale: UpscaleFilter::None,
             upscale_passes: Vec::new(),

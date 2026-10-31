@@ -159,7 +159,6 @@ def run_animations(ccdir: str, ecdir: str, output_dir: str, cc_format: list[str]
         run_pack(
             "pack-mobile-anims",
             *cc_format,
-            "--crop-transparent-bounds",
             "--ccdir",
             ccdir,
             "--output",
@@ -169,7 +168,6 @@ def run_animations(ccdir: str, ecdir: str, output_dir: str, cc_format: list[str]
         run_pack(
             "pack-ec-mobile-anims",
             *ec_format,
-            "--crop-transparent-bounds",
             "--tables",
             tables,
             "--ecdir",
@@ -241,8 +239,6 @@ def run_all(
             *ec_art_format,
             *ec_land_format,
             *source_args,
-            "--art-crop-transparent-bounds",
-            "--tilemeta-ec-art-cropped",
             "--art-output",
             f"{output_dir}/tex_art_ec.uddp",
             "--land-output",

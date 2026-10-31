@@ -26,10 +26,10 @@ fn main() -> Result<()> {
     let options = TexArtEcAtlasOptions {
         compression: CompressionFlag::ZstdNoDict, ..TexArtEcAtlasOptions::default()
     };
-    convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources(&sources,
+    let art_summary = convert_tex_art_ec_uop_to_tex_art_ec_uddp_from_loaded_sources(&sources,
         &args.output.join("tex_art_ec.uddp"), &options)?;
     build_tilemeta_uddp_from_split_sources_with_loaded_ec_sources(
-        &args.cc_client, &args.ec_client, &sources, &args.output.join("tilemeta.uddp"),
+        &args.cc_client, &sources, &art_summary.ec_crop_adjustments, &args.output.join("tilemeta.uddp"),
         &TileMetaBuildOptions::default())?;
     let art = udd_assets::tex_art_ec::TexArtEcPackage::load(args.output.join("tex_art_ec.uddp"))?;
     let meta = udd_assets::tilemeta::TileMetaPackage::load(args.output.join("tilemeta.uddp"))?;

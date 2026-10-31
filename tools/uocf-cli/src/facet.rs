@@ -6,6 +6,7 @@ use uocf::classic::facet_sources::{
     ClassicDifOptions, ClassicFacetSources, ClassicMapFile, ClassicMapFormat, StaticsFiles,
 };
 use uocf::classic::map::MapSizeCells;
+use uocf::classic::verdata::Verdata;
 use uocf::utils::path::find_file_ignoring_case;
 use uocf::enhanced::facet_definition::{read_facet_definition, write_facet_definition, FacetDefinition, FacetRect};
 use uocf::enhanced::facet_encoder::encode_map_plane;
@@ -134,7 +135,7 @@ pub enum FacetCmd {
     /// --map named mapNx) writes facetNx.uop and facetNNx.dds.
     FromClassic {
         /// Classic client directory to find the facet's files in (mapN.mul or mapNLegacyMUL.uop, staidxN.mul,
-        /// staticsN.mul, the dif files and radarcol.mul).
+        /// staticsN.mul, the dif files, radarcol.mul and verdata.mul).
         #[arg(long, conflicts_with_all = ["map", "staidx", "statics"], required_unless_present_all = ["map", "staidx", "statics"])]
         client_dir: Option<PathBuf>,
         /// mapN.mul or mapNLegacyMUL.uop.
@@ -156,6 +157,12 @@ pub enum FacetCmd {
         /// present.
         #[arg(long = "include-static-difs", default_value_t = false)]
         include_static_difs: bool,
+        /// Apply verdata.mul (from --client-dir, or next to --map), the patch file only clients of that era ship.
+        /// It patches only the standard map0.mul, staidx0.mul and statics0.mul (and the other files whose ids it
+        /// lists), never a UOP map or the x variant files. Ignored by default; when requested but absent, a warning
+        /// is printed and the facet is read without it.
+        #[arg(long = "use-verdata", default_value_t = false)]
+        use_verdata: bool,
         /// Map edition to read from --client-dir: standard, or variant (the x files the server selects with the
         /// 0xA9 flag 0x8000; facets 0, 1, 2 and 5 only, the others read their standard files). The variant never
         /// falls back to the standard files. The dif options apply to whichever edition is selected. With --map,
@@ -326,6 +333,7 @@ pub fn run(cmd: FacetCmd) -> eyre::Result<()> {
             facet,
             include_map_difs,
             include_static_difs,
+            use_verdata,
             map_edition,
             width,
             height,
@@ -335,7 +343,7 @@ pub fn run(cmd: FacetCmd) -> eyre::Result<()> {
         } => {
             let size = width.zip(height).map(|(width, height)| MapSizeCells { width, height });
             let difs = ClassicDifOptions { map_difs: include_map_difs, static_difs: include_static_difs };
-            let (sources, radarcol) = match client_dir {
+            let (sources, radarcol, verdata_dirs) = match client_dir {
                 Some(client_dir) => {
                     let dirs = [client_dir];
                     let sources = ClassicFacetSources::resolve(
@@ -350,7 +358,7 @@ pub fn run(cmd: FacetCmd) -> eyre::Result<()> {
                         None => find_file_ignoring_case(&dirs[0], RADARCOL_NAME)
                             .ok_or_else(|| eyre::eyre!("{} has no {RADARCOL_NAME}", dirs[0].display()))?,
                     };
-                    (sources, radarcol)
+                    (sources, radarcol, dirs.to_vec())
                 }
                 None => {
                     let (map, index, statics) = (
@@ -364,7 +372,7 @@ pub fn run(cmd: FacetCmd) -> eyre::Result<()> {
                     let map = ClassicMapFile { format, path: map, map_index: u32::from(facet) };
                     let statics = StaticsFiles { index, statics };
                     let sources = ClassicFacetSources::from_files(u32::from(facet), map, Some(statics), &dif_dirs, difs);
-                    (sources, radarcol.expect("clap requires --radarcol without --client-dir"))
+                    (sources, radarcol.expect("clap requires --radarcol without --client-dir"), dif_dirs)
                 }
             };
             if kr && sources.edition.is_variant() {
@@ -375,10 +383,11 @@ pub fn run(cmd: FacetCmd) -> eyre::Result<()> {
                 );
             }
             println!("Reading facet {facet} ({} edition) from {}.", sources.edition, sources.map.path.display());
-            let mut plane = sources.load_map_plane(size, None)?;
+            let verdata = if use_verdata { Verdata::load_from_dirs(&verdata_dirs)? } else { None };
+            let mut plane = sources.load_map_plane(size, verdata.clone())?;
             let size = plane.size_cells();
             let geometry = FacetGeometry::new(size.width, size.height);
-            let statics = sources.load_statics_reader(geometry.width, geometry.height, None)?;
+            let statics = sources.load_statics_reader(geometry.width, geometry.height, verdata)?;
             std::fs::create_dir_all(&output_dir).wrap_err_with(|| format!("create {}", output_dir.display()))?;
             if kr {
                 let mut land_map = KrLandMap::shipped();

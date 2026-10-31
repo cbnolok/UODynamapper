@@ -1,8 +1,8 @@
 # EC Art Trimming
 
-This note documents the cropped Enhanced Client static-art workflow and the matching tilemeta update rules.
+This note documents how the Enhanced Client static-art packer trims each art entry, and where the trim is recorded so that placement and source sampling stay right.
 
-The current packer trims each art entry after applying its sampling window. The active design direction is to keep the original large source texture intact and apply sampling windows at runtime, so this document should be treated as the description of current behavior, not the final target.
+EC art atlases are always alpha-trimmed; there is no untrimmed mode. The active design direction is to keep the original large source texture intact and apply sampling windows at runtime, so this document should be treated as the description of current behavior, not the final target.
 
 The EC source package split matters here:
 - `Texture.uop` and `LegacyTexture.uop` are the shared decode pools.
@@ -25,18 +25,20 @@ The EC source package split matters here:
 - After the window is applied, only fully transparent border rows and columns are trimmed.
 - No opaque pixel inside the effective art image is discarded.
 
-## Tilemeta Contract
+## Where the Trim Is Recorded
 
-- Raw `tilemeta.uddp` keeps the original EC `start_x/start_y/end_x/end_y` semantics from `tileart.uop`.
-- Historical cropped EC art used a matching tilemeta package whose `ec_start_x/ec_start_y` were shifted by the recorded source top/left crop delta.
-- Atlas-packed EC art that is alpha-trimmed after the tileart sampling window should keep `ec_start_x/ec_start_y` unchanged and instead adjust the draw offsets by the visual trim delta.
-- The renderer treats EC billboard Y placement as bottom-anchored, so the placement-preserving draw-offset correction uses the left trim for `ec_offset_x` and the bottom trim for `ec_offset_y`.
-- `ec_offset_x/ec_offset_y` are draw offsets, so they are the correct place to preserve on-screen placement when the atlas stores only the non-empty visual bounds.
+The trim is written in exactly two places, each once:
+
+- **`tex_art_ec.uddp` slot draw offsets** (`draw_offset_x/draw_offset_y`) keep on-screen placement: the atlas stores only the non-empty visual bounds, and the offsets absorb the trim. The renderer treats EC billboard Y placement as bottom-anchored, so the correction uses the left trim for X and the bottom trim for Y.
+- **`tilemeta.uddp` EC sampling starts** (`ec_start_x/ec_start_y`) are the trimmed image's origin in the source texture: the tileart start shifted by the top/left trim (the window start clamped to the texture, plus the trim). Consumers that crop a source-space texture at `ec_start` with the packed slot's extent get exactly the slot's pixels; the EC sprite hue masks depend on this. A tile the atlas did not pack from its `Texture.uop` texture keeps its tileart start.
+
+`tilemeta.uddp` stores no draw offsets, so placement is never corrected twice.
+
+The trims are recorded per art id, so an art id whose pixels are shared with another window (a rendered alias) still gets the origin of its own window.
 
 ## CLI Status
 
 - The standalone cropped EC-art command has been removed.
-- EC package creation now goes through the shared `udd-pack pack-ec-textures` pass.
-- `udd-pack pack-ec-textures --art-crop-transparent-bounds` enables atlas alpha trimming for EC art. When that command also writes `--tilemeta-output`, it applies the matching draw-offset adjustment automatically.
-- If `tilemeta.uddp` is built separately for a trimmed EC-art atlas, use `udd-pack pack-tilemeta --ec-art-trimmed-draw-offsets`.
-- The legacy `--ec-art-cropped`/`--tilemeta-ec-art-cropped` path is for historical source-cropped metadata that shifts EC sampling starts.
+- EC package creation goes through the shared `udd-pack pack-ec-textures` pass, which always trims.
+- When `pack-ec-textures` also writes `--tilemeta-output`, tilemeta takes the trims the atlas pass recorded; nothing is decoded twice.
+- A separate `udd-pack pack-tilemeta` recomputes the same trims from the EC sources, so it gives the same `ec_start` values. It therefore needs the sources the art packer needs: `tileart.uop`, `string_dictionary.uop`, `TerrainDefinition.uop` and `Texture.uop` or `LegacyTexture.uop`.

@@ -36,7 +36,6 @@ fn sparse_slots_keep_absent_records() {
         atlas_width: 16,
         atlas_height: 16,
         gutter: 1,
-        crop_transparent_bounds: false,
         compression: CompressionFlag::ZstdNoDict,
         upscale: UpscaleFilter::default(),
         upscale_passes: Vec::new(),
@@ -81,7 +80,6 @@ fn packer_spills_to_multiple_pages() {
         atlas_width: 8,
         atlas_height: 8,
         gutter: 1,
-        crop_transparent_bounds: false,
         compression: CompressionFlag::ZstdNoDict,
         upscale: UpscaleFilter::default(),
         upscale_passes: Vec::new(),
@@ -110,7 +108,6 @@ fn later_ids_do_not_backfill_an_earlier_page() {
         atlas_width: 10,
         atlas_height: 6,
         gutter: 0,
-        crop_transparent_bounds: false,
         compression: CompressionFlag::ZstdNoDict,
         upscale: UpscaleFilter::default(),
         upscale_passes: Vec::new(),
@@ -140,7 +137,6 @@ fn full_width_static_tile_fits_when_page_is_4096_wide() {
         atlas_width: 4096,
         atlas_height: 2048,
         gutter: 1,
-        crop_transparent_bounds: false,
         compression: CompressionFlag::ZstdNoDict,
         upscale: UpscaleFilter::default(),
         upscale_passes: Vec::new(),
@@ -168,7 +164,6 @@ fn runtime_reader_can_unpack_page_and_slot_metadata() {
         atlas_width: 8,
         atlas_height: 8,
         gutter: 1,
-        crop_transparent_bounds: false,
         compression: CompressionFlag::ZstdNoDict,
         upscale: UpscaleFilter::default(),
         upscale_passes: Vec::new(),
@@ -262,7 +257,6 @@ fn alias_slots_reuse_canonical_page_location() {
         atlas_width: 16,
         atlas_height: 16,
         gutter: 1,
-        crop_transparent_bounds: false,
         compression: CompressionFlag::ZstdNoDict,
         upscale: UpscaleFilter::default(),
         upscale_passes: Vec::new(),
@@ -369,49 +363,6 @@ fn clip_rect_is_applied_before_alpha_trim() {
 }
 
 #[test]
-fn requested_clip_rect_is_applied_without_alpha_trim() {
-    let mut rgba = vec![0u8; 6 * 6 * 4];
-    for y in 0..6usize {
-        for x in 0..6usize {
-            let index = (y * 6 + x) * 4;
-            rgba[index..index + 4].copy_from_slice(&[x as u8, y as u8, 99, 255]);
-        }
-    }
-
-    let (width, height, cropped, adjustment) = apply_requested_clip_rect(
-        6,
-        6,
-        rgba,
-        Some(SourceClipRect {
-            left: 2,
-            top: 1,
-            right: 4,
-            bottom: 3,
-        }),
-    )
-    .expect("apply clip rect without alpha trim");
-
-    assert_eq!(width, 2);
-    assert_eq!(height, 2);
-    assert_eq!(
-        adjustment,
-        TexArtEcCropAdjustment {
-            source_left: 2,
-            source_top: 1,
-            trim_left: 0,
-            trim_top: 0,
-            trim_right: 0,
-            trim_bottom: 0,
-        }
-    );
-    assert_eq!(cropped.len(), 2 * 2 * 4);
-    assert_eq!(&cropped[0..4], &[2, 1, 99, 255]);
-    assert_eq!(&cropped[4..8], &[3, 1, 99, 255]);
-    assert_eq!(&cropped[8..12], &[2, 2, 99, 255]);
-    assert_eq!(&cropped[12..16], &[3, 2, 99, 255]);
-}
-
-#[test]
 fn normalized_source_clip_rect_ignores_empty_rects() {
     let texture = ArtTexture {
         texture_id: 1,
@@ -427,50 +378,21 @@ fn normalized_source_clip_rect_ignores_empty_rects() {
 }
 
 #[test]
-fn crop_adjustment_lookup_copies_canonical_adjustment_to_aliases() {
-    let lookup = build_crop_adjustment_lookup(
-        16,
-        &HashMap::from([(
-            7,
-            TexArtEcCropAdjustment {
-                source_left: 3,
-                source_top: 4,
-                trim_left: 1,
-                trim_top: 2,
-                trim_right: 3,
-                trim_bottom: 4,
-            },
-        )]),
-        &[SlotAlias {
-            art_id: 9,
-            canonical_art_id: 7,
-            draw_offset_x: 0,
-            draw_offset_y: 0,
-        }],
-    );
+fn crop_adjustment_lookup_places_each_art_id_and_leaves_the_rest_empty() {
+    const SLOT_COUNT: u32 = 16;
+    let adjustment = TexArtEcCropAdjustment {
+        source_left: 3,
+        source_top: 4,
+        trim_left: 1,
+        trim_top: 2,
+        trim_right: 3,
+        trim_bottom: 4,
+    };
+    let lookup = build_crop_adjustment_lookup(SLOT_COUNT, &HashMap::from([(7, adjustment), (9, adjustment)]));
 
-    assert_eq!(
-        lookup[7],
-        Some(TexArtEcCropAdjustment {
-            source_left: 3,
-            source_top: 4,
-            trim_left: 1,
-            trim_top: 2,
-            trim_right: 3,
-            trim_bottom: 4,
-        })
-    );
-    assert_eq!(
-        lookup[9],
-        Some(TexArtEcCropAdjustment {
-            source_left: 3,
-            source_top: 4,
-            trim_left: 1,
-            trim_top: 2,
-            trim_right: 3,
-            trim_bottom: 4,
-        })
-    );
+    assert_eq!(lookup.len(), SLOT_COUNT as usize);
+    assert_eq!(lookup[7], Some(adjustment));
+    assert_eq!(lookup[9], Some(adjustment));
     assert_eq!(lookup[6], None);
 }
 
