@@ -9,7 +9,7 @@ use uocf::client_exe::facet_dimensions::{
     ClientExeInspection, ClientFamily, FacetTable, DISABLED_SPLIT_X, FACET_RECORD_SIZE, STOCK_SPLIT_X,
 };
 use uocf::client_exe::patch::{
-    plan_patch, read_manifest, write_patched_client_exe, ExeEdit, ExeManifest, ExePatch, PatchPlan, PatchedClientExe,
+    plan_patch_inspected, read_manifest, write_patched_client_exe, ExeEdit, ExeManifest, ExePatch, PatchPlan, PatchedClientExe,
 };
 
 /// The manifest found next to the opened file.
@@ -71,7 +71,7 @@ impl OpenedExe {
 
     /// The dry run of `patch` on the bytes read.
     pub fn plan(&self, patch: &ExePatch) -> eyre::Result<PatchPlan> {
-        plan_patch(&self.bytes, patch, self.current_manifest())
+        plan_patch_inspected(&self.bytes, &self.inspection, patch, self.current_manifest())
     }
 
     /// Writes the patched copy `output` and its manifest (see [`write_patched_client_exe`]: a new file outside the

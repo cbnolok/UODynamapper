@@ -65,6 +65,6 @@ pub fn ui_seam(ui: &mut egui::Ui, session: &mut Session) {
     }
     let warnings = session.preview.get(&session.opened, &session.edits).warnings().to_vec();
     for warning in seam_warnings(&warnings) {
-        warning_label(ui, warning.as_str());
+        warning_label(ui, warning.text.as_str());
     }
 }

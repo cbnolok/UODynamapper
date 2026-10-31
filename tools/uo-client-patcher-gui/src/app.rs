@@ -79,7 +79,7 @@ pub struct Session {
 
 impl Session {
     fn new(opened: OpenedExe, data_dir: Option<PathBuf>) -> Self {
-        let edits = EditState::new(&opened.inspection);
+        let edits = EditState::with_manifest(&opened.inspection, opened.current_manifest());
         let data_dir = data_dir.unwrap_or_else(|| opened.folder());
         Self {
             opened,
@@ -220,7 +220,7 @@ impl PatcherApp {
         match session.opened.write_copy(&output, patch) {
             Ok(written) => {
                 for warning in &written.warnings {
-                    self.logs.push(LogLevel::Warning, warning.clone());
+                    self.logs.push(LogLevel::Warning, warning.text.clone());
                 }
                 let manifest = manifest_path(&output);
                 self.logs.push(

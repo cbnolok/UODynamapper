@@ -2,15 +2,12 @@
 //! live validation (the library's validate functions) and the [`ExePatch`] it builds. Every section that edits the
 //! executable contributes its edits to [`EditState::build_patch`]; the login section will be one more.
 
-use uocf::classic::map::CLASSIC_FACET_HEIGHTS;
-use uocf::client_exe::classic_facets::{
-    classic_map_blocks, validate_classic_size, validate_classic_wrap, CLASSIC_STOCK_WIDTHS, CLASSIC_STOCK_WRAP,
-};
+use uocf::client_exe::classic_facets::{classic_map_blocks, validate_classic_size, validate_classic_wrap};
 use uocf::client_exe::facet_dimensions::{
     validate_facet_size, ClientExeInspection, ClientFamily, DISABLED_SPLIT_X, SPLIT_FACETS,
 };
-use uocf::client_exe::patch::{ExeEdit, ExePatch, SplitEdit};
-use uocf::enhanced::facet_sector::{FacetGeometry, CLIENT_FACET_DIMENSIONS};
+use uocf::client_exe::patch::{stock_facets, ExeEdit, ExeManifest, ExePatch, SplitEdit};
+use uocf::enhanced::facet_sector::FacetGeometry;
 
 /// The lowest split or seam x the library takes.
 const MIN_SPLIT_X: u32 = 1;
@@ -106,27 +103,6 @@ fn parse_size(what: [&str; 2], width: &str, height: &str, errors: &mut Vec<Strin
     }
 }
 
-/// The shipped size and wrap of facet `facet`. Enhanced Client and Kingdom Reborn: the shipped table. Classic: the
-/// opened file's values when it is stock, else the Mondain's Legacy-on values (UO Gold's Felucca and Trammel are
-/// narrower).
-fn stock_values(inspection: &ClientExeInspection, facet: usize) -> (Option<FacetGeometry>, Option<FacetGeometry>) {
-    let record = &inspection.table().records[facet];
-    match inspection.family {
-        ClientFamily::Enhanced | ClientFamily::KingdomReborn => (CLIENT_FACET_DIMENSIONS.get(facet).copied(), None),
-        ClientFamily::Classic if inspection.is_stock() => {
-            (Some(record.geometry), record.classic.map(|classic| classic.wrap))
-        }
-        ClientFamily::Classic => {
-            let size = CLASSIC_STOCK_WIDTHS
-                .get(facet)
-                .zip(CLASSIC_FACET_HEIGHTS.get(facet))
-                .map(|(width, height)| FacetGeometry::new(*width, *height));
-            let wrap = if SPLIT_FACETS.contains(&(facet as u8)) { Some(CLASSIC_STOCK_WRAP) } else { size };
-            (size, size.and(wrap))
-        }
-    }
-}
-
 impl FacetRow {
     fn set_size(&mut self, size: FacetGeometry) {
         self.width = size.width.to_string();
@@ -146,15 +122,24 @@ impl FacetRow {
 }
 
 impl EditState {
-    /// The unedited state of the opened file.
+    /// The unedited state of the opened file, without a manifest.
+    #[cfg(test)]
     pub fn new(inspection: &ClientExeInspection) -> Self {
+        Self::with_manifest(inspection, None)
+    }
+
+    /// The unedited state of the opened file; `manifest` (of a patched copy) gives the stock sizes of the build it
+    /// derives from ([`stock_facets`]).
+    pub fn with_manifest(inspection: &ClientExeInspection, manifest: Option<&ExeManifest>) -> Self {
+        let stock_sizes = stock_facets(inspection, manifest);
         let rows = inspection
             .table()
             .records
             .iter()
             .enumerate()
             .map(|(facet, record)| {
-                let (stock, stock_wrap) = stock_values(inspection, facet);
+                let stock = stock_sizes[facet];
+                let (stock, stock_wrap) = (stock.map(|stock| stock.size), stock.and_then(|stock| stock.wrap));
                 let current_wrap = record.classic.map(|classic| classic.wrap);
                 let mut row = FacetRow {
                     facet: facet as u8,

@@ -4,9 +4,11 @@ use clap::Subcommand;
 use color_eyre::eyre::{self, eyre, WrapErr};
 use uocf::client_exe::classic_facets::{ClassicFileRole, CLASSIC_FACET_RECORD_SIZE};
 use uocf::client_exe::facet_data::{check_client_facet_data, FacetDataStatus};
+use uocf::client_config::login_servers::LoginServerAddress;
 use uocf::client_exe::facet_dimensions::{
     ClientExeInspection, ClientFamily, FacetTable, DISABLED_SPLIT_X, FACET_RECORD_SIZE, STOCK_SPLIT_X,
 };
+use uocf::client_exe::login::LoginHost;
 use uocf::client_exe::patch::{
     dry_run_client_exe, manifest_path, read_manifest, write_patched_client_exe, ByteChange, ChangeCause, ExeEdit,
     ExePatch, SplitEdit,
@@ -19,9 +21,10 @@ const SIZE_SEPARATOR: char = 'x';
 
 #[derive(Subcommand, Debug)]
 pub enum ExeCmd {
-    /// Print the facet size tables, the split (Enhanced Client) or wrap seam (Classic) and the PE checksum of a client
-    /// executable (UOSA*.exe, UOKR.exe, Classic client.exe; any 32-bit build, located by structure). Classic: both
-    /// table copies with wrap, file ids and flag, and the startup copy of facet 0. Only reads the file.
+    /// Print the facet size tables, the split (Enhanced Client) or wrap seam (Classic), the built-in login server
+    /// (Enhanced Client, Kingdom Reborn) and the PE checksum of a client executable (UOSA*.exe, UOKR.exe, Classic
+    /// client.exe; any 32-bit build, located by structure). Classic: both table copies with wrap, file ids and flag,
+    /// and the startup copy of facet 0. Only reads the file.
     Show {
         exe: PathBuf,
     },
@@ -47,6 +50,11 @@ pub enum ExeCmd {
         /// Disable the split or seam (x = 0x8000).
         #[arg(long)]
         no_split: bool,
+        /// Enhanced Client only: the built-in login server, `HOST:PORT` (dotted IPv4, or a host name the client
+        /// resolves; at most the host slot's size, 15 characters, 11 for UOSA 4.0.115.0's second slot). Written to
+        /// every public host slot and port, so both random draws give it. Classic reads login.cfg (`login set`).
+        #[arg(long, value_name = "HOST:PORT", value_parser = parse_login_server)]
+        login_server: Option<(LoginHost, u16)>,
         /// Print the byte changes without writing anything.
         #[arg(long)]
         dry_run: bool,
@@ -70,10 +78,17 @@ fn parse_facet_pair(text: &str) -> Result<(u8, u32, u32), String> {
     Ok((facet, number(width)?, number(height)?))
 }
 
+/// Parses `HOST:PORT` for `--login-server`.
+fn parse_login_server(text: &str) -> Result<(LoginHost, u16), String> {
+    let address = LoginServerAddress::parse(text).map_err(|error| error.to_string())?;
+    let host = LoginHost::new(&address.host).map_err(|error| error.to_string())?;
+    Ok((host, address.port))
+}
+
 pub fn run(cmd: ExeCmd) -> eyre::Result<()> {
     match cmd {
         ExeCmd::Show { exe } => show(&exe),
-        ExeCmd::Patch { exe, output, sizes, wraps, split, no_split, dry_run } => {
+        ExeCmd::Patch { exe, output, sizes, wraps, split, no_split, login_server, dry_run } => {
             let mut edits: Vec<ExeEdit> =
                 sizes.into_iter().map(|(facet, width, height)| ExeEdit::FacetSize { facet, width, height }).collect();
             edits.extend(wraps.into_iter().map(|(facet, wrap_width, wrap_height)| ExeEdit::ClassicWrap {
@@ -85,6 +100,9 @@ pub fn run(cmd: ExeCmd) -> eyre::Result<()> {
                 (Some(x), _) => edits.push(ExeEdit::Split(SplitEdit::Set(x))),
                 (None, true) => edits.push(ExeEdit::Split(SplitEdit::Disable)),
                 (None, false) => {}
+            }
+            if let Some((host, port)) = login_server {
+                edits.push(ExeEdit::LoginServer { host, port });
             }
             let patch = ExePatch { edits };
             match (dry_run, output) {
@@ -207,6 +225,7 @@ fn print_inspection(inspection: &ClientExeInspection) {
             None => println!("startup   not located: facet 0 cannot be patched"),
         }
     }
+    print_login(inspection);
     let what = if inspection.family == ClientFamily::Classic { "wrap seam" } else { "split" };
     match &inspection.split {
         None => match inspection.family {
@@ -227,6 +246,49 @@ fn print_inspection(inspection: &ClientExeInspection) {
             );
         }
     }
+}
+
+fn print_login(inspection: &ClientExeInspection) {
+    let Some(login) = &inspection.login else {
+        match inspection.family {
+            ClientFamily::Classic => println!("login     not in the executable: Classic reads login.cfg (`uocf-cli login show`)"),
+            _ => println!("login     the login address code was not located"),
+        }
+        return;
+    };
+    let fixed = &login.fixed;
+    let fixed_at = located(inspection, fixed.offset);
+    if inspection.family == ClientFamily::KingdomReborn {
+        println!("login     built-in {}:{} (the only address; MOV imm32/imm16 at {fixed_at})", fixed.ip, fixed.port);
+        return;
+    }
+    let state = if login.is_stock() { "stock" } else { "NOT the stock address: patched" };
+    println!("login     built-in, located by instruction pattern ({state}):");
+    let draw = |index: usize, count: usize| match count {
+        1 => String::new(),
+        _ => format!(" (rand {})", if index == 0 { "odd" } else { "even" }),
+    };
+    for (index, slot) in login.hosts.iter().enumerate() {
+        println!(
+            "  host {} {:<16} {}-byte slot at {}, pushed at file {:#x}{}",
+            index + 1,
+            slot.host,
+            slot.capacity,
+            located(inspection, slot.offset),
+            slot.push_offset,
+            draw(index, login.hosts.len())
+        );
+    }
+    for (index, site) in login.ports.iter().enumerate() {
+        println!(
+            "  port {} {:<16} imm16 at {}{}",
+            index + 1,
+            site.port,
+            located(inspection, site.offset),
+            draw(index, login.ports.len())
+        );
+    }
+    println!("  internal {}:{} (internal flag only, not patched) at {fixed_at}", fixed.ip, fixed.port);
 }
 
 fn show(exe: &Path) -> eyre::Result<()> {

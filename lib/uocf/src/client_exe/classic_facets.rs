@@ -400,22 +400,41 @@ pub fn locate_classic_seam(bytes: &[u8], pe: &PeImage, startup: &ClassicStartupF
     }
 }
 
-/// True when every record of every copy has its stock size and wrap ([`CLASSIC_STOCK_WIDTHS`] or
-/// [`CLASSIC_OLD_FELUCCA_WIDTH`], [`CLASSIC_FACET_HEIGHTS`], [`CLASSIC_STOCK_WRAP`] for Felucca and Trammel and the
-/// size for the others) and the startup copy equals facet 0.
+/// True when Trammel reads Felucca's map file (UO Gold to 5.x: Trammel is map0 plus the mapdif1 patches); from
+/// 6.0.14.3 on it reads map1. Told by the record file ids, so it holds for patched copies too.
+pub fn classic_trammel_reads_map0(table: &FacetTable) -> bool {
+    let map = |facet: usize| table.records.get(facet).and_then(|record| record.classic).map(|classic| classic.file_id(ClassicFileRole::Map));
+    map(0).is_some() && map(0) == map(1)
+}
+
+/// The stock width of Felucca and Trammel a Classic build may have: [`CLASSIC_OLD_FELUCCA_WIDTH`] (UO Gold) only
+/// where Trammel still reads map0, else [`CLASSIC_STOCK_WIDTHS`]'s.
+pub fn classic_split_widths(table: &FacetTable) -> &'static [u32] {
+    const BOTH: [u32; 2] = [CLASSIC_STOCK_WIDTHS[0], CLASSIC_OLD_FELUCCA_WIDTH];
+    if classic_trammel_reads_map0(table) { &BOTH } else { &CLASSIC_STOCK_WIDTHS[..1] }
+}
+
+/// The stock size and wrap of Classic facet `facet` when Felucca and Trammel are `split_width` wide.
+pub fn classic_stock_facet(facet: usize, split_width: u32) -> Option<(FacetGeometry, FacetGeometry)> {
+    let height = *CLASSIC_FACET_HEIGHTS.get(facet)?;
+    let width = if facet < CLASSIC_STOCK_SPLIT_FACETS { split_width } else { *CLASSIC_STOCK_WIDTHS.get(facet)? };
+    let size = FacetGeometry::new(width, height);
+    Some((size, if facet < CLASSIC_STOCK_SPLIT_FACETS { CLASSIC_STOCK_WRAP } else { size }))
+}
+
+/// True when every record of every copy has its stock size and wrap ([`classic_stock_facet`]: Felucca and Trammel
+/// both 7168 wide, or both 6144 in a build whose Trammel reads map0 (UO Gold), [`CLASSIC_FACET_HEIGHTS`],
+/// [`CLASSIC_STOCK_WRAP`] for Felucca and Trammel and the size for the others) and the startup copy equals facet 0.
 pub fn is_classic_stock(tables: &[FacetTable], layout: &ClassicLayout) -> bool {
-    let records_stock = tables.iter().all(|table| {
-        table.records.len() <= CLASSIC_STOCK_WIDTHS.len()
-            && table.records.iter().enumerate().all(|(facet, record)| {
-                let wrap = record.classic.expect("a Classic table").wrap;
-                let FacetGeometry { width, height } = record.geometry;
-                let felucca_or_trammel = facet < CLASSIC_STOCK_SPLIT_FACETS;
-                let stock_width = width == CLASSIC_STOCK_WIDTHS[facet]
-                    || (felucca_or_trammel && width == CLASSIC_OLD_FELUCCA_WIDTH);
-                let stock_wrap = if felucca_or_trammel { CLASSIC_STOCK_WRAP } else { record.geometry };
-                stock_width && height == CLASSIC_FACET_HEIGHTS[facet] && wrap == stock_wrap
-            })
-    });
+    let split_width = tables[0].records[0].geometry.width;
+    let records_stock = classic_split_widths(&tables[0]).contains(&split_width)
+        && tables.iter().all(|table| {
+            table.records.len() <= CLASSIC_STOCK_WIDTHS.len()
+                && table.records.iter().enumerate().all(|(facet, record)| {
+                    let wrap = record.classic.expect("a Classic table").wrap;
+                    classic_stock_facet(facet, split_width) == Some((record.geometry, wrap))
+                })
+        });
     let first = &tables[0].records[0];
     let startup_stock = layout.startup.is_none_or(|startup| {
         startup.size == first.geometry && Some(startup.wrap) == first.classic.map(|classic| classic.wrap)
@@ -613,6 +632,29 @@ pub(crate) mod tests {
     pub fn seam_imm_offsets(inspection: &ClientExeInspection) -> Vec<usize> {
         let text = inspection.pe.section(".text").unwrap().raw_offset as usize;
         vec![text + SEAM_AT[0] + 2, text + SEAM_AT[1] + 1]
+    }
+
+    #[test]
+    fn gold_widths_are_stock_only_where_trammel_reads_map0() {
+        let image = synthetic_classic(5, 1);
+        let inspection = ClientExeInspection::inspect(&image).unwrap();
+        let mut gold = image.clone();
+        let table = inspection.table();
+        for facet in 0..CLASSIC_STOCK_SPLIT_FACETS {
+            put(&mut gold, table.record_offset(facet) + FACET_RECORD_WIDTH_OFFSET, CLASSIC_OLD_FELUCCA_WIDTH);
+        }
+        let startup = inspection.classic.as_ref().unwrap().startup.unwrap();
+        put(&mut gold, startup.field_offsets()[2], CLASSIC_OLD_FELUCCA_WIDTH);
+        assert!(!ClientExeInspection::inspect(&gold).unwrap().is_stock(), "6144 with Trammel on map1 is not stock");
+        let map_role = ClassicFileRole::ALL.iter().position(|role| *role == ClassicFileRole::Map).unwrap();
+        let felucca_map = table.records[0].classic.unwrap().file_ids[map_role];
+        put(&mut gold, table.record_offset(1) + CLASSIC_RECORD_FILE_IDS_OFFSET + map_role * size_of::<u32>(), felucca_map);
+        let gold = ClientExeInspection::inspect(&gold).unwrap();
+        assert!(classic_trammel_reads_map0(gold.table()));
+        assert!(gold.is_stock(), "UO Gold: Felucca and Trammel 6144 wide on map0");
+        let mut uneven = image.clone();
+        put(&mut uneven, table.record_offset(1) + FACET_RECORD_WIDTH_OFFSET, CLASSIC_OLD_FELUCCA_WIDTH);
+        assert!(!ClientExeInspection::inspect(&uneven).unwrap().is_stock());
     }
 
     #[test]

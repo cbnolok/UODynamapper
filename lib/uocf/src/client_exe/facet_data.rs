@@ -163,9 +163,25 @@ pub fn check_facet_data(dimensions: &[FacetGeometry], client_dir: &Path) -> eyre
 /// Checks the facet data of `client_dir` against the executable `inspection`: [`check_facet_data`] for the Enhanced
 /// Client and Kingdom Reborn, [`check_classic_facet_data`] for Classic. Only reads.
 pub fn check_client_facet_data(inspection: &ClientExeInspection, client_dir: &Path) -> eyre::Result<Vec<FacetDataReport>> {
+    check_client_facet_data_with_sizes(inspection, &inspection.dimensions(), client_dir)
+}
+
+/// [`check_client_facet_data`] against the sizes `dimensions` (one per record of the table, e.g. edits not written
+/// yet) instead of the table's; the Classic file ids still come from `inspection`'s records. Only reads.
+pub fn check_client_facet_data_with_sizes(
+    inspection: &ClientExeInspection,
+    dimensions: &[FacetGeometry],
+    client_dir: &Path,
+) -> eyre::Result<Vec<FacetDataReport>> {
+    eyre::ensure!(
+        dimensions.len() == inspection.facet_count(),
+        "{} sizes for a table of {} facets",
+        dimensions.len(),
+        inspection.facet_count()
+    );
     match inspection.family {
-        ClientFamily::Classic => check_classic_facet_data(inspection, client_dir),
-        ClientFamily::Enhanced | ClientFamily::KingdomReborn => check_facet_data(&inspection.dimensions(), client_dir),
+        ClientFamily::Classic => classic_facet_data(inspection, dimensions, client_dir),
+        ClientFamily::Enhanced | ClientFamily::KingdomReborn => check_facet_data(dimensions, client_dir),
     }
 }
 
@@ -262,9 +278,17 @@ fn check_classic_file(
 /// Checks every facet of the Classic `inspection` (both table copies) against the data in `client_dir`: map blocks,
 /// `staidx` entries and `statics` ranges. Files the folder does not have are reported absent. Only reads.
 pub fn check_classic_facet_data(inspection: &ClientExeInspection, client_dir: &Path) -> eyre::Result<Vec<FacetDataReport>> {
+    classic_facet_data(inspection, &inspection.dimensions(), client_dir)
+}
+
+fn classic_facet_data(
+    inspection: &ClientExeInspection,
+    dimensions: &[FacetGeometry],
+    client_dir: &Path,
+) -> eyre::Result<Vec<FacetDataReport>> {
     eyre::ensure!(inspection.family == ClientFamily::Classic, "not a Classic client");
     let mut reports = Vec::with_capacity(inspection.facet_count());
-    for (facet, geometry) in inspection.dimensions().into_iter().enumerate() {
+    for (facet, geometry) in dimensions.iter().copied().enumerate() {
         let mut items = Vec::new();
         for (role, name) in classic_facet_files(inspection, facet, client_dir) {
             match find_file_ignoring_case(client_dir, &name) {

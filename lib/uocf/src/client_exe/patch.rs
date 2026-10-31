@@ -17,19 +17,26 @@
 //!   facet), and facet 0 also writes the startup globals.
 //! - [`ExeEdit::Split`]: the three split imm32 (Enhanced Client) or the two wrap seam imm32 (Classic).
 //! - [`ExeEdit::ClassicWrap`]: the facet's wrap in every table copy (and the startup globals for facet 0).
+//! - [`ExeEdit::LoginServer`] (Enhanced Client only): every public login host slot, zero filled, and every public
+//!   port imm16 ([`crate::client_exe::login`]); the internal test address is left alone. Kingdom Reborn and Classic
+//!   are refused: Classic reads `login.cfg` ([`crate::client_config::login_servers`]).
 
 crate::eyre_imports!();
 use std::path::{Path, PathBuf};
 
 use crate::client_exe::classic_facets::{
-    validate_classic_size, validate_classic_wrap, CLASSIC_RECORD_WRAP_HEIGHT_OFFSET, CLASSIC_RECORD_WRAP_WIDTH_OFFSET,
+    classic_split_widths, classic_stock_facet, validate_classic_size, validate_classic_wrap,
+    CLASSIC_OLD_FELUCCA_WIDTH, CLASSIC_RECORD_WRAP_HEIGHT_OFFSET, CLASSIC_RECORD_WRAP_WIDTH_OFFSET,
+    CLASSIC_STOCK_WIDTHS,
 };
 use crate::client_exe::facet_dimensions::{
-    validate_facet_size, ClientExeInspection, ClientFamily, ExeValues, FacetValues, DISABLED_SPLIT_X,
+    validate_facet_size, ClientExeInspection, ClientFamily, ExeValues, FacetValues, CLASSIC_GOLD_SHA256, DISABLED_SPLIT_X,
     FACET_RECORD_HEIGHT_OFFSET, FACET_RECORD_WIDTH_OFFSET, SPLIT_FACETS, STOCK_SPLIT_X,
 };
+use crate::client_exe::login::{LoginHost, LoginSites, LoginValues};
 use crate::client_exe::pe::pe_checksum;
-use crate::enhanced::facet_sector::FacetGeometry;
+use crate::client_config::login_servers::{validate_login_port, HostKind, validate_login_host};
+use crate::enhanced::facet_sector::{FacetGeometry, CLIENT_FACET_DIMENSIONS};
 
 /// The manifest of a patched copy: `<copy>` plus this suffix.
 pub const MANIFEST_SUFFIX: &str = ".facet-dims.json";
@@ -39,6 +46,40 @@ pub const MANIFEST_FORMAT: &str = "uocf-facet-dims";
 pub const MANIFEST_VERSION: u32 = 2;
 pub const MANIFEST_VERSION_1: u32 = 1;
 const PATCH_FIELD_SIZE: usize = size_of::<u32>();
+
+/// What a patch warning is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PatchWarningKind {
+    /// A facet size the client takes but that is unusual (not a multiple of 64, larger than stock, ...).
+    Size,
+    /// The Enhanced Client split: not found, or outside a facet.
+    Split,
+    /// The Classic wrap seam disagrees with a facet's wrap.
+    Seam,
+    /// The login server: the input's is not the stock one, or a host name the client resolves.
+    Login,
+    /// The input's stored PE checksum is not the computed one (the copy gets the right one).
+    Checksum,
+}
+
+/// An allowed but unusual request, and what it is about.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PatchWarning {
+    pub kind: PatchWarningKind,
+    pub text: String,
+}
+
+impl PatchWarning {
+    pub fn new(kind: PatchWarningKind, text: impl Into<String>) -> Self {
+        Self { kind, text: text.into() }
+    }
+}
+
+impl std::fmt::Display for PatchWarning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.text)
+    }
+}
 
 /// A new split x.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -68,9 +109,8 @@ pub enum ExeEdit {
     Split(SplitEdit),
     /// A new wrap rectangle for one facet (Classic only).
     ClassicWrap { facet: u8, wrap_width: u32, wrap_height: u32 },
-    // Planned with the login and encryption research: `LoginAddress`, `LoginPort`, `Encryption`. Each is one more
-    // variant whose validation and byte changes go in `plan_patch`; the plan, the change list and the manifest steps
-    // keep their shape.
+    /// A new built-in login server (Enhanced Client only): every public host slot and port.
+    LoginServer { host: LoginHost, port: u16 },
 }
 
 impl ExeEdit {
@@ -82,6 +122,7 @@ impl ExeEdit {
             Self::ClassicWrap { facet, wrap_width, wrap_height } => {
                 format!("facet {facet} wrap {wrap_width}x{wrap_height}")
             }
+            Self::LoginServer { host, port } => format!("login server {host}:{port}"),
         }
     }
 }
@@ -121,11 +162,13 @@ pub struct PatchPlan {
     pub patch: ExePatch,
     pub changes: Vec<ByteChange>,
     /// Allowed but unusual requests.
-    pub warnings: Vec<String>,
+    pub warnings: Vec<PatchWarning>,
     /// The values of the patched copy.
     pub expected: ExeValues,
-    /// The chain: the stock build the copy derives from and the earlier steps (empty for a stock input).
+    /// The chain: the stock build the copy derives from, its values when known, and the earlier steps (empty for a
+    /// stock input).
     pub original_sha256: String,
+    pub original_values: Option<ExeValues>,
     pub build: Option<String>,
     pub previous_steps: Vec<ManifestStep>,
 }
@@ -163,6 +206,10 @@ pub struct ExeManifest {
     /// SHA-256 of the patched copy.
     pub patched_sha256: String,
     pub values: ExeValues,
+    /// The values of the stock executable the chain started from (`None` in manifests written before they were
+    /// recorded): the sizes a "stock" reset goes back to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_values: Option<ExeValues>,
     /// The PE checksum written.
     pub checksum: u32,
     /// Every write of the chain, the last one this copy's. A version 1 manifest has one step without edits.
@@ -186,16 +233,22 @@ pub struct PatchedClientExe {
     pub before: ClientExeInspection,
     pub after: ClientExeInspection,
     pub changes: Vec<ByteChange>,
-    pub warnings: Vec<String>,
+    pub warnings: Vec<PatchWarning>,
     pub manifest: ExeManifest,
 }
 
 /// A field write of a plan, before comparing it with the input.
 struct FieldWrite {
     offset: usize,
-    value: u32,
+    new: Vec<u8>,
     field: String,
     edit: usize,
+}
+
+impl FieldWrite {
+    fn u32(offset: usize, value: u32, field: String, edit: usize) -> Self {
+        Self { offset, new: value.to_le_bytes().to_vec(), field, edit }
+    }
 }
 
 /// Which edit set each side of a Classic wrap, when it changes.
@@ -212,27 +265,96 @@ fn checked_facet(facet: u8, count: usize) -> eyre::Result<usize> {
     Ok(index)
 }
 
+/// True when the `recorded` values of a manifest are the `current` values of the executable. A manifest written
+/// before the login values were recorded has none, and then only the facet values and split compare.
+pub fn recorded_values_match(recorded: &ExeValues, current: &ExeValues) -> bool {
+    recorded.facets == current.facets
+        && recorded.split_x == current.split_x
+        && (recorded.login.is_none() || recorded.login == current.login)
+}
+
+/// Why a login server edit is refused for `family`.
+fn login_refusal(family: ClientFamily) -> String {
+    match family {
+        ClientFamily::Classic => "the Classic client reads its login server from login.cfg (or the LoginServerFile that \
+                                  uo.cfg names), not from the executable: edit that file (`uocf-cli login set`)"
+            .to_owned(),
+        ClientFamily::KingdomReborn => "the login server patch supports the Enhanced Client only: Kingdom Reborn's \
+                                        UOKR.exe connects to the one IPv4 address built into its code (`exe show` \
+                                        prints it), and the traced build never loads LoginServers*.xml"
+            .to_owned(),
+        ClientFamily::Enhanced => "the login address code was not located in this build: no single fixed address store \
+                                   followed by the public host pushes and port stores"
+            .to_owned(),
+    }
+}
+
+/// The login sites a login edit writes, checked for `host`.
+fn checked_login_sites<'a>(before: &'a ClientExeInspection, host: &LoginHost, port: u16) -> eyre::Result<&'a LoginSites> {
+    let sites = match (&before.login, before.family) {
+        (Some(sites), ClientFamily::Enhanced) if !sites.hosts.is_empty() && !sites.ports.is_empty() => sites,
+        _ => eyre::bail!("{}", login_refusal(before.family)),
+    };
+    validate_login_port(port)?;
+    for (number, slot) in sites.hosts.iter().enumerate() {
+        eyre::ensure!(
+            host.as_str().len() < slot.capacity,
+            "host `{host}` has {} characters: host slot {} (VA {:#x}, `{}`) takes at most {} (a {}-byte slot): use a \
+             shorter host (a shorter IPv4 address or name)",
+            host.as_str().len(),
+            number + 1,
+            slot.va,
+            slot.host,
+            slot.capacity - 1,
+            slot.capacity
+        );
+        eyre::ensure!(
+            slot.references == 1,
+            "host slot {} (VA {:#x}) is referenced {} times in the image: writing it could change other code",
+            number + 1,
+            slot.va,
+            slot.references
+        );
+    }
+    Ok(sites)
+}
+
 /// Validates `patch` against the executable `bytes` and plans its byte changes, without writing anything (the dry
 /// run). `previous` is the manifest of the input when it is an earlier patched copy.
 pub fn plan_patch(bytes: &[u8], patch: &ExePatch, previous: Option<&ExeManifest>) -> eyre::Result<PatchPlan> {
     let before = ClientExeInspection::inspect(bytes)?;
+    plan_patch_inspected(bytes, &before, patch, previous)
+}
+
+/// [`plan_patch`] with the inspection of `bytes` already made (a GUI plans each edit without inspecting the file
+/// again). `before` must be [`ClientExeInspection::inspect`] of these `bytes`.
+pub fn plan_patch_inspected(
+    bytes: &[u8],
+    before: &ClientExeInspection,
+    patch: &ExePatch,
+    previous: Option<&ExeManifest>,
+) -> eyre::Result<PatchPlan> {
+    eyre::ensure!(bytes.len() == before.file_size, "the inspection is not of this executable: its size differs");
+    let before = before.clone();
     eyre::ensure!(!before.pe.is_signed(), "the executable is Authenticode signed; a patch would break the signature");
     eyre::ensure!(!patch.edits.is_empty(), "the patch has no edits");
     let previous = previous.filter(|manifest| manifest.patched_sha256 == before.sha256);
-    let (original_sha256, build, previous_steps) = match previous {
+    let (original_sha256, original_values, build, previous_steps) = match previous {
         Some(manifest) => {
             eyre::ensure!(
-                manifest.values == before.values(),
-                "the executable's facet values differ from the ones its manifest records"
+                recorded_values_match(&manifest.values, &before.values()),
+                "the executable's facet or login values differ from the ones its manifest records"
             );
-            (manifest.original_sha256.clone(), manifest.build.clone(), manifest.steps.clone())
+            let build = manifest.build.clone();
+            (manifest.original_sha256.clone(), manifest.original_values.clone(), build, manifest.steps.clone())
         }
         None => {
             eyre::ensure!(
                 before.is_stock(),
                 "the executable's facet values are not the stock ones and no manifest of an earlier patch records them"
             );
-            (before.sha256.clone(), before.known.map(|build| build.name.to_owned()), Vec::new())
+            let build = before.known.map(|build| build.name.to_owned());
+            (before.sha256.clone(), Some(before.values()), build, Vec::new())
         }
     };
     let count = before.facet_count();
@@ -243,6 +365,16 @@ pub fn plan_patch(bytes: &[u8], patch: &ExePatch, previous: Option<&ExeManifest>
     let mut sized = vec![None; count];
     let mut wrapped = vec![None; count];
     let mut split_edit = None;
+    let mut login_edit = None;
+    if !before.checksum_valid() {
+        warnings.push(PatchWarning::new(
+            PatchWarningKind::Checksum,
+            format!(
+                "the input's stored PE checksum {:#010x} is not the computed {:#010x}; the copy gets a correct one",
+                before.pe.stored_checksum, before.computed_checksum
+            ),
+        ));
+    }
     for (index, edit) in patch.edits.iter().enumerate() {
         match *edit {
             ExeEdit::FacetSize { facet, width, height } => {
@@ -251,7 +383,7 @@ pub fn plan_patch(bytes: &[u8], patch: &ExePatch, previous: Option<&ExeManifest>
                 sized[facet_index] = Some(index);
                 let size_warnings =
                     if classic { validate_classic_size(width, height)? } else { validate_facet_size(width, height)? };
-                warnings.extend(size_warnings);
+                warnings.extend(size_warnings.into_iter().map(|text| PatchWarning::new(PatchWarningKind::Size, text)));
             }
             ExeEdit::Split(split) => {
                 eyre::ensure!(split_edit.is_none(), "two split edits");
@@ -273,10 +405,29 @@ pub fn plan_patch(bytes: &[u8], patch: &ExePatch, previous: Option<&ExeManifest>
                 eyre::ensure!(wrapped[facet_index].is_none(), "two wrap edits for facet {facet}");
                 wrapped[facet_index] = Some(index);
             }
+            ExeEdit::LoginServer { host, port } => {
+                eyre::ensure!(login_edit.is_none(), "two login server edits");
+                let sites = checked_login_sites(&before, &host, port)?;
+                if !sites.is_stock() && previous.is_none() {
+                    let current: Vec<String> =
+                        sites.public_servers().iter().map(|(host, port)| format!("{host}:{port}")).collect();
+                    warnings.push(PatchWarning::new(
+                        PatchWarningKind::Login,
+                        format!("the built-in login server is already not the stock one ({})", current.join(", ")),
+                    ));
+                }
+                if validate_login_host(host.as_str())? == HostKind::Name {
+                    warnings.push(PatchWarning::new(
+                        PatchWarningKind::Login,
+                        format!("`{host}` is a host name: the client resolves it (gethostbyname) at each login"),
+                    ));
+                }
+                login_edit = Some((index, host, port));
+            }
         }
         let facet = match *edit {
             ExeEdit::FacetSize { facet, .. } | ExeEdit::ClassicWrap { facet, .. } => Some(facet),
-            ExeEdit::Split(_) => None,
+            ExeEdit::Split(_) | ExeEdit::LoginServer { .. } => None,
         };
         if classic && facet == Some(0) {
             eyre::ensure!(
@@ -322,6 +473,12 @@ pub fn plan_patch(bytes: &[u8], patch: &ExePatch, previous: Option<&ExeManifest>
     if let Some((_, x)) = split_edit {
         expected.split_x = Some(x);
     }
+    if let (Some((_, host, port)), Some(sites)) = (login_edit, &before.login) {
+        expected.login = Some(LoginValues {
+            hosts: vec![host.as_str().to_owned(); sites.hosts.len()],
+            ports: vec![port; sites.ports.len()],
+        });
+    }
     warnings.extend(split_warnings(&before, &expected, &sized));
 
     let mut writes = Vec::new();
@@ -342,7 +499,7 @@ pub fn plan_patch(bytes: &[u8], patch: &ExePatch, previous: Option<&ExeManifest>
             for (cause, field_offset, value, what) in record_fields {
                 if let (Some(edit), Some(value)) = (cause, value) {
                     let field = label(what, table_index);
-                    writes.push(FieldWrite { offset: record + field_offset, value, field, edit });
+                    writes.push(FieldWrite::u32(record + field_offset, value, field, edit));
                 }
             }
         }
@@ -358,7 +515,7 @@ pub fn plan_patch(bytes: &[u8], patch: &ExePatch, previous: Option<&ExeManifest>
             ];
             for (cause, offset, value, what) in startup_fields {
                 if let (Some(edit), Some(value)) = (cause, value) {
-                    writes.push(FieldWrite { offset, value, field: format!("facet 0 ({}) {what}", values.name), edit });
+                    writes.push(FieldWrite::u32(offset, value, format!("facet 0 ({}) {what}", values.name), edit));
                 }
             }
         }
@@ -367,16 +524,28 @@ pub fn plan_patch(bytes: &[u8], patch: &ExePatch, previous: Option<&ExeManifest>
         let what = if classic { "wrap seam" } else { "split" };
         for (number, offset) in split.offsets.iter().enumerate() {
             let field = format!("{what} x, compare {}", number + 1);
-            writes.push(FieldWrite { offset: *offset, value: x, field, edit });
+            writes.push(FieldWrite::u32(*offset, x, field, edit));
+        }
+    }
+    if let (Some((edit, host, port)), Some(sites)) = (login_edit, &before.login) {
+        for (number, slot) in sites.hosts.iter().enumerate() {
+            let mut new = host.as_str().as_bytes().to_vec();
+            new.resize(slot.capacity, 0);
+            let field = format!("login host {} ({}-byte slot)", number + 1, slot.capacity);
+            writes.push(FieldWrite { offset: slot.offset, new, field, edit });
+        }
+        for (number, site) in sites.ports.iter().enumerate() {
+            let field = format!("login port {} (imm16)", number + 1);
+            writes.push(FieldWrite { offset: site.offset, new: port.to_le_bytes().to_vec(), field, edit });
         }
     }
 
     let mut patched = bytes.to_vec();
     let mut changes = Vec::new();
     for write in writes {
-        let range = write.offset..write.offset + PATCH_FIELD_SIZE;
-        let new = write.value.to_le_bytes();
-        if bytes[range.clone()] == new {
+        let range = write.offset..write.offset + write.new.len();
+        let new = write.new;
+        if bytes[range.clone()] == new[..] {
             continue;
         }
         patched[range.clone()].copy_from_slice(&new);
@@ -403,39 +572,49 @@ pub fn plan_patch(bytes: &[u8], patch: &ExePatch, previous: Option<&ExeManifest>
             cause: ChangeCause::Checksum,
         });
     }
-    Ok(PatchPlan { before, patch: patch.clone(), changes, warnings, expected, original_sha256, build, previous_steps })
+    Ok(PatchPlan {
+        before,
+        patch: patch.clone(),
+        changes,
+        warnings,
+        expected,
+        original_sha256,
+        original_values,
+        build,
+        previous_steps,
+    })
 }
 
 /// The warnings about the split or seam of the patched values.
-fn split_warnings(before: &ClientExeInspection, expected: &ExeValues, sized: &[Option<usize>]) -> Vec<String> {
+fn split_warnings(before: &ClientExeInspection, expected: &ExeValues, sized: &[Option<usize>]) -> Vec<PatchWarning> {
     let split_facets = || expected.facets.iter().filter(|facet| SPLIT_FACETS.contains(&facet.facet));
     let mut warnings = Vec::new();
     match (before.family, expected.split_x) {
         (ClientFamily::Enhanced, None) if split_facets().any(|facet| sized[usize::from(facet.facet)].is_some()) => {
-            warnings.push(format!(
+            warnings.push(PatchWarning::new(PatchWarningKind::Split, format!(
                 "no x = {STOCK_SPLIT_X} split sequence found: in an Enhanced Client build, the split code differs \
                  from the known sequence"
-            ));
+            )));
         }
         (ClientFamily::Classic, Some(x)) => {
             for facet in split_facets() {
                 let FacetValues { width, wrap_width, .. } = facet;
                 let wrap = wrap_width.unwrap_or(*width);
                 if wrap.min(*width) != x.min(*width) {
-                    warnings.push(format!(
+                    warnings.push(PatchWarning::new(PatchWarningKind::Seam, format!(
                         "the wrap seam x {x} is not facet {} ({})'s wrap width {wrap}: the radar and the walk test \
                          assume the facet stops wrapping at the seam",
                         facet.facet, facet.name
-                    ));
+                    )));
                 }
             }
         }
         (_, Some(x)) if x != DISABLED_SPLIT_X => {
             for facet in split_facets().filter(|facet| x >= facet.width) {
-                warnings.push(format!(
+                warnings.push(PatchWarning::new(PatchWarningKind::Split, format!(
                     "split x {x} is not inside facet {} ({})'s width {}: nothing is split",
                     facet.facet, facet.name, facet.width
-                ));
+                )));
             }
         }
         _ => {}
@@ -461,12 +640,14 @@ pub fn patch_client_exe(bytes: &[u8], patch: &ExePatch, previous: Option<&ExeMan
     let startup = |inspection: &ClientExeInspection| {
         inspection.classic.as_ref().and_then(|layout| layout.startup).map(|startup| startup.offset)
     };
+    let login_offsets = |inspection: &ClientExeInspection| inspection.login.as_ref().map(LoginSites::offsets);
     eyre::ensure!(
         after.family == before.family
             && offsets(&after) == offsets(&before)
             && split_offsets(&after) == split_offsets(&before)
-            && startup(&after) == startup(&before),
-        "internal error: the patched copy's tables, split or startup values are located elsewhere"
+            && startup(&after) == startup(&before)
+            && login_offsets(&after) == login_offsets(&before),
+        "internal error: the patched copy's tables, split, startup values or login sites are located elsewhere"
     );
     eyre::ensure!(after.values() == plan.expected, "internal error: the patched copy does not have the planned values");
     let facet_0_edited = plan.patch.edits.iter().any(|edit| {
@@ -498,10 +679,70 @@ pub fn patch_client_exe(bytes: &[u8], patch: &ExePatch, previous: Option<&ExeMan
         source_sha256: before.sha256.clone(),
         patched_sha256: after.sha256.clone(),
         values: after.values(),
+        original_values: plan.original_values,
         checksum: after.pe.stored_checksum,
         steps,
     };
     Ok(PatchedClientExe { bytes: patched, before, after, changes: plan.changes, warnings: plan.warnings, manifest })
+}
+
+/// The stock size of a facet, and its stock wrap (Classic).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StockFacet {
+    pub size: FacetGeometry,
+    pub wrap: Option<FacetGeometry>,
+}
+
+/// The stock size (and Classic wrap) of each facet of the build `inspection` is, or derives from (`manifest`: its
+/// manifest, when it is a patched copy); `None` for a facet whose stock size is not known.
+///
+/// - A stock file: its own table (every Classic generation: UO Gold's 6144-wide Felucca and Trammel, Mondain's
+///   Legacy on 7168).
+/// - A copy whose manifest records the original values: those.
+/// - Otherwise Enhanced Client and Kingdom Reborn: the shipped table ([`CLIENT_FACET_DIMENSIONS`]). Classic: the
+///   generation's values; Felucca and Trammel are 7168 wide where Trammel reads map1 (6.0.14.3 on), 6144 when the
+///   manifest's original build is UO Gold, and unknown in an older build of unknown origin (UO Gold to 5.x share
+///   the layout).
+pub fn stock_facets(inspection: &ClientExeInspection, manifest: Option<&ExeManifest>) -> Vec<Option<StockFacet>> {
+    let manifest = manifest.filter(|manifest| manifest.patched_sha256 == inspection.sha256);
+    let from_values = |values: &ExeValues| -> Vec<Option<StockFacet>> {
+        values
+            .facets
+            .iter()
+            .map(|facet| {
+                let wrap = facet.wrap_width.zip(facet.wrap_height).map(|(width, height)| FacetGeometry::new(width, height));
+                Some(StockFacet { size: FacetGeometry::new(facet.width, facet.height), wrap })
+            })
+            .collect()
+    };
+    if inspection.is_stock() {
+        return from_values(&inspection.values());
+    }
+    if let Some(values) = manifest.and_then(|manifest| manifest.original_values.as_ref()) {
+        return from_values(values);
+    }
+    let count = inspection.facet_count();
+    match inspection.family {
+        ClientFamily::Enhanced | ClientFamily::KingdomReborn => (0..count)
+            .map(|facet| CLIENT_FACET_DIMENSIONS.get(facet).map(|size| StockFacet { size: *size, wrap: None }))
+            .collect(),
+        ClientFamily::Classic => {
+            let widths = classic_split_widths(inspection.table());
+            let gold = manifest.is_some_and(|manifest| manifest.original_sha256 == CLASSIC_GOLD_SHA256);
+            let split_width = match widths {
+                [only] => Some(*only),
+                _ if gold => Some(CLASSIC_OLD_FELUCCA_WIDTH),
+                _ => None,
+            };
+            (0..count)
+                .map(|facet| {
+                    // The width argument is read for Felucca and Trammel only.
+                    let width = if SPLIT_FACETS.contains(&(facet as u8)) { split_width? } else { CLASSIC_STOCK_WIDTHS[0] };
+                    classic_stock_facet(facet, width).map(|(size, wrap)| StockFacet { size, wrap: Some(wrap) })
+                })
+                .collect()
+        }
+    }
 }
 
 /// The manifest path of the patched copy `exe`: its file name plus [`MANIFEST_SUFFIX`].
@@ -587,8 +828,10 @@ mod tests {
     use crate::client_exe::classic_facets::tests::{seam_imm_offsets, stock_size, synthetic_classic};
     use crate::client_exe::facet_dimensions::tests::{synthetic_client, synthetic_kr_client, NEW_SPLIT};
     use crate::client_exe::facet_dimensions::{FACET_SIDE_ALIGNMENT, MAX_FACET_SIDE, STOCK_FACET_COUNT};
+    use crate::client_exe::login::tests::{synthetic_kr_login_client, synthetic_login_client};
+    use crate::client_exe::login::LOGIN_HOST_SLOT_SIZE;
+    use crate::client_exe::classic_facets::CLASSIC_STOCK_WRAP;
     use crate::client_exe::sha256::sha256_hex;
-    use crate::enhanced::facet_sector::CLIENT_FACET_DIMENSIONS;
 
     const NEW_WIDTH: u32 = 8192;
     const NEW_HEIGHT: u32 = 4160;
@@ -730,6 +973,105 @@ mod tests {
             ],
         };
         assert!(plan_patch(&image, &smaller, None).is_ok());
+    }
+
+    fn login(host: &str, port: u16) -> ExeEdit {
+        ExeEdit::LoginServer { host: LoginHost::new(host).unwrap(), port }
+    }
+
+    const LOCAL_HOST: &str = "127.0.0.1";
+    const SHARD_PORT: u16 = 2593;
+
+    #[test]
+    fn a_login_patch_writes_every_public_host_and_port() {
+        let image = synthetic_login_client(true, false);
+        let before = ClientExeInspection::inspect(&image).unwrap();
+        let sites = before.login.clone().unwrap();
+        let patch = ExePatch { edits: vec![login(LOCAL_HOST, SHARD_PORT), size(5, 1280, 4160)] };
+        let plan = plan_patch(&image, &patch, None).unwrap();
+        assert_eq!(plan_patch_inspected(&image, &before, &patch, None).unwrap().changes, plan.changes);
+        let patched = patch_client_exe(&image, &patch, None).unwrap();
+        assert_plan_is_the_write(&image, &plan, &patched.bytes);
+        assert_eq!(plan.changes, patched.changes, "the dry run is the write");
+        // Two 16-byte host slots, two ports, the facet width, the checksum.
+        let login_changes: Vec<(usize, usize)> = plan
+            .changes
+            .iter()
+            .filter(|change| change.cause == ChangeCause::Edit(0))
+            .map(|change| (change.offset, change.new.len()))
+            .collect();
+        let mut expected: Vec<(usize, usize)> = sites.hosts.iter().map(|slot| (slot.offset, LOGIN_HOST_SLOT_SIZE)).collect();
+        expected.extend(sites.ports.iter().map(|site| (site.offset, size_of::<u16>())));
+        assert_eq!(login_changes, expected);
+        let after = patched.after.login.as_ref().unwrap();
+        assert_eq!(after.public_servers(), [(LOCAL_HOST.to_owned(), SHARD_PORT), (LOCAL_HOST.to_owned(), SHARD_PORT)]);
+        assert_eq!(after.fixed, sites.fixed, "the internal test address is kept");
+        assert!(!after.is_stock());
+        assert_eq!(patched.manifest.values.login, plan.expected.login);
+        assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+
+        // The copy patches again with its manifest; a host name warns; the same address changes nothing.
+        let renamed = patch_client_exe(&patched.bytes, &ExePatch { edits: vec![login("shard.example", SHARD_PORT)] }, Some(&patched.manifest)).unwrap();
+        assert_eq!(renamed.warnings.iter().map(|warning| warning.kind).collect::<Vec<_>>(), [PatchWarningKind::Login]);
+        assert_eq!(renamed.manifest.steps.len(), 2);
+        let same = ExePatch { edits: vec![login(LOCAL_HOST, SHARD_PORT)] };
+        assert!(plan_patch(&patched.bytes, &same, Some(&patched.manifest)).is_err());
+
+        // A copy patched elsewhere only at its login sites (as UOSA_eclo.exe) has stock facets: it patches again
+        // without a manifest, with a warning that its login server is not stock.
+        let mut foreign = image.clone();
+        for slot in &sites.hosts {
+            foreign[slot.offset..slot.offset + slot.capacity].fill(0);
+            foreign[slot.offset..slot.offset + LOCAL_HOST.len()].copy_from_slice(LOCAL_HOST.as_bytes());
+        }
+        let foreign_plan = plan_patch(&foreign, &ExePatch { edits: vec![login("10.0.0.1", SHARD_PORT)] }, None).unwrap();
+        assert_eq!(foreign_plan.warnings.iter().map(|warning| warning.kind).collect::<Vec<_>>(), [PatchWarningKind::Checksum, PatchWarningKind::Login]);
+
+        // A manifest written before the login values were recorded still matches.
+        let mut old = patched.manifest.clone();
+        old.values.login = None;
+        assert!(plan_patch(&patched.bytes, &ExePatch { edits: vec![size(6, 512, 512)] }, Some(&old)).is_ok());
+        old.values.login = Some(LoginValues { hosts: vec![], ports: vec![] });
+        assert!(plan_patch(&patched.bytes, &ExePatch { edits: vec![size(6, 512, 512)] }, Some(&old)).is_err());
+
+        // The one-host build before Time of Legends.
+        let old_build = synthetic_login_client(false, false);
+        let patched = patch_client_exe(&old_build, &same, None).unwrap();
+        assert_eq!(patched.after.login.unwrap().public_servers(), [(LOCAL_HOST.to_owned(), SHARD_PORT)]);
+    }
+
+    #[test]
+    fn login_patches_are_refused_where_they_cannot_apply() {
+        let edit = ExePatch { edits: vec![login(LOCAL_HOST, SHARD_PORT)] };
+        let error = |image: &[u8], patch: &ExePatch| plan_patch(image, patch, None).unwrap_err().to_string();
+        assert!(error(&synthetic_kr_login_client(), &edit).contains("Kingdom Reborn"));
+        assert!(error(&synthetic_classic(6, 2), &edit).contains("login.cfg"));
+        assert!(error(&synthetic_client(Some(STOCK_SPLIT_X), false), &edit).contains("not located"));
+        // A 12-byte second slot takes 11 characters.
+        let short = synthetic_login_client(true, true);
+        assert!(plan_patch(&short, &ExePatch { edits: vec![login("192.168.100.1", SHARD_PORT)] }, None).is_err());
+        assert!(plan_patch(&short, &ExePatch { edits: vec![login("192.168.1.1", SHARD_PORT)] }, None).is_ok());
+        let image = synthetic_login_client(true, false);
+        assert!(plan_patch(&image, &ExePatch { edits: vec![login(LOCAL_HOST, 0)] }, None).is_err());
+        assert!(plan_patch(&image, &ExePatch { edits: vec![login(LOCAL_HOST, 1), login(LOCAL_HOST, 2)] }, None).is_err());
+        let serialized = serde_json::to_string(&edit.edits).unwrap();
+        assert_eq!(serialized, r#"[{"login_server":{"host":"127.0.0.1","port":2593}}]"#);
+        assert_eq!(serde_json::from_str::<Vec<ExeEdit>>(&serialized).unwrap(), edit.edits);
+    }
+
+    #[test]
+    fn stock_sizes_come_from_the_file_its_manifest_or_its_generation() {
+        let image = synthetic_classic(6, 2);
+        let stock = stock_facets(&ClientExeInspection::inspect(&image).unwrap(), None);
+        assert_eq!(stock[0], Some(StockFacet { size: stock_size(0), wrap: Some(CLASSIC_STOCK_WRAP) }));
+        let patch = ExePatch { edits: vec![size(0, CLASSIC_NEW_WIDTH, stock_size(0).height), size(3, 4096, 4096)] };
+        let patched = patch_client_exe(&image, &patch, None).unwrap();
+        assert_eq!(stock_facets(&patched.after, Some(&patched.manifest)), stock);
+        // Without the manifest: the generation (this table's Trammel reads map1, so 7168).
+        assert_eq!(stock_facets(&patched.after, None), stock);
+        let enhanced = patch_client_exe(&synthetic_client(None, false), &ExePatch { edits: vec![size(0, NEW_WIDTH, NEW_HEIGHT)] }, None).unwrap();
+        let sizes: Vec<FacetGeometry> = stock_facets(&enhanced.after, None).into_iter().map(|facet| facet.unwrap().size).collect();
+        assert_eq!(sizes, CLIENT_FACET_DIMENSIONS);
     }
 
     #[test]

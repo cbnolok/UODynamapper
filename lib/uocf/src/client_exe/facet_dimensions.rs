@@ -33,6 +33,7 @@ use crate::client_exe::classic_facets::{
     locate_classic_seam, locate_classic_startup_facet, ClassicLayout, ClassicRecord, MAX_CLASSIC_TABLE_COPIES,
     UNLOCATED_FILE_ID_LIMIT,
 };
+use crate::client_exe::login::{locate_login_sites, LoginSites, LoginValues};
 use crate::client_exe::pe::{pe_checksum, read_u32, PeImage, PeSection, MACHINE_I386};
 use crate::client_exe::sha256::sha256_hex;
 use crate::enhanced::facet_sector::{FacetGeometry, CLIENT_FACET_DIMENSIONS, SECTOR_SIDE};
@@ -227,7 +228,7 @@ pub const KNOWN_BUILDS: [KnownBuild; 12] = [
     },
     KnownBuild {
         name: "Classic UO Gold client.exe",
-        sha256: "aa21bb3ea16b6c5e00837569466b052e978baa6e38fd945e2694af4f14fa28c2",
+        sha256: CLASSIC_GOLD_SHA256,
         family: ClientFamily::Classic,
         table_offsets: &[0x16f918],
         split_offsets: &[0xa80ab, 0xef339],
@@ -290,6 +291,9 @@ pub const KNOWN_BUILDS: [KnownBuild; 12] = [
     },
 ];
 
+/// The UO Gold `client.exe` of the research: its Felucca and Trammel are 6144 wide.
+pub const CLASSIC_GOLD_SHA256: &str = "aa21bb3ea16b6c5e00837569466b052e978baa6e38fd945e2694af4f14fa28c2";
+
 /// The known build with SHA-256 `sha256`.
 pub fn known_build(sha256: &str) -> Option<&'static KnownBuild> {
     KNOWN_BUILDS.iter().find(|build| build.sha256 == sha256)
@@ -350,6 +354,10 @@ pub struct ExeValues {
     /// The split x of facets 0 and 1 (Enhanced Client) or the wrap seam (Classic); `None` for a build without
     /// (Kingdom Reborn).
     pub split_x: Option<u32>,
+    /// The public login hosts and ports (Enhanced Client); `None` in the other families, in builds where they were
+    /// not located, and in manifests written before they were recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub login: Option<LoginValues>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -365,7 +373,7 @@ pub struct FacetValues {
     pub wrap_height: Option<u32>,
 }
 
-/// What a client executable stores about the facet sizes. The login and encryption findings will extend it.
+/// What a client executable stores about the facet sizes and the login server.
 #[derive(Debug, Clone)]
 pub struct ClientExeInspection {
     pub sha256: String,
@@ -383,6 +391,8 @@ pub struct ClientExeInspection {
     pub split: Option<FacetSplit>,
     /// The Classic startup copy of facet 0 and file name table; `None` in the other families.
     pub classic: Option<ClassicLayout>,
+    /// The login address code (Enhanced Client and Kingdom Reborn), when located ([`locate_login_sites`]).
+    pub login: Option<LoginSites>,
 }
 
 /// The single element of `items`, or `None`.
@@ -427,7 +437,8 @@ impl ClientExeInspection {
         let sha256 = sha256_hex(bytes);
         let known = known_build(&sha256);
         let computed_checksum = pe_checksum(bytes, pe.checksum_offset);
-        Ok(Self { sha256, file_size: bytes.len(), family, known, pe, computed_checksum, tables, split, classic })
+        let login = locate_login_sites(bytes, &pe, family)?;
+        Ok(Self { sha256, file_size: bytes.len(), family, known, pe, computed_checksum, tables, split, classic, login })
     }
 
     /// The first table: the only one, or the copy the Classic client reads without the 0xA9 flag.
@@ -466,6 +477,10 @@ impl ClientExeInspection {
                 })
                 .collect(),
             split_x: self.split.as_ref().map(|split| split.x),
+            login: match self.family {
+                ClientFamily::Enhanced => self.login.as_ref().map(LoginSites::values),
+                _ => None,
+            },
         }
     }
 
@@ -767,13 +782,28 @@ pub(crate) mod tests {
     /// A 12-byte-table client: `.text` (`text`, or a nop sled), `.rdata` with the names (and the Enhanced Client
     /// marker when `enhanced`), `.data` with `records` stock records.
     fn synthetic_image(text: Option<Vec<u8>>, records: usize, enhanced: bool, signed: bool) -> Vec<u8> {
-        let text = text.unwrap_or_else(|| vec![0x90; 64]);
+        synthetic_image_parts(text, Vec::new(), records, enhanced, signed)
+    }
+
+    /// The virtual address of `.rdata` in a synthetic image whose `.text` has `text_len` bytes.
+    pub fn synthetic_rdata_va(text_len: usize) -> u32 {
         // The sections are laid out at aligned offsets equal to their RVAs: .text, then .rdata, then .data.
-        let rdata_rva = TEST_SECTION_ALIGNMENT * (1 + (text.len() as u32).div_ceil(TEST_SECTION_ALIGNMENT));
-        let mut rdata = Vec::new();
+        TEST_IMAGE_BASE + TEST_SECTION_ALIGNMENT * (1 + (text_len as u32).div_ceil(TEST_SECTION_ALIGNMENT))
+    }
+
+    /// A stock 7-record client with `text` as `.text` and `rdata_prefix` at the start of `.rdata` (at
+    /// [`synthetic_rdata_va`]), the facet names after it.
+    pub fn synthetic_image_with(text: Vec<u8>, rdata_prefix: Vec<u8>, enhanced: bool) -> Vec<u8> {
+        synthetic_image_parts(Some(text), rdata_prefix, STOCK_FACET_COUNT, enhanced, false)
+    }
+
+    fn synthetic_image_parts(text: Option<Vec<u8>>, rdata_prefix: Vec<u8>, records: usize, enhanced: bool, signed: bool) -> Vec<u8> {
+        let text = text.unwrap_or_else(|| vec![0x90; 64]);
+        let rdata_va = synthetic_rdata_va(text.len());
+        let mut rdata = rdata_prefix;
         let mut pointers = Vec::new();
         for name in &STOCK_NAMES[..records] {
-            pointers.push(TEST_IMAGE_BASE + rdata_rva + rdata.len() as u32);
+            pointers.push(rdata_va + rdata.len() as u32);
             rdata.extend_from_slice(name.as_bytes());
             rdata.push(0);
         }

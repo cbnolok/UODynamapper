@@ -60,14 +60,14 @@ const CHAINED_SIZE: FacetGeometry = FacetGeometry::new(512, 512);
 const FIELD_SIZE: usize = size_of::<u32>();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ExeKind {
+pub(super) enum ExeKind {
     Enhanced,
     KingdomReborn,
     Classic,
     Other,
 }
 
-fn exe_kind(path: &Path) -> ExeKind {
+pub(super) fn exe_kind(path: &Path) -> ExeKind {
     let name = path.file_name().unwrap_or_default().to_string_lossy().to_ascii_lowercase();
     if name.starts_with(EC_EXE_PREFIX) {
         ExeKind::Enhanced
@@ -104,7 +104,7 @@ fn collect_exes(dir: &Path, exes: &mut Vec<PathBuf>) {
 }
 
 /// Every `*.exe` under the client roots.
-fn client_exes() -> Vec<PathBuf> {
+pub(super) fn client_exes() -> Vec<PathBuf> {
     let roots = std::env::var_os(CLIENT_ROOTS_ENV).unwrap_or_else(|| panic!("set {CLIENT_ROOTS_ENV}"));
     let mut exes = Vec::new();
     for root in std::env::split_paths(&roots) {
@@ -148,7 +148,7 @@ fn describe_tables(tables: &[FacetTable]) -> String {
 }
 
 /// The byte ranges a patch of `edits` on `before` may change, derived from the inspection alone.
-fn allowed_ranges(before: &ClientExeInspection, edits: &[ExeEdit]) -> Vec<Range<usize>> {
+pub(super) fn allowed_ranges(before: &ClientExeInspection, edits: &[ExeEdit]) -> Vec<Range<usize>> {
     let field = |offset: usize| offset..offset + FIELD_SIZE;
     let mut ranges = vec![field(before.pe.checksum_offset)];
     for edit in edits {
@@ -169,6 +169,12 @@ fn allowed_ranges(before: &ClientExeInspection, edits: &[ExeEdit]) -> Vec<Range<
                 }
             }
             ExeEdit::Split(_) => ranges.extend(before.split.iter().flat_map(|split| split.offsets.iter().copied().map(field))),
+            ExeEdit::LoginServer { .. } => {
+                if let Some(login) = &before.login {
+                    ranges.extend(login.hosts.iter().map(|slot| slot.offset..slot.offset + slot.capacity));
+                    ranges.extend(login.ports.iter().map(|site| site.offset..site.offset + size_of::<u16>()));
+                }
+            }
         }
     }
     ranges

@@ -2,6 +2,7 @@ mod exe;
 mod facet;
 mod hues;
 mod legacy_mul;
+mod login;
 mod mul_convert;
 mod multimap;
 mod sound;
@@ -94,9 +95,12 @@ enum Commands {
     /// Enhanced Client and Kingdom Reborn facets: facetN.uop squares, facetNN.dds radar images, facets.uop definitions.
     #[command(subcommand)]
     Facet(facet::FacetCmd),
-    /// Client executables: the facet size table and the x = 5120 split; patch a copy to new facet sizes.
+    /// Client executables: the facet size table, the x = 5120 split and the built-in login server; patch a copy.
     #[command(subcommand)]
     Exe(exe::ExeCmd),
+    /// Login server files of a client folder: where the client reads its server from; write an edited copy.
+    #[command(subcommand)]
+    Login(login::LoginCmd),
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -160,6 +164,7 @@ fn main() -> eyre::Result<()> {
         Commands::Hues(cmd) => hues::run(cmd)?,
         Commands::Facet(cmd) => facet::run(cmd)?,
         Commands::Exe(cmd) => exe::run(cmd)?,
+        Commands::Login(cmd) => login::run(cmd)?,
     }
 
     Ok(())

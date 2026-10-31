@@ -35,7 +35,7 @@ pub fn ui_preview(ui: &mut egui::Ui, session: &mut Session) -> Option<ExePatch> 
                 ui.label(format!("  {}. {}", index + 1, edit.describe()));
             }
             for warning in &plan.warnings {
-                warning_label(ui, warning.as_str());
+                warning_label(ui, warning.text.as_str());
             }
             ui.add_space(ITEM_SPACING);
             egui::ScrollArea::both().id_salt("byte_changes").max_height(CHANGES_MAX_HEIGHT).show(ui, |ui| {

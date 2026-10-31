@@ -2,16 +2,13 @@
 
 use std::path::{Path, PathBuf};
 
-use uocf::client_exe::facet_data::{check_client_facet_data, FacetDataReport, FacetDataStatus};
+use uocf::client_exe::facet_data::{check_client_facet_data_with_sizes, FacetDataReport, FacetDataStatus};
 use uocf::client_exe::facet_dimensions::ClientExeInspection;
-use uocf::client_exe::patch::{ByteChange, ChangeCause, ExePatch, PatchPlan};
+use uocf::client_exe::patch::{ByteChange, ChangeCause, ExePatch, PatchPlan, PatchWarning, PatchWarningKind};
 use uocf::enhanced::facet_sector::FacetGeometry;
 
 use super::edits::EditState;
 use super::opened::OpenedExe;
-
-/// Words of a library warning about the split or seam.
-const SEAM_WARNING_WORDS: [&str; 2] = ["split", "seam"];
 
 /// One byte change as the preview shows it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,8 +44,8 @@ pub fn change_rows(changes: &[ByteChange], patch: &ExePatch) -> Vec<ChangeRow> {
 }
 
 /// The library warnings about the split or seam.
-pub fn seam_warnings(warnings: &[String]) -> Vec<&String> {
-    warnings.iter().filter(|warning| SEAM_WARNING_WORDS.iter().any(|word| warning.contains(word))).collect()
+pub fn seam_warnings(warnings: &[PatchWarning]) -> Vec<&PatchWarning> {
+    warnings.iter().filter(|warning| matches!(warning.kind, PatchWarningKind::Split | PatchWarningKind::Seam)).collect()
 }
 
 /// The state of the dry run for the current edits.
@@ -71,7 +68,7 @@ impl Preview {
         }
     }
 
-    pub fn warnings(&self) -> &[String] {
+    pub fn warnings(&self) -> &[PatchWarning] {
         self.plan().map(|plan| plan.warnings.as_slice()).unwrap_or_default()
     }
 }
@@ -107,18 +104,6 @@ impl PreviewCache {
     }
 }
 
-/// The inspection with the table sizes replaced by `dimensions` (every copy), for checking data against sizes not
-/// written yet.
-pub fn inspection_with_dimensions(inspection: &ClientExeInspection, dimensions: &[FacetGeometry]) -> ClientExeInspection {
-    let mut edited = inspection.clone();
-    for table in &mut edited.tables {
-        for (record, geometry) in table.records.iter_mut().zip(dimensions) {
-            record.geometry = *geometry;
-        }
-    }
-    edited
-}
-
 /// Counts of the checked items.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DataCounts {
@@ -138,8 +123,7 @@ pub struct DataCheck {
 impl DataCheck {
     /// Checks the data in `dir` against `inspection` with the sizes `dimensions`. Only reads.
     pub fn run(inspection: &ClientExeInspection, dimensions: &[FacetGeometry], dir: &Path) -> Self {
-        let edited = inspection_with_dimensions(inspection, dimensions);
-        let reports = check_client_facet_data(&edited, dir).map_err(|error| format!("{error:#}"));
+        let reports = check_client_facet_data_with_sizes(inspection, dimensions, dir).map_err(|error| format!("{error:#}"));
         Self { dir: dir.to_path_buf(), dimensions: dimensions.to_vec(), reports }
     }
 
