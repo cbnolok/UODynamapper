@@ -16,6 +16,8 @@ const COFF_OPTIONAL_HEADER_SIZE_OFFSET: usize = 16;
 const COFF_HEADER_SIZE: usize = 20;
 /// Optional header magic of a PE32 (32-bit) image; the clients are 32-bit.
 const PE32_MAGIC: u16 = 0x10b;
+/// Optional header magic of a PE32+ (64-bit) image: refused, with its own message (no OSI client is 64-bit).
+const PE32_PLUS_MAGIC: u16 = 0x20b;
 const OPTIONAL_IMAGE_BASE_OFFSET: usize = 28;
 /// The checksum field, from the start of the optional header (same in PE32 and PE32+).
 pub const OPTIONAL_CHECKSUM_OFFSET: usize = 64;
@@ -30,6 +32,13 @@ const SECTION_VIRTUAL_SIZE_OFFSET: usize = 8;
 const SECTION_VIRTUAL_ADDRESS_OFFSET: usize = 12;
 const SECTION_RAW_SIZE_OFFSET: usize = 16;
 const SECTION_RAW_OFFSET_OFFSET: usize = 20;
+const SECTION_CHARACTERISTICS_OFFSET: usize = 36;
+/// Section characteristics (`IMAGE_SCN_*`).
+pub const SECTION_CODE: u32 = 0x0000_0020;
+pub const SECTION_INITIALIZED_DATA: u32 = 0x0000_0040;
+pub const SECTION_EXECUTE: u32 = 0x2000_0000;
+pub const SECTION_READ: u32 = 0x4000_0000;
+pub const SECTION_WRITE: u32 = 0x8000_0000;
 /// Mask of the low 16 bits, the checksum fold.
 const LOW_16_BITS: u64 = 0xffff;
 const LOW_32_BITS: u64 = 0xffff_ffff;
@@ -43,12 +52,28 @@ pub struct PeSection {
     pub virtual_size: u32,
     pub raw_offset: u32,
     pub raw_size: u32,
+    /// `IMAGE_SCN_*` flags ([`SECTION_CODE`], [`SECTION_READ`], ...).
+    pub characteristics: u32,
 }
 
 impl PeSection {
     /// The file bytes of the section.
     pub fn raw_range(&self) -> std::ops::Range<usize> {
         self.raw_offset as usize..self.raw_offset as usize + self.raw_size as usize
+    }
+
+    /// Code: contains code or is executable.
+    pub fn is_code(&self) -> bool {
+        self.characteristics & (SECTION_CODE | SECTION_EXECUTE) != 0
+    }
+
+    /// Initialized data that is not code (`.data`, `.rdata`, ...).
+    pub fn is_data(&self) -> bool {
+        self.characteristics & SECTION_INITIALIZED_DATA != 0 && !self.is_code()
+    }
+
+    pub fn is_readable(&self) -> bool {
+        self.characteristics & SECTION_READ != 0
     }
 }
 
@@ -88,6 +113,10 @@ impl PeImage {
         let optional_size = read_u16(bytes, coff + COFF_OPTIONAL_HEADER_SIZE_OFFSET)? as usize;
         let optional = coff + COFF_HEADER_SIZE;
         let magic = read_u16(bytes, optional)?;
+        eyre::ensure!(
+            magic != PE32_PLUS_MAGIC,
+            "a 64-bit (PE32+) image: not supported, every OSI client (UOSA, UOKR, client.exe) is 32-bit"
+        );
         eyre::ensure!(magic == PE32_MAGIC, "optional header magic {magic:#x}: not a 32-bit (PE32) image");
         let image_base = read_u32(bytes, optional + OPTIONAL_IMAGE_BASE_OFFSET)?;
         let checksum_offset = optional + OPTIONAL_CHECKSUM_OFFSET;
@@ -112,6 +141,7 @@ impl PeImage {
                 virtual_size: read_u32(bytes, header + SECTION_VIRTUAL_SIZE_OFFSET)?,
                 raw_offset: read_u32(bytes, header + SECTION_RAW_OFFSET_OFFSET)?,
                 raw_size: read_u32(bytes, header + SECTION_RAW_SIZE_OFFSET)?,
+                characteristics: read_u32(bytes, header + SECTION_CHARACTERISTICS_OFFSET)?,
             });
         }
         Ok(Self { machine, image_base, checksum_offset, stored_checksum, security_directory, sections })
@@ -124,6 +154,11 @@ impl PeImage {
 
     pub fn section(&self, name: &str) -> Option<&PeSection> {
         self.sections.iter().find(|section| section.name == name)
+    }
+
+    /// The section that stores virtual address `va` in the file.
+    pub fn section_of_va(&self, va: u32) -> Option<&PeSection> {
+        self.sections.iter().find(|section| va.checked_sub(section.virtual_address).is_some_and(|delta| delta < section.raw_size))
     }
 
     /// The file offset of virtual address `va`, when a section stores it in the file.
@@ -178,6 +213,15 @@ pub(crate) mod tests {
     /// Raw offset and RVA alignment of the synthetic sections.
     pub const TEST_SECTION_ALIGNMENT: u32 = 0x1000;
 
+    /// The characteristics of a synthetic section: `.text` is code, `.data` writable data, any other read-only data.
+    fn synthetic_characteristics(name: &str) -> u32 {
+        match name {
+            ".text" => SECTION_CODE | SECTION_EXECUTE | SECTION_READ,
+            ".data" => SECTION_INITIALIZED_DATA | SECTION_READ | SECTION_WRITE,
+            _ => SECTION_INITIALIZED_DATA | SECTION_READ,
+        }
+    }
+
     /// A PE32 image with the given sections `(name, contents)`, each at its own aligned RVA equal to its raw
     /// offset; `signed` sets a security directory.
     pub fn synthetic_pe(sections: &[(&str, Vec<u8>)], signed: bool) -> Vec<u8> {
@@ -207,6 +251,7 @@ pub(crate) mod tests {
                 (SECTION_VIRTUAL_ADDRESS_OFFSET, raw_offset),
                 (SECTION_RAW_SIZE_OFFSET, size),
                 (SECTION_RAW_OFFSET_OFFSET, raw_offset),
+                (SECTION_CHARACTERISTICS_OFFSET, synthetic_characteristics(name)),
             ] {
                 bytes[header + field..header + field + 4].copy_from_slice(&value.to_le_bytes());
             }
@@ -229,6 +274,14 @@ pub(crate) mod tests {
         assert_eq!(pe.offset_to_va(data.raw_offset as usize + 4), Some(data.virtual_address + 4));
         assert_eq!(pe.va_to_offset(data.virtual_address + data.raw_size), None);
         assert!(PeImage::parse(&synthetic_pe(&[(TEXT, vec![0; 4])], true)).unwrap().is_signed());
+        assert!(pe.section(TEXT).unwrap().is_code() && !pe.section(TEXT).unwrap().is_data());
+        assert!(data.is_data() && data.is_readable());
+
+        let mut wide = image.clone();
+        let magic = TEST_PE_OFFSET + COFF_HEADER_OFFSET + COFF_HEADER_SIZE;
+        wide[magic..magic + 2].copy_from_slice(&PE32_PLUS_MAGIC.to_le_bytes());
+        let error = PeImage::parse(&wide).unwrap_err().to_string();
+        assert!(error.contains("64-bit"), "{error}");
     }
 
     #[test]

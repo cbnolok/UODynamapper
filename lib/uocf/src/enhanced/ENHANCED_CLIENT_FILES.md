@@ -173,7 +173,14 @@ Facet sizes in the executable (`client_exe::facet_dimensions`, `uocf-cli exe`):
 
 - The client sizes each facet from `UOFacet::g_FacetDimensions`, 7 records
   `{char* name, u32 width, u32 height}` in `.data` (EC `UOSA.exe` file
-  0x9a72a8; located in any build by the 7 name pointers). Changing a map size
+  0x9a72a8). It is located by structure in any build, never by hash: the one
+  run of 4..=16 consecutive 12-byte records whose pointer resolves to a short
+  NUL-terminated ASCII name (a letter, then letters, digits, space, `_'-`) in
+  a readable section and whose sizes are legal (1..=32704, multiples of 8),
+  in any initialized data section; names and record count are read from the
+  executable. Every EC and KR build has exactly one such run (7 records) and
+  no other executable in the client folders has any. 64-bit (PE32+) images
+  are refused. Changing a map size
   means patching a copy of the executable: `uocf-cli exe patch <exe> --output
   <copy> --facet N --width W --height H [--split X | --no-split]` writes the
   copy (a new file outside the client folder) and `<copy>.facet-dims.json`
@@ -181,12 +188,28 @@ Facet sizes in the executable (`client_exe::facet_dimensions`, `uocf-cli exe`):
   only with its manifest. Sizes: at most 32704, multiples of 8 (64 avoids
   padded sectors), at most 65536 sectors. The PE checksum is recomputed
   (`UOSA_eclo.exe` ships a wrong one); signed builds are refused. `exe show`
-  prints the table, split and checksum of a build (5 traced builds by SHA-256,
-  any other by signature).
+  prints the table, split and checksum of a build and how each was located;
+  the SHA-256 of the 5 traced builds is only a label (`build known: ...`)
+  and the tests' reference for their offsets.
 - The x = 5120 seam: `IsSameFeluccaTrammelHalf` makes facets 0 and 1 not
   build a chunk across x = 5120 (three imm32 0x1400 in UOSA, none in KR).
   A new layout must move it (`--split X`) or disable it (`--no-split`,
-  0x8000).
+  0x8000). It is found by decoding the sequence `CMP r/m,1; JG|JA T;
+  CMP r/m,S; JGE|JAE B; CMP X,S; JL|JB T; F: XOR AL,AL ...; B: CMP X,S;
+  JL|JB F; T: POP* MOV AL,1` (any registers, displacements, short or near
+  jumps; both `CMP X` on the same operand; the three S equal). UOSA:
+  `83 FF 01 7F ?? 81 7C 24 ?? [S] 7D ?? 81 FB [S] 7C ?? 32 C0 .. 81 FB [S]
+  7C ?? 5E B0 01`. At most one match is accepted; KR has none (patching
+  facet 0 or 1 without one warns).
+- Classic 2D clients (`client.exe` 5.0.9.1 to 7.0.103, Gold, Mondain's
+  Legacy, `client_tc.exe`) keep their map sizes in another table: 48-byte
+  records `{char* name, u32 width, u32 height, u32 wrap width, u32 wrap
+  height, 6 u32 ids, u32 flag}` in `.rdata` ("Felucca", ..., "Tokuno
+  Islands", "Ter Mur"; 5 records before Stygian Abyss, two 6-record copies
+  from 7.0 on, chosen by a global flag; Gold has 6144-wide Felucca and
+  Trammel, wrap width 5120). In 7.0.103 the accessors (0x5a0380 width,
+  0x5a03c0 height, facet <= 5) feed the current map's block counts
+  (0x593eb0). Not supported: the locator does not match it.
 - The executable alone is not enough. The data must have the new size too:
   `facetN.uop` (and `facetNx.uop`) with ceil(w/64)·ceil(h/64) sectors in
   column-major order (a new height renumbers every sector), `data.map`,

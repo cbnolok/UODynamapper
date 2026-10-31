@@ -5,7 +5,6 @@
 crate::eyre_imports!();
 use std::path::Path;
 
-use crate::client_exe::facet_dimensions::FACET_COUNT;
 use crate::enhanced::facet_definition::{read_facet_definition, FACET_DEFINITIONS_UOP_NAME};
 use crate::enhanced::facet_radar::{radar_dds_file_name, radar_mip_count, FacetRadarDds};
 use crate::enhanced::facet_sector::{data_map_entry_path, facet_package_file_name, sector_entry_path, FacetGeometry};
@@ -101,15 +100,16 @@ fn check_radar(items: &mut Vec<FacetDataItem>, path: &Path, geometry: FacetGeome
     }
 }
 
-/// Checks every facet of `dimensions` (an executable's facet table) against the data in `client_dir`. Only reads.
-pub fn check_facet_data(dimensions: &[FacetGeometry; FACET_COUNT], client_dir: &Path) -> eyre::Result<Vec<FacetDataReport>> {
+/// Checks every facet of `dimensions` (an executable's facet table, record order) against the data in `client_dir`.
+/// Only reads.
+pub fn check_facet_data(dimensions: &[FacetGeometry], client_dir: &Path) -> eyre::Result<Vec<FacetDataReport>> {
     let definitions_path = client_dir.join(FACET_DEFINITIONS_UOP_NAME);
     let definitions = if definitions_path.is_file() {
         Some(UopPackage::load(&definitions_path).wrap_err_with(|| format!("load {}", definitions_path.display()))?)
     } else {
         None
     };
-    let mut reports = Vec::with_capacity(FACET_COUNT);
+    let mut reports = Vec::with_capacity(dimensions.len());
     for (facet, geometry) in dimensions.iter().copied().enumerate() {
         let facet = facet as u8;
         let mut items = Vec::new();

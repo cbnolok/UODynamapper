@@ -5,14 +5,14 @@ use color_eyre::eyre::{self, WrapErr};
 use uocf::client_exe::facet_data::{check_facet_data, FacetDataStatus};
 use uocf::client_exe::facet_dimensions::{
     manifest_path, read_manifest, write_patched_client_exe, ClientExeFacets, FacetDimsPatch, SplitEdit,
-    DISABLED_SPLIT_X, FACET_NAMES, STOCK_SPLIT_X,
+    DISABLED_SPLIT_X, FACET_RECORD_SIZE, STOCK_SPLIT_X,
 };
 use uocf::enhanced::facet_sector::CLIENT_FACET_DIMENSIONS;
 
 #[derive(Subcommand, Debug)]
 pub enum ExeCmd {
     /// Print the facet size table, the x = 5120 Felucca/Trammel split and the PE checksum of a client executable
-    /// (UOSA*.exe, UOKR.exe). Only reads the file.
+    /// (UOSA*.exe, UOKR.exe; any 32-bit build, located by structure). Only reads the file.
     Show {
         exe: PathBuf,
     },
@@ -24,7 +24,7 @@ pub enum ExeCmd {
         /// The patched copy.
         #[arg(long)]
         output: PathBuf,
-        /// Facet index 0..6.
+        /// Facet index, below the table's record count (0..6 in the shipped builds).
         #[arg(long)]
         facet: u8,
         /// New width in squares (a multiple of 8, at most 32704).
@@ -77,9 +77,10 @@ fn split_label(x: u32) -> &'static str {
 }
 
 fn print_facets(facets: &ClientExeFacets) {
-    let build = facets.known.map_or("unknown build (located by signature)", |build| build.name);
     println!("sha256    {}", facets.sha256);
-    println!("build     {build}");
+    if let Some(build) = facets.known {
+        println!("build     known: {}", build.name);
+    }
     println!("size      {} bytes", facets.file_size);
     let state = if facets.checksum_valid() { "valid" } else { "INVALID" };
     println!(
@@ -88,11 +89,21 @@ fn print_facets(facets: &ClientExeFacets) {
     );
     let signed = if facets.pe.is_signed() { "Authenticode signed (cannot be patched)" } else { "not signed" };
     println!("signature {signed}");
-    println!("table     file {:#x}, VA {:#x}{}", facets.table_offset, facets.table_va, if facets.is_stock() { " (stock)" } else { "" });
-    for (facet, (geometry, name)) in facets.dimensions.iter().zip(FACET_NAMES).enumerate() {
-        let stock = if *geometry == CLIENT_FACET_DIMENSIONS[facet] { "" } else { "  (changed)" };
+    let table = &facets.table;
+    println!(
+        "table     located by structure: {} records of {FACET_RECORD_SIZE} bytes {{name pointer, width, height}} in {}, \
+         file {:#x}, VA {:#x}{}",
+        table.records.len(),
+        table.section,
+        table.offset,
+        table.va,
+        if facets.is_stock() { " (stock)" } else { "" }
+    );
+    for (facet, record) in table.records.iter().enumerate() {
+        let (geometry, name) = (record.geometry, &record.name);
+        let stock = if CLIENT_FACET_DIMENSIONS.get(facet) == Some(&geometry) { "" } else { "  (not stock)" };
         println!(
-            "  {facet} {name:<9} {:>5} x {:<5} {:>3} x {:<3} = {:>5} sectors{stock}",
+            "  {facet} {name:<14} {:>5} x {:<5} {:>3} x {:<3} = {:>5} sectors{stock}",
             geometry.width,
             geometry.height,
             geometry.sector_columns(),
@@ -101,7 +112,10 @@ fn print_facets(facets: &ClientExeFacets) {
         );
     }
     match facets.split {
-        None => println!("split     none (no x = 5120 Felucca/Trammel split in this build)"),
+        None => println!(
+            "split     not found: no x = 5120 Felucca/Trammel split sequence (Kingdom Reborn has none; in an \
+             Enhanced Client build, the split code has another shape: check it by hand)"
+        ),
         Some(split) => {
             let at = split
                 .offsets
@@ -109,7 +123,12 @@ fn print_facets(facets: &ClientExeFacets) {
                 .map(|offset| format!("{offset:#x} (VA {:#x})", facets.pe.offset_to_va(*offset).unwrap_or_default()))
                 .collect::<Vec<_>>()
                 .join(", ");
-            println!("split     x = {} ({}), imm32 at file {at}", split.x, split_label(split.x));
+            println!(
+                "split     located by instruction pattern at file {:#x}: x = {} ({}), imm32 at file {at}",
+                split.signature_offset,
+                split.x,
+                split_label(split.x)
+            );
         }
     }
 }
@@ -121,6 +140,9 @@ fn show(exe: &Path) -> eyre::Result<()> {
         let current = if manifest.patched_sha256 == facets.sha256 { "matches this file" } else { "STALE: another file" };
         println!("manifest  {} ({current})", manifest_path(exe).display());
         println!("  original {}", manifest.original_sha256);
+        if let Some(build) = &manifest.build {
+            println!("  build    known: {build}");
+        }
         println!("  source   {}", manifest.source_sha256);
     }
     Ok(())
@@ -144,14 +166,14 @@ fn patch(exe: &Path, output: &Path, patch: &FacetDimsPatch) -> eyre::Result<()> 
 
 fn check_data(exe: &Path, client_dir: &Path) -> eyre::Result<()> {
     let facets = inspect(exe)?;
-    let reports = check_facet_data(&facets.dimensions, client_dir)?;
+    let reports = check_facet_data(&facets.dimensions(), client_dir)?;
     let mut mismatches = 0;
     for report in &reports {
         let geometry = report.geometry;
         println!(
             "facet {} {} {}x{} ({} sectors)",
             report.facet,
-            FACET_NAMES[usize::from(report.facet)],
+            facets.table.records[usize::from(report.facet)].name,
             geometry.width,
             geometry.height,
             geometry.sector_count()

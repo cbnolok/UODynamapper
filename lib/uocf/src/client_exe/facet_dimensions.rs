@@ -2,14 +2,19 @@
 //! split at x = 5120: locate, report and patch them in a copy of the executable.
 //!
 //! Traced in `scripts/dev-helpers/ec-research/ghidra-facets/results/uosa_facets.md` ("Other dimension sites",
-//! "Constraints", "Builds and the cross-build patch recipe") and `uokr_facets.md`:
+//! "Constraints", "Builds and the cross-build patch recipe") and `uokr_facets.md`. Both are located by structure,
+//! in any build; the SHA-256 of a traced build ([`KNOWN_BUILDS`]) is only a label:
 //!
-//! - The table is 7 records `{char* name, u32 width, u32 height}` in `.data`, located by its name pointers
-//!   (Felucca, Trammel, Ilshenar, Malas, Tokuno, Gargoyle, Test). The client sizes its sector grid and chunk
-//!   bounds from it.
+//! - The table is a run of 12-byte records `{char* name, u32 width, u32 height}` in a data section: the name
+//!   pointer resolves to a short NUL-terminated ASCII name in a readable section, and the sizes are legal facet
+//!   sizes. Exactly one run of [`MIN_FACET_RECORDS`]..=[`MAX_FACET_RECORDS`] records is required (the shipped
+//!   builds have 7: Felucca, Trammel, Ilshenar, Malas, Tokuno, Gargoyle, Test). The client sizes its sector grid
+//!   and chunk bounds from it. Classic 2D clients keep their map sizes in another, 48-byte record table, which
+//!   this locator does not match.
 //! - `UOFacet::IsSameFeluccaTrammelHalf` (UOSA 0x005df670) returns false, for facets 0 and 1, when two x lie on
 //!   different sides of 5120; `BuildChunkFromSector` then does not build the chunk. The 5120 is three imm32 in one
-//!   `.text` sequence; 0x8000, above any legal width, disables the split. Kingdom Reborn has no split.
+//!   `.text` sequence, found by decoding its instructions ([`SPLIT_SIGNATURE`]); 0x8000, above any legal width,
+//!   disables the split. Kingdom Reborn has no split.
 //! - The PE checksum is recomputed (the client does not verify it: `UOSA_eclo.exe` ships a wrong one and runs).
 //!   A signed (Authenticode) build is refused, since any patch breaks its signature; no shipped build is signed.
 //!
@@ -18,22 +23,30 @@
 crate::eyre_imports!();
 use std::path::{Path, PathBuf};
 
-use crate::client_exe::pe::{pe_checksum, read_u32, PeImage, MACHINE_I386};
+use crate::client_exe::pe::{pe_checksum, read_u32, PeImage, PeSection, MACHINE_I386};
 use crate::client_exe::sha256::sha256_hex;
 use crate::enhanced::client_dialect::ClientDialect;
 use crate::enhanced::facet_sector::{FacetGeometry, CLIENT_FACET_DIMENSIONS, SECTOR_SIDE};
 
-/// Facets of the table; every client reader rejects a facet >= 7.
-pub const FACET_COUNT: usize = CLIENT_FACET_DIMENSIONS.len();
-/// The table's facet names, in record order.
-pub const FACET_NAMES: [&str; FACET_COUNT] = ["Felucca", "Trammel", "Ilshenar", "Malas", "Tokuno", "Gargoyle", "Test"];
+/// Records of the shipped tables (Enhanced Client and Kingdom Reborn); every reader there rejects a facet >= 7.
+pub const STOCK_FACET_COUNT: usize = CLIENT_FACET_DIMENSIONS.len();
+/// The fewest records of a table: Felucca, Trammel, Ilshenar and Malas exist in every client since Age of Shadows.
+pub const MIN_FACET_RECORDS: usize = 4;
+/// The most records of a table: the facet nibble of the client's chunk key holds 16 facets.
+pub const MAX_FACET_RECORDS: usize = 16;
+/// The name pointer of a record (32-bit images only).
+const NAME_POINTER_SIZE: usize = size_of::<u32>();
 /// Bytes of a table record: `char* name, u32 width, u32 height`.
-pub const FACET_RECORD_SIZE: usize = 12;
-const FACET_RECORD_WIDTH_OFFSET: usize = 4;
-const FACET_RECORD_HEIGHT_OFFSET: usize = 8;
+pub const FACET_RECORD_SIZE: usize = NAME_POINTER_SIZE + 2 * size_of::<u32>();
+const FACET_RECORD_WIDTH_OFFSET: usize = NAME_POINTER_SIZE;
+const FACET_RECORD_HEIGHT_OFFSET: usize = FACET_RECORD_WIDTH_OFFSET + size_of::<u32>();
 /// The table is pointer aligned.
-const TABLE_SCAN_STEP: usize = size_of::<u32>();
-const TABLE_SECTION: &str = ".data";
+const TABLE_SCAN_STEP: usize = NAME_POINTER_SIZE;
+/// Facet names are short ASCII words ("Felucca", "Ter Mur"): a letter, then letters, digits or
+/// [`FACET_NAME_PUNCTUATION`], NUL terminated.
+const MIN_FACET_NAME_LEN: usize = 2;
+const MAX_FACET_NAME_LEN: usize = 31;
+const FACET_NAME_PUNCTUATION: &[u8] = b" _'-";
 const CODE_SECTION: &str = ".text";
 
 /// The largest width or height: the land accessors reject x or y > 0x7fe0, and the side is a multiple of 64.
@@ -49,25 +62,71 @@ pub const STOCK_SPLIT_X: u32 = 5120;
 pub const DISABLED_SPLIT_X: u32 = 0x8000;
 /// The facets the split applies to.
 pub const SPLIT_FACETS: [u8; 2] = [0, 1];
-/// `CMP EDI,1; JG r8; CMP [ESP+8],imm32; JGE r8; CMP EBX,imm32; JL r8; XOR AL,AL`.
-const SPLIT_PATTERN: &str = "83 FF 01 7F ?? 81 7C 24 08 ?? ?? ?? ?? 7D ?? 81 FB ?? ?? ?? ?? 7C ?? 32 C0";
-/// Offsets of the two imm32 inside [`SPLIT_PATTERN`].
-const SPLIT_IMMEDIATE_OFFSETS: [usize; 2] = [9, 17];
-/// `CMP EBX,imm32; JL -18; POP ESI; MOV AL,1`, within [`SPLIT_TAIL_WINDOW`] bytes after [`SPLIT_PATTERN`].
-const SPLIT_TAIL_PATTERN: &str = "81 FB ?? ?? ?? ?? 7C EE 5E B0 01";
-const SPLIT_TAIL_IMMEDIATE_OFFSET: usize = 2;
-const SPLIT_TAIL_WINDOW: usize = 32;
 /// The three imm32 of the split.
 pub const SPLIT_IMMEDIATE_COUNT: usize = 3;
-const PATTERN_WILDCARD: &str = "??";
-const HEX_RADIX: u32 = 16;
+/// The split sequence the matcher decodes (`r`, `m`: any register or memory operand; `X`: the same operand in
+/// both places; `jcc`: a short or near jump; the three imm32 must be equal):
+///
+/// ```text
+/// CMP r/m,1      ; JG|JA   T       facet > 1: same half
+/// CMP r/m,imm32  ; JGE|JAE B       x1 >= split
+/// CMP X,imm32    ; JL|JB   T       x1 < split, x2 < split: same half
+/// F: XOR AL,AL   ...               different halves
+/// B: CMP X,imm32 ; JL|JB   F       x1 >= split, x2 < split: different halves
+/// T: POP r ...   ; MOV AL,1        same half
+/// ```
+///
+/// UOSA: `83 FF 01 7F 24 81 7C 24 08 [imm32] 7D 12 81 FB [imm32] 7C 12 32 C0 .. 81 FB [imm32] 7C EE 5E B0 01`.
+pub const SPLIT_SIGNATURE: &str = "CMP r/m,1; JG T; CMP r/m,S; JGE B; CMP X,S; JL T; F: XOR AL,AL; .. \
+                                   B: CMP X,S; JL F; .. T: POP*; MOV AL,1";
+
+/// x86 (32-bit) encodings the split matcher decodes.
+const OPCODE_CMP_RM32_IMM32: u8 = 0x81;
+const OPCODE_CMP_RM32_IMM8: u8 = 0x83;
+const OPCODE_CMP_EAX_IMM32: u8 = 0x3d;
+/// The ModRM reg field of CMP in the 0x81 / 0x83 opcode groups.
+const MODRM_REG_CMP: u8 = 7;
+const MODRM_MOD_SHIFT: u8 = 6;
+const MODRM_REG_SHIFT: u8 = 3;
+const MODRM_FIELD_MASK: u8 = 0b111;
+const MODRM_REG_FIELD: u8 = MODRM_FIELD_MASK << MODRM_REG_SHIFT;
+const MOD_INDIRECT: u8 = 0;
+const MOD_DISP8: u8 = 1;
+const MOD_DISP32: u8 = 2;
+const MOD_REGISTER: u8 = 3;
+/// rm = 100: a SIB byte follows; rm = 101 with mod 00 (or SIB base 101 with mod 00): a disp32 without base.
+const RM_SIB: u8 = 0b100;
+const RM_DISP32: u8 = 0b101;
+const REGISTER_EAX: u8 = 0;
+const OPCODE_JCC_SHORT: u8 = 0x70;
+const OPCODE_TWO_BYTE: u8 = 0x0f;
+const OPCODE_JCC_NEAR: u8 = 0x80;
+const JCC_CONDITION_MASK: u8 = 0x0f;
+const JCC_SHORT_SIZE: usize = 2;
+const JCC_NEAR_SIZE: usize = 6;
+/// Jcc conditions: below, above or equal, above, less, greater or equal, greater.
+const CONDITION_B: u8 = 0x2;
+const CONDITION_AE: u8 = 0x3;
+const CONDITION_A: u8 = 0x7;
+const CONDITION_L: u8 = 0xc;
+const CONDITION_GE: u8 = 0xd;
+const CONDITION_G: u8 = 0xf;
+/// The facet compare: `facet > 1` is outside [`SPLIT_FACETS`].
+const SPLIT_FACET_LIMIT: u8 = 1;
+/// `XOR AL,AL` (both encodings) or `XOR EAX,EAX`: the false result.
+const CLEAR_RESULT: [[u8; 2]; 3] = [[0x32, 0xc0], [0x30, 0xc0], [0x33, 0xc0]];
+/// `MOV AL,1`: the true result, after at most [`MAX_POPS_BEFORE_RESULT`] one-byte `POP r32`.
+const SET_RESULT: [u8; 2] = [0xb0, 0x01];
+const POP_REGISTER_OPCODES: std::ops::RangeInclusive<u8> = 0x58..=0x5f;
+const MAX_POPS_BEFORE_RESULT: usize = 4;
 
 /// Appended to the file name of a patched copy for its manifest.
 pub const MANIFEST_SUFFIX: &str = ".facet-dims.json";
 pub const MANIFEST_FORMAT: &str = "uocf-facet-dims";
 pub const MANIFEST_VERSION: u32 = 1;
 
-/// A client build whose layout was traced.
+/// A client build whose layout was traced. Only a label for reports and a reference for the tests: the table and
+/// the split are always located by structure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KnownBuild {
     pub name: &'static str,
@@ -135,9 +194,37 @@ pub fn known_build(sha256: &str) -> Option<&'static KnownBuild> {
     KNOWN_BUILDS.iter().find(|build| build.sha256 == sha256)
 }
 
+/// One record of a located table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FacetTableRecord {
+    /// The name the record points to.
+    pub name: String,
+    pub geometry: FacetGeometry,
+}
+
+/// A run of facet records in a data section.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FacetTable {
+    pub section: String,
+    /// File offset and virtual address of the first record.
+    pub offset: usize,
+    pub va: u32,
+    pub records: Vec<FacetTableRecord>,
+}
+
+/// One match of [`SPLIT_SIGNATURE`]: the file offsets of the facet compare and of the three imm32, and their values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SplitCandidate {
+    pub signature_offset: usize,
+    pub offsets: [usize; SPLIT_IMMEDIATE_COUNT],
+    pub values: [u32; SPLIT_IMMEDIATE_COUNT],
+}
+
 /// The split of a build: the file offsets of its three imm32 and their (equal) value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FacetSplit {
+    /// File offset of the facet compare that starts [`SPLIT_SIGNATURE`].
+    pub signature_offset: usize,
     pub offsets: [usize; SPLIT_IMMEDIATE_COUNT],
     pub x: u32,
 }
@@ -163,50 +250,58 @@ pub struct FacetDimsRecord {
 pub struct ClientExeFacets {
     pub sha256: String,
     pub file_size: usize,
+    /// The traced build of the same SHA-256, as a label.
     pub known: Option<&'static KnownBuild>,
     pub pe: PeImage,
     /// The checksum the file should store.
     pub computed_checksum: u32,
-    pub table_offset: usize,
-    pub table_va: u32,
-    pub dimensions: [FacetGeometry; FACET_COUNT],
+    pub table: FacetTable,
     pub split: Option<FacetSplit>,
 }
 
 impl ClientExeFacets {
-    /// Locates the table and the split of the client executable `bytes` (PE32 i386) by their signatures, and
-    /// checks them against the known build of the same SHA-256. Fails without exactly one table, with more than
-    /// one split or a split whose three values differ.
+    /// Locates the table and the split of the client executable `bytes` (PE32 i386) by their structure. Fails
+    /// without exactly one table, with more than one split or a split whose three values differ. The SHA-256 only
+    /// selects the [`KnownBuild`] label.
     pub fn inspect(bytes: &[u8]) -> eyre::Result<Self> {
         let pe = PeImage::parse(bytes)?;
         eyre::ensure!(pe.machine == MACHINE_I386, "COFF machine {:#x}: not an i386 image", pe.machine);
+        let mut tables = locate_facet_tables(bytes, &pe);
+        eyre::ensure!(
+            tables.len() == 1,
+            "{} facet size tables found, expected exactly 1 (a run of {MIN_FACET_RECORDS}..={MAX_FACET_RECORDS} \
+             {FACET_RECORD_SIZE}-byte {{name pointer, width, height}} records; Classic 2D clients store their map \
+             sizes differently and are not supported)",
+            tables.len()
+        );
+        let table = tables.remove(0);
+        let split = match locate_split_candidates(bytes, &pe)?[..] {
+            [] => None,
+            [candidate] => {
+                let [first, ..] = candidate.values;
+                eyre::ensure!(
+                    candidate.values.iter().all(|value| *value == first),
+                    "the three split values at {:#x} differ: {:?}",
+                    candidate.signature_offset,
+                    candidate.values
+                );
+                Some(FacetSplit { signature_offset: candidate.signature_offset, offsets: candidate.offsets, x: first })
+            }
+            ref candidates => eyre::bail!("{} x = 5120 split sequences found, expected at most 1", candidates.len()),
+        };
         let sha256 = sha256_hex(bytes);
         let known = known_build(&sha256);
-        let tables = find_tables(bytes, &pe)?;
-        let [table_offset] = tables[..] else {
-            eyre::bail!("{} facet tables found, expected exactly 1", tables.len());
-        };
-        let table_va = pe.offset_to_va(table_offset).expect("the table lies in .data");
-        let mut dimensions = CLIENT_FACET_DIMENSIONS;
-        for (facet, geometry) in dimensions.iter_mut().enumerate() {
-            let record = table_offset + FACET_RECORD_SIZE * facet;
-            *geometry = FacetGeometry::new(
-                read_u32(bytes, record + FACET_RECORD_WIDTH_OFFSET)?,
-                read_u32(bytes, record + FACET_RECORD_HEIGHT_OFFSET)?,
-            );
-        }
-        let split = find_split(bytes, &pe)?;
-        if let Some(build) = known {
-            eyre::ensure!(
-                build.table_offset == table_offset
-                    && build.split_offsets == split.map(|split| split.offsets)
-                    && build.checksum_offset == pe.checksum_offset,
-                "{}: the located table, split or checksum differ from the traced build",
-                build.name
-            );
-        }
         let computed_checksum = pe_checksum(bytes, pe.checksum_offset);
-        Ok(Self { sha256, file_size: bytes.len(), known, pe, computed_checksum, table_offset, table_va, dimensions, split })
+        Ok(Self { sha256, file_size: bytes.len(), known, pe, computed_checksum, table, split })
+    }
+
+    /// Records of the table.
+    pub fn facet_count(&self) -> usize {
+        self.table.records.len()
+    }
+
+    pub fn dimensions(&self) -> Vec<FacetGeometry> {
+        self.table.records.iter().map(|record| record.geometry).collect()
     }
 
     /// True when the stored PE checksum is the computed one.
@@ -217,83 +312,209 @@ impl ClientExeFacets {
     pub fn values(&self) -> FacetDimsValues {
         FacetDimsValues {
             facets: self
-                .dimensions
+                .table
+                .records
                 .iter()
-                .zip(FACET_NAMES)
                 .enumerate()
-                .map(|(facet, (geometry, name))| FacetDimsRecord {
+                .map(|(facet, record)| FacetDimsRecord {
                     facet: facet as u8,
-                    name: name.to_owned(),
-                    width: geometry.width,
-                    height: geometry.height,
+                    name: record.name.clone(),
+                    width: record.geometry.width,
+                    height: record.geometry.height,
                 })
                 .collect(),
             split_x: self.split.map(|split| split.x),
         }
     }
 
-    /// True when the table has the shipped sizes and the split (if any) is at 5120.
+    /// True when every record has the shipped size of its facet ([`CLIENT_FACET_DIMENSIONS`]) and the split (if
+    /// any) is at 5120.
     pub fn is_stock(&self) -> bool {
-        self.dimensions == CLIENT_FACET_DIMENSIONS && self.split.is_none_or(|split| split.x == STOCK_SPLIT_X)
+        self.facet_count() <= STOCK_FACET_COUNT
+            && self.table.records.iter().zip(CLIENT_FACET_DIMENSIONS).all(|(record, stock)| record.geometry == stock)
+            && self.split.is_none_or(|split| split.x == STOCK_SPLIT_X)
     }
 }
 
-/// `"83 FF ?? ..."` as bytes, `None` for a wildcard.
-fn parse_pattern(pattern: &str) -> Vec<Option<u8>> {
-    pattern
-        .split_whitespace()
-        .map(|token| (token != PATTERN_WILDCARD).then(|| u8::from_str_radix(token, HEX_RADIX).expect("hex byte")))
-        .collect()
+/// A legal facet width or height.
+fn plausible_side(side: u32) -> bool {
+    (1..=MAX_FACET_SIDE).contains(&side) && side % FACET_SIDE_ALIGNMENT == 0
 }
 
-fn matches_at(bytes: &[u8], at: usize, pattern: &[Option<u8>]) -> bool {
-    bytes
-        .get(at..at + pattern.len())
-        .is_some_and(|window| window.iter().zip(pattern).all(|(byte, expected)| expected.is_none_or(|e| e == *byte)))
+/// The facet name at virtual address `va`: NUL-terminated ASCII in a readable section (see [`MIN_FACET_NAME_LEN`]).
+fn facet_name_at(bytes: &[u8], pe: &PeImage, va: u32) -> Option<String> {
+    let section = pe.section_of_va(va).filter(|section| section.is_readable())?;
+    let start = section.raw_offset as usize + (va - section.virtual_address) as usize;
+    let end = section.raw_range().end.min(bytes.len()).min(start + MAX_FACET_NAME_LEN + 1);
+    let text = bytes.get(start..end)?;
+    let len = text.iter().position(|byte| *byte == 0)?;
+    let name = &text[..len];
+    let valid = len >= MIN_FACET_NAME_LEN
+        && name[0].is_ascii_alphabetic()
+        && name.iter().all(|byte| byte.is_ascii_alphanumeric() || FACET_NAME_PUNCTUATION.contains(byte));
+    valid.then(|| String::from_utf8_lossy(name).into_owned())
 }
 
-/// File offsets in `.data`, at pointer steps, of 7 records whose name pointers resolve to [`FACET_NAMES`].
-fn find_tables(bytes: &[u8], pe: &PeImage) -> eyre::Result<Vec<usize>> {
-    let data = pe.section(TABLE_SECTION).ok_or_else(|| eyre!("no {TABLE_SECTION} section"))?;
-    let range = data.raw_range();
-    let table_size = FACET_RECORD_SIZE * FACET_COUNT;
-    let names_at = |table: usize| {
-        FACET_NAMES.iter().enumerate().all(|(facet, name)| {
-            let Ok(pointer) = read_u32(bytes, table + FACET_RECORD_SIZE * facet) else {
-                return false;
-            };
-            pe.va_to_offset(pointer).is_some_and(|offset| {
-                bytes.get(offset..offset + name.len()) == Some(name.as_bytes()) && bytes.get(offset + name.len()) == Some(&0)
-            })
-        })
+/// The record at file offset `offset` of `section`, when it is one.
+fn facet_record_at(bytes: &[u8], pe: &PeImage, section: &PeSection, offset: usize) -> Option<FacetTableRecord> {
+    if offset + FACET_RECORD_SIZE > section.raw_range().end.min(bytes.len()) {
+        return None;
+    }
+    let width = read_u32(bytes, offset + FACET_RECORD_WIDTH_OFFSET).ok()?;
+    let height = read_u32(bytes, offset + FACET_RECORD_HEIGHT_OFFSET).ok()?;
+    if !(plausible_side(width) && plausible_side(height)) {
+        return None;
+    }
+    let name = facet_name_at(bytes, pe, read_u32(bytes, offset).ok()?)?;
+    Some(FacetTableRecord { name, geometry: FacetGeometry::new(width, height) })
+}
+
+/// Every candidate table: the maximal runs of [`MIN_FACET_RECORDS`]..=[`MAX_FACET_RECORDS`] consecutive records, at
+/// pointer steps, in the data sections.
+pub fn locate_facet_tables(bytes: &[u8], pe: &PeImage) -> Vec<FacetTable> {
+    let mut tables = Vec::new();
+    for section in pe.sections.iter().filter(|section| section.is_data()) {
+        let range = section.raw_range();
+        for start in (range.start..range.end.min(bytes.len())).step_by(TABLE_SCAN_STEP) {
+            let continues_a_run = start >= range.start + FACET_RECORD_SIZE
+                && facet_record_at(bytes, pe, section, start - FACET_RECORD_SIZE).is_some();
+            if continues_a_run {
+                continue;
+            }
+            let records: Vec<FacetTableRecord> = (0..)
+                .map_while(|index| facet_record_at(bytes, pe, section, start + FACET_RECORD_SIZE * index))
+                .take(MAX_FACET_RECORDS + 1)
+                .collect();
+            if (MIN_FACET_RECORDS..=MAX_FACET_RECORDS).contains(&records.len()) {
+                let va = pe.offset_to_va(start).expect("the table lies in its section");
+                tables.push(FacetTable { section: section.name.clone(), offset: start, va, records });
+            }
+        }
+    }
+    tables
+}
+
+/// The operand of a decoded compare: a register, or the ModRM (reg field cleared), SIB and displacement bytes of a
+/// memory operand. Equal operands are equal locations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Operand<'a> {
+    Register(u8),
+    Memory(u8, &'a [u8]),
+}
+
+/// The r/m operand of the ModRM byte at `at`: its ModRM reg field, the operand and the bytes ModRM, SIB and
+/// displacement take.
+fn decode_modrm(code: &[u8], at: usize) -> Option<(u8, Operand<'_>, usize)> {
+    let modrm = *code.get(at)?;
+    let (mode, reg, rm) =
+        (modrm >> MODRM_MOD_SHIFT, (modrm >> MODRM_REG_SHIFT) & MODRM_FIELD_MASK, modrm & MODRM_FIELD_MASK);
+    if mode == MOD_REGISTER {
+        return Some((reg, Operand::Register(rm), 1));
+    }
+    let mut len = 1;
+    let mut absolute = mode == MOD_INDIRECT && rm == RM_DISP32;
+    if rm == RM_SIB {
+        let base = *code.get(at + len)? & MODRM_FIELD_MASK;
+        absolute = mode == MOD_INDIRECT && base == RM_DISP32;
+        len += 1;
+    }
+    len += match mode {
+        MOD_DISP8 => size_of::<u8>(),
+        MOD_DISP32 => size_of::<u32>(),
+        _ if absolute => size_of::<u32>(),
+        _ => 0,
     };
-    Ok((range.start..range.end.min(bytes.len()).saturating_sub(table_size))
-        .step_by(TABLE_SCAN_STEP)
-        .filter(|&table| names_at(table))
-        .collect())
+    let rest = code.get(at + 1..at + len)?;
+    Some((reg, Operand::Memory(modrm & !MODRM_REG_FIELD, rest), len))
 }
 
-/// The split of the build: `None` without the signature (Kingdom Reborn); fails on more than one hit, a hit
-/// without its tail, or differing values.
-fn find_split(bytes: &[u8], pe: &PeImage) -> eyre::Result<Option<FacetSplit>> {
+/// A decoded `CMP r/m32, imm32` (or `CMP EAX, imm32`).
+struct CompareImm32<'a> {
+    operand: Operand<'a>,
+    imm_offset: usize,
+    imm: u32,
+    end: usize,
+}
+
+fn decode_cmp_imm32(code: &[u8], at: usize) -> Option<CompareImm32<'_>> {
+    let (operand, imm_offset) = match *code.get(at)? {
+        OPCODE_CMP_EAX_IMM32 => (Operand::Register(REGISTER_EAX), at + 1),
+        OPCODE_CMP_RM32_IMM32 => {
+            let (reg, operand, len) = decode_modrm(code, at + 1)?;
+            (reg == MODRM_REG_CMP).then_some((operand, at + 1 + len))?
+        }
+        _ => return None,
+    };
+    let imm = u32::from_le_bytes(code.get(imm_offset..imm_offset + size_of::<u32>())?.try_into().ok()?);
+    Some(CompareImm32 { operand, imm_offset, imm, end: imm_offset + size_of::<u32>() })
+}
+
+/// The end of a `CMP r/m32, imm8` with immediate `expected` at `at`.
+fn decode_cmp_imm8(code: &[u8], at: usize, expected: u8) -> Option<usize> {
+    (*code.get(at)? == OPCODE_CMP_RM32_IMM8).then_some(())?;
+    let (reg, _, len) = decode_modrm(code, at + 1)?;
+    let imm_at = at + 1 + len;
+    (reg == MODRM_REG_CMP && *code.get(imm_at)? == expected).then_some(imm_at + size_of::<u8>())
+}
+
+/// A short or near conditional jump at `at`: its condition, target and end.
+fn decode_jcc(code: &[u8], at: usize) -> Option<(u8, usize, usize)> {
+    let opcode = *code.get(at)?;
+    let (condition, displacement, end) = if opcode & !JCC_CONDITION_MASK == OPCODE_JCC_SHORT {
+        (opcode & JCC_CONDITION_MASK, i64::from(*code.get(at + 1)? as i8), at + JCC_SHORT_SIZE)
+    } else if opcode == OPCODE_TWO_BYTE && *code.get(at + 1)? & !JCC_CONDITION_MASK == OPCODE_JCC_NEAR {
+        let rel = code.get(at + 2..at + JCC_NEAR_SIZE)?;
+        let condition = code[at + 1] & JCC_CONDITION_MASK;
+        (condition, i64::from(i32::from_le_bytes(rel.try_into().ok()?)), at + JCC_NEAR_SIZE)
+    } else {
+        return None;
+    };
+    let target = usize::try_from(end as i64 + displacement).ok().filter(|target| *target < code.len())?;
+    Some((condition, target, end))
+}
+
+/// A jump at `at` with one of `conditions`: its target and end.
+fn jump_if(code: &[u8], at: usize, conditions: [u8; 2]) -> Option<(usize, usize)> {
+    let (condition, target, end) = decode_jcc(code, at)?;
+    conditions.contains(&condition).then_some((target, end))
+}
+
+/// [`SPLIT_SIGNATURE`] at `at` of `code`: the three compares.
+fn match_split(code: &[u8], at: usize) -> Option<[CompareImm32<'_>; SPLIT_IMMEDIATE_COUNT]> {
+    let after_facet = decode_cmp_imm8(code, at, SPLIT_FACET_LIMIT)?;
+    let (same_half, after) = jump_if(code, after_facet, [CONDITION_G, CONDITION_A])?;
+    let first = decode_cmp_imm32(code, after)?;
+    let (first_above, after) = jump_if(code, first.end, [CONDITION_GE, CONDITION_AE])?;
+    let second = decode_cmp_imm32(code, after)?;
+    let (target, different_halves) = jump_if(code, second.end, [CONDITION_L, CONDITION_B])?;
+    (target == same_half).then_some(())?;
+    let clears = code.get(different_halves..different_halves + CLEAR_RESULT[0].len())?;
+    CLEAR_RESULT.iter().any(|clear| clear == clears).then_some(())?;
+    let third = decode_cmp_imm32(code, first_above)?;
+    (third.operand == second.operand).then_some(())?;
+    let (target, _) = jump_if(code, third.end, [CONDITION_L, CONDITION_B])?;
+    (target == different_halves).then_some(())?;
+    let pops = code.get(same_half..)?.iter().take(MAX_POPS_BEFORE_RESULT);
+    let result = same_half + pops.take_while(|opcode| POP_REGISTER_OPCODES.contains(opcode)).count();
+    (code.get(result..result + SET_RESULT.len())? == SET_RESULT).then_some([first, second, third])
+}
+
+/// Every match of [`SPLIT_SIGNATURE`] in `.text`, whatever its registers, displacements, jump forms and values.
+pub fn locate_split_candidates(bytes: &[u8], pe: &PeImage) -> eyre::Result<Vec<SplitCandidate>> {
     let text = pe.section(CODE_SECTION).ok_or_else(|| eyre!("no {CODE_SECTION} section"))?;
     let range = text.raw_range();
-    let (pattern, tail) = (parse_pattern(SPLIT_PATTERN), parse_pattern(SPLIT_TAIL_PATTERN));
-    let hits: Vec<usize> = (range.start..range.end.min(bytes.len())).filter(|&at| matches_at(bytes, at, &pattern)).collect();
-    let hit = match hits[..] {
-        [] => return Ok(None),
-        [hit] => hit,
-        _ => eyre::bail!("{} x = 5120 split signatures found, expected at most 1", hits.len()),
-    };
-    let after = hit + pattern.len();
-    let tail_at = (after..after + SPLIT_TAIL_WINDOW - tail.len() + 1)
-        .find(|&at| matches_at(bytes, at, &tail))
-        .ok_or_else(|| eyre!("the split signature at {hit:#x} has no tail compare"))?;
-    let [first, second] = SPLIT_IMMEDIATE_OFFSETS.map(|offset| hit + offset);
-    let offsets = [first, second, tail_at + SPLIT_TAIL_IMMEDIATE_OFFSET];
-    let values = offsets.map(|offset| read_u32(bytes, offset).expect("inside the matched pattern"));
-    eyre::ensure!(values.iter().all(|value| *value == values[0]), "the three split values differ: {values:?}");
-    Ok(Some(FacetSplit { offsets, x: values[0] }))
+    let code = bytes.get(range.start..range.end.min(bytes.len())).unwrap_or_default();
+    Ok((0..code.len())
+        .filter(|&at| code[at] == OPCODE_CMP_RM32_IMM8)
+        .filter_map(|at| {
+            let compares = match_split(code, at)?;
+            Some(SplitCandidate {
+                signature_offset: range.start + at,
+                offsets: compares.each_ref().map(|compare| range.start + compare.imm_offset),
+                values: compares.each_ref().map(|compare| compare.imm),
+            })
+        })
+        .collect())
 }
 
 /// What a patch does to the split.
@@ -371,8 +592,9 @@ pub fn patch_facet_dimensions(
     previous: Option<&FacetDimsManifest>,
 ) -> eyre::Result<PatchedClientExe> {
     let facet = usize::from(patch.facet);
-    eyre::ensure!(facet < FACET_COUNT, "facet {facet}: the client has facets 0..{FACET_COUNT}");
     let before = ClientExeFacets::inspect(bytes)?;
+    let facet_count = before.facet_count();
+    eyre::ensure!(facet < facet_count, "facet {facet}: the table has facets 0..{facet_count}");
     eyre::ensure!(!before.pe.is_signed(), "the executable is Authenticode signed; a patch would break the signature");
     let previous = previous.filter(|manifest| manifest.patched_sha256 == before.sha256);
     let (original_sha256, build) = match previous {
@@ -397,8 +619,14 @@ pub fn patch_facet_dimensions(
         SplitEdit::Set(x) => Some(x),
         SplitEdit::Disable => Some(DISABLED_SPLIT_X),
     };
+    if split_x.is_none() && before.split.is_none() && SPLIT_FACETS.contains(&patch.facet) {
+        warnings.push(format!(
+            "no x = {STOCK_SPLIT_X} split sequence found: right for Kingdom Reborn; in an Enhanced Client build, the \
+             split code differs from the known sequence"
+        ));
+    }
     let mut patched = bytes.to_vec();
-    let record = before.table_offset + FACET_RECORD_SIZE * facet;
+    let record = before.table.offset + FACET_RECORD_SIZE * facet;
     let mut allowed = vec![record + FACET_RECORD_WIDTH_OFFSET..record + FACET_RECORD_SIZE];
     patched[record + FACET_RECORD_WIDTH_OFFSET..][..size_of::<u32>()].copy_from_slice(&patch.width.to_le_bytes());
     patched[record + FACET_RECORD_HEIGHT_OFFSET..][..size_of::<u32>()].copy_from_slice(&patch.height.to_le_bytes());
@@ -407,7 +635,7 @@ pub fn patch_facet_dimensions(
             SPLIT_FACETS.contains(&patch.facet),
             "the split concerns facets {SPLIT_FACETS:?}, not facet {facet}"
         );
-        let split = before.split.ok_or_else(|| eyre!("this build has no x = 5120 split (Kingdom Reborn)"))?;
+        let split = before.split.ok_or_else(|| eyre!("no x = {STOCK_SPLIT_X} split sequence found in this build"))?;
         eyre::ensure!((1..=DISABLED_SPLIT_X).contains(&x), "split x {x} is outside 1..={DISABLED_SPLIT_X}");
         if x != DISABLED_SPLIT_X && x >= patch.width {
             warnings.push(format!("split x {x} is not inside the new width {}: nothing is split", patch.width));
@@ -428,6 +656,11 @@ pub fn patch_facet_dimensions(
     eyre::ensure!(stray.is_none(), "internal error: byte {stray:?} changed outside the patched fields");
     let after = ClientExeFacets::inspect(&patched)?;
     eyre::ensure!(after.checksum_valid(), "internal error: the written checksum does not verify");
+    let same_split = after.split.map(|split| split.offsets) == before.split.map(|split| split.offsets);
+    eyre::ensure!(
+        after.table.offset == before.table.offset && same_split,
+        "internal error: the patched copy's table or split is located elsewhere"
+    );
     let manifest = FacetDimsManifest {
         format: MANIFEST_FORMAT.to_owned(),
         version: MANIFEST_VERSION,
@@ -511,32 +744,47 @@ pub(crate) mod tests {
     const NEW_WIDTH: u32 = 8192;
     const NEW_HEIGHT: u32 = 4608;
     const NEW_SPLIT: u32 = 6144;
+    /// The shipped facet names.
+    const STOCK_NAMES: [&str; STOCK_FACET_COUNT] =
+        ["Felucca", "Trammel", "Ilshenar", "Malas", "Tokuno", "Gargoyle", "Test"];
+    /// `UOFacet::IsSameFeluccaTrammelHalf` from the facet compare to its end (UOSA.exe file 0x1df6d2), with the
+    /// split imm32 at [`SPLIT_IMMEDIATES`].
+    const UOSA_SPLIT_CODE: [u8; 51] = [
+        0x83, 0xff, 0x01, 0x7f, 0x24, 0x81, 0x7c, 0x24, 0x08, 0x00, 0x14, 0x00, 0x00, 0x7d, 0x12, 0x81, 0xfb, 0x00,
+        0x14, 0x00, 0x00, 0x7c, 0x12, 0x32, 0xc0, 0x5e, 0x5b, 0x83, 0xc4, 0x0c, 0xc2, 0x04, 0x00, 0x81, 0xfb, 0x00,
+        0x14, 0x00, 0x00, 0x7c, 0xee, 0x5e, 0xb0, 0x01, 0x5b, 0x83, 0xc4, 0x0c, 0xc2, 0x04, 0x00,
+    ];
+    const SPLIT_IMMEDIATES: [usize; SPLIT_IMMEDIATE_COUNT] = [9, 17, 35];
+    /// Code before the split sequence.
+    const SPLIT_CODE_START: usize = 8;
+    /// Register and displacement variants of [`UOSA_SPLIT_CODE`]: (offset, byte). `CMP ESI,1`, `CMP [ESP+0x10]`,
+    /// `CMP ECX` twice.
+    const VARIANT_BYTES: [(usize, u8); 4] = [(1, 0xfe), (8, 0x10), (16, 0xf9), (34, 0xf9)];
+    /// The second `CMP X` with another register than the first: not the split.
+    const MISMATCHED_OPERAND: (usize, u8) = (34, 0xfa);
 
-    fn split_code(x: u32) -> Vec<u8> {
-        let mut code = vec![0x90; 8];
-        let pattern = parse_pattern(SPLIT_PATTERN);
-        let start = code.len();
-        code.extend(pattern.iter().map(|byte| byte.unwrap_or(0)));
-        for offset in SPLIT_IMMEDIATE_OFFSETS {
-            code[start + offset..start + offset + 4].copy_from_slice(&x.to_le_bytes());
+    fn split_code(x: u32, edits: &[(usize, u8)]) -> Vec<u8> {
+        let mut code = vec![0x90; SPLIT_CODE_START];
+        code.extend(UOSA_SPLIT_CODE);
+        for offset in SPLIT_IMMEDIATES {
+            code[SPLIT_CODE_START + offset..][..size_of::<u32>()].copy_from_slice(&x.to_le_bytes());
         }
-        code.extend([0x90; 3]);
-        let tail = code.len();
-        code.extend(parse_pattern(SPLIT_TAIL_PATTERN).iter().map(|byte| byte.unwrap_or(0)));
-        code[tail + SPLIT_TAIL_IMMEDIATE_OFFSET..][..4].copy_from_slice(&x.to_le_bytes());
-        code.extend([0xc3; 8]);
+        for (offset, byte) in edits {
+            code[SPLIT_CODE_START + offset] = *byte;
+        }
+        code.extend([0xcc; SPLIT_CODE_START]);
         code
     }
 
-    /// A client-like image: `.text` (with the split when `split` is set), `.rdata` with the names, `.data` with
-    /// the stock table.
-    pub fn synthetic_client(split: Option<u32>, signed: bool) -> Vec<u8> {
-        let text = split.map_or_else(|| vec![0x90; 64], split_code);
+    /// A client-like image: `.text` (`text`, or a nop sled), `.rdata` with the names, `.data` with `records`
+    /// stock records.
+    fn synthetic_image(text: Option<Vec<u8>>, records: usize, signed: bool) -> Vec<u8> {
+        let text = text.unwrap_or_else(|| vec![0x90; 64]);
         // The sections are laid out at aligned offsets equal to their RVAs: .text, then .rdata, then .data.
         let rdata_rva = TEST_SECTION_ALIGNMENT * (1 + (text.len() as u32).div_ceil(TEST_SECTION_ALIGNMENT));
         let mut rdata = Vec::new();
         let mut pointers = Vec::new();
-        for name in FACET_NAMES {
+        for name in &STOCK_NAMES[..records] {
             pointers.push(TEST_IMAGE_BASE + rdata_rva + rdata.len() as u32);
             rdata.extend_from_slice(name.as_bytes());
             rdata.push(0);
@@ -548,7 +796,7 @@ pub(crate) mod tests {
             }
         }
         // Room for a second table, so a test can copy one there.
-        data.extend(vec![0; FACET_RECORD_SIZE * FACET_COUNT + TABLE_DATA_OFFSET]);
+        data.extend(vec![0; FACET_RECORD_SIZE * STOCK_FACET_COUNT + TABLE_DATA_OFFSET]);
         let mut image = synthetic_pe(&[(".text", text), (".rdata", rdata), (".data", data)], signed);
         let pe = PeImage::parse(&image).unwrap();
         let checksum = pe_checksum(&image, pe.checksum_offset);
@@ -556,15 +804,25 @@ pub(crate) mod tests {
         image
     }
 
+    /// A client-like image with the 7 stock records and, when `split` is set, the UOSA split sequence.
+    pub fn synthetic_client(split: Option<u32>, signed: bool) -> Vec<u8> {
+        synthetic_image(split.map(|x| split_code(x, &[])), STOCK_FACET_COUNT, signed)
+    }
+
     #[test]
     fn table_and_split_are_located() {
         let image = synthetic_client(Some(STOCK_SPLIT_X), false);
         let facets = ClientExeFacets::inspect(&image).unwrap();
         assert!(facets.known.is_none());
-        assert_eq!(facets.dimensions, CLIENT_FACET_DIMENSIONS);
+        assert_eq!(facets.dimensions(), CLIENT_FACET_DIMENSIONS);
+        assert_eq!(facets.table.records.iter().map(|record| record.name.as_str()).collect::<Vec<_>>(), STOCK_NAMES);
         assert_eq!(facets.split.unwrap().x, STOCK_SPLIT_X);
         assert!(facets.is_stock() && facets.checksum_valid());
-        assert_eq!(facets.table_offset, facets.pe.section(TABLE_SECTION).unwrap().raw_offset as usize + TABLE_DATA_OFFSET);
+        let data = facets.pe.section(".data").unwrap();
+        assert_eq!(facets.table.offset, data.raw_offset as usize + TABLE_DATA_OFFSET);
+        let text = facets.pe.section(CODE_SECTION).unwrap().raw_offset as usize + SPLIT_CODE_START;
+        assert_eq!(facets.split.unwrap().signature_offset, text);
+        assert_eq!(facets.split.unwrap().offsets, SPLIT_IMMEDIATES.map(|offset| text + offset));
 
         let no_split = ClientExeFacets::inspect(&synthetic_client(None, false)).unwrap();
         assert!(no_split.split.is_none() && no_split.is_stock());
@@ -574,9 +832,54 @@ pub(crate) mod tests {
         unequal[offset] ^= 1;
         assert!(ClientExeFacets::inspect(&unequal).is_err(), "differing split values");
         let mut two_tables = image.clone();
-        let (table, table_size) = (facets.table_offset, FACET_RECORD_SIZE * FACET_COUNT);
-        two_tables.copy_within(table..table + table_size, table + table_size);
+        let (table, table_size) = (facets.table.offset, FACET_RECORD_SIZE * STOCK_FACET_COUNT);
+        two_tables.copy_within(table..table + table_size, table + table_size + TABLE_DATA_OFFSET);
         assert!(ClientExeFacets::inspect(&two_tables).is_err(), "two tables");
+    }
+
+    #[test]
+    fn shorter_tables_are_located_and_too_short_runs_are_not() {
+        for records in MIN_FACET_RECORDS..=STOCK_FACET_COUNT {
+            let facets = ClientExeFacets::inspect(&synthetic_image(None, records, false)).unwrap();
+            assert_eq!(facets.facet_count(), records);
+            assert!(facets.is_stock());
+        }
+        assert!(ClientExeFacets::inspect(&synthetic_image(None, MIN_FACET_RECORDS - 1, false)).is_err());
+
+        // A record with an illegal size ends a run: record 3 leaves two runs of 3 records, both too short.
+        let image = synthetic_client(None, false);
+        let facets = ClientExeFacets::inspect(&image).unwrap();
+        let mut broken = image.clone();
+        let width = facets.table.offset + FACET_RECORD_SIZE * 3 + FACET_RECORD_WIDTH_OFFSET;
+        broken[width..width + 4].copy_from_slice(&(MAX_FACET_SIDE + FACET_SIDE_ALIGNMENT).to_le_bytes());
+        assert!(locate_facet_tables(&broken, &facets.pe).is_empty());
+        // A name that is not a word does not count either.
+        let mut unnamed = image.clone();
+        let name = facets.pe.va_to_offset(read_u32(&image, facets.table.offset).unwrap()).unwrap();
+        unnamed[name] = b'#';
+        let tables = locate_facet_tables(&unnamed, &facets.pe);
+        assert_eq!(tables.len(), 1);
+        assert_eq!(tables[0].records.len(), STOCK_FACET_COUNT - 1, "the run starts at Trammel");
+    }
+
+    #[test]
+    fn the_split_matcher_takes_any_register_and_needs_the_same_x_operand() {
+        let stock = ClientExeFacets::inspect(&synthetic_client(Some(STOCK_SPLIT_X), false)).unwrap();
+        let variant = synthetic_image(Some(split_code(NEW_SPLIT, &VARIANT_BYTES)), STOCK_FACET_COUNT, false);
+        let split = ClientExeFacets::inspect(&variant).unwrap().split.unwrap();
+        assert_eq!(split.x, NEW_SPLIT);
+        assert_eq!(split.offsets, stock.split.unwrap().offsets);
+
+        let code = split_code(STOCK_SPLIT_X, &[MISMATCHED_OPERAND]);
+        let mismatched = synthetic_image(Some(code), STOCK_FACET_COUNT, false);
+        assert!(locate_split_candidates(&mismatched, &PeImage::parse(&mismatched).unwrap()).unwrap().is_empty());
+        assert!(ClientExeFacets::inspect(&mismatched).unwrap().split.is_none());
+
+        let mut twice = split_code(STOCK_SPLIT_X, &[]);
+        twice.extend(split_code(STOCK_SPLIT_X, &VARIANT_BYTES));
+        let image = synthetic_image(Some(twice), STOCK_FACET_COUNT, false);
+        assert_eq!(locate_split_candidates(&image, &PeImage::parse(&image).unwrap()).unwrap().len(), 2);
+        assert!(ClientExeFacets::inspect(&image).is_err(), "two split sequences");
     }
 
     #[test]
@@ -584,14 +887,14 @@ pub(crate) mod tests {
         let image = synthetic_client(Some(STOCK_SPLIT_X), false);
         let patch = FacetDimsPatch { facet: 0, width: NEW_WIDTH, height: NEW_HEIGHT, split: SplitEdit::Set(NEW_SPLIT) };
         let patched = patch_facet_dimensions(&image, &patch, None).unwrap();
-        assert_eq!(patched.after.dimensions[0], FacetGeometry::new(NEW_WIDTH, NEW_HEIGHT));
-        assert_eq!(patched.after.dimensions[1..], CLIENT_FACET_DIMENSIONS[1..]);
+        assert_eq!(patched.after.dimensions()[0], FacetGeometry::new(NEW_WIDTH, NEW_HEIGHT));
+        assert_eq!(patched.after.dimensions()[1..], CLIENT_FACET_DIMENSIONS[1..]);
         assert_eq!(patched.after.split.unwrap().x, NEW_SPLIT);
         assert!(patched.after.checksum_valid() && !patched.after.is_stock());
         assert!(patched.warnings.is_empty());
         assert_eq!(patched.manifest.original_sha256, sha256_hex(&image));
         assert_eq!(patched.manifest.patched_sha256, sha256_hex(&patched.bytes));
-        let record = patched.before.table_offset;
+        let record = patched.before.table.offset;
         assert!(patched.changed_offsets.iter().all(|offset| {
             (record + FACET_RECORD_WIDTH_OFFSET..record + FACET_RECORD_SIZE).contains(offset)
                 || patched.before.split.unwrap().offsets.iter().any(|imm| (*imm..*imm + 4).contains(offset))
@@ -607,6 +910,10 @@ pub(crate) mod tests {
         assert_eq!(chained.warnings.len(), 1, "1608 is not a multiple of 64");
         let disabled = FacetDimsPatch { split: SplitEdit::Disable, ..patch };
         assert_eq!(patch_facet_dimensions(&image, &disabled, None).unwrap().after.split.unwrap().x, DISABLED_SPLIT_X);
+
+        // Without split code, resizing facet 0 warns that the seam was not found.
+        let keep = FacetDimsPatch { split: SplitEdit::Keep, ..patch };
+        assert_eq!(patch_facet_dimensions(&synthetic_client(None, false), &keep, None).unwrap().warnings.len(), 1);
     }
 
     #[test]
@@ -614,7 +921,7 @@ pub(crate) mod tests {
         let image = synthetic_client(Some(STOCK_SPLIT_X), false);
         let good = FacetDimsPatch { facet: 3, width: NEW_WIDTH, height: NEW_HEIGHT, split: SplitEdit::Keep };
         for bad in [
-            FacetDimsPatch { facet: FACET_COUNT as u8, ..good },
+            FacetDimsPatch { facet: STOCK_FACET_COUNT as u8, ..good },
             FacetDimsPatch { width: MAX_FACET_SIDE + SECTOR_SIDE, ..good },
             FacetDimsPatch { width: NEW_WIDTH + FACET_SIDE_ALIGNMENT / 2, ..good },
             FacetDimsPatch { width: 0, ..good },
@@ -625,6 +932,9 @@ pub(crate) mod tests {
             assert!(patch_facet_dimensions(&image, &bad, None).is_err(), "{bad:?}");
         }
         assert!(patch_facet_dimensions(&image, &good, None).is_ok());
+        let short = synthetic_image(None, MIN_FACET_RECORDS, false);
+        let past_the_table = FacetDimsPatch { facet: MIN_FACET_RECORDS as u8, ..good };
+        assert!(patch_facet_dimensions(&short, &past_the_table, None).is_err(), "facet past a shorter table");
         let kr_like = synthetic_client(None, false);
         let split = FacetDimsPatch { facet: 0, split: SplitEdit::Disable, ..good };
         assert!(patch_facet_dimensions(&kr_like, &split, None).is_err(), "no split to patch");
