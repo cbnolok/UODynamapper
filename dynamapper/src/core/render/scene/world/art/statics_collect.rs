@@ -288,8 +288,8 @@ const TILE_FLAG_SURFACE: u64 = 0x200;
 const TILE_FLAG_BRIDGE: u64 = 0x400;
 const TILE_FLAG_FOLIAGE: u64 = 0x20_000;
 const TILE_FLAG_ROOF: u64 = 0x1000_0000;
-/// IsWet flag — tile has tidal/water properties (matches tiledata.mul bit 0x80).
-/// When set, the art shader applies the animated sin/cos UV distortion.
+/// IsWet flag — tile has tidal/water properties (matches tiledata.mul bit 0x80). An object property;
+/// whether the art shader applies the animated sin/cos UV distortion is `static_tile_renders_wet`.
 const TILE_FLAG_WET: u64 = 0x80;
 const STATIC_HUE_FLAG_APPLY: u32 = 1;
 const STATIC_HUE_FLAG_EC_SPRITE: u32 = 2;
@@ -890,18 +890,26 @@ fn resolve_ec_static_visual_kind(
     }
 }
 
-/// A static is wet with the classic IsWet tiledata flag, in both modes. Enhanced mode adds the EC
-/// term: the item's EC block material uses `UOWaterShader` (Enhanced Client water and lava).
-fn static_tile_is_wet(
+/// Whether a static takes the wet render path (animated water UV distortion). This is a render
+/// decision, not the object property: `TileMetaItemTile::is_wet` (IsWet) stays the gameplay flag.
+/// - Classic art mode: the IsWet flag.
+/// - Enhanced art mode, item with an EC material: only its shader decides (`UOWaterShader`); IsWet
+///   does not override it, so water-like sprite-shader items render dry.
+/// - Enhanced art mode, item without an EC material: it draws the Classic fallback art, so IsWet.
+fn static_tile_renders_wet(
     tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
     tilemeta_package: Option<&udd_assets::tilemeta::TileMetaPackage>,
     art_id: u32,
     art_source: Option<ClientTextureSource>,
 ) -> bool {
-    let classic_wet = tilemeta.is_some_and(|meta| meta.flags & TILE_FLAG_WET != 0);
-    let ec_wet = art_source == Some(ClientTextureSource::Ec)
-        && tilemeta_package.is_some_and(|package| package.uses_water_shader(art_id));
-    classic_wet || ec_wet
+    let classic_wet = tilemeta.is_some_and(udd_assets::tilemeta::TileMetaItemTile::is_wet);
+    if art_source != Some(ClientTextureSource::Ec) {
+        return classic_wet;
+    }
+    match tilemeta_package.filter(|package| package.has_ec_material(art_id)) {
+        Some(package) => package.uses_water_shader(art_id),
+        None => classic_wet,
+    }
 }
 
 fn static_hue_payload(hue_id: u16) -> (u32, u32) {
@@ -942,7 +950,7 @@ pub struct SpriteInstance {
     pub priority_z_units: f32,
     pub sort_bias_ordinal: u32,
     /// Tiledata flags packed for the GPU.
-    /// Bit 0: is_wet (`static_tile_is_wet` → animated water UV distortion in sprite shader).
+    /// Bit 0: is_wet (`static_tile_renders_wet` → animated water UV distortion in sprite shader).
     /// Bit 1: ground surface blend; bits 2..9: NW,N,NE,W,E,SW,S,SE same-material neighbors.
     pub is_wet_flags: u32,
     pub hue_id: u32,
@@ -2144,7 +2152,7 @@ fn emit_static_render_tile(
         world_x: render_tile.world_x,
         world_z: render_tile.world_z,
         depth_class: resolve_static_depth_class(tilemeta),
-        is_wet_flags: u32::from(static_tile_is_wet(tilemeta, tilemeta_package, render_tile.graphic as u32,
+        is_wet_flags: u32::from(static_tile_renders_wet(tilemeta, tilemeta_package, render_tile.graphic as u32,
             frame.art_source)),
         base_world_y: (render_tile.z as f32) * frame.height_scale,
     };
@@ -3308,14 +3316,14 @@ mod tests {
     }
 
     #[test]
-    fn the_classic_wet_flag_marks_statics_wet_in_both_modes() {
+    fn without_an_ec_material_the_classic_wet_flag_picks_the_wet_render_path() {
         const ART_ID: u32 = 0x1797;
         let wet = item_tile_with_flags(TILE_FLAG_WET, udd_assets::tilemeta::TileMetaItemVisualKind::RegularArt);
         let dry = item_tile_with_flags(0, udd_assets::tilemeta::TileMetaItemVisualKind::RegularArt);
         for source in [None, Some(ClientTextureSource::Cc), Some(ClientTextureSource::Ec)] {
-            assert!(static_tile_is_wet(Some(&wet), None, ART_ID, source));
-            assert!(!static_tile_is_wet(Some(&dry), None, ART_ID, source));
-            assert!(!static_tile_is_wet(None, None, ART_ID, source));
+            assert!(static_tile_renders_wet(Some(&wet), None, ART_ID, source));
+            assert!(!static_tile_renders_wet(Some(&dry), None, ART_ID, source));
+            assert!(!static_tile_renders_wet(None, None, ART_ID, source));
         }
     }
 

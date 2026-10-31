@@ -342,6 +342,13 @@ impl TileMetaItemTile {
         self.flags & uocf::enhanced::tileart::TaeFlag::NoDraw.bits() != 0
     }
 
+    /// The IsWet tiledata/tileart flag: an object property (water, swamp, wave, sink ...) for gameplay
+    /// and future client logic. It does not choose the Enhanced render path: there an item with an
+    /// EC material renders wet only through its shader (`TileMetaPackage::uses_water_shader`).
+    pub fn is_wet(&self) -> bool {
+        self.flags & uocf::enhanced::tileart::TaeFlag::Wet.bits() != 0
+    }
+
     pub fn name_ascii(&self) -> &str {
         let null_pos = self.name.iter().position(|&byte| byte == 0).unwrap_or(20);
         std::str::from_utf8(&self.name[..null_pos]).unwrap_or("")
@@ -526,6 +533,12 @@ impl TileMetaPackage {
     /// the renderer deliberately ignores it (see `TILEMETA_ITEM_EC_ART_FLAG_USE_NEW_ART`).
     pub fn uses_new_art(&self, art_id: u32) -> bool {
         self.item_tile(art_id).is_some_and(TileMetaItemTile::uses_new_art)
+    }
+
+    /// Whether `art_id` has a material in the EC block (`TILEMETA_EC_TEXTURE_BLOCK_INDEX`), i.e. the
+    /// Enhanced Client draws it with its own shader rather than the classic-style art.
+    pub fn has_ec_material(&self, art_id: u32) -> bool {
+        self.item_material(art_id, TILEMETA_EC_TEXTURE_BLOCK_INDEX).is_some()
     }
 
     /// Whether the EC block (`TILEMETA_EC_TEXTURE_BLOCK_INDEX`) material of `art_id` uses
@@ -944,6 +957,10 @@ mod tests {
         for art_id in [LEGACY_BLOCK_WATER, SPRITE, NO_MATERIAL] {
             assert!(!package.uses_water_shader(art_id), "{art_id}");
         }
+        for art_id in [EC_WATER, LEGACY_BLOCK_WATER, SPRITE] {
+            assert!(package.has_ec_material(art_id), "{art_id}");
+        }
+        assert!(!package.has_ec_material(NO_MATERIAL));
     }
 
     #[test]
