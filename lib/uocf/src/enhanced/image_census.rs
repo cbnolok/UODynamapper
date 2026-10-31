@@ -50,6 +50,19 @@ const ID3_MAGIC: &[u8] = b"ID3";
 const NIF_MAGICS: [&[u8]; 2] = [b"Gamebryo File Format, Version ", b"NetImmerse File Format, Version"];
 const KFM_MAGIC: &[u8] = b";Gamebryo KFM File Version ";
 const UTF8_BOM: &[u8] = b"\xef\xbb\xbf";
+const UTF16_LE_BOM: &[u8] = b"\xff\xfe";
+const UTF16_BE_BOM: &[u8] = b"\xfe\xff";
+/// TrueType (`00 01 00 00`, `true`), OpenType CFF (`OTTO`) and TrueType collection (`ttcf`) signatures.
+const FONT_MAGICS: [&[u8]; 4] = [b"\x00\x01\x00\x00", b"true", b"OTTO", b"ttcf"];
+/// The table count after an sfnt signature (`numTables`, big-endian): a font has at least one table and the
+/// shipped ones have at most a few dozen.
+const FONT_TABLE_COUNT_OFFSET: usize = 4;
+const FONT_MAX_TABLES: u16 = 64;
+const FONT_COLLECTION_MAGIC: &[u8] = b"ttcf";
+/// The mobile animation container (`AnimationFrame*.uop`, and the two of `Paperdoll.uop`).
+const AMOU_MAGIC: &[u8] = b"AMOU";
+/// An OLE compound file (an `.xls` or `Thumbs.db` shipped by mistake).
+const OLE_MAGIC: &[u8] = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1";
 const XML_OPEN: char = '<';
 
 const BMP_MAGIC: &[u8] = b"BM";
@@ -158,6 +171,14 @@ pub enum ContentFormat {
     Xml,
     /// UTF-8 text other than XML (KDL, Lua, CSV and the like, which have no magic).
     Text,
+    /// Text with a UTF-16 byte order mark that decodes.
+    Utf16Text,
+    /// A TrueType or OpenType font, or a font collection.
+    Font,
+    /// The `AMOU` mobile animation container.
+    Amou,
+    /// An OLE compound file.
+    Ole,
     Empty,
     /// None of the above.
     Binary,
@@ -186,6 +207,10 @@ impl ContentFormat {
             Self::Kfm => "KFM",
             Self::Xml => "XML",
             Self::Text => "text",
+            Self::Utf16Text => "UTF-16 text",
+            Self::Font => "font",
+            Self::Amou => "AMOU",
+            Self::Ole => "OLE compound file",
             Self::Empty => "empty",
             Self::Binary => "binary",
         }
@@ -227,6 +252,7 @@ impl ContentFormat {
             "nif" | "kf" => Self::Nif,
             "kfm" => Self::Kfm,
             "xml" => Self::Xml,
+            "ttf" | "otf" | "ttc" => Self::Font,
             _ => return None,
         };
         Some(format)
@@ -260,7 +286,8 @@ impl ContentClass {
     }
 }
 
-/// The format of `payload`, by its bytes alone: the magics first, then a TGA validation, then text.
+/// The format of `payload`, by its bytes alone: the magics first, then a TGA validation, then the short magics a TGA
+/// header could start with (fonts, AMOU, OLE, UTF-16), then MP3 frames, then text.
 pub fn classify_content(payload: &[u8]) -> ContentClass {
     if payload.is_empty() {
         return ContentClass::of(ContentFormat::Empty);
@@ -280,9 +307,10 @@ pub fn classify_content(payload: &[u8]) -> ContentClass {
         TgaVerdict::Trailing { image_type, depth, .. } => {
             (ContentFormat::TgaTrailing, Some(format!("TGA type {image_type}, {depth} bit")))
         }
-        TgaVerdict::BadData(_) | TgaVerdict::BadHeader(_) => match mpeg_stream_start(payload) {
-            Some(start) => (ContentFormat::Mp3, (start > 0).then(|| format!("MP3 after {start} zero bytes"))),
-            None => (text_format(payload).unwrap_or(ContentFormat::Binary), None),
+        TgaVerdict::BadData(_) | TgaVerdict::BadHeader(_) => match (late_magic_format(payload), mpeg_stream_start(payload)) {
+            (Some(format), _) => (format, None),
+            (None, Some(start)) => (ContentFormat::Mp3, (start > 0).then(|| format!("MP3 after {start} zero bytes"))),
+            (None, None) => (text_format(payload).unwrap_or(ContentFormat::Binary), None),
         },
     };
     ContentClass { format, detail, tga: Some(verdict) }
@@ -324,6 +352,43 @@ fn magic_format(payload: &[u8]) -> Option<ContentFormat> {
         return None;
     };
     Some(format)
+}
+
+/// The formats whose magics are short or zero-led, checked once the payload is known not to be a TGA.
+fn late_magic_format(payload: &[u8]) -> Option<ContentFormat> {
+    let starts = |magic: &[u8]| payload.starts_with(magic);
+    let font_tables = read_u16_be(payload, FONT_TABLE_COUNT_OFFSET).is_some_and(|count| (1..=FONT_MAX_TABLES).contains(&count));
+    if starts(FONT_COLLECTION_MAGIC) || (FONT_MAGICS.iter().any(|magic| starts(magic)) && font_tables) {
+        Some(ContentFormat::Font)
+    } else if starts(AMOU_MAGIC) {
+        Some(ContentFormat::Amou)
+    } else if starts(OLE_MAGIC) {
+        Some(ContentFormat::Ole)
+    } else if utf16_text(payload) {
+        Some(ContentFormat::Utf16Text)
+    } else {
+        None
+    }
+}
+
+/// A UTF-16 byte order mark followed by whole code units that decode.
+fn utf16_text(payload: &[u8]) -> bool {
+    const UNIT_BYTES: usize = 2;
+    let (little, body) = if let Some(body) = payload.strip_prefix(UTF16_LE_BOM) {
+        (true, body)
+    } else if let Some(body) = payload.strip_prefix(UTF16_BE_BOM) {
+        (false, body)
+    } else {
+        return false;
+    };
+    if body.len() % UNIT_BYTES != 0 {
+        return false;
+    }
+    let units = body.chunks_exact(UNIT_BYTES).map(|unit| {
+        let pair = [unit[0], unit[1]];
+        if little { u16::from_le_bytes(pair) } else { u16::from_be_bytes(pair) }
+    });
+    char::decode_utf16(units).all(|c| c.is_ok())
 }
 
 fn read_u16(bytes: &[u8], offset: usize) -> u16 {

@@ -1483,6 +1483,10 @@ How content is told:
   height pixels. After them: nothing, or a TGA 2.0 footer whose extension
   (size field 495, or 494) and developer areas lie between pixels and footer.
   Anything else after the pixels is "TGA + trailing bytes".
+- Then the short or zero-led magics a TGA header could start with: fonts
+  (sfnt `00 01 00 00`, `true`, `OTTO` with 1 to 64 tables, or `ttcf`), `AMOU`,
+  OLE compound files (`D0 CF 11 E0 A1 B1 1A E1`) and UTF-16 text (a byte order
+  mark and code units that decode).
 - Otherwise UTF-8 text (XML when it opens with `<`), else binary.
 
 Images and media by content (named as such / named otherwise / unnamed):
@@ -1500,7 +1504,11 @@ Images and media by content (named as such / named otherwise / unnamed):
 | NIF | 466 | 466 | 451 | 0 |
 
 No GIF, KTX, OGG, KFM, other RIFF or zlib payload exists. The rest is XML
-(LegacyTerrain, Interface), text (Lua, CSV, `.ems`, shaders) and binary;
+(LegacyTerrain, Interface), text (Lua, CSV, `.ems`, shaders), the unnamed
+Interface fonts (EC 32, KR 29: TrueType and OpenType CFF), `AMOU` animations
+(the `AnimationFrame*.uop` entries, both `Paperdoll.uop` entries and one
+unnamed Interface entry), UTF-16 text (2 EC Interface, 1 `MainMisc.uop`), one
+OLE compound file each in `GameData.uop` and `Interface.uop`, and binary;
 the Classic packages hold no image (MP3 frame-sync false positives in map
 data, like `FF FF 06 00`, are free-format headers and are refused).
 

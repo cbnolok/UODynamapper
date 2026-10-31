@@ -187,8 +187,8 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
     },
     ParseCheck {
         label: "animation frames (AMOU)",
-        packages: &["animationframe"],
-        kinds: &[ContentFormat::Binary],
+        packages: &[],
+        kinds: &[ContentFormat::Amou],
         name: None,
         dialects: false,
         check: |bytes, _| ok(crate::enhanced::animationframe::AnimationFrame::load(bytes)),
@@ -292,6 +292,14 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         check: |bytes, _| ok(crate::enhanced::dds_writer::DdsDescription::parse(bytes)),
     },
     ParseCheck {
+        label: "font table directory",
+        packages: &[],
+        kinds: &[ContentFormat::Font],
+        name: None,
+        dialects: false,
+        check: |bytes, _| check_font(bytes),
+    },
+    ParseCheck {
         label: "PNG or BMP decode",
         packages: &[],
         kinds: &[ContentFormat::Png, ContentFormat::Bmp],
@@ -308,6 +316,41 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         check: |bytes, _| ok(image::load_from_memory_with_format(bytes, image::ImageFormat::Tga).map_err(Into::into)),
     },
 ];
+
+/// An sfnt font's table directory, or each font's of a collection: every table lies inside the file.
+fn check_font(bytes: &[u8]) -> eyre::Result<()> {
+    const COLLECTION_MAGIC: &[u8] = b"ttcf";
+    const COLLECTION_COUNT_OFFSET: usize = 8;
+    const COLLECTION_OFFSETS_START: usize = 12;
+    const TABLE_COUNT_OFFSET: usize = 4;
+    const DIRECTORY_HEADER_BYTES: usize = 12;
+    const TABLE_RECORD_BYTES: usize = 16;
+    const TABLE_OFFSET_FIELD: usize = 8;
+    const TABLE_LENGTH_FIELD: usize = 12;
+    let u16_at = |offset: usize| bytes.get(offset..offset + size_of::<u16>()).map(|b| u16::from_be_bytes([b[0], b[1]]) as usize);
+    let u32_at = |offset: usize| bytes.get(offset..offset + size_of::<u32>()).map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as usize);
+    let directories: Vec<usize> = if bytes.starts_with(COLLECTION_MAGIC) {
+        let count = u32_at(COLLECTION_COUNT_OFFSET).ok_or_else(|| eyre!("font collection: no font count"))?;
+        (0..count)
+            .map(|index| u32_at(COLLECTION_OFFSETS_START + index * size_of::<u32>()).ok_or_else(|| eyre!("font collection: font {index} has no offset")))
+            .collect::<eyre::Result<_>>()?
+    } else {
+        vec![0]
+    };
+    for start in directories {
+        let tables = u16_at(start + TABLE_COUNT_OFFSET).ok_or_else(|| eyre!("font at {start}: no table count"))?;
+        for index in 0..tables {
+            let record = start + DIRECTORY_HEADER_BYTES + index * TABLE_RECORD_BYTES;
+            let (Some(offset), Some(length)) = (u32_at(record + TABLE_OFFSET_FIELD), u32_at(record + TABLE_LENGTH_FIELD)) else {
+                eyre::bail!("font at {start}: table record {index} is cut");
+            };
+            if offset.checked_add(length).is_none_or(|end| end > bytes.len()) {
+                eyre::bail!("font at {start}: table {index} ({offset}+{length}) ends past the file ({} bytes)", bytes.len());
+            }
+        }
+    }
+    Ok(())
+}
 
 /// A package's key in [`ParseCheck::packages`]: the lowercase file stem without digits.
 pub fn package_key(path: &Path) -> String {
