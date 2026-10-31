@@ -46,6 +46,7 @@ serde_json.workspace = true
 csv.workspace = true
 toml.workspace = true
 memmap2 = "0.9"
+symphonia.workspace = true
 udd-kdl = { path = "../udd-kdl" }
 # Diagnostic trait of knuffel's parse errors, read for their line and column.
 miette = { version = "5", default-features = false }

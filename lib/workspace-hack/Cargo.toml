@@ -16,7 +16,7 @@ publish = false
 ### BEGIN HAKARI SECTION
 [dependencies]
 ahash = { version = "0.8", default-features = false, features = ["no-rng", "serde", "std"] }
-arrayvec = { version = "0.7", default-features = false, features = ["std"] }
+arrayvec = { version = "0.7" }
 bitflags = { version = "2", default-features = false, features = ["bytemuck", "serde", "std"] }
 bytemuck = { version = "1", default-features = false, features = ["aarch64_simd", "avx512_simd", "derive", "extern_crate_alloc", "min_const_generics", "must_cast", "wasm_simd"] }
 clap = { version = "4", features = ["derive", "unicode"] }

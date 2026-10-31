@@ -6,6 +6,7 @@ extern crate color_eyre;
 extern crate derive_new;
 
 pub mod animation_sequence;
+pub mod audio;
 pub mod classic;
 pub mod client_config;
 pub mod client_exe;
