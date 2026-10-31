@@ -473,8 +473,10 @@ fn static_depth_key_with_tie_break(
 }
 
 fn assign_sprite_depth_tie_breakers(instances: &mut [SpriteInstance]) {
-    let mut last_base_key: Option<f32> = None;
-    let mut tie_break_ordinal = 0u32;
+    // Chunk batches are concatenated in stable (gy,gx,scale) order, not globally
+    // depth-sorted. Equal-priority sprites can straddle a chunk boundary and
+    // need distinct ordinals even when other depth groups lie between them.
+    let mut next_ordinals = HashMap::<u32, u32>::new();
 
     for instance in instances.iter_mut() {
         let base_key = static_depth_key(
@@ -484,14 +486,9 @@ fn assign_sprite_depth_tie_breakers(instances: &mut [SpriteInstance]) {
             decode_depth_class(instance.depth_class),
         );
 
-        if last_base_key.is_some_and(|last| last == base_key) {
-            tie_break_ordinal = tie_break_ordinal.saturating_add(1);
-        } else {
-            last_base_key = Some(base_key);
-            tie_break_ordinal = 0;
-        }
-
-        instance.sort_bias_ordinal = tie_break_ordinal;
+        let ordinal = next_ordinals.entry(base_key.to_bits()).or_insert(0);
+        instance.sort_bias_ordinal = *ordinal;
+        *ordinal = ordinal.saturating_add(1);
     }
 }
 
@@ -2020,6 +2017,9 @@ fn collect_visible_static_chunks_slow(
         );
     }
 
+    // Assign after assembling every visible chunk: restarting at each chunk
+    // leaves opaque coplanar sprites dependent on GPU batch submission order.
+    assign_sprite_depth_tie_breakers(&mut sprite_output.0);
     slow_stats
 }
 
@@ -2643,8 +2643,6 @@ fn sort_static_chunk_instances(
             .partial_cmp(&depth_b)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    assign_sprite_depth_tie_breakers(sprite_instances);
-
     ground_instances.sort_by(|a, b| {
         let depth_a = static_depth_key(
             a.tile_x,
@@ -3751,6 +3749,28 @@ mod tests {
         assert_eq!(instances[0].sort_bias_ordinal, 0);
         assert_eq!(instances[1].sort_bias_ordinal, 1);
         assert_eq!(instances[2].sort_bias_ordinal, 0);
+    }
+
+    #[test]
+    fn sprite_depth_ties_continue_across_separated_chunk_groups() {
+        // Bridge planks at raw (2820,991) and (2819,992) occupy adjacent
+        // 32-cell chunks. Both formerly restarted their tie ordinal at zero.
+        let plank = SpriteInstance {
+            tile_x: 2820.5,
+            tile_y: 992.5,
+            priority_z_units: 21.0,
+            depth_class: StaticDepthClass::Background.encoded(),
+            ..SpriteInstance::zeroed()
+        };
+        let mut instances = [plank,
+            SpriteInstance { tile_x: 2821.5, ..plank },
+            SpriteInstance { tile_x: 2819.5, tile_y: 993.5, ..plank },
+            SpriteInstance { tile_x: 2820.5, tile_y: 993.5, ..plank }];
+        assign_sprite_depth_tie_breakers(&mut instances);
+        assert_eq!(instances.map(|instance| instance.sort_bias_ordinal), [0, 0, 1, 1]);
+        // Reassembling cached chunks must not accumulate the previous ordinals.
+        assign_sprite_depth_tie_breakers(&mut instances);
+        assert_eq!(instances.map(|instance| instance.sort_bias_ordinal), [0, 0, 1, 1]);
     }
 
     #[test]

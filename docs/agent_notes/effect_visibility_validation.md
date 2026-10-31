@@ -118,7 +118,9 @@ the direct repaired frame exactly; a package inventory verifies those bindings.
 Thus this is not a normal-role regression. The subsequent
 [transparent-batch follow-up](static_depth_ordering.md#history-sensitive-tree-edges)
 identifies and repairs insertion-dependent equal-distance sorting. Its matched
-town histories are now exact; the separate small bridge-edge case remains open.
+town histories are now exact. The subsequent
+[cross-chunk opaque-tie repair](static_depth_ordering.md#equal-priority-sprites-across-chunk-boundaries)
+also closes the independently isolated bridge-edge history case.
 
 These checks establish control reachability and source ownership, not original
 client pixel parity, normal orientation/filtering parity, every caster's depth,

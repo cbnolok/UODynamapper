@@ -147,12 +147,56 @@ one byte (maximum 34), and 20795 bridge pixels (maximum 29). The normal build
 and 92 focused static-art tests pass; two adapter-dependent tests remain ignored.
 
 A separate 50-pixel KR orthographic bridge-edge history difference (maximum
-22, bounds `x=117..448`, `y=45..377`) remains. The unchanged pre-fix binary
-reproduces it, and old/new bridge frames are byte-identical for each matched
-history. Its remaining coverage/depth cause is not established. General
-pixel-alpha and original-client depth parity are not claimed by the tie fix.
+22, bounds `x=117..448`, `y=45..377`) survived that transparent-phase repair.
+The unchanged pre-fix binary reproduced it, and old/new bridge frames were
+byte-identical for each matched history. The subsequent opaque-tie investigation
+below establishes its independent cause. General pixel-alpha and original-client
+depth parity are not claimed by the transparent-phase fix.
 
 The follow-up acceptance set is 32 complete native frames from eleven owned
 Desktop-4 previews, indexed by `transparent-order-accepted-evidence.json` in
 `/tmp/uodynamapper-ec-followup`. The earlier effect-audit frames remain the
 before controls; metadata submission alone is not proof of stable final art.
+
+## Equal-priority sprites across chunk boundaries
+
+The retained bridge case comes from an exact opaque depth tie. Raw planks
+`(2820,991)` and `(2819,992)`, graphic 1993, occupy adjacent 32-cell chunks.
+Both are Background, with priority Z 21 and equal anchored X+Y. The old
+per-chunk tie assignment gave both ordinal zero. Opaque batch submission order
+then selected different winners after different teleport histories; stable
+transparent-phase ordering cannot repair the opaque winner underneath.
+
+A temporary native source-cell/pass shader identifies different neighboring
+owners at exactly the original 50 pixels. Raw snapshots contain the same 11267
+sprite instances in the same order, with identical geometry, priorities, UVs,
+ordinals, flags and colors. Only 2092 residency layer indices differ. Selecting
+the layer directly from the instance instead of its interpolated varying leaves
+the same defect, rejecting that alternative explanation. The diagnostic shader
+and instance-dump hook are absent from production code.
+
+`assign_sprite_depth_tie_breakers` now runs after assembling all visible chunk
+batches. A per-base-key counter continues ties across noncontiguous groups in
+the stable `(gy,gx,scale)` chunk stream. Cached chunk geometry and per-chunk
+instance sorting remain intact; retained complete frames reuse the assembled
+output. Reassembly starts counters at zero instead of accumulating old ordinals.
+This preserves the existing shader bias, instance layout, batch ranges, ground
+raster depth and lossless logical XYZ/height/flags. It is a cross-chunk tie
+repair, not a replacement of the overall static depth policy.
+
+The regression reproduces the separated plank groups and checks repeat
+assignment. The focused static-art suite passes 93 tests, with two
+adapter-dependent tests ignored. The normal build passes without diagnostic
+hooks. Twenty-eight complete native frames from eight verified Desktop-4 runs
+cover all three orthographic styles and KR perspective. Town and bridge history
+pairs are byte-identical throughout. Towns, CC-art bridges and the perspective
+bridge also match their previous accepted frames exactly. The corrected KR
+orthographic bridge differs at 57 pixels from the old direct frame and seven
+from the old history frame; the original 50-pixel history difference is gone.
+Classic/Enhanced lava controls remain exact. The road/roof controls change at
+113/110 roof-edge pixels above one byte after the shared tie repair; visual
+review retains the roof silhouettes, ground transitions and bridge stair/deck
+occlusion. This is not a claim of complete original-client depth parity.
+Native acceptance and source/package evidence are retained in
+`bridge-cross-chunk-accepted-evidence.json` under
+`/tmp/uodynamapper-ec-followup`.
