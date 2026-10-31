@@ -4,7 +4,7 @@ use crate::core::controls::input_actions::{
 use crate::core::controls::{InjectedPointer, effective_cursor_position};
 use crate::core::render::scene::world::art::statics_collect::{
     resolve_priority_z_units, resolve_static_depth_class, static_depth_key,
-    static_tile_is_surface_like,
+    static_tile_is_surface_like, static_tile_renders_wet,
 };
 use crate::core::render::scene::world::art::static_geometry::{StaticArtRoute, StaticPickingResources, projected_quad_hit};
 use crate::core::render::scene::player::Player;
@@ -659,6 +659,7 @@ fn describe_hovered_object(
             best_match.tile,
             Some(best_match.kind),
             Some(best_match.route),
+            picking.art_source(),
         )
     )
 }
@@ -704,7 +705,9 @@ fn hovered_static_match(
     if tilemeta.is_some_and(|meta| meta.is_nodraw()) {
         return None;
     }
-    let depth_class = resolve_static_depth_class(tilemeta);
+    let renders_wet = static_tile_renders_wet(tilemeta, tilemeta_res.map(|meta| meta.0.as_ref()),
+        u32::from(graphic), picking.art_source());
+    let depth_class = resolve_static_depth_class(tilemeta, renders_wet);
     let world_x = source.world_x;
     let world_z = source.world_z;
     let geometry = picking.resolve(graphic, world_x, world_z, tile.z)?;
@@ -848,6 +851,7 @@ fn describe_static_tiles(
                 *tile,
                 None,
                 picking.resolve(tile.graphic, f32::from(x), f32::from(y), tile.z).map(|geometry| geometry.route),
+                picking.art_source(),
             )
         })
         .collect::<Vec<_>>()
@@ -868,6 +872,7 @@ fn describe_static_tile_details(
     tile: uocf::classic::statics::PackedStaticTile,
     hovered_kind: Option<HoveredObjectKind>,
     route: Option<StaticArtRoute>,
+    art_source: Option<crate::configs::settings::ClientTextureSource>,
 ) -> String {
     let graphic = tile.graphic;
     let z = tile.z;
@@ -882,7 +887,8 @@ fn describe_static_tile_details(
         .and_then(|meta_package| meta_package.0.main_ec_texture_id_with_branch(graphic as u32))
         .map(|(id, branch)| (Some(id), branch))
         .unwrap_or((None, "none"));
-    let is_surface_like = static_tile_is_surface_like(meta);
+    let is_surface_like = static_tile_is_surface_like(meta,
+        static_tile_renders_wet(meta, tilemeta_res.map(|package| package.0.as_ref()), u32::from(graphic), art_source));
     let tex_art_cc_id = cc_texture_id.map(|id| id.saturating_add(CLASSIC_STATIC_ART_ID_OFFSET as u32));
     let cc_slot =
         tex_art_cc_id.and_then(|art_id| tex_art_cc_res.and_then(|package| package.0.present_slot(art_id)));

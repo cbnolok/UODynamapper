@@ -105,6 +105,11 @@ impl<'w> StaticPickingResources<'w> {
         alpha.is_some_and(|value| value * geometry.opacity >= 0.0001)
     }
 
+    /// The art mode statics are drawn with, if any.
+    pub(crate) fn art_source(&self) -> Option<ClientTextureSource> {
+        self.source.active_source
+    }
+
     pub(crate) fn resolve(&mut self, graphic: u16, x: f32, y: f32, z: i8) -> Option<StaticArtGeometry> {
         // Dot mode uses a separate radar representation, not these textured quads.
         if self.zoom.0 >= 20.0 { return None; }
@@ -115,7 +120,9 @@ impl<'w> StaticPickingResources<'w> {
             self.meta.as_ref().map(|package| package.0.as_ref()), meta,
             self.ec.as_ref().map(|package| package.0.as_ref()),
             self.land.as_ref().map(|package| package.0.as_ref()), &mut self.cache);
-        let depth_class = statics_collect::resolve_static_depth_class(meta);
+        let renders_wet = statics_collect::static_tile_renders_wet(meta,
+            self.meta.as_ref().map(|package| package.0.as_ref()), u32::from(graphic), Some(source));
+        let depth_class = statics_collect::resolve_static_depth_class(meta, renders_wet);
         let height = scale_uo_z_to_bevy_units(f32::from(z)) + statics_collect::depth_class_y_bias(depth_class);
         let (anchor_x, anchor_y) = statics_collect::surface_like_static_world_anchor(kind, x, y);
         let mut geometry = StaticArtGeometry { origin: Vec3::new(anchor_x, height, anchor_y),

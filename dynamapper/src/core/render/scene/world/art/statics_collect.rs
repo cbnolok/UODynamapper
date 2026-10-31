@@ -297,20 +297,25 @@ const DEFAULT_PRIORITY_HEIGHT: i8 = 10;
 const SURFACE_LIKE_DEPTH_CLASS_OFFSET: f32 = -4.0;
 const STATIC_DEPTH_TIE_BREAK_STEP: f32 = 0.000_001;
 
+/// Surface-like: authored SurfaceLike, the Surface flag, or a static that renders wet.
+/// `renders_wet` is `static_tile_renders_wet` for the art mode in use, so Classic mode keeps the IsWet
+/// flag and Enhanced mode follows the water shader for items that have an EC material.
 pub(crate) fn static_tile_is_surface_like(
     tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
+    renders_wet: bool,
 ) -> bool {
     let Some(meta) = tilemeta else {
         return false;
     };
 
-    meta.is_surface_like() || meta.flags & (TILE_FLAG_SURFACE | TILE_FLAG_WET) != 0
+    meta.is_surface_like() || meta.flags & TILE_FLAG_SURFACE != 0 || renders_wet
 }
 
 fn static_tile_uses_tex_land_ec_surface_path(
     tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
+    renders_wet: bool,
 ) -> bool {
-    static_tile_is_surface_like(tilemeta)
+    static_tile_is_surface_like(tilemeta, renders_wet)
 }
 
 /// CC-specific gate for the flat-quad (lie-flat) static render path.
@@ -358,8 +363,10 @@ pub(super) fn ec_static_camera_quad(tilemeta: Option<&udd_assets::tilemeta::Tile
     tilemeta.is_some_and(|meta| meta.flags & EC_CAMERA_QUAD_FLAG != 0)
 }
 
+/// `renders_wet`: `static_tile_renders_wet` for the art mode in use (see `static_tile_is_surface_like`).
 pub(crate) fn resolve_static_depth_class(
     tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
+    renders_wet: bool,
 ) -> StaticDepthClass {
     let Some(meta) = tilemeta else {
         return StaticDepthClass::Regular;
@@ -379,7 +386,7 @@ pub(crate) fn resolve_static_depth_class(
 
     // Bridge marks walkable volume (stairs and stacked stone blocks), not a
     // flat floor. Keep its effective height and regular sprite depth priority.
-    if static_tile_is_surface_like(tilemeta) && meta.flags & TILE_FLAG_BRIDGE == 0 {
+    if static_tile_is_surface_like(tilemeta, renders_wet) && meta.flags & TILE_FLAG_BRIDGE == 0 {
         return StaticDepthClass::SurfaceLikeFloor;
     }
 
@@ -534,7 +541,9 @@ fn resolve_surface_like_tex_land_ec_slot_id(
     tex_land_ec: Option<&udd_assets::tex_land_ec::TexLandEcPackage>,
 ) -> Option<SurfaceLikeTexLandEcResolution> {
     let meta = tilemeta?;
-    if !static_tile_uses_tex_land_ec_surface_path(tilemeta) {
+    // This path is Enhanced-only: wetness is the water shader for items with an EC material.
+    let renders_wet = static_tile_renders_wet(tilemeta, tilemeta_package, tile_id, Some(ClientTextureSource::Ec));
+    if !static_tile_uses_tex_land_ec_surface_path(tilemeta, renders_wet) {
         return None;
     }
 
@@ -560,11 +569,11 @@ fn resolve_surface_like_tex_land_ec_slot_id(
     }
 
     let main_ec_texture_id = tilemeta_package
-        .and_then(|package| surface_like_visible_ec_texture_ref(tile_id, meta, package))
+        .and_then(|package| surface_like_visible_ec_texture_ref(tile_id, renders_wet, package))
         .map(|texture_ref| texture_ref.texture_id)
-        .or_else(|| surface_like_legacy_ec_texture_id_fallback(meta));
+        .or_else(|| surface_like_legacy_ec_texture_id_fallback(meta, renders_wet));
     let Some(main_ec_texture_id) = main_ec_texture_id else {
-        if let Some(resolution) = wet_surface_like_water_resolution(meta, package) {
+        if let Some(resolution) = wet_surface_like_water_resolution(renders_wet, package) {
             return Some(resolution);
         }
 
@@ -617,7 +626,7 @@ fn resolve_surface_like_tex_land_ec_slot_id(
         });
     }
 
-    if let Some(resolution) = wet_surface_like_water_resolution(meta, package) {
+    if let Some(resolution) = wet_surface_like_water_resolution(renders_wet, package) {
         return Some(resolution);
     }
 
@@ -630,10 +639,10 @@ fn resolve_surface_like_tex_land_ec_slot_id(
 
 fn surface_like_visible_ec_texture_ref<'a>(
     tile_id: u32,
-    tilemeta: &udd_assets::tilemeta::TileMetaItemTile,
+    renders_wet: bool,
     package: &'a udd_assets::tilemeta::TileMetaPackage,
 ) -> Option<&'a udd_assets::tilemeta::TileMetaItemTextureRef> {
-    if tilemeta.flags & TILE_FLAG_WET == 0 {
+    if !renders_wet {
         return package.main_ec_texture_ref(tile_id);
     }
 
@@ -666,19 +675,22 @@ fn visible_surface_texture_ref_candidates<'a>(
 
 fn surface_like_legacy_ec_texture_id_fallback(
     tilemeta: &udd_assets::tilemeta::TileMetaItemTile,
+    renders_wet: bool,
 ) -> Option<u32> {
-    if tilemeta.ec_texture_id == 0 || tilemeta.flags & TILE_FLAG_WET != 0 {
+    if tilemeta.ec_texture_id == 0 || renders_wet {
         return None;
     }
 
     Some(tilemeta.ec_texture_id)
 }
 
+/// The classic-water land fallback for a surface-like static that renders wet in Enhanced mode
+/// (`static_tile_renders_wet`), not merely one with the IsWet property.
 fn wet_surface_like_water_resolution(
-    tilemeta: &udd_assets::tilemeta::TileMetaItemTile,
+    renders_wet: bool,
     package: &udd_assets::tex_land_ec::TexLandEcPackage,
 ) -> Option<SurfaceLikeTexLandEcResolution> {
-    if tilemeta.flags & TILE_FLAG_WET == 0 {
+    if !renders_wet {
         return None;
     }
 
@@ -896,7 +908,7 @@ fn resolve_ec_static_visual_kind(
 /// - Enhanced art mode, item with an EC material: only its shader decides (`UOWaterShader`); IsWet
 ///   does not override it, so water-like sprite-shader items render dry.
 /// - Enhanced art mode, item without an EC material: it draws the Classic fallback art, so IsWet.
-fn static_tile_renders_wet(
+pub(crate) fn static_tile_renders_wet(
     tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
     tilemeta_package: Option<&udd_assets::tilemeta::TileMetaPackage>,
     art_id: u32,
@@ -2146,14 +2158,15 @@ fn emit_static_render_tile(
     if !frame.is_dot_mode && tilemeta.is_some_and(|meta| meta.is_nodraw()) {
         return;
     }
+    let renders_wet = static_tile_renders_wet(tilemeta, tilemeta_package, render_tile.graphic as u32,
+        frame.art_source);
     let info = StaticTileRenderInfo {
         tile: render_tile,
         tilemeta,
         world_x: render_tile.world_x,
         world_z: render_tile.world_z,
-        depth_class: resolve_static_depth_class(tilemeta),
-        is_wet_flags: u32::from(static_tile_renders_wet(tilemeta, tilemeta_package, render_tile.graphic as u32,
-            frame.art_source)),
+        depth_class: resolve_static_depth_class(tilemeta, renders_wet),
+        is_wet_flags: u32::from(renders_wet),
         base_world_y: (render_tile.z as f32) * frame.height_scale,
     };
 
@@ -3133,8 +3146,8 @@ mod tests {
             udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike,
         );
 
-        assert!(static_tile_is_surface_like(Some(&tile)));
-        assert!(static_tile_uses_tex_land_ec_surface_path(Some(&tile)));
+        assert!(static_tile_is_surface_like(Some(&tile), tile.is_wet()));
+        assert!(static_tile_uses_tex_land_ec_surface_path(Some(&tile), tile.is_wet()));
     }
 
     #[test]
@@ -3145,7 +3158,7 @@ mod tests {
             TILE_FLAG_SURFACE | TILE_FLAG_BACKGROUND,
             udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike,
         );
-        assert!(static_tile_is_surface_like(Some(&roof)));
+        assert!(static_tile_is_surface_like(Some(&roof), roof.is_wet()));
         assert!(!cc_static_tile_renders_flat(Some(&roof)));
 
         // Real shoreline water / "wave" statics carry IsWet -> lie flat.
@@ -3208,7 +3221,7 @@ mod tests {
         let tile =
             item_tile_with_flags(0, udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike);
 
-        assert!(static_tile_uses_tex_land_ec_surface_path(Some(&tile)));
+        assert!(static_tile_uses_tex_land_ec_surface_path(Some(&tile), tile.is_wet()));
     }
 
     #[test]
@@ -3226,7 +3239,7 @@ mod tests {
         );
         tile.ec_texture_id = 12_345;
 
-        assert_eq!(surface_like_legacy_ec_texture_id_fallback(&tile), None);
+        assert_eq!(surface_like_legacy_ec_texture_id_fallback(&tile, tile.is_wet()), None);
     }
 
     #[test]
@@ -3235,7 +3248,7 @@ mod tests {
             item_tile_with_flags(0, udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike);
         tile.ec_texture_id = 12_345;
 
-        assert_eq!(surface_like_legacy_ec_texture_id_fallback(&tile), Some(12_345));
+        assert_eq!(surface_like_legacy_ec_texture_id_fallback(&tile, tile.is_wet()), Some(12_345));
     }
 
     #[test]
@@ -3579,7 +3592,7 @@ mod tests {
 
     #[test]
     fn depth_class_defaults_to_regular_without_metadata() {
-        assert_eq!(resolve_static_depth_class(None), StaticDepthClass::Regular);
+        assert_eq!(resolve_static_depth_class(None, false), StaticDepthClass::Regular);
     }
 
     #[test]
@@ -3588,7 +3601,7 @@ mod tests {
             item_tile_with_flags(0, udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike);
 
         assert_eq!(
-            resolve_static_depth_class(Some(&tile)),
+            resolve_static_depth_class(Some(&tile), tile.is_wet()),
             StaticDepthClass::SurfaceLikeFloor,
         );
     }
@@ -3606,8 +3619,8 @@ mod tests {
                 udd_assets::tilemeta::TileMetaItemVisualKind::SurfaceLike,
             );
             tile.height = height;
-            assert!(static_tile_is_surface_like(Some(&tile)));
-            let class = resolve_static_depth_class(Some(&tile));
+            assert!(static_tile_is_surface_like(Some(&tile), tile.is_wet()));
+            let class = resolve_static_depth_class(Some(&tile), tile.is_wet());
             assert_eq!(class, StaticDepthClass::Regular);
             assert_eq!(resolve_priority_z_units(15, Some(&tile), class), priority);
         }
@@ -3621,7 +3634,7 @@ mod tests {
         );
 
         assert_eq!(
-            resolve_static_depth_class(Some(&tile)),
+            resolve_static_depth_class(Some(&tile), tile.is_wet()),
             StaticDepthClass::Roof
         );
     }
@@ -3634,7 +3647,7 @@ mod tests {
         );
 
         assert_eq!(
-            resolve_static_depth_class(Some(&tile)),
+            resolve_static_depth_class(Some(&tile), tile.is_wet()),
             StaticDepthClass::Background,
         );
     }
@@ -3647,7 +3660,7 @@ mod tests {
         );
 
         assert_eq!(
-            resolve_static_depth_class(Some(&tile)),
+            resolve_static_depth_class(Some(&tile), tile.is_wet()),
             StaticDepthClass::Roof
         );
     }
@@ -3664,11 +3677,11 @@ mod tests {
         );
 
         assert_eq!(
-            resolve_static_depth_class(Some(&background)),
+            resolve_static_depth_class(Some(&background), background.is_wet()),
             StaticDepthClass::Background,
         );
         assert_eq!(
-            resolve_static_depth_class(Some(&foliage)),
+            resolve_static_depth_class(Some(&foliage), foliage.is_wet()),
             StaticDepthClass::Foliage,
         );
     }
