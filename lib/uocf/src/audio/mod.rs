@@ -1,7 +1,9 @@
 //! Audio in the client files, shared by the Classic, Kingdom Reborn and Enhanced readers: what a payload holds by
 //! its bytes alone ([`probe_audio`]: MPEG audio with its tags and info header, RIFF WAVE with its chunks, OGG, Bink
-//! video, text) and decoding to 16-bit PCM ([`decode`]).
+//! video, text), decoding to 16-bit PCM ([`decode`]), and the census of a client's audio files ([`census`]).
+//! `docs/agent_notes/ec_audio_formats.md` summarizes what the shipped clients hold.
 
+pub mod census;
 pub mod decode;
 pub mod mp3;
 pub mod wav;

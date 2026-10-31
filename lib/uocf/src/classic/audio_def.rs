@@ -1,22 +1,25 @@
 //! `Sound.def` and `Music.def` of the Classic client: id translations, one per line, read strictly.
 //!
-//! The grammar, as every shipped file follows it (UO Gold to the current Classic client):
+//! The grammar, as the shipped files follow it (UO Gold to the current Classic client):
 //!
 //! ```text
-//! file    = *(line EOL) [line]          ; EOL is CRLF or LF; the last line may lack it
-//! line    = "" | entry
-//! entry   = id WS "{" targets "}" WS extra [WS]
-//! targets = int *(*WS "," *WS int)
-//! id      = 1*DIGIT                     ; unique in the file
-//! int     = ["-"] 1*DIGIT               ; a target of -1 names no slot
-//! WS      = 1*(SP | HTAB)
+//! file     = *(line EOL) [line]           ; EOL is CRLF or LF; the last line may lack it
+//! line     = "" | entry | unclosed
+//! entry    = id WS "{" targets "}" WS extra [WS]
+//! unclosed = id WS "{" targets [WS]        ; no "}" and no extra: see below
+//! targets  = *WS int *(sep int) *WS
+//! sep      = 1*WS | *WS "," *WS
+//! id       = 1*DIGIT                      ; unique in the file
+//! int      = ["-"] 1*DIGIT                ; a target of -1 names no slot
+//! WS       = 1*(SP | HTAB)
 //! ```
 //!
-//! `Sound.def` (685 entries in UO Gold, 787 in the current client) gives sound ids without a slot of their own the
-//! slot to play instead: `654 {487} 0`. Every shipped target list has one value, every `extra` is 0, and the ids
-//! from 778 on map to `{-1}`. `Music.def` holds the single line `0 {0} 0` without a line end. Comments, blank
-//! lines with spaces, and anything else are errors: the shipped files have none, and how the client treats them
-//! is not known.
+//! `Sound.def` (685 ids in UO Gold, 787 in the current client) gives sound ids without a slot of their own the
+//! slot to play instead: `654 {487} 0`. Every closed target list has one value, every `extra` is 0, and the ids
+//! from 778 on map to `{-1}`. Both releases ship one line without its `}`, `805 {331 0`: it is read as an
+//! [`DefTranslation::unclosed`] group of every integer up to the line end (331 and 0), the first slot of which is
+//! the one played; how the client reads it is not known. `Music.def` holds the single line `0 {0} 0` without a
+//! line end. Comments, blank lines with spaces and anything else are errors: the shipped files have none.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -37,8 +40,10 @@ pub const NO_TARGET: i32 = -1;
 pub struct DefTranslation {
     pub id: u32,
     pub targets: Vec<i32>,
-    /// The third field (0 in every shipped line; its meaning is not known).
-    pub extra: i32,
+    /// The third field (0 in every shipped line; its meaning is not known); `None` for an unclosed group.
+    pub extra: Option<i32>,
+    /// The group has no `}`: the targets run to the line end.
+    pub unclosed: bool,
     /// The 1-based line number.
     pub line: usize,
 }
@@ -183,17 +188,22 @@ fn parse_line(line: &str, line_number: usize) -> Result<DefTranslation, LineErro
     cursor.require_space("the target group")?;
     cursor.expect(GROUP_OPEN)?;
     let mut targets = Vec::new();
+    cursor.skip_space();
     loop {
-        cursor.skip_space();
         targets.push(cursor.signed("a target")?);
-        cursor.skip_space();
+        let spaced = cursor.skip_space() > 0;
         match cursor.peek() {
-            Some(GROUP_SEPARATOR) => cursor.position += GROUP_SEPARATOR.len_utf8(),
+            Some(GROUP_SEPARATOR) => {
+                cursor.position += GROUP_SEPARATOR.len_utf8();
+                cursor.skip_space();
+            }
             Some(GROUP_CLOSE) => {
                 cursor.position += GROUP_CLOSE.len_utf8();
                 break;
             }
-            _ => return Err(cursor.error(format!("expected `{GROUP_SEPARATOR}` or `{GROUP_CLOSE}`"))),
+            None => return Ok(DefTranslation { id, targets, extra: None, unclosed: true, line: line_number }),
+            Some(_) if spaced => {}
+            Some(_) => return Err(cursor.error(format!("expected `{GROUP_SEPARATOR}`, `{GROUP_CLOSE}` or white space"))),
         }
     }
     cursor.require_space("the extra value")?;
@@ -202,7 +212,7 @@ fn parse_line(line: &str, line_number: usize) -> Result<DefTranslation, LineErro
     if cursor.peek().is_some() {
         return Err(cursor.error("expected the end of the line"));
     }
-    Ok(DefTranslation { id, targets, extra, line: line_number })
+    Ok(DefTranslation { id, targets, extra: Some(extra), unclosed: false, line: line_number })
 }
 
 #[cfg(test)]
@@ -211,12 +221,15 @@ mod tests {
 
     #[test]
     fn parses_the_shipped_grammar() {
-        let table = DefTranslationTable::parse("Sound.def", "654 {487} 0\r\n778 {-1} 0\r\n7 {1, 2,3} -4\r\n\r\n").unwrap();
-        assert_eq!(table.len(), 3);
+        let table =
+            DefTranslationTable::parse("Sound.def", "654 {487} 0\r\n778 {-1} 0\r\n7 {1, 2,3 4} -4\r\n\r\n805 {331 0\r\n").unwrap();
+        assert_eq!(table.len(), 4);
         assert_eq!(table.get(654).unwrap().targets, [487]);
         assert_eq!(table.get(778).unwrap().slots().count(), 0);
         let multi = table.get(7).unwrap();
-        assert_eq!((multi.targets.as_slice(), multi.extra, multi.line), (&[1, 2, 3][..], -4, 3));
+        assert_eq!((multi.targets.as_slice(), multi.extra, multi.line), (&[1, 2, 3, 4][..], Some(-4), 3));
+        let unclosed = table.get(805).unwrap();
+        assert_eq!((unclosed.targets.as_slice(), unclosed.extra, unclosed.unclosed), (&[331, 0][..], None, true));
         let music = DefTranslationTable::parse("Music.def", "0 {0} 0").unwrap();
         assert_eq!(music.get(0).unwrap().targets, [0]);
     }
@@ -225,7 +238,8 @@ mod tests {
     fn rejects_anything_else_with_line_and_column() {
         let error = |text: &str| DefTranslationTable::parse("Sound.def", text).unwrap_err().to_string();
         assert!(error("1 {2} 0\n# comment\n").starts_with("Sound.def:2:1: expected the id"), "{}", error("# x"));
-        assert!(error("1 {2 0").starts_with("Sound.def:1:6:"), "{}", error("1 {2 0"));
+        assert!(error("1 {2x} 0").starts_with("Sound.def:1:5:"), "{}", error("1 {2x} 0"));
+        assert!(error("1 {2 x").starts_with("Sound.def:1:6: expected a target"), "{}", error("1 {2 x"));
         assert!(error("1 {2} 0 x").contains("1:9: expected the end of the line"), "{}", error("1 {2} 0 x"));
         assert!(error("1 {} 0").contains("expected a target"), "{}", error("1 {} 0"));
         assert!(error("1{2} 0").contains("1:2: expected white space"), "{}", error("1{2} 0"));

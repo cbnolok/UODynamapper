@@ -5,6 +5,7 @@
 
 pub mod animation_definition;
 pub mod animationframe;
+pub mod audio;
 pub mod chaos_script;
 pub mod classic_tile_mapper;
 pub mod client_dialect;

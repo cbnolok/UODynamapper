@@ -23,6 +23,7 @@ pub mod map_statics_diff;
 pub mod facet_sources;
 pub mod sound;
 pub mod audio_def;
+pub mod music;
 pub mod vd_codec;
 pub mod michelangelo_uop_codec;
 pub mod verdata;

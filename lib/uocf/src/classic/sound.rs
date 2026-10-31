@@ -1,5 +1,12 @@
-#![allow(dead_code)]
-//! Classic Client sound codec for `soundidx.mul` and `sound.mul`.
+//! Classic Client sounds: the slots of `soundidx.mul`/`sound.mul` or of `soundLegacyMUL.uop`
+//! (`build/soundlegacymul/%08d.dat`), patched by `verdata.mul`, and the `Sound.def` translations
+//! ([`crate::classic::audio_def`]).
+//!
+//! A slot is a 40-byte header and raw 22050 Hz mono 16-bit little-endian PCM. The header is the sound's name,
+//! NUL-terminated in 32 bytes, then 8 bytes whose meaning is not known: build-tool leftovers by their look
+//! (`30 00 00 00 98 fb 18 00` throughout `soundLegacyMUL.uop`, pointer-like values or MSVC's `cc` fill in UO Gold's
+//! `sound.mul`). The Enhanced Client's `data/audio/legacysounds/*.wav` hold the same PCM bytes as these slots,
+//! from byte 40 on. [`ClassicSound`] keeps the header as stored, so a slot can be written back unchanged.
 
 crate::eyre_imports!();
 
@@ -9,20 +16,54 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::classic::audio_def::{DefTranslationTable, SOUND_DEF_FILE_NAME};
 use crate::classic::generic_index::IndexFile;
 use crate::classic::verdata::{VerFileId, Verdata};
+use crate::uop_container::file::CompressionFlag;
+use crate::uop_container::hash::hash_file_name_single;
+use crate::uop_container::package::{LoadMode, UopPackage};
+use crate::utils::path::find_file_ignoring_case;
 
 pub const SOUND_NAME_BYTES: usize = 32;
-pub const WAV_HEADER_BYTES: usize = 44;
+/// The name and the 8 unknown bytes before the PCM.
+pub const SOUND_HEADER_BYTES: usize = 40;
+pub const WAV_HEADER_BYTES: usize = crate::audio::wav::PCM_WAV_HEADER_SIZE;
 pub const SAMPLE_RATE: u32 = 22_050;
 pub const CHANNELS: u16 = 1;
 pub const BITS_PER_SAMPLE: u16 = 16;
+const BITS_PER_BYTE: u16 = 8;
+
+pub const SOUND_IDX_FILE_NAME: &str = "soundidx.mul";
+pub const SOUND_MUL_FILE_NAME: &str = "sound.mul";
+pub const SOUND_UOP_FILE_NAME: &str = "soundLegacyMUL.uop";
+/// The entry name of slot `id` in `soundLegacyMUL.uop`: `build/soundlegacymul/` and the id in 8 digits.
+pub const SOUND_UOP_ENTRY_PREFIX: &str = "build/soundlegacymul/";
+pub const SOUND_UOP_ENTRY_EXTENSION: &str = ".dat";
+/// Sound ids are 16-bit in the protocol: the UOP entries searched by id.
+pub const SOUND_UOP_SLOT_LIMIT: u32 = 1 << u16::BITS;
+
+/// The `soundLegacyMUL.uop` entry name of a slot.
+pub fn sound_uop_entry_name(slot_id: u32) -> String {
+    format!("{SOUND_UOP_ENTRY_PREFIX}{slot_id:08}{SOUND_UOP_ENTRY_EXTENSION}")
+}
+
+/// Where a slot was read from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SoundSlotSource {
+    Mul,
+    /// A `soundLegacyMUL.uop` entry, stored with this compression.
+    Uop(CompressionFlag),
+    Verdata,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClassicSound {
     pub slot_id: u32,
     pub name: String,
+    /// The slot's first [`SOUND_HEADER_BYTES`] bytes as stored: the name field and the 8 unknown bytes.
+    pub header: Vec<u8>,
     pub pcm_data: Vec<u8>,
+    pub source: SoundSlotSource,
 }
 
 impl ClassicSound {
@@ -31,8 +72,13 @@ impl ClassicSound {
     }
 
     pub fn duration_seconds(&self) -> f64 {
-        let bytes_per_sample = (BITS_PER_SAMPLE / 8) as f64;
-        self.pcm_data.len() as f64 / SAMPLE_RATE as f64 / CHANNELS as f64 / bytes_per_sample
+        let frame_bytes = f64::from(CHANNELS * BITS_PER_SAMPLE / BITS_PER_BYTE);
+        self.pcm_data.len() as f64 / frame_bytes / f64::from(SAMPLE_RATE)
+    }
+
+    /// The slot bytes as stored: header and PCM.
+    pub fn slot_bytes(&self) -> Vec<u8> {
+        [self.header.as_slice(), self.pcm_data.as_slice()].concat()
     }
 }
 
@@ -44,38 +90,61 @@ pub struct SoundLookup {
 }
 
 #[derive(Clone)]
+enum SoundStore {
+    Mul { idx_file: IndexFile, mul_data: Vec<u8> },
+    Uop { package: Arc<UopPackage>, slot_hashes: HashMap<u32, u64> },
+}
+
+#[derive(Clone)]
 pub struct SoundMap {
     client_path: PathBuf,
-    idx_file: IndexFile,
-    mul_data: Vec<u8>,
-    translations: HashMap<u32, u32>,
+    store: SoundStore,
+    translations: DefTranslationTable,
     verdata: Option<Arc<Verdata>>,
 }
 
 impl SoundMap {
+    /// `soundidx.mul` and `sound.mul` when both exist, otherwise `soundLegacyMUL.uop` (file names matched ignoring
+    /// case), and `Sound.def` when present, parsed strictly.
     pub fn load(client_path: impl AsRef<Path>) -> eyre::Result<Self> {
         let client_path = client_path.as_ref().to_path_buf();
-        let idx_path = client_path.join("soundidx.mul");
-        let mul_path = client_path.join("sound.mul");
+        let idx_path = find_file_ignoring_case(&client_path, SOUND_IDX_FILE_NAME);
+        let mul_path = find_file_ignoring_case(&client_path, SOUND_MUL_FILE_NAME);
+        let store = match (idx_path, mul_path) {
+            (Some(idx_path), Some(mul_path)) => {
+                let idx_file = IndexFile::load(idx_path)?;
+                let mut mul_data = Vec::new();
+                File::open(&mul_path)
+                    .and_then(|mut file| file.read_to_end(&mut mul_data))
+                    .wrap_err_with(|| format!("Failed to read {}", mul_path.display()))?;
+                SoundStore::Mul { idx_file, mul_data }
+            }
+            _ => {
+                let uop_path = find_file_ignoring_case(&client_path, SOUND_UOP_FILE_NAME).ok_or_else(|| {
+                    eyre!(
+                        "Neither {SOUND_IDX_FILE_NAME}/{SOUND_MUL_FILE_NAME} nor {SOUND_UOP_FILE_NAME} found in {}",
+                        client_path.display()
+                    )
+                })?;
+                let package = UopPackage::load_with_mode(&uop_path, LoadMode::Lazy)
+                    .wrap_err_with(|| format!("Failed to load {}", uop_path.display()))?;
+                let slot_hashes = (0..SOUND_UOP_SLOT_LIMIT)
+                    .map(|slot_id| (slot_id, hash_file_name_single(&sound_uop_entry_name(slot_id))))
+                    .filter(|(_, hash)| package.get_file_by_hash(*hash).is_some())
+                    .collect();
+                SoundStore::Uop { package: Arc::new(package), slot_hashes }
+            }
+        };
+        let translations = match find_file_ignoring_case(&client_path, SOUND_DEF_FILE_NAME) {
+            Some(path) => DefTranslationTable::load(&path)?.unwrap_or_default(),
+            None => DefTranslationTable::default(),
+        };
+        Ok(Self { client_path, store, translations, verdata: None })
+    }
 
-        let idx_file = IndexFile::load(idx_path)?;
-
-        let mut mul_file = File::open(&mul_path)
-            .wrap_err_with(|| format!("Failed to open {}", mul_path.display()))?;
-        let mut mul_data = Vec::new();
-        mul_file
-            .read_to_end(&mut mul_data)
-            .wrap_err_with(|| format!("Failed to read {}", mul_path.display()))?;
-
-        let translations = load_sound_def_translations(&client_path.join("Sound.def"))?;
-
-        Ok(Self {
-            client_path,
-            idx_file,
-            mul_data,
-            translations,
-            verdata: None,
-        })
+    /// The client folder has `sound.mul` or `soundLegacyMUL.uop`, which [`Self::load`] reads.
+    pub fn has_sound_files(client_path: &Path) -> bool {
+        [SOUND_MUL_FILE_NAME, SOUND_UOP_FILE_NAME].iter().any(|name| find_file_ignoring_case(client_path, name).is_some())
     }
 
     pub fn with_verdata(mut self, verdata: Arc<Verdata>) -> Self {
@@ -83,103 +152,99 @@ impl SoundMap {
         self
     }
 
+    pub fn client_path(&self) -> &Path {
+        &self.client_path
+    }
+
+    /// The slots files hold: `soundLegacyMUL.uop` or `sound.mul`.
+    pub fn source_label(&self) -> &'static str {
+        match self.store {
+            SoundStore::Mul { .. } => SOUND_MUL_FILE_NAME,
+            SoundStore::Uop { .. } => SOUND_UOP_FILE_NAME,
+        }
+    }
+
+    /// The slot ids to scan: the index length, or one past the highest UOP entry.
     pub fn slot_count(&self) -> usize {
-        self.idx_file.element_count()
+        match &self.store {
+            SoundStore::Mul { idx_file, .. } => idx_file.element_count(),
+            SoundStore::Uop { slot_hashes, .. } => slot_hashes.keys().max().map_or(0, |&max| max as usize + 1),
+        }
     }
 
     pub fn translation_count(&self) -> usize {
         self.translations.len()
     }
 
-    pub fn read_slot(&self, slot_id: u32) -> eyre::Result<Option<ClassicSound>> {
-        if let Some(verdata) = &self.verdata {
-            if let Some(bytes) = verdata.read_patch(VerFileId::Sound, slot_id as i32)? {
-                return Ok(parse_sound_slot(slot_id, &bytes));
-            }
-        }
-
-        let entry = match self.idx_file.element(slot_id as usize) {
-            Ok(entry) => entry,
-            Err(_) => return Ok(None),
-        };
-
-        let index_patch = self
-            .verdata
-            .as_ref()
-            .and_then(|verdata| verdata.index_patch(VerFileId::SoundIdx, slot_id as i32));
-        let index_values = index_patch.or_else(|| {
-            Some((entry.lookup()?, entry.len()?, entry.extra().unwrap_or(0)))
-        });
-        let Some((lookup, length, _extra)) = index_values else {
-            return Ok(None);
-        };
-
-        if length as usize <= SOUND_NAME_BYTES {
-            return Ok(None);
-        }
-
-        let lookup = lookup as usize;
-        let length = length as usize;
-        let end = lookup
-            .checked_add(length)
-            .ok_or_else(|| eyre!("Sound slot {} range overflows usize.", slot_id))?;
-
-        if end > self.mul_data.len() {
-            eyre::bail!(
-                "Sound slot {} points outside sound.mul (offset {}, length {}, file length {}).",
-                slot_id,
-                lookup,
-                length,
-                self.mul_data.len()
-            );
-        }
-
-        Ok(parse_sound_slot(slot_id, &self.mul_data[lookup..end]))
+    pub fn translations(&self) -> &DefTranslationTable {
+        &self.translations
     }
 
+    /// The slot as stored (header and PCM), with its source; `None` for an empty or missing slot.
+    pub fn read_slot_bytes(&self, slot_id: u32) -> eyre::Result<Option<(Vec<u8>, SoundSlotSource)>> {
+        if let Some(verdata) = &self.verdata {
+            if let Some(bytes) = verdata.read_patch(VerFileId::Sound, slot_id as i32)? {
+                return Ok(Some((bytes, SoundSlotSource::Verdata)));
+            }
+        }
+        match &self.store {
+            SoundStore::Mul { idx_file, mul_data } => {
+                let Ok(entry) = idx_file.element(slot_id as usize) else {
+                    return Ok(None);
+                };
+                let index_patch = self.verdata.as_ref().and_then(|verdata| verdata.index_patch(VerFileId::SoundIdx, slot_id as i32));
+                let Some((lookup, length, _extra)) =
+                    index_patch.or_else(|| Some((entry.lookup()?, entry.len()?, entry.extra().unwrap_or(0))))
+                else {
+                    return Ok(None);
+                };
+                let (lookup, length) = (lookup as usize, length as usize);
+                let end = lookup.checked_add(length).ok_or_else(|| eyre!("Sound slot {slot_id} range overflows usize."))?;
+                if end > mul_data.len() {
+                    eyre::bail!(
+                        "Sound slot {slot_id} points outside {SOUND_MUL_FILE_NAME} (offset {lookup}, length {length}, file length {}).",
+                        mul_data.len()
+                    );
+                }
+                Ok(Some((mul_data[lookup..end].to_vec(), SoundSlotSource::Mul)))
+            }
+            SoundStore::Uop { package, slot_hashes } => {
+                let Some(&hash) = slot_hashes.get(&slot_id) else {
+                    return Ok(None);
+                };
+                let compression = package.get_file_by_hash(hash).map(|file| file.compression()).unwrap_or(CompressionFlag::None);
+                let bytes = package
+                    .unpack_file_by_hash(hash)
+                    .wrap_err_with(|| format!("Failed to read {}", sound_uop_entry_name(slot_id)))?;
+                Ok(bytes.map(|bytes| (bytes, SoundSlotSource::Uop(compression))))
+            }
+        }
+    }
+
+    pub fn read_slot(&self, slot_id: u32) -> eyre::Result<Option<ClassicSound>> {
+        Ok(self.read_slot_bytes(slot_id)?.and_then(|(bytes, source)| parse_sound_slot(slot_id, &bytes, source)))
+    }
+
+    /// The slot of `sound_id`, or the first slot of its `Sound.def` targets that holds a sound.
     pub fn read_id(&self, sound_id: u32) -> eyre::Result<Option<SoundLookup>> {
         if let Some(sound) = self.read_slot(sound_id)? {
-            return Ok(Some(SoundLookup {
-                sound,
-                requested_id: sound_id,
-                translated: false,
-            }));
+            return Ok(Some(SoundLookup { sound, requested_id: sound_id, translated: false }));
         }
-
-        let Some(&slot_id) = self.translations.get(&sound_id) else {
+        let Some(translation) = self.translations.get(sound_id) else {
             return Ok(None);
         };
-
-        Ok(self.read_slot(slot_id)?.map(|sound| SoundLookup {
-            sound,
-            requested_id: sound_id,
-            translated: true,
-        }))
+        for slot_id in translation.slots() {
+            if let Some(sound) = self.read_slot(slot_id)? {
+                return Ok(Some(SoundLookup { sound, requested_id: sound_id, translated: true }));
+            }
+        }
+        Ok(None)
     }
 }
 
+/// A PCM WAV file of Classic sound PCM.
 pub fn encode_wav(pcm_data: &[u8]) -> Vec<u8> {
-    let mut wav = Vec::with_capacity(WAV_HEADER_BYTES + pcm_data.len());
-    let data_len = pcm_data.len() as u32;
-    let byte_rate = SAMPLE_RATE * CHANNELS as u32 * BITS_PER_SAMPLE as u32 / 8;
-    let block_align = CHANNELS * BITS_PER_SAMPLE / 8;
-
-    wav.extend_from_slice(b"RIFF");
-    wav.extend_from_slice(&(data_len + 36).to_le_bytes());
-    wav.extend_from_slice(b"WAVE");
-    wav.extend_from_slice(b"fmt ");
-    wav.extend_from_slice(&16u32.to_le_bytes());
-    wav.extend_from_slice(&1u16.to_le_bytes());
-    wav.extend_from_slice(&CHANNELS.to_le_bytes());
-    wav.extend_from_slice(&SAMPLE_RATE.to_le_bytes());
-    wav.extend_from_slice(&byte_rate.to_le_bytes());
-    wav.extend_from_slice(&block_align.to_le_bytes());
-    wav.extend_from_slice(&BITS_PER_SAMPLE.to_le_bytes());
-    wav.extend_from_slice(b"data");
-    wav.extend_from_slice(&data_len.to_le_bytes());
-    wav.extend_from_slice(pcm_data);
-
-    wav
+    crate::audio::wav::encode_pcm_wav(SAMPLE_RATE, CHANNELS, pcm_data)
 }
 
 fn decode_sound_name(bytes: &[u8]) -> String {
@@ -187,57 +252,18 @@ fn decode_sound_name(bytes: &[u8]) -> String {
     String::from_utf8_lossy(&bytes[..end]).trim_end().to_string()
 }
 
-fn parse_sound_slot(slot_id: u32, bytes: &[u8]) -> Option<ClassicSound> {
-    if bytes.len() <= SOUND_NAME_BYTES {
+/// A slot of more than [`SOUND_HEADER_BYTES`] bytes.
+pub fn parse_sound_slot(slot_id: u32, bytes: &[u8], source: SoundSlotSource) -> Option<ClassicSound> {
+    if bytes.len() <= SOUND_HEADER_BYTES {
         return None;
     }
-
     Some(ClassicSound {
         slot_id,
         name: decode_sound_name(&bytes[..SOUND_NAME_BYTES]),
-        pcm_data: bytes[SOUND_NAME_BYTES..].to_vec(),
+        header: bytes[..SOUND_HEADER_BYTES].to_vec(),
+        pcm_data: bytes[SOUND_HEADER_BYTES..].to_vec(),
+        source,
     })
-}
-
-fn load_sound_def_translations(path: &Path) -> eyre::Result<HashMap<u32, u32>> {
-    if !path.is_file() {
-        return Ok(HashMap::new());
-    }
-
-    let text = std::fs::read_to_string(path)
-        .wrap_err_with(|| format!("Failed to read {}", path.display()))?;
-    let mut translations = HashMap::new();
-
-    for line in text.lines() {
-        if let Some((from, to)) = parse_sound_def_translation(line) {
-            translations.insert(from, to);
-        }
-    }
-
-    Ok(translations)
-}
-
-fn parse_sound_def_translation(line: &str) -> Option<(u32, u32)> {
-    let line = line.trim();
-    if line.is_empty() || line.starts_with('#') {
-        return None;
-    }
-
-    let mut first_digits = String::new();
-    for ch in line.chars() {
-        if ch.is_ascii_digit() {
-            first_digits.push(ch);
-        } else {
-            break;
-        }
-    }
-
-    let open = line.find('{')?;
-    let close = line[open + 1..].find('}')? + open + 1;
-    let from = first_digits.parse().ok()?;
-    let to = line[open + 1..close].trim().parse().ok()?;
-
-    Some((from, to))
 }
 
 #[cfg(test)]
@@ -259,7 +285,20 @@ mod tests {
         assert_eq!(u32::from_le_bytes(wav[24..28].try_into().unwrap()), SAMPLE_RATE);
         assert_eq!(&wav[36..40], b"data");
         assert_eq!(u32::from_le_bytes(wav[40..44].try_into().unwrap()), pcm.len() as u32);
-        assert_eq!(&wav[44..], &pcm);
+        assert_eq!(&wav[WAV_HEADER_BYTES..], &pcm);
+    }
+
+    #[test]
+    fn slot_header_is_kept_and_pcm_starts_after_it() {
+        let mut slot = vec![0u8; SOUND_HEADER_BYTES];
+        slot[..5].copy_from_slice(b"clang");
+        slot[SOUND_NAME_BYTES..].copy_from_slice(&[0x30, 0, 0, 0, 0x98, 0xfb, 0x18, 0]);
+        slot.extend_from_slice(&[1, 2]);
+        let sound = parse_sound_slot(3, &slot, SoundSlotSource::Mul).unwrap();
+        assert_eq!(sound.name, "clang");
+        assert_eq!(sound.pcm_data, [1, 2]);
+        assert_eq!(sound.slot_bytes(), slot);
+        assert!(parse_sound_slot(3, &slot[..SOUND_HEADER_BYTES], SoundSlotSource::Mul).is_none());
     }
 
     #[test]
@@ -273,35 +312,40 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
 
         let result = write_sound_pair_and_read(&dir);
-        let _ = std::fs::remove_file(dir.join("soundidx.mul"));
-        let _ = std::fs::remove_file(dir.join("sound.mul"));
-        let _ = std::fs::remove_file(dir.join("Sound.def"));
+        let _ = std::fs::remove_file(dir.join(SOUND_IDX_FILE_NAME));
+        let _ = std::fs::remove_file(dir.join(SOUND_MUL_FILE_NAME));
+        let _ = std::fs::remove_file(dir.join(SOUND_DEF_FILE_NAME));
         let _ = std::fs::remove_dir(&dir);
 
         result.unwrap();
     }
 
     fn write_sound_pair_and_read(dir: &Path) -> std::io::Result<()> {
-        let mut payload = [0u8; SOUND_NAME_BYTES].to_vec();
+        let mut payload = [0u8; SOUND_HEADER_BYTES].to_vec();
         payload[..5].copy_from_slice(b"clang");
         payload.extend_from_slice(&[1u8, 2, 3, 4]);
 
-        let mut idx = std::fs::File::create(dir.join("soundidx.mul"))?;
+        let mut idx = std::fs::File::create(dir.join(SOUND_IDX_FILE_NAME))?;
         idx.write_all(&0u32.to_le_bytes())?;
         idx.write_all(&(payload.len() as u32).to_le_bytes())?;
         idx.write_all(&1u32.to_le_bytes())?;
-        std::fs::write(dir.join("sound.mul"), payload)?;
-        std::fs::write(dir.join("Sound.def"), "7 {0} 0\n")?;
+        std::fs::write(dir.join(SOUND_MUL_FILE_NAME), payload)?;
+        std::fs::write(dir.join(SOUND_DEF_FILE_NAME), "7 {-1, 0} 0\r\n")?;
 
         let sounds = SoundMap::load(dir).unwrap();
         let slot = sounds.read_slot(0).unwrap().unwrap();
         assert_eq!(slot.name, "clang");
         assert_eq!(slot.pcm_data, [1u8, 2, 3, 4]);
+        assert_eq!(slot.source, SoundSlotSource::Mul);
 
         let lookup = sounds.read_id(7).unwrap().unwrap();
         assert!(lookup.translated);
         assert_eq!(lookup.requested_id, 7);
         assert_eq!(lookup.sound.slot_id, 0);
+
+        std::fs::write(dir.join(SOUND_DEF_FILE_NAME), "7 {0} 0 trailing\r\n")?;
+        let error = SoundMap::load(dir).err().unwrap().to_string();
+        assert!(error.contains(":1:9: expected the end of the line"), "{error}");
 
         Ok(())
     }

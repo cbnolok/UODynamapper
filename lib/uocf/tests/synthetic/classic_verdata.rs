@@ -119,7 +119,7 @@ fn verdata_art_gump_sound_and_multi_payloads_override_base_files() {
     gump_payload.extend_from_slice(&1u32.to_le_bytes());
     gump_payload.extend_from_slice(&0x7fffu16.to_le_bytes());
     gump_payload.extend_from_slice(&1u16.to_le_bytes());
-    let mut sound_payload = vec![0u8; 32];
+    let mut sound_payload = vec![0u8; uocf::classic::sound::SOUND_HEADER_BYTES];
     sound_payload[..4].copy_from_slice(b"bell");
     sound_payload.extend_from_slice(&[1, 2, 3, 4]);
     let mut multi_payload = Vec::new();
