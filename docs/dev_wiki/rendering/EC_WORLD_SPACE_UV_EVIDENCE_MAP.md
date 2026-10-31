@@ -125,8 +125,8 @@ The following points are *reconstruction inferences*, not proven original EC fac
 | `solid-terrain.fx` uses explicit integer Stretch per texture, not pixel-size heuristic | **Diverges from current UODynamapper behaviour** — worth investigating |
 | `solid-terrain.fx` uses Texture0 + Texture1 + AlphaMask (three inputs) | Already partially implemented in UODynamapper (Phase 10D); stretch handling unverified |
 | `liquid-terrain.fx` uses `Texture0Stretch` and `NormalStretch` as separate integer parameters | Decoded TerrainDefinition `texture_repetition` per layer is a plausible match; not proven identical |
-| `liquid-terrain.fx` `WaveHeight`, `WindDirection`, `WindForce`, `Time`, `Center` parameters | UODynamapper approximates wind/wave behaviour in WGSL using hard-coded constants; `TERRAIN_FLAG_FOLLOW_CENTER` is used for `Center` variant |
-| `liquid-terrain.fx` `FollowCenter` vs `Main` technique | Mapped to `TERRAIN_FLAG_FOLLOW_CENTER` bit in `terrain_flags` — reasonable, not proven |
+| `liquid-terrain.fx` `WaveHeight`, `WindDirection`, `WindForce`, `Time`, `Center` parameters | Superseded: UOSA.exe `UOWaterTerrainLayer::Draw` scrolls item 0 by `time × tweaks 0/1` (seconds), which the renderer follows; the FX parameters are not read |
+| `liquid-terrain.fx` `FollowCenter` vs `Main` technique | Superseded: the client has no follow-center flag, and the old `TERRAIN_FLAG_FOLLOW_CENTER` bit is removed |
 
 ---
 
@@ -173,8 +173,8 @@ they are resolved unless new evidence is found:
 3. **If changing stretch derivation**, justify it against both the decoded metadata and
    known-correct visual families, not only against the FX files.
 
-4. **FollowCenter** is a terrain flag already in place.  Do not re-derive it from the FX
-   files as if it were new; it is already wired to `TERRAIN_FLAG_FOLLOW_CENTER`.
+4. **FollowCenter** has no client counterpart and its terrain flag was removed. Water
+   scroll follows `UOWaterTerrainLayer::Draw` (item 0 translated by time × tweaks 0/1).
 
 5. **Liquid NormalStretch** may eventually need to be a separate per-layer stored value
    rather than shared with the base stretch.  Design for that possibility before hardcoding

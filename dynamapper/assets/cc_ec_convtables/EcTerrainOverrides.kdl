@@ -28,12 +28,12 @@
 //
 // 1. `policy`
 //
-//     policy "follow-center" code="reviewed_runtime_policy"
+//     policy "KEYWORD" code="reason_code"
 //
-// - Argument: policy keyword string.
-// - Known policy keywords currently used:
-//   - `"follow-center"`: a repo-side liquid look (stronger normal scroll and wave
-//     height in the land shader); the client has no such flag.
+// - Argument: policy keyword string. No keyword is currently read.
+// - There is no "follow-center" policy: the client scrolls a water material's
+//   distortion map (item 0) by its TerrainDefinition.uop tweaks 0/1 per second
+//   (UOWaterTerrainLayer::Draw), which the renderer reads directly.
 // - There is no "smooth" policy: the client's edge softness is each material's
 //   TerrainDefinition.uop `coverage_exponent` (0: hard edge, point filtering;
 //   larger: soft falloff, bilinear filtering), which the renderer reads directly.
@@ -102,7 +102,6 @@
 // Reason code guidance:
 // - Keep `code` values short, enumerable, and machine-greppable.
 // - Current codes in use:
-//   - `reviewed_runtime_policy`
 //   - `reviewed_liquid_motion`
 //   - `reviewed_layer_texture`
 //   - `reviewed_liquid_texture`
@@ -133,7 +132,6 @@
 //   by position for every water material; they can be removed.
 
 terrain 5 {
-    policy "follow-center" code="reviewed_runtime_policy"
     liquid waveheight=0.3 code="reviewed_liquid_motion"
     layer "t0" tex=2000051 stretch=4.0 code="reviewed_liquid_texture"
     layer "n" tex=1000013 stretch=16.0 code="reviewed_liquid_texture"
@@ -160,8 +158,4 @@ terrain 70 {
     liquid speed=0.01 waveheight=0.3 code="reviewed_liquid_motion"
     layer "t0" tex=2000700 stretch=4.0 code="reviewed_liquid_texture"
     layer "n" tex=2000703 stretch=16.0 code="reviewed_liquid_texture"
-}
-
-terrain 53 {
-    policy "follow-center" code="reviewed_runtime_policy"
 }

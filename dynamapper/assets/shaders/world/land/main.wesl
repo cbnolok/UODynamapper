@@ -40,7 +40,6 @@ import package::shaders::postprocess::tonemapping::{tonemap_ec_kr_profile};
 import package::shaders::world::land::sampling::{
   LandGradients, ec_tile_gradients, ec_world_uv,
   ec_material_has_liquid_normal,
-  ec_liquid_perturbed_base_uv,
   sample_ec_material_normal_world,
   sample_tile_albedo,
   sample_tile_albedo_grad,
@@ -534,9 +533,6 @@ fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool, world
     // uv_in_tile offset so water animation stays coherent with EC textures too.
     let world_xz = vec2<f32>(floor(in.world_position.x), floor(in.world_position.z)) + uv_in_tile;
     sample_uv = ec_world_uv(world_xz, tile);
-    if (enable_water == 1u && ec_liquid_normal && !use_ec_liquid) {
-      sample_uv = ec_liquid_perturbed_base_uv(world_xz, sample_uv, tile, globals.time, world_gradients);
-    }
   }
 
 
@@ -673,11 +669,9 @@ fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool, world
   // For non-classic modes we can still override with bicubic if desired.
   var Nw = surface_normal;
   if (effects.enable_normal_maps == 1u && shading_mode != 0u && tile.texture_size == 2u && !use_ec_liquid) {
-    let animate_normal_map = enable_water == 1u && (tile.is_wet == 1u || reviewed_liquid) && ec_liquid_normal;
-    let normal_map = sample_ec_material_normal_world(in.world_position.xz, tile, globals.time, animate_normal_map, world_gradients);
+    let normal_map = sample_ec_material_normal_world(in.world_position.xz, tile, world_gradients);
     if (normal_map.w > 0.5) {
-      let base_normal_map_strength = clamp(effects.land_normal_map_strength, 0.0, 1.0);
-      let normal_map_strength = select(base_normal_map_strength, min(base_normal_map_strength * 1.28, 1.0), animate_normal_map);
+      let normal_map_strength = clamp(effects.land_normal_map_strength, 0.0, 1.0);
       Nw = normalize(mix(Nw, normal_map.xyz, normal_map_strength));
     }
   }

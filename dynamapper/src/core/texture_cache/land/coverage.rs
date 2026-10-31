@@ -49,9 +49,7 @@ fn coverage_weights(b: f32) -> [u8; 2] {
 }
 
 pub fn ec_land_shader_flags(package: &TexLandEcPackage, tile_id: u32) -> u16 {
-    use crate::core::render::scene::world::land::tile_atlas::{
-        TERRAIN_SHADER_FLAG_FOLLOW_CENTER, TERRAIN_SHADER_FLAG_REVIEWED_LIQUID,
-    };
+    use crate::core::render::scene::world::land::tile_atlas::TERRAIN_SHADER_FLAG_REVIEWED_LIQUID;
     let Some(material_id) = package.resolve_material_decision(tile_id).material_id else {
         return 0;
     };
@@ -63,12 +61,6 @@ pub fn ec_land_shader_flags(package: &TexLandEcPackage, tile_id: u32) -> u16 {
     let Some(details) = package.terrain_override_details_for(material_id) else {
         return flags;
     };
-    for policy in &details.policies {
-        match policy.policy.as_str() {
-            "follow-center" => flags |= TERRAIN_SHADER_FLAG_FOLLOW_CENTER,
-            _ => {}
-        }
-    }
     if details.liquid.is_some() { flags |= TERRAIN_SHADER_FLAG_REVIEWED_LIQUID; }
     flags
 }

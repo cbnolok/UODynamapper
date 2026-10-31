@@ -109,7 +109,7 @@ on top. Data (material 8): item 3 `01000013_water_alpha.tga`, item 4 `01000014_c
 `GetMap(0..3)`: map0 coverage, map1 item 0, map2 item 1, map3 item 2. The layer draws nothing unless items
 0..2 and their textures exist (0x005988ea..0x00598922). It reads technique 0 (and technique 1, which it then
 discards, 0x00598a5d) and tweaks 0 and 1 (tweaks 2 and 3 are read and popped unused, 0x00598aa4 / 0x00598ab1).
-`t` = float at `*(0x00e3722c) + 0x58` (inference: elapsed time).
+`t` = float at `*(0x00e3722c) + 0x58`: elapsed time in **seconds** (verified, see "Water scroll time" below).
 
 Path with 4 or more stages (0x00598ac0..):
 
@@ -209,10 +209,23 @@ name (0x004616e0), `LoadTerrainLayer` 0x00461800 and `LoadTerrainLayerTexture` 0
 6. Route classic land through `legacyterrainmap.csv`; 774/777 → material 64 subtype 0. A material without a
    definition is invalid data (the client faults), so a converter should reject it rather than invent one.
 
+### Water scroll time (verified 2026-10-31)
+
+- `0x00e3722c` is the `UOApplication` singleton (created by 0x0047c560 → constructor 0x004833d0, which sets
+  `UOApplication::vftable` and zeroes +0x58).
+- The only stores to +0x58 from its vftable methods and their callees are in 0x00482530 (vftable slot 1, the
+  main loop; probe `UoAppTimeWriterProbe20261031.java`). On entry it sets +0x58 = 0x0099a814() (a QPC tick
+  count × the float at 0x00e32240: a start phase). Each frame it computes `local_28` = milliseconds since the
+  last frame (0x0099a7c7 returns QPC ticks / (frequency / 10000), i.e. 0.1 ms units, divided by 10; the same
+  value feeds `Sleep(1000 / fps - local_28)`), stores +0x5c = `local_28 / 1000.0` (frame seconds) and ends the
+  frame with +0x58 += +0x5c.
+- So `t` is seconds since start (plus a constant phase) and the scroll is `tweak` texture repeats per second:
+  water 5 at -0.01 moves one repeat in 100 s.
+- 0x005101c0 copies two floats to offsets 0 and 4 of its target and sets the byte at +0x1c when they change:
+  the texture transform's translation setter with a dirty flag.
+
 ## Open items
 
-- The unit of `t` (`*(0x00e3722c) + 0x58`) and what 0x005101c0 stores (read as a translation setter from its two
-  products; not opened).
 - Technique 1 of water layers (values 1, 2, 3) is read and discarded in `Draw`; another reader (for example the
   `UOTerrainShader` pass count 0x00596c80) was not traced.
 - The meaning of map flag bits 0x3000 / 0x3100 / 0x100 (filter and address modes, from the coverage behaviour)

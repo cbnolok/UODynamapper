@@ -90,7 +90,7 @@ No image or material mutation occurs while the cache is idle.
 
 Baking also waits for submitted metadata and a matching full halo, then snapshots
 its liquid flags. A later revision that changes these flags requires a rebake
-before publication. Height, smooth and follow-center flags do not affect grime
+before publication. Height flags do not affect grime
 decisions. Evicted or mismatched sources unpublish the entry while retaining its
 immutable data for reuse after residency returns. A deferred bake cannot publish
 an old entry with different pass limits.

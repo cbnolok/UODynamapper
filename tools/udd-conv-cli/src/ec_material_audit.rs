@@ -3091,7 +3091,7 @@ fn terrain_override_action_count(terrain: &EcTerrainOverrideTerrainEntry) -> usi
 }
 
 fn accepted_terrain_policy(policy: &str) -> bool {
-    matches!(policy, "follow-center" | "single")
+    matches!(policy, "single")
 }
 
 fn accepted_terrain_layer_role(role: &str) -> bool {

@@ -1336,9 +1336,8 @@ Active KDL files live in `dynamapper/assets/cc_ec_convtables/`.
 - Reviewed manual integration table for facts not currently derivable from UOP
   data.
 - Supported actions:
-  - `policy`: repo-side runtime policy; only `follow-center` is read (a liquid
-    look with no client basis). Edge softness is `coverage_exponent`, not a
-    policy.
+  - `policy`: repo-side runtime policy; no keyword is read. Edge softness is
+    `coverage_exponent` and the water scroll is tweaks 0/1, neither a policy.
   - `liquid`: reviewed liquid speed/wave parameters
   - `layer`: ordered texture layer substitution with optional stretch
   - `texture`: extra texture id reference with role

@@ -5,6 +5,11 @@
 import package::shaders::world::uo_coords::UO_Z_TO_WORLD_SCALE;
 
 const LIQUID_LOOKUP_CAPACITY: u32 = 16384u;
+// UOWaterTerrainLayer::Draw (0x005988a0) sets item 0's texture translation
+// (0x005101c0, NiTextureTransform translate + dirty flag) to t * tweaks[0..2].
+// t is UOApplication +0x58, advanced each frame by the frame time in seconds
+// (0x00482530: QPC milliseconds / 1000). Bevy's globals.time is also seconds.
+const EC_WATER_CLIENT_TIME_PER_SECOND: f32 = 1.0;
 
 struct EcLiquidSlot {
     present: bool,
@@ -121,7 +126,7 @@ fn sample_ec_liquid(atlas: texture_2d_array<f32>, lookup: texture_2d<u32>, linea
         if (params.w != 0u) {
             velocity = bitcast<vec2<f32>>(params.yz);
         }
-        let scroll = velocity * select(0.0, time, animate);
+        let scroll = velocity * select(0.0, time * EC_WATER_CLIENT_TIME_PER_SECOND, animate);
         var bump_uv = world_xz / normal.stretch + scroll;
         if (params.w != 0u) {
             bump_uv = ec_liquid_texture_uv(ec_liquid_world_uv(world_xz), normal.stretch, scroll);

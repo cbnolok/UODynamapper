@@ -54,6 +54,11 @@ path dependencies on `lib/uocf` and `color-eyre`:
 terrain_layers <EC client dir>
 ```
 
+## UoAppTimeWriterProbe20261031.java
+
+Read-only GhidraScript (console output only) that finds the writers of `UOApplication` +0x58, the water
+scroll time; see "Water scroll time" in the results. A copy is in `~/ghidra_scripts/`.
+
 Probe scripts used for the tracing, kept outside the repo in `~/ghidra_scripts/`:
 `ProbeTerrainLayers2026Vt.java` (dump labelled vftables), `ProbeTerrainLayers2026Names.java` (current names
 and plate comments), `ProbeLegacyScale2026Decomp.java` (decompile to a file).

@@ -15,7 +15,7 @@ struct TileUniform {
   texture_extent: vec2<u32>,
   // 1 when the tile has the IsWet tiledata flag set (animated water effect).
   is_wet: u32,
-  // Reviewed EC terrain hints packed by the CPU: bit 0 unused, bit 1=follow-center, bit 2=liquid.
+  // Reviewed EC terrain hints packed by the CPU: bits 0-1 unused, bit 2=liquid.
   terrain_flags: u32,
   // Original land-page lookup payload. EC material sampling uses this to load
   // optional detail/mask slots from land_page_lookup.

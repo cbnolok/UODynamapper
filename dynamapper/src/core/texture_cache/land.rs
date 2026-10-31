@@ -108,6 +108,8 @@ const LAND_PAGE_LOOKUP_ROLE_NORMAL: u32 = 3;
 const LAND_PAGE_LOOKUP_ROLE_ANIMATED: u32 = 4;
 const LAND_PAGE_LOOKUP_ROLE_LIQUID_PARAMS: u32 = 5;
 const LAND_PAGE_LOOKUP_ROLE_COVERAGE_PARAMS: u32 = 6;
+/// `w` of a liquid-params entry: the scroll comes from the source water tweaks.
+const LIQUID_PARAMS_FROM_SOURCE: u32 = 1;
 
 /// The texture and stretch of the item that has `role` in a terrain tile's layer graph (roles are by
 /// position per layer class, as the client binds them).
@@ -871,12 +873,13 @@ fn create_land_shader_images(
                     .and_then(|entry| entry.texture.as_ref())
                     .filter(|texture| texture.layer_class() == TerrainLayerClass::Water) {
                     // Original Technique[0] selects coordinates; Tweaks[0..2]
-                    // scrolls the bump texture in UV units per second.
+                    // scroll item 0 (du/dv) in UV units per second
+                    // (UOWaterTerrainLayer::Draw, see ec_liquid.wesl).
                     write_land_lookup_entry(&mut lookup_bytes, tile_id, LAND_PAGE_LOOKUP_ROLE_LIQUID_PARAMS, [
                         source.techniques().first().copied().unwrap_or(0) as u32,
                         source.tweaks().first().copied().unwrap_or(0.0).to_bits(),
                         source.tweaks().get(1).copied().unwrap_or(0.0).to_bits(),
-                        1,
+                        LIQUID_PARAMS_FROM_SOURCE,
                     ]);
                 }
                 let [layer0, layer1, layer2, layer3, animated] = package.resolve_material_render_layers(tile_id);
@@ -1791,7 +1794,7 @@ import package::shaders::world::land::coverage::{ec_terrain_cache, ec_cache_laye
 import package::shaders::world::land::liquid_bank::{ec_liquid_bank, ec_bank_vertex};
 import package::shaders::world::land::sampling::{
     LandGradients, apply_ec_aux_two_base_blend, apply_sharpening, blurred_albedo, classic_land_art_is_present,
-    ec_liquid_perturbed_base_uv, sample_classic_land_art, sample_ec_material_albedo,
+    sample_classic_land_art, sample_ec_material_albedo,
     sample_ec_material_normal_world, sample_ec_ripple_normal, sample_tile_albedo,
 };
 
@@ -1803,14 +1806,14 @@ fn fragment() -> @location(0) vec4<f32> {
     let bank = ec_liquid_bank(vec3<f32>(0.0), tile, 0u, 1.0);
     tile.tile_height += bank.weight;
     let gradients = LandGradients(vec2<f32>(0.01, 0.0), vec2<f32>(0.0, 0.01));
-    let uv = ec_liquid_perturbed_base_uv(vec2<f32>(0.0), vec2<f32>(0.0), tile, 0.0, gradients);
+    let uv = vec2<f32>(0.0);
     var color = sample_tile_albedo(uv, tile, gradients) + sample_ec_material_albedo(uv, uv, tile, gradients);
     color = apply_ec_aux_two_base_blend(color, uv, tile);
     color = apply_sharpening(color, uv, tile, 0.0, gradients) + blurred_albedo(uv, tile, 0.0, uv, gradients);
     if (classic_land_art_is_present(0u)) {
         color += sample_classic_land_art(uv, 0u);
     }
-    let normal = sample_ec_material_normal_world(uv, tile, 0.0, true, gradients);
+    let normal = sample_ec_material_normal_world(uv, tile, gradients);
     let ripple = sample_ec_ripple_normal(uv, 0u, 0.0, 0.0);
     let reflection_uv = ec_liquid_reflection_uv(vec3<f32>(0.0, 0.0, -1.0));
     color += sample_ec_liquid(land_page_atlas, land_page_lookup, tex_small_sampler,
