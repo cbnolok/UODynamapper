@@ -1050,9 +1050,12 @@ all active shader inputs yet. Do not discard them just because the current
 shader only uses base/detail/mask.
 
 For EC tileart texture refs, stable roles are inferred from paths and selection
-state:
+state. These are repo heuristics: the client never reads a role from a file
+name; it binds item i to shader map i of the block's shader
+(`scripts/dev-helpers/ec-research/ghidra-texture-roles/results/uosa_texture_roles.md`).
 
-- `normal` or `_n` -> normal-like
+- `normal` -> normal-like (no `_n` rule: in the shipped tileart it matched only
+  non-normal names such as `01000045_noise` and `*_NO_DRAW`)
 - `alpha` -> alpha mask
 - `mask` -> generic mask
 - `noise` -> noise

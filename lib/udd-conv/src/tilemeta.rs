@@ -202,6 +202,26 @@ mod tests {
     }
 
     #[test]
+    fn an_underscore_n_in_the_name_is_not_a_normal_map() {
+        let role = |path: &str| stable_role_from_tileart_texture_path(path);
+        assert_eq!(role("Data\\WorldArt\\01000045_noise.tga"), EcMaterialStableRole::Noise);
+        assert_eq!(role("Data\\WorldArt\\00004012_bed_of_nails.tga"), EcMaterialStableRole::UnknownSupport);
+        assert_eq!(role("Data\\WorldArt\\00001234_NO_DRAW.tga"), EcMaterialStableRole::UnknownSupport);
+        assert_eq!(role("Data\\WorldArt\\20006373_Nightshade_mask.tga"), EcMaterialStableRole::GenericMask);
+        assert_eq!(role("Data\\Textures\\00000123_lava_normal.tga"), EcMaterialStableRole::NormalLike, "\"normal\" is kept");
+
+        let primary = TextureItem {
+            texture_type: TextureType::WorldArt,
+            path: "Data\\WorldArt\\00008600_NO_DRAW.tga".to_string(),
+            ..TextureItem::default()
+        };
+        assert_eq!(
+            stable_role_for_tileart_texture_ref(&primary, TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED),
+            EcMaterialStableRole::Base
+        );
+    }
+
+    #[test]
     fn primary_selected_normal_map_keeps_support_role() {
         let item = TextureItem {
             texture_type: TextureType::Textures,
@@ -740,7 +760,10 @@ fn stable_role_from_tileart_texture_path(path: &str) -> EcMaterialStableRole {
     let basename = lower.rsplit(['\\', '/']).next().unwrap_or(lower.as_str());
     let stem = basename.split('.').next().unwrap_or(basename);
 
-    if stem.contains("normal") || stem.contains("_n") {
+    // No "_n" rule: UOSA.exe never derives a role from a file name, and in the shipped tileart
+    // "_n" matched only non-normal images (`01000045_noise`, `*_bed_of_nails`, `*_NO_DRAW`,
+    // `*_Nightshade_mask`). See scripts/dev-helpers/ec-research/ghidra-texture-roles/results/uosa_texture_roles.md.
+    if stem.contains("normal") {
         EcMaterialStableRole::NormalLike
     } else if stem.contains("alpha") {
         EcMaterialStableRole::AlphaMask

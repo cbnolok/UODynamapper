@@ -37,12 +37,15 @@ path role, and the aux packer skips `Base`. A support ref must therefore never c
 
 ## Gotchas
 
-- `stable_role_from_tileart_texture_path` uses `stem.contains("_n")` for `NormalLike`. In the
-  current tileart no stem matches a real `_n`/`_nrm` normal-map segment. The hits are words such
-  as `_nautilus`, `_nightshade`, `_no-dachi` and `01000045_noise`, so noise is classed as
-  `NormalLike` rather than `Noise`.
-- Unavailable sources: tileart names WorldArt ids that `Texture.uop` lacks. In the plain client
-  there are 28, among them the hue masks 2003211, 2003212, 20003979, 20004038 and 20004039.
+- `stable_role_from_tileart_texture_path` no longer has a `"_n"` rule. It matched 85,504 refs, none
+  a normal map: `01000045_noise` (85,140), `*_noise_alpha`, and names such as `_NO_DRAW`,
+  `_nautilus`, `_Nightshade`, `_bed_of_nails`. With it, 165 primary images had `NormalLike`
+  instead of `Base` and were packed as aux images (68 slots), and 7 of them were listed as absent
+  sources. The other name rules are still heuristics: UOSA.exe never reads a role from a file name,
+  only (block shader, item position); see
+  `scripts/dev-helpers/ec-research/ghidra-texture-roles/results/uosa_texture_roles.md`.
+- Unavailable sources: tileart names WorldArt ids that `Texture.uop` lacks. Of the non-base ones
+  the plain client has 21, among them the hue masks 2003211, 2003212, 20003979, 20004038 and 20004039.
   - When a texture request returns no data, UOSA.exe's tile material builder (FUN_0045cd80,
     0x0045ddf8 and 0x0045e42e) asks again for `Data\SystemTextures\missing.tga`, a 256x256
     opaque magenta pattern. A decode failure instead falls back to Gamebryo's default texture.

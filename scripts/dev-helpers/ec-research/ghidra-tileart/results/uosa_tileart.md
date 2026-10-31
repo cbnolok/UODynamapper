@@ -103,7 +103,7 @@ Shader block (`UOShaderDefinition`, 0x54 bytes in memory):
 | Field | Format | Memory | Meaning |
 |---|---|---|---|
 | present | u8 | - | 0 = keep the default block |
-| field_04 | u8 | +0x04 | `GetField04`; 0 in all records |
+| field_04 | u8 | +0x04 | `GetField04`: the shader implementation index passed to `NiShaderFactory::RetrieveShader(name, field_04, 1)` (0x0045da8d-0x0045dace, `ghidra-texture-roles/results/uosa_texture_roles.md` section 1); 0 in all records |
 | shader name | u32 string index | +0x08 std::string | `UOSpriteShader` (14608), `UOStaticTerrainShader` (341), `UOWaterShader` (322) in block 0 |
 | item count | u8 | vector +0x24 | |
 | item | u32 path index, u8 source_kind, f32 stretch, u32 sampler_index, u32 uv_set | `UOTileArtTextureItem` 0x2c | see below |
@@ -117,7 +117,7 @@ Texture item (`UOTileArtTextureItem`, ctor `UOTileArtTextureItem::Init` 0x004491
 | path | +0x00 std::string | `Data\WorldArt\...`, `TileArtLegacy\...`, `TileArtEnhanced\...` | high |
 | source_kind (u8) | +0x1c | material builder 0x0045cd80 (0x0045e23f): 0 loads the texture, 2 loads it the same way and forces wrap addressing (`OR [map+4],0x3000` at 0x0045e2f2), any other value loads nothing; 0 in all records | high |
 | stretch (f32) | +0x20 | != 1.0 sets address mode wrap (bits 12-13 = 3) | high |
-| sampler_index (u32) | +0x24 | not read: the material builder binds items by position (base map = item 0, shader maps = items 1..n); usually equals the position (section 8.10) | high (unused) |
+| sampler_index (u32) | +0x24 | not read: the material builder binds items by position (item i -> shader map i); usually equals the position (section 8.10). The `NiTexturingProperty` base map is the hue atlas, not an item (`ghidra-texture-roles/results/uosa_texture_roles.md`) | high (unused) |
 | uv_set (u32) | +0x28 | texture coordinate set: low byte of the `NiTexturingProperty::Map` flags (0x0045de94, 0x0045e1ec); 0/1 | high |
 
 Blocks: 0 = WorldArt (present on 15271 records; implies `has_world_art`), 1 = TileArtLegacy (always present),
@@ -280,7 +280,7 @@ they use. Grouped by subsystem:
 | Sitting | 4 x u32 | 4 x u32 | 6 x u32 | correct |
 | Radar color | rgba | rgba | rgba + present flag | agree |
 | Texture blocks | 4 | 4 | WorldArt, Legacy, Enhanced, Light | refine |
-| Block unk1 | byte | byte | field_04, 0 | agree (unused) |
+| Block unk1 | byte | byte | field_04: shader implementation index, 0 | refine |
 | Item unk4 | byte | byte | source_kind (0/2 load path) | new |
 | Item unk5 | float | float | stretch (wrap if != 1) | new |
 | Item unk6 | u32 | u32 | sampler index (probable) | new (low) |
@@ -870,8 +870,10 @@ chains, displacement scans), `ProbeHouseSupport02.java` (call graph of the house
   `dynamic_cast` to the sprite type (TD 0x00de41ec); the graphics base constructor 0x00433620 only zeroes it
   (0x00433679). The animation component uses its own +0x2c as a shared_ptr. Medium: probably unused (a reader
   through a non-virtual path cannot be fully excluded).
-- Texture items, material builder 0x0045cd80: item 0 becomes the base map and items 1..n the shader maps
-  (loop from index 1 at 0x0045e145, slot = loop index), so the slot is the item position.
+- Texture items, material builder 0x0045cd80: item 0 becomes shader map 0 (`SetShaderMap(0, map)`, 0x0045e0a5)
+  and items 1..n shader maps 1..n (loop from index 1 at 0x0045e145, slot = loop index), so the slot is the item
+  position. Correction from `ghidra-texture-roles/results/uosa_texture_roles.md`: an earlier version of this note said item 0 becomes the base map. The
+  base map is `Build\Hues\Hues.dds`, set by `NiTexturingProperty::SetBaseTexture` (call 0x0045e666).
   - `uv_set`: `MOV CX,word [item+0x28]; AND DX,0xff00; OR CX,DX` into the map flags (0x0045de94, 0x0045e1ec),
     the Gamebryo texture coordinate set index. High.
   - `stretch`: compared with 1.0 (0x0045e200) -> clamp bits 12-13 = 3 (wrap) when different; UV scale
@@ -919,8 +921,8 @@ Not applied; for `lib/uocf/src/enhanced/tileart.rs` and `effect_definition.rs`.
    - `source_kind` doc: "0 loads the texture; 2 loads it and forces wrap addressing; any other value makes
      the client skip the texture. 0 in all client records." Constants
      `TEXTURE_SOURCE_NORMAL: u8 = 0`, `TEXTURE_SOURCE_WRAP: u8 = 2`.
-   - `sampler_index` doc: "Not read by the client, which binds the items in order (item 0 the base map,
-     the rest the shader maps); usually equal to the item position."
+   - `sampler_index` doc: "Not read by the client, which binds item i to shader map i; usually equal to
+     the item position."
    - `uv_set` doc: "Texture coordinate set index (low byte of the Gamebryo texture map flags); 0 or 1."
    - Repo users matching on `sampler_index` (`udd-assets/src/tex_land_ec.rs`) could use the item position
      instead; same result on current data.
