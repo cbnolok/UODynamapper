@@ -1358,6 +1358,14 @@ Active KDL files live in `dynamapper/assets/cc_ec_convtables/`.
 - Keep it to id routing. Do not add visual policy here.
 - It remains active for ids not fully resolved through direct
   `TerrainDefinition.uop` aliases.
+- It extends the client's `legacyterrainmap.csv` routes (GameData.uop), and a
+  row replaces the client's route for that id. Rows that disagreed with the
+  client on void (431-434 hidden; 11996-12000 drawn as tree bark), on the
+  embank tiles (46/47 instead of the client's Dirt Cliff 58/60, same textures)
+  and on 1072 (terra cotta 82 instead of grey tiles 71) were removed so the
+  client's route applies. Still differing: 181 same-family variant/orientation
+  rows (tree bark/path, cave walls, snow, tiles, swamp2 edges, acid), and 41 ids
+  with no client row (the KDL adds them, e.g. 435-437 to void).
 
 Legacy KDL files:
 
