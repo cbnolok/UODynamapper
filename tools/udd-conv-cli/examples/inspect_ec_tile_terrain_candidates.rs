@@ -241,8 +241,8 @@ fn print_matching_layer(index: usize, layer: &TerrainDefinitionTextureLayer) {
         layer.is_support_layer_by_current_name_heuristic(),
         layer.has_support_like_name_clue(),
         layer.has_preferred_primary_repetition(),
-        layer.unk4,
-        layer.unk6,
-        layer.unk7,
+        layer.source_kind,
+        layer.sampler_index,
+        layer.uv_set,
     );
 }

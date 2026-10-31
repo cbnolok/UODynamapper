@@ -166,9 +166,9 @@ pub fn audit_ec_material_refs(source_dirs: &[PathBuf], output: &Path) -> eyre::R
                 family,
                 bool_str(terrain_layer_support_guess(raw_path)),
                 &format_float(layer.texture_repetition),
-                &layer.unk4.to_string(),
-                &layer.unk6.to_string(),
-                &layer.unk7.to_string(),
+                &layer.source_kind.to_string(),
+                &layer.sampler_index.to_string(),
+                &layer.uv_set.to_string(),
                 "direct-textual",
             ])?;
             row_count += 1;
@@ -241,8 +241,8 @@ pub fn audit_ec_terrain_primary_selection(
 
         let runtime_slot_ids = entry.runtime_slot_ids();
         let alias_record_count = entry.aliases.len();
-        let zero_alias_count = entry.aliases.iter().filter(|alias| alias.alias == 0).count();
-        let concrete_alias_count = entry.aliases.iter().filter(|alias| alias.alias != 0).count();
+        let zero_alias_count = entry.aliases.iter().filter(|alias| alias.legacy_land_id == 0).count();
+        let concrete_alias_count = entry.aliases.iter().filter(|alias| alias.legacy_land_id != 0).count();
         let texture_layer_count = texture
             .layers
             .iter()
@@ -331,10 +331,10 @@ pub fn audit_ec_terrain_primary_selection(
                 .aliases
                 .iter()
                 .map(|alias| TerrainAliasReport {
-                    count_index: alias.count_index,
-                    alias: alias.alias,
+                    count_index: alias.subtype,
+                    alias: alias.legacy_land_id,
                     tile_flags: alias.tile_flags,
-                    is_placeholder: alias.alias == 0,
+                    is_placeholder: alias.legacy_land_id == 0,
                 })
                 .collect(),
             runtime_slot_ids,
@@ -363,9 +363,9 @@ pub fn audit_ec_terrain_primary_selection(
                 support_like_clue: layer.has_support_like_name_clue(),
                 preferred_repetition: layer.has_preferred_primary_repetition(),
                 texture_repetition: layer.texture_repetition,
-                unk4: layer.unk4,
-                unk6_opaque_order: layer.unk6,
-                unk7: layer.unk7,
+                unk4: layer.source_kind,
+                unk6_opaque_order: layer.sampler_index,
+                unk7: layer.uv_set,
                 physical_package_guess: selected_package.to_string(),
                 logical_family: selected_family.to_string(),
             }),
@@ -2088,8 +2088,8 @@ struct TerrainSelectedLayerReport {
     preferred_repetition: bool,
     texture_repetition: f32,
     unk4: u8,
-    unk6_opaque_order: i32,
-    unk7: i32,
+    unk6_opaque_order: u32,
+    unk7: u32,
     physical_package_guess: String,
     logical_family: String,
 }
@@ -2116,8 +2116,8 @@ struct TerrainLayerReport {
     preferred_repetition: bool,
     texture_repetition: f32,
     unk4: u8,
-    unk6_opaque_order: i32,
-    unk7: i32,
+    unk6_opaque_order: u32,
+    unk7: u32,
     physical_package_guess: String,
     logical_family: String,
 }
@@ -2194,8 +2194,8 @@ struct TerrainDefinitionUopLayerReport {
     support_like_name: bool,
     current_support_heuristic: bool,
     unk4: u8,
-    unk6: i32,
-    unk7: i32,
+    unk6: u32,
+    unk7: u32,
 }
 
 #[derive(Serialize)]
@@ -3020,9 +3020,9 @@ fn terrain_layer_report(
         support_like_clue: layer.has_support_like_name_clue(),
         preferred_repetition: layer.has_preferred_primary_repetition(),
         texture_repetition: layer.texture_repetition,
-        unk4: layer.unk4,
-        unk6_opaque_order: layer.unk6,
-        unk7: layer.unk7,
+        unk4: layer.source_kind,
+        unk6_opaque_order: layer.sampler_index,
+        unk7: layer.uv_set,
         physical_package_guess: physical_package.to_string(),
         logical_family: terrain_texture_family_name(layer.texture_type, physical_package)
             .to_string(),
@@ -3054,9 +3054,9 @@ fn terrain_definition_uop_entry_report(
 ) -> TerrainDefinitionUopEntryReport {
     TerrainDefinitionUopEntryReport {
         name: entry.name.clone(),
-        unknown_floats: [entry.unk, entry.unk2, entry.unk3],
+        unknown_floats: [entry.field_34, entry.coverage_exponent(), entry.field_3c],
         alias_record_count: entry.aliases.len(),
-        concrete_alias_count: entry.aliases.iter().filter(|alias| alias.alias != 0).count(),
+        concrete_alias_count: entry.aliases.iter().filter(|alias| alias.legacy_land_id != 0).count(),
         runtime_slot_ids: entry.runtime_slot_ids(),
         shader_name: entry
             .texture
@@ -3078,9 +3078,9 @@ fn terrain_definition_uop_entry_report(
                         support_like_name: layer.has_support_like_name_clue(),
                         current_support_heuristic: layer
                             .is_support_layer_by_current_name_heuristic(),
-                        unk4: layer.unk4,
-                        unk6: layer.unk6,
-                        unk7: layer.unk7,
+                        unk4: layer.source_kind,
+                        unk6: layer.sampler_index,
+                        unk7: layer.uv_set,
                     })
                     .collect()
             })
@@ -3153,9 +3153,9 @@ fn terrain_selected_layer_report(
         support_like_clue: layer.has_support_like_name_clue(),
         preferred_repetition: layer.has_preferred_primary_repetition(),
         texture_repetition: layer.texture_repetition,
-        unk4: layer.unk4,
-        unk6_opaque_order: layer.unk6,
-        unk7: layer.unk7,
+        unk4: layer.source_kind,
+        unk6_opaque_order: layer.sampler_index,
+        unk7: layer.uv_set,
         physical_package_guess: selected_package.to_string(),
         logical_family: terrain_texture_family_name(layer.texture_type, selected_package)
             .to_string(),
@@ -4002,7 +4002,7 @@ fn terrain_kdl_float_finding(
     value: f32,
     entry: &TerrainDefinitionEntry,
 ) -> TerrainDefinitionKdlFindingReport {
-    let unknowns = [entry.unk, entry.unk2, entry.unk3];
+    let unknowns = [entry.field_34, entry.coverage_exponent(), entry.field_3c];
     let status = if unknowns
         .iter()
         .any(|unknown| floats_match(*unknown, value))
@@ -4016,7 +4016,7 @@ fn terrain_kdl_float_finding(
         status,
         format!(
             "kdl={value}; uop_unknowns={},{},{}",
-            entry.unk, entry.unk2, entry.unk3
+            entry.field_34, entry.coverage_exponent(), entry.field_3c
         ),
     )
 }

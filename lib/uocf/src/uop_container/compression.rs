@@ -316,11 +316,9 @@ pub mod mythic_decompress {
 pub mod zlib_bwt_codec {
     use super::{move_to_front_coding, mythic_decompress};
     use flate2::read::ZlibDecoder;
-    use flate2::write::ZlibEncoder;
-    use flate2::Compression;
     use std::io::{self, Cursor};
     use byteorder::{LittleEndian, ReadBytesExt};
-    use std::io::{Read, Write};
+    use std::io::Read;
 
     // Helper function: Frequency (adapted for u8 output)
     fn frequency(input: &[i32], output: &mut [u8]) {
@@ -510,8 +508,6 @@ pub mod zlib_bwt_codec {
         staged.extend_from_slice(&move_to_front_coding::encode(&transformed));
         staged.push(0);
 
-        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-        encoder.write_all(&staged)?;
-        encoder.finish()
+        crate::uop_container::codec::encode_payload(&staged, crate::uop_container::codec::UopCompression::Zlib)
     }
 }

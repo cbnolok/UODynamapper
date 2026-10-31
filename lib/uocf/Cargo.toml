@@ -42,6 +42,7 @@ flate2 = { workspace = true, features = ["zlib-ng"] }
 libz-sys.workspace = true
 rayon.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 csv.workspace = true
 toml.workspace = true
 memmap2 = "0.9"

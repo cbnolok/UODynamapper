@@ -34,7 +34,7 @@ fn main() -> Result<()> {
     }
     let mut materials = Vec::new();
     for entry in entries {
-        let queries: BTreeSet<_> = entry.aliases.iter().map(|alias| alias.alias)
+        let queries: BTreeSet<_> = entry.aliases.iter().map(|alias| alias.legacy_land_id)
             .chain(std::iter::once(entry.id)).collect();
         let query = queries.into_iter().find(|query|
             terrain.resolve_material_decision(*query).material_id == Some(entry.id));

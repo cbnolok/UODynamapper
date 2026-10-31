@@ -6,6 +6,7 @@ pub mod effects_editor;
 pub mod housing_editor;
 pub mod keyed_edits;
 pub mod legacy_terrain_editor;
+pub mod terrain_definition_editor;
 pub mod multi_editor;
 pub mod nif_editor;
 pub mod tileart_editor;

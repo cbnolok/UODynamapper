@@ -1830,6 +1830,7 @@ pub struct UopInspectorApp {
     pub tileart_editor: crate::logic::tileart_editor::TileArtEditor,
     pub waypoint_document: Option<crate::logic::waypoint_editor::WaypointDocument>,
     pub legacy_terrain_editor: Option<crate::logic::legacy_terrain_editor::LegacyTerrainEditor>,
+    pub terrain_definition_editor: Option<crate::logic::terrain_definition_editor::TerrainDefinitionEditor>,
 }
 
 impl UopInspectorApp {
@@ -1913,6 +1914,7 @@ impl UopInspectorApp {
             tileart_editor: Default::default(),
             waypoint_document: None,
             legacy_terrain_editor: None,
+            terrain_definition_editor: None,
             texture_previews: HashMap::new(),
             ec_texture_previews: HashMap::new(),
             ec_texture_preview_source_keys: HashMap::new(),
@@ -2015,6 +2017,7 @@ impl UopInspectorApp {
         self.tileart_editor = Default::default();
         self.waypoint_document = None;
         self.legacy_terrain_editor = None;
+        self.terrain_definition_editor = None;
         self.selected_ec_hue_hash = None;
         self.cliloc = None;
         self.cliloc_files.clear();
@@ -4331,6 +4334,7 @@ pub(crate) mod tests {
             tileart_editor: Default::default(),
             waypoint_document: None,
             legacy_terrain_editor: None,
+            terrain_definition_editor: None,
         }
     }
 

@@ -7,6 +7,7 @@ extern crate derive_new;
 
 pub mod animation_sequence;
 pub mod classic;
+pub mod client_exe;
 pub mod ec_material_axes;
 pub mod enhanced;
 mod errors;

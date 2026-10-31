@@ -48,18 +48,18 @@ fn main() -> Result<()> {
                 &args.client.join("string_dictionary.uop"),
             )?;
             for entry in package.entries {
-                let Some(texture) = entry.texture else { continue; };
+                let Some(texture) = &entry.texture else { continue; };
                 let selected = if ids.is_empty() {
                     texture.shader_name.as_deref() == Some("UOWaterTerrainLayer")
                 } else { ids.contains(&entry.id) };
                 if !selected { continue; }
                 println!("material={} name={:?} shader={:?} Technique={:?} Tweaks={:?}",
-                    entry.id, entry.name, texture.shader_name, texture.unk8, texture.unk9);
-                println!("  terrain_fields={}/{}/{}", entry.unk, entry.unk2, entry.unk3);
+                    entry.id, entry.name, texture.shader_name, texture.techniques(), texture.tweaks());
+                println!("  terrain_fields={}/{}/{}", entry.field_34, entry.coverage_exponent(), entry.field_3c);
                 for (index, layer) in texture.layers.iter().enumerate() {
                     println!("  source={index} id={:?} path={:?} repetition={} fields={}/{}/{}",
                         layer.texture_id, layer.path, layer.texture_repetition,
-                        layer.unk4, layer.unk6, layer.unk7);
+                        layer.source_kind, layer.sampler_index, layer.uv_set);
                 }
             }
         }

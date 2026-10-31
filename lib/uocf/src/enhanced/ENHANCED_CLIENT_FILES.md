@@ -112,13 +112,37 @@ Editing `.uop` packages (`uop_container::package`):
     (`textures/hues.rgba8888`), where each hue occupies a 256-pixel strip
     containing the 32 classic hue entries expanded to 8 pixels each (linear
     ramp between entries by default, as EA's atlas, or flat blocks).
-- KR:
-  - KR world maps and statics are stored as compressed facet sectors inside `facet*.uop` packages.
-  - Slightly different file format than EC.
-  - UOCF decodes and can encode those facet sectors, loads the KR tile/static dictionaries, and translates KR land/static ids toward Classic-style 8x8 map blocks and statics where a mapping is known. The tile dictionary maps KR land tile ids to Classic land tile ids; the static dictionary is a known-static whitelist used when decoding or encoding KR facet statics.
-  - Unverified: the `kr::facet` square layout does not parse the sectors of the
-    `UO - Old KR` facet packages tried (it overruns the first sector), and its
-    encoder numbers sectors row-major, so neither is known to match KR.
+- KR (`UO - Old KR`, `facet0..4.uop`, 7168/7168/900/1280/529 sectors):
+  - The EC sector with 3 more bytes per square after the land id:
+    `i8 z, u16 material, u8 subtype, u16 classic_land`, then the EC
+    delimiters (holding the neighbour's z and material) and statics.
+    The material is a `TerrainDefinition` id and `subtype` picks its alias
+    (0/1/2); the client renders from them and does not read the legacy
+    (Classic) id ([uokr_facets.md](../../../../scripts/dev-helpers/ec-research/ghidra-facets/results/uokr_facets.md)).
+    The KR reader only logs leftover bytes, a direction above 7 and a
+    mismatched header; UOCF rejects them. Same entry names, header,
+    column-major numbering over the ceil size, `data.map` (first entry,
+    uncompressed) and delimiter rule as EC; off-map squares are all zero bytes.
+    Packages are UOP version 4, 100 entries per block, zlib sectors, timestamp
+    data block headers.
+  - All sectors re-encode byte for byte; delimiter presence and order follow
+    the EC rule on every square (23/14/0/4/0 squares hold stale values).
+  - Decoding needs no dictionary (the square stores its Classic land id).
+    Encoding maps Classic -> `(material, subtype)` with
+    `kr::facet::kr_land_map` (generated from the shipped facets; see
+    [KR_FACET_MAPPINGS.md](../kr/facet/KR_FACET_MAPPINGS.md)). The former
+    `TileDictionary.bin`/`StaticDictionary.bin` were .NET BinaryFormatter blobs
+    and are removed.
+  - UOCF: the EC `facet_sector`/`facet_package` code with
+    `ClientDialect::KingdomReborn`, `kr::facet::facet_decoder`,
+    `kr::facet::facet_encoder` (Classic map + statics to KR `facetN.uop` +
+    `facetNN.dds`), and `uocf-cli facet` (`--kr`, or detected).
+  - `StaticChunk.uop` (`kr::facet::static_chunk`): 145 entries (names
+    unresolved) of `u16 count` + Classic static records with x, y in 0..32:
+    32x32-square chunks keyed `cx << 10 | cy` in the client, which builds
+    its static objects from them in memory and has no writer of the file.
+    All re-encode byte for byte; map decoding does not need it.
+    `TerrainChunk.uop` is mounted but not shipped.
 
 `facetNN.dds` (loose files, `facet%02d.dds`):
 
@@ -145,38 +169,95 @@ Editing `.uop` packages (`uop_container::package`):
   verbatim and re-encodes all 7 records byte for byte. Facet 2 region 5 ships an
   inverted rect.
 
+Facet sizes in the executable (`client_exe::facet_dimensions`, `uocf-cli exe`):
 
-`TerrainDefinition.uop`:
+- The client sizes each facet from `UOFacet::g_FacetDimensions`, 7 records
+  `{char* name, u32 width, u32 height}` in `.data` (EC `UOSA.exe` file
+  0x9a72a8; located in any build by the 7 name pointers). Changing a map size
+  means patching a copy of the executable: `uocf-cli exe patch <exe> --output
+  <copy> --facet N --width W --height H [--split X | --no-split]` writes the
+  copy (a new file outside the client folder) and `<copy>.facet-dims.json`
+  (original, source and patched SHA-256, the values); a copy is patched again
+  only with its manifest. Sizes: at most 32704, multiples of 8 (64 avoids
+  padded sectors), at most 65536 sectors. The PE checksum is recomputed
+  (`UOSA_eclo.exe` ships a wrong one); signed builds are refused. `exe show`
+  prints the table, split and checksum of a build (5 traced builds by SHA-256,
+  any other by signature).
+- The x = 5120 seam: `IsSameFeluccaTrammelHalf` makes facets 0 and 1 not
+  build a chunk across x = 5120 (three imm32 0x1400 in UOSA, none in KR).
+  A new layout must move it (`--split X`) or disable it (`--no-split`,
+  0x8000).
+- The executable alone is not enough. The data must have the new size too:
+  `facetN.uop` (and `facetNx.uop`) with ceil(w/64)·ceil(h/64) sectors in
+  column-major order (a new height renumbers every sector), `data.map`,
+  the FacetDefinition width/height (and region rects) in `facets.uop` (EC; it
+  sizes the radar), and `facetNN.dds` at 1 pixel per square with the full
+  mip chain; plus the server's map. `uocf-cli exe check-data <exe> <client
+  dir>` compares them with the table (all shipped EC and KR data agree).
 
-**TODOC**: outdated! especially about "unk" flags.
 
-- Owns EC terrain/material semantics.
-- Each entry currently decodes:
-  - `name_id`
-  - `id` material id
-  - `unk`, `unk2`, `unk3` floats, preserved but not interpreted
-  - alias records: `count_index`, `alias`, `tile_flags`
-  - optional texture block
-- Alias records are the bridge from map/facet terrain ids to EC material ids.
-  Non-zero aliases are runtime terrain slot ids. If an entry has no concrete
-  aliases, the material id itself is used as a fallback runtime slot id.
-- The optional texture block is the same general shape as `TextureItem`:
-  - `unk1`, preserved but not currently used as policy
-  - `shader_name_id` / resolved `shader_name`
-  - layered image refs, each with `name_string_off`, resolved path,
-    extracted `texture_id`, logical family, `unk4`, `texture_repetition`,
-    `unk6`, and `unk7`
-  - trailing `unk8` integer vector and `unk9` float vector
-- `texture_repetition` is the authored stretch/repetition factor. Runtime uses
-  it for EC terrain layer sampling; losing it shrinks large authored textures
-  into a tiny tile.
-- Current interpretation of terrain texture unknowns:
-  - `unk1` appears to be texture-block mode/class metadata, but it is not
-    needed for the current material routing.
-  - `unk4` is preserved per image ref; no rendering meaning is assigned yet.
-  - `unk6` has ordering correlation inside otherwise equivalent layer choices,
-    so it is used only as a deterministic final tie-breaker and audit signal.
-  - `unk7`, `unk8`, and `unk9` are preserved for future audits.
+`TerrainDefinition.uop` (`enhanced::terrain_definition`):
+
+- Owns EC terrain/material semantics. One zlib entry
+  `build/terraindefinition/{id}.bin` (decimal, no padding) per material: 201
+  in the Enhanced Client, 191 in Kingdom Reborn. Layout traced in
+  `scripts/dev-helpers/ec-research/ghidra-terrain/results/uosa_terrain.md`
+  (`TerrainDefinition_Read` 0x00845c25): u32 name (string index), u32 id,
+  f32 `field_34` (no reader, always 0), f32 `coverage_exponent` (stored as
+  the compatibility field `unk2`), f32 `field_3c` (no reader, always 0), u32
+  alias count + aliases `{u32 subtype, u32 legacy_land_id, u64 flags}`
+  (Kingdom Reborn: u32 flags), u8 shader block present (1 in every record),
+  u8 `field_04`, u32 shader name index, u8 texture item count + items
+  `{u32 path index, u8 source_kind, f32 stretch, u32 sampler_index, u32
+  uv_set}`, u32 + i32 techniques, u32 + f32 tweaks (4 each in every record;
+  compatibility fields `unk8`, `unk9`, accessors `techniques()`,
+  `tweaks()`). Nothing follows; trailing bytes are rejected.
+- String indices are 1-based: index N is the dictionary's string N - 1
+  (record 0 names index 110548, string 110547 `void_no_draw`).
+- A square names `(material, subtype)` (Kingdom Reborn sectors directly, EC
+  sectors through `legacyterrainmap.csv`); the alias with that subtype
+  supplies the cell flags. Subtype equals the alias position in every
+  record. `BuildTerrainMesh` dereferences the subtype-0 alias of every drawn
+  material without a null check, so a definition without one crashes the
+  client. `legacy_land_id` is a representative Classic land id (0 in 104 EC
+  aliases) with no client reader; non-zero values are the runtime terrain
+  slot ids of the tools, and the material id is the fallback slot.
+- Alias flags use the tiledata / `TaeFlag` bit positions. The client reads
+  impassable (bit 6), ignored (8), hover-over (25) and no-draw (33); wall
+  (4), wet (7), surface (9), mongen (16) and no-house (32) are kept but
+  unread. Kingdom Reborn flags are u32: KR bit 26 is EC bit 33 no-draw (the
+  void definition: KR `0x4000100`, EC `0x200000100`) and KR bit 19 is
+  probably EC bit 32 no-house (medium confidence);
+  `kr_terrain_flags_to_enhanced` and `TerrainDefinitionEntry::kr_to_enhanced`
+  convert.
+- `texture_repetition` is the authored stretch (UV scale 1 / stretch); losing
+  it shrinks large authored textures into a tiny tile. `sampler_index` equals
+  the item position in 625 of 657 items and is only a deterministic final
+  tie-breaker of the primary layer choice; `source_kind`, `uv_set`,
+  `field_04` are 0 everywhere.
+- Writing: `to_bytes_dialect` is the exact inverse of `from_bytes_dialect`
+  (201/201 EC and 191/191 KR records byte for byte);
+  `detect_terrain_definition_dialect` picks the layout of a package.
+  `apply_terrain_definition_edits` and `write_terrain_definition_package`
+  replace, add and remove entries in a copy of the package (unchanged
+  definitions skipped, classic zlib, timestamp data block header).
+- Checks: `TerrainDefinitionEntry::validate` (subtype-0 alias, unique
+  subtypes at their positions, shader block, 4 techniques and 4 tweaks) and
+  `check_terrain_references` against the `(material, subtype)` pairs of the
+  sectors and the csv (`TerrainReferences`): the shipped EC (245 pairs) and
+  KR (203 pairs) data pass. EC land id 0 (70,081 squares, the padding of
+  partial sectors and void land) has no csv route.
+- Editing: the inspector's UOP browser, on a `TerrainDefinition.uop` entry,
+  has an **Edit TerrainDefinition.uop** button: a table of every definition
+  (coverage exponent, shader from the package's shaders, duplicate, delete)
+  and, for the selected one, its aliases (legacy land id, named flag
+  checkboxes in the package's dialect, add / remove last), layer stretch and
+  sampler, techniques and tweaks, with undo and the checks; a definition
+  that would crash the client is not saved.
+- Tests: unit tests in `terrain_definition.rs`; the ignored
+  `terrain_definition_client_files` checks every EC and KR record byte for
+  byte, the checks, the sector and csv references, and that a rewritten
+  package changes only the edited entry.
 
 `tileart.uop`:
 
@@ -315,6 +396,13 @@ Editing `.uop` packages (`uop_container::package`):
   `Data/Definitions/TileArt/%08d.tileart` override. Servers send item graphics
   as u16, so ids above 0xFFFF are client-side only (paperdoll overrides,
   placeholders).
+- Kingdom Reborn records are version 3 (`TILEART_KR_RECORD_VERSION`; the
+  version picks the layout in `parse_bytes` / `to_bytes`): one flag byte
+  (`has_world_art`; no `uses_enhanced_tileart`), no `alternate_animation`,
+  u32 flags, a 4-word sitting block, no radar colour, 3 shader blocks (EC
+  blocks 0, 1 and 3; no TileArtEnhanced) and the KR effect grammar
+  ([uokr_facets.md](../../../../scripts/dev-helpers/ec-research/ghidra-facets/results/uokr_facets.md), answer 9). All 17,086 KR records re-encode
+  byte for byte; writing fails on a value v3 cannot hold.
 
 `EffectDefinitionCollection.uop`:
 
@@ -397,6 +485,11 @@ Editing `.uop` packages (`uop_container::package`):
     - UserPreference zero or unknown mask bits.
 
   Unknown definition keys never reach the tree: the parser rejects them.
+- Kingdom Reborn (`ClientDialect::KingdomReborn`, the `*_dialect` functions):
+  KR type keys are the EC keys minus one from KR 5 (container) on, because EC
+  inserted the tile effect at 5 (and appended fade at 18); particles have no
+  `hued` byte (27-byte body); the property flag mask is a u32. All 258 KR
+  entries re-encode byte for byte ([uokr_facets.md](../../../../scripts/dev-helpers/ec-research/ghidra-facets/results/uokr_facets.md), answers 3 and 4).
 
 `EffectTexture.uop`:
 
@@ -522,6 +615,12 @@ Editing `.uop` packages (`uop_container::package`):
   numbers its frames `1..5 * frame_count` (`FrameEntry::frame_number`); the
   number, not the entry position, gives direction and frame (some files have
   gaps).
+- Writer: `AnimationSequence::to_bytes` re-encodes all 370 EC sequences byte
+  for byte. Kingdom Reborn (`parse_dialect` / `to_bytes_dialect`): actions have
+  no i16 offsets and no skipped-frame list, but an i32 after the alias
+  (`kr_extra`, stored at action +0x28 and never read; -1 in all data), and use
+  the KR effect grammar. Ten KR sequences repeat action id 0
+  (`repeated_actions`). All 252 re-encode byte for byte.
 
 `AnimationFrame*.uop` pixels (`enhanced::animationframe`):
 
@@ -649,6 +748,9 @@ Editing `.uop` packages (`uop_container::package`):
   data are in
   [`uosa_housing.md`](../../../../scripts/dev-helpers/ec-research/ghidra-housing/results/uosa_housing.md)
   (decoder: `verify_housing.py` next to it).
+- Kingdom Reborn parts have one flag (`not_drawn`, by the data and its place)
+  and no `flag2` (`MultiCollection::from_package_dialect`,
+  `MultiItem::*_dialect`); all 241 KR multis re-encode byte for byte.
 
 `waypoint.uop`:
 
@@ -738,6 +840,12 @@ Editing `.uop` packages (`uop_container::package`):
 - `LegacyTexture.uop` usually resolves `build/tileartlegacy/{:08}.dds`.
 - Payloads are raw DDS or TGA image data. Tooling decodes them for packing, but
   the original payload is the source evidence.
+- Kingdom Reborn `TileArtLegacy.uop` holds no tileart records: it is the TGA
+  source of the legacy art (`data/tileartlegacy/%d.tga`, 16,384 entries, 3 of
+  them unnamed), from which `LegacyTexture.uop`'s DDS were packed. Its last
+  entry is a header-only 0x0 TGA, which `textures::decode_tga_rgba8` reads as
+  an empty image. Four KR `Interface.uop` images are X1R5G5B5 DDS, which
+  `textures::decode_dds_rgba8` decodes as opaque B5G5R5A1.
 
 ## 3. Ownership Model
 

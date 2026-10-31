@@ -1,6 +1,7 @@
 use eframe::egui;
 use crate::app::{guess_uop_image_format_from_payload, UopInspectorApp};
 use super::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by};
+use uocf::enhanced::client_dialect::ClientDialect;
 use uocf::enhanced::tileart::TileArtEntry;
 use uocf::enhanced::waypoints::{
     WaypointClilocDefinition, WaypointTypeDefinition, WaypointsPackage,
@@ -9,6 +10,7 @@ use uocf::enhanced::waypoints::{
 use crate::logic::waypoint_editor::{WaypointDocument, WaypointField};
 use super::UOP_PATCHER_NOTE;
 use super::legacy_terrain;
+use super::terrain_definition_editor;
 
 const UOP_BROWSER_PACKAGE_PANEL_WIDTH: f32 = 200.0;
 const UOP_BROWSER_ENTRY_PANEL_WIDTH: f32 = 350.0;
@@ -170,6 +172,12 @@ pub fn ui_uop_browser(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut e
                     ui_integrated_waypoints_view(app, ui, file, &loaded_uop.path);
                 } else if legacy_terrain::is_legacy_terrain_package(&loaded_uop.path) {
                     legacy_terrain::ui_legacy_terrain_view(app, ui, file, &loaded_uop.path, &loaded_uop.package);
+                } else if terrain_definition_editor::is_terrain_definition_package(&loaded_uop.path) {
+                    terrain_definition_editor::ui_terrain_definition_editor(app, ui, &loaded_uop.path, &loaded_uop.package);
+                    if !terrain_definition_editor::is_editing(app, &loaded_uop.path) {
+                        ui.separator();
+                        ui_integrated_terrain_view(app, ctx, ui, file);
+                    }
                 } else if resolved_name.contains("tileart") && resolved_name.ends_with(".bin") {
                     ui_integrated_tileart_view(app, ctx, ui, file);
                 } else if resolved_name.contains("terraindefinition") && resolved_name.ends_with(".bin") {
@@ -603,7 +611,10 @@ fn ui_integrated_tileart_view(app: &mut UopInspectorApp, ctx: &egui::Context, ui
 
 fn ui_integrated_terrain_view(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui, file: &uocf::uop_container::file::UopFile) {
     let dict = app.uo_string_dictionary.as_deref();
-    if let Ok(entry) = uocf::enhanced::terrain_definition::parse_entry(file, dict) {
+    let parsed = uocf::enhanced::terrain_definition::parse_entry(file, dict).or_else(|_| {
+        uocf::enhanced::terrain_definition::parse_entry_dialect(file, dict, ClientDialect::KingdomReborn)
+    });
+    if let Ok(entry) = parsed {
         ui.heading(format!("Terrain: {}", entry.name.as_deref().unwrap_or("Unknown")));
         ui.label(format!("ID: {}", entry.id));
 
@@ -632,7 +643,7 @@ fn ui_integrated_terrain_view(app: &mut UopInspectorApp, ctx: &egui::Context, ui
              ui.vertical(|ui| {
                  ui.heading("Aliases");
                  for alias in &entry.aliases {
-                     ui.label(format!("Slot: {}, Alias: {}, Flags: {:016X}", alias.count_index, alias.alias, alias.tile_flags));
+                     ui.label(format!("Subtype: {}, Legacy land: {}, Flags: {:016X}", alias.subtype, alias.legacy_land_id, alias.tile_flags));
                  }
              });
         });

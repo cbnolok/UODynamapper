@@ -7,6 +7,7 @@ pub mod animdata;
 pub mod art_viewer;
 pub mod uop_browser;
 mod legacy_terrain;
+mod terrain_definition_editor;
 pub mod multis;
 mod multi_editor;
 mod tileart_editor;

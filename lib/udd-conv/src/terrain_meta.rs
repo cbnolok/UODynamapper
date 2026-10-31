@@ -210,9 +210,9 @@ pub fn build_terrain_meta_tables(
                 has_name_clue: layer.has_support_like_name_clue() as u8,
                 has_pref_rep: layer.has_preferred_primary_repetition() as u8,
                 _pad: 0,
-                unk4: layer.unk4 as u32,
-                unk6: layer.unk6 as u32,
-                unk7: layer.unk7 as u32,
+                unk4: layer.source_kind as u32,
+                unk6: layer.sampler_index,
+                unk7: layer.uv_set,
             };
             layers.push(layer_ref);
         }
@@ -300,10 +300,10 @@ mod tests {
             entries: vec![
                 TerrainDefinitionEntry {
                     id: 10,
-                    name_id: 0,
+                    name_index: 0,
                     aliases: vec![TerrainDefinitionTileAlias {
-                        count_index: 0,
-                        alias: 100,
+                        subtype: 0,
+                        legacy_land_id: 100,
                         tile_flags: 0,
                     }],
                     texture: Some(TerrainDefinitionTexture {
@@ -311,18 +311,18 @@ mod tests {
                             TerrainDefinitionTextureLayer {
                                 texture_id: Some(2000001),
                                 texture_repetition: 4.0,
-                                unk4: 0,
-                                unk6: 0,
-                                unk7: 0,
+                                source_kind: 0,
+                                sampler_index: 0,
+                                uv_set: 0,
                                 ..Default::default()
                             },
                             TerrainDefinitionTextureLayer {
                                 texture_id: Some(2000002),
                                 texture_repetition: 1.0,
                                 path: Some("noise_layer.dds".to_string()),
-                                unk4: 0,
-                                unk6: 1,
-                                unk7: 0,
+                                source_kind: 0,
+                                sampler_index: 1,
+                                uv_set: 0,
                                 ..Default::default()
                             },
                         ],
@@ -332,7 +332,7 @@ mod tests {
                 },
                 TerrainDefinitionEntry {
                     id: 20,
-                    name_id: 0,
+                    name_index: 0,
                     aliases: vec![],
                     texture: None,
                     ..Default::default()

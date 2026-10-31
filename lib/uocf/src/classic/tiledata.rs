@@ -12,20 +12,43 @@ use crate::classic::verdata::{VerFileId, Verdata};
 
 /* Struct to manage Flags for LandTile and ItemTile */
 
+/// `NoHouse` (bit 32) of the 64-bit flags: no house may be placed on the tile. On land it agrees with the
+/// LegacyTerrain `nohouse` flag on every client entry (see ENHANCED_CLIENT_FILES.md).
+pub const TILE_FLAG_NO_HOUSE: u64 = 1 << 32;
+/// `NoDraw` (bit 33): the tile is not drawn.
+pub const TILE_FLAG_NO_DRAW: u64 = 1 << 33;
+/// `Rotated` (bit 34): rotated tile art (the EC tileart `Rotated` flag).
+pub const TILE_FLAG_ROTATED: u64 = 1 << 34;
+/// `AlphaBlend` (bit 35).
+pub const TILE_FLAG_ALPHA_BLEND: u64 = 1 << 35;
+/// `NoShadow` (bit 36).
+pub const TILE_FLAG_NO_SHADOW: u64 = 1 << 36;
+/// `PixelBleed` (bit 37).
+pub const TILE_FLAG_PIXEL_BLEED: u64 = 1 << 37;
+/// `PlayAnimOnce` (bit 39).
+pub const TILE_FLAG_PLAY_ANIM_ONCE: u64 = 1 << 39;
+/// `MultiMovable` (bit 40).
+pub const TILE_FLAG_MULTI_MOVABLE: u64 = 1 << 40;
+
+/// The tile flags. Files from High Seas on store them as 64 bits; older files store 32 bits, read with the upper
+/// half 0. The upper 32 bits follow the EC tileart `TaeFlag` layout: comparing a 7.0.x `tiledata.mul` with the EC
+/// `tileart.uop` of the same item ids (36,611 records), every upper bit set in the Classic file is set in the tileart
+/// record too (NoDraw 3, AlphaBlend 58, NoShadow 26, PixelBleed 11,482, PlayAnimOnce 15, MultiMovable 4 items);
+/// land uses only `NoHouse` (94 tiles).
 #[repr(C)]
 #[derive(Clone, Copy, Default, Pod, Zeroable, Debug)]
 pub struct Flags {
-    pub internal_flags: u32,
+    pub internal_flags: u64,
 }
 
 #[allow(unused)]
 impl Flags {
     #[inline(always)]
-    fn has(&self, mask: u32) -> bool {
+    fn has(&self, mask: u64) -> bool {
         0 != (self.internal_flags & mask)
     }
 
-    fn value(&self) -> u32 {
+    fn value(&self) -> u64 {
         self.internal_flags
     }
 
@@ -127,6 +150,42 @@ impl Flags {
     }
     pub fn stairright(&self) -> bool {
         self.has(0x80000000)
+    }
+    pub fn nohouse(&self) -> bool {
+        self.has(TILE_FLAG_NO_HOUSE)
+    }
+    pub fn nodraw(&self) -> bool {
+        self.has(TILE_FLAG_NO_DRAW)
+    }
+    pub fn rotated(&self) -> bool {
+        self.has(TILE_FLAG_ROTATED)
+    }
+    pub fn alphablend(&self) -> bool {
+        self.has(TILE_FLAG_ALPHA_BLEND)
+    }
+    pub fn noshadow(&self) -> bool {
+        self.has(TILE_FLAG_NO_SHADOW)
+    }
+    pub fn pixelbleed(&self) -> bool {
+        self.has(TILE_FLAG_PIXEL_BLEED)
+    }
+    pub fn playanimonce(&self) -> bool {
+        self.has(TILE_FLAG_PLAY_ANIM_ONCE)
+    }
+    pub fn multimovable(&self) -> bool {
+        self.has(TILE_FLAG_MULTI_MOVABLE)
+    }
+}
+
+impl Flags {
+    /// Flags read from a file that stores 32 bits.
+    fn from_32_bits(flags: u32) -> Self {
+        Self { internal_flags: u64::from(flags) }
+    }
+
+    /// Flags read from a file that stores 64 bits.
+    fn from_64_bits(flags: u64) -> Self {
+        Self { internal_flags: flags }
     }
 }
 /* End of Flags struct */
@@ -348,7 +407,7 @@ enum ItemTileMaxIdxRev {
 #[repr(C, packed)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct RawLandTileClassic {
-    flags: Flags,
+    flags: u32,
     texture_id: u16,
     name: [u8; LandTile::NAME_LEN],
 }
@@ -356,8 +415,7 @@ struct RawLandTileClassic {
 #[repr(C, packed)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct RawLandTileHS {
-    flags: Flags,
-    unk: i32,
+    flags: u64,
     texture_id: u16,
     name: [u8; LandTile::NAME_LEN],
 }
@@ -365,7 +423,7 @@ struct RawLandTileHS {
 #[repr(C, packed)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct RawItemTileClassic {
-    flags: Flags,
+    flags: u32,
     weight: u8,
     quality: u8,
     unk0: u16,
@@ -383,8 +441,7 @@ struct RawItemTileClassic {
 #[repr(C, packed)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct RawItemTileHS {
-    flags: Flags,
-    unk_hs: i32,
+    flags: u64,
     weight: u8,
     quality: u8,
     unk0: u16,
@@ -611,7 +668,7 @@ impl TileData {
             Self::push_tiles_from_blocks(&mut tiledata.land_data, blocks, |tile_id, raw| {
                 LandTile {
                     tile_id,
-                    flags: raw.flags,
+                    flags: Flags::from_32_bits(raw.flags),
                     texture_id: raw.texture_id,
                     name: raw.name,
                 }
@@ -621,7 +678,7 @@ impl TileData {
             Self::push_tiles_from_blocks(&mut tiledata.land_data, blocks, |tile_id, raw| {
                 LandTile {
                     tile_id,
-                    flags: raw.flags,
+                    flags: Flags::from_64_bits(raw.flags),
                     texture_id: raw.texture_id,
                     name: raw.name,
                 }
@@ -648,7 +705,7 @@ impl TileData {
             Self::push_tiles_from_blocks(&mut tiledata.item_data, blocks, |tile_id, raw| {
                 ItemTile {
                     tile_id,
-                    flags: raw.flags,
+                    flags: Flags::from_32_bits(raw.flags),
                     weight: raw.weight,
                     quality: raw.quality,
                     quantity: raw.quantity,
@@ -665,7 +722,7 @@ impl TileData {
             Self::push_tiles_from_blocks(&mut tiledata.item_data, blocks, |tile_id, raw| {
                 ItemTile {
                     tile_id,
-                    flags: raw.flags,
+                    flags: Flags::from_64_bits(raw.flags),
                     weight: raw.weight,
                     quality: raw.quality,
                     quantity: raw.quantity,
@@ -733,4 +790,77 @@ fn apply_tiledata_verdata_patches(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Land tile whose flags the tests set.
+    const FLAGGED_LAND_TILE: usize = 3;
+    /// Item tile whose flags the tests set.
+    const FLAGGED_ITEM_TILE: usize = 5;
+    /// Flags with a lower bit (impassable) and, in 64-bit files, upper bits.
+    const LOW_FLAGS: u32 = 0x40;
+    const HIGH_FLAGS: u64 = TILE_FLAG_NO_HOUSE | TILE_FLAG_PIXEL_BLEED;
+
+    /// A tiledata file of `item_blocks` item blocks whose tile records are `land_size` and `item_size` bytes, with
+    /// `flags` (stored in `flag_bytes` bytes) on the flagged land and item tile.
+    fn tiledata_bytes(land_size: usize, item_size: usize, item_blocks: usize, flags: u64, flag_bytes: usize) -> Vec<u8> {
+        const HEADER: usize = 4;
+        let land_block = HEADER + land_size * LandTile::TILES_PER_BLOCK;
+        let item_block = HEADER + item_size * ItemTile::TILES_PER_BLOCK;
+        let land_section = LandTile::BLOCK_QTY * land_block;
+        let mut bytes = vec![0u8; land_section + item_blocks * item_block];
+        let flag_value = flags.to_le_bytes();
+        let land_offset = HEADER + FLAGGED_LAND_TILE * land_size;
+        bytes[land_offset..land_offset + flag_bytes].copy_from_slice(&flag_value[..flag_bytes]);
+        let item_offset = land_section + HEADER + FLAGGED_ITEM_TILE * item_size;
+        bytes[item_offset..item_offset + flag_bytes].copy_from_slice(&flag_value[..flag_bytes]);
+        bytes
+    }
+
+    fn load(name: &str, bytes: &[u8]) -> TileData {
+        let path = std::env::temp_dir().join(format!("uocf_tiledata_{name}_{}.mul", std::process::id()));
+        std::fs::write(&path, bytes).unwrap();
+        let tiledata = TileData::load(path.clone()).unwrap();
+        std::fs::remove_file(path).unwrap();
+        tiledata
+    }
+
+    #[test]
+    fn high_seas_files_keep_the_upper_flag_bits() {
+        let flags = HIGH_FLAGS | u64::from(LOW_FLAGS);
+        let item_blocks = (1 + ItemTileMaxIdxRev::Revision3 as usize) / ItemTile::TILES_PER_BLOCK;
+        let bytes = tiledata_bytes(
+            LandTileBinSize::HS as usize,
+            ItemTileBinSize::HS as usize,
+            item_blocks,
+            flags,
+            std::mem::size_of::<u64>(),
+        );
+        let tiledata = load("hs", &bytes);
+        for tile_flags in [tiledata.land_tiles()[FLAGGED_LAND_TILE].flags, tiledata.item_tiles()[FLAGGED_ITEM_TILE].flags] {
+            assert_eq!(tile_flags.internal_flags, flags);
+            assert!(tile_flags.nohouse() && tile_flags.pixelbleed() && tile_flags.impassable());
+            assert!(!tile_flags.nodraw());
+        }
+    }
+
+    #[test]
+    fn older_files_read_32_bit_flags() {
+        let item_blocks = (1 + ItemTileMaxIdxRev::Revision1 as usize) / ItemTile::TILES_PER_BLOCK;
+        let bytes = tiledata_bytes(
+            LandTileBinSize::Classic as usize,
+            ItemTileBinSize::Classic as usize,
+            item_blocks,
+            u64::from(LOW_FLAGS),
+            std::mem::size_of::<u32>(),
+        );
+        let tiledata = load("classic", &bytes);
+        let item = &tiledata.item_tiles()[FLAGGED_ITEM_TILE];
+        assert_eq!(item.flags.internal_flags, u64::from(LOW_FLAGS));
+        assert_eq!(tiledata.land_tiles()[FLAGGED_LAND_TILE].flags.internal_flags, u64::from(LOW_FLAGS));
+        assert!(item.flags.impassable() && !item.flags.nohouse());
+    }
 }

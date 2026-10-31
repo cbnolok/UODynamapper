@@ -45,7 +45,7 @@ fn main() -> eyre::Result<()> {
         };
 
         println!("material_id={}", entry.id);
-        println!("  name_id={}", entry.name_id);
+        println!("  name_id={}", entry.name_index);
         println!("  name={:?}", entry.name);
         println!("  primary_texture_id={:?}", entry.primary_texture_id());
         match entry.primary_texture_layer_with_reason() {
@@ -65,14 +65,14 @@ fn main() -> eyre::Result<()> {
         for alias in &entry.aliases {
             println!(
                 "    count_index={} alias={} tile_flags={}",
-                alias.count_index,
-                alias.alias,
+                alias.subtype,
+                alias.legacy_land_id,
                 alias.tile_flags
             );
         }
         match &entry.texture {
             Some(texture) => {
-                println!("  shader_name_id={}", texture.shader_name_id);
+                println!("  shader_name_id={}", texture.shader_name_index);
                 println!("  shader_name={:?}", texture.shader_name);
                 println!("  layers:");
                 for (index, layer) in texture.layers.iter().enumerate() {
@@ -86,9 +86,9 @@ fn main() -> eyre::Result<()> {
                         layer.is_support_layer_by_current_name_heuristic(),
                         layer.has_support_like_name_clue(),
                         layer.has_preferred_primary_repetition(),
-                        layer.unk4,
-                        layer.unk6,
-                        layer.unk7
+                        layer.source_kind,
+                        layer.sampler_index,
+                        layer.uv_set
                     );
                 }
             }

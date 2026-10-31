@@ -121,20 +121,20 @@ fn ui_terrain_file(
 
     ui.heading("Encoded Header");
     egui::Grid::new("td_encoded_header_grid").striped(true).show(ui, |ui| {
-        ui.label("name_id");
-        ui.label(entry.name_id.to_string());
+        ui.label("name_index");
+        ui.label(entry.name_index.to_string());
         ui.end_row();
         ui.label("id");
         ui.label(entry.id.to_string());
         ui.end_row();
-        ui.label("unk");
-        ui.label(entry.unk.to_string());
+        ui.label("field_34");
+        ui.label(entry.field_34.to_string());
         ui.end_row();
-        ui.label("unk2");
-        ui.label(entry.unk2.to_string());
+        ui.label("coverage_exponent");
+        ui.label(entry.coverage_exponent().to_string());
         ui.end_row();
-        ui.label("unk3");
-        ui.label(entry.unk3.to_string());
+        ui.label("field_3c");
+        ui.label(entry.field_3c.to_string());
         ui.end_row();
         ui.label("alias_count");
         ui.label(entry.aliases.len().to_string());
@@ -150,14 +150,14 @@ fn ui_terrain_file(
         ui.label("No aliases.");
     } else {
         egui::Grid::new("td_aliases_grid").striped(true).show(ui, |ui| {
-            ui.label("count_index");
-            ui.label("alias");
+            ui.label("subtype");
+            ui.label("legacy_land_id");
             ui.label("tile_flags");
             ui.end_row();
 
             for alias in &entry.aliases {
-                ui.label(alias.count_index.to_string());
-                ui.label(format!("0x{:04X} ({})", alias.alias, alias.alias));
+                ui.label(alias.subtype.to_string());
+                ui.label(format!("0x{:04X} ({})", alias.legacy_land_id, alias.legacy_land_id));
                 ui.label(format!("0x{:016X}", alias.tile_flags));
                 ui.end_row();
             }
@@ -186,7 +186,7 @@ fn ui_cc_alias_textures(
     let mut aliases = entry
         .aliases
         .iter()
-        .map(|alias| alias.alias)
+        .map(|alias| alias.legacy_land_id)
         .filter(|alias| *alias != 0)
         .collect::<BTreeSet<_>>();
 
@@ -222,11 +222,11 @@ fn ui_texture_data(
     if let Some(texture) = &entry.texture {
         ui.heading("Texture Item");
         egui::Grid::new("td_texture_header_grid").striped(true).show(ui, |ui| {
-            ui.label("unk1");
-            ui.label(texture.unk1.to_string());
+            ui.label("field_04");
+            ui.label(texture.field_04.to_string());
             ui.end_row();
-            ui.label("shader_name_id");
-            ui.label(texture.shader_name_id.to_string());
+            ui.label("shader_name_index");
+            ui.label(texture.shader_name_index.to_string());
             ui.end_row();
             ui.label("shader_name");
             ui.label(texture.shader_name.as_deref().unwrap_or("None"));
@@ -234,11 +234,11 @@ fn ui_texture_data(
             ui.label("layer_count");
             ui.label(texture.layers.len().to_string());
             ui.end_row();
-            ui.label("unk8");
-            ui.label(format!("{:?}", texture.unk8));
+            ui.label("techniques");
+            ui.label(format!("{:?}", texture.techniques()));
             ui.end_row();
-            ui.label("unk9");
-            ui.label(format!("{:?}", texture.unk9));
+            ui.label("tweaks");
+            ui.label(format!("{:?}", texture.tweaks()));
             ui.end_row();
         });
 
@@ -246,33 +246,33 @@ fn ui_texture_data(
         ui.heading("Texture Layers");
         egui::Grid::new("td_layers_grid").striped(true).show(ui, |ui| {
             ui.label("#");
-            ui.label("name_string_off");
+            ui.label("path_index");
             ui.label("path");
             ui.label("texture_id");
             ui.label("type");
             ui.label("support?");
             ui.label("clue?");
             ui.label("pref.rep?");
-            ui.label("unk4");
+            ui.label("source_kind");
             ui.label("repetition");
-            ui.label("unk6");
-            ui.label("unk7");
+            ui.label("sampler_index");
+            ui.label("uv_set");
             ui.label("preview");
             ui.end_row();
 
             for (i, layer) in texture.layers.iter().enumerate() {
                 ui.label(i.to_string());
-                ui.label(layer.name_string_off.to_string());
+                ui.label(layer.path_index.to_string());
                 ui.label(layer.path.as_deref().unwrap_or("None"));
                 ui.label(layer.texture_id.map(|id| id.to_string()).unwrap_or_else(|| "None".to_string()));
                 ui.label(terrain_texture_type_label(layer.texture_type));
                 ui.label(layer.is_support_layer_by_current_name_heuristic().to_string());
                 ui.label(layer.has_support_like_name_clue().to_string());
                 ui.label(layer.has_preferred_primary_repetition().to_string());
-                ui.label(layer.unk4.to_string());
+                ui.label(layer.source_kind.to_string());
                 ui.label(layer.texture_repetition.to_string());
-                ui.label(layer.unk6.to_string());
-                ui.label(layer.unk7.to_string());
+                ui.label(layer.sampler_index.to_string());
+                ui.label(layer.uv_set.to_string());
                 if let Some(texture_id) = layer.texture_id {
                     if let Some(handle) = app.get_ec_texture_by_id(ctx, texture_id) {
                         ui.add(thumbnail(&handle, 128.0));

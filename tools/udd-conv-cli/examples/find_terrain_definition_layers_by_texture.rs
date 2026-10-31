@@ -59,7 +59,7 @@ fn main() -> eyre::Result<()> {
             println!("  material_id={}", entry.id);
             println!("    name={:?}", entry.name);
             println!("    primary_texture_id={:?}", entry.primary_texture_id());
-            println!("    aliases={:?}", entry.aliases.iter().map(|alias| alias.alias).collect::<Vec<_>>());
+            println!("    aliases={:?}", entry.aliases.iter().map(|alias| alias.legacy_land_id).collect::<Vec<_>>());
             println!("    shader_name={:?}", texture.shader_name);
             for (index, layer) in matching_layers {
                 println!(
@@ -67,9 +67,9 @@ fn main() -> eyre::Result<()> {
                     index,
                     layer.path,
                     layer.texture_repetition,
-                    layer.unk4,
-                    layer.unk6,
-                    layer.unk7
+                    layer.source_kind,
+                    layer.sampler_index,
+                    layer.uv_set
                 );
             }
         }

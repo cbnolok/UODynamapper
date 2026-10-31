@@ -9,5 +9,6 @@ pub mod hash_dictionary;
 pub mod hash_bruteforce;
 pub mod compression;
 
+pub use codec::{encode_payload, UopCompression};
 pub use compression::mythic_decompress;
 pub use compression::zlib_bwt_codec;

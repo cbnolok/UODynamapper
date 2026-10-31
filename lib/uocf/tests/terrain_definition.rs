@@ -114,7 +114,7 @@ fn terrain_definition_decoder_reads_ids_aliases_and_texture_path() {
     assert_eq!(entry.id, 1);
     assert_eq!(entry.name.as_deref(), Some("Grass"));
     assert_eq!(entry.aliases.len(), 3);
-    assert_eq!(entry.aliases[0].alias, 3);
+    assert_eq!(entry.aliases[0].legacy_land_id, 3);
     let texture = entry.texture.as_ref().expect("texture block should decode");
     assert_eq!(texture.shader_name.as_deref(), Some("UOWaterTerrainLayer"));
     assert_eq!(texture.layers.len(), 3);
@@ -267,14 +267,14 @@ fn terrain_definition_primary_reason_exposes_support_fallback() {
                     texture_id: Some(10),
                     path: Some("01000003_noise_alpha.tga".to_string()),
                     texture_repetition: 8.0,
-                    name_string_off: 1,
+                    path_index: 1,
                     ..TerrainDefinitionTextureLayer::default()
                 },
                 TerrainDefinitionTextureLayer {
                     texture_id: Some(20),
                     path: Some("01000004_noise_mask.tga".to_string()),
                     texture_repetition: 16.0,
-                    name_string_off: 2,
+                    path_index: 2,
                     ..TerrainDefinitionTextureLayer::default()
                 },
             ],

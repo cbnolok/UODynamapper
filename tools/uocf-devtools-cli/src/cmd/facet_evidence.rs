@@ -196,10 +196,13 @@ fn extract_kr_evidence(args: &Args, map_index: u8, size: MapSizeCells) -> eyre::
         .map(|cc_map| load_cc_plane(cc_map, map_index, size))
         .transpose()?;
     let mut evidence = Evidence::default();
+    // KR sectors are numbered and padded like EC ones (column-major over the ceil size).
+    let geometry = FacetGeometry::new(size.width, size.height);
 
-    for block_id in 0..facet_block_count(size) {
+    for block_id in 0..geometry.sector_count() {
+        let (origin_x, origin_y) = geometry.sector_origin(block_id);
         if let Some(plane) = cc_plane.as_mut() {
-            load_cc_chunk_blocks(plane, block_id, size)?;
+            load_cc_chunk_blocks_at(plane, origin_x, origin_y, size)?;
         }
         let facet = uocf::kr::facet::facet_decoder::read_facet_block_raw(
             &package,
@@ -208,27 +211,27 @@ fn extract_kr_evidence(args: &Args, map_index: u8, size: MapSizeCells) -> eyre::
         )
         .wrap_err_with(|| format!("decode KR facet block {block_id}"))?;
 
-        let (chunk_x, chunk_y) = facet_chunk_coords(block_id, size);
-        for (x, column) in facet.tiles.iter().enumerate() {
-            for (y, tile) in column.iter().enumerate() {
-                let original_id = if let Some(plane) = cc_plane.as_mut() {
-                    cc_land_id_at(
-                        plane,
-                        chunk_x * 64 + x as u32,
-                        chunk_y * 64 + y as u32,
-                    )?
-                } else {
-                    u16::from_be_bytes([
-                        tile.original_id_low,
-                        tile.original_id_high,
-                    ])
+        for x in 0..SECTOR_SIDE {
+            for y in 0..SECTOR_SIDE {
+                let global_x = origin_x + x;
+                let global_y = origin_y + y;
+                if !geometry.contains(global_x, global_y) {
+                    continue;
+                }
+                let tile = &facet.tiles[square_index(x, y)];
+                let kr = tile.kr.ok_or_else(|| eyre::eyre!("KR facet block {block_id} has an EC square"))?;
+                let original_id = match cc_plane.as_mut() {
+                    Some(plane) => cc_land_id_at(plane, global_x, global_y)?,
+                    None => kr.classic_land,
                 };
+                // The stored Classic id, a little-endian u16.
+                let [original_byte_0, original_byte_1] = kr.classic_land.to_le_bytes();
                 let key = TranscodeKey {
                     cc_land_id: original_id,
                     client_land_id: tile.land_graphic as u32,
-                    unknown: Some(tile.unknown_byte),
-                    original_byte_0: Some(tile.original_id_low),
-                    original_byte_1: Some(tile.original_id_high),
+                    unknown: Some(kr.subtype),
+                    original_byte_0: Some(original_byte_0),
+                    original_byte_1: Some(original_byte_1),
                 };
                 *evidence.transcodes.entry(key).or_default() += 1;
             }
@@ -322,7 +325,7 @@ fn write_terrain_definition(output: &mut String, terrain: &TerrainDefinitionPack
         for alias in &entry.aliases {
             output.push_str(&format!(
                 "        alias id={} count_index={} flags={}\n",
-                alias.alias, alias.count_index, alias.tile_flags
+                alias.legacy_land_id, alias.subtype, alias.tile_flags
             ));
         }
 
@@ -359,25 +362,7 @@ fn load_cc_plane(path: &Path, map_index: u8, size: MapSizeCells) -> eyre::Result
     }
 }
 
-fn load_cc_chunk_blocks(
-    plane: &mut MapPlane,
-    block_id: u32,
-    size: MapSizeCells,
-) -> eyre::Result<()> {
-    let (chunk_x, chunk_y) = facet_chunk_coords(block_id, size);
-    let mut blocks = Vec::with_capacity(64);
-    for x in 0..8 {
-        for y in 0..8 {
-            blocks.push(MapBlockRelPos {
-                x: chunk_x * 8 + x,
-                y: chunk_y * 8 + y,
-            });
-        }
-    }
-    plane.load_blocks(&mut blocks)
-}
-
-/// Loads the Classic blocks of the EC sector at square `(origin_x, origin_y)` that lie on the map.
+/// Loads the Classic blocks of the EC or KR sector at square `(origin_x, origin_y)` that lie on the map.
 fn load_cc_chunk_blocks_at(
     plane: &mut MapPlane,
     origin_x: u32,
@@ -404,15 +389,6 @@ fn cc_land_id_at(plane: &mut MapPlane, x: u32, y: u32) -> eyre::Result<u16> {
         .and_then(|block| block.cell(cell_x, cell_y).ok())
         .map(|cell| cell.id)
         .ok_or_else(|| eyre::eyre!("missing CC map cell at {x},{y}"))
-}
-
-fn facet_chunk_coords(block_id: u32, size: MapSizeCells) -> (u32, u32) {
-    let chunks_y = size.height / 64;
-    (block_id / chunks_y, block_id % chunks_y)
-}
-
-fn facet_block_count(size: MapSizeCells) -> u32 {
-    (size.width / 64) * (size.height / 64)
 }
 
 fn map_size(map_index: u8, width: Option<u32>, height: Option<u32>) -> eyre::Result<MapSizeCells> {

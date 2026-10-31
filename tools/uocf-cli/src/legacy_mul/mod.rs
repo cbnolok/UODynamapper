@@ -14,13 +14,12 @@ use std::{
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use log::warn;
-use flate2::{
-    Compression,
-    read::{ZlibDecoder, ZlibEncoder},
-};
+use flate2::read::ZlibDecoder;
 use uocf::uop_container::{
     compression::{mythic_decompress, zlib_bwt_codec},
+    encode_payload,
     hash::{hash_data_block, hash_file_name_single},
+    UopCompression,
 };
 
 mod pack;

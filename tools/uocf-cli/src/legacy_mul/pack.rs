@@ -219,10 +219,7 @@ fn write_table_entry_data(
 
     match current_compression_flag {
         CompressionFlag::Zlib => {
-            let mut encoder = ZlibEncoder::new(final_data.as_slice(), Compression::default());
-            let mut compressed_data = Vec::new();
-            encoder.read_to_end(&mut compressed_data)?;
-            final_data = compressed_data;
+            final_data = encode_payload(&final_data, UopCompression::Zlib)?;
             compressed_size = final_data.len();
         }
         CompressionFlag::Mythic => {

@@ -1046,10 +1046,10 @@ fn build_terrain_provenance_records(
             .copied()
             .unwrap_or(entry.id);
         for alias in &entry.aliases {
-            let provenance_slot_id = if alias.alias == 0 {
+            let provenance_slot_id = if alias.legacy_land_id == 0 {
                 runtime_slot_id
             } else {
-                alias.alias
+                alias.legacy_land_id
             };
             let mut selected_layers = entry
                 .texture
@@ -1100,9 +1100,9 @@ fn build_terrain_provenance_records(
                     .unwrap_or(MISSING_SLOT_ID);
                 records.push(TexLandEcTerrainProvenanceRecord {
                     material_id: entry.id,
-                    material_name_id: entry.name_id,
-                    alias_count_index: alias.count_index,
-                    alias_slot_id: alias.alias,
+                    material_name_id: entry.name_index as i32,
+                    alias_count_index: alias.subtype,
+                    alias_slot_id: alias.legacy_land_id,
                     alias_tile_flags: alias.tile_flags,
                     selected_texture_id,
                     canonical_slot_id,
@@ -1992,10 +1992,10 @@ mod tests {
         let terrain_definition = TerrainDefinitionPackage {
             entries: vec![TerrainDefinitionEntry {
                 id: 13,
-                name_id: 0,
+                name_index: 0,
                 aliases: vec![TerrainDefinitionTileAlias {
-                    count_index: 0,
-                    alias: 581,
+                    subtype: 0,
+                    legacy_land_id: 581,
                     tile_flags: 0,
                 }],
                 texture: Some(TerrainDefinitionTexture {
@@ -2008,7 +2008,7 @@ mod tests {
                         TerrainDefinitionTextureLayer {
                             texture_id: Some(2000131),
                             texture_repetition: 4.0,
-                            unk6: 1,
+                            sampler_index: 1,
                             ..Default::default()
                         },
                     ],
