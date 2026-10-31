@@ -579,7 +579,9 @@ although its facet0x differs too, and no install has `facet01x.dds`. EC-2026 als
 
 - When the server sets 0x8000 and which shards do (code side and server side).
 - Why EC-2024 facet0x matches neither Classic map0 nor map0x, while EC-2024 facet1x has the Classic
-  statics1x: the EC variants were evidently built from a different snapshot.
+  statics1x: the EC variants were evidently built from a different snapshot. The user notes that this
+  install may hold a custom map they built with UO EMC and placed there, so EC-2024 facet0x may not be
+  a shipped file at all; treat its content as unverified until compared with a clean EC-2024 install.
 - Whether a newer EC build than the one traced reads `facet00x.dds` (the traced UOSA does not; there is no
   variant radar for facet 1, and none at all in EC-2024).
 - What slot A (7005,518..7166,650, terrain only, no statics, no region) is for.
