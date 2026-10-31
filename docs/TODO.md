@@ -136,6 +136,7 @@ handoff; older acceptance captures apply to their recorded package revisions.
   - direct populated slot wins
   - only then fall back through provenance or canonical mapping
 - Revisit runtime terrain-id override coverage, including the documented forest-family `196` case in `runtime_material_id_overrides`.
+- Draw the rest of the bump terrain layer (`UOBumpMapTerrainLayer`, material 8): item 3 (luminance bump, du/dv) and item 4 (environment map). The land shader now draws only items 0..2 (colour A/B by the item 2 alpha); see `scripts/dev-helpers/ec-research/ghidra-terrain-layers/results/uosa_terrain_layers.md` for the stage setup.
 
 ### Static Art Pipeline And Residency
 
