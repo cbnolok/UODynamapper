@@ -6,7 +6,7 @@
 //!
 //! The KR client directory comes from `common::KR_CLIENT_DIR_ENV`. Run with `--release`.
 
-mod common;
+use crate::common;
 
 use uocf::animation_sequence::AnimationSequence;
 use uocf::enhanced::client_dialect::ClientDialect;

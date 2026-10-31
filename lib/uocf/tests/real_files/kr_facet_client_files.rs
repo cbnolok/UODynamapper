@@ -7,7 +7,7 @@
 //! `statics*.mul`, `radarcol.mul`) from `common::KR_CLASSIC_DIR_ENV`. Run with `--release`. Files written here go to
 //! `std::env::temp_dir()` (set `TMPDIR` to choose it) and are deleted.
 
-mod common;
+use crate::common;
 
 use std::path::PathBuf;
 

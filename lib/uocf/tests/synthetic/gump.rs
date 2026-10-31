@@ -83,7 +83,7 @@ fn gump_map_reads_classic_mul_pair() {
     let unique = format!(
         "uocf_gump_test_{}_{}",
         std::process::id(),
-        std::thread::current().name().unwrap_or("unnamed")
+        std::thread::current().name().unwrap_or("unnamed").replace(':', "_")
     );
     let dir = std::env::temp_dir().join(unique);
     std::fs::create_dir_all(&dir).unwrap();

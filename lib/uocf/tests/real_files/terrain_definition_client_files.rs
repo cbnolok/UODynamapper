@@ -5,7 +5,7 @@
 //! The client directories come from `UO_EC_CLIENT_DIR` and `UO_KR_CLIENT_DIR`. The rewritten package goes to
 //! `std::env::temp_dir()` (set `TMPDIR` to choose it) and is deleted afterwards.
 
-mod common;
+use crate::common;
 
 use std::collections::BTreeMap;
 use std::path::Path;

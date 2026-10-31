@@ -2,7 +2,7 @@ use std::fs;
 
 use uocf::classic::body_def::BodyDef;
 
-mod common;
+use crate::common;
 
 #[test]
 fn body_def_parses_redirect_with_hue_and_comments() {

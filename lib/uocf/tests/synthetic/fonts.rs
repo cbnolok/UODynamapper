@@ -85,7 +85,7 @@ fn classic_fonts_loads_ascii_and_measures_width() {
     let unique = format!(
         "uocf_fonts_test_{}_{}",
         std::process::id(),
-        std::thread::current().name().unwrap_or("unnamed")
+        std::thread::current().name().unwrap_or("unnamed").replace(':', "_")
     );
     let dir = std::env::temp_dir().join(unique);
     std::fs::create_dir_all(&dir).unwrap();
@@ -112,7 +112,7 @@ fn unicode_font_decodes_bitpacked_glyphs() {
     let unique = format!(
         "uocf_unifont_test_{}_{}",
         std::process::id(),
-        std::thread::current().name().unwrap_or("unnamed")
+        std::thread::current().name().unwrap_or("unnamed").replace(':', "_")
     );
     let path = std::env::temp_dir().join(unique);
 
@@ -154,7 +154,7 @@ fn classic_fonts_unicode_metrics_include_offsets() {
     let unique = format!(
         "uocf_unifont_metrics_test_{}_{}",
         std::process::id(),
-        std::thread::current().name().unwrap_or("unnamed")
+        std::thread::current().name().unwrap_or("unnamed").replace(':', "_")
     );
     let dir = std::env::temp_dir().join(unique);
     std::fs::create_dir_all(&dir).unwrap();

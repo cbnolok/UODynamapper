@@ -58,8 +58,8 @@ records, computes the expected `data_block_hash` (Adler-32 for a timestamp heade
 with initial value 0 for a signature header) and prints per package the version, matches, header kinds
 (record type, key id) and header lengths, then the total. Exits 1 on any mismatch.
 
-The same check runs in Rust: `lib/uocf/tests/uop_data_block_header.rs`
-(`UO_EC_CLIENT_DIR` / `UO_CC_CLIENT_DIR`, `cargo test -p uocf --test uop_data_block_header -- --ignored`).
+The same check runs in Rust: `lib/uocf/tests/synthetic/uop_data_block_header.rs`
+(`UO_EC_CLIENT_DIR` / `UO_CC_CLIENT_DIR`, `cargo test -p uocf --test synthetic uop_data_block_header:: -- --ignored`).
 
 ### Notes
 

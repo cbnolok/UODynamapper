@@ -5,7 +5,7 @@ use uocf::classic::map_statics_diff::MapDiff;
 use uocf::uop_container::file::CompressionFlag;
 use uocf::uop_container::package::UopPackage;
 
-mod common;
+use crate::common;
 
 #[test]
 fn mapdif_and_mapdifl_override_base_map_block() {

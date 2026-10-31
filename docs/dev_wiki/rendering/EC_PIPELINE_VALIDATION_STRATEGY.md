@@ -25,7 +25,7 @@ to be selected.  Both are required.
 
 ## Layer 1 — Parser and metadata classification tests
 
-**Location:** `lib/uocf/tests/tileart_ref_preservation.rs`, `lib/uocf/tests/ec_material_axes.rs`
+**Location:** `lib/uocf/tests/synthetic/tileart_ref_preservation.rs`, `lib/uocf/tests/synthetic/ec_material_axes.rs`
 
 **What is checked:**
 - Textures-style path (e.g. `build/terraintexture/`) produces `EcLogicalFamily::Textures`, not `Unknown` or `WorldArt`
@@ -46,7 +46,7 @@ cargo test -p uocf ec_material_axes
 
 ## Layer 2 — Packer and sidecar integrity tests
 
-**Location:** `lib/udd-conv/tests/tilemeta.rs`, `lib/udd-conv/tests/tex_art_ec.rs`, inline tests in `lib/udd-conv/src/tex_art_ec.rs`
+**Location:** `lib/udd-conv/tests/integration/tilemeta.rs`, `lib/udd-conv/tests/integration/tex_art_ec.rs`, inline tests in `lib/udd-conv/src/tex_art_ec.rs`
 
 **What is checked:**
 - `TileMetaItemTextureRef` records with populated `stable_role`, `speculative_role`,

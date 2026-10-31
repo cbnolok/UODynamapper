@@ -1,4 +1,4 @@
-mod common;
+use crate::common;
 
 use uocf::enhanced::string_dictionary::UoStringDictionary;
 use uocf::uop_container::hash::hash_file_name_single;

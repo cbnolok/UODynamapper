@@ -15,7 +15,7 @@ use uocf::classic::statics::StaticsReader;
 use uocf::classic::tiledata::TileData;
 use uocf::classic::verdata::{VerFileId, Verdata};
 
-mod common;
+use crate::common;
 
 #[test]
 fn verdata_static_patch_overrides_base_static_block() {

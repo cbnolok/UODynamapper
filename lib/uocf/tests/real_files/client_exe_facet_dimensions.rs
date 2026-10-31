@@ -7,7 +7,7 @@
 //! files; they are only read. The copies go to `std::env::temp_dir()` (set `TMPDIR` to choose it) and are deleted
 //! afterwards.
 
-mod common;
+use crate::common;
 
 use std::path::{Path, PathBuf};
 

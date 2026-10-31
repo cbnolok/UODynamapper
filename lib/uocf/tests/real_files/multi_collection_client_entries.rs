@@ -12,7 +12,7 @@
 //! deleted afterwards. The multi writer tests check that every multi entry re-encodes byte for byte and that a
 //! package rewritten with an edited, an added and a removed multi changes only those entries.
 
-mod common;
+use crate::common;
 
 use std::collections::{BTreeMap, HashSet};
 use std::ops::RangeInclusive;

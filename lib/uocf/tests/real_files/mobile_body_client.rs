@@ -6,7 +6,7 @@
 //! release (the 2024 Enhanced Client); they are asserted only when the placeholder count identifies that
 //! release, and printed otherwise.
 
-mod common;
+use crate::common;
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;

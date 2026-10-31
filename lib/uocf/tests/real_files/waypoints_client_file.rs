@@ -3,7 +3,7 @@
 //! The client directories come from the variables in `common::CLIENT_DIR_ENVS`. The rewritten package goes to
 //! `std::env::temp_dir()` (set `TMPDIR` to choose it) and is deleted afterwards.
 
-mod common;
+use crate::common;
 
 use uocf::enhanced::waypoints::{waypoints_payload_hash, WaypointsPackage, WAYPOINTS_UOP_NAME};
 use uocf::uop_container::data_block_header::{DataBlockHeader, DataBlockHeaderRecord};

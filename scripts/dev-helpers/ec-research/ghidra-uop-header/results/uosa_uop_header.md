@@ -97,7 +97,7 @@ Package survey (reference clients; `verify_uop_headers.py` prints per-package co
 | `Ultima Online Classic_7_0_20_0` | 40232 | 40232 |
 
 Checked by `verify_uop_headers.py` (Python, stdlib) and by
-`lib/uocf/tests/uop_data_block_header.rs::client_package_headers_match_their_data_block_hash` (Rust,
+`lib/uocf/tests/synthetic/uop_data_block_header.rs::client_package_headers_match_their_data_block_hash` (Rust,
 reference clients). Adler-32 is ruled out for signature headers: their hash's low half reaches 65535, above
 Adler's 65520 limit.
 

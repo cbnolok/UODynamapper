@@ -4,7 +4,7 @@
 //! The client directories come from the variables in `common::CLIENT_DIR_ENVS`. The rewritten package goes to
 //! `std::env::temp_dir()` (set `TMPDIR` to choose it) and is deleted afterwards.
 
-mod common;
+use crate::common;
 
 use std::collections::BTreeMap;
 

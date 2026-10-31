@@ -319,8 +319,8 @@ The packer lists every finding with a severity:
 `--report FILE` writes the findings, one line each. `--strict` fails on any error finding; missing
 particle files never fail it.
 
-`tests/effects_ec_package_client.rs` in `udd-conv` (ignored) checks a package against the client. Set
-`UO_EC_CLIENT_DIR`; set `UDD_EFFECTS_EC_UDDP` to check a prebuilt package instead of packing in
+`tests/integration/effects_ec_package_client.rs` in `udd-conv` (ignored) checks a package against the client.
+Set `UO_EC_CLIENT_DIR`; set `UDD_EFFECTS_EC_UDDP` to check a prebuilt package instead of packing in
 memory; run with `--ignored`. It checks that:
 
 - every collection entry equals the client tree;

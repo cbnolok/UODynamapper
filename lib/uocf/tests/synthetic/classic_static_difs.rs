@@ -3,7 +3,7 @@ use std::fs;
 use uocf::classic::map_statics_diff::StaticDiff;
 use uocf::classic::statics::StaticsReader;
 
-mod common;
+use crate::common;
 
 #[test]
 fn stadif_stadifi_and_stadifl_override_base_static_block() {

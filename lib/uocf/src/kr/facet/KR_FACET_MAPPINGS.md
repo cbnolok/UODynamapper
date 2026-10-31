@@ -16,7 +16,7 @@ therefore runs one way only:
   the most frequent `material` and `subtype` of each Classic id. `material` is a function of the Classic id
   except for 2444 (KR 58 or 46) and 2446 (KR 60 or 47): exact on 99.9995% of the squares. `subtype` takes more
   than one value for 64 ids: exact on 99.967%. The ignored test `kr_facet_sectors_reencode_identically_and_follow_the_rules`
-  (`lib/uocf/tests/kr_facet_client_files.rs`) derives the table again with `KrLandCounter` and fails when it differs.
+  (`lib/uocf/tests/real_files/kr_facet_client_files.rs`) derives the table again with `KrLandCounter` and fails when it differs.
 - `BUILDER_KR_LAND_MAP_SUPPLEMENT`: the 1133 Classic ids the KR facets never use, taken from `get_tile_map` in
   `tile_mappings_builder.rs` (Manawydan's KR converter table). Unverified. The builder table agrees with the
   facets on most shipped ids, but disagrees on 36 and lacks 19, so the generated table wins where both have an id.

@@ -5,7 +5,7 @@
 //! are skipped. Rewritten packages go to `std::env::temp_dir()` (set `TMPDIR` to choose it) and are deleted
 //! afterwards.
 
-mod common;
+use crate::common;
 
 use std::collections::BTreeMap;
 

@@ -4,7 +4,7 @@
 //! path list (`:`-separated on Unix) for comparing several releases at once. Each directory may hold a
 //! `hues.mul`, a `Hues.uop`, or both. Packages written here go to `std::env::temp_dir()` and are deleted.
 
-mod common;
+use crate::common;
 
 use std::path::{Path, PathBuf};
 

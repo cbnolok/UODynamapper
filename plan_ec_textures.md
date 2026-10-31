@@ -765,7 +765,7 @@ Core metadata and parser surfaces:
 - /mnt/dati/__cloud/mega/_proj/_Rust/UODynamapper/lib/udd-conv/src/tex_land_ec.rs
 Likely supporting seams:
 - /mnt/dati/__cloud/mega/_proj/_Rust/UODynamapper/tools/udd-conv-cli/examples/inspect_ec_tile_surface_signals.rs
-- /mnt/dati/__cloud/mega/_proj/_Rust/UODynamapper/lib/uocf/tests/terrain_definition.rs
+- /mnt/dati/__cloud/mega/_proj/_Rust/UODynamapper/lib/uocf/tests/synthetic/terrain_definition.rs
 - any tileart or tilemeta tests already covering preserved refs
 Optional previous-phase artifacts:
 - Phase 0 owner-reference census output

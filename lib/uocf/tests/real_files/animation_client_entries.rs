@@ -8,7 +8,7 @@
 //! are asserted only when the entry count identifies that release, and printed otherwise. Every sequence must
 //! also re-encode byte for byte.
 
-mod common;
+use crate::common;
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;

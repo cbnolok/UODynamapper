@@ -2,7 +2,7 @@ use std::fs;
 
 use uocf::classic::bodyconv_def::BodyConvDef;
 
-mod common;
+use crate::common;
 
 #[test]
 fn bodyconv_def_picks_highest_available_animation_file() {

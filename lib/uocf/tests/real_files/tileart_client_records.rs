@@ -9,7 +9,7 @@
 //! The tileart writer tests check that every record re-encodes byte for byte, and that a package rewritten with an edited, an added and a removed record changes only those entries. The
 //! rewritten package goes to `std::env::temp_dir()` (set `TMPDIR` to choose it) and is deleted afterwards.
 
-mod common;
+use crate::common;
 
 use std::collections::{BTreeMap, BTreeSet};
 use uocf::enhanced::effect_definition::{

@@ -4,7 +4,7 @@
 //!
 //! The client directories come from the variables in `common::CLIENT_DIR_ENVS`.
 
-mod common;
+use crate::common;
 
 use std::fs;
 use std::io::{self, BufReader, Read};
