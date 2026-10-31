@@ -2,6 +2,7 @@ use eframe::egui;
 use crate::app::UopInspectorApp;
 use std::cmp::Ordering;
 
+pub mod animation_definitions;
 pub mod animations;
 pub mod animdata;
 pub mod art_viewer;
@@ -217,6 +218,7 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Multis, "Multis");
             }
             ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Housing, "Housing");
+            ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::AnimationDefinitions, "Animation definitions");
             ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Effects, "Effects");
             ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Multimap, "Multimap");
             if app.client_data.is_some() || app.ec_hues.is_some() {
@@ -379,6 +381,9 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui
         }
         crate::app::ViewMode::Housing => {
             housing::ui_housing(app, ctx, ui);
+        }
+        crate::app::ViewMode::AnimationDefinitions => {
+            animation_definitions::ui_animation_definitions(app, ctx, ui);
         }
         crate::app::ViewMode::Effects => {
             effects::ui_effects(app, ctx, ui);

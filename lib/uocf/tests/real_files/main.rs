@@ -7,6 +7,7 @@
 mod common;
 
 mod animation_client_entries;
+mod animation_definition_editing;
 mod classic_client_eras;
 mod classic_dif_usage;
 mod classic_facet_difs;

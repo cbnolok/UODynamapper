@@ -6,6 +6,11 @@
 //! take a [`ClientDialect`]; the KR differences are listed where each format is read. Where a field of the KR form
 //! has no confirmed meaning yet it is kept verbatim and named neutrally (`kr_*`).
 
+use std::path::Path;
+
+use crate::client_config::login_servers::KINGDOM_REBORN_EXE;
+use crate::utils::path::find_file_ignoring_case;
+
 /// Which client's form of a shared file layout to read or write.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum ClientDialect {
@@ -26,5 +31,21 @@ impl ClientDialect {
             Self::Enhanced => "Enhanced Client",
             Self::KingdomReborn => "Kingdom Reborn",
         }
+    }
+
+    /// The dialect of the client folder `dir`: Kingdom Reborn when it holds `UOKR.exe` (any case), else Enhanced
+    /// Client. For packages whose data reads in both forms (no field tells them apart), so the folder decides
+    /// what an edit writes.
+    pub fn of_client_dir(dir: &Path) -> Self {
+        if find_file_ignoring_case(dir, KINGDOM_REBORN_EXE).is_some() {
+            Self::KingdomReborn
+        } else {
+            Self::Enhanced
+        }
+    }
+
+    /// [`Self::of_client_dir`] of the folder holding the package `path`.
+    pub fn of_package_path(path: &Path) -> Self {
+        path.parent().map_or(Self::Enhanced, Self::of_client_dir)
     }
 }

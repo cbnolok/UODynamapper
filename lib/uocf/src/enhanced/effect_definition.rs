@@ -36,6 +36,7 @@ pub use encode::{
     write_effect_definition_dialect, write_effect_list, write_effect_list_dialect, TILEART_EFFECT_COUNT_MAX,
 };
 pub use kdl_text::{effect_definitions_from_kdl, effect_definitions_to_kdl};
+pub(crate) use kdl_text::{effect_definitions_from_nodes, f32_text, value_f32, write_effect_definition_nodes};
 pub use validation::{
     validate_effect_definitions, EffectIssue, EffectIssueKind, EffectIssueSeverity, EffectValidationContext,
     RANDOM_WEIGHT_TOLERANCE,

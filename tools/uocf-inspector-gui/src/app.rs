@@ -56,6 +56,7 @@ pub enum ViewMode {
     TerrainDefinition,
     StringDictionary,
     Sounds,
+    AnimationDefinitions,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
@@ -1833,6 +1834,7 @@ pub struct UopInspectorApp {
     pub housing_index: Option<Arc<HousingIndex>>,
     pub multi_part_filters: MultiPartFilters,
     pub housing_panel: crate::ui::housing::HousingPanelState,
+    pub animation_definitions_panel: crate::ui::animation_definitions::AnimationDefinitionsPanelState,
     pub effects_panel: crate::ui::effects::EffectsPanelState,
     pub multi_editor: crate::logic::multi_editor::MultiEditor,
     pub tileart_editor: crate::logic::tileart_editor::TileArtEditor,
@@ -1917,6 +1919,7 @@ impl UopInspectorApp {
             housing_index: None,
             multi_part_filters: MultiPartFilters::default(),
             housing_panel: Default::default(),
+            animation_definitions_panel: Default::default(),
             effects_panel: Default::default(),
             multi_editor: Default::default(),
             tileart_editor: Default::default(),
@@ -4337,6 +4340,7 @@ pub(crate) mod tests {
             housing_index: None,
             multi_part_filters: MultiPartFilters::default(),
             housing_panel: Default::default(),
+            animation_definitions_panel: Default::default(),
             effects_panel: Default::default(),
             multi_editor: Default::default(),
             tileart_editor: Default::default(),

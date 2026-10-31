@@ -750,7 +750,46 @@ Facet sizes in the executable (`client_exe::facet_dimensions`,
   u32 count, count x {u32 tile id, u8 effect count, effects}}`.
 - Client data: one set (key 0) per entry, no effects; 3 entries store an id
   other than their name (7905 -> 7897, 7923 -> 7916, 18153 -> 18150), with no
-  known use.
+  known use. Entry counts: 1,102 (EC 2024), 1,205 (a later EC build), 712
+  (Kingdom Reborn, `UOKR.exe`). No Classic client ships the file.
+- Kingdom Reborn: the same entry layout as far as the data shows (every KR
+  entry re-encodes byte for byte with it; the KR reader was not traced).
+  Frame effects use the KR effect grammar (`ClientDialect::KingdomReborn`,
+  shifted type keys); no KR entry has one, so the data cannot tell the
+  dialects apart and the folder decides (`ClientDialect::of_client_dir`:
+  Kingdom Reborn next to `UOKR.exe`).
+- Writer: `AnimationDefinition::to_bytes` / `to_bytes_dialect`, the inverse
+  of `parse` / `parse_dialect` (sets in ascending key order). It refuses what
+  the client rejects or the layout cannot hold: a missing start or second
+  set, a `next` naming no set or above `i32::MAX`, a NaN, infinite or
+  negative frame interval, a NaN or negative value, more than 255 effects on
+  a frame. `validate` lists these as errors, plus empty and unreachable sets
+  as warnings and the effect checks of `effect_definition` per frame.
+- Package: `AnimationDefinitionCollection` reads every entry by item id
+  (names resolved over item ids 0..0xFFFF and 10,000,000 + 0..0xFFFF), sets,
+  adds and removes entries and writes a copy of the package
+  (`write_package`): unchanged entries keep their bytes and data block
+  headers, changed and added ones get a fresh timestamp header; unnamed
+  entries are kept; the source is never overwritten.
+- KDL (`animation_definition/kdl_text.rs`, schema in its docs): one
+  `animation <item id> [stored-id=] [start=] [second=] [value=]` node per
+  entry with `set <key> interval=<s> [next=<key>]` children holding
+  `frames <tile id>...` and `frame <tile id> { effects }`; the effects use
+  the `EffectDefinitionCollection` KDL grammar. The reader is strict
+  (unknown nodes and properties, repeated ids or keys, dangling set links and
+  what the writer refuses are errors with line and column).
+  `export_kdl_files` writes `<item id, 8 digits>.kdl` per entry;
+  `import_kdl_paths` reads files or folders of them.
+- Verified on the three client packages above: every entry re-encodes byte
+  for byte, directly and through KDL, and validates without errors; a
+  rewrite changes only the edited entries
+  (`tests/real_files/animation_definition_editing.rs`, `UO_CLIENT_ROOTS`).
+- Tools: `uocf-cli animdef export <uop> --output <dir> [--item <id>]` and
+  `uocf-cli animdef import <uop> <kdl files or folders> --output <uop>`
+  (`--dialect auto|enhanced|kingdom-reborn`, `--no-names`); the inspector's
+  "Animation definitions" tab lists, edits (sets, next links, intervals,
+  frames with art previews, frame effects as KDL), validates, imports and
+  exports KDL and saves the package.
 - Layout, run-time semantics, confidence and verification against the client
   data for both files are in
   `scripts/dev-helpers/ec-research/ghidra-animation/results/uosa_animation.md`.

@@ -1,3 +1,4 @@
+mod animdef;
 mod exe;
 mod facet;
 mod hues;
@@ -101,6 +102,9 @@ enum Commands {
     /// Login server files of a client folder: where the client reads its server from; write an edited copy.
     #[command(subcommand)]
     Login(login::LoginCmd),
+    /// Enhanced Client and Kingdom Reborn AnimationDefinition.uop (animated items): export and import KDL entries.
+    #[command(subcommand)]
+    Animdef(animdef::AnimdefCmd),
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -165,6 +169,7 @@ fn main() -> eyre::Result<()> {
         Commands::Facet(cmd) => facet::run(cmd)?,
         Commands::Exe(cmd) => exe::run(cmd)?,
         Commands::Login(cmd) => login::run(cmd)?,
+        Commands::Animdef(cmd) => animdef::run(cmd)?,
     }
 
     Ok(())

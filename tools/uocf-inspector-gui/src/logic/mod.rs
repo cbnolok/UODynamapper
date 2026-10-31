@@ -1,3 +1,4 @@
+pub mod animation_definition_editor;
 pub mod dictionary;
 pub mod effect_files;
 pub mod effect_gltf;

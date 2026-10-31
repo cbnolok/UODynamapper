@@ -213,6 +213,31 @@ pub fn effect_definitions_from_kdl(
     document.nodes.iter().map(|node| reader.definition(node, 0)).collect()
 }
 
+/// Appends definition nodes indented `depth` levels to `text`: the effect grammar inside another KDL document (the
+/// frames of `AnimationDefinition.uop`).
+pub(crate) fn write_effect_definition_nodes(
+    text: &mut String,
+    definitions: &[EffectDefinition],
+    strings: Option<&UoStringDictionary>,
+    depth: usize,
+) {
+    let mut writer = Writer { text: std::mem::take(text), strings };
+    for definition in definitions {
+        writer.definition(definition, depth);
+    }
+    *text = writer.text;
+}
+
+/// Reads definition nodes of another KDL document ([`write_effect_definition_nodes`]); they are top-level
+/// definitions (depth 0).
+pub(crate) fn effect_definitions_from_nodes<'n>(
+    nodes: impl IntoIterator<Item = &'n SpannedNode<LineSpan>>,
+    strings: Option<&UoStringDictionary>,
+) -> eyre::Result<Vec<EffectDefinition>> {
+    let mut reader = Reader { strings, indices: None };
+    nodes.into_iter().map(|node| reader.definition(node, 0)).collect()
+}
+
 struct Writer<'a> {
     text: String,
     strings: Option<&'a UoStringDictionary>,
@@ -398,7 +423,8 @@ fn float_text(display: String, is_nan: bool, canonical_nan: bool, bits: impl std
     }
 }
 
-fn f32_text(value: f32) -> String {
+/// An f32 as KDL: a decimal with a point, or `"nan"`, `"inf"`, `"-inf"` (`"nan:0x<bits>"`).
+pub(crate) fn f32_text(value: f32) -> String {
     let infinite = value.is_infinite().then_some(value.is_sign_positive());
     float_text(value.to_string(), value.is_nan(), value.to_bits() == f32::NAN.to_bits(), value.to_bits(), infinite)
 }
@@ -739,7 +765,8 @@ fn value_bool(value: &Value<LineSpan>, field: &str) -> eyre::Result<bool> {
     }
 }
 
-fn value_f32(value: &Value<LineSpan>, field: &str) -> eyre::Result<f32> {
+/// An f32 written by [`f32_text`]; integers are accepted too.
+pub(crate) fn value_f32(value: &Value<LineSpan>, field: &str) -> eyre::Result<f32> {
     value_float(value, field, f32::from_bits, |decimal| f32::try_from(decimal), |integer| integer as f32, f32::NAN, f32::INFINITY)
 }
 
