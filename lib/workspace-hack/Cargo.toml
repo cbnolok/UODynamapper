@@ -23,8 +23,11 @@ clap = { version = "4", features = ["derive", "unicode"] }
 clap_builder = { version = "4", default-features = false, features = ["color", "help", "std", "suggestions", "unicode", "usage"] }
 crossbeam-channel = { version = "0.5" }
 dds = { version = "0.2" }
-egui = { version = "0.37", features = ["bytemuck", "default_fonts", "persistence"] }
+ecolor = { version = "0.36", default-features = false, features = ["bytemuck", "serde"] }
+egui = { version = "0.36", features = ["bytemuck", "persistence"] }
 either = { version = "1", default-features = false, features = ["use_std"] }
+emath = { version = "0.36", default-features = false, features = ["bytemuck", "serde"] }
+epaint = { version = "0.36", default-features = false, features = ["bytemuck", "default_fonts", "serde"] }
 flate2 = { version = "1", features = ["zlib-ng"] }
 foldhash = { version = "0.2", default-features = false, features = ["std"] }
 font-types = { version = "0.12", default-features = false, features = ["bytemuck", "serde", "std"] }
@@ -88,8 +91,7 @@ winnow = { version = "1" }
 
 [target.x86_64-unknown-linux-gnu.dependencies]
 ahash = { version = "0.8" }
-arboard = { version = "3", features = ["wayland-data-control"] }
-fixedbitset = { version = "0.5" }
+arboard = { version = "3" }
 getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng"] }
 hashbrown-986da7b5efc2b80e = { package = "hashbrown", version = "0.16", features = ["serde"] }
 libc = { version = "0.2", features = ["extra_traits"] }
@@ -113,8 +115,7 @@ log = { version = "0.4", default-features = false, features = ["std"] }
 
 [target.aarch64-unknown-linux-gnu.dependencies]
 ahash = { version = "0.8" }
-arboard = { version = "3", features = ["wayland-data-control"] }
-fixedbitset = { version = "0.5" }
+arboard = { version = "3" }
 getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng"] }
 hashbrown-986da7b5efc2b80e = { package = "hashbrown", version = "0.16", features = ["serde"] }
 libc = { version = "0.2", features = ["extra_traits"] }
@@ -138,8 +139,7 @@ log = { version = "0.4", default-features = false, features = ["std"] }
 
 [target.x86_64-unknown-linux-musl.dependencies]
 ahash = { version = "0.8" }
-arboard = { version = "3", features = ["wayland-data-control"] }
-fixedbitset = { version = "0.5" }
+arboard = { version = "3" }
 getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng"] }
 hashbrown-986da7b5efc2b80e = { package = "hashbrown", version = "0.16", features = ["serde"] }
 libc = { version = "0.2", features = ["extra_traits"] }
@@ -163,8 +163,7 @@ log = { version = "0.4", default-features = false, features = ["std"] }
 
 [target.aarch64-unknown-linux-musl.dependencies]
 ahash = { version = "0.8" }
-arboard = { version = "3", features = ["wayland-data-control"] }
-fixedbitset = { version = "0.5" }
+arboard = { version = "3" }
 getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng"] }
 hashbrown-986da7b5efc2b80e = { package = "hashbrown", version = "0.16", features = ["serde"] }
 libc = { version = "0.2", features = ["extra_traits"] }
@@ -187,7 +186,7 @@ libc = { version = "0.2", features = ["extra_traits"] }
 log = { version = "0.4", default-features = false, features = ["std"] }
 
 [target.x86_64-pc-windows-msvc.dependencies]
-arboard = { version = "3", features = ["wayland-data-control"] }
+arboard = { version = "3" }
 getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng"] }
 hashbrown-986da7b5efc2b80e = { package = "hashbrown", version = "0.16", features = ["serde"] }
 naga = { version = "30", features = ["glsl-out", "hlsl-out", "spv-out", "wgsl-in"] }
@@ -202,14 +201,14 @@ windows = { version = "0.62", features = ["Wdk_System_SystemInformation", "Wdk_S
 windows-core = { version = "0.62" }
 windows-sys-4db8c43aad08e7ae = { package = "windows-sys", version = "0.60", features = ["Win32_Graphics_Gdi", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_DataExchange", "Win32_System_IO", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_UI_Shell"] }
 windows-sys-b21d60becc0929df = { package = "windows-sys", version = "0.52", features = ["Win32_Devices_HumanInterfaceDevice", "Win32_Foundation", "Win32_Globalization", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_Graphics_OpenGL", "Win32_Media", "Win32_Security", "Win32_System_Com_StructuredStorage", "Win32_System_LibraryLoader", "Win32_System_Ole", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_UI_Accessibility", "Win32_UI_Controls", "Win32_UI_HiDpi", "Win32_UI_Input_Ime", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Input_Pointer", "Win32_UI_Input_Touch", "Win32_UI_Shell", "Win32_UI_TextServices", "Win32_UI_WindowsAndMessaging"] }
-windows-sys-d4189bed749088b6 = { package = "windows-sys", version = "0.61", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Globalization", "Win32_Graphics_Dwm", "Win32_Media", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_LibraryLoader", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging"] }
+windows-sys-d4189bed749088b6 = { package = "windows-sys", version = "0.61", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Globalization", "Win32_Media", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_LibraryLoader", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging"] }
 
 [target.x86_64-pc-windows-msvc.build-dependencies]
 getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng"] }
 log = { version = "0.4", default-features = false, features = ["std"] }
 
 [target.aarch64-pc-windows-msvc.dependencies]
-arboard = { version = "3", features = ["wayland-data-control"] }
+arboard = { version = "3" }
 getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng"] }
 hashbrown-986da7b5efc2b80e = { package = "hashbrown", version = "0.16", features = ["serde"] }
 naga = { version = "30", features = ["glsl-out", "hlsl-out", "spv-out", "wgsl-in"] }
@@ -224,20 +223,20 @@ windows = { version = "0.62", features = ["Wdk_System_SystemInformation", "Wdk_S
 windows-core = { version = "0.62" }
 windows-sys-4db8c43aad08e7ae = { package = "windows-sys", version = "0.60", features = ["Win32_Graphics_Gdi", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_DataExchange", "Win32_System_IO", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_UI_Shell"] }
 windows-sys-b21d60becc0929df = { package = "windows-sys", version = "0.52", features = ["Win32_Devices_HumanInterfaceDevice", "Win32_Foundation", "Win32_Globalization", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_Graphics_OpenGL", "Win32_Media", "Win32_Security", "Win32_System_Com_StructuredStorage", "Win32_System_LibraryLoader", "Win32_System_Ole", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_UI_Accessibility", "Win32_UI_Controls", "Win32_UI_HiDpi", "Win32_UI_Input_Ime", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Input_Pointer", "Win32_UI_Input_Touch", "Win32_UI_Shell", "Win32_UI_TextServices", "Win32_UI_WindowsAndMessaging"] }
-windows-sys-d4189bed749088b6 = { package = "windows-sys", version = "0.61", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Globalization", "Win32_Graphics_Dwm", "Win32_Media", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_LibraryLoader", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging"] }
+windows-sys-d4189bed749088b6 = { package = "windows-sys", version = "0.61", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Globalization", "Win32_Media", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_LibraryLoader", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging"] }
 
 [target.aarch64-pc-windows-msvc.build-dependencies]
 getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng"] }
 log = { version = "0.4", default-features = false, features = ["std"] }
 
 [target.x86_64-apple-darwin.dependencies]
-arboard = { version = "3", features = ["wayland-data-control"] }
+arboard = { version = "3" }
 core-foundation-sys = { version = "0.8" }
 getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng"] }
 image = { version = "0.25", default-features = false, features = ["tiff"] }
 libc = { version = "0.2", features = ["extra_traits"] }
 miniz_oxide = { version = "0.8", features = ["simd"] }
-objc2-app-kit-468e82937335b1c9 = { package = "objc2-app-kit", version = "0.3", default-features = false, features = ["NSAlert", "NSApplication", "NSBitmapImageRep", "NSButton", "NSControl", "NSEvent", "NSGraphics", "NSImage", "NSImageRep", "NSMenu", "NSMenuItem", "NSOpenGL", "NSOpenGLView", "NSOpenPanel", "NSPanel", "NSPasteboard", "NSPasteboardItem", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSView", "NSWindow", "NSWorkspace", "block2", "objc2-core-foundation", "objc2-core-graphics", "std"] }
+objc2-app-kit-468e82937335b1c9 = { package = "objc2-app-kit", version = "0.3", default-features = false, features = ["NSAlert", "NSApplication", "NSBitmapImageRep", "NSButton", "NSControl", "NSGraphics", "NSImage", "NSImageRep", "NSMenu", "NSMenuItem", "NSOpenGL", "NSOpenGLView", "NSOpenPanel", "NSPanel", "NSPasteboard", "NSPasteboardItem", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSView", "NSWindow", "NSWorkspace", "block2", "objc2-core-foundation", "objc2-core-graphics", "std"] }
 objc2-app-kit-6f8ce4dd05d13bba = { package = "objc2-app-kit", version = "0.2", features = ["NSAccessibility", "NSAccessibilityConstants", "NSAccessibilityElement", "NSAccessibilityProtocols", "NSAppearance", "NSApplication", "NSBitmapImageRep", "NSButton", "NSColor", "NSControl", "NSCursor", "NSDragging", "NSEvent", "NSGraphics", "NSGraphicsContext", "NSImage", "NSImageRep", "NSMenu", "NSMenuItem", "NSOpenGLView", "NSPasteboard", "NSResponder", "NSRunningApplication", "NSScreen", "NSText", "NSTextInputClient", "NSTextInputContext", "NSView", "NSWindow", "NSWindowScripting", "NSWindowTabGroup"] }
 objc2-core-foundation = { version = "0.3", features = ["CFBase"] }
 objc2-foundation = { version = "0.3" }
@@ -251,13 +250,13 @@ wgpu-types = { version = "30", default-features = false, features = ["web"] }
 libc = { version = "0.2", features = ["extra_traits"] }
 
 [target.aarch64-apple-darwin.dependencies]
-arboard = { version = "3", features = ["wayland-data-control"] }
+arboard = { version = "3" }
 core-foundation-sys = { version = "0.8" }
 getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng"] }
 image = { version = "0.25", default-features = false, features = ["tiff"] }
 libc = { version = "0.2", features = ["extra_traits"] }
 miniz_oxide = { version = "0.8", features = ["simd"] }
-objc2-app-kit-468e82937335b1c9 = { package = "objc2-app-kit", version = "0.3", default-features = false, features = ["NSAlert", "NSApplication", "NSBitmapImageRep", "NSButton", "NSControl", "NSEvent", "NSGraphics", "NSImage", "NSImageRep", "NSMenu", "NSMenuItem", "NSOpenGL", "NSOpenGLView", "NSOpenPanel", "NSPanel", "NSPasteboard", "NSPasteboardItem", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSView", "NSWindow", "NSWorkspace", "block2", "objc2-core-foundation", "objc2-core-graphics", "std"] }
+objc2-app-kit-468e82937335b1c9 = { package = "objc2-app-kit", version = "0.3", default-features = false, features = ["NSAlert", "NSApplication", "NSBitmapImageRep", "NSButton", "NSControl", "NSGraphics", "NSImage", "NSImageRep", "NSMenu", "NSMenuItem", "NSOpenGL", "NSOpenGLView", "NSOpenPanel", "NSPanel", "NSPasteboard", "NSPasteboardItem", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSView", "NSWindow", "NSWorkspace", "block2", "objc2-core-foundation", "objc2-core-graphics", "std"] }
 objc2-app-kit-6f8ce4dd05d13bba = { package = "objc2-app-kit", version = "0.2", features = ["NSAccessibility", "NSAccessibilityConstants", "NSAccessibilityElement", "NSAccessibilityProtocols", "NSAppearance", "NSApplication", "NSBitmapImageRep", "NSButton", "NSColor", "NSControl", "NSCursor", "NSDragging", "NSEvent", "NSGraphics", "NSGraphicsContext", "NSImage", "NSImageRep", "NSMenu", "NSMenuItem", "NSOpenGLView", "NSPasteboard", "NSResponder", "NSRunningApplication", "NSScreen", "NSText", "NSTextInputClient", "NSTextInputContext", "NSView", "NSWindow", "NSWindowScripting", "NSWindowTabGroup"] }
 objc2-core-foundation = { version = "0.3", features = ["CFBase"] }
 objc2-foundation = { version = "0.3" }

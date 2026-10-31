@@ -32,9 +32,9 @@ members = [
 # our crates as path or git dependencies get the stub, and none of the hack's feature unification.
 workspace-hack = "=0.1.0"
 zstd = { version = "0.13", features = ["zstdmt"] }
-eframe = { version = "0.37", default-features = false, features = ["clipboard", "default_fonts", "wayland", "wgpu", "x11", "persistence", "glow"] }
-egui = { version = "0.37", features = ["bytemuck"] }
-egui_extras = { version = "0.37", features = ["image"] }
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "wayland", "wgpu", "x11", "persistence", "glow"] }
+egui = { version = "0.36", features = ["bytemuck"] }
+egui_extras = { version = "0.36", features = ["image"] }
 rfd = { version = "0.17", features = ["xdg-portal"] }
 ktx2 = "0.5"
 tracing = "0.1.44"

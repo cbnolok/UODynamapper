@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """
-check_dep_alignment.py — Report workspace direct dependencies that resolve to a
+check_dep_alignment.py — Report workspace dependencies that resolve to a
 different version than the one already pulled in by a reference package's
-transitive dependency tree (default: bevy).
+transitive dependency tree (default: bevy and bevy_egui).
+
+Two checks run: the workspace's direct dependencies, and every crate reached
+through them (e.g. egui pulled by eframe while bevy_egui pins another egui).
+Cargo can't express "the version bevy_egui uses", so this script is how the
+workspace keeps such crates on one version: when bevy or bevy_egui moves,
+it fails until the workspace declarations follow.
 
 A mismatch means both versions are compiled separately, inflating build times
 and binary size. Updating the workspace declaration to accept the reference
@@ -24,9 +30,25 @@ Usage:
 
 import argparse
 import json
+import os
+import re
 import subprocess
 import sys
 from collections import defaultdict, deque
+
+DEFAULT_REFERENCES = ("bevy", "bevy_egui")
+# The platforms we build for are the ones the workspace-hack is generated for.
+HAKARI_CONFIG = os.path.join(".config", "hakari.toml")
+# The generated feature-unification crate mirrors the other members' resolution; a mismatch only it pulls means
+# it is stale (`cargo hakari generate`), not that a declaration needs changing.
+WORKSPACE_HACK = "workspace-hack"
+# Direct dependencies whose own requirements cause duplicates we can't remove by changing our declarations:
+# crate -> why. Mismatches reached only through these are reported, never a failure.
+KNOWN_SOURCES = {
+    "dds": "dds 0.2, its latest release, requires glam 0.25",
+    "knuffel": "knuffel 3.2, its latest release (2023), requires syn 1, chumsky 0.9 and miette 5",
+    "miette": "miette 5 is the version knuffel 3.2 requires",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -63,6 +85,33 @@ def bfs_subtree(root_ids: set, node_map: dict) -> set:
     return visited
 
 
+def built_packages() -> set:
+    """(name, version) of every package some workspace build compiles on a platform we build for.
+
+    cargo metadata's resolve graph also lists packages that the feature resolver never activates (it reported
+    rand 0.8 through phf_macros, which nothing builds) and the ones only other platforms (iOS) build, so the
+    transitive check keeps only what cargo tree shows for our platforms.
+    """
+    with open(HAKARI_CONFIG, encoding="utf-8") as config:
+        text = config.read()
+    try:
+        import tomllib  # Python 3.11+; the CI runner's Python is older.
+        platforms = tomllib.loads(text)["platforms"]
+    except ImportError:
+        platforms = re.findall(r'"([^"]+)"', re.search(r"^platforms\s*=\s*\[(.*?)\]", text, re.S | re.M).group(1))
+    targets = [arg for platform in platforms for arg in ("--target", platform)]
+    result = subprocess.run(
+        ["cargo", "tree", "--workspace", *targets, "-e", "normal,build", "--prefix", "none", "--format", "{p}"],
+        capture_output=True, text=True, check=True,
+    )
+    built = set()
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[1].startswith("v"):
+            built.add((parts[0], parts[1][1:]))
+    return built
+
+
 def dep_kind_set(dep_edge: dict) -> set:
     """Return the set of dep_kinds strings for a resolve graph dep edge."""
     return {dk.get("kind") for dk in dep_edge.get("dep_kinds", [{"kind": None}])}
@@ -79,7 +128,7 @@ def main() -> int:
     parser.add_argument(
         "--reference", default=None,
         help="Name of the reference package whose transitive dep versions are authoritative "
-             "(default: bevy). Can be specified multiple times.",
+             f"(default: {', '.join(DEFAULT_REFERENCES)}). Can be specified multiple times.",
         action="append", dest="references",
     )
     parser.add_argument(
@@ -97,7 +146,7 @@ def main() -> int:
     args = parser.parse_args()
 
     # The default argparse `append` adds to the default, so handle that:
-    reference_names = args.references if args.references else ["bevy"]
+    reference_names = args.references if args.references else list(DEFAULT_REFERENCES)
 
     try:
         meta = load_metadata()
@@ -113,7 +162,7 @@ def main() -> int:
     ref_root_ids = {
         p["id"]
         for p in meta["packages"]
-        if p["name"] in reference_names
+        if p["name"] in reference_names and p["id"] in node_map
     }
     if not ref_root_ids:
         names_in_graph = sorted({p["name"] for p in meta["packages"]})
@@ -187,8 +236,44 @@ def main() -> int:
             else:
                 mismatches[dep_name].append(entry)
 
+    # --- Transitive check: versions reached through a workspace direct dep that the reference tree resolves
+    # differently. Attributed to the direct dep (and the members declaring it) that leads there.
+    transitive: dict[str, dict] = defaultdict(lambda: defaultdict(set))
+    built = built_packages()
+    for ws_id in sorted(workspace_ids):
+        ws_name = pkg_map[ws_id]["name"]
+        for dep_edge in node_map.get(ws_id, {}).get("deps", []):
+            direct_id = dep_edge["pkg"]
+            if direct_id in workspace_ids or direct_id in ref_root_ids:
+                continue
+            direct = pkg_map[direct_id]
+            for pkg_id in bfs_subtree({direct_id}, node_map) - ref_subtree_ids:
+                pkg = pkg_map[pkg_id]
+                if (pkg["name"] in ref_versions and pkg["version"] not in ref_versions[pkg["name"]]
+                        and (pkg["name"], pkg["version"]) in built):
+                    transitive[(pkg["name"], pkg["version"])][(direct["name"], direct["version"])].add(ws_name)
+
     # --- Report ---
     ref_label = " + ".join(sorted(reference_names))
+    failed = False
+    if transitive:
+        print(f"=== TRANSITIVE VERSION MISMATCHES vs {ref_label} ===\n")
+        for (name, version) in sorted(transitive):
+            vias = transitive[(name, version)]
+            # The hack declares everything the members do, so it only decides when it is the sole declarer.
+            real = {via: members - {WORKSPACE_HACK} for via, members in vias.items() if members - {WORKSPACE_HACK}}
+            if not real:
+                tag = "stale workspace-hack: run `cargo hakari generate`"
+            elif all(via_name in KNOWN_SOURCES for via_name, _ in real):
+                tag = "known: " + "; ".join(sorted({KNOWN_SOURCES[via_name] for via_name, _ in real}))
+            else:
+                tag = "MISMATCH"
+            failed |= tag == "MISMATCH"
+            print(f"  {name} {version} (reference resolves {', '.join(sorted(ref_versions[name]))}) [{tag}]")
+            for (via_name, via_version) in sorted(real or vias):
+                members = (real or vias)[(via_name, via_version)]
+                print(f"    via {via_name} {via_version}, declared by: {', '.join(sorted(members))}")
+        print()
 
     if args.show_all and matches:
         print(f"=== ALIGNED with {ref_label} ({len(matches)} crates) ===\n")
@@ -203,7 +288,7 @@ def main() -> int:
 
     if not mismatches:
         print(f"✓ All workspace direct dependencies already align with {ref_label}'s resolved versions.")
-        return 0
+        return 1 if failed else 0
 
     print(f"=== VERSION MISMATCHES vs {ref_label} ({len(mismatches)} crates) ===\n")
     print(

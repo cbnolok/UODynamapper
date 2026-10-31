@@ -323,7 +323,7 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
             });
         });
 
-    let show_housing_id = egui::Id::unique(SHOW_HOUSING_PIECES_ID_SALT);
+    let show_housing_id = egui::Id::new(SHOW_HOUSING_PIECES_ID_SALT);
     let mut show_housing = ctx
         .data_mut(|data| data.get_temp::<bool>(show_housing_id))
         .unwrap_or(false);
@@ -505,7 +505,7 @@ pub(crate) fn show_multi_in_multis_tab(app: &mut UopInspectorApp, ctx: &egui::Co
         .map(|item| item.filename_hash);
     app.multis_source = MultisSource::Uop;
     select_multi(app, multi_id, hash);
-    ctx.data_mut(|data| data.insert_temp(egui::Id::unique(SHOW_HOUSING_PIECES_ID_SALT), false));
+    ctx.data_mut(|data| data.insert_temp(egui::Id::new(SHOW_HOUSING_PIECES_ID_SALT), false));
     app.view_mode = ViewMode::Multis;
 }
 
@@ -687,8 +687,8 @@ fn draw_multi_details(
         .collect();
     let parts = parts.as_slice();
     ui.label(format!("Showing {} of {} parts", parts.len(), all_parts.len()));
-    let detached_window_id = egui::Id::unique("multi_preview_detached_window");
-    let show_center_id = egui::Id::unique("multi_preview_show_center");
+    let detached_window_id = egui::Id::new("multi_preview_detached_window");
+    let show_center_id = egui::Id::new("multi_preview_show_center");
     let selected_part_id = multi_selected_part_id(app);
     let mut detached_open = ctx
         .data_mut(|data| data.get_temp::<bool>(detached_window_id))
@@ -788,7 +788,7 @@ fn draw_multi_details(
     if detached_open {
         let mut open = true;
         egui::Window::new(format!("2D Preview - {} {}", title, app.selected_multi_id))
-            .id(egui::Id::unique("multi_preview_detached_window_panel"))
+            .id(egui::Id::new("multi_preview_detached_window_panel"))
             .open(&mut open)
             .default_size(egui::vec2(1000.0, 720.0))
             .resizable(true)
@@ -1010,7 +1010,7 @@ fn paint_selected_part_highlight(
 }
 
 fn multi_selected_part_id(app: &UopInspectorApp) -> egui::Id {
-    egui::Id::unique(("multi_selected_part", app.multis_source as u8, app.selected_multi_id))
+    egui::Id::new(("multi_selected_part", app.multis_source as u8, app.selected_multi_id))
 }
 
 fn get_multi_part_texture(

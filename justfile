@@ -627,9 +627,10 @@ bevy-lint:
     @echo "Running Bevy lints..."
     bevy lint
 
-# Check workspace direct dependency versions against Bevy's dependency tree.
+# Check that the workspace's dependencies, direct and transitive, resolve to the versions bevy and bevy_egui use
+# (e.g. egui pulled by eframe), so no crate is compiled twice. Fails on a mismatch; CI runs it.
 check-dep-alignment *args:
-    @echo "Checking workspace dependency alignment against Bevy..."
+    @echo "Checking workspace dependency alignment against bevy and bevy_egui..."
     cargo metadata --format-version 1 | python3 scripts/dev-helpers/check_dep_alignment.py {{args}}
 
 # Check workspace direct dependency versions against a selected reference crate.

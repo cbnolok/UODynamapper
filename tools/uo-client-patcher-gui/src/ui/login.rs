@@ -340,7 +340,7 @@ fn ui_classic(ui: &mut egui::Ui, session: &mut Session) -> Option<LoginAction> {
     }
     if let Some(path) = login.pending_overwrite.clone() {
         let mut cancel = false;
-        let modal = egui::Modal::new(egui::Id::unique(OVERWRITE_MODAL_ID)).show(ui.ctx(), |ui| {
+        let modal = egui::Modal::new(egui::Id::new(OVERWRITE_MODAL_ID)).show(ui.ctx(), |ui| {
             ui.label(format!("{} exists. Overwrite it?", path.display()));
             ui.add_space(ITEM_SPACING);
             ui.horizontal(|ui| {
