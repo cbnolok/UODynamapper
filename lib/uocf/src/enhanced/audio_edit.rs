@@ -22,7 +22,7 @@ use crate::enhanced::audio::{
     check_table_path, legacy_sound_entry_name, read_tables, write_table, AudioKind, AudioTableRow,
     AudioTables, AUDIO_ENTRY_ROOT, MUSIC_TABLE_ENTRY, MUSIC_TABLE_HEADER, SOUND_TABLE_ENTRY, SOUND_TABLE_HEADER,
 };
-use crate::enhanced::uop_entries::refuse_to_overwrite;
+use crate::enhanced::uop_entries::save_package_as;
 use crate::uop_container::file::CompressionFlag;
 use crate::uop_container::hash::hash_file_name_single;
 use crate::uop_container::package::{FileReplacement, NewEntryCompression, UopPackage};
@@ -292,8 +292,7 @@ impl AudioPackageEditor {
         if !output.is_absolute() {
             eyre::bail!("the output must be an absolute path: {}", output.display());
         }
-        refuse_to_overwrite(&self.source, output)?;
-        self.package.finalize_and_save(output).wrap_err_with(|| format!("Failed to write {}", output.display()))
+        save_package_as(&mut self.package, &self.source, output)
     }
 }
 

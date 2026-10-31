@@ -13,6 +13,7 @@ pub mod client_dialect;
 pub mod dds_writer;
 pub mod effect_definition;
 pub mod effect_texture;
+pub mod entry_edit;
 pub mod facet_decoder;
 pub mod facet_definition;
 pub mod facet_encoder;

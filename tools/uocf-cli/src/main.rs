@@ -114,7 +114,8 @@ enum Commands {
     /// conventions.
     #[command(subcommand)]
     Image(image_census::ImageCmd),
-    /// Content-aware edits of UOP packages: replace a texture keeping its DDS format.
+    /// Content-aware edits of UOP packages: replace a texture keeping its DDS format, replace or add any entry
+    /// checked by its content.
     #[command(subcommand)]
     Uop(uop::UopCmd),
     /// Enhanced Client and Kingdom Reborn AnimationDefinition.uop (animated items): export and import KDL entries.

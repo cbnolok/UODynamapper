@@ -878,7 +878,7 @@ impl UopPackage {
     }
 
     /// The compression [`Self::add_entry`] gives a new entry.
-    fn new_entry_compression(&self, compression: NewEntryCompression) -> CompressionFlag {
+    pub fn new_entry_compression(&self, compression: NewEntryCompression) -> CompressionFlag {
         match compression {
             NewEntryCompression::Flag(flag) => flag,
             NewEntryCompression::LikePackage => {

@@ -1,14 +1,12 @@
+use std::fs;
 use std::path::PathBuf;
 
-use clap::Subcommand;
+use clap::{Args, Subcommand, ValueEnum};
 use color_eyre::eyre::{self, WrapErr};
+use uocf::audio::validate::FormatPolicy;
 use uocf::enhanced::dds_writer::{replace_texture_in_uop, SizeChange};
-use uocf::uop_container::hash::hash_file_name_single;
-
-const HEX_PREFIX: &str = "0x";
-const HEX_RADIX: u32 = 16;
-/// Hex digits of an entry hash written without the prefix.
-const HASH_HEX_DIGITS: usize = 16;
+use uocf::enhanced::entry_edit::{EntryCheck, EntryEdit, EntryTarget, UopEntryEditor};
+use uocf::uop_container::file::CompressionFlag;
 
 #[derive(Subcommand, Debug)]
 pub enum UopCmd {
@@ -30,17 +28,90 @@ pub enum UopCmd {
         #[arg(long)]
         allow_resize: bool,
     },
+    /// Write a copy of a package with one entry replaced by a file of the same kind, checked by its content: the
+    /// kind its extension or the current entry has, and, where uocf has a strict reader for the entry (DDS,
+    /// images, Chaos scripts, the audio tables, the legacy terrain map and documents, hue bitmaps, tileart,
+    /// animation, effect, terrain, facet, multi, waypoint and string records), a parse. The entry keeps its
+    /// compression flag and gets a fresh timestamp; the other entries are untouched.
+    ReplaceEntry {
+        #[command(flatten)]
+        edit: EntryArgs,
+    },
+    /// Write a copy of a package with a new entry, checked like replace-entry against its name's extension and
+    /// the package's readers, stored with the flag the package's entries of its kind have unless --compression.
+    AddEntry {
+        #[command(flatten)]
+        edit: EntryArgs,
+        /// The new entry's compression.
+        #[arg(long, value_enum)]
+        compression: Option<EntryCompression>,
+    },
+}
+
+#[derive(Args, Debug)]
+pub struct EntryArgs {
+    /// Source package (only read).
+    uop: PathBuf,
+    /// Entry name (lowercase, `/` separators) or hash (`0x` and hex, or 16 hex digits).
+    entry: String,
+    /// The file the entry will hold.
+    file: PathBuf,
+    /// Output package: an absolute path, not the source.
+    #[arg(long)]
+    output: PathBuf,
+    /// For MP3 and WAV entries: accept audio formats no shipped entry has (a file of another kind is still
+    /// refused).
+    #[arg(long)]
+    allow_unverified_format: bool,
+}
+
+#[derive(ValueEnum, Clone, Copy, Debug)]
+pub enum EntryCompression {
+    None,
+    Zlib,
+}
+
+impl From<EntryCompression> for CompressionFlag {
+    fn from(compression: EntryCompression) -> Self {
+        match compression {
+            EntryCompression::None => CompressionFlag::None,
+            EntryCompression::Zlib => CompressionFlag::Zlib,
+        }
+    }
+}
+
+impl EntryArgs {
+    fn run(&self, put: impl FnOnce(&mut UopEntryEditor, &EntryTarget, &[u8], FormatPolicy) -> eyre::Result<EntryEdit>) -> eyre::Result<()> {
+        eyre::ensure!(self.output.is_absolute(), "--output must be an absolute path: {}", self.output.display());
+        let target = EntryTarget::parse(&self.entry)?;
+        let file = fs::read(&self.file).wrap_err_with(|| format!("Failed to read {}", self.file.display()))?;
+        let policy = if self.allow_unverified_format { FormatPolicy::AllowUnverified } else { FormatPolicy::VerifiedOnly };
+        let mut editor = UopEntryEditor::load(&self.uop)?;
+        let edit = put(&mut editor, &target, &file, policy)?;
+        for warning in &edit.warnings {
+            log::warn!("{warning}");
+        }
+        editor.save_as(&self.output)?;
+        let check = match &edit.check {
+            EntryCheck::Parsed { reader, dialect: Some(dialect) } => format!("checked: {reader} ({})", dialect.label()),
+            EntryCheck::Parsed { reader, dialect: None } => format!("checked: {reader}"),
+            EntryCheck::Kind(kind) => format!("{} (no reader for this entry)", kind.label()),
+            EntryCheck::Unchecked(kind) => format!("{}, unchecked (no extension to check against)", kind.label()),
+        };
+        println!(
+            "Wrote {}: entry {} {:?}, {:?} compression, {check}.",
+            self.output.display(),
+            edit.name.clone().unwrap_or_else(|| format!("{:016X}", edit.hash)),
+            edit.write,
+            edit.compression
+        );
+        Ok(())
+    }
 }
 
 /// The hash an entry argument names.
 fn entry_hash(entry: &str) -> eyre::Result<u64> {
-    if let Some(hex) = entry.strip_prefix(HEX_PREFIX) {
-        return u64::from_str_radix(hex, HEX_RADIX).wrap_err_with(|| format!("bad entry hash {entry}"));
-    }
-    if entry.len() == HASH_HEX_DIGITS && entry.chars().all(|digit| digit.is_ascii_hexdigit()) {
-        return Ok(u64::from_str_radix(entry, HEX_RADIX)?);
-    }
-    Ok(hash_file_name_single(entry))
+    Ok(EntryTarget::parse(entry)?.hash())
 }
 
 pub fn run(cmd: UopCmd) -> eyre::Result<()> {
@@ -65,6 +136,10 @@ pub fn run(cmd: UopCmd) -> eyre::Result<()> {
                 replacement.style.map_or("as the original (not a shipped style)".to_owned(), |style| format!("{style:?}"))
             );
         }
+        UopCmd::ReplaceEntry { edit } => edit.run(|editor, target, file, policy| editor.replace(target, file, policy))?,
+        UopCmd::AddEntry { edit, compression } => {
+            edit.run(|editor, target, file, policy| editor.add(target, file, compression.map(Into::into), policy))?
+        }
     }
     Ok(())
 }
@@ -72,6 +147,7 @@ pub fn run(cmd: UopCmd) -> eyre::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uocf::uop_container::hash::hash_file_name_single;
 
     const HASH: u64 = 0xBEA6_C96E_A9B7_27F4;
     const NAME: &str = "data/interface/login/textures/login_02.dds";

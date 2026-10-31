@@ -18,6 +18,7 @@ mod client_exe_facet_dimensions;
 mod client_login_servers;
 mod dds_client_textures;
 mod effects_client_files;
+mod entry_editor_client_packages;
 mod facet_client_files;
 mod facet_variants;
 mod hues_mul_uop_client;

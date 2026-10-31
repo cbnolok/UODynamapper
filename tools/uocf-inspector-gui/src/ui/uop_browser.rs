@@ -1,7 +1,9 @@
 use eframe::egui;
 use crate::app::{guess_uop_image_format_from_payload, UopInspectorApp};
 use super::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by};
+use uocf::audio::validate::FormatPolicy;
 use uocf::enhanced::client_dialect::ClientDialect;
+use uocf::enhanced::entry_edit::{EntryCheck, EntryTarget, UopEntryEditor};
 use uocf::enhanced::tileart::TileArtEntry;
 use uocf::enhanced::waypoints::{
     WaypointClilocDefinition, WaypointTypeDefinition, WaypointsPackage,
@@ -20,6 +22,42 @@ const WAYPOINT_DRAG_SPEED: f64 = 0.1;
 const WAYPOINT_ERROR_COLOR: egui::Color32 = egui::Color32::from_rgb(230, 90, 90);
 const WAYPOINT_WARNING_COLOR: egui::Color32 = egui::Color32::from_rgb(230, 180, 60);
 const UOP_FILTER: (&str, &[&str]) = ("UOP package", &["uop"]);
+
+const REPLACE_FILE_HOVER: &str = "Write a copy of the package with this entry replaced by a file of the same kind \
+(by content: the kind its extension or the current entry has) that parses where uocf has a reader for the entry. \
+The entry keeps its compression flag; the other entries are untouched.";
+
+/// Replaces the entry `hash` (named `name` when the name hashes to it) of the package at `source` with a file the
+/// user picks, written to a copy the user names.
+fn replace_entry_file(app: &mut UopInspectorApp, source: &std::path::Path, hash: u64, name: &str) {
+    let Some(input) = crate::dialog::file_dialog().set_title("Replace entry with").pick_file() else { return };
+    let file_name = source.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+    let Some(output) = crate::dialog::file_dialog()
+        .add_filter(UOP_FILTER.0, UOP_FILTER.1)
+        .set_title("Write the edited package to")
+        .set_file_name(&file_name)
+        .save_file()
+    else {
+        return;
+    };
+    let target = if uocf::uop_container::hash::hash_file_name_single(name) == hash {
+        EntryTarget::Name(name.to_owned())
+    } else {
+        EntryTarget::Hash(hash)
+    };
+    let result = (|| -> color_eyre::eyre::Result<String> {
+        let file = std::fs::read(&input)?;
+        let mut editor = UopEntryEditor::load(source)?;
+        let edit = editor.replace(&target, &file, FormatPolicy::VerifiedOnly)?;
+        editor.save_as(&output)?;
+        let check = match edit.check {
+            EntryCheck::Parsed { reader, .. } => format!("checked: {reader}"),
+            EntryCheck::Kind(kind) | EntryCheck::Unchecked(kind) => format!("{} by content", kind.label()),
+        };
+        Ok(format!("{:?} {name} ({:?}, {check}) in {}. {UOP_PATCHER_NOTE}", edit.write, edit.compression, output.display()))
+    })();
+    app.status_message = result.unwrap_or_else(|e| format!("Failed to replace {name}: {e:#}"));
+}
 
 pub fn has_visible_uop_explorer_package(app: &UopInspectorApp) -> bool {
     app.uop_cache
@@ -160,6 +198,9 @@ pub fn ui_uop_browser(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut e
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button("📥 Extract...").clicked() {
                             app.save_entry(hash, &resolved_name);
+                        }
+                        if ui.button("Replace file...").on_hover_text(REPLACE_FILE_HOVER).clicked() {
+                            replace_entry_file(app, &loaded_uop.path, hash, &resolved_name);
                         }
                     });
                 });
