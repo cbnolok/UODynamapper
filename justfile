@@ -58,11 +58,7 @@ lld_llvm_major := if has_lld != "" {
 # --- Build Configuration ---
 
 # RUSTC_WRAPPER logic (needed for sccache)
-wrapper_path := if is_windows == "true" {
-    "scripts/build/common/rustc_wrapper.bat"
-} else {
-    "scripts/build/common/rustc_wrapper.sh"
-}
+wrapper_path := "scripts/build/common/rustc_wrapper.sh"
 
 # Determine if sccache should be used. CI uses it except on Windows: sccache expands cargo's @argfile and spawns rustc
 # with every argument, and with one -L per dependency build directory that passes Windows' 32767-character command
@@ -71,7 +67,10 @@ sccache_requested := if sccache == "true" { "true" } else if is_windows == "true
 sccache_available := if has_sccache != "" { "true" } else { "false" }
 sccache_effective := if sccache_requested == "true" { sccache_available } else { "false" }
 
-export RUSTC_WRAPPER := if sccache_effective == "true" { "sccache" } else { wrapper_path }
+# Windows runs without a wrapper unless sccache is on: its pass-through wrapper goes through PowerShell's -File
+#   argument binding, which splits `--remap-path-prefix=D:\…=.` at the drive colon, and starts pwsh for every rustc
+#   call. Cargo treats an empty RUSTC_WRAPPER as no wrapper.
+export RUSTC_WRAPPER := if sccache_effective == "true" { "sccache" } else if is_windows == "true" { "" } else { wrapper_path }
 
 # Determine linker to be used and to be passed to RUSTFLAGS
 # For now linux_debug_linker_base is unused, since we are relying on config.toml for rapid iteration debug

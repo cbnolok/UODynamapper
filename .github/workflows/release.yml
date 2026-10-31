@@ -183,6 +183,10 @@ jobs:
               chown -R "$HOST_UID:$HOST_GID" /work/target
             '
 
+      # The build runs in the Alpine container; packaging runs on the runner, which has no just of its own.
+      - name: Install Just
+        uses: extractions/setup-just@v2
+
       - name: Package CLI tools
         run: just package-release-cli dynamapper-linux-x86_64-musl x86_64-unknown-linux-musl
 
@@ -227,6 +231,10 @@ jobs:
               just build-linux-musl-release-nightly aarch64-unknown-linux-musl
               chown -R "$HOST_UID:$HOST_GID" /work/target
             '
+
+      # The build runs in the Alpine container; packaging runs on the runner, which has no just of its own.
+      - name: Install Just
+        uses: extractions/setup-just@v2
 
       - name: Package CLI tools
         run: just package-release-cli dynamapper-linux-arm64-musl aarch64-unknown-linux-musl
