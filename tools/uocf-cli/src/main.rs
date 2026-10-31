@@ -1,4 +1,5 @@
 mod animdef;
+mod animframe;
 mod audio;
 mod exe;
 mod facet;
@@ -119,6 +120,10 @@ enum Commands {
     /// Enhanced Client and Kingdom Reborn AnimationDefinition.uop (animated items): export and import KDL entries.
     #[command(subcommand)]
     Animdef(animdef::AnimdefCmd),
+    /// Enhanced Client and Kingdom Reborn AnimationFrame*.uop (mobile frames): export a body/action as PNGs plus
+    /// KDL, and import such a folder back into a copy of the package.
+    #[command(subcommand)]
+    Animframe(animframe::AnimframeCmd),
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -187,6 +192,7 @@ fn main() -> eyre::Result<()> {
         Commands::Image(cmd) => image_census::run(cmd)?,
         Commands::Uop(cmd) => uop::run(cmd)?,
         Commands::Animdef(cmd) => animdef::run(cmd)?,
+        Commands::Animframe(cmd) => animframe::run(cmd)?,
     }
 
     Ok(())
