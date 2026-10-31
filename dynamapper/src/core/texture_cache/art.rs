@@ -18,6 +18,7 @@ use udd_assets::bc7::{self, ImageExtent, TextureUploadLayout, VramTextureFormat}
 use udd_assets::{
     tex_art_cc::{TexArtCcPackage, PagePixelFormat},
     tex_art_ec::TexArtEcPackage,
+    tex_aux_ec::TexAuxEcPackage,
     tex_land_ec::TexLandEcPackage,
     tilemeta::TileMetaPackage,
 };
@@ -60,7 +61,7 @@ pub struct ResolvedArtSprite {
 
 #[derive(Debug, Clone)]
 pub struct ArtPageUpload {
-    pub page_index: u32,
+    pub page_index: ArtPageKey,
     pub layer: u32,
     pub bytes: Vec<u8>,
     pub upload_layout: TextureUploadLayout,
@@ -68,10 +69,20 @@ pub struct ArtPageUpload {
     pub upload_height: u32,
 }
 
+/// A layer's source survives growth/reupload; equal page numbers from different
+/// packages must never alias when Enhanced artwork falls back to Classic art.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ArtPageKey {
+    Classic(u32),
+    Enhanced(u32),
+    Terrain(u32),
+    Missing,
+}
+
 pub struct ArtPageAtlas {
     pub gpu_handle: Handle<Image>,
-    page_to_layer: HashMap<u32, u32>,
-    layer_to_page: Vec<Option<u32>>,
+    page_to_layer: HashMap<ArtPageKey, u32>,
+    layer_to_page: Vec<Option<ArtPageKey>>,
     layer_access_tick: Vec<u64>,
     current_tick: u64,
     mapping_revision: u64,
@@ -143,7 +154,7 @@ impl ArtPageAtlas {
         self.requested_resize_to.take()
     }
 
-    pub fn resident_page_layers(&self) -> Vec<(u32, u32)> {
+    pub fn resident_page_layers(&self) -> Vec<(ArtPageKey, u32)> {
         self.page_to_layer
             .iter()
             .map(|(&page_index, &layer)| (page_index, layer))
@@ -152,7 +163,7 @@ impl ArtPageAtlas {
 
     pub fn queue_page_upload<F>(
         &mut self,
-        page_index: u32,
+        page_index: ArtPageKey,
         layer: u32,
         atlas_width: u32,
         atlas_height: u32,
@@ -176,18 +187,15 @@ impl ArtPageAtlas {
         }
 
         if let Ok(page_data) = read_page_bytes() {
-            if let Some((bytes, upload_layout)) = prepare_page_upload_bytes(
+            if let Some((bytes, upload_layout, upload_width, upload_height)) = prepare_compatible_page_upload(
                 &page_data,
                 atlas_width,
                 atlas_height,
                 used_width,
                 used_height,
                 pixel_format,
+                self.pixel_format,
             ) {
-                let (upload_width, upload_height) = match pixel_format {
-                    PagePixelFormat::Rgba8888 => (used_width, used_height),
-                    PagePixelFormat::Bc7 => (atlas_width, atlas_height),
-                };
                 self.pending_uploads.push(ArtPageUpload {
                     page_index,
                     layer,
@@ -243,11 +251,10 @@ impl ArtPageAtlas {
         self.mapping_revision
     }
 
-    pub fn resolve_cc(&mut self, tex_art_cc: &TexArtCcPackage, graphic: u16) -> Option<ResolvedArtSprite> {
-        let art_id = graphic as u32;
+    pub fn resolve_cc(&mut self, tex_art_cc: &TexArtCcPackage, art_id: u32) -> Option<ResolvedArtSprite> {
         let slot = tex_art_cc.present_slot(art_id)?;
         let mut resolved = self.resolve_slot(
-            slot.page_index,
+            ArtPageKey::Classic(slot.page_index),
             slot.x,
             slot.y,
             slot.width,
@@ -270,7 +277,7 @@ impl ArtPageAtlas {
     pub fn resolve_ec(&mut self, tex_art_ec: &TexArtEcPackage, art_id: u32) -> Option<ResolvedArtSprite> {
         let slot = tex_art_ec.present_slot(art_id)?;
         let mut resolved = self.resolve_slot(
-            slot.page_index,
+            ArtPageKey::Enhanced(slot.page_index),
             slot.x,
             slot.y,
             slot.width,
@@ -298,7 +305,7 @@ impl ArtPageAtlas {
     ) -> Option<ResolvedArtSprite> {
         let slot = tex_land_ec.present_slot(art_id)?;
         self.resolve_slot(
-            slot.page_index,
+            ArtPageKey::Terrain(slot.page_index),
             slot.x,
             slot.y,
             slot.width,
@@ -316,9 +323,51 @@ impl ArtPageAtlas {
         )
     }
 
+    pub fn resolve_missing(&mut self, aux: &TexAuxEcPackage) -> Option<ResolvedArtSprite> {
+        let slot = aux.missing_texture_slot()?;
+        self.resolve_slot(ArtPageKey::Missing, 0, 0, slot.width, slot.height,
+            f32::from(slot.width), f32::from(slot.height), -(slot.width as i32 / 2) as i16, 0,
+            u32::from(slot.width), u32::from(slot.height), u32::from(slot.width), u32::from(slot.height),
+            PagePixelFormat::Rgba8888, || aux.load_rgba(slot.payload_texture_id)?
+                .ok_or_else(|| eyre::eyre!("missing-texture payload is unavailable")))
+    }
+
+    pub fn requeue_page(&mut self, key: ArtPageKey, layer: u32,
+        cc: Option<&TexArtCcPackage>, ec: Option<&TexArtEcPackage>,
+        terrain: Option<&TexLandEcPackage>, aux: Option<&TexAuxEcPackage>) {
+        match key {
+            ArtPageKey::Classic(index) => {
+                let Some(package) = cc else { return; };
+                let Some(page) = package.pages().get(index as usize) else { return; };
+                self.queue_page_upload(key, layer, package.atlas_width(), package.atlas_height(),
+                    page.used_width, page.used_height, page.pixel_format, || package.read_page_bytes(index));
+            }
+            ArtPageKey::Enhanced(index) => {
+                let Some(package) = ec else { return; };
+                let Some(page) = package.pages().get(index as usize) else { return; };
+                self.queue_page_upload(key, layer, package.atlas_width(), package.atlas_height(),
+                    page.used_width, page.used_height, page.pixel_format, || package.read_page_bytes(index));
+            }
+            ArtPageKey::Terrain(index) => {
+                let Some(package) = terrain else { return; };
+                let Some(page) = package.pages().get(index as usize) else { return; };
+                self.queue_page_upload(key, layer, package.atlas_width(), package.atlas_height(),
+                    page.used_width, page.used_height, page.pixel_format, || package.read_page_bytes(index));
+            }
+            ArtPageKey::Missing => {
+                let Some(package) = aux else { return; };
+                let Some(slot) = package.missing_texture_slot() else { return; };
+                self.queue_page_upload(key, layer, u32::from(slot.width), u32::from(slot.height),
+                    u32::from(slot.width), u32::from(slot.height), PagePixelFormat::Rgba8888,
+                    || package.load_rgba(slot.payload_texture_id)?
+                        .ok_or_else(|| eyre::eyre!("missing-texture payload is unavailable")));
+            }
+        }
+    }
+
     fn resolve_slot<F>(
         &mut self,
-        page_index: u32,
+        page_index: ArtPageKey,
         x: u16,
         y: u16,
         width: u16,
@@ -448,9 +497,72 @@ fn prepare_page_upload_bytes(
     Some((page_data.to_vec(), format.upload_layout(extent)))
 }
 
+fn prepare_compatible_page_upload(data: &[u8], atlas_width: u32, atlas_height: u32,
+    used_width: u32, used_height: u32, source: PagePixelFormat, target: PagePixelFormat,
+) -> Option<(Vec<u8>, TextureUploadLayout, u32, u32)> {
+    let (width, height) = match source {
+        PagePixelFormat::Rgba8888 => (used_width, used_height),
+        PagePixelFormat::Bc7 => (atlas_width, atlas_height),
+    };
+    if source == target {
+        let (bytes, layout) = prepare_page_upload_bytes(data, atlas_width, atlas_height,
+            used_width, used_height, source)?;
+        return Some((bytes, layout, width, height));
+    }
+    let extent = ImageExtent::new(width, height).ok()?;
+    let rgba = match source {
+        PagePixelFormat::Rgba8888 => data.to_vec(),
+        PagePixelFormat::Bc7 => bc7::decode_bc7_to_rgba8888(data, extent).ok()?,
+    };
+    let encoding = match target {
+        PagePixelFormat::Rgba8888 => bc7::VramTextureEncoding::Rgba8UnormSrgb,
+        PagePixelFormat::Bc7 => bc7::VramTextureEncoding::Bc7(bc7::preferred_bc7_encoder_backend()),
+    };
+    let texture = bc7::encode_for_vram(&rgba, extent, bc7::RawImageFormat::Rgba8888, encoding).ok()?;
+    Some((texture.bytes().to_vec(), texture.upload_layout(), width, height))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mixed_sprite_pages_do_not_alias_and_keep_source_keys_after_growth() {
+        let mut atlas = ArtPageAtlas::new(Handle::default(), 4, 4, 2, 4, PagePixelFormat::Rgba8888);
+        for (key, value) in [(ArtPageKey::Classic(0), 31), (ArtPageKey::Enhanced(0), 127)] {
+            assert!(atlas.resolve_slot(key, 0, 0, 4, 4, 4.0, 4.0, 0, 0,
+                4, 4, 4, 4, PagePixelFormat::Rgba8888, || Ok(vec![value; 64])).is_none());
+        }
+        assert_eq!(atlas.pending_uploads.len(), 2);
+        assert_ne!(atlas.pending_uploads[0].layer, atlas.pending_uploads[1].layer);
+        assert_eq!(atlas.pending_uploads[0].bytes, vec![31; 64]);
+        assert_eq!(atlas.pending_uploads[1].bytes, vec![127; 64]);
+        let keys = atlas.resident_page_layers();
+        atlas.apply_resize(Handle::default(), 3);
+        assert_eq!(atlas.page_to_layer.len(), 2);
+        for (key, layer) in keys { assert_eq!(atlas.page_to_layer[&key], layer); }
+    }
+
+    #[test]
+    fn mixed_formats_decode_losslessly_and_native_bc7_uploads_stay_compressed() {
+        let extent = ImageExtent::new(8, 8).unwrap();
+        let rgba: Vec<_> = (0..64).flat_map(|i| [i * 3, i, 117, 255]).collect();
+        let encoded = bc7::encode_for_vram(&rgba, extent, bc7::RawImageFormat::Rgba8888,
+            bc7::VramTextureEncoding::Bc7(bc7::preferred_bc7_encoder_backend())).unwrap();
+        let (native, layout, width, height) = prepare_compatible_page_upload(encoded.bytes(),
+            8, 8, 5, 7, PagePixelFormat::Bc7, PagePixelFormat::Bc7).unwrap();
+        assert_eq!(native, encoded.bytes());
+        assert_eq!((width, height), (8, 8));
+        assert_eq!(layout.format, wgpu::TextureFormat::Bc7RgbaUnormSrgb);
+        let (decoded, layout, _, _) = prepare_compatible_page_upload(encoded.bytes(),
+            8, 8, 5, 7, PagePixelFormat::Bc7, PagePixelFormat::Rgba8888).unwrap();
+        assert_eq!(decoded, bc7::decode_bc7_to_rgba8888(encoded.bytes(), extent).unwrap());
+        assert_eq!(layout.format, wgpu::TextureFormat::Rgba8UnormSrgb);
+        let (missing, layout, _, _) = prepare_compatible_page_upload(&rgba,
+            8, 8, 8, 8, PagePixelFormat::Rgba8888, PagePixelFormat::Bc7).unwrap();
+        assert_eq!(missing, encoded.bytes());
+        assert_eq!(layout.format, wgpu::TextureFormat::Bc7RgbaUnormSrgb);
+    }
 
     #[test]
     fn request_growth_uses_ceil_1p5x_and_clamps_to_max_layers() {
@@ -477,12 +589,12 @@ mod tests {
             8,
             PagePixelFormat::Rgba8888,
         );
-        atlas.page_to_layer.insert(7, 1);
-        atlas.layer_to_page[1] = Some(7);
+        atlas.page_to_layer.insert(ArtPageKey::Enhanced(7), 1);
+        atlas.layer_to_page[1] = Some(ArtPageKey::Enhanced(7));
         atlas.layer_access_tick[1] = 11;
         atlas.current_tick = 23;
         atlas.extract_staging.push(ArtPageUpload {
-            page_index: 7,
+            page_index: ArtPageKey::Enhanced(7),
             layer: 1,
             bytes: vec![1, 2, 3, 4],
             upload_layout: TextureUploadLayout {
@@ -497,8 +609,8 @@ mod tests {
         atlas.apply_resize(Handle::default(), 3);
 
         assert_eq!(atlas.active_layers, 3);
-        assert_eq!(atlas.page_to_layer.get(&7), Some(&1));
-        assert_eq!(atlas.layer_to_page[1], Some(7));
+        assert_eq!(atlas.page_to_layer.get(&ArtPageKey::Enhanced(7)), Some(&1));
+        assert_eq!(atlas.layer_to_page[1], Some(ArtPageKey::Enhanced(7)));
         assert_eq!(atlas.layer_to_page[2], None);
         assert_eq!(atlas.layer_access_tick[1], 11);
         assert_eq!(atlas.current_tick, 23);

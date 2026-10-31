@@ -96,9 +96,9 @@ pub(crate) fn append(lookup: &mut Image, meta: &TileMetaPackage, art: &TexArtEcP
             let start = UVec2::new(u32::try_from(tile.ec_start_x).ok()?, u32::try_from(tile.ec_start_y).ok()?);
             let extent = native_extent(slot.width, slot.height, slot.upscale_factor)?;
             if (start + extent).x > u32::from(source.width) || (start + extent).y > u32::from(source.height) { return None; }
-            let key = (mask.texture_id, start.x, start.y, extent.x, extent.y);
+            let key = (source.payload_texture_id, start.x, start.y, extent.x, extent.y);
             if let Some(&descriptor) = crops.get(&key) { return Some(descriptor); }
-            let rgba = pixels.entry(mask.texture_id).or_insert_with(|| match aux.load_rgba(mask.texture_id) {
+            let rgba = pixels.entry(source.payload_texture_id).or_insert_with(|| match aux.load_rgba(source.payload_texture_id) {
                 Ok(value) => value,
                 Err(error) => {
                     crate::console_logger::one(crate::console_logger::LogSev::Warn,

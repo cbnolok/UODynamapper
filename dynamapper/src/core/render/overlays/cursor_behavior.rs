@@ -705,9 +705,7 @@ fn hovered_static_match(
     if tilemeta.is_some_and(|meta| meta.is_nodraw()) {
         return None;
     }
-    let renders_wet = static_tile_renders_wet(tilemeta, tilemeta_res.map(|meta| meta.0.as_ref()),
-        u32::from(graphic), picking.art_source());
-    let depth_class = resolve_static_depth_class(tilemeta, renders_wet);
+    let depth_class = resolve_static_depth_class(tilemeta, candidate.is_wet);
     let world_x = source.world_x;
     let world_z = source.world_z;
     let geometry = picking.resolve(graphic, world_x, world_z, tile.z)?;
@@ -887,8 +885,13 @@ fn describe_static_tile_details(
         .and_then(|meta_package| meta_package.0.main_ec_texture_id_with_branch(graphic as u32))
         .map(|(id, branch)| (Some(id), branch))
         .unwrap_or((None, "none"));
-    let is_surface_like = static_tile_is_surface_like(meta,
-        static_tile_renders_wet(meta, tilemeta_res.map(|package| package.0.as_ref()), u32::from(graphic), art_source));
+    let selected_source = match route {
+        Some(StaticArtRoute::CcArt(_)) => Some(crate::configs::settings::ClientTextureSource::Cc),
+        _ => art_source,
+    };
+    let renders_wet = !matches!(route, Some(StaticArtRoute::MissingArt)) &&
+        static_tile_renders_wet(meta, tilemeta_res.map(|package| package.0.as_ref()), u32::from(graphic), selected_source);
+    let is_surface_like = static_tile_is_surface_like(meta, renders_wet);
     let tex_art_cc_id = cc_texture_id.map(|id| id.saturating_add(CLASSIC_STATIC_ART_ID_OFFSET as u32));
     let cc_slot =
         tex_art_cc_id.and_then(|art_id| tex_art_cc_res.and_then(|package| package.0.present_slot(art_id)));
@@ -904,6 +907,7 @@ fn describe_static_tile_details(
     let live_decision = match route {
         Some(StaticArtRoute::CcArt(slot)) => format!("cc->art:{}", slot),
         Some(StaticArtRoute::EcArt(slot)) => format!("ec->art:{}", slot),
+        Some(StaticArtRoute::MissingArt) => "ec->missing.tga".into(),
         Some(StaticArtRoute::EcLand(slot)) => format!("ec->land:{}", slot),
         None => "unresolved/not_rendered".to_string(),
     };

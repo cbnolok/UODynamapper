@@ -141,3 +141,16 @@ instance layout or logical object metadata changed in this phase. Captures,
 settled terrain revisions, effective presets, native inspector replies, pinned
 binary hashes and copied application logs are recorded in
 `/tmp/uodynamapper-ec-followup/hover-accepted-evidence.json`.
+
+
+## Actual artwork fallback
+
+With KR-only `tex_art_ec`, collection and picking resolve the same available
+KR -> Classic owner/alias -> original missing-image chain. A Classic fallback
+uses Classic native dimensions, anchors, flat-art policy and alpha pages even
+when the configured artwork source is EC. Collector wetness is preserved on the
+pick candidate instead of being recomputed from the configured source. Missing
+art has its own route and auxiliary-revision alpha cache. The inspector exposes
+these final routes; neither a texture alias nor a billboard offset changes the
+logical object ID/XYZ. This source agreement does not close the material-mask
+and final terrain/depth-occlusion limits above.

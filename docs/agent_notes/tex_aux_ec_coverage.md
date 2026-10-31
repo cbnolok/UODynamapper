@@ -63,3 +63,26 @@ from the block shader and the item position.
   LegacyTexture. An aux package built from one client is not a regression baseline for the
   other. The two clients' LegacyTexture images also differ at the same
   ids, e.g. 4072.., 41718.. (different sizes).
+
+
+## Runtime integration
+
+The art page atlas qualifies each page by source; Classic fallback cannot alias
+a KR page with the same number, including during growth and reupload. Artwork
+availability is checked in the actual packages before selecting wetness, depth,
+scale, anchor and CPU alpha. See [the artwork contract](ec_sprite_descriptor_geometry.md#kr-only-artwork-and-runtime-fallback).
+Auxiliary image decoding, hue crops and full upload layers are keyed by
+`payload_texture_id`; original requested IDs and family checks are retained.
+The real-package regression checks all missing-source aliases share one layer
+with the original reserved image's pixels. The canonical crop audit admits
+11,673 sprites and resolves all 340 declared masks (313 distinct native crops).
+Nine of these bindings intentionally sample the client's missing image.
+
+A second data issue was found during native acceptance: installed Classic art
+omitted book 39297 even though the selected original Classic UOP contains its
+44x39 image and matching metadata. Rebuilding with the unchanged converter adds
+4,883 slots, loses none, and brings all 39,386 resulting slots into exact RGBA
+and native-anchor agreement with that original source. 499 old images and 466
+old geometry records differ; this is an explicitly source-validated replacement,
+not an image-preservation claim. The source comparison helpers in
+`tools/udd-conv-cli/examples/` audit every slot independently of atlas packing.

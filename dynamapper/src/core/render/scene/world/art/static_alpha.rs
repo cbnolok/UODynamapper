@@ -38,14 +38,14 @@ impl AlphaPage {
 
 #[derive(Resource, Default)]
 pub(crate) struct StaticAlphaCache {
-    revisions: [Option<Tick>; 2],
+    revisions: [Option<Tick>; 3],
     pages: HashMap<(u8, u32), (u64, Option<AlphaPage>)>,
     bytes: usize,
     access: u64,
 }
 
 impl StaticAlphaCache {
-    pub(crate) fn sync_packages(&mut self, revisions: [Option<Tick>; 2]) {
+    pub(crate) fn sync_packages(&mut self, revisions: [Option<Tick>; 3]) {
         if self.revisions != revisions {
             self.pages.clear();
             self.bytes = 0;
@@ -104,10 +104,10 @@ mod tests {
     #[test]
     fn alpha_pages_are_shared_and_package_replacement_invalidates_them() {
         let mut cache = StaticAlphaCache::default();
-        cache.sync_packages([Some(Tick::new(1)), None]);
+        cache.sync_packages([Some(Tick::new(1)), None, None]);
         assert_eq!(cache.sample((0, 2), Vec2::splat(0.5), || Some((1, 1, vec![0,0,0,255]))), Some(1.0));
         assert_eq!(cache.sample((0, 2), Vec2::splat(0.5), || panic!("cached page reloaded")), Some(1.0));
-        cache.sync_packages([Some(Tick::new(2)), None]);
+        cache.sync_packages([Some(Tick::new(2)), None, None]);
         assert_eq!(cache.sample((0, 2), Vec2::splat(0.5), || Some((1, 1, vec![255,255,255,0]))), Some(0.0));
         for page in 3..140 { cache.sample((0, page), Vec2::ZERO, || Some((1,1,vec![0;4]))); }
         assert_eq!(cache.pages.len(), MAX_ALPHA_PAGES);

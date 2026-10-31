@@ -31,6 +31,17 @@ and `hue-gradient-package/`. Proprietary palette pixels remain outside the repo.
 
 ## Sprite mask crops and auxiliary coverage
 
+**Historical installation below:** the preservation-only extension used an
+auxiliary package from the newer Enhanced fp client. The plain Enhanced client
+is now canonical. Its KR-only art and tilemeta format-3 handoff restores missing
+support roles and uses the original `missing.tga` for absent source images.
+The earlier advice that a full repack is unsafe and missing-mask hues stay
+unchanged is superseded by [the corrected source/role investigation](tex_aux_ec_coverage.md).
+Compare packages built from the same client; omitted unused legacy-family
+images do not imply lost renderer inputs. Runtime auxiliary/hue caches share
+aliases by payload ID while keeping each requested image number for diagnostics.
+
+
 Palette correctness is separate from source-2 mask availability. Ordinary
 UOSprite masks use the matching art slot's native extent and tilemeta's trimmed
 source origin. The mandatory-trim integration independently checks original

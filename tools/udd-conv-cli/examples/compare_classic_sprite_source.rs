@@ -18,6 +18,9 @@ struct Args {
     /// New output directory; original assets and existing evidence are untouched.
     #[arg(long)]
     output: PathBuf,
+    /// Export available source pixels and report absent packed slots instead of stopping.
+    #[arg(long)]
+    allow_missing_packed: bool,
 }
 
 fn main() -> Result<()> {
@@ -33,10 +36,18 @@ fn main() -> Result<()> {
     for graphic in &args.graphic {
         let id = u32::from(*graphic) + 0x4000;
         let (width, height, original) = art.decode_static_tile_from_source(id, source, &mut scratch)?;
-        let slot = packed.present_slot(id).context("missing packed CC sprite")?;
-        let pixels = packed.get_pixel_data(id).context("decode packed CC sprite")?;
         image::save_buffer(args.output.join(format!("original-{graphic}.png")), &original,
             u32::from(width), u32::from(height), image::ColorType::Rgba8)?;
+        let slot = packed.present_slot(id);
+        if args.allow_missing_packed && slot.is_none() {
+            rows.push(serde_json::json!({"graphic":graphic, "art_slot":id,
+                "source_extent":[width,height], "packed_extent":null,
+                "raw_classic_flags":tiledata.item_tiles().get(usize::from(*graphic)).map(|tile|tile.flags.internal_flags),
+                "exact_rgba_match":false, "reason":"missing_packed_slot"}));
+            continue;
+        }
+        let slot = slot.context("missing packed CC sprite")?;
+        let pixels = packed.get_pixel_data(id).context("decode packed CC sprite")?;
         image::save_buffer(args.output.join(format!("packed-{graphic}.png")), &pixels,
             u32::from(slot.width), u32::from(slot.height), image::ColorType::Rgba8)?;
         let same_extent = (width, height) == (slot.width, slot.height);
@@ -49,6 +60,7 @@ fn main() -> Result<()> {
     }
     std::fs::write(args.output.join("manifest.json"), serde_json::to_vec_pretty(&serde_json::json!({
         "client":args.client,"package":args.package,"source":args.source,"sprites":rows,
+        "classic_item_metadata_count":tiledata.item_tiles().len(),
         "scope":"Original pixels and packed coverage; not a claim of rendered shader/color/depth parity."
     }))?)?;
     println!("Exported {} original/packed sprite pairs to {}", rows.len(), args.output.display());

@@ -55,8 +55,10 @@ Current execution decisions:
 
 Proposed execution order and the latest asset-session corrections are in
 [the 2026-10-31 renderer plan](reviews/2026-10-31-renderer-next-work-plan.md).
-First finish and validate the KR-only artwork fallback and shader-position/layer
-handoff; older acceptance captures apply to their recorded package revisions.
+The KR-only artwork fallback and current package handoff are integrated; see
+[the source/native acceptance](reviews/2026-11-01-renderer-art-handoff.md).
+Next implement composed-material coverage and terrain/visible-depth picking.
+Older captures apply to their recorded package revisions.
 
 - Validate remaining individual static anchors/new-art scales and effect visibility against matched fixtures. Common legacy pixel/height calibration, the perspective bridge stair/deck tie-bias defect and stale hover quad construction are repaired.
 - Validate remaining individual/degenerate sprite windows and anchors against [the descriptor contracts](agent_notes/ec_sprite_descriptor_geometry.md). Required per-owner source scales, positive ordinary world-window edges and matching art/tilemeta rebuilding are implemented; retain the visible legacy-crane and scaled-plant controls.
@@ -64,7 +66,7 @@ handoff; older acceptance captures apply to their recorded package revisions.
 - Finish authored-material coverage and terrain/visible-depth picking, and validate more large-art/expanded-multi fixtures. Ordinary sprite alpha now passes through transparent pixels; candidates come from admitted collector tiles, including expanded parts. Use original logical surfaces and movement flags for future walking. See [hover geometry contracts](agent_notes/static_hover_geometry.md).
 - Validate wider equal-priority overlaps while keeping the repaired town and bridge histories as regression controls. Transparent batch sorting fixes the tree-edge defect; visible-set sprite tie assignment fixes the separate opaque bridge-edge tie across chunk boundaries. See [the depth notes](agent_notes/static_depth_ordering.md).
 - Legacy Translucent source weights and blended-pass admission are repaired from original executable evidence; the isolated coast mark is verified original artwork. Keep [the matching-pair controls](agent_notes/classic_static_translucency.md); exact 5-bit/gamma composition remains parity work.
-- Mandatory-trim art/tilemeta integration and the earlier 20-mask recovery have recorded validation. The subsequent source audit traced package differences to the fp/plain client split; plain Enhanced is canonical. Missing-source aliases now carry the client's `missing.tga`, and KR-only art needs the Classic fallback. Validate the new candidates and complete material graphs as described in [the corrected coverage note](agent_notes/tex_aux_ec_coverage.md) and the renderer plan above.
+- Mandatory-trim art/tilemeta integration and the earlier 20-mask recovery have recorded validation. The subsequent source audit traced package differences to the fp/plain client split; plain Enhanced is canonical. Missing-source aliases now carry the client's `missing.tga`; KR-only art uses the actual Classic/missing-image fallback. The complete Classic atlas and matching current EC set are installed. Keep remaining material/reflection parity separate from this accepted source integration; see [the corrected coverage note](agent_notes/tex_aux_ec_coverage.md) and the renderer plan above.
 - Use [the visual follow-up review](reviews/2026-10-29-visual-fidelity-followup.md) for current evidence and reconciliation of the unstaged user TODO. Historical repaired items must reproduce before being reopened.
 
 ### Baseline And Instrumentation

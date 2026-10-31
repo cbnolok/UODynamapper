@@ -13,7 +13,7 @@ use crate::core::render::scene::SceneStateData;
 use crate::core::statics::{LazyStaticsStore, StaticsStoreRes};
 use crate::core::texture_cache::art::{GroundArtPageAtlas, ResolvedArtSprite, SpriteArtPageAtlas};
 use crate::core::uo_files_loader::{
-    TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes, TileMetaPackageRes,
+    TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes, TileMetaPackageRes, TexAuxEcPackageRes,
 };
 use crate::prelude::*;
 use bevy::prelude::*;
@@ -21,7 +21,7 @@ use bevy::render::render_resource::ShaderType;
 use bytemuck::{Pod, Zeroable};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-const CLASSIC_STATIC_ART_ID_OFFSET: u16 = 0x4000;
+const CLASSIC_STATIC_ART_ID_OFFSET: u32 = 0x4000;
 const ISO_TILE_SCREEN_DIAGONAL_WORLD_UNITS: f32 = std::f32::consts::SQRT_2;
 const CC_TILE_PIXEL_WIDTH: f32 = 44.0;
 // Original legacy art projects four square sprite pixels per raw Z unit.
@@ -189,7 +189,7 @@ pub(super) fn surface_like_static_world_anchor(
         // CC billboards are force-centered in their bbox, so they need a symmetric anchor
         // (see CC_STATIC_TILE_TRANSLATION_*); EC billboards carry their own per-sprite offsets
         // and keep the legacy asymmetric anchor they were validated against.
-        StaticVisualKind::CcRegular { .. } => {
+        StaticVisualKind::CcRegular { .. } | StaticVisualKind::Missing => {
             apply_cc_static_world_anchor_translation(world_x, world_z)
         }
         StaticVisualKind::EcRegular { .. } => {
@@ -200,10 +200,31 @@ pub(super) fn surface_like_static_world_anchor(
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum StaticVisualKind {
-    CcRegular { art_id: u16, fallback_art_id: u16 },
+    CcRegular { art_id: u32, fallback_art_id: u32 },
     EcRegular { art_id: u32 },
     EcSurface { art_id: u32 },
     TexLandEc { resolution: SurfaceLikeTexLandEcResolution },
+    Missing,
+}
+
+fn classic_static_visual_kind(graphic: u16,
+    tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>) -> StaticVisualKind {
+    StaticVisualKind::CcRegular {
+        art_id: u32::from(graphic) + CLASSIC_STATIC_ART_ID_OFFSET,
+        fallback_art_id: tilemeta.map_or(u32::from(graphic), |m| m.cc_texture_id)
+            .saturating_add(CLASSIC_STATIC_ART_ID_OFFSET),
+    }
+}
+
+pub(super) fn static_visual_renders_wet(kind: StaticVisualKind,
+    tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
+    package: Option<&udd_assets::tilemeta::TileMetaPackage>, graphic: u32) -> bool {
+    match kind {
+        StaticVisualKind::Missing => false,
+        StaticVisualKind::CcRegular { .. } =>
+            static_tile_renders_wet(tilemeta, package, graphic, Some(ClientTextureSource::Cc)),
+        _ => static_tile_renders_wet(tilemeta, package, graphic, Some(ClientTextureSource::Ec)),
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -795,13 +816,7 @@ fn resolve_static_visual_kind(
 ) -> StaticVisualKind {
     match art_source {
         ClientTextureSource::Cc => {
-            let fallback_texture_id = tilemeta
-                .map(|meta| meta.cc_texture_id as u16)
-                .unwrap_or(tile_graphic);
-            StaticVisualKind::CcRegular {
-                art_id: tile_graphic.saturating_add(CLASSIC_STATIC_ART_ID_OFFSET),
-                fallback_art_id: fallback_texture_id.saturating_add(CLASSIC_STATIC_ART_ID_OFFSET),
-            }
+            classic_static_visual_kind(tile_graphic, tilemeta)
         }
         ClientTextureSource::Ec => resolve_ec_static_visual_kind(
             tile_graphic,
@@ -825,19 +840,20 @@ pub(super) fn resolve_static_visual_kind_cached(
     tile_graphic: u16,
     tilemeta_package: Option<&udd_assets::tilemeta::TileMetaPackage>,
     tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
+    tex_art_cc: Option<&udd_assets::tex_art_cc::TexArtCcPackage>,
     tex_art_ec: Option<&udd_assets::tex_art_ec::TexArtEcPackage>,
     tex_land_ec: Option<&udd_assets::tex_land_ec::TexLandEcPackage>,
     surface_resolution_cache: &mut StaticSurfaceLikeResolutionCache,
 ) -> StaticVisualKind {
     match art_source {
         ClientTextureSource::Cc => {
-            let fallback_texture_id = tilemeta
-                .map(|meta| meta.cc_texture_id as u16)
-                .unwrap_or(tile_graphic);
-            StaticVisualKind::CcRegular {
-                art_id: tile_graphic.saturating_add(CLASSIC_STATIC_ART_ID_OFFSET),
-                fallback_art_id: fallback_texture_id.saturating_add(CLASSIC_STATIC_ART_ID_OFFSET),
-            }
+            classic_static_visual_kind(tile_graphic, tilemeta)
+        }
+        ClientTextureSource::Ec if tex_art_ec.and_then(|p| p.present_slot(u32::from(tile_graphic))).is_none() => {
+            let classic = classic_static_visual_kind(tile_graphic, tilemeta);
+            let StaticVisualKind::CcRegular { art_id, fallback_art_id } = classic else { unreachable!() };
+            if tex_art_cc.is_some_and(|p| p.present_slot(art_id).is_some()
+                || p.present_slot(fallback_art_id).is_some()) { classic } else { StaticVisualKind::Missing }
         }
         ClientTextureSource::Ec => resolve_ec_static_visual_kind(
             tile_graphic,
@@ -1764,6 +1780,7 @@ struct StaticCollectResources<'a> {
     tex_art_ec: Option<&'a TexArtEcPackageRes>,
     tex_land_ec: Option<&'a TexLandEcPackageRes>,
     tilemeta: Option<&'a TileMetaPackageRes>,
+    tex_aux_ec: Option<&'a TexAuxEcPackageRes>,
     multis: Option<&'a MultiDefinitionsRes>,
     static_lights: &'a super::static_lights::RenderStaticLightInstances,
     tile_atlas: &'a TileAtlas,
@@ -1784,6 +1801,10 @@ impl<'a> StaticCollectResources<'a> {
 
     fn tilemeta_package(self) -> Option<&'a udd_assets::tilemeta::TileMetaPackage> {
         self.tilemeta.map(|package| package.0.as_ref())
+    }
+
+    fn tex_aux_ec_package(self) -> Option<&'a udd_assets::tex_aux_ec::TexAuxEcPackage> {
+        self.tex_aux_ec.map(|package| package.0.as_ref())
     }
 }
 
@@ -1859,6 +1880,7 @@ fn static_collect_resources<'a>(
     tex_art_ec_res: &'a Option<Res<TexArtEcPackageRes>>,
     tex_land_ec_res: &'a Option<Res<TexLandEcPackageRes>>,
     tilemeta_res: &'a Option<Res<TileMetaPackageRes>>,
+    tex_aux_ec_res: &'a Option<Res<TexAuxEcPackageRes>>,
     multis_res: &'a Option<Res<MultiDefinitionsRes>>,
     static_lights: &'a super::static_lights::RenderStaticLightInstances,
     tile_atlas: &'a TileAtlas,
@@ -1868,6 +1890,7 @@ fn static_collect_resources<'a>(
         tex_art_ec: tex_art_ec_res.as_ref().map(|res| &**res),
         tex_land_ec: tex_land_ec_res.as_ref().map(|res| &**res),
         tilemeta: tilemeta_res.as_ref().map(|res| &**res),
+        tex_aux_ec: tex_aux_ec_res.as_ref().map(|res| &**res),
         multis: multis_res.as_ref().map(|res| &**res),
         static_lights,
         tile_atlas,
@@ -2158,8 +2181,13 @@ fn emit_static_render_tile(
     if !frame.is_dot_mode && tilemeta.is_some_and(|meta| meta.is_nodraw()) {
         return;
     }
-    let renders_wet = static_tile_renders_wet(tilemeta, tilemeta_package, render_tile.graphic as u32,
-        frame.art_source);
+    let visual_kind = frame.art_source.filter(|_| !frame.is_dot_mode).map(|source|
+        resolve_static_visual_kind_cached(source, render_tile.graphic, tilemeta_package, tilemeta,
+            resources.tex_art_cc_package(), resources.tex_art_ec_package(), resources.tex_land_ec_package(),
+            surface_resolution_cache));
+    let renders_wet = visual_kind.map_or_else(|| static_tile_renders_wet(tilemeta, tilemeta_package,
+        u32::from(render_tile.graphic), frame.art_source), |kind|
+        static_visual_renders_wet(kind, tilemeta, tilemeta_package, u32::from(render_tile.graphic)));
     let info = StaticTileRenderInfo {
         tile: render_tile,
         tilemeta,
@@ -2172,16 +2200,15 @@ fn emit_static_render_tile(
 
     if frame.is_dot_mode {
         emit_dot_static_tile(info, frame, resources, build);
-    } else {
+    } else if let Some(visual_kind) = visual_kind {
         let before = (build.sprite_instances.len(), build.ground_instances.len());
         emit_art_static_tile(
             info,
             frame,
             resources,
-            tilemeta_package,
+            visual_kind,
             sprite_atlas,
             ground_atlas,
-            surface_resolution_cache,
             build,
         );
         if before != (build.sprite_instances.len(), build.ground_instances.len()) {
@@ -2250,25 +2277,11 @@ fn emit_art_static_tile(
     info: StaticTileRenderInfo<'_>,
     frame: StaticCollectFrameConfig,
     resources: StaticCollectResources<'_>,
-    tilemeta_package: Option<&udd_assets::tilemeta::TileMetaPackage>,
+    visual_kind: StaticVisualKind,
     sprite_atlas: &mut SpriteArtPageAtlas,
     ground_atlas: &mut GroundArtPageAtlas,
-    surface_resolution_cache: &mut StaticSurfaceLikeResolutionCache,
     build: &mut StaticChunkBuildState,
 ) {
-    let Some(art_source) = frame.art_source else {
-        return;
-    };
-    let visual_kind = resolve_static_visual_kind_cached(
-        art_source,
-        info.tile.graphic,
-        tilemeta_package,
-        info.tilemeta,
-        resources.tex_art_ec_package(),
-        resources.tex_land_ec_package(),
-        surface_resolution_cache,
-    );
-
     let bias = if matches!(visual_kind, StaticVisualKind::TexLandEc { .. }) {
         GROUND_ART_Y_BIAS
     } else {
@@ -2295,7 +2308,7 @@ fn emit_art_static_tile(
     // the latter also matches non-water "surface-like" tiles (floors, elevated roofs) which are
     // upright CC sprite art and must stay billboards. See cc_static_tile_renders_flat.
     // Separately admit tile-sized dry diamonds only on a resident, level map cell.
-    let cc_surface_like_flat = matches!(art_source, ClientTextureSource::Cc)
+    let cc_surface_like_flat = matches!(billboard_source, ClientTextureSource::Cc)
         && resolved_sprite.as_ref().is_some_and(|sprite| {
             cc_static_uses_flat_geometry(info.tilemeta, sprite.logical_width, sprite.logical_height,
                 info.world_x, info.world_z, info.tile.z, resources.tile_atlas)
@@ -2411,7 +2424,7 @@ fn resolve_art_static_sprite(
             let tex_art_ec = resources.tex_art_ec_package()?;
 
             if let Some(slot) = tex_art_ec.present_slot(art_id) {
-                requested_pages.insert(slot.page_index as u64);
+                requested_pages.insert((1u64 << 62) | u64::from(slot.page_index));
             }
 
             let texture_stretch = if matches!(visual_kind, StaticVisualKind::EcSurface { .. }) {
@@ -2424,6 +2437,10 @@ fn resolve_art_static_sprite(
                 0.0
             };
             Some((ClientTextureSource::Ec, sprite_atlas.resolve_ec(tex_art_ec, art_id), texture_stretch))
+        }
+        StaticVisualKind::Missing => {
+            requested_pages.insert(1u64 << 61);
+            Some((ClientTextureSource::Ec, sprite_atlas.resolve_missing(resources.tex_aux_ec_package()?), 0.0))
         }
     }
 }
@@ -2790,10 +2807,8 @@ fn finish_static_collect_slow_path(
 
 pub fn sys_collect_visible_statics(
     statics_res: Res<StaticsStoreRes>,
-    tex_art_cc_res: Option<Res<TexArtCcPackageRes>>,
-    tex_art_ec_res: Option<Res<TexArtEcPackageRes>>,
-    tex_land_ec_res: Option<Res<TexLandEcPackageRes>>,
-    tilemeta_res: Option<Res<TileMetaPackageRes>>,
+    packages: (Option<Res<TexArtCcPackageRes>>, Option<Res<TexArtEcPackageRes>>,
+        Option<Res<TexLandEcPackageRes>>, Option<Res<TileMetaPackageRes>>, Option<Res<TexAuxEcPackageRes>>),
     mut sprite_atlas: ResMut<SpriteArtPageAtlas>,
     mut ground_atlas: ResMut<GroundArtPageAtlas>,
     settings: Res<crate::configs::settings::Settings>,
@@ -2814,6 +2829,7 @@ pub fn sys_collect_visible_statics(
     // We can iterate over existing land chunk entities to find which blocks to draw.
     terrain: (Query<&crate::core::render::scene::world::land::LCMesh>, Res<TileAtlas>),
 ) {
+    let (tex_art_cc_res, tex_art_ec_res, tex_land_ec_res, tilemeta_res, tex_aux_ec_res) = packages;
     let (chunks_q, tile_atlas) = terrain;
     if !settings.world_rendering.enable_statics {
         let (sprite_output, ground_output, batches, cache, _) = &mut outputs;
@@ -2855,6 +2871,7 @@ pub fn sys_collect_visible_statics(
         &tex_art_ec_res,
         &tex_land_ec_res,
         &tilemeta_res,
+        &tex_aux_ec_res,
         &multis_res,
         &static_lights,
         &tile_atlas,
@@ -3137,6 +3154,51 @@ mod tests {
                 fallback_art_id: 0x4063,
             }
         );
+    }
+
+    #[test]
+    fn classic_fallback_preserves_high_graphics_and_actual_source_wetness() {
+        let tile = item_tile_with_flags(TILE_FLAG_WET | uocf::enhanced::tileart::TaeFlag::Translucent.bits(),
+            udd_assets::tilemeta::TileMetaItemVisualKind::RegularArt);
+        let classic = classic_static_visual_kind(60_000, Some(&tile));
+        assert!(matches!(classic, StaticVisualKind::CcRegular { art_id: 76_384, .. }));
+        assert_eq!(surface_like_static_world_anchor(classic, 10.0, 20.0), (11.0, 21.0));
+        assert!(static_visual_renders_wet(classic, Some(&tile), None, 60_000));
+        assert!(!static_visual_renders_wet(StaticVisualKind::Missing, Some(&tile), None, 60_000));
+        assert_eq!(resolve_static_visual_kind_cached(ClientTextureSource::Ec, 60_000,
+            None, Some(&tile), None, None, None, &mut StaticSurfaceLikeResolutionCache::default()),
+            StaticVisualKind::Missing);
+    }
+
+    #[test]
+    #[ignore = "requires current canonical packages in DYNAMAPPER_TEST_PACKAGES"]
+    fn canonical_art_inventory_uses_kr_then_classic_then_missing() {
+        let root = std::path::PathBuf::from(std::env::var_os("DYNAMAPPER_TEST_PACKAGES")
+            .expect("set DYNAMAPPER_TEST_PACKAGES to the matching current package directory"));
+        let cc = udd_assets::tex_art_cc::TexArtCcPackage::load(root.join("tex_art_cc.uddp")).unwrap();
+        let ec = udd_assets::tex_art_ec::TexArtEcPackage::load(root.join("tex_art_ec.uddp")).unwrap();
+        let land = udd_assets::tex_land_ec::TexLandEcPackage::load(root.join("tex_land_ec.uddp")).unwrap();
+        let meta = udd_assets::tilemeta::TileMetaPackage::load(root.join("tilemeta.uddp")).unwrap();
+        let mut cache = StaticSurfaceLikeResolutionCache::default();
+        let (mut world, mut classic) = (0, 0);
+        for tile in meta.item_tiles().iter().filter(|t| !t.is_nodraw()) {
+            let Ok(graphic) = u16::try_from(tile.tile_id) else { continue; };
+            let selected = resolve_static_visual_kind_cached(ClientTextureSource::Ec, graphic,
+                Some(&meta), Some(tile), Some(&cc), Some(&ec), Some(&land), &mut cache);
+            if ec.present_slot(tile.tile_id).is_some() {
+                assert!(!matches!(selected, StaticVisualKind::CcRegular { .. } | StaticVisualKind::Missing));
+                world += 1;
+            } else {
+                let owner = tile.tile_id + CLASSIC_STATIC_ART_ID_OFFSET;
+                let alias = tile.cc_texture_id.saturating_add(CLASSIC_STATIC_ART_ID_OFFSET);
+                if cc.present_slot(owner).is_some() || cc.present_slot(alias).is_some() {
+                    assert_eq!(selected, classic_static_visual_kind(graphic, Some(tile)));
+                    classic += 1;
+                } else { assert_eq!(selected, StaticVisualKind::Missing); }
+            }
+        }
+        assert!(world > 0 && classic > 0,
+            "inventory did not exercise both artwork sources: KR={world}, Classic={classic}");
     }
 
     #[test]

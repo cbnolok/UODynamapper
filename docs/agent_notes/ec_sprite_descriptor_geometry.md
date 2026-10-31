@@ -199,3 +199,46 @@ the full shaded frames are not byte-identical. Do not describe those changes
 as an anchor correction or claim original-client sampler parity. The matching
 pair and preservation-safe auxiliary extension are installed with verified
 backups; see [the hue-mask integration](ec_hue_palette_conversion.md#sprite-mask-crops-and-auxiliary-coverage).
+
+
+## KR-only artwork and runtime fallback
+
+Tilemeta format 3 and the canonical plain-EC art rebuild supersede the earlier
+mixed WorldArt/LegacyTexture inventory above. `tex_art_ec` contains KR WorldArt
+only (13,311 present slots in the reviewed candidate); the 21,305 formerly
+legacy-sourced slots are deliberately absent. The actual runtime artwork chain
+is a present KR slot, then the Classic owner slot `graphic + 0x4000`, then its
+Classic texture alias, then the original auxiliary `missing.tga`. `UseNewArt`
+is informational and does not gate the user's explicit EC-art source.
+
+Classic fallback keeps Classic pixel units, symmetric south-vertex anchor,
+flat-water/ground eligibility, raw IsWet rendering rule, hue and legacy opacity.
+Collection selects the source before wetness/depth classification; geometry,
+alpha picking and the inspector consume that same source. Classic art IDs use
+u32 throughout, so graphics above 49,151 cannot saturate at u16::MAX after the
+0x4000 offset. None of this changes logical XYZ, signed Z or movement flags.
+
+Mixed sprite pages share the existing batched atlas but have source-qualified
+keys (Classic, Enhanced, Terrain or Missing). Atlas growth/reupload retains the
+key and reads the original package dimensions. Equal numeric page indices can
+therefore never select the other client's pixels. Matching native BC7 pages
+remain compressed; mixed input formats use RGBA. Only the small original
+missing image needs conversion when the shared atlas is BC7. Whole-package unavailability still uses the existing effective-source selector;
+missing individual KR slots use the per-object chain above.
+
+The missing image is a dry, centered, bottom-anchored full native image. Its
+pixel alpha is used by picking and invalidates with auxiliary-package changes.
+The inspector reports `cc->art:<slot>` for an actual Classic fallback and
+`ec->missing.tga` for the last resort. Auxiliary missing-source aliases retain
+their requested identity but share image decoding, hue crops and upload layers
+by payload ID. They do not create invented replacement textures.
+
+
+Classic package coverage must be checked against raw Classic UOPs as well as
+metadata. The source-backed complete rebuild has 39,386 present slots versus
+34,503 in the former installed atlas. Book39297 at `(6403,2599,5)` is a positive
+fallback coverage control; its 44x39 native art was readable in the source but
+absent from that old atlas. A magenta rectangle there was a data-coverage gap,
+not an excuse to redirect the object to unrelated EC art. Every rebuilt slot
+matches original RGBA/native placement; the old atlas has 499 differing images,
+so older Classic pixel baselines cannot universally establish identity.

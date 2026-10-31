@@ -14,7 +14,7 @@ use crate::core::texture_cache::art::{
 };
 use crate::core::uo_files_loader::{
     HuesPackageRes, TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes,
-    TileMetaPackageRes,
+    TileMetaPackageRes, TexAuxEcPackageRes,
 };
 use crate::prelude::*;
 use bevy::camera::visibility::NoFrustumCulling;
@@ -374,15 +374,27 @@ fn sprite_atlas_spec(
                 pixel_format: package_pixel_format(package.0.pages(), |page| page.pixel_format),
             })
             .unwrap_or_else(blank_atlas_spec),
-        Some(ClientTextureSource::Ec) => tex_art_ec_res
-            .map(|package| AtlasAllocationSpec {
-                page_width: package.0.atlas_width().max(1),
-                page_height: package.0.atlas_height().max(1),
-                initial_layers: (package.0.pages().len().max(1) as u32).min(4),
-                max_layers: package.0.pages().len().max(1) as u32,
-                pixel_format: package_pixel_format(package.0.pages(), |page| page.pixel_format),
-            })
-            .unwrap_or_else(blank_atlas_spec),
+        Some(ClientTextureSource::Ec) => {
+            let enhanced = tex_art_ec_res.map(|p| p.0.as_ref());
+            let classic = tex_art_cc_res.map(|p| p.0.as_ref());
+            let layers = enhanced.map_or(0, |p| p.pages().len()) + classic.map_or(0, |p| p.pages().len()) + 1;
+            let format = enhanced.map(|p| package_pixel_format(p.pages(), |p| p.pixel_format))
+                .or_else(|| classic.map(|p| package_pixel_format(p.pages(), |p| p.pixel_format)))
+                .unwrap_or(PagePixelFormat::Rgba8888);
+            // Keep compressed uploads when both sources share BC7. Mixed
+            // storage formats need a common lossless runtime representation.
+            let format = if classic.is_some_and(|p|
+                package_pixel_format(p.pages(), |p| p.pixel_format) != format) {
+                PagePixelFormat::Rgba8888
+            } else { format };
+            AtlasAllocationSpec {
+                page_width: enhanced.map_or(0, |p| p.atlas_width()).max(classic.map_or(0, |p| p.atlas_width())).max(256),
+                page_height: enhanced.map_or(0, |p| p.atlas_height()).max(classic.map_or(0, |p| p.atlas_height())).max(256),
+                initial_layers: (layers as u32).min(4),
+                max_layers: layers as u32,
+                pixel_format: format,
+            }
+        }
         None => blank_atlas_spec(),
     }
 }
@@ -555,9 +567,9 @@ fn apply_sprite_art_atlas_resize(
     render_assets: &ArtSpriteRenderAssets,
     atlas: &mut ArtPageAtlas,
     atlas_handle: &mut Handle<Image>,
-    active_source: Option<ClientTextureSource>,
     tex_art_cc_res: Option<&Res<TexArtCcPackageRes>>,
     tex_art_ec_res: Option<&Res<TexArtEcPackageRes>>,
+    tex_aux_ec_res: Option<&Res<TexAuxEcPackageRes>>,
 ) {
     let Some(new_layers) = atlas.take_resize_request() else {
         return;
@@ -576,44 +588,9 @@ fn apply_sprite_art_atlas_resize(
     );
     atlas.apply_resize(new_handle.clone(), new_layers);
 
-    match active_source {
-        Some(ClientTextureSource::Cc) => {
-            if let Some(package) = tex_art_cc_res {
-                for (page_index, layer) in resident_pages {
-                    if let Some(page) = package.0.pages().get(page_index as usize) {
-                        atlas.queue_page_upload(
-                            page_index,
-                            layer,
-                            atlas.page_width,
-                            atlas.page_height,
-                            page.used_width,
-                            page.used_height,
-                            page.pixel_format,
-                            || package.0.read_page_bytes(page_index),
-                        );
-                    }
-                }
-            }
-        }
-        Some(ClientTextureSource::Ec) => {
-            if let Some(package) = tex_art_ec_res {
-                for (page_index, layer) in resident_pages {
-                    if let Some(page) = package.0.pages().get(page_index as usize) {
-                        atlas.queue_page_upload(
-                            page_index,
-                            layer,
-                            atlas.page_width,
-                            atlas.page_height,
-                            page.used_width,
-                            page.used_height,
-                            page.pixel_format,
-                            || package.0.read_page_bytes(page_index),
-                        );
-                    }
-                }
-            }
-        }
-        None => {}
+    for (key, layer) in resident_pages {
+        atlas.requeue_page(key, layer, tex_art_cc_res.map(|p| p.0.as_ref()),
+            tex_art_ec_res.map(|p| p.0.as_ref()), None, tex_aux_ec_res.map(|p| p.0.as_ref()));
     }
 
     *atlas_handle = new_handle.clone();
@@ -654,21 +631,8 @@ fn apply_ground_art_atlas_resize(
     );
     atlas.apply_resize(new_handle.clone(), new_layers);
 
-    if let Some(package) = tex_land_ec_res {
-        for (page_index, layer) in resident_pages {
-            if let Some(page) = package.0.pages().get(page_index as usize) {
-                atlas.queue_page_upload(
-                    page_index,
-                    layer,
-                    atlas.page_width,
-                    atlas.page_height,
-                    page.used_width,
-                    page.used_height,
-                    page.pixel_format,
-                    || package.0.read_page_bytes(page_index),
-                );
-            }
-        }
+    for (key, layer) in resident_pages {
+        atlas.requeue_page(key, layer, None, None, tex_land_ec_res.map(|p| p.0.as_ref()), None);
     }
 
     *atlas_handle = new_handle.clone();
@@ -1070,11 +1034,9 @@ pub fn sys_apply_pending_art_page_atlas_resizes(
     mut sprite_atlas_handle: ResMut<SpriteArtPageAtlasHandle>,
     mut ground_atlas: ResMut<GroundArtPageAtlas>,
     mut ground_atlas_handle: ResMut<GroundArtPageAtlasHandle>,
-    source_state: Res<
-        crate::core::render::scene::world::art::statics_collect::StaticArtSourceState,
-    >,
     tex_art_cc_res: Option<Res<TexArtCcPackageRes>>,
     tex_art_ec_res: Option<Res<TexArtEcPackageRes>>,
+    tex_aux_ec_res: Option<Res<TexAuxEcPackageRes>>,
     tex_land_ec_res: Option<Res<TexLandEcPackageRes>>,
 ) {
     apply_sprite_art_atlas_resize(
@@ -1083,9 +1045,9 @@ pub fn sys_apply_pending_art_page_atlas_resizes(
         &render_assets,
         &mut sprite_atlas,
         &mut sprite_atlas_handle.0,
-        source_state.active_source,
         tex_art_cc_res.as_ref(),
         tex_art_ec_res.as_ref(),
+        tex_aux_ec_res.as_ref(),
     );
     apply_ground_art_atlas_resize(
         &mut images,

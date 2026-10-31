@@ -6,6 +6,16 @@ Draft for the next implementation phases. This reconciles current source,
 acceptance is claimed here. Performance work remains deferred to the profiling
 workstation.
 
+## Phase 1 completion
+
+The artwork fallback, shared source-qualified atlas, picking/inspector agreement
+and canonical package integration are implemented. Native/source acceptance also
+found and repaired missing Classic atlas coverage through a complete original
+Classic UOP rebuild. Six coherent runtime files are installed with verified
+backups. See [the acceptance and its limits](2026-11-01-renderer-art-handoff.md).
+The next implementation phase is composed-material and visible-depth picking
+(phase 2 below). The rest of this document retains the original handoff rationale.
+
 ## Updated handoff and scope
 
 The auxiliary-package investigation changes the earlier diagnosis. The old

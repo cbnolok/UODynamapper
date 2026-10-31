@@ -7,7 +7,7 @@ use super::statics_collect::{
 use super::static_alpha::{StaticAlphaCache, sprite_sample_position};
 use crate::configs::settings::ClientTextureSource;
 use crate::core::render::scene::{camera::RenderZoom, world::land::tile_atlas::TileAtlas};
-use crate::core::uo_files_loader::{TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes, TileMetaPackageRes};
+use crate::core::uo_files_loader::{TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes, TileMetaPackageRes, TexAuxEcPackageRes};
 use crate::prelude::*;
 use bevy::{ecs::system::SystemParam, prelude::*};
 
@@ -18,6 +18,7 @@ pub(crate) struct StaticPickingResources<'w> {
     atlas: Res<'w, TileAtlas>,
     cc: Option<Res<'w, TexArtCcPackageRes>>,
     ec: Option<Res<'w, TexArtEcPackageRes>>,
+    aux: Option<Res<'w, TexAuxEcPackageRes>>,
     land: Option<Res<'w, TexLandEcPackageRes>>,
     meta: Option<Res<'w, TileMetaPackageRes>>,
     cache: ResMut<'w, StaticSurfaceLikeResolutionCache>,
@@ -34,6 +35,7 @@ pub(crate) enum StaticArtRoute {
     CcArt(u32),
     EcArt(u32),
     EcLand(u32),
+    MissingArt,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -53,6 +55,7 @@ impl<'w> StaticPickingResources<'w> {
             || self.meta.as_ref().is_some_and(|value| value.is_changed())
             || self.cc.as_ref().is_some_and(|value| value.is_changed())
             || self.ec.as_ref().is_some_and(|value| value.is_changed())
+            || self.aux.as_ref().is_some_and(|value| value.is_changed())
             || self.land.as_ref().is_some_and(|value| value.is_changed())
             || self.sprites.is_changed() || self.ground.is_changed() || self.uniforms.is_changed()
             || self.uniforms.effects.enable_water_animation != 0
@@ -64,7 +67,7 @@ impl<'w> StaticPickingResources<'w> {
 
     pub(crate) fn prepare_alpha(&mut self) {
         self.alpha.sync_packages([self.cc.as_ref().map(|v| v.last_changed()),
-            self.ec.as_ref().map(|v| v.last_changed())]);
+            self.ec.as_ref().map(|v| v.last_changed()), self.aux.as_ref().map(|v| v.last_changed())]);
     }
 
     pub(crate) fn alpha_visible(&mut self, geometry: StaticArtGeometry,
@@ -98,6 +101,14 @@ impl<'w> StaticPickingResources<'w> {
                 self.alpha.sample((1, slot.page_index), sample, ||
                     package.0.read_page_rgba(slot.page_index).ok().map(|rgba| (page.used_width, page.used_height, rgba)))
             }
+            StaticArtRoute::MissingArt => {
+                let Some(package) = self.aux.as_ref() else { return false; };
+                let Some(slot) = package.0.missing_texture_slot() else { return false; };
+                let size = Vec2::new(f32::from(slot.width), f32::from(slot.height));
+                let sample = sprite_sample_position(hit.uv, hit.dx, hit.dy, size);
+                self.alpha.sample((2, 0), sample, || package.0.load_rgba(slot.payload_texture_id).ok()
+                    .flatten().map(|rgba| (u32::from(slot.width), u32::from(slot.height), rgba)))
+            }
             StaticArtRoute::EcLand(_) => return true,
         };
         // Both sprite passes discard below this coverage; a failed page is not
@@ -118,10 +129,11 @@ impl<'w> StaticPickingResources<'w> {
         if meta.is_some_and(|tile| tile.is_nodraw()) { return None; }
         let kind = statics_collect::resolve_static_visual_kind_cached(source, graphic,
             self.meta.as_ref().map(|package| package.0.as_ref()), meta,
+            self.cc.as_ref().map(|package| package.0.as_ref()),
             self.ec.as_ref().map(|package| package.0.as_ref()),
             self.land.as_ref().map(|package| package.0.as_ref()), &mut self.cache);
-        let renders_wet = statics_collect::static_tile_renders_wet(meta,
-            self.meta.as_ref().map(|package| package.0.as_ref()), u32::from(graphic), Some(source));
+        let renders_wet = statics_collect::static_visual_renders_wet(kind, meta,
+            self.meta.as_ref().map(|package| package.0.as_ref()), u32::from(graphic));
         let depth_class = statics_collect::resolve_static_depth_class(meta, renders_wet);
         let height = scale_uo_z_to_bevy_units(f32::from(z)) + statics_collect::depth_class_y_bias(depth_class);
         let (anchor_x, anchor_y) = statics_collect::surface_like_static_world_anchor(kind, x, y);
@@ -149,10 +161,15 @@ impl<'w> StaticPickingResources<'w> {
                     source.legacy_pixel_ratio(), false)
             }
             StaticVisualKind::TexLandEc { .. } => unreachable!(),
+            StaticVisualKind::Missing => {
+                let slot = self.aux.as_ref()?.0.missing_texture_slot()?;
+                geometry.route = StaticArtRoute::MissingArt;
+                (-(slot.width as i32 / 2) as i16, 0, f32::from(slot.width), f32::from(slot.height), 1.0, false)
+            }
         };
         if matches!(kind, StaticVisualKind::EcSurface { .. }) {
             geometry.flat_quad = if statics_collect::ec_static_camera_quad(meta) { 3 } else { 2 };
-        } else if source == ClientTextureSource::Cc
+        } else if matches!(kind, StaticVisualKind::CcRegular { .. })
             && statics_collect::cc_static_uses_flat_geometry(meta, width, height, x, y, z, &self.atlas) {
             let bounds = statics_collect::resolve_cc_surface_like_flat_quad_bounds(width, height);
             let (dx, dy) = statics_collect::cc_surface_like_flat_quad_center_offsets(height);

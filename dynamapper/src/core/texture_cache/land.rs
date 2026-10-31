@@ -218,12 +218,13 @@ fn assign_aux_layer(
 ) -> Option<(u32, UVec2)> {
     let slot = package.slot_for_texture_id(texture_id)?;
     let extent = UVec2::new(slot.width.into(), slot.height.into());
-    if let Some(&layer) = assigned.get(&texture_id) { return Some((layer, extent)); }
+    let payload_id = slot.payload_texture_id;
+    if let Some(&layer) = assigned.get(&payload_id) { return Some((layer, extent)); }
     if extent.min_element() == 0 || extent.max_element() > AUX_ATLAS_TILE_SIZE {
         log::warn!("EC auxiliary source {texture_id} exceeds atlas cell extent: {extent:?}");
         return None;
     }
-    let rgba = match package.load_rgba(texture_id) {
+    let rgba = match package.load_rgba(payload_id) {
         Ok(Some(rgba)) => rgba,
         result => { log::warn!("EC auxiliary source {texture_id} could not be read: {result:?}"); return None; }
     };
@@ -233,7 +234,7 @@ fn assign_aux_layer(
     }
     let layer = layers.len() as u32;
     layers.push(pad_aux_rgba(&rgba, extent.x, extent.y, AUX_ATLAS_TILE_SIZE, AUX_ATLAS_TILE_SIZE));
-    assigned.insert(texture_id, layer);
+    assigned.insert(payload_id, layer);
     Some((layer, extent))
 }
 
@@ -1664,6 +1665,29 @@ mod tests {
         Shader, ShaderCache, ShaderCacheError, ShaderCacheSource, ValidateShader,
     };
     use wgpu::naga;
+
+    #[test]
+    #[ignore = "requires current canonical packages in DYNAMAPPER_TEST_PACKAGES"]
+    fn missing_aux_aliases_share_one_upload_layer() {
+        let root = std::path::PathBuf::from(std::env::var_os("DYNAMAPPER_TEST_PACKAGES")
+            .expect("set DYNAMAPPER_TEST_PACKAGES to the matching current package directory"));
+        let package = TexAuxEcPackage::load(root.join("tex_aux_ec.uddp")).unwrap();
+        let mut assigned = std::collections::HashMap::new();
+        let mut layers = Vec::new();
+        let mut aliases = 0;
+        for slot in package.slots().iter().filter(|slot| slot.is_missing_source()) {
+            assert_eq!(assign_aux_layer(&package, slot.texture_id, &mut assigned, &mut layers),
+                Some((0, UVec2::new(256, 256))));
+            aliases += 1;
+        }
+        assert!(aliases > 1, "inventory did not exercise shared missing-source aliases");
+        assert_eq!(assigned.len(), 1);
+        assert_eq!(layers.len(), 1);
+        let original = package.load_rgba(udd_assets::tex_aux_ec::TEX_AUX_EC_MISSING_TEXTURE_ID)
+            .unwrap().unwrap();
+        assert_eq!(layers[0], pad_aux_rgba(&original, 256, 256,
+            AUX_ATLAS_TILE_SIZE, AUX_ATLAS_TILE_SIZE));
+    }
 
     /// Parses and validates the composed WGSL with naga, standing in for the GPU
     /// shader module creation that the real `PipelineCache` would perform.
