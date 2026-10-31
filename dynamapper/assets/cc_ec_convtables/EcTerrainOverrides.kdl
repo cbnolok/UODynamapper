@@ -100,6 +100,8 @@
 //   - `reviewed_liquid_motion`
 //   - `reviewed_layer_texture`
 //   - `reviewed_liquid_texture`
+//   - `from_terrain_definition_kdl`: a value carried over from the removed hand-written
+//     TerrainDefinition.kdl that neither TerrainDefinition.uop nor this file had.
 // - Suggested additional codes when needed:
 //   - `reviewed_textureid`
 //   - `intentionally_hidden`
@@ -111,7 +113,7 @@
 // - `EcTerrainOverrides.kdl` modifies/integrates EC terrain material behavior.
 // - `EcSurfaceOverrides.kdl` handles surface-like item/static art routing.
 //
-// A pre-blending snapshot of this file lives under `legacy/`.
+// Earlier versions of this file are in git history.
 //
 // Liquid texture notes:
 // - The current reviewed liquid layer choices mirror the third-party
@@ -167,4 +169,63 @@ terrain 195 {
 terrain 201 {
     layer "t0" tex=2000640 stretch=5.0 code="reviewed_layer_texture"
     layer "t1" tex=2000641 stretch=5.0 code="reviewed_layer_texture"
+    layer "m" tex=1000003 stretch=16.0 code="from_terrain_definition_kdl"
+}
+
+// Solid terrains the removed TerrainDefinition.kdl flagged "Smooth"; TerrainDefinition.uop carries no such flag.
+
+terrain 1 {
+    policy "smooth" code="from_terrain_definition_kdl"
+}
+
+terrain 2 {
+    policy "smooth" code="from_terrain_definition_kdl"
+}
+
+terrain 3 {
+    policy "smooth" code="from_terrain_definition_kdl"
+}
+
+terrain 4 {
+    policy "smooth" code="from_terrain_definition_kdl"
+}
+
+terrain 6 {
+    policy "smooth" code="from_terrain_definition_kdl"
+}
+
+terrain 7 {
+    policy "smooth" code="from_terrain_definition_kdl"
+}
+
+terrain 8 {
+    policy "smooth" code="from_terrain_definition_kdl"
+}
+
+terrain 9 {
+    policy "smooth" code="from_terrain_definition_kdl"
+}
+
+terrain 13 {
+    policy "smooth" code="from_terrain_definition_kdl"
+}
+
+terrain 14 {
+    policy "smooth" code="from_terrain_definition_kdl"
+}
+
+terrain 15 {
+    policy "smooth" code="from_terrain_definition_kdl"
+}
+
+terrain 16 {
+    policy "smooth" code="from_terrain_definition_kdl"
+}
+
+terrain 20 {
+    policy "smooth" code="from_terrain_definition_kdl"
+}
+
+terrain 21 {
+    policy "smooth" code="from_terrain_definition_kdl"
 }

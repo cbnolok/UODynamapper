@@ -1367,9 +1367,10 @@ Active KDL files live in `dynamapper/assets/cc_ec_convtables/`.
 
 Legacy KDL files:
 
-- Live under `dynamapper/assets/cc_ec_convtables/legacy/`.
-- They are review history and migration reference.
-- Runtime paths must not load them.
+- The superseded tables (the hand-written `TerrainDefinition.kdl`, the `TerrainTranscode` experiments and the
+  pre-blending snapshot) were removed; git history keeps them. The values only `TerrainDefinition.kdl` held, the
+  "smooth" policy of 14 solid terrains and terrain 201's mask layer, are in `EcTerrainOverrides.kdl` with
+  `code="from_terrain_definition_kdl"`.
 
 Modify active KDL only when the source-derived pipeline is wrong or incomplete
 and the reason has been inspected. If a rule can be derived from UOP data, fix
