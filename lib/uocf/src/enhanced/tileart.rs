@@ -19,6 +19,29 @@ use std::path::Path;
 
 // region: --- Public API (Convenience & Application Use)
 
+/// Shader name of the sprite material (`UOSpriteShader`): blocks 0-2 of most records.
+pub const SPRITE_SHADER_NAME: &str = "UOSpriteShader";
+/// Shader name of the item water material (`UOWaterShader`).
+pub const WATER_SHADER_NAME: &str = "UOWaterShader";
+/// Shader name of the item terrain material (`UOStaticTerrainShader`).
+pub const STATIC_TERRAIN_SHADER_NAME: &str = "UOStaticTerrainShader";
+/// Texture block drawn by the lighting component; its shader name is not used for the item art.
+pub const LIGHT_TEXTURE_BLOCK_INDEX: u8 = 3;
+/// Item position the client reads as the primary texture of a `UOWaterShader` block.
+pub const WATER_PRIMARY_TEXTURE_POSITION: u8 = 1;
+/// Item position the client reads as the primary texture of every other block.
+pub const DEFAULT_PRIMARY_TEXTURE_POSITION: u8 = 0;
+
+/// Item position of a block's primary texture, as `UOObjectDefinition::GetPrimaryTextureLocation`
+/// (0x004c9050) reads it: `GetTexture(shaderName == "UOWaterShader" ? 1 : 0)`.
+pub fn primary_texture_position(shader_name: Option<&str>) -> u8 {
+    if shader_name == Some(WATER_SHADER_NAME) {
+        WATER_PRIMARY_TEXTURE_POSITION
+    } else {
+        DEFAULT_PRIMARY_TEXTURE_POSITION
+    }
+}
+
 /// Main entry point to load and process Art Tile data from an Enhanced Client UOP file.
 /// This function handles the full pipeline: parsing the raw binary structure and
 /// resolving string references into a clean, public-facing ArtData structure.
@@ -242,7 +265,6 @@ pub struct TextureItem {
     pub sampler_index: u32,
     /// Texture coordinate set index; see `TaeTextureImage::uv_set`.
     pub uv_set: u32,
-    pub is_auxiliary: bool,
     /// Logical folder family inferred from the path.
     pub ec_logical_family: EcLogicalFamily,
     /// Physical UOP package inferred from the path.
@@ -393,8 +415,8 @@ pub struct TaeTextureImage {
     pub source_kind: u8,
     /// Texture stretch; the client switches the sampler to wrap when it is not 1.0.
     pub texture_stretch: f32,
-    /// Not read by the client, which binds the items in order (item 0 the base map, the rest
-    /// the shader maps); usually equal to the item position.
+    /// Not read by the client, which binds item i to shader map i; usually equal to the item
+    /// position.
     pub sampler_index: u32,
     /// Texture coordinate set index (low byte of the Gamebryo texture map flags); 0 or 1.
     pub uv_set: u32,
@@ -404,7 +426,8 @@ pub struct TaeTextureImage {
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct TaeTexture {
     pub has_texture: u8,
-    /// Byte at `UOShaderDefinition` +0x04 (`GetField04`); 0 in all client records, meaning unknown.
+    /// Shader implementation index (`UOShaderDefinition` +0x04, `GetField04`), passed to
+    /// `NiShaderFactory::RetrieveShader`; 0 in all client records.
     pub field_04: u8,
     pub type_string_off: u32,
     pub texture_items_count: u8,
@@ -902,7 +925,7 @@ impl TileArtEntry {
             if ec_texture_block.has_texture == 1 {
                 art_data.tile_type = self.get_tile_type(ec_texture_block, string_dictionary);
                 if let Some(id) =
-                    self.select_primary_texture_id(ec_texture_block, string_dictionary, None)
+                    self.select_primary_texture_id(ec_texture_block, string_dictionary)
                 {
                     art_data.ec_texture = Some(ArtTexture {
                         texture_id: id,
@@ -919,11 +942,7 @@ impl TileArtEntry {
 
         if let Some(cc_texture_block) = self.texture_vector.get(1) {
             if cc_texture_block.has_texture == 1 {
-                if let Some(id) = self.select_primary_texture_id(
-                    cc_texture_block,
-                    string_dictionary,
-                    Some(TextureType::TileArtLegacy),
-                ) {
+                if let Some(id) = self.select_primary_texture_id(cc_texture_block, string_dictionary) {
                     art_data.cc_texture = Some(ArtTexture {
                         texture_id: id,
                         start_x: self.cc_img_offset.x_start,
@@ -971,7 +990,6 @@ impl TileArtEntry {
                         item.source_kind = texture_item.source_kind;
                         item.sampler_index = texture_item.sampler_index;
                         item.uv_set = texture_item.uv_set;
-                        item.is_auxiliary = is_auxiliary_texture_path(str);
 
                         items.push(item);
                     }
@@ -991,9 +1009,9 @@ impl TileArtEntry {
             string_dictionary.get_string((texture_block.type_string_off - 1) as usize)
         {
             match shader_name {
-                "UOWaterShader" => TileType::Liquid,
-                "UOStaticTerrainShader" => TileType::Solid,
-                "UOSpriteShader" => {
+                WATER_SHADER_NAME => TileType::Liquid,
+                STATIC_TERRAIN_SHADER_NAME => TileType::Solid,
+                SPRITE_SHADER_NAME => {
                     if self.flags1.contains(TaeFlag::Rotated) {
                         return TileType::Solid;
                     }
@@ -1045,45 +1063,19 @@ impl TileArtEntry {
             .and_then(crate::utils::path::extract_texture_id_from_path)
     }
 
+    /// Texture id of the block's primary item: the item at `primary_texture_position` of the
+    /// block's shader, as the client's `GetPrimaryTextureLocation` reads it. `None` when that item
+    /// is missing or its path has no texture id.
     fn select_primary_texture_id(
         &self,
         texture_block: &TaeTexture,
         string_dictionary: &UoStringDictionary,
-        preferred_type: Option<TextureType>,
     ) -> Option<u32> {
-        let mut preferred_non_aux = None;
-        let mut non_aux = None;
-        let mut preferred_any = None;
-        let mut any = None;
-
-        for texture_item in &texture_block.texture_items {
-            let Some(path) =
-                string_dictionary.get_string((texture_item.name_string_off - 1) as usize)
-            else {
-                continue;
-            };
-            let Some(texture_id) = crate::utils::path::extract_texture_id_from_path(path) else {
-                continue;
-            };
-
-            let texture_type = classify_texture_path(path);
-            let auxiliary = is_auxiliary_texture_path(path);
-
-            any.get_or_insert(texture_id);
-
-            if !auxiliary {
-                non_aux.get_or_insert(texture_id);
-            }
-
-            if preferred_type.is_some_and(|preferred| texture_type == preferred) {
-                preferred_any.get_or_insert(texture_id);
-                if !auxiliary {
-                    preferred_non_aux.get_or_insert(texture_id);
-                }
-            }
-        }
-
-        preferred_non_aux.or(non_aux).or(preferred_any).or(any)
+        let shader_name = texture_block.type_string_off.checked_sub(1)
+            .and_then(|offset| string_dictionary.get_string(offset as usize));
+        let item = texture_block.texture_items.get(primary_texture_position(shader_name) as usize)?;
+        let path = string_dictionary.get_string(item.name_string_off.checked_sub(1)? as usize)?;
+        crate::utils::path::extract_texture_id_from_path(path)
     }
 }
 
@@ -1224,21 +1216,6 @@ pub fn classify_texture_path(path: &str) -> TextureType {
     }
 }
 
-fn is_auxiliary_texture_path(path: &str) -> bool {
-    let normalized = crate::utils::path::normalize_dictionary_path(path);
-    let file_name = normalized
-        .rsplit('\\')
-        .next()
-        .unwrap_or(normalized.as_str());
-    let stem = file_name.split('.').next().unwrap_or(file_name);
-
-    stem.contains("noise")
-        || stem.contains("normal")
-        || stem
-            .split(['_', '-'])
-            .any(|segment| matches!(segment, "n" | "nm" | "nrm" | "norm"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1306,43 +1283,33 @@ mod tests {
     }
 
     #[test]
-    fn tileart_process_prefers_non_aux_ec_texture_item() {
+    fn primary_texture_is_the_item_at_the_shader_primary_position() {
         let dictionary = dictionary_with_strings(&[
             "UOStaticTerrainShader",
+            "UOWaterShader",
             "Data\\WorldArt\\01000045_noise.tga",
             "Data\\WorldArt\\02000130_Cave_Floor_A.tga",
         ]);
-        let entry = TileArtEntry {
-            tile_id: 1345,
-            texture_vector: vec![
-                TaeTexture {
-                    has_texture: 1,
-                    type_string_off: 1,
-                    texture_items: vec![
-                        TaeTextureImage {
-                            name_string_off: 2,
-                            ..Default::default()
-                        },
-                        TaeTextureImage {
-                            name_string_off: 3,
-                            ..Default::default()
-                        },
-                    ],
-                    ..Default::default()
-                },
-                TaeTexture::default(),
-                TaeTexture::default(),
-                TaeTexture::default(),
+        let block = |type_string_off| TaeTexture {
+            has_texture: 1,
+            type_string_off,
+            texture_items: vec![
+                TaeTextureImage { name_string_off: 3, ..Default::default() },
+                TaeTextureImage { name_string_off: 4, ..Default::default() },
             ],
             ..Default::default()
         };
+        let primary = |type_string_off| TileArtEntry {
+            tile_id: 1345,
+            texture_vector: vec![block(type_string_off), TaeTexture::default(), TaeTexture::default(), TaeTexture::default()],
+            ..Default::default()
+        }.process(&dictionary).ec_texture.map(|texture| texture.texture_id);
 
-        let art_data = entry.process(&dictionary);
-
-        assert_eq!(
-            art_data.ec_texture.map(|texture| texture.texture_id),
-            Some(2000130)
-        );
+        // The name does not matter: position 0 is primary, also when its file is named "noise".
+        assert_eq!(primary(1), Some(1000045));
+        assert_eq!(primary(2), Some(2000130), "water reads position 1");
+        assert_eq!(primary_texture_position(Some(WATER_SHADER_NAME)), WATER_PRIMARY_TEXTURE_POSITION);
+        assert_eq!(primary_texture_position(None), DEFAULT_PRIMARY_TEXTURE_POSITION);
     }
 
     #[test]

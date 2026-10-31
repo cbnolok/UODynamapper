@@ -4095,19 +4095,7 @@ fn tileart_sample_path_prefix(
 
     let selected_type = items
         .iter()
-        .find(|item| {
-            item.id == texture_id && item.texture_type == preferred_type && !item.is_auxiliary
-        })
-        .or_else(|| {
-            items
-                .iter()
-                .find(|item| item.id == texture_id && item.texture_type == preferred_type)
-        })
-        .or_else(|| {
-            items
-                .iter()
-                .find(|item| item.id == texture_id && !item.is_auxiliary)
-        })
+        .find(|item| item.id == texture_id && item.texture_type == preferred_type)
         .or_else(|| items.iter().find(|item| item.id == texture_id))
         .map(|item| item.texture_type);
 
@@ -4707,13 +4695,11 @@ pub(crate) mod tests {
             TileArtTextureItem {
                 texture_type: TileArtTextureType::TileArtEnhanced,
                 id: 77,
-                is_auxiliary: false,
                 ..Default::default()
             },
             TileArtTextureItem {
                 texture_type: TileArtTextureType::WorldArt,
                 id: 88,
-                is_auxiliary: false,
                 ..Default::default()
             },
         ]];

@@ -91,8 +91,8 @@ impl Default for TexAuxEcPackOptions {
 pub struct TexAuxEcPackSummary {
     /// Total `TileMetaItemTextureRef` rows considered.
     pub refs_considered: u64,
-    /// Refs with a base role — excluded (those belong to tex_art_ec).
-    pub excluded_base_role: u64,
+    /// Primary-selected refs: the image `tex_art_ec` packs for the owner.
+    pub excluded_primary: u64,
     /// Non-base refs of a family no runtime consumer reads (TileArtLegacy, TileArtEnhanced); see
     /// [`TEX_AUX_EC_PACKED_FAMILIES`].
     pub excluded_unread_family: u64,
@@ -247,7 +247,7 @@ pub fn pack_tex_aux_ec(
         encode(
             TEX_AUX_EC_MISSING_TEXTURE_ID,
             EcMaterialLogicalFamily::SystemTextures as u8,
-            EcMaterialStableRole::ImageSupport as u8,
+            EcMaterialStableRole::Unknown as u8,
             missing_texture,
         )
         .ok_or_else(|| eyre::eyre!("encode {EC_MISSING_TEXTURE_UOP_ENTRY}"))?,
@@ -258,10 +258,10 @@ pub fn pack_tex_aux_ec(
     image_entries.sort_by_key(|(tid, _, _, _, _)| *tid);
 
     info!(
-        "tex_aux_ec: {} included plus the missing-texture fallback; excluded: base role {}, unread family {}, no path {}, \
+        "tex_aux_ec: {} included plus the missing-texture fallback; excluded: primary {}, unread family {}, no path {}, \
          source absent {} (listed for the fallback), decode error {}, duplicates {}",
         summary.included,
-        summary.excluded_base_role,
+        summary.excluded_primary,
         summary.excluded_unread_family,
         summary.excluded_no_path,
         summary.excluded_source_absent,
@@ -333,8 +333,8 @@ fn select_qualifying_refs<'a>(
     for tex_ref in refs {
         summary.refs_considered += 1;
         let role = tex_ref.stable_role();
-        if role == EcMaterialStableRole::Base || role == EcMaterialStableRole::SecondaryBase {
-            summary.excluded_base_role += 1;
+        if tex_ref.is_primary_selected() {
+            summary.excluded_primary += 1;
             continue;
         }
         if !TEX_AUX_EC_PACKED_FAMILIES.contains(&tex_ref.logical_family()) {
@@ -427,6 +427,7 @@ mod tests {
     const MASK_ID: u32 = 20_002_472;
     const LEGACY_ID: u32 = 4_039;
     const BASE_ID: u32 = 1_364;
+    const SECONDARY_ID: u32 = 2_000_131;
 
     fn texture_ref(
         texture_id: u32,
@@ -447,26 +448,30 @@ mod tests {
     fn only_packed_families_qualify_and_skipped_refs_are_counted() -> eyre::Result<()> {
         use EcMaterialLogicalFamily::{TileArtEnhanced, TileArtLegacy, WorldArt};
         use EcMaterialPhysicalPackage::{LegacyTexture, Texture, Unknown};
-        use EcMaterialStableRole::{Base, GenericMask, UnknownSupport};
+        use EcMaterialStableRole::{Base, HueMask, SecondaryBase};
+        let primary = TileMetaItemTextureRef {
+            flags: udd_assets::tilemeta::TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
+            ..texture_ref(BASE_ID, WorldArt, Texture, Base)
+        };
         let refs = [
-            texture_ref(MASK_ID, WorldArt, Texture, GenericMask),
-            texture_ref(MASK_ID, WorldArt, Texture, GenericMask),
-            texture_ref(BASE_ID, WorldArt, Texture, Base),
-            texture_ref(LEGACY_ID, TileArtLegacy, LegacyTexture, UnknownSupport),
-            texture_ref(LEGACY_ID, TileArtEnhanced, Unknown, UnknownSupport),
-            texture_ref(0, WorldArt, Texture, UnknownSupport),
+            texture_ref(MASK_ID, WorldArt, Texture, HueMask),
+            texture_ref(MASK_ID, WorldArt, Texture, HueMask),
+            primary,
+            // Terrain RGB B is a colour image, yet only the primary image belongs to tex_art_ec.
+            texture_ref(SECONDARY_ID, WorldArt, Texture, SecondaryBase),
+            texture_ref(LEGACY_ID, TileArtLegacy, LegacyTexture, Base),
+            texture_ref(LEGACY_ID, TileArtEnhanced, Unknown, Base),
+            texture_ref(0, WorldArt, Texture, HueMask),
         ];
         let mut summary = TexAuxEcPackSummary::default();
         let selected = select_qualifying_refs(&refs, &mut summary)?;
-        assert_eq!(selected, [QualifiedRef {
-            texture_id: MASK_ID,
-            logical_family: WorldArt as u8,
-            stable_role: GenericMask as u8,
-            physical_package: Texture,
-        }]);
+        let qualified = |texture_id, role: EcMaterialStableRole| QualifiedRef {
+            texture_id, logical_family: WorldArt as u8, stable_role: role as u8, physical_package: Texture,
+        };
+        assert_eq!(selected, [qualified(MASK_ID, HueMask), qualified(SECONDARY_ID, SecondaryBase)]);
         assert_eq!(summary.refs_considered, refs.len() as u64);
         assert_eq!(summary.excluded_duplicate_id, 1);
-        assert_eq!(summary.excluded_base_role, 1);
+        assert_eq!(summary.excluded_primary, 1);
         assert_eq!(summary.excluded_unread_family, 2, "legacy and enhanced refs are counted, not packed");
         assert_eq!(summary.excluded_no_path, 1);
         Ok(())
@@ -475,7 +480,7 @@ mod tests {
     #[test]
     fn a_ref_on_the_reserved_key_is_rejected() {
         let refs = [texture_ref(TEX_AUX_EC_MISSING_TEXTURE_ID, EcMaterialLogicalFamily::WorldArt,
-            EcMaterialPhysicalPackage::Texture, EcMaterialStableRole::GenericMask)];
+            EcMaterialPhysicalPackage::Texture, EcMaterialStableRole::HueMask)];
         assert!(select_qualifying_refs(&refs, &mut TexAuxEcPackSummary::default()).is_err());
     }
 }

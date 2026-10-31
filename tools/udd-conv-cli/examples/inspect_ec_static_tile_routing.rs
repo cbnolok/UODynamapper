@@ -87,11 +87,8 @@ fn main() -> eyre::Result<()> {
             format!("TexLandEcArt(liquid_payload={payload})")
         } else if tex_art_ec_direct.is_some_and(|slot| slot.is_land()) {
             use udd_assets::tilemeta::EcMaterialStableRole;
-            if primary.is_some_and(|texture_ref| matches!(texture_ref.stable_role(),
-                EcMaterialStableRole::AlphaMask | EcMaterialStableRole::GenericMask
-                    | EcMaterialStableRole::Noise | EcMaterialStableRole::NormalLike
-                    | EcMaterialStableRole::ImageSupport | EcMaterialStableRole::EffectOnlyMetadata
-            )) {
+            if primary.is_some_and(|texture_ref| !texture_ref.stable_role().is_colour()
+                && texture_ref.stable_role() != EcMaterialStableRole::Unknown) {
                 "TileartSupport(visible terrain material resolution required)".to_string()
             } else {
                 format!("EcSurface(art_id={tile_id}, owner=tileart, geometry=ground_quad)")

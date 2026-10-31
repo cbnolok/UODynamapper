@@ -2,9 +2,9 @@
 
 ## What `tex_aux_ec` packs
 
-`udd-cli pack pack-ec-tex-aux` walks every tilemeta item texture ref. It keeps the ones whose
-`stable_role` is not `Base`/`SecondaryBase` and whose family is in `TEX_AUX_EC_PACKED_FAMILIES`
-(WorldArt only), and decodes them from `Texture.uop`. Slots are keyed by the texture number alone,
+`udd-cli pack pack-ec-tex-aux` walks every tilemeta item texture ref. It keeps the ones that
+are not `PRIMARY_SELECTED` and whose family is in `TEX_AUX_EC_PACKED_FAMILIES` (WorldArt only),
+and decodes them from `Texture.uop`. Slots are keyed by the texture number alone,
 and the first ref seen wins.
 
 TileArtLegacy/TileArtEnhanced refs are counted as "unread family" and skipped. They are the EC
@@ -20,11 +20,12 @@ sampler 2). All of them read block-0 WorldArt refs from `Texture.uop` and check
 
 ## PRIMARY_SELECTED (lib/udd-conv/src/tilemeta.rs)
 
-`stable_role_for_tileart_texture_ref` gives `Base` to any ref that has `PRIMARY_SELECTED` and no
-path role, and the aux packer skips `Base`. A support ref must therefore never carry the flag.
+The aux packer skips `PRIMARY_SELECTED` refs (their image is in `tex_art_ec`), so a support ref
+must never carry the flag. Since tilemeta format 2 the role does not depend on the flag: it comes
+from the block shader and the item position.
 
-- **Block 0 (the EC art set).** Only the item `ec_texture_id` was selected from is primary: the
-  first non-auxiliary matching item, or the first matching item if all are auxiliary. Terrain
+- **Block 0 (the EC art set).** Only the item at the shader's primary position (1 for
+  `UOWaterShader`, 0 otherwise) whose id is `ec_texture_id` is primary. Terrain
   statics reuse the base image number on another sampler, e.g. stone roofs 1364.. use it on
   sampler 2. Flagging by number alone turned those refs into `Base`, so they were left out of the
   aux package and dynapper dropped the whole UOStaticTerrainShader graph for 51 owners (roofs,
@@ -37,13 +38,16 @@ path role, and the aux packer skips `Base`. A support ref must therefore never c
 
 ## Gotchas
 
-- `stable_role_from_tileart_texture_path` no longer has a `"_n"` rule. It matched 85,504 refs, none
-  a normal map: `01000045_noise` (85,140), `*_noise_alpha`, and names such as `_NO_DRAW`,
-  `_nautilus`, `_Nightshade`, `_bed_of_nails`. With it, 165 primary images had `NormalLike`
-  instead of `Base` and were packed as aux images (68 slots), and 7 of them were listed as absent
-  sources. The other name rules are still heuristics: UOSA.exe never reads a role from a file name,
-  only (block shader, item position); see
-  `scripts/dev-helpers/ec-research/ghidra-texture-roles/results/uosa_texture_roles.md`.
+- File-name roles are gone (tilemeta format 2). UOSA.exe never reads a role from a file name, only
+  (block shader, item position); see
+  `scripts/dev-helpers/ec-research/ghidra-texture-roles/results/uosa_texture_roles.md` §5. The
+  name rules were wrong at scale: the `"_n"` rule alone matched 85,504 refs, none a normal map
+  (`01000045_noise`, `_NO_DRAW`, `_nautilus`, ...).
+- Water primaries. `UOWaterShader` binds the surface at position 1 and the bump map at position 0.
+  Format 1 made position 0 primary for 155 water owners (4651.., 5701, 7367..); format 2 takes
+  position 1. 133 ids that format 1 packed as aux images are now only primary images (in
+  `tex_art_ec`), and the bump map 1000020 joined the aux package. Pixels of the 650 common ids
+  are unchanged.
 - Unavailable sources: tileart names WorldArt ids that `Texture.uop` lacks. Of the non-base ones
   the plain client has 21, among them the hue masks 2003211, 2003212, 20003979, 20004038 and 20004039.
   - When a texture request returns no data, UOSA.exe's tile material builder (FUN_0045cd80,

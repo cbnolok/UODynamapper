@@ -436,9 +436,10 @@ Facet sizes in the executable (`client_exe::facet_dimensions`,
   - item `texture_stretch`: values other than 1.0 switch the sampler to wrap.
   - item `sampler_index`: not read by the client, which binds the items by
     their position in the block (item 0 the base map, the rest the shader
-    maps); usually equal to the item position. The renderer still matches item
-    water and surface materials by it, which gives the same result on current
-    client data.
+    maps); usually equal to the item position. Our libraries read the item
+    position (`item_index`) or the position role instead; dynapper's item
+    water and surface materials still match by `sampler_index`, which gives
+    the same result on current client data.
   - item `uv_set`: the texture coordinate set index (low byte of the Gamebryo
     texture map flags), 0 or 1.
 - Writing (`tileart` module): `TileArtEntry::to_bytes` is the exact inverse of
@@ -1049,24 +1050,29 @@ are preserved as metadata and packed texture refs when available. They are not
 all active shader inputs yet. Do not discard them just because the current
 shader only uses base/detail/mask.
 
-For EC tileart texture refs, stable roles are inferred from paths and selection
-state. These are repo heuristics: the client never reads a role from a file
-name; it binds item i to shader map i of the block's shader
-(`scripts/dev-helpers/ec-research/ghidra-texture-roles/results/uosa_texture_roles.md`).
+For EC tileart texture refs, the stable role is the shader input the item feeds.
+The client binds item i of a block to shader map i of the block's shader and
+never reads a role from a file name
+(`scripts/dev-helpers/ec-research/ghidra-texture-roles/results/uosa_texture_roles.md`
+§5). `EcMaterialStableRole::for_texture_position(block, shader, position)`:
 
-- `normal` -> normal-like (no `_n` rule: in the shipped tileart it matched only
-  non-normal names such as `01000045_noise` and `*_NO_DRAW`)
-- `alpha` -> alpha mask
-- `mask` -> generic mask
-- `noise` -> noise
-- `detail` -> detail
-- `light` or `glow` -> overlay
-- primary selected ref -> base
-- auxiliary ref or `Data\Textures\...` -> image support
-- otherwise unknown support
+| Block shader | Position 0 | Position 1 | Position 2 | Position 3 |
+|---|---|---|---|---|
+| `UOSpriteShader` | `Base` (colour) | `Noise` | `HueMask` | `Unused` |
+| `UOWaterShader` | `WaterBump` | `Base` (surface, the primary) | `WaterReflection` | `WaterFourthStage` |
+| `UOStaticTerrainShader` | `Base` (RGB A) | `SecondaryBase` (RGB B) | `BlendAlpha` | `CoverageAlpha` |
+| block 3, any shader | `Light` | `Noise` | `Unused` | `Unused` |
 
-Tileart auxiliary detection currently treats names containing `noise`,
-`normal`, or token segments `n`, `nm`, `nrm`, `norm` as auxiliary.
+An unknown shader name gives `Unknown` (the converter logs a count; the
+shipped client has none). A position past a shader's last map is `Unused`.
+
+`AUXILIARY` means "not at the block's primary position": position 1 for the
+water shader, 0 otherwise (`uocf::enhanced::tileart::primary_texture_position`).
+`PRIMARY_SELECTED` marks the block-0 item at that position (the image
+`ArtData::ec_texture` and `tex_art_ec` use) and, in blocks 1 and 2, items naming
+the same texture id. Blocks 1 and 2 (the legacy and enhanced art sets) use the
+sprite shader too, so their position 0 is `Base`; the main-texture selectors
+read roles from block 0 only.
 
 ## 6. Surface-Like Statics
 
@@ -1080,9 +1086,9 @@ Build-time flow:
 - `tilemeta.uddp` stores `TileMetaItemVisualKind::SurfaceLike` for non-static
   tileart classifications.
 - It also stores all tileart texture refs, including logical family, physical
-  package, stable role, speculative role, `texture_stretch`, `source_kind`,
-  `sampler_index`, `uv_set`, block index, item index, and primary/auxiliary
-  flags.
+  package, stable role (from the block shader and the item position),
+  `texture_stretch`, `source_kind`, `sampler_index`, `uv_set`, block index,
+  item index, and primary/auxiliary flags.
 
 Runtime flow for EC surface-like statics:
 
@@ -1141,8 +1147,8 @@ What to verify first:
   the missing albedo may have to be resolved through TerrainDefinition
   provenance or a reviewed override.
 - Check whether the current `tilemeta.main_ec_texture_id` points at a ref whose
-  stable role is `normal`, `mask`, `noise`, `alpha`, `ripple`, `flow`, or
-  `distort`. If yes, the bug is in tileart main-texture selection.
+  stable role is not `Base`/`SecondaryBase` (a bump, mask, alpha or noise
+  input). If yes, the bug is in tileart main-texture selection.
 - Check whether `resolve_surface_like_tex_land_ec_slot_id` reroutes a correct
   tileart texture id to a terrain provenance slot whose selected primary layer
   is support-like. If yes, the bug is in terrain primary selection or in the
@@ -1222,8 +1228,8 @@ Tile metadata build:
 4. Build dense item metadata from classic item records plus EC tileart records.
 5. Store EC/CC texture ids, crop starts, offsets, visual kind, radar color,
    flags, and full EC texture-ref side tables.
-6. Compute tileart texture roles from path names, selected primary refs,
-   auxiliary clues, and package/family classification.
+6. Compute tileart texture roles from the block shader and the item position,
+   and the logical family from the path folder.
 
 Runtime:
 
@@ -1245,11 +1251,15 @@ Runtime:
 - `metadata/items.bin`: dense `TileMetaItemTile` table from classic item
   metadata plus EC tileart facts.
 - `metadata/item_texture_refs_index.bin`: per-item span table into refs.
-- `metadata/item_texture_refs.bin`: all EC tileart texture refs.
+- `metadata/item_texture_refs.v2.bin`: all EC tileart texture refs. The path
+  names the format (`TILEMETA_FORMAT_VERSION`); a package with the format 1
+  `metadata/item_texture_refs.bin` (file-name roles) is rejected with a repack
+  message.
 - Item records store EC and CC texture ids, crop starts, offsets, radar color,
   flags, height, visual kind, and names.
 - Texture refs store texture id, logical family, physical package, stable role,
-  speculative role, block/item index, primary/auxiliary flags, stretch,
+  a reserved byte (format 1's file-name speculative role), block/item index,
+  primary/auxiliary flags, stretch,
   `source_kind`, `sampler_index`, and `uv_set` (formerly `unk4`, `unk6` and
   `unk7`; the binary layout is unchanged).
 - `metadata/item_materials.json`: per-item shader block material (block index,

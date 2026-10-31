@@ -438,11 +438,15 @@ impl TexLandEcPackage {
         refs: &[crate::tilemeta::TileMetaItemTextureRef],
     ) -> Option<u32> {
         use crate::tilemeta::EcMaterialPhysicalPackage;
-        if material.block_index != 0 || material.shader_name.as_deref() != Some("UOWaterShader") {
+        use crate::tilemeta::EcMaterialStableRole;
+        if material.block_index != 0 || material.shader_name.as_deref() != Some(uocf::enhanced::tileart::WATER_SHADER_NAME) {
             return None;
         }
-        let [Some(bump), Some(fallback), Some(surface)] = [0, 1, 2].map(|sampler| refs.iter()
-            .find(|r| r.block_index == 0 && r.is_world_art() && r.sampler_index == sampler
+        // Water maps 0, 1 and 2 by item position (the client binds item i to shader map i).
+        let [Some(bump), Some(fallback), Some(surface)] = [
+            EcMaterialStableRole::WaterBump, EcMaterialStableRole::Base, EcMaterialStableRole::WaterReflection,
+        ].map(|role| refs.iter()
+            .find(|r| r.block_index == 0 && r.is_world_art() && r.stable_role() == role
                 && r.physical_package() == EcMaterialPhysicalPackage::Texture)) else { return None; };
         let active = material.technique.first().zip(material.tweaks.get(..2))
             .and_then(|(technique, scroll)| self.source_liquid_payload_for_active_sources(
@@ -1821,8 +1825,12 @@ mod tests {
                 texture_id, texture_stretch, texture_type: 1,
                 physical_package: EcMaterialPhysicalPackage::Texture as u8, ..Default::default()
             });
-        let refs = [refs[0], TileMetaItemTextureRef { sampler_index: 1, ..refs[1] },
-            TileMetaItemTextureRef { sampler_index: 2, ..refs[2] }];
+        let refs = [0, 1, 2].map(|position| TileMetaItemTextureRef {
+            item_index: position as u8,
+            stable_role: crate::tilemeta::EcMaterialStableRole::for_texture_position(
+                0, material.shader_name.as_deref(), position as u8) as u8,
+            ..refs[position]
+        });
         assert_eq!(package.source_liquid_payload_for_item(&material, &refs), Some(203));
         let mut wrong = refs;
         wrong[0].physical_package = EcMaterialPhysicalPackage::LegacyTexture as u8;

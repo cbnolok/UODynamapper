@@ -8,9 +8,7 @@ use udd_assets::{
     tex_land_ec::{TexLandEcPackage, MISSING_SLOT_ID},
     tilemeta::{TileMetaItemTextureRef, TileMetaItemTile, TileMetaPackage},
 };
-use udd_conv::tex_art_ec::{is_base_eligible, LiquidExclusionReason};
-use udd_conv::tilemeta::stable_role_for_tileart_texture_ref;
-use udd_assets::tilemeta::TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED;
+use udd_conv::tex_art_ec::{is_base_eligible, primary_texture_stable_role};
 use udd_conv::terrain_meta::TerrainMetaPackage;
 use uocf::enhanced::string_dictionary::UoStringDictionary;
 use uocf::enhanced::tile_database::ArtDefinition;
@@ -140,33 +138,14 @@ fn main() -> eyre::Result<()> {
                     .as_ref()
                     .map(|t| t.texture_id)
                     .or_else(|| art_data.cc_texture.as_ref().map(|t| t.texture_id));
-                let stable_role = {
-                    let chosen_id = chosen_texture_id;
-                    let mut role = udd_assets::tilemeta::EcMaterialStableRole::UnknownSupport;
-                    if let Some(id) = chosen_id {
-                        'outer: for block in &art_data.texture_items {
-                            for item in block {
-                                if item.id == id {
-                                    role = stable_role_for_tileart_texture_ref(
-                                        item,
-                                        TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
-                                    );
-                                    break 'outer;
-                                }
-                            }
-                        }
-                    }
-                    role
-                };
+                let stable_role = primary_texture_stable_role(art_data);
                 let eligible = is_base_eligible(art_data.tile_type, chosen_texture_id, stable_role);
                 println!("  liquid_base_eligible={eligible}");
                 let exclusion_reason = if !eligible {
                     if chosen_texture_id.is_none() {
                         "LiquidNoBase"
-                    } else if stable_role == udd_assets::tilemeta::EcMaterialStableRole::EffectOnlyMetadata {
-                        "LiquidEffectOnly"
                     } else {
-                        "LiquidUnknownSupportOnly"
+                        "LiquidUnknownRole"
                     }
                 } else {
                     "NotExcluded"
@@ -339,13 +318,11 @@ fn print_tilemeta_texture_refs(texture_refs: &[TileMetaItemTextureRef]) {
     println!("  tilemeta.texture_refs.count={}", texture_refs.len());
     for (index, texture_ref) in texture_refs.iter().enumerate() {
         println!(
-            "    ref[{index}] id={} family={:?} package={:?} stable_role={:?} speculative_role={:?} readiness={} block={} item={} aux={} primary={} stretch={} source_kind={} sampler_index={} uv_set={}",
+            "    ref[{index}] id={} family={:?} package={:?} stable_role={:?} block={} item={} aux={} primary={} stretch={} source_kind={} sampler_index={} uv_set={}",
             texture_ref.texture_id,
             texture_ref.logical_family(),
             texture_ref.physical_package(),
             texture_ref.stable_role(),
-            texture_ref.speculative_role(),
-            texture_ref.implementation_readiness().as_str(),
             texture_ref.block_index,
             texture_ref.item_index,
             texture_ref.is_auxiliary(),
@@ -366,14 +343,6 @@ fn print_tilemeta_texture_refs(texture_refs: &[TileMetaItemTextureRef]) {
         println!(
             "      ref[{index}].stable_role={:?}",
             texture_ref.stable_role()
-        );
-        println!(
-            "      ref[{index}].speculative_role={:?}",
-            texture_ref.speculative_role()
-        );
-        println!(
-            "      ref[{index}].implementation_readiness={}",
-            texture_ref.implementation_readiness().as_str()
         );
         // TODO Phase 6: raw_path and normalized_path are not yet stored in TileMetaItemTextureRef
         // (deferred from Phase 5 — POD format extension requires a parallel string sidecar table).

@@ -122,6 +122,8 @@ Stores the non-base support images that tileart refs name and that a runtime con
 
 Stores dense land/item metadata tables used by the runtime to merge Classic Client tiledata with Enhanced Client metadata and sidecars.
 
+Each EC texture ref carries the shader input it feeds (`stable_role`), taken from the block's shader name and the item position, as the client binds them; file names are not read. Packages from before this rule (tilemeta format 1) are rejected; repack them.
+
 ## Enhanced Client Source Inputs
 
 Enhanced Client source packages are not a single asset stream. The current packers read and classify content from a mixed set of UOP inputs.

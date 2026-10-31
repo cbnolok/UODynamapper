@@ -38,8 +38,8 @@ fn main() -> Result<()> {
             for reference in tilemeta.item_texture_refs(tile.tile_id).iter()
                 .filter(|r| r.block_index == material.block_index) {
                 let slot = aux.slot_for_texture_id(reference.texture_id);
-                println!("  sampler={} id={} family={:?} package={:?} repetition={} uv_set={} aux={slot:?}",
-                    reference.sampler_index, reference.texture_id, reference.logical_family(),
+                println!("  position={} role={:?} id={} family={:?} package={:?} repetition={} uv_set={} aux={slot:?}",
+                    reference.item_index, reference.stable_role(), reference.texture_id, reference.logical_family(),
                     reference.physical_package(), reference.texture_stretch, reference.uv_set);
                 if let (Some(slot), Some(output)) = (slot, &args.output) {
                     if !exported.insert(reference.texture_id) { continue; }

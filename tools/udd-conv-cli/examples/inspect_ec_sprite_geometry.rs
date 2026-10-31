@@ -104,7 +104,7 @@ fn main() -> Result<()> {
                 let material = meta.item_material(u32::from(id), 0)?;
                 if material.shader_name.as_deref() != Some("UOSpriteShader") { return None; }
                 meta.item_texture_refs(u32::from(id)).iter().find(|r| r.block_index == 0
-                    && r.sampler_index == 2 && r.is_world_art() && r.uv_set == 0
+                    && r.item_index == 2 && r.is_world_art() && r.uv_set == 0
                     && r.texture_stretch == 1.0
                     && r.physical_package() == udd_assets::tilemeta::EcMaterialPhysicalPackage::Texture)
                     .map(|r| r.texture_id)

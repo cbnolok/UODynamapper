@@ -2192,10 +2192,10 @@ where
                 },
             )?;
             info!(
-                "tex_aux_ec: packed {} auxiliary textures plus the missing-texture fallback ({} refs considered, {} base-role excluded, {} unread-family (legacy) excluded, {} no-path excluded, {} source-absent ids listed for the fallback, {} decode errors, {} duplicates) to '{}'.",
+                "tex_aux_ec: packed {} auxiliary textures plus the missing-texture fallback ({} refs considered, {} primary excluded, {} unread-family (legacy) excluded, {} no-path excluded, {} source-absent ids listed for the fallback, {} decode errors, {} duplicates) to '{}'.",
                 summary.included,
                 summary.refs_considered,
-                summary.excluded_base_role,
+                summary.excluded_primary,
                 summary.excluded_unread_family,
                 summary.excluded_no_path,
                 summary.excluded_source_absent,

@@ -14,6 +14,10 @@
 //! - `metadata/land.bin`: dense table for `TileMetaLandTile` entries.
 //! - `metadata/items.bin`: dense table for `TileMetaItemTile` entries.
 //! - `metadata/item_materials.json`: original per-item shader block parameters.
+//! - `metadata/item_texture_refs.v2.bin`: the texture refs; the path names `TILEMETA_FORMAT_VERSION`.
+//!
+//! Texture ref roles come from the block shader and the item position
+//! (`EcMaterialStableRole::for_texture_position`); no rule reads the file name.
 
 use std::path::{Path, PathBuf};
 
@@ -29,7 +33,7 @@ use crate::tex_art_ec::{
 };
 use udd_assets::tex_art_ec::TexArtEcCropAdjustment;
 use udd_assets::tilemeta::{
-    EcMaterialLogicalFamily, EcMaterialPhysicalPackage, EcMaterialSpeculativeRole,
+    EcMaterialLogicalFamily, EcMaterialPhysicalPackage,
     EcMaterialStableRole, TileMetaItemTextureRef, TileMetaItemTextureRefSpan, TileMetaItemTile,
     TileMetaItemVisualKind, TileMetaLandTile, TILEMETA_ITEM_ENTRY_PATH,
     TILEMETA_ITEM_TEXTURE_FLAG_AUXILIARY, TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
@@ -44,7 +48,7 @@ use uocf::classic::tiledata::{
     TileData, TILE_FLAG_ALPHA_BLEND, TILE_FLAG_MULTI_MOVABLE, TILE_FLAG_NO_DRAW, TILE_FLAG_NO_HOUSE,
     TILE_FLAG_NO_SHADOW, TILE_FLAG_PIXEL_BLEED, TILE_FLAG_PLAY_ANIM_ONCE, TILE_FLAG_ROTATED,
 };
-use uocf::enhanced::tileart::{ArtData, TaeFlag, TextureItem};
+use uocf::enhanced::tileart::{primary_texture_position, ArtData, TaeFlag, TextureItem};
 
 pub struct TileMetaBuildOptions {
     /// When `true`, use radar colors from `tileart.uop` (EC data).
@@ -130,109 +134,63 @@ mod tests {
 
     #[test]
     fn tileart_textures_refs_are_preserved_as_terraintexture_support() {
-        let item = TextureItem {
-            texture_type: TextureType::Textures,
-            ..TextureItem::default()
-        };
-
         assert_eq!(
-            physical_package_for_tileart_texture_type(item.texture_type),
+            physical_package_for_tileart_texture_type(TextureType::Textures),
             EcMaterialPhysicalPackage::TerrainTexture
-        );
-        assert_eq!(
-            stable_role_for_tileart_texture_ref(&item, 0),
-            EcMaterialStableRole::ImageSupport
         );
     }
 
-    #[test]
-    fn primary_selected_tileart_ref_gets_base_role_without_changing_policy() {
-        let item = TextureItem {
-            texture_type: TextureType::WorldArt,
-            ..TextureItem::default()
+    fn water_record(items: &[(u8, u8, u32)]) -> ArtData {
+        let mut art = ArtData::default();
+        art.materials = vec![uocf::enhanced::tileart::ArtMaterial {
+            block_index: 0, shader_name: Some(uocf::enhanced::tileart::WATER_SHADER_NAME.to_owned()), ..Default::default()
+        }];
+        let item = |&(block_index, item_index, id): &(u8, u8, u32)| TextureItem {
+            block_index, item_index, id, texture_type: TextureType::WorldArt, ..TextureItem::default()
         };
+        art.texture_items = vec![items.iter().map(item).collect()];
+        art
+    }
 
-        assert_eq!(
-            stable_role_for_tileart_texture_ref(&item, TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED),
-            EcMaterialStableRole::Base
-        );
+    #[test]
+    fn roles_follow_the_block_shader_and_the_position_not_the_name() {
+        let mut art = water_record(&[(0, 0, 2000520), (0, 1, 2000051), (0, 2, 2000530), (0, 3, 2000531)]);
+        art.texture_items[0][0].path = "Data\\WorldArt\\02000520_surface.tga".to_owned();
+        let roles: Vec<_> = art.texture_items[0].iter().map(|item| texture_item_role(&art, item)).collect();
+        use EcMaterialStableRole as R;
+        assert_eq!(roles, [R::WaterBump, R::Base, R::WaterReflection, R::WaterFourthStage]);
+        assert_eq!(block_shader_name(&art, 1), None);
+        art.materials[0].shader_name = Some("UOUnknownShader".to_owned());
+        assert_eq!(texture_item_role(&art, &art.texture_items[0][1]), R::Unknown);
     }
 
     #[test]
     fn only_the_selected_block_zero_item_is_primary() {
-        // Owner 1364 (stone roof): its base also feeds sampler 2, and block 1 names
+        // Owner 1364 (stone roof): its base also feeds another map, and block 1 names
         // LegacyTexture image 1364, the legacy art set's counterpart.
         const BASE_ID: u32 = 1364;
         const OTHER_ID: u32 = 1372;
-        let item = |block_index, item_index, id, texture_type, is_auxiliary| TextureItem {
-            block_index, item_index, id, texture_type, is_auxiliary, ..TextureItem::default()
+        let item = |block_index, item_index, id, texture_type| TextureItem {
+            block_index, item_index, id, texture_type, ..TextureItem::default()
         };
         let mut art = ArtData::default();
         art.texture_items = vec![
-            vec![item(0, 0, BASE_ID, TextureType::WorldArt, true),
-                item(0, 1, BASE_ID, TextureType::WorldArt, false),
-                item(0, 2, OTHER_ID, TextureType::WorldArt, false),
-                item(0, 3, BASE_ID, TextureType::WorldArt, false)],
-            vec![item(1, 0, BASE_ID, TextureType::TileArtLegacy, false)],
+            vec![item(0, 0, BASE_ID, TextureType::WorldArt),
+                item(0, 1, OTHER_ID, TextureType::WorldArt),
+                item(0, 2, BASE_ID, TextureType::WorldArt)],
+            vec![item(1, 0, BASE_ID, TextureType::TileArtLegacy)],
         ];
         let primary = primary_ec_texture_item(&art, BASE_ID);
-        assert_eq!(primary, Some((0, 1)));
+        assert_eq!(primary, Some((0, 0)), "no shader: position 0");
         let flagged: Vec<(u8, u8)> = art.texture_items.iter().flatten()
             .filter(|item| is_primary_selected_texture_item(item, primary, BASE_ID))
             .map(|item| (item.block_index, item.item_index)).collect();
-        assert_eq!(flagged, [(0, 1), (1, 0)], "block 0 keeps only its selected item; the legacy counterpart stays primary");
-        art.texture_items[0].retain(|item| item.is_auxiliary || item.id != BASE_ID);
-        assert_eq!(primary_ec_texture_item(&art, BASE_ID), Some((0, 0)), "all-auxiliary block keeps its first item");
+        assert_eq!(flagged, [(0, 0), (1, 0)], "block 0 keeps only its primary item; the legacy counterpart stays primary");
+        assert_eq!(primary_ec_texture_item(&art, OTHER_ID), None, "an id away from the primary position is not primary");
         assert_eq!(primary_ec_texture_item(&art, 0), None);
-        assert_eq!(primary_ec_texture_item(&art, OTHER_ID + 1), None);
-    }
 
-    #[test]
-    fn primary_selected_alpha_mask_keeps_support_role() {
-        let item = TextureItem {
-            texture_type: TextureType::WorldArt,
-            path: "Data\\WorldArt\\02000042_alpha.dds".to_string(),
-            ..TextureItem::default()
-        };
-
-        assert_eq!(
-            stable_role_for_tileart_texture_ref(&item, TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED),
-            EcMaterialStableRole::AlphaMask
-        );
-    }
-
-    #[test]
-    fn an_underscore_n_in_the_name_is_not_a_normal_map() {
-        let role = |path: &str| stable_role_from_tileart_texture_path(path);
-        assert_eq!(role("Data\\WorldArt\\01000045_noise.tga"), EcMaterialStableRole::Noise);
-        assert_eq!(role("Data\\WorldArt\\00004012_bed_of_nails.tga"), EcMaterialStableRole::UnknownSupport);
-        assert_eq!(role("Data\\WorldArt\\00001234_NO_DRAW.tga"), EcMaterialStableRole::UnknownSupport);
-        assert_eq!(role("Data\\WorldArt\\20006373_Nightshade_mask.tga"), EcMaterialStableRole::GenericMask);
-        assert_eq!(role("Data\\Textures\\00000123_lava_normal.tga"), EcMaterialStableRole::NormalLike, "\"normal\" is kept");
-
-        let primary = TextureItem {
-            texture_type: TextureType::WorldArt,
-            path: "Data\\WorldArt\\00008600_NO_DRAW.tga".to_string(),
-            ..TextureItem::default()
-        };
-        assert_eq!(
-            stable_role_for_tileart_texture_ref(&primary, TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED),
-            EcMaterialStableRole::Base
-        );
-    }
-
-    #[test]
-    fn primary_selected_normal_map_keeps_support_role() {
-        let item = TextureItem {
-            texture_type: TextureType::Textures,
-            path: "Data\\Textures\\water_normal.dds".to_string(),
-            ..TextureItem::default()
-        };
-
-        assert_eq!(
-            stable_role_for_tileart_texture_ref(&item, TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED),
-            EcMaterialStableRole::NormalLike
-        );
+        let water = water_record(&[(0, 0, OTHER_ID), (0, 1, BASE_ID)]);
+        assert_eq!(primary_ec_texture_item(&water, BASE_ID), Some((0, 1)), "water reads position 1");
     }
 }
 
@@ -512,6 +470,7 @@ fn build_tilemeta_tables_with_ec_sources(
     let mut tilemeta_items = Vec::with_capacity(cc_tiledata.item_tiles().len());
     let mut item_texture_ref_spans = Vec::with_capacity(cc_tiledata.item_tiles().len());
     let mut item_texture_refs = Vec::new();
+    let mut unknown_shader_refs = std::collections::BTreeMap::<String, usize>::new();
     let mut item_materials = std::collections::BTreeMap::new();
     for tile in cc_tiledata.item_tiles() {
         pb.inc(1);
@@ -576,8 +535,13 @@ fn build_tilemeta_tables_with_ec_sources(
 
             let primary_item = primary_ec_texture_item(ec_data, tile_meta_item.ec_texture_id);
             item_texture_refs.extend(ec_data.texture_items.iter().flatten().map(|item| {
+                let shader_name = block_shader_name(ec_data, item.block_index);
+                let stable_role = EcMaterialStableRole::for_texture_position(item.block_index, shader_name, item.item_index);
+                if stable_role == EcMaterialStableRole::Unknown {
+                    *unknown_shader_refs.entry(shader_name.unwrap_or_default().to_owned()).or_default() += 1;
+                }
                 let mut flags = 0u8;
-                if item.is_auxiliary {
+                if item.item_index != primary_texture_position(shader_name) {
                     flags |= TILEMETA_ITEM_TEXTURE_FLAG_AUXILIARY;
                 }
                 if is_primary_selected_texture_item(item, primary_item, tile_meta_item.ec_texture_id) {
@@ -597,10 +561,8 @@ fn build_tilemeta_tables_with_ec_sources(
                     source_kind: item.source_kind,
                     physical_package: physical_package_for_tileart_texture_type(item.texture_type)
                         as u8,
-                    stable_role: stable_role_for_tileart_texture_ref(item, flags) as u8,
-                    speculative_role: speculative_role_from_normalized_path(
-                        item.normalized_path.as_deref(),
-                    ) as u8,
+                    stable_role: stable_role as u8,
+                    _reserved: 0,
                     sampler_index: item.sampler_index,
                     uv_set: item.uv_set,
                     // TODO Phase 5: populate raw_path and normalized_path sidecar fields
@@ -626,6 +588,9 @@ fn build_tilemeta_tables_with_ec_sources(
         tilemeta_items.push(tile_meta_item);
     }
     pb.finish_with_message("Tile Metadata unified");
+    for (shader_name, refs) in &unknown_shader_refs {
+        log::warn!("tilemeta: {refs} texture refs in blocks with unknown shader {shader_name:?} get the Unknown role");
+    }
 
     Ok(BuiltTileMetaTables {
         land_tiles: tilemeta_land,
@@ -635,40 +600,6 @@ fn build_tilemeta_tables_with_ec_sources(
         item_materials,
         package_compression: options.package_compression,
     })
-}
-
-fn speculative_role_from_normalized_path(path: Option<&str>) -> EcMaterialSpeculativeRole {
-    let Some(p) = path else {
-        return EcMaterialSpeculativeRole::UnknownSupport;
-    };
-    if p.contains("waterfall") {
-        return EcMaterialSpeculativeRole::WaterfallSupport;
-    }
-    if p.contains("ripple") || p.contains("wave") || p.contains("liquid") {
-        return EcMaterialSpeculativeRole::LiquidRipple;
-    }
-    if p.contains("foam") || p.contains("highlight") {
-        return EcMaterialSpeculativeRole::FoamHighlight;
-    }
-    if p.contains("lava") || p.contains("magma") || p.contains("bubble") {
-        return EcMaterialSpeculativeRole::LavaBubbleSupport;
-    }
-    if p.contains("flowmap") || p.contains("flow_map") {
-        return EcMaterialSpeculativeRole::FlowMapLike;
-    }
-    if p.contains("refract") || p.contains("distort") {
-        return EcMaterialSpeculativeRole::RefractionDistortionLike;
-    }
-    if p.contains("envprobe") || p.contains("reflect") {
-        return EcMaterialSpeculativeRole::LiquidEnvProbe;
-    }
-    if p.contains("postblend") || p.contains("post_blend") {
-        return EcMaterialSpeculativeRole::PostBlendSupport;
-    }
-    if p.contains("water") || p.contains("splash") || p.contains("wet") {
-        return EcMaterialSpeculativeRole::LiquidReflectionSupport;
-    }
-    EcMaterialSpeculativeRole::UnknownSupport
 }
 
 /// Maps `EcLogicalFamily` (from `uocf::ec_material_axes`) to the numeric discriminant
@@ -691,14 +622,23 @@ fn ec_logical_family_as_material_u8(family: uocf::ec_material_axes::EcLogicalFam
 /// Texture block the EC primary image is selected from (`ArtData::ec_texture`, the first tileart block).
 const EC_PRIMARY_TEXTURE_BLOCK_INDEX: u8 = 0;
 
+/// Shader name of block `block_index` of a record, if the block is present and named.
+pub fn block_shader_name(art: &ArtData, block_index: u8) -> Option<&str> {
+    art.materials.iter().find(|material| material.block_index == block_index)?.shader_name.as_deref()
+}
+
+/// Role of a tileart texture item, from its block shader and position.
+pub fn texture_item_role(art: &ArtData, item: &TextureItem) -> EcMaterialStableRole {
+    EcMaterialStableRole::for_texture_position(item.block_index, block_shader_name(art, item.block_index), item.item_index)
+}
+
 /// Whether a texture ref gets `PRIMARY_SELECTED`.
 ///
-/// In the EC block only the item `ec_texture_id` was selected from is primary. Another sampler of that
-/// block naming the same number reuses the base image as a support input (a terrain mask, say); flagged
-/// primary it would take the `Base` role, and `tex_aux_ec` skips `Base` images, which drops the runtime
-/// input. In the other blocks (the `TileArtLegacy`/`TileArtEnhanced` art sets) an item with the same
-/// number is that set's counterpart of the primary image and stays primary, as the main-texture
-/// selectors and the `tex_aux_ec` `Base` exclusion expect.
+/// In the EC block only the item `ec_texture_id` was taken from is primary: the item at the block's
+/// primary position. Another item of that block naming the same number reuses the image on another
+/// shader map (a terrain mask, say), and `tex_aux_ec` must keep it. In the other blocks (the
+/// `TileArtLegacy`/`TileArtEnhanced` art sets) an item with the same number is that set's
+/// counterpart of the primary image and stays primary, as the main-texture selectors expect.
 fn is_primary_selected_texture_item(item: &TextureItem, primary_item: Option<(u8, u8)>, ec_texture_id: u32) -> bool {
     if item.block_index == EC_PRIMARY_TEXTURE_BLOCK_INDEX {
         primary_item == Some((item.block_index, item.item_index))
@@ -707,20 +647,17 @@ fn is_primary_selected_texture_item(item: &TextureItem, primary_item: Option<(u8
     }
 }
 
-/// Returns `(block_index, item_index)` of the one texture item `ec_texture_id` was selected from.
-///
-/// The tileart parser takes the first non-auxiliary item of the first block, or the first item when
-/// all are auxiliary. Other items of that block may name the same number, as a sampler reusing the
-/// base image; those are support refs, not the selected primary.
+/// Returns `(block_index, item_index)` of the item `ec_texture_id` was taken from: the item at the
+/// primary position of block 0 (`uocf::enhanced::tileart::primary_texture_position`), when it names
+/// that id.
 fn primary_ec_texture_item(ec_data: &ArtData, ec_texture_id: u32) -> Option<(u8, u8)> {
     if ec_texture_id == 0 {
         return None;
     }
-    let mut candidates = ec_data.texture_items.iter().flatten()
-        .filter(|item| item.block_index == EC_PRIMARY_TEXTURE_BLOCK_INDEX && item.id == ec_texture_id);
-    let first = candidates.clone().next()?;
-    let primary = candidates.find(|item| !item.is_auxiliary).unwrap_or(first);
-    Some((primary.block_index, primary.item_index))
+    let position = primary_texture_position(block_shader_name(ec_data, EC_PRIMARY_TEXTURE_BLOCK_INDEX));
+    ec_data.texture_items.iter().flatten()
+        .find(|item| item.block_index == EC_PRIMARY_TEXTURE_BLOCK_INDEX && item.item_index == position && item.id == ec_texture_id)
+        .map(|item| (item.block_index, item.item_index))
 }
 
 fn physical_package_for_tileart_texture_type(
@@ -734,49 +671,6 @@ fn physical_package_for_tileart_texture_type(
         uocf::enhanced::tileart::TextureType::Textures => EcMaterialPhysicalPackage::TerrainTexture,
         uocf::enhanced::tileart::TextureType::TileArtEnhanced
         | uocf::enhanced::tileart::TextureType::Undefined => EcMaterialPhysicalPackage::Unknown,
-    }
-}
-
-pub fn stable_role_for_tileart_texture_ref(
-    item: &uocf::enhanced::tileart::TextureItem,
-    flags: u8,
-) -> EcMaterialStableRole {
-    let path_role = stable_role_from_tileart_texture_path(&item.path);
-    if path_role != EcMaterialStableRole::UnknownSupport {
-        path_role
-    } else if flags & TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED != 0 {
-        EcMaterialStableRole::Base
-    } else if item.is_auxiliary
-        || item.texture_type == uocf::enhanced::tileart::TextureType::Textures
-    {
-        EcMaterialStableRole::ImageSupport
-    } else {
-        EcMaterialStableRole::UnknownSupport
-    }
-}
-
-fn stable_role_from_tileart_texture_path(path: &str) -> EcMaterialStableRole {
-    let lower = path.to_ascii_lowercase();
-    let basename = lower.rsplit(['\\', '/']).next().unwrap_or(lower.as_str());
-    let stem = basename.split('.').next().unwrap_or(basename);
-
-    // No "_n" rule: UOSA.exe never derives a role from a file name, and in the shipped tileart
-    // "_n" matched only non-normal images (`01000045_noise`, `*_bed_of_nails`, `*_NO_DRAW`,
-    // `*_Nightshade_mask`). See scripts/dev-helpers/ec-research/ghidra-texture-roles/results/uosa_texture_roles.md.
-    if stem.contains("normal") {
-        EcMaterialStableRole::NormalLike
-    } else if stem.contains("alpha") {
-        EcMaterialStableRole::AlphaMask
-    } else if stem.contains("mask") {
-        EcMaterialStableRole::GenericMask
-    } else if stem.contains("noise") {
-        EcMaterialStableRole::Noise
-    } else if stem.contains("detail") {
-        EcMaterialStableRole::Detail
-    } else if stem.contains("light") || stem.contains("glow") {
-        EcMaterialStableRole::Overlay
-    } else {
-        EcMaterialStableRole::UnknownSupport
     }
 }
 

@@ -28,8 +28,8 @@ struct Args {
 
 // Match ec_item_surface::{source,sprite_source}: the first supported material
 // source wins, before applying the ordinary sprite's stricter UV constraints.
-fn source(refs: &[TileMetaItemTextureRef], stage: u32) -> Option<&TileMetaItemTextureRef> {
-    refs.iter().find(|r| r.block_index == 0 && r.sampler_index == stage && r.is_world_art()
+fn source(refs: &[TileMetaItemTextureRef], position: u8) -> Option<&TileMetaItemTextureRef> {
+    refs.iter().find(|r| r.block_index == 0 && r.item_index == position && r.is_world_art()
         && r.physical_package() == EcMaterialPhysicalPackage::Texture
         && r.uv_set <= 1 && r.texture_stretch.is_finite() && r.texture_stretch > 0.0)
         .filter(|r| r.uv_set == 0 && r.texture_stretch == 1.0)
@@ -57,7 +57,7 @@ fn main() -> Result<()> {
         if !source(refs, 0).is_some_and(|r| r.is_primary_selected()
             && r.texture_id == tile.ec_texture_id) { continue; }
         registered += 1;
-        if !refs.iter().any(|r| r.block_index == 0 && r.sampler_index == 2) { continue; }
+        if !refs.iter().any(|r| r.block_index == 0 && r.item_index == 2) { continue; }
         let mask = source(refs, 2);
         let upscale = slot.upscale_factor.max(1);
         let extent = [slot.width / upscale, slot.height / upscale];

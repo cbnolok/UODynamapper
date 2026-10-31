@@ -1,8 +1,7 @@
 //! Metadata axes for Enhanced Client texture references.
 //!
-//! These types describe the physical origin, logical grouping, and semantic
-//! role of an EC material reference. They are orthogonal: a single texture ref
-//! can be assigned any combination independently.
+//! These types describe the physical origin and logical grouping of an EC material
+//! reference. They are orthogonal: a single texture ref can have any combination.
 //!
 //! # Design
 //!
@@ -11,12 +10,9 @@
 //!   TileArtLegacy, …). Usually correlates with the physical package but is derived
 //!   purely from the path, so a terrain-archive entry that lives under
 //!   `build/worldart/` still gets `LogicalFamily::WorldArt`.
-//! - `EcStableRole` — the semantically stable function of the texture in the material
-//!   (base colour, noise, normal map, …). Set by heuristic; confidence is tracked
-//!   separately via `EcRoleConfidence`.
-//! - `EcSpeculativeRole` — additional, speculative classification for textures whose
-//!   stable role is still `UnknownSupport`. Can co-exist with any stable role.
-//! - `EcRoleConfidence` — how reliable the role assignment is.
+//!
+//! The role of a texture item is not a path property: the client binds item i to shader map i of
+//! its block's shader (`udd_assets::tilemeta::EcMaterialStableRole::for_texture_position`).
 
 /// Which UOP archive physically contains the texture path.
 ///
@@ -152,77 +148,4 @@ impl EcLogicalFamily {
             Self::Unknown => "Unknown",
         }
     }
-}
-
-/// Semantically stable role of a texture reference within its material.
-///
-/// "Stable" means the role is unlikely to change as we learn more about the
-/// EC format. Contrast with `EcSpeculativeRole` which tracks guesses that
-/// may be revised.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum EcStableRole {
-    /// Primary colour/albedo texture.
-    Base,
-    /// Secondary colour/albedo (e.g. an alternate base for blending).
-    SecondaryBase,
-    /// Alpha/transparency mask.
-    AlphaMask,
-    /// Generic mask (not specifically alpha — could be blend, dirt, etc.).
-    GenericMask,
-    /// Noise texture (tiling noise used for procedural variation).
-    Noise,
-    /// Detail/micro-detail texture.
-    Detail,
-    /// Overlay / emissive / glow layer.
-    Overlay,
-    /// Normal map or similar tangent-space direction data.
-    NormalLike,
-    /// Generic image-based support (catch-all for auxiliary images).
-    ImageSupport,
-    /// Only meaningful as metadata for effect-only entries; never sampled directly.
-    EffectOnlyMetadata,
-    /// Role not yet classified by any heuristic.
-    UnknownSupport,
-}
-
-/// Speculative role for textures whose stable role is still `UnknownSupport`.
-///
-/// These are informed guesses based on path names and shader context. They
-/// should be treated as hints only and may be overridden once the EC format
-/// is better understood.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum EcSpeculativeRole {
-    /// No speculative assignment.
-    None,
-    /// Animated ripple layer used for liquid surfaces.
-    LiquidRipple,
-    /// Reflection support texture for liquid (environment probe source).
-    LiquidReflectionSupport,
-    /// Cubemap-like environment probe for liquid.
-    LiquidEnvProbe,
-    /// Foam or highlight layer on water edges.
-    FoamHighlight,
-    /// Flow map (used to distort UV coordinates over time).
-    FlowMapLike,
-    /// Refraction / distortion map.
-    RefractionDistortionLike,
-    /// Support texture specific to waterfall materials.
-    WaterfallSupport,
-    /// Support texture specific to lava / bubble materials.
-    LavaBubbleSupport,
-    /// Post-blend / compositing support (applied after the primary blend).
-    PostBlendSupport,
-}
-
-/// Confidence level for a role assignment.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum EcRoleConfidence {
-    /// Derived from authoritative data (e.g. an explicit format field).
-    High,
-    /// Derived from a reliable heuristic (e.g. shader name + path pattern).
-    Medium,
-    /// Derived from a weak heuristic (path keyword only).
-    Low,
-    /// No heuristic could produce an assignment.
-    Unresolved,
 }

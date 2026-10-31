@@ -115,7 +115,8 @@ pub fn audit_ec_material_refs(source_dirs: &[PathBuf], output: &Path) -> eyre::R
                 &normalized_path,
                 package,
                 family,
-                bool_str(item.is_auxiliary),
+                bool_str(item.item_index != uocf::enhanced::tileart::primary_texture_position(
+                    udd_conv::tilemeta::block_shader_name(art_data, item.block_index))),
                 &format_float(item.texture_stretch),
                 &item.source_kind.to_string(),
                 &item.sampler_index.to_string(),
@@ -1218,13 +1219,10 @@ The following axes must stay independent:
   `EffectTexture.uop`, `SystemTextures`, `ShaderResources`, `Unknown`
 - `logical_family`: `WorldArt`, `TileArtLegacy`, `TileArtEnhanced`, `Textures`,
   `Effects`, `SystemTextures`, `ShaderResources`, `Unknown`
-- `stable_role`: `Base`, `SecondaryBase`, `AlphaMask`, `GenericMask`, `Noise`,
-  `Detail`, `Overlay`, `NormalLike`, `ImageSupport`, `EffectOnlyMetadata`,
-  `UnknownSupport`
-- `speculative_role`: `LiquidRipple`, `LiquidReflectionSupport`,
-  `LiquidEnvProbe`, `FoamHighlight`, `FlowMapLike`,
-  `RefractionDistortionLike`, `WaterfallSupport`, `LavaBubbleSupport`,
-  `PostBlendSupport`, `UnknownSupport`
+- `stable_role` (tilemeta, from the block shader and the item position): `Base`,
+  `SecondaryBase`, `BlendAlpha`, `CoverageAlpha`, `Noise`, `HueMask`, `WaterBump`,
+  `WaterReflection`, `WaterFourthStage`, `Light`, `Unused`, `Unknown`
+- `speculative_role`: this report's own provisional name-keyword guess (not stored in tilemeta)
 - `role_reason`
 - `confidence`
 - `metadata_only`
@@ -4496,8 +4494,7 @@ enum AbnormalityCode {
     MissingBase,
     LowConfidenceBase,
     LiquidNoBase,
-    LiquidEffectOnly,
-    LiquidUnknownSupportOnly,
+    LiquidUnknownRole,
     /// A `BaseChoiceOverride` was applied for this art id.
     OverrideApplied,
     /// A `MetadataOnlyOverride` marks this texture id as never a visible base.
@@ -4511,8 +4508,7 @@ impl AbnormalityCode {
             Self::MissingBase => "MissingBase",
             Self::LowConfidenceBase => "LowConfidenceBase",
             Self::LiquidNoBase => "LiquidNoBase",
-            Self::LiquidEffectOnly => "LiquidEffectOnly",
-            Self::LiquidUnknownSupportOnly => "LiquidUnknownSupportOnly",
+            Self::LiquidUnknownRole => "LiquidUnknownRole",
             Self::OverrideApplied => "OverrideApplied",
             Self::MetadataOnlyOverride => "MetadataOnlyOverride",
         }
@@ -4524,8 +4520,7 @@ impl AbnormalityCode {
             Self::MissingBase => "error",
             Self::LowConfidenceBase
             | Self::LiquidNoBase
-            | Self::LiquidEffectOnly
-            | Self::LiquidUnknownSupportOnly
+            | Self::LiquidUnknownRole
             | Self::MetadataOnlyOverride => "warning",
         }
     }
@@ -4538,8 +4533,7 @@ pub struct AbnormalityCounts {
     pub missing_base: u64,
     pub low_confidence_base: u64,
     pub liquid_no_base: u64,
-    pub liquid_effect_only: u64,
-    pub liquid_unknown_support_only: u64,
+    pub liquid_unknown_role: u64,
     pub override_applied: u64,
     pub metadata_only_override: u64,
     /// Top-10 low-confidence tiles by owner_id (owner_id, chosen_texture_id).
@@ -4554,8 +4548,7 @@ impl AbnormalityCounts {
             missing_base: 0,
             low_confidence_base: 0,
             liquid_no_base: 0,
-            liquid_effect_only: 0,
-            liquid_unknown_support_only: 0,
+            liquid_unknown_role: 0,
             override_applied: 0,
             metadata_only_override: 0,
             top_low_confidence: Vec::new(),
@@ -4575,8 +4568,7 @@ impl AbnormalityCounts {
                 }
             }
             AbnormalityCode::LiquidNoBase => self.liquid_no_base += 1,
-            AbnormalityCode::LiquidEffectOnly => self.liquid_effect_only += 1,
-            AbnormalityCode::LiquidUnknownSupportOnly => self.liquid_unknown_support_only += 1,
+            AbnormalityCode::LiquidUnknownRole => self.liquid_unknown_role += 1,
             AbnormalityCode::OverrideApplied => self.override_applied += 1,
             AbnormalityCode::MetadataOnlyOverride => self.metadata_only_override += 1,
         }
@@ -4675,15 +4667,13 @@ pub fn write_ec_abnormality_report(
                 let stable_role = tilemeta
                     .main_ec_texture_id_role_aware(tile_id)
                     .map(|(_, role, _)| role)
-                    .unwrap_or(EcMaterialStableRole::UnknownSupport);
+                    .unwrap_or(EcMaterialStableRole::Unknown);
                 if !is_base_eligible(TileType::Liquid, chosen_texture_id, stable_role) {
                     // Determine the specific liquid exclusion reason.
                     if chosen_texture_id.is_none() {
                         Some(LiquidExclusionReason::LiquidNoBase)
-                    } else if stable_role == EcMaterialStableRole::EffectOnlyMetadata {
-                        Some(LiquidExclusionReason::LiquidEffectOnly)
                     } else {
-                        Some(LiquidExclusionReason::LiquidUnknownSupportOnly)
+                        Some(LiquidExclusionReason::LiquidUnknownRole)
                     }
                 } else {
                     None
@@ -4698,10 +4688,7 @@ pub fn write_ec_abnormality_report(
             if let Some(liquid_reason) = liquid_exclusion {
                 let liquid_code = match liquid_reason {
                     LiquidExclusionReason::LiquidNoBase => AbnormalityCode::LiquidNoBase,
-                    LiquidExclusionReason::LiquidEffectOnly => AbnormalityCode::LiquidEffectOnly,
-                    LiquidExclusionReason::LiquidUnknownSupportOnly => {
-                        AbnormalityCode::LiquidUnknownSupportOnly
-                    }
+                    LiquidExclusionReason::LiquidUnknownRole => AbnormalityCode::LiquidUnknownRole,
                 };
                 let chosen = art_data.and_then(|d| {
                     d.ec_texture
@@ -4711,7 +4698,7 @@ pub fn write_ec_abnormality_report(
                 });
                 (
                     chosen,
-                    "UnknownSupport",
+                    EcMaterialStableRole::Unknown.as_str(),
                     liquid_reason.as_str(),
                     false,
                     liquid_code,
@@ -4720,25 +4707,13 @@ pub fn write_ec_abnormality_report(
                 match result {
                     None => (
                         None,
-                        "UnknownSupport",
+                        EcMaterialStableRole::Unknown.as_str(),
                         "not_found",
                         false,
                         AbnormalityCode::MissingBase,
                     ),
                     Some((tex_id, stable_role, reason)) => {
-                        let role_str = match stable_role {
-                            EcMaterialStableRole::Base => "Base",
-                            EcMaterialStableRole::SecondaryBase => "SecondaryBase",
-                            EcMaterialStableRole::AlphaMask => "AlphaMask",
-                            EcMaterialStableRole::GenericMask => "GenericMask",
-                            EcMaterialStableRole::Noise => "Noise",
-                            EcMaterialStableRole::Detail => "Detail",
-                            EcMaterialStableRole::Overlay => "Overlay",
-                            EcMaterialStableRole::NormalLike => "NormalLike",
-                            EcMaterialStableRole::ImageSupport => "ImageSupport",
-                            EcMaterialStableRole::EffectOnlyMetadata => "EffectOnlyMetadata",
-                            EcMaterialStableRole::UnknownSupport => "UnknownSupport",
-                        };
+                        let role_str = stable_role.as_str();
                         let low = reason.is_low_confidence();
                         let code = if low {
                             AbnormalityCode::LowConfidenceBase
@@ -4783,15 +4758,14 @@ pub fn write_ec_abnormality_report(
 
     info!(
         "wrote {} EC abnormality report rows to '{}' \
-         (ok={} missing_base={} low_confidence={} liquid_no_base={} liquid_effect_only={} liquid_unknown_support_only={} override_applied={} metadata_only_override={})",
+         (ok={} missing_base={} low_confidence={} liquid_no_base={} liquid_unknown_role={} override_applied={} metadata_only_override={})",
         counts.total,
         output.display(),
         counts.ok,
         counts.missing_base,
         counts.low_confidence_base,
         counts.liquid_no_base,
-        counts.liquid_effect_only,
-        counts.liquid_unknown_support_only,
+        counts.liquid_unknown_role,
         counts.override_applied,
         counts.metadata_only_override,
     );
@@ -4810,11 +4784,8 @@ fn abnormality_notes(code: AbnormalityCode) -> &'static str {
             "base selection used a low-confidence fallback path"
         }
         AbnormalityCode::LiquidNoBase => "liquid tile has no chosen texture id",
-        AbnormalityCode::LiquidEffectOnly => {
-            "liquid tile primary ref has EffectOnlyMetadata role"
-        }
-        AbnormalityCode::LiquidUnknownSupportOnly => {
-            "liquid tile refs are all UnknownSupport — no verifiable base"
+        AbnormalityCode::LiquidUnknownRole => {
+            "liquid tile primary image has the Unknown role: its block has no known UO shader"
         }
         AbnormalityCode::OverrideApplied => {
             "base texture id replaced by base_choice_overrides.kdl entry"
@@ -4854,12 +4825,7 @@ pub fn write_ec_abnormality_summary(counts: &AbnormalityCounts, output: &Path) -
         ("MissingBase", counts.missing_base, "error"),
         ("LowConfidenceBase", counts.low_confidence_base, "warning"),
         ("LiquidNoBase", counts.liquid_no_base, "warning"),
-        ("LiquidEffectOnly", counts.liquid_effect_only, "warning"),
-        (
-            "LiquidUnknownSupportOnly",
-            counts.liquid_unknown_support_only,
-            "warning",
-        ),
+        ("LiquidUnknownRole", counts.liquid_unknown_role, "warning"),
         ("OverrideApplied", counts.override_applied, "ok"),
         (
             "MetadataOnlyOverride",
@@ -5251,7 +5217,8 @@ pub fn write_tileart_liquid_surface_report(
                 ec_logical_family: item.ec_logical_family.as_str().to_string(),
                 ec_physical_package: item.ec_physical_package.as_str().to_string(),
                 raw_path: item.raw_path.clone(),
-                is_auxiliary: item.is_auxiliary,
+                is_auxiliary: item.item_index != uocf::enhanced::tileart::primary_texture_position(
+                    udd_conv::tilemeta::block_shader_name(art_data, item.block_index)),
             })
             .collect();
 

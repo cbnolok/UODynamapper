@@ -1,6 +1,4 @@
-use uocf::ec_material_axes::{
-    EcLogicalFamily, EcPhysicalPackage, EcSpeculativeRole, EcStableRole,
-};
+use uocf::ec_material_axes::{EcLogicalFamily, EcPhysicalPackage};
 
 /// Verifies that `EcPhysicalPackage` and `EcLogicalFamily` can legitimately diverge:
 /// a path that comes from a terrain-archive but sits under `build/worldart/` is
@@ -39,27 +37,6 @@ fn physical_package_and_logical_family_differ() {
         "the overridden physical package differs from what infer_from_path would return"
     );
     assert_eq!(logical, EcLogicalFamily::WorldArt);
-}
-
-/// Verifies that `EcStableRole::UnknownSupport` and `EcSpeculativeRole::LiquidRipple`
-/// are a valid combination — the stable role expresses that we do not yet have a
-/// definitive structural role for this texture, while the speculative role records
-/// our best guess about its visual purpose.
-#[test]
-fn stable_role_unknown_with_speculative_populated() {
-    let stable = EcStableRole::UnknownSupport;
-    let speculative = EcSpeculativeRole::LiquidRipple;
-
-    // The combination is valid by construction — we just ensure the values are
-    // what they claim to be and that Debug formatting works.
-    assert_eq!(stable, EcStableRole::UnknownSupport);
-    assert_eq!(speculative, EcSpeculativeRole::LiquidRipple);
-    assert_ne!(speculative, EcSpeculativeRole::None);
-
-    // Confirm they can be stored together in a trivially copyable pair.
-    let pair = (stable, speculative);
-    assert_eq!(pair.0, EcStableRole::UnknownSupport);
-    assert_eq!(pair.1, EcSpeculativeRole::LiquidRipple);
 }
 
 /// Verifies that `EcPhysicalPackage::infer_from_path` correctly recognises the

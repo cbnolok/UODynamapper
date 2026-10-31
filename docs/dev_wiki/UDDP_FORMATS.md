@@ -48,6 +48,8 @@ The long-term schema direction is to keep CC and EC ownership/behavior separate 
 
 - `metadata/land.bin`: Dense array of `TileMetaLandTile` structs.
 - `metadata/items.bin`: Dense array of `TileMetaItemTile` structs.
+- `metadata/item_texture_refs_index.bin` and `metadata/item_texture_refs.v2.bin`: the per-item span table and the EC tileart texture refs (`TileMetaItemTextureRef`, 24 bytes). The `.v2` in the path is `TILEMETA_FORMAT_VERSION` 2: `stable_role` is the shader input the item feeds, from the block's shader name and the item position (`EcMaterialStableRole::for_texture_position`; the table is in `lib/uocf/src/enhanced/ENHANCED_CLIENT_FILES.md` §5). The loader rejects format 1 (`metadata/item_texture_refs.bin`, roles guessed from file names) and asks for a repack. Byte 0x0F, format 1's file-name `speculative_role`, is reserved (zero). Flags: `AUXILIARY` (1) = the item is not at its block's primary position (1 for `UOWaterShader`, else 0); `PRIMARY_SELECTED` (2) = the block-0 item `ec_texture_id` comes from, or a block-1/2 item with the same id.
+- `metadata/item_materials.json`: per-item shader block material.
 
 ### 2.1 `TileMetaLandTile` Struct (48 Bytes, 8-Byte Aligned)
 
@@ -210,7 +212,7 @@ Contents:
 - **No TileArtLegacy or TileArtEnhanced images.** Those belong to the EC's legacy-art mode, which is not converted; Classic art comes from the Classic Client files (`tex_art_cc.uddp`). The packer counts the skipped refs as "unread family".
 - **The client's missing-texture image.** When a texture request returns no data, the client substitutes `Data\SystemTextures\missing.tga` (`SystemTextures.uop`, a 256x256 TGA decoded by its extension). The package stores that image as a normal slot and payload under the reserved id `TEX_AUX_EC_MISSING_TEXTURE_ID` = `u32::MAX` (`0xFFFFFFFF`).
   - No real texture can take that id: the client formats tile texture paths with a signed `%08d`, so reachable ids stop at `i32::MAX`.
-  - The slot has family `SystemTextures` (6) and role `ImageSupport` (9).
+  - The slot has family `SystemTextures` (6) and role `Unknown` (0).
 
 **Virtual Files:**
 
@@ -228,7 +230,7 @@ Contents:
 | 0x04 | `u16` | `width` | Image width in pixels. |
 | 0x06 | `u16` | `height` | Image height in pixels. |
 | 0x08 | `u8` | `logical_family` | `EcMaterialLogicalFamily`: 1 = WorldArt; 6 = SystemTextures (reserved entry only). |
-| 0x09 | `u8` | `stable_role` | `EcMaterialStableRole` of the first ref that named the id. |
+| 0x09 | `u8` | `stable_role` | `EcMaterialStableRole` of the first ref that named the id (from the block shader and the item position). |
 | 0x0A | `u8` | `pixel_format` | 0 = RGBA8888, 1 = BC7. |
 | 0x0B | `u8` | `_pad` | Zero. |
 

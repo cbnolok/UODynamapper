@@ -10,8 +10,8 @@ use bytemuck::Zeroable;
 
 use udd_assets::{
     tilemeta::{
-        EcMaterialImplementationReadiness, EcMaterialLogicalFamily, EcMaterialPhysicalPackage,
-        EcMaterialSpeculativeRole, EcMaterialStableRole, TileMetaItemTextureRef,
+        EcMaterialLogicalFamily, EcMaterialPhysicalPackage,
+        EcMaterialStableRole, TileMetaItemTextureRef,
         TileMetaItemTextureRefSpan, TileMetaItemTile, TileMetaItemVisualKind, TileMetaLandTile,
         TILEMETA_ITEM_ENTRY_PATH, TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH, TILEMETA_ITEM_MATERIAL_ENTRY_PATH,
         TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH, TILEMETA_LAND_ENTRY_PATH,
@@ -224,20 +224,19 @@ fn classify_item_visual_kind_keeps_static_entries_as_regular_art() {
 /// physical-package, and logical-family fields must survive a UDDP write/read
 /// round-trip without losing any metadata axis.
 ///
-/// This is the Phase 13 sidecar-integrity acceptance test.  It exercises the
+/// It exercises the
 /// full binary format path:
 ///   Vec<TileMetaItemTextureRef> → bytemuck::cast_slice → UDDP entry →
 ///   TileMetaPackage::from_uddp_package → item_texture_refs(tile_id)
 #[test]
 fn tilemeta_texture_refs_roundtrip_preserves_role_fields() {
-    // Two refs for tile 42 — one Base (blend-ready candidate) and one
-    // ImageSupport + LiquidRipple (liquid-ready candidate).
+    // Two refs for tile 42: a water surface (Base, position 1) and a water bump (position 0).
     let ref_base = TileMetaItemTextureRef {
         texture_id: 1000,
         texture_type: EcMaterialLogicalFamily::WorldArt as u8,
         physical_package: EcMaterialPhysicalPackage::Texture as u8,
         stable_role: EcMaterialStableRole::Base as u8,
-        speculative_role: EcMaterialSpeculativeRole::UnknownSupport as u8,
+        item_index: 1,
         texture_stretch: 4.0,
         ..TileMetaItemTextureRef::zeroed()
     };
@@ -245,8 +244,7 @@ fn tilemeta_texture_refs_roundtrip_preserves_role_fields() {
         texture_id: 1000020,
         texture_type: EcMaterialLogicalFamily::Textures as u8,
         physical_package: EcMaterialPhysicalPackage::TerrainTexture as u8,
-        stable_role: EcMaterialStableRole::ImageSupport as u8,
-        speculative_role: EcMaterialSpeculativeRole::LiquidRipple as u8,
+        stable_role: EcMaterialStableRole::WaterBump as u8,
         texture_stretch: 16.0,
         ..TileMetaItemTextureRef::zeroed()
     };
@@ -332,22 +330,13 @@ fn tilemeta_texture_refs_roundtrip_preserves_role_fields() {
     assert_eq!(loaded[0].logical_family(), EcMaterialLogicalFamily::WorldArt);
     assert_eq!(loaded[0].physical_package(), EcMaterialPhysicalPackage::Texture);
     assert_eq!(loaded[0].stable_role(), EcMaterialStableRole::Base);
-    assert_eq!(loaded[0].speculative_role(), EcMaterialSpeculativeRole::UnknownSupport);
+    assert_eq!(loaded[0].item_index, 1);
     assert!((loaded[0].texture_stretch - 4.0).abs() < f32::EPSILON);
-    assert_eq!(
-        loaded[0].implementation_readiness(),
-        EcMaterialImplementationReadiness::BaseSafe,
-    );
 
-    // Ripple ref — role axes and readiness
+    // Bump ref
     assert_eq!(loaded[1].texture_id, 1000020);
     assert_eq!(loaded[1].logical_family(), EcMaterialLogicalFamily::Textures);
     assert_eq!(loaded[1].physical_package(), EcMaterialPhysicalPackage::TerrainTexture);
-    assert_eq!(loaded[1].stable_role(), EcMaterialStableRole::ImageSupport);
-    assert_eq!(loaded[1].speculative_role(), EcMaterialSpeculativeRole::LiquidRipple);
+    assert_eq!(loaded[1].stable_role(), EcMaterialStableRole::WaterBump);
     assert!((loaded[1].texture_stretch - 16.0).abs() < f32::EPSILON);
-    assert_eq!(
-        loaded[1].implementation_readiness(),
-        EcMaterialImplementationReadiness::LiquidReady,
-    );
 }

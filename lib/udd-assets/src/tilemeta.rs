@@ -7,10 +7,16 @@ use udd_container::UddpReader;
 pub const TILEMETA_LAND_ENTRY_PATH: &str = "metadata/land.bin";
 pub const TILEMETA_ITEM_ENTRY_PATH: &str = "metadata/items.bin";
 pub const TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH: &str = "metadata/item_texture_refs_index.bin";
-pub const TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH: &str = "metadata/item_texture_refs.bin";
+/// Carries `TILEMETA_FORMAT_VERSION`: a package of another format has no entry at this path.
+pub const TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH: &str = "metadata/item_texture_refs.v2.bin";
+/// Format 1's texture refs (roles from file names), rejected with a repack message.
+const TILEMETA_FORMAT_1_ITEM_TEXTURE_REF_ENTRY_PATH: &str = "metadata/item_texture_refs.bin";
 pub const TILEMETA_ITEM_MATERIAL_ENTRY_PATH: &str = "metadata/item_materials.json";
 
+/// The item is not at its block's primary position (`uocf::enhanced::tileart::primary_texture_position`).
 pub const TILEMETA_ITEM_TEXTURE_FLAG_AUXILIARY: u8 = 1 << 0;
+/// Block 0: the item `ec_texture_id` was taken from (its primary position). Blocks 1 and 2: an item
+/// naming the same texture id, that art set's counterpart of the primary image.
 pub const TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED: u8 = 1 << 1;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -69,151 +75,165 @@ impl EcMaterialLogicalFamily {
     }
 }
 
+/// Version of the tilemeta texture-ref semantics, named in `TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH`.
+///
+/// 2: `stable_role` comes from (block, shader name, item position) and `AUXILIARY` from the position;
+/// the file-name roles and the speculative role byte are gone. Older packages are rejected.
+pub const TILEMETA_FORMAT_VERSION: u32 = 2;
+
+/// Role of a tileart texture item: the shader input it feeds.
+///
+/// The Enhanced Client binds item i of a block to shader map i (`SetShaderMap(i)`), and each UO
+/// shader class reads its maps by fixed index. The role is therefore a function of the block, its
+/// shader name and the item position (`for_texture_position`); the client never reads a role from a
+/// file name. See `scripts/dev-helpers/ec-research/ghidra-texture-roles/results/uosa_texture_roles.md`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[repr(u8)]
 pub enum EcMaterialStableRole {
+    /// The block's shader name is not one of the UO shaders, so no input table applies.
     #[default]
-    UnknownSupport = 0,
+    Unknown = 0,
+    /// The colour image the material shows: sprite map 0, static terrain map 0 (RGB A), water map 1
+    /// (the surface the client reads as the primary texture).
     Base = 1,
+    /// Static terrain map 1: RGB B, blended with RGB A by the blend alpha.
     SecondaryBase = 2,
-    AlphaMask = 3,
-    GenericMask = 4,
+    /// Static terrain map 2: its alpha mixes RGB B toward RGB A.
+    BlendAlpha = 3,
+    /// Static terrain map 3: coverage alpha.
+    CoverageAlpha = 4,
+    /// Sprite map 1 (multiplied in at FFP stage 1; unused by the HLSL sprite shader), and map 1 of the
+    /// light block.
     Noise = 5,
-    Detail = 6,
-    Overlay = 7,
-    NormalLike = 8,
-    ImageSupport = 9,
-    EffectOnlyMetadata = 10,
+    /// Sprite map 2: its alpha blends the colour toward the hue (`HueMaskSampler`).
+    HueMask = 6,
+    /// Water map 0: the bump source (`D3DTOP_BUMPENVMAP`).
+    WaterBump = 7,
+    /// Water map 2: the surface sampled with reflection-vector texgen.
+    WaterReflection = 8,
+    /// Water map 3: the optional fourth stage, composed by `Technique[1]`.
+    WaterFourthStage = 9,
+    /// Light block (block 3) map 0: the light sprite texture.
+    Light = 10,
+    /// A position the block's shader never reads (sprite map 3 and later, or past a shader's last map).
+    Unused = 11,
 }
+
+/// Role of each shader map a UO shader reads, indexed by item position.
+const SPRITE_ROLES: [EcMaterialStableRole; 3] =
+    [EcMaterialStableRole::Base, EcMaterialStableRole::Noise, EcMaterialStableRole::HueMask];
+const WATER_ROLES: [EcMaterialStableRole; 4] = [
+    EcMaterialStableRole::WaterBump, EcMaterialStableRole::Base,
+    EcMaterialStableRole::WaterReflection, EcMaterialStableRole::WaterFourthStage,
+];
+const STATIC_TERRAIN_ROLES: [EcMaterialStableRole; 4] = [
+    EcMaterialStableRole::Base, EcMaterialStableRole::SecondaryBase,
+    EcMaterialStableRole::BlendAlpha, EcMaterialStableRole::CoverageAlpha,
+];
+const LIGHT_ROLES: [EcMaterialStableRole; 2] = [EcMaterialStableRole::Light, EcMaterialStableRole::Noise];
 
 impl EcMaterialStableRole {
     pub fn from_u8(value: u8) -> Self {
         match value {
             1 => Self::Base,
             2 => Self::SecondaryBase,
-            3 => Self::AlphaMask,
-            4 => Self::GenericMask,
+            3 => Self::BlendAlpha,
+            4 => Self::CoverageAlpha,
             5 => Self::Noise,
-            6 => Self::Detail,
-            7 => Self::Overlay,
-            8 => Self::NormalLike,
-            9 => Self::ImageSupport,
-            10 => Self::EffectOnlyMetadata,
-            _ => Self::UnknownSupport,
+            6 => Self::HueMask,
+            7 => Self::WaterBump,
+            8 => Self::WaterReflection,
+            9 => Self::WaterFourthStage,
+            10 => Self::Light,
+            11 => Self::Unused,
+            _ => Self::Unknown,
         }
     }
-}
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[repr(u8)]
-pub enum EcMaterialSpeculativeRole {
-    #[default]
-    UnknownSupport = 0,
-    LiquidRipple = 1,
-    LiquidReflectionSupport = 2,
-    LiquidEnvProbe = 3,
-    FoamHighlight = 4,
-    FlowMapLike = 5,
-    RefractionDistortionLike = 6,
-    WaterfallSupport = 7,
-    LavaBubbleSupport = 8,
-    PostBlendSupport = 9,
-}
-
-impl EcMaterialSpeculativeRole {
-    pub fn from_u8(value: u8) -> Self {
-        match value {
-            1 => Self::LiquidRipple,
-            2 => Self::LiquidReflectionSupport,
-            3 => Self::LiquidEnvProbe,
-            4 => Self::FoamHighlight,
-            5 => Self::FlowMapLike,
-            6 => Self::RefractionDistortionLike,
-            7 => Self::WaterfallSupport,
-            8 => Self::LavaBubbleSupport,
-            9 => Self::PostBlendSupport,
-            _ => Self::UnknownSupport,
-        }
-    }
-}
-
-/// Implementation readiness of a preserved EC texture reference.
-///
-/// Computed from `stable_role` and `speculative_role`; never stored as a separate
-/// binary field.  Classifies every preserved ref by which future rendering feature
-/// family it is meant to serve so later agents can consume or ignore refs without
-/// repeating role archaeology.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum EcMaterialImplementationReadiness {
-    /// Role derivation was inconclusive.
-    #[default]
-    Unknown,
-    /// Already selected or eligible as the visible base.  Stable role: `Base`.
-    BaseSafe,
-    /// Candidate for two-base + alpha-mask authored blend (Phase 10D).
-    /// Stable roles: `SecondaryBase`, `AlphaMask`, `Detail`, `Overlay`.
-    BlendReady,
-    /// Candidate for liquid-base + ripple/normal-like perturbation (Phase 10E/10F).
-    /// Speculative roles: `LiquidRipple`, `LiquidReflectionSupport`, `LiquidEnvProbe`
-    /// on any stable role, or `NormalLike` with a liquid speculative role.
-    LiquidReady,
-    /// Normal-map-like candidate not yet consumable by any implemented pass.
-    /// Stable role: `NormalLike` without a liquid speculative role.
-    NormalLikeExperimental,
-    /// Requires a dedicated extra render pass not yet implemented.
-    /// Speculative roles: `FoamHighlight`, `WaterfallSupport`, `LavaBubbleSupport`,
-    /// `RefractionDistortionLike`, `FlowMapLike`, `PostBlendSupport`.
-    /// Also: `EffectOnlyMetadata` stable role.
-    ExtraPassOnly,
-}
-
-impl EcMaterialImplementationReadiness {
-    /// Derive readiness from an already-resolved stable and speculative role pair.
-    pub fn from_roles(stable: EcMaterialStableRole, speculative: EcMaterialSpeculativeRole) -> Self {
-        use EcMaterialImplementationReadiness::*;
-        use EcMaterialSpeculativeRole as Spec;
-        use EcMaterialStableRole as Stable;
-
-        match stable {
-            Stable::Base => BaseSafe,
-            Stable::SecondaryBase | Stable::AlphaMask | Stable::Detail | Stable::Overlay => {
-                BlendReady
+    /// Role of the item at `item_index` of block `block_index`, whose shader is `shader_name`.
+    ///
+    /// Block 3 is the light texture block whatever its shader name. An unknown shader name gives
+    /// `Unknown`; a position past the shader's last map gives `Unused`.
+    pub fn for_texture_position(block_index: u8, shader_name: Option<&str>, item_index: u8) -> Self {
+        use uocf::enhanced::tileart::{LIGHT_TEXTURE_BLOCK_INDEX, SPRITE_SHADER_NAME, STATIC_TERRAIN_SHADER_NAME, WATER_SHADER_NAME};
+        let roles: &[Self] = if block_index == LIGHT_TEXTURE_BLOCK_INDEX {
+            &LIGHT_ROLES
+        } else {
+            match shader_name {
+                Some(SPRITE_SHADER_NAME) => &SPRITE_ROLES,
+                Some(WATER_SHADER_NAME) => &WATER_ROLES,
+                Some(STATIC_TERRAIN_SHADER_NAME) => &STATIC_TERRAIN_ROLES,
+                _ => return Self::Unknown,
             }
-            Stable::NormalLike => match speculative {
-                Spec::LiquidRipple | Spec::LiquidReflectionSupport | Spec::LiquidEnvProbe => {
-                    LiquidReady
-                }
-                _ => NormalLikeExperimental,
-            },
-            Stable::ImageSupport
-            | Stable::GenericMask
-            | Stable::Noise
-            | Stable::UnknownSupport => match speculative {
-                Spec::LiquidRipple | Spec::LiquidReflectionSupport | Spec::LiquidEnvProbe => {
-                    LiquidReady
-                }
-                Spec::FoamHighlight
-                | Spec::WaterfallSupport
-                | Spec::LavaBubbleSupport
-                | Spec::RefractionDistortionLike
-                | Spec::FlowMapLike
-                | Spec::PostBlendSupport => ExtraPassOnly,
-                Spec::UnknownSupport => Unknown,
-            },
-            Stable::EffectOnlyMetadata => ExtraPassOnly,
-        }
+        };
+        roles.get(item_index as usize).copied().unwrap_or(Self::Unused)
+    }
+
+    /// The material's colour images: `Base` and `SecondaryBase`.
+    pub fn is_colour(self) -> bool {
+        matches!(self, Self::Base | Self::SecondaryBase)
     }
 
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Unknown => "unknown",
-            Self::BaseSafe => "base_safe",
-            Self::BlendReady => "blend_ready",
-            Self::LiquidReady => "liquid_ready",
-            Self::NormalLikeExperimental => "normal_like_experimental",
-            Self::ExtraPassOnly => "extra_pass_only",
+            Self::Base => "base",
+            Self::SecondaryBase => "secondary_base",
+            Self::BlendAlpha => "blend_alpha",
+            Self::CoverageAlpha => "coverage_alpha",
+            Self::Noise => "noise",
+            Self::HueMask => "hue_mask",
+            Self::WaterBump => "water_bump",
+            Self::WaterReflection => "water_reflection",
+            Self::WaterFourthStage => "water_fourth_stage",
+            Self::Light => "light",
+            Self::Unused => "unused",
         }
     }
+}
+
+/// Names of the file-name roles that format 1 had, kept only until dynapper stops naming them.
+///
+/// Each maps to the position role that took its place; none is ever `Base`, so a check that rejects
+/// "a support image as the primary" keeps rejecting non-colour inputs. Remove this block once
+/// dynapper (statics_collect.rs, static_surface.rs) uses the roles above.
+#[allow(non_upper_case_globals)]
+impl EcMaterialStableRole {
+    #[deprecated(note = "file-name role; use BlendAlpha or CoverageAlpha")]
+    #[doc(hidden)]
+    pub const AlphaMask: Self = Self::BlendAlpha;
+    #[deprecated(note = "file-name role; use HueMask")]
+    #[doc(hidden)]
+    pub const GenericMask: Self = Self::HueMask;
+    #[deprecated(note = "file-name role; use WaterBump")]
+    #[doc(hidden)]
+    pub const NormalLike: Self = Self::WaterBump;
+    #[deprecated(note = "file-name role; use the position roles")]
+    #[doc(hidden)]
+    pub const ImageSupport: Self = Self::Unused;
+    #[deprecated(note = "file-name role; use the position roles")]
+    #[doc(hidden)]
+    pub const EffectOnlyMetadata: Self = Self::Unknown;
+}
+
+/// Format 1's file-name "speculative role" (the words "ripple", "foam", "water" ... in the path).
+///
+/// Format 2 no longer stores it: `TileMetaItemTextureRef::speculative_role` always returns
+/// `UnknownSupport`. Kept only until dynapper (statics_collect.rs) stops naming it; then remove it.
+#[deprecated(note = "file-name role, no longer stored; use EcMaterialStableRole and the block shader")]
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EcMaterialSpeculativeRole {
+    UnknownSupport,
+    LiquidRipple,
+    LiquidReflectionSupport,
+    LiquidEnvProbe,
+    FoamHighlight,
+    FlowMapLike,
+    RefractionDistortionLike,
+    WaterfallSupport,
+    LavaBubbleSupport,
+    PostBlendSupport,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -393,9 +413,11 @@ pub struct TileMetaItemTextureRef {
     /// Tileart texture item load path selector (medium confidence).
     pub source_kind: u8,
     pub physical_package: u8,
+    /// `EcMaterialStableRole`, from the block shader and `item_index`.
     pub stable_role: u8,
-    pub speculative_role: u8,
-    /// Probable sampler index inside the tileart shader block (low confidence).
+    /// 0. Held a file-name "speculative role" before format 2.
+    pub _reserved: u8,
+    /// Stored by the client but never read: it binds item i to shader map i. Use `item_index`.
     pub sampler_index: u32,
     /// Tileart texture item UV set (medium confidence).
     pub uv_set: u32,
@@ -404,21 +426,28 @@ pub struct TileMetaItemTextureRef {
 /// On-disk size of one `item_texture_refs.bin` record.
 const TILEMETA_ITEM_TEXTURE_REF_SIZE: usize = 24;
 
-// Packages written before the field renames must keep loading: the record stays packed
-// with the renamed fields at their original positions.
+// The record stays packed: 24 bytes with no padding.
 const _: () = {
     use std::mem::{offset_of, size_of};
     assert!(size_of::<TileMetaItemTextureRef>() == TILEMETA_ITEM_TEXTURE_REF_SIZE);
     assert!(offset_of!(TileMetaItemTextureRef, source_kind)
         == offset_of!(TileMetaItemTextureRef, texture_stretch) + size_of::<f32>());
     assert!(offset_of!(TileMetaItemTextureRef, sampler_index)
-        == offset_of!(TileMetaItemTextureRef, speculative_role) + size_of::<u8>());
+        == offset_of!(TileMetaItemTextureRef, _reserved) + size_of::<u8>());
     assert!(offset_of!(TileMetaItemTextureRef, uv_set)
         == offset_of!(TileMetaItemTextureRef, sampler_index) + size_of::<u32>());
     assert!(offset_of!(TileMetaItemTextureRef, uv_set) + size_of::<u32>() == TILEMETA_ITEM_TEXTURE_REF_SIZE);
 };
 
 impl TileMetaItemTextureRef {
+    /// Always `UnknownSupport`: format 2 stores no file-name role.
+    #[deprecated(note = "file-name role, no longer stored; use stable_role")]
+    #[doc(hidden)]
+    #[allow(deprecated)]
+    pub fn speculative_role(&self) -> EcMaterialSpeculativeRole {
+        EcMaterialSpeculativeRole::UnknownSupport
+    }
+
     pub fn is_auxiliary(&self) -> bool {
         self.flags & TILEMETA_ITEM_TEXTURE_FLAG_AUXILIARY != 0
     }
@@ -441,19 +470,6 @@ impl TileMetaItemTextureRef {
 
     pub fn stable_role(&self) -> EcMaterialStableRole {
         EcMaterialStableRole::from_u8(self.stable_role)
-    }
-
-    pub fn speculative_role(&self) -> EcMaterialSpeculativeRole {
-        EcMaterialSpeculativeRole::from_u8(self.speculative_role)
-    }
-
-    /// Compute the implementation readiness class from the stored role fields.
-    ///
-    /// Readiness is not stored as a separate binary field; it is always derived fresh
-    /// from `stable_role` and `speculative_role` so it reflects the current derivation
-    /// logic without requiring a format version bump.
-    pub fn implementation_readiness(&self) -> EcMaterialImplementationReadiness {
-        EcMaterialImplementationReadiness::from_roles(self.stable_role(), self.speculative_role())
     }
 }
 
@@ -481,6 +497,9 @@ impl TileMetaPackage {
     }
 
     pub fn from_uddp_package(package: UddpReader) -> eyre::Result<Self> {
+        eyre::ensure!(package.find_by_path_hash(udd_container::xxh64_virtual_path(TILEMETA_FORMAT_1_ITEM_TEXTURE_REF_ENTRY_PATH)).is_none(),
+            "tilemeta format 1 (texture roles from file names), expected format {TILEMETA_FORMAT_VERSION}; \
+             repack with the current udd-cli");
         let land_bytes = read_path_entry_cow(&package, TILEMETA_LAND_ENTRY_PATH)?;
         let item_bytes = read_path_entry_cow(&package, TILEMETA_ITEM_ENTRY_PATH)?;
         let item_texture_ref_span_bytes = read_path_entry_cow(&package, TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH)
@@ -609,13 +628,23 @@ impl TileMetaPackage {
     }
 }
 
+/// Tileart block holding the Enhanced Client's own (KR) art; blocks 1 and 2 are the legacy and
+/// enhanced art sets, whose position 0 is a `Base` image too.
+pub const TILEMETA_EC_TEXTURE_BLOCK_INDEX: u8 = 0;
+
+/// Refs of the EC block. The main-texture selectors read only these through their role branches:
+/// every block has a `Base` image at its primary position.
+fn ec_block_refs(texture_refs: &[TileMetaItemTextureRef]) -> impl Iterator<Item = &TileMetaItemTextureRef> + Clone {
+    texture_refs.iter().filter(|texture_ref| texture_ref.block_index == TILEMETA_EC_TEXTURE_BLOCK_INDEX)
+}
+
 fn choose_main_ec_texture_ref(
     texture_refs: &[TileMetaItemTextureRef],
     tile_id: u32,
     allow_exact_tile_id: bool,
 ) -> Option<(&TileMetaItemTextureRef, TileMetaMainEcTextureReason)> {
-    texture_refs
-        .iter()
+    let ec_refs = ec_block_refs(texture_refs);
+    ec_refs.clone()
         .find(|texture_ref| {
             allow_exact_tile_id
                 && !texture_ref.is_auxiliary()
@@ -624,8 +653,7 @@ fn choose_main_ec_texture_ref(
         })
         .map(|texture_ref| (texture_ref, TileMetaMainEcTextureReason::RoleBaseExactTileId))
         .or_else(|| {
-            texture_refs
-                .iter()
+            ec_refs.clone()
                 .find(|texture_ref| {
                     !texture_ref.is_auxiliary()
                         && valid_ec_art_texture_identity(
@@ -644,8 +672,7 @@ fn choose_main_ec_texture_ref(
                 })
         })
         .or_else(|| {
-            texture_refs
-                .iter()
+            ec_refs.clone()
                 .find(|texture_ref| {
                     !texture_ref.is_auxiliary()
                         && valid_ec_art_texture_identity(
@@ -658,8 +685,7 @@ fn choose_main_ec_texture_ref(
                 .map(|texture_ref| (texture_ref, TileMetaMainEcTextureReason::RoleBaseFirst))
         })
         .or_else(|| {
-            texture_refs
-                .iter()
+            ec_refs.clone()
                 .find(|texture_ref| {
                     !texture_ref.is_auxiliary()
                         && valid_ec_art_texture_identity(
@@ -678,8 +704,7 @@ fn choose_main_ec_texture_ref(
                 })
         })
         .or_else(|| {
-            texture_refs
-                .iter()
+            ec_refs.clone()
                 .find(|texture_ref| {
                     !texture_ref.is_auxiliary()
                         && valid_ec_art_texture_identity(
@@ -697,11 +722,10 @@ fn choose_main_ec_texture_ref(
                 })
         })
         .or_else(|| {
-            texture_refs
-                .iter()
+            ec_refs.clone()
                 .find(|texture_ref| {
                     allow_exact_tile_id
-                        && texture_ref.stable_role() == EcMaterialStableRole::UnknownSupport
+                        && texture_ref.stable_role() == EcMaterialStableRole::Unknown
                         && !texture_ref.is_auxiliary()
                         && texture_ref.is_world_art()
                         && texture_ref.texture_id == tile_id
@@ -714,10 +738,9 @@ fn choose_main_ec_texture_ref(
                 })
         })
         .or_else(|| {
-            texture_refs
-                .iter()
+            ec_refs.clone()
                 .find(|texture_ref| {
-                    texture_ref.stable_role() == EcMaterialStableRole::UnknownSupport
+                    texture_ref.stable_role() == EcMaterialStableRole::Unknown
                         && valid_ec_art_texture_identity(
                             texture_ref,
                             tile_id,
@@ -735,10 +758,9 @@ fn choose_main_ec_texture_ref(
                 })
         })
         .or_else(|| {
-            texture_refs
-                .iter()
+            ec_refs.clone()
                 .find(|texture_ref| {
-                    texture_ref.stable_role() == EcMaterialStableRole::UnknownSupport
+                    texture_ref.stable_role() == EcMaterialStableRole::Unknown
                         && valid_ec_art_texture_identity(
                             texture_ref,
                             tile_id,
@@ -763,8 +785,10 @@ fn choose_main_ec_texture_id_role_aware(
     texture_refs: &[TileMetaItemTextureRef],
     item_tile: Option<&TileMetaItemTile>,
 ) -> Option<(u32, EcMaterialStableRole, MainEcTextureRoleReason)> {
+    // Steps 1-5 read roles, so only the EC block; steps 6-7 take any block.
+    let ec_refs = ec_block_refs(texture_refs);
     // 1. Base + primary-selected
-    if let Some(r) = texture_refs.iter().find(|r| {
+    if let Some(r) = ec_refs.clone().find(|r| {
         !r.is_auxiliary()
             && r.stable_role() == EcMaterialStableRole::Base
             && r.is_primary_selected()
@@ -773,14 +797,14 @@ fn choose_main_ec_texture_id_role_aware(
     }
 
     // 2. Base, any (first found)
-    if let Some(r) = texture_refs.iter().find(|r| {
+    if let Some(r) = ec_refs.clone().find(|r| {
         !r.is_auxiliary() && r.stable_role() == EcMaterialStableRole::Base
     }) {
         return Some((r.texture_id, EcMaterialStableRole::Base, MainEcTextureRoleReason::RoleBaseFirst));
     }
 
     // 3. SecondaryBase + primary-selected
-    if let Some(r) = texture_refs.iter().find(|r| {
+    if let Some(r) = ec_refs.clone().find(|r| {
         !r.is_auxiliary()
             && r.stable_role() == EcMaterialStableRole::SecondaryBase
             && r.is_primary_selected()
@@ -792,29 +816,29 @@ fn choose_main_ec_texture_id_role_aware(
         ));
     }
 
-    // 4. WorldArt + primary-selected (UnknownSupport only)
-    if let Some(r) = texture_refs.iter().find(|r| {
+    // 4. WorldArt + primary-selected (Unknown only)
+    if let Some(r) = ec_refs.clone().find(|r| {
         !r.is_auxiliary()
-            && r.stable_role() == EcMaterialStableRole::UnknownSupport
+            && r.stable_role() == EcMaterialStableRole::Unknown
             && r.is_world_art()
             && r.is_primary_selected()
     }) {
         return Some((
             r.texture_id,
-            EcMaterialStableRole::UnknownSupport,
+            EcMaterialStableRole::Unknown,
             MainEcTextureRoleReason::FallbackWorldArtPrimary,
         ));
     }
 
-    // 5. WorldArt, first non-aux (UnknownSupport only)
-    if let Some(r) = texture_refs.iter().find(|r| {
+    // 5. WorldArt, first non-aux (Unknown only)
+    if let Some(r) = ec_refs.clone().find(|r| {
         !r.is_auxiliary()
-            && r.stable_role() == EcMaterialStableRole::UnknownSupport
+            && r.stable_role() == EcMaterialStableRole::Unknown
             && r.is_world_art()
     }) {
         return Some((
             r.texture_id,
-            EcMaterialStableRole::UnknownSupport,
+            EcMaterialStableRole::Unknown,
             MainEcTextureRoleReason::FallbackWorldArtFirst,
         ));
     }
@@ -845,7 +869,7 @@ fn choose_main_ec_texture_id_role_aware(
         if item.ec_texture_id != 0 {
             return Some((
                 item.ec_texture_id,
-                EcMaterialStableRole::UnknownSupport,
+                EcMaterialStableRole::Unknown,
                 MainEcTextureRoleReason::FallbackLegacyEcTextureId,
             ));
         }
@@ -887,55 +911,50 @@ mod tests {
         }
     }
 
-    #[test]
-    fn item_texture_ref_material_axes_decode_from_dense_bytes() {
-        let texture_ref = TileMetaItemTextureRef {
-            texture_id: 42,
-            texture_type: EcMaterialLogicalFamily::Textures as u8,
-            physical_package: EcMaterialPhysicalPackage::TerrainTexture as u8,
-            stable_role: EcMaterialStableRole::ImageSupport as u8,
-            speculative_role: EcMaterialSpeculativeRole::LiquidRipple as u8,
-            ..TileMetaItemTextureRef::zeroed()
-        };
-
-        assert_eq!(
-            texture_ref.logical_family(),
-            EcMaterialLogicalFamily::Textures
-        );
-        assert_eq!(
-            texture_ref.physical_package(),
-            EcMaterialPhysicalPackage::TerrainTexture
-        );
-        assert_eq!(
-            texture_ref.stable_role(),
-            EcMaterialStableRole::ImageSupport
-        );
-        assert_eq!(
-            texture_ref.speculative_role(),
-            EcMaterialSpeculativeRole::LiquidRipple
-        );
+    fn package_with_refs_at(refs_path: &str) -> eyre::Result<TileMetaPackage> {
+        let mut builder = udd_container::UddpBuilder::new(udd_container::LookupMode::VirtualPathHash);
+        let entries = [
+            (TILEMETA_LAND_ENTRY_PATH, b"".as_slice()),
+            (TILEMETA_ITEM_ENTRY_PATH, b"".as_slice()),
+            (TILEMETA_ITEM_TEXTURE_REF_INDEX_ENTRY_PATH, b"".as_slice()),
+            (refs_path, b"".as_slice()),
+            (TILEMETA_ITEM_MATERIAL_ENTRY_PATH, b"{}".as_slice()),
+        ];
+        for (path, data) in entries {
+            builder.add_file(udd_container::AddFileRequest {
+                data_type: udd_container::DataType::Metadata as u8,
+                compression: udd_container::CompressionFlag::ZstdNoDict,
+                width: 0, height: 0, virtual_path: Some(path), path_hash64: None, id: None, data,
+            }).expect("add test metadata");
+        }
+        TileMetaPackage::from_uddp_package(UddpReader::open(builder.build().expect("build test metadata")).expect("open test metadata"))
     }
 
     #[test]
-    fn zeroed_item_texture_ref_keeps_old_sidecar_axes_unknown() {
-        let texture_ref = TileMetaItemTextureRef::zeroed();
+    fn only_the_current_format_version_loads() {
+        assert!(TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH.contains(&format!(".v{TILEMETA_FORMAT_VERSION}.")));
+        assert!(package_with_refs_at(TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH).is_ok());
+        let message = package_with_refs_at(TILEMETA_FORMAT_1_ITEM_TEXTURE_REF_ENTRY_PATH)
+            .err().expect("reject a format 1 tilemeta").to_string();
+        assert!(message.contains("format 1") && message.contains("repack"), "{message}");
+    }
 
-        assert_eq!(
-            texture_ref.logical_family(),
-            EcMaterialLogicalFamily::Unknown
-        );
-        assert_eq!(
-            texture_ref.physical_package(),
-            EcMaterialPhysicalPackage::Unknown
-        );
-        assert_eq!(
-            texture_ref.stable_role(),
-            EcMaterialStableRole::UnknownSupport
-        );
-        assert_eq!(
-            texture_ref.speculative_role(),
-            EcMaterialSpeculativeRole::UnknownSupport
-        );
+    #[test]
+    fn roles_come_from_the_shader_and_the_item_position() {
+        use uocf::enhanced::tileart::{LIGHT_TEXTURE_BLOCK_INDEX, SPRITE_SHADER_NAME, STATIC_TERRAIN_SHADER_NAME, WATER_SHADER_NAME};
+        use EcMaterialStableRole as R;
+        let roles = |block, shader, count| (0..count).map(|position| R::for_texture_position(block, shader, position)).collect::<Vec<_>>();
+        assert_eq!(roles(0, Some(SPRITE_SHADER_NAME), 4), [R::Base, R::Noise, R::HueMask, R::Unused]);
+        assert_eq!(roles(1, Some(SPRITE_SHADER_NAME), 4), [R::Base, R::Noise, R::HueMask, R::Unused]);
+        assert_eq!(roles(0, Some(WATER_SHADER_NAME), 5),
+            [R::WaterBump, R::Base, R::WaterReflection, R::WaterFourthStage, R::Unused]);
+        assert_eq!(roles(0, Some(STATIC_TERRAIN_SHADER_NAME), 4), [R::Base, R::SecondaryBase, R::BlendAlpha, R::CoverageAlpha]);
+        assert_eq!(roles(LIGHT_TEXTURE_BLOCK_INDEX, Some(SPRITE_SHADER_NAME), 3), [R::Light, R::Noise, R::Unused]);
+        assert_eq!(roles(0, Some("SomeOtherShader"), 2), [R::Unknown, R::Unknown]);
+        assert_eq!(roles(0, None, 1), [R::Unknown]);
+        for value in 0..=R::Unused as u8 {
+            assert_eq!(R::from_u8(value) as u8, value);
+        }
         assert_eq!(std::mem::size_of::<TileMetaItemTextureRef>(), 24);
     }
 
@@ -1024,13 +1043,13 @@ mod tests {
             texture_ref_with_role(
                 100,
                 EcMaterialLogicalFamily::WorldArt,
-                EcMaterialStableRole::AlphaMask,
+                EcMaterialStableRole::BlendAlpha,
                 TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
             ),
             texture_ref_with_role(
                 101,
                 EcMaterialLogicalFamily::WorldArt,
-                EcMaterialStableRole::NormalLike,
+                EcMaterialStableRole::WaterBump,
                 0,
             ),
         ];
@@ -1043,7 +1062,7 @@ mod tests {
         family: EcMaterialLogicalFamily,
         flags: u8,
     ) -> TileMetaItemTextureRef {
-        texture_ref_with_role(texture_id, family, EcMaterialStableRole::UnknownSupport, flags)
+        texture_ref_with_role(texture_id, family, EcMaterialStableRole::Unknown, flags)
     }
 
     fn texture_ref_with_role(
@@ -1081,7 +1100,7 @@ mod tests {
             texture_ref_with_role(
                 77,
                 EcMaterialLogicalFamily::WorldArt,
-                EcMaterialStableRole::UnknownSupport,
+                EcMaterialStableRole::Unknown,
                 TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
             ),
         ];
@@ -1100,13 +1119,13 @@ mod tests {
             texture_ref_with_role(
                 55,
                 EcMaterialLogicalFamily::WorldArt,
-                EcMaterialStableRole::UnknownSupport,
+                EcMaterialStableRole::Unknown,
                 TILEMETA_ITEM_TEXTURE_FLAG_PRIMARY_SELECTED,
             ),
             texture_ref_with_role(
                 66,
                 EcMaterialLogicalFamily::WorldArt,
-                EcMaterialStableRole::UnknownSupport,
+                EcMaterialStableRole::Unknown,
                 0,
             ),
         ];
@@ -1123,7 +1142,7 @@ mod tests {
         let texture_refs = [texture_ref_with_role(
             10,
             EcMaterialLogicalFamily::Textures,
-            EcMaterialStableRole::NormalLike,
+            EcMaterialStableRole::WaterBump,
             0,
         )];
 
@@ -1159,87 +1178,5 @@ mod tests {
         assert_eq!(id, 777);
         assert_eq!(reason, MainEcTextureRoleReason::FallbackLegacyEcTextureId);
         assert!(reason.is_low_confidence());
-    }
-
-    // --- Implementation readiness tests (Phase 12) ---
-
-    fn ref_with_roles(
-        stable: EcMaterialStableRole,
-        speculative: EcMaterialSpeculativeRole,
-    ) -> TileMetaItemTextureRef {
-        TileMetaItemTextureRef {
-            texture_id: 1,
-            stable_role: stable as u8,
-            speculative_role: speculative as u8,
-            ..TileMetaItemTextureRef::zeroed()
-        }
-    }
-
-    #[test]
-    fn blend_ready_secondary_base_preserved() {
-        let r = ref_with_roles(
-            EcMaterialStableRole::SecondaryBase,
-            EcMaterialSpeculativeRole::UnknownSupport,
-        );
-        assert_eq!(
-            r.implementation_readiness(),
-            EcMaterialImplementationReadiness::BlendReady
-        );
-    }
-
-    #[test]
-    fn liquid_ready_ripple_preserved() {
-        let r = ref_with_roles(
-            EcMaterialStableRole::ImageSupport,
-            EcMaterialSpeculativeRole::LiquidRipple,
-        );
-        assert_eq!(
-            r.implementation_readiness(),
-            EcMaterialImplementationReadiness::LiquidReady
-        );
-    }
-
-    #[test]
-    fn normal_like_distinguished_from_liquid_ready() {
-        let r = ref_with_roles(
-            EcMaterialStableRole::NormalLike,
-            EcMaterialSpeculativeRole::UnknownSupport,
-        );
-        assert_eq!(
-            r.implementation_readiness(),
-            EcMaterialImplementationReadiness::NormalLikeExperimental
-        );
-        // NormalLike + liquid speculative → LiquidReady, not NormalLikeExperimental.
-        let r2 = ref_with_roles(
-            EcMaterialStableRole::NormalLike,
-            EcMaterialSpeculativeRole::LiquidEnvProbe,
-        );
-        assert_eq!(
-            r2.implementation_readiness(),
-            EcMaterialImplementationReadiness::LiquidReady
-        );
-    }
-
-    #[test]
-    fn extra_pass_foam_preserved() {
-        let r = ref_with_roles(
-            EcMaterialStableRole::ImageSupport,
-            EcMaterialSpeculativeRole::FoamHighlight,
-        );
-        assert_eq!(
-            r.implementation_readiness(),
-            EcMaterialImplementationReadiness::ExtraPassOnly
-        );
-    }
-
-    #[test]
-    fn readiness_visible_from_ref_method_and_as_str() {
-        let r = ref_with_roles(
-            EcMaterialStableRole::Base,
-            EcMaterialSpeculativeRole::UnknownSupport,
-        );
-        let readiness = r.implementation_readiness();
-        assert_eq!(readiness, EcMaterialImplementationReadiness::BaseSafe);
-        assert_eq!(readiness.as_str(), "base_safe");
     }
 }

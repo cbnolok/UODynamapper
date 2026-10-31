@@ -1,9 +1,9 @@
 //! Runtime support for `tex_aux_ec.uddp`.
 //!
 //! This package holds the image-bearing support texture refs a runtime consumer reads: tileart
-//! refs with a non-base stable role (ImageSupport, AlphaMask, Noise, etc.) of the families listed by
-//! the packer (currently WorldArt only). It is the natural home for any ref that is owned by tileart
-//! yet should not land in `tex_art_ec.uddp` (which keeps only base-role images).
+//! refs that are not the primary image (hue masks, terrain RGB B and alphas, water stages, noise) of
+//! the families listed by the packer (currently WorldArt only). The primary image of each item is in
+//! `tex_art_ec.uddp` instead.
 //!
 //! Package layout:
 //! - `metadata/slots.bin`: flat array of `TexAuxEcSlotRecord`, sorted by `texture_id`.
