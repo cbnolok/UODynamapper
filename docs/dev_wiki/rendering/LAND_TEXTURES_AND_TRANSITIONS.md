@@ -140,12 +140,19 @@ This means:
 
 EC land material records can reference multiple texture roles. Current runtime role mapping is:
 
-| Role | Texture role |
-|------|--------------|
-| `0` | base/diffuse/albedo |
-| `1` | detail |
-| `2` | mask/alpha |
-| `3` | normal/normal_map |
+| Role | Texture role | Default / bump item | Water item |
+|------|--------------|---------------------|------------|
+| `0` | base colour | 0 (colour A, the primary) | 1 (fallback colour, the primary) |
+| `1` | detail | 1 (colour B) | - |
+| `2` | mask/alpha | 2 (blend alpha) | - |
+| `3` | normal | bump only: 3 (luminance bump) | 0 (distortion du/dv) |
+| `4` | animated liquid | - | 2 (main colour) |
+
+The source item behind each role depends on the material's layer class, which comes from its shader name (`TerrainLayerClass`; `UOWaterTerrainLayer`/`UOWaterShader` water, `UOBumpMapTerrainLayer` bump, anything else default). Positions are the client's (`scripts/dev-helpers/ec-research/ghidra-terrain-layers/results/uosa_terrain_layers.md`); names and stretch never pick a layer, and stretch is only a UV divisor.
+
+- The land shader blends `base * a + detail * (1 - a)`, `a` being the mask alpha, as the client's `SetupFourStages` does (`sample_ec_material_albedo`, `sampling.wesl`). Earlier code had the blend inverted and, through a name/stretch heuristic, used item 1 as the base of 22 materials (grass 1, rock 6, cave 13 and 171-189).
+- Edge softness between materials is each material's `coverage_exponent` from `TerrainDefinition.uop` (`coverage.rs`): 0 gives a hard edge with point filtering, a larger value a soft falloff with bilinear filtering. The client has no "smooth" flag, and `EcTerrainOverrides.kdl` no longer has a `smooth` policy.
+- `policy "follow-center"` (terrains 5 and 53) only strengthens the land shader's normal scroll and wave height. It is a repo-side look with no client counterpart.
 
 Normal maps remain land-owned material support data when they are reached through `TerrainDefinition` material roles. They should not be reclassified as art or effect textures only because the physical DDS came from a shared source pool. Known KR normal maps can be DXT1 RGB DDS files, but that is source evidence rather than runtime storage. UDDP land packages repack the decoded pixels as RGBA8888 or BC7/BC7-RDO atlas pages, and the renderer samples the repacked RGB channels rather than assuming a special normal-map compression format.
 

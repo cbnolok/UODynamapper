@@ -188,7 +188,6 @@ fn mesh_for_scale(handles: &LandMeshHandles, scale: u32, lod: LandMeshLod) -> Ha
 
 use crate::core::render::scene::world::land::tile_atlas::{
     Rg16u, TileAtlas, TERRAIN_SHADER_FLAG_FOLLOW_CENTER, TERRAIN_SHADER_FLAG_REVIEWED_LIQUID,
-    TERRAIN_SHADER_FLAG_SMOOTH,
 };
 
 #[derive(Component)]

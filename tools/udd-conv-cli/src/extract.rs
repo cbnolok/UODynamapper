@@ -302,7 +302,7 @@ fn extract_tex_land_ec(package: &UddpReader, out_dir: &Path) -> eyre::Result<boo
     write_text_file(&out_dir.join("metadata/present_slots.csv"), &slots_csv)?;
 
     let mut provenance_csv = String::from(
-        "material_id,material_name_id,alias_count_index,alias_slot_id,alias_tile_flags,selected_texture_id,canonical_slot_id,selected_layer_index,selected_texture_repetition,primary_texture_id,primary_layer_index,primary_selection_reason,primary_selection_flags\n",
+        "material_id,material_name_id,alias_count_index,alias_slot_id,alias_tile_flags,selected_texture_id,canonical_slot_id,selected_layer_index,selected_texture_repetition,primary_texture_id,primary_layer_index,layer_class,selected_layer_role\n",
     );
     for record in package.terrain_provenance() {
         writeln!(
@@ -319,8 +319,8 @@ fn extract_tex_land_ec(package: &UddpReader, out_dir: &Path) -> eyre::Result<boo
             record.selected_texture_repetition,
             optional_u32_csv(record.primary_texture_id, MISSING_TEXTURE_ID),
             optional_u32_csv(record.primary_layer_index, MISSING_TERRAIN_LAYER_INDEX),
-            record.primary_selection_reason,
-            record.primary_selection_flags
+            record.layer_class.as_str(),
+            record.selected_layer_role.map_or("", |role| role.as_str())
         )
         .unwrap();
     }

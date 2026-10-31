@@ -28,14 +28,15 @@
 //
 // 1. `policy`
 //
-//     policy "smooth" code="reviewed_runtime_policy"
 //     policy "follow-center" code="reviewed_runtime_policy"
 //
 // - Argument: policy keyword string.
 // - Known policy keywords currently used:
-//   - `"smooth"`: request smooth terrain treatment for this material.
-//   - `"follow-center"`: request center/follow-center behavior for this
-//     material where runtime blending/selection supports it.
+//   - `"follow-center"`: a repo-side liquid look (stronger normal scroll and wave
+//     height in the land shader); the client has no such flag.
+// - There is no "smooth" policy: the client's edge softness is each material's
+//   TerrainDefinition.uop `coverage_exponent` (0: hard edge, point filtering;
+//   larger: soft falloff, bilinear filtering), which the renderer reads directly.
 // - `code`: optional short reason code emitted into metadata/audits.
 // - Unknown policy strings still parse and are preserved. They only do
 //   something if runtime code recognizes them.
@@ -61,9 +62,14 @@
 //   - `"m"`: mask/alpha blend-control layer.
 //   - `"s"`: support/specular-like or future support role.
 //   - `"n"`: normal-map-like support role.
-// - `t0`, `t1`, `m` and `n` override material layers 0, 1, 2 and 3. Any other
+// - `t0`, `t1`, `m` and `n` override render layers 0, 1, 2 and 3. Any other
 //   role string (including `s`) takes the layer at its position among the
 //   material's `layer` overrides.
+// - The source items bind by position per layer class (TerrainLayerClass in
+//   lib/uocf terrain_definition.rs): default/bump `t0`/`t1`/`m` = items 0/1/2
+//   (colour = item0 · a + item1 · (1 − a), a = item 2 alpha); water `t0` =
+//   item 1 (fallback colour), `n` = item 0 (distortion du/dv), and the main
+//   colour is item 2 (no override role).
 // - Properties:
 //   - `tex`: required unsigned integer EC texture id.
 //   - `stretch`: optional float. Authored repetition/stretch. Preserve source
@@ -100,8 +106,6 @@
 //   - `reviewed_liquid_motion`
 //   - `reviewed_layer_texture`
 //   - `reviewed_liquid_texture`
-//   - `from_terrain_definition_kdl`: a value carried over from the removed hand-written
-//     TerrainDefinition.kdl that neither TerrainDefinition.uop nor this file had.
 // - Suggested additional codes when needed:
 //   - `reviewed_textureid`
 //   - `intentionally_hidden`
@@ -116,15 +120,19 @@
 // Earlier versions of this file are in git history.
 //
 // Liquid texture notes:
-// - The current reviewed liquid layer choices mirror the third-party
-//   UOClient-stefanomerotta terrain data:
-//   - water:       t0=02000051 stretch=4,  n=01000013 stretch=16
-//   - lava:        t0=02000100 stretch=6,  n=01000012 stretch=12
-//   - acid:        t0=02000490 stretch=8,  n=01000012 stretch=12
-//   - swamp water: t0=02000702 stretch=20, n=02000703 stretch=16
+// - The reviewed liquid layers first mirrored the third-party
+//   UOClient-stefanomerotta terrain data. They are now checked against the
+//   client's water positions in TerrainDefinition.uop: `t0` is item 1 (the
+//   fallback colour) and `n` is item 0 (the distortion map):
+//   - water  5:  t0=02000051 stretch=4, n=01000013 stretch=16 (unchanged)
+//   - lava  10:  t0=02000100 stretch=4 (was stretch 6, item 2's), n=01000012 stretch=12
+//   - acid  49:  t0=02000490 stretch=8, n=01000012 stretch=12 (unchanged)
+//   - swamp 70:  t0=02000700 stretch=4 (was 02000702 stretch 20: item 2's texture,
+//                no item's stretch), n=02000703 stretch=16
+// - These layers now equal the source items, which the renderer already binds
+//   by position for every water material; they can be removed.
 
 terrain 5 {
-    policy "smooth" code="reviewed_runtime_policy"
     policy "follow-center" code="reviewed_runtime_policy"
     liquid waveheight=0.3 code="reviewed_liquid_motion"
     layer "t0" tex=2000051 stretch=4.0 code="reviewed_liquid_texture"
@@ -132,14 +140,12 @@ terrain 5 {
 }
 
 terrain 10 {
-    policy "smooth" code="reviewed_runtime_policy"
     liquid speed=0.01 waveheight=0.2 code="reviewed_liquid_motion"
-    layer "t0" tex=2000100 stretch=6.0 code="reviewed_liquid_texture"
+    layer "t0" tex=2000100 stretch=4.0 code="reviewed_liquid_texture"
     layer "n" tex=1000012 stretch=12.0 code="reviewed_liquid_texture"
 }
 
 terrain 49 {
-    policy "smooth" code="reviewed_runtime_policy"
     liquid speed=0.01 waveheight=0.3 code="reviewed_liquid_motion"
     layer "t0" tex=2000490 stretch=8.0 code="reviewed_liquid_texture"
     layer "n" tex=1000012 stretch=12.0 code="reviewed_liquid_texture"
@@ -151,81 +157,11 @@ terrain 52 {
 }
 
 terrain 70 {
-    policy "smooth" code="reviewed_runtime_policy"
     liquid speed=0.01 waveheight=0.3 code="reviewed_liquid_motion"
-    layer "t0" tex=2000702 stretch=20.0 code="reviewed_liquid_texture"
+    layer "t0" tex=2000700 stretch=4.0 code="reviewed_liquid_texture"
     layer "n" tex=2000703 stretch=16.0 code="reviewed_liquid_texture"
 }
 
 terrain 53 {
-    policy "smooth" code="reviewed_runtime_policy"
     policy "follow-center" code="reviewed_runtime_policy"
-}
-
-terrain 195 {
-    policy "smooth" code="reviewed_runtime_policy"
-}
-
-terrain 201 {
-    layer "t0" tex=2000640 stretch=5.0 code="reviewed_layer_texture"
-    layer "t1" tex=2000641 stretch=5.0 code="reviewed_layer_texture"
-    layer "m" tex=1000003 stretch=16.0 code="from_terrain_definition_kdl"
-}
-
-// Solid terrains the removed TerrainDefinition.kdl flagged "Smooth"; TerrainDefinition.uop carries no such flag.
-
-terrain 1 {
-    policy "smooth" code="from_terrain_definition_kdl"
-}
-
-terrain 2 {
-    policy "smooth" code="from_terrain_definition_kdl"
-}
-
-terrain 3 {
-    policy "smooth" code="from_terrain_definition_kdl"
-}
-
-terrain 4 {
-    policy "smooth" code="from_terrain_definition_kdl"
-}
-
-terrain 6 {
-    policy "smooth" code="from_terrain_definition_kdl"
-}
-
-terrain 7 {
-    policy "smooth" code="from_terrain_definition_kdl"
-}
-
-terrain 8 {
-    policy "smooth" code="from_terrain_definition_kdl"
-}
-
-terrain 9 {
-    policy "smooth" code="from_terrain_definition_kdl"
-}
-
-terrain 13 {
-    policy "smooth" code="from_terrain_definition_kdl"
-}
-
-terrain 14 {
-    policy "smooth" code="from_terrain_definition_kdl"
-}
-
-terrain 15 {
-    policy "smooth" code="from_terrain_definition_kdl"
-}
-
-terrain 16 {
-    policy "smooth" code="from_terrain_definition_kdl"
-}
-
-terrain 20 {
-    policy "smooth" code="from_terrain_definition_kdl"
-}
-
-terrain 21 {
-    policy "smooth" code="from_terrain_definition_kdl"
 }

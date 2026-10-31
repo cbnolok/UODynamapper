@@ -1,8 +1,8 @@
 //! Terrain-layer sidecar tables for `TerrainDefinition.uop`.
 //!
 //! Each `TerrainMetaLayerRef` captures one layer from a `TerrainDefinitionTexture`,
-//! preserving the full layer graph so later phases can reason about non-primary
-//! layers, support roles, and blend weights without re-parsing the original UOP.
+//! preserving the full layer graph with each item's class and role (by position, as the client binds them;
+//! `uocf::enhanced::terrain_definition::TerrainLayerClass`) so later phases need not re-parse the original UOP.
 //!
 //! Package layout (flat binary, not a UDDP):
 //! - `[u32: span_count]` followed by `span_count` × `TerrainMetaLayerSpan` records
@@ -20,7 +20,8 @@ use uocf::enhanced::terrain_definition::TerrainDefinitionPackage;
 
 // Magic and version constants.
 const TERRAIN_META_MAGIC: [u8; 4] = *b"TMLY";
-const TERRAIN_META_VERSION: u32 = 1;
+/// 2: per-layer class and role by position replace the name/stretch heuristic bytes.
+const TERRAIN_META_VERSION: u32 = 2;
 
 /// One layer record from a `TerrainDefinitionTexture`, keyed by
 /// `TerrainMetaLayerSpan.terrain_tile_id`.
@@ -34,13 +35,11 @@ pub struct TerrainMetaLayerRef {
     pub texture_id: u32,
     /// `layer.texture_repetition`.
     pub texture_repetition: f32,
-    /// `layer.is_support_layer_by_current_name_heuristic() as u8`.
-    pub is_support: u8,
-    /// `layer.has_support_like_name_clue() as u8`.
-    pub has_name_clue: u8,
-    /// `layer.has_preferred_primary_repetition() as u8`.
-    pub has_pref_rep: u8,
-    pub _pad: u8,
+    /// `TerrainLayerClass as u8` of the entry's shader.
+    pub layer_class: u8,
+    /// `TerrainLayerRole as u8` of the item position.
+    pub role: u8,
+    pub _pad: [u8; 2],
     /// `layer.source_kind` (stored as u32 for alignment).
     pub source_kind: u32,
     /// `layer.sampler_index`.
@@ -116,19 +115,18 @@ impl TerrainMetaPackage {
         for _ in 0..layer_count {
             let texture_id = reader.read_u32::<LittleEndian>()?;
             let texture_repetition = reader.read_f32::<LittleEndian>()?;
-            let is_support = reader.read_u8()?;
-            let has_name_clue = reader.read_u8()?;
-            let has_pref_rep = reader.read_u8()?;
-            let _pad = reader.read_u8()?;
+            let layer_class = reader.read_u8()?;
+            let role = reader.read_u8()?;
+            let mut _pad = [0u8; 2];
+            reader.read_exact(&mut _pad)?;
             let source_kind = reader.read_u32::<LittleEndian>()?;
             let sampler_index = reader.read_u32::<LittleEndian>()?;
             let uv_set = reader.read_u32::<LittleEndian>()?;
             layers.push(TerrainMetaLayerRef {
                 texture_id,
                 texture_repetition,
-                is_support,
-                has_name_clue,
-                has_pref_rep,
+                layer_class,
+                role,
                 _pad,
                 source_kind,
                 sampler_index,
@@ -202,14 +200,14 @@ pub fn build_terrain_meta_tables(
 
         // Collect layer records for this entry's texture block.
         let entry_layer_start = layers.len();
-        for layer in &texture.layers {
+        let layer_class = texture.layer_class();
+        for (position, layer) in texture.layers.iter().enumerate() {
             let layer_ref = TerrainMetaLayerRef {
                 texture_id: layer.texture_id.unwrap_or(0),
                 texture_repetition: layer.texture_repetition,
-                is_support: layer.is_support_layer_by_current_name_heuristic() as u8,
-                has_name_clue: layer.has_support_like_name_clue() as u8,
-                has_pref_rep: layer.has_preferred_primary_repetition() as u8,
-                _pad: 0,
+                layer_class: layer_class as u8,
+                role: layer_class.role(position) as u8,
+                _pad: [0; 2],
                 source_kind: layer.source_kind as u32,
                 sampler_index: layer.sampler_index,
                 uv_set: layer.uv_set,
@@ -263,10 +261,9 @@ pub fn serialize_terrain_meta(tables: &TerrainMetaTables) -> eyre::Result<Vec<u8
     for layer in &tables.layers {
         bytes.write_u32::<LittleEndian>(layer.texture_id)?;
         bytes.write_f32::<LittleEndian>(layer.texture_repetition)?;
-        bytes.write_u8(layer.is_support)?;
-        bytes.write_u8(layer.has_name_clue)?;
-        bytes.write_u8(layer.has_pref_rep)?;
-        bytes.write_u8(layer._pad)?;
+        bytes.write_u8(layer.layer_class)?;
+        bytes.write_u8(layer.role)?;
+        bytes.extend_from_slice(&layer._pad);
         bytes.write_u32::<LittleEndian>(layer.source_kind)?;
         bytes.write_u32::<LittleEndian>(layer.sampler_index)?;
         bytes.write_u32::<LittleEndian>(layer.uv_set)?;
@@ -292,7 +289,7 @@ mod tests {
     use super::*;
     use uocf::enhanced::terrain_definition::{
         TerrainDefinitionEntry, TerrainDefinitionPackage, TerrainDefinitionTexture,
-        TerrainDefinitionTextureLayer, TerrainDefinitionTileAlias,
+        TerrainDefinitionTextureLayer, TerrainDefinitionTileAlias, TerrainLayerClass, TerrainLayerRole,
     };
 
     fn make_package() -> TerrainDefinitionPackage {
@@ -353,9 +350,10 @@ mod tests {
         assert_eq!(layers.len(), 2);
         assert_eq!(layers[0].texture_id, 2000001);
         assert_eq!(layers[0].texture_repetition, 4.0);
-        assert_eq!(layers[0].has_pref_rep, 1);
+        assert_eq!(layers[0].layer_class, TerrainLayerClass::Default as u8);
+        assert_eq!(layers[0].role, TerrainLayerRole::ColourA as u8);
         assert_eq!(layers[1].texture_id, 2000002);
-        assert_eq!(layers[1].has_name_clue, 1);
+        assert_eq!(layers[1].role, TerrainLayerRole::ColourB as u8);
         assert_eq!(layers[1].sampler_index, 1);
 
         // Entry 20 has no texture block — layers_for_tile returns empty.

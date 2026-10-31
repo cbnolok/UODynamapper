@@ -23,6 +23,7 @@ use udd_assets::{
     tilemeta::{TileMetaLandTile, TileMetaPackage},
 };
 use uocf::classic::land_texture::LandTextureSize;
+use uocf::enhanced::terrain_definition::{TerrainLayerClass, TerrainLayerRole};
 use uocf::classic::map::MapBlockRelPos;
 
 pub struct LandTextureCachePlugin {
@@ -108,76 +109,33 @@ const LAND_PAGE_LOOKUP_ROLE_ANIMATED: u32 = 4;
 const LAND_PAGE_LOOKUP_ROLE_LIQUID_PARAMS: u32 = 5;
 const LAND_PAGE_LOOKUP_ROLE_COVERAGE_PARAMS: u32 = 6;
 
-/// Identify the secondary-base `texture_id` for a terrain tile from the layer graph.
-///
-/// A secondary base is a layer where `is_support == 0` and `has_pref_rep == 1` that is
-/// NOT the primary texture already packed into `tex_land_ec`.
-fn secondary_base_texture_id(
+/// The texture and stretch of the item that has `role` in a terrain tile's layer graph (roles are by
+/// position per layer class, as the client binds them).
+fn terrain_layer_texture_with_role(
     tile_id: u32,
     terrain_meta: &TerrainMetaPackage,
-    tex_land_ec: &TexLandEcPackage,
+    role: TerrainLayerRole,
 ) -> Option<(u32, f32)> {
-    let layers = terrain_meta.layers_for_tile(tile_id);
-    if layers.len() < 2 {
-        return None;
-    }
-    // The primary texture_id already used by tex_land_ec for this tile.
-    let primary_texture_id = tex_land_ec
-        .resolve_material_decision(tile_id)
-        .primary_texture_id;
-
-    for layer in layers {
-        if layer.texture_id == 0 {
-            continue;
-        }
-        // Skip the primary layer.
-        if Some(layer.texture_id) == primary_texture_id {
-            continue;
-        }
-        // Secondary base: non-support, preferred repetition.
-        if layer.is_support == 0 && layer.has_pref_rep == 1 {
-            return Some((layer.texture_id, layer.texture_repetition));
-        }
-    }
-    None
+    terrain_meta
+        .layers_for_tile(tile_id)
+        .iter()
+        .find(|layer| layer.role == role && layer.texture_id != 0)
+        .map(|layer| (layer.texture_id, layer.texture_repetition))
 }
 
-/// Identify the alpha-mask `texture_id` for a terrain tile from the layer graph.
-///
-/// An alpha mask is a layer where `is_support == 1`.
-fn alpha_mask_texture_id(
-    tile_id: u32,
-    terrain_meta: &TerrainMetaPackage,
-) -> Option<(u32, f32)> {
-    let layers = terrain_meta.layers_for_tile(tile_id);
-    for layer in layers {
-        if layer.texture_id == 0 {
-            continue;
-        }
-        if layer.is_support == 1 {
-            return Some((layer.texture_id, layer.texture_repetition));
-        }
-    }
-    None
+/// The secondary base: colour B of a default or bump layer (item 1), weighted by 1 − blend alpha.
+fn secondary_base_texture_id(tile_id: u32, terrain_meta: &TerrainMetaPackage) -> Option<(u32, f32)> {
+    terrain_layer_texture_with_role(tile_id, terrain_meta, TerrainLayerRole::ColourB)
 }
 
-/// Identify the ripple/perturbation `texture_id` for a terrain tile.
-///
-/// A ripple layer is a support layer (`is_support == 1`) that also carries a
-/// name-based clue (`has_name_clue == 1`), indicating it is a normal map,
-/// ripple texture, or similar perturbation source rather than a plain alpha mask.
-/// Returns the first such layer found, or `None` when none exists.
+/// The alpha mask: the blend-alpha item of a default or bump layer (item 2).
+fn alpha_mask_texture_id(tile_id: u32, terrain_meta: &TerrainMetaPackage) -> Option<(u32, f32)> {
+    terrain_layer_texture_with_role(tile_id, terrain_meta, TerrainLayerRole::BlendAlpha)
+}
+
+/// The ripple/perturbation: the du/dv distortion item of a water layer (item 0).
 fn ripple_texture_id(tile_id: u32, terrain_meta: &TerrainMetaPackage) -> Option<(u32, f32)> {
-    let layers = terrain_meta.layers_for_tile(tile_id);
-    for layer in layers {
-        if layer.texture_id == 0 {
-            continue;
-        }
-        if layer.is_support == 1 && layer.has_name_clue == 1 {
-            return Some((layer.texture_id, layer.texture_repetition));
-        }
-    }
-    None
+    terrain_layer_texture_with_role(tile_id, terrain_meta, TerrainLayerRole::Distortion)
 }
 
 /// Copy native RGBA texels into the top-left of a zeroed atlas layer.
@@ -315,7 +273,7 @@ fn create_aux_atlas_images(
 
     if let (Some(terrain_meta), Some(tex_land_ec)) = (terrain_meta, tex_land_ec) {
         for tile_id in 0..AUX_LOOKUP_TILE_CAPACITY {
-            let sec_base = secondary_base_texture_id(tile_id, terrain_meta, tex_land_ec);
+            let sec_base = secondary_base_texture_id(tile_id, terrain_meta);
             let alpha_mask = alpha_mask_texture_id(tile_id, terrain_meta);
             let ripple = ripple_texture_id(tile_id, terrain_meta);
 
@@ -911,7 +869,7 @@ fn create_land_shader_images(
                 if let Some(source) = package.resolve_material_decision(tile_id).material_id
                     .and_then(|id| package.source_material(id))
                     .and_then(|entry| entry.texture.as_ref())
-                    .filter(|texture| texture.shader_name.as_deref() == Some("UOWaterTerrainLayer")) {
+                    .filter(|texture| texture.layer_class() == TerrainLayerClass::Water) {
                     // Original Technique[0] selects coordinates; Tweaks[0..2]
                     // scrolls the bump texture in UV units per second.
                     write_land_lookup_entry(&mut lookup_bytes, tile_id, LAND_PAGE_LOOKUP_ROLE_LIQUID_PARAMS, [

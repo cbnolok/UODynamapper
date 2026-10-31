@@ -157,7 +157,7 @@ mod tests {
             "test.kdl",
             r#"
 terrain 5 {
-    policy "smooth" code="reviewed_runtime_policy"
+    policy "follow-center" code="reviewed_runtime_policy"
     liquid speed=0.01 waveheight=0.3 code="reviewed_liquid_motion"
 }
 terrain 52 {
@@ -175,7 +175,7 @@ terrain 201 {
         let map = overrides.to_map();
 
         assert_eq!(map.len(), 4);
-        assert_eq!(map[&5].policies[0].policy, "smooth");
+        assert_eq!(map[&5].policies[0].policy, "follow-center");
         assert_eq!(map[&5].liquid.as_ref().and_then(|liquid| liquid.speed), Some(0.01));
         assert_eq!(map[&52].layers[0].texture, 2000510);
         assert_eq!(map[&75].textures[0].role.as_deref(), Some("base"));

@@ -13,6 +13,7 @@ use udd_assets::{TexArtCcPackage, TexArtEcPackage, TexLandEcPackage};
 use udd_assets::tex_art_cc::TexArtCcSlotRecord;
 use udd_assets::tex_art_ec::TexArtEcSlotRecord;
 use udd_assets::tex_land_ec::{TexLandEcSlotRecord, TexLandEcTerrainProvenanceRecord};
+use uocf::enhanced::terrain_definition::{TerrainLayerClass, TerrainLayerRole};
 use udd_conv::tex_art_cc::encode_slot_manifest as encode_cc_slot_manifest;
 use udd_assets::tex_art_cc::SLOT_MANIFEST_ENTRY_PATH as CC_SLOT_MANIFEST_ENTRY_PATH;
 use udd_conv::tex_art_ec::encode_slot_manifest as encode_tex_art_ec_slot_manifest;
@@ -1010,8 +1011,8 @@ fn write_tex_land_ec_terrain_provenance_csv(
         "selected_texture_repetition",
         "primary_texture_id",
         "primary_layer_index",
-        "primary_selection_reason",
-        "primary_selection_flags",
+        "layer_class",
+        "selected_layer_role",
     ])?;
     for record in records {
         writer.write_record([
@@ -1026,8 +1027,8 @@ fn write_tex_land_ec_terrain_provenance_csv(
             record.selected_texture_repetition.to_string(),
             optional_u32_string(record.primary_texture_id, MISSING_TEXTURE_ID),
             optional_u32_string(record.primary_layer_index, MISSING_TERRAIN_LAYER_INDEX),
-            record.primary_selection_reason.to_string(),
-            record.primary_selection_flags.to_string(),
+            record.layer_class.as_str().to_string(),
+            record.selected_layer_role.map_or_else(String::new, |role| role.as_str().to_string()),
         ])?;
     }
     writer.flush()?;
@@ -1054,8 +1055,8 @@ fn read_tex_land_ec_terrain_provenance_csv(
     let selected_texture_repetition = csv_header_index(&headers, "selected_texture_repetition")?;
     let primary_texture_id = csv_header_index(&headers, "primary_texture_id")?;
     let primary_layer_index = csv_header_index(&headers, "primary_layer_index")?;
-    let primary_selection_reason = csv_header_index(&headers, "primary_selection_reason")?;
-    let primary_selection_flags = csv_header_index(&headers, "primary_selection_flags")?;
+    let layer_class = csv_header_index(&headers, "layer_class")?;
+    let selected_layer_role = csv_header_index(&headers, "selected_layer_role")?;
 
     let mut records = Vec::new();
     for (row_index, row) in reader.records().enumerate() {
@@ -1123,18 +1124,18 @@ fn read_tex_land_ec_terrain_provenance_csv(
                 line_number,
                 MISSING_TERRAIN_LAYER_INDEX,
             )?,
-            primary_selection_reason: parse_u8_field(
-                &row,
-                primary_selection_reason,
-                "primary_selection_reason",
-                line_number,
-            )?,
-            primary_selection_flags: parse_u16_field(
-                &row,
-                primary_selection_flags,
-                "primary_selection_flags",
-                line_number,
-            )?,
+            layer_class: {
+                let name = row.get(layer_class).unwrap_or_default();
+                TerrainLayerClass::from_name(name).ok_or_else(|| {
+                    eyre::eyre!("line {line_number}: unknown layer_class {name:?}")
+                })?
+            },
+            selected_layer_role: match row.get(selected_layer_role).unwrap_or_default() {
+                "" => None,
+                name => Some(TerrainLayerRole::from_name(name).ok_or_else(|| {
+                    eyre::eyre!("line {line_number}: unknown selected_layer_role {name:?}")
+                })?),
+            },
         });
     }
     records.sort_by_key(|record| {
@@ -1432,18 +1433,6 @@ fn parse_u16_field(
     row.get(index)
         .ok_or_else(|| eyre::eyre!("CSV line {line_number} missing field '{field_name}'"))?
         .parse::<u16>()
-        .map_err(|error| eyre::eyre!("CSV line {line_number} has invalid {field_name}: {error}"))
-}
-
-fn parse_u8_field(
-    row: &StringRecord,
-    index: usize,
-    field_name: &str,
-    line_number: usize,
-) -> eyre::Result<u8> {
-    row.get(index)
-        .ok_or_else(|| eyre::eyre!("CSV line {line_number} missing field '{field_name}'"))?
-        .parse::<u8>()
         .map_err(|error| eyre::eyre!("CSV line {line_number} has invalid {field_name}: {error}"))
 }
 

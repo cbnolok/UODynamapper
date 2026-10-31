@@ -6,7 +6,7 @@
 //!
 //! Package layout (flat binary, **not** a UDDP):
 //! - 4-byte magic `b"TMLY"`
-//! - u32 version (must be 1)
+//! - u32 version (must be 2: per-layer class and role by position)
 //! - `[u32: span_count]` followed by `span_count` × [`TerrainMetaLayerSpan`] records
 //! - `[u32: layer_count]` followed by `layer_count` × [`TerrainMetaLayerRef`] records
 
@@ -16,24 +16,23 @@ use std::path::Path;
 use byteorder::{LittleEndian, ReadBytesExt};
 
 use crate::common::ensure_manifest_version;
+use uocf::enhanced::terrain_definition::{TerrainLayerClass, TerrainLayerRole};
 
 const TERRAIN_META_MAGIC: [u8; 4] = *b"TMLY";
-const TERRAIN_META_VERSION: u32 = 1;
+const TERRAIN_META_VERSION: u32 = 2;
 
 /// One layer record from a `TerrainDefinitionTexture`, keyed by
 /// `TerrainMetaLayerSpan.terrain_tile_id`.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 pub struct TerrainMetaLayerRef {
     /// Source texture id; 0 when absent.
     pub texture_id: u32,
     /// Authored stretch/repetition value.
     pub texture_repetition: f32,
-    /// 1 when the layer is a support layer by name heuristic.
-    pub is_support: u8,
-    /// 1 when the layer name has a support-like clue.
-    pub has_name_clue: u8,
-    /// 1 when the layer has a preferred primary repetition.
-    pub has_pref_rep: u8,
+    /// The class of the entry's shader.
+    pub layer_class: TerrainLayerClass,
+    /// The role of the item position in that class.
+    pub role: TerrainLayerRole,
 }
 
 /// Index into the flat `TerrainMetaLayerRef` table, one per terrain tile id.
@@ -93,19 +92,21 @@ impl TerrainMetaPackage {
         for _ in 0..layer_count {
             let texture_id = reader.read_u32::<LittleEndian>()?;
             let texture_repetition = reader.read_f32::<LittleEndian>()?;
-            let is_support = reader.read_u8()?;
-            let has_name_clue = reader.read_u8()?;
-            let has_pref_rep = reader.read_u8()?;
-            let _pad = reader.read_u8()?;
+            let class_code = reader.read_u8()?;
+            let role_code = reader.read_u8()?;
+            let _pad = reader.read_u16::<LittleEndian>()?;
+            let layer_class = TerrainLayerClass::from_u8(class_code)
+                .ok_or_else(|| eyre::eyre!("terrain meta: unknown layer class {class_code}"))?;
+            let role = TerrainLayerRole::from_u8(role_code)
+                .ok_or_else(|| eyre::eyre!("terrain meta: unknown layer role {role_code}"))?;
             let _source_kind = reader.read_u32::<LittleEndian>()?;
             let _sampler_index = reader.read_u32::<LittleEndian>()?;
             let _uv_set = reader.read_u32::<LittleEndian>()?;
             layers.push(TerrainMetaLayerRef {
                 texture_id,
                 texture_repetition,
-                is_support,
-                has_name_clue,
-                has_pref_rep,
+                layer_class,
+                role,
             });
         }
 

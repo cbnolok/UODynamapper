@@ -48,18 +48,10 @@ fn main() -> eyre::Result<()> {
         println!("  name_id={}", entry.name_index);
         println!("  name={:?}", entry.name);
         println!("  primary_texture_id={:?}", entry.primary_texture_id());
-        match entry.primary_texture_layer_with_reason() {
-            Some((layer, reason)) => {
-                println!("  primary_texture_reason={}", reason.as_str());
-                println!(
-                    "  primary_texture_layer path={:?} current_support={} support_like_clue={} preferred_repetition={}",
-                    layer.path,
-                    layer.is_support_layer_by_current_name_heuristic(),
-                    layer.has_support_like_name_clue(),
-                    layer.has_preferred_primary_repetition()
-                );
-            }
-            None => println!("  primary_texture_reason=missing"),
+        println!("  layer_class={}", entry.layer_class().as_str());
+        match entry.primary_texture_layer() {
+            Some((index, layer)) => println!("  primary_texture_layer index={index} path={:?}", layer.path),
+            None => println!("  primary_texture_layer=missing"),
         }
         println!("  aliases:");
         for alias in &entry.aliases {
@@ -77,15 +69,13 @@ fn main() -> eyre::Result<()> {
                 println!("  layers:");
                 for (index, layer) in texture.layers.iter().enumerate() {
                     println!(
-                        "    [{}] path={:?} texture_id={:?} type={:?} repetition={} current_support={} support_like_clue={} preferred_repetition={} source_kind={} sampler_index={} uv_set={}",
+                        "    [{}] path={:?} texture_id={:?} type={:?} repetition={} role={} source_kind={} sampler_index={} uv_set={}",
                         index,
                         layer.path,
                         layer.texture_id,
                         layer.texture_type,
                         layer.texture_repetition,
-                        layer.is_support_layer_by_current_name_heuristic(),
-                        layer.has_support_like_name_clue(),
-                        layer.has_preferred_primary_repetition(),
+                        texture.layer_role(index).as_str(),
                         layer.source_kind,
                         layer.sampler_index,
                         layer.uv_set

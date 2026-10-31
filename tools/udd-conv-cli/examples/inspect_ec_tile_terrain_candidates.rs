@@ -8,7 +8,7 @@ use udd_assets::{
     tilemeta::TileMetaPackage,
 };
 use uocf::enhanced::terrain_definition::{
-    TerrainDefinitionEntry, TerrainDefinitionPackage, TerrainDefinitionTextureLayer,
+    TerrainDefinitionEntry, TerrainDefinitionPackage, TerrainDefinitionTextureLayer, TerrainLayerRole,
 };
 use uocf::enhanced::tile_database::ArtDefinition;
 
@@ -128,10 +128,9 @@ fn inspect_terrain_candidates(
             continue;
         }
 
-        let primary_selection = entry.primary_texture_layer_with_reason();
-        let primary_match = primary_selection
-            .map(|(layer, _)| layer.texture_id == Some(texture_id))
-            .unwrap_or(false);
+        let primary_match = entry
+            .primary_texture_layer()
+            .is_some_and(|(_, layer)| layer.texture_id == Some(texture_id));
         let runtime_slot_ids = entry.runtime_slot_ids();
         if let Some(tex_land_ec) = tex_land_ec {
             for runtime_slot_id in &runtime_slot_ids {
@@ -183,16 +182,13 @@ fn inspect_terrain_candidates(
         println!("    name={:?}", entry.name);
         println!("    shader_name={:?}", entry.texture.as_ref().and_then(|texture| texture.shader_name.as_deref()));
         println!("    primary_texture_id={:?}", entry.primary_texture_id());
-        match entry.primary_texture_layer_with_reason() {
-            Some((layer, reason)) => println!(
-                "    primary_texture_reason={} current_support={} support_like_clue={} preferred_repetition={} path={:?}",
-                reason.as_str(),
-                layer.is_support_layer_by_current_name_heuristic(),
-                layer.has_support_like_name_clue(),
-                layer.has_preferred_primary_repetition(),
+        match entry.primary_texture_layer() {
+            Some((index, layer)) => println!(
+                "    layer_class={} primary_texture_layer={index} path={:?}",
+                entry.layer_class().as_str(),
                 layer.path
             ),
-            None => println!("    primary_texture_reason=missing"),
+            None => println!("    primary_texture_layer=missing"),
         }
         println!("    primary_match={primary_match}");
         println!("    runtime_slot_ids={runtime_slot_ids:?}");
@@ -204,7 +200,7 @@ fn inspect_terrain_candidates(
             println!("    resolved_tex_land_ec_slots={resolved_slots:?}");
         }
         for (index, layer) in matching_layers {
-            print_matching_layer(index, layer);
+            print_matching_layer(index, layer, entry.layer_class().role(index));
         }
     }
 }
@@ -233,14 +229,12 @@ fn resolve_runtime_slot_for_material(
         })
 }
 
-fn print_matching_layer(index: usize, layer: &TerrainDefinitionTextureLayer) {
+fn print_matching_layer(index: usize, layer: &TerrainDefinitionTextureLayer, role: TerrainLayerRole) {
     println!(
-        "    layer[{index}] path={:?} repetition={} current_support={} support_like_clue={} preferred_repetition={} source_kind={} sampler_index={} uv_set={}",
+        "    layer[{index}] path={:?} repetition={} role={} source_kind={} sampler_index={} uv_set={}",
         layer.path,
         layer.texture_repetition,
-        layer.is_support_layer_by_current_name_heuristic(),
-        layer.has_support_like_name_clue(),
-        layer.has_preferred_primary_repetition(),
+        role.as_str(),
         layer.source_kind,
         layer.sampler_index,
         layer.uv_set,

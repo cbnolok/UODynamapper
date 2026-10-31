@@ -158,7 +158,7 @@ fn terrain_definition_decoder_keeps_entry_index_separate_from_land_tile_ids() {
 }
 
 #[test]
-fn terrain_definition_primary_texture_ignores_support_layers() {
+fn terrain_definition_default_primary_is_item_zero() {
     let dict_path = write_uop_file(
         "dictionary_support_layers",
         &serialize_dictionary_payload(&[
@@ -189,14 +189,11 @@ fn terrain_definition_primary_texture_ignores_support_layers() {
 
     assert_eq!(package.entries.len(), 1);
     assert_eq!(package.entries[0].primary_texture_id(), Some(2_000_540));
-    let (primary_layer, reason) = package.entries[0]
-        .primary_texture_layer_with_reason()
+    let (primary_position, primary_layer) = package.entries[0]
+        .primary_texture_layer()
         .expect("primary terrain layer");
+    assert_eq!(primary_position, 0);
     assert_eq!(primary_layer.texture_id, Some(2_000_540));
-    assert_eq!(
-        reason,
-        TerrainDefinitionPrimaryLayerReason::NonSupportRepetitionFallback
-    );
     assert_eq!(package.texture_selections(), vec![(54, 2_000_540)]);
 
     let _ = std::fs::remove_file(dict_path);
@@ -258,56 +255,72 @@ fn terrain_definition_extract_texture_id_normalizes_dictionary_name_patterns() {
     );
 }
 
-#[test]
-fn terrain_definition_primary_reason_exposes_support_fallback() {
-    let entry = TerrainDefinitionEntry {
+fn layered_entry(shader: &str, repetitions: &[f32]) -> TerrainDefinitionEntry {
+    TerrainDefinitionEntry {
         texture: Some(TerrainDefinitionTexture {
-            layers: vec![
-                TerrainDefinitionTextureLayer {
-                    texture_id: Some(10),
+            shader_name: Some(shader.to_string()),
+            layers: repetitions
+                .iter()
+                .enumerate()
+                .map(|(position, repetition)| TerrainDefinitionTextureLayer {
+                    texture_id: Some(position as u32 + 10),
                     path: Some("01000003_noise_alpha.tga".to_string()),
-                    texture_repetition: 8.0,
-                    path_index: 1,
+                    texture_repetition: *repetition,
                     ..TerrainDefinitionTextureLayer::default()
-                },
-                TerrainDefinitionTextureLayer {
-                    texture_id: Some(20),
-                    path: Some("01000004_noise_mask.tga".to_string()),
-                    texture_repetition: 16.0,
-                    path_index: 2,
-                    ..TerrainDefinitionTextureLayer::default()
-                },
-            ],
+                })
+                .collect(),
             ..TerrainDefinitionTexture::default()
         }),
         ..TerrainDefinitionEntry::default()
-    };
-
-    let (layer, reason) = entry
-        .primary_texture_layer_with_reason()
-        .expect("primary terrain layer");
-
-    assert_eq!(layer.texture_id, Some(10));
-    assert_eq!(
-        reason,
-        TerrainDefinitionPrimaryLayerReason::SupportPreferredRepetitionFallback
-    );
-    assert_eq!(reason.as_str(), "support_preferred_repetition_fallback");
+    }
 }
 
 #[test]
-fn terrain_definition_support_like_clue_is_broader_than_current_heuristic() {
-    let layer = TerrainDefinitionTextureLayer {
-        texture_id: Some(10),
-        path: Some("02000123alphaedge.tga".to_string()),
-        texture_repetition: 4.0,
-        ..TerrainDefinitionTextureLayer::default()
-    };
+fn terrain_layer_class_comes_from_the_shader_name_only() {
+    assert_eq!(TerrainLayerClass::for_shader(Some("UOWaterTerrainLayer")), TerrainLayerClass::Water);
+    assert_eq!(TerrainLayerClass::for_shader(Some("UOWaterShader")), TerrainLayerClass::Water);
+    assert_eq!(TerrainLayerClass::for_shader(Some("UOBumpMapTerrainLayer")), TerrainLayerClass::Bump);
+    assert_eq!(TerrainLayerClass::for_shader(Some("UODefaultTerrainLayer")), TerrainLayerClass::Default);
+    assert_eq!(TerrainLayerClass::for_shader(Some("UOTerrainShader")), TerrainLayerClass::Default);
+    assert_eq!(TerrainLayerClass::for_shader(None), TerrainLayerClass::Default);
+    for class in [TerrainLayerClass::Default, TerrainLayerClass::Bump, TerrainLayerClass::Water] {
+        assert_eq!(TerrainLayerClass::from_u8(class as u8), Some(class));
+    }
+}
 
-    assert!(!layer.is_support_layer_by_current_name_heuristic());
-    assert!(layer.has_support_like_name_clue());
+#[test]
+fn terrain_layer_roles_are_fixed_by_position() {
+    use TerrainLayerRole as R;
+    let default_roles = (0..4).map(|p| TerrainLayerClass::Default.role(p)).collect::<Vec<_>>();
+    assert_eq!(default_roles, vec![R::ColourA, R::ColourB, R::BlendAlpha, R::Unused]);
+    let bump_roles = (0..6).map(|p| TerrainLayerClass::Bump.role(p)).collect::<Vec<_>>();
     assert_eq!(
-        layer.current_primary_selection_reason(),
-        TerrainDefinitionPrimaryLayerReason::NonSupportPreferredRepetition
+        bump_roles,
+        vec![R::ColourA, R::ColourB, R::BlendAlpha, R::LuminanceBump, R::EnvironmentMap, R::Unused]
     );
+    let water_roles = (0..4).map(|p| TerrainLayerClass::Water.role(p)).collect::<Vec<_>>();
+    assert_eq!(water_roles, vec![R::Distortion, R::FallbackColour, R::MainColour, R::Unused]);
+    assert_eq!(TerrainLayerClass::Water.position_of(R::MainColour), Some(2));
+    assert_eq!(TerrainLayerClass::Default.position_of(R::Distortion), None);
+    for role in [R::Unused, R::ColourA, R::BlendAlpha, R::MainColour] {
+        assert_eq!(R::from_u8(role as u8), Some(role));
+    }
+}
+
+#[test]
+fn terrain_primary_ignores_names_and_stretch() {
+    // Grass: item 0 stretch 10 stays the primary (no 4..8 range rule).
+    let grass = layered_entry("UODefaultTerrainLayer", &[10.0, 4.0, 32.0]);
+    assert_eq!(grass.layer_class(), TerrainLayerClass::Default);
+    assert_eq!(grass.primary_texture_layer().map(|(p, _)| p), Some(0));
+    assert_eq!(grass.primary_texture_id(), Some(10));
+
+    let water = layered_entry("UOWaterTerrainLayer", &[16.0, 4.0, 1.0]);
+    assert_eq!(water.primary_texture_layer().map(|(p, _)| p), Some(1));
+    let texture = water.texture.as_ref().expect("texture");
+    assert_eq!(
+        texture.layer_with_role(TerrainLayerRole::Distortion).map(|(p, _)| p),
+        Some(0)
+    );
+    assert_eq!(texture.layer_role(2), TerrainLayerRole::MainColour);
 }

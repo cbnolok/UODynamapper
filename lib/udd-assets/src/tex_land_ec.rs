@@ -13,12 +13,15 @@ use crate::common::{
 };
 use crate::ec_terrain_overrides::EcTerrainOverrides;
 use crate::tex_art_cc::{AtlasPackingMode, PagePixelFormat};
+use uocf::enhanced::terrain_definition::{TerrainLayerClass, TerrainLayerRole};
 
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"ELPG";
 const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"ELSL";
 const TERRAIN_PROVENANCE_MAGIC: [u8; 4] = *b"ELTP";
 const TEX_LAND_EC_METADATA_VERSION: u32 = 3;
-const TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION: u32 = 3;
+/// 4: the terrain layer class and the selected item's role by position replace the primary-selection
+/// heuristic reason and flags.
+pub const TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION: u32 = 4;
 
 pub const UDDP_PAGE_MANIFEST_ENTRY_VPATH: &str = "metadata/pages.bin";
 pub const UDDP_SLOT_MANIFEST_ENTRY_VPATH: &str = "metadata/slots.bin";
@@ -40,19 +43,8 @@ pub const MISSING_TEXTURE_ID: u32 = u32::MAX;
 pub const MISSING_SLOT_ID: u32 = u32::MAX;
 pub const MISSING_TERRAIN_LAYER_INDEX: u32 = u32::MAX;
 
-pub const TERRAIN_PRIMARY_REASON_UNKNOWN: u8 = 0;
-pub const TERRAIN_PRIMARY_REASON_NON_SUPPORT_PREFERRED_REPETITION: u8 = 1;
-pub const TERRAIN_PRIMARY_REASON_NON_SUPPORT_REPETITION_FALLBACK: u8 = 2;
-pub const TERRAIN_PRIMARY_REASON_SUPPORT_PREFERRED_REPETITION_FALLBACK: u8 = 3;
-pub const TERRAIN_PRIMARY_REASON_SUPPORT_REPETITION_FALLBACK: u8 = 4;
-
-pub const TERRAIN_PRIMARY_FLAG_SELECTED_CURRENT_SUPPORT: u16 = 1 << 0;
-pub const TERRAIN_PRIMARY_FLAG_SELECTED_SUPPORT_LIKE: u16 = 1 << 1;
-pub const TERRAIN_PRIMARY_FLAG_SELECTED_PREFERRED_REPETITION: u16 = 1 << 2;
-pub const TERRAIN_PRIMARY_FLAG_FALLBACK_REASON: u16 = 1 << 3;
-pub const TERRAIN_PRIMARY_FLAG_MULTIPLE_PREFERRED_NON_SUPPORT: u16 = 1 << 4;
-pub const TERRAIN_PRIMARY_FLAG_SUPPORT_LIKE_OUTSIDE_CURRENT_HEURISTIC: u16 = 1 << 5;
-pub const TERRAIN_PRIMARY_FLAG_SAMPLER_INDEX_TIEBREAKER: u16 = 1 << 6;
+/// The provenance byte of a selected texture that is not a source item (an override or a missing layer).
+pub const TERRAIN_LAYER_ROLE_NONE: u8 = u8::MAX;
 
 pub const TERRAIN_OVERRIDE_ACTION_POLICY: u16 = 1 << 0;
 pub const TERRAIN_OVERRIDE_ACTION_LIQUID: u16 = 1 << 1;
@@ -167,8 +159,8 @@ pub struct TexLandEcMaterialDecision {
     pub provenance_record_count: u32,
     pub primary_texture_id: Option<u32>,
     pub primary_layer_index: Option<u32>,
-    pub primary_selection_reason: u8,
-    pub primary_selection_flags: u16,
+    /// The material's layer class (from its shader name), when a provenance record names it.
+    pub layer_class: Option<TerrainLayerClass>,
     pub override_actions: Option<TexLandEcTerrainOverrideActions>,
 }
 
@@ -249,10 +241,13 @@ pub struct TexLandEcTerrainProvenanceRecord {
     pub canonical_slot_id: u32,
     pub selected_layer_index: u32,
     pub selected_texture_repetition: f32,
+    /// The source item the client draws alone: item 0 for default and bump, item 1 for water.
     pub primary_texture_id: u32,
     pub primary_layer_index: u32,
-    pub primary_selection_reason: u8,
-    pub primary_selection_flags: u16,
+    /// The material's layer class, from its shader name.
+    pub layer_class: TerrainLayerClass,
+    /// The role of `selected_layer_index` in `layer_class`; `None` for an override or missing layer.
+    pub selected_layer_role: Option<TerrainLayerRole>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -461,7 +456,7 @@ impl TexLandEcPackage {
     fn source_liquid_payload(&self, textures: [u32; 3]) -> Option<u32> {
         self.source_materials.values().filter(|entry| {
             entry.texture.as_ref().is_some_and(|texture| {
-                texture.shader_name.as_deref() == Some("UOWaterTerrainLayer")
+                texture.layer_class() == TerrainLayerClass::Water
                     && texture.layers.len() >= 3
                     && texture.layers.iter().take(3).map(|layer| layer.texture_id)
                         .eq(textures.into_iter().map(Some))
@@ -487,7 +482,7 @@ impl TexLandEcPackage {
         }
         self.source_materials.values().filter(|entry| {
             entry.texture.as_ref().is_some_and(|texture| {
-                texture.shader_name.as_deref() == Some("UOWaterTerrainLayer")
+                texture.layer_class() == TerrainLayerClass::Water
                     && texture.techniques.first().copied() == Some(technique)
                     && texture.tweaks.get(..2) == Some(scroll.as_slice())
                     && [0, 2].into_iter().zip(sources).all(|(index, (id, repetition))| {
@@ -668,14 +663,19 @@ impl TexLandEcPackage {
         let source_texture = decision.material_id.and_then(|id| self.source_material(id))
             .and_then(|entry| entry.texture.as_ref());
         let source_liquid = source_texture
-            .filter(|texture| texture.shader_name.as_deref() == Some("UOWaterTerrainLayer"));
+            .filter(|texture| texture.layer_class() == TerrainLayerClass::Water);
         let reviewed_liquid = decision.override_actions.is_some_and(|actions| actions.has_liquid());
         std::array::from_fn(|index| {
             if let Some(source) = source_liquid {
                 let material_id = decision.material_id?;
-                // Original UOWaterShader uses source 0 for bump displacement,
-                // source 2 as the animated surface, and source 1 as fallback.
-                let source_index = match index { 0 => 1, 3 => 0, 4 => 2, _ => return None };
+                // Water items by position: 0 distortion (du/dv), 1 fallback colour, 2 main colour.
+                let role = match index {
+                    0 => TerrainLayerRole::FallbackColour,
+                    3 => TerrainLayerRole::Distortion,
+                    4 => TerrainLayerRole::MainColour,
+                    _ => return None,
+                };
+                let source_index = TerrainLayerClass::Water.position_of(role)?;
                 if let Some(layer) = self.resolve_override_material_layer_slot_by_material(material_id, index as u32) {
                     return Some(layer);
                 }
@@ -699,7 +699,7 @@ impl TexLandEcPackage {
                 // Only the authored bump family or an explicit normal override
                 // establishes that role. Keep raw source-layer access separate.
                 if index == 3 && !source_texture.is_some_and(|texture|
-                    texture.shader_name.as_deref() == Some("UOBumpMapTerrainLayer")) {
+                    texture.layer_class() == TerrainLayerClass::Bump) {
                     return self.resolve_override_material_layer_slot_by_material(decision.material_id?, 3);
                 }
                 self.resolve_material_layer_slot(cc_tile_id, index as u32)
@@ -884,12 +884,7 @@ impl TexLandEcPackage {
                 .and_then(|record| optional_texture_id(record.primary_texture_id)),
             primary_layer_index: primary_record
                 .and_then(|record| optional_terrain_layer_index(record.primary_layer_index)),
-            primary_selection_reason: primary_record
-                .map(|record| record.primary_selection_reason)
-                .unwrap_or(TERRAIN_PRIMARY_REASON_UNKNOWN),
-            primary_selection_flags: primary_record
-                .map(|record| record.primary_selection_flags)
-                .unwrap_or(0),
+            layer_class: primary_record.map(|record| record.layer_class),
             override_actions: material_id.and_then(|id| {
                 self.terrain_override_actions.get(&id).copied()
             }),
@@ -1183,8 +1178,21 @@ fn parse_terrain_provenance_manifest(bytes: &[u8]) -> eyre::Result<Vec<TexLandEc
             selected_texture_repetition: cursor.read_f32::<LittleEndian>()?,
             primary_texture_id: cursor.read_u32::<LittleEndian>()?,
             primary_layer_index: cursor.read_u32::<LittleEndian>()?,
-            primary_selection_reason: cursor.read_u8()?,
-            primary_selection_flags: cursor.read_u16::<LittleEndian>()?,
+            layer_class: {
+                let code = cursor.read_u8()?;
+                TerrainLayerClass::from_u8(code)
+                    .ok_or_else(|| eyre::eyre!("tex_land_ec terrain provenance: unknown layer class {code}"))?
+            },
+            selected_layer_role: {
+                let code = cursor.read_u8()?;
+                if code == TERRAIN_LAYER_ROLE_NONE {
+                    None
+                } else {
+                    Some(TerrainLayerRole::from_u8(code).ok_or_else(|| {
+                        eyre::eyre!("tex_land_ec terrain provenance: unknown layer role {code}")
+                    })?)
+                }
+            },
         });
     }
     Ok(records)
@@ -1663,8 +1671,14 @@ mod tests {
                 .unwrap();
             bytes.write_u32::<LittleEndian>(2000520).unwrap();
             bytes.write_u32::<LittleEndian>(0).unwrap();
-            bytes.write_u8(TERRAIN_PRIMARY_REASON_NON_SUPPORT_PREFERRED_REPETITION).unwrap();
-            bytes.write_u16::<LittleEndian>(TERRAIN_PRIMARY_FLAG_SELECTED_PREFERRED_REPETITION).unwrap();
+            bytes.write_u8(TerrainLayerClass::Default as u8).unwrap();
+            bytes
+                .write_u8(match texture_id {
+                    2000520 => TerrainLayerRole::ColourA as u8,
+                    2000510 => TerrainLayerRole::ColourB as u8,
+                    _ => TERRAIN_LAYER_ROLE_NONE,
+                })
+                .unwrap();
         }
         bytes
     }
@@ -1677,7 +1691,7 @@ mod tests {
     {
       "material_id": 52,
       "active_action_count": 4,
-      "policies": [{"policy": "smooth", "code": "reviewed_runtime_policy"}],
+      "policies": [{"policy": "follow-center", "code": "reviewed_runtime_policy"}],
       "liquid": {"speed": 0.01, "waveheight": 0.3, "code": "reviewed_liquid_motion"},
       "layers": [{"role": "t0", "texture_id": 2000510}],
       "textures": [],
@@ -1919,7 +1933,7 @@ terrain 52 {
         let detail = details.get(&52).expect("material 52 override details");
 
         assert_eq!(detail.policies.len(), 1);
-        assert_eq!(detail.policies[0].policy, "smooth");
+        assert_eq!(detail.policies[0].policy, "follow-center");
         assert_eq!(
             detail.policies[0].code.as_deref(),
             Some("reviewed_runtime_policy")
@@ -1946,7 +1960,7 @@ terrain 52 {
         assert_eq!(decision.runtime_slot_source, Some(TexLandEcRuntimeSlotSource::DirectAlias));
         assert_eq!(decision.primary_texture_id, Some(2000520));
         assert_eq!(decision.primary_layer_index, Some(0));
-        assert_eq!(decision.primary_selection_reason, TERRAIN_PRIMARY_REASON_NON_SUPPORT_PREFERRED_REPETITION);
+        assert_eq!(decision.layer_class, Some(TerrainLayerClass::Default));
         assert_eq!(
             decision.override_actions.map(|actions| actions.action_flags),
             Some(
@@ -1958,7 +1972,7 @@ terrain 52 {
         let details = package
             .terrain_override_details_for(52)
             .expect("material 52 override details");
-        assert_eq!(details.policies[0].policy, "smooth");
+        assert_eq!(details.policies[0].policy, "follow-center");
         assert_eq!(
             details.liquid.as_ref().and_then(|liquid| liquid.waveheight),
             Some(0.3)
@@ -2075,7 +2089,7 @@ terrain 52 {
             "loose.kdl",
             r#"
 terrain 52 {
-    policy "smooth"
+    policy "follow-center"
     liquid speed=1.0 code="old_liquid"
     layer "unknown_a" tex=2000510
     texture 9999999 role="detail"
@@ -2101,7 +2115,7 @@ terrain 52 {
         assert_eq!(summary.action_count, 7);
         assert_eq!(summary.texture_ref_count, 4);
         assert_eq!(summary.resolved_texture_ref_count, 3);
-        assert_eq!(details.policies[0].policy, "smooth");
+        assert_eq!(details.policies[0].policy, "follow-center");
         assert_eq!(
             details.liquid.as_ref().and_then(|liquid| liquid.speed),
             None

@@ -15,7 +15,8 @@ pub struct Rg16u {
     pub g: u16,
 }
 
-pub const TERRAIN_SHADER_FLAG_SMOOTH: u16 = 1 << 0;
+// Bit 0 is unused: the old repo `policy "smooth"` had no client basis and no shader reader; edge softness
+// comes from the TerrainDefinition `coverage_exponent` (coverage params, land/coverage.wesl).
 pub const TERRAIN_SHADER_FLAG_FOLLOW_CENTER: u16 = 1 << 1;
 /// EC liquid terrain: the TerrainDefinition material is the water layer class (`UOWaterTerrainLayer`),
 /// or a reviewed `EcTerrainOverrides` liquid entry (all of which are water layer materials). The

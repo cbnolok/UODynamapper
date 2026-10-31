@@ -198,68 +198,152 @@ pub struct TerrainDefinitionTextureLayer {
     pub uv_set: u32,
 }
 
-impl TerrainDefinitionTextureLayer {
-    pub fn has_preferred_primary_repetition(&self) -> bool {
-        (4.0..=8.0).contains(&self.texture_repetition)
-    }
+/// The other water layer shader name `UOTerrain::CreateTerrainLayerForShader` 0x004616e0 accepts (the tileart
+/// water shader).
+pub const WATER_SHADER_TERRAIN_LAYER_ALIAS: &str = crate::enhanced::tileart::WATER_SHADER_NAME;
 
-    pub fn is_support_layer_by_current_name_heuristic(&self) -> bool {
-        let Some(path) = self.path.as_deref() else {
-            return false;
-        };
+/// The terrain layer class, chosen from the shader name only by `UOTerrain::CreateTerrainLayerForShader`
+/// 0x004616e0 (`scripts/dev-helpers/ec-research/ghidra-terrain-layers/results/uosa_terrain_layers.md` §1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
+#[repr(u8)]
+pub enum TerrainLayerClass {
+    /// `UODefaultTerrainLayer`, `UOTerrainShader`, any other name.
+    #[default]
+    Default = 0,
+    /// `UOBumpMapTerrainLayer`.
+    Bump = 1,
+    /// `UOWaterTerrainLayer`, `UOWaterShader`.
+    Water = 2,
+}
 
-        let path = path.to_ascii_lowercase();
-        path.contains("noise")
-            || path.contains("normal")
-            || path.contains("mask")
-            || path.contains("_alpha")
-    }
+impl TerrainLayerClass {
+    /// The item the client draws alone as the layer colour: item 0 for default and bump (the < 4-stage path),
+    /// item 1 for water (the fallback path).
+    pub const DEFAULT_PRIMARY_ITEM: usize = 0;
+    pub const WATER_PRIMARY_ITEM: usize = 1;
 
-    pub fn has_support_like_name_clue(&self) -> bool {
-        let Some(path) = self.path.as_deref() else {
-            return false;
-        };
-
-        let path = path.to_ascii_lowercase();
-        path.contains("alpha")
-            || path.contains("mask")
-            || path.contains("noise")
-            || path.contains("normal")
-            || path.contains("bump")
-            || path.contains("ripple")
-            || path.contains("flow")
-            || path.contains("distort")
-    }
-
-    pub fn current_primary_selection_reason(&self) -> TerrainDefinitionPrimaryLayerReason {
-        match (
-            self.is_support_layer_by_current_name_heuristic(),
-            self.has_preferred_primary_repetition(),
-        ) {
-            (false, true) => TerrainDefinitionPrimaryLayerReason::NonSupportPreferredRepetition,
-            (false, false) => TerrainDefinitionPrimaryLayerReason::NonSupportRepetitionFallback,
-            (true, true) => TerrainDefinitionPrimaryLayerReason::SupportPreferredRepetitionFallback,
-            (true, false) => TerrainDefinitionPrimaryLayerReason::SupportRepetitionFallback,
+    /// The class of a layer shader name; no shader name is a default layer.
+    pub fn for_shader(shader_name: Option<&str>) -> Self {
+        match shader_name {
+            Some(WATER_TERRAIN_LAYER_SHADER | WATER_SHADER_TERRAIN_LAYER_ALIAS) => Self::Water,
+            Some(BUMP_MAP_TERRAIN_LAYER_SHADER) => Self::Bump,
+            _ => Self::Default,
         }
     }
-}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TerrainDefinitionPrimaryLayerReason {
-    NonSupportPreferredRepetition,
-    NonSupportRepetitionFallback,
-    SupportPreferredRepetitionFallback,
-    SupportRepetitionFallback,
-}
+    pub fn from_u8(value: u8) -> Option<Self> {
+        [Self::Default, Self::Bump, Self::Water].into_iter().find(|class| *class as u8 == value)
+    }
 
-impl TerrainDefinitionPrimaryLayerReason {
+    /// The class named by [`Self::as_str`].
+    pub fn from_name(name: &str) -> Option<Self> {
+        [Self::Default, Self::Bump, Self::Water].into_iter().find(|class| class.as_str() == name)
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::NonSupportPreferredRepetition => "non_support_preferred_repetition",
-            Self::NonSupportRepetitionFallback => "non_support_repetition_fallback",
-            Self::SupportPreferredRepetitionFallback => "support_preferred_repetition_fallback",
-            Self::SupportRepetitionFallback => "support_repetition_fallback",
+            Self::Default => "default",
+            Self::Bump => "bump",
+            Self::Water => "water",
         }
+    }
+
+    /// The item position of the single colour the client draws without the full stage setup.
+    pub fn primary_item(self) -> usize {
+        match self {
+            Self::Default | Self::Bump => Self::DEFAULT_PRIMARY_ITEM,
+            Self::Water => Self::WATER_PRIMARY_ITEM,
+        }
+    }
+
+    /// The role of the texture item at `position` (map `position + 1`; map 0 is the generated coverage).
+    pub fn role(self, position: usize) -> TerrainLayerRole {
+        use TerrainLayerRole as R;
+        const DEFAULT_ROLES: [TerrainLayerRole; 3] = [R::ColourA, R::ColourB, R::BlendAlpha];
+        const BUMP_ROLES: [TerrainLayerRole; 5] =
+            [R::ColourA, R::ColourB, R::BlendAlpha, R::LuminanceBump, R::EnvironmentMap];
+        const WATER_ROLES: [TerrainLayerRole; 3] = [R::Distortion, R::FallbackColour, R::MainColour];
+        let roles: &[TerrainLayerRole] = match self {
+            Self::Default => &DEFAULT_ROLES,
+            Self::Bump => &BUMP_ROLES,
+            Self::Water => &WATER_ROLES,
+        };
+        roles.get(position).copied().unwrap_or(R::Unused)
+    }
+
+    /// The item position that has `role` in this class.
+    pub fn position_of(self, role: TerrainLayerRole) -> Option<usize> {
+        (0..=TerrainLayerRole::MAX_ROLE_POSITION).find(|position| self.role(*position) == role)
+    }
+}
+
+/// The role of a terrain texture item, fixed by its position in its class (no name or stretch test in the
+/// client; `uosa_terrain_layers.md` §2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum TerrainLayerRole {
+    /// Never read by the client (default item 3+, bump item 5+, water item 3+).
+    Unused = 0,
+    /// Default/bump item 0: colour = A · a + B · (1 − a), a = the blend item alpha; drawn alone on < 4 stages.
+    ColourA = 1,
+    /// Default/bump item 1.
+    ColourB = 2,
+    /// Default/bump item 2: only its alpha is read.
+    BlendAlpha = 3,
+    /// Bump item 3: the luminance du/dv bump that perturbs the environment map.
+    LuminanceBump = 4,
+    /// Bump item 4: the environment (reflection) map added on top.
+    EnvironmentMap = 5,
+    /// Water item 0: the du/dv map scrolled by tweaks 0 and 1.
+    Distortion = 6,
+    /// Water item 1: the colour drawn only on the < 4-stage fallback path.
+    FallbackColour = 7,
+    /// Water item 2: the colour seen through the distortion, coordinates from technique 0.
+    MainColour = 8,
+}
+
+impl TerrainLayerRole {
+    /// The last item position with a role in any class (bump item 4).
+    pub const MAX_ROLE_POSITION: usize = 4;
+
+    const ALL: [Self; 9] = [
+        Self::Unused,
+        Self::ColourA,
+        Self::ColourB,
+        Self::BlendAlpha,
+        Self::LuminanceBump,
+        Self::EnvironmentMap,
+        Self::Distortion,
+        Self::FallbackColour,
+        Self::MainColour,
+    ];
+
+    pub fn from_u8(value: u8) -> Option<Self> {
+        Self::ALL.into_iter().find(|role| *role as u8 == value)
+    }
+
+    /// The role named by [`Self::as_str`].
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|role| role.as_str() == name)
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Unused => "unused",
+            Self::ColourA => "colour_a",
+            Self::ColourB => "colour_b",
+            Self::BlendAlpha => "blend_alpha",
+            Self::LuminanceBump => "luminance_bump",
+            Self::EnvironmentMap => "environment_map",
+            Self::Distortion => "distortion",
+            Self::FallbackColour => "fallback_colour",
+            Self::MainColour => "main_colour",
+        }
+    }
+
+    /// A colour the client shows (not a mask, bump or distortion map).
+    pub fn is_colour(self) -> bool {
+        matches!(self, Self::ColourA | Self::ColourB | Self::FallbackColour | Self::MainColour | Self::EnvironmentMap)
     }
 }
 
@@ -281,6 +365,22 @@ pub struct TerrainDefinitionTexture {
 }
 
 impl TerrainDefinitionTexture {
+    /// The layer class of the shader name.
+    pub fn layer_class(&self) -> TerrainLayerClass {
+        TerrainLayerClass::for_shader(self.shader_name.as_deref())
+    }
+
+    /// The role of the item at `position`.
+    pub fn layer_role(&self, position: usize) -> TerrainLayerRole {
+        self.layer_class().role(position)
+    }
+
+    /// The item that has `role`, with its position.
+    pub fn layer_with_role(&self, role: TerrainLayerRole) -> Option<(usize, &TerrainDefinitionTextureLayer)> {
+        let position = self.layer_class().position_of(role)?;
+        self.layers.get(position).map(|layer| (position, layer))
+    }
+
     /// The shader technique values.
     pub fn techniques(&self) -> &[i32] {
         &self.techniques
@@ -428,36 +528,21 @@ impl TerrainDefinitionEntry {
         }
     }
 
-    pub fn primary_texture_id(&self) -> Option<u32> {
-        self.primary_texture_layer_with_reason()
-            .and_then(|(layer, _)| layer.texture_id)
+    /// The layer class; a record without a shader block is a default layer.
+    pub fn layer_class(&self) -> TerrainLayerClass {
+        self.texture.as_ref().map_or(TerrainLayerClass::Default, TerrainDefinitionTexture::layer_class)
     }
 
-    pub fn primary_texture_layer_with_reason(
-        &self,
-    ) -> Option<(&TerrainDefinitionTextureLayer, TerrainDefinitionPrimaryLayerReason)> {
-        let texture = self.texture.as_ref()?;
+    /// The texture of the primary item ([`TerrainLayerClass::primary_item`]).
+    pub fn primary_texture_id(&self) -> Option<u32> {
+        self.primary_texture_layer().and_then(|(_, layer)| layer.texture_id)
+    }
 
-        texture
-            .layers
-            .iter()
-            .filter(|layer| layer.texture_id.is_some())
-            .min_by(|left, right| {
-                let left_rank = (
-                    left.is_support_layer_by_current_name_heuristic(),
-                    !left.has_preferred_primary_repetition(),
-                    left.sampler_index,
-                    left.path_index,
-                );
-                let right_rank = (
-                    right.is_support_layer_by_current_name_heuristic(),
-                    !right.has_preferred_primary_repetition(),
-                    right.sampler_index,
-                    right.path_index,
-                );
-                left_rank.cmp(&right_rank)
-            })
-            .map(|layer| (layer, layer.current_primary_selection_reason()))
+    /// The primary item and its position: item 0 for default and bump, item 1 for water.
+    pub fn primary_texture_layer(&self) -> Option<(usize, &TerrainDefinitionTextureLayer)> {
+        let texture = self.texture.as_ref()?;
+        let position = texture.layer_class().primary_item();
+        texture.layers.get(position).map(|layer| (position, layer))
     }
 
     /// The coverage exponent (object +0x38).

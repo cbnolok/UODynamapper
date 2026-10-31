@@ -288,7 +288,8 @@ fn apply_ec_aux_two_base_blend(
         aux.mask_layer != 0u,
     );
 
-    return mix(base_albedo, secondary, alpha_mask_value);
+    // item0 · a + item1 · (1 − a), as the client's SetupFourStages (secondary = item 1).
+    return mix(secondary, base_albedo, alpha_mask_value);
 }
 
 fn sample_ec_material_albedo(world_xz: vec2<f32>, base_uv: vec2<f32>, tile: TileUniform, world: LandGradients) -> vec3<f32> {
@@ -303,7 +304,9 @@ fn sample_ec_material_albedo(world_xz: vec2<f32>, base_uv: vec2<f32>, tile: Tile
   let mask_uv = ec_slot_world_uv(world_xz, mask);
   let detail_color = sample_ec_lookup_slot(detail_uv, detail, world);
   let mask_value = ec_material_mask_value(sample_ec_lookup_slot_rgba(mask_uv, mask, world));
-  return mix(base, detail_color, mask_value);
+  // The client's SetupFourStages: item0 · a + item1 · (1 − a), a = the blend item alpha
+  // (base = item 0, detail = item 1).
+  return mix(detail_color, base, mask_value);
 }
 
 fn sample_ec_material_albedo_at_world(world_xz: vec2<f32>, tile: TileUniform, world: LandGradients) -> vec3<f32> {

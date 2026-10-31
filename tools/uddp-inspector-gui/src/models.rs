@@ -88,8 +88,8 @@ pub struct EcLandMaterialInfo {
     pub selected_textures: Vec<EcLandMaterialTextureInfo>,
     pub override_textures: Vec<EcLandMaterialOverrideTextureInfo>,
     pub preview: Option<EcLandMaterialPreview>,
-    pub primary_selection_reason: u8,
-    pub primary_selection_flags: u16,
+    /// The material's terrain layer class (from its shader name).
+    pub layer_class: Option<uocf::enhanced::terrain_definition::TerrainLayerClass>,
 }
 
 #[derive(Debug, Clone)]

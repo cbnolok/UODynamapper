@@ -25,13 +25,7 @@ use udd_assets::{
     tex_land_ec::{
         TexLandEcMaterialDecision, TexLandEcPackage, TexLandEcRuntimeSlotSource,
         TexLandEcTerrainProvenanceRecord, MISSING_SLOT_ID, MISSING_TERRAIN_LAYER_INDEX,
-        MISSING_TEXTURE_ID, TERRAIN_PRIMARY_FLAG_FALLBACK_REASON,
-        TERRAIN_PRIMARY_FLAG_MULTIPLE_PREFERRED_NON_SUPPORT,
-        TERRAIN_PRIMARY_FLAG_SAMPLER_INDEX_TIEBREAKER,
-        TERRAIN_PRIMARY_FLAG_SELECTED_CURRENT_SUPPORT,
-        TERRAIN_PRIMARY_FLAG_SELECTED_PREFERRED_REPETITION,
-        TERRAIN_PRIMARY_FLAG_SELECTED_SUPPORT_LIKE,
-        TERRAIN_PRIMARY_FLAG_SUPPORT_LIKE_OUTSIDE_CURRENT_HEURISTIC,
+        MISSING_TEXTURE_ID,
     },
     tilemeta::{TileMetaItemTile, TileMetaPackage},
 };
@@ -40,8 +34,8 @@ use udd_conv::tex_art_ec::{load_tex_art_ec_sources, TexArtEcLoadedSources};
 use uocf::{
     enhanced::{
         terrain_definition::{
-            TerrainDefinitionEntry, TerrainDefinitionPrimaryLayerReason,
-            TerrainDefinitionTextureLayer, TerrainTextureType,
+            TerrainDefinitionEntry, TerrainDefinitionTextureLayer, TerrainLayerClass,
+            TerrainLayerRole, TerrainTextureType,
         },
         textures::TextureItem as EnhancedTextureItem,
         tileart::{TextureType as TileArtTextureType, TileType},
@@ -164,7 +158,7 @@ pub fn audit_ec_material_refs(source_dirs: &[PathBuf], output: &Path) -> eyre::R
                 &normalized_path,
                 package,
                 family,
-                bool_str(terrain_layer_support_guess(raw_path)),
+                bool_str(!texture.layer_role(layer_index).is_colour()),
                 &format_float(layer.texture_repetition),
                 &layer.source_kind.to_string(),
                 &layer.sampler_index.to_string(),
@@ -219,25 +213,19 @@ pub fn audit_ec_terrain_primary_selection(
         .transpose()?
         .flatten();
     let mut entries = Vec::new();
-    let mut reason_counts = BTreeMap::<String, u64>::new();
+    let mut class_counts = BTreeMap::<String, u64>::new();
     let mut flag_counts = BTreeMap::<String, u64>::new();
     let mut shape_counts = BTreeMap::<String, u64>::new();
-    let mut selected_support_like_count = 0u64;
     let mut selected_texture_count = 0u64;
 
     for entry in &sources.terrain_definition.entries {
         let Some(texture) = entry.texture.as_ref() else {
             continue;
         };
-        let primary = entry.primary_texture_layer_with_reason();
-        let (selected_layer_index, selected_layer, selection_reason) = primary
-            .and_then(|(layer, reason)| {
-                texture.layers
-                    .iter()
-                    .position(|candidate| std::ptr::eq(candidate, layer))
-                    .map(|index| (Some(index), Some(layer), Some(reason)))
-            })
-            .unwrap_or((None, None, None));
+        let layer_class = texture.layer_class();
+        let (selected_layer_index, selected_layer) = entry
+            .primary_texture_layer()
+            .map_or((None, None), |(index, layer)| (Some(index), Some(layer)));
 
         let runtime_slot_ids = entry.runtime_slot_ids();
         let alias_record_count = entry.aliases.len();
@@ -254,31 +242,18 @@ pub fn audit_ec_terrain_primary_selection(
             .filter_map(|layer| layer.texture_id)
             .collect::<BTreeSet<_>>()
             .len();
-        let non_support_texture_layer_count = texture
-            .layers
-            .iter()
-            .filter(|layer| {
-                layer.texture_id.is_some()
-                    && !layer.is_support_layer_by_current_name_heuristic()
-                    && !layer.has_support_like_name_clue()
-            })
-            .count();
-        let support_like_layer_count = texture
-            .layers
-            .iter()
-            .filter(|layer| layer.has_support_like_name_clue())
-            .count();
-        let current_support_layer_count = texture
-            .layers
-            .iter()
-            .filter(|layer| layer.is_support_layer_by_current_name_heuristic())
-            .count();
-        let preferred_repetition_layer_count = texture
-            .layers
-            .iter()
-            .filter(|layer| layer.has_preferred_primary_repetition())
-            .count();
-        let audit_flags = terrain_primary_audit_flags(entry, selected_layer, selection_reason);
+        let role_count = |wanted: fn(TerrainLayerRole) -> bool| {
+            texture
+                .layers
+                .iter()
+                .enumerate()
+                .filter(|(index, layer)| layer.texture_id.is_some() && wanted(texture.layer_role(*index)))
+                .count()
+        };
+        let colour_layer_count = role_count(TerrainLayerRole::is_colour);
+        let non_colour_layer_count = role_count(|role| !role.is_colour() && role != TerrainLayerRole::Unused);
+        let unused_layer_count = role_count(|role| role == TerrainLayerRole::Unused);
+        let audit_flags = terrain_primary_audit_flags(entry, selected_layer);
         let audit_flag_values = split_flags(&audit_flags);
         let runtime_slot_count = runtime_slot_ids.len();
         let material_shape = terrain_material_shape(
@@ -286,24 +261,17 @@ pub fn audit_ec_terrain_primary_selection(
             concrete_alias_count,
             texture_layer_count,
             unique_texture_id_count,
-            non_support_texture_layer_count,
-            support_like_layer_count,
+            colour_layer_count,
+            non_colour_layer_count,
         );
 
-        if let Some(reason) = selection_reason {
-            increment_count(&mut reason_counts, reason.as_str());
-        } else {
-            increment_count(&mut reason_counts, "missing");
-        }
+        increment_count(&mut class_counts, layer_class.as_str());
         for flag in &audit_flag_values {
             increment_count(&mut flag_counts, flag);
         }
         increment_count(&mut shape_counts, material_shape);
-        if let Some(layer) = selected_layer {
+        if selected_layer.is_some() {
             selected_texture_count += 1;
-            if layer.has_support_like_name_clue() {
-                selected_support_like_count += 1;
-            }
         }
 
         let selected_path = selected_layer
@@ -356,12 +324,8 @@ pub fn audit_ec_terrain_primary_selection(
                 layer_index: selected_layer_index.unwrap_or_default(),
                 texture_id: layer.texture_id,
                 path: layer.path.clone(),
-                selection_reason: selection_reason
-                    .map(|reason| reason.as_str().to_string())
-                    .unwrap_or_else(|| "missing".to_string()),
-                current_support_heuristic: layer.is_support_layer_by_current_name_heuristic(),
-                support_like_clue: layer.has_support_like_name_clue(),
-                preferred_repetition: layer.has_preferred_primary_repetition(),
+                layer_class: layer_class.as_str().to_string(),
+                role: layer_class.role(selected_layer_index.unwrap_or_default()).as_str().to_string(),
                 texture_repetition: layer.texture_repetition,
                 source_kind: layer.source_kind,
                 sampler_index: layer.sampler_index,
@@ -373,17 +337,16 @@ pub fn audit_ec_terrain_primary_selection(
                 layer_count: texture.layers.len(),
                 texture_layer_count,
                 unique_texture_id_count,
-                non_support_texture_layer_count,
-                support_like_layer_count,
-                current_support_layer_count,
-                preferred_repetition_layer_count,
+                colour_layer_count,
+                non_colour_layer_count,
+                unused_layer_count,
             },
             layers: texture
                 .layers
                 .iter()
                 .enumerate()
                 .map(|(layer_index, layer)| {
-                    terrain_layer_report(layer_index, layer, &package_membership)
+                    terrain_layer_report(layer_index, layer, texture.layer_role(layer_index), &package_membership)
                 })
                 .collect(),
             audit_flags: audit_flag_values,
@@ -393,17 +356,16 @@ pub fn audit_ec_terrain_primary_selection(
     let row_count = entries.len() as u64;
     let report = TerrainPrimarySelectionReport {
         schema: "ec_terrain_primary_selection",
-        schema_version: 2,
+        schema_version: 3,
         summary: TerrainPrimarySelectionSummary {
             material_count: row_count as usize,
             override_entry_count: overrides.len(),
             tex_land_ec_path: tex_land_ec_path.map(|path| path.display().to_string()),
             packaged_override_summary,
             packed_provenance_material_count: packed_provenance_by_material.len(),
-            selection_reason_counts: reason_counts.clone(),
+            layer_class_counts: class_counts.clone(),
             audit_flag_counts: flag_counts.clone(),
             material_shape_counts: shape_counts.clone(),
-            selected_support_like_count: selected_support_like_count as usize,
             selected_texture_count: selected_texture_count as usize,
         },
         entries,
@@ -415,15 +377,9 @@ pub fn audit_ec_terrain_primary_selection(
         "wrote {row_count} EC terrain primary-selection JSON entries to '{}'",
         output.display()
     );
-    log_count_summary("terrain primary selection reasons", &reason_counts);
+    log_count_summary("terrain layer classes", &class_counts);
     log_count_summary("terrain primary audit flags", &flag_counts);
     log_count_summary("terrain material shapes", &shape_counts);
-    if selected_texture_count > 0 {
-        let percent = selected_support_like_count as f64 * 100.0 / selected_texture_count as f64;
-        info!(
-            "terrain primary selections with support-like clues: {selected_support_like_count}/{selected_texture_count} ({percent:.2}%)"
-        );
-    }
 
     Ok(())
 }
@@ -462,16 +418,10 @@ pub fn write_ec_terrain_practical_review(
         let Some(texture) = entry.texture.as_ref() else {
             continue;
         };
-        let primary = entry.primary_texture_layer_with_reason();
-        let (selected_layer_index, selected_layer, selection_reason) = primary
-            .and_then(|(layer, reason)| {
-                texture
-                    .layers
-                    .iter()
-                    .position(|candidate| std::ptr::eq(candidate, layer))
-                    .map(|index| (Some(index), Some(layer), Some(reason)))
-            })
-            .unwrap_or((None, None, None));
+        let layer_class = texture.layer_class();
+        let (selected_layer_index, selected_layer) = entry
+            .primary_texture_layer()
+            .map_or((None, None), |(index, layer)| (Some(index), Some(layer)));
         let manual_override = overrides.get(&entry.id);
         let packed_records = packed_provenance_by_material.get(&entry.id);
         let resolver_decision = packed_terrain.as_ref().map(|package| {
@@ -494,11 +444,7 @@ pub fn write_ec_terrain_practical_review(
         let effective_slot_changed = resolver_decision
             .as_ref()
             .is_some_and(|decision| decision.runtime_slot_id != effective_runtime_slot);
-        let mut findings = split_flags(&terrain_primary_audit_flags(
-            entry,
-            selected_layer,
-            selection_reason,
-        ));
+        let mut findings = split_flags(&terrain_primary_audit_flags(entry, selected_layer));
 
         if let Some(records) = packed_records {
             if let Some(texture_id) = selected_layer.and_then(|layer| layer.texture_id) {
@@ -574,7 +520,7 @@ pub fn write_ec_terrain_practical_review(
                 terrain_selected_layer_report(
                     selected_layer_index.unwrap_or_default(),
                     layer,
-                    selection_reason,
+                    layer_class,
                     &package_membership,
                 )
             }),
@@ -1722,10 +1668,9 @@ struct TerrainPrimarySelectionSummary {
     tex_land_ec_path: Option<String>,
     packaged_override_summary: Option<PackagedTerrainOverrideSummaryReport>,
     packed_provenance_material_count: usize,
-    selection_reason_counts: BTreeMap<String, u64>,
+    layer_class_counts: BTreeMap<String, u64>,
     audit_flag_counts: BTreeMap<String, u64>,
     material_shape_counts: BTreeMap<String, u64>,
-    selected_support_like_count: usize,
     selected_texture_count: usize,
 }
 
@@ -1764,8 +1709,7 @@ struct PackedTerrainProvenanceReport {
     selected_texture_ids: Vec<u32>,
     primary_texture_ids: Vec<u32>,
     primary_layer_indices: Vec<u32>,
-    primary_selection_reasons: Vec<String>,
-    primary_selection_flags: Vec<String>,
+    layer_classes: Vec<String>,
     selected_layer_texture_present_in_packed_provenance: Option<bool>,
     selected_layer_index_present_in_packed_provenance: Option<bool>,
 }
@@ -1818,8 +1762,7 @@ struct TerrainResolverDecisionReport {
     provenance_record_count: u32,
     primary_texture_id: Option<u32>,
     primary_layer_index: Option<u32>,
-    primary_selection_reason: String,
-    primary_selection_flags: Vec<String>,
+    layer_class: Option<String>,
     override_action_count: Option<u32>,
     override_action_flags: Vec<&'static str>,
 }
@@ -1855,10 +1798,8 @@ struct TerrainSelectedLayerReport {
     layer_index: usize,
     texture_id: Option<u32>,
     path: Option<String>,
-    selection_reason: String,
-    current_support_heuristic: bool,
-    support_like_clue: bool,
-    preferred_repetition: bool,
+    layer_class: String,
+    role: String,
     texture_repetition: f32,
     source_kind: u8,
     sampler_index: u32,
@@ -1872,10 +1813,12 @@ struct TerrainLayerSummaryReport {
     layer_count: usize,
     texture_layer_count: usize,
     unique_texture_id_count: usize,
-    non_support_texture_layer_count: usize,
-    support_like_layer_count: usize,
-    current_support_layer_count: usize,
-    preferred_repetition_layer_count: usize,
+    /// Items whose role is a colour (A, B, fallback, main, environment).
+    colour_layer_count: usize,
+    /// Blend alpha, luminance bump and distortion items.
+    non_colour_layer_count: usize,
+    /// Items the client never reads.
+    unused_layer_count: usize,
 }
 
 #[derive(Serialize)]
@@ -1884,9 +1827,7 @@ struct TerrainLayerReport {
     texture_id: Option<u32>,
     path: Option<String>,
     texture_type: String,
-    current_support_heuristic: bool,
-    support_like_clue: bool,
-    preferred_repetition: bool,
+    role: String,
     texture_repetition: f32,
     source_kind: u8,
     sampler_index: u32,
@@ -2061,10 +2002,8 @@ struct SurfaceTerrainMatchReport {
     primary_match: bool,
     aliases: Vec<u32>,
     layer_path: String,
-    layer_current_support: bool,
-    layer_support_like: bool,
+    layer_role: String,
     primary_texture_id: Option<u32>,
-    primary_reason: String,
 }
 
 #[derive(Serialize)]
@@ -2085,8 +2024,8 @@ struct SurfaceProvenanceRecordReport {
     canonical_slot_id: Option<u32>,
     primary_texture_id: Option<u32>,
     primary_layer_index: Option<u32>,
-    primary_selection_reason: String,
-    primary_selection_flags: Vec<String>,
+    layer_class: String,
+    selected_layer_role: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -2103,10 +2042,8 @@ struct TerrainTextureMatch {
     primary_match: bool,
     aliases: Vec<u32>,
     layer_path: String,
-    layer_current_support: bool,
-    layer_support_like: bool,
+    layer_role: String,
     primary_texture_id: Option<u32>,
-    primary_reason: String,
 }
 
 struct SurfaceRedirectionResolution {
@@ -2141,14 +2078,12 @@ fn terrain_matches_for_texture(
         let Some(texture) = entry.texture.as_ref() else {
             continue;
         };
-        let primary = entry.primary_texture_layer_with_reason();
+        let primary = entry.primary_texture_layer();
         for (layer_index, layer) in texture.layers.iter().enumerate() {
             if layer.texture_id != Some(texture_id) {
                 continue;
             }
-            let primary_match = primary
-                .map(|(primary_layer, _)| std::ptr::eq(primary_layer, layer))
-                .unwrap_or(false);
+            let primary_match = primary.is_some_and(|(primary_index, _)| primary_index == layer_index);
             matches.push(TerrainTextureMatch {
                 material_id: entry.id,
                 material_name: entry.name.clone().unwrap_or_default(),
@@ -2156,12 +2091,8 @@ fn terrain_matches_for_texture(
                 primary_match,
                 aliases: entry.runtime_slot_ids(),
                 layer_path: layer.path.clone().unwrap_or_default(),
-                layer_current_support: layer.is_support_layer_by_current_name_heuristic(),
-                layer_support_like: layer.has_support_like_name_clue(),
-                primary_texture_id: primary.and_then(|(primary_layer, _)| primary_layer.texture_id),
-                primary_reason: primary
-                    .map(|(_, reason)| reason.as_str().to_string())
-                    .unwrap_or_else(|| "missing".to_string()),
+                layer_role: texture.layer_role(layer_index).as_str().to_string(),
+                primary_texture_id: primary.and_then(|(_, primary_layer)| primary_layer.texture_id),
             });
         }
     }
@@ -2423,10 +2354,8 @@ fn surface_terrain_match_report(match_row: &TerrainTextureMatch) -> SurfaceTerra
         primary_match: match_row.primary_match,
         aliases: match_row.aliases.clone(),
         layer_path: match_row.layer_path.clone(),
-        layer_current_support: match_row.layer_current_support,
-        layer_support_like: match_row.layer_support_like,
+        layer_role: match_row.layer_role.clone(),
         primary_texture_id: match_row.primary_texture_id,
-        primary_reason: match_row.primary_reason.clone(),
     }
 }
 
@@ -2443,12 +2372,8 @@ fn surface_provenance_record_report(
         canonical_slot_id: optional_slot_id(record.canonical_slot_id),
         primary_texture_id: optional_texture_id(record.primary_texture_id),
         primary_layer_index: optional_terrain_layer_index(record.primary_layer_index),
-        primary_selection_reason: terrain_primary_reason_name(record.primary_selection_reason)
-            .to_string(),
-        primary_selection_flags: terrain_primary_flags_vec(record.primary_selection_flags)
-            .into_iter()
-            .map(str::to_string)
-            .collect(),
+        layer_class: record.layer_class.as_str().to_string(),
+        selected_layer_role: record.selected_layer_role.map(|role| role.as_str().to_string()),
     }
 }
 
@@ -2594,42 +2519,6 @@ fn surface_redirection_flags(
     flags.join(";")
 }
 
-fn terrain_primary_reason_name(reason: u8) -> &'static str {
-    match reason {
-        1 => "non_support_preferred_repetition",
-        2 => "non_support_repetition_fallback",
-        3 => "support_preferred_repetition_fallback",
-        4 => "support_repetition_fallback",
-        _ => "unknown",
-    }
-}
-
-fn terrain_primary_flags_vec(flags: u16) -> Vec<&'static str> {
-    let mut names = Vec::new();
-    if flags & TERRAIN_PRIMARY_FLAG_SELECTED_CURRENT_SUPPORT != 0 {
-        names.push("selected_current_support");
-    }
-    if flags & TERRAIN_PRIMARY_FLAG_SELECTED_SUPPORT_LIKE != 0 {
-        names.push("selected_support_like");
-    }
-    if flags & TERRAIN_PRIMARY_FLAG_SELECTED_PREFERRED_REPETITION != 0 {
-        names.push("selected_preferred_repetition");
-    }
-    if flags & TERRAIN_PRIMARY_FLAG_FALLBACK_REASON != 0 {
-        names.push("fallback_reason");
-    }
-    if flags & TERRAIN_PRIMARY_FLAG_MULTIPLE_PREFERRED_NON_SUPPORT != 0 {
-        names.push("multiple_preferred_non_support");
-    }
-    if flags & TERRAIN_PRIMARY_FLAG_SUPPORT_LIKE_OUTSIDE_CURRENT_HEURISTIC != 0 {
-        names.push("support_like_outside_current_heuristic");
-    }
-    if flags & TERRAIN_PRIMARY_FLAG_SAMPLER_INDEX_TIEBREAKER != 0 {
-        names.push("sampler_index_tiebreaker");
-    }
-    names
-}
-
 fn optional_nonzero_u32(value: u32) -> Option<u32> {
     (value != 0).then_some(value)
 }
@@ -2651,16 +2540,16 @@ fn terrain_material_shape(
     concrete_alias_count: usize,
     texture_layer_count: usize,
     unique_texture_id_count: usize,
-    non_support_texture_layer_count: usize,
-    support_like_layer_count: usize,
+    colour_layer_count: usize,
+    non_colour_layer_count: usize,
 ) -> &'static str {
     let has_aliases = alias_record_count > 0;
     let has_concrete_aliases = concrete_alias_count > 0;
     let has_multiple_unique_textures = unique_texture_id_count > 1;
-    let has_multiple_non_support = non_support_texture_layer_count > 1;
-    let has_support = support_like_layer_count > 0;
+    let has_multiple_colours = colour_layer_count > 1;
+    let has_non_colour = non_colour_layer_count > 0;
     let is_complex = texture_layer_count > 1
-        && (has_multiple_unique_textures || has_multiple_non_support || has_support);
+        && (has_multiple_unique_textures || has_multiple_colours || has_non_colour);
 
     match (has_aliases, has_concrete_aliases, is_complex) {
         (true, true, true) => "concrete_aliases_complex_material",
@@ -2683,6 +2572,7 @@ fn split_flags(flags: &str) -> Vec<String> {
 fn terrain_layer_report(
     layer_index: usize,
     layer: &TerrainDefinitionTextureLayer,
+    role: TerrainLayerRole,
     package_membership: &EcPackageMembership,
 ) -> TerrainLayerReport {
     let raw_path = layer.path.as_deref().unwrap_or("");
@@ -2694,9 +2584,7 @@ fn terrain_layer_report(
         texture_id: layer.texture_id,
         path: layer.path.clone(),
         texture_type: terrain_texture_type_name(layer.texture_type).to_string(),
-        current_support_heuristic: layer.is_support_layer_by_current_name_heuristic(),
-        support_like_clue: layer.has_support_like_name_clue(),
-        preferred_repetition: layer.has_preferred_primary_repetition(),
+        role: role.as_str().to_string(),
         texture_repetition: layer.texture_repetition,
         source_kind: layer.source_kind,
         sampler_index: layer.sampler_index,
@@ -2754,7 +2642,7 @@ fn terrain_definition_override_entry_report(
 fn terrain_selected_layer_report(
     layer_index: usize,
     layer: &TerrainDefinitionTextureLayer,
-    selection_reason: Option<TerrainDefinitionPrimaryLayerReason>,
+    layer_class: TerrainLayerClass,
     package_membership: &EcPackageMembership,
 ) -> TerrainSelectedLayerReport {
     let selected_path = layer.path.as_deref().unwrap_or("");
@@ -2765,12 +2653,8 @@ fn terrain_selected_layer_report(
         layer_index,
         texture_id: layer.texture_id,
         path: layer.path.clone(),
-        selection_reason: selection_reason
-            .map(|reason| reason.as_str().to_string())
-            .unwrap_or_else(|| "missing".to_string()),
-        current_support_heuristic: layer.is_support_layer_by_current_name_heuristic(),
-        support_like_clue: layer.has_support_like_name_clue(),
-        preferred_repetition: layer.has_preferred_primary_repetition(),
+        layer_class: layer_class.as_str().to_string(),
+        role: layer_class.role(layer_index).as_str().to_string(),
         texture_repetition: layer.texture_repetition,
         source_kind: layer.source_kind,
         sampler_index: layer.sampler_index,
@@ -2797,12 +2681,7 @@ fn terrain_resolver_decision_report(
         provenance_record_count: decision.provenance_record_count,
         primary_texture_id: decision.primary_texture_id,
         primary_layer_index: decision.primary_layer_index,
-        primary_selection_reason: terrain_primary_reason_name(decision.primary_selection_reason)
-            .to_string(),
-        primary_selection_flags: terrain_primary_flags_vec(decision.primary_selection_flags)
-            .into_iter()
-            .map(str::to_string)
-            .collect(),
+        layer_class: decision.layer_class.map(|class| class.as_str().to_string()),
         override_action_count: decision
             .override_actions
             .map(|actions| actions.action_count),
@@ -2927,14 +2806,9 @@ fn packed_terrain_provenance_report(
             records.iter().map(|record| record.primary_layer_index),
             MISSING_TERRAIN_LAYER_INDEX,
         ),
-        primary_selection_reasons: sorted_unique_strings(records.iter().map(|record| {
-            terrain_primary_reason_name(record.primary_selection_reason).to_string()
-        })),
-        primary_selection_flags: sorted_unique_strings(records.iter().flat_map(|record| {
-            terrain_primary_flags_vec(record.primary_selection_flags)
-                .into_iter()
-                .map(str::to_string)
-        })),
+        layer_classes: sorted_unique_strings(
+            records.iter().map(|record| record.layer_class.as_str().to_string()),
+        ),
         selected_layer_texture_present_in_packed_provenance: selected_texture_id.map(|texture_id| {
             records.iter().any(|record| {
                 record.primary_texture_id == texture_id || record.selected_texture_id == texture_id
@@ -3217,7 +3091,7 @@ fn terrain_override_action_count(terrain: &EcTerrainOverrideTerrainEntry) -> usi
 }
 
 fn accepted_terrain_policy(policy: &str) -> bool {
-    matches!(policy, "smooth" | "follow-center" | "single")
+    matches!(policy, "follow-center" | "single")
 }
 
 fn accepted_terrain_layer_role(role: &str) -> bool {
@@ -3257,10 +3131,10 @@ fn terrain_override_finding(
     }
 }
 
+/// Findings on a material's primary item (item 0 for default and bump, item 1 for water).
 fn terrain_primary_audit_flags(
     entry: &TerrainDefinitionEntry,
     selected_layer: Option<&TerrainDefinitionTextureLayer>,
-    selection_reason: Option<TerrainDefinitionPrimaryLayerReason>,
 ) -> String {
     let mut flags = Vec::new();
 
@@ -3272,66 +3146,14 @@ fn terrain_primary_audit_flags(
         flags.push("missing_selected_layer");
         return flags.join(";");
     };
-
-    if selected_layer.has_support_like_name_clue() {
-        flags.push("selected_support_like_name");
-    }
-    if selected_layer.is_support_layer_by_current_name_heuristic() {
-        flags.push("selected_current_support_heuristic");
-    }
-    if matches!(
-        selection_reason,
-        Some(TerrainDefinitionPrimaryLayerReason::NonSupportRepetitionFallback)
-            | Some(TerrainDefinitionPrimaryLayerReason::SupportPreferredRepetitionFallback)
-            | Some(TerrainDefinitionPrimaryLayerReason::SupportRepetitionFallback)
-    ) {
-        flags.push("fallback_selection_reason");
-    }
-
-    let preferred_non_support_count = texture
-        .layers
-        .iter()
-        .filter(|layer| {
-            layer.texture_id.is_some()
-                && !layer.is_support_layer_by_current_name_heuristic()
-                && layer.has_preferred_primary_repetition()
-        })
-        .count();
-    if preferred_non_support_count > 1 {
-        flags.push("multiple_preferred_non_support_layers");
-    }
-
-    let selected_rank_peer_count = texture
-        .layers
-        .iter()
-        .filter(|layer| {
-            layer.texture_id.is_some()
-                && layer.is_support_layer_by_current_name_heuristic()
-                    == selected_layer.is_support_layer_by_current_name_heuristic()
-                && layer.has_preferred_primary_repetition()
-                    == selected_layer.has_preferred_primary_repetition()
-        })
-        .count();
-    if selected_rank_peer_count > 1 {
-        flags.push("sampler_index_tiebreaker_involved");
-    }
-
-    let support_like_not_current_count = texture
-        .layers
-        .iter()
-        .filter(|layer| {
-            layer.texture_id.is_some()
-                && layer.has_support_like_name_clue()
-                && !layer.is_support_layer_by_current_name_heuristic()
-        })
-        .count();
-    if support_like_not_current_count > 0 {
-        flags.push("support_like_outside_current_heuristic");
-    }
-
-    let selected_texture_id = selected_layer.texture_id;
-    if selected_texture_id.is_none() {
+    if selected_layer.texture_id.is_none() {
         flags.push("selected_layer_missing_texture_id");
+    }
+    let unused_count = (0..texture.layers.len())
+        .filter(|index| texture.layer_role(*index) == TerrainLayerRole::Unused)
+        .count();
+    if unused_count > 0 {
+        flags.push("has_items_the_client_never_reads");
     }
 
     flags.join(";")
@@ -3414,19 +3236,6 @@ fn logical_family_from_physical_package(physical_package: &str) -> &'static str 
         "ShaderResources" => "ShaderResources",
         _ => "Unknown",
     }
-}
-
-fn terrain_layer_support_guess(path: &str) -> bool {
-    let normalized = normalize_dictionary_path(path);
-    let file_name = normalized
-        .rsplit('\\')
-        .next()
-        .unwrap_or(normalized.as_str());
-    let stem = file_name.split('.').next().unwrap_or(file_name);
-    stem.contains("noise")
-        || stem.contains("normal")
-        || stem.contains("mask")
-        || stem.contains("_alpha")
 }
 
 struct EcPackageMembership {
@@ -4143,7 +3952,7 @@ fn write_owner_audit_filtered(
 /// Writes a JSON review artifact for all TerrainDefinition material entries.
 ///
 /// Each record contains material metadata, all texture layers with physical/logical
-/// classification, the selected primary layer, its reason, and uncertainty notes.
+/// classification and role by position, the primary layer, the layer class, and uncertainty notes.
 pub fn write_terrain_definition_review(
     source_dirs: &[PathBuf],
     output: &Path,
@@ -4154,20 +3963,8 @@ pub fn write_terrain_definition_review(
 
     for entry in &sources.terrain_definition.entries {
         let alias_ids: Vec<u32> = entry.runtime_slot_ids();
-        let (primary_layer_index, primary_layer_reason) =
-            if let Some((layer, reason)) = entry.primary_texture_layer_with_reason() {
-                let index = entry
-                    .texture
-                    .as_ref()
-                    .and_then(|tex| {
-                        tex.layers
-                            .iter()
-                            .position(|candidate| std::ptr::eq(candidate, layer))
-                    });
-                (index, Some(reason.as_str().to_string()))
-            } else {
-                (None, None)
-            };
+        let primary_layer_index = entry.primary_texture_layer().map(|(index, _)| index);
+        let layer_class = entry.layer_class();
 
         let layers: Vec<TerrainDefinitionReviewLayerRecord> = entry
             .texture
@@ -4190,10 +3987,7 @@ pub fn write_terrain_definition_review(
                             texture_repetition: layer.texture_repetition,
                             physical_package: physical_package.to_string(),
                             logical_family: logical_family.to_string(),
-                            is_support_heuristic: layer
-                                .is_support_layer_by_current_name_heuristic(),
-                            has_name_clue: layer.has_support_like_name_clue(),
-                            has_preferred_repetition: layer.has_preferred_primary_repetition(),
+                            role: tex.layer_role(index).as_str().to_string(),
                         }
                     })
                     .collect()
@@ -4208,11 +4002,8 @@ pub fn write_terrain_definition_review(
                     layer.index
                 ));
             }
-            if layer.is_support_heuristic && layer.has_preferred_repetition {
-                uncertainty_notes.push(format!(
-                    "layer {} matches support heuristic but has preferred-primary repetition",
-                    layer.index
-                ));
+            if layer.role == TerrainLayerRole::Unused.as_str() {
+                uncertainty_notes.push(format!("layer {} is never read by the client", layer.index));
             }
         }
 
@@ -4225,7 +4016,7 @@ pub fn write_terrain_definition_review(
                 .and_then(|tex| tex.shader_name.clone()),
             layers,
             primary_layer_index,
-            primary_layer_reason,
+            layer_class: layer_class.as_str().to_string(),
             uncertainty_notes,
         });
     }
@@ -4233,7 +4024,7 @@ pub fn write_terrain_definition_review(
     let row_count = entries.len() as u64;
     let report = TerrainDefinitionReviewReport {
         schema: "terrain_definition_review",
-        schema_version: 1,
+        schema_version: 2,
         entry_count: row_count as usize,
         entries,
     };
@@ -4263,7 +4054,7 @@ struct TerrainDefinitionReviewRecord {
     shader_name: Option<String>,
     layers: Vec<TerrainDefinitionReviewLayerRecord>,
     primary_layer_index: Option<usize>,
-    primary_layer_reason: Option<String>,
+    layer_class: String,
     uncertainty_notes: Vec<String>,
 }
 
@@ -4275,9 +4066,7 @@ struct TerrainDefinitionReviewLayerRecord {
     texture_repetition: f32,
     physical_package: String,
     logical_family: String,
-    is_support_heuristic: bool,
-    has_name_clue: bool,
-    has_preferred_repetition: bool,
+    role: String,
 }
 
 // endregion: --- TerrainDefinition review generator

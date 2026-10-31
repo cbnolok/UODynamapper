@@ -3,12 +3,23 @@
 use bevy::prelude::*;
 use std::collections::BTreeMap;
 use udd_assets::tex_land_ec::TexLandEcPackage;
+use uocf::enhanced::terrain_definition::TerrainLayerClass;
 mod cache;
 pub(crate) use cache::sys_prepare as sys_prepare_stack_cache;
 
 /// GPU role 6: material ID, signed sorting key, cardinal/diagonal bytes,
 /// then class (bits 0..2), positive exponent (3), terrain policy (4..6),
 /// and linear coverage filtering (7). Mirrored in land/coverage.wesl.
+///
+/// Edge softness is the client's: `coverage_exponent` 0 gives a hard edge and point filtering, larger values
+/// the soft 255 · 0.95^b / 255 · 0.6^b falloff and bilinear filtering (`UOTerrain::BuildTerrainCoverage`).
+/// GPU class codes (bits 0..2 of the flags word; 0 is no EC material). Mirrored in land/coverage.wesl.
+const GPU_LAYER_CLASS_DEFAULT: u32 = 1;
+const GPU_LAYER_CLASS_WATER: u32 = 2;
+const GPU_LAYER_CLASS_BUMP: u32 = 3;
+/// `UOWaterTerrainLayer::SetMaterialId` 0x004601e0 stores `material × 1000`, so water layers sort after the others.
+const WATER_LAYER_SORT_KEY_SCALE: u32 = 1000;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EcTerrainParams(pub [u32; 4]);
 
@@ -16,16 +27,15 @@ impl EcTerrainParams {
     pub fn for_tile(package: &TexLandEcPackage, payload: u32) -> Option<Self> {
         let id = package.resolve_material_decision(payload).material_id?;
         let source = package.source_material(id)?;
-        let class = match source.texture.as_ref()?.shader_name.as_deref()? {
-            "UODefaultTerrainLayer" | "UOTerrainShader" => 1,
-            "UOWaterTerrainLayer" => 2,
-            "UOBumpMapTerrainLayer" => 3,
-            _ => return None,
+        let class = match source.texture.as_ref()?.layer_class() {
+            TerrainLayerClass::Default => GPU_LAYER_CLASS_DEFAULT,
+            TerrainLayerClass::Water => GPU_LAYER_CLASS_WATER,
+            TerrainLayerClass::Bump => GPU_LAYER_CLASS_BUMP,
         };
         let b = source.coverage_exponent();
         if !b.is_finite() { return None; }
         let weights = coverage_weights(b);
-        let key = if class == 2 { id.checked_mul(1000)? } else { id };
+        let key = if class == GPU_LAYER_CLASS_WATER { id.checked_mul(WATER_LAYER_SORT_KEY_SCALE)? } else { id };
         let flags = class | (u32::from(b > 0.0) << 3)
             | (u32::from(ec_land_shader_flags(package, payload)) << 4)
             | (u32::from(b != 0.0) << 7);
@@ -41,14 +51,13 @@ fn coverage_weights(b: f32) -> [u8; 2] {
 pub fn ec_land_shader_flags(package: &TexLandEcPackage, tile_id: u32) -> u16 {
     use crate::core::render::scene::world::land::tile_atlas::{
         TERRAIN_SHADER_FLAG_FOLLOW_CENTER, TERRAIN_SHADER_FLAG_REVIEWED_LIQUID,
-        TERRAIN_SHADER_FLAG_SMOOTH,
     };
     let Some(material_id) = package.resolve_material_decision(tile_id).material_id else {
         return 0;
     };
     let mut flags = 0u16;
     if package.source_material(material_id).and_then(|entry| entry.texture.as_ref())
-        .is_some_and(|texture| texture.shader_name.as_deref() == Some(uocf::enhanced::terrain_definition::WATER_TERRAIN_LAYER_SHADER)) {
+        .is_some_and(|texture| texture.layer_class() == TerrainLayerClass::Water) {
         flags |= TERRAIN_SHADER_FLAG_REVIEWED_LIQUID;
     }
     let Some(details) = package.terrain_override_details_for(material_id) else {
@@ -56,7 +65,6 @@ pub fn ec_land_shader_flags(package: &TexLandEcPackage, tile_id: u32) -> u16 {
     };
     for policy in &details.policies {
         match policy.policy.as_str() {
-            "smooth" => flags |= TERRAIN_SHADER_FLAG_SMOOTH,
             "follow-center" => flags |= TERRAIN_SHADER_FLAG_FOLLOW_CENTER,
             _ => {}
         }

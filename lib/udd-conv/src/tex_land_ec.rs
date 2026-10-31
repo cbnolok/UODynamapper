@@ -50,16 +50,7 @@ use udd_assets::tex_art_cc::{page_entry_path, PagePixelFormat};
 use udd_assets::tex_land_ec::{
     TexLandEcPageRecord, TexLandEcSlotRecord, TexLandEcTerrainProvenanceRecord,
     MISSING_PAGE_INDEX, MISSING_PAGE_TILE_INDEX, MISSING_SLOT_ID, MISSING_TERRAIN_LAYER_INDEX,
-    MISSING_TEXTURE_ID, TERRAIN_PRIMARY_FLAG_FALLBACK_REASON,
-    TERRAIN_PRIMARY_FLAG_MULTIPLE_PREFERRED_NON_SUPPORT,
-    TERRAIN_PRIMARY_FLAG_SAMPLER_INDEX_TIEBREAKER,
-    TERRAIN_PRIMARY_FLAG_SELECTED_CURRENT_SUPPORT, TERRAIN_PRIMARY_FLAG_SELECTED_PREFERRED_REPETITION,
-    TERRAIN_PRIMARY_FLAG_SELECTED_SUPPORT_LIKE,
-    TERRAIN_PRIMARY_FLAG_SUPPORT_LIKE_OUTSIDE_CURRENT_HEURISTIC,
-    TERRAIN_PRIMARY_REASON_NON_SUPPORT_PREFERRED_REPETITION,
-    TERRAIN_PRIMARY_REASON_NON_SUPPORT_REPETITION_FALLBACK,
-    TERRAIN_PRIMARY_REASON_SUPPORT_PREFERRED_REPETITION_FALLBACK,
-    TERRAIN_PRIMARY_REASON_SUPPORT_REPETITION_FALLBACK, TERRAIN_PRIMARY_REASON_UNKNOWN,
+    MISSING_TEXTURE_ID, TERRAIN_LAYER_ROLE_NONE,
     TERRAIN_OVERRIDES_SCHEMA, TERRAIN_OVERRIDES_SCHEMA_VERSION,
     UDDP_PAGE_MANIFEST_ENTRY_VPATH, UDDP_SLOT_MANIFEST_ENTRY_VPATH,
     UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH, UDDP_TERRAIN_PROVENANCE_ENTRY_VPATH,
@@ -75,8 +66,7 @@ use udd_container::{
 };
 use uocf::enhanced::{
     terrain_definition::{
-        TerrainDefinitionEntry, TerrainDefinitionPackage, TerrainDefinitionPrimaryLayerReason,
-        TerrainDefinitionTextureLayer,
+        TerrainDefinitionEntry, TerrainDefinitionPackage, TerrainLayerClass, TerrainLayerRole,
     },
     textures::{ECImageFormat, Textures},
 };
@@ -104,7 +94,12 @@ const SLOT_MANIFEST_MAGIC: [u8; 4] = *b"ELSL";
 const TERRAIN_PROVENANCE_MAGIC: [u8; 4] = *b"ELTP";
 /// Bump version when the binary layout of either manifest changes.
 const TEX_LAND_EC_METADATA_VERSION: u32 = 3;
-const TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION: u32 = 3;
+/// 4: layer class and selected-item role replace the primary-selection heuristic reason and flags.
+const TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION: u32 = 4;
+/// Magic, version and record count.
+const TERRAIN_PROVENANCE_HEADER_BYTES: usize = 12;
+/// Ten u32/i32/f32 fields, the u64 alias flags, the class byte and the role byte.
+const TERRAIN_PROVENANCE_RECORD_BYTES: usize = 50;
 
 pub const DEFAULT_ATLAS_PAGE_WIDTH: u32 = 2048;
 pub const DEFAULT_ATLAS_PAGE_HEIGHT: u32 = 2048;
@@ -918,6 +913,8 @@ fn serialize_terrain_overrides_metadata_from_overrides(
 struct TerrainLayerProvenance {
     layer_index: u32,
     texture_repetition: f32,
+    /// The role of a source item by position; `None` for an override or missing layer.
+    role: Option<TerrainLayerRole>,
 }
 
 fn terrain_override_layers_by_material(
@@ -932,6 +929,7 @@ fn terrain_override_layers_by_material(
                 TerrainLayerProvenance {
                     layer_index: index as u32,
                     texture_repetition: layer.stretch.unwrap_or(1.0),
+                    role: None,
                 },
             );
         }
@@ -939,6 +937,7 @@ fn terrain_override_layers_by_material(
             layers.entry(texture.texture).or_insert(TerrainLayerProvenance {
                 layer_index: MISSING_TERRAIN_LAYER_INDEX,
                 texture_repetition: 1.0,
+                role: None,
             });
         }
     }
@@ -1045,6 +1044,7 @@ fn build_terrain_provenance_records(
                                     TerrainLayerProvenance {
                                         layer_index: layer_index as u32,
                                         texture_repetition: layer.texture_repetition,
+                                        role: Some(texture.layer_role(layer_index)),
                                     },
                                 )
                             })
@@ -1056,6 +1056,7 @@ fn build_terrain_provenance_records(
                 selected_layers.entry(selected_texture_id).or_insert(TerrainLayerProvenance {
                     layer_index: MISSING_TERRAIN_LAYER_INDEX,
                     texture_repetition: 1.0,
+                    role: None,
                 });
             }
             if let Some(override_layers) = override_layers_by_material.get(&entry.id) {
@@ -1068,6 +1069,7 @@ fn build_terrain_provenance_records(
                     TerrainLayerProvenance {
                         layer_index: MISSING_TERRAIN_LAYER_INDEX,
                         texture_repetition: 0.0,
+                        role: None,
                     },
                 );
             }
@@ -1089,8 +1091,8 @@ fn build_terrain_provenance_records(
                     selected_texture_repetition: selected_layer.texture_repetition,
                     primary_texture_id: primary.texture_id,
                     primary_layer_index: primary.layer_index,
-                    primary_selection_reason: primary.reason,
-                    primary_selection_flags: primary.flags,
+                    layer_class: entry.layer_class(),
+                    selected_layer_role: selected_layer.role,
                 });
             }
         }
@@ -1111,123 +1113,20 @@ fn build_terrain_provenance_records(
 struct TerrainPrimaryProvenance {
     texture_id: u32,
     layer_index: u32,
-    reason: u8,
-    flags: u16,
 }
 
+/// The primary item by the client's rule ([`TerrainLayerClass::primary_item`]).
 fn terrain_primary_provenance(entry: &TerrainDefinitionEntry) -> TerrainPrimaryProvenance {
-    let Some(texture) = entry.texture.as_ref() else {
-        return TerrainPrimaryProvenance {
+    match entry.primary_texture_layer() {
+        Some((position, layer)) => TerrainPrimaryProvenance {
+            texture_id: layer.texture_id.unwrap_or(MISSING_TEXTURE_ID),
+            layer_index: position as u32,
+        },
+        None => TerrainPrimaryProvenance {
             texture_id: MISSING_TEXTURE_ID,
             layer_index: MISSING_TERRAIN_LAYER_INDEX,
-            reason: TERRAIN_PRIMARY_REASON_UNKNOWN,
-            flags: 0,
-        };
-    };
-    let Some((layer, reason)) = entry.primary_texture_layer_with_reason() else {
-        return TerrainPrimaryProvenance {
-            texture_id: MISSING_TEXTURE_ID,
-            layer_index: MISSING_TERRAIN_LAYER_INDEX,
-            reason: TERRAIN_PRIMARY_REASON_UNKNOWN,
-            flags: 0,
-        };
-    };
-
-    let layer_index = texture
-        .layers
-        .iter()
-        .position(|candidate| std::ptr::eq(candidate, layer))
-        .map(|index| index as u32)
-        .unwrap_or(MISSING_TERRAIN_LAYER_INDEX);
-
-    TerrainPrimaryProvenance {
-        texture_id: layer.texture_id.unwrap_or(MISSING_TEXTURE_ID),
-        layer_index,
-        reason: terrain_primary_reason_code(reason),
-        flags: terrain_primary_flags(texture.layers.as_slice(), layer, reason),
+        },
     }
-}
-
-fn terrain_primary_reason_code(reason: TerrainDefinitionPrimaryLayerReason) -> u8 {
-    match reason {
-        TerrainDefinitionPrimaryLayerReason::NonSupportPreferredRepetition => {
-            TERRAIN_PRIMARY_REASON_NON_SUPPORT_PREFERRED_REPETITION
-        }
-        TerrainDefinitionPrimaryLayerReason::NonSupportRepetitionFallback => {
-            TERRAIN_PRIMARY_REASON_NON_SUPPORT_REPETITION_FALLBACK
-        }
-        TerrainDefinitionPrimaryLayerReason::SupportPreferredRepetitionFallback => {
-            TERRAIN_PRIMARY_REASON_SUPPORT_PREFERRED_REPETITION_FALLBACK
-        }
-        TerrainDefinitionPrimaryLayerReason::SupportRepetitionFallback => {
-            TERRAIN_PRIMARY_REASON_SUPPORT_REPETITION_FALLBACK
-        }
-    }
-}
-
-fn terrain_primary_flags(
-    layers: &[TerrainDefinitionTextureLayer],
-    selected_layer: &TerrainDefinitionTextureLayer,
-    reason: TerrainDefinitionPrimaryLayerReason,
-) -> u16 {
-    let mut flags = 0u16;
-    if selected_layer.is_support_layer_by_current_name_heuristic() {
-        flags |= TERRAIN_PRIMARY_FLAG_SELECTED_CURRENT_SUPPORT;
-    }
-    if selected_layer.has_support_like_name_clue() {
-        flags |= TERRAIN_PRIMARY_FLAG_SELECTED_SUPPORT_LIKE;
-    }
-    if selected_layer.has_preferred_primary_repetition() {
-        flags |= TERRAIN_PRIMARY_FLAG_SELECTED_PREFERRED_REPETITION;
-    }
-    if matches!(
-        reason,
-        TerrainDefinitionPrimaryLayerReason::NonSupportRepetitionFallback
-            | TerrainDefinitionPrimaryLayerReason::SupportPreferredRepetitionFallback
-            | TerrainDefinitionPrimaryLayerReason::SupportRepetitionFallback
-    ) {
-        flags |= TERRAIN_PRIMARY_FLAG_FALLBACK_REASON;
-    }
-
-    let preferred_non_support_count = layers
-        .iter()
-        .filter(|layer| {
-            layer.texture_id.is_some()
-                && !layer.is_support_layer_by_current_name_heuristic()
-                && layer.has_preferred_primary_repetition()
-        })
-        .count();
-    if preferred_non_support_count > 1 {
-        flags |= TERRAIN_PRIMARY_FLAG_MULTIPLE_PREFERRED_NON_SUPPORT;
-    }
-
-    let support_like_not_current_count = layers
-        .iter()
-        .filter(|layer| {
-            layer.texture_id.is_some()
-                && layer.has_support_like_name_clue()
-                && !layer.is_support_layer_by_current_name_heuristic()
-        })
-        .count();
-    if support_like_not_current_count > 0 {
-        flags |= TERRAIN_PRIMARY_FLAG_SUPPORT_LIKE_OUTSIDE_CURRENT_HEURISTIC;
-    }
-
-    let selected_rank_peer_count = layers
-        .iter()
-        .filter(|layer| {
-            layer.texture_id.is_some()
-                && layer.is_support_layer_by_current_name_heuristic()
-                    == selected_layer.is_support_layer_by_current_name_heuristic()
-                && layer.has_preferred_primary_repetition()
-                    == selected_layer.has_preferred_primary_repetition()
-        })
-        .count();
-    if selected_rank_peer_count > 1 {
-        flags |= TERRAIN_PRIMARY_FLAG_SAMPLER_INDEX_TIEBREAKER;
-    }
-
-    flags
 }
 
 fn decode_present_tiles(
@@ -1863,7 +1762,9 @@ pub fn encode_slot_manifest(
 pub fn serialize_terrain_provenance_manifest(
     records: &[TexLandEcTerrainProvenanceRecord],
 ) -> eyre::Result<Vec<u8>> {
-    let mut bytes = Vec::with_capacity(12 + records.len() * 43);
+    let mut bytes = Vec::with_capacity(
+        TERRAIN_PROVENANCE_HEADER_BYTES + records.len() * TERRAIN_PROVENANCE_RECORD_BYTES,
+    );
     bytes.extend_from_slice(&TERRAIN_PROVENANCE_MAGIC);
     bytes.write_u32::<LittleEndian>(TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION)?;
     bytes.write_u32::<LittleEndian>(records.len() as u32)?;
@@ -1879,8 +1780,8 @@ pub fn serialize_terrain_provenance_manifest(
         bytes.write_f32::<LittleEndian>(record.selected_texture_repetition)?;
         bytes.write_u32::<LittleEndian>(record.primary_texture_id)?;
         bytes.write_u32::<LittleEndian>(record.primary_layer_index)?;
-        bytes.write_u8(record.primary_selection_reason)?;
-        bytes.write_u16::<LittleEndian>(record.primary_selection_flags)?;
+        bytes.write_u8(record.layer_class as u8)?;
+        bytes.write_u8(record.selected_layer_role.map_or(TERRAIN_LAYER_ROLE_NONE, |role| role as u8))?;
     }
     Ok(bytes)
 }
@@ -1984,6 +1885,7 @@ mod tests {
                 TerrainLayerProvenance {
                     layer_index: 2,
                     texture_repetition: 6.0,
+                    role: None,
                 },
             )]),
         )]);
@@ -2015,18 +1917,18 @@ mod tests {
                 && record.selected_layer_index == 2
                 && record.selected_texture_repetition == 6.0
         }));
+        // The primary is item 0 for a default layer, whatever its stretch.
         for record in &records {
-            assert_eq!(record.primary_texture_id, 2000131);
-            assert_eq!(record.primary_layer_index, 1);
-            assert_eq!(
-                record.primary_selection_reason,
-                TERRAIN_PRIMARY_REASON_NON_SUPPORT_PREFERRED_REPETITION
-            );
-            assert_eq!(
-                record.primary_selection_flags & TERRAIN_PRIMARY_FLAG_SELECTED_PREFERRED_REPETITION,
-                TERRAIN_PRIMARY_FLAG_SELECTED_PREFERRED_REPETITION
-            );
+            assert_eq!(record.primary_texture_id, 2000130);
+            assert_eq!(record.primary_layer_index, 0);
+            assert_eq!(record.layer_class, TerrainLayerClass::Default);
         }
+        let role_of = |texture_id: u32| {
+            records.iter().find(|record| record.selected_texture_id == texture_id).map(|record| record.selected_layer_role)
+        };
+        assert_eq!(role_of(2000130), Some(Some(TerrainLayerRole::ColourA)));
+        assert_eq!(role_of(2000131), Some(Some(TerrainLayerRole::ColourB)));
+        assert_eq!(role_of(2000132), Some(None));
     }
 
     #[test]
@@ -2039,7 +1941,7 @@ mod tests {
             &path,
             r#"
 terrain 52 {
-    policy "smooth" code="reviewed_runtime_policy"
+    policy "follow-center" code="reviewed_runtime_policy"
     layer "t0" tex=2000510 stretch=5.0 code="reviewed_layer_texture"
 }
 "#,

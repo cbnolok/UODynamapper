@@ -636,14 +636,7 @@ impl InspectorApp {
                 let primary_texture = primary_texture_id
                     .map(|texture_id| texture_id.to_string())
                     .unwrap_or_else(|| "missing".to_string());
-                let primary_selection_reason = records
-                    .first()
-                    .map(|r| r.primary_selection_reason)
-                    .unwrap_or(udd_assets::tex_land_ec::TERRAIN_PRIMARY_REASON_UNKNOWN);
-                let primary_selection_flags = records
-                    .first()
-                    .map(|r| r.primary_selection_flags)
-                    .unwrap_or(0);
+                let layer_class = records.first().map(|r| r.layer_class);
                 let selected_texture_count = records
                     .iter()
                     .filter_map(|record| {
@@ -693,8 +686,7 @@ impl InspectorApp {
                         alias_count,
                         selected_texture_count,
                         primary_texture_id,
-                        primary_selection_reason,
-                        primary_selection_flags,
+                        layer_class,
                         selected_textures,
                         override_textures,
                         preview,
@@ -1835,7 +1827,9 @@ mod tests {
     fn ec_land_terrain_provenance_bytes() -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"ELTP");
-        bytes.write_u32::<LittleEndian>(3).unwrap();
+        bytes
+            .write_u32::<LittleEndian>(udd_assets::tex_land_ec::TEX_LAND_EC_TERRAIN_PROVENANCE_VERSION)
+            .unwrap();
         bytes.write_u32::<LittleEndian>(3).unwrap();
         for (texture_id, canonical_slot_id, layer_index) in [
             (1_000_003, 16_408, udd_assets::tex_land_ec::MISSING_TERRAIN_LAYER_INDEX),
@@ -1853,14 +1847,8 @@ mod tests {
             bytes.write_f32::<LittleEndian>(5.0).unwrap();
             bytes.write_u32::<LittleEndian>(2_000_520).unwrap();
             bytes.write_u32::<LittleEndian>(0).unwrap();
-            bytes
-                .write_u8(udd_assets::tex_land_ec::TERRAIN_PRIMARY_REASON_NON_SUPPORT_PREFERRED_REPETITION)
-                .unwrap();
-            bytes
-                .write_u16::<LittleEndian>(
-                    udd_assets::tex_land_ec::TERRAIN_PRIMARY_FLAG_SELECTED_PREFERRED_REPETITION,
-                )
-                .unwrap();
+            bytes.write_u8(uocf::enhanced::terrain_definition::TerrainLayerClass::Default as u8).unwrap();
+            bytes.write_u8(udd_assets::tex_land_ec::TERRAIN_LAYER_ROLE_NONE).unwrap();
         }
         bytes
     }

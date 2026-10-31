@@ -250,9 +250,7 @@ fn ui_texture_data(
             ui.label("path");
             ui.label("texture_id");
             ui.label("type");
-            ui.label("support?");
-            ui.label("clue?");
-            ui.label("pref.rep?");
+            ui.label("role");
             ui.label("source_kind");
             ui.label("repetition");
             ui.label("sampler_index");
@@ -266,9 +264,7 @@ fn ui_texture_data(
                 ui.label(layer.path.as_deref().unwrap_or("None"));
                 ui.label(layer.texture_id.map(|id| id.to_string()).unwrap_or_else(|| "None".to_string()));
                 ui.label(terrain_texture_type_label(layer.texture_type));
-                ui.label(layer.is_support_layer_by_current_name_heuristic().to_string());
-                ui.label(layer.has_support_like_name_clue().to_string());
-                ui.label(layer.has_preferred_primary_repetition().to_string());
+                ui.label(texture.layer_role(i).as_str());
                 ui.label(layer.source_kind.to_string());
                 ui.label(layer.texture_repetition.to_string());
                 ui.label(layer.sampler_index.to_string());
@@ -287,15 +283,13 @@ fn ui_texture_data(
         });
         ui.add_space(5.0);
         ui.collapsing("Layer Analysis", |ui| {
-            let primary = entry.primary_texture_layer_with_reason();
-            if let Some((primary_layer, reason)) = primary {
-                let primary_idx = texture.layers.iter().position(|l| std::ptr::eq(l, primary_layer));
+            if let Some((primary_idx, primary_layer)) = entry.primary_texture_layer() {
                 egui::Grid::new("td_primary_analysis_grid").show(ui, |ui| {
                     ui.label("Primary layer:");
-                    ui.label(primary_idx.map(|i| i.to_string()).unwrap_or_else(|| "?".to_string()));
+                    ui.label(primary_idx.to_string());
                     ui.end_row();
-                    ui.label("Reason:");
-                    ui.label(reason.as_str());
+                    ui.label("Layer class:");
+                    ui.label(texture.layer_class().as_str());
                     ui.end_row();
                     ui.label("Path:");
                     ui.label(primary_layer.path.as_deref().unwrap_or("None"));
@@ -318,14 +312,11 @@ fn ui_texture_data(
                 );
                 ui.collapsing(header, |ui| {
                     egui::Grid::new(format!("td_layer_analysis_{i}")).show(ui, |ui| {
-                        ui.label("support heuristic:");
-                        ui.label(layer.is_support_layer_by_current_name_heuristic().to_string());
+                        ui.label("role (by position):");
+                        ui.label(texture.layer_role(i).as_str());
                         ui.end_row();
-                        ui.label("support-like clue:");
-                        ui.label(layer.has_support_like_name_clue().to_string());
-                        ui.end_row();
-                        ui.label("preferred repetition:");
-                        ui.label(layer.has_preferred_primary_repetition().to_string());
+                        ui.label("stretch (UV divisor):");
+                        ui.label(layer.texture_repetition.to_string());
                         ui.end_row();
                     });
                     if let Some(texture_id) = layer.texture_id {

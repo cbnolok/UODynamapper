@@ -1002,61 +1002,50 @@ Consequences:
 Terrain packing starts from `TerrainDefinition.uop`, not from classic tile ids
 or raw texture package membership.
 
-The current primary visible texture selector ranks layers in this order:
+The client binds a material's texture items by class and position, never by
+file name or stretch
+(`scripts/dev-helpers/ec-research/ghidra-terrain-layers/results/uosa_terrain_layers.md`).
+`uocf::enhanced::terrain_definition::TerrainLayerClass` and
+`TerrainLayerRole` name those rules:
 
-1. Layers with a resolved texture id.
-2. Non-support names before support names.
-3. Preferred repetition before non-preferred repetition.
-4. Lower `sampler_index`.
-5. Lower `path_index`.
+- The class comes from the shader name only, as in
+  `CreateTerrainLayerForShader`: `UOWaterTerrainLayer` or `UOWaterShader` is
+  water, `UOBumpMapTerrainLayer` is bump, anything else is default. Shipped
+  data: 192 default, 8 water, 1 bump (snow 8).
+- The primary (visible) item is item 0 for default and bump, item 1 for water.
+  No other selection step exists: there is no support-name test, no preferred
+  stretch range and no `sampler_index` tie-breaker. Stretch is only a UV
+  divisor.
+- `terrain_provenance.bin` v4 stores each record's layer class and the role of
+  its selected layer instead of the old primary selection reason and flags.
 
-Current support-name heuristic:
-
-- Support for primary exclusion: path contains `noise`, `normal`, `mask`, or
-  `_alpha`.
-- Wider support-like diagnostic clue: path contains `alpha`, `mask`, `noise`,
-  `normal`, `bump`, `ripple`, `flow`, or `distort`.
-
-Preferred repetition is `4.0..=8.0`. This matches the observed EC terrain
-albedo/detail layers better than choosing the first layer blindly. It prevents
-the old failures where an alpha mask, normal map, displacement-like texture, or
-red diagnostic-looking support texture became the visible terrain base.
-
-`sampler_index` is only a deterministic final tie-breaker after the support and
-repetition rules. It is not treated as semantic policy. The packer marks
-`TERRAIN_PRIMARY_FLAG_SAMPLER_INDEX_TIEBREAKER` when multiple layers have the
-same current rank, so those cases stay visible for audit. Do not promote
-`sampler_index` unless an audit proves it works in at least 3/4 of reviewed cases.
-
-Reason codes written to metadata:
-
-- `non_support_preferred_repetition`
-- `non_support_repetition_fallback`
-- `support_preferred_repetition_fallback`
-- `support_repetition_fallback`
-
-Diagnostic flags written to metadata include:
-
-- selected current support layer
-- selected support-like layer
-- selected preferred repetition
-- fallback reason
-- multiple preferred non-support layers
-- support-like clue outside current heuristic
-- `sampler_index` tie-breaker
+Edge softness is each material's `coverage_exponent`: 0 gives a hard edge with
+point filtering; a larger value gives a soft falloff with bilinear filtering.
+The client has no "smooth" flag, and the renderer reads the exponent from the
+packed source materials.
 
 ## 5. Layer Roles
 
-For EC terrain runtime blending, layer index currently matters:
+Item i of a terrain definition is shader map i + 1 (map 0 is the coverage
+alpha). Roles by class and position (`TerrainLayerClass::role`):
 
-- Layer 0 is treated as base/albedo.
-- Layer 1 is treated as detail/grunge/secondary albedo.
-- Layer 2 is treated as mask/alpha blend control.
+| Class | Item 0 | Item 1 | Item 2 | Item 3 | Item 4 |
+|---|---|---|---|---|---|
+| default | `ColourA` (primary) | `ColourB` | `BlendAlpha` | `Unused` | `Unused` |
+| bump | `ColourA` (primary) | `ColourB` | `BlendAlpha` | `LuminanceBump` | `EnvironmentMap` |
+| water | `Distortion` (du/dv) | `FallbackColour` (primary) | `MainColour` | `Unused` | `Unused` |
 
-This is a runtime interpretation of the layer graph preserved from
-`TerrainDefinition.uop`. The packer does not flatten layers into one image. It
-packs all source texture ids it can decode, then writes provenance so runtime
-can sample base/detail/mask with the authored stretch.
+- Default and bump colour = `item0 * a + item1 * (1 - a)`, with `a` the alpha of
+  item 2 (`SetupFourStages`). With fewer than four stages the client draws
+  item 0 alone. Item 3 of a default material is never fetched (48 records have
+  one).
+- Water scrolls item 0 by tweaks 0/1 and perturbs item 2 with it; item 1 is the
+  fallback colour. `UOWaterTerrainLayer::SetMaterialId` (0x004601e0) stores
+  material × 1000, so water layers sort after the others.
+
+The packer does not flatten layers into one image. It packs all source texture
+ids it can decode, then writes provenance so runtime can sample the roles with
+the authored stretch.
 
 Normals, noise, masks, ripple/flow/distortion clues, and other support textures
 are preserved as metadata and packed texture refs when available. They are not
@@ -1171,11 +1160,9 @@ What to verify first:
 
 Likely correct policy:
 
-- For liquid surface-like statics, prefer tileart refs classified as visible
-  albedo/base over support refs, exactly as terrain primary selection does.
-- Treat names containing `normal`, `bump`, `mask`, `_alpha`, `noise`, `ripple`,
-  `flow`, or `distort` as support for visible-primary selection unless a manual
-  review proves otherwise.
+- For liquid surface-like statics, prefer tileart refs whose stable role (from
+  the block shader and the item position) is visible albedo/base, just as
+  terrain layers bind by class and position; file names are not evidence.
 - Keep `texture_stretch` from the selected visible ref or resolved terrain
   provenance slot; otherwise water scale and motion will look wrong even after
   the texture id is fixed.
@@ -1300,7 +1287,7 @@ Runtime:
   - `metadata/terrain_provenance.bin`: material-to-texture provenance
   - optional `metadata/terrain_overrides.json`: embedded KDL-derived defaults
   - optional `metadata/transcode.bin`: embedded transcode table
-- `terrain_provenance.bin` v3 stores:
+- `terrain_provenance.bin` v4 stores:
   - material id
   - material name id
   - alias count index
@@ -1311,9 +1298,10 @@ Runtime:
   - selected layer index
   - selected texture repetition/stretch
   - primary texture id
-  - primary layer index
-  - primary selection reason
-  - primary selection flags
+  - primary layer index (item 0, or item 1 for water)
+  - layer class (`TerrainLayerClass`: 0 default, 1 bump, 2 water)
+  - selected layer role (`TerrainLayerRole`; 255 for an override or missing
+    layer)
 - Runtime uses provenance to resolve direct terrain, transcoded terrain, and
   surface-like static texture refs, and to fill base/detail/mask lookup entries
   for the land shader.
@@ -1348,7 +1336,9 @@ Active KDL files live in `dynamapper/assets/cc_ec_convtables/`.
 - Reviewed manual integration table for facts not currently derivable from UOP
   data.
 - Supported actions:
-  - `policy`: shader/runtime policy such as smoothing or follow-center
+  - `policy`: repo-side runtime policy; only `follow-center` is read (a liquid
+    look with no client basis). Edge softness is `coverage_exponent`, not a
+    policy.
   - `liquid`: reviewed liquid speed/wave parameters
   - `layer`: ordered texture layer substitution with optional stretch
   - `texture`: extra texture id reference with role
@@ -1371,9 +1361,10 @@ Active KDL files live in `dynamapper/assets/cc_ec_convtables/`.
 Legacy KDL files:
 
 - The superseded tables (the hand-written `TerrainDefinition.kdl`, the `TerrainTranscode` experiments and the
-  pre-blending snapshot) were removed; git history keeps them. The values only `TerrainDefinition.kdl` held, the
-  "smooth" policy of 14 solid terrains and terrain 201's mask layer, are in `EcTerrainOverrides.kdl` with
-  `code="from_terrain_definition_kdl"`.
+  pre-blending snapshot) were removed; git history keeps them. The values only `TerrainDefinition.kdl` held were
+  dropped too: its "smooth" flag has no client basis (softness is `coverage_exponent`), and its terrain 201 is not
+  a client material (a copy of 64). Classic land 774/777 now follow `legacyterrainmap.csv` to material 64,
+  subtype 0.
 
 Modify active KDL only when the source-derived pipeline is wrong or incomplete
 and the reason has been inspected. If a rule can be derived from UOP data, fix
