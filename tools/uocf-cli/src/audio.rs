@@ -1,5 +1,5 @@
-//! `uocf-cli audio`: the census of client audio, the list of the audio entries, and exports of the files as they
-//! are (and decoded to WAV) by id, name or all.
+//! `uocf-cli audio`: the census of client audio, the list of the audio entries, exports of the files as they
+//! are (and decoded to WAV) by id, name or all, and `Audio.uop` copies with entries replaced or added.
 
 use std::fs;
 use std::io::BufWriter;
@@ -8,10 +8,12 @@ use std::path::{Path, PathBuf};
 use clap::{ArgGroup, Subcommand};
 use color_eyre::eyre::{self, eyre, WrapErr};
 use uocf::audio::census::{census_client, AudioCensus};
+use uocf::audio::validate::FormatPolicy;
 use uocf::audio::decode::{decode, decode_classic_pcm};
 use uocf::audio::AudioContent;
 use uocf::classic::sound::{ClassicSound, SoundMap};
 use uocf::enhanced::audio::{AudioEntry, AudioKind, AudioPackage, AudioTables, AUDIO_ENTRY_ROOT};
+use uocf::enhanced::audio_edit::{AudioImportOptions, AudioPackageEditor, AudioPut, AudioTarget, NewAudio};
 use uocf::uop_container::hash_dictionary::HashDictionary;
 
 /// Where exports of unnamed `Audio.uop` entries and Classic slots go, under the output folder.
@@ -94,6 +96,113 @@ pub enum AudioCmd {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Write a copy of an Audio.uop with one entry replaced by a file. The entry keeps its compression flag; the
+    /// file must be in a format the shipped package holds (see --allow-unverified-format).
+    #[command(group(ArgGroup::new("target").required(true).args(["sound", "legacy_sound", "music", "name"])))]
+    Replace {
+        #[command(flatten)]
+        edit: EditArgs,
+        /// Sound id: its MP3.
+        #[arg(long)]
+        sound: Option<u32>,
+        /// Sound id: its Classic WAV under legacysounds/.
+        #[arg(long)]
+        legacy_sound: Option<u32>,
+        /// Music id.
+        #[arg(long)]
+        music: Option<u32>,
+        /// Entry name, such as data/audio/sounds/aaaenvir/d_frst01.mp3.
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// Write a copy of an Audio.uop with a new entry: MP3s stored, WAVs zlib-compressed, as the shipped ones. A
+    /// sound or music id without a table row gets one (--table-path).
+    #[command(group(ArgGroup::new("target").required(true).args(["sound", "legacy_sound", "music", "name"])))]
+    Add {
+        #[command(flatten)]
+        edit: EditArgs,
+        /// Sound id: its MP3.
+        #[arg(long)]
+        sound: Option<u32>,
+        /// Sound id: its Classic WAV under legacysounds/.
+        #[arg(long)]
+        legacy_sound: Option<u32>,
+        /// Music id.
+        #[arg(long)]
+        music: Option<u32>,
+        /// Entry name under data/audio/ (lowercase, `/` separators), without a table row.
+        #[arg(long, conflicts_with_all = ["table_path", "looping"])]
+        name: Option<String>,
+        /// The path of the new table row of an id without one: `Sounds\folder\file.mp3` for a sound (its MP3
+        /// and its legacy WAV), `Music/file.mp3` for music.
+        #[arg(long)]
+        table_path: Option<String>,
+        /// A new music row loops.
+        #[arg(long = "loop")]
+        looping: bool,
+    },
+}
+
+/// What `audio replace` and `audio add` share.
+#[derive(clap::Args, Debug)]
+pub struct EditArgs {
+    /// The Audio.uop to read.
+    #[arg(long)]
+    uop: PathBuf,
+    /// The Audio.uop to write: an absolute path, not the source.
+    #[arg(long)]
+    output: PathBuf,
+    /// The file the entry will hold: MP3 for an .mp3 entry, WAV for a .wav one.
+    #[arg(long)]
+    input: PathBuf,
+    /// Convert a file a WAV entry cannot take (another sample format, MP3) to 16-bit PCM WAV of its rate and
+    /// channels. There is no MP3 encoder, and no resampling.
+    #[arg(long)]
+    convert: bool,
+    /// Accept a format the shipped package does not show the client playing, with warnings: the client's
+    /// decoder limits are not known, so this is for trying a file out in a test client, not for a release.
+    #[arg(long)]
+    allow_unverified_format: bool,
+}
+
+impl EditArgs {
+    fn options(&self) -> AudioImportOptions {
+        let policy = if self.allow_unverified_format { FormatPolicy::AllowUnverified } else { FormatPolicy::VerifiedOnly };
+        AudioImportOptions { policy, convert: self.convert }
+    }
+
+    /// Loads the package and the file, applies `put`, writes the copy and reports.
+    fn apply(&self, put: impl FnOnce(&mut AudioPackageEditor, &[u8], AudioImportOptions) -> eyre::Result<AudioPut>) -> eyre::Result<()> {
+        eyre::ensure!(self.output.is_absolute(), "--output must be an absolute path: {}", self.output.display());
+        let file = fs::read(&self.input).wrap_err_with(|| format!("Failed to read {}", self.input.display()))?;
+        let mut editor = AudioPackageEditor::load(&self.uop)?;
+        let result = put(&mut editor, &file, self.options())?;
+        for warning in &result.warnings {
+            log::warn!("{}: {warning}", result.name);
+        }
+        editor.save_as(&self.output)?;
+        log::info!(
+            "{:?} {} ({:016X}, {:?}{}){} in {}",
+            result.write,
+            result.name,
+            result.hash,
+            result.compression,
+            if result.converted { ", converted to 16-bit PCM WAV" } else { "" },
+            result.table_row_added.map(|table| format!(", with a new row in {table}")).unwrap_or_default(),
+            self.output.display()
+        );
+        Ok(())
+    }
+}
+
+/// The entry kind and id of the `--sound`, `--legacy-sound` or `--music` given.
+fn id_target(sound: Option<u32>, legacy_sound: Option<u32>, music: Option<u32>) -> Option<(AudioKind, u32)> {
+    match (sound, legacy_sound, music) {
+        (Some(id), ..) => Some((AudioKind::Sound, id)),
+        (_, Some(id), _) => Some((AudioKind::LegacySound, id)),
+        (.., Some(id)) => Some((AudioKind::Music, id)),
+        _ => None,
+    }
 }
 
 fn load_dictionaries(paths: &[PathBuf]) -> eyre::Result<HashDictionary> {
@@ -137,6 +246,22 @@ pub fn run(cmd: AudioCmd) -> eyre::Result<()> {
                 _ => unreachable!("clap requires one selector"),
             };
             export(&client, selection, wav, &output)
+        }
+        AudioCmd::Replace { edit, sound, legacy_sound, music, name } => {
+            let target = match (id_target(sound, legacy_sound, music), name) {
+                (Some((kind, id)), _) => AudioTarget::Id(kind, id),
+                (None, Some(name)) => AudioTarget::Name(name),
+                (None, None) => unreachable!("clap requires one target"),
+            };
+            edit.apply(|editor, file, options| editor.replace(&target, file, options))
+        }
+        AudioCmd::Add { edit, sound, legacy_sound, music, name, table_path, looping } => {
+            let new = match (id_target(sound, legacy_sound, music), name) {
+                (Some((kind, id)), _) => NewAudio::Id { kind, id, path: table_path, loops: looping.then_some(true) },
+                (None, Some(name)) => NewAudio::Name(name),
+                (None, None) => unreachable!("clap requires one target"),
+            };
+            edit.apply(|editor, file, options| editor.add(&new, file, options))
         }
     }
 }

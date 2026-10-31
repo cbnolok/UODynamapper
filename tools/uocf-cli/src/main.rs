@@ -85,11 +85,11 @@ enum Commands {
         #[arg(short, long)]
         output: PathBuf,
     },
-    /// Classic Client sounds (sound.mul/soundidx.mul or soundLegacyMUL.uop): export one as WAV.
+    /// Classic Client sounds (sound.mul/soundidx.mul or soundLegacyMUL.uop): export one as WAV, or import one.
     #[command(subcommand)]
     Sound(sound::SoundCmd),
-    /// Client audio (Audio.uop, Classic sounds, Music/): the census by content, the list, and exports as stored
-    /// and decoded to WAV.
+    /// Client audio (Audio.uop, Classic sounds, Music/): the census by content, the list, exports as stored
+    /// and decoded to WAV, and Audio.uop entries replaced or added.
     #[command(subcommand)]
     Audio(audio::AudioCmd),
     /// Classic Client multimap.rle converter.

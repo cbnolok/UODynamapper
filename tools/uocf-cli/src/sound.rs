@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use clap::{ArgGroup, Subcommand, ValueEnum};
 use color_eyre::eyre::{self, WrapErr};
 use uocf::classic::sound::SoundMap;
+use uocf::classic::sound_edit::ClassicSoundEditor;
 
 #[derive(Subcommand, Debug)]
 pub enum SoundCmd {
@@ -30,6 +31,29 @@ pub enum SoundCmd {
         #[arg(long, value_enum, default_value_t = SoundExportFormat::Wav)]
         format: SoundExportFormat,
     },
+    /// Write copies of the sound files (sound.mul and soundidx.mul, else soundLegacyMUL.uop) with a slot set from
+    /// a 16-bit PCM mono WAV at 22050 Hz. A replaced slot keeps its 40-byte header (the name field rewritten with
+    /// --name); a new one gets the name and zeros. Verdata is not applied.
+    Import {
+        /// Classic Client directory containing soundidx.mul and sound.mul, or soundLegacyMUL.uop.
+        #[arg(long)]
+        ccdir: PathBuf,
+        /// Folder for the written files: an absolute path, not the client directory.
+        #[arg(long)]
+        output: PathBuf,
+        /// Direct soundidx.mul slot.
+        #[arg(long)]
+        slot: u32,
+        /// The WAV file.
+        #[arg(long)]
+        input: PathBuf,
+        /// The name in the slot header (up to 31 ASCII characters); required for a new slot.
+        #[arg(long)]
+        name: Option<String>,
+        /// Decode any WAV or MP3 at 22050 Hz (or 22048 Hz) and downmix it to mono. There is no resampling.
+        #[arg(long)]
+        convert: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -41,6 +65,25 @@ pub fn run(cmd: SoundCmd) -> eyre::Result<()> {
     match cmd {
         SoundCmd::Export { ccdir, slot, id, output, format } => {
             export_sound(ccdir, slot, id, output, format)
+        }
+        SoundCmd::Import { ccdir, output, slot, input, name, convert } => {
+            eyre::ensure!(output.is_absolute(), "--output must be an absolute path: {}", output.display());
+            let file = fs::read(&input).wrap_err_with(|| format!("Failed to read {}", input.display()))?;
+            let mut editor = ClassicSoundEditor::load(&ccdir)?;
+            let put = editor.put_sound(slot, &file, name.as_deref(), convert)?;
+            for warning in &put.warnings {
+                log::warn!("slot {slot}: {warning}");
+            }
+            let written = editor.save_to(&output)?;
+            log::info!(
+                "{:?} slot {slot} '{}' ({} PCM bytes{}); wrote {}",
+                put.write,
+                put.name,
+                put.pcm_bytes,
+                if put.converted { ", converted" } else { "" },
+                written.iter().map(|path| path.display().to_string()).collect::<Vec<_>>().join(", ")
+            );
+            Ok(())
         }
     }
 }
