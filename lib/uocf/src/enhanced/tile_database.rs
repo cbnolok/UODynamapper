@@ -6,7 +6,7 @@ use crate::enhanced::string_dictionary::UoStringDictionary;
 use crate::enhanced::terrain_config::{
     LiquidLandData, SingleLandData, SolidLandData, TerrainDefinition,
 };
-use crate::enhanced::tileart::{ArtData, TileArtEntry};
+use crate::enhanced::tileart::{ArtData, TileArtEntry, tileart_entry_hash};
 use crate::uop_container::package::UopPackage;
 use std::collections::HashMap;
 use std::path::Path;
@@ -112,16 +112,61 @@ impl ArtDefinition {
         let string_dictionary = UoStringDictionary::load(string_dict_path)
             .wrap_err("Failed to load string_dictionary.uop")?;
 
-        let mut definitions = HashMap::new();
+        Self::from_package(&tileart_package, &string_dictionary)
+    }
 
-        for file in tileart_package.iter_files() {
-            if let Ok(tae) = TileArtEntry::parse_raw(file) {
-                let art_data = tae.process(&string_dictionary);
-                definitions.insert(art_data.id, art_data);
-            }
+    /// Resolve the 16-bit static-art namespace by asset name, as the client does.
+    pub fn from_package(package: &UopPackage, strings: &UoStringDictionary) -> eyre::Result<Self> {
+        let mut definitions = HashMap::new();
+        for id in u16::MIN..=u16::MAX {
+            let Some(file) = package.get_file_by_hash(tileart_entry_hash(u32::from(id))) else { continue; };
+            // Some original records store another tile's ID. Large creature
+            // placeholder IDs also must not wrap into this static namespace.
+            let entry = TileArtEntry::parse_raw(file)
+                .wrap_err_with(|| format!("parse tileart asset {id}"))?;
+            let mut art_data = entry.process(strings);
+            art_data.id = id;
+            definitions.insert(id, art_data);
         }
         Ok(Self { definitions })
     }
 }
 
 // endregion: --- Public API
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::enhanced::tileart::{TaeTexture, TILEART_RECORD_VERSION, tileart_entry_path};
+    use crate::uop_container::file::CompressionFlag;
+
+    #[test]
+    fn static_assets_use_entry_names_and_keep_the_stored_source_id() {
+        let strings = UoStringDictionary::from_payload_bytes(&[0; 16], "empty test dictionary").unwrap();
+        let mut package = UopPackage::new_default();
+        let creature = 10_000_001u32;
+        let wrapped = creature as u16;
+        for (asset, stored) in [(43956, 43956), (43957, 43956),
+            (u32::from(wrapped), u32::from(wrapped)), (creature, creature)] {
+            let entry = TileArtEntry { version: TILEART_RECORD_VERSION, tile_id: stored,
+                texture_vector: vec![TaeTexture::default(); 4], ..TileArtEntry::default() };
+            package.add_file_from_memory(&entry.to_bytes().unwrap(), &tileart_entry_path(asset),
+                CompressionFlag::Zlib).unwrap();
+        }
+        let art = ArtDefinition::from_package(&package, &strings).unwrap();
+        assert_eq!(art.definitions.len(), 3);
+        assert_eq!(art.definitions[&43956].source_tile_id, 43956);
+        assert_eq!(art.definitions[&43957].id, 43957);
+        assert_eq!(art.definitions[&43957].source_tile_id, 43956);
+        assert_eq!(art.definitions[&wrapped].source_tile_id, u32::from(wrapped));
+    }
+
+    #[test]
+    fn malformed_named_static_is_reported_instead_of_silently_missing() {
+        let strings = UoStringDictionary::from_payload_bytes(&[0; 16], "empty test dictionary").unwrap();
+        let mut package = UopPackage::new_default();
+        package.add_file_from_memory(&[0, 0], &tileart_entry_path(43957), CompressionFlag::Zlib).unwrap();
+        let error = ArtDefinition::from_package(&package, &strings).unwrap_err();
+        assert!(format!("{error:#}").contains("parse tileart asset 43957"));
+    }
+}

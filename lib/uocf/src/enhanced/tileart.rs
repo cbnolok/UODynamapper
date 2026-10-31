@@ -170,6 +170,8 @@ pub struct ArtTexture {
 #[derive(Debug, Default, Clone)]
 pub struct ArtData {
     pub id: u16,
+    /// ID stored in the source record; it can differ from the asset lookup ID.
+    pub source_tile_id: u32,
     pub tile_type: TileType,
     pub flags: TaeFlag,
     pub height: u8,
@@ -801,6 +803,7 @@ impl TileArtEntry {
         let mut art_data = ArtData::default();
 
         art_data.id = self.tile_id as u16;
+        art_data.source_tile_id = self.tile_id;
         art_data.flags = self.flags1;
         art_data.radar_color = self.radarcol.clone();
         art_data.height = self.get_property(PropertyKey::Height).unwrap_or(0) as u8;
