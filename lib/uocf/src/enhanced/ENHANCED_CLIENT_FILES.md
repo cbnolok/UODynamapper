@@ -1352,3 +1352,83 @@ Known weak signals:
 - `EffectTexture.uop` evidence is metadata/support evidence unless linked by a
   real owner; do not infer particle-only or terrain-only behavior from the file
   name alone.
+
+## 12. DDS formats in client packages
+
+Census of every DDS payload in every UOP of the EC, EC fp, KR and three Classic
+installs (168 packages, 734,299 entries, 156,666 DDS payloads, found by the
+`DDS ` magic after decompression). Rerun with
+`uocf-cli dds census <dirs> --dictionary tools/_shared_assets/Dictionary.dic`;
+`--records <tsv>` dumps every header. The Classic packages hold no DDS and no
+other image.
+
+Never found: cube maps, volumes, DX10 headers, DXT2/DXT4, ATI1/ATI2/BC4/BC5,
+trailing bytes after the last surface, DDS embedded inside other payloads,
+non-zero `reserved1`. Every DDS is a 2D texture whose payload ends with its last
+surface.
+
+| Package | Formats (count) | Mips |
+|---|---|---|
+| `Texture.uop` | DXT5 (EC 9,339 / KR 9,187), DXT1 (413 / 161) | one level; 6 EC entries stored uncompressed |
+| `LegacyTexture.uop` | DXT5 (EC 49,265, fp 52,427, KR 16,877), DXT1 3 | one level, 1x1 to 1024x1024 |
+| `TerrainTexture.uop` | DXT5 34, DXT1 3 | one level |
+| `GumpArtMask.uop` (fp) | DXT5 4,666 | one level, 3,117 not power of two |
+| `EffectTexture.uop` | A8R8G8B8 50, DXT5 8, DXT1 4 | full chain (3 DXT5 one level) |
+| `Hues.uop` | A8R8G8B8 2 | one level |
+| `Interface.uop` | DXT5 966, A8R8G8B8 341, DXT3 244, DXT1 192, R8G8B8 1-3 | mixed: full chain or one level |
+| KR `Interface.uop` | DXT1 415, DXT3 248, DXT5 119, A4R4G4B4 19, X1R5G5B5 4, A8R8G8B8 2, R8G8B8 2 | mixed |
+
+Full chains always go down to 1x1 (`floor(log2(max(w, h))) + 1` levels), for
+non-power-of-two sizes too; no texture stops at the smaller side or elsewhere.
+Non-power-of-two sizes occur in `Interface.uop` (A8R8G8B8 50x4 to 1800x2040) and
+`GumpArtMask.uop`.
+
+Header conventions (`DdsHeaderStyle` in `dds_writer.rs`; flags/caps hex):
+
+| Style | Flags | Caps | `pitchOrLinearSize` | Mip field | Count |
+|---|---|---|---|---|---:|
+| `Linear` | 0x81007 | 0x1000 | bytes of mip 0 (uncompressed too) | 0 | 153,695 |
+| `Mipmapped` | 0xa1007 | 0x401008 | bytes of mip 0 | full chain | 2,259 |
+| `MipmappedDdsx` | 0xa1007 | 0x401008 | bytes of mip 0 | full chain | 32 |
+| `Pitched` | 0x100f | 0x1000 | row bytes | 1 | 672 |
+| `Unsized` | 0x1007 | 0x1000 | 0 | 0 | 7 |
+
+- `MipmappedDdsx` adds caps3 `DDSX` (0x58534444), caps4 and reserved2
+  0xFFFFFFFF, and a pixel format bit count of 0x100 for DXT3 and 0x200 for DXT5
+  (0 for DXT1, 32 for A8R8G8B8): an exporter's signature, in EffectTexture and
+  Interface textures.
+- `Pitched` is the 672 unnamed A8R8G8B8 Interface images.
+- `Unsized`: DXT1 `noicon.dds`, DXT3 `resizeframe.dds`, and two 2048x1024 R8G8B8
+  fp Interface textures.
+- One header fits no style: fp `data/interface/default/icons/racialabilities/fly.dds`
+  (A8R8G8B8, flags 0x81007 with the row bytes). Replacing it keeps that header.
+- Pixel format blocks are the standard ones: FourCC alone, or RGB(A) flags
+  (0x41 / 0x40), bit count and masks.
+- X1R5G5B5 texels (the KR login backgrounds) leave the X bit clear.
+
+Other images: TGA (types 2, 3, 10) in EffectTexture, Interface, SystemTextures
+and KR `TileArtLegacy.uop`; 32-bit BMP hues in `Hues.uop`; PSD in
+EffectTexture; PNG in SystemTextures; one JPEG in Interface.
+
+### Writing textures
+
+`dds_writer::replace_dds_entry` keeps the entry's pixel format, mip rule (one
+level, or the full chain of the new size) and header convention; its header for
+a given size equals the shipped header byte for byte for all 156,666 payloads.
+It refuses a size change unless the caller allows it (then warns). Uncompressed
+textures (A8R8G8B8, R8G8B8, A4R4G4B4, X1R5G5B5) decode and re-encode byte for
+byte. BC1/2/3 use the `dds` crate encoder: re-encoding the decoded shipped
+pixels gives RMSE 0.04-0.07 per channel (max 49) against them; the shipped
+encoder is not reproduced block for block (DXT1 92%, DXT3 96%, DXT5 1% identical
+blocks).
+
+Mips are a 2x2 box filter of the level above, averaging the stored (gamma)
+values. Against each shipped level filtered from the shipped level above,
+gamma averaging is closer than linear-light averaging for every format (mean
+colour error 3.30 vs 3.62 overall; A8R8G8B8 2.30 vs 2.53); neither matches
+exactly (15% exact texels for A8R8G8B8), so the shipped tool used another
+kernel.
+
+`uocf-cli uop replace-texture <uop> <entry name or hash> <image> --output <uop>
+[--allow-resize]` replaces one texture; the entry keeps its compression and gets
+a fresh timestamp data block header, every other entry keeps its bytes.

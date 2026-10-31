@@ -13,6 +13,7 @@ mod classic_dif_usage;
 mod classic_facet_difs;
 mod client_exe_facet_dimensions;
 mod client_login_servers;
+mod dds_client_textures;
 mod effects_client_files;
 mod facet_client_files;
 mod facet_variants;

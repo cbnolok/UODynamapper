@@ -1,4 +1,5 @@
 mod animdef;
+mod dds;
 mod exe;
 mod facet;
 mod hues;
@@ -7,6 +8,7 @@ mod login;
 mod mul_convert;
 mod multimap;
 mod sound;
+mod uop;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use color_eyre::eyre::{self, Context};
@@ -102,6 +104,12 @@ enum Commands {
     /// Login server files of a client folder: where the client reads its server from; write an edited copy.
     #[command(subcommand)]
     Login(login::LoginCmd),
+    /// DDS textures in client UOP packages: the census of formats and header conventions.
+    #[command(subcommand)]
+    Dds(dds::DdsCmd),
+    /// Content-aware edits of UOP packages: replace a texture keeping its DDS format.
+    #[command(subcommand)]
+    Uop(uop::UopCmd),
     /// Enhanced Client and Kingdom Reborn AnimationDefinition.uop (animated items): export and import KDL entries.
     #[command(subcommand)]
     Animdef(animdef::AnimdefCmd),
@@ -169,6 +177,8 @@ fn main() -> eyre::Result<()> {
         Commands::Facet(cmd) => facet::run(cmd)?,
         Commands::Exe(cmd) => exe::run(cmd)?,
         Commands::Login(cmd) => login::run(cmd)?,
+        Commands::Dds(cmd) => dds::run(cmd)?,
+        Commands::Uop(cmd) => uop::run(cmd)?,
         Commands::Animdef(cmd) => animdef::run(cmd)?,
     }
 
