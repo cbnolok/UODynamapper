@@ -6,16 +6,20 @@
 //! partial sectors padded with `z 0, land 0` squares, and the shipped delimiters. Classic land ids are written as
 //! they are, and statics keep their order in `statics.mul`, graphic and hue widened to u32. The radar image
 //! follows the recipe in `facet_radar`.
+//!
+//! The same builder makes Kingdom Reborn facets (`crate::kr::facet::facet_encoder`), with the KR square layout and
+//! a Classic -> KR land mapping.
 
 use std::path::Path;
 
 use crate::classic::map::{MapBlock, MapBlockRelPos, MapCell, MapPlane};
 use crate::classic::statics::{StaticTile as ClassicStaticTile, StaticsReader};
-use crate::enhanced::facet_decoder::{DecodedEcFacet, EcFacetDelimiter, StaticTile};
+use crate::enhanced::client_dialect::ClientDialect;
+use crate::enhanced::facet_decoder::{DecodedEcFacet, EcFacetDelimiter, KrSquareLand, StaticTile};
 use crate::enhanced::facet_package::EcFacetPackage;
 use crate::enhanced::facet_radar::{radar_dds_file_name, FacetRadarDds, FacetRadarSource, RadarPalette};
 use crate::enhanced::facet_sector::{
-    delimiter_targets, empty_ec_sector, facet_package_file_name, square_index, FacetGeometry, MAX_SQUARE_RECORDS,
+    delimiter_targets, empty_sector, facet_package_file_name, square_index, FacetGeometry, MAX_SQUARE_RECORDS,
     SECTOR_SIDE,
 };
 
@@ -23,6 +27,9 @@ crate::eyre_imports!();
 
 /// Classic map blocks along a sector side.
 const BLOCKS_PER_SECTOR_SIDE: u32 = SECTOR_SIDE / MapBlock::CELLS_PER_ROW;
+
+/// How a Classic land id is stored in a square: its land id and, in a Kingdom Reborn square, the KR bytes.
+pub(crate) type SquareLandOf<'a> = &'a dyn Fn(u16) -> eyre::Result<(u16, Option<KrSquareLand>)>;
 
 /// Encodes a Classic map plane and its statics into `facet{map_index}.uop` and `facet{map_index:02}.dds` in
 /// `output_dir`, with the radar colours of `radarcol_path` (Classic `radarcol.mul`).
@@ -47,12 +54,25 @@ pub fn build_facet_from_classic(
     facet: u8,
     palette: &RadarPalette,
 ) -> eyre::Result<(EcFacetPackage, FacetRadarDds)> {
+    build_facet(map_plane, statics, facet, palette, ClientDialect::Enhanced, &|id| Ok((id, None)))
+}
+
+/// [`build_facet_from_classic`] in the square layout of `dialect`, storing each Classic land id as `land_of`
+/// gives it (delimiters take the neighbour's stored land id).
+pub(crate) fn build_facet(
+    map_plane: &mut MapPlane,
+    statics: &StaticsReader,
+    facet: u8,
+    palette: &RadarPalette,
+    dialect: ClientDialect,
+    land_of: SquareLandOf,
+) -> eyre::Result<(EcFacetPackage, FacetRadarDds)> {
     let size = map_plane.size_cells();
     let geometry = FacetGeometry::new(size.width, size.height);
-    let mut package = EcFacetPackage::new(facet, geometry)?;
+    let mut package = EcFacetPackage::new_dialect(facet, geometry, dialect)?;
     let mut radar = FacetRadarSource::new(geometry);
     for sector in 0..geometry.sector_count() {
-        let decoded = classic_sector(map_plane, statics, &geometry, facet, sector)?;
+        let decoded = classic_sector(map_plane, statics, &geometry, facet, sector, dialect, land_of)?;
         radar.add_sector(sector, &decoded, palette);
         package.put_sector(&decoded)?;
     }
@@ -67,6 +87,8 @@ fn classic_sector(
     geometry: &FacetGeometry,
     facet: u8,
     sector: u32,
+    dialect: ClientDialect,
+    land_of: SquareLandOf,
 ) -> eyre::Result<DecodedEcFacet> {
     let (origin_x, origin_y) = geometry.sector_origin(sector);
     let size_blocks = map_plane.size_blocks;
@@ -80,7 +102,7 @@ fn classic_sector(
         .collect();
     map_plane.load_blocks(&mut blocks)?;
 
-    let mut decoded = empty_ec_sector(facet, sector)?;
+    let mut decoded = empty_sector(facet, sector, dialect)?;
     for block_x in 0..BLOCKS_PER_SECTOR_SIDE {
         for block_y in 0..BLOCKS_PER_SECTOR_SIDE {
             let map_block_x = origin_x / MapBlock::CELLS_PER_ROW + block_x;
@@ -98,7 +120,8 @@ fn classic_sector(
                     let mut delimiters = Vec::new();
                     for (direction, nx, ny) in delimiter_targets(geometry, x, y) {
                         let neighbour = cell_at(map_plane, nx, ny)?;
-                        delimiters.push(EcFacetDelimiter { direction, z: neighbour.z, graphic_id: u32::from(neighbour.id) });
+                        let (land, _) = land_of(neighbour.id)?;
+                        delimiters.push(EcFacetDelimiter { direction, z: neighbour.z, graphic_id: u32::from(land) });
                     }
                     let square_statics: Vec<StaticTile> = block_statics
                         .iter()
@@ -119,7 +142,7 @@ fn classic_sector(
                     }
                     let tile = &mut decoded.tiles[square_index(local_x, local_y)];
                     tile.z = cell.z;
-                    tile.land_graphic = cell.id;
+                    (tile.land_graphic, tile.kr) = land_of(cell.id)?;
                     tile.delimiters = delimiters;
                     tile.statics = square_statics;
                 }

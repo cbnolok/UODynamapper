@@ -3724,6 +3724,7 @@ mod tests {
                     frame_effects: BTreeMap::new(),
                     skipped_frames: skipped.iter().copied().collect(),
                     base_frame,
+                    kr_extra: None,
                 })
             })
             .collect();
@@ -3743,6 +3744,7 @@ mod tests {
             extra_offsets: Default::default(),
             actions,
             groups: BTreeMap::from([(uocf::animation_sequence::GROUP_PEACE, group)]),
+            repeated_actions: Vec::new(),
         }
     }
 

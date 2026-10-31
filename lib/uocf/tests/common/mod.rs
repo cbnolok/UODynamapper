@@ -88,3 +88,22 @@ pub fn client_files(file_name: &str) -> Vec<(&'static str, PathBuf)> {
         })
         .collect()
 }
+
+/// Environment variable naming a Kingdom Reborn client directory (`UOKR.exe`, 2008) for the ignored KR tests.
+pub const KR_CLIENT_DIR_ENV: &str = "UO_KR_CLIENT_DIR";
+/// Environment variable naming the Classic client the KR facets are compared with (`map*.mul`, `staidx*.mul`,
+/// `statics*.mul`, `radarcol.mul`; the research used 7.0.20).
+pub const KR_CLASSIC_DIR_ENV: &str = "UO_KR_CLASSIC_DIR";
+
+/// The path of `file_name` in the directory named by `env`; panics when the variable is unset or the file missing.
+pub fn required_client_file(env: &str, file_name: &str) -> PathBuf {
+    let dir = std::env::var_os(env).unwrap_or_else(|| panic!("set {env} to a client directory"));
+    let path = PathBuf::from(dir).join(file_name);
+    assert!(path.is_file(), "{env}: no {file_name}");
+    path
+}
+
+/// The path of `file_name` in the Kingdom Reborn client directory ([`KR_CLIENT_DIR_ENV`]).
+pub fn kr_client_file(file_name: &str) -> PathBuf {
+    required_client_file(KR_CLIENT_DIR_ENV, file_name)
+}

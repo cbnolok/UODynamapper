@@ -5,7 +5,8 @@
 //! skipped. Every entry must parse in any release. The expected figures are the ones verified by
 //! `scripts/dev-helpers/ec-research/ghidra-animation/verify_animation.py` on the reference release (the 2024
 //! Enhanced Client; the Classic Client of the same release has the same `AnimationSequence.uop` payloads); they
-//! are asserted only when the entry count identifies that release, and printed otherwise.
+//! are asserted only when the entry count identifies that release, and printed otherwise. Every sequence must
+//! also re-encode byte for byte.
 
 mod common;
 
@@ -116,6 +117,25 @@ fn animation_sequence_parses_every_client_entry() {
         assert_eq!(alias_of_alias, EXPECTED_ALIAS_OF_ALIAS);
         assert_eq!(effect_frames, EXPECTED_EFFECT_FRAMES);
         assert_eq!(skipped_frame_actions, EXPECTED_SKIPPED_FRAME_ACTIONS);
+    }
+}
+
+#[test]
+#[ignore = "needs a real client: set UO_EC_CLIENT_DIR and/or UO_CC_CLIENT_DIR and run with --ignored"]
+fn animation_sequence_reencodes_every_client_entry() {
+    for (env, path) in common::client_files(SEQUENCE_UOP_NAME) {
+        let package = UopPackage::load(&path).unwrap_or_else(|error| panic!("load {}: {error}", path.display()));
+        let mut entries = 0usize;
+        for file in package.iter_files().filter(|file| file.has_size()) {
+            let payload = file.unpack().unwrap();
+            let hash = file.filename_hash();
+            let sequence =
+                AnimationSequence::parse(&payload).unwrap_or_else(|error| panic!("{env} {hash:016X}: {error}"));
+            let encoded = sequence.to_bytes().unwrap_or_else(|error| panic!("{env} {hash:016X}: {error:#}"));
+            assert!(encoded == payload, "{env}: {hash:016X} re-encodes differently");
+            entries += 1;
+        }
+        println!("{env}: {entries} sequences re-encode identically");
     }
 }
 

@@ -157,11 +157,12 @@ pub fn choose_radar_static<'a>(land_z: i8, statics: &'a [StaticTile], palette: &
         .max_by_key(|item| item.z)
 }
 
-/// The square's colour before shading, packed with [`BASE_FROM_STATIC`].
+/// The square's colour before shading, packed with [`BASE_FROM_STATIC`]. Land takes the colour of its Classic id
+/// (the stored `classic_land` of a Kingdom Reborn square).
 fn radar_square_base(tile: &EcFacetTile, palette: &RadarPalette) -> u16 {
     match choose_radar_static(tile.z, &tile.statics, palette) {
         Some(item) => palette.static_color(item.graphic_id).expect("chosen statics have a colour") | BASE_FROM_STATIC,
-        None => palette.land_color(tile.land_graphic),
+        None => palette.land_color(tile.classic_land_id()),
     }
 }
 

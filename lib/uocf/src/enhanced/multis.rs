@@ -8,6 +8,12 @@
 //! parser, [`MultiCollection::set`] and [`MultiCollection::remove`] add, replace and remove multis, and
 //! [`MultiCollection::apply_to_package`] / [`MultiCollection::write_multi_collection`] write them back into a
 //! `MultiCollection.uop`, leaving `housing.bin` and unchanged multis untouched.
+//!
+//! The Kingdom Reborn client (`UOKR.exe` reader 0x007bb4c3; `ClientDialect::KingdomReborn`, the `*_dialect`
+//! functions) stores parts without `flag2`: `{u16 tile, i16 x, i16 y, i16 z, u8 not_drawn, u32 n, n x u32}`. That
+//! the single flag is `not_drawn` rests on the data (it equals the EC `not_drawn` in all 48,428 parts of the multis
+//! whose geometry is the same in both clients) and on its place; its KR readers were not traced
+//! (`scripts/dev-helpers/ec-research/ghidra-facets/results/uokr_facets.md`, answer 10).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Read};
@@ -16,6 +22,7 @@ use std::path::Path;
 use byteorder::{LittleEndian, ReadBytesExt};
 use color_eyre::eyre::{self, WrapErr};
 
+use crate::enhanced::client_dialect::ClientDialect;
 use crate::enhanced::uop_entries::{self, EntryPut};
 use crate::uop_container::file::CompressionFlag;
 use crate::uop_container::hash::hash_file_name_single;
@@ -28,6 +35,8 @@ pub const HOUSING_PATH: &str = "build/multicollection/housing.bin";
 pub const MAX_MULTI_COLLECTION_ID: u32 = 0x10000;
 /// Bytes of a part before its string list: tile id, x, y, z, `not_drawn`, `flag2` and the string count.
 const MULTI_PART_FIXED_SIZE: usize = 14;
+/// Bytes of a Kingdom Reborn part before its string list (no `flag2`).
+const MULTI_KR_PART_FIXED_SIZE: usize = MULTI_PART_FIXED_SIZE - size_of::<u8>();
 const STRING_ID_SIZE: usize = size_of::<u32>();
 /// Bytes of an entry before its parts: the multi id and the part count.
 const MULTI_ENTRY_HEADER_SIZE: usize = 2 * size_of::<u32>();
@@ -47,7 +56,8 @@ pub struct MultiItemPart {
     /// and in placement tests. Classic `multi.mul` has flags = 0 for these parts. Confidence: high.
     pub not_drawn: bool,
     /// Byte +0xb. With 1 the renderer passes hue 0 instead of the multi hue ("ignore multi hue"); equals the
-    /// extra dword of classic `multi.mul` records. Only that reader was found. Confidence: low-medium.
+    /// extra dword of classic `multi.mul` records. Only that reader was found. Confidence: low-medium. Not in
+    /// Kingdom Reborn parts (reads 0, and must be 0 to write).
     pub flag2: u8,
     /// String dictionary indices (`string_dictionary.uop`) of the part tags, such as `house_door`, `hueshadow`
     /// or `shipaccess`. The client copies each string and keeps only the non-empty ones; all ids are kept here.
@@ -80,15 +90,27 @@ pub struct MultiCollection {
     items_by_id: BTreeMap<u32, usize>,
     pub housing_hash: Option<u64>,
     pub housing_byte_len: Option<u32>,
+    /// The part layout the multis are read and written in.
+    dialect: ClientDialect,
 }
 
 impl MultiCollection {
     pub fn load(path: impl AsRef<Path>) -> eyre::Result<Self> {
+        Self::load_dialect(path, ClientDialect::Enhanced)
+    }
+
+    /// [`Self::load`] for a package of `dialect`.
+    pub fn load_dialect(path: impl AsRef<Path>, dialect: ClientDialect) -> eyre::Result<Self> {
         let package = UopPackage::load(path)?;
-        Self::from_package(&package)
+        Self::from_package_dialect(&package, dialect)
     }
 
     pub fn from_package(package: &UopPackage) -> eyre::Result<Self> {
+        Self::from_package_dialect(package, ClientDialect::Enhanced)
+    }
+
+    /// [`Self::from_package`] for a package of `dialect`; [`Self::apply_to_package`] writes the same layout.
+    pub fn from_package_dialect(package: &UopPackage, dialect: ClientDialect) -> eyre::Result<Self> {
         let mut items = Vec::new();
         for id in 0..MAX_MULTI_COLLECTION_ID {
             let path = multi_collection_path(id);
@@ -100,7 +122,7 @@ impl MultiCollection {
                 continue;
             }
             let bytes = file.unpack().wrap_err_with(|| format!("failed to unpack {path}"))?;
-            let mut item = MultiItem::from_payload_bytes(hash, path, &bytes)?;
+            let mut item = MultiItem::from_payload_bytes_dialect(hash, path, &bytes, dialect)?;
             if item.id != id {
                 item.id = id;
             }
@@ -120,7 +142,18 @@ impl MultiCollection {
             items_by_id,
             housing_hash: housing_file.map(|file| file.filename_hash()),
             housing_byte_len: housing_file.map(|file| file.decompressed_size()),
+            dialect,
         })
+    }
+
+    /// The part layout of the collection.
+    pub fn dialect(&self) -> ClientDialect {
+        self.dialect
+    }
+
+    /// Sets the part layout [`Self::apply_to_package`] writes (to convert a collection to the other client).
+    pub fn set_dialect(&mut self, dialect: ClientDialect) {
+        self.dialect = dialect;
     }
 
     /// A collection of `items` without `housing.bin` information; the items are sorted by id, as
@@ -130,7 +163,13 @@ impl MultiCollection {
         if let Some(pair) = items.windows(2).find(|pair| pair[0].id == pair[1].id) {
             eyre::bail!("multi {} appears twice", pair[0].id);
         }
-        let mut collection = Self { items, items_by_id: BTreeMap::new(), housing_hash: None, housing_byte_len: None };
+        let mut collection = Self {
+            items,
+            items_by_id: BTreeMap::new(),
+            housing_hash: None,
+            housing_byte_len: None,
+            dialect: ClientDialect::default(),
+        };
         collection.rebuild_index();
         Ok(collection)
     }
@@ -182,7 +221,8 @@ impl MultiCollection {
     /// compressed bytes and data block header), changed ones are replaced keeping their compression flag, new ones
     /// are added with the compression of the package's multi entries; both get a fresh timestamp data block header
     /// (the package's edit time). Multi entries missing from the collection are removed; `housing.bin` and any
-    /// other entry are kept. Fails on an id outside [`MAX_MULTI_COLLECTION_ID`] or listed twice.
+    /// other entry are kept. The multis are written in the collection's [`Self::dialect`]. Fails on an id outside
+    /// [`MAX_MULTI_COLLECTION_ID`] or listed twice, or a part the dialect cannot hold.
     pub fn apply_to_package(&self, package: &mut UopPackage) -> eyre::Result<MultiCollectionChanges> {
         let ids_by_hash: BTreeMap<u64, u32> = (0..MAX_MULTI_COLLECTION_ID).map(|id| (multi_collection_hash(id), id)).collect();
         let compression = package
@@ -199,7 +239,7 @@ impl MultiCollection {
                 eyre::bail!("multi {} appears twice", item.id);
             }
             let hash = multi_collection_hash(item.id);
-            let payload = item.to_payload_bytes();
+            let payload = item.to_payload_bytes_dialect(self.dialect)?;
             let path = multi_collection_path(item.id);
             let current = package.unpack_file_by_hash(hash).wrap_err_with(|| format!("failed to unpack {path}"))?;
             if current.as_deref() == Some(payload.as_slice()) {
@@ -259,13 +299,25 @@ impl MultiItem {
     /// `{u16 tile, i16 x, i16 y, i16 z, u8 not_drawn, u8 flag2, u32 n, n x u32 string id}`. As in the client,
     /// the entry must end exactly after the last part.
     pub fn from_payload_bytes(filename_hash: u64, path: String, bytes: &[u8]) -> eyre::Result<Self> {
+        Self::from_payload_bytes_dialect(filename_hash, path, bytes, ClientDialect::Enhanced)
+    }
+
+    /// [`Self::from_payload_bytes`] for an entry of `dialect` (Kingdom Reborn parts have no `flag2`).
+    pub fn from_payload_bytes_dialect(
+        filename_hash: u64,
+        path: String,
+        bytes: &[u8],
+        dialect: ClientDialect,
+    ) -> eyre::Result<Self> {
+        let kr = dialect.is_kingdom_reborn();
+        let part_size = if kr { MULTI_KR_PART_FIXED_SIZE } else { MULTI_PART_FIXED_SIZE };
         let mut reader = Cursor::new(bytes);
         let id = reader.read_u32::<LittleEndian>()?;
         let count = reader.read_u32::<LittleEndian>()? as usize;
-        let mut parts = Vec::with_capacity(count.min(remaining_len(&reader) / MULTI_PART_FIXED_SIZE));
+        let mut parts = Vec::with_capacity(count.min(remaining_len(&reader) / part_size));
 
         for _ in 0..count {
-            if remaining_len(&reader) < MULTI_PART_FIXED_SIZE {
+            if remaining_len(&reader) < part_size {
                 eyre::bail!("truncated multicollection part in {path}");
             }
 
@@ -274,7 +326,7 @@ impl MultiItem {
             let y = reader.read_i16::<LittleEndian>()?;
             let z = reader.read_i16::<LittleEndian>()?;
             let not_drawn = reader.read_u8()? != 0;
-            let flag2 = reader.read_u8()?;
+            let flag2 = if kr { 0 } else { reader.read_u8()? };
             let string_count = reader.read_u32::<LittleEndian>()? as usize;
             let mut string_ids = Vec::with_capacity(string_count.min(remaining_len(&reader) / STRING_ID_SIZE));
             for _ in 0..string_count {
@@ -315,10 +367,20 @@ impl MultiItem {
     /// # Panics
     /// When a count does not fit the u32 of the format.
     pub fn to_payload_bytes(&self) -> Vec<u8> {
+        self.to_payload_bytes_dialect(ClientDialect::Enhanced).expect("every part fits the Enhanced Client layout")
+    }
+
+    /// [`Self::to_payload_bytes`] in the layout of `dialect`; fails on a Kingdom Reborn part with a non-zero
+    /// `flag2`, which that layout cannot hold.
+    ///
+    /// # Panics
+    /// When a count does not fit the u32 of the format.
+    pub fn to_payload_bytes_dialect(&self, dialect: ClientDialect) -> eyre::Result<Vec<u8>> {
+        let kr = dialect.is_kingdom_reborn();
+        let part_size = if kr { MULTI_KR_PART_FIXED_SIZE } else { MULTI_PART_FIXED_SIZE };
         let string_ids: usize = self.parts.iter().map(|part| part.string_ids.len()).sum();
-        let mut bytes = Vec::with_capacity(
-            MULTI_ENTRY_HEADER_SIZE + self.parts.len() * MULTI_PART_FIXED_SIZE + string_ids * STRING_ID_SIZE,
-        );
+        let mut bytes =
+            Vec::with_capacity(MULTI_ENTRY_HEADER_SIZE + self.parts.len() * part_size + string_ids * STRING_ID_SIZE);
         bytes.extend_from_slice(&self.id.to_le_bytes());
         bytes.extend_from_slice(&count_u32(self.parts.len()).to_le_bytes());
         for part in &self.parts {
@@ -327,13 +389,23 @@ impl MultiItem {
             bytes.extend_from_slice(&part.y.to_le_bytes());
             bytes.extend_from_slice(&part.z.to_le_bytes());
             bytes.push(u8::from(part.not_drawn));
-            bytes.push(part.flag2);
+            if kr {
+                eyre::ensure!(
+                    part.flag2 == 0,
+                    "multi {}: part {} has flag2 {}, which Kingdom Reborn parts lack",
+                    self.id,
+                    part.item_id,
+                    part.flag2
+                );
+            } else {
+                bytes.push(part.flag2);
+            }
             bytes.extend_from_slice(&count_u32(part.string_ids.len()).to_le_bytes());
             for string_id in &part.string_ids {
                 bytes.extend_from_slice(&string_id.to_le_bytes());
             }
         }
-        bytes
+        Ok(bytes)
     }
 
     pub fn bounds(&self) -> Option<MultiBounds> {
@@ -490,6 +562,33 @@ mod tests {
         let item = MultiItem::from_payload_bytes(TEST_HASH, multi_collection_path(TEST_MULTI_ID), &bytes).unwrap();
         assert_eq!(item.to_payload_bytes(), bytes);
         assert_eq!(MultiItem::new(TEST_MULTI_ID, Vec::new()).to_payload_bytes(), entry_bytes(&[]));
+    }
+
+    #[test]
+    fn kingdom_reborn_parts_have_no_flag2() {
+        const KR: ClientDialect = ClientDialect::KingdomReborn;
+        /// Offset of the first part's `flag2`: the entry header, then tile id, x, y, z and `not_drawn`.
+        const FIRST_FLAG2_OFFSET: usize = MULTI_ENTRY_HEADER_SIZE + MULTI_KR_PART_FIXED_SIZE - size_of::<u32>();
+        let [first, second] = test_parts();
+        let parts = [first, TestPart { flag2: 0, ..second }];
+        // The KR entry is the EC one without the flag2 byte of each part.
+        let mut kr_bytes = entry_bytes(&parts);
+        kr_bytes.remove(FIRST_FLAG2_OFFSET);
+        let second_flag2 = FIRST_FLAG2_OFFSET + MULTI_KR_PART_FIXED_SIZE + parts[0].string_ids.len() * STRING_ID_SIZE;
+        kr_bytes.remove(second_flag2);
+
+        let path = multi_collection_path(TEST_MULTI_ID);
+        let item = MultiItem::from_payload_bytes_dialect(TEST_HASH, path.clone(), &kr_bytes, KR).unwrap();
+        let ec = MultiItem::from_payload_bytes(TEST_HASH, path, &entry_bytes(&parts)).unwrap();
+        assert_eq!(item, ec);
+        assert_eq!(item.to_payload_bytes_dialect(KR).unwrap(), kr_bytes);
+
+        let flagged_bytes = entry_bytes(&test_parts());
+        let flagged = MultiItem::from_payload_bytes(TEST_HASH, multi_collection_path(TEST_MULTI_ID), &flagged_bytes).unwrap();
+        assert!(flagged.to_payload_bytes_dialect(KR).is_err());
+        let mut collection = MultiCollection::from_items(vec![flagged]).unwrap();
+        collection.set_dialect(KR);
+        assert!(collection.apply_to_package(&mut UopPackage::new_default()).is_err());
     }
 
     #[test]

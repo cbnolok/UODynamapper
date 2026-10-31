@@ -1,15 +1,32 @@
 //! Serializers of effect definitions: the exact inverse of the readers (flags are written as 0 or 1).
+//!
+//! The `*_dialect` forms write the grammar of a client; the Kingdom Reborn one fails on what it cannot hold (a
+//! `hued` particle, a property flag mask above u32).
 
 use color_eyre::eyre::{self, Result};
 
 use super::{EffectDefinition, EffectMapEntry};
+use crate::enhanced::client_dialect::ClientDialect;
 
 /// Largest definition count of a tileart record, whose count is a u8.
 pub const TILEART_EFFECT_COUNT_MAX: usize = u8::MAX as usize;
 
+/// The Enhanced Client grammar holds every definition.
+const ENHANCED_WRITES_ALL: &str = "the Enhanced Client effect grammar holds every definition";
+
 /// Appends one definition: its u32 type key, then its body.
 pub fn write_effect_definition(out: &mut Vec<u8>, definition: &EffectDefinition) {
-    put_u32(out, definition.type_key());
+    write_effect_definition_dialect(out, definition, ClientDialect::Enhanced).expect(ENHANCED_WRITES_ALL);
+}
+
+/// [`write_effect_definition`] in the grammar of `dialect`.
+pub fn write_effect_definition_dialect(
+    out: &mut Vec<u8>,
+    definition: &EffectDefinition,
+    dialect: ClientDialect,
+) -> Result<()> {
+    let kr = dialect.is_kingdom_reborn();
+    put_u32(out, definition.type_key_in(dialect));
     match definition {
         EffectDefinition::Particle(effect) => {
             put_u32(out, effect.name_index);
@@ -21,13 +38,19 @@ pub fn write_effect_definition(out: &mut Vec<u8>, definition: &EffectDefinition)
             put_f32(out, effect.duration);
             out.push(u8::from(effect.looping));
             out.push(effect.field_3c);
-            out.push(u8::from(effect.hued));
+            if kr {
+                if effect.hued {
+                    eyre::bail!("a Kingdom Reborn particle cannot be hued");
+                }
+            } else {
+                out.push(u8::from(effect.hued));
+            }
         }
         EffectDefinition::Sound(effect) => {
             put_u32(out, effect.sound_id);
             put_f32(out, effect.value_08);
         }
-        EffectDefinition::RoundRobin(effect) => write_effect_list(out, &effect.children),
+        EffectDefinition::RoundRobin(effect) => write_effect_list_dialect(out, &effect.children, dialect)?,
         EffectDefinition::PositionOffset(effect) => {
             for offset in &effect.offsets {
                 out.extend_from_slice(&offset.x.to_le_bytes());
@@ -35,18 +58,25 @@ pub fn write_effect_definition(out: &mut Vec<u8>, definition: &EffectDefinition)
             }
         }
         EffectDefinition::Wait(effect) => {
-            write_effect_list(out, &effect.children);
+            write_effect_list_dialect(out, &effect.children, dialect)?;
             put_u32(out, effect.min_delay_ms);
             put_u32(out, effect.max_delay_ms);
             out.push(u8::from(effect.aligned));
         }
-        EffectDefinition::Lod(effect) => write_map(out, &effect.levels),
+        EffectDefinition::Lod(effect) => write_map(out, &effect.levels, dialect)?,
         EffectDefinition::PropertyFlag(effect) => {
             out.push(effect.mode as u8);
-            out.extend_from_slice(&effect.mask.to_le_bytes());
+            if kr {
+                let Ok(mask) = u32::try_from(effect.mask) else {
+                    eyre::bail!("property flag mask {:#x} does not fit the Kingdom Reborn u32", effect.mask);
+                };
+                put_u32(out, mask);
+            } else {
+                out.extend_from_slice(&effect.mask.to_le_bytes());
+            }
             put_u32(out, effect.property);
-            write_effect_list(out, &effect.default_children);
-            write_map(out, &effect.cases);
+            write_effect_list_dialect(out, &effect.default_children, dialect)?;
+            write_map(out, &effect.cases, dialect)?;
         }
         EffectDefinition::Earthquake(effect) => {
             for value in [effect.amplitude, effect.duration, effect.frequency] {
@@ -57,44 +87,69 @@ pub fn write_effect_definition(out: &mut Vec<u8>, definition: &EffectDefinition)
             put_count(out, effect.entries.len());
             for entry in &effect.entries {
                 put_f32(out, entry.weight);
-                write_effect_list(out, &entry.children);
+                write_effect_list_dialect(out, &entry.children, dialect)?;
             }
         }
         EffectDefinition::UserPreference(effect) => {
             put_u32(out, effect.mask);
-            write_effect_list(out, &effect.children);
+            write_effect_list_dialect(out, &effect.children, dialect)?;
         }
     }
+    Ok(())
 }
 
 /// The definitions one after the other, without a count (the inverse of `read_effect_definitions`).
 pub fn encode_effect_definitions(definitions: &[EffectDefinition]) -> Vec<u8> {
+    encode_effect_definitions_dialect(definitions, ClientDialect::Enhanced).expect(ENHANCED_WRITES_ALL)
+}
+
+/// [`encode_effect_definitions`] in the grammar of `dialect`.
+pub fn encode_effect_definitions_dialect(definitions: &[EffectDefinition], dialect: ClientDialect) -> Result<Vec<u8>> {
     let mut out = Vec::new();
     for definition in definitions {
-        write_effect_definition(&mut out, definition);
+        write_effect_definition_dialect(&mut out, definition, dialect)?;
     }
-    out
+    Ok(out)
 }
 
 /// Appends an effect list: u32 count, then the definitions.
 pub fn write_effect_list(out: &mut Vec<u8>, definitions: &[EffectDefinition]) {
+    write_effect_list_dialect(out, definitions, ClientDialect::Enhanced).expect(ENHANCED_WRITES_ALL);
+}
+
+/// [`write_effect_list`] in the grammar of `dialect`.
+pub fn write_effect_list_dialect(out: &mut Vec<u8>, definitions: &[EffectDefinition], dialect: ClientDialect) -> Result<()> {
     put_count(out, definitions.len());
     for definition in definitions {
-        write_effect_definition(out, definition);
+        write_effect_definition_dialect(out, definition, dialect)?;
     }
+    Ok(())
 }
 
 /// The payload of one `EffectDefinitionCollection.uop` entry, the inverse of
 /// `parse_effect_definition_collection`.
 pub fn encode_effect_definition_collection(definitions: &[EffectDefinition]) -> Vec<u8> {
+    encode_effect_definition_collection_dialect(definitions, ClientDialect::Enhanced).expect(ENHANCED_WRITES_ALL)
+}
+
+/// [`encode_effect_definition_collection`] in the grammar of `dialect`.
+pub fn encode_effect_definition_collection_dialect(
+    definitions: &[EffectDefinition],
+    dialect: ClientDialect,
+) -> Result<Vec<u8>> {
     let mut out = Vec::new();
-    write_effect_list(&mut out, definitions);
-    out
+    write_effect_list_dialect(&mut out, definitions, dialect)?;
+    Ok(out)
 }
 
 /// The effect tail of a `tileart.uop` record: u8 count, then the definitions. Fails above
 /// [`TILEART_EFFECT_COUNT_MAX`] definitions.
 pub fn encode_tileart_effects(definitions: &[EffectDefinition]) -> Result<Vec<u8>> {
+    encode_tileart_effects_dialect(definitions, ClientDialect::Enhanced)
+}
+
+/// [`encode_tileart_effects`] in the grammar of `dialect`.
+pub fn encode_tileart_effects_dialect(definitions: &[EffectDefinition], dialect: ClientDialect) -> Result<Vec<u8>> {
     let Ok(count) = u8::try_from(definitions.len()) else {
         eyre::bail!(
             "{} effect definitions do not fit a tileart record (at most {TILEART_EFFECT_COUNT_MAX})",
@@ -102,16 +157,17 @@ pub fn encode_tileart_effects(definitions: &[EffectDefinition]) -> Result<Vec<u8
         );
     };
     let mut out = vec![count];
-    out.extend(encode_effect_definitions(definitions));
+    out.extend(encode_effect_definitions_dialect(definitions, dialect)?);
     Ok(out)
 }
 
-fn write_map(out: &mut Vec<u8>, entries: &[EffectMapEntry]) {
+fn write_map(out: &mut Vec<u8>, entries: &[EffectMapEntry], dialect: ClientDialect) -> Result<()> {
     put_count(out, entries.len());
     for entry in entries {
         put_u32(out, entry.key);
-        write_effect_list(out, &entry.children);
+        write_effect_list_dialect(out, &entry.children, dialect)?;
     }
+    Ok(())
 }
 
 fn put_u32(out: &mut Vec<u8>, value: u32) {
@@ -223,5 +279,64 @@ mod tests {
 
         let too_many = vec![definitions[0].clone(); TILEART_EFFECT_COUNT_MAX + 1];
         assert!(encode_tileart_effects(&too_many).is_err());
+    }
+
+    #[test]
+    fn kingdom_reborn_grammar_round_trips_and_differs_where_documented() {
+        use crate::enhanced::effect_definition::{
+            ec_effect_type_key_of_kr, kr_effect_type_key, parse_effect_definition_collection_dialect, ParticleEffect,
+            PropertyFlagEffect, EFFECT_TYPE_POSITION_OFFSET, EFFECT_TYPE_ROUND_ROBIN, EFFECT_TYPE_USER_PREFERENCE,
+        };
+        const KR: ClientDialect = ClientDialect::KingdomReborn;
+        /// Bytes of a KR particle body (EC 28).
+        const KR_PARTICLE_BODY_SIZE: usize = 27;
+        /// EC tile effect (no KR key), KR container (EC 6), KR death (EC 3, which neither parser supports), and the
+        /// first key past the KR enum.
+        const EC_TILE_EFFECT: u32 = 5;
+        const KR_CONTAINER: u32 = 5;
+        const KR_DEATH: u32 = 3;
+        const KR_PAST_THE_ENUM: u32 = 17;
+
+        assert_eq!(kr_effect_type_key(EFFECT_TYPE_ROUND_ROBIN), Some(EFFECT_TYPE_ROUND_ROBIN));
+        assert_eq!(kr_effect_type_key(EC_TILE_EFFECT), None);
+        assert_eq!(kr_effect_type_key(EFFECT_TYPE_POSITION_OFFSET), Some(EFFECT_TYPE_POSITION_OFFSET - 1));
+        assert_eq!(kr_effect_type_key(EFFECT_TYPE_USER_PREFERENCE), Some(EFFECT_TYPE_USER_PREFERENCE - 1));
+        assert_eq!(kr_effect_type_key(EFFECT_TYPE_USER_PREFERENCE + 1), None);
+        assert_eq!(ec_effect_type_key_of_kr(KR_CONTAINER), Some(EC_TILE_EFFECT + 1));
+        assert_eq!(ec_effect_type_key_of_kr(KR_PAST_THE_ENUM), None);
+
+        // Every type round trips once the KR limits hold: no hued particle, u32 masks.
+        let mut definitions = every_definition_type();
+        assert!(encode_effect_definition_collection_dialect(&definitions, KR).is_err());
+        for definition in &mut definitions {
+            match definition {
+                EffectDefinition::Particle(effect) => effect.hued = false,
+                EffectDefinition::PropertyFlag(effect) => effect.mask &= u64::from(u32::MAX),
+                _ => {}
+            }
+        }
+        let payload = encode_effect_definition_collection_dialect(&definitions, KR).unwrap();
+        let parsed = parse_effect_definition_collection_dialect(&payload, KR).unwrap();
+        assert_same(&parsed, &definitions);
+
+        let particle = EffectDefinition::Particle(ParticleEffect { field_3c: 7, ..match &definitions[0] {
+            EffectDefinition::Particle(effect) => effect.clone(),
+            _ => unreachable!("the first definition is a particle"),
+        } });
+        let bytes = encode_effect_definitions_dialect(&[particle.clone()], KR).unwrap();
+        assert_eq!(bytes.len(), size_of::<u32>() + KR_PARTICLE_BODY_SIZE);
+        assert_eq!(encode_effect_definitions(&[particle]).len(), bytes.len() + 1);
+        let flag = EffectDefinition::PropertyFlag(PropertyFlagEffect {
+            mode: super::super::PropertyFlagMode::FlagMask,
+            mask: u64::from(u32::MAX) + 1,
+            property: 0,
+            default_children: vec![],
+            cases: vec![],
+        });
+        assert!(encode_effect_definitions_dialect(&[flag], KR).is_err());
+        let mut unknown = Vec::new();
+        put_u32(&mut unknown, 1);
+        put_u32(&mut unknown, KR_DEATH);
+        assert!(parse_effect_definition_collection_dialect(&unknown, KR).is_err());
     }
 }

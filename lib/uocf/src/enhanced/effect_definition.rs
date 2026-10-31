@@ -8,6 +8,18 @@
 //! A definition is a u32 type key followed by a type-specific body. An effect list is a u32
 //! count followed by that many definitions; an effect map is a u32 count followed by that many
 //! {u32 key, effect list} pairs.
+//!
+//! The Kingdom Reborn client (`UOKR.exe`, 2008) stores an older form of the grammar
+//! (`ClientDialect::KingdomReborn`, the `*_dialect` functions), verified by byte-identical round trips of every
+//! KR `EffectDefinitionCollection.uop`, `AnimationSequence.uop` and `tileart.uop` record:
+//! - the particle body is 27 bytes: KR has no `hued` byte (and no hued particle class), so `hued` reads false and
+//!   must be false to write;
+//! - the type keys from KR 5 (container) on are one lower ([`kr_effect_type_key`]): EC inserted
+//!   `UOTileEffectDefinition` at key 5 (and appended fade at 18, which KR lacks). Keys 0-4 are the same;
+//! - the property flag mask is a u32 (EC u64).
+//!
+//! The KR layouts follow the factories of `UOKR.exe`
+//! (`scripts/dev-helpers/ec-research/ghidra-facets/results/uokr_facets.md`, answers 3 and 4).
 
 mod collection;
 mod encode;
@@ -19,8 +31,9 @@ pub use collection::{
     EffectDefinitionCollection, EffectEntryKey, EFFECT_COLLECTION_ID_SCAN_END, EFFECT_DEFINITION_COLLECTION_UOP_NAME,
 };
 pub use encode::{
-    encode_effect_definition_collection, encode_effect_definitions, encode_tileart_effects, write_effect_definition,
-    write_effect_list, TILEART_EFFECT_COUNT_MAX,
+    encode_effect_definition_collection, encode_effect_definition_collection_dialect, encode_effect_definitions,
+    encode_effect_definitions_dialect, encode_tileart_effects, encode_tileart_effects_dialect, write_effect_definition,
+    write_effect_definition_dialect, write_effect_list, write_effect_list_dialect, TILEART_EFFECT_COUNT_MAX,
 };
 pub use kdl_text::{effect_definitions_from_kdl, effect_definitions_to_kdl};
 pub use validation::{
@@ -28,6 +41,7 @@ pub use validation::{
     RANDOM_WEIGHT_TOLERANCE,
 };
 
+use crate::enhanced::client_dialect::ClientDialect;
 use crate::enhanced::string_dictionary::UoStringDictionary;
 use byteorder::{LittleEndian, ReadBytesExt};
 use color_eyre::eyre::{bail, ensure, Result};
@@ -53,6 +67,38 @@ pub const EFFECT_TYPE_EARTHQUAKE: u32 = 15;
 pub const EFFECT_TYPE_RANDOM: u32 = 16;
 /// Type key of a user effect setting filter (`UOUserPrefEffectFilterDefinition`).
 pub const EFFECT_TYPE_USER_PREFERENCE: u32 = 17;
+
+/// Enhanced Client type key of `UOTileEffectDefinition`, which the Kingdom Reborn enum lacks: the EC keys above it
+/// are the KR keys plus one.
+const EC_EFFECT_TYPE_TILE_EFFECT: u32 = 5;
+/// How much higher the Enhanced Client keys above [`EC_EFFECT_TYPE_TILE_EFFECT`] are than the KR ones.
+const KR_EFFECT_TYPE_SHIFT: u32 = 1;
+/// Highest Kingdom Reborn type key (`UOUserPrefEffectFilterDefinition`, EC 17).
+const KR_EFFECT_TYPE_MAX: u32 = 16;
+
+/// The Kingdom Reborn type key of Enhanced Client type key `ec_key`: the same below 5, one lower above it;
+/// `None` for the EC-only tile effect (5) and keys past the KR enum (EC fade, 18).
+pub const fn kr_effect_type_key(ec_key: u32) -> Option<u32> {
+    if ec_key < EC_EFFECT_TYPE_TILE_EFFECT {
+        Some(ec_key)
+    } else if ec_key > EC_EFFECT_TYPE_TILE_EFFECT && ec_key - KR_EFFECT_TYPE_SHIFT <= KR_EFFECT_TYPE_MAX {
+        Some(ec_key - KR_EFFECT_TYPE_SHIFT)
+    } else {
+        None
+    }
+}
+
+/// The Enhanced Client type key of Kingdom Reborn type key `kr_key` (the inverse of [`kr_effect_type_key`]), or
+/// `None` past the KR enum.
+pub const fn ec_effect_type_key_of_kr(kr_key: u32) -> Option<u32> {
+    if kr_key < EC_EFFECT_TYPE_TILE_EFFECT {
+        Some(kr_key)
+    } else if kr_key <= KR_EFFECT_TYPE_MAX {
+        Some(kr_key + KR_EFFECT_TYPE_SHIFT)
+    } else {
+        None
+    }
+}
 
 /// Collection id = 0xC7 packet effect or explode effect field - `EFFECT_ID_PACKET_BIAS`
 /// (`(N - 1) & 0xffff`); see `PacketEffectPath`.
@@ -324,6 +370,16 @@ impl EffectDefinition {
         }
     }
 
+    /// Type key as stored in a file of `dialect`.
+    pub fn type_key_in(&self, dialect: ClientDialect) -> u32 {
+        match dialect {
+            ClientDialect::Enhanced => self.type_key(),
+            ClientDialect::KingdomReborn => {
+                kr_effect_type_key(self.type_key()).expect("every supported type has a Kingdom Reborn key")
+            }
+        }
+    }
+
     /// Calls `visitor` on this definition and then on every nested definition, depth first.
     pub fn visit(&self, visitor: &mut dyn FnMut(&EffectDefinition)) {
         visitor(self);
@@ -356,18 +412,32 @@ impl ParticleEffect {
 
 /// Reads one definition: a u32 type key, then its body.
 pub fn read_effect_definition(reader: &mut Cursor<&[u8]>) -> Result<EffectDefinition> {
-    read_definition(reader, 0)
+    read_definition(reader, 0, ClientDialect::Enhanced)
 }
 
 /// Reads `count` definitions, as stored after the count of a tileart record tail or of a
 /// collection entry.
 pub fn read_effect_definitions(reader: &mut Cursor<&[u8]>, count: usize) -> Result<Vec<EffectDefinition>> {
-    read_definitions(reader, count, 0)
+    read_effect_definitions_dialect(reader, count, ClientDialect::Enhanced)
+}
+
+/// [`read_effect_definitions`] in the grammar of `dialect`.
+pub fn read_effect_definitions_dialect(
+    reader: &mut Cursor<&[u8]>,
+    count: usize,
+    dialect: ClientDialect,
+) -> Result<Vec<EffectDefinition>> {
+    read_definitions(reader, count, 0, dialect)
 }
 
 /// Reads an effect list (`UOEffects::ParseEffectList`): u32 count, then that many definitions.
 pub fn read_effect_list(reader: &mut Cursor<&[u8]>) -> Result<Vec<EffectDefinition>> {
-    read_list(reader, 0)
+    read_effect_list_dialect(reader, ClientDialect::Enhanced)
+}
+
+/// [`read_effect_list`] in the grammar of `dialect`.
+pub fn read_effect_list_dialect(reader: &mut Cursor<&[u8]>, dialect: ClientDialect) -> Result<Vec<EffectDefinition>> {
+    read_list(reader, 0, dialect)
 }
 
 /// Parses the payload of one `EffectDefinitionCollection.uop` entry
@@ -377,8 +447,13 @@ pub fn read_effect_list(reader: &mut Cursor<&[u8]>) -> Result<Vec<EffectDefiniti
 /// All top-level definitions play at the same time (one container); there is no sequencing.
 /// A missing entry falls back to `EFFECT_ID_FALLBACK`.
 pub fn parse_effect_definition_collection(data: &[u8]) -> Result<Vec<EffectDefinition>> {
+    parse_effect_definition_collection_dialect(data, ClientDialect::Enhanced)
+}
+
+/// [`parse_effect_definition_collection`] in the grammar of `dialect`.
+pub fn parse_effect_definition_collection_dialect(data: &[u8], dialect: ClientDialect) -> Result<Vec<EffectDefinition>> {
     let mut reader = Cursor::new(data);
-    let definitions = read_effect_list(&mut reader)?;
+    let definitions = read_effect_list_dialect(&mut reader, dialect)?;
     let trailing = data.len() - reader.position() as usize;
     ensure!(trailing == 0, "{trailing} trailing bytes after the effect definition collection");
     Ok(definitions)
@@ -482,14 +557,23 @@ impl PacketEffectPath {
     }
 }
 
-fn read_definition(reader: &mut Cursor<&[u8]>, depth: usize) -> Result<EffectDefinition> {
+fn read_definition(reader: &mut Cursor<&[u8]>, depth: usize, dialect: ClientDialect) -> Result<EffectDefinition> {
     let offset = reader.position();
     ensure!(
         depth <= MAX_EFFECT_NESTING_DEPTH,
         "effect definition at offset {offset} exceeds the nesting depth limit {MAX_EFFECT_NESTING_DEPTH}"
     );
     let child_depth = depth + 1;
-    let definition = match reader.read_u32::<LittleEndian>()? {
+    let stored_key = reader.read_u32::<LittleEndian>()?;
+    let type_key = match dialect {
+        ClientDialect::Enhanced => stored_key,
+        ClientDialect::KingdomReborn => ec_effect_type_key_of_kr(stored_key)
+            .ok_or_else(|| color_eyre::eyre::eyre!("unknown Kingdom Reborn effect type key {stored_key} at offset {offset}"))?,
+    };
+    // The list and map readers of this dialect (the closures shadow the functions they call).
+    let read_list = |reader: &mut Cursor<&[u8]>, depth| read_list(reader, depth, dialect);
+    let read_map = |reader: &mut Cursor<&[u8]>, depth| read_map(reader, depth, dialect);
+    let definition = match type_key {
         EFFECT_TYPE_PARTICLE => EffectDefinition::Particle(ParticleEffect {
             name_index: reader.read_u32::<LittleEndian>()?,
             offset_x: reader.read_f32::<LittleEndian>()?,
@@ -500,7 +584,10 @@ fn read_definition(reader: &mut Cursor<&[u8]>, depth: usize) -> Result<EffectDef
             duration: reader.read_f32::<LittleEndian>()?,
             looping: reader.read_u8()? != 0,
             field_3c: reader.read_u8()?,
-            hued: reader.read_u8()? != 0,
+            hued: match dialect {
+                ClientDialect::Enhanced => reader.read_u8()? != 0,
+                ClientDialect::KingdomReborn => false,
+            },
         }),
         EFFECT_TYPE_SOUND => EffectDefinition::Sound(SoundEffect {
             sound_id: reader.read_u32::<LittleEndian>()?,
@@ -532,7 +619,10 @@ fn read_definition(reader: &mut Cursor<&[u8]>, depth: usize) -> Result<EffectDef
             } else {
                 PropertyFlagMode::FlagMask
             },
-            mask: reader.read_u64::<LittleEndian>()?,
+            mask: match dialect {
+                ClientDialect::Enhanced => reader.read_u64::<LittleEndian>()?,
+                ClientDialect::KingdomReborn => u64::from(reader.read_u32::<LittleEndian>()?),
+            },
             property: reader.read_u32::<LittleEndian>()?,
             default_children: read_list(reader, child_depth)?,
             cases: read_map(reader, child_depth)?,
@@ -556,32 +646,37 @@ fn read_definition(reader: &mut Cursor<&[u8]>, depth: usize) -> Result<EffectDef
             mask: reader.read_u32::<LittleEndian>()?,
             children: read_list(reader, child_depth)?,
         }),
-        type_key => bail!("unknown effect type key {type_key} at offset {offset}"),
+        _ => bail!("unknown effect type key {stored_key} at offset {offset}"),
     };
     Ok(definition)
 }
 
-fn read_definitions(reader: &mut Cursor<&[u8]>, count: usize, depth: usize) -> Result<Vec<EffectDefinition>> {
+fn read_definitions(
+    reader: &mut Cursor<&[u8]>,
+    count: usize,
+    depth: usize,
+    dialect: ClientDialect,
+) -> Result<Vec<EffectDefinition>> {
     ensure_count_fits(reader, count, "effect definition")?;
     let mut definitions = Vec::with_capacity(count);
     for _ in 0..count {
-        definitions.push(read_definition(reader, depth)?);
+        definitions.push(read_definition(reader, depth, dialect)?);
     }
     Ok(definitions)
 }
 
-fn read_list(reader: &mut Cursor<&[u8]>, depth: usize) -> Result<Vec<EffectDefinition>> {
+fn read_list(reader: &mut Cursor<&[u8]>, depth: usize, dialect: ClientDialect) -> Result<Vec<EffectDefinition>> {
     let count = reader.read_u32::<LittleEndian>()? as usize;
-    read_definitions(reader, count, depth)
+    read_definitions(reader, count, depth, dialect)
 }
 
 /// Reads an effect map (`UOEffects::ParseEffectMap`): u32 count, then that many {u32 key, list}.
-fn read_map(reader: &mut Cursor<&[u8]>, depth: usize) -> Result<Vec<EffectMapEntry>> {
+fn read_map(reader: &mut Cursor<&[u8]>, depth: usize, dialect: ClientDialect) -> Result<Vec<EffectMapEntry>> {
     let count = read_count(reader, "effect map entry")?;
     let mut entries = Vec::with_capacity(count);
     for _ in 0..count {
         let key = reader.read_u32::<LittleEndian>()?;
-        let children = read_list(reader, depth)?;
+        let children = read_list(reader, depth, dialect)?;
         entries.push(EffectMapEntry { key, children });
     }
     Ok(entries)

@@ -35,8 +35,36 @@
 //! ```
 //!
 //! The same format serves the Classic and the Enhanced Client: the client accepts nothing else.
+//!
+//! [`AnimationSequence::to_bytes`] writes an entry back: actions in ascending id order, groups in ascending key
+//! order with each parent before its children, typed actions in ascending (type, sub type as i8) order, as all
+//! client entries are (the client keys typed actions by signed bytes). Every client entry re-encodes byte for byte.
+//!
+//! ## Kingdom Reborn (`ClientDialect::KingdomReborn`, [`AnimationSequence::parse_dialect`])
+//!
+//! The KR client (`UOKR.exe`, 2008) stores an older layout, verified on all 252 KR entries (byte-identical round
+//! trips):
+//!
+//! ```text
+//! u32   stored_id
+//! 8 x { i8 x, i8 y }                         no i16 extra offsets
+//! u32   action_count
+//! action_count x {
+//!     u32 action, u32 frame_count, i32 alias, i32 kr_extra, f32 fps
+//!     8 x { i8 x, i8 y }                     no i16 extra offsets
+//!     u32 n; n x { u32 frame, KR effect list }
+//!                                            no skipped frame list
+//! }
+//! groups as above
+//! ```
+//!
+//! The reader is `UOKR.exe` 0x004a6a10 (`ghidra-facets/results/uokr_facets.md`, answer 8). `kr_extra` is -1 in
+//! all KR data; the client stores it in the action record (+0x28) and never reads it. Ten KR entries repeat action id 0 (a plain
+//! record of 0 frames after action 22); the repeats are kept in [`AnimationSequence::repeated_actions`], since
+//! which record the client keeps is unconfirmed. The extra offsets read as 0 and the skipped frames as none.
 
-use crate::enhanced::effect_definition::{read_effect_list, EffectDefinition};
+use crate::enhanced::client_dialect::ClientDialect;
+use crate::enhanced::effect_definition::{read_effect_list_dialect, write_effect_list_dialect, EffectDefinition};
 use byteorder::{LittleEndian, ReadBytesExt};
 use color_eyre::eyre::{bail, ensure, eyre, Result};
 use std::collections::{BTreeMap, BTreeSet};
@@ -70,6 +98,8 @@ pub const MISSING_ACTION_FPS: f32 = 16.0;
 
 /// File value of `alias` for an action with its own frames.
 const NO_ALIAS: i32 = -1;
+/// The Kingdom Reborn `kr_extra` written when an action has none (its value in all KR data).
+pub const KR_EXTRA_DEFAULT: i32 = -1;
 /// File value of a group `parent` for a group without a parent.
 const NO_PARENT: i8 = -1;
 
@@ -147,6 +177,20 @@ pub struct AnimationSequence {
     pub actions: BTreeMap<u32, SequenceAction>,
     /// Action groups (`FrameSetLookup`) by key, see the `GROUP_*` constants (confirmed).
     pub groups: BTreeMap<i8, ActionGroup>,
+    /// Kingdom Reborn only: action records whose id an earlier record already has, which `actions` does not
+    /// hold (it keeps the first), with their position among the action records. Kept to write the entry back;
+    /// which record the client uses is unconfirmed. Always empty for the Enhanced Client, which rejects repeats.
+    pub repeated_actions: Vec<RepeatedAction>,
+}
+
+/// An action record whose id an earlier record of the entry already has (Kingdom Reborn).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RepeatedAction {
+    /// Position among the entry's action records, 0-based.
+    pub position: usize,
+    pub id: u32,
+    /// The record; its `base_frame` is 0 (it owns no frames of its own).
+    pub action: SequenceAction,
 }
 
 /// One action record (`UOAnimationSequence` action map value).
@@ -175,6 +219,9 @@ pub struct SequenceAction {
     /// `STORED_DIRECTION_COUNT * frame_count` consecutive numbers from `FIRST_BASE_FRAME`, in
     /// file order (`NextBaseFrame`, confirmed). 0 for alias records, which own no frames.
     pub base_frame: u32,
+    /// Kingdom Reborn only: the i32 after `alias`, stored by the client but never read (-1 in all KR data);
+    /// `None` for the Enhanced Client, which has no such field.
+    pub kr_extra: Option<i32>,
 }
 
 /// Stand / walk / run actions of a group.
@@ -228,14 +275,22 @@ impl AnimationSequence {
     /// before its child, are errors: the client's handling of them was not traced and no client
     /// entry has one.
     pub fn parse(data: &[u8]) -> Result<Self> {
+        Self::parse_dialect(data, ClientDialect::Enhanced)
+    }
+
+    /// [`Self::parse`] for an entry in the layout of `dialect` (see the module documentation). Repeated action ids
+    /// are accepted in the Kingdom Reborn layout only.
+    pub fn parse_dialect(data: &[u8], dialect: ClientDialect) -> Result<Self> {
+        let kr = dialect.is_kingdom_reborn();
         let mut reader = Cursor::new(data);
         let stored_id = reader.read_u32::<LittleEndian>()?;
         let offsets = read_byte_offsets(&mut reader)?;
-        let extra_offsets = read_short_offsets(&mut reader)?;
+        let extra_offsets = if kr { ShortOffsets::default() } else { read_short_offsets(&mut reader)? };
 
         let mut actions = BTreeMap::new();
+        let mut repeated_actions = Vec::new();
         let mut next_base_frame = FIRST_BASE_FRAME;
-        for _ in 0..reader.read_u32::<LittleEndian>()? {
+        for position in 0..reader.read_u32::<LittleEndian>()? as usize {
             let action_id = reader.read_u32::<LittleEndian>()?;
             let frame_count = reader.read_u32::<LittleEndian>()?;
             let alias = match reader.read_i32::<LittleEndian>()? {
@@ -244,19 +299,37 @@ impl AnimationSequence {
                     u32::try_from(alias).map_err(|_| eyre!("action {action_id} has negative alias {alias}"))?,
                 ),
             };
+            let kr_extra = if kr { Some(reader.read_i32::<LittleEndian>()?) } else { None };
             let fps = reader.read_f32::<LittleEndian>()?;
             let offsets = read_byte_offsets(&mut reader)?;
-            let extra_offsets = read_short_offsets(&mut reader)?;
+            let extra_offsets = if kr { ShortOffsets::default() } else { read_short_offsets(&mut reader)? };
             let mut frame_effects = BTreeMap::new();
             for _ in 0..reader.read_u32::<LittleEndian>()? {
                 let frame = reader.read_u32::<LittleEndian>()?;
-                let effects = read_effect_list(&mut reader)?;
+                let effects = read_effect_list_dialect(&mut reader, dialect)?;
                 insert_unique(&mut frame_effects, frame, effects, "action frame effect frame")?;
             }
             let mut skipped_frames = BTreeSet::new();
-            for _ in 0..reader.read_u32::<LittleEndian>()? {
-                let frame = reader.read_u32::<LittleEndian>()?;
-                ensure!(skipped_frames.insert(frame), "action {action_id} repeats skipped frame {frame}");
+            if !kr {
+                for _ in 0..reader.read_u32::<LittleEndian>()? {
+                    let frame = reader.read_u32::<LittleEndian>()?;
+                    ensure!(skipped_frames.insert(frame), "action {action_id} repeats skipped frame {frame}");
+                }
+            }
+            if kr && actions.contains_key(&action_id) {
+                let action = SequenceAction {
+                    frame_count,
+                    alias,
+                    fps,
+                    offsets,
+                    extra_offsets,
+                    frame_effects,
+                    skipped_frames,
+                    base_frame: 0,
+                    kr_extra,
+                };
+                repeated_actions.push(RepeatedAction { position, id: action_id, action });
+                continue;
             }
             let base_frame = if alias.is_none() {
                 let base_frame = next_base_frame;
@@ -277,6 +350,7 @@ impl AnimationSequence {
                 frame_effects,
                 skipped_frames,
                 base_frame,
+                kr_extra,
             };
             insert_unique(&mut actions, action_id, action, "action id")?;
         }
@@ -323,7 +397,101 @@ impl AnimationSequence {
 
         let trailing = data.len() - reader.position() as usize;
         ensure!(trailing == 0, "{trailing} trailing bytes after the animation sequence");
-        Ok(Self { stored_id, offsets, extra_offsets, actions, groups })
+        Ok(Self { stored_id, offsets, extra_offsets, actions, groups, repeated_actions })
+    }
+
+    /// Writes the entry in the Enhanced Client layout ([`Self::to_bytes_dialect`]).
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        self.to_bytes_dialect(ClientDialect::Enhanced)
+    }
+
+    /// Writes the entry in the layout of `dialect`, the inverse of [`Self::parse_dialect`] (see the module
+    /// documentation for the record order). `base_frame` is not stored: the reader numbers plain actions in
+    /// ascending id order. Fails on what the layout cannot hold: repeated actions in the Enhanced Client layout;
+    /// non-zero extra offsets or skipped frames in the Kingdom Reborn one; a group whose parent is missing.
+    pub fn to_bytes_dialect(&self, dialect: ClientDialect) -> Result<Vec<u8>> {
+        let kr = dialect.is_kingdom_reborn();
+        ensure!(
+            kr || self.repeated_actions.is_empty(),
+            "the Enhanced Client layout cannot hold repeated action ids"
+        );
+        let mut out = Vec::new();
+        put_u32(&mut out, self.stored_id);
+        write_offsets(&mut out, &self.offsets, &self.extra_offsets, kr, "the sequence")?;
+
+        let mut records: Vec<(u32, &SequenceAction)> = self.actions.iter().map(|(&id, action)| (id, action)).collect();
+        let mut repeated: Vec<&RepeatedAction> = self.repeated_actions.iter().collect();
+        repeated.sort_by_key(|repeat| repeat.position);
+        for repeat in repeated {
+            ensure!(repeat.position <= records.len(), "repeated action {} position {} is past the end", repeat.id, repeat.position);
+            records.insert(repeat.position, (repeat.id, &repeat.action));
+        }
+        put_count(&mut out, records.len(), "actions")?;
+        for (id, action) in records {
+            put_u32(&mut out, id);
+            put_u32(&mut out, action.frame_count);
+            let alias = match action.alias {
+                None => NO_ALIAS,
+                Some(alias) => i32::try_from(alias).map_err(|_| eyre!("action {id} alias {alias} exceeds i32"))?,
+            };
+            out.extend_from_slice(&alias.to_le_bytes());
+            if kr {
+                out.extend_from_slice(&action.kr_extra.unwrap_or(KR_EXTRA_DEFAULT).to_le_bytes());
+            }
+            out.extend_from_slice(&action.fps.to_le_bytes());
+            write_offsets(&mut out, &action.offsets, &action.extra_offsets, kr, &format!("action {id}"))?;
+            put_count(&mut out, action.frame_effects.len(), "frame effects")?;
+            for (&frame, effects) in &action.frame_effects {
+                put_u32(&mut out, frame);
+                write_effect_list_dialect(&mut out, effects, dialect)?;
+            }
+            if kr {
+                ensure!(action.skipped_frames.is_empty(), "action {id}: the Kingdom Reborn layout has no skipped frames");
+            } else {
+                put_count(&mut out, action.skipped_frames.len(), "skipped frames")?;
+                for &frame in &action.skipped_frames {
+                    put_u32(&mut out, frame);
+                }
+            }
+        }
+
+        put_count(&mut out, self.groups.len(), "groups")?;
+        let mut written = BTreeSet::new();
+        while written.len() < self.groups.len() {
+            // The lowest key whose parent is written (the reader needs parents first).
+            let (&key, group) = self
+                .groups
+                .iter()
+                .find(|(key, group)| !written.contains(*key) && group.parent.is_none_or(|parent| written.contains(&parent)))
+                .ok_or_else(|| eyre!("a group parent is missing or in a cycle"))?;
+            written.insert(key);
+            out.extend_from_slice(&key.to_le_bytes());
+            out.extend_from_slice(&group.parent.unwrap_or(NO_PARENT).to_le_bytes());
+            put_u32(&mut out, group.default_action);
+            put_count(&mut out, group.transitions.len(), "transitions")?;
+            for (&transition, &action) in &group.transitions {
+                out.extend_from_slice(&transition.to_le_bytes());
+                put_u32(&mut out, action);
+            }
+            put_count(&mut out, group.moves.len(), "moves")?;
+            for (&movement, actions) in &group.moves {
+                out.push(movement);
+                put_u32(&mut out, actions.action);
+                put_u32(&mut out, actions.alternate);
+            }
+            put_count(&mut out, group.typed.len(), "typed actions")?;
+            let mut typed: Vec<_> = group.typed.iter().collect();
+            typed.sort_by_key(|((anim_type, sub_type), _)| (*anim_type, sub_type.cast_signed()));
+            for (&(anim_type, sub_type), choices) in typed {
+                out.extend_from_slice(&anim_type.to_le_bytes());
+                out.push(sub_type);
+                put_count(&mut out, choices.len(), "typed action choices")?;
+                for &choice in choices {
+                    put_u32(&mut out, choice);
+                }
+            }
+        }
+        Ok(out)
     }
 
     /// Action whose frames, frame count and fps are used for `action`
@@ -521,6 +689,33 @@ fn read_short_offsets(reader: &mut Cursor<&[u8]>) -> Result<ShortOffsets> {
         *offset = (reader.read_i16::<LittleEndian>()?, reader.read_i16::<LittleEndian>()?);
     }
     Ok(offsets)
+}
+
+/// Writes i8 offsets, then (Enhanced Client) the i16 extra offsets; the Kingdom Reborn layout has none, so they
+/// must be zero.
+fn write_offsets(out: &mut Vec<u8>, offsets: &ByteOffsets, extra: &ShortOffsets, kr: bool, owner: &str) -> Result<()> {
+    for (x, y) in offsets {
+        out.extend_from_slice(&x.to_le_bytes());
+        out.extend_from_slice(&y.to_le_bytes());
+    }
+    if kr {
+        ensure!(*extra == ShortOffsets::default(), "{owner}: the Kingdom Reborn layout has no extra offsets");
+    } else {
+        for (x, y) in extra {
+            out.extend_from_slice(&x.to_le_bytes());
+            out.extend_from_slice(&y.to_le_bytes());
+        }
+    }
+    Ok(())
+}
+
+fn put_u32(out: &mut Vec<u8>, value: u32) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn put_count(out: &mut Vec<u8>, count: usize, what: &str) -> Result<()> {
+    put_u32(out, u32::try_from(count).map_err(|_| eyre!("{count} {what} exceed u32"))?);
+    Ok(())
 }
 
 fn insert_unique<K: Ord + Copy + std::fmt::Debug, V>(map: &mut BTreeMap<K, V>, key: K, value: V, what: &str) -> Result<()> {
@@ -777,5 +972,60 @@ mod tests {
     #[test]
     fn entry_path_uses_eight_digits() {
         assert_eq!(AnimationSequence::entry_path(400), "build/animationsequence/00000400.bin");
+    }
+
+    #[test]
+    fn to_bytes_writes_parents_first_and_round_trips() {
+        let sequence = parsed();
+        let bytes = sequence.to_bytes().unwrap();
+        assert_eq!(AnimationSequence::parse(&bytes).unwrap(), sequence);
+        assert_eq!(AnimationSequence::parse(&bytes).unwrap().to_bytes().unwrap(), bytes);
+        // Typed actions in (type, sub type as i8) order: the any sub type (-1) first.
+        let mut typed = parsed();
+        let peace = typed.groups.get_mut(&GROUP_PEACE).unwrap();
+        peace.typed.insert((0, 0), vec![1]);
+        peace.typed.insert((0, ANY_SUB_TYPE), vec![2]);
+        let bytes = typed.to_bytes().unwrap();
+        let any = bytes.windows(2).position(|pair| pair == [0, ANY_SUB_TYPE]).unwrap();
+        let zero = bytes.windows(2).rposition(|pair| pair == [0, 0]).unwrap();
+        assert!(any < zero);
+
+        let mut orphan = parsed();
+        orphan.groups.get_mut(&GROUP_WAR).unwrap().parent = Some(GROUP_FLYING);
+        assert!(orphan.to_bytes().is_err());
+    }
+
+    #[test]
+    fn kingdom_reborn_layout_round_trips_with_repeated_actions() {
+        const KR: ClientDialect = ClientDialect::KingdomReborn;
+        /// Bytes of a KR action record without frame effects: ids, alias, extra, fps, i8 offsets, effect count.
+        const KR_PLAIN_ACTION_SIZE: usize = 4 * 5 + 2 * DIRECTION_COUNT + 4;
+        const EXTRA: i32 = -7;
+        let mut sequence = parsed();
+        assert!(sequence.to_bytes_dialect(KR).is_err(), "the EC extra offsets do not fit KR");
+        sequence.extra_offsets = ShortOffsets::default();
+        for action in sequence.actions.values_mut() {
+            action.extra_offsets = ShortOffsets::default();
+            action.skipped_frames.clear();
+            action.kr_extra = Some(EXTRA);
+        }
+        let mut repeat = sequence.actions[&0].clone();
+        (repeat.frame_count, repeat.alias, repeat.base_frame) = (0, None, 0);
+        let position = sequence.actions.len();
+        sequence.repeated_actions.push(RepeatedAction { position, id: 0, action: repeat });
+        assert!(sequence.to_bytes().is_err(), "EC rejects repeated action ids");
+
+        let bytes = sequence.to_bytes_dialect(KR).unwrap();
+        let parsed_kr = AnimationSequence::parse_dialect(&bytes, KR).unwrap();
+        assert_eq!(parsed_kr, sequence);
+        assert_eq!(parsed_kr.to_bytes_dialect(KR).unwrap(), bytes);
+        assert!(AnimationSequence::parse(&bytes).is_err());
+        // A KR record is the EC one without the i16 offsets and skipped frames, plus the extra i32.
+        let mut plain = sequence.clone();
+        plain.actions.retain(|&id, _| id == 19);
+        plain.repeated_actions.clear();
+        plain.groups.clear();
+        let header = 4 + 2 * DIRECTION_COUNT + 4;
+        assert_eq!(plain.to_bytes_dialect(KR).unwrap().len(), header + KR_PLAIN_ACTION_SIZE + 4);
     }
 }

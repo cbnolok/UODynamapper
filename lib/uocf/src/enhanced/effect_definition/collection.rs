@@ -5,8 +5,9 @@ use std::path::Path;
 
 use color_eyre::eyre::{self, WrapErr};
 
-use super::encode::encode_effect_definition_collection;
-use super::{parse_effect_definition_collection, EffectDefinition};
+use super::encode::encode_effect_definition_collection_dialect;
+use super::{parse_effect_definition_collection_dialect, EffectDefinition};
+use crate::enhanced::client_dialect::ClientDialect;
 use crate::enhanced::uop_entries::{self, EntryPut};
 use crate::uop_container::file::CompressionFlag;
 use crate::uop_container::hash::hash_file_name_single;
@@ -76,6 +77,11 @@ impl EffectDefinitionCollection {
     /// Reads every entry of a package; entry names are resolved by hashing the ids below
     /// [`EFFECT_COLLECTION_ID_SCAN_END`].
     pub fn from_package(package: &UopPackage) -> eyre::Result<Self> {
+        Self::from_package_dialect(package, ClientDialect::Enhanced)
+    }
+
+    /// [`Self::from_package`] for a package in the effect grammar of `dialect`.
+    pub fn from_package_dialect(package: &UopPackage, dialect: ClientDialect) -> eyre::Result<Self> {
         let ids_by_hash = ids_by_hash();
         let mut entries = Vec::new();
         for file in package.iter_files().filter(|file| file.has_size()) {
@@ -85,8 +91,8 @@ impl EffectDefinitionCollection {
                 .unpack_file_by_hash(hash)
                 .wrap_err_with(|| format!("failed to unpack {}", describe(key)))?
                 .unwrap_or_default();
-            let definitions =
-                parse_effect_definition_collection(&payload).wrap_err_with(|| format!("failed to parse {}", describe(key)))?;
+            let definitions = parse_effect_definition_collection_dialect(&payload, dialect)
+                .wrap_err_with(|| format!("failed to parse {}", describe(key)))?;
             entries.push(EffectCollectionEntry { key, definitions });
         }
         Ok(Self { entries })
@@ -139,6 +145,15 @@ impl EffectDefinitionCollection {
     /// compression of the existing entries. Both get a fresh timestamp data block header (the package's edit
     /// time); entries missing from the collection are removed. Returns the number of entries replaced, added and removed.
     pub fn apply_to_package(&self, package: &mut UopPackage) -> eyre::Result<EffectCollectionChanges> {
+        self.apply_to_package_dialect(package, ClientDialect::Enhanced)
+    }
+
+    /// [`Self::apply_to_package`] writing the effect grammar of `dialect`.
+    pub fn apply_to_package_dialect(
+        &self,
+        package: &mut UopPackage,
+        dialect: ClientDialect,
+    ) -> eyre::Result<EffectCollectionChanges> {
         let mut changes = EffectCollectionChanges::default();
         let compression = package
             .iter_files()
@@ -151,7 +166,8 @@ impl EffectDefinitionCollection {
                 eyre::bail!("{} appears twice in the collection", describe(entry.key));
             }
             seen.push(hash);
-            let payload = encode_effect_definition_collection(&entry.definitions);
+            let payload = encode_effect_definition_collection_dialect(&entry.definitions, dialect)
+                .wrap_err_with(|| format!("failed to encode {}", describe(entry.key)))?;
             let current =
                 package.unpack_file_by_hash(hash).wrap_err_with(|| format!("failed to unpack {}", describe(entry.key)))?;
             if current.as_deref() == Some(payload.as_slice()) {
@@ -212,6 +228,7 @@ fn describe(key: EffectEntryKey) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::enhanced::effect_definition::encode_effect_definition_collection;
     use crate::enhanced::effect_definition::SoundEffect;
 
     fn sound(sound_id: u32) -> EffectDefinition {

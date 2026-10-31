@@ -37,10 +37,19 @@
 //! The payload must end right after the last square: the client rejects a sector with bytes left over, and so
 //! does this decoder. `facet_sector` has the geometry, the column-major sector numbering, the encoder and the
 //! remaining client rules.
+//!
+//! The Kingdom Reborn client (`ClientDialect::KingdomReborn`) stores 3 more bytes after the land id of every
+//! square, `u8 subtype, u16 classic_land` ([`KrSquareLand`]); everything else is the same. Its land id is the
+//! KR material (`TerrainDefinition` id), and its delimiters hold the neighbour's material
+//! (`UOFacet::Sector_ReadSquare` 0x007b6994 in `UOKR.exe`;
+//! `scripts/dev-helpers/ec-research/ghidra-facets/results/uokr_facets.md`). The KR reader is more lenient than
+//! EC's: it only logs bytes left over, a delimiter direction above 7 (and then reads out of step) and a header
+//! naming another facet or sector. This decoder rejects all three, as for EC sectors.
 
 //#![allow(dead_code)]
 crate::eyre_imports!();
 use crate::classic::map::MapBlock;
+use crate::enhanced::client_dialect::ClientDialect;
 use crate::enhanced::facet_sector::{sector_entry_path, DELIMITER_DIRECTION_COUNT};
 use crate::uop_container as uop;
 use crate::uop_container::package::UopPackage;
@@ -85,12 +94,38 @@ pub struct EcFacetDelimiter {
     pub graphic_id: u32,
 }
 
+/// The bytes a Kingdom Reborn square stores after its land id (`u8, u16`); not in Enhanced Client squares.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct KrSquareLand {
+    /// Selects the alias of the square's material in `TerrainDefinition.uop` (`alias.subtype == subtype`), whose
+    /// flags the client gives the cell (confirmed; it is the EC `newSubType` of `legacyterrainmap.csv`). 0, 1 or
+    /// 2 in the shipped facets, equal to the alias position in every KR definition; mostly a function of
+    /// `classic_land` (64 of 1556 ids take more than one value).
+    pub subtype: u8,
+    /// The legacy (Classic) land id of the square, stored directly. The client stores it but no reader was found
+    /// (probable): KR renders from the material and subtype. It matches Classic 7.0.20 `mapN.mul` on
+    /// 97.9..99.99% of the squares (the rest are map content changes).
+    pub classic_land: u16,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EcFacetTile {
     pub z: i8,
+    /// The land id: the Classic id in Enhanced Client facets, the material (`TerrainDefinition` id) in Kingdom
+    /// Reborn facets.
     pub land_graphic: u16,
+    /// The Kingdom Reborn square bytes; `Some` exactly in Kingdom Reborn sectors.
+    pub kr: Option<KrSquareLand>,
     pub delimiters: Vec<EcFacetDelimiter>,
     pub statics: Vec<StaticTile>,
+}
+
+impl EcFacetTile {
+    /// The Classic land id: `land_graphic` in an Enhanced Client square, the stored `classic_land` in a Kingdom
+    /// Reborn one.
+    pub fn classic_land_id(&self) -> u16 {
+        self.kr.map_or(self.land_graphic, |kr| kr.classic_land)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -158,7 +193,14 @@ fn check_fully_consumed(cursor: &Cursor<&[u8]>) -> eyre::Result<()> {
     Ok(())
 }
 
+/// Decodes an Enhanced Client sector payload ([`decode_sector`] with `ClientDialect::Enhanced`).
 pub fn decode_facet_bin_raw(data: &[u8]) -> eyre::Result<DecodedEcFacet> {
+    decode_sector(data, ClientDialect::Enhanced)
+}
+
+/// Decodes a sector payload in the square layout of `dialect`. Fails on a delimiter direction above 7, a read
+/// past the end or bytes left after the last square, as the client does.
+pub fn decode_sector(data: &[u8], dialect: ClientDialect) -> eyre::Result<DecodedEcFacet> {
     let mut cursor: Cursor<&[u8]> = Cursor::new(data);
 
     let facet_id: u8 = cursor.read_u8()?;
@@ -169,6 +211,13 @@ pub fn decode_facet_bin_raw(data: &[u8]) -> eyre::Result<DecodedEcFacet> {
         for y_64 in 0..64 {
             let z: i8 = cursor.read_i8()?;
             let land_graphic: u16 = cursor.read_u16::<LittleEndian>()?;
+            let kr = match dialect {
+                ClientDialect::Enhanced => None,
+                ClientDialect::KingdomReborn => Some(KrSquareLand {
+                    subtype: cursor.read_u8()?,
+                    classic_land: cursor.read_u16::<LittleEndian>()?,
+                }),
+            };
 
             let delimiter_count: u8 = cursor.read_u8()?;
             let mut delimiters = Vec::with_capacity(delimiter_count as usize);
@@ -197,6 +246,7 @@ pub fn decode_facet_bin_raw(data: &[u8]) -> eyre::Result<DecodedEcFacet> {
             tiles.push(EcFacetTile {
                 z,
                 land_graphic,
+                kr,
                 delimiters,
                 statics,
             });

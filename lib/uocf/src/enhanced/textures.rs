@@ -167,33 +167,75 @@ impl TextureFile {
 
     pub fn decode_to_rgba8(&self) -> eyre::Result<RgbaImage> {
         match self.format {
-            ECImageFormat::DDS => {
-                let cursor = Cursor::new(self.raw_bytes());
-                let mut decoder = dds::Decoder::new(cursor).wrap_err("Failed reading DDS header")?;
-                let size = decoder.main_size();
-                let rgba_len = dds::ColorFormat::RGBA_U8
-                    .buffer_size(size)
-                    .ok_or_else(|| eyre::eyre!("DDS image is too large to decode"))?;
-                let mut rgba = vec![0u8; rgba_len];
-                let image = dds::ImageViewMut::new(&mut rgba, size, dds::ColorFormat::RGBA_U8)
-                    .ok_or_else(|| eyre::eyre!("Could not create DDS decode buffer"))?;
-                decoder
-                    .read_surface(image)
-                    .wrap_err("Failed decoding DDS image")?;
-                let image_buffer = ImageBuffer::from_raw(size.width, size.height, rgba)
-                    .ok_or_else(|| eyre::eyre!("Could not map buffer"))?;
-                Ok(image_buffer)
-            }
-            ECImageFormat::TGA => {
-                image::load(Cursor::new(self.raw_bytes()), image::ImageFormat::Tga)
-                    .wrap_err("Failed reading TGA")
-                    .map(|image| image.into_rgba8())
-            }
+            ECImageFormat::DDS => decode_dds_rgba8(self.raw_bytes()),
+            ECImageFormat::TGA => decode_tga_rgba8(self.raw_bytes()),
             ECImageFormat::Unknown => {
                 eyre::bail!("Unknown image format payload")
             }
         }
     }
+}
+
+/// DX9 bit count of X1R5G5B5 DDS images (four 2048x1024 Kingdom Reborn `Interface.uop` images).
+const X1R5G5B5_BIT_COUNT: dds::header::RgbBitCount = dds::header::RgbBitCount::Count16;
+/// Red, green and blue masks of X1R5G5B5; the top bit is unused (no alpha mask).
+const X1R5G5B5_RGB_MASKS: [u32; 3] = [0x7C00, 0x03E0, 0x001F];
+/// Size of a TGA header; the width and height are the u16 at [`TGA_WIDTH_OFFSET`] and [`TGA_HEIGHT_OFFSET`].
+const TGA_HEADER_SIZE: usize = 18;
+const TGA_WIDTH_OFFSET: usize = 12;
+const TGA_HEIGHT_OFFSET: usize = 14;
+/// Alpha of an opaque RGBA pixel.
+const OPAQUE_ALPHA: u8 = u8::MAX;
+
+/// Whether `header` is X1R5G5B5, which the `dds` crate does not detect: it reads as B5G5R5A1 with the alpha bit
+/// ignored.
+fn is_x1r5g5b5(header: &dds::header::Header) -> bool {
+    let dds::header::Header::Dx9(header) = header else { return false };
+    let dds::header::Dx9PixelFormat::Mask(mask) = &header.pixel_format else { return false };
+    mask.rgb_bit_count == X1R5G5B5_BIT_COUNT
+        && [mask.r_bit_mask, mask.g_bit_mask, mask.b_bit_mask] == X1R5G5B5_RGB_MASKS
+        && mask.a_bit_mask == 0
+}
+
+/// Decodes the main surface of a DDS file to RGBA, including X1R5G5B5 (opaque).
+pub fn decode_dds_rgba8(bytes: &[u8]) -> eyre::Result<RgbaImage> {
+    let mut cursor = Cursor::new(bytes);
+    let header = dds::header::Header::read(&mut cursor, &dds::header::ParseOptions::default())
+        .wrap_err("Failed reading DDS header")?;
+    let opaque = is_x1r5g5b5(&header);
+    let mut decoder = if opaque {
+        dds::Decoder::from_header_with(cursor, header, dds::Format::B5G5R5A1_UNORM)
+    } else {
+        dds::Decoder::from_header(cursor, header)
+    }
+    .wrap_err("Failed reading DDS header")?;
+    let size = decoder.main_size();
+    let rgba_len = dds::ColorFormat::RGBA_U8
+        .buffer_size(size)
+        .ok_or_else(|| eyre::eyre!("DDS image is too large to decode"))?;
+    let mut rgba = vec![0u8; rgba_len];
+    let image = dds::ImageViewMut::new(&mut rgba, size, dds::ColorFormat::RGBA_U8)
+        .ok_or_else(|| eyre::eyre!("Could not create DDS decode buffer"))?;
+    decoder.read_surface(image).wrap_err("Failed decoding DDS image")?;
+    if opaque {
+        rgba.chunks_exact_mut(dds::ColorFormat::RGBA_U8.bytes_per_pixel() as usize)
+            .for_each(|pixel| pixel[pixel.len() - 1] = OPAQUE_ALPHA);
+    }
+    ImageBuffer::from_raw(size.width, size.height, rgba).ok_or_else(|| eyre::eyre!("Could not map buffer"))
+}
+
+/// Decodes a TGA file to RGBA. A header-only TGA of width or height 0 (the last Kingdom Reborn
+/// `TileArtLegacy.uop` entry) is an empty image.
+pub fn decode_tga_rgba8(bytes: &[u8]) -> eyre::Result<RgbaImage> {
+    if bytes.len() >= TGA_HEADER_SIZE {
+        let dimension = |offset: usize| u16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
+        if dimension(TGA_WIDTH_OFFSET) == 0 || dimension(TGA_HEIGHT_OFFSET) == 0 {
+            return Ok(RgbaImage::new(0, 0));
+        }
+    }
+    image::load(Cursor::new(bytes), image::ImageFormat::Tga)
+        .wrap_err("Failed reading TGA")
+        .map(|image| image.into_rgba8())
 }
 
 /// The primary public-facing orchestrator for Enhanced Client textures.
@@ -339,3 +381,56 @@ impl Textures {
 }
 
 // endregion: --- Public API
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A 2x1 X1R5G5B5 DDS: one pure red pixel with the unused top bit clear, one pure blue with it set.
+    fn x1r5g5b5_dds() -> Vec<u8> {
+        const DDS_HEADER_SIZE: u32 = 124;
+        const DDS_PIXEL_FORMAT_SIZE: u32 = 32;
+        /// DDSD_CAPS | DDSD_HEIGHT | DDSD_WIDTH | DDSD_PIXELFORMAT.
+        const DDS_FLAGS: u32 = 0x1007;
+        const DDPF_RGB: u32 = 0x40;
+        const DDSCAPS_TEXTURE: u32 = 0x1000;
+        const HEADER_RESERVED_WORDS: usize = 11;
+        const TRAILING_WORDS: usize = 4;
+        const RED: u16 = 0x7C00;
+        const BLUE_WITH_TOP_BIT: u16 = 0x801F;
+        let mut bytes = b"DDS ".to_vec();
+        let mut put = |value: u32| bytes.extend_from_slice(&value.to_le_bytes());
+        // size, flags, height, width, pitch, depth, mip count
+        [DDS_HEADER_SIZE, DDS_FLAGS, 1, 2, 0, 0, 0].into_iter().for_each(&mut put);
+        (0..HEADER_RESERVED_WORDS).for_each(|_| put(0));
+        [DDS_PIXEL_FORMAT_SIZE, DDPF_RGB, 0, u32::from(X1R5G5B5_BIT_COUNT)].into_iter().for_each(&mut put);
+        X1R5G5B5_RGB_MASKS.into_iter().for_each(&mut put);
+        put(0);
+        put(DDSCAPS_TEXTURE);
+        (0..TRAILING_WORDS).for_each(|_| put(0));
+        bytes.extend_from_slice(&RED.to_le_bytes());
+        bytes.extend_from_slice(&BLUE_WITH_TOP_BIT.to_le_bytes());
+        bytes
+    }
+
+    #[test]
+    fn x1r5g5b5_dds_decodes_opaque() {
+        let image = decode_dds_rgba8(&x1r5g5b5_dds()).unwrap();
+        assert_eq!(image.dimensions(), (2, 1));
+        assert_eq!(image.get_pixel(0, 0).0, [u8::MAX, 0, 0, OPAQUE_ALPHA]);
+        assert_eq!(image.get_pixel(1, 0).0, [0, 0, u8::MAX, OPAQUE_ALPHA]);
+    }
+
+    #[test]
+    fn header_only_tga_is_an_empty_image() {
+        /// Uncompressed true-colour TGA, 32 bits per pixel, 0x0.
+        const TGA_TRUE_COLOUR: u8 = 2;
+        const TGA_BITS_PER_PIXEL_OFFSET: usize = 16;
+        const TGA_BITS_PER_PIXEL: u8 = 32;
+        let mut header = [0u8; TGA_HEADER_SIZE];
+        header[2] = TGA_TRUE_COLOUR;
+        header[TGA_BITS_PER_PIXEL_OFFSET] = TGA_BITS_PER_PIXEL;
+        assert_eq!(decode_tga_rgba8(&header).unwrap().dimensions(), (0, 0));
+        assert!(decode_tga_rgba8(&header[..TGA_HEADER_SIZE - 1]).is_err());
+    }
+}

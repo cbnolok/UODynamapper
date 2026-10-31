@@ -7,6 +7,7 @@ pub mod animation_definition;
 pub mod animationframe;
 pub mod chaos_script;
 pub mod classic_tile_mapper;
+pub mod client_dialect;
 pub mod effect_definition;
 pub mod effect_texture;
 pub mod facet_decoder;

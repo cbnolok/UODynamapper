@@ -1,7 +1,10 @@
 //! Represents tile art data from a UOP file for Enhanced Client "Art Tiles" (statics).
 
 use crate::ec_material_axes::{EcLogicalFamily, EcPhysicalPackage};
-use crate::enhanced::effect_definition::{encode_tileart_effects, read_effect_definitions, EffectDefinition};
+use crate::enhanced::client_dialect::ClientDialect;
+use crate::enhanced::effect_definition::{
+    encode_tileart_effects_dialect, read_effect_definitions_dialect, EffectDefinition,
+};
 use crate::enhanced::string_dictionary::UoStringDictionary;
 use crate::enhanced::uop_entries::{self, EntryPut};
 use crate::uop_container::file::{CompressionFlag, UopFile};
@@ -30,6 +33,11 @@ pub fn load(
 
 /// Record version accepted by the client (`UOTileArt::ParseObjectDefinition` rejects any other).
 pub const TILEART_RECORD_VERSION: u16 = 4;
+/// Record version of the Kingdom Reborn client (`UOKR.exe` reader 0x007bdeb2): the v4 record without
+/// `uses_enhanced_tileart`, `alternate_animation`, sitting words 4 and 5, the radar colour and the TileArtEnhanced
+/// shader block, with u32 flags and the Kingdom Reborn effect grammar
+/// (`scripts/dev-helpers/ec-research/ghidra-facets/results/uokr_facets.md`, answer 9).
+pub const TILEART_KR_RECORD_VERSION: u16 = 3;
 /// Client package holding one record per tile id.
 pub const TILEART_UOP_NAME: &str = "tileart.uop";
 /// Shader block `has_texture` value of a present block; any other value is a block without data.
@@ -40,6 +48,12 @@ const DEFAULT_TILEART_COMPRESSION: CompressionFlag = CompressionFlag::Zlib;
 pub const TILEART_SHADER_BLOCK_COUNT: usize = 4;
 /// Number of u32 words in a sitting block (`UOTileArtSitting`).
 pub const TILEART_SITTING_WORD_COUNT: usize = 6;
+/// Number of u32 words in a Kingdom Reborn sitting block (the first four of the Enhanced Client block).
+pub const TILEART_KR_SITTING_WORD_COUNT: usize = 4;
+/// Shader block index of TileArtEnhanced, the block a Kingdom Reborn record lacks.
+pub const TILEART_SHADER_BLOCK_ENHANCED: usize = 2;
+/// Shader blocks of a Kingdom Reborn record: WorldArt, TileArtLegacy and light texture.
+pub const TILEART_KR_SHADER_BLOCK_COUNT: usize = TILEART_SHADER_BLOCK_COUNT - 1;
 /// Appearance filter subtype: appearance by owner body type.
 pub const APPEARANCE_FILTER_BY_OWNER_BODY_TYPE: u8 = 0;
 /// Appearance filter subtype: appearance by owner gender.
@@ -516,29 +530,35 @@ impl TileArtEntry {
         }
 
         read_value!(entry.version, read_u16, LittleEndian);
-        ensure!(
-            entry.version == TILEART_RECORD_VERSION,
-            "unsupported tileart record version {} (expected {TILEART_RECORD_VERSION})",
-            entry.version
-        );
+        let dialect = record_dialect(entry.version)?;
+        let kr = dialect.is_kingdom_reborn();
         read_value!(entry.string_dict_off, read_u32, LittleEndian);
         read_value!(entry.tile_id, read_u32, LittleEndian);
         entry.has_world_art = reader.read_u8()? != 0;
-        entry.uses_enhanced_tileart = reader.read_u8()? != 0;
+        if !kr {
+            entry.uses_enhanced_tileart = reader.read_u8()? != 0;
+        }
         read_value!(entry.world_art_scale, read_f32, LittleEndian);
         read_value!(entry.legacy_art_scale, read_f32, LittleEndian);
         read_value!(entry.field_60, read_u32, LittleEndian);
         read_value!(entry.old_id, read_i32, LittleEndian);
         read_value!(entry.rotation_degrees, read_f32, LittleEndian);
         read_value!(entry.body_type, read_u32, LittleEndian);
-        entry.alternate_animation = reader.read_u8()? != 0;
+        if !kr {
+            entry.alternate_animation = reader.read_u8()? != 0;
+        }
         read_value!(entry.light_scale, read_f32, LittleEndian);
         read_value!(entry.light_field_70, read_u32, LittleEndian);
         read_value!(entry.light_offset_x, read_f32, LittleEndian);
         read_value!(entry.light_offset_y, read_f32, LittleEndian);
         read_value!(entry.house_join_bits, read_u32, LittleEndian);
-        entry.flags1 = TaeFlag::from_bits_retain(reader.read_u64::<LittleEndian>()?);
-        entry.flags2 = TaeFlag::from_bits_retain(reader.read_u64::<LittleEndian>()?);
+        for flags in [&mut entry.flags1, &mut entry.flags2] {
+            let bits = match kr {
+                true => u64::from(reader.read_u32::<LittleEndian>()?),
+                false => reader.read_u64::<LittleEndian>()?,
+            };
+            *flags = TaeFlag::from_bits_retain(bits);
+        }
         read_value!(entry.facing, read_i32, LittleEndian);
 
         read_value!(entry.ec_img_offset.x_start, read_i32, LittleEndian);
@@ -606,7 +626,8 @@ impl TileArtEntry {
         };
         if entry.has_sitting {
             let mut words = [0u32; TILEART_SITTING_WORD_COUNT];
-            reader.read_u32_into::<LittleEndian>(&mut words)?;
+            let word_count = if kr { TILEART_KR_SITTING_WORD_COUNT } else { TILEART_SITTING_WORD_COUNT };
+            reader.read_u32_into::<LittleEndian>(&mut words[..word_count])?;
             let [direction_mask, seat_offset_x, seat_offset_y, window_shift, field_10, field_14] = words;
             entry.sitting = Some(TaeSittingAnimation {
                 direction_mask,
@@ -619,13 +640,19 @@ impl TileArtEntry {
         }
 
         entry.radarcol_offset = reader.position() as u32;
-        entry.radarcol.r = reader.read_u8()?;
-        entry.radarcol.g = reader.read_u8()?;
-        entry.radarcol.b = reader.read_u8()?;
-        entry.radarcol.a = reader.read_u8()?;
+        if !kr {
+            entry.radarcol.r = reader.read_u8()?;
+            entry.radarcol.g = reader.read_u8()?;
+            entry.radarcol.b = reader.read_u8()?;
+            entry.radarcol.a = reader.read_u8()?;
+        }
 
-        for _ in 0..TILEART_SHADER_BLOCK_COUNT {
+        for index in 0..TILEART_SHADER_BLOCK_COUNT {
             let mut texture = TaeTexture::default();
+            if kr && index == TILEART_SHADER_BLOCK_ENHANCED {
+                entry.texture_vector.push(texture);
+                continue;
+            }
             texture.has_texture = reader.read_u8()?;
             if texture.has_texture == TILEART_SHADER_BLOCK_PRESENT {
                 texture.field_04 = reader.read_u8()?;
@@ -655,7 +682,7 @@ impl TileArtEntry {
         }
 
         let effect_count = reader.read_u8()?;
-        entry.effects = read_effect_definitions(&mut reader, usize::from(effect_count))?;
+        entry.effects = read_effect_definitions_dialect(&mut reader, usize::from(effect_count), dialect)?;
         let trailing = data.len() - reader.position() as usize;
         ensure!(trailing == 0, "{trailing} trailing bytes after the tileart effects");
 
@@ -667,15 +694,15 @@ impl TileArtEntry {
     /// `texture_items_count`, `technique_count` and `tweak_count` are ignored; [`Self::sync_counts`] updates them),
     /// the booleans are written as 0 or 1 (the only values in client data; the client tests the bytes for
     /// non-zero), and the derived `uop_block`, `uop_file`, `stack_alias_count_offset` and `radarcol_offset` are not
-    /// stored. Fails on another version than [`TILEART_RECORD_VERSION`], not exactly
-    /// [`TILEART_SHADER_BLOCK_COUNT`] shader blocks, or a list longer than its count field.
+    /// stored. Fails on another version than [`TILEART_RECORD_VERSION`] or [`TILEART_KR_RECORD_VERSION`], not
+    /// exactly [`TILEART_SHADER_BLOCK_COUNT`] shader blocks, or a list longer than its count field. A Kingdom
+    /// Reborn (v3) record is written in its own layout and fails on a value it cannot hold: `uses_enhanced_tileart`
+    /// or `alternate_animation` set, flags above 32 bits, sitting words 4 or 5, a radar colour, a present
+    /// TileArtEnhanced block, or an effect the Kingdom Reborn grammar lacks.
     pub fn to_bytes(&self) -> eyre::Result<Vec<u8>> {
-        ensure!(
-            self.version == TILEART_RECORD_VERSION,
-            "tileart record {} has version {} (the client reads only {TILEART_RECORD_VERSION})",
-            self.tile_id,
-            self.version
-        );
+        let dialect = record_dialect(self.version)
+            .wrap_err_with(|| format!("tileart record {} cannot be written", self.tile_id))?;
+        let kr = dialect.is_kingdom_reborn();
         ensure!(
             self.texture_vector.len() == TILEART_SHADER_BLOCK_COUNT,
             "tileart record {} has {} shader blocks (expected {TILEART_SHADER_BLOCK_COUNT})",
@@ -686,22 +713,34 @@ impl TileArtEntry {
         out.extend_from_slice(&self.version.to_le_bytes());
         put_u32(&mut out, self.string_dict_off);
         put_u32(&mut out, self.tile_id);
+        if kr {
+            self.ensure_kingdom_reborn_fits()?;
+        }
         out.push(u8::from(self.has_world_art));
-        out.push(u8::from(self.uses_enhanced_tileart));
+        if !kr {
+            out.push(u8::from(self.uses_enhanced_tileart));
+        }
         put_f32(&mut out, self.world_art_scale);
         put_f32(&mut out, self.legacy_art_scale);
         put_u32(&mut out, self.field_60);
         out.extend_from_slice(&self.old_id.to_le_bytes());
         put_f32(&mut out, self.rotation_degrees);
         put_u32(&mut out, self.body_type);
-        out.push(u8::from(self.alternate_animation));
+        if !kr {
+            out.push(u8::from(self.alternate_animation));
+        }
         put_f32(&mut out, self.light_scale);
         put_u32(&mut out, self.light_field_70);
         put_f32(&mut out, self.light_offset_x);
         put_f32(&mut out, self.light_offset_y);
         put_u32(&mut out, self.house_join_bits);
-        out.extend_from_slice(&self.flags1.bits().to_le_bytes());
-        out.extend_from_slice(&self.flags2.bits().to_le_bytes());
+        for flags in [self.flags1, self.flags2] {
+            match kr {
+                // `ensure_kingdom_reborn_fits` checked that the bits fit.
+                true => put_u32(&mut out, flags.bits() as u32),
+                false => out.extend_from_slice(&flags.bits().to_le_bytes()),
+            }
+        }
         out.extend_from_slice(&self.facing.to_le_bytes());
         for offset in [&self.ec_img_offset, &self.cc_img_offset] {
             for value in [offset.x_start, offset.y_start, offset.x_end, offset.y_end, offset.x_off, offset.y_off] {
@@ -747,15 +786,22 @@ impl TileArtEntry {
             Some(sitting) => {
                 out.push(TILEART_SITTING_PRESENT);
                 put_u32(&mut out, sitting.direction_mask);
-                for word in [sitting.seat_offset_x, sitting.seat_offset_y, sitting.window_shift, sitting.field_10, sitting.field_14] {
+                let words = [sitting.seat_offset_x, sitting.seat_offset_y, sitting.window_shift, sitting.field_10, sitting.field_14];
+                let word_count = if kr { TILEART_KR_SITTING_WORD_COUNT } else { TILEART_SITTING_WORD_COUNT };
+                for word in &words[..word_count - 1] {
                     out.extend_from_slice(&word.to_le_bytes());
                 }
             }
         }
 
-        out.extend_from_slice(&[self.radarcol.r, self.radarcol.g, self.radarcol.b, self.radarcol.a]);
+        if !kr {
+            out.extend_from_slice(&[self.radarcol.r, self.radarcol.g, self.radarcol.b, self.radarcol.a]);
+        }
 
-        for block in &self.texture_vector {
+        for (index, block) in self.texture_vector.iter().enumerate() {
+            if kr && index == TILEART_SHADER_BLOCK_ENHANCED {
+                continue;
+            }
             out.push(block.has_texture);
             if block.has_texture != TILEART_SHADER_BLOCK_PRESENT {
                 continue;
@@ -780,8 +826,39 @@ impl TileArtEntry {
             }
         }
 
-        out.extend(encode_tileart_effects(&self.effects)?);
+        out.extend(encode_tileart_effects_dialect(&self.effects, dialect)?);
         Ok(out)
+    }
+
+    /// The client whose layout the record has, by its version.
+    pub fn dialect(&self) -> eyre::Result<ClientDialect> {
+        record_dialect(self.version)
+    }
+
+    /// Fails when the record holds a value the Kingdom Reborn (v3) layout has no room for.
+    fn ensure_kingdom_reborn_fits(&self) -> eyre::Result<()> {
+        let id = self.tile_id;
+        ensure!(!self.uses_enhanced_tileart, "tileart record {id}: Kingdom Reborn has no uses_enhanced_tileart");
+        ensure!(!self.alternate_animation, "tileart record {id}: Kingdom Reborn has no alternate_animation");
+        for (flags, name) in [(self.flags1, "flags1"), (self.flags2, "flags2")] {
+            ensure!(
+                u32::try_from(flags.bits()).is_ok(),
+                "tileart record {id}: {name} {:#x} exceeds the Kingdom Reborn u32",
+                flags.bits()
+            );
+        }
+        if let Some(sitting) = &self.sitting {
+            ensure!(
+                sitting.field_10 == 0 && sitting.field_14 == 0,
+                "tileart record {id}: Kingdom Reborn sitting blocks have no words 4 and 5"
+            );
+        }
+        ensure!(self.radarcol == TaeRadarcol::default(), "tileart record {id}: Kingdom Reborn has no radar colour");
+        ensure!(
+            self.texture_vector.get(TILEART_SHADER_BLOCK_ENHANCED) == Some(&TaeTexture::default()),
+            "tileart record {id}: Kingdom Reborn has no TileArtEnhanced shader block"
+        );
+        Ok(())
     }
 
     /// Sets the count fields from the vectors they count, as [`Self::to_bytes`] writes them (saturating counts
@@ -1095,6 +1172,18 @@ pub fn write_tileart_package(
     Ok(changes)
 }
 
+/// The client of tileart record version `version`.
+fn record_dialect(version: u16) -> eyre::Result<ClientDialect> {
+    match version {
+        TILEART_RECORD_VERSION => Ok(ClientDialect::Enhanced),
+        TILEART_KR_RECORD_VERSION => Ok(ClientDialect::KingdomReborn),
+        _ => bail!(
+            "unsupported tileart record version {version} (expected {TILEART_RECORD_VERSION}, or \
+             {TILEART_KR_RECORD_VERSION} for Kingdom Reborn)"
+        ),
+    }
+}
+
 fn put_u32(out: &mut Vec<u8>, value: u32) {
     out.extend_from_slice(&value.to_le_bytes());
 }
@@ -1155,7 +1244,7 @@ fn is_auxiliary_texture_path(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::enhanced::effect_definition::{SoundEffect, EFFECT_TYPE_SOUND};
+    use crate::enhanced::effect_definition::{SoundEffect, EFFECT_TYPE_SOUND, POSITION_OFFSET_DIRECTION_COUNT};
 
     fn dictionary_with_strings(values: &[&str]) -> UoStringDictionary {
         let mut payload = Vec::new();
@@ -1429,7 +1518,7 @@ mod tests {
     fn tileart_parse_bytes_rejects_what_the_client_rejects() {
         let unknown_subtype = APPEARANCE_FILTER_ANIMATION_BY_OWNER_BODY_TYPE + 1;
         let invalid_sitting_flag = TILEART_SITTING_PRESENT + 1;
-        let old_version = TILEART_RECORD_VERSION - 1;
+        let old_version = TILEART_KR_RECORD_VERSION - 1;
         let mut trailing_byte = valid_sample_record();
         trailing_byte.push(0);
         for (record, reason) in [
@@ -1475,6 +1564,61 @@ mod tests {
             let entry = TileArtEntry::parse_bytes(&record).expect("parse record");
             assert_eq!(entry.to_bytes().expect("encode record"), record);
         }
+    }
+
+    /// Builds a Kingdom Reborn (v3) record: one flag byte, no alternate animation byte, u32 flags, a 4-word
+    /// sitting block, no radar colour, 3 shader blocks and a KR effect (position offset, KR key 6).
+    fn kingdom_reborn_record() -> Vec<u8> {
+        /// KR type key of position offset (EC 7).
+        const KR_EFFECT_TYPE_POSITION_OFFSET: u32 = 6;
+        let mut writer = RecordWriter::default();
+        writer.u16(TILEART_KR_RECORD_VERSION).u32(7).u32(1234).u8(1).f32(1.0).f32(1.5).u32(0).i32(1233)
+            .f32(0.0).u32(400).f32(2.0).u32(0).f32(-5.0).f32(-4.0).u32(0x3FC0)
+            .u32((TaeFlag::Rotated | TaeFlag::AlphaBlend).bits() as u32).u32(TaeFlag::UseNewArt.bits() as u32).u32(1);
+        (1..=12).for_each(|value| { writer.i32(value); });
+        writer.u8(0).u8(0).u32(0).u32(0);
+        writer.u8(TILEART_SITTING_PRESENT).u32(SITTING_DIRECTION_WEST).i32(-3).i32(-20).i32(-4);
+        writer.block(2, &[(3, TEXTURE_SOURCE_NORMAL, 1.0, 0, 0)], &[], &[]).u8(0).block(5, &[], &[], &[1.0]);
+        writer.u8(1).u32(KR_EFFECT_TYPE_POSITION_OFFSET);
+        (0..2 * POSITION_OFFSET_DIRECTION_COUNT).for_each(|value| { writer.u8(value as u8); });
+        writer.0
+    }
+
+    #[test]
+    fn tileart_kingdom_reborn_records_round_trip_in_their_own_layout() {
+        let record = kingdom_reborn_record();
+        let entry = TileArtEntry::parse_bytes(&record).expect("parse KR record");
+        assert_eq!(entry.dialect().unwrap(), ClientDialect::KingdomReborn);
+        assert!(entry.has_world_art && !entry.uses_enhanced_tileart && !entry.alternate_animation);
+        assert_eq!((entry.body_type, entry.light_scale, entry.house_join_bits), (400, 2.0, 0x3FC0));
+        assert_eq!(entry.flags2, TaeFlag::UseNewArt);
+        assert_eq!(entry.sitting, Some(TaeSittingAnimation {
+            direction_mask: SITTING_DIRECTION_WEST, seat_offset_x: -3, seat_offset_y: -20, window_shift: -4,
+            field_10: 0, field_14: 0,
+        }));
+        assert_eq!(entry.radarcol, TaeRadarcol::default());
+        // KR blocks 0, 1, 2 are the EC blocks 0 (WorldArt), 1 (TileArtLegacy) and 3 (light).
+        assert_eq!(entry.texture_vector.len(), TILEART_SHADER_BLOCK_COUNT);
+        assert_eq!(entry.texture_vector[TILEART_SHADER_BLOCK_ENHANCED], TaeTexture::default());
+        assert_eq!(entry.texture_vector[TILEART_SHADER_BLOCK_COUNT - 1].tweaks, vec![1.0]);
+        assert!(matches!(entry.effects[..], [EffectDefinition::PositionOffset(_)]));
+        assert_eq!(entry.to_bytes().expect("encode KR record"), record);
+
+        for (edit, reason) in [
+            (TileArtEntry { uses_enhanced_tileart: true, ..entry.clone() }, "uses_enhanced_tileart"),
+            (TileArtEntry { alternate_animation: true, ..entry.clone() }, "alternate_animation"),
+            (TileArtEntry { flags1: TaeFlag::from_bits_retain(1 << u32::BITS), ..entry.clone() }, "u32"),
+            (TileArtEntry { radarcol: TaeRadarcol { r: 1, ..TaeRadarcol::default() }, ..entry.clone() }, "radar"),
+        ] {
+            let error = edit.to_bytes().expect_err(reason);
+            assert!(format!("{error:#}").contains(reason), "{error:#}");
+        }
+        let mut enhanced = entry.clone();
+        enhanced.texture_vector[TILEART_SHADER_BLOCK_ENHANCED].has_texture = TILEART_SHADER_BLOCK_PRESENT;
+        assert!(enhanced.to_bytes().is_err());
+        let mut sitting = entry;
+        sitting.sitting.as_mut().unwrap().field_14 = 1;
+        assert!(sitting.to_bytes().is_err());
     }
 
     #[test]

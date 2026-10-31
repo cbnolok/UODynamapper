@@ -6,9 +6,11 @@ use uocf::classic::map::{MapPlane, MapSizeCells};
 use uocf::classic::statics::StaticsReader;
 use uocf::enhanced::facet_definition::{read_facet_definition, write_facet_definition, FacetDefinition, FacetRect};
 use uocf::enhanced::facet_encoder::encode_map_plane;
-use uocf::enhanced::facet_package::EcFacetPackage;
+use uocf::enhanced::facet_package::{detect_facet_dialect, EcFacetPackage};
 use uocf::enhanced::facet_radar::{radar_index_agreement, FacetRadarDds, FacetRadarSource, PixelRect, RadarPalette};
 use uocf::enhanced::facet_sector::FacetGeometry;
+use uocf::kr::facet::facet_encoder as kr_facet_encoder;
+use uocf::kr::facet::kr_land_map::KrLandMap;
 use uocf::uop_container::package::UopPackage;
 
 /// Values in a `--add-static` / `--add-rect` list.
@@ -21,7 +23,8 @@ const HEX_RADIX: u32 = 16;
 
 #[derive(Subcommand, Debug)]
 pub enum FacetCmd {
-    /// Print one square of an Enhanced Client facet package: land, delimiters, statics.
+    /// Print one square of a facet package: land, delimiters, statics. Kingdom Reborn packages are detected; their
+    /// land is the material, followed by the subtype and the stored Classic land id.
     DumpCell {
         /// facetN.uop or facetNx.uop.
         #[arg(long)]
@@ -35,7 +38,9 @@ pub enum FacetCmd {
         y: u32,
     },
     /// Edit one square of a facet package and save the package; the neighbours' delimiters follow land edits.
-    /// Optionally updates a radar image around the square.
+    /// Optionally updates a radar image around the square. In a Kingdom Reborn package (detected), --land is the
+    /// Classic land id, stored with the material and subtype of the shipped land map unless --material or
+    /// --subtype give them.
     PatchCell {
         #[arg(long)]
         uop: PathBuf,
@@ -48,6 +53,12 @@ pub enum FacetCmd {
         /// New land id.
         #[arg(long)]
         land: Option<String>,
+        /// Kingdom Reborn only: new material (TerrainDefinition id).
+        #[arg(long)]
+        material: Option<String>,
+        /// Kingdom Reborn only: new subtype (alias of the material).
+        #[arg(long)]
+        subtype: Option<u8>,
         /// New land z.
         #[arg(long, allow_hyphen_values = true)]
         z: Option<i8>,
@@ -89,7 +100,8 @@ pub enum FacetCmd {
         #[arg(long)]
         compare: Option<PathBuf>,
     },
-    /// Build facetN.uop and facetNN.dds from a Classic map, staidx and statics.
+    /// Build facetN.uop and facetNN.dds from a Classic map, staidx and statics (Enhanced Client, or Kingdom Reborn
+    /// with --kr).
     FromClassic {
         /// mapN.mul or mapNLegacyMUL.uop.
         #[arg(long)]
@@ -110,6 +122,13 @@ pub enum FacetCmd {
         /// Output directory.
         #[arg(short, long)]
         output_dir: PathBuf,
+        /// Build a Kingdom Reborn facet (squares carry material and subtype from the shipped land map).
+        #[arg(long)]
+        kr: bool,
+        /// Kingdom Reborn: the Classic land id whose material and subtype to store for Classic ids the land map
+        /// lacks (else they fail the build).
+        #[arg(long, requires = "kr")]
+        kr_fallback_land: Option<String>,
     },
     /// Print the facet definitions of facets.uop.
     DumpDef {
@@ -154,7 +173,7 @@ pub enum FacetCmd {
 pub fn run(cmd: FacetCmd) -> eyre::Result<()> {
     match cmd {
         FacetCmd::DumpCell { uop, facet, x, y } => {
-            let mut package = EcFacetPackage::open(&uop, facet)?;
+            let mut package = open_facet(&uop, facet)?;
             print_cell(&mut package, x, y)?;
         }
         FacetCmd::PatchCell {
@@ -163,6 +182,8 @@ pub fn run(cmd: FacetCmd) -> eyre::Result<()> {
             x,
             y,
             land,
+            material,
+            subtype,
             z,
             remove_static,
             set_static,
@@ -172,12 +193,33 @@ pub fn run(cmd: FacetCmd) -> eyre::Result<()> {
             radarcol,
             radar_output,
         } => {
-            let mut package = EcFacetPackage::open(&uop, facet)?;
-            if land.is_some() || z.is_some() {
-                let current = package.square(x, y)?;
-                let (current_land, current_z) = (current.land_graphic, current.z);
-                let land = land.as_deref().map(parse_number::<u16>).transpose()?.unwrap_or(current_land);
-                package.set_land(x, y, land, z.unwrap_or(current_z))?;
+            let mut package = open_facet(&uop, facet)?;
+            let land = land.as_deref().map(parse_number::<u16>).transpose()?;
+            let material = material.as_deref().map(parse_number::<u16>).transpose()?;
+            if package.dialect().is_kingdom_reborn() {
+                if land.is_some() || material.is_some() || subtype.is_some() || z.is_some() {
+                    let current = package.square(x, y)?;
+                    let current_kr =
+                        current.kr.ok_or_else(|| eyre::eyre!("({x}, {y}) has no Kingdom Reborn bytes"))?;
+                    let (mut new_material, mut kr, current_z) = (current.land_graphic, current_kr, current.z);
+                    if let Some(classic_land) = land {
+                        let (mapped_material, mapped) = KrLandMap::shipped().square_land(classic_land)?;
+                        new_material = mapped_material;
+                        kr = mapped.expect("the land map gives every Classic id its Kingdom Reborn bytes");
+                    }
+                    new_material = material.unwrap_or(new_material);
+                    kr.subtype = subtype.unwrap_or(kr.subtype);
+                    package.set_kr_land(x, y, new_material, kr, z.unwrap_or(current_z))?;
+                }
+            } else {
+                if material.is_some() || subtype.is_some() {
+                    eyre::bail!("--material and --subtype need a Kingdom Reborn package");
+                }
+                if land.is_some() || z.is_some() {
+                    let current = package.square(x, y)?;
+                    let (current_land, current_z) = (current.land_graphic, current.z);
+                    package.set_land(x, y, land.unwrap_or(current_land), z.unwrap_or(current_z))?;
+                }
             }
             for index in remove_static {
                 package.remove_static(x, y, index)?;
@@ -210,7 +252,7 @@ pub fn run(cmd: FacetCmd) -> eyre::Result<()> {
             println!("Wrote {} (sectors {sectors:?} changed).", output.display());
         }
         FacetCmd::RebuildRadar { uop, facet, radarcol, output, compare } => {
-            let package = EcFacetPackage::open(&uop, facet)?;
+            let package = open_facet(&uop, facet)?;
             let palette = RadarPalette::load_radarcol(&radarcol)?;
             let geometry = package.geometry();
             let rgb = FacetRadarSource::from_facet(&package, &palette)?.rgb8();
@@ -227,7 +269,18 @@ pub fn run(cmd: FacetCmd) -> eyre::Result<()> {
                 );
             }
         }
-        FacetCmd::FromClassic { map, staidx, statics, radarcol, facet, width, height, output_dir } => {
+        FacetCmd::FromClassic {
+            map,
+            staidx,
+            statics,
+            radarcol,
+            facet,
+            width,
+            height,
+            output_dir,
+            kr,
+            kr_fallback_land,
+        } => {
             let geometry = match (width, height) {
                 (Some(width), Some(height)) => FacetGeometry::new(width, height),
                 _ => FacetGeometry::client_facet(facet)
@@ -242,8 +295,25 @@ pub fn run(cmd: FacetCmd) -> eyre::Result<()> {
             };
             let statics = StaticsReader::new(&staidx, &statics, geometry.width, geometry.height)?;
             std::fs::create_dir_all(&output_dir).wrap_err_with(|| format!("create {}", output_dir.display()))?;
-            encode_map_plane(&mut plane, &statics, &radarcol, &output_dir, facet)?;
-            println!("Wrote facet {facet} ({}x{}) to {}.", geometry.width, geometry.height, output_dir.display());
+            if kr {
+                let mut land_map = KrLandMap::shipped();
+                if let Some(fallback) = kr_fallback_land.as_deref().map(parse_number::<u16>).transpose()? {
+                    let land = land_map
+                        .get(fallback)
+                        .ok_or_else(|| eyre::eyre!("--kr-fallback-land {fallback} is not in the land map"))?;
+                    land_map = land_map.with_fallback(land);
+                }
+                kr_facet_encoder::encode_map_plane(&mut plane, &statics, &radarcol, &output_dir, facet, &land_map)?;
+            } else {
+                encode_map_plane(&mut plane, &statics, &radarcol, &output_dir, facet)?;
+            }
+            let client = if kr { "Kingdom Reborn" } else { "Enhanced Client" };
+            println!(
+                "Wrote {client} facet {facet} ({}x{}) to {}.",
+                geometry.width,
+                geometry.height,
+                output_dir.display()
+            );
         }
         FacetCmd::DumpDef { uop, facet } => {
             let package = load_package(&uop)?;
@@ -311,6 +381,13 @@ pub fn run(cmd: FacetCmd) -> eyre::Result<()> {
     Ok(())
 }
 
+/// Opens facet package `path` in the square layout its sectors have (Enhanced Client or Kingdom Reborn).
+fn open_facet(path: &Path, facet: u8) -> eyre::Result<EcFacetPackage> {
+    let package = load_package(path)?;
+    let dialect = detect_facet_dialect(&package, facet).wrap_err_with(|| format!("read {}", path.display()))?;
+    EcFacetPackage::from_package_dialect(package, facet, None, dialect)
+}
+
 fn load_package(path: &Path) -> eyre::Result<UopPackage> {
     UopPackage::load(path).wrap_err_with(|| format!("load {}", path.display()))
 }
@@ -318,7 +395,13 @@ fn load_package(path: &Path) -> eyre::Result<UopPackage> {
 fn print_cell(package: &mut EcFacetPackage, x: u32, y: u32) -> eyre::Result<()> {
     let sector = package.geometry().sector_of(x, y);
     let tile = package.square(x, y)?;
-    println!("({x}, {y}) sector {sector}: land 0x{:04x} z {}", tile.land_graphic, tile.z);
+    match tile.kr {
+        Some(kr) => println!(
+            "({x}, {y}) sector {sector}: material 0x{:04x} subtype {} classic land 0x{:04x} z {}",
+            tile.land_graphic, kr.subtype, kr.classic_land, tile.z
+        ),
+        None => println!("({x}, {y}) sector {sector}: land 0x{:04x} z {}", tile.land_graphic, tile.z),
+    }
     for delimiter in &tile.delimiters {
         println!("  delimiter dir {} z {} land 0x{:04x}", delimiter.direction, delimiter.z, delimiter.graphic_id);
     }

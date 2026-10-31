@@ -20,10 +20,15 @@
 //! - The `build/sectors/facet_%02d/data.map` entry holds `u32 height, u32 width`, uncompressed. The client never
 //!   reads it (it takes the sizes from a hard-coded table, [`CLIENT_FACET_DIMENSIONS`]), but shipped packages
 //!   and offline tools have it.
+//!
+//! The Kingdom Reborn facets (`ClientDialect::KingdomReborn`) follow the same rules (numbering, header, padding,
+//! delimiter rule and order, `data.map`; checked on every shipped sector), with 3 more bytes per square after the
+//! land id ([`KrSquareLand`]); their padding squares are all zero bytes.
 
 use byteorder::{LittleEndian, WriteBytesExt};
 
-use crate::enhanced::facet_decoder::{DecodedEcFacet, EcFacetDelimiter, EcFacetTile};
+use crate::enhanced::client_dialect::ClientDialect;
+use crate::enhanced::facet_decoder::{DecodedEcFacet, EcFacetDelimiter, EcFacetTile, KrSquareLand};
 
 crate::eyre_imports!();
 
@@ -54,6 +59,10 @@ const SQUARE_MIN_SIZE: usize = 5;
 const DELIMITER_RECORD_SIZE: usize = 6;
 /// Bytes of a static record: u32 graphic, i8 z, u32 hue.
 const STATIC_RECORD_SIZE: usize = 9;
+/// Bytes a Kingdom Reborn square adds after the land id: u8 `subtype`, u16 `classic_land`.
+const KR_SQUARE_LAND_SIZE: usize = size_of::<u8>() + size_of::<u16>();
+/// The Kingdom Reborn bytes of the padding squares outside the map (all zero in the shipped facets).
+pub const PADDING_KR_SQUARE_LAND: KrSquareLand = KrSquareLand { subtype: 0, classic_land: PADDING_LAND_ID };
 
 /// The client's facet sizes (`UOFacet::g_FacetDimensions`, 0x00da72a8): Felucca, Trammel, Ilshenar, Malas,
 /// Tokuno, TerMur, Test.
@@ -188,6 +197,9 @@ pub enum EcSectorIssue {
     TooManyStatics { square: usize, count: usize },
     /// The header facet or sector id differs from the requested one: the client leaves a hole.
     HeaderMismatch { facet: u8, sector_id: u16, expected_facet: u8, expected_sector: u32 },
+    /// A square without the Kingdom Reborn bytes in a Kingdom Reborn sector, or with them in an Enhanced Client
+    /// one (an encoder input error).
+    SquareLayout { square: usize, dialect: ClientDialect },
 }
 
 impl std::fmt::Display for EcSectorIssue {
@@ -210,6 +222,12 @@ impl std::fmt::Display for EcSectorIssue {
                 "header facet {facet} sector {sector_id}, expected facet {expected_facet} sector {expected_sector}; \
                  the client leaves a hole"
             ),
+            Self::SquareLayout { square, dialect } => write!(
+                f,
+                "square {square}: {} the Kingdom Reborn square bytes in a {} sector",
+                if dialect.is_kingdom_reborn() { "lacks" } else { "has" },
+                dialect.label()
+            ),
         }
     }
 }
@@ -217,11 +235,23 @@ impl std::fmt::Display for EcSectorIssue {
 /// The issues that keep the client from using `sector` as facet `facet`, sector `sector_id`
 /// (`None` skips the header check).
 pub fn validate_ec_sector(sector: &DecodedEcFacet, expected: Option<(u8, u32)>) -> Vec<EcSectorIssue> {
+    validate_sector(sector, expected, ClientDialect::Enhanced)
+}
+
+/// [`validate_ec_sector`] for a sector in the square layout of `dialect`.
+pub fn validate_sector(
+    sector: &DecodedEcFacet,
+    expected: Option<(u8, u32)>,
+    dialect: ClientDialect,
+) -> Vec<EcSectorIssue> {
     let mut issues = Vec::new();
     if sector.tiles.len() != SECTOR_SQUARE_COUNT {
         issues.push(EcSectorIssue::SquareCount(sector.tiles.len()));
     }
     for (square, tile) in sector.tiles.iter().enumerate() {
+        if tile.kr.is_some() != dialect.is_kingdom_reborn() {
+            issues.push(EcSectorIssue::SquareLayout { square, dialect });
+        }
         if tile.delimiters.len() > MAX_SQUARE_RECORDS {
             issues.push(EcSectorIssue::TooManyDelimiters { square, count: tile.delimiters.len() });
         }
@@ -251,15 +281,24 @@ pub fn validate_ec_sector(sector: &DecodedEcFacet, expected: Option<(u8, u32)>) 
 /// sector). Fails on anything [`validate_ec_sector`] reports, instead of writing a sector the client rejects
 /// (a u8 count would wrap above 255).
 pub fn encode_ec_sector(sector: &DecodedEcFacet) -> eyre::Result<Vec<u8>> {
-    if let Some(issue) = validate_ec_sector(sector, None).first() {
+    encode_sector(sector, ClientDialect::Enhanced)
+}
+
+/// Encodes a sector payload in the square layout of `dialect`, the exact inverse of
+/// [`decode_sector`](crate::enhanced::facet_decoder::decode_sector) (byte-identical on every shipped EC and KR
+/// sector). Fails on anything [`validate_sector`] reports.
+pub fn encode_sector(sector: &DecodedEcFacet, dialect: ClientDialect) -> eyre::Result<Vec<u8>> {
+    if let Some(issue) = validate_sector(sector, None, dialect).first() {
         eyre::bail!("facet {} sector {}: {issue}", sector.facet_id, sector.file_id);
     }
+    let square_land_size = if dialect.is_kingdom_reborn() { KR_SQUARE_LAND_SIZE } else { 0 };
     let size = SECTOR_HEADER_SIZE
         + sector
             .tiles
             .iter()
             .map(|tile| {
                 SQUARE_MIN_SIZE
+                    + square_land_size
                     + tile.delimiters.len() * DELIMITER_RECORD_SIZE
                     + tile.statics.len() * STATIC_RECORD_SIZE
             })
@@ -270,6 +309,10 @@ pub fn encode_ec_sector(sector: &DecodedEcFacet) -> eyre::Result<Vec<u8>> {
     for tile in &sector.tiles {
         out.write_i8(tile.z)?;
         out.write_u16::<LittleEndian>(tile.land_graphic)?;
+        if let Some(kr) = tile.kr {
+            out.write_u8(kr.subtype)?;
+            out.write_u16::<LittleEndian>(kr.classic_land)?;
+        }
         out.write_u8(tile.delimiters.len() as u8)?;
         for delimiter in &tile.delimiters {
             out.write_u8(delimiter.direction)?;
@@ -289,6 +332,12 @@ pub fn encode_ec_sector(sector: &DecodedEcFacet) -> eyre::Result<Vec<u8>> {
 
 /// A sector of padding squares (`z 0, land 0`, no delimiters, no statics), to fill in.
 pub fn empty_ec_sector(facet: u8, sector: u32) -> eyre::Result<DecodedEcFacet> {
+    empty_sector(facet, sector, ClientDialect::Enhanced)
+}
+
+/// [`empty_ec_sector`] in the square layout of `dialect` (Kingdom Reborn squares get
+/// [`PADDING_KR_SQUARE_LAND`]).
+pub fn empty_sector(facet: u8, sector: u32, dialect: ClientDialect) -> eyre::Result<DecodedEcFacet> {
     let file_id = u16::try_from(sector).map_err(|_| eyre!("sector id {sector} does not fit the u16 header"))?;
     Ok(DecodedEcFacet {
         facet_id: facet,
@@ -297,6 +346,7 @@ pub fn empty_ec_sector(facet: u8, sector: u32) -> eyre::Result<DecodedEcFacet> {
             EcFacetTile {
                 z: PADDING_LAND_Z,
                 land_graphic: PADDING_LAND_ID,
+                kr: dialect.is_kingdom_reborn().then_some(PADDING_KR_SQUARE_LAND),
                 delimiters: Vec::new(),
                 statics: Vec::new(),
             };

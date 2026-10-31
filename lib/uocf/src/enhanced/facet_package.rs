@@ -7,14 +7,19 @@
 //!
 //! A variant package (`facet0x.uop`, ...) is opened with its base facet index: it uses the base package's entry
 //! names and sector ids. The radar image (`facetNN.dds`) is not in the package; see `facet_radar`.
+//!
+//! Kingdom Reborn facet packages open with `ClientDialect::KingdomReborn` ([`EcFacetPackage::open_dialect`], or
+//! [`detect_facet_dialect`]): the same entries and rules, the KR square layout, and version 4 packages with 100
+//! entries per block. Their land is edited with [`EcFacetPackage::set_kr_land`].
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
-use crate::enhanced::facet_decoder::{decode_facet_bin_raw, DecodedEcFacet, EcFacetDelimiter, EcFacetTile, StaticTile};
+use crate::enhanced::client_dialect::ClientDialect;
+use crate::enhanced::facet_decoder::{decode_sector, DecodedEcFacet, EcFacetDelimiter, EcFacetTile, KrSquareLand, StaticTile};
 use crate::enhanced::facet_sector::{
-    data_map_entry_path, delimiter_targets, encode_ec_sector, local_coords, sector_entry_path, square_index,
-    validate_ec_sector, FacetGeometry, DELIMITER_OFFSETS, MAX_SQUARE_RECORDS,
+    data_map_entry_path, delimiter_targets, encode_sector, local_coords, sector_entry_path, square_index,
+    validate_sector, FacetGeometry, DELIMITER_OFFSETS, MAX_SQUARE_RECORDS,
 };
 use crate::uop_container::file::CompressionFlag;
 use crate::uop_container::hash::hash_file_name_single;
@@ -30,10 +35,43 @@ pub const FACET_PACKAGE_BLOCK_SIZE: u32 = 1000;
 pub const SECTOR_COMPRESSION: CompressionFlag = CompressionFlag::Zlib;
 /// Compression of the shipped `data.map` entry.
 pub const DATA_MAP_COMPRESSION: CompressionFlag = CompressionFlag::None;
+/// UOP version of the shipped Kingdom Reborn facet packages (sectors zlib-compressed, `data.map` first and
+/// uncompressed, 12-byte timestamp data block headers, as in the EC packages).
+pub const KR_FACET_PACKAGE_VERSION: u32 = 4;
+/// Entries per block of the shipped Kingdom Reborn facet packages.
+pub const KR_FACET_PACKAGE_BLOCK_SIZE: u32 = 100;
+
+/// The UOP version and block size of the shipped facet packages of `dialect`.
+pub fn facet_package_layout(dialect: ClientDialect) -> (u32, u32) {
+    match dialect {
+        ClientDialect::Enhanced => (FACET_PACKAGE_VERSION, FACET_PACKAGE_BLOCK_SIZE),
+        ClientDialect::KingdomReborn => (KR_FACET_PACKAGE_VERSION, KR_FACET_PACKAGE_BLOCK_SIZE),
+    }
+}
+
+/// The square layout of a facet package: the dialect that decodes its first sector. Fails when neither does.
+pub fn detect_facet_dialect(package: &UopPackage, facet: u8) -> eyre::Result<ClientDialect> {
+    let geometry = FacetGeometry::client_facet(facet);
+    let sector_count = geometry.map_or(u32::from(u16::MAX) + 1, |geometry| geometry.sector_count());
+    for sector in 0..sector_count {
+        let path = sector_entry_path(facet, sector);
+        let Some(payload) = package.unpack_file_by_hash(hash_file_name_single(&path))? else {
+            continue;
+        };
+        for dialect in [ClientDialect::Enhanced, ClientDialect::KingdomReborn] {
+            if decode_sector(&payload, dialect).is_ok() {
+                return Ok(dialect);
+            }
+        }
+        eyre::bail!("{path} decodes neither as an Enhanced Client nor as a Kingdom Reborn sector");
+    }
+    eyre::bail!("the package has no sector of facet {facet}")
+}
 
 /// A facet package open for reading and editing sectors.
 pub struct EcFacetPackage {
     facet: u8,
+    dialect: ClientDialect,
     geometry: FacetGeometry,
     package: UopPackage,
     /// Sectors read for editing, by sector id.
@@ -46,13 +84,28 @@ impl EcFacetPackage {
     /// Opens `path` as facet `facet` (the base index for a variant package). The geometry comes from the
     /// `data.map` entry, else from the client's table.
     pub fn open(path: impl AsRef<Path>, facet: u8) -> eyre::Result<Self> {
+        Self::open_dialect(path, facet, ClientDialect::Enhanced)
+    }
+
+    /// [`Self::open`] for a package in the square layout of `dialect`.
+    pub fn open_dialect(path: impl AsRef<Path>, facet: u8, dialect: ClientDialect) -> eyre::Result<Self> {
         let path = path.as_ref();
         let package = UopPackage::load(path).wrap_err_with(|| format!("load {}", path.display()))?;
-        Self::from_package(package, facet, None)
+        Self::from_package_dialect(package, facet, None, dialect)
     }
 
     /// Wraps a loaded package. `geometry` overrides the `data.map` entry and the client table.
     pub fn from_package(package: UopPackage, facet: u8, geometry: Option<FacetGeometry>) -> eyre::Result<Self> {
+        Self::from_package_dialect(package, facet, geometry, ClientDialect::Enhanced)
+    }
+
+    /// [`Self::from_package`] for a package in the square layout of `dialect`.
+    pub fn from_package_dialect(
+        package: UopPackage,
+        facet: u8,
+        geometry: Option<FacetGeometry>,
+        dialect: ClientDialect,
+    ) -> eyre::Result<Self> {
         let geometry = match geometry {
             Some(geometry) => geometry,
             None => match package.unpack_file_by_hash(hash_file_name_single(&data_map_entry_path(facet)))? {
@@ -62,24 +115,36 @@ impl EcFacetPackage {
             },
         };
         check_sector_ids_fit(&geometry)?;
-        Ok(Self { facet, geometry, package, sectors: HashMap::new(), dirty: BTreeSet::new() })
+        Ok(Self { facet, dialect, geometry, package, sectors: HashMap::new(), dirty: BTreeSet::new() })
     }
 
     /// An empty package for facet `facet`, holding only the `data.map` entry (u32 height, u32 width,
     /// uncompressed). Add every sector with [`Self::put_sector`]: the client leaves a hole for a missing one.
     pub fn new(facet: u8, geometry: FacetGeometry) -> eyre::Result<Self> {
+        Self::new_dialect(facet, geometry, ClientDialect::Enhanced)
+    }
+
+    /// [`Self::new`] for `dialect`, with the package version and block size of its shipped packages
+    /// ([`facet_package_layout`]).
+    pub fn new_dialect(facet: u8, geometry: FacetGeometry, dialect: ClientDialect) -> eyre::Result<Self> {
         check_sector_ids_fit(&geometry)?;
-        let mut package = UopPackage::new(FACET_PACKAGE_VERSION, FACET_PACKAGE_BLOCK_SIZE)?;
+        let (version, block_size) = facet_package_layout(dialect);
+        let mut package = UopPackage::new(version, block_size)?;
         package.add_entry_by_name(
             &data_map_entry_path(facet),
             &geometry.data_map_payload(),
             NewEntryCompression::Flag(DATA_MAP_COMPRESSION),
         )?;
-        Ok(Self { facet, geometry, package, sectors: HashMap::new(), dirty: BTreeSet::new() })
+        Ok(Self { facet, dialect, geometry, package, sectors: HashMap::new(), dirty: BTreeSet::new() })
     }
 
     pub fn facet(&self) -> u8 {
         self.facet
+    }
+
+    /// The square layout of the package's sectors.
+    pub fn dialect(&self) -> ClientDialect {
+        self.dialect
     }
 
     pub fn geometry(&self) -> FacetGeometry {
@@ -98,8 +163,8 @@ impl EcFacetPackage {
         let Some(payload) = self.package.unpack_file_by_hash(hash_file_name_single(&path))? else {
             return Ok(None);
         };
-        let decoded = decode_facet_bin_raw(&payload).wrap_err_with(|| format!("decode {path}"))?;
-        if let Some(issue) = validate_ec_sector(&decoded, Some((self.facet, sector))).first() {
+        let decoded = decode_sector(&payload, self.dialect).wrap_err_with(|| format!("decode {path}"))?;
+        if let Some(issue) = validate_sector(&decoded, Some((self.facet, sector)), self.dialect).first() {
             eyre::bail!("{path}: {issue}");
         }
         Ok(Some(decoded))
@@ -146,7 +211,7 @@ impl EcFacetPackage {
     pub fn put_sector(&mut self, sector: &DecodedEcFacet) -> eyre::Result<()> {
         let id = u32::from(sector.file_id);
         self.check_sector(sector, id)?;
-        self.write_entry(id, &encode_ec_sector(sector)?)?;
+        self.write_entry(id, &encode_sector(sector, self.dialect)?)?;
         self.sectors.remove(&id);
         self.dirty.remove(&id);
         Ok(())
@@ -159,10 +224,29 @@ impl EcFacetPackage {
     }
 
     /// Sets the land id and z of the square at map `(x, y)` and refreshes the delimiters that point at it from
-    /// the neighbouring sectors.
+    /// the neighbouring sectors. Fails on a Kingdom Reborn package, whose squares also store the Classic id:
+    /// use [`Self::set_kr_land`].
     pub fn set_land(&mut self, x: u32, y: u32, land_id: u16, z: i8) -> eyre::Result<()> {
+        if self.dialect.is_kingdom_reborn() {
+            eyre::bail!("({x}, {y}): a Kingdom Reborn square needs its material, subtype and Classic id (set_kr_land)");
+        }
         let tile = self.square_mut(x, y)?;
         tile.land_graphic = land_id;
+        tile.z = z;
+        self.refresh_delimiters_around(x, y)?;
+        Ok(())
+    }
+
+    /// Sets the land of the Kingdom Reborn square at map `(x, y)`: the material, the `subtype` and stored Classic
+    /// id, and z; refreshes the delimiters that point at it (they hold the material). Fails on an
+    /// Enhanced Client package.
+    pub fn set_kr_land(&mut self, x: u32, y: u32, material: u16, kr: KrSquareLand, z: i8) -> eyre::Result<()> {
+        if !self.dialect.is_kingdom_reborn() {
+            eyre::bail!("({x}, {y}): an Enhanced Client square has no Kingdom Reborn bytes (set_land)");
+        }
+        let tile = self.square_mut(x, y)?;
+        tile.land_graphic = material;
+        tile.kr = Some(kr);
         tile.z = z;
         self.refresh_delimiters_around(x, y)?;
         Ok(())
@@ -268,7 +352,7 @@ impl EcFacetPackage {
     pub fn flush(&mut self) -> eyre::Result<usize> {
         let dirty: Vec<u32> = std::mem::take(&mut self.dirty).into_iter().collect();
         for &sector in &dirty {
-            let payload = encode_ec_sector(&self.sectors[&sector])?;
+            let payload = encode_sector(&self.sectors[&sector], self.dialect)?;
             self.write_entry(sector, &payload)?;
         }
         Ok(dirty.len())
@@ -292,7 +376,7 @@ impl EcFacetPackage {
         if id >= self.geometry.sector_count() {
             eyre::bail!("sector {id} is outside the facet's {} sectors", self.geometry.sector_count());
         }
-        if let Some(issue) = validate_ec_sector(sector, Some((self.facet, id))).first() {
+        if let Some(issue) = validate_sector(sector, Some((self.facet, id)), self.dialect).first() {
             eyre::bail!("facet {} sector {id}: {issue}", self.facet);
         }
         Ok(())

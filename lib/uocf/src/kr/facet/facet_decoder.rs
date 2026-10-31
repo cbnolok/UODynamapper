@@ -1,323 +1,151 @@
 //! # UO Kingdom Reborn Facet Decoder
 //!
-//! This module provides functionality to decode `.bin` files from Kingdom Reborn facet `.uop` packages
-//! back into a structured representation of map data, including land tiles, delimiters, and statics.
+//! Decodes the sectors of the Kingdom Reborn facet packages (`facetN.uop` of `UOKR.exe`, 2008). They are the
+//! Enhanced Client sectors (`crate::enhanced::facet_sector`) with 3 more bytes per square, so they decode with
+//! the shared codec in its `ClientDialect::KingdomReborn` square layout into a [`DecodedEcFacet`] whose tiles
+//! carry [`KrSquareLand`](crate::enhanced::facet_decoder::KrSquareLand).
 //!
-//! ## KR Facet `.bin` (or .dat?) File Format
+//! ## Sector entry `build/sectors/facet_%02d/%08d.bin` (little endian)
 //!
-//! The `facet.uop` file is a standard UOP package containing Zlib-compressed `.bin` files.
-//! Each `.bin` file represents a 64x64 tile chunk of the map. The data within each bin is structured
-//! as follows, laid out in column-major order (X is the outer loop, Y is the inner loop):
+//! ```text
+//! u8  facet                    == the package's facet index
+//! u16 sector_id                == the entry's sector id (column-major over ceil(w/64) x ceil(h/64))
+//! 4096 squares, x outer, y inner:
+//!   i8  z
+//!   u16 material               the TerrainDefinition id (EcFacetTile::land_graphic)
+//!   u8  subtype                the alias of the material (0/1/2 in the data)
+//!   u16 classic_land           the legacy (Classic) land id, stored but not read by the client
+//!   u8  n; n x { u8 direction, i8 z, u32 land }        delimiters: the neighbour's (z, material), as in EC
+//!   u8  m; m x { u32 graphic, i8 z, u32 hue }          statics, as in EC
+//! ```
 //!
-//! 1.  **Header** (3 bytes)
-//!     - `BYTE`: Facet ID (the map index, e.g., 0 for Felucca/Trammel).
-//!     - `WORD` (Little Endian): File ID (the index of the 64x64 block in the map).
-//!
-//! 2.  **Tile Data** (4096 entries for a 64x64 grid)
-//!     For each tile (X then Y):
-//!     - `sbyte`: Z-coordinate of the land tile.
-//!     - `ushort` (Little Endian): Graphic ID of the land tile (from `TileCollection.Values`).
-//!     - `byte`: Unknown byte (from `TileCollection.Values`).
-//!     - `byte`: Original tile ID low byte.
-//!     - `byte`: Original tile ID high byte.
-//!     - **Delimiters** (Variable size)
-//!         - `BYTE`: `count` of delimiter entries. If 0, no further delimiter data for this tile.
-//!         - For each entry:
-//!             - `BYTE`: `direction` (0-7, representing relative position of neighbor).
-//!             - `sbyte`: Z-coordinate of the adjacent tile.
-//!             - `ushort` (Little Endian): Graphic ID of the adjacent tile (from `TileCollection.Values`).
-//!             - `byte`: Unknown byte (from `TileCollection.Values`).
-//!     - **Statics** (Variable size)
-//!         - `BYTE`: Always 0.
-//!         - `BYTE`: `count` of static items on this tile (only for the first static, 0 for others).
-//!         - For each static:
-//!             - `ushort` (Little Endian): Graphic ID of the static item.
-//!             - `ushort` (Little Endian): Unknown (always 0).
-//!             - `sbyte`: Z-coordinate of the static item.
-//!             - `ushort` (Little Endian): Hue of the static item (with conditional logic).
-
-use byteorder::{LittleEndian, ReadBytesExt};
-use color_eyre::eyre::{self, eyre};
-use std::collections::{HashMap, HashSet};
-use std::io::Cursor;
+//! Field names follow `UOFacet::Sector_Read` 0x007b688f (`ghidra-facets/results/uokr_facets.md`). The client
+//! only logs leftover bytes, a direction above 7 and a header naming another facet or sector; this decoder
+//! rejects them. The package also holds `build/sectors/facet_%02d/data.map` (u32 height, u32 width,
+//! uncompressed), as in EC, which the client does not read. The squares past the map edge of a partial sector are all zero bytes. Decoding needs no tile dictionary:
+//! [`decode_facet_bin`] takes the land from the stored `classic_land`, and keeps every static.
 
 use crate::classic::map::MapBlock;
-use crate::enhanced::facet_decoder::StaticTile;
+use crate::enhanced::client_dialect::ClientDialect;
+use crate::enhanced::facet_decoder::{decode_sector, DecodedBlockClassic, DecodedEcFacet, DecodedFacet, StaticTile};
+use crate::enhanced::facet_sector::{sector_entry_path, SECTOR_SIDE};
 use crate::uop_container as uop;
 use crate::uop_container::package::UopPackage;
 
-// TODO: WE HAVE TO USE THOSE!
-/*
-#[cfg(feature ="tile_mappings_builder")]
-use super::tile_mappings_builder::*;
-#[cfg(not(feature ="tile_mappings_builder"))]
-use super::tile_mappings_loader::*;
-*/
-// The encoder crate does the following, we have to do the reverse:
-/*
-    #[cfg(feature = "tile_mappings_builder")]
-    {
-        tile_dictionary = in_memory_dictionaries::get_in_memory_tile_dictionary();
-        static_dictionary = in_memory_dictionaries::get_in_memory_static_dictionary();
-    }
+crate::eyre_imports!();
 
-    #[cfg(not(feature = "tile_mappings_builder"))]
-    {
-        tile_dictionary = load_tile_dictionary(tile_dictionary_path)?;
-        static_dictionary = load_static_dictionary(static_dictionary_path)?;
-    }
-*/
-
-// region: --- Internal Raw File-Mapping Structs (Binary Format)
-
-/// Represents a single delimiter entry within a KR facet tile.
-///
-/// This structure mirrors the binary layout used in Kingdom Reborn facets for stitching.
-/// It is primarily used as an intermediate representation during decoding.
-#[derive(Debug, Clone)]
-pub struct KrFacetDelimiter {
-    pub direction: u8,
-    pub z: i8,
-    pub graphic: u16,
-    pub unknown: u8,
-}
-
-/// Represents a single static item within a facet tile.
-#[derive(Debug, Clone)]
-pub struct KrFacetStatic {
-    pub graphic: u16,
-    pub unknown1: u16,
-    pub z: i8,
-    pub hue: u16,
-}
-
-/// Represents a single tile within a 64x64 facet sector.
-#[derive(Debug, Clone)]
-pub struct KrFacetTile {
-    pub z: i8,
-    pub land_graphic: u16,
-    pub unknown_byte: u8,
-    pub original_id_low: u8,
-    pub original_id_high: u8,
-    pub delimiters: Vec<KrFacetDelimiter>,
-    pub statics: Vec<KrFacetStatic>,
-}
-
-/// Represents the complete decoded content of a single 64x64 facet `.bin` file.
-#[derive(Debug, Clone)]
-pub struct DecodedKrFacet {
-    pub facet_id: u8,
-    pub file_id: u16,
-    pub tiles: Vec<Vec<KrFacetTile>>, // 64x64 grid of tiles
-}
-
-// endregion: --- Internal Raw File-Mapping Structs
+/// Classic map blocks along a sector side.
+const BLOCKS_PER_SECTOR_SIDE: u32 = SECTOR_SIDE / MapBlock::CELLS_PER_ROW;
 
 // region: --- Public API (Convenience & Application Use)
 
-/// Decodes a raw KR facet `.bin` file directly into a classic 8x8 block representation.
-///
-/// This bypasses the intermediate `KrFacetTile` allocation entirely, ensuring
-/// zero redundant vector allocations. The output represents the 64 classic 8x8 MapBlocks.
-///
-/// # Arguments
-/// * `data` - The raw byte slice of the `.bin` file.
-/// * `tile_dictionary` - The KR to Classic tile mapping.
-/// * `static_dictionary` - A whitelist of valid classic static tile IDs.
-pub fn decode_facet_bin(
-    data: &[u8],
-    tile_dictionary: &HashMap<u16, (u16, u8)>,
-    static_dictionary: &HashSet<u16>,
-) -> eyre::Result<crate::enhanced::facet_decoder::DecodedFacet> {
-    let mut cursor: Cursor<&[u8]> = Cursor::new(data);
-
-    // 1. Read Header
-    let _facet_id: u8 = cursor.read_u8()?;
-    let _file_id: u16 = cursor.read_u16::<LittleEndian>()?;
-
-    // Initialize the 64 classic empty blocks
-    let mut decoded_blocks: Vec<crate::enhanced::facet_decoder::DecodedBlockClassic> = (0..64)
+/// Decodes a KR sector payload into the 64 Classic 8x8 blocks it covers (block `i` at `(i % 8, i / 8)`), with
+/// the stored Classic land ids and every static.
+pub fn decode_facet_bin(data: &[u8]) -> eyre::Result<DecodedFacet> {
+    let sector = decode_facet_bin_raw(data)?;
+    let mut blocks: Vec<DecodedBlockClassic> = (0..BLOCKS_PER_SECTOR_SIDE * BLOCKS_PER_SECTOR_SIDE)
         .map(|i| {
-            let block_x = (i % 8) as u32;
-            let block_y = (i / 8) as u32;
             let mut block = MapBlock::default();
-            block.internal_coords.x = block_x;
-            block.internal_coords.y = block_y;
-            crate::enhanced::facet_decoder::DecodedBlockClassic {
-                block,
-                statics: Vec::new(),
-            }
+            block.internal_coords.x = i % BLOCKS_PER_SECTOR_SIDE;
+            block.internal_coords.y = i / BLOCKS_PER_SECTOR_SIDE;
+            DecodedBlockClassic { block, statics: Vec::new() }
         })
         .collect();
+    for (index, tile) in sector.tiles.iter().enumerate() {
+        let (x, y) = (index as u32 / SECTOR_SIDE, index as u32 % SECTOR_SIDE);
+        let block_index = ((y / MapBlock::CELLS_PER_COLUMN) * BLOCKS_PER_SECTOR_SIDE + x / MapBlock::CELLS_PER_ROW) as usize;
+        let (cell_x, cell_y) = (x % MapBlock::CELLS_PER_ROW, y % MapBlock::CELLS_PER_COLUMN);
+        let decoded = &mut blocks[block_index];
+        let cell = decoded.block.cell_as_mut(cell_x, cell_y)?;
+        cell.id = tile.classic_land_id();
+        cell.z = tile.z;
+        decoded.statics.extend(tile.statics.iter().map(|item| StaticTile {
+            x: cell_x as u8,
+            y: cell_y as u8,
+            ..item.clone()
+        }));
+    }
+    Ok(DecodedFacet { blocks })
+}
 
-    // 2. Read Tile Data (64x64 grid, column-major: X then Y)
-    for x_64 in 0..64_u32 {
-        for y_64 in 0..64_u32 {
-            // Determine block coordinates
-            let block_x: u32 = x_64 / 8;
-            let block_y: u32 = y_64 / 8;
-            let block_index: usize = (block_y * 8 + block_x) as usize;
-            let cell_x: u32 = x_64 % 8;
-            let cell_y: u32 = y_64 % 8;
+/// Decodes a KR sector payload ([`decode_sector`] with `ClientDialect::KingdomReborn`): fails on a delimiter
+/// direction above 7, a read past the end or bytes left after the last square.
+pub fn decode_facet_bin_raw(data: &[u8]) -> eyre::Result<DecodedEcFacet> {
+    decode_sector(data, ClientDialect::KingdomReborn)
+}
 
-            // --- Land Tile ---
-            let z: i8 = cursor.read_i8()?;
-            let kr_land_graphic: u16 = cursor.read_u16::<LittleEndian>()?;
-            let _unknown_byte_land: u8 = cursor.read_u8()?;
-            let _original_id_low: u8 = cursor.read_u8()?;
-            let _original_id_high: u8 = cursor.read_u8()?;
+/// Reads and decodes sector `block_id` of facet `map_index` into Classic blocks ([`decode_facet_bin`]).
+pub fn read_facet_block(package: &UopPackage, map_index: u8, block_id: u32) -> eyre::Result<DecodedFacet> {
+    decode_facet_bin(&read_facet_block_bytes(package, map_index, block_id)?)
+}
 
-            // Apply reverse mapping for the land graphic
-            let classic_graphic_id = tile_dictionary
-                .get(&kr_land_graphic)
-                .map(|r| r.0)
-                .unwrap_or(0);
+/// Reads and decodes sector `block_id` of facet `map_index` ([`decode_facet_bin_raw`]), checking that its header
+/// names that facet and sector.
+pub fn read_facet_block_raw(package: &UopPackage, map_index: u8, block_id: u32) -> eyre::Result<DecodedEcFacet> {
+    let sector = decode_facet_bin_raw(&read_facet_block_bytes(package, map_index, block_id)?)?;
+    if sector.facet_id != map_index || u32::from(sector.file_id) != block_id {
+        eyre::bail!(
+            "{}: header facet {} sector {}, expected facet {map_index} sector {block_id}",
+            sector_entry_path(map_index, block_id),
+            sector.facet_id,
+            sector.file_id
+        );
+    }
+    Ok(sector)
+}
 
-            if let Ok(cell) = decoded_blocks[block_index]
-                .block
-                .cell_as_mut(cell_x, cell_y)
-            {
-                cell.id = classic_graphic_id;
-                cell.z = z;
-            }
+fn read_facet_block_bytes(package: &UopPackage, map_index: u8, block_id: u32) -> eyre::Result<Vec<u8>> {
+    let target_path = sector_entry_path(map_index, block_id);
+    let target_hash: u64 = uop::hash::hash_file_name_single(&target_path);
+    package.unpack_file_by_hash(target_hash)?.ok_or_else(|| eyre!("File not found in package: {target_path}"))
+}
 
-            // --- Delimiters ---
-            let delimiter_count: u8 = cursor.read_u8()?;
-            if delimiter_count > 0 {
-                // Skip delimiters (1 + 1 + 2 + 1 = 5 bytes per delimiter)
-                cursor.set_position(cursor.position() + (delimiter_count as u64 * 5));
-            }
+// endregion: --- Public API
 
-            // --- Statics ---
-            let static_count: u8 = cursor.read_u8()?;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::enhanced::facet_decoder::{EcFacetDelimiter, KrSquareLand};
+    use crate::enhanced::facet_sector::{empty_sector, encode_sector, square_index, SECTOR_HEADER_SIZE};
 
-            for _ in 0..static_count {
-                let graphic: u16 = cursor.read_u16::<LittleEndian>()?;
-                let _unknown1: u16 = cursor.read_u16::<LittleEndian>()?;
-                let static_z: i8 = cursor.read_i8()?;
-                let hue: u16 = cursor.read_u16::<LittleEndian>()?;
+    const FACET: u8 = 4;
+    const SECTOR: u32 = 7;
+    /// Bytes of a KR square without delimiters and statics.
+    const KR_SQUARE_MIN_SIZE: usize = 8;
 
-                // Statics translation rule: The static is only pushed if it exists in the whitelist dictionary.
-                if static_dictionary.contains(&graphic) {
-                    decoded_blocks[block_index].statics.push(StaticTile {
-                        graphic_id: graphic as u32,
-                        x: cell_x as u8,
-                        y: cell_y as u8,
-                        z: static_z,
-                        hue: hue as u32,
-                    });
-                }
-            }
-        }
+    fn sample() -> DecodedEcFacet {
+        let mut sector = empty_sector(FACET, SECTOR, ClientDialect::KingdomReborn).unwrap();
+        let tile = &mut sector.tiles[square_index(9, 10)];
+        tile.z = -3;
+        tile.land_graphic = 54;
+        tile.kr = Some(KrSquareLand { subtype: 2, classic_land: 0x1A4 });
+        tile.delimiters.push(EcFacetDelimiter { direction: 4, z: 7, graphic_id: 1 });
+        tile.statics.push(StaticTile { graphic_id: 6345, x: 9, y: 10, z: 12, hue: 8883 });
+        sector
     }
 
-    Ok(crate::enhanced::facet_decoder::DecodedFacet {
-        blocks: decoded_blocks,
-    })
-}
-
-pub fn decode_facet_bin_raw(data: &[u8]) -> eyre::Result<DecodedKrFacet> {
-    let mut cursor: Cursor<&[u8]> = Cursor::new(data);
-
-    let facet_id: u8 = cursor.read_u8()?;
-    let file_id: u16 = cursor.read_u16::<LittleEndian>()?;
-    let mut tiles = Vec::with_capacity(64);
-
-    for _x_64 in 0..64_u32 {
-        let mut column = Vec::with_capacity(64);
-        for _y_64 in 0..64_u32 {
-            let z: i8 = cursor.read_i8()?;
-            let land_graphic: u16 = cursor.read_u16::<LittleEndian>()?;
-            let unknown_byte: u8 = cursor.read_u8()?;
-            let original_id_low: u8 = cursor.read_u8()?;
-            let original_id_high: u8 = cursor.read_u8()?;
-
-            let delimiter_count: u8 = cursor.read_u8()?;
-            let mut delimiters = Vec::with_capacity(delimiter_count as usize);
-            for _ in 0..delimiter_count {
-                delimiters.push(KrFacetDelimiter {
-                    direction: cursor.read_u8()?,
-                    z: cursor.read_i8()?,
-                    graphic: cursor.read_u16::<LittleEndian>()?,
-                    unknown: cursor.read_u8()?,
-                });
-            }
-
-            let static_count: u8 = cursor.read_u8()?;
-
-            let mut statics = Vec::with_capacity(static_count as usize);
-            for _ in 0..static_count {
-                statics.push(KrFacetStatic {
-                    graphic: cursor.read_u16::<LittleEndian>()?,
-                    unknown1: cursor.read_u16::<LittleEndian>()?,
-                    z: cursor.read_i8()?,
-                    hue: cursor.read_u16::<LittleEndian>()?,
-                });
-            }
-
-            column.push(KrFacetTile {
-                z,
-                land_graphic,
-                unknown_byte,
-                original_id_low,
-                original_id_high,
-                delimiters,
-                statics,
-            });
-        }
-        tiles.push(column);
+    #[test]
+    fn kr_squares_round_trip_with_their_three_extra_bytes() {
+        let sector = sample();
+        let bytes = encode_sector(&sector, ClientDialect::KingdomReborn).unwrap();
+        // 6-byte delimiters and 9-byte statics, as in EC.
+        assert_eq!(bytes.len(), SECTOR_HEADER_SIZE + 4096 * KR_SQUARE_MIN_SIZE + 6 + 9);
+        assert_eq!(decode_facet_bin_raw(&bytes).unwrap(), sector);
+        assert!(decode_sector(&bytes, ClientDialect::Enhanced).is_err());
+        assert!(encode_sector(&sector, ClientDialect::Enhanced).is_err());
+        let mut trailing = bytes.clone();
+        trailing.push(0);
+        assert!(decode_facet_bin_raw(&trailing).is_err());
     }
 
-    Ok(DecodedKrFacet {
-        facet_id,
-        file_id,
-        tiles,
-    })
-}
-
-/// Reads and decodes a single 64x64 block from a KR facet UOP file.
-pub fn read_facet_block(
-    package: &UopPackage,
-    map_index: u8,
-    block_id: u32,
-    tile_dictionary: &HashMap<u16, (u16, u8)>,
-    static_dictionary: &HashSet<u16>,
-) -> eyre::Result<crate::enhanced::facet_decoder::DecodedFacet> {
-    let decompressed_data = read_facet_block_bytes(package, map_index, block_id)?;
-    decode_facet_bin(&decompressed_data, tile_dictionary, static_dictionary)
-}
-
-pub fn read_facet_block_raw(
-    package: &UopPackage,
-    map_index: u8,
-    block_id: u32,
-) -> eyre::Result<DecodedKrFacet> {
-    let decompressed_data = read_facet_block_bytes(package, map_index, block_id)?;
-    decode_facet_bin_raw(&decompressed_data)
-}
-
-fn read_facet_block_bytes(
-    package: &UopPackage,
-    map_index: u8,
-    block_id: u32,
-) -> eyre::Result<Vec<u8>> {
-    use std::io::Write;
-    let mut path_buf = [0u8; 64];
-    let mut slice = &mut path_buf[..];
-    write!(
-        slice,
-        "build/sectors/facet_0{}/{:08}.bin",
-        map_index, block_id
-    )
-    .unwrap();
-    let len = 64 - slice.len();
-    let target_path = unsafe { std::str::from_utf8_unchecked(&path_buf[..len]) };
-    let target_hash: u64 = uop::hash::hash_file_name_single(target_path);
-
-    for file in package.iter_files() {
-        if file.filename_hash() == target_hash {
-            return Ok(file.unpack()?);
-        }
+    #[test]
+    fn classic_view_takes_the_stored_classic_land_and_keeps_every_static() {
+        let bytes = encode_sector(&sample(), ClientDialect::KingdomReborn).unwrap();
+        let decoded = decode_facet_bin(&bytes).unwrap();
+        // Square (9, 10) is cell (1, 2) of block (1, 1).
+        let block = &decoded.blocks[(BLOCKS_PER_SECTOR_SIDE + 1) as usize];
+        let cell = block.block.cell(1, 2).unwrap();
+        assert_eq!((cell.id, cell.z), (0x1A4, -3));
+        assert_eq!(block.statics, vec![StaticTile { graphic_id: 6345, x: 1, y: 2, z: 12, hue: 8883 }]);
     }
-    Err(eyre!("File not found in package: {}", target_path))
 }
