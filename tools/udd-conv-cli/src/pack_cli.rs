@@ -1231,7 +1231,8 @@ enum Commands {
         #[arg(long, default_value = "tileart_liquid_surface_report.json")]
         output: PathBuf,
     },
-    /// Packs non-base auxiliary EC texture refs from tilemeta.uddp into tex_aux_ec.uddp.
+    /// Packs non-base WorldArt auxiliary EC texture refs from tilemeta.uddp into tex_aux_ec.uddp, plus the
+    /// client's missing-texture fallback (SystemTextures.uop) and the list of absent source ids.
     #[command(name = "pack-ec-tex-aux")]
     #[command(group(ArgGroup::new("output_format").args(["raw", "jxl", "bc7", "bc7_rdo"])))]
     PackEcTexAux {
@@ -2191,11 +2192,13 @@ where
                 },
             )?;
             info!(
-                "tex_aux_ec: packed {} auxiliary textures ({} refs considered, {} base-role excluded, {} no-path excluded, {} decode errors, {} duplicates) to '{}'.",
+                "tex_aux_ec: packed {} auxiliary textures plus the missing-texture fallback ({} refs considered, {} base-role excluded, {} unread-family (legacy) excluded, {} no-path excluded, {} source-absent ids listed for the fallback, {} decode errors, {} duplicates) to '{}'.",
                 summary.included,
                 summary.refs_considered,
                 summary.excluded_base_role,
+                summary.excluded_unread_family,
                 summary.excluded_no_path,
+                summary.excluded_source_absent,
                 summary.excluded_decode_error,
                 summary.excluded_duplicate_id,
                 out_file.display()

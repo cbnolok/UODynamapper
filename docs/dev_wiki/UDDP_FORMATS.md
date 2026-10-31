@@ -104,7 +104,7 @@ Runtime static lights use this item metadata: `flags & 0x00800000` marks a light
 These are GPU texture atlases packed into fixed-size pages to avoid texture array limits.
 `tex_art_cc` packages Classic Art sprites, `tex_art_ec` packages Enhanced Client Art sprites from the shared EC texture pass, and `tex_land_ec` packages Enhanced Client Terrain Textures from the same pass.
 
-The next architecture under discussion is a three-way split for EC textures: land, art, and auxiliary layers/masks/noise. That split does not exist yet in the current wire format, but docs should assume it as the target shape when discussing future changes.
+EC textures are split three ways: land (`tex_land_ec`), art (`tex_art_ec`), and auxiliary layers and masks (`tex_aux_ec`, section 2.5).
 Avoid BC7 RDO for art and mobile-animation sprites unless a specific asset class has been visually validated. Plain BC7 is a GPU-ready storage format; RDO is a separate lossy entropy-reduction pass that permanently changes BC7 block bytes and cannot be undone by the runtime.
 
 Current EC packing semantics:
@@ -112,7 +112,7 @@ Current EC packing semantics:
 - `tex_art_ec.uddp` is keyed by tileart/static ownership and uses per-entry sampling windows.
 - `tex_land_ec.uddp` is keyed by TerrainDefinition semantics and may pack sparse slot ids plus alias/provenance metadata.
 - `tex_land_ec.uddp` also carries EC land material roles in the runtime lookup table: role `0` is base/diffuse, role `1` is detail, role `2` is mask/alpha, and role `3` is normal/normal_map. These role entries point into the same page atlas and are selected by semantic material id, not by raw texture-id ranges.
-- `ec_textures_layers.uddp` is the planned destination for extra shared layers, masks, and noise-like resources that are referenced semantically but do not belong to the primary land/art splits.
+- `tex_aux_ec.uddp` holds the support images (masks, liquid and surface inputs) that tileart refs name but that do not belong to the art or land atlases (section 2.5). `ec_textures_layers.uddp` was the planned name for that third split.
 - If a source texture is claimed by both art and land semantics, duplication across outputs is valid and should be decided by ownership, not by avoiding repeated ids.
 
 Normal-map format note:
@@ -199,6 +199,57 @@ Storing the converted textures as BC7 within the UDDP package creates a file tha
 3. **Texture Array Uniformity**: Modern GPU renderers use `Texture2DArray` to pack multiple pages into a single draw-call pipeline. All layers in a texture array must share the exact same format. BC7 provides the best "highest common denominator" for mixing opaque and translucent terrain tiles.
 
 To mitigate the inherent size increase of the 8bpp BC7 format, UODynamapper uses a **Supercompression** pass (applying `ZstdNoDict` compression on top of the BC7 payload). Even though BC7 is a fixed-rate GPU format, Zstd is highly effective at compressing the repeating, identical BC7 16-byte blocks that are generated for transparent or flat-color "empty space" regions within the atlas pages.
+
+### 2.5 `tex_aux_ec.uddp`
+
+Holds the non-base support images (hue masks, terrain-surface masks, liquid inputs) that runtime consumers read through tilemeta texture refs. These are images that are not atlased. Each image is keyed by its source texture id, with one image per id; the first ref seen wins.
+
+Contents:
+
+- **Only the WorldArt family** (`EcMaterialLogicalFamily` 1, from `Texture.uop`). Every consumer reads block-0 WorldArt refs.
+- **No TileArtLegacy or TileArtEnhanced images.** Those belong to the EC's legacy-art mode, which is not converted; Classic art comes from the Classic Client files (`tex_art_cc.uddp`). The packer counts the skipped refs as "unread family".
+- **The client's missing-texture image.** When a texture request returns no data, the client substitutes `Data\SystemTextures\missing.tga` (`SystemTextures.uop`, a 256x256 TGA decoded by its extension). The package stores that image as a normal slot and payload under the reserved id `TEX_AUX_EC_MISSING_TEXTURE_ID` = `u32::MAX` (`0xFFFFFFFF`).
+  - No real texture can take that id: the client formats tile texture paths with a signed `%08d`, so reachable ids stop at `i32::MAX`.
+  - The slot has family `SystemTextures` (6) and role `ImageSupport` (9).
+
+**Virtual Files:**
+
+- `metadata/slots.bin`: array of `TexAuxEcSlotRecord`, sorted by `texture_id` (the reserved entry sorts last). It has no version header.
+- `textures/{texture_id:08x}`: raw pixels for one slot, RGBA8888 or a BC7 container according to the slot's `pixel_format`.
+- `metadata/absent_sources.bin`: a `u32` version (currently 1), then `TexAuxEcAbsentSourceRecord`s sorted by `texture_id`.
+  - It lists each distinct referenced id of a packed family whose image the EC archive does not contain.
+  - A source that exists but fails to decode is not listed: the client shows Gamebryo's default texture for those, not `missing.tga`.
+
+**`TexAuxEcSlotRecord` (12 Bytes)**
+
+| Offset | Type | Name | Description |
+|--------|------|------|-------------|
+| 0x00 | `u32` | `texture_id` | Source texture id, or the reserved missing-texture id. |
+| 0x04 | `u16` | `width` | Image width in pixels. |
+| 0x06 | `u16` | `height` | Image height in pixels. |
+| 0x08 | `u8` | `logical_family` | `EcMaterialLogicalFamily`: 1 = WorldArt; 6 = SystemTextures (reserved entry only). |
+| 0x09 | `u8` | `stable_role` | `EcMaterialStableRole` of the first ref that named the id. |
+| 0x0A | `u8` | `pixel_format` | 0 = RGBA8888, 1 = BC7. |
+| 0x0B | `u8` | `_pad` | Zero. |
+
+**`TexAuxEcAbsentSourceRecord` (8 Bytes)**
+
+| Offset | Type | Name | Description |
+|--------|------|------|-------------|
+| 0x00 | `u32` | `texture_id` | Referenced source id the archive lacks. |
+| 0x04 | `u8` | `logical_family` | Family of the ref (1 = WorldArt). |
+| 0x05 | `u8` | `physical_package` | `EcMaterialPhysicalPackage` it was looked up in (1 = `Texture.uop`). |
+| 0x06 | `u8[2]` | `_pad` | Zero. |
+
+Tilemeta refs keep their true source ids; nothing is substituted at build time.
+
+**Reading:**
+
+- Readers resolve a ref with `TexAuxEcPackage::get_or_missing(texture_id, logical_family)`, which returns one of:
+  - the packed slot, when its family matches;
+  - the reserved missing-texture slot, when the id is listed as absent for that family (what the client draws);
+  - `None` otherwise.
+- Packages built before the fallback existed have neither the reserved entry nor `metadata/absent_sources.bin`. They read as having no absent sources.
 
 ---
 

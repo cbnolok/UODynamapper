@@ -15,6 +15,7 @@ Common commands:
 - `pack-art`: pack Classic Client `art.mul` / `artidx.mul` into `tex_art_cc.uddp`.
 - `pack-ec-textures`: pack Enhanced Client static-art and terrain textures into `tex_art_ec.uddp` and `tex_land_ec.uddp`.
 - `pack-tilemeta`: pack Classic Client tiledata and Enhanced Client tileart metadata into `tilemeta.uddp`.
+- `pack-ec-tex-aux`: pack the EC support images that runtime consumers read (WorldArt hue masks, terrain-surface masks, liquid inputs) from a `tilemeta.uddp`'s texture refs into `tex_aux_ec.uddp`. The package also holds the client's missing-texture fallback; see below.
 - `pack-radar`: generate a radar map such as `facet0X.dds` from Classic Client map and statics data.
 - `pack-map`: pack Classic Client map data into a block-based `.uddp` package.
 - `pack-statics`: pack Classic Client statics data into a block-based `.uddp` package.
@@ -29,6 +30,12 @@ Typical Enhanced Client texture and metadata workflow:
 ```text
 udd-pack pack-ec-textures --ecdir /path/to/ec --art-output tex_art_ec.uddp --land-output tex_land_ec.uddp
 udd-pack pack-tilemeta --ccdir /path/to/cc --ecdir /path/to/ec --output tilemeta.uddp
+```
+
+Then build the auxiliary images from that tilemeta, with the same EC directory (it also reads `SystemTextures.uop`):
+
+```text
+udd-pack pack-ec-tex-aux --ecdir /path/to/ec --tilemeta tilemeta.uddp --zstd --output tex_aux_ec.uddp
 ```
 
 When building all EC texture outputs plus `tilemeta.uddp`, prefer the grouped form so
@@ -103,6 +110,14 @@ EC land materials are role-based, not single-texture records. The runtime lookup
 
 Normal maps are stored in the same UDDP page-atlas infrastructure as visible EC land textures, either as RGBA8888 pages or BC7/BC7-RDO GPU payloads depending on the package build. Do not assume a separate normal-map atlas exists at runtime. Original-client DDS files are source evidence only: for example, `01000013.dds` from a KR unpack is `256x256` DXT1, which shows the source normal map is RGB tangent-space data rather than BC5/ATI2 two-channel data. The renderer samples the repacked UDDP atlas and decodes its RGB channels as the normal.
 
+### `tex_aux_ec.uddp`
+
+Stores the non-base support images that tileart refs name and that a runtime consumer reads: sprite hue masks, static terrain-surface masks and EC item liquid inputs. All of them are WorldArt images from `Texture.uop`, keyed by texture id.
+
+- **No legacy-art images.** TileArtLegacy and TileArtEnhanced refs are not packed. They are the EC's legacy-art mode, which the project does not convert; Classic art comes from the Classic Client files (`tex_art_cc.uddp`).
+- **The client's fallback image.** When a texture request returns no data, the client draws `Data\SystemTextures\missing.tga` instead. The package carries that image under a reserved id, and lists the referenced ids that `Texture.uop` lacks.
+- **Lookup.** Renderers resolve refs with `TexAuxEcPackage::get_or_missing`. Layout details are in [UDDP_FORMATS.md](UDDP_FORMATS.md) section 2.5.
+
 ### `tilemeta.uddp`
 
 Stores dense land/item metadata tables used by the runtime to merge Classic Client tiledata with Enhanced Client metadata and sidecars.
@@ -120,7 +135,8 @@ Ownership and linkage sources:
 Shared or support texture pools:
 
 - `Texture.uop`: shared texture pool used by both EC land and EC static-art classification.
-- `LegacyTexture.uop`: classic-style shared texture pool.
+- `LegacyTexture.uop`: classic-style shared texture pool of the EC's legacy-art mode. That mode is not converted into `tex_aux_ec`; Classic art comes from the Classic Client files.
+- `SystemTextures.uop`: client system images; `missing.tga` is packed into `tex_aux_ec` as the missing-texture fallback.
 - `TerrainTexture.uop`: land support-resource pool. Package origin alone does not prove land ownership.
 - `EffectTexture.uop`: mixed effect-resource pool containing image and non-image resources.
 

@@ -949,6 +949,13 @@ Facet sizes in the executable (`client_exe::facet_dimensions`,
 - Shared image pools, not ownership boundaries.
 - `Texture.uop` usually resolves `build/worldart/{:08}.dds`.
 - `LegacyTexture.uop` usually resolves `build/tileartlegacy/{:08}.dds`.
+- `LegacyTexture.uop` and tileart shader block 1 (TileArtLegacy) are the EC's
+  legacy-art mode: the client can draw the classic-looking art set from them.
+  The project does not convert that mode. Classic art comes from the Classic
+  Client files (`tex_art_cc.uddp`), and `tex_aux_ec.uddp` packs no
+  TileArtLegacy or TileArtEnhanced images. Tilemeta still records the block 1
+  and 2 refs; the main-texture selectors and `cc_texture_id` (the legacy
+  block's image) read them.
 - Payloads are raw DDS or TGA image data. Tooling decodes them for packing, but
   the original payload is the source evidence.
 - Kingdom Reborn `TileArtLegacy.uop` holds no tileart records: it is the TGA
@@ -1280,6 +1287,20 @@ Runtime:
 - Runtime uses provenance to resolve direct terrain, transcoded terrain, and
   surface-like static texture refs, and to fill base/detail/mask lookup entries
   for the land shader.
+
+`tex_aux_ec.uddp`:
+
+- Contains the non-base support images of the WorldArt refs that the runtime
+  reads: hue masks, terrain-surface masks and liquid inputs. Keyed by
+  texture id, with one image per id.
+- It holds no legacy-art (TileArtLegacy/TileArtEnhanced) images, since that
+  mode is not converted (see `Texture.uop` and `LegacyTexture.uop` above).
+- When a texture request returns no data, the client substitutes
+  `Data\SystemTextures\missing.tga` (`SystemTextures.uop`, a 256x256 TGA).
+  The package stores that image under the reserved id `u32::MAX`, and lists
+  the referenced ids that `Texture.uop` lacks in
+  `metadata/absent_sources.bin`. Tilemeta refs keep their true ids. The layout
+  is in `docs/dev_wiki/UDDP_FORMATS.md`.
 
 `tex_art_cc.uddp`:
 
