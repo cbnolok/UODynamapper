@@ -24,6 +24,7 @@ dds.workspace = true
 flate2.workspace = true
 image = { workspace = true, features = ["bmp", "png"] }
 udd-image-codecs = { path = "../../lib/udd-image-codecs", features = ["ktx2"] }
+workspace-hack = { version = "0.1", path = "../../lib/workspace-hack" }
 
 [[bin]]
 name = "uocf-cli"

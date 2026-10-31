@@ -29,6 +29,7 @@ dds = ["dep:dds"]
 uocf = { path = "../../uocf", optional = true }
 gamebryo-nif = { path = "../gamebryo-nif", optional = true }
 dds = { version = "0.2", default-features = false, optional = true }
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 
 [dev-dependencies]
 # The ignored real-file test and the preview example read EffectTexture.uop through uocf.

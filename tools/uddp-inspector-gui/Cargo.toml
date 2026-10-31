@@ -45,6 +45,7 @@ image = { workspace = true, features = [
     "tga",
     "bmp",
 ] }
+workspace-hack = { version = "0.1", path = "../../lib/workspace-hack" }
 
 [dev-dependencies]
 # Compiles the Chaos scripts of the synthetic test package.

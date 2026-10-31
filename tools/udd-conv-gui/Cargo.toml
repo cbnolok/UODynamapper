@@ -32,6 +32,7 @@ toml.workspace = true
 ktx2.workspace = true
 image = { workspace = true, features = ["png"] }
 zstd.workspace = true
+workspace-hack = { version = "0.1", path = "../../lib/workspace-hack" }
 
 [features]
 default = []

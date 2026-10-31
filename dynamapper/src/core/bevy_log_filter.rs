@@ -11,6 +11,11 @@ use tracing_subscriber::{
 
 static INIT_BEVY_LOGGING: Once = Once::new();
 
+/// The most verbose `log` crate record forwarded to tracing. This is the cap the former `release_max_level_warn`
+/// feature applied: it acted in every build, because dependencies are compiled without debug assertions. `tracing`
+/// events need no cap, since [`bevy_log_targets`] lets nothing past INFO through.
+const LOG_CRATE_MAX_LEVEL: log::LevelFilter = log::LevelFilter::Warn;
+
 fn strip_meta_prefix<'a>(value: &'a str) -> &'a str {
     let mut out = value;
     while let Some(rest) = out
@@ -80,7 +85,7 @@ fn bevy_log_targets() -> Targets {
 
 pub fn init_bevy_logging() {
     INIT_BEVY_LOGGING.call_once(|| {
-        let _ = LogTracer::init();
+        let _ = LogTracer::init_with_filter(LOG_CRATE_MAX_LEVEL);
 
         // Use static target-prefix filters rather than EnvFilter so filtered-out
         // Bevy/backend events do not pay regex matching costs at runtime.

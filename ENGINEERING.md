@@ -42,6 +42,13 @@ just bevy-lint                                   # Bevy-specific lints
 
 **Cargo target directory**: keep the one configured in `.cargo/config.toml`. Never pass `CARGO_TARGET_DIR` or `--target-dir`.
 
+**Feature unification (`lib/workspace-hack`)**: every member depends on the `workspace-hack` crate that cargo-hakari generates. It
+turns on the union of the third-party features, so the workspace build, `-p dynamapper` and each tool share one copy of each
+dependency instead of rebuilding it per feature set. After adding, removing or changing a dependency or its features, run
+`cargo hakari generate`; a new member also needs `cargo hakari manage-deps`. `.config/hakari.toml` lists the platforms, and the
+crates kept out because only opt-in features would pull them in (tracy, GPU profiling, vendored libjxl). Never set
+compile-time log level features (`log`/`tracing` `max_level_*`): unification would apply them to every tool.
+
 **Do not run `cargo fmt`, `rustfmt`, or `cargo clippy` automatically.** These are privileged maintainer actions. Maintain local style manually in the lines you touch. If a validation command would implicitly reformat code, do not run it.
 
 ---

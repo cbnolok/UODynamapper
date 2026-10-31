@@ -1,0 +1,63 @@
+# This file contains settings for `cargo hakari`.
+# See https://docs.rs/cargo-hakari/latest/cargo_hakari/config for a full list of options.
+
+hakari-package = "workspace-hack"
+
+# Format version for hakari's output. Version 4 requires cargo-hakari 0.9.22 or above.
+dep-format-version = "4"
+
+# Setting workspace.resolver = "3" or higher in the root Cargo.toml is HIGHLY recommended.
+# Hakari works much better with the v2 resolver. (The v2 and v3 resolvers are identical from
+# hakari's perspective, so you're welcome to set either.)
+#
+# For more about the new feature resolver, see:
+# https://blog.rust-lang.org/2021/03/25/Rust-1.51.0.html#cargos-new-feature-resolver
+resolver = "3"
+
+# Add triples corresponding to platforms commonly used by developers here.
+# https://doc.rust-lang.org/rustc/platform-support.html
+# The release targets of .github/workflows/release.yml.
+platforms = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+]
+
+# Write out exact versions rather than a semver range. (Defaults to false.)
+# exact-versions = true
+
+# Hakari also simulates every member built with all features. That would force opt-in features on every build:
+# dynamapper's tracy and GPU profiling, uocf's profiling, and the vendored libjxl of the musl builds. These
+# crates stay out of the hack. Bevy is used by dynamapper alone, so its features never differ between builds.
+[final-excludes]
+third-party = [
+    { name = "bevy" },
+    { name = "bevy_internal" },
+    { name = "bevy_anti_alias" },
+    { name = "bevy_app" },
+    { name = "bevy_asset" },
+    { name = "bevy_core_pipeline" },
+    { name = "bevy_ecs" },
+    { name = "bevy_extract" },
+    { name = "bevy_image" },
+    { name = "bevy_log" },
+    { name = "bevy_math" },
+    { name = "bevy_pbr" },
+    { name = "bevy_picking" },
+    { name = "bevy_post_process" },
+    { name = "bevy_render" },
+    { name = "bevy_transform" },
+    { name = "bevy_winit" },
+    { name = "jpegxl-rs" },
+    { name = "jpegxl-sys" },
+    { name = "profiling" },
+    { name = "tracing-tracy" },
+    { name = "tracy-client" },
+    { name = "tracy-client-sys" },
+    { name = "wgpu-profiler" },
+]

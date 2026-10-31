@@ -14,6 +14,7 @@ members = [
     "lib/udd-logging",
     "lib/gui-shared",
     "lib/image-postprocess",
+    "lib/workspace-hack",
     "tools/udd-conv-cli",
     "tools/uocf-cli",
     "tools/uocf-devtools-cli",

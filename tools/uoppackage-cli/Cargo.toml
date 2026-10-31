@@ -21,6 +21,7 @@ flate2.workspace = true
 log.workspace = true
 serde = { workspace = true, features = ["derive"] }
 toml.workspace = true
+workspace-hack = { version = "0.1", path = "../../lib/workspace-hack" }
 
 [[bin]]
 name = "uoppackage-cli"

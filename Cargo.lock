@@ -2886,6 +2886,7 @@ dependencies = [
  "wgpu",
  "wgpu-profiler",
  "windows",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2918,6 +2919,7 @@ dependencies = [
  "particle-sim",
  "serde_json",
  "uocf",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -3548,6 +3550,7 @@ name = "gamebryo-nif"
 version = "0.1.0"
 dependencies = [
  "uocf",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -3786,6 +3789,7 @@ dependencies = [
  "eframe",
  "egui_extras",
  "rfd",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -4125,6 +4129,7 @@ dependencies = [
  "image",
  "serde",
  "wide",
+ "workspace-hack",
  "xbrz-rs",
 ]
 
@@ -5562,6 +5567,7 @@ dependencies = [
  "gamebryo-nif",
  "image",
  "uocf",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -7040,6 +7046,7 @@ dependencies = [
  "udd-image-codecs",
  "udd-kdl",
  "uocf",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -7050,6 +7057,7 @@ dependencies = [
  "jpegxl-rs",
  "memmap2",
  "rayon",
+ "workspace-hack",
  "xxhash-rust",
  "zstd",
 ]
@@ -7080,6 +7088,7 @@ dependencies = [
  "udd-kdl",
  "uocf",
  "wgpu-types",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -7102,6 +7111,7 @@ dependencies = [
  "udd-kdl",
  "udd-logging",
  "uocf",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -7123,6 +7133,7 @@ dependencies = [
  "udd-image-codecs",
  "udd-logging",
  "uocf",
+ "workspace-hack",
  "zstd",
 ]
 
@@ -7136,6 +7147,7 @@ dependencies = [
  "rayon",
  "wgpu-types",
  "wide",
+ "workspace-hack",
  "zstd",
 ]
 
@@ -7146,6 +7158,7 @@ dependencies = [
  "color-eyre",
  "knuffel",
  "miette",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -7159,6 +7172,7 @@ dependencies = [
  "tracing-indicatif",
  "tracing-log",
  "tracing-subscriber",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -7182,6 +7196,7 @@ dependencies = [
  "udd-container",
  "udd-conv",
  "uocf",
+ "workspace-hack",
  "zstd",
 ]
 
@@ -7263,6 +7278,7 @@ dependencies = [
  "serde",
  "udd-logging",
  "uocf",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -7294,6 +7310,7 @@ dependencies = [
  "toml",
  "udd-kdl",
  "wide",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -7310,6 +7327,7 @@ dependencies = [
  "udd-image-codecs",
  "udd-logging",
  "uocf",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -7326,6 +7344,7 @@ dependencies = [
  "udd-logging",
  "uocf",
  "walkdir",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -7353,6 +7372,7 @@ dependencies = [
  "udd-kdl",
  "udd-logging",
  "uocf",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -7369,6 +7389,7 @@ dependencies = [
  "toml",
  "udd-logging",
  "uocf",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -7383,6 +7404,7 @@ dependencies = [
  "toml",
  "udd-logging",
  "uocf",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -8530,6 +8552,94 @@ dependencies = [
  "wayland-client",
  "wayland-protocols",
  "wayland-protocols-wlr",
+]
+
+[[package]]
+name = "workspace-hack"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "arboard",
+ "arrayvec",
+ "bitflags 2.13.1",
+ "bytemuck",
+ "cc",
+ "clap",
+ "clap_builder",
+ "core-foundation-sys",
+ "crossbeam-channel",
+ "dds",
+ "egui 0.37.0",
+ "either",
+ "fixedbitset",
+ "flate2",
+ "foldhash 0.2.0",
+ "font-types",
+ "getrandom 0.4.3",
+ "glam 0.33.12",
+ "half",
+ "hashbrown 0.16.1",
+ "hashbrown 0.17.1",
+ "image",
+ "indexmap",
+ "libc",
+ "log",
+ "memchr",
+ "miniz_oxide 0.8.9",
+ "naga",
+ "naga-types",
+ "num-traits",
+ "objc2-app-kit 0.2.2",
+ "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
+ "once_cell",
+ "proc-macro2",
+ "quote",
+ "rand 0.10.2",
+ "raw-window-handle",
+ "regex",
+ "regex-automata",
+ "regex-syntax",
+ "resize",
+ "ron",
+ "rustix 0.38.44",
+ "serde",
+ "serde_core",
+ "serde_spanned",
+ "smallvec",
+ "smol_str",
+ "syn 2.0.119",
+ "syn 3.0.5",
+ "thiserror 2.0.20",
+ "toml",
+ "toml_datetime",
+ "toml_parser",
+ "toml_writer",
+ "tracing",
+ "tracing-core",
+ "tracing-log",
+ "tracing-subscriber",
+ "uuid",
+ "wayland-backend",
+ "wayland-sys",
+ "wgpu",
+ "wgpu-core",
+ "wgpu-core-deps-windows-linux-android",
+ "wgpu-hal",
+ "wgpu-types",
+ "wide",
+ "windows",
+ "windows-core",
+ "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
+ "winit",
+ "winnow",
+ "zerocopy",
+ "zstd",
+ "zstd-safe",
+ "zstd-sys",
 ]
 
 [[package]]

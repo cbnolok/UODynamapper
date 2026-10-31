@@ -15,6 +15,7 @@ nonminimal_bool = "allow"
 too_many_arguments = "allow"
 
 [dependencies]
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 
 [dev-dependencies]
 # Only the ignored real-file test reads EffectTexture.uop through it.

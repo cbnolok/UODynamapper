@@ -33,10 +33,9 @@ color-eyre = { workspace = true, features = ["track-caller"] }
 indexmap = "2.14.2"
 # Only for the Decode derives: their code names the knuffel crate. Parse through udd-kdl.
 knuffel.workspace = true
-log = { version = "*", features = [
-  "max_level_debug",
-  "release_max_level_warn",
-] }
+# No compile-time level caps here: in a workspace build those features would cap every tool's logging too.
+# The level is set at runtime (core/bevy_log_filter.rs).
+log = "*"
 mimalloc = { version = "0.1.*", default-features = false, features = ["v3"] }
 nohash-hasher = "0.2.0"
 #pad = "0.1"
@@ -62,10 +61,7 @@ strum_macros = { version = "0.28", default-features = false }
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 time = { version = "0.3", default-features = false }
 toml.workspace = true
-tracing = { version = "0.1.44", features = [
-  "max_level_debug",
-  "release_max_level_info",
-] }
+tracing = "0.1.44"
 tracing-log = { version = "0.2", default-features = false, features = [
   "log-tracer",
   "std",
@@ -81,6 +77,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
 
 wgpu.workspace = true
 wgpu-profiler = { workspace = true, optional = true }
+workspace-hack = { version = "0.1", path = "../lib/workspace-hack" }
 
 
 [dependencies.bevy]

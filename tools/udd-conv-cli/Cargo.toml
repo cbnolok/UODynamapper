@@ -31,6 +31,7 @@ udd-kdl = { path = "../../lib/udd-kdl" }
 udd-image-codecs = { path = "../../lib/udd-image-codecs", features = ["ktx2"] }
 udd-logging = { path = "../../lib/udd-logging" }
 uocf = { path = "../../lib/uocf" }
+workspace-hack = { version = "0.1", path = "../../lib/workspace-hack" }
 
 [features]
 default = []
