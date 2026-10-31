@@ -4,8 +4,10 @@ What the shipped clients' audio holds, as `uocf-cli audio census` measured it (2
 clients: the 2024 Enhanced Client, the current Classic Client, the old Kingdom Reborn client and UO Gold. Code:
 `lib/uocf/src/audio/` (probe, decode, census), `lib/uocf/src/enhanced/audio.rs` (`Audio.uop`),
 `lib/uocf/src/classic/sound.rs` (`sound.mul`, `soundLegacyMUL.uop`), `lib/uocf/src/classic/audio_def.rs`
-(`Sound.def`, `Music.def`), `lib/uocf/src/classic/music.rs` (`Music/Digital/Config.txt`). Real-file tests:
-`lib/uocf/tests/real_files/audio_client_files.rs`.
+(`Sound.def`, `Music.def`), `lib/uocf/src/classic/music.rs` (`Music/Digital/Config.txt`). Writers:
+`lib/uocf/src/enhanced/audio_edit.rs`, `lib/uocf/src/classic/sound_edit.rs`, `lib/uocf/src/audio/validate.rs`,
+`lib/uocf/src/audio/convert.rs` ([Writing](#writing)). Real-file tests:
+`lib/uocf/tests/real_files/audio_client_files.rs`, `lib/uocf/tests/real_files/audio_writers.rs`.
 
 Rerun:
 
@@ -96,6 +98,63 @@ named exists. Music folders: current Classic 91 MP3 + 1 Bink video; UO Gold 40 M
 
 2,008 names (commit a99b0b73): 1,668 legacy WAVs, 278 sounds, 57 music (Enhanced and Kingdom Reborn), 5
 `build/soundlegacymul/` slots (1662..1666). Everything else in the tables was already named.
+
+## Writing
+
+Round trips (2026-11-01, `audio_writers` real-file tests): an unchanged copy is byte-identical to the shipped file
+for the Enhanced `Audio.uop` (3,435 entries), the Kingdom Reborn `Audio.uop` (1,553), the current Classic
+`soundLegacyMUL.uop`, and `sound.mul` + `soundidx.mul` of UO Gold, Mondain's Legacy and 7.0.20. `Sound.def` and
+`Music.def` of all four Classic clients write back byte for byte (the unclosed `805 {331 0` and the current
+client's trailing empty line included). The two Enhanced tables write back byte for byte from their rows. After a
+replace or add, every other entry or slot keeps its bytes.
+
+### `Audio.uop` entries (`AudioPackageEditor`, `uocf-cli audio replace|add`, inspector "Replace...")
+
+- Accepted as is (`audio::validate`, what the shipped package holds; all 3,430 shipped MP3 and WAV entries pass):
+  - MP3: MPEG-1 Layer III 32 kHz mono, 44.1 kHz mono/stereo/joint stereo; MPEG-2 Layer III 16 kHz mono,
+    22.05 kHz mono/stereo/joint stereo. CBR only, 64..=320 kbit/s (shipped: 64, 128, 160, 192, 320). No frames of
+    another stream, no breaks in the frame chain, no cut last frame, no APE tag; before the frames only tags and zero
+    bytes (110 shipped MP3s start with 720 or 1,044), after them only tags. ID3 tags and the Xing/LAME header are fine.
+  - WAV: 16-bit PCM (`fmt ` tag 1, size 16 or 18) at 22,048 or 22,050 Hz mono, 44,100 Hz mono, 22,050 or 44,100 Hz
+    stereo; consistent byte rate and block align, `data` after `fmt `, whole sample frames, the RIFF size of the
+    file, nothing after the last chunk. Extra chunks are kept.
+  - The file's format must match the entry name's extension.
+- Anything else is refused; `--allow-unverified-format` (`FormatPolicy::AllowUnverified`) turns the problems into
+  warnings. It exists because the lists are what the release ships, not what the client's decoder accepts (Ghidra
+  question 3): a format outside them may play, and trying one in a test client needs a way to write it.
+- `--convert`: a WAV entry takes any WAV `audio::decode` reads (8/16/24/32-bit PCM, 32/64-bit float, extensible)
+  or an MP3, rewritten as a canonical 16-bit PCM WAV of the same rate and channels. No resampling (a pure-Rust
+  option would be `rubato`), no MP3 encoder: encode with `lame --cbr -b 128` or `ffmpeg -c:a libmp3lame -b:a 128k`
+  at one of the rates above (LAME bindings are C).
+- A replaced entry keeps its compression flag. An added one is stored like the shipped ones of its kind: MP3
+  uncompressed, WAV and tables zlib. Edited entries get a fresh timestamp data block header; the others keep their
+  bytes and place. The copy goes to an absolute path other than the source.
+- Names: by sound id (the row's MP3), legacy sound id (the row's `legacysounds/` WAV), music id, or entry name
+  (`data/audio/...`, lowercase with `/`: names are hashed as written). A new id gets a row: `Sounds\folder\x.mp3`
+  for a sound (which names both its MP3 and its legacy WAV), `Music/x.mp3` for music (`--loop`), checked like the
+  shipped paths (`.mp3`, printable ASCII, no comma). The table is rewritten in id order with CRLF lines.
+  Kingdom Reborn packages have no Enhanced tables: entries there are replaced or added by name only.
+
+### Classic sounds (`ClassicSoundEditor`, `uocf-cli sound import`, inspector "Replace slot...")
+
+- `sound.mul` layout in all three MUL clients: the slots back to back in index order from offset 0, the data file
+  ending with the last; index entry `i` is `(offset, length, i + 1)`, empty `(-1, -1, i + 1)`. The writer keeps
+  each entry's third field and the empty entries as read and lays the slots out the same way; a slot past the end
+  extends the index with empty entries.
+- `soundLegacyMUL.uop`: a replaced entry keeps its flag; an added one is uncompressed, as all shipped ones.
+- Header: a replaced slot keeps its 40 bytes (a new `--name` overwrites the start of the name field and a NUL; the
+  bytes after it, leftovers in the shipped files, stay). A new slot gets the name and zeros: bytes 32..40 are
+  undocumented and the shipped values look like tool leftovers (Ghidra question 6).
+- Input: 16-bit PCM mono WAV at 22,050 Hz, or 22,048 Hz (the label the Enhanced legacy WAVs use for the same PCM),
+  copied as is. `--convert` decodes any WAV or MP3 at those rates and downmixes to mono; other rates are refused
+  (`ffmpeg -ar 22050 -ac 1 -c:a pcm_s16le`).
+- Verdata is not applied or written. The `sound.mul` pair is edited when present, as `SoundMap` reads it.
+
+### `Sound.def` and `Music.def` (`DefTranslationTable::to_text`, `set`, `remove`)
+
+Lines in file order (blank lines kept), `id {a, b} extra`, an unclosed group as `id {a b`, the line end of the
+first line, the final line end or none. Other spacing is normalized, so only canonical files (all shipped ones)
+round-trip byte for byte.
 
 ## Questions for a Ghidra pass
 

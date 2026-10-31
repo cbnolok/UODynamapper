@@ -1649,3 +1649,12 @@ grey) TGAs, each ending with the pixels, a plain footer or a footer after a
 494-size extension area (keep the original's ending), the EC fp 32,784 zero
 bytes of padding, and the 0x0 placeholder headers (no pixels to replace); the
 256x2 32-bit hue BMPs with a correct, a 525 or a GIMP (+2 bytes) file size.
+
+## 13. Audio
+
+`Audio.uop` holds the sounds (MP3 under `data/audio/sounds/`, the Classic sounds as 16-bit PCM WAVs under
+`data/audio/legacysounds/`), the music (MP3 under `data/audio/music/`) and two tables mapping ids to them
+(`audio_sounds.csv`, `audio_music.csv`). `enhanced::audio` reads it; `enhanced::audio_edit` replaces and adds
+entries, accepting only the stream kinds the shipped package holds unless told otherwise (`audio::validate`),
+and adds table rows for new ids. An unchanged copy re-saves byte for byte. Formats, names, tables and the
+accepted list: `docs/agent_notes/ec_audio_formats.md`.
