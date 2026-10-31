@@ -29,6 +29,13 @@ Checked on the 2024 and 2026 ("fp") Classic and Enhanced Client folders.
 - Classic UOP frames hold only part of the bodies (277 in 2024, 311 in 2026); the others are in `anim*.mul`.
   `mobile_anim_cc` reads both.
 - The 2026 Classic `AnimationFrame6.uop` has entries zero-padded after the size stored in the header.
+- Container writer (`uocf::enhanced::animationframe::AmouFile`): parses and rewrites both kinds byte for byte
+  (every EC, KR and Classic entry; bytes after the header's total size are kept as `tail`). Only Enhanced/KR
+  frame data has an encoder; Classic `animationlegacyframe` pixels would need a Classic frame encoder.
+- Kingdom Reborn frame files are the Enhanced format, but UOKR.exe keys the hue table with the integer mean of
+  the three colour bytes where UOSA.exe uses byte 0. Layout, encoder rules and verification marks:
+  `lib/uocf/src/enhanced/ENHANCED_CLIENT_FILES.md` (`AnimationFrame*.uop` pixels) and
+  `scripts/dev-helpers/ec-research/ghidra-animation-frames`.
 
 ## Multi ids
 

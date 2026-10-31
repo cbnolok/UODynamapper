@@ -719,6 +719,47 @@ Facet sizes in the executable (`client_exe::facet_dimensions`,
   are opaque; an edge pixel keeps its palette RGB with alpha `255 * f >> 4`
   (straight alpha). A coded run past the box, a truncated stream or a palette
   index past the palette is an error.
+- Exact layout, as the encoder writes it (`animationframe::encode`; V =
+  confirmed in UOSA.exe and UOKR.exe, `ghidra-animation-frames`; D = holds in
+  every shipped EC and KR entry, checked by the real-file test
+  `animation_frame_encoding`; I = inferred). Header, 40 bytes LE: `AMOU` (D,
+  never checked: V), u32 version 1 (D, not read: V), u32 total size = entry
+  length (D, not read: V), u32 animation id = body (D, not read: V), i16 box
+  x0 y0 x1 y1 = union of the frame boxes and their mirrors, `x0 = min(x0,
+  -x1)`, `x1 = max(x1, -x0)` (D, not read: V), u32 colour count, colour
+  offset 40, frame count, frame offset `40 + 4 * colours` (D; the offsets are
+  read: V). Colours `[b0, b1, b2, flag]`, flag 0 hueable or 1 keep colour (D:
+  no other value), at most 256, no bound check on indices (V). Frame entries,
+  16 bytes: u16 action, u16 frame number, i16 box, u32 offset relative to the
+  entry's own address (V); sorted ascending by (action, number), which the
+  client's binary search needs (V); data contiguous in table order, no padding
+  or alignment (D); no empty frame (D). One entry holds one action; numbers
+  run direction-major `(direction - 3) * frame_count + frame + 1` (D; gaps
+  are allowed: I).
+- RLE encoder rules (D, 100% byte-identical re-encode): runs never cross a
+  row; a run starts with a leading edge pixel when its first pixel is an edge
+  and not the last pixel of the row; then at most 127 solids (`0x80 + 127`);
+  a trailing edge pixel when there are fewer than 127 solids and the pixel
+  right after them, in the same row, is an edge; skips are at most 127 and
+  run on to the box end. Coverage: 16 levels (`f` 1..15 edges, 16 solid, 0
+  transparent); an imported alpha takes the level whose decoded alpha
+  (`255 * f >> 4`) is nearest (I: exact on decoded pixels).
+- Kingdom Reborn: same file format (D), but UOKR.exe keys the hue table with
+  `(b0 + b1 + b2) / 3` where UOSA.exe uses `b0` (V), so a hueable non-grey
+  colour hues differently in the two clients; KR's empty atlas is filled with
+  `0x335555ff` (V).
+- Editing (`animationframe::folder`, `package`; `uocf-cli animframe`, the
+  inspector's Export / Replace frames): one entry as `n%05d.png` RGBA frames,
+  `n%05d_hue.png` hue masks (written when keep-colour pixels exist) and a
+  strict `animationframe.kdl` (body, action, frames per direction, box,
+  palette, per-frame anchor and size). With the palette kept, an unedited
+  folder re-encodes byte for byte; without it, the palette is built from the
+  pixels (sorted distinct colours, or a deterministic weighted median cut
+  above 256, split by hueable/keep weight) and only the pixels round trip:
+  the shipped palette order is not derivable from the images. A change of
+  frames per direction must be written to the `AnimationSequence.uop` entry
+  too (`package::write_sequence_frame_count`; sequence id = body unless
+  given).
 - Hues (`enhanced::hues`): a hueable pixel takes `table[red]` of the hue
   table (`hue{N:04}.bmp`, 256x2, top row, key `hue - 1`, partial flag 0x8000
   masks to 0x3fff) and keeps its edge alpha. The same rows form
