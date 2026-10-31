@@ -37,36 +37,26 @@ Editing `.uop` packages (`uop_container::package`):
 - **Patcher:** the official patcher re-downloads edited entries and deletes
   added ones. Keep edited packages in a client copy the patcher never runs on.
 - Compression (`uop_container::codec::encode_payload`): the client stores
-  classic zlib level-6 streams (`78 9C`). Classic zlib (libz-sys) at level 6
-  reproduces every client entry byte for byte (all entries of `waypoint`,
-  `MultiCollection`, `tileart`, `string_dictionary`,
-  `EffectDefinitionCollection`, `AnimationDefinition`, `AnimationSequence`,
-  `TerrainDefinition`, `facets`, `LocalizedStrings` and `facet4`). The repo
-  uses the zlib-ng backend of flate2, whose level 6 is often a few bytes
-  longer, so an edited entry leaves its slot and moves to the end of the file.
-  `encode_payload` therefore keeps the smallest of levels 6..=9
-  (`ZLIB_LEVELS`). Re-compressed client entries that fit their stored size
-  (level 6 alone / levels 6..=9):
+  classic zlib level-6 streams (`78 9C`). `encode_payload` compresses zlib
+  entries with classic zlib's `compress2` at level 6 (`libz-sys` with the
+  `static` feature, built from its bundled zlib 1.3.2 source, so the system
+  zlib never decides the bytes). It reproduces every zlib entry byte for byte,
+  so a re-compressed unchanged entry always keeps its slot:
 
-  | Package | Entries | zlib-ng 6 | zlib-ng 6..=9 |
-  | --- | ---: | ---: | ---: |
-  | `waypoint.uop` | 1 | 0 | 1 |
-  | `MultiCollection.uop` | 863 | 448 | 800 |
-  | `tileart.uop` | 37,756 | 4,811 | 35,176 |
-  | `string_dictionary.uop` | 1 | 1 | 1 |
-  | `EffectDefinitionCollection.uop` | 269 | 1 | 27 |
-  | `AnimationDefinition.uop` | 1,102 | 17 | 1,089 |
-  | `AnimationSequence.uop` | 370 | 322 | 370 |
-  | `TerrainDefinition.uop` | 201 | 78 | 189 |
-  | `facets.uop` | 7 | 3 | 5 |
-  | `LocalizedStrings.uop` | 8 | 1 | 7 |
-  | `facet4.uop` | 529 | 481 | 529 |
+  | Client | Packages | zlib entries | Exact (classic 6) | Fit, old encoder |
+  | --- | ---: | ---: | ---: | ---: |
+  | Enhanced | 40 | 185,253 | 185,253 | 158,228 |
+  | Kingdom Reborn | 34 | 104,911 | 104,911 | 91,479 |
+  | Classic (UOP) | 9 with zlib | 48,604 | 48,604 | 40,452 |
 
-  Level 9 alone fits 783 multis and 34,949 tileart records; levels 1..=9 add
-  one tileart record; miniz_oxide level 6 fits only 411 tileart records. An
-  edited v5 entry also trades its ~134-byte signature header for the 12-byte
-  timestamp header, so it nearly always fits. Switching the backend to classic
-  zlib (a flate2 feature change) would give exact client bytes.
+  The old encoder (flate2's zlib-ng backend, smallest of levels 6..=9) matched
+  485 Enhanced entries exactly. The smallest of classic levels 6..=9 matches
+  only 63,442, so there is no level fallback. No client package uses the
+  Mythic or zlib+BWT flags. Decompression, and every other flate2 user, keeps
+  the zlib-ng backend: it is native zlib-ng (`zng_`-prefixed symbols) and
+  shares no global symbol with classic zlib. An edited v5 entry also trades its
+  ~134-byte signature header for the 12-byte timestamp header, so it nearly
+  always fits.
 
 `string_dictionary.uop`:
 
@@ -692,6 +682,54 @@ Editing `.uop` packages (`uop_container::package`):
   `100000` danger, `100042` city, `100045` dungeon, `100053` moongate,
   `100060` shrine, and the shop/service icon range. These icon ids are display
   choices, not proven fields in the compact `waypoint.uop` records.
+
+`LegacyTerrain.uop` (`enhanced::legacy_terrain`):
+
+- 2,723 zlib entries `data/definitions/legacyterrain/%08d.legacyterrain`, one
+  UTF-8 XML document per Classic land tile, numbered by the land tile id (the
+  `id` attribute on every entry): `<legacyTerrain><terrainType id name
+  texMap><typeFlags>` with empty flag elements `impassable` (863), `surface`
+  (117), `nohouse` (94), `wet` (67), `wall` (39), `mongen` (3) and
+  `no_diagonal` (1). No BOM, XML declaration, comment or entity; CRLF line
+  breaks; 21 whitespace shapes (four-space or tab indentation,
+  `<typeFlags />` or `<typeFlags/>`, stray tabs and trailing spaces, a few
+  blank last lines). The client's reader of these files was not traced.
+- Against the Classic `tiledata.mul` (HS layout, 64-bit flags) of the same
+  land tile: `name` is the land tile name and `texMap` its texture id on all
+  2,723 entries, and six flags match a land flag bit on all of them:
+  impassable `0x40`, surface `0x200`, wet `0x80`, wall `0x10`, mongen
+  `0x10000`, nohouse `0x1_0000_0000`. `no_diagonal` matches no bit.
+- Model: `LegacyTerrainType` (id, name, tex_map, flags in document order) is
+  the typed definition. `LegacyTerrainDocument` pairs it with a private
+  formatting layer that holds every byte outside the typed values: the
+  prolog, whitespace and comments between elements, attribute order, spacing
+  around `=`, quote character, the stored spelling of each value, the
+  self-closing style and the epilog. A schema-specific scanner fills both; a
+  generic XML event round trip was not used because the edits need
+  formatting rules, and a typed model plus trivia keeps them in one place.
+- Writing: `to_bytes` rebuilds the document from the two, so every client
+  entry writes back byte for byte (2,723 of 2,723). An edited document keeps
+  its style: a value keeps its stored spelling while it still means the typed
+  value, else it is written fresh and escaped for its quote. A removed flag
+  drops its line. An added flag copies the formatting of a stored flag, or,
+  without one, goes one indentation level below `<typeFlags>`, which opens.
+  Removing every flag gives back `<typeFlags/>` in the flags' closing style.
+  `LegacyTerrainDocument::new` formats like the most common client shape,
+  and `with_terrain` copies another document's formatting.
+- Package: `read_legacy_terrain` and `read_legacy_terrain_documents` (fails
+  on an entry that is not the entry of its id), `apply_legacy_terrain_edits`
+  and `write_legacy_terrain_package(source, output, documents, removed)`
+  replace, add and remove entries in a copy of the package. Unchanged
+  documents are skipped. A new entry takes the package's compression, and
+  edited entries get a timestamp data block header.
+- Editing: the inspector's UOP browser shows the definition and XML of a
+  selected `LegacyTerrain.uop` entry. Its **Edit LegacyTerrain.uop** button
+  opens a table of every definition (name, texMap, flag checkboxes;
+  add, duplicate, delete; undo) that saves a copy of the package.
+- Tests: unit tests in `legacy_terrain.rs`. The ignored
+  `legacy_terrain_client_file` checks every client entry byte for byte,
+  re-parses every entry after each flag toggle, and checks that a rewritten
+  package changes only the edited entries.
 
 `Texture.uop` and `LegacyTexture.uop`:
 

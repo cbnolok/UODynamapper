@@ -20,6 +20,7 @@ pub mod hues;
 pub mod hues_mul_uop;
 pub mod localized_strings;
 pub mod mobile_body;
+pub mod legacy_terrain;
 pub mod legacy_terrain_map;
 pub mod multis;
 pub mod string_dictionary;

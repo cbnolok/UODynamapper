@@ -8,6 +8,7 @@ use uocf::enhanced::waypoints::{
 };
 use crate::logic::waypoint_editor::{WaypointDocument, WaypointField};
 use super::UOP_PATCHER_NOTE;
+use super::legacy_terrain;
 
 const UOP_BROWSER_PACKAGE_PANEL_WIDTH: f32 = 200.0;
 const UOP_BROWSER_ENTRY_PANEL_WIDTH: f32 = 350.0;
@@ -167,6 +168,8 @@ pub fn ui_uop_browser(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut e
                 // Specialized Visualizers
                 if is_waypoint_payload(hash, &resolved_name) {
                     ui_integrated_waypoints_view(app, ui, file, &loaded_uop.path);
+                } else if legacy_terrain::is_legacy_terrain_package(&loaded_uop.path) {
+                    legacy_terrain::ui_legacy_terrain_view(app, ui, file, &loaded_uop.path, &loaded_uop.package);
                 } else if resolved_name.contains("tileart") && resolved_name.ends_with(".bin") {
                     ui_integrated_tileart_view(app, ctx, ui, file);
                 } else if resolved_name.contains("terraindefinition") && resolved_name.ends_with(".bin") {

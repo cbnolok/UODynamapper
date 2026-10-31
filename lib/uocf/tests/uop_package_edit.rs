@@ -1,5 +1,6 @@
 //! Entry edits of UOP packages (add, remove, list) and the layout-preserving writer (`SaveLayout::Preserve`), on
-//! hand-built packages laid out like the client's and on every package of a real client.
+//! hand-built packages laid out like the client's and on every package of a real client, and the zlib encoder on
+//! every zlib entry of a real client.
 //!
 //! The client directories come from the variables in `common::CLIENT_DIR_ENVS`.
 
@@ -10,7 +11,8 @@ use std::io::{self, BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use uocf::uop_container::data_block_header::{DataBlockHeader, DataBlockHeaderKind};
-use uocf::uop_container::file::CompressionFlag;
+use rayon::prelude::*;
+use uocf::uop_container::file::{CompressionFlag, UopFile};
 use uocf::uop_container::hash::{hash_data_block, hash_file_name_single};
 use uocf::uop_container::package::{FileReplacement, LoadMode, NewEntryCompression, SaveLayout, UopPackage};
 
@@ -449,4 +451,36 @@ fn client_packages_resave_byte_for_byte_and_replace_one_entry_in_place() {
         fs::remove_dir_all(out).unwrap();
     }
     assert!(checked > 0, "set {} to a client directory", common::CLIENT_DIR_ENVS.join(" and/or "));
+}
+
+/// Every zlib entry of every package of the client directories re-compresses (`encode_payload`, classic zlib level
+/// 6) to its stored bytes.
+#[test]
+#[ignore = "needs a real client: set UO_EC_CLIENT_DIR and/or UO_CC_CLIENT_DIR and run with --ignored"]
+fn client_zlib_entries_recompress_byte_for_byte() {
+    let mut checked = 0usize;
+    for env in common::CLIENT_DIR_ENVS {
+        let Some(dir) = std::env::var_os(env) else { continue };
+        for path in client_packages(Path::new(&dir)) {
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            let package = UopPackage::load(&path).unwrap();
+            let files: Vec<&UopFile> = package
+                .iter_files()
+                .filter(|file| !file.is_empty_slot() && file.compression() == CompressionFlag::Zlib)
+                .collect();
+            let differing: Vec<u64> = files
+                .par_iter()
+                .filter_map(|file| {
+                    let recompressed = UopFile::new()
+                        .create_file_from_bytes(&file.unpack().unwrap(), file.filename_hash(), CompressionFlag::Zlib)
+                        .unwrap();
+                    (recompressed.data() != file.data()).then_some(file.filename_hash())
+                })
+                .collect();
+            println!("{env}\t{name}\t{} zlib entries\t{} differ", files.len(), differing.len());
+            assert!(differing.is_empty(), "{env} {name}: entries {differing:016X?} re-compress to other bytes");
+            checked += files.len();
+        }
+    }
+    assert!(checked > 0, "no zlib entries: set {} to a client directory", common::CLIENT_DIR_ENVS.join(" and/or "));
 }

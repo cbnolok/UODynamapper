@@ -39,6 +39,7 @@ indexmap = "2.14.2"
 log = { version = "0.4", default-features = false }
 adler32 = "1.2.0"
 flate2 = { workspace = true, features = ["zlib-ng"] }
+libz-sys.workspace = true
 rayon.workspace = true
 serde.workspace = true
 csv.workspace = true

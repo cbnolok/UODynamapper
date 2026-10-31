@@ -48,6 +48,10 @@ crossbeam-channel = "0.5"
 csv = "1.4"
 dds = "0.2"
 flate2 = { version = "1.1.10", default-features = false }
+# Classic zlib, built from source: the UOP entry encoder reproduces the client's level-6 streams with it. The
+# `stock-zlib` feature keeps it classic zlib even if another crate asks libz-sys for zlib-ng; `libc` exposes
+# `compress2`.
+libz-sys = { version = "1.1.31", default-features = false, features = ["libc", "static", "stock-zlib"] }
 image = { version = "0.25", default-features = false }
 libc = "0.2"
 log = "0.4.34"
