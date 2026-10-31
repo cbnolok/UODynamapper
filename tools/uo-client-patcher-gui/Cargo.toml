@@ -1,0 +1,25 @@
+[package]
+name = "uo-client-patcher-gui"
+version = "0.1.0"
+edition = "2024"
+#resolver = "3"
+
+[lints.clippy]
+collapsible_if = "allow"
+empty_line_after_doc_comments = "allow"
+manual_div_ceil = "allow"
+manual_is_multiple_of = "allow"
+needless_lifetimes = "allow"
+nonminimal_bool = "allow"
+too_many_arguments = "allow"
+
+[dependencies]
+eframe.workspace = true
+egui.workspace = true
+rfd.workspace = true
+gui-shared = { path = "../../lib/gui-shared" }
+udd-logging = { path = "../../lib/udd-logging" }
+uocf = { path = "../../lib/uocf" }
+color-eyre.workspace = true
+log.workspace = true
+serde.workspace = true

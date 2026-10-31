@@ -7249,6 +7249,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "uo-client-patcher-gui"
+version = "0.1.0"
+dependencies = [
+ "color-eyre",
+ "eframe",
+ "egui 0.37.0",
+ "gui-shared",
+ "log",
+ "rfd",
+ "serde",
+ "udd-logging",
+ "uocf",
+]
+
+[[package]]
 name = "uocf"
 version = "0.0.1"
 dependencies = [

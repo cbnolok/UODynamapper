@@ -22,6 +22,7 @@ members = [
     "tools/uddp-inspector-gui",
     "tools/uocf-inspector-gui",
     "tools/uop-dict-populator-gui",
+    "tools/uo-client-patcher-gui",
 ]
 
 [workspace.dependencies]
@@ -135,6 +136,7 @@ debug = false
 #[profile.profiling.package.uocf-cli]
 #[profile.profiling.package.uocf-inspector-gui]
 #[profile.profiling.package.uop-dict-populator-gui]
+#[profile.profiling.package.uo-client-patcher-gui]
 
 
 
@@ -291,6 +293,12 @@ debug-assertions = true
 #strip = "debuginfo"
 
 [profile.dev.package.uop-dict-populator-gui]
+opt-level = 1
+debug = "line-tables-only"
+debug-assertions = true
+#strip = "debuginfo"
+
+[profile.dev.package.uo-client-patcher-gui]
 opt-level = 1
 debug = "line-tables-only"
 debug-assertions = true
