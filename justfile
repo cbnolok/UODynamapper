@@ -64,8 +64,10 @@ wrapper_path := if is_windows == "true" {
     "scripts/build/common/rustc_wrapper.sh"
 }
 
-# Determine if sccache should be used
-sccache_requested := if sccache == "true" { "true" } else { is_ci }
+# Determine if sccache should be used. CI uses it except on Windows: sccache expands cargo's @argfile and spawns rustc
+# with every argument, and with one -L per dependency build directory that passes Windows' 32767-character command
+# line limit (os error 206).
+sccache_requested := if sccache == "true" { "true" } else if is_windows == "true" { "false" } else { is_ci }
 sccache_available := if has_sccache != "" { "true" } else { "false" }
 sccache_effective := if sccache_requested == "true" { sccache_available } else { "false" }
 
@@ -174,10 +176,12 @@ rustflags_profile_nightly_musl := ""
 workspace_dir        := justfile_directory()
 remap_workspace_flag := if replace(workspace_dir, " ", "") == workspace_dir { " --remap-path-prefix=" + workspace_dir + "=." } else { "" }
 
+# MSVC always writes separate .pdb files, and the windows-gnu targets reject split-debuginfo as unstable.
+split_debuginfo_flag := if is_windows == "true" { "" } else { " -Csplit-debuginfo=packed" }
 # Specialized RUSTFLAGS for different build types (exported to be accessible in shell commands)
-rustflags_debug_common              := linker_debug_flags + " -Csplit-debuginfo=packed -Csymbol-mangling-version=v0 -Cembed-bitcode=no"   # llvm bitcode is unneeded since we are not using LTO in debug
-rustflags_optimized_common_stable   := linker_optimized_flags_stable  + remap_workspace_flag + " -Csplit-debuginfo=packed -Csymbol-mangling-version=v0"
-rustflags_optimized_common_nightly  := linker_optimized_flags_nightly + remap_workspace_flag + " -Csplit-debuginfo=packed -Csymbol-mangling-version=v0" +\
+rustflags_debug_common              := linker_debug_flags + split_debuginfo_flag + " -Csymbol-mangling-version=v0 -Cembed-bitcode=no"   # llvm bitcode is unneeded since we are not using LTO in debug
+rustflags_optimized_common_stable   := linker_optimized_flags_stable  + remap_workspace_flag + split_debuginfo_flag + " -Csymbol-mangling-version=v0"
+rustflags_optimized_common_nightly  := linker_optimized_flags_nightly + remap_workspace_flag + split_debuginfo_flag + " -Csymbol-mangling-version=v0" +\
                                         " -Zshare-generics=y -Zlocation-detail=none"
 # Windows targets require unwind tables: rustc rejects -Cforce-unwind-tables=no there.
 no_unwind_tables_flag               := if is_windows == "true" { "" } else { " -Cforce-unwind-tables=no" }

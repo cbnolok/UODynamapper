@@ -16,6 +16,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # .cargo/config.toml sets a developer's local target-dir; CI builds into ./target, where the package recipes look.
+  CARGO_TARGET_DIR: target
   CARGO_INCREMENTAL: 0
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   SCCACHE_GHA_ENABLED: "true"
@@ -157,6 +159,7 @@ jobs:
             -w /work \
             -e HOST_UID="$(id -u)" \
             -e HOST_GID="$(id -g)" \
+            -e CARGO_TARGET_DIR=target \
             alpine:3.20 \
             sh -eu -c '
               apk add --no-cache \
@@ -201,6 +204,7 @@ jobs:
             -w /work \
             -e HOST_UID="$(id -u)" \
             -e HOST_GID="$(id -g)" \
+            -e CARGO_TARGET_DIR=target \
             alpine:3.20 \
             sh -eu -c '
               apk add --no-cache \
@@ -242,9 +246,6 @@ jobs:
         uses: dtolnay/rust-toolchain@nightly
         with:
           components: rust-src
-
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Install Just
         uses: extractions/setup-just@v2
@@ -301,9 +302,6 @@ jobs:
           targets: x86_64-pc-windows-gnu
           components: rust-src
 
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.9
-
       - name: Install Just
         uses: extractions/setup-just@v2
 
@@ -355,9 +353,6 @@ jobs:
         with:
           targets: aarch64-pc-windows-msvc
           components: rust-src
-
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Install Just
         run: cargo install just --locked
