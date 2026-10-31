@@ -566,6 +566,10 @@ test:
     @echo "Running all workspace tests..."
     cargo test --workspace
 
+# Rebuild the debug workspace, tests and dynamapper, then delete the debug artifacts none of them uses.
+sweep-debug *args:
+    python3 scripts/build/sweep_debug_target.py {{args}}
+
 # Remove Cargo and release packaging build artifacts.
 clean:
     @echo "Removing Cargo build artifacts and artifact/ packages..."
