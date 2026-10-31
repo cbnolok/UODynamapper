@@ -271,3 +271,6 @@ wgpu-types = { version = "30", default-features = false, features = ["web"] }
 libc = { version = "0.2", features = ["extra_traits"] }
 
 ### END HAKARI SECTION
+
+[lints]
+workspace = true

@@ -185,10 +185,10 @@ rustflags_debug_common              := linker_debug_flags + " -Csplit-debuginfo=
 rustflags_optimized_common_stable   := linker_optimized_flags_stable  + remap_workspace_flag + " -Csplit-debuginfo=packed -Csymbol-mangling-version=v0"
 rustflags_optimized_common_nightly  := linker_optimized_flags_nightly + remap_workspace_flag + " -Csplit-debuginfo=packed -Csymbol-mangling-version=v0" +\
                                         " -Zshare-generics=y -Zlocation-detail=none"
-export RUSTFLAGS_RELEASE_STABLE     := rustflags_optimized_common_stable  +\
-                                        " -Cforce-unwind-tables=no"
-export RUSTFLAGS_RELEASE_NIGHTLY    := rustflags_optimized_common_nightly +\
-                                        " -Cforce-unwind-tables=no"
+# Windows targets require unwind tables: rustc rejects -Cforce-unwind-tables=no there.
+no_unwind_tables_flag               := if is_windows == "true" { "" } else { " -Cforce-unwind-tables=no" }
+export RUSTFLAGS_RELEASE_STABLE     := rustflags_optimized_common_stable  + no_unwind_tables_flag
+export RUSTFLAGS_RELEASE_NIGHTLY    := rustflags_optimized_common_nightly + no_unwind_tables_flag
 export RUSTFLAGS_PROFILE_STABLE     := rustflags_optimized_common_stable  +\
                                         " -Cforce-frame-pointers=yes -Cembed-bitcode=no"
 export RUSTFLAGS_PROFILE_NIGHTLY    := rustflags_optimized_common_nightly +\
