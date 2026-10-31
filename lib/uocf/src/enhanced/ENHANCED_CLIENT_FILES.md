@@ -412,9 +412,12 @@ Facet sizes in the executable (`client_exe::facet_dimensions`,
   classic-style art. `tilemeta` stores that bit as
   `TileMetaItemTile::ec_art_flags` (`uses_new_art`). Newer Classic art often
   has no block-0 image. The project packs block 0 only (`tex_art_ec`) and takes
-  Classic art from the Classic Client (`tex_art_cc`), so a renderer can draw
-  KR art for every item that has it, or only for `UseNewArt` items as the
-  official client does. Each block stores
+  Classic art from the Classic Client (`tex_art_cc`). UODynamapper's Enhanced
+  mode deliberately ignores `UseNewArt`: it draws KR art for every item that
+  has a block-0 slot, then the Classic art, then magenta. The flag is off for
+  almost every item, including items whose KR art the client still packs, so
+  the client disabled that art on purpose; `ec_art_flags` stays as
+  informational client data. Each block stores
   `field_04` (formerly `unk1`), the shader name index, texture items, Technique
   (i32 values, formerly `unk8`) and Tweaks (f32 values, formerly `unk9`).
 - Each texture item stores string offset, `source_kind` (formerly `unk4`),
@@ -1267,7 +1270,7 @@ Runtime:
   `ec_art_flags`) is rejected with a repack message.
 - Item records store EC and CC texture ids, crop starts, offsets, radar color,
   flags, height, visual kind, names, and `ec_art_flags` (bit 0: tileart
-  `flags2` `UseNewArt`).
+  `flags2` `UseNewArt`; informational, the renderer ignores it).
 - Texture refs store texture id, logical family, physical package, stable role,
   a reserved byte (format 1's file-name speculative role), block/item index,
   primary/auxiliary flags, stretch,

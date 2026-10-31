@@ -890,6 +890,20 @@ fn resolve_ec_static_visual_kind(
     }
 }
 
+/// A static is wet with the classic IsWet tiledata flag, in both modes. Enhanced mode adds the EC
+/// term: the item's EC block material uses `UOWaterShader` (Enhanced Client water and lava).
+fn static_tile_is_wet(
+    tilemeta: Option<&udd_assets::tilemeta::TileMetaItemTile>,
+    tilemeta_package: Option<&udd_assets::tilemeta::TileMetaPackage>,
+    art_id: u32,
+    art_source: Option<ClientTextureSource>,
+) -> bool {
+    let classic_wet = tilemeta.is_some_and(|meta| meta.flags & TILE_FLAG_WET != 0);
+    let ec_wet = art_source == Some(ClientTextureSource::Ec)
+        && tilemeta_package.is_some_and(|package| package.uses_water_shader(art_id));
+    classic_wet || ec_wet
+}
+
 fn static_hue_payload(hue_id: u16) -> (u32, u32) {
     if hue_id == 0 {
         (0, 0)
@@ -928,7 +942,7 @@ pub struct SpriteInstance {
     pub priority_z_units: f32,
     pub sort_bias_ordinal: u32,
     /// Tiledata flags packed for the GPU.
-    /// Bit 0: is_wet (IsWet tiledata flag → animated water UV distortion in sprite shader).
+    /// Bit 0: is_wet (`static_tile_is_wet` → animated water UV distortion in sprite shader).
     /// Bit 1: ground surface blend; bits 2..9: NW,N,NE,W,E,SW,S,SE same-material neighbors.
     pub is_wet_flags: u32,
     pub hue_id: u32,
@@ -2130,10 +2144,8 @@ fn emit_static_render_tile(
         world_x: render_tile.world_x,
         world_z: render_tile.world_z,
         depth_class: resolve_static_depth_class(tilemeta),
-        // Only the classic wet flag. EC tileart no longer adds wetness: the file-name liquid roles
-        // (ripple, foam, waterfall, lava bubble ...) are gone, and taking it from the water shader is
-        // an open decision.
-        is_wet_flags: u32::from(tilemeta.map_or(false, |meta| meta.flags & TILE_FLAG_WET != 0)),
+        is_wet_flags: u32::from(static_tile_is_wet(tilemeta, tilemeta_package, render_tile.graphic as u32,
+            frame.art_source)),
         base_world_y: (render_tile.z as f32) * frame.height_scale,
     };
 
@@ -3293,6 +3305,18 @@ mod tests {
         assert!(ec_static_camera_quad(Some(&solid)));
         assert!(!ec_static_camera_quad(Some(&wet)));
         assert!(!ec_static_camera_quad(None));
+    }
+
+    #[test]
+    fn the_classic_wet_flag_marks_statics_wet_in_both_modes() {
+        const ART_ID: u32 = 0x1797;
+        let wet = item_tile_with_flags(TILE_FLAG_WET, udd_assets::tilemeta::TileMetaItemVisualKind::RegularArt);
+        let dry = item_tile_with_flags(0, udd_assets::tilemeta::TileMetaItemVisualKind::RegularArt);
+        for source in [None, Some(ClientTextureSource::Cc), Some(ClientTextureSource::Ec)] {
+            assert!(static_tile_is_wet(Some(&wet), None, ART_ID, source));
+            assert!(!static_tile_is_wet(Some(&dry), None, ART_ID, source));
+            assert!(!static_tile_is_wet(None, None, ART_ID, source));
+        }
     }
 
     #[test]

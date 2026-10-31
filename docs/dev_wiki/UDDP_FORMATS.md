@@ -49,7 +49,7 @@ The long-term schema direction is to keep CC and EC ownership/behavior separate 
 - `metadata/land.bin`: Dense array of `TileMetaLandTile` structs.
 - `metadata/items.bin`: Dense array of `TileMetaItemTile` structs.
 - `metadata/item_texture_refs_index.bin` and `metadata/item_texture_refs.v3.bin`: the per-item span table and the EC tileart texture refs (`TileMetaItemTextureRef`, 24 bytes). The `.v3` in the path is `TILEMETA_FORMAT_VERSION` 3. Since format 2, `stable_role` is the shader input the item feeds, from the block's shader name and the item position (`EcMaterialStableRole::for_texture_position`; the table is in `lib/uocf/src/enhanced/ENHANCED_CLIENT_FILES.md` §5). Format 3 adds `TileMetaItemTile::ec_art_flags`. The loader rejects format 1 (`metadata/item_texture_refs.bin`, roles guessed from file names) and format 2 (`.v2`, no `ec_art_flags`) and asks for a repack. Byte 0x0F, format 1's file-name `speculative_role`, is reserved (zero). Flags: `AUXILIARY` (1) = the item is not at its block's primary position (1 for `UOWaterShader`, else 0); `PRIMARY_SELECTED` (2) = the block-0 item `ec_texture_id` comes from, or a block-1/2 item with the same id.
-- `metadata/item_materials.json`: per-item shader block material.
+- `metadata/item_materials.json`: per-item shader block material. `TileMetaPackage::uses_water_shader(art_id)` reads it: the block-0 material is `UOWaterShader` (322 items in the shipped client), which makes the item wet in Enhanced mode.
 
 ### 2.1 `TileMetaLandTile` Struct (48 Bytes, 8-Byte Aligned)
 
@@ -82,7 +82,7 @@ Represents static map items and artwork.
 | 0x13 | `u8` | `value` | Item value. |
 | 0x14 | `i8` | `height` | Z-buffer physical height. |
 | 0x15 | `u8` | `_pad1` | Padding. |
-| 0x16 | `u16` | `ec_art_flags` | `TILEMETA_ITEM_EC_ART_FLAG_*` from the tileart record. Bit 0 (`USE_NEW_ART`): `flags2` has `UseNewArt` (bit 19), so the official EC draws the block-0 KR art (`tex_art_ec`); otherwise it draws classic-style art. 795 items in the shipped client. Read it with `TileMetaItemTile::uses_new_art` or `TileMetaPackage::uses_new_art(art_id)`. The `UseNewArt`-named bit in `flags` is not it: `flags` merges the Classic tiledata flags and the tileart `flags1`. |
+| 0x16 | `u16` | `ec_art_flags` | `TILEMETA_ITEM_EC_ART_FLAG_*` from the tileart record. Bit 0 (`USE_NEW_ART`): `flags2` has `UseNewArt` (bit 19), so the official EC draws the block-0 KR art (`tex_art_ec`); otherwise it draws classic-style art. 795 items in the shipped client. Read it with `TileMetaItemTile::uses_new_art` or `TileMetaPackage::uses_new_art(art_id)`. Informational client data: the renderer deliberately ignores it. The flag is off for almost every item, including items whose KR art the client still packs, so the client disabled that art on purpose; Enhanced mode draws KR art wherever `tex_art_ec` has a slot, then the Classic art, then magenta. The `UseNewArt`-named bit in `flags` is not it: `flags` merges the Classic tiledata flags and the tileart `flags1`. |
 | 0x18 | `[u8; 4]` | `radar_color` | RGBA minimap colors. |
 | 0x1C | `[u8; 20]`| `name` | Null-terminated classic ASCII name. |
 | 0x30 | `u32` | `ec_texture_id` | EC Texture slot ID. |

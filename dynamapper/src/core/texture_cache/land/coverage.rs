@@ -48,7 +48,7 @@ pub fn ec_land_shader_flags(package: &TexLandEcPackage, tile_id: u32) -> u16 {
     };
     let mut flags = 0u16;
     if package.source_material(material_id).and_then(|entry| entry.texture.as_ref())
-        .is_some_and(|texture| texture.shader_name.as_deref() == Some("UOWaterTerrainLayer")) {
+        .is_some_and(|texture| texture.shader_name.as_deref() == Some(uocf::enhanced::terrain_definition::WATER_TERRAIN_LAYER_SHADER)) {
         flags |= TERRAIN_SHADER_FLAG_REVIEWED_LIQUID;
     }
     let Some(details) = package.terrain_override_details_for(material_id) else {

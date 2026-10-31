@@ -17,6 +17,9 @@ pub struct Rg16u {
 
 pub const TERRAIN_SHADER_FLAG_SMOOTH: u16 = 1 << 0;
 pub const TERRAIN_SHADER_FLAG_FOLLOW_CENTER: u16 = 1 << 1;
+/// EC liquid terrain: the TerrainDefinition material is the water layer class (`UOWaterTerrainLayer`),
+/// or a reviewed `EcTerrainOverrides` liquid entry (all of which are water layer materials). The
+/// EC wetness flag; the `is_wet` bit carries the classic IsWet tiledata flag in classic mode only.
 pub const TERRAIN_SHADER_FLAG_REVIEWED_LIQUID: u16 = 1 << 2;
 
 impl Rg16u {
@@ -25,7 +28,7 @@ impl Rg16u {
     /// G channel high-byte layout (mirrored in atlas.wesl):
     ///   bits 0-3: `tex_size_bits` (texture source mode: 0=cc-small, 1=cc-big, 2=ec-atlas, 3=missing, 4=cc-atlas)
     ///   bits 4-6: `land_flags` (EC reviewed land policy/liquid hints)
-    ///   bit  7:   `is_wet` (tile has the IsWet tiledata flag → animated water effect)
+    ///   bit  7:   `is_wet` (classic mode: the IsWet tiledata flag → animated water effect)
     ///
     /// This packing must be manually unrolled in the WGSL shader logic.
     pub fn pack(

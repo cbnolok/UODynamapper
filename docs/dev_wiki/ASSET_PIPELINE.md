@@ -95,7 +95,7 @@ Stores Classic Client land/static atlas pages plus a sparse slot table keyed by 
 
 Stores Enhanced Client static/art textures from the shared EC texture classification pass: the block-0 `WorldArt` image of each item (`Texture.uop`), which is the KR art.
 
-- **KR art only.** The official EC draws an item's KR art only when its tileart record sets `UseNewArt` (795 items; `TileMetaPackage::uses_new_art`), otherwise classic-style art. The project does not use the EC's legacy-art set (`LegacyTexture.uop`): Classic art comes from `tex_art_cc.uddp`. On the plain clients 13,311 statics have a KR slot (all of them also have Classic art) and 23,216 have Classic art only.
+- **KR art only.** The official EC draws an item's KR art only when its tileart record sets `UseNewArt` (795 items; `TileMetaPackage::uses_new_art`), otherwise classic-style art. The renderer deliberately ignores that flag: it is off for almost every item, even where the client packs KR art, so the client disabled that art on purpose. Enhanced mode draws the KR art wherever a `tex_art_ec` slot exists, then the Classic art, then magenta. The project does not use the EC's legacy-art set (`LegacyTexture.uop`): Classic art comes from `tex_art_cc.uddp`. On the plain clients 13,311 statics have a KR slot (all of them also have Classic art) and 23,216 have Classic art only.
 - **Renderer fallback in Enhanced mode:** KR slot, then the `tex_art_cc` art at classic scale, then the client's magenta `missing.tga` (the reserved slot of `tex_aux_ec`).
 
 ### `tex_land_ec.uddp`

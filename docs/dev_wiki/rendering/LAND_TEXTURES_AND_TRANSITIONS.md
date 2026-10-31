@@ -56,23 +56,26 @@ This is why a renderer that uses only `texmaps.mul` can reproduce the base land 
 
 ## 4. Implications For UODynamapper
 
-Current practical state:
+Current practical state (`dynamapper/src/core/render/scene/world/land/draw_mesh.rs`, `dynamapper/src/core/texture_cache/land.rs`, `dynamapper/assets/shaders/world/land/`):
 
-- UODynamapper currently renders terrain from `texmaps.mul` data only.
-- This is sufficient for the main textured ground path.
-- It is not sufficient for full classic-fidelity land transitions.
+- Classic land mode (`land_texture_source = cc`) draws every land cell as a textured quad from `tex_land_cc.uddp` (`texmaps.mul`): the tile's tiledata texture id, or the tile id when that is 0. A cell without a packaged texmap is drawn as missing. Without the package, texmaps stream from the client's `texmaps.mul` (the same images).
+- Classic land art from `art.mul` (`tex_art_cc.uddp`) is drawn in one case only, through `classic_land_art_atlas`: a **flat wet** cell (IsWet tiledata flag, all four corners at the same height) whose texture id is 0 or its own tile id (`classic_land_art_payload_id`, `land.rs`; `use_classic_flat_wet_land_art`, `main.wesl`). Shoreline statics and the water under them then share the same source pixels. Sloped wet cells keep the texmap.
+- **Dry transition land art is not drawn.** Dry cells always use their texmap. The optional Classic smoothing (`cc_terrain_transitions`, off by default; `cc_transitions.wesl`) blends neighbouring dry texmaps procedurally across cell edges. It is not the authored transition art.
+- Enhanced land mode (`land_texture_source = ec`) draws terrain from `tex_land_ec.uddp` (TerrainDefinition materials and their layers) plus `tex_aux_ec.uddp` (secondary bases and alpha masks for the authored two-base blends). An unresolved EC route stays explicitly missing (section 5.0.1); it never falls back to texmaps or art.
+- Wetness: in Classic mode a land cell is wet from the IsWet tiledata flag. In Enhanced mode it is wet when its TerrainDefinition material is the water layer class (`UOWaterTerrainLayer`, `TERRAIN_SHADER_FLAG_REVIEWED_LIQUID`); the tiledata flag is not used there. On the shipped clients every IsWet land tile is also a water-layer tile (67 of 146).
 
-Immediate consequence:
+Consequences:
 
-- To match original content more closely, the renderer needs support for classic land art tiles from `art.mul`, at least for transition tiles.
+- Classic mode reproduces the base land materials and the flat wet art, but not the authored dry transition tiles, so Classic seams between dry materials differ from the original client.
+- Drawing those transitions would need the map-side choice the original client makes (art for flat cells, textured quads for sloped ones) applied to dry cells too, with the art from `tex_art_cc`.
 
 Architectural consequence:
 
 - "Land" is not a single asset source.
-- The runtime needs to treat these as separate but cooperating inputs:
+- The runtime treats these as separate but cooperating inputs:
   - logical land ids and corner heights from the map
-  - repeatable land textures from `texmaps.mul`
-  - transition and flat land art from `art.mul`
+  - repeatable land textures from `texmaps.mul` (Classic) or TerrainDefinition materials (Enhanced)
+  - flat land art from `art.mul`, today only for flat wet cells
 
 ## 5. How This Helps Interpret EC Files
 

@@ -87,6 +87,10 @@ pub const TILEMETA_FORMAT_VERSION: u32 = 3;
 
 /// `TileMetaItemTile::ec_art_flags`: the tileart record sets `UseNewArt` in `flags2` (bit 19), so the
 /// official Enhanced Client draws its block-0 KR art; without it the client draws classic-style art.
+///
+/// Informational only: the renderer deliberately ignores it. The flag is off for almost every item,
+/// including items whose KR art the client still packs, so the client disabled that art on purpose.
+/// Enhanced mode draws KR art wherever `tex_art_ec` has a slot, then the Classic art, then magenta.
 pub const TILEMETA_ITEM_EC_ART_FLAG_USE_NEW_ART: u16 = 1 << 0;
 
 /// Role of a tileart texture item: the shader input it feeds.
@@ -310,7 +314,8 @@ pub struct TileMetaItemTile {
     pub value: u8,
     pub height: i8,
     pub _pad1: u8,
-    /// `TILEMETA_ITEM_EC_ART_FLAG_*` bits from the tileart record.
+    /// `TILEMETA_ITEM_EC_ART_FLAG_*` bits from the tileart record. Informational client data: the
+    /// renderer does not read them (see `TILEMETA_ITEM_EC_ART_FLAG_USE_NEW_ART`).
     pub ec_art_flags: u16,
     pub radar_color: [u8; 4],
     pub name: [u8; 20],
@@ -354,7 +359,8 @@ impl TileMetaItemTile {
     }
 
     /// The tileart record sets `UseNewArt`: the official Enhanced Client draws this item's block-0
-    /// KR art (`tex_art_ec`), otherwise its classic-style art.
+    /// KR art (`tex_art_ec`), otherwise its classic-style art. The renderer deliberately ignores it
+    /// (see `TILEMETA_ITEM_EC_ART_FLAG_USE_NEW_ART`).
     pub fn uses_new_art(&self) -> bool {
         self.ec_art_flags & TILEMETA_ITEM_EC_ART_FLAG_USE_NEW_ART != 0
     }
@@ -516,9 +522,18 @@ impl TileMetaPackage {
     }
 
     /// Whether the official Enhanced Client draws the KR art (`tex_art_ec`) of `art_id`
-    /// (`TileMetaItemTile::uses_new_art`); false for an id outside the item table.
+    /// (`TileMetaItemTile::uses_new_art`); false for an id outside the item table. Informational:
+    /// the renderer deliberately ignores it (see `TILEMETA_ITEM_EC_ART_FLAG_USE_NEW_ART`).
     pub fn uses_new_art(&self, art_id: u32) -> bool {
         self.item_tile(art_id).is_some_and(TileMetaItemTile::uses_new_art)
+    }
+
+    /// Whether the EC block (`TILEMETA_EC_TEXTURE_BLOCK_INDEX`) material of `art_id` uses
+    /// `UOWaterShader`: the item is Enhanced Client water (or lava), so the EC renderer treats it as wet.
+    /// False when the item has no stored EC block material.
+    pub fn uses_water_shader(&self, art_id: u32) -> bool {
+        self.item_material(art_id, TILEMETA_EC_TEXTURE_BLOCK_INDEX)
+            .is_some_and(|material| material.shader_name.as_deref() == Some(uocf::enhanced::tileart::WATER_SHADER_NAME))
     }
 
     pub fn item_texture_refs(&self, tile_id: u32) -> &[TileMetaItemTextureRef] {
@@ -907,6 +922,27 @@ mod tests {
         for (version, path) in TILEMETA_OLDER_FORMAT_ITEM_TEXTURE_REF_ENTRY_PATHS {
             let message = package_with_refs_at(path).err().expect("reject an older tilemeta").to_string();
             assert!(message.contains(&format!("format {version}")) && message.contains("repack"), "{message}");
+        }
+    }
+
+    #[test]
+    fn water_shader_items_are_read_from_the_ec_block_material() {
+        use uocf::enhanced::tileart::{ArtMaterial, SPRITE_SHADER_NAME, WATER_SHADER_NAME};
+        const EC_WATER: u32 = 1;
+        const LEGACY_BLOCK_WATER: u32 = 2;
+        const SPRITE: u32 = 3;
+        const NO_MATERIAL: u32 = 4;
+        const LEGACY_BLOCK: u8 = 1;
+        let material = |block_index, shader: &str| ArtMaterial {
+            block_index, shader_name: Some(shader.to_owned()), ..ArtMaterial::default() };
+        let mut package = package_with_refs_at(TILEMETA_ITEM_TEXTURE_REF_ENTRY_PATH).expect("test package");
+        package.item_materials.insert(EC_WATER, vec![material(TILEMETA_EC_TEXTURE_BLOCK_INDEX, WATER_SHADER_NAME)]);
+        package.item_materials.insert(LEGACY_BLOCK_WATER, vec![
+            material(TILEMETA_EC_TEXTURE_BLOCK_INDEX, SPRITE_SHADER_NAME), material(LEGACY_BLOCK, WATER_SHADER_NAME)]);
+        package.item_materials.insert(SPRITE, vec![material(TILEMETA_EC_TEXTURE_BLOCK_INDEX, SPRITE_SHADER_NAME)]);
+        assert!(package.uses_water_shader(EC_WATER));
+        for art_id in [LEGACY_BLOCK_WATER, SPRITE, NO_MATERIAL] {
+            assert!(!package.uses_water_shader(art_id), "{art_id}");
         }
     }
 

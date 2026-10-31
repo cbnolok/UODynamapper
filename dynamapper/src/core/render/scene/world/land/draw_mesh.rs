@@ -828,12 +828,17 @@ pub fn sys_draw_spawned_land_chunks(
     // We use a flat Vec<u8> (0 or 1) for cache-friendly reads inside the closure.
     // The data comes from TileMetaPackageRes (tilemeta.uddp), which is always optional
     // because the package may not have been converted yet.
+    // Classic mode only: EC terrain is wet when its TerrainDefinition material is the water layer
+    // class (`TERRAIN_SHADER_FLAG_REVIEWED_LIQUID`, set by `coverage::ec_land_shader_flags`).
     //
     // Bit mask constant matching tiledata.mul / map_cc_flags_to_tilemeta().
     const TILEMETA_FLAG_WET: u64 = 0x80;
+    let classic_land_source =
+        frame_pacing.settings.graphics.land_texture_source == crate::configs::settings::ClientTextureSource::Cc;
     let wet_bits: Vec<u8> = frame_pacing
         .tilemeta
         .as_ref()
+        .filter(|_| classic_land_source)
         .map(|meta| {
             let land_tiles = meta.0.land_tiles();
             (0..LandTextureCache::MAX_TILE_ID)

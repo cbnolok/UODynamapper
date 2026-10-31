@@ -83,8 +83,8 @@ Current execution decisions:
 - Split and preserve these metadata axes everywhere they matter:
   - physical source package
   - logical family
-  - stable role
-  - speculative role
+  - stable role (`EcMaterialStableRole`, from the block shader and the item position)
+  - block and item position
   - reason and confidence
 - Extend tileart parsing so `Textures`-style refs are preserved instead of collapsing into lossy fallback buckets.
 - Preserve raw path, normalized path, and `texture_stretch` for tileart-linked refs.
@@ -196,7 +196,7 @@ Current execution decisions:
   - source package
   - logical family
   - stable role
-  - speculative role
+  - block and item position
   - reason
   - confidence
   - runtime routing
@@ -221,7 +221,7 @@ These need a person at the GUI or in a running client; the code side is done.
   - make explicit metadata override texture-extent inference when warranted
   - keep the rule inspectable
 - Single-land material mode for materials that are truly one-base by evidence.
-- Solid-land blend mode for materials with credible `Base`, `SecondaryBase`, and `AlphaMask` support.
+- Solid-land blend mode for materials with credible `Base`, `SecondaryBase`, `BlendAlpha`, and `CoverageAlpha` support.
 - Land-owned liquid mode with explicit uncertainty handling for ripple-like or normal-like support inputs.
 - Art-owned wet or liquid mode separate from terrain-liquid logic.
 - Extra-pass exploration only behind explicit feature gates and diagnostics.
@@ -282,13 +282,13 @@ These need a person at the GUI or in a running client; the code side is done.
 ### Future-Readiness Preservation
 
 - Preserve future blend candidates distinctly from generic support refs.
-- Preserve `NormalLike`, distortion-like, and flow-like candidates distinctly.
+- Preserve the water inputs `WaterBump`, `WaterReflection`, and `WaterFourthStage` distinctly.
 - Preserve extra-pass candidates such as waterfall, splash, foam, flare, glow, and lava bubbles.
 - Add an implementation-readiness field for preserved support refs with categories like:
   - `base-safe`
   - `blend-ready`
   - `liquid-ready`
-  - `normal-like experimental`
+  - `water-bump experimental`
   - `extra-pass only`
 
 ## Later
@@ -338,7 +338,7 @@ These need a person at the GUI or in a running client; the code side is done.
 - Add parser tests for:
   - tileart `Textures`-family classification
   - stable-role classification
-  - speculative-role tagging
+  - position-role tagging (`EcMaterialStableRole::for_texture_position`)
   - owner-reference census correctness
 - Add packer tests for:
   - sidecar integrity
