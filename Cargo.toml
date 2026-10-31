@@ -220,7 +220,7 @@ debug-assertions = true
 [profile.dev.package.uocf]
 opt-level = 1
 #codegen-units = 1
-debug = true
+debug = "line-tables-only" # full debug info here was linked into every test binary (~1.6 GB each)
 debug-assertions = true
 strip = false
 
