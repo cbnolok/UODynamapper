@@ -1409,6 +1409,9 @@ fn show_ec_uop_animationframe_entry_frames(
                 );
             }
 
+            if let Some(action) = entry.action_id {
+                show_animationframe_replace_controls(app, ui, entry, body_id, action);
+            }
             if frame_count == 0 {
                 ui.label("Frame count unavailable until payload is decoded.");
             }
@@ -1431,6 +1434,169 @@ fn show_ec_uop_animationframe_entry_frames(
                 }
             }
         });
+}
+
+/// Name of the sequence package searched next to an AnimationFrame package.
+const ANIMATION_SEQUENCE_UOP_NAME: &str = "AnimationSequence.uop";
+const UOP_FILE_FILTER: (&str, &[&str]) = ("UOP package", &["uop"]);
+
+/// "Replace frames": export the entry as PNGs plus `animationframe.kdl`, or encode such a folder back into a copy
+/// of the package (and of `AnimationSequence.uop` when the frames per direction change).
+fn show_animationframe_replace_controls(
+    app: &mut UopInspectorApp,
+    ui: &mut egui::Ui,
+    entry: &AnimationFrameUopEntry,
+    body_id: u32,
+    action: u16,
+) {
+    ui.horizontal(|ui| {
+        if ui
+            .button("Export frames...")
+            .on_hover_text(
+                "Writes the frames as RGBA PNGs plus animationframe.kdl (anchors, frame numbers, palette) into a new \
+                 subfolder.",
+            )
+            .clicked()
+        {
+            if let Some(dir) = crate::dialog::pick_folder() {
+                app.status_message = match export_animationframe_folder(app, entry, body_id, action, &dir) {
+                    Ok(message) => message,
+                    Err(error) => format!("Frame export failed: {error:#}"),
+                };
+            }
+        }
+        if ui
+            .button("Replace frames...")
+            .on_hover_text(format!(
+                "Encodes a folder written by Export frames (edited) and writes a copy of the package with this entry \
+                 replaced; the opened package is refused as the target. When the frames per direction change, a copy \
+                 of the {ANIMATION_SEQUENCE_UOP_NAME} next to the package is written too.\n{}",
+                crate::ui::UOP_PATCHER_NOTE
+            ))
+            .clicked()
+        {
+            if let Some(dir) = crate::dialog::pick_folder() {
+                app.status_message = match replace_animationframe_entry(app, entry, body_id, action, &dir) {
+                    Ok(message) => message,
+                    Err(error) => format!("Frame replace failed: {error:#}"),
+                };
+            }
+        }
+    });
+}
+
+fn animationframe_package_path(app: &UopInspectorApp, entry: &AnimationFrameUopEntry) -> eyre::Result<PathBuf> {
+    app.uop_cache
+        .loaded_uops
+        .get(entry.package_index)
+        .map(|loaded| loaded.path.clone())
+        .ok_or_else(|| eyre::eyre!("AnimationFrame package {} is no longer loaded", entry.package_index))
+}
+
+/// The sequence package next to `package`, and the action's frames per direction there (sequence id = body).
+fn animationframe_sequence(package: &Path, body_id: u32, action: u16) -> eyre::Result<Option<(PathBuf, u32)>> {
+    let Some(path) = package
+        .parent()
+        .and_then(|dir| uocf::utils::path::find_file_ignoring_case(dir, ANIMATION_SEQUENCE_UOP_NAME))
+    else {
+        return Ok(None);
+    };
+    let sequences = uocf::uop_container::package::UopPackage::load(&path)?;
+    let dialect = uocf::enhanced::client_dialect::ClientDialect::of_package_path(&path);
+    let count =
+        uocf::enhanced::animationframe::package::sequence_frame_count(&sequences, body_id, u32::from(action), dialect)?;
+    Ok(count.map(|count| (path, count)))
+}
+
+fn export_animationframe_folder(
+    app: &UopInspectorApp,
+    entry: &AnimationFrameUopEntry,
+    body_id: u32,
+    action: u16,
+    dir: &Path,
+) -> eyre::Result<String> {
+    let payload = animationframe_payload(app, entry)?;
+    let package = animationframe_package_path(app, entry)?;
+    let frames_per_direction = animationframe_sequence(&package, body_id, action)?.map(|(_, count)| count);
+    let output = dir.join(format!("body{body_id:05}_action{action:02}"));
+    let sidecar = uocf::enhanced::animationframe::folder::export_folder(
+        &payload,
+        body_id,
+        action,
+        frames_per_direction,
+        true,
+        &output,
+    )?;
+    Ok(format!("Exported {} frames to {}", sidecar.frames.len(), output.display()))
+}
+
+fn replace_animationframe_entry(
+    app: &UopInspectorApp,
+    entry: &AnimationFrameUopEntry,
+    body_id: u32,
+    action: u16,
+    dir: &Path,
+) -> eyre::Result<String> {
+    use uocf::animation_sequence::STORED_DIRECTION_COUNT;
+    use uocf::enhanced::animationframe::package::{write_entry, write_sequence_frame_count};
+
+    let imported = uocf::enhanced::animationframe::folder::import_folder(dir)?;
+    let sidecar = &imported.sidecar;
+    eyre::ensure!(
+        (sidecar.body, sidecar.action) == (body_id, action),
+        "the folder holds body {} action {}, not body {body_id} action {action}",
+        sidecar.body,
+        sidecar.action
+    );
+    let package = animationframe_package_path(app, entry)?;
+    let frames = sidecar.frames.len();
+    let per_direction = sidecar.frames_per_direction.or_else(|| {
+        let count = u32::try_from(frames).ok()?;
+        (count % STORED_DIRECTION_COUNT == 0).then_some(count / STORED_DIRECTION_COUNT)
+    });
+    let sequence_change = match animationframe_sequence(&package, body_id, action)? {
+        Some((path, current)) if per_direction != Some(current) => {
+            let new = per_direction.ok_or_else(|| {
+                eyre::eyre!(
+                    "{frames} frames are not a multiple of {STORED_DIRECTION_COUNT} directions: set \
+                     frames-per-direction= in the sidecar"
+                )
+            })?;
+            Some((path, current, new))
+        }
+        _ => None,
+    };
+
+    let file_name = package.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+    let Some(output) = crate::dialog::file_dialog()
+        .add_filter(UOP_FILE_FILTER.0, UOP_FILE_FILTER.1)
+        .set_file_name(&file_name)
+        .save_file()
+    else {
+        return Ok("Frame replace cancelled".to_string());
+    };
+    let mut sequence_message = String::new();
+    if let Some((sequence_path, current, new)) = sequence_change {
+        let Some(sequence_output) = crate::dialog::file_dialog()
+            .set_title(format!("{ANIMATION_SEQUENCE_UOP_NAME}: {current} -> {new} frames per direction"))
+            .add_filter(UOP_FILE_FILTER.0, UOP_FILE_FILTER.1)
+            .set_file_name(ANIMATION_SEQUENCE_UOP_NAME)
+            .save_file()
+        else {
+            return Ok("Frame replace cancelled: the frames per direction change and need a sequence copy".to_string());
+        };
+        let dialect = uocf::enhanced::client_dialect::ClientDialect::of_package_path(&sequence_path);
+        write_sequence_frame_count(&sequence_path, &sequence_output, body_id, u32::from(action), new, dialect)?;
+        sequence_message = format!("; {current} -> {new} frames per direction in {}", sequence_output.display());
+    }
+    let change = write_entry(&package, &output, body_id, action, &imported.payload)?;
+    let report = imported.report;
+    Ok(format!(
+        "Wrote {} ({frames} frames, {} colours{}, entry {change:?}){sequence_message}",
+        output.display(),
+        report.distinct_colours,
+        if report.quantized { ", quantized" } else { "" }
+    ))
 }
 
 fn selected_cc_animationframe_entry(
