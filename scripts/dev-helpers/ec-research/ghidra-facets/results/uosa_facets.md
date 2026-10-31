@@ -408,3 +408,42 @@ It reads the classic map as `TileMatrix(6144, 4096)` (`Form1.cs`) and writes loo
     `radarcol.r()`. The shipped images ignore hue.
   - The u8 static count wraps above 255 statics per square.
   - It writes no `data.map`, which is harmless for the client.
+
+## facetNx variants and the Classic x maps
+
+This section re-checks the [Packages and mounting](#packages-and-mounting) note against the Classic clients.
+The Classic side is in [../../ghidra-classic-facets/results/classic_facets.md](../../ghidra-classic-facets/results/classic_facets.md).
+
+- **Trigger (traced).** `UOPacket::Handle_0xA9_CitiesAndChars` 0x00612a80:
+  - stores the 0xA9 u32 flags at login manager +0x3c;
+  - calls `FUN_00612880` on bit 10;
+  - then calls `UOFacet::ApplyFacetVariantFlag` 0x00615730. That is its only caller.
+
+  The mounted state is a byte at +0xab, starting at 0 (base packages). The function behaves as follows:
+  - +0xab == 0 and bit 15 (0x8000) set: `SwapFacetPackageVariants(g_UOAssetManager, 1)`, +0xab = 1;
+  - +0xab == 1 and bit 15 clear: `SwapFacetPackageVariants(…, 0)`, +0xab = 0.
+
+  So the swap follows the flag of every character list, in both directions. The repo note "swapped by
+  the 0xA9 flag bit 0x8000" is **correct**.
+- **What is swapped (traced).** `SwapFacetPackageVariants` 0x00a6c9fc works for N = 0, 1, 2, 5:
+  - it unmounts `facetN.uop` with `FUN_0098a3fe`, which finds the archive by name in the two mount lists
+    and destroys it;
+  - it mounts `facetNx.uop` with `UOP::MountArchive` (reverse for 0);
+  - then it calls `FUN_00a6d834` → `FUN_00a707a7` + `FUN_00a74868(g_UOAssetResolvers)`, presumably to
+    drop the cached resolutions (inferred).
+
+  The only `x` strings in UOSA.exe are `facet0x.uop`, `facet1x.uop`, `facet2x.uop` and `facet5x.uop`
+  (0x00cfdcf4..0x00cfdd18). Only the sector packages change:
+  - `facetNN.dds` is opened as `facet%02d.dds` with no variant, so the radar keeps the base image;
+  - FacetDefinition (`facets.uop`, keyed by facet id) has no variant;
+  - `g_FacetDimensions` has no variant.
+- **Same server flag as Classic (traced on both sides).**
+  - Classic 7.0.x copies bit 15 into `g_UseFacetVariants` and reads the second facet table. That table
+    holds map0x/1x (7.0.20), or map0x/1x/2x/5x with the matching staidx/statics (7.0.50, 7.0.103).
+  - Gold has no bit 15.
+  - EC's set {0, 1, 2, 5} equals the 7.0.50+ Classic set.
+
+  The shipped data matches: facet2x/5x are byte-equal to the base, and facet0x/1x differ in a few hundred
+  sectors (see above).
+- **Wrap.** EC has no Felucca/Trammel wrap. `SetPlayerChunkPosition` rejects x ≥ width. The Classic
+  wrap fields have no EC counterpart.

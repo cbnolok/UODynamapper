@@ -295,3 +295,13 @@ Details: [../../ghidra-terrain/results/uosa_terrain.md](../../ghidra-terrain/res
 - `/UOKR.exe` was imported from `UO - Old KR/UOKR.exe` (read only, never executed), auto-analysed, named
   by both scripts with `--apply` (facets: 1 label, 21 functions; terrain: 2 functions), and saved.
 - The d3d9 `.gdt` was not applied: no KR question needed Direct3D types.
+
+## No facetNx variants in KR
+
+- `UOKR.exe` holds only `facet0.uop`..`facet6.uop` and `client\facet0.uop`..`client\facet6.uop` (0x00b67d48,
+  0x00b67f70). No `facetNx` string exists. Traced by string search.
+- The KR 0xA9 handler `FUN_005b5ca0` ("LoginManager::Receive_CITIES_AND_CHARS") stores the flags at +0x3c and
+  tests bit 10, like EC. It has no `ApplyFacetVariantFlag` call: its callees are 0x005b0550, 0x0046c360,
+  0x005b5b10, 0x005b3cd0, 0x005b5dd0, 0x005bbea0, 0x005bbc10 and 0x00415600. **KR ignores bit 15**, so no
+  variant exists. Traced.
+- See [uosa_facets.md](uosa_facets.md#facetnx-variants-and-the-classic-x-maps) for EC and the Classic link.
