@@ -43,14 +43,20 @@ What the client connects to is in its code (`LoginAccount`):
 
 - **Fixed store** `C7 44 24 d imm32` (the IPv4 address as a host-order u32, so 172.16.17.41 is stored `29 11 10 ac`)
   `66 C7 44 24 d+4 imm16` (port), then `JMP` to `LEA r32,[ESP+d]`. EC: an internal test address (172.16.17.41:7775, TC
-  10.18.37.29:7775) used only behind an internal flag; not patched. KR: the only address (159.153.196.41:7775); KR is
-  refused by the patcher.
+  10.18.37.29:7775) used only behind an internal flag; not patched. KR: the only address (159.153.196.41:7775); the
+  patch writes the imm32 and imm16 there. The imm32 is a number, not a string the client resolves, so KR takes a
+  dotted IPv4 address only (a host name is refused).
 - **EC public hosts**: pushed between the fixed store and the port store. TOL and later: `74 07 68 h1 EB 05 68 h2`, an
   odd `rand()` pushes host 1, an even one host 2. Older builds push one host.
 - **EC public ports**: `89 modrm 24 d` `66 C7 44 24 d+4 imm16` plus, with two servers, `75 07 66 C7 44 24 d+4 imm16`.
   The immediate is a little-endian u16 of the port number (7775 = `5f 1e`); the client applies `htons` itself.
-  A second `rand()` picks the port: 7775 when odd, 7776 when even, independently of the host draw. The patch writes
-  the same host to both slots and the same port to both immediates, so every draw gives the one address.
+  A second `rand()` picks the port: 7775 when odd, 7776 when even, independently of the host draw.
+- **The edit** (`LoginServerEdit`) holds one host per host site and one port per port site, in site order (`exe show`
+  numbers them from 1); counts that differ from the build's sites are refused. `LoginServerEdit::uniform` (and
+  `--login-server`) puts the same host on every slot and the same port on every immediate, so every draw gives the
+  one address. Different hosts per slot each pass their own slot's capacity. Since the host and port draws are
+  independent, different ports pair with either host. Manifests written before per-site edits recorded
+  `{"host", "port"}`: they read as one host and one port.
 - Hosts are strings resolved by `sscanf("%u.%u.%u.%u")`, else `gethostbyname`, so host names work. The string lives
   in a slot whose capacity is its length plus the zero padding after it, capped at 16 (`LOGIN_HOST_SLOT_SIZE`); each
   slot is referenced once in the image. The patch writes the host zero-filled to the whole slot, and refuses a host
@@ -71,8 +77,13 @@ also rewrote the internal port; it did not update the PE checksum); it inspects 
 again (with a warning, since no manifest records its stock values). In 4.0.115.0 the second slot holds at most 11
 characters: ECLO's fixed 16-byte write would run into the next string.
 
+The survey's versions come from each exe's version resource (`VS_FIXEDFILEINFO`, `client_exe::version`), which
+`exe show`, the inspection and the manifest (`exe_version`) report; nothing is decided from them.
+
 ## Tools
 
-- `uocf-cli exe show <exe>`: the built-in address, slots, ports and whether they are stock.
-- `uocf-cli exe patch <exe> --output <copy> --login-server HOST:PORT [--dry-run]`: EC only, all public slots and ports.
+- `uocf-cli exe show <exe>`: the version, the built-in address, slots, ports and whether they are stock.
+- `uocf-cli exe patch <exe> --output <copy> [--dry-run]` with `--login-server HOST:PORT` (every site),
+  `--login-host N=HOST` (one host slot; overrides `--login-server`'s host) and `--login-port [N=]PORT` (one port site,
+  or every site without `N`). Without `--login-server` every site needs its own value. EC and KR (KR: IPv4 only).
 - `uocf-cli login show <client_dir>` / `login set <client_dir|file> --output <path> --server [NAME=]HOST:PORT ...`.

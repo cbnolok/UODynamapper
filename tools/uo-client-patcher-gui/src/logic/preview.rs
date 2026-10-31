@@ -48,6 +48,11 @@ pub fn seam_warnings(warnings: &[PatchWarning]) -> Vec<&PatchWarning> {
     warnings.iter().filter(|warning| matches!(warning.kind, PatchWarningKind::Split | PatchWarningKind::Seam)).collect()
 }
 
+/// The library warnings about the login server.
+pub fn login_warnings(warnings: &[PatchWarning]) -> Vec<&PatchWarning> {
+    warnings.iter().filter(|warning| warning.kind == PatchWarningKind::Login).collect()
+}
+
 /// The state of the dry run for the current edits.
 #[derive(Debug, Clone)]
 pub enum Preview {

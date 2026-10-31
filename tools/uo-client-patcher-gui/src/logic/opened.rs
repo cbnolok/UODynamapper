@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use color_eyre::eyre::{self, WrapErr};
 use uocf::client_exe::classic_facets::{ClassicFileRole, CLASSIC_FACET_RECORD_SIZE};
+use uocf::client_exe::version::ExeVersion;
 use uocf::client_exe::facet_dimensions::{
     ClientExeInspection, ClientFamily, FacetTable, DISABLED_SPLIT_X, FACET_RECORD_SIZE, STOCK_SPLIT_X,
 };
@@ -170,6 +171,14 @@ pub fn checksum_status(inspection: &ClientExeInspection) -> String {
         "{:#010x} at {:#x}, computed {:#010x}: {state}",
         inspection.pe.stored_checksum, inspection.pe.checksum_offset, inspection.computed_checksum
     )
+}
+
+/// The version resource's file and product versions, in words (information only).
+pub fn version_label(version: Option<&ExeVersion>) -> String {
+    match version {
+        Some(version) => format!("{version} (version resource; information only)"),
+        None => "none (no version resource)".to_owned(),
+    }
 }
 
 /// One line per manifest step.

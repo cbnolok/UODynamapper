@@ -25,6 +25,7 @@ use uocf::client_exe::patch::{
 };
 use uocf::client_exe::pe::PeImage;
 use uocf::client_exe::sha256::sha256_hex;
+use uocf::client_exe::version::read_exe_version;
 use uocf::enhanced::facet_sector::{facet_package_file_name, FacetGeometry, CLIENT_FACET_DIMENSIONS};
 use uocf::utils::path::find_file_ignoring_case;
 
@@ -169,8 +170,12 @@ pub(super) fn allowed_ranges(before: &ClientExeInspection, edits: &[ExeEdit]) ->
                 }
             }
             ExeEdit::Split(_) => ranges.extend(before.split.iter().flat_map(|split| split.offsets.iter().copied().map(field))),
-            ExeEdit::LoginServer { .. } => {
+            ExeEdit::LoginServer(_) => {
                 if let Some(login) = &before.login {
+                    if login.uses_fixed_address() {
+                        ranges.push(field(login.fixed.ip_offset));
+                        ranges.push(login.fixed.port_offset..login.fixed.port_offset + size_of::<u16>());
+                    }
                     ranges.extend(login.hosts.iter().map(|slot| slot.offset..slot.offset + slot.capacity));
                     ranges.extend(login.ports.iter().map(|site| site.offset..site.offset + size_of::<u16>()));
                 }
@@ -215,6 +220,10 @@ fn every_client_exe_is_surveyed_and_each_client_has_its_tables() {
             describe_tables(&classic_tables),
             splits.unwrap_or_else(|error| format!("{error:#}"))
         );
+        match read_exe_version(&bytes, &pe) {
+            Some(version) => println!("  version {version}"),
+            None => println!("  version none (no version resource)"),
+        }
         if kind == ExeKind::Other {
             continue;
         }

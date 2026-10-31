@@ -8,7 +8,7 @@ use uocf::client_config::login_servers::LoginServerAddress;
 use uocf::client_exe::facet_dimensions::{
     ClientExeInspection, ClientFamily, FacetTable, DISABLED_SPLIT_X, FACET_RECORD_SIZE, STOCK_SPLIT_X,
 };
-use uocf::client_exe::login::LoginHost;
+use uocf::client_exe::login::{LoginHost, LoginServerEdit, LoginSites};
 use uocf::client_exe::patch::{
     dry_run_client_exe, manifest_path, read_manifest, write_patched_client_exe, ByteChange, ChangeCause, ExeEdit,
     ExePatch, SplitEdit,
@@ -18,6 +18,10 @@ use uocf::enhanced::facet_sector::CLIENT_FACET_DIMENSIONS;
 /// `N=WxH`: a facet and a size.
 const FACET_SEPARATOR: char = '=';
 const SIZE_SEPARATOR: char = 'x';
+/// `N=HOST`, `N=PORT`: a login site and its value.
+const SITE_SEPARATOR: char = '=';
+/// The login sites are numbered from 1, as `exe show` prints them.
+const FIRST_SITE_NUMBER: usize = 1;
 
 #[derive(Subcommand, Debug)]
 pub enum ExeCmd {
@@ -50,11 +54,21 @@ pub enum ExeCmd {
         /// Disable the split or seam (x = 0x8000).
         #[arg(long)]
         no_split: bool,
-        /// Enhanced Client only: the built-in login server, `HOST:PORT` (dotted IPv4, or a host name the client
-        /// resolves; at most the host slot's size, 15 characters, 11 for UOSA 4.0.115.0's second slot). Written to
-        /// every public host slot and port, so both random draws give it. Classic reads login.cfg (`login set`).
+        /// The built-in login server, `HOST:PORT`, written to every login site (`exe show` lists them), so every
+        /// random draw gives it. Enhanced Client: each public host slot (a dotted IPv4 address or a host name the
+        /// client resolves, shorter than the slot: at most 15 characters, 11 in UOSA 4.0.115.0's second slot) and
+        /// each public port. Kingdom Reborn: its one address, a dotted IPv4 only (stored as a number). Classic reads
+        /// login.cfg (`login set`).
         #[arg(long, value_name = "HOST:PORT", value_parser = parse_login_server)]
         login_server: Option<(LoginHost, u16)>,
+        /// The host of one login host site, `N=HOST` (N from 1, as `exe show` numbers them); repeat per site. It
+        /// overrides --login-server's host for that site; without --login-server every site needs one.
+        #[arg(long = "login-host", value_name = "N=HOST", value_parser = parse_login_host)]
+        login_hosts: Vec<(usize, LoginHost)>,
+        /// The port of one login port site, `N=PORT`, or of every site, `PORT`; repeatable. It overrides
+        /// --login-server's port; without --login-server every port site needs one.
+        #[arg(long = "login-port", value_name = "[N=]PORT", value_parser = parse_login_port)]
+        login_ports: Vec<(Option<usize>, u16)>,
         /// Print the byte changes without writing anything.
         #[arg(long)]
         dry_run: bool,
@@ -85,10 +99,85 @@ fn parse_login_server(text: &str) -> Result<(LoginHost, u16), String> {
     Ok((host, address.port))
 }
 
+/// Parses the site number of `N=VALUE`.
+fn parse_site_number(number: &str, text: &str) -> Result<usize, String> {
+    match number.trim().parse::<usize>() {
+        Ok(number) if number >= FIRST_SITE_NUMBER => Ok(number),
+        _ => Err(format!("`{text}`: the site number must be {FIRST_SITE_NUMBER} or more")),
+    }
+}
+
+/// Parses `N=HOST` for `--login-host`.
+fn parse_login_host(text: &str) -> Result<(usize, LoginHost), String> {
+    let (number, host) =
+        text.split_once(SITE_SEPARATOR).ok_or_else(|| format!("`{text}`: expected N=HOST, e.g. 2=10.0.0.2"))?;
+    let host = LoginHost::new(host.trim()).map_err(|error| error.to_string())?;
+    Ok((parse_site_number(number, text)?, host))
+}
+
+/// Parses `N=PORT` or `PORT` for `--login-port`.
+fn parse_login_port(text: &str) -> Result<(Option<usize>, u16), String> {
+    let (number, port) = match text.split_once(SITE_SEPARATOR) {
+        Some((number, port)) => (Some(parse_site_number(number, text)?), port),
+        None => (None, text),
+    };
+    let port = port.trim().parse::<u16>().map_err(|_| format!("`{text}`: expected [N=]PORT, e.g. 2=2594"))?;
+    Ok((number, port))
+}
+
+/// The login options of `exe patch`, resolved against the inspected build's sites.
+struct LoginOptions {
+    server: Option<(LoginHost, u16)>,
+    hosts: Vec<(usize, LoginHost)>,
+    ports: Vec<(Option<usize>, u16)>,
+}
+
+/// One value per site `1..=count`: the last numbered value given for it, else `default`.
+fn per_site<T: Clone>(count: usize, option: &str, numbered: &[(usize, T)], default: Option<T>) -> eyre::Result<Vec<T>> {
+    for (number, _) in numbered {
+        eyre::ensure!(
+            *number < FIRST_SITE_NUMBER + count,
+            "--{option} {number}=...: this build has {count} such site(s), numbered from {FIRST_SITE_NUMBER}"
+        );
+    }
+    (FIRST_SITE_NUMBER..FIRST_SITE_NUMBER + count)
+        .map(|number| {
+            numbered.iter().rev().find(|(given, _)| *given == number).map(|(_, value)| value.clone()).or(default.clone()).ok_or_else(
+                || eyre!("{} site {number} has no value: give --{option} {number}=..., or --login-server for every site", option.replace('-', " ")),
+            )
+        })
+        .collect()
+}
+
+impl LoginOptions {
+    fn is_empty(&self) -> bool {
+        self.server.is_none() && self.hosts.is_empty() && self.ports.is_empty()
+    }
+
+    /// The edit for `sites`; without located sites, the one host and port given, which the patch refuses with the
+    /// family's reason.
+    fn edit(&self, sites: Option<&LoginSites>) -> eyre::Result<LoginServerEdit> {
+        let default_port =
+            self.ports.iter().rev().find_map(|(number, port)| number.is_none().then_some(*port)).or(self.server.map(|(_, port)| port));
+        let default_host = self.server.map(|(host, _)| host);
+        let Some(sites) = sites else {
+            let host = default_host.or(self.hosts.first().map(|(_, host)| *host));
+            let port = default_port.or(self.ports.first().map(|(_, port)| *port));
+            return Ok(LoginServerEdit { hosts: host.into_iter().collect(), ports: port.into_iter().collect() });
+        };
+        let numbered_ports: Vec<(usize, u16)> =
+            self.ports.iter().filter_map(|(number, port)| number.map(|number| (number, *port))).collect();
+        Ok(LoginServerEdit {
+            hosts: per_site(sites.host_site_count(), "login-host", &self.hosts, default_host)?,
+            ports: per_site(sites.port_site_count(), "login-port", &numbered_ports, default_port)?,
+        })
+    }
+}
+
 pub fn run(cmd: ExeCmd) -> eyre::Result<()> {
     match cmd {
         ExeCmd::Show { exe } => show(&exe),
-        ExeCmd::Patch { exe, output, sizes, wraps, split, no_split, login_server, dry_run } => {
+        ExeCmd::Patch { exe, output, sizes, wraps, split, no_split, login_server, login_hosts, login_ports, dry_run } => {
             let mut edits: Vec<ExeEdit> =
                 sizes.into_iter().map(|(facet, width, height)| ExeEdit::FacetSize { facet, width, height }).collect();
             edits.extend(wraps.into_iter().map(|(facet, wrap_width, wrap_height)| ExeEdit::ClassicWrap {
@@ -101,8 +190,10 @@ pub fn run(cmd: ExeCmd) -> eyre::Result<()> {
                 (None, true) => edits.push(ExeEdit::Split(SplitEdit::Disable)),
                 (None, false) => {}
             }
-            if let Some((host, port)) = login_server {
-                edits.push(ExeEdit::LoginServer { host, port });
+            let login = LoginOptions { server: login_server, hosts: login_hosts, ports: login_ports };
+            if !login.is_empty() {
+                let inspection = inspect(&exe)?;
+                edits.push(ExeEdit::LoginServer(login.edit(inspection.login.as_ref())?));
             }
             let patch = ExePatch { edits };
             match (dry_run, output) {
@@ -192,6 +283,10 @@ fn print_inspection(inspection: &ClientExeInspection) {
     }
     println!("family    {} (located by structure)", inspection.family.label());
     println!("size      {} bytes", inspection.file_size);
+    match &inspection.version {
+        Some(version) => println!("version   {version} (version resource)"),
+        None => println!("version   none (no version resource)"),
+    }
     let state = if inspection.checksum_valid() { "valid" } else { "INVALID" };
     println!(
         "checksum  {:#010x} at {:#x}, computed {:#010x}: {state}",
@@ -259,7 +354,13 @@ fn print_login(inspection: &ClientExeInspection) {
     let fixed = &login.fixed;
     let fixed_at = located(inspection, fixed.offset);
     if inspection.family == ClientFamily::KingdomReborn {
-        println!("login     built-in {}:{} (the only address; MOV imm32/imm16 at {fixed_at})", fixed.ip, fixed.port);
+        let state = if login.is_stock() { "stock" } else { "NOT the stock address: patched" };
+        println!("login     built-in {}:{} ({state}; the only address; MOV imm32/imm16 at {fixed_at})", fixed.ip, fixed.port);
+        println!(
+            "  ip imm32 at {}, port imm16 at {}: --login-server takes a dotted IPv4 address only",
+            located(inspection, fixed.ip_offset),
+            located(inspection, fixed.port_offset)
+        );
         return;
     }
     let state = if login.is_stock() { "stock" } else { "NOT the stock address: patched" };

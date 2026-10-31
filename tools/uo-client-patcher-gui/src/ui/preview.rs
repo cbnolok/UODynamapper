@@ -20,7 +20,7 @@ pub fn ui_preview(ui: &mut egui::Ui, session: &mut Session) -> Option<ExePatch> 
     let preview = session.preview.get(&session.opened, &session.edits);
     let mut save = None;
     match preview {
-        Preview::Empty => muted_label(ui, "Nothing edited: the facets and the seam are as in the file."),
+        Preview::Empty => muted_label(ui, "Nothing edited: the facets, the seam and the login server are as in the file."),
         Preview::Invalid(errors) => {
             ui.label("Fix these before writing:");
             for error in errors {

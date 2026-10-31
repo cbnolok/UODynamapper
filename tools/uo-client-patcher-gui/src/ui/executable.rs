@@ -5,7 +5,9 @@ use uocf::client_exe::patch::manifest_path;
 
 use super::{error_label, info_grid, muted_label, warning_label, ITEM_SPACING, SUCCESS_COLOR};
 use crate::app::Session;
-use crate::logic::opened::{checksum_status, manifest_steps, seam_status, table_locations, ManifestState};
+use crate::logic::opened::{
+    checksum_status, manifest_steps, seam_status, table_locations, version_label, ManifestState,
+};
 
 pub fn ui_executable(ui: &mut egui::Ui, session: &Session) {
     let opened = &session.opened;
@@ -15,6 +17,7 @@ pub fn ui_executable(ui: &mut egui::Ui, session: &Session) {
         ("Known build", inspection.known.map_or_else(|| "not a traced build".to_owned(), |build| build.name.to_owned())),
         ("SHA-256", inspection.sha256.clone()),
         ("Size", format!("{} bytes", inspection.file_size)),
+        ("Version", version_label(inspection.version.as_ref())),
         ("Values", if inspection.is_stock() { "stock".to_owned() } else { "not stock".to_owned() }),
         ("PE checksum", checksum_status(inspection)),
         ("Signature", if inspection.pe.is_signed() { "Authenticode signed".to_owned() } else { "not signed".to_owned() }),
@@ -67,6 +70,9 @@ pub fn ui_executable(ui: &mut egui::Ui, session: &Session) {
             let mut rows = vec![("Original", manifest.original_sha256.clone())];
             if let Some(build) = &manifest.build {
                 rows.push(("Started from", build.clone()));
+            }
+            if let Some(version) = &manifest.exe_version {
+                rows.push(("Version", version_label(Some(version))));
             }
             let steps = manifest_steps(manifest);
             for (index, step) in steps.into_iter().enumerate() {

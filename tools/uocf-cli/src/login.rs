@@ -206,7 +206,7 @@ fn set(
         println!("wrote     {} ({} LoginServer entries)", output.display(), document.servers()?.len());
         println!(
             "note      the traced Enhanced Client and Kingdom Reborn builds never load LoginServers*.xml: to change the \
-             server an Enhanced Client connects to, patch a copy of UOSA.exe (`uocf-cli exe patch --login-server`)"
+             server, patch a copy of UOSA.exe or UOKR.exe (`uocf-cli exe patch --login-server`)"
         );
     } else {
         let mut cfg = match &file {

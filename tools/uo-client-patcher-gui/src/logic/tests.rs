@@ -1,16 +1,20 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use uocf::client_config::login_servers::{CfgServerKind, LoginCfg};
 use uocf::client_exe::facet_data::FacetDataStatus;
 use uocf::client_exe::facet_dimensions::{ClientExeInspection, ClientFamily, DISABLED_SPLIT_X, STOCK_SPLIT_X};
+use uocf::client_exe::login::{LoginHost, LoginServerEdit, LOGIN_HOST_SLOT_SIZE, MAX_LOGIN_HOST_LENGTH};
 use uocf::client_exe::patch::{patch_client_exe, ChangeCause, ExeEdit, ExePatch, SplitEdit};
 use uocf::enhanced::facet_sector::{FacetGeometry, CLIENT_FACET_DIMENSIONS};
 
 use super::edits::{EditState, SeamChoice};
+use super::login::{login_mode, login_site_rows, stock_login, ClassicLogin, LoginEdit, LoginMode, KR_IPV4_ONLY};
 use super::opened::{classic_files, manifest_steps, seam_status, table_locations, ManifestState, OpenedExe};
 use super::preview::{change_rows, preview, seam_warnings, DataCheck, Preview, PreviewCache};
 use super::synthetic::{
-    classic_stock_size, classic_stock_wrap, synthetic_classic, synthetic_enhanced, synthetic_kingdom_reborn,
+    classic_stock_size, classic_stock_wrap, synthetic_classic, synthetic_enhanced, synthetic_enhanced_login,
+    synthetic_kingdom_reborn, synthetic_kingdom_reborn_login, SyntheticLogin, TOL_HOSTS,
 };
 
 const NEW_WIDTH: u32 = 8192;
@@ -27,6 +31,14 @@ const CLASSIC_NARROW_FELUCCA: u32 = 4096;
 const EC_EXE_NAME: &str = "UOSA.exe";
 const KR_EXE_NAME: &str = "UOKR.exe";
 const CLASSIC_EXE_NAME: &str = "client.exe";
+/// Login hosts and ports, short enough for the 12-byte slot (11 characters at most).
+const SHARD_HOSTS: [&str; 2] = ["10.0.0.2", "10.0.0.4"];
+const SHARD_PORTS: [u16; 2] = [2593, 2594];
+/// The longest host of UOSA 4.0.115.0's 12-byte second slot.
+const SHORT_SLOT_HOST_LENGTH: usize = 11;
+/// 13 characters: fits a 16-byte slot, not a 12-byte one.
+const LONG_HOST: &str = "192.168.100.1";
+const NAMED_HOST: &str = "shard.example";
 
 fn opened_from(bytes: Vec<u8>, manifest: ManifestState) -> OpenedExe {
     let inspection = ClientExeInspection::inspect(&bytes).unwrap();
@@ -226,7 +238,7 @@ fn classic_wraps_follow_the_size_until_typed() {
     assert_eq!(edits.rows[2].wrap_width, CLASSIC_ILSHENAR_WIDTH.to_string(), "the wrap followed");
     assert_eq!(edits.check_row(2).wrap, Some(ilshenar));
     let size_edit = ExeEdit::FacetSize { facet: 2, width: ilshenar.width, height: ilshenar.height };
-    assert_eq!(edits.build_patch().unwrap().edits, [size_edit]);
+    assert_eq!(edits.build_patch().unwrap().edits, [size_edit.clone()]);
     // Keeping the old wrap is a wrap edit.
     set_wrap(&mut edits, 2, classic_stock_wrap(2));
     edits.sync_followed_wraps();
@@ -286,6 +298,191 @@ fn the_data_check_uses_the_edited_sizes() {
         edits.reset_to_current(0);
         assert!(!check.is_for(&edits.edited_dimensions().unwrap(), &temp.0));
     }
+}
+
+/// Types `hosts` and `ports` into the login fields, one per site (`same_for_all` off); the other fields are empty.
+fn type_login(login: &mut LoginEdit, hosts: &[&str], ports: &[u16]) {
+    login.set_same_for_all(false);
+    login.clear();
+    for (field, host) in login.hosts.iter_mut().zip(hosts) {
+        field.text = host.to_string();
+    }
+    for (field, port) in login.ports.iter_mut().zip(ports) {
+        field.text = port.to_string();
+    }
+}
+
+fn login_edit(hosts: &[&str], ports: &[u16]) -> ExeEdit {
+    let hosts = hosts.iter().map(|host| LoginHost::new(host).unwrap()).collect();
+    ExeEdit::LoginServer(LoginServerEdit { hosts, ports: ports.to_vec() })
+}
+
+#[test]
+fn an_enhanced_login_edit_joins_the_facet_patch() {
+    let opened = opened_from(synthetic_enhanced_login(SyntheticLogin::TimeOfLegends { short_slot: false }), ManifestState::None);
+    assert_eq!(login_mode(&opened.inspection), LoginMode::PublicSites);
+    let mut edits = EditState::new(&opened.inspection);
+    assert_eq!(edits.login.hosts.len(), TOL_HOSTS.len());
+    assert!(edits.login.same_for_all && edits.login.has_several_sites());
+    assert_eq!(edits.login.hosts[1].capacity, Some(LOGIN_HOST_SLOT_SIZE));
+
+    // One host and port typed with "same for all" go to every site, next to the facet edit.
+    set_size(&mut edits, 0, FacetGeometry::new(NEW_WIDTH, NEW_HEIGHT));
+    edits.login.hosts[0].text = SHARD_HOSTS[0].to_owned();
+    edits.login.spread(false, 0);
+    edits.login.ports[0].text = SHARD_PORTS[0].to_string();
+    edits.login.spread(true, 0);
+    let patch = edits.build_patch().unwrap();
+    let uniform = login_edit(&[SHARD_HOSTS[0]; 2], &[SHARD_PORTS[0]; 2]);
+    assert_eq!(patch.edits, [ExeEdit::FacetSize { facet: 0, width: NEW_WIDTH, height: NEW_HEIGHT }, uniform]);
+
+    // The dry run lists the login bytes: two host slots and two ports, after the facet's.
+    let plan = preview(&opened, &edits).plan().expect("planned").clone();
+    let fields: Vec<String> = plan.changes.iter().filter(|change| change.cause == ChangeCause::Edit(1)).map(|change| change.field.clone()).collect();
+    let slot = |number: usize| format!("login host {number} ({LOGIN_HOST_SLOT_SIZE}-byte slot)");
+    assert_eq!(fields, [slot(1), slot(2), "login port 1 (imm16)".to_owned(), "login port 2 (imm16)".to_owned()]);
+    let rows = change_rows(&plan.changes, &plan.patch);
+    assert!(rows.iter().any(|row| row.cause == format!("edit 2: login server {}:{}", SHARD_HOSTS[0], SHARD_PORTS[0])), "{rows:?}");
+
+    // A host and port per site.
+    type_login(&mut edits.login, &SHARD_HOSTS, &SHARD_PORTS);
+    assert_eq!(edits.build_patch().unwrap().edits[1], login_edit(&SHARD_HOSTS, &SHARD_PORTS));
+    // An empty field keeps the file's value.
+    edits.login.hosts[1].text.clear();
+    edits.login.ports[1].text.clear();
+    assert_eq!(
+        edits.build_patch().unwrap().edits[1],
+        login_edit(&[SHARD_HOSTS[0], TOL_HOSTS[1]], &[SHARD_PORTS[0], opened.inspection.login.as_ref().unwrap().ports[1].port])
+    );
+
+    // Written and reopened: the new values are the file's, and the manifest knows the stock ones.
+    let temp = TempDir::new("login_write");
+    let client = temp.folder("client");
+    let exe = client.join(EC_EXE_NAME);
+    std::fs::write(&exe, &opened.bytes).unwrap();
+    let opened = OpenedExe::open(&exe).unwrap();
+    type_login(&mut edits.login, &SHARD_HOSTS, &SHARD_PORTS);
+    let copy = plan_write_and_reopen(&opened, &edits, &temp.folder("copies").join(EC_EXE_NAME));
+    let reopened = LoginEdit::new(&copy.inspection);
+    let current: Vec<&str> = reopened.hosts.iter().map(|field| field.current.as_str()).collect();
+    assert_eq!(current, SHARD_HOSTS);
+    let stock = stock_login(&copy.inspection, copy.current_manifest()).unwrap();
+    assert_eq!(stock.hosts, TOL_HOSTS);
+    let rows = login_site_rows(&copy.inspection, Some(&stock));
+    assert!(rows[0].stock.starts_with("changed"), "{rows:?}");
+    // Typing the file's own values is no edit.
+    let mut same = EditState::new(&copy.inspection);
+    type_login(&mut same.login, &SHARD_HOSTS, &SHARD_PORTS);
+    assert!(same.login.is_edited() && same.build_patch().unwrap().edits.is_empty());
+}
+
+#[test]
+fn login_hosts_validate_against_their_own_slot() {
+    let opened = opened_from(synthetic_enhanced_login(SyntheticLogin::TimeOfLegends { short_slot: true }), ManifestState::None);
+    let mut login = EditState::new(&opened.inspection).login;
+    let lengths: Vec<Option<usize>> = login.hosts.iter().map(|field| field.max_host_length()).collect();
+    assert_eq!(lengths, [Some(MAX_LOGIN_HOST_LENGTH), Some(SHORT_SLOT_HOST_LENGTH)]);
+    // Same for all: the long host fits slot 1, not slot 2.
+    login.hosts[0].text = LONG_HOST.to_owned();
+    login.spread(false, 0);
+    let (edit, validation) = login.check();
+    assert!(edit.is_none());
+    assert_eq!(validation.errors.len(), 1, "{:?}", validation.errors);
+    assert!(validation.errors[0].starts_with("host 2:"), "{:?}", validation.errors);
+    // Per slot: the long host on the 16-byte slot, a short one on the 12-byte slot.
+    type_login(&mut login, &[LONG_HOST, SHARD_HOSTS[0]], &[]);
+    let (edit, validation) = login.check();
+    assert!(validation.is_ok(), "{:?}", validation.errors);
+    assert!(edit.is_some());
+    // A host name warns once; bad ports fail.
+    type_login(&mut login, &[NAMED_HOST, NAMED_HOST], &[]);
+    assert_eq!(login.check().1.warnings.len(), 1);
+    type_login(&mut login, &[], &[0]);
+    assert!(!login.check().1.is_ok());
+    login.ports[1].text = "port".to_owned();
+    assert_eq!(login.check().1.errors.len(), 2);
+    login.clear();
+    assert!(!login.is_edited() && login.check() == (None, Default::default()));
+
+    // The one-host build before Time of Legends: one host and one port site.
+    let one = LoginEdit::new(&ClientExeInspection::inspect(&synthetic_enhanced_login(SyntheticLogin::OneHost)).unwrap());
+    assert_eq!((one.hosts.len(), one.ports.len()), (1, 1));
+    assert!(!one.has_several_sites());
+}
+
+#[test]
+fn kingdom_reborn_takes_an_ipv4_address() {
+    let temp = TempDir::new("kr_login");
+    let exe = temp.folder("client").join(KR_EXE_NAME);
+    std::fs::write(&exe, synthetic_kingdom_reborn_login()).unwrap();
+    let opened = OpenedExe::open(&exe).unwrap();
+    assert_eq!(login_mode(&opened.inspection), LoginMode::FixedAddress);
+    let mut edits = EditState::new(&opened.inspection);
+    assert_eq!((edits.login.hosts.len(), edits.login.ports.len()), (1, 1));
+    assert!(!edits.login.has_several_sites());
+    edits.login.hosts[0].text = NAMED_HOST.to_owned();
+    let (edit, validation) = edits.login.check();
+    assert!(edit.is_none() && validation.errors[0].contains(KR_IPV4_ONLY), "{:?}", validation.errors);
+    type_login(&mut edits.login, &[SHARD_HOSTS[0]], &[SHARD_PORTS[1]]);
+    assert_eq!(edits.build_patch().unwrap().edits, [login_edit(&[SHARD_HOSTS[0]], &[SHARD_PORTS[1]])]);
+    let plan = preview(&opened, &edits).plan().expect("planned").clone();
+    let fields: Vec<&str> = plan.changes.iter().filter(|change| change.cause == ChangeCause::Edit(0)).map(|change| change.field.as_str()).collect();
+    assert_eq!(fields, ["login address (ip imm32)", "login port (imm16)"]);
+    let copy = plan_write_and_reopen(&opened, &edits, &temp.folder("copies").join(KR_EXE_NAME));
+    let fixed = &copy.inspection.login.as_ref().unwrap().fixed;
+    assert_eq!((fixed.ip.to_string(), fixed.port), (SHARD_HOSTS[0].to_owned(), SHARD_PORTS[1]));
+    // Without its login code there is nothing to edit.
+    assert_eq!(login_mode(&ClientExeInspection::inspect(&synthetic_kingdom_reborn()).unwrap()), LoginMode::NotLocated);
+}
+
+/// A Classic `login.cfg` with a comment, a line the client does not know and both kinds of server.
+const CLASSIC_LOGIN_CFG: &str = ";Loginservers for Ultima Online\r\nLoginServer=127.0.0.1,2593\r\nSomethingElse=1\r\nBackupLoginServer=10.0.0.9,2593\r\n";
+
+#[test]
+fn classic_login_lists_are_saved_as_a_copy_keeping_other_lines() {
+    let classic = ClientExeInspection::inspect(&synthetic_classic()).unwrap();
+    assert_eq!(login_mode(&classic), LoginMode::ConfigFile);
+    assert!(LoginEdit::new(&classic).hosts.is_empty());
+
+    let temp = TempDir::new("classic_login");
+    let client = temp.folder("client");
+    std::fs::write(client.join("login.cfg"), CLASSIC_LOGIN_CFG).unwrap();
+    let mut login = ClassicLogin::load(&client);
+    assert!(login.cfg_found && login.cfg_error().is_none());
+    assert_eq!(login.list(CfgServerKind::Primary), ["127.0.0.1:2593"]);
+    assert_eq!(login.list(CfgServerKind::Backup), ["10.0.0.9:2593"]);
+    assert_eq!(login.edited_cfg().unwrap().to_text(), CLASSIC_LOGIN_CFG, "unedited: the file as it is");
+
+    login.list_mut(CfgServerKind::Primary)[0] = format!("{}:{}", SHARD_HOSTS[0], SHARD_PORTS[0]);
+    login.list_mut(CfgServerKind::Primary).push(format!("{NAMED_HOST}:{}", SHARD_PORTS[1]));
+    assert!(login.is_edited());
+    let text = login.edited_cfg().unwrap().to_text();
+    let expected = format!(
+        ";Loginservers for Ultima Online\r\nLoginServer={},{}\r\nLoginServer={NAMED_HOST},{}\r\nSomethingElse=1\r\nBackupLoginServer=10.0.0.9,2593\r\n",
+        SHARD_HOSTS[0], SHARD_PORTS[0], SHARD_PORTS[1]
+    );
+    assert_eq!(text, expected);
+
+    // Bad rows and an empty primary list are errors.
+    login.list_mut(CfgServerKind::Backup).push("no port".to_owned());
+    assert!(login.edited_cfg().unwrap_err()[0].starts_with("backup 2"));
+    login.list_mut(CfgServerKind::Backup).pop();
+    let primary = std::mem::take(login.list_mut(CfgServerKind::Primary));
+    assert!(login.edited_cfg().is_err());
+    *login.list_mut(CfgServerKind::Primary) = primary;
+
+    // The copy goes outside the client folder; an existing one needs the overwrite.
+    let client_dirs = [client.clone()];
+    let inside = login.save_copy(&client.join("copy.cfg"), false, &client_dirs).unwrap_err();
+    assert!(format!("{inside:#}").contains("inside the client folder"), "{inside:#}");
+    let output = temp.folder("out").join("login.cfg");
+    login.save_copy(&output, false, &client_dirs).unwrap();
+    assert_eq!(std::fs::read_to_string(&output).unwrap(), expected);
+    assert!(login.save_copy(&output, false, &client_dirs).is_err());
+    login.reset();
+    login.save_copy(&output, true, &client_dirs).unwrap();
+    assert_eq!(LoginCfg::read(&output).unwrap().to_text(), CLASSIC_LOGIN_CFG);
+    assert_eq!(std::fs::read_to_string(client.join("login.cfg")).unwrap(), CLASSIC_LOGIN_CFG, "the client's file is untouched");
 }
 
 /// Patches `exe` with `edits` through the logic: dry run, write to `copies`, reopen; the written file is the dry run
@@ -392,8 +589,10 @@ fn collect_exes(dir: &Path, exes: &mut Vec<PathBuf>) {
 }
 
 /// Every Enhanced Client, Kingdom Reborn and Classic executable under `UO_CLIENT_ROOTS` (only read) goes through the
-/// logic: inspect, edit facets 0 and 2 and the split or seam, check the data folder against the edited sizes, dry run,
-/// write the copy to the temp dir (`TMPDIR`), reopen it and patch it again.
+/// logic: inspect, edit facets 0 and 2, the split or seam and the login server (Enhanced Client: a host and port per
+/// site; Kingdom Reborn: its IPv4 address), check the data folder against the edited sizes, dry run, write the copy
+/// to the temp dir (`TMPDIR`), reopen it and patch it again. Classic: the login files of the folder are read and the
+/// edited login file is saved as a copy in the temp dir.
 #[test]
 #[ignore = "needs client executables under UO_CLIENT_ROOTS"]
 fn real_clients_go_through_inspect_edit_plan_write() {
@@ -418,6 +617,27 @@ fn real_clients_go_through_inspect_edit_plan_write() {
         edits.sync_followed_wraps();
         if edits.seam.current.is_some() {
             move_seam(&mut edits, NEW_SPLIT);
+        }
+        match login_mode(&opened.inspection) {
+            LoginMode::PublicSites | LoginMode::FixedAddress => {
+                type_login(&mut edits.login, &SHARD_HOSTS, &SHARD_PORTS);
+                let (edit, validation) = edits.login.check();
+                assert!(validation.is_ok() && edit.is_some(), "{}: {:?}", exe.display(), validation);
+            }
+            LoginMode::ConfigFile => {
+                let mut login = ClassicLogin::load(&opened.folder());
+                let report = login.report.as_ref().unwrap_or_else(|error| panic!("{}: {error}", exe.display()));
+                let entries: Vec<String> = report.entries.iter().map(|entry| format!("{:?}", entry.address)).collect();
+                eprintln!("{}: {} read={} {entries:?}", exe.display(), login.cfg_path.display(), login.cfg_found);
+                assert!(login.cfg_error().is_none(), "{}", exe.display());
+                login.list_mut(CfgServerKind::Primary).insert(0, format!("{}:{}", SHARD_HOSTS[0], SHARD_PORTS[0]));
+                let output = temp.folder(&format!("{index}_login")).join(login.file_name());
+                login.save_copy(&output, false, &[opened.folder()]).unwrap_or_else(|error| panic!("{}: {error:#}", exe.display()));
+                let written = LoginCfg::read(&output).unwrap();
+                let primary = written.servers().into_iter().find(|line| line.kind == CfgServerKind::Primary).unwrap();
+                assert_eq!(primary.address.unwrap().host, SHARD_HOSTS[0]);
+            }
+            LoginMode::NotLocated => panic!("{}: login code not located", exe.display()),
         }
         for row in 0..edits.rows.len() {
             let check = edits.check_row(row);

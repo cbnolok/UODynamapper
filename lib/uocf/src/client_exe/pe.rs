@@ -1,5 +1,6 @@
 //! The parts of a 32-bit PE image the patchers need: sections (to map virtual addresses to file offsets), the
-//! checksum field and its algorithm, and the Authenticode (security) directory.
+//! checksum field and its algorithm, the Authenticode (security) directory and the resource directory (for the
+//! version resource, [`super::version`]).
 
 crate::eyre_imports!();
 
@@ -24,6 +25,8 @@ pub const OPTIONAL_CHECKSUM_OFFSET: usize = 64;
 const OPTIONAL_DIRECTORY_COUNT_OFFSET: usize = 92;
 const OPTIONAL_DIRECTORIES_OFFSET: usize = 96;
 const DATA_DIRECTORY_SIZE: usize = 8;
+/// Index of the resource data directory; its address is an RVA.
+pub(crate) const RESOURCE_DIRECTORY: usize = 2;
 /// Index of the security (Authenticode certificate table) data directory; its address is a file offset.
 const SECURITY_DIRECTORY: usize = 4;
 const SECTION_HEADER_SIZE: usize = 40;
@@ -93,6 +96,8 @@ pub struct PeImage {
     pub stored_checksum: u32,
     /// File offset and size of the Authenticode certificate table; size 0 when the image is not signed.
     pub security_directory: (u32, u32),
+    /// RVA and size of the resource directory; size 0 when the image has none.
+    pub resource_directory: (u32, u32),
     pub sections: Vec<PeSection>,
 }
 
@@ -126,12 +131,15 @@ impl PeImage {
         let checksum_offset = optional + OPTIONAL_CHECKSUM_OFFSET;
         let stored_checksum = read_u32(bytes, checksum_offset)?;
         let directory_count = read_u32(bytes, optional + OPTIONAL_DIRECTORY_COUNT_OFFSET)? as usize;
-        let security_directory = if directory_count > SECURITY_DIRECTORY {
-            let entry = optional + OPTIONAL_DIRECTORIES_OFFSET + DATA_DIRECTORY_SIZE * SECURITY_DIRECTORY;
-            (read_u32(bytes, entry)?, read_u32(bytes, entry + size_of::<u32>())?)
-        } else {
-            (0, 0)
+        let directory = |index: usize| -> eyre::Result<(u32, u32)> {
+            if directory_count <= index {
+                return Ok((0, 0));
+            }
+            let entry = optional + OPTIONAL_DIRECTORIES_OFFSET + DATA_DIRECTORY_SIZE * index;
+            Ok((read_u32(bytes, entry)?, read_u32(bytes, entry + size_of::<u32>())?))
         };
+        let security_directory = directory(SECURITY_DIRECTORY)?;
+        let resource_directory = directory(RESOURCE_DIRECTORY)?;
         let mut sections = Vec::with_capacity(usize::from(section_count));
         for index in 0..usize::from(section_count) {
             let header = optional + optional_size + SECTION_HEADER_SIZE * index;
@@ -148,7 +156,7 @@ impl PeImage {
                 characteristics: read_u32(bytes, header + SECTION_CHARACTERISTICS_OFFSET)?,
             });
         }
-        Ok(Self { machine, image_base, checksum_offset, stored_checksum, security_directory, sections })
+        Ok(Self { machine, image_base, checksum_offset, stored_checksum, security_directory, resource_directory, sections })
     }
 
     /// True when the image carries an Authenticode signature (a non-empty security directory).
@@ -210,6 +218,10 @@ pub(crate) mod tests {
 
     /// Image base of the synthetic images.
     pub const TEST_IMAGE_BASE: u32 = 0x0040_0000;
+    /// The file offset of data directory `index` of a synthetic image.
+    pub fn test_directory_entry(index: usize) -> usize {
+        TEST_PE_OFFSET + COFF_HEADER_OFFSET + COFF_HEADER_SIZE + OPTIONAL_DIRECTORIES_OFFSET + DATA_DIRECTORY_SIZE * index
+    }
     /// `e_lfanew` of the synthetic images.
     const TEST_PE_OFFSET: usize = 0x80;
     const TEST_OPTIONAL_SIZE: usize = 0xe0;

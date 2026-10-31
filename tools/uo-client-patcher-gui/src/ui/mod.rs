@@ -99,11 +99,6 @@ impl PatcherApp {
     }
 
     fn ui_section(&mut self, ui: &mut egui::Ui, section: Section) {
-        if section == Section::LoginServer {
-            // It needs no executable yet.
-            login::ui_login(ui);
-            return;
-        }
         if section == Section::Executable {
             if let Some(error) = &self.open_error {
                 error_label(ui, format!("Cannot open: {error}"));
@@ -129,7 +124,11 @@ impl PatcherApp {
                     self.save_as(&patch);
                 }
             }
-            Section::LoginServer => {}
+            Section::LoginServer => match login::ui_login(ui, session) {
+                Some(login::LoginAction::SaveCfgAs) => self.save_login_cfg_as(),
+                Some(login::LoginAction::Overwrite(path)) => self.write_login_cfg(&path, true),
+                None => {}
+            },
         }
     }
 }

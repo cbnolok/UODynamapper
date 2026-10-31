@@ -1,7 +1,10 @@
 //! Synthetic client executables for the tests, built like the uocf `client_exe` tests build theirs (their helpers
 //! are private to that crate): a PE32 image with `.text`, `.rdata` and `.data`; an Enhanced Client-like table with
 //! the UOSA split sequence, a Kingdom Reborn-like one, and a two-copy Classic table with its file name table, startup
-//! globals and wrap seam.
+//! globals and wrap seam. The login variants add `LoginAccount`'s address code as the uocf `client_exe::login` tests
+//! build it: the fixed store, then (Enhanced Client) the public host pushes and port stores, the hosts in `.rdata`.
+
+use std::net::Ipv4Addr;
 
 use uocf::classic::map::CLASSIC_FACET_HEIGHTS;
 use uocf::client_exe::classic_facets::{
@@ -12,6 +15,9 @@ use uocf::client_exe::classic_facets::{
 use uocf::client_exe::facet_dimensions::{
     ENHANCED_CLIENT_MARKER, FACET_RECORD_HEIGHT_OFFSET, FACET_RECORD_WIDTH_OFFSET, SPLIT_IMMEDIATE_COUNT,
     STOCK_FACET_COUNT, STOCK_SPLIT_X,
+};
+use uocf::client_exe::login::{
+    LOGIN_HOST_SLOT_SIZE, STOCK_INTERNAL_LOGIN_ADDRESSES, STOCK_KR_LOGIN_ADDRESS, STOCK_LOGIN_PORTS,
 };
 use uocf::client_exe::pe::{
     pe_checksum, PeImage, MACHINE_I386, OPTIONAL_CHECKSUM_OFFSET, SECTION_CODE, SECTION_EXECUTE,
@@ -95,6 +101,51 @@ const SETGE_AL: [u8; 3] = [0x0f, 0x9d, 0xc0];
 const CMP_EAX_IMM32: u8 = 0x3d;
 const MOV_ECX_ESP4_SETGE_CL: [u8; 7] = [0x8b, 0x4c, 0x24, 0x04, 0x0f, 0x9d, 0xc1];
 
+/// The Time of Legends hosts of UOSA 4.0.102.3, in 16-byte slots.
+pub const TOL_HOSTS: [&str; 2] = ["107.23.85.115", "107.23.176.74"];
+/// A second host slot of 12 bytes (UOSA 4.0.115.0's 75.2.70.184).
+pub const SHORT_SLOT_HOST: &str = "75.2.70.184";
+/// The Enhanced Client's internal test address.
+pub const INTERNAL_IP: Ipv4Addr = STOCK_INTERNAL_LOGIN_ADDRESSES[0].0;
+/// The stack displacement of the `{ip, port}` pair.
+const PAIR_DISPLACEMENT: u8 = 0x14;
+const PAIR_PORT_OFFSET: u8 = WORD as u8;
+/// After the last host: zero padding, then a non-zero byte that ends the slot.
+const RDATA_TAIL_PADDING: usize = 4;
+const RDATA_TAIL_TEXT: &[u8] = b"LoginManager";
+const LOGIN_CODE_PADDING: usize = 16;
+/// `MOV DWORD [ESP+disp8],imm32` and `MOV WORD [ESP+disp8],imm16` without their displacement.
+const MOV_DWORD_ESP: [u8; 3] = [0xc7, 0x44, 0x24];
+const MOV_WORD_ESP: [u8; 4] = [0x66, 0xc7, 0x44, 0x24];
+/// The length of `MOV WORD [ESP+disp8],imm16`, the `JNE` skip over the second port store.
+const MOV_WORD_ESP_LEN: u8 = 7;
+/// `MOV [ESP+disp8],EDI` without its displacement.
+const MOV_ESP_EDI: [u8; 3] = [0x89, 0x7c, 0x24];
+/// `LEA EDX,[ESP+disp8]` without its displacement, then `PUSH EDX`.
+const LEA_EDX_ESP: [u8; 3] = [0x8d, 0x54, 0x24];
+const OPCODE_PUSH_EDX: u8 = 0x52;
+const OPCODE_JMP_REL32: u8 = 0xe9;
+const JMP_REL32_SIZE: usize = 5;
+/// `CALL rand; AND EAX,0x80000001; LEA ECX,[ESP+1C]`.
+const RAND_DRAW: [u8; 14] = [0xe8, 0, 0, 0, 0, 0x25, 0x01, 0, 0, 0x80, 0x8d, 0x4c, 0x24, 0x1c];
+/// `CALL ResolveHostIPv4; MOV EDI,EAX`.
+const RESOLVE_HOST: [u8; 7] = [0xe8, 0, 0, 0, 0, 0x8b, 0xf8];
+const OPCODE_PUSH_IMM32: u8 = 0x68;
+/// `JE +7` over `PUSH host1; JMP +5`, and that `JMP +5` over `PUSH host2`.
+const JE_OVER_FIRST_PUSH: [u8; 2] = [0x74, 7];
+const JMP_OVER_SECOND_PUSH: [u8; 2] = [0xeb, 5];
+const OPCODE_JNE_REL8: u8 = 0x75;
+const LOGIN_CODE_TAIL: usize = 16;
+
+/// The login address code of a synthetic image.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyntheticLogin {
+    /// Time of Legends: two hosts (the second in a 12-byte slot when `short_slot`) and two ports.
+    TimeOfLegends { short_slot: bool },
+    /// Before Time of Legends: one host and one port.
+    OneHost,
+}
+
 fn put(buffer: &mut [u8], at: usize, value: u32) {
     buffer[at..at + WORD].copy_from_slice(&value.to_le_bytes());
 }
@@ -165,12 +216,101 @@ fn split_code(x: u32) -> Vec<u8> {
     code
 }
 
-/// A 12-byte-table client with the 7 stock records: Enhanced Client-like (marker, and the split sequence when
-/// `split` is set) or Kingdom Reborn-like.
-fn twelve_byte_client(split: Option<u32>, enhanced: bool, signed: bool) -> Vec<u8> {
-    let text = split.map(split_code).unwrap_or_else(|| vec![NOP; NOP_SLED_SIZE]);
-    let rdata_rva = next_rva(SECTION_ALIGNMENT, text.len());
+/// The `.rdata` prefix with the host strings, each in a 16-byte slot (the last one only as long as its string and
+/// NUL when `short_last`), then the tail. Returns it and the offsets of the strings.
+fn host_rdata(hosts: &[&str], short_last: bool) -> (Vec<u8>, Vec<usize>) {
     let mut rdata = Vec::new();
+    let mut offsets = Vec::new();
+    for (index, host) in hosts.iter().enumerate() {
+        offsets.push(rdata.len());
+        rdata.extend_from_slice(host.as_bytes());
+        let slot = if short_last && index + 1 == hosts.len() { host.len() + 1 } else { LOGIN_HOST_SLOT_SIZE };
+        rdata.resize(offsets[index] + slot, 0);
+    }
+    if !short_last {
+        rdata.extend([0; RDATA_TAIL_PADDING]);
+    }
+    rdata.extend_from_slice(RDATA_TAIL_TEXT);
+    rdata.push(0);
+    (rdata, offsets)
+}
+
+/// `LoginAccount`'s address code: the fixed store of `fixed`, a `JMP` to the `LEA` of the pair, and between them the
+/// pushes of the hosts at `host_vas` (none for Kingdom Reborn) and the stores of `ports`.
+fn login_code(host_vas: &[u32], fixed: (Ipv4Addr, u16), ports: &[u16]) -> Vec<u8> {
+    let disp = PAIR_DISPLACEMENT;
+    let port_disp = disp + PAIR_PORT_OFFSET;
+    let mut code = vec![NOP; LOGIN_CODE_PADDING];
+    code.extend(MOV_DWORD_ESP);
+    code.push(disp);
+    code.extend(u32::from(fixed.0).to_le_bytes());
+    code.extend(MOV_WORD_ESP);
+    code.push(port_disp);
+    code.extend(fixed.1.to_le_bytes());
+    let jump = code.len();
+    code.extend([OPCODE_JMP_REL32, 0, 0, 0, 0]);
+    code.extend(RAND_DRAW);
+    match host_vas {
+        [one] => {
+            code.push(OPCODE_PUSH_IMM32);
+            code.extend(one.to_le_bytes());
+        }
+        [first, second] => {
+            code.extend(JE_OVER_FIRST_PUSH);
+            code.push(OPCODE_PUSH_IMM32);
+            code.extend(first.to_le_bytes());
+            code.extend(JMP_OVER_SECOND_PUSH);
+            code.push(OPCODE_PUSH_IMM32);
+            code.extend(second.to_le_bytes());
+        }
+        _ => {}
+    }
+    code.extend(RESOLVE_HOST);
+    code.extend(MOV_ESP_EDI);
+    code.push(disp);
+    code.extend(MOV_WORD_ESP);
+    code.push(port_disp);
+    code.extend(ports[0].to_le_bytes());
+    if let Some(second) = ports.get(1) {
+        code.extend([OPCODE_JNE_REL8, MOV_WORD_ESP_LEN]);
+        code.extend(MOV_WORD_ESP);
+        code.push(port_disp);
+        code.extend(second.to_le_bytes());
+    }
+    let target = code.len();
+    code.extend(LEA_EDX_ESP);
+    code.extend([disp, OPCODE_PUSH_EDX]);
+    let rel = (target - (jump + JMP_REL32_SIZE)) as i32;
+    code[jump + 1..jump + JMP_REL32_SIZE].copy_from_slice(&rel.to_le_bytes());
+    code.extend([INT3; LOGIN_CODE_TAIL]);
+    code
+}
+
+/// The `.text` tail and `.rdata` prefix of `login`, for a `.text` whose first `head_len` bytes are other code.
+fn enhanced_login_parts(head_len: usize, login: SyntheticLogin) -> (Vec<u8>, Vec<u8>) {
+    let (hosts, short_slot, ports): (Vec<&str>, bool, &[u16]) = match login {
+        SyntheticLogin::TimeOfLegends { short_slot: false } => (TOL_HOSTS.to_vec(), false, &STOCK_LOGIN_PORTS),
+        SyntheticLogin::TimeOfLegends { short_slot: true } => {
+            (vec![TOL_HOSTS[0], SHORT_SLOT_HOST], true, &STOCK_LOGIN_PORTS)
+        }
+        SyntheticLogin::OneHost => (vec![TOL_HOSTS[0]], false, &STOCK_LOGIN_PORTS[..1]),
+    };
+    let (rdata, offsets) = host_rdata(&hosts, short_slot);
+    let fixed = (INTERNAL_IP, STOCK_LOGIN_PORTS[0]);
+    // The code's length does not depend on the host addresses.
+    let code_len = login_code(&vec![0; hosts.len()], fixed, ports).len();
+    let rdata_va = IMAGE_BASE + next_rva(SECTION_ALIGNMENT, head_len + code_len);
+    let vas: Vec<u32> = offsets.iter().map(|offset| rdata_va + *offset as u32).collect();
+    (login_code(&vas, fixed, ports), rdata)
+}
+
+/// A 12-byte-table client with the 7 stock records: Enhanced Client-like (marker, and the split sequence when
+/// `split` is set) or Kingdom Reborn-like; `login` adds the login address code and `.rdata` prefix.
+fn twelve_byte_client(split: Option<u32>, enhanced: bool, signed: bool, login: Option<(Vec<u8>, Vec<u8>)>) -> Vec<u8> {
+    let mut text = split.map(split_code).unwrap_or_else(|| vec![NOP; NOP_SLED_SIZE]);
+    let (login_text, mut rdata) = login.unwrap_or_default();
+    text.extend(login_text);
+    let rdata_rva = next_rva(SECTION_ALIGNMENT, text.len());
     let mut pointers = Vec::new();
     for name in EC_NAMES {
         pointers.push(IMAGE_BASE + rdata_rva + rdata.len() as u32);
@@ -193,12 +333,24 @@ fn twelve_byte_client(split: Option<u32>, enhanced: bool, signed: bool) -> Vec<u
 
 /// An Enhanced Client-like image with the stock split at x = 5120.
 pub fn synthetic_enhanced(signed: bool) -> Vec<u8> {
-    twelve_byte_client(Some(STOCK_SPLIT_X), true, signed)
+    twelve_byte_client(Some(STOCK_SPLIT_X), true, signed, None)
+}
+
+/// [`synthetic_enhanced`] with the login address code of `login` and the stock hosts and ports.
+pub fn synthetic_enhanced_login(login: SyntheticLogin) -> Vec<u8> {
+    let parts = enhanced_login_parts(split_code(STOCK_SPLIT_X).len(), login);
+    twelve_byte_client(Some(STOCK_SPLIT_X), true, false, Some(parts))
 }
 
 /// A Kingdom Reborn-like image: no marker, no split.
 pub fn synthetic_kingdom_reborn() -> Vec<u8> {
-    twelve_byte_client(None, false, false)
+    twelve_byte_client(None, false, false, None)
+}
+
+/// [`synthetic_kingdom_reborn`] with its one built-in address, [`STOCK_KR_LOGIN_ADDRESS`].
+pub fn synthetic_kingdom_reborn_login() -> Vec<u8> {
+    let code = login_code(&[], STOCK_KR_LOGIN_ADDRESS, &STOCK_LOGIN_PORTS[..1]);
+    twelve_byte_client(None, false, false, Some((code, Vec::new())))
 }
 
 pub fn classic_stock_size(facet: usize) -> FacetGeometry {

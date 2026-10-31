@@ -15,8 +15,11 @@
 //!   The port immediates are little-endian u16, as every x86 immediate; the pair keeps the port in host order and
 //!   swaps it when connecting.
 //!
-//! A patch ([`crate::client_exe::patch::ExeEdit::LoginServer`]) writes every public host slot (zero filled) and
-//! every port immediate, so both random draws give the one address; the internal test address is left alone.
+//! A patch ([`crate::client_exe::patch::ExeEdit::LoginServer`], a [`LoginServerEdit`]) writes one host per site
+//! and one port per site: in the Enhanced Client every public host slot (zero filled, each host within its own
+//! slot) and every port immediate, the internal test address left alone; in Kingdom Reborn the fixed address's
+//! imm32 (an IPv4 address only: no string is resolved there) and imm16. [`LoginServerEdit::uniform`] gives every
+//! site the same host and port, so every random draw gives the one address.
 
 crate::eyre_imports!();
 use std::net::Ipv4Addr;
@@ -37,6 +40,12 @@ pub const STOCK_LOGIN_PORTS: [u16; 2] = [7775, 7776];
 pub const STOCK_LOGIN_HOSTS: [&str; 4] = ["107.23.85.115", "107.23.176.74", "13.248.219.129", "75.2.70.184"];
 /// How far after the fixed address the public hosts and ports are searched (the traced builds: 0x61..0x9b bytes).
 pub const LOGIN_SEARCH_WINDOW: usize = 0x200;
+/// The Enhanced Client's internal test addresses (the fixed store) of the traced builds: Time of Legends and later,
+/// then 4.0.29.97 (TC).
+pub const STOCK_INTERNAL_LOGIN_ADDRESSES: [(Ipv4Addr, u16); 2] =
+    [(Ipv4Addr::new(172, 16, 17, 41), STOCK_LOGIN_PORTS[0]), (Ipv4Addr::new(10, 18, 37, 29), STOCK_LOGIN_PORTS[0])];
+/// Kingdom Reborn's only address (the fixed store) in the traced build.
+pub const STOCK_KR_LOGIN_ADDRESS: (Ipv4Addr, u16) = (Ipv4Addr::new(159, 153, 196, 41), STOCK_LOGIN_PORTS[0]);
 
 const OPCODE_MOV_RM32_IMM32: u8 = 0xc7;
 const OPCODE_MOV_RM32_R32: u8 = 0x89;
@@ -114,7 +123,8 @@ pub struct LoginSites {
     pub ports: Vec<LoginPortSite>,
 }
 
-/// The public login values of a build, as a manifest records them.
+/// The login values a login edit writes, as a manifest records them: the Enhanced Client's public hosts and ports,
+/// or Kingdom Reborn's fixed address (one host, one port).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct LoginValues {
     pub hosts: Vec<String>,
@@ -122,20 +132,44 @@ pub struct LoginValues {
 }
 
 impl LoginSites {
+    /// True when the client connects to the fixed address (Kingdom Reborn: no public hosts), so a login edit writes
+    /// it; the Enhanced Client's fixed address is the internal test one, never written.
+    pub fn uses_fixed_address(&self) -> bool {
+        self.hosts.is_empty()
+    }
+
+    /// The host sites a login edit writes: the public slots, or the one fixed address.
+    pub fn host_site_count(&self) -> usize {
+        if self.uses_fixed_address() { 1 } else { self.hosts.len() }
+    }
+
+    /// The port sites a login edit writes: the public port immediates, or the fixed address's.
+    pub fn port_site_count(&self) -> usize {
+        if self.uses_fixed_address() { 1 } else { self.ports.len() }
+    }
+
     pub fn values(&self) -> LoginValues {
+        if self.uses_fixed_address() {
+            return LoginValues { hosts: vec![self.fixed.ip.to_string()], ports: vec![self.fixed.port] };
+        }
         LoginValues {
             hosts: self.hosts.iter().map(|slot| slot.host.clone()).collect(),
             ports: self.ports.iter().map(|site| site.port).collect(),
         }
     }
 
-    /// True when every public host is an official one and every port is the stock one of its draw.
+    /// Enhanced Client: true when every public host is an official one and every port is the stock one of its
+    /// draw. Kingdom Reborn: true at the traced address ([`STOCK_KR_LOGIN_ADDRESS`]).
     pub fn is_stock(&self) -> bool {
+        if self.uses_fixed_address() {
+            return (self.fixed.ip, self.fixed.port) == STOCK_KR_LOGIN_ADDRESS;
+        }
         self.hosts.iter().all(|slot| STOCK_LOGIN_HOSTS.contains(&slot.host.as_str()))
             && self.ports.iter().zip(STOCK_LOGIN_PORTS).all(|(site, stock)| site.port == stock)
     }
 
-    /// The public servers the client draws from: host `i` with port `i` (or every host with the one port).
+    /// The Enhanced Client's public servers the client draws from: host `i` with port `i` (or every host with the
+    /// one port). Empty in Kingdom Reborn (its address is [`Self::fixed`]).
     pub fn public_servers(&self) -> Vec<(String, u16)> {
         let count = self.hosts.len().max(self.ports.len());
         (0..count)
@@ -162,7 +196,7 @@ impl LoginSites {
 }
 
 /// A host the patch writes: at most [`MAX_LOGIN_HOST_LENGTH`] bytes of a validated dotted IPv4 address or host
-/// name, stored inline so [`crate::client_exe::patch::ExeEdit`] stays `Copy`. Serialized as its string.
+/// name, stored inline. Serialized as its string.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct LoginHost {
@@ -211,6 +245,57 @@ impl TryFrom<String> for LoginHost {
 impl From<LoginHost> for String {
     fn from(host: LoginHost) -> Self {
         host.as_str().to_owned()
+    }
+}
+
+/// A login server edit: one host per host site and one port per port site of the build, in the order of
+/// [`LoginSites::hosts`] and [`LoginSites::ports`] (Kingdom Reborn: one each, the fixed address). The patch refuses
+/// counts that differ from the located sites.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(from = "LoginServerEditRecord")]
+pub struct LoginServerEdit {
+    pub hosts: Vec<LoginHost>,
+    pub ports: Vec<u16>,
+}
+
+/// What a manifest step holds: the per-site form, or the one host and port of a manifest written before per-site
+/// edits (read as one host and one port).
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum LoginServerEditRecord {
+    PerSite { hosts: Vec<LoginHost>, ports: Vec<u16> },
+    Single { host: LoginHost, port: u16 },
+}
+
+impl From<LoginServerEditRecord> for LoginServerEdit {
+    fn from(record: LoginServerEditRecord) -> Self {
+        match record {
+            LoginServerEditRecord::PerSite { hosts, ports } => Self { hosts, ports },
+            LoginServerEditRecord::Single { host, port } => Self { hosts: vec![host], ports: vec![port] },
+        }
+    }
+}
+
+impl LoginServerEdit {
+    /// `host` on every host site and `port` on every port site of `sites`.
+    pub fn uniform(sites: &LoginSites, host: LoginHost, port: u16) -> Self {
+        Self { hosts: vec![host; sites.host_site_count()], ports: vec![port; sites.port_site_count()] }
+    }
+
+    pub fn describe(&self) -> String {
+        let uniform_host = self.hosts.first().filter(|first| self.hosts.iter().all(|host| host == *first));
+        let uniform_port = self.ports.first().filter(|first| self.ports.iter().all(|port| port == *first));
+        if let (Some(host), Some(port)) = (uniform_host, uniform_port) {
+            return format!("login server {host}:{port}");
+        }
+        let numbered = |items: Vec<String>| {
+            items.iter().enumerate().map(|(index, item)| format!("{} {item}", index + 1)).collect::<Vec<_>>().join(", ")
+        };
+        format!(
+            "login hosts {}; ports {}",
+            numbered(self.hosts.iter().map(LoginHost::to_string).collect()),
+            numbered(self.ports.iter().map(u16::to_string).collect())
+        )
     }
 }
 
@@ -366,8 +451,8 @@ pub(crate) mod tests {
 
     /// The Time of Legends hosts of UOSA 4.0.102.3, 16 bytes apart, then 4 zero bytes and other data.
     pub const TOL_HOSTS: [&str; 2] = ["107.23.85.115", "107.23.176.74"];
-    pub const INTERNAL_IP: Ipv4Addr = Ipv4Addr::new(172, 16, 17, 41);
-    const KR_IP: Ipv4Addr = Ipv4Addr::new(159, 153, 196, 41);
+    pub const INTERNAL_IP: Ipv4Addr = STOCK_INTERNAL_LOGIN_ADDRESSES[0].0;
+    const KR_IP: Ipv4Addr = STOCK_KR_LOGIN_ADDRESS.0;
     const PAIR_DISPLACEMENT: u8 = 0x14;
     /// After the last host: a non-zero byte ends the zero padding of the second slot.
     const RDATA_TAIL: &[u8] = b"\0\0\0\0LoginManager";

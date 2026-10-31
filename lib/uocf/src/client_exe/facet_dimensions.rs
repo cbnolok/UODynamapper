@@ -34,6 +34,7 @@ use crate::client_exe::classic_facets::{
     UNLOCATED_FILE_ID_LIMIT,
 };
 use crate::client_exe::login::{locate_login_sites, LoginSites, LoginValues};
+use crate::client_exe::version::{read_exe_version, ExeVersion};
 use crate::client_exe::pe::{pe_checksum, read_u32, PeImage, PeSection, MACHINE_I386};
 use crate::client_exe::sha256::sha256_hex;
 use crate::enhanced::facet_sector::{FacetGeometry, CLIENT_FACET_DIMENSIONS, SECTOR_SIDE};
@@ -354,8 +355,9 @@ pub struct ExeValues {
     /// The split x of facets 0 and 1 (Enhanced Client) or the wrap seam (Classic); `None` for a build without
     /// (Kingdom Reborn).
     pub split_x: Option<u32>,
-    /// The public login hosts and ports (Enhanced Client); `None` in the other families, in builds where they were
-    /// not located, and in manifests written before they were recorded.
+    /// The login values a login edit writes ([`LoginSites::values`]: the Enhanced Client's public hosts and ports,
+    /// Kingdom Reborn's fixed address); `None` for Classic, in builds where they were not located, and in manifests
+    /// written before they were recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub login: Option<LoginValues>,
 }
@@ -393,6 +395,8 @@ pub struct ClientExeInspection {
     pub classic: Option<ClassicLayout>,
     /// The login address code (Enhanced Client and Kingdom Reborn), when located ([`locate_login_sites`]).
     pub login: Option<LoginSites>,
+    /// The file and product versions of the version resource, when it has one (information only).
+    pub version: Option<ExeVersion>,
 }
 
 /// The single element of `items`, or `None`.
@@ -438,7 +442,20 @@ impl ClientExeInspection {
         let known = known_build(&sha256);
         let computed_checksum = pe_checksum(bytes, pe.checksum_offset);
         let login = locate_login_sites(bytes, &pe, family)?;
-        Ok(Self { sha256, file_size: bytes.len(), family, known, pe, computed_checksum, tables, split, classic, login })
+        let version = read_exe_version(bytes, &pe);
+        Ok(Self {
+            sha256,
+            file_size: bytes.len(),
+            family,
+            known,
+            pe,
+            computed_checksum,
+            tables,
+            split,
+            classic,
+            login,
+            version,
+        })
     }
 
     /// The first table: the only one, or the copy the Classic client reads without the 0xA9 flag.
@@ -478,8 +495,8 @@ impl ClientExeInspection {
                 .collect(),
             split_x: self.split.as_ref().map(|split| split.x),
             login: match self.family {
-                ClientFamily::Enhanced => self.login.as_ref().map(LoginSites::values),
-                _ => None,
+                ClientFamily::Enhanced | ClientFamily::KingdomReborn => self.login.as_ref().map(LoginSites::values),
+                ClientFamily::Classic => None,
             },
         }
     }

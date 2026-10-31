@@ -17,9 +17,11 @@
 //!   facet), and facet 0 also writes the startup globals.
 //! - [`ExeEdit::Split`]: the three split imm32 (Enhanced Client) or the two wrap seam imm32 (Classic).
 //! - [`ExeEdit::ClassicWrap`]: the facet's wrap in every table copy (and the startup globals for facet 0).
-//! - [`ExeEdit::LoginServer`] (Enhanced Client only): every public login host slot, zero filled, and every public
-//!   port imm16 ([`crate::client_exe::login`]); the internal test address is left alone. Kingdom Reborn and Classic
-//!   are refused: Classic reads `login.cfg` ([`crate::client_config::login_servers`]).
+//! - [`ExeEdit::LoginServer`] ([`LoginServerEdit`]: one host per host site, one port per port site). Enhanced
+//!   Client: each public login host slot, zero filled (each host within its own slot), and each public port imm16
+//!   ([`crate::client_exe::login`]); the internal test address is left alone. Kingdom Reborn: the fixed address's
+//!   ip imm32 (dotted IPv4 only: the code holds a number, not a string the client resolves) and port imm16.
+//!   Classic is refused: it reads `login.cfg` ([`crate::client_config::login_servers`]).
 
 crate::eyre_imports!();
 use std::path::{Path, PathBuf};
@@ -33,8 +35,9 @@ use crate::client_exe::facet_dimensions::{
     validate_facet_size, ClientExeInspection, ClientFamily, ExeValues, FacetValues, CLASSIC_GOLD_SHA256, DISABLED_SPLIT_X,
     FACET_RECORD_HEIGHT_OFFSET, FACET_RECORD_WIDTH_OFFSET, SPLIT_FACETS, STOCK_SPLIT_X,
 };
-use crate::client_exe::login::{LoginHost, LoginSites, LoginValues};
+use crate::client_exe::login::{LoginHost, LoginServerEdit, LoginSites, LoginValues};
 use crate::client_exe::pe::pe_checksum;
+use crate::client_exe::version::ExeVersion;
 use crate::client_config::login_servers::{validate_login_port, HostKind, validate_login_host};
 use crate::enhanced::facet_sector::{FacetGeometry, CLIENT_FACET_DIMENSIONS};
 
@@ -101,7 +104,7 @@ impl SplitEdit {
 }
 
 /// One change of a patch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExeEdit {
     /// A new size for one facet.
@@ -109,8 +112,8 @@ pub enum ExeEdit {
     Split(SplitEdit),
     /// A new wrap rectangle for one facet (Classic only).
     ClassicWrap { facet: u8, wrap_width: u32, wrap_height: u32 },
-    /// A new built-in login server (Enhanced Client only): every public host slot and port.
-    LoginServer { host: LoginHost, port: u16 },
+    /// A new built-in login server (Enhanced Client, Kingdom Reborn): one host per host site, one port per port site.
+    LoginServer(LoginServerEdit),
 }
 
 impl ExeEdit {
@@ -122,7 +125,7 @@ impl ExeEdit {
             Self::ClassicWrap { facet, wrap_width, wrap_height } => {
                 format!("facet {facet} wrap {wrap_width}x{wrap_height}")
             }
-            Self::LoginServer { host, port } => format!("login server {host}:{port}"),
+            Self::LoginServer(login) => login.describe(),
         }
     }
 }
@@ -212,6 +215,10 @@ pub struct ExeManifest {
     pub original_values: Option<ExeValues>,
     /// The PE checksum written.
     pub checksum: u32,
+    /// The file and product versions of the patched copy's version resource (information only; `None` without
+    /// one, and in manifests written before it was recorded).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exe_version: Option<ExeVersion>,
     /// Every write of the chain, the last one this copy's. A version 1 manifest has one step without edits.
     #[serde(default)]
     pub steps: Vec<ManifestStep>,
@@ -279,9 +286,8 @@ fn login_refusal(family: ClientFamily) -> String {
         ClientFamily::Classic => "the Classic client reads its login server from login.cfg (or the LoginServerFile that \
                                   uo.cfg names), not from the executable: edit that file (`uocf-cli login set`)"
             .to_owned(),
-        ClientFamily::KingdomReborn => "the login server patch supports the Enhanced Client only: Kingdom Reborn's \
-                                        UOKR.exe connects to the one IPv4 address built into its code (`exe show` \
-                                        prints it), and the traced build never loads LoginServers*.xml"
+        ClientFamily::KingdomReborn => "the login address code was not located in this build: no single fixed \
+                                        address store (MOV imm32 ip, MOV imm16 port, JMP to the LEA of the pair)"
             .to_owned(),
         ClientFamily::Enhanced => "the login address code was not located in this build: no single fixed address store \
                                    followed by the public host pushes and port stores"
@@ -289,14 +295,42 @@ fn login_refusal(family: ClientFamily) -> String {
     }
 }
 
-/// The login sites a login edit writes, checked for `host`.
-fn checked_login_sites<'a>(before: &'a ClientExeInspection, host: &LoginHost, port: u16) -> eyre::Result<&'a LoginSites> {
+/// `count` sites, in words.
+fn site_count_text(count: usize, what: &str) -> String {
+    format!("{count} {what} site{}", if count == 1 { "" } else { "s" })
+}
+
+/// The login sites `login` writes, checked: one host and port per site, the ports, and each host against its site
+/// (Enhanced Client: its slot's capacity; Kingdom Reborn: dotted IPv4).
+fn checked_login_sites<'a>(before: &'a ClientExeInspection, login: &LoginServerEdit) -> eyre::Result<&'a LoginSites> {
     let sites = match (&before.login, before.family) {
         (Some(sites), ClientFamily::Enhanced) if !sites.hosts.is_empty() && !sites.ports.is_empty() => sites,
+        (Some(sites), ClientFamily::KingdomReborn) => sites,
         _ => eyre::bail!("{}", login_refusal(before.family)),
     };
-    validate_login_port(port)?;
-    for (number, slot) in sites.hosts.iter().enumerate() {
+    let (host_sites, port_sites) = (sites.host_site_count(), sites.port_site_count());
+    eyre::ensure!(
+        login.hosts.len() == host_sites && login.ports.len() == port_sites,
+        "{} and {} given: this build has {} and {}: give one per site (the same host or port for each to use one \
+         address)",
+        site_count_text(login.hosts.len(), "host"),
+        site_count_text(login.ports.len(), "port"),
+        site_count_text(host_sites, "host"),
+        site_count_text(port_sites, "port")
+    );
+    for port in &login.ports {
+        validate_login_port(*port)?;
+    }
+    if sites.uses_fixed_address() {
+        let host = &login.hosts[0];
+        eyre::ensure!(
+            validate_login_host(host.as_str())? == HostKind::Ipv4,
+            "host `{host}`: Kingdom Reborn needs a dotted IPv4 address: UOKR.exe stores its login address as a 32-bit \
+             number in an instruction (MOV imm32), not as a string it resolves, so a host name cannot be written"
+        );
+        return Ok(sites);
+    }
+    for (number, (slot, host)) in sites.hosts.iter().zip(&login.hosts).enumerate() {
         eyre::ensure!(
             host.as_str().len() < slot.capacity,
             "host `{host}` has {} characters: host slot {} (VA {:#x}, `{}`) takes at most {} (a {}-byte slot): use a \
@@ -405,29 +439,39 @@ pub fn plan_patch_inspected(
                 eyre::ensure!(wrapped[facet_index].is_none(), "two wrap edits for facet {facet}");
                 wrapped[facet_index] = Some(index);
             }
-            ExeEdit::LoginServer { host, port } => {
+            ExeEdit::LoginServer(ref login) => {
                 eyre::ensure!(login_edit.is_none(), "two login server edits");
-                let sites = checked_login_sites(&before, &host, port)?;
+                let sites = checked_login_sites(&before, login)?;
                 if !sites.is_stock() && previous.is_none() {
-                    let current: Vec<String> =
-                        sites.public_servers().iter().map(|(host, port)| format!("{host}:{port}")).collect();
+                    let values = sites.values();
+                    let ports: Vec<String> = values.ports.iter().map(u16::to_string).collect();
                     warnings.push(PatchWarning::new(
                         PatchWarningKind::Login,
-                        format!("the built-in login server is already not the stock one ({})", current.join(", ")),
+                        format!(
+                            "the built-in login server is already not the stock one (hosts {}; ports {})",
+                            values.hosts.join(", "),
+                            ports.join(", ")
+                        ),
                     ));
                 }
-                if validate_login_host(host.as_str())? == HostKind::Name {
+                let mut names: Vec<&LoginHost> = Vec::new();
+                for host in &login.hosts {
+                    if validate_login_host(host.as_str())? == HostKind::Name && !names.contains(&host) {
+                        names.push(host);
+                    }
+                }
+                for host in names {
                     warnings.push(PatchWarning::new(
                         PatchWarningKind::Login,
                         format!("`{host}` is a host name: the client resolves it (gethostbyname) at each login"),
                     ));
                 }
-                login_edit = Some((index, host, port));
+                login_edit = Some((index, login));
             }
         }
         let facet = match *edit {
             ExeEdit::FacetSize { facet, .. } | ExeEdit::ClassicWrap { facet, .. } => Some(facet),
-            ExeEdit::Split(_) | ExeEdit::LoginServer { .. } => None,
+            ExeEdit::Split(_) | ExeEdit::LoginServer(_) => None,
         };
         if classic && facet == Some(0) {
             eyre::ensure!(
@@ -473,10 +517,10 @@ pub fn plan_patch_inspected(
     if let Some((_, x)) = split_edit {
         expected.split_x = Some(x);
     }
-    if let (Some((_, host, port)), Some(sites)) = (login_edit, &before.login) {
+    if let Some((_, login)) = login_edit {
         expected.login = Some(LoginValues {
-            hosts: vec![host.as_str().to_owned(); sites.hosts.len()],
-            ports: vec![port; sites.ports.len()],
+            hosts: login.hosts.iter().map(|host| host.as_str().to_owned()).collect(),
+            ports: login.ports.clone(),
         });
     }
     warnings.extend(split_warnings(&before, &expected, &sized));
@@ -527,14 +571,21 @@ pub fn plan_patch_inspected(
             writes.push(FieldWrite::u32(*offset, x, field, edit));
         }
     }
-    if let (Some((edit, host, port)), Some(sites)) = (login_edit, &before.login) {
-        for (number, slot) in sites.hosts.iter().enumerate() {
+    if let (Some((edit, login)), Some(sites)) = (login_edit, &before.login) {
+        if sites.uses_fixed_address() {
+            let ip: std::net::Ipv4Addr = login.hosts[0].as_str().parse().wrap_err("the checked IPv4 host")?;
+            let fixed = &sites.fixed;
+            writes.push(FieldWrite::u32(fixed.ip_offset, u32::from(ip), "login address (ip imm32)".to_owned(), edit));
+            let new = login.ports[0].to_le_bytes().to_vec();
+            writes.push(FieldWrite { offset: fixed.port_offset, new, field: "login port (imm16)".to_owned(), edit });
+        }
+        for (number, (slot, host)) in sites.hosts.iter().zip(&login.hosts).enumerate() {
             let mut new = host.as_str().as_bytes().to_vec();
             new.resize(slot.capacity, 0);
             let field = format!("login host {} ({}-byte slot)", number + 1, slot.capacity);
             writes.push(FieldWrite { offset: slot.offset, new, field, edit });
         }
-        for (number, site) in sites.ports.iter().enumerate() {
+        for (number, (site, port)) in sites.ports.iter().zip(&login.ports).enumerate() {
             let field = format!("login port {} (imm16)", number + 1);
             writes.push(FieldWrite { offset: site.offset, new: port.to_le_bytes().to_vec(), field, edit });
         }
@@ -681,6 +732,7 @@ pub fn patch_client_exe(bytes: &[u8], patch: &ExePatch, previous: Option<&ExeMan
         values: after.values(),
         original_values: plan.original_values,
         checksum: after.pe.stored_checksum,
+        exe_version: after.version,
         steps,
     };
     Ok(PatchedClientExe { bytes: patched, before, after, changes: plan.changes, warnings: plan.warnings, manifest })
@@ -906,7 +958,7 @@ mod tests {
             vec![size(3, NEW_WIDTH + FACET_SIDE_ALIGNMENT / 2, NEW_HEIGHT)],
             vec![size(3, 0, NEW_HEIGHT)],
             vec![size(3, MAX_FACET_SIDE, MAX_FACET_SIDE)],
-            vec![good, size(3, NEW_WIDTH, NEW_WIDTH)],
+            vec![good.clone(), size(3, NEW_WIDTH, NEW_WIDTH)],
             vec![ExeEdit::Split(SplitEdit::Set(DISABLED_SPLIT_X + 1))],
             vec![ExeEdit::Split(SplitEdit::Set(NEW_SPLIT)), ExeEdit::Split(SplitEdit::Disable)],
             vec![ExeEdit::ClassicWrap { facet: 3, wrap_width: 2048, wrap_height: 2048 }],
@@ -914,7 +966,7 @@ mod tests {
         ] {
             assert!(plan_patch(&image, &ExePatch { edits: bad.clone() }, None).is_err(), "{bad:?}");
         }
-        assert!(plan_patch(&image, &ExePatch { edits: vec![good] }, None).is_ok());
+        assert!(plan_patch(&image, &ExePatch { edits: vec![good.clone()] }, None).is_ok());
         let split = ExePatch { edits: vec![ExeEdit::Split(SplitEdit::Disable)] };
         assert!(plan_patch(&synthetic_kr_client(), &split, None).is_err(), "no split to patch");
         let signed = synthetic_client(Some(STOCK_SPLIT_X), true);
@@ -975,19 +1027,29 @@ mod tests {
         assert!(plan_patch(&image, &smaller, None).is_ok());
     }
 
-    fn login(host: &str, port: u16) -> ExeEdit {
-        ExeEdit::LoginServer { host: LoginHost::new(host).unwrap(), port }
+    /// A login edit of the given hosts and ports, one per site.
+    fn per_site(hosts: &[&str], ports: &[u16]) -> ExeEdit {
+        let hosts = hosts.iter().map(|host| LoginHost::new(host).unwrap()).collect();
+        ExeEdit::LoginServer(LoginServerEdit { hosts, ports: ports.to_vec() })
+    }
+
+    /// `host:port` on every login site of `image`.
+    fn login(image: &[u8], host: &str, port: u16) -> ExeEdit {
+        let sites = ClientExeInspection::inspect(image).unwrap().login.unwrap();
+        ExeEdit::LoginServer(LoginServerEdit::uniform(&sites, LoginHost::new(host).unwrap(), port))
     }
 
     const LOCAL_HOST: &str = "127.0.0.1";
+    const SHARD_HOST: &str = "10.0.0.7";
     const SHARD_PORT: u16 = 2593;
+    const SECOND_SHARD_PORT: u16 = 2594;
 
     #[test]
     fn a_login_patch_writes_every_public_host_and_port() {
         let image = synthetic_login_client(true, false);
         let before = ClientExeInspection::inspect(&image).unwrap();
         let sites = before.login.clone().unwrap();
-        let patch = ExePatch { edits: vec![login(LOCAL_HOST, SHARD_PORT), size(5, 1280, 4160)] };
+        let patch = ExePatch { edits: vec![login(&image, LOCAL_HOST, SHARD_PORT), size(5, 1280, 4160)] };
         let plan = plan_patch(&image, &patch, None).unwrap();
         assert_eq!(plan_patch_inspected(&image, &before, &patch, None).unwrap().changes, plan.changes);
         let patched = patch_client_exe(&image, &patch, None).unwrap();
@@ -1008,13 +1070,14 @@ mod tests {
         assert_eq!(after.fixed, sites.fixed, "the internal test address is kept");
         assert!(!after.is_stock());
         assert_eq!(patched.manifest.values.login, plan.expected.login);
+        assert_eq!(patched.manifest.steps[0].edits[0].describe(), format!("login server {LOCAL_HOST}:{SHARD_PORT}"));
         assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
 
         // The copy patches again with its manifest; a host name warns; the same address changes nothing.
-        let renamed = patch_client_exe(&patched.bytes, &ExePatch { edits: vec![login("shard.example", SHARD_PORT)] }, Some(&patched.manifest)).unwrap();
+        let renamed = patch_client_exe(&patched.bytes, &ExePatch { edits: vec![login(&image, "shard.example", SHARD_PORT)] }, Some(&patched.manifest)).unwrap();
         assert_eq!(renamed.warnings.iter().map(|warning| warning.kind).collect::<Vec<_>>(), [PatchWarningKind::Login]);
         assert_eq!(renamed.manifest.steps.len(), 2);
-        let same = ExePatch { edits: vec![login(LOCAL_HOST, SHARD_PORT)] };
+        let same = ExePatch { edits: vec![login(&image, LOCAL_HOST, SHARD_PORT)] };
         assert!(plan_patch(&patched.bytes, &same, Some(&patched.manifest)).is_err());
 
         // A copy patched elsewhere only at its login sites (as UOSA_eclo.exe) has stock facets: it patches again
@@ -1024,7 +1087,7 @@ mod tests {
             foreign[slot.offset..slot.offset + slot.capacity].fill(0);
             foreign[slot.offset..slot.offset + LOCAL_HOST.len()].copy_from_slice(LOCAL_HOST.as_bytes());
         }
-        let foreign_plan = plan_patch(&foreign, &ExePatch { edits: vec![login("10.0.0.1", SHARD_PORT)] }, None).unwrap();
+        let foreign_plan = plan_patch(&foreign, &ExePatch { edits: vec![login(&image, SHARD_HOST, SHARD_PORT)] }, None).unwrap();
         assert_eq!(foreign_plan.warnings.iter().map(|warning| warning.kind).collect::<Vec<_>>(), [PatchWarningKind::Checksum, PatchWarningKind::Login]);
 
         // A manifest written before the login values were recorded still matches.
@@ -1036,27 +1099,101 @@ mod tests {
 
         // The one-host build before Time of Legends.
         let old_build = synthetic_login_client(false, false);
-        let patched = patch_client_exe(&old_build, &same, None).unwrap();
+        let patched = patch_client_exe(&old_build, &ExePatch { edits: vec![login(&old_build, LOCAL_HOST, SHARD_PORT)] }, None).unwrap();
         assert_eq!(patched.after.login.unwrap().public_servers(), [(LOCAL_HOST.to_owned(), SHARD_PORT)]);
     }
 
     #[test]
+    fn each_login_site_takes_its_own_host_and_port() {
+        let image = synthetic_login_client(true, false);
+        let edit = per_site(&[LOCAL_HOST, SHARD_HOST], &[SHARD_PORT, SECOND_SHARD_PORT]);
+        let patched = patch_client_exe(&image, &ExePatch { edits: vec![edit.clone()] }, None).unwrap();
+        let after = patched.after.login.as_ref().unwrap();
+        assert_eq!(after.public_servers(), [(LOCAL_HOST.to_owned(), SHARD_PORT), (SHARD_HOST.to_owned(), SECOND_SHARD_PORT)]);
+        assert_eq!(
+            patched.manifest.values.login,
+            Some(LoginValues { hosts: vec![LOCAL_HOST.to_owned(), SHARD_HOST.to_owned()], ports: vec![SHARD_PORT, SECOND_SHARD_PORT] })
+        );
+        assert_eq!(edit.describe(), format!("login hosts 1 {LOCAL_HOST}, 2 {SHARD_HOST}; ports 1 {SHARD_PORT}, 2 {SECOND_SHARD_PORT}"));
+        // Only the second host changes: one host write and nothing at the ports.
+        let second = per_site(&[LOCAL_HOST, LOCAL_HOST], &[SHARD_PORT, SECOND_SHARD_PORT]);
+        let plan = plan_patch(&patched.bytes, &ExePatch { edits: vec![second] }, Some(&patched.manifest)).unwrap();
+        let fields: Vec<String> = plan.changes.iter().filter(|change| change.cause == ChangeCause::Edit(0)).map(|change| change.field.clone()).collect();
+        assert_eq!(fields, [format!("login host 2 ({LOGIN_HOST_SLOT_SIZE}-byte slot)")]);
+
+        // Each host is checked against its own slot: 13 characters fit the 16-byte first slot, not the 12-byte second.
+        let short = synthetic_login_client(true, true);
+        const LONG_HOST: &str = "192.168.100.1";
+        const FITTING_HOST: &str = "192.168.1.1";
+        assert!(plan_patch(&short, &ExePatch { edits: vec![per_site(&[LONG_HOST, FITTING_HOST], &[SHARD_PORT; 2])] }, None).is_ok());
+        let error = plan_patch(&short, &ExePatch { edits: vec![per_site(&[FITTING_HOST, LONG_HOST], &[SHARD_PORT; 2])] }, None).unwrap_err().to_string();
+        assert!(error.contains("slot 2"), "{error}");
+
+        // Counts that differ from the sites are refused.
+        for wrong in [
+            per_site(&[LOCAL_HOST], &[SHARD_PORT; 2]),
+            per_site(&[LOCAL_HOST; 3], &[SHARD_PORT; 2]),
+            per_site(&[LOCAL_HOST; 2], &[SHARD_PORT]),
+            per_site(&[], &[]),
+        ] {
+            let error = plan_patch(&image, &ExePatch { edits: vec![wrong] }, None).unwrap_err().to_string();
+            assert!(error.contains("this build has 2 host sites and 2 port sites"), "{error}");
+        }
+        let one_host = synthetic_login_client(false, false);
+        let error = plan_patch(&one_host, &ExePatch { edits: vec![per_site(&[LOCAL_HOST; 2], &[SHARD_PORT; 2])] }, None).unwrap_err().to_string();
+        assert!(error.contains("1 host site and 1 port site"), "{error}");
+    }
+
+    #[test]
+    fn kingdom_reborn_patches_its_fixed_ipv4_address() {
+        let image = synthetic_kr_login_client();
+        let before = ClientExeInspection::inspect(&image).unwrap();
+        let sites = before.login.clone().unwrap();
+        assert!(sites.uses_fixed_address() && sites.is_stock());
+        assert_eq!(before.values().login, Some(LoginValues { hosts: vec![sites.fixed.ip.to_string()], ports: vec![sites.fixed.port] }));
+        let patch = ExePatch { edits: vec![login(&image, SHARD_HOST, SHARD_PORT)] };
+        let plan = plan_patch(&image, &patch, None).unwrap();
+        let patched = patch_client_exe(&image, &patch, None).unwrap();
+        assert_plan_is_the_write(&image, &plan, &patched.bytes);
+        let fields: Vec<(&str, usize)> = plan
+            .changes
+            .iter()
+            .filter(|change| change.cause == ChangeCause::Edit(0))
+            .map(|change| (change.field.as_str(), change.offset))
+            .collect();
+        assert_eq!(fields, [("login address (ip imm32)", sites.fixed.ip_offset), ("login port (imm16)", sites.fixed.port_offset)]);
+        // The address is a host-order u32, little endian.
+        let ip: std::net::Ipv4Addr = SHARD_HOST.parse().unwrap();
+        assert_eq!(patched.bytes[sites.fixed.ip_offset..][..4], u32::from(ip).to_le_bytes());
+        let after = patched.after.login.as_ref().unwrap();
+        assert_eq!((after.fixed.ip, after.fixed.port), (ip, SHARD_PORT));
+        assert!(!after.is_stock());
+        assert_eq!(patched.manifest.values.login, Some(LoginValues { hosts: vec![SHARD_HOST.to_owned()], ports: vec![SHARD_PORT] }));
+        // Patches again with its manifest; a host name cannot be written.
+        assert!(plan_patch(&patched.bytes, &ExePatch { edits: vec![login(&image, LOCAL_HOST, SHARD_PORT)] }, Some(&patched.manifest)).is_ok());
+        let error = plan_patch(&image, &ExePatch { edits: vec![login(&image, "shard.example", SHARD_PORT)] }, None).unwrap_err().to_string();
+        assert!(error.contains("dotted IPv4") && error.contains("imm32"), "{error}");
+        let error = plan_patch(&image, &ExePatch { edits: vec![per_site(&[SHARD_HOST; 2], &[SHARD_PORT; 2])] }, None).unwrap_err().to_string();
+        assert!(error.contains("1 host site and 1 port site"), "{error}");
+    }
+
+    #[test]
     fn login_patches_are_refused_where_they_cannot_apply() {
-        let edit = ExePatch { edits: vec![login(LOCAL_HOST, SHARD_PORT)] };
+        let image = synthetic_login_client(true, false);
+        let edit = ExePatch { edits: vec![per_site(&[LOCAL_HOST], &[SHARD_PORT])] };
         let error = |image: &[u8], patch: &ExePatch| plan_patch(image, patch, None).unwrap_err().to_string();
-        assert!(error(&synthetic_kr_login_client(), &edit).contains("Kingdom Reborn"));
         assert!(error(&synthetic_classic(6, 2), &edit).contains("login.cfg"));
         assert!(error(&synthetic_client(Some(STOCK_SPLIT_X), false), &edit).contains("not located"));
-        // A 12-byte second slot takes 11 characters.
-        let short = synthetic_login_client(true, true);
-        assert!(plan_patch(&short, &ExePatch { edits: vec![login("192.168.100.1", SHARD_PORT)] }, None).is_err());
-        assert!(plan_patch(&short, &ExePatch { edits: vec![login("192.168.1.1", SHARD_PORT)] }, None).is_ok());
-        let image = synthetic_login_client(true, false);
-        assert!(plan_patch(&image, &ExePatch { edits: vec![login(LOCAL_HOST, 0)] }, None).is_err());
-        assert!(plan_patch(&image, &ExePatch { edits: vec![login(LOCAL_HOST, 1), login(LOCAL_HOST, 2)] }, None).is_err());
-        let serialized = serde_json::to_string(&edit.edits).unwrap();
-        assert_eq!(serialized, r#"[{"login_server":{"host":"127.0.0.1","port":2593}}]"#);
-        assert_eq!(serde_json::from_str::<Vec<ExeEdit>>(&serialized).unwrap(), edit.edits);
+        assert!(plan_patch(&image, &ExePatch { edits: vec![login(&image, LOCAL_HOST, 0)] }, None).is_err());
+        let twice = ExePatch { edits: vec![login(&image, LOCAL_HOST, 1), login(&image, LOCAL_HOST, 2)] };
+        assert!(plan_patch(&image, &twice, None).is_err());
+        let uniform = ExePatch { edits: vec![login(&image, LOCAL_HOST, SHARD_PORT)] };
+        let serialized = serde_json::to_string(&uniform.edits).unwrap();
+        assert_eq!(serialized, r#"[{"login_server":{"hosts":["127.0.0.1","127.0.0.1"],"ports":[2593,2593]}}]"#);
+        assert_eq!(serde_json::from_str::<Vec<ExeEdit>>(&serialized).unwrap(), uniform.edits);
+        // A manifest step written before per-site edits reads as one host and one port.
+        let single = r#"[{"login_server":{"host":"127.0.0.1","port":2593}}]"#;
+        assert_eq!(serde_json::from_str::<Vec<ExeEdit>>(single).unwrap(), edit.edits);
     }
 
     #[test]
