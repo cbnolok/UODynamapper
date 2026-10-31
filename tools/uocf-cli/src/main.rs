@@ -1,8 +1,8 @@
 mod animdef;
-mod dds;
 mod exe;
 mod facet;
 mod hues;
+mod image_census;
 mod legacy_mul;
 mod login;
 mod mul_convert;
@@ -104,9 +104,10 @@ enum Commands {
     /// Login server files of a client folder: where the client reads its server from; write an edited copy.
     #[command(subcommand)]
     Login(login::LoginCmd),
-    /// DDS textures in client UOP packages: the census of formats and header conventions.
+    /// Images in client UOP packages: the census by content (names checked against it), DDS formats and header
+    /// conventions.
     #[command(subcommand)]
-    Dds(dds::DdsCmd),
+    Image(image_census::ImageCmd),
     /// Content-aware edits of UOP packages: replace a texture keeping its DDS format.
     #[command(subcommand)]
     Uop(uop::UopCmd),
@@ -177,7 +178,7 @@ fn main() -> eyre::Result<()> {
         Commands::Facet(cmd) => facet::run(cmd)?,
         Commands::Exe(cmd) => exe::run(cmd)?,
         Commands::Login(cmd) => login::run(cmd)?,
-        Commands::Dds(cmd) => dds::run(cmd)?,
+        Commands::Image(cmd) => image_census::run(cmd)?,
         Commands::Uop(cmd) => uop::run(cmd)?,
         Commands::Animdef(cmd) => animdef::run(cmd)?,
     }

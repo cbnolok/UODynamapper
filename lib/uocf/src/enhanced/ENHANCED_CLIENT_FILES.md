@@ -1353,16 +1353,90 @@ Known weak signals:
   real owner; do not infer particle-only or terrain-only behavior from the file
   name alone.
 
-## 12. DDS formats in client packages
+## 12. Images in client packages
 
-Census of every DDS payload in every UOP of the EC, EC fp, KR and three Classic
-installs (168 packages, 734,299 entries, 156,666 DDS payloads, found by the
-`DDS ` magic after decompression). Rerun with
-`uocf-cli dds census <dirs> --dictionary tools/_shared_assets/Dictionary.dic`;
-`--records <tsv>` dumps every header. The Classic packages hold no DDS and no
-other image.
+Census of every entry of every UOP of the EC, EC fp, KR and three Classic
+installs (168 packages, 734,299 entries, 614,960 of them named by
+`tools/_shared_assets/Dictionary.dic` and the six `string_dictionary.uop`),
+classified by its decompressed content alone, never by its name
+(`image_census.rs`). Rerun with `uocf-cli image census <dirs> --dictionary
+tools/_shared_assets/Dictionary.dic --string-dictionary
+<install>/string_dictionary.uop ...`; `--records <tsv>` dumps every DDS header,
+`--contents <tsv>` every entry that is not plain binary with its name, content
+and TGA verdict.
 
-Never found: cube maps, volumes, DX10 headers, DXT2/DXT4, ATI1/ATI2/BC4/BC5,
+How content is told:
+
+- A magic: DDS, PNG, JPEG (`FF D8 FF`), GIF, PSD (`8BPS` and version 1/2), KTX,
+  RIFF/WAV, OGG, MP3 (`ID3`), Gamebryo NIF/KF and KFM header text. BMP: `BM`,
+  zero reserved fields, a known info header size, one plane, a known bit count,
+  the pixel offset after the headers, the padded rows inside the payload, and
+  the file size field equal to the payload length (otherwise "BMP, wrong file
+  size field"). zlib: a valid header and a stream that inflates exactly to the
+  payload's end. MP3 without a tag: four chained MPEG frame headers (same
+  version, layer, rate; no free-format bitrate), after any leading zero bytes.
+- TGA has no magic: image type 1/2/3/9/10/11; colour map fields consistent with
+  the type (present for colour-mapped images; when absent, zero first index and
+  length, entry size 0 or a map depth); a depth the type allows, alpha bits ≤
+  depth, reserved descriptor bits clear; non-zero size; then the pixels:
+  uncompressed of the exact size, or RLE packets decoding exactly width ×
+  height pixels. After them: nothing, or a TGA 2.0 footer whose extension
+  (size field 495, or 494) and developer areas lie between pixels and footer.
+  Anything else after the pixels is "TGA + trailing bytes".
+- Otherwise UTF-8 text (XML when it opens with `<`), else binary.
+
+Images and media by content (named as such / named otherwise / unnamed):
+
+| Content | EC | EC fp | KR | Classic (3 installs) |
+|---|---:|---:|---:|---:|
+| DDS | 60,865 (59,570 / 0 / 1,295) | 68,745 (59,569 / 0 / 9,176) | 27,056 (27,037 / 0 / 19) | 0 |
+| TGA | 4,688 (4,446 / 0 / 242) | 243 (113 / 0 / 130) | 16,648 (135 / 0 / 16,513) | 0 |
+| TGA + trailing bytes | 0 | 5,545 (0 / 4,333 / 1,212) | 0 | 0 |
+| BMP | 365 | 390 | 4 | 0 |
+| BMP, wrong file size field | 2,635 | 2,610 | 2,996 | 0 |
+| PNG / JPEG / PSD (unnamed) | 2 / 1 / 2 | 2 / 1 / 2 | 2 / 1 / 2 | 0 |
+| WAV (unnamed) | 1,666 | 1,669 | 0 | 0 |
+| MP3 | 1,764 | 1,770 | 1,544 | 0 |
+| NIF | 466 | 466 | 451 | 0 |
+
+No GIF, KTX, OGG, KFM, other RIFF or zlib payload exists. The rest is XML
+(LegacyTerrain, Interface), text (Lua, CSV, `.ems`, shaders) and binary;
+the Classic packages hold no image (MP3 frame-sync false positives in map
+data, like `FF FF 06 00`, are free-format headers and are refused).
+
+Names that disagree with the content (86,854 entries; no `.dds`, `.png`,
+`.jpg`, `.psd` name is wrong, and no image hides under another extension):
+
+| Package | Name says | Content | Count | Example |
+|---|---|---|---:|---|
+| Classic, Classic fp `artLegacyMUL.uop` | TGA | binary (MUL art) | 37,106 each | `build/artlegacymul/00000000.tga` 99361F7D3A53AEA8, 2,048 B |
+| EC, EC fp, KR `Hues.uop` | BMP | BMP, wrong file size field | 2,635 / 2,610 / 2,996 | `data/definitions/hues/hue0001.bmp` 1983BA229918359B, 2,102 B |
+| EC fp `Interface.uop` | TGA | TGA + 32,784 zero bytes | 4,333 | `data/interface/default/textures/gumpart/00000000.tga` 6346EB3EE1F23306, 1,000,032 B |
+| EC, EC fp `Interface.uop` | TGA | binary (0x0 TGA header) | 34 each | `data/interface/default/textures/gumpart/00000029.tga` 1B4912C546B09A3B, 18 B (fp 32,802 B) |
+
+- Classic `artLegacyMUL.uop` keeps the `.tga` names of the EC packing tool but
+  stores raw MUL art (2,048-byte land tiles, run-length statics, 129 entries of
+  14 bytes).
+- The 256x2 32-bit hue strips store 525 in the file size field instead of 2,102
+  (2,635 EC); the others are correct (EC 293) or GIMP exports with 2 bytes after
+  the pixels and the size counting them (EC 72, fp 82, KR 4).
+- EC fp `Interface.uop` TGAs (all 5,545, 1,212 unnamed) end with 32,784 zero
+  bytes after the pixels (2,746) or after their footer (2,799); the EC copies of
+  the same images end with the pixels or the footer.
+- 34 gump TGAs of both EC Interface packages are 18-byte headers of a 0x0
+  type 10 image (fp: plus the 32,784 zero bytes); KR `TileArtLegacy.uop` has one.
+- TGA endings (no footer / footer without areas / extension area whose size
+  field says 494): EC 2,751 / 1,865 / 72, KR 16,260 / 293 / 95, EC fp padded
+  2,746 / 2,727 / 72 and unpadded 1 / 242 / 0. Without a footer are the EC
+  Interface RLE type 10 32-bit gumps (2,750) and KR `TileArtLegacy.uop`
+  (16,259 of its 16,383 unnamed TGAs, mostly RLE type 10 32-bit). The 494 areas
+  are 71 EC Interface gumps, 94 KR TileArtLegacy images and the unnamed
+  `CC45B75C95180636` of EC and KR Interface.
+- 110 EC (and fp) audio entries, 5 of them named `.mp3` (KR: the same 5), hold
+  MP3 frames after 720 or 1,044 zero bytes.
+
+DDS payloads (156,666) never found: cube maps, volumes, DX10 headers,
+DXT2/DXT4, ATI1/ATI2/BC4/BC5,
 trailing bytes after the last surface, DDS embedded inside other payloads,
 non-zero `reserved1`. Every DDS is a 2D texture whose payload ends with its last
 surface.
@@ -1406,10 +1480,6 @@ Header conventions (`DdsHeaderStyle` in `dds_writer.rs`; flags/caps hex):
   (0x41 / 0x40), bit count and masks.
 - X1R5G5B5 texels (the KR login backgrounds) leave the X bit clear.
 
-Other images: TGA (types 2, 3, 10) in EffectTexture, Interface, SystemTextures
-and KR `TileArtLegacy.uop`; 32-bit BMP hues in `Hues.uop`; PSD in
-EffectTexture; PNG in SystemTextures; one JPEG in Interface.
-
 ### Writing textures
 
 `dds_writer::replace_dds_entry` keeps the entry's pixel format, mip rule (one
@@ -1432,3 +1502,13 @@ kernel.
 `uocf-cli uop replace-texture <uop> <entry name or hash> <image> --output <uop>
 [--allow-resize]` replaces one texture; the entry keeps its compression and gets
 a fresh timestamp data block header, every other entry keeps its bytes.
+
+The writer goes by the entry's content, not its name: a payload without the
+`DDS ` magic and a whole header is refused (a TGA, PNG or BMP named `.dds`
+included) and `replace_texture_in_uop` then writes nothing; a DDS is replaced
+whatever its name. A TGA or BMP writer would have to handle, by content: RLE
+type 10 (24/32-bit) and uncompressed type 2 (24/32-bit) and type 3 (8-bit
+grey) TGAs, each ending with the pixels, a plain footer or a footer after a
+494-size extension area (keep the original's ending), the EC fp 32,784 zero
+bytes of padding, and the 0x0 placeholder headers (no pixels to replace); the
+256x2 32-bit hue BMPs with a correct, a 525 or a GIMP (+2 bytes) file size.

@@ -1,5 +1,5 @@
 //! DDS textures of client packages: the pixel formats, mip chains and header conventions the shipped files use,
-//! and a writer that reproduces them (see "DDS formats in client packages" in `ENHANCED_CLIENT_FILES.md`).
+//! and a writer that reproduces them (see "Images in client packages" in `ENHANCED_CLIENT_FILES.md`).
 
 use std::io::Cursor;
 use std::path::Path;
@@ -802,8 +802,8 @@ impl DdsHeaderConvention {
 
 // region: --- Textures
 
-/// The filter [`replace_dds_entry`] builds mip chains with; the closer of the two to the shipped mips (see "DDS
-/// formats in client packages" in `ENHANCED_CLIENT_FILES.md`).
+/// The filter [`replace_dds_entry`] builds mip chains with; the closer of the two to the shipped mips (see "Images
+/// in client packages" in `ENHANCED_CLIENT_FILES.md`).
 pub const SHIPPED_MIP_FILTER: MipFilter = MipFilter::BoxGamma;
 
 /// Writes a DDS of `image` with `convention`: its mip rule gives the levels, built with `filter`.
@@ -941,6 +941,8 @@ pub fn replace_texture_in_uop(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::uop_container::file::CompressionFlag;
+    use crate::uop_container::hash::hash_file_name_single;
 
     const DXT_SIZE: (u32, u32) = (64, 32);
     const NON_POW2_SIZE: (u32, u32) = (50, 4);
@@ -1105,6 +1107,45 @@ mod tests {
         let pitched = texture(DdsHeaderStyle::Pitched, DdsTextureFormat::A8R8G8B8, NON_POW2_SIZE);
         let replacement = replace_dds_entry(&pitched, &gradient(NON_POW2_SIZE.0, NON_POW2_SIZE.1), SizeChange::Refuse).unwrap();
         assert_eq!(replacement.bytes, pitched);
+    }
+
+    const UOP_VERSION: u32 = 5;
+    const UOP_BLOCK_SIZE: u32 = 100;
+    const TGA_NAMED_DDS: &str = "build/test/tga_content.dds";
+    const DDS_NAMED_TGA: &str = "build/test/dds_content.tga";
+    /// A 1x1 32-bit uncompressed TGA: image type 2 at byte 2, width and height at 12 and 14, depth at 16.
+    const TGA_1X1: [u8; 22] = [0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 32, 8, 1, 2, 3, 4];
+
+    /// The writers decide by the entry's content: a TGA, PNG or BMP is refused even when its name ends in `.dds`,
+    /// and a DDS is replaced whatever its name; a refused replacement writes nothing.
+    #[test]
+    fn non_dds_entries_are_refused_whatever_their_name() {
+        let image = RgbaImage::new(1, 1);
+        let mut png = Vec::new();
+        image.write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+        let mut bmp = Vec::new();
+        image.write_to(&mut Cursor::new(&mut bmp), image::ImageFormat::Bmp).unwrap();
+        let truncated_dds = texture(DdsHeaderStyle::Linear, DdsTextureFormat::A8R8G8B8, (1, 1))[..DDS_HEADER_SIZE - 1].to_vec();
+        for payload in [TGA_1X1.to_vec(), png, bmp, truncated_dds] {
+            let error = replace_dds_entry(&payload, &image, SizeChange::Refuse).unwrap_err();
+            assert!(format!("{error:?}").contains("not a DDS file"), "{error:?}");
+        }
+
+        let dir = std::env::temp_dir().join(format!("uocf_dds_writer_refuse_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (source, output) = (dir.join("source.uop"), dir.join("output.uop"));
+        let mut package = UopPackage::new(UOP_VERSION, UOP_BLOCK_SIZE).unwrap();
+        let dds = texture(DdsHeaderStyle::Linear, DdsTextureFormat::A8R8G8B8, (1, 1));
+        package.add_file_from_memory(&TGA_1X1, TGA_NAMED_DDS, CompressionFlag::Zlib).unwrap();
+        package.add_file_from_memory(&dds, DDS_NAMED_TGA, CompressionFlag::Zlib).unwrap();
+        package.finalize_and_save(&source).unwrap();
+        let tga_hash = hash_file_name_single(TGA_NAMED_DDS);
+        let dds_hash = hash_file_name_single(DDS_NAMED_TGA);
+        assert!(replace_texture_in_uop(&source, tga_hash, &image, SizeChange::Refuse, &output).is_err());
+        assert!(!output.exists());
+        let replacement = replace_texture_in_uop(&source, dds_hash, &image, SizeChange::Refuse, &output).unwrap();
+        assert_eq!(UopPackage::load(&output).unwrap().get_file_by_hash(dds_hash).unwrap().unpack().unwrap(), replacement.bytes);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

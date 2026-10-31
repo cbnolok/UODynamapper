@@ -1,5 +1,5 @@
-//! Every DDS payload of every UOP under the client roots (found by its magic after decompression) against the DDS
-//! writer: the header the writer gives for its format, size and convention equals the shipped header byte for
+//! Every entry of every UOP under the client roots classified by its decompressed content (the image census), and
+//! every DDS payload (found by its magic) against the DDS writer: the header the writer gives for its format, size and convention equals the shipped header byte for
 //! byte; uncompressed textures decode and re-encode byte for byte; block-compressed ones re-encode within a stated
 //! error; the shipped mip chains are compared with both mip filters. A texture of a real package is replaced and
 //! the package saved to a copy.
@@ -18,13 +18,16 @@ use std::sync::Mutex;
 
 use image::RgbaImage;
 use rayon::prelude::*;
-use uocf::enhanced::dds_census::find_packages;
+use uocf::enhanced::image_census::{census_directories, find_packages, ContentFormat};
+use uocf::enhanced::string_dictionary::UoStringDictionary;
 use uocf::enhanced::dds_writer::{
     decode_dds_levels, decode_surface, downsample_level, encode_surface, mip_level_size, replace_texture_in_uop,
     DdsDescription, DdsHeaderConvention, DdsHeaderStyle, MipFilter, SizeChange, DDS_MAGIC,
     SHIPPED_MIP_FILTER,
 };
 use uocf::uop_container::data_block_header::DataBlockHeaderRecord;
+use uocf::uop_container::hash::hash_file_name_single;
+use uocf::uop_container::hash_dictionary::HashDictionary;
 use uocf::uop_container::package::{LoadMode, UopPackage};
 
 const CLIENT_ROOTS_ENV: &str = "UO_CLIENT_ROOTS";
@@ -45,6 +48,26 @@ const BC_MAX_ERROR_BOUND: u8 = 64;
 const REPLACED_PACKAGES: [&str; 2] = ["TerrainTexture.uop", "EffectTexture.uop"];
 /// The mean channel error allowed for the replaced mip 0 against the new image.
 const REPLACED_MEAN_ERROR_BOUND: f64 = 2.0;
+/// The hash dictionary of the repository, relative to the crate.
+const DICTIONARY: &str = "../../tools/_shared_assets/Dictionary.dic";
+const STRING_DICTIONARY_FILE: &str = "string_dictionary.uop";
+/// Entries per content format in the EC, EC fp, KR and three Classic installs of `ENHANCED_CLIENT_FILES.md`
+/// ("Images in client packages"), and the named entries whose extension disagrees with their content: the
+/// Classic `artLegacyMUL.uop` `.tga` names (MUL art), the Hues BMPs with a wrong file size field, the EC fp
+/// Interface TGAs padded with zero bytes and the empty TGA headers of both EC Interface packages.
+const CENSUS_COUNTS: [(ContentFormat, usize); 10] = [
+    (ContentFormat::Dds, 156_666),
+    (ContentFormat::Tga, 21_579),
+    (ContentFormat::TgaTrailing, 5_545),
+    (ContentFormat::Bmp, 759),
+    (ContentFormat::BmpBadSize, 8_241),
+    (ContentFormat::Png, 6),
+    (ContentFormat::Jpeg, 3),
+    (ContentFormat::Psd, 6),
+    (ContentFormat::Wav, 3_335),
+    (ContentFormat::Mp3, 5_078),
+];
+const CENSUS_MISMATCHES: usize = 86_854;
 
 /// Every `*.uop` under the client roots.
 fn client_packages() -> Vec<PathBuf> {
@@ -87,6 +110,44 @@ fn for_each_dds(unique: bool, visit: impl Fn(&Path, u64, &[u8]) + Sync) -> usize
             .sum::<usize>();
     }
     visited
+}
+
+/// Classifies every entry by content, names from the repository dictionary and the clients' string dictionaries:
+/// the counts per format and of disagreeing names are the documented ones; no entry named `.dds` holds anything
+/// but a DDS, and every disagreeing name is a `.tga` or `.bmp` one.
+#[test]
+#[ignore = "needs real clients: set UO_CLIENT_ROOTS and run with --ignored"]
+fn client_entries_are_classified_by_content() {
+    let roots = std::env::var_os(CLIENT_ROOTS_ENV).unwrap_or_else(|| panic!("set {CLIENT_ROOTS_ENV}"));
+    let roots: Vec<PathBuf> = std::env::split_paths(&roots).collect();
+    let mut names = HashDictionary::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join(DICTIONARY)).unwrap();
+    for path in client_packages().iter().filter(|path| path.file_name().unwrap() == STRING_DICTIONARY_FILE) {
+        for (_, string) in UoStringDictionary::load(path).unwrap().iter() {
+            let hash = hash_file_name_single(string);
+            if names.resolve(hash).is_none() {
+                names.set(hash, string);
+            }
+        }
+    }
+    let census = census_directories(&roots, &|hash| names.resolve(hash).map(str::to_owned)).unwrap();
+    let counts = census.format_counts();
+    println!("{counts:?}, {} names disagree", census.mismatch_count());
+    for (format, expected) in CENSUS_COUNTS {
+        assert_eq!(counts.get(&format).copied().unwrap_or(0), expected, "{}", format.label());
+    }
+    assert_eq!(census.mismatch_count(), CENSUS_MISMATCHES);
+    assert_eq!(census.dds_count(), counts[&ContentFormat::Dds]);
+    for package in &census.packages {
+        for ((declared, actual), entries) in package.name_mismatches() {
+            assert!(
+                [ContentFormat::Tga.label(), ContentFormat::Bmp.label()].contains(&declared.as_str()),
+                "{}: {} named {declared} hold {}",
+                package.path.display(),
+                entries.len(),
+                actual.label()
+            );
+        }
+    }
 }
 
 fn context(path: &Path, hash: u64) -> String {
