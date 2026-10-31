@@ -52,16 +52,42 @@ so a stationary pointer is refreshed when the view or a dry-diamond dependency
 changes. Disabling static rendering suppresses object hits. Textured picking is
 not applied to the separate radar/dot representation.
 
+## Admitted candidates and ordinary sprite alpha
+
+Picking now iterates logical tiles retained by the current static chunk
+collector, after actual sprite/ground admission. Cached, non-visible chunks do
+not contribute candidates. Expanded multi parts use their collected graphic,
+position, collected signed Z and inherited hue. A sprite's owning cell no longer has
+to fall inside nine blocks around the cursor's ground-plane intersection.
+Neither the instance layout nor the rendered chunk ordering changes.
+
+Ordinary CC/EC sprites and flat CC art test the selected atlas page's alpha.
+Perspective-correct interpolation follows the rendered two triangles and
+retains source UV orientation. The CPU sampler follows the sprite shader's
+nearest-interior/bilinear-seam filter; its finite-difference UV footprint is an
+approximation to GPU derivatives at rasterization boundaries. Wet art uses the
+same wrapped clock and UV breathing formula. Coverage below 0.0001 passes
+through to another candidate, matching the two sprite passes' shared discard.
+Fractional but visible alpha remains selectable.
+
+Decoded pages retain alpha only, load on a geometric hit and share a bounded
+LRU cache (32 MiB target, 128 records; one oversized page can occupy the cache
+alone). Package change ticks invalidate the pages. Failed reads do not become
+opaque rectangles. Multi-image EC material surfaces retain their existing
+geometry hit policy: testing only their base image would misrepresent authored
+coverage masks and static-ground fades.
+
 ## Limits
 
 This repairs visual quad construction, not a complete gameplay picking system.
-There is no texture-alpha test, GPU object-ID/depth readback or exact visible
-fragment selection. Transparent portions of a CC baked diamond can still hit;
-the existing CPU priority chooses between overlapping candidate quads and is
-not a full raster-depth query. The existing nearby-block search and raw-static
-iteration do not prove coverage of very large art, every expanded multi or all
-facets. Walking/collision must use the original logical surfaces and movement
-metadata, not the highlight polygon or its small display lift.
+There is no GPU object-ID/depth readback or exact visible fragment selection.
+The existing CPU priority chooses between alpha-qualified candidates and is
+not a full raster-depth query. Terrain occlusion, authored material composition
+and exact screen-edge sampling remain open. Collector-backed candidates cover
+admitted large art and expanded parts; this does not prove every source multi,
+uncached/offscreen owner or all facets. Walking/collision must use the original
+logical surfaces and movement metadata, not the highlight polygon or its small
+display lift.
 
 The opt-in Unix controller exposes the displayed inspector text as
 `status.cursor_inspect`. Enable the overlay, toggle it with `KeyI`, send an
@@ -70,7 +96,24 @@ stale. See [the controller workflow](../../scripts/dev-helpers/renderer/README.m
 
 ## Validation
 
-The application suite passes 146 tests, with five adapter-dependent tests
+The alpha follow-up passes 97 art tests, with two adapter-dependent cases
+ignored, and a normal application build. Eight paired Desktop-4 previews retain
+56 frames across all three styles and KR perspective. At the crane fixture
+`(500,768)`, pointer `(638,330)` changes from the overlapping piece 18911 to the
+visible beam 18910. Pointer `(590,355)` passes through that same piece's empty
+window to pier 942 at Z=-5; the solid body still selects 18911. Open water has
+no object hit, and the centered `(2518,561)` road still selects graphic 1304.
+OS focus and pointer remain unchanged. Unhighlighted world controls are exact
+in Classic/Enhanced and within one color byte in KR. This does not establish
+full fragment-depth or material-mask selection.
+
+The paired builds use the same supported terrain package and effective presets.
+The first old temporary package failed the current source-metadata schema; it
+is not acceptance evidence. The baseline snapshot restores the prior picker
+while preserving the current dependency/configuration schema. Evidence is
+`/tmp/uodynamapper-ec-followup/alpha-picking-accepted-evidence.json`.
+
+The initial geometry phase passed 146 application tests, with five adapter-dependent tests
 ignored. New regressions cover both projected triangle windings and degenerate
 quads, horizontal CC water/ground in both projections, the authored EC quad's
 view gate and all four resident level corners for dry CC diamonds.

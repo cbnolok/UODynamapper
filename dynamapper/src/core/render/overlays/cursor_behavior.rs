@@ -6,7 +6,7 @@ use crate::core::render::scene::world::art::statics_collect::{
     resolve_priority_z_units, resolve_static_depth_class, static_depth_key,
     static_tile_is_surface_like,
 };
-use crate::core::render::scene::world::art::static_geometry::{StaticArtRoute, StaticPickingResources, projected_quad_contains};
+use crate::core::render::scene::world::art::static_geometry::{StaticArtRoute, StaticPickingResources, projected_quad_hit};
 use crate::core::render::scene::player::Player;
 use crate::core::render::{
     dialogs,
@@ -502,14 +502,11 @@ fn build_cursor_inspect_label(
         cursor_pos,
         camera,
         settings,
-        statics_res,
         tex_art_cc_res,
         tex_art_ec_res,
         tex_land_ec_res,
         tilemeta_res,
         map_id,
-        cursor_x,
-        cursor_y,
     );
     let land_line = describe_land_tile(map_planes_r, tilemeta_res, map_id, cursor_x, cursor_y);
     let statics_line = describe_static_tiles(
@@ -560,7 +557,6 @@ fn sys_draw_hovered_static_highlight(
     windows: Query<&Window, With<PrimaryWindow>>,
     injected_pointer: Option<Res<InjectedPointer>>,
     camera_q: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
-    statics_res: Res<StaticsStoreRes>,
     tilemeta_res: Option<Res<TileMetaPackageRes>>,
     mut gizmos: Gizmos,
 ) {
@@ -581,7 +577,7 @@ fn sys_draw_hovered_static_highlight(
     let Some(player) = player_q.single().ok() else {
         return;
     };
-    let Some((map_id, x, y)) = resolve_cursor_tile_coords(
+    let Some((map_id, _, _)) = resolve_cursor_tile_coords(
         Some(cursor_pos),
         Some((camera, camera_tf)),
         Some(player),
@@ -596,11 +592,8 @@ fn sys_draw_hovered_static_highlight(
         camera,
         camera_tf,
         &settings,
-        &statics_res,
         tilemeta_res.as_deref(),
         map_id,
-        x,
-        y,
     ) else {
         return;
     };
@@ -629,14 +622,11 @@ fn describe_hovered_object(
     cursor_pos: Option<Vec2>,
     camera: Option<(&Camera, &GlobalTransform)>,
     settings: &crate::configs::settings::Settings,
-    statics_res: &StaticsStoreRes,
     tex_art_cc_res: Option<&TexArtCcPackageRes>,
     tex_art_ec_res: Option<&TexArtEcPackageRes>,
     tex_land_ec_res: Option<&TexLandEcPackageRes>,
     tilemeta_res: Option<&TileMetaPackageRes>,
     map_id: u8,
-    x: u16,
-    y: u16,
 ) -> String {
     let Some(cursor_pos) = cursor_pos else {
         return "hovered_object: [no cursor]".to_string();
@@ -651,11 +641,8 @@ fn describe_hovered_object(
         camera,
         camera_tf,
         settings,
-        statics_res,
         tilemeta_res,
         map_id,
-        x,
-        y,
     ) else {
         return "hovered_object: none".to_string();
     };
@@ -682,55 +669,18 @@ fn find_hovered_static_object(
     camera: &Camera,
     camera_tf: &GlobalTransform,
     settings: &crate::configs::settings::Settings,
-    statics_res: &StaticsStoreRes,
     tilemeta_res: Option<&TileMetaPackageRes>,
     map_id: u8,
-    x: u16,
-    y: u16,
 ) -> Option<HoveredStaticMatch> {
     if !settings.world_rendering.enable_statics { return None; }
-    let store = statics_res
-        .0
-        .get(map_id as usize)
-        .and_then(|opt| opt.as_ref())?;
-    let mut store = store.lock();
-    let base_block_x = x as i32 / 8;
-    let base_block_y = y as i32 / 8;
+    picking.prepare_alpha();
     let mut best_match: Option<HoveredStaticMatch> = None;
 
-    for block_x in (base_block_x - 1)..=(base_block_x + 1) {
-        for block_y in (base_block_y - 1)..=(base_block_y + 1) {
-            if block_x < 0 || block_y < 0 {
-                continue;
-            }
-
-            let Ok(block_tiles) = store.block_tiles(block_x as u32, block_y as u32) else {
-                continue;
-            };
-
-            for tile in block_tiles.iter().copied() {
-                let Some(candidate) = hovered_static_match(
-                    picking,
-                    cursor_pos,
-                    camera,
-                    camera_tf,
-                    tilemeta_res,
-                    block_x as u32,
-                    block_y as u32,
-                    tile,
-                ) else {
-                    continue;
-                };
-
-                let should_replace = match &best_match {
-                    Some(current) => candidate.depth_key >= current.depth_key,
-                    None => true,
-                };
-
-                if should_replace {
-                    best_match = Some(candidate);
-                }
-            }
+    for tile in picking.visible_tiles(u32::from(map_id)) {
+        let Some(candidate) = hovered_static_match(picking, cursor_pos, camera,
+            camera_tf, tilemeta_res, tile) else { continue; };
+        if best_match.as_ref().is_none_or(|current| candidate.depth_key >= current.depth_key) {
+            best_match = Some(candidate);
         }
     }
 
@@ -743,27 +693,26 @@ fn hovered_static_match(
     camera: &Camera,
     camera_tf: &GlobalTransform,
     tilemeta_res: Option<&TileMetaPackageRes>,
-    block_x: u32,
-    block_y: u32,
-    tile: uocf::classic::statics::PackedStaticTile,
+    candidate: crate::core::render::scene::world::art::statics_collect::StaticPickTile,
 ) -> Option<HoveredStaticMatch> {
+    let source = candidate.tile;
+    let tile = uocf::classic::statics::PackedStaticTile { graphic: source.graphic,
+        xy_packed: (source.world_x as u32 & 7) as u8 | (((source.world_z as u32 & 7) as u8) << 3),
+        z: source.z, hue: source.hue };
     let graphic = tile.graphic;
     let tilemeta = tilemeta_res.and_then(|meta| meta.0.item_tile(graphic as u32));
     if tilemeta.is_some_and(|meta| meta.is_nodraw()) {
         return None;
     }
     let depth_class = resolve_static_depth_class(tilemeta);
-    let local_x = tile.x_offset() as f32;
-    let local_y = tile.y_offset() as f32;
-    let world_x = block_x as f32 * 8.0 + local_x;
-    let world_z = block_y as f32 * 8.0 + local_y;
+    let world_x = source.world_x;
+    let world_z = source.world_z;
     let geometry = picking.resolve(graphic, world_x, world_z, tile.z)?;
     let kind = if geometry.flat_quad == 0 { HoveredObjectKind::Sprite } else { HoveredObjectKind::Ground };
     let corners = geometry.corners(camera, camera_tf);
 
-    if !screen_polygon_contains(cursor_pos, camera, camera_tf, &corners) {
-        return None;
-    }
+    let hit = projected_quad_hit(cursor_pos, camera, camera_tf, corners)?;
+    if !picking.alpha_visible(geometry, hit, candidate.is_wet) { return None; }
 
     let priority_z_units = resolve_priority_z_units(tile.z, tilemeta, depth_class);
     let depth_key = static_depth_key(geometry.priority_anchor.x, geometry.priority_anchor.y,
@@ -777,22 +726,6 @@ fn hovered_static_match(
         global_y: world_z as u16,
         route: geometry.route,
     })
-}
-
-fn screen_polygon_contains(
-    cursor_pos: Vec2,
-    camera: &Camera,
-    camera_tf: &GlobalTransform,
-    corners: &[Vec3; 4],
-) -> bool {
-    let mut screen_points = [Vec2::ZERO; 4];
-    for (index, corner) in corners.iter().enumerate() {
-        let Ok(screen) = camera.world_to_viewport(camera_tf, *corner) else {
-            return false;
-        };
-        screen_points[index] = screen;
-    }
-    projected_quad_contains(cursor_pos, screen_points)
 }
 
 fn resolve_cursor_tile_coords(

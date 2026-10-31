@@ -207,12 +207,18 @@ pub(super) enum StaticVisualKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct StaticRenderTile {
-    graphic: u16,
-    world_x: f32,
-    world_z: f32,
-    z: i8,
-    hue: u16,
+pub(crate) struct StaticRenderTile {
+    pub graphic: u16,
+    pub world_x: f32,
+    pub world_z: f32,
+    pub z: i8,
+    pub hue: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct StaticPickTile {
+    pub tile: StaticRenderTile,
+    pub is_wet: bool,
 }
 
 fn collect_static_render_tiles(
@@ -1024,6 +1030,7 @@ struct CachedStaticChunkStats {
 struct CachedStaticChunk {
     sprite_instances: Vec<SpriteInstance>,
     ground_instances: Vec<GroundTileInstance>,
+    pick_tiles: Vec<StaticPickTile>,
     stats: CachedStaticChunkStats,
     last_visible_tick: u64,
 }
@@ -1038,6 +1045,14 @@ pub struct StaticChunkRenderCache {
 }
 
 impl StaticChunkRenderCache {
+    /// Only admitted objects in the current rendered set; includes expanded multi
+    /// parts and large sprites whose owning cell is far from the ground cursor.
+    pub(crate) fn visible_pick_tiles(&self, map_id: u32) -> impl Iterator<Item = StaticPickTile> + '_ {
+        self.last_visible_chunk_keys.iter().filter(move |key| key.map_id == map_id)
+            .filter_map(|key| self.chunks.get(key))
+            .flat_map(|chunk| chunk.pick_tiles.iter().copied())
+    }
+
     fn begin_frame(&mut self) -> u64 {
         self.current_tick = self.current_tick.saturating_add(1);
         self.current_tick
@@ -1739,6 +1754,7 @@ struct StaticTileRenderInfo<'a> {
 struct StaticChunkBuildState {
     sprite_instances: Vec<SpriteInstance>,
     ground_instances: Vec<GroundTileInstance>,
+    pick_tiles: Vec<StaticPickTile>,
     requested_pages: HashSet<u64>,
     stats: CachedStaticChunkStats,
     render_tiles: Vec<StaticRenderTile>,
@@ -2129,6 +2145,7 @@ fn emit_static_render_tile(
     if frame.is_dot_mode {
         emit_dot_static_tile(info, frame, resources, build);
     } else {
+        let before = (build.sprite_instances.len(), build.ground_instances.len());
         emit_art_static_tile(
             info,
             frame,
@@ -2139,6 +2156,9 @@ fn emit_static_render_tile(
             surface_resolution_cache,
             build,
         );
+        if before != (build.sprite_instances.len(), build.ground_instances.len()) {
+            build.pick_tiles.push(StaticPickTile { tile: render_tile, is_wet: info.is_wet_flags & 1 != 0 });
+        }
     }
 }
 
@@ -2608,6 +2628,7 @@ fn finish_rebuilt_static_chunk(
     CachedStaticChunk {
         sprite_instances: build.sprite_instances,
         ground_instances: build.ground_instances,
+        pick_tiles: build.pick_tiles,
         stats: build.stats,
         last_visible_tick: visible_tick,
     }
@@ -3289,6 +3310,22 @@ mod tests {
             resolve_ec_static_visual_kind(196, false, false, Some(resolution)),
             StaticVisualKind::TexLandEc { resolution },
         );
+    }
+
+    #[test]
+    fn picking_uses_only_the_current_visible_set_and_preserves_expanded_tile_data() {
+        let visible = StaticChunkBatchKey { map_id: 0, gx: 2, gy: 3, scale: 1 };
+        let other = StaticChunkBatchKey { gx: 20, ..visible };
+        let expanded = StaticPickTile { tile: StaticRenderTile { graphic: 3240,
+            world_x: 1046.0, world_z: 2253.0, z: -7, hue: 22 }, is_wet: false };
+        let mut cache = StaticChunkRenderCache::default();
+        cache.chunks.insert(visible, CachedStaticChunk { pick_tiles: vec![expanded], ..Default::default() });
+        cache.chunks.insert(other, CachedStaticChunk { pick_tiles: vec![expanded], ..Default::default() });
+        cache.last_visible_chunk_keys = vec![visible];
+        assert_eq!(cache.visible_pick_tiles(0).collect::<Vec<_>>(), vec![expanded]);
+        assert_eq!(cache.visible_pick_tiles(1).count(), 0);
+        cache.last_visible_chunk_keys.clear();
+        assert_eq!(cache.visible_pick_tiles(0).count(), 0);
     }
 
     #[test]

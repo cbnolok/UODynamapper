@@ -2,7 +2,9 @@
 //! These are visual bounds only; logical XYZ and movement metadata stay on the tile.
 use super::statics_collect::{
     self, StaticArtSourceState, StaticSurfaceLikeResolutionCache, StaticVisualKind,
+    StaticChunkRenderCache, StaticPickTile, RenderStaticInstances, RenderStaticLandInstances,
 };
+use super::static_alpha::{StaticAlphaCache, sprite_sample_position};
 use crate::configs::settings::ClientTextureSource;
 use crate::core::render::scene::{camera::RenderZoom, world::land::tile_atlas::TileAtlas};
 use crate::core::uo_files_loader::{TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes, TileMetaPackageRes};
@@ -19,6 +21,12 @@ pub(crate) struct StaticPickingResources<'w> {
     land: Option<Res<'w, TexLandEcPackageRes>>,
     meta: Option<Res<'w, TileMetaPackageRes>>,
     cache: ResMut<'w, StaticSurfaceLikeResolutionCache>,
+    chunks: Res<'w, StaticChunkRenderCache>,
+    sprites: Res<'w, RenderStaticInstances>,
+    ground: Res<'w, RenderStaticLandInstances>,
+    alpha: ResMut<'w, StaticAlphaCache>,
+    uniforms: Res<'w, crate::configs::shader_presets::UniformState>,
+    time: Res<'w, Time>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -38,13 +46,62 @@ pub(crate) struct StaticArtGeometry {
     pub route: StaticArtRoute,
 }
 
-impl StaticPickingResources<'_> {
+impl<'w> StaticPickingResources<'w> {
     pub(crate) fn is_changed(&self) -> bool {
         self.source.is_changed() || self.zoom.is_changed() || self.atlas.is_changed()
             || self.meta.as_ref().is_some_and(|value| value.is_changed())
             || self.cc.as_ref().is_some_and(|value| value.is_changed())
             || self.ec.as_ref().is_some_and(|value| value.is_changed())
             || self.land.as_ref().is_some_and(|value| value.is_changed())
+            || self.sprites.is_changed() || self.ground.is_changed() || self.uniforms.is_changed()
+            || self.uniforms.effects.enable_water_animation != 0
+    }
+
+    pub(crate) fn visible_tiles(&self, map_id: u32) -> impl Iterator<Item = StaticPickTile> + 'w {
+        Res::clone(&self.chunks).into_inner().visible_pick_tiles(map_id)
+    }
+
+    pub(crate) fn prepare_alpha(&mut self) {
+        self.alpha.sync_packages([self.cc.as_ref().map(|v| v.last_changed()),
+            self.ec.as_ref().map(|v| v.last_changed())]);
+    }
+
+    pub(crate) fn alpha_visible(&mut self, geometry: StaticArtGeometry,
+        mut hit: ProjectedQuadHit, is_wet: bool) -> bool {
+        // Authored material surfaces compose several images and coverage masks.
+        // Their base image's alpha alone is not their visible coverage.
+        if geometry.flat_quad >= 2 { return true; }
+        if is_wet && self.uniforms.effects.enable_water_animation != 0 {
+            let t = self.time.elapsed_secs_wrapped();
+            let scale = Vec2::new(1.3 + t.sin() * 0.28, 1.3 + t.cos() * 0.14);
+            hit.uv = Vec2::splat(0.5) + (hit.uv - Vec2::splat(0.5)) / scale;
+            hit.dx /= scale;
+            hit.dy /= scale;
+        }
+        let alpha = match geometry.route {
+            StaticArtRoute::CcArt(id) => {
+                let Some(package) = self.cc.as_ref() else { return false; };
+                let Some(slot) = package.0.present_slot(id) else { return false; };
+                let Some(page) = package.0.pages().get(slot.page_index as usize) else { return false; };
+                let sample = Vec2::new(f32::from(slot.x), f32::from(slot.y))
+                    + sprite_sample_position(hit.uv, hit.dx, hit.dy, Vec2::new(f32::from(slot.width), f32::from(slot.height)));
+                self.alpha.sample((0, slot.page_index), sample, ||
+                    package.0.read_page_rgba(slot.page_index).ok().map(|rgba| (page.used_width, page.used_height, rgba)))
+            }
+            StaticArtRoute::EcArt(id) => {
+                let Some(package) = self.ec.as_ref() else { return false; };
+                let Some(slot) = package.0.present_slot(id) else { return false; };
+                let Some(page) = package.0.pages().get(slot.page_index as usize) else { return false; };
+                let sample = Vec2::new(f32::from(slot.x), f32::from(slot.y))
+                    + sprite_sample_position(hit.uv, hit.dx, hit.dy, Vec2::new(f32::from(slot.width), f32::from(slot.height)));
+                self.alpha.sample((1, slot.page_index), sample, ||
+                    package.0.read_page_rgba(slot.page_index).ok().map(|rgba| (page.used_width, page.used_height, rgba)))
+            }
+            StaticArtRoute::EcLand(_) => return true,
+        };
+        // Both sprite passes discard below this coverage; a failed page is not
+        // silently treated as an opaque rectangle.
+        alpha.is_some_and(|value| value >= 0.0001)
     }
 
     pub(crate) fn resolve(&mut self, graphic: u16, x: f32, y: f32, z: i8) -> Option<StaticArtGeometry> {
@@ -138,16 +195,52 @@ impl StaticArtGeometry {
     }
 }
 
-pub(crate) fn projected_quad_contains(point: Vec2, corners: [Vec2; 4]) -> bool {
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ProjectedQuadHit {
+    pub uv: Vec2,
+    pub dx: Vec2,
+    pub dy: Vec2,
+}
+
+pub(crate) fn projected_quad_hit(point: Vec2, camera: &Camera,
+    transform: &GlobalTransform, corners: [Vec3; 4]) -> Option<ProjectedQuadHit> {
+    let clip_from_world = camera.clip_from_view() * transform.to_matrix().inverse();
+    let mut screen = [Vec2::ZERO; 4];
+    let mut inverse_w = [0.0; 4];
+    for index in 0..4 {
+        screen[index] = camera.world_to_viewport(transform, corners[index]).ok()?;
+        let clip = clip_from_world * corners[index].extend(1.0);
+        if !clip.is_finite() || clip.w <= 0.0 { return None; }
+        inverse_w[index] = 1.0 / clip.w;
+    }
+    projected_quad_uv(point, screen, inverse_w)
+}
+
+fn projected_quad_uv(point: Vec2, corners: [Vec2; 4], inverse_w: [f32; 4]) -> Option<ProjectedQuadHit> {
     // Match the renderer's two triangles, rather than their axis-aligned bounding box.
-    [[0, 2, 1], [1, 2, 3]].into_iter().any(|indices| {
+    let texcoords = [Vec2::ZERO, Vec2::X, Vec2::Y, Vec2::ONE];
+    for indices in [[0, 2, 1], [1, 2, 3]] {
         let [a, b, c] = indices.map(|index| corners[index]);
         let area = (b - a).perp_dot(c - a);
-        if !area.is_finite() || area.abs() <= 0.000001 { return false; }
-        let u = (b - a).perp_dot(point - a) / area;
-        let v = (point - a).perp_dot(c - a) / area;
-        u >= 0.0 && v >= 0.0 && u + v <= 1.0
-    })
+        if !area.is_finite() || area.abs() <= 0.000001 { continue; }
+        let barycentric = |p: Vec2| {
+            let u = (p - a).perp_dot(c - a) / area;
+            let v = (b - a).perp_dot(p - a) / area;
+            Vec3::new(1.0 - u - v, u, v)
+        };
+        let weights = barycentric(point);
+        if weights.min_element() < 0.0 { continue; }
+        let interpolate = |weights: Vec3| {
+            let weighted = weights * Vec3::from_array(indices.map(|i| inverse_w[i]));
+            let uv = indices.into_iter().enumerate().map(|(j, i)| texcoords[i] * weighted[j]).sum::<Vec2>();
+            uv / weighted.element_sum()
+        };
+        let uv = interpolate(weights);
+        let dx = interpolate(barycentric(point + Vec2::X)) - uv;
+        let dy = interpolate(barycentric(point + Vec2::Y)) - uv;
+        if uv.is_finite() && dx.is_finite() && dy.is_finite() { return Some(ProjectedQuadHit { uv, dx, dy }); }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -226,12 +319,26 @@ mod tests {
             Vec2::new(-1.0, 0.0), Vec2::new(0.0, 1.0)];
         for corners in [diamond, diamond.map(|p| Vec2::new(-p.x, p.y))] {
             for point in [Vec2::ZERO, Vec2::new(0.2, 0.6), Vec2::new(0.0, -1.0)] {
-                assert!(projected_quad_contains(point, corners));
+                assert!(projected_quad_uv(point, corners, [1.0; 4]).is_some());
             }
             for point in [Vec2::new(0.8, 0.8), Vec2::new(-0.8, -0.8), Vec2::new(2.0, 0.0)] {
-                assert!(!projected_quad_contains(point, corners));
+                assert!(projected_quad_uv(point, corners, [1.0; 4]).is_none());
             }
         }
-        assert!(!projected_quad_contains(Vec2::ZERO, [Vec2::ZERO; 4]));
+        assert!(projected_quad_uv(Vec2::ZERO, [Vec2::ZERO; 4], [1.0; 4]).is_none());
+    }
+
+    #[test]
+    fn sprite_hit_interpolates_uvs_in_the_drawn_triangle_with_perspective_divide() {
+        let corners = [Vec2::ZERO, Vec2::new(2.0, 0.0), Vec2::new(0.0, 2.0), Vec2::splat(2.0)];
+        let hit = projected_quad_uv(Vec2::ONE, corners, [1.0; 4]).unwrap();
+        assert_eq!(hit.uv, Vec2::splat(0.5));
+        assert_eq!(hit.dx, Vec2::new(0.5, 0.0));
+        assert_eq!(hit.dy, Vec2::new(0.0, 0.5));
+        // An equal screen-space split is not an equal UV split under perspective.
+        let hit = projected_quad_uv(Vec2::ONE, corners, [1.0, 0.5, 1.0, 0.5]).unwrap();
+        assert!((hit.uv - Vec2::new(1.0 / 3.0, 2.0 / 3.0)).length() < 0.000001);
+        let lower = projected_quad_uv(Vec2::splat(1.5), corners, [1.0; 4]).unwrap();
+        assert_eq!(lower.uv, Vec2::splat(0.75));
     }
 }

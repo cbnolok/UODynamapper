@@ -11,6 +11,7 @@ pub mod statics_draw;
 pub mod static_lights;
 mod static_surface;
 pub(crate) mod static_geometry;
+mod static_alpha;
 mod transparent_order;
 #[cfg(test)]
 mod shading_tests;
@@ -32,6 +33,7 @@ impl Plugin for DrawStaticSpritesPlugin {
         app.init_resource::<statics_collect::StaticSurfaceLikeResolutionCache>();
         app.init_resource::<statics_collect::StaticArtCollectDebugState>();
         app.init_resource::<statics_collect::StaticArtSourceState>();
+        app.init_resource::<static_alpha::StaticAlphaCache>();
         app.init_resource::<statics_draw::StaticArtDrawDebugState>();
         app.init_resource::<statics_draw::StaticArtUploadCache>();
         app.init_resource::<statics_draw::StaticBatchEntitySyncState>();
