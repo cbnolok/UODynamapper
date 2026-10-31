@@ -14,6 +14,7 @@ use wide::u16x8;
 
 use crate::classic::generic_index::IndexFile;
 use crate::classic::verdata::{VerFileId, Verdata};
+use crate::utils::path::find_file_ignoring_case;
 
 pub const MAX_ANIM_FILES: u8 = 6; // anim, anim2, anim3, anim4, anim5
 const MAX_CLASSIC_ANIM_FRAME_DIMENSION: u16 = 2048;
@@ -73,10 +74,10 @@ impl AnimMap {
             let idx_name = format!("anim{}.idx", suffix);
             let mul_name = format!("anim{}.mul", suffix);
 
-            let idx_path = client_path.join(&idx_name);
-            let mul_path = client_path.join(&mul_name);
+            let idx_path = find_file_ignoring_case(client_path, &idx_name);
+            let mul_path = find_file_ignoring_case(client_path, &mul_name);
 
-            if idx_path.exists() && mul_path.exists() {
+            if let (Some(idx_path), Some(mul_path)) = (idx_path, mul_path) {
                 let idx = IndexFile::load(idx_path)?;
                 let mul_file = File::open(mul_path)?;
                 let mul = unsafe { memmap2::Mmap::map(&mul_file)? };
@@ -111,7 +112,8 @@ impl AnimMap {
 
         if let Some(Some(source)) = self.sources.get(file_idx as usize) {
             if let Ok(entry) = source.idx.element(anim_id as usize) {
-                return entry.lookup().is_some();
+                // Empty slots are `lookup 0, size 0` as often as `lookup -1` (13,795 in UO Gold's Anim2.idx).
+                return entry.lookup().is_some() && entry.len().is_some_and(|len| len > 0);
             }
         }
         false

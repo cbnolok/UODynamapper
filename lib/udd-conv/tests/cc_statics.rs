@@ -32,14 +32,20 @@ fn statics_pack_uses_legacy_map_uop_for_dimensions() {
     let dir = temp_dir("statics_map_uop_dimensions");
     fs::create_dir_all(&dir).expect("create temp dir");
 
+    // The map size comes from the blocks the package holds: a full Ilshenar, in entries of 4096 blocks.
+    const ILSHENAR_BLOCKS: usize = 288 * 200;
+    const BLOCKS_PER_ENTRY: usize = 4096;
     let mut package = UopPackage::new_default();
-    package
-        .add_file_from_memory(
-            &map_block(1, 0),
-            "build/map2legacymul/00000000.dat",
-            CompressionFlag::None,
-        )
-        .expect("add map chunk");
+    for (entry_index, first_block) in (0..ILSHENAR_BLOCKS).step_by(BLOCKS_PER_ENTRY).enumerate() {
+        let entry_blocks = BLOCKS_PER_ENTRY.min(ILSHENAR_BLOCKS - first_block);
+        package
+            .add_file_from_memory(
+                &map_block(1, 0).repeat(entry_blocks),
+                &format!("build/map2legacymul/{entry_index:08}.dat"),
+                CompressionFlag::None,
+            )
+            .expect("add map chunk");
+    }
     package
         .finalize_and_save(dir.join("map2LegacyMUL.uop"))
         .expect("save map uop");
@@ -48,7 +54,7 @@ fn statics_pack_uses_legacy_map_uop_for_dimensions() {
     staidx.write_i32::<LittleEndian>(0).unwrap();
     staidx.write_i32::<LittleEndian>(7).unwrap();
     staidx.write_i32::<LittleEndian>(0).unwrap();
-    for _ in 1..(288 * 200) {
+    for _ in 1..ILSHENAR_BLOCKS {
         staidx.write_i32::<LittleEndian>(-1).unwrap();
         staidx.write_i32::<LittleEndian>(-1).unwrap();
         staidx.write_i32::<LittleEndian>(-1).unwrap();

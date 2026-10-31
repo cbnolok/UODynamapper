@@ -25,6 +25,8 @@ pub struct MultiMap {
     index_file: IndexFile,
     mul_path: std::path::PathBuf,
     verdata: Option<Arc<Verdata>>,
+    /// The part record size of the whole file, when its entry lengths settle it ([`file_multi_part_record_size`]).
+    record_size: Option<usize>,
 }
 
 impl MultiMap {
@@ -43,10 +45,12 @@ impl MultiMap {
         }
 
         let index = IndexFile::load(idx_path)?;
+        let record_size = file_multi_part_record_size(&index);
         Ok(Self {
             index_file: index,
             mul_path,
             verdata: None,
+            record_size,
         })
     }
 
@@ -58,7 +62,7 @@ impl MultiMap {
     pub fn get_parts(&self, multi_id: u32) -> eyre::Result<Vec<MultiPart>> {
         if let Some(verdata) = &self.verdata {
             if let Some(bytes) = verdata.read_patch(VerFileId::Multi, multi_id as i32)? {
-                return parse_multi_parts(&bytes);
+                return self.parse_parts(&bytes);
             }
         }
 
@@ -108,7 +112,38 @@ impl MultiMap {
         let mut bytes = vec![0u8; length as usize];
         reader.read_exact(&mut bytes)?;
 
-        parse_multi_parts(&bytes)
+        self.parse_parts(&bytes)
+    }
+
+    /// The part record size of the file (12 bytes before High Seas, 16 from High Seas on), when its entry
+    /// lengths settle it.
+    pub fn record_size(&self) -> Option<usize> {
+        self.record_size
+    }
+
+    fn parse_parts(&self, bytes: &[u8]) -> eyre::Result<Vec<MultiPart>> {
+        match self.record_size {
+            Some(stride) => parse_multi_parts_with_stride(bytes, stride),
+            None => parse_multi_parts(bytes),
+        }
+    }
+}
+
+/// The part record size every entry of `index` is a whole number of, when only one of the two sizes is: a file
+/// does not mix them. UO Gold and Mondain's Legacy have 233 entries, all multiples of 12 bytes and 31 of them of
+/// 16 too; 7.0.x files from High Seas on have 324 to 800, all multiples of 16 bytes and 115 to 211 of 12 too.
+/// `None` when every entry fits both or one fits neither (each entry is then judged alone).
+fn file_multi_part_record_size(index: &IndexFile) -> Option<usize> {
+    let lengths: Vec<usize> = (0..index.element_count())
+        .filter_map(|multi_id| index.element(multi_id).ok()?.len())
+        .filter(|&length| length != 0)
+        .map(|length| length as usize)
+        .collect();
+    let all_fit = |stride: usize| lengths.iter().all(|length| length % stride == 0);
+    match (all_fit(LEGACY_MULTI_PART_RECORD_SIZE), all_fit(EXTENDED_MULTI_PART_RECORD_SIZE)) {
+        (true, false) => Some(LEGACY_MULTI_PART_RECORD_SIZE),
+        (false, true) => Some(EXTENDED_MULTI_PART_RECORD_SIZE),
+        _ => None,
     }
 }
 

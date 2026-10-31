@@ -1,6 +1,6 @@
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
-use crate::app::{concrete_art_tile_source, tileart_flags_summary, tileart_property_name, ArtSource, ArtViewerRow, TileArtFileEntry, TileMetadataSource, UopInspectorApp, ViewMode};
+use crate::app::{classic_tile_flags_summary, concrete_art_tile_source, tileart_flags_summary, tileart_property_name, ArtSource, ArtViewerRow, TileArtFileEntry, TileMetadataSource, UopInspectorApp, ViewMode};
 use crate::logic::ClientData;
 use super::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by, tileart_editor};
 use std::sync::Arc;
@@ -124,12 +124,12 @@ pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
                             if let Some(tile) = client.tiledata.land_tiles().get(id as usize) {
                                 egui::Grid::new("land_tile_grid").striped(true).show(ui, |ui| {
                                     ui.label("Name"); ui.label(tile.name_ascii()); ui.end_row();
-                                    ui.label("Flags"); ui.label(format!("{:08X}", tile.flags.internal_flags)); ui.end_row();
+                                    ui.label("Flags"); ui.label(format!("{:016X}", tile.flags.internal_flags)); ui.end_row();
                                     ui.label("Texture ID"); ui.label(tile.texture_id.to_string()); ui.end_row();
                                 });
                                 ui.separator();
                                 ui.label("Flags Breakdown:");
-                                ui.label(format!("{:?}", tile.flags));
+                                ui.label(classic_tile_flags_summary(tile.flags));
                             }
                         } else {
                             let item_id = if source.is_ec_uop() {
@@ -140,7 +140,7 @@ pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
                             if let Some(tile) = client.tiledata.item_tiles().get(item_id as usize) {
                                 egui::Grid::new("item_tile_grid").striped(true).show(ui, |ui| {
                                     ui.label("Name"); ui.label(tile.name_ascii()); ui.end_row();
-                                    ui.label("Flags"); ui.label(format!("{:?}", tile.flags)); ui.end_row();
+                                    ui.label("Flags"); ui.label(format!("{:016X}", tile.flags.internal_flags)); ui.end_row();
                                     ui.label("Weight"); ui.label(tile.weight.to_string()); ui.end_row();
                                     ui.label("Layer/LightID"); ui.label(tile.quality.to_string()); ui.end_row();
                                     ui.label("Count/Quantity"); ui.label(tile.quantity.to_string()); ui.end_row();
@@ -150,7 +150,7 @@ pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
                                 });
                                 ui.separator();
                                 ui.label("Flags Breakdown:");
-                                ui.label(format!("{:?}", tile.flags));
+                                ui.label(classic_tile_flags_summary(tile.flags));
                             }
                         }
                     }

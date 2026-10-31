@@ -1168,7 +1168,7 @@ fn collect_cc_tiledata_rows(tiledata: &TileData) -> Vec<CcTileDataRow> {
         let art_id = tile.tile_id as u32;
         let id = tile.tile_id.to_string();
         let name = tile.name_ascii().to_string();
-        let flags_raw = format!("0x{:08X}", tile.flags.internal_flags);
+        let flags_raw = format!("0x{:016X}", tile.flags.internal_flags);
         let flags_summary = classic_tile_flags_summary(tile.flags);
         let texture_id = tile.texture_id.to_string();
         let search_text = format!(
@@ -1203,7 +1203,7 @@ fn collect_cc_tiledata_rows(tiledata: &TileData) -> Vec<CcTileDataRow> {
         let art_id = tile.tile_id as u32 + 0x4000;
         let id = tile.tile_id.to_string();
         let name = tile.name_ascii().to_string();
-        let flags_raw = format!("0x{:08X}", tile.flags.internal_flags);
+        let flags_raw = format!("0x{:016X}", tile.flags.internal_flags);
         let flags_summary = classic_tile_flags_summary(tile.flags);
         let height = tile.height_raw().to_string();
         let weight = tile.weight.to_string();
@@ -1324,7 +1324,7 @@ pub(crate) fn collect_tileart_display_rows(
         .collect()
 }
 
-fn classic_tile_flags_summary(flags: uocf::classic::tiledata::Flags) -> String {
+pub(crate) fn classic_tile_flags_summary(flags: uocf::classic::tiledata::Flags) -> String {
     let labels = [
         (flags.background(), "Background"),
         (flags.weapon(), "Weapon"),
@@ -1358,6 +1358,14 @@ fn classic_tile_flags_summary(flags: uocf::classic::tiledata::Flags) -> String {
         (flags.door(), "Door"),
         (flags.stairback(), "StairBack"),
         (flags.stairright(), "StairRight"),
+        (flags.nohouse(), "NoHouse"),
+        (flags.nodraw(), "NoDraw"),
+        (flags.rotated(), "Rotated"),
+        (flags.alphablend(), "AlphaBlend"),
+        (flags.noshadow(), "NoShadow"),
+        (flags.pixelbleed(), "PixelBleed"),
+        (flags.playanimonce(), "PlayAnimOnce"),
+        (flags.multimovable(), "MultiMovable"),
     ];
 
     let active = labels

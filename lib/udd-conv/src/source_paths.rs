@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use uocf::utils::path::find_file_ignoring_case;
+
 pub fn gather_source_dirs(ccdir: Option<&PathBuf>, ecdir: Option<&PathBuf>) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
 
@@ -16,12 +18,13 @@ pub fn gather_source_dirs(ccdir: Option<&PathBuf>, ecdir: Option<&PathBuf>) -> V
     dirs
 }
 
+/// The first of `file_names` found in `source_dirs`, matching names ignoring ASCII case (client folders mix
+/// cases, such as UO Gold's `Anim.idx`).
 pub fn find_first_existing_file(source_dirs: &[PathBuf], file_names: &[&str]) -> Option<PathBuf> {
     source_dirs.iter().find_map(|dir| {
         file_names
             .iter()
-            .map(|name| dir.join(name))
-            .find(|candidate| candidate.is_file())
+            .find_map(|name| find_file_ignoring_case(dir, name))
     })
 }
 
@@ -29,7 +32,7 @@ pub fn find_first_dir_matching(source_dirs: &[PathBuf], required_file_sets: &[&[
     source_dirs.iter().find_map(|dir| {
         required_file_sets
             .iter()
-            .any(|file_set| file_set.iter().all(|name| dir.join(name).is_file()))
+            .any(|file_set| file_set.iter().all(|name| find_file_ignoring_case(dir, name).is_some()))
             .then(|| dir.clone())
     })
 }

@@ -22,3 +22,18 @@ pub fn extract_first_digit_run(segment: &str) -> Option<u32> {
 }
 
 
+
+/// The file `file_name` in `dir`, matched ignoring ASCII case: Windows client folders mix cases (UO Gold ships
+/// `Anim.idx` beside `anim.mul`), which a case-sensitive file system tells apart. An exact match wins.
+pub fn find_file_ignoring_case(dir: &std::path::Path, file_name: &str) -> Option<std::path::PathBuf> {
+    let exact = dir.join(file_name);
+    if exact.is_file() {
+        return Some(exact);
+    }
+    std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(Result::ok)
+        .find(|entry| entry.file_name().to_str().is_some_and(|name| name.eq_ignore_ascii_case(file_name)))
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file())
+}

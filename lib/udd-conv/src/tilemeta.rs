@@ -42,8 +42,11 @@ use udd_container::{
     xxh64_virtual_path, AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder,
     UddpReader,
 };
-use uocf::classic::tiledata::TileData;
-use uocf::enhanced::{tile_database::ArtDefinition, tileart::ArtData};
+use uocf::classic::tiledata::{
+    TileData, TILE_FLAG_ALPHA_BLEND, TILE_FLAG_MULTI_MOVABLE, TILE_FLAG_NO_DRAW, TILE_FLAG_NO_HOUSE,
+    TILE_FLAG_NO_SHADOW, TILE_FLAG_PIXEL_BLEED, TILE_FLAG_PLAY_ANIM_ONCE, TILE_FLAG_ROTATED,
+};
+use uocf::enhanced::{tile_database::ArtDefinition, tileart::{ArtData, TaeFlag}};
 
 pub struct TileMetaBuildOptions {
     /// When `true`, subtract the EC-art crop delta from the stored EC sampling
@@ -106,6 +109,15 @@ fn read_path_entry(package: &UddpReader, path: &str) -> eyre::Result<Vec<u8>> {
 mod tests {
     use super::*;
     use uocf::enhanced::tileart::{TextureItem, TextureType};
+
+    #[test]
+    fn classic_upper_flags_survive_the_tilemeta_mapping() {
+        let impassable = TaeFlag::Impassable.bits();
+        let upper = TILE_FLAG_NO_HOUSE | TILE_FLAG_PIXEL_BLEED | TILE_FLAG_MULTI_MOVABLE;
+        let mapped = map_cc_flags_to_tilemeta(impassable | upper);
+        assert_eq!(mapped, (TaeFlag::Impassable | TaeFlag::NoHouse | TaeFlag::PixelBleed | TaeFlag::MultiMovable).bits());
+        assert_eq!(map_cc_flags_to_tilemeta(TaeFlag::Unused2.bits()), 0);
+    }
 
     #[test]
     fn source_item_materials_survive_converter_package_roundtrip() {
@@ -819,11 +831,12 @@ pub fn adjusted_ec_sampling_start(
     ))
 }
 
-/// Explicitly translates Classic Client 32-bit flags into the Enhanced Client 64-bit flag space.
+/// Explicitly translates Classic Client flags into the Enhanced Client 64-bit flag space.
 /// While historically many of the lower 32-bits share the same integer values across clients,
 /// explicit mapping ensures no assumptions are made and allows divergent flags to be mapped
-/// correctly into a single dictionary.
-fn map_cc_flags_to_tilemeta(cc: u32) -> u64 {
+/// correctly into a single dictionary. Files from High Seas on store 64 bits, whose known upper bits
+/// are carried over too ([`CC_UPPER_FLAGS_TO_TILEMETA`]).
+fn map_cc_flags_to_tilemeta(cc: u64) -> u64 {
     let mut ec = 0u64;
 
     if (cc & 0x00000001) != 0 {
@@ -923,5 +936,24 @@ fn map_cc_flags_to_tilemeta(cc: u32) -> u64 {
         ec |= 0x80000000;
     } // StairRight
 
+    for (cc_flag, ec_flag) in CC_UPPER_FLAGS_TO_TILEMETA {
+        if (cc & cc_flag) != 0 {
+            ec |= ec_flag.bits();
+        }
+    }
+
     ec
 }
+
+/// The upper 32 bits of the 64-bit Classic flags that tilemeta keeps, with their Enhanced Client flag. They have
+/// the EC tileart layout bit for bit; bit 38 (`TaeFlag::Unused2`) has no known meaning and is dropped.
+const CC_UPPER_FLAGS_TO_TILEMETA: [(u64, TaeFlag); 8] = [
+    (TILE_FLAG_NO_HOUSE, TaeFlag::NoHouse),
+    (TILE_FLAG_NO_DRAW, TaeFlag::NoDraw),
+    (TILE_FLAG_ROTATED, TaeFlag::Rotated),
+    (TILE_FLAG_ALPHA_BLEND, TaeFlag::AlphaBlend),
+    (TILE_FLAG_NO_SHADOW, TaeFlag::NoShadow),
+    (TILE_FLAG_PIXEL_BLEED, TaeFlag::PixelBleed),
+    (TILE_FLAG_PLAY_ANIM_ONCE, TaeFlag::PlayAnimOnce),
+    (TILE_FLAG_MULTI_MOVABLE, TaeFlag::MultiMovable),
+];

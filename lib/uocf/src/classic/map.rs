@@ -91,6 +91,53 @@ impl MapCell {
 /// Size of a map block in the file (4 bytes header + 64 * 3 bytes cells)
 const MAP_BLOCK_FILE_SIZE: usize = 196;
 
+/// The height in cells of each Classic facet, by map index (Felucca, Trammel, Ilshenar, Malas, Tokuno, Ter Mur).
+/// The heights never changed across client eras, while the width did: Felucca and Trammel were 6144 cells wide
+/// up to Mondain's Legacy (UO Gold's `map0.mul` is 77,070,336 bytes, 768 x 512 blocks) and 7168 wide since. So the
+/// width comes from the file: its block count over the facet's block rows.
+pub const CLASSIC_FACET_HEIGHTS: [u32; 6] = [4096, 4096, 1600, 2048, 1448, 4096];
+
+/// Map blocks in each `build/mapNlegacymul/NNNNNNNN.dat` entry of a `mapNLegacyMUL.uop` package.
+pub const UOP_MAP_BLOCKS_PER_ENTRY: u32 = 4096;
+
+/// Blocks a shipped `mapNLegacyMUL.uop` package holds past the facet: its last entry is one extra block.
+pub const UOP_MAP_TRAILING_BLOCKS: u64 = 1;
+
+/// The size of Classic map `map_index` holding `block_count` blocks: the facet's height
+/// ([`CLASSIC_FACET_HEIGHTS`]) and the width those blocks fill. Up to `trailing_blocks` blocks past the last full
+/// column are allowed (a UOP package's trailing block); any other remainder fails.
+pub fn classic_map_size(map_index: u32, block_count: u64, trailing_blocks: u64) -> eyre::Result<MapSizeCells> {
+    let height = *CLASSIC_FACET_HEIGHTS
+        .get(map_index as usize)
+        .ok_or_else(|| eyre!("map{map_index} has no known facet height; pass the map size"))?;
+    let height_blocks = u64::from(height / MapBlock::CELLS_PER_COLUMN);
+    let width_blocks = block_count / height_blocks;
+    let remainder = block_count % height_blocks;
+    if width_blocks == 0 || remainder > trailing_blocks {
+        eyre::bail!(
+            "map{map_index}: {block_count} blocks do not fill whole columns of {height_blocks} blocks \
+             (facet height {height}); pass the map size"
+        );
+    }
+    let width = u32::try_from(width_blocks * u64::from(MapBlock::CELLS_PER_ROW))
+        .map_err(|_| eyre!("map{map_index}: {block_count} blocks give an oversized map"))?;
+    Ok(MapSizeCells { width, height })
+}
+
+/// The name of entry `entry_index` of a `map{map_index}LegacyMUL.uop` package.
+fn uop_map_entry_name(map_index: u32, entry_index: u32) -> String {
+    format!("build/map{map_index}legacymul/{entry_index:08}.dat")
+}
+
+/// The bytes of block data in a `map{map_index}LegacyMUL.uop` package: its entries from the first, in order,
+/// up to the first missing one.
+fn uop_map_data_size(package: &crate::uop_container::package::UopPackage, map_index: u32) -> u64 {
+    (0..)
+        .map_while(|entry_index| package.get_file_by_name(&uop_map_entry_name(map_index, entry_index)))
+        .map(|file| u64::from(file.decompressed_size()))
+        .sum()
+}
+
 /// Represents a block of 8x8 cells.
 #[derive(Clone)]
 pub struct MapBlock {
@@ -544,39 +591,18 @@ impl MapPlane {
                     Ok(size)
                 }
             }
-            None => match map_index {
-                0..=1 => {
-                    // Determine if this is a pre-ML (6144x4096) or post-ML (7168x4096) map by checking file size.
-                    if map_file_mul_metadata.len() < 77070336 {
-                        Ok(MapSizeCells {
-                            width: 6144,
-                            height: 4096,
-                        }) // pre-ML
-                    } else {
-                        Ok(MapSizeCells {
-                            width: 7168,
-                            height: 4096,
-                        })
-                    }
+            None => {
+                // The size comes from the file: a pre-ML map0.mul/map1.mul is 6144 cells wide, a later one 7168.
+                let file_size = map_file_mul_metadata.len();
+                if file_size % MapBlock::PACKED_SIZE as u64 != 0 {
+                    Err(eyre!(
+                        "Malformed map{map_index}.mul: {file_size} bytes is not a whole number of {}-byte blocks",
+                        MapBlock::PACKED_SIZE
+                    ))
+                } else {
+                    classic_map_size(map_index, file_size / MapBlock::PACKED_SIZE as u64, 0)
                 }
-                2 => Ok(MapSizeCells {
-                    width: 2304,
-                    height: 1600,
-                }),
-                3 => Ok(MapSizeCells {
-                    width: 2560,
-                    height: 2048,
-                }),
-                4 => Ok(MapSizeCells {
-                    width: 1448,
-                    height: 1448,
-                }),
-                5 => Ok(MapSizeCells {
-                    width: 1280,
-                    height: 4096,
-                }),
-                _ => Err(eyre!("Invalid map number")),
-            },
+            }
         }?;
 
         let map_size_blocks = MapSizeBlocks {
@@ -589,7 +615,10 @@ impl MapPlane {
             * map_size_blocks.height as u64;
         if map_file_mul_metadata.len() != map_file_expected_size {
             return Err(eyre!(
-                "Malformed map file: expected size doesn't match the real file size"
+                "Malformed map file: a {}x{} map takes {map_file_expected_size} bytes, the file has {}",
+                map_size_tiles.width,
+                map_size_tiles.height,
+                map_file_mul_metadata.len()
             ));
         }
 
@@ -642,32 +671,18 @@ impl MapPlane {
                     Ok(size)
                 }
             }
-            None => match map_index {
-                0..=1 => {
-                    // In UOP format, maps 0 and 1 are always the larger (post-ML) size.
-                    Ok(MapSizeCells {
-                        width: 7168,
-                        height: 4096,
-                    })
+            None => {
+                // The size comes from the blocks the package's entries hold.
+                let data_size = uop_map_data_size(&package, map_index);
+                if data_size % MapBlock::PACKED_SIZE as u64 != 0 {
+                    Err(eyre!(
+                        "Malformed map{map_index} UOP: {data_size} bytes of entries is not a whole number of {}-byte blocks",
+                        MapBlock::PACKED_SIZE
+                    ))
+                } else {
+                    classic_map_size(map_index, data_size / MapBlock::PACKED_SIZE as u64, UOP_MAP_TRAILING_BLOCKS)
                 }
-                2 => Ok(MapSizeCells {
-                    width: 2304,
-                    height: 1600,
-                }),
-                3 => Ok(MapSizeCells {
-                    width: 2560,
-                    height: 2048,
-                }),
-                4 => Ok(MapSizeCells {
-                    width: 1448,
-                    height: 1448,
-                }),
-                5 => Ok(MapSizeCells {
-                    width: 1280,
-                    height: 4096,
-                }),
-                _ => Err(eyre!("Invalid map number")),
-            },
+            }
         }?;
 
         let map_size_blocks = MapSizeBlocks {
@@ -880,13 +895,13 @@ impl MapPlane {
             let idx = (pos.x * self.size_blocks.height) + pos.y;
 
             // In UOP maps, each entry contains 4096 blocks (64x64 blocks = 512x512 tiles).
-            let chunk_idx = idx / 4096;
-            let block_offset_in_chunk = (idx % 4096) as usize;
+            let chunk_idx = idx / UOP_MAP_BLOCKS_PER_ENTRY;
+            let block_offset_in_chunk = (idx % UOP_MAP_BLOCKS_PER_ENTRY) as usize;
 
             let arena_idx = self.cached_block_indices[idx as usize];
             if arena_idx == u32::MAX {
                 // Find the chunk in the UOP package.
-                let chunk_name = format!("build/map{}legacymul/{:08}.dat", self.index, chunk_idx);
+                let chunk_name = uop_map_entry_name(self.index, chunk_idx);
                 let file_entry = package
                     .get_file_by_name(&chunk_name)
                     .ok_or_else(|| eyre::eyre!("Missing UOP chunk: {}", chunk_name))?;
@@ -1034,4 +1049,47 @@ pub fn load_blocks_from_mmap(
     }
 
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Felucca's map index.
+    const FELUCCA: u32 = 0;
+    /// Tokuno's map index.
+    const TOKUNO: u32 = 4;
+    /// UO Gold's `map0.mul` (6144 x 4096) and a later one (7168 x 4096), in bytes.
+    const GOLD_MAP0_SIZE: u64 = 77_070_336;
+    const ML_MAP0_SIZE: u64 = 89_915_392;
+    const PRE_ML_FELUCCA_WIDTH: u32 = 6144;
+    const ML_FELUCCA_WIDTH: u32 = 7168;
+    const FELUCCA_HEIGHT: u32 = 4096;
+    const TOKUNO_SIDE: u32 = 1448;
+
+    fn blocks(file_size: u64) -> u64 {
+        file_size / MapBlock::PACKED_SIZE as u64
+    }
+
+    #[test]
+    fn felucca_width_comes_from_the_file() {
+        let gold = classic_map_size(FELUCCA, blocks(GOLD_MAP0_SIZE), 0).unwrap();
+        assert_eq!((gold.width, gold.height), (PRE_ML_FELUCCA_WIDTH, FELUCCA_HEIGHT));
+        let ml = classic_map_size(FELUCCA, blocks(ML_MAP0_SIZE), 0).unwrap();
+        assert_eq!((ml.width, ml.height), (ML_FELUCCA_WIDTH, FELUCCA_HEIGHT));
+    }
+
+    #[test]
+    fn uop_packages_may_end_with_a_trailing_block() {
+        let tokuno_blocks = u64::from(TOKUNO_SIDE / MapBlock::CELLS_PER_ROW).pow(2);
+        let size = classic_map_size(TOKUNO, tokuno_blocks + UOP_MAP_TRAILING_BLOCKS, UOP_MAP_TRAILING_BLOCKS).unwrap();
+        assert_eq!((size.width, size.height), (TOKUNO_SIDE, TOKUNO_SIDE));
+        assert!(classic_map_size(TOKUNO, tokuno_blocks + UOP_MAP_TRAILING_BLOCKS, 0).is_err());
+        assert!(classic_map_size(TOKUNO, tokuno_blocks + UOP_MAP_TRAILING_BLOCKS + 1, UOP_MAP_TRAILING_BLOCKS).is_err());
+    }
+
+    #[test]
+    fn unknown_facets_need_a_size() {
+        assert!(classic_map_size(CLASSIC_FACET_HEIGHTS.len() as u32, blocks(ML_MAP0_SIZE), 0).is_err());
+    }
 }

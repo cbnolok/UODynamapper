@@ -114,7 +114,7 @@ pub enum FacetCmd {
         radarcol: PathBuf,
         #[arg(long)]
         facet: u8,
-        /// Map size in squares; defaults to the client's size of the facet.
+        /// Map size in squares; defaults to the size the map file holds (UO Gold's map0.mul is 6144x4096).
         #[arg(long, requires = "height")]
         width: Option<u32>,
         #[arg(long, requires = "width")]
@@ -281,18 +281,15 @@ pub fn run(cmd: FacetCmd) -> eyre::Result<()> {
             kr,
             kr_fallback_land,
         } => {
-            let geometry = match (width, height) {
-                (Some(width), Some(height)) => FacetGeometry::new(width, height),
-                _ => FacetGeometry::client_facet(facet)
-                    .ok_or_else(|| eyre::eyre!("facet {facet} has no client size; pass --width and --height"))?,
-            };
-            let size = MapSizeCells { width: geometry.width, height: geometry.height };
+            let size = width.zip(height).map(|(width, height)| MapSizeCells { width, height });
             let is_uop = map.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("uop"));
             let mut plane = if is_uop {
-                MapPlane::init_uop_with_size(map.clone(), u32::from(facet), Some(size))?
+                MapPlane::init_uop_with_size(map.clone(), u32::from(facet), size)?
             } else {
-                MapPlane::init_with_size(map.clone(), u32::from(facet), Some(size))?
+                MapPlane::init_with_size(map.clone(), u32::from(facet), size)?
             };
+            let size = plane.size_cells();
+            let geometry = FacetGeometry::new(size.width, size.height);
             let statics = StaticsReader::new(&staidx, &statics, geometry.width, geometry.height)?;
             std::fs::create_dir_all(&output_dir).wrap_err_with(|| format!("create {}", output_dir.display()))?;
             if kr {

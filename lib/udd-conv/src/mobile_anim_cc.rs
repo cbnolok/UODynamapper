@@ -28,6 +28,7 @@ use uocf::classic::animationframe_cc::AnimationFrameCc;
 use uocf::classic::body_def::BodyDef;
 use uocf::classic::bodyconv_def::BodyConvDef;
 use uocf::uop_container::package::{LoadMode, UopPackage};
+use uocf::utils::path::find_file_ignoring_case;
 
 use crate::bc7::{
     encode_for_vram_with_bc7_rdo_options_and_stage_progress_timed, Bc7ProgressStage,
@@ -419,9 +420,9 @@ fn print_classic_animation_source_files(client_dir: &Path) {
         } else {
             format!("anim{}.idx", file_index + 1)
         };
-        let idx_path = client_dir.join(idx_name);
-        let mul_path = client_dir.join(mul_name);
-        if idx_path.is_file() && mul_path.is_file() {
+        let idx_path = find_file_ignoring_case(client_dir, &idx_name);
+        let mul_path = find_file_ignoring_case(client_dir, mul_name);
+        if let (Some(idx_path), Some(mul_path)) = (idx_path, mul_path) {
             println!("Using CC animation index source file: {}", source_path_label(client_dir, &idx_path));
             println!("Using CC animation source file (MUL): {}", source_path_label(client_dir, &mul_path));
         }

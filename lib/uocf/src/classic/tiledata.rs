@@ -394,6 +394,53 @@ enum ItemTileMaxIdxRev {
     Revision2 = 0x7FFF,
     Revision3 = 0xFFFF,
 }
+
+/// Bytes of the u32 header that opens each block of 32 tiles.
+const TILE_BLOCK_HEADER_SIZE: u64 = 4;
+
+/// A `tiledata.mul` layout: the record sizes (26/37 bytes with 32-bit flags, 30/41 with 64-bit flags) and the
+/// static tile count. Both sections are whole blocks, 512 land blocks and `static count / 32` static blocks, so
+/// the file length tells the layouts apart.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct TiledataLayout {
+    land: LandTileBinSize,
+    item: ItemTileBinSize,
+    max_item: ItemTileMaxIdxRev,
+}
+
+impl TiledataLayout {
+    /// The layouts read. Measured on client files: UO Gold and Mondain's Legacy ship 32-bit flags with 16,384
+    /// statics (1,036,288 bytes); 7.0.x from High Seas on ship 64-bit flags with 65,536 statics (3,188,736 bytes).
+    /// Stygian Abyss before High Seas kept 32-bit flags with 32,768 statics (1,644,544 bytes). The other pairings
+    /// of flag width and static count are read too: no two layouts have the same length.
+    const KNOWN: [Self; 6] = [
+        Self::new(LandTileBinSize::Classic, ItemTileBinSize::Classic, ItemTileMaxIdxRev::Revision1),
+        Self::new(LandTileBinSize::Classic, ItemTileBinSize::Classic, ItemTileMaxIdxRev::Revision2),
+        Self::new(LandTileBinSize::Classic, ItemTileBinSize::Classic, ItemTileMaxIdxRev::Revision3),
+        Self::new(LandTileBinSize::HS, ItemTileBinSize::HS, ItemTileMaxIdxRev::Revision1),
+        Self::new(LandTileBinSize::HS, ItemTileBinSize::HS, ItemTileMaxIdxRev::Revision2),
+        Self::new(LandTileBinSize::HS, ItemTileBinSize::HS, ItemTileMaxIdxRev::Revision3),
+    ];
+
+    const fn new(land: LandTileBinSize, item: ItemTileBinSize, max_item: ItemTileMaxIdxRev) -> Self {
+        Self { land, item, max_item }
+    }
+
+    const fn file_size(self) -> u64 {
+        let tiles_per_block = LandTile::TILES_PER_BLOCK as u64;
+        let land_block = TILE_BLOCK_HEADER_SIZE + self.land as u64 * tiles_per_block;
+        let item_block = TILE_BLOCK_HEADER_SIZE + self.item as u64 * ItemTile::TILES_PER_BLOCK as u64;
+        let item_blocks = (1 + self.max_item as u64) / ItemTile::TILES_PER_BLOCK as u64;
+        land_block * LandTile::BLOCK_QTY as u64 + item_block * item_blocks
+    }
+
+    fn from_file_size(file_size: u64) -> eyre::Result<Self> {
+        Self::KNOWN.into_iter().find(|layout| layout.file_size() == file_size).ok_or_else(|| {
+            let known: Vec<String> = Self::KNOWN.iter().map(|layout| layout.file_size().to_string()).collect();
+            eyre!("Malformed tiledata.mul? Size: {file_size} matches no known layout ({})", known.join(", "))
+        })
+    }
+}
 /* End of enums for Tiledata file structure */
 
 /// Internal structures used for fast bulk parsing of the tiledata.mul file.
@@ -508,6 +555,16 @@ impl TileData {
         &self.item_data
     }
 
+    /// Whether the file stores 64-bit tile flags (High Seas on) rather than 32-bit ones.
+    pub fn has_64_bit_flags(&self) -> bool {
+        self.land_tile_binary_size == LandTileBinSize::HS
+    }
+
+    /// The bytes of a land and of a static tile record in the file.
+    pub fn record_sizes(&self) -> (usize, usize) {
+        (self.land_tile_binary_size as usize, self.item_tile_binary_size as usize)
+    }
+
     pub fn new_empty() -> Self {
         Self {
             land_tile_binary_size: LandTileBinSize::Classic,
@@ -536,92 +593,15 @@ impl TileData {
             .metadata()
             .wrap_err("Get tiledata.mul metadata")?;
 
-        const FILE_SIZE_REV1: u64 = {
-            const LAND_SECTION_SIZE: u64 = {
-                const BLOCK_SIZE: u64 = 4 /* u32 header */ + (LandTileBinSize::Classic as u64 * LandTile::TILES_PER_BLOCK as u64);
-                const BLOCK_QTY: u64 = LandTile::BLOCK_QTY as u64;
-                BLOCK_SIZE * BLOCK_QTY
-            };
-            const ITEM_SECTION_SIZE: u64 = {
-                const BLOCK_SIZE: u64 = 4 /* u32 header */ + (ItemTileBinSize::Classic as u64 * ItemTile::TILES_PER_BLOCK as u64);
-                const BLOCK_QTY: u64 =
-                    (1 + ItemTileMaxIdxRev::Revision1 as u64) / ItemTile::TILES_PER_BLOCK as u64;
-                BLOCK_SIZE * BLOCK_QTY
-            };
-            LAND_SECTION_SIZE + ITEM_SECTION_SIZE
-        };
-
-        const FILE_SIZE_REV2: u64 = {
-            const LAND_SECTION_SIZE: u64 = {
-                const BLOCK_SIZE: u64 = 4 /* u32 header */ + (LandTileBinSize::HS as u64 * LandTile::TILES_PER_BLOCK as u64);
-                const BLOCK_QTY: u64 = LandTile::BLOCK_QTY as u64;
-                BLOCK_SIZE * BLOCK_QTY
-            };
-            const ITEM_SECTION_SIZE: u64 = {
-                const BLOCK_SIZE: u64 = 4 /* u32 header */ + (ItemTileBinSize::HS as u64 * ItemTile::TILES_PER_BLOCK as u64);
-                const BLOCK_QTY: u64 =
-                    (1 + ItemTileMaxIdxRev::Revision2 as u64) / ItemTile::TILES_PER_BLOCK as u64;
-                BLOCK_SIZE * BLOCK_QTY
-            };
-            LAND_SECTION_SIZE + ITEM_SECTION_SIZE
-        };
-
-        const FILE_SIZE_REV3: u64 = {
-            const LAND_SECTION_SIZE: u64 = {
-                const BLOCK_SIZE: u64 = 4 /* u32 header */ + (LandTileBinSize::HS as u64 * LandTile::TILES_PER_BLOCK as u64);
-                const BLOCK_QTY: u64 = LandTile::BLOCK_QTY as u64;
-                BLOCK_SIZE * BLOCK_QTY
-            };
-            const ITEM_SECTION_SIZE: u64 = {
-                const BLOCK_SIZE: u64 = 4 /* u32 header */ + (ItemTileBinSize::HS as u64 * ItemTile::TILES_PER_BLOCK as u64);
-                const BLOCK_QTY: u64 =
-                    (1 + ItemTileMaxIdxRev::Revision3 as u64) / ItemTile::TILES_PER_BLOCK as u64;
-                BLOCK_SIZE * BLOCK_QTY
-            };
-            LAND_SECTION_SIZE + ITEM_SECTION_SIZE
-        };
-
         let file_size = file_metadata.len();
-        if file_size < FILE_SIZE_REV1 {
-            return Err(eyre!(
-                "Tiledata.mul too short: it doesn't have room for land tile data.".to_owned()
-            ));
-        }
-
+        let layout = TiledataLayout::from_file_size(file_size)?;
         let mut tiledata = TileData {
-            land_tile_binary_size: LandTileBinSize::Classic,
-            item_tile_binary_size: ItemTileBinSize::Classic,
-            max_item_rev: ItemTileMaxIdxRev::Revision1,
+            land_tile_binary_size: layout.land,
+            item_tile_binary_size: layout.item,
+            max_item_rev: layout.max_item,
             land_data: Vec::with_capacity(TileData::LAND_TILE_MAX),
             item_data: Vec::new(),
         };
-
-        if file_size == FILE_SIZE_REV1 {
-            tiledata = TileData {
-                land_tile_binary_size: LandTileBinSize::Classic,
-                item_tile_binary_size: ItemTileBinSize::Classic,
-                max_item_rev: ItemTileMaxIdxRev::Revision1,
-                ..tiledata
-            };
-        } else if file_size == FILE_SIZE_REV2 {
-            tiledata = TileData {
-                land_tile_binary_size: LandTileBinSize::HS,
-                item_tile_binary_size: ItemTileBinSize::HS,
-                max_item_rev: ItemTileMaxIdxRev::Revision2,
-                ..tiledata
-            };
-        } else if file_size == FILE_SIZE_REV3 {
-            tiledata = TileData {
-                land_tile_binary_size: LandTileBinSize::HS,
-                item_tile_binary_size: ItemTileBinSize::HS,
-                max_item_rev: ItemTileMaxIdxRev::Revision3,
-                ..tiledata
-            };
-        } else {
-            return Err(eyre!(
-                format!("Malformed tiledata.mul? Size: {file_size}").to_owned()
-            ));
-        }
         tiledata.item_data = Vec::with_capacity(1 + tiledata.max_item_rev as usize);
 
         log::info!(
@@ -845,6 +825,36 @@ mod tests {
             assert!(tile_flags.nohouse() && tile_flags.pixelbleed() && tile_flags.impassable());
             assert!(!tile_flags.nodraw());
         }
+    }
+
+    /// UO Gold's `tiledata.mul` (32-bit flags, 16,384 statics) and a High Seas one (64-bit flags, 65,536 statics).
+    const GOLD_TILEDATA_SIZE: u64 = 1_036_288;
+    const HIGH_SEAS_TILEDATA_SIZE: u64 = 3_188_736;
+
+    #[test]
+    fn layouts_have_distinct_lengths() {
+        let sizes: std::collections::BTreeSet<u64> =
+            TiledataLayout::KNOWN.iter().map(|layout| layout.file_size()).collect();
+        assert_eq!(sizes.len(), TiledataLayout::KNOWN.len());
+        assert_eq!(TiledataLayout::KNOWN[0].file_size(), GOLD_TILEDATA_SIZE);
+        assert_eq!(TiledataLayout::KNOWN[5].file_size(), HIGH_SEAS_TILEDATA_SIZE);
+        assert!(TiledataLayout::from_file_size(GOLD_TILEDATA_SIZE + 1).is_err());
+    }
+
+    #[test]
+    fn stygian_abyss_files_read_32_bit_flags_with_more_statics() {
+        let item_blocks = (1 + ItemTileMaxIdxRev::Revision2 as usize) / ItemTile::TILES_PER_BLOCK;
+        let bytes = tiledata_bytes(
+            LandTileBinSize::Classic as usize,
+            ItemTileBinSize::Classic as usize,
+            item_blocks,
+            u64::from(LOW_FLAGS),
+            std::mem::size_of::<u32>(),
+        );
+        let tiledata = load("sa", &bytes);
+        assert!(!tiledata.has_64_bit_flags());
+        assert_eq!(tiledata.item_tiles().len(), 1 + ItemTileMaxIdxRev::Revision2 as usize);
+        assert_eq!(tiledata.item_tiles()[FLAGGED_ITEM_TILE].flags.internal_flags, u64::from(LOW_FLAGS));
     }
 
     #[test]

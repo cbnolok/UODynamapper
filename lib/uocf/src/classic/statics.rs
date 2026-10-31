@@ -117,12 +117,21 @@ impl StaticsReader {
         let index = IndexFile::load(index_path.to_path_buf())?;
         let mul_file = File::open(mul_path).wrap_err("Failed to open statics.mul")?;
         let mul_mmap = unsafe { Mmap::map(&mul_file)? };
+        let (block_width, block_height) = (width / UO_BLOCK_DIM, height / UO_BLOCK_DIM);
+        let block_count = block_width as usize * block_height as usize;
+        if index.element_count() < block_count {
+            eyre::bail!(
+                "{} has {} entries, fewer than the {block_count} blocks of a {width}x{height} map",
+                index_path.display(),
+                index.element_count()
+            );
+        }
 
         Ok(Self {
             index_file: index,
             mul_mmap,
-            block_width: width / UO_BLOCK_DIM,
-            block_height: height / UO_BLOCK_DIM,
+            block_width,
+            block_height,
             static_diff: None,
             verdata: None,
         })
