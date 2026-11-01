@@ -78,7 +78,7 @@ TMPDIR=/home/claudio/test/uop/<date> UO_EC_CLIENT_DIR="$C/_Ultima Online Enhance
 | facetN, facetNx | sectors (7168 per Britannia facet / KR the same per facet) | typed, both dialects | editor (sector encoder, build from Classic) | writer, RT EC (`facet_client_files::facet_sectors_reencode_identically_and_delimiters_follow_the_rule`) and KR (`kr_facet_client_files::kr_facet_sectors_reencode_identically_and_follow_the_rules`) | none in the inspector (dynamapper renders them) | `facet_*` bf596b93, 378e103e, 7fd85a38 |
 | | data map (1 per package) | typed | editor (written by the facet builder) | writer, RT EC (`facet_client_files::facet_data_maps_reencode_identically`, 10 packages) and KR (`kr_facet_client_files::kr_facet_data_maps_reencode_identically`) | none | `facet_sector.rs` |
 | facets (EC) | facet definitions (7) | typed | editor | writer, RT (`facet_client_files::facet_definitions_reencode_identically`) | none | `facet_definition.rs` bf596b93 |
-| gumpartLegacyMUL (EC) | Classic gumps (4,342 parse; 34 do not) | typed (`decode_uop_gump`) | replace (parse-checked); MUL <-> UOP repack (`uocf-cli mul-convert`) | no gump pixel encoder; repack RT (synthetic) | Gumps (view) | `classic/gump.rs` 7b89a450, a09b2255; gap 11 |
+| gumpartLegacyMUL (EC) | Classic gumps (4,342 parse; 34 are 0x0 placeholders) | typed (`decode_uop_gump`, `GumpColors`) | replace (parse-checked); from an image (`UopEntryEditor::replace_image`, `uocf-cli uop replace-image`); MUL <-> UOP repack (`uocf-cli mul-convert`) | writer of the shipped RLE, RT byte for byte on every gump that decodes: EC, EC fp 4,342, Classic 4,422, Classic fp 5,522 UOP entries, 7.0.20 3,164, Mondain's Legacy 2,600, Gold 2,416 `gumpart.mul` slots (`gump_client_encoding::every_shipped_gump_encodes_back`) | Gumps (view) | `classic/gump.rs` 7b89a450, a09b2255; `classic/gump_write.rs`, `enhanced/entry_image.rs` |
 | string_dictionary | dictionary (1 / 1) | typed | editor (library only) | writer, RT EC and KR (`string_tables_client_files::*string_dictionar*`) | String dictionary (view) | `string_dictionary.rs` fe344236 |
 | tileart | records (37,756 / 17,086) | typed, both dialects | editor | writer, RT EC (`tileart_client_records::tileart_reencodes_every_client_record`) and KR (`kr_client_files::kr_tileart_records_reencode_identically`), edit RT | Tile metadata, tileart editor (save) | `tileart.rs` 38705ade, 938dc6e7 |
 | waypoint | waypoints (1 / 1) | typed | editor | writer, RT EC (`waypoints_client_file::waypoints_reencode_identically`) and KR (`kr_client_files::kr_waypoints_reencode_identically`) | UOP explorer (waypoint editor) | `waypoints.rs` c368a4f0, 38705ade |
@@ -93,7 +93,7 @@ editor whose writer is round-trip tested on every shipped entry; Audio, EffectTe
 their typed kinds (MP3 is stored as given, not encoded). What remains raw is text without a parser (Lua, XML outside LegacyTerrain, CSV outside the audio
 tables and GameData, shaders), the fonts, a few stray files (OLE, UTF-16 text, PSD, one JPEG) and
 the unknown `MainMisc` binary. What has a reader but no writer: the
-TGA images and the Classic gumps (pixels).
+TGA images.
 
 ## Replacement checks
 
@@ -120,7 +120,7 @@ TGA images and the Classic gumps (pixels).
 - **Kind only** (no parser in uocf): XML outside LegacyTerrain, Lua, CSV outside the audio tables and
   `GameData.uop` (the KR `audio_sounds.csv` and `audio_effects.csv` are parse-checked since the audio batch),
   shaders, plain text, UTF-16 text, PSD, OLE files,
-  and plain binary (the `MainMisc` binary, the TGA placeholders, the 34 gumps that do not decode).
+  and plain binary (the `MainMisc` binary, the TGA placeholders, the 34 0x0 gump placeholders).
 
 ## Text entries
 
@@ -169,7 +169,7 @@ Measured on the 78 EC and 63 KR text entries of `GameData.uop` (the reader: `enh
 | 8 | ~~`legacyterrainmap.csv` writer~~ | **closed**: `to_csv_bytes` gives the shipped table back byte for byte; `check_canonical` for the entry editor's CSV check | done |
 | 9 | ~~Hues: shipped hue bitmaps reproduced byte for byte (wrong size field, hand-picked swatches)~~ | **closed**: written on EA's package (`build_hues_uop_entries_on_base`, `uocf-cli hues mul-to-uop --base`), every unedited hue keeps its bitmap, atlas row, swatch and name line; the 2024 EC and EC fp packages come back whole from their Classic `hues.mul`. Without a base, 365 EC hues stay unreproducible: `hues.mul` holds only their 5-bit reduction | done |
 | 10 | ~~Strict CSV reader for the other GameData tables~~ | **closed**: `enhanced/game_data.rs` reads every EC and KR table as the client's CSV reader does and writes it back byte for byte; replacements keep the table's shape; typed readers for `legacycontainers`, `weaponability`, `mobart`, `buffdata` | done |
-| 11 | Classic gump encoder for `gumpartLegacyMUL.uop` | gumps can be replaced only as encoded payloads | 1 day |
+| 11 | ~~Classic gump encoder for `gumpartLegacyMUL.uop`~~ | **closed**: `classic/gump_write.rs` encodes as every shipped gump (UOP and `gumpart.mul`, the same rows) and gives each back byte for byte; an image replaces a gump through `UopEntryEditor::replace_image`. The 34 that do not decode (ids 29, 33, 34, 37, 47, 49, 98, 99, 114-119, 122-141) are 8 zero bytes, the slots every `gumpart.mul` client leaves empty | done |
 | 12 | TGA writer of the shipped conventions (RLE type 10, footer, padding) for Interface gumps and TileArtLegacy | images go in as whatever TGA the user provides | 1-2 days |
 | 13 | ~~Facet data map round-trip test~~ | **closed**: every EC and KR `data.map` re-encodes byte for byte and matches the client size table | done |
 | 14 | ~~KR `waypoint.uop` and `housing.bin` round-trip tests~~ | **closed**: both re-encode byte for byte on KR (housing also through KDL) | done |

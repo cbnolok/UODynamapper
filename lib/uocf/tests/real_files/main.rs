@@ -22,6 +22,7 @@ mod entry_editor_client_packages;
 mod facet_client_files;
 mod facet_variants;
 mod game_data_client_tables;
+mod gump_client_encoding;
 mod hues_mul_uop_client;
 mod kr_client_files;
 mod kr_facet_client_files;

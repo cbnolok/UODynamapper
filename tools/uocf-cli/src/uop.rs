@@ -29,6 +29,23 @@ pub enum UopCmd {
         #[arg(long)]
         allow_resize: bool,
     },
+    /// Write a copy of a package with an image entry replaced by an image converted to the entry's format: a
+    /// `gumpartLegacyMUL.uop` entry becomes a Classic gump encoded as the shipped ones (alpha 0 or 255 only; 5 bits
+    /// per channel; opaque black stored as 0x0001), then checked as replace-entry checks a file.
+    ReplaceImage {
+        /// Source package (only read).
+        uop: PathBuf,
+        /// Entry name (`build/gumpartlegacymul/00001234.tga`) or hash (`0x` and hex, or 16 hex digits).
+        entry: String,
+        /// The new image (PNG, BMP), converted to RGBA.
+        image: PathBuf,
+        /// Output package: an absolute path, not the source.
+        #[arg(long)]
+        output: PathBuf,
+        /// Accept an image of another size than the entry (gump and button layouts may assume the size).
+        #[arg(long)]
+        allow_resize: bool,
+    },
     /// Write a copy of a package with one entry replaced by a file of the same kind, checked by its content: the
     /// kind its extension or the current entry has, and, where uocf has a strict reader for the entry (DDS,
     /// images, Chaos scripts, the audio tables, the legacy terrain map and documents, hue bitmaps, tileart,
@@ -147,6 +164,28 @@ pub fn run(cmd: UopCmd) -> eyre::Result<()> {
                 replacement.mip_count,
                 if replacement.mip_count == 1 { "" } else { "s" },
                 replacement.style.map_or("as the original (not a shipped style)".to_owned(), |style| format!("{style:?}"))
+            );
+        }
+        UopCmd::ReplaceImage { uop, entry, image, output, allow_resize } => {
+            eyre::ensure!(output.is_absolute(), "--output must be an absolute path: {}", output.display());
+            let target = EntryTarget::parse(&entry)?;
+            let rgba = image::open(&image).wrap_err_with(|| format!("failed to read {}", image.display()))?.into_rgba8();
+            let size_change = if allow_resize { SizeChange::Allow } else { SizeChange::Refuse };
+            let mut editor = UopEntryEditor::load(&uop)?;
+            let (converted, edit) = editor.replace_image(&target, &rgba, size_change)?;
+            for note in converted.notes.iter().chain(&edit.warnings) {
+                log::warn!("{note}");
+            }
+            editor.save_as(&output)?;
+            println!(
+                "Wrote {}: entry {} is now a {} {}x{} ({} bytes), {:?} compression.",
+                output.display(),
+                target.label(),
+                converted.format.label(),
+                rgba.width(),
+                rgba.height(),
+                converted.bytes.len(),
+                edit.compression
             );
         }
         UopCmd::ReplaceEntry { edit } => edit.run(|editor, target, file, policy| editor.replace(target, file, policy))?,

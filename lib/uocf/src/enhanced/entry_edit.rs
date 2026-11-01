@@ -83,7 +83,8 @@ impl EntryTarget {
         }
     }
 
-    fn label(&self) -> String {
+    /// The name, or the hash in hex.
+    pub fn label(&self) -> String {
         match self {
             Self::Name(name) => name.clone(),
             Self::Hash(hash) => format!("{hash:016X}"),
