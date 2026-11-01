@@ -1,4 +1,5 @@
-//! Classic client font loaders for `fonts.mul` and optional `unifont*.mul`.
+//! Classic client font loaders and writers for `fonts.mul` ([`AsciiFontsFile`]) and optional `unifont*.mul`
+//! ([`UnicodeFontData`]); both write back byte for byte.
 //!
 //! `fonts.mul` stores a sequence of bitmap font faces. Each face begins with a
 //! one-byte header followed by 224 glyph records for printable characters
@@ -288,6 +289,241 @@ pub fn decode_ascii_fonts(bytes: &[u8]) -> eyre::Result<Vec<AsciiFont>> {
     Ok(fonts)
 }
 
+/// The `unifont*.mul` files the client may have: `unifont.mul`, then `unifont1.mul` to `unifont19.mul`.
+pub const UNICODE_FONT_FILES_MAX: usize = 20;
+
+/// The file name of Unicode font `index`: `unifont.mul` for 0, else `unifont{index}.mul`.
+pub fn unicode_font_file_name(index: usize) -> String {
+    if index == 0 { "unifont.mul".to_owned() } else { format!("unifont{index}.mul") }
+}
+
+fn ascii_glyph_bytes(glyph: &AsciiFontGlyph) -> usize {
+    ASCII_GLYPH_HEADER_BYTES + glyph.pixels.len() * std::mem::size_of::<u16>()
+}
+
+/// `fonts.mul` for writing: the faces and the bytes after the last whole face, kept (every shipped file ends in
+/// 143 such bytes: zeros, then a hexadecimal text between two `x`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AsciiFontsFile {
+    pub fonts: Vec<AsciiFont>,
+    pub tail: Vec<u8>,
+}
+
+impl AsciiFontsFile {
+    pub fn from_bytes(bytes: &[u8]) -> eyre::Result<Self> {
+        let fonts = decode_ascii_fonts(bytes)?;
+        let read: usize = fonts.iter().map(|font| 1 + font.glyphs.iter().map(ascii_glyph_bytes).sum::<usize>()).sum();
+        Ok(Self { fonts, tail: bytes[read..].to_vec() })
+    }
+
+    pub fn load(path: &Path) -> eyre::Result<Self> {
+        let bytes = std::fs::read(path).wrap_err_with(|| format!("read {}", path.display()))?;
+        Self::from_bytes(&bytes).wrap_err_with(|| format!("{}", path.display()))
+    }
+
+    /// The faces, then the tail. Every face needs its [`ASCII_GLYPH_COUNT`] glyphs, and every glyph
+    /// `width * height` pixels.
+    pub fn to_bytes(&self) -> eyre::Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        for (font_index, font) in self.fonts.iter().enumerate() {
+            if font.glyphs.len() != ASCII_GLYPH_COUNT {
+                eyre::bail!("font {font_index}: {} glyphs, a font has {ASCII_GLYPH_COUNT}", font.glyphs.len());
+            }
+            bytes.push(font.header);
+            for (glyph_index, glyph) in font.glyphs.iter().enumerate() {
+                if glyph.pixels.len() != glyph.pixel_count() {
+                    eyre::bail!(
+                        "font {font_index} glyph {glyph_index}: {} pixels for {}x{}",
+                        glyph.pixels.len(),
+                        glyph.width,
+                        glyph.height
+                    );
+                }
+                bytes.extend_from_slice(&[glyph.width, glyph.height, glyph.unknown]);
+                glyph.pixels.iter().for_each(|pixel| bytes.extend_from_slice(&pixel.to_le_bytes()));
+            }
+        }
+        bytes.extend_from_slice(&self.tail);
+        Ok(bytes)
+    }
+
+    /// Writes [`Self::to_bytes`] through a temporary file in the folder of `path`.
+    pub fn save(&self, path: &Path) -> eyre::Result<()> {
+        save_bytes(path, &self.to_bytes()?)
+    }
+}
+
+fn save_bytes(path: &Path, bytes: &[u8]) -> eyre::Result<()> {
+    crate::utils::output_file::write_through_temp(path, |temp| {
+        std::fs::write(temp, bytes).wrap_err_with(|| format!("write {}", temp.display()))
+    })
+}
+
+/// One code point of a [`UnicodeFontData`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UnicodeFontSlot {
+    /// Offset 0: no glyph.
+    Absent,
+    /// A glyph, and the bytes after its bitmap up to the next glyph: the glyphs of width 0 of `unifont3.mul` on
+    /// carry `height` bytes the client does not read.
+    Glyph { glyph: UnicodeFontGlyph, padding: Vec<u8> },
+    /// An offset to the end of the file, with no glyph there (U+FFE0 of `unifont3.mul` to `unifont12.mul`).
+    PastEnd,
+}
+
+/// A `unifont*.mul` file for writing: one slot per code point.
+///
+/// The shipped files lay the glyphs out right after the offset table, in code point order, each once, so
+/// [`Self::to_bytes`] writes them so; a glyph two code points share is written once per code point.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnicodeFontData {
+    slots: Vec<UnicodeFontSlot>,
+}
+
+impl Default for UnicodeFontData {
+    fn default() -> Self {
+        Self { slots: vec![UnicodeFontSlot::Absent; UNICODE_GLYPH_COUNT] }
+    }
+}
+
+fn unicode_bitmap_len(width: u8, height: u8) -> usize {
+    if width == 0 || height == 0 { 0 } else { (width as usize).div_ceil(8) * height as usize }
+}
+
+impl UnicodeFontData {
+    /// Reads every slot. An offset must be 0, address a glyph after the table, or the end of the file, and every
+    /// byte after the table must belong to a glyph.
+    pub fn from_bytes(bytes: &[u8]) -> eyre::Result<Self> {
+        if bytes.len() < UNICODE_LOOKUP_BYTES {
+            eyre::bail!("{} bytes, shorter than the {UNICODE_LOOKUP_BYTES}-byte offset table", bytes.len());
+        }
+        let offsets: Vec<i32> = (0..UNICODE_GLYPH_COUNT).map(|cp| read_i32_le(bytes, cp * std::mem::size_of::<i32>())).collect::<eyre::Result<_>>()?;
+        let mut starts: Vec<usize> = Vec::new();
+        for (cp, &offset) in offsets.iter().enumerate() {
+            match usize::try_from(offset) {
+                Ok(0) => {}
+                Ok(start) if start == bytes.len() => {}
+                Ok(start) if (UNICODE_LOOKUP_BYTES..bytes.len()).contains(&start) => starts.push(start),
+                _ => eyre::bail!("U+{cp:04X}: offset {offset} is not 0, a glyph after the offset table, or the file end ({})", bytes.len()),
+            }
+        }
+        starts.sort_unstable();
+        starts.dedup();
+        if let Some(&first) = starts.first().filter(|&&first| first != UNICODE_LOOKUP_BYTES) {
+            eyre::bail!("{} bytes after the offset table belong to no glyph (the first is at {first})", first - UNICODE_LOOKUP_BYTES);
+        }
+        let mut slots = Vec::with_capacity(UNICODE_GLYPH_COUNT);
+        for (cp, &offset) in offsets.iter().enumerate() {
+            let start = offset as usize;
+            if offset == 0 {
+                slots.push(UnicodeFontSlot::Absent);
+                continue;
+            }
+            if start == bytes.len() {
+                slots.push(UnicodeFontSlot::PastEnd);
+                continue;
+            }
+            let next = starts.partition_point(|&other| other <= start);
+            let end = starts.get(next).copied().unwrap_or(bytes.len());
+            if start + UNICODE_GLYPH_HEADER_BYTES > end {
+                eyre::bail!("U+{cp:04X}: the glyph at {start} has {} bytes, fewer than its header", end - start);
+            }
+            let (width, height) = (bytes[start + 2], bytes[start + 3]);
+            let bitmap_end = start + UNICODE_GLYPH_HEADER_BYTES + unicode_bitmap_len(width, height);
+            if bitmap_end > end {
+                eyre::bail!("U+{cp:04X}: the {width}x{height} bitmap at {start} runs into the next glyph or the file end at {end}");
+            }
+            let glyph = UnicodeFontGlyph {
+                offset_x: bytes[start] as i8,
+                offset_y: bytes[start + 1] as i8,
+                width,
+                height,
+                bitmap: bytes[start + UNICODE_GLYPH_HEADER_BYTES..bitmap_end].to_vec(),
+            };
+            slots.push(UnicodeFontSlot::Glyph { glyph, padding: bytes[bitmap_end..end].to_vec() });
+        }
+        Ok(Self { slots })
+    }
+
+    pub fn load(path: &Path) -> eyre::Result<Self> {
+        let bytes = std::fs::read(path).wrap_err_with(|| format!("read {}", path.display()))?;
+        Self::from_bytes(&bytes).wrap_err_with(|| format!("{}", path.display()))
+    }
+
+    /// The offset table, then the glyphs in code point order; [`UnicodeFontSlot::PastEnd`] offsets address the
+    /// file end.
+    pub fn to_bytes(&self) -> eyre::Result<Vec<u8>> {
+        let mut bytes = vec![0u8; UNICODE_LOOKUP_BYTES];
+        let mut past_end = Vec::new();
+        for (cp, slot) in self.slots.iter().enumerate() {
+            let offset = match slot {
+                UnicodeFontSlot::Absent => continue,
+                UnicodeFontSlot::PastEnd => {
+                    past_end.push(cp);
+                    continue;
+                }
+                UnicodeFontSlot::Glyph { glyph, padding } => {
+                    let offset = bytes.len();
+                    bytes.extend_from_slice(&[glyph.offset_x as u8, glyph.offset_y as u8, glyph.width, glyph.height]);
+                    bytes.extend_from_slice(&glyph.bitmap);
+                    bytes.extend_from_slice(padding);
+                    offset
+                }
+            };
+            write_unicode_offset(&mut bytes, cp, offset)?;
+        }
+        let end = bytes.len();
+        for cp in past_end {
+            write_unicode_offset(&mut bytes, cp, end)?;
+        }
+        Ok(bytes)
+    }
+
+    /// Writes [`Self::to_bytes`] through a temporary file in the folder of `path`.
+    pub fn save(&self, path: &Path) -> eyre::Result<()> {
+        save_bytes(path, &self.to_bytes()?)
+    }
+
+    pub fn slot(&self, codepoint: u16) -> &UnicodeFontSlot {
+        &self.slots[codepoint as usize]
+    }
+
+    pub fn glyph(&self, codepoint: u16) -> Option<&UnicodeFontGlyph> {
+        match self.slot(codepoint) {
+            UnicodeFontSlot::Glyph { glyph, .. } => Some(glyph),
+            _ => None,
+        }
+    }
+
+    /// Sets or clears the glyph of `codepoint` (without padding); the bitmap must hold `ceil(width / 8) * height`
+    /// bytes, none when the width or height is 0.
+    pub fn set_glyph(&mut self, codepoint: u16, glyph: Option<UnicodeFontGlyph>) -> eyre::Result<()> {
+        self.slots[codepoint as usize] = match glyph {
+            None => UnicodeFontSlot::Absent,
+            Some(glyph) => {
+                let expected = unicode_bitmap_len(glyph.width, glyph.height);
+                if glyph.bitmap.len() != expected {
+                    eyre::bail!(
+                        "U+{codepoint:04X}: a {}x{} glyph has {expected} bitmap bytes, not {}",
+                        glyph.width,
+                        glyph.height,
+                        glyph.bitmap.len()
+                    );
+                }
+                UnicodeFontSlot::Glyph { glyph, padding: Vec::new() }
+            }
+        };
+        Ok(())
+    }
+}
+
+fn write_unicode_offset(bytes: &mut [u8], codepoint: usize, offset: usize) -> eyre::Result<()> {
+    let offset = i32::try_from(offset).map_err(|_| eyre!("U+{codepoint:04X}: offset {offset} does not fit 32 bits"))?;
+    let at = codepoint * std::mem::size_of::<i32>();
+    bytes[at..at + std::mem::size_of::<i32>()].copy_from_slice(&offset.to_le_bytes());
+    Ok(())
+}
+
 impl UnicodeFontFile {
     pub fn load(path: impl AsRef<Path>) -> eyre::Result<Self> {
         let path = path.as_ref();
@@ -378,13 +614,9 @@ impl ClassicFonts {
             Vec::new()
         };
 
-        let mut unicode_fonts = Vec::with_capacity(20);
-        for index in 0..20 {
-            let file_name = if index == 0 {
-                "unifont.mul".to_string()
-            } else {
-                format!("unifont{index}.mul")
-            };
+        let mut unicode_fonts = Vec::with_capacity(UNICODE_FONT_FILES_MAX);
+        for index in 0..UNICODE_FONT_FILES_MAX {
+            let file_name = unicode_font_file_name(index);
             let title_file_name = if index == 0 {
                 "Unifont.mul".to_string()
             } else {

@@ -8,12 +8,19 @@ use std::path::{Path, PathBuf};
 
 use uocf::classic::dif_files::{MapDifFile, StaticDifFile};
 use uocf::classic::facet_sources::{MapDifFiles, StaticDifFiles};
+use uocf::classic::fonts::{
+    ASCII_GLYPH_COUNT, AsciiFontsFile, UNICODE_FONT_FILES_MAX, UnicodeFontData, UnicodeFontGlyph, UnicodeFontSlot, unicode_font_file_name,
+};
 use uocf::classic::statics_write::StaticRecord;
 use uocf::utils::path::find_file_ignoring_case;
 
 const CLIENT_ROOTS_ENV: &str = "UO_CLASSIC_CLIENT_ROOTS";
 /// The facets whose difs a client may ship.
 const DIF_FACETS: u32 = 5;
+/// `fonts.mul`.
+const ASCII_FONTS_FILE: &str = "fonts.mul";
+/// The code point the Unicode edit replaces.
+const EDITED_CODEPOINT: u16 = 'A' as u16;
 
 fn client_roots() -> Vec<PathBuf> {
     let roots = std::env::var_os(CLIENT_ROOTS_ENV).unwrap_or_else(|| panic!("set {CLIENT_ROOTS_ENV}"));
@@ -72,4 +79,48 @@ fn classic_map_and_static_difs_write_back_byte_for_byte() {
         }
     }
     assert!(checked > 0, "no client in {CLIENT_ROOTS_ENV} ships a dif");
+}
+
+#[test]
+#[ignore = "needs real Classic clients: set UO_CLASSIC_CLIENT_ROOTS and run with --ignored"]
+fn classic_fonts_write_back_byte_for_byte() {
+    let mut checked = 0;
+    for root in client_roots() {
+        let client = label(&root);
+        if let Some([bytes]) = read_all(&root, [ASCII_FONTS_FILE.to_owned()]) {
+            let mut file = AsciiFontsFile::from_bytes(&bytes).unwrap_or_else(|error| panic!("{client} {ASCII_FONTS_FILE}: {error:#}"));
+            assert_eq!(file.to_bytes().unwrap(), bytes, "{client} {ASCII_FONTS_FILE}");
+            assert!(file.fonts.iter().all(|font| font.glyphs.len() == ASCII_GLYPH_COUNT));
+            println!(
+                "{client}: {ASCII_FONTS_FILE} ({} faces, {} bytes after them) written back byte for byte",
+                file.fonts.len(),
+                file.tail.len()
+            );
+            let glyph = &mut file.fonts[0].glyphs[0];
+            glyph.pixels.extend(std::iter::repeat_n(0, glyph.height as usize));
+            glyph.width += 1;
+            let edited = file.to_bytes().unwrap();
+            assert_eq!(AsciiFontsFile::from_bytes(&edited).unwrap(), file, "{client} {ASCII_FONTS_FILE}: the widened glyph");
+            checked += 1;
+        }
+        for index in 0..UNICODE_FONT_FILES_MAX {
+            let name = unicode_font_file_name(index);
+            let Some([bytes]) = read_all(&root, [name.clone()]) else { continue };
+            let mut font = UnicodeFontData::from_bytes(&bytes).unwrap_or_else(|error| panic!("{client} {name}: {error:#}"));
+            assert_eq!(font.to_bytes().unwrap(), bytes, "{client} {name}");
+            let glyphs = (0..=u16::MAX).filter(|&cp| matches!(font.slot(cp), UnicodeFontSlot::Glyph { .. })).count();
+            println!("{client}: {name} ({glyphs} glyphs) written back byte for byte");
+
+            let before = font.clone();
+            let glyph = UnicodeFontGlyph { offset_x: 1, offset_y: 2, width: 9, height: 2, bitmap: vec![0xFF, 0x80, 0x00, 0x80] };
+            font.set_glyph(EDITED_CODEPOINT, Some(glyph.clone())).unwrap();
+            let back = UnicodeFontData::from_bytes(&font.to_bytes().unwrap()).unwrap();
+            assert_eq!(back.glyph(EDITED_CODEPOINT), Some(&glyph), "{client} {name}: the edited glyph");
+            for cp in (0..=u16::MAX).filter(|&cp| cp != EDITED_CODEPOINT) {
+                assert_eq!(back.slot(cp), before.slot(cp), "{client} {name}: U+{cp:04X}");
+            }
+            checked += 1;
+        }
+    }
+    assert!(checked > 0, "no client in {CLIENT_ROOTS_ENV} ships a font");
 }
