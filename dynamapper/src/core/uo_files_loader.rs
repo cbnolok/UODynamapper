@@ -705,3 +705,33 @@ fn load_multi_definitions(
     lg("No multi definition source selected: multi.mul/multi.idx or MultiCollection.uop not found in udd_path.");
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::path::{Path, PathBuf};
+
+    /// The loose terrain transcode the loader overlays on the EC land package.
+    const LOOSE_TRANSCODE_PATH: &str = "assets/cc_ec_convtables/TerrainTranscode.kdl";
+
+    #[test]
+    #[ignore = "requires current canonical packages in DYNAMAPPER_TEST_PACKAGES"]
+    fn classic_land_routes_follow_the_client_terrain_map() {
+        let root = PathBuf::from(std::env::var_os("DYNAMAPPER_TEST_PACKAGES")
+            .expect("set DYNAMAPPER_TEST_PACKAGES to the matching current package directory"));
+        let mut package = udd_assets::tex_land_ec::TexLandEcPackage::load(root.join("tex_land_ec.uddp")).unwrap();
+        let loose = Path::new(env!("CARGO_MANIFEST_DIR")).join(LOOSE_TRANSCODE_PATH);
+        package.set_transcode(udd_assets::eckr_terrain_kdl::EckrTerrainRouting::load(&loose).unwrap().to_map());
+        let client = package.source_terrain_map().expect("the package embeds legacyterrainmap.csv").routes.clone();
+        assert!(!client.is_empty());
+        // Same as the loader: the client's map, then the package's and the loose KDL's routes over it.
+        let differing: BTreeMap<u16, (u32, Option<u32>)> = client
+            .values()
+            .filter_map(|route| {
+                let effective = package.resolve_material_decision(u32::from(route.legacy_id)).material_id;
+                (effective != Some(route.material_id)).then_some((route.legacy_id, (route.material_id, effective)))
+            })
+            .collect();
+        assert!(differing.is_empty(), "classic land id -> (client material, effective material): {differing:?}");
+    }
+}
