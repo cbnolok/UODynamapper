@@ -42,7 +42,9 @@ This is the renderer side of the [web map export](../agent_notes/proposals/2026-
 - **Readiness.**
   - Every footprint chunk must have its mesh.
   - Land uploads must be idle, with the submitted metadata revision equal to the atlas revision.
-  - The art collection must show no atlas misses or pending pages.
+  - The art collection must show no pending pages, and no more requested pages than the atlas holds.
+    Statics whose art the texture package lacks stay missing, so they are drawn as nothing, as in
+    the interactive view. Their count must be settled, and the renderer logs a warning naming it.
   - No render pipeline may be waiting to compile, counted in the render world.
   - The player must be at the rendered position.
   - All of this must hold unchanged for 3 frames.
@@ -57,6 +59,8 @@ This is the renderer side of the [web map export](../agent_notes/proposals/2026-
     the `cc` set for `cc`, or the EC set plus the Classic fallbacks for `ec`. Each comes with its
     embedded `package_hash64`.
   - The process exits 0 after the last frame and 1 on any frame error.
+  - Messages go through `console_logger`. The `log` macros are dropped by this app's logger setup.
+    A readiness timeout names what it is still waiting for.
 
 ## Shader change: sub-pixel snap
 
@@ -77,6 +81,7 @@ levels. The GPU projection test gained a case that only passes with the snap.
 | Manual job (Britain, frame `a`, frame `b` 3584 px to the right, `a` again), Classic | `a` and `a_again` are bit-identical. Kept overlap: 82 of 2,097,152 px differ, on one diagonal of land-water texels |
 | Same job, `ec` (KR-like) | `a` and `a_again` are bit-identical. The kept overlap differs only on water: 10% of it, from the camera-focused EC reflections |
 | `webmap-export-cli plan --region 1400,1600,1500,1700` + `run --renderer` | 4 frames, each passing the tool's rectangle, projection and package checks. 85 tiles per frame, levels 0–9, viewer written. About 3 s render per frame |
+| Absent art | Under the June `map0`/`statics0`, a frame at x≈7070, y≈2300 has 3,870 of 5,952 statics with no art in the installed `tex_art_cc`. That frame is now exported, with a warning; before this change it waited until it timed out |
 | Tiles | The level-9 mosaic and a full-resolution crop at the four-frame corner show no seam, player or overlay |
 
 Evidence is in `/home/claudio/rust-target/uodynamapper-scratch/renderer/export/`:

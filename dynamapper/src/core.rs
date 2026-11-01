@@ -256,7 +256,11 @@ pub fn run_bevy_app() -> ExitCode {
     let export_job = match export_job::load_requested_job() {
         Ok(job) => job,
         Err(error) => {
-            log::error!("{} is not a usable export job: {error:?}", export_job::EXPORT_JOB_ENV);
+            console_logger::one(
+                LogSev::Error,
+                LogAbout::Startup,
+                &format!("{} is not a usable export job: {error:?}", export_job::EXPORT_JOB_ENV),
+            );
             return ExitCode::from(settings::STARTUP_CONFIG_ERROR_EXIT_CODE);
         }
     };
