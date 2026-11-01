@@ -24,6 +24,7 @@ mod classic_facet_difs;
 mod classic_mul_writers;
 mod classic_speech_and_skills;
 mod classic_text_tables;
+mod classic_credits_help_asset_map;
 mod classic_ui_files;
 mod client_exe_facet_dimensions;
 mod client_login_servers;

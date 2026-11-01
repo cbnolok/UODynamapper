@@ -52,3 +52,7 @@ pub mod key_names;
 pub mod legacy_tables;
 pub mod small_binaries;
 pub mod filter_lists;
+pub(crate) mod text_mode_lines;
+pub mod credits;
+pub mod help_index;
+pub mod asset_map;
