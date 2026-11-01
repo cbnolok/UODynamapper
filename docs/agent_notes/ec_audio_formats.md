@@ -253,8 +253,15 @@ entry or slot keeps its bytes.
   `legacysounds/` WAV stays allowed, with the note that the Enhanced Client does not play it.
 - Kingdom Reborn: a sound id is the server's id, followed through `audio_effects.csv` (`ID#` = id + 1) to its
   structure's file (a structure starting with a digit is a structure handle, `0x10000 | n` for the n-th sound
-  structure UOKR accepted; see `uokr_audio.md`); its tables are not edited (a new sound means editing both CSVs
-  by hand). Entries are also replaced or added by name.
+  structure UOKR accepted; see `uokr_audio.md`). A server id without an effects row, added with a table path
+  (`Sounds\folder\file.mp3`), gets a sound structure at the end of `audio_sounds.csv`, named as the shipped ones
+  (`folder\file`) and with the parameters of 1,488 of the 1,561 shipped structures (`1.0-1.1` rate, mono, the
+  rest `*`), and the row `,<id + 1>,folder\file` at the end of `audio_effects.csv`; both tables keep every shipped
+  byte and get one line, ended like their first (CRLF), and are read again strictly, so the client's limits hold
+  (names and file names up to 0x50 characters, 4000 names, 30 structures per file, the 14 fields, 0x7fe-character
+  lines). Refused: a structure name taken, `s_default`, or starting with a digit (the effects table would read it as
+  a handle). Real-file test: `audio_client_files::kingdom_reborn_audio_add_plays_a_new_server_id` (server id 2072
+  plays the new MP3; every shipped server id plays what it played). Entries are also replaced or added by name.
 
 ### Classic sounds (`ClassicSoundEditor`, `uocf-cli sound import`, inspector "Replace slot...")
 

@@ -16,7 +16,9 @@ use uocf::audio::{AudioContent, AudioFormat};
 use uocf::classic::audio_def::{DefTranslationTable, MUSIC_DEF_FILE_NAME, SOUND_DEF_FILE_NAME};
 use uocf::classic::music::MusicConfig;
 use uocf::classic::sound::SoundMap;
-use uocf::enhanced::audio::{AudioKind, AudioPackage, AudioTables, AUDIO_UOP_FILE_NAME};
+use uocf::enhanced::audio::{AudioKind, AudioPackage, AudioTables, AUDIO_UOP_FILE_NAME, SOUND_TABLE_ENTRY};
+use uocf::enhanced::audio_edit::{AudioImportOptions, AudioPackageEditor, NewAudio};
+use uocf::enhanced::kr_audio::{KR_EFFECTS_TABLE_ENTRY, KR_NEW_SOUND_PARAMETERS};
 use uocf::utils::path::find_file_ignoring_case;
 
 const EC_CLIENT_DIR_ENV: &str = "UO_EC_CLIENT_DIR";
@@ -32,6 +34,11 @@ const REFERENCE_EC_WAV: usize = 1666;
 const REFERENCE_EC_TEXT: usize = 5;
 const REFERENCE_CC_SLOTS: usize = 1655;
 const REFERENCE_KR_ENTRIES: usize = 1553;
+/// The table path of the sound added to Kingdom Reborn's `Audio.uop`, and its structure name.
+const KR_NEW_SOUND_PATH: &str = "Sounds\\uocf\\added.mp3";
+const KR_NEW_SOUND_STRUCTURE: &str = "uocf\\added";
+/// The server id whose MP3 the added sound holds.
+const KR_MP3_SOURCE_SERVER_ID: u32 = 0;
 /// The sound rows of the reference `audio_sounds.csv` whose path names no entry (typos, `pirates_` names).
 const REFERENCE_EC_SILENT_SOUNDS: [std::ops::RangeInclusive<u32>; 7] =
     [19..=19, 856..=856, 1469..=1469, 1471..=1471, 1628..=1633, 1636..=1640, 1658..=1660];
@@ -200,4 +207,47 @@ fn kingdom_reborn_audio_uop_entries_probe() {
     if hashes.len() == REFERENCE_KR_ENTRIES {
         assert_eq!(formats.get(&AudioFormat::Unknown), None);
     }
+}
+
+#[test]
+#[ignore = "needs a real Kingdom Reborn client: set UO_KR_CLIENT_DIR"]
+fn kingdom_reborn_audio_add_plays_a_new_server_id() {
+    let path = common::kr_client_file(AUDIO_UOP_FILE_NAME);
+    let out = common::temp_dir("audio_client_files_kr_add");
+    let shipped = AudioPackage::load_file(&path).unwrap();
+    let AudioTables::KingdomReborn(kr) = shipped.tables() else { panic!("not Kingdom Reborn's tables") };
+    let effects = kr.effects.as_ref().unwrap();
+    let server_id = effects.rows().filter_map(|row| row.server_id()).max().unwrap() + 1;
+    let mp3 = shipped.entry_for(AudioKind::Sound, KR_MP3_SOURCE_SERVER_ID).unwrap().unwrap().payload;
+
+    let mut editor = AudioPackageEditor::load(&path).unwrap();
+    let new = NewAudio::Id { kind: AudioKind::Sound, id: server_id, path: Some(KR_NEW_SOUND_PATH.to_owned()), loops: None };
+    let added = editor.add(&new, &mp3, AudioImportOptions::default()).unwrap();
+    assert_eq!(added.tables_with_new_rows, vec![SOUND_TABLE_ENTRY, KR_EFFECTS_TABLE_ENTRY]);
+    let output = out.join(AUDIO_UOP_FILE_NAME);
+    editor.save_as(&output).unwrap();
+
+    let edited = AudioPackage::load_file(&output).unwrap();
+    let AudioTables::KingdomReborn(after) = edited.tables() else { panic!("not Kingdom Reborn's tables") };
+    // Each table is the shipped one, byte for byte, and one line.
+    let new_lines = [
+        (SOUND_TABLE_ENTRY, format!(",,{KR_NEW_SOUND_STRUCTURE},{KR_NEW_SOUND_PATH},{KR_NEW_SOUND_PARAMETERS}\r\n")),
+        (KR_EFFECTS_TABLE_ENTRY, format!(",{},{KR_NEW_SOUND_STRUCTURE}\r\n", server_id + 1)),
+    ];
+    for (entry, line) in new_lines {
+        let before = shipped.entry_by_name(entry).unwrap().unwrap().payload;
+        let now = edited.entry_by_name(entry).unwrap().unwrap().payload;
+        assert_eq!(now[..], [&before[..], line.as_bytes()].concat()[..], "{entry}");
+    }
+    assert_eq!(edited.entry_for(AudioKind::Sound, server_id).unwrap().unwrap().payload, mp3, "the new server id plays the MP3");
+    assert_eq!(after.sounds.sounds().count(), kr.sounds.sounds().count() + 1);
+    assert_eq!(edited.hashes().count(), shipped.hashes().count() + 1);
+    for row in effects.rows() {
+        let Some(id) = row.server_id() else { continue };
+        let name = |audio: &AudioPackage| audio.entry_name_for(AudioKind::Sound, id);
+        assert_eq!(name(&edited), name(&shipped), "server id {id} plays what it played");
+    }
+    assert_eq!(edited.table_warnings(), shipped.table_warnings());
+    println!("server id {server_id} (ID# {}) plays {}", server_id + 1, added.name);
+    let _ = std::fs::remove_dir_all(&out);
 }

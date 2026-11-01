@@ -43,7 +43,7 @@ TMPDIR=/home/claudio/test/uop/<date> UO_EC_CLIENT_DIR="$C/_Ultima Online Enhance
 | Audio | MP3 (1,764 / 1,544) | typed (probe, decode to PCM) | editor (replace/add by id or name, tables) | no MP3 encoder; the stored file is kept as given; package RT EC+KR (`audio_writers`) | Sounds (play, export, replace, add) | `audio/`, `enhanced/audio*.rs` 16bddb09, 78aaca7d, 28acc831 |
 | | WAV (1,666 / 0) | typed | editor (any PCM converted with `--convert`) | writer (PCM 16 WAV); package RT | Sounds | same |
 | | sound/music CSV (2 / 0) | typed (EC grammar) | editor (rows added with entries) | writer, RT EC (`audio_writers`, the tables rebuild exactly) | Sounds | `enhanced/audio.rs` |
-| | KR `audio_sounds.csv`, `audio_effects.csv` (0 / 2) | typed (UOKR.exe's grammar), lookup by server id | replace (parse-checked); rows not edited | writer, RT KR (`audio_client_files`, byte for byte) | UOP explorer (text editor) | `enhanced/kr_audio.rs` |
+| | KR `audio_sounds.csv`, `audio_effects.csv` (0 / 2) | typed (UOKR.exe's grammar), lookup by server id | replace (parse-checked); `audio add` adds a structure and its effects row for a new server id | writer, RT KR (`audio_client_files`, byte for byte) | UOP explorer (text editor) | `enhanced/kr_audio.rs` |
 | | other KR CSV and text (3 / 7) | raw | replace | no | UOP explorer (text editor) | |
 | EffectDefinitionCollection | collections (269 / 258) | typed, both dialects, KDL | editor | writer, RT EC (`effects_client_files::effect_definition_collection_round_trip`) and KR (`kr_client_files::kr_effect_collection_entries_reencode_identically`), package RT | Effects (edit, save) | `effect_definition*` a93fb9cd, 0042dbbd |
 | EffectTexture | Chaos scripts `.ems` + unnamed (61 / 59) | typed | editor | writer, RT EC (`effects_client_files::chaos_scripts_round_trip`) | Effects (export, import) | `chaos_script/` 0042dbbd |
@@ -172,7 +172,7 @@ Measured on the 78 EC and 63 KR text entries of `GameData.uop` (the reader: `enh
 
 | # | Gap | Why it matters | Effort |
 |---|---|---|---|
-| 1 | ~~KR `audio_sounds.csv` strict parser, byte-identical writer, lookup by server id~~ done (`enhanced/kr_audio.rs`); left: adding KR rows | KR sounds cannot be added with a table row | 0.25 day |
+| 1 | ~~KR `audio_sounds.csv` strict parser, byte-identical writer, lookup by server id, adding KR rows~~ | **closed**: `enhanced/kr_audio.rs`; `audio add --sound <id> --table-path` adds the structure and its effects row (`KrAudioTables::with_sound`), checked against the client's limits | done |
 | 2 | ~~Text view and editor for CSV, Lua, plain and UTF-16 text in the inspector's UOP explorer~~ | **closed**: `enhanced/entry_text.rs` keeps the encoding, BOM and line endings (every shipped text entry encodes back byte for byte: `entry_editor_client_packages::every_text_entry_encodes_back_to_its_bytes`); saved through `UopEntryEditor` to a copy | done |
 | 3 | ~~Lua syntax check for replaced Interface Lua~~ | **closed**: `enhanced/syntax_check.rs` (`full_moon` 3.0.0, the client's dialect); all 130 EC and 239 KR Interface scripts pass, by name and by hash | done |
 | 4 | ~~XML well-formedness check for Interface and MainMisc XML~~ | **closed**: `roxmltree` 0.21.2 after a TinyXML pass (5 loosenings, above); all 128 EC and 249 KR documents pass (and the 2,723 LegacyTerrain documents) | done |

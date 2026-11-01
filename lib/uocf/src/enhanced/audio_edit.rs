@@ -6,9 +6,10 @@
 //!   `audio_effects.csv` to its sound structure ([`crate::enhanced::kr_audio`]).
 //! - The Enhanced Client plays a sound only through a table row, so a playable sound is an MP3 entry and a row: a
 //!   new id gets its row in `audio_sounds.csv` or `audio_music.csv` (written back with [`write_table`]), and an MP3
-//!   added by name must be one a row already names (a shipped row naming no entry). Kingdom Reborn's tables are
-//!   not edited. A `legacysounds/` WAV can still be replaced or added, with a note that the Enhanced Client never
-//!   plays it.
+//!   added by name must be one a row already names (a shipped row naming no entry). For Kingdom Reborn a new server
+//!   id gets a sound structure in `audio_sounds.csv` and its `audio_effects.csv` row
+//!   ([`crate::enhanced::kr_audio::KrAudioTables::with_sound`]). A `legacysounds/` WAV can still be replaced or
+//!   added, with a note that the Enhanced Client never plays it.
 //! - Every file is checked against what the client's decoder (Miles 7.2c) plays ([`enhanced_format_report`])
 //!   under a [`FormatPolicy`]. With [`AudioImportOptions::convert`] a WAV entry takes any file [`to_pcm16_wav`]
 //!   converts (WAV of another sample format, MP3); an MP3 entry takes MP3 files only: there is no encoder.
@@ -25,10 +26,11 @@ use crate::audio::mp3::MpegLayer;
 use crate::audio::validate::{enhanced_format_report, expected_format, kind_mismatch, FormatPolicy};
 use crate::audio::{probe_audio, AudioContent, AudioFormat};
 use crate::enhanced::audio::{
-    check_table_path, legacy_sound_entry_name, read_tables, write_table, AudioKind, AudioTableRow, AudioTables,
+    check_table_path, legacy_sound_entry_name, read_tables, table_path_entry_name, write_table, AudioKind, AudioTableRow, AudioTables,
     AUDIO_ENTRY_ROOT, LEGACY_SOUNDS_ROOT, MAX_SERVER_SOUND_ID, MUSIC_TABLE_ENTRY, MUSIC_TABLE_HEADER, SOUND_TABLE_ENTRY,
     SOUND_TABLE_HEADER,
 };
+use crate::enhanced::kr_audio::{KrAudioTables, KR_EFFECTS_TABLE_ENTRY};
 use crate::enhanced::uop_entries::save_package_as;
 use crate::uop_container::file::{CompressionFlag, UopFile};
 use crate::uop_container::hash::hash_file_name_single;
@@ -84,8 +86,15 @@ pub struct AudioPut {
     pub converted: bool,
     /// The format problems [`FormatPolicy::AllowUnverified`] let through.
     pub warnings: Vec<String>,
-    /// The table that got a row for the id.
-    pub table_row_added: Option<&'static str>,
+    /// The tables that got a row for the id (Kingdom Reborn's: both).
+    pub tables_with_new_rows: Vec<&'static str>,
+}
+
+/// The table rows a new id gets.
+enum NewRows {
+    Enhanced(AudioKind, AudioTableRow),
+    /// Kingdom Reborn's tables with the structure and its effects row.
+    KingdomReborn(Box<KrAudioTables>),
 }
 
 /// A table entry written for a new row, and the entry it replaced (`None` when it was added).
@@ -253,7 +262,7 @@ impl AudioPackageEditor {
             FileReplacement::Replaced => AudioWrite::Replaced,
             FileReplacement::Unchanged => AudioWrite::Unchanged,
         };
-        Ok(AudioPut { name, hash, write, compression, converted, warnings, table_row_added: None })
+        Ok(AudioPut { name, hash, write, compression, converted, warnings, tables_with_new_rows: Vec::new() })
     }
 
     /// Adds a new entry holding `file`, and the table row its id needs: both or, when either fails, neither.
@@ -279,38 +288,30 @@ impl AudioPackageEditor {
         }
         let (payload, content, converted, warnings) = self.prepare(&name, file, options)?;
         let compression = family_compression(&content);
-        // The table is written first, and put back when the entry cannot be added.
-        let table = match &new_row {
-            Some((kind, row)) => Some(self.write_table_with_row(*kind, row)?),
-            None => None,
+        // The tables are written first, and put back when the entry cannot be added.
+        let tables = match &new_row {
+            Some(rows) => self.write_tables_with_rows(rows)?,
+            None => Vec::new(),
         };
         if let Err(error) = self.package.add_entry(hash, &payload, NewEntryCompression::Flag(compression)) {
-            if let Some(table) = table {
-                self.restore_table(table);
-            }
+            self.restore_tables(tables);
             return Err(error).wrap_err_with(|| format!("Failed to add {name}"));
         }
-        let table_row_added = table.map(|table| table.entry);
-        if let Some((kind, row)) = new_row {
-            self.table_rows_mut(kind).insert(row.id, row);
+        let tables_with_new_rows = tables.iter().map(|table| table.entry).collect();
+        match new_row {
+            Some(NewRows::Enhanced(kind, row)) => {
+                self.table_rows_mut(kind).insert(row.id, row);
+            }
+            Some(NewRows::KingdomReborn(kr)) => self.tables = AudioTables::KingdomReborn(kr),
+            None => {}
         }
-        Ok(AudioPut { name, hash, write: AudioWrite::Added, compression, converted, warnings, table_row_added })
+        Ok(AudioPut { name, hash, write: AudioWrite::Added, compression, converted, warnings, tables_with_new_rows })
     }
 
-    /// The entry name of a new id entry, and the row to add when the id has none.
-    fn new_entry_name(
-        &self,
-        kind: AudioKind,
-        id: u32,
-        path: Option<&str>,
-        loops: Option<bool>,
-    ) -> eyre::Result<(String, Option<(AudioKind, AudioTableRow)>)> {
-        if let AudioTables::KingdomReborn(_) = &self.tables {
-            if path.is_some() || loops.is_some() {
-                eyre::bail!("{}: Kingdom Reborn's tables are not edited here: give no path", self.source.display());
-            }
-            let name = self.kingdom_reborn_name(kind, id)?.expect("Kingdom Reborn's tables");
-            return Ok((name, None));
+    /// The entry name of a new id entry, and the rows to add when the id has none.
+    fn new_entry_name(&self, kind: AudioKind, id: u32, path: Option<&str>, loops: Option<bool>) -> eyre::Result<(String, Option<NewRows>)> {
+        if let AudioTables::KingdomReborn(kr) = &self.tables {
+            return self.new_kingdom_reborn_entry_name(kr, kind, id, path, loops);
         }
         if !matches!(self.tables, AudioTables::Enhanced { .. }) {
             return Err(self.missing_row_error(kind, id));
@@ -334,6 +335,7 @@ impl AudioPackageEditor {
         }
         check_table_path(path, music)?;
         let row = AudioTableRow { id, path: path.to_owned(), loops: music.then_some(loops.unwrap_or(false)), line: 0 };
+        let rows = NewRows::Enhanced(kind, row.clone());
         let name = row_entry_name(kind, &row)?;
         if kind == AudioKind::LegacySound {
             let mp3 = row_entry_name(AudioKind::Sound, &row)?;
@@ -346,7 +348,41 @@ impl AudioPackageEditor {
                 );
             }
         }
-        Ok((name, Some((kind, row))))
+        Ok((name, Some(rows)))
+    }
+
+    /// [`Self::new_entry_name`] for Kingdom Reborn's tables: a server id with an `audio_effects.csv` row plays its
+    /// structure's file (a path given must name it); one without gets a structure and its row, for `path`.
+    fn new_kingdom_reborn_entry_name(
+        &self,
+        kr: &KrAudioTables,
+        kind: AudioKind,
+        id: u32,
+        path: Option<&str>,
+        loops: Option<bool>,
+    ) -> eyre::Result<(String, Option<NewRows>)> {
+        if loops.is_some() {
+            eyre::bail!("{}: the loop flag is for the Enhanced Client's music rows only", self.source.display());
+        }
+        if kind != AudioKind::Sound || kr.effects.as_ref().and_then(|effects| effects.by_server_id(id)).is_some() {
+            let name = self.kingdom_reborn_name(kind, id)?.expect("Kingdom Reborn's tables");
+            if let Some(path) = path.filter(|path| table_path_entry_name(path) != name) {
+                eyre::bail!("{}: server id {id} plays `{name}`: give no path, or one naming that file, not `{path}`", self.source.display());
+            }
+            return Ok((name, None));
+        }
+        let path = path.ok_or_else(|| {
+            eyre!(
+                "{}: {KR_EFFECTS_TABLE_ENTRY} has no row for server id {id} (ID# {id} + 1): give the path of a new sound \
+                 structure",
+                self.source.display()
+            )
+        })?;
+        if id > MAX_SERVER_SOUND_ID {
+            eyre::bail!("sound id {id}: a server sends sound ids up to {MAX_SERVER_SOUND_ID}");
+        }
+        let tables = kr.with_sound(&self.source.display().to_string(), id, path)?;
+        Ok((table_path_entry_name(path), Some(NewRows::KingdomReborn(Box::new(tables)))))
     }
 
     fn table_rows_mut(&mut self, kind: AudioKind) -> &mut BTreeMap<u32, AudioTableRow> {
@@ -354,16 +390,39 @@ impl AudioPackageEditor {
         if kind == AudioKind::Music { music } else { sounds }
     }
 
-    /// Stores the text of `row`'s table with `row` added (the rows themselves are left as they are); returns what
-    /// [`Self::restore_table`] needs to undo it.
-    fn write_table_with_row(&mut self, kind: AudioKind, row: &AudioTableRow) -> eyre::Result<TableWrite> {
-        let (entry, header, with_loop) = match kind {
-            AudioKind::Music => (MUSIC_TABLE_ENTRY, MUSIC_TABLE_HEADER, true),
-            AudioKind::Sound | AudioKind::LegacySound => (SOUND_TABLE_ENTRY, SOUND_TABLE_HEADER, false),
+    /// Stores the text of the tables with `rows` added (the tables held are left as they are); returns what
+    /// [`Self::restore_tables`] needs to undo it. A table that cannot be stored puts back those stored before it.
+    fn write_tables_with_rows(&mut self, rows: &NewRows) -> eyre::Result<Vec<TableWrite>> {
+        let texts = match rows {
+            NewRows::Enhanced(kind, row) => {
+                let (entry, header, with_loop) = match kind {
+                    AudioKind::Music => (MUSIC_TABLE_ENTRY, MUSIC_TABLE_HEADER, true),
+                    AudioKind::Sound | AudioKind::LegacySound => (SOUND_TABLE_ENTRY, SOUND_TABLE_HEADER, false),
+                };
+                let mut table = self.table_rows_mut(*kind).clone();
+                table.insert(row.id, row.clone());
+                vec![(entry, write_table(header, &table, with_loop))]
+            }
+            NewRows::KingdomReborn(kr) => {
+                let effects = kr.effects.as_ref().expect("KrAudioTables::with_sound adds the effects row");
+                vec![(SOUND_TABLE_ENTRY, kr.sounds.to_text()), (KR_EFFECTS_TABLE_ENTRY, effects.to_text())]
+            }
         };
-        let mut rows = self.table_rows_mut(kind).clone();
-        rows.insert(row.id, row.clone());
-        let text = write_table(header, &rows, with_loop);
+        let mut written = Vec::new();
+        for (entry, text) in texts {
+            match self.write_table_text(entry, &text) {
+                Ok(table) => written.push(table),
+                Err(error) => {
+                    self.restore_tables(written);
+                    return Err(error);
+                }
+            }
+        }
+        Ok(written)
+    }
+
+    /// Stores `text` as the table entry `entry`, replaced keeping its flag or added zlib-compressed.
+    fn write_table_text(&mut self, entry: &'static str, text: &str) -> eyre::Result<TableWrite> {
         let hash = hash_file_name_single(entry);
         let previous = self.package.get_file_by_hash(hash).cloned();
         match previous.as_ref().map(|file| file.compression()) {
@@ -378,12 +437,14 @@ impl AudioPackageEditor {
         Ok(TableWrite { entry, hash, previous })
     }
 
-    /// Puts a table entry back as it was before [`Self::write_table_with_row`].
-    fn restore_table(&mut self, table: TableWrite) {
-        match table.previous {
-            Some(file) => *self.package.get_file_by_hash_mut(table.hash).expect("the table was just written") = file,
-            None => {
-                self.package.remove_entry(table.hash);
+    /// Puts the table entries back as they were before [`Self::write_tables_with_rows`], the last written first.
+    fn restore_tables(&mut self, tables: Vec<TableWrite>) {
+        for table in tables.into_iter().rev() {
+            match table.previous {
+                Some(file) => *self.package.get_file_by_hash_mut(table.hash).expect("the table was just written") = file,
+                None => {
+                    self.package.remove_entry(table.hash);
+                }
             }
         }
     }
@@ -457,7 +518,7 @@ mod tests {
         let new = NewAudio::Id { kind: AudioKind::Sound, id: 5, path: Some("Sounds\\custom\\Bell.mp3".to_owned()), loops: None };
         let added = editor.add(&new, &mp3_file(), options).unwrap();
         assert_eq!(added.name, "data/audio/sounds/custom/bell.mp3");
-        assert_eq!((added.compression, added.table_row_added), (CompressionFlag::None, Some(SOUND_TABLE_ENTRY)));
+        assert_eq!((added.compression, added.tables_with_new_rows), (CompressionFlag::None, vec![SOUND_TABLE_ENTRY]));
         let legacy = NewAudio::Id { kind: AudioKind::LegacySound, id: 5, path: None, loops: None };
         let float_wav = wav::tests::wav_with_format(wav::WAVE_FORMAT_IEEE_FLOAT, 32, &0.5f32.to_le_bytes());
         assert!(editor.add(&legacy, &float_wav, options).is_err(), "float WAV needs --convert");
@@ -508,9 +569,9 @@ mod tests {
         let table_hash = hash_file_name_single(SOUND_TABLE_ENTRY);
         let stamp = |file: &UopFile| (file.data().map(|bytes| bytes.to_vec()), file.data_block_header().map(|bytes| bytes.to_vec()), file.data_block_hash());
         let before = stamp(editor.package.get_file_by_hash(table_hash).unwrap());
-        let table = editor.write_table_with_row(AudioKind::Sound, &row).unwrap();
+        let tables = editor.write_tables_with_rows(&NewRows::Enhanced(AudioKind::Sound, row)).unwrap();
         assert!(unpack(&editor.package, SOUND_TABLE_ENTRY).unwrap().ends_with(b"9,Sounds\\custom\\nine.mp3\r\n"));
-        editor.restore_table(table);
+        editor.restore_tables(tables);
         assert_eq!(stamp(editor.package.get_file_by_hash(table_hash).unwrap()), before);
         assert!(editor.row(AudioKind::Sound, 9).is_none());
         let unnamed = NewAudio::Name("data/audio/sounds/custom/orphan.mp3".to_owned());
@@ -556,7 +617,35 @@ mod tests {
         assert!(error.contains("names `l_none`, which is no sound structure"), "{error}");
         assert!(editor.target_name(&AudioTarget::Id(AudioKind::Sound, 2)).unwrap_err().to_string().contains("no row for server id 2"));
         let with_path = NewAudio::Id { kind: AudioKind::Sound, id: 0, path: Some("Sounds\\x.mp3".to_owned()), loops: None };
-        assert!(editor.add(&with_path, &mp3_file(), options).unwrap_err().to_string().contains("not edited here"));
+        let error = editor.add(&with_path, &mp3_file(), options).unwrap_err().to_string();
+        assert!(error.contains("server id 0 plays `data/audio/sounds/custom/bell.mp3`: give no path"), "{error}");
+
+        // A server id without an effects row gets a structure and its row, both or neither.
+        let no_path = NewAudio::Id { kind: AudioKind::Sound, id: 7, path: None, loops: None };
+        assert!(editor.add(&no_path, &mp3_file(), options).unwrap_err().to_string().contains("give the path of a new sound structure"));
+        let taken = NewAudio::Id { kind: AudioKind::Sound, id: 7, path: Some("Sounds\\Custom\\Bell.mp3".to_owned()), loops: None };
+        let error = format!("{:#}", editor.add(&taken, &mp3_file(), options).unwrap_err());
+        assert!(error.contains("the entry `data/audio/sounds/custom/bell.mp3` exists"), "{error}");
+        let wav = NewAudio::Id { kind: AudioKind::Sound, id: 7, path: Some("Sounds\\Custom\\Horn.mp3".to_owned()), loops: None };
+        assert!(editor.add(&wav, &wav::encode_pcm_wav(22_050, 1, &[0, 0]), options).is_err(), "a WAV for an MP3 entry");
+        assert!(editor.tables() == AudioPackageEditor::load(&path).unwrap().tables(), "nothing written on failure");
+        let unpacked = |editor: &AudioPackageEditor, name: &str| String::from_utf8(unpack(editor.package(), name).unwrap()).unwrap();
+        assert_eq!(unpacked(&editor, SOUND_TABLE_ENTRY), sounds);
+        let added = editor.add(&wav, &mp3_file(), options).unwrap();
+        assert_eq!(added.name, "data/audio/sounds/custom/horn.mp3");
+        assert_eq!(added.tables_with_new_rows, vec![SOUND_TABLE_ENTRY, crate::enhanced::kr_audio::KR_EFFECTS_TABLE_ENTRY]);
+        assert_eq!(unpacked(&editor, SOUND_TABLE_ENTRY), format!("{sounds},,Custom\\Horn,Sounds\\Custom\\Horn.mp3,1.0-1.1,*,*,*,*,*,*,1,*,*,*\r\n"));
+        assert_eq!(unpacked(&editor, crate::enhanced::kr_audio::KR_EFFECTS_TABLE_ENTRY), format!("{effects},8,Custom\\Horn\r\n"));
+        assert_eq!(editor.target_name(&AudioTarget::Id(AudioKind::Sound, 7)).unwrap(), added.name, "server id 7 is ID# 8");
+        let saved = dir.join("Edited.uop");
+        editor.save_as(&saved).unwrap();
+        let reloaded = AudioPackageEditor::load(&saved).unwrap();
+        assert_eq!(reloaded.target_name(&AudioTarget::Id(AudioKind::Sound, 7)).unwrap(), added.name);
+        let again = NewAudio::Id { kind: AudioKind::Sound, id: 7, path: Some("Sounds\\Custom\\Horn2.mp3".to_owned()), loops: None };
+        let error = editor.add(&again, &mp3_file(), options).unwrap_err().to_string();
+        assert!(error.contains("server id 7 plays `data/audio/sounds/custom/horn.mp3`"), "{error}");
+        let looping = NewAudio::Id { kind: AudioKind::Sound, id: 9, path: Some("Sounds\\a.mp3".to_owned()), loops: Some(true) };
+        assert!(editor.add(&looping, &mp3_file(), options).unwrap_err().to_string().contains("loop flag"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

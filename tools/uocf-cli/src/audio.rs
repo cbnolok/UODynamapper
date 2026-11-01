@@ -137,7 +137,9 @@ pub enum AudioCmd {
         name: Option<String>,
         /// The path of the new table row of an id without one: `Sounds\folder\file.mp3` for a sound (its MP3
         /// and its legacy WAV), `Music/file.mp3` for music. The Enhanced Client plays only the MP3, so a legacy
-        /// sound takes no new row: add the MP3 with --sound first, then the WAV, which takes that row.
+        /// sound takes no new row: add the MP3 with --sound first, then the WAV, which takes that row. For
+        /// Kingdom Reborn, a server id without an audio_effects.csv row gets a sound structure in audio_sounds.csv
+        /// (named as the shipped ones, `folder\file`, with their parameters) and its effects row (ID# = id + 1).
         #[arg(long)]
         table_path: Option<String>,
         /// A new music row loops.
@@ -193,7 +195,7 @@ impl EditArgs {
             result.hash,
             result.compression,
             if result.converted { ", converted to 16-bit PCM WAV" } else { "" },
-            result.table_row_added.map(|table| format!(", with a new row in {table}")).unwrap_or_default(),
+            if result.tables_with_new_rows.is_empty() { String::new() } else { format!(", with a new row in {}", result.tables_with_new_rows.join(" and ")) },
             self.output.display()
         );
         Ok(())

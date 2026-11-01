@@ -36,11 +36,16 @@
 //!
 //! [`KrSoundTable::to_text`] and [`KrEffectsTable::to_text`] write every field as read, quotes included, with each
 //! line's own line end: the shipped tables come back byte for byte.
+//!
+//! [`KrAudioTables::with_sound`] adds a playable sound: a structure row at the end of `audio_sounds.csv`, named and
+//! set as the shipped sound effects are ([`kr_structure_name`], [`KR_NEW_SOUND_PARAMETERS`]), and an
+//! `audio_effects.csv` row of `ID#` server id + 1 naming it. Each table gets one line, ended like its first one, and
+//! is read again with the rules above, so the client's limits (names, structures per file, line length) hold.
 
 use std::collections::HashMap;
 use std::str::FromStr;
 
-use crate::enhanced::audio::table_path_entry_name;
+use crate::enhanced::audio::{check_table_path, table_path_entry_name, SOUND_PATH_ROOT, TABLE_PATH_EXTENSION};
 
 crate::eyre_imports!();
 
@@ -68,6 +73,12 @@ pub const KR_SOUND_HANDLE_KIND: u32 = 0x1_0000;
 pub const KR_HANDLE_ID_MASK: u32 = 0xffff;
 /// The first id the client gives a sound structure.
 pub const KR_FIRST_SOUND_ID: u32 = 1;
+/// The fields after the name and file name of a structure added here: those of 1,488 of the 1,561 shipped
+/// structures (a rate drawn from 1.0-1.1, mono, the rest the defaults; the type field before the name is empty, a
+/// sample).
+pub const KR_NEW_SOUND_PARAMETERS: &str = "1.0-1.1,*,*,*,*,*,*,1,*,*,*";
+/// The line end of a line added to a table without lines (the shipped tables end their lines with CRLF).
+const DEFAULT_LINE_END: &str = "\r\n";
 const FIELD_SEPARATOR: char = ',';
 const QUOTE: char = '"';
 const DIRECTIVE_MARK: char = '!';
@@ -108,6 +119,38 @@ impl CsvLine {
     fn to_text(&self) -> String {
         let fields: Vec<&str> = self.fields.iter().map(|field| field.raw.as_str()).collect();
         format!("{}{}", fields.join(&FIELD_SEPARATOR.to_string()), self.line_end)
+    }
+}
+
+/// The text of `lines` with `row` added as a last line, ended like the first line; a last line without a line end
+/// gets one.
+fn text_with_line<'a>(lines: impl IntoIterator<Item = &'a CsvLine>, row: &str) -> String {
+    let mut text = String::new();
+    let mut line_end = None;
+    for line in lines {
+        line_end.get_or_insert_with(|| line.line_end.clone());
+        text.push_str(&line.to_text());
+    }
+    let line_end = line_end.filter(|end| !end.is_empty()).unwrap_or_else(|| DEFAULT_LINE_END.to_owned());
+    if !text.is_empty() && !text.ends_with(['\r', '\n']) {
+        text.push_str(&line_end);
+    }
+    text.push_str(row);
+    text.push_str(&line_end);
+    text
+}
+
+/// The structure name a sound added here gets, as the shipped ones have: the table path without `Sounds\` and
+/// the extension (`Sounds\animals\bear5.mp3` is `animals\bear5`).
+pub fn kr_structure_name(path: &str) -> String {
+    let without_root = match path.get(..SOUND_PATH_ROOT.len()) {
+        Some(root) if root.eq_ignore_ascii_case(SOUND_PATH_ROOT) => &path[SOUND_PATH_ROOT.len()..],
+        _ => path,
+    };
+    let extension = without_root.len().saturating_sub(TABLE_PATH_EXTENSION.len());
+    match without_root.get(extension..) {
+        Some(end) if end.eq_ignore_ascii_case(TABLE_PATH_EXTENSION) => without_root[..extension].to_owned(),
+        _ => without_root.to_owned(),
     }
 }
 
@@ -412,6 +455,26 @@ impl KrSoundTable {
         (handle & !KR_HANDLE_ID_MASK == KR_SOUND_HANDLE_KIND).then(|| self.sound_by_id(handle & KR_HANDLE_ID_MASK)).flatten()
     }
 
+    /// The table with a sound structure `name` playing `filename` (a table path) added at the end, with
+    /// [`KR_NEW_SOUND_PARAMETERS`], read again as [`Self::parse`] reads it. Refused when the name is taken, or when
+    /// the table would break one of the client's limits.
+    pub fn with_sound(&self, source: &str, name: &str, filename: &str) -> eyre::Result<Self> {
+        if let Some(row) = self.sound(name) {
+            eyre::bail!("{source}: the sound structure `{name}` is already defined on line {}", row.line);
+        }
+        for (what, text) in [("name", name), ("file name", filename)] {
+            if text.chars().count() > KR_MAX_NAME_CHARS {
+                eyre::bail!("{source}: the {what} `{text}` is longer than the {KR_MAX_NAME_CHARS} characters the client reads");
+            }
+        }
+        let row = format!("{FIELD_SEPARATOR}{FIELD_SEPARATOR}{name}{FIELD_SEPARATOR}{filename}{FIELD_SEPARATOR}{KR_NEW_SOUND_PARAMETERS}");
+        let table = Self::parse(source, &text_with_line(self.lines.iter().map(|(line, _)| line), &row))?;
+        match table.lines.last() {
+            Some((_, KrSoundLine::Sound(added))) if added.name == name && added.filename == filename && added.duplicate_of.is_none() => Ok(table),
+            _ => eyre::bail!("{source}: the added line does not read back as the sound structure `{name}`"),
+        }
+    }
+
     /// The lines the client skips, and the structures it skips as duplicates, one note each.
     pub fn client_notes(&self) -> Vec<String> {
         self.lines
@@ -520,6 +583,25 @@ impl KrEffectsTable {
         self.lines[*self.by_id.get(&id)?].1.as_ref()
     }
 
+    /// The table with a row of `ID#` `server_id` + [`KR_EFFECT_ID_OFFSET`] naming `structure` added at the end,
+    /// read again as [`Self::parse`] reads it. Refused when the id has a row, or when the name starts with a digit
+    /// (the client would read it as a structure handle).
+    pub fn with_row(&self, source: &str, server_id: u32, structure: &str) -> eyre::Result<Self> {
+        let id = server_id.checked_add(KR_EFFECT_ID_OFFSET).ok_or_else(|| eyre!("{source}: server id {server_id} has no ID#"))?;
+        if let Some(row) = self.by_server_id(server_id) {
+            eyre::bail!("{source}: server id {server_id} (ID# {id}) already has the row on line {}", row.line);
+        }
+        if structure.is_empty() || structure.starts_with(|c: char| c.is_ascii_digit()) {
+            eyre::bail!("{source}: `{structure}`: a structure name must not be empty or start with a digit (the client reads that as a structure handle)");
+        }
+        let row = format!("{FIELD_SEPARATOR}{id}{FIELD_SEPARATOR}{structure}");
+        let table = Self::parse(source, &text_with_line(self.lines.iter().map(|(line, _)| line), &row))?;
+        match table.lines.last() {
+            Some((_, Some(added))) if added.id == id && added.structure == structure => Ok(table),
+            _ => eyre::bail!("{source}: the added line does not read back as ID# {id} naming `{structure}`"),
+        }
+    }
+
     /// The rows of an id defined again, one note each.
     pub fn client_notes(&self) -> Vec<String> {
         self.rows()
@@ -561,6 +643,24 @@ impl KrAudioTables {
             Some(handle) => self.sounds.sound_by_handle(handle),
             None => self.sounds.sound(&effect.structure),
         }
+    }
+
+    /// The tables with a new sound for the server id `server_id` playing the table path `path` (`Sounds\...mp3`):
+    /// a structure named [`kr_structure_name`] in `audio_sounds.csv` ([`KrSoundTable::with_sound`]) and its
+    /// `audio_effects.csv` row ([`KrEffectsTable::with_row`]). `source` names the package in errors.
+    pub fn with_sound(&self, source: &str, server_id: u32, path: &str) -> eyre::Result<Self> {
+        use crate::enhanced::audio::SOUND_TABLE_ENTRY;
+        let Some(effects) = &self.effects else {
+            eyre::bail!("{source}: the package has no {KR_EFFECTS_TABLE_ENTRY}, through which the client plays a server id");
+        };
+        check_table_path(path, false)?;
+        let name = kr_structure_name(path);
+        if name == KR_DEFAULT_SOUND_NAME {
+            eyre::bail!("`{path}`: the structure would be named `{KR_DEFAULT_SOUND_NAME}`, the default-parameter row");
+        }
+        let effects = effects.with_row(&format!("{source}: {KR_EFFECTS_TABLE_ENTRY}"), server_id, &name)?;
+        let sounds = self.sounds.with_sound(&format!("{source}: {SOUND_TABLE_ENTRY}"), &name, path)?;
+        Ok(Self { sounds, effects: Some(effects) })
     }
 
     /// The structures no effects row reaches and the effects rows naming no sound structure, as counts, and the
@@ -669,5 +769,47 @@ mod tests {
         assert!(effects(",x,a").contains("e.csv:1:2: expected the ID#"), "{}", effects(",x,a"));
         assert!(effects(",1,").contains("e.csv:1:4: expected a structure name"), "{}", effects(",1,"));
         assert!(effects("w,1,a").contains("found `w`"));
+    }
+
+    #[test]
+    fn adds_a_sound_structure_and_its_effects_row_within_the_clients_limits() {
+        let tables = KrAudioTables {
+            sounds: KrSoundTable::parse("audio_sounds.csv", SOUNDS).unwrap(),
+            effects: Some(KrEffectsTable::parse("audio_effects.csv", EFFECTS).unwrap()),
+        };
+        assert_eq!(kr_structure_name("Sounds\\animals\\bear5.mp3"), "animals\\bear5");
+        assert_eq!(kr_structure_name("sounds\\Bell.MP3"), "Bell");
+        let added = tables.with_sound("Audio.uop", 9, "Sounds\\custom\\Horn.mp3").unwrap();
+        let sounds = added.sounds.to_text();
+        // SOUNDS ends with LF: the new line ends like the first one, CRLF; EFFECTS has no last line end.
+        assert_eq!(sounds, format!("{SOUNDS},,custom\\Horn,Sounds\\custom\\Horn.mp3,{KR_NEW_SOUND_PARAMETERS}\r\n"));
+        assert_eq!(added.effects.as_ref().unwrap().to_text(), format!("{EFFECTS}\r\n,10,custom\\Horn\r\n"));
+        let (effect, sound) = added.sound_for_server_id(9).unwrap();
+        assert_eq!((effect.id, sound.unwrap().entry_name()), (10, "data/audio/sounds/custom/horn.mp3".to_owned()));
+        let horn = added.sounds.sound("custom\\Horn").unwrap();
+        assert_eq!((horn.rate, horn.mono, horn.type_id), (KrRange::Span(1.0, 1.1), Some(1), None));
+        assert!(added.client_notes().len() == tables.client_notes().len(), "{:?}", added.client_notes());
+
+        let error = |server_id: u32, path: &str| format!("{:#}", tables.with_sound("Audio.uop", server_id, path).unwrap_err());
+        assert!(error(0, "Sounds\\x.mp3").contains("server id 0 (ID# 1) already has the row on line 2"), "{}", error(0, "Sounds\\x.mp3"));
+        assert!(error(9, "Music/x.mp3").contains("start with `Sounds\\`"), "{}", error(9, "Music/x.mp3"));
+        assert!(error(9, "Sounds\\1st.mp3").contains("must not be empty or start with a digit"));
+        assert!(error(9, "Sounds\\s_default.mp3").contains("default-parameter row"));
+        assert!(error(9, "Sounds\\aaaenvir\\d_frst01.mp3").contains("`aaaenvir\\d_frst01` is already defined on line 7"), "{}", error(9, "Sounds\\aaaenvir\\d_frst01.mp3"));
+        let long = format!("Sounds\\{}.mp3", "x".repeat(KR_MAX_NAME_CHARS));
+        assert!(error(9, &long).contains("longer than the 80 characters"), "{}", error(9, &long));
+        assert!(KrAudioTables { effects: None, ..tables.clone() }.with_sound("Audio.uop", 9, "Sounds\\a.mp3").unwrap_err().to_string().contains("no data/audio/audio_effects.csv"));
+
+        // One file serves at most KR_MAX_STRUCTURES_PER_FILE structures, and the client takes at most
+        // KR_MAX_SOUND_NAMES names.
+        let shared: String = (0..KR_MAX_STRUCTURES_PER_FILE).map(|n| format!(",,s{n},Sounds\\shared.mp3,1,*,*,*,*,*,*,*,*,*,*\r\n")).collect();
+        let full_file = KrSoundTable::parse("s.csv", &shared).unwrap();
+        let error = full_file.with_sound("s.csv", "one_more", "Sounds\\shared.mp3").unwrap_err().to_string();
+        assert!(error.contains("serves more than the 30 structures"), "{error}");
+        let many: String = (0..KR_MAX_SOUND_NAMES).map(|n| format!(",,s{n},Sounds\\f{n}.mp3,1,*,*,*,*,*,*,*,*,*,*\r\n")).collect();
+        let full = KrSoundTable::parse("s.csv", &many).unwrap();
+        let error = full.with_sound("s.csv", "one_more", "Sounds\\one_more.mp3").unwrap_err().to_string();
+        assert!(error.contains("more than the 4000 sound names"), "{error}");
+        assert_eq!(text_with_line([], "a"), "a\r\n", "an empty table");
     }
 }
