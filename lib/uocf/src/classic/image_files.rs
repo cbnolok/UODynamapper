@@ -25,7 +25,7 @@ use crate::classic::art_write::{uop_entry_name, ArtColors, ArtKind};
 use crate::classic::gump::uop_gump_candidates;
 use crate::classic::gump_write::GumpColors;
 use crate::enhanced::dds_writer::SizeChange;
-use crate::enhanced::entry_edit::{entry_kind, EntryTarget, UopEntryEditor};
+use crate::enhanced::entry_edit::{EntryTarget, UopEntryEditor};
 use crate::enhanced::entry_image::{encode_entry_image, entry_image_format, EntryImageFormat, CLASSIC_ART_PACKAGE, PLACEHOLDER_GUMP};
 use crate::uop_container::hash::hash_file_name_single;
 use crate::utils::output_file::{refuse_same_file, write_through_temp};
@@ -339,10 +339,7 @@ impl ClassicImageFiles {
                             ClassicImageKind::Art => uop_entry_name(id),
                             ClassicImageKind::Gump => uop_gump_candidates(id)[0].clone(),
                         };
-                        // The entry editor's add takes a `.tga` name for a TGA; these entries keep the extension
-                        // for Classic records (checked by decoding them back, `prepare`).
-                        let compression = editor.family_compression(entry_kind(&prepared.uop_record))?;
-                        editor.put_unchecked(hash_file_name_single(&name), &prepared.uop_record, compression)?;
+                        editor.add(&EntryTarget::Name(name), &prepared.uop_record, None, FormatPolicy::VerifiedOnly)?;
                     }
                 }
                 editor.save_as(path)?;

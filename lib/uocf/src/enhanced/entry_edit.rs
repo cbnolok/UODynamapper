@@ -6,7 +6,9 @@
 //!   ([`TEXT_EXTENSIONS`]), or the kind of the (non-empty) entry it replaces; a TGA with trailing bytes counts as a
 //!   TGA and a BMP with a wrong size field as a BMP. An unnamed entry of plain binary takes only plain binary (the
 //!   shipped 18-byte placeholders named `.tga` take a TGA or another placeholder); Windows-1252 text counts as
-//!   text ([`entry_kind`]). A mismatch is refused under
+//!   text ([`entry_kind`]). The `.tga` names of `artLegacyMUL.uop` and `gumpartLegacyMUL.uop` hold Classic art and
+//!   gump records, not TGAs ([`CLASSIC_RECORD_PACKAGES`]): such an entry takes plain binary, parse-checked as its
+//!   package's records, on an add as on a replace. A mismatch is refused under
 //!   every policy. An entry added without a name or a known extension has nothing to
 //!   check against ([`EntryCheck::Unchecked`]).
 //! - **Parse check.** Where a strict reader exists for the entry ([`PARSE_CHECKS`]), the file must parse. On a
@@ -32,6 +34,7 @@ use crate::audio::validate::{enhanced_format_report, kind_mismatch, FormatPolicy
 use crate::audio::{probe_audio, AudioContent};
 use crate::enhanced::client_dialect::ClientDialect;
 use crate::enhanced::entry_text::windows_1252_text;
+use crate::enhanced::entry_image::{CLASSIC_ART_PACKAGE, CLASSIC_GUMP_PACKAGE};
 use crate::enhanced::image_census::{classify_content, declared_format, name_extension, ContentFormat};
 use crate::enhanced::uop_entries::{put_entry, save_package_as};
 use crate::uop_container::file::CompressionFlag;
@@ -116,6 +119,10 @@ pub struct ParseCheck {
     /// after both parse (a GameData table keeps its columns: [`crate::enhanced::game_data::keeps_shape`]).
     pub keeps: Option<fn(&[u8], &[u8]) -> eyre::Result<()>>,
 }
+
+/// The packages ([`package_key`]) whose entries are named `.tga` but hold Classic records (art, gumps), which the
+/// kind check takes as plain binary.
+pub const CLASSIC_RECORD_PACKAGES: [&str; 2] = [CLASSIC_ART_PACKAGE, CLASSIC_GUMP_PACKAGE];
 
 /// The reader label of the Classic Client's `animationlegacyframe` entries.
 pub const CLASSIC_ANIMATION_FRAMES_READER: &str = "Classic animation frames (animationlegacyframe)";
@@ -708,7 +715,9 @@ impl UopEntryEditor {
         let kind = entry_kind(file);
         let current_kind = current.map(entry_kind);
         let name = target.name();
-        let mut expected: Vec<ContentFormat> = name.and_then(declared_format).map(kind_family).into_iter().collect();
+        let classic_records = CLASSIC_RECORD_PACKAGES.contains(&package_key(&self.source).as_str());
+        let declared = if classic_records { Some(ContentFormat::Binary) } else { name.and_then(declared_format) };
+        let mut expected: Vec<ContentFormat> = declared.map(kind_family).into_iter().collect();
         let text_extension = name.and_then(name_extension).is_some_and(|extension| TEXT_EXTENSIONS.contains(&extension.as_str()));
         if expected.is_empty() && text_extension {
             expected.push(ContentFormat::Text);
@@ -1138,6 +1147,39 @@ mod tests {
         }
         let added = editor.add(&EntryTarget::Name(AnimationFrameCc::animationframe_path(BODY, ACTION + 1)), &entry(WHITE), None, policy).unwrap();
         assert_eq!(added.check, EntryCheck::Parsed { reader: CLASSIC_ANIMATION_FRAMES_READER, dialect: None });
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn classic_art_and_gump_records_are_added_as_their_records_not_as_tgas() {
+        use crate::classic::art_write::{encode_art_from_rgba, uop_entry_name, STATIC_ART_ID_BASE};
+        use crate::classic::gump::uop_gump_candidates;
+        use crate::classic::gump_write::GumpColors;
+        const RED: [u8; 4] = [0xF8, 0, 0, 0xFF];
+        const SIDE: u32 = 3;
+        let rgba = RED.repeat((SIDE * SIDE) as usize);
+        let (art, _) = encode_art_from_rgba(STATIC_ART_ID_BASE, SIDE, SIDE, &rgba).unwrap();
+        let gump = GumpColors::from_rgba(SIDE, SIDE, &rgba).unwrap().0.encode_uop().unwrap();
+        let mut tga = Vec::new();
+        image::RgbaImage::from_raw(SIDE, SIDE, rgba.clone()).unwrap().write_to(&mut std::io::Cursor::new(&mut tga), image::ImageFormat::Tga).unwrap();
+        let dir = temp_dir("classic_records");
+        let policy = FormatPolicy::VerifiedOnly;
+        let cases = [
+            ("artLegacyMUL.uop", uop_entry_name(STATIC_ART_ID_BASE), uop_entry_name(STATIC_ART_ID_BASE + 1), art, "Classic art"),
+            ("gumpartLegacyMUL.uop", uop_gump_candidates(1)[0].clone(), uop_gump_candidates(2)[0].clone(), gump, "Classic gump"),
+        ];
+        for (file, existing, added, record, reader) in cases {
+            let path = package_with(&dir, file, &[(&existing, &record, CompressionFlag::None)]);
+            let mut editor = UopEntryEditor::load(&path).unwrap();
+            let target = EntryTarget::Name(added);
+            let error = format!("{:#}", editor.add(&target, &tga, None, policy).unwrap_err());
+            assert!(error.contains("the file is TGA"), "{file}: {error}");
+            // The header says 3 rows or a 3-wide static, the bytes end after it.
+            let error = format!("{:#}", editor.add(&target, &record[..record.len() / 2], None, policy).unwrap_err());
+            assert!(error.contains(&format!("parses as none of {reader}")), "{file}: {error}");
+            let put = editor.add(&target, &record, None, policy).unwrap();
+            assert_eq!(put.check, EntryCheck::Parsed { reader, dialect: None }, "{file}");
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 
