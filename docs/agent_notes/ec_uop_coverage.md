@@ -41,10 +41,11 @@ TMPDIR=/home/claudio/test/uop/<date> UO_EC_CLIENT_DIR="$C/_Ultima Online Enhance
 | Audio | MP3 (1,764 / 1,544) | typed (probe, decode to PCM) | editor (replace/add by id or name, tables) | no MP3 encoder; the stored file is kept as given; package RT EC+KR (`audio_writers`) | Sounds (play, export, replace, add) | `audio/`, `enhanced/audio*.rs` 16bddb09, 78aaca7d, 28acc831 |
 | | WAV (1,666 / 0) | typed | editor (any PCM converted with `--convert`) | writer (PCM 16 WAV); package RT | Sounds | same |
 | | sound/music CSV (2 / 0) | typed (EC grammar) | editor (rows added with entries) | writer, RT EC (`audio_writers`, the tables rebuild exactly) | Sounds | `enhanced/audio.rs` |
-| | KR CSV and text (3 / 9) | raw | replace | no | none (hex) | gap 1 |
+| | KR `audio_sounds.csv`, `audio_effects.csv` (0 / 2) | typed (UOKR.exe's grammar), lookup by server id | replace (parse-checked); rows not edited | writer, RT KR (`audio_client_files`, byte for byte) | none (hex) | `enhanced/kr_audio.rs` |
+| | other KR CSV and text (3 / 7) | raw | replace | no | none (hex) | |
 | EffectDefinitionCollection | collections (269 / 258) | typed, both dialects, KDL | editor | writer, RT EC (`effects_client_files::effect_definition_collection_round_trip`) and KR (`kr_client_files::kr_effect_collection_entries_reencode_identically`), package RT | Effects (edit, save) | `effect_definition*` a93fb9cd, 0042dbbd |
 | EffectTexture | Chaos scripts `.ems` + unnamed (61 / 59) | typed | editor | writer, RT EC (`effects_client_files::chaos_scripts_round_trip`) | Effects (export, import) | `chaos_script/` 0042dbbd |
-| | NIF (466 / 451) | typed (`gamebryo-nif`, inspector side) | editor (inspector NIF editor, import) | writer, RT EC (`gamebryo-nif` `real_nifs_round_trip_byte_exact`, 466 NIFs); KR untested | Effects NIF (edit, export .nif/glTF) | `lib/ec-effects/gamebryo-nif` ac3439ae; gaps 5, 6 |
+| | NIF (466 / 451) | typed (`gamebryo-nif`, inspector side) | editor (inspector NIF editor, import) | writer, RT EC (`gamebryo-nif` `real_nifs_round_trip_byte_exact`, 466 NIFs) and KR (`kr_nifs_round_trip_byte_exact`, 451 NIFs, 36,041 blocks) | Effects NIF (edit, export .nif/glTF) | `lib/ec-effects/gamebryo-nif` ac3439ae; gap 5 |
 | | TGA (238 / 237) | typed (image crate) | replace (also through the effects import) | no TGA writer of the shipped conventions | Effects, UOP explorer (image) | gap 12 |
 | | DDS (62 / 0) | typed | replace | writer (see Texture) | Effects, UOP explorer | `dds_writer.rs` |
 | | PSD (2 / 2) | raw | replace | no | none (hex) | gap 18 |
@@ -108,20 +109,21 @@ TGA images and the Classic gumps (pixels).
   readers for its kind.
 - **Audio**: MP3 and WAV entries with a known name also pass the `Audio.uop` format checks under the caller's
   policy.
-- **Kind only** (no parser in uocf): XML outside LegacyTerrain, Lua, CSV other than the audio tables and the
-  legacy terrain map (including the KR audio CSV), shaders, plain text, UTF-16 text, NIF, PSD, JPEG, OLE files,
+- **Kind only** (no parser in uocf): XML outside LegacyTerrain, Lua, CSV other than the audio tables (the KR
+  `audio_sounds.csv` and `audio_effects.csv` are parse-checked since the audio batch) and the legacy terrain map,
+  shaders, plain text, UTF-16 text, NIF, PSD, JPEG, OLE files,
   and plain binary (the `MainMisc` binary, the TGA placeholders, the 34 gumps that do not decode).
 
 ## Gaps, ranked by usefulness
 
 | # | Gap | Why it matters | Effort |
 |---|---|---|---|
-| 1 | KR `audio_sounds.csv` strict parser, byte-identical writer, lookup by server id | KR sounds cannot be added with a table row | 0.5 day (scheduled in the audio batch) |
+| 1 | ~~KR `audio_sounds.csv` strict parser, byte-identical writer, lookup by server id~~ done (`enhanced/kr_audio.rs`); left: adding KR rows | KR sounds cannot be added with a table row | 0.25 day |
 | 2 | Text view and editor for CSV, Lua, plain and UTF-16 text in the inspector's UOP explorer (today a hex dump of the first KB) | Interface Lua and GameData CSV are what EC modders edit most | 0.5 day |
 | 3 | Lua syntax check for replaced Interface Lua (128 EC) | a broken UI script fails only in the client | 0.5-1 day, needs a Lua parser crate (design decision: a new dependency) |
 | 4 | XML well-formedness check for Interface and MainMisc XML (EC 128, KR 249) | same as 3, for the UI layouts | 0.5 day, needs an XML crate (new dependency) |
 | 5 | NIF parse check in the entry editor | a replaced NIF is only kind-checked | 0.5 day: uocf depends on `gamebryo-nif`, or the check moves to the CLI and inspector layer |
-| 6 | KR NIF round trip (451) | `gamebryo-nif` was verified on the EC NIFs only | 0.25 day |
+| 6 | ~~KR NIF round trip (451)~~ | **closed**: all 451 KR NIFs read, write back byte for byte and have no bad links | done |
 | 7 | `LocalizedStrings` writer and editor; `string_dictionary` round trip on the shipped files | localized text cannot be edited; the dictionary writer is untested on real data | 1 day; 0.1 day |
 | 8 | `legacyterrainmap.csv` writer | land routing can only be replaced whole | 0.5 day |
 | 9 | Hues: shipped hue bitmaps reproduced byte for byte (wrong size field, hand-picked swatches) | edited `Hues.uop` differs from EA's in unedited hues | 1 day |

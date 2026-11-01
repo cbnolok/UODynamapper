@@ -6,6 +6,9 @@
 //! - `UO_EC_CLIENT_DIR`: an Enhanced Client directory; every NIF in `EffectTexture.uop` is tested,
 //!   and the file count and block type counts must match the survey of that package.
 //!
+//! - `UO_KR_CLIENT_DIR`: a Kingdom Reborn client directory, for `kr_nifs_round_trip_byte_exact` (every NIF of its
+//!   `EffectTexture.uop`).
+//!
 //! Run: `UO_EC_CLIENT_DIR=... cargo test -p gamebryo-nif --test real_files -- --ignored --nocapture`
 
 use std::collections::BTreeMap;
@@ -15,6 +18,12 @@ use gamebryo_nif::NifFile;
 
 const DIR_ENV: &str = "GAMEBRYO_NIF_DIR";
 const EC_CLIENT_DIR_ENV: &str = "UO_EC_CLIENT_DIR";
+/// A Kingdom Reborn client directory (`UOKR.exe`, 2008): every NIF of its `EffectTexture.uop` is tested.
+const KR_CLIENT_DIR_ENV: &str = "UO_KR_CLIENT_DIR";
+/// NIF payloads in the KR `EffectTexture.uop`.
+const KR_EXPECTED_NIF_FILES: usize = 451;
+/// Blocks in all of them (56 block types).
+const KR_EXPECTED_TOTAL_BLOCKS: usize = 36041;
 const EFFECT_TEXTURE_UOP: &str = "EffectTexture.uop";
 const NIF_MAGIC: &[u8] = b"Gamebryo File Format";
 
@@ -122,22 +131,13 @@ fn collect_from_uop(client_dir: &Path) -> Vec<(String, Vec<u8>)> {
     out
 }
 
-#[test]
-#[ignore = "needs real NIF files: set UO_EC_CLIENT_DIR (or GAMEBRYO_NIF_DIR) and run with --ignored"]
-fn real_nifs_round_trip_byte_exact() {
-    let (files, from_package) = if let Some(dir) = std::env::var_os(DIR_ENV) {
-        (collect_from_dir(Path::new(&dir)), false)
-    } else if let Some(dir) = std::env::var_os(EC_CLIENT_DIR_ENV) {
-        (collect_from_uop(Path::new(&dir)), true)
-    } else {
-        panic!("set {EC_CLIENT_DIR_ENV} or {DIR_ENV}");
-    };
-    assert!(!files.is_empty(), "no NIF files found");
-
+/// Reads, writes and link-checks every file; asserts that each writes back byte for byte. Returns the blocks per
+/// type as (blocks, files using the type) and the block total.
+fn round_trip(files: &[(String, Vec<u8>)]) -> (BTreeMap<&'static str, (usize, usize)>, usize) {
     let mut failures = Vec::new();
     let mut blocks_by_type: BTreeMap<&'static str, (usize, usize)> = BTreeMap::new();
     let mut total_blocks = 0;
-    for (name, data) in &files {
+    for (name, data) in files {
         let nif = match NifFile::read(data) {
             Ok(nif) => nif,
             Err(e) => {
@@ -182,6 +182,23 @@ fn real_nifs_round_trip_byte_exact() {
     }
     assert!(failures.is_empty(), "{} of {} files failed", failures.len(), files.len());
 
+    (blocks_by_type, total_blocks)
+}
+
+#[test]
+#[ignore = "needs real NIF files: set UO_EC_CLIENT_DIR (or GAMEBRYO_NIF_DIR) and run with --ignored"]
+fn real_nifs_round_trip_byte_exact() {
+    let (files, from_package) = if let Some(dir) = std::env::var_os(DIR_ENV) {
+        (collect_from_dir(Path::new(&dir)), false)
+    } else if let Some(dir) = std::env::var_os(EC_CLIENT_DIR_ENV) {
+        (collect_from_uop(Path::new(&dir)), true)
+    } else {
+        panic!("set {EC_CLIENT_DIR_ENV} or {DIR_ENV}");
+    };
+    assert!(!files.is_empty(), "no NIF files found");
+
+    let (blocks_by_type, total_blocks) = round_trip(&files);
+
     if from_package {
         assert_eq!(files.len(), EXPECTED_NIF_FILES);
         assert_eq!(total_blocks, EXPECTED_TOTAL_BLOCKS);
@@ -190,4 +207,16 @@ fn real_nifs_round_trip_byte_exact() {
         let found: BTreeMap<&str, (usize, usize)> = blocks_by_type.into_iter().collect();
         assert_eq!(found, expected);
     }
+}
+
+#[test]
+#[ignore = "needs a real Kingdom Reborn client: set UO_KR_CLIENT_DIR and run with --ignored"]
+fn kr_nifs_round_trip_byte_exact() {
+    let dir = std::env::var_os(KR_CLIENT_DIR_ENV).unwrap_or_else(|| panic!("set {KR_CLIENT_DIR_ENV}"));
+    let files = collect_from_uop(Path::new(&dir));
+    let (blocks_by_type, total_blocks) = round_trip(&files);
+    assert_eq!(files.len(), KR_EXPECTED_NIF_FILES);
+    assert_eq!(total_blocks, KR_EXPECTED_TOTAL_BLOCKS);
+    println!("{} block types", blocks_by_type.len());
+    println!("KR: {} NIF files, {total_blocks} blocks round trip", files.len());
 }
