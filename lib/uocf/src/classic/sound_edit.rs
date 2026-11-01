@@ -32,6 +32,7 @@ use crate::classic::sound::{
 use crate::uop_container::file::CompressionFlag;
 use crate::uop_container::hash::hash_file_name_single;
 use crate::uop_container::package::{FileReplacement, LoadMode, NewEntryCompression, UopPackage};
+use crate::utils::output_file::{refuse_same_file, write_through_temp};
 use crate::utils::path::find_file_ignoring_case;
 
 crate::eyre_imports!();
@@ -379,15 +380,32 @@ impl ClassicSoundEditor {
         if canonical(output_dir)? == canonical(&self.source_dir)? {
             eyre::bail!("refusing to overwrite the sound files of {}: write to another folder", self.source_dir.display());
         }
+        // Each file goes through a temporary file renamed over it, and none may be a source file or a link to one.
+        let source_dir = self.source_dir.clone();
+        let refuse = |names: &[&str], output: &Path| {
+            let sources: Vec<PathBuf> = names.iter().map(|name| source_dir.join(name)).collect();
+            refuse_same_file(sources.iter().map(PathBuf::as_path), output, "source sound file")
+        };
         match &mut self.files {
             ClassicSoundFiles::Mul { files, idx_name, mul_name } => {
                 let (idx, mul) = (output_dir.join(&*idx_name), output_dir.join(&*mul_name));
-                files.save(&idx, &mul)?;
+                for output in [&idx, &mul] {
+                    refuse(&[idx_name.as_str(), mul_name.as_str()], output)?;
+                }
+                let (idx_bytes, mul_bytes) = files.to_bytes()?;
+                for (path, bytes) in [(&idx, idx_bytes), (&mul, mul_bytes)] {
+                    write_through_temp(path, |temp| {
+                        std::fs::write(temp, bytes).wrap_err_with(|| format!("Failed to write {}", path.display()))
+                    })?;
+                }
                 Ok(vec![idx, mul])
             }
             ClassicSoundFiles::Uop { package, file_name } => {
                 let path = output_dir.join(&*file_name);
-                package.finalize_and_save(&path).wrap_err_with(|| format!("Failed to write {}", path.display()))?;
+                refuse(&[file_name.as_str()], &path)?;
+                write_through_temp(&path, |temp| {
+                    package.finalize_and_save(temp).wrap_err_with(|| format!("Failed to write {}", path.display()))
+                })?;
                 Ok(vec![path])
             }
         }
@@ -490,6 +508,15 @@ mod tests {
             assert!(editor.put_sound(MAX_SOUND_ID + 1, &file, Some("x.wav"), false).unwrap_err().to_string().contains("above 1667"));
             assert!(editor.save_to(source).is_err(), "never the source folder");
             assert!(editor.save_to(Path::new("relative")).is_err());
+            // An output that is a hard link to a source file is refused, and left as it was.
+            let linked = dir.join("linked");
+            std::fs::create_dir_all(&linked).unwrap();
+            let last = written.last().unwrap();
+            std::fs::hard_link(source.join(written[0]), linked.join(last)).unwrap();
+            let error = editor.save_to(&linked).unwrap_err().to_string();
+            assert!(error.contains("refusing to overwrite the source sound file"), "{error}");
+            assert_eq!(std::fs::read(linked.join(last)).unwrap(), std::fs::read(source.join(written[0])).unwrap());
+            let _ = std::fs::remove_dir_all(&linked);
             editor.save_to(&out).unwrap();
 
             let saved = crate::classic::sound::SoundMap::load(&out).unwrap();

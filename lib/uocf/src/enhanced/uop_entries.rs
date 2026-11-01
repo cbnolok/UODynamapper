@@ -1,7 +1,8 @@
 //! Entry-level edits of client UOP packages shared by the effect file writers: replace, add or remove one entry
 //! and save the package to a new path. Untouched entries keep their data block headers and their place in the file
 //! (`SaveLayout::Preserve`); replaced and added ones get a fresh timestamp header
-//! (`UopPackage::edit_data_block_header`).
+//! (`UopPackage::edit_data_block_header`). The copy is written whole to a temporary file beside the output, then
+//! renamed over it, and never onto the source or a link to it (`utils::output_file`).
 
 use std::path::Path;
 
@@ -9,6 +10,7 @@ use color_eyre::eyre::{self, WrapErr};
 
 use crate::uop_container::file::CompressionFlag;
 use crate::uop_container::package::{NewEntryCompression, UopPackage};
+use crate::utils::output_file::{refuse_same_file, write_through_temp};
 
 /// What [`put_entry`] did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,20 +51,17 @@ pub(crate) fn remove_entry(package: &mut UopPackage, hash: u64) -> bool {
     package.remove_entry(hash)
 }
 
-/// Fails when `output` is the `source` package (or a link to it): writers never overwrite client files.
+/// Fails when `output` is the `source` package, a symbolic or a hard link to it (compared by file identity):
+/// writers never overwrite client files.
 pub(crate) fn refuse_to_overwrite(source: &Path, output: &Path) -> eyre::Result<()> {
-    let canonical_source =
-        std::fs::canonicalize(source).wrap_err_with(|| format!("failed to resolve {}", source.display()))?;
-    if std::fs::canonicalize(output).is_ok_and(|canonical_output| canonical_output == canonical_source) {
-        eyre::bail!("refusing to overwrite the source package {}: write to a new path", source.display());
-    }
-    Ok(())
+    refuse_same_file([source], output, "source package")
 }
 
-/// Saves `package`, loaded from `source`, to `output`, which must not be `source`.
+/// Saves `package`, loaded from `source`, to `output`, which must not be `source`: through a temporary file in
+/// the output's folder, renamed over `output` once written, so a failed save leaves `output` as it was.
 pub(crate) fn save_package_as(package: &mut UopPackage, source: &Path, output: &Path) -> eyre::Result<()> {
     refuse_to_overwrite(source, output)?;
-    package.finalize_and_save(output).wrap_err_with(|| format!("failed to write {}", output.display()))
+    write_through_temp(output, |temp| package.finalize_and_save(temp).wrap_err_with(|| format!("failed to write {}", output.display())))
 }
 
 #[cfg(test)]

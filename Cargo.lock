@@ -7274,6 +7274,7 @@ dependencies = [
  "nohash-hasher",
  "rand 0.10.2",
  "rayon",
+ "same-file",
  "serde",
  "serde_json",
  "symphonia",
