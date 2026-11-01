@@ -117,6 +117,11 @@ pub struct ParseCheck {
     pub keeps: Option<fn(&[u8], &[u8]) -> eyre::Result<()>>,
 }
 
+/// The reader label of the Classic Client's `animationlegacyframe` entries.
+pub const CLASSIC_ANIMATION_FRAMES_READER: &str = "Classic animation frames (animationlegacyframe)";
+/// The [`package_key`] of `AnimationFrame*.uop`.
+const ANIMATION_FRAME_PACKAGE_KEY: &str = "animationframe";
+
 fn ok<T>(result: eyre::Result<T>) -> eyre::Result<()> {
     result.map(|_| ())
 }
@@ -285,6 +290,18 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         extensions: &[],
         dialects: true,
         check: |bytes, dialect| ok(crate::animation_sequence::AnimationSequence::parse_dialect(bytes, dialect)),
+        keeps: None,
+    },
+    // Before the Enhanced reader, which also reads the Classic Client's container: a Classic entry is checked as
+    // Classic frames, and an Enhanced entry, which does not parse as one, with the Enhanced reader.
+    ParseCheck {
+        label: CLASSIC_ANIMATION_FRAMES_READER,
+        packages: &[ANIMATION_FRAME_PACKAGE_KEY],
+        kinds: &[ContentFormat::Amou],
+        name: None,
+        extensions: &[],
+        dialects: false,
+        check: |bytes, _| ok(crate::classic::anim_frames::uop::ClassicUopEntry::parse(bytes)),
         keeps: None,
     },
     ParseCheck {
@@ -1050,6 +1067,43 @@ mod tests {
         assert_eq!(note.check, EntryCheck::Kind(ContentFormat::Text));
         let added = editor.add(&EntryTarget::Hash(hash_file_name_single("data/interface/x.txt")), b"not ( lua", None, policy).unwrap();
         assert_eq!(added.check, EntryCheck::Unchecked(ContentFormat::Text));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn checks_classic_animation_frames_by_name_and_by_hash() {
+        use crate::classic::anim_frames::uop::{ClassicUopEntry, ClassicUopFrame, FIRST_FRAME_NUMBER};
+        use crate::classic::anim_frames::{ClassicFrame, PALETTE_COLOURS};
+        use crate::classic::animationframe_cc::AnimationFrameCc;
+        const BODY: u32 = 400;
+        const ACTION: u16 = 3;
+        const WHITE: u16 = 0x7FFF;
+        const END_OF_FRAME: [u8; 4] = [0xFF, 0x7F, 0xFF, 0x7F];
+        let entry = |colour: u16| {
+            let mut palette = [0u16; PALETTE_COLOURS];
+            palette[1] = colour;
+            let mut entry = ClassicUopEntry::new(BODY, palette);
+            let frame = ClassicFrame { center_x: 1, center_y: -2, width: 2, height: 1, pixels: vec![Some(1), None] };
+            entry.frames.push(ClassicUopFrame { action: ACTION, frame_number: FIRST_FRAME_NUMBER, frame });
+            entry.to_bytes().unwrap()
+        };
+        let name = AnimationFrameCc::animationframe_path(BODY, ACTION);
+        let dir = temp_dir("classic_frames");
+        let path = package_with(&dir, "AnimationFrame1.uop", &[(&name, &entry(WHITE), CompressionFlag::None)]);
+        let mut editor = UopEntryEditor::load(&path).unwrap();
+        let policy = FormatPolicy::VerifiedOnly;
+        // The end of the frame overwritten: the runs read past the frame.
+        let mut broken = entry(WHITE);
+        let end = broken.windows(END_OF_FRAME.len()).rposition(|window| window == END_OF_FRAME).unwrap();
+        broken[end..end + END_OF_FRAME.len()].fill(0);
+        for target in [EntryTarget::Name(name.clone()), EntryTarget::Hash(AnimationFrameCc::animationframe_hash(BODY, ACTION))] {
+            let put = editor.replace(&target, &entry(1), policy).unwrap();
+            assert_eq!(put.check, EntryCheck::Parsed { reader: CLASSIC_ANIMATION_FRAMES_READER, dialect: None });
+            let error = format!("{:#}", editor.replace(&target, &broken, policy).unwrap_err());
+            assert!(error.contains(&format!("does not parse as a {CLASSIC_ANIMATION_FRAMES_READER}")), "{error}");
+        }
+        let added = editor.add(&EntryTarget::Name(AnimationFrameCc::animationframe_path(BODY, ACTION + 1)), &entry(WHITE), None, policy).unwrap();
+        assert_eq!(added.check, EntryCheck::Parsed { reader: CLASSIC_ANIMATION_FRAMES_READER, dialect: None });
         let _ = std::fs::remove_dir_all(&dir);
     }
 

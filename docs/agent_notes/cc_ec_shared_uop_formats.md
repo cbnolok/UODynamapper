@@ -51,8 +51,9 @@ the client code; **S** = holds on every shipped file checked; **I** = inferred.
 
 - **Palette**: 256 `u16` RGB555 words (red bits 10..14, green 5..9, blue 0..4). The client draws
   `palette[index]` for every pixel of a run, bit 15 and a word of 0 included (0 draws black) (V): there is no
-  transparent index or colour; transparency is "not in a run". uocf's decoders and ClassicUO draw a colour of 0
-  transparent; shipped `AnimationFrame2` and `3.uop` frames have such pixels (4,081 frames in the 7.0.103
+  transparent index or colour; transparency is "not in a run". The hued draws, the shadow and the hit test also
+  take a colour-0 pixel as opaque (V, per path in the research results). uocf's decoders draw it opaque black
+  (ClassicUO draws it transparent); shipped `AnimationFrame2` and `3.uop` frames have such pixels (4,081 frames in the 7.0.103
   `AnimationFrame2.uop`, 9,660 in CC fp, 10,362 in 7.0.20; also 44 in the 7.0.20 `animationframe4.uop`), no MUL
   frame does (S). Index 0 is never used by a pixel (S).
 - **Frame**: `i16` anchor x, `i16` anchor y, `u16` width, `u16` height (V); runs; the `u32` end marker
@@ -80,7 +81,8 @@ the client code; **S** = holds on every shipped file checked; **I** = inferred.
   rule); channels round to the nearest 5-bit value. With the entry's palette each colour takes its lowest index
   (bit 15 ignored, index 0 last; black takes a word of 0 when the palette has one, as the shipped frames do);
   without one, the palette is every distinct colour (at most 255, index 0 unused) or a deterministic median cut,
-  and black is stored as 0x0001 (the near black the shipped frames use most), which every decoder draws.
+  and black is stored as 0x0001 (the near black the shipped frames use most): ClassicUO draws a 0 transparent,
+  and the client's partial hue (0x8000) hues a 0 as a grey but draws 0x0001 as it is.
 - **Round trips** (`classic_animation_frame_encoding` real-file tests): indexed re-encode and RGBA with the
   entry's palette byte-identical on 100% of the entries, and the uocf decoder agrees on every frame:
   7.0.103 CC `AnimationFrame1-4.uop` (9,610 entries, 470,415 frames), CC fp `AnimationFrame1-4, 6.uop` (10,724
@@ -92,7 +94,9 @@ the client code; **S** = holds on every shipped file checked; **I** = inferred.
   frames) write a folder of PNGs plus `classicanimation.kdl` (strict KDL: body, action, source, palettes,
   anchors, frame numbers) and encode it back into copies of the files. A UOP entry whose frames per direction
   change also needs its `AnimationSequence.uop` frame count changed (the Classic Client's sequences are the EC
-  format). `verdata.mul` patches of animations are not read or written (uocf's `AnimMap` applies them when it is
+  format). `uop replace-entry` and the inspector's entry editor check a replaced or added
+  `animationlegacyframe` entry, by name or by hash, with the Classic reader (one palette, frames that end at
+  their marker), and the Enhanced Client's AMOU entries with the Enhanced one. `verdata.mul` patches of animations are not read or written (uocf's `AnimMap` applies them when it is
   given one).
 
 ## Multi ids

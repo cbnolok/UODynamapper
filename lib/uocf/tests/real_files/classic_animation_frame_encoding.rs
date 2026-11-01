@@ -9,6 +9,9 @@
 //!   with a palette built from the pixels, they give the same pixels;
 //! - the RGBA agrees with uocf's frame decoders (`AnimationFrameCc`, `AnimMap`).
 //!
+//! The entry editor checks every `animationlegacyframe` entry with the Classic reader, by name and by hash, and
+//! every other AMOU entry (of the Enhanced and Kingdom Reborn roots too) with the Enhanced one.
+//!
 //! Counts are printed (run with `--nocapture`). The package test rewrites one UOP entry and one MUL body/action
 //! through the PNG folder and the writers; outputs go to `std::env::temp_dir()` (set `TMPDIR` to choose it) and are
 //! deleted afterwards.
@@ -27,7 +30,9 @@ use uocf::classic::anim_frames::uop::{read_uop_entry, write_uop_entry, ClassicUo
 use uocf::classic::anim_frames::{
     index_rgba_frames, ClassicFrame, ClassicPalette, ClassicRgbaFrame, OPAQUE_BLACK, PALETTE_COLOURS,
 };
+use uocf::audio::validate::FormatPolicy;
 use uocf::classic::animationframe_cc::AnimationFrameCc;
+use uocf::enhanced::entry_edit::{EntryCheck, EntryTarget, UopEntryEditor, CLASSIC_ANIMATION_FRAMES_READER};
 use uocf::enhanced::animationframe::package::EntryChange;
 use uocf::enhanced::animationframe::{MAX_ACTION_ID_FALLBACK, MAX_BODY_ID};
 use uocf::uop_container::package::UopPackage;
@@ -40,6 +45,10 @@ const IDX_EXTENSION: &str = ".idx";
 const MUL_EXTENSION: &str = "mul";
 const INDEX_ENTRY_BYTES: usize = 12;
 const DIRECTIONS: u8 = 5;
+/// The end of a Classic frame's runs, as stored.
+const END_OF_FRAME: [u8; 4] = [0xFF, 0x7F, 0xFF, 0x7F];
+/// The entry editor's reader of the Enhanced Client's frames.
+const ENHANCED_FRAMES_READER: &str = "animation frames (AMOU)";
 
 fn files(matches: impl Fn(&str) -> bool) -> Vec<PathBuf> {
     fn collect(dir: &Path, matches: &dyn Fn(&str) -> bool, found: &mut Vec<PathBuf>) {
@@ -401,4 +410,61 @@ fn folder_imports_and_writers_change_only_the_edited_entries() {
     assert!(output_mul[..source_mul.len()] == source_mul[..] && output_mul[source_mul.len()..] == edited[..], "{name}");
     println!("{name}: body {body} action 0 round trips through PNGs; one direction rewrites alone");
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// The entry editor (`uop replace-entry`) checks every `animationlegacyframe` entry as Classic frames, by name and
+/// by hash, and the Enhanced Client's frames (any other AMOU entry, of any root) with the Enhanced reader; a legacy
+/// entry whose last frame lost its end is refused under both targets.
+#[test]
+#[ignore = "needs real clients: set UO_CLIENT_ROOTS and run with --ignored"]
+fn the_entry_editor_checks_legacy_frames_as_classic_frames() {
+    let names = legacy_names();
+    let policy = FormatPolicy::VerifiedOnly;
+    let mut legacy_total = 0;
+    for path in uop_packages() {
+        let name = path.display().to_string();
+        let editor = UopEntryEditor::load(&path).unwrap();
+        let hashes: Vec<u64> = editor.package().iter_files().filter(|file| file.has_size()).map(|file| file.filename_hash()).collect();
+        let checks: Vec<(u64, EntryCheck)> = hashes
+            .par_iter()
+            .map(|&hash| {
+                let payload = editor.package().unpack_file_by_hash(hash).unwrap().unwrap();
+                let target = match names.get(&hash) {
+                    Some(&(body, action)) => EntryTarget::Name(AnimationFrameCc::animationframe_path(body, action)),
+                    None => EntryTarget::Hash(hash),
+                };
+                let check = editor.check_replacement(&target, &payload, policy).unwrap_or_else(|error| panic!("{name}: {hash:016X}: {error:#}"));
+                if names.contains_key(&hash) {
+                    let by_hash = editor.check_replacement(&EntryTarget::Hash(hash), &payload, policy).unwrap();
+                    assert_eq!(by_hash, check, "{name}: {hash:016X} by hash");
+                }
+                (hash, check)
+            })
+            .collect();
+        let classic = EntryCheck::Parsed { reader: CLASSIC_ANIMATION_FRAMES_READER, dialect: None };
+        let enhanced = EntryCheck::Parsed { reader: ENHANCED_FRAMES_READER, dialect: None };
+        let (mut legacy, mut others) = (0, 0);
+        for (hash, check) in &checks {
+            if names.contains_key(hash) {
+                assert_eq!(check, &classic, "{name}: {hash:016X}");
+                legacy += 1;
+            } else {
+                assert_ne!(check, &classic, "{name}: {hash:016X} is no legacy entry");
+                others += usize::from(check == &enhanced);
+            }
+        }
+        if let Some(&(hash, _)) = checks.iter().find(|(hash, _)| names.contains_key(hash)) {
+            let mut broken = editor.package().unpack_file_by_hash(hash).unwrap().unwrap();
+            let end = broken.windows(END_OF_FRAME.len()).rposition(|window| window == END_OF_FRAME).unwrap();
+            broken[end..end + END_OF_FRAME.len()].fill(0);
+            let (body, action) = names[&hash];
+            for target in [EntryTarget::Name(AnimationFrameCc::animationframe_path(body, action)), EntryTarget::Hash(hash)] {
+                let error = format!("{:#}", editor.check_replacement(&target, &broken, policy).unwrap_err());
+                assert!(error.contains(&format!("does not parse as a {CLASSIC_ANIMATION_FRAMES_READER}")), "{name}: {error}");
+            }
+        }
+        legacy_total += legacy;
+        println!("{name}: {legacy} legacy entries checked as Classic frames, {others} as Enhanced frames, of {}", checks.len());
+    }
+    assert!(legacy_total > 0, "no animationlegacyframe entry under {CLIENT_ROOTS_ENV}");
 }
