@@ -4,6 +4,12 @@ Status: **approved 2026-11-01, tool built**; the renderer's export mode is the r
 [Decisions](#decisions-2026-11-01)). The questions the user answered are kept in
 [Questions for the user](#questions-for-the-user).
 
+The [renderer control pilot](../../reviews/2026-11-01-webmap-control-pilot.md)
+is complete: placement is correct, but translated overlaps are not pixel-identical.
+The differences reproduce on terrain alone and survive full settling; repeated
+captures at the same location agree exactly. Export acceptance still needs stable
+terrain sampling and the offscreen job implementation.
+
 The user's decisions so far, from proposal (b) of the
 [data-track proposals](2026-11-01-data-track-open-items.md#b-world-export):
 
