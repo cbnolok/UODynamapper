@@ -59,6 +59,9 @@ pub enum ViewMode {
     StringDictionary,
     Sounds,
     AnimationDefinitions,
+    ClassicMaps,
+    ClassicFonts,
+    ClassicDefs,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
@@ -1867,6 +1870,8 @@ pub struct UopInspectorApp {
     pub selected_ec_hueing_mode: EcHueingMode,
     pub selected_cliloc_number: i32,
     pub multimap_zoom: f32,
+    /// The Classic maps, fonts and def file views.
+    pub classic_file_views: crate::ui::ClassicFileViews,
 
     pub terrain_def_package: Option<Arc<uocf::enhanced::terrain_definition::TerrainDefinitionPackage>>,
     pub terrain_def_files: Option<Arc<Vec<TerrainDefinitionFileEntry>>>,
@@ -2044,6 +2049,7 @@ impl UopInspectorApp {
             selected_ec_hueing_mode: EcHueingMode::Cc,
             selected_cliloc_number: 0,
             multimap_zoom: 0.25,
+            classic_file_views: Default::default(),
         };
 
         app.log("UOCF Inspector starting...");
@@ -4403,6 +4409,7 @@ pub(crate) mod tests {
             selected_ec_hueing_mode: EcHueingMode::Cc,
             selected_cliloc_number: 0,
             multimap_zoom: 0.25,
+            classic_file_views: Default::default(),
             terrain_def_package: None,
             terrain_def_files: None,
             ec_tileart_entries: None,

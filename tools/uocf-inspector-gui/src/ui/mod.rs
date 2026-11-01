@@ -24,6 +24,17 @@ pub mod terrain_definition;
 pub mod string_dictionary;
 pub mod sounds;
 pub mod upscale_preview;
+pub mod classic_maps;
+pub mod classic_fonts;
+pub mod classic_defs;
+
+/// The state of the read-only Classic file views.
+#[derive(Default)]
+pub struct ClassicFileViews {
+    pub maps: classic_maps::ClassicMapsState,
+    pub fonts: classic_fonts::ClassicFontsState,
+    pub defs: classic_defs::ClassicDefsState,
+}
 
 /// Hint shown wherever a `.uop` package is saved.
 pub(crate) const UOP_PATCHER_NOTE: &str = "The official patcher re-downloads edited entries and deletes added ones: \
@@ -257,6 +268,11 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui
             if app.cc_sounds.is_some() || app.ec_audio.is_some() {
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Sounds, "Sounds");
             }
+            if app.settings.cc_path.is_some() {
+                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::ClassicMaps, "Maps");
+                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::ClassicFonts, "Fonts");
+                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::ClassicDefs, "Def files");
+            }
         });
     });
 
@@ -405,6 +421,15 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui
         }
         crate::app::ViewMode::Sounds => {
             sounds::ui_sounds(app, ctx, ui);
+        }
+        crate::app::ViewMode::ClassicMaps => {
+            classic_maps::ui_classic_maps(app, ctx, ui);
+        }
+        crate::app::ViewMode::ClassicFonts => {
+            classic_fonts::ui_classic_fonts(app, ctx, ui);
+        }
+        crate::app::ViewMode::ClassicDefs => {
+            classic_defs::ui_classic_defs(app, ctx, ui);
         }
     }
 
