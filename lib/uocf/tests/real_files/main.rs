@@ -29,4 +29,5 @@ mod mobile_body_client;
 mod multi_collection_client_entries;
 mod terrain_definition_client_files;
 mod tileart_client_records;
+mod uop_package_unchanged_save;
 mod waypoints_client_file;

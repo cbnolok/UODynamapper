@@ -27,8 +27,10 @@ TMPDIR=/home/claudio/test/uop/<date> UO_EC_CLIENT_DIR="$C/_Ultima Online Enhance
   entry decodes and re-encodes byte for byte; *RT (synthetic)* = only unit tests do; *lossy* = re-encodes within a
   stated error; *no* = no writer.
 - **Package RT**: an unchanged save of the whole package is asserted byte-identical (`SaveLayout::Preserve`).
-  Asserted for AnimationDefinition, AnimationFrame1-6, Audio (EC and KR), EffectDefinitionCollection and
-  GameData; the other packages share the code path. *Edit RT*: a rewrite with edits is asserted to change only
+  Asserted for every package of both clients (40 EC, 34 KR `*.uop` files) by
+  `uop_package_unchanged_save::every_enhanced_client_package_saves_unchanged_byte_for_byte` and
+  `every_kingdom_reborn_package_saves_unchanged_byte_for_byte`; AnimationDefinition, AnimationFrame1-6, Audio
+  (EC and KR), EffectDefinitionCollection and GameData also through their typed editors. *Edit RT*: a rewrite with edits is asserted to change only
   the edited entries.
 
 ## Coverage table
@@ -133,7 +135,7 @@ TGA images and the Classic gumps (pixels).
 | 13 | ~~Facet data map round-trip test~~ | **closed**: every EC and KR `data.map` re-encodes byte for byte and matches the client size table | done |
 | 14 | ~~KR `waypoint.uop` and `housing.bin` round-trip tests~~ | **closed**: both re-encode byte for byte on KR (housing also through KDL) | done |
 | 15 | `Paperdoll.uop` AMOU entries: what they are, container RT | two 6 MB animations of unknown role | 0.5 day research |
-| 16 | Unchanged-save byte-identical test for every package (not only the ones above) | asserted on 5 package kinds only | 0.2 day (large temporary files) |
+| 16 | ~~Unchanged-save byte-identical test for every package~~ | **closed**: all 40 EC and 34 KR packages save back byte for byte | done |
 | 17 | JPEG decode in parse checks (the image crate's `jpeg` feature) | one entry | 0.1 day |
 | 18 | PSD, OLE, the `MainMisc` binary | stray or unknown files | low value |
 
