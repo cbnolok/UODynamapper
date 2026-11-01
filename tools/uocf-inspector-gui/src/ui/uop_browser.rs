@@ -2,6 +2,10 @@ use eframe::egui;
 use crate::app::{guess_uop_image_format_from_payload, UopInspectorApp};
 use super::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by};
 use uocf::enhanced::client_dialect::ClientDialect;
+use uocf::enhanced::dds_writer::SizeChange;
+use uocf::enhanced::entry_edit::package_key;
+use uocf::enhanced::entry_image::{entry_image_format, EntryImageFormat};
+use uocf::uop_container::package::UopPackage;
 use uocf::enhanced::tileart::TileArtEntry;
 use uocf::enhanced::waypoints::{
     WaypointClilocDefinition, WaypointTypeDefinition, WaypointsPackage,
@@ -23,12 +27,67 @@ const UOP_FILTER: (&str, &[&str]) = ("UOP package", &["uop"]);
 
 const REPLACE_FILE_HOVER: &str = "Write a copy of the package with this entry replaced by a file of the same kind \
 (by content: the kind its extension or the current entry has) that parses where uocf has a reader for the entry. \
-The entry keeps its compression flag; the other entries are untouched.";
+A PNG, BMP or JPEG for a TGA or Classic gump entry can be converted to the entry's format (a TGA keeps its type, \
+depth, RLE packing and footer). The entry keeps its compression flag; the other entries are untouched.";
 
-/// Replaces the entry `hash` (named `name` when the name hashes to it) of the package at `source` with a file the
-/// user picks, written to a copy the user names.
-fn replace_entry_file(app: &mut UopInspectorApp, source: &std::path::Path, hash: u64, name: &str) {
+/// Asks whether to convert `image` to the entry's `format`: `None` cancels, `Some(None)` stores the file as it is.
+fn ask_image_conversion(input: &std::path::Path, image: &image::RgbaImage, format: &EntryImageFormat) -> Option<Option<SizeChange>> {
+    use rfd::{MessageButtons, MessageDialogResult, MessageLevel};
+    let convert = crate::dialog::message_dialog()
+        .set_level(MessageLevel::Info)
+        .set_title("Convert the image?")
+        .set_description(format!(
+            "Convert {} to the entry's format ({})?\n\nNo stores the file as it is: it must then be of the entry's kind.",
+            input.display(),
+            format.label()
+        ))
+        .set_buttons(MessageButtons::YesNoCancel)
+        .show();
+    match convert {
+        MessageDialogResult::Yes => {}
+        MessageDialogResult::No => return Some(None),
+        _ => return None,
+    }
+    let Some((width, height)) = format.size().filter(|&size| size != image.dimensions()) else { return Some(Some(SizeChange::Refuse)) };
+    let resize = crate::dialog::message_dialog()
+        .set_level(MessageLevel::Warning)
+        .set_title("Change the entry's size?")
+        .set_description(format!(
+            "The image is {}x{}, the entry {width}x{height}. Store it at the new size? Layouts may assume the old size.",
+            image.width(),
+            image.height()
+        ))
+        .set_buttons(MessageButtons::YesNo)
+        .show();
+    (resize == MessageDialogResult::Yes).then_some(Some(SizeChange::Allow))
+}
+
+/// Replaces the entry `hash` (named `name` when the name hashes to it) of `package`, loaded from `source`, with a
+/// file the user picks (converted to the entry's image format when the user agrees), written to a copy the user
+/// names.
+fn replace_entry_file(app: &mut UopInspectorApp, source: &std::path::Path, package: &UopPackage, hash: u64, name: &str) {
+    use crate::logic::entry_text_editor::{check_summary, entry_target, image_to_convert, save_entry_copy, save_entry_image_copy};
     let Some(input) = crate::dialog::file_dialog().set_title("Replace entry with").pick_file() else { return };
+    let prepared = (|| -> color_eyre::eyre::Result<Option<(Vec<u8>, Option<(image::RgbaImage, SizeChange)>)>> {
+        let file = std::fs::read(&input)?;
+        let current = package.unpack_file_by_hash(hash)?.unwrap_or_default();
+        let conversion = match (entry_image_format(&package_key(source), &current), image_to_convert(&file)?) {
+            (Some(format), Some(image)) => match ask_image_conversion(&input, &image, &format) {
+                None => return Ok(None),
+                Some(size_change) => size_change.map(|size_change| (image, size_change)),
+            },
+            _ => None,
+        };
+        Ok(Some((file, conversion)))
+    })();
+    let (file, conversion) = match prepared {
+        Ok(Some(prepared)) => prepared,
+        Ok(None) => return,
+        Err(error) => {
+            app.status_message = format!("Failed to replace {name}: {error:#}");
+            return;
+        }
+    };
     let file_name = source.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
     let Some(output) = crate::dialog::file_dialog()
         .add_filter(UOP_FILTER.0, UOP_FILTER.1)
@@ -38,11 +97,23 @@ fn replace_entry_file(app: &mut UopInspectorApp, source: &std::path::Path, hash:
     else {
         return;
     };
-    use crate::logic::entry_text_editor::{check_summary, entry_target, save_entry_copy};
+    let target = entry_target(name, hash);
     let result = (|| -> color_eyre::eyre::Result<String> {
-        let file = std::fs::read(&input)?;
-        let edit = save_entry_copy(source, &entry_target(name, hash), &file, &output)?;
-        Ok(format!("{:?} {name} ({:?}, {}) in {}. {UOP_PATCHER_NOTE}", edit.write, edit.compression, check_summary(&edit.check), output.display()))
+        let (edit, converted) = match conversion {
+            Some((image, size_change)) => {
+                let (converted, edit) = save_entry_image_copy(source, &target, &image, size_change, &output)?;
+                let notes = converted.notes.iter().map(|note| format!("; {note}")).collect::<String>();
+                (edit, format!(" converted to {}{notes}", converted.format.label()))
+            }
+            None => (save_entry_copy(source, &target, &file, &output)?, String::new()),
+        };
+        Ok(format!(
+            "{:?} {name}{converted} ({:?}, {}) in {}. {UOP_PATCHER_NOTE}",
+            edit.write,
+            edit.compression,
+            check_summary(&edit.check),
+            output.display()
+        ))
     })();
     app.status_message = result.unwrap_or_else(|e| format!("Failed to replace {name}: {e:#}"));
 }
@@ -188,7 +259,7 @@ pub fn ui_uop_browser(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut e
                             app.save_entry(hash, &resolved_name);
                         }
                         if ui.button("Replace file...").on_hover_text(REPLACE_FILE_HOVER).clicked() {
-                            replace_entry_file(app, &loaded_uop.path, hash, &resolved_name);
+                            replace_entry_file(app, &loaded_uop.path, &loaded_uop.package, hash, &resolved_name);
                         }
                     });
                 });

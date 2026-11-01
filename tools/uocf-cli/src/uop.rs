@@ -29,9 +29,10 @@ pub enum UopCmd {
         #[arg(long)]
         allow_resize: bool,
     },
-    /// Write a copy of a package with an image entry replaced by an image converted to the entry's format: a
-    /// `gumpartLegacyMUL.uop` entry becomes a Classic gump encoded as the shipped ones (alpha 0 or 255 only; 5 bits
-    /// per channel; opaque black stored as 0x0001), then checked as replace-entry checks a file.
+    /// Write a copy of a package with an image entry replaced by an image converted to the entry's format, then
+    /// checked as replace-entry checks a file: a `gumpartLegacyMUL.uop` entry becomes a Classic gump encoded as the
+    /// shipped ones (alpha 0 or 255 only; 5 bits per channel; opaque black stored as 0x0001), a TGA entry a TGA of
+    /// its type, depth, RLE packing and ending (footer, extension area, padding). DDS textures: replace-texture.
     ReplaceImage {
         /// Source package (only read).
         uop: PathBuf,

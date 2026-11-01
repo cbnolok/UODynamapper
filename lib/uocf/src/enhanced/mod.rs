@@ -38,6 +38,7 @@ pub mod terrain;
 pub mod terrain_config;
 pub mod terrain_definition;
 pub mod textures;
+pub mod tga_writer;
 pub mod tile_database;
 pub mod tileart;
 mod uop_entries;

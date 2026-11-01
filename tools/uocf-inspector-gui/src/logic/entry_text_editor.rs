@@ -7,7 +7,10 @@ use std::path::{Path, PathBuf};
 
 use color_eyre::eyre;
 use uocf::audio::validate::FormatPolicy;
+use image::{ImageFormat, RgbaImage};
+use uocf::enhanced::dds_writer::SizeChange;
 use uocf::enhanced::entry_edit::{EntryCheck, EntryEdit, EntryTarget, ParseCheck, UopEntryEditor};
+use uocf::enhanced::entry_image::EntryImage;
 use uocf::enhanced::entry_text::EntryText;
 use uocf::enhanced::image_census::ContentFormat;
 use uocf::uop_container::hash::hash_file_name_single;
@@ -55,6 +58,7 @@ impl EntryTextEdits {
     }
 
     /// How many entries hold unsaved edits.
+    #[cfg(test)]
     pub fn modified_count(&self) -> usize {
         self.open.values().filter(|edit| edit.modified()).count()
     }
@@ -83,6 +87,34 @@ pub fn save_entry_copy(source: &Path, target: &EntryTarget, bytes: &[u8], output
     let edit = editor.replace(target, bytes, FormatPolicy::VerifiedOnly)?;
     editor.save_as(output)?;
     Ok(edit)
+}
+
+/// The formats "Replace file..." offers to convert to an image entry's format (a TGA or DDS file is stored as it is).
+const CONVERTED_IMAGE_FORMATS: [ImageFormat; 3] = [ImageFormat::Png, ImageFormat::Bmp, ImageFormat::Jpeg];
+
+/// The image a picked file holds when it is one to convert (PNG, BMP, JPEG), as RGBA.
+pub fn image_to_convert(file: &[u8]) -> eyre::Result<Option<RgbaImage>> {
+    match image::guess_format(file) {
+        Ok(format) if CONVERTED_IMAGE_FORMATS.contains(&format) => {
+            Ok(Some(image::load_from_memory_with_format(file, format).map_err(|error| eyre::eyre!("not a readable {format:?}: {error}"))?.into_rgba8()))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// Writes a copy of the package at `source` to `output` with the image entry `target` replaced by `image` converted
+/// to its format ([`UopEntryEditor::replace_image`]).
+pub fn save_entry_image_copy(
+    source: &Path,
+    target: &EntryTarget,
+    image: &RgbaImage,
+    size_change: SizeChange,
+    output: &Path,
+) -> eyre::Result<(EntryImage, EntryEdit)> {
+    let mut editor = UopEntryEditor::load(source)?.with_check(NIF_CHECK);
+    let replaced = editor.replace_image(target, image, size_change)?;
+    editor.save_as(output)?;
+    Ok(replaced)
 }
 
 /// "checked: <reader>" or "<kind> by content".
