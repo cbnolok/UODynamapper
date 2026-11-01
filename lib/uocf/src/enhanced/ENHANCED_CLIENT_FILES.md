@@ -1534,7 +1534,8 @@ Images and media by content (named as such / named otherwise / unnamed):
 No GIF, KTX, OGG, KFM, other RIFF or zlib payload exists. The rest is XML
 (LegacyTerrain, Interface), text (Lua, CSV, `.ems`, shaders), the unnamed
 Interface fonts (EC 32, KR 29: TrueType and OpenType CFF), `AMOU` animations
-(the `AnimationFrame*.uop` entries, both `Paperdoll.uop` entries and one
+(the `AnimationFrame*.uop` entries, both `Paperdoll.uop` entries, the male and
+female paperdoll image sets searched by gender and body or worn item id, and one
 unnamed Interface entry), UTF-16 text (2 EC Interface, 1 `MainMisc.uop`), one
 OLE compound file each in `GameData.uop` and `Interface.uop`, and binary;
 the Classic packages hold no image (MP3 frame-sync false positives in map

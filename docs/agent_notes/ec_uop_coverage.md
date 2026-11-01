@@ -70,7 +70,7 @@ TMPDIR=/home/claudio/test/uop/<date> UO_EC_CLIENT_DIR="$C/_Ultima Online Enhance
 | MainMisc | XML (2 / 2), UTF-16 text (1 / 1), binary (1 / 0) | raw | replace | no | UOP explorer (text editor) (XML, UTF-16) | gap 4 |
 | MultiCollection | multis (862 / 241) | typed, both dialects | editor (multi editor, KDL) | writer, RT EC (`multi_collection_client_entries::every_multi_reencodes_identically`) and KR (`kr_client_files::kr_multis_reencode_identically`), edit RT | Multis, Multi editor (save) | `multis.rs` 38705ade, 7fd85a38 |
 | | `housing.bin` (1 / 1) | typed, KDL | editor | writer, RT EC (`housing_bin_reserializes_identically_directly_and_through_kdl`) and KR (`kr_client_files::kr_housing_bin_reserializes_identically_directly_and_through_kdl`), both directly and through KDL | Housing (edit, save) | `housing*` 02fb5dad, beeecc11 |
-| Paperdoll | AMOU (2 / 2) | typed (AMOU reader) | replace (parse-checked) | writer exists (AMOU container), not tested on these | none (hex) | gap 15 |
+| Paperdoll | AMOU (2 / 2): the male and female paperdoll image sets (`PaperdollFrameSet` assets 0x40, 0x41; action = gender, number = body or worn item id) | typed (AMOU reader) | replace (parse-checked) | writer, RT EC and KR, container and frames re-encoded (`paperdoll_frame_sets::paperdoll_frame_sets_round_trip`) | none (hex) | `ghidra-paperdoll` |
 | Shaders | `.psh`/`.vsh` and unnamed text (12 / 6) | raw (text) | replace (kind check) | no | UOP explorer (text editor) | |
 | SystemTextures | TGA (5 / 5), PNG (2 / 2) | typed (image crate) | replace (parse-checked) | no | UOP explorer (image) | |
 | TerrainDefinition | definitions (201 / 191) | typed, both dialects | editor | writer, RT EC and KR (`terrain_definition_client_files::*_write_back_byte_for_byte`), edit RT | Terrain definition (edit, save) | `terrain_definition.rs` af85d41b, 59e77b3e |
@@ -173,7 +173,7 @@ Measured on the 78 EC and 63 KR text entries of `GameData.uop` (the reader: `enh
 | 12 | TGA writer of the shipped conventions (RLE type 10, footer, padding) for Interface gumps and TileArtLegacy | images go in as whatever TGA the user provides | 1-2 days |
 | 13 | ~~Facet data map round-trip test~~ | **closed**: every EC and KR `data.map` re-encodes byte for byte and matches the client size table | done |
 | 14 | ~~KR `waypoint.uop` and `housing.bin` round-trip tests~~ | **closed**: both re-encode byte for byte on KR (housing also through KDL) | done |
-| 15 | `Paperdoll.uop` AMOU entries: what they are, container RT | two 6 MB animations of unknown role | 0.5 day research |
+| 15 | ~~`Paperdoll.uop` AMOU entries: what they are, container RT~~ | **closed**: the paperdoll images, one AMOU set per gender, read by the EC and CC paperdoll textures (`scripts/dev-helpers/ec-research/ghidra-paperdoll/`); both sets write back byte for byte on EC and KR, frames re-encoded from their indices | done |
 | 16 | ~~Unchanged-save byte-identical test for every package~~ | **closed**: all 40 EC and 34 KR packages save back byte for byte | done |
 | 17 | ~~JPEG decode in parse checks (the image crate's `jpeg` feature)~~ | **closed**: the pure-Rust `zune-jpeg` decoder; the EC and KR Interface JPEG decodes | done |
 | 18 | PSD, OLE, the `MainMisc` binary | stray or unknown files | low value |
