@@ -15,7 +15,7 @@ TMPDIR=/home/claudio/test/uop/<date> UO_CC_CLIENT_DIR="$C/_Ultima Online Classic
   UO_CLASSIC_CLIENT_ROOTS="$C/_Ultima Online Classic:$C/Ultima Online Classic_7_0_20_0:$C/Ultima Online Mondain's Legacy:$C/Ultima Online Gold" \
   cargo test --release -p uocf --test real_files -- --ignored \
   uop_package_unchanged_save::every_classic entry_editor_client_packages::every_shipped classic_client_eras \
-  classic_animation_frame_encoding gump_client_encoding hues_mul_uop_client::classic audio_writers::classic \
+  classic_animation_frame_encoding gump_client_encoding classic_art_encoding hues_mul_uop_client::classic audio_writers::classic \
   audio_client_files::classic animation_client_entries::animation_sequence multi_collection_client_entries \
   tileart_client_records::tileart tileart_client_records::rewritten string_tables_client_files::classic \
   string_tables_client_files::string_dictionaries
@@ -36,7 +36,8 @@ UO_PRE7_CLIENT_DIR="$C/Ultima Online Mondain's Legacy" UO_CLIENT_ROOTS="$C" \
   (`classic::art::check_art_payload`), `map*LegacyMUL` entries be whole 196-byte blocks, `soundLegacyMUL` entries
   have samples after their header.
 - **Write**: *writer* = bytes are produced from the typed form. *RT* = a real-file test asserts that the shipped file
-  (or every shipped entry) decodes and re-encodes byte for byte; *RT (synthetic)* = only unit tests do; *raw copy* =
+  (or every shipped entry) decodes and re-encodes byte for byte; *RT but padding* = byte for byte except padding
+  that the shipped files fill with old memory (the encoder writes zeros); *RT (synthetic)* = only unit tests do; *raw copy* =
   the bytes are moved between containers unparsed; *no* = no writer.
 - **Package RT**: an unchanged save of every Classic UOP is byte-identical (`SaveLayout::Preserve`):
   `uop_package_unchanged_save::every_classic_client_package_saves_unchanged_byte_for_byte` (`UO_CLASSIC_CLIENT_ROOTS`),
@@ -59,7 +60,7 @@ UO_PRE7_CLIENT_DIR="$C/Ultima Online Mondain's Legacy" UO_CLIENT_ROOTS="$C" \
 | `AnimationSequence.uop` | 370 | typed (shared with EC) | entries rewritten by the frame import | writer, RT (`animation_client_entries::animation_sequence_reencodes_every_client_entry`) | via `classicanim` / `animframe` | `animation_sequence.rs` |
 | `MainMisc.uop` | 4 (2 TinyXML, 1 UTF-16 text, 1 binary) | XML parse check, text decode | replace; text editor | text: RT through `entry_text` | UOP explorer text view | `enhanced/entry_text.rs` |
 | `MultiCollection.uop` | 862 multis + `housing.bin` | typed | editor (multis, housing KDL) | writer, RT (`multi_collection_client_entries::every_multi_reencodes_identically`, `housing_bin_reserializes_identically_directly_and_through_kdl`); edit RT (`rewritten_multi_collection_changes_only_*`) | Multis, Housing views | `enhanced/multi*`, `enhanced/housing*` |
-| `artLegacyMUL.uop` | 39,386 | typed (land raw 44x44, static RLE) | replace (static or land check) | **no** | Tex/Art view (view); `mul-convert` | `classic/art.rs` 262c2743, 8fe7831b |
+| `artLegacyMUL.uop` | 39,386 | typed (land raw 44x44, static RLE) | replace (static or land check); from an image (`replace_image`, land or static by the entry's id) | writer, RT but padding (`classic_art_encoding::every_shipped_art_record_encodes_back`) | `uop replace-image`; Tex/Art view (view), UOP explorer image replace; `mul-convert` | `classic/art.rs` 262c2743, 8fe7831b; `art_write.rs` |
 | `gumpartLegacyMUL.uop` | 4,456 (4,422 gumps, 34 0x0 placeholders) | typed | replace from an image (`replace_image`) | writer, RT (`gump_client_encoding::every_shipped_gump_encodes_back`) | `uop replace-image`; Gumps view (view), UOP explorer image replace | `classic/gump.rs`, `gump_write.rs` 7f5842ce |
 | `map0-5(x)LegacyMUL.uop` | 8-113 blocks each, 11 packages | typed (`MapPlane::init_uop`) | replace (whole-block check) | **no** (conversion to an EC facet only: `facet from-classic`) | `facet` CLI | `classic/map.rs`, `facet_sources.rs`, `map_edition.rs` acc42a13 |
 | `soundLegacyMUL.uop` | 1,655 | typed (`SoundMap`) | editor (replace, add from WAV) | writer, RT (`audio_writers::classic_sounds_and_defs_write_back_and_edit`) | `sound`; Sounds view (replace, save, export) | `classic/sound.rs`, `sound_edit.rs` 78aaca7d |
@@ -75,7 +76,7 @@ tiledata, maps, statics, multis, hues, radarcol, art, gumps, texmaps, anims, ani
 |---|---|---|---|---|---|
 | `anim.mul`-`anim5.mul` + `.idx` (Gold/ML: `anim-anim4`; fp: `anim6`) | typed | editor: frames appended or replaced per action | writer, RT (`classic_animation_frame_encoding::every_classic_mul_frame_round_trips`); edit RT | `classicanim`, `export-anim-patch`; Animations view | `classic/anim_frames/mul.rs` 920d2cf9, `anim.rs` ca9d0690 |
 | `animdata.mul` | typed (every byte kept, trailing bytes too) | API (fields) | writer (`AnimData::to_bytes`), RT on every era (`classic_mul_writers::classic_tile_radar_animdata_and_multimap_files_write_back_byte_for_byte`) | AnimData view (view) | `classic/animdata.rs` ad8451ba |
-| `art.mul` + `artidx.mul` | typed | no | **no** (raw copy from the UOP) | Tex/Art view; `mul-convert` | `classic/art.rs` |
+| `art.mul` + `artidx.mul` | typed | no (a record encodes with `ArtColors::encode`, but no MUL writer saves it) | records: RT but padding (`every_shipped_art_record_encodes_back`); file: raw copy from the UOP | Tex/Art view; `mul-convert` | `classic/art.rs`, `art_write.rs` |
 | `fonts.mul`, `unifont*.mul` (13) | typed (RGBA glyphs) | no | **no** | none | `classic/fonts.rs` c3915278 |
 | `gumpart.mul` + `gumpidx.mul` (older clients) | typed | no (a gump encodes with `GumpColors::encode_rows`, but no MUL writer saves it) | rows: RT (`every_shipped_gump_encodes_back`); file: raw copy from the UOP | Gumps view; `mul-convert` | `classic/gump.rs`, `gump_write.rs` |
 | `hues.mul` | typed | API only (`HuesMul::hue_mut`) | writer, RT (`hues_mul_uop_client::classic_hues_mul_round_trips_through_own_uop_in_both_modes`: the file comes back byte for byte through a written `Hues.uop`) | `hues mul-to-uop`/`uop-to-mul`; Hues view (view) | `classic/hues.rs` 074c28e9, f7852681 |
@@ -114,20 +115,50 @@ The executables are read for facet sizes and login sites (`client_exe`, `uocf-cl
 
 - Every Classic UOP package saves back byte for byte unchanged, and every entry passes its replacement check, a
   parse check for all but the 34 gump placeholders and the 2 `MainMisc` text and binary entries. Typed
-  writers with real-file round trips cover the animations (UOP and MUL), the gumps, the sounds, `hues.mul`,
+  writers with real-file round trips cover the animations (UOP and MUL), the gumps, the art (but padding), the sounds, `hues.mul`,
   `MultiCollection`, `tileart`, the string dictionary, the clilocs and `Sound.def`/`Music.def`.
 - `tiledata.mul` (all six layouts), `radarcol.mul`, `animdata.mul` and `Multimap.rle` write back byte for byte on
-  every era (UO Gold to the 2024 client). The world and art data have readers only: art, maps, statics, lights,
-  texmaps, `multi.mul`, the difs and verdata. A Classic map, its statics and its art cannot be edited and
-  written back as Classic files; `facet from-classic` converts them to an Enhanced Client facet instead.
+  every era (UO Gold to the 2024 client). The world data have readers only: maps, statics, lights, texmaps,
+  `multi.mul`, the difs and verdata. A Classic map and its statics cannot be edited and written back as Classic
+  files; `facet from-classic` converts them to an Enhanced Client facet instead. Art is replaced in
+  `artLegacyMUL.uop` from an image; `art.mul` gets it through `mul-convert`.
 - About 60 text, def and binary types have no reader; most are localized UI text or files the client no longer reads.
+
+## Classic art encoding
+
+`classic/art_write.rs`, measured on every record of the Classic (`artLegacyMUL.uop`), Classic fp, 7.0.20,
+Mondain's Legacy and UO Gold (`art.mul`) clients (`classic_art_encoding::every_shipped_art_record_encodes_back`):
+
+- The art id decides: below 0x4000 a land tile, else a static (item id + 0x4000). Confirmed in the 7.0.103
+  client: `UOClassicArt::GetArtRecord` 0x005d7c00 (`scripts/dev-helpers/ec-research/ghidra-classic-art/`).
+- Land: 2,048 bytes, the 1,012 diamond colors then 24 bytes, zero in the Classic clients, old memory in 3,725
+  Mondain's Legacy and UO Gold records. Color 0 is opaque black.
+- Static: `u32` byte length of the rows (not read by the client), `u16` width, height, a `u16` offset per row,
+  the rows: `(x offset, run)` pairs and their colors, `(0, 0)` at the end, each row padded to 4 bytes with one
+  `u16`. A row equal to an earlier one points at it. No run holds color 0 or touches the next run; no color
+  sets bit 15.
+- The padding words: of 973,367 in the Classic client, 12% are zero, 71% equal the word at the same offset of
+  the previous record (by id) and 12% another word of the record: an uncleared buffer reused from record to
+  record (probable). So about 1 static in 10 is byte for byte; all are byte for byte outside the padding.
+
+| Client | Land records (byte for byte) | Static records (byte for byte; not decodable) |
+|---|---|---|
+| Classic | 2,859 (100%) | 36,527 (3,517) |
+| Classic fp | 4,244 (100%) | 39,189 (3,694) |
+| 7.0.20 | 2,855 (100%) | 31,648 (3,118) |
+| Mondain's Legacy | 2,288 (292) | 19,460 (2,164; 1) |
+| UO Gold | 1,784 (55) | 17,824 (1,635; 1) |
+
+Every record but the two that do not decode (one each in Mondain's Legacy and UO Gold) gives back its colors
+and is byte for byte outside the padding. From an image: the gump rules (alpha 0 or 255, 5-bit rounding, opaque
+black stored as 0x0001 in a static); a land tile is a 44x44 image with an opaque diamond and transparent corners.
 
 ## Gaps, ranked by usefulness
 
 | # | Gap | Why it matters | Effort |
 |---|---|---|---|
 | 1 | Map and statics writers (`mapN.mul`, `mapNLegacyMUL.uop`, `staidxN`/`staticsN`, the `x` editions) | the Classic world cannot be edited and saved as Classic files; dynamapper and server tools need it | large: block layout of both containers, statics re-indexing, byte-identical unchanged blocks |
-| 2 | Art encoder (`artLegacyMUL.uop`, `art.mul`): land 44x44 and static RLE, encoded as shipped | no item or land art replacement for the Classic client (a raw replacement is only structure-checked) | medium: the static run convention must be inferred, as for gumps (7f5842ce) |
+| 2 | ~~Art encoder (`artLegacyMUL.uop`, `art.mul`): land 44x44 and static RLE, encoded as shipped~~ | **closed**: `classic/art_write.rs` (land or static by the art id, as the client's `UOClassicArt::GetArtRecord`, `ghidra-classic-art`); every land and static of the five clients encodes back to the same colors and bytes, but for padding words of old memory (see below); an image replaces an `artLegacyMUL` entry through `replace_image` | done |
 | 3 | ~~`tiledata.mul` writer, all 6 layouts~~ | **closed**: the reader keeps the unknown item bytes and the block headers; `TileData::to_bytes` writes the layout read; Gold, ML, 7.0.20, 2024 and fp come back byte for byte | done |
 | 4 | ~~Parse checks for `artLegacyMUL`, `soundLegacyMUL` and `map*LegacyMUL` entries~~ | **closed**: static or land diamond, whole map blocks, samples after the sound header; all 41,594 shipped entries pass (the land/static choice by entry id is left to the art encoder, #2) | done |
 | 5 | ~~`radarcol.mul` and `animdata.mul` writers~~ | **closed**: `encode_radarcol`, `AnimData::to_bytes`; byte for byte on every era | done |

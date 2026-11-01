@@ -14,8 +14,9 @@
 //!
 //! ### `artlegacymul.uop`
 //!
-//! - A UOP package that contains art data, primarily for Classic Client items. The data is stored
-//!   as TGA files within the UOP package.
+//! - A UOP package that contains art data, primarily for Classic Client items. The entries hold
+//!   `art.mul` records; the `.tga` of their names (`build/artlegacymul/%08d.tga`) is only hashed.
+//!   Writing: [`crate::classic::art_write`].
 //!
 //! ### Land Tiles (ID < 0x4000)
 //!

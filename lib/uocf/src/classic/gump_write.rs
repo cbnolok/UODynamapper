@@ -23,8 +23,8 @@ crate::eyre_imports!();
 pub const TRANSPARENT: u16 = 0;
 /// What opaque black is stored as: color 0 is transparent.
 pub const OPAQUE_BLACK: u16 = 0x0001;
-const OPAQUE_ALPHA: u8 = u8::MAX;
-const TRANSPARENT_ALPHA: u8 = 0;
+pub(crate) const OPAQUE_ALPHA: u8 = u8::MAX;
+pub(crate) const TRANSPARENT_ALPHA: u8 = 0;
 const CHANNEL_BITS: u32 = 5;
 const CHANNEL_MAX: u16 = (1 << CHANNEL_BITS) - 1;
 /// An 8-bit channel per 5-bit step, as the decoder expands them.
@@ -111,20 +111,7 @@ impl GumpColors {
         if rgba.len() != pixels * RGBA_BYTES_PER_PIXEL {
             eyre::bail!("{} RGBA bytes for {width}x{height}", rgba.len());
         }
-        let partial: Vec<usize> = rgba
-            .chunks_exact(RGBA_BYTES_PER_PIXEL)
-            .enumerate()
-            .filter(|(_, pixel)| pixel[3] != OPAQUE_ALPHA && pixel[3] != TRANSPARENT_ALPHA)
-            .map(|(index, _)| index)
-            .collect();
-        if let Some(&first) = partial.first() {
-            let (x, y) = (first % usize::from(width16), first / usize::from(width16));
-            eyre::bail!(
-                "{} pixels are partly transparent, the first at x {x}, y {y} (alpha {}); a gump pixel is opaque or transparent",
-                partial.len(),
-                rgba[first * RGBA_BYTES_PER_PIXEL + 3]
-            );
-        }
+        refuse_partial_alpha(usize::from(width16), rgba, "gump")?;
         let mut conversion = RgbaConversion::default();
         let colors = rgba
             .chunks_exact(RGBA_BYTES_PER_PIXEL)
@@ -132,9 +119,7 @@ impl GumpColors {
                 if pixel[3] == TRANSPARENT_ALPHA {
                     return TRANSPARENT;
                 }
-                let channel = |value: u8| ((u16::from(value) + CHANNEL_STEP / 2) / CHANNEL_STEP).min(CHANNEL_MAX);
-                let (red, green, blue) = (channel(pixel[0]), channel(pixel[1]), channel(pixel[2]));
-                match red << RED_SHIFT | green << GREEN_SHIFT | blue {
+                match rgb555_of_rgba(pixel) {
                     TRANSPARENT => {
                         conversion.black += 1;
                         OPAQUE_BLACK
@@ -143,10 +128,7 @@ impl GumpColors {
                 }
             })
             .collect();
-        conversion.rounded = rgba
-            .chunks_exact(RGBA_BYTES_PER_PIXEL)
-            .filter(|pixel| pixel[3] == OPAQUE_ALPHA && pixel[..3].iter().any(|&value| u16::from(value) % CHANNEL_STEP != 0))
-            .count();
+        conversion.rounded = rgba.chunks_exact(RGBA_BYTES_PER_PIXEL).filter(|pixel| is_rounded_opaque(pixel)).count();
         Ok((Self { width: width16, height: height16, colors }, conversion))
     }
 
@@ -185,6 +167,36 @@ impl GumpColors {
     pub fn index_extra(&self) -> u32 {
         u32::from(self.width) << INDEX_EXTRA_WIDTH_SHIFT | u32::from(self.height)
     }
+}
+
+/// Refuses an image with partly transparent pixels, naming the first one; `what` names the format ("gump").
+pub(crate) fn refuse_partial_alpha(width: usize, rgba: &[u8], what: &str) -> eyre::Result<()> {
+    let partial: Vec<usize> = rgba
+        .chunks_exact(RGBA_BYTES_PER_PIXEL)
+        .enumerate()
+        .filter(|(_, pixel)| pixel[3] != OPAQUE_ALPHA && pixel[3] != TRANSPARENT_ALPHA)
+        .map(|(index, _)| index)
+        .collect();
+    if let Some(&first) = partial.first() {
+        let (x, y) = (first % width, first / width);
+        eyre::bail!(
+            "{} pixels are partly transparent, the first at x {x}, y {y} (alpha {}); a {what} pixel is opaque or transparent",
+            partial.len(),
+            rgba[first * RGBA_BYTES_PER_PIXEL + 3]
+        );
+    }
+    Ok(())
+}
+
+/// The 15-bit color of an RGBA pixel, each channel rounded to the nearest 5-bit value; black is 0.
+pub(crate) fn rgb555_of_rgba(pixel: &[u8]) -> u16 {
+    let channel = |value: u8| ((u16::from(value) + CHANNEL_STEP / 2) / CHANNEL_STEP).min(CHANNEL_MAX);
+    channel(pixel[0]) << RED_SHIFT | channel(pixel[1]) << GREEN_SHIFT | channel(pixel[2])
+}
+
+/// Whether an RGBA pixel is opaque with a channel off the 5-bit grid.
+pub(crate) fn is_rounded_opaque(pixel: &[u8]) -> bool {
+    pixel[3] == OPAQUE_ALPHA && pixel[..3].iter().any(|&value| u16::from(value) % CHANNEL_STEP != 0)
 }
 
 #[cfg(test)]

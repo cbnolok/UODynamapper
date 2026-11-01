@@ -12,6 +12,7 @@ mod animation_frame_encoding;
 mod audio_client_files;
 mod audio_writers;
 mod classic_animation_frame_encoding;
+mod classic_art_encoding;
 mod classic_client_eras;
 mod classic_dif_usage;
 mod classic_facet_difs;

@@ -31,12 +31,15 @@ pub enum UopCmd {
     },
     /// Write a copy of a package with an image entry replaced by an image converted to the entry's format, then
     /// checked as replace-entry checks a file: a `gumpartLegacyMUL.uop` entry becomes a Classic gump encoded as the
-    /// shipped ones (alpha 0 or 255 only; 5 bits per channel; opaque black stored as 0x0001), a TGA entry a TGA of
-    /// its type, depth, RLE packing and ending (footer, extension area, padding). DDS textures: replace-texture.
+    /// shipped ones (alpha 0 or 255 only; 5 bits per channel; opaque black stored as 0x0001), an
+    /// `artLegacyMUL.uop` entry Classic art by its id (below 0x4000 a land tile: a 44x44 image, the diamond opaque
+    /// and the corners transparent; else a static, with the gump rules), a TGA entry a TGA of its type, depth, RLE
+    /// packing and ending (footer, extension area, padding). DDS textures: replace-texture.
     ReplaceImage {
         /// Source package (only read).
         uop: PathBuf,
-        /// Entry name (`build/gumpartlegacymul/00001234.tga`) or hash (`0x` and hex, or 16 hex digits).
+        /// Entry name (`build/gumpartlegacymul/00001234.tga`, `build/artlegacymul/00016384.tga`) or hash (`0x` and
+        /// hex, or 16 hex digits).
         entry: String,
         /// The new image (PNG, BMP), converted to RGBA.
         image: PathBuf,
