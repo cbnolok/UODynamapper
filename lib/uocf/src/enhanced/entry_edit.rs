@@ -180,7 +180,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         kinds: &[ContentFormat::Text],
         name: Some(crate::enhanced::legacy_terrain_map::UOP_ENTRY_PATH),
         dialects: false,
-        check: |bytes, _| ok(crate::enhanced::legacy_terrain_map::LegacyTerrainMap::from_bytes(bytes)),
+        check: |bytes, _| ok(crate::enhanced::legacy_terrain_map::check_canonical(bytes)),
         keeps: None,
     },
     ParseCheck {
@@ -860,6 +860,21 @@ mod tests {
         let error = format!("{:#}", editor.replace(&target, b"objectId,primaryAbility\r\nsword,Disarm\r\n", policy).unwrap_err());
         assert!(error.contains("does not keep the GameData table") && error.contains("field 1 (objectId)"), "{error}");
         assert!(editor.replace(&target, b"objectId,primary\r\n1,\"open\r\n", policy).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_legacy_terrain_map_stays_in_the_shipped_format() {
+        const NAME: &str = crate::enhanced::legacy_terrain_map::UOP_ENTRY_PATH;
+        let dir = temp_dir("legacy_terrain_map");
+        let path = package_with(&dir, "GameData.uop", &[(NAME, b"legacyId,newId,newSubType\r\n1,0,1\r\n", CompressionFlag::Zlib)]);
+        let mut editor = UopEntryEditor::load(&path).unwrap();
+        let target = EntryTarget::Name(NAME.to_owned());
+        let policy = FormatPolicy::VerifiedOnly;
+        let put = editor.replace(&target, b"legacyId,newId,newSubType\r\n1,0,1\r\n2,4,0\r\n", policy).unwrap();
+        assert_eq!(put.check, EntryCheck::Parsed { reader: "legacy terrain map", dialect: None });
+        let error = format!("{:#}", editor.replace(&target, b"legacyId,newId,newSubType\n1,0,1\n", policy).unwrap_err());
+        assert!(error.contains("not in the shipped format at line 1"), "{error}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
