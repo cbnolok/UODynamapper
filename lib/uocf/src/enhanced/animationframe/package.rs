@@ -43,11 +43,23 @@ pub fn write_entry(
     action: u16,
     payload: &[u8],
 ) -> eyre::Result<EntryChange> {
+    AnimationFrame::load(payload).wrap_err("the payload is not an AnimationFrame entry")?;
+    write_payload(source, output, AnimationFrame::animationframe_hash(body, action), payload)
+}
+
+/// Writes a copy of `source` to `output` with `payload` as the entry `hash`, unchecked (the callers check the
+/// payload's format): replaced keeping its compression, or added with the compression of the package's entries.
+/// `output` must not be `source`.
+pub fn write_payload(
+    source: impl AsRef<Path>,
+    output: impl AsRef<Path>,
+    hash: u64,
+    payload: &[u8],
+) -> eyre::Result<EntryChange> {
     let (source, output) = (source.as_ref(), output.as_ref());
     uop_entries::refuse_to_overwrite(source, output)?;
-    AnimationFrame::load(payload).wrap_err("the payload is not an AnimationFrame entry")?;
     let mut package = UopPackage::load(source).wrap_err_with(|| format!("failed to load {}", source.display()))?;
-    let change = put(&mut package, AnimationFrame::animationframe_hash(body, action), payload)?;
+    let change = put(&mut package, hash, payload)?;
     uop_entries::save_package_as(&mut package, source, output)?;
     Ok(change)
 }

@@ -7,6 +7,7 @@ pub mod hues;
 pub mod radarcol;
 pub mod statics;
 pub mod anim;
+pub mod anim_frames;
 pub mod animdata;
 pub mod animationframe_cc;
 pub mod body_def;

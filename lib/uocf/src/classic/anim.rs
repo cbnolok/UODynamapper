@@ -18,6 +18,9 @@ use crate::utils::path::find_file_ignoring_case;
 
 pub const MAX_ANIM_FILES: u8 = 6; // anim, anim2, anim3, anim4, anim5
 const MAX_CLASSIC_ANIM_FRAME_DIMENSION: u16 = 2048;
+/// A frame offset of 0 is no frame: the client skips it (`UOClassicAnim::GetMulFrame`); 365 frames of the 7.0.103
+/// `anim.mul` have it.
+const MISSING_FRAME_OFFSET: usize = 0;
 const MAX_CLASSIC_ANIM_FRAME_PIXELS: usize =
     MAX_CLASSIC_ANIM_FRAME_DIMENSION as usize * MAX_CLASSIC_ANIM_FRAME_DIMENSION as usize;
 
@@ -345,6 +348,10 @@ fn decode_animation_payload(data: &[u8], lookup: usize) -> eyre::Result<Vec<Anim
         let mut frames = Vec::with_capacity(frame_count);
         for i in 0..frame_count {
             let offset = read_frame_offset(frame_offsets, i)? as usize;
+            if offset == MISSING_FRAME_OFFSET {
+                frames.push(AnimFrame { width: 0, height: 0, center_x: 0, center_y: 0, data: Vec::new() });
+                continue;
+            }
             let frame_start = frame_offset_base
                 .checked_add(offset)
                 .ok_or_else(|| eyre!("Frame offset {} overflows", offset))?;
@@ -426,6 +433,10 @@ fn decode_animation_payload_metadata(data: &[u8], lookup: usize) -> eyre::Result
         let mut frames = Vec::with_capacity(frame_count);
         for i in 0..frame_count {
             let offset = read_frame_offset(frame_offsets, i)? as usize;
+            if offset == MISSING_FRAME_OFFSET {
+                frames.push(AnimFrameInfo { width: 0, height: 0, center_x: 0, center_y: 0 });
+                continue;
+            }
             let frame_start = frame_offset_base
                 .checked_add(offset)
                 .ok_or_else(|| eyre!("Frame offset {} overflows", offset))?;

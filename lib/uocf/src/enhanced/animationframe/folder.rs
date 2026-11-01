@@ -257,7 +257,8 @@ pub fn import_folder(dir: impl AsRef<Path>) -> eyre::Result<ImportedFrames> {
     Ok(ImportedFrames { sidecar, payload, report })
 }
 
-fn write_new(path: &Path, bytes: &[u8]) -> eyre::Result<()> {
+/// Writes a new file; an existing one is never overwritten.
+pub(crate) fn write_new(path: &Path, bytes: &[u8]) -> eyre::Result<()> {
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -266,7 +267,7 @@ fn write_new(path: &Path, bytes: &[u8]) -> eyre::Result<()> {
     file.write_all(bytes).wrap_err_with(|| format!("failed to write {}", path.display()))
 }
 
-fn write_png(path: &Path, width: u16, height: u16, pixels: &[u8], colour: image::ExtendedColorType) -> eyre::Result<()> {
+pub(crate) fn write_png(path: &Path, width: u16, height: u16, pixels: &[u8], colour: image::ExtendedColorType) -> eyre::Result<()> {
     let mut bytes = Vec::new();
     image::codecs::png::PngEncoder::new(&mut bytes)
         .write_image(pixels, u32::from(width), u32::from(height), colour)
@@ -349,7 +350,7 @@ pub fn sidecar_to_kdl(sidecar: &FrameFolderSidecar) -> String {
     text
 }
 
-fn kdl_string(text: &str) -> String {
+pub(crate) fn kdl_string(text: &str) -> String {
     format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
@@ -508,7 +509,7 @@ fn read_frame(node: &KdlNode, default_action: u16) -> eyre::Result<FolderFrame> 
     Ok(frame)
 }
 
-fn value_i16(value: &Value<LineSpan>, field: &str) -> eyre::Result<i16> {
+pub(crate) fn value_i16(value: &Value<LineSpan>, field: &str) -> eyre::Result<i16> {
     let span = value.literal.span();
     if let Some(type_name) = &value.type_name {
         return Err(error_at(type_name.span(), "type annotations are not supported"));
