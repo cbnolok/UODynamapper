@@ -1,9 +1,7 @@
 use eframe::egui;
 use crate::app::{guess_uop_image_format_from_payload, UopInspectorApp};
 use super::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by};
-use uocf::audio::validate::FormatPolicy;
 use uocf::enhanced::client_dialect::ClientDialect;
-use uocf::enhanced::entry_edit::{EntryCheck, EntryTarget, UopEntryEditor};
 use uocf::enhanced::tileart::TileArtEntry;
 use uocf::enhanced::waypoints::{
     WaypointClilocDefinition, WaypointTypeDefinition, WaypointsPackage,
@@ -40,21 +38,11 @@ fn replace_entry_file(app: &mut UopInspectorApp, source: &std::path::Path, hash:
     else {
         return;
     };
-    let target = if uocf::uop_container::hash::hash_file_name_single(name) == hash {
-        EntryTarget::Name(name.to_owned())
-    } else {
-        EntryTarget::Hash(hash)
-    };
+    use crate::logic::entry_text_editor::{check_summary, entry_target, save_entry_copy};
     let result = (|| -> color_eyre::eyre::Result<String> {
         let file = std::fs::read(&input)?;
-        let mut editor = UopEntryEditor::load(source)?;
-        let edit = editor.replace(&target, &file, FormatPolicy::VerifiedOnly)?;
-        editor.save_as(&output)?;
-        let check = match edit.check {
-            EntryCheck::Parsed { reader, .. } => format!("checked: {reader}"),
-            EntryCheck::Kind(kind) | EntryCheck::Unchecked(kind) => format!("{} by content", kind.label()),
-        };
-        Ok(format!("{:?} {name} ({:?}, {check}) in {}. {UOP_PATCHER_NOTE}", edit.write, edit.compression, output.display()))
+        let edit = save_entry_copy(source, &entry_target(name, hash), &file, &output)?;
+        Ok(format!("{:?} {name} ({:?}, {}) in {}. {UOP_PATCHER_NOTE}", edit.write, edit.compression, check_summary(&edit.check), output.display()))
     })();
     app.status_message = result.unwrap_or_else(|e| format!("Failed to replace {name}: {e:#}"));
 }
@@ -589,16 +577,10 @@ fn ui_generic_preview(
                     ui.image(&handle);
                 });
             }
-        } else if data.starts_with(b"<?xml") || name.ends_with(".xml") || name.ends_with(".def") {
-            if let Ok(text) = std::str::from_utf8(data) {
-                let mut text_ref = text;
-                egui::ScrollArea::both().show(ui, |ui| {
-                    ui.add(egui::TextEdit::multiline(&mut text_ref)
-                        .font(egui::TextStyle::Monospace)
-                        .code_editor()
-                        .desired_width(f32::INFINITY));
-                });
-            }
+        } else if let Some(source) = app.uop_cache.loaded_uops.get(uop_idx).map(|loaded| loaded.path.clone())
+            && app.entry_text_edits.open(&source, hash, data).is_some()
+        {
+            ui_entry_text_editor(app, ui, &source, hash, name);
         } else {
             ui.label("Hex Preview (first 1KB):");
             egui::ScrollArea::vertical().show(ui, |ui| {
@@ -611,6 +593,57 @@ fn ui_generic_preview(
             });
         }
     }
+}
+
+const TEXT_EDITOR_HOVER: &str = "Edit the entry as text. It is saved with the encoding, byte order mark and line \
+endings it has, checked like \"Replace file...\" (kind, and the reader uocf has for the entry), to a copy of the \
+package.";
+
+/// The text editor of a text entry (opened in `app.entry_text_edits`): its encoding, the text, and saving a copy.
+fn ui_entry_text_editor(app: &mut UopInspectorApp, ui: &mut egui::Ui, source: &std::path::Path, hash: u64, name: &str) {
+    use crate::logic::entry_text_editor::{check_summary, entry_target, save_entry_copy};
+    let Some(edit) = app.entry_text_edits.open(source, hash, &[]) else { return };
+    let modified = edit.modified();
+    let mut save = false;
+    let mut revert = false;
+    ui.horizontal(|ui| {
+        ui.label(format!("Text: {}", edit.original.label())).on_hover_text(TEXT_EDITOR_HOVER);
+        if modified {
+            ui.label("(modified)");
+        }
+        save = ui.add_enabled(modified, egui::Button::new("Save copy...")).on_hover_text(TEXT_EDITOR_HOVER).clicked();
+        revert = ui.add_enabled(modified, egui::Button::new("Revert")).clicked();
+    });
+    egui::ScrollArea::both().show(ui, |ui| {
+        ui.add(egui::TextEdit::multiline(&mut edit.buffer).font(egui::TextStyle::Monospace).code_editor().desired_width(f32::INFINITY));
+    });
+    if revert {
+        app.entry_text_edits.close(source, hash);
+        return;
+    }
+    if !save {
+        return;
+    }
+    let bytes = match edit.encoded() {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            app.status_message = format!("Cannot store {name}: {error:#}");
+            return;
+        }
+    };
+    let file_name = source.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+    let Some(output) = crate::dialog::file_dialog()
+        .add_filter(UOP_FILTER.0, UOP_FILTER.1)
+        .set_title("Write the edited package to")
+        .set_file_name(&file_name)
+        .save_file()
+    else {
+        return;
+    };
+    app.status_message = match save_entry_copy(source, &entry_target(name, hash), &bytes, &output) {
+        Ok(edit) => format!("{:?} {name} ({:?}, {}) in {}. {UOP_PATCHER_NOTE}", edit.write, edit.compression, check_summary(&edit.check), output.display()),
+        Err(error) => format!("Failed to save {name}: {error:#}"),
+    };
 }
 
 fn ui_integrated_tileart_view(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui, file: &uocf::uop_container::file::UopFile) {

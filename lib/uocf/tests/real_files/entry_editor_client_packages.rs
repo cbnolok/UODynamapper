@@ -1,7 +1,7 @@
 //! The generic UOP entry editor over real clients: every shipped entry of every package of the Enhanced Client
 //! (`UO_EC_CLIENT_DIR`) and Kingdom Reborn (`UO_KR_CLIENT_DIR`) passes its own replacement check, and an edit of
-//! `GameData.uop` keeps the other entries, the flags and an unchanged save byte for byte. Copies go under the
-//! temporary directory (`TMPDIR`).
+//! `GameData.uop` keeps the other entries, the flags and an unchanged save byte for byte; every text entry decodes
+//! for the text editor and encodes back to its bytes. Copies go under the temporary directory (`TMPDIR`).
 
 use crate::common;
 
@@ -11,7 +11,8 @@ use std::path::{Path, PathBuf};
 use rayon::prelude::*;
 use uocf::audio::validate::FormatPolicy;
 use uocf::enhanced::entry_edit::{EntryCheck, EntryTarget, EntryWrite, UopEntryEditor};
-use uocf::enhanced::image_census::find_packages;
+use uocf::enhanced::entry_text::EntryText;
+use uocf::enhanced::image_census::{classify_content, find_packages, ContentFormat};
 use uocf::enhanced::legacy_terrain_map::UOP_ENTRY_PATH as LEGACY_TERRAIN_MAP_ENTRY;
 use uocf::enhanced::string_dictionary::UoStringDictionary;
 use uocf::uop_container::file::CompressionFlag;
@@ -152,4 +153,41 @@ fn game_data_entries_are_replaced_and_added() {
     assert_eq!(saved.get_file_by_hash(map.hash()).unwrap().compression(), flag);
     assert_eq!(saved.unpack_file_by_hash(hash_file_name_single(added_name)).unwrap().unwrap(), b"a,b\r\n1,2\r\n");
     let _ = std::fs::remove_dir_all(&out);
+}
+
+/// Every text, XML and UTF-16 text entry, and every binary one that is Windows-1252 text, decodes as the text
+/// editor shows it and encodes back to its bytes; the encodings and line endings are printed per client.
+#[test]
+#[ignore = "needs real clients: set UO_EC_CLIENT_DIR and/or UO_KR_CLIENT_DIR and run with --ignored"]
+fn every_text_entry_encodes_back_to_its_bytes() {
+    const TEXT_KINDS: [ContentFormat; 3] = [ContentFormat::Text, ContentFormat::Xml, ContentFormat::Utf16Text];
+    let dirs: Vec<(&str, PathBuf)> =
+        CLIENT_DIR_ENVS.into_iter().filter_map(|(env, _)| std::env::var_os(env).map(|dir| (env, PathBuf::from(dir)))).collect();
+    assert!(!dirs.is_empty(), "set {}", CLIENT_DIR_ENVS.map(|(env, _)| env).join(" and/or "));
+    let mut failures = Vec::new();
+    for (env, dir) in dirs {
+        let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+        for path in find_packages(&dir).unwrap() {
+            let package = UopPackage::load(&path).unwrap();
+            for file in package.iter_files().filter(|file| !file.is_empty_slot()) {
+                let payload = package.unpack_file_by_hash(file.filename_hash()).unwrap().unwrap();
+                let kind = classify_content(&payload).format;
+                if !TEXT_KINDS.contains(&kind) && kind != ContentFormat::Binary {
+                    continue;
+                }
+                let label = format!("{env} {}: {:016X}", path.file_name().unwrap().to_string_lossy(), file.filename_hash());
+                match EntryText::decode(&payload) {
+                    None if kind == ContentFormat::Binary => {}
+                    Some(text) if text.encode_unchanged() == payload => *counts.entry(text.label()).or_default() += 1,
+                    Some(text) => failures.push(format!("{label}: {} does not encode back", text.label())),
+                    None => failures.push(format!("{label}: does not decode")),
+                }
+            }
+        }
+        println!("{env}: {counts:?}");
+    }
+    for failure in failures.iter().take(SHOWN_FAILURES) {
+        println!("FAIL {failure}");
+    }
+    assert!(failures.is_empty(), "{} text entries fail", failures.len());
 }

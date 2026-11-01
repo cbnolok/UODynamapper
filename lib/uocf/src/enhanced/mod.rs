@@ -14,6 +14,7 @@ pub mod dds_writer;
 pub mod effect_definition;
 pub mod effect_texture;
 pub mod entry_edit;
+pub mod entry_text;
 pub mod facet_decoder;
 pub mod facet_definition;
 pub mod facet_encoder;

@@ -5,7 +5,8 @@
 //!   may hold: the kind its name's extension declares ([`declared_format`]), text for a text extension
 //!   ([`TEXT_EXTENSIONS`]), or the kind of the (non-empty) entry it replaces; a TGA with trailing bytes counts as a
 //!   TGA and a BMP with a wrong size field as a BMP. An unnamed entry of plain binary takes only plain binary (the
-//!   shipped 18-byte placeholders named `.tga` take a TGA or another placeholder). A mismatch is refused under
+//!   shipped 18-byte placeholders named `.tga` take a TGA or another placeholder); Windows-1252 text counts as
+//!   text ([`entry_kind`]). A mismatch is refused under
 //!   every policy. An entry added without a name or a known extension has nothing to
 //!   check against ([`EntryCheck::Unchecked`]).
 //! - **Parse check.** Where a strict reader exists for the entry ([`PARSE_CHECKS`]), the file must parse. On a
@@ -24,6 +25,7 @@ use std::path::{Path, PathBuf};
 use crate::audio::validate::{enhanced_format_report, kind_mismatch, FormatPolicy};
 use crate::audio::{probe_audio, AudioContent};
 use crate::enhanced::client_dialect::ClientDialect;
+use crate::enhanced::entry_text::windows_1252_text;
 use crate::enhanced::image_census::{classify_content, declared_format, name_extension, ContentFormat};
 use crate::enhanced::uop_entries::{put_entry, save_package_as};
 use crate::uop_container::file::CompressionFlag;
@@ -409,6 +411,15 @@ pub enum EntryCheck {
     Unchecked(ContentFormat),
 }
 
+/// The kind a file counts as for the kind check: its [`kind_family`], and text for a file that is Windows-1252
+/// text ([`windows_1252_text`]: the EC `GameData.uop` table with an `A0` byte), so that it takes its UTF-8 edit.
+pub fn entry_kind(bytes: &[u8]) -> ContentFormat {
+    match kind_family(classify_content(bytes).format) {
+        ContentFormat::Binary if windows_1252_text(bytes).is_some() => ContentFormat::Text,
+        kind => kind,
+    }
+}
+
 /// What happened to an entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntryWrite {
@@ -498,8 +509,8 @@ impl UopEntryEditor {
     /// Checks `file` for the entry `target` (current payload `current`): the kind, the parse, the audio formats.
     fn check(&self, target: &EntryTarget, current: Option<&[u8]>, file: &[u8], policy: FormatPolicy) -> eyre::Result<(EntryCheck, Vec<String>)> {
         let label = target.label();
-        let kind = kind_family(classify_content(file).format);
-        let current_kind = current.map(|bytes| kind_family(classify_content(bytes).format));
+        let kind = entry_kind(file);
+        let current_kind = current.map(entry_kind);
         let name = target.name();
         let mut expected: Vec<ContentFormat> = name.and_then(declared_format).map(kind_family).into_iter().collect();
         let text_extension = name.and_then(name_extension).is_some_and(|extension| TEXT_EXTENSIONS.contains(&extension.as_str()));
@@ -571,7 +582,7 @@ impl UopEntryEditor {
         let (mut uncompressed, mut zlib) = (0usize, 0usize);
         for (hash, flag) in files {
             let Some(payload) = self.unpack(hash)? else { continue };
-            if kind_family(classify_content(&payload).format) != kind {
+            if entry_kind(&payload) != kind {
                 continue;
             }
             match flag {
@@ -598,7 +609,7 @@ impl UopEntryEditor {
         let current = self.unpack(hash)?;
         let (check, warnings) = self.check(target, current.as_deref(), file, policy)?;
         let write = self.put_unchecked(hash, file, compression)?;
-        let kind = kind_family(classify_content(file).format);
+        let kind = entry_kind(file);
         Ok(EntryEdit { hash, name: target.name().map(str::to_owned), write, compression, kind, check, warnings })
     }
 
@@ -617,7 +628,7 @@ impl UopEntryEditor {
             eyre::bail!("{}: an entry needs a payload", target.label());
         }
         let (check, warnings) = self.check(target, None, file, policy)?;
-        let kind = kind_family(classify_content(file).format);
+        let kind = entry_kind(file);
         let compression = match compression {
             Some(compression) => compression,
             None => self.family_compression(kind)?,
@@ -675,6 +686,7 @@ mod tests {
                 (XML_NAME, b"<?xml version=\"1.0\"?><a/>", CompressionFlag::None),
                 (MP3_NAME, &mp3, CompressionFlag::None),
                 ("build/test/blob.bin", &[0, 1, 2, 3, 0xff], CompressionFlag::Zlib),
+                ("data/test/latin.csv", b"Prized\xa0,1\r\n", CompressionFlag::Zlib),
             ],
         );
         let mut editor = UopEntryEditor::load(&path).unwrap();
@@ -689,6 +701,8 @@ mod tests {
         let wav = wav::encode_pcm_wav(22_050, 1, &[0, 0]);
         let error = editor.replace(&EntryTarget::Name(MP3_NAME.to_owned()), &wav, FormatPolicy::AllowUnverified).unwrap_err();
         assert!(error.to_string().contains("never stored"), "{error}");
+        let latin = EntryTarget::Hash(hash_file_name_single("data/test/latin.csv"));
+        assert_eq!(editor.replace(&latin, b"Prized,1\r\n", policy).unwrap().check, EntryCheck::Kind(ContentFormat::Text), "Windows-1252 takes UTF-8");
         let blob = EntryTarget::parse(&format!("{:016X}", hash_file_name_single("build/test/blob.bin"))).unwrap();
         assert_eq!(EntryTarget::parse("0x1f").unwrap(), EntryTarget::Hash(0x1f));
         assert!(EntryTarget::parse("0xnothex").is_err());
