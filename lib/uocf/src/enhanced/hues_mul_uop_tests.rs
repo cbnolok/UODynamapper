@@ -233,3 +233,99 @@ fn packages_without_metadata_keep_colours_and_default_the_rest() {
     assert!(recovered.hues.trailing.is_empty());
     assert!(recovered.hues.groups.iter().all(|group| group.header == 0));
 }
+
+/// Low bits an authored EC gradient carries below the 5-bit colours.
+const AUTHORED_LOW_BITS: u8 = 0b101;
+/// `bfSize` and `biSizeImage` of the KR's other bitmap header, and the bytes it has after the pixels.
+const KR_HEADER_FILE_SIZE_FIELD: usize = 2;
+const KR_HEADER_IMAGE_SIZE_FIELD: usize = 34;
+const KR_HEADER_IMAGE_SIZE: u32 = 2050;
+const KR_HEADER_TRAILING: [u8; 2] = [0; 2];
+/// `biBitCount` field, and a depth the client refuses.
+const BIT_COUNT_FIELD: usize = 28;
+const REFUSED_BIT_COUNT: u16 = 24;
+
+fn entry_data<'a>(entries: &'a [HuesUopEntry], hash: u64) -> &'a [u8] {
+    &entries.iter().find(|entry| entry.hash == hash).expect("entry").data
+}
+
+fn set_entry(entries: &mut [HuesUopEntry], hash: u64, data: Vec<u8>) {
+    entries.iter_mut().find(|entry| entry.hash == hash).expect("entry").data = data;
+}
+
+#[test]
+fn writing_on_a_base_keeps_unedited_hues_byte_for_byte() {
+    let (authored, refused, edited, renamed, unnamed, truncated) = (5u32, 6u32, 7u32, 8u32, 3u32, 4u32);
+    let mut hues = synthetic_hues();
+    hues.hue_mut(unnamed).unwrap().name = [0; HUE_NAME_LEN];
+    let truncated_name = b"ABCDEFGHIJKLMNOPQRS";
+    let truncated_hue = hues.hue_mut(truncated).unwrap();
+    truncated_hue.name = [0; HUE_NAME_LEN];
+    truncated_hue.name[..truncated_name.len()].copy_from_slice(truncated_name);
+
+    // The base, as EA ships it: no metadata, one authored bitmap with the KR header, names of an older file.
+    let mut base = build_hues_uop_entries(&hues, HueRampMode::Linear);
+    base.retain(|entry| entry.path.as_deref() != Some(HUES_MUL_METADATA_PATH));
+    let mut table = hue_palette_row(&hues.hue(authored).unwrap().color_table, HueRampMode::Linear);
+    for texel in &mut table {
+        for channel in &mut texel[..RGBA_CHANNELS - 1] {
+            *channel |= AUTHORED_LOW_BITS;
+        }
+    }
+    let swatch = [1, 2, 3, OPAQUE];
+    let mut authored_bitmap = encode_hue_bitmap(&table, swatch);
+    authored_bitmap.extend_from_slice(&KR_HEADER_TRAILING);
+    let file_size = authored_bitmap.len() as u32;
+    authored_bitmap[KR_HEADER_FILE_SIZE_FIELD..KR_HEADER_FILE_SIZE_FIELD + 4].copy_from_slice(&file_size.to_le_bytes());
+    authored_bitmap[KR_HEADER_IMAGE_SIZE_FIELD..KR_HEADER_IMAGE_SIZE_FIELD + 4]
+        .copy_from_slice(&KR_HEADER_IMAGE_SIZE.to_le_bytes());
+    set_entry(&mut base, hue_bitmap_hash(authored as u16), authored_bitmap.clone());
+    let mut refused_bitmap = entry_data(&base, hue_bitmap_hash(refused as u16)).to_vec();
+    refused_bitmap[BIT_COUNT_FIELD..BIT_COUNT_FIELD + 2].copy_from_slice(&REFUSED_BIT_COUNT.to_le_bytes());
+    set_entry(&mut base, hue_bitmap_hash(refused as u16), refused_bitmap);
+    let mut csv = Vec::new();
+    for hue in hues.hues() {
+        let line = match hue.id {
+            id if id == unnamed => format!("{id}").into_bytes(),
+            id if id == truncated => format!("{id},{}T", std::str::from_utf8(truncated_name).unwrap()).into_bytes(),
+            id if id == renamed => format!("{id},Old").into_bytes(),
+            id => [format!("{id:04},").into_bytes(), hue.name_bytes().to_vec()].concat(),
+        };
+        csv.extend_from_slice(&line);
+        csv.extend_from_slice(CSV_LINE_END);
+    }
+    set_entry(&mut base, hash_file_name_single(HUENAMES_PATH), csv.clone());
+    let base_package = package_of(&base);
+
+    hues.hue_mut(edited).unwrap().color_table[0] ^= RED;
+    let (entries, reuse) = build_hues_uop_entries_on_base(&hues, &base_package).expect("build on base");
+    assert_eq!(reuse.bitmaps_rebuilt, vec![refused, edited]);
+    assert_eq!(reuse.bitmaps_kept, hues.hue_count() - 2);
+    assert_eq!(reuse.names_rebuilt, vec![renamed]);
+    assert_eq!(reuse.names_kept, hues.hue_count() - 1);
+
+    assert_eq!(entry_data(&entries, hue_bitmap_hash(authored as u16)), authored_bitmap);
+    for id in [refused, edited] {
+        let hue = hues.hue(id).unwrap();
+        let rule = encode_hue_bitmap(&hue_palette_row(&hue.color_table, HueRampMode::Linear), hue_swatch_color(&hue.color_table));
+        assert_eq!(entry_data(&entries, hue_bitmap_hash(id as u16)), rule);
+    }
+    let (_, _, atlas) = decode_argb32_dds(entry_data(&entries, hash_file_name_single(HUES_ATLAS_PATH))).unwrap();
+    let coord = atlas_coord_for_hue(authored as u16).unwrap();
+    let start = coord.y as usize * HUES_ATLAS_WIDTH as usize + coord.x as usize;
+    assert_eq!(atlas[start..start + HUE_TABLE_ENTRIES], table);
+    let (_, _, grid) = decode_argb32_dds(entry_data(&entries, FIXED_PALETTE_HASH)).unwrap();
+    let side = SWATCH_GRID_SIDE as usize;
+    assert_eq!(grid[(authored as usize % side) * side + authored as usize / side], swatch);
+    // Every name line but the renamed hue's is the base's, in the base's spelling.
+    let names = String::from_utf8_lossy(entry_data(&entries, hash_file_name_single(HUENAMES_PATH))).to_string();
+    let base_names = String::from_utf8_lossy(&csv).to_string();
+    let differing: Vec<_> = names.split("\r\n").zip(base_names.split("\r\n")).filter(|(a, b)| a != b).collect();
+    let renamed_line = format!("{renamed},{}", String::from_utf8_lossy(hues.hue(renamed).unwrap().name_bytes()));
+    assert_eq!(differing, vec![(renamed_line.as_str(), format!("{renamed},Old").as_str())]);
+    assert!(names.starts_with("0001,"));
+
+    let recovered = hues_mul_from_uop_package(&package_of(&entries)).expect("recover");
+    assert!(recovered.had_metadata);
+    assert_eq!(recovered.hues.to_bytes(), hues.to_bytes());
+}

@@ -792,6 +792,17 @@ Facet sizes in the executable (`client_exe::facet_dimensions`,
   still match the Classic file of the same release. EA's format drops bit 15,
   table start/end, raw names and group headers; the converter keeps them in
   `build/hues/huesmul_metadata.bin`, which the client never reads.
+- The other 365 EC bitmaps (2024) are 8-bit gradients saved by other tools:
+  their texels at x = 8i reduce (`v >> 3`) to the `hues.mul` colours, the
+  rest follows no rule, and their headers differ (293 with `bfSize` = 2,102
+  and 3,780 ppm; 72 of 2,104 bytes with `biSizeImage` 2,050, 2,834 ppm and 2
+  bytes after the pixels; the KR has 4 of these). `UOHues::LoadHueBitmap`
+  (0x004271f0) checks only `biBitCount` 32, `biWidth` 256, `biHeight` 2, reads
+  the pixels at `bfOffBits`, and takes the first texel of the first stored row
+  as the swatch and the second stored row as the table. `huenames.csv` keeps
+  20-byte names of an older `hues.mul` and drops the comma on 824 empty rows
+  of ids 1921..3000 (not all). Writing on an existing package
+  (`build_hues_uop_entries_on_base`) keeps these for every unedited hue.
 - Hue 0x4001 (shadow; the server sets it for a dead bonded pet through 0xBF
   sub-command 0x19): every pixel is black. Its alpha comes from the inverse
   luminance `inv = 255 - trunc(b0 * .34 + b2 * .07 + b1 * .59)` and the

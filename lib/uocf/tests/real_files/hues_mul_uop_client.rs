@@ -10,11 +10,11 @@ use std::path::{Path, PathBuf};
 
 use uocf::classic::hues::{HuesMul, HUE_COLOR_COUNT};
 use uocf::enhanced::hues::{
-    atlas_coord_for_hue, decode_hue_image_to_rgba, hue_bitmap_hash, FIXED_PALETTE_HASH, HUES_ATLAS_PATH,
-    HUES_ATLAS_WIDTH, HUE_TABLE_ENTRIES, MAX_EC_HUES,
+    atlas_coord_for_hue, decode_hue_image_to_rgba, hue_bitmap_hash, FIXED_PALETTE_HASH, HUENAMES_PATH,
+    HUES_ATLAS_PATH, HUES_ATLAS_WIDTH, HUE_TABLE_ENTRIES, MAX_EC_HUES,
 };
 use uocf::enhanced::hues_mul_uop::{
-    build_hues_uop_entries, decode_argb32_dds, encode_hue_bitmap, expand_hue_color, hue_palette_row,
+    build_hues_uop_entries, build_hues_uop_entries_on_base, decode_argb32_dds, encode_hue_bitmap, expand_hue_color, hue_palette_row,
     hue_swatch_color, hues_mul_from_uop_package, write_hues_uop, HueRampMode, SWATCH_GRID_SIDE,
     TEXELS_PER_HUE_COLOR,
 };
@@ -184,6 +184,57 @@ fn ea_packages_convert_to_hues_mul_best_effort() {
                 same_bytes,
                 classic_bytes.len(),
                 if ours == classic_bytes { " (identical)" } else { "" }
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "needs client files: set UO_CC_CLIENT_DIR, UO_EC_CLIENT_DIR and/or UO_HUES_CLIENT_DIRS"]
+fn hues_mul_written_on_an_ea_package_keeps_its_unedited_hues_byte_for_byte() {
+    let muls = sources(HUES_MUL_NAME);
+    for uop_path in sources(HUES_UOP_NAME) {
+        let base = UopPackage::load_with_mode(&uop_path, LoadMode::Eager).unwrap();
+        let base_entry = |hash: u64| base.unpack_file_by_hash(hash).unwrap();
+        for mul_path in &muls {
+            let source = std::fs::read(mul_path).unwrap();
+            let hues = HuesMul::parse(&source);
+            let (entries, reuse) = build_hues_uop_entries_on_base(&hues, &base).unwrap();
+            assert_eq!(reuse.bitmaps_kept + reuse.bitmaps_rebuilt.len(), hues.hue_count());
+            assert_eq!(reuse.names_kept + reuse.names_rebuilt.len(), hues.hue_count());
+            let same = |hash: u64| entries.iter().find(|entry| entry.hash == hash).map(|entry| Some(&entry.data) == base_entry(hash).as_ref());
+            let identical_bitmaps = hues.hues().filter(|hue| same(hash_file_name_single(&format!("data/definitions/hues/hue{:04}.bmp", hue.id))) == Some(true)).count();
+            let (atlas, swatches, names) = (
+                same(hash_file_name_single(HUES_ATLAS_PATH)) == Some(true),
+                same(FIXED_PALETTE_HASH) == Some(true),
+                same(hash_file_name_single(HUENAMES_PATH)) == Some(true),
+            );
+            assert!(identical_bitmaps >= reuse.bitmaps_kept, "every kept bitmap is EA's");
+            let every_ea_hue_kept =
+                reuse.bitmaps_rebuilt.is_empty() && hues.hue_count() == usize::from(MAX_EC_HUES);
+            if every_ea_hue_kept {
+                assert!(atlas && swatches, "with every hue kept, the atlas and swatch texture are EA's");
+            }
+
+            let written = temp_path("Hues.uop");
+            write_hues_uop(&entries, &written, Some(TEST_FILETIME)).unwrap();
+            let package = UopPackage::load_with_mode(&written, LoadMode::Eager).unwrap();
+            let recovered = hues_mul_from_uop_package(&package).unwrap();
+            std::fs::remove_file(&written).unwrap();
+            assert_eq!(recovered.hues.to_bytes(), source, "the package converts back to the identical hues.mul");
+            println!(
+                "{} on {}: {} hues, bitmaps kept {} (byte-identical {identical_bitmaps}), rebuilt {}; name lines kept {}, \
+                 rebuilt {}; atlas {}, swatches {}, huenames.csv {}; back to the identical hues.mul",
+                label(mul_path),
+                label(&uop_path),
+                hues.hue_count(),
+                reuse.bitmaps_kept,
+                reuse.bitmaps_rebuilt.len(),
+                reuse.names_kept,
+                reuse.names_rebuilt.len(),
+                if atlas { "identical" } else { "differs" },
+                if swatches { "identical" } else { "differ" },
+                if names { "identical" } else { "differs" },
             );
         }
     }

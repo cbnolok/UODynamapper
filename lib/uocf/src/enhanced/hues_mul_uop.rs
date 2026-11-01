@@ -13,8 +13,9 @@
 //! channels `c << 3`, and the 7 texels after it ramp linearly to colour `i + 1` (colour 31 is held to the end),
 //! [`HueRampMode::Linear`]. The ramp is exact in integers because both ends are multiples of 8. The swatch is
 //! the larger of colour 0 and colour 31 as 15-bit values. Both rules reproduce every EA bitmap whose colours
-//! still match the Classic file of the same release (2635 of 3000 hues in the 2024 clients; the others were
-//! repainted in the EC).
+//! still match the Classic file of the same release (2635 of 3000 hues in the 2024 clients). The other 365 are
+//! 8-bit gradients that `hues.mul` holds only reduced to 5 bits: [`build_hues_uop_entries_on_base`] keeps them,
+//! and every other unedited hue, from an existing package.
 //!
 //! EA's format drops what `hues.mul` has beyond the 15-bit colours: bit 15 of each colour, table start and
 //! end, the raw 20 name bytes, the group headers and any bytes after the last whole group. This converter
@@ -237,25 +238,35 @@ pub fn decode_argb32_dds(bytes: &[u8]) -> eyre::Result<(u32, u32, Vec<Rgba>)> {
 
 /// The atlas texels (`HUES_ATLAS_WIDTH` x `HUES_ATLAS_HEIGHT`) of every hue up to `MAX_EC_HUES`.
 pub fn build_hues_atlas(hues: &HuesMul, mode: HueRampMode) -> Vec<Rgba> {
+    atlas_of_tables(hues.hues().map(|hue| (hue.id, hue_palette_row(&hue.color_table, mode))))
+}
+
+/// The atlas texels of `(hue id, table row)` pairs; ids without an atlas row are skipped.
+fn atlas_of_tables(tables: impl Iterator<Item = (u32, [Rgba; HUE_TABLE_ENTRIES])>) -> Vec<Rgba> {
     let width = HUES_ATLAS_WIDTH as usize;
     let mut atlas = vec![TRANSPARENT; width * HUES_ATLAS_HEIGHT as usize];
-    for hue in hues.hues() {
-        let Some(coord) = u16::try_from(hue.id).ok().and_then(atlas_coord_for_hue) else {
+    for (id, table) in tables {
+        let Some(coord) = u16::try_from(id).ok().and_then(atlas_coord_for_hue) else {
             continue;
         };
         let start = coord.y as usize * width + coord.x as usize;
-        atlas[start..start + HUE_TABLE_ENTRIES].copy_from_slice(&hue_palette_row(&hue.color_table, mode));
+        atlas[start..start + HUE_TABLE_ENTRIES].copy_from_slice(&table);
     }
     atlas
 }
 
 /// The swatch texture texels (`SWATCH_GRID_SIDE` squared) of every hue up to `MAX_EC_HUES`.
 pub fn build_swatch_grid(hues: &HuesMul) -> Vec<Rgba> {
+    swatch_grid_of(hues.hues().map(|hue| (hue.id, hue_swatch_color(&hue.color_table))))
+}
+
+/// The swatch texture texels of `(hue id, swatch)` pairs; ids above `MAX_EC_HUES` are skipped.
+fn swatch_grid_of(swatches: impl Iterator<Item = (u32, Rgba)>) -> Vec<Rgba> {
     let side = SWATCH_GRID_SIDE as usize;
     let mut grid = vec![TRANSPARENT; side * side];
-    for hue in hues.hues().filter(|hue| hue.id <= u32::from(MAX_EC_HUES)) {
-        let (x, y) = (hue.id as usize / side, hue.id as usize % side);
-        grid[y * side + x] = hue_swatch_color(&hue.color_table);
+    for (id, swatch) in swatches.filter(|(id, _)| *id <= u32::from(MAX_EC_HUES)) {
+        let (x, y) = (id as usize / side, id as usize % side);
+        grid[y * side + x] = swatch;
     }
     grid
 }
@@ -407,22 +418,48 @@ impl HuesUopEntry {
 /// The entries of the `Hues.uop` of `hues`, in EA's order, then the metadata entry. Every hue gets a bitmap;
 /// the atlas and swatch texture hold the hues up to `MAX_EC_HUES`.
 pub fn build_hues_uop_entries(hues: &HuesMul, mode: HueRampMode) -> Vec<HuesUopEntry> {
-    let mut entries = Vec::with_capacity(hues.hue_count() + 4);
+    let parts = hues.hues().map(|hue| HueParts::by_rule(hue, mode)).collect::<Vec<_>>();
+    assemble_hues_uop_entries(hues, parts, encode_huenames_csv(hues))
+}
+
+/// What one hue puts in a `Hues.uop`: its table row (bitmap and atlas), swatch (swatch texture) and bitmap.
+struct HueParts {
+    id: u32,
+    table: [Rgba; HUE_TABLE_ENTRIES],
+    swatch: Rgba,
+    bitmap: Vec<u8>,
+}
+
+impl HueParts {
+    /// The parts of `hue` by EA's rules: the `mode` ramp and the larger end colour as the swatch.
+    fn by_rule(hue: &HueEntry, mode: HueRampMode) -> Self {
+        let table = hue_palette_row(&hue.color_table, mode);
+        let swatch = hue_swatch_color(&hue.color_table);
+        Self { id: hue.id, table, swatch, bitmap: encode_hue_bitmap(&table, swatch) }
+    }
+}
+
+/// The entries of a `Hues.uop` in EA's order: the swatch texture, the atlas, the bitmaps (`parts`, one per hue of
+/// `hues`), `huenames.csv`, then the metadata entry.
+fn assemble_hues_uop_entries(hues: &HuesMul, parts: Vec<HueParts>, huenames_csv: Vec<u8>) -> Vec<HuesUopEntry> {
+    let mut entries = Vec::with_capacity(parts.len() + 4);
     entries.push(HuesUopEntry {
         hash: FIXED_PALETTE_HASH,
         path: None,
-        data: encode_argb32_dds(SWATCH_GRID_SIDE, SWATCH_GRID_SIDE, &build_swatch_grid(hues)),
+        data: encode_argb32_dds(
+            SWATCH_GRID_SIDE,
+            SWATCH_GRID_SIDE,
+            &swatch_grid_of(parts.iter().map(|part| (part.id, part.swatch))),
+        ),
     });
     entries.push(HuesUopEntry::named(
         HUES_ATLAS_PATH.to_string(),
-        encode_argb32_dds(HUES_ATLAS_WIDTH, HUES_ATLAS_HEIGHT, &build_hues_atlas(hues, mode)),
+        encode_argb32_dds(HUES_ATLAS_WIDTH, HUES_ATLAS_HEIGHT, &atlas_of_tables(parts.iter().map(|part| (part.id, part.table)))),
     ));
-    for hue in hues.hues() {
-        let table = hue_palette_row(&hue.color_table, mode);
-        let bitmap = encode_hue_bitmap(&table, hue_swatch_color(&hue.color_table));
-        entries.push(HuesUopEntry::named(hue_bitmap_file_path(hue.id), bitmap));
+    for part in parts {
+        entries.push(HuesUopEntry::named(hue_bitmap_file_path(part.id), part.bitmap));
     }
-    entries.push(HuesUopEntry::named(HUENAMES_PATH.to_string(), encode_huenames_csv(hues)));
+    entries.push(HuesUopEntry::named(HUENAMES_PATH.to_string(), huenames_csv));
     entries.push(HuesUopEntry::named(HUES_MUL_METADATA_PATH.to_string(), HuesMulMetadata::from_hues(hues).encode()));
     entries
 }
@@ -588,6 +625,10 @@ fn hue_bitmap_file_path(id: u32) -> String {
 fn push_bgra(out: &mut Vec<u8>, texel: Rgba) {
     out.extend_from_slice(&[texel[2], texel[1], texel[0], texel[3]]);
 }
+
+#[path = "hues_mul_uop_base.rs"]
+mod base;
+pub use base::{build_hues_uop_entries_on_base, convert_hues_mul_to_uop_on_base, BaseReuse};
 
 #[cfg(test)]
 #[path = "hues_mul_uop_tests.rs"]
