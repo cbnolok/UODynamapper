@@ -1,3 +1,4 @@
+import package::shaders::world::art::picking::{pick_clip, pick_pass, pick_color};
 import bevy_pbr::render::{
     forward_io::Vertex,
     view_transformations,
@@ -106,11 +107,12 @@ fn vertex(vertex: Vertex) -> GroundVertexOutput {
     out.world_pos = world_pos;
     out.instance_index = u32(vertex.uv_b.x + 0.5);
     out.reflection_uv = ec_liquid_camera_reflection_uv(world_pos, scene.ec_reflection_camera_distance);
+    @if(STATIC_PICK)
+    out.position = pick_clip(out.position);
     return out;
 }
 
-@fragment
-fn fragment(in: GroundVertexOutput) -> GroundFragmentOutput {
+fn shade_fragment(in: GroundVertexOutput, sample_index: u32) -> GroundFragmentOutput {
     var out: GroundFragmentOutput;
     // This is a horizontal world quad, so depth must vary across its surface.
     // A sprite's constant priority depth intersects the terrain plane and leaves
@@ -149,7 +151,10 @@ fn fragment(in: GroundVertexOutput) -> GroundFragmentOutput {
     // Blend authored partial-alpha coverage instead of making half-opaque masks
     // solid. Other art keeps its existing sprite split.
     let alpha_cutoff = select(sprite_params.alpha_cutoff, 0.9999, use_ec_water_material);
-    if (sprite_params.pass_mode == PASS_MODE_OPAQUE) {
+    var pass_mode = sprite_params.pass_mode;
+    @if(STATIC_PICK)
+    pass_mode = pick_pass();
+    if (pass_mode == PASS_MODE_OPAQUE) {
         if color.a < 0.0001 || color.a < alpha_cutoff {
             discard;
         }
@@ -157,6 +162,11 @@ fn fragment(in: GroundVertexOutput) -> GroundFragmentOutput {
         if color.a < 0.0001 || color.a >= alpha_cutoff {
             discard;
         }
+    }
+
+    @if(STATIC_PICK) {
+        out.color = pick_color(in.instance_index, true, out.depth, sample_index);
+        return out;
     }
 
     var shaded = color * in.color;
@@ -227,4 +237,13 @@ fn fragment(in: GroundVertexOutput) -> GroundFragmentOutput {
 
     out.color = vec4<f32>(max(final_rgb, vec3<f32>(0.0)), shaded.a);
     return out;
+}
+
+@fragment
+fn fragment(in: GroundVertexOutput) -> GroundFragmentOutput { return shade_fragment(in, 0u); }
+
+@if(STATIC_PICK)
+@fragment
+fn pick_fragment(in: GroundVertexOutput, @builtin(sample_index) sample_index: u32) -> GroundFragmentOutput {
+    return shade_fragment(in, sample_index);
 }

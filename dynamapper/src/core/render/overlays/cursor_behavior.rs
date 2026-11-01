@@ -3,10 +3,9 @@ use crate::core::controls::input_actions::{
 };
 use crate::core::controls::{InjectedPointer, effective_cursor_position};
 use crate::core::render::scene::world::art::statics_collect::{
-    resolve_priority_z_units, resolve_static_depth_class, static_depth_key,
     static_tile_is_surface_like, static_tile_renders_wet,
 };
-use crate::core::render::scene::world::art::static_geometry::{StaticArtRoute, StaticPickingResources, projected_quad_hit};
+use crate::core::render::scene::world::art::static_geometry::{StaticArtRoute, StaticPickingResources};
 use crate::core::render::scene::player::Player;
 use crate::core::render::{
     dialogs,
@@ -544,7 +543,6 @@ struct HoveredStaticMatch {
     tile: uocf::classic::statics::PackedStaticTile,
     kind: HoveredObjectKind,
     corners: [Vec3; 4],
-    depth_key: f32,
     global_x: u16,
     global_y: u16,
     route: StaticArtRoute,
@@ -674,23 +672,12 @@ fn find_hovered_static_object(
     map_id: u8,
 ) -> Option<HoveredStaticMatch> {
     if !settings.world_rendering.enable_statics { return None; }
-    picking.prepare_alpha();
-    let mut best_match: Option<HoveredStaticMatch> = None;
-
-    for tile in picking.visible_tiles(u32::from(map_id)) {
-        let Some(candidate) = hovered_static_match(picking, cursor_pos, camera,
-            camera_tf, tilemeta_res, tile) else { continue; };
-        if best_match.as_ref().is_none_or(|current| candidate.depth_key >= current.depth_key) {
-            best_match = Some(candidate);
-        }
-    }
-
-    best_match
+    let tile = picking.visible_hit(cursor_pos, camera, camera_tf, u32::from(map_id))?;
+    hovered_static_match(picking, camera, camera_tf, tilemeta_res, tile)
 }
 
 fn hovered_static_match(
     picking: &mut StaticPickingResources,
-    cursor_pos: Vec2,
     camera: &Camera,
     camera_tf: &GlobalTransform,
     tilemeta_res: Option<&TileMetaPackageRes>,
@@ -705,24 +692,19 @@ fn hovered_static_match(
     if tilemeta.is_some_and(|meta| meta.is_nodraw()) {
         return None;
     }
-    let depth_class = resolve_static_depth_class(tilemeta, candidate.is_wet);
     let world_x = source.world_x;
     let world_z = source.world_z;
     let geometry = picking.resolve(graphic, world_x, world_z, tile.z)?;
     let kind = if geometry.flat_quad == 0 { HoveredObjectKind::Sprite } else { HoveredObjectKind::Ground };
     let corners = geometry.corners(camera, camera_tf);
 
-    let hit = projected_quad_hit(cursor_pos, camera, camera_tf, corners)?;
-    if !picking.alpha_visible(geometry, hit, candidate.is_wet) { return None; }
+    // Visibility is the GPU material/depth result. Reconstruct only the logical
+    // owner and its highlight; do not re-reject it with a different CPU sampler.
 
-    let priority_z_units = resolve_priority_z_units(tile.z, tilemeta, depth_class);
-    let depth_key = static_depth_key(geometry.priority_anchor.x, geometry.priority_anchor.y,
-        priority_z_units, depth_class);
     Some(HoveredStaticMatch {
         tile,
         kind,
         corners,
-        depth_key,
         global_x: world_x as u16,
         global_y: world_z as u16,
         route: geometry.route,

@@ -1095,6 +1095,8 @@ struct CachedStaticChunk {
     sprite_instances: Vec<SpriteInstance>,
     ground_instances: Vec<GroundTileInstance>,
     pick_tiles: Vec<StaticPickTile>,
+    sprite_pick_indices: Vec<usize>,
+    ground_pick_indices: Vec<usize>,
     stats: CachedStaticChunkStats,
     last_visible_tick: u64,
 }
@@ -1111,12 +1113,21 @@ pub struct StaticChunkRenderCache {
 impl StaticChunkRenderCache {
     /// Only admitted objects in the current rendered set; includes expanded multi
     /// parts and large sprites whose owning cell is far from the ground cursor.
-    pub(crate) fn visible_pick_tiles(&self, map_id: u32) -> impl Iterator<Item = StaticPickTile> + '_ {
-        self.last_visible_chunk_keys.iter().filter(move |key| key.map_id == map_id)
-            .filter_map(|key| self.chunks.get(key))
-            .flat_map(|chunk| chunk.pick_tiles.iter().copied())
+    /// Snapshot the logical owner in the exact order used by each GPU instance
+    /// buffer. Pixel-query replies retain this snapshot across asynchronous frames.
+    pub(crate) fn gpu_pick_targets(&self, batches: &RenderStaticChunkBatches) -> [Vec<StaticPickTile>; 2] {
+        std::array::from_fn(|kind| {
+            let batches = if kind == 0 { &batches.sprite } else { &batches.ground };
+            let mut targets = Vec::new();
+            for batch in batches {
+                let Some(chunk) = self.chunks.get(&batch.key) else { return Vec::new(); };
+                let indices = if kind == 0 { &chunk.sprite_pick_indices } else { &chunk.ground_pick_indices };
+                if targets.len() != batch.start as usize || indices.len() != batch.count as usize { return Vec::new(); }
+                targets.extend(indices.iter().map(|&index| chunk.pick_tiles[index]));
+            }
+            targets
+        })
     }
-
     fn begin_frame(&mut self) -> u64 {
         self.current_tick = self.current_tick.saturating_add(1);
         self.current_tick
@@ -1723,7 +1734,9 @@ pub fn sys_sync_static_art_source(
                 fallback_label,
             ),
         );
-    } else if effective_source == Some(requested_source) {
+    } else if effective_source == Some(requested_source) && source_state.warned_unavailable_source.is_some() {
+        // A redundant write here invalidates asynchronous visibility queries on
+        // every frame even though the selected artwork has not changed.
         source_state.warned_unavailable_source = None;
     }
 
@@ -1824,6 +1837,8 @@ struct StaticChunkBuildState {
     sprite_instances: Vec<SpriteInstance>,
     ground_instances: Vec<GroundTileInstance>,
     pick_tiles: Vec<StaticPickTile>,
+    sprite_pick_indices: Vec<(f32, usize)>,
+    ground_pick_indices: Vec<(f32, usize)>,
     requested_pages: HashSet<u64>,
     stats: CachedStaticChunkStats,
     render_tiles: Vec<StaticRenderTile>,
@@ -2212,7 +2227,17 @@ fn emit_static_render_tile(
             build,
         );
         if before != (build.sprite_instances.len(), build.ground_instances.len()) {
+            let index = build.pick_tiles.len();
             build.pick_tiles.push(StaticPickTile { tile: render_tile, is_wet: info.is_wet_flags & 1 != 0 });
+            if before.0 < build.sprite_instances.len() {
+                let inst = build.sprite_instances.last().unwrap();
+                build.sprite_pick_indices.push((static_depth_key(inst.tile_x, inst.tile_y,
+                    inst.priority_z_units, decode_depth_class(inst.depth_class)), index));
+            } else {
+                let inst = build.ground_instances.last().unwrap();
+                build.ground_pick_indices.push((static_depth_key(inst.tile_x, inst.tile_y,
+                    inst.priority_z_units, decode_depth_class(inst.depth_class)), index));
+            }
         }
     }
 }
@@ -2662,6 +2687,11 @@ fn finish_rebuilt_static_chunk(
     visible_tick: u64,
 ) -> CachedStaticChunk {
     sort_static_chunk_instances(&mut build.sprite_instances, &mut build.ground_instances);
+    // Match the stable instance sort, including equal-depth emission order.
+    let sorted_indices = |mut indices: Vec<(f32, usize)>| {
+        indices.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        indices.into_iter().map(|(_, index)| index).collect()
+    };
 
     let mut requested_pages = build.requested_pages.into_iter().collect::<Vec<_>>();
     requested_pages.sort_unstable();
@@ -2671,6 +2701,8 @@ fn finish_rebuilt_static_chunk(
         sprite_instances: build.sprite_instances,
         ground_instances: build.ground_instances,
         pick_tiles: build.pick_tiles,
+        sprite_pick_indices: sorted_indices(build.sprite_pick_indices),
+        ground_pick_indices: sorted_indices(build.ground_pick_indices),
         stats: build.stats,
         last_visible_tick: visible_tick,
     }
@@ -3202,6 +3234,33 @@ mod tests {
     }
 
     #[test]
+    fn gpu_pick_owner_order_matches_sorted_sprite_and_ground_instances() {
+        let owner = |graphic, z| StaticPickTile { tile: StaticRenderTile {
+            graphic, world_x: 10.0, world_z: 20.0, z, hue: 33 }, is_wet: false };
+        let mut build = StaticChunkBuildState::default();
+        build.pick_tiles = vec![owner(18910, -5), owner(2901, 0), owner(6044, -5)];
+        let mut front = SpriteInstance::zeroed();
+        front.tile_x = 2.0;
+        let mut back = front;
+        back.tile_x = 1.0;
+        build.sprite_instances = vec![front, back];
+        build.sprite_pick_indices = vec![(static_depth_key(2.0, 0.0, 0.0, StaticDepthClass::Regular), 0),
+            (static_depth_key(1.0, 0.0, 0.0, StaticDepthClass::Regular), 1)];
+        build.ground_instances = vec![GroundTileInstance::zeroed()];
+        build.ground_pick_indices = vec![(0.0, 2)];
+        let chunk = finish_rebuilt_static_chunk(build, 1);
+        let key = StaticChunkBatchKey { map_id: 0, gx: 1, gy: 2, scale: 1 };
+        let mut cache = StaticChunkRenderCache::default();
+        cache.chunks.insert(key, chunk);
+        let batch = StaticChunkBatch { key, start: 0, count: 2 };
+        let batches = RenderStaticChunkBatches { sprite: vec![batch],
+            ground: vec![StaticChunkBatch { count: 1, ..batch }] };
+        let targets = cache.gpu_pick_targets(&batches);
+        assert_eq!(targets, [vec![owner(2901, 0), owner(18910, -5)], vec![owner(6044, -5)]]);
+        assert_eq!(cache.chunks[&key].sprite_instances[0].tile_x, 1.0);
+    }
+
+    #[test]
     fn wet_surface_like_tiles_keep_surface_depth_and_land_redirection() {
         let tile = item_tile_with_flags(
             TILE_FLAG_WET,
@@ -3432,19 +3491,23 @@ mod tests {
     }
 
     #[test]
-    fn picking_uses_only_the_current_visible_set_and_preserves_expanded_tile_data() {
+    fn picking_uses_only_current_batches_and_preserves_expanded_tile_data() {
         let visible = StaticChunkBatchKey { map_id: 0, gx: 2, gy: 3, scale: 1 };
         let other = StaticChunkBatchKey { gx: 20, ..visible };
         let expanded = StaticPickTile { tile: StaticRenderTile { graphic: 3240,
             world_x: 1046.0, world_z: 2253.0, z: -7, hue: 22 }, is_wet: false };
         let mut cache = StaticChunkRenderCache::default();
-        cache.chunks.insert(visible, CachedStaticChunk { pick_tiles: vec![expanded], ..Default::default() });
-        cache.chunks.insert(other, CachedStaticChunk { pick_tiles: vec![expanded], ..Default::default() });
-        cache.last_visible_chunk_keys = vec![visible];
-        assert_eq!(cache.visible_pick_tiles(0).collect::<Vec<_>>(), vec![expanded]);
-        assert_eq!(cache.visible_pick_tiles(1).count(), 0);
-        cache.last_visible_chunk_keys.clear();
-        assert_eq!(cache.visible_pick_tiles(0).count(), 0);
+        for key in [visible, other] {
+            cache.chunks.insert(key, CachedStaticChunk { pick_tiles: vec![expanded],
+                sprite_pick_indices: vec![0], ..Default::default() });
+        }
+        let mut batches = RenderStaticChunkBatches { sprite: vec![StaticChunkBatch {
+            key: visible, start: 0, count: 1 }], ..Default::default() };
+        assert_eq!(cache.gpu_pick_targets(&batches), [vec![expanded], Vec::new()]);
+        batches.sprite.clear();
+        assert_eq!(cache.gpu_pick_targets(&batches), [Vec::new(), Vec::new()]);
+        batches.sprite.push(StaticChunkBatch { key: visible, start: 1, count: 1 });
+        assert!(cache.gpu_pick_targets(&batches)[0].is_empty(), "invalid GPU indices must not select another object");
     }
 
     #[test]

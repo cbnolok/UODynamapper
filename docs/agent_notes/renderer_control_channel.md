@@ -83,3 +83,14 @@ input completion alone does not establish a visually settled UI.
 Reusable commands and transport documentation live in
 `scripts/dev-helpers/renderer/`. They can drive one preview through multiple
 locations without changing startup session state or rebuilding capture hooks.
+
+
+## Pixel-query readiness
+
+`status.picking` exposes the active physical pixel, request serial, render-seen
+and encoded serials, and ready/pending state. Readback is asynchronous; encoded
+commands alone do not establish a hit. `control.py wait-pick` checks the injected
+pointer's physical pixel and allows the inspector's following update to finish.
+A successful empty hit is ready, while map/readback failure stays unready.
+Animation can keep another frame pending while a recent matching-view reply is
+ready. Changed pointer, camera or content cannot reuse the old view's reply.

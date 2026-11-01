@@ -49,6 +49,21 @@ uniforms. `status.static_lights.instances` exposes the collector count. Use thes
 to verify the source state for an effect comparison, then inspect actual pixels;
 the count does not establish visible light decals or GPU completion.
 
+`status.picking` exposes the physical query pixel, request serial, render-seen
+serial, encoded serial, and ready/pending state. Encoded commands are not a GPU
+completion fence. After an app-only pointer command, use `wait-pick` before
+reading/capturing its inspector result:
+
+```sh
+python3 scripts/dev-helpers/renderer/control.py --socket /tmp/my-preview/control.sock pointer 638 330
+python3 scripts/dev-helpers/renderer/control.py --socket /tmp/my-preview/control.sock wait-pick
+```
+
+The command accepts a ready empty hit, rejects a stale pixel and waits for the
+following inspector update. Enable inspection/highlighting first; hidden
+inspection does not request queries. Animated scenes can have both a ready
+matching-view reply and a newer pending query.
+
 `status.cursor_inspect` exposes the current cursor-inspection label for native
 picking probes. Enable the cursor overlay in the isolated settings, tap `KeyI`,
 then send an app-only `pointer` command. Allow an update before reading status.

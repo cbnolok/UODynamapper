@@ -75,6 +75,32 @@ def wait_for_scene(endpoint, timeout, position=None):
         time.sleep(0.1)
 
 
+def wait_for_pick(endpoint, timeout):
+    """Wait for a GPU reply for the injected pointer, including an empty hit."""
+    deadline = time.monotonic() + timeout
+    previous = None
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError('visible-object query did not finish')
+        status = request(endpoint, {'command': 'status'}, remaining)
+        pick = status.get('picking')
+        pointer = status.get('input', {}).get('pointer')
+        scale = status.get('window', {}).get('scale_factor')
+        if pick and pointer is not None and scale is not None:
+            pixel = [int(value * scale) for value in pointer]
+            if pick['ready'] and pick['pixel'] == pixel:
+                # The GPU reply is drained before the inspector text updates.
+                # Observe a second ready frame before returning its label.
+                fingerprint = (tuple(pixel), tuple(status.get('rendered_position') or []))
+                if fingerprint == previous:
+                    return status
+                previous = fingerprint
+            else:
+                previous = None
+        time.sleep(0.05)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--socket', type=Path, required=True)
@@ -87,6 +113,7 @@ def main():
     teleport.add_argument('--map', type=int, default=0)
     actions.add_parser('status')
     actions.add_parser('wait-ready', help='Wait for stable terrain and sprite readiness before capture')
+    actions.add_parser('wait-pick', help='Wait for visible-object picking at the app-only pointer')
     capture = actions.add_parser('capture')
     capture.add_argument('path', type=Path)
     key = actions.add_parser('key', help='Send a named Bevy KeyCode, for example F2 or ControlLeft')
@@ -126,6 +153,7 @@ def main():
     if args.command == 'reset-input':
         command['command'] = 'reset_input'
     result = (wait_for_scene(args.socket, args.timeout) if args.command == 'wait-ready'
+              else wait_for_pick(args.socket, args.timeout) if args.command == 'wait-pick'
               else request(args.socket, command, args.timeout))
     if args.command in ['key', 'text', 'pointer', 'click', 'scroll', 'reset-input']:
         # Acknowledgement means queued. Drain press/release frames; UI animation,

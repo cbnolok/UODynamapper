@@ -11,6 +11,18 @@ spec.loader.exec_module(control)
 
 
 class SceneReadinessTests(unittest.TestCase):
+    def test_pick_wait_rejects_stale_pixel_and_accepts_an_empty_visible_hit(self):
+        ready = {'picking': {'ready': True, 'pixel': [20, 40]},
+                 'input': {'pointer': [10, 20]}, 'window': {'scale_factor': 2}}
+        pending = copy.deepcopy(ready)
+        pending['picking']['ready'] = False
+        stale = copy.deepcopy(ready)
+        stale['picking']['pixel'] = [19, 40]
+        with patch.object(control, 'request', side_effect=[pending, stale, ready, ready]) as request, \
+                patch.object(control.time, 'sleep'):
+            self.assertEqual(control.wait_for_pick('/unused', 10), ready)
+            self.assertEqual(request.call_count, 4)
+
     def test_terrain_ready_does_not_admit_pending_or_changing_art(self):
         ready = {'position': [2834, 987, 0, 0], 'rendered_position': [2834, 987, 0, 0],
                  'terrain': {'metadata_pending': False, 'metadata_revision': 8,

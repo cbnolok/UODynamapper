@@ -200,3 +200,14 @@ occlusion. This is not a claim of complete original-client depth parity.
 Native acceptance and source/package evidence are retained in
 `bridge-cross-chunk-accepted-evidence.json` under
 `/tmp/uodynamapper-ec-followup`.
+
+
+## Visible-object query
+
+Inspection/highlighting now use [the GPU material/depth query](static_hover_geometry.md#current-visibility-query).
+The former CPU `static_depth_key` winner could disagree with projected priority
+and per-fragment ground depth. In particular, the bridge's screen `(530,410)`
+selects visible water 6043 at Z=-5 instead of an occluded plank, and `(530,490)`
+selects stair 1874 at Z=10 instead of the overlapping Z=15 piece. The drawing
+depth policy itself is unchanged. Exact coincident opaque ties remain a stated
+query-ordering limit; this is not a global original-client depth replacement.

@@ -1,3 +1,4 @@
+import package::shaders::world::art::picking::{pick_clip, pick_pass, pick_color};
 import bevy_pbr::render::{
     forward_io::Vertex,
     view_transformations,
@@ -154,11 +155,12 @@ fn vertex(vertex: Vertex) -> ArtVertexOutput {
     out.is_wet = inst.is_wet_flags & 1u;
     out.world_pos = world_pos;
     out.instance_index = u32(vertex.uv_b.x + 0.5);
+    @if(STATIC_PICK)
+    out.position = pick_clip(out.position);
     return out;
 }
 
-@fragment
-fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
+fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
     var out: ArtFragmentOutput;
     out.depth = in.logical_depth;
 
@@ -314,7 +316,10 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
     let visible_alpha = color.a * in.color.a;
     let alpha_cutoff = select(sprite_params.alpha_cutoff, 0.9999,
         surface_header.x != 0u || blend_surface || in.color.a < 0.9999);
-    if (sprite_params.pass_mode == PASS_MODE_OPAQUE) {
+    var pass_mode = sprite_params.pass_mode;
+    @if(STATIC_PICK)
+    pass_mode = pick_pass();
+    if (pass_mode == PASS_MODE_OPAQUE) {
         if visible_alpha < 0.0001 || visible_alpha < alpha_cutoff {
             discard;
         }
@@ -322,6 +327,11 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
         if visible_alpha < 0.0001 || visible_alpha >= alpha_cutoff {
             discard;
         }
+    }
+
+    @if(STATIC_PICK) {
+        out.color = pick_color(in.instance_index, false, out.depth, sample_index);
+        return out;
     }
 
     var shaded = color * in.color;
@@ -434,4 +444,13 @@ fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput {
 
     out.color = vec4<f32>(max(final_rgb, vec3<f32>(0.0)), shaded.a);
     return out;
+}
+
+@fragment
+fn fragment(in: ArtVertexOutput) -> ArtFragmentOutput { return shade_fragment(in, 0u); }
+
+@if(STATIC_PICK)
+@fragment
+fn pick_fragment(in: ArtVertexOutput, @builtin(sample_index) sample_index: u32) -> ArtFragmentOutput {
+    return shade_fragment(in, sample_index);
 }

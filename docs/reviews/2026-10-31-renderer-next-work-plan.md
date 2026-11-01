@@ -16,6 +16,15 @@ backups. See [the acceptance and its limits](2026-11-01-renderer-art-handoff.md)
 The next implementation phase is composed-material and visible-depth picking
 (phase 2 below). The rest of this document retains the original handoff rationale.
 
+## Static visibility follow-up
+
+The authored-material coverage and opaque-terrain/depth part of phase 2 is now
+implemented through a shared-shader GPU query. See [the accepted static picking
+review](2026-11-01-visible-static-picking.md). The separate cursor-cell diagnostic
+still uses the Y=0 plane; accurate visible-terrain coordinates remain a bounded
+follow-up before treating this as a gameplay surface query. Individual geometry,
+rare exact-depth ties and later animation/effect work retain their scope below.
+
 ## Updated handoff and scope
 
 The auxiliary-package investigation changes the earlier diagnosis. The old

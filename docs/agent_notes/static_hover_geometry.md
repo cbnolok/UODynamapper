@@ -1,5 +1,41 @@
 # Static hover geometry
 
+## Current visibility query
+
+`gpu_picking.rs` now supplies the inspector/highlight's visible logical owner.
+It rasterizes one pixel using the production art/ground material composition,
+coverage, opacity and depth. Both projections and MSAA share the drawing path.
+`StaticPickingResources` reconstructs only that selected owner's highlight and
+source label; the CPU alpha cache and projected-quad priority picker below were
+retired. See [the implementation, evidence and limits](../reviews/2026-11-01-visible-static-picking.md).
+
+Instance indices map through the collector's stable sorted owner tables. Async
+replies retain their logical snapshot and reject changed pointers/views/content.
+Do not use a render index, billboard offset or painter priority as a walking
+coordinate. Main color/depth are never written by the query. The existing four
+bind groups remain sufficient because art reconstructs positions without the
+stock mesh group; its query variant uses that unused group for query resources.
+
+Keep actual content revisions and alpha controls in cache keys. The source
+selector's former repeated `warned_unavailable_source = None` write changed its
+Bevy tick every frame and starved every readback; it now writes only when a
+warning exists. Rendering-resource bookkeeping or RGB-only lighting changes do
+not establish changed visible coverage.
+
+`status.picking` reports ready/pending state, the physical pixel, request serial,
+render-seen serial and encoded serial. Encoded means commands were recorded;
+only the ready reply establishes successful readback. `control.py wait-pick`
+waits for the injected pointer's query and a following inspector update.
+A valid empty hit is ready; a readback failure is not.
+
+The legacy ground-plane cursor-cell and click-teleport coordinates remain a
+separate approximation on slopes. This query selects visible statics and does
+not yet return rendered terrain XYZ. Exact coincident opaque ties and broader
+camera/facet/multi coverage remain limited as described in the review.
+
+## Earlier CPU implementation (superseded)
+
+
 `world/art/static_geometry.rs::StaticPickingResources` resolves visual bounds
 through the collector's effective art source and
 `resolve_static_visual_kind_cached`. It shares the collector's canonical EC

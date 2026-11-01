@@ -118,9 +118,10 @@ fn poll_control(
         Option<Res<crate::core::render::scene::world::art::static_lights::RenderStaticLightInstances>>,
         Option<Res<crate::core::render::scene::world::art::statics_collect::StaticArtCollectDebugState>>,
         Option<Res<crate::core::texture_cache::art::SpriteArtPageAtlas>>,
-        Option<Res<crate::core::texture_cache::art::GroundArtPageAtlas>>),
+        Option<Res<crate::core::texture_cache::art::GroundArtPageAtlas>>,
+        Option<Res<crate::core::render::scene::world::art::gpu_picking::VisibleStaticPick>>),
 ) {
-    let (uniforms, static_lights, art_stats, sprite_atlas, ground_atlas) = render_state;
+    let (uniforms, static_lights, art_stats, sprite_atlas, ground_atlas, picking) = render_state;
     let (windows, inspect_text) = view;
     if capture_pending.as_ref().is_some_and(|(path, started)| path.exists() || time.elapsed_secs_f64() - started > 30.0) {
         *capture_pending = None;
@@ -170,6 +171,11 @@ fn poll_control(
                         "elapsed_seconds": time.elapsed_secs_f64(),
                         "fps": metric(&fps_path),
                         "frame_ms": metric(&frame_path), "terrain": terrain, "art": art,
+                        "picking": picking.as_ref().map(|p| {
+                            let (serial, pending, ready, pixel, render_seen, encoded) = p.status();
+                            json!({"serial": serial, "pending": pending, "ready": ready, "pixel": pixel,
+                                "render_seen_serial": render_seen, "encoded_serial": encoded})
+                        }),
                         "render": uniforms.as_ref().map(|state| json!({
                             "preset": state.active_preset, "global_lighting": state.global_lighting,
                             "effects": state.effects})),

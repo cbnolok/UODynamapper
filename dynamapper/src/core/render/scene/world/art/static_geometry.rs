@@ -1,10 +1,9 @@
-//! CPU picking uses the same source routing, anchors and bounds as static collection.
+//! Highlight geometry uses the same source routing, anchors and bounds as static collection.
 //! These are visual bounds only; logical XYZ and movement metadata stay on the tile.
 use super::statics_collect::{
     self, StaticArtSourceState, StaticSurfaceLikeResolutionCache, StaticVisualKind,
     StaticChunkRenderCache, StaticPickTile, RenderStaticInstances, RenderStaticLandInstances,
 };
-use super::static_alpha::{StaticAlphaCache, sprite_sample_position};
 use crate::configs::settings::ClientTextureSource;
 use crate::core::render::scene::{camera::RenderZoom, world::land::tile_atlas::TileAtlas};
 use crate::core::uo_files_loader::{TexArtCcPackageRes, TexArtEcPackageRes, TexLandEcPackageRes, TileMetaPackageRes, TexAuxEcPackageRes};
@@ -25,7 +24,9 @@ pub(crate) struct StaticPickingResources<'w> {
     chunks: Res<'w, StaticChunkRenderCache>,
     sprites: Res<'w, RenderStaticInstances>,
     ground: Res<'w, RenderStaticLandInstances>,
-    alpha: ResMut<'w, StaticAlphaCache>,
+    batches: Res<'w, statics_collect::RenderStaticChunkBatches>,
+    gpu_pick: ResMut<'w, super::gpu_picking::VisibleStaticPick>,
+    gpu_request: ResMut<'w, super::gpu_picking::PickRequest>,
     uniforms: Res<'w, crate::configs::shader_presets::UniformState>,
     time: Res<'w, Time>,
 }
@@ -44,12 +45,37 @@ pub(crate) struct StaticArtGeometry {
     pub local_min: Vec2,
     pub local_max: Vec2,
     pub flat_quad: u32,
-    pub priority_anchor: Vec2,
     pub route: StaticArtRoute,
-    pub opacity: f32,
 }
 
 impl<'w> StaticPickingResources<'w> {
+    pub(crate) fn visible_hit(&mut self, cursor: Vec2, camera: &Camera,
+        transform: &GlobalTransform, map: u32) -> Option<StaticPickTile> {
+        let scale = camera.target_scaling_factor()?;
+        let viewport = camera.physical_viewport_rect()?;
+        let pixel = (cursor * scale).floor().as_uvec2();
+        if !viewport.contains(pixel) || self.zoom.0 >= 20.0 {
+            self.gpu_pick.bypass_change_detection().cancel(&mut self.gpu_request);
+            return None;
+        }
+        let signature = super::gpu_picking::PickSignature {
+            pixel, viewport: UVec4::new(viewport.min.x, viewport.min.y, viewport.width(), viewport.height()),
+            clip_from_world: camera.clip_from_view() * transform.to_matrix().inverse(),
+            revisions: [u64::from(self.sprites.last_changed().get()), u64::from(self.ground.last_changed().get()),
+                self.meta.as_ref().map_or(0, |meta| u64::from(meta.last_changed().get())), self.atlas.content_revision,
+                self.source.active_source.map_or(2, |source| match source { ClientTextureSource::Cc => 0, ClientTextureSource::Ec => 1 })],
+            alpha_controls: UVec4::new(self.uniforms.effects.post_process_profile, self.uniforms.effects.terrain_transition_flags,
+                self.uniforms.effects.enable_linear_filtering, self.uniforms.effects.enable_water_animation),
+            animation: if self.uniforms.effects.enable_water_animation != 0 { self.time.elapsed_secs_wrapped().to_bits() } else { 0 },
+            map,
+        };
+        let keys = self.batches.sprite.iter().chain(&self.batches.ground)
+            .filter(|b| b.key.map_id == map).map(|b| b.key).collect();
+        let chunks = &self.chunks;
+        let batches = &self.batches;
+        self.gpu_pick.bypass_change_detection().query(&mut self.gpu_request, signature, || chunks.gpu_pick_targets(batches), keys)
+    }
+
     pub(crate) fn is_changed(&self) -> bool {
         self.source.is_changed() || self.zoom.is_changed() || self.atlas.is_changed()
             || self.meta.as_ref().is_some_and(|value| value.is_changed())
@@ -58,62 +84,8 @@ impl<'w> StaticPickingResources<'w> {
             || self.aux.as_ref().is_some_and(|value| value.is_changed())
             || self.land.as_ref().is_some_and(|value| value.is_changed())
             || self.sprites.is_changed() || self.ground.is_changed() || self.uniforms.is_changed()
+            || self.gpu_pick.is_changed()
             || self.uniforms.effects.enable_water_animation != 0
-    }
-
-    pub(crate) fn visible_tiles(&self, map_id: u32) -> impl Iterator<Item = StaticPickTile> + 'w {
-        Res::clone(&self.chunks).into_inner().visible_pick_tiles(map_id)
-    }
-
-    pub(crate) fn prepare_alpha(&mut self) {
-        self.alpha.sync_packages([self.cc.as_ref().map(|v| v.last_changed()),
-            self.ec.as_ref().map(|v| v.last_changed()), self.aux.as_ref().map(|v| v.last_changed())]);
-    }
-
-    pub(crate) fn alpha_visible(&mut self, geometry: StaticArtGeometry,
-        mut hit: ProjectedQuadHit, is_wet: bool) -> bool {
-        // Authored material surfaces compose several images and coverage masks.
-        // Their base image's alpha alone is not their visible coverage.
-        if geometry.flat_quad >= 2 { return true; }
-        if is_wet && self.uniforms.effects.enable_water_animation != 0 {
-            let t = self.time.elapsed_secs_wrapped();
-            let scale = Vec2::new(1.3 + t.sin() * 0.28, 1.3 + t.cos() * 0.14);
-            hit.uv = Vec2::splat(0.5) + (hit.uv - Vec2::splat(0.5)) / scale;
-            hit.dx /= scale;
-            hit.dy /= scale;
-        }
-        let alpha = match geometry.route {
-            StaticArtRoute::CcArt(id) => {
-                let Some(package) = self.cc.as_ref() else { return false; };
-                let Some(slot) = package.0.present_slot(id) else { return false; };
-                let Some(page) = package.0.pages().get(slot.page_index as usize) else { return false; };
-                let sample = Vec2::new(f32::from(slot.x), f32::from(slot.y))
-                    + sprite_sample_position(hit.uv, hit.dx, hit.dy, Vec2::new(f32::from(slot.width), f32::from(slot.height)));
-                self.alpha.sample((0, slot.page_index), sample, ||
-                    package.0.read_page_rgba(slot.page_index).ok().map(|rgba| (page.used_width, page.used_height, rgba)))
-            }
-            StaticArtRoute::EcArt(id) => {
-                let Some(package) = self.ec.as_ref() else { return false; };
-                let Some(slot) = package.0.present_slot(id) else { return false; };
-                let Some(page) = package.0.pages().get(slot.page_index as usize) else { return false; };
-                let sample = Vec2::new(f32::from(slot.x), f32::from(slot.y))
-                    + sprite_sample_position(hit.uv, hit.dx, hit.dy, Vec2::new(f32::from(slot.width), f32::from(slot.height)));
-                self.alpha.sample((1, slot.page_index), sample, ||
-                    package.0.read_page_rgba(slot.page_index).ok().map(|rgba| (page.used_width, page.used_height, rgba)))
-            }
-            StaticArtRoute::MissingArt => {
-                let Some(package) = self.aux.as_ref() else { return false; };
-                let Some(slot) = package.0.missing_texture_slot() else { return false; };
-                let size = Vec2::new(f32::from(slot.width), f32::from(slot.height));
-                let sample = sprite_sample_position(hit.uv, hit.dx, hit.dy, size);
-                self.alpha.sample((2, 0), sample, || package.0.load_rgba(slot.payload_texture_id).ok()
-                    .flatten().map(|rgba| (u32::from(slot.width), u32::from(slot.height), rgba)))
-            }
-            StaticArtRoute::EcLand(_) => return true,
-        };
-        // Both sprite passes discard below this coverage; a failed page is not
-        // silently treated as an opaque rectangle.
-        alpha.is_some_and(|value| value * geometry.opacity >= 0.0001)
     }
 
     /// The art mode statics are drawn with, if any.
@@ -139,32 +111,32 @@ impl<'w> StaticPickingResources<'w> {
         let (anchor_x, anchor_y) = statics_collect::surface_like_static_world_anchor(kind, x, y);
         let mut geometry = StaticArtGeometry { origin: Vec3::new(anchor_x, height, anchor_y),
             local_min: Vec2::ZERO, local_max: Vec2::ONE, flat_quad: 2,
-            priority_anchor: Vec2::new(anchor_x, anchor_y), route: StaticArtRoute::EcArt(u32::from(graphic)), opacity: 1.0 };
+            route: StaticArtRoute::EcArt(u32::from(graphic)) };
         // Ground material slots cover the owning cell, without a billboard translation.
         if let StaticVisualKind::TexLandEc { resolution } = kind {
             self.land.as_ref()?.0.present_slot(resolution.runtime_slot_id)?;
             geometry.route = StaticArtRoute::EcLand(resolution.runtime_slot_id);
             return Some(geometry);
         }
-        let (offset_x, offset_y, width, height, pixel_ratio, legacy_art) = match kind {
+        let (offset_x, offset_y, width, height, pixel_ratio) = match kind {
             StaticVisualKind::CcRegular { art_id, fallback_art_id } => {
                 let package = &self.cc.as_ref()?.0;
                 let selected = if package.present_slot(u32::from(art_id)).is_some() { art_id } else { fallback_art_id };
                 let slot = package.present_slot(u32::from(selected))?;
                 geometry.route = StaticArtRoute::CcArt(u32::from(selected));
-                (slot.draw_offset_x, slot.draw_offset_y, slot.logical_width(), slot.logical_height(), 1.0, true)
+                (slot.draw_offset_x, slot.draw_offset_y, slot.logical_width(), slot.logical_height(), 1.0)
             }
             StaticVisualKind::EcRegular { art_id } | StaticVisualKind::EcSurface { art_id } => {
                 let slot = self.ec.as_ref()?.0.present_slot(art_id)?;
                 let source = self.ec.as_ref()?.0.sprite_geometry(art_id)?;
                 (slot.draw_offset_x, slot.draw_offset_y, slot.logical_width(), slot.logical_height(),
-                    source.legacy_pixel_ratio(), false)
+                    source.legacy_pixel_ratio())
             }
             StaticVisualKind::TexLandEc { .. } => unreachable!(),
             StaticVisualKind::Missing => {
                 let slot = self.aux.as_ref()?.0.missing_texture_slot()?;
                 geometry.route = StaticArtRoute::MissingArt;
-                (-(slot.width as i32 / 2) as i16, 0, f32::from(slot.width), f32::from(slot.height), 1.0, false)
+                (-(slot.width as i32 / 2) as i16, 0, f32::from(slot.width), f32::from(slot.height), 1.0)
             }
         };
         if matches!(kind, StaticVisualKind::EcSurface { .. }) {
@@ -175,7 +147,6 @@ impl<'w> StaticPickingResources<'w> {
             let (dx, dy) = statics_collect::cc_surface_like_flat_quad_center_offsets(height);
             geometry.origin.x = x + dx;
             geometry.origin.z = y + dy;
-            geometry.priority_anchor = Vec2::new(x, y);
             geometry.local_min = Vec2::new(bounds.local_min_x, bounds.local_min_z);
             geometry.local_max = Vec2::new(bounds.local_max_x, bounds.local_max_z);
             geometry.flat_quad = 1;
@@ -185,9 +156,6 @@ impl<'w> StaticPickingResources<'w> {
             geometry.local_min = Vec2::new(bounds.local_min_x, bounds.local_min_y);
             geometry.local_max = Vec2::new(bounds.local_max_x, bounds.local_max_y);
             geometry.flat_quad = 0;
-        }
-        if !matches!(kind, StaticVisualKind::EcSurface { .. }) {
-            geometry.opacity = statics_collect::static_sprite_opacity(meta, legacy_art);
         }
         Some(geometry)
     }
@@ -224,54 +192,6 @@ impl StaticArtGeometry {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct ProjectedQuadHit {
-    pub uv: Vec2,
-    pub dx: Vec2,
-    pub dy: Vec2,
-}
-
-pub(crate) fn projected_quad_hit(point: Vec2, camera: &Camera,
-    transform: &GlobalTransform, corners: [Vec3; 4]) -> Option<ProjectedQuadHit> {
-    let clip_from_world = camera.clip_from_view() * transform.to_matrix().inverse();
-    let mut screen = [Vec2::ZERO; 4];
-    let mut inverse_w = [0.0; 4];
-    for index in 0..4 {
-        screen[index] = camera.world_to_viewport(transform, corners[index]).ok()?;
-        let clip = clip_from_world * corners[index].extend(1.0);
-        if !clip.is_finite() || clip.w <= 0.0 { return None; }
-        inverse_w[index] = 1.0 / clip.w;
-    }
-    projected_quad_uv(point, screen, inverse_w)
-}
-
-fn projected_quad_uv(point: Vec2, corners: [Vec2; 4], inverse_w: [f32; 4]) -> Option<ProjectedQuadHit> {
-    // Match the renderer's two triangles, rather than their axis-aligned bounding box.
-    let texcoords = [Vec2::ZERO, Vec2::X, Vec2::Y, Vec2::ONE];
-    for indices in [[0, 2, 1], [1, 2, 3]] {
-        let [a, b, c] = indices.map(|index| corners[index]);
-        let area = (b - a).perp_dot(c - a);
-        if !area.is_finite() || area.abs() <= 0.000001 { continue; }
-        let barycentric = |p: Vec2| {
-            let u = (p - a).perp_dot(c - a) / area;
-            let v = (b - a).perp_dot(p - a) / area;
-            Vec3::new(1.0 - u - v, u, v)
-        };
-        let weights = barycentric(point);
-        if weights.min_element() < 0.0 { continue; }
-        let interpolate = |weights: Vec3| {
-            let weighted = weights * Vec3::from_array(indices.map(|i| inverse_w[i]));
-            let uv = indices.into_iter().enumerate().map(|(j, i)| texcoords[i] * weighted[j]).sum::<Vec2>();
-            uv / weighted.element_sum()
-        };
-        let uv = interpolate(weights);
-        let dx = interpolate(barycentric(point + Vec2::X)) - uv;
-        let dy = interpolate(barycentric(point + Vec2::Y)) - uv;
-        if uv.is_finite() && dx.is_finite() && dy.is_finite() { return Some(ProjectedQuadHit { uv, dx, dy }); }
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -299,7 +219,7 @@ mod tests {
             let transform = GlobalTransform::from(Transform::from_xyz(10.0, 10.0, 10.0)
                 .looking_at(Vec3::ZERO, Vec3::Y));
             let ground = StaticArtGeometry { origin, local_min: Vec2::ZERO,
-                local_max: Vec2::ONE, flat_quad: 2, priority_anchor: Vec2::new(12.0, 20.0), route: StaticArtRoute::EcArt(1304), opacity: 1.0 };
+                local_max: Vec2::ONE, flat_quad: 2, route: StaticArtRoute::EcArt(1304) };
             assert_eq!(ground.corners(&camera, &transform), [origin, origin + Vec3::X,
                 origin + Vec3::Z, origin + Vec3::X + Vec3::Z]);
             // The 44px baked CC diamond uses diagonal, centered bounds. Its
@@ -325,7 +245,7 @@ mod tests {
             .looking_at(Vec3::ZERO, Vec3::Y));
         let geometry = StaticArtGeometry { origin: Vec3::new(2.0, -0.5, 3.0),
             local_min: Vec2::ZERO, local_max: Vec2::ONE, flat_quad: 3,
-            priority_anchor: Vec2::new(2.0, 3.0), route: StaticArtRoute::EcArt(1304), opacity: 1.0 };
+            route: StaticArtRoute::EcArt(1304) };
         for perspective in [false, true] {
             let camera = test_camera(perspective);
             for transform in [&iso, &rotated] {
@@ -342,32 +262,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn projected_quad_rejects_empty_bounding_box_corners_in_both_windings() {
-        let diamond = [Vec2::new(0.0, -1.0), Vec2::new(1.0, 0.0),
-            Vec2::new(-1.0, 0.0), Vec2::new(0.0, 1.0)];
-        for corners in [diamond, diamond.map(|p| Vec2::new(-p.x, p.y))] {
-            for point in [Vec2::ZERO, Vec2::new(0.2, 0.6), Vec2::new(0.0, -1.0)] {
-                assert!(projected_quad_uv(point, corners, [1.0; 4]).is_some());
-            }
-            for point in [Vec2::new(0.8, 0.8), Vec2::new(-0.8, -0.8), Vec2::new(2.0, 0.0)] {
-                assert!(projected_quad_uv(point, corners, [1.0; 4]).is_none());
-            }
-        }
-        assert!(projected_quad_uv(Vec2::ZERO, [Vec2::ZERO; 4], [1.0; 4]).is_none());
-    }
-
-    #[test]
-    fn sprite_hit_interpolates_uvs_in_the_drawn_triangle_with_perspective_divide() {
-        let corners = [Vec2::ZERO, Vec2::new(2.0, 0.0), Vec2::new(0.0, 2.0), Vec2::splat(2.0)];
-        let hit = projected_quad_uv(Vec2::ONE, corners, [1.0; 4]).unwrap();
-        assert_eq!(hit.uv, Vec2::splat(0.5));
-        assert_eq!(hit.dx, Vec2::new(0.5, 0.0));
-        assert_eq!(hit.dy, Vec2::new(0.0, 0.5));
-        // An equal screen-space split is not an equal UV split under perspective.
-        let hit = projected_quad_uv(Vec2::ONE, corners, [1.0, 0.5, 1.0, 0.5]).unwrap();
-        assert!((hit.uv - Vec2::new(1.0 / 3.0, 2.0 / 3.0)).length() < 0.000001);
-        let lower = projected_quad_uv(Vec2::splat(1.5), corners, [1.0; 4]).unwrap();
-        assert_eq!(lower.uv, Vec2::splat(0.75));
-    }
 }
