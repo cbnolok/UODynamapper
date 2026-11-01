@@ -15,6 +15,7 @@ mod classic_animation_frame_encoding;
 mod classic_art_encoding;
 mod classic_client_eras;
 mod classic_def_files;
+mod classic_difs_fonts_and_music;
 mod classic_dif_usage;
 mod classic_indexed_mul_writers;
 mod classic_map_writers;
