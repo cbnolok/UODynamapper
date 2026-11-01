@@ -13,6 +13,9 @@
 //!   replace, the reader is the first one (and client dialect) the current entry parses under, so a reader is
 //!   never applied to an entry it does not describe; on an add, the file must parse under one of the readers of
 //!   its package and kind, when there are any.
+//! - **Caller checks.** A crate above uocf adds the readers uocf does not have ([`UopEntryEditor::with_check`]:
+//!   the CLI and the inspector add `gamebryo-nif`'s NIF reader); they are tried before the built-in ones, and
+//!   a replacement or addition is checked with them the same way.
 //! - **Audio.** MP3 and WAV files also pass the `Audio.uop` format checks ([`crate::audio::validate`]) under the
 //!   caller's [`FormatPolicy`].
 //! - **Storage.** A replaced entry keeps its compression flag; an added one gets the flag most entries of its kind
@@ -446,18 +449,32 @@ pub struct EntryEdit {
 pub struct UopEntryEditor {
     source: PathBuf,
     package: UopPackage,
+    /// The caller's readers ([`Self::with_check`]), tried before [`PARSE_CHECKS`].
+    caller_checks: Vec<ParseCheck>,
 }
 
 impl UopEntryEditor {
     pub fn load(path: impl AsRef<Path>) -> eyre::Result<Self> {
         let source = path.as_ref().to_path_buf();
         let package = UopPackage::load_with_mode(&source, LoadMode::Lazy).wrap_err_with(|| format!("Failed to load {}", source.display()))?;
-        Ok(Self { source, package })
+        Ok(Self { source, package, caller_checks: Vec::new() })
     }
 
     /// An editor over a loaded package (from `source`, which [`Self::save_as`] never overwrites).
     pub fn from_package(source: PathBuf, package: UopPackage) -> Self {
-        Self { source, package }
+        Self { source, package, caller_checks: Vec::new() }
+    }
+
+    /// Adds a reader uocf does not have (a NIF parser): it checks the entries it applies to (its packages, kinds
+    /// and name, as for [`PARSE_CHECKS`]) before the built-in readers do.
+    pub fn with_check(mut self, check: ParseCheck) -> Self {
+        self.caller_checks.push(check);
+        self
+    }
+
+    /// [`Self::with_check`] for each of `checks`.
+    pub fn with_checks(self, checks: impl IntoIterator<Item = ParseCheck>) -> Self {
+        checks.into_iter().fold(self, Self::with_check)
     }
 
     pub fn source(&self) -> &Path {
@@ -487,11 +504,12 @@ impl UopEntryEditor {
         Ok(if current.is_some() { EntryWrite::Replaced } else { EntryWrite::Added })
     }
 
-    /// The parse checks of this package that apply to an entry `name` of `kind`.
-    fn parse_checks(&self, name: Option<&str>, kind: ContentFormat) -> Vec<&'static ParseCheck> {
+    /// The parse checks of this package that apply to an entry `name` of `kind`: the caller's, then uocf's.
+    fn parse_checks(&self, name: Option<&str>, kind: ContentFormat) -> Vec<&ParseCheck> {
         let key = package_key(&self.source);
-        PARSE_CHECKS
+        self.caller_checks
             .iter()
+            .chain(PARSE_CHECKS)
             .filter(|check| check.packages.is_empty() || check.packages.contains(&key.as_str()))
             .filter(|check| check.kinds.contains(&kind))
             .filter(|check| check.name.is_none_or(|wanted| name == Some(wanted)))
@@ -499,7 +517,7 @@ impl UopEntryEditor {
     }
 
     /// The first (reader, dialect) of `checks` that accepts `bytes`.
-    fn first_parse(checks: &[&'static ParseCheck], bytes: &[u8]) -> Option<(&'static ParseCheck, ClientDialect)> {
+    fn first_parse<'a>(checks: &[&'a ParseCheck], bytes: &[u8]) -> Option<(&'a ParseCheck, ClientDialect)> {
         checks.iter().find_map(|check| {
             let dialects = if check.dialects { &DIALECTS[..] } else { &DIALECTS[..1] };
             dialects.iter().find(|&&dialect| (check.check)(bytes, dialect).is_ok()).map(|&dialect| (*check, dialect))
@@ -753,6 +771,34 @@ mod tests {
         let mut bytes = Vec::new();
         image::codecs::jpeg::JpegEncoder::new(&mut bytes).encode(&pixels, side, side, image::ExtendedColorType::Rgb8).unwrap();
         bytes
+    }
+
+    #[test]
+    fn checks_with_the_callers_readers() {
+        const NAME: &str = "data/test/model.nif";
+        const NIF_HEADER: &[u8] = b"Gamebryo File Format, Version 20.0.0.4\n";
+        /// A stand-in reader: a NIF must end in `ok`.
+        const ENDS_IN_OK: ParseCheck = ParseCheck {
+            label: "test NIF reader",
+            packages: &[],
+            kinds: &[ContentFormat::Nif],
+            name: None,
+            dialects: false,
+            check: |bytes, _| if bytes.ends_with(b"ok") { Ok(()) } else { Err(eyre!("does not end in ok")) },
+        };
+        let nif = |tail: &[u8]| [NIF_HEADER, tail].concat();
+        let dir = temp_dir("caller_checks");
+        let path = package_with(&dir, "Test.uop", &[(NAME, &nif(b"ok"), CompressionFlag::None)]);
+        let target = EntryTarget::Name(NAME.to_owned());
+        let policy = FormatPolicy::VerifiedOnly;
+        let mut plain = UopEntryEditor::load(&path).unwrap();
+        assert_eq!(plain.replace(&target, &nif(b"bad"), policy).unwrap().check, EntryCheck::Kind(ContentFormat::Nif));
+        let mut editor = UopEntryEditor::load(&path).unwrap().with_checks([ENDS_IN_OK]);
+        let put = editor.replace(&target, &nif(b"also ok"), policy).unwrap();
+        assert_eq!(put.check, EntryCheck::Parsed { reader: "test NIF reader", dialect: None });
+        assert!(editor.replace(&target, &nif(b"bad"), policy).unwrap_err().to_string().contains("test NIF reader"));
+        assert!(editor.add(&EntryTarget::Name("data/test/other.nif".to_owned()), &nif(b"bad"), None, policy).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

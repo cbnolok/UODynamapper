@@ -5,7 +5,8 @@ use clap::{Args, Subcommand, ValueEnum};
 use color_eyre::eyre::{self, WrapErr};
 use uocf::audio::validate::FormatPolicy;
 use uocf::enhanced::dds_writer::{replace_texture_in_uop, SizeChange};
-use uocf::enhanced::entry_edit::{EntryCheck, EntryEdit, EntryTarget, UopEntryEditor};
+use uocf::enhanced::entry_edit::{EntryCheck, EntryEdit, EntryTarget, ParseCheck, UopEntryEditor};
+use uocf::enhanced::image_census::ContentFormat;
 use uocf::uop_container::file::CompressionFlag;
 
 #[derive(Subcommand, Debug)]
@@ -31,7 +32,8 @@ pub enum UopCmd {
     /// Write a copy of a package with one entry replaced by a file of the same kind, checked by its content: the
     /// kind its extension or the current entry has, and, where uocf has a strict reader for the entry (DDS,
     /// images, Chaos scripts, the audio tables, the legacy terrain map and documents, hue bitmaps, tileart,
-    /// animation, effect, terrain, facet, multi, waypoint and string records), a parse. The entry keeps its
+    /// animation, effect, terrain, facet, multi, waypoint and string records, and NIF models: they must read and
+    /// link), a parse. The entry keeps its
     /// compression flag and gets a fresh timestamp; the other entries are untouched.
     ReplaceEntry {
         #[command(flatten)]
@@ -86,7 +88,7 @@ impl EntryArgs {
         let target = EntryTarget::parse(&self.entry)?;
         let file = fs::read(&self.file).wrap_err_with(|| format!("Failed to read {}", self.file.display()))?;
         let policy = if self.allow_unverified_format { FormatPolicy::AllowUnverified } else { FormatPolicy::VerifiedOnly };
-        let mut editor = UopEntryEditor::load(&self.uop)?;
+        let mut editor = UopEntryEditor::load(&self.uop)?.with_check(NIF_CHECK);
         let edit = put(&mut editor, &target, &file, policy)?;
         for warning in &edit.warnings {
             log::warn!("{warning}");
@@ -108,6 +110,16 @@ impl EntryArgs {
         Ok(())
     }
 }
+
+/// A replaced or added NIF must read with `gamebryo-nif` and have no wrong link.
+pub const NIF_CHECK: ParseCheck = ParseCheck {
+    label: "NIF model",
+    packages: &[],
+    kinds: &[ContentFormat::Nif],
+    name: None,
+    dialects: false,
+    check: |bytes, _| gamebryo_nif::read_checked(bytes).map(|_| ()).map_err(|error| eyre::eyre!(error)),
+};
 
 /// The hash an entry argument names.
 fn entry_hash(entry: &str) -> eyre::Result<u64> {

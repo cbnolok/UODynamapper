@@ -244,6 +244,11 @@ fn link_issues_find_wrong_targets() {
     assert_eq!(issues[0].field, "children[0]");
     assert_eq!((issues[0].expected, issues[0].found), ("NiAVObject", Some("NiFloatData")));
     assert_eq!((issues[1].block, issues[1].found), (Some(0), None));
+    let error = crate::read_checked(&nif.write().unwrap()).unwrap_err();
+    assert!(error.starts_with("2 wrong link(s); the first: block 0 children[0] = 1"), "{error}");
+    let linked = file_of(vec![single_node().into()]);
+    assert!(crate::read_checked(&linked.write().unwrap()).is_ok());
+    assert!(crate::read_checked(b"not a NIF\n").is_err());
 }
 
 #[test]

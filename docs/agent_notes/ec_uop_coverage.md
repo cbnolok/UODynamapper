@@ -47,7 +47,7 @@ TMPDIR=/home/claudio/test/uop/<date> UO_EC_CLIENT_DIR="$C/_Ultima Online Enhance
 | | other KR CSV and text (3 / 7) | raw | replace | no | UOP explorer (text editor) | |
 | EffectDefinitionCollection | collections (269 / 258) | typed, both dialects, KDL | editor | writer, RT EC (`effects_client_files::effect_definition_collection_round_trip`) and KR (`kr_client_files::kr_effect_collection_entries_reencode_identically`), package RT | Effects (edit, save) | `effect_definition*` a93fb9cd, 0042dbbd |
 | EffectTexture | Chaos scripts `.ems` + unnamed (61 / 59) | typed | editor | writer, RT EC (`effects_client_files::chaos_scripts_round_trip`) | Effects (export, import) | `chaos_script/` 0042dbbd |
-| | NIF (466 / 451) | typed (`gamebryo-nif`, inspector side) | editor (inspector NIF editor, import) | writer, RT EC (`gamebryo-nif` `real_nifs_round_trip_byte_exact`, 466 NIFs) and KR (`kr_nifs_round_trip_byte_exact`, 451 NIFs, 36,041 blocks) | Effects NIF (edit, export .nif/glTF) | `lib/ec-effects/gamebryo-nif` ac3439ae; gap 5 |
+| | NIF (466 / 451) | typed (`gamebryo-nif`, inspector side) | editor (inspector NIF editor, import) | writer, RT EC (`gamebryo-nif` `real_nifs_round_trip_byte_exact`, 466 NIFs) and KR (`kr_nifs_round_trip_byte_exact`, 451 NIFs, 36,041 blocks) | Effects NIF (edit, export .nif/glTF) | `lib/ec-effects/gamebryo-nif` ac3439ae; replace parse-checked through the caller hook |
 | | TGA (238 / 237) | typed (image crate) | replace (also through the effects import) | no TGA writer of the shipped conventions | Effects, UOP explorer (image) | gap 12 |
 | | DDS (62 / 0) | typed | replace | writer (see Texture) | Effects, UOP explorer | `dds_writer.rs` |
 | | PSD (2 / 2) | raw | replace | no | none (hex) | gap 18 |
@@ -109,11 +109,15 @@ TGA images and the Classic gumps (pixels).
   KR static chunk, then the generic DDS header, font table directory, PNG/BMP/JPEG decode and TGA decode. A replacement
   must parse with the reader (and dialect) the current entry parses with; an addition with one of its package's
   readers for its kind.
+- **Caller checks**: readers above uocf, passed with `UopEntryEditor::with_check` and tried before the built-in
+  ones. The CLI (`uop replace-entry`, `add-entry`) and the inspector (text editor, "Replace file...") add the NIF
+  check: `gamebryo_nif::read_checked` reads the model and finds no wrong link; the inspector's effects import uses
+  the same function.
 - **Audio**: MP3 and WAV entries with a known name also pass the `Audio.uop` format checks under the caller's
   policy.
 - **Kind only** (no parser in uocf): XML outside LegacyTerrain, Lua, CSV other than the audio tables (the KR
   `audio_sounds.csv` and `audio_effects.csv` are parse-checked since the audio batch) and the legacy terrain map,
-  shaders, plain text, UTF-16 text, NIF, PSD, OLE files,
+  shaders, plain text, UTF-16 text, PSD, OLE files,
   and plain binary (the `MainMisc` binary, the TGA placeholders, the 34 gumps that do not decode).
 
 ## Text entries
@@ -132,7 +136,7 @@ GameData 8 of 78, KR Interface 99 of 486). The inspector's text editor shows `\n
 | 2 | ~~Text view and editor for CSV, Lua, plain and UTF-16 text in the inspector's UOP explorer~~ | **closed**: `enhanced/entry_text.rs` keeps the encoding, BOM and line endings (every shipped text entry encodes back byte for byte: `entry_editor_client_packages::every_text_entry_encodes_back_to_its_bytes`); saved through `UopEntryEditor` to a copy | done |
 | 3 | Lua syntax check for replaced Interface Lua (128 EC) | a broken UI script fails only in the client | 0.5-1 day, needs a Lua parser crate (design decision: a new dependency) |
 | 4 | XML well-formedness check for Interface and MainMisc XML (EC 128, KR 249) | same as 3, for the UI layouts | 0.5 day, needs an XML crate (new dependency) |
-| 5 | NIF parse check in the entry editor | a replaced NIF is only kind-checked | 0.5 day: uocf depends on `gamebryo-nif`, or the check moves to the CLI and inspector layer |
+| 5 | ~~NIF parse check in the entry editor~~ | **closed**: a caller hook (`UopEntryEditor::with_check`) that the CLI and the inspector fill with `gamebryo_nif::read_checked`; uocf does not depend on `gamebryo-nif` | done |
 | 6 | ~~KR NIF round trip (451)~~ | **closed**: all 451 KR NIFs read, write back byte for byte and have no bad links | done |
 | 7 | ~~`LocalizedStrings` writer and editor; `string_dictionary` round trip on the shipped files~~ | **closed**: every EC, KR and Classic table and both dictionaries write back byte for byte; `uocf-cli strings` and the Clilocs view edit them | done |
 | 8 | ~~`legacyterrainmap.csv` writer~~ | **closed**: `to_csv_bytes` gives the shipped table back byte for byte; `check_canonical` for the entry editor's CSV check | done |

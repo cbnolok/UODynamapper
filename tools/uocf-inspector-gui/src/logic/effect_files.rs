@@ -468,7 +468,8 @@ pub fn decode_texture_levels(name: &str, payload: &[u8]) -> Result<TextureLevels
 }
 
 /// Reads a file to import into the package: its lowercase base name and payload. Scripts may have issues
-/// (shown afterwards); textures must decode; NIF files must parse.
+/// (shown afterwards); textures must decode; NIF files must parse with no wrong link (`gamebryo_nif::read_checked`,
+/// the entry editor's NIF check).
 pub fn read_import(path: &Path) -> Result<(String, Arc<[u8]>), String> {
     let name = path
         .file_name()
@@ -483,7 +484,7 @@ pub fn read_import(path: &Path) -> Result<(String, Arc<[u8]>), String> {
             return Err(format!("{name}: not a Chaos script (it must start with particlesystem)"));
         }
     } else if is_nif_name(&name) {
-        gamebryo_nif::NifFile::read(&payload).map_err(|error| format!("{name}: {error}"))?;
+        gamebryo_nif::read_checked(&payload).map_err(|error| format!("{name}: {error}"))?;
     } else {
         decode_texture(&payload).map_err(|error| format!("{name}: {error}"))?;
     }

@@ -7292,6 +7292,7 @@ dependencies = [
  "color-eyre",
  "dds",
  "flate2",
+ "gamebryo-nif",
  "image",
  "log",
  "udd-image-codecs",

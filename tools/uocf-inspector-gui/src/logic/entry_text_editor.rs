@@ -1,14 +1,15 @@
 //! The UOP explorer's text editor: the open text entries ([`EntryTextEdits`]), each decoded with its encoding and
-//! line endings ([`EntryText`]) and saved through [`UopEntryEditor`] (its kind and parse checks) to a copy of the
-//! package.
+//! line endings ([`EntryText`]) and saved through [`UopEntryEditor`] (its kind and parse checks, and the NIF check
+//! uocf leaves to its callers: [`NIF_CHECK`]) to a copy of the package; "Replace file..." saves the same way.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use color_eyre::eyre;
 use uocf::audio::validate::FormatPolicy;
-use uocf::enhanced::entry_edit::{EntryCheck, EntryEdit, EntryTarget, UopEntryEditor};
+use uocf::enhanced::entry_edit::{EntryCheck, EntryEdit, EntryTarget, ParseCheck, UopEntryEditor};
 use uocf::enhanced::entry_text::EntryText;
+use uocf::enhanced::image_census::ContentFormat;
 use uocf::uop_container::hash::hash_file_name_single;
 
 /// One text entry being edited.
@@ -64,10 +65,20 @@ pub fn entry_target(name: &str, hash: u64) -> EntryTarget {
     if hash_file_name_single(name) == hash { EntryTarget::Name(name.to_owned()) } else { EntryTarget::Hash(hash) }
 }
 
+/// A replaced NIF must read with `gamebryo-nif` and have no wrong link (the effects import checks the same).
+pub const NIF_CHECK: ParseCheck = ParseCheck {
+    label: "NIF model",
+    packages: &[],
+    kinds: &[ContentFormat::Nif],
+    name: None,
+    dialects: false,
+    check: |bytes, _| gamebryo_nif::read_checked(bytes).map(|_| ()).map_err(|error| eyre::eyre!(error)),
+};
+
 /// Writes a copy of the package at `source` to `output` with the entry `target` replaced by `bytes`, checked by
-/// [`UopEntryEditor::replace`].
+/// [`UopEntryEditor::replace`] and [`NIF_CHECK`].
 pub fn save_entry_copy(source: &Path, target: &EntryTarget, bytes: &[u8], output: &Path) -> eyre::Result<EntryEdit> {
-    let mut editor = UopEntryEditor::load(source)?;
+    let mut editor = UopEntryEditor::load(source)?.with_check(NIF_CHECK);
     let edit = editor.replace(target, bytes, FormatPolicy::VerifiedOnly)?;
     editor.save_as(output)?;
     Ok(edit)

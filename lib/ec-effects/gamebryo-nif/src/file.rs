@@ -72,6 +72,25 @@ pub fn read(data: &[u8]) -> Result<NifFile> {
     NifFile::read(data)
 }
 
+/// Reads a NIF file and checks its links ([`NifFile::link_issues`]): the check a NIF passes before it replaces a
+/// shipped one. The error names the first wrong link and how many there are.
+pub fn read_checked(data: &[u8]) -> std::result::Result<NifFile, String> {
+    let nif = NifFile::read(data).map_err(|error| error.to_string())?;
+    let issues = nif.link_issues();
+    if let Some(first) = issues.first() {
+        let holder = first.block.map_or_else(|| "the footer".to_owned(), |block| format!("block {block}"));
+        let found = first.found.unwrap_or("no block (out of range)");
+        return Err(format!(
+            "{} wrong link(s); the first: {holder} {} = {} must point at a {}, points at {found}",
+            issues.len(),
+            first.field,
+            first.raw,
+            first.expected
+        ));
+    }
+    Ok(nif)
+}
+
 /// Writes a NIF file. Same as [`NifFile::write`].
 pub fn write(nif: &NifFile) -> Result<Vec<u8>> {
     nif.write()

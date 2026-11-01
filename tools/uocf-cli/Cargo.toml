@@ -14,6 +14,8 @@ too_many_arguments = "allow"
 
 [dependencies]
 uocf = { path = "../../lib/uocf" }
+# The NIF reader of the entry editor's NIF check.
+gamebryo-nif = { path = "../../lib/ec-effects/gamebryo-nif" }
 udd-logging = { path = "../../lib/udd-logging" }
 log.workspace = true
 clap = { workspace = true, features = ["derive", "unicode"] }

@@ -34,7 +34,7 @@ pub mod reflect;
 mod types;
 
 pub use error::{BlockContext, ErrorKind, NifError, PathSegment, Result};
-pub use file::{ENDIAN_LITTLE, Header, LinkIssue, NifFile, read, write};
+pub use file::{ENDIAN_LITTLE, Header, LinkIssue, NifFile, read, read_checked, write};
 pub use generated::*;
 pub use io::{Ev, NifIo, Reader, Writer};
 pub use reflect::{AsValue, Field, FieldInfo, FieldMut, FieldType, NifEnum, Reflect, Value, ValueMut};
