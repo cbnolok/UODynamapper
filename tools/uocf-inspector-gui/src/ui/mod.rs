@@ -27,6 +27,7 @@ pub mod upscale_preview;
 pub mod classic_maps;
 pub mod classic_fonts;
 pub mod classic_defs;
+pub mod classic_image_import;
 
 /// The state of the read-only Classic file views.
 #[derive(Default)]

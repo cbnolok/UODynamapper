@@ -1,6 +1,7 @@
 mod animdef;
 mod animframe;
 mod audio;
+mod classic_image;
 mod classicanim;
 mod exe;
 mod facet;
@@ -91,6 +92,10 @@ enum Commands {
     /// Classic Client sounds (sound.mul/soundidx.mul or soundLegacyMUL.uop): export one as WAV, or import one.
     #[command(subcommand)]
     Sound(sound::SoundCmd),
+    /// Classic art and gumps (art.mul/artidx.mul or artLegacyMUL.uop, gumpart.mul/gumpidx.mul or
+    /// gumpartLegacyMUL.uop): export one as PNG, or import one into copies.
+    #[command(subcommand)]
+    ClassicImage(classic_image::ClassicImageCmd),
     /// Client audio (Audio.uop, Classic sounds, Music/): the census by content, the list, exports as stored
     /// and decoded to WAV, and Audio.uop entries replaced or added.
     #[command(subcommand)]
@@ -194,6 +199,7 @@ fn main() -> eyre::Result<()> {
             );
         }
         Commands::Sound(cmd) => sound::run(cmd)?,
+        Commands::ClassicImage(cmd) => classic_image::run(cmd)?,
         Commands::Audio(cmd) => audio::run(cmd)?,
         Commands::Multimap(cmd) => multimap::run(cmd)?,
         Commands::MulConvert(cmd) => mul_convert::run(cmd)?,

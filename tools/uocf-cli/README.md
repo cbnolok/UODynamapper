@@ -17,6 +17,13 @@
   (anchors, frame numbers, palettes), and back into copies of the files (absolute output
   paths; MUL: `--output` idx and `--mul-output`, changed entries appended; UOP: a changed
   frames-per-direction needs `--sequence` and `--sequence-output`). Alpha 0 or 255 only.
+- `classic-image export` / `classic-image import`: one Classic art (statics: item id +
+  0x4000) or gump id as a PNG, from `artidx.mul`/`art.mul`, `artLegacyMUL.uop`,
+  `gumpidx.mul`/`gumpart.mul` or `gumpartLegacyMUL.uop` (`--container` when both are
+  there), and an image back into copies in `--output-dir`: encoded as the shipped records
+  (land 44x44 with an opaque diamond; alpha 0 or 255; 5 bits per channel; opaque black as
+  0x0001), a MUL record appended to the data copy, a UOP entry replaced or added;
+  `--allow-resize` for another size than the record's.
 - `facet convert`: one facet between Classic (`mapN.mul` and/or `mapNLegacyMUL.uop`, with
   `staidxN.mul`/`staticsN.mul`), Enhanced Client and Kingdom Reborn `facetN.uop`, in any
   direction. Classic difs are baked into the map (`--difs`, a later id winning). The target

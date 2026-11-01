@@ -3,6 +3,8 @@ use egui_extras::{Column, TableBuilder};
 use crate::app::{classic_tile_flags_summary, concrete_art_tile_source, tileart_flags_summary, tileart_property_name, ArtSource, ArtViewerRow, TileArtFileEntry, TileMetadataSource, UopInspectorApp, ViewMode};
 use crate::logic::ClientData;
 use super::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by, tileart_editor};
+use super::classic_image_import::{ui_classic_image_panel, PreferredContainer};
+use uocf::classic::image_files::ClassicImageKind;
 use std::sync::Arc;
 use uocf::enhanced::tileart::{TaeAppearanceFilter, TaeSittingAnimation, TextureType};
 use uocf::classic::art::{static_art_id_for_source, STATIC_TILE_ID_BASE};
@@ -111,6 +113,16 @@ pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
                         ui.image(&handle);
                     } else {
                         ui.colored_label(egui::Color32::RED, "Art data not found");
+                    }
+                    // The Classic sources: art ids as the Classic files number them.
+                    let preferred = match concrete_art_tile_source(app.selected_legacy_source) {
+                        ArtSource::Mul => Some(PreferredContainer::Mul),
+                        ArtSource::CcUop => Some(PreferredContainer::Uop),
+                        _ => None,
+                    };
+                    if let Some(preferred) = preferred {
+                        ui.separator();
+                        ui_classic_image_panel(app, ctx, ui, ClassicImageKind::Art, id, preferred);
                     }
                 });
 

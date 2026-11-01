@@ -178,7 +178,8 @@ fn first_existing(client_path: &Path, candidates: &[&str]) -> Option<PathBuf> {
     None
 }
 
-fn uop_gump_candidates(gump_id: u32) -> [String; 2] {
+/// The `gumpartLegacyMUL.uop` entry names gump `gump_id` may have: eight digits (every shipped gump), then seven.
+pub fn uop_gump_candidates(gump_id: u32) -> [String; 2] {
     [
         format!("build/gumpartlegacymul/{:08}.tga", gump_id),
         format!("build/gumpartlegacymul/{:07}.tga", gump_id),

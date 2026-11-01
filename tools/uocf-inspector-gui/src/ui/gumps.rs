@@ -396,6 +396,17 @@ fn ui_gump_preview_controls(app: &mut UopInspectorApp, ctx: &egui::Context, ui: 
             } else if !app.selected_gump_id.trim().is_empty() {
                 ui.label("Gump not found in the selected source.");
             }
+            if app.selected_gump_source == GumpSource::Classic {
+                ui.separator();
+                super::classic_image_import::ui_classic_image_panel(
+                    app,
+                    ctx,
+                    ui,
+                    uocf::classic::image_files::ClassicImageKind::Gump,
+                    gump_id,
+                    super::classic_image_import::PreferredContainer::Any,
+                );
+            }
         }
         Err(_) if !app.selected_gump_id.trim().is_empty() => {
             ui.label("Invalid gump ID.");

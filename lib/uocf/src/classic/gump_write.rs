@@ -163,6 +163,15 @@ impl GumpColors {
         Ok(payload)
     }
 
+    /// The RGBA image (color 0 transparent, any other opaque), as the readers decode the gump.
+    pub fn to_rgba(&self) -> Vec<u8> {
+        let lut = crate::utils::color::color_lut();
+        self.colors
+            .iter()
+            .flat_map(|&color| if color == TRANSPARENT { [0; RGBA_BYTES_PER_PIXEL] } else { lut[usize::from(color)].to_le_bytes() })
+            .collect()
+    }
+
     /// The `gumpidx.mul` extra field of the slot.
     pub fn index_extra(&self) -> u32 {
         u32::from(self.width) << INDEX_EXTRA_WIDTH_SHIFT | u32::from(self.height)
