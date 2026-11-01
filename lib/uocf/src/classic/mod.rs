@@ -33,7 +33,6 @@ pub mod generic_index;
 pub mod fonts;
 pub mod gump;
 pub mod gump_write;
-pub mod image_files;
 pub mod map_statics_diff;
 pub mod dif_files;
 pub mod facet_sources;
