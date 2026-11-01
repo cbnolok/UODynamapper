@@ -300,10 +300,9 @@ Done or superseded. Blend inputs (`SecondaryBase`, `BlendAlpha`, `CoverageAlpha`
 
 ### Immediate Regression Protection
 
-Parser tests for `Textures`-family classification, stable roles and position roles exist (`lib/uocf/tests/synthetic/tileart_ref_preservation.rs`; tilemeta `roles_come_from_the_shader_and_the_item_position`, `roles_follow_the_block_shader_and_the_position_not_the_name`), as do liquid-base retention (`tex_art_ec` `liquid_with_*`), tilemeta material and `terrain_meta` round trips, and `meta32` packing.
+The ignored real-file test `udd-conv` `tex_aux_ec_client` packs `tilemeta` and `tex_aux_ec` from the clients and checks that every block-0 support ref of a material item resolves in `tex_aux_ec` with readable pixels (15271 items, 13714 refs, 23 on the missing-texture image). Parser tests for `Textures`-family classification, stable roles and position roles exist (`lib/uocf/tests/synthetic/tileart_ref_preservation.rs`; tilemeta `roles_come_from_the_shader_and_the_item_position`, `roles_follow_the_block_shader_and_the_position_not_the_name`), as do liquid-base retention (`tex_art_ec` `liquid_with_*`), tilemeta material and `terrain_meta` round trips, and `meta32` packing.
 
 - Add tests for the owner-reference census (`audit-ec-material-refs` has none).
-- Add a packer test that every block-0 support ref a packed item names resolves in `tex_aux_ec` (true today: 0 missing among drawn surface-like items).
 - Add UDDP layout tests: payload alignment and reads through the memory-mapped reader.
 - Add decode fuzzing for the high-risk decoders (RLE, art, gumps).
 
