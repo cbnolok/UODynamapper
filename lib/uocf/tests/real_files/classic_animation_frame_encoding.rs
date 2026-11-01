@@ -139,18 +139,11 @@ fn rgba_of(frame: &ClassicFrame, palette: &ClassicPalette) -> ClassicRgbaFrame {
     }
 }
 
-/// Whether uocf's decoder output `old` is the frame as the client draws it, except that uocf makes the pixels of
-/// colour 0 transparent (the client draws them black); counts the frames with such pixels.
+/// Whether uocf's decoder output `old` is the frame as the client draws it (a colour of 0 opaque black); counts the
+/// frames with such pixels.
 fn same_image(old: &AnimFrame, frame: &ClassicFrame, palette: &ClassicPalette, counts: &Counts) -> bool {
-    const RGBA_BYTES: usize = 4;
-    let mut new = frame.to_rgba(palette);
-    let mut colour_zero = false;
-    for (pixel, rgba) in frame.pixels.iter().zip(new.data.chunks_exact_mut(RGBA_BYTES)) {
-        if pixel.is_some_and(|index| palette[usize::from(index)] == 0) {
-            rgba.fill(0);
-            colour_zero = true;
-        }
-    }
+    let new = frame.to_rgba(palette);
+    let colour_zero = frame.pixels.iter().flatten().any(|&index| palette[usize::from(index)] == 0);
     add(&counts.colour_zero_frames, usize::from(colour_zero));
     (old.width, old.height, old.data.as_slice()) == (new.width, new.height, new.data.as_slice())
         && (old.width == 0 || (old.center_x, old.center_y) == (new.center_x, new.center_y))
@@ -244,8 +237,7 @@ fn report(name: &str, counts: &Counts) {
     println!(
         "{name}: {entries} entries, {} frames; indexed re-encode byte-identical {:.3}%; RGBA with the palette \
          byte-identical {:.3}%; RGBA with a rebuilt palette: pixels identical {:.3}% (quantized {} entries, black stored as 0x0001 in {}), \
-         byte-identical {:.3}%; agrees with the uocf decoder {:.3}% (frames with colour-0 pixels, black in the client \
-         and transparent in uocf: {})",
+         byte-identical {:.3}%; agrees with the uocf decoder {:.3}% (frames with colour-0 pixels, opaque black: {})",
         get(&counts.frames),
         percent(get(&counts.indexed_identical), entries),
         percent(get(&counts.rgba_identical), entries),

@@ -20,8 +20,8 @@
 //! From RGBA ([`index_rgba_frames`]), as the gump writer (`gump_write`): alpha 0 is transparent, 255 opaque, other
 //! alphas are refused; channels round to the nearest 5-bit value. With a given palette each colour takes its lowest
 //! index (index 0 last; bit 15 ignored), so black takes a word of 0 as in the shipped frames; without one, opaque
-//! black is stored as [`OPAQUE_BLACK`] (the near black the shipped frames use most), since uocf's decoders (and
-//! ClassicUO) draw a colour of 0 transparent, and the palette is every distinct
+//! black is stored as [`OPAQUE_BLACK`] (the near black the shipped frames use most: ClassicUO draws a colour of 0
+//! transparent, and the client's partial hue takes 0 as a grey but not 0x0001), and the palette is every distinct
 //! colour when there are at most [`USABLE_PALETTE_COLOURS`], else a deterministic median cut
 //! ([`crate::enhanced::animationframe::quantize::median_cut`]); index 0 stays unused, as in the shipped palettes.
 
@@ -29,7 +29,7 @@ crate::eyre_imports!();
 
 use std::collections::BTreeMap;
 
-use crate::classic::anim::AnimFrame;
+use crate::classic::anim::{rgb555_palette_to_rgba_words, AnimFrame};
 use crate::enhanced::animationframe::quantize::median_cut;
 
 pub mod folder;
@@ -55,7 +55,8 @@ pub const MAX_RUN_OFFSET: i32 = (1 << (RUN_OFFSET_BITS - 1)) - 1;
 pub const UNUSED_PALETTE_INDEX: u8 = 0;
 /// Colours a new palette holds: every index but [`UNUSED_PALETTE_INDEX`].
 pub const USABLE_PALETTE_COLOURS: usize = PALETTE_COLOURS - 1;
-/// What opaque black is stored as (colour 0 decodes as transparent in uocf and ClassicUO).
+/// What opaque black is stored as in a new palette. The client and uocf draw a colour of 0 black too, but ClassicUO
+/// draws it transparent, and the client's partial hue (0x8000) hues 0 as a grey and leaves 0x0001 alone.
 pub const OPAQUE_BLACK: u16 = 0x0001;
 /// The colour bits of a palette word; bit 15 is not a colour.
 pub const RGB555_COLOUR_MASK: u16 = 0x7FFF;
@@ -205,16 +206,14 @@ impl ClassicFrame {
         Ok(())
     }
 
-    /// The frame as RGBA, as the client draws it: every pixel of a run opaque, a colour of 0 black. (uocf's
-    /// decoders, [`crate::classic::anim`], make a colour of 0 transparent, as ClassicUO.)
+    /// The frame as RGBA, as the client draws it and uocf's decoders ([`crate::classic::anim`]) give it: every
+    /// pixel of a run opaque, a colour of 0 black.
     pub fn to_rgba(&self, palette: &ClassicPalette) -> AnimFrame {
+        let words = rgb555_palette_to_rgba_words(palette);
         let data = self
             .pixels
             .iter()
-            .flat_map(|pixel| match pixel {
-                Some(index) => rgba_of_word(palette[usize::from(*index)]),
-                None => [0; RGBA_BYTES],
-            })
+            .flat_map(|pixel| pixel.map_or(0, |index| words[usize::from(index)]).to_le_bytes())
             .collect();
         let (width, height) = if self.is_empty() { (0, 0) } else { (self.width, self.height) };
         AnimFrame { width, height, center_x: self.center_x, center_y: self.center_y, data }
@@ -224,12 +223,6 @@ impl ClassicFrame {
     pub fn used_indices(&self) -> impl Iterator<Item = u8> + '_ {
         self.pixels.iter().flatten().copied()
     }
-}
-
-/// A palette word as opaque RGBA (bit 15 ignored), each channel expanded as uocf's decoders do.
-fn rgba_of_word(word: u16) -> [u8; RGBA_BYTES] {
-    let channel = |shift: u32| (((word >> shift) & CHANNEL_MAX) << (u8::BITS - CHANNEL_BITS)) as u8;
-    [channel(RED_SHIFT), channel(GREEN_SHIFT), channel(0), OPAQUE_ALPHA]
 }
 
 /// The x and y offsets of a run header (signed 10-bit fields).
