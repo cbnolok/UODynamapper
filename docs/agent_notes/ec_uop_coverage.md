@@ -121,9 +121,12 @@ TGA images.
   them get a space (EC `customizehousewindow.xml`, `managedtextures.xml`, `fontscht.xml`), a `&` starting no
   predefined entity or character reference and a `<` in an attribute value are characters (KR `icons.xml`),
   a comment ends at the first `-->` (KR `bulkorderfilter.xml` nests one), a later XML declaration is a node
-  (KR `choicetext.xml`), and the elements open at the end are closed (EC and KR `startmenu.xml` lack
-  `</Interface>`; whether the client reads a document TinyXML reports this error for is not traced). Errors name
-  the line and column; the inspector's text editor shows the first one as the text is edited.
+  (KR `choicetext.xml`); the client's TinyXML 2.5.3 reads each of these without its error flag. An element still
+  open at the end is an error in the client's wording ("the client drops this document: unable to load due to
+  error at line L, column C"): TinyXML sets error 9 and the Interface loader (`UOXml::LoadInterfaceDocument`)
+  drops the document. EC and KR `startmenu.xml` lack `</Interface>` and are dropped so; nothing names them; the
+  real-file test records them as the known exception (`ghidra-classic-defs`). Errors name the line and column;
+  the inspector's text editor shows the first one as the text is edited.
 - **Caller checks**: readers above uocf, passed with `UopEntryEditor::with_check` and tried before the built-in
   ones. The CLI (`uop replace-entry`, `add-entry`) and the inspector (text editor, "Replace file...") add the NIF
   check: `gamebryo_nif::read_checked` reads the model and finds no wrong link; the inspector's effects import uses

@@ -2,6 +2,11 @@
 //! (`UO_KR_CLIENT_DIR`) passes the syntax checks of replaced entries (`enhanced::syntax_check`). A Lua script is an
 //! entry named `.lua`; an XML document is an entry of the XML kind, or UTF-16 text named `.xml`. Prints the counts
 //! per package and the unnamed text entries that parse as Lua.
+//!
+//! Known exception: `startmenu.xml`, in both clients, lacks its last `</Interface>`. The client's TinyXML
+//! reports error 9 for it and the Interface loader drops the document ("unable to load ... due to error"), and no
+//! Interface document, mod or script names it, so the check fails it as the client does
+//! (`scripts/dev-helpers/ec-research/ghidra-classic-defs`). The test requires that failure in each client.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -17,6 +22,9 @@ const CLIENT_DIR_ENVS: [&str; 2] = ["UO_EC_CLIENT_DIR", "UO_KR_CLIENT_DIR"];
 const DICTIONARY: &str = "../../tools/_shared_assets/Dictionary.dic";
 const LUA_EXTENSION: &str = "lua";
 const XML_EXTENSION: &str = "xml";
+/// The shipped document the client drops ([`KNOWN_DROPPED_ERROR`]).
+const KNOWN_DROPPED_DOCUMENT: &str = "startmenu.xml";
+const KNOWN_DROPPED_ERROR: &str = "the client drops this document";
 
 #[derive(Default, Debug)]
 struct Counts {
@@ -51,6 +59,7 @@ fn every_shipped_script_and_document_passes() {
     let mut failures = Vec::new();
     for dir in CLIENT_DIR_ENVS.iter().filter_map(std::env::var_os).map(PathBuf::from) {
         let mut counts: BTreeMap<String, Counts> = BTreeMap::new();
+        let mut dropped = Vec::new();
         for path in find_packages(&dir).unwrap() {
             let package = UopPackage::load(&path).unwrap();
             let package_name = path.file_name().unwrap().to_string_lossy().into_owned();
@@ -69,8 +78,17 @@ fn every_shipped_script_and_document_passes() {
                     }
                 } else if kind == ContentFormat::Xml || (kind == ContentFormat::Utf16Text && extension.as_deref() == Some(XML_EXTENSION)) {
                     entry.xml += 1;
-                    if let Err(error) = check_xml(&payload) {
-                        failures.push(format!("{} {label} (XML): {error:#}{}", path.display(), context(&payload, &error)));
+                    match check_xml(&payload) {
+                        Err(error)
+                            if label.ends_with(KNOWN_DROPPED_DOCUMENT)
+                                && error.downcast_ref::<SyntaxError>().is_some_and(|error| error.message.starts_with(KNOWN_DROPPED_ERROR)) =>
+                        {
+                            dropped.push(format!("{label}: {error}"));
+                        }
+                        Err(error) => {
+                            failures.push(format!("{} {label} (XML): {error:#}{}", path.display(), context(&payload, &error)))
+                        }
+                        Ok(()) => {}
                     }
                 } else if kind == ContentFormat::Utf16Text {
                     entry.other_utf16.push((label, check_xml(&payload).is_ok()));
@@ -86,6 +104,10 @@ fn every_shipped_script_and_document_passes() {
         }
         for (package, counts) in counts.iter().filter(|(_, counts)| counts.lua + counts.xml + counts.unnamed_lua + counts.other_named_lua.len() + counts.other_utf16.len() > 0) {
             println!("{}/{package}: {counts:?}", dir.display());
+        }
+        println!("{}: known dropped documents: {dropped:?}", dir.display());
+        if dropped.is_empty() {
+            failures.push(format!("{}: {KNOWN_DROPPED_DOCUMENT} no longer fails as the client drops it", dir.display()));
         }
     }
     assert!(failures.is_empty(), "{} failures:\n{}", failures.len(), failures.join("\n"));

@@ -20,9 +20,17 @@
 //! - a `&` that starts no reference TinyXML knows (the five predefined entities and character references; KR
 //!   `icons.xml`: `Whistle & Yell`) and a `<` in an attribute value are characters;
 //! - a comment ends at the first `-->`, whatever it holds (KR `bulkorderfilter.xml` nests `<!--`);
-//! - an XML declaration after the start (KR `choicetext.xml`, after a comment) is a node of its own;
-//! - the elements open at the end of the document are closed (EC and KR `startmenu.xml` lack the last
-//!   `</Interface>`: TinyXML keeps what it read; whether the client reads a document with this error is not traced).
+//! - an XML declaration after the start (KR `choicetext.xml`, after a comment) is a node of its own.
+//!
+//! Each of these is read without TinyXML's error flag in the client's TinyXML 2.5.3 (UOSA.exe:
+//! `TiXmlElement::Parse` parses the next attribute right after a value, `GetEntity` takes an unknown `&` as a
+//! character, `TiXmlAttribute::Parse` reads a quoted value up to its quote, `TiXmlComment::Parse` stops at the first
+//! `-->`, `Identify` makes `<?xml` a declaration anywhere). An element still open at the end of the document is an
+//! error, with the client's wording: TinyXML sets error 9 ("Error reading end tag"), and the client's Interface
+//! loader (`UOXml::LoadInterfaceDocument`) then logs "unable to load '%s' due to error at line %d, column %d" and
+//! drops the whole document, so such a replacement would do nothing in game. The EC and KR `startmenu.xml` lack
+//! their last `</Interface>` and are dropped so; no Interface document, mod or script names them
+//! (`ghidra-classic-defs`).
 
 use full_moon::node::Node;
 use full_moon::tokenizer::{Symbol, TokenType};
@@ -200,6 +208,8 @@ fn is_name_char(c: char) -> bool {
 struct TinyXmlPass {
     out: String,
     inserted: Vec<(usize, usize)>,
+    /// The end of the document and the innermost element still open there, if one is.
+    unclosed: Option<(usize, usize, String)>,
     line: usize,
     column: usize,
 }
@@ -267,7 +277,8 @@ impl TinyXmlPass {
     }
 
     fn run(source: &str) -> Self {
-        let mut pass = Self { out: String::with_capacity(source.len()), inserted: Vec::new(), line: 1, column: 1 };
+        let mut pass =
+            Self { out: String::with_capacity(source.len()), inserted: Vec::new(), unclosed: None, line: 1, column: 1 };
         let mut open: Vec<&str> = Vec::new();
         let mut at = 0;
         while at < source.len() {
@@ -328,10 +339,19 @@ impl TinyXmlPass {
                 at += end;
             }
         }
+        if let Some(innermost) = open.last() {
+            pass.unclosed = Some((pass.line, pass.column, innermost.to_string()));
+        }
+        // Closed, so that `roxmltree` judges the rest of the document; an earlier error is reported first.
         for name in open.iter().rev() {
             pass.out.push_str(&format!("</{name}>"));
         }
         pass
+    }
+
+    /// `column` of the output on `line` as a column of the source: the inserted spaces before it taken off.
+    fn source_column(&self, line: usize, column: usize) -> usize {
+        column - self.inserted.iter().filter(|&&(at_line, at_column)| at_line == line && at_column < column).count()
     }
 }
 
@@ -339,12 +359,25 @@ impl TinyXmlPass {
 pub fn xml_error(source: &str) -> Option<SyntaxError> {
     let pass = TinyXmlPass::run(source);
     let options = roxmltree::ParsingOptions { allow_dtd: true, ..roxmltree::ParsingOptions::default() };
-    roxmltree::Document::parse_with_options(&pass.out, options).err().map(|error| {
+    let error = roxmltree::Document::parse_with_options(&pass.out, options).err().map(|error| {
         let (line, column) = (error.pos().row as usize, error.pos().col as usize);
-        let shifted = pass.inserted.iter().filter(|&&(at_line, at_column)| at_line == line && at_column < column).count();
+        let source_column = pass.source_column(line, column);
         // The message names the position in the passed text.
-        let message = error.to_string().replace(&format!("{line}:{column}"), &format!("{line}:{}", column - shifted));
-        SyntaxError { line, column: column - shifted, message }
+        let message = error.to_string().replace(&format!("{line}:{column}"), &format!("{line}:{source_column}"));
+        SyntaxError { line, column: source_column, message }
+    });
+    error.or_else(|| {
+        pass.unclosed.as_ref().map(|(line, column, element)| {
+            let column = pass.source_column(*line, *column);
+            SyntaxError {
+                line: *line,
+                column,
+                message: format!(
+                    "the client drops this document: unable to load due to error at line {line}, column {column} \
+                     (`<{element}>` is not closed)"
+                ),
+            }
+        })
     })
 }
 
@@ -387,8 +420,12 @@ mod tests {
 
     #[test]
     fn reads_xml_as_tinyxml_does() {
-        let shipped = "<!-- a -- b --><?xml version=\"1.0\"encoding=\"UTF-8\"?>\n<Root a=\"1\"b=\"x & y < z\">\n\t<!--<!-- nested -->\n\t<Item/>\n";
+        let shipped = "<!-- a -- b --><?xml version=\"1.0\"encoding=\"UTF-8\"?>\n<Root a=\"1\"b=\"x & y < z\">\n\t<!--<!-- nested -->\n\t<Item/>\n</Root>\n";
         assert_eq!(xml_error(shipped), None);
+        let error = xml_error("<Root a=\"1\"b=\"2\">\n\t<Item/>\n").unwrap();
+        assert_eq!((error.line, error.column), (3, 1), "{error}");
+        assert!(error.message.starts_with("the client drops this document: unable to load due to error at line 3, column 1"), "{error}");
+        assert!(error.message.contains("`<Root>`"), "{error}");
         let error = xml_error("<Root a=\"1\"b=\"2\">\n</Wrong>\n").unwrap();
         assert_eq!((error.line, error.column), (2, 1), "{error}");
         let error = xml_error("<a x=\"1\"y=\"2\" x=\"3\"/>").unwrap();
