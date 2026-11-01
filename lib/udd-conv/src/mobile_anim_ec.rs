@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use byteorder::{LittleEndian, WriteBytesExt};
-use color_eyre::eyre::{self, WrapErr};
+use color_eyre::eyre::{self, ContextCompat, WrapErr};
 use guillotiere::{size2, AtlasAllocator};
 use crate::progress::{ProgressBar, ProgressStyle};
 use log::{info, warn};
@@ -38,6 +38,7 @@ use crate::package_progress::{
     AssetTaskProgressStage,
 };
 use crate::rgba_bounds::{count_nonzero_alpha, nonzero_alpha_bounds, RgbaBounds};
+use crate::prefix_search::{longest_fitting_prefix, LazyPrefix};
 use crate::source_paths::{find_first_dir_matching, find_first_existing_file};
 use crate::upscale::{apply_upscale_passes_owned, UpscaleFilter, UpscalePass};
 use crate::upscale_profile::{UpscaleImageType, UpscaleProfile, UpscaleTarget};
@@ -81,8 +82,6 @@ const RGBA_CHANNELS: usize = 4;
 const RGBA_ALPHA_CHANNEL: usize = 3;
 /// Highest body type whose `AnimationSequence` entry name is looked up (body ids are u16).
 const MAX_SEQUENCE_BODY_TYPE: u32 = u16::MAX as u32;
-const PLANNED_SOURCE_CACHE_LIMIT: usize = 256;
-const PAGE_PACK_CANDIDATE_INITIAL_CAPACITY_LIMIT: usize = 4096;
 const BC7_PROGRESS_FLUSH_UNITS: u64 = 256;
 const EC_ANIMATIONFRAME_FILES: [&str; 12] = [
     "AnimationFrame1.uop",
@@ -270,6 +269,63 @@ pub struct BuiltMobileAnimEcPage {
 struct PackedMobileAnimEcPages {
     records: Vec<MobileAnimEcPageRecord>,
     stats: MobileAnimPageStats,
+    timings: AtlasStageTimings,
+}
+
+/// Wall time of the atlas stages of a pack: the page bucket and prefix search, the source entry loads (the frame
+/// pixels are decoded in the page build), the page allocation, decodes, blits, gutter extrusion and hue masks, the
+/// page encode (BC7: summed per page, see [`MobileAnimEncodeTimings`]) and the page registration.
+#[derive(Debug, Clone, Copy, Default)]
+struct AtlasStageTimings {
+    bucket_selection: Duration,
+    source_load: Duration,
+    page_build: Duration,
+    page_encode: Duration,
+    encode: MobileAnimEncodeTimings,
+}
+
+/// Wall time of every stage of a pack, logged once at the end.
+#[derive(Debug, Clone, Copy, Default)]
+struct MobileAnimEcStageTimings {
+    metadata: Duration,
+    plan: Duration,
+    layout: Duration,
+    trim: Duration,
+    upscale: Duration,
+    atlas: AtlasStageTimings,
+    records_and_manifests: Duration,
+    package_write: Duration,
+    total: Duration,
+}
+
+impl MobileAnimEcStageTimings {
+    fn log(&self) {
+        let seconds = |duration: Duration| duration.as_secs_f64();
+        let atlas = &self.atlas;
+        info!(
+            "EC mobile animation stage timing: metadata {:.3}s, plan {:.3}s, layout {:.3}s, trim {:.3}s, upscale {:.3}s, \
+             bucket selection {:.3}s, source load {:.3}s, page build/decode/blit {:.3}s, page encode {:.3}s \
+             (BC7 input {:.3}s, encode {:.3}s, RDO {:.3}s, flatten {:.3}s), page registration {:.3}s, \
+             records and manifests {:.3}s, package write {:.3}s, total {:.3}s",
+            seconds(self.metadata),
+            seconds(self.plan),
+            seconds(self.layout),
+            seconds(self.trim),
+            seconds(self.upscale),
+            seconds(atlas.bucket_selection),
+            seconds(atlas.source_load),
+            seconds(atlas.page_build),
+            seconds(atlas.page_encode),
+            seconds(atlas.encode.bc7.input),
+            seconds(atlas.encode.bc7.encode),
+            seconds(atlas.encode.bc7.rdo),
+            seconds(atlas.encode.bc7.flatten),
+            seconds(atlas.encode.register_pages),
+            seconds(self.records_and_manifests),
+            seconds(self.package_write),
+            seconds(self.total),
+        );
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -306,10 +362,6 @@ struct PlannedPageFrame {
     alloc_area: u32,
 }
 
-struct CachedPlannedAnimation {
-    animation: Arc<AnimationFrame>,
-    last_used: u64,
-}
 
 #[derive(Debug, Clone, Copy, Default)]
 struct MobileAnimPageStats {
@@ -364,7 +416,9 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progr
     if animationframe_paths.is_empty() {
         eyre::bail!("missing EC AnimationFrame1.uop..AnimationFrame6.uop in {}", client_dir.display());
     }
+    let mut stage_timings = MobileAnimEcStageTimings::default();
     let planning_timer = Instant::now();
+    let stage_timer = Instant::now();
     let metadata_path = find_ec_mobile_animations_kdl(
         source_dirs,
         options.metadata_path.as_deref(),
@@ -380,6 +434,7 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progr
     } else {
         eyre::bail!("missing EcMobileAnimations.kdl for EC mobile animation metadata");
     };
+    stage_timings.metadata = stage_timer.elapsed();
 
     info!(
         "Converting EC mobile animations from {} UOP files to {}",
@@ -393,7 +448,10 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progr
         completed: 0,
         total: 1,
     });
+    let stage_timer = Instant::now();
     let mut planned_by_body = plan_animationframe_packages(&animationframe_paths)?;
+    stage_timings.plan = stage_timer.elapsed();
+    let stage_timer = Instant::now();
     let (sequences, sequence_parse_error_count) = load_animation_sequences(&client_dir)?;
     let body_map = load_mobile_body_map(&client_dir)?;
     let mut layout = build_animation_layout(&source_frames_by_body(&planned_by_body), &sequences, &body_map)?;
@@ -404,14 +462,19 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progr
         frames.retain(|frame| referenced_frames.contains(&(body_id, frame.source_frame_index)));
     }
     planned_by_body.retain(|_, frames| !frames.is_empty());
+    stage_timings.layout = stage_timer.elapsed();
     info!(
         "EC mobile animation layout: {} records, {} frame records, {:?}",
         layout.animations.len(),
         layout.slots.len(),
         layout.stats
     );
+    let stage_timer = Instant::now();
     apply_planned_transparent_trim(&mut planned_by_body, options)?;
+    stage_timings.trim = stage_timer.elapsed();
+    let stage_timer = Instant::now();
     apply_planned_upscale(&mut planned_by_body, options)?;
+    stage_timings.upscale = stage_timer.elapsed();
     payload_progress(AssetTaskProgress {
         stage: AssetTaskProgressStage::Extracting,
         completed: 1,
@@ -437,6 +500,8 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progr
         packed_pages.records.len(),
         pack_timer.elapsed().as_secs_f64()
     );
+    stage_timings.atlas = packed_pages.timings;
+    let stage_timer = Instant::now();
     let packed_frame_count = placements.len() as u32;
     let layout_stats = layout.stats;
     let (bodies, animations, frames) = layout.into_records(&placements, &shadow_by_source)?;
@@ -467,12 +532,14 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progr
             data,
         })?;
     }
+    stage_timings.records_and_manifests = stage_timer.elapsed();
 
     let package_timer = Instant::now();
     finish_streaming_package_with_progress(package, &mut package_progress)?;
+    stage_timings.package_write = package_timer.elapsed();
     info!(
         "EC mobile animation package build and write completed in {:.3}s",
-        package_timer.elapsed().as_secs_f64()
+        stage_timings.package_write.as_secs_f64()
     );
 
     let summary = MobileAnimEcBuildSummary {
@@ -491,9 +558,11 @@ pub fn convert_animationframe_uop_to_mobile_anim_ec_uddp_from_sources_with_progr
         atlas_height: options.atlas_height,
         layout: layout_stats,
     };
+    stage_timings.total = total_timer.elapsed();
+    stage_timings.log();
     info!(
         "EC mobile animation conversion completed in {:.3}s",
-        total_timer.elapsed().as_secs_f64()
+        stage_timings.total.as_secs_f64()
     );
     Ok(summary)
 }
@@ -927,39 +996,11 @@ fn apply_planned_transparent_trim(
     planned_by_body: &mut BTreeMap<u32, Vec<PlannedMobileAnimEcFrame>>,
     options: &MobileAnimEcAtlasOptions,
 ) -> eyre::Result<()> {
-    let mut animationframe_packages = HashMap::<Arc<PathBuf>, AnimationFrameSourcePackage>::new();
-    let mut decoded_sources = HashMap::<PlannedMobileAnimEcSource, CachedPlannedAnimation>::new();
-    let mut decoded_source_use_tick = 0u64;
-
+    let frame_bounds = planned_frame_opaque_bounds(planned_by_body)?;
+    let mut frame_bounds = frame_bounds.into_iter();
     for frames in planned_by_body.values_mut() {
         for frame in frames {
-            let animation = cached_decode_planned_animation_source(
-                &frame.source,
-                &mut animationframe_packages,
-                &mut decoded_sources,
-                &mut decoded_source_use_tick,
-            )?;
-            let Some(source_entry) = animation.frames.get(frame.source_entry_index as usize).copied() else {
-                eyre::bail!(
-                    "planned EC mobile animation body {} frame {} missing source entry {} while trimming",
-                    frame.body_id,
-                    frame.source_frame_index,
-                    frame.source_entry_index
-                );
-            };
-            let decoded = animation.decode_frame(&source_entry)?;
-            if decoded.width != frame.width || decoded.height != frame.height {
-                eyre::bail!(
-                    "planned EC mobile animation body {} frame {} changed dimensions while trimming: planned {}x{}, decoded {}x{}",
-                    frame.body_id,
-                    frame.source_frame_index,
-                    frame.width,
-                    frame.height,
-                    decoded.width,
-                    decoded.height
-                );
-            }
-            let Some(bounds) = transparent_bounds(decoded.width, decoded.height, &decoded.data)? else {
+            let Some(bounds) = frame_bounds.next().context("EC mobile animation trim bounds ended early")? else {
                 continue;
             };
             if bounds.left == 0
@@ -990,6 +1031,68 @@ fn apply_planned_transparent_trim(
     }
 
     Ok(())
+}
+
+/// The opaque bounds of every planned frame, body by body in order. Frames sharing a source come in runs; each run
+/// parses its source once, and the runs are decoded in parallel.
+fn planned_frame_opaque_bounds(
+    planned_by_body: &BTreeMap<u32, Vec<PlannedMobileAnimEcFrame>>,
+) -> eyre::Result<Vec<Option<RgbaBounds>>> {
+    let animationframe_packages = load_planned_animationframe_packages(planned_by_body.values().flatten())?;
+
+    let runs: Vec<&[PlannedMobileAnimEcFrame]> = planned_by_body
+        .values()
+        .flat_map(|frames| frames.chunk_by(|left, right| left.source == right.source))
+        .collect();
+    let run_bounds = runs
+        .par_iter()
+        .map(|run| -> eyre::Result<Vec<Option<RgbaBounds>>> {
+            let Some(first) = run.first() else {
+                return Ok(Vec::new());
+            };
+            let animation = decode_planned_animation_source_shared(&first.source, &animationframe_packages)?;
+            run.iter()
+                .map(|frame| {
+                    let Some(source_entry) = animation.frames.get(frame.source_entry_index as usize).copied() else {
+                        eyre::bail!(
+                            "planned EC mobile animation body {} frame {} missing source entry {} while trimming",
+                            frame.body_id,
+                            frame.source_frame_index,
+                            frame.source_entry_index
+                        );
+                    };
+                    let decoded = animation.decode_frame(&source_entry)?;
+                    if decoded.width != frame.width || decoded.height != frame.height {
+                        eyre::bail!(
+                            "planned EC mobile animation body {} frame {} changed dimensions while trimming: planned {}x{}, decoded {}x{}",
+                            frame.body_id,
+                            frame.source_frame_index,
+                            frame.width,
+                            frame.height,
+                            decoded.width,
+                            decoded.height
+                        );
+                    }
+                    transparent_bounds(decoded.width, decoded.height, &decoded.data)
+                })
+                .collect()
+        })
+        .collect::<eyre::Result<Vec<_>>>()?;
+    Ok(run_bounds.into_iter().flatten().collect())
+}
+
+/// `decode_planned_animation_source` over packages shared between threads, read without keeping their payloads.
+fn decode_planned_animation_source_shared(
+    source: &PlannedMobileAnimEcSource,
+    animationframe_packages: &HashMap<Arc<PathBuf>, UopPackage>,
+) -> eyre::Result<AnimationFrame> {
+    let package = animationframe_packages
+        .get(&source.path)
+        .with_context(|| format!("EC AnimationFrame package {} not loaded", source.path.display()))?;
+    let data = package.unpack_file_by_hash(source.file_hash)?.ok_or_else(|| {
+        eyre::eyre!("EC AnimationFrame payload {:016x} not found in {}", source.file_hash, source.path.display())
+    })?;
+    AnimationFrame::load(&data)
 }
 
 fn has_effective_upscale(passes: &[UpscalePass]) -> bool {
@@ -1133,71 +1236,61 @@ fn planned_frame_from_entry(
     })
 }
 
-/// One lazily opened `AnimationFrame` UOP with a reader kept open for its payloads. Payloads are
-/// read on demand and not kept: frames are packed in source order and the decoded-animation
-/// cache already serves repeated reads of one source.
-struct AnimationFrameSourcePackage {
-    package: UopPackage,
-    reader: File,
-}
+/// The parsed sources of one atlas page's frames.
+type PlannedPageSources = HashMap<PlannedMobileAnimEcSource, Arc<AnimationFrame>>;
 
-fn decode_planned_animation_source(
-    source: &PlannedMobileAnimEcSource,
-    animationframe_packages: &mut HashMap<Arc<PathBuf>, AnimationFrameSourcePackage>,
-) -> eyre::Result<AnimationFrame> {
-    let source_package = match animationframe_packages.entry(Arc::clone(&source.path)) {
-        Entry::Occupied(entry) => entry.into_mut(),
-        Entry::Vacant(entry) => {
-            let package = UopPackage::load_with_mode(source.path.as_ref(), LoadMode::Lazy)
-                .wrap_err_with(|| format!("load {}", source.path.display()))?;
-            let reader = package
-                .open_payload_reader()
-                .wrap_err_with(|| format!("open {}", source.path.display()))?;
-            entry.insert(AnimationFrameSourcePackage { package, reader })
+/// The EC AnimationFrame packages the planned frames read, opened lazily.
+fn load_planned_animationframe_packages<'a>(
+    planned_frames: impl Iterator<Item = &'a PlannedMobileAnimEcFrame>,
+) -> eyre::Result<HashMap<Arc<PathBuf>, UopPackage>> {
+    let mut packages = HashMap::<Arc<PathBuf>, UopPackage>::new();
+    for frame in planned_frames {
+        if let Entry::Vacant(entry) = packages.entry(Arc::clone(&frame.source.path)) {
+            let package = UopPackage::load_with_mode(frame.source.path.as_ref(), LoadMode::Lazy)
+                .wrap_err_with(|| format!("load {}", frame.source.path.display()))?;
+            entry.insert(package);
         }
-    };
-    let data = source_package
-        .package
-        .unpack_file_by_hash_from_reader(source.file_hash, &mut source_package.reader)?
-        .ok_or_else(|| eyre::eyre!(
-            "EC AnimationFrame payload {:016x} not found in {}",
-            source.file_hash,
-            source.path.display()
-        ))?;
-    AnimationFrame::load(&data)
+    }
+    Ok(packages)
 }
 
-fn cached_decode_planned_animation_source(
-    source: &PlannedMobileAnimEcSource,
-    animationframe_packages: &mut HashMap<Arc<PathBuf>, AnimationFrameSourcePackage>,
-    cache: &mut HashMap<PlannedMobileAnimEcSource, CachedPlannedAnimation>,
-    use_tick: &mut u64,
-) -> eyre::Result<Arc<AnimationFrame>> {
-    *use_tick = use_tick.saturating_add(1);
-    if let Some(entry) = cache.get_mut(source) {
-        entry.last_used = *use_tick;
-        return Ok(Arc::clone(&entry.animation));
+/// The parsed source of every frame of a page: the sources the previous page also used are reused, the others
+/// are loaded in parallel.
+fn load_planned_page_sources(
+    frames: &[PlannedMobileAnimEcFrame],
+    animationframe_packages: &HashMap<Arc<PathBuf>, UopPackage>,
+    previous_page_sources: &PlannedPageSources,
+) -> eyre::Result<PlannedPageSources> {
+    let mut page_sources = PlannedPageSources::new();
+    let mut missing_seen = HashSet::new();
+    let mut missing = Vec::new();
+    for frame in frames {
+        if page_sources.contains_key(&frame.source) {
+            continue;
+        }
+        match previous_page_sources.get(&frame.source) {
+            Some(animation) => {
+                page_sources.insert(frame.source.clone(), Arc::clone(animation));
+            }
+            None => {
+                if missing_seen.insert(&frame.source) {
+                    missing.push(&frame.source);
+                }
+            }
+        }
     }
-
-    let decoded = Arc::new(decode_planned_animation_source(source, animationframe_packages)?);
-    cache.insert(source.clone(), CachedPlannedAnimation {
-        animation: Arc::clone(&decoded),
-        last_used: *use_tick,
-    });
-    while cache.len() > PLANNED_SOURCE_CACHE_LIMIT {
-        let Some(oldest) = cache
-            .iter()
-            .filter(|(key, _)| *key != source)
-            .min_by_key(|(_, entry)| entry.last_used)
-            .map(|(key, _)| key.clone())
-        else {
-            break;
-        };
-        cache.remove(&oldest);
+    let loaded = missing
+        .par_iter()
+        .map(|source| decode_planned_animation_source_shared(source, animationframe_packages).map(Arc::new))
+        .collect::<eyre::Result<Vec<_>>>()?;
+    for (source, animation) in missing.into_iter().zip(loaded) {
+        page_sources.insert(source.clone(), animation);
     }
-
-    Ok(decoded)
+    Ok(page_sources)
 }
+
+
+
 
 /// Identity of one source frame of a body: its position among the body's `AnimationFrame`
 /// entries (the atlas key) and its `FrameEntry` action and 1-based frame number.
@@ -1962,9 +2055,8 @@ fn pack_planned_frames_into_package(
     let mut page_index = 0u32;
     let mut pending_pages = Vec::new();
     let chunk_size = rayon::current_num_threads().max(1);
-    let mut animationframe_package_cache = HashMap::<Arc<PathBuf>, AnimationFrameSourcePackage>::new();
-    let mut decoded_source_cache = HashMap::<PlannedMobileAnimEcSource, CachedPlannedAnimation>::new();
-    let mut decoded_source_use_tick = 0u64;
+    let animationframe_packages = load_planned_animationframe_packages(remaining.iter())?;
+    let mut previous_page_sources = PlannedPageSources::new();
     let mut packed_frames = 0u64;
     let payload_stage = if options.pixel_format == PagePixelFormat::Bc7 {
         AssetTaskProgressStage::EncodingBc7
@@ -1975,10 +2067,13 @@ fn pack_planned_frames_into_package(
     let rdo_payload_completed = AtomicU64::new(0);
     let mut atlas_build_time = Duration::ZERO;
     let mut encode_timings = MobileAnimEncodeTimings::default();
+    let mut timings = AtlasStageTimings::default();
 
     while !remaining.is_empty() {
         pb.set_message(format!("creating EC mobile animation atlas page {}", page_index + 1));
+        let bucket_timer = Instant::now();
         let (page_size, prefix_len) = select_planned_page_bucket(&remaining, options)?;
+        timings.bucket_selection += bucket_timer.elapsed();
         if prefix_len == 0 {
             eyre::bail!(
                 "could not fit any EC mobile animation frame into atlas page {}x{}",
@@ -1995,9 +2090,9 @@ fn pack_planned_frames_into_package(
             page_frames,
             &mut placements,
             options,
-            &mut animationframe_package_cache,
-            &mut decoded_source_cache,
-            &mut decoded_source_use_tick,
+            &animationframe_packages,
+            &mut previous_page_sources,
+            &mut timings.source_load,
         )?;
         atlas_build_time += page_timer.elapsed();
         if page.record.frame_count == 0 {
@@ -2027,7 +2122,8 @@ fn pack_planned_frames_into_package(
         records.push(page.record);
         pending_pages.push(page);
         if pending_pages.len() >= chunk_size {
-            let timings = encode_and_add_mobile_anim_page_chunk(
+            let encode_timer = Instant::now();
+            let chunk_timings = encode_and_add_mobile_anim_page_chunk(
                 package,
                 &mut pending_pages,
                 options,
@@ -2037,13 +2133,15 @@ fn pack_planned_frames_into_package(
                 &rdo_payload_completed,
                 total_frames,
             )?;
-            encode_timings.add_assign(timings);
+            timings.page_encode += encode_timer.elapsed();
+            encode_timings.add_assign(chunk_timings);
         }
         page_index += 1;
     }
 
     if !pending_pages.is_empty() {
-        let timings = encode_and_add_mobile_anim_page_chunk(
+        let encode_timer = Instant::now();
+        let chunk_timings = encode_and_add_mobile_anim_page_chunk(
             package,
             &mut pending_pages,
             options,
@@ -2053,8 +2151,11 @@ fn pack_planned_frames_into_package(
             &rdo_payload_completed,
             total_frames,
         )?;
-        encode_timings.add_assign(timings);
+        timings.page_encode += encode_timer.elapsed();
+        encode_timings.add_assign(chunk_timings);
     }
+    timings.page_build = atlas_build_time.saturating_sub(timings.source_load);
+    timings.encode = encode_timings;
 
     pb.finish_with_message(format!("EC mobile animation atlas pages created ({})", records.len()));
     info!(
@@ -2067,7 +2168,7 @@ fn pack_planned_frames_into_package(
         encode_timings.bc7.flatten.as_secs_f64(),
         encode_timings.register_pages.as_secs_f64()
     );
-    Ok((PackedMobileAnimEcPages { records, stats }, placements))
+    Ok((PackedMobileAnimEcPages { records, stats, timings }, placements))
 }
 
 fn take_page_frame_prefix(
@@ -2095,12 +2196,14 @@ fn select_page_bucket(
     let candidates = atlas_page_buckets(options)
         .into_par_iter()
         .map(|page_size| -> eyre::Result<Option<(AtlasPageSize, usize, u64)>> {
-            let page_candidates = page_prefix_pack_candidates(frames, page_size, options)?;
-            let prefix_len = max_fitting_candidate_prefix_len(&page_candidates, page_size);
+            let mut page_candidates =
+                LazyPrefix::new(frames, |frame| pack_candidate(frame, page_size, options));
+            let prefix_len =
+                longest_fitting_prefix(&mut page_candidates, |prefix| candidate_prefix_fits(prefix, page_size));
             if prefix_len == 0 {
                 return Ok(None);
             }
-            let alloc_area = candidate_prefix_alloc_area(&page_candidates[..prefix_len]);
+            let alloc_area = candidate_prefix_alloc_area(page_candidates.load(prefix_len));
             Ok(Some((page_size, prefix_len, alloc_area)))
         })
         .collect::<Vec<_>>();
@@ -2137,12 +2240,14 @@ fn select_planned_page_bucket(
     let candidates = atlas_page_buckets(options)
         .into_par_iter()
         .map(|page_size| -> eyre::Result<Option<(AtlasPageSize, usize, u64)>> {
-            let page_candidates = planned_page_prefix_pack_candidates(frames, page_size, options)?;
-            let prefix_len = max_fitting_candidate_prefix_len(&page_candidates, page_size);
+            let mut page_candidates =
+                LazyPrefix::new(frames, |frame| planned_pack_candidate(frame, page_size, options));
+            let prefix_len =
+                longest_fitting_prefix(&mut page_candidates, |prefix| candidate_prefix_fits(prefix, page_size));
             if prefix_len == 0 {
                 return Ok(None);
             }
-            let alloc_area = candidate_prefix_alloc_area(&page_candidates[..prefix_len]);
+            let alloc_area = candidate_prefix_alloc_area(page_candidates.load(prefix_len));
             Ok(Some((page_size, prefix_len, alloc_area)))
         })
         .collect::<Vec<_>>();
@@ -2197,50 +2302,9 @@ fn atlas_page_buckets(options: &MobileAnimEcAtlasOptions) -> Vec<AtlasPageSize> 
     buckets
 }
 
-fn max_fitting_candidate_prefix_len<Key: Ord + Copy>(
-    candidates: &[PagePackCandidate<Key>],
-    page_size: AtlasPageSize,
-) -> usize {
-    let mut best = 0usize;
-    let mut high = 1usize;
-    let mut scratch = Vec::new();
-    while high <= candidates.len() {
-        if candidate_prefix_fits(&candidates[..high], page_size, &mut scratch) {
-            best = high;
-            if high == candidates.len() {
-                return best;
-            }
-            high = high.saturating_mul(2).min(candidates.len());
-        } else {
-            break;
-        }
-    }
-    if best == 0 {
-        return 0;
-    }
 
-    let mut low = best + 1;
-    let mut high = high.saturating_sub(1);
-    while low <= high {
-        let mid = low + (high - low) / 2;
-        if candidate_prefix_fits(&candidates[..mid], page_size, &mut scratch) {
-            best = mid;
-            low = mid + 1;
-        } else {
-            high = mid.saturating_sub(1);
-        }
-    }
-    best
-}
-
-fn candidate_prefix_fits<Key: Ord + Copy>(
-    candidates: &[PagePackCandidate<Key>],
-    page_size: AtlasPageSize,
-    scratch: &mut Vec<PagePackCandidate<Key>>,
-) -> bool {
-    scratch.clear();
-    scratch.extend_from_slice(candidates);
-    page_pack_candidates_fit(scratch, page_size)
+fn candidate_prefix_fits<Key: Ord + Copy>(candidates: &[PagePackCandidate<Key>], page_size: AtlasPageSize) -> bool {
+    page_pack_candidates_fit(&mut candidates.to_vec(), page_size)
 }
 
 fn candidate_prefix_alloc_area<Key>(candidates: &[PagePackCandidate<Key>]) -> u64 {
@@ -2250,49 +2314,36 @@ fn candidate_prefix_alloc_area<Key>(candidates: &[PagePackCandidate<Key>]) -> u6
         .sum()
 }
 
-fn page_prefix_pack_candidates(
-    frames: &[DecodedMobileAnimEcFrame],
+/// The pack candidate of `frame` in a page of `page_size`, or none when it does not fit one.
+fn pack_candidate(
+    frame: &DecodedMobileAnimEcFrame,
     page_size: AtlasPageSize,
     options: &MobileAnimEcAtlasOptions,
-) -> eyre::Result<Vec<PagePackCandidate<(u32, u16)>>> {
-    let mut candidates = Vec::with_capacity(page_pack_candidate_initial_capacity(frames.len()));
-    for frame in frames {
-        let Ok((width_axis, height_axis)) = packing_axes(frame, page_size, options) else {
-            break;
-        };
-        candidates.push(PagePackCandidate {
-            sort_key: (frame.body_id, frame.source_frame_index),
-            width_axis,
-            height_axis,
-            alloc_area: width_axis.alloc_extent * height_axis.alloc_extent,
-        });
-    }
-    Ok(candidates)
+) -> Option<PagePackCandidate<(u32, u16)>> {
+    let (width_axis, height_axis) = packing_axes(frame, page_size, options).ok()?;
+    Some(PagePackCandidate {
+        sort_key: (frame.body_id, frame.source_frame_index),
+        width_axis,
+        height_axis,
+        alloc_area: width_axis.alloc_extent * height_axis.alloc_extent,
+    })
 }
 
-fn planned_page_prefix_pack_candidates(
-    frames: &[PlannedMobileAnimEcFrame],
+/// The pack candidate of `frame` in a page of `page_size`, or none when it does not fit one.
+fn planned_pack_candidate(
+    frame: &PlannedMobileAnimEcFrame,
     page_size: AtlasPageSize,
     options: &MobileAnimEcAtlasOptions,
-) -> eyre::Result<Vec<PagePackCandidate<(u32, u16)>>> {
-    let mut candidates = Vec::with_capacity(page_pack_candidate_initial_capacity(frames.len()));
-    for frame in frames {
-        let Ok((width_axis, height_axis)) = planned_packing_axes(frame, page_size, options) else {
-            break;
-        };
-        candidates.push(PagePackCandidate {
-            sort_key: (frame.body_id, frame.source_frame_index),
-            width_axis,
-            height_axis,
-            alloc_area: width_axis.alloc_extent * height_axis.alloc_extent,
-        });
-    }
-    Ok(candidates)
+) -> Option<PagePackCandidate<(u32, u16)>> {
+    let (width_axis, height_axis) = planned_packing_axes(frame, page_size, options).ok()?;
+    Some(PagePackCandidate {
+        sort_key: (frame.body_id, frame.source_frame_index),
+        width_axis,
+        height_axis,
+        alloc_area: width_axis.alloc_extent * height_axis.alloc_extent,
+    })
 }
 
-fn page_pack_candidate_initial_capacity(frame_count: usize) -> usize {
-    frame_count.min(PAGE_PACK_CANDIDATE_INITIAL_CAPACITY_LIMIT)
-}
 
 fn page_pack_candidates_fit<Key: Ord + Copy>(
     candidates: &mut [PagePackCandidate<Key>],
@@ -2436,9 +2487,9 @@ fn build_planned_page(
     frames: Vec<PlannedMobileAnimEcFrame>,
     placements: &mut HashMap<(u32, u16), FramePlacement>,
     options: &MobileAnimEcAtlasOptions,
-    animationframe_packages: &mut HashMap<Arc<PathBuf>, AnimationFrameSourcePackage>,
-    decoded_sources: &mut HashMap<PlannedMobileAnimEcSource, CachedPlannedAnimation>,
-    decoded_source_use_tick: &mut u64,
+    animationframe_packages: &HashMap<Arc<PathBuf>, UopPackage>,
+    previous_page_sources: &mut PlannedPageSources,
+    source_load_time: &mut Duration,
 ) -> eyre::Result<(BuiltMobileAnimEcPage, Vec<PlannedMobileAnimEcFrame>, u64)> {
     let mut allocator = AtlasAllocator::new(size2(
         page_size.width as i32,
@@ -2481,6 +2532,9 @@ fn build_planned_page(
         hue_mask: Option<Vec<u8>>,
     }
 
+    let load_timer = Instant::now();
+    let page_sources = load_planned_page_sources(&frames, animationframe_packages, previous_page_sources)?;
+    *source_load_time += load_timer.elapsed();
     let page_frames = planned_page_frames_with_axes(frames, page_size, options)?;
     let page_frame_capacity = page_frames.len();
     let mut planned_extrusions = Vec::with_capacity(page_frame_capacity);
@@ -2494,12 +2548,10 @@ fn build_planned_page(
             width_axis.alloc_extent as i32,
             height_axis.alloc_extent as i32,
         )) {
-            let animation = cached_decode_planned_animation_source(
-                &frame.source,
-                animationframe_packages,
-                decoded_sources,
-                decoded_source_use_tick,
-            )?;
+            let animation = page_sources
+                .get(&frame.source)
+                .cloned()
+                .context("planned EC mobile animation source was not loaded for its page")?;
             let Some(source_entry) = animation.frames.get(frame.source_entry_index as usize).copied() else {
                 eyre::bail!(
                     "planned EC mobile animation body {} frame {} missing source entry {}",
@@ -2647,20 +2699,32 @@ fn build_planned_page(
             }
         }
     } else {
-        for pending in pending_blits {
-            let decoded = pending.animation.decode_frame(&pending.source_entry)?;
-            let window = FrameWindow {
-                left: u32::from(pending.source_left),
-                top: u32::from(pending.source_top),
-                width: u32::from(pending.source_crop_width),
-                height: u32::from(pending.source_crop_height),
-            };
-            let hue_mode = frame_window_hue_mode(&decoded.data, &decoded.hue_mask, u32::from(decoded.width), window);
+        // Decode and hue-scan the frames in parallel; blit them in placement order.
+        let decoded_frames = pending_blits
+            .par_iter()
+            .map(|pending| -> eyre::Result<_> {
+                let decoded = pending.animation.decode_frame(&pending.source_entry)?;
+                let window = FrameWindow {
+                    left: u32::from(pending.source_left),
+                    top: u32::from(pending.source_top),
+                    width: u32::from(pending.source_crop_width),
+                    height: u32::from(pending.source_crop_height),
+                };
+                let hue_mode =
+                    frame_window_hue_mode(&decoded.data, &decoded.hue_mask, u32::from(decoded.width), window);
+                let hue_mask = (hue_mode == FRAME_HUE_MASKED)
+                    .then(|| crop_hue_mask_window(&decoded, window))
+                    .transpose()?;
+                Ok((decoded, hue_mode, hue_mask))
+            })
+            .collect::<Vec<_>>();
+        for (pending, decoded) in pending_blits.into_iter().zip(decoded_frames) {
+            let (decoded, hue_mode, hue_mask) = decoded?;
             set_placement_hue_mode(placements, pending.body_id, pending.source_frame_index, hue_mode);
-            if hue_mode == FRAME_HUE_MASKED {
+            if let Some(mask) = hue_mask {
                 placed_hue_masks.push(PlacedHueMask {
                     extrusion: pending.extrusion,
-                    mask: crop_hue_mask_window(&decoded, window)?,
+                    mask,
                 });
             }
             filled_pixel_count += blit_rgba_frame_window(
@@ -2683,6 +2747,7 @@ fn build_planned_page(
             ))?;
         }
     }
+    *previous_page_sources = page_sources;
     for extrusion in planned_extrusions {
         extrusion.extrude_rgba(&mut pixels, used_width, used_height);
     }

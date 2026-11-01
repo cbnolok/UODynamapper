@@ -80,11 +80,9 @@ Older captures apply to their recorded package revisions.
 - Add cache diagnostics for LRU hit rate, eviction reason, hysteresis counters, and queue backlog depth.
 - Define golden benchmark scenes and reproducible camera paths.
 - Make metrics visible in the debug overlay and persist them in logs for A/B runs.
-- Add mobile conversion timing breakdowns for atlas creation/blit, BC7 encode, RDO precompute or ultrasmooth work, RDO search, package compression, and package write.
-- Optimize mobile atlas page build and blit paths before further RDO micro-tuning; atlas pages are approximately `2048x2048`, so full-page clears, crop/copy passes, and alpha scans can dominate.
-- Audit BC7 encode work before RDO for uniform and gutter-heavy pages, including safe reuse of repeated transparent or solid blocks without compromising image quality.
+- Mobile conversion timing: done. Both mobile packers log a per-stage summary at the end (`CC mobile animation stage timing` / `EC mobile animation stage timing`: load/metadata, plan, trim, upscale, bucket selection, source decode, page build/blit, BC7 input/encode/RDO/flatten, page registration, manifests, package write), and the UDDP builders log compression apart from assembly and write. Measured with the `profiling` profile on 2026-11-01 (CC fp, BC7 + Zstd: 51.1s to 32.2s; EC, BC7: 167.8s to 78.2s; package sha unchanged, peak RSS lower): the lazy, speculatively parallel page prefix search (`udd_conv::prefix_search`), parallel trim and per-page source decode, row-wise gutter extrusion and the parallel EC hue scan. Largest stages left: bucket selection (CC 8.7s, EC 11.5s; guillotiere fit tests), EC page build (14.7s), BC7 encode (CC 5.6s, EC 12.0s) and package write (CC zstd 5s; EC 10s, the payload spill copied into the package).
+- BC7 pre-RDO audit: solid blocks (the empty and gutter area of a page) already take the encoder's solid fast path in `pack_bc7_rgb`/`pack_bc7_rgba`; the remaining encode time is content blocks. Reusing repeated non-solid blocks is the open option.
 - Continue RDO algorithmic reduction after timings isolate it, prioritizing branch predictability, bitwise operations, SIMD-friendly data layout, early backend dispatch, stack-local scratch where sensible, and cache-line-aware traversal.
-- Profile package compression and write time separately from image processing so storage overhead is not misattributed to BC7/RDO.
 
 ### EC Material And Texture Ownership Pipeline
 

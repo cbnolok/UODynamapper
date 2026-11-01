@@ -25,6 +25,7 @@ pub mod hues;
 pub mod mobile_anim_cc;
 pub mod mobile_anim_ec;
 pub mod effects_ec;
+mod prefix_search;
 mod rgba_bounds;
 pub mod upscale {
 	pub use crate::upscale_pipeline::{
@@ -142,19 +143,40 @@ pub(crate) fn extrude_rgba_rect_edges(
 	let rect_bottom = (rect_y + rect_height).min(atlas_height);
 	let content_right = content_x + content_width;
 	let content_bottom = content_y + content_height;
+	// Every pixel of the rect outside the content takes the nearest content pixel. Sources are content pixels,
+	// which are never written, so the rows can be filled in any order.
+	let left_end = content_x.clamp(rect_x, rect_right);
+	let right_start = content_right.clamp(rect_x, rect_right);
+	let pixel_offset = |x: u32, y: u32| (y as usize * atlas_width as usize + x as usize) * RGBA_BYTES;
 
 	for y in rect_y..rect_bottom {
 		let sample_y = y.clamp(content_y, content_bottom - 1);
-		for x in rect_x..rect_right {
-			if x >= content_x && x < content_right && y >= content_y && y < content_bottom {
-				continue;
-			}
-			let sample_x = x.clamp(content_x, content_right - 1);
-			let dst = ((y as usize * atlas_width as usize) + x as usize) * 4;
-			let src = ((sample_y as usize * atlas_width as usize) + sample_x as usize) * 4;
-			let rgba = [pixels[src], pixels[src + 1], pixels[src + 2], pixels[src + 3]];
-			pixels[dst..dst + 4].copy_from_slice(&rgba);
+		let row_inside_content = y >= content_y && y < content_bottom;
+		if !row_inside_content && left_end < right_start {
+			let src = pixel_offset(left_end, sample_y);
+			let len = (right_start - left_end) as usize * RGBA_BYTES;
+			pixels.copy_within(src..src + len, pixel_offset(left_end, y));
 		}
+		fill_rgba_run(pixels, pixel_offset(rect_x, y), left_end - rect_x, pixel_offset(content_x, sample_y));
+		fill_rgba_run(
+			pixels,
+			pixel_offset(right_start, y),
+			rect_right - right_start,
+			pixel_offset(content_right - 1, sample_y),
+		);
+	}
+}
+
+const RGBA_BYTES: usize = 4;
+
+/// Writes the pixel at byte offset `src` to the `count` pixels starting at byte offset `dst`.
+fn fill_rgba_run(pixels: &mut [u8], dst: usize, count: u32, src: usize) {
+	if count == 0 {
+		return;
+	}
+	let rgba: [u8; RGBA_BYTES] = pixels[src..src + RGBA_BYTES].try_into().expect("one RGBA pixel");
+	for pixel in pixels[dst..dst + count as usize * RGBA_BYTES].chunks_exact_mut(RGBA_BYTES) {
+		pixel.copy_from_slice(&rgba);
 	}
 }
 
@@ -175,6 +197,86 @@ where
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	/// The per-pixel extrusion the row-wise one replaced.
+	fn extrude_rgba_rect_edges_per_pixel(
+		pixels: &mut [u8],
+		atlas_width: u32,
+		atlas_height: u32,
+		rect: (u32, u32, u32, u32),
+		content: (u32, u32, u32, u32),
+	) {
+		let (rect_x, rect_y, rect_width, rect_height) = rect;
+		let (content_x, content_y, content_width, content_height) = content;
+		if content_width == 0 || content_height == 0 || rect_width == 0 || rect_height == 0 {
+			return;
+		}
+		let rect_right = (rect_x + rect_width).min(atlas_width);
+		let rect_bottom = (rect_y + rect_height).min(atlas_height);
+		let content_right = content_x + content_width;
+		let content_bottom = content_y + content_height;
+		for y in rect_y..rect_bottom {
+			let sample_y = y.clamp(content_y, content_bottom - 1);
+			for x in rect_x..rect_right {
+				if x >= content_x && x < content_right && y >= content_y && y < content_bottom {
+					continue;
+				}
+				let sample_x = x.clamp(content_x, content_right - 1);
+				let dst = ((y as usize * atlas_width as usize) + x as usize) * 4;
+				let src = ((sample_y as usize * atlas_width as usize) + sample_x as usize) * 4;
+				let rgba = [pixels[src], pixels[src + 1], pixels[src + 2], pixels[src + 3]];
+				pixels[dst..dst + 4].copy_from_slice(&rgba);
+			}
+		}
+	}
+
+	#[test]
+	fn extrude_rgba_rect_edges_matches_the_per_pixel_extrusion() {
+		const ATLAS_WIDTH: u32 = 13;
+		const ATLAS_HEIGHT: u32 = 11;
+		const MAX_PADDING: u32 = 3;
+		const MAX_CONTENT: u32 = 5;
+		let base: Vec<u8> = (0..ATLAS_WIDTH * ATLAS_HEIGHT * 4).map(|i| (i * 37 % 251) as u8).collect();
+		for content_width in 1..=MAX_CONTENT {
+			for content_height in 1..=MAX_CONTENT {
+				for left in 0..=MAX_PADDING {
+					for top in 0..=MAX_PADDING {
+						for right in 0..=MAX_PADDING {
+							for bottom in 0..=MAX_PADDING {
+								for (overshoot_x, overshoot_y) in (0..=right).flat_map(|x| (0..=bottom).map(move |y| (x, y))) {
+									// Rects reaching past the atlas edge by the overshoot are clipped by both.
+									let rect = (
+										ATLAS_WIDTH - content_width - left - right + overshoot_x,
+										ATLAS_HEIGHT - content_height - top - bottom + overshoot_y,
+										left + content_width + right,
+										top + content_height + bottom,
+									);
+									let content = (rect.0 + left, rect.1 + top, content_width, content_height);
+									let mut expected = base.clone();
+									extrude_rgba_rect_edges_per_pixel(&mut expected, ATLAS_WIDTH, ATLAS_HEIGHT, rect, content);
+									let mut actual = base.clone();
+									extrude_rgba_rect_edges(
+										&mut actual,
+										ATLAS_WIDTH,
+										ATLAS_HEIGHT,
+										rect.0,
+										rect.1,
+										rect.2,
+										rect.3,
+										content.0,
+										content.1,
+										content.2,
+										content.3,
+									);
+									assert_eq!(actual, expected, "rect {rect:?}, content {content:?}");
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
 
 	#[test]
 	fn extrude_rgba_rect_edges_clamps_gutter_to_nearest_content_pixel() {
