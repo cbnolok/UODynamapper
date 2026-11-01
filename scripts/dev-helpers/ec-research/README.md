@@ -100,6 +100,9 @@ The Classic `client.exe` facet table is decoded in [`ghidra-classic-facets`](ghi
 for UO Gold, ML, 5.0.9.1, 6.0.14.3, 7.0.20, 7.0.50 and 7.0.103. It covers the wrap rectangle, file ids,
 the Felucca-rules flag, the `map0x` table copy selected by 0xA9 flag 0x8000, and the mapdif/stadif patches
 and the client versions that still apply them.
+The Classic custom-house tables, `suppinfo.txt`, `prof.txt`, `keynames.txt`, `palette.mul`, `animinfo.mul` and
+`sjis2uni.mul` readers, and the files the client never opens (`Arttable.cfg`, `Tile256/1024.txt`, `gamegen.txt`),
+are traced in [`ghidra-classic-text-tables`](ghidra-classic-text-tables/README.md).
 
 ### Variable names, prototypes and structures (ApplyVariableSpecs.java)
 

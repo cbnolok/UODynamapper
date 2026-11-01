@@ -46,3 +46,8 @@ pub mod music;
 pub mod vd_codec;
 pub mod michelangelo_uop_codec;
 pub mod verdata;
+pub mod house_tables;
+pub mod professions;
+pub mod key_names;
+pub mod legacy_tables;
+pub mod small_binaries;
