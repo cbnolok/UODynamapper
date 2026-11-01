@@ -96,6 +96,7 @@ impl TerrainMetaPackage {
         }
 
         let span_count = reader.read_u32::<LittleEndian>()? as usize;
+        ensure_records_fit(&reader, span_count, std::mem::size_of::<TerrainMetaLayerSpan>(), "span")?;
         let mut spans = Vec::with_capacity(span_count);
         for _ in 0..span_count {
             let terrain_tile_id = reader.read_u32::<LittleEndian>()?;
@@ -111,6 +112,7 @@ impl TerrainMetaPackage {
         }
 
         let layer_count = reader.read_u32::<LittleEndian>()? as usize;
+        ensure_records_fit(&reader, layer_count, std::mem::size_of::<TerrainMetaLayerRef>(), "layer")?;
         let mut layers = Vec::with_capacity(layer_count);
         for _ in 0..layer_count {
             let texture_id = reader.read_u32::<LittleEndian>()?;
@@ -160,9 +162,23 @@ impl TerrainMetaPackage {
             let start = span.start as usize;
             let end = start.saturating_add(span.len as usize);
             let end = end.min(self.layers.len());
+            // A span past the table (a damaged package) has no layers.
+            let start = start.min(end);
             (span.terrain_tile_id, &self.layers[start..end])
         })
     }
+}
+
+/// Fails unless `count` records of `record_bytes` each fit in what is left of the reader, so that a damaged
+/// count is an error rather than an allocation of up to 4 Gi records.
+fn ensure_records_fit(reader: &Cursor<&[u8]>, count: usize, record_bytes: usize, what: &str) -> eyre::Result<()> {
+    let left = reader.get_ref().len().saturating_sub(reader.position() as usize);
+    let needed = count.checked_mul(record_bytes);
+    eyre::ensure!(
+        needed.is_some_and(|needed| needed <= left),
+        "terrain meta: {count} {what} records need {record_bytes} bytes each, {left} bytes are left"
+    );
+    Ok(())
 }
 
 /// Build result from [`build_terrain_meta_tables`].

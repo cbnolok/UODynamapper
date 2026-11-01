@@ -20,6 +20,10 @@ use uocf::enhanced::terrain_definition::{TerrainLayerClass, TerrainLayerRole};
 
 const TERRAIN_META_MAGIC: [u8; 4] = *b"TMLY";
 const TERRAIN_META_VERSION: u32 = 2;
+/// Stored bytes of a span (tile id, start, length, padding) and of a layer (texture id, repetition, class, role,
+/// padding, source kind, sampler, UV set).
+const SPAN_RECORD_BYTES: usize = 12;
+const LAYER_RECORD_BYTES: usize = 24;
 
 /// One layer record from a `TerrainDefinitionTexture`, keyed by
 /// `TerrainMetaLayerSpan.terrain_tile_id`.
@@ -74,6 +78,7 @@ impl TerrainMetaPackage {
         ensure_manifest_version("terrain meta", version, TERRAIN_META_VERSION)?;
 
         let span_count = reader.read_u32::<LittleEndian>()? as usize;
+        ensure_records_fit(&reader, span_count, SPAN_RECORD_BYTES, "span")?;
         let mut spans = Vec::with_capacity(span_count);
         for _ in 0..span_count {
             let terrain_tile_id = reader.read_u32::<LittleEndian>()?;
@@ -88,6 +93,7 @@ impl TerrainMetaPackage {
         }
 
         let layer_count = reader.read_u32::<LittleEndian>()? as usize;
+        ensure_records_fit(&reader, layer_count, LAYER_RECORD_BYTES, "layer")?;
         let mut layers = Vec::with_capacity(layer_count);
         for _ in 0..layer_count {
             let texture_id = reader.read_u32::<LittleEndian>()?;
@@ -129,4 +135,16 @@ impl TerrainMetaPackage {
         }
         &self.layers[start..end]
     }
+}
+
+/// Fails unless `count` records of `record_bytes` each fit in what is left of the reader, so that a damaged
+/// count is an error rather than an allocation of up to 4 Gi records.
+fn ensure_records_fit(reader: &Cursor<&[u8]>, count: usize, record_bytes: usize, what: &str) -> eyre::Result<()> {
+    let left = reader.get_ref().len().saturating_sub(reader.position() as usize);
+    let needed = count.checked_mul(record_bytes);
+    eyre::ensure!(
+        needed.is_some_and(|needed| needed <= left),
+        "terrain meta: {count} {what} records need {record_bytes} bytes each, {left} bytes are left"
+    );
+    Ok(())
 }

@@ -202,6 +202,7 @@ pub fn decode_dds_rgba8(bytes: &[u8]) -> eyre::Result<RgbaImage> {
     let mut cursor = Cursor::new(bytes);
     let header = dds::header::Header::read(&mut cursor, &dds::header::ParseOptions::default())
         .wrap_err("Failed reading DDS header")?;
+    let data_start = cursor.position();
     let opaque = is_x1r5g5b5(&header);
     let mut decoder = if opaque {
         dds::Decoder::from_header_with(cursor, header, dds::Format::B5G5R5A1_UNORM)
@@ -209,6 +210,11 @@ pub fn decode_dds_rgba8(bytes: &[u8]) -> eyre::Result<RgbaImage> {
         dds::Decoder::from_header(cursor, header)
     }
     .wrap_err("Failed reading DDS header")?;
+    // A damaged header can name a surface of hundreds of gigabytes: check that the bytes are there before the
+    // RGBA buffer is allocated (the read would fail on them anyway).
+    let main_len = decoder.surface_info().map_or(0, |surface| surface.data_len());
+    let data_left = (bytes.len() as u64).saturating_sub(data_start);
+    eyre::ensure!(main_len <= data_left, "DDS main surface needs {main_len} bytes, {data_left} follow the header");
     let size = decoder.main_size();
     let rgba_len = dds::ColorFormat::RGBA_U8
         .buffer_size(size)
@@ -419,6 +425,21 @@ mod tests {
         assert_eq!(image.dimensions(), (2, 1));
         assert_eq!(image.get_pixel(0, 0).0, [u8::MAX, 0, 0, OPAQUE_ALPHA]);
         assert_eq!(image.get_pixel(1, 0).0, [0, 0, u8::MAX, OPAQUE_ALPHA]);
+    }
+
+    #[test]
+    fn a_dds_header_larger_than_its_data_fails_before_allocating() {
+        /// Byte offsets of the height and width in a DDS file (after the magic, size and flags).
+        const HEIGHT_OFFSET: usize = 12;
+        const WIDTH_OFFSET: usize = 16;
+        /// A side whose RGBA would take 1 TiB.
+        const DAMAGED_SIDE: u32 = 1 << 19;
+        let mut bytes = x1r5g5b5_dds();
+        for offset in [HEIGHT_OFFSET, WIDTH_OFFSET] {
+            bytes[offset..offset + size_of::<u32>()].copy_from_slice(&DAMAGED_SIDE.to_le_bytes());
+        }
+        let error = decode_dds_rgba8(&bytes).unwrap_err();
+        assert!(format!("{error:#}").contains("main surface needs"), "{error:#}");
     }
 
     #[test]
