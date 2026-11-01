@@ -15,9 +15,11 @@ use uocf::enhanced::effect_definition::{
     EffectDefinitionCollection, EFFECT_DEFINITION_COLLECTION_UOP_NAME,
 };
 use uocf::enhanced::multis::{
-    multi_collection_hash, MultiCollection, MultiItem, MAX_MULTI_COLLECTION_ID, MULTI_COLLECTION_UOP_NAME,
+    multi_collection_hash, MultiCollection, MultiItem, HOUSING_PATH, MAX_MULTI_COLLECTION_ID, MULTI_COLLECTION_UOP_NAME,
 };
+use uocf::enhanced::housing::HousingPieces;
 use uocf::enhanced::textures::{decode_dds_rgba8, decode_tga_rgba8};
+use uocf::enhanced::waypoints::{waypoints_payload_hash, WaypointsPackage, WAYPOINTS_UOP_NAME};
 use uocf::enhanced::tileart::{TileArtEntry, TILEART_KR_RECORD_VERSION, TILEART_UOP_NAME};
 use uocf::uop_container::hash::hash_file_name_single;
 use uocf::uop_container::package::UopPackage;
@@ -123,6 +125,37 @@ fn kr_multis_reencode_identically() {
     assert_eq!(collection.items.len(), KR_MULTIS);
     let changes = collection.apply_to_package(&mut package).unwrap();
     assert_eq!((changes.replaced, changes.added, changes.removed), (0, 0, 0));
+}
+
+#[test]
+#[ignore = "needs a real Kingdom Reborn client: set UO_KR_CLIENT_DIR and run with --ignored"]
+fn kr_waypoints_reencode_identically() {
+    let package = UopPackage::load(common::kr_client_file(WAYPOINTS_UOP_NAME)).unwrap();
+    let payload = package.get_file_by_hash(waypoints_payload_hash()).expect("waypoint.bin").unpack().unwrap();
+    let waypoints = WaypointsPackage::from_payload_bytes(&payload).unwrap();
+    assert!(waypoints.to_payload_bytes() == payload, "waypoint.bin re-encodes differently");
+    println!(
+        "{} waypoints, {} types, {} icons, {} effects, {} trailing bytes re-encode identically",
+        waypoints.waypoints.len(),
+        waypoints.type_definitions.len(),
+        waypoints.icon_definitions.len(),
+        waypoints.effect_definitions.len(),
+        waypoints.trailing_bytes.len()
+    );
+}
+
+#[test]
+#[ignore = "needs a real Kingdom Reborn client: set UO_KR_CLIENT_DIR and run with --ignored"]
+fn kr_housing_bin_reserializes_identically_directly_and_through_kdl() {
+    let package = UopPackage::load(common::kr_client_file(MULTI_COLLECTION_UOP_NAME)).unwrap();
+    let original = package.get_file_by_name(HOUSING_PATH).expect("housing.bin entry").unpack().unwrap();
+    let housing = HousingPieces::from_payload_bytes(&original).expect("housing.bin parses");
+    assert!(housing.to_payload_bytes() == original, "re-serialized housing.bin differs");
+    let kdl = housing.to_kdl_string();
+    let from_kdl = HousingPieces::from_kdl_str(&kdl).expect("the written KDL parses");
+    assert!(from_kdl == housing, "KDL round trip changed the pieces");
+    assert!(from_kdl.to_payload_bytes() == original, "housing.bin from KDL differs");
+    println!("{} bytes of housing.bin, {} KDL lines", original.len(), kdl.lines().count());
 }
 
 #[test]

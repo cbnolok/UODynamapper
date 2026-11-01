@@ -66,19 +66,19 @@ TMPDIR=/home/claudio/test/uop/<date> UO_EC_CLIENT_DIR="$C/_Ultima Online Enhance
 | LocalizedStrings | string tables (8 / 3) | typed | replace (parse-checked) | no writer | Clilocs (view) | `localized_strings.rs` e65e9602; gap 7 |
 | MainMisc | XML (2 / 2), UTF-16 text (1 / 1), binary (1 / 0) | raw | replace | no | UOP explorer (XML text) | gap 4 |
 | MultiCollection | multis (862 / 241) | typed, both dialects | editor (multi editor, KDL) | writer, RT EC (`multi_collection_client_entries::every_multi_reencodes_identically`) and KR (`kr_client_files::kr_multis_reencode_identically`), edit RT | Multis, Multi editor (save) | `multis.rs` 38705ade, 7fd85a38 |
-| | `housing.bin` (1 / 1) | typed, KDL | editor | writer, RT EC (`housing_bin_reserializes_identically_directly_and_through_kdl`); KR untested | Housing (edit, save) | `housing*` 02fb5dad, beeecc11; gap 14 |
+| | `housing.bin` (1 / 1) | typed, KDL | editor | writer, RT EC (`housing_bin_reserializes_identically_directly_and_through_kdl`) and KR (`kr_client_files::kr_housing_bin_reserializes_identically_directly_and_through_kdl`), both directly and through KDL | Housing (edit, save) | `housing*` 02fb5dad, beeecc11 |
 | Paperdoll | AMOU (2 / 2) | typed (AMOU reader) | replace (parse-checked) | writer exists (AMOU container), not tested on these | none (hex) | gap 15 |
 | Shaders | `.psh`/`.vsh` and unnamed text (12 / 6) | raw (text) | replace (kind check) | no | none (hex) | gap 2 |
 | SystemTextures | TGA (5 / 5), PNG (2 / 2) | typed (image crate) | replace (parse-checked) | no | UOP explorer (image) | |
 | TerrainDefinition | definitions (201 / 191) | typed, both dialects | editor | writer, RT EC and KR (`terrain_definition_client_files::*_write_back_byte_for_byte`), edit RT | Terrain definition (edit, save) | `terrain_definition.rs` af85d41b, 59e77b3e |
 | TerrainTexture, Texture | DDS (37+9,752 / 20+9,348) | typed | editor (`uop replace-texture`) | writer (see Interface DDS) | UOP explorer (image) | `dds_writer.rs`, `textures.rs` |
 | facetN, facetNx | sectors (7168 per Britannia facet / KR the same per facet) | typed, both dialects | editor (sector encoder, build from Classic) | writer, RT EC (`facet_client_files::facet_sectors_reencode_identically_and_delimiters_follow_the_rule`) and KR (`kr_facet_client_files::kr_facet_sectors_reencode_identically_and_follow_the_rules`) | none in the inspector (dynamapper renders them) | `facet_*` bf596b93, 378e103e, 7fd85a38 |
-| | data map (1 per package) | typed | editor (written by the facet builder) | writer, no RT test | none | gap 13 |
+| | data map (1 per package) | typed | editor (written by the facet builder) | writer, RT EC (`facet_client_files::facet_data_maps_reencode_identically`, 10 packages) and KR (`kr_facet_client_files::kr_facet_data_maps_reencode_identically`) | none | `facet_sector.rs` |
 | facets (EC) | facet definitions (7) | typed | editor | writer, RT (`facet_client_files::facet_definitions_reencode_identically`) | none | `facet_definition.rs` bf596b93 |
 | gumpartLegacyMUL (EC) | Classic gumps (4,342 parse; 34 do not) | typed (`decode_uop_gump`) | replace (parse-checked); MUL <-> UOP repack (`uocf-cli mul-convert`) | no gump pixel encoder; repack RT (synthetic) | Gumps (view) | `classic/gump.rs` 7b89a450, a09b2255; gap 11 |
 | string_dictionary | dictionary (1 / 1) | typed | editor (library only) | writer, RT (synthetic) | String dictionary (view) | `string_dictionary.rs` fe344236; gap 7 |
 | tileart | records (37,756 / 17,086) | typed, both dialects | editor | writer, RT EC (`tileart_client_records::tileart_reencodes_every_client_record`) and KR (`kr_client_files::kr_tileart_records_reencode_identically`), edit RT | Tile metadata, tileart editor (save) | `tileart.rs` 38705ade, 938dc6e7 |
-| waypoint | waypoints (1 / 1) | typed | editor | writer, RT EC (`waypoints_client_file::waypoints_reencode_identically`); KR untested | UOP explorer (waypoint editor) | `waypoints.rs` c368a4f0, 38705ade; gap 14 |
+| waypoint | waypoints (1 / 1) | typed | editor | writer, RT EC (`waypoints_client_file::waypoints_reencode_identically`) and KR (`kr_client_files::kr_waypoints_reencode_identically`) | UOP explorer (waypoint editor) | `waypoints.rs` c368a4f0, 38705ade |
 | StaticChunk (KR) | static chunks (145) | typed | editor (`apply_to_package`) | writer, RT (`kr_facet_client_files::kr_static_chunks_reencode_identically`) | none | `kr/facet/static_chunk.rs` 7fd85a38 |
 | TileArtLegacy (KR) | TGA (16,383), placeholder (1) | typed (image crate) | replace (parse-checked) | no TGA writer | UOP explorer (image) | gap 12 |
 
@@ -128,8 +128,8 @@ TGA images and the Classic gumps (pixels).
 | 10 | Strict CSV reader for the other GameData tables (65 EC) | GameData CSVs are only kind-checked | 0.5 day to measure the shipped grammar, then per table |
 | 11 | Classic gump encoder for `gumpartLegacyMUL.uop` | gumps can be replaced only as encoded payloads | 1 day |
 | 12 | TGA writer of the shipped conventions (RLE type 10, footer, padding) for Interface gumps and TileArtLegacy | images go in as whatever TGA the user provides | 1-2 days |
-| 13 | Facet data map round-trip test | writer untested on shipped data | 0.1 day |
-| 14 | KR `waypoint.uop` and `housing.bin` round-trip tests | writers untested on KR data | 0.2 day |
+| 13 | ~~Facet data map round-trip test~~ | **closed**: every EC and KR `data.map` re-encodes byte for byte and matches the client size table | done |
+| 14 | ~~KR `waypoint.uop` and `housing.bin` round-trip tests~~ | **closed**: both re-encode byte for byte on KR (housing also through KDL) | done |
 | 15 | `Paperdoll.uop` AMOU entries: what they are, container RT | two 6 MB animations of unknown role | 0.5 day research |
 | 16 | Unchanged-save byte-identical test for every package (not only the ones above) | asserted on 5 package kinds only | 0.2 day (large temporary files) |
 | 17 | JPEG decode in parse checks (the image crate's `jpeg` feature) | one entry | 0.1 day |

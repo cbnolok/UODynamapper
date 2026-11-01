@@ -249,6 +249,22 @@ fn kr_facets_build_from_classic_and_compare_with_the_shipped_ones() {
 
 #[test]
 #[ignore = "needs a real Kingdom Reborn client: set UO_KR_CLIENT_DIR and run with --ignored"]
+fn kr_facet_data_maps_reencode_identically() {
+    for facet in KR_FACETS {
+        let package = UopPackage::load(kr_facet_package(facet)).expect("load KR facet package");
+        let data_map = package
+            .unpack_file_by_hash(hash_file_name_single(&data_map_entry_path(facet)))
+            .unwrap()
+            .expect("data.map");
+        let geometry = FacetGeometry::from_data_map_payload(&data_map).unwrap();
+        assert_eq!(Some(geometry), FacetGeometry::client_facet(facet), "facet {facet}: data.map size");
+        assert_eq!(geometry.data_map_payload().as_slice(), data_map.as_slice(), "facet {facet}: data.map re-encodes differently");
+        println!("facet {facet}: data.map {}x{} re-encodes identically", geometry.width, geometry.height);
+    }
+}
+
+#[test]
+#[ignore = "needs a real Kingdom Reborn client: set UO_KR_CLIENT_DIR and run with --ignored"]
 fn kr_static_chunks_reencode_identically() {
     let path = common::kr_client_file(STATIC_CHUNK_UOP_NAME);
     let mut package = UopPackage::load(&path).unwrap();

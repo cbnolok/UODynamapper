@@ -144,6 +144,22 @@ fn check_package(label: &str, facet: u8, path: &PathBuf) -> (u32, u64, u64, u32)
 }
 
 #[test]
+#[ignore = "needs a real Enhanced Client: set UO_EC_CLIENT_DIR and run with --ignored"]
+fn facet_data_maps_reencode_identically() {
+    for (label, facet, path) in facet_packages() {
+        let package = UopPackage::load(&path).expect("load facet package");
+        let data_map = package
+            .unpack_file_by_hash(hash_file_name_single(&data_map_entry_path(facet)))
+            .expect("unpack data.map")
+            .expect("data.map entry");
+        let geometry = FacetGeometry::from_data_map_payload(&data_map).expect("data.map");
+        assert_eq!(Some(geometry), FacetGeometry::client_facet(facet), "{label}: data.map size");
+        assert_eq!(geometry.data_map_payload().as_slice(), data_map.as_slice(), "{label}: data.map re-encodes differently");
+        println!("{label}: data.map {}x{} re-encodes identically", geometry.width, geometry.height);
+    }
+}
+
+#[test]
 #[ignore = "needs a real Enhanced Client: set UO_EC_CLIENT_DIR and run with --ignored --release"]
 fn facet_sectors_reencode_identically_and_delimiters_follow_the_rule() {
     let mut total = 0;
