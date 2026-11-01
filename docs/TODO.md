@@ -298,16 +298,13 @@ Done or superseded. Blend inputs (`SecondaryBase`, `BlendAlpha`, `CoverageAlpha`
 
 ### Immediate Regression Protection
 
-The owner-reference census has unit tests for its archive and family guesses and an ignored real-file test (`udd-conv-cli` `ec_material_refs_client`: one row per tileart item and terrain layer, every tileart row equal to the packed tilemeta ref). The ignored real-file test `udd-conv` `tex_aux_ec_client` packs `tilemeta` and `tex_aux_ec` from the clients and checks that every block-0 support ref of a material item resolves in `tex_aux_ec` with readable pixels (15271 items, 13714 refs, 23 on the missing-texture image). Parser tests for `Textures`-family classification, stable roles and position roles exist (`lib/uocf/tests/synthetic/tileart_ref_preservation.rs`; tilemeta `roles_come_from_the_shader_and_the_item_position`, `roles_follow_the_block_shader_and_the_position_not_the_name`), as do liquid-base retention (`tex_art_ec` `liquid_with_*`), tilemeta material and `terrain_meta` round trips, and `meta32` packing.
+`udd-container` `uddp_layout` checks the blob layout (head, dictionaries, unpadded payloads in key order) and reads through the memory-mapped reader. The owner-reference census has unit tests for its archive and family guesses and an ignored real-file test (`udd-conv-cli` `ec_material_refs_client`: one row per tileart item and terrain layer, every tileart row equal to the packed tilemeta ref). The ignored real-file test `udd-conv` `tex_aux_ec_client` packs `tilemeta` and `tex_aux_ec` from the clients and checks that every block-0 support ref of a material item resolves in `tex_aux_ec` with readable pixels (15271 items, 13714 refs, 23 on the missing-texture image). Parser tests for `Textures`-family classification, stable roles and position roles exist (`lib/uocf/tests/synthetic/tileart_ref_preservation.rs`; tilemeta `roles_come_from_the_shader_and_the_item_position`, `roles_follow_the_block_shader_and_the_position_not_the_name`), as do liquid-base retention (`tex_art_ec` `liquid_with_*`), tilemeta material and `terrain_meta` round trips, and `meta32` packing.
 
-- Add UDDP layout tests: payload alignment and reads through the memory-mapped reader.
 - Add decode fuzzing for the high-risk decoders (RLE, art, gumps).
 
 ### Priority Test Inventory
 
 - `test_metadata_packing_roundtrip`
-- `test_uddp_alignment_verification`
-- `test_mmap_block_access`
 - `test_iso_depth_sorting`
 - `test_subtile_precision_bias`
 - `fuzz_rle_decoder`

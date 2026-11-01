@@ -2,6 +2,8 @@
 
 This document describes the structure of custom binary `.uddp` formats used by UODynamapper for fast parsing/ram/vram upload and fast rendering. All `.uddp` files are packaged using the core `UddpBuilder` and compressed (typically with `ZstdNoDict`), containing multiple virtual files (metadata tables and texture payloads).
 
+The container is laid out as the header, the dictionary table and the index, back to back, then the blob region: the dictionaries (by data type) and every payload in key order, with no padding, to the end of the file (`lib/udd-container/tests/uddp_layout.rs`). Payloads are not aligned, so a reader that needs aligned records copies them; the `*_cow` reads borrow uncompressed payloads at any offset. `udd-cli tool validate` decodes every entry and runs each package's own reader.
+
 The container header (version 1.0) and every binary metadata manifest carry a version. Readers accept only the current one and reject any other with "package version N is not supported; repack with the current udd-cli": there are no readers for older layouts.
 
 The current implementation still uses a unified `flags` field in `tilemeta.uddp`, but the active design direction is to separate CC and EC metadata fields more explicitly when the schema is bumped. Treat the tables below as the current wire format, not the final semantic model.
