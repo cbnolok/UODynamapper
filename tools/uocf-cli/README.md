@@ -11,6 +11,12 @@
   back. Packages written by `mul-to-uop` carry `build/hues/huesmul_metadata.bin`, so
   `uop-to-mul` gives back the identical `hues.mul`; EA's packages give exact colours
   with defaulted table start/end, names and group headers.
+- `classicanim export` / `classicanim import`: Classic mobile frames of one body and
+  action, from an `AnimationFrame*.uop` `animationlegacyframe` entry or the five direction
+  entries of an `anim*.idx` / `anim*.mul` pair, as RGBA PNGs plus `classicanimation.kdl`
+  (anchors, frame numbers, palettes), and back into copies of the files (absolute output
+  paths; MUL: `--output` idx and `--mul-output`, changed entries appended; UOP: a changed
+  frames-per-direction needs `--sequence` and `--sequence-output`). Alpha 0 or 255 only.
 
 Supported animation sources:
 

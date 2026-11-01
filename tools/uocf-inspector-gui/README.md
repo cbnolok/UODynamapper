@@ -13,7 +13,7 @@ UO asset data during development and research.
 | CC Art | Classic Client art tiles (`art.mul` / `artidx.mul`). |
 | CC Tiledata | Classic Client `tiledata.mul` land and item tile metadata. |
 | Tile Metadata | Combined CC tiledata and EC tileart metadata (switchable source). |
-| Animations | Mobile animations from CC `anim*.mul` or EC `AnimationFrame*.uop`. |
+| Animations | Mobile animations from CC `anim*.mul`, CC or EC `AnimationFrame*.uop`; per action, Export frames (PNGs plus KDL) and Replace frames (into copies of the files). |
 | Anim Data | Classic Client `animdata.mul` animation sequence tables. |
 | Gumps | CC or EC gump art (switchable source). |
 | Multis | Multi-tile structures from CC or EC sources. |

@@ -30,8 +30,9 @@ Checked on the 2024 and 2026 ("fp") Classic and Enhanced Client folders.
   `mobile_anim_cc` reads both.
 - The 2026 Classic `AnimationFrame6.uop` has entries zero-padded after the size stored in the header.
 - Container writer (`uocf::enhanced::animationframe::AmouFile`): parses and rewrites both kinds byte for byte
-  (every EC, KR and Classic entry; bytes after the header's total size are kept as `tail`). Only Enhanced/KR
-  frame data has an encoder; Classic `animationlegacyframe` pixels would need a Classic frame encoder.
+  (every EC, KR and Classic entry; bytes after the header's total size are kept as `tail`). Enhanced/KR frame
+  data: `uocf::enhanced::animationframe::encode`; Classic frame data: `uocf::classic::anim_frames`
+  ([Classic frames](#classic-frames-anim-mul-and-animationlegacyframe)).
 - Kingdom Reborn frame files are the Enhanced format, but UOKR.exe keys the hue table with the integer mean of
   the three colour bytes where UOSA.exe uses byte 0. Layout, encoder rules and verification marks:
   `lib/uocf/src/enhanced/ENHANCED_CLIENT_FILES.md` (`AnimationFrame*.uop` pixels) and
@@ -41,6 +42,58 @@ Checked on the 2024 and 2026 ("fp") Classic and Enhanced Client folders.
   (fallback 400 in the male set). The container and the encoder write both back byte for byte
   (`paperdoll_frame_sets` real-file test); research in `scripts/dev-helpers/ec-research/ghidra-paperdoll`.
   The Classic client has no `Paperdoll.uop`.
+
+## Classic frames: `anim*.mul` and `animationlegacyframe`
+
+The same frame codec in both, read by the 7.0.103.0 client in `UOClassicAnim::DrawFrameRle`, `GetMulFrame`,
+`GetUopFrame` and `FindFrameEntry` (`scripts/dev-helpers/ec-research/ghidra-classic-frames/`). **V** = read in
+the client code; **S** = holds on every shipped file checked; **I** = inferred.
+
+- **Palette**: 256 `u16` RGB555 words (red bits 10..14, green 5..9, blue 0..4). The client draws
+  `palette[index]` for every pixel of a run, bit 15 and a word of 0 included (0 draws black) (V): there is no
+  transparent index or colour; transparency is "not in a run". uocf's decoders and ClassicUO draw a colour of 0
+  transparent; shipped `AnimationFrame2` and `3.uop` frames have such pixels (4,081 frames in the 7.0.103
+  `AnimationFrame2.uop`, 9,660 in CC fp, 10,362 in 7.0.20; also 44 in the 7.0.20 `animationframe4.uop`), no MUL
+  frame does (S). Index 0 is never used by a pixel (S).
+- **Frame**: `i16` anchor x, `i16` anchor y, `u16` width, `u16` height (V); runs; the `u32` end marker
+  0x7FFF7FFF (V). Run header `u32`: bits 0..11 the length, 12..21 the signed y offset, 22..31 the signed x
+  offset (V: `x = (int)hdr >> 22`, `y = (hdr << 10) >> 22`), then `length` index bytes. Image pixel `(x, y)` has
+  offsets `(x - anchor x, y - anchor y - height)` (S, I for the meaning), so a frame must fit offsets
+  -512..511. The client stops at the first run below its clip box (V): runs go top to bottom. Mirroring reads
+  the runs backwards from the marker (V).
+- **Shipped encoder** (S, every frame): runs row by row, left to right, each a maximal span of opaque pixels of
+  one row (split at 0xFFF, which the offset range never reaches); no bytes after the marker.
+- **MUL entry** (`anim*.idx` 12-byte entries: lookup, length, extra 0): the palette, a `u32` frame count, `u32`
+  offsets relative to the end of the palette (0 = missing frame, skipped by the client (V); 365 in the 7.0.103
+  `anim.mul`), the frames. Every shipped entry has ascending contiguous offsets from `4 + 4 * count`, no zero-size
+  frame and no bytes after its last frame (S). The `.mul` files are not in index order and have gaps (S), so the
+  writer appends changed entries at the end and points the index there. An entry is one direction of one action;
+  the body/action/direction to index layout is `classic::anim::classic_animation_source_index_from_identity`.
+- **UOP entry** (`build/animationlegacyframe/%06d/%02d.bin`): the AMOU container, every frame's data being the
+  palette (the same in all frames of a shipped entry, S) and a Classic frame; an empty frame (width or height 0)
+  is the palette and an 8-byte zero header, no marker (S; the client returns no frame for it, V). The client
+  reads only the frame count (+0x20), the table offset (+0x24) and each entry's key and data offset, the table
+  being binary-searched by (action, frame number) (V). The header box, the colour table (EC-like leftovers) and
+  the entry boxes are not read on this path (I: `UOMobFrameSet::Construct` reads three unidentified `u32`); a
+  rewrite keeps them from the entry it replaces (a new entry: no colour table, entry boxes around each frame).
+- **From RGBA** (`index_rgba_frames`): alpha 0 is transparent, 255 opaque, others refused (the gump writer's
+  rule); channels round to the nearest 5-bit value. With the entry's palette each colour takes its lowest index
+  (bit 15 ignored, index 0 last; black takes a word of 0 when the palette has one, as the shipped frames do);
+  without one, the palette is every distinct colour (at most 255, index 0 unused) or a deterministic median cut,
+  and black is stored as 0x0001 (the near black the shipped frames use most), which every decoder draws.
+- **Round trips** (`classic_animation_frame_encoding` real-file tests): indexed re-encode and RGBA with the
+  entry's palette byte-identical on 100% of the entries, and the uocf decoder agrees on every frame:
+  7.0.103 CC `AnimationFrame1-4.uop` (9,610 entries, 470,415 frames), CC fp `AnimationFrame1-4, 6.uop` (10,724
+  entries, 525,916 frames), 7.0.20 `animationframe1-4.uop` (7,307 entries, 357,566 frames); `anim*.mul` of Gold
+  (`anim`-`anim4`), Mondain's Legacy (`anim`-`anim5`), 7.0.20 (`anim`-`anim5`), CC (`anim`-`anim5`) and CC fp
+  (`anim`-`anim6`): every entry, 100%. A rebuilt palette keeps every pixel (no shipped entry has more than 255
+  colours) but its palette order differs from the shipped one, so those bytes differ.
+- **Edit**: `uocf-cli classicanim export|import` and the inspector's Animations view (Export frames, Replace
+  frames) write a folder of PNGs plus `classicanimation.kdl` (strict KDL: body, action, source, palettes,
+  anchors, frame numbers) and encode it back into copies of the files. A UOP entry whose frames per direction
+  change also needs its `AnimationSequence.uop` frame count changed (the Classic Client's sequences are the EC
+  format). `verdata.mul` patches of animations are not read or written (uocf's `AnimMap` applies them when it is
+  given one).
 
 ## Multi ids
 
