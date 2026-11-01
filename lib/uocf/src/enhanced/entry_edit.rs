@@ -47,6 +47,8 @@ const HEX_RADIX: u32 = 16;
 const HASH_HEX_DIGITS: usize = 16;
 /// The reader [`EntryCheck::Parsed`] names for the `Audio.uop` format checks.
 pub const AUDIO_READER: &str = "audio format checks";
+const MP3_EXTENSION: &str = "mp3";
+const WAV_EXTENSION: &str = "wav";
 /// The client dialects a parse check tries, in order.
 const DIALECTS: [ClientDialect; 2] = [ClientDialect::Enhanced, ClientDialect::KingdomReborn];
 
@@ -429,6 +431,15 @@ fn check_font(bytes: &[u8]) -> eyre::Result<()> {
     Ok(())
 }
 
+/// The extension the audio checks give an entry of `kind` by hash, for an MP3 or WAV.
+fn audio_extension(kind: ContentFormat) -> Option<&'static str> {
+    match kind {
+        ContentFormat::Mp3 => Some(MP3_EXTENSION),
+        ContentFormat::Wav => Some(WAV_EXTENSION),
+        _ => None,
+    }
+}
+
 /// A package's key in [`ParseCheck::packages`]: the lowercase file stem without digits.
 pub fn package_key(path: &Path) -> String {
     let stem = path.file_stem().map(|stem| stem.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
@@ -546,15 +557,16 @@ impl UopEntryEditor {
         Ok(if current.is_some() { EntryWrite::Replaced } else { EntryWrite::Added })
     }
 
-    /// The parse checks of this package that apply to an entry `name` of `kind`: the caller's, then uocf's.
-    fn parse_checks(&self, name: Option<&str>, kind: ContentFormat) -> Vec<&ParseCheck> {
+    /// The parse checks of this package that apply to the entry `target` of `kind`: the caller's, then uocf's. A
+    /// check for one entry name applies to a target by hash when the name hashes to it.
+    fn parse_checks(&self, target: &EntryTarget, kind: ContentFormat) -> Vec<&ParseCheck> {
         let key = package_key(&self.source);
         self.caller_checks
             .iter()
             .chain(PARSE_CHECKS)
             .filter(|check| check.packages.is_empty() || check.packages.contains(&key.as_str()))
             .filter(|check| check.kinds.contains(&kind))
-            .filter(|check| check.name.is_none_or(|wanted| name == Some(wanted)))
+            .filter(|check| check.name.is_none_or(|wanted| hash_file_name_single(wanted) == target.hash()))
             .collect()
     }
 
@@ -589,18 +601,28 @@ impl UopEntryEditor {
 
         let mut warnings = Vec::new();
         let mut audio_checked = false;
-        if matches!(kind, ContentFormat::Mp3 | ContentFormat::Wav) {
+        if let Some(extension) = audio_extension(kind) {
             let content = probe_audio(file);
-            if let (Some(name), AudioContent::Mpeg(_) | AudioContent::Wav(_)) = (name, &content) {
-                if let Some(mismatch) = kind_mismatch(name, &content) {
-                    eyre::bail!("{label}: {mismatch}");
-                }
-                warnings = policy.apply(name, enhanced_format_report(name, &content))?;
-                audio_checked = true;
+            if !matches!(content, AudioContent::Mpeg(_) | AudioContent::Wav(_)) {
+                eyre::bail!("{label}: the file starts as {} but holds no {0} stream ({} by its content)", kind.label(), content.format().label());
             }
+            // A target by hash is checked as an entry of its kind outside the legacy sound root.
+            let synthetic;
+            let audio_name = match name {
+                Some(name) => name,
+                None => {
+                    synthetic = format!("{:016x}.{extension}", target.hash());
+                    synthetic.as_str()
+                }
+            };
+            if let Some(mismatch) = kind_mismatch(audio_name, &content) {
+                eyre::bail!("{label}: {mismatch}");
+            }
+            warnings = policy.apply(audio_name, enhanced_format_report(audio_name, &content))?;
+            audio_checked = true;
         }
 
-        let checks = self.parse_checks(name, kind);
+        let checks = self.parse_checks(target, kind);
         let parsed = match current {
             Some(current) if current_kind == Some(kind) => Self::first_parse(&checks, current).map(|(check, dialect)| {
                 (check.check)(file, dialect)
@@ -875,6 +897,51 @@ mod tests {
         assert_eq!(put.check, EntryCheck::Parsed { reader: "legacy terrain map", dialect: None });
         let error = format!("{:#}", editor.replace(&target, b"legacyId,newId,newSubType\n1,0,1\n", policy).unwrap_err());
         assert!(error.contains("not in the shipped format at line 1"), "{error}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn audio_checks_apply_by_hash_and_to_mp3s_without_frames() {
+        /// An ID3v2.3 tag with no frames: "ID3", version 3.0, no flags, a size of 0.
+        const EMPTY_ID3V2: [u8; 10] = [b'I', b'D', b'3', 3, 0, 0, 0, 0, 0, 0];
+        const NOT_FRAMES: [u8; 64] = [1; 64];
+        let dir = temp_dir("audio_by_hash");
+        let mp3 = mp3::tests::frames(mp3::tests::MPEG2_L3_64K_MONO_HEADER, mp3::tests::MPEG2_L3_64K_MONO_FRAME, 4);
+        let path = package_with(&dir, "Audio.uop", &[(MP3_NAME, &mp3, CompressionFlag::None)]);
+        let mut editor = UopEntryEditor::load(&path).unwrap();
+        let policy = FormatPolicy::VerifiedOnly;
+        let by_name = EntryTarget::Name(MP3_NAME.to_owned());
+        let by_hash = EntryTarget::Hash(hash_file_name_single(MP3_NAME));
+        // The first frame past the window mssmp3.asi scans after the tag.
+        let late = [&EMPTY_ID3V2[..], &vec![0; crate::audio::validate::MILES_MP3_SYNC_WINDOW + 1], &mp3].concat();
+        let no_frames = [&EMPTY_ID3V2[..], &NOT_FRAMES].concat();
+        for target in [&by_name, &by_hash] {
+            let error = format!("{:#}", editor.replace(target, &late, policy).unwrap_err());
+            assert!(error.contains("bytes in (mssmp3.asi scans"), "{target:?}: {error}");
+            let error = format!("{:#}", editor.replace(target, &no_frames, policy).unwrap_err());
+            assert!(error.contains("holds no MP3 stream"), "{target:?}: {error}");
+        }
+        let put = editor.replace(&by_hash, &mp3::tests::frames(mp3::tests::MPEG2_L3_64K_MONO_HEADER, mp3::tests::MPEG2_L3_64K_MONO_FRAME, 2), policy).unwrap();
+        assert_eq!(put.check, EntryCheck::Parsed { reader: AUDIO_READER, dialect: None });
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn named_parse_checks_apply_by_hash() {
+        use crate::enhanced::audio::SOUND_TABLE_ENTRY;
+        use crate::enhanced::legacy_terrain_map::UOP_ENTRY_PATH;
+        const BAD_TABLE: &[u8] = b"not,a,sound,table\r\nx,y\r\n";
+        let dir = temp_dir("named_by_hash");
+        let audio = package_with(&dir, "Audio.uop", &[(SOUND_TABLE_ENTRY, b"#ID,FilePath\r\n0,Sounds\\a.mp3\r\n", CompressionFlag::Zlib)]);
+        let mut editor = UopEntryEditor::load(&audio).unwrap();
+        let target = EntryTarget::Hash(hash_file_name_single(SOUND_TABLE_ENTRY));
+        let error = format!("{:#}", editor.replace(&target, BAD_TABLE, FormatPolicy::VerifiedOnly).unwrap_err());
+        assert!(error.contains("does not parse as a sound table"), "{error}");
+        let game_data = package_with(&dir, "GameData.uop", &[(UOP_ENTRY_PATH, b"legacyId,newId,newSubType\r\n1,0,1\r\n", CompressionFlag::Zlib)]);
+        let mut editor = UopEntryEditor::load(&game_data).unwrap();
+        let target = EntryTarget::Hash(hash_file_name_single(UOP_ENTRY_PATH));
+        let error = format!("{:#}", editor.replace(&target, b"legacyId,newId,newSubType\n1,0,1\n", FormatPolicy::VerifiedOnly).unwrap_err());
+        assert!(error.contains("not in the shipped format"), "{error}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
