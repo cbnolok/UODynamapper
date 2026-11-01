@@ -1436,11 +1436,11 @@ Active KDL files live in `dynamapper/assets/cc_ec_convtables/`.
   items as the client's material (the per-tile terra cotta and blue slate
   materials 74-103 for 1046-1077, embank snow 65/67 for 778-789, swamp2 edges
   131/133 for 15834/15837) and acid 49 for 11834/11835 (client: 168/169, the
-  water materials whose own aliases name those ids). Still differing: 138
+  water materials whose own aliases name those ids), and so were the 138
   same-family variant/orientation rows with different textures (tree
-  bark/path, cave walls, snow 378/379, planks 699, terra cotta 1071), pending
-  review, and 41 ids with no client row (the KDL adds them, e.g. 435-437 to
-  void).
+  bark/path, cave walls, snow 378/379, planks 699, terra cotta 1071). Every
+  remaining row is an id with no client row (41; the KDL adds them, e.g.
+  435-437 to void) or agrees with the client.
 
 Legacy KDL files:
 
