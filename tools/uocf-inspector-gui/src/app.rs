@@ -1881,6 +1881,7 @@ pub struct UopInspectorApp {
     pub multi_part_filters: MultiPartFilters,
     pub housing_panel: crate::ui::housing::HousingPanelState,
     pub animation_definitions_panel: crate::ui::animation_definitions::AnimationDefinitionsPanelState,
+    pub localized_strings_editor: crate::ui::clilocs::LocalizedStringsEditor,
     pub effects_panel: crate::ui::effects::EffectsPanelState,
     pub multi_editor: crate::logic::multi_editor::MultiEditor,
     pub tileart_editor: crate::logic::tileart_editor::TileArtEditor,
@@ -1971,6 +1972,7 @@ impl UopInspectorApp {
             multi_part_filters: MultiPartFilters::default(),
             housing_panel: Default::default(),
             animation_definitions_panel: Default::default(),
+            localized_strings_editor: Default::default(),
             effects_panel: Default::default(),
             multi_editor: Default::default(),
             tileart_editor: Default::default(),
@@ -2093,6 +2095,7 @@ impl UopInspectorApp {
         self.housing_index = None;
         self.selected_multi_uop_hash = None;
         self.selected_localized_file_hash = None;
+        self.localized_strings_editor = Default::default();
         self.cc_sounds = None;
         self.cc_sound_entries = None;
         self.ec_audio = None;
@@ -2489,6 +2492,7 @@ impl UopInspectorApp {
                         let rows = collect_localized_string_rows(&strings);
                         self.localized_strings = Some(Arc::new(strings));
                         self.localized_string_rows = Some(Arc::new(rows));
+                        self.localized_strings_editor = crate::ui::clilocs::LocalizedStringsEditor::for_package(uop_path.clone());
                         self.log(format!("Parsed {} localized string entries.", count));
                     }
                     Err(e) => self.log(format!("Failed to parse {}: {}", uop_name, e)),
@@ -4409,6 +4413,7 @@ pub(crate) mod tests {
             multi_part_filters: MultiPartFilters::default(),
             housing_panel: Default::default(),
             animation_definitions_panel: Default::default(),
+            localized_strings_editor: Default::default(),
             effects_panel: Default::default(),
             multi_editor: Default::default(),
             tileart_editor: Default::default(),

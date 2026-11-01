@@ -71,6 +71,23 @@ Editing `.uop` packages (`uop_container::package`):
   keeps both counts (`declared_count`, `len`), and `to_payload_bytes` writes the
   client payload back byte for byte.
 
+`LocalizedStrings.uop` (`localized_strings.rs`):
+
+- One string table per language, `data/localizedstrings/%03d.cliloc` (names
+  verified by hash): 1 enu, 2 jpn, 3 kor, 4 fra, 5 deu, 6 esp, 7 chs, 8 cht
+  (verified by content: the eight EC tables are byte-identical to the Classic
+  client's `Cliloc.<lang>` files). Kingdom Reborn ships 1, 2 and 8.
+- Table: `u32 header1`, `u16 header2` (2 and 1 in every shipped table; meaning
+  inferred), then entries to the end: `u32 id`, `u8 flag` (always 0), `u16`
+  length, UTF-8 text. Shipped tables are sorted by id, without duplicates.
+- `LocalizedStringTable::to_payload_bytes` writes every shipped table (EC, KR
+  and the uncompressed Classic `Cliloc.*`) back byte for byte, directly and
+  through KDL (`to_kdl_string` / strict `from_kdl_str`); `write_tables` writes a
+  copy of the package with only the edited tables replaced. CLI: `uocf-cli
+  strings export|import`; inspector: the Clilocs view edits a table and saves a
+  copy. Compressed Classic clilocs (later clients) are read by
+  `classic::cliloc` only.
+
 `facet*.uop`:
 
 - Stores KR/EC map chunks under paths like `build/sectors/facet_0M/XXXXXXXX.bin`.

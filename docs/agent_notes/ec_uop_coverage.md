@@ -66,7 +66,7 @@ TMPDIR=/home/claudio/test/uop/<date> UO_EC_CLIENT_DIR="$C/_Ultima Online Enhance
 | | 18-byte 0x0 TGA placeholders, UTF-16 text, OLE, AMOU, JPEG (39 / 3) | raw (AMOU typed, JPEG decoded) | replace (JPEG parse-checked) | no | none (hex) | low value |
 | LegacyTerrain (EC) | terrain documents XML (2,723) | typed | editor | writer, RT (`legacy_terrain_client_file::every_document_writes_back_byte_for_byte`), edit RT | Legacy terrain (edit, save) | `legacy_terrain.rs` b2dcd31b |
 | LegacyTexture | DDS (49,268 / 16,877) | typed | editor (`uop replace-texture`) | writer (see Interface DDS) | UOP explorer (image), Art viewer | `dds_writer.rs`, `textures.rs` |
-| LocalizedStrings | string tables (8 / 3) | typed | replace (parse-checked) | no writer | Clilocs (view) | `localized_strings.rs` e65e9602; gap 7 |
+| LocalizedStrings | string tables (8 / 3; `data/localizedstrings/%03d.cliloc`) | typed (strict UTF-8) | editor (`uocf-cli strings`, KDL) | writer, RT EC and KR, directly and through KDL; the Classic `Cliloc.*` files (same format, 8) too (`string_tables_client_files`), edit RT | Clilocs (edit, save, KDL) | `localized_strings.rs` |
 | MainMisc | XML (2 / 2), UTF-16 text (1 / 1), binary (1 / 0) | raw | replace | no | UOP explorer (XML text) | gap 4 |
 | MultiCollection | multis (862 / 241) | typed, both dialects | editor (multi editor, KDL) | writer, RT EC (`multi_collection_client_entries::every_multi_reencodes_identically`) and KR (`kr_client_files::kr_multis_reencode_identically`), edit RT | Multis, Multi editor (save) | `multis.rs` 38705ade, 7fd85a38 |
 | | `housing.bin` (1 / 1) | typed, KDL | editor | writer, RT EC (`housing_bin_reserializes_identically_directly_and_through_kdl`) and KR (`kr_client_files::kr_housing_bin_reserializes_identically_directly_and_through_kdl`), both directly and through KDL | Housing (edit, save) | `housing*` 02fb5dad, beeecc11 |
@@ -79,7 +79,7 @@ TMPDIR=/home/claudio/test/uop/<date> UO_EC_CLIENT_DIR="$C/_Ultima Online Enhance
 | | data map (1 per package) | typed | editor (written by the facet builder) | writer, RT EC (`facet_client_files::facet_data_maps_reencode_identically`, 10 packages) and KR (`kr_facet_client_files::kr_facet_data_maps_reencode_identically`) | none | `facet_sector.rs` |
 | facets (EC) | facet definitions (7) | typed | editor | writer, RT (`facet_client_files::facet_definitions_reencode_identically`) | none | `facet_definition.rs` bf596b93 |
 | gumpartLegacyMUL (EC) | Classic gumps (4,342 parse; 34 do not) | typed (`decode_uop_gump`) | replace (parse-checked); MUL <-> UOP repack (`uocf-cli mul-convert`) | no gump pixel encoder; repack RT (synthetic) | Gumps (view) | `classic/gump.rs` 7b89a450, a09b2255; gap 11 |
-| string_dictionary | dictionary (1 / 1) | typed | editor (library only) | writer, RT (synthetic) | String dictionary (view) | `string_dictionary.rs` fe344236; gap 7 |
+| string_dictionary | dictionary (1 / 1) | typed | editor (library only) | writer, RT EC and KR (`string_tables_client_files::*string_dictionar*`) | String dictionary (view) | `string_dictionary.rs` fe344236 |
 | tileart | records (37,756 / 17,086) | typed, both dialects | editor | writer, RT EC (`tileart_client_records::tileart_reencodes_every_client_record`) and KR (`kr_client_files::kr_tileart_records_reencode_identically`), edit RT | Tile metadata, tileart editor (save) | `tileart.rs` 38705ade, 938dc6e7 |
 | waypoint | waypoints (1 / 1) | typed | editor | writer, RT EC (`waypoints_client_file::waypoints_reencode_identically`) and KR (`kr_client_files::kr_waypoints_reencode_identically`) | UOP explorer (waypoint editor) | `waypoints.rs` c368a4f0, 38705ade |
 | StaticChunk (KR) | static chunks (145) | typed | editor (`apply_to_package`) | writer, RT (`kr_facet_client_files::kr_static_chunks_reencode_identically`) | none | `kr/facet/static_chunk.rs` 7fd85a38 |
@@ -92,7 +92,7 @@ LegacyTerrain, MultiCollection, TerrainDefinition, the 10 facet packages, facets
 editor whose writer is round-trip tested on every shipped entry; Audio, EffectTexture and Hues have editors for
 their typed kinds (MP3 is stored as given, not encoded). What remains raw is text without a parser (Lua, XML outside LegacyTerrain, CSV outside the audio
 tables and the legacy terrain map, shaders), the fonts, a few stray files (OLE, UTF-16 text, PSD, one JPEG) and
-the unknown `MainMisc` binary. What has a reader but no writer: `LocalizedStrings`, `legacyterrainmap.csv`, the
+the unknown `MainMisc` binary. What has a reader but no writer: `legacyterrainmap.csv`, the
 TGA images and the Classic gumps (pixels).
 
 ## Replacement checks
@@ -126,7 +126,7 @@ TGA images and the Classic gumps (pixels).
 | 4 | XML well-formedness check for Interface and MainMisc XML (EC 128, KR 249) | same as 3, for the UI layouts | 0.5 day, needs an XML crate (new dependency) |
 | 5 | NIF parse check in the entry editor | a replaced NIF is only kind-checked | 0.5 day: uocf depends on `gamebryo-nif`, or the check moves to the CLI and inspector layer |
 | 6 | ~~KR NIF round trip (451)~~ | **closed**: all 451 KR NIFs read, write back byte for byte and have no bad links | done |
-| 7 | `LocalizedStrings` writer and editor; `string_dictionary` round trip on the shipped files | localized text cannot be edited; the dictionary writer is untested on real data | 1 day; 0.1 day |
+| 7 | ~~`LocalizedStrings` writer and editor; `string_dictionary` round trip on the shipped files~~ | **closed**: every EC, KR and Classic table and both dictionaries write back byte for byte; `uocf-cli strings` and the Clilocs view edit them | done |
 | 8 | `legacyterrainmap.csv` writer | land routing can only be replaced whole | 0.5 day |
 | 9 | Hues: shipped hue bitmaps reproduced byte for byte (wrong size field, hand-picked swatches) | edited `Hues.uop` differs from EA's in unedited hues | 1 day |
 | 10 | Strict CSV reader for the other GameData tables (65 EC) | GameData CSVs are only kind-checked | 0.5 day to measure the shipped grammar, then per table |

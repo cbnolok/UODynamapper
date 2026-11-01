@@ -10,6 +10,7 @@ mod login;
 mod mul_convert;
 mod multimap;
 mod sound;
+mod strings;
 mod uop;
 
 use clap::{Parser, Subcommand, ValueEnum};
@@ -125,6 +126,10 @@ enum Commands {
     /// KDL, and import such a folder back into a copy of the package.
     #[command(subcommand)]
     Animframe(animframe::AnimframeCmd),
+    /// String tables (LocalizedStrings.uop of the Enhanced Client and Kingdom Reborn, Classic Cliloc.<lang>):
+    /// export as KDL, and import KDL back into a copy.
+    #[command(subcommand)]
+    Strings(strings::StringsCmd),
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -194,6 +199,7 @@ fn main() -> eyre::Result<()> {
         Commands::Uop(cmd) => uop::run(cmd)?,
         Commands::Animdef(cmd) => animdef::run(cmd)?,
         Commands::Animframe(cmd) => animframe::run(cmd)?,
+        Commands::Strings(cmd) => strings::run(cmd)?,
     }
 
     Ok(())
