@@ -41,6 +41,16 @@ pub struct VisibleLandChunkTargets {
 #[derive(Message, Debug, Clone, PartialEq)]
 pub struct RecomputeVisibleChunksEvent;
 
+/// Export mode only: the tiles whose chunks must be drawn, half-open. When present, it replaces the
+/// window-derived chunk set, so the frame rectangle, not the window and player, decides what streams in.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExportChunkFootprint {
+    pub tile_x0: u32,
+    pub tile_y0: u32,
+    pub tile_x1: u32,
+    pub tile_y1: u32,
+}
+
 /// Plugin for scene setup, worldmap chunk management, and dynamic updates/despawns.
 /// Now robust against map-plane switches and duplicated logic in chunk range handling.
 pub struct ScenePlugin {
@@ -247,6 +257,29 @@ fn compute_visible_chunks(
     chunks
 }
 
+/// The chunks covering `footprint`, in the same form as [`compute_visible_chunks`]: base-grid coordinates
+/// aligned to `chunk_scale`, whole super-chunks inside the map only, sorted.
+pub(crate) fn chunks_in_tile_rect(
+    footprint: &ExportChunkFootprint,
+    map_width: u32,
+    map_height: u32,
+    chunk_scale: u32,
+) -> Vec<(u32, u32)> {
+    let span = TILE_NUM_PER_CHUNK_DIM * chunk_scale;
+    let (map_base_chunks_x, map_base_chunks_y) = (map_width / TILE_NUM_PER_CHUNK_DIM, map_height / TILE_NUM_PER_CHUNK_DIM);
+    let mut chunks = Vec::new();
+    for gx in footprint.tile_x0 / span..footprint.tile_x1.div_ceil(span) {
+        for gy in footprint.tile_y0 / span..footprint.tile_y1.div_ceil(span) {
+            let (base_gx, base_gy) = (gx * chunk_scale, gy * chunk_scale);
+            if base_gx + chunk_scale <= map_base_chunks_x && base_gy + chunk_scale <= map_base_chunks_y {
+                chunks.push((base_gx, base_gy));
+            }
+        }
+    }
+    chunks.sort_unstable();
+    chunks
+}
+
 /// Bundled local state for `sys_update_worldmap_chunks_to_render` to stay within
 /// Bevy's 16-parameter system limit.
 #[derive(Default)]
@@ -352,6 +385,7 @@ fn sys_update_worldmap_chunks_to_render(
     mut player_q: Query<(&mut Player, &Transform)>,
     existing_chunks_q: Query<(Entity, &land::LCMesh, Has<Mesh3d>)>,
     mut locals: Local<ChunkRenderLocals>,
+    export_footprint: Option<Res<ExportChunkFootprint>>,
 ) {
     /// Maximum number of chunk entities spawned per frame to avoid burst stalls.
     const MAX_SPAWNS_PER_FRAME: usize = 512;
@@ -433,15 +467,24 @@ fn sys_update_worldmap_chunks_to_render(
 
         // Compute the visible chunk set for the desired scale and, if a handoff is active,
         // also maintain the committed scale as a fallback until the target scale is ready.
-        let required_desired_chunks: Vec<(u32, u32)> = compute_visible_chunks(
-            player_transform.translation,
-            zoom,
-            viewport_size.0,
-            viewport_size.1,
-            new_map_plane_metadata.width,
-            new_map_plane_metadata.height,
-            desired_scale,
-        );
+        let visible_chunks = |scale: u32| match export_footprint.as_deref() {
+            Some(footprint) => chunks_in_tile_rect(
+                footprint,
+                new_map_plane_metadata.width,
+                new_map_plane_metadata.height,
+                scale,
+            ),
+            None => compute_visible_chunks(
+                player_transform.translation,
+                zoom,
+                viewport_size.0,
+                viewport_size.1,
+                new_map_plane_metadata.width,
+                new_map_plane_metadata.height,
+                scale,
+            ),
+        };
+        let required_desired_chunks: Vec<(u32, u32)> = visible_chunks(desired_scale);
         if locals.last_logged_visible_target_map_id != Some(new_map_id)
             || locals.last_logged_visible_target_scale != Some(desired_scale)
             || locals.last_logged_visible_target != required_desired_chunks
@@ -513,15 +556,7 @@ fn sys_update_worldmap_chunks_to_render(
                 );
             }
 
-            let mut required_committed_chunks = compute_visible_chunks(
-                player_transform.translation,
-                zoom,
-                window.width(),
-                window.height(),
-                new_map_plane_metadata.width,
-                new_map_plane_metadata.height,
-                committed_scale,
-            );
+            let mut required_committed_chunks = visible_chunks(committed_scale);
             locals.committed_required_chunks = required_committed_chunks.clone();
 
             if scale_changed {

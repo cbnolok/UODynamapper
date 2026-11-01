@@ -3,6 +3,7 @@ mod bevy_log_filter;
 pub mod constants;
 pub mod controls;
 mod diagnostics;
+pub mod export_job;
 pub mod frame_limiter;
 pub mod maps;
 pub mod multis;
@@ -109,11 +110,12 @@ fn custom_threadpool_settings() -> TaskPoolPlugin {
     }
 }
 
-fn custom_window_plugin_settings(size: (f32, f32), vsync: bool) -> WindowPlugin {
+fn custom_window_plugin_settings(size: (f32, f32), vsync: bool, visible: bool) -> WindowPlugin {
     let present_mode = present_mode_for_vsync(vsync);
     WindowPlugin {
         primary_window: Some(Window {
             present_mode,
+            visible,
             composite_alpha_mode: bevy::window::CompositeAlphaMode::Opaque,
             desired_maximum_frame_latency: Some(std::num::NonZeroU32::new(1).unwrap()),
             title: "UODynamapper".to_string(),
@@ -251,13 +253,23 @@ pub fn run_bevy_app() -> ExitCode {
         assets_folder.as_os_str().to_str().unwrap_or("N/A")
     ));
 
-    let settings_data = match settings::load_from_files() {
+    let export_job = match export_job::load_requested_job() {
+        Ok(job) => job,
+        Err(error) => {
+            log::error!("{} is not a usable export job: {error:?}", export_job::EXPORT_JOB_ENV);
+            return ExitCode::from(settings::STARTUP_CONFIG_ERROR_EXIT_CODE);
+        }
+    };
+    let mut settings_data = match settings::load_from_files() {
         Ok(settings_data) => settings_data,
         Err(error) => {
             settings::report_startup_config_error(&error);
             return ExitCode::from(settings::STARTUP_CONFIG_ERROR_EXIT_CODE);
         }
     };
+    if let Some(job) = &export_job {
+        export_job::apply_settings_overrides(&mut settings_data, job);
+    }
     settings::apply_logging_settings(&settings_data.logging);
     // Configure plugin log toggles (controls flat per-plugin lines and tree dump)
     set_plugin_log_toggles(
@@ -299,7 +311,12 @@ pub fn run_bevy_app() -> ExitCode {
             //.disable::<bevy::core_pipeline::experimental::mip_generation::MipGenerationPlugin>()
             //.disable::<bevy::core_pipeline::oit::OrderIndependentTransparencyPlugin>()
             //.disable::<bevy::core_pipeline::upscaling::UpscalingPlugin>()
-            .set(custom_window_plugin_settings(window_size, vsync_enabled))
+            .set(custom_window_plugin_settings(
+                window_size,
+                vsync_enabled,
+                // The export renders offscreen; its window is never shown.
+                export_job.is_none(),
+            ))
             .set(custom_threadpool_settings())
             .set(custom_render_plugin_settings(wireframe_enabled))
             .set(ImagePlugin::default_nearest())
@@ -380,6 +397,10 @@ pub fn run_bevy_app() -> ExitCode {
             registered_by: "Core",
         },
     ))
+    .add_plugins(export_job::ExportJobPlugin {
+        registered_by: "Core",
+        job: export_job,
+    })
     .init_state::<AppState>()
     .insert_state(AppState::StartupSetup)
     .configure_sets(

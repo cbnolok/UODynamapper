@@ -29,6 +29,7 @@ struct ProjectionView {
     world_from_view: mat4x4<f32>,
     view_from_world: mat4x4<f32>,
     clip_from_view: mat4x4<f32>,
+    viewport: vec4<f32>,
 }
 @group(0) @binding(5) var<uniform> view: ProjectionView;
 "#, "embedded://bevy_pbr/render/mesh_view_bindings.wesl"));
@@ -307,7 +308,7 @@ fn main() {
             vec4<u32>(7u + graph * 7u, 16u, 0u, 0u), vec2<f32>(0.75, 0.25),
             vec2<f32>(0.25, 0.75), vec2<f32>(0.0, 1.0), 0.25, index == 9u, false, 0.5);
     }
-    for (var index = 0u; index < 5u; index++) {
+    for (var index = 0u; index < 6u; index++) {
         let input = projection_inputs[index];
         samples[111u + index] = camera_relative_world_to_clip(input.origin.xyz, input.offset.xyz) * input.offset.w;
     }
@@ -380,7 +381,7 @@ fn main() {
             offset: 0, bytes_per_row: Some(6 * 16), rows_per_image: Some(1),
         }, item_lookup.size());
         let item_view = item_lookup.create_view(&wgpu::TextureViewDescriptor::default());
-        let result_size = 116 * 16;
+        let result_size = 117 * 16;
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: None, size: result_size, mapped_at_creation: false,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
@@ -396,7 +397,7 @@ fn main() {
         // Match the runtime's uniform view. A constant view lets the driver
         // fold the tiny offset into its large literal camera translation.
         let projection_view = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("projection view"), size: 3 * 64, mapped_at_creation: false,
+            label: Some("projection view"), size: 3 * 64 + 16, mapped_at_creation: false,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         let matrices = [
@@ -405,10 +406,14 @@ fn main() {
             bevy::math::Mat4::IDENTITY.to_cols_array(),
         ];
         queue.write_buffer(&projection_view, 0, bytemuck::cast_slice(&matrices));
+        // A 1024-pixel viewport: the 1/64 px snap grid is 1/32768 in clip units, so the
+        // sub-ULP cases above stay exact and only the off-grid case below is rounded.
+        let viewport_px = 1024.0f32;
+        queue.write_buffer(&projection_view, 3 * 64, bytemuck::cast_slice(&[0.0, 0.0, viewport_px, viewport_px]));
         // Geometry is uploaded independently, as with real mesh/instance data.
         // Shader-literal origin rebasing can be folded before the helper call.
         let projection_vertices = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("projection inputs"), size: 5 * 32, mapped_at_creation: false,
+            label: Some("projection inputs"), size: 6 * 32, mapped_at_creation: false,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
         let tiny = 1.0f32 / 32768.0;
@@ -418,6 +423,8 @@ fn main() {
             [8196.0, 8184.0, 8208.0, 0.0, 0.25, 0.5, 0.75, 1.0],
             [8192.0, 8192.0, 8192.0, 0.0, 0.0, 0.0, 0.0, 1.0],
             [8200.0, 8192.0, 8200.0, 0.0, -8.0 + tiny, tiny, -8.0 + tiny, 32768.0],
+            // 0.512 px from the centre snaps to 33/64 px on screen; depth is not snapped.
+            [8192.0, 8192.0, 8192.0, 0.0, 0.001, 0.001, 0.001, 32768.0],
         ];
         queue.write_buffer(&projection_vertices, 0, bytemuck::cast_slice(&inputs));
         let bindings = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -532,7 +539,8 @@ fn main() {
         expected.push(decode(std::array::from_fn(|channel| if channel == 3 { normalized[0][3] }
             else { normalized[0][channel] * normalized[0][channel] * 0.5 })));
         expected.extend([[1.0, 1.0, 1.0, 32768.0], [-1.0, -1.0, -1.0, 32768.0],
-            [4.25, -7.5, 16.75, 1.0], [0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 1.0, 32768.0]]);
+            [4.25, -7.5, 16.75, 1.0], [0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 1.0, 32768.0],
+            [33.0, 33.0, 0.001 * 32768.0, 32768.0]]);
         // Cursor geometry must keep matching the production bank shader. The
         // synthetic atlas above deliberately includes missing and Classic cells.
         use crate::core::render::scene::world::land::picking::{bank_vertex, TerrainSample};

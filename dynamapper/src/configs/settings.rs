@@ -1,4 +1,5 @@
 use crate::console_logger::{self, LogAbout, LogSev};
+use crate::core::export_job::ExportJob;
 use crate::core::render::scene::camera::RenderZoom;
 use crate::core::render::scene::player::Player;
 use crate::prelude::*;
@@ -748,12 +749,15 @@ impl Plugin for SettingsPlugin {
                 t
             }))
             .add_systems(FixedUpdate, sys_evlisten_switch_wireframe)
+            // Export mode overrides the settings in memory and must never save them.
             .add_systems(
                 FixedUpdate,
-                sys_sync_resources_to_settings.before(sys_debounced_save),
+                sys_sync_resources_to_settings
+                    .before(sys_debounced_save)
+                    .run_if(not(resource_exists::<ExportJob>)),
             )
-            .add_systems(FixedUpdate, sys_debounced_save)
-            .add_systems(Last, sys_flush_settings_on_exit);
+            .add_systems(FixedUpdate, sys_debounced_save.run_if(not(resource_exists::<ExportJob>)))
+            .add_systems(Last, sys_flush_settings_on_exit.run_if(not(resource_exists::<ExportJob>)));
     }
 }
 
@@ -838,8 +842,11 @@ fn sync_runtime_resources_to_settings(
     }
 }
 
-fn sys_startup_load_file(mut commands: Commands) {
-    let data = load_from_files().unwrap_or_else(|error| exit_on_startup_config_error(&error));
+fn sys_startup_load_file(mut commands: Commands, export_job: Option<Res<ExportJob>>) {
+    let mut data = load_from_files().unwrap_or_else(|error| exit_on_startup_config_error(&error));
+    if let Some(job) = export_job {
+        crate::core::export_job::apply_settings_overrides(&mut data, &job);
+    }
 
     // Initialize logger settings
     apply_logging_settings(&data.logging);

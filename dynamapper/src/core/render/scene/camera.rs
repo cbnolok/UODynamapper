@@ -2,6 +2,7 @@ use crate::configs::settings::{AntiAliasingMode, SectGraphics, Settings};
 use crate::core::render::scene::world::effects::fog_pass::FogPostProcessUniform;
 use crate::core::render::scene::player::Player;
 use crate::core::render::scene::RecomputeVisibleChunksEvent;
+use crate::core::export_job::ExportJob;
 use crate::core::system_sets::*;
 use crate::prelude::*;
 use crate::util_lib::math::Between;
@@ -98,7 +99,11 @@ impl Plugin for CameraPlugin {
                     .run_if(resource_changed::<Settings>)
                     .in_set(MovementSysSet::UpdateCamera), // or some appropriate set
             )
-            .add_systems(Update, sys_update_camera_projection_to_view)
+            // In export mode the export job owns the world camera: its target, projection and placement.
+            .add_systems(
+                Update,
+                sys_update_camera_projection_to_view.run_if(not(resource_exists::<ExportJob>)),
+            )
             .add_systems(
                 Update,
                 (
@@ -107,6 +112,7 @@ impl Plugin for CameraPlugin {
                         .run_if(not(|s: Res<Settings>| s.app.window.free_camera)),
                     sys_free_camera_movement.run_if(|s: Res<Settings>| s.app.window.free_camera),
                 )
+                    .run_if(not(resource_exists::<ExportJob>))
                     .in_set(MovementSysSet::UpdateCamera),
             );
     }
