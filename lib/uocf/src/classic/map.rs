@@ -106,6 +106,14 @@ pub const UOP_MAP_TRAILING_BLOCKS: u64 = 1;
 /// The size of Classic map `map_index` holding `block_count` blocks: the facet's height
 /// ([`CLASSIC_FACET_HEIGHTS`]) and the width those blocks fill. Up to `trailing_blocks` blocks past the last full
 /// column are allowed (a UOP package's trailing block); any other remainder fails.
+/// The entry editor's check of a `mapNLegacyMUL.uop` payload: whole map blocks, at least one.
+pub fn check_uop_map_payload(bytes: &[u8]) -> eyre::Result<()> {
+    if bytes.is_empty() || bytes.len() % MAP_BLOCK_FILE_SIZE != 0 {
+        eyre::bail!("{} bytes are not whole map blocks of {MAP_BLOCK_FILE_SIZE} bytes", bytes.len());
+    }
+    Ok(())
+}
+
 pub fn classic_map_size(map_index: u32, block_count: u64, trailing_blocks: u64) -> eyre::Result<MapSizeCells> {
     let height = *CLASSIC_FACET_HEIGHTS
         .get(map_index as usize)
@@ -1088,6 +1096,13 @@ pub fn load_blocks_from_mmap(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn uop_map_check_wants_whole_blocks() {
+        assert!(check_uop_map_payload(&[0; MAP_BLOCK_FILE_SIZE * 2]).is_ok());
+        assert!(check_uop_map_payload(&[0; MAP_BLOCK_FILE_SIZE + 1]).is_err());
+        assert!(check_uop_map_payload(&[]).is_err());
+    }
 
     /// Felucca's map index.
     const FELUCCA: u32 = 0;

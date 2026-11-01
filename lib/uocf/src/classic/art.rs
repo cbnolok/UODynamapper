@@ -165,6 +165,19 @@ pub fn decode_land_tile_from_raw(
     Ok(())
 }
 
+/// The entry editor's check of an `artLegacyMUL.uop` payload: it decodes as a static tile, or holds a land diamond.
+/// The payload does not say which it is (the entry's id does), so a land payload passes on its length.
+pub fn check_art_payload(raw_data: &[u8]) -> eyre::Result<()> {
+    match decode_static_tile_from_raw(raw_data) {
+        Ok(_) => Ok(()),
+        Err(_) if raw_data.len() >= LAND_DIAMOND_BYTE_COUNT => Ok(()),
+        Err(error) => Err(error.wrap_err(format!(
+            "neither a static tile nor a land diamond ({LAND_DIAMOND_BYTE_COUNT} bytes): {} bytes",
+            raw_data.len()
+        ))),
+    }
+}
+
 pub fn decode_static_tile_from_raw(raw_data: &[u8]) -> eyre::Result<(u16, u16, Vec<u8>)> {
     let _flags = read_u32_le(raw_data, 0)?;
     let width = read_u16_le(raw_data, 4)?;
@@ -735,6 +748,20 @@ fn find_uop_art_file<'a>(
 mod tests {
     use super::*;
     use crate::uop_container::file::CompressionFlag;
+
+    #[test]
+    fn art_check_accepts_statics_and_land_diamonds_only() {
+        // A 1x1 static: flags, width, height, one row offset, a run of one pixel, the row end.
+        let static_tile: Vec<u8> = [0u32.to_le_bytes().as_slice(), &1u16.to_le_bytes(), &1u16.to_le_bytes()]
+            .concat()
+            .into_iter()
+            .chain([0u16, 0, 1, 0x7FFF, 0, 0].iter().flat_map(|word| word.to_le_bytes()))
+            .collect();
+        assert!(check_art_payload(&static_tile).is_ok());
+        assert!(check_art_payload(&vec![0u8; LAND_DIAMOND_BYTE_COUNT]).is_ok());
+        assert!(check_art_payload(&static_tile[..STATIC_HEADER_BYTES]).is_err());
+        assert!(check_art_payload(&[]).is_err());
+    }
 
     #[test]
     fn art_map_keeps_cc_and_ec_uop_sources_separate() {

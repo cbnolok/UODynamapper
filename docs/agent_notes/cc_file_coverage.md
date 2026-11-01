@@ -32,8 +32,9 @@ UO_PRE7_CLIENT_DIR="$C/Ultima Online Mondain's Legacy" UO_CLIENT_ROOTS="$C" \
   replace or add. Every entry of every Classic UOP has *replace* through `uocf::enhanced::entry_edit::UopEntryEditor`
   (`uocf-cli uop replace-entry` / `add-entry`, the inspector's "Replace file..."): the census
   `entry_editor_client_packages::every_shipped_entry_passes_its_own_check` (`UO_CC_CLIENT_DIR`) passes on all
-  94,654 Classic entries. `artLegacyMUL`, `map*LegacyMUL` and `soundLegacyMUL` entries are only checked by kind
-  (binary), not parsed.
+  94,654 Classic entries. `artLegacyMUL` entries must decode as a static or hold a land diamond
+  (`classic::art::check_art_payload`), `map*LegacyMUL` entries be whole 196-byte blocks, `soundLegacyMUL` entries
+  have samples after their header.
 - **Write**: *writer* = bytes are produced from the typed form. *RT* = a real-file test asserts that the shipped file
   (or every shipped entry) decodes and re-encodes byte for byte; *RT (synthetic)* = only unit tests do; *raw copy* =
   the bytes are moved between containers unparsed; *no* = no writer.
@@ -52,9 +53,9 @@ UO_PRE7_CLIENT_DIR="$C/Ultima Online Mondain's Legacy" UO_CLIENT_ROOTS="$C" \
 | `AnimationSequence.uop` | 370 | typed (shared with EC) | entries rewritten by the frame import | writer, RT (`animation_client_entries::animation_sequence_reencodes_every_client_entry`) | via `classicanim` / `animframe` | `animation_sequence.rs` |
 | `MainMisc.uop` | 4 (2 TinyXML, 1 UTF-16 text, 1 binary) | XML parse check, text decode | replace; text editor | text: RT through `entry_text` | UOP explorer text view | `enhanced/entry_text.rs` |
 | `MultiCollection.uop` | 862 multis + `housing.bin` | typed | editor (multis, housing KDL) | writer, RT (`multi_collection_client_entries::every_multi_reencodes_identically`, `housing_bin_reserializes_identically_directly_and_through_kdl`); edit RT (`rewritten_multi_collection_changes_only_*`) | Multis, Housing views | `enhanced/multi*`, `enhanced/housing*` |
-| `artLegacyMUL.uop` | 39,386 | typed (land raw 44x44, static RLE) | replace (kind check only) | **no** | Tex/Art view (view); `mul-convert` | `classic/art.rs` 262c2743, 8fe7831b |
+| `artLegacyMUL.uop` | 39,386 | typed (land raw 44x44, static RLE) | replace (static or land check) | **no** | Tex/Art view (view); `mul-convert` | `classic/art.rs` 262c2743, 8fe7831b |
 | `gumpartLegacyMUL.uop` | 4,456 (4,422 gumps, 34 0x0 placeholders) | typed | replace from an image (`replace_image`) | writer, RT (`gump_client_encoding::every_shipped_gump_encodes_back`) | `uop replace-image`; Gumps view (view), UOP explorer image replace | `classic/gump.rs`, `gump_write.rs` 7f5842ce |
-| `map0-5(x)LegacyMUL.uop` | 8-113 blocks each, 11 packages | typed (`MapPlane::init_uop`) | replace (kind check only) | **no** (conversion to an EC facet only: `facet from-classic`) | `facet` CLI | `classic/map.rs`, `facet_sources.rs`, `map_edition.rs` acc42a13 |
+| `map0-5(x)LegacyMUL.uop` | 8-113 blocks each, 11 packages | typed (`MapPlane::init_uop`) | replace (whole-block check) | **no** (conversion to an EC facet only: `facet from-classic`) | `facet` CLI | `classic/map.rs`, `facet_sources.rs`, `map_edition.rs` acc42a13 |
 | `soundLegacyMUL.uop` | 1,655 | typed (`SoundMap`) | editor (replace, add from WAV) | writer, RT (`audio_writers::classic_sounds_and_defs_write_back_and_edit`) | `sound`; Sounds view (replace, save, export) | `classic/sound.rs`, `sound_edit.rs` 78aaca7d |
 | `string_dictionary.uop` | 1 | typed | editor | writer, RT (`string_tables_client_files::string_dictionaries_write_back_byte_for_byte`) | `strings`; String dictionary view | `enhanced/string_dictionary.rs` |
 | `tileart.uop` | 37,756 | typed | editor | writer, RT (`tileart_client_records::tileart_reencodes_every_client_record`); edit RT | Tile metadata view (edit, save) | `enhanced/tileart.rs` |
@@ -105,7 +106,8 @@ The executables are read for facet sizes and login sites (`client_exe`, `uocf-cl
 
 ## Summary
 
-- Every Classic UOP package saves back byte for byte unchanged, and every entry passes its replacement check. Typed
+- Every Classic UOP package saves back byte for byte unchanged, and every entry passes its replacement check, a
+  parse check for all but the 34 gump placeholders and the 2 `MainMisc` text and binary entries. Typed
   writers with real-file round trips cover the animations (UOP and MUL), the gumps, the sounds, `hues.mul`,
   `MultiCollection`, `tileart`, the string dictionary, the clilocs and `Sound.def`/`Music.def`.
 - `tiledata.mul` (all six layouts), `radarcol.mul`, `animdata.mul` and `Multimap.rle` write back byte for byte on
@@ -119,9 +121,9 @@ The executables are read for facet sizes and login sites (`client_exe`, `uocf-cl
 | # | Gap | Why it matters | Effort |
 |---|---|---|---|
 | 1 | Map and statics writers (`mapN.mul`, `mapNLegacyMUL.uop`, `staidxN`/`staticsN`, the `x` editions) | the Classic world cannot be edited and saved as Classic files; dynamapper and server tools need it | large: block layout of both containers, statics re-indexing, byte-identical unchanged blocks |
-| 2 | Art encoder (`artLegacyMUL.uop`, `art.mul`): land 44x44 and static RLE, encoded as shipped | no item or land art replacement for the Classic client; `artLegacyMUL` entries are not parse-checked | medium: the static run convention must be inferred, as for gumps (7f5842ce) |
+| 2 | Art encoder (`artLegacyMUL.uop`, `art.mul`): land 44x44 and static RLE, encoded as shipped | no item or land art replacement for the Classic client (a raw replacement is only structure-checked) | medium: the static run convention must be inferred, as for gumps (7f5842ce) |
 | 3 | ~~`tiledata.mul` writer, all 6 layouts~~ | **closed**: the reader keeps the unknown item bytes and the block headers; `TileData::to_bytes` writes the layout read; Gold, ML, 7.0.20, 2024 and fp come back byte for byte | done |
-| 4 | Parse checks for `artLegacyMUL`, `soundLegacyMUL` and `map*LegacyMUL` entries | a broken replacement is caught only by kind today | small (art needs the land/static choice from the entry name) |
+| 4 | ~~Parse checks for `artLegacyMUL`, `soundLegacyMUL` and `map*LegacyMUL` entries~~ | **closed**: static or land diamond, whole map blocks, samples after the sound header; all 41,594 shipped entries pass (the land/static choice by entry id is left to the art encoder, #2) | done |
 | 5 | ~~`radarcol.mul` and `animdata.mul` writers~~ | **closed**: `encode_radarcol`, `AnimData::to_bytes`; byte for byte on every era | done |
 | 6 | Real-file round trip of `mul-convert` extract and pack on the shipped UOPs (`Multimap.rle`: ~~closed~~, byte for byte on every era) | the repack has synthetic tests only | small |
 | 7 | `multi.mul`, `light.mul`, `texmaps.mul` writers | the modern client reads `MultiCollection.uop`; lights and texmaps are rarely edited | small each (index + payloads) |

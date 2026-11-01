@@ -427,6 +427,40 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         keeps: None,
     },
     ParseCheck {
+        label: "Classic art",
+        packages: &["artlegacymul"],
+        kinds: &[ContentFormat::Binary],
+        name: None,
+        extensions: &[],
+        dialects: false,
+        check: |bytes, _| crate::classic::art::check_art_payload(bytes),
+        keeps: None,
+    },
+    ParseCheck {
+        label: "Classic map blocks",
+        packages: &["maplegacymul", "mapxlegacymul"],
+        kinds: &[ContentFormat::Binary],
+        name: None,
+        extensions: &[],
+        dialects: false,
+        check: |bytes, _| crate::classic::map::check_uop_map_payload(bytes),
+        keeps: None,
+    },
+    ParseCheck {
+        label: "Classic sound slot",
+        packages: &["soundlegacymul"],
+        kinds: &[ContentFormat::Binary],
+        name: None,
+        extensions: &[],
+        dialects: false,
+        check: |bytes, _| {
+            use crate::classic::sound::SOUND_HEADER_BYTES;
+            eyre::ensure!(bytes.len() > SOUND_HEADER_BYTES, "{} bytes: no samples after the {SOUND_HEADER_BYTES}-byte header", bytes.len());
+            Ok(())
+        },
+        keeps: None,
+    },
+    ParseCheck {
         label: "static chunk",
         packages: &["staticchunk"],
         kinds: &[ContentFormat::Binary],

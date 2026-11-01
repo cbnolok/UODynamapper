@@ -106,7 +106,7 @@ TGA images.
   table, legacy terrain map, GameData table, legacy terrain document, hue bitmap, tileart record, animation definition, animation
   sequence, AMOU animation frames, effect definition collection, terrain definition, facet definition, facet
   sector, facet data map, housing pieces, multi, waypoints, string dictionary, localized strings, Classic gump,
-  KR static chunk, the Interface Lua script and the Interface and MainMisc XML document syntax checks
+  Classic art, map blocks and sound slots (`artLegacyMUL`, `map*LegacyMUL`, `soundLegacyMUL`), KR static chunk, the Interface Lua script and the Interface and MainMisc XML document syntax checks
   (`syntax_check.rs`), then the generic DDS header, font table directory, PNG/BMP/JPEG decode and TGA decode. A replacement
   must parse with the reader (and dialect) the current entry parses with, and keep what that reader asks of the
   entry it replaces (`ParseCheck::keeps`; a GameData table keeps its column names, its records' field counts, the
