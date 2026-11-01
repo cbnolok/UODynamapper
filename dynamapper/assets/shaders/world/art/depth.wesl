@@ -1,3 +1,5 @@
+import bevy_pbr::render::mesh_view_bindings::view;
+
 // Equal-priority sprites retain their established draw-order separation.
 // A fixed NDC offset is safe only for the orthographic lens: in perspective
 // it grows quadratically in world distance and can reorder neighboring cells.
@@ -16,4 +18,26 @@ fn static_priority_depth(clip_position: vec4<f32>, clip_from_view: mat4x4<f32>, 
         -f32(ordinal) * STATIC_DEPTH_TIE_BREAK_VIEW_STEP, 0.0);
     let biased = clip_position + offset;
     return clamp(biased.z / biased.w, 0.0, 1.0);
+}
+
+// Below this, the view direction is too close to the horizontal plane to solve for its depth.
+const HORIZONTAL_PLANE_MIN_VIEW_Y: f32 = 0.000001;
+
+// Depth of the horizontal world plane y = plane_y at a fragment, solved from the fragment's pixel
+// centre under the orthographic camera. Coplanar quads then write bit-identical depth at a pixel
+// they share, so their one-pixel overlaps go to draw order. Rasterised depth differs between the two
+// quads by rounding that depends on where the camera is. Perspective keeps the rasterised depth.
+fn horizontal_plane_frag_depth(frag_position: vec4<f32>, plane_y: f32) -> f32 {
+    let world_from_view = view.world_from_view;
+    if (view.clip_from_view[3][3] != 1.0 || abs(world_from_view[2].y) < HORIZONTAL_PLANE_MIN_VIEW_Y) {
+        return frag_position.z;
+    }
+    let ndc = vec2<f32>(
+        (frag_position.x - view.viewport.x) / view.viewport.z * 2.0 - 1.0,
+        1.0 - (frag_position.y - view.viewport.y) / view.viewport.w * 2.0,
+    );
+    let view_xy = (ndc - view.clip_from_view[3].xy) / vec2<f32>(view.clip_from_view[0].x, view.clip_from_view[1].y);
+    let view_z = (plane_y - world_from_view[3].y - world_from_view[0].y * view_xy.x - world_from_view[1].y * view_xy.y)
+        / world_from_view[2].y;
+    return clamp(view.clip_from_view[2].z * view_z + view.clip_from_view[3].z, 0.0, 1.0);
 }

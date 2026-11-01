@@ -1,4 +1,5 @@
 import package::shaders::world::art::picking::{pick_clip, pick_pass, pick_color};
+import package::shaders::world::art::depth::horizontal_plane_frag_depth;
 import bevy_pbr::render::{
     forward_io::Vertex,
     view_transformations,
@@ -119,10 +120,12 @@ fn shade_fragment(in: GroundVertexOutput, sample_index: u32) -> GroundFragmentOu
     // This is a horizontal world quad, so depth must vary across its surface.
     // A sprite's constant priority depth intersects the terrain plane and leaves
     // triangular gaps along otherwise coplanar EC water tiles.
-    out.depth = in.position.z;
-
     let layer = u32(in.uv_b.x);
     let inst = instances[in.instance_index];
+    out.depth = horizontal_plane_frag_depth(in.position, inst.world_y);
+    // The pick target crops XY, so its pixel is not a screen position.
+    @if(STATIC_PICK)
+    out.depth = in.position.z;
     let atlas_extent = max(inst.uv_max - inst.uv_min, vec2<f32>(0.000001));
     var uv_in_tile = (in.uv - inst.uv_min) / atlas_extent;
     let use_ec_water_material = (inst.material_flags & GROUND_FLAG_EC_WATER_MATERIAL) != 0u;

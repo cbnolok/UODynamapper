@@ -94,9 +94,18 @@ Evidence is in `/home/claudio/rust-target/uodynamapper-scratch/renderer/export/`
 
 ## Remaining limits
 
-- **Classic: about 0.004% of an overlap differs.** These are land-texel ties along tile diagonals.
-  `uv_in_tile = fract(world_position)` is interpolated from absolute coordinates of about 1500, where
-  f32 resolves about 1e-4. A tile-local varying would remove it. That was not done in this phase.
+- **Classic overlap residual: fixed.** The last 82 pixels were not land texels. They were the one-pixel
+  overlaps between neighbouring flat Classic water and road quads (the art diamonds overlap by one pixel
+  column along their lower edges). Each quad wrote its own rasterised depth there, and which one won
+  depended on rounding that changes with the camera. Hiding sprite art made the overlap exact, and
+  quantising the land `uv_in_tile` changed nothing. Flat quads (`art/main.wesl` flat kinds 1–2 and
+  `art/ground.wesl`) now solve their depth from the fragment's pixel under the orthographic camera
+  (`art/depth.wesl::horizontal_plane_frag_depth`). Coplanar quads therefore tie exactly, and draw order
+  decides. With that, the Classic pair is exact: 0 differing pixels outside the guard. Pick passes and
+  perspective keep the rasterised depth. At the ten accepted scenes in Classic, 0.18–0.23% of the
+  pixels change, all on those overlap pixels of water and cobble quads, and they look the same. EC
+  frames are unchanged. Not verified: whether the quad that now wins each overlap is the one the
+  client's painter order draws last.
 - **EC water reflections follow the camera focus**, by design (`ec_liquid_camera_reflection_uv`). An
   export needs a fixed reflection focus or reflections off. This is a decision for the user.
 - **Interactive check not run.** The snap could not be checked in the interactive three-preset scene

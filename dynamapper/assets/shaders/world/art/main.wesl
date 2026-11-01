@@ -31,7 +31,7 @@ import package::shaders::world::art::shading::apply_art_surface_shading;
 import package::shaders::world::art::surface_blend::static_surface_coverage;
 import package::shaders::world::ec_item_water::{ec_item_is_water, sample_ec_item_water};
 import package::shaders::world::ec_liquid_camera::ec_liquid_camera_reflection_uv;
-import package::shaders::world::art::depth::static_priority_depth;
+import package::shaders::world::art::depth::{static_priority_depth, horizontal_plane_frag_depth};
 import package::shaders::world::projection::camera_relative_world_to_clip;
 
 struct ArtVertexOutput {
@@ -289,7 +289,12 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
     // This policy prevents coplanar/intersection artifacts without changing authored alpha or
     // color coverage. Only reached in the opaque/transparent passes; billboards and the shadow
     // pass are unaffected.
-    if (inst.flat_quad != 0u) {
+    if (inst.flat_quad == 3u) {
+        out.depth = in.position.z;
+    } else if (inst.flat_quad != 0u) {
+        out.depth = horizontal_plane_frag_depth(in.position, inst.world_y);
+        // The pick target crops XY, so its pixel is not a screen position.
+        @if(STATIC_PICK)
         out.depth = in.position.z;
     }
 
