@@ -29,6 +29,8 @@ pub mod generic_def;
 pub mod def_files;
 pub mod skills;
 pub mod speech;
+pub mod iff;
+pub mod localized_text;
 pub mod generic_index;
 pub mod fonts;
 pub mod gump;
