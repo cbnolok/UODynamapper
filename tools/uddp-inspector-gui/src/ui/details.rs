@@ -370,6 +370,18 @@ impl InspectorApp {
                     metadata_label(ui, "EC Texture:");
                     ui.label(info.ec_texture_id.to_string());
                     ui.end_row();
+                    metadata_label(ui, "Main Texture:");
+                    ui.label(match &info.main_texture {
+                        Some(main) => format!(
+                            "{} ({}; {}, {} confidence)",
+                            main.texture_id,
+                            main.stable_role,
+                            main.reason,
+                            if main.low_confidence { "low" } else { "high" }
+                        ),
+                        None => "none".to_string(),
+                    });
+                    ui.end_row();
                     metadata_label(ui, "CC Texture:");
                     ui.label(info.cc_texture_id.to_string());
                     ui.end_row();
@@ -470,7 +482,55 @@ impl InspectorApp {
                 */
             }
         });
+        if let VirtualEntryData::TileMetaItem(info) = &ventry.data {
+            ui_tilemeta_texture_refs(ui, ventry.id, info);
+        }
     }
+}
+
+/// The item's texture refs, one row each.
+fn ui_tilemeta_texture_refs(ui: &mut egui::Ui, tile_id: u32, info: &crate::models::TileMetaItemInfo) {
+    ui.add_space(DETAILS_SECTION_SPACING_LARGE);
+    ui.label(egui::RichText::new(format!("Texture Refs ({})", info.texture_refs.len())).strong());
+    ui.label(if info.image_packages.is_empty() {
+        "Image packages beside the tilemeta: none found".to_string()
+    } else {
+        format!("Image packages beside the tilemeta: {}", info.image_packages.join(", "))
+    });
+    if info.texture_refs.is_empty() {
+        ui.label("No tileart texture refs.");
+        return;
+    }
+    egui::ScrollArea::horizontal().id_salt(("tilemeta_refs_scroll", tile_id)).show(ui, |ui| {
+        egui::Grid::new(("tilemeta_refs", tile_id)).striped(true).show(ui, |ui| {
+            for header in TEXTURE_REF_COLUMNS {
+                ui.label(egui::RichText::new(header).strong());
+            }
+            ui.end_row();
+            for tex_ref in &info.texture_refs {
+                ui.label(tex_ref.block_index.to_string());
+                ui.label(tex_ref.item_index.to_string());
+                ui.label(tex_ref.texture_id.to_string());
+                ui.label(tex_ref.stable_role);
+                ui.label(&tex_ref.physical_package);
+                ui.label(&tex_ref.logical_family);
+                ui.label(yes_no(tex_ref.primary_selected));
+                ui.label(yes_no(tex_ref.auxiliary));
+                ui.label(format!("{:.3}", tex_ref.stretch));
+                ui.label(yes_no(tex_ref.is_main));
+                ui.label(&tex_ref.image_holder);
+                ui.end_row();
+            }
+        });
+    });
+}
+
+const TEXTURE_REF_COLUMNS: [&str; 11] = [
+    "Block", "Item", "Texture", "Role", "Package", "Family", "Primary", "Aux", "Stretch", "Main", "Image In",
+];
+
+fn yes_no(value: bool) -> &'static str {
+    if value { "yes" } else { "no" }
 }
 
 fn format_material_layers(textures: &[crate::models::EcLandMaterialTextureInfo]) -> String {

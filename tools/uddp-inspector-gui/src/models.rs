@@ -152,6 +152,39 @@ pub struct TileMetaItemInfo {
     pub cc_start_y: i16,
     pub cc_offset_x: i16,
     pub cc_offset_y: i16,
+    /// The item's tileart texture refs, in package order.
+    pub texture_refs: Vec<TileMetaTextureRefInfo>,
+    /// The role-aware main-texture choice.
+    pub main_texture: Option<TileMetaMainTextureInfo>,
+    /// Image packages found beside the tilemeta, which the refs' image holders were looked up in.
+    pub image_packages: Vec<&'static str>,
+}
+
+/// One tileart texture ref of a `tilemeta` item.
+#[derive(Debug, Clone)]
+pub struct TileMetaTextureRefInfo {
+    pub block_index: u8,
+    pub item_index: u8,
+    pub texture_id: u32,
+    pub stable_role: &'static str,
+    pub physical_package: String,
+    pub logical_family: String,
+    pub primary_selected: bool,
+    pub auxiliary: bool,
+    pub stretch: f32,
+    /// This ref is the main-texture choice.
+    pub is_main: bool,
+    /// The package beside the tilemeta that holds the image.
+    pub image_holder: String,
+}
+
+/// The role-aware main-texture choice of a `tilemeta` item.
+#[derive(Debug, Clone)]
+pub struct TileMetaMainTextureInfo {
+    pub texture_id: u32,
+    pub stable_role: &'static str,
+    pub reason: &'static str,
+    pub low_confidence: bool,
 }
 
 #[derive(Debug, Clone)]

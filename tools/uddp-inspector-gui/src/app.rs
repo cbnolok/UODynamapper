@@ -510,7 +510,7 @@ impl InspectorApp {
                 self.mobile_anim_frame_reset_pending = true;
                 self.mobile_anim_tree_order = MobileAnimTreeOrder::BodyType;
                 self.mobile_anim_tree_collapse_revision = 0;
-                self.detect_virtual_entries(&reader);
+                self.detect_virtual_entries(&reader, &path);
                 self.effects_viewer = crate::ui::effects::EffectsViewer::open(&path, &reader);
 
                 self.package = Some(reader);
@@ -545,7 +545,7 @@ impl InspectorApp {
         self.settings.last_package_dir = package_parent_dir(path);
     }
 
-    pub fn detect_virtual_entries(&mut self, reader: &UddpReader) {
+    pub fn detect_virtual_entries(&mut self, reader: &UddpReader, package_path: &Path) {
         self.virtual_entries.clear();
         self.virtual_material_entries.clear();
         self.atlas_pages.clear();
@@ -582,7 +582,7 @@ impl InspectorApp {
             }
         }
 
-        let tilemeta_entries = self.detect_tilemeta_virtual_entries(reader);
+        let tilemeta_entries = self.detect_tilemeta_virtual_entries(reader, package_path);
         if !tilemeta_entries.is_empty() {
             self.virtual_entries = tilemeta_entries;
             return;
@@ -849,8 +849,15 @@ impl InspectorApp {
         }
     }
 
-    pub fn detect_tilemeta_virtual_entries(&self, reader: &UddpReader) -> Vec<VirtualEntry> {
+    pub fn detect_tilemeta_virtual_entries(&self, reader: &UddpReader, package_path: &Path) -> Vec<VirtualEntry> {
         let mut entries = Vec::new();
+        // The texture-ref view reads the whole package and the image packages beside it.
+        let tilemeta = udd_assets::TileMetaPackage::from_uddp_package(reader.clone()).ok();
+        let holders = match (&tilemeta, package_path.parent()) {
+            (Some(_), Some(directory)) => crate::logic::tilemeta_refs::ImageHolders::load_beside(directory),
+            _ => crate::logic::tilemeta_refs::ImageHolders::default(),
+        };
+        let image_packages = holders.loaded_names();
 
         if let Some(data) = self.read_file_by_path(reader, TILEMETA_LAND_ENTRY_PATH) {
             if let Some(land_tiles) = read_pod_records::<TileMetaLandTile>(&data) {
@@ -882,6 +889,10 @@ impl InspectorApp {
             if let Some(item_tiles) = read_pod_records::<TileMetaItemTile>(&data) {
                 entries.extend(item_tiles.into_iter().map(|tile| {
                     let name = tile.name_ascii().to_string();
+                    let (texture_refs, main_texture) = tilemeta
+                        .as_ref()
+                        .map(|tilemeta| crate::logic::tilemeta_refs::item_texture_refs(tilemeta, tile.tile_id, &holders))
+                        .unwrap_or_default();
                     VirtualEntry {
                         id: tile.tile_id,
                         _data_type: 11, // Metadata
@@ -917,6 +928,9 @@ impl InspectorApp {
                             cc_start_y: tile.cc_start_y,
                             cc_offset_x: 0,
                             cc_offset_y: 0,
+                            texture_refs,
+                            main_texture,
+                            image_packages: image_packages.clone(),
                         }),
                     }
                 }));

@@ -170,7 +170,7 @@ Done. The main-texture selector is role first with explicit reasons (`choose_mai
 
 Abnormality reports and owner audits (`write-ec-abnormality-report`, `write-tileart-owner-audit`, `write-terrain-definition-owner-audit`, d7319dc8), source-controlled override tables (`dynamapper/assets/cc_ec_convtables/`, checked by `audit-ec-terrain-overrides` and `audit-land-routing-kdl`) and editable review artifacts (`write-terrain-definition-review`, `write-tileart-liquid-surface-report`, 4a9a87de) exist.
 
-- Show each tilemeta item's texture refs in `uddp-inspector-gui` (it shows only the EC/CC texture ids and the name): block and item position, stable role, physical package, logical family, primary/auxiliary flags, stretch, the main-texture reason and its confidence, and whether `tex_art_ec`, `tex_aux_ec` or `tex_land_ec` holds the image.
+- Done: `uddp-inspector-gui` shows each tilemeta item's texture refs (position, role, package, family, primary/aux, stretch, main-texture reason and confidence) and which of `tex_art_ec`, `tex_aux_ec` and `tex_land_ec` beside the tilemeta holds each image (`logic/tilemeta_refs.rs`).
 
 ### EC Effects: Manual Checks
 
