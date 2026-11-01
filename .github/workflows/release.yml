@@ -22,6 +22,9 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   SCCACHE_GHA_ENABLED: "true"
   SCCACHE_NO_DAEMON: "1"
+  # Dated nightly for every nightly build (the justfile reads it too). Bump it on purpose: nightly-2026-10-31 fails to
+  # compile wesl 0.6.0 ("cycle detected when computing when `error::ResolveError` needs async drop").
+  RUST_NIGHTLY_TOOLCHAIN: nightly-2026-10-29
 
 jobs:
   build-linux:
@@ -46,8 +49,9 @@ jobs:
           sudo ln -sf $(which mold) /usr/bin/ld.mold
 
       - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_NIGHTLY_TOOLCHAIN }}
           components: rust-src
 
       - name: Run sccache-cache
@@ -115,8 +119,9 @@ jobs:
             pkg-config clang mold
 
       - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_NIGHTLY_TOOLCHAIN }}
           components: rust-src
 
       - name: Run sccache-cache
@@ -171,12 +176,13 @@ jobs:
             -e HOST_UID="$(id -u)" \
             -e HOST_GID="$(id -g)" \
             -e CARGO_TARGET_DIR=target \
+            -e RUST_NIGHTLY_TOOLCHAIN \
             alpine:3.24 \
             sh -eu -c '
               apk add --no-cache \
                 bash build-base cmake gcc g++ clang mold \
                 curl ca-certificates pkgconf just
-              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain nightly
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "$RUST_NIGHTLY_TOOLCHAIN"
               . "$HOME/.cargo/env"
               rustup target add x86_64-unknown-linux-musl
               rustup component add rust-src
@@ -219,12 +225,13 @@ jobs:
             -e HOST_UID="$(id -u)" \
             -e HOST_GID="$(id -g)" \
             -e CARGO_TARGET_DIR=target \
+            -e RUST_NIGHTLY_TOOLCHAIN \
             alpine:3.24 \
             sh -eu -c '
               apk add --no-cache \
                 bash build-base cmake gcc g++ clang mold \
                 curl ca-certificates pkgconf just
-              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain nightly
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "$RUST_NIGHTLY_TOOLCHAIN"
               . "$HOME/.cargo/env"
               rustup target add aarch64-unknown-linux-musl
               rustup component add rust-src
@@ -260,8 +267,9 @@ jobs:
           fetch-depth: 0
 
       - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_NIGHTLY_TOOLCHAIN }}
           components: rust-src
 
       # Pinned: sccache 0.17+ expands cargo's @argfile and spawns rustc with every argument, which passes Windows'
@@ -385,8 +393,9 @@ jobs:
           fetch-depth: 0
 
       - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_NIGHTLY_TOOLCHAIN }}
           targets: aarch64-pc-windows-msvc
           components: rust-src
 
@@ -437,8 +446,9 @@ jobs:
           fetch-depth: 0
 
       - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_NIGHTLY_TOOLCHAIN }}
           targets: x86_64-apple-darwin
           components: rust-src
 
@@ -484,8 +494,9 @@ jobs:
           fetch-depth: 0
 
       - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_NIGHTLY_TOOLCHAIN }}
           targets: aarch64-apple-darwin
           components: rust-src
 

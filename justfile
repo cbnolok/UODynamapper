@@ -24,6 +24,9 @@ is_linux := if os == "linux" { "true" } else { "false" }
 is_macos := if os == "macos" { "true" } else { "false" }
 is_ci := env_var_or_default("GITHUB_ACTIONS", "false")
 RUSTFLAGS := env_var_or_default("RUSTFLAGS", "")
+# The toolchain the nightly recipes use. CI pins a dated nightly (RUST_NIGHTLY_TOOLCHAIN in release.yml), so a broken
+# nightly can't fail the release builds; locally it is the current nightly.
+nightly_toolchain := env_var_or_default("RUST_NIGHTLY_TOOLCHAIN", "nightly")
 
 # --- Features ---
 # Enable sccache explicitly. If "true", it will bypass the wrapper and use sccache directly.
@@ -45,7 +48,7 @@ rust_llvm_major_stable := if is_linux == "true" {
     ""
 }
 rust_llvm_major_nightly := if is_linux == "true" {
-    `rustc +nightly -vV 2>/dev/null | sed -n 's/^LLVM version: \([0-9][0-9]*\).*/\1/p' | head -n1 || true`
+    `rustc +"${RUST_NIGHTLY_TOOLCHAIN:-nightly}" -vV 2>/dev/null | sed -n 's/^LLVM version: \([0-9][0-9]*\).*/\1/p' | head -n1 || true`
 } else {
     ""
 }
@@ -201,11 +204,11 @@ export CARGO_FLAGS_NIGHTLY := if is_windows == "true" {
 
 # Cross-platform Cargo runners to properly inject RUSTFLAGS in the shell
 cargo_release_nightly   :=\
-    if is_windows == "true" { "$env:RUSTFLAGS=$env:RUSTFLAGS_RELEASE_NIGHTLY; cargo +nightly" } else { "export RUSTFLAGS=\"$RUSTFLAGS_RELEASE_NIGHTLY\"; cargo +nightly" }
+    if is_windows == "true" { "$env:RUSTFLAGS=$env:RUSTFLAGS_RELEASE_NIGHTLY; cargo +" + nightly_toolchain } else { "export RUSTFLAGS=\"$RUSTFLAGS_RELEASE_NIGHTLY\"; cargo +" + nightly_toolchain }
 cargo_release_stable    :=\
     if is_windows == "true" { "$env:RUSTFLAGS=$env:RUSTFLAGS_RELEASE_STABLE; cargo" }           else { "export RUSTFLAGS=\"$RUSTFLAGS_RELEASE_STABLE\"; cargo" }
 cargo_profile_nightly   :=\
-    if is_windows == "true" { "$env:RUSTFLAGS=$env:RUSTFLAGS_PROFILE_NIGHTLY; cargo +nightly" } else { "export RUSTFLAGS=\"$RUSTFLAGS_PROFILE_NIGHTLY\"; cargo +nightly" }
+    if is_windows == "true" { "$env:RUSTFLAGS=$env:RUSTFLAGS_PROFILE_NIGHTLY; cargo +" + nightly_toolchain } else { "export RUSTFLAGS=\"$RUSTFLAGS_PROFILE_NIGHTLY\"; cargo +" + nightly_toolchain }
 cargo_profile_stable    :=\
     if is_windows == "true" { "$env:RUSTFLAGS=$env:RUSTFLAGS_PROFILE_STABLE; cargo" }           else { "export RUSTFLAGS=\"$RUSTFLAGS_PROFILE_STABLE\"; cargo" }
 
@@ -282,7 +285,7 @@ build-linux-musl-release-nightly target *args:
     @echo 'Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}'
     @echo "Adding musl RUSTFLAGS: {{linux_musl_rustflags}} {{rustflags_release_nightly_musl}}"
     RUSTFLAGS="{{RUSTFLAGS_RELEASE_NIGHTLY}}{{linux_musl_rustflags}}{{rustflags_release_nightly_musl}}" \
-        cargo +nightly build --target "{{target}}" --release --locked {{cli_packages}} --bins --no-default-features --features \
+        cargo +{{nightly_toolchain}} build --target "{{target}}" --release --locked {{cli_packages}} --bins --no-default-features --features \
         "{{musl_features}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
 
 # Build the full workspace with the same nightly release settings used by CI.
@@ -347,7 +350,7 @@ build-linux-musl-profile-nightly target *args:
     @echo 'Adding cargo flags: {{CARGO_FLAGS_NIGHTLY}}'
     @echo "Adding musl RUSTFLAGS: {{linux_musl_rustflags}} {{rustflags_profile_nightly_musl}}"
     RUSTFLAGS="{{RUSTFLAGS_PROFILE_NIGHTLY}}{{linux_musl_rustflags}}{{rustflags_profile_nightly_musl}}" \
-        cargo +nightly build --target "{{target}}" --profile profiling --locked {{cli_packages}} --bins --no-default-features --features \
+        cargo +{{nightly_toolchain}} build --target "{{target}}" --profile profiling --locked {{cli_packages}} --bins --no-default-features --features \
         "uocf/profiling,{{musl_features}}" {{CARGO_FLAGS_NIGHTLY}} {{args}}
 
 # Generate a Dynamapper SVG flamegraph with cargo-flamegraph and nightly profiling settings.
