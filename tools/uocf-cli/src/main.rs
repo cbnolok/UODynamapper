@@ -1,6 +1,7 @@
 mod animdef;
 mod animframe;
 mod audio;
+mod classicanim;
 mod exe;
 mod facet;
 mod hues;
@@ -126,6 +127,10 @@ enum Commands {
     /// KDL, and import such a folder back into a copy of the package.
     #[command(subcommand)]
     Animframe(animframe::AnimframeCmd),
+    /// Classic Client mobile frames (anim*.mul, AnimationFrame*.uop animationlegacyframe entries): export a
+    /// body/action as PNGs plus KDL, and import such a folder back into a copy of the files.
+    #[command(subcommand)]
+    Classicanim(classicanim::ClassicanimCmd),
     /// String tables (LocalizedStrings.uop of the Enhanced Client and Kingdom Reborn, Classic Cliloc.<lang>):
     /// export as KDL, and import KDL back into a copy.
     #[command(subcommand)]
@@ -199,6 +204,7 @@ fn main() -> eyre::Result<()> {
         Commands::Uop(cmd) => uop::run(cmd)?,
         Commands::Animdef(cmd) => animdef::run(cmd)?,
         Commands::Animframe(cmd) => animframe::run(cmd)?,
+        Commands::Classicanim(cmd) => classicanim::run(cmd)?,
         Commands::Strings(cmd) => strings::run(cmd)?,
     }
 

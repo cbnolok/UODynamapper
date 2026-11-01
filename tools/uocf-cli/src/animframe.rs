@@ -84,8 +84,28 @@ impl DialectArg {
 }
 
 impl SequenceArgs {
+    /// Whether no sequence option was given.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.sequence.is_none() && self.sequence_id.is_none() && self.dialect == DialectArg::Auto
+    }
+
+    /// The AnimationSequence.uop, when given.
+    pub(crate) fn path(&self) -> Option<&Path> {
+        self.sequence.as_deref()
+    }
+
+    /// The sequence entry of the frames of `body`.
+    pub(crate) fn sequence_id(&self, body: u32) -> u32 {
+        self.sequence_id.unwrap_or(body)
+    }
+
+    /// The sequence format of the package at `path`.
+    pub(crate) fn dialect(&self, path: &Path) -> ClientDialect {
+        self.dialect.resolve(path)
+    }
+
     /// The action's frames per direction in the sequence package, when one is given.
-    fn frame_count(&self, body: u32, action: u16) -> eyre::Result<Option<u32>> {
+    pub(crate) fn frame_count(&self, body: u32, action: u16) -> eyre::Result<Option<u32>> {
         let Some(path) = &self.sequence else {
             return Ok(None);
         };
@@ -97,7 +117,7 @@ impl SequenceArgs {
     }
 }
 
-fn require_absolute(path: &Path, what: &str) -> eyre::Result<()> {
+pub(crate) fn require_absolute(path: &Path, what: &str) -> eyre::Result<()> {
     eyre::ensure!(path.is_absolute(), "{what} must be an absolute path: {}", path.display());
     Ok(())
 }
