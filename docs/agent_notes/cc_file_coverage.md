@@ -100,11 +100,12 @@ tiledata, maps, statics, multis, hues, radarcol, art, gumps, texmaps, anims, ani
 | `Cliloc.*` (8 languages) | typed | editor | writer, RT (`string_tables_client_files::classic_cliloc_files_write_back_through_the_table_format`) | `strings`; Clilocs view (edit, save) | `classic/cliloc.rs` 39255886, `enhanced/localized_strings.rs` |
 | `Sound.def`, `Music.def` | typed, strict | editor (table) | writer, RT (`classic_sounds_and_defs_write_back_and_edit`) | `sound`, `audio` | `classic/audio_def.rs` 4d568937 |
 | `Music/Digital/Config.txt` + MP3s | typed, strict | no | **no** | `audio` | `classic/music.rs` 16bddb09 |
-| `Body.def`, `Bodyconv.def` | typed | no | **no** | via the mobile packer (udd-conv) | `classic/body_def.rs`, `bodyconv_def.rs` a0d6cfd9 |
+| `Body.def`, `Bodyconv.def` | typed; strict as the client reads them (`def_files.rs`) | records (add, edit, remove) | writer, RT on every era plus an edit read back by `BodyDef`/`BodyConvDef` (`classic_def_files::classic_def_files_read_strictly_and_write_back_byte_for_byte`) | via the mobile packer (udd-conv) | `classic/body_def.rs`, `bodyconv_def.rs` a0d6cfd9, `def_files.rs` |
+| `Anim1-4.def`, `Corpse.def`, `Equipconv.def`, `art.def`, `gump.def`, `TexTerr.def` | typed, strict as the client reads them, line and column errors | records | writer, RT on every era (same test) | no | `classic/def_files.rs` |
 | `Login.cfg`, `Uo.cfg` | typed, keeps comments, unknown lines and endings | editor (login servers) | writer; folder census `client_login_servers::every_client_folder_tells_where_its_login_server_comes_from`, edits synthetic | `login`; patcher | `client_config/login_servers.rs` 41021f71 |
 | `mobtypes.txt` | typed (udd-conv only) | no | no | mobile packer | `udd-conv/src/mobile_anim_cc.rs` |
 | `Multimap.rle` | typed | editor (bitmap or PNG import) | writer, RT on every era (`classic_mul_writers::classic_tile_radar_animdata_and_multimap_files_write_back_byte_for_byte`) | `multimap`; Multimap view (edit, save, export) | `classic/multimap_rle.rs` 9d3d7dd7 |
-| `Anim1.def`, `Anim2.def`, `Corpse.def`, `Equipconv.def`, `art.def`, `gump.def`, `TexTerr.def`, `stitchin.def`, `Intrface.def`, `entitled.def` | **no** | | | | |
+| `stitchin.def`, `Intrface.def`, `entitled.def` | **no** | | | | |
 | `Intloc*`, `Chat.*`, `Gesture.*`, `Gt_*`, `Intro.*`, `Tilehelp.*`, `Tooltips.*`, `Professn.*`, `options.*`, `OPTNUOTD.*`, `SKILL16/30.*`, `Skilname.*` | **no** | | | | |
 | `doors/floors/misc/roof/stairs/walls/teleprts.txt`, `Prof.txt`, `suppinfo.txt`, `gamegen.txt`, `metrics.txt`, `Tile256/1024.txt`, `Arttable.cfg`, `Macros.txt`, `Keynames.txt`, `Default.mac`, `*.lst` | **no** (`stairs.txt` columns are only cited by the housing labels) | | | | |
 | `Anim256/1024.bin`, `Antx256/1024.bin`, `Blueprints.tbp`, `Credits.dat`, `Helpindx.dat`, `Langcode.iff`, `desktop.nwb`, `Version.*`, `*.myp`, `UO.bin`, `Data/assetmap.xml` | **no** | | | | |
@@ -122,7 +123,9 @@ The executables are read for facet sizes and login sites (`client_exe`, `uocf-cl
   only: maps, statics, the difs and verdata. A Classic map and its statics cannot be edited and written back as Classic
   files; `facet from-classic` converts them to an Enhanced Client facet instead. Art is replaced in
   `artLegacyMUL.uop` from an image; `art.mul` gets it through `mul-convert`.
-- About 60 text, def and binary types have no reader; most are localized UI text or files the client no longer reads.
+- The remap def files (`Body`, `Bodyconv`, `Equipconv`, `Corpse`, `art`, `gump`, `TexTerr`, `Anim1-4`) read strictly
+  as the client reads them and write back byte for byte.
+- About 50 text, def and binary types have no reader; most are localized UI text or files the client no longer reads.
 
 ## Classic art encoding
 
@@ -164,7 +167,7 @@ black stored as 0x0001 in a static); a land tile is a 44x44 image with an opaque
 | 5 | ~~`radarcol.mul` and `animdata.mul` writers~~ | **closed**: `encode_radarcol`, `AnimData::to_bytes`; byte for byte on every era | done |
 | 6 | ~~Real-file round trips of `mul-convert` and `Multimap.rle`~~ | **closed**: art, gump, map and sound payloads come back on the 2024 client (two pack bugs fixed, above); `Multimap.rle` byte for byte on every era. The `MultiCollection` repack stays synthetic | done |
 | 7 | ~~`multi.mul`, `light.mul`, `texmaps.mul` writers~~ | **closed**: `classic/indexed_mul.rs` lays the payloads out in id order from 0, as every shipped file is, and keeps each absent record as read (they differ by file and era: `(-1,-1,-1)`, `(-1,0,0)`, `(0,0,0)`, and Mondain's Legacy's mixed `texidx.mul` with its 4-byte tail); `multi_write.rs`, `light_write.rs`, `texmap_write.rs` type the payloads. Gold, ML, 7.0.20, 2024 and fp come back byte for byte; a grown entry changes only itself and reads back through the renderer's readers | done |
-| 8 | `Anim1/2.def`, `Corpse.def`, `Equipconv.def`, `art.def`, `gump.def`, `TexTerr.def` readers; `Body.def`/`Bodyconv.def` writers | mobile and item remapping as the client applies it | small-medium each |
+| 8 | ~~`Anim1/2.def`, `Corpse.def`, `Equipconv.def`, `art.def`, `gump.def`, `TexTerr.def` readers; `Body.def`/`Bodyconv.def` writers~~ | **closed**: `classic/def_files.rs` reads them as the 2024 client does (`ghidra-classic-defs`: `ID {T1, T2} VALUE`, the first line of an id wins, `{-1}` is target 1; `bodyconv.def` and `Equipconv.def` cut at `#`, the last line wins, the Equipconv hue is hexadecimal), strictly, with line and column errors where the client would skip text, drop or misread a line; every line is kept, so all 50 shipped files of Gold, ML, 7.0.20, 2024 and fp write back byte for byte, and an edited record changes only its line | done |
 | 9 | `speech.mul`, `skills.mul`/`Skills.idx`, `skillgrp.mul` readers | server and tooling reference data | small |
 | 10 | Inspector views for maps, statics, fonts, def files; gump and art import in their own views | today through the UOP explorer or not at all | medium |
 | 11 | Difs, verdata, fonts, `Config.txt` writers | pre-7.0 or rarely edited; `Config.txt` is in the audio agent's modules | low value |

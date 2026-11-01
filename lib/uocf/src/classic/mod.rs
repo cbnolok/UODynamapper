@@ -22,6 +22,7 @@ pub mod texmap_write;
 pub mod multimap_rle;
 pub mod multimap_render;
 pub mod generic_def;
+pub mod def_files;
 pub mod generic_index;
 pub mod fonts;
 pub mod gump;
