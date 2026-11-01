@@ -405,6 +405,7 @@ pub enum TextureError {
         actual: usize,
     },
     BackendOperationFailed { backend: &'static str, operation: &'static str, message: String },
+    RectOutOfBounds { rect: PixelRect, width: u32, height: u32 },
 }
 
 impl fmt::Display for TextureError {
@@ -457,6 +458,11 @@ impl fmt::Display for TextureError {
             } => write!(
                 f,
                 "BC7 backend {backend} failed during {operation}: {message}"
+            ),
+            Self::RectOutOfBounds { rect, width, height } => write!(
+                f,
+                "rect {}x{} at ({}, {}) is outside the {width}x{height} image",
+                rect.width, rect.height, rect.x, rect.y
             ),
         }
     }
@@ -522,6 +528,62 @@ pub fn extract_rgba8_subrect(
 
 pub fn decode_bc7_to_rgba8888(blocks: &[u8], extent: ImageExtent) -> Result<Vec<u8>, TextureError> {
     decode_bc7(blocks, extent, RawImageFormat::Rgba8888)
+}
+
+/// Pixels per side of a BC7 block, and bytes per block.
+pub const BC7_BLOCK_EDGE: u32 = 4;
+pub const BC7_BLOCK_BYTES: usize = 16;
+
+/// A pixel rectangle of an image.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PixelRect {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Decodes only the blocks of `blocks` (a BC7 image of `extent`) that cover `rect`, and returns the rect's
+/// RGBA8888 pixels: the same bytes as [`decode_bc7_to_rgba8888`] of the whole image cropped to `rect`, since
+/// each block decodes on its own.
+pub fn decode_bc7_rect_to_rgba8888(
+    blocks: &[u8],
+    extent: ImageExtent,
+    rect: PixelRect,
+) -> Result<Vec<u8>, TextureError> {
+    let expected_len = expected_bc7_byte_len(extent);
+    if blocks.len() != expected_len {
+        return Err(TextureError::InvalidBc7Length { expected: expected_len, actual: blocks.len() });
+    }
+    let right = rect.x.checked_add(rect.width);
+    let bottom = rect.y.checked_add(rect.height);
+    if !right.is_some_and(|right| right <= extent.width()) || !bottom.is_some_and(|bottom| bottom <= extent.height()) {
+        return Err(TextureError::RectOutOfBounds { rect, width: extent.width(), height: extent.height() });
+    }
+    if rect.width == 0 || rect.height == 0 {
+        return Ok(Vec::new());
+    }
+
+    let (first_block_x, first_block_y) = (rect.x / BC7_BLOCK_EDGE, rect.y / BC7_BLOCK_EDGE);
+    let blocks_wide = (rect.x + rect.width).div_ceil(BC7_BLOCK_EDGE) - first_block_x;
+    let blocks_high = (rect.y + rect.height).div_ceil(BC7_BLOCK_EDGE) - first_block_y;
+    let row_len = blocks_wide as usize * BC7_BLOCK_BYTES;
+    let mut covering = Vec::with_capacity(row_len * blocks_high as usize);
+    for block_y in first_block_y..first_block_y + blocks_high {
+        let start = (block_y as usize * extent.blocks_wide() as usize + first_block_x as usize) * BC7_BLOCK_BYTES;
+        covering.extend_from_slice(&blocks[start..start + row_len]);
+    }
+
+    let covering_extent = ImageExtent::new(blocks_wide * BC7_BLOCK_EDGE, blocks_high * BC7_BLOCK_EDGE)?;
+    let rgba = decode_bc7_to_rgba8888(&covering, covering_extent)?;
+    Ok(extract_rgba8_subrect(
+        &rgba,
+        covering_extent.width(),
+        rect.x - first_block_x * BC7_BLOCK_EDGE,
+        rect.y - first_block_y * BC7_BLOCK_EDGE,
+        rect.width,
+        rect.height,
+    ))
 }
 
 pub fn decode_bc7_to_rgb888(
@@ -1372,5 +1434,54 @@ mod tests {
 
         assert_eq!(bc7_encode_progress_units(extent, 0.0), blocks);
         assert_eq!(bc7_encode_progress_units(extent, 1.0), blocks * 2);
+    }
+}
+
+#[cfg(test)]
+mod rect_decode_tests {
+    use super::*;
+
+    /// Pseudo-random block bytes (xorshift), so that every BC7 mode and partition occurs.
+    fn random_blocks(extent: ImageExtent, mut state: u64) -> Vec<u8> {
+        (0..expected_bc7_byte_len(extent))
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state as u8
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_rect_decodes_as_the_whole_image_cropped() {
+        const SEED: u64 = 0x2545_F491_4F6C_DD1D;
+        // Not a multiple of the block size, so the last blocks are partly outside the image.
+        let extent = ImageExtent::new(37, 22).unwrap();
+        let blocks = random_blocks(extent, SEED);
+        let whole = decode_bc7_to_rgba8888(&blocks, extent).unwrap();
+        let rects = [(0, 0, 37, 22), (0, 0, 1, 1), (3, 5, 9, 7), (4, 4, 8, 8), (36, 21, 1, 1), (13, 0, 24, 22)];
+        for (x, y, width, height) in rects {
+            let rect = PixelRect { x, y, width, height };
+            let cropped = extract_rgba8_subrect(&whole, extent.width(), x, y, width, height);
+            assert_eq!(decode_bc7_rect_to_rgba8888(&blocks, extent, rect).unwrap(), cropped, "{rect:?}");
+        }
+    }
+
+    #[test]
+    fn a_rect_outside_the_image_or_a_short_payload_fails() {
+        let extent = ImageExtent::new(8, 8).unwrap();
+        let blocks = random_blocks(extent, 1);
+        let outside = PixelRect { x: 5, y: 0, width: 4, height: 1 };
+        assert!(matches!(
+            decode_bc7_rect_to_rgba8888(&blocks, extent, outside),
+            Err(TextureError::RectOutOfBounds { .. })
+        ));
+        let inside = PixelRect { x: 0, y: 0, width: 1, height: 1 };
+        assert!(matches!(
+            decode_bc7_rect_to_rgba8888(&blocks[1..], extent, inside),
+            Err(TextureError::InvalidBc7Length { .. })
+        ));
+        assert!(decode_bc7_rect_to_rgba8888(&blocks, extent, PixelRect { width: 0, ..inside }).unwrap().is_empty());
     }
 }

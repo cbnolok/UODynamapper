@@ -290,7 +290,7 @@ Done or superseded. Blend inputs (`SecondaryBase`, `BlendAlpha`, `CoverageAlpha`
 - Implement the 1:1 tiled world export pipeline.
 - Add WebP output profile controls for quality, lossless, and speed.
 - Done: `udd-cli tool validate <files or dirs>` decodes every entry through its key, checks the package hash, codecs and dictionaries, and runs the package's own reader, so a stale package fails before the app loads it.
-- Improve `uddp_inspector` atlas preview with selective CPU decode for BC7 sub-rects instead of full-page decode.
+- Done: the `uddp-inspector-gui` tile and land-material previews decode only the BC7 blocks covering the rect (`udd_image_codecs::bc7::decode_bc7_rect_to_rgba8888`, equal to the whole page cropped); the whole page is decoded when the Full Atlas view is shown. First selection on a 2048x2048 `tex_land_ec` BC7 page: 23.9 ms -> 0.14 ms CPU (the 4096x2048 RGBA `tex_art_ec` page: 24.4 ms -> 4 us), plus the full-page texture upload it no longer does.
 
 ## Validation
 

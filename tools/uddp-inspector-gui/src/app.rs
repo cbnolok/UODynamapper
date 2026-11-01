@@ -86,6 +86,9 @@ pub struct InspectorApp {
     pub atlas_text: Option<String>,
     pub decoded_atlas_page_index: Option<u32>,
     pub decoded_atlas_page: Option<DecodedAtlasPage>,
+    /// The stored bytes of the selected manifest page: a tile preview decodes only its rect from them, and the
+    /// whole page is decoded when the Full Atlas view is shown.
+    pub atlas_page_bytes: Option<(u32, Vec<u8>)>,
     pub preview_mode: PreviewModeKind,
     pub image_window_open: bool,
     pub image_window_mode: PreviewModeKind,
@@ -136,6 +139,7 @@ impl InspectorApp {
             atlas_text: None,
             decoded_atlas_page_index: None,
             decoded_atlas_page: None,
+            atlas_page_bytes: None,
             preview_mode: PreviewModeKind::Entry,
             image_window_open: false,
             image_window_mode: PreviewModeKind::Entry,
@@ -154,6 +158,7 @@ impl InspectorApp {
         self.atlas_text = None;
         self.decoded_atlas_page_index = None;
         self.decoded_atlas_page = None;
+        self.atlas_page_bytes = None;
         self.preview_mode = PreviewModeKind::Entry;
         self.image_window_mode = PreviewModeKind::Entry;
         self.texture_zoom = 1.0;
@@ -228,6 +233,64 @@ impl InspectorApp {
                     )
                 }),
         }
+    }
+
+    /// Forget the selected atlas page, its decoded pixels and its Full Atlas texture.
+    fn reset_atlas_page(&mut self) {
+        self.decoded_atlas_page_index = None;
+        self.decoded_atlas_page = None;
+        self.atlas_page_bytes = None;
+        self.atlas_texture = None;
+        self.atlas_texture_size = None;
+        self.atlas_text = None;
+    }
+
+    fn atlas_page_format_name(&self, page_index: u32) -> &'static str {
+        self.atlas_pages
+            .get(&page_index)
+            .map(|info| atlas_pixel_format_to_str(info.pixel_format))
+            .unwrap_or("unknown")
+    }
+
+    /// The Full Atlas texture of the decoded page; the text says when the page could not be shown.
+    fn load_full_atlas_texture(&mut self, ctx: &egui::Context, page_index: u32) {
+        let Some(page) = self.decoded_atlas_page.as_ref() else {
+            self.atlas_text = Some(format!("Full Atlas Page {page_index}: could not decode the page"));
+            return;
+        };
+        let atlas_size = [page.width as usize, page.height as usize];
+        let expected_len = atlas_size[0].saturating_mul(atlas_size[1]).saturating_mul(4);
+        if atlas_size[0] == 0 || atlas_size[1] == 0 || page.rgba.len() != expected_len {
+            self.atlas_text = Some(format!("Full Atlas Page {page_index}: invalid RGBA buffer"));
+            return;
+        }
+        let atlas_image = egui::ColorImage::from_rgba_unmultiplied(atlas_size, &page.rgba);
+        self.atlas_texture = Some(ctx.load_texture("full_atlas", atlas_image, egui::TextureOptions::NEAREST));
+        self.atlas_texture_size = Some(atlas_size);
+        self.atlas_text = Some(format!(
+            "Full Atlas Page {} (format: {})",
+            page_index,
+            self.atlas_page_format_name(page_index)
+        ));
+    }
+
+    /// Decodes the whole selected manifest page once the Full Atlas view is shown (beside the details or in
+    /// the image window); a tile preview alone decodes only its rect.
+    pub fn ensure_full_atlas_texture(&mut self, ctx: &egui::Context) {
+        let wants_atlas = self.preview_mode == PreviewModeKind::Atlas
+            || (self.image_window_open && self.image_window_mode == PreviewModeKind::Atlas);
+        // The text is set once the page was tried, shown or not.
+        if !wants_atlas || self.view_mode != ViewMode::Virtual || self.atlas_text.is_some() {
+            return;
+        }
+        let Some((page_index, bytes)) = self.atlas_page_bytes.as_ref() else { return };
+        let page_index = *page_index;
+        if self.decoded_atlas_page_index != Some(page_index) {
+            let Some(page_info) = self.atlas_pages.get(&page_index).copied() else { return };
+            self.decoded_atlas_page = decode_atlas_page(page_info, bytes.clone());
+            self.decoded_atlas_page_index = self.decoded_atlas_page.is_some().then_some(page_index);
+        }
+        self.load_full_atlas_texture(ctx, page_index);
     }
 
     fn clear_entry_preview_state(&mut self) {
@@ -1112,9 +1175,10 @@ impl InspectorApp {
                     let ventry = self.active_virtual_entries()[idx].clone();
                     match ventry.data.clone() {
                         VirtualEntryData::AtlasRect { page_index, .. } => {
-                            if self.decoded_atlas_page_index == Some(page_index)
-                                && self.decoded_atlas_page.is_some()
-                            {
+                            let page_held = self.atlas_page_bytes.as_ref().is_some_and(|(index, _)| *index == page_index)
+                                || (self.decoded_atlas_page_index == Some(page_index)
+                                    && self.decoded_atlas_page.is_some());
+                            if page_held {
                                 Some((ventry, None, None))
                             } else {
                                 let mut page_data = None;
@@ -1168,42 +1232,36 @@ impl InspectorApp {
                         height,
                         ..
                     } => {
-                        if self.decoded_atlas_page_index != Some(page_index) {
-                            self.decoded_atlas_page_index = None;
-                            self.decoded_atlas_page = page_data_opt.and_then(|page_bytes| {
-                                self.decode_virtual_atlas_page(page_index, page_bytes)
-                            });
-                            if self.decoded_atlas_page.is_some() {
-                                self.decoded_atlas_page_index = Some(page_index);
+                        let rect = [x as usize, y as usize, width as usize, height as usize];
+                        let cropped = if let Some(page_info) = self.atlas_pages.get(&page_index).copied() {
+                            // A manifest page: decode the rect alone; the whole page waits for the Full Atlas view.
+                            if self.atlas_page_bytes.as_ref().map(|(index, _)| *index) != Some(page_index) {
+                                self.reset_atlas_page();
+                                self.atlas_page_bytes = page_data_opt.map(|bytes| (page_index, bytes));
                             }
-                            self.atlas_texture = None;
-                            self.atlas_texture_size = None;
-                            self.atlas_text = None;
-                        }
-
-                        if let Some(page) = self.decoded_atlas_page.as_ref() {
-                            let rect = [x as usize, y as usize, width as usize, height as usize];
-                            let cropped = crop_rgba(&page.rgba, page.width as usize, rect);
-                            let atlas_image = if self.atlas_texture.is_none() {
-                                let atlas_size = [page.width as usize, page.height as usize];
-                                let expected_len =
-                                    atlas_size[0].saturating_mul(atlas_size[1]).saturating_mul(4);
-                                if atlas_size[0] != 0
-                                    && atlas_size[1] != 0
-                                    && page.rgba.len() == expected_len
-                                {
-                                    Some(egui::ColorImage::from_rgba_unmultiplied(
-                                        atlas_size,
-                                        &page.rgba,
-                                    ))
-                                } else {
-                                    None
+                            self.atlas_page_bytes
+                                .as_ref()
+                                .and_then(|(_, bytes)| decode_atlas_rect(page_info, bytes, rect))
+                        } else {
+                            if self.decoded_atlas_page_index != Some(page_index) {
+                                self.reset_atlas_page();
+                                self.decoded_atlas_page = page_data_opt.and_then(|page_bytes| {
+                                    self.decode_virtual_atlas_page(page_index, page_bytes)
+                                });
+                                if self.decoded_atlas_page.is_some() {
+                                    self.decoded_atlas_page_index = Some(page_index);
                                 }
-                            } else {
-                                None
-                            };
-                            let atlas_size = [page.width as usize, page.height as usize];
-
+                            }
+                            let cropped = self
+                                .decoded_atlas_page
+                                .as_ref()
+                                .map(|page| crop_rgba(&page.rgba, page.width as usize, rect));
+                            if self.atlas_texture.is_none() {
+                                self.load_full_atlas_texture(ctx, page_index);
+                            }
+                            cropped
+                        };
+                        if let Some(cropped) = cropped {
                             self.set_preview_image(
                                 ctx,
                                 "virtual_tile",
@@ -1214,45 +1272,25 @@ impl InspectorApp {
                                     ventry.id,
                                     width,
                                     height,
-                                    self.atlas_pages
-                                        .get(&page_index)
-                                        .map(|info| atlas_pixel_format_to_str(info.pixel_format))
-                                        .unwrap_or("unknown")
+                                    self.atlas_page_format_name(page_index)
                                 ),
                             );
-                            if let Some(atlas_image) = atlas_image {
-                                self.atlas_texture = Some(ctx.load_texture(
-                                    "full_atlas",
-                                    atlas_image,
-                                    egui::TextureOptions::NEAREST,
-                                ));
-                                self.atlas_texture_size = Some(atlas_size);
-                                self.atlas_text = Some(format!(
-                                    "Full Atlas Page {} (format: {})",
-                                    page_index,
-                                    self.atlas_pages
-                                        .get(&page_index)
-                                        .map(|info| atlas_pixel_format_to_str(info.pixel_format))
-                                        .unwrap_or("unknown")
-                                ));
-                            }
                         }
                     }
                     VirtualEntryData::EcLandMaterial(info) => {
                         if let (Some(preview), Some(page_bytes)) = (info.preview.as_ref(), page_data_opt) {
-                            let decoded_page = self
+                            let rect = [
+                                preview.x as usize,
+                                preview.y as usize,
+                                preview.width as usize,
+                                preview.height as usize,
+                            ];
+                            let cropped = self
                                 .atlas_pages
                                 .get(&preview.page_index)
                                 .copied()
-                                .and_then(|page_info| decode_atlas_page(page_info, page_bytes));
-                            if let Some(page) = decoded_page {
-                                let rect = [
-                                    preview.x as usize,
-                                    preview.y as usize,
-                                    preview.width as usize,
-                                    preview.height as usize,
-                                ];
-                                let cropped = crop_rgba(&page.rgba, page.width as usize, rect);
+                                .and_then(|page_info| decode_atlas_rect(page_info, &page_bytes, rect));
+                            if let Some(cropped) = cropped {
                                 self.set_preview_image(
                                     ctx,
                                     "ec_land_material",
@@ -1756,6 +1794,7 @@ mod tests {
             atlas_text: None,
             decoded_atlas_page_index: None,
             decoded_atlas_page: None,
+            atlas_page_bytes: None,
             preview_mode: PreviewModeKind::Entry,
             image_window_open: false,
             image_window_mode: PreviewModeKind::Entry,
@@ -2111,6 +2150,7 @@ mod tests {
                 width: 1,
                 height: 1,
             }),
+            atlas_page_bytes: None,
             preview_mode: PreviewModeKind::Atlas,
             image_window_open: true,
             image_window_mode: PreviewModeKind::Atlas,
@@ -2202,6 +2242,7 @@ mod tests {
             atlas_text: None,
             decoded_atlas_page_index: None,
             decoded_atlas_page: None,
+            atlas_page_bytes: None,
             preview_mode: PreviewModeKind::Entry,
             image_window_open: false,
             image_window_mode: PreviewModeKind::Entry,
@@ -2330,6 +2371,7 @@ mod tests {
             atlas_text: None,
             decoded_atlas_page_index: None,
             decoded_atlas_page: None,
+            atlas_page_bytes: None,
             preview_mode: PreviewModeKind::Entry,
             image_window_open: false,
             image_window_mode: PreviewModeKind::Entry,
@@ -2545,6 +2587,7 @@ mod tests {
             atlas_text: None,
             decoded_atlas_page_index: None,
             decoded_atlas_page: None,
+            atlas_page_bytes: None,
             preview_mode: PreviewModeKind::Entry,
             image_window_open: false,
             image_window_mode: PreviewModeKind::Entry,

@@ -72,6 +72,8 @@ impl eframe::App for InspectorApp {
                 self.ui_left_panel(ui);
             });
 
+        self.ensure_full_atlas_texture(&ctx);
+
         let selected_idx = match self.view_mode {
             ViewMode::Package => self.selected_idx,
             ViewMode::Virtual => self.selected_virtual_idx,
