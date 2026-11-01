@@ -525,6 +525,151 @@ Options if JPEG XL is wanted anyway:
     pure-Rust `ravif` with rav1e) as a new dependency.
   - Not proposed unless disk size becomes the constraint.
 
+### Colour fidelity (re-measured)
+
+This section asks a different question from the one above: which format keeps the colours, at any size
+and whatever the browser support.
+
+**Method.**
+
+- **Crops.** The same 11 crops of 512 × 512 at the same coordinates.
+- **Probe.** The probe crate was rebuilt in
+  `/home/claudio/rust-target/uodynamapper-scratch/webmap-codecs` with the same libraries:
+  - libjxl 0.12.0 through `jpegxl-rs` 0.14.0;
+  - libwebp 1.6.0 through `libwebp-sys` 0.14.4;
+  - `avifenc`/`avifdec` 1.4.2.
+- **Settings.**
+  - **JXL XYB**: the default lossy mode, as above.
+  - **JXL no-XYB**: lossy with `uses_original_profile = true`, so libjxl codes the RGB values without
+    converting them to XYB. Both VarDCT and modular were tried.
+  - **JXL lossless**: efforts 1, 3 and 7.
+  - **WebP lossless**: `lossless = 1`, `exact = 1`, quality 75, method 4.
+  - **WebP lossy**: the current setting (method 4, sharp YUV, q85), plus q90 and q95.
+  - **AVIF**: 4:4:4 (`-y 444`), speed 6, one thread.
+  - The probe checks that every lossless output matches its source bit for bit.
+- **Metrics.**
+  - **SSIMULACRA2**: the mean and the minimum over the crops.
+  - **Error per channel**: the mean absolute error, the mean signed error (bias) and the largest absolute
+    error, in 8-bit units, over all 11 crops.
+  - **Water mean red**: the mean decoded red over the `water_coast` pixels whose source red is exactly 0.
+    The 3.5 quoted above came from a different selection of pixels, so the two numbers are not comparable.
+  - **ΔE2000 on dark saturated pixels.**
+    - A pixel counts when its largest channel is between 16 and 128 and its (max − min) / max is at least
+      0.5.
+    - That gives 1.31 M of the 2.88 M pixels, mostly water, swamp, shadows and dark foliage. `snow_flat`
+      has none.
+    - The colour difference is CIEDE2000 between the source and decoded colours in CIELAB, converted from
+      sRGB with a D65 white. The implementation reproduces Sharma's test pair 1 (2.0425).
+    - Each row gives the mean, the 95th percentile and the maximum, pooled over all those pixels.
+- **Timing.**
+  - Each tile is encoded and decoded on one thread; the best of 3 runs is kept.
+  - **Boost off, EPP power**: the cores stay at 2.0 GHz, on a Ryzen AI 9 365.
+  - Every encoder is about 5 × slower than in the table above, which ran with boost on, so the two tables
+    cannot be compared.
+  - The AVIF figures come from the CLI, so they include starting the process and writing the PNG.
+
+**Results.**
+
+| Setting | Total KB (11 crops) | bpp (geo mean) | SSIMULACRA2 mean / min | MAE R / G / B | Bias R / G / B | Max error R / G / B | Water mean red | ΔE2000 dark sat. mean / p95 / max | Encode ms | Decode ms |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| JXL XYB e3 d1.5 | 554 | 1.230 | 75.7 / 69.2 | 4.08 / 2.89 / 5.34 | +1.28 / +0.12 / +1.33 | 114 / 65 / 162 | 2.45 | 2.47 / 6.35 / 43.5 | 32.5 | 19.8 |
+| JXL XYB e3 d1 | 802 | 1.846 | 83.3 / 78.0 | 3.32 / 2.05 / 4.74 | +1.18 / +0.10 / +1.18 | 107 / 48 / 154 | 2.43 | 2.15 / 5.66 / 38.4 | 36.1 | 20.5 |
+| JXL XYB e3 d0.5 | 1268 | 3.071 | 89.9 / 87.1 | 2.42 / 1.24 / 3.91 | +0.96 / +0.06 / +0.92 | 79 / 34 / 130 | 2.08 | 1.71 / 4.63 / 29.3 | 43.0 | 20.0 |
+| JXL no-XYB VarDCT e3 d2 | 1488 | 3.408 | 77.7 / 69.3 | 2.25 / 2.71 / 4.31 | +0.12 / +0.02 / +0.49 | 44 / 28 / 116 | 0.01 | 2.21 / 5.79 / 34.2 | 45.0 | 22.7 |
+| JXL no-XYB VarDCT e3 d1.5 | 1674 | 3.894 | 80.3 / 73.4 | 2.23 / 2.25 / 3.95 | +0.12 / +0.02 / +0.44 | 45 / 22 / 108 | 0.01 | 2.02 / 5.27 / 33.0 | 38.8 | 23.1 |
+| JXL no-XYB VarDCT e3 d1 | 2115 | 5.069 | 84.0 / 78.2 | 2.20 / 1.45 / 3.22 | +0.12 / +0.01 / +0.32 | 45 / 15 / 60 | 0.01 | 1.67 / 4.40 / 26.2 | 49.2 | 25.4 |
+| JXL no-XYB VarDCT e3 d0.5 | 2835 | 7.048 | 86.4 / 78.7 | 2.19 / 0.76 / 2.31 | +0.12 / +0.01 / +0.19 | 45 / 8 / 34 | 0.00 | 1.31 / 3.52 / 20.5 | 57.5 | 26.8 |
+| JXL no-XYB VarDCT e7 d1 | 2103 | 5.340 | 61.6 / 19.6 | 5.06 / 1.46 / 3.38 | +0.50 / +0.01 / +0.37 | 121 / 19 / 119 | 0.00 | 2.52 / 7.64 / 33.1 | 270.2 | 21.4 |
+| JXL no-XYB modular e3 d1.5 | 1933 | 4.510 | 77.5 / 71.4 | 3.16 / 2.80 / 3.48 | +0.42 / +0.05 / +0.40 | 74 / 106 / 66 | 0.71 | 2.28 / 5.93 / 45.1 | 150.2 | 90.9 |
+| JXL no-XYB modular e3 d1 | 2396 | 5.695 | 83.7 / 80.3 | 2.53 / 2.09 / 2.77 | +0.36 / +0.04 / +0.30 | 41 / 103 / 41 | 0.60 | 1.95 / 5.19 / 32.9 | 142.4 | 83.7 |
+| JXL no-XYB modular e3 d0.5 | 3415 | 8.487 | 89.8 / 87.0 | 1.69 / 1.31 / 1.82 | +0.25 / +0.03 / +0.16 | 21 / 103 / 19 | 0.47 | 1.37 / 3.66 / 19.7 | 133.4 | 80.5 |
+| JXL lossless e1 | 4366 | 11.895 | lossless | 0 | 0 | 0 | 0 | 0 | 4.8 | 27.8 |
+| JXL lossless e3 | 4299 | 11.608 | lossless | 0 | 0 | 0 | 0 | 0 | 142.5 | 93.0 |
+| JXL lossless e7 | 3059 | 8.214 | lossless | 0 | 0 | 0 | 0 | 0 | 816.9 | 146.6 |
+| **WebP lossless q75 m4 exact** | **2708** | **7.052** | **lossless** | **0** | **0** | **0** | **0** | **0** | **489.6** | **9.1** |
+| WebP m4 sharp YUV q85 (current) | 728 | 1.571 | 74.9 / 65.7 | 2.89 / 2.34 / 3.87 | +0.27 / +0.26 / +0.20 | 98 / 55 / 144 | 0.42 | 2.12 / 5.41 / 34.7 | 134.6 | 12.2 |
+| WebP m4 sharp YUV q90 | 932 | 2.208 | 81.5 / 76.7 | 2.51 / 1.87 / 3.51 | +0.27 / +0.25 / +0.20 | 97 / 53 / 144 | 0.44 | 1.89 / 5.00 / 35.0 | 126.6 | 14.7 |
+| WebP m4 sharp YUV q95 | 1249 | 3.184 | 87.0 / 84.2 | 2.20 / 1.43 / 3.19 | +0.29 / +0.20 / +0.23 | 97 / 51 / 145 | 0.44 | 1.68 / 4.62 / 34.1 | 142.4 | 19.1 |
+| AVIF 4:4:4 s6 q70 | 568 | 1.303 | 76.2 / 69.3 | 2.78 / 2.71 / 3.61 | +0.29 / −0.03 / +0.22 | 74 / 47 / 116 | 0.44 | 2.13 / 5.44 / 35.8 | 531 (CLI) | 195 (CLI) |
+| AVIF 4:4:4 s6 q80 | 759 | 1.781 | 82.0 / 77.0 | 2.27 / 2.09 / 3.12 | +0.26 / −0.02 / +0.20 | 65 / 35 / 94 | 0.43 | 1.86 / 4.80 / 30.0 | 620 (CLI) | 208 (CLI) |
+| AVIF 4:4:4 s6 q90 | 1143 | 2.777 | 88.2 / 85.4 | 1.68 / 1.37 / 2.45 | +0.24 / −0.04 / +0.19 | 35 / 19 / 47 | 0.40 | 1.47 / 3.83 / 26.1 | 802 (CLI) | 214 (CLI) |
+
+The probe also writes a table per crop and setting to `out/per_crop.tsv`.
+
+**What the numbers show.**
+
+- **XYB tints the colours, and lowering the distance does not fix it.**
+  - Red and blue drift upwards on average (bias +0.9 to +1.3) at every distance; the other codecs stay
+    within ±0.3.
+  - In the water, red rises from 0 to 2.1–2.5 whatever the distance. WebP and AVIF give about 0.4.
+  - Even at d0.5 the largest blue error is 130.
+  - XYB is the reason. It is not a matter of how many bytes are spent.
+- **JXL without XYB removes the tint, but is not usable either.**
+  - The water red stays at 0.00–0.01, and the bias is +0.12.
+  - **VarDCT has an error floor in red.** The red error stays flat as the distance drops. In
+    `town_classic` the red MAE is 3.64 at d1.5, 3.62 at d1 and 3.61 at d0.5, and the largest red error is
+    41–45 throughout, while green improves 3.5-fold and blue 1.7-fold. The same holds in every crop with red
+    content. That is a measurement; why libjxl does it was not investigated.
+  - **Effort 7 is broken in this mode.** The red MAE doubles and the SSIMULACRA2 minimum falls to 19.6
+    (`lava`).
+  - **Modular** has no floor, but it keeps a single green error of 103–106 in `dock_sprites` at every
+    distance. It is also 4 × slower and 3 × larger than XYB for the same SSIMULACRA2.
+  - libjxl's lossy encoder is tuned for XYB. Without it, JXL also loses its size advantage: d1 is 5.07 bpp,
+    against 2.78 for AVIF q90.
+- **Current WebP q85.**
+  - **A sharp-edge error of about 97 in red and 144 in blue that higher quality never reduces.** q85, q90
+    and q95 all keep it. It is the 4:2:0 chroma on 1-px colour edges, which sharp YUV narrows but cannot
+    remove.
+  - Otherwise it is accurate on dark colours: ΔE2000 has a mean of 2.1 and a p95 of 5.4, and the water
+    red is 0.4.
+- **AVIF 4:4:4 is the most faithful lossy setting.**
+  - At q90 (2.78 bpp) it has the lowest ΔE2000 of all the lossy settings (mean 1.47, p95 3.8) and the
+    smallest maximum errors (35 / 19 / 47).
+  - WebP q95 is larger (3.18 bpp) and still keeps its 97 / 145 edge errors.
+  - AVIF q70 matches WebP q85 on ΔE2000 at 17 % fewer bytes, with smaller maximum errors.
+  - Its costs are those given above: a new encoder dependency, slow encoding, and smoothed textures.
+- **Lossless: WebP beats JPEG XL on this art.**
+  - WebP lossless is 7.05 bpp, against 8.21 for JXL e7.
+    - It is 14 % smaller and encodes in 490 ms, against 817.
+    - It decodes in 9 ms, against 147. That is the fastest decode of any setting here, lossy included.
+  - JXL e1 encodes fastest (4.8 ms) but is 69 % larger than WebP lossless.
+  - Every lossless output matched its source exactly.
+
+**Disk for Britannia**, scaled from the 6–9 GB estimate for q85 by the bpp ratio:
+
+| Format | Disk |
+| --- | --- |
+| WebP sharp YUV q85 | 6–9 GB |
+| AVIF 4:4:4 q90 | 11–16 GB |
+| WebP lossless | 27–40 GB |
+| JXL lossless e7 | 31–47 GB |
+
+Encoding WebP lossless takes about 3.6 × the q85 time per tile. That is roughly 15 minutes on 20 threads
+at full clock.
+
+**Recommendation on fidelity.**
+
+- **Exact colours: lossless WebP** (`lossless = 1`, `exact = 1`, method 4, quality 75).
+  - Every pixel stays bit for bit, so the water red is 0 and ΔE is 0.
+  - Every browser shows it, and its decoding is the fastest measured here.
+  - It is smaller than lossless JXL at any effort.
+  - Its price is disk: about 4.5 × the current tiles, 27–40 GB for Britannia.
+  - It needs only the `--lossless` switch the tool left out. The tool already uses libwebp, so there is no
+    new dependency.
+- **If that disk is too much: AVIF 4:4:4 q90.**
+  - It has the best ΔE2000 and the smallest maximum errors among the lossy settings, at 1.8 × the current
+    disk.
+  - It adds an AV1 encoder dependency and slow encoding.
+  - It is still the most faithful option below lossless.
+- **Not JPEG XL lossy, in either mode.**
+  - XYB tints the colours.
+  - Without XYB it has a red error floor, effort 7 breaks, and it is not smaller than AVIF.
+  - JXL lossless is larger and slower than WebP lossless.
+- **The current WebP q85 stays the choice for size.**
+  - Its known limit is the 1-px colour edge, which no quality setting fixes.
+
+The Decisions table above still records the approved WebP q85. Switching to lossless is the user's call.
+
 ## Phases and effort
 
 1. **Pilot** (half a day, tool side). A control-channel prototype captures a 2 × 2 frame block around
