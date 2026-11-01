@@ -88,52 +88,22 @@ Older captures apply to their recorded package revisions.
 
 ### EC Material And Texture Ownership Pipeline
 
-- Build a full owner-reference census from `tileart.uop` and `TerrainDefinition.uop` so direct package usage is measured instead of inferred.
-- Add dedicated inventories for `TerrainTexture.uop` and `EffectTexture.uop`, including direct-consumer linkage, file-kind classification, and anomaly buckets for names like `ripple`, `water_alpha`, `cube`, `env`, `splash`, `foam`, `glow`, `lava`, and `mask`.
-- Freeze the current chooser, routing, and shader baseline in explicit diagnostics before changing behavior further.
-- Split and preserve these metadata axes everywhere they matter:
-  - physical source package
-  - logical family
-  - stable role (`EcMaterialStableRole`, from the block shader and the item position)
-  - block and item position
-  - reason and confidence
-- Extend tileart parsing so `Textures`-style refs are preserved instead of collapsing into lossy fallback buckets.
-- Preserve raw path, normalized path, and `texture_stretch` for tileart-linked refs.
-- Promote multi-reference metadata to first-class runtime data for both item-owned and land-owned records.
-- Preserve metadata-only manifests for non-image `EffectTexture.uop` resources.
+Done; kept as a pointer. Owner-reference census, support-texture inventories and the baseline report are `udd-cli pack audit-ec-material-refs`, `inventory-ec-support-textures` and `report-ec-material-baseline` (c2e383fe); the metadata axes are on every tilemeta texture ref (`physical_package`, `logical_family()`, `stable_role` from the block shader and the item position since 55647354, `block_index`/`item_index`, and the selector's reason with `is_low_confidence`); `Textures`-family refs, raw/normalized paths and `texture_stretch` survive the tileart parser (`lib/uocf/tests/synthetic/tileart_ref_preservation.rs`); item refs are tilemeta `item_texture_refs`, land layers are `tex_land_ec` `source_materials.json` plus terrain provenance; non-image `EffectTexture.uop` resources have `write-ec-effect-meta-manifest` (33c88fb5). Tilemeta stores texture ids, not paths: a path follows from the id and its family.
 
 ### EC Packaging Boundaries
 
-- Keep `tex_art_ec.uddp` for tileart-owned visible bases.
-- Keep `tex_land_ec.uddp` for `TerrainDefinition`-owned visible bases.
-- Add `ec_tex_aux.uddp` for non-base image-bearing support refs.
-- Keep non-image support resources as metadata manifests, not fake image slots.
-- Make package assignment inspectable and auditable.
-- Keep semantic ownership as the packaging driver; do not collapse EC assets into one flat texture-id atlas family.
+Done; kept as the rule. `tex_art_ec.uddp` holds the tileart-owned visible images, `tex_land_ec.uddp` the `TerrainDefinition`-owned ones, `tex_aux_ec.uddp` the image-bearing support refs that runtime consumers read (c61470d8, a8cf7d93), and non-image resources stay metadata manifests. Packages follow semantic ownership, not one flat texture-id atlas; `udd-cli tool info` shows each package's contents.
 
 ### EC Base Selection And Visibility Rules
 
-- Replace the old non-aux-first base chooser with stable-role-first selection plus explicit reason logging.
-- Add override hooks for:
-  - base choice
-  - role correction
-  - metadata-only tagging
-- Replace the blanket tileart `Liquid` exclusion with a conservative base-eligibility decision.
-- Keep support-only and no-base liquid stacks preserved in metadata and auxiliary outputs.
-- Surface abnormalities for:
-  - missing base
-  - support-only stacks
-  - ambiguous multiple bases
-  - unresolved support-rich stacks
-  - low-confidence fallback selection
+Done. The main-texture selector is role first with explicit reasons (`choose_main_ec_texture_id_role_aware`, `MainEcTextureRoleReason`, `TileMetaMainEcTextureReason`), and the tex_art_ec packer takes the client's own primary (`ArtData.ec_texture`); roles come from the shader and the position, so no role-correction hook is needed. Liquid entries are kept whenever they have a base (`LiquidExclusionReason`; all 322 included), support-only stacks stay in tilemeta refs and `tex_aux_ec`, and `write-ec-abnormality-report` (d7319dc8) reports missing and low-confidence bases.
+
+- Remove the unused override hooks `dynamapper/assets/ec_overrides/{base_choice,role,metadata_only}_overrides.kdl` and `udd_conv::ec_overrides` (read only by `write-ec-abnormality-report`, all empty): the base and the role are the client's.
 
 ### EC Runtime: Open Correctness Gaps
 
 - Finish runtime consumption of chosen-base metadata for land-owned, art-owned, and surface-like art paths.
-- Resolve remaining surface-like static routing failures where tilemeta says `SurfaceLike` but runtime `ec_land` resolution is still missing.
-  - Known samples: `1345`, `1395`, `1396`, `1397`, `1398`, `1399`.
-  - `1345` points at `ec_texture_id=2000130` and appears to have `TerrainDefinition` matches.
-  - `1395..1399` point at `1000034` and currently show no `TerrainDefinition` matches.
+- Surface-like routing has no open failures (census 2026-11-01, installed packages: 9222 Enhanced surface-like items, none left without an image). An item with a `tex_art_ec` slot draws its own image (`EcSurface`/`EcRegular`), which wins over any `ec_land` match, and one without falls back to Classic art first, so `ec_land` decides only the 261 water-shader liquid payloads. The former samples `1345` (cave floor, `UOStaticTerrainShader`) and `1395..1399` (stone roof, `UOSpriteShader` with `1000034`) draw their own tileart textures, as the client does; their support maps are all in `tex_aux_ec`. Open renderer details are in `agents_comm.txt` (2026-11-01): the dead `unresolved_surface_like` counter, the unreached non-liquid `TexLandEc` branch, and the 61 `UOWaterShader` blood items drawn from their primary only.
 - Keep the safe static runtime precedence:
   - `tilemeta.is_surface_like()` plus resolvable `ec_land` slot first
   - then existing art fallback paths
@@ -200,18 +170,9 @@ Older captures apply to their recorded package revisions.
 
 ### EC Review, Audit, And Artifact Surfaces
 
-- Emit machine-readable abnormality reports and owner-reference audits.
-- Keep override files source-controlled and reviewable.
-- Generate editable review artifacts grounded in original package evidence, not just current code behavior.
-- Extend inspectors so they print at least:
-  - owner kind
-  - source package
-  - logical family
-  - stable role
-  - block and item position
-  - reason
-  - confidence
-  - runtime routing
+Abnormality reports and owner audits (`write-ec-abnormality-report`, `write-tileart-owner-audit`, `write-terrain-definition-owner-audit`, d7319dc8), source-controlled override tables (`dynamapper/assets/cc_ec_convtables/`, checked by `audit-ec-terrain-overrides` and `audit-land-routing-kdl`) and editable review artifacts (`write-terrain-definition-review`, `write-tileart-liquid-surface-report`, 4a9a87de) exist.
+
+- Show each tilemeta item's texture refs in `uddp-inspector-gui` (it shows only the EC/CC texture ids and the name): block and item position, stable role, physical package, logical family, primary/auxiliary flags, stretch, the main-texture reason and its confidence, and whether `tex_art_ec`, `tex_aux_ec` or `tex_land_ec` holds the image.
 
 ### EC Effects: Manual Checks
 
@@ -293,15 +254,7 @@ These need a person at the GUI or in a running client; the code side is done.
 
 ### Future-Readiness Preservation
 
-- Preserve future blend candidates distinctly from generic support refs.
-- Preserve the water inputs `WaterBump`, `WaterReflection`, and `WaterFourthStage` distinctly.
-- Preserve extra-pass candidates such as waterfall, splash, foam, flare, glow, and lava bubbles.
-- Add an implementation-readiness field for preserved support refs with categories like:
-  - `base-safe`
-  - `blend-ready`
-  - `liquid-ready`
-  - `water-bump experimental`
-  - `extra-pass only`
+Done or superseded. Blend inputs (`SecondaryBase`, `BlendAlpha`, `CoverageAlpha`) and the water inputs (`WaterBump`, `WaterReflection`, `WaterFourthStage`) are distinct stable roles (55647354), so the role already says how a ref is used and no separate readiness field is needed. Waterfall, splash, foam, glow and similar effects come from the effect definitions (`effects_ec.uddp`), not from texture names.
 
 ## Later
 
@@ -340,25 +293,19 @@ These need a person at the GUI or in a running client; the code side is done.
 
 - Implement the 1:1 tiled world export pipeline.
 - Add WebP output profile controls for quality, lossless, and speed.
-- Add CLI pack validation for UDDP consistency and dictionary coverage.
+- Add `udd-cli tool validate`: decode every entry, check its codec and dictionary references, and run the package-specific reader. `tool info` checks only the package hash and a few tables, so a stale package (for example a `tex_land_ec` with provenance version 3) is found only when the app loads it.
 - Improve `uddp_inspector` atlas preview with selective CPU decode for BC7 sub-rects instead of full-page decode.
 
 ## Validation
 
 ### Immediate Regression Protection
 
-- Add parser tests for:
-  - tileart `Textures`-family classification
-  - stable-role classification
-  - position-role tagging (`EcMaterialStableRole::for_texture_position`)
-  - owner-reference census correctness
-- Add packer tests for:
-  - sidecar integrity
-  - auxiliary-package owner linkage
-  - liquid base retention
-- Add metadata round-trip and bit-packing tests where format packing is critical.
-- Add UDDP alignment and `mmap` safety tests for package layout.
-- Keep RLE or decode fuzzing for high-risk decode paths.
+Parser tests for `Textures`-family classification, stable roles and position roles exist (`lib/uocf/tests/synthetic/tileart_ref_preservation.rs`; tilemeta `roles_come_from_the_shader_and_the_item_position`, `roles_follow_the_block_shader_and_the_position_not_the_name`), as do liquid-base retention (`tex_art_ec` `liquid_with_*`), tilemeta material and `terrain_meta` round trips, and `meta32` packing.
+
+- Add tests for the owner-reference census (`audit-ec-material-refs` has none).
+- Add a packer test that every block-0 support ref a packed item names resolves in `tex_aux_ec` (true today: 0 missing among drawn surface-like items).
+- Add UDDP layout tests: payload alignment and reads through the memory-mapped reader.
+- Add decode fuzzing for the high-risk decoders (RLE, art, gumps).
 
 ### Priority Test Inventory
 
