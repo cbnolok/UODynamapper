@@ -1160,10 +1160,6 @@ enum Commands {
         source_dirs: SourceDirArgs,
         #[arg(long)]
         tilemeta: PathBuf,
-        /// Optional directory containing ec_overrides KDL files. When provided,
-        /// base_choice_overrides.kdl and metadata_only_overrides.kdl are applied.
-        #[arg(long)]
-        ec_overrides_dir: Option<PathBuf>,
         #[arg(long, default_value = "ec_abnormality_report.csv")]
         output: PathBuf,
     },
@@ -2059,16 +2055,11 @@ where
         Commands::WriteEcAbnormalityReport {
             source_dirs: source_dir_args,
             tilemeta,
-            ec_overrides_dir,
             output,
         } => {
             let paths = collect_ec_source_dirs(&source_dir_args)?;
             let out_file = resolve_output_path(&output);
-            let overrides = ec_overrides_dir
-                .as_deref()
-                .map(udd_conv::ec_overrides::EcOverrides::load_from_dir)
-                .transpose()?;
-            write_ec_abnormality_report(&paths, &tilemeta, overrides.as_ref(), &out_file)?;
+            write_ec_abnormality_report(&paths, &tilemeta, &out_file)?;
         }
         Commands::WriteTileartOwnerAudit {
             source_dirs: source_dir_args,

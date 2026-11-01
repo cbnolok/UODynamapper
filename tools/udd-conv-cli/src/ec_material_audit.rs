@@ -3358,10 +3358,6 @@ enum AbnormalityCode {
     LowConfidenceBase,
     LiquidNoBase,
     LiquidUnknownRole,
-    /// A `BaseChoiceOverride` was applied for this art id.
-    OverrideApplied,
-    /// A `MetadataOnlyOverride` marks this texture id as never a visible base.
-    MetadataOnlyOverride,
 }
 
 impl AbnormalityCode {
@@ -3372,19 +3368,16 @@ impl AbnormalityCode {
             Self::LowConfidenceBase => "LowConfidenceBase",
             Self::LiquidNoBase => "LiquidNoBase",
             Self::LiquidUnknownRole => "LiquidUnknownRole",
-            Self::OverrideApplied => "OverrideApplied",
-            Self::MetadataOnlyOverride => "MetadataOnlyOverride",
         }
     }
 
     fn severity(self) -> &'static str {
         match self {
-            Self::Ok | Self::OverrideApplied => "ok",
+            Self::Ok => "ok",
             Self::MissingBase => "error",
             Self::LowConfidenceBase
             | Self::LiquidNoBase
-            | Self::LiquidUnknownRole
-            | Self::MetadataOnlyOverride => "warning",
+            | Self::LiquidUnknownRole => "warning",
         }
     }
 }
@@ -3397,8 +3390,6 @@ pub struct AbnormalityCounts {
     pub low_confidence_base: u64,
     pub liquid_no_base: u64,
     pub liquid_unknown_role: u64,
-    pub override_applied: u64,
-    pub metadata_only_override: u64,
     /// Top-10 low-confidence tiles by owner_id (owner_id, chosen_texture_id).
     pub top_low_confidence: Vec<(u32, u32)>,
 }
@@ -3412,8 +3403,6 @@ impl AbnormalityCounts {
             low_confidence_base: 0,
             liquid_no_base: 0,
             liquid_unknown_role: 0,
-            override_applied: 0,
-            metadata_only_override: 0,
             top_low_confidence: Vec::new(),
         }
     }
@@ -3432,8 +3421,6 @@ impl AbnormalityCounts {
             }
             AbnormalityCode::LiquidNoBase => self.liquid_no_base += 1,
             AbnormalityCode::LiquidUnknownRole => self.liquid_unknown_role += 1,
-            AbnormalityCode::OverrideApplied => self.override_applied += 1,
-            AbnormalityCode::MetadataOnlyOverride => self.metadata_only_override += 1,
         }
     }
 
@@ -3453,16 +3440,9 @@ const TOP_LOW_CONFIDENCE_LIMIT: usize = 10;
 ///
 /// Also writes a companion markdown summary alongside the CSV (replacing `.csv` with `.md`,
 /// or appending `_summary.md` if the output does not end in `.csv`).
-///
-/// When `overrides` is `Some`, base-choice overrides are applied: the row for
-/// that art id uses the override texture id as `chosen_texture_id` and is marked
-/// `abnormality_code=OverrideApplied`. Metadata-only overrides mark rows with
-/// `abnormality_code=MetadataOnlyOverride`. When `overrides` is `None`, behaviour
-/// is unchanged.
 pub fn write_ec_abnormality_report(
     source_dirs: &[PathBuf],
     tilemeta_path: &Path,
-    overrides: Option<&udd_conv::ec_overrides::EcOverrides>,
     output: &Path,
 ) -> eyre::Result<()> {
     use udd_assets::tilemeta::TileMetaPackage;
@@ -3482,24 +3462,6 @@ pub fn write_ec_abnormality_report(
 
     let mut counts = AbnormalityCounts::new();
     let sources = load_tex_art_ec_sources(source_dirs)?;
-
-    // Build override look-up maps when overrides are provided.
-    let base_choice_overrides: HashMap<u32, u32> = overrides
-        .map(|ov| {
-            ov.base_choices
-                .iter()
-                .map(|entry| (entry.art_id, entry.base_texture_id))
-                .collect()
-        })
-        .unwrap_or_default();
-    let metadata_only_texture_ids: BTreeSet<u32> = overrides
-        .map(|ov| {
-            ov.metadata_only
-                .iter()
-                .map(|entry| entry.texture_id)
-                .collect()
-        })
-        .unwrap_or_default();
 
     let mut art_ids = sources
         .art_definition
@@ -3588,18 +3550,6 @@ pub fn write_ec_abnormality_report(
                 }
             };
 
-        // Apply base-choice override if present.
-        let (chosen_texture_id, code) =
-            if let Some(&override_texture_id) = base_choice_overrides.get(&tile_id) {
-                (Some(override_texture_id), AbnormalityCode::OverrideApplied)
-            } else if chosen_texture_id
-                .is_some_and(|id| metadata_only_texture_ids.contains(&id))
-            {
-                (chosen_texture_id, AbnormalityCode::MetadataOnlyOverride)
-            } else {
-                (chosen_texture_id, code)
-            };
-
         counts.record(code, tile_id, chosen_texture_id);
 
         let notes = abnormality_notes(code);
@@ -3621,7 +3571,7 @@ pub fn write_ec_abnormality_report(
 
     info!(
         "wrote {} EC abnormality report rows to '{}' \
-         (ok={} missing_base={} low_confidence={} liquid_no_base={} liquid_unknown_role={} override_applied={} metadata_only_override={})",
+         (ok={} missing_base={} low_confidence={} liquid_no_base={} liquid_unknown_role={})",
         counts.total,
         output.display(),
         counts.ok,
@@ -3629,8 +3579,6 @@ pub fn write_ec_abnormality_report(
         counts.low_confidence_base,
         counts.liquid_no_base,
         counts.liquid_unknown_role,
-        counts.override_applied,
-        counts.metadata_only_override,
     );
 
     let summary_path = abnormality_summary_path(output);
@@ -3649,12 +3597,6 @@ fn abnormality_notes(code: AbnormalityCode) -> &'static str {
         AbnormalityCode::LiquidNoBase => "liquid tile has no chosen texture id",
         AbnormalityCode::LiquidUnknownRole => {
             "liquid tile primary image has the Unknown role: its block has no known UO shader"
-        }
-        AbnormalityCode::OverrideApplied => {
-            "base texture id replaced by base_choice_overrides.kdl entry"
-        }
-        AbnormalityCode::MetadataOnlyOverride => {
-            "chosen texture id is marked metadata-only by metadata_only_overrides.kdl"
         }
     }
 }
@@ -3689,12 +3631,6 @@ pub fn write_ec_abnormality_summary(counts: &AbnormalityCounts, output: &Path) -
         ("LowConfidenceBase", counts.low_confidence_base, "warning"),
         ("LiquidNoBase", counts.liquid_no_base, "warning"),
         ("LiquidUnknownRole", counts.liquid_unknown_role, "warning"),
-        ("OverrideApplied", counts.override_applied, "ok"),
-        (
-            "MetadataOnlyOverride",
-            counts.metadata_only_override,
-            "warning",
-        ),
     ];
     for (code, count, severity) in rows {
         let pct = AbnormalityCounts::percent(*count, counts.total);

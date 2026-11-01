@@ -96,9 +96,7 @@ Done; kept as the rule. `tex_art_ec.uddp` holds the tileart-owned visible images
 
 ### EC Base Selection And Visibility Rules
 
-Done. The main-texture selector is role first with explicit reasons (`choose_main_ec_texture_id_role_aware`, `MainEcTextureRoleReason`, `TileMetaMainEcTextureReason`), and the tex_art_ec packer takes the client's own primary (`ArtData.ec_texture`); roles come from the shader and the position, so no role-correction hook is needed. Liquid entries are kept whenever they have a base (`LiquidExclusionReason`; all 322 included), support-only stacks stay in tilemeta refs and `tex_aux_ec`, and `write-ec-abnormality-report` (d7319dc8) reports missing and low-confidence bases.
-
-- Remove the unused override hooks `dynamapper/assets/ec_overrides/{base_choice,role,metadata_only}_overrides.kdl` and `udd_conv::ec_overrides` (read only by `write-ec-abnormality-report`, all empty): the base and the role are the client's.
+Done. The main-texture selector is role first with explicit reasons (`choose_main_ec_texture_id_role_aware`, `MainEcTextureRoleReason`, `TileMetaMainEcTextureReason`), and the tex_art_ec packer takes the client's own primary (`ArtData.ec_texture`); roles come from the shader and the position, so no role-correction hook is needed. Liquid entries are kept whenever they have a base (`LiquidExclusionReason`; all 322 included), support-only stacks stay in tilemeta refs and `tex_aux_ec`, and `write-ec-abnormality-report` (d7319dc8) reports missing and low-confidence bases. The empty override hooks (`dynamapper/assets/ec_overrides/*.kdl`, `udd_conv::ec_overrides`) are removed: the base and the role are the client's.
 
 ### EC Runtime: Open Correctness Gaps
 

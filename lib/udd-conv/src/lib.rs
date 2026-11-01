@@ -18,7 +18,6 @@ pub mod source_paths;
 pub mod tilemeta;
 pub mod tex_aux_ec;
 pub mod terrain_meta;
-pub mod ec_overrides;
 pub mod upscale_pipeline;
 pub mod upscale_profile;
 pub mod world_lights;

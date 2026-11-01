@@ -1,3 +1,0 @@
-// Marks specific texture ids as metadata-only (never sampled as visible base).
-// Format:
-//   texture <texture_id> reason="<note>"
