@@ -168,3 +168,8 @@ Start C only when the user decides how dynamapper edits the world.
    through uocf's `MapPlane`? This decides whether C goes in udd-conv or in uocf.
 7. **Priority.** Is there a consumer now (a server map, an editor milestone), or should B wait behind the other
    gaps?
+
+## Decision (2026-11-01)
+
+The user decided that option B waits until a consumer needs it: a dynamapper editor or a `.uddp` → Classic
+export. Nothing is implemented. Questions 1 to 6 stay open until then.
