@@ -64,6 +64,10 @@ public class NameClassicFrameCode extends GhidraScript {
             + " box, so runs must come in ascending rows; mirrored frames read each run backwards at -x - length."
             + " Hue modes: 0x3fff bits = hue + 1, 0x8000 = only grey colours ((c & 0x3ff) == c >> 5) take the hue",
             "const:7fff7fff", "const:fff", "calledby:00452ad0"),
+        new Entry("00449c30", ANIM, "DarkenPixel", true, "DrawFrameRle's modes with hue bit 0x4000 (every pixel"
+            + " without 0x8000, the greys with it): darkens the destination pixel by level 0x17 - (colour >> 10),"
+            + " clamped at 0, through the table at 0x00788fd8 (0x20 words a level); the pixel is drawn whatever its"
+            + " colour, 0 included", "calledby:00449c90"),
         new Entry("00449aa0", ANIM, "DrawFrameShadowRle", false, "the mobile shadow: walks the same runs, keeps the"
             + " rows with an even y offset at y / 2, skews x by the row, and halves the pixels under each run"
             + " (>> 1 & 0x3def); stops at the first run below the clip box", "const:7fff7fff", "const:3def"),

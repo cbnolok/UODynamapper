@@ -8,6 +8,7 @@ Program `classic_7.0.103.0_client.exe` (SHA-256 `4d857f2f5f8bf350bc50a87ee66b223
 | Address | Name | Notes |
 |---|---|---|
 | 0x00449c90 | `UOClassicAnim::DrawFrameRle` | draws a frame's runs; hue modes; mirror |
+| 0x00449c30 | `UOClassicAnim::DarkenPixel` | probable name: the 0x4000 hue modes darken the destination |
 | 0x00449aa0 | `UOClassicAnim::DrawFrameShadowRle` | the same runs as a shadow (0x3DEF blend) |
 | 0x0044a4c0 | `UOClassicAnim::FrameRleHitTest` | pixel under the cursor |
 | 0x005d4dc0 | `UOClassicAnim::DrawFrameRleToBuffer` | probable name: a 64x128 buffer, anchor (32, 80), same hue modes |
@@ -35,6 +36,18 @@ Program `classic_7.0.103.0_client.exe` (SHA-256 `4d857f2f5f8bf350bc50a87ee66b223
    Mirroring reads the runs backwards from the marker. **confirmed**.
 5. **Hue.** A hue of 0x3FFF bits takes hue table entry hue - 1 (`DAT_00a6b810`, stride 0x2C); bit 0x8000 hues
    only the greys (`(c & 0x3FF) == c >> 5`). **confirmed**.
+6. **A colour of 0 is an opaque pixel on every path** (the four functions that read the runs, the only code
+   with the 0x7FFF7FFF constant). **confirmed**:
+   - `DrawFrameRle`, plain (hue & 0x3FFF = 0, normal and mirrored): writes `palette[index]`, so 0 is black.
+   - full hue (no 0x8000 / 0x4000): writes hue entry `[(c >> 10) + (hue - 1) * 0x2C]` (the shift at
+     0x007469e8 is 10): 0 takes the hue's colour 0, as any colour of red 0 (0x0001 too).
+   - partial hue (0x8000): 0 is a grey, so it takes the hue's colour 0; 0x0001 is no grey and is drawn as is.
+   - 0x4000 (with 0x8000: the greys only, others written as they are): `DarkenPixel` darkens the destination
+     by level 0x17 - (c >> 10); 0 darkens most. No pixel is skipped.
+   - `DrawFrameShadowRle` halves the destination under every run pixel; it never reads the index.
+   - `FrameRleHitTest` tests run coverage only; it never reads the index.
+   - `DrawFrameRleToBuffer`: the plain, full and partial hue modes of `DrawFrameRle` (hue clamped: above 2999
+     is 0), with the same results for 0.
 
 ## The sources
 
@@ -54,5 +67,6 @@ Program `classic_7.0.103.0_client.exe` (SHA-256 `4d857f2f5f8bf350bc50a87ee66b223
   bytes after the marker; MUL frames contiguous after the offset table. The uocf writer reproduces every shipped
   frame byte for byte (`classic_animation_frame_encoding` real-file tests).
 - Transparency is only "not in a run": an RGBA pixel of alpha 0 is left out, every other pixel is opaque.
-- uocf's decoders and ClassicUO draw a colour of 0 transparent, the client black: new palettes store black as
-  0x0001.
+- uocf's decoders draw a colour of 0 opaque black, as the client does (since 615cebf5; they drew it
+  transparent before). ClassicUO draws it transparent, and the partial hue hues 0 but not 0x0001: new palettes
+  store black as 0x0001.
