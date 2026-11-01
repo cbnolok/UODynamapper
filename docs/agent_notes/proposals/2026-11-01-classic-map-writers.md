@@ -214,5 +214,10 @@ Measured (`lib/uocf/tests/real_files/classic_map_writers.rs`, all `#[ignore]`):
   The added strip of ML is land 0x244 at z 0 where it is empty, the fill a grow writes. Gold → 7168 → Gold is
   equal; ML → 6144 is refused (259,645 land cells and 21,204 statics outside) and drops them with `--crop`.
 
-Open decisions: whether the stale delimiters should only warn (they are rebuilt by the rule, so the client sees
-the same neighbours), and how to keep the KR materials (a sidecar, or the opt-in only).
+Follow-up decisions (the user, 2026-11-01):
+
+- Stale delimiters are a warning with their count, not a loss: the delimiter rule rebuilds them from the same
+  land. `--allow-lossy` is needed only for real losses.
+- KR materials and subtypes other than the land map's stay a real loss behind `--allow-lossy`; a sidecar that
+  keeps them is deferred (docs/TODO.md).
+- The fp stale bytes stay as they are (documented in cc_file_coverage.md).

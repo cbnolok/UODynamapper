@@ -361,6 +361,7 @@ Done or superseded. Blend inputs (`SecondaryBase`, `BlendAlpha`, `CoverageAlpha`
 - Full lighting-model parity with original client time-of-day rules.
 - Networking protocol integration.
 - Editor UX for live map sculpting and tile painting.
+- A sidecar for the Kingdom Reborn materials and subtypes that `uocf-cli facet convert` loses going KR → Classic (squares whose pair is not the shipped land map's for their Classic id; facet0 9,608, facet1 10,013, facet2 7, facet3 2,665, facet4 1,065), so a KR → Classic → KR round trip is exact; until then the conversion needs `--allow-lossy` (the user, 2026-11-01).
 - Classic map editing in dynamapper (option C of the [map writers proposal](agent_notes/proposals/2026-11-01-classic-map-writers.md)): the writers, dif baking and `uocf-cli facet convert` are done (option B); the editor path (`.uddp` → Classic export or `MapPlane` dirty blocks) is still to decide.
 
 ## Suggested Execution Order

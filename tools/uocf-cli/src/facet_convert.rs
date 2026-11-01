@@ -142,7 +142,7 @@ pub struct ConvertArgs {
     #[arg(long)]
     pub target_tiledata: Option<PathBuf>,
     /// Convert a facet package even when the Classic files cannot hold all of it (the losses are listed; refused by
-    /// default).
+    /// default). Stale delimiters are not a loss: they are reported and rebuilt by the rule.
     #[arg(long)]
     pub allow_lossy: bool,
     /// radarcol.mul, to write the radar image of an Enhanced Client or Kingdom Reborn facet.
@@ -537,7 +537,10 @@ fn load_source(args: &ConvertArgs, kr_land: &KrLandMap) -> eyre::Result<Source> 
         let geometry = package.geometry();
         println!("Reading the {kind} facet {} ({}x{}).", uop.display(), geometry.width, geometry.height);
         let converted = facet_to_classic(&package, Some(kr_land))?;
-        let losses = converted.losses.describe();
+        if let Some(note) = converted.losses.rebuilt_delimiters() {
+            println!("warning: {}: {note}", uop.display());
+        }
+        let losses = converted.losses.real_losses().describe();
         if !losses.is_empty() {
             let list = losses.iter().map(|line| format!("  {line}")).collect::<Vec<_>>().join("\n");
             if !args.allow_lossy {
@@ -794,24 +797,42 @@ mod tests {
     }
 
     #[test]
-    fn a_facet_with_stale_delimiters_is_refused_unless_lossy_is_allowed() {
+    fn stale_delimiters_only_warn_and_a_real_loss_needs_allow_lossy() {
+        /// A hue the Classic static record (u16) cannot hold.
+        const WIDE_HUE: u32 = 0x1_0000;
         let root = temp("lossy");
-        let (source, ec, back) = (root.join("source"), root.join("ec"), root.join("back"));
-        std::fs::create_dir_all(&source).unwrap();
-        std::fs::create_dir_all(&ec).unwrap();
+        let (source, ec, back, wide, wide_back) =
+            (root.join("source"), root.join("ec"), root.join("back"), root.join("wide"), root.join("wide_back"));
+        for dir in [&source, &ec, &wide] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
         let (mut package, _) = build_facet_from_world(&write_source(&source), 4, None).unwrap();
         let path = ec.join(facet_package_file_name(4, false));
-        // A delimiter only the client's files can hold: a stale copy of a neighbour.
+        // A delimiter only the client's files hold: a stale copy of a neighbour, rebuilt by the rule.
         let square = &mut package.sector_mut(0).unwrap().tiles[uocf::enhanced::facet_sector::square_index(0, 63)];
         square.delimiters.push(uocf::enhanced::facet_decoder::EcFacetDelimiter { direction: 0, z: 0, graphic_id: 1 });
         package.save(&path).unwrap();
-        let args = ["convert", "--uop", path.to_str().unwrap(), "--facet", FACET, "--to", "classic", "--container", "mul", "-o", back.to_str().unwrap()];
-        let error = format!("{:#}", run(&args).unwrap_err());
-        assert!(error.contains("--allow-lossy") && error.contains("delimiters"), "{error}");
-        let mut lossy = args.to_vec();
-        lossy.push("--allow-lossy");
-        run(&lossy).unwrap();
+        let to_classic = |from: &Path, to: &Path| {
+            vec![
+                "convert".to_owned(), "--uop".to_owned(), from.to_str().unwrap().to_owned(), "--facet".to_owned(),
+                FACET.to_owned(), "--to".to_owned(), "classic".to_owned(), "--container".to_owned(), "mul".to_owned(),
+                "-o".to_owned(), to.to_str().unwrap().to_owned(),
+            ]
+        };
+        let args = to_classic(&path, &back);
+        run(&args.iter().map(String::as_str).collect::<Vec<_>>()).unwrap();
         assert_eq!(read_bytes(&back, &classic_names()), read_bytes(&source, &classic_names()));
+
+        // A hue above 0xFFFF is a real loss: refused unless --allow-lossy.
+        let (x, y, ..) = STATICS[0];
+        package.sector_mut(0).unwrap().tiles[uocf::enhanced::facet_sector::square_index(x, y)].statics[0].hue = WIDE_HUE;
+        let wide_path = wide.join(facet_package_file_name(4, false));
+        package.save(&wide_path).unwrap();
+        let mut args = to_classic(&wide_path, &wide_back);
+        let error = format!("{:#}", run(&args.iter().map(String::as_str).collect::<Vec<_>>()).unwrap_err());
+        assert!(error.contains("--allow-lossy") && error.contains("hue") && !error.contains("delimiters"), "{error}");
+        args.push("--allow-lossy".to_owned());
+        run(&args.iter().map(String::as_str).collect::<Vec<_>>()).unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }
 

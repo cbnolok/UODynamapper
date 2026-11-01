@@ -123,9 +123,9 @@ Editing `.uop` packages (`uop_container::package`):
     sectors, layout-preserving save, from-scratch packages with `data.map`),
     `facet_encoder` (Classic map + statics to `facetN.uop` + `facetNN.dds`),
     `facet_to_classic` (an EC or KR facet back to Classic map and statics,
-    listing what the Classic files cannot hold: stale delimiters, KR
-    materials and subtypes other than the land map's, graphics or hues above
-    0xFFFF, missing sectors), and `uocf-cli facet` (`dump-cell`,
+    listing what the Classic files cannot hold: KR materials and subtypes
+    other than the land map's, graphics or hues above 0xFFFF, missing
+    sectors; stale delimiters are counted apart, as the rule rebuilds them), and `uocf-cli facet` (`dump-cell`,
     `patch-cell`, `rebuild-radar`, `from-classic`, `convert`,
     `patch-classic`, `dump-def`, `patch-def`). EC → Classic → EC keeps every
     square but the stale delimiters; the Classic facets from the shipped EC

@@ -10,8 +10,10 @@
 //! - statics: graphic, z and hue, in the square's order. The Classic record has a `u16` graphic and hue, so a
 //!   larger value cannot be written ([`FacetClassicLosses::graphic_overflow`], `hue_overflow`; such statics are
 //!   left out). A block's records are written square by square in (y, x) order, the order of the shipped files.
-//! - delimiters: not Classic data; the builders derive them from the neighbours' land (the shipped rule), so a
-//!   square whose delimiters differ from the rule is a loss ([`FacetClassicLosses::delimiters_off_rule`]).
+//! - delimiters: not Classic data; the builders derive them from the neighbours' land (the shipped rule). A square
+//!   whose delimiters differ from the rule (a stale copy) is counted ([`FacetClassicLosses::delimiters_off_rule`])
+//!   but is not a real loss: the rule rebuilds them from the same land ([`FacetClassicLosses::real_losses`]).
+//!   Every shipped Enhanced Client facet has some.
 //! - the padding squares of partial sectors (outside the facet): not kept; the builders write `z 0, land 0`.
 //! - missing sectors: the client leaves a hole; the Classic files have none, so their cells are written as land 0
 //!   at z 0 without statics ([`FacetClassicLosses::missing_sectors`]).
@@ -59,6 +61,21 @@ impl FacetClassicLosses {
         *self == Self::default()
     }
 
+    /// The losses without the stale delimiters, which the builders rebuild by the rule from the same land.
+    pub fn real_losses(&self) -> Self {
+        Self { delimiters_off_rule: 0, ..self.clone() }
+    }
+
+    /// The note on the stale delimiters, when there are any.
+    pub fn rebuilt_delimiters(&self) -> Option<String> {
+        (self.delimiters_off_rule > 0).then(|| {
+            format!(
+                "{} squares have delimiters other than the ones derived from their neighbours (rebuilt by the rule)",
+                self.delimiters_off_rule
+            )
+        })
+    }
+
     /// One line per loss.
     pub fn describe(&self) -> Vec<String> {
         let mut lines = Vec::new();
@@ -78,12 +95,7 @@ impl FacetClassicLosses {
         if self.hue_overflow > 0 {
             lines.push(format!("{} statics have a hue above 0xFFFF and are left out", self.hue_overflow));
         }
-        if self.delimiters_off_rule > 0 {
-            lines.push(format!(
-                "{} squares have delimiters other than the ones derived from their neighbours (rebuilt by the rule)",
-                self.delimiters_off_rule
-            ));
-        }
+        lines.extend(self.rebuilt_delimiters());
         if self.padding_not_default > 0 {
             lines.push(format!(
                 "{} padding squares outside the facet are not empty (written back empty)",

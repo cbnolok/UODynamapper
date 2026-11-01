@@ -42,6 +42,10 @@ UO_PRE7_CLIENT_DIR="$C/Ultima Online Mondain's Legacy" UO_CLIENT_ROOTS="$C" \
 - **Package RT**: an unchanged save of every Classic UOP is byte-identical (`SaveLayout::Preserve`):
   `uop_package_unchanged_save::every_classic_client_package_saves_unchanged_byte_for_byte` (`UO_CLASSIC_CLIENT_ROOTS`),
   22 packages of the canonical client and the 8 of 7.0.20.
+- **Stale UOP bytes (Classic fp)**: `map0`, `map1` and `map1xLegacyMUL.uop` of the fp client hold 1,076,787,
+  960,540 and 960,540 bytes that no entry or table uses (old memory). Any uocf UOP save writes zeros there, an
+  unchanged one too, so those three come back equal to an unchanged save, not to the original file; every entry
+  and table is the same. Left as it is (the user, 2026-11-01): the client never reads those bytes.
 - **MUL/UOP repack**: `uocf-cli mul-convert extract|pack` (`tools/uocf-cli/src/legacy_mul`, 198974e4, 5f0b2381)
   moves `art`, `gumpart`, `sound` and the multis between their MUL/IDX and `*LegacyMUL.uop`/`MultiCollection`
   forms as raw copies; the maps go through the typed map writer (below). On the real `artLegacyMUL`, `gumpartLegacyMUL` and `soundLegacyMUL`, an

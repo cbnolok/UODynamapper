@@ -195,9 +195,10 @@ pub enum FacetCmd {
     /// nothing, as Mondain's Legacy's added Felucca strip). To give an old client a bigger map instead, patch its
     /// size table with uo-client-patcher-gui.
     ///
-    /// A facet package keeps what the Classic files cannot (stale delimiters; KR materials and subtypes that are
-    /// not the land map's): the conversion lists them and stops unless --allow-lossy. Classic difs are baked into
-    /// the map as the source client applies them (--difs).
+    /// A facet package can hold what the Classic files cannot (KR materials and subtypes that are not the land
+    /// map's, graphics or hues above 0xFFFF, missing sectors): the conversion lists them and stops unless
+    /// --allow-lossy. Stale delimiters (not the ones the neighbours give) only warn, with their count: the delimiter
+    /// rule rebuilds them. Classic difs are baked into the map as the source client applies them (--difs).
     Convert(crate::facet_convert::ConvertArgs),
     /// Edit one cell of one Classic map edition (land, z, statics) and write the map in its container (a UOP keeps
     /// its layout) with staidxN.mul and staticsN.mul. An added static goes after the cell's statics.

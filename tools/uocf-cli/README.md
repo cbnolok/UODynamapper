@@ -24,8 +24,10 @@
   size is refused when content lies outside it unless `--crop`, a larger one is filled with
   land 0x244 at z 0 (the shipped maps' void; `--fill-land`/`--fill-z`). `--target-client`
   also picks the Classic container and checks the ids against its `tiledata.mul`. A facet
-  package with data the Classic files cannot hold (stale delimiters, KR materials) is refused
-  unless `--allow-lossy`. For a bigger map in an old client, patch its size table with
+  package with data the Classic files cannot hold (KR materials and subtypes other than the
+  land map's, graphics or hues above 0xFFFF, missing sectors) is refused unless
+  `--allow-lossy`; stale delimiters only warn, with their count, since the delimiter rule
+  rebuilds them. For a bigger map in an old client, patch its size table with
   `uo-client-patcher-gui` instead.
 - `facet patch-classic`: edit one cell of one Classic edition (land, z, statics added after
   the cell's, removed or changed) and write it in the same container to `-o`.
