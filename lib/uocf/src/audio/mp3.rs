@@ -4,8 +4,10 @@
 
 use std::collections::BTreeSet;
 
+use super::validate::{miles_mp3_seek, MilesMp3Seek};
+
 pub const ID3V2_MAGIC: &[u8] = b"ID3";
-const ID3V2_HEADER_SIZE: usize = 10;
+pub(crate) const ID3V2_HEADER_SIZE: usize = 10;
 const ID3V2_MAJOR_OFFSET: usize = 3;
 const ID3V2_REVISION_OFFSET: usize = 4;
 const ID3V2_FLAGS_OFFSET: usize = 5;
@@ -25,20 +27,22 @@ const APE_FOOTER_SIZE: usize = 32;
 const APE_SIZE_OFFSET: usize = 12;
 
 pub const MPEG_HEADER_SIZE: usize = 4;
-const SYNC_BYTE: u8 = 0xff;
-const SYNC_MASK: u8 = 0xe0;
+pub(crate) const SYNC_BYTE: u8 = 0xff;
+pub(crate) const SYNC_MASK: u8 = 0xe0;
 const VERSION_SHIFT: u8 = 3;
-const LAYER_SHIFT: u8 = 1;
-const TWO_BITS: u8 = 0b11;
+pub(crate) const LAYER_SHIFT: u8 = 1;
+pub(crate) const TWO_BITS: u8 = 0b11;
+/// The layer bits of Layer III.
+pub(crate) const LAYER_3_BITS: u8 = 0b01;
 const FOUR_BITS: u8 = 0x0f;
 const PROTECTION_ABSENT_BIT: u8 = 0x01;
-const BITRATE_SHIFT: u8 = 4;
-const SAMPLE_RATE_SHIFT: u8 = 2;
+pub(crate) const BITRATE_SHIFT: u8 = 4;
+pub(crate) const SAMPLE_RATE_SHIFT: u8 = 2;
 const PADDING_SHIFT: u8 = 1;
 const CHANNEL_MODE_SHIFT: u8 = 6;
 const BITRATE_FREE: u8 = 0;
-const BITRATE_BAD: u8 = 15;
-const SAMPLE_RATE_RESERVED: u8 = 3;
+pub(crate) const BITRATE_BAD: u8 = 15;
+pub(crate) const SAMPLE_RATE_RESERVED: u8 = 3;
 /// The 16-bit CRC after the header of a protected frame.
 const CRC_SIZE: usize = 2;
 const BITS_PER_KILOBIT: u32 = 1000;
@@ -102,7 +106,7 @@ const VBRI_FRAMES_OFFSET: usize = 14;
 const BITS_PER_BYTE: u32 = 8;
 
 /// Frames that must chain from a candidate start for it to count as an MPEG stream (fewer when the payload ends
-/// exactly after them).
+/// exactly after them). Frames chain when they share version, layer and sample rate ([`FrameHeader::chain_key`]).
 pub const MPEG_FRAMES_TO_SYNC: usize = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -194,7 +198,7 @@ impl FrameHeader {
         let layer = match (version_layer >> LAYER_SHIFT) & TWO_BITS {
             0b11 => MpegLayer::L1,
             0b10 => MpegLayer::L2,
-            0b01 => MpegLayer::L3,
+            LAYER_3_BITS => MpegLayer::L3,
             _ => return None,
         };
         let bitrate_index = rates >> BITRATE_SHIFT;
@@ -252,9 +256,15 @@ impl FrameHeader {
         }
     }
 
-    /// Version, layer, sample rate and channel mode: what stays the same along one stream.
+    /// Version, layer, sample rate and channel mode: what the shipped streams keep along their frames.
     pub fn stream_key(&self) -> (MpegVersion, MpegLayer, u32, ChannelMode) {
         (self.version, self.layer, self.sample_rate, self.channel_mode)
+    }
+
+    /// Version, layer and sample rate: what every frame of one stream shares. The channel mode may change from frame
+    /// to frame, as `mssmp3.asi` allows (it compares only these).
+    pub fn chain_key(&self) -> (MpegVersion, MpegLayer, u32) {
+        (self.version, self.layer, self.sample_rate)
     }
 
     /// Where a Xing/Info header starts: after the header, the CRC and the layer 3 side information.
@@ -465,6 +475,8 @@ pub struct MpegAnalysis {
     pub length: usize,
     /// Bytes inside the frames (the info frame included).
     pub frame_bytes: usize,
+    /// Where `mssmp3.asi` starts decoding ([`miles_mp3_seek`]).
+    pub miles_seek: MilesMp3Seek,
 }
 
 impl MpegAnalysis {
@@ -527,7 +539,7 @@ fn chains_from(payload: &[u8], start: usize) -> Option<FrameHeader> {
             return Some(first);
         }
         let header = FrameHeader::parse(payload.get(offset..)?)?;
-        if header.stream_key() != first.stream_key() {
+        if header.chain_key() != first.chain_key() {
             return None;
         }
         offset += header.length;
@@ -539,29 +551,30 @@ fn chains_from(payload: &[u8], start: usize) -> Option<FrameHeader> {
 }
 
 /// Where the next frame chain starts at or after `from`.
-fn resync(payload: &[u8], from: usize, key: Option<(MpegVersion, MpegLayer, u32, ChannelMode)>) -> Option<usize> {
+fn resync(payload: &[u8], from: usize, key: Option<(MpegVersion, MpegLayer, u32)>) -> Option<usize> {
     (from..payload.len().saturating_sub(MPEG_HEADER_SIZE - 1))
         .filter(|&offset| payload[offset] == SYNC_BYTE)
-        .find(|&offset| chains_from(payload, offset).is_some_and(|header| key.is_none_or(|key| header.stream_key() == key)))
+        .find(|&offset| chains_from(payload, offset).is_some_and(|header| key.is_none_or(|key| header.chain_key() == key)))
 }
 
 /// The tags at the end of the payload: an ID3v1 tag in the last 128 bytes, an APEv2 footer before it or at the end.
-/// Returns where the tags start.
-fn tail_tags(payload: &[u8]) -> (usize, bool, bool) {
+/// A tag counts only when it starts at or after `not_before` (the end of the first frame): bytes inside the first
+/// frame, or before it, are no tail tag. Returns where the tags start.
+fn tail_tags(payload: &[u8], not_before: usize) -> (usize, bool, bool) {
     let mut end = payload.len();
-    let id3v1 = end >= ID3V1_SIZE && payload[end - ID3V1_SIZE..].starts_with(ID3V1_MAGIC);
+    let id3v1 = end >= not_before.saturating_add(ID3V1_SIZE) && payload[end - ID3V1_SIZE..].starts_with(ID3V1_MAGIC);
     if id3v1 {
         end -= ID3V1_SIZE;
     }
     let mut ape = false;
-    if end >= APE_FOOTER_SIZE && payload[end - APE_FOOTER_SIZE..].starts_with(APE_MAGIC) {
+    if end >= not_before.saturating_add(APE_FOOTER_SIZE) && payload[end - APE_FOOTER_SIZE..].starts_with(APE_MAGIC) {
         let footer = &payload[end - APE_FOOTER_SIZE..end];
         let size = u32::from_le_bytes(footer[APE_SIZE_OFFSET..APE_SIZE_OFFSET + size_of::<u32>()].try_into().expect("four bytes")) as usize;
-        if size >= APE_FOOTER_SIZE && size <= end {
+        if size >= APE_FOOTER_SIZE && not_before.saturating_add(size) <= end {
             ape = true;
             end -= size;
             // An APEv2 tag may have a header too, of the footer's size, which the size field leaves out.
-            if end >= APE_FOOTER_SIZE && payload[end - APE_FOOTER_SIZE..].starts_with(APE_MAGIC) {
+            if end >= not_before.saturating_add(APE_FOOTER_SIZE) && payload[end - APE_FOOTER_SIZE..].starts_with(APE_MAGIC) {
                 end -= APE_FOOTER_SIZE;
             }
         }
@@ -591,8 +604,8 @@ pub fn analyze_mpeg(payload: &[u8]) -> Option<MpegAnalysis> {
     let leading = &payload[after_tags..start];
     let (leading_zero_bytes, leading_junk_bytes) =
         if leading.iter().all(|&byte| byte == 0) { (leading.len(), 0) } else { (0, leading.len()) };
-    let (tags_start, id3v1, ape) = tail_tags(payload);
     let first = FrameHeader::parse(&payload[start..]).expect("the chain starts with a frame");
+    let (tags_start, id3v1, ape) = tail_tags(payload, start.saturating_add(first.length).min(payload.len()));
     let key = first.stream_key();
 
     let mut analysis = MpegAnalysis {
@@ -613,6 +626,7 @@ pub fn analyze_mpeg(payload: &[u8]) -> Option<MpegAnalysis> {
         tail: StreamTail { id3v1, ape, ..Default::default() },
         length: payload.len(),
         frame_bytes: 0,
+        miles_seek: miles_mp3_seek(payload),
     };
     let mut offset = start;
     while offset < tags_start {
@@ -621,7 +635,7 @@ pub fn analyze_mpeg(payload: &[u8]) -> Option<MpegAnalysis> {
             if payload[offset..tags_start].iter().all(|&byte| byte == 0) {
                 break;
             }
-            match resync(&payload[..tags_start], offset + 1, Some(key)) {
+            match resync(&payload[..tags_start], offset + 1, Some(first.chain_key())) {
                 Some(next) => {
                     analysis.resyncs += 1;
                     analysis.resync_bytes += next - offset;
@@ -748,5 +762,50 @@ pub(crate) mod tests {
         assert_eq!((analysis.resyncs, analysis.resync_bytes), (1, 4));
         assert!(analyze_mpeg(b"plain text, no frames").is_none());
         assert!(analyze_mpeg(&MPEG1_L3_128K_HEADER).is_none(), "a lone header that runs past the end");
+    }
+
+    #[test]
+    fn channel_mode_changes_keep_the_chain() {
+        // MPEG-2 Layer III, 64 kbit/s, 22050 Hz, joint stereo: the mono header's frame length.
+        const MPEG2_L3_64K_JOINT_HEADER: [u8; 4] = [0xff, 0xf3, 0x80, 0x40];
+        let mut payload = frames(MPEG2_L3_64K_MONO_HEADER, MPEG2_L3_64K_MONO_FRAME, 1);
+        payload.extend(frames(MPEG2_L3_64K_JOINT_HEADER, MPEG2_L3_64K_MONO_FRAME, 3));
+        let analysis = analyze_mpeg(&payload).unwrap();
+        assert_eq!((analysis.first_frame_offset, analysis.frames, analysis.resyncs), (0, 4, 0));
+        assert_eq!((analysis.inconsistent_frames, analysis.inconsistent_rate_frames), (3, 0));
+    }
+
+    /// Tags at the end that would start before the end of the first frame are no tags (these panicked).
+    #[test]
+    fn tail_tags_inside_the_first_frame_are_ignored() {
+        /// MPEG-2.5 Layer III, 8 kbit/s, 8000 Hz, mono: a 72-byte frame.
+        const MPEG25_L3_8K_MONO_HEADER: [u8; 4] = [0xff, 0xe3, 0x18, 0xc0];
+        const MPEG25_L3_8K_MONO_FRAME: usize = 72;
+        const LEADING_ZEROS: usize = 4;
+        const ID3V2_BODY: u8 = 100;
+
+        // Zeros, three frames, and an APE footer in their last bytes whose size reaches back past the first frame.
+        let mut ape = vec![0u8; LEADING_ZEROS];
+        ape.extend(frames(MPEG2_L3_64K_MONO_HEADER, MPEG2_L3_64K_MONO_FRAME, MPEG_FRAMES_TO_SYNC));
+        let footer_at = ape.len() - APE_FOOTER_SIZE;
+        let size = (ape.len() - LEADING_ZEROS) as u32;
+        ape[footer_at..footer_at + APE_MAGIC.len()].copy_from_slice(APE_MAGIC);
+        ape[footer_at + APE_SIZE_OFFSET..footer_at + APE_SIZE_OFFSET + size_of::<u32>()].copy_from_slice(&size.to_le_bytes());
+        let analysis = analyze_mpeg(&ape).unwrap();
+        assert_eq!((analysis.first_frame_offset, analysis.frames), (LEADING_ZEROS, MPEG_FRAMES_TO_SYNC as u32));
+        assert!(!analysis.tail.ape);
+
+        // An ID3v2 tag, then one frame ending the payload; `TAG` 128 bytes from the end lies inside the ID3v2 tag.
+        let mut id3v1 = b"ID3\x03\x00\x00\x00\x00\x00".to_vec();
+        id3v1.push(ID3V2_BODY);
+        id3v1.resize(ID3V2_HEADER_SIZE + usize::from(ID3V2_BODY), 0);
+        id3v1.extend(frames(MPEG25_L3_8K_MONO_HEADER, MPEG25_L3_8K_MONO_FRAME, 1));
+        let tag_at = id3v1.len() - ID3V1_SIZE;
+        id3v1[tag_at..tag_at + ID3V1_MAGIC.len()].copy_from_slice(ID3V1_MAGIC);
+        let analysis = analyze_mpeg(&id3v1).unwrap();
+        assert_eq!(analysis.first.version, MpegVersion::V2_5);
+        assert_eq!((analysis.first_frame_offset, analysis.frames), (ID3V2_HEADER_SIZE + usize::from(ID3V2_BODY), 1));
+        assert!(!analysis.tail.id3v1);
+        assert_eq!(analysis.tail.trailing_bytes, 0);
     }
 }

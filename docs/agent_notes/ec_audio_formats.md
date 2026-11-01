@@ -199,17 +199,16 @@ entry or slot keeps its bytes.
   | WAV: mono or stereo, rate not 0 | more channels take the multichannel path, which was not read; any rate plays (`AIL_set_sample_playback_rate`, the mixer resamples) |
   | WAV: a `data` chunk with samples, inside the file | "Invalid or missing data block."; Miles does not clamp the size to the file |
   | MP3: Layer III (MPEG-1, 2 or 2.5) | `MilesMp3::SeekFrameHeader` rejects layers I, II and reserved, bitrate index 15 and rate index 3 |
-  | MP3: the first frame within 8 KiB after a leading ID3v2 tag | the sync scan stops at 0x2000 (the 110 shipped files with 720 or 1,044 leading zeros pass) |
-  | MP3: every frame of the first frame's version, layer and rate | later frames must match them; the bitrate is not compared, so VBR plays |
+  | MP3: the first header Miles' byte scan locks onto is the stream's first frame (`validate::miles_mp3_seek` simulates it) | `SeekFrameHeader` reads a byte while it is at most 0x2000 bytes past the window start, so a header must start within 0x1FFD bytes; the window starts after the leading ID3v2 tag (`SetNamedSampleFile_Impl`, footer not skipped) and restarts after each inline `TAG` (128 bytes) or valid `ID3` tag (with its footer) it skips; it takes the first sync (`0xFF`, three set bits) that is Layer III with bitrate index ≠ 15 and rate index ≠ 3, and checks no next frame, so a false sync in junk before the stream would be decoded (the 110 shipped files with 720 or 1,044 leading zeros pass) |
+  | MP3: every frame of the first frame's version, layer and rate | later frames must match them; the bitrate and the channel mode are not compared, so VBR plays |
 
   Accepted: VBR, any bitrate, ID3v1 and ID3v2 tags (inline ones are skipped while seeking), the Xing/Info frame
   (decoded as a silent frame), CRC-protected frames (the CRC is skipped). Notes, always accepted: an MP3 stream
   unlike the shipped ones (MPEG-1 32 kHz mono, 44.1 kHz mono/stereo/joint; MPEG-2 16 kHz mono, 22.05 kHz
-  mono/stereo/joint), a legacy WAV unlike 22,048 Hz mono 16-bit, a RIFF size that differs from the file, bytes
+  mono/stereo/joint), frames that change the channel mode (no shipped stream does), a legacy WAV unlike 22,048 Hz mono 16-bit, a RIFF size that differs from the file, bytes
   after the last chunk, and every `legacysounds/` name (the client never plays it).
 - Still unverified, refused unless `--allow-unverified-format` (`FormatPolicy::AllowUnverified`) turns them into
-  warnings, for trying a file out in a test client: an MP3 whose frames change only the channel mode, a broken
-  frame chain (resyncs), a cut last frame, trailing bytes that are not a tag, an APE tag; a PCM WAV whose byte rate
+  warnings, for trying a file out in a test client: an MP3 with a broken frame chain (resyncs), a cut last frame, trailing bytes that are not a tag, an APE tag; a PCM WAV whose byte rate
   or block align disagree with its channels and bits, or whose data is not whole sample frames. No MPEG rate is
   left over: the header table holds only the nine rates the decoder takes (that the decoder handles all of them is
   `probable` in `miles_audio.md`). Kingdom Reborn's 13 MP3s with a cut last frame fall here.

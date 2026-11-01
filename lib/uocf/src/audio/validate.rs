@@ -12,15 +12,21 @@
 //!   pad byte); `fmt ` of 16 bytes or more (Miles reads the first 16); PCM of 8 or 16 bits, IMA ADPCM, or
 //!   `WAVE_FORMAT_EXTENSIBLE` with `cbSize` ≥ 22, the PCM sub-format and 16 bits; mono or stereo; any rate; a `data`
 //!   chunk inside the file (Miles does not clamp it).
-//! - **MP3** (`mssmp3.asi`): Layer III, MPEG-1, 2 or 2.5; the first frame within 8 KiB after a leading ID3v2 tag;
-//!   every frame of the first frame's version, layer and rate; any bitrate, VBR included; ID3v1 and ID3v2 tags.
+//! - **MP3** (`mssmp3.asi`): Layer III, MPEG-1, 2 or 2.5; the first frame header Miles' byte scan locks onto
+//!   ([`miles_mp3_seek`]: within 8 KiB after the last tag it skips) must be the stream's first frame; every frame of
+//!   the first frame's version, layer and rate (the channel mode may change); any bitrate, VBR included; ID3v1 and
+//!   ID3v2 tags.
 //!
 //! [`FormatReport`] sorts what differs: `refused` (Miles refuses it, or there is nothing to play), `unverified`
 //! (the code read does not say; refused unless the caller asks for [`FormatPolicy::AllowUnverified`], for trying a
 //! file out in a test client, never for a release) and `notes` (played, but unlike the shipped entries; always
 //! accepted, reported as warnings).
 
-use super::mp3::{ChannelMode, MpegAnalysis, MpegLayer, MpegVersion};
+use super::mp3::{
+    ChannelMode, Id3v2Tag, MpegAnalysis, MpegLayer, MpegVersion, BITRATE_BAD, BITRATE_SHIFT, ID3V1_MAGIC, ID3V1_SIZE,
+    ID3V2_HEADER_SIZE, ID3V2_MAGIC, LAYER_3_BITS, LAYER_SHIFT, MPEG_HEADER_SIZE, SAMPLE_RATE_RESERVED, SAMPLE_RATE_SHIFT, SYNC_BYTE,
+    SYNC_MASK, TWO_BITS,
+};
 use super::wav::{
     WavAnalysis, CHUNK_HEADER_SIZE, DATA_CHUNK_ID, FMT_CHUNK_ID, KSDATAFORMAT_SUBTYPE_PCM, RIFF_HEADER_SIZE,
     WAVE_FORMAT_EXTENSIBLE, WAVE_FORMAT_IMA_ADPCM, WAVE_FORMAT_PCM,
@@ -30,7 +36,9 @@ use crate::enhanced::audio::LEGACY_SOUNDS_ROOT;
 
 crate::eyre_imports!();
 
-/// How far `mssmp3.asi` scans for the first frame sync, after a leading ID3v2 tag.
+/// How far `mssmp3.asi` scans for the first frame sync, from where its scan (re)starts: the start of the stream, or
+/// the end of a tag it skipped. It reads a byte while fewer than this many bytes lie between the window start and
+/// it, so a header must start within `MILES_MP3_SYNC_WINDOW - (MPEG_HEADER_SIZE - 1)` bytes.
 pub const MILES_MP3_SYNC_WINDOW: usize = 0x2000;
 /// Miles takes a leading ID3v2 tag only when both version bytes are below this.
 pub const MILES_ID3V2_VERSION_LIMIT: u8 = 0xff;
@@ -146,13 +154,67 @@ pub fn enhanced_format_report(name: &str, content: &AudioContent) -> FormatRepor
     report
 }
 
-/// Where `mssmp3.asi` starts scanning: after a leading ID3v2 tag Miles takes (its footer not skipped).
-fn miles_scan_start(analysis: &MpegAnalysis) -> usize {
-    analysis
-        .id3v2
-        .first()
-        .filter(|tag| tag.offset == 0 && tag.major < MILES_ID3V2_VERSION_LIMIT && tag.revision < MILES_ID3V2_VERSION_LIMIT)
-        .map_or(0, |tag| tag.length_without_footer())
+/// Where `mssmp3.asi` starts decoding an MP3 ([`miles_mp3_seek`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MilesMp3Seek {
+    /// The offset of the frame header it locks onto.
+    Frame(usize),
+    /// It finds no header: within [`MILES_MP3_SYNC_WINDOW`] bytes of `window_start`, or before the payload ends.
+    NotFound { window_start: usize },
+}
+
+/// An ID3v2 tag Miles skips: both version bytes below [`MILES_ID3V2_VERSION_LIMIT`] and a syncsafe size.
+fn miles_id3v2_tag(payload: &[u8], offset: usize) -> Option<Id3v2Tag> {
+    Id3v2Tag::parse(payload, offset)
+        .filter(|tag| tag.major < MILES_ID3V2_VERSION_LIMIT && tag.revision < MILES_ID3V2_VERSION_LIMIT)
+}
+
+/// The first frame header `mssmp3.asi` locks onto, simulating its byte scan (`SeekFrameHeader`, after
+/// `SetNamedSampleFile_Impl` skipped a leading ID3v2 tag without its footer):
+///
+/// - it reads one byte at a time while the byte is at most [`MILES_MP3_SYNC_WINDOW`] bytes past the window start
+///   (a header starting `scanned` bytes in is found when `scanned + MPEG_HEADER_SIZE - 1 <= MILES_MP3_SYNC_WINDOW`);
+/// - when the last three bytes read are `TAG`, it skips the rest of the 128-byte ID3v1 tag and restarts the window;
+/// - when they are `ID3`, it reads the 7 bytes left of the tag header: a valid tag is skipped (with its footer) and
+///   the window restarts, an invalid one is passed over in the same window;
+/// - when the last four bytes read are a frame sync (`0xff`, then three set bits), it takes them for the first
+///   frame if they are Layer III with a bitrate index other than 15 and a sample rate index other than 3; otherwise
+///   it scans on. Nothing checks that the next frame follows.
+pub fn miles_mp3_seek(payload: &[u8]) -> MilesMp3Seek {
+    let mut pos = miles_id3v2_tag(payload, 0).map_or(0, |tag| tag.length_without_footer());
+    let mut window_start = pos;
+    // The last four bytes read, oldest first.
+    let mut read = [0u8; MPEG_HEADER_SIZE];
+    loop {
+        if pos - window_start > MILES_MP3_SYNC_WINDOW {
+            return MilesMp3Seek::NotFound { window_start };
+        }
+        let Some(&byte) = payload.get(pos) else { return MilesMp3Seek::NotFound { window_start } };
+        pos += 1;
+        read = [read[1], read[2], read[3], byte];
+        let last_three = &read[1..];
+        if last_three == ID3V1_MAGIC {
+            pos = pos - ID3V1_MAGIC.len() + ID3V1_SIZE;
+            window_start = pos;
+        } else if last_three == ID3V2_MAGIC {
+            let tag_offset = pos - ID3V2_MAGIC.len();
+            match miles_id3v2_tag(payload, tag_offset) {
+                Some(tag) => {
+                    pos = tag_offset + tag.length;
+                    window_start = pos;
+                }
+                None if payload.len() < tag_offset + ID3V2_HEADER_SIZE => return MilesMp3Seek::NotFound { window_start },
+                None => pos = tag_offset + ID3V2_HEADER_SIZE,
+            }
+        } else if read[0] == SYNC_BYTE && read[1] & SYNC_MASK == SYNC_MASK {
+            let layer_3 = (read[1] >> LAYER_SHIFT) & TWO_BITS == LAYER_3_BITS;
+            let bitrate_known = read[2] >> BITRATE_SHIFT != BITRATE_BAD;
+            let rate_known = (read[2] >> SAMPLE_RATE_SHIFT) & TWO_BITS != SAMPLE_RATE_RESERVED;
+            if layer_3 && bitrate_known && rate_known {
+                return MilesMp3Seek::Frame(pos - MPEG_HEADER_SIZE);
+            }
+        }
+    }
 }
 
 fn mpeg_report(analysis: &MpegAnalysis, report: &mut FormatReport) {
@@ -160,9 +222,18 @@ fn mpeg_report(analysis: &MpegAnalysis, report: &mut FormatReport) {
     if first.layer != MpegLayer::L3 {
         report.refused.push(format!("{} (mssmp3.asi decodes Layer III only)", first.layer.label()));
     }
-    let scanned = analysis.first_frame_offset.saturating_sub(miles_scan_start(analysis));
-    if scanned > MILES_MP3_SYNC_WINDOW {
-        report.refused.push(format!("the first frame is {scanned} bytes in (mssmp3.asi scans {MILES_MP3_SYNC_WINDOW} bytes for it)"));
+    match analysis.miles_seek {
+        MilesMp3Seek::Frame(offset) if offset == analysis.first_frame_offset => {}
+        MilesMp3Seek::Frame(offset) => report.refused.push(format!(
+            "mssmp3.asi's byte scan takes the bytes at {offset} for the first frame, not the stream's first frame at {} \
+             (it would decode from there)",
+            analysis.first_frame_offset
+        )),
+        MilesMp3Seek::NotFound { window_start } => report.refused.push(format!(
+            "the first frame is {} bytes in (mssmp3.asi scans {MILES_MP3_SYNC_WINDOW} bytes for it, from byte \
+             {window_start}, after the last tag it skips)",
+            analysis.first_frame_offset.saturating_sub(window_start)
+        )),
     }
     if analysis.audio_frames() == 0 {
         report.refused.push("no audio frames".to_owned());
@@ -175,7 +246,6 @@ fn mpeg_report(analysis: &MpegAnalysis, report: &mut FormatReport) {
     }
     let channel_mode_changes = analysis.inconsistent_frames - analysis.inconsistent_rate_frames;
     let unverified = [
-        (channel_mode_changes > 0, format!("{channel_mode_changes} frames of another channel mode than the first")),
         (analysis.resyncs > 0, format!("{} breaks in the frame chain", analysis.resyncs)),
         (analysis.truncated_last_frame, "the last frame is cut".to_owned()),
         (analysis.tail.trailing_bytes > 0, format!("{} bytes that are no tag after the last frame", analysis.tail.trailing_bytes)),
@@ -184,6 +254,10 @@ fn mpeg_report(analysis: &MpegAnalysis, report: &mut FormatReport) {
     report.unverified.extend(unverified.into_iter().filter(|(found, _)| *found).map(|(_, problem)| problem));
     if first.layer == MpegLayer::L3 && !SHIPPED_MPEG_STREAMS.contains(&(first.version, first.sample_rate, first.channel_mode)) {
         report.notes.push(format!("{} is not among the shipped streams", analysis.stream_label()));
+    }
+    if channel_mode_changes > 0 {
+        // mssmp3.asi compares version, layer and sample rate only; no shipped stream changes its channel mode.
+        report.notes.push(format!("{channel_mode_changes} frames of another channel mode than the first (no shipped stream has one)"));
     }
 }
 
@@ -323,6 +397,66 @@ mod tests {
         assert!(found.is_verified(), "an odd chunk after fmt and data is never walked: {found:?}");
     }
 
+    fn stream() -> Vec<u8> {
+        mp3::tests::frames(mp3::tests::MPEG2_L3_64K_MONO_HEADER, mp3::tests::MPEG2_L3_64K_MONO_FRAME, 4)
+    }
+
+    /// An ID3v2.3 tag of `body` bytes after its header.
+    fn id3v2(body: usize) -> Vec<u8> {
+        const SYNCSAFE_BITS: u32 = 7;
+        const SYNCSAFE_MASK: usize = 0x7f;
+        let size: Vec<u8> = (0..4).rev().map(|byte| ((body >> (SYNCSAFE_BITS * byte)) & SYNCSAFE_MASK) as u8).collect();
+        let mut tag = [&b"ID3\x03\x00\x00"[..], &size].concat();
+        tag.resize(ID3V2_HEADER_SIZE + body, 0);
+        tag
+    }
+
+    #[test]
+    fn the_sync_window_ends_where_the_last_header_byte_must_be_read() {
+        let last_start = MILES_MP3_SYNC_WINDOW - (MPEG_HEADER_SIZE - 1);
+        for (zeros, found) in [(last_start, true), (last_start + 1, false), (MILES_MP3_SYNC_WINDOW, false), (MILES_MP3_SYNC_WINDOW + 1, false)] {
+            let payload = [vec![0; zeros], stream()].concat();
+            let expected = if found { MilesMp3Seek::Frame(zeros) } else { MilesMp3Seek::NotFound { window_start: 0 } };
+            assert_eq!(miles_mp3_seek(&payload), expected, "{zeros:#x} zero bytes");
+            assert_eq!(report(MP3_NAME, &payload).refused.is_empty(), found, "{zeros:#x} zero bytes");
+        }
+        // After a leading tag, the window starts at its end.
+        let tagged = [id3v2(MILES_MP3_SYNC_WINDOW), vec![0; last_start], stream()].concat();
+        assert!(report(MP3_NAME, &tagged).is_verified());
+    }
+
+    #[test]
+    fn the_window_restarts_after_every_tag_miles_skips() {
+        const TAG_BODY: usize = 0x3000;
+        const GAP: usize = 0x1000;
+        // Two tags: Miles skips the second as it scans, and counts the window from its end.
+        let stacked = [id3v2(TAG_BODY), id3v2(TAG_BODY), vec![0; GAP], stream()].concat();
+        let first = 2 * (ID3V2_HEADER_SIZE + TAG_BODY) + GAP;
+        assert_eq!(miles_mp3_seek(&stacked), MilesMp3Seek::Frame(first));
+        assert!(report(MP3_NAME, &stacked).is_verified(), "{:?}", report(MP3_NAME, &stacked));
+        // An ID3v1 tag ahead of the stream restarts it too.
+        let mut id3v1 = vec![0u8; ID3V1_SIZE];
+        id3v1[..ID3V1_MAGIC.len()].copy_from_slice(ID3V1_MAGIC);
+        let after_id3v1 = [vec![0; GAP], id3v1, vec![0; GAP], stream()].concat();
+        assert_eq!(miles_mp3_seek(&after_id3v1), MilesMp3Seek::Frame(2 * GAP + ID3V1_SIZE));
+    }
+
+    #[test]
+    fn a_false_sync_before_the_stream_is_refused() {
+        const JUNK: [u8; 6] = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
+        // A lone Layer III header in the junk after the tag: our resync passes over it, Miles decodes from it.
+        let false_sync = [id3v2(0), JUNK.to_vec(), mp3::tests::MPEG2_L3_64K_MONO_HEADER.to_vec(), JUNK.to_vec(), stream()].concat();
+        let analysis = mp3::analyze_mpeg(&false_sync).unwrap();
+        assert_eq!(analysis.first_frame_offset, ID3V2_HEADER_SIZE + 2 * JUNK.len() + MPEG_HEADER_SIZE);
+        assert_eq!(analysis.miles_seek, MilesMp3Seek::Frame(ID3V2_HEADER_SIZE + JUNK.len()));
+        let found = report(MP3_NAME, &false_sync);
+        assert!(found.refused.iter().any(|problem| problem.contains("takes the bytes at")), "{found:?}");
+        // A Layer II sync there is passed over: Miles locks onto the stream.
+        const LAYER_2_HEADER: [u8; 4] = [0xff, 0xfd, 0x90, 0x40];
+        let layer_2 = [id3v2(0), JUNK.to_vec(), LAYER_2_HEADER.to_vec(), JUNK.to_vec(), stream()].concat();
+        assert!(report(MP3_NAME, &layer_2).refused.is_empty(), "{:?}", report(MP3_NAME, &layer_2));
+    }
+
     #[test]
     fn refuses_what_miles_refuses_and_applies_the_policy() {
         let float = wav::tests::wav_with_format(wav::WAVE_FORMAT_IEEE_FLOAT, 32, &0.5f32.to_le_bytes());
@@ -340,6 +474,12 @@ mod tests {
         late.extend(mp3::tests::frames(mp3::tests::MPEG2_L3_64K_MONO_HEADER, mp3::tests::MPEG2_L3_64K_MONO_FRAME, 4));
         assert!(report(MP3_NAME, &late).refused.iter().any(|problem| problem.contains("scans")));
         let mut mixed = mp3::tests::frames(mp3::tests::MPEG2_L3_64K_MONO_HEADER, mp3::tests::MPEG2_L3_64K_MONO_FRAME, 4);
+        // A channel mode change plays (mssmp3.asi does not compare it): a note.
+        const MPEG2_L3_64K_JOINT_HEADER: [u8; 4] = [0xff, 0xf3, 0x80, 0x40];
+        let mut joint = mixed.clone();
+        joint.extend(mp3::tests::frames(MPEG2_L3_64K_JOINT_HEADER, mp3::tests::MPEG2_L3_64K_MONO_FRAME, 1));
+        let found = report(MP3_NAME, &joint);
+        assert!(found.is_verified() && found.notes.iter().any(|note| note.contains("channel mode")), "{found:?}");
         mixed.extend(mp3::tests::frames(mp3::tests::MPEG1_L3_128K_HEADER, mp3::tests::MPEG1_L3_128K_FRAME, 1));
         assert!(report(MP3_NAME, &mixed).refused.iter().any(|problem| problem.contains("another version")));
 
