@@ -267,15 +267,21 @@ pub struct ItemTile {
     #[new(default)]
     pub quality: u8, // Stratics: If Wearable, this is a Layer. If Light Source, this is Light ID
 
-    //pub unknown0: u16,
-    //pub unknown1: u8,
+    /// Bytes 2-3 after the weight and quality, kept for the writer (meaning unknown).
+    #[new(default)]
+    pub unknown0: u16,
+    /// The byte after `unknown0`, kept for the writer (meaning unknown).
+    #[new(default)]
+    pub unknown1: u8,
     #[new(default)]
     pub quantity: u8, // Stratics: If Weapon, this is Weapon Struct. If Armor, Armor Struct
 
     #[new(default)]
     pub anim_id: u16, // Stratics: The Body ID the animatation. Add 50,000 and 60,000 respectivefully to get the two gump indicies assocaited with this tile
 
-    //pub unknown2: u8,
+    /// The byte after the anim id, kept for the writer (meaning unknown).
+    #[new(default)]
+    pub unknown2: u8,
     #[new(default)]
     pub hue_extra: u8, // For colored light sources? or forms a u16 with unknown2 ?
 
@@ -299,8 +305,11 @@ impl Default for ItemTile {
             flags: Flags::default(),
             weight: 0,
             quality: 0,
+            unknown0: 0,
+            unknown1: 0,
             quantity: 0,
             anim_id: 0,
+            unknown2: 0,
             hue_extra: 0,
             stacking_offset: 0,
             value: 0,
@@ -510,6 +519,26 @@ struct RawBlock<T> {
     tiles: [T; 32],
 }
 
+fn block_headers<T: Pod>(blocks: &[RawBlock<T>]) -> Vec<u32> {
+    blocks.iter().map(|block| block.header).collect()
+}
+
+/// Appends a block per header: the header, then its 32 tiles as records.
+fn push_blocks<Tile, Raw: Pod>(
+    out: &mut Vec<u8>,
+    headers: &[u32],
+    tiles: &[Tile],
+    mut raw: impl FnMut(&Tile) -> eyre::Result<Raw>,
+) -> eyre::Result<()> {
+    for (header, block) in headers.iter().zip(tiles.chunks_exact(LandTile::TILES_PER_BLOCK)) {
+        out.extend_from_slice(&header.to_le_bytes());
+        for tile in block {
+            out.extend_from_slice(bytemuck::bytes_of(&raw(tile)?));
+        }
+    }
+    Ok(())
+}
+
 /* Start of Tiledata struct */
 
 pub struct TileData {
@@ -518,6 +547,9 @@ pub struct TileData {
     max_item_rev: ItemTileMaxIdxRev,
     land_data: Vec<LandTile>,
     item_data: Vec<ItemTile>,
+    /// The u32 that opens each block of 32 tiles, kept for the writer (meaning unknown).
+    land_block_headers: Vec<u32>,
+    item_block_headers: Vec<u32>,
 }
 impl TileData {
     const LAND_TILE_MAX: usize = 0x4000;
@@ -572,7 +604,102 @@ impl TileData {
             max_item_rev: ItemTileMaxIdxRev::Revision1,
             land_data: Vec::new(),
             item_data: Vec::new(),
+            land_block_headers: Vec::new(),
+            item_block_headers: Vec::new(),
         }
+    }
+
+    pub fn land_tiles_mut(&mut self) -> &mut [LandTile] {
+        &mut self.land_data
+    }
+
+    pub fn item_tiles_mut(&mut self) -> &mut [ItemTile] {
+        &mut self.item_data
+    }
+
+    /// The `tiledata.mul` bytes, in the layout the file was read with: the block headers, then every land and item
+    /// record with its unknown bytes. A file read with [`Self::load`] comes back byte for byte (with its verdata
+    /// patches applied when it was read with them). A 32-bit layout refuses flags above bit 31.
+    pub fn to_bytes(&self) -> eyre::Result<Vec<u8>> {
+        let layout = TiledataLayout::new(self.land_tile_binary_size, self.item_tile_binary_size, self.max_item_rev);
+        let land_blocks = LandTile::BLOCK_QTY;
+        let item_count = 1 + self.max_item_rev as usize;
+        let item_blocks = item_count / ItemTile::TILES_PER_BLOCK;
+        eyre::ensure!(
+            self.land_data.len() == land_blocks * LandTile::TILES_PER_BLOCK && self.land_block_headers.len() == land_blocks,
+            "{} land tiles and {} block headers; the layout has {} and {land_blocks}",
+            self.land_data.len(),
+            self.land_block_headers.len(),
+            land_blocks * LandTile::TILES_PER_BLOCK
+        );
+        eyre::ensure!(
+            self.item_data.len() == item_count && self.item_block_headers.len() == item_blocks,
+            "{} item tiles and {} block headers; the layout has {item_count} and {item_blocks}",
+            self.item_data.len(),
+            self.item_block_headers.len()
+        );
+        let mut out = Vec::with_capacity(layout.file_size() as usize);
+        let narrow = |tile_kind: &str, tile_id: i32, flags: Flags| {
+            u32::try_from(flags.internal_flags).map_err(|_| {
+                eyre!("{tile_kind} tile {tile_id}: flags {:#x} do not fit the file's 32 bits", flags.internal_flags)
+            })
+        };
+        if self.land_tile_binary_size == LandTileBinSize::Classic {
+            push_blocks(&mut out, &self.land_block_headers, &self.land_data, |tile| {
+                Ok(RawLandTileClassic {
+                    flags: narrow("land", tile.tile_id, tile.flags)?,
+                    texture_id: tile.texture_id,
+                    name: tile.name,
+                })
+            })?;
+        } else {
+            push_blocks(&mut out, &self.land_block_headers, &self.land_data, |tile| {
+                Ok(RawLandTileHS { flags: tile.flags.internal_flags, texture_id: tile.texture_id, name: tile.name })
+            })?;
+        }
+        if self.item_tile_binary_size == ItemTileBinSize::Classic {
+            push_blocks(&mut out, &self.item_block_headers, &self.item_data, |tile| {
+                Ok(RawItemTileClassic {
+                    flags: narrow("item", tile.tile_id, tile.flags)?,
+                    weight: tile.weight,
+                    quality: tile.quality,
+                    unk0: tile.unknown0,
+                    unk1: tile.unknown1,
+                    quantity: tile.quantity,
+                    anim_id: tile.anim_id,
+                    unk2: tile.unknown2,
+                    hue_extra: tile.hue_extra,
+                    stacking_offset: tile.stacking_offset,
+                    value: tile.value,
+                    height: tile.height,
+                    name: tile.name,
+                })
+            })?;
+        } else {
+            push_blocks(&mut out, &self.item_block_headers, &self.item_data, |tile| {
+                Ok(RawItemTileHS {
+                    flags: tile.flags.internal_flags,
+                    weight: tile.weight,
+                    quality: tile.quality,
+                    unk0: tile.unknown0,
+                    unk1: tile.unknown1,
+                    quantity: tile.quantity,
+                    anim_id: tile.anim_id,
+                    unk2: tile.unknown2,
+                    hue_extra: tile.hue_extra,
+                    stacking_offset: tile.stacking_offset,
+                    value: tile.value,
+                    height: tile.height,
+                    name: tile.name,
+                })
+            })?;
+        }
+        debug_assert_eq!(out.len() as u64, layout.file_size());
+        Ok(out)
+    }
+
+    pub fn save(&self, path: &std::path::Path) -> eyre::Result<()> {
+        std::fs::write(path, self.to_bytes()?).wrap_err_with(|| format!("Write tiledata.mul at '{}'", path.display()))
     }
 
     pub fn load(file_path: PathBuf) -> eyre::Result<TileData> {
@@ -601,6 +728,8 @@ impl TileData {
             max_item_rev: layout.max_item,
             land_data: Vec::with_capacity(TileData::LAND_TILE_MAX),
             item_data: Vec::new(),
+            land_block_headers: Vec::new(),
+            item_block_headers: Vec::new(),
         };
         tiledata.item_data = Vec::with_capacity(1 + tiledata.max_item_rev as usize);
 
@@ -645,6 +774,7 @@ impl TileData {
 
         if tiledata.land_tile_binary_size == LandTileBinSize::Classic {
             let blocks: &[RawBlock<RawLandTileClassic>] = bytemuck::cast_slice(land_bytes);
+            tiledata.land_block_headers = block_headers(blocks);
             Self::push_tiles_from_blocks(&mut tiledata.land_data, blocks, |tile_id, raw| {
                 LandTile {
                     tile_id,
@@ -655,6 +785,7 @@ impl TileData {
             });
         } else {
             let blocks: &[RawBlock<RawLandTileHS>] = bytemuck::cast_slice(land_bytes);
+            tiledata.land_block_headers = block_headers(blocks);
             Self::push_tiles_from_blocks(&mut tiledata.land_data, blocks, |tile_id, raw| {
                 LandTile {
                     tile_id,
@@ -682,14 +813,18 @@ impl TileData {
 
         if tiledata.item_tile_binary_size == ItemTileBinSize::Classic {
             let blocks: &[RawBlock<RawItemTileClassic>] = bytemuck::cast_slice(item_bytes);
+            tiledata.item_block_headers = block_headers(blocks);
             Self::push_tiles_from_blocks(&mut tiledata.item_data, blocks, |tile_id, raw| {
                 ItemTile {
                     tile_id,
                     flags: Flags::from_32_bits(raw.flags),
                     weight: raw.weight,
                     quality: raw.quality,
+                    unknown0: raw.unk0,
+                    unknown1: raw.unk1,
                     quantity: raw.quantity,
                     anim_id: raw.anim_id,
+                    unknown2: raw.unk2,
                     hue_extra: raw.hue_extra,
                     stacking_offset: raw.stacking_offset,
                     value: raw.value,
@@ -699,14 +834,18 @@ impl TileData {
             });
         } else {
             let blocks: &[RawBlock<RawItemTileHS>] = bytemuck::cast_slice(item_bytes);
+            tiledata.item_block_headers = block_headers(blocks);
             Self::push_tiles_from_blocks(&mut tiledata.item_data, blocks, |tile_id, raw| {
                 ItemTile {
                     tile_id,
                     flags: Flags::from_64_bits(raw.flags),
                     weight: raw.weight,
                     quality: raw.quality,
+                    unknown0: raw.unk0,
+                    unknown1: raw.unk1,
                     quantity: raw.quantity,
                     anim_id: raw.anim_id,
+                    unknown2: raw.unk2,
                     hue_extra: raw.hue_extra,
                     stacking_offset: raw.stacking_offset,
                     value: raw.value,
@@ -806,6 +945,32 @@ mod tests {
         let tiledata = TileData::load(path.clone()).unwrap();
         std::fs::remove_file(path).unwrap();
         tiledata
+    }
+
+    /// Every byte comes back, block headers and the unknown item bytes included, in both flag widths; a 32-bit
+    /// file refuses flags above bit 31.
+    #[test]
+    fn every_layout_writes_back_byte_for_byte() {
+        const HEADER_SEED: u8 = 0xA5;
+        for (land, item, max_item, flag_bytes) in [
+            (LandTileBinSize::Classic, ItemTileBinSize::Classic, ItemTileMaxIdxRev::Revision1, std::mem::size_of::<u32>()),
+            (LandTileBinSize::HS, ItemTileBinSize::HS, ItemTileMaxIdxRev::Revision3, std::mem::size_of::<u64>()),
+        ] {
+            let item_blocks = (1 + max_item as usize) / ItemTile::TILES_PER_BLOCK;
+            let mut bytes =
+                tiledata_bytes(land as usize, item as usize, item_blocks, u64::from(LOW_FLAGS), flag_bytes);
+            // Every byte nonzero and distinct by position, so a dropped or moved field shows.
+            for (index, byte) in bytes.iter_mut().enumerate() {
+                *byte = HEADER_SEED ^ (index as u8);
+            }
+            let tiledata = load("rt", &bytes);
+            assert_eq!(tiledata.to_bytes().unwrap(), bytes, "{land:?} {item:?}");
+            if land == LandTileBinSize::Classic {
+                let mut edited = tiledata;
+                edited.item_tiles_mut()[FLAGGED_ITEM_TILE].flags.internal_flags = HIGH_FLAGS;
+                assert!(edited.to_bytes().is_err());
+            }
+        }
     }
 
     #[test]

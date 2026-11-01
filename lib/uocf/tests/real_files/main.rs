@@ -15,6 +15,7 @@ mod classic_animation_frame_encoding;
 mod classic_client_eras;
 mod classic_dif_usage;
 mod classic_facet_difs;
+mod classic_mul_writers;
 mod client_exe_facet_dimensions;
 mod client_login_servers;
 mod dds_client_textures;

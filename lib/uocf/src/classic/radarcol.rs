@@ -26,3 +26,29 @@ pub fn load_radarcol(path: &Path) -> eyre::Result<Vec<Rgb555>> {
     }
     Ok(colors)
 }
+
+/// The `radarcol.mul` bytes of `colors`, the inverse of [`load_radarcol`] (a file of an even length comes back
+/// byte for byte).
+pub fn encode_radarcol(colors: &[Rgb555]) -> Vec<u8> {
+    colors.iter().flat_map(|color| color.value().to_le_bytes()).collect()
+}
+
+pub fn save_radarcol(path: &Path, colors: &[Rgb555]) -> eyre::Result<()> {
+    fs::write(path, encode_radarcol(colors)).wrap_err_with(|| format!("Write {}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn radarcol_round_trips_every_byte() {
+        let bytes = [0x00, 0x00, 0xFF, 0x7F, 0x34, 0x12, 0x01, 0x80];
+        let path = std::env::temp_dir().join(format!("uocf_radarcol_{}.mul", std::process::id()));
+        fs::write(&path, bytes).unwrap();
+        let colors = load_radarcol(&path).unwrap();
+        fs::remove_file(&path).unwrap();
+        assert_eq!(colors.len(), bytes.len() / std::mem::size_of::<u16>());
+        assert_eq!(encode_radarcol(&colors), bytes);
+    }
+}

@@ -168,6 +168,11 @@ impl Rgb555 {
         }
     }
 
+    /// The stored 16 bits, bit 15 included.
+    pub fn value(&self) -> u16 {
+        self.value
+    }
+
     pub fn new_from_components(r: u8, g: u8, b: u8) -> Self {
         Self {
             value: ((r & 0x1F) as u16) << 10 |

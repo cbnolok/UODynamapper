@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 
-use byteorder::{LittleEndian, ReadBytesExt};
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use color_eyre::eyre::{self, WrapErr};
 
 use crate::classic::verdata::{VerFileId, Verdata};
@@ -111,6 +111,33 @@ impl AnimData {
     pub fn active_count(&self) -> usize {
         self.active_entries().count()
     }
+
+    /// The file bytes: each chunk's header from [`Self::chunk_headers`] (an entry's `chunk_header` is a copy for
+    /// reading and is not written), its eight records, then [`Self::trailing_bytes`]. A file read with
+    /// [`Self::from_bytes`] comes back byte for byte.
+    pub fn to_bytes(&self) -> eyre::Result<Vec<u8>> {
+        let chunks = self.chunk_headers.len();
+        eyre::ensure!(
+            self.entries.len() == chunks * ANIMDATA_RECORDS_PER_CHUNK,
+            "{} entries do not fill {chunks} chunks of {ANIMDATA_RECORDS_PER_CHUNK}",
+            self.entries.len()
+        );
+        let mut bytes = Vec::with_capacity(chunks * ANIMDATA_CHUNK_SIZE + self.trailing_bytes.len());
+        for (header, records) in self.chunk_headers.iter().zip(self.entries.chunks_exact(ANIMDATA_RECORDS_PER_CHUNK)) {
+            bytes.write_i32::<LittleEndian>(*header)?;
+            for entry in records {
+                bytes.extend(entry.frames.iter().map(|&frame| frame as u8));
+                bytes.extend_from_slice(&[entry.unknown, entry.frame_count, entry.frame_interval, entry.frame_start]);
+            }
+        }
+        bytes.extend_from_slice(&self.trailing_bytes);
+        Ok(bytes)
+    }
+
+    pub fn save(&self, path: impl AsRef<Path>) -> eyre::Result<()> {
+        let path = path.as_ref();
+        fs::write(path, self.to_bytes()?).wrap_err_with(|| format!("failed to write {}", path.display()))
+    }
 }
 
 fn apply_animdata_verdata_patches(bytes: &mut [u8], verdata: &Verdata) -> eyre::Result<()> {
@@ -157,6 +184,7 @@ mod tests {
         bytes.extend_from_slice(b"tail");
 
         let animdata = AnimData::from_bytes(&bytes).unwrap();
+        assert_eq!(animdata.to_bytes().unwrap(), bytes);
 
         assert_eq!(animdata.chunk_headers, vec![0x11223344]);
         assert_eq!(animdata.entries.len(), 8);
