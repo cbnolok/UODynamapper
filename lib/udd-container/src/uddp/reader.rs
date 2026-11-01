@@ -10,7 +10,8 @@ use std::collections::HashMap;
 
 use std::sync::{Arc, RwLock};
 
-use super::support::{checked_region, zstd_decompress, zstd_decompress_with_dict, jxl_decompress, Cursor};
+use super::support::{checked_region, zstd_decompress, jxl_decompress, Cursor};
+use zstd::dict::DecoderDictionary;
 use memmap2::Mmap;
 use super::*;
 
@@ -133,6 +134,9 @@ pub struct UddpReader {
     header: UddpHeader,
     lookup_mode: LookupMode,
     dict_by_type: [Option<RuntimeDictRef>; MAX_TYPES],
+    /// The type dictionaries, digested once at open; decoding with the raw bytes digested the
+    /// dictionary again for every payload.
+    prepared_dicts: Arc<Vec<Option<DecoderDictionary<'static>>>>,
     dense_index: Option<Vec<UddpLocator>>,
     path_index: Option<Vec<UddpPathEntry>>,
     sparse_index: Option<Vec<UddpSparseIdEntry>>,
@@ -203,6 +207,7 @@ impl UddpReader {
             header,
             lookup_mode,
             dict_by_type: [None; MAX_TYPES],
+            prepared_dicts: Arc::new(Vec::new()),
             dense_index: None,
             path_index: None,
             sparse_index: None,
@@ -412,6 +417,10 @@ impl UddpReader {
             });
         }
 
+        let prepared = (0..MAX_TYPES as u8)
+            .map(|data_type| self.dictionary_for_type(data_type).map(DecoderDictionary::copy))
+            .collect();
+        self.prepared_dicts = Arc::new(prepared);
         Ok(())
     }
 
@@ -474,13 +483,15 @@ impl UddpReader {
 
             let decoded = match unpack_codec(locator.meta32) {
                 Codec::None => data.to_vec(),
-                Codec::ZstdNoDict => zstd_decompress(data, locator.raw_size as usize).map_err(FormatError::Io)?,
+                Codec::ZstdNoDict => zstd_decompress(data, locator.raw_size as usize, None).map_err(FormatError::Io)?,
                 Codec::ZstdTypeDict => {
                     let data_type = unpack_type(locator.meta32);
                     let dict = self
-                        .dictionary_for_type(data_type)
+                        .prepared_dicts
+                        .get(data_type as usize)
+                        .and_then(Option::as_ref)
                         .ok_or(FormatError::MissingDictionary(data_type))?;
-                    zstd_decompress_with_dict(data, locator.raw_size as usize, dict).map_err(FormatError::Io)?
+                    zstd_decompress(data, locator.raw_size as usize, Some(dict)).map_err(FormatError::Io)?
                 }
                 Codec::JpegXl => {
                     jxl_decompress(data)

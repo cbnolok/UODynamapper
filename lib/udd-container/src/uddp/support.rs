@@ -14,7 +14,8 @@ use std::ops::Range;
 use std::path::Path;
 
 use xxhash_rust::xxh64::xxh64;
-use zstd::bulk::{Compressor, Decompressor};
+use zstd::bulk::Compressor;
+use zstd::dict::DecoderDictionary;
 
 use super::*;
 
@@ -297,20 +298,30 @@ fn jxl_decompress_payload(data: &[u8]) -> Result<Vec<u8>, String> {
     }
 }
 
-/// Plain Zstd decompression helper.
-pub(crate) fn zstd_decompress(data: &[u8], raw_size: usize) -> std::io::Result<Vec<u8>> {
-    let mut decompressor = Decompressor::new()?;
-    decompressor.decompress(data, raw_size)
+thread_local! {
+    /// One Zstd decompression context per thread, reused by every payload decode. Creating a context
+    /// for each payload cost more than decoding a 4 KB map chunk.
+    static DECOMPRESSION_CONTEXT: std::cell::RefCell<zstd::zstd_safe::DCtx<'static>> =
+        std::cell::RefCell::new(zstd::zstd_safe::DCtx::create());
 }
 
-/// Dictionary-backed Zstd decompression helper.
-pub(crate) fn zstd_decompress_with_dict(
+/// Zstd-decompresses one payload of `raw_size` bytes on this thread's reused context, with the
+/// type's prepared dictionary when the payload has one.
+pub(crate) fn zstd_decompress(
     data: &[u8],
     raw_size: usize,
-    dict: &[u8],
+    dictionary: Option<&DecoderDictionary<'static>>,
 ) -> std::io::Result<Vec<u8>> {
-    let mut decompressor = Decompressor::with_dictionary(dict)?;
-    decompressor.decompress(data, raw_size)
+    DECOMPRESSION_CONTEXT.with(|context| {
+        let mut context = context.borrow_mut();
+        let mut decoded = Vec::with_capacity(raw_size);
+        let result = match dictionary {
+            Some(dictionary) => context.decompress_using_ddict(&mut decoded, data, dictionary.as_ddict()),
+            None => context.decompress(&mut decoded, data),
+        };
+        result.map_err(|code| std::io::Error::other(zstd::zstd_safe::get_error_name(code)))?;
+        Ok(decoded)
+    })
 }
 
 /// Compute the canonical XXH64 package hash.
