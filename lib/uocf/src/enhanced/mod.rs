@@ -21,6 +21,7 @@ pub mod facet_encoder;
 pub mod facet_package;
 pub mod facet_radar;
 pub mod facet_sector;
+pub mod game_data;
 pub mod housing;
 pub mod hues;
 pub mod hues_mul_uop;

@@ -53,8 +53,8 @@ TMPDIR=/home/claudio/test/uop/<date> UO_EC_CLIENT_DIR="$C/_Ultima Online Enhance
 | | PSD (2 / 2) | raw | replace | no | none (hex) | gap 18 |
 | | package | | editor (entries replaced, added, removed) | edit RT (`effects_client_files::effect_texture_package_rewrite`) | Effects (save) | `effect_texture.rs` 0042dbbd, 622749ed |
 | GameData | `legacyterrainmap.csv` (1 / 0) | typed (row order kept) | replace (parse-checked); library edits (`set_route`, `remove_route`) | writer, RT (`terrain_definition_client_files::legacy_terrain_map_csv_writes_back_byte_for_byte`); `check_canonical` names the first line off the shipped format (entry-editor hookup pending) | UOP explorer (text editor) | `legacy_terrain_map.rs` 096c9ab5 |
-| | other CSV and text (76 / 63) | raw | replace (kind check) | no | UOP explorer (text editor) | gap 10 |
-| | OLE compound file, Windows-1252 CSV (2 / 1) | raw | replace (the CSV counts as text) | no | UOP explorer (text editor) for the CSV | low value |
+| | other CSV tables (77 / 63, with the Windows-1252 `itemprop.csv`) | generic table (the client's CSV grammar: comments, blank lines, quoted commas, column names); typed `legacycontainers`, `weaponability`, `mobart`, `buffdata` | replace (parse-checked, shape kept: column names, field counts, column kinds, unique ids); library edits (`set_field`, `push_record`) | writer, RT EC+KR (`game_data_client_tables::every_game_data_table_reads_and_writes_back`, byte for byte) | UOP explorer (text editor) | `game_data.rs` |
+| | OLE compound file (1 / 1) | raw | replace (kind check) | no | none (hex) | low value |
 | Hues | hue bitmaps (3,000 / 3,000) | typed (`EcHueTable::from_bitmap`) | editor (from `hues.mul`: whole package; `--base` keeps an existing package's unedited hues) | writer; by rule 2,635 EC bitmaps byte-identical (`hues_mul_uop_client::linear_ramp_reproduces_ea_hue_data_for_unedited_hues`); on EA's package every unedited hue byte-identical, all 3,000 EC and EC fp with their Classic file, 2,972 KR with Mondain's Legacy (`hues_mul_written_on_an_ea_package_keeps_its_unedited_hues_byte_for_byte`); own packages and EA-based packages convert back to the identical `hues.mul` | Hues (view) | `hues.rs`, `hues_mul_uop.rs`, `hues_mul_uop_base.rs` 0113f3a6, f7852681 |
 | | atlas, swatch DDS (2 / 2) | typed | editor (rebuilt from `hues.mul`) | writer; byte-identical on EA's package when every hue is unedited (EC, EC fp) | Hues | same |
 | | `huenames.csv` (1 / 1) | typed (lenient) | editor (from `hues.mul`) | writer; byte-identical on EA's package for EC and EC fp (base lines kept for unedited names) | Hues | same |
@@ -86,12 +86,12 @@ TMPDIR=/home/claudio/test/uop/<date> UO_EC_CLIENT_DIR="$C/_Ultima Online Enhance
 | TileArtLegacy (KR) | TGA (16,383), placeholder (1) | typed (image crate) | replace (parse-checked) | no TGA writer | UOP explorer (image) | gap 12 |
 
 Summary: in the 40 EC packages, every entry can be replaced or added with content checks. 36 packages have a typed
-reader for all their entries but stray files; raw text and binary remain in GameData, Interface, MainMisc and
-Shaders. 25 packages (AnimationDefinition, AnimationFrame1-6, AnimationSequence, EffectDefinitionCollection,
+reader for all their entries but stray files; raw text and binary remain in Interface, MainMisc and Shaders,
+and the OLE file in GameData. 25 packages (AnimationDefinition, AnimationFrame1-6, AnimationSequence, EffectDefinitionCollection,
 LegacyTerrain, MultiCollection, TerrainDefinition, the 10 facet packages, facets, tileart, waypoint) have a typed
 editor whose writer is round-trip tested on every shipped entry; Audio, EffectTexture and Hues have editors for
 their typed kinds (MP3 is stored as given, not encoded). What remains raw is text without a parser (Lua, XML outside LegacyTerrain, CSV outside the audio
-tables and the legacy terrain map, shaders), the fonts, a few stray files (OLE, UTF-16 text, PSD, one JPEG) and
+tables and GameData, shaders), the fonts, a few stray files (OLE, UTF-16 text, PSD, one JPEG) and
 the unknown `MainMisc` binary. What has a reader but no writer: the
 TGA images and the Classic gumps (pixels).
 
@@ -103,30 +103,57 @@ TGA images and the Classic gumps (pixels).
   BMP with a wrong size field = BMP) must be the kind the name's extension declares, text for `csv lua txt ems
   psh vsh`, or the current entry's kind. Refused under every policy.
 - **Parse** (where a strict reader exists): the readers, in the order tried, are Chaos script, sound table, music
-  table, legacy terrain map, legacy terrain document, hue bitmap, tileart record, animation definition, animation
+  table, legacy terrain map, GameData table, legacy terrain document, hue bitmap, tileart record, animation definition, animation
   sequence, AMOU animation frames, effect definition collection, terrain definition, facet definition, facet
   sector, facet data map, housing pieces, multi, waypoints, string dictionary, localized strings, Classic gump,
   KR static chunk, then the generic DDS header, font table directory, PNG/BMP/JPEG decode and TGA decode. A replacement
-  must parse with the reader (and dialect) the current entry parses with; an addition with one of its package's
-  readers for its kind.
+  must parse with the reader (and dialect) the current entry parses with, and keep what that reader asks of the
+  entry it replaces (`ParseCheck::keeps`; a GameData table keeps its column names, its records' field counts, the
+  kind of each column and unique ids: `game_data::keeps_shape`); an addition with one of its package's readers for
+  its kind.
 - **Caller checks**: readers above uocf, passed with `UopEntryEditor::with_check` and tried before the built-in
   ones. The CLI (`uop replace-entry`, `add-entry`) and the inspector (text editor, "Replace file...") add the NIF
   check: `gamebryo_nif::read_checked` reads the model and finds no wrong link; the inspector's effects import uses
   the same function.
 - **Audio**: MP3 and WAV entries with a known name also pass the `Audio.uop` format checks under the caller's
   policy.
-- **Kind only** (no parser in uocf): XML outside LegacyTerrain, Lua, CSV other than the audio tables (the KR
-  `audio_sounds.csv` and `audio_effects.csv` are parse-checked since the audio batch) and the legacy terrain map,
+- **Kind only** (no parser in uocf): XML outside LegacyTerrain, Lua, CSV outside the audio tables and
+  `GameData.uop` (the KR `audio_sounds.csv` and `audio_effects.csv` are parse-checked since the audio batch),
   shaders, plain text, UTF-16 text, PSD, OLE files,
   and plain binary (the `MainMisc` binary, the TGA placeholders, the 34 gumps that do not decode).
 
 ## Text entries
 
 Every shipped text entry ends its lines in CRLF. EC: 3,130 UTF-8, 6 UTF-8 with a BOM (Interface), 3 UTF-16 LE with a
-BOM (2 Interface, 1 MainMisc), and 1 Windows-1252 table (the unnamed `GameData.uop` CSV `7E4442558DEB76A6`, whose
+BOM (2 Interface, 1 MainMisc), and 1 Windows-1252 table (`GameData.uop` `data/gamedata/itemprop.csv`, whose
 `Prized` ends in an `A0` no-break space: `classify_content` calls it binary, the entry editor's kind check counts
 it as text). KR: 626 UTF-8 and 1 UTF-16 LE. Some end without a final line break (EC Interface 130 of 257,
 GameData 8 of 78, KR Interface 99 of 486). The inspector's text editor shows `\n` for the ending and stores the file's.
+
+## GameData tables
+
+Measured on the 78 EC and 63 KR text entries of `GameData.uop` (the reader: `enhanced/game_data.rs`):
+
+- CRLF throughout (8 EC tables without the final one); UTF-8 without a BOM, but `itemprop.csv` (Windows-1252).
+- Comma-separated as Excel saves: `"` toggles quoting and is dropped, quoted fields hold commas (`mobart.csv`
+  descriptions, `skilldata.csv` comments), no escapes, every line has an even number of quotes; fields are not
+  trimmed (some keep trailing spaces). Longest line about 460 characters; the client's line buffer holds 2,046.
+- `#` rows are comments: the craft and house tables open with a `#int,int,...,string` type row, the house tables
+  (`classic_housedata`, `foundationstyle`, `housesign*`, `*_cust_housedata`) and `skilldata.csv` carry 11 to 13
+  of them. Blank lines separate records in the clothing tables. The column names are the row before the first
+  record (`abilities.csv` has a `,,,,,Buff,...` row above them; it and `starting_wearables_human_female.csv`
+  repeat a name). Every record starts with an integer id; ids are unique but in some house tables.
+- Field counts match the header but in `elfskinhues.csv` (3 or 2), `playerstats.csv` (EC 7, 6 or 5; KR 6 or 5)
+  and `mobart.csv` (3, or 5 with empty or blank extras). Column values are integers, `TRUE`/`FALSE` or text.
+- UOSA.exe opens eight of them itself (`abilities`, `bugreport`, `equipconv`, `legacycontainers`,
+  `legacyterrainmap`, `mobart`, `skilldata`, `weaponability`, with "ID exceeds limit range" messages); the
+  Interface Lua reads others (`itemprop`, `tipoftheday`). That the C++ tables go through the audio tables' CSV
+  reader (Ghidra-confirmed there) is probable, not traced.
+- Names found by hash and added to `tools/_shared_assets/Dictionary.dic`: `femalegargoylepants`,
+  `femalegargoyleshirts`, `malegargoylepants`, `malegargoyleshirts`, `tipoftheday` (the dictionary had a wrong
+  `da` for it), `itemprop`. Still unnamed: 7 house customization tables (`06049F5F9520EEC6`, `180B76710FCCF153`,
+  `2103671F4F662B94`, `341EC3C28A7BCB26`, `629EA7108E6459EF`, `92C3AA51CEABDC49`, `E010A4D243ABA65F`) and the OLE
+  file `B31F680844B96EB9`.
 
 ## Gaps, ranked by usefulness
 
@@ -141,7 +168,7 @@ GameData 8 of 78, KR Interface 99 of 486). The inspector's text editor shows `\n
 | 7 | ~~`LocalizedStrings` writer and editor; `string_dictionary` round trip on the shipped files~~ | **closed**: every EC, KR and Classic table and both dictionaries write back byte for byte; `uocf-cli strings` and the Clilocs view edit them | done |
 | 8 | ~~`legacyterrainmap.csv` writer~~ | **closed**: `to_csv_bytes` gives the shipped table back byte for byte; `check_canonical` for the entry editor's CSV check | done |
 | 9 | ~~Hues: shipped hue bitmaps reproduced byte for byte (wrong size field, hand-picked swatches)~~ | **closed**: written on EA's package (`build_hues_uop_entries_on_base`, `uocf-cli hues mul-to-uop --base`), every unedited hue keeps its bitmap, atlas row, swatch and name line; the 2024 EC and EC fp packages come back whole from their Classic `hues.mul`. Without a base, 365 EC hues stay unreproducible: `hues.mul` holds only their 5-bit reduction | done |
-| 10 | Strict CSV reader for the other GameData tables (65 EC) | GameData CSVs are only kind-checked | 0.5 day to measure the shipped grammar, then per table |
+| 10 | ~~Strict CSV reader for the other GameData tables~~ | **closed**: `enhanced/game_data.rs` reads every EC and KR table as the client's CSV reader does and writes it back byte for byte; replacements keep the table's shape; typed readers for `legacycontainers`, `weaponability`, `mobart`, `buffdata` | done |
 | 11 | Classic gump encoder for `gumpartLegacyMUL.uop` | gumps can be replaced only as encoded payloads | 1 day |
 | 12 | TGA writer of the shipped conventions (RLE type 10, footer, padding) for Interface gumps and TileArtLegacy | images go in as whatever TGA the user provides | 1-2 days |
 | 13 | ~~Facet data map round-trip test~~ | **closed**: every EC and KR `data.map` re-encodes byte for byte and matches the client size table | done |

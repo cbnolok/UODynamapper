@@ -11,8 +11,9 @@
 //!   check against ([`EntryCheck::Unchecked`]).
 //! - **Parse check.** Where a strict reader exists for the entry ([`PARSE_CHECKS`]), the file must parse. On a
 //!   replace, the reader is the first one (and client dialect) the current entry parses under, so a reader is
-//!   never applied to an entry it does not describe; on an add, the file must parse under one of the readers of
-//!   its package and kind, when there are any.
+//!   never applied to an entry it does not describe, and the file keeps what the reader requires of the entry it
+//!   replaces ([`ParseCheck::keeps`]: a GameData table its columns); on an add, the file must parse under one of
+//!   the readers of its package and kind, when there are any.
 //! - **Caller checks.** A crate above uocf adds the readers uocf does not have ([`UopEntryEditor::with_check`]:
 //!   the CLI and the inspector add `gamebryo-nif`'s NIF reader); they are tried before the built-in ones, and
 //!   a replacement or addition is checked with them the same way.
@@ -103,6 +104,9 @@ pub struct ParseCheck {
     /// The reader reads both client dialects ([`DIALECTS`]); else it is called with the default one.
     pub dialects: bool,
     pub check: fn(&[u8], ClientDialect) -> eyre::Result<()>,
+    /// What a replacement must keep of the entry it replaces, called with the current payload and the file
+    /// after both parse (a GameData table keeps its columns: [`crate::enhanced::game_data::keeps_shape`]).
+    pub keeps: Option<fn(&[u8], &[u8]) -> eyre::Result<()>>,
 }
 
 fn ok<T>(result: eyre::Result<T>) -> eyre::Result<()> {
@@ -119,6 +123,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         name: None,
         dialects: false,
         check: |bytes, _| ok(crate::enhanced::chaos_script::ChaosScript::parse_bytes(bytes)),
+        keeps: None,
     },
     ParseCheck {
         label: "sound table",
@@ -130,6 +135,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
             use crate::enhanced::audio::{parse_table, SOUND_TABLE_ENTRY, SOUND_TABLE_HEADER};
             ok(parse_table(SOUND_TABLE_ENTRY, std::str::from_utf8(bytes)?, SOUND_TABLE_HEADER, false))
         },
+        keeps: None,
     },
     ParseCheck {
         label: "music table",
@@ -141,6 +147,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
             use crate::enhanced::audio::{parse_table, MUSIC_TABLE_ENTRY, MUSIC_TABLE_HEADER};
             ok(parse_table(MUSIC_TABLE_ENTRY, std::str::from_utf8(bytes)?, MUSIC_TABLE_HEADER, true))
         },
+        keeps: None,
     },
     ParseCheck {
         label: "Kingdom Reborn sound table",
@@ -152,6 +159,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
             use crate::enhanced::{audio::SOUND_TABLE_ENTRY, kr_audio::KrSoundTable};
             ok(KrSoundTable::parse(SOUND_TABLE_ENTRY, std::str::from_utf8(bytes)?))
         },
+        keeps: None,
     },
     ParseCheck {
         label: "Kingdom Reborn effects table",
@@ -163,6 +171,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
             use crate::enhanced::kr_audio::{KrEffectsTable, KR_EFFECTS_TABLE_ENTRY};
             ok(KrEffectsTable::parse(KR_EFFECTS_TABLE_ENTRY, std::str::from_utf8(bytes)?))
         },
+        keeps: None,
     },
     ParseCheck {
         label: "legacy terrain map",
@@ -171,6 +180,16 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         name: Some(crate::enhanced::legacy_terrain_map::UOP_ENTRY_PATH),
         dialects: false,
         check: |bytes, _| ok(crate::enhanced::legacy_terrain_map::LegacyTerrainMap::from_bytes(bytes)),
+        keeps: None,
+    },
+    ParseCheck {
+        label: "GameData table",
+        packages: &["gamedata"],
+        kinds: &[ContentFormat::Text],
+        name: None,
+        dialects: false,
+        check: |bytes, _| ok(crate::enhanced::game_data::GameDataTable::parse("the table", bytes)),
+        keeps: Some(crate::enhanced::game_data::keeps_shape),
     },
     ParseCheck {
         label: "legacy terrain document",
@@ -179,6 +198,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         name: None,
         dialects: false,
         check: |bytes, _| ok(crate::enhanced::legacy_terrain::LegacyTerrainDocument::parse(bytes)),
+        keeps: None,
     },
     ParseCheck {
         label: "hue bitmap",
@@ -187,6 +207,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         name: None,
         dialects: false,
         check: |bytes, _| ok(crate::enhanced::hues::EcHueTable::from_bitmap(bytes)),
+        keeps: None,
     },
     ParseCheck {
         label: "tileart record",
@@ -195,6 +216,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         name: None,
         dialects: false,
         check: |bytes, _| ok(crate::enhanced::tileart::TileArtEntry::parse_bytes(bytes)),
+        keeps: None,
     },
     ParseCheck {
         label: "animation definition",
@@ -203,6 +225,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         name: None,
         dialects: true,
         check: |bytes, dialect| ok(crate::enhanced::animation_definition::AnimationDefinition::parse_dialect(bytes, dialect)),
+        keeps: None,
     },
     ParseCheck {
         label: "animation sequence",
@@ -211,6 +234,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         name: None,
         dialects: true,
         check: |bytes, dialect| ok(crate::animation_sequence::AnimationSequence::parse_dialect(bytes, dialect)),
+        keeps: None,
     },
     ParseCheck {
         label: "animation frames (AMOU)",
@@ -219,6 +243,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         name: None,
         dialects: false,
         check: |bytes, _| ok(crate::enhanced::animationframe::AnimationFrame::load(bytes)),
+        keeps: None,
     },
     ParseCheck {
         label: "effect definition collection",
@@ -229,6 +254,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         check: |bytes, dialect| {
             ok(crate::enhanced::effect_definition::parse_effect_definition_collection_dialect(bytes, dialect))
         },
+        keeps: None,
     },
     ParseCheck {
         label: "terrain definition",
@@ -237,6 +263,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         name: None,
         dialects: true,
         check: |bytes, dialect| ok(crate::enhanced::terrain_definition::TerrainDefinitionEntry::from_bytes_dialect(bytes, dialect)),
+        keeps: None,
     },
     ParseCheck {
         label: "facet definition",
@@ -245,6 +272,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         name: None,
         dialects: false,
         check: |bytes, _| ok(crate::enhanced::facet_definition::FacetDefinition::from_bytes(bytes)),
+        keeps: None,
     },
     ParseCheck {
         label: "facet sector",
@@ -253,6 +281,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         name: None,
         dialects: true,
         check: |bytes, dialect| ok(crate::enhanced::facet_decoder::decode_sector(bytes, dialect)),
+        keeps: None,
     },
     ParseCheck {
         label: "facet data map",
@@ -261,6 +290,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         name: None,
         dialects: false,
         check: |bytes, _| ok(crate::enhanced::facet_sector::FacetGeometry::from_data_map_payload(bytes)),
+        keeps: None,
     },
     ParseCheck {
         label: "housing pieces",
@@ -269,6 +299,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         name: Some("build/multicollection/housing.bin"),
         dialects: false,
         check: |bytes, _| ok(crate::enhanced::housing::HousingPieces::from_payload_bytes(bytes)),
+        keeps: None,
     },
     ParseCheck {
         label: "multi",
@@ -277,6 +308,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         name: None,
         dialects: true,
         check: |bytes, dialect| ok(crate::enhanced::multis::MultiItem::from_payload_bytes_dialect(0, String::new(), bytes, dialect)),
+        keeps: None,
     },
     ParseCheck {
         label: "waypoints",
@@ -285,6 +317,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         name: None,
         dialects: false,
         check: |bytes, _| ok(crate::enhanced::waypoints::WaypointsPackage::from_payload_bytes(bytes)),
+        keeps: None,
     },
     ParseCheck {
         label: "string dictionary",
@@ -293,6 +326,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         name: None,
         dialects: false,
         check: |bytes, _| ok(crate::enhanced::string_dictionary::UoStringDictionary::from_payload_bytes(bytes, "entry")),
+        keeps: None,
     },
     ParseCheck {
         label: "localized strings",
@@ -301,6 +335,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         name: None,
         dialects: false,
         check: |bytes, _| ok(crate::enhanced::localized_strings::LocalizedStringTable::from_payload_bytes(bytes)),
+        keeps: None,
     },
     ParseCheck {
         label: "Classic gump",
@@ -309,6 +344,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         name: None,
         dialects: false,
         check: |bytes, _| ok(crate::classic::gump::decode_uop_gump(bytes)),
+        keeps: None,
     },
     ParseCheck {
         label: "static chunk",
@@ -317,6 +353,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         name: None,
         dialects: false,
         check: |bytes, _| ok(crate::kr::facet::static_chunk::StaticChunk::decode(bytes)),
+        keeps: None,
     },
     ParseCheck {
         label: "DDS header",
@@ -325,6 +362,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         name: None,
         dialects: false,
         check: |bytes, _| ok(crate::enhanced::dds_writer::DdsDescription::parse(bytes)),
+        keeps: None,
     },
     ParseCheck {
         label: "font table directory",
@@ -333,6 +371,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         name: None,
         dialects: false,
         check: |bytes, _| check_font(bytes),
+        keeps: None,
     },
     ParseCheck {
         label: "PNG, BMP or JPEG decode",
@@ -341,6 +380,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         name: None,
         dialects: false,
         check: |bytes, _| ok(image::load_from_memory(bytes).map_err(Into::into)),
+        keeps: None,
     },
     ParseCheck {
         label: "TGA decode",
@@ -349,6 +389,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         name: None,
         dialects: false,
         check: |bytes, _| ok(image::load_from_memory_with_format(bytes, image::ImageFormat::Tga).map_err(Into::into)),
+        keeps: None,
     },
 ];
 
@@ -562,8 +603,11 @@ impl UopEntryEditor {
         let parsed = match current {
             Some(current) if current_kind == Some(kind) => Self::first_parse(&checks, current).map(|(check, dialect)| {
                 (check.check)(file, dialect)
-                    .map(|()| (check, dialect))
-                    .wrap_err_with(|| format!("{label}: the file does not parse as a {} (the current entry does)", check.label))
+                    .wrap_err_with(|| format!("{label}: the file does not parse as a {} (the current entry does)", check.label))?;
+                if let Some(keeps) = check.keeps {
+                    keeps(current, file).wrap_err_with(|| format!("{label}: the file does not keep the {} it replaces", check.label))?;
+                }
+                Ok((check, dialect))
             }),
             Some(_) => None,
             None if checks.is_empty() => None,
@@ -785,6 +829,7 @@ mod tests {
             name: None,
             dialects: false,
             check: |bytes, _| if bytes.ends_with(b"ok") { Ok(()) } else { Err(eyre!("does not end in ok")) },
+            keeps: None,
         };
         let nif = |tail: &[u8]| [NIF_HEADER, tail].concat();
         let dir = temp_dir("caller_checks");
@@ -798,6 +843,22 @@ mod tests {
         assert_eq!(put.check, EntryCheck::Parsed { reader: "test NIF reader", dialect: None });
         assert!(editor.replace(&target, &nif(b"bad"), policy).unwrap_err().to_string().contains("test NIF reader"));
         assert!(editor.add(&EntryTarget::Name("data/test/other.nif".to_owned()), &nif(b"bad"), None, policy).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn game_data_tables_keep_their_columns() {
+        const NAME: &str = "data/gamedata/weaponability.csv";
+        let dir = temp_dir("game_data");
+        let path = package_with(&dir, "GameData.uop", &[(NAME, b"objectId,primaryAbility\r\n3568,ArmorIgnore\r\n", CompressionFlag::Zlib)]);
+        let mut editor = UopEntryEditor::load(&path).unwrap();
+        let target = EntryTarget::Name(NAME.to_owned());
+        let policy = FormatPolicy::VerifiedOnly;
+        let put = editor.replace(&target, b"objectId,primaryAbility\r\n3568,Disarm\r\n3569,Dismount\r\n", policy).unwrap();
+        assert_eq!(put.check, EntryCheck::Parsed { reader: "GameData table", dialect: None });
+        let error = format!("{:#}", editor.replace(&target, b"objectId,primaryAbility\r\nsword,Disarm\r\n", policy).unwrap_err());
+        assert!(error.contains("does not keep the GameData table") && error.contains("field 1 (objectId)"), "{error}");
+        assert!(editor.replace(&target, b"objectId,primary\r\n1,\"open\r\n", policy).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

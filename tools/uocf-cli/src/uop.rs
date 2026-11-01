@@ -119,6 +119,7 @@ pub const NIF_CHECK: ParseCheck = ParseCheck {
     name: None,
     dialects: false,
     check: |bytes, _| gamebryo_nif::read_checked(bytes).map(|_| ()).map_err(|error| eyre::eyre!(error)),
+    keeps: None,
 };
 
 /// The hash an entry argument names.

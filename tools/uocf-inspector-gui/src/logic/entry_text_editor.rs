@@ -73,6 +73,7 @@ pub const NIF_CHECK: ParseCheck = ParseCheck {
     name: None,
     dialects: false,
     check: |bytes, _| gamebryo_nif::read_checked(bytes).map(|_| ()).map_err(|error| eyre::eyre!(error)),
+    keeps: None,
 };
 
 /// Writes a copy of the package at `source` to `output` with the entry `target` replaced by `bytes`, checked by
