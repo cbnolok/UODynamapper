@@ -51,3 +51,4 @@ pub mod professions;
 pub mod key_names;
 pub mod legacy_tables;
 pub mod small_binaries;
+pub mod filter_lists;
