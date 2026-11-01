@@ -82,7 +82,7 @@ Older captures apply to their recorded package revisions.
 - Make metrics visible in the debug overlay and persist them in logs for A/B runs.
 - Mobile conversion timing: done. Both mobile packers log a per-stage summary at the end (`CC mobile animation stage timing` / `EC mobile animation stage timing`: load/metadata, plan, trim, upscale, bucket selection, source decode, page build/blit, BC7 input/encode/RDO/flatten, page registration, manifests, package write), and the UDDP builders log compression apart from assembly and write. Measured with the `profiling` profile on 2026-11-01 (CC fp, BC7 + Zstd: 51.1s to 32.2s; EC, BC7: 167.8s to 78.2s; package sha unchanged, peak RSS lower): the lazy, speculatively parallel page prefix search (`udd_conv::prefix_search`), parallel trim and per-page source decode, row-wise gutter extrusion and the parallel EC hue scan. Largest stages left: bucket selection (CC 8.7s, EC 11.5s; guillotiere fit tests), EC page build (14.7s), BC7 encode (CC 5.6s, EC 12.0s) and package write (CC zstd 5s; EC 10s, the payload spill copied into the package).
 - BC7 pre-RDO audit: solid blocks (the empty and gutter area of a page) already take the encoder's solid fast path in `pack_bc7_rgb`/`pack_bc7_rgba`; the remaining encode time is content blocks. Reusing repeated non-solid blocks is the open option.
-- Continue RDO algorithmic reduction after timings isolate it, prioritizing branch predictability, bitwise operations, SIMD-friendly data layout, early backend dispatch, stack-local scratch where sensible, and cache-line-aware traversal.
+- BC7 RDO: closed 2026-11-01, kept as the opt-in `--bc7-rdo` (default λ 0.05; the mobile packers and `tex_aux_ec` default to λ 0). At λ 0.05 the packages get larger or barely smaller: `tex_land_cc` 10.92 -> 11.12 MB (+1.8 %, 0.3 s -> 13.3 s), `tex_art_cc` 38.71 -> 38.84 MB (+0.4 %, 1.2 s -> 22.6 s), `mobile_anim_ec` 1.988 -> 1.965 GB (-1.1 %, 81 s -> 1580 s). Bytes come back only at a λ that shows (λ 2.0: -13.8 % on `tex_land_cc`, 33..41 dB PSNR against plain BC7; λ 0.05 is 43..53 dB). Plain BC7 encode is 10.6 s of the 81 s EC mobile pack, so the encoder is not the bottleneck. [Proposal (d)](agent_notes/proposals/2026-11-01-data-track-open-items.md).
 
 ### EC Material And Texture Ownership Pipeline
 
@@ -113,7 +113,6 @@ Done. The main-texture selector is role first with explicit reasons (`choose_mai
 ### Static Art Pipeline And Residency
 
 - Finish the production-grade clustered static-art pipeline.
-- Cluster tiny art records into `32..96 KB` uncompressed payload groups instead of compressing them individually.
 - Implement atlas packing with `guillotiere` for static art.
 - Support two runtime storage modes for art atlas pages:
   - `RGBA8` as the lossless default for tiny and alpha-sensitive art
@@ -155,14 +154,6 @@ Done. The main-texture selector is role first with explicit reasons (`choose_mai
 - Implement fallback decode paths per content type.
 - Keep predictive prefetch rings optional until telemetry proves they improve real movement behavior.
 - Keep live editing persistence and delta-merging deferred until editor and gameplay ownership is explicit.
-
-### Terrain Metadata VRAM Optimization
-
-- Implement indexed metadata atlases for terrain so metadata can drop below the current per-tile footprint when the palette cardinality supports it.
-- Add per-page metadata palettes or dictionaries in a GPU-readable buffer.
-- Update the terrain atlas shader path to perform indexed metadata indirection.
-- Update the converter path to generate metadata palettes during packaging.
-- Keep this optimization lossless for gameplay-relevant height and id data.
 
 ### EC Review, Audit, And Artifact Surfaces
 
@@ -287,8 +278,9 @@ Done or superseded. Blend inputs (`SecondaryBase`, `BlendAlpha`, `CoverageAlpha`
 
 ### Export And Tooling
 
-- Implement the 1:1 tiled world export pipeline.
+- Implement the 1:1 tiled world export pipeline: web map tiles, lossy WebP through libwebp (the user's answer, 2026-11-01); the remaining design questions are with the user, so it is not started. [Proposal (b)](agent_notes/proposals/2026-11-01-data-track-open-items.md).
 - Add WebP output profile controls for quality, lossless, and speed.
+- Done: map and statics chunks are stored by default for the fastest runtime retrieval (`udd_conv::chunk_compression`; `--zstd[=LEVEL]` on `pack-map`, `pack-statics` and `pack-map-statics` compresses them with plain Zstd), and the UDDP reader reuses a per-thread Zstd context and the type dictionaries prepared at open. Warm reads of a Britannia map chunk: 7.9 us (installed, dictionary) -> 3.9 us with the reader change, 0.2 us stored (0.01 us through `read_file_by_dense_id_cow`); statics 1.3 us -> 0.06 us stored. Stored map0 is 118 MB against 18 MB, statics0 24 MB against 8.5 MB. Benchmark: `lib/udd-conv/tests/integration/map_statics_retrieval.rs`. [Proposal (a)](agent_notes/proposals/2026-11-01-data-track-open-items.md).
 - Done: `udd-cli tool validate <files or dirs>` decodes every entry through its key, checks the package hash, codecs and dictionaries, and runs the package's own reader, so a stale package fails before the app loads it.
 - Done: the `uddp-inspector-gui` tile and land-material previews decode only the BC7 blocks covering the rect (`udd_image_codecs::bc7::decode_bc7_rect_to_rgba8888`, equal to the whole page cropped); the whole page is decoded when the Full Atlas view is shown. First selection on a 2048x2048 `tex_land_ec` BC7 page: 23.9 ms -> 0.14 ms CPU (the 4096x2048 RGBA `tex_art_ec` page: 24.4 ms -> 4 us), plus the full-page texture upload it no longer does.
 
@@ -361,6 +353,7 @@ Done or superseded. Blend inputs (`SecondaryBase`, `BlendAlpha`, `CoverageAlpha`
 
 ## Deferred
 
+- Terrain metadata VRAM optimization (indexed metadata atlases, per-page palettes in a GPU-readable buffer, shader indirection, converter-generated palettes), deferred to the renderer performance work (the user, 2026-11-01). The `Rg16Uint` atlas is 4 B per tile, 16 MiB per 2048² page, 128 MiB for Britannia (8 pages). On `map0` a page holds 318..859 tile ids and 1,817..21,143 (id, Z) pairs (the whole map 1,496 ids, 38,770 pairs); a 32x32 chunk at most 117 ids, an 8x8 block at most 41. So an 8-bit per-page id index does not fit, Z needs its own 8 bits, and the smallest lossless layout is 2 B per tile: -64 MiB for Britannia, for an indirection on the land shader's 63 metadata reads. The converter side is about a day and not needed until the runtime part is chosen. Keep it lossless (see Validation). [Proposal (c)](agent_notes/proposals/2026-11-01-data-track-open-items.md).
 - Renderer FPS optimization is deferred until the desktop workstation session with RenderDoc and rocprofv3. Preserve the accepted cache changes; resume from [the hypotheses and test plan](reviews/2026-10-29-renderer-performance-handoff.md) before choosing another implementation.
 - Full lighting-model parity with original client time-of-day rules.
 - Networking protocol integration.

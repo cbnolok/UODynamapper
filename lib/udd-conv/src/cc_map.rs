@@ -1,7 +1,7 @@
 //! Build-time support for `mapX.uddp`.
 //!
 //! This module converts Classic Client `mapX.mul` files into UODynamapper's
-//! compressed runtime format.
+//! runtime format.
 //!
 //! The goal is to store each 32x32 map chunk as a separate entry in a `.uddp`
 //! package, using a format that matches the GPU's metadata atlas:
@@ -20,7 +20,8 @@
 //! byte array representing a 32x32 grid of tiles (1024 tiles total).
 //!
 //! **Structure**: `[Rg16u; 1024]`
-//! **Total Size**: 4,096 bytes (uncompressed).
+//! **Total Size**: 4,096 bytes, stored unless the packer is asked for Zstd
+//! ([`ChunkCompression`]).
 //!
 //! **Rg16u Memory Layout**:
 //! | Offset | Size | Name | Content |
@@ -36,6 +37,7 @@ use color_eyre::eyre::{self};
 use crate::progress::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
 
+use crate::chunk_compression::ChunkCompression;
 use crate::classic_patches::ClassicPatchOptions;
 use crate::classic_sources::{resolve_classic_map_source, SourceFormatPreference};
 use crate::package_progress::build_and_write_package;
@@ -97,6 +99,7 @@ pub fn convert_map_mul_to_uddp_from_sources(
         map_id,
         preference,
         &ClassicPatchOptions::NONE,
+        ChunkCompression::default(),
     )
 }
 
@@ -106,6 +109,7 @@ pub fn convert_map_mul_to_uddp_from_sources_with_patches(
     map_id: u32,
     preference: SourceFormatPreference,
     patch_options: &ClassicPatchOptions,
+    chunk_compression: ChunkCompression,
 ) -> eyre::Result<CcMapBuildSummary> {
     let map_source = resolve_classic_map_source(source_dirs, map_id, preference, patch_options)?;
 
@@ -179,7 +183,7 @@ pub fn convert_map_mul_to_uddp_from_sources_with_patches(
             let chunk_index = chunk_x * height_chunks + chunk_y;
             builder.add_file(AddFileRequest {
                 data_type: DataType::Map as u8,
-                compression: CompressionFlag::Auto,
+                compression: chunk_compression.flag(),
                 width: 0,
                 height: 0,
                 virtual_path: None,

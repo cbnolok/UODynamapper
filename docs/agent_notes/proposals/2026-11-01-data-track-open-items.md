@@ -1,7 +1,7 @@
 # Data-track open items: proposals (2026-11-01)
 
-Proposals only; nothing here is implemented. Four `docs/TODO.md` items need a decision from the
-user:
+The user's decisions and what came of them are in [Decisions](#decisions-2026-11-01) at the end;
+the proposals below are as written. Four `docs/TODO.md` items needed a decision from the user:
 
 - (a) cluster tiny art records;
 - (b) the 1:1 tiled world export with WebP profiles;
@@ -328,3 +328,128 @@ Repack `mobile_anim_ec` with `--zstd`; this is not RDO, but it is the real size 
    performance session?
 4. (d) Close the RDO item. Keep RDO as an opt-in, or remove it? Repack the installed
    `mobile_anim_ec.uddp` with `--zstd` (6.9 GB → 2.0 GB)?
+
+## Decisions (2026-11-01)
+
+### (a) Map and statics: retrieval speed, not size
+
+The user: "We are talking about saving a small amount of MB, I'd keep what allows faster runtime
+retrieval and rendering." The clustering item is dropped (removed from `docs/TODO.md`). Map and
+statics packages were measured for runtime retrieval instead.
+
+The benchmark is `lib/udd-conv/tests/integration/map_statics_retrieval.rs` (ignored; run it with
+`--release` and `UDD_PACKAGE_DIR`). It repacks the installed `map0`/`statics0` entries with each
+codec and reads them through `UddpReader` as dynamapper does: `load` (mmap), decoded cache off,
+`read_file_by_dense_id`. It also reads them from `load_in_memory` and through
+`read_file_by_dense_id_cow`.
+
+The read orders are:
+
+- id order;
+- a shuffled order;
+- a 24×24-chunk region at the map centre, as a view load would read it.
+
+Each read order is timed two ways:
+
+- **warm** is the fastest of 5 passes with the file in the page cache, per chunk;
+- **cold** drops the file's pages first (`posix_fadvise(DONTNEED)`) and covers opening the package
+  plus reading every chunk in the order once.
+
+The numbers below are with the reader change described next.
+
+**map0** (28,672 chunks of 4 KB):
+
+| Codec | Size | Warm per chunk (mmap / cow) | Warm region | Cold id order (mmap / in-memory) | Cold shuffled (mmap / in-memory) | Cold region (mmap / in-memory) |
+| --- | --- | --- | --- | --- | --- | --- |
+| installed (zstd 7 + dictionary) | 18.36 MB | 3.92 / 3.90 us | 4.14 us | 116 / 121 ms | 149 / 129 ms | 5.4 / 9.0 ms |
+| **stored** | 117.90 MB | **0.21 / 0.01 us** | **0.07 us** | **28 / 44 ms** | 850 / **46 ms** | **3.5** / 37 ms |
+| zstd 1 | 20.58 MB | 4.44 us | 5.06 us | 131 ms | 160 / 153 ms | 4.7 / 8.5 ms |
+| zstd 3 | 20.41 MB | 4.56 us | 5.06 us | 136 ms | 162 / 148 ms | 5.0 / 8.6 ms |
+| zstd 7 | 17.76 MB | 3.39 us | 3.64 us | 102 ms | 127 / 114 ms | 3.9 / 7.1 ms |
+| zstd 19 | 15.96 MB | 3.43 us | 3.35 us | 105 ms | 126 / 114 ms | 3.8 / 6.2 ms |
+| zstd 7 + dictionary | 18.36 MB | 3.74 us | 3.99 us | 117 ms | 144 / 128 ms | 4.0 / 7.4 ms |
+
+**statics0** (28,672 chunks; 18,834 empty):
+
+| Codec | Size | Warm per chunk (mmap / cow) | Warm region | Cold id order (mmap / in-memory) | Cold shuffled (mmap / in-memory) | Cold region (mmap / in-memory) |
+| --- | --- | --- | --- | --- | --- | --- |
+| installed (zstd 7) | 8.46 MB | 1.31 / 1.31 us | 0.62 us | 39 / 41 ms | 51 / 43 ms | 1.5 / 3.3 ms |
+| **stored** | 23.71 MB | **0.06 / 0.01 us** | **0.01 us** | **8 / 8 ms** | 25 / **8 ms** | 1.5 / 6.0 ms |
+| zstd 1 | 8.82 MB | 1.30 us | 0.60 us | 40 ms | 49 / 42 ms | 1.3 / 2.7 ms |
+| zstd 3 | 8.74 MB | 1.31 us | 0.62 us | 40 ms | 49 / 43 ms | 1.3 / 2.6 ms |
+| zstd 7 | 8.46 MB | 1.31 us | 0.64 us | 42 ms | 50 / 44 ms | 1.3 / 2.6 ms |
+| zstd 19 | 8.17 MB | 1.46 us | 0.72 us | 45 ms | 53 / 46 ms | 1.3 / 2.5 ms |
+| zstd 7 + dictionary | 7.71 MB | 1.34 us | 0.60 us | 44 ms | 51 / 44 ms | 1.2 / 2.4 ms |
+
+What the numbers say:
+
+- **Stored retrieves fastest** wherever the data is in memory: 16..50× faster warm, and zero-copy
+  through `_cow`. It is also fastest cold in id order and for a mapped region.
+- The one loss is reading the whole map in a shuffled order from a cold mmap: 850 ms against
+  127 ms, because 118 MB of page faults stand in for 18 MB. No view does that; a cold region is
+  3.5 ms against 3.9 ms.
+- The zstd levels differ little from each other. The dictionary does not make map chunks smaller,
+  and it is 10 % slower than plain zstd 7.
+
+**The reader fix.** Before this change the reader built a new Zstd context for every payload. For
+the dictionary codec it also digested the dictionary again for every payload. That made the
+installed map read at 7.90 us per chunk, against 3.45 us at plain zstd 7.
+
+`udd-container` now keeps:
+
+- one decompression context per thread (`support::zstd_decompress`);
+- the type dictionaries, prepared once at open (`UddpReader::prepared_dicts`).
+
+The installed map now reads at 3.9 us per chunk without a repack. Every Zstd package benefits.
+
+**Decision:**
+
+- The map and statics packers store chunks by default (`udd_conv::chunk_compression::ChunkCompression`).
+- `--zstd[=LEVEL]` on `pack-map`, `pack-statics` and `pack-map-statics` now compresses chunks with
+  plain Zstd. It used to be accepted and ignored.
+- The dictionary path (`CompressionFlag::Auto` on map chunks) is gone from the map packer.
+- `scripts/uddconv` passes `--zstd` to `pack-map-statics` only when it is asked. Its other
+  non-texture packages keep the default `--zstd`.
+- The size cost is about +100 MB per Britannia-sized facet for the map and +15 MB for statics.
+
+The candidates are packed from the plain CC client by today's packer, without difs. Both pass
+`udd-cli tool validate`. The sha256 values are in `SHA256SUMS` in the folder.
+
+`/home/claudio/test/uddp-candidates/map-statics-stored-20261101/`:
+
+- `stored/map0.uddp` (117,899,352 B) and `stored/statics0.uddp` (23,665,808 B): the new default;
+- `zstd7/map0.uddp` (17,744,768 B) and `zstd7/statics0.uddp` (8,444,739 B): `--zstd`, for
+  comparison.
+
+The stored and the zstd 7 packages have the same payloads (`tool diff`: 0 changed). Against the
+installed packages, which were packed on 2026-06-30, 40 map chunks and 53 statics chunks differ.
+The zstd 7 build differs in the same chunks, so the codec is not the cause; the June packages
+predate later packer or source changes. With `--include-map-difs --include-static-difs` the counts
+are 40 and 183, so the June packages were not built with difs either.
+
+Suggested for the renderer session: read map and statics chunks with
+`read_file_by_dense_id_cow`. A stored chunk is then borrowed from the mapping, not copied.
+
+### (b) World export
+
+It is for web map tiles, as lossy WebP through libwebp. The user is answering the remaining design
+questions; nothing is started. The TODO item records this.
+
+### (c) Terrain metadata palettes
+
+Deferred to the renderer performance work. The item moved to "Deferred" in `docs/TODO.md`, with the
+cardinality numbers and a link here.
+
+### (d) RDO
+
+The item is closed. RDO stays an opt-in (`--bc7-rdo`), and the numbers are in `docs/TODO.md`.
+
+The renderer is asked, in `agents_comm.txt`, to install the `--bc7 --zstd` EC mobile candidate
+after a visual check. The candidate is
+`/home/claudio/test/uddp-candidates/rdo-measure-20261101/mobile_anim_ececmob__bc7___zstd_.uddp`:
+
+- size: 1,987,863,904 B;
+- sha256: `b6472838bc9573281052fd6a93e4f6f201d6135da4d77c198229120db5ffdec5`;
+- package hash64: `0x5d21415ff80f2810`.
+
+It replaces the 6.9 GB installed package.

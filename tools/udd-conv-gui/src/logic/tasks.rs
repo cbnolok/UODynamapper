@@ -26,6 +26,7 @@ use udd_conv::{
     tex_land_ec::{TexLandEcAtlasOptions, convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_sources_with_progress},
     tilemeta::{TileMetaBuildOptions, build_tilemeta_uddp_from_sources_with_progress, build_tilemeta_uddp_from_split_sources_with_progress},
     cc_map::convert_map_mul_to_uddp_from_sources_with_patches,
+    chunk_compression::ChunkCompression,
     cc_statics::convert_statics_mul_to_uddp_from_sources_with_patches,
     tex_land_cc::{TexLandCcAtlasOptions, convert_texmaps_mul_to_tex_land_cc_uddp_with_patches_and_progress},
     cc_radar::{build_facet_radar_dds, RadarFormat, RadarBuildOptions},
@@ -772,6 +773,7 @@ impl UddConvApp {
                 map_id,
                 settings.map_preferences[map_id as usize],
                 &classic_patch_options(&settings),
+                ChunkCompression::default(),
             )?;
             Ok(format!("Wrote {} chunks to {}", summary.chunk_count, output.display()))
         });
@@ -789,6 +791,7 @@ impl UddConvApp {
                 &output,
                 map_id,
                 &classic_patch_options(&settings),
+                ChunkCompression::default(),
             )?;
             Ok(format!("Wrote {} chunks to {}", summary.chunk_count, output.display()))
         });
@@ -858,6 +861,7 @@ impl UddConvApp {
                 map_id,
                 settings.map_preferences[map_id as usize],
                 &classic_patch_options(&settings),
+                ChunkCompression::default(),
             )?;
 
             // 2. Statics
@@ -869,6 +873,7 @@ impl UddConvApp {
                 &statics_output,
                 map_id,
                 &classic_patch_options(&settings),
+                ChunkCompression::default(),
             )?;
 
             // 3. Radar

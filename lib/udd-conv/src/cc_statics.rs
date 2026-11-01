@@ -1,7 +1,8 @@
 //! Build-time support for `staticsX.uddp`.
 //!
 //! This module converts Classic Client `staticsX.mul` and `staidxX.mul` files
-//! into UODynamapper's compressed runtime format.
+//! into UODynamapper's runtime format (chunks stored unless the packer is asked
+//! for Zstd, see [`ChunkCompression`]).
 //!
 //! Each 32x32 map chunk has a corresponding entry in the `.uddp` package,
 //! containing the list of static items for that chunk with offsets relative to
@@ -13,6 +14,7 @@ use crate::progress::{ProgressBar, ProgressStyle};
 use log::info;
 use std::path::{Path, PathBuf};
 
+use crate::chunk_compression::ChunkCompression;
 use crate::classic_patches::ClassicPatchOptions;
 use crate::classic_sources::{resolve_classic_map_source, ClassicMapSource, SourceFormatPreference};
 use crate::package_progress::build_and_write_package;
@@ -37,6 +39,7 @@ pub fn convert_statics_mul_to_uddp_from_sources(
         output_path,
         map_id,
         &ClassicPatchOptions::NONE,
+        ChunkCompression::default(),
     )
 }
 
@@ -45,6 +48,7 @@ pub fn convert_statics_mul_to_uddp_from_sources_with_patches(
     output_path: &Path,
     map_id: u32,
     patch_options: &ClassicPatchOptions,
+    chunk_compression: ChunkCompression,
 ) -> eyre::Result<CcStaticsBuildSummary> {
     let map_source = resolve_classic_map_source(
         source_dirs,
@@ -77,6 +81,7 @@ pub fn convert_statics_mul_to_uddp_from_sources_with_patches(
         width_blocks,
         height_blocks,
         patch_options,
+        chunk_compression,
     )
 }
 
@@ -87,6 +92,7 @@ pub fn convert_statics_mul_to_uddp_from_sources_with_dimensions_and_patches(
     width_blocks: u32,
     height_blocks: u32,
     patch_options: &ClassicPatchOptions,
+    chunk_compression: ChunkCompression,
 ) -> eyre::Result<CcStaticsBuildSummary> {
     let map_source = resolve_classic_map_source(
         source_dirs,
@@ -102,6 +108,7 @@ pub fn convert_statics_mul_to_uddp_from_sources_with_dimensions_and_patches(
         width_blocks,
         height_blocks,
         patch_options,
+        chunk_compression,
     )
 }
 
@@ -112,6 +119,7 @@ fn convert_statics_mul_to_uddp_from_resolved_sources_with_dimensions(
     width_blocks: u32,
     height_blocks: u32,
     patch_options: &ClassicPatchOptions,
+    chunk_compression: ChunkCompression,
 ) -> eyre::Result<CcStaticsBuildSummary> {
     let map_id = map_source.map_id;
     let statics_files = map_source.facet.statics_files()?;
@@ -190,7 +198,7 @@ fn convert_statics_mul_to_uddp_from_resolved_sources_with_dimensions(
             } else {
                 builder.add_file(AddFileRequest {
                     data_type: DataType::Static as u8,
-                    compression: CompressionFlag::ZstdNoDict,
+                    compression: chunk_compression.flag(),
                     width: 0,
                     height: 0,
                     virtual_path: None,

@@ -2,6 +2,7 @@
 pub mod bc7;
 pub mod tex_art_cc;
 pub mod cc_map;
+pub mod chunk_compression;
 pub mod cc_gumps;
 pub mod ec_gumps;
 mod gump_atlas;
