@@ -8,7 +8,7 @@ pub(super) const WATER: u32 = 16;
 
 pub(super) fn append(
     records: &mut Vec<[u32; 4]>, item: u32, material: &ArtMaterial,
-    refs: &[TileMetaItemTextureRef], window: Vec4, extent: UVec2,
+    refs: &[TileMetaItemTextureRef], window: Vec4, extent: UVec2, camera_quad: bool,
     assign: &mut impl FnMut(&TileMetaItemTextureRef) -> Option<(u32, UVec2)>,
 ) {
     if item as usize >= ITEM_CAPACITY || material.block_index != 0
@@ -23,8 +23,12 @@ pub(super) fn append(
     if fourth.is_none() && has_source(refs, 3) { return; }
     if extent.min_element() == 0 || !window.is_finite() || window.xy().min_element() < 0.0
         || window.zw().min_element() <= 0.0 || (window.xy() + window.zw()).cmpgt(extent.as_vec2()).any() { return; }
-    let uv_window = Vec4::new(window.x / extent.x as f32, window.y / extent.y as f32,
-        window.z / extent.x as f32, window.w / extent.y as f32);
+    // The Rotated branch at 0x45a080 builds a fixed camera-plane quad with
+    // literal unit UVs. Only ordinary image-window geometry uses the crop.
+    let uv_window = if camera_quad { Vec4::new(0.0, 0.0, 1.0, 1.0) } else {
+        Vec4::new(window.x / extent.x as f32, window.y / extent.y as f32,
+            window.z / extent.x as f32, window.w / extent.y as f32)
+    };
     let mut descriptors = [[0u32; 4]; 7];
     // Match the native primary-image crop, as the hue-mask path already does.
     // Trimming changes a sampling window, not the full support-map pixels.
@@ -67,7 +71,7 @@ mod tests {
         let (material, refs) = graph();
         let mut records = vec![[0; 4]; ITEM_CAPACITY];
         let mut assigned = Vec::new();
-        append(&mut records, 17000, &material, &refs, Vec4::new(0.0, 0.0, 64.0, 32.0), UVec2::new(64, 32), &mut |r| {
+        append(&mut records, 17000, &material, &refs, Vec4::new(0.0, 0.0, 64.0, 32.0), UVec2::new(64, 32), false, &mut |r| {
             assigned.push(r.texture_id); Some((assigned.len() as u32, UVec2::new(64, 32)))
         });
         assert_eq!(assigned, [1000020, 4000001, 4651]);
@@ -83,12 +87,17 @@ mod tests {
     fn item_water_graph_maps_trimmed_art_to_full_source_uvs_and_rejects_bad_windows() {
         let (material, refs) = graph();
         let mut records = vec![[0; 4]; ITEM_CAPACITY];
-        append(&mut records, 4651, &material, &refs, Vec4::new(16.0, 8.0, 32.0, 16.0), UVec2::new(64, 32),
+        append(&mut records, 4651, &material, &refs, Vec4::new(16.0, 8.0, 32.0, 16.0), UVec2::new(64, 32), false,
             &mut |_| Some((1, UVec2::new(64, 32))));
         assert_eq!(records[ITEM_CAPACITY + 6], [0.25f32.to_bits(), 0.25f32.to_bits(), 0.5f32.to_bits(), 0.5f32.to_bits()]);
+        let mut camera_records = vec![[0; 4]; ITEM_CAPACITY];
+        append(&mut camera_records, 4651, &material, &refs, Vec4::new(16.0, 8.0, 32.0, 16.0), UVec2::new(64, 32), true,
+            &mut |_| Some((1, UVec2::new(64, 32))));
+        assert_eq!(camera_records[ITEM_CAPACITY + 6], [0, 0, 1.0f32.to_bits(), 1.0f32.to_bits()],
+            "the original camera-plane constructor writes unit UVs regardless of art trimming");
         for window in [Vec4::new(33.0, 0.0, 32.0, 32.0), Vec4::new(-1.0, 0.0, 32.0, 32.0), Vec4::ZERO] {
             let mut records = vec![[0; 4]; ITEM_CAPACITY];
-            append(&mut records, 4651, &material, &refs, window, UVec2::new(64, 32), &mut |_| Some((1, UVec2::new(64, 32))));
+            append(&mut records, 4651, &material, &refs, window, UVec2::new(64, 32), false, &mut |_| Some((1, UVec2::new(64, 32))));
             assert_eq!(records[4651], [0; 4]);
         }
     }
@@ -100,18 +109,18 @@ mod tests {
             let mut invalid = refs;
             invalid[stage].uv_set = 2;
             let mut records = vec![[0; 4]; ITEM_CAPACITY];
-            append(&mut records, 4651, &material, &invalid, Vec4::new(0.0, 0.0, 64.0, 64.0), UVec2::splat(64), &mut |_| Some((1, UVec2::splat(64))));
+            append(&mut records, 4651, &material, &invalid, Vec4::new(0.0, 0.0, 64.0, 64.0), UVec2::splat(64), false, &mut |_| Some((1, UVec2::splat(64))));
             assert_eq!(records.len(), ITEM_CAPACITY);
         }
         let mut invalid = refs;
         invalid[1].flags = 0;
         let mut records = vec![[0; 4]; ITEM_CAPACITY];
-        append(&mut records, 4651, &material, &invalid, Vec4::new(0.0, 0.0, 64.0, 64.0), UVec2::splat(64), &mut |_| Some((1, UVec2::splat(64))));
+        append(&mut records, 4651, &material, &invalid, Vec4::new(0.0, 0.0, 64.0, 64.0), UVec2::splat(64), false, &mut |_| Some((1, UVec2::splat(64))));
         assert_eq!(records[4651], [0; 4]);
-        append(&mut records, 4651, &material, &refs, Vec4::new(0.0, 0.0, 64.0, 64.0), UVec2::splat(64), &mut |_| None);
+        append(&mut records, 4651, &material, &refs, Vec4::new(0.0, 0.0, 64.0, 64.0), UVec2::splat(64), false, &mut |_| None);
         assert_eq!(records[4651], [0; 4]);
         invalid = refs; invalid[0].physical_package = EcMaterialPhysicalPackage::LegacyTexture as u8;
-        append(&mut records, 4651, &material, &invalid, Vec4::new(0.0, 0.0, 64.0, 64.0), UVec2::splat(64), &mut |_| Some((1, UVec2::splat(64))));
+        append(&mut records, 4651, &material, &invalid, Vec4::new(0.0, 0.0, 64.0, 64.0), UVec2::splat(64), false, &mut |_| Some((1, UVec2::splat(64))));
         assert_eq!(records[4651], [0; 4]);
     }
 
@@ -121,7 +130,7 @@ mod tests {
         for technique in 0..=2 {
             material.technique[0] = technique;
             let mut records = vec![[0; 4]; ITEM_CAPACITY];
-            append(&mut records, 4651, &material, &refs[..3], Vec4::new(0.0, 0.0, 64.0, 64.0), UVec2::splat(64), &mut |_| Some((1, UVec2::splat(64))));
+            append(&mut records, 4651, &material, &refs[..3], Vec4::new(0.0, 0.0, 64.0, 64.0), UVec2::splat(64), false, &mut |_| Some((1, UVec2::splat(64))));
             assert_eq!(records[ITEM_CAPACITY + 3][3], technique as u32);
             assert_eq!(records[ITEM_CAPACITY + 4], [0; 4]);
         }
@@ -149,7 +158,8 @@ fn installed_item_water_graphs_without_terrain_proxy_keep_all_support_sources() 
         let slot = art.present_slot(tile.tile_id).unwrap();
         append(&mut records, tile.tile_id, material, refs,
             Vec4::new(f32::from(tile.ec_start_x), f32::from(tile.ec_start_y), slot.logical_width(), slot.logical_height()),
-            UVec2::from_array(aux.water_primary_extent(source(refs, 1).unwrap().texture_id).expect("native primary extent")), &mut |source| {
+            UVec2::from_array(aux.water_primary_extent(source(refs, 1).unwrap().texture_id).expect("native primary extent")),
+            tile.flags & uocf::enhanced::tileart::TaeFlag::Rotated.bits() != 0, &mut |source| {
             let slot = aux.slot_for_texture_id(source.texture_id)?;
             (slot.logical_family == source.texture_type).then_some((1, UVec2::new(slot.width.into(), slot.height.into())))
         });

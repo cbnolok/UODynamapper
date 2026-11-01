@@ -25,10 +25,13 @@ XYZ, signed Z, heights and movement flags remain unchanged.
 Native comparison caught an additional UV error: the art atlas is trimmed, while
 the original image-window builder divides source pixels by the full primary
 image dimensions. Sampling the fourth map over quad-local 0..1 shrank blood 4651.
-The runtime now reconstructs the original UV window from `ec_start`, the native
-slot extent and the original primary extent. Item 7379 demonstrates why the latter
-cannot be inferred: its art crop is 64x28, its primary source is 64x64, and that
-primary is not also an auxiliary image.
+For ordinary image-window geometry, the runtime reconstructs UVs from `ec_start`,
+the native slot extent and the original primary extent. The separate `Rotated`
+camera-plane constructor at `0x45a080` instead writes literal unit UVs. Item 7379
+has a 64x28 fallback crop and a 64x64 primary, but its camera quad must sample the
+full fourth-stage image. A final source cross-check corrected the first crop fix,
+which had been applied too broadly. The lookup now distinguishes both constructors;
+the primary image's dimensions are never inferred from a different support map.
 
 `tex_aux_ec` now requires `metadata/water_primary_extents.bin`, containing sorted
 native `u32 [id,width,height]` rows. The converter reads these dimensions before
@@ -46,7 +49,8 @@ stage/alpha operations, explicit UV modes, unsigned displacement, paused/animate
 translation and a trimmed native window. A normal renderer build was used for
 native acceptance.
 
-Five isolated previews produced 24 frames and 35 completed GPU picks. All verified
+Seven isolated previews retain 27 accepted frames and 34 completed GPU picks,
+excluding three superseded camera-quad fixtures from the first matrix. All verified
 exact-process Desktop 4 placement, cleanup and unchanged OS focus/pointer, with no
 shader validation errors. They cover:
 
@@ -57,9 +61,11 @@ shader validation errors. They cover:
 - Animation enabled: all 61 direct materials have zero authored Tweaks, so the
   blood remains still (at most one-byte channel noise), while bridge water moves.
 
-Bridge and town controls differ from the prior accepted path by at most one byte
+Bridge and town controls differ from the prior accepted path by at most two bytes
 per channel outside the inspector overlay. The earlier shrunken-mask pilot and
 interrupted/reused-destination Classic runs are not acceptance evidence.
+The final `camera-uv-final` and `camera-uv-perspective` checks cover the corrected
+7379/7442 domain, an ordinary cropped blood control and unchanged bridge controls.
 
 The canonical-source auxiliary rebuild has exactly one added metadata entry,
 zero removed entries and zero changed decoded payloads among all 652 previous

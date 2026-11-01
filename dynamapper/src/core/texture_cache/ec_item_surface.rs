@@ -86,7 +86,7 @@ pub(super) fn create_lookup(
                 source(refs, 1).and_then(|r| aux?.water_primary_extent(r.texture_id))) {
                 water::append(&mut records, tile.tile_id, material, tilemeta.item_texture_refs(tile.tile_id),
                     Vec4::new(f32::from(tile.ec_start_x), f32::from(tile.ec_start_y), slot.logical_width(), slot.logical_height()),
-                    UVec2::from_array(extent), &mut assign);
+                    UVec2::from_array(extent), tile.flags & uocf::enhanced::tileart::TaeFlag::Rotated.bits() != 0, &mut assign);
             }
         }
     }

@@ -1048,6 +1048,15 @@ required water-primary extent sidecar supplies the original source dimensions
 without uploading fallback pixels. Never infer those dimensions from a fourth
 map merely because common blood assets happen to have the same dimensions.
 
+This reconstruction applies only to ordinary image-window geometry. The separate
+`Rotated` camera-plane branch at `0x45a080` writes literal unit UVs as recorded
+above. Its support stages must keep that unit domain even when the fallback art
+atlas is trimmed. Item 7379 is such a camera quad: mapping its 64x28 fallback crop
+over the fourth-stage image would incorrectly select only part of that image.
+The direct lookup therefore writes a unit window for the same authored flag that
+the collector uses, in both supported projections. A CPU regression distinguishes
+the two constructors using the same nontrivial art crop.
+
 The direct path retains the current camera adapter and flat-water diffuse
 response. It establishes source stages and source-window alignment, not full
 original-client camera/clock/alpha-property waveform parity. The separate

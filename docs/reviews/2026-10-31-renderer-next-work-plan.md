@@ -154,11 +154,13 @@ and 6,695 Classic fallback. These are dated data-side findings from
 they do not establish completed native material composition.
 
 The concrete appearance follow-up is 61 UOWaterShader items (blood 4651–4654,
-5701 and 7367–7442). Without a matching terrain liquid graph they currently take
-the EcSurface primary-color path. The handoff identifies original water maps
+5701 and sparse IDs within 7367–7442). Before the direct item-water phase, these
+took the EcSurface primary-color path without a matching terrain liquid graph.
+The handoff identifies original water maps
 0 bump 1000020, 2 reflection 4000001 and 3 the item's own WorldArt; their support
-images are present in tex_aux_ec. Trace this bounded material path before
-changing global water appearance or treating it as missing source data.
+images are present in tex_aux_ec. The direct path now uses those stages and
+distinguishes cropped image-window UVs from the flagged camera quad's unit UVs.
+Native primary extents are retained separately from optional texture upscaling.
 Non-liquid terrain-provenance fallback branches and never-incremented unresolved
 counters in `statics_collect.rs` were also identified for a later minimal review.
 
