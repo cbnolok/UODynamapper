@@ -122,8 +122,14 @@ Editing `.uop` packages (`uop_container::package`):
     statics by map coordinates, neighbour delimiters kept in step across
     sectors, layout-preserving save, from-scratch packages with `data.map`),
     `facet_encoder` (Classic map + statics to `facetN.uop` + `facetNN.dds`),
-    and `uocf-cli facet` (`dump-cell`, `patch-cell`, `rebuild-radar`,
-    `from-classic`, `dump-def`, `patch-def`).
+    `facet_to_classic` (an EC or KR facet back to Classic map and statics,
+    listing what the Classic files cannot hold: stale delimiters, KR
+    materials and subtypes other than the land map's, graphics or hues above
+    0xFFFF, missing sectors), and `uocf-cli facet` (`dump-cell`,
+    `patch-cell`, `rebuild-radar`, `from-classic`, `convert`,
+    `patch-classic`, `dump-def`, `patch-def`). EC → Classic → EC keeps every
+    square but the stale delimiters; the Classic facets from the shipped EC
+    base editions equal the 2024 client's files (`classic_map_writers`).
   - Map editions (`uocf::map_edition::MapEdition`): `facetNx.uop` (N = 0, 1,
     2, 5) is an alternate edition the server selects with the 0xA9 flag
     0x8000 (the client mounts it in place of `facetN.uop`), never a patch layer

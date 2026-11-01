@@ -19,7 +19,8 @@ use super::kr_land_map::KrLandMap;
 use crate::classic::map::MapPlane;
 use crate::classic::statics::StaticsReader;
 use crate::enhanced::client_dialect::ClientDialect;
-use crate::enhanced::facet_encoder::build_facet;
+use crate::classic::world::ClassicWorld;
+use crate::enhanced::facet_encoder::{build_facet, ClassicFiles};
 use crate::enhanced::facet_package::EcFacetPackage;
 use crate::enhanced::facet_radar::{radar_dds_file_name, FacetRadarDds, RadarPalette};
 use crate::enhanced::facet_sector::facet_package_file_name;
@@ -53,9 +54,22 @@ pub fn build_kr_facet_from_classic(
     palette: &RadarPalette,
     land_map: &KrLandMap,
 ) -> eyre::Result<(EcFacetPackage, FacetRadarDds)> {
-    build_facet(map_plane, statics, facet, palette, ClientDialect::KingdomReborn, &|classic| {
+    let mut source = ClassicFiles { plane: map_plane, statics };
+    let (package, radar) = build_facet(&mut source, facet, Some(palette), ClientDialect::KingdomReborn, &|classic| {
         land_map.square_land(classic)
-    })
+    })?;
+    Ok((package, radar.expect("a palette gives a radar image")))
+}
+
+/// Builds the KR facet package (in memory) of a facet held in memory, and its radar image when `palette` is
+/// given. The facet size is the world's. Fails on a Classic land id `land_map` lacks.
+pub fn build_kr_facet_from_world(
+    world: &ClassicWorld,
+    facet: u8,
+    palette: Option<&RadarPalette>,
+    land_map: &KrLandMap,
+) -> eyre::Result<(EcFacetPackage, Option<FacetRadarDds>)> {
+    build_facet(&mut &*world, facet, palette, ClientDialect::KingdomReborn, &|classic| land_map.square_land(classic))
 }
 
 // endregion: --- Public API

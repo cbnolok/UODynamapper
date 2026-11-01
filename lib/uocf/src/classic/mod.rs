@@ -1,12 +1,16 @@
 pub mod light;
 pub mod land_texture;
 pub mod map;
+pub mod map_write;
 pub mod tiledata;
 pub mod art;
 pub mod art_write;
 pub mod hues;
 pub mod radarcol;
 pub mod statics;
+pub mod statics_write;
+pub mod target_client;
+pub mod world;
 pub mod anim;
 pub mod anim_frames;
 pub mod animdata;

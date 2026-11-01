@@ -133,7 +133,7 @@ pub fn classic_map_size(map_index: u32, block_count: u64, trailing_blocks: u64) 
 }
 
 /// The name of entry `entry_index` of a `map{map_index}LegacyMUL.uop` package.
-fn uop_map_entry_name(map_index: u32, entry_index: u32) -> String {
+pub fn uop_map_entry_name(map_index: u32, entry_index: u32) -> String {
     format!("build/map{map_index}legacymul/{entry_index:08}.dat")
 }
 
@@ -488,13 +488,13 @@ pub struct MapCellRelPos {
 }
 
 // Size of a map plane, expressed in cells/tiles.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MapSizeCells {
     pub width: u32,
     pub height: u32,
 }
 // Size of a map plane, expressed in blocks.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MapSizeBlocks {
     pub width: u32,
     pub height: u32,

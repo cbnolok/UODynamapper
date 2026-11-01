@@ -17,6 +17,7 @@ mod classic_client_eras;
 mod classic_def_files;
 mod classic_dif_usage;
 mod classic_indexed_mul_writers;
+mod classic_map_writers;
 mod classic_facet_difs;
 mod classic_mul_writers;
 mod classic_speech_and_skills;
