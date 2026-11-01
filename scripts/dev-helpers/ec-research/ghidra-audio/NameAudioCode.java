@@ -134,9 +134,25 @@ public class NameAudioCode extends GhidraScript {
         new Entry("004951c0", UO_AUDIO, "InitAudio", false, "AudioSystem_Init(\"data/audio\"), then"
             + " LoadEffectsTable", "string:data/audio", "calls:00726bf4", "calls:004937e0"),
         new Entry("004937e0", UO_AUDIO, "LoadEffectsTable", false, "data/audio/audio_effects.csv: rows marker,"
-            + " ID# (atol), sound structure name (a leading digit is read as an id, else a name lookup);"
-            + " ';' rows are comments; ID# = server sound id + 1", "string:audio_effects.csv",
-            "calls:00824bf0", "calls:0072773a"),
+            + " ID# (atol), sound structure name (a leading digit: atol, taken as the structure handle; else"
+            + " FindStructureHandle); ';' rows are comments; ID# = server sound id + 1",
+            "string:audio_effects.csv", "calls:00824bf0", "calls:0072773a"),
+        new Entry("0072773a", MYTH_AUDIO, "FindStructureHandle", false, "name to structure handle: the name"
+            + " tables at +0x80 (sounds, id | 0x10000), +0xac (| 0x20000), +0xd8 (| 0x40000), +0x104"
+            + " (| 0x80000), +0x15c (| 0x1000000) and +0x188 (| 0x400000) in turn; 0 when none holds it",
+            "calls:0072664d", "calledby:004937e0"),
+        new Entry("0072664d", MYTH_AUDIO, "NameTable_FindId", false, "the id stored with a name (+0x58 of its"
+            + " record); 0 when the table does not hold it", "calls:0072680d", "calledby:0072773a"),
+        new Entry("0072667f", MYTH_AUDIO, "NameTable_AddName", false, "a new name gets the next id of the"
+            + " table's allocator; 0 when the name is already there (ParseSoundsCsv: duplicate, no id; the"
+            + " sound structures get ids from the +0x80 table in the order they are accepted)",
+            "calls:0072680d", "calls:00826211", "calledby:0072836a"),
+        new Entry("00826211", MYTH_AUDIO, "IdAllocator_Next", true, "IdAllocator_FindFree from the hint up to"
+            + " the maximum, tried a second time when the first fails", "calls:008262bc",
+            "calledby:0072667f"),
+        new Entry("008262bc", MYTH_AUDIO, "IdAllocator_FindFree", false, "bitmap scan from the given id up to"
+            + " the maximum: marks the first free id, returns it and sets the hint to it + 1",
+            "calledby:00826211"),
         new Entry("00726bf4", MYTH_AUDIO, "AudioSystem_Init", false, "Miles start-up and AudioSystem_LoadCsvFiles"
             + " of the given directory", "string:Audio system successfully initialized", "calls:0072821f"),
         new Entry("0072821f", MYTH_AUDIO, "AudioSystem_LoadCsvFiles", false, "\"<dir>/audio_\" + sounds.csv,"

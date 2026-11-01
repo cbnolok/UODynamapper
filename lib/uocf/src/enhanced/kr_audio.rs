@@ -4,8 +4,10 @@
 //! - `data/audio/audio_sounds.csv` ([`KrSoundTable`], `MythAudio::ParseSoundsCsv`): MythAudio sound structures.
 //! - `data/audio/audio_effects.csv` ([`KrEffectsTable`], `UOAudio::LoadEffectsTable`): `ID#` and a structure
 //!   name. `ID#` is the server's sound id + 1 ([`KR_EFFECT_ID_OFFSET`]: "Mythic code assumes ID 0 to be invalid");
-//!   the Enhanced Client has no such offset. [`KrAudioTables::sound_for_server_id`] follows a server id to the
-//!   structure and its file.
+//!   the Enhanced Client has no such offset. A structure starting with a digit is a structure handle
+//!   ([`KrEffectRow::structure_handle`]): `0x10000 | n` is the n-th sound structure the client accepted
+//!   ([`KrSoundTable::sound_by_id`]). [`KrAudioTables::sound_for_server_id`] follows a server id to the structure
+//!   and its file.
 //!
 //! Both are read with the client's CSV reader: a line ends at CR, LF or CRLF and holds at most
 //! [`KR_MAX_LINE_CHARS`] characters; fields are split at commas, a `"` toggles quoting and is dropped, nothing is
@@ -58,6 +60,14 @@ pub const KR_MAX_SOUND_NAMES: usize = 4000;
 pub const KR_MAX_STRUCTURES_PER_FILE: usize = 30;
 /// The fields of a sound entry after the first.
 pub const KR_SOUND_FIELDS: usize = 14;
+/// The sound entry that sets the default parameters: it is no structure and gets no id.
+pub const KR_DEFAULT_SOUND_NAME: &str = "s_default";
+/// A structure handle is a kind bit over a 16-bit id; this kind is the sound structures'
+/// (`MythAudio::FindStructureHandle`).
+pub const KR_SOUND_HANDLE_KIND: u32 = 0x1_0000;
+pub const KR_HANDLE_ID_MASK: u32 = 0xffff;
+/// The first id the client gives a sound structure.
+pub const KR_FIRST_SOUND_ID: u32 = 1;
 const FIELD_SEPARATOR: char = ',';
 const QUOTE: char = '"';
 const DIRECTIVE_MARK: char = '!';
@@ -296,6 +306,8 @@ pub struct KrSoundTable {
     lines: Vec<(CsvLine, KrSoundLine)>,
     /// The first structure of each name: its index in `lines`.
     by_name: HashMap<String, usize>,
+    /// The structures the client gives an id, in id order from [`KR_FIRST_SOUND_ID`]: their index in `lines`.
+    by_id: Vec<usize>,
 }
 
 impl KrSoundTable {
@@ -303,6 +315,7 @@ impl KrSoundTable {
     pub fn parse(source: &str, text: &str) -> eyre::Result<Self> {
         let mut lines = Vec::new();
         let mut by_name: HashMap<String, usize> = HashMap::new();
+        let mut by_id = Vec::new();
         let mut names_by_line: HashMap<String, usize> = HashMap::new();
         let mut section = None;
         let mut per_file: HashMap<String, usize> = HashMap::new();
@@ -335,6 +348,9 @@ impl KrSoundTable {
                         eyre::bail!("{source}:{}:1: more than the {KR_MAX_SOUND_NAMES} sound names the client takes", line.line);
                     }
                     by_name.insert(row.name.clone(), lines.len());
+                    if row.name != KR_DEFAULT_SOUND_NAME {
+                        by_id.push(lines.len());
+                    }
                     names_by_line.insert(row.name.clone(), line.line);
                     let users = per_file.entry(row.entry_name()).or_default();
                     *users += 1;
@@ -349,7 +365,7 @@ impl KrSoundTable {
             }
             lines.push((line, kind));
         }
-        Ok(Self { lines, by_name })
+        Ok(Self { lines, by_name, by_id })
     }
 
     fn parse_sound(source: &str, line: &CsvLine, names: &HashMap<String, usize>) -> eyre::Result<KrSoundRow> {
@@ -381,6 +397,21 @@ impl KrSoundTable {
         }
     }
 
+    /// The structure of id `id`: `ParseSoundsCsv` numbers the structures it accepts in their order, from
+    /// [`KR_FIRST_SOUND_ID`], leaving out `s_default` and the duplicates.
+    pub fn sound_by_id(&self, id: u32) -> Option<&KrSoundRow> {
+        let index = usize::try_from(id.checked_sub(KR_FIRST_SOUND_ID)?).ok()?;
+        match &self.lines[*self.by_id.get(index)?].1 {
+            KrSoundLine::Sound(row) => Some(row),
+            _ => None,
+        }
+    }
+
+    /// The structure a handle names, when it is a sound structure's.
+    pub fn sound_by_handle(&self, handle: u32) -> Option<&KrSoundRow> {
+        (handle & !KR_HANDLE_ID_MASK == KR_SOUND_HANDLE_KIND).then(|| self.sound_by_id(handle & KR_HANDLE_ID_MASK)).flatten()
+    }
+
     /// The lines the client skips, and the structures it skips as duplicates, one note each.
     pub fn client_notes(&self) -> Vec<String> {
         self.lines
@@ -402,7 +433,8 @@ pub struct KrEffectRow {
     pub line: usize,
     /// `ID#`: the server's sound id + [`KR_EFFECT_ID_OFFSET`].
     pub id: u32,
-    /// The sound structure (or group, queue, loop) name; a value starting with a digit is read as an id.
+    /// The sound structure (or group, queue, loop) name; a value starting with a digit is a structure handle
+    /// ([`Self::structure_handle`]).
     pub structure: String,
     /// The line of the first row of this id, when this one comes later. Which one the client keeps was not
     /// traced; [`KrEffectsTable::by_server_id`] takes the first.
@@ -414,7 +446,24 @@ impl KrEffectRow {
     pub fn server_id(&self) -> Option<u32> {
         self.id.checked_sub(KR_EFFECT_ID_OFFSET)
     }
+
+    /// The structure handle a structure starting with a digit is read as: `atol` of it (the leading digits, up to
+    /// `i32::MAX`), as `LoadEffectsTable` stores it. `None` for a name.
+    pub fn structure_handle(&self) -> Option<u32> {
+        if !self.structure.starts_with(|c: char| c.is_ascii_digit()) {
+            return None;
+        }
+        let max = u64::from(i32::MAX.unsigned_abs());
+        let value = self
+            .structure
+            .bytes()
+            .take_while(u8::is_ascii_digit)
+            .fold(0u64, |value, digit| (value * DECIMAL_RADIX + u64::from(digit - b'0')).min(max));
+        Some(u32::try_from(value).expect("at most i32::MAX"))
+    }
 }
+
+const DECIMAL_RADIX: u64 = 10;
 
 /// Kingdom Reborn's `data/audio/audio_effects.csv`: `;` comment rows and `,ID#,name[,...]` rows.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -503,7 +552,15 @@ impl KrAudioTables {
     /// The effects row of a server sound id, and the sound structure it names when it is one.
     pub fn sound_for_server_id(&self, server_id: u32) -> Option<(&KrEffectRow, Option<&KrSoundRow>)> {
         let effect = self.effects.as_ref()?.by_server_id(server_id)?;
-        Some((effect, self.sounds.sound(&effect.structure)))
+        Some((effect, self.structure_sound(effect)))
+    }
+
+    /// The sound structure an effects row names: by handle when it starts with a digit, else by name.
+    pub fn structure_sound(&self, effect: &KrEffectRow) -> Option<&KrSoundRow> {
+        match effect.structure_handle() {
+            Some(handle) => self.sounds.sound_by_handle(handle),
+            None => self.sounds.sound(&effect.structure),
+        }
     }
 
     /// The structures no effects row reaches and the effects rows naming no sound structure, as counts, and the
@@ -512,7 +569,7 @@ impl KrAudioTables {
         let mut notes: Vec<String> = self.sounds.client_notes().into_iter().map(|note| format!("audio_sounds.csv {note}")).collect();
         if let Some(effects) = &self.effects {
             notes.extend(effects.client_notes().into_iter().map(|note| format!("audio_effects.csv {note}")));
-            for row in effects.rows().filter(|row| row.duplicate_of.is_none() && self.sounds.sound(&row.structure).is_none()) {
+            for row in effects.rows().filter(|row| row.duplicate_of.is_none() && self.structure_sound(row).is_none()) {
                 notes.push(format!(
                     "audio_effects.csv line {}: ID# {} (server id {}) names `{}`, which is no sound structure",
                     row.line,
@@ -576,6 +633,18 @@ mod tests {
         assert!(tables.sound_for_server_id(2).is_none());
         let notes = tables.client_notes();
         assert!(notes.iter().any(|note| note.contains("ID# 2 is already defined on line 3")), "{notes:?}");
+
+        // A structure starting with a digit is a handle: 0x10000 | n, the n-th structure the client gave an id
+        // (s_default and the second `turfin` get none). 65537 is the forest, 65538 `turfin`, 65539 nothing.
+        let by_handle = KrAudioTables {
+            sounds: tables.sounds.clone(),
+            effects: Some(KrEffectsTable::parse("e.csv", ",1,65537\r\n,2,65538x\r\n,3,65539\r\n,4,1\r\n,5,99999999999").unwrap()),
+        };
+        let file = |server_id| by_handle.sound_for_server_id(server_id).unwrap().1.map(|row| row.filename.as_str());
+        assert_eq!(file(0), Some("Sounds\\aaaenvir\\Env_Forest.mp3"));
+        assert_eq!(file(1), Some("Music/turfin.mp3"), "atol stops at the first non-digit");
+        assert_eq!((file(2), file(3), file(4)), (None, None, None), "past the last id, another kind, LONG_MAX");
+        assert_eq!(by_handle.effects.as_ref().unwrap().by_server_id(4).unwrap().structure_handle(), Some(i32::MAX.unsigned_abs()));
         assert!(notes.iter().any(|note| note.contains("names `l_turfin`, which is no sound structure")), "{notes:?}");
     }
 

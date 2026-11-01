@@ -27,6 +27,11 @@ the two-column `audio_sounds.csv`.
 | 0x0072ec60 | `MythAudio::TrimWhitespace` | |
 | 0x0072ecf1 | `MythAudio::RemoveWhitespace` | |
 | 0x00729f4e | `MythAudio::ResolveNameId` | name → id table, `s_silence` reserved |
+| 0x0072773a | `MythAudio::FindStructureHandle` | name → structure handle, through six name tables |
+| 0x0072664d | `MythAudio::NameTable_FindId` | the id stored with a name, 0 when absent |
+| 0x0072667f | `MythAudio::NameTable_AddName` | a new name's id; 0 for a name already there |
+| 0x00826211 | `MythAudio::IdAllocator_Next` | probable |
+| 0x008262bc | `MythAudio::IdAllocator_FindFree` | bitmap id allocator |
 | 0x00824bf0 | `UOCsv::ReadStringField` | same reader as UOSA.exe |
 | 0x00662fa4 | `UOCsv::ReadField` | |
 
@@ -102,7 +107,21 @@ skipped.
 ### `audio_effects.csv` (`LoadEffectsTable`)
 
 **confirmed**. Rows: marker, `ID#` (`atol`), sound structure name. If the name starts with a digit it is
-read as an id, otherwise it is looked up by name. `;` rows are comments. The file states, and the data
+read as an id, otherwise it is looked up by name. `;` rows are comments.
+
+The id is a **structure handle** (**confirmed**: both branches store into the same map value). A name goes
+through `FindStructureHandle`, which looks it up in six name tables in turn and returns `id | kind`: the sound
+structures (+0x80, `| 0x10000`), then +0xac (`| 0x20000`), +0xd8 (`| 0x40000`), +0x104 (`| 0x80000`), +0x15c
+(`| 0x1000000`) and +0x188 (`| 0x400000`), presumably groups, queues, loops and the rest. A value starting with a
+digit is `atol`'d and stored as is, so `65537` (0x10001) is the sound structure of id 1.
+
+Sound structure ids: `ParseSoundsCsv` gives an entry an id with `NameTable_AddName` on the +0x80 table only
+after every field passed and when the name is not `s_default`; a name already there gets 0 (the "Duplicate
+sound sample name" message, no id); at most 4000. The table's ids come from a bitmap allocator
+(`IdAllocator_FindFree`: the first free id from the hint, which then moves past it). Nothing is freed while the
+tables load, so the structures are numbered in the order they are accepted. **probable**: that the first id is 1
+(a record is at `id * 0x98 - 0x98` in the array, so id 1 is the first record), and that `audio_sounds.csv` is
+the only file adding to the +0x80 table (the only callers are the CSV parsers, each on its own table). The file states, and the data
 agrees, that `ID#` = server sound id + 1: "Mythic code assumes ID 0 to be invalid". The EC has no such
 offset.
 

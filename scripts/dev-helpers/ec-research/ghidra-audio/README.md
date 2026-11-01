@@ -84,7 +84,7 @@ Results of the 2026-11-01 runs:
 | Program | Functions named and tagged |
 |---|---|
 | UOSA.exe | 21 |
-| UOKR.exe | 18 |
+| UOKR.exe | 23 (5 added later the same day: the structure handles of `audio_effects.csv`) |
 | classic_7.0.103.0_client.exe | 12 |
 | gold_client.exe | 2 |
 | mss32.dll | 5 |
