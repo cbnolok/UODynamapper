@@ -4077,3 +4077,52 @@ struct TileartSupportRefRecord {
 }
 
 // endregion: --- Tileart liquid/surface report
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn no_archives() -> EcPackageMembership {
+        EcPackageMembership { texture: None, legacy_texture: None, terrain_texture: None, effect_texture: None }
+    }
+
+    #[test]
+    fn census_guesses_the_archive_from_the_path_folder() {
+        let membership = no_archives();
+        let cases = [
+            ("Data/WorldArt/00012345.dds", "Texture.uop"),
+            ("data/tileartlegacy/00000001.dds", "LegacyTexture.uop"),
+            ("data/legacyland/00000003.dat", "LegacyTexture.uop"),
+            ("Data/Textures/grass.dds", "TerrainTexture.uop"),
+            ("data/terraintexture/00000007.dds", "TerrainTexture.uop"),
+            ("data/effecttexture/spark.dds", "EffectTexture.uop"),
+            ("data/effects/glow.tga", "EffectTexture.uop"),
+            ("data/systemtextures/missing.tga", "SystemTextures"),
+            ("data/shaders/noise.dds", "ShaderResources"),
+            // The folder wins over a name that also mentions shaders.
+            ("data/worldart/shader_noise.dds", "Texture.uop"),
+        ];
+        for (raw_path, expected) in cases {
+            let normalized = normalize_dictionary_path(raw_path);
+            assert_eq!(physical_package_guess(&normalized, Some(1), &membership), expected, "{raw_path}");
+        }
+    }
+
+    #[test]
+    fn census_without_a_path_or_an_archive_hit_is_unknown() {
+        let membership = no_archives();
+        assert_eq!(physical_package_guess("", Some(12_345), &membership), "Unknown");
+        assert_eq!(physical_package_guess("", None, &membership), "Unknown");
+        assert_eq!(physical_package_guess("data\\elsewhere\\x.dds", None, &membership), "Unknown");
+    }
+
+    #[test]
+    fn census_terrain_family_falls_back_to_the_archive_only_when_undefined() {
+        assert_eq!(terrain_texture_family_name(TerrainTextureType::Undefined, "TerrainTexture.uop"), "Textures");
+        assert_eq!(terrain_texture_family_name(TerrainTextureType::Undefined, "EffectTexture.uop"), "Effects");
+        assert_eq!(terrain_texture_family_name(TerrainTextureType::Undefined, "Unknown"), "Unknown");
+        assert_eq!(terrain_texture_family_name(TerrainTextureType::WorldArt, "TerrainTexture.uop"), "WorldArt");
+        assert_eq!(tileart_texture_family_name(TileArtTextureType::Undefined), "Unknown");
+        assert_eq!(tileart_texture_family_name(TileArtTextureType::Textures), "Textures");
+    }
+}
