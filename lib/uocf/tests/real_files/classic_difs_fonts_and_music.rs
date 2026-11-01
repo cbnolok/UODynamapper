@@ -11,6 +11,7 @@ use uocf::classic::facet_sources::{MapDifFiles, StaticDifFiles};
 use uocf::classic::fonts::{
     ASCII_GLYPH_COUNT, AsciiFontsFile, UNICODE_FONT_FILES_MAX, UnicodeFontData, UnicodeFontGlyph, UnicodeFontSlot, unicode_font_file_name,
 };
+use uocf::classic::music::{MUSIC_CONFIG_FILE_NAME, MusicConfig};
 use uocf::classic::statics_write::StaticRecord;
 use uocf::utils::path::find_file_ignoring_case;
 
@@ -123,4 +124,30 @@ fn classic_fonts_write_back_byte_for_byte() {
         }
     }
     assert!(checked > 0, "no client in {CLIENT_ROOTS_ENV} ships a font");
+}
+
+#[test]
+#[ignore = "needs real Classic clients: set UO_CLASSIC_CLIENT_ROOTS and run with --ignored"]
+fn classic_music_config_writes_back_byte_for_byte() {
+    let mut checked = 0;
+    for root in client_roots() {
+        let client = label(&root);
+        let Some(mut config) = MusicConfig::load(&root).unwrap_or_else(|error| panic!("{client} {MUSIC_CONFIG_FILE_NAME}: {error:#}")) else {
+            continue;
+        };
+        let path = find_file_ignoring_case(&config.directory, MUSIC_CONFIG_FILE_NAME).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(config.to_text(), text, "{client} {MUSIC_CONFIG_FILE_NAME}");
+        println!("{client}: {MUSIC_CONFIG_FILE_NAME} ({} entries) written back byte for byte", config.len());
+
+        let entry = config.iter().next().unwrap().clone();
+        config.set(entry.id, &entry.name, None).unwrap();
+        let edited = config.to_text();
+        let changed: Vec<(&str, &str)> = text.split('\n').zip(edited.split('\n')).filter(|(a, b)| a != b).collect();
+        assert_eq!(changed.len(), 1, "{client}: only the edited line changes: {changed:?}");
+        let back = MusicConfig::parse(MUSIC_CONFIG_FILE_NAME, &edited).unwrap();
+        assert_eq!((back.get(entry.id).unwrap().flag.as_ref(), back.len()), (None, config.len()), "{client}: the edited entry");
+        checked += 1;
+    }
+    assert!(checked > 0, "no client in {CLIENT_ROOTS_ENV} ships {MUSIC_CONFIG_FILE_NAME}");
 }

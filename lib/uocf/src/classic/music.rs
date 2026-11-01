@@ -31,6 +31,9 @@
 //!
 //! UO Gold's names have no extension (`turfin,loop`); the current client's have `.mp3`. UO Gold's line 10 reads
 //! `9 britainpos,lop`.
+//!
+//! [`MusicConfig::to_text`] writes every line back as read (comments, blank lines, spacing and line ends too), so
+//! an unchanged file comes back byte for byte; an entry set with [`MusicConfig::set`] is written `id name[,flag]`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -65,8 +68,10 @@ pub struct MusicEntry {
     pub flag: Option<String>,
     /// The tokens before the last one, which the client ignores.
     pub ignored_tokens: Vec<String>,
-    /// The 1-based line number.
+    /// The 1-based line number (0 for an entry set with [`MusicConfig::set`]).
     pub line: usize,
+    /// The line as read, written back while the entry is unchanged.
+    raw: Option<String>,
 }
 
 impl MusicEntry {
@@ -81,17 +86,34 @@ impl MusicEntry {
     }
 }
 
+/// One line of the file, in file order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ConfigLine {
+    /// A blank or comment line, as read (the CR of a CRLF end too).
+    Skipped(String),
+    Entry(u32),
+}
+
 fn file_name_of(name: &str) -> String {
     let tail_start = name.char_indices().rev().nth(EXTENSION_WINDOW - 1).map_or(0, |(index, _)| index);
     if name[tail_start..].contains('.') { name.to_owned() } else { format!("{name}{MUSIC_EXTENSION}") }
 }
 
 /// `Music/Digital/Config.txt`.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MusicConfig {
     /// The `Music/Digital` folder.
     pub directory: PathBuf,
     entries: BTreeMap<u32, MusicEntry>,
+    lines: Vec<ConfigLine>,
+    /// Whether the lines end in CRLF (the shipped files' ends), as the first one does.
+    crlf: bool,
+}
+
+impl Default for MusicConfig {
+    fn default() -> Self {
+        Self { directory: PathBuf::new(), entries: BTreeMap::new(), lines: Vec::new(), crlf: true }
+    }
 }
 
 impl MusicConfig {
@@ -115,6 +137,8 @@ impl MusicConfig {
     /// Parses `text`; errors name `source`, the line and the column.
     pub fn parse(source: &str, text: &str) -> eyre::Result<Self> {
         let mut entries: BTreeMap<u32, MusicEntry> = BTreeMap::new();
+        let mut lines = Vec::new();
+        let crlf = text.split_once('\n').is_none_or(|(first, _)| first.ends_with('\r'));
         for (index, raw) in text.split('\n').enumerate() {
             let line_number = index + 1;
             if raw.len() > CONFIG_MAX_LINE_BYTES {
@@ -127,9 +151,10 @@ impl MusicConfig {
             }
             let line = raw.trim_end_matches(|c: char| c < FIRST_KEPT_CHAR);
             if line.is_empty() || line.starts_with(COMMENT_MARK) {
+                lines.push(ConfigLine::Skipped(raw.to_owned()));
                 continue;
             }
-            let entry = parse_line(line, line_number)
+            let mut entry = parse_line(line, line_number)
                 .map_err(|(column, message)| eyre!("{source}:{line_number}:{column}: {message} (expected `id name[,flag]`)"))?;
             if let Some(previous) = entries.get(&entry.id) {
                 eyre::bail!(
@@ -138,9 +163,80 @@ impl MusicConfig {
                     previous.line
                 );
             }
+            entry.raw = Some(raw.to_owned());
+            lines.push(ConfigLine::Entry(entry.id));
             entries.insert(entry.id, entry);
         }
-        Ok(Self { directory: PathBuf::new(), entries })
+        Ok(Self { directory: PathBuf::new(), entries, lines, crlf })
+    }
+
+    /// The text of the file: every line as read, an entry set since as `id name[,flag]`.
+    pub fn to_text(&self) -> String {
+        let lines: Vec<String> = self
+            .lines
+            .iter()
+            .map(|line| match line {
+                ConfigLine::Skipped(text) => text.clone(),
+                ConfigLine::Entry(id) => {
+                    let entry = &self.entries[id];
+                    entry.raw.clone().unwrap_or_else(|| {
+                        let flag = entry.flag.as_ref().map_or_else(String::new, |flag| format!("{FLAG_SEPARATOR}{flag}"));
+                        let end = if self.crlf { "\r" } else { "" };
+                        format!("{}{TOKEN_SEPARATOR}{}{flag}{end}", entry.id, entry.name)
+                    })
+                }
+            })
+            .collect();
+        lines.join("\n")
+    }
+
+    /// Writes [`Self::to_text`] to `path`, through a temporary file in its folder.
+    pub fn save(&self, path: &Path) -> eyre::Result<()> {
+        let text = self.to_text();
+        crate::utils::output_file::write_through_temp(path, |temp| {
+            std::fs::write(temp, &text).wrap_err_with(|| format!("write {}", temp.display()))
+        })
+    }
+
+    /// Sets the file of music `id`: in its line when it has one, else in a new line before the first entry of a
+    /// greater id (after the last entry when none is greater). The name and the flag are checked as the parser
+    /// checks them.
+    pub fn set(&mut self, id: u32, name: &str, flag: Option<&str>) -> eyre::Result<()> {
+        let value = match flag {
+            Some(flag) => format!("{name}{FLAG_SEPARATOR}{flag}"),
+            None => name.to_owned(),
+        };
+        if value.contains(TOKEN_SEPARATOR) {
+            eyre::bail!("music id {id}: `{value}` holds a space, and the client splits the line at spaces");
+        }
+        let line = format!("{id}{TOKEN_SEPARATOR}{value}");
+        let mut entry = parse_line(&line, 0).map_err(|(column, message)| eyre!("music id {id}: `{line}`:{column}: {message}"))?;
+        if entry.name != name || entry.flag.as_deref() != flag {
+            eyre::bail!("music id {id}: `{line}` reads back as name `{}` and flag {:?}", entry.name, entry.flag);
+        }
+        if line.len() > CONFIG_MAX_LINE_BYTES {
+            eyre::bail!("music id {id}: the line has {} bytes; the client reads {CONFIG_MAX_LINE_BYTES}", line.len());
+        }
+        match self.entries.get(&id) {
+            Some(previous) => entry.line = previous.line,
+            None => {
+                let position = self
+                    .lines
+                    .iter()
+                    .position(|line| matches!(line, ConfigLine::Entry(other) if *other > id))
+                    .or_else(|| self.lines.iter().rposition(|line| matches!(line, ConfigLine::Entry(_))).map(|last| last + 1))
+                    .unwrap_or(self.lines.len());
+                self.lines.insert(position, ConfigLine::Entry(id));
+            }
+        }
+        self.entries.insert(id, entry);
+        Ok(())
+    }
+
+    /// Removes the line of `id`; returns whether it had one.
+    pub fn remove(&mut self, id: u32) -> bool {
+        self.lines.retain(|line| *line != ConfigLine::Entry(id));
+        self.entries.remove(&id).is_some()
     }
 
     pub fn len(&self) -> usize {
@@ -240,6 +336,7 @@ fn parse_line(line: &str, line_number: usize) -> Result<MusicEntry, (usize, Stri
         flag: flag.map(str::to_owned),
         ignored_tokens: tokens[..tokens.len() - 1].iter().map(|(_, token)| (*token).to_owned()).collect(),
         line: line_number,
+        raw: None,
     })
 }
 
@@ -271,6 +368,27 @@ mod tests {
         let notes = config.client_notes();
         assert_eq!(notes.len(), 1);
         assert!(notes[0].contains("line 7: music id 6: the client takes the last token"), "{notes:?}");
+    }
+
+    #[test]
+    fn writes_every_line_back_and_edits_only_its_own() {
+        let text = "# music\r\n0 turfin,loop\r\n\r\n9 britainpos,lop   \r\n64 SelimsBar.mp3\r\n";
+        let mut config = MusicConfig::parse("Config.txt", text).unwrap();
+        assert_eq!(config.to_text(), text);
+        config.set(9, "britainpos", Some("loop")).unwrap();
+        config.set(5, "new.mp3", None).unwrap();
+        config.set(70, "last", Some("loop")).unwrap();
+        assert!(config.remove(64));
+        let edited = config.to_text();
+        assert_eq!(edited, "# music\r\n0 turfin,loop\r\n\r\n5 new.mp3\r\n9 britainpos,loop\r\n70 last,loop\r\n");
+        assert_eq!(MusicConfig::parse("Config.txt", &edited).unwrap().get(9).unwrap().flag.as_deref(), Some("loop"));
+        let mut lf = MusicConfig::parse("Config.txt", "1 a\n").unwrap();
+        lf.set(2, "b", None).unwrap();
+        assert_eq!(lf.to_text(), "1 a\n2 b\n", "the new line ends as the first one does");
+        assert!(config.set(1, "two words", None).is_err());
+        assert!(config.set(1, "song.wav", None).is_err());
+        assert!(config.set(1, "song", Some("")).is_err());
+        assert!(config.set(1, "", Some("loop")).is_err());
     }
 
     #[test]
