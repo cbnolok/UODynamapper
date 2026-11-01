@@ -7,10 +7,9 @@ pub(super) fn from_uop(
     out_file: &Path,
     out_file_idx: Option<&Path>,
     file_type: FileType,
-    type_index: i32,
     housing_bin_file: Option<&Path>,
 ) -> io::Result<()> {
-    let (chunk_ids, chunk_ids2, max_id) = build_chunk_id_maps(file_type, type_index);
+    let (chunk_ids, chunk_ids2, max_id) = build_chunk_id_maps(file_type);
     let mut used = vec![false; max_id as usize];
 
     let mut reader = BufReader::new(File::open(in_file)?);
@@ -57,12 +56,6 @@ pub(super) fn from_uop(
             let chunk_id = resolve_chunk_id(&chunk_ids, &chunk_ids2, entry.identifier)?;
             let decompressed_chunk_data = read_and_decompress_entry(&mut reader, &entry)?;
 
-            if file_type == FileType::MapLegacyMul {
-                mul_writer.seek(SeekFrom::Start(chunk_id as u64 * 0xC4000))?;
-                mul_writer.write_all(&decompressed_chunk_data)?;
-                continue;
-            }
-
             write_non_map_chunk(
                 &mut mul_writer,
                 idx_writer.as_mut(),
@@ -78,22 +71,15 @@ pub(super) fn from_uop(
         write_unused_idx_entries(idx_writer, &used)?;
     }
 
-    if file_type == FileType::MapLegacyMul {
-        mul_writer.flush()?;
-        let current_size = File::open(out_file)?.metadata()?.len();
-        warn_if_non_standard_map_size(out_file, type_index, current_size);
-    }
-
     Ok(())
 }
 
 fn build_chunk_id_maps(
     file_type: FileType,
-    type_index: i32,
 ) -> (HashMap<u64, i32>, HashMap<u64, i32>, i32) {
     let mut chunk_ids = HashMap::new();
     let mut chunk_ids2 = HashMap::new();
-    let (format_0, format_1, max_id) = get_hash_format(file_type, type_index);
+    let (format_0, format_1, max_id) = get_hash_format(file_type);
 
     for i in 0..max_id {
         let identifier_str = format_0.replace("{0:00000000}", &format!("{:08}", i));

@@ -13,7 +13,6 @@ use std::{
 };
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use log::warn;
 use flate2::read::ZlibDecoder;
 use uocf::uop_container::{
     compression::{mythic_decompress, zlib_bwt_codec},
@@ -29,7 +28,6 @@ mod unpack;
 pub enum FileType {
     ArtLegacyMul,
     GumpartLegacyMul,
-    MapLegacyMul,
     SoundLegacyMul,
     MultiCollection,
 }
@@ -84,7 +82,6 @@ impl LegacyMulFileConverter {
         in_file_idx: Option<&Path>,
         out_file: &Path,
         file_type: FileType,
-        type_index: i32,
         compression_flag: CompressionFlag,
     ) -> io::Result<()> {
         pack::to_uop(
@@ -92,7 +89,6 @@ impl LegacyMulFileConverter {
             in_file_idx,
             out_file,
             file_type,
-            type_index,
             compression_flag,
         )
     }
@@ -102,7 +98,6 @@ impl LegacyMulFileConverter {
         out_file: &Path,
         out_file_idx: Option<&Path>,
         file_type: FileType,
-        type_index: i32,
         housing_bin_file: Option<&Path>,
     ) -> io::Result<()> {
         unpack::from_uop(
@@ -110,7 +105,6 @@ impl LegacyMulFileConverter {
             out_file,
             out_file_idx,
             file_type,
-            type_index,
             housing_bin_file,
         )
     }
@@ -121,7 +115,6 @@ fn compression_flag_for(file_type: FileType, compression_flag: CompressionFlag) 
         file_type,
         FileType::ArtLegacyMul
             | FileType::GumpartLegacyMul
-            | FileType::MapLegacyMul
             | FileType::SoundLegacyMul
     ) {
         CompressionFlag::None
@@ -151,42 +144,7 @@ fn read_and_decompress_entry(
     }
 }
 
-fn expected_map_file_size(type_index: i32) -> Option<u64> {
-    match type_index {
-        0 => Some(89_915_392),
-        1 => Some(89_915_392),
-        2 => Some(11_289_600),
-        3 => Some(16_056_320),
-        4 => Some(6_421_156),
-        5 => Some(16_056_320),
-        _ => None,
-    }
-}
-
-fn warn_if_non_standard_map_size(out_file: &Path, type_index: i32, current_size: u64) {
-    match expected_map_file_size(type_index) {
-        Some(expected_size) if current_size != expected_size => {
-            warn!(
-                "warning: map file '{}' has size {} bytes, expected {} bytes for standard map{}; keeping non-standard size as-is.",
-                out_file.display(),
-                current_size,
-                expected_size,
-                type_index,
-            );
-        }
-        Some(_) => {}
-        None => {
-            warn!(
-                "warning: map file '{}' uses unknown map type {}; generated size is {} bytes.",
-                out_file.display(),
-                type_index,
-                current_size,
-            );
-        }
-    }
-}
-
-fn get_hash_format(file_type: FileType, type_index: i32) -> (String, String, i32) {
+fn get_hash_format(file_type: FileType) -> (String, String, i32) {
     let mut max_id = 0x7FFFF;
 
     let (format_0, format_1) = match file_type {
@@ -200,10 +158,6 @@ fn get_hash_format(file_type: FileType, type_index: i32) -> (String, String, i32
         FileType::GumpartLegacyMul => (
             "build/gumpartlegacymul/{0:00000000}.tga".to_string(),
             "build/gumpartlegacymul/{0:0000000}.tga".to_string(),
-        ),
-        FileType::MapLegacyMul => (
-            format!("build/map{}legacymul/{{0:00000000}}.dat", type_index),
-            String::new(),
         ),
         FileType::SoundLegacyMul => (
             "build/soundlegacymul/{0:00000000}.dat".to_string(),
@@ -366,16 +320,14 @@ mod tests {
             Some(&sound_idx),
             &sound_uop,
             FileType::SoundLegacyMul,
-            0,
-            CompressionFlag::Zlib,
+                        CompressionFlag::Zlib,
         )?;
         LegacyMulFileConverter::from_uop(
             &sound_uop,
             &out_mul,
             Some(&out_idx),
             FileType::SoundLegacyMul,
-            0,
-            None,
+                        None,
         )?;
 
         assert_eq!(std::fs::read(&out_mul)?, payload);
@@ -406,16 +358,14 @@ mod tests {
             Some(&art_idx),
             &art_uop,
             FileType::ArtLegacyMul,
-            0,
-            CompressionFlag::Zlib,
+                        CompressionFlag::Zlib,
         )?;
         LegacyMulFileConverter::from_uop(
             &art_uop,
             &out_mul,
             Some(&out_idx),
             FileType::ArtLegacyMul,
-            0,
-            None,
+                        None,
         )?;
 
         assert_eq!(std::fs::read(&out_mul)?, payload);
@@ -444,55 +394,18 @@ mod tests {
             Some(&gump_idx),
             &gump_uop,
             FileType::GumpartLegacyMul,
-            0,
-            CompressionFlag::Zlib,
+                        CompressionFlag::Zlib,
         )?;
         LegacyMulFileConverter::from_uop(
             &gump_uop,
             &out_mul,
             Some(&out_idx),
             FileType::GumpartLegacyMul,
-            0,
-            None,
+                        None,
         )?;
 
         assert_eq!(std::fs::read(&out_mul)?, payload);
         assert_idx_entry(&out_idx, 0, payload.len() as i32, extra)?;
-
-        let _ = std::fs::remove_dir_all(temp);
-        Ok(())
-    }
-
-    #[test]
-    fn one_block_map_mul_uop_roundtrip_preserves_payload() -> io::Result<()> {
-        let temp = temp_dir("map-roundtrip")?;
-        let map_mul = temp.join("map0.mul");
-        let map_uop = temp.join("map0LegacyMUL.uop");
-        let out_mul = temp.join("out_map0.mul");
-        let mut payload = vec![0u8; 0xC4000];
-        payload[0] = 7;
-        payload[0xC4000 - 1] = 9;
-
-        std::fs::write(&map_mul, &payload)?;
-
-        LegacyMulFileConverter::to_uop(
-            &map_mul,
-            None,
-            &map_uop,
-            FileType::MapLegacyMul,
-            0,
-            CompressionFlag::None,
-        )?;
-        LegacyMulFileConverter::from_uop(
-            &map_uop,
-            &out_mul,
-            None,
-            FileType::MapLegacyMul,
-            0,
-            None,
-        )?;
-
-        assert_eq!(std::fs::read(&out_mul)?, payload);
 
         let _ = std::fs::remove_dir_all(temp);
         Ok(())
@@ -582,31 +495,28 @@ mod tests {
     #[ignore = "needs a real Classic client: set UO_CC_CLIENT_DIR and run with --ignored --release"]
     fn real_classic_packages_extract_and_pack_back_to_their_payloads() -> io::Result<()> {
         const CC_CLIENT_DIR_ENV: &str = "UO_CC_CLIENT_DIR";
-        /// The map index of the facet package checked.
-        const MAP_INDEX: i32 = 0;
         let dir = std::path::PathBuf::from(
             std::env::var_os(CC_CLIENT_DIR_ENV).unwrap_or_else(|| panic!("set {CC_CLIENT_DIR_ENV}")),
         );
         let cases = [
-            ("artLegacyMUL.uop", FileType::ArtLegacyMul, true, 0),
-            ("gumpartLegacyMUL.uop", FileType::GumpartLegacyMul, true, 0),
-            ("map0LegacyMUL.uop", FileType::MapLegacyMul, false, MAP_INDEX),
-            ("soundLegacyMUL.uop", FileType::SoundLegacyMul, true, 0),
+            ("artLegacyMUL.uop", FileType::ArtLegacyMul, true),
+            ("gumpartLegacyMUL.uop", FileType::GumpartLegacyMul, true),
+            ("soundLegacyMUL.uop", FileType::SoundLegacyMul, true),
         ];
-        for (name, file_type, has_idx, type_index) in cases {
+        for (name, file_type, has_idx) in cases {
             let source = dir.join(name);
             let temp = temp_dir("real-repack")?;
             let (mul, idx) = (temp.join("out.mul"), temp.join("out.idx"));
             let (packed, mul_again, idx_again) = (temp.join("packed.uop"), temp.join("again.mul"), temp.join("again.idx"));
             let idx_arg = |path: &std::path::Path| has_idx.then(|| path.to_path_buf());
-            LegacyMulFileConverter::from_uop(&source, &mul, idx_arg(&idx).as_deref(), file_type, type_index, None)?;
-            LegacyMulFileConverter::to_uop(&mul, idx_arg(&idx).as_deref(), &packed, file_type, type_index, CompressionFlag::None)?;
+            LegacyMulFileConverter::from_uop(&source, &mul, idx_arg(&idx).as_deref(), file_type, None)?;
+            LegacyMulFileConverter::to_uop(&mul, idx_arg(&idx).as_deref(), &packed, file_type, CompressionFlag::None)?;
             let (original, repacked) = (payloads(&source)?, payloads(&packed)?);
             let missing = original.keys().filter(|hash| !repacked.contains_key(hash)).count();
             let differing = original.iter().filter(|(hash, bytes)| repacked.get(hash).is_some_and(|other| other != *bytes)).count();
             let extra = repacked.len().saturating_sub(original.len() - missing);
             println!("{name}: {} entries; repacked {}, missing {missing}, differing {differing}, extra {extra}", original.len(), repacked.len());
-            LegacyMulFileConverter::from_uop(&packed, &mul_again, idx_arg(&idx_again).as_deref(), file_type, type_index, None)?;
+            LegacyMulFileConverter::from_uop(&packed, &mul_again, idx_arg(&idx_again).as_deref(), file_type, None)?;
             let records = mul_records(&mul, idx_arg(&idx).as_deref())?;
             let same_records = records == mul_records(&mul_again, idx_arg(&idx_again).as_deref())?;
             let same_bytes = std::fs::read(&mul)? == std::fs::read(&mul_again)?;

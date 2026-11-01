@@ -361,7 +361,7 @@ Done or superseded. Blend inputs (`SecondaryBase`, `BlendAlpha`, `CoverageAlpha`
 - Full lighting-model parity with original client time-of-day rules.
 - Networking protocol integration.
 - Editor UX for live map sculpting and tile painting.
-- Classic map, statics and dif writers (`mapN.mul`, `mapNLegacyMUL.uop`, `staidxN`/`staticsN`, the `x` editions, dif baking): deferred until a dynamapper editor or a `.uddp` → Classic export needs them (the user, 2026-11-01). The measured layout and the options are in the [proposal](agent_notes/proposals/2026-11-01-classic-map-writers.md); option B is recommended.
+- Classic map editing in dynamapper (option C of the [map writers proposal](agent_notes/proposals/2026-11-01-classic-map-writers.md)): the writers, dif baking and `uocf-cli facet convert` are done (option B); the editor path (`.uddp` → Classic export or `MapPlane` dirty blocks) is still to decide.
 
 ## Suggested Execution Order
 

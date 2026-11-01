@@ -17,6 +17,21 @@
   (anchors, frame numbers, palettes), and back into copies of the files (absolute output
   paths; MUL: `--output` idx and `--mul-output`, changed entries appended; UOP: a changed
   frames-per-direction needs `--sequence` and `--sequence-output`). Alpha 0 or 255 only.
+- `facet convert`: one facet between Classic (`mapN.mul` and/or `mapNLegacyMUL.uop`, with
+  `staidxN.mul`/`staticsN.mul`), Enhanced Client and Kingdom Reborn `facetN.uop`, in any
+  direction. Classic difs are baked into the map (`--difs`, a later id winning). The target
+  size comes from `--target-client` (its executable's size table) or `--size WxH`; a smaller
+  size is refused when content lies outside it unless `--crop`, a larger one is filled with
+  land 0x244 at z 0 (the shipped maps' void; `--fill-land`/`--fill-z`). `--target-client`
+  also picks the Classic container and checks the ids against its `tiledata.mul`. A facet
+  package with data the Classic files cannot hold (stale delimiters, KR materials) is refused
+  unless `--allow-lossy`. For a bigger map in an old client, patch its size table with
+  `uo-client-patcher-gui` instead.
+- `facet patch-classic`: edit one cell of one Classic edition (land, z, statics added after
+  the cell's, removed or changed) and write it in the same container to `-o`.
+- `mul-convert extract|pack`: maps go through the typed map writer (4,096 blocks per UOP
+  entry and the trailing block, as shipped); `pack --uop-template-dir` keeps the layout of
+  the shipped packages, so an unchanged map packs back byte for byte.
 
 Supported animation sources:
 

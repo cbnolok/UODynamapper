@@ -185,6 +185,23 @@ pub enum FacetCmd {
         #[arg(long, requires = "kr")]
         kr_fallback_land: Option<String>,
     },
+    /// Convert a facet between Classic (mapN.mul, mapNLegacyMUL.uop, staidxN.mul, staticsN.mul), Enhanced Client
+    /// and Kingdom Reborn files (facetN.uop), in any direction, for another client's facet size. The source is
+    /// --client-dir or --map (Classic) or --uop (a facet package); --to says what to write.
+    ///
+    /// The target size comes from --target-client's size table (client.exe, UOSA.exe or UOKR.exe; never a
+    /// per-version table) or --size. A smaller size is refused when content lies outside it, unless --crop; a larger
+    /// one is filled with --fill-land/--fill-z (default 0x244 at z 0, the land the shipped maps hold where they have
+    /// nothing, as Mondain's Legacy's added Felucca strip). To give an old client a bigger map instead, patch its
+    /// size table with uo-client-patcher-gui.
+    ///
+    /// A facet package keeps what the Classic files cannot (stale delimiters; KR materials and subtypes that are
+    /// not the land map's): the conversion lists them and stops unless --allow-lossy. Classic difs are baked into
+    /// the map as the source client applies them (--difs).
+    Convert(crate::facet_convert::ConvertArgs),
+    /// Edit one cell of one Classic map edition (land, z, statics) and write the map in its container (a UOP keeps
+    /// its layout) with staidxN.mul and staticsN.mul. An added static goes after the cell's statics.
+    PatchClassic(crate::facet_convert::PatchClassicArgs),
     /// Print the facet definitions of facets.uop.
     DumpDef {
         #[arg(long)]
@@ -409,6 +426,8 @@ pub fn run(cmd: FacetCmd) -> eyre::Result<()> {
                 output_dir.display()
             );
         }
+        FacetCmd::Convert(args) => crate::facet_convert::run_convert(args)?,
+        FacetCmd::PatchClassic(args) => crate::facet_convert::run_patch_classic(args)?,
         FacetCmd::DumpDef { uop, facet } => {
             let package = load_package(&uop)?;
             let ids: Vec<u32> = match facet {
@@ -476,13 +495,13 @@ pub fn run(cmd: FacetCmd) -> eyre::Result<()> {
 }
 
 /// Opens facet package `path` in the square layout its sectors have (Enhanced Client or Kingdom Reborn).
-fn open_facet(path: &Path, facet: u8) -> eyre::Result<EcFacetPackage> {
+pub(crate) fn open_facet(path: &Path, facet: u8) -> eyre::Result<EcFacetPackage> {
     let package = load_package(path)?;
     let dialect = detect_facet_dialect(&package, facet).wrap_err_with(|| format!("read {}", path.display()))?;
     EcFacetPackage::from_package_dialect(package, facet, None, dialect)
 }
 
-fn load_package(path: &Path) -> eyre::Result<UopPackage> {
+pub(crate) fn load_package(path: &Path) -> eyre::Result<UopPackage> {
     UopPackage::load(path).wrap_err_with(|| format!("load {}", path.display()))
 }
 
@@ -533,7 +552,7 @@ fn print_definition(definition: &FacetDefinition) {
 }
 
 /// Parses a decimal or `0x` hexadecimal number.
-fn parse_number<T: TryFrom<i64>>(text: &str) -> eyre::Result<T> {
+pub(crate) fn parse_number<T: TryFrom<i64>>(text: &str) -> eyre::Result<T> {
     let text = text.trim();
     let value = match text.strip_prefix(HEX_PREFIX) {
         Some(hex) => i64::from_str_radix(hex, HEX_RADIX),
@@ -544,11 +563,11 @@ fn parse_number<T: TryFrom<i64>>(text: &str) -> eyre::Result<T> {
 }
 
 /// Parses `N` comma-separated numbers.
-fn parse_list<const N: usize>(text: &str) -> eyre::Result<[i64; N]> {
+pub(crate) fn parse_list<const N: usize>(text: &str) -> eyre::Result<[i64; N]> {
     let values = text.split(',').map(parse_number::<i64>).collect::<eyre::Result<Vec<_>>>()?;
     values.try_into().map_err(|values: Vec<i64>| eyre::eyre!("{text:?}: expected {N} values, got {}", values.len()))
 }
 
-fn to_z(value: i64) -> eyre::Result<i8> {
+pub(crate) fn to_z(value: i64) -> eyre::Result<i8> {
     i8::try_from(value).map_err(|_| eyre::eyre!("z {value} is outside -128..127"))
 }

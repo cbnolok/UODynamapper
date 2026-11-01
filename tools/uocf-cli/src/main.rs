@@ -4,6 +4,7 @@ mod audio;
 mod classicanim;
 mod exe;
 mod facet;
+mod facet_convert;
 mod hues;
 mod image_census;
 mod legacy_mul;

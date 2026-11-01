@@ -5,7 +5,6 @@ pub(super) fn to_uop(
     in_file_idx: Option<&Path>,
     out_file: &Path,
     file_type: FileType,
-    type_index: i32,
     compression_flag: CompressionFlag,
 ) -> io::Result<()> {
     let mut reader = BufReader::new(File::open(in_file)?);
@@ -16,7 +15,7 @@ pub(super) fn to_uop(
     };
     let mut writer = BufWriter::new(File::create(out_file)?);
 
-    let mut idx_entries = read_idx_entries(&mut reader, reader_idx.as_mut(), file_type)?;
+    let mut idx_entries = read_idx_entries(reader_idx.as_mut())?;
     let mut file_count = idx_entries.len();
 
     if file_type == FileType::MultiCollection {
@@ -47,7 +46,7 @@ pub(super) fn to_uop(
 
     // The second format (seven digits) is only read back (`unpack`): the shipped packages name every gump, 9834
     // included, with eight digits, the name the client looks up.
-    let (hash_format_0, _, _max_id) = get_hash_format(file_type, type_index);
+    let (hash_format_0, _, _max_id) = get_hash_format(file_type);
 
     for i in 0..table_count {
         let this_table = writer.stream_position()?;
@@ -88,36 +87,10 @@ pub(super) fn to_uop(
     Ok(())
 }
 
-/// The map bytes of a `mapNLegacyMUL.uop` entry: 4,096 blocks of 196 bytes.
-const MAP_ENTRY_BYTES: i32 = 0xC4000;
-
 fn read_idx_entries(
-    reader: &mut BufReader<File>,
     mut reader_idx: Option<&mut BufReader<File>>,
-    file_type: FileType,
 ) -> io::Result<Vec<IdxEntry>> {
     let mut idx_entries = Vec::new();
-
-    if file_type == FileType::MapLegacyMul {
-        let length = reader.seek(SeekFrom::End(0))? as i32;
-        reader.seek(SeekFrom::Start(0))?;
-
-        let mut position = 0;
-        let mut id = 0;
-        while position < length {
-            // The last entry holds what is left: the shipped maps end with a partial entry (a trailing block).
-            idx_entries.push(IdxEntry {
-                id,
-                offset: position,
-                size: MAP_ENTRY_BYTES.min(length - position),
-                extra: 0,
-            });
-            position += MAP_ENTRY_BYTES;
-            id += 1;
-        }
-
-        return Ok(idx_entries);
-    }
 
     let reader_idx = reader_idx.as_mut().ok_or_else(|| {
         io::Error::new(

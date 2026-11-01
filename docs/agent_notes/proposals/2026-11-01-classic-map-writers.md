@@ -1,6 +1,6 @@
 # Classic map and statics writers: proposal (2026-11-01)
 
-A proposal only; nothing here is implemented. It covers gap 1 of [cc_file_coverage.md](../cc_file_coverage.md):
+Option B is implemented (see the Decision at the end). It covers gap 1 of [cc_file_coverage.md](../cc_file_coverage.md):
 writers for `mapN.mul`, `mapNLegacyMUL.uop`, `staidxN.mul` + `staticsN.mul`, their `x` editions, the dif files,
 and how they fit the block cache and the converters.
 
@@ -171,5 +171,48 @@ Start C only when the user decides how dynamapper edits the world.
 
 ## Decision (2026-11-01)
 
-The user decided that option B waits until a consumer needs it: a dynamapper editor or a `.uddp` → Classic
-export. Nothing is implemented. Questions 1 to 6 stay open until then.
+The user first deferred option B, then asked for it the same day, for a tool that converts the CC UOP and the EC
+facets to MUL and back, and between clients with smaller maps. Option B is implemented with these answers:
+
+1. **Old clients:** a valid modern-layout rewrite. Gold and ML maps come back with the block index as header and
+   the statics in the modern layout; cells and statics are the same.
+2. **Difs:** baked into the base map, every id applied, a later one winning (the client's rule). No dif writer.
+3. **`x` editions:** an edit goes to one named edition (`--map-edition`, `--target-edition`).
+4. **Statics order:** an added static goes after its cell's statics, keeping the (y, x) order.
+5. **Containers:** a client gets its own container by default (`--container auto` from `--target-client`); the
+   tool can write MUL, UOP or both.
+6. **Editor path:** still open (option C).
+
+What was built:
+
+- uocf: `classic/map_write.rs` (`ClassicMapBlocks`: MUL and UOP, the trailing block rule, a template package for
+  the shipped layout; `bake_map_difs`), `classic/statics_write.rs` (`ClassicStaticsBlocks`, `bake_static_difs`),
+  `classic/world.rs` (`ClassicWorld`: load with difs, resize with fill or crop, ids beyond a tiledata),
+  `classic/target_client.rs` (size table, Trammel-reads-map0, dif usage, container and tiledata of a client folder),
+  `enhanced/facet_to_classic.rs` (EC or KR facet to Classic, with the losses), and the EC and KR facet builders
+  taking a `ClassicWorld`.
+- uocf-cli: `facet convert` (Classic MUL / Classic UOP / EC facet / KR facet, any direction; `--target-client` or
+  `--size`; `--crop`; `--fill-land`/`--fill-z`; `--allow-lossy`), `facet patch-classic`, and `mul-convert` maps
+  through the typed writer (`pack --uop-template-dir`).
+
+Measured (`lib/uocf/tests/real_files/classic_map_writers.rs`, all `#[ignore]`):
+
+- **MUL and UOP write-back.** 7.0.20: every map and statics file byte for byte. 2024: every map UOP (through MUL,
+  with the shipped package as template) and statics byte for byte. fp: statics byte for byte; map0, map1 and map1x
+  hold 1,076,787 / 960,540 / 960,540 stale bytes no entry or table uses, which any uocf UOP save zeroes (an
+  unchanged save too), so they match an unchanged save, not the original. Gold, ML: the block headers differ only.
+- **Difs.** Baked Gold and ML facets 0 to 2 equal the dif-applying readers (0 cells, 0 static blocks differ).
+- **EC facet → Classic → EC.** Lossless but for delimiters that are not the ones the rule derives from the
+  neighbours (stale copies; the builder rewrites them by the rule): facet0 13,884 squares, 0x 13,995, 1 22,848, 1x
+  23,260, 2 and 2x 1,138, 3 198, 4 195, 5 and 5x 105,977. The Classic facets from the EC base editions equal the
+  2024 client's files cell for cell and static for static (with the 2024 packages as template, map0, map4 and map5
+  come out byte for byte); the 0x and 1x editions differ in content (38,821 and 35,970 cells).
+- **KR facet → Classic → KR.** Squares whose material or subtype is not the shipped land map's: facet0 9,608,
+  facet1 10,013, facet2 7, facet3 2,665, facet4 1,065; stale delimiters 23, 14, 0, 4, 0.
+- **Classic → EC → Classic and Classic → KR → Classic.** Lossless on every facet of the 2024 and 7.0.20 clients.
+- **Sizes.** UO Gold's Felucca and Trammel are 6144x4096 (Trammel is map0 with the facet-1 difs); ML's 7168x4096.
+  The added strip of ML is land 0x244 at z 0 where it is empty, the fill a grow writes. Gold → 7168 → Gold is
+  equal; ML → 6144 is refused (259,645 land cells and 21,204 statics outside) and drops them with `--crop`.
+
+Open decisions: whether the stale delimiters should only warn (they are rebuilt by the rule, so the client sees
+the same neighbours), and how to keep the KR materials (a sidecar, or the opt-in only).
