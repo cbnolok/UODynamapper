@@ -32,6 +32,13 @@ const REFERENCE_EC_WAV: usize = 1666;
 const REFERENCE_EC_TEXT: usize = 5;
 const REFERENCE_CC_SLOTS: usize = 1655;
 const REFERENCE_KR_ENTRIES: usize = 1553;
+/// The sound rows of the reference `audio_sounds.csv` whose path names no entry (typos, `pirates_` names).
+const REFERENCE_EC_SILENT_SOUNDS: [std::ops::RangeInclusive<u32>; 7] =
+    [19..=19, 856..=856, 1469..=1469, 1471..=1471, 1628..=1633, 1636..=1640, 1658..=1660];
+/// The ids of the reference Classic `Sound.def` lines: the one the client drops (`805 {331 0`), and the one that
+/// applies (the other ids have a slot of their own).
+const REFERENCE_CC_DROPPED_DEF_ID: u32 = 805;
+const REFERENCE_CC_APPLYING_DEF_ID: u32 = 856;
 
 fn env_dir(env: &str) -> Option<PathBuf> {
     std::env::var_os(env).map(PathBuf::from)
@@ -74,6 +81,8 @@ fn enhanced_audio_uop_entries_probe_and_decode() {
     }
     let music_found = music.keys().filter(|&&id| audio.entry_for(AudioKind::Music, id).unwrap().is_some()).count();
     println!("ids with an entry: {sound_kinds:?}, music {music_found}");
+    let silent: Vec<(AudioKind, u32)> = audio.silent_rows().iter().map(|row| (row.kind, row.id)).collect();
+    println!("silent rows: {silent:?}");
 
     if let Some(cc) = env_dir(CC_CLIENT_DIR_ENV) {
         let classic = SoundMap::load(&cc).unwrap();
@@ -96,6 +105,8 @@ fn enhanced_audio_uop_entries_probe_and_decode() {
     }
 
     if hashes.len() == REFERENCE_EC_ENTRIES {
+        let expected: Vec<(AudioKind, u32)> = REFERENCE_EC_SILENT_SOUNDS.iter().cloned().flatten().map(|id| (AudioKind::Sound, id)).collect();
+        assert_eq!(silent, expected);
         assert_eq!((sounds.len(), music.len()), (REFERENCE_EC_SOUND_ROWS, REFERENCE_EC_MUSIC_ROWS));
         assert_eq!(formats.get(&AudioFormat::Mpeg(uocf::audio::mp3::MpegLayer::L3)), Some(&REFERENCE_EC_MP3));
         assert_eq!(formats.get(&AudioFormat::Wav), Some(&REFERENCE_EC_WAV));
@@ -133,19 +144,26 @@ fn classic_sounds_defs_and_music_parse() {
         for name in [SOUND_DEF_FILE_NAME, MUSIC_DEF_FILE_NAME] {
             if let Some(path) = find_file_ignoring_case(&dir, name) {
                 let table = DefTranslationTable::load(&path).unwrap().unwrap();
-                let unclosed: Vec<_> = table.iter().filter(|entry| entry.unclosed).map(|entry| entry.line).collect();
-                println!("  {name}: {} ids, unclosed groups on lines {unclosed:?}", table.len());
+                let text = std::fs::read_to_string(&path).unwrap();
+                assert_eq!(table.to_text(), text, "{name} is written back byte for byte");
+                println!("  {name}: {} ids; {:?}", table.len(), table.client_notes());
+                if let Some(dropped) = table.get(REFERENCE_CC_DROPPED_DEF_ID).filter(|_| name == SOUND_DEF_FILE_NAME) {
+                    assert!(dropped.client_ignored.is_some() && dropped.client_targets().is_none(), "the client drops `805 {{331 0`");
+                }
                 assert!(table.iter().all(|entry| entry.extra.is_none_or(|extra| extra == 0)), "{name}: a third field other than 0");
             }
         }
         if let Some(config) = MusicConfig::load(&dir).unwrap() {
             let missing: Vec<_> = config.iter().filter(|entry| config.file_path(entry).is_none()).map(|entry| entry.file_name()).collect();
             let not_looping: Vec<_> = config.iter().filter(|entry| !entry.loops()).map(|entry| entry.id).collect();
-            println!("  Config.txt: {} ids, missing files {missing:?}, not looping {not_looping:?}", config.len());
+            println!("  Config.txt: {} ids, missing files {missing:?}, not looping {not_looping:?}; {:?}", config.len(), config.client_notes());
             assert!(missing.is_empty());
         }
+        let notes = sounds.translation_notes().unwrap();
+        println!("  {notes:?}");
         if sounds.source_label() == uocf::classic::sound::SOUND_UOP_FILE_NAME && read.len() == REFERENCE_CC_SLOTS {
             assert_eq!(odd, 0);
+            assert!(notes[0].contains(&format!("1 apply (ids [{REFERENCE_CC_APPLYING_DEF_ID}])")), "{notes:?}");
         }
     }
 }
@@ -155,7 +173,24 @@ fn classic_sounds_defs_and_music_parse() {
 fn kingdom_reborn_audio_uop_entries_probe() {
     let path = common::kr_client_file(AUDIO_UOP_FILE_NAME);
     let audio = AudioPackage::load_file(&path).unwrap();
-    assert_eq!(audio.tables(), &AudioTables::KingdomReborn);
+    let AudioTables::KingdomReborn(kr) = audio.tables() else { panic!("not Kingdom Reborn's tables") };
+    for (entry, text) in [
+        (uocf::enhanced::audio::SOUND_TABLE_ENTRY, kr.sounds.to_text()),
+        (uocf::enhanced::kr_audio::KR_EFFECTS_TABLE_ENTRY, kr.effects.as_ref().unwrap().to_text()),
+    ] {
+        let shipped = audio.entry_by_name(entry).unwrap().unwrap().payload;
+        assert!(shipped[..] == *text.as_bytes(), "{entry} is written back byte for byte");
+    }
+    let effects = kr.effects.as_ref().unwrap();
+    let server_ids: Vec<u32> = effects.rows().filter_map(|row| row.server_id()).collect();
+    let playable = server_ids.iter().filter(|&&id| audio.entry_for(AudioKind::Sound, id).unwrap().is_some()).count();
+    let notes = audio.table_warnings();
+    println!(
+        "{} sound structures, {} effects rows, {playable} server ids reach an entry; {} notes: {notes:#?}",
+        kr.sounds.sounds().count(),
+        server_ids.len(),
+        notes.len()
+    );
     let hashes: Vec<u64> = audio.hashes().collect();
     let mut formats: BTreeMap<AudioFormat, usize> = BTreeMap::new();
     for &hash in &hashes {

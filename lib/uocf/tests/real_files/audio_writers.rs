@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use rayon::prelude::*;
-use uocf::audio::validate::{enhanced_format_problems, FormatPolicy};
+use uocf::audio::validate::{enhanced_format_report, FormatPolicy};
 use uocf::audio::{AudioContent, AudioFormat};
 use uocf::classic::audio_def::{DefTranslationTable, MUSIC_DEF_FILE_NAME, SOUND_DEF_FILE_NAME};
 use uocf::classic::sound::{SoundMap, SOUND_HEADER_BYTES};
@@ -84,8 +84,8 @@ fn enhanced_audio_uop_writes_back_and_edits() {
                 AudioFormat::Wav => "unnamed.wav".to_owned(),
                 _ => "unnamed.mp3".to_owned(),
             });
-            let problems = enhanced_format_problems(&name, &entry.content);
-            (!problems.is_empty()).then(|| format!("{name} ({hash:016X}): {problems:?}"))
+            let report = enhanced_format_report(&name, &entry.content);
+            (!report.is_verified()).then(|| format!("{name} ({hash:016X}): {report:?}"))
         })
         .collect();
     println!("{} shipped entries fail the format checks: {failing:?}", failing.len());

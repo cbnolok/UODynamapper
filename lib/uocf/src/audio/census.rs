@@ -137,10 +137,17 @@ pub fn census_client(client_path: &Path, dictionary: Option<&HashDictionary>) ->
     if let Some(audio) = AudioPackage::load(client_path)? {
         let tables = match audio.tables() {
             AudioTables::Enhanced { sounds, music } => format!("Enhanced tables: {} sounds, {} music", sounds.len(), music.len()),
-            AudioTables::KingdomReborn => "Kingdom Reborn tables (not read)".to_owned(),
+            AudioTables::KingdomReborn(kr) => format!(
+                "Kingdom Reborn tables: {} sound structures, {} effects rows",
+                kr.sounds.sounds().filter(|row| row.duplicate_of.is_none()).count(),
+                kr.effects.as_ref().map_or(0, |effects| effects.rows().count())
+            ),
             AudioTables::Missing => "no sound table".to_owned(),
         };
         census.notes.push((client.clone(), format!("{AUDIO_UOP_FILE_NAME}: {tables}")));
+        for warning in audio.table_warnings() {
+            census.notes.push((client.clone(), format!("{AUDIO_UOP_FILE_NAME}: warning: {warning}")));
+        }
         let hashes: Vec<u64> = audio.hashes().collect();
         let rows: Vec<eyre::Result<CensusRow>> = hashes
             .par_iter()
@@ -166,7 +173,8 @@ pub fn census_client(client_path: &Path, dictionary: Option<&HashDictionary>) ->
         census.rows.extend(rows.into_iter().collect::<eyre::Result<Vec<_>>>()?);
     }
 
-    match SoundMap::has_sound_files(client_path).then(|| SoundMap::load(client_path)) {
+    let classic_sounds = SoundMap::has_sound_files(client_path).then(|| SoundMap::load(client_path));
+    match &classic_sounds {
         None => {}
         Some(Ok(sounds)) => {
             census.notes.push((client.clone(), format!("{}: {} slot ids scanned", sounds.source_label(), sounds.slot_count())));
@@ -211,15 +219,25 @@ pub fn census_client(client_path: &Path, dictionary: Option<&HashDictionary>) ->
         }
         Some(Err(error)) => census.notes.push((client.clone(), format!("Classic sounds: {error:#}"))),
     }
+    if let Some(Ok(sounds)) = &classic_sounds {
+        for note in sounds.translation_notes()? {
+            census.notes.push((client.clone(), note));
+        }
+    }
 
     for name in [SOUND_DEF_FILE_NAME, MUSIC_DEF_FILE_NAME] {
         let Some(path) = find_file_ignoring_case(client_path, name) else { continue };
         let note = match DefTranslationTable::load(&path) {
             Ok(Some(table)) => {
-                let unclosed: Vec<usize> = table.iter().filter(|entry| entry.unclosed).map(|entry| entry.line).collect();
-                let multi = table.iter().filter(|entry| entry.targets.len() > 1 && !entry.unclosed).count();
-                let none = table.iter().filter(|entry| entry.slots().next().is_none()).count();
-                format!("{name}: {} ids, {multi} with several targets, {none} without a slot, unclosed groups on lines {unclosed:?}", table.len())
+                let ignored: Vec<usize> = table.iter().filter(|entry| entry.client_ignored.is_some()).map(|entry| entry.line).collect();
+                let multi = table.iter().filter(|entry| entry.client_targets().is_some_and(|targets| targets.len() > 1)).count();
+                let negative = table.iter().filter(|entry| entry.negative_targets().next().is_some()).count();
+                let readers = if name == MUSIC_DEF_FILE_NAME { "; no client reads Music.def" } else { "" };
+                format!(
+                    "{name}: {} ids, {multi} with several targets (a random pick per play), {negative} with a `-` target, lines \
+                     the client ignores {ignored:?}{readers}",
+                    table.len()
+                )
             }
             Ok(None) => continue,
             Err(error) => format!("{name}: {error:#}"),
@@ -230,6 +248,9 @@ pub fn census_client(client_path: &Path, dictionary: Option<&HashDictionary>) ->
         Ok(Some(config)) => {
             let missing: Vec<String> = config.iter().filter(|entry| config.file_path(entry).is_none()).map(|entry| entry.file_name()).collect();
             let flags: BTreeSet<String> = config.iter().filter_map(|entry| entry.flag.clone()).collect();
+            for note in config.client_notes() {
+                census.notes.push((client.clone(), format!("Config.txt {note}")));
+            }
             let with_extension = config.iter().filter(|entry| entry.name.contains('.')).count();
             census.notes.push((
                 client.clone(),

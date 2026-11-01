@@ -97,12 +97,13 @@ pub enum AudioCmd {
         output: PathBuf,
     },
     /// Write a copy of an Audio.uop with one entry replaced by a file. The entry keeps its compression flag; the
-    /// file must be in a format the shipped package holds (see --allow-unverified-format).
+    /// file must be one the Enhanced Client's decoder (Miles 7.2c) plays (see --allow-unverified-format). The
+    /// Enhanced Client never plays the legacysounds/ WAVs: replacing one changes nothing in it.
     #[command(group(ArgGroup::new("target").required(true).args(["sound", "legacy_sound", "music", "name"])))]
     Replace {
         #[command(flatten)]
         edit: EditArgs,
-        /// Sound id: its MP3.
+        /// Sound id (the server's): its MP3. For Kingdom Reborn, through audio_effects.csv (ID# = id + 1).
         #[arg(long)]
         sound: Option<u32>,
         /// Sound id: its Classic WAV under legacysounds/.
@@ -115,13 +116,13 @@ pub enum AudioCmd {
         #[arg(long)]
         name: Option<String>,
     },
-    /// Write a copy of an Audio.uop with a new entry: MP3s stored, WAVs zlib-compressed, as the shipped ones. A
-    /// sound or music id without a table row gets one (--table-path).
+    /// Write a copy of an Audio.uop with a new entry: MP3s stored, WAVs zlib-compressed, as the shipped ones. The
+    /// client plays a sound only through a table row: a sound or music id without one gets it (--table-path).
     #[command(group(ArgGroup::new("target").required(true).args(["sound", "legacy_sound", "music", "name"])))]
     Add {
         #[command(flatten)]
         edit: EditArgs,
-        /// Sound id: its MP3.
+        /// Sound id (the server's): its MP3. For Kingdom Reborn, through audio_effects.csv (ID# = id + 1).
         #[arg(long)]
         sound: Option<u32>,
         /// Sound id: its Classic WAV under legacysounds/.
@@ -130,7 +131,8 @@ pub enum AudioCmd {
         /// Music id.
         #[arg(long)]
         music: Option<u32>,
-        /// Entry name under data/audio/ (lowercase, `/` separators), without a table row.
+        /// Entry name under data/audio/ (lowercase, `/` separators). An MP3 outside legacysounds/ must be one a
+        /// table row already names (the client plays nothing else); add a new sound by id instead.
         #[arg(long, conflicts_with_all = ["table_path", "looping"])]
         name: Option<String>,
         /// The path of the new table row of an id without one: `Sounds\folder\file.mp3` for a sound (its MP3
@@ -159,9 +161,10 @@ pub struct EditArgs {
     /// channels. There is no MP3 encoder, and no resampling.
     #[arg(long)]
     convert: bool,
-    /// Accept a format the shipped package does not show the client playing, with warnings: the client's
-    /// decoder limits are not known, so this is for trying a file out in a test client, not for a release. A file
-    /// of another kind than the entry's extension (a WAV for an .mp3) is refused all the same.
+    /// Accept, with warnings, a file the Enhanced Client's decoder (Miles 7.2c) takes but whose playback was not
+    /// verified (a resynchronised MP3 stream, a cut last frame, trailing bytes, PCM fields that disagree): for
+    /// trying a file out in a test client, not for a release. A file Miles refuses, or of another kind than the
+    /// entry's extension (a WAV for an .mp3), is refused all the same.
     #[arg(long)]
     allow_unverified_format: bool,
 }
@@ -294,11 +297,25 @@ fn list(client: &Path, names: &HashDictionary) -> eyre::Result<()> {
                 }
             }
         } else {
+            if let AudioTables::KingdomReborn(kr) = audio.tables() {
+                for effect in kr.effects.iter().flat_map(|effects| effects.rows()) {
+                    let Some(server_id) = effect.server_id() else { continue };
+                    let name = audio.entry_name_for(AudioKind::Sound, server_id).unwrap_or_default();
+                    let found = match audio.entry_for(AudioKind::Sound, server_id)? {
+                        Some(entry) => describe(&entry.content),
+                        None => "no entry".to_owned(),
+                    };
+                    println!("Sound\t{server_id}\tID# {}\t{}\t{name}\t{found}", effect.id, effect.structure);
+                }
+            }
             for hash in audio.hashes() {
                 let name = audio.name_of(hash).or_else(|| names.resolve(hash)).unwrap_or_default();
                 let entry = audio.entry_by_hash(hash)?.ok_or_else(|| eyre!("entry {hash:016X} vanished"))?;
                 println!("{hash:016X}\t{name}\t{}", describe(&entry.content));
             }
+        }
+        for warning in audio.table_warnings() {
+            eprintln!("warning: {warning}");
         }
     }
     if SoundMap::has_sound_files(client) {

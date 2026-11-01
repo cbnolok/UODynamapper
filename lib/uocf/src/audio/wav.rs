@@ -23,6 +23,10 @@ const FMT_BLOCK_ALIGN_OFFSET: usize = 12;
 const FMT_BITS_OFFSET: usize = 14;
 const FMT_CB_SIZE_OFFSET: usize = 16;
 const FMT_SUBFORMAT_OFFSET: usize = 24;
+const GUID_SIZE: usize = 16;
+/// `KSDATAFORMAT_SUBTYPE_PCM`, `00000001-0000-0010-8000-00AA00389B71`, as stored.
+pub const KSDATAFORMAT_SUBTYPE_PCM: [u8; GUID_SIZE] =
+    [0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71];
 pub const WAVE_FORMAT_PCM: u16 = 0x0001;
 pub const WAVE_FORMAT_ADPCM: u16 = 0x0002;
 pub const WAVE_FORMAT_IEEE_FLOAT: u16 = 0x0003;
@@ -63,6 +67,8 @@ pub struct WavFormat {
     pub cb_size: Option<u16>,
     /// The first two bytes of the sub-format GUID of `WAVE_FORMAT_EXTENSIBLE` (the format tag it stands for).
     pub sub_format: Option<u16>,
+    /// The whole sub-format GUID of `WAVE_FORMAT_EXTENSIBLE`.
+    pub sub_format_guid: Option<[u8; GUID_SIZE]>,
 }
 
 impl WavFormat {
@@ -199,6 +205,10 @@ fn parse_format(chunk: &[u8]) -> Option<WavFormat> {
         chunk_size,
         cb_size,
         sub_format: (format_tag == WAVE_FORMAT_EXTENSIBLE).then(|| read_u16(chunk, FMT_SUBFORMAT_OFFSET)).flatten(),
+        sub_format_guid: (format_tag == WAVE_FORMAT_EXTENSIBLE)
+            .then(|| chunk.get(FMT_SUBFORMAT_OFFSET..FMT_SUBFORMAT_OFFSET + GUID_SIZE))
+            .flatten()
+            .map(|guid| guid.try_into().expect("sixteen bytes")),
     })
 }
 

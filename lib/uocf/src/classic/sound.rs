@@ -2,10 +2,13 @@
 //! (`build/soundlegacymul/%08d.dat`), patched by `verdata.mul`, and the `Sound.def` translations
 //! ([`crate::classic::audio_def`]).
 //!
-//! A slot is a 40-byte header and raw 22050 Hz mono 16-bit little-endian PCM. The header is the sound's name,
-//! NUL-terminated in 32 bytes, then 8 bytes whose meaning is not known: build-tool leftovers by their look
-//! (`30 00 00 00 98 fb 18 00` throughout `soundLegacyMUL.uop`, pointer-like values or MSVC's `cc` fill in UO Gold's
-//! `sound.mul`). The Enhanced Client's `data/audio/legacysounds/*.wav` hold the same PCM bytes as these slots,
+//! A slot is a 40-byte header and raw mono 16-bit little-endian PCM, which the client plays at 22,048 Hz (its
+//! DirectSound buffers are created at 0x5620 Hz; the PCM is nominally 22,050 Hz). The header is the sound's name,
+//! NUL-terminated in 32 bytes, then 8 bytes no client reads (`Voice_SetData` copies from byte 40 on): build-tool
+//! leftovers by their look (`30 00 00 00 98 fb 18 00` throughout `soundLegacyMUL.uop`, pointer-like values or
+//! MSVC's `cc` fill in UO Gold's `sound.mul`). A slot of 40 bytes or fewer counts as missing, and the client plays
+//! no id above [`MAX_SOUND_ID`]; `scripts/dev-helpers/ec-research/ghidra-audio/results/classic_audio.md` has the
+//! code. The Enhanced Client's `data/audio/legacysounds/*.wav` hold the same PCM bytes as these slots,
 //! from byte 40 on. [`ClassicSound`] keeps the header as stored, so a slot can be written back unchanged.
 
 crate::eyre_imports!();
@@ -28,7 +31,12 @@ pub const SOUND_NAME_BYTES: usize = 32;
 /// The name and the 8 unknown bytes before the PCM.
 pub const SOUND_HEADER_BYTES: usize = 40;
 pub const WAV_HEADER_BYTES: usize = crate::audio::wav::PCM_WAV_HEADER_SIZE;
-pub const SAMPLE_RATE: u32 = 22_050;
+/// The rate the client plays every slot at.
+pub const SAMPLE_RATE: u32 = 22_048;
+/// The rate the PCM was made at, which files often carry.
+pub const NOMINAL_SAMPLE_RATE: u32 = 22_050;
+/// The highest id `PlaySound` plays (0x683).
+pub const MAX_SOUND_ID: u32 = 1667;
 pub const CHANNELS: u16 = 1;
 pub const BITS_PER_SAMPLE: u16 = 16;
 const BITS_PER_BYTE: u16 = 8;
@@ -87,6 +95,8 @@ pub struct SoundLookup {
     pub sound: ClassicSound,
     pub requested_id: u32,
     pub translated: bool,
+    /// For a translated id, the `Sound.def` targets the client picks from at random on every play.
+    pub targets: Vec<u32>,
 }
 
 #[derive(Clone)]
@@ -225,20 +235,42 @@ impl SoundMap {
         Ok(self.read_slot_bytes(slot_id)?.and_then(|(bytes, source)| parse_sound_slot(slot_id, &bytes, source)))
     }
 
-    /// The slot of `sound_id`, or the first slot of its `Sound.def` targets that holds a sound.
+    /// The slot of `sound_id`; when it is missing, the first of its `Sound.def` targets (as the client reads them)
+    /// that holds a sound. The client picks one target at random on every play: [`SoundLookup::targets`] lists them.
     pub fn read_id(&self, sound_id: u32) -> eyre::Result<Option<SoundLookup>> {
         if let Some(sound) = self.read_slot(sound_id)? {
-            return Ok(Some(SoundLookup { sound, requested_id: sound_id, translated: false }));
+            return Ok(Some(SoundLookup { sound, requested_id: sound_id, translated: false, targets: Vec::new() }));
         }
-        let Some(translation) = self.translations.get(sound_id) else {
+        let Some(targets) = self.translations.get(sound_id).and_then(|translation| translation.client_targets()) else {
             return Ok(None);
         };
-        for slot_id in translation.slots() {
+        for &slot_id in &targets {
             if let Some(sound) = self.read_slot(slot_id)? {
-                return Ok(Some(SoundLookup { sound, requested_id: sound_id, translated: true }));
+                return Ok(Some(SoundLookup { sound, requested_id: sound_id, translated: true, targets }));
             }
         }
         Ok(None)
+    }
+
+    /// How the client uses `Sound.def`: which lines apply (their id's slot is missing), which never do, and what it
+    /// reads differently from the text ([`DefTranslationTable::client_notes`]).
+    pub fn translation_notes(&self) -> eyre::Result<Vec<String>> {
+        let mut applied = Vec::new();
+        let mut never = 0usize;
+        for translation in self.translations.iter().filter(|translation| translation.client_ignored.is_none()) {
+            if self.read_slot(translation.id)?.is_some() {
+                never += 1;
+            } else {
+                applied.push(translation.id);
+            }
+        }
+        let mut notes = vec![format!(
+            "{SOUND_DEF_FILE_NAME}: lines apply only to ids without a sound of their own: {} apply (ids {applied:?}), {never} \
+             never apply",
+            applied.len()
+        )];
+        notes.extend(self.translations.client_notes().into_iter().map(|note| format!("{SOUND_DEF_FILE_NAME} {note}")));
+        Ok(notes)
     }
 }
 
@@ -330,7 +362,7 @@ mod tests {
         idx.write_all(&(payload.len() as u32).to_le_bytes())?;
         idx.write_all(&1u32.to_le_bytes())?;
         std::fs::write(dir.join(SOUND_MUL_FILE_NAME), payload)?;
-        std::fs::write(dir.join(SOUND_DEF_FILE_NAME), "7 {-1, 0} 0\r\n")?;
+        std::fs::write(dir.join(SOUND_DEF_FILE_NAME), "7 {-1, 0} 0\r\n8 {0 1\r\n")?;
 
         let sounds = SoundMap::load(dir).unwrap();
         let slot = sounds.read_slot(0).unwrap().unwrap();
@@ -341,7 +373,11 @@ mod tests {
         let lookup = sounds.read_id(7).unwrap().unwrap();
         assert!(lookup.translated);
         assert_eq!(lookup.requested_id, 7);
-        assert_eq!(lookup.sound.slot_id, 0);
+        assert_eq!(lookup.targets, [1, 0], "the client reads -1 as 1");
+        assert_eq!(lookup.sound.slot_id, 0, "slot 1 is missing");
+        assert!(sounds.read_id(8).unwrap().is_none(), "the client drops `8 {{0 1`");
+        let notes = sounds.translation_notes().unwrap();
+        assert!(notes[0].contains("1 apply (ids [7]), 0 never apply"), "{notes:?}");
 
         std::fs::write(dir.join(SOUND_DEF_FILE_NAME), "7 {0} 0 trailing\r\n")?;
         let error = SoundMap::load(dir).err().unwrap().to_string();

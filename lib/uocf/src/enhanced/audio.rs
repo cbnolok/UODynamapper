@@ -1,16 +1,21 @@
-//! `Audio.uop` of the Enhanced Client (and of Kingdom Reborn, by name only): the sound and music tables and the
-//! entries they name ([`AudioPackage`]).
+//! `Audio.uop` of the Enhanced Client and of Kingdom Reborn: the sound and music tables and the entries they name
+//! ([`AudioPackage`]).
 //!
-//! The package holds two tables, `data/audio/audio_sounds.csv` (`#ID,FilePath`) and `data/audio/audio_music.csv`
-//! (`#ID,FilePath,Loop`), and the files. An entry's name is `data/audio/` and the table's path lowercased, with
-//! `\` turned into `/`: sound 0, `Sounds\aaaenvir\d_frst01.mp3`, is `data/audio/sounds/aaaenvir/d_frst01.mp3`. Most
-//! sounds also have the Classic sound of the same id as a WAV file, under `data/audio/legacysounds/` with the
-//! `sounds/` folder dropped and `.wav` for `.mp3`: `data/audio/legacysounds/aaaenvir/d_frst01.wav`. Sound ids are the
-//! Classic ids, the slots of `soundLegacyMUL.uop`. A few table paths name no entry (`flame04 .mp3`, the `pirates_`
-//! rows); `docs/agent_notes/ec_audio_formats.md` lists them.
+//! The Enhanced Client's package holds two tables, `data/audio/audio_sounds.csv` (`#ID,FilePath`) and
+//! `data/audio/audio_music.csv` (`#ID,FilePath,Loop`), and the files. The client plays a sound id (the server's id,
+//! no offset) from `data/audio/` + its row's `FilePath`, with `\` turned into `/` and lowercased, nothing trimmed
+//! (`UOP::NormalizePath`; `scripts/dev-helpers/ec-research/ghidra-audio/results/uosa_audio.md`): sound 0,
+//! `Sounds\aaaenvir\d_frst01.mp3`, is `data/audio/sounds/aaaenvir/d_frst01.mp3`. The name is built in a buffer of
+//! [`MAX_ENTRY_NAME_BYTES`]. Most sounds also have the Classic sound of the same id as a WAV file, under
+//! `data/audio/legacysounds/` with the `sounds/` folder dropped and `.wav` for `.mp3`:
+//! `data/audio/legacysounds/aaaenvir/d_frst01.wav`. The client never plays those. Sound ids are the Classic ids,
+//! the slots of `soundLegacyMUL.uop`. A row whose path names no entry is silent: the shipped tables have
+//! several ([`AudioPackage::silent_rows`]: `flame04 .mp3`, the `pirates_` rows, ...).
 //!
-//! Kingdom Reborn's tables have the same names but another layout (`w,s,id,filename,rate,...` rows, `;` comments,
-//! music ids from 10000): [`AudioTables::KingdomReborn`] keeps them unread, and its entries are reached by name.
+//! Kingdom Reborn's tables have the same names but another layout (`w,s,id,filename,rate,...` rows, `;` comments):
+//! [`AudioTables::KingdomReborn`] holds them, read by [`crate::enhanced::kr_audio`]. A server sound id goes through
+//! `audio_effects.csv` (`ID#` = id + 1) to a sound structure and its file. Its `audio_music.csv` (music ids from
+//! 10000) is kept unread.
 //!
 //! Entries keep their stored bytes and compression flag ([`AudioEntry::stored`]), so a replacement can be written
 //! with the original flag ([`crate::enhanced::audio_edit`]). [`write_table`] writes a table back: header and rows in
@@ -21,6 +26,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::audio::{probe_audio, AudioContent};
+use crate::enhanced::kr_audio::{KrAudioTables, KrEffectsTable, KrSoundTable, KR_EFFECTS_TABLE_ENTRY, KR_OTHER_TABLE_ENTRIES};
 use crate::uop_container::file::CompressionFlag;
 use crate::uop_container::hash::hash_file_name_single;
 use crate::uop_container::package::{LoadMode, UopPackage};
@@ -42,6 +48,12 @@ pub const LEGACY_SOUND_EXTENSION: &str = "wav";
 /// How Kingdom Reborn's tables start: the sound table's header, or the comment row of the music table.
 const KR_SOUND_HEADER_START: &str = "w,s,id,";
 const KR_COMMENT_MARK: char = ';';
+/// The longest entry name the Enhanced Client builds: `sprintf("%s/%s", "data/audio", FilePath)` into 255 bytes.
+pub const MAX_ENTRY_NAME_BYTES: usize = 254;
+/// The highest sound id a server can send (a u16; 0xFFFF is skipped).
+pub const MAX_SERVER_SOUND_ID: u32 = 0xfffe;
+/// The client's CSV reader drops it and toggles quoting.
+const QUOTE: char = '"';
 const FIELD_SEPARATOR: char = ',';
 const LOOP_OFF: &str = "0";
 const LOOP_ON: &str = "1";
@@ -88,11 +100,11 @@ impl AudioTableRow {
 }
 
 /// The tables of an `Audio.uop`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum AudioTables {
     Enhanced { sounds: BTreeMap<u32, AudioTableRow>, music: BTreeMap<u32, AudioTableRow> },
-    /// Kingdom Reborn's layout, not read.
-    KingdomReborn,
+    /// Kingdom Reborn's layout.
+    KingdomReborn(Box<KrAudioTables>),
     /// The package has no sound table.
     Missing,
 }
@@ -162,7 +174,8 @@ pub fn write_table(header: &str, rows: &BTreeMap<u32, AudioTableRow>, with_loop:
 
 /// Checks a path for a new row of the sound table (`music` false) or of the music table, by the shipped rows'
 /// rules: `Sounds\` and `\` separators, or `Music/` and `/` separators; the `.mp3` extension (any case); printable
-/// ASCII without commas.
+/// ASCII without commas or quotes (the client's reader drops a `"`); an entry name of at most
+/// [`MAX_ENTRY_NAME_BYTES`].
 pub fn check_table_path(path: &str, music: bool) -> eyre::Result<()> {
     let (root, separator, other) = if music {
         (MUSIC_PATH_ROOT, MUSIC_PATH_SEPARATOR, SOUND_PATH_SEPARATOR)
@@ -180,8 +193,12 @@ pub fn check_table_path(path: &str, music: bool) -> eyre::Result<()> {
     if !lower.ends_with(TABLE_PATH_EXTENSION) {
         eyre::bail!("`{path}`: every path of {table} names a {TABLE_PATH_EXTENSION} file");
     }
-    if let Some(bad) = path.chars().find(|&c| c == FIELD_SEPARATOR || !(' '..='~').contains(&c)) {
-        eyre::bail!("`{path}`: `{}` is not allowed in a table path (printable ASCII without commas)", bad.escape_default());
+    if let Some(bad) = path.chars().find(|&c| c == FIELD_SEPARATOR || c == QUOTE || !(' '..='~').contains(&c)) {
+        eyre::bail!("`{path}`: `{}` is not allowed in a table path (printable ASCII without commas or quotes)", bad.escape_default());
+    }
+    let name = table_path_entry_name(path);
+    if name.len() > MAX_ENTRY_NAME_BYTES {
+        eyre::bail!("`{path}`: the entry name `{name}` has {} bytes; the client builds at most {MAX_ENTRY_NAME_BYTES}", name.len());
     }
     Ok(())
 }
@@ -197,7 +214,14 @@ pub(crate) fn read_tables(package: &UopPackage, path: &Path) -> eyre::Result<Aud
     let source = |name: &str| format!("{}:{name}", path.display());
     Ok(match read_table(SOUND_TABLE_ENTRY)? {
         None => AudioTables::Missing,
-        Some(text) if is_kingdom_reborn_table(&text) => AudioTables::KingdomReborn,
+        Some(text) if is_kingdom_reborn_table(&text) => {
+            let sounds = KrSoundTable::parse(&source(SOUND_TABLE_ENTRY), &text)?;
+            let effects = match read_table(KR_EFFECTS_TABLE_ENTRY)? {
+                Some(text) => Some(KrEffectsTable::parse(&source(KR_EFFECTS_TABLE_ENTRY), &text)?),
+                None => None,
+            };
+            AudioTables::KingdomReborn(Box::new(KrAudioTables { sounds, effects }))
+        }
         Some(text) => {
             let sounds = parse_table(&source(SOUND_TABLE_ENTRY), &text, SOUND_TABLE_HEADER, false)?;
             let music = match read_table(MUSIC_TABLE_ENTRY)? {
@@ -244,6 +268,27 @@ pub struct AudioPackage {
     tables: AudioTables,
     /// The names the tables give, by hash.
     names: HashMap<u64, String>,
+    silent: Vec<SilentRow>,
+}
+
+/// A table row whose path names no entry of the package: the client plays nothing for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SilentRow {
+    pub kind: AudioKind,
+    pub id: u32,
+    pub path: String,
+    pub line: usize,
+    pub entry_name: String,
+}
+
+impl SilentRow {
+    pub fn warning(&self) -> String {
+        let table = if self.kind == AudioKind::Music { MUSIC_TABLE_ENTRY } else { SOUND_TABLE_ENTRY };
+        format!(
+            "{table} line {}: id {} names `{}`, which is no entry ({}): the client plays nothing for it",
+            self.line, self.id, self.path, self.entry_name
+        )
+    }
 }
 
 impl AudioPackage {
@@ -256,23 +301,34 @@ impl AudioPackage {
         let package = UopPackage::load_with_mode(path, LoadMode::Lazy).wrap_err_with(|| format!("Failed to load {}", path.display()))?;
         let tables = read_tables(&package, path)?;
         let mut names = HashMap::new();
-        for name in [SOUND_TABLE_ENTRY, MUSIC_TABLE_ENTRY] {
-            names.insert(hash_file_name_single(name), name.to_owned());
-        }
-        if let AudioTables::Enhanced { sounds, music } = &tables {
-            let derived = sounds
-                .values()
-                .flat_map(|row| [Some(row.entry_name()), legacy_sound_entry_name(&row.path)])
-                .chain(music.values().map(|row| Some(row.entry_name())))
-                .flatten();
-            for name in derived {
-                let hash = hash_file_name_single(&name);
-                if package.get_file_by_hash(hash).is_some() {
-                    names.insert(hash, name);
+        let mut silent = Vec::new();
+        let mut derived = vec![SOUND_TABLE_ENTRY.to_owned(), MUSIC_TABLE_ENTRY.to_owned()];
+        match &tables {
+            AudioTables::Enhanced { sounds, music } => {
+                derived.extend(sounds.values().flat_map(|row| [Some(row.entry_name()), legacy_sound_entry_name(&row.path)]).flatten());
+                derived.extend(music.values().map(AudioTableRow::entry_name));
+                let rows = sounds.values().map(|row| (AudioKind::Sound, row)).chain(music.values().map(|row| (AudioKind::Music, row)));
+                for (kind, row) in rows {
+                    let entry_name = row.entry_name();
+                    if package.get_file_by_hash(hash_file_name_single(&entry_name)).is_none() {
+                        silent.push(SilentRow { kind, id: row.id, path: row.path.clone(), line: row.line, entry_name });
+                    }
                 }
             }
+            AudioTables::KingdomReborn(kr) => {
+                derived.push(KR_EFFECTS_TABLE_ENTRY.to_owned());
+                derived.extend(KR_OTHER_TABLE_ENTRIES.iter().map(|name| (*name).to_owned()));
+                derived.extend(kr.sounds.sounds().map(|row| row.entry_name()));
+            }
+            AudioTables::Missing => {}
         }
-        Ok(Self { path: path.to_path_buf(), package, tables, names })
+        for name in derived {
+            let hash = hash_file_name_single(&name);
+            if package.get_file_by_hash(hash).is_some() {
+                names.insert(hash, name);
+            }
+        }
+        Ok(Self { path: path.to_path_buf(), package, tables, names, silent })
     }
 
     pub fn path(&self) -> &Path {
@@ -301,6 +357,19 @@ impl AudioPackage {
         self.package.iter_files().filter(|file| file.has_size()).map(|file| file.filename_hash())
     }
 
+    /// The Enhanced Client table rows whose path names no entry, in table order (sounds, then music).
+    pub fn silent_rows(&self) -> &[SilentRow] {
+        &self.silent
+    }
+
+    /// What the client reads differently from the tables: the silent rows, and Kingdom Reborn's skipped lines.
+    pub fn table_warnings(&self) -> Vec<String> {
+        match &self.tables {
+            AudioTables::KingdomReborn(kr) => kr.client_notes(),
+            _ => self.silent.iter().map(SilentRow::warning).collect(),
+        }
+    }
+
     pub fn sound_row(&self, id: u32) -> Option<&AudioTableRow> {
         match &self.tables {
             AudioTables::Enhanced { sounds, .. } => sounds.get(&id),
@@ -315,8 +384,12 @@ impl AudioPackage {
         }
     }
 
-    /// The entry name an id stands for, from the tables.
+    /// The entry name an id stands for, from the tables. For Kingdom Reborn, a sound id is the server's id
+    /// ([`KrAudioTables::sound_for_server_id`]); its music and legacy sounds have no ids here.
     pub fn entry_name_for(&self, kind: AudioKind, id: u32) -> Option<String> {
+        if let AudioTables::KingdomReborn(kr) = &self.tables {
+            return (kind == AudioKind::Sound).then(|| kr.sound_for_server_id(id)).flatten().and_then(|(_, row)| row).map(|row| row.entry_name());
+        }
         match kind {
             AudioKind::Sound => self.sound_row(id).map(AudioTableRow::entry_name),
             AudioKind::LegacySound => self.sound_row(id).and_then(|row| legacy_sound_entry_name(&row.path)),
@@ -413,6 +486,9 @@ mod tests {
         assert!(error("Music/x.wav", true).contains(".mp3 file"));
         assert!(error("Music/a,b.mp3", true).contains("`,` is not allowed"));
         assert!(error("Sounds\\", false).contains("start with"));
+        assert!(error("Sounds\\a\"b.mp3", false).contains("without commas or quotes"));
+        let long = format!("Sounds\\{}.mp3", "x".repeat(MAX_ENTRY_NAME_BYTES));
+        assert!(error(&long, false).contains("the client builds at most 254"), "{}", error(&long, false));
         assert!(!is_kingdom_reborn_table("#ID,FilePath\r\n"));
     }
 }

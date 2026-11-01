@@ -19,14 +19,17 @@ use uocf::uop_container::hash::hash_file_name_single;
 use uocf::uop_container::hash_dictionary::HashDictionary;
 use uocf::uop_container::package::UopPackage;
 
-const CLIENT_DIR_ENVS: [&str; 2] = ["UO_EC_CLIENT_DIR", "UO_KR_CLIENT_DIR"];
+/// The client folders, and the audio policy their shipped entries are checked with.
+const CLIENT_DIR_ENVS: [(&str, FormatPolicy); 2] = [("UO_EC_CLIENT_DIR", EC_AUDIO_POLICY), ("UO_KR_CLIENT_DIR", KR_AUDIO_POLICY)];
 const DICTIONARY: &str = "../../tools/_shared_assets/Dictionary.dic";
 const STRING_DICTIONARY_FILE: &str = "string_dictionary.uop";
 const GAME_DATA_FILE: &str = "GameData.uop";
-/// The Kingdom Reborn music is VBR, partly at 32 kbit/s, with a cut last frame: formats the Enhanced Client's
-/// shipped entries do not show, so the shipped entries are checked with the unverified formats allowed (a file
-/// of another kind is refused under both policies).
-const AUDIO_POLICY: FormatPolicy = FormatPolicy::AllowUnverified;
+/// Every shipped Enhanced Client file is one its decoder (Miles 7.2c) is verified to play.
+const EC_AUDIO_POLICY: FormatPolicy = FormatPolicy::VerifiedOnly;
+/// Kingdom Reborn plays with Miles 7.0x, and some of its music ends in a cut last frame, which 7.2c's handling is
+/// not verified for: its shipped entries are checked with the unverified formats allowed (a file Miles refuses,
+/// or of another kind, is refused under both policies).
+const KR_AUDIO_POLICY: FormatPolicy = FormatPolicy::AllowUnverified;
 /// How many failures the report prints.
 const SHOWN_FAILURES: usize = 20;
 
@@ -58,11 +61,13 @@ fn check_label(check: &EntryCheck) -> String {
 #[test]
 #[ignore = "needs real clients: set UO_EC_CLIENT_DIR and/or UO_KR_CLIENT_DIR and run with --ignored"]
 fn every_shipped_entry_passes_its_own_check() {
-    let dirs: Vec<(&str, PathBuf)> =
-        CLIENT_DIR_ENVS.into_iter().filter_map(|env| std::env::var_os(env).map(|dir| (env, PathBuf::from(dir)))).collect();
-    assert!(!dirs.is_empty(), "set {}", CLIENT_DIR_ENVS.join(" and/or "));
+    let dirs: Vec<(&str, FormatPolicy, PathBuf)> = CLIENT_DIR_ENVS
+        .into_iter()
+        .filter_map(|(env, policy)| std::env::var_os(env).map(|dir| (env, policy, PathBuf::from(dir))))
+        .collect();
+    assert!(!dirs.is_empty(), "set {}", CLIENT_DIR_ENVS.map(|(env, _)| env).join(" and/or "));
     let mut failures = Vec::new();
-    for (env, dir) in dirs {
+    for (env, audio_policy, dir) in dirs {
         let packages = find_packages(&dir).unwrap();
         let names = names(&packages);
         for path in &packages {
@@ -79,7 +84,7 @@ fn every_shipped_entry_passes_its_own_check() {
                     };
                     let payload = editor.package().unpack_file_by_hash(hash).unwrap().unwrap();
                     let label = target.name().map_or_else(|| format!("{hash:016X}"), str::to_owned);
-                    (label, editor.check_replacement(&target, &payload, AUDIO_POLICY).map_err(|error| format!("{error:#}")))
+                    (label, editor.check_replacement(&target, &payload, audio_policy).map_err(|error| format!("{error:#}")))
                 })
                 .collect();
             let mut counts: BTreeMap<String, usize> = BTreeMap::new();
@@ -104,7 +109,7 @@ fn every_shipped_entry_passes_its_own_check() {
 #[test]
 #[ignore = "needs the Enhanced Client: set UO_EC_CLIENT_DIR and run with --ignored"]
 fn game_data_entries_are_replaced_and_added() {
-    let dir = PathBuf::from(std::env::var_os(CLIENT_DIR_ENVS[0]).unwrap_or_else(|| panic!("set {}", CLIENT_DIR_ENVS[0])));
+    let dir = PathBuf::from(std::env::var_os(CLIENT_DIR_ENVS[0].0).unwrap_or_else(|| panic!("set {}", CLIENT_DIR_ENVS[0].0)));
     let source = dir.join(GAME_DATA_FILE);
     let out = common::temp_dir("entry_editor_game_data");
     let policy = FormatPolicy::VerifiedOnly;

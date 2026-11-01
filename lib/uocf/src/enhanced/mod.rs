@@ -24,6 +24,7 @@ pub mod housing;
 pub mod hues;
 pub mod hues_mul_uop;
 pub mod image_census;
+pub mod kr_audio;
 pub mod localized_strings;
 pub mod mobile_body;
 pub mod legacy_terrain;

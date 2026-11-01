@@ -1,23 +1,53 @@
-//! Which audio the Enhanced Client is known to play: the streams its shipped `Audio.uop` holds
-//! (`docs/agent_notes/ec_audio_formats.md`), checked before an entry is replaced or added
-//! ([`enhanced_format_problems`]).
+//! Which audio the Enhanced Client plays: what its decoder, Miles Sound System 7.2c (`mss32.dll` and
+//! `miles/mssmp3.asi`), accepts, checked before an entry is replaced or added ([`enhanced_format_report`]).
 //!
-//! The lists are what the reference release ships, not what the client's decoder accepts: that is a question for
-//! the client code (the decoder and its limits are not known yet). Until then anything else is refused, unless the
-//! caller asks for [`FormatPolicy::AllowUnverified`], which turns the problems into warnings: for trying a format
-//! out in a test client, never for a release. A file of another kind than its entry name says ([`kind_mismatch`])
-//! is refused under either policy.
-
-use std::ops::RangeInclusive;
+//! The client hands the whole entry to `AIL_set_named_sample_file` with the entry name, and checks nothing itself.
+//! Miles picks the decoder by the name's extension (a leading ID3v2 tag forces MP3), so a file of another kind than
+//! its name ([`kind_mismatch`]) is refused under every policy. The rest of the rules come from the Miles code
+//! (`scripts/dev-helpers/ec-research/ghidra-audio/results/miles_audio.md`); `docs/agent_notes/ec_audio_formats.md`
+//! names the evidence of each:
+//!
+//! - **WAV** (the built-in parser): `WAVE` at +8; the chunk walk steps `size + (size & 1) + 8` from +12 within the
+//!   RIFF size, so it must reach the `fmt ` and `data` chunks our walk finds (an odd chunk before them needs its
+//!   pad byte); `fmt ` of 16 bytes or more (Miles reads the first 16); PCM of 8 or 16 bits, IMA ADPCM, or
+//!   `WAVE_FORMAT_EXTENSIBLE` with `cbSize` ≥ 22, the PCM sub-format and 16 bits; mono or stereo; any rate; a `data`
+//!   chunk inside the file (Miles does not clamp it).
+//! - **MP3** (`mssmp3.asi`): Layer III, MPEG-1, 2 or 2.5; the first frame within 8 KiB after a leading ID3v2 tag;
+//!   every frame of the first frame's version, layer and rate; any bitrate, VBR included; ID3v1 and ID3v2 tags.
+//!
+//! [`FormatReport`] sorts what differs: `refused` (Miles refuses it, or there is nothing to play), `unverified`
+//! (the code read does not say; refused unless the caller asks for [`FormatPolicy::AllowUnverified`], for trying a
+//! file out in a test client, never for a release) and `notes` (played, but unlike the shipped entries; always
+//! accepted, reported as warnings).
 
 use super::mp3::{ChannelMode, MpegAnalysis, MpegLayer, MpegVersion};
-use super::wav::{WavAnalysis, FMT_EX_SIZE, FMT_PCM_SIZE, PCM_WAV_BITS_PER_SAMPLE, WAVE_FORMAT_PCM};
+use super::wav::{
+    WavAnalysis, CHUNK_HEADER_SIZE, DATA_CHUNK_ID, FMT_CHUNK_ID, KSDATAFORMAT_SUBTYPE_PCM, RIFF_HEADER_SIZE,
+    WAVE_FORMAT_EXTENSIBLE, WAVE_FORMAT_IMA_ADPCM, WAVE_FORMAT_PCM,
+};
 use super::{name_extension, AudioContent, AudioFormat};
+use crate::enhanced::audio::LEGACY_SOUNDS_ROOT;
 
 crate::eyre_imports!();
 
-/// The MPEG Layer III streams of the shipped `Audio.uop`: version, sample rate and channel mode.
-pub const VERIFIED_MPEG_STREAMS: [(MpegVersion, u32, ChannelMode); 8] = [
+/// How far `mssmp3.asi` scans for the first frame sync, after a leading ID3v2 tag.
+pub const MILES_MP3_SYNC_WINDOW: usize = 0x2000;
+/// Miles takes a leading ID3v2 tag only when both version bytes are below this.
+pub const MILES_ID3V2_VERSION_LIMIT: u8 = 0xff;
+/// The PCM sample sizes the built-in WAV parser plays.
+pub const MILES_PCM_BITS: [u16; 2] = [8, 16];
+/// IMA ADPCM's sample size, which Miles decodes natively.
+pub const MILES_IMA_ADPCM_BITS: u16 = 4;
+/// `WAVE_FORMAT_EXTENSIBLE`: the smallest `cbSize`, and the one sample size (block align = channels × 2).
+pub const MILES_EXTENSIBLE_MIN_CB_SIZE: u16 = 22;
+pub const MILES_EXTENSIBLE_BITS: u16 = 16;
+/// Mono and stereo; more channels take Miles' multichannel path, which was not read.
+pub const MILES_MAX_CHANNELS: u16 = 2;
+const BITS_PER_BYTE: u16 = 8;
+
+/// The MPEG Layer III streams of the shipped `Audio.uop`: version, sample rate and channel mode. Others play; they
+/// are reported as notes.
+pub const SHIPPED_MPEG_STREAMS: [(MpegVersion, u32, ChannelMode); 8] = [
     (MpegVersion::V1, 32_000, ChannelMode::Mono),
     (MpegVersion::V1, 44_100, ChannelMode::Mono),
     (MpegVersion::V1, 44_100, ChannelMode::Stereo),
@@ -27,36 +57,53 @@ pub const VERIFIED_MPEG_STREAMS: [(MpegVersion, u32, ChannelMode); 8] = [
     (MpegVersion::V2, 22_050, ChannelMode::Stereo),
     (MpegVersion::V2, 22_050, ChannelMode::JointStereo),
 ];
-/// The constant bitrates the shipped MP3s use run from 64 to 320 kbit/s (64, 128, 160, 192, 320).
-pub const VERIFIED_MPEG_BITRATES_KBPS: RangeInclusive<u32> = 64..=320;
-/// The PCM WAV streams of the shipped `Audio.uop`: sample rate and channels, all 16-bit. 22048 Hz is how most
-/// legacy sounds label the Classic 22050 Hz PCM.
-pub const VERIFIED_WAV_STREAMS: [(u32, u16); 5] = [(22_048, 1), (22_050, 1), (44_100, 1), (22_050, 2), (44_100, 2)];
-pub const VERIFIED_WAV_BITS: u16 = PCM_WAV_BITS_PER_SAMPLE;
-/// The `fmt ` chunk sizes of the shipped WAVs.
-pub const VERIFIED_WAV_FMT_SIZES: [u32; 2] = [FMT_PCM_SIZE, FMT_EX_SIZE];
+/// The stream of the legacy WAVs (`data/audio/legacysounds/`): the Classic client's playback format, which the
+/// Classic tooling expects. Others are reported as notes.
+pub const LEGACY_WAV_STREAM: (u32, u16, u16) = (22_048, 1, 16);
 
-/// What to do with a format the shipped data does not show the client playing.
+/// What to do with what the Miles code read does not settle.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum FormatPolicy {
     /// Refuse it.
     #[default]
     VerifiedOnly,
-    /// Accept it, reporting the problems as warnings (`--allow-unverified-format`).
+    /// Accept it, reporting it as warnings (`--allow-unverified-format`).
     AllowUnverified,
 }
 
+/// How a file compares with what the Enhanced Client plays (see the module documentation).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FormatReport {
+    /// Miles refuses it, or there is nothing to play: never stored.
+    pub refused: Vec<String>,
+    /// The Miles code read does not say whether it plays.
+    pub unverified: Vec<String>,
+    /// It plays, but differs from the shipped entries.
+    pub notes: Vec<String>,
+}
+
+impl FormatReport {
+    /// Nothing refused and nothing unverified.
+    pub fn is_verified(&self) -> bool {
+        self.refused.is_empty() && self.unverified.is_empty()
+    }
+}
+
 impl FormatPolicy {
-    /// Fails with `problems` under [`Self::VerifiedOnly`]; returns them as warnings under [`Self::AllowUnverified`].
-    pub fn apply(self, what: &str, problems: Vec<String>) -> eyre::Result<Vec<String>> {
-        if problems.is_empty() || self == Self::AllowUnverified {
-            return Ok(problems);
+    /// Fails on anything `report` refuses, and on what is unverified under [`Self::VerifiedOnly`]; returns the
+    /// warnings: the unverified problems let through, then the notes.
+    pub fn apply(self, what: &str, report: FormatReport) -> eyre::Result<Vec<String>> {
+        if !report.refused.is_empty() {
+            eyre::bail!("{what} is not a file the Enhanced Client's decoder (Miles 7.2c) plays: {}", report.refused.join("; "))
         }
-        eyre::bail!(
-            "{what} is not in a format the shipped Audio.uop shows the client playing: {} (allow it with \
-             --allow-unverified-format to try it out)",
-            problems.join("; ")
-        )
+        if !report.unverified.is_empty() && self == Self::VerifiedOnly {
+            eyre::bail!(
+                "{what}: whether the Enhanced Client's decoder (Miles 7.2c) plays this is not verified: {} (allow it with \
+                 --allow-unverified-format to try it out)",
+                report.unverified.join("; ")
+            )
+        }
+        Ok(report.unverified.into_iter().chain(report.notes).collect())
     }
 }
 
@@ -81,84 +128,152 @@ pub fn kind_mismatch(name: &str, content: &AudioContent) -> Option<String> {
     }
 }
 
-/// Why `content`, stored as the entry `name`, is not like the shipped entries: empty when it is. The first problem
-/// is the [`kind_mismatch`] when there is one.
-pub fn enhanced_format_problems(name: &str, content: &AudioContent) -> Vec<String> {
-    let mut problems: Vec<String> = kind_mismatch(name, content).into_iter().collect();
+/// How `content`, stored as the entry `name`, compares with what the Enhanced Client plays. The first refusal is
+/// the [`kind_mismatch`] when there is one.
+pub fn enhanced_format_report(name: &str, content: &AudioContent) -> FormatReport {
+    let mut report = FormatReport { refused: kind_mismatch(name, content).into_iter().collect(), ..FormatReport::default() };
+    let legacy = name.starts_with(LEGACY_SOUNDS_ROOT);
     match content {
-        AudioContent::Mpeg(analysis) => problems.extend(mpeg_problems(analysis)),
-        AudioContent::Wav(analysis) => problems.extend(wav_problems(analysis)),
-        other => problems.push(format!("{} is neither MP3 nor WAV", other.format().label())),
+        AudioContent::Mpeg(analysis) => mpeg_report(analysis, &mut report),
+        AudioContent::Wav(analysis) => wav_report(analysis, legacy, &mut report),
+        other => report.refused.push(format!("{} is neither MP3 nor WAV", other.format().label())),
     }
-    problems
-}
-
-fn mpeg_problems(analysis: &MpegAnalysis) -> Vec<String> {
-    let first = &analysis.first;
-    let mut problems = Vec::new();
-    if first.layer != MpegLayer::L3 {
-        problems.push(format!("{} (only Layer III ships)", first.layer.label()));
-    }
-    if !VERIFIED_MPEG_STREAMS.contains(&(first.version, first.sample_rate, first.channel_mode)) {
-        problems.push(format!("{} (not among the shipped streams)", analysis.stream_label()));
-    }
-    if !analysis.is_cbr() {
-        problems.push(format!("{} (every shipped MP3 has a constant bitrate)", analysis.bitrate_label()));
-    }
-    if let Some(bitrate) = analysis.bitrates.iter().find(|bitrate| !VERIFIED_MPEG_BITRATES_KBPS.contains(bitrate)) {
-        problems.push(format!(
-            "{bitrate} kbit/s (the shipped bitrates run from {} to {})",
-            VERIFIED_MPEG_BITRATES_KBPS.start(),
-            VERIFIED_MPEG_BITRATES_KBPS.end()
+    if legacy {
+        report.notes.push(format!(
+            "the Enhanced Client never plays `{LEGACY_SOUNDS_ROOT}` entries: it plays the MP3 files audio_sounds.csv names"
         ));
     }
-    if analysis.audio_frames() == 0 {
-        problems.push("no audio frames".to_owned());
-    }
-    let defects = [
-        (analysis.inconsistent_frames > 0, format!("{} frames of another stream", analysis.inconsistent_frames)),
-        (analysis.resyncs > 0, format!("{} breaks in the frame chain", analysis.resyncs)),
-        (analysis.truncated_last_frame, "the last frame is cut".to_owned()),
-        (analysis.leading_junk_bytes > 0, format!("{} bytes that are no frame before the first", analysis.leading_junk_bytes)),
-        (analysis.tail.trailing_bytes > 0, format!("{} bytes that are no tag after the last frame", analysis.tail.trailing_bytes)),
-        (analysis.tail.ape, "an APE tag".to_owned()),
-    ];
-    problems.extend(defects.into_iter().filter(|(found, _)| *found).map(|(_, problem)| problem));
-    problems
+    report
 }
 
-fn wav_problems(analysis: &WavAnalysis) -> Vec<String> {
+/// Where `mssmp3.asi` starts scanning: after a leading ID3v2 tag Miles takes (its footer not skipped).
+fn miles_scan_start(analysis: &MpegAnalysis) -> usize {
+    analysis
+        .id3v2
+        .first()
+        .filter(|tag| tag.offset == 0 && tag.major < MILES_ID3V2_VERSION_LIMIT && tag.revision < MILES_ID3V2_VERSION_LIMIT)
+        .map_or(0, |tag| tag.length_without_footer())
+}
+
+fn mpeg_report(analysis: &MpegAnalysis, report: &mut FormatReport) {
+    let first = &analysis.first;
+    if first.layer != MpegLayer::L3 {
+        report.refused.push(format!("{} (mssmp3.asi decodes Layer III only)", first.layer.label()));
+    }
+    let scanned = analysis.first_frame_offset.saturating_sub(miles_scan_start(analysis));
+    if scanned > MILES_MP3_SYNC_WINDOW {
+        report.refused.push(format!("the first frame is {scanned} bytes in (mssmp3.asi scans {MILES_MP3_SYNC_WINDOW} bytes for it)"));
+    }
+    if analysis.audio_frames() == 0 {
+        report.refused.push("no audio frames".to_owned());
+    }
+    if analysis.inconsistent_rate_frames > 0 {
+        report.refused.push(format!(
+            "{} frames of another version, layer or sample rate than the first (mssmp3.asi takes only frames like the first)",
+            analysis.inconsistent_rate_frames
+        ));
+    }
+    let channel_mode_changes = analysis.inconsistent_frames - analysis.inconsistent_rate_frames;
+    let unverified = [
+        (channel_mode_changes > 0, format!("{channel_mode_changes} frames of another channel mode than the first")),
+        (analysis.resyncs > 0, format!("{} breaks in the frame chain", analysis.resyncs)),
+        (analysis.truncated_last_frame, "the last frame is cut".to_owned()),
+        (analysis.tail.trailing_bytes > 0, format!("{} bytes that are no tag after the last frame", analysis.tail.trailing_bytes)),
+        (analysis.tail.ape, "an APE tag (Miles skips ID3 tags only)".to_owned()),
+    ];
+    report.unverified.extend(unverified.into_iter().filter(|(found, _)| *found).map(|(_, problem)| problem));
+    if first.layer == MpegLayer::L3 && !SHIPPED_MPEG_STREAMS.contains(&(first.version, first.sample_rate, first.channel_mode)) {
+        report.notes.push(format!("{} is not among the shipped streams", analysis.stream_label()));
+    }
+}
+
+/// The offset of the chunk Miles' walk finds for `id`: from +12, `size + (size & 1) + 8` per chunk, ids compared
+/// ignoring case, within the RIFF size and the payload. The walk is run over the chunks our walk found: where it
+/// lands on no chunk of ours (the byte after an unpadded odd chunk, past the end), it finds nothing.
+fn miles_find_chunk(analysis: &WavAnalysis, id: [u8; 4]) -> Option<usize> {
+    let bound = (analysis.riff_size as usize).saturating_add(CHUNK_HEADER_SIZE).min(analysis.length);
+    let mut offset = RIFF_HEADER_SIZE;
+    while offset + CHUNK_HEADER_SIZE <= bound {
+        let chunk = analysis.chunks.iter().find(|chunk| chunk.offset == offset)?;
+        if chunk.id.eq_ignore_ascii_case(&id) {
+            return Some(offset);
+        }
+        offset = offset.checked_add(CHUNK_HEADER_SIZE + chunk.size as usize + (chunk.size as usize & 1))?;
+    }
+    None
+}
+
+/// Why Miles' walk does not find the `fmt ` and `data` chunks ours finds; `None` when it does. An unpadded odd
+/// chunk sends Miles to the byte after it, so it matters only before `fmt ` or `data`.
+fn miles_walk_problem(analysis: &WavAnalysis) -> Option<String> {
+    for (id, label) in [(FMT_CHUNK_ID, "fmt "), (DATA_CHUNK_ID, "data")] {
+        let Some(ours) = analysis.chunks.iter().find(|chunk| chunk.id == id).map(|chunk| chunk.offset) else { continue };
+        if miles_find_chunk(analysis, id) != Some(ours) {
+            let unpadded = analysis.chunks.iter().any(|chunk| chunk.unpadded && chunk.offset < ours);
+            let why = if unpadded { "an odd chunk before it has no pad byte" } else { "the RIFF size ends before it" };
+            return Some(format!("Miles' chunk walk misses the `{label}` chunk: {why}"));
+        }
+    }
+    None
+}
+
+fn wav_report(analysis: &WavAnalysis, legacy: bool, report: &mut FormatReport) {
     let Some(format) = analysis.format else {
-        return vec!["no fmt chunk".to_owned()];
+        report.refused.push("no fmt chunk".to_owned());
+        return;
     };
-    let mut problems = Vec::new();
-    if format.format_tag != WAVE_FORMAT_PCM || format.bits_per_sample != VERIFIED_WAV_BITS {
-        problems.push(format!("{} (every shipped WAV is plain {VERIFIED_WAV_BITS}-bit PCM)", format.label()));
-    } else if !VERIFIED_WAV_STREAMS.contains(&(format.sample_rate, format.channels)) {
-        problems.push(format!("{} (not among the shipped streams)", format.label()));
+    let tag = format.format_tag;
+    let bits = format.bits_per_sample;
+    let playable = match tag {
+        WAVE_FORMAT_PCM => MILES_PCM_BITS.contains(&bits),
+        WAVE_FORMAT_IMA_ADPCM => bits == MILES_IMA_ADPCM_BITS,
+        WAVE_FORMAT_EXTENSIBLE => {
+            let bad = [
+                (format.cb_size.is_none_or(|size| size < MILES_EXTENSIBLE_MIN_CB_SIZE), format!("a cbSize below {MILES_EXTENSIBLE_MIN_CB_SIZE}")),
+                (format.sub_format_guid != Some(KSDATAFORMAT_SUBTYPE_PCM), "a sub-format other than PCM".to_owned()),
+                (bits != MILES_EXTENSIBLE_BITS || format.block_align != format.channels * (MILES_EXTENSIBLE_BITS / BITS_PER_BYTE),
+                    format!("Miles takes {MILES_EXTENSIBLE_BITS}-bit samples only")),
+            ];
+            let problems: Vec<String> = bad.into_iter().filter(|(found, _)| *found).map(|(_, problem)| problem).collect();
+            if !problems.is_empty() {
+                report.refused.push(format!("extensible format with {}", problems.join(", ")));
+            }
+            problems.is_empty()
+        }
+        _ => false,
+    };
+    if !playable && tag != WAVE_FORMAT_EXTENSIBLE {
+        report.refused.push(format!("{} (Miles plays PCM of 8 or 16 bits and IMA ADPCM)", format.label()));
     }
-    if !format.is_consistent() {
-        problems.push("byte rate or block align do not follow from the format".to_owned());
+    if format.channels == 0 || format.channels > MILES_MAX_CHANNELS {
+        report.refused.push(format!("{} channels (mono or stereo only)", format.channels));
     }
-    if !VERIFIED_WAV_FMT_SIZES.contains(&format.chunk_size) {
-        problems.push(format!("a fmt chunk of {} bytes", format.chunk_size));
+    if format.sample_rate == 0 {
+        report.refused.push("a sample rate of 0".to_owned());
     }
-    let position = |id| analysis.chunks.iter().position(|chunk| chunk.id == id);
-    match (position(super::wav::FMT_CHUNK_ID), position(super::wav::DATA_CHUNK_ID)) {
-        (_, None) => problems.push("no data chunk".to_owned()),
-        (Some(fmt), Some(data)) if data < fmt => problems.push("the data chunk comes before fmt".to_owned()),
-        _ => {}
+    match analysis.data_offset {
+        None => report.refused.push("no data chunk".to_owned()),
+        Some(_) if analysis.data_truncated => report.refused.push("the data chunk runs past the file (Miles does not clamp it)".to_owned()),
+        Some(_) if analysis.data_len == 0 => report.refused.push("no samples".to_owned()),
+        Some(_) => {}
     }
+    report.refused.extend(miles_walk_problem(analysis));
     let block_align = usize::from(format.block_align);
-    let defects = [
-        (analysis.data_len == 0, "no samples".to_owned()),
-        (analysis.data_truncated, "the data chunk is cut".to_owned()),
-        (block_align > 0 && analysis.data_len % block_align != 0, "the data is not whole sample frames".to_owned()),
+    let pcm = format.effective_tag() == WAVE_FORMAT_PCM;
+    let unverified = [
+        (pcm && !format.is_consistent(), "byte rate or block align do not follow from the format".to_owned()),
+        (pcm && block_align > 0 && analysis.data_len % block_align != 0, "the data is not whole sample frames".to_owned()),
+    ];
+    report.unverified.extend(unverified.into_iter().filter(|(found, _)| *found).map(|(_, problem)| problem));
+    let notes = [
         (!analysis.riff_size_matches(), "the RIFF size is not the file's".to_owned()),
         (analysis.trailing_bytes > 0, format!("{} bytes after the last chunk", analysis.trailing_bytes)),
+        (legacy && (format.sample_rate, format.channels, bits) != LEGACY_WAV_STREAM, {
+            let (rate, channels, bits) = LEGACY_WAV_STREAM;
+            format!("{} (the legacy WAVs, like Classic sounds, are {rate} Hz, {channels} channel, {bits}-bit)", format.label())
+        }),
     ];
-    problems.extend(defects.into_iter().filter(|(found, _)| *found).map(|(_, problem)| problem));
-    problems
+    report.notes.extend(notes.into_iter().filter(|(found, _)| *found).map(|(_, problem)| problem));
 }
 
 #[cfg(test)]
@@ -168,41 +283,73 @@ mod tests {
 
     const MP3_NAME: &str = "data/audio/sounds/test/a.mp3";
     const WAV_NAME: &str = "data/audio/legacysounds/test/a.wav";
+    const OTHER_WAV_NAME: &str = "data/audio/test/a.wav";
 
-    #[test]
-    fn accepts_the_shipped_kinds_of_stream() {
-        let mpeg2 = mp3::tests::frames(mp3::tests::MPEG2_L3_64K_MONO_HEADER, mp3::tests::MPEG2_L3_64K_MONO_FRAME, 4);
-        assert_eq!(enhanced_format_problems(MP3_NAME, &probe_audio(&mpeg2)), Vec::<String>::new());
-        let mpeg1 = mp3::tests::frames(mp3::tests::MPEG1_L3_128K_HEADER, mp3::tests::MPEG1_L3_128K_FRAME, 4);
-        let problems = enhanced_format_problems(MP3_NAME, &probe_audio(&mpeg1));
-        // The synthetic MPEG-1 frames are 44100 Hz joint stereo, a shipped stream.
-        assert!(problems.is_empty(), "{problems:?}");
-        let pcm = wav::encode_pcm_wav(22_050, 1, &[0, 0, 1, 0]);
-        assert!(enhanced_format_problems(WAV_NAME, &probe_audio(&pcm)).is_empty());
-        let with_chunks = wav::tests::sample_wav(&[0, 0]);
-        assert!(enhanced_format_problems(WAV_NAME, &probe_audio(&with_chunks)).is_empty(), "18-byte fmt and an odd LIST");
+    fn report(name: &str, file: &[u8]) -> FormatReport {
+        enhanced_format_report(name, &probe_audio(file))
     }
 
     #[test]
-    fn reports_what_differs_and_applies_the_policy() {
-        let wav_48k = wav::encode_pcm_wav(48_000, 1, &[0, 0]);
-        let problems = enhanced_format_problems(WAV_NAME, &probe_audio(&wav_48k));
-        assert_eq!(problems.len(), 1, "{problems:?}");
-        assert!(problems[0].contains("48000 Hz"));
+    fn accepts_what_miles_plays() {
+        let mpeg2 = mp3::tests::frames(mp3::tests::MPEG2_L3_64K_MONO_HEADER, mp3::tests::MPEG2_L3_64K_MONO_FRAME, 4);
+        assert_eq!(report(MP3_NAME, &mpeg2), FormatReport::default());
+        let mpeg1 = mp3::tests::frames(mp3::tests::MPEG1_L3_128K_HEADER, mp3::tests::MPEG1_L3_128K_FRAME, 4);
+        assert!(report(MP3_NAME, &mpeg1).is_verified(), "44100 Hz joint stereo, a shipped stream");
+        // MPEG-2 Layer III, 32 kbit/s, 22050 Hz, mono: a 104-byte frame.
+        const MPEG2_L3_32K_MONO_HEADER: [u8; 4] = [0xff, 0xf3, 0x40, 0xc0];
+        const MPEG2_L3_32K_MONO_FRAME: usize = 104;
+        let mut vbr = mpeg2.clone();
+        vbr.extend(mp3::tests::frames(MPEG2_L3_32K_MONO_HEADER, MPEG2_L3_32K_MONO_FRAME, 3));
+        assert!(report(MP3_NAME, &vbr).is_verified(), "VBR: Miles does not compare bitrates");
 
-        let mismatch = enhanced_format_problems(MP3_NAME, &probe_audio(&wav::encode_pcm_wav(22_050, 1, &[0, 0])));
-        assert!(mismatch[0].contains("the name asks for MP3, the file is WAV"), "{mismatch:?}");
-        assert!(enhanced_format_problems("data/audio/a.ogg", &AudioContent::Ogg).len() == 2);
+        let pcm = wav::encode_pcm_wav(22_048, 1, &[0, 0, 1, 0]);
+        assert_eq!(report(WAV_NAME, &pcm).refused, Vec::<String>::new());
+        assert_eq!(report(WAV_NAME, &pcm).notes.len(), 1, "the EC does not play legacy WAVs");
+        assert_eq!(report(OTHER_WAV_NAME, &wav::encode_pcm_wav(48_000, 2, &[0, 0, 0, 0])), FormatReport::default(), "any rate");
+        let eight_bit = wav::tests::wav_with_format(WAVE_FORMAT_PCM, 8, &[0x80, 0x80]);
+        assert!(report(OTHER_WAV_NAME, &eight_bit).is_verified());
+        let ima = wav::tests::wav_with_format(WAVE_FORMAT_IMA_ADPCM, MILES_IMA_ADPCM_BITS, &[0; 4]);
+        assert!(report(OTHER_WAV_NAME, &ima).refused.is_empty(), "{:?}", report(OTHER_WAV_NAME, &ima));
+        let with_chunks = wav::tests::sample_wav(&[0, 0]);
+        let found = report(OTHER_WAV_NAME, &with_chunks);
+        assert!(found.refused.iter().any(|problem| problem.contains("no pad byte")), "an unpadded LIST before data: {found:?}");
+        // fmt, data, then an odd `bext` without its pad byte and a `cart`: as 110 shipped legacy WAVs.
+        let mut last = wav::encode_pcm_wav(22_050, 1, &[0, 0]);
+        last.extend_from_slice(b"bext\x03\0\0\0abccart\0\0\0\0");
+        let riff_size = (last.len() - CHUNK_HEADER_SIZE) as u32;
+        last[CHUNK_HEADER_SIZE / 2..CHUNK_HEADER_SIZE].copy_from_slice(&riff_size.to_le_bytes());
+        assert_eq!(crate::audio::wav::analyze_wav(&last).unwrap().unpadded_chunks(), 1);
+        let found = report(OTHER_WAV_NAME, &last);
+        assert!(found.is_verified(), "an odd chunk after fmt and data is never walked: {found:?}");
+    }
+
+    #[test]
+    fn refuses_what_miles_refuses_and_applies_the_policy() {
+        let float = wav::tests::wav_with_format(wav::WAVE_FORMAT_IEEE_FLOAT, 32, &0.5f32.to_le_bytes());
+        assert!(report(OTHER_WAV_NAME, &float).refused[0].contains("IEEE float"));
+        let mismatch = report(MP3_NAME, &wav::encode_pcm_wav(22_050, 1, &[0, 0]));
+        assert!(mismatch.refused[0].contains("the name asks for MP3, the file is WAV"), "{mismatch:?}");
+        assert_eq!(enhanced_format_report("data/audio/a.ogg", &AudioContent::Ogg).refused.len(), 2);
         assert!(kind_mismatch("data/audio/a.ogg", &AudioContent::Ogg).is_some());
-        assert!(kind_mismatch(WAV_NAME, &probe_audio(&wav_48k)).is_none(), "a WAV of another rate is still a WAV");
 
         let mut cut = mp3::tests::frames(mp3::tests::MPEG2_L3_64K_MONO_HEADER, mp3::tests::MPEG2_L3_64K_MONO_FRAME, 4);
         cut.truncate(cut.len() - 1);
-        assert!(enhanced_format_problems(MP3_NAME, &probe_audio(&cut)).iter().any(|problem| problem.contains("cut")));
+        let found = report(MP3_NAME, &cut);
+        assert!(found.refused.is_empty() && found.unverified.iter().any(|problem| problem.contains("cut")), "{found:?}");
+        let mut late = vec![0u8; MILES_MP3_SYNC_WINDOW + 1];
+        late.extend(mp3::tests::frames(mp3::tests::MPEG2_L3_64K_MONO_HEADER, mp3::tests::MPEG2_L3_64K_MONO_FRAME, 4));
+        assert!(report(MP3_NAME, &late).refused.iter().any(|problem| problem.contains("scans")));
+        let mut mixed = mp3::tests::frames(mp3::tests::MPEG2_L3_64K_MONO_HEADER, mp3::tests::MPEG2_L3_64K_MONO_FRAME, 4);
+        mixed.extend(mp3::tests::frames(mp3::tests::MPEG1_L3_128K_HEADER, mp3::tests::MPEG1_L3_128K_FRAME, 1));
+        assert!(report(MP3_NAME, &mixed).refused.iter().any(|problem| problem.contains("another version")));
 
-        let error = FormatPolicy::VerifiedOnly.apply("x.wav", problems.clone()).unwrap_err().to_string();
+        let refused = FormatReport { refused: vec!["x".to_owned()], ..FormatReport::default() };
+        assert!(FormatPolicy::AllowUnverified.apply("x.wav", refused).unwrap_err().to_string().contains("Miles 7.2c"));
+        let unverified = FormatReport { unverified: vec!["u".to_owned()], notes: vec!["n".to_owned()], ..FormatReport::default() };
+        let error = FormatPolicy::VerifiedOnly.apply("x.wav", unverified.clone()).unwrap_err().to_string();
         assert!(error.contains("--allow-unverified-format"), "{error}");
-        assert_eq!(FormatPolicy::AllowUnverified.apply("x.wav", problems.clone()).unwrap(), problems);
-        assert!(FormatPolicy::VerifiedOnly.apply("x.wav", Vec::new()).unwrap().is_empty());
+        assert_eq!(FormatPolicy::AllowUnverified.apply("x.wav", unverified).unwrap(), ["u", "n"]);
+        let notes = FormatReport { notes: vec!["n".to_owned()], ..FormatReport::default() };
+        assert_eq!(FormatPolicy::VerifiedOnly.apply("x.wav", notes).unwrap(), ["n"]);
     }
 }

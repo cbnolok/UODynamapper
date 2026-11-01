@@ -303,6 +303,11 @@ impl Id3v2Tag {
         })
     }
 
+    /// The tag without its footer: the header and the size its size field gives.
+    pub fn length_without_footer(&self) -> usize {
+        self.length - if self.flags & ID3V2_FOOTER_FLAG != 0 { ID3V2_FOOTER_SIZE } else { 0 }
+    }
+
     pub fn label(&self) -> String {
         format!("ID3v2.{}.{}", self.major, self.revision)
     }
@@ -444,6 +449,8 @@ pub struct MpegAnalysis {
     pub info_header: Option<InfoHeader>,
     /// Frames whose version, layer, sample rate or channel mode differ from the first frame's.
     pub inconsistent_frames: u32,
+    /// Of those, the frames whose version, layer or sample rate differ (a channel mode change is not counted).
+    pub inconsistent_rate_frames: u32,
     /// The bitrates of the audio frames (the info header's frame excluded), in kbit/s.
     pub bitrates: BTreeSet<u32>,
     /// Frames with a CRC.
@@ -597,6 +604,7 @@ pub fn analyze_mpeg(payload: &[u8]) -> Option<MpegAnalysis> {
         frames: 0,
         info_header: None,
         inconsistent_frames: 0,
+        inconsistent_rate_frames: 0,
         bitrates: BTreeSet::new(),
         protected_frames: 0,
         resyncs: 0,
@@ -629,6 +637,9 @@ pub fn analyze_mpeg(payload: &[u8]) -> Option<MpegAnalysis> {
         }
         if header.stream_key() != key {
             analysis.inconsistent_frames += 1;
+            if (header.version, header.layer, header.sample_rate) != (first.version, first.layer, first.sample_rate) {
+                analysis.inconsistent_rate_frames += 1;
+            }
         }
         if analysis.frames > 0 || analysis.info_header.is_none() {
             analysis.bitrates.insert(header.bitrate_kbps);

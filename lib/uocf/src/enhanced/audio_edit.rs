@@ -1,11 +1,17 @@
 //! Replacing and adding `Audio.uop` entries ([`AudioPackageEditor`]), and the table rows a new id needs.
 //!
-//! - Names follow the tables (`crate::enhanced::audio`): a sound id's MP3 is its row's path, its legacy WAV the
-//!   path under `legacysounds/`, a music id's MP3 its row's path. A new id gets a row in `audio_sounds.csv` or
-//!   `audio_music.csv`, written back with [`write_table`].
-//! - Every file is checked against the formats the shipped package holds ([`enhanced_format_problems`]) under a
-//!   [`FormatPolicy`]. With [`AudioImportOptions::convert`] a WAV entry takes any file [`to_pcm16_wav`] converts
-//!   (WAV of another sample format, MP3); an MP3 entry takes MP3 files only: there is no encoder.
+//! - Names follow the tables (`crate::enhanced::audio`), normalised as the client does (`\` to `/`, lowercase,
+//!   nothing trimmed): a sound id's MP3 is its row's path, its legacy WAV the path under `legacysounds/`, a music
+//!   id's MP3 its row's path. For Kingdom Reborn a sound id is the server's id, followed through
+//!   `audio_effects.csv` to its sound structure ([`crate::enhanced::kr_audio`]).
+//! - The Enhanced Client plays a sound only through a table row, so a playable sound is an MP3 entry and a row: a
+//!   new id gets its row in `audio_sounds.csv` or `audio_music.csv` (written back with [`write_table`]), and an MP3
+//!   added by name must be one a row already names (a shipped row naming no entry). Kingdom Reborn's tables are
+//!   not edited. A `legacysounds/` WAV can still be replaced or added, with a note that the Enhanced Client never
+//!   plays it.
+//! - Every file is checked against what the client's decoder (Miles 7.2c) plays ([`enhanced_format_report`])
+//!   under a [`FormatPolicy`]. With [`AudioImportOptions::convert`] a WAV entry takes any file [`to_pcm16_wav`]
+//!   converts (WAV of another sample format, MP3); an MP3 entry takes MP3 files only: there is no encoder.
 //! - A replaced entry keeps its compression flag; an added one is stored like the shipped entries of its kind: MP3
 //!   uncompressed, WAV and tables zlib-compressed ([`family_compression`]). Both get a fresh timestamp data block
 //!   header (`UopPackage::edit_data_block_header`); untouched entries keep theirs and their place in the file.
@@ -16,11 +22,12 @@ use std::path::{Path, PathBuf};
 
 use crate::audio::convert::to_pcm16_wav;
 use crate::audio::mp3::MpegLayer;
-use crate::audio::validate::{enhanced_format_problems, expected_format, kind_mismatch, FormatPolicy};
+use crate::audio::validate::{enhanced_format_report, expected_format, kind_mismatch, FormatPolicy};
 use crate::audio::{probe_audio, AudioContent, AudioFormat};
 use crate::enhanced::audio::{
-    check_table_path, legacy_sound_entry_name, read_tables, write_table, AudioKind, AudioTableRow,
-    AudioTables, AUDIO_ENTRY_ROOT, MUSIC_TABLE_ENTRY, MUSIC_TABLE_HEADER, SOUND_TABLE_ENTRY, SOUND_TABLE_HEADER,
+    check_table_path, legacy_sound_entry_name, read_tables, write_table, AudioKind, AudioTableRow, AudioTables,
+    AUDIO_ENTRY_ROOT, LEGACY_SOUNDS_ROOT, MAX_SERVER_SOUND_ID, MUSIC_TABLE_ENTRY, MUSIC_TABLE_HEADER, SOUND_TABLE_ENTRY,
+    SOUND_TABLE_HEADER,
 };
 use crate::enhanced::uop_entries::save_package_as;
 use crate::uop_container::file::CompressionFlag;
@@ -154,9 +161,42 @@ impl AudioPackageEditor {
                 Ok(name.clone())
             }
             AudioTarget::Id(kind, id) => {
+                if let Some(name) = self.kingdom_reborn_name(*kind, *id)? {
+                    return Ok(name);
+                }
                 let row = self.row(*kind, *id).ok_or_else(|| self.missing_row_error(*kind, *id))?;
                 row_entry_name(*kind, row)
             }
+        }
+    }
+
+    /// For Kingdom Reborn's tables, the entry a server sound id plays; `Ok(None)` for other tables.
+    fn kingdom_reborn_name(&self, kind: AudioKind, id: u32) -> eyre::Result<Option<String>> {
+        let AudioTables::KingdomReborn(kr) = &self.tables else {
+            return Ok(None);
+        };
+        if kind != AudioKind::Sound {
+            eyre::bail!("{}: Kingdom Reborn's tables have sound ids only here; name the entry instead", self.source.display());
+        }
+        match kr.sound_for_server_id(id) {
+            Some((_, Some(sound))) => Ok(Some(sound.entry_name())),
+            Some((effect, None)) => eyre::bail!(
+                "{}: audio_effects.csv line {}: server id {id} (ID# {}) names `{}`, which is no sound structure",
+                self.source.display(),
+                effect.line,
+                effect.id,
+                effect.structure
+            ),
+            None => eyre::bail!("{}: audio_effects.csv has no row for server id {id} (ID# {id} + 1)", self.source.display()),
+        }
+    }
+
+    /// Whether a table row names the entry `name`, so the client can play it.
+    fn row_names(&self, name: &str) -> bool {
+        match &self.tables {
+            AudioTables::Enhanced { sounds, music } => sounds.values().chain(music.values()).any(|row| row.entry_name() == name),
+            AudioTables::KingdomReborn(kr) => kr.sounds.sounds().any(|row| row.entry_name() == name),
+            AudioTables::Missing => false,
         }
     }
 
@@ -173,7 +213,7 @@ impl AudioPackageEditor {
         let mut payload = file.to_vec();
         let mut content = probe_audio(&payload);
         let mut converted = false;
-        if options.convert && expected_format(name) == Some(AudioFormat::Wav) && !enhanced_format_problems(name, &content).is_empty() {
+        if options.convert && expected_format(name) == Some(AudioFormat::Wav) && !enhanced_format_report(name, &content).is_verified() {
             payload = to_pcm16_wav(file, false).wrap_err_with(|| format!("Failed to convert the file for {name}"))?;
             content = probe_audio(&payload);
             converted = true;
@@ -188,7 +228,7 @@ impl AudioPackageEditor {
             };
             eyre::bail!("{name}: {mismatch}; a file of another kind is never stored under the name.{hint}");
         }
-        let warnings = options.policy.apply(name, enhanced_format_problems(name, &content))?;
+        let warnings = options.policy.apply(name, enhanced_format_report(name, &content))?;
         Ok((payload, content, converted, warnings))
     }
 
@@ -214,6 +254,14 @@ impl AudioPackageEditor {
         let (name, new_row) = match new {
             NewAudio::Name(name) => {
                 check_entry_name(name)?;
+                let mp3 = expected_format(name) == Some(AudioFormat::Mpeg(MpegLayer::L3));
+                if mp3 && !name.starts_with(LEGACY_SOUNDS_ROOT) && !self.row_names(name) {
+                    eyre::bail!(
+                        "{}: no table row names `{name}`, so the client would never play it; add it by id with a table path \
+                         (the entry and its row together)",
+                        self.source.display()
+                    );
+                }
                 (name.clone(), None)
             }
             NewAudio::Id { kind, id, path, loops } => self.new_entry_name(*kind, *id, path.as_deref(), *loops)?,
@@ -242,6 +290,13 @@ impl AudioPackageEditor {
         path: Option<&str>,
         loops: Option<bool>,
     ) -> eyre::Result<(String, Option<(AudioKind, AudioTableRow)>)> {
+        if let AudioTables::KingdomReborn(_) = &self.tables {
+            if path.is_some() || loops.is_some() {
+                eyre::bail!("{}: Kingdom Reborn's tables are not edited here: give no path", self.source.display());
+            }
+            let name = self.kingdom_reborn_name(kind, id)?.expect("Kingdom Reborn's tables");
+            return Ok((name, None));
+        }
         if !matches!(self.tables, AudioTables::Enhanced { .. }) {
             return Err(self.missing_row_error(kind, id));
         }
@@ -259,6 +314,9 @@ impl AudioPackageEditor {
             return Ok((row_entry_name(kind, row)?, None));
         }
         let path = path.ok_or_else(|| eyre!("id {id} has no table row: give the path of a new one"))?;
+        if !music && id > MAX_SERVER_SOUND_ID {
+            eyre::bail!("sound id {id}: a server sends sound ids up to {MAX_SERVER_SOUND_ID}");
+        }
         check_table_path(path, music)?;
         let row = AudioTableRow { id, path: path.to_owned(), loops: music.then_some(loops.unwrap_or(false)), line: 0 };
         let name = row_entry_name(kind, &row)?;
@@ -395,13 +453,52 @@ mod tests {
         assert!(editor.add(&wrong_path, &mp3_file(), options).unwrap_err().to_string().contains("has the row"));
         let no_path = NewAudio::Id { kind: AudioKind::Sound, id: 8, path: None, loops: None };
         assert!(editor.add(&no_path, &mp3_file(), options).unwrap_err().to_string().contains("give the path"));
+        let too_high = NewAudio::Id { kind: AudioKind::Sound, id: MAX_SERVER_SOUND_ID + 1, path: Some("Sounds\\x.mp3".to_owned()), loops: None };
+        assert!(editor.add(&too_high, &mp3_file(), options).unwrap_err().to_string().contains("up to 65534"));
+        let unnamed = NewAudio::Name("data/audio/sounds/custom/orphan.mp3".to_owned());
+        assert!(editor.add(&unnamed, &mp3_file(), options).unwrap_err().to_string().contains("no table row names"));
+        let legacy = NewAudio::Name("data/audio/legacysounds/custom/orphan.wav".to_owned());
+        let added = editor.add(&legacy, &wav::encode_pcm_wav(22_048, 1, &[0, 0]), options).unwrap();
+        assert!(added.warnings.iter().any(|warning| warning.contains("never plays")), "{:?}", added.warnings);
 
-        let wav_48k = wav::encode_pcm_wav(48_000, 1, &[0, 0]);
         let target = AudioTarget::Id(AudioKind::LegacySound, 0);
-        assert!(editor.replace(&target, &wav_48k, options).is_err());
+        let wav_48k = wav::encode_pcm_wav(48_000, 1, &[0, 0]);
+        let put = editor.replace(&target, &wav_48k, options).unwrap();
+        assert_eq!(put.warnings.len(), 2, "Miles plays any rate; the notes stay: {:?}", put.warnings);
+        assert!(put.warnings.iter().any(|warning| warning.contains("never plays `data/audio/legacysounds/`")), "{:?}", put.warnings);
+        // 2 bytes of 16-bit stereo: not whole frames.
+        let partial = wav::encode_pcm_wav(22_050, 2, &[0, 0]);
+        assert!(editor.replace(&target, &partial, options).unwrap_err().to_string().contains("--allow-unverified-format"));
         let allowed = AudioImportOptions { policy: FormatPolicy::AllowUnverified, ..options };
-        let put = editor.replace(&target, &wav_48k, allowed).unwrap();
-        assert_eq!(put.warnings.len(), 1, "{:?}", put.warnings);
+        let put = editor.replace(&target, &partial, allowed).unwrap();
+        assert_eq!(put.warnings.len(), 3, "{:?}", put.warnings);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn follows_kingdom_reborn_server_ids() {
+        let dir = std::env::temp_dir().join(format!("uocf_audio_edit_kr_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let sounds = "w,s,id,filename,rate,vol,pan,offset,r1,r2,,,polygroup,type,,status,usage,notes\r\n\
+            ,,bell,Sounds\\Custom\\Bell.mp3,1.0-1.1,*,*,*,*,*,*,1,*,*,*,,,\r\n";
+        let effects = ";,ID#,description,sound,notes\r\n,1,bell\r\n,2,l_none\r\n";
+        let mut package = UopPackage::new_default();
+        let flag = NewEntryCompression::Flag(CompressionFlag::Zlib);
+        package.add_entry_by_name(SOUND_TABLE_ENTRY, sounds.as_bytes(), flag).unwrap();
+        package.add_entry_by_name(crate::enhanced::kr_audio::KR_EFFECTS_TABLE_ENTRY, effects.as_bytes(), flag).unwrap();
+        let path = dir.join("Audio.uop");
+        package.finalize_and_save(&path).unwrap();
+        let mut editor = AudioPackageEditor::load(&path).unwrap();
+        let options = AudioImportOptions::default();
+        let bell = NewAudio::Id { kind: AudioKind::Sound, id: 0, path: None, loops: None };
+        assert_eq!(editor.add(&bell, &mp3_file(), options).unwrap().name, "data/audio/sounds/custom/bell.mp3", "server id 0 is ID# 1");
+        let target = AudioTarget::Id(AudioKind::Sound, 0);
+        assert_eq!(editor.replace(&target, &mp3_file(), options).unwrap().write, AudioWrite::Unchanged);
+        let error = editor.target_name(&AudioTarget::Id(AudioKind::Sound, 1)).unwrap_err().to_string();
+        assert!(error.contains("names `l_none`, which is no sound structure"), "{error}");
+        assert!(editor.target_name(&AudioTarget::Id(AudioKind::Sound, 2)).unwrap_err().to_string().contains("no row for server id 2"));
+        let with_path = NewAudio::Id { kind: AudioKind::Sound, id: 0, path: Some("Sounds\\x.mp3".to_owned()), loops: None };
+        assert!(editor.add(&with_path, &mp3_file(), options).unwrap_err().to_string().contains("not edited here"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

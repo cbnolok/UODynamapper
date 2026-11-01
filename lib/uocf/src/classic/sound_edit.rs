@@ -9,13 +9,15 @@
 //! - `soundLegacyMUL.uop`: one uncompressed entry per slot, `build/soundlegacymul/%08d.dat`. A replaced entry keeps
 //!   its compression flag and an added one is uncompressed, as every shipped one; both get a fresh timestamp data
 //!   block header.
-//! - A slot is the 40-byte header and 22050 Hz mono 16-bit PCM. A replaced slot keeps its header, its name field
-//!   overwritten when a new name is given (the name, a NUL, and the old bytes after it: the shipped name fields
-//!   hold leftovers after the NUL) and bytes 32..40 kept. A new slot's header is the name and zeros: what bytes
-//!   32..40 mean is not known, and the shipped values look like build-tool leftovers.
-//! - Files: 16-bit PCM WAV, mono, 22050 Hz (or 22048 Hz, how the Enhanced Client's legacy WAVs label this PCM),
-//!   taken as they are. With `convert`, any WAV or MP3 [`crate::audio::convert`] decodes at those rates, downmixed
-//!   to mono. There is no resampling.
+//! - A slot is the 40-byte header and mono 16-bit PCM, which the client plays at 22,048 Hz. A replaced slot keeps
+//!   its header, its name field overwritten when a new name is given (the name, a NUL, and the old bytes after it:
+//!   the shipped name fields hold leftovers after the NUL) and bytes 32..40 kept. A new slot's header is the name
+//!   and zeros: no client reads bytes 0..40 (`Voice_SetData` skips them), so zeros are safe.
+//! - Slot ids go up to [`MAX_SOUND_ID`], the highest id the client plays.
+//! - Files: 16-bit PCM WAV, mono, at 22,048 Hz, taken as they are; 22,050 Hz (the nominal rate the PCM was made at)
+//!   is taken too, with a note that the client plays it 0.01% slower. Other rates are refused: the client would play
+//!   them at the wrong speed. With `convert`, any WAV or MP3 [`crate::audio::convert`] decodes at those rates,
+//!   downmixed to mono. There is no resampling.
 //! - Verdata patches are not applied or written: the editor works on the base files.
 
 use std::path::{Path, PathBuf};
@@ -24,8 +26,8 @@ use crate::audio::convert::{decode_file, downmix_to_mono, MONO};
 use crate::audio::wav::{PCM_WAV_BITS_PER_SAMPLE, WAVE_FORMAT_PCM};
 use crate::audio::{probe_audio, AudioContent};
 use crate::classic::sound::{
-    sound_uop_entry_name, BITS_PER_SAMPLE, SAMPLE_RATE, SOUND_HEADER_BYTES, SOUND_IDX_FILE_NAME, SOUND_MUL_FILE_NAME,
-    SOUND_NAME_BYTES, SOUND_UOP_FILE_NAME, SOUND_UOP_SLOT_LIMIT,
+    sound_uop_entry_name, BITS_PER_SAMPLE, MAX_SOUND_ID, NOMINAL_SAMPLE_RATE, SAMPLE_RATE, SOUND_HEADER_BYTES,
+    SOUND_IDX_FILE_NAME, SOUND_MUL_FILE_NAME, SOUND_NAME_BYTES, SOUND_UOP_FILE_NAME,
 };
 use crate::uop_container::file::CompressionFlag;
 use crate::uop_container::hash::hash_file_name_single;
@@ -40,10 +42,10 @@ pub const SOUND_INDEX_ENTRY_BYTES: usize = 12;
 const INDEX_FIELD_BYTES: usize = size_of::<u32>();
 /// The longest name a header holds with its NUL.
 pub const SOUND_NAME_MAX_LEN: usize = SOUND_NAME_BYTES - 1;
-/// Bytes 32..40 of a new slot's header.
+/// Bytes 32..40 of a new slot's header: no client reads them.
 pub const NEW_SOUND_HEADER_TAIL: [u8; SOUND_HEADER_BYTES - SOUND_NAME_BYTES] = [0; SOUND_HEADER_BYTES - SOUND_NAME_BYTES];
-/// The rates a file's PCM is taken at: the Classic rate, and how the Enhanced Client's legacy WAVs label it.
-pub const CLASSIC_PCM_RATES: [u32; 2] = [SAMPLE_RATE, 22_048];
+/// The rates a file's PCM is taken at: the rate the client plays, and the nominal one (with a note).
+pub const CLASSIC_PCM_RATES: [u32; 2] = [SAMPLE_RATE, NOMINAL_SAMPLE_RATE];
 /// An added `soundLegacyMUL.uop` entry's compression, as every shipped one.
 pub const NEW_SLOT_COMPRESSION: CompressionFlag = CompressionFlag::None;
 
@@ -202,8 +204,13 @@ pub fn sound_header(name: Option<&str>, base: Option<&[u8]>) -> eyre::Result<[u8
     Ok(header)
 }
 
-/// The Classic PCM of a file, and whether it was converted (see the module documentation).
-pub fn classic_pcm_from_file(file: &[u8], convert: bool) -> eyre::Result<(Vec<u8>, bool)> {
+/// The note for PCM taken at the nominal rate, which the client plays at [`SAMPLE_RATE`].
+fn rate_note(rate: u32) -> Option<String> {
+    (rate == NOMINAL_SAMPLE_RATE).then(|| format!("the file is {rate} Hz; the client plays every sound at {SAMPLE_RATE} Hz (0.01% slower)"))
+}
+
+/// The Classic PCM of a file, whether it was converted, and the note on its rate (see the module documentation).
+pub fn classic_pcm_from_file(file: &[u8], convert: bool) -> eyre::Result<(Vec<u8>, bool, Option<String>)> {
     let content = probe_audio(file);
     if let AudioContent::Wav(analysis) = &content {
         let taken = analysis.format.filter(|format| {
@@ -219,24 +226,25 @@ pub fn classic_pcm_from_file(file: &[u8], convert: bool) -> eyre::Result<(Vec<u8
             if data.is_empty() {
                 eyre::bail!("the WAV holds no samples");
             }
-            return Ok((data.to_vec(), false));
+            return Ok((data.to_vec(), false, taken.and_then(|format| rate_note(format.sample_rate))));
         }
     }
-    let wanted = format!("16-bit PCM mono WAV at {SAMPLE_RATE} Hz");
+    let wanted = format!("16-bit PCM mono WAV at {SAMPLE_RATE} Hz (or {NOMINAL_SAMPLE_RATE} Hz)");
     if !convert {
         eyre::bail!("the file is {}, not {wanted}: convert it (--convert) or with an external tool", content.detail());
     }
     let decoded = downmix_to_mono(&decode_file(file)?);
     if !CLASSIC_PCM_RATES.contains(&decoded.sample_rate) {
         eyre::bail!(
-            "the file is {} Hz: Classic sounds are {SAMPLE_RATE} Hz and there is no resampler here (use `ffmpeg -ar {SAMPLE_RATE}` or sox)",
+            "the file is {} Hz: the client plays every sound at {SAMPLE_RATE} Hz, so it would play at the wrong speed, and \
+             there is no resampler here (use `ffmpeg -ar {SAMPLE_RATE}` or sox)",
             decoded.sample_rate
         );
     }
     if decoded.samples.is_empty() {
         eyre::bail!("the file holds no samples");
     }
-    Ok((decoded.pcm_le_bytes(), true))
+    Ok((decoded.pcm_le_bytes(), true, rate_note(decoded.sample_rate)))
 }
 
 /// What happened to a slot.
@@ -314,8 +322,8 @@ impl ClassicSoundEditor {
 
     /// Stores a whole slot (header and PCM).
     pub fn put_slot_bytes(&mut self, slot_id: u32, bytes: &[u8]) -> eyre::Result<ClassicSoundWrite> {
-        if slot_id >= SOUND_UOP_SLOT_LIMIT {
-            eyre::bail!("sound slot {slot_id} is past the 16-bit sound ids");
+        if slot_id > MAX_SOUND_ID {
+            eyre::bail!("sound slot {slot_id}: the client plays no sound id above {MAX_SOUND_ID}");
         }
         if bytes.len() <= SOUND_HEADER_BYTES {
             eyre::bail!("a sound slot is the {SOUND_HEADER_BYTES}-byte header and PCM; {} bytes hold no PCM", bytes.len());
@@ -343,10 +351,10 @@ impl ClassicSoundEditor {
 
     /// Stores the sound of a WAV or MP3 file in a slot (see the module documentation for the header and the file).
     pub fn put_sound(&mut self, slot_id: u32, file: &[u8], name: Option<&str>, convert: bool) -> eyre::Result<ClassicSoundPut> {
-        let (pcm, converted) = classic_pcm_from_file(file, convert)?;
+        let (pcm, converted, rate_note) = classic_pcm_from_file(file, convert)?;
         let current = self.slot_bytes(slot_id)?.filter(|bytes| bytes.len() >= SOUND_HEADER_BYTES);
         let header = sound_header(name, current.as_ref().map(|bytes| &bytes[..SOUND_HEADER_BYTES]))?;
-        let mut warnings = Vec::new();
+        let mut warnings: Vec<String> = rate_note.into_iter().collect();
         if let ClassicSoundFiles::Mul { files, .. } = &self.files {
             if slot_id as usize >= files.slot_count() {
                 warnings.push(format!("slot {slot_id} extends the index past its {} entries", files.slot_count()));
@@ -445,11 +453,13 @@ mod tests {
     #[test]
     fn takes_classic_pcm_and_converts_on_request() {
         let pcm = [1u8, 0, 2, 0];
-        assert_eq!(classic_pcm_from_file(&wav::encode_pcm_wav(SAMPLE_RATE, 1, &pcm), false).unwrap(), (pcm.to_vec(), false));
-        assert_eq!(classic_pcm_from_file(&wav::encode_pcm_wav(22_048, 1, &pcm), false).unwrap().0, pcm);
+        assert_eq!(classic_pcm_from_file(&wav::encode_pcm_wav(SAMPLE_RATE, 1, &pcm), false).unwrap(), (pcm.to_vec(), false, None));
+        let (nominal, _, note) = classic_pcm_from_file(&wav::encode_pcm_wav(NOMINAL_SAMPLE_RATE, 1, &pcm), false).unwrap();
+        assert_eq!(nominal, pcm);
+        assert!(note.unwrap().contains("plays every sound at 22048 Hz"));
         let stereo = wav::encode_pcm_wav(SAMPLE_RATE, 2, &[2, 0, 4, 0]);
         assert!(classic_pcm_from_file(&stereo, false).unwrap_err().to_string().contains("--convert"));
-        assert_eq!(classic_pcm_from_file(&stereo, true).unwrap(), (vec![3, 0], true));
+        assert_eq!(classic_pcm_from_file(&stereo, true).unwrap(), (vec![3, 0], true, None));
         let fast = wav::encode_pcm_wav(44_100, 1, &pcm);
         assert!(classic_pcm_from_file(&fast, true).unwrap_err().to_string().contains("no resampler"));
     }
@@ -477,6 +487,7 @@ mod tests {
             assert_eq!((replaced.write, replaced.name.as_str()), (ClassicSoundWrite::Replaced, "a.wav"));
             let added = editor.put_sound(3, &file, Some("new.wav"), false).unwrap();
             assert_eq!(added.write, ClassicSoundWrite::Added);
+            assert!(editor.put_sound(MAX_SOUND_ID + 1, &file, Some("x.wav"), false).unwrap_err().to_string().contains("above 1667"));
             assert!(editor.save_to(source).is_err(), "never the source folder");
             assert!(editor.save_to(Path::new("relative")).is_err());
             editor.save_to(&out).unwrap();

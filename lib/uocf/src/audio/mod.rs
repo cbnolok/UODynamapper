@@ -221,7 +221,7 @@ mod tests {
         let wav = wav::encode_pcm_wav(CLASSIC_RATE, CLASSIC_CHANNELS, &[0, 0, 1, 0]);
         let content = probe_audio(&wav);
         assert_eq!(content.format(), AudioFormat::Wav);
-        assert_eq!((content.sample_rate(), content.channels(), content.bits_per_sample()), (Some(22_050), Some(1), Some(16)));
+        assert_eq!((content.sample_rate(), content.channels(), content.bits_per_sample()), (Some(CLASSIC_RATE), Some(1), Some(16)));
         let stream = mp3::tests::frames(mp3::tests::MPEG1_L3_128K_HEADER, mp3::tests::MPEG1_L3_128K_FRAME, 4);
         assert_eq!(probe_audio(&stream).format(), AudioFormat::Mpeg(MpegLayer::L3));
         assert_eq!(probe_audio(b"OggS\0\x02").format(), AudioFormat::Ogg);

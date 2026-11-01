@@ -21,7 +21,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::audio::validate::{enhanced_format_problems, kind_mismatch, FormatPolicy};
+use crate::audio::validate::{enhanced_format_report, kind_mismatch, FormatPolicy};
 use crate::audio::{probe_audio, AudioContent};
 use crate::enhanced::client_dialect::ClientDialect;
 use crate::enhanced::image_census::{classify_content, declared_format, name_extension, ContentFormat};
@@ -135,6 +135,28 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         check: |bytes, _| {
             use crate::enhanced::audio::{parse_table, MUSIC_TABLE_ENTRY, MUSIC_TABLE_HEADER};
             ok(parse_table(MUSIC_TABLE_ENTRY, std::str::from_utf8(bytes)?, MUSIC_TABLE_HEADER, true))
+        },
+    },
+    ParseCheck {
+        label: "Kingdom Reborn sound table",
+        packages: &["audio"],
+        kinds: &[ContentFormat::Text],
+        name: Some(crate::enhanced::audio::SOUND_TABLE_ENTRY),
+        dialects: false,
+        check: |bytes, _| {
+            use crate::enhanced::{audio::SOUND_TABLE_ENTRY, kr_audio::KrSoundTable};
+            ok(KrSoundTable::parse(SOUND_TABLE_ENTRY, std::str::from_utf8(bytes)?))
+        },
+    },
+    ParseCheck {
+        label: "Kingdom Reborn effects table",
+        packages: &["audio"],
+        kinds: &[ContentFormat::Text],
+        name: Some(crate::enhanced::kr_audio::KR_EFFECTS_TABLE_ENTRY),
+        dialects: false,
+        check: |bytes, _| {
+            use crate::enhanced::kr_audio::{KrEffectsTable, KR_EFFECTS_TABLE_ENTRY};
+            ok(KrEffectsTable::parse(KR_EFFECTS_TABLE_ENTRY, std::str::from_utf8(bytes)?))
         },
     },
     ParseCheck {
@@ -502,7 +524,7 @@ impl UopEntryEditor {
                 if let Some(mismatch) = kind_mismatch(name, &content) {
                     eyre::bail!("{label}: {mismatch}");
                 }
-                warnings = policy.apply(name, enhanced_format_problems(name, &content))?;
+                warnings = policy.apply(name, enhanced_format_report(name, &content))?;
                 audio_checked = true;
             }
         }
