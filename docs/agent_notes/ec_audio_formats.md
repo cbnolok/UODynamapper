@@ -4,10 +4,14 @@ What the shipped clients' audio holds, as `uocf-cli audio census` measured it (2
 clients: the 2024 Enhanced Client, the current Classic Client, the old Kingdom Reborn client and UO Gold. Code:
 `lib/uocf/src/audio/` (probe, decode, census), `lib/uocf/src/enhanced/audio.rs` (`Audio.uop`),
 `lib/uocf/src/classic/sound.rs` (`sound.mul`, `soundLegacyMUL.uop`), `lib/uocf/src/classic/audio_def.rs`
-(`Sound.def`, `Music.def`), `lib/uocf/src/classic/music.rs` (`Music/Digital/Config.txt`). Writers:
+(`Sound.def`, `Music.def`), `lib/uocf/src/classic/music.rs` (`Music/Digital/Config.txt`),
+`lib/uocf/src/enhanced/kr_audio.rs` (Kingdom Reborn's `audio_sounds.csv` and `audio_effects.csv`). Writers:
 `lib/uocf/src/enhanced/audio_edit.rs`, `lib/uocf/src/classic/sound_edit.rs`, `lib/uocf/src/audio/validate.rs`,
 `lib/uocf/src/audio/convert.rs` ([Writing](#writing)). Real-file tests:
-`lib/uocf/tests/real_files/audio_client_files.rs`, `lib/uocf/tests/real_files/audio_writers.rs`.
+`lib/uocf/tests/real_files/audio_client_files.rs`, `lib/uocf/tests/real_files/audio_writers.rs`. How the clients
+read and play all this was traced in Ghidra (commit 7906ae18): `scripts/dev-helpers/ec-research/ghidra-audio/results/`
+`uosa_audio.md` (Enhanced Client), `miles_audio.md` (its decoder, Miles 7.2c), `uokr_audio.md` (Kingdom Reborn),
+`classic_audio.md` (Classic Client and UO Gold).
 
 Rerun:
 
@@ -37,104 +41,196 @@ frame). No decode failures.
   44,100 Hz mono 1. `fmt ` size 18 in 1,448, 16 in 218. Chunk layouts besides `fmt data`: `LIST DISP bext cart`,
   leading `bext`, `fact`, `CDif`, `_PMX`, `iXML`, `cue`, `LGWV`, `JUNK`. 110 files have odd-sized chunks without
   the RIFF pad byte (the reader accepts both). RIFF sizes always match. 3,174 s in all.
+- The 110 unpadded files do not trip Miles' chunk walk (which steps `size + (size & 1) + 8` and so needs the pad
+  byte): all 110 lay out `fmt  data LIST DISP bext cart`, and the odd, unpadded chunk is `bext`, after `fmt ` and
+  `data`. The walk finds both before it reaches `bext`, so it never mis-steps (checked by simulating the walk on
+  every WAV, 2026-11-01). It would not matter anyway: the Enhanced Client never plays these WAVs.
 - The WAVs are the legacy sounds: for every one of the 1,655 slots of the Classic `soundLegacyMUL.uop`, the WAV's
-  `data` chunk is byte-identical to the slot's PCM. The 22,048 Hz label is a header difference only.
-- Entry names are lowercase, `/`-separated; see the tables below. With the current `Dictionary.dic`, 11 entries stay
+  `data` chunk is byte-identical to the slot's PCM. 22,048 Hz is the rate the Classic client plays them at.
+- **The Enhanced Client plays only the MP3s.** It plays a sound id from `data/audio/` + the `audio_sounds.csv`
+  `FilePath`, and music the same way from `audio_music.csv`; UOSA.exe has no `legacysound` string, and no setting
+  selects the WAVs (`uosa_audio.md` Q1). The `legacysounds/` WAVs are dead data for it.
+- Entry names are lowercase, `/`-separated; see the tables below. With the current `Dictionary.dic`, 6 entries stay
   unnamed (below).
 
 ### Tables
 
-- `data/audio/audio_sounds.csv`: header `#ID,FilePath`, 1,668 rows, e.g. `0,Sounds\aaaenvir\d_frst01.mp3`.
+- `data/audio/audio_sounds.csv`: header `#ID,FilePath`, 1,668 rows, e.g. `0,Sounds\aaaenvir\d_frst01.mp3`. The
+  id is the server's sound id (packet 0x54's u16, 0xFFFF skipped), with no offset.
 - `data/audio/audio_music.csv`: header `#ID,FilePath,Loop`, 107 rows, loop `0`/`1`.
-- Entry name = `data/audio/` + lowercase(path) with `\` turned into `/`.
+- Entry name = `data/audio/` + the path with `\` turned into `/` and lowercased (`UOP::NormalizePath`), nothing
+  trimmed and `//` not collapsed, built by `sprintf("%s/%s", "data/audio", FilePath)` in 255 bytes (so at most 254).
+  The client's CSV reader splits at commas, drops a `"` and toggles quoting, trims nothing, and holds 0x7fe
+  characters a line.
 - Legacy WAV of sound id N = `data/audio/legacysounds/` + the path without its `sounds/` folder, `.wav` for
   `.mp3`. Sound ids are the Classic slot ids.
 - Ids that have an entry: sounds 1,650 MP3, legacy WAV 1,656, music 107.
-- Rows naming no entry: 19 `wave02_l`, 856 `flame04 .mp3` (a space in the path), 1469 `forcearro`,
-  1471 `lightningarro`, 1628..1633 `pirates_*`, 1636..1640, 1658..1660 `drz1`..`drz3`. Which of the MP3 and the
-  legacy WAV the client plays for a row is not known (Ghidra question 1).
+- Rows naming no entry (`AudioPackage::silent_rows`; warnings in `audio census` and `audio list`): 19 `wave02_l`
+  (only its legacy WAV exists), 856 `flame04 .mp3` (a space in the path), 1469 `forcearro`, 1471 `lightningarro`,
+  1628..1633 `pirates_*`, 1636..1640 (the `pirates_` prefix missing), 1658..1660 `drz1`..`drz3`. The client plays
+  nothing for them: a row without an entry is silent (in mode 0 the failed load is cached for the session), and so
+  is an id without a row. Fixing one is a table edit or an entry renamed to the row's path.
 
-### Unnamed entries (11)
+### Unnamed entries (6)
 
 - text, file lists: `2C34B9194A0A0560` (weapon sounds), `668DFEC4FE8F74A1` (ends with `z_end`),
-  `AB055D6281ECFEB1` (trap sounds). The same three hashes exist in Kingdom Reborn.
-- MP3: `438745BCB223823C`, `8131CA6737014352`, `814E39778A04107C`, `8E7736F30EEE5E3B`, `A5D6DDC3E7F68E44`,
-  `B7D9D1C334E536A7`, `E99FA5FB5E4712E2`.
+  `AB055D6281ECFEB1` (trap sounds). The same three hashes exist in Kingdom Reborn. MythAudio's table reader
+  (`AudioConfig_Init`) has no caller in UOSA.exe, so nothing reads them.
+- MP3: `814E39778A04107C`, `8E7736F30EEE5E3B`. Dictionary attacks (0.8 M names from the tables' parts, 4.7 M from
+  merged dictionaries) found nothing; no row names them, so the client never plays them.
 - WAV: `DBDCE27B2628F5B6`.
+- Named from the Ghidra pass (in `Dictionary.dic` now): `E99FA5FB5E4712E2`
+  `data/audio/sounds/highseas/pirates_cannon_shot_01.mp3`, `438745BCB223823C` `.../pirates_electric_crackle_01.mp3`,
+  `A5D6DDC3E7F68E44` `.../pirates_cannon_fuse_01.mp3`, `8131CA6737014352` `.../pirates_cavern_roar_01.mp3`,
+  `B7D9D1C334E536A7` `.../pirates_water_roar_01.mp3`. No row names them either (the rows say `pirates_*` without
+  `_01`).
 
 The labels of `tools/_shared_assets/manual_mappings_from_ec_super_viewer_todo/AudioCollection.xml` are display
 labels, not hash preimages; the table paths and Classic slot names do not cover these entries.
 
 ## Kingdom Reborn `Audio.uop` (1,553 entries)
 
-MP3 1,544 (all zlib; CBR 1,531, VBR 13; 13 with the last frame cut), text 9 (zlib). Its tables share the Enhanced
-names but have another layout (`w,s,id,filename,rate,...` rows, `;` comments, music ids from 10000); the reader
-detects and skips them (`AudioTables::KingdomReborn`), entries are reached by name. 3 unnamed (the file lists).
+MP3 1,544 (all zlib; CBR 1,531, VBR 13; 13 with the last frame cut), text 9 (zlib). 3 unnamed (the file lists).
+
+Kingdom Reborn plays with its own Miles build, not the Enhanced Client's: its `mss32.dll` is version 7.0x (SHA-256
+`272f65a0...`), the Enhanced Client's 7.2c (`b588b479...`), and the `miles/mssmp3.asi` files differ too
+(`f6bbeccf...` against `0fb784a9...`). `miles_audio.md`'s "KR ships the same `miles` folder" is wrong: what it
+found holds for the Enhanced Client only. So whether 7.2c handles Kingdom Reborn's cut last frames stays
+unverified, and the Kingdom Reborn entries are checked with `--allow-unverified-format`.
+
+### Tables (`lib/uocf/src/enhanced/kr_audio.rs`)
+
+Read the way UOKR.exe reads them (`uokr_audio.md`), with the same CSV reader as the Enhanced Client, and written
+back byte for byte (every field as read, quotes included, each line's own line end).
+
+- `data/audio/audio_sounds.csv` (`MythAudio::ParseSoundsCsv`), 1,587 lines, CRLF. By the first field: `!` starts a
+  section (`POLYGROUPS`, `ROLLOFF FACTOR`, `DEFAULT PARAMETER`, or another: `MASTER VOLUME`, `RATE PRESETS`,
+  `SOUND DEFAULT PARAMETER VALUES`); `;` is a comment (17); `#` is a polygroup row, a rolloff row or a sound entry
+  in those three sections and skipped in the others (so the `#,,s_default,...` row is not read); empty or a space
+  is a sound entry (1,561); anything else is skipped (the `w,s,id,filename,...` header). A sound entry is 14 fields
+  after the marker: type id, name (at most 0x50), file name (at most 0x50), rate, volume, pan, offset (ranges:
+  white space removed, `%`, `-`, `*` turned into spaces, empty = the default, one value or `low high`, so `-5`
+  reads as 5 and is refused here), min and max range (`*` or empty = default), repeat (ignored), mono, polygroup,
+  priority, streamed; then trailing status, usage and notes. Shipped: rate `1.0-1.1` (1,489) or `1.0-1.0` (72),
+  every other range `*`, mono `1` (1,488) or `*`. A second structure of a name is skipped by the client; 11 shipped
+  (`citynightedit`, `walking`, `turfin`, the six `*.mp3` names, ...). At most 4,000 names, 30 structures per file.
+- `data/audio/audio_effects.csv` (`UOAudio::LoadEffectsTable`): `;,ID#,description,sound,notes`, then 1,567
+  `,ID#,name[,,notes]` rows. `ID#` = the server's sound id + 1 ("Mythic code assumes ID 0 to be invalid"); the
+  Enhanced Client has no such offset. 6 ids are defined twice (2061..2066; which row the client keeps was not
+  traced, the reader takes the first) and 11 ids name no sound structure (`l_turfin`, music names without
+  `.mp3`).
+- A server sound id S plays: the effects row `ID#` S + 1, its structure, that structure's file, `data/audio/` +
+  the normalized file name (`KrAudioTables::sound_for_server_id`, `AudioPackage::entry_for`). 1,541 of the 1,567
+  rows reach an entry.
+- `audio_music.csv` (`,ID#,name,mp3,loop,...`, ids from 10000) and the group, queue and loop tables are kept
+  unread.
 
 ## Classic sounds
 
-- Slot = 40-byte header (32-byte NUL-padded name, then 8 bytes) + 22,050 Hz mono 16-bit PCM.
+- Slot = 40-byte header (32-byte NUL-padded name, then 8 bytes) + mono 16-bit PCM, which the client plays at
+  22,048 Hz (its DirectSound buffers are created at 0x5620 Hz; `classic_audio.md`). The PCM was made at 22,050 Hz.
 - Header bytes 32..40: current client `30|40|50|00|76 00 00 00 98 fb 18 00`; UO Gold `cc cc cc cc cc cc cc cc`
   (684), `49 10 40 00 40 94 40 00` (589), `91 10 40 00 28 7a 41 00` (65). They look like uninitialized memory
-  (stack/heap fill, pointers) of the packing tool; kept as read.
+  (stack/heap fill, pointers) of the packing tool; kept as read. No client reads bytes 0..40 (`Voice_SetData`
+  copies from byte 40 on).
+- A slot of 40 bytes or fewer counts as missing. `PlaySound` plays no id above 1667 (0x683).
 - Current client: `soundLegacyMUL.uop`, 1,655 slots, uncompressed, entry `build/soundlegacymul/NNNNNNNN.dat`
   (8 digits), 3,815 s. No `sound.mul`. UO Gold: `sound.mul`/`soundidx.mul`, 4,096 index entries, 1,338 slots.
-- `SoundMap` prefers the MUL pair when both exist; `read_id` resolves a sound id through `Sound.def` first.
+- `SoundMap` prefers the MUL pair when both exist; `read_id` takes the id's own slot, and `Sound.def` only when the
+  slot is missing.
 
 ## `Sound.def` and `Music.def`
 
-Grammar in `lib/uocf/src/classic/audio_def.rs`. One `id {targets} extra` per line; 685 ids in UO Gold, 787 in the
-current client; every closed list has one target and every `extra` is 0; ids from 778 map to `{-1}`. Both
-releases ship line 152 `805 {331 0` without `}`: read as an unclosed group (targets 331, 0; the first is
-played), flagged `unclosed`. `Music.def` is the single line `0 {0} 0`.
+Grammar and the client's reading in `lib/uocf/src/classic/audio_def.rs` (`classic_audio.md` Q4, the same in UO
+Gold and 7.0.103). One `id {targets} extra` per line; 685 ids in UO Gold, 787 in the current client; every group
+has one target and every `extra` is 0.
+
+- The client reads lines with `fgets` of 255 bytes, skips blank and `#` lines and leading white space, reads ids
+  and targets with `%hd`, and skips a `-` (so `{-1}` reads as target 1). After a target only white space and then
+  `,` or `}` may follow, else the line is dropped; the third field is required; the first line of an id wins.
+- A line applies only when its id has no slot (or one of 40 bytes or fewer). With several targets the client picks
+  one at random (`rand() % count`) on every play.
+- Both releases ship line 152 `805 {331 0`: the client drops it (`0` follows `331` without a comma), flagged
+  `client_ignored`. Ids 778..1440 (UO Gold 778..1338, 351 / 249 ids) write `{-1}`; the parser keeps `-1` and
+  notes that the client reads it as 1. Only one line ever applies: `856 {550} 0`, whose slot is missing; every other
+  id has a slot of its own (`SoundMap::translation_notes`, in the census).
+- `Music.def` is the single line `0 {0} 0`, and no client reads it: neither UO Gold nor 7.0.103 has the string.
 
 ## `Music/Digital/Config.txt` and the music files
 
-Grammar in `lib/uocf/src/classic/music.rs`: `id name[,flag]`. Current client 103 ids (46 names with `.mp3`,
-41 looping), UO Gold 52 (no extensions, 34 looping, line 10 `9 britainpos,lop` misspells the flag). Every file
-named exists. Music folders: current Classic 91 MP3 + 1 Bink video; UO Gold 40 MP3 + 3 Bink videos. All MP3s CBR.
+Grammar and the client's reading in `lib/uocf/src/classic/music.rs` (`classic_audio.md` Q5): `fgets` of 0x200
+bytes, trailing characters below `!` trimmed, blank and `#` lines skipped, `strtok(" ")` (spaces only; the last
+token wins), the value split at the first `,` into name and flag, `.mp3` appended when the last 4 characters hold
+no `.`, any extension but `mp3` plays nothing, and it loops when the flag is exactly `loop` or `lop`
+(case-sensitive). Current client 103 ids (46 names with `.mp3`, 41 looping), UO Gold 52 (no extensions, 35
+looping: line 10 `9 britainpos,lop` loops too). Every file named exists. Music folders: current Classic 91 MP3 + 1
+Bink video; UO Gold 40 MP3 + 3 Bink videos. All MP3s CBR.
 
 ## Names added to `Dictionary.dic`
 
 2,008 names (commit a99b0b73): 1,668 legacy WAVs, 278 sounds, 57 music (Enhanced and Kingdom Reborn), 5
-`build/soundlegacymul/` slots (1662..1666). Everything else in the tables was already named.
+`build/soundlegacymul/` slots (1662..1666). Everything else in the tables was already named. Then the 5 HighSeas
+MP3s the Ghidra pass recovered (above).
 
 ## Writing
 
 Round trips (2026-11-01, `audio_writers` real-file tests): an unchanged copy is byte-identical to the shipped file
 for the Enhanced `Audio.uop` (3,435 entries), the Kingdom Reborn `Audio.uop` (1,553), the current Classic
 `soundLegacyMUL.uop`, and `sound.mul` + `soundidx.mul` of UO Gold, Mondain's Legacy and 7.0.20. `Sound.def` and
-`Music.def` of all four Classic clients write back byte for byte (the unclosed `805 {331 0` and the current
-client's trailing empty line included). The two Enhanced tables write back byte for byte from their rows. After a
-replace or add, every other entry or slot keeps its bytes.
+`Music.def` of all five Classic clients write back byte for byte (the dropped `805 {331 0` and the current
+client's trailing empty line included). The two Enhanced tables write back byte for byte from their rows, and
+Kingdom Reborn's `audio_sounds.csv` and `audio_effects.csv` from their fields. After a replace or add, every other
+entry or slot keeps its bytes.
 
 ### `Audio.uop` entries (`AudioPackageEditor`, `uocf-cli audio replace|add`, inspector "Replace...")
 
-- Accepted as is (`audio::validate`, what the shipped package holds; all 3,430 shipped MP3 and WAV entries pass):
-  - MP3: MPEG-1 Layer III 32 kHz mono, 44.1 kHz mono/stereo/joint stereo; MPEG-2 Layer III 16 kHz mono,
-    22.05 kHz mono/stereo/joint stereo. CBR only, 64..=320 kbit/s (shipped: 64, 128, 160, 192, 320). No frames of
-    another stream, no breaks in the frame chain, no cut last frame, no APE tag; before the frames only tags and zero
-    bytes (110 shipped MP3s start with 720 or 1,044), after them only tags. ID3 tags and the Xing/LAME header are fine.
-  - WAV: 16-bit PCM (`fmt ` tag 1, size 16 or 18) at 22,048 or 22,050 Hz mono, 44,100 Hz mono, 22,050 or 44,100 Hz
-    stereo; consistent byte rate and block align, `data` after `fmt `, whole sample frames, the RIFF size of the
-    file, nothing after the last chunk. Extra chunks are kept.
-  - The file's format must match the entry name's extension (`validate::kind_mismatch`): this one holds under
-    either policy.
-- Anything else is refused; `--allow-unverified-format` (`FormatPolicy::AllowUnverified`) turns the other problems
-  into warnings. It exists because the lists are what the release ships, not what the client's decoder accepts (Ghidra
-  question 3): a format outside them may play, and trying one in a test client needs a way to write it.
+- Checked against what the Enhanced Client's decoder plays (`audio::validate::enhanced_format_report`). The client
+  checks nothing itself: `SampleSound_Start` hands the whole entry and its name to Miles 7.2c's
+  `AIL_set_named_sample_file`. Every shipped MP3 and WAV passes (3,430 entries, `FormatPolicy::VerifiedOnly`).
+  Refused under every policy, with the evidence in `miles_audio.md`:
+
+  | Rule | Evidence |
+  |---|---|
+  | The content matches the name's extension (`kind_mismatch`) | `SetNamedSampleFile_Impl` picks the decoder by extension; a leading valid ID3v2 (`ID3`, version bytes < 0xFF, syncsafe size) forces MP3 |
+  | WAV: `RIFF` with `WAVE` at +8 | `WavInfo_Impl` ("Not a WAV file.") |
+  | WAV: the walk from +12, step `size + (size & 1) + 8`, within the RIFF size, reaches `fmt ` and `data` (an odd chunk before them needs its pad byte) | `WavInfo_Impl`; ids compared case-insensitively (`StrnicmpN`); `fmt ` searched first, `data` again from the first chunk |
+  | WAV: `fmt ` of 16 bytes or more | Miles reads the first 16 (16 and 18 both ship) |
+  | WAV: PCM of 8 or 16 bits, IMA ADPCM (tag 0x11, 4 bits), or EXTENSIBLE with `cbSize` ≥ 22, `KSDATAFORMAT_SUBTYPE_PCM` and block align = channels × 2 | `SetSampleFile_Impl`, `InitSampleFromWavInfo` ("Unsupported wave file format.", "Not a WAVEFORMATPCMEX file.", "Not KSDATAFORMAT_SUBTYPE_PCM.") |
+  | WAV: mono or stereo, rate not 0 | more channels take the multichannel path, which was not read; any rate plays (`AIL_set_sample_playback_rate`, the mixer resamples) |
+  | WAV: a `data` chunk with samples, inside the file | "Invalid or missing data block."; Miles does not clamp the size to the file |
+  | MP3: Layer III (MPEG-1, 2 or 2.5) | `MilesMp3::SeekFrameHeader` rejects layers I, II and reserved, bitrate index 15 and rate index 3 |
+  | MP3: the first frame within 8 KiB after a leading ID3v2 tag | the sync scan stops at 0x2000 (the 110 shipped files with 720 or 1,044 leading zeros pass) |
+  | MP3: every frame of the first frame's version, layer and rate | later frames must match them; the bitrate is not compared, so VBR plays |
+
+  Accepted: VBR, any bitrate, ID3v1 and ID3v2 tags (inline ones are skipped while seeking), the Xing/Info frame
+  (decoded as a silent frame), CRC-protected frames (the CRC is skipped). Notes, always accepted: an MP3 stream
+  unlike the shipped ones (MPEG-1 32 kHz mono, 44.1 kHz mono/stereo/joint; MPEG-2 16 kHz mono, 22.05 kHz
+  mono/stereo/joint), a legacy WAV unlike 22,048 Hz mono 16-bit, a RIFF size that differs from the file, bytes
+  after the last chunk, and every `legacysounds/` name (the client never plays it).
+- Still unverified, refused unless `--allow-unverified-format` (`FormatPolicy::AllowUnverified`) turns them into
+  warnings, for trying a file out in a test client: an MP3 whose frames change only the channel mode, a broken
+  frame chain (resyncs), a cut last frame, trailing bytes that are not a tag, an APE tag; a PCM WAV whose byte rate
+  or block align disagree with its channels and bits, or whose data is not whole sample frames. No MPEG rate is
+  left over: the header table holds only the nine rates the decoder takes (that the decoder handles all of them is
+  `probable` in `miles_audio.md`). Kingdom Reborn's 13 MP3s with a cut last frame fall here.
 - `--convert`: a WAV entry takes any WAV `audio::decode` reads (8/16/24/32-bit PCM, 32/64-bit float, extensible)
   or an MP3, rewritten as a canonical 16-bit PCM WAV of the same rate and channels. No resampling (a pure-Rust
   option would be `rubato`), no MP3 encoder: encode with `lame --cbr -b 128` or `ffmpeg -c:a libmp3lame -b:a 128k`
-  at one of the rates above (LAME bindings are C).
+  (LAME bindings are C).
 - A replaced entry keeps its compression flag. An added one is stored like the shipped ones of its kind: MP3
   uncompressed, WAV and tables zlib. Edited entries get a fresh timestamp data block header; the others keep their
   bytes and place. The copy goes to an absolute path other than the source.
 - Names: by sound id (the row's MP3), legacy sound id (the row's `legacysounds/` WAV), music id, or entry name
-  (`data/audio/...`, lowercase with `/`: names are hashed as written). A new id gets a row: `Sounds\folder\x.mp3`
-  for a sound (which names both its MP3 and its legacy WAV), `Music/x.mp3` for music (`--loop`), checked like the
-  shipped paths (`.mp3`, printable ASCII, no comma). The table is rewritten in id order with CRLF lines.
-  Kingdom Reborn packages have no Enhanced tables: entries there are replaced or added by name only.
+  (`data/audio/...`, lowercase with `/`: names are hashed as written, as the client normalizes them).
+- A playable sound is an MP3 entry and a table row naming it. A new id gets its row: `Sounds\folder\x.mp3` for a
+  sound (which names both its MP3 and its legacy WAV), `Music/x.mp3` for music (`--loop`), checked like the shipped
+  paths (`.mp3`, printable ASCII, no comma or `"`, an entry name of at most 254 bytes; sound ids up to 0xFFFE). The
+  table is rewritten in id order with CRLF lines. An MP3 added by name must be one a row already names (a shipped
+  silent row); anything else is refused, since the client would never play it. Replacing or adding a
+  `legacysounds/` WAV stays allowed, with the note that the Enhanced Client does not play it.
+- Kingdom Reborn: a sound id is the server's id, followed through `audio_effects.csv` (`ID#` = id + 1) to its
+  structure's file; its tables are not edited (a new sound means editing both CSVs by hand). Entries are also
+  replaced or added by name.
 
 ### Classic sounds (`ClassicSoundEditor`, `uocf-cli sound import`, inspector "Replace slot...")
 
@@ -144,29 +240,28 @@ replace or add, every other entry or slot keeps its bytes.
   extends the index with empty entries.
 - `soundLegacyMUL.uop`: a replaced entry keeps its flag; an added one is uncompressed, as all shipped ones.
 - Header: a replaced slot keeps its 40 bytes (a new `--name` overwrites the start of the name field and a NUL; the
-  bytes after it, leftovers in the shipped files, stay). A new slot gets the name and zeros: bytes 32..40 are
-  undocumented and the shipped values look like tool leftovers (Ghidra question 6).
-- Input: 16-bit PCM mono WAV at 22,050 Hz, or 22,048 Hz (the label the Enhanced legacy WAVs use for the same PCM),
-  copied as is. `--convert` decodes any WAV or MP3 at those rates and downmixes to mono; other rates are refused
-  (`ffmpeg -ar 22050 -ac 1 -c:a pcm_s16le`).
+  bytes after it, leftovers in the shipped files, stay). A new slot gets the name and zeros, which is safe: no
+  client reads bytes 0..40.
+- Slot ids go up to 1667, the highest the client plays.
+- Input: 16-bit PCM mono WAV at 22,048 Hz, the rate the client plays, copied as is; 22,050 Hz (the nominal rate,
+  and the label of 424 Enhanced legacy WAVs) is still taken, with a note that it plays 0.01% slower. Other rates
+  are refused: they would play at the wrong speed. `--convert` decodes any WAV or MP3 at those rates and downmixes
+  to mono (`ffmpeg -ar 22048 -ac 1 -c:a pcm_s16le`).
 - Verdata is not applied or written. The `sound.mul` pair is edited when present, as `SoundMap` reads it.
 
 ### `Sound.def` and `Music.def` (`DefTranslationTable::to_text`, `set`, `remove`)
 
-Lines in file order (blank lines kept), `id {a, b} extra`, an unclosed group as `id {a b`, the line end of the
-first line, the final line end or none. Other spacing is normalized, so only canonical files (all shipped ones)
-round-trip byte for byte.
+Every line read is written back as it was (blank and `#` lines, spacing, dropped lines), with the line end of the
+first line and the final line end or none, so any file the parser takes round-trips byte for byte. A line set
+after parsing is written `id {a, b} extra`; ids and targets go up to 32,767 (`%hd`).
 
 ## Questions for a Ghidra pass
 
-1. For a sound id, does the Enhanced Client play the `sounds/` MP3 or the `legacysounds/` WAV, and on what
-   setting? How does it handle table rows without an entry (`flame04 .mp3`, `pirates_*`)?
-2. Which names do the three unnamed file lists have, and what reads them? Who plays the 7 unnamed MP3s and the
-   unnamed WAV?
-3. Which decoder plays the audio (Miles `mssmp3.asi`?), which WAV `fmt` tags, sizes and extra chunks it accepts,
-   whether unpadded odd chunks matter, and whether 22,048 Hz WAVs are resampled or played as 22,050.
-4. How the Classic client parses `Sound.def`/`Music.def`: the unclosed `805 {331 0`, several targets (random
-   pick?), the third field, `-1`.
-5. How `Config.txt` flags are read (is `lop` a loop?), and whether an extension is added.
-6. Whether anything reads bytes 32..40 of a Classic sound header.
-7. Kingdom Reborn table grammar (`w,s,id,filename,...`) and what `rate` and the other columns do.
+Answered by the pass of commit 7906ae18 (above, and in `scripts/dev-helpers/ec-research/ghidra-audio/results/`):
+the Enhanced Client plays the table's MP3 and never the legacy WAV; rows without an entry are silent; the decoder
+is Miles 7.2c with the rules above; how `Sound.def`, `Music.def` and `Config.txt` are read; bytes 32..40 are
+unread; Kingdom Reborn's table grammar and its id offset. Still open:
+
+1. The names of the three file lists, the two unnamed MP3s and the unnamed WAV (nothing reads them).
+2. Whether Miles 7.2c plays a cut last frame, and how Kingdom Reborn's Miles 7.0x differs.
+3. Which of two `audio_effects.csv` rows of an id Kingdom Reborn keeps, and the reader of its `audio_music.csv`.

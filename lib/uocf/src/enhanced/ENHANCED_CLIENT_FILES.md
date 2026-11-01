@@ -1663,6 +1663,22 @@ bytes of padding, and the 0x0 placeholder headers (no pixels to replace); the
 `Audio.uop` holds the sounds (MP3 under `data/audio/sounds/`, the Classic sounds as 16-bit PCM WAVs under
 `data/audio/legacysounds/`), the music (MP3 under `data/audio/music/`) and two tables mapping ids to them
 (`audio_sounds.csv`, `audio_music.csv`). `enhanced::audio` reads it; `enhanced::audio_edit` replaces and adds
-entries, accepting only the stream kinds the shipped package holds unless told otherwise (`audio::validate`),
-and adds table rows for new ids. An unchanged copy re-saves byte for byte. Formats, names, tables and the
-accepted list: `docs/agent_notes/ec_audio_formats.md`.
+entries and adds table rows for new ids. An unchanged copy re-saves byte for byte.
+
+- **What plays.** The client plays a sound id (the server's id, no offset) from `data/audio/` + its
+  `audio_sounds.csv` `FilePath`, with `\` turned into `/` and lowercased, nothing trimmed; music the same way from
+  `audio_music.csv`. It never plays the `legacysounds/` WAVs. A row naming no entry, or an id without a row, is
+  silent: the shipped table has 18 such rows (ids 19, 856, 1469, 1471, 1628..1633, 1636..1640, 1658..1660),
+  reported as warnings (`AudioPackage::silent_rows`). A new playable sound is therefore an MP3 entry and a table
+  row; the editor writes both, and refuses an MP3 added by name that no row names.
+- **Decoder.** Miles 7.2c, which picks the decoder by the entry's extension (a leading ID3v2 tag forces MP3) and
+  takes WAV (PCM 8/16-bit, IMA ADPCM, EXTENSIBLE 16-bit PCM; mono or stereo; any rate; padded odd chunks) and MP3
+  (Layer III, MPEG-1/2/2.5, first frame within 8 KiB, one version and rate throughout, VBR allowed). The client
+  checks nothing itself. `audio::validate` refuses what Miles refuses and, unless told otherwise, what the code
+  read leaves unverified.
+- **Kingdom Reborn** has the same table names in MythAudio's layout, read by `enhanced::kr_audio` and written back
+  byte for byte: `audio_sounds.csv` (sections, comments, 14-field sound structures) and `audio_effects.csv`, whose
+  `ID#` is the server's sound id + 1. It plays with Miles 7.0x, a different build.
+
+Formats, names, tables, the accepted list with the evidence of each rule, and the Classic `Sound.def`, `Music.def`
+and `Config.txt` readings: `docs/agent_notes/ec_audio_formats.md`.
