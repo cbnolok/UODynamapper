@@ -205,31 +205,56 @@ entry or slot keeps its bytes.
   Accepted: VBR, any bitrate, ID3v1 and ID3v2 tags (inline ones are skipped while seeking), the Xing/Info frame
   (decoded as a silent frame), CRC-protected frames (the CRC is skipped). Notes, always accepted: an MP3 stream
   unlike the shipped ones (MPEG-1 32 kHz mono, 44.1 kHz mono/stereo/joint; MPEG-2 16 kHz mono, 22.05 kHz
-  mono/stereo/joint), frames that change the channel mode (no shipped stream does), a legacy WAV unlike 22,048 Hz mono 16-bit, a RIFF size that differs from the file, bytes
-  after the last chunk, and every `legacysounds/` name (the client never plays it).
+  mono/stereo/joint), frames that change the channel mode (no shipped stream does), a legacy WAV unlike 22,048 Hz
+  mono 16-bit, a RIFF size that differs from the file, bytes after the last chunk, and every `legacysounds/` name
+  (the client never plays it).
 - Still unverified, refused unless `--allow-unverified-format` (`FormatPolicy::AllowUnverified`) turns them into
-  warnings, for trying a file out in a test client: an MP3 with a broken frame chain (resyncs), a cut last frame, trailing bytes that are not a tag, an APE tag; a PCM WAV whose byte rate
-  or block align disagree with its channels and bits, or whose data is not whole sample frames. No MPEG rate is
-  left over: the header table holds only the nine rates the decoder takes (that the decoder handles all of them is
-  `probable` in `miles_audio.md`). Kingdom Reborn's 13 MP3s with a cut last frame fall here.
+  warnings, for trying a file out in a test client: an MP3 with a broken frame chain (resyncs), a cut last frame,
+  trailing bytes that are not a tag, an APE tag; a PCM WAV whose byte rate or block align disagree with its
+  channels and bits, or whose data is not whole sample frames. No MPEG rate is left over: the header table holds
+  only the nine rates the decoder takes (that the decoder handles all of them is `probable` in `miles_audio.md`).
+  Kingdom Reborn's 13 MP3s with a cut last frame fall here.
+- Refused here although Miles would take them, deliberately: each is a file no tool should write, and none is
+  shipped. They stay refused under every policy.
+  - WAV chunk ids in another case (`FMT `, `DATA`): Miles compares them ignoring case, our walk does not.
+  - A zero-size chunk exactly at the RIFF size: our bound is one chunk header stricter than Miles' `offset <
+    riff_size`.
+  - A RIFF size too small to hold the first chunk, even when that chunk is `fmt ` or `data` (Miles checks the
+    first chunk before the bound).
+  - `WAVE_FORMAT_EXTENSIBLE` of another sample size than 16 bits (Miles checks only block align = channels × 2).
+  - MP3: a free-format bitrate (index 0) and the reserved version bits `01`: `SeekFrameHeader` takes both, but no
+    frame length follows from them.
+  - `Sound.def` and `Music.def`: whitespace before `{` and before a trailing `#` is required here; the client also
+    takes `5{1} 0` and `5 {1} 0#x`. Lines of more than 253 characters are refused, though the client reads a
+    line of 254 whole too (`fgets` of 255 bytes leaves only its line feed, read next as an empty line).
+  - `Config.txt`: the 510-byte line limit counts the CR of a CRLF line, which the client's text-mode read drops
+    before its `fgets` of 0x200 bytes.
 - `--convert`: a WAV entry takes any WAV `audio::decode` reads (8/16/24/32-bit PCM, 32/64-bit float, extensible)
   or an MP3, rewritten as a canonical 16-bit PCM WAV of the same rate and channels. No resampling (a pure-Rust
   option would be `rubato`), no MP3 encoder: encode with `lame --cbr -b 128` or `ffmpeg -c:a libmp3lame -b:a 128k`
   (LAME bindings are C).
 - A replaced entry keeps its compression flag. An added one is stored like the shipped ones of its kind: MP3
   uncompressed, WAV and tables zlib. Edited entries get a fresh timestamp data block header; the others keep their
-  bytes and place. The copy goes to an absolute path other than the source.
+  bytes and place. The copy goes to an absolute path other than the source: an output that is the source, or a
+  symbolic or hard link to it, is refused by file identity (`utils::output_file`, the `same-file` crate: device
+  and inode, or the Windows volume and file index). It is written to a temporary file beside the output and
+  renamed over it, so a failed save leaves the output as it was. The same holds for every UOP writer built on
+  `uop_entries::save_package_as` and for the Classic sound files.
 - Names: by sound id (the row's MP3), legacy sound id (the row's `legacysounds/` WAV), music id, or entry name
   (`data/audio/...`, lowercase with `/`: names are hashed as written, as the client normalizes them).
 - A playable sound is an MP3 entry and a table row naming it. A new id gets its row: `Sounds\folder\x.mp3` for a
   sound (which names both its MP3 and its legacy WAV), `Music/x.mp3` for music (`--loop`), checked like the shipped
   paths (`.mp3`, printable ASCII, no comma or `"`, an entry name of at most 254 bytes; sound ids up to 0xFFFE). The
-  table is rewritten in id order with CRLF lines. An MP3 added by name must be one a row already names (a shipped
-  silent row); anything else is refused, since the client would never play it. Replacing or adding a
+  table is rewritten in id order with CRLF lines. An add stores the entry and its row together or neither: the
+  table is written first and put back when the entry cannot be added. A legacy sound id gets no new row unless
+  the package already holds the MP3 the row names (the client plays only that MP3): add the MP3 by sound id with
+  the path first, then the WAV, which takes that row. An MP3 added by name must be one a row already names (a
+  shipped silent row); anything else is refused, since the client would never play it. Replacing or adding a
   `legacysounds/` WAV stays allowed, with the note that the Enhanced Client does not play it.
 - Kingdom Reborn: a sound id is the server's id, followed through `audio_effects.csv` (`ID#` = id + 1) to its
-  structure's file; its tables are not edited (a new sound means editing both CSVs by hand). Entries are also
-  replaced or added by name.
+  structure's file (a structure starting with a digit is a structure handle, `0x10000 | n` for the n-th sound
+  structure UOKR accepted; see `uokr_audio.md`); its tables are not edited (a new sound means editing both CSVs
+  by hand). Entries are also replaced or added by name.
 
 ### Classic sounds (`ClassicSoundEditor`, `uocf-cli sound import`, inspector "Replace slot...")
 
