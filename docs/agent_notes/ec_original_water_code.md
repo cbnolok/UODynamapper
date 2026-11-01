@@ -77,6 +77,12 @@ not be substituted blindly for the serialized material's source indices.
   original normal rendering path blended sources 1 and 2 together.
 - The optional fourth texture has its own stages beginning at `0x59c43c`.
   It must not be interpreted as generic solid-material detail.
+- Alpha is independent of reflection RGB. The bump stage at `0x59c1e3`–
+  `0x59c283` selects `TEXTURE` alpha (`ALPHAOP=2`, `ALPHAARG1=2`);
+  the reflection stage at `0x59c418`–`0x59c437` preserves `CURRENT` alpha
+  (`ALPHAOP=2`, `ALPHAARG1=1`). Thus a missing fourth stage retains bump
+  alpha, and fourth-stage technique 2 preserves that alpha. Reflection-map
+  alpha must not replace it.
 
 State names were cross-checked against Microsoft's
 [texture operations](https://learn.microsoft.com/en-us/windows/win32/direct3d9/d3dtextureop)
@@ -1013,3 +1019,37 @@ three styles, bridge/stairs, curved coast, acid, swamp, town and CC controls;
 all previews verified Desktop 4 placement and cleanup. Earlier `surface-`,
 `camera-`, `color-`, `quad-` and `solid-quad-` captures retain intermediate or
 rejected hypotheses and must not be presented as final mask validation.
+
+## Direct item water without a terrain proxy
+
+The canonical package census finds 61 surface-art `UOWaterShader` owners with
+no matching TerrainDefinition graph: 4651..4654, 5701 and sparse blood variants
+within 7367..7442. The numeric range also contains other material families.
+These owners require their own source stages; a primary-image quad is only the
+old hardware fallback. Matching terrain-owned water continues through its
+existing shared land/static material path.
+
+`ec_item_surface/water.rs` registers direct item graphs in the existing surface
+lookup. `ec_item_water.wesl` samples bump 0, reflection 2 and optional fourth 3,
+using each source's UV set/repetition and original Technique/Tweaks. Technique[0]
+0 uses vertex-generated reflection coordinates; 1 keeps source 2's UV set; 2
+forces local UV0. Other texgen modes are not admitted without a source trace.
+Bump RG stays unsigned, reflection wraps, and diffuse modulation and fourth-stage
+operations occur in encoded color before one conversion to linear RGB. Fractional
+alpha uses the existing blended pass and the same coverage in GPU picking.
+There is no added binding, pass, instance stride or gameplay-coordinate change.
+
+The image-window builder `0x459b00` derives local UVs from source pixel positions
+and the full primary texture dimensions. Our atlas is alpha-trimmed, so sampling
+support maps with quad-local 0..1 shrinks the visible material. Reconstruct
+`authored_uv = (ec_start + quad_uv * native_slot_extent) / primary_source_extent`.
+The art slot's logical size removes its upscale factor; the auxiliary package's
+required water-primary extent sidecar supplies the original source dimensions
+without uploading fallback pixels. Never infer those dimensions from a fourth
+map merely because common blood assets happen to have the same dimensions.
+
+The direct path retains the current camera adapter and flat-water diffuse
+response. It establishes source stages and source-window alignment, not full
+original-client camera/clock/alpha-property waveform parity. The separate
+alpha-property threshold waveform remains unimplemented; generated screenshot
+appearance alone is not evidence for it.

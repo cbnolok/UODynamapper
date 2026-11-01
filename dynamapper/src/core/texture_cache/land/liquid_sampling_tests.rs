@@ -38,6 +38,10 @@ fn liquid_sampling_gpu_preserves_data_and_source_edges() {
             include_str!("../../../../assets/shaders/world/ec_item_liquid.wesl"),
             "shaders/world/ec_item_liquid.wesl",
         ));
+        shaders.set_shader(shader_id(15), Shader::from_wesl(
+            include_str!("../../../../assets/shaders/world/ec_item_water.wesl"),
+            "shaders/world/ec_item_water.wesl",
+        ));
         shaders.set_shader(shader_id(5), Shader::from_wesl(
             include_str!("../../../../assets/shaders/world/ec_item_quad.wesl"),
             "shaders/world/ec_item_quad.wesl",
@@ -122,6 +126,7 @@ fn sample_tile_albedo_grad(uv: vec2<f32>, tile: TileUniform, dx: vec2<f32>, dy: 
 import package::shaders::world::ec_liquid::{EcLiquidSlot, ec_liquid_sample, ec_liquid_reflection_uv, ec_liquid_original_view};
 import package::shaders::world::ec_item_surface::apply_ec_item_surface;
 import package::shaders::world::ec_item_liquid::apply_ec_item_liquid;
+import package::shaders::world::ec_item_water::sample_ec_item_water;
 import package::shaders::world::texture_data::texture_color_rgb;
 import package::shaders::world::ec_item_quad::{ec_item_quad_screen, ec_item_quad_world};
 import package::shaders::world::land::atlas::{bank_fixture_tile, atlas_read_meta};
@@ -277,6 +282,15 @@ fn main() {
     // UV-coded artwork catches sampling the neighbor's opposite edge.
     samples[98] = cc_color(vec2<i32>(110, 50), vec2<f32>(1.0, 0.5));
     samples[99] = cc_color(vec2<i32>(111, 50), vec2<f32>(0.0, 0.5));
+    // Item water uses its own map indices/UV sets, not a terrain payload.
+    // Distinct bump/reflection alpha catches using surface alpha as coverage.
+    for (var index = 0u; index < 11u; index++) {
+        let graph = select(min(index, 8u), 9u, index == 10u);
+        samples[100u + index] = sample_ec_item_water(atlas, surface_lookup, linear_sampler,
+            vec4<u32>(7u + graph * 7u, 16u, 0u, 0u), vec2<f32>(0.75, 0.25),
+            vec2<f32>(0.25, 0.75), vec2<f32>(0.0, 1.0), 0.25, index == 9u, false, 0.5);
+    }
+
 }
 "#, "shaders/test/liquid_sampling_gpu.wesl"));
         let wgsl = shaders.get(0, shader_id(0), &[]).unwrap();
@@ -310,16 +324,27 @@ fn main() {
             dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default()
         });
         let lookup = device.create_texture(&wgpu::TextureDescriptor {
-            label: None, size: wgpu::Extent3d { width: 7, height: 1, depth_or_array_layers: 1 },
+            label: None, size: wgpu::Extent3d { width: 77, height: 1, depth_or_array_layers: 1 },
             mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba32Uint,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        let records = [[0u32; 4], [2, 2, 2, 0], [1.0f32.to_bits(), 0, 0, 0],
+        let mut records = vec![[0u32; 4], [2, 2, 2, 0], [1.0f32.to_bits(), 0, 0, 0],
             [2, 2, 2, 0], [1.0f32.to_bits(), 0, 0, 0], [0; 4], [0; 4]];
+        for graph in 0..10 {
+            records.extend([
+                [2, 2, 2, u32::from(graph == 4)],
+                [1.0f32.to_bits(), if graph == 8 { (-2.0f32).to_bits() } else { 0 }, 0, 0],
+                [2, 2, 2, u32::from(graph == 6 || graph == 7)],
+                [1.0f32.to_bits(), 0, 0, if graph == 5 || graph == 7 { 1 } else if graph == 6 { 2 } else { 0 }],
+                [if (1..=3).contains(&graph) || graph == 9 { 2 } else { 0 }, 2, 2, u32::from(graph != 9)],
+                [1.0f32.to_bits(), 0, 0, if graph == 1 || graph == 9 { 1 } else if graph == 2 { 2 } else { 0 }],
+                [0, 0, (if graph == 9 { 0.5f32 } else { 1.0f32 }).to_bits(), (if graph == 9 { 0.5f32 } else { 1.0f32 }).to_bits()],
+            ]);
+        }
         queue.write_texture(lookup.as_image_copy(), bytemuck::cast_slice(&records), wgpu::TexelCopyBufferLayout {
-            offset: 0, bytes_per_row: Some(7 * 16), rows_per_image: Some(1),
+            offset: 0, bytes_per_row: Some(77 * 16), rows_per_image: Some(1),
         }, lookup.size());
         let lookup_view = lookup.create_view(&wgpu::TextureViewDescriptor::default());
         let item_lookup = device.create_texture(&wgpu::TextureDescriptor {
@@ -335,7 +360,7 @@ fn main() {
             offset: 0, bytes_per_row: Some(6 * 16), rows_per_image: Some(1),
         }, item_lookup.size());
         let item_view = item_lookup.create_view(&wgpu::TextureViewDescriptor::default());
-        let result_size = 100 * 16;
+        let result_size = 111 * 16;
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: None, size: result_size, mapped_at_creation: false,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
@@ -408,7 +433,7 @@ fn main() {
             let length = (right * right + up * up + forward * forward).sqrt();
             [(right / length) as f32, (up / length) as f32, 0.0, 0.0]
         };
-        let expected = [mean(&normalized), decode(mask), mean(&normalized[..2]),
+        let mut expected = vec![mean(&normalized), decode(mask), mean(&normalized[..2]),
             normalized[0], normalized[0], normalized[1], normalized[1], normalized[0],
             mean(&normalized), normalized[3], decode(mean(&normalized[..2])), linear[0], linear[0], decode(mask),
             [0.0, -0.6, 0.0, 0.0], [2.0 / 3.0, -2.0 / 3.0, 0.0, 0.0], [0.0; 4],
@@ -444,6 +469,19 @@ fn main() {
             [0.0, 1.0, 0.0, 1.0], [0.0, 1.0, 0.0, 1.0], [1.0, 0.0, 0.0, 1.0],
             [0.5, 0.5, 0.25, 1.0], [0.5, 0.5, 0.25, 1.0],
             [0.5, 0.25, 0.0, 1.0], [0.5, 0.25, 0.0, 1.0]];
+        let water_base = |surface: usize, alpha: f32| [normalized[surface][0] * 0.5,
+            normalized[surface][1] * 0.5, normalized[surface][2] * 0.5, alpha];
+        let base = water_base(0, normalized[1][3]);
+        let overlay = normalized[2];
+        let multiply = std::array::from_fn(|channel| if channel == 3 { overlay[3] } else { base[channel] * overlay[channel] });
+        let blend = std::array::from_fn(|channel| if channel == 3 { base[3] } else { base[channel] * (1.0 - overlay[3]) + overlay[channel] * overlay[3] });
+        let add = std::array::from_fn(|channel| if channel == 3 { overlay[3] } else { (base[channel] + overlay[channel]).min(1.0) });
+        expected.extend([decode(base), decode(multiply), decode(blend), decode(add),
+            decode(water_base(3, normalized[2][3])), decode(water_base(2, normalized[1][3])),
+            decode(water_base(2, normalized[1][3])), decode(water_base(1, normalized[1][3])),
+            decode(base), decode(water_base(0, normalized[0][3]))]);
+        expected.push(decode(std::array::from_fn(|channel| if channel == 3 { normalized[0][3] }
+            else { normalized[0][channel] * normalized[0][channel] * 0.5 })));
         // Cursor geometry must keep matching the production bank shader. The
         // synthetic atlas above deliberately includes missing and Classic cells.
         use crate::core::render::scene::world::land::picking::{bank_vertex, TerrainSample};

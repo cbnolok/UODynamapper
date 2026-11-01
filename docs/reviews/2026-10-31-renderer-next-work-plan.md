@@ -142,6 +142,11 @@ from discarding their recorded fixes.
 
 ## Later surface-material handoff
 
+The 61 unmatched item-water graphs below now have direct source-stage composition,
+including the source-backed native UV-window dimensions. See [the implementation,
+package update and validation](2026-11-01-item-water-materials.md). Broader
+reflection/clock/alpha-property parity remains separate phase-5 work.
+
 The asset agent's 2026-11-01 installed-package census covers 9,222 surface-like
 items, all with an image: 892 EcRegular, 1,374 EcSurface, 261 liquid TexLandEc,
 and 6,695 Classic fallback. These are dated data-side findings from

@@ -7,6 +7,13 @@ are not `PRIMARY_SELECTED` and whose family is in `TEX_AUX_EC_PACKED_FAMILIES` (
 and decodes them from `Texture.uop`. Slots are keyed by the texture number alone,
 and the first ref seen wins.
 
+The package also requires `metadata/water_primary_extents.bin`: sorted little-endian
+`u32 [texture_id, width, height]` rows for block-0 `UOWaterShader` map-1 primaries.
+These are full native source dimensions, recorded before optional upscaling, not
+new image slots. The primary pixels remain in `tex_art_ec`; the runtime does not
+decode/upload an otherwise unused fallback image. Rebuild the auxiliary package
+with the current packer if the reader reports missing extent metadata.
+
 TileArtLegacy/TileArtEnhanced refs are counted as "unread family" and skipped. They are the EC
 legacy-art mode, which the project does not convert; Classic art comes from the CC files. Before
 this rule they made up 38,771 of 39,620 slots (80 MB, against 6.3 MB now). They also shadowed
@@ -48,6 +55,13 @@ from the block shader and the item position.
   position 1. 133 ids that format 1 packed as aux images are now only primary images (in
   `tex_art_ec`), and the bump map 1000020 joined the aux package. Pixels of the 650 common ids
   are unchanged.
+  The primary's dimensions still matter: `UOTileArt::BuildImageWindowQuad` at
+  `0x459b00` divides the authored pixel window by the full primary texture size.
+  For example, item 7379 has a 64x28 packed art crop but a 64x64 primary in the
+  canonical `Texture.uop`; that primary is not an auxiliary image. Neither the
+  trimmed crop nor a differently numbered fourth-stage mask proves its full
+  dimensions. The extent sidecar preserves this information without duplicating
+  primary pixels or changing texture roles.
 - Unavailable sources: tileart names WorldArt ids that `Texture.uop` lacks. Of the non-base ones
   the plain client has 19, among them the hue masks 2003211, 2003212, 20003979, 20004038 and 20004039.
   - When a texture request returns no data, UOSA.exe's tile material builder (FUN_0045cd80,

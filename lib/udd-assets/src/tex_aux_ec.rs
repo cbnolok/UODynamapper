@@ -16,6 +16,8 @@
 //!   missing-texture image, which the client substitutes in that case. A normal lookup
 //!   ([`TexAuxEcPackage::slot_for_texture_id`], [`TexAuxEcPackage::load_rgba`]) therefore returns
 //!   the magenta image for an absent id.
+//! - `metadata/water_primary_extents.bin`: sorted native `u32 [id, width, height]`
+//!   rows for water map-1 images, including primaries not stored in this package.
 //!
 //! Packages built before the aliases existed lack them (and may carry an unread
 //! `metadata/absent_sources.bin`); absent ids then have no slot.
@@ -29,6 +31,9 @@ use udd_image_codecs::bc7::{decode_from_vram, RawImageFormat, VramTextureData};
 use crate::common::read_pod_vec;
 
 pub const TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH: &str = "metadata/slots.bin";
+/// Native (pre-upscale) dimensions of block-0 water primary images. The shader
+/// samples other maps, but its local UV window is defined against these images.
+pub const TEX_AUX_EC_WATER_EXTENTS_ENTRY_PATH: &str = "metadata/water_primary_extents.bin";
 /// `TexAuxEcSlotRecord::flags`: the EC archive lacks this id's image. The slot is an alias of the
 /// reserved missing-texture slot: width, height and pixel format are that image's, and its pixels
 /// are read from the reserved payload, which is stored once.
@@ -109,6 +114,7 @@ impl SlotInfo {
 pub struct TexAuxEcPackage {
     package: UddpReader,
     slots: Vec<TexAuxEcSlotRecord>,
+    water_primary_extents: Vec<[u32; 3]>,
 }
 
 impl From<&TexAuxEcSlotRecord> for SlotInfo {
@@ -142,7 +148,20 @@ impl TexAuxEcPackage {
         let has_missing = slots.binary_search_by_key(&TEX_AUX_EC_MISSING_TEXTURE_ID, |slot| slot.texture_id).is_ok();
         eyre::ensure!(!aliases_missing || has_missing,
             "tex_aux_ec has missing-source aliases but no missing-texture slot {TEX_AUX_EC_MISSING_TEXTURE_ID:#x}");
-        Ok(Self { package, slots })
+        let extent_bytes = crate::common::read_path_entry_cow(&package, TEX_AUX_EC_WATER_EXTENTS_ENTRY_PATH)
+            .wrap_err("read native water-primary extents; rebuild tex_aux_ec with the current packer")?;
+        let water_primary_extents = read_pod_vec::<[u32; 3]>(extent_bytes.as_ref(), TEX_AUX_EC_WATER_EXTENTS_ENTRY_PATH)?;
+        eyre::ensure!(water_primary_extents.windows(2).all(|pair| pair[0][0] < pair[1][0])
+            && water_primary_extents.iter().all(|row| row[1] > 0 && row[2] > 0),
+            "invalid native water-primary extents");
+        Ok(Self { package, slots, water_primary_extents })
+    }
+
+    /// Full source dimensions, independent of the trimmed art slot and auxiliary upscaling.
+    /// This does not decode or upload the hardware-fallback image.
+    pub fn water_primary_extent(&self, texture_id: u32) -> Option<[u32; 2]> {
+        let pos = self.water_primary_extents.binary_search_by_key(&texture_id, |row| row[0]).ok()?;
+        Some([self.water_primary_extents[pos][1], self.water_primary_extents[pos][2]])
     }
 
     /// Return slot metadata for the given `texture_id`, if packed. For a source the EC archive
@@ -227,6 +246,11 @@ mod tests {
             virtual_path: Some(TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH), path_hash64: None, id: None,
             data: bytemuck::cast_slice(slots),
         })?;
+        builder.add_file(AddFileRequest {
+            data_type: DataType::Metadata as u8, compression: CompressionFlag::None, width: 0, height: 0,
+            virtual_path: Some(TEX_AUX_EC_WATER_EXTENTS_ENTRY_PATH), path_hash64: None, id: None,
+            data: bytemuck::cast_slice(&[[4651u32, 64, 32]]),
+        })?;
         let images: Vec<(String, Vec<u8>)> = slots.iter().filter(|slot| !slot.is_missing_source()).map(|slot| {
             let pixel = if slot.texture_id == TEX_AUX_EC_MISSING_TEXTURE_ID { MISSING_PIXEL } else { PACKED_PIXEL };
             (texture_entry_path(slot.texture_id), pixel.repeat(usize::from(IMAGE_SIDE) * usize::from(IMAGE_SIDE)))
@@ -257,6 +281,8 @@ mod tests {
         assert!(package.slot_for_texture_id(UNLISTED_ID).is_none());
         assert!(package.load_rgba(UNLISTED_ID)?.is_none());
         assert!(package.missing_texture_slot().is_some_and(|slot| !slot.is_missing_source()));
+        assert_eq!(package.water_primary_extent(4651), Some([64, 32]));
+        assert_eq!(package.water_primary_extent(7379), None);
         Ok(())
     }
 

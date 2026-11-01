@@ -29,6 +29,8 @@ import package::shaders::world::art::art_bindings::{
 import package::shaders::world::art::hue::{apply_static_hue, apply_ec_sprite_hue, STATIC_HUE_FLAG_APPLY, STATIC_HUE_FLAG_EC_SPRITE};
 import package::shaders::world::art::shading::apply_art_surface_shading;
 import package::shaders::world::art::surface_blend::static_surface_coverage;
+import package::shaders::world::ec_item_water::{ec_item_is_water, sample_ec_item_water};
+import package::shaders::world::ec_liquid_camera::ec_liquid_camera_reflection_uv;
 import package::shaders::world::art::depth::static_priority_depth;
 
 struct ArtVertexOutput {
@@ -41,6 +43,7 @@ struct ArtVertexOutput {
     @location(5) @interpolate(flat) is_wet: u32,
     @location(6) world_pos: vec3<f32>,
     @location(7) @interpolate(flat) instance_index: u32,
+    @location(8) reflection_uv: vec2<f32>,
 }
 
 struct ArtFragmentOutput {
@@ -155,6 +158,12 @@ fn vertex(vertex: Vertex) -> ArtVertexOutput {
     out.is_wet = inst.is_wet_flags & 1u;
     out.world_pos = world_pos;
     out.instance_index = u32(vertex.uv_b.x + 0.5);
+    out.reflection_uv = vec2<f32>(0.0);
+    if (inst.flat_quad >= 2u && (inst.is_wet_flags & 1u) != 0u) {
+        // Fixed-function reflection is generated at vertices. Ordinary sprites
+        // and Classic flat art do not need this additional coordinate work.
+        out.reflection_uv = ec_liquid_camera_reflection_uv(projected_world_pos, scene.ec_reflection_camera_distance);
+    }
     @if(STATIC_PICK)
     out.position = pick_clip(out.position);
     return out;
@@ -287,20 +296,31 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
             uv = inst.uv_min + fract(in.world_pos.xz / inst.texture_stretch) * atlas_extent;
         }
     }
-    if (effects.enable_water_animation == 1u && in.is_wet == 1u) {
+    let use_ec_item_water = ec_item_is_water(surface_header);
+    if (effects.enable_water_animation == 1u && in.is_wet == 1u && !use_ec_item_water) {
         let uv_in_tile = (uv - inst.uv_min) / atlas_extent;
         uv = inst.uv_min + apply_water_animation(uv_in_tile, vec2<f32>(0.5, 0.5)) * atlas_extent;
     }
     let atlas_size = vec2<f32>(textureDimensions(art_atlas).xy);
     let sample_uv = pixel_art_atlas_uv_iq(uv, inst.uv_min, inst.uv_max, atlas_size);
-    var color = textureSample(art_atlas, art_atlas_sampler, sample_uv, i32(layer));
-    if (inst.flat_quad >= 2u) {
-        color = apply_ec_item_surface(color, item_surface_atlas, item_surface_lookup,
+    var color: vec4<f32>;
+    if (use_ec_item_water) {
+        let energy = global_light.ambient_strength
+            + global_light.land_diffuse_strength * water_flat_wrapped_lambert(scene.light_direction);
+        color = sample_ec_item_water(item_surface_atlas, item_surface_lookup,
             item_surface_sampler, surface_header, uv_in_tile_for_shading, in.world_pos.xz,
-            effects.enable_linear_filtering == 1u,
-            effects.enable_linear_filtering == 1u || effects.post_process_profile != 0u);
+            in.reflection_uv, globals.time, effects.enable_water_animation == 1u,
+            effects.enable_linear_filtering == 1u, energy);
+    } else {
+        color = textureSample(art_atlas, art_atlas_sampler, sample_uv, i32(layer));
+        if (inst.flat_quad >= 2u) {
+            color = apply_ec_item_surface(color, item_surface_atlas, item_surface_lookup,
+                item_surface_sampler, surface_header, uv_in_tile_for_shading, in.world_pos.xz,
+                effects.enable_linear_filtering == 1u,
+                effects.enable_linear_filtering == 1u || effects.post_process_profile != 0u);
+        }
     }
-    if (surface_header.x != 0u && effects.post_process_profile != 0u) {
+    if (surface_header.x != 0u && !use_ec_item_water && effects.post_process_profile != 0u) {
         // The authored overlap margin allows a 1.5-pixel coverage fade at the
         // quad boundary without drawing a hard cutout over the liquid below.
         let edge = min(uv_in_tile_for_shading, vec2<f32>(1.0) - uv_in_tile_for_shading);
@@ -382,7 +402,7 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
         let flat_water_lam = water_flat_wrapped_lambert(scene.light_direction);
         let flat_water_energy = global_light.ambient_strength + global_light.land_diffuse_strength * flat_water_lam;
         shaded = vec4<f32>(shaded.rgb * flat_water_energy, shaded.a);
-    } else {
+    } else if (!use_ec_item_water) {
         shaded = vec4<f32>(apply_art_surface_shading(
             shaded.rgb,
             uv_in_tile_for_shading,
@@ -418,8 +438,8 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
     // A flat liquid has no per-sprite vertical shadow gradient or local-light
     // ownership. Feeding either into the KR wash paints the authored diamond
     // outline into the water and diverges from the terrain-owned surface.
-    let color_wash_shadow = select(object_color_wash_shadow, 0.0, is_cc_flat_water);
-    let color_wash_local_light = select(inst.local_light_rgba.a, 0.0, is_cc_flat_water);
+    let color_wash_shadow = select(object_color_wash_shadow, 0.0, is_cc_flat_water || use_ec_item_water);
+    let color_wash_local_light = select(inst.local_light_rgba.a, 0.0, is_cc_flat_water || use_ec_item_water);
     shaded = vec4<f32>(apply_kr_color_wash(
         shaded.rgb,
         in.world_pos.xz,

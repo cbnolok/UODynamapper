@@ -10,6 +10,7 @@ const LOOKUP_WIDTH: usize = 256;
 /// Item position of the static terrain shader's fourth map (coverage alpha).
 const FOURTH_SOURCE_POSITION: u8 = 3;
 mod hue_mask;
+mod water;
 pub(super) use hue_mask::append as append_sprite_hues;
 
 #[derive(Resource, Clone)]
@@ -71,6 +72,8 @@ fn append_material(
 
 pub(super) fn create_lookup(
     images: &mut Assets<Image>, tilemeta: Option<&TileMetaPackage>,
+    art: Option<&udd_assets::tex_art_ec::TexArtEcPackage>,
+    aux: Option<&udd_assets::tex_aux_ec::TexAuxEcPackage>,
     mut assign: impl FnMut(&TileMetaItemTextureRef) -> Option<(u32, UVec2)>,
 ) -> Handle<Image> {
     let mut records = vec![[0u32; 4]; ITEM_CAPACITY];
@@ -78,6 +81,13 @@ pub(super) fn create_lookup(
         for tile in tilemeta.item_tiles() {
             let Some(material) = tilemeta.item_material(tile.tile_id, 0) else { continue; };
             append_material(&mut records, tile.tile_id, material, tilemeta.item_texture_refs(tile.tile_id), &mut assign);
+            let refs = tilemeta.item_texture_refs(tile.tile_id);
+            if let (Some(slot), Some(extent)) = (art.and_then(|art| art.present_slot(tile.tile_id)),
+                source(refs, 1).and_then(|r| aux?.water_primary_extent(r.texture_id))) {
+                water::append(&mut records, tile.tile_id, material, tilemeta.item_texture_refs(tile.tile_id),
+                    Vec4::new(f32::from(tile.ec_start_x), f32::from(tile.ec_start_y), slot.logical_width(), slot.logical_height()),
+                    UVec2::from_array(extent), &mut assign);
+            }
         }
     }
     let height = records.len().div_ceil(LOOKUP_WIDTH);

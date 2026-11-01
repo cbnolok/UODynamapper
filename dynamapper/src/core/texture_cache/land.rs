@@ -206,7 +206,7 @@ fn create_blank_aux_atlas_images(images: &mut Assets<Image>) -> LandAuxAtlasImag
         aux_atlas: images.add(aux_atlas),
         aux_lookup: images.add(aux_lookup),
         item_lookup: super::ec_item_liquid::create_lookup(images, None, |_| None),
-        surface_lookup: super::ec_item_surface::create_lookup(images, None, |_| None),
+        surface_lookup: super::ec_item_surface::create_lookup(images, None, None, None, |_| None),
     }
 }
 
@@ -364,7 +364,7 @@ fn create_aux_atlas_images(
         }
         assign_aux_layer(tex_aux_ec, source.texture_id, &mut texture_id_to_layer, &mut layers_rgba)
     });
-    let surface_lookup = super::ec_item_surface::create_lookup(images, tilemeta, |source| {
+    let surface_lookup = super::ec_item_surface::create_lookup(images, tilemeta, tex_art_ec, Some(tex_aux_ec), |source| {
         let slot = tex_aux_ec.slot_for_texture_id(source.texture_id)?;
         if slot.logical_family != source.texture_type { return None; }
         assign_aux_layer(tex_aux_ec, source.texture_id, &mut texture_id_to_layer, &mut layers_rgba)

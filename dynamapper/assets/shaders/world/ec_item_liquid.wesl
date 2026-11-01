@@ -21,12 +21,16 @@ fn apply_ec_item_liquid(current: vec4<f32>, atlas: texture_2d_array<f32>,
     // forces WRAP separately in the original draw path.
     let slot = EcLiquidSlot(true, i32(source.x), vec2<u32>(0u), source.yz, repetition);
     let overlay = ec_liquid_sample(atlas, liquid_sampler, slot, transformed, linear, repetition != 1.0);
-    if (source.w == 2u) {
+    return compose_ec_item_liquid(current, overlay, source.w);
+}
+
+fn compose_ec_item_liquid(current: vec4<f32>, overlay: vec4<f32>, technique: u32) -> vec4<f32> {
+    if (technique == 2u) {
         // D3DTOP_BLENDTEXTUREALPHA retains current alpha.
         return vec4<f32>(mix(current.rgb, overlay.rgb, overlay.a), current.a);
     }
     var rgb = current.rgb + overlay.rgb;
-    if (source.w == 1u) { rgb = current.rgb * overlay.rgb; }
+    if (technique == 1u) { rgb = current.rgb * overlay.rgb; }
     // Both MODULATE and the default ADD branch select texture alpha.
     return vec4<f32>(clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0)), overlay.a);
 }

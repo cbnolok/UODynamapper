@@ -15,6 +15,8 @@
 //! - the client's `Data\SystemTextures\missing.tga` under `TEX_AUX_EC_MISSING_TEXTURE_ID`;
 //! - an alias slot (`TEX_AUX_EC_SLOT_FLAG_MISSING_SOURCE`, no payload) for each referenced id the
 //!   EC archive lacks, which the client replaces with `missing.tga`.
+//! - `metadata/water_primary_extents.bin`: full native dimensions for water UV windows,
+//!   independent of trimmed primary art and optional auxiliary upscaling.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -28,6 +30,7 @@ use udd_assets::tex_art_cc::PagePixelFormat;
 use udd_assets::tex_aux_ec::{
     texture_entry_path, TexAuxEcSlotRecord, TEX_AUX_EC_MISSING_TEXTURE_ID, TEX_AUX_EC_SLOT_FLAG_MISSING_SOURCE,
     TEX_AUX_EC_SLOT_MANIFEST_ENTRY_PATH,
+    TEX_AUX_EC_WATER_EXTENTS_ENTRY_PATH,
 };
 use udd_assets::tilemeta::{
     EcMaterialLogicalFamily, EcMaterialPhysicalPackage, EcMaterialStableRole, TileMetaItemTextureRef, TileMetaPackage,
@@ -146,6 +149,11 @@ pub fn pack_tex_aux_ec(
         .map(|p| Textures::new(p, None, None).wrap_err_with(|| format!("load {}", p.display())))
         .transpose()?;
     let missing_texture = load_missing_texture(source_dirs)?;
+    // Water map 1 is not sampled on capable hardware, so its pixels still belong
+    // only to tex_art_ec. Retain its native dimensions for the item's local UVs;
+    // a trimmed art slot or an upscaled support map cannot supply those dimensions.
+    let water_primary_extents = collect_water_primary_extents(&tilemeta, world_textures.as_ref(),
+        [missing_texture.width, missing_texture.height])?;
 
     let mut summary = TexAuxEcPackSummary::default();
     let qualifying_refs = select_qualifying_refs(
@@ -280,6 +288,14 @@ pub fn pack_tex_aux_ec(
         id: None,
         data: slot_bytes,
     })?;
+    package.add_file(AddFileRequest {
+        data_type: DataType::Metadata as u8,
+        compression: CompressionFlag::ZstdNoDict,
+        width: 0, height: 0,
+        virtual_path: Some(TEX_AUX_EC_WATER_EXTENTS_ENTRY_PATH),
+        path_hash64: None, id: None,
+        data: cast_slice::<[u32; 3], u8>(&water_primary_extents),
+    })?;
 
     for (texture_id, width, height, _pixel_format, data) in image_entries {
         let vpath = texture_entry_path(texture_id);
@@ -304,6 +320,34 @@ pub fn pack_tex_aux_ec(
     );
 
     Ok(summary)
+}
+
+fn collect_water_primary_extents(tilemeta: &TileMetaPackage, textures: Option<&Textures>,
+    missing_extent: [u32; 2]) -> eyre::Result<Vec<[u32; 3]>> {
+    let mut ids = std::collections::BTreeSet::new();
+    for tile in tilemeta.item_tiles() {
+        if !tilemeta.item_material(tile.tile_id, 0)
+            .is_some_and(|m| m.shader_name.as_deref() == Some("UOWaterShader")) { continue; }
+        for reference in tilemeta.item_texture_refs(tile.tile_id) {
+            if reference.block_index == 0 && reference.item_index == 1 && reference.is_primary_selected()
+                && reference.is_world_art() && reference.physical_package() == EcMaterialPhysicalPackage::Texture {
+                ids.insert(reference.texture_id);
+            }
+        }
+    }
+    let mut extents = Vec::with_capacity(ids.len());
+    for id in ids {
+        let textures = textures.ok_or_else(|| eyre::eyre!("Texture.uop required for water primary {id}"))?;
+        let extent = match textures.get_from_id(id)? {
+            Some(file) => {
+                let image = decode_raw_rgba(&file).wrap_err_with(|| format!("decode water primary {id}"))?;
+                [image.width, image.height]
+            }
+            None => missing_extent,
+        };
+        extents.push([id, extent[0], extent[1]]);
+    }
+    Ok(extents)
 }
 
 /// The slot of a source the EC archive lacks: the ref's id, family and role, with the missing-texture

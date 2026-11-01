@@ -4,6 +4,8 @@ import package::shaders::world::ec_liquid::{EcLiquidSlot, ec_liquid_sample, ec_l
 
 import package::shaders::world::texture_data::{texture_data_rgb, texture_color_rgb};
 
+const ITEM_SURFACE_WATER: u32 = 16u;
+
 fn ec_item_surface_record(lookup: texture_2d<u32>, index: u32) -> vec4<u32> {
     let width = textureDimensions(lookup).x;
     return textureLoad(lookup, vec2<i32>(i32(index % width), i32(index / width)), 0);
@@ -24,7 +26,7 @@ fn ec_item_surface_source(atlas: texture_2d_array<f32>, lookup: texture_2d<u32>,
 fn apply_ec_item_surface(base: vec4<f32>, atlas: texture_2d_array<f32>, lookup: texture_2d<u32>,
                          linear_sampler: sampler, header: vec4<u32>, local_uv: vec2<f32>,
                          world_xz: vec2<f32>, linear: bool, coverage_linear: bool) -> vec4<f32> {
-    if (header.x == 0u) { return base; }
+    if (header.x == 0u || (header.y & ITEM_SURFACE_WATER) != 0u) { return base; }
     let encoded_base = vec4<f32>(texture_data_rgb(base.rgb), base.a);
     var temporary = encoded_base;
     if ((header.y & 1u) == 0u) {
