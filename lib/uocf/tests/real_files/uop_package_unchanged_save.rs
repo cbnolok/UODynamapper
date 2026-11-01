@@ -1,8 +1,9 @@
-//! Loads every UOP package of a real Enhanced Client and Kingdom Reborn client and saves it unchanged
-//! (`SaveLayout::Preserve`, the default of `UopPackage::finalize_and_save`): every saved file must be byte-identical
-//! to its source.
+//! Loads every UOP package of a real Enhanced Client, Kingdom Reborn client and Classic clients and saves it
+//! unchanged (`SaveLayout::Preserve`, the default of `UopPackage::finalize_and_save`): every saved file must be
+//! byte-identical to its source.
 //!
-//! The client directories come from `UO_EC_CLIENT_DIR` and `common::KR_CLIENT_DIR_ENV`; set one or both. Packages
+//! The client directories come from `UO_EC_CLIENT_DIR`, `common::KR_CLIENT_DIR_ENV` and `UO_CLASSIC_CLIENT_ROOTS`
+//! (Classic client directories, separated like `PATH`; those without packages are skipped). Packages
 //! are written one at a time to `std::env::temp_dir()` (set `TMPDIR` to choose it; the largest is about 570 MB) and
 //! each is deleted after the comparison. Run with `--release`.
 
@@ -15,10 +16,13 @@ use std::path::{Path, PathBuf};
 use uocf::uop_container::package::UopPackage;
 
 const EC_CLIENT_DIR_ENV: &str = "UO_EC_CLIENT_DIR";
+const CLASSIC_CLIENT_ROOTS_ENV: &str = "UO_CLASSIC_CLIENT_ROOTS";
 const UOP_EXTENSION: &str = "uop";
 /// Packages of the reference clients: the 2024 Enhanced Client and the 2008 Kingdom Reborn client.
 const EC_PACKAGES: usize = 40;
 const KR_PACKAGES: usize = 34;
+/// Packages of the canonical Classic client (2024, `_Ultima Online Classic`).
+const CLASSIC_PACKAGES: usize = 22;
 /// Read buffer of the file comparison.
 const COMPARE_CHUNK: usize = 1 << 20;
 
@@ -109,4 +113,22 @@ fn every_enhanced_client_package_saves_unchanged_byte_for_byte() {
 fn every_kingdom_reborn_package_saves_unchanged_byte_for_byte() {
     let dir = std::env::var_os(common::KR_CLIENT_DIR_ENV).unwrap_or_else(|| panic!("set {}", common::KR_CLIENT_DIR_ENV));
     check_client("KR", Path::new(&dir), KR_PACKAGES);
+}
+
+#[test]
+#[ignore = "needs real Classic clients: set UO_CLASSIC_CLIENT_ROOTS and run with --ignored --release"]
+fn every_classic_client_package_saves_unchanged_byte_for_byte() {
+    let roots =
+        std::env::var_os(CLASSIC_CLIENT_ROOTS_ENV).unwrap_or_else(|| panic!("set {CLASSIC_CLIENT_ROOTS_ENV}"));
+    let mut checked = 0usize;
+    for root in std::env::split_paths(&roots) {
+        if packages_in(&root).is_empty() {
+            println!("{}: no packages", root.display());
+            continue;
+        }
+        let label = root.file_name().unwrap().to_string_lossy().into_owned();
+        check_client(&label, &root, CLASSIC_PACKAGES);
+        checked += 1;
+    }
+    assert!(checked > 0, "no Classic client in {CLASSIC_CLIENT_ROOTS_ENV} has packages");
 }

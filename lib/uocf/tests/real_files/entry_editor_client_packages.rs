@@ -1,7 +1,7 @@
 //! The generic UOP entry editor over real clients: every shipped entry of every package of the Enhanced Client
-//! (`UO_EC_CLIENT_DIR`) and Kingdom Reborn (`UO_KR_CLIENT_DIR`) passes its own replacement check, and an edit of
-//! `GameData.uop` keeps the other entries, the flags and an unchanged save byte for byte; every text entry decodes
-//! for the text editor and encodes back to its bytes. Copies go under the temporary directory (`TMPDIR`).
+//! (`UO_EC_CLIENT_DIR`), Kingdom Reborn (`UO_KR_CLIENT_DIR`) and the Classic Client (`UO_CC_CLIENT_DIR`) passes its
+//! own replacement check, and an edit of `GameData.uop` keeps the other entries, the flags and an unchanged save byte
+//! for byte; every text entry decodes for the text editor and encodes back to its bytes. Copies go under the temporary directory (`TMPDIR`).
 
 use crate::common;
 
@@ -21,7 +21,11 @@ use uocf::uop_container::hash_dictionary::HashDictionary;
 use uocf::uop_container::package::UopPackage;
 
 /// The client folders, and the audio policy their shipped entries are checked with.
-const CLIENT_DIR_ENVS: [(&str, FormatPolicy); 2] = [("UO_EC_CLIENT_DIR", EC_AUDIO_POLICY), ("UO_KR_CLIENT_DIR", KR_AUDIO_POLICY)];
+const CLIENT_DIR_ENVS: [(&str, FormatPolicy); 3] = [
+    ("UO_EC_CLIENT_DIR", EC_AUDIO_POLICY),
+    ("UO_KR_CLIENT_DIR", KR_AUDIO_POLICY),
+    ("UO_CC_CLIENT_DIR", CC_AUDIO_POLICY),
+];
 const DICTIONARY: &str = "../../tools/_shared_assets/Dictionary.dic";
 const STRING_DICTIONARY_FILE: &str = "string_dictionary.uop";
 const GAME_DATA_FILE: &str = "GameData.uop";
@@ -31,6 +35,8 @@ const EC_AUDIO_POLICY: FormatPolicy = FormatPolicy::VerifiedOnly;
 /// not verified for: its shipped entries are checked with the unverified formats allowed (a file Miles refuses,
 /// or of another kind, is refused under both policies).
 const KR_AUDIO_POLICY: FormatPolicy = FormatPolicy::AllowUnverified;
+/// The Classic Client's packages hold no MP3 or WAV entries (its sounds are `soundLegacyMUL.uop` slots).
+const CC_AUDIO_POLICY: FormatPolicy = FormatPolicy::VerifiedOnly;
 /// How many failures the report prints.
 const SHOWN_FAILURES: usize = 20;
 
@@ -60,7 +66,7 @@ fn check_label(check: &EntryCheck) -> String {
 /// Every entry, given back as its own replacement, passes the kind, parse and audio checks; the checks applied
 /// are printed per package.
 #[test]
-#[ignore = "needs real clients: set UO_EC_CLIENT_DIR and/or UO_KR_CLIENT_DIR and run with --ignored"]
+#[ignore = "needs real clients: set UO_EC_CLIENT_DIR, UO_KR_CLIENT_DIR and/or UO_CC_CLIENT_DIR and run with --ignored"]
 fn every_shipped_entry_passes_its_own_check() {
     let dirs: Vec<(&str, FormatPolicy, PathBuf)> = CLIENT_DIR_ENVS
         .into_iter()
