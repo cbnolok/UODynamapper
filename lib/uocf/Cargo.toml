@@ -27,7 +27,7 @@ color-eyre = { workspace = true, features = ["track-caller"] }
 dds = { version = "0.2", default-features = false }
 derive-new = { version = "0.7", default-features = false }
 getset = { version = "0.1", default-features = false }
-image = { workspace = true, features = ["bmp", "png", "tga"] }
+image = { workspace = true, features = ["bmp", "jpeg", "png", "tga"] }
 ddsfile.workspace = true
 wide = { version = "1", default-features = false, features = ["std"] }
 bytemuck.workspace = true

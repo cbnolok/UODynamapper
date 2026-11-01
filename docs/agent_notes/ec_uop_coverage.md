@@ -63,7 +63,7 @@ TMPDIR=/home/claudio/test/uop/<date> UO_EC_CLIENT_DIR="$C/_Ultima Online Enhance
 | | Lua and plain text (129 / 239) | raw (text) | replace (kind check) | no | none (hex) | gaps 2, 3 |
 | | XML (126 / 247) | raw (text) | replace (kind check) | no | UOP explorer (text) | gap 4 |
 | | fonts TrueType/OpenType (32 / 29) | raw (table directory checked) | replace (parse-checked) | no | none (hex) | 06e3fded |
-| | 18-byte 0x0 TGA placeholders, UTF-16 text, OLE, AMOU, JPEG (39 / 3) | raw (AMOU typed) | replace | no | none (hex) | low value |
+| | 18-byte 0x0 TGA placeholders, UTF-16 text, OLE, AMOU, JPEG (39 / 3) | raw (AMOU typed, JPEG decoded) | replace (JPEG parse-checked) | no | none (hex) | low value |
 | LegacyTerrain (EC) | terrain documents XML (2,723) | typed | editor | writer, RT (`legacy_terrain_client_file::every_document_writes_back_byte_for_byte`), edit RT | Legacy terrain (edit, save) | `legacy_terrain.rs` b2dcd31b |
 | LegacyTexture | DDS (49,268 / 16,877) | typed | editor (`uop replace-texture`) | writer (see Interface DDS) | UOP explorer (image), Art viewer | `dds_writer.rs`, `textures.rs` |
 | LocalizedStrings | string tables (8 / 3) | typed | replace (parse-checked) | no writer | Clilocs (view) | `localized_strings.rs` e65e9602; gap 7 |
@@ -106,14 +106,14 @@ TGA images and the Classic gumps (pixels).
   table, legacy terrain map, legacy terrain document, hue bitmap, tileart record, animation definition, animation
   sequence, AMOU animation frames, effect definition collection, terrain definition, facet definition, facet
   sector, facet data map, housing pieces, multi, waypoints, string dictionary, localized strings, Classic gump,
-  KR static chunk, then the generic DDS header, font table directory, PNG/BMP decode and TGA decode. A replacement
+  KR static chunk, then the generic DDS header, font table directory, PNG/BMP/JPEG decode and TGA decode. A replacement
   must parse with the reader (and dialect) the current entry parses with; an addition with one of its package's
   readers for its kind.
 - **Audio**: MP3 and WAV entries with a known name also pass the `Audio.uop` format checks under the caller's
   policy.
 - **Kind only** (no parser in uocf): XML outside LegacyTerrain, Lua, CSV other than the audio tables (the KR
   `audio_sounds.csv` and `audio_effects.csv` are parse-checked since the audio batch) and the legacy terrain map,
-  shaders, plain text, UTF-16 text, NIF, PSD, JPEG, OLE files,
+  shaders, plain text, UTF-16 text, NIF, PSD, OLE files,
   and plain binary (the `MainMisc` binary, the TGA placeholders, the 34 gumps that do not decode).
 
 ## Gaps, ranked by usefulness
@@ -136,7 +136,7 @@ TGA images and the Classic gumps (pixels).
 | 14 | ~~KR `waypoint.uop` and `housing.bin` round-trip tests~~ | **closed**: both re-encode byte for byte on KR (housing also through KDL) | done |
 | 15 | `Paperdoll.uop` AMOU entries: what they are, container RT | two 6 MB animations of unknown role | 0.5 day research |
 | 16 | ~~Unchanged-save byte-identical test for every package~~ | **closed**: all 40 EC and 34 KR packages save back byte for byte | done |
-| 17 | JPEG decode in parse checks (the image crate's `jpeg` feature) | one entry | 0.1 day |
+| 17 | ~~JPEG decode in parse checks (the image crate's `jpeg` feature)~~ | **closed**: the pure-Rust `zune-jpeg` decoder; the EC and KR Interface JPEG decodes | done |
 | 18 | PSD, OLE, the `MainMisc` binary | stray or unknown files | low value |
 
 [`classify_content`]: ../../lib/uocf/src/enhanced/image_census.rs

@@ -330,9 +330,9 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         check: |bytes, _| check_font(bytes),
     },
     ParseCheck {
-        label: "PNG or BMP decode",
+        label: "PNG, BMP or JPEG decode",
         packages: &[],
-        kinds: &[ContentFormat::Png, ContentFormat::Bmp],
+        kinds: &[ContentFormat::Png, ContentFormat::Bmp, ContentFormat::Jpeg],
         name: None,
         dialects: false,
         check: |bytes, _| ok(image::load_from_memory(bytes).map_err(Into::into)),
@@ -730,6 +730,31 @@ mod tests {
         let notes = EntryTarget::Name("data/effects/notes.txt".to_owned());
         assert_eq!(editor.replace(&notes, b"still { not a script", policy).unwrap().check, EntryCheck::Kind(ContentFormat::Text));
         assert!(editor.add(&EntryTarget::Name("data/effects/new.ems".to_owned()), b"particlesystem \"x\"\r\n{}", None, policy).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    /// A JPEG in an RGB image of `side` pixels square.
+    fn jpeg(side: u32) -> Vec<u8> {
+        const RGB_CHANNELS: u32 = 3;
+        let pixels = vec![0x80; (side * side * RGB_CHANNELS) as usize];
+        let mut bytes = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new(&mut bytes).encode(&pixels, side, side, image::ExtendedColorType::Rgb8).unwrap();
+        bytes
+    }
+
+    #[test]
+    fn decodes_replaced_jpegs() {
+        const NAME: &str = "data/test/picture.jpg";
+        const SIDE: u32 = 8;
+        const CUT_BYTES: usize = 16;
+        let dir = temp_dir("jpeg");
+        let path = package_with(&dir, "Test.uop", &[(NAME, &jpeg(SIDE), CompressionFlag::None)]);
+        let mut editor = UopEntryEditor::load(&path).unwrap();
+        let target = EntryTarget::Name(NAME.to_owned());
+        let put = editor.replace(&target, &jpeg(SIDE * 2), FormatPolicy::VerifiedOnly).unwrap();
+        assert_eq!(put.check, EntryCheck::Parsed { reader: "PNG, BMP or JPEG decode", dialect: None });
+        let cut = jpeg(SIDE);
+        let error = editor.replace(&target, &cut[..cut.len() - CUT_BYTES], FormatPolicy::VerifiedOnly).unwrap_err();
+        assert!(error.to_string().contains("does not parse"), "{error}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
