@@ -12,7 +12,7 @@ use rayon::prelude::*;
 use uocf::audio::validate::{enhanced_format_report, FormatPolicy};
 use uocf::audio::{AudioContent, AudioFormat};
 use uocf::classic::audio_def::{DefTranslationTable, MUSIC_DEF_FILE_NAME, SOUND_DEF_FILE_NAME};
-use uocf::classic::sound::{SoundMap, SOUND_HEADER_BYTES};
+use uocf::classic::sound::{SoundMap, MAX_SOUND_ID, SOUND_HEADER_BYTES};
 use uocf::classic::sound_edit::{ClassicSoundEditor, ClassicSoundWrite, SoundMulFiles};
 use uocf::enhanced::audio::{
     write_table, AudioKind, AudioPackage, AudioTables, AUDIO_UOP_FILE_NAME, MUSIC_TABLE_ENTRY, MUSIC_TABLE_HEADER,
@@ -30,6 +30,10 @@ const CLASSIC_ROOTS_ENV: &str = "UO_CLASSIC_CLIENT_ROOTS";
 const NEW_ID: u32 = 60_000;
 const NEW_SOUND_PATH: &str = "Sounds\\uocf_test\\added.mp3";
 const NEW_MUSIC_PATH: &str = "Music/uocf_test_added.mp3";
+/// The index entries a truncated `soundidx.mul` copy keeps, and how far past its end a slot is added: the index
+/// grows to it with empty entries.
+const TRUNCATED_INDEX_ENTRIES: u32 = 1000;
+const GROWN_SLOT: u32 = 1010;
 
 fn env_dir(env: &str) -> Option<PathBuf> {
     std::env::var_os(env).map(PathBuf::from)
@@ -170,7 +174,8 @@ fn classic_sounds_and_defs_write_back_and_edit() {
             assert!(identical, "{}: {name}", dir.display());
         }
 
-        // Replace the first slot with the second's PCM, keeping its header; add a slot past the end.
+        // Replace the first slot with the second's PCM, keeping its header; add a sound in the first empty slot
+        // the client plays (the MUL clients' index has 4096 entries, past the highest id it plays).
         let original = SoundMap::load(&dir).unwrap();
         let slots: Vec<u32> = (0..original.slot_count() as u32).filter(|&slot| original.read_slot(slot).unwrap().is_some()).collect();
         let (first, second) = (slots[0], slots[1]);
@@ -178,7 +183,7 @@ fn classic_sounds_and_defs_write_back_and_edit() {
         let first_sound = original.read_slot(first).unwrap().unwrap();
         assert_eq!(editor.put_sound(first, &first_sound.wav_bytes(), None, false).unwrap().write, ClassicSoundWrite::Unchanged);
         let replaced = editor.put_sound(first, &second_wav, None, false).unwrap();
-        let new_slot = original.slot_count() as u32;
+        let new_slot = (0..=MAX_SOUND_ID).find(|&slot| original.read_slot(slot).unwrap().is_none()).expect("an empty slot");
         let added = editor.put_sound(new_slot, &second_wav, Some("uocf_test.wav"), false).unwrap();
         assert_eq!((replaced.write, added.write), (ClassicSoundWrite::Replaced, ClassicSoundWrite::Added));
         let edited_dir = out.join("edited");
@@ -195,8 +200,32 @@ fn classic_sounds_and_defs_write_back_and_edit() {
         assert!(untouched, "{}: untouched slots changed", dir.display());
         if let [idx, mul] = &names[..] {
             let files = SoundMulFiles::load(&edited_dir.join(idx), &edited_dir.join(mul)).unwrap();
-            assert_eq!(files.slot_count(), new_slot as usize + 1);
+            assert_eq!(files.slot_count(), original.slot_count().max(new_slot as usize + 1));
             assert_eq!(files.slot(new_slot).unwrap().len(), SOUND_HEADER_BYTES + replaced_slot.pcm_data.len());
+
+            // A truncated index copy grows to a slot past its end, with empty entries as the shipped ones.
+            let truncated = out.join("truncated");
+            std::fs::create_dir_all(&truncated).unwrap();
+            let idx_bytes = std::fs::read(dir.join(idx)).unwrap();
+            let kept = TRUNCATED_INDEX_ENTRIES as usize * uocf::classic::sound_edit::SOUND_INDEX_ENTRY_BYTES;
+            std::fs::write(truncated.join(idx), &idx_bytes[..kept]).unwrap();
+            std::fs::copy(dir.join(mul), truncated.join(mul)).unwrap();
+            let mut grower = ClassicSoundEditor::load(&truncated).unwrap();
+            let put = grower.put_sound(GROWN_SLOT, &second_wav, Some("uocf_grown.wav"), false).unwrap();
+            assert_eq!(put.write, ClassicSoundWrite::Added);
+            assert!(put.warnings.iter().any(|warning| warning.contains("extends the index")), "{:?}", put.warnings);
+            let grown_dir = out.join("grown");
+            grower.save_to(&grown_dir).unwrap();
+            let grown = SoundMulFiles::load(&grown_dir.join(idx), &grown_dir.join(mul)).unwrap();
+            let before = SoundMulFiles::load(&truncated.join(idx), &truncated.join(mul)).unwrap();
+            assert_eq!(grown.slot_count(), GROWN_SLOT as usize + 1);
+            for slot in TRUNCATED_INDEX_ENTRIES..GROWN_SLOT {
+                let entry = grown.entry(slot).unwrap();
+                assert!(entry.is_empty() && entry.extra == slot + 1, "slot {slot}: {entry:?}");
+            }
+            assert!((0..TRUNCATED_INDEX_ENTRIES).all(|slot| grown.slot(slot) == before.slot(slot) && grown.entry(slot).unwrap().extra == before.entry(slot).unwrap().extra));
+            assert_eq!(SoundMap::load(&grown_dir).unwrap().read_slot(GROWN_SLOT).unwrap().unwrap().name, "uocf_grown.wav");
+            println!("{}: a {TRUNCATED_INDEX_ENTRIES}-entry index grew to slot {GROWN_SLOT}", dir.display());
         }
         println!("{}: slot {first} replaced, slot {new_slot} added, the other {} slots unchanged", dir.display(), slots.len() - 1);
         let _ = std::fs::remove_dir_all(&out);
