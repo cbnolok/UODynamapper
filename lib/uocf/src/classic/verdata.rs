@@ -188,6 +188,124 @@ impl Verdata {
     }
 }
 
+/// Bytes of the entry count before the records.
+pub const VERDATA_COUNT_BYTES: usize = size_of::<i32>();
+/// Bytes of one record: file id, index, lookup, length and extra, each a little-endian `i32`.
+pub const VERDATA_RECORD_BYTES: usize = 5 * size_of::<i32>();
+
+/// One patch of a [`VerdataFile`]: the file and the entry it replaces, the entry's extra field (the art or gump
+/// dimensions, the sound flag) and its new payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerdataPatch {
+    /// The patched file ([`VerFileId`]); ids the readers do not know are kept.
+    pub file_id: i32,
+    pub index: i32,
+    pub extra: i32,
+    pub data: Vec<u8>,
+}
+
+/// `verdata.mul` as its records list it, for writing: an `i32` count, then one 20-byte record per patch (file
+/// id, index, lookup, length, extra), then the payloads, which the lookups address from the file start.
+///
+/// **Unverified against a shipped file**: no client at hand ships `verdata.mul` (the clients of 2003 on carry
+/// their patches in the MUL files themselves), so the writer follows the documented layout and is tested on
+/// synthetic files only. [`Self::to_bytes`] lays the payloads out right after the records, in record order and
+/// with nothing between them; a file laid out otherwise reads the same but is not written back byte for byte.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct VerdataFile {
+    /// In file order; when a file id and index repeat, the readers take the last.
+    pub patches: Vec<VerdataPatch>,
+}
+
+fn read_verdata_i32(bytes: &[u8], offset: usize) -> i32 {
+    i32::from_le_bytes(bytes[offset..offset + size_of::<i32>()].try_into().expect("four bytes"))
+}
+
+impl VerdataFile {
+    /// Reads every record; each payload must lie inside the file.
+    pub fn from_bytes(bytes: &[u8]) -> eyre::Result<Self> {
+        if bytes.len() < VERDATA_COUNT_BYTES {
+            eyre::bail!("verdata.mul: {} bytes, shorter than its entry count", bytes.len());
+        }
+        let count = read_verdata_i32(bytes, 0);
+        let header_end = usize::try_from(count)
+            .ok()
+            .and_then(|count| count.checked_mul(VERDATA_RECORD_BYTES))
+            .and_then(|records| records.checked_add(VERDATA_COUNT_BYTES))
+            .filter(|&end| end <= bytes.len())
+            .ok_or_else(|| eyre!("verdata.mul: {count} records do not fit its {} bytes", bytes.len()))?;
+        let mut patches = Vec::with_capacity(header_end / VERDATA_RECORD_BYTES);
+        for (position, record) in bytes[VERDATA_COUNT_BYTES..header_end].chunks_exact(VERDATA_RECORD_BYTES).enumerate() {
+            let field = |field: usize| read_verdata_i32(record, field * size_of::<i32>());
+            let (file_id, index, lookup, length, extra) = (field(0), field(1), field(2), field(3), field(4));
+            let payload = usize::try_from(lookup)
+                .ok()
+                .zip(usize::try_from(length).ok())
+                .and_then(|(start, length)| Some(start..start.checked_add(length)?))
+                .filter(|range| range.end <= bytes.len())
+                .ok_or_else(|| {
+                    eyre!("verdata.mul record {position}: {length} bytes at {lookup} lie outside its {} bytes", bytes.len())
+                })?;
+            patches.push(VerdataPatch { file_id, index, extra, data: bytes[payload].to_vec() });
+        }
+        Ok(Self { patches })
+    }
+
+    pub fn load(path: &Path) -> eyre::Result<Self> {
+        let bytes = std::fs::read(path).wrap_err_with(|| format!("read {}", path.display()))?;
+        Self::from_bytes(&bytes).wrap_err_with(|| format!("{}", path.display()))
+    }
+
+    /// The file: the count, the records, then the payloads in record order.
+    pub fn to_bytes(&self) -> eyre::Result<Vec<u8>> {
+        let too_large = || eyre!("{} patches do not fit verdata.mul's 32-bit offsets", self.patches.len());
+        let count = i32::try_from(self.patches.len()).map_err(|_| too_large())?;
+        let header_end = VERDATA_COUNT_BYTES + self.patches.len() * VERDATA_RECORD_BYTES;
+        let mut header = Vec::with_capacity(header_end);
+        header.extend_from_slice(&count.to_le_bytes());
+        let mut payloads = Vec::new();
+        for patch in &self.patches {
+            let lookup = i32::try_from(header_end + payloads.len()).map_err(|_| too_large())?;
+            let length = i32::try_from(patch.data.len()).map_err(|_| too_large())?;
+            for field in [patch.file_id, patch.index, lookup, length, patch.extra] {
+                header.extend_from_slice(&field.to_le_bytes());
+            }
+            payloads.extend_from_slice(&patch.data);
+        }
+        header.extend_from_slice(&payloads);
+        Ok(header)
+    }
+
+    /// Writes [`Self::to_bytes`] through a temporary file in the folder of `path`.
+    pub fn save(&self, path: &Path) -> eyre::Result<()> {
+        let bytes = self.to_bytes()?;
+        crate::utils::output_file::write_through_temp(path, |temp| {
+            std::fs::write(temp, &bytes).wrap_err_with(|| format!("write {}", temp.display()))
+        })
+    }
+
+    /// The patch the readers take for `file_id` and `index`: the last.
+    pub fn patch(&self, file_id: VerFileId, index: i32) -> Option<&VerdataPatch> {
+        self.patches.iter().rev().find(|patch| patch.file_id == file_id as i32 && patch.index == index)
+    }
+
+    /// Sets the patch of `file_id` and `index`: the last one when there is one, else a new one at the end.
+    pub fn set_patch(&mut self, file_id: VerFileId, index: i32, extra: i32, data: Vec<u8>) {
+        let patch = VerdataPatch { file_id: file_id as i32, index, extra, data };
+        match self.patches.iter_mut().rev().find(|other| other.file_id == patch.file_id && other.index == index) {
+            Some(slot) => *slot = patch,
+            None => self.patches.push(patch),
+        }
+    }
+
+    /// Removes every patch of `file_id` and `index`; returns how many there were.
+    pub fn remove_patch(&mut self, file_id: VerFileId, index: i32) -> usize {
+        let before = self.patches.len();
+        self.patches.retain(|patch| patch.file_id != file_id as i32 || patch.index != index);
+        before - self.patches.len()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -397,5 +515,38 @@ mod tests {
         let _ = std::fs::remove_file(&path);
 
         result.unwrap();
+    }
+
+    #[test]
+    fn the_writer_lays_out_the_documented_layout_and_reads_back() {
+        let path = temp_path("writer.mul");
+        let header_len = 4 + 3 * 20;
+        let records = [(4, 7, header_len, 2, 0x0010_0020), (99, 1, header_len + 2, 0, -1), (8, 3, header_len + 2, 3, 5)];
+        write_verdata(&path, &records, &[1, 2, 7, 8, 9]).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let mut file = VerdataFile::from_bytes(&bytes).unwrap();
+        assert_eq!(file.to_bytes().unwrap(), bytes, "a file laid out in record order comes back byte for byte");
+        assert_eq!(file.patches[1].file_id, 99, "unknown file ids are kept");
+        assert_eq!(file.patch(VerFileId::Sound, 3).unwrap().data, vec![7, 8, 9]);
+
+        file.set_patch(VerFileId::Art, 7, 0x0020_0020, vec![0xAA; 4]);
+        file.set_patch(VerFileId::Gumpart, 2, 0, vec![0xBB]);
+        file.save(&path).unwrap();
+        let result = (|| -> eyre::Result<()> {
+            let verdata = Verdata::load(&path)?;
+            assert_eq!(verdata.read_patch(VerFileId::Art, 7)?.unwrap(), vec![0xAA; 4]);
+            assert_eq!(verdata.entry(VerFileId::Art, 7).unwrap().extra, 0x0020_0020);
+            assert_eq!(verdata.read_patch(VerFileId::Sound, 3)?.unwrap(), vec![7, 8, 9]);
+            assert_eq!(verdata.read_patch(VerFileId::Gumpart, 2)?.unwrap(), vec![0xBB]);
+            assert_eq!(VerdataFile::load(&path)?, file);
+            Ok(())
+        })();
+        let _ = std::fs::remove_file(&path);
+        result.unwrap();
+
+        assert_eq!(file.remove_patch(VerFileId::Art, 7), 1);
+        assert!(file.patch(VerFileId::Art, 7).is_none());
+        assert!(VerdataFile::from_bytes(&bytes[..bytes.len() - 1]).is_err(), "a payload past the end");
+        assert!(VerdataFile::from_bytes(&(-1i32).to_le_bytes()).is_err());
     }
 }
