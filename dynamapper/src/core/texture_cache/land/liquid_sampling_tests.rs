@@ -444,6 +444,26 @@ fn main() {
             [0.0, 1.0, 0.0, 1.0], [0.0, 1.0, 0.0, 1.0], [1.0, 0.0, 0.0, 1.0],
             [0.5, 0.5, 0.25, 1.0], [0.5, 0.5, 0.25, 1.0],
             [0.5, 0.25, 0.0, 1.0], [0.5, 0.25, 0.0, 1.0]];
+        // Cursor geometry must keep matching the production bank shader. The
+        // synthetic atlas above deliberately includes missing and Classic cells.
+        use crate::core::render::scene::world::land::picking::{bank_vertex, TerrainSample};
+        use bevy::math::{IVec2, Vec2, Vec3};
+        let tile = |height, ec_present, liquid| TerrainSample { height, ec_present, liquid };
+        let fixture = |cell: IVec2| match (cell.x, cell.y) {
+            (10, 10) | (10, 11) => tile(3.0, true, true),
+            (11, 10) => tile(4.0, true, false), (9, 9) => tile(5.0, true, false),
+            (9, 10) | (19, 20) => tile(2.0, true, false), _ => tile(0.0, false, false),
+        };
+        for (index, cell, current) in [(61, IVec2::new(10, 10), tile(3.0, true, true)),
+            (62, IVec2::new(11, 10), tile(4.0, true, false)),
+            (63, IVec2::new(20, 20), tile(4.0, true, false)),
+            (64, IVec2::new(11, 10), tile(4.0, false, false)),
+            (65, IVec2::new(9, 9), tile(5.0, true, false)),
+            (66, IVec2::new(10, 11), tile(3.0, true, true))] {
+            let read = |candidate| Some(if candidate == cell { current } else { fixture(candidate) });
+            let cpu = bank_vertex(cell, Vec2::new(1.0, -1.0), &read).unwrap() - Vec3::new(cell.x as f32, 0.0, cell.y as f32);
+            assert!((cpu - Vec3::from_slice(&actual[index][..3])).abs().max_element() < 0.0001, "bank cursor case {index}");
+        }
         assert_eq!(actual.len(), expected.len());
         for (sample, (actual, expected)) in actual.iter().zip(expected).enumerate() {
             for channel in 0..4 {

@@ -7,6 +7,7 @@ use crate::core::render::scene::world::art::statics_collect::{
 };
 use crate::core::render::scene::world::art::static_geometry::{StaticArtRoute, StaticPickingResources};
 use crate::core::render::scene::player::Player;
+use crate::core::render::scene::world::land::picking::{TerrainCursor, TerrainCursorQuery};
 use crate::core::render::{
     dialogs,
     scene::{
@@ -75,6 +76,7 @@ pub struct CursorInspectResources<'w> {
     settings: Res<'w, crate::configs::settings::Settings>,
     inspect_state: Res<'w, CursorInspectOverlayState>,
     map_planes_r: Res<'w, MapPlanesRes>,
+    terrain: Res<'w, TerrainCursor>,
     statics_res: Res<'w, StaticsStoreRes>,
     tex_art_cc_res: Option<Res<'w, TexArtCcPackageRes>>,
     tex_art_ec_res: Option<Res<'w, TexArtEcPackageRes>>,
@@ -104,12 +106,12 @@ impl Plugin for CursorBehaviorOverlayPlugin {
             .add_systems(
                 Update,
                 (
-                    update_cursor_behavior_text.run_if(in_state(AppState::InGame)),
-                    update_cursor_inspect_text.after(crate::core::system_sets::SceneRenderArtSysSet::CollectVisibleStatics)
+                    update_cursor_behavior_text.after(TerrainCursorQuery).run_if(in_state(AppState::InGame)),
+                    update_cursor_inspect_text.after(TerrainCursorQuery).after(crate::core::system_sets::SceneRenderArtSysSet::CollectVisibleStatics)
                         .run_if(in_state(AppState::InGame)),
                     sys_draw_hovered_static_highlight.after(crate::core::system_sets::SceneRenderArtSysSet::CollectVisibleStatics)
                         .run_if(in_state(AppState::InGame)),
-                    sys_teleport_on_click.run_if(in_state(AppState::InGame)),
+                    sys_teleport_on_click.after(TerrainCursorQuery).run_if(in_state(AppState::InGame)),
                 ),
             );
     }
@@ -200,13 +202,13 @@ pub fn setup_overlay_cursor_behavior(
         });
 }
 
-pub fn update_cursor_behavior_text(
+pub(crate) fn update_cursor_behavior_text(
     settings: Res<crate::configs::settings::Settings>,
     cursor: Res<CursorBehavior>,
     player_q: Query<&Player>,
     windows: (Query<&Window, With<PrimaryWindow>>, Option<Res<InjectedPointer>>),
     camera_q: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
-    map_planes_r: Res<MapPlanesRes>,
+    terrain: Res<TerrainCursor>,
     mut mode_text_q: Query<
         (&mut Text, &mut TextFont, &mut LineHeight),
         (
@@ -295,35 +297,14 @@ pub fn update_cursor_behavior_text(
     let needs_rebuild = *last_cursor_pos != cursor_pos
         || *last_window_size != window_size
         || *last_camera_translation != camera_translation
-        || *last_player_map_id != player_map_id;
+        || *last_player_map_id != player_map_id
+        || terrain.is_changed();
 
     if needs_rebuild {
-        let cursor_position_label =
-            match (cursor_pos, camera_q.single().ok(), player_q.single().ok()) {
-                (Some(cursor_pos), Some((camera, camera_tf)), Some(player)) => {
-                    match camera.viewport_to_world(camera_tf, cursor_pos).ok() {
-                        Some(ray) if ray.direction.y.abs() > 1e-6 => {
-                            let t = -ray.origin.y / ray.direction.y;
-                            let hit = ray.origin + ray.direction * t;
-                            let cursor_x = hit.x.round().max(0.0) as u16;
-                            let cursor_y = hit.z.round().max(0.0) as u16;
-                            let map_id = player
-                                .current_pos
-                                .map(|p| p.m)
-                                .unwrap_or(settings.session_state.world.last_p.m);
-                            let cursor_z =
-                                resolve_cursor_map_z(&map_planes_r, map_id, cursor_x, cursor_y)
-                                    .unwrap_or(0);
-                            format!(
-                                "Cursor position:\n[{}, {}, {}]",
-                                cursor_x, cursor_y, cursor_z
-                            )
-                        }
-                        _ => "Cursor position:\n[NA, NA, NA]".to_string(),
-                    }
-                }
-                _ => "Cursor position:\n[NA, NA, NA]".to_string(),
-            };
+        let cursor_position_label = match terrain.hit {
+            Some(hit) => format!("Cursor position:\n[{}, {}, {}]", hit.logical.x, hit.logical.y, hit.logical.z),
+            None => "Cursor position:\n[NA, NA, NA]".to_string(),
+        };
 
         if let Ok((mut position_text, _, _)) = position_text_q.single_mut() {
             if position_text.0 != cursor_position_label {
@@ -401,7 +382,8 @@ pub(crate) fn update_cursor_inspect_text(
         || scale_changed
         || resources.inspect_state.is_changed()
         || resources.settings.is_changed()
-        || picking.is_changed();
+        || picking.is_changed()
+        || resources.terrain.is_changed();
 
     if !show_inspect || !needs_rebuild {
         return;
@@ -413,6 +395,7 @@ pub(crate) fn update_cursor_inspect_text(
         camera_q.single().ok(),
         player_q.single().ok(),
         &resources.settings,
+        &resources.terrain,
         &resources.map_planes_r,
         &resources.statics_res,
         resources.tex_art_cc_res.as_deref(),
@@ -433,21 +416,6 @@ pub(crate) fn update_cursor_inspect_text(
     *locals.last_player_map_id = player_map_id;
 }
 
-pub fn resolve_cursor_map_z(map_planes_r: &MapPlanesRes, map_id: u8, x: u16, y: u16) -> Option<i8> {
-    let plane = map_planes_r
-        .0
-        .get(map_id as usize)
-        .and_then(|opt| opt.as_ref())
-        .expect("Uncached Map in resolve_cursor_map_z");
-    let cell = MapCellCoords {
-        x: x as u32,
-        y: y as u32,
-    };
-    let block_pos = MapCell::coords_of_parent_block(&cell);
-    let block = plane.block_no_update(block_pos)?;
-    let rel = MapCell::coords_in_block(&cell);
-    Some(block.cell(rel.x, rel.y).ok()?.z)
-}
 
 fn sys_toggle_cursor_mode(
     _trigger: On<ActionToggleCursorTeleportMode>,
@@ -483,6 +451,7 @@ fn build_cursor_inspect_label(
     camera: Option<(&Camera, &GlobalTransform)>,
     player: Option<&Player>,
     settings: &crate::configs::settings::Settings,
+    terrain: &TerrainCursor,
     map_planes_r: &MapPlanesRes,
     statics_res: &StaticsStoreRes,
     tex_art_cc_res: Option<&TexArtCcPackageRes>,
@@ -490,9 +459,7 @@ fn build_cursor_inspect_label(
     tex_land_ec_res: Option<&TexLandEcPackageRes>,
     tilemeta_res: Option<&TileMetaPackageRes>,
 ) -> String {
-    let Some((map_id, cursor_x, cursor_y)) =
-        resolve_cursor_tile_coords(cursor_pos, camera, player, settings)
-    else {
+    let Some(map_id) = cursor_map_id(player, settings) else {
         return "Hovered tiles:\n[NA]".to_string();
     };
 
@@ -507,6 +474,10 @@ fn build_cursor_inspect_label(
         tilemeta_res,
         map_id,
     );
+    let Some(hit) = terrain.hit.filter(|hit| hit.logical.m == map_id) else {
+        return format!("Hovered tiles:\ncell=[no terrain surface] map={}\n{}", map_id, hovered_object_line);
+    };
+    let (cursor_x, cursor_y) = (hit.logical.x, hit.logical.y);
     let land_line = describe_land_tile(map_planes_r, tilemeta_res, map_id, cursor_x, cursor_y);
     let statics_line = describe_static_tiles(
         picking,
@@ -575,14 +546,7 @@ fn sys_draw_hovered_static_highlight(
     let Some(player) = player_q.single().ok() else {
         return;
     };
-    let Some((map_id, _, _)) = resolve_cursor_tile_coords(
-        Some(cursor_pos),
-        Some((camera, camera_tf)),
-        Some(player),
-        &settings,
-    ) else {
-        return;
-    };
+    let Some(map_id) = cursor_map_id(Some(player), &settings) else { return; };
 
     let Some(best_match) = find_hovered_static_object(
         &mut picking,
@@ -711,29 +675,8 @@ fn hovered_static_match(
     })
 }
 
-fn resolve_cursor_tile_coords(
-    cursor_pos: Option<Vec2>,
-    camera: Option<(&Camera, &GlobalTransform)>,
-    player: Option<&Player>,
-    settings: &crate::configs::settings::Settings,
-) -> Option<(u8, u16, u16)> {
-    let cursor_pos = cursor_pos?;
-    let (camera, camera_tf) = camera?;
-    let player = player?;
-    let ray = camera.viewport_to_world(camera_tf, cursor_pos).ok()?;
-    if ray.direction.y.abs() <= 1e-6 {
-        return None;
-    }
-
-    let t = -ray.origin.y / ray.direction.y;
-    let hit = ray.origin + ray.direction * t;
-    let cursor_x = hit.x.round().max(0.0) as u16;
-    let cursor_y = hit.z.round().max(0.0) as u16;
-    let map_id = player
-        .current_pos
-        .map(|p| p.m)
-        .unwrap_or(settings.session_state.world.last_p.m);
-    Some((map_id, cursor_x, cursor_y))
+fn cursor_map_id(player: Option<&Player>, settings: &crate::configs::settings::Settings) -> Option<u8> {
+    Some(player?.current_pos.map(|p| p.m).unwrap_or(settings.session_state.world.last_p.m))
 }
 
 fn describe_land_tile(
@@ -962,7 +905,6 @@ fn sys_teleport_on_click(
     mouse: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     injected_pointer: Option<Res<InjectedPointer>>,
-    camera_q: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
     mut player_q: Query<(&mut Player, &mut Transform)>,
     cursor: Res<CursorBehavior>,
     settings: Res<crate::configs::settings::Settings>,
@@ -970,6 +912,7 @@ fn sys_teleport_on_click(
     egui_ui_camera: Res<UiCameraResource>,
     mut chunk_recompute_writer: MessageWriter<RecomputeVisibleChunksEvent>,
     world_geo_data: Res<WorldGeoData>,
+    terrain: Res<TerrainCursor>,
 ) {
     if cursor.mode != CursorMode::Teleport {
         return;
@@ -995,47 +938,16 @@ fn sys_teleport_on_click(
         None => return,
     };
 
-    let Ok((cam, cam_tf)) = camera_q.single() else {
-        return;
-    };
-    let ray = match cam.viewport_to_world(cam_tf, cursor_pos).ok() {
-        Some(ray) => ray,
-        None => return,
-    };
-
-    let dir_y = ray.direction.y;
-    if dir_y.abs() <= 1e-6 {
-        return;
-    }
-
-    let t = -ray.origin.y / dir_y;
-    let hit = ray.origin + ray.direction * t;
-
+    let Some(hit) = terrain.hit.filter(|_| terrain.pointer == Some(cursor_pos)) else { return; };
     if let Ok((mut player, mut transform)) = player_q.single_mut() {
-        let map = player
-            .current_pos
-            .map(|p| p.m)
-            .unwrap_or(settings.session_state.world.last_p.m);
-
-        let (max_x, max_y) = if let Some(meta) = world_geo_data.maps.get(&(map as u32)) {
-            (meta.width, meta.height)
-        } else {
-            (u16::MAX as u32, u16::MAX as u32)
-        };
-
-        let mut clamped_hit = hit;
-        clamped_hit.x = clamped_hit.x.clamp(0.0, (max_x.saturating_sub(1)) as f32);
-        clamped_hit.z = clamped_hit.z.clamp(0.0, (max_y.saturating_sub(1)) as f32);
-
-        let uo_pos = clamped_hit.to_uo_vec4(map);
-        player.current_pos = Some(uo_pos);
-        transform.translation = uo_pos.to_bevy_vec3_ignore_map();
+        let Some(map) = cursor_map_id(Some(&player), &settings) else { return; };
+        if hit.logical.m != map { return; }
+        if crate::core::controls::teleport::teleport_player(&mut player, &mut transform, hit.logical, &world_geo_data).is_err() { return; }
         // Always force a full recompute so the new visible area loads immediately.
         chunk_recompute_writer.write(RecomputeVisibleChunksEvent {});
-
         ingame_sysmessage_logger::normal(format!(
             "Teleported to [{}, {}, {}, {}] via cursor",
-            uo_pos.x, uo_pos.y, uo_pos.z, uo_pos.m
+            hit.logical.x, hit.logical.y, hit.logical.z, hit.logical.m
         ));
     }
 }

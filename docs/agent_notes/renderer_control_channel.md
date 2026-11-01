@@ -94,3 +94,13 @@ pointer's physical pixel and allows the inspector's following update to finish.
 A successful empty hit is ready, while map/readback failure stays unready.
 Animation can keep another frame pending while a recent matching-view reply is
 ready. Changed pointer, camera or content cannot reuse the old view's reply.
+
+
+## Terrain cursor snapshot
+
+`status.terrain_cursor` reports the logical pointer and optional terrain hit:
+`logical` is `[map_x, map_y, original_signed_z, facet]`, `graphic` is the source
+map cell, and `world_position` is the continuous rendered triangle point. These
+heights intentionally differ on slopes and eased banks. A null hit does not
+fabricate a plane destination; inspect `status.terrain` for streaming readiness.
+See [the terrain query contract](terrain_cursor_surface.md).

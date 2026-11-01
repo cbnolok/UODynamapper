@@ -112,6 +112,17 @@ pub enum LandMeshLod {
     Low,
 }
 
+impl LandMeshHandles {
+    /// The actual assigned mesh decides cursor topology, including delayed LOD
+    /// swaps. Keep these dimensions paired with setup_base_mesh::setup_land_mesh.
+    pub(crate) fn grid(&self, mesh: &Mesh3d) -> Option<(u32, u32)> {
+        [(&self.high, 32, 1), (&self.medium, 32, 2), (&self.low, 32, 4),
+            (&self.wide16, 64, 2), (&self.wide32, 128, 4), (&self.wide64, 256, 8),
+            (&self.wide128, 512, 16), (&self.wide256, 1024, 32)]
+            .into_iter().find(|(handle, _, _)| handle.id() == mesh.0.id()).map(|(_, span, step)| (span, step))
+    }
+}
+
 /// Automatic LOD selection based on camera zoom level.
 /// At higher zoom (more zoomed out), fewer vertices are needed because each
 /// chunk covers fewer screen pixels.

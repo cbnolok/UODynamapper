@@ -20,10 +20,12 @@ The next implementation phase is composed-material and visible-depth picking
 
 The authored-material coverage and opaque-terrain/depth part of phase 2 is now
 implemented through a shared-shader GPU query. See [the accepted static picking
-review](2026-11-01-visible-static-picking.md). The separate cursor-cell diagnostic
-still uses the Y=0 plane; accurate visible-terrain coordinates remain a bounded
-follow-up before treating this as a gameplay surface query. Individual geometry,
-rare exact-depth ties and later animation/effect work retain their scope below.
+review](2026-11-01-visible-static-picking.md). The separate [terrain cursor and
+click-teleport follow-up](2026-11-01-terrain-cursor.md) now queries admitted mesh
+triangles, keeping logical signed Z distinct from bank relief and interpolated
+height. Gameplay walkable surfaces/collision remain a later client milestone.
+Individual geometry, rare exact-depth ties and later animation/effect work
+retain their scope below.
 
 ## Updated handoff and scope
 
@@ -137,6 +139,23 @@ The current plan does not reclassify these historical reports as open bugs:
 
 New handoff changes can require revalidation of these controls. That is separate
 from discarding their recorded fixes.
+
+## Later surface-material handoff
+
+The asset agent's 2026-11-01 installed-package census covers 9,222 surface-like
+items, all with an image: 892 EcRegular, 1,374 EcSurface, 261 liquid TexLandEc,
+and 6,695 Classic fallback. These are dated data-side findings from
+`surface-like-census/census_installed.csv` under the scratch target folder;
+they do not establish completed native material composition.
+
+The concrete appearance follow-up is 61 UOWaterShader items (blood 4651–4654,
+5701 and 7367–7442). Without a matching terrain liquid graph they currently take
+the EcSurface primary-color path. The handoff identifies original water maps
+0 bump 1000020, 2 reflection 4000001 and 3 the item's own WorldArt; their support
+images are present in tex_aux_ec. Trace this bounded material path before
+changing global water appearance or treating it as missing source data.
+Non-liquid terrain-provenance fallback branches and never-incremented unresolved
+counters in `statics_collect.rs` were also identified for a later minimal review.
 
 ## Later client milestones and deferred work
 

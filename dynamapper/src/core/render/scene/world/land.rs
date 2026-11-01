@@ -2,6 +2,7 @@ pub mod chunk_loader;
 pub mod draw_mesh;
 pub mod mesh_material;
 pub mod profiling;
+pub(crate) mod picking;
 pub mod setup_base_mesh;
 pub mod tile_atlas;
 
@@ -534,6 +535,7 @@ use std::time::Duration;
 
 impl Plugin for DrawLandChunkMeshPlugin {
     fn build(&self, app: &mut App) {
+        picking::install(app);
         app.init_resource::<draw_mesh::LandMeshScratch>()
             .init_resource::<LandUploadBudget>()
             .init_resource::<LandUploadTelemetry>()

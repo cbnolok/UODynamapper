@@ -64,6 +64,13 @@ following inspector update. Enable inspection/highlighting first; hidden
 inspection does not request queries. Animated scenes can have both a ready
 matching-view reply and a newer pending query.
 
+`status.terrain_cursor` reports the input pointer and an optional terrain hit.
+Its `logical` array preserves `[map_x, map_y, original_signed_z, facet]`;
+`world_position` is the displayed triangle point, and `graphic` is the source
+map cell. Bank easing and interpolation can change the displayed height without
+changing logical Z. Wait for scene readiness before interpreting a null hit as
+no terrain. Click teleporting uses the original logical cell height.
+
 `status.cursor_inspect` exposes the current cursor-inspection label for native
 picking probes. Enable the cursor overlay in the isolated settings, tap `KeyI`,
 then send an app-only `pointer` command. Allow an update before reading status.

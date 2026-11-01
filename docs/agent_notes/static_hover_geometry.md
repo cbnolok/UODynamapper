@@ -28,10 +28,11 @@ only the ready reply establishes successful readback. `control.py wait-pick`
 waits for the injected pointer's query and a following inspector update.
 A valid empty hit is ready; a readback failure is not.
 
-The legacy ground-plane cursor-cell and click-teleport coordinates remain a
-separate approximation on slopes. This query selects visible statics and does
-not yet return rendered terrain XYZ. Exact coincident opaque ties and broader
-camera/facet/multi coverage remain limited as described in the review.
+The separate [terrain cursor query](terrain_cursor_surface.md) now intersects
+admitted terrain triangles and keeps displayed positions separate from logical
+map Z. The static query still returns only visible object ownership. Exact
+coincident opaque ties and broader camera/facet/multi coverage remain limited
+as described in the review.
 
 ## Earlier CPU implementation (superseded)
 

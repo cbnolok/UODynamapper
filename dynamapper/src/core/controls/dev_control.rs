@@ -119,9 +119,10 @@ fn poll_control(
         Option<Res<crate::core::render::scene::world::art::statics_collect::StaticArtCollectDebugState>>,
         Option<Res<crate::core::texture_cache::art::SpriteArtPageAtlas>>,
         Option<Res<crate::core::texture_cache::art::GroundArtPageAtlas>>,
-        Option<Res<crate::core::render::scene::world::art::gpu_picking::VisibleStaticPick>>),
+        Option<Res<crate::core::render::scene::world::art::gpu_picking::VisibleStaticPick>>,
+        Option<Res<crate::core::render::scene::world::land::picking::TerrainCursor>>),
 ) {
-    let (uniforms, static_lights, art_stats, sprite_atlas, ground_atlas, picking) = render_state;
+    let (uniforms, static_lights, art_stats, sprite_atlas, ground_atlas, picking, terrain_cursor) = render_state;
     let (windows, inspect_text) = view;
     if capture_pending.as_ref().is_some_and(|(path, started)| path.exists() || time.elapsed_secs_f64() - started > 30.0) {
         *capture_pending = None;
@@ -176,6 +177,10 @@ fn poll_control(
                             json!({"serial": serial, "pending": pending, "ready": ready, "pixel": pixel,
                                 "render_seen_serial": render_seen, "encoded_serial": encoded})
                         }),
+                        "terrain_cursor": terrain_cursor.as_ref().map(|cursor| json!({
+                            "pointer": cursor.pointer, "hit": cursor.hit.map(|hit| json!({
+                                "logical": [hit.logical.x as i32, hit.logical.y as i32, hit.logical.z as i32, hit.logical.m as i32],
+                                "graphic": hit.graphic, "world_position": hit.world_position}))})),
                         "render": uniforms.as_ref().map(|state| json!({
                             "preset": state.active_preset, "global_lighting": state.global_lighting,
                             "effects": state.effects})),
