@@ -52,6 +52,10 @@ symphonia.workspace = true
 udd-kdl = { path = "../udd-kdl" }
 # Diagnostic trait of knuffel's parse errors, read for their line and column.
 miette = { version = "5", default-features = false }
+# Syntax checks of replaced entries (`enhanced/syntax_check.rs`): the client's Lua (5.1 with `continue` and the
+# bitwise operators, read as Lua 5.3 with the 5.2+ syntax refused: `lua53`) and XML well-formedness.
+full_moon = { version = "3.0.0", default-features = false, features = ["lua53"] }
+roxmltree = "0.21.2"
 workspace-hack.workspace = true
 
 [dev-dependencies]

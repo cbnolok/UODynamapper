@@ -135,6 +135,7 @@ pub const NIF_CHECK: ParseCheck = ParseCheck {
     packages: &[],
     kinds: &[ContentFormat::Nif],
     name: None,
+    extensions: &[],
     dialects: false,
     check: |bytes, _| gamebryo_nif::read_checked(bytes).map(|_| ()).map_err(|error| eyre::eyre!(error)),
     keeps: None,

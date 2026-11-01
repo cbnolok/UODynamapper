@@ -31,6 +31,7 @@ mod mobile_body_client;
 mod multi_collection_client_entries;
 mod paperdoll_frame_sets;
 mod string_tables_client_files;
+mod syntax_client_files;
 mod terrain_definition_client_files;
 mod tga_client_encoding;
 mod tileart_client_records;

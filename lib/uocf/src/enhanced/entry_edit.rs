@@ -13,7 +13,9 @@
 //!   replace, the reader is the first one (and client dialect) the current entry parses under, so a reader is
 //!   never applied to an entry it does not describe, and the file keeps what the reader requires of the entry it
 //!   replaces ([`ParseCheck::keeps`]: a GameData table its columns); on an add, the file must parse under one of
-//!   the readers of its package and kind, when there are any.
+//!   the readers of its package and kind, when there are any. A reader for one entry name or extension
+//!   ([`ParseCheck::name`], [`ParseCheck::extensions`]: the Interface Lua scripts) applies to a target by hash
+//!   whose name it is, or which replaces an entry that parses with it.
 //! - **Caller checks.** A crate above uocf adds the readers uocf does not have ([`UopEntryEditor::with_check`]:
 //!   the CLI and the inspector add `gamebryo-nif`'s NIF reader); they are tried before the built-in ones, and
 //!   a replacement or addition is checked with them the same way.
@@ -102,8 +104,11 @@ pub struct ParseCheck {
     pub packages: &'static [&'static str],
     /// The content kinds it reads.
     pub kinds: &'static [ContentFormat],
-    /// Only the entry of this name, when set.
+    /// Only the entry of this name, when set (a target by hash when the name hashes to it).
     pub name: Option<&'static str>,
+    /// Only entries named with one of these extensions, when not empty. A target by hash has no name: the check
+    /// applies when it replaces an entry (that parses with it), not to an entry added by hash.
+    pub extensions: &'static [&'static str],
     /// The reader reads both client dialects ([`DIALECTS`]); else it is called with the default one.
     pub dialects: bool,
     pub check: fn(&[u8], ClientDialect) -> eyre::Result<()>,
@@ -124,6 +129,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         packages: &["effecttexture"],
         kinds: &[ContentFormat::Text],
         name: None,
+        extensions: &[],
         dialects: false,
         check: |bytes, _| ok(crate::enhanced::chaos_script::ChaosScript::parse_bytes(bytes)),
         keeps: None,
@@ -133,6 +139,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         packages: &["audio"],
         kinds: &[ContentFormat::Text],
         name: Some(crate::enhanced::audio::SOUND_TABLE_ENTRY),
+        extensions: &[],
         dialects: false,
         check: |bytes, _| {
             use crate::enhanced::audio::{parse_table, SOUND_TABLE_ENTRY, SOUND_TABLE_HEADER};
@@ -145,6 +152,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         packages: &["audio"],
         kinds: &[ContentFormat::Text],
         name: Some(crate::enhanced::audio::MUSIC_TABLE_ENTRY),
+        extensions: &[],
         dialects: false,
         check: |bytes, _| {
             use crate::enhanced::audio::{parse_table, MUSIC_TABLE_ENTRY, MUSIC_TABLE_HEADER};
@@ -157,6 +165,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         packages: &["audio"],
         kinds: &[ContentFormat::Text],
         name: Some(crate::enhanced::audio::SOUND_TABLE_ENTRY),
+        extensions: &[],
         dialects: false,
         check: |bytes, _| {
             use crate::enhanced::{audio::SOUND_TABLE_ENTRY, kr_audio::KrSoundTable};
@@ -169,6 +178,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         packages: &["audio"],
         kinds: &[ContentFormat::Text],
         name: Some(crate::enhanced::kr_audio::KR_EFFECTS_TABLE_ENTRY),
+        extensions: &[],
         dialects: false,
         check: |bytes, _| {
             use crate::enhanced::kr_audio::{KrEffectsTable, KR_EFFECTS_TABLE_ENTRY};
@@ -181,6 +191,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         packages: &["gamedata"],
         kinds: &[ContentFormat::Text],
         name: Some(crate::enhanced::legacy_terrain_map::UOP_ENTRY_PATH),
+        extensions: &[],
         dialects: false,
         check: |bytes, _| ok(crate::enhanced::legacy_terrain_map::check_canonical(bytes)),
         keeps: None,
@@ -190,6 +201,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         packages: &["gamedata"],
         kinds: &[ContentFormat::Text],
         name: None,
+        extensions: &[],
         dialects: false,
         check: |bytes, _| ok(crate::enhanced::game_data::GameDataTable::parse("the table", bytes)),
         keeps: Some(crate::enhanced::game_data::keeps_shape),
@@ -199,8 +211,40 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         packages: &["legacyterrain"],
         kinds: &[ContentFormat::Xml],
         name: None,
+        extensions: &[],
         dialects: false,
         check: |bytes, _| ok(crate::enhanced::legacy_terrain::LegacyTerrainDocument::parse(bytes)),
+        keeps: None,
+    },
+    ParseCheck {
+        label: "Lua script",
+        packages: &["interface"],
+        // Two EC scripts are UTF-16, which LuaPlus reads.
+        kinds: &[ContentFormat::Text, ContentFormat::Utf16Text],
+        name: None,
+        extensions: &["lua"],
+        dialects: false,
+        check: |bytes, _| crate::enhanced::syntax_check::check_lua(bytes),
+        keeps: None,
+    },
+    ParseCheck {
+        label: "TinyXML document",
+        packages: &["interface", "mainmisc"],
+        kinds: &[ContentFormat::Xml],
+        name: None,
+        extensions: &[],
+        dialects: false,
+        check: |bytes, _| crate::enhanced::syntax_check::check_xml(bytes),
+        keeps: None,
+    },
+    ParseCheck {
+        label: "UTF-16 TinyXML document",
+        packages: &["interface", "mainmisc"],
+        kinds: &[ContentFormat::Utf16Text],
+        name: None,
+        extensions: &["xml"],
+        dialects: false,
+        check: |bytes, _| crate::enhanced::syntax_check::check_xml(bytes),
         keeps: None,
     },
     ParseCheck {
@@ -208,6 +252,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         packages: &["hues"],
         kinds: &[ContentFormat::Bmp],
         name: None,
+        extensions: &[],
         dialects: false,
         check: |bytes, _| ok(crate::enhanced::hues::EcHueTable::from_bitmap(bytes)),
         keeps: None,
@@ -217,6 +262,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         packages: &["tileart"],
         kinds: &[ContentFormat::Binary],
         name: None,
+        extensions: &[],
         dialects: false,
         check: |bytes, _| ok(crate::enhanced::tileart::TileArtEntry::parse_bytes(bytes)),
         keeps: None,
@@ -226,6 +272,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         packages: &["animationdefinition"],
         kinds: &[ContentFormat::Binary],
         name: None,
+        extensions: &[],
         dialects: true,
         check: |bytes, dialect| ok(crate::enhanced::animation_definition::AnimationDefinition::parse_dialect(bytes, dialect)),
         keeps: None,
@@ -235,6 +282,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         packages: &["animationsequence"],
         kinds: &[ContentFormat::Binary],
         name: None,
+        extensions: &[],
         dialects: true,
         check: |bytes, dialect| ok(crate::animation_sequence::AnimationSequence::parse_dialect(bytes, dialect)),
         keeps: None,
@@ -244,6 +292,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         packages: &[],
         kinds: &[ContentFormat::Amou],
         name: None,
+        extensions: &[],
         dialects: false,
         check: |bytes, _| ok(crate::enhanced::animationframe::AnimationFrame::load(bytes)),
         keeps: None,
@@ -253,6 +302,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         packages: &["effectdefinitioncollection"],
         kinds: &[ContentFormat::Binary],
         name: None,
+        extensions: &[],
         dialects: true,
         check: |bytes, dialect| {
             ok(crate::enhanced::effect_definition::parse_effect_definition_collection_dialect(bytes, dialect))
@@ -264,6 +314,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         packages: &["terraindefinition"],
         kinds: &[ContentFormat::Binary],
         name: None,
+        extensions: &[],
         dialects: true,
         check: |bytes, dialect| ok(crate::enhanced::terrain_definition::TerrainDefinitionEntry::from_bytes_dialect(bytes, dialect)),
         keeps: None,
@@ -273,6 +324,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         packages: &["facets"],
         kinds: &[ContentFormat::Binary],
         name: None,
+        extensions: &[],
         dialects: false,
         check: |bytes, _| ok(crate::enhanced::facet_definition::FacetDefinition::from_bytes(bytes)),
         keeps: None,
@@ -282,6 +334,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         packages: &["facet", "facetx"],
         kinds: &[ContentFormat::Binary],
         name: None,
+        extensions: &[],
         dialects: true,
         check: |bytes, dialect| ok(crate::enhanced::facet_decoder::decode_sector(bytes, dialect)),
         keeps: None,
@@ -291,6 +344,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         packages: &["facet", "facetx"],
         kinds: &[ContentFormat::Binary],
         name: None,
+        extensions: &[],
         dialects: false,
         check: |bytes, _| ok(crate::enhanced::facet_sector::FacetGeometry::from_data_map_payload(bytes)),
         keeps: None,
@@ -300,6 +354,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         packages: &["multicollection"],
         kinds: &[ContentFormat::Binary],
         name: Some("build/multicollection/housing.bin"),
+        extensions: &[],
         dialects: false,
         check: |bytes, _| ok(crate::enhanced::housing::HousingPieces::from_payload_bytes(bytes)),
         keeps: None,
@@ -309,6 +364,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         packages: &["multicollection"],
         kinds: &[ContentFormat::Binary],
         name: None,
+        extensions: &[],
         dialects: true,
         check: |bytes, dialect| ok(crate::enhanced::multis::MultiItem::from_payload_bytes_dialect(0, String::new(), bytes, dialect)),
         keeps: None,
@@ -318,6 +374,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         packages: &["waypoint"],
         kinds: &[ContentFormat::Binary],
         name: None,
+        extensions: &[],
         dialects: false,
         check: |bytes, _| ok(crate::enhanced::waypoints::WaypointsPackage::from_payload_bytes(bytes)),
         keeps: None,
@@ -327,6 +384,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         packages: &["string_dictionary"],
         kinds: &[ContentFormat::Binary],
         name: None,
+        extensions: &[],
         dialects: false,
         check: |bytes, _| ok(crate::enhanced::string_dictionary::UoStringDictionary::from_payload_bytes(bytes, "entry")),
         keeps: None,
@@ -336,6 +394,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         packages: &["localizedstrings"],
         kinds: &[ContentFormat::Binary],
         name: None,
+        extensions: &[],
         dialects: false,
         check: |bytes, _| ok(crate::enhanced::localized_strings::LocalizedStringTable::from_payload_bytes(bytes)),
         keeps: None,
@@ -345,6 +404,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         packages: &["gumpartlegacymul"],
         kinds: &[ContentFormat::Binary],
         name: None,
+        extensions: &[],
         dialects: false,
         check: |bytes, _| ok(crate::classic::gump::decode_uop_gump(bytes)),
         keeps: None,
@@ -354,6 +414,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         packages: &["staticchunk"],
         kinds: &[ContentFormat::Binary],
         name: None,
+        extensions: &[],
         dialects: false,
         check: |bytes, _| ok(crate::kr::facet::static_chunk::StaticChunk::decode(bytes)),
         keeps: None,
@@ -363,6 +424,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         packages: &[],
         kinds: &[ContentFormat::Dds],
         name: None,
+        extensions: &[],
         dialects: false,
         check: |bytes, _| ok(crate::enhanced::dds_writer::DdsDescription::parse(bytes)),
         keeps: None,
@@ -372,6 +434,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         packages: &[],
         kinds: &[ContentFormat::Font],
         name: None,
+        extensions: &[],
         dialects: false,
         check: |bytes, _| check_font(bytes),
         keeps: None,
@@ -381,6 +444,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         packages: &[],
         kinds: &[ContentFormat::Png, ContentFormat::Bmp, ContentFormat::Jpeg],
         name: None,
+        extensions: &[],
         dialects: false,
         check: |bytes, _| ok(image::load_from_memory(bytes).map_err(Into::into)),
         keeps: None,
@@ -390,6 +454,7 @@ pub const PARSE_CHECKS: &[ParseCheck] = &[
         packages: &[],
         kinds: &[ContentFormat::Tga],
         name: None,
+        extensions: &[],
         dialects: false,
         check: |bytes, _| ok(image::load_from_memory_with_format(bytes, image::ImageFormat::Tga).map_err(Into::into)),
         keeps: None,
@@ -559,7 +624,8 @@ impl UopEntryEditor {
 
     /// The parse checks of this package that apply to the entry `target` of `kind`: the caller's, then uocf's. A
     /// check for one entry name applies to a target by hash when the name hashes to it.
-    fn parse_checks(&self, target: &EntryTarget, kind: ContentFormat) -> Vec<&ParseCheck> {
+    fn parse_checks(&self, target: &EntryTarget, kind: ContentFormat, replacing: bool) -> Vec<&ParseCheck> {
+        let extension = target.name().and_then(name_extension);
         let key = package_key(&self.source);
         self.caller_checks
             .iter()
@@ -567,6 +633,13 @@ impl UopEntryEditor {
             .filter(|check| check.packages.is_empty() || check.packages.contains(&key.as_str()))
             .filter(|check| check.kinds.contains(&kind))
             .filter(|check| check.name.is_none_or(|wanted| hash_file_name_single(wanted) == target.hash()))
+            .filter(|check| {
+                check.extensions.is_empty()
+                    || match &extension {
+                        Some(extension) => check.extensions.contains(&extension.as_str()),
+                        None => target.name().is_none() && replacing,
+                    }
+            })
             .collect()
     }
 
@@ -622,7 +695,7 @@ impl UopEntryEditor {
             audio_checked = true;
         }
 
-        let checks = self.parse_checks(target, kind);
+        let checks = self.parse_checks(target, kind, current.is_some());
         let parsed = match current {
             Some(current) if current_kind == Some(kind) => Self::first_parse(&checks, current).map(|(check, dialect)| {
                 (check.check)(file, dialect)
@@ -850,6 +923,7 @@ mod tests {
             packages: &[],
             kinds: &[ContentFormat::Nif],
             name: None,
+            extensions: &[],
             dialects: false,
             check: |bytes, _| if bytes.ends_with(b"ok") { Ok(()) } else { Err(eyre!("does not end in ok")) },
             keeps: None,
@@ -942,6 +1016,40 @@ mod tests {
         let target = EntryTarget::Hash(hash_file_name_single(UOP_ENTRY_PATH));
         let error = format!("{:#}", editor.replace(&target, b"legacyId,newId,newSubType\n1,0,1\n", FormatPolicy::VerifiedOnly).unwrap_err());
         assert!(error.contains("not in the shipped format"), "{error}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn checks_interface_lua_and_xml_by_name_and_by_hash() {
+        const LUA_NAME: &str = "data/interface/default/source/test.lua";
+        const XML_NAME: &str = "data/interface/default/source/test.xml";
+        const NOTE_NAME: &str = "data/interface/default/source/note.txt";
+        let dir = temp_dir("interface_syntax");
+        let path = package_with(
+            &dir,
+            "Interface.uop",
+            &[
+                (LUA_NAME, b"for i = 1, 2 do\r\n\tcontinue\r\nend\r\n", CompressionFlag::Zlib),
+                (XML_NAME, b"<Interface a=\"1\"b=\"2\"></Interface>", CompressionFlag::Zlib),
+            ],
+        );
+        let mut editor = UopEntryEditor::load(&path).unwrap();
+        let policy = FormatPolicy::VerifiedOnly;
+        for target in [EntryTarget::Name(LUA_NAME.to_owned()), EntryTarget::Hash(hash_file_name_single(LUA_NAME))] {
+            let put = editor.replace(&target, b"x = 1 & 3\r\n", policy).unwrap();
+            assert_eq!(put.check, EntryCheck::Parsed { reader: "Lua script", dialect: None });
+            let error = format!("{:#}", editor.replace(&target, b"x = 1\r\nif x then\r\n", policy).unwrap_err());
+            assert!(error.contains("does not parse as a Lua script") && error.contains("line 3, column 1"), "{error}");
+        }
+        for target in [EntryTarget::Name(XML_NAME.to_owned()), EntryTarget::Hash(hash_file_name_single(XML_NAME))] {
+            let error = format!("{:#}", editor.replace(&target, b"<Interface>\n<Window></Interface>", policy).unwrap_err());
+            assert!(error.contains("does not parse as a TinyXML document") && error.contains("line 2, column"), "{error}");
+        }
+        // Text of another extension, or added by hash, is no script.
+        let note = editor.add(&EntryTarget::Name(NOTE_NAME.to_owned()), b"not ( lua", None, policy).unwrap();
+        assert_eq!(note.check, EntryCheck::Kind(ContentFormat::Text));
+        let added = editor.add(&EntryTarget::Hash(hash_file_name_single("data/interface/x.txt")), b"not ( lua", None, policy).unwrap();
+        assert_eq!(added.check, EntryCheck::Unchecked(ContentFormat::Text));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

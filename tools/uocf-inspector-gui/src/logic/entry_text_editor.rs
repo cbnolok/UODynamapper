@@ -12,19 +12,72 @@ use uocf::enhanced::dds_writer::SizeChange;
 use uocf::enhanced::entry_edit::{EntryCheck, EntryEdit, EntryTarget, ParseCheck, UopEntryEditor};
 use uocf::enhanced::entry_image::EntryImage;
 use uocf::enhanced::entry_text::EntryText;
-use uocf::enhanced::image_census::ContentFormat;
+use uocf::enhanced::image_census::{name_extension, ContentFormat};
+use uocf::enhanced::syntax_check::{lua_errors, xml_error, SyntaxError};
 use uocf::uop_container::hash::hash_file_name_single;
+
+/// The syntax uocf checks a text entry in ([`uocf::enhanced::syntax_check`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextSyntax {
+    Lua,
+    Xml,
+}
+
+impl TextSyntax {
+    /// The syntax of the text entry `name` whose original text is `original`: by its extension, else the one the
+    /// original text reads in (an entry without a name).
+    pub fn of(name: &str, original: &str) -> Option<Self> {
+        match name_extension(name).as_deref() {
+            Some(LUA_EXTENSION) => Some(Self::Lua),
+            Some(XML_EXTENSION) => Some(Self::Xml),
+            Some(_) => None,
+            None if original.trim_start().starts_with(XML_START) && xml_error(original).is_none() => Some(Self::Xml),
+            None => lua_errors(original).is_empty().then_some(Self::Lua),
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Lua => "Lua",
+            Self::Xml => "XML",
+        }
+    }
+
+    pub fn first_error(self, text: &str) -> Option<SyntaxError> {
+        match self {
+            Self::Lua => lua_errors(text).into_iter().next(),
+            Self::Xml => xml_error(text),
+        }
+    }
+}
+
+const LUA_EXTENSION: &str = "lua";
+const XML_EXTENSION: &str = "xml";
+const XML_START: char = '<';
 
 /// One text entry being edited.
 #[derive(Debug, Clone)]
 pub struct EntryTextEdit {
     pub original: EntryText,
     pub buffer: String,
+    /// The syntax of the entry, once known, and the text last checked with its first error.
+    syntax: Option<Option<TextSyntax>>,
+    checked: Option<(String, Option<SyntaxError>)>,
 }
 
 impl EntryTextEdit {
     pub fn modified(&self) -> bool {
         self.buffer != self.original.text
+    }
+
+    /// The syntax of the entry named `name` and the first syntax error of the edited text, checked again only when
+    /// the text changed.
+    pub fn syntax_error(&mut self, name: &str) -> Option<(TextSyntax, Option<&SyntaxError>)> {
+        let syntax = (*self.syntax.get_or_insert_with(|| TextSyntax::of(name, &self.original.text)))?;
+        if self.checked.as_ref().is_none_or(|(text, _)| *text != self.buffer) {
+            self.checked = Some((self.buffer.clone(), syntax.first_error(&self.buffer)));
+        }
+        Some((syntax, self.checked.as_ref().and_then(|(_, error)| error.as_ref())))
     }
 
     /// The bytes the edited text is stored as.
@@ -47,7 +100,7 @@ impl EntryTextEdits {
         if !self.open.contains_key(&key) {
             let original = EntryText::decode(payload)?;
             let buffer = original.text.clone();
-            self.open.insert(key.clone(), EntryTextEdit { original, buffer });
+            self.open.insert(key.clone(), EntryTextEdit { original, buffer, syntax: None, checked: None });
         }
         self.open.get_mut(&key)
     }
@@ -75,6 +128,7 @@ pub const NIF_CHECK: ParseCheck = ParseCheck {
     packages: &[],
     kinds: &[ContentFormat::Nif],
     name: None,
+    extensions: &[],
     dialects: false,
     check: |bytes, _| gamebryo_nif::read_checked(bytes).map(|_| ()).map_err(|error| eyre::eyre!(error)),
     keeps: None,
@@ -145,5 +199,20 @@ mod tests {
         assert_eq!(edits.modified_count(), 0);
         assert_eq!(entry_target("data/x.csv", hash_file_name_single("data/x.csv")), EntryTarget::Name("data/x.csv".to_owned()));
         assert_eq!(entry_target("unnamed", HASH), EntryTarget::Hash(HASH));
+    }
+
+    #[test]
+    fn shows_the_first_syntax_error_of_scripts_and_documents() {
+        const HASH: u64 = 2;
+        let mut edits = EntryTextEdits::default();
+        let package = Path::new("/packages/Interface.uop");
+        let edit = edits.open(package, HASH, b"x = 1\r\n").unwrap();
+        assert_eq!(edit.syntax_error("data/interface/a.lua").map(|(syntax, error)| (syntax, error.is_some())), Some((TextSyntax::Lua, false)));
+        edit.buffer.push_str("if x then\n");
+        let (_, error) = edit.syntax_error("data/interface/a.lua").unwrap();
+        assert_eq!(error.map(|error| (error.line, error.column)), Some((3, 1)));
+        assert_eq!(TextSyntax::of("unnamed", "<a b=\"1\"/>"), Some(TextSyntax::Xml));
+        assert_eq!(TextSyntax::of("unnamed", "x = 1"), Some(TextSyntax::Lua));
+        assert_eq!(TextSyntax::of("data/x.csv", "x = 1"), None);
     }
 }

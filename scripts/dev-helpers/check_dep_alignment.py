@@ -46,6 +46,7 @@ WORKSPACE_HACK = "workspace-hack"
 # crate -> why. Mismatches reached only through these are reported, never a failure.
 KNOWN_SOURCES = {
     "dds": "dds 0.2, its latest release, requires glam 0.25",
+    "full_moon": "full_moon 3.0, its latest release, requires derive_more 1, smol_str 0.3 and (its derive macros) syn 1 and indexmap 1",
     "knuffel": "knuffel 3.2, its latest release (2023), requires syn 1, chumsky 0.9 and miette 5",
     "miette": "miette 5 is the version knuffel 3.2 requires",
 }

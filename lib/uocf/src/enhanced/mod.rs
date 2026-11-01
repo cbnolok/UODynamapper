@@ -34,6 +34,7 @@ pub mod legacy_terrain;
 pub mod legacy_terrain_map;
 pub mod multis;
 pub mod string_dictionary;
+pub mod syntax_check;
 pub mod terrain;
 pub mod terrain_config;
 pub mod terrain_definition;

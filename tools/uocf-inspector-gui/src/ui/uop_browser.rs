@@ -22,6 +22,7 @@ const WAYPOINT_RECORDS_MAX_HEIGHT: f32 = 360.0;
 /// Drag speed of the waypoint number fields (typing is the main input).
 const WAYPOINT_DRAG_SPEED: f64 = 0.1;
 const WAYPOINT_ERROR_COLOR: egui::Color32 = egui::Color32::from_rgb(230, 90, 90);
+const SYNTAX_ERROR_COLOR: egui::Color32 = WAYPOINT_ERROR_COLOR;
 const WAYPOINT_WARNING_COLOR: egui::Color32 = egui::Color32::from_rgb(230, 180, 60);
 const UOP_FILTER: (&str, &[&str]) = ("UOP package", &["uop"]);
 
@@ -668,7 +669,8 @@ fn ui_generic_preview(
 
 const TEXT_EDITOR_HOVER: &str = "Edit the entry as text. It is saved with the encoding, byte order mark and line \
 endings it has, checked like \"Replace file...\" (kind, and the reader uocf has for the entry), to a copy of the \
-package.";
+package. Lua scripts and XML documents show their first syntax error (line and column) as you type: the client's \
+Lua (5.1 with continue and the bitwise operators) and XML as TinyXML reads it.";
 
 /// The text editor of a text entry (opened in `app.entry_text_edits`): its encoding, the text, and saving a copy.
 fn ui_entry_text_editor(app: &mut UopInspectorApp, ui: &mut egui::Ui, source: &std::path::Path, hash: u64, name: &str) {
@@ -685,6 +687,15 @@ fn ui_entry_text_editor(app: &mut UopInspectorApp, ui: &mut egui::Ui, source: &s
         save = ui.add_enabled(modified, egui::Button::new("Save copy...")).on_hover_text(TEXT_EDITOR_HOVER).clicked();
         revert = ui.add_enabled(modified, egui::Button::new("Revert")).clicked();
     });
+    match edit.syntax_error(name) {
+        Some((syntax, Some(error))) => {
+            ui.colored_label(SYNTAX_ERROR_COLOR, format!("{} syntax: {error}", syntax.label()));
+        }
+        Some((syntax, None)) if modified => {
+            ui.label(format!("{} syntax: no error", syntax.label()));
+        }
+        _ => {}
+    }
     egui::ScrollArea::both().show(ui, |ui| {
         ui.add(egui::TextEdit::multiline(&mut edit.buffer).font(egui::TextStyle::Monospace).code_editor().desired_width(f32::INFINITY));
     });

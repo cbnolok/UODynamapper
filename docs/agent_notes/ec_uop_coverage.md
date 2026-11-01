@@ -60,14 +60,14 @@ TMPDIR=/home/claudio/test/uop/<date> UO_EC_CLIENT_DIR="$C/_Ultima Online Enhance
 | | `huenames.csv` (1 / 1) | typed (lenient) | editor (from `hues.mul`) | writer; byte-identical on EA's package for EC and EC fp (base lines kept for unedited names) | Hues | same |
 | Interface | DDS (1,744 / 809) | typed | editor (`uop replace-texture`: image in, format and mips kept) | writer: headers RT, uncompressed RT, BC lossy within bound (`dds_client_textures`) | UOP explorer (image) | `dds_writer.rs` abd89877, 271b21aa |
 | | TGA gumps (4,445 / 23) | typed (image crate; strict validation) | replace; an image converted to the entry's convention | writer (`tga_writer.rs`), RT EC, EC fp, KR, every entry | UOP explorer (image; "Replace file..." converts a PNG) | |
-| | Lua and plain text (129 / 239) | raw (text) | replace (kind check) | no | UOP explorer (text editor) | gap 3 |
-| | XML (126 / 247) | raw (text) | replace (kind check) | no | UOP explorer (text editor) | gap 4 |
+| | Lua and plain text (129 / 239) | raw (text); Lua syntax-checked (130 / 239 pass, `syntax_client_files`) | replace (Lua parse-checked) | no | UOP explorer (text editor, live syntax error) | |
+| | XML (126 / 247) | raw (text); read as TinyXML reads it (126 / 247 pass) | replace (parse-checked) | no | UOP explorer (text editor, live syntax error) | |
 | | fonts TrueType/OpenType (32 / 29) | raw (table directory checked) | replace (parse-checked) | no | none (hex) | 06e3fded |
 | | 18-byte 0x0 TGA placeholders, UTF-16 text, OLE, AMOU, JPEG (39 / 3) | raw (AMOU typed, JPEG decoded) | replace (JPEG parse-checked) | no | none (hex) | low value |
 | LegacyTerrain (EC) | terrain documents XML (2,723) | typed | editor | writer, RT (`legacy_terrain_client_file::every_document_writes_back_byte_for_byte`), edit RT | Legacy terrain (edit, save) | `legacy_terrain.rs` b2dcd31b |
 | LegacyTexture | DDS (49,268 / 16,877) | typed | editor (`uop replace-texture`) | writer (see Interface DDS) | UOP explorer (image), Art viewer | `dds_writer.rs`, `textures.rs` |
 | LocalizedStrings | string tables (8 / 3; `data/localizedstrings/%03d.cliloc`) | typed (strict UTF-8) | editor (`uocf-cli strings`, KDL) | writer, RT EC and KR, directly and through KDL; the Classic `Cliloc.*` files (same format, 8) too (`string_tables_client_files`), edit RT | Clilocs (edit, save, KDL) | `localized_strings.rs` |
-| MainMisc | XML (2 / 2), UTF-16 text (1 / 1), binary (1 / 0) | raw | replace | no | UOP explorer (text editor) (XML, UTF-16) | gap 4 |
+| MainMisc | XML (2 / 2), UTF-16 text (1 / 1), binary (1 / 0) | raw; XML read as TinyXML reads it (2 / 2 pass) | replace (XML parse-checked) | no | UOP explorer (text editor) (XML, UTF-16) | |
 | MultiCollection | multis (862 / 241) | typed, both dialects | editor (multi editor, KDL) | writer, RT EC (`multi_collection_client_entries::every_multi_reencodes_identically`) and KR (`kr_client_files::kr_multis_reencode_identically`), edit RT | Multis, Multi editor (save) | `multis.rs` 38705ade, 7fd85a38 |
 | | `housing.bin` (1 / 1) | typed, KDL | editor | writer, RT EC (`housing_bin_reserializes_identically_directly_and_through_kdl`) and KR (`kr_client_files::kr_housing_bin_reserializes_identically_directly_and_through_kdl`), both directly and through KDL | Housing (edit, save) | `housing*` 02fb5dad, beeecc11 |
 | Paperdoll | AMOU (2 / 2): the male and female paperdoll image sets (`PaperdollFrameSet` assets 0x40, 0x41; action = gender, number = body or worn item id) | typed (AMOU reader) | replace (parse-checked) | writer, RT EC and KR, container and frames re-encoded (`paperdoll_frame_sets::paperdoll_frame_sets_round_trip`) | none (hex) | `ghidra-paperdoll` |
@@ -90,7 +90,7 @@ reader for all their entries but stray files; raw text and binary remain in Inte
 and the OLE file in GameData. 25 packages (AnimationDefinition, AnimationFrame1-6, AnimationSequence, EffectDefinitionCollection,
 LegacyTerrain, MultiCollection, TerrainDefinition, the 10 facet packages, facets, tileart, waypoint) have a typed
 editor whose writer is round-trip tested on every shipped entry; Audio, EffectTexture and Hues have editors for
-their typed kinds (MP3 is stored as given, not encoded). What remains raw is text without a parser (Lua, XML outside LegacyTerrain, CSV outside the audio
+their typed kinds (MP3 is stored as given, not encoded). What remains raw is text without a parser (Lua and XML have syntax checks only; CSV outside the audio
 tables and GameData, shaders), the fonts, a few stray files (OLE, UTF-16 text, PSD, one JPEG) and
 the unknown `MainMisc` binary. What has a reader but no writer: the
 TGA images.
@@ -106,18 +106,31 @@ TGA images.
   table, legacy terrain map, GameData table, legacy terrain document, hue bitmap, tileart record, animation definition, animation
   sequence, AMOU animation frames, effect definition collection, terrain definition, facet definition, facet
   sector, facet data map, housing pieces, multi, waypoints, string dictionary, localized strings, Classic gump,
-  KR static chunk, then the generic DDS header, font table directory, PNG/BMP/JPEG decode and TGA decode. A replacement
+  KR static chunk, the Interface Lua script and the Interface and MainMisc XML document syntax checks
+  (`syntax_check.rs`), then the generic DDS header, font table directory, PNG/BMP/JPEG decode and TGA decode. A replacement
   must parse with the reader (and dialect) the current entry parses with, and keep what that reader asks of the
   entry it replaces (`ParseCheck::keeps`; a GameData table keeps its column names, its records' field counts, the
   kind of each column and unique ids: `game_data::keeps_shape`); an addition with one of its package's readers for
-  its kind.
+  its kind. A reader for one name (the audio tables, the legacy terrain map) or extension (`.lua`) also applies
+  to a target by hash: by the name's hash, or (an extension) when the entry it replaces parses with it.
+- **Syntax checks**: Lua as the client's Lua (5.1 with `continue` and the bitwise operators `& | ^^ << >>`: the
+  EC lexer's token table and opcodes; the shipped scripts use `continue` and `&`), read by `full_moon` as Lua 5.3
+  after a pass that keeps byte offsets (`continue` and `^^` replaced by same-length 5.3 syntax, a backtick by
+  `$`: `full_moon` 3.0 panics on a backtick otherwise), with `goto`, labels, `//` and `~` refused by token;
+  UTF-16 scripts too (2 EC). XML as TinyXML reads it, then `roxmltree`: attributes without whitespace between
+  them get a space (EC `customizehousewindow.xml`, `managedtextures.xml`, `fontscht.xml`), a `&` starting no
+  predefined entity or character reference and a `<` in an attribute value are characters (KR `icons.xml`),
+  a comment ends at the first `-->` (KR `bulkorderfilter.xml` nests one), a later XML declaration is a node
+  (KR `choicetext.xml`), and the elements open at the end are closed (EC and KR `startmenu.xml` lack
+  `</Interface>`; whether the client reads a document TinyXML reports this error for is not traced). Errors name
+  the line and column; the inspector's text editor shows the first one as the text is edited.
 - **Caller checks**: readers above uocf, passed with `UopEntryEditor::with_check` and tried before the built-in
   ones. The CLI (`uop replace-entry`, `add-entry`) and the inspector (text editor, "Replace file...") add the NIF
   check: `gamebryo_nif::read_checked` reads the model and finds no wrong link; the inspector's effects import uses
   the same function.
 - **Audio**: MP3 and WAV entries with a known name also pass the `Audio.uop` format checks under the caller's
   policy.
-- **Kind only** (no parser in uocf): XML outside LegacyTerrain, Lua, CSV outside the audio tables and
+- **Kind only** (no parser in uocf): XML outside LegacyTerrain, Interface and MainMisc, Lua outside Interface, CSV outside the audio tables and
   `GameData.uop` (the KR `audio_sounds.csv` and `audio_effects.csv` are parse-checked since the audio batch),
   shaders, plain text, UTF-16 text, PSD, OLE files,
   and plain binary (the `MainMisc` binary, the TGA placeholders, the 34 0x0 gump placeholders).
@@ -161,8 +174,8 @@ Measured on the 78 EC and 63 KR text entries of `GameData.uop` (the reader: `enh
 |---|---|---|---|
 | 1 | ~~KR `audio_sounds.csv` strict parser, byte-identical writer, lookup by server id~~ done (`enhanced/kr_audio.rs`); left: adding KR rows | KR sounds cannot be added with a table row | 0.25 day |
 | 2 | ~~Text view and editor for CSV, Lua, plain and UTF-16 text in the inspector's UOP explorer~~ | **closed**: `enhanced/entry_text.rs` keeps the encoding, BOM and line endings (every shipped text entry encodes back byte for byte: `entry_editor_client_packages::every_text_entry_encodes_back_to_its_bytes`); saved through `UopEntryEditor` to a copy | done |
-| 3 | Lua syntax check for replaced Interface Lua (128 EC) | a broken UI script fails only in the client | 0.5-1 day, needs a Lua parser crate (design decision: a new dependency) |
-| 4 | XML well-formedness check for Interface and MainMisc XML (EC 128, KR 249) | same as 3, for the UI layouts | 0.5 day, needs an XML crate (new dependency) |
+| 3 | ~~Lua syntax check for replaced Interface Lua~~ | **closed**: `enhanced/syntax_check.rs` (`full_moon` 3.0.0, the client's dialect); all 130 EC and 239 KR Interface scripts pass, by name and by hash | done |
+| 4 | ~~XML well-formedness check for Interface and MainMisc XML~~ | **closed**: `roxmltree` 0.21.2 after a TinyXML pass (5 loosenings, above); all 128 EC and 249 KR documents pass (and the 2,723 LegacyTerrain documents) | done |
 | 5 | ~~NIF parse check in the entry editor~~ | **closed**: a caller hook (`UopEntryEditor::with_check`) that the CLI and the inspector fill with `gamebryo_nif::read_checked`; uocf does not depend on `gamebryo-nif` | done |
 | 6 | ~~KR NIF round trip (451)~~ | **closed**: all 451 KR NIFs read, write back byte for byte and have no bad links | done |
 | 7 | ~~`LocalizedStrings` writer and editor; `string_dictionary` round trip on the shipped files~~ | **closed**: every EC, KR and Classic table and both dictionaries write back byte for byte; `uocf-cli strings` and the Clilocs view edit them | done |

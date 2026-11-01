@@ -529,7 +529,7 @@ dependencies = [
  "bevy_utils",
  "bitvec",
  "blake3",
- "derive_more",
+ "derive_more 2.1.1",
  "downcast-rs 2.0.2",
  "either",
  "petgraph",
@@ -623,7 +623,7 @@ dependencies = [
  "bitflags 2.13.1",
  "blake3",
  "crossbeam-channel",
- "derive_more",
+ "derive_more 2.1.1",
  "disqualified",
  "downcast-rs 2.0.2",
  "either",
@@ -690,7 +690,7 @@ dependencies = [
  "bevy_transform",
  "bevy_utils",
  "bevy_window",
- "derive_more",
+ "derive_more 2.1.1",
  "downcast-rs 2.0.2",
  "serde",
  "smallvec",
@@ -724,7 +724,7 @@ dependencies = [
  "bevy_math",
  "bevy_reflect",
  "bytemuck",
- "derive_more",
+ "derive_more 2.1.1",
  "encase",
  "serde",
  "thiserror 2.0.20",
@@ -757,7 +757,7 @@ dependencies = [
  "bevy_utils",
  "bevy_window",
  "bitflags 2.13.1",
- "indexmap",
+ "indexmap 2.14.2",
  "nonmax",
 ]
 
@@ -858,9 +858,9 @@ dependencies = [
  "bitflags 2.13.1",
  "bumpalo",
  "concurrent-queue",
- "derive_more",
+ "derive_more 2.1.1",
  "fixedbitset",
- "indexmap",
+ "indexmap 2.14.2",
  "log",
  "nonmax",
  "rand 0.10.2",
@@ -1095,10 +1095,10 @@ dependencies = [
  "bevy_math",
  "bevy_platform",
  "bevy_reflect",
- "derive_more",
+ "derive_more 2.1.1",
  "log",
  "serde",
- "smol_str",
+ "smol_str 0.2.2",
  "thiserror 2.0.20",
 ]
 
@@ -1279,7 +1279,7 @@ checksum = "598cbdcec4d0f0d966905996240ac76f77a644c583f95fb612d4f59f5f649038"
 dependencies = [
  "approx",
  "bevy_reflect",
- "derive_more",
+ "derive_more 2.1.1",
  "glam 0.33.12",
  "libm",
  "rand 0.10.2",
@@ -1307,7 +1307,7 @@ dependencies = [
  "bevy_transform",
  "bitflags 2.13.1",
  "bytemuck",
- "derive_more",
+ "derive_more 2.1.1",
  "encase",
  "glam 0.33.12",
  "half",
@@ -1356,9 +1356,9 @@ dependencies = [
  "bevy_utils",
  "bitflags 2.13.1",
  "bytemuck",
- "derive_more",
+ "derive_more 2.1.1",
  "fixedbitset",
- "indexmap",
+ "indexmap 2.14.2",
  "nonmax",
  "offset-allocator",
  "smallvec",
@@ -1461,18 +1461,18 @@ dependencies = [
  "bevy_ptr",
  "bevy_reflect_derive",
  "bevy_utils",
- "derive_more",
+ "derive_more 2.1.1",
  "disqualified",
  "downcast-rs 2.0.2",
  "erased-serde",
  "foldhash 0.2.0",
  "glam 0.33.12",
- "indexmap",
+ "indexmap 2.14.2",
  "inventory",
  "petgraph",
  "serde",
  "smallvec",
- "smol_str",
+ "smol_str 0.2.2",
  "thiserror 2.0.20",
  "uuid",
  "variadics_please",
@@ -1486,7 +1486,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dfaa1e315676c625ed8d30ba8a671ebf917cad6355320295b9802a8cbc06853b"
 dependencies = [
  "bevy_macro_utils",
- "indexmap",
+ "indexmap 2.14.2",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -1528,12 +1528,12 @@ dependencies = [
  "bevy_window",
  "bitflags 2.13.1",
  "bytemuck",
- "derive_more",
+ "derive_more 2.1.1",
  "downcast-rs 2.0.2",
  "encase",
  "glam 0.33.12",
  "image",
- "indexmap",
+ "indexmap 2.14.2",
  "itertools 0.14.0",
  "js-sys",
  "nonmax",
@@ -1626,7 +1626,7 @@ dependencies = [
  "arrayvec",
  "bevy_math",
  "bevy_reflect",
- "derive_more",
+ "derive_more 2.1.1",
  "rand 0.10.2",
  "rand_distr",
  "serde",
@@ -1687,7 +1687,7 @@ dependencies = [
  "bevy_utils",
  "bitflags 2.13.1",
  "bytemuck",
- "derive_more",
+ "derive_more 2.1.1",
  "fixedbitset",
  "nonmax",
  "smallvec",
@@ -1735,7 +1735,7 @@ dependencies = [
  "bevy_platform",
  "concurrent-queue",
  "crossbeam-queue",
- "derive_more",
+ "derive_more 2.1.1",
  "futures-lite",
  "heapless",
  "web-task",
@@ -1762,7 +1762,7 @@ dependencies = [
  "parley",
  "serde",
  "smallvec",
- "smol_str",
+ "smol_str 0.2.2",
  "swash",
  "sys-locale",
  "thiserror 2.0.20",
@@ -1797,7 +1797,7 @@ dependencies = [
  "bevy_reflect",
  "bevy_tasks",
  "bevy_utils",
- "derive_more",
+ "derive_more 2.1.1",
  "serde",
  "thiserror 2.0.20",
  "tracing",
@@ -1831,7 +1831,7 @@ dependencies = [
  "bevy_transform",
  "bevy_utils",
  "bevy_window",
- "derive_more",
+ "derive_more 2.1.1",
  "parley",
  "serde",
  "smallvec",
@@ -1872,8 +1872,8 @@ dependencies = [
  "bevy_ui",
  "bevy_utils",
  "bytemuck",
- "derive_more",
- "indexmap",
+ "derive_more 2.1.1",
+ "indexmap 2.14.2",
  "smallvec",
  "tracing",
 ]
@@ -1901,7 +1901,7 @@ dependencies = [
  "bevy_ui",
  "bevy_window",
  "parley",
- "smol_str",
+ "smol_str 0.2.2",
  "web-sys",
 ]
 
@@ -1914,7 +1914,7 @@ dependencies = [
  "async-channel",
  "bevy_platform",
  "disqualified",
- "indexmap",
+ "indexmap 2.14.2",
  "serde",
  "thread_local",
 ]
@@ -1986,7 +1986,7 @@ dependencies = [
  "bevy_reflect",
  "bevy_transform",
  "bevy_utils",
- "derive_more",
+ "derive_more 2.1.1",
  "ron",
  "serde",
  "thiserror 2.0.20",
@@ -2104,10 +2104,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "borsh"
+version = "1.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "553c5d846a6ba5150c65e3b1b8ec073bcf1abc20f9b7220de384a4443ea4e20a"
+dependencies = [
+ "bytes",
+ "cfg_aliases",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
+
+[[package]]
+name = "bytecount"
+version = "0.6.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "175812e0be2bccb6abe50bb8d566126198344f707e304f45c648fd8f2cc0365e"
 
 [[package]]
 name = "bytemuck"
@@ -2754,11 +2770,32 @@ dependencies = [
 
 [[package]]
 name = "derive_more"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a9b99b9cbbe49445b21764dc0625032a89b145a2642e67603e1c936f5458d05"
+dependencies = [
+ "derive_more-impl 1.0.0",
+]
+
+[[package]]
+name = "derive_more"
 version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d751e9e49156b02b44f9c1815bcb94b984cdcc4396ecc32521c739452808b134"
 dependencies = [
- "derive_more-impl",
+ "derive_more-impl 2.1.1",
+]
+
+[[package]]
+name = "derive_more-impl"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb7330aeadfbe296029522e6c40f315320aba36fc43a5b3632f3795348f3bd22"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+ "unicode-xid",
 ]
 
 [[package]]
@@ -2855,7 +2892,7 @@ dependencies = [
  "bytemuck",
  "chrono",
  "color-eyre",
- "indexmap",
+ "indexmap 2.14.2",
  "knuffel",
  "log",
  "mimalloc",
@@ -3410,6 +3447,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "full_moon"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5bc70b300f9b09c409fa0a68a9f0c3e6b43573e47680d16932a0f8dade11a193"
+dependencies = [
+ "bytecount",
+ "cfg-if",
+ "derive_more 1.0.0",
+ "full_moon_derive",
+ "paste",
+ "smol_str 0.3.7",
+]
+
+[[package]]
+name = "full_moon_derive"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "99b4bd12ce56927d1dc5478d21528ea8c4b93ca85ff8f8043b6a5351a2a3c6f7"
+dependencies = [
+ "indexmap 1.9.3",
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+]
+
+[[package]]
 name = "funty"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3756,6 +3819,12 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888"
+
+[[package]]
+name = "hashbrown"
 version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
@@ -4058,6 +4127,16 @@ name = "indenter"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "964de6e86d545b246d84badc0fef527924ace5134f30641c203ef52ba83f58d5"
+
+[[package]]
+name = "indexmap"
+version = "1.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd070e393353796e801d209ad339e89596eb4c8d430d18ede6a1cced8fafbd99"
+dependencies = [
+ "autocfg",
+ "hashbrown 0.12.3",
+]
 
 [[package]]
 name = "indexmap"
@@ -4745,7 +4824,7 @@ dependencies = [
  "codespan-reporting",
  "half",
  "hashbrown 0.17.1",
- "indexmap",
+ "indexmap 2.14.2",
  "libm",
  "log",
  "naga-types",
@@ -4764,7 +4843,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "590afbf58a6f4f62873cd5cff4468061844bafa1cdf399cc954537c22d768d49"
 dependencies = [
  "hashbrown 0.17.1",
- "indexmap",
+ "indexmap 2.14.2",
  "rustc-hash 1.1.0",
  "serde",
  "thiserror 2.0.20",
@@ -5497,6 +5576,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "paste"
+version = "1.0.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
+
+[[package]]
 name = "peniko"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5523,7 +5608,7 @@ checksum = "8701b58ea97060d5e5b155d383a69952a60943f0e6dfe30b04c287beb0b27455"
 dependencies = [
  "fixedbitset",
  "hashbrown 0.15.5",
- "indexmap",
+ "indexmap 2.14.2",
  "serde",
  "serde_derive",
 ]
@@ -6072,6 +6157,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "roxmltree"
+version = "0.21.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9da7f59328b09405b181fee1018925fad50f157afb43c0c0f5c522c256dd5907"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "rustc-demangle"
 version = "0.1.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6405,6 +6499,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dd538fb6910ac1099850255cf94a94df6551fbdd602454387d0adb2d1ca6dead"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "smol_str"
+version = "0.3.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eeb7109d23f319619d4cc0de5464613c8b7b1a09db2774a58101459cf6be2f10"
+dependencies = [
+ "borsh",
+ "serde_core",
 ]
 
 [[package]]
@@ -6777,7 +6881,7 @@ version = "1.1.5+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "12c0ba9680044b4ce98d391a62094047eada0d64860b80166c39f4a6b5640785"
 dependencies = [
- "indexmap",
+ "indexmap 2.14.2",
  "serde_core",
  "serde_spanned",
  "toml_datetime",
@@ -6801,7 +6905,7 @@ version = "0.25.13+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6975367e4d2ef766d86af01ffad14b622fecc8d4357a998fbc4deb6e9bacaf9b"
 dependencies = [
- "indexmap",
+ "indexmap 2.14.2",
  "toml_datetime",
  "toml_parser",
  "winnow",
@@ -7264,9 +7368,10 @@ dependencies = [
  "ddsfile",
  "derive-new",
  "flate2",
+ "full_moon",
  "getset",
  "image",
- "indexmap",
+ "indexmap 2.14.2",
  "libz-sys",
  "log",
  "memmap2",
@@ -7274,6 +7379,7 @@ dependencies = [
  "nohash-hasher",
  "rand 0.10.2",
  "rayon",
+ "roxmltree",
  "same-file",
  "serde",
  "serde_json",
@@ -7778,7 +7884,7 @@ checksum = "fdd8f9619baa4c7bde4df0899d6f626b70ee92d6e9c18c5f74473419b5bb6fa6"
 dependencies = [
  "annotate-snippets",
  "anstream",
- "derive_more",
+ "derive_more 2.1.1",
  "glob",
  "half",
  "itertools 0.15.0",
@@ -7854,7 +7960,7 @@ dependencies = [
  "cfg_aliases",
  "document-features",
  "hashbrown 0.17.1",
- "indexmap",
+ "indexmap 2.14.2",
  "log",
  "naga",
  "naga-types",
@@ -8012,7 +8118,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37cee524ba5cfabfd65d10a316b646f8a4c50f3663e7e787471f21b783261f47"
 dependencies = [
  "annotate-snippets",
- "derive_more",
+ "derive_more 2.1.1",
  "itertools 0.15.0",
  "lalrpop-util",
  "lexical",
@@ -8449,7 +8555,7 @@ dependencies = [
  "rustix 0.38.44",
  "sctk-adwaita",
  "smithay-client-toolkit 0.19.2",
- "smol_str",
+ "smol_str 0.2.2",
  "tracing",
  "unicode-segmentation",
  "wasm-bindgen",
@@ -8528,7 +8634,7 @@ dependencies = [
  "hashbrown 0.16.1",
  "hashbrown 0.17.1",
  "image",
- "indexmap",
+ "indexmap 2.14.2",
  "libc",
  "log",
  "memchr",
@@ -8555,7 +8661,7 @@ dependencies = [
  "serde_core",
  "serde_spanned",
  "smallvec",
- "smol_str",
+ "smol_str 0.2.2",
  "syn 2.0.119",
  "syn 3.0.5",
  "thiserror 2.0.20",
