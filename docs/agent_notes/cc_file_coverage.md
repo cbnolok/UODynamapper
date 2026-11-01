@@ -43,7 +43,13 @@ UO_PRE7_CLIENT_DIR="$C/Ultima Online Mondain's Legacy" UO_CLIENT_ROOTS="$C" \
   22 packages of the canonical client and the 8 of 7.0.20.
 - **MUL/UOP repack**: `uocf-cli mul-convert extract|pack` (`tools/uocf-cli/src/legacy_mul`, 198974e4, 5f0b2381)
   moves `art`, `gumpart`, `mapN`, `sound` and the multis between their MUL/IDX and `*LegacyMUL.uop`/`MultiCollection`
-  forms as raw copies. Synthetic round trips only (`legacy_mul::tests`).
+  forms as raw copies. On the real `artLegacyMUL`, `gumpartLegacyMUL`, `map0LegacyMUL` and `soundLegacyMUL`, an
+  extract then pack gives every payload back under its name, and the packed UOP extracts to the same records
+  (`legacy_mul::tests::real_classic_packages_extract_and_pack_back_to_their_payloads`, `UO_CC_CLIENT_DIR`; the
+  MUL record order follows the package's entry order, so art and gump MULs differ in layout only). The test found
+  and fixed two pack bugs: gump 9834 was named with seven digits (both shipped clients use eight, the name the
+  client looks up), and a map whose size is not whole 4,096-block entries (every shipped one: a trailing block)
+  failed to pack. The multis' repack has synthetic tests only.
 
 ## UOP packages
 
@@ -125,7 +131,7 @@ The executables are read for facet sizes and login sites (`client_exe`, `uocf-cl
 | 3 | ~~`tiledata.mul` writer, all 6 layouts~~ | **closed**: the reader keeps the unknown item bytes and the block headers; `TileData::to_bytes` writes the layout read; Gold, ML, 7.0.20, 2024 and fp come back byte for byte | done |
 | 4 | ~~Parse checks for `artLegacyMUL`, `soundLegacyMUL` and `map*LegacyMUL` entries~~ | **closed**: static or land diamond, whole map blocks, samples after the sound header; all 41,594 shipped entries pass (the land/static choice by entry id is left to the art encoder, #2) | done |
 | 5 | ~~`radarcol.mul` and `animdata.mul` writers~~ | **closed**: `encode_radarcol`, `AnimData::to_bytes`; byte for byte on every era | done |
-| 6 | Real-file round trip of `mul-convert` extract and pack on the shipped UOPs (`Multimap.rle`: ~~closed~~, byte for byte on every era) | the repack has synthetic tests only | small |
+| 6 | ~~Real-file round trips of `mul-convert` and `Multimap.rle`~~ | **closed**: art, gump, map and sound payloads come back on the 2024 client (two pack bugs fixed, above); `Multimap.rle` byte for byte on every era. The `MultiCollection` repack stays synthetic | done |
 | 7 | `multi.mul`, `light.mul`, `texmaps.mul` writers | the modern client reads `MultiCollection.uop`; lights and texmaps are rarely edited | small each (index + payloads) |
 | 8 | `Anim1/2.def`, `Corpse.def`, `Equipconv.def`, `art.def`, `gump.def`, `TexTerr.def` readers; `Body.def`/`Bodyconv.def` writers | mobile and item remapping as the client applies it | small-medium each |
 | 9 | `speech.mul`, `skills.mul`/`Skills.idx`, `skillgrp.mul` readers | server and tooling reference data | small |

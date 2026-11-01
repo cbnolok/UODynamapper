@@ -45,7 +45,9 @@ pub(super) fn to_uop(
         LegacyMulFileConverter::TABLE_SIZE as usize
     ];
 
-    let (hash_format_0, hash_format_1, _max_id) = get_hash_format(file_type, type_index);
+    // The second format (seven digits) is only read back (`unpack`): the shipped packages name every gump, 9834
+    // included, with eight digits, the name the client looks up.
+    let (hash_format_0, _, _max_id) = get_hash_format(file_type, type_index);
 
     for i in 0..table_count {
         let this_table = writer.stream_position()?;
@@ -66,7 +68,6 @@ pub(super) fn to_uop(
                 file_count,
                 idx_start + table_idx,
                 &hash_format_0,
-                &hash_format_1,
                 compression_flag,
             )?;
         }
@@ -87,6 +88,9 @@ pub(super) fn to_uop(
     Ok(())
 }
 
+/// The map bytes of a `mapNLegacyMUL.uop` entry: 4,096 blocks of 196 bytes.
+const MAP_ENTRY_BYTES: i32 = 0xC4000;
+
 fn read_idx_entries(
     reader: &mut BufReader<File>,
     mut reader_idx: Option<&mut BufReader<File>>,
@@ -101,13 +105,14 @@ fn read_idx_entries(
         let mut position = 0;
         let mut id = 0;
         while position < length {
+            // The last entry holds what is left: the shipped maps end with a partial entry (a trailing block).
             idx_entries.push(IdxEntry {
                 id,
                 offset: position,
-                size: 0xC4000,
+                size: MAP_ENTRY_BYTES.min(length - position),
                 extra: 0,
             });
-            position += 0xC4000;
+            position += MAP_ENTRY_BYTES;
             id += 1;
         }
 
@@ -181,7 +186,6 @@ fn write_table_entry_data(
     file_count: usize,
     entry_index: usize,
     hash_format_0: &str,
-    hash_format_1: &str,
     compression_flag: CompressionFlag,
 ) -> io::Result<()> {
     if file_type == FileType::MultiCollection && entry_index == file_count - 1 {
@@ -205,11 +209,7 @@ fn write_table_entry_data(
         size_decompressed = data.len();
     }
 
-    let identifier_str = if file_type == FileType::GumpartLegacyMul && idx_entry.id == 9834 {
-        hash_format_1.replace("{0:0000000}", &format!("{:07}", idx_entry.id))
-    } else {
-        hash_format_0.replace("{0:00000000}", &format!("{:08}", idx_entry.id))
-    };
+    let identifier_str = hash_format_0.replace("{0:00000000}", &format!("{:08}", idx_entry.id));
 
     table_entry.identifier = hash_file_name_single(&identifier_str);
 

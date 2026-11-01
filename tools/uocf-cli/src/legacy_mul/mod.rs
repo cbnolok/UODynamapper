@@ -548,6 +548,79 @@ mod tests {
         Ok(())
     }
 
+    /// Every payload of an unpacked real package, by name hash (empty slots left out).
+    fn payloads(path: &std::path::Path) -> io::Result<std::collections::BTreeMap<u64, Vec<u8>>> {
+        let package = uocf::uop_container::package::UopPackage::load(path)?;
+        let hashes: Vec<u64> =
+            package.iter_files().filter(|file| !file.is_empty_slot()).map(|file| file.filename_hash()).collect();
+        hashes.into_iter().map(|hash| Ok((hash, package.unpack_file_by_hash(hash)?.unwrap_or_default()))).collect()
+    }
+
+    /// The records of a MUL and IDX pair by index: `(extra, payload)`, `None` for an empty slot. The MUL alone (a
+    /// map) is one record.
+    fn mul_records(mul: &std::path::Path, idx: Option<&std::path::Path>) -> io::Result<Vec<Option<(i32, Vec<u8>)>>> {
+        const IDX_ENTRY_BYTES: usize = 12;
+        const FIELD_BYTES: usize = 4;
+        let data = std::fs::read(mul)?;
+        let Some(idx) = idx else { return Ok(vec![Some((0, data))]) };
+        let field = |entry: &[u8], index: usize| {
+            i32::from_le_bytes(entry[index * FIELD_BYTES..(index + 1) * FIELD_BYTES].try_into().unwrap())
+        };
+        Ok(std::fs::read(idx)?
+            .chunks_exact(IDX_ENTRY_BYTES)
+            .map(|entry| {
+                let (offset, size, extra) = (field(entry, 0), field(entry, 1), field(entry, 2));
+                (offset >= 0 && size > 0).then(|| (extra, data[offset as usize..(offset + size) as usize].to_vec()))
+            })
+            .collect())
+    }
+
+    /// `mul-convert` on the real Classic packages: each is extracted to MUL (and IDX), packed back to a UOP holding
+    /// the same payloads under the same names, and that UOP extracts to the same records (the MUL's record order
+    /// follows the package's entry order, which the pack does not keep).
+    #[test]
+    #[ignore = "needs a real Classic client: set UO_CC_CLIENT_DIR and run with --ignored --release"]
+    fn real_classic_packages_extract_and_pack_back_to_their_payloads() -> io::Result<()> {
+        const CC_CLIENT_DIR_ENV: &str = "UO_CC_CLIENT_DIR";
+        /// The map index of the facet package checked.
+        const MAP_INDEX: i32 = 0;
+        let dir = std::path::PathBuf::from(
+            std::env::var_os(CC_CLIENT_DIR_ENV).unwrap_or_else(|| panic!("set {CC_CLIENT_DIR_ENV}")),
+        );
+        let cases = [
+            ("artLegacyMUL.uop", FileType::ArtLegacyMul, true, 0),
+            ("gumpartLegacyMUL.uop", FileType::GumpartLegacyMul, true, 0),
+            ("map0LegacyMUL.uop", FileType::MapLegacyMul, false, MAP_INDEX),
+            ("soundLegacyMUL.uop", FileType::SoundLegacyMul, true, 0),
+        ];
+        for (name, file_type, has_idx, type_index) in cases {
+            let source = dir.join(name);
+            let temp = temp_dir("real-repack")?;
+            let (mul, idx) = (temp.join("out.mul"), temp.join("out.idx"));
+            let (packed, mul_again, idx_again) = (temp.join("packed.uop"), temp.join("again.mul"), temp.join("again.idx"));
+            let idx_arg = |path: &std::path::Path| has_idx.then(|| path.to_path_buf());
+            LegacyMulFileConverter::from_uop(&source, &mul, idx_arg(&idx).as_deref(), file_type, type_index, None)?;
+            LegacyMulFileConverter::to_uop(&mul, idx_arg(&idx).as_deref(), &packed, file_type, type_index, CompressionFlag::None)?;
+            let (original, repacked) = (payloads(&source)?, payloads(&packed)?);
+            let missing = original.keys().filter(|hash| !repacked.contains_key(hash)).count();
+            let differing = original.iter().filter(|(hash, bytes)| repacked.get(hash).is_some_and(|other| other != *bytes)).count();
+            let extra = repacked.len().saturating_sub(original.len() - missing);
+            println!("{name}: {} entries; repacked {}, missing {missing}, differing {differing}, extra {extra}", original.len(), repacked.len());
+            LegacyMulFileConverter::from_uop(&packed, &mul_again, idx_arg(&idx_again).as_deref(), file_type, type_index, None)?;
+            let records = mul_records(&mul, idx_arg(&idx).as_deref())?;
+            let same_records = records == mul_records(&mul_again, idx_arg(&idx_again).as_deref())?;
+            let same_bytes = std::fs::read(&mul)? == std::fs::read(&mul_again)?;
+            println!(
+                "{name}: {} records extracted again identical {same_records} (MUL bytes identical {same_bytes})",
+                records.iter().flatten().count()
+            );
+            std::fs::remove_dir_all(&temp)?;
+            assert_eq!((missing, differing, extra), (0, 0, 0), "{name}: payloads");
+            assert!(same_records, "{name}: the repacked package extracts differently");
+        }
+        Ok(())
+    }
+
     fn assert_idx_entry(
         path: &std::path::Path,
         expected_offset: i32,
