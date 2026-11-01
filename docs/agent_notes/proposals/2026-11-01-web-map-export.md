@@ -1,7 +1,8 @@
 # Web map export: design proposal (2026-11-01)
 
-Status: **proposal, no code**. CLAUDE.md requires the user's confirmation before implementation.
-The questions are in [Questions for the user](#questions-for-the-user).
+Status: **approved 2026-11-01, tool built**; the renderer's export mode is the renderer session's work (see
+[Decisions](#decisions-2026-11-01)). The questions the user answered are kept in
+[Questions for the user](#questions-for-the-user).
 
 The user's decisions so far, from proposal (b) of the
 [data-track proposals](2026-11-01-data-track-open-items.md#b-world-export):
@@ -15,6 +16,37 @@ The JPEG XL question the user added is answered by measurement in
 [JPEG XL, WebP and AVIF](#jpeg-xl-webp-and-avif-measured). In short, JPEG XL makes files 22–34 % smaller at
 the same quality. Edge does not decode it yet, Chrome and Firefox have only decoded it since October 2026,
 and it greys saturated dark colours. **WebP stays the serving format.**
+
+## Decisions (2026-11-01)
+
+The user approved every recommendation:
+
+| Question | Decision |
+| --- | --- |
+| Format | Lossy WebP, **method 4, quality 85, sharp YUV**. **No JPEG XL set.** |
+| Capture | An **offscreen export mode** in the renderer (`DYNAMAPPER_EXPORT_JOB`), after a **control-channel pilot**. |
+| Facets | **Britannia first.** |
+| Tile size | **512 px.** |
+| Viewer | **Leaflet 1.9.4 vendored** into the output. |
+| Coordinate readout | **z = 0** approximation in v1. |
+| Location | A new crate, **`tools/webmap-export-cli`**. |
+| Downsampling | **sRGB 2 × 2 box** average. |
+
+What the implementation settled on top of the proposal:
+
+- **TOML, not JSON**, for the job, the frame sidecars and the tool's state, read strictly (unknown or
+  missing keys are errors, ENGINEERING.md). The schemas are in
+  [Contract for the renderer session](#contract-for-the-renderer-session).
+- `plan` writes `state/plan.toml` once and refuses an existing plan or a non-empty directory; `run`
+  resumes from it. Other parameters mean a new output directory, so there is no `--restart`.
+- Frame ids are `f{i:04}_{j:04}`, the frame's column and row in the 4096 px grid.
+- `--lossless` is not built: no use for lossless WebP tiles came up.
+- Britannia's tallest static rises 591 px, so `Z_TOP` = 1152 px (not 512). The box is 247,808 ×
+  249,472 px, still 10 levels (0–9). 1,815 frames touch the facet; a frame is planned if the
+  separating-axis test finds its kept area can show the ground diamond moved up by `Z_TOP` or down by
+  the bottom margin.
+- The `pilot` command is the control-channel pilot. Because the renderer session uses the running app,
+  it is asked to run it (agents_comm.txt).
 
 ## Summary
 
@@ -104,12 +136,31 @@ The renderer session would add an export mode with these properties. The tool de
 contract.
 
 1. **Activation.**
-   - `DYNAMAPPER_EXPORT_JOB=<absolute path to job.json>`, an opt-in like `DYNAMAPPER_CONTROL_SOCKET`.
+   - `DYNAMAPPER_EXPORT_JOB=<absolute path to job.toml>`, an opt-in like `DYNAMAPPER_CONTROL_SOCKET`.
    - No interactive state is touched.
    - Rendering must work without a visible or focused window. A hidden window or a windowless app is the
      renderer's choice.
-2. **Job.** Facet; package set; frame size F; a list of frames, each with an id and a top-left corner in
-   base-level pixels; the spool directory. The tool writes the job; the renderer only reads it.
+2. **Job.** The tool writes `job.toml`; the renderer only reads it, strictly:
+
+   ```toml
+   format_version = 1
+   facet = 0
+   map_width_tiles = 7168
+   map_height_tiles = 4096
+   texture_source = "cc"          # or "ec"
+   tile_half_width_px = 22        # the projection, repeated so the renderer need not hard-code it
+   z_step_px = 4
+   z_top_px = 1152
+   frame_size_px = 4160           # F, margin included
+   frame_margin_px = 32           # M, cropped by the tool
+   spool_dir = "/abs/out/spool"
+   max_spool_frames = 2
+
+   [[frames]]                     # in render order
+   id = "f0021_0000"
+   left_px = 85984                # top-left of the rendered frame in base-level pixels; may be negative
+   top_px = -32
+   ```
 3. **Preset**, fixed for the export:
    - every static drawn;
    - fixed daylight, static lights off, dynamic lights off;
@@ -120,18 +171,36 @@ contract.
    - zoom exactly 1.0, orthographic.
 4. **Placement.**
    - The base-level pixel convention above.
-   - The renderer reports in the frame's sidecar the constant offset between its world origin and
-     `(px, py)`, so the tool can check it.
+   - The renderer reports in the frame's sidecar one tile it drew and the base-level pixel where it put that
+     tile's top vertex at z = 0; the tool checks it against its own projection.
 5. **Readiness.** A frame is captured only when every chunk for its rectangle is spawned and every land
    page, art page and metadata upload it needs is complete. These are the same signals `status` exposes
    today (`metadata_pending`, `pending_pages`, the art collection stats).
 6. **Output.**
    - `<spool>/<frame id>.rgba`: raw RGBA8, F × F, rows top to bottom.
-   - `<spool>/<frame id>.json`: id, rectangle, offset, package revisions, render time in ms.
-   - Both are written as `*.tmp` and renamed; the JSON is renamed last, as the commit marker.
-7. **Back-pressure.** The renderer stops when the spool holds 2 frames the tool has not consumed (the tool
+   - `<spool>/<frame id>.toml`, the sidecar:
+
+     ```toml
+     format_version = 1
+     id = "f0021_0000"
+     left_px = 85984              # as in the job
+     top_px = -32
+     width_px = 4160
+     height_px = 4160
+     check_tile = [10, 20]        # a tile in the frame
+     check_tile_px = [89892, 1812] # where its top vertex at z = 0 landed, in base-level pixels
+     render_ms = 850
+     packages = [{ name = "map0.uddp", hash64 = "0x0123456789abcdef" }]   # every package used
+     ```
+
+   - Both are written as `*.tmp` and renamed; the sidecar is renamed last, as the commit marker.
+   - The tool reads the pixels, writes the frame's tiles, appends the id to `state/frames.done`, then deletes
+     the `.rgba` and then the `.toml`. Every frame must list the same packages as the first.
+7. **Back-pressure.** The renderer waits while the spool holds `max_spool_frames` (2) sidecars the tool has not consumed (the tool
    deletes consumed frames). This keeps memory and disk bounded at about 140 MB.
 8. **Determinism.** The same rectangle gives the same bytes, whatever frame came before.
+9. **Exit.** The renderer exits with status 0 after the last frame's sidecar is consumed or written; on an
+   error it exits non-zero. `run` treats an exit with frames missing as an error, and a rerun resumes.
 
 ## Tiling scheme
 
@@ -182,7 +251,7 @@ contract.
 
   It reads the facet size and the tallest art height through `udd-container`.
 - **Commands.**
-  - `webmap-export-cli plan`: facet, output and tile options → `job.json` and `state/`.
+  - `webmap-export-cli plan`: facet, output and tile options → `state/plan.toml`; `run` writes `job.toml`.
   - `webmap-export-cli run`: spawns the renderer with the job, consumes frames, writes the base levels.
   - `webmap-export-cli pyramid`: the low levels from the intermediate.
   - `webmap-export-cli viewer`: `index.html`.
@@ -192,8 +261,8 @@ contract.
     tile are written. Every write goes to a `.tmp` file first and is renamed.
   - A rerun gives the renderer only the frames not marked done.
   - The pyramid step is idempotent: it overwrites from the intermediate.
-  - The parameters (quality, tile size, package revisions) are stored in `state/params.json`. A rerun with
-    different parameters is refused unless `--restart` is passed.
+  - The parameters (quality, tile size, region) are stored in `state/plan.toml`, the package revisions in
+    `state/packages.toml`. A new plan in the same directory is refused.
 - **Parallelism.**
   - The renderer produces frames one at a time, since the GPU is the serial part.
   - The tool slices and encodes each frame's 85 tiles on a rayon pool while the next frame renders. A

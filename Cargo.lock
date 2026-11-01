@@ -4562,6 +4562,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "libwebp-sys"
+version = "0.14.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b3a87b44e34d17161e4f17d92a463d596cb13825dcd1758ed18fd3a721e189c"
+dependencies = [
+ "cc",
+ "glob",
+ "pkg-config",
+]
+
+[[package]]
 name = "libz-ng-sys"
 version = "1.1.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7876,6 +7887,25 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "url",
  "web-sys",
+]
+
+[[package]]
+name = "webmap-export-cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "color-eyre",
+ "image",
+ "libwebp-sys",
+ "rayon",
+ "serde",
+ "serde_json",
+ "toml",
+ "udd-assets",
+ "udd-container",
+ "uocf",
+ "workspace-hack",
+ "zstd",
 ]
 
 [[package]]

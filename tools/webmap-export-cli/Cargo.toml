@@ -1,0 +1,33 @@
+[package]
+name = "webmap-export-cli"
+version = "0.1.0"
+edition = "2024"
+
+[lints.clippy]
+collapsible_if = "allow"
+empty_line_after_doc_comments = "allow"
+manual_div_ceil = "allow"
+manual_is_multiple_of = "allow"
+needless_lifetimes = "allow"
+nonminimal_bool = "allow"
+too_many_arguments = "allow"
+
+[dependencies]
+uocf = { path = "../../lib/uocf" }
+udd-assets = { path = "../../lib/udd-assets" }
+udd-container = { path = "../../lib/udd-container" }
+clap = { workspace = true, features = ["derive", "unicode"] }
+color-eyre.workspace = true
+image = { workspace = true, features = ["png"] }
+# Bundles libwebp 1.6.0 and builds it with cc; no system library, so the musl build stays static.
+libwebp-sys = "0.14.4"
+rayon.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+toml.workspace = true
+zstd.workspace = true
+workspace-hack.workspace = true
+
+[[bin]]
+name = "webmap-export-cli"
+path = "src/main.rs"

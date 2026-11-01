@@ -215,12 +215,12 @@ cargo_profile_stable    :=\
 # --- Release Package Contents ---
 app_docs := "docs/keybindings.md docs/USER_TROUBLESHOOTING.md"
 tool_docs := "README.md docs/USER_TROUBLESHOOTING.md"
-tool_bins := "udd-cli udd-conv-gui uddp-inspector-gui uocf-cli uocf-inspector-gui uop-dict-populator-gui uoppackage-cli"
-tool_packages := "-p udd-conv-cli -p uocf-cli -p udd-conv-gui -p uddp-inspector-gui -p uocf-inspector-gui -p uop-dict-populator-gui -p uoppackage-cli"
+tool_bins := "udd-cli udd-conv-gui uddp-inspector-gui uocf-cli uocf-inspector-gui uop-dict-populator-gui uoppackage-cli webmap-export-cli"
+tool_packages := "-p udd-conv-cli -p uocf-cli -p udd-conv-gui -p uddp-inspector-gui -p uocf-inspector-gui -p uop-dict-populator-gui -p uoppackage-cli -p webmap-export-cli"
 # The static musl builds ship only these. A static musl binary can't load shared libraries (dlopen fails with "Dynamic
 # loading not supported"), and dynamapper and the GUI tools load their windowing, GPU and audio libraries that way.
-cli_bins := "udd-cli uocf-cli uoppackage-cli"
-cli_packages := "-p udd-conv-cli -p uocf-cli -p uoppackage-cli"
+cli_bins := "udd-cli uocf-cli uoppackage-cli webmap-export-cli"
+cli_packages := "-p udd-conv-cli -p uocf-cli -p uoppackage-cli -p webmap-export-cli"
 
 # --- Recipes ---
 

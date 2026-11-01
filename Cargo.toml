@@ -24,6 +24,7 @@ members = [
     "tools/uocf-inspector-gui",
     "tools/uop-dict-populator-gui",
     "tools/uo-client-patcher-gui",
+    "tools/webmap-export-cli",
 ]
 
 [workspace.dependencies]
