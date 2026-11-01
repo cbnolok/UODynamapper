@@ -727,6 +727,11 @@ fn show_mul_animation_tree(
                                                     && app.selected_action_id == action_id),
                                         )
                                         .show(ui, |ui| {
+                                            show_classic_frames_controls(
+                                                app,
+                                                ui,
+                                                &ClassicFramesTarget::Mul { file_index, body_id, action: action_id },
+                                            );
                                             for (direction, entry) in directions {
                                                 show_mul_direction_tree(
                                                     app,
@@ -1038,6 +1043,13 @@ fn show_uop_animationframe_tree(
                                             && app.selected_action_id == action_id,
                                     )
                                     .show(ui, |ui| {
+                                        if let Some(entry) = directions.values().flatten().next() {
+                                            show_classic_frames_controls(
+                                                app,
+                                                ui,
+                                                &ClassicFramesTarget::Uop { entry: entry.clone(), body_id, action: action_id },
+                                            );
+                                        }
                                         for (direction, entries) in directions {
                                             egui::CollapsingHeader::new(format!(
                                                 "Direction {}",
@@ -1597,6 +1609,241 @@ fn replace_animationframe_entry(
         report.distinct_colours,
         if report.quantized { ", quantized" } else { "" }
     ))
+}
+
+/// The Classic frames an export or replace works on: an `animationlegacyframe` entry (all five directions of an
+/// action) of a CC AnimationFrame*.uop, or the five direction entries of an action in `anim*.mul`.
+enum ClassicFramesTarget {
+    Uop { entry: AnimationFrameUopEntry, body_id: u32, action: u16 },
+    Mul { file_index: u8, body_id: u16, action: u16 },
+}
+
+impl ClassicFramesTarget {
+    fn body_action(&self) -> (u32, u16) {
+        match self {
+            Self::Uop { body_id, action, .. } => (*body_id, *action),
+            Self::Mul { body_id, action, .. } => (u32::from(*body_id), *action),
+        }
+    }
+}
+
+const MUL_INDEX_FILE_FILTER: (&str, &[&str]) = ("Animation index", &["idx"]);
+const MUL_DATA_FILE_FILTER: (&str, &[&str]) = ("Animation data", &["mul"]);
+
+/// "Export frames" / "Replace frames" for Classic frames (`classicanimation.kdl` folders).
+fn show_classic_frames_controls(app: &mut UopInspectorApp, ui: &mut egui::Ui, target: &ClassicFramesTarget) {
+    let what = match target {
+        ClassicFramesTarget::Uop { .. } => "a copy of the package with this entry replaced",
+        ClassicFramesTarget::Mul { .. } => {
+            "copies of anim*.idx and anim*.mul with the action's direction entries appended (verdata.mul is not read)"
+        }
+    };
+    ui.horizontal(|ui| {
+        if ui
+            .button("Export frames...")
+            .on_hover_text(
+                "Writes the action's frames (all directions) as RGBA PNGs plus classicanimation.kdl (anchors, frame \
+                 numbers, palettes) into a new subfolder.",
+            )
+            .clicked()
+        {
+            if let Some(dir) = crate::dialog::pick_folder() {
+                app.status_message = match export_classic_frames_folder(app, target, &dir) {
+                    Ok(message) => message,
+                    Err(error) => format!("Frame export failed: {error:#}"),
+                };
+            }
+        }
+        let note = match target {
+            ClassicFramesTarget::Uop { .. } => format!("\n{}", crate::ui::UOP_PATCHER_NOTE),
+            ClassicFramesTarget::Mul { .. } => String::new(),
+        };
+        if ui
+            .button("Replace frames...")
+            .on_hover_text(format!(
+                "Encodes a folder written by Export frames (edited; alpha 0 or 255 only) and writes {what}; the opened \
+                 files are refused as targets. A UOP entry whose frames per direction change also needs a copy of \
+                 the {ANIMATION_SEQUENCE_UOP_NAME} next to the package.{note}"
+            ))
+            .clicked()
+        {
+            if let Some(dir) = crate::dialog::pick_folder() {
+                app.status_message = match replace_classic_frames(app, target, &dir) {
+                    Ok(message) => message,
+                    Err(error) => format!("Frame replace failed: {error:#}"),
+                };
+            }
+        }
+    });
+}
+
+/// The `anim*.idx` / `anim*.mul` pair of MUL file `file_index` (0 is anim.mul) in the Classic client folder.
+fn classic_mul_pair(app: &UopInspectorApp, file_index: u8) -> eyre::Result<(PathBuf, PathBuf)> {
+    use uocf::classic::anim_frames::folder::FIRST_MUL_FILE;
+    let client = app.client_data.as_ref().ok_or_else(|| eyre::eyre!("no Classic client is loaded"))?;
+    let stem = match file_index {
+        0 => "anim".to_string(),
+        index => format!("anim{}", u32::from(index) + u32::from(FIRST_MUL_FILE)),
+    };
+    let find = |extension: &str| {
+        let name = format!("{stem}.{extension}");
+        uocf::utils::path::find_file_ignoring_case(&client.path, &name)
+            .ok_or_else(|| eyre::eyre!("{name} is not in {}", client.path.display()))
+    };
+    Ok((find(MUL_INDEX_FILE_FILTER.1[0])?, find(MUL_DATA_FILE_FILTER.1[0])?))
+}
+
+/// The MUL index entries of the five directions of `body_id` / `action`.
+fn classic_mul_indices(file_index: u8, body_id: u16, action: u16) -> eyre::Result<Vec<(u8, u32)>> {
+    use uocf::animation_sequence::STORED_DIRECTION_COUNT;
+    (0..STORED_DIRECTION_COUNT as u8)
+        .map(|direction| {
+            uocf::classic::anim::classic_animation_source_index_from_identity(file_index, body_id, action, direction)
+                .map(|index| (direction, index))
+                .ok_or_else(|| eyre::eyre!("body {body_id} has no action {action} in the layout of this file"))
+        })
+        .collect()
+}
+
+fn export_classic_frames_folder(app: &UopInspectorApp, target: &ClassicFramesTarget, dir: &Path) -> eyre::Result<String> {
+    use uocf::classic::anim_frames::folder::{export_mul_folder, export_uop_folder, FIRST_MUL_FILE};
+    let (body_id, action) = target.body_action();
+    let output = dir.join(format!("body{body_id:05}_action{action:02}"));
+    let sidecar = match target {
+        ClassicFramesTarget::Uop { entry, .. } => {
+            let payload = animationframe_payload(app, entry)?;
+            let package = animationframe_package_path(app, entry)?;
+            let frames_per_direction = animationframe_sequence(&package, body_id, action)?.map(|(_, count)| count);
+            export_uop_folder(&payload, body_id, action, frames_per_direction, true, &output)?
+        }
+        ClassicFramesTarget::Mul { file_index, body_id, action } => {
+            let (idx, mul) = classic_mul_pair(app, *file_index)?;
+            let mut entries = Vec::new();
+            for (direction, index) in classic_mul_indices(*file_index, *body_id, *action)? {
+                if let Some(payload) = uocf::classic::anim_frames::mul::read_mul_entry(&idx, &mul, index)? {
+                    entries.push((direction, payload));
+                }
+            }
+            eyre::ensure!(!entries.is_empty(), "{} has no body {body_id} action {action}", idx.display());
+            export_mul_folder(&entries, file_index + FIRST_MUL_FILE, u32::from(*body_id), *action, true, &output)?
+        }
+    };
+    let frames: usize = sidecar.groups.iter().map(|group| group.frames.len()).sum();
+    Ok(format!("Exported {frames} frames to {}", output.display()))
+}
+
+fn replace_classic_frames(app: &UopInspectorApp, target: &ClassicFramesTarget, dir: &Path) -> eyre::Result<String> {
+    use uocf::classic::anim_frames::folder::{import_folder, FrameSource, FIRST_MUL_FILE};
+
+    let imported = import_folder(dir)?;
+    let sidecar = &imported.sidecar;
+    let (body_id, action) = target.body_action();
+    eyre::ensure!(
+        (sidecar.body, sidecar.action) == (body_id, action),
+        "the folder holds body {} action {}, not body {body_id} action {action}",
+        sidecar.body,
+        sidecar.action
+    );
+    let distinct: usize = imported.groups.iter().map(|group| group.report.distinct_colours).max().unwrap_or_default();
+    let quantized = if imported.groups.iter().any(|group| group.report.quantized) { ", quantized" } else { "" };
+    match target {
+        ClassicFramesTarget::Uop { entry, .. } => {
+            use uocf::animation_sequence::STORED_DIRECTION_COUNT;
+            use uocf::classic::anim_frames::uop::{write_uop_entry, ClassicUopEntry};
+            use uocf::enhanced::animationframe::package::write_sequence_frame_count;
+
+            eyre::ensure!(sidecar.source == FrameSource::Uop, "the folder holds anim*.mul frames, not a UOP entry");
+            let base = animationframe_payload(app, entry)?;
+            let payload = imported.uop_payload(Some(&base))?;
+            let frames = ClassicUopEntry::parse(&payload)?.frames.len();
+            let package = animationframe_package_path(app, entry)?;
+            let per_direction = sidecar.frames_per_direction.or_else(|| {
+                let count = u32::try_from(frames).ok()?;
+                (count % STORED_DIRECTION_COUNT == 0).then_some(count / STORED_DIRECTION_COUNT)
+            });
+            let sequence_change = match animationframe_sequence(&package, body_id, action)? {
+                Some((path, current)) if per_direction != Some(current) => {
+                    let new = per_direction.ok_or_else(|| {
+                        eyre::eyre!(
+                            "{frames} frames are not a multiple of {STORED_DIRECTION_COUNT} directions: set \
+                             frames-per-direction= in the sidecar"
+                        )
+                    })?;
+                    Some((path, current, new))
+                }
+                _ => None,
+            };
+            let file_name = package.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+            let Some(output) = crate::dialog::file_dialog()
+                .add_filter(UOP_FILE_FILTER.0, UOP_FILE_FILTER.1)
+                .set_file_name(&file_name)
+                .save_file()
+            else {
+                return Ok("Frame replace cancelled".to_string());
+            };
+            let mut sequence_message = String::new();
+            if let Some((sequence_path, current, new)) = sequence_change {
+                let Some(sequence_output) = crate::dialog::file_dialog()
+                    .set_title(format!("{ANIMATION_SEQUENCE_UOP_NAME}: {current} -> {new} frames per direction"))
+                    .add_filter(UOP_FILE_FILTER.0, UOP_FILE_FILTER.1)
+                    .set_file_name(ANIMATION_SEQUENCE_UOP_NAME)
+                    .save_file()
+                else {
+                    return Ok("Frame replace cancelled: the frames per direction change and need a sequence copy".to_string());
+                };
+                let dialect = uocf::enhanced::client_dialect::ClientDialect::of_package_path(&sequence_path);
+                write_sequence_frame_count(&sequence_path, &sequence_output, body_id, u32::from(action), new, dialect)?;
+                sequence_message = format!("; {current} -> {new} frames per direction in {}", sequence_output.display());
+            }
+            let change = write_uop_entry(&package, &output, body_id, action, &payload)?;
+            Ok(format!(
+                "Wrote {} ({frames} frames, {distinct} colours{quantized}, entry {change:?}){sequence_message}",
+                output.display()
+            ))
+        }
+        ClassicFramesTarget::Mul { file_index, body_id, action } => {
+            use uocf::classic::anim_frames::mul::write_mul_entries;
+
+            let file = file_index + FIRST_MUL_FILE;
+            eyre::ensure!(
+                sidecar.source == FrameSource::Mul { file },
+                "the folder does not hold frames of anim file {file} (file=1 is anim.mul)"
+            );
+            let indices = classic_mul_indices(*file_index, *body_id, *action)?;
+            let entries = imported
+                .mul_payloads()?
+                .into_iter()
+                .map(|(direction, payload)| {
+                    let index = indices.iter().find(|(d, _)| *d == direction).map(|(_, index)| *index);
+                    index.map(|index| (index, payload)).ok_or_else(|| eyre::eyre!("direction {direction} is past the five"))
+                })
+                .collect::<eyre::Result<Vec<_>>>()?;
+            let (idx, mul) = classic_mul_pair(app, *file_index)?;
+            let name = |path: &Path| path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+            let Some(idx_output) = crate::dialog::file_dialog()
+                .add_filter(MUL_INDEX_FILE_FILTER.0, MUL_INDEX_FILE_FILTER.1)
+                .set_file_name(name(&idx))
+                .save_file()
+            else {
+                return Ok("Frame replace cancelled".to_string());
+            };
+            let Some(mul_output) = crate::dialog::file_dialog()
+                .add_filter(MUL_DATA_FILE_FILTER.0, MUL_DATA_FILE_FILTER.1)
+                .set_directory(idx_output.parent().unwrap_or(Path::new("")))
+                .set_file_name(name(&mul))
+                .save_file()
+            else {
+                return Ok("Frame replace cancelled".to_string());
+            };
+            let changes = write_mul_entries(&idx, &mul, &idx_output, &mul_output, &entries)?;
+            Ok(format!(
+                "Wrote {} and {} ({} directions, {distinct} colours at most{quantized}, entries {changes:?})",
+                idx_output.display(),
+                mul_output.display(),
+                changes.len()
+            ))
+        }
+    }
 }
 
 fn selected_cc_animationframe_entry(
