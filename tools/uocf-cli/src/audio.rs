@@ -136,7 +136,8 @@ pub enum AudioCmd {
         #[arg(long, conflicts_with_all = ["table_path", "looping"])]
         name: Option<String>,
         /// The path of the new table row of an id without one: `Sounds\folder\file.mp3` for a sound (its MP3
-        /// and its legacy WAV), `Music/file.mp3` for music.
+        /// and its legacy WAV), `Music/file.mp3` for music. The Enhanced Client plays only the MP3, so a legacy
+        /// sound takes no new row: add the MP3 with --sound first, then the WAV, which takes that row.
         #[arg(long)]
         table_path: Option<String>,
         /// A new music row loops.

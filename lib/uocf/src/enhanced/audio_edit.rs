@@ -30,7 +30,7 @@ use crate::enhanced::audio::{
     SOUND_TABLE_HEADER,
 };
 use crate::enhanced::uop_entries::save_package_as;
-use crate::uop_container::file::CompressionFlag;
+use crate::uop_container::file::{CompressionFlag, UopFile};
 use crate::uop_container::hash::hash_file_name_single;
 use crate::uop_container::package::{FileReplacement, NewEntryCompression, UopPackage};
 
@@ -86,6 +86,13 @@ pub struct AudioPut {
     pub warnings: Vec<String>,
     /// The table that got a row for the id.
     pub table_row_added: Option<&'static str>,
+}
+
+/// A table entry written for a new row, and the entry it replaced (`None` when it was added).
+struct TableWrite {
+    entry: &'static str,
+    hash: u64,
+    previous: Option<UopFile>,
 }
 
 /// How an added entry of this content is stored, as the shipped entries are: MP3 (and anything else)
@@ -249,7 +256,7 @@ impl AudioPackageEditor {
         Ok(AudioPut { name, hash, write, compression, converted, warnings, table_row_added: None })
     }
 
-    /// Adds a new entry holding `file`, and the table row its id needs.
+    /// Adds a new entry holding `file`, and the table row its id needs: both or, when either fails, neither.
     pub fn add(&mut self, new: &NewAudio, file: &[u8], options: AudioImportOptions) -> eyre::Result<AudioPut> {
         let (name, new_row) = match new {
             NewAudio::Name(name) => {
@@ -272,13 +279,21 @@ impl AudioPackageEditor {
         }
         let (payload, content, converted, warnings) = self.prepare(&name, file, options)?;
         let compression = family_compression(&content);
-        self.package
-            .add_entry(hash, &payload, NewEntryCompression::Flag(compression))
-            .wrap_err_with(|| format!("Failed to add {name}"))?;
-        let table_row_added = match new_row {
-            Some((kind, row)) => Some(self.add_row(kind, row)?),
+        // The table is written first, and put back when the entry cannot be added.
+        let table = match &new_row {
+            Some((kind, row)) => Some(self.write_table_with_row(*kind, row)?),
             None => None,
         };
+        if let Err(error) = self.package.add_entry(hash, &payload, NewEntryCompression::Flag(compression)) {
+            if let Some(table) = table {
+                self.restore_table(table);
+            }
+            return Err(error).wrap_err_with(|| format!("Failed to add {name}"));
+        }
+        let table_row_added = table.map(|table| table.entry);
+        if let Some((kind, row)) = new_row {
+            self.table_rows_mut(kind).insert(row.id, row);
+        }
         Ok(AudioPut { name, hash, write: AudioWrite::Added, compression, converted, warnings, table_row_added })
     }
 
@@ -320,20 +335,38 @@ impl AudioPackageEditor {
         check_table_path(path, music)?;
         let row = AudioTableRow { id, path: path.to_owned(), loops: music.then_some(loops.unwrap_or(false)), line: 0 };
         let name = row_entry_name(kind, &row)?;
+        if kind == AudioKind::LegacySound {
+            let mp3 = row_entry_name(AudioKind::Sound, &row)?;
+            if self.package.get_file_by_hash(hash_file_name_single(&mp3)).is_none() {
+                eyre::bail!(
+                    "legacy sound id {id} has no table row, and a new row would name `{mp3}`, which the package does not \
+                     hold: the Enhanced Client plays only the MP3 a row names, never the legacysounds/ WAV, so the row \
+                     would play nothing. Add the MP3 first (sound id {id} with this table path), then the WAV by legacy \
+                     sound id {id}, which takes that row"
+                );
+            }
+        }
         Ok((name, Some((kind, row))))
     }
 
-    /// Adds `row` to its table and stores the table's new text; returns the table's entry name.
-    fn add_row(&mut self, kind: AudioKind, row: AudioTableRow) -> eyre::Result<&'static str> {
+    fn table_rows_mut(&mut self, kind: AudioKind) -> &mut BTreeMap<u32, AudioTableRow> {
         let AudioTables::Enhanced { sounds, music } = &mut self.tables else { unreachable!("checked by new_entry_name") };
-        let (entry, header, rows, with_loop): (&'static str, _, &mut BTreeMap<u32, AudioTableRow>, _) = match kind {
-            AudioKind::Music => (MUSIC_TABLE_ENTRY, MUSIC_TABLE_HEADER, music, true),
-            AudioKind::Sound | AudioKind::LegacySound => (SOUND_TABLE_ENTRY, SOUND_TABLE_HEADER, sounds, false),
+        if kind == AudioKind::Music { music } else { sounds }
+    }
+
+    /// Stores the text of `row`'s table with `row` added (the rows themselves are left as they are); returns what
+    /// [`Self::restore_table`] needs to undo it.
+    fn write_table_with_row(&mut self, kind: AudioKind, row: &AudioTableRow) -> eyre::Result<TableWrite> {
+        let (entry, header, with_loop) = match kind {
+            AudioKind::Music => (MUSIC_TABLE_ENTRY, MUSIC_TABLE_HEADER, true),
+            AudioKind::Sound | AudioKind::LegacySound => (SOUND_TABLE_ENTRY, SOUND_TABLE_HEADER, false),
         };
-        rows.insert(row.id, row);
-        let text = write_table(header, rows, with_loop);
+        let mut rows = self.table_rows_mut(kind).clone();
+        rows.insert(row.id, row.clone());
+        let text = write_table(header, &rows, with_loop);
         let hash = hash_file_name_single(entry);
-        match self.package.get_file_by_hash(hash).map(|file| file.compression()) {
+        let previous = self.package.get_file_by_hash(hash).cloned();
+        match previous.as_ref().map(|file| file.compression()) {
             Some(compression) => {
                 self.package.replace_file(hash, text.as_bytes(), compression).wrap_err_with(|| format!("Failed to write {entry}"))?;
             }
@@ -342,7 +375,17 @@ impl AudioPackageEditor {
                 .add_entry(hash, text.as_bytes(), NewEntryCompression::Flag(family_compression(&AudioContent::Text)))
                 .wrap_err_with(|| format!("Failed to add {entry}"))?,
         }
-        Ok(entry)
+        Ok(TableWrite { entry, hash, previous })
+    }
+
+    /// Puts a table entry back as it was before [`Self::write_table_with_row`].
+    fn restore_table(&mut self, table: TableWrite) {
+        match table.previous {
+            Some(file) => *self.package.get_file_by_hash_mut(table.hash).expect("the table was just written") = file,
+            None => {
+                self.package.remove_entry(table.hash);
+            }
+        }
     }
 
     /// Writes the edited package to `output`: an absolute path, not the source.
@@ -455,6 +498,21 @@ mod tests {
         assert!(editor.add(&no_path, &mp3_file(), options).unwrap_err().to_string().contains("give the path"));
         let too_high = NewAudio::Id { kind: AudioKind::Sound, id: MAX_SERVER_SOUND_ID + 1, path: Some("Sounds\\x.mp3".to_owned()), loops: None };
         assert!(editor.add(&too_high, &mp3_file(), options).unwrap_err().to_string().contains("up to 65534"));
+        // A legacy WAV's new row would name an MP3 the package does not hold: the Enhanced Client would play nothing.
+        let legacy_first = NewAudio::Id { kind: AudioKind::LegacySound, id: 7, path: Some("Sounds\\custom\\only.mp3".to_owned()), loops: None };
+        let error = editor.add(&legacy_first, &wav::encode_pcm_wav(22_048, 1, &[0, 0]), options).unwrap_err().to_string();
+        assert!(error.contains("plays only the MP3") && error.contains("Add the MP3 first"), "{error}");
+        assert!(editor.row(AudioKind::Sound, 7).is_none());
+        // When the entry cannot be added after its row's table was written, the table entry is put back as it was.
+        let row = AudioTableRow { id: 9, path: "Sounds\\custom\\nine.mp3".to_owned(), loops: None, line: 0 };
+        let table_hash = hash_file_name_single(SOUND_TABLE_ENTRY);
+        let stamp = |file: &UopFile| (file.data().map(|bytes| bytes.to_vec()), file.data_block_header().map(|bytes| bytes.to_vec()), file.data_block_hash());
+        let before = stamp(editor.package.get_file_by_hash(table_hash).unwrap());
+        let table = editor.write_table_with_row(AudioKind::Sound, &row).unwrap();
+        assert!(unpack(&editor.package, SOUND_TABLE_ENTRY).unwrap().ends_with(b"9,Sounds\\custom\\nine.mp3\r\n"));
+        editor.restore_table(table);
+        assert_eq!(stamp(editor.package.get_file_by_hash(table_hash).unwrap()), before);
+        assert!(editor.row(AudioKind::Sound, 9).is_none());
         let unnamed = NewAudio::Name("data/audio/sounds/custom/orphan.mp3".to_owned());
         assert!(editor.add(&unnamed, &mp3_file(), options).unwrap_err().to_string().contains("no table row names"));
         let legacy = NewAudio::Name("data/audio/legacysounds/custom/orphan.wav".to_owned());
