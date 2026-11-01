@@ -278,7 +278,7 @@ Done or superseded. Blend inputs (`SecondaryBase`, `BlendAlpha`, `CoverageAlpha`
 
 ### Export And Tooling
 
-- Implement the 1:1 tiled world export pipeline: web map tiles, lossy WebP through libwebp (the user's answer, 2026-11-01); the remaining design questions are with the user, so it is not started. [Proposal (b)](agent_notes/proposals/2026-11-01-data-track-open-items.md).
+- Implement the 1:1 tiled world export pipeline: web map tiles, lossy WebP through libwebp (the user's answer, 2026-11-01); the design proposal, with the JPEG XL comparison, waits for the user's answers, so it is not started. [Web map export proposal](agent_notes/proposals/2026-11-01-web-map-export.md).
 - Add WebP output profile controls for quality, lossless, and speed.
 - Done: map and statics chunks are compressed with plain Zstd at the level that decodes fastest for its size (`udd_conv::chunk_compression`: map 19, 15.96 MB for Britannia at the same 3.4 us per warm chunk as level 7's 17.76 MB; statics 7, since higher levels decode 5..10 % slower); `--zstd=LEVEL` sets the level and `--stored` stores them (0.2 us per map chunk, 118 MB). No type dictionary: it made map chunks larger and 10 % slower. The UDDP reader reuses a per-thread Zstd context and the type dictionaries prepared at open (the installed dictionary map: 7.9 -> 3.9 us per chunk). LZ4 was measured for comparison only (map 58 MB at 2.2 us). Benchmark: `lib/udd-conv/tests/integration/map_statics_retrieval.rs`. [Proposal (a)](agent_notes/proposals/2026-11-01-data-track-open-items.md).
 - Done: `udd-cli tool validate <files or dirs>` decodes every entry through its key, checks the package hash, codecs and dictionaries, and runs the package's own reader, so a stale package fails before the app loads it.

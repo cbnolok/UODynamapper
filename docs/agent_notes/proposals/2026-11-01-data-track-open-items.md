@@ -477,8 +477,9 @@ mapping instead of copied; for Zstd chunks it changes nothing.
 
 ### (b) World export
 
-It is for web map tiles, as lossy WebP through libwebp. The user is answering the remaining design
-questions; nothing is started. The TODO item records this.
+It is for web map tiles, as lossy WebP through libwebp. The design, with the JPEG XL measurements the user
+asked for, is in the [web map export proposal](2026-11-01-web-map-export.md); it waits for the user's
+answers there, and nothing is started. The TODO item records this.
 
 ### (c) Terrain metadata palettes
 
