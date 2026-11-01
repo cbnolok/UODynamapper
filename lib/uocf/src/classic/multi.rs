@@ -12,7 +12,7 @@ const LEGACY_MULTI_PART_RECORD_SIZE: usize = 12;
 const EXTENDED_MULTI_PART_RECORD_SIZE: usize = 16;
 const MAX_CLASSIC_STATIC_ITEM_ID: u16 = 0x3FFF;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MultiPart {
     pub item_id: u16,
     pub x: i16,

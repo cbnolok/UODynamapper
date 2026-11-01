@@ -80,13 +80,13 @@ tiledata, maps, statics, multis, hues, radarcol, art, gumps, texmaps, anims, ani
 | `fonts.mul`, `unifont*.mul` (13) | typed (RGBA glyphs) | no | **no** | none | `classic/fonts.rs` c3915278 |
 | `gumpart.mul` + `gumpidx.mul` (older clients) | typed | no (a gump encodes with `GumpColors::encode_rows`, but no MUL writer saves it) | rows: RT (`every_shipped_gump_encodes_back`); file: raw copy from the UOP | Gumps view; `mul-convert` | `classic/gump.rs`, `gump_write.rs` |
 | `hues.mul` | typed | API only (`HuesMul::hue_mut`) | writer, RT (`hues_mul_uop_client::classic_hues_mul_round_trips_through_own_uop_in_both_modes`: the file comes back byte for byte through a written `Hues.uop`) | `hues mul-to-uop`/`uop-to-mul`; Hues view (view) | `classic/hues.rs` 074c28e9, f7852681 |
-| `light.mul` + `lightidx.mul` | typed (RGBA) | no | **no** | Tex/Art view | `classic/light.rs` 3a5600a5 |
+| `light.mul` + `lightidx.mul` | typed (RGBA; `LightMulFile`: intensities, dimensions, the bytes after the pixels) | API (`set_light`) | writer (`LightMulFile::to_bytes`), RT on every era and an edit read back by `LightMap` (`classic_indexed_mul_writers::classic_multi_light_and_texmap_files_write_back_byte_for_byte_and_edit`) | Tex/Art view | `classic/light.rs` 3a5600a5, `classic/light_write.rs` |
 | `mapN.mul` / `mapNx.mul` (older clients) | typed | no | **no** | `facet` CLI | `classic/map.rs` |
-| `multi.mul` + `multi.idx` | typed (old and HS record sizes) | no | **no** (raw unpack from `MultiCollection.uop`) | Multis view (Classic MUL source); `mul-convert` | `classic/multi.rs` ca9d0690 |
+| `multi.mul` + `multi.idx` | typed (old and HS record sizes; `MultiMulFile` keeps the HS field) | API (`set_parts`) | writer (`MultiMulFile::to_bytes`) in the part size read, RT on every era and an edit read back by `MultiMap` (`classic_indexed_mul_writers::classic_multi_light_and_texmap_files_write_back_byte_for_byte_and_edit`) | Multis view (Classic MUL source); `mul-convert` | `classic/multi.rs` ca9d0690 |
 | `radarcol.mul` | typed (`Vec<Rgb555>`) | API | writer (`encode_radarcol`), RT on every era (`classic_mul_writers::classic_tile_radar_animdata_and_multimap_files_write_back_byte_for_byte`) | Tex/Art view; `facet rebuild-radar` | `classic/radarcol.rs` 074c28e9 |
 | `sound.mul` + `soundidx.mul` (older clients) | typed | editor | writer, RT (`classic_sounds_and_defs_write_back_and_edit`) | `sound`; Sounds view | `classic/sound_edit.rs` |
 | `staidxN.mul` + `staticsN.mul` (`x` editions too) | typed | no | **no** | `facet` CLI | `classic/statics.rs` 79344fad |
-| `texmaps.mul` + `texidx.mul` | typed | no | **no** | Tex/Art view, legacy terrain editor | `classic/land_texture.rs` |
+| `texmaps.mul` + `texidx.mul` | typed (`TexmapMulFile`: RGB555 colors) | API (`set_texture`, `TexmapRecord::from_rgba`) | writer (`TexmapMulFile::to_bytes`), RT on every era and an edit read back by `TexMap` (`classic_indexed_mul_writers::classic_multi_light_and_texmap_files_write_back_byte_for_byte_and_edit`) | Tex/Art view, legacy terrain editor | `classic/land_texture.rs` |
 | `tiledata.mul` (6 layouts: 32/64-bit flags, 16,384/32,768/65,536 statics) | typed, every byte kept (the unknown item bytes and the block headers too) | API (`land_tiles_mut`, `item_tiles_mut`) | writer (`TileData::to_bytes`) in the layout read, RT on every era and an edit changing only its bytes (`classic_mul_writers::classic_tile_radar_animdata_and_multimap_files_write_back_byte_for_byte`) | CC tiledata view (view) | `classic/tiledata.rs` b5076c1d, 21c3ceb8 |
 | `mapdifN`/`mapdiflN`, `stadifN`/`stadifiN`/`stadiflN` (Gold, ML; the canonical client still ships `stadif0-2`) | typed, applied on request | no | **no** | `facet from-classic --include-map-difs/--include-static-difs` | `classic/map_statics_diff.rs` a0d6cfd9, `facet_sources.rs` acc42a13; `classic_facet_difs`, `classic_dif_usage` |
 | `verdata.mul` (Gold, ML) | typed, patches applied on request | no | **no** (the `.vd` anim patch writer is another format) | inspector "include verdata" | `classic/verdata.rs` a0d6cfd9 |
@@ -117,9 +117,9 @@ The executables are read for facet sizes and login sites (`client_exe`, `uocf-cl
   parse check for all but the 34 gump placeholders and the 2 `MainMisc` text and binary entries. Typed
   writers with real-file round trips cover the animations (UOP and MUL), the gumps, the art (but padding), the sounds, `hues.mul`,
   `MultiCollection`, `tileart`, the string dictionary, the clilocs and `Sound.def`/`Music.def`.
-- `tiledata.mul` (all six layouts), `radarcol.mul`, `animdata.mul` and `Multimap.rle` write back byte for byte on
-  every era (UO Gold to the 2024 client). The world data have readers only: maps, statics, lights, texmaps,
-  `multi.mul`, the difs and verdata. A Classic map and its statics cannot be edited and written back as Classic
+- `tiledata.mul` (all six layouts), `radarcol.mul`, `animdata.mul`, `Multimap.rle`, `multi.mul`, `light.mul` and
+  `texmaps.mul` write back byte for byte on every era (UO Gold to the 2024 client). The world data have readers
+  only: maps, statics, the difs and verdata. A Classic map and its statics cannot be edited and written back as Classic
   files; `facet from-classic` converts them to an Enhanced Client facet instead. Art is replaced in
   `artLegacyMUL.uop` from an image; `art.mul` gets it through `mul-convert`.
 - About 60 text, def and binary types have no reader; most are localized UI text or files the client no longer reads.
@@ -163,7 +163,7 @@ black stored as 0x0001 in a static); a land tile is a 44x44 image with an opaque
 | 4 | ~~Parse checks for `artLegacyMUL`, `soundLegacyMUL` and `map*LegacyMUL` entries~~ | **closed**: static or land diamond, whole map blocks, samples after the sound header; all 41,594 shipped entries pass (the land/static choice by entry id is left to the art encoder, #2) | done |
 | 5 | ~~`radarcol.mul` and `animdata.mul` writers~~ | **closed**: `encode_radarcol`, `AnimData::to_bytes`; byte for byte on every era | done |
 | 6 | ~~Real-file round trips of `mul-convert` and `Multimap.rle`~~ | **closed**: art, gump, map and sound payloads come back on the 2024 client (two pack bugs fixed, above); `Multimap.rle` byte for byte on every era. The `MultiCollection` repack stays synthetic | done |
-| 7 | `multi.mul`, `light.mul`, `texmaps.mul` writers | the modern client reads `MultiCollection.uop`; lights and texmaps are rarely edited | small each (index + payloads) |
+| 7 | ~~`multi.mul`, `light.mul`, `texmaps.mul` writers~~ | **closed**: `classic/indexed_mul.rs` lays the payloads out in id order from 0, as every shipped file is, and keeps each absent record as read (they differ by file and era: `(-1,-1,-1)`, `(-1,0,0)`, `(0,0,0)`, and Mondain's Legacy's mixed `texidx.mul` with its 4-byte tail); `multi_write.rs`, `light_write.rs`, `texmap_write.rs` type the payloads. Gold, ML, 7.0.20, 2024 and fp come back byte for byte; a grown entry changes only itself and reads back through the renderer's readers | done |
 | 8 | `Anim1/2.def`, `Corpse.def`, `Equipconv.def`, `art.def`, `gump.def`, `TexTerr.def` readers; `Body.def`/`Bodyconv.def` writers | mobile and item remapping as the client applies it | small-medium each |
 | 9 | `speech.mul`, `skills.mul`/`Skills.idx`, `skillgrp.mul` readers | server and tooling reference data | small |
 | 10 | Inspector views for maps, statics, fonts, def files; gump and art import in their own views | today through the UOP explorer or not at all | medium |
