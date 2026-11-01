@@ -32,6 +32,7 @@ import package::shaders::world::art::surface_blend::static_surface_coverage;
 import package::shaders::world::ec_item_water::{ec_item_is_water, sample_ec_item_water};
 import package::shaders::world::ec_liquid_camera::ec_liquid_camera_reflection_uv;
 import package::shaders::world::art::depth::static_priority_depth;
+import package::shaders::world::projection::camera_relative_world_to_clip;
 
 struct ArtVertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -91,10 +92,12 @@ fn vertex(vertex: Vertex) -> ArtVertexOutput {
 
     let corner = vec2<f32>(vertex.position.x, vertex.position.z);
     var world_pos: vec3<f32>;
+    var local_world_pos: vec3<f32>;
     if (inst.flat_quad >= 2u) {
         // Tileart-owned EC material images share the sprite atlas, but cover
         // an axis-aligned world cell just like terrain-owned ground materials.
         let local = mix(inst.local_min, inst.local_max, corner);
+        local_world_pos = vec3<f32>(local.x, 0.0, local.y);
         world_pos = vec3<f32>(inst.world_x + local.x, inst.world_y, inst.world_z + local.y);
     } else if (inst.flat_quad == 1u) {
         // CC surface-like statics (shoreline water) lie flat in the XZ plane instead of
@@ -106,6 +109,8 @@ fn vertex(vertex: Vertex) -> ArtVertexOutput {
         // resolve_cc_surface_like_flat_quad_bounds, the sprite's diamond vertices land on the
         // cell corners so the water seams with the terrain beneath it.
         let local = mix(inst.local_min, inst.local_max, corner);
+        local_world_pos = vec3<f32>(local.x * BILLBOARD_RIGHT_XZ.x + local.y * FLAT_QUAD_FORWARD_XZ.x, 0.0,
+            local.x * BILLBOARD_RIGHT_XZ.y + local.y * FLAT_QUAD_FORWARD_XZ.y);
         world_pos = vec3<f32>(
             inst.world_x + local.x * BILLBOARD_RIGHT_XZ.x + local.y * FLAT_QUAD_FORWARD_XZ.x,
             inst.world_y,
@@ -113,6 +118,7 @@ fn vertex(vertex: Vertex) -> ArtVertexOutput {
         );
     } else {
         let local = mix(inst.local_min, inst.local_max, vec2<f32>(corner.x, 1.0 - corner.y));
+        local_world_pos = vec3<f32>(local.x * BILLBOARD_RIGHT_XZ.x, local.y, local.x * BILLBOARD_RIGHT_XZ.y);
         world_pos = vec3<f32>(
             inst.world_x + local.x * BILLBOARD_RIGHT_XZ.x,
             inst.world_y + local.y,
@@ -120,10 +126,13 @@ fn vertex(vertex: Vertex) -> ArtVertexOutput {
         );
     }
     var projected_world_pos = world_pos;
+    var projected_local_pos = local_world_pos;
     if (inst.flat_quad == 3u && view.clip_from_view[3][3] == 1.0
         && dot(view.world_from_view[2].xyz, vec3<f32>(0.577350269)) >= 0.999999) {
         let pixel_aspect = (view.clip_from_view[0][0] * view.viewport.z)
             / (view.clip_from_view[1][1] * view.viewport.w);
+        projected_local_pos = ec_item_quad_world(vec3<f32>(0.0), corner,
+            view.world_from_view[0].xyz, view.world_from_view[1].xyz, pixel_aspect);
         projected_world_pos = ec_item_quad_world(vec3<f32>(inst.world_x, inst.world_y, inst.world_z),
             corner, view.world_from_view[0].xyz, view.world_from_view[1].xyz, pixel_aspect);
     }
@@ -143,9 +152,11 @@ fn vertex(vertex: Vertex) -> ArtVertexOutput {
             inst.base_world_y + 0.012,
             world_pos.z + shadow_offset.y,
         );
+        projected_local_pos = vec3<f32>(local_world_pos.x + shadow_offset.x,
+            projected_world_pos.y - inst.world_y, local_world_pos.z + shadow_offset.y);
     }
     var out: ArtVertexOutput;
-    out.position = view_transformations::position_world_to_clip(projected_world_pos);
+    out.position = camera_relative_world_to_clip(vec3<f32>(inst.world_x, inst.world_y, inst.world_z), projected_local_pos);
     out.uv = mix(inst.uv_min, inst.uv_max, corner);
     out.uv_b = vec2<f32>(f32(inst.layer), 0.0);
     out.color = inst.color_rgba;

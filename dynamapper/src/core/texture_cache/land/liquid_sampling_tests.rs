@@ -18,6 +18,20 @@ fn liquid_sampling_gpu_preserves_data_and_source_edges() {
             Ok(wgsl)
         });
         let shader_id = |value| AssetId::<Shader>::Uuid { uuid: Uuid::from_u128(value) };
+        shaders.set_shader(shader_id(16), Shader::from_wesl(
+            include_str!("../../../../assets/shaders/world/projection.wesl"),
+            "shaders/world/projection.wesl",
+        ));
+        // A large camera anchor with identity rotation/projection isolates the
+        // lost-offset bug. The real helper must retain sub-ULP local geometry.
+        shaders.set_shader(shader_id(17), Shader::from_wesl(r#"
+struct ProjectionView {
+    world_from_view: mat4x4<f32>,
+    view_from_world: mat4x4<f32>,
+    clip_from_view: mat4x4<f32>,
+}
+@group(0) @binding(5) var<uniform> view: ProjectionView;
+"#, "embedded://bevy_pbr/render/mesh_view_bindings.wesl"));
         shaders.set_shader(shader_id(14), Shader::from_wesl(
             include_str!("../../../../assets/shaders/world/uo_coords.wesl"),
             "shaders/world/uo_coords.wesl",
@@ -134,11 +148,14 @@ import package::shaders::world::land::liquid_bank::{ec_liquid_bank, ec_bank_vert
 import package::shaders::world::art::surface_blend::static_surface_coverage;
 import package::shaders::world::land::sampling::{LandGradients, sample_tile_albedo_grad};
 import package::shaders::world::land::cc_transitions::blend_cc_terrain_transitions;
+import package::shaders::world::projection::camera_relative_world_to_clip;
 @group(0) @binding(0) var atlas: texture_2d_array<f32>;
 @group(0) @binding(1) var<storage, read_write> samples: array<vec4<f32>>;
 @group(0) @binding(2) var linear_sampler: sampler;
 @group(0) @binding(3) var surface_lookup: texture_2d<u32>;
 @group(0) @binding(4) var item_lookup: texture_2d<u32>;
+struct ProjectionInput { origin: vec4<f32>, offset: vec4<f32>, }
+@group(0) @binding(6) var<storage, read> projection_inputs: array<ProjectionInput>;
 fn bank_result(bank: EcLiquidBank) -> vec4<f32> {
     return vec4<f32>(bank.weight, vec2<f32>(bank.cell), 0.0);
 }
@@ -290,7 +307,10 @@ fn main() {
             vec4<u32>(7u + graph * 7u, 16u, 0u, 0u), vec2<f32>(0.75, 0.25),
             vec2<f32>(0.25, 0.75), vec2<f32>(0.0, 1.0), 0.25, index == 9u, false, 0.5);
     }
-
+    for (var index = 0u; index < 5u; index++) {
+        let input = projection_inputs[index];
+        samples[111u + index] = camera_relative_world_to_clip(input.origin.xyz, input.offset.xyz) * input.offset.w;
+    }
 }
 "#, "shaders/test/liquid_sampling_gpu.wesl"));
         let wgsl = shaders.get(0, shader_id(0), &[]).unwrap();
@@ -360,7 +380,7 @@ fn main() {
             offset: 0, bytes_per_row: Some(6 * 16), rows_per_image: Some(1),
         }, item_lookup.size());
         let item_view = item_lookup.create_view(&wgpu::TextureViewDescriptor::default());
-        let result_size = 111 * 16;
+        let result_size = 116 * 16;
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: None, size: result_size, mapped_at_creation: false,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
@@ -373,6 +393,33 @@ fn main() {
             mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
+        // Match the runtime's uniform view. A constant view lets the driver
+        // fold the tiny offset into its large literal camera translation.
+        let projection_view = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("projection view"), size: 3 * 64, mapped_at_creation: false,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let matrices = [
+            bevy::math::Mat4::from_translation(bevy::math::Vec3::splat(8192.0)).to_cols_array(),
+            bevy::math::Mat4::from_translation(bevy::math::Vec3::splat(-8192.0)).to_cols_array(),
+            bevy::math::Mat4::IDENTITY.to_cols_array(),
+        ];
+        queue.write_buffer(&projection_view, 0, bytemuck::cast_slice(&matrices));
+        // Geometry is uploaded independently, as with real mesh/instance data.
+        // Shader-literal origin rebasing can be folded before the helper call.
+        let projection_vertices = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("projection inputs"), size: 5 * 32, mapped_at_creation: false,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        });
+        let tiny = 1.0f32 / 32768.0;
+        let inputs = [
+            [8192.0, 8192.0, 8192.0, 0.0, tiny, tiny, tiny, 32768.0],
+            [8192.0, 8192.0, 8192.0, 0.0, -tiny, -tiny, -tiny, 32768.0],
+            [8196.0, 8184.0, 8208.0, 0.0, 0.25, 0.5, 0.75, 1.0],
+            [8192.0, 8192.0, 8192.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+            [8200.0, 8192.0, 8200.0, 0.0, -8.0 + tiny, tiny, -8.0 + tiny, 32768.0],
+        ];
+        queue.write_buffer(&projection_vertices, 0, bytemuck::cast_slice(&inputs));
         let bindings = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None, layout: &pipeline.get_bind_group_layout(0),
             entries: &[
@@ -381,6 +428,8 @@ fn main() {
                 wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&sampler) },
                 wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&lookup_view) },
                 wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&item_view) },
+                wgpu::BindGroupEntry { binding: 5, resource: projection_view.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 6, resource: projection_vertices.as_entire_binding() },
             ],
         });
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
@@ -482,6 +531,8 @@ fn main() {
             decode(base), decode(water_base(0, normalized[0][3]))]);
         expected.push(decode(std::array::from_fn(|channel| if channel == 3 { normalized[0][3] }
             else { normalized[0][channel] * normalized[0][channel] * 0.5 })));
+        expected.extend([[1.0, 1.0, 1.0, 32768.0], [-1.0, -1.0, -1.0, 32768.0],
+            [4.25, -7.5, 16.75, 1.0], [0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 1.0, 32768.0]]);
         // Cursor geometry must keep matching the production bank shader. The
         // synthetic atlas above deliberately includes missing and Classic cells.
         use crate::core::render::scene::world::land::picking::{bank_vertex, TerrainSample};

@@ -14,7 +14,6 @@ import bevy_pbr::render::{
   forward_io::{Vertex, VertexOutput},
   mesh_functions,
   mesh_view_bindings::{globals, view},
-  view_transformations,
 };
 
 // ---- Land shader modules (package asset-path imports for on-demand loading) ----
@@ -65,6 +64,7 @@ import package::shaders::world::texture_data::texture_color_rgb;
 import package::shaders::world::land::coverage::{EcTerrainStack, EcTerrainCache, EcTerrainLayer, ec_coverage_params, ec_terrain_cache, ec_cache_layer, ec_cache_grime_mask, ec_terrain_stack_uncached, ec_layer_tile};
 import package::shaders::world::land::liquid_bank::{ec_liquid_bank, ec_bank_vertex};
 import package::shaders::world::land::cc_transitions::{blend_cc_terrain_transitions, cc_transition_dry_material};
+import package::shaders::world::projection::camera_relative_world_to_clip;
 
 import package::shaders::world::land::transitions::{
   ec_transition_neighbor_weight, ec_transition_diagonal_weight,
@@ -395,7 +395,9 @@ fn vertex(in: Vertex, @builtin(vertex_index) vertex_index: u32) -> VertexOutput 
   final_world_pos += vec4<f32>(bank_vertex.x * relax_corner, bank_vertex.y, bank_vertex.z * relax_corner, 0.0);
 
   out.world_position = final_world_pos;
-  out.position       = view_transformations::position_world_to_clip(out.world_position.xyz);
+  let local_world_pos = world_from_local * vec4<f32>(flat_local_pos, 0.0);
+  out.position = camera_relative_world_to_clip(world_from_local[3].xyz,
+      local_world_pos.xyz + vec3<f32>(bank_vertex.x * relax_corner, bank_vertex.y, bank_vertex.z * relax_corner));
   // Terrain albedo uses world coordinates; use the otherwise unused UV varying
   // for the original vertex-generated liquid reflection coordinates.
   out.uv = ec_liquid_camera_reflection_uv(final_world_pos.xyz, scene.ec_reflection_camera_distance);

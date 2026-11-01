@@ -28,6 +28,7 @@ import package::shaders::world::art::art_ground_bindings::{
 };
 import package::shaders::world::art::hue::apply_static_hue;
 import package::shaders::world::art::shading::apply_art_surface_shading;
+import package::shaders::world::projection::camera_relative_world_to_clip;
 
 struct GroundVertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -95,7 +96,8 @@ fn vertex(vertex: Vertex) -> GroundVertexOutput {
         inst.world_z + local.y,
     );
     var out: GroundVertexOutput;
-    out.position = view_transformations::position_world_to_clip(world_pos);
+    out.position = camera_relative_world_to_clip(vec3<f32>(inst.world_x, inst.world_y, inst.world_z),
+        vec3<f32>(local.x, 0.0, local.y));
     out.uv = mix(inst.uv_min, inst.uv_max, corner);
     out.uv_b = vec2<f32>(f32(inst.layer), 0.0);
     out.color = inst.color_rgba;

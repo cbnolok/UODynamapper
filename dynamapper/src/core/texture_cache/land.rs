@@ -1740,6 +1740,22 @@ mod tests {
     }
 
     #[test]
+    fn world_entry_points_discover_shader_dependencies() {
+        // Bevy returns no imports when WESL parsing fails, e.g. an import after
+        // a struct. Library-only composition cannot catch that entry-point bug.
+        for (source, path) in [
+            (include_str!("../../../assets/shaders/world/land/main.wesl"), "shaders/world/land/main.wesl"),
+            (include_str!("../../../assets/shaders/world/art/main.wesl"), "shaders/world/art/main.wesl"),
+            (include_str!("../../../assets/shaders/world/art/ground.wesl"), "shaders/world/art/ground.wesl"),
+        ] {
+            let shader = Shader::from_wesl(source, path);
+            assert!(shader.imports.iter().any(|import| matches!(import,
+                bevy::shader::ShaderImport::AssetPath(path) if path == "/shaders/world/projection")),
+                "{path} did not parse/discover the shared projection");
+        }
+    }
+
+    #[test]
     fn land_sampling_shader_composes() {
         let mut shader_cache = ShaderCache::<(), ()>::new((), validate_shader_module);
         let shader_id = |n: u128| AssetId::<Shader>::Uuid {
