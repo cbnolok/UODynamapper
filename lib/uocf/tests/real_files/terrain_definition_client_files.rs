@@ -1,6 +1,7 @@
 //! Every definition of a real client `TerrainDefinition.uop` (Enhanced Client and Kingdom Reborn) parses and
 //! writes back byte for byte, passes the client checks, and covers every `(material, subtype)` its sectors and
-//! `legacyterrainmap.csv` name; a rewritten package changes only the edited entry.
+//! `legacyterrainmap.csv` name; a rewritten package changes only the edited entry. `legacyterrainmap.csv` itself
+//! is written back byte for byte.
 //!
 //! The client directories come from `UO_EC_CLIENT_DIR` and `UO_KR_CLIENT_DIR`. The rewritten package goes to
 //! `std::env::temp_dir()` (set `TMPDIR` to choose it) and is deleted afterwards.
@@ -13,7 +14,7 @@ use std::path::Path;
 use uocf::enhanced::client_dialect::ClientDialect;
 use uocf::enhanced::facet_package::{detect_facet_dialect, EcFacetPackage};
 use uocf::enhanced::facet_sector::{facet_package_file_name, CLIENT_FACET_DIMENSIONS};
-use uocf::enhanced::legacy_terrain_map::LegacyTerrainMap;
+use uocf::enhanced::legacy_terrain_map::{check_canonical, LegacyTerrainMap};
 use uocf::enhanced::string_dictionary::UoStringDictionary;
 use uocf::enhanced::terrain_definition::*;
 use uocf::uop_container::package::UopPackage;
@@ -23,6 +24,8 @@ const EC_DEFINITION_COUNT: usize = 201;
 const KR_DEFINITION_COUNT: usize = 191;
 const STRING_DICTIONARY_UOP_NAME: &str = "string_dictionary.uop";
 const GAME_DATA_UOP_NAME: &str = "GameData.uop";
+/// Rows of the Enhanced Client `legacyterrainmap.csv`.
+const LEGACY_TERRAIN_MAP_ROUTES: usize = 2705;
 /// Material 0 and its name in both clients.
 const VOID_MATERIAL: u32 = 0;
 const VOID_MATERIAL_NAME: &str = "void_no_draw";
@@ -76,7 +79,7 @@ fn client_references(dir: &Path, map: Option<&LegacyTerrainMap>, dialect: Client
     if let Some(map) = map {
         references.add_legacy_terrain_map(map);
     }
-    let empty_map = LegacyTerrainMap { routes: BTreeMap::new(), source_csv: Vec::new() };
+    let empty_map = LegacyTerrainMap { routes: BTreeMap::new(), row_order: Vec::new(), source_csv: Vec::new() };
     for facet in 0..CLIENT_FACET_DIMENSIONS.len() as u8 {
         let path = dir.join(facet_package_file_name(facet, false));
         if !path.is_file() {
@@ -110,6 +113,16 @@ fn kingdom_reborn_definitions_write_back_byte_for_byte() {
     let definitions = round_trip(&dir, ClientDialect::KingdomReborn, KR_DEFINITION_COUNT);
     let void = definitions[&VOID_MATERIAL].kr_to_enhanced();
     assert_eq!(void.alias(BASE_SUBTYPE).unwrap().tile_flags, VOID_FLAGS);
+}
+
+#[test]
+#[ignore = "needs a real Enhanced Client: set UO_EC_CLIENT_DIR and run with --ignored"]
+fn legacy_terrain_map_csv_writes_back_byte_for_byte() {
+    let map = LegacyTerrainMap::load(client_dir(EC_CLIENT_DIR_ENV).join(GAME_DATA_UOP_NAME)).unwrap();
+    assert!(map.to_csv_bytes() == map.source_csv, "legacyterrainmap.csv is written back byte for byte");
+    check_canonical(&map.source_csv).unwrap();
+    assert_eq!(map.routes.len(), LEGACY_TERRAIN_MAP_ROUTES);
+    println!("legacyterrainmap.csv: {} routes, {} bytes written back byte for byte", map.routes.len(), map.source_csv.len());
 }
 
 #[test]
