@@ -113,6 +113,7 @@ Inspects, extracts, and edits `.uddp` and `.uddpi` package files.
 | `export-csv` | Export editable CSV metadata from supported packages. |
 | `import-csv` | Import edited CSV metadata into a rebuilt package. |
 | `diff` | Compare two packages or two metadata CSV files. |
+| `validate` | Check that packages (or directories of them) open with this build's readers: container, package hash, every entry decoded with its codec and dictionary, and the package's own reader. Exits non-zero when any fails. |
 
 ## Current Production Status
 

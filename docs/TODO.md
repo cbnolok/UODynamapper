@@ -293,7 +293,7 @@ Done or superseded. Blend inputs (`SecondaryBase`, `BlendAlpha`, `CoverageAlpha`
 
 - Implement the 1:1 tiled world export pipeline.
 - Add WebP output profile controls for quality, lossless, and speed.
-- Add `udd-cli tool validate`: decode every entry, check its codec and dictionary references, and run the package-specific reader. `tool info` checks only the package hash and a few tables, so a stale package (for example a `tex_land_ec` with provenance version 3) is found only when the app loads it.
+- Done: `udd-cli tool validate <files or dirs>` decodes every entry through its key, checks the package hash, codecs and dictionaries, and runs the package's own reader, so a stale package fails before the app loads it.
 - Improve `uddp_inspector` atlas preview with selective CPU decode for BC7 sub-rects instead of full-page decode.
 
 ## Validation

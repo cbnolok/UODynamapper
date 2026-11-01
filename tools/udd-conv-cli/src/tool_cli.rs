@@ -32,6 +32,7 @@ use udd_container::{xxh64_virtual_path, LookupMode, UddpReader};
 use crate::extract;
 use crate::package_edit;
 use crate::package_info;
+use crate::package_validate;
 
 /// Inspect and edit UODynamapper package files.
 #[derive(Parser)]
@@ -86,6 +87,13 @@ enum Commands {
         csv: PathBuf,
         #[arg(long)]
         output: Option<PathBuf>,
+    },
+    /// Check that packages open with the readers in this build: container, package hash,
+    /// every entry decoded with its codec and dictionary, and the package's own reader.
+    /// Directories are searched recursively. Exits non-zero when any package fails.
+    Validate {
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
     },
     /// Compare two packages or two metadata CSV files.
     Diff {
@@ -229,6 +237,7 @@ where
             }
         },
         Commands::Diff { left, right, kind } => diff_paths(&left, &right, kind)?,
+        Commands::Validate { paths } => package_validate::run_validate(&paths)?,
     }
 
     Ok(())
