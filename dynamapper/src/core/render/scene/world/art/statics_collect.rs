@@ -55,7 +55,6 @@ const CC_STATIC_TILE_TRANSLATION_Z: f32 = 1.0;
 const CLASSIC_WATER_LAND_TILE_ID: u32 = 168;
 const EC_WATER_BASE_LAYER_INDEX: u32 = 0;
 const STATIC_CHUNK_CACHE_HYSTERESIS_TICKS: u64 = 30;
-const UNRESOLVED_SURFACE_LIKE_SAMPLE_LIMIT: usize = 8;
 const STATIC_BILLBOARD_RIGHT_XZ: Vec2 =
     Vec2::new(std::f32::consts::FRAC_1_SQRT_2, -std::f32::consts::FRAC_1_SQRT_2);
 
@@ -514,21 +513,6 @@ fn assign_sprite_depth_tie_breakers(instances: &mut [SpriteInstance]) {
         let ordinal = next_ordinals.entry(base_key.to_bits()).or_insert(0);
         instance.sort_bias_ordinal = *ordinal;
         *ordinal = ordinal.saturating_add(1);
-    }
-}
-
-fn push_sample_tile_id(
-    sample: &mut [u16; UNRESOLVED_SURFACE_LIKE_SAMPLE_LIMIT],
-    sample_len: &mut usize,
-    tile_id: u16,
-) {
-    if sample[..*sample_len].contains(&tile_id) {
-        return;
-    }
-
-    if *sample_len < UNRESOLVED_SURFACE_LIKE_SAMPLE_LIMIT {
-        sample[*sample_len] = tile_id;
-        *sample_len += 1;
     }
 }
 
@@ -1082,9 +1066,6 @@ struct CachedStaticChunkStats {
     visited_blocks: usize,
     source_tiles: usize,
     ground_land_tiles: usize,
-    unresolved_surface_like_tiles: usize,
-    unresolved_surface_like_sample: [u16; UNRESOLVED_SURFACE_LIKE_SAMPLE_LIMIT],
-    unresolved_surface_like_sample_len: usize,
     atlas_hits: usize,
     atlas_misses: usize,
     requested_pages: Vec<u64>,
@@ -1183,18 +1164,6 @@ fn aggregate_cached_visible_static_stats(
         aggregate.visited_blocks += chunk.stats.visited_blocks;
         aggregate.source_tiles += chunk.stats.source_tiles;
         aggregate.ground_land_tiles += chunk.stats.ground_land_tiles;
-        aggregate.unresolved_surface_like_tiles += chunk.stats.unresolved_surface_like_tiles;
-        for tile_id in chunk.stats.unresolved_surface_like_sample
-            [..chunk.stats.unresolved_surface_like_sample_len]
-            .iter()
-            .copied()
-        {
-            push_sample_tile_id(
-                &mut aggregate.unresolved_surface_like_sample,
-                &mut aggregate.unresolved_surface_like_sample_len,
-                tile_id,
-            );
-        }
         aggregate.atlas_hits += chunk.stats.atlas_hits;
         aggregate.atlas_misses += chunk.stats.atlas_misses;
         aggregate
@@ -1289,14 +1258,13 @@ fn log_static_collect_stats(
             LogSev::DebugVerbose,
             LogAbout::RenderWorldArt,
             &format!(
-                "static art collect (1/2): map={} dot_mode={} chunks={} blocks={} tiles={} ground_land_tiles={} unresolved_surface_like={}",
+                "static art collect (1/2): map={} dot_mode={} chunks={} blocks={} tiles={} ground_land_tiles={}",
                 stats.map_id,
                 stats.dot_mode,
                 stats.visible_chunks,
                 stats.visited_blocks,
                 stats.source_tiles,
                 stats.ground_land_tiles,
-                stats.unresolved_surface_like_tiles,
             ),
         );
         console_logger::one(
@@ -1328,22 +1296,6 @@ fn log_static_collect_stats(
                 debug_state.path_counters.copied_ground_instances,
             ),
         );
-        if stats.unresolved_surface_like_tiles > 0 {
-            let sample = stats.unresolved_surface_like_sample[..stats.unresolved_surface_like_sample_len]
-                .iter()
-                .map(u16::to_string)
-                .collect::<Vec<_>>()
-                .join(", ");
-            console_logger::one(
-                LogSev::Warn,
-                LogAbout::RenderWorldArt,
-                &format!(
-                    "Skipped {} unresolved surface-like EC static tiles; sample tile ids: [{}].",
-                    stats.unresolved_surface_like_tiles,
-                    sample,
-                ),
-            );
-        }
         debug_state.last = Some(stats);
     }
 }
@@ -1570,9 +1522,6 @@ pub struct StaticArtCollectStats {
     pub visited_blocks: usize,
     pub source_tiles: usize,
     pub ground_land_tiles: usize,
-    pub unresolved_surface_like_tiles: usize,
-    pub unresolved_surface_like_sample: [u16; UNRESOLVED_SURFACE_LIKE_SAMPLE_LIMIT],
-    pub unresolved_surface_like_sample_len: usize,
     pub unique_requested_pages: usize,
     pub resident_pages: usize,
     pub pending_pages: usize,
@@ -1849,9 +1798,6 @@ struct StaticCollectSlowStats {
     visited_blocks: usize,
     source_tiles: usize,
     ground_land_tiles: usize,
-    unresolved_surface_like_tiles: usize,
-    unresolved_surface_like_sample: [u16; UNRESOLVED_SURFACE_LIKE_SAMPLE_LIMIT],
-    unresolved_surface_like_sample_len: usize,
     atlas_hits: usize,
     atlas_misses: usize,
     unique_requested_pages: HashSet<u64>,
@@ -1864,18 +1810,6 @@ impl StaticCollectSlowStats {
         self.visited_blocks += chunk.stats.visited_blocks;
         self.source_tiles += chunk.stats.source_tiles;
         self.ground_land_tiles += chunk.stats.ground_land_tiles;
-        self.unresolved_surface_like_tiles += chunk.stats.unresolved_surface_like_tiles;
-        for tile_id in chunk.stats.unresolved_surface_like_sample
-            [..chunk.stats.unresolved_surface_like_sample_len]
-            .iter()
-            .copied()
-        {
-            push_sample_tile_id(
-                &mut self.unresolved_surface_like_sample,
-                &mut self.unresolved_surface_like_sample_len,
-                tile_id,
-            );
-        }
         self.atlas_hits += chunk.stats.atlas_hits;
         self.atlas_misses += chunk.stats.atlas_misses;
         self.unique_requested_pages
@@ -2022,9 +1956,6 @@ fn try_finish_cached_visible_static_collect(
             visited_blocks: aggregate.visited_blocks,
             source_tiles: aggregate.source_tiles,
             ground_land_tiles: aggregate.ground_land_tiles,
-            unresolved_surface_like_tiles: aggregate.unresolved_surface_like_tiles,
-            unresolved_surface_like_sample: aggregate.unresolved_surface_like_sample,
-            unresolved_surface_like_sample_len: aggregate.unresolved_surface_like_sample_len,
             unique_requested_pages: aggregate.requested_pages.len(),
             resident_pages: sprite_atlas.resident_page_count() + ground_atlas.resident_page_count(),
             pending_pages: sprite_atlas.pending_page_count() + ground_atlas.pending_page_count(),
@@ -2820,9 +2751,6 @@ fn finish_static_collect_slow_path(
             visited_blocks: slow_stats.visited_blocks,
             source_tiles: slow_stats.source_tiles,
             ground_land_tiles: slow_stats.ground_land_tiles,
-            unresolved_surface_like_tiles: slow_stats.unresolved_surface_like_tiles,
-            unresolved_surface_like_sample: slow_stats.unresolved_surface_like_sample,
-            unresolved_surface_like_sample_len: slow_stats.unresolved_surface_like_sample_len,
             unique_requested_pages: slow_stats.unique_requested_pages.len(),
             resident_pages: sprite_atlas.resident_page_count() + ground_atlas.resident_page_count(),
             pending_pages: sprite_atlas.pending_page_count() + ground_atlas.pending_page_count(),
