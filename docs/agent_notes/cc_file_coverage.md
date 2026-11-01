@@ -91,7 +91,9 @@ tiledata, maps, statics, multis, hues, radarcol, art, gumps, texmaps, anims, ani
 | `mapdifN`/`mapdiflN`, `stadifN`/`stadifiN`/`stadiflN` (Gold, ML; the canonical client still ships `stadif0-2`) | typed, applied on request | no | **no** | `facet from-classic --include-map-difs/--include-static-difs` | `classic/map_statics_diff.rs` a0d6cfd9, `facet_sources.rs` acc42a13; `classic_facet_difs`, `classic_dif_usage` |
 | `verdata.mul` (Gold, ML) | typed, patches applied on request | no | **no** (the `.vd` anim patch writer is another format) | inspector "include verdata" | `classic/verdata.rs` a0d6cfd9 |
 | `facet00-05.mul` | **no** | | | | |
-| `speech.mul`, `skills.mul` + `Skills.idx`, `skillgrp.mul`, `animinfo.mul`, `palette.mul`, `sjis2uni.mul` | **no** | | | | |
+| `speech.mul` | typed, strict (UTF-8, whole records) | records | writer, RT on every era (`classic_speech_and_skills::classic_speech_skills_and_skill_groups_write_back_byte_for_byte`) | no | `classic/speech.rs` |
+| `skills.mul` + `Skills.idx`, `skillgrp.mul` | typed, strict (action flag, NUL-terminated Latin-1 names; groups in range); the Unicode `skillgrp.mul` of ClassicUO too | skills and groups | writer, RT on every era plus a renamed skill and group (same test) | no | `classic/skills.rs`, `indexed_mul.rs` |
+| `animinfo.mul`, `palette.mul`, `sjis2uni.mul` | **no** | | | | |
 
 ## Text, def and config files
 
@@ -124,7 +126,7 @@ The executables are read for facet sizes and login sites (`client_exe`, `uocf-cl
   files; `facet from-classic` converts them to an Enhanced Client facet instead. Art is replaced in
   `artLegacyMUL.uop` from an image; `art.mul` gets it through `mul-convert`.
 - The remap def files (`Body`, `Bodyconv`, `Equipconv`, `Corpse`, `art`, `gump`, `TexTerr`, `Anim1-4`) read strictly
-  as the client reads them and write back byte for byte.
+  as the client reads them and write back byte for byte; so do `speech.mul`, `skills.mul` and `skillgrp.mul`.
 - About 50 text, def and binary types have no reader; most are localized UI text or files the client no longer reads.
 
 ## Classic art encoding
@@ -166,9 +168,9 @@ black stored as 0x0001 in a static); a land tile is a 44x44 image with an opaque
 | 4 | ~~Parse checks for `artLegacyMUL`, `soundLegacyMUL` and `map*LegacyMUL` entries~~ | **closed**: static or land diamond, whole map blocks, samples after the sound header; all 41,594 shipped entries pass (the land/static choice by entry id is left to the art encoder, #2) | done |
 | 5 | ~~`radarcol.mul` and `animdata.mul` writers~~ | **closed**: `encode_radarcol`, `AnimData::to_bytes`; byte for byte on every era | done |
 | 6 | ~~Real-file round trips of `mul-convert` and `Multimap.rle`~~ | **closed**: art, gump, map and sound payloads come back on the 2024 client (two pack bugs fixed, above); `Multimap.rle` byte for byte on every era. The `MultiCollection` repack stays synthetic | done |
-| 7 | ~~`multi.mul`, `light.mul`, `texmaps.mul` writers~~ | **closed**: `classic/indexed_mul.rs` lays the payloads out in id order from 0, as every shipped file is, and keeps each absent record as read (they differ by file and era: `(-1,-1,-1)`, `(-1,0,0)`, `(0,0,0)`, and Mondain's Legacy's mixed `texidx.mul` with its 4-byte tail); `multi_write.rs`, `light_write.rs`, `texmap_write.rs` type the payloads. Gold, ML, 7.0.20, 2024 and fp come back byte for byte; a grown entry changes only itself and reads back through the renderer's readers | done |
+| 7 | ~~`multi.mul`, `light.mul`, `texmaps.mul` writers~~ | **closed**: `classic/indexed_mul.rs` lays the payloads out from 0 in the order read (id order in every shipped file but `skills.mul`, #9), and keeps each absent record as read (they differ by file and era: `(-1,-1,-1)`, `(-1,0,0)`, `(0,0,0)`, and Mondain's Legacy's mixed `texidx.mul` with its 4-byte tail); `multi_write.rs`, `light_write.rs`, `texmap_write.rs` type the payloads. Gold, ML, 7.0.20, 2024 and fp come back byte for byte; a grown entry changes only itself and reads back through the renderer's readers | done |
 | 8 | ~~`Anim1/2.def`, `Corpse.def`, `Equipconv.def`, `art.def`, `gump.def`, `TexTerr.def` readers; `Body.def`/`Bodyconv.def` writers~~ | **closed**: `classic/def_files.rs` reads them as the 2024 client does (`ghidra-classic-defs`: `ID {T1, T2} VALUE`, the first line of an id wins, `{-1}` is target 1; `bodyconv.def` and `Equipconv.def` cut at `#`, the last line wins, the Equipconv hue is hexadecimal), strictly, with line and column errors where the client would skip text, drop or misread a line; every line is kept, so all 50 shipped files of Gold, ML, 7.0.20, 2024 and fp write back byte for byte, and an edited record changes only its line | done |
-| 9 | `speech.mul`, `skills.mul`/`Skills.idx`, `skillgrp.mul` readers | server and tooling reference data | small |
+| 9 | ~~`speech.mul`, `skills.mul`/`Skills.idx`, `skillgrp.mul` readers~~ | **closed**: readers and writers (`classic/speech.rs`, `classic/skills.rs`), byte for byte on Gold, ML, 7.0.20, 2024 and fp. From 7.0.20 on `skills.mul` holds 57, 56, 55 last, so `IndexedMul` keeps the data order read; UO Gold's `skillgrp.mul` name fields hold old text after the NUL, kept until a group is renamed | done |
 | 10 | Inspector views for maps, statics, fonts, def files; gump and art import in their own views | today through the UOP explorer or not at all | medium |
 | 11 | Difs, verdata, fonts, `Config.txt` writers | pre-7.0 or rarely edited; `Config.txt` is in the audio agent's modules | low value |
 | 12 | Localized UI text, `facetNN.mul`, `palette.mul`, `animinfo.mul`, `*.bin`, the remaining text and config files | not read by our tools; several are not read by the current client | low value |

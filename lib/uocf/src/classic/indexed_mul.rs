@@ -1,8 +1,10 @@
 //! An index file and its data file (`*idx.mul` / `*.mul`) as entries, written back as the shipped files are laid
-//! out, for the Classic files whose payloads need no other layout: `multi.mul`, `light.mul`, `texmaps.mul`.
+//! out, for the Classic files whose payloads need no other layout: `multi.mul`, `light.mul`, `texmaps.mul`,
+//! `skills.mul`.
 //!
 //! Measured on UO Gold, Mondain's Legacy, 7.0.20, the 2024 Classic client and Classic fp: the present entries'
-//! payloads follow each other in id order from offset 0, with nothing between them or after the last one. An
+//! payloads follow each other from offset 0, with nothing between them or after the last one, in id order but in
+//! `skills.mul` from 7.0.20 on (55 to 57 were appended as 57, 56, 55), so the order read is kept. An
 //! absent entry's 12-byte record differs by file and era, so it is kept as read:
 //!
 //! | File | Absent entry record (lookup, size, extra) |
@@ -14,8 +16,8 @@
 //! | `texidx.mul` (7.0.20, 2024, fp) | `(0, 0, 0)` |
 //!
 //! Mondain's Legacy's `texidx.mul` also ends with 4 bytes that are no whole record; they are kept too.
-//! [`IndexedMul::to_bytes`] lays the payloads out again in id order, so an unchanged file comes back byte for
-//! byte and an edited entry moves only the entries after it.
+//! [`IndexedMul::to_bytes`] lays the payloads out again in the order read, then the added ones in id order, so an
+//! unchanged file comes back byte for byte and an edited entry moves only the payloads after it.
 
 crate::eyre_imports!();
 use std::path::Path;
@@ -60,6 +62,9 @@ pub struct IndexedMul {
     pub index_tail: Vec<u8>,
     /// Data bytes after the last payload (none in the shipped files).
     pub data_tail: Vec<u8>,
+    /// The ids of the payloads read, in data order; [`Self::to_bytes`] writes the present ones in this order, then
+    /// the others in id order.
+    pub data_order: Vec<usize>,
 }
 
 fn read_u32(bytes: &[u8], offset: usize) -> u32 {
@@ -73,6 +78,7 @@ impl IndexedMul {
         let count = index.len() / INDEX_RECORD_BYTES;
         let mut entries = Vec::with_capacity(count);
         let mut data_end = 0usize;
+        let mut lookups = Vec::new();
         for id in 0..count {
             let base = id * INDEX_RECORD_BYTES;
             let (lookup, size, extra) = (read_u32(index, base), read_u32(index, base + 4), read_u32(index, base + 8));
@@ -85,9 +91,12 @@ impl IndexedMul {
                 eyre!("index entry {id}: {len} bytes at {start} lie past the data's {} bytes", data.len())
             })?;
             data_end = data_end.max(end);
+            lookups.push((start, id));
             entries.push(IndexedEntry::Present { extra, payload: data[start..end].to_vec() });
         }
-        Ok(Self { entries, index_tail: index[count * INDEX_RECORD_BYTES..].to_vec(), data_tail: data[data_end..].to_vec() })
+        lookups.sort_unstable();
+        let data_order = lookups.into_iter().map(|(_, id)| id).collect();
+        Ok(Self { entries, index_tail: index[count * INDEX_RECORD_BYTES..].to_vec(), data_tail: data[data_end..].to_vec(), data_order })
     }
 
     pub fn load(index_path: &Path, data_path: &Path) -> eyre::Result<Self> {
@@ -96,23 +105,39 @@ impl IndexedMul {
         Self::from_bytes(&index, &data).wrap_err_with(|| format!("{} and {}", index_path.display(), data_path.display()))
     }
 
-    /// The index and the data: payloads in id order from offset 0, absent records as read.
+    /// The ids of the present entries in the order their payloads are written: [`Self::data_order`], then the
+    /// others in id order.
+    pub fn write_order(&self) -> Vec<usize> {
+        let present = |id: &usize| self.entries.get(*id).is_some_and(|entry| entry.payload().is_some());
+        let mut seen = vec![false; self.entries.len()];
+        let mut order: Vec<usize> = self.data_order.iter().copied().filter(present).filter(|&id| !std::mem::replace(&mut seen[id], true)).collect();
+        order.extend((0..self.entries.len()).filter(|id| present(id) && !seen[*id]));
+        order
+    }
+
+    /// The index and the data: payloads from offset 0 in [`Self::write_order`], absent records as read.
     pub fn to_bytes(&self) -> eyre::Result<(Vec<u8>, Vec<u8>)> {
         let mut index = Vec::with_capacity(self.entries.len() * INDEX_RECORD_BYTES + self.index_tail.len());
         let mut data = Vec::new();
+        let mut lookups = vec![0u32; self.entries.len()];
+        for id in self.write_order() {
+            let payload = self.entries[id].payload().expect("a present entry");
+            lookups[id] = u32::try_from(data.len()).ok().filter(|&lookup| lookup != ABSENT).ok_or_else(|| {
+                eyre!("entry {id}: {} bytes at {} do not fit an index record", payload.len(), data.len())
+            })?;
+            data.extend_from_slice(payload);
+        }
         for (id, entry) in self.entries.iter().enumerate() {
             let (lookup, size, extra) = match entry {
                 IndexedEntry::Present { extra, payload } => {
-                    let lookup = u32::try_from(data.len()).ok().filter(|&lookup| lookup != ABSENT);
                     let size = u32::try_from(payload.len()).ok().filter(|&size| size != ABSENT && size != 0);
-                    let (Some(lookup), Some(size)) = (lookup, size) else {
-                        eyre::bail!("entry {id}: {} bytes at {} do not fit an index record", payload.len(), data.len());
+                    let Some(size) = size else {
+                        eyre::bail!("entry {id}: {} bytes do not fit an index record", payload.len());
                     };
                     if *extra == ABSENT {
                         eyre::bail!("entry {id}: extra {ABSENT:#x} would mark it absent");
                     }
-                    data.extend_from_slice(payload);
-                    (lookup, size, *extra)
+                    (lookups[id], size, *extra)
                 }
                 IndexedEntry::Absent { lookup, size, extra } => (*lookup, *size, *extra),
             };
@@ -202,6 +227,21 @@ mod tests {
         assert!(matches!(back.entries[4], IndexedEntry::Absent { .. }));
         edited.clear(3);
         assert!(edited.entries[3].payload().is_none());
+    }
+
+    #[test]
+    fn keeps_the_data_order_read() {
+        let mut index = Vec::new();
+        index.extend(record(2, 1, 0));
+        index.extend(record(0, 2, 0));
+        let data = [5, 5, 4];
+        let mut file = IndexedMul::from_bytes(&index, &data).unwrap();
+        assert_eq!(file.data_order, vec![1, 0]);
+        assert_eq!(file.to_bytes().unwrap(), (index, data.to_vec()));
+        file.set(3, IndexedEntry::Present { extra: 0, payload: vec![9] });
+        file.set(1, IndexedEntry::Present { extra: 0, payload: vec![6] });
+        assert_eq!(file.write_order(), vec![1, 0, 3]);
+        assert_eq!(file.to_bytes().unwrap().1, vec![6, 4, 9]);
     }
 
     #[test]

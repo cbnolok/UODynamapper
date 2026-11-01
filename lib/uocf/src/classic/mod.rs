@@ -23,6 +23,8 @@ pub mod multimap_rle;
 pub mod multimap_render;
 pub mod generic_def;
 pub mod def_files;
+pub mod skills;
+pub mod speech;
 pub mod generic_index;
 pub mod fonts;
 pub mod gump;
