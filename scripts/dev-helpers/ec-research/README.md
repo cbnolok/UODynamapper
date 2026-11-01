@@ -82,6 +82,7 @@ Chaos particle engine that plays `.ems` effects is documented in
 [`ghidra-effects/results/uosa_chaos.md`](ghidra-effects/results/uosa_chaos.md).
 `AnimationSequence.uop`, `AnimationDefinition.uop` and the 0x6E/0xE2 animation packets are traced in [`ghidra-animation`](ghidra-animation/README.md).
 The `AnimationFrame*.uop` (AMOU) code of UOSA.exe and UOKR.exe (frame entry search, palette and hue key, RLE decoders, atlas) and the rules a frame encoder must follow are in [`ghidra-animation-frames`](ghidra-animation-frames/README.md).
+How UOSA.exe loads a mobile animation at run time (synchronous main-thread UOP reads and inflates, the asset and frame composite caches and their limits, per-frame D3D9 texture creation) and what makes it stutter are traced in [`ghidra-ec-anim-loading`](ghidra-ec-anim-loading/README.md).
 `build/multicollection/housing.bin` (house customization pieces) and the `MultiCollection.uop` multis are decoded in [`ghidra-housing`](ghidra-housing/README.md).
 UOP data block headers (version-4 timestamps, version-5 signatures) and `data_block_hash` are decoded in [`ghidra-uop-header`](ghidra-uop-header/README.md).
 How the client picks the decoder for each image it loads from a UOP (the extension of the requested path, the `assetmap.xml` suffixes of tile textures, the hue bitmap parser) and what each decoder checks are traced in [`ghidra-image-decoders`](ghidra-image-decoders/README.md).
