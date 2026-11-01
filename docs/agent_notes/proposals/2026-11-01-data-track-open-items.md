@@ -331,17 +331,25 @@ Repack `mobile_anim_ec` with `--zstd`; this is not RDO, but it is the real size 
 
 ## Decisions (2026-11-01)
 
-### (a) Map and statics: retrieval speed, not size
+### (a) Map and statics: compressed, at the level that decodes fastest
 
-The user: "We are talking about saving a small amount of MB, I'd keep what allows faster runtime
-retrieval and rendering." The clustering item is dropped (removed from `docs/TODO.md`). Map and
-statics packages were measured for runtime retrieval instead.
+The user's first answer: "We are talking about saving a small amount of MB, I'd keep what allows
+faster runtime retrieval and rendering." The clustering item is dropped (removed from
+`docs/TODO.md`), and map and statics packages were measured for runtime retrieval.
 
-The benchmark is `lib/udd-conv/tests/integration/map_statics_retrieval.rs` (ignored; run it with
-`--release` and `UDD_PACKAGE_DIR`). It repacks the installed `map0`/`statics0` entries with each
-codec and reads them through `UddpReader` as dynamapper does: `load` (mmap), decoded cache off,
-`read_file_by_dense_id`. It also reads them from `load_in_memory` and through
-`read_file_by_dense_id_cow`.
+Stored chunks measured fastest, so 3a3c1621 made them the packers' default. The user then
+corrected that: "100 MB per facet is a lot, compress that data." Since then, chunks are compressed
+with plain Zstd by default, at a level per package chosen by decode speed. Stored is an opt-in.
+
+**The benchmark** is `lib/udd-conv/tests/integration/map_statics_retrieval.rs` (ignored; run it
+with `--release` and `UDD_PACKAGE_DIR`).
+
+- It repacks the installed `map0`/`statics0` entries with each codec and reports the pack time.
+- It reads them through `UddpReader` as dynamapper does: `load` (mmap), decoded cache off,
+  `read_file_by_dense_id`. It also reads them from `load_in_memory` and through
+  `read_file_by_dense_id_cow`.
+- LZ4 (`lz4_flex`, a dev-dependency) is there for comparison only. Its payloads are stored LZ4
+  blocks, decoded in the test; there is no container codec for it.
 
 The read orders are:
 
@@ -355,80 +363,117 @@ Each read order is timed two ways:
 - **cold** drops the file's pages first (`posix_fadvise(DONTNEED)`) and covers opening the package
   plus reading every chunk in the order once.
 
-The numbers below are with the reader change described next.
+The numbers below are with the reader fix described further down. Pack time is the builder's
+(parallel) compression and write of the entries.
 
 **map0** (28,672 chunks of 4 KB):
 
-| Codec | Size | Warm per chunk (mmap / cow) | Warm region | Cold id order (mmap / in-memory) | Cold shuffled (mmap / in-memory) | Cold region (mmap / in-memory) |
-| --- | --- | --- | --- | --- | --- | --- |
-| installed (zstd 7 + dictionary) | 18.36 MB | 3.92 / 3.90 us | 4.14 us | 116 / 121 ms | 149 / 129 ms | 5.4 / 9.0 ms |
-| **stored** | 117.90 MB | **0.21 / 0.01 us** | **0.07 us** | **28 / 44 ms** | 850 / **46 ms** | **3.5** / 37 ms |
-| zstd 1 | 20.58 MB | 4.44 us | 5.06 us | 131 ms | 160 / 153 ms | 4.7 / 8.5 ms |
-| zstd 3 | 20.41 MB | 4.56 us | 5.06 us | 136 ms | 162 / 148 ms | 5.0 / 8.6 ms |
-| zstd 7 | 17.76 MB | 3.39 us | 3.64 us | 102 ms | 127 / 114 ms | 3.9 / 7.1 ms |
-| zstd 19 | 15.96 MB | 3.43 us | 3.35 us | 105 ms | 126 / 114 ms | 3.8 / 6.2 ms |
-| zstd 7 + dictionary | 18.36 MB | 3.74 us | 3.99 us | 117 ms | 144 / 128 ms | 4.0 / 7.4 ms |
+| Codec | Size | Pack | Warm per chunk (mmap / cow) | Warm region | Cold id order (mmap) | Cold shuffled (mmap / in-memory) | Cold region (mmap) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| installed (zstd 7 + dictionary) | 18.36 MB | - | 3.89 / 3.87 us | 3.98 us | 117 ms | 154 / 129 ms | 5.5 ms |
+| stored | 117.90 MB | 0.06 s | 0.22 / 0.00 us | 0.07 us | 32 ms | 842 / 46 ms | 3.3 ms |
+| LZ4 (comparison) | 58.42 MB | 0.14 s | 2.22 / 2.05 us | 2.29 us | 73 ms | 421 / 82 ms | 4.6 ms |
+| zstd 1 | 20.58 MB | 0.08 s | 4.29 us | 4.83 us | 130..270 ms | 160..269 ms | 5.1..6.4 ms |
+| zstd 3 | 20.41 MB | 0.06 s | 4.36 us | 4.84 us | 130 ms | 159 / 144 ms | 5.1 ms |
+| zstd 7 | 17.76 MB | 0.29 s | 3.33 us | 3.58 us | 98 ms | 122 / 109 ms | 4.0 ms |
+| zstd 9 | 17.79 MB | 0.46 s | 3.15 us | 3.18 us | 95 ms | 122 / 107 ms | 3.8 ms |
+| zstd 12 | 17.11 MB | 0.81 s | 3.47 us | 3.57 us | 105 ms | 129 / 115 ms | 3.8 ms |
+| zstd 15 | 16.74 MB | 1.28 s | 3.36 us | 3.33 us | 101 ms | 124 / 110 ms | 3.8 ms |
+| **zstd 19 (the map default)** | **15.96 MB** | 2.49 s | 3.41 us | 3.34 us | 102 ms | 127 / 113 ms | 3.7 ms |
+| zstd 22 | 15.96 MB | 2.54 s | 3.41 us | 3.35 us | 102 ms | 124 / 112 ms | 3.7 ms |
+| zstd 7 + dictionary | 18.36 MB | 0.32 s | 3.68 us | 3.96 us | 115 ms | 138 / 124 ms | 4.2 ms |
 
 **statics0** (28,672 chunks; 18,834 empty):
 
-| Codec | Size | Warm per chunk (mmap / cow) | Warm region | Cold id order (mmap / in-memory) | Cold shuffled (mmap / in-memory) | Cold region (mmap / in-memory) |
-| --- | --- | --- | --- | --- | --- | --- |
-| installed (zstd 7) | 8.46 MB | 1.31 / 1.31 us | 0.62 us | 39 / 41 ms | 51 / 43 ms | 1.5 / 3.3 ms |
-| **stored** | 23.71 MB | **0.06 / 0.01 us** | **0.01 us** | **8 / 8 ms** | 25 / **8 ms** | 1.5 / 6.0 ms |
-| zstd 1 | 8.82 MB | 1.30 us | 0.60 us | 40 ms | 49 / 42 ms | 1.3 / 2.7 ms |
-| zstd 3 | 8.74 MB | 1.31 us | 0.62 us | 40 ms | 49 / 43 ms | 1.3 / 2.6 ms |
-| zstd 7 | 8.46 MB | 1.31 us | 0.64 us | 42 ms | 50 / 44 ms | 1.3 / 2.6 ms |
-| zstd 19 | 8.17 MB | 1.46 us | 0.72 us | 45 ms | 53 / 46 ms | 1.3 / 2.5 ms |
-| zstd 7 + dictionary | 7.71 MB | 1.34 us | 0.60 us | 44 ms | 51 / 44 ms | 1.2 / 2.4 ms |
+| Codec | Size | Pack | Warm per chunk (mmap / cow) | Warm region | Cold id order (mmap) | Cold shuffled (mmap / in-memory) | Cold region (mmap) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| installed (zstd 7) | 8.46 MB | - | 1.30 / 1.30 us | 0.62 us | 39 ms | 51 / 43 ms | 1.5 ms |
+| stored | 23.71 MB | 0.01 s | 0.06 / 0.00 us | 0.01 us | 8 ms | 25 / 8 ms | 1.5 ms |
+| LZ4 (comparison) | 16.99 MB | 0.04 s | 0.36 / 0.32 us | 0.17 us | 14 ms | 28 / 16 ms | 1.3 ms |
+| zstd 1 | 8.82 MB | 0.02 s | 1.25 us | 0.60 us | 39 ms | 48 / 42 ms | 1.3 ms |
+| zstd 3 | 8.74 MB | 0.02 s | 1.27 us | 0.60 us | 43 ms | 48 / 41 ms | 1.3 ms |
+| **zstd 7 (the statics default)** | **8.46 MB** | 0.05 s | 1.35 us | 0.64 us | 42 ms | 53 / 43 ms | 1.3 ms |
+| zstd 9 | 8.46 MB | 0.06 s | 1.35 us | 0.64 us | 43 ms | 50 / 44 ms | 1.3 ms |
+| zstd 12 | 8.28 MB | 0.10 s | 1.42 us | 0.69 us | 43 ms | 52 / 45 ms | 1.4 ms |
+| zstd 15 | 8.23 MB | 0.14 s | 1.46 us | 0.73 us | 44 ms | 53 / 47 ms | 1.5 ms |
+| zstd 19 | 8.17 MB | 0.25 s | 1.45 us | 0.73 us | 44 ms | 52 / 46 ms | 1.3 ms |
+| zstd 22 | 8.17 MB | 0.25 s | 1.46 us | 0.73 us | 44 ms | 53 / 46 ms | 1.3 ms |
+| zstd 7 + dictionary | 7.71 MB | 0.16 s | 1.33 us | 0.60 us | 42 ms | 51 / 44 ms | 1.2 ms |
 
-What the numbers say:
+The zstd 1 map row ranges over two runs; one cold pass was an outlier.
 
-- **Stored retrieves fastest** wherever the data is in memory: 16..50× faster warm, and zero-copy
-  through `_cow`. It is also fastest cold in id order and for a mapped region.
-- The one loss is reading the whole map in a shuffled order from a cold mmap: 850 ms against
-  127 ms, because 118 MB of page faults stand in for 18 MB. No view does that; a cold region is
-  3.5 ms against 3.9 ms.
-- The zstd levels differ little from each other. The dictionary does not make map chunks smaller,
-  and it is 10 % slower than plain zstd 7.
+**Choosing the level.** The rule: take the highest level whose decode is not slower, unless pack
+time becomes unreasonable.
 
-**The reader fix.** Before this change the reader built a new Zstd context for every payload. For
-the dictionary codec it also digested the dictionary again for every payload. That made the
-installed map read at 7.90 us per chunk, against 3.45 us at plain zstd 7.
+- **Map:** level 19. It is the smallest package (15.96 MB, −10 % against level 7). Its warm decode
+  is level 7's (3.41 against 3.33 us), and over a view region it is faster (3.34 against 3.58 us).
+  Level 22 gives the same bytes. Packing takes 2.5 s against 0.3 s for map0.
+- **Statics:** level 7. Level 9 gives the same bytes at the same speed. From level 12 on, decode
+  is 5..10 % slower for at most 3.4 % fewer bytes (8.17 MB at 19). This is also what the installed
+  statics already use.
+- **No dictionary:** on the map it is larger than plain zstd 7 and about 10 % slower. On statics
+  it is 9 % smaller at the same speed, but that is 0.75 MB, and dropping it keeps one codec path.
+- **Stored** stays an opt-in: `--stored`.
 
-`udd-container` now keeps:
+**LZ4, for comparison only.** It is not adopted and has no container codec.
+
+| Package | LZ4 against the default | Warm per chunk | View region, cold |
+| --- | --- | --- | --- |
+| map | 3.7× the size (58.4 MB) | 1.5× faster (2.2 against 3.4 us) | slower (4.6 against 3.7 ms), from the extra bytes |
+| statics | 2× the size (17.0 MB) | 3.7× faster (0.36 against 1.35 us) | same |
+
+The absolute gain is small. A 576-chunk view region decodes in about 2 ms (map) and 0.4 ms
+(statics) at the defaults, so LZ4 would save about 0.7 ms and 0.3 ms.
+
+**The reader fix.** Before c4b94c4e the reader built a new Zstd context for every payload. For
+the dictionary codec it also digested the dictionary again for every payload, so the installed map
+read at 7.90 us per chunk. `udd-container` now keeps:
 
 - one decompression context per thread (`support::zstd_decompress`);
 - the type dictionaries, prepared once at open (`UddpReader::prepared_dicts`).
 
-The installed map now reads at 3.9 us per chunk without a repack. Every Zstd package benefits.
+The installed map reads at 3.9 us per chunk without a repack. Every Zstd package benefits.
 
-**Decision:**
+**What changed in the packers:**
 
-- The map and statics packers store chunks by default (`udd_conv::chunk_compression::ChunkCompression`).
-- `--zstd[=LEVEL]` on `pack-map`, `pack-statics` and `pack-map-statics` now compresses chunks with
-  plain Zstd. It used to be accepted and ignored.
+- `udd_conv::chunk_compression::ChunkCompression` defaults to plain Zstd at the package's level:
+  `MAP_CHUNK_ZSTD_LEVEL` 19 and `STATICS_CHUNK_ZSTD_LEVEL` 7.
+- On `pack-map`, `pack-statics` and `pack-map-statics`, `--zstd=LEVEL` sets the level. A bare
+  `--zstd` keeps the package's level, which is what `scripts/uddconv` passes by default; the
+  scripts are back to how they were before 3a3c1621.
+- `--stored` stores the chunks. It conflicts with `--zstd`.
 - The dictionary path (`CompressionFlag::Auto` on map chunks) is gone from the map packer.
-- `scripts/uddconv` passes `--zstd` to `pack-map-statics` only when it is asked. Its other
-  non-texture packages keep the default `--zstd`.
-- The size cost is about +100 MB per Britannia-sized facet for the map and +15 MB for statics.
 
-The candidates are packed from the plain CC client by today's packer, without difs. Both pass
-`udd-cli tool validate`. The sha256 values are in `SHA256SUMS` in the folder.
+**Candidates.** `/home/claudio/test/uddp-candidates/map-statics-zstd-20261101/` holds a default
+`pack-map-statics --map-id 0` build from the plain CC client, without difs. Both packages pass
+`udd-cli tool validate`, and the sha256 values are in `SHA256SUMS`.
 
-`/home/claudio/test/uddp-candidates/map-statics-stored-20261101/`:
+| Package | Size | sha256 | Note |
+| --- | --- | --- | --- |
+| `map0.uddp` | 15,943,908 B | `f87cf818...` | packing compressed for 2.5 s |
+| `statics0.uddp` | 8,444,739 B | `38c29ee7...` | the same bytes as an explicit zstd 7 build |
 
-- `stored/map0.uddp` (117,899,352 B) and `stored/statics0.uddp` (23,665,808 B): the new default;
-- `zstd7/map0.uddp` (17,744,768 B) and `zstd7/statics0.uddp` (8,444,739 B): `--zstd`, for
-  comparison.
+Their payloads equal those of the stored build (`tool diff`: 0 changed). The stored candidates
+have been trashed.
 
-The stored and the zstd 7 packages have the same payloads (`tool diff`: 0 changed). Against the
-installed packages, which were packed on 2026-06-30, 40 map chunks and 53 statics chunks differ.
-The zstd 7 build differs in the same chunks, so the codec is not the cause; the June packages
-predate later packer or source changes. With `--include-map-difs --include-static-difs` the counts
-are 40 and 183, so the June packages were not built with difs either.
+**Why 40 map and 53 statics chunks differ from the installed packages.** The June packages
+(2026-06-30) were packed from the fp client, `_Ultima Online Classic fp`, like
+`mobile_anim_cc`. A pack of map0/statics0 from the fp client with today's packer has 0 changed
+payloads against them.
+
+The plain client's `map0LegacyMUL.uop` is dated 2024-06-06 and its `statics0.mul` 2024-04-09. The
+fp client's files are dated 2026-05-19 and 2026-05-12, so they carry newer map content:
+
+- the 40 map chunks are in one block at x 6976..7135, y 2176..2431, in the dungeon area east of
+  x 5120;
+- 51 of the 53 statics chunks are in the same block (x 6976..7167, y 2144..2463);
+- the other 2 are at x 1824..1887, y 2816..2847.
+
+No packer change is involved.
 
 Suggested for the renderer session: read map and statics chunks with
-`read_file_by_dense_id_cow`. A stored chunk is then borrowed from the mapping, not copied.
+`read_file_by_dense_id_cow`. It only pays off for stored chunks, which are then borrowed from the
+mapping instead of copied; for Zstd chunks it changes nothing.
 
 ### (b) World export
 

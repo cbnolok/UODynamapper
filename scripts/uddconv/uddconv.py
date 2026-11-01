@@ -189,14 +189,13 @@ def run_ec_gumps(ecdir: str, output_dir: str, format_args: list[str] | None = No
     run_pack("pack-ec-gumps", *(format_args or DEFAULT_GUMP_ARGS), "--ecdir", ecdir, "--output", f"{output_dir}/gumps_ec.uddp")
 
 
-def run_maps_statics(ccdir: str, output_dir: str, maps: str, map_statics_zstd: list[str]) -> None:
-    # Map and statics chunks are stored unless --zstd is asked: stored chunks read fastest at runtime.
+def run_maps_statics(ccdir: str, output_dir: str, maps: str, non_texture_zstd: list[str]) -> None:
     ccdir = require_value(ccdir, "usage: uddconv.py maps-statics --ccdir CCDIR [--output-dir DIR] [--maps MAPS]")
     ensure_output_dir(output_dir)
     for map_id in parse_map_ids(maps, "usage: uddconv.py maps-statics --ccdir CCDIR [--output-dir DIR] [--maps MAPS]"):
         run_pack(
             "pack-map-statics",
-            *map_statics_zstd,
+            *non_texture_zstd,
             "--ccdir",
             ccdir,
             "--map-id",
@@ -221,7 +220,6 @@ def run_all(
     ec_land_format: list[str],
     tables: str,
     non_texture_zstd: list[str],
-    map_statics_zstd: list[str],
     gump_args: list[str],
 ) -> None:
     ccdir = require_value(ccdir, "usage: just uddconv-all <ccdir> [ecdir] [output_dir] [maps]")
@@ -253,10 +251,9 @@ def run_all(
     run_pack("pack-lights", *non_texture_zstd, *source_args, "--output", f"{output_dir}/world_lights.uddp")
     run_pack("pack-hues", *non_texture_zstd, "--ccdir", ccdir, "--output", f"{output_dir}/hues.uddp")
     for map_id in map_ids:
-        # Map and statics chunks are stored unless --zstd is asked: stored chunks read fastest at runtime.
         run_pack(
             "pack-map-statics",
-            *map_statics_zstd,
+            *non_texture_zstd,
             "--ccdir",
             ccdir,
             "--map-id",
@@ -341,7 +338,6 @@ def main() -> int:
             format_and_zstd_args(args, prefix="land-", cli_prefix="land-", default_format="jxl", global_zstd=global_zstd),
             args.tables,
             non_texture_zstd,
-            global_zstd,
             gump_args,
         )
     elif args.command == "animations":
@@ -359,7 +355,7 @@ def main() -> int:
     elif args.command == "ec-gumps":
         run_ec_gumps(args.ecdir, args.output_dir, default_or_requested_gump_args(args))
     else:
-        run_maps_statics(args.ccdir, args.output_dir, args.maps, zstd_args_from_namespace(args))
+        run_maps_statics(args.ccdir, args.output_dir, args.maps, default_or_requested_zstd(args))
     return 0
 
 

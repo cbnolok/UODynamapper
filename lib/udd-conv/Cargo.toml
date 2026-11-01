@@ -45,6 +45,8 @@ workspace-hack.workspace = true
 [dev-dependencies]
 # The map/statics retrieval benchmark drops a file's pages from the page cache (posix_fadvise).
 libc.workspace = true
+# Comparison only in that benchmark: LZ4 payloads, decoded in the test (no container codec).
+lz4_flex = { version = "0.11", default-features = false, features = ["std", "safe-encode", "safe-decode"] }
 
 [features]
 default = []

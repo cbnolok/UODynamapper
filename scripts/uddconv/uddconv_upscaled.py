@@ -260,7 +260,6 @@ def run_all(
     ec_art_format: list[str],
     ec_land_format: list[str],
     non_texture_zstd: list[str],
-    map_statics_zstd: list[str],
     gump_zstd: list[str],
     tables: str,
     cc_art_upscale: list[str],
@@ -305,10 +304,9 @@ def run_all(
     run_pack("pack-lights", *non_texture_zstd, *source_args, "--output", f"{output_dir}/world_lights.uddp")
     run_pack("pack-hues", *non_texture_zstd, "--ccdir", ccdir, "--output", f"{output_dir}/hues.uddp")
     for map_id in map_ids:
-        # Map and statics chunks are stored unless --zstd is asked: stored chunks read fastest at runtime.
         run_pack(
             "pack-map-statics",
-            *map_statics_zstd,
+            *non_texture_zstd,
             "--ccdir",
             ccdir,
             "--map-id",
@@ -406,7 +404,6 @@ def main() -> int:
             format_and_zstd_args(args, prefix="art-", cli_prefix="art-", default_format="bc7", default_zstd=True, global_zstd=global_zstd),
             format_and_zstd_args(args, prefix="land-", cli_prefix="land-", default_format="bc7", default_zstd=True, global_zstd=global_zstd),
             non_texture_zstd,
-            global_zstd,
             gump_zstd,
             args.tables,
             upscale_args_from_namespace(args, prefix="cc-art-", defaults=CC_ART_UPSCALE),

@@ -1,8 +1,8 @@
 //! Build-time support for `staticsX.uddp`.
 //!
 //! This module converts Classic Client `staticsX.mul` and `staidxX.mul` files
-//! into UODynamapper's runtime format (chunks stored unless the packer is asked
-//! for Zstd, see [`ChunkCompression`]).
+//! into UODynamapper's runtime format (chunks compressed with plain Zstd, see
+//! [`ChunkCompression`]).
 //!
 //! Each 32x32 map chunk has a corresponding entry in the `.uddp` package,
 //! containing the list of static items for that chunk with offsets relative to
@@ -14,7 +14,7 @@ use crate::progress::{ProgressBar, ProgressStyle};
 use log::info;
 use std::path::{Path, PathBuf};
 
-use crate::chunk_compression::ChunkCompression;
+use crate::chunk_compression::{ChunkCompression, STATICS_CHUNK_ZSTD_LEVEL};
 use crate::classic_patches::ClassicPatchOptions;
 use crate::classic_sources::{resolve_classic_map_source, ClassicMapSource, SourceFormatPreference};
 use crate::package_progress::build_and_write_package;
@@ -198,7 +198,7 @@ fn convert_statics_mul_to_uddp_from_resolved_sources_with_dimensions(
             } else {
                 builder.add_file(AddFileRequest {
                     data_type: DataType::Static as u8,
-                    compression: chunk_compression.flag(),
+                    compression: chunk_compression.flag(STATICS_CHUNK_ZSTD_LEVEL),
                     width: 0,
                     height: 0,
                     virtual_path: None,

@@ -2,7 +2,8 @@
 //!
 //! The ignored test repacks the entries of an installed `map0.uddp` and `statics0.uddp` with every
 //! codec the builder offers for them: stored, plain Zstd at several levels, and Zstd with the type
-//! dictionary. It then reads every chunk back the way dynamapper does
+//! dictionary. For comparison it also stores LZ4 payloads (`lz4_flex`, the payload decoded in the
+//! test, as there is no container codec for it) and reports each variant's pack time. It then reads every chunk back the way dynamapper does
 //! (`UddpReader::load`, which maps the file, and `read_file_by_dense_id`, with the decoded-entry
 //! cache off), and also from an in-memory reader and through the borrowing `_cow` read, in id
 //! order, in a shuffled order and for a 24x24-chunk region around the map centre. Warm
@@ -26,7 +27,7 @@ use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpB
 const PACKAGE_DIR_ENV: &str = "UDD_PACKAGE_DIR";
 const PACKAGES: [&str; 2] = ["map0.uddp", "statics0.uddp"];
 /// Plain Zstd levels to compare. 7 is the builder's default level (`ZstdNoDict`, `ZstdDict`).
-const ZSTD_LEVELS: [i32; 4] = [1, 3, 7, 19];
+const ZSTD_LEVELS: [i32; 8] = [1, 3, 7, 9, 12, 15, 19, 22];
 /// Warm passes per read order; the reported time is the fastest pass.
 const WARM_PASSES: usize = 5;
 const RANDOM_ORDER_SEED: u64 = 0x2545_F491_4F6C_DD1D;
@@ -43,16 +44,36 @@ struct Entry {
 struct Variant {
     label: String,
     compression: CompressionFlag,
+    /// The chunk is an LZ4 block (size prepended), stored, and decoded after the read.
+    lz4: bool,
 }
 
 fn variants() -> Vec<Variant> {
-    let mut variants = vec![Variant { label: "stored".into(), compression: CompressionFlag::None }];
+    let mut variants = vec![
+        Variant { label: "stored".into(), compression: CompressionFlag::None, lz4: false },
+        Variant { label: "lz4".into(), compression: CompressionFlag::None, lz4: true },
+    ];
     variants.extend(ZSTD_LEVELS.iter().map(|&level| Variant {
         label: format!("zstd {level}"),
         compression: CompressionFlag::ZstdNoDictLevel(level),
+        lz4: false,
     }));
-    variants.push(Variant { label: "zstd 7 + dict".into(), compression: CompressionFlag::ZstdDict });
+    variants.push(Variant { label: "zstd 7 + dict".into(), compression: CompressionFlag::ZstdDict, lz4: false });
     variants
+}
+
+/// One chunk read, decoded to its raw bytes; returns the raw length.
+fn read_chunk(reader: &UddpReader, id: u32, borrow: bool, lz4: bool) -> usize {
+    let payload = if borrow {
+        reader.read_file_by_dense_id_cow(id).expect("read entry")
+    } else {
+        std::borrow::Cow::Owned(reader.read_file_by_dense_id(id).expect("read entry"))
+    };
+    if lz4 && !payload.is_empty() {
+        black_box(lz4_flex::decompress_size_prepended(&payload).expect("lz4 decode")).len()
+    } else {
+        black_box(payload).len()
+    }
 }
 
 fn read_entries(path: &Path) -> Vec<Entry> {
@@ -76,25 +97,29 @@ fn map_height_chunks(map_path: &Path) -> u32 {
     metadata.height_tiles.div_ceil(CHUNK_TILE_DIM)
 }
 
-/// Repacks the entries with one codec. Metadata and empty chunks stay stored, as the packers do.
-fn repack(entries: &[Entry], compression: CompressionFlag, path: &Path) {
+/// Repacks the entries with one codec and returns the time to compress and write them. Metadata and
+/// empty chunks stay stored, as the packers do.
+fn repack(entries: &[Entry], variant: &Variant, path: &Path) -> Duration {
+    let start = Instant::now();
     let mut builder = UddpBuilder::new(LookupMode::DenseId);
     for (id, entry) in entries.iter().enumerate() {
         let is_chunk = entry.data_type != DataType::Metadata as u8 && !entry.raw.is_empty();
+        let lz4_payload = (variant.lz4 && is_chunk).then(|| lz4_flex::compress_prepend_size(&entry.raw));
         builder
             .add_file(AddFileRequest {
                 data_type: entry.data_type,
-                compression: if is_chunk { compression } else { CompressionFlag::None },
+                compression: if is_chunk { variant.compression } else { CompressionFlag::None },
                 width: 0,
                 height: 0,
                 virtual_path: None,
                 path_hash64: None,
                 id: Some(id as u32),
-                data: &entry.raw,
+                data: lz4_payload.as_deref().unwrap_or(&entry.raw),
             })
             .expect("add entry");
     }
     builder.into_file(path).expect("write variant");
+    start.elapsed()
 }
 
 /// Where the region read order sits: a square of chunks around the map centre, read row by row as a
@@ -140,46 +165,43 @@ fn evict_from_page_cache(path: &Path) {
 
 /// One cold pass: the file is evicted, then mapped (or read whole, for the in-memory reader, whose
 /// load time is included) and every id read once.
-fn cold_pass(path: &Path, ids: &[u32], in_memory: bool) -> Duration {
+fn cold_pass(path: &Path, ids: &[u32], in_memory: bool, lz4: bool) -> Duration {
     evict_from_page_cache(path);
     let start = Instant::now();
     let reader = if in_memory { UddpReader::load_in_memory(path) } else { UddpReader::load(path) }
         .expect("open variant cold");
     for &id in ids {
-        black_box(reader.read_file_by_dense_id(id).expect("read entry"));
+        read_chunk(&reader, id, false, lz4);
     }
     start.elapsed()
 }
 
-fn time_pass(reader: &UddpReader, ids: &[u32], borrow: bool) -> Duration {
+fn time_pass(reader: &UddpReader, ids: &[u32], borrow: bool, lz4: bool) -> Duration {
     let start = Instant::now();
     for &id in ids {
-        if borrow {
-            black_box(reader.read_file_by_dense_id_cow(id).expect("read entry"));
-        } else {
-            black_box(reader.read_file_by_dense_id(id).expect("read entry"));
-        }
+        read_chunk(reader, id, borrow, lz4);
     }
     start.elapsed()
 }
 
-fn fastest_pass(reader: &UddpReader, ids: &[u32], borrow: bool) -> Duration {
-    (0..WARM_PASSES).map(|_| time_pass(reader, ids, borrow)).min().expect("at least one pass")
+fn fastest_pass(reader: &UddpReader, ids: &[u32], borrow: bool, lz4: bool) -> Duration {
+    (0..WARM_PASSES).map(|_| time_pass(reader, ids, borrow, lz4)).min().expect("at least one pass")
 }
 
 fn micros_per_entry(elapsed: Duration, ids: &[u32]) -> f64 {
     elapsed.as_nanos() as f64 / NANOS_PER_MICRO / ids.len() as f64
 }
 
-fn report(label: &str, path: &Path, entries: &[Entry], height_chunks: u32) {
+fn report(label: &str, path: &Path, entries: &[Entry], height_chunks: u32, lz4: bool, pack_time: Option<Duration>) {
     let orders = read_orders(entries, height_chunks);
     let size_mb = fs::metadata(path).expect("variant size").len() as f64 / BYTES_PER_MB;
-    let mut cells = vec![format!("{label:<13}"), format!("{size_mb:>7.2} MB")];
+    let pack = pack_time.map_or_else(|| "-".to_string(), |time| format!("{:.2} s", time.as_secs_f64()));
+    let mut cells = vec![format!("{label:<13}"), format!("{size_mb:>7.2} MB"), format!("pack {pack:>7}")];
 
     // Cold passes first, while no reader maps the file.
     for (order, ids) in &orders {
-        let mapped_cold = cold_pass(path, ids, false);
-        let memory_cold = cold_pass(path, ids, true);
+        let mapped_cold = cold_pass(path, ids, false, lz4);
+        let memory_cold = cold_pass(path, ids, true, lz4);
         cells.push(format!(
             "cold {order}: mmap {:.1} ms, in-memory {:.1} ms (open included)",
             mapped_cold.as_secs_f64() * MILLIS_PER_SECOND,
@@ -189,13 +211,16 @@ fn report(label: &str, path: &Path, entries: &[Entry], height_chunks: u32) {
 
     let mapped = UddpReader::load(path).expect("map variant");
     for (id, entry) in entries.iter().enumerate() {
-        assert_eq!(mapped.read_file_by_dense_id(id as u32).expect("read back"), entry.raw, "{label}: entry {id}");
+        let payload = mapped.read_file_by_dense_id(id as u32).expect("read back");
+        let is_chunk = entry.data_type != DataType::Metadata as u8 && !entry.raw.is_empty();
+        let raw = if lz4 && is_chunk { lz4_flex::decompress_size_prepended(&payload).expect("lz4 decode") } else { payload };
+        assert_eq!(raw, entry.raw, "{label}: entry {id}");
     }
     let in_memory = UddpReader::load_in_memory(path).expect("read variant");
     for (order, ids) in &orders {
-        let mapped_warm = micros_per_entry(fastest_pass(&mapped, ids, false), ids);
-        let mapped_cow = micros_per_entry(fastest_pass(&mapped, ids, true), ids);
-        let memory_warm = micros_per_entry(fastest_pass(&in_memory, ids, false), ids);
+        let mapped_warm = micros_per_entry(fastest_pass(&mapped, ids, false, lz4), ids);
+        let mapped_cow = micros_per_entry(fastest_pass(&mapped, ids, true, lz4), ids);
+        let memory_warm = micros_per_entry(fastest_pass(&in_memory, ids, false, lz4), ids);
         cells.push(format!(
             "warm {order}: mmap {mapped_warm:.2} us (cow {mapped_cow:.2}), in-memory {memory_warm:.2} us"
         ));
@@ -216,11 +241,11 @@ fn map_and_statics_chunks_by_codec() {
         let installed = package_dir.join(package);
         let entries = read_entries(&installed);
         println!("== {package}: {} entries", entries.len());
-        report("installed", &installed, &entries, height_chunks);
+        report("installed", &installed, &entries, height_chunks, false, None);
         for variant in variants() {
             let path = work_dir.join(format!("{}_{}.uddp", package, variant.label.replace(' ', "_")));
-            repack(&entries, variant.compression, &path);
-            report(&variant.label, &path, &entries, height_chunks);
+            let pack_time = repack(&entries, &variant, &path);
+            report(&variant.label, &path, &entries, height_chunks, variant.lz4, Some(pack_time));
             fs::remove_file(&path).expect("remove variant");
         }
     }

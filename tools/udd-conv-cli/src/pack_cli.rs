@@ -88,7 +88,8 @@ use udd_conv::{
 #[cfg(test)]
 const DEFAULT_ZSTD_LEVEL: i32 = 7;
 const DEFAULT_ZSTD_LEVEL_VALUE: &str = "7";
-const CHUNK_ZSTD_HELP: &str = "Compress the chunks with plain Zstd (default level 7, or --zstd=LEVEL). Without it the chunks are stored, which reads fastest at runtime for a larger package.";
+const CHUNK_ZSTD_HELP: &str = "Zstd level of the chunks (--zstd=LEVEL). Chunks are compressed with plain Zstd unless --stored; without a level (or without the flag) map chunks use level 19 and statics chunks level 7.";
+const CHUNK_STORED_HELP: &str = "Store the chunks uncompressed: the fastest runtime read, for a package about 6.6x (map) or 2.8x (statics) larger.";
 const DEFAULT_JXL_LEVEL: u8 = 6;
 const OUTPUT_PATH_HELP: &str = "Output paths (--output, --art-output, --land-output, ...) and their default \
 file names resolve against the current working directory; absolute paths are used as given. \
@@ -1299,8 +1300,10 @@ enum Commands {
         output: Option<PathBuf>,
         #[arg(long, default_value_t = false)]
         uop: bool,
-        #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = CHUNK_ZSTD_HELP)]
-        zstd: Option<i32>,
+        #[arg(long, num_args = 0..=1, require_equals = true, conflicts_with = "stored", help = CHUNK_ZSTD_HELP)]
+        zstd: Option<Option<i32>>,
+        #[arg(long, default_value_t = false, help = CHUNK_STORED_HELP)]
+        stored: bool,
     },
     /// Packs Classic staticsX.mul into staticsX.uddp blocks.
     PackStatics {
@@ -1314,8 +1317,10 @@ enum Commands {
         map_id: u32,
         #[arg(long)]
         output: Option<PathBuf>,
-        #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = CHUNK_ZSTD_HELP)]
-        zstd: Option<i32>,
+        #[arg(long, num_args = 0..=1, require_equals = true, conflicts_with = "stored", help = CHUNK_ZSTD_HELP)]
+        zstd: Option<Option<i32>>,
+        #[arg(long, default_value_t = false, help = CHUNK_STORED_HELP)]
+        stored: bool,
     },
     /// Packs Classic mapX.uddp and staticsX.uddp together, reusing the map dimensions for statics.
     PackMapStatics {
@@ -1333,8 +1338,10 @@ enum Commands {
         statics_output: Option<PathBuf>,
         #[arg(long, default_value_t = false)]
         uop: bool,
-        #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_ZSTD_LEVEL_VALUE, help = CHUNK_ZSTD_HELP)]
-        zstd: Option<i32>,
+        #[arg(long, num_args = 0..=1, require_equals = true, conflicts_with = "stored", help = CHUNK_ZSTD_HELP)]
+        zstd: Option<Option<i32>>,
+        #[arg(long, default_value_t = false, help = CHUNK_STORED_HELP)]
+        stored: bool,
     },
     /// Packs CC and EC lighting textures into world_lights.uddp.
     PackLights {
@@ -2188,6 +2195,7 @@ where
             output,
             uop,
             zstd,
+            stored,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let default_output = PathBuf::from(format!("map{}.uddp", map_id));
@@ -2202,7 +2210,7 @@ where
                     SourceFormatPreference::Mul
                 },
                 &facet_patch_options(classic_patches, map_edition),
-                ChunkCompression::from_zstd_level(zstd),
+                ChunkCompression::from_cli(stored, zstd),
             )?;
             info!(
                 "Wrote {} chunks for map {} to '{}' ({}x{} package chunks).",
@@ -2220,6 +2228,7 @@ where
             map_id,
             output,
             zstd,
+            stored,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let default_output = PathBuf::from(format!("statics{}.uddp", map_id));
@@ -2229,7 +2238,7 @@ where
                 &out_file,
                 map_id,
                 &facet_patch_options(classic_patches, map_edition),
-                ChunkCompression::from_zstd_level(zstd),
+                ChunkCompression::from_cli(stored, zstd),
             )?;
             info!(
                 "Wrote {} chunks with {} total statics for map {} to '{}'.",
@@ -2248,6 +2257,7 @@ where
             statics_output,
             uop,
             zstd,
+            stored,
         } => {
             let paths = collect_source_dirs(&source_dir_args)?;
             let default_map_output = PathBuf::from(format!("map{}.uddp", map_id));
@@ -2258,7 +2268,7 @@ where
                 statics_output.as_ref().unwrap_or(&default_statics_output),
             );
             let patch_options = facet_patch_options(classic_patches, map_edition);
-            let chunk_compression = ChunkCompression::from_zstd_level(zstd);
+            let chunk_compression = ChunkCompression::from_cli(stored, zstd);
             let map_summary = convert_map_mul_to_uddp_from_sources_with_patches(
                 &paths,
                 &map_out_file,
@@ -3750,26 +3760,28 @@ mod tests {
     }
 
     #[test]
-    fn map_and_statics_chunks_are_stored_unless_zstd_is_asked() {
-        const ASKED_LEVEL: i32 = 19;
-        let default_level: i32 = DEFAULT_ZSTD_LEVEL_VALUE.parse().expect("default zstd level");
+    fn map_and_statics_chunks_are_compressed_unless_stored_is_asked() {
+        const ASKED_LEVEL: i32 = 3;
         let level_arg = format!("--zstd={ASKED_LEVEL}");
         for command in ["pack-map", "pack-statics", "pack-map-statics"] {
             for (extra, expected) in [
-                (None, ChunkCompression::Stored),
-                (Some("--zstd"), ChunkCompression::Zstd(default_level)),
-                (Some(level_arg.as_str()), ChunkCompression::Zstd(ASKED_LEVEL)),
+                (vec![], ChunkCompression::PackageDefault),
+                (vec!["--zstd"], ChunkCompression::PackageDefault),
+                (vec![level_arg.as_str()], ChunkCompression::Zstd(ASKED_LEVEL)),
+                (vec!["--stored"], ChunkCompression::Stored),
             ] {
                 let mut args = vec!["uddpack", command, "--ccdir", "/cc", "--map-id", "0"];
-                args.extend(extra);
-                let zstd = match Cli::try_parse_from(args).expect("parse map args").command {
-                    Commands::PackMap { zstd, .. }
-                    | Commands::PackStatics { zstd, .. }
-                    | Commands::PackMapStatics { zstd, .. } => zstd,
+                args.extend(extra.iter().copied());
+                let (zstd, stored) = match Cli::try_parse_from(args).expect("parse map args").command {
+                    Commands::PackMap { zstd, stored, .. }
+                    | Commands::PackStatics { zstd, stored, .. }
+                    | Commands::PackMapStatics { zstd, stored, .. } => (zstd, stored),
                     _ => panic!("unexpected command parsed"),
                 };
-                assert_eq!(ChunkCompression::from_zstd_level(zstd), expected, "{command} {extra:?}");
+                assert_eq!(ChunkCompression::from_cli(stored, zstd), expected, "{command} {extra:?}");
             }
+            let both = ["uddpack", command, "--ccdir", "/cc", "--map-id", "0", "--stored", "--zstd"];
+            assert!(Cli::try_parse_from(both).is_err(), "{command}: --stored conflicts with --zstd");
         }
     }
 
