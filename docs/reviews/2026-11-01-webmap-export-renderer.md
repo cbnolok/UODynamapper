@@ -92,6 +92,29 @@ Evidence is in `/home/claudio/rust-target/uodynamapper-scratch/renderer/export/`
 - `snap-effect-*.png`.
 - `scripts/run_hidden.py`, the hidden-window and desktop-state watcher.
 
+## Full Classic export of facet 0
+
+The whole of facet 0 (7168×4096 tiles, installed zstd map/statics packages, Classic art) was planned
+and run with `webmap-export-cli` and the hidden export renderer. It covered 1,815 frames of 4,160 px,
+and 143 of them lie outside the map and write no tiles. It took 81 minutes (4,869 s) on one GPU: about
+3 s of render and 1.8 s of tile encoding per land frame. No frame timed out, no static lacked art, no
+window mapped, and focus and pointer were unchanged. The output is 9.6 GB:
+
+| Level | Tiles | Size |
+| --- | ---: | ---: |
+| 9 (full resolution) | 96,159 | 7.4 GB |
+| 8 | 24,574 | 1.5 GB |
+| 7 | 6,356 | 252 MB |
+| 6 | 1,672 | 38 MB |
+| 5 | 450 | 9.2 MB |
+| 4 | 128 | 2.7 MB |
+| 0–3 | 57 | 1.2 MB |
+
+Frame seams: over 4,000 random neighbouring level-9 tile pairs, the step across an edge in excess of
+the step just inside it is the same at frame edges (mean 0.39 levels, 99th percentile 3.4) as at tile
+edges inside a frame (0.40, 3.1). The largest steps are content, such as a post on a tile edge. A frame
+corner in Britain shows no seam at levels 9 to 6, and the level-3 overview is complete.
+
 ## Remaining limits
 
 - **Classic overlap residual: fixed.** The last 82 pixels were not land texels. They were the one-pixel
@@ -104,8 +127,11 @@ Evidence is in `/home/claudio/rust-target/uodynamapper-scratch/renderer/export/`
   decides. With that, the Classic pair is exact: 0 differing pixels outside the guard. Pick passes and
   perspective keep the rasterised depth. At the ten accepted scenes in Classic, 0.18–0.23% of the
   pixels change, all on those overlap pixels of water and cobble quads, and they look the same. EC
-  frames are unchanged. Not verified: whether the quad that now wins each overlap is the one the
-  client's painter order draws last.
+  frames are unchanged; in the EC overlap pair 5 fewer pixels differ, and the rest are the camera-led
+  reflections below. Within a chunk, static instances are sorted by ascending `x + y`, and the depth
+  test passes on equal depth, so the later (southern) quad of an overlapping pair wins, as in the
+  client's painter order. Not verified: pairs that straddle two chunk draw entities, whose order is
+  the render phase's.
 - **EC water reflections follow the camera focus**, by design (`ec_liquid_camera_reflection_uv`). An
   export needs a fixed reflection focus or reflections off. This is a decision for the user.
 - **Interactive check not run.** The snap could not be checked in the interactive three-preset scene
