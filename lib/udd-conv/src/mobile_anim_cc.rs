@@ -18,7 +18,7 @@ use byteorder::{LittleEndian, WriteBytesExt};
 use color_eyre::eyre::{self, ContextCompat, WrapErr};
 use guillotiere::{size2, AtlasAllocator};
 use crate::progress::{ProgressBar, ProgressStyle};
-use log::info;
+use log::{info, warn};
 use rayon::prelude::*;
 use udd_container::{
     AddFileRequest, AddOwnedFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder,
@@ -49,6 +49,7 @@ use udd_assets::mobile_anim_cc::{
     page_entry_path, MobileAnimCcAnimationRecord, MobileAnimCcFrameRecord,
     MobileAnimCcBodyResolveRecord, MobileAnimCcBodyTypeRecord, MobileAnimCcPageRecord,
     ANIMATION_MANIFEST_ENTRY_PATH, BODY_RESOLVE_FLAG_BODYCONV_DEF, BODY_RESOLVE_FLAG_BODY_DEF,
+    MOBILE_ANIM_CC_FLAG_UOP_SOURCE,
     BODY_RESOLVE_MANIFEST_ENTRY_PATH, BODY_TYPE_MANIFEST_ENTRY_PATH, FRAME_MANIFEST_ENTRY_PATH,
     MISSING_PAGE_FRAME_INDEX, MISSING_PAGE_INDEX, PAGE_MANIFEST_ENTRY_PATH,
 };
@@ -92,6 +93,8 @@ pub struct MobileAnimCcBuildSummary {
     pub empty_pixel_count: u64,
     pub atlas_width: u32,
     pub atlas_height: u32,
+    /// Source entries that hold data but couldn't be read, each reported in a warning.
+    pub skipped_animation_count: u32,
 }
 
 pub struct MobileAnimCcAtlasOptions {
@@ -357,7 +360,7 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources_with_progress(
         total: 1,
     });
     let stage_timer = Instant::now();
-    let (mut planned_frames, animation_records, mut frame_records) =
+    let (mut planned_frames, animation_records, mut frame_records, skipped_animation_count) =
         plan_present_animations(&client_dir, &anim_map)?;
     stage_timings.plan = stage_timer.elapsed();
     let stage_timer = Instant::now();
@@ -451,6 +454,7 @@ pub fn convert_anim_mul_to_mobile_anim_cc_uddp_from_sources_with_progress(
         empty_pixel_count: packed_pages.stats.empty_pixel_count,
         atlas_width: options.atlas_width,
         atlas_height: options.atlas_height,
+        skipped_animation_count,
     };
     stage_timings.total = total_timer.elapsed();
     stage_timings.log();
@@ -808,10 +812,11 @@ fn flush_bc7_progress(pb: Option<&ProgressBar>, pending: &AtomicU64) {
 fn plan_present_animations(
     client_dir: &Path,
     anim_map: &AnimMap,
-) -> eyre::Result<(Vec<PlannedMobileAnimFrame>, Vec<MobileAnimCcAnimationRecord>, Vec<MobileAnimCcFrameRecord>)> {
+) -> eyre::Result<(Vec<PlannedMobileAnimFrame>, Vec<MobileAnimCcAnimationRecord>, Vec<MobileAnimCcFrameRecord>, u32)> {
     let mut planned_frames = Vec::new();
     let mut animation_records = Vec::new();
     let mut frame_records = Vec::new();
+    let mut skipped_animation_count = 0u32;
 
     let mut candidates = collect_present_animation_candidates(anim_map);
     let animationframe_paths = discover_classic_animationframe_paths(client_dir);
@@ -839,12 +844,24 @@ fn plan_present_animations(
             active_source = source_label;
             pb.set_message(format!("planning {active_source}"));
         }
-        let Ok(frames) = decode_candidate_animation_frame_metadata(&candidate, anim_map) else {
-            continue;
+        let read = match decode_candidate_animation_frame_metadata(&candidate, anim_map) {
+            Ok(frames) if frames.is_empty() => Err("it has no frames".to_string()),
+            Ok(frames) if frames.len() > u16::MAX as usize => Err(format!("it has {} frames", frames.len())),
+            Ok(frames) => Ok(frames),
+            Err(error) => Err(format!("{error:#}")),
         };
-        if frames.is_empty() || frames.len() > u16::MAX as usize {
-            continue;
-        }
+        let frames = match read {
+            Ok(frames) => frames,
+            Err(reason) => {
+                // Custom art can't vanish unnoticed: every entry holding data is packed or named here.
+                warn!(
+                    "Skipped {active_source} entry {} (body {}, action {}, direction {}): {reason}",
+                    candidate.source_index, candidate.body_id, candidate.action_id, candidate.direction
+                );
+                skipped_animation_count += 1;
+                continue;
+            }
+        };
         let frame_count = frames.len() as u16;
         let source = planned_animation_source(&candidate);
 
@@ -884,8 +901,11 @@ fn plan_present_animations(
         });
     }
     pb.finish_with_message(format!("Classic mobile animations planned from {source_summary}"));
+    if skipped_animation_count != 0 {
+        warn!("Skipped {skipped_animation_count} Classic animation entries that couldn't be read; each is named above");
+    }
 
-    Ok((planned_frames, animation_records, frame_records))
+    Ok((planned_frames, animation_records, frame_records, skipped_animation_count))
 }
 
 fn planned_animation_source(candidate: &PresentAnimationCandidate) -> PlannedAnimationSource {
@@ -955,6 +975,7 @@ fn apply_planned_transparent_trim(
             continue;
         }
 
+        let rows_below = usize::from(frame.height) - bounds.bottom;
         let record = frame_records
             .get_mut(frame.global_frame_index as usize)
             .context("trimmed mobile animation frame outside frame table")?;
@@ -971,11 +992,7 @@ fn apply_planned_transparent_trim(
             bounds.left as u32,
             "mobile animation frame center_x",
         )?;
-        record.center_y = adjusted_frame_center(
-            record.center_y,
-            bounds.top as u32,
-            "mobile animation frame center_y",
-        )?;
+        record.center_y = center_y_after_bottom_trim(record.center_y, rows_below)?;
     }
 
     Ok(())
@@ -1313,7 +1330,7 @@ fn decode_classic_animationframe_package(
                     direction,
                     file_index,
                     source_index: animation.anim_id,
-                    flags: 0,
+                    flags: MOBILE_ANIM_CC_FLAG_UOP_SOURCE,
                     frames: PresentAnimationFrames::AnimationFrameUop {
                         path: Arc::clone(&source_path),
                         file_hash,
@@ -2618,11 +2635,7 @@ fn trim_decoded_frame(
         bounds.left as u32,
         "mobile animation frame center_x",
     )?;
-    record.center_y = adjusted_frame_center(
-        record.center_y,
-        bounds.top as u32,
-        "mobile animation frame center_y",
-    )?;
+    record.center_y = center_y_after_bottom_trim(record.center_y, usize::from(frame.height) - bounds.bottom)?;
     let global_frame_index = frame.global_frame_index;
     let rgba = crop_rgba_frame_window(
         frame.width,
@@ -2731,6 +2744,14 @@ fn crop_rgba_frame_window_borrowed<'a>(
             .copy_from_slice(&rgba[source_start..source_start + target_stride]);
     }
     Ok(Cow::Owned(cropped))
+}
+
+/// A Classic anchor's y counts from the image's bottom edge: a run's image row is `y offset + center_y + height`. So
+/// rows trimmed from the top change nothing, and rows trimmed from the bottom raise it by their count.
+fn center_y_after_bottom_trim(center_y: i16, rows_below: usize) -> eyre::Result<i16> {
+    let adjusted = i32::from(center_y) + rows_below as i32;
+    i16::try_from(adjusted)
+        .map_err(|_| eyre::eyre!("mobile animation frame center_y exceeds i16 after transparent trim: {adjusted}"))
 }
 
 fn adjusted_frame_center(center: i16, trim_start: u32, label: &str) -> eyre::Result<i16> {
@@ -3204,7 +3225,7 @@ mod tests {
         assert_eq!(records[0].width, 3);
         assert_eq!(records[0].height, 3);
         assert_eq!(records[0].center_x, 3);
-        assert_eq!(records[0].center_y, 3);
+        assert_eq!(records[0].center_y, 6, "one row trimmed from the bottom");
         assert_eq!(pages[0].record.used_width % 4, 0);
         assert_eq!(pages[0].record.used_height % 4, 0);
     }

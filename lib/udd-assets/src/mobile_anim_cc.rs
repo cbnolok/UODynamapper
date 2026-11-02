@@ -22,6 +22,12 @@ pub const MISSING_PAGE_FRAME_INDEX: u16 = u16::MAX;
 
 pub const BODY_RESOLVE_FLAG_BODY_DEF: u16 = 1 << 0;
 pub const BODY_RESOLVE_FLAG_BODYCONV_DEF: u16 = 1 << 1;
+/// Animation record flag: the frames came from `AnimationFrame*.uop`, not from `anim*.mul`.
+pub const MOBILE_ANIM_CC_FLAG_UOP_SOURCE: u16 = 1 << 14;
+/// `mobtypes.txt` flag: the client draws this body from UOP (`BodyUsesUopFrames`). Its table holds ids in this range;
+/// any other body, or one with no row, takes the MUL path.
+pub const MOB_TYPE_FLAG_USES_UOP_FRAMES: u32 = 0x10000;
+pub const MOB_TYPE_BODY_IDS: std::ops::RangeInclusive<u16> = 1..=0x7FF;
 
 const PAGE_MANIFEST_MAGIC: [u8; 4] = *b"MAPG";
 const ANIMATION_MANIFEST_MAGIC: [u8; 4] = *b"MAAN";
@@ -200,12 +206,25 @@ impl MobileAnimCcPackage {
             .map(|index| &self.body_types[index])
     }
 
+    /// Whether the client draws this body from UOP. The client's frame code doesn't always test the requested id
+    /// (`scripts/dev-helpers/ec-research/ghidra-classic-frames/results/classic_frames.md`); this is the mobile's own body.
+    pub fn body_uses_uop_frames(&self, body_id: u16) -> bool {
+        MOB_TYPE_BODY_IDS.contains(&body_id)
+            && self
+                .body_type_record(body_id)
+                .is_some_and(|record| record.flags & MOB_TYPE_FLAG_USES_UOP_FRAMES != 0)
+    }
+
+    /// The animation of a body, from the source the client would use. A package can hold both a MUL and a UOP entry
+    /// for one action, as when a shard replaces a body in the MUL; the other source only fills in when that one has
+    /// none.
     pub fn animation(&self, body_id: u16, action_id: u16, direction: u8) -> Option<&MobileAnimCcAnimationRecord> {
-        self.animations.iter().find(|animation| {
+        let matching = self.animations.iter().filter(|animation| {
             animation.body_id == body_id
                 && animation.action_id == action_id
                 && animation.direction == direction
-        })
+        });
+        animation_from_source(matching, self.body_uses_uop_frames(body_id))
     }
 
     pub fn animation_frames(&self, animation: &MobileAnimCcAnimationRecord) -> &[MobileAnimCcFrameRecord] {
@@ -376,6 +395,20 @@ fn parse_body_resolve_manifest(bytes: &[u8]) -> eyre::Result<Vec<MobileAnimCcBod
     Ok(records)
 }
 
+fn animation_from_source<'a>(
+    matching: impl Iterator<Item = &'a MobileAnimCcAnimationRecord>,
+    wants_uop: bool,
+) -> Option<&'a MobileAnimCcAnimationRecord> {
+    let mut other_source = None;
+    for animation in matching {
+        if (animation.flags & MOBILE_ANIM_CC_FLAG_UOP_SOURCE != 0) == wants_uop {
+            return Some(animation);
+        }
+        other_source.get_or_insert(animation);
+    }
+    other_source
+}
+
 fn parse_body_type_manifest(bytes: &[u8]) -> eyre::Result<Vec<MobileAnimCcBodyTypeRecord>> {
     let mut cursor = Cursor::new(bytes);
     let mut magic = [0u8; 4];
@@ -511,6 +544,7 @@ mod tests {
         assert_eq!(package.animation_frames(package.animation(2, 3, 4).unwrap()).len(), 1);
         assert_eq!(package.body_resolve_record(7).unwrap().resolved_body_id, 8);
         assert_eq!(package.body_type_record(7).unwrap().group_type, 3);
+        assert!(!package.body_uses_uop_frames(7));
         assert_eq!(package.read_page_bytes(0).unwrap().len(), page.len());
         let animation = package.animation(2, 3, 4).unwrap();
         let frame = &package.animation_frames(animation)[0];
@@ -518,5 +552,27 @@ mod tests {
             package.read_frame_rgba(frame).unwrap().len(),
             2 * 2 * 4
         );
+    }
+
+    #[test]
+    fn animation_takes_the_source_the_client_uses_and_the_other_only_when_alone() {
+        let record = |flags| MobileAnimCcAnimationRecord {
+            body_id: 1,
+            action_id: 0,
+            direction: 0,
+            file_index: 0,
+            source_index: 0,
+            frame_start: 0,
+            frame_count: 1,
+            flags,
+        };
+        let (mul, uop) = (record(0), record(MOBILE_ANIM_CC_FLAG_UOP_SOURCE));
+
+        assert_eq!(animation_from_source([mul, uop].iter(), false), Some(&mul));
+        assert_eq!(animation_from_source([mul, uop].iter(), true), Some(&uop));
+        assert_eq!(animation_from_source([uop, mul].iter(), false), Some(&mul));
+        assert_eq!(animation_from_source([uop].iter(), false), Some(&uop));
+        assert_eq!(animation_from_source([mul].iter(), true), Some(&mul));
+        assert_eq!(animation_from_source([].iter(), true), None);
     }
 }

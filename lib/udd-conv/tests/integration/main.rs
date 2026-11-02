@@ -10,6 +10,7 @@ mod ec_art_trim_client;
 mod effects_ec_package_client;
 mod map_statics_retrieval;
 mod mobile_anim_codec;
+mod mobile_anim_custom_mul;
 mod tex_art_cc;
 mod tex_art_ec;
 mod tex_aux_ec_client;

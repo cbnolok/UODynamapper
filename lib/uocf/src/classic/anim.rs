@@ -23,6 +23,13 @@ const MAX_CLASSIC_ANIM_FRAME_DIMENSION: u16 = 2048;
 const MISSING_FRAME_OFFSET: usize = 0;
 const MAX_CLASSIC_ANIM_FRAME_PIXELS: usize =
     MAX_CLASSIC_ANIM_FRAME_DIMENSION as usize * MAX_CLASSIC_ANIM_FRAME_DIMENSION as usize;
+/// Ends a frame's runs.
+const RUN_END_MARKER: u32 = 0x7FFF_7FFF;
+const RUN_LENGTH_MASK: u32 = 0xFFF;
+const RUN_HEADER_BYTES: usize = size_of::<u32>();
+/// A run header's x offset is in bits 22..32 and its y offset in bits 12..22, both signed.
+const RUN_X_OFFSET_SHIFT: u32 = 22;
+const RUN_Y_OFFSET_LEFT_SHIFT: u32 = 10;
 
 /// Represents a single decoded animation frame from a MUL file.
 #[derive(Debug, Clone)]
@@ -383,24 +390,25 @@ fn decode_animation_payload(data: &[u8], lookup: usize) -> eyre::Result<Vec<Anim
                 eyre::bail!("Suspicious animation frame dimensions: {}x{}", width, height);
             }
 
-            let pixel_len = frame_pixel_len(width, height)?;
+            let rect = frame_rect_covering_runs(frame_ptr, width, height, center_x, center_y)?;
+            let pixel_len = frame_pixel_len(rect.width, rect.height)?;
             let mut pixel_data = vec![0u8; pixel_len];
 
             decode_classic_rle_frame(
                 &mut pixel_data,
                 &mut frame_ptr,
-                width,
-                height,
-                center_x,
-                center_y,
+                rect.width,
+                rect.height,
+                rect.center_x,
+                rect.center_y,
                 &rgba_palette,
             )?;
 
             frames.push(AnimFrame {
-                width,
-                height,
-                center_x,
-                center_y,
+                width: rect.width,
+                height: rect.height,
+                center_x: rect.center_x,
+                center_y: rect.center_y,
                 data: pixel_data,
             });
         }
@@ -456,16 +464,85 @@ fn decode_animation_payload_metadata(data: &[u8], lookup: usize) -> eyre::Result
             {
                 eyre::bail!("Suspicious animation frame dimensions: {}x{}", width, height);
             }
+            if width == 0 || height == 0 {
+                frames.push(AnimFrameInfo { width, height, center_x, center_y });
+                continue;
+            }
 
+            // Walking the runs here also means a frame that passes metadata can't fail at the pixel stage.
+            let rect = frame_rect_covering_runs(frame_ptr, width, height, center_x, center_y)?;
             frames.push(AnimFrameInfo {
-                width,
-                height,
-                center_x,
-                center_y,
+                width: rect.width,
+                height: rect.height,
+                center_x: rect.center_x,
+                center_y: rect.center_y,
             });
         }
 
         Ok(frames)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ClassicFrameRect {
+    width: u16,
+    height: u16,
+    center_x: i16,
+    center_y: i16,
+}
+
+/// A run's first pixel in the image of a frame `height` rows tall.
+fn run_image_position(header: u32, center_x: i16, center_y: i16, height: i32) -> (i32, i32) {
+    let x_offset = (header as i32) >> RUN_X_OFFSET_SHIFT;
+    let y_offset = ((header << RUN_Y_OFFSET_LEFT_SHIFT) as i32) >> RUN_X_OFFSET_SHIFT;
+    (x_offset + i32::from(center_x), y_offset + i32::from(center_y) + height)
+}
+
+/// The declared rectangle grown to hold every run. The client places runs from the anchor and clips them only to the
+/// screen, never reading the frame's width or height (`UOClassicAnim::DrawFrameRle`), so a run a custom tool wrote
+/// outside the declared size is still drawn. Growing keeps each pixel at its offset from the anchor.
+fn frame_rect_covering_runs(
+    mut runs: &[u8],
+    width: u16,
+    height: u16,
+    center_x: i16,
+    center_y: i16,
+) -> eyre::Result<ClassicFrameRect> {
+    let height_i32 = i32::from(height);
+    let (mut left, mut right, mut top, mut bottom) = (0, i32::from(width), 0, height_i32);
+    while let Some((header_bytes, rest)) = runs.split_first_chunk::<RUN_HEADER_BYTES>() {
+        let header = u32::from_le_bytes(*header_bytes);
+        if header == RUN_END_MARKER {
+            break;
+        }
+        let run_len = (header & RUN_LENGTH_MASK) as usize;
+        runs = rest.get(run_len..).ok_or_else(|| eyre!("Animation RLE run exceeds remaining frame data"))?;
+        if run_len == 0 {
+            continue;
+        }
+        let (x, y) = run_image_position(header, center_x, center_y, height_i32);
+        left = left.min(x);
+        right = right.max(x + run_len as i32);
+        top = top.min(y);
+        bottom = bottom.max(y + 1);
+    }
+
+    let (grown_width, grown_height) = (right - left, bottom - top);
+    let max_dimension = i32::from(MAX_CLASSIC_ANIM_FRAME_DIMENSION);
+    if grown_width > max_dimension || grown_height > max_dimension {
+        eyre::bail!(
+            "Animation frame runs reach {grown_width}x{grown_height}, past the {max_dimension} limit (declared {width}x{height})"
+        );
+    }
+    // Rows added below the declared rectangle lower the anchor's row, which counts from the bottom edge.
+    let rows_below = bottom - height_i32;
+    Ok(ClassicFrameRect {
+        width: grown_width as u16,
+        height: grown_height as u16,
+        center_x: i16::try_from(i32::from(center_x) - left)
+            .map_err(|_| eyre!("Animation frame anchor x overflows after growing to its runs"))?,
+        center_y: i16::try_from(i32::from(center_y) - rows_below)
+            .map_err(|_| eyre!("Animation frame anchor y overflows after growing to its runs"))?,
+    })
 }
 
 fn read_frame_offset(frame_offsets: &[u8], index: usize) -> eyre::Result<u32> {
@@ -529,29 +606,18 @@ pub(crate) fn decode_classic_rle_frame(
         let header = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
         *data = &data[4..];
 
-        if header == 0x7FFF7FFF {
+        if header == RUN_END_MARKER {
             break;
         }
 
-        let x_run = (header & 0xFFF) as usize;
+        let x_run = (header & RUN_LENGTH_MASK) as usize;
         if data.len() < x_run {
             eyre::bail!("Animation RLE run exceeds remaining frame data");
         }
         let (run, rest) = data.split_at(x_run);
         *data = rest;
 
-        let mut x_offset = ((header >> 22) & 0x3FF) as i32;
-        let mut y_offset = ((header >> 12) & 0x3FF) as i32;
-
-        if (x_offset & 0x200) != 0 {
-            x_offset |= !0x3FF;
-        }
-        if (y_offset & 0x200) != 0 {
-            y_offset |= !0x3FF;
-        }
-
-        let x = x_offset + center_x as i32;
-        let y = y_offset + center_y as i32 + height_i32;
+        let (x, y) = run_image_position(header, center_x, center_y, height_i32);
 
         if y < 0 || y >= height_i32 {
             continue;
@@ -673,6 +739,70 @@ mod tests {
         assert_eq!(metadata[0].height, frames[0].height);
         assert_eq!(metadata[0].center_x, frames[0].center_x);
         assert_eq!(metadata[0].center_y, frames[0].center_y);
+    }
+
+    fn run_header(x_offset: i32, y_offset: i32, len: u32) -> u32 {
+        ((x_offset as u32 & 0x3FF) << 22) | ((y_offset as u32 & 0x3FF) << 12) | len
+    }
+
+    /// An entry with one 2x2 frame anchored at (0, 0), holding the given runs, each of colour index 1.
+    fn entry_with_runs(runs: &[(i32, i32, u32)]) -> Vec<u8> {
+        let mut data = vec![0u8; 512];
+        data[2..4].copy_from_slice(&0x7FFFu16.to_le_bytes());
+        data.extend_from_slice(&1u32.to_le_bytes());
+        data.extend_from_slice(&8u32.to_le_bytes());
+        data.extend_from_slice(&0i16.to_le_bytes());
+        data.extend_from_slice(&0i16.to_le_bytes());
+        data.extend_from_slice(&2u16.to_le_bytes());
+        data.extend_from_slice(&2u16.to_le_bytes());
+        for &(x_offset, y_offset, len) in runs {
+            data.extend_from_slice(&run_header(x_offset, y_offset, len).to_le_bytes());
+            data.extend(std::iter::repeat_n(1u8, len as usize));
+        }
+        data.extend_from_slice(&RUN_END_MARKER.to_le_bytes());
+        data
+    }
+
+    #[test]
+    fn frame_grows_to_runs_outside_the_declared_size_and_keeps_pixels_at_their_anchor_offsets() {
+        // Declared 2x2 anchored at (0, 0): image pixel (x, y) has offsets (x, y - 2). These reach one column left,
+        // one row above, two columns right and two rows below.
+        let data = entry_with_runs(&[(-1, -3, 1), (0, -2, 2), (3, 1, 1)]);
+
+        let frames = decode_animation_payload(&data, 0).expect("payload should decode");
+        let metadata = decode_animation_payload_metadata(&data, 0).expect("metadata should decode");
+
+        let frame = &frames[0];
+        assert_eq!((frame.width, frame.height), (5, 5));
+        assert_eq!((frame.center_x, frame.center_y), (1, -2));
+        assert_eq!(
+            (metadata[0].width, metadata[0].height, metadata[0].center_x, metadata[0].center_y),
+            (frame.width, frame.height, frame.center_x, frame.center_y),
+        );
+        let opaque: Vec<(i32, i32)> = (0..5)
+            .flat_map(|y| (0..5).map(move |x| (x, y)))
+            .filter(|&(x, y)| frame.data[((y * 5 + x) * 4 + 3) as usize] != 0)
+            .collect();
+        let to_offsets = |(x, y): (i32, i32)| (x - i32::from(frame.center_x), y - i32::from(frame.center_y) - 5);
+        assert_eq!(
+            opaque.into_iter().map(to_offsets).collect::<Vec<_>>(),
+            vec![(-1, -3), (0, -2), (1, -2), (3, 1)],
+        );
+    }
+
+    #[test]
+    fn frame_inside_its_declared_size_is_unchanged() {
+        let data = entry_with_runs(&[(0, -2, 2), (0, -1, 2)]);
+        let metadata = decode_animation_payload_metadata(&data, 0).expect("metadata should decode");
+        assert_eq!((metadata[0].width, metadata[0].height), (2, 2));
+        assert_eq!((metadata[0].center_x, metadata[0].center_y), (0, 0));
+    }
+
+    #[test]
+    fn frame_whose_run_passes_the_data_end_fails_at_metadata() {
+        let mut data = entry_with_runs(&[(0, -2, 2)]);
+        data.truncate(data.len() - RUN_HEADER_BYTES - 1);
+        assert!(decode_animation_payload_metadata(&data, 0).is_err());
     }
 
     #[test]

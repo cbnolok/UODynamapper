@@ -1623,6 +1623,12 @@ where
                 summary.animation_count,
                 out_file.display()
             );
+            if summary.skipped_animation_count != 0 {
+                log::warn!(
+                    "{} animation entries were left out because they couldn't be read; each is named in a warning above",
+                    summary.skipped_animation_count
+                );
+            }
             info!(
                 "Mobile animation atlas usage: {} used pixels, {} filled ({}) and {} empty ({}); estimated uncompressed page payload {} bytes.",
                 summary.used_page_pixel_count,

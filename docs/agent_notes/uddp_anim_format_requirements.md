@@ -84,14 +84,23 @@ What the converter does today (`lib/udd-conv/src/mobile_anim_cc.rs`):
   entry is collected.
 - It reads `Body.def`, `Bodyconv.def` and `mobtypes.txt` from the install being converted, so edited routing is kept.
 
-What is not safe yet:
+- An entry that can't be read gets a warning naming its file, slot, body, action, direction and reason. The total is in
+  the build summary and the CLI output. Reading walks the runs at planning, so a bad entry can't abort the pixel stage.
+- A MUL frame grows to hold every run. The client places runs from the anchor and clips only to the screen, never
+  reading the frame's size (`DrawFrameRle`, 7.0.103.0). Each pixel stays at its offset from the anchor. No shipped frame
+  needs this: 0 of 526,895 MUL frames and 0 of 470,415 UOP frames have a run outside their size.
+- When a package holds a MUL and a UOP entry for one action, the reader takes the one the client would use: UOP when
+  the `mobtypes.txt` row has flag 0x10000, otherwise MUL. The other source only fills in when that one has none.
+- `lib/udd-conv/tests/integration/mobile_anim_custom_mul.rs` covers an added body, a replaced body with its old bytes
+  orphaned, an idx longer than the shipped one, palette index 0 drawn as opaque black, a 1500x900 frame, runs outside the
+  declared size, trimming, and unreadable entries.
 
-- **An entry that fails to decode is dropped silently** (`:842`). It should be reported per entry, and no custom art
-  should disappear without a line in the log.
-- **Runs outside the frame's declared height are dropped silently** (`classic/anim.rs`). The client's behaviour for
-  those hasn't been compared.
-- **No test converts a MUL with custom entries.** Needed: an added body in an unused slot, a replaced body with its old
-  bytes orphaned, an idx longer than the shipped one, use of palette index 0, frames larger than any shipped.
+What is still not safe:
+
+- **Custom UOP frames:** `AnimationFrame*.uop` frames are still clipped to their declared size, and a frame wider or
+  taller than 1024 is blanked silently.
+- **Very large frames:** above 2048 in either dimension an entry is refused, with a warning. Frames near that limit may
+  not fit the 2048 atlas page with its gutter; this is untested.
 - **Leaving out art is unsafe by default,** because a shard can draw any body it routes. See section 7.
 
 ### Orphaned art in the shipped MUL files
