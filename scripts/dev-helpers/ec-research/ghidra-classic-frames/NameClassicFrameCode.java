@@ -91,8 +91,14 @@ public class NameClassicFrameCode extends GhidraScript {
             + " frame number at +2: the table must be sorted by (action, frame number). Reads nothing else of the"
             + " header or the entry boxes", "calledby:00543e50"),
         new Entry("005bc880", ANIM, "GetMobileFrame", false, "a mobile's current frame: the anim*.mul frame"
-            + " (GetMulFrame) when 0x005978a0(body) is false, else the AnimationFrame*.uop one (GetUopFrame)",
-            "calls:00543500", "calls:00543e50", "const:6000"),
+            + " (GetMulFrame) when BodyUsesUopFrames(body) is false, else the AnimationFrame*.uop one (GetUopFrame)",
+            "calls:00543500", "calls:00543e50", "calls:005978a0", "const:6000"),
+        new Entry("005978a0", ANIM, "BodyUsesUopFrames", false, "the per-body source test: the mobtypes.txt row of the"
+            + " body (12 bytes each, 0x800 rows: present byte, type, flags; out of range is row 0, never present) is"
+            + " present and its flags have 0x10000", "calledby:005bc880", "const:10000"),
+        new Entry("00597d70", ANIM, "LoadMobTypesFile", false, "reads mobtypes.txt, \"%d %s %x\" (id, type, hex flags);"
+            + " text after # is ignored; a row is kept when the id is 1..0x7FF and the type is known", "string:mobtypes.txt",
+            "const:7fe"),
         new Entry("00452ad0", ANIM, "DrawMobile", true, "draws a mobile and its equipment layers: GetMobileFrame"
             + " for each, mirrored anchor x = width - anchor x, DrawFrameRle", "calls:005bc880", "calls:00449c90"),
         new Entry("0056c170", FILES, "ReadMulIndexEntry", true, "the 12-byte index entry N of a MUL pair (u32"

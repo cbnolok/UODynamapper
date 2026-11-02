@@ -71,6 +71,7 @@ const ALL_PASSES: [&str; 4] = [SIZES_PASS, TIMING_PASS, UPSCALE_PASS, SHRINK_PAS
 /// timing pass.
 const BOOST_PATH: &str = "/sys/devices/system/cpu/cpufreq/boost";
 const CPU_DIR: &str = "/sys/devices/system/cpu";
+const PLATFORM_PROFILE_PATH: &str = "/sys/firmware/acpi/platform_profile";
 const EPP_FILE: &str = "cpufreq/energy_performance_preference";
 /// The load averages, printed with the CPU state (other work on the machine slows the one-thread timings).
 const LOADAVG_PATH: &str = "/proc/loadavg";
@@ -1154,6 +1155,11 @@ fn time_body(body: &Body, prepared: &Prepared) -> Timing {
 
 /// The CPU boost state and the energy preferences of the CPUs, as a label: `boost off, EPP power`.
 fn cpu_state() -> String {
+    let profile = std::fs::read_to_string(PLATFORM_PROFILE_PATH).map_or_else(|_| "unknown".to_string(), |text| text.trim().to_string());
+    format!("{}, platform profile {profile}", cpu_preferences())
+}
+
+fn cpu_preferences() -> String {
     let boost = match std::fs::read_to_string(BOOST_PATH).as_deref().map(str::trim) {
         Ok("1") => "boost on",
         Ok("0") => "boost off",

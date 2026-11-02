@@ -38,7 +38,7 @@ const TYPED_DIE: i8 = 3;
 const TYPED_IMPACT: i8 = 4;
 const TYPED_FIDGET: i8 = 5;
 const TYPED_SPELL: i8 = 11;
-const KIND_IDLE: &str = "idle";
+pub(super) const KIND_IDLE: &str = "idle";
 const KIND_WALK: &str = "walk";
 const KIND_RUN: &str = "run";
 const KIND_ATTACK: &str = "attack";
@@ -49,7 +49,7 @@ const KIND_SPELL: &str = "spell";
 const KIND_OTHER_TYPED: &str = "other typed";
 const KIND_TRANSITION: &str = "transition";
 const KIND_OTHER: &str = "other";
-const KIND_NO_SEQUENCE: &str = "no sequence";
+pub(super) const KIND_NO_SEQUENCE: &str = "no sequence";
 
 const SELECTION_NAMES: [&str; 2] = ["uniform", "worst interpolators kept"];
 const METHOD_WARP_LOAD: usize = 2;
@@ -80,7 +80,7 @@ const CRC_POLYNOMIAL: u32 = 0xEDB8_8320;
 // Sprites: a frame in anchor-relative coordinates
 
 #[derive(Clone)]
-struct Sprite {
+pub(super) struct Sprite {
     left: i32,
     top: i32,
     w: i32,
@@ -111,7 +111,11 @@ impl Area {
 }
 
 impl Sprite {
-    fn of(planes: &Planes, frame: &FrameBox) -> Sprite {
+    pub(super) fn with_rgba(frame: &FrameBox, rgba: Vec<u8>) -> Sprite {
+        Sprite { left: frame.left, top: frame.top, w: frame.w as i32, h: frame.h as i32, rgba }
+    }
+
+    pub(super) fn of(planes: &Planes, frame: &FrameBox) -> Sprite {
         Sprite { left: frame.left, top: frame.top, w: frame.w as i32, h: frame.h as i32, rgba: frame_rgba(planes, frame, &planes.index, &planes.coverage) }
     }
 
@@ -120,7 +124,7 @@ impl Sprite {
     }
 
     #[inline(always)]
-    fn at(&self, x: i32, y: i32) -> [u8; RGBA_CHANNELS] {
+    pub(super) fn at(&self, x: i32, y: i32) -> [u8; RGBA_CHANNELS] {
         let (px, py) = (x - self.left, y - self.top);
         if px < 0 || py < 0 || px >= self.w || py >= self.h {
             return [0; RGBA_CHANNELS];
@@ -395,7 +399,7 @@ fn stored_rebuild(a: &Sprite, b: &Sprite, stored: &StoredFrame) -> Sprite {
 }
 
 /// SSIMULACRA2 of a rebuild against the real frame, on the union of their boxes over grey.
-fn score(real: &Sprite, rebuilt: &Sprite) -> f64 {
+pub(super) fn score(real: &Sprite, rebuilt: &Sprite) -> f64 {
     let area = real.area().union(rebuilt.area());
     let (p, q) = (real.on(area), rebuilt.on(area));
     if p == q {
@@ -529,7 +533,7 @@ fn kept_planes(planes: &Planes, actions: &[ActionFrames], masks: &[Vec<bool>]) -
 // ---------------------------------------------------------------------------------------------------------------
 // Sequences: protected frames, action kinds and rates
 
-fn load_sequences(client_dir: &Path) -> BTreeMap<u32, AnimationSequence> {
+pub(super) fn load_sequences(client_dir: &Path) -> BTreeMap<u32, AnimationSequence> {
     let Some(path) = find_ignoring_case(client_dir, SEQUENCE_FILE) else { return BTreeMap::new() };
     let mut package = UopPackage::load_with_mode(&path, LoadMode::Lazy).expect("the sequence package");
     let mut sequences = BTreeMap::new();
@@ -549,7 +553,7 @@ fn load_sequences(client_dir: &Path) -> BTreeMap<u32, AnimationSequence> {
 }
 
 /// The sequence each frames body plays by, from the tile art placeholders; else its own.
-fn sequence_of_frames_body(sequences: &BTreeMap<u32, AnimationSequence>, client_dir: &Path) -> HashMap<u32, u32> {
+pub(super) fn sequence_of_frames_body(sequences: &BTreeMap<u32, AnimationSequence>, client_dir: &Path) -> HashMap<u32, u32> {
     let mut map = HashMap::new();
     if let Some(body_map) = find_ignoring_case(client_dir, TILEART_FILE).and_then(|path| MobileBodyMap::load(path).ok()) {
         for definition in body_map.definitions.values() {
@@ -569,7 +573,7 @@ fn sequence_of_frames_body(sequences: &BTreeMap<u32, AnimationSequence>, client_
     map
 }
 
-fn kinds_of(sequence: &AnimationSequence) -> HashMap<u32, &'static str> {
+pub(super) fn kinds_of(sequence: &AnimationSequence) -> HashMap<u32, &'static str> {
     let mut kinds = HashMap::new();
     let mut add = |action: u32, kind: &'static str| {
         if let Some(resolved) = sequence.resolve_action(action, false) {
@@ -611,7 +615,7 @@ fn kinds_of(sequence: &AnimationSequence) -> HashMap<u32, &'static str> {
     kinds
 }
 
-fn body_number(planes: &Planes) -> Option<u32> {
+pub(super) fn body_number(planes: &Planes) -> Option<u32> {
     planes.label.rsplit(' ').next().and_then(|id| id.parse().ok())
 }
 
@@ -972,8 +976,8 @@ fn write_png(path: &Path, w: usize, h: usize, rgb: &[u8]) {
 
 /// One dropped frame's cells: the previous kept frame, the real one, the next kept one, the four rebuilds. The row below
 /// holds each cell's difference from the real frame, gained.
-struct SheetRow {
-    cells: [Sprite; SHEET_COLUMNS],
+pub(super) struct SheetRow {
+    pub(super) cells: [Sprite; SHEET_COLUMNS],
 }
 
 fn sheet_row(sprites: &HashMap<usize, Sprite>, frames: &[usize], mask: &[bool], position: usize) -> SheetRow {
@@ -986,7 +990,7 @@ fn sheet_row(sprites: &HashMap<usize, Sprite>, frames: &[usize], mask: &[bool], 
 
 const REAL_COLUMN: usize = 1;
 
-fn write_sheet(path: &Path, rows: &[SheetRow]) {
+pub(super) fn write_sheet(path: &Path, rows: &[SheetRow]) {
     if rows.is_empty() {
         return;
     }
@@ -1029,7 +1033,7 @@ fn write_sheet(path: &Path, rows: &[SheetRow]) {
     write_png(path, w as usize, h as usize, &rgb);
 }
 
-fn slug(label: &str) -> String {
+pub(super) fn slug(label: &str) -> String {
     label.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect()
 }
 

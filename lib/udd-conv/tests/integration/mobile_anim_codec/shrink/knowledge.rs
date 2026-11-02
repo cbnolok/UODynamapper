@@ -9,6 +9,8 @@
 //! 6. coverage with contexts from its structure;
 //! 7. equipment layers: their share of the cost, and the shape coded with the base body's as context.
 //!
+//! Part `r` (only on request): where rank coding's decode time goes, stage by stage, on one thread.
+//!
 //! Every coder here is decoded and compared with its source: a mismatch fails the test.
 
 use super::*;
@@ -27,6 +29,11 @@ const KIND_ANIMAL: &str = "ANIMAL";
 const KIND_HUMAN: &str = "HUMAN";
 const KIND_EQUIPMENT: &str = "EQUIPMENT";
 const BODY_DEF_FILE: &str = "Body.def";
+/// The `mobtypes.txt` flag `BodyUsesUopFrames` tests.
+const MOBTYPES_UOP_FLAG: u32 = 0x10000;
+const MOBTYPES_LAST_BODY: u32 = 0x7FF;
+const MOBTYPES_KINDS: [&str; 5] = [KIND_MONSTER, KIND_SEA_MONSTER, KIND_ANIMAL, KIND_HUMAN, KIND_EQUIPMENT];
+const HEX_RADIX: u32 = 16;
 const BODYCONV_DEF_FILE: &str = "Bodyconv.def";
 /// `<body> <anim2> <anim3> <anim4> <anim5>`: the client drops a line with fewer numbers.
 const BODYCONV_NUMBERS: usize = 5;
@@ -38,8 +45,8 @@ const EC_BODY_EXCESS_FACTOR: f64 = 0.9;
 
 const COLOUR_CHANNELS: usize = 3;
 const NEAREST_CELL_BITS: u32 = 5;
-const NEAREST_CELL_SHIFT: u32 = u8::BITS - NEAREST_CELL_BITS;
-const NEAREST_CELLS: usize = 1 << (NEAREST_CELL_BITS * COLOUR_CHANNELS as u32);
+/// [`RankMode::Coarse`]: a 16x16x16 lookup, a tenth of the table and fewer cells to fill.
+const NEAREST_COARSE_CELL_BITS: u32 = 4;
 const NEAREST_EMPTY: u16 = u16::MAX;
 /// Sums of three channels and two gradients, back to the scale of the index gradient buckets.
 const RGB_GRADIENT_DIVISOR: u32 = 4;
@@ -207,7 +214,7 @@ fn part_k1(sources: &Sources, bodies: &[BodySource], cc_dir: &Path) {
         sum(&|r| matches!(r.place, Place::Mul(file) if file > 0 && !reached.contains(&(file, r.body)))),
     );
 
-    // The same body in a MUL and in a UOP: the client picks by body (GetMobileFrame, 0x005978a0, not read).
+    // The same body in a MUL and in a UOP: the client picks by body (see the rule below).
     let mut uop_actions = HashMap::<(u32, u16, u32), (u64, f64, Place)>::new();
     let mut uop_duplicates = (0u64, 0f64);
     for row in rows.iter().filter(|r| matches!(r.place, Place::Uop(_))) {
@@ -251,7 +258,7 @@ fn part_k1(sources: &Sources, bodies: &[BodySource], cc_dir: &Path) {
             }
         }
     }
-    println!("\n  MUL (action, direction) units: {units_seen}. Overlap with a UOP entry; the client takes one source per body by a test not yet read (0x005978a0):\n");
+    println!("\n  MUL (action, direction) units: {units_seen}. Overlap with a UOP entry, before the client's per-body rule below:\n");
     println!("| overlap | MUL bodies | units | MUL side MB | UOP side MB | identical units | identical MUL MB |");
     println!("|---|---:|---:|---:|---:|---:|---:|");
     for (name, (units, compressed, same, same_compressed, uop)) in &overlap {
@@ -269,6 +276,7 @@ fn part_k1(sources: &Sources, bodies: &[BodySource], cc_dir: &Path) {
     line("UOP bodies with an anim.mul body of the same id", sum(&|r| matches!(r.place, Place::Uop(_)) && in_mul.contains(&r.body)));
     let uop_bodies: HashSet<u32> = rows.iter().filter(|r| matches!(r.place, Place::Uop(_))).map(|r| r.body).collect();
     line("anim.mul bodies with a UOP body of the same id", sum(&|r| r.place == anim_mul && uop_bodies.contains(&r.body)));
+    report_source_rule(&rows, &conv, cc_dir);
     // Enhanced, from the client's rule in the frames study.
     let enhanced: Vec<(u32, u64, u64)> = bodies
         .par_iter()
@@ -286,23 +294,118 @@ fn part_k1(sources: &Sources, bodies: &[BodySource], cc_dir: &Path) {
     }
 }
 
+/// The ids of `mobtypes.txt` the client draws from `AnimationFrame*.uop`, parsed as `LoadMobTypesFile` does: text after
+/// `#` is cut, a line is `%d %s %x`, the id is in range and the type known, a later line replaces an earlier one.
+fn uop_flagged_bodies(cc_dir: &Path) -> HashSet<u32> {
+    let mut flags = HashMap::<u32, u32>::new();
+    let text = find_ignoring_case(cc_dir, MOBTYPES_FILE).and_then(|path| std::fs::read(path).ok()).unwrap_or_default();
+    for line in String::from_utf8_lossy(&text).lines() {
+        let mut words = line.split('#').next().unwrap_or("").split_whitespace();
+        let (Some(id), Some(kind), Some(value)) = (words.next(), words.next(), words.next()) else { continue };
+        let (Ok(id), Ok(value)) = (id.parse::<u32>(), u32::from_str_radix(value, HEX_RADIX)) else { continue };
+        if (1..=MOBTYPES_LAST_BODY).contains(&id) && MOBTYPES_KINDS.contains(&kind) {
+            flags.insert(id, value);
+        }
+    }
+    flags.into_iter().filter(|(_, value)| value & MOBTYPES_UOP_FLAG != 0).map(|(id, _)| id).collect()
+}
+
+/// Body.def's targets: `<body> {<new body>, ...} <hue>`, one chosen at random by the client.
+fn body_def_targets(cc_dir: &Path) -> HashMap<u32, Vec<u32>> {
+    let mut targets = HashMap::new();
+    let text = find_ignoring_case(cc_dir, BODY_DEF_FILE).and_then(|path| std::fs::read(path).ok()).unwrap_or_default();
+    for line in String::from_utf8_lossy(&text).lines() {
+        let line = line.split('#').next().unwrap_or("");
+        let (Some(open), Some(close)) = (line.find('{'), line.find('}')) else { continue };
+        let Ok(body) = line[..open].trim().parse::<u32>() else { continue };
+        let list: Vec<u32> = line[open + 1..close].split(',').filter_map(|word| word.trim().parse().ok()).collect();
+        targets.insert(body, list);
+    }
+    targets
+}
+
+/// What the client's rule leaves undrawn: `BodyUsesUopFrames` (0x005978a0) sends a body flagged in `mobtypes.txt` to the
+/// UOP entry of its id and every other body through Body.def and Bodyconv.def to a MUL, with no fallback either way.
+fn report_source_rule(rows: &[SourceRow], conv: &[(u32, Vec<(u8, u32)>)], cc_dir: &Path) {
+    let flagged = uop_flagged_bodies(cc_dir);
+    let remaps = body_def_targets(cc_dir);
+    let conv: HashMap<u32, &Vec<(u8, u32)>> = conv.iter().map(|(body, targets)| (*body, targets)).collect();
+    // (file, body) a MUL read can reach, under some expansion setting and with every expansion enabled.
+    let (mut any_setting, mut all_enabled) = (HashSet::<(usize, u32)>::new(), HashSet::<(usize, u32)>::new());
+    for body in 0..=u32::from(u16::MAX) {
+        if flagged.contains(&body) {
+            continue;
+        }
+        let row = conv.get(&body).filter(|targets| !targets.is_empty() && body <= MOBTYPES_LAST_BODY);
+        let remapped: &[u32] = remaps.get(&body).map_or(&[], Vec::as_slice);
+        // With a Bodyconv.def row for an enabled expansion, Body.def does not apply.
+        let enabled: Vec<u32> = if row.is_some() || remapped.is_empty() { vec![body] } else { remapped.to_vec() };
+        for &resolved in &enabled {
+            match conv.get(&resolved).filter(|targets| !targets.is_empty() && resolved <= MOBTYPES_LAST_BODY) {
+                Some(targets) => all_enabled.insert((usize::from(targets[0].0), targets[0].1)),
+                None => all_enabled.insert((0, resolved)),
+            };
+        }
+        let mut any: Vec<u32> = remapped.to_vec();
+        if remapped.is_empty() || row.is_some() {
+            any.push(body);
+        }
+        for &resolved in &any {
+            any_setting.insert((0, resolved));
+            if let Some(targets) = conv.get(&resolved).filter(|_| resolved <= MOBTYPES_LAST_BODY) {
+                any_setting.extend(targets.iter().map(|&(file, target)| (usize::from(file), target)));
+            }
+        }
+    }
+    println!("\n  The client's rule: {} bodies are flagged 0x10000 in mobtypes.txt and use UOP; all others use a MUL.\n", flagged.len());
+    println!("| source | bodies | MB | not reached by a mobile's own body, under any expansion setting: bodies | MB | with every expansion enabled: bodies | MB |");
+    println!("|---|---:|---:|---:|---:|---:|---:|");
+    let mut places: Vec<Place> = rows.iter().map(|r| r.place).collect::<HashSet<_>>().into_iter().collect();
+    places.sort();
+    let (mut lost_any, mut lost_enabled) = (0u64, 0u64);
+    for place in places {
+        let of: Vec<&SourceRow> = rows.iter().filter(|r| r.place == place).collect();
+        let total: u64 = of.iter().map(|r| r.compressed).sum();
+        let lost = |reach: &HashSet<(usize, u32)>| -> (usize, u64) {
+            let gone: Vec<&&SourceRow> = of
+                .iter()
+                .filter(|r| match place {
+                    Place::Mul(file) => !reach.contains(&(file, r.body)),
+                    Place::Uop(_) => !flagged.contains(&r.body),
+                })
+                .collect();
+            (gone.len(), gone.iter().map(|r| r.compressed).sum())
+        };
+        let (any, enabled) = (lost(&any_setting), lost(&all_enabled));
+        lost_any += any.1;
+        lost_enabled += enabled.1;
+        println!("| {place:?} | {} | {:.1} | {} | {:.1} | {} | {:.1} |", of.len(), mb(total), any.0, mb(any.1), enabled.0, mb(enabled.1));
+    }
+    let total: u64 = rows.iter().map(|r| r.compressed).sum();
+    println!("\n  Not reached by a mobile's own body (other requests are not traced): {:.1} MB of {:.1} MB under any expansion setting; {:.1} MB with every expansion enabled.", mb(lost_any), mb(total), mb(lost_enabled));
+    let in_uop: HashSet<u32> = rows.iter().filter(|r| matches!(r.place, Place::Uop(_))).map(|r| r.body).collect();
+    let empty = flagged.iter().filter(|body| !in_uop.contains(body)).count();
+    println!("  Flagged bodies with no UOP entry, which draw nothing: {empty}.");
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // 2. Rank coding
 
 /// The entries by RGB distance from each entry, and the nearest entry of a colour, built as they are first needed.
-struct RankTables<'a> {
+pub(super) struct RankTables<'a> {
     colours: &'a [[u8; EC_PALETTE_ENTRY_BYTES]],
     first: usize,
     list: Vec<u8>,
     rank: Vec<u8>,
     filled: [bool; BYTE_SYMBOLS],
     nearest: Vec<u16>,
+    cell_bits: u32,
     want_rank: bool,
     scratch: Vec<(i32, u16)>,
 }
 
 impl<'a> RankTables<'a> {
-    fn new(colours: &'a [[u8; EC_PALETTE_ENTRY_BYTES]], first: usize, want_rank: bool) -> Self {
+    pub(super) fn new(colours: &'a [[u8; EC_PALETTE_ENTRY_BYTES]], first: usize, want_rank: bool, cell_bits: u32) -> Self {
         RankTables {
             colours,
             first,
@@ -310,6 +413,7 @@ impl<'a> RankTables<'a> {
             rank: if want_rank { vec![0; BYTE_SYMBOLS * BYTE_SYMBOLS] } else { Vec::new() },
             filled: [false; BYTE_SYMBOLS],
             nearest: Vec::new(),
+            cell_bits,
             want_rank,
             scratch: Vec::with_capacity(BYTE_SYMBOLS),
         }
@@ -336,7 +440,7 @@ impl<'a> RankTables<'a> {
     }
 
     #[inline(always)]
-    fn rank_of(&mut self, reference: usize, entry: u8) -> u8 {
+    pub(super) fn rank_of(&mut self, reference: usize, entry: u8) -> u8 {
         self.row(reference);
         self.rank[reference * BYTE_SYMBOLS + usize::from(entry)]
     }
@@ -347,16 +451,17 @@ impl<'a> RankTables<'a> {
         self.list[reference * BYTE_SYMBOLS + usize::from(rank)]
     }
 
-    /// The entry nearest a colour's 32x32x32 cell centre.
+    /// The entry nearest the centre of a colour's cell.
     #[inline(always)]
     fn nearest(&mut self, colour: [u8; COLOUR_CHANNELS]) -> usize {
         if self.nearest.is_empty() {
-            self.nearest = vec![NEAREST_EMPTY; NEAREST_CELLS];
+            self.nearest = vec![NEAREST_EMPTY; 1 << (self.cell_bits * COLOUR_CHANNELS as u32)];
         }
-        let cell = colour.iter().fold(0usize, |cell, &c| (cell << NEAREST_CELL_BITS) | usize::from(c >> NEAREST_CELL_SHIFT));
+        let shift = u8::BITS - self.cell_bits;
+        let cell = colour.iter().fold(0usize, |cell, &c| (cell << self.cell_bits) | usize::from(c >> shift));
         if self.nearest[cell] == NEAREST_EMPTY {
-            let half = 1u8 << (NEAREST_CELL_SHIFT - 1);
-            let centre = colour.map(|c| ((c >> NEAREST_CELL_SHIFT) << NEAREST_CELL_SHIFT) | half);
+            let half = 1u8 << (shift - 1);
+            let centre = colour.map(|c| ((c >> shift) << shift) | half);
             let point = [centre[0], centre[1], centre[2], 0];
             let best = (self.first..self.colours.len()).min_by_key(|&e| (colour_distance(&point, &self.colours[e]), e)).unwrap_or(self.first);
             self.nearest[cell] = best as u16;
@@ -373,6 +478,14 @@ pub(super) enum RankMode {
     PreviousContext,
     /// (c) The previous frame's colour is the reference when known.
     PreviousReference,
+    /// As [`RankMode::Spatial`] with a coarser colour lookup, the cheaper decode path of part `r`.
+    Coarse,
+}
+
+impl RankMode {
+    fn cell_bits(self) -> u32 {
+        if self == RankMode::Coarse { NEAREST_COARSE_CELL_BITS } else { NEAREST_CELL_BITS }
+    }
 }
 
 const RANK_MODES: [(RankMode, &str); 3] = [
@@ -381,12 +494,12 @@ const RANK_MODES: [(RankMode, &str); 3] = [
     (RankMode::PreviousReference, "c: rank from the previous frame's colour when known, rANS"),
 ];
 
-fn first_entry(client: Client) -> usize {
+pub(super) fn first_entry(client: Client) -> usize {
     usize::from(client == Client::Cc)
 }
 
-fn tables_of<'p, 'a>(tables: &'p mut [Option<RankTables<'a>>], palettes: &'a [Vec<[u8; EC_PALETTE_ENTRY_BYTES]>], palette: usize, first: usize, want_rank: bool) -> &'p mut RankTables<'a> {
-    tables[palette].get_or_insert_with(|| RankTables::new(&palettes[palette], first, want_rank))
+fn tables_of<'p, 'a>(tables: &'p mut [Option<RankTables<'a>>], palettes: &'a [Vec<[u8; EC_PALETTE_ENTRY_BYTES]>], palette: usize, first: usize, want_rank: bool, cell_bits: u32) -> &'p mut RankTables<'a> {
+    tables[palette].get_or_insert_with(|| RankTables::new(&palettes[palette], first, want_rank, cell_bits))
 }
 
 /// (a) The plane with each opaque pixel as its rank from the left pixel; raw after a transparent one.
@@ -397,7 +510,7 @@ fn left_rank_plane(planes: &Planes, frames: &[usize], index: &[u8], mask: &[u8])
     let mut start = 0usize;
     for &f in frames {
         let frame = &planes.boxes[f];
-        let tables = tables_of(&mut tables, &planes.palettes, frame.palette, first, true);
+        let tables = tables_of(&mut tables, &planes.palettes, frame.palette, first, true, NEAREST_CELL_BITS);
         for y in 0..frame.h {
             for x in 0..frame.w {
                 let i = start + y * frame.w + x;
@@ -425,7 +538,7 @@ fn decode_left_rank(boxes: &[FrameBox], palettes: &[Vec<[u8; EC_PALETTE_ENTRY_BY
     let mut start = 0usize;
     for &f in frames {
         let frame = &boxes[f];
-        let tables = tables_of(&mut tables, palettes, frame.palette, first, false);
+        let tables = tables_of(&mut tables, palettes, frame.palette, first, false, NEAREST_CELL_BITS);
         for y in 0..frame.h {
             for x in 0..frame.w {
                 let i = start + y * frame.w + x;
@@ -518,7 +631,7 @@ fn previous_colour_bucket(before: Option<[u8; COLOUR_CHANNELS]>, prediction: [u8
 
 pub(super) fn rank_contexts(mode: RankMode) -> usize {
     match mode {
-        RankMode::Spatial => INDEX_CONTEXTS,
+        RankMode::Spatial | RankMode::Coarse => INDEX_CONTEXTS,
         _ => INDEX_CONTEXTS * PREVIOUS_BUCKETS,
     }
 }
@@ -539,7 +652,7 @@ fn rank_step(
     palette: usize,
 ) -> (usize, usize) {
     let (prediction, context) = colour_prediction(index, mask, colours, w, i, x, y > 0, last);
-    if mode == RankMode::Spatial {
+    if matches!(mode, RankMode::Spatial | RankMode::Coarse) {
         return (tables.nearest(prediction), context);
     }
     let before = previous.and_then(|(p, before_palette)| p.pixel(index, mask, x, y).map(|value| (value, before_palette)));
@@ -562,7 +675,7 @@ pub(super) fn rank_symbols(planes: &Planes, frames: &[usize], index: &[u8], mask
     for (n, &f) in frames.iter().enumerate() {
         let frame = &planes.boxes[f];
         let colours = &planes.palettes[frame.palette];
-        let tables = tables_of(&mut tables, &planes.palettes, frame.palette, first, true);
+        let tables = tables_of(&mut tables, &planes.palettes, frame.palette, first, true, mode.cell_bits());
         let mut last = [FIRST_PREDICTION; COLOUR_CHANNELS];
         for y in 0..frame.h {
             for x in 0..frame.w {
@@ -582,16 +695,21 @@ pub(super) fn rank_symbols(planes: &Planes, frames: &[usize], index: &[u8], mask
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn decode_rank(stream: &[u8], model: &Model, boxes: &[FrameBox], palettes: &[Vec<[u8; EC_PALETTE_ENTRY_BYTES]>], client: Client, frames: &[usize], mask: &[u8], mode: RankMode) -> Vec<u8> {
+    let mut tables: Vec<Option<RankTables>> = (0..palettes.len()).map(|_| None).collect();
+    decode_rank_with(&mut tables, stream, model, boxes, palettes, client, frames, mask, mode)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn decode_rank_with<'a>(tables: &mut [Option<RankTables<'a>>], stream: &[u8], model: &Model, boxes: &[FrameBox], palettes: &'a [Vec<[u8; EC_PALETTE_ENTRY_BYTES]>], client: Client, frames: &[usize], mask: &[u8], mode: RankMode) -> Vec<u8> {
     let first = first_entry(client);
     let previous = aligned_previous(boxes, frames);
-    let mut tables: Vec<Option<RankTables>> = (0..palettes.len()).map(|_| None).collect();
     let mut index = vec![0u8; mask.len()];
     let mut decoder = RansDecoder::new(stream);
     let mut start = 0usize;
     for (n, &f) in frames.iter().enumerate() {
         let frame = &boxes[f];
         let colours = &palettes[frame.palette];
-        let tables = tables_of(&mut tables, palettes, frame.palette, first, false);
+        let tables = tables_of(tables, palettes, frame.palette, first, false, mode.cell_bits());
         let mut last = [FIRST_PREDICTION; COLOUR_CHANNELS];
         for y in 0..frame.h {
             for x in 0..frame.w {
@@ -662,7 +780,7 @@ fn part_k2(sample: &[Planes]) {
 // ---------------------------------------------------------------------------------------------------------------
 // 3. Reference action
 
-fn stand_action(planes: &Planes, kinds: &HashMap<u32, String>) -> u16 {
+pub(super) fn stand_action(planes: &Planes, kinds: &HashMap<u32, String>) -> u16 {
     let number: Option<u32> = planes.label.rsplit(' ').next().and_then(|id| id.parse().ok());
     let kind = number.and_then(|n| kinds.get(&n)).and_then(|kind| kind.split(':').next());
     let wanted = match (kind, number) {
@@ -1347,16 +1465,98 @@ fn part_k7(sources: &Sources, bodies: &[BodySource], sample: &[Planes], kinds: &
 
 // ---------------------------------------------------------------------------------------------------------------
 
+/// Decodes every stream of a body, with tables from outside.
+fn decode_all_with<'a>(tables: &mut [Vec<Option<RankTables<'a>>>], encoded: &Encoded, masks: &[Vec<u8>], model: &Model, planes: &'a Planes, mode: RankMode) -> usize {
+    encoded
+        .units
+        .iter()
+        .zip(masks)
+        .zip(tables.iter_mut())
+        .map(|((unit, mask), tables)| decode_rank_with(tables, &unit.index, model, &planes.boxes, &planes.palettes, planes.client, &unit.frames, mask, mode).len())
+        .sum()
+}
+
+/// Where rank coding's decode time goes, on one thread, summed over the sample.
+fn part_r(sample: &[Planes]) {
+    let single = rayon::ThreadPoolBuilder::new().num_threads(1).build().expect("one-thread pool");
+    let state = cpu_state();
+    let rows: [(&str, RankMode, Unit); 4] = [
+        ("rank + previous frame context", RankMode::PreviousContext, Unit::Action),
+        ("rank + previous frame context", RankMode::PreviousContext, Unit::Body),
+        ("rank from MED colour", RankMode::Spatial, Unit::Action),
+        ("rank from MED colour, 16x16x16 lookup", RankMode::Coarse, Unit::Action),
+    ];
+    println!("\n### r: rank coding's decode by stage, one thread; CPU {state}; load average {}", load_average());
+    for client in [Client::Cc, Client::Ec] {
+        let bodies: Vec<&Planes> = sample.iter().filter(|p| p.client == client).collect();
+        if bodies.is_empty() {
+            continue;
+        }
+        let resident: u64 = bodies.iter().map(|p| p.resident_bytes()).sum();
+        let opaque: u64 = bodies.iter().map(|p| p.opaque_pixels()).sum();
+        println!("\n#### {}: {} bodies, {:.1} MB resident, {:.1} Mpx opaque\n", client.label(), bodies.len(), mb(resident), opaque as f64 / PIXELS_PER_MEGAPIXEL);
+        println!("| coder | stream | total MB | index MB | parse tables ms | shape/coverage ms | palette tables ms | pixel loop ms | whole decode ms | decode MB/s | opaque Mpx/s in the pixel loop |");
+        println!("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
+        for (name, mode, unit) in rows {
+            let candidate = candidate(name, Order::Original, IndexCoding::Rank(mode, Scope::Body), COVERAGE_RANS, unit);
+            let encoded: Vec<Encoded> = bodies
+                .par_iter()
+                .map(|planes| {
+                    let encoded = encode_candidate(planes, &candidate);
+                    verify_round_trip(planes, &encoded, &candidate);
+                    encoded
+                })
+                .collect();
+            let (mut parse, mut whole, mut cold, mut warm) = (0f64, 0f64, 0f64, 0f64);
+            for (planes, encoded) in bodies.iter().zip(&encoded) {
+                let boxes = &planes.boxes;
+                let masks: Vec<Vec<u8>> = encoded.units.iter().map(|u| unit_planes(planes, &u.frames).1).collect();
+                single.install(|| {
+                    parse += fastest(|| shared_models(encoded, &candidate, client).index.is_some()).as_secs_f64();
+                    let shared = shared_models(encoded, &candidate, client);
+                    let model = shared.index.as_ref().expect("body tables");
+                    whole += fastest(|| encoded.units.iter().map(|u| decode_unit(u, boxes, &planes.palettes, &candidate, client, &shared).0.len()).sum::<usize>()).as_secs_f64();
+                    cold += fastest(|| encoded.units.iter().zip(&masks).map(|(u, mask)| decode_rank(&u.index, model, boxes, &planes.palettes, client, &u.frames, mask, mode).len()).sum::<usize>()).as_secs_f64();
+                    // Tables filled by a first decode stay for the timed ones, one set per stream as in a real decode.
+                    let mut tables: Vec<Vec<Option<RankTables>>> = encoded.units.iter().map(|_| (0..planes.palettes.len()).map(|_| None).collect()).collect();
+                    decode_all_with(&mut tables, encoded, &masks, model, planes, mode);
+                    warm += fastest(|| decode_all_with(&mut tables, encoded, &masks, model, planes, mode)).as_secs_f64();
+                });
+            }
+            let total: u64 = encoded.iter().map(Encoded::total).sum();
+            let index: u64 = encoded.iter().map(Encoded::index_bytes).sum();
+            println!(
+                "| {name} | {unit:?} | {:.2} | {:.2} | {:.0} | {:.0} | {:.0} | {:.0} | {:.0} | {:.1} | {:.1} |",
+                mb(total),
+                mb(index),
+                ms(parse),
+                ms((whole - cold).max(0.0)),
+                ms((cold - warm).max(0.0)),
+                ms(warm),
+                ms(parse + whole),
+                mb(resident) / (parse + whole),
+                opaque as f64 / PIXELS_PER_MEGAPIXEL / warm,
+            );
+        }
+    }
+    let end = cpu_state();
+    println!("\nLoad average at the end of part r {}", load_average());
+    if end != state {
+        println!("The CPU state changed during part r ({state} at the start, {end} at the end): discard its timings");
+    }
+}
+
 pub(super) fn run(sources: &Sources, bodies: &[BodySource], present: &[(Client, u64, usize)], cc_dir: &Path, parts: &[String], stride: usize, time: bool) {
     let runs = |part: &str| parts.iter().any(|p| p == part || p == "k");
-    if !["k1", "k2", "k3", "k4", "k5", "k6", "k7"].iter().any(|part| runs(part)) {
+    let runs_r = parts.iter().any(|p| p == "r");
+    if !runs_r && !["k1", "k2", "k3", "k4", "k5", "k6", "k7"].iter().any(|part| runs(part)) {
         return;
     }
     println!("\nPart k, every {stride}-th body; CPU {}; load average {}", cpu_state(), load_average());
     if runs("k1") {
         part_k1(sources, bodies, cc_dir);
     }
-    if !["k2", "k3", "k4", "k5", "k6", "k7"].iter().any(|part| runs(part)) {
+    if !runs_r && !["k2", "k3", "k4", "k5", "k6", "k7"].iter().any(|part| runs(part)) {
         return;
     }
     let kinds = body_kinds(cc_dir);
@@ -1368,6 +1568,9 @@ pub(super) fn run(sources: &Sources, bodies: &[BodySource], present: &[(Client, 
         })
         .collect();
     let sample: Vec<Planes> = indices.par_iter().map(|&i| Planes::from_body(&load_body(sources, &bodies[i]))).collect();
+    if runs_r {
+        part_r(&sample);
+    }
     if runs("k2") {
         part_k2(&sample);
     }

@@ -54,6 +54,8 @@ ssimulacra2 = { version = "0.5.1", default-features = false }
 # Its shrink pass: how far proper image codecs get on the index planes (bounds only).
 jpegxl-rs = { version = "0.14" }
 libwebp-sys = "0.14.4"
+# LZ4 HC, which lz4_flex doesn't have: the fast entropy path's comparison.
+lz4 = "1.28"
 # Its contact sheets (PNG).
 flate2.workspace = true
 

@@ -53,10 +53,23 @@ Program `classic_7.0.103.0_client.exe` (SHA-256 `4d857f2f5f8bf350bc50a87ee66b223
 
 1. **MUL.** `GetMulFrame` reads the idx entry, then at the entry start the palette, a `u32` frame count and
    `u32` offsets relative to the end of the palette; an offset of 0 is a missing frame (skipped). **confirmed**.
-2. **UOP.** `GetMobileFrame` takes the MUL path when `0x005978a0(body)` is false, else `GetUopFrame`, which
+2. **UOP.** `GetMobileFrame` takes the MUL path when `BodyUsesUopFrames(body)` is false, else `GetUopFrame`, which
    requests the frame set of (body, action), searches its table with `FindFrameEntry` by (action, frame number)
    and decodes at the entry's data offset; a width or height of 0 gives no frame. The container fields read are
    the frame count (+0x20), the table offset (+0x24) and each entry's key and data offset. **confirmed**.
+   - **The per-body test.** `BodyUsesUopFrames` (0x005978a0) is true when the body has a `mobtypes.txt` row whose
+     flags have 0x10000. `LoadMobTypesFile` (0x00597d70) reads `"%d %s %x"` per line, cuts at `#`, and keeps ids
+     1..0x7FF with a known type. A body out of range, or with no row, takes the MUL path. **confirmed**. Within
+     `GetMobileFrame` there is no fallback from one source to the other. **confirmed**.
+   - **What the test does not prove.** An unflagged UOP entry is not shown to be unreachable, only not reached by a
+     mobile's own body. `GetMobileFrame` tests the object's field +0x3E but requests the frames of its argument, and
+     `FUN_005441e0`, the other caller of `GetUopFrame`, tests its object's field +0x38 and then requests its own id
+     argument, so a flagged object can request an unflagged id. Body 1525 (`EQUIP_Tabbard_Gargoyle`, unflagged, has
+     UOP frames) is the likely case. `FUN_005b96a0` also requests frame sets for actions 9-14 without the test,
+     **probably** as preloading. The callers' arguments are not traced.
+   - **Remapping.** Only the MUL path goes through `body.def` and `bodyconv.def` (`0x0044f6d0`). The UOP path keys
+     on the id the mobile's asset returns (its vtable +0xbc, or +0xc0 when not 0). That id is the body itself
+     **probable**: the two virtual functions were not read.
 3. **Unread fields.** The header box, the colour table and the entry boxes of the AMOU container are not read
    on this path. `UOMobFrameSet::Construct` reads three `u32` from its stream, not identified. **probable** that
    nothing else reads them.

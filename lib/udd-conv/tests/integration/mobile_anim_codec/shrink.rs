@@ -17,7 +17,7 @@
 //!
 //! `MOBILE_ANIM_CODEC_SHRINK_STRIDE=n` samples every n-th body by pixel count (10 when unset; 1 is the whole set).
 //! `MOBILE_ANIM_CODEC_SHRINK_TIME=1` also times the candidates of `b` on one thread, after encoding them in parallel.
-//! `k1`..`k7` (`k`, all of them): what knowledge of the data buys, see the `knowledge` module.
+//! `k1`..`k7` (`k`, all of them) and `r`: what knowledge of the data buys, see the `knowledge` module.
 //! `k8`: keep about half of the frames and rebuild the others (lossy), see the `halved` module.
 //! Every lossless candidate is decoded and compared with its source: a mismatch fails the test.
 
@@ -29,8 +29,12 @@ use libwebp_sys as webp;
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 
+mod crowd;
+mod derive;
+mod floor;
 mod halved;
 mod knowledge;
+mod video;
 
 const PARTS_ENV: &str = "MOBILE_ANIM_CODEC_SHRINK_PARTS";
 const DEFAULT_PARTS: &str = "a1,b,c,d,e,f,g";
@@ -842,6 +846,10 @@ enum IndexCoding {
     RansPrevious(Predictor, Scope, PreviousRole),
     /// Each pixel's rank in the palette's entries by RGB distance from a reference, rANS; see `knowledge`.
     Rank(knowledge::RankMode, Scope),
+    /// The whole index plane, LZ4 HC. The Classic plane carries the shape.
+    Lz4Hc,
+    /// Prediction residuals of the opaque pixels in context-split streams; Classic adds the shape, a bitmask. See `crowd`.
+    Split(crowd::SplitSpec),
 }
 
 /// What the previous frame's pixel does in [`IndexCoding::RansPrevious`].
@@ -861,6 +869,8 @@ enum CoverageCoding {
     Split(i32),
     /// rANS with neighbour contexts.
     Rans(Scope),
+    /// The plane, LZ4 HC.
+    Lz4Hc,
 }
 
 #[derive(Clone, Copy)]
@@ -880,9 +890,11 @@ const COVERAGE_ZSTD: CoverageCoding = CoverageCoding::Zstd(LEVEL_19);
 const COVERAGE_RANS: CoverageCoding = CoverageCoding::Rans(Scope::Body);
 
 /// Every stream candidate of part `b`.
-const CANDIDATES: [Candidate; 44] = {
+const CANDIDATES: [Candidate; 68] = {
     use IndexCoding::{Rans, RansPrevious, Residual, Zstd, ZstdLarge};
     use Order::{Cooccurrence, Luma, Original, Path, PathAll};
+    use crowd::SplitCoder::{Tans, Zstd19};
+    use crowd::split;
     use PreviousRole::{Context, Prediction};
     use Predictor::{Left, Med, Up};
     [
@@ -939,6 +951,33 @@ const CANDIDATES: [Candidate; 44] = {
         // Rank coding through the palette's colours (part k, item 2).
         candidate("k2: rank from MED colour, rANS body tables, action streams", Original, IndexCoding::Rank(knowledge::RankMode::Spatial, Scope::Body), COVERAGE_RANS, Unit::Action),
         candidate("k2: rank + previous frame context, rANS body tables, action streams", Original, IndexCoding::Rank(knowledge::RankMode::PreviousContext, Scope::Body), COVERAGE_RANS, Unit::Action),
+        candidate("k2: rank with a 16x16x16 colour lookup, rANS body tables, action streams", Original, IndexCoding::Rank(knowledge::RankMode::Coarse, Scope::Body), COVERAGE_RANS, Unit::Action),
+        // The fast entropy path (part s2): no per-pixel entropy coder, no per-pixel palette work.
+        candidate("s2: slot plane, LZ4 HC, body", Original, IndexCoding::Lz4Hc, CoverageCoding::Lz4Hc, Unit::Body),
+        candidate("s2: slot plane, LZ4 HC, action", Original, IndexCoding::Lz4Hc, CoverageCoding::Lz4Hc, Unit::Action),
+        candidate("s2: luma, MED residual, zstd 19, action", Luma, Residual(Med, LEVEL_19), COVERAGE_ZSTD, Unit::Action),
+        candidate("s2: luma, left residual, zstd 19, action", Luma, Residual(Left, LEVEL_19), COVERAGE_ZSTD, Unit::Action),
+        candidate("s2: luma, MED, 4 streams, zstd 19, action", Luma, IndexCoding::Split(split(Med, false, Zstd19, false)), COVERAGE_ZSTD, Unit::Action),
+        candidate("s2: luma, MED, 10 streams, zstd 19, action", Luma, IndexCoding::Split(split(Med, true, Zstd19, false)), COVERAGE_ZSTD, Unit::Action),
+        candidate("s2: luma, MED, 10 streams, zstd 19, body", Luma, IndexCoding::Split(split(Med, true, Zstd19, false)), COVERAGE_ZSTD, Unit::Body),
+        candidate("s2: luma, left, 10 streams, zstd 19, action", Luma, IndexCoding::Split(split(Left, true, Zstd19, false)), COVERAGE_ZSTD, Unit::Action),
+        candidate("s2: slot, MED, 10 streams, zstd 19, action", Original, IndexCoding::Split(split(Med, true, Zstd19, false)), COVERAGE_ZSTD, Unit::Action),
+        candidate("s2: luma, MED, 4 streams, tANS, action", Luma, IndexCoding::Split(split(Med, false, Tans, false)), COVERAGE_ZSTD, Unit::Action),
+        candidate("s2: luma, MED, 10 streams, tANS, action", Luma, IndexCoding::Split(split(Med, true, Tans, false)), COVERAGE_ZSTD, Unit::Action),
+        candidate("s2: luma, MED, 10 streams, tANS, body", Luma, IndexCoding::Split(split(Med, true, Tans, false)), COVERAGE_ZSTD, Unit::Body),
+        candidate("s2: luma, MED, 10 streams, tANS, action+direction", Luma, IndexCoding::Split(split(Med, true, Tans, false)), COVERAGE_ZSTD, Unit::ActionDirection),
+        candidate("s2: luma, left, 10 streams, tANS, action", Luma, IndexCoding::Split(split(Left, true, Tans, false)), COVERAGE_ZSTD, Unit::Action),
+        candidate("s2: slot, MED, 10 streams, tANS, action", Original, IndexCoding::Split(split(Med, true, Tans, false)), COVERAGE_ZSTD, Unit::Action),
+        // Motion-compensated prediction (part s3), through the same streams.
+        candidate("s3: luma, MED + block motion, zstd 19, action", Luma, IndexCoding::Split(split(Med, true, Zstd19, true)), COVERAGE_ZSTD, Unit::Action),
+        candidate("s3: luma, MED + block motion, tANS, action", Luma, IndexCoding::Split(split(Med, true, Tans, true)), COVERAGE_ZSTD, Unit::Action),
+        // The other load units of part s1's candidates, for their disk cost.
+        candidate("s1: slot plane, LZ4 HC, action+direction", Original, IndexCoding::Lz4Hc, CoverageCoding::Lz4Hc, Unit::ActionDirection),
+        candidate("s1: luma, MED residual, zstd 19, action+direction", Luma, Residual(Med, LEVEL_19), COVERAGE_ZSTD, Unit::ActionDirection),
+        candidate("s1: luma, MED, 10 streams, zstd 19, action+direction", Luma, IndexCoding::Split(split(Med, true, Zstd19, false)), COVERAGE_ZSTD, Unit::ActionDirection),
+        candidate("s1: luma, MED + block motion, tANS, body", Luma, IndexCoding::Split(split(Med, true, Tans, true)), COVERAGE_ZSTD, Unit::Body),
+        candidate("s1: luma, MED + block motion, tANS, action+direction", Luma, IndexCoding::Split(split(Med, true, Tans, true)), COVERAGE_ZSTD, Unit::ActionDirection),
+        candidate("s1: rank + previous, action+direction", Original, IndexCoding::Rank(knowledge::RankMode::PreviousContext, Scope::Body), COVERAGE_RANS, Unit::ActionDirection),
     ]
 };
 
@@ -1245,15 +1284,28 @@ fn encode_candidate(planes: &Planes, candidate: &Candidate) -> Encoded {
                 unit.index = bytes;
             }
         }
+        IndexCoding::Lz4Hc => {
+            for (unit, (index, _)) in encoded.units.iter_mut().zip(&parts) {
+                unit.index = crowd::lz4_compress(index);
+            }
+        }
+        IndexCoding::Split(spec) => {
+            encoded.index_tables = crowd::encode_split(planes, &groups, &parts, spec, &mut encoded.units);
+        }
     }
 
     // Shape and coverage streams.
     match planes.client {
         Client::Cc => match candidate.index {
-            IndexCoding::Zstd(_) | IndexCoding::ZstdLarge => {}
+            IndexCoding::Zstd(_) | IndexCoding::ZstdLarge | IndexCoding::Lz4Hc => {}
             IndexCoding::Residual(_, level) => {
                 for (unit, (_, mask)) in encoded.units.iter_mut().zip(&parts) {
                     unit.coverage = compress_level(&packed_bits(mask.iter().map(|&m| m != 0)), level, false);
+                }
+            }
+            IndexCoding::Split(_) => {
+                for (unit, (_, mask)) in encoded.units.iter_mut().zip(&parts) {
+                    unit.coverage = compress_level(&packed_bits(mask.iter().map(|&m| m != 0)), LEVEL_19, false);
                 }
             }
             IndexCoding::Rans(_, scope) | IndexCoding::RansPrevious(_, scope, _) | IndexCoding::Rank(_, scope) => {
@@ -1285,6 +1337,11 @@ fn encode_candidate(planes: &Planes, candidate: &Candidate) -> Encoded {
                     ]);
                 }
             }
+            CoverageCoding::Lz4Hc => {
+                for (unit, (_, coverage)) in encoded.units.iter_mut().zip(&parts) {
+                    unit.coverage = crowd::lz4_compress(coverage);
+                }
+            }
             CoverageCoding::Rans(scope) => {
                 let streams: Vec<Vec<(u16, u8)>> =
                     groups.iter().zip(&parts).map(|(frames, (_, coverage))| coverage_symbols(&planes.boxes, frames, coverage)).collect();
@@ -1305,11 +1362,14 @@ fn encode_candidate(planes: &Planes, candidate: &Candidate) -> Encoded {
 struct SharedModels {
     index: Option<Model>,
     coverage: Option<Model>,
+    split: Vec<crowd::Tans>,
 }
 
 fn shared_models(encoded: &Encoded, candidate: &Candidate, client: Client) -> SharedModels {
     let mut models = SharedModels::default();
-    if !encoded.index_tables.is_empty() {
+    if let IndexCoding::Split(spec) = candidate.index {
+        models.split = crowd::parse_tables(&encoded.index_tables, spec);
+    } else if !encoded.index_tables.is_empty() {
         models.index = Some(Model::parse(&encoded.index_tables, BYTE_SYMBOLS, index_contexts(candidate.index)));
     }
     if !encoded.coverage_tables.is_empty() {
@@ -1328,8 +1388,8 @@ fn decode_unit(unit: &EncodedUnit, boxes: &[FrameBox], palettes: &[Vec<[u8; EC_P
     let mut mask = Vec::new();
     match client {
         Client::Cc => match candidate.index {
-            IndexCoding::Zstd(_) | IndexCoding::ZstdLarge => {}
-            IndexCoding::Residual(..) => {
+            IndexCoding::Zstd(_) | IndexCoding::ZstdLarge | IndexCoding::Lz4Hc => {}
+            IndexCoding::Residual(..) | IndexCoding::Split(_) => {
                 let bits = decompress(&unit.coverage, packed_bytes(total));
                 mask = (0..total).map(|n| (bits[n / u8::BITS as usize] >> (n % u8::BITS as usize)) & 1).collect();
             }
@@ -1359,6 +1419,7 @@ fn decode_unit(unit: &EncodedUnit, boxes: &[FrameBox], palettes: &[Vec<[u8; EC_P
         },
         Client::Ec => match candidate.coverage {
             CoverageCoding::Zstd(_) => mask = decompress(&unit.coverage, total),
+            CoverageCoding::Lz4Hc => mask = crowd::lz4_decompress(&unit.coverage, total),
             CoverageCoding::Split(_) => {
                 let mut at = 0usize;
                 let shape = decompress(get_stream(&unit.coverage, &mut at), packed_bytes(total));
@@ -1408,6 +1469,8 @@ fn decode_unit(unit: &EncodedUnit, boxes: &[FrameBox], palettes: &[Vec<[u8; EC_P
 
     let index = match candidate.index {
         IndexCoding::Zstd(_) | IndexCoding::ZstdLarge => decompress(&unit.index, total),
+        IndexCoding::Lz4Hc => crowd::lz4_decompress(&unit.index, total),
+        IndexCoding::Split(spec) => crowd::decode_split(unit, boxes, &mask, spec, &shared.split, total),
         IndexCoding::Residual(predictor, _) => {
             let opaque = mask.iter().filter(|&&m| m != 0).count();
             let residuals = decompress(&unit.index, opaque);
@@ -3083,5 +3146,23 @@ pub(super) fn run(sources: &Sources, bodies: &[BodySource], present: &[(Client, 
     knowledge::run(sources, bodies, present, cc_dir, &parts, stride, time);
     if runs("k8") {
         halved::run(sources, bodies, present, cc_dir, stride);
+    }
+    if runs("s1") {
+        crowd::part_s1(sources, bodies, present, &only);
+    }
+    if runs("s6") {
+        video::part_s6(sources, bodies, present, cc_dir, time);
+    }
+    if runs("s3") {
+        crowd::part_s3(sources, bodies, present, cc_dir, stride);
+    }
+    if runs("s4") {
+        floor::part_s4(sources, bodies, present, cc_dir, stride);
+    }
+    if runs("s4q") {
+        floor::part_s4q(sources, bodies, present);
+    }
+    if runs("s5") {
+        derive::part_s5(sources, bodies);
     }
 }
