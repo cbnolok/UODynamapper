@@ -51,6 +51,11 @@ lz4_flex = { version = "0.11", default-features = false, features = ["std", "saf
 # SSIMULACRA2 of requantized upscales.
 zstd.workspace = true
 ssimulacra2 = { version = "0.5.1", default-features = false }
+# Its shrink pass: how far proper image codecs get on the index planes (bounds only).
+jpegxl-rs = { version = "0.14" }
+libwebp-sys = "0.14.4"
+# Its contact sheets (PNG).
+flate2.workspace = true
 
 [features]
 default = []

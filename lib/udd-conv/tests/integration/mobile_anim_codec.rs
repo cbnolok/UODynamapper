@@ -22,7 +22,7 @@
 //! Nothing is written to disk. Run with `--release`:
 //! `UO_CC_CLIENT_DIR=<Classic client> UO_EC_CLIENT_DIR=<Enhanced client> cargo test --release -p udd-conv --test
 //! integration mobile_anim_codec:: -- --ignored --nocapture`; `MOBILE_ANIM_CODEC_STRIDE=n` measures every n-th body only,
-//! `MOBILE_ANIM_CODEC_PASSES=timing` (or `sizes`, `upscale`, comma-separated) runs only those passes. The timing pass
+//! `MOBILE_ANIM_CODEC_PASSES=timing` (or `sizes`, `upscale`, `shrink`, comma-separated) runs only those passes. The timing pass
 //! prints the CPU state (turbo boost, `/sys/devices/system/cpu/cpufreq/boost`, and the CPUs' energy preferences) and
 //! discards its timings when the state changed during the pass.
 
@@ -51,17 +51,22 @@ use uocf::enhanced::animationframe::{
 use uocf::uop_container::package::{LoadMode, UopPackage};
 use zstd::zstd_safe::CParameter;
 
+mod shrink;
+
 const CC_CLIENT_DIR_ENV: &str = "UO_CC_CLIENT_DIR";
 const EC_CLIENT_DIR_ENV: &str = "UO_EC_CLIENT_DIR";
 /// When set to `n`, only every `n`-th body batch is measured (a quick run).
 const BODY_STRIDE_ENV: &str = "MOBILE_ANIM_CODEC_STRIDE";
-/// Comma-separated passes to run, of [`SIZES_PASS`], [`TIMING_PASS`] and [`UPSCALE_PASS`]; all when unset.
+/// Comma-separated passes to run, of [`ALL_PASSES`]; [`DEFAULT_PASSES`] when unset.
 const PASSES_ENV: &str = "MOBILE_ANIM_CODEC_PASSES";
 const SIZES_PASS: &str = "sizes";
 const TIMING_PASS: &str = "timing";
 /// Upscaling and motion.
 const UPSCALE_PASS: &str = "upscale";
-const ALL_PASSES: [&str; 3] = [SIZES_PASS, TIMING_PASS, UPSCALE_PASS];
+/// Only on request, as it takes hours: see the `shrink` module.
+const SHRINK_PASS: &str = "shrink";
+const DEFAULT_PASSES: [&str; 3] = [SIZES_PASS, TIMING_PASS, UPSCALE_PASS];
+const ALL_PASSES: [&str; 4] = [SIZES_PASS, TIMING_PASS, UPSCALE_PASS, SHRINK_PASS];
 /// CPU turbo boost (`1` on, `0` off) and each CPU's energy preference, read at the start and at the end of the
 /// timing pass.
 const BOOST_PATH: &str = "/sys/devices/system/cpu/cpufreq/boost";
@@ -1687,7 +1692,7 @@ fn mobile_animation_storage_candidates() {
 
     let passes: Vec<String> = std::env::var(PASSES_ENV)
         .map(|list| list.split(',').map(|pass| pass.trim().to_string()).collect())
-        .unwrap_or_else(|_| ALL_PASSES.map(String::from).to_vec());
+        .unwrap_or_else(|_| DEFAULT_PASSES.map(String::from).to_vec());
     for pass in &passes {
         assert!(ALL_PASSES.contains(&pass.as_str()), "{PASSES_ENV}: unknown pass {pass}, expected one of {ALL_PASSES:?}");
     }
@@ -1726,6 +1731,9 @@ fn mobile_animation_storage_candidates() {
     };
     if runs(TIMING_PASS) {
         time_sample(&sources, &bodies, &[Client::Cc, Client::Ec].map(|c| pick(c, TIMING_SAMPLE_PER_CLIENT)).concat());
+    }
+    if runs(SHRINK_PASS) {
+        shrink::run(&sources, &bodies, &present, Path::new(&cc_dir));
     }
     if !runs(UPSCALE_PASS) {
         println!("\ndone in {:.0} s", started.elapsed().as_secs_f64());
