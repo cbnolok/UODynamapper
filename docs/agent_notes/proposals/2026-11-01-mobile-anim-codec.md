@@ -37,20 +37,31 @@ every variant, so it is left out of the payload sizes: 14 MB for Classic and 22 
 | VRAM, Classic | R8 needs 2.42 GB for the whole set, and BC7 2.52 GB. **R8 is no larger than BC7, and it is lossless with hue in the shader.** |
 | VRAM, Enhanced | RG8 needs 9.83 GB and BC7 5.11 GB. RG8 is twice the size of BC7. |
 | Enhanced at 8 bpp | **No.** 19 % of pixels have partial coverage (per-body median 32 %), and the (index, coverage) pairs fit 255 entries in under 1 % of bodies. |
-| Runtime BC7 | About **21 Mpx/s per thread**, 19–42× the decode time. That is too slow for the first-draw path, but feasible as a background step after the indexed frames are drawn. It is only worth it for Enhanced. |
+| Runtime BC7 | About **22–23 Mpx/s per thread**, 19–43× the decode time. That is too slow for the first-draw path, but feasible as a background step after the indexed frames are drawn. It is only worth it for Enhanced. |
 | GPU BC7 | Not worth building now. Classic gains nothing from it, and pack-time BC7 already covers RGBA art. Reconsider only if Enhanced VRAM becomes the limit. |
 | 2× upscale | MMPX costs 1.38–1.48× the 1× size and stays indexed. xBRZ/hqx requantized to 256 colours cost 2.9–3.7×, about the same as BC7 (3.1–4.2×), with SSIMULACRA2 above 91 at the median. |
 | Motion | An exact 8×8 shift between neighbouring frames is rare: 3 % of blocks (Classic) and under 1 % (Enhanced). Keyframe interpolation would have to be approximate. |
-| Load unit | A whole-body batch takes a median of 1.1 ms (Classic) or 5.5 ms (Enhanced) to decode, and up to 215 / 364 ms. A per-action batch shows its first frame in a median of 41 / 104 µs, with a maximum of 6 / 10 ms. **Provisional timings**, see [Timing conditions](#timing-conditions). |
+| Load unit | A whole-body batch takes a median of 0.9 ms (Classic) or 5.0 ms (Enhanced) to decode, and up to 197 / 363 ms. A per-action batch shows its first frame in a median of 34 / 96 µs, with a maximum of 6 / 10 ms (boost off, EPP power). |
 
 ## Timing conditions
 
 All timings are on one thread of an AMD Ryzen AI 9 365, with **boost off and EPP power**. Each time is the fastest
 of 3 runs, and the files are already in memory.
 
-> **Provisional.** The run below shared the machine with the renderer's full Britannia web-map export.
-> The load average was 15.13 / 20.33 / 28.23 at the start of the timing pass and 1.04 / 4.80 / 13.16 at its end.
-> A timing-only re-run, started with a load under 2 after the export ends, will replace these figures.
+The tables come from a timing-only run (`MOBILE_ANIM_CODEC_PASSES=timing`) on a quiet machine, after the
+renderer's web-map export had ended. No other agent was running.
+
+| run | load average at the start of the timing pass (1 / 5 / 15 min) | at its end |
+|---|---|---|
+| **quiet, timing only (these tables)** | 3.83 / 2.24 / 5.93 | 1.04 / 3.42 / 5.57 |
+| full run, contended by the web-map export (discarded) | 15.13 / 20.33 / 28.23 | 1.04 / 4.80 / 13.16 |
+
+- **The quiet run's starting load is the benchmark's own.** The load was 0.43 when it was launched.
+  - Without the size pass, the benchmark first loads every body in parallel to rank them by pixel count.
+  - It also prepares each chunk of 20 sampled bodies' payloads in parallel between timings.
+  - The timed steps themselves run alone, on a one-thread pool.
+- **The quiet medians are 3–20 % lower than the contended run's.** Classic block copy is 20 % lower, most Classic
+  steps 10–15 % and every Enhanced step under 10 %. No conclusion changed.
 
 ## 1. Sizes
 
@@ -139,62 +150,82 @@ The largest bodies are Classic `AnimationFrame1.uop` body 197 (1380 frames, 140.
 
 ## 2. Load cost per body batch
 
-This uses 200 bodies per client, spread by pixel count, on one thread. **Boost off, EPP power; provisional
-(contended, see [Timing conditions](#timing-conditions)).** MB/s counts the decoded output.
+This uses 200 bodies per client, spread by pixel count, on one thread. **Boost off, EPP power, quiet machine**
+(see [Timing conditions](#timing-conditions)). MB/s counts the decoded output.
 
-### Classic (boost off, EPP power; provisional)
-
-| step | median µs | p95 µs | max µs | MB/s |
-|---|---:|---:|---:|---:|
-| BC7 + zstd 7 (zstd only) | 741 | 8773 | 151968 | 973 |
-| RGBA8 + zstd 7 | 2189 | 42334 | 485563 | 1067 |
-| indexed, per frame + zstd 9 | 3045 | 13943 | 119147 | 471 |
-| indexed, batch + zstd 9 | 804 | 9039 | 171608 | 836 |
-| indexed, batch + zstd 19 | 1060 | 10866 | 215037 | 670 |
-| indexed, batch + zstd 19 + LDM | 1050 | 11046 | 229122 | 660 |
-| indexed + block copy + zstd 19 (zstd + rebuild) | 1955 | 32448 | 590998 | 268 |
-| indexed + difference + zstd 19 (zstd + rebuild) | 2661 | 35953 | 555802 | 244 |
-| indexed batch → RGBA8 expand (no zstd) | 524 | 6027 | 69219 | 5725 |
-| runtime BC7 (Analytical): expand + encode | 45289 | 438850 | 4252282 | 20.7 Mpx/s |
-| runtime BC7 (AnalyticalWide): expand + encode | 44271 | 385578 | 4336922 | 20.9 Mpx/s |
-
-### Enhanced (boost off, EPP power; provisional)
+### Classic (boost off, EPP power)
 
 | step | median µs | p95 µs | max µs | MB/s |
 |---|---:|---:|---:|---:|
-| BC7 + zstd 7 (zstd only) | 2706 | 19013 | 161261 | 991 |
-| RGBA8 + zstd 7 | 7490 | 86559 | 556270 | 1042 |
-| indexed, per frame + zstd 9 | 11999 | 39593 | 223265 | 670 |
-| indexed, batch + zstd 9 | 4539 | 35161 | 347600 | 963 |
-| indexed, batch + zstd 19 | 5463 | 39952 | 363565 | 850 |
-| indexed, batch + zstd 19 + LDM | 5465 | 40499 | 375510 | 838 |
-| indexed + block copy + zstd 19 (zstd + rebuild) | 9848 | 95535 | 835029 | 400 |
-| indexed + difference + zstd 19 (zstd + rebuild) | 11893 | 118200 | 903036 | 332 |
-| indexed batch → RGBA8 expand (no zstd) | 5310 | 33366 | 205352 | 2098 |
-| runtime BC7 (Analytical): expand + encode | 140676 | 719383 | 3902086 | 21.7 Mpx/s |
-| runtime BC7 (AnalyticalWide): expand + encode | 135938 | 681998 | 3673335 | 22.6 Mpx/s |
+| BC7 + zstd 7 (zstd only) | 667 | 8727 | 145899 | 1051 |
+| RGBA8 + zstd 7 | 1927 | 40137 | 468413 | 1144 |
+| indexed, per frame + zstd 9 | 2913 | 12646 | 119089 | 526 |
+| indexed, batch + zstd 9 | 685 | 8866 | 163688 | 921 |
+| indexed, batch + zstd 19 | 914 | 10642 | 197394 | 746 |
+| indexed, batch + zstd 19 + LDM | 898 | 10698 | 217233 | 725 |
+| indexed + block copy + zstd 19 (zstd + rebuild) | 1572 | 29480 | 569309 | 295 |
+| indexed + difference + zstd 19 (zstd + rebuild) | 2363 | 30766 | 530414 | 273 |
+| indexed batch → RGBA8 expand (no zstd) | 471 | 5792 | 69223 | 6468 |
+| runtime BC7 (Analytical): expand + encode | 40373 | 398903 | 4185815 | 22.1 Mpx/s |
+| runtime BC7 (AnalyticalWide): expand + encode | 39331 | 383064 | 3975973 | 23.0 Mpx/s |
+
+### Enhanced (boost off, EPP power)
+
+| step | median µs | p95 µs | max µs | MB/s |
+|---|---:|---:|---:|---:|
+| BC7 + zstd 7 (zstd only) | 2513 | 18739 | 165740 | 1040 |
+| RGBA8 + zstd 7 | 7226 | 87436 | 592213 | 1058 |
+| indexed, per frame + zstd 9 | 11337 | 39036 | 221637 | 698 |
+| indexed, batch + zstd 9 | 4118 | 34765 | 351436 | 1000 |
+| indexed, batch + zstd 19 | 5048 | 39508 | 363321 | 879 |
+| indexed, batch + zstd 19 + LDM | 5040 | 40203 | 386514 | 864 |
+| indexed + block copy + zstd 19 (zstd + rebuild) | 9073 | 95298 | 865798 | 409 |
+| indexed + difference + zstd 19 (zstd + rebuild) | 11271 | 118302 | 938334 | 344 |
+| indexed batch → RGBA8 expand (no zstd) | 4986 | 33064 | 199554 | 2183 |
+| runtime BC7 (Analytical): expand + encode | 130485 | 717982 | 3908371 | 22.1 Mpx/s |
+| runtime BC7 (AnalyticalWide): expand + encode | 126059 | 683008 | 3689146 | 22.9 Mpx/s |
 
 Only the interleaved layout was timed. Planar is one zstd stream of about the same size, so it should decode at
 about the same speed (inferred, not measured).
 
-### Load unit: whole body or one action (boost off, EPP power; provisional)
+### Load unit: whole body or one action (boost off, EPP power)
 
 The first frame is drawable once the batch that holds it is decoded. For a per-action batch, that is the body's
 lowest action.
 
 | client | unit | stored as | compressed MB (sample) | per batch decode median / p95 µs | first frame drawable median / p95 / max µs |
 |---|---|---|---:|---|---|
-| Classic | body | indexed zstd 19 | 134.5 | 1060 / 10866 | 1060 / 10866 / 215037 |
-| Classic | action | indexed zstd 19 | 148.2 | 19 / 397 | 41 / 1059 / 6314 |
-| Classic | body | BC7 zstd 7 | 160.6 | 741 / 8773 | 741 / 8773 / 151968 |
-| Classic | action | BC7 zstd 7 | 178.0 | 20 / 270 | 40 / 749 / 4185 |
-| Enhanced | body | indexed zstd 19 | 440.0 | 5463 / 39952 | 5463 / 39952 / 363565 |
-| Enhanced | action | indexed zstd 19 | 441.8 | 57 / 1272 | 104 / 2568 / 10125 |
-| Enhanced | body | BC7 zstd 7 | 387.2 | 2706 / 19013 | 2706 / 19013 / 161261 |
-| Enhanced | action | BC7 zstd 7 | 405.2 | 37 / 500 | 56 / 1115 / 4548 |
+| Classic | body | indexed zstd 19 | 134.5 | 914 / 10642 | 914 / 10642 / 197394 |
+| Classic | action | indexed zstd 19 | 148.2 | 18 / 382 | 34 / 1039 / 6110 |
+| Classic | body | BC7 zstd 7 | 160.6 | 667 / 8727 | 667 / 8727 / 145899 |
+| Classic | action | BC7 zstd 7 | 178.0 | 17 / 251 | 37 / 756 / 4109 |
+| Enhanced | body | indexed zstd 19 | 440.0 | 5048 / 39508 | 5048 / 39508 / 363321 |
+| Enhanced | action | indexed zstd 19 | 441.8 | 54 / 1229 | 96 / 2554 / 9861 |
+| Enhanced | body | BC7 zstd 7 | 387.2 | 2513 / 18739 | 2513 / 18739 / 165740 |
+| Enhanced | action | BC7 zstd 7 | 405.2 | 36 / 490 | 54 / 1144 / 4515 |
 
 These are decode times only. A whole-body batch also has to be uploaded before its first frame shows: up to
 279 MB (RG8) for the largest Enhanced body, and 41.5 MB at p95.
+
+### Baseline: map and statics chunks in the same state
+
+`map_statics_retrieval` was re-run right after the timing pass, in the same state: boost off, EPP power, load
+average 0.74 / 3.20 / 5.45 at the start and 2.34 / 3.02 / 5.02 at the end. Times are warm, per chunk, read through
+`UddpReader` from an mmap. The decoded sizes come from the stored variant: 117.9 MB for 28,673 map chunks
+(4.1 KB each) and 23.7 MB for 28,672 statics chunks (0.8 KB each).
+
+| package | codec | size MB | sequential µs | random µs | ≈ MB/s decoded (sequential) |
+|---|---|---:|---:|---:|---:|
+| map0 | installed (size of zstd 19) | 15.94 | 8.67 | 9.03 | 474 |
+| map0 | zstd 7 | 17.74 | 8.25 | 8.63 | 498 |
+| map0 | lz4 | 58.35 | 5.30 | 5.72 | 776 |
+| statics0 | installed (size of zstd 7) | 8.44 | 3.28 | 3.34 | 252 |
+| statics0 | zstd 19 | 8.15 | 3.57 | 3.70 | 232 |
+| statics0 | lz4 | 16.96 | 0.87 | 0.90 | 950 |
+
+The 4 KB map chunks decode at about 500 MB/s, and the 1 KB statics chunks at about 250 MB/s. The larger
+animation batches reach 750–880 MB/s at zstd 19. So an animation batch costs no more per byte than the map
+streaming already does, and less for whole-body batches.
 
 ### What the official client does, and what the design needs
 
@@ -216,15 +247,15 @@ So the design needs:
 
 The indexed formats provide the last point directly: hue is a palette swap, and R8/RG8 pages need no compositing.
 With decoding off the main thread, a large unit costs latency (pop-in), not frame time. A whole Enhanced body is
-40 ms at p95 and 364 ms at most to its first frame, against 2.6 ms and 10 ms for one action.
+40 ms at p95 and 363 ms at most to its first frame, against 2.6 ms and 10 ms for one action.
 
 ## 3. Runtime BC7
 
 The test encodes BC7 from the indexed batch with our encoder at its fastest settings: no RDO, both front-ends. The
-encoders have no other speed setting. It takes about **21–23 Mpx/s on one thread**: a median of 44 ms per Classic
-body and 136 ms per Enhanced body, with a maximum of 4.3 s / 3.7 s. That is 32× (Classic) and 19× (Enhanced) the
-batch zstd 19 decode (the benchmark's ratio over the sample totals; the medians give 42× and 25×). The expand to
-RGBA8 alone is 0.5 ms / 5.3 ms at the median.
+encoders have no other speed setting. It takes about **22–23 Mpx/s on one thread** (boost off, EPP power): a median
+of 39 ms per Classic body and 126 ms per Enhanced body, with a maximum of 4.0 s / 3.7 s. That is 32× (Classic) and
+19× (Enhanced) the batch zstd 19 decode (the benchmark's ratio over the sample totals; the medians give 43× and
+25×). The expand to RGBA8 alone is 0.5 ms / 5.0 ms at the median.
 
 Is it viable while streaming?
 
@@ -237,7 +268,7 @@ Is it viable while streaming?
   indexed or each hue is encoded separately.
 
 **GPU compute BC7: not worth trying now.** Published compute encoders are one to two orders of magnitude faster
-than 21 Mpx/s per thread, but the only gain on the table is halving Enhanced VRAM. The cheaper option is not
+than 23 Mpx/s per thread, but the only gain on the table is halving Enhanced VRAM. The cheaper option is not
 measured: an R8 index page plus 4-bit coverage packed two pixels per byte in a half-width R8 page, which comes to
 12 bpp with no codec. RGBA art (custom 32-bit art, colour-making upscales) is already handled by BC7 at pack time.
 Reconsider a GPU encoder only if Enhanced VRAM becomes the binding limit in practice.
