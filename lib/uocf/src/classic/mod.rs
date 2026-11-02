@@ -56,3 +56,4 @@ pub(crate) mod text_mode_lines;
 pub mod credits;
 pub mod help_index;
 pub mod asset_map;
+pub mod facet_image;
