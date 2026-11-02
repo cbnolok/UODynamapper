@@ -36,8 +36,27 @@
   `--allow-lossy`; stale delimiters only warn, with their count, since the delimiter rule
   rebuilds them. For a bigger map in an old client, patch its size table with
   `uo-client-patcher-gui` instead.
+  With `--to classic` and a `--target-client` that draws the world map images (7.0.x:
+  its executable names `facetNN.mul`), the facet's image is written too. The client reads
+  it without bounds checks, tile (x, y) at column x of row y, so an image of another size
+  than the map draws the wrong tiles. `--facet-image`:
+  - `update` (default): the target's image when the map is the target's, byte for byte;
+    the tiles that differ from the target's map re-rendered by the slope rule otherwise;
+    the whole image rendered when the sizes differ or the target has none;
+  - `keep`: the target's image as it is;
+  - `regenerate`: the whole image rendered;
+  - `none`: no image.
+
+  `keep` and `none` are refused when the target's image is not the map's size. A whole
+  rendered image is an approximation: about 94 % of pixels match the shipped style. The
+  rule takes the radarcol colour of the highest static (else the land) and shifts every
+  channel by the land slope. Bit-15 (black) pixels of unchanged tiles are kept. The
+  variant edition does not update the image (one image per facet) unless `regenerate`.
 - `facet patch-classic`: edit one cell of one Classic edition (land, z, statics added after
-  the cell's, removed or changed) and write it in the same container to `-o`.
+  the cell's, removed or changed) and write it in the same container to `-o`. When the
+  folder has the facet's `facetNN.mul` (with `radarcol.mul` and `tiledata.mul`), the
+  edited tile is re-rendered into a copy in `-o`, as are the tiles left of and above it
+  when its land z changed. Only those rows change; the pixels touched are reported.
 - `mul-convert extract|pack`: maps go through the typed map writer (4,096 blocks per UOP
   entry and the trailing block, as shipped); `pack --uop-template-dir` keeps the layout of
   the shipped packages, so an unchanged map packs back byte for byte.

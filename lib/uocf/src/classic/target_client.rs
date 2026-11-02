@@ -1,10 +1,11 @@
 //! What a facet conversion needs to know about the client it writes for ([`TargetClient`]): the facet sizes from the
 //! executable's size table (located by structure, `client_exe`; never a per-version table), whether Trammel reads
-//! Felucca's files and whether the difs are applied (Classic), the map container its folder ships, and the
-//! `tiledata.mul` sizes.
+//! Felucca's files and whether the difs are applied (Classic), the map container its folder ships, the
+//! `tiledata.mul` sizes, and which world map images (`facetNN.mul`) it draws.
 
 use std::path::{Path, PathBuf};
 
+use crate::classic::facet_image::{facet_image_file_name, FACET_IMAGE_COUNT};
 use crate::classic::map::MapSizeCells;
 use crate::classic::tiledata::TileData;
 use crate::client_config::login_servers::{ENHANCED_EXE, KINGDOM_REBORN_EXE};
@@ -43,6 +44,10 @@ pub struct TargetClient {
     pub inspection: ClientExeInspection,
     /// The folder of the executable.
     pub dir: PathBuf,
+    /// Classic: the facets whose `facetNN.mul` the executable names (7.0.20 and 2024 name all six; UO Gold and
+    /// Mondain's Legacy none). The 2024 client draws them in the map item gump, reading tile (x, y) at column x
+    /// of row y without bounds checks (`ghidra-classic-map-image`).
+    pub facet_images: Vec<u32>,
 }
 
 impl TargetClient {
@@ -58,7 +63,17 @@ impl TargetClient {
         let bytes = std::fs::read(&exe).wrap_err_with(|| format!("read {}", exe.display()))?;
         let inspection = ClientExeInspection::inspect(&bytes).wrap_err_with(|| format!("inspect {}", exe.display()))?;
         let dir = exe.parent().map(Path::to_path_buf).unwrap_or_default();
-        Ok(Self { exe, inspection, dir })
+        let facet_images = if inspection.family == ClientFamily::Classic {
+            (0..FACET_IMAGE_COUNT)
+                .filter(|&facet| {
+                    let name = facet_image_file_name(facet);
+                    bytes.windows(name.len()).any(|window| window.eq_ignore_ascii_case(name.as_bytes()))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        Ok(Self { exe, inspection, dir, facet_images })
     }
 
     pub fn family(&self) -> ClientFamily {
@@ -83,6 +98,11 @@ impl TargetClient {
     /// Classic: what the client does with the dif files.
     pub fn difs(&self) -> Option<&ClassicDifUsage> {
         self.inspection.difs.as_ref()
+    }
+
+    /// Classic: whether the client draws `facetNN.mul` for `facet` ([`Self::facet_images`]).
+    pub fn reads_facet_image(&self, facet: u32) -> bool {
+        self.facet_images.contains(&facet)
     }
 
     /// The Classic map container the client folder holds for `facet`, if any.

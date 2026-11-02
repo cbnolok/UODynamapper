@@ -221,3 +221,31 @@ Follow-up decisions (the user, 2026-11-01):
 - KR materials and subtypes other than the land map's stay a real loss behind `--allow-lossy`; a sidecar that
   keeps them is deferred (docs/TODO.md).
 - The fp stale bytes stay as they are (documented in cc_file_coverage.md).
+
+World map images (the coordinator, 2026-11-02). The 7.0.x clients draw `facetNN.mul` in the map item gump. They
+read it without bounds checks, tile (x, y) at column x of row y (`ghidra-classic-map-image`). So a map that is
+resized or edited while its image is not draws the wrong tiles, or stale ones. Both map tools now write the
+image with the map:
+
+- **The rule.** `classic/facet_image_render.rs` renders a tile from the radarcol colour of its highest static
+  (else its land), with every channel shifted by the land slope `z(x+1, y) - z(x, y+1)`: -1, +3 at 3 or more,
+  -4 at -3 or less. It is an approximation, not the shipped bytes: 84-95% of a facet's pixels exact, 94-99%
+  within one 5-bit step.
+- **`patch-classic`.** When the folder has the image, it re-renders the edited tile, and the tiles left of and
+  above it when its land z changed. `set_pixels` re-encodes those rows only. The tool reports the tiles, pixels
+  and rows touched.
+- **`convert --to classic`, with a `--target-client` whose executable names `facetNN.mul`.** `--facet-image`
+  picks what is written:
+  - `update` (default): the target's image byte for byte when the map is the target's; the differing tiles
+    re-rendered on the target's image when the content differs; the whole image rendered, with a line saying it
+    is an approximation, when the sizes differ or there is no image;
+  - `keep`: the target's image as it is;
+  - `regenerate`: the whole image rendered;
+  - `none`: no image.
+
+  `keep` and `none` refuse an image whose size is not the map's. Bit-15 (black) pixels of unchanged tiles are
+  kept. The variant edition leaves the image alone unless `regenerate`: the client draws one image per facet.
+
+  Measured: one patched Tokuno tile on 2024 changes rows y - 1 and y only; converting 2024's unchanged Tokuno
+  writes its image byte for byte (`tools/uocf-cli/tests/facet_image_cli.rs`). A resized map gets an image of the
+  new size that the reader accepts (`classic_facet_images`).

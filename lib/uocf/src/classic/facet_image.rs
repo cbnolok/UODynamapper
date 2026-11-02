@@ -185,10 +185,16 @@ impl FacetImageFile {
         let Some((width, height)) = facet_image_size(facet) else {
             eyre::bail!("facet {facet} has no image (facets 0 to {} do)", FACET_IMAGE_COUNT - 1);
         };
+        self.check_size(u32::from(width), u32::from(height)).wrap_err_with(|| format!("facet {facet}"))
+    }
+
+    /// Refuses a size other than `width` x `height` tiles, the size of the map the client draws the image for (a
+    /// client whose size table was patched draws a map of another size than the stock one).
+    pub fn check_size(&self, width: u32, height: u32) -> eyre::Result<()> {
         eyre::ensure!(
-            (self.width, self.height) == (width, height),
-            "a {} x {} image for facet {facet}, which is {width} x {height} tiles: the client ignores the header and \
-             draws tile (x, y) from column x of row y, so it would show the wrong tiles",
+            (u32::from(self.width), u32::from(self.height)) == (width, height),
+            "a {} x {} image for a map of {width} x {height} tiles: the client ignores the header and draws tile \
+             (x, y) from column x of row y, so it would show the wrong tiles",
             self.width,
             self.height
         );
@@ -371,7 +377,7 @@ mod tests {
         assert!(FacetImageFile::from_bytes(&inside).unwrap_err().to_string().contains("inside a run"));
         let truncated = [1, 0, 1, 0, 6, 0, 0, 0, 1, 0x1f, 0];
         assert!(FacetImageFile::from_bytes(&truncated).unwrap_err().to_string().contains("past the end"));
-        assert!(sample().check_facet_size(0).unwrap_err().to_string().contains("wrong tiles"));
+        assert!(format!("{:#}", sample().check_facet_size(0).unwrap_err()).contains("wrong tiles"));
     }
 
     #[test]

@@ -1,5 +1,8 @@
 //! `facet convert` (any of Classic MUL, Classic UOP, Enhanced Client facet, Kingdom Reborn facet to any other, with
-//! a resize to another client's facet size) and `facet patch-classic` (edit one Classic map edition).
+//! a resize to another client's facet size) and `facet patch-classic` (edit one Classic map edition). Both keep
+//! the world map image (`facetNN.mul`) of a client that draws it in step with the map written: the 7.0.x clients
+//! read it without bounds checks, tile (x, y) at column x of row y, so an image of another size draws the wrong
+//! tiles.
 
 use std::path::{Path, PathBuf};
 
@@ -8,6 +11,11 @@ use color_eyre::eyre::{self, WrapErr};
 use uocf::classic::facet_sources::{
     ClassicDifOptions, ClassicFacetSources, ClassicMapFile, ClassicMapFormat, MapDifFiles, StaticDifFiles,
     StaticsFiles,
+};
+use uocf::classic::facet_image::{facet_image_file_name, FacetImageFile, FACET_IMAGE_COUNT};
+use uocf::classic::facet_image_render::{
+    plan_facet_image, ChangedTile, FacetImageMode, FacetImagePlan, FacetImageRenderer, ImageUpdate,
+    SHIPPED_STYLE_MATCH_PERCENT,
 };
 use uocf::classic::map::MapSizeCells;
 #[cfg(test)]
@@ -74,6 +82,32 @@ pub enum DifMode {
     Bake,
     /// Do not apply them.
     Ignore,
+}
+
+/// `--facet-image`: the world map image (`facetNN.mul`) written with a Classic map, for a target client that draws
+/// it (7.0.x).
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FacetImageArg {
+    /// The target's image as it is; refused when its size is not the map's.
+    Keep,
+    /// The target's image, with the tiles that differ from the target's map re-rendered by the slope rule; the
+    /// whole image rendered when the sizes differ or the target has none (the default).
+    Update,
+    /// The whole image rendered from the map by the slope rule.
+    Regenerate,
+    /// No image; refused when the target's image is not the map's size.
+    None,
+}
+
+impl From<FacetImageArg> for FacetImageMode {
+    fn from(arg: FacetImageArg) -> Self {
+        match arg {
+            FacetImageArg::Keep => Self::Keep,
+            FacetImageArg::Update => Self::Update,
+            FacetImageArg::Regenerate => Self::Regenerate,
+            FacetImageArg::None => Self::None,
+        }
+    }
 }
 
 #[derive(Args, Debug)]
@@ -151,6 +185,10 @@ pub struct ConvertArgs {
     /// Kingdom Reborn: the Classic land id whose material and subtype to store for Classic ids the land map lacks.
     #[arg(long)]
     pub kr_fallback_land: Option<String>,
+    /// Classic, with a --target-client that draws facetNN.mul (7.0.x): the world map image written (default
+    /// update). A rendered tile is an approximation of the shipped style.
+    #[arg(long, value_enum)]
+    pub facet_image: Option<FacetImageArg>,
     /// Output folder (created; must not be a source folder).
     #[arg(short, long)]
     pub output_dir: PathBuf,
@@ -339,8 +377,19 @@ pub fn run_convert(args: ConvertArgs) -> eyre::Result<()> {
             };
             let template = args.uop_template.as_deref().map(load_package).transpose()?;
             write_classic(&world, u32::from(target_facet), target_edition, &containers, template, &args.output_dir)?;
+            write_converted_facet_image(
+                args.facet_image,
+                client.as_ref(),
+                &world,
+                u32::from(target_facet),
+                target_edition,
+                &args.output_dir,
+            )?;
         }
         ConvertTarget::Enhanced | ConvertTarget::Kr => {
+            if args.facet_image.is_some() {
+                println!("note: --facet-image applies to --to classic only.");
+            }
             let radarcol = args.radarcol.clone().or_else(|| {
                 let mut dirs = source.dirs.clone();
                 dirs.extend(client.as_ref().map(|client| client.dir.clone()));
@@ -397,6 +446,7 @@ pub fn run_patch_classic(args: PatchClassicArgs) -> eyre::Result<()> {
     let dir = sources.map.path.parent().map(Path::to_path_buf).unwrap_or_default();
     let (mut world, _, _) = ClassicWorld::load(&sources, source_size(args.size.as_deref(), &dir, facet)?)?;
     let (x, y) = (args.x, args.y);
+    let before = (world.map.cell(x, y)?, world.statics.cell_statics(x, y)?);
     if args.land.is_some() || args.z.is_some() {
         let (land, z) = world.map.cell(x, y)?;
         let land = args.land.as_deref().map(parse_number::<u16>).transpose()?.unwrap_or(land);
@@ -423,11 +473,168 @@ pub fn run_patch_classic(args: PatchClassicArgs) -> eyre::Result<()> {
         ClassicMapFormat::Uop => (ClassicContainer::Uop, Some(load_package(&sources.map.path)?)),
     };
     write_classic(&world, sources.map.map_index, sources.edition, &[container], template, &args.output_dir)?;
+    let after = (world.map.cell(x, y)?, world.statics.cell_statics(x, y)?);
+    let changed = (after != before).then_some(ChangedTile { x, y, land_z_changed: after.0.1 != before.0.1 });
+    patch_facet_image(&dir, sources.map.map_index, sources.edition, &world, changed, &args.output_dir)?;
     let (land, z) = world.map.cell(x, y)?;
     println!("({x}, {y}) in the {} edition: land 0x{land:04x} z {z}", sources.edition);
     for (index, record) in world.statics.cell_statics(x, y)?.iter().enumerate() {
         println!("  static {index}: 0x{:04x} z {} hue {}", record.graphic, record.z, record.hue);
     }
+    Ok(())
+}
+
+/// `Wrote ...` for an image updated tile by tile.
+fn describe_update(path: &Path, update: &ImageUpdate) -> String {
+    format!(
+        "Wrote {}: {} tiles re-rendered by the slope rule, {} pixels changed in {} rows ({} bit-15 pixels of unchanged \
+         tiles kept).",
+        path.display(),
+        update.tiles_rendered,
+        update.pixels_changed,
+        update.rows_changed,
+        update.undrawn_kept
+    )
+}
+
+/// The target's facet as it is, to compare the converted one with.
+fn load_target_world(dir: &Path, facet: u32, edition: MapEdition, size: MapSizeCells) -> eyre::Result<ClassicWorld> {
+    let sources =
+        ClassicFacetSources::resolve(&[dir.to_path_buf()], facet, &SOURCE_MAP_FORMATS, ClassicDifOptions::NONE, edition)?;
+    Ok(ClassicWorld::load(&sources, Some(size))?.0)
+}
+
+/// `facet convert --to classic`: the `facetNN.mul` of a target client that draws it (`--facet-image`).
+fn write_converted_facet_image(
+    mode: Option<FacetImageArg>,
+    client: Option<&TargetClient>,
+    world: &ClassicWorld,
+    facet: u32,
+    edition: MapEdition,
+    output_dir: &Path,
+) -> eyre::Result<()> {
+    let name = facet_image_file_name(facet);
+    let Some(client) = client.filter(|client| client.reads_facet_image(facet)) else {
+        if mode.is_some() {
+            let why = match client {
+                Some(client) => format!("{} does not draw {name}", client.exe.display()),
+                None => "it needs a --target-client that draws facetNN.mul".to_owned(),
+            };
+            println!("note: --facet-image ignored: {why}.");
+        }
+        return Ok(());
+    };
+    let mode: FacetImageMode = mode.map_or(FacetImageMode::Update, Into::into);
+    let current_image = find_file_ignoring_case(&client.dir, &name).and_then(|path| match FacetImageFile::load(&path) {
+        Ok(image) => Some(image),
+        Err(error) => {
+            println!("warning: {error:#}: the target's {name} is treated as missing.");
+            None
+        }
+    });
+    let size = world.size_cells();
+    let fits = current_image.as_ref().is_some_and(|image| image.check_size(size.width, size.height).is_ok());
+    if edition.is_variant() && mode == FacetImageMode::Update && fits {
+        println!(
+            "note: {name} not written: the client draws one image per facet, for either edition, and it is not \
+             updated from the {edition} edition; pass --facet-image regenerate to render it from this one."
+        );
+        return Ok(());
+    }
+    let current_world = if mode == FacetImageMode::Update && fits {
+        match load_target_world(&client.dir, facet, edition, size) {
+            Ok(current) => Some(current),
+            Err(error) => {
+                println!("warning: the target's map could not be read to compare with: {error:#}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let renderer = FacetImageRenderer::load(&client.dir);
+    let plan = match plan_facet_image(mode, world, current_image.as_ref(), current_world.as_ref(), renderer.as_ref().ok()) {
+        Ok(plan) => plan,
+        Err(error) => match &renderer {
+            Err(load) => eyre::bail!("{name}: {error:#} ({load:#})"),
+            Ok(_) => return Err(error.wrap_err(name)),
+        },
+    };
+    let path = output_dir.join(&name);
+    match plan {
+        FacetImagePlan::Unchanged(image) => {
+            image.save(&path)?;
+            let why = if mode == FacetImageMode::Keep { "--facet-image keep" } else { "the map is the target's" };
+            println!("Wrote {}: the target's image, unchanged ({why}).", path.display());
+        }
+        FacetImagePlan::Updated(image, update) => {
+            image.save(&path)?;
+            println!("{}", describe_update(&path, &update));
+        }
+        FacetImagePlan::Rendered(image, reason) => {
+            image.save(&path)?;
+            println!(
+                "Wrote {} ({}x{}), rendered whole from the map by the slope rule ({}): an approximation, about \
+                 {SHIPPED_STYLE_MATCH_PERCENT} % of pixels match the shipped style.",
+                path.display(),
+                image.width(),
+                image.height(),
+                reason.describe()
+            );
+        }
+        FacetImagePlan::NotWritten => {
+            let why = if mode == FacetImageMode::None { "--facet-image none" } else { "the target has none to keep" };
+            println!("No {name} written ({why}).");
+        }
+    }
+    Ok(())
+}
+
+/// `facet patch-classic`: the `facetNN.mul` next to the edited map, with the edited tile re-rendered (and, when
+/// its land z changed, the tiles left of and above it).
+fn patch_facet_image(
+    dir: &Path,
+    facet: u32,
+    edition: MapEdition,
+    world: &ClassicWorld,
+    changed: Option<ChangedTile>,
+    output_dir: &Path,
+) -> eyre::Result<()> {
+    if facet >= FACET_IMAGE_COUNT {
+        return Ok(());
+    }
+    let name = facet_image_file_name(facet);
+    let Some(path) = find_file_ignoring_case(dir, &name) else {
+        return Ok(());
+    };
+    let Some(changed) = changed else {
+        println!("{name} not written: the cell is unchanged.");
+        return Ok(());
+    };
+    if edition.is_variant() {
+        println!(
+            "note: {name} not updated: the client draws one image per facet, for either edition, and it is not \
+             updated from the {edition} edition."
+        );
+        return Ok(());
+    }
+    let mut image = FacetImageFile::load(&path)?;
+    let size = world.size_cells();
+    if let Err(error) = image.check_size(size.width, size.height) {
+        println!("warning: {}: {error:#}; not updated.", path.display());
+        return Ok(());
+    }
+    let renderer = match FacetImageRenderer::load(dir) {
+        Ok(renderer) => renderer,
+        Err(error) => {
+            println!("warning: {name} not updated: {error:#}.");
+            return Ok(());
+        }
+    };
+    let update = renderer.update(world, &mut image, &[changed])?;
+    let out = output_dir.join(&name);
+    image.save(&out)?;
+    println!("{}", describe_update(&out, &update));
     Ok(())
 }
 
@@ -858,6 +1065,44 @@ mod tests {
         let cell: Vec<_> = statics.cell_statics(1, 1).unwrap().iter().map(|record| (record.graphic, record.z, record.hue)).collect();
         assert_eq!(cell, [(0x0E76, 9, 0x21), (0x1234, 7, 0x22)]);
         assert!(run(&["patch-classic", "--map", map.to_str().unwrap(), "--staidx", index.to_str().unwrap(), "--statics", data.to_str().unwrap(), "--facet", FACET, "--size", SIZE, "--x", "1", "--y", "1", "-o", uop_dir.to_str().unwrap()]).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn patch_classic_re_renders_the_facet_image_rows_of_the_edit_only() {
+        /// The size of a UO Gold `tiledata.mul` (16,384 items), read as all heights 0.
+        const GOLD_TILEDATA_LEN: usize = 1_036_288;
+        /// Radar colours for the land ids used here (the void 0x244 too): greys.
+        const RADAR_COLOURS: u16 = 0x300;
+        const GREY_STEP: u16 = 0x0421;
+        const HILL_Z: &str = "20";
+        let root = temp("patch_image");
+        let (source, out, same) = (root.join("source"), root.join("out"), root.join("same"));
+        std::fs::create_dir_all(&source).unwrap();
+        let world = write_source(&source);
+        let radarcol: Vec<_> = (0..RADAR_COLOURS).map(|id| uocf::utils::color::Rgb555::new_from_val(id % 0x20 * GREY_STEP)).collect();
+        std::fs::write(source.join(RADARCOL_NAME), uocf::classic::radarcol::encode_radarcol(&radarcol)).unwrap();
+        std::fs::write(source.join("tiledata.mul"), vec![0u8; GOLD_TILEDATA_LEN]).unwrap();
+        let image_name = facet_image_file_name(4);
+        let image = FacetImageRenderer::load(&source).unwrap().render(&world).unwrap();
+        image.save(&source.join(&image_name)).unwrap();
+        let patch = |extra: &[&str], out: &Path| {
+            let mut args = vec!["patch-classic", "--client-dir", source.to_str().unwrap(), "--facet", FACET, "--size", SIZE, "--x", "9", "--y", "6"];
+            args.extend_from_slice(extra);
+            args.extend_from_slice(&["-o", out.to_str().unwrap()]);
+            run(&args)
+        };
+        patch(&["--z", HILL_Z], &out).unwrap();
+        let patched = FacetImageFile::load(&out.join(&image_name)).unwrap();
+        let changed_rows: Vec<usize> = (0..image.rows().len()).filter(|&row| image.rows()[row] != patched.rows()[row]).collect();
+        // Tile (9, 6) keeps its slope; (8, 6) now rises and (9, 5) falls.
+        assert_eq!(changed_rows, [5, 6]);
+        let (before, after) = (image.pixels(), patched.pixels());
+        let differing: Vec<usize> = (0..before.len()).filter(|&at| before[at] != after[at]).collect();
+        assert_eq!(differing, [5 * SIDE as usize + 9, 6 * SIDE as usize + 8]);
+        // An edit that changes nothing writes no image.
+        patch(&["--z", "0"], &same).unwrap();
+        assert!(!same.join(&image_name).exists());
         std::fs::remove_dir_all(root).unwrap();
     }
 
