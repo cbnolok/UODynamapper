@@ -11,7 +11,7 @@ clients: the 2024 Enhanced Client, the current Classic Client, the old Kingdom R
 `lib/uocf/tests/real_files/audio_client_files.rs`, `lib/uocf/tests/real_files/audio_writers.rs`. How the clients
 read and play all this was traced in Ghidra (commit 7906ae18): `scripts/dev-helpers/ec-research/ghidra-audio/results/`
 `uosa_audio.md` (Enhanced Client), `miles_audio.md` (its decoder, Miles 7.2c), `uokr_audio.md` (Kingdom Reborn),
-`classic_audio.md` (Classic Client and UO Gold).
+`classic_audio.md` (Classic Client and UO Gold). How Miles sounds, for a playback path: `miles_playback_reference.md`.
 
 Rerun:
 
@@ -212,13 +212,14 @@ entry or slot keeps its bytes.
   warnings, for trying a file out in a test client: an MP3 with a broken frame chain (resyncs), a cut last frame,
   trailing bytes that are not a tag, an APE tag; a PCM WAV whose byte rate or block align disagree with its
   channels and bits, or whose data is not whole sample frames. No MPEG rate is left over: the header table holds
-  only the nine rates the decoder takes (that the decoder handles all of them is `probable` in `miles_audio.md`).
+  only the nine rates the decoder takes. It plays all of them, but MPEG-2.5 with the wrong band edges (`miles_audio.md`).
   Kingdom Reborn's 13 MP3s with a cut last frame fall here.
 - Refused here although Miles would take them, deliberately: each is a file no tool should write, and none is
   shipped. They stay refused under every policy.
   - WAV chunk ids in another case (`FMT `, `DATA`): Miles compares them ignoring case, our walk does not.
-  - A zero-size chunk exactly at the RIFF size: our bound is one chunk header stricter than Miles' `offset <
-    riff_size`.
+  - A chunk whose header runs past RIFF size + 8: our bound is stricter than Miles', which only needs its start
+    below the RIFF size. The reverse case is a known gap: a chunk starting exactly at the RIFF size passes here and
+    fails in Miles (`end` is the file start + the RIFF size, 0x21129cdb). No shipped file has either.
   - A RIFF size too small to hold the first chunk, even when that chunk is `fmt ` or `data` (Miles checks the
     first chunk before the bound).
   - `WAVE_FORMAT_EXTENSIBLE` of another sample size than 16 bits (Miles checks only block align = channels × 2).
@@ -294,5 +295,6 @@ is Miles 7.2c with the rules above; how `Sound.def`, `Music.def` and `Config.txt
 unread; Kingdom Reborn's table grammar and its id offset. Still open:
 
 1. The names of the three file lists, the two unnamed MP3s and the unnamed WAV (nothing reads them).
-2. Whether Miles 7.2c plays a cut last frame, and how Kingdom Reborn's Miles 7.0x differs.
+2. Answered in `miles_playback_reference.md`: both 7.2c and 7.0x play a cut last frame, partly from stale buffer
+   bytes, so a short glitch is possible. Nothing has listened to it yet.
 3. Which of two `audio_effects.csv` rows of an id Kingdom Reborn keeps, and the reader of its `audio_music.csv`.

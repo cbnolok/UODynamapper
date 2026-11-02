@@ -2,8 +2,9 @@
 
 Programs `mss32.dll` (SHA-256 `b588b4791ff6803247962c661b6d3ff9a8625d0f60363a6fa53f61d401f0e74e`) and
 `miles/mssmp3.asi` (`0fb784a9cc9826a9ec2412b7d71453b917af6c74442647f38061512e2c3a05bb`), both from the EC
-folder. UOSA.exe sets the redist directory to `miles` (`SoundSystem_Startup`); KR ships the same `miles`
-folder. **confirmed** = read in the code; **probable** = inferred.
+folder. UOSA.exe sets the redist directory to `miles` (`SoundSystem_Startup`). KR ships its own Miles, 7.0x, in a
+`miles` folder of the same layout (see `docs/agent_notes/ec_audio_formats.md`). **confirmed** = read in the code;
+**probable** = inferred. How Miles plays what it accepts is in `docs/agent_notes/miles_playback_reference.md`.
 
 ## Functions
 
@@ -29,9 +30,16 @@ Everything below is Miles.
 
 **confirmed**. `SetNamedSampleFile_Impl` decides as follows:
 
-1. If the data starts with a valid ID3v2 header, Miles skips its size + 10 bytes and treats the file as
-   `.mp3`, whatever the name. A valid header is `ID3`, version bytes < 0xFF and syncsafe size bytes < 0x80.
-   The ID3v2 footer flag is not handled at this level.
+1. If the data starts with a valid ID3v2 header, Miles skips it and treats the file as `.mp3`, whatever the
+   name. A valid header is `ID3`, version bytes < 0xFF and syncsafe size bytes < 0x80. The ID3v2 footer flag is
+   not handled at this level.
+
+   The skip is not quite size + 10. Miles adds 10 to the lowest size byte, then ORs in the other size bytes
+   shifted (0x2112b6ca to 0x2112b6e6; the same in the stream code and in KR's 7.0x). A carry out of bit 6 is lost
+   when the next size byte is odd, so the skip is 128 bytes short and the scan starts inside the tag. This happens
+   when the lowest size byte is 118 or more and the next is odd: 157 of Enhanced's 181 tagged MP3s and 10 of
+   KR's 47. Every one of those has only zero bytes in those 128, so the first frame found is the same
+   (checked on the shipped files, 2026-11-02).
 2. Otherwise Miles takes the ASI provider whose "Input file types" match the name's extension. `.mp3` goes
    to mssmp3.asi.
 3. With no provider, `.wav` and `.voc` (case-insensitive) go to the built-in parser
@@ -53,7 +61,10 @@ RIFF data in a `.mp3` entry fails in the MP3 decoder.
   - `data` is searched again from the first chunk. Its length is the chunk size, and Miles does not clamp
     it to the file.
 - **Formats** (`SetSampleFile_Impl`, `InitSampleFromWavInfo`):
-  - **PCM** (tag 1): 8 or 16 bits per sample, any other bit depth fails ("Unsupported wave file format.").
+  - **PCM** (tag 1): 8 or 16 bits per sample. Other depths are not usable, but how they fail depends on the path.
+    `InitSampleFromWavInfo` (the body of `AIL_set_sample_info`) refuses them with "Unsupported wave file format.".
+    The 7.2a source of `AIL_set_sample_file` has no such check on the named-file path: a 24 or 32-bit file plays
+    as noise, and a 4-bit one is flagged as ADPCM. That path in 7.2c needs a Ghidra pass.
     1 or 2 channels; more use the multichannel path.
   - **IMA ADPCM** (tag 0x11, 4 bits) is native. It uses `fact` when present.
   - **WAVE_FORMAT_EXTENSIBLE** (0xFFFE): `cbSize` ≥ 22, SubFormat must be `KSDATAFORMAT_SUBTYPE_PCM`, and
@@ -65,9 +76,11 @@ RIFF data in a `.mp3` entry fails in the MP3 decoder.
 - **Errors:** "Not a WAV file.", "Invalid or missing data block.", "Not a WAVEFORMATPCMEX file.",
   "Not KSDATAFORMAT_SUBTYPE_PCM.", "Unsupported multichannel format.".
 
-**probable**: the 110 shipped legacy WAVs with an unpadded odd chunk (see `ec_audio_formats.md`) would
-mis-step the walk if that chunk comes before `fmt ` or `data`. This does not matter for the EC, which never
-plays legacy WAVs.
+**confirmed**: the 110 shipped legacy WAVs with an unpadded odd chunk (see `ec_audio_formats.md`) do not
+mis-step the walk. All are `fmt  data LIST DISP bext cart`, the odd chunk is `bext`, and each search stops at its
+match and restarts from the first chunk. `fact` is searched only for IMA ADPCM, so a PCM file's walk never goes
+past `data`. An unpadded odd chunk before `fmt ` or `data` would land the walk one byte late and most likely fail
+as "Not a WAV file.". The EC never plays legacy WAVs in any case.
 
 ### MP3 (mssmp3.asi)
 
@@ -76,18 +89,30 @@ plays legacy WAVs.
 - **Frame search.** The decoder scans byte by byte, up to 0x2000 (8 KiB), for an 11-bit frame sync. MPEG-1,
   MPEG-2 and MPEG-2.5 headers are all accepted. Leading junk shorter than 8 KiB is fine; this covers the
   110 shipped files with leading zero bytes.
-- **Layers.** Layer III only. Layers I and II and the reserved layer are rejected.
-- **Header fields.** Bitrate index 15 and sample-rate index 3 are rejected.
-- **Later frames** must match the first frame's version, MPEG-2.5 flag, layer and sample rate. The bitrate
-  is not compared, so VBR works.
+- **Layers.** Layer III only. Other layers are skipped and the scan goes on in the same window; the open fails
+  only when the window runs out with no Layer III header, and the error names the last layer it saw.
+- **Header fields.** Bitrate index 15 and sample-rate index 3 are skipped the same way.
+- **Later frames** are compared with the previous header seen, not the first frame's: version, MPEG-2.5 flag,
+  layer and sample rate. A header that differs is skipped, **and it replaces the values compared against**
+  (0x26f075cd to 0x26f0765b). So a real change of rate loses one frame, and decoding then goes on at the new
+  values while the sample's playback rate stays as set at open. The bitrate is not compared, so VBR works.
+- **Between frames** each frame gets its own 8 KiB window. Junk shorter than that is skipped silently; beyond it,
+  or at the end of the data, the stream ends without an error.
 - **Xing/Info headers** are not parsed. There is no `Xing` string, so the Info frame decodes as an ordinary
   (silent) frame.
 - **Tags.** An inline ID3v1 `TAG` (128 bytes) and an inline ID3v2 tag (+10 bytes for the footer flag) are
   skipped while seeking. A leading ID3v2 tag is already skipped by `SetNamedSampleFile_Impl`.
 - **CRC.** The protection CRC (2 bytes) is skipped, not checked.
 
-**probable**: the decoder itself (not read here) handles all the rates its header table holds (MPEG-1
-32/44.1/48 kHz, MPEG-2 16/22.05/24 kHz, MPEG-2.5 8/11.025/12 kHz).
+**confirmed, with a qualifier**: the decoder plays all nine rates its header table holds, at the right rate and
+without failing. MPEG-1 and MPEG-2 are correct. **MPEG-2.5 is not**: the band tables have six rows only, so the
+three MPEG-2.5 rates reuse the MPEG-2 rows of the same index (11,025 uses 22,050's, 12,000 uses 24,000's, 8,000
+uses 16,000's). The 8 kHz long-block row is in none of the three `mssmp3.asi` builds (byte search). Frame sizes and
+the output rate are right, so these files play with wrong band edges and audible artefacts are to be expected,
+though that was not measured. No shipped file uses MPEG-2.5.
+
+The 7.2a source of `mp3api.cpp` and `mp3dec.cpp` applies to this `mssmp3.asi`: all 46 code blocks match it, and
+only 4 instructions differ, none in the decoding.
 
 ## Replace path whitelist (recommendation)
 
