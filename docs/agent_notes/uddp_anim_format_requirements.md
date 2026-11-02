@@ -7,8 +7,16 @@ nobody repeats a dead end. The measurements and their method are in
 
 Reading the numbers:
 
-- "× BC7" compares with the BC7 + zstd baseline: 782.5 MB Classic, 1823.3 MB Enhanced. **That baseline is under
-  question**: the installed `mobile_anim_ec.uddp` (30 Oct) is 6904 MB and the difference isn't explained yet.
+- "× BC7" compares with the benchmark's BC7 + zstd estimate: 782.5 MB Classic, 1823.3 MB Enhanced, per body with no
+  atlas or gutters. It flatters BC7 slightly, because real packs are larger:
+
+  | | Benchmark estimate | Pack from today's packer (`--bc7 --zstd`, not installed) | Installed today |
+  |---|---:|---:|---:|
+  | Classic | 782.5 MB | 856.6 MB | 985.6 MB (30 Jun) |
+  | Enhanced | 1823.3 MB | 1987.9 MB | 6904 MB (30 Oct) |
+
+  The installed Enhanced package predates compression: 2291 of its 2522 entries are stored raw, and 73 % of its atlas
+  area is empty.
 - Timings are one thread, boost off, EPP power, unless marked otherwise. Numbers marked *provisional* come from a run
   whose CPU state changed before it ended.
 
@@ -42,11 +50,14 @@ Also needed, derived from the above and from how the art works:
 |---|---:|---:|
 | Bodies, frames | 1022, 996,620 | 926, 1,572,711 |
 | Trimmed pixels | 2419 Mpx | 4917 Mpx |
-| Shipped size | 1235.0 MB (`AnimationFrame*.uop`, `anim*.mul`, `animdata.mul`, `animinfo.mul`) | 1984.5 MB (`AnimationFrame*.uop`) |
+| Shipped size | 1235.0 MB (`AnimationFrame*.uop`, `anim*.mul`, `animdata.mul`, `animinfo.mul`), of which 1060.3 MB is referenced | 1984.5 MB (`AnimationFrame*.uop`) |
 | Pixel | one index | index + coverage (0–16 sixteenths); 19 % of pixels partly covered |
 | Bits per opaque pixel, as measured | 5.66 | 6.89 |
 | Stored VRAM, whole set | R8 2.42 GB (BC7 2.52 GB) | RG8 9.83 GB (BC7 5.11 GB) |
 
+- **174.7 MB of the shipped MUL files is unreferenced:** the `anim*.idx` files reference only 521.0 MB of the 695.7 MB
+  of `anim*.mul`. So comparisons with shipped Classic use the 1060.3 MB. Also, `animdata.mul` (4.49 MB) is static-tile
+  animation data, and the `anim*.idx` files (6.09 MB) aren't in the total.
 - **Palettes are per frame**, 256 entries or fewer. A body uses a median of 3784 distinct colours, and only 5.7 % of
   bodies fit one 256-entry palette.
 - **Enhanced can't be 8 bits per pixel without loss:** (index, coverage) pairs fit 255 entries in under 1 % of bodies.
@@ -87,7 +98,8 @@ Wanted but not required, in the order the user raised them.
   stored frames as key frames and interpolate the movement between them, probably at runtime.
 - **Fewer stored frames if interpolation can rebuild them** (the halving idea below).
 - **Runtime BC7** as a later option, possibly for upscaled animations, to save VRAM. Off for now by the user's decision.
-- **Do clearly better than the 20-year-old clients.** Classic already does (0.55× shipped). Enhanced does not yet.
+- **Do clearly better than the 20-year-old clients.** Classic already does (0.64× of the referenced shipped data). Enhanced
+  does not yet (0.98×).
 
 ## 4. Failed attempts
 
@@ -176,17 +188,17 @@ hasn't given a verdict yet; the contact sheets are in `uodynamapper-scratch/anim
 |---|---|
 | Runtime BC7 at load | 22–23 Mpx/s, 19–43× the decode time. Too slow for first draw; off by the user's decision. |
 | GPU BC7 encoder | Not built: Classic gains nothing, and only Enhanced VRAM would benefit. |
-| Whole-body batches for crowds (the original choice) | Estimated from measured times for 300 distinct items, one thread, before upload: 1.5 s at the median and 12 s at the p95, holding about 1.3 GB of VRAM, against 30 ms, 0.8 s and about 90 MB per action. |
+| Whole-body batches for crowds (the original choice) | Rough estimate from measured times for 300 distinct items, one thread, before upload, until the crowd scenario replaces it: 1.5 s at the median and 12 s at the p95, holding about 1.3 GB of VRAM, against 30 ms, 0.8 s and about 90 MB per action. |
 | Upscaled frames as lossless RGBA8 | At best 1.34× / 1.60× BC7 at 2× |
 
 ## 5. What still looks right
 
 Nothing here is final.
 
-- **zstd 19 on indexed planes.** Classic whole body is 0.866× BC7 and 0.55× shipped. Enhanced is 1.070× BC7 and 0.98×
-  shipped, so it needs help.
-- **Per-action streams, grouped per body.** The disk cost (0.958× Classic, about 1.08× Enhanced) is what we pay for
-  crowds.
+- **zstd 19 on indexed planes.** Classic whole body is 677 MB: 0.79× of a real BC7 pack and 0.64× of the referenced
+  shipped data. Enhanced is 1951 MB: 0.98× of a real BC7 pack and 0.98× shipped, so it needs help.
+- **Per-action streams, grouped per body.** Classic is 749 MB, 0.87× of a real BC7 pack. Enhanced is about 1970 MB
+  (an estimate from the sample), about 0.99× of one. That is what we pay for crowds, and it's still no larger than BC7.
 - **Hue in the shader**, on R8 and RG8 atlas pages.
 - **Upscaling:** store 1× and a filter id and upscale on load, since the filters are deterministic. On one thread the
   worst action takes EPX 27 / 52 ms, MMPX 59 / 144 ms, hqx 129 / 214 ms, xBRZ 161 / 387 ms (not a fully quiet machine),
@@ -210,7 +222,9 @@ Measure-only, queued after the timing rerun. The ranking is crowd speed first, s
    installed.
 6. **A real video codec (AV1 4:4:4), lossy:** the likely largest saving and the biggest risk to colour and hue.
 
-Timed runs are on hold until TLP stops re-applying boost and `balance_performance` (`/etc/tlp.conf`).
+TLP used to re-apply boost and `balance_performance` during timed runs. `/etc/tlp.conf` now sets boost off and EPP
+`balance_power` on mains, so new timings are in that state and don't compare in absolute terms with the older EPP
+`power` tables. Each run carries its own zstd 19 baseline, so ratios still hold.
 
 ## 7. Never-drawn art: how it was determined, and how far to trust it
 
@@ -272,4 +286,3 @@ to change, with no backward compatibility. Official art may use restricted colou
 | Runtime interpolation for high frame rates | A separate study on the full frame set |
 | Leaving out never-drawn art | Section 7's trace |
 | What "fast enough" means in numbers | The user: no budget has been set beyond "hundreds on screen, no stutter" |
-| The 6904 MB against 1823 MB baseline | Being checked |
