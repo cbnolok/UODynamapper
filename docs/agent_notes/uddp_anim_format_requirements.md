@@ -33,6 +33,7 @@ Stated by the user, most important first.
 | 5 | **32-bit colour for custom animations.** | The restricted palette format is only for official art, so a package must be able to say which kind a batch holds. |
 | 6 | **Upscaled sprites**, using the filters we already have, chosen at conversion or inspection time. | The user prefers upscaling before conversion, since that works with more filters. |
 | 7 | **Dynamapper reads only UDDP, never UOP.** | Any animation data that lives in other client files, such as `tileart.uop`, must be carried into the package. |
+| 8 | **Custom animations added to the MUL files must survive conversion.** | Stated 2026-11-02. See "Custom animations in MUL files" below. |
 
 Also needed, derived from the above and from how the art works:
 
@@ -57,11 +58,13 @@ Also needed, derived from the above and from how the art works:
 
 - **174.7 MB of the shipped MUL files is unreferenced:** the `anim*.idx` files reference only 521.0 MB of the 695.7 MB
   of `anim*.mul`. So comparisons with shipped Classic use the 1060.3 MB. Also, `animdata.mul` (4.49 MB) is static-tile
-  animation data, and the `anim*.idx` files (6.09 MB) aren't in the total.
+  animation data, and the `anim*.idx` files (6.09 MB) aren't in the total. What those bytes hold is in
+  "Orphaned art" below.
 - **Palettes are per frame**, 256 entries or fewer. A body uses a median of 3784 distinct colours, and only 5.7 % of
   bodies fit one 256-entry palette.
 - **Enhanced can't be 8 bits per pixel without loss:** (index, coverage) pairs fit 255 entries in under 1 % of bodies.
-- **Classic index 0 is free:** no shipped pixel uses it, so we use it for transparent.
+- **Classic index 0 is free in shipped art only:** no shipped pixel uses it, so we can use it for transparent there. A
+  custom animation may use it, so the format can't assume this for every MUL entry.
 - **Frames are small:** about 3100 trimmed pixels on average for Enhanced, so an action averages about 154 kpx. A few
   bodies are enormous: Enhanced body 1288 has 1600 frames and 139.6 Mpx (279 MB as RG8).
 - **Frame counts:** Enhanced and Classic `AnimationFrame*.uop` use a median of 10 frames per direction. Classic
@@ -69,6 +72,57 @@ Also needed, derived from the above and from how the art works:
   9 fps.
 - **Five directions are stored** and the other three are mirrored.
 - **Frames are redrawn, not shifted.** See the failed attempts.
+
+### Custom animations in MUL files
+
+Shard and mod makers add or replace animations with MUL tools. The converter must keep what they added.
+
+What the converter does today (`lib/udd-conv/src/mobile_anim_cc.rs`):
+
+- It walks every idx slot of `anim.mul` to `anim6.mul` with data, whether or not a def file reaches it, so an added
+  entry is collected.
+- It reads `Body.def`, `Bodyconv.def` and `mobtypes.txt` from the install being converted, so edited routing is kept.
+
+What is not safe yet:
+
+- **An entry that fails to decode is dropped silently** (`:842`). It should be reported per entry, and no custom art
+  should disappear without a line in the log.
+- **Runs outside the frame's declared height are dropped silently** (`classic/anim.rs`). The client's behaviour for
+  those hasn't been compared.
+- **No test converts a MUL with custom entries.** Needed: an added body in an unused slot, a replaced body with its old
+  bytes orphaned, an idx longer than the shipped one, use of palette index 0, frames larger than any shipped.
+- **Leaving out art is unsafe by default,** because a shard can draw any body it routes. See section 7.
+
+### Orphaned art in the shipped MUL files
+
+Measured 2026-11-02 (`uodynamapper-scratch/mul-gaps/scan.py`, read-only). No idx entry points at these bytes, and the
+client reads frames only through the idx, so it shouldn't reach them. All 174.66 MB parses as complete animation
+entries with no bytes left over: 69,289 entries and 414,461 frames, mostly in blocks of 175 entries (35 actions × 5
+directions).
+
+| Compared with referenced entries | Size |
+|---|---:|
+| Byte-identical to a referenced entry | 12.61 MB |
+| Different frames, same palette as a referenced entry (likely an older version of that body) | 19.92 MB |
+| No match | 142.13 MB |
+
+The largest blocks:
+
+| File, offset | Size | Entries, frames | Contents |
+|---|---:|---:|---|
+| `anim2.mul` 0x8B678CF | 57.8 MB | 44,625, 267,282 | Very small sprites, mostly grey |
+| `anim5.mul` 0x29F45B8 | 33.0 MB | 200, 880 | Large, detailed red and purple dragons |
+| `anim4.mul` 0x3D402CB | 24.4 MB | 3500, 21,000 | Robed figures; about half identical to bodies 505–515 |
+| `anim3.mul` 0x2C83146 | 10.6 MB | 2975, 17,850 | Armour pieces and robes; many share palettes with bodies 455 and 458 |
+| `anim3.mul` 0x1D1EF47 | 8.9 MB | 2800, 16,799 | Same kind of art; many share palettes with body 468 |
+
+- These have no body id: the idx was the only record of it. Only a shared palette or neighbouring data hints at one.
+- We can't tell from this why they're orphaned. Art left behind when patches rewrote bodies is a guess. The MUL
+  tools that add custom animations can leave the same kind of gap.
+- They haven't been compared with the `AnimationFrame*.uop` art, so "no match" doesn't mean the art exists nowhere else.
+
+The converter reads through the idx, so none of this reaches a package. That's correct, and it makes the 0.64× shipped
+figure the fair one.
 
 ### Decoding and loading
 
@@ -203,7 +257,7 @@ Nothing here is final.
 - **Upscaling:** store 1× and a filter id and upscale on load, since the filters are deterministic. On one thread the
   worst action takes EPX 27 / 52 ms, MMPX 59 / 144 ms, hqx 129 / 214 ms, xBRZ 161 / 387 ms (not a fully quiet machine),
   so it needs a background step. MMPX stored indexed costs 0.37× / 0.44× of 2× BC7.
-- **Possibly leaving out art the client never draws.** See section 7.
+- **Keeping everything by default.** Leaving out unreached art is at most opt-in. See section 7.
 
 ## 6. Still untested
 
@@ -268,7 +322,9 @@ Other limits:
   client never draws.
 - Enhanced is much smaller and is a separate rule: about 3.3 MB (bodies 344, 679, 827).
 
-Any omission has to be a converter option with a way to keep the data, confirmed by the user.
+**Default:** keep every entry the idx or UOP table holds. Custom animations (need 8) rule out dropping art by default:
+a shard can route any body. Leaving out unreached art can only be an opt-in converter flag, working from the files of
+the install being converted, never from a fixed list of official bodies. Whether to offer the flag at all is open.
 
 ## 8. Decisions
 
@@ -284,5 +340,5 @@ to change, with no backward compatibility. Official art may use restricted colou
 | Whether any lossy tier is acceptable, and where the quality floor sits (80 suggested) | Contact sheets; the user's eye |
 | Halved frames: pursue with a better interpolator, or drop | Contact sheets |
 | Runtime interpolation for high frame rates | A separate study on the full frame set |
-| Leaving out never-drawn art | Section 7's trace |
+| Whether to offer an opt-in flag for unreached art | Section 7's trace |
 | What "fast enough" means in numbers | The user: no budget has been set beyond "hundreds on screen, no stutter" |
