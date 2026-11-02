@@ -8,7 +8,8 @@
 //! of its highest static by (z + `tiledata.mul` height, z), when that top reaches the land z, else of its land
 //! tile. Every 5-bit channel is then shifted by the land slope `s = z(x + 1, y) - z(x, y + 1)` (the edge tiles
 //! use their own z past the edge), clamped to 0..=31: -1 when `|s| <= 2`, +3 when `s >= 3`, -4 when `s <= -3`.
-//! The pixels it gives exactly, and within one 5-bit step, of the shipped standard-edition images:
+//! The drawn pixels it gives exactly, and within one 5-bit step, of the shipped images (rendered from the standard
+//! edition):
 //!
 //! | Facet | Exact | Within one step |
 //! |---|---|---|
@@ -23,6 +24,20 @@
 //! over land). So an edit re-renders only the tiles it changes, and the tiles left of and above a tile whose land
 //! z changed (their slope reads it), keeping every other pixel as shipped; a bit-15 pixel of a tile the edit did
 //! not change is kept too.
+//!
+//! **The images follow the standard edition**, not the variant (`x`) one. Scored on the tiles where the two
+//! editions differ: at each, does the shipped image match the render of the standard map only, of the variant
+//! only, of both, or of neither?
+//!
+//! | Client, facet | Tiles that differ | Standard only | Variant only | Both | Neither |
+//! |---|---|---|---|---|---|
+//! | 2024 Felucca | 12,840 | 7,802 | 129 | 1,096 | 3,813 |
+//! | 2024 Trammel | 2,725 | 1,504 | 25 | 482 | 714 |
+//! | 7.0.20 Felucca | 295,886 | 245,194 | 118 | 40,483 | 10,091 |
+//! | 7.0.20 Trammel | 3,897 | 2,439 | 0 | 1,359 | 99 |
+//!
+//! 2024's Ilshenar and Ter Mur variants equal their standard maps. So a variant edition's map does not change the
+//! image: [`FacetImageMode::Update`] leaves it to the standard edition (the map tools).
 
 crate::eyre_imports!();
 use std::collections::BTreeMap;

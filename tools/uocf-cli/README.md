@@ -50,8 +50,9 @@
   `keep` and `none` are refused when the target's image is not the map's size. A whole
   rendered image is an approximation: about 94 % of pixels match the shipped style. The
   rule takes the radarcol colour of the highest static (else the land) and shifts every
-  channel by the land slope. Bit-15 (black) pixels of unchanged tiles are kept. The
-  variant edition does not update the image (one image per facet) unless `regenerate`.
+  channel by the land slope. Bit-15 (black) pixels of unchanged tiles are kept. A
+  variant edition leaves the image alone unless `regenerate`: the shipped images follow
+  the standard edition.
 - `facet patch-classic`: edit one cell of one Classic edition (land, z, statics added after
   the cell's, removed or changed) and write it in the same container to `-o`. When the
   folder has the facet's `facetNN.mul` (with `radarcol.mul` and `tiledata.mul`), the

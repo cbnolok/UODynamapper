@@ -244,7 +244,9 @@ image with the map:
   - `none`: no image.
 
   `keep` and `none` refuse an image whose size is not the map's. Bit-15 (black) pixels of unchanged tiles are
-  kept. The variant edition leaves the image alone unless `regenerate`: the client draws one image per facet.
+  kept. A variant edition leaves the image alone unless `regenerate`: the shipped images follow the standard
+  edition. Where the two editions differ, 2024 Felucca's image matches the standard render at 7,802 tiles and the
+  variant at 129; Trammel 1,504 and 25; 7.0.20 Felucca 245,194 and 118 (`facet_image_render.rs`).
 
   Measured: one patched Tokuno tile on 2024 changes rows y - 1 and y only; converting 2024's unchanged Tokuno
   writes its image byte for byte (`tools/uocf-cli/tests/facet_image_cli.rs`). A resized map gets an image of the

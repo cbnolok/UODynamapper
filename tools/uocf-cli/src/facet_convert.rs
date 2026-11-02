@@ -536,8 +536,8 @@ fn write_converted_facet_image(
     let fits = current_image.as_ref().is_some_and(|image| image.check_size(size.width, size.height).is_ok());
     if edition.is_variant() && mode == FacetImageMode::Update && fits {
         println!(
-            "note: {name} not written: the client draws one image per facet, for either edition, and it is not \
-             updated from the {edition} edition; pass --facet-image regenerate to render it from this one."
+            "note: {name} not written: the shipped images follow the standard edition, not the {edition} one; pass \
+             --facet-image regenerate to render it from this one."
         );
         return Ok(());
     }
@@ -613,8 +613,7 @@ fn patch_facet_image(
     };
     if edition.is_variant() {
         println!(
-            "note: {name} not updated: the client draws one image per facet, for either edition, and it is not \
-             updated from the {edition} edition."
+            "note: {name} not updated: the shipped images follow the standard edition, not the {edition} one."
         );
         return Ok(());
     }
