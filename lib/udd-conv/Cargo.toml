@@ -47,6 +47,10 @@ workspace-hack.workspace = true
 libc.workspace = true
 # Comparison only in that benchmark: LZ4 payloads, decoded in the test (no container codec).
 lz4_flex = { version = "0.11", default-features = false, features = ["std", "safe-encode", "safe-decode"] }
+# The mobile animation codec benchmark: Zstd levels and long-distance matching on the candidate payloads, and
+# SSIMULACRA2 of requantized upscales.
+zstd.workspace = true
+ssimulacra2 = { version = "0.5.1", default-features = false }
 
 [features]
 default = []
