@@ -60,8 +60,9 @@ Also needed, derived from the above and from how the art works:
   of `anim*.mul`. So comparisons with shipped Classic use the 1060.3 MB. Also, `animdata.mul` (4.49 MB) is static-tile
   animation data, and the `anim*.idx` files (6.09 MB) aren't in the total. What those bytes hold is in
   "Orphaned art" below.
-- **Palettes are per frame**, 256 entries or fewer. A body uses a median of 3784 distinct colours, and only 5.7 % of
-  bodies fit one 256-entry palette.
+- **Palettes change far less often than frames.** Files store one with each frame, 256 entries or fewer, but a smoke
+  run on every 100th body measured 1.00 palette per action in Enhanced and 3.73 in Classic (1.46 distinct by content).
+  Across a body they do differ: a median of 3784 distinct colours, and only 5.7 % of bodies fit one 256-entry palette.
 - **Enhanced can't be 8 bits per pixel without loss:** (index, coverage) pairs fit 255 entries in under 1 % of bodies.
 - **Classic index 0 is free in shipped art only:** no shipped pixel uses it, so we can use it for transparent there. A
   custom animation may use it, so the format can't assume this for every MUL entry.
@@ -270,8 +271,8 @@ Measure-only, queued after the timing rerun. The ranking is crowd speed first, s
    per-pixel rANS and palette sorting.
 3. **Motion-compensated prediction, lossless:** the moved previous frame as the predicted colour. Earlier tests only
    covered unmoved references and exact matches.
-4. **Why the floor is 5.5–5.7 bits:** whether per-frame palettes and dithering add noise to static regions, and whether
-   a shared palette per action at a tiny colour error removes it (lossy).
+4. **Why the floor is 5.5–5.7 bits:** the same smoke run shows no frame-to-frame noise signature, so per-frame palette
+   noise looks like the wrong explanation. The full run on every 10th body decides it.
 5. **Classic UOP against Enhanced:** whether they're the same renders, so one could derive from the other when both are
    installed.
 6. **A real video codec (AV1 4:4:4), lossy:** the likely largest saving and the biggest risk to colour and hue.
