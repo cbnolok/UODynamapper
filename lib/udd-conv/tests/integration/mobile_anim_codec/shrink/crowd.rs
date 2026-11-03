@@ -577,6 +577,9 @@ fn print_kind(kind: &str, row: &KindRow) {
 const CROWD_PAIRS: usize = 300;
 /// A smaller crowd, to try the part out.
 const CROWD_PAIRS_ENV: &str = "MOBILE_ANIM_CODEC_SHRINK_CROWD_PAIRS";
+/// `cc-uniform,cc-worst,ec-uniform,ec-worst`: which scenarios run; all by default.
+const CROWD_SCENARIOS_ENV: &str = "MOBILE_ANIM_CODEC_SHRINK_CROWD_SCENARIOS";
+const CROWD_NO_BC7_ENV: &str = "MOBILE_ANIM_CODEC_SHRINK_CROWD_NO_BC7";
 /// The user's target: this many new actions drawable on `WORKER_THREADS` threads is fast enough.
 const CROWD_TARGET_MS: f64 = 250.0;
 const CROWD_SEED: u64 = 0x2026_1102_C0DE_5EED;
@@ -765,34 +768,13 @@ fn facing_unit(position: usize, wanted: &[usize]) -> usize {
     wanted[((position as u64).wrapping_mul(FACING_HASH) >> u8::BITS) as usize % wanted.len()]
 }
 
-fn scenario(label: &str, pairs: &[Pair], sources: &Sources, bodies: &[BodySource], only: &[String]) {
-    let distinct: BTreeSet<usize> = pairs.iter().map(|p| p.body).collect();
-    let distinct: Vec<usize> = distinct.into_iter().collect();
-    let position: HashMap<usize, usize> = distinct.iter().enumerate().map(|(n, &b)| (b, n)).collect();
-    let mut wanted_actions: Vec<BTreeSet<u16>> = vec![BTreeSet::new(); distinct.len()];
-    pairs.iter().for_each(|p| {
-        wanted_actions[position[&p.body]].insert(p.action);
-    });
-    let pair_pixels: Vec<f64> = pairs.iter().map(|p| p.pixels as f64 / PIXELS_PER_MEGAPIXEL).collect();
-    println!(
-        "\n#### {label}: {} pairs of {} bodies, {:.1} Mpx trimmed; a pair's Mpx: median {:.3}, p95 {:.2}, max {:.2}\n",
-        pairs.len(),
-        distinct.len(),
-        pair_pixels.iter().sum::<f64>(),
-        quantile(&pair_pixels, P50),
-        quantile(&pair_pixels, P95),
-        pair_pixels.iter().copied().fold(0.0, f64::max),
-    );
-    println!("| candidate | load unit | read from disk MB | all drawable, 1 thread ms | {WORKER_THREADS} threads ms | within {CROWD_TARGET_MS} ms on {WORKER_THREADS} threads | worst job ms | job p95 ms | upload and VRAM as stored MB | RGBA8 MB |");
-    println!("|---|---|---:|---:|---:|---|---:|---:|---:|---:|");
-
-    // BC7 as today's packer makes it, without atlas pages: zstd 7 on the blocks.
-    let loaded: Vec<(Planes, Vec<Vec<u8>>)> = distinct
+/// BC7 as today's packer makes it, without atlas pages: zstd 7 on the blocks. Its frames are freed with this call.
+fn bc7_rows(loaded: &[Planes], distinct: &[usize], pairs: &[Pair], position: &HashMap<usize, usize>, wanted_actions: &[BTreeSet<u16>], sources: &Sources, bodies: &[BodySource]) {
+    let blocks: Vec<Vec<Vec<u8>>> = distinct
         .par_iter()
-        .map(|&i| {
-            let body = load_body(sources, &bodies[i]);
-            let planes = Planes::from_body(&body);
-            let plane = bc7_plane(&body, Bc7EncoderBackend::AnalyticalWide);
+        .zip(loaded)
+        .map(|(&i, planes)| {
+            let plane = bc7_plane(&load_body(sources, &bodies[i]), Bc7EncoderBackend::AnalyticalWide);
             let mut frames = Vec::with_capacity(planes.boxes.len());
             let mut at = 0usize;
             for frame in &planes.boxes {
@@ -801,14 +783,15 @@ fn scenario(label: &str, pairs: &[Pair], sources: &Sources, bodies: &[BodySource
                 at += bytes;
             }
             assert_eq!(at, plane.len(), "{}: the BC7 plane's frames", planes.label);
-            (planes, frames)
+            frames
         })
         .collect();
-    let rgba_of = |n: usize, frames: &[usize]| frames.iter().map(|&f| loaded[n].0.boxes[f].pixels() as u64 * RGBA_CHANNELS as u64).sum::<u64>();
-    let raw_of = |n: usize, frames: &[usize]| frames.iter().map(|&f| loaded[n].1[f].len() as u64).sum::<u64>();
+    let rgba_of = |n: usize, frames: &[usize]| frames.iter().map(|&f| loaded[n].boxes[f].pixels() as u64 * RGBA_CHANNELS as u64).sum::<u64>();
+    let raw_of = |n: usize, frames: &[usize]| frames.iter().map(|&f| blocks[n][f].len() as u64).sum::<u64>();
     let bc7_units = |unit: Unit| -> Vec<Vec<(Vec<usize>, Vec<u8>)>> {
         loaded
             .par_iter()
+            .zip(&blocks)
             .enumerate()
             .map(|(n, (planes, frames))| {
                 units(&planes.boxes, unit, BC7_BLOCK_BYTES)
@@ -842,7 +825,7 @@ fn scenario(label: &str, pairs: &[Pair], sources: &Sources, bodies: &[BodySource
             .iter()
             .map(|p| {
                 let n = position[&p.body];
-                let parts: Vec<&(Vec<usize>, Vec<u8>)> = by_unit[n].iter().filter(|u| loaded[n].0.boxes[u.0[0]].action == p.action).collect();
+                let parts: Vec<&(Vec<usize>, Vec<u8>)> = by_unit[n].iter().filter(|u| loaded[n].boxes[u.0[0]].action == p.action).collect();
                 read += parts.iter().map(|u| u.1.len() as u64).sum::<u64>();
                 let stored = parts.iter().map(|u| raw_of(n, &u.0)).sum();
                 let rgba = parts.iter().map(|u| rgba_of(n, &u.0)).sum();
@@ -852,11 +835,38 @@ fn scenario(label: &str, pairs: &[Pair], sources: &Sources, bodies: &[BodySource
             .collect();
         print_jobs("BC7, zstd 7", name, mb(read), &jobs);
     }
+}
+
+fn scenario(label: &str, pairs: &[Pair], sources: &Sources, bodies: &[BodySource], only: &[String], with_bc7: bool) {
+    let distinct: BTreeSet<usize> = pairs.iter().map(|p| p.body).collect();
+    let distinct: Vec<usize> = distinct.into_iter().collect();
+    let position: HashMap<usize, usize> = distinct.iter().enumerate().map(|(n, &b)| (b, n)).collect();
+    let mut wanted_actions: Vec<BTreeSet<u16>> = vec![BTreeSet::new(); distinct.len()];
+    pairs.iter().for_each(|p| {
+        wanted_actions[position[&p.body]].insert(p.action);
+    });
+    let pair_pixels: Vec<f64> = pairs.iter().map(|p| p.pixels as f64 / PIXELS_PER_MEGAPIXEL).collect();
+    println!(
+        "\n#### {label}: {} pairs of {} bodies, {:.1} Mpx trimmed; a pair's Mpx: median {:.3}, p95 {:.2}, max {:.2}\n",
+        pairs.len(),
+        distinct.len(),
+        pair_pixels.iter().sum::<f64>(),
+        quantile(&pair_pixels, P50),
+        quantile(&pair_pixels, P95),
+        pair_pixels.iter().copied().fold(0.0, f64::max),
+    );
+    println!("| candidate | load unit | read from disk MB | all drawable, 1 thread ms | {WORKER_THREADS} threads ms | within {CROWD_TARGET_MS} ms on {WORKER_THREADS} threads | worst job ms | job p95 ms | upload and VRAM as stored MB | RGBA8 MB |");
+    println!("|---|---|---:|---:|---:|---|---:|---:|---:|---:|");
+
+    let loaded: Vec<Planes> = distinct.par_iter().map(|&i| Planes::from_body(&load_body(sources, &bodies[i]))).collect();
+    if with_bc7 {
+        bc7_rows(&loaded, &distinct, pairs, &position, &wanted_actions, sources, bodies);
+    }
 
     let chosen: Vec<&Candidate> = CROWD.iter().filter(|c| only.is_empty() || only.iter().any(|filter| c.name.contains(filter.as_str()))).collect();
     for &base in &chosen {
         let started = Instant::now();
-        let ordered: Vec<Planes> = loaded.par_iter().map(|l| reordered(&l.0, base.order)).collect();
+        let ordered: Vec<Planes> = loaded.par_iter().map(|planes| reordered(planes, base.order)).collect();
         // Whole bodies.
         let body_candidate = with_unit(base, Unit::Body);
         let encoded: Vec<Encoded> = ordered.par_iter().map(|p| encode_checked(p, &body_candidate)).collect();
@@ -951,11 +961,23 @@ pub(super) fn part_s1(sources: &Sources, bodies: &[BodySource], present: &[(Clie
     let state = cpu_state();
     let count = std::env::var(CROWD_PAIRS_ENV).ok().map(|n| n.parse::<usize>().expect("the crowd size")).unwrap_or(CROWD_PAIRS);
     println!("\n### s1: the crowd; CPU {state}; load average {}", load_average());
-    for client in [Client::Cc, Client::Ec] {
+    // A rerun of one scenario, by name; its BC7 rows can be left out if they already ran.
+    let picked = std::env::var(CROWD_SCENARIOS_ENV).ok();
+    let wanted = |name: &str| picked.as_deref().is_none_or(|list| list.split(',').any(|scenario| scenario == name));
+    let with_bc7 = std::env::var_os(CROWD_NO_BC7_ENV).is_none();
+    for (client, short) in [(Client::Cc, "cc"), (Client::Ec, "ec")] {
+        let (uniform, worst) = (format!("{short}-uniform"), format!("{short}-worst"));
+        if !wanted(&uniform) && !wanted(&worst) {
+            continue;
+        }
         let pairs = all_pairs(sources, bodies, present, client);
         println!("\n{}: {} (body, action) pairs in the set", client.label(), pairs.len());
-        scenario(&format!("{}, {count} pairs drawn uniformly from the real ones", client.label()), &pick_uniform(&pairs, count), sources, bodies, only);
-        scenario(&format!("{}, worst case: the {count} largest pairs", client.label()), &pick_largest(&pairs, count), sources, bodies, only);
+        if wanted(&uniform) {
+            scenario(&format!("{}, {count} pairs drawn uniformly from the real ones", client.label()), &pick_uniform(&pairs, count), sources, bodies, only, with_bc7);
+        }
+        if wanted(&worst) {
+            scenario(&format!("{}, worst case: the {count} largest pairs", client.label()), &pick_largest(&pairs, count), sources, bodies, only, with_bc7);
+        }
     }
     let end = cpu_state();
     if end != state {

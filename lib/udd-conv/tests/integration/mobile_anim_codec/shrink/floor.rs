@@ -23,6 +23,8 @@ const LUMA_RED: i32 = 77;
 const LUMA_GREEN: i32 = 150;
 const LUMA_BLUE: i32 = 29;
 
+/// One client's label, to run this part for it alone.
+const QUALITY_CLIENT_ENV: &str = "MOBILE_ANIM_CODEC_SHRINK_QUALITY_CLIENT";
 const QUALITY_BODIES_PER_CLIENT: usize = 25;
 const QUALITY_THRESHOLDS: [i32; 4] = [2, 4, 8, 16];
 /// Every n-th changed frame is scored.
@@ -551,7 +553,11 @@ fn quality_of(planes: &Planes, reference: &Planes) -> QualityRow {
 
 pub(super) fn part_s4q(sources: &Sources, bodies: &[BodySource], present: &[(Client, u64, usize)]) {
     println!("\n### s4q (LOSSY): static surfaces made to repeat; CPU {}", cpu_state());
+    let only_client = std::env::var(QUALITY_CLIENT_ENV).ok();
     for client in [Client::Cc, Client::Ec] {
+        if only_client.as_deref().is_some_and(|name| name != client.label()) {
+            continue;
+        }
         let sample = sample_of(present, client, QUALITY_BODIES_PER_CLIENT);
         // Name, merge entries, repeat from the previous frame, threshold.
         let mut variants: Vec<(String, bool, bool, i32)> = vec![("lossless".to_string(), false, false, 0)];
