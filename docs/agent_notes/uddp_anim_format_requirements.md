@@ -60,8 +60,8 @@ Also needed, derived from the above and from how the art works:
   of `anim*.mul`. So comparisons with shipped Classic use the 1060.3 MB. Also, `animdata.mul` (4.49 MB) is static-tile
   animation data, and the `anim*.idx` files (6.09 MB) aren't in the total. What those bytes hold is in
   "Orphaned art" below.
-- **Palettes change far less often than frames.** Files store one with each frame, 256 entries or fewer, but a smoke
-  run on every 100th body measured 1.00 palette per action in Enhanced and 3.73 in Classic (1.46 distinct by content).
+- **Palettes change far less often than frames.** Files store one with each frame, 256 entries or fewer, but on every
+  10th body there are 1.00 palettes per action in Enhanced and 3.41 in Classic (1.63 distinct by content).
   Across a body they do differ: a median of 3784 distinct colours, and only 5.7 % of bodies fit one 256-entry palette.
 - **Enhanced can't be 8 bits per pixel without loss:** (index, coverage) pairs fit 255 entries in under 1 % of bodies.
 - **Classic index 0 is free in shipped art only:** no shipped pixel uses it, so we can use it for transparent there. A
@@ -280,8 +280,10 @@ Measure-only, queued after the timing rerun. The ranking is crowd speed first, s
    per-pixel rANS and palette sorting.
 3. **Motion-compensated prediction, lossless:** the moved previous frame as the predicted colour. Earlier tests only
    covered unmoved references and exact matches.
-4. **Why the floor is 5.5–5.7 bits:** the same smoke run shows no frame-to-frame noise signature, so per-frame palette
-   noise looks like the wrong explanation. The full run on every 10th body decides it.
+4. **Why the floor is 5.5–5.7 bits:** settled, on every 10th body: it isn't per-frame palette noise. Static surfaces take
+   only 19–22 % of index bits in idle actions and 4–5 % in others, frame-to-frame changes lack the correlation of noise
+   (−0.23 to +0.05, against about −0.5), and Enhanced has one palette per action anyway. Pixels that change or move cost
+   5.9–6.4 bits, and static ones 3.6–5.5 from their neighbours but 2.8–3.7 from the previous frame.
 5. **Classic UOP against Enhanced:** whether they're the same renders, so one could derive from the other when both are
    installed.
 6. **A real video codec (AV1 4:4:4), lossy:** the likely largest saving and the biggest risk to colour and hue.
