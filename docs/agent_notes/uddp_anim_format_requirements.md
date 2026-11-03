@@ -292,8 +292,8 @@ reference.
 
 1. **Crowds:** zstd 19 has 8–17× to spare on the uniform crowd. On the worst crowd it passes only when each NPC loads its
    faced direction first. Whole-body units fail the uniform crowd for every lossless candidate except LZ4 HC.
-2. **Fast prediction path:** table-driven decoding works, but it stays 4–6× slower than plain zstd 19 for at most 9 % less
-   in Enhanced.
+2. **Fast prediction path:** table-driven decoding works, but it is 6–10× slower than plain zstd 19 in Classic, where it is
+   also larger, and 4–6× slower in Enhanced for 9–10 % less disk.
 3. **Block motion, lossless:** −4.8 % Classic and −7.8 % Enhanced overall, mostly in idle (−22 % / −24.5 %) and fidget.
 4. **Why the floor is 5.5–5.7 bits:** it isn't per-frame palette noise. Static surfaces take only 19–22 % of index bits in
    idle actions and 4–5 % in others, frame-to-frame changes lack the correlation of noise (−0.23 to +0.05, against about
