@@ -15,8 +15,9 @@ Program `classic_7.0.103.0_client.exe` (SHA-256 `4d857f2f5f8bf350bc50a87ee66b223
 | 0x00543500 | `UOClassicAnim::GetMulFrame` | `anim*.mul` entry → frame |
 | 0x00543e50 | `UOClassicAnim::GetUopFrame` | `animationlegacyframe` entry → frame |
 | 0x00542c40 | `UOClassicAnim::FindFrameEntry` | binary search of the AMOU table |
-| 0x005bc880 | `UOClassicAnim::GetMobileFrame` | MUL or UOP by body |
-| 0x00452ad0 | `UOClassicAnim::DrawMobile` | probable name: calls the two above |
+| 0x005bc880 | `UOClassicAnim::GetMobileFrame` | MUL or UOP by the object's +0x3E; **probably** corpses only, kept name |
+| 0x00452ad0 | `UOClassicAnim::DrawCorpse` | `CCorpse` vtable slot 2; was misnamed `DrawMobile` |
+| 0x005441e0 | `UOClassicAnim::GetObjectLayerFrame` | the mobile layers' route: UOP or MUL, see [uop_reachability.md](uop_reachability.md) |
 | 0x0056c170 | `UOClassicFiles::ReadMulIndexEntry` | probable name: idx lookup / length |
 | 0x00543890 | `UOClassicAnim::GetUopFrameSet` | probable name: requests the frame set asset |
 | 0x00413752 | `UOMobFrameSet::Construct` | the asset object (vtable 0x006db10c) |
@@ -61,15 +62,16 @@ Program `classic_7.0.103.0_client.exe` (SHA-256 `4d857f2f5f8bf350bc50a87ee66b223
      flags have 0x10000. `LoadMobTypesFile` (0x00597d70) reads `"%d %s %x"` per line, cuts at `#`, and keeps ids
      1..0x7FF with a known type. A body out of range, or with no row, takes the MUL path. **confirmed**. Within
      `GetMobileFrame` there is no fallback from one source to the other. **confirmed**.
-   - **What the test does not prove.** An unflagged UOP entry is not shown to be unreachable, only not reached by a
-     mobile's own body. `GetMobileFrame` tests the object's field +0x3E but requests the frames of its argument, and
-     `FUN_005441e0`, the other caller of `GetUopFrame`, tests its object's field +0x38 and then requests its own id
-     argument, so a flagged object can request an unflagged id. Body 1525 (`EQUIP_Tabbard_Gargoyle`, unflagged, has
-     UOP frames) is the likely case. `FUN_005b96a0` also requests frame sets for actions 9-14 without the test,
-     **probably** as preloading. The callers' arguments are not traced.
-   - **Remapping.** Only the MUL path goes through `body.def` and `bodyconv.def` (`0x0044f6d0`). The UOP path keys
-     on the id the mobile's asset returns (its vtable +0xbc, or +0xc0 when not 0). That id is the body itself
-     **probable**: the two virtual functions were not read.
+   - **What the test does not prove.** It is tested on the object, not on the id requested, and on the flagged route
+     the id isn't tested at all, so an unflagged UOP entry can be drawn. Body 1525 is: a gargoyle wearing tile 42002
+     requests it. Bodies 197, 198 and 267 are requested only if a server sends those tile graphics as layer items.
+     `PreloadWeaponUopFrameSets` (0x005b96a0, **probably** a preload) doesn't test it either. Trace and verdict:
+     [uop_reachability.md](uop_reachability.md). **confirmed**.
+   - **Remapping.** Only the MUL path goes through `body.def`, `corpse.def` and `bodyconv.def`, after the test
+     (`ConvertCorpseBodyForMul` 0x0044f6d0, `GetMobileMulFrame` 0x0044e8e0). The UOP path keys on the appearance of the
+     id's tile definition on the object's placeholder: vtable +0xbc (`TileDefinition_GetAppearance`), or +0xc0 when not
+     0. That is the tile id unless property 8 or a filter says otherwise, so it isn't always the body: flagged body 647
+     resolves to 603. **confirmed**.
 3. **Unread fields.** The header box, the colour table and the entry boxes of the AMOU container are not read
    on this path. `UOMobFrameSet::Construct` reads three `u32` from its stream, not identified. **probable** that
    nothing else reads them.

@@ -334,19 +334,30 @@ enabled. 73.5 MB of the 85 comes from 4 unflagged UOP bodies (compressed sizes b
 | 267 | Troglodyte | 0.8 MB |
 | 1525 | EQUIP_Tabbard_Gargoyle | 0.8 MB |
 
-**This rule is not proven complete.** Reading the callers on 2026-11-02 showed:
+**This rule is wrong for one of the four, and was too simple.** Traced on 2026-11-03 in the code and in parses of the
+shipped data; nothing ran. Details and addresses: `scripts/dev-helpers/ec-research/ghidra-classic-frames/results/uop_reachability.md`.
 
-- `GetMobileFrame` (0x005bc880) tests one id, the object's field +0x3E, but requests the frames of its argument.
-- `FUN_005441e0`, the other caller of `GetUopFrame`, first tests field +0x38 of its object the same way, and then
-  requests the frames of its own id argument.
-- So a flagged object can request an id that isn't flagged. Body 1525 is the likely case: it's equipment for a flagged
-  wearer, so it is probably drawn, and the rule counts it as lost. This has not been traced.
-- `FUN_005b96a0` also requests frame sets for actions 9–14 without this test, which looks like preloading. Not traced.
+- The flag is tested on the object, not on the id it requests. On a flagged object, `GetObjectLayerFrame` (0x005441e0)
+  requests its id untested, and for a layer item the id is the item's graphic. Proven by the code read.
+- The UOP body isn't that id: it is the appearance of the id's `tileart.uop` row on the object. That is the id, unless
+  property 8 or a filter says otherwise. Proven by the code read. Step 3 above is therefore not what the client does: flagged
+  body 647, for one, resolves to 603.
+- **1525 is drawn from UOP.** Tile 42002 resolves to 1525 for wearers 666, 667, 694 and 695. Proven by the code read and
+  the shipped files. The 85.0 MB counts it as lost; that is about 0.8 MB of shipped size. The total was not recomputed.
+- **197, 198 and 267 are not requested through any shipped table.** Proven on the shipped files: of the 277 bodies with
+  UOP frames, they are the only ones reached neither by a flagged mobile's own body nor by a wearable tile on a flagged wearer.
+- **They are not unreachable.** The packet handlers don't check that a layer item is wearable, so a server that sends tile
+  197, 198 or 267 (a wall, an arch and a wall) on a layer of a flagged mobile causes the request. Proven as far as the request;
+  not run. A mobile or corpse whose own body is one of them draws from a MUL.
+- The conversion doesn't change this: `Body.def`, `Corpse.def` and `Bodyconv.def` apply after the test, on the MUL side, so
+  the id tested is the server's own. Proven by the code read.
+- `FUN_005b96a0` is `PreloadWeaponUopFrameSets`, likely a preload: actions 9-14 of a weapon-flag item on layer 1 or 2, with no
+  test of 0x10000. It can load UOP frames for a human wearer, with shipped data only of flagged bodies, apart from 1525 if a
+  server puts tile 42002 on layer 1 or 2.
 
-**What is safe to say:** a mobile whose own body is 197 or 198 draws from a MUL, since their `Bodyconv.def` rows point
-there. Whether anything else requests those two UOP bodies is not proven. To confirm it, trace what the callers
-(`FUN_0044fd50`, `FUN_0044d980`, `FUN_00450f90`, `FUN_004517a0`, `FUN_00451d50`, `FUN_00452f90`, `FUN_00453ba0`) pass
-in, then check that the UOP frames of 197 and 198 are no use to a client that edits `mobtypes.txt`.
+**What is safe to say:** with the shipped files and a server sending wearable items, 197, 198 and 267 are not drawn from
+UOP. Whether another route exists beyond the callers traced is not determined. Editing `mobtypes.txt` to flag them would
+likely draw them: the placeholder, the sequence and the frames all ship. So their frames aren't useless to such a client.
 
 Other limits:
 

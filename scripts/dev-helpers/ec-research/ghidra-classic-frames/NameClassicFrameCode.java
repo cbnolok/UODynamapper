@@ -44,6 +44,7 @@ public class NameClassicFrameCode extends GhidraScript {
     private static final String FILES = "UOClassicFiles";
     private static final String MOB_FRAME_SET = "UOMobFrameSet";
     private static final String FRAME_SET_FACTORY = "UOAnimationFrameSetFactory";
+    private static final String PACKETS = "UOClassicPackets";
 
     // Checks: "calls:ADDR" (the function references ADDR: call, pointer, jump or data),
     // "calledby:ADDR" (the function at ADDR references this one), "ref:ADDR" (the data or code at ADDR
@@ -99,8 +100,68 @@ public class NameClassicFrameCode extends GhidraScript {
         new Entry("00597d70", ANIM, "LoadMobTypesFile", false, "reads mobtypes.txt, \"%d %s %x\" (id, type, hex flags);"
             + " text after # is ignored; a row is kept when the id is 1..0x7FF and the type is known", "string:mobtypes.txt",
             "const:7fe"),
-        new Entry("00452ad0", ANIM, "DrawMobile", true, "draws a mobile and its equipment layers: GetMobileFrame"
-            + " for each, mirrored anchor x = width - anchor x, DrawFrameRle", "calls:005bc880", "calls:00449c90"),
+        new Entry("00452ad0", ANIM, "DrawCorpse", false, "CCorpse vtable slot 2 (0x006b8134): draws a corpse and its"
+            + " equipment: GetMobileFrame(+0x3E, the corpse's body), then per item GetMobileFrame(tiledata anim id,"
+            + " through the corpse.def test and DefTable_RemapRandom, only when 400..1999), mirrored anchor x ="
+            + " width - anchor x, DrawFrameRle", "ref:006b8134", "calls:005bc880", "calls:00449c90"),
+        new Entry("00452f90", ANIM, "CMobile_Draw", false, "CMobile vtable slot 2 (0x006b81ec): draws a mobile and its"
+            + " layers: GetObjectLayerFrame per layer, with the layer item's graphic as id when the body is flagged"
+            + " and its tiledata anim id (body.def, Equipconv) when not", "ref:006b81ec", "calls:005441e0",
+            "calls:00449c90"),
+        new Entry("00453ba0", ANIM, "CMobile_DrawVariant", true, "CMobile vtable +0xE8: draws as CMobile_Draw does,"
+            + " same id choice per layer; when the client calls it instead was not read", "ref:006b82cc",
+            "calls:005441e0", "calls:00449c90"),
+        new Entry("004517a0", ANIM, "CMobile_ComputeBounds", true, "CMobile vtable slot 3 (0x006b81f0): walks the same"
+            + " layers with GetObjectLayerFrame and stores extents, draws nothing", "ref:006b81f0", "calls:005441e0"),
+        new Entry("00451d50", ANIM, "CMobile_ComputeBoundsVariant", true, "CMobile vtable +0xEC: as"
+            + " CMobile_ComputeBounds; applies Equipconv to the flagged-body id too", "ref:006b82d0", "calls:005441e0"),
+        new Entry("0044b480", ANIM, "CCorpse_ComputeBounds", true, "CCorpse vtable slot 3 (0x006b8138):"
+            + " GetMobileFrame(+0x3E)", "ref:006b8138", "calls:005bc880"),
+        new Entry("0044fd50", ANIM, "ObjectFrameHitTest", true, "FrameRleHitTest over a mobile's layers"
+            + " (GetObjectLayerFrame) or a corpse (GetMobileFrame)", "calls:0044a4c0", "calls:005441e0",
+            "calls:005bc880"),
+        new Entry("00450f90", ANIM, "MountedFrameBounds", true, "the frame of a mount layer item for"
+            + " CMobile_ComputeBounds: GetObjectLayerFrame(mount body from the item's graphic)", "calledby:004517a0",
+            "calledby:00451d50", "calls:005441e0"),
+        new Entry("005441e0", ANIM, "GetObjectLayerFrame", false, "the frame of id on an object: when"
+            + " BodyUsesUopFrames(object +0x38), GetUopFrame(id) with no test of id; else when BodyUsesUopFrames(id)"
+            + " and id is a mount body (IsMountBody), GetUopFrame(id); else the anim*.mul frame (GetMobileMulFrame)",
+            "calls:00543e50", "calls:005978a0", "calls:005d3640", "calls:0044e8e0"),
+        new Entry("0044e8e0", ANIM, "GetMobileMulFrame", true, "the MUL side of GetObjectLayerFrame: body.def remap,"
+            + " then the bodyconv table, then the frame", "calledby:005441e0"),
+        new Entry("0044f6d0", ANIM, "ConvertCorpseBodyForMul", true, "the MUL side of GetMobileFrame: corpse.def"
+            + " remap, then the bodyconv table; runs after the flag test", "calledby:005bc880"),
+        new Entry("005d3640", ANIM, "IsMountBody", true, "a fixed list of bodies; the only unflagged-object route to"
+            + " GetUopFrame", "calledby:005441e0"),
+        new Entry("00543cf0", ANIM, "UopFrameSetHasFrames", false, "whether GetUopFrameSet gives a set with frames;"
+            + " same id as GetObjectLayerFrame", "calls:00543890", "calledby:005441e0"),
+        new Entry("005978e0", ANIM, "BodyHasUopSequence", false, "the mobtypes.txt row is present and its flags have"
+            + " 0x10000 or 0x20000; gates the asset pair of AssetAnimation_Construct", "calledby:005baf50",
+            "const:30000"),
+        new Entry("005baf50", ANIM, "AssetAnimation_Construct", false, "the CUOAssetAnimation of CMobile and CCorpse"
+            + " (at +0x108): keeps the body at +0x10 (object +0x118) and fills its sequence and choreography only"
+            + " when BodyHasUopSequence", "calls:005978e0", "calledby:005bb230", "calledby:005bb720"),
+        new Entry("005bb0d0", ANIM, "AssetAnimation_SetBody", false, "rebuilds the CUOAssetAnimation when the body"
+            + " changes", "calls:005baf50", "calledby:005bb200"),
+        new Entry("005bb200", ANIM, "CMobile_SetBody", false, "stores the raw body at +0x38, unconverted, then"
+            + " AssetAnimation_SetBody", "calls:005bb0d0"),
+        new Entry("005bb230", ANIM, "CMobile_Construct", false, "CMobile vtable 0x006b81e4; stores the raw body at"
+            + " +0x38", "const:6b81e4", "calls:005baf50"),
+        new Entry("005bb720", ANIM, "CCorpse_Construct", false, "CCorpse vtable 0x006b812c; +0x38 is the graphic"
+            + " 0x2006, +0x3E the corpse's body from the item amount", "const:6b812c", "calls:005baf50"),
+        new Entry("00406001", ANIM, "GetTileDefinition", false, "the tileart.uop record of a tile id (asset type 6);"
+            + " creature placeholders are 10000000 + body", "calledby:00543890", "calledby:005b96a0"),
+        new Entry("00405bf1", ANIM, "TileDefinition_GetAppearance", false, "vtable 0x006da914 +0xBC: the UOP body of a"
+            + " tile on an owner: the tile id, or property 8, or the first matching non-animation filter",
+            "ref:006da9d0"),
+        new Entry("00405ce4", ANIM, "TileDefinition_GetAnimationAppearance", false, "vtable 0x006da914 +0xC0: 0, or"
+            + " the value of the first matching animation filter; overrides TileDefinition_GetAppearance",
+            "ref:006da9d4"),
+        new Entry("005b96a0", ANIM, "PreloadWeaponUopFrameSets", true, "for a tiledata-flag-2 item on layer 1 or 2:"
+            + " GetUopFrameSet for actions 9..14 of the item's appearance on the wearer, kept in the wearer's map at"
+            + " +0x28C; no test of mobtypes flag 0x10000", "calls:00543890", "calledby:005b9ad0"),
+        new Entry("005b9ad0", ANIM, "Item_EquipOnLayer", false, "stores the item at wearer +0x124 + layer * 4; no check"
+            + " of the tile's wearable flag or layer", "calls:005b96a0"),
         new Entry("0056c170", FILES, "ReadMulIndexEntry", true, "the 12-byte index entry N of a MUL pair (u32"
             + " lookup, length, extra); a negative lookup is no entry; returns the data pointer", "calledby:00543500"),
         new Entry("00543890", ANIM, "GetUopFrameSet", true, "the frame set asset of a body and action"
@@ -110,6 +171,13 @@ public class NameClassicFrameCode extends GhidraScript {
         new Entry("0041385a", FRAME_SET_FACTORY, "CreateAsset", false, "UOAnimationFrameSetFactory vtable 0x006db0f8"
             + " slot 1: a UOMobFrameSet from the archive entry; \"Failed to get animation frame set ...\"",
             "ref:006db0fc", "string:Failed to get animation frame set"),
+        new Entry("00476820", PACKETS, "Handle_0x78_MobileIncoming", false, "opcode 0x78 of the dispatcher 0x00483af0:"
+            + " body and each layer's graphic and layer go to the mobile unfiltered", "calledby:00483af0",
+            "calls:005b9ad0"),
+        new Entry("00476df0", PACKETS, "Handle_0xD3_MobileIncoming", false, "opcode 0xD3 of the dispatcher 0x00483af0:"
+            + " as 0x78", "calledby:00483af0", "calls:005b9ad0"),
+        new Entry("004773b0", PACKETS, "Handle_0x2E_WornItem", false, "opcode 0x2E of the dispatcher 0x00483af0: a"
+            + " worn item's graphic and layer go to the mobile unfiltered", "calledby:00483af0", "calls:005b9ad0"),
     };
 
     private static final Build[] BUILDS = {
