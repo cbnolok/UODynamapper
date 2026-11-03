@@ -31,10 +31,9 @@ const STRING_DICTIONARY_FILE: &str = "string_dictionary.uop";
 const GAME_DATA_FILE: &str = "GameData.uop";
 /// Every shipped Enhanced Client file is one its decoder (Miles 7.2c) is verified to play.
 const EC_AUDIO_POLICY: FormatPolicy = FormatPolicy::VerifiedOnly;
-/// Kingdom Reborn plays with Miles 7.0x, and some of its music ends in a cut last frame, which 7.2c's handling is
-/// not verified for: its shipped entries are checked with the unverified formats allowed (a file Miles refuses,
-/// or of another kind, is refused under both policies).
-const KR_AUDIO_POLICY: FormatPolicy = FormatPolicy::AllowUnverified;
+/// Kingdom Reborn plays with Miles 7.0x, whose frame seek and handling of a cut last frame (13 of its files) are the
+/// same as 7.2c's: every shipped entry passes the checks written for 7.2c.
+const KR_AUDIO_POLICY: FormatPolicy = FormatPolicy::VerifiedOnly;
 /// The Classic Client's packages hold no MP3 or WAV entries (its sounds are `soundLegacyMUL.uop` slots).
 const CC_AUDIO_POLICY: FormatPolicy = FormatPolicy::VerifiedOnly;
 /// How many failures the report prints.

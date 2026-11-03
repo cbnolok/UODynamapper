@@ -4,15 +4,18 @@
 //! RIFF pads every chunk of odd size with one byte. Some writers leave the pad out; the walk takes the padded
 //! position unless only the unpadded one holds a chunk id, and counts those chunks.
 
+use super::validate::{miles_wav_walk, MilesWavWalk};
+
 pub const RIFF_MAGIC: &[u8] = b"RIFF";
 pub const WAVE_FORM: &[u8] = b"WAVE";
 pub const RIFF_HEADER_SIZE: usize = 12;
 const RIFF_SIZE_OFFSET: usize = 4;
 const RIFF_FORM_OFFSET: usize = 8;
 pub const CHUNK_HEADER_SIZE: usize = 8;
-const CHUNK_ID_SIZE: usize = 4;
+pub(crate) const CHUNK_ID_SIZE: usize = 4;
 pub const FMT_CHUNK_ID: [u8; 4] = *b"fmt ";
 pub const DATA_CHUNK_ID: [u8; 4] = *b"data";
+pub const FACT_CHUNK_ID: [u8; 4] = *b"fact";
 /// `WAVEFORMAT` with `wBitsPerSample` (PCMWAVEFORMAT), `WAVEFORMATEX` with `cbSize`, `WAVEFORMATEXTENSIBLE`.
 pub const FMT_PCM_SIZE: u32 = 16;
 pub const FMT_EX_SIZE: u32 = 18;
@@ -137,6 +140,8 @@ pub struct WavAnalysis {
     pub trailing_zero: bool,
     /// The payload length.
     pub length: usize,
+    /// What Miles' chunk walk finds, which is not always what this walk finds ([`miles_wav_walk`]).
+    pub miles_walk: MilesWavWalk,
 }
 
 impl WavAnalysis {
@@ -217,8 +222,9 @@ pub fn analyze_wav(payload: &[u8]) -> Option<WavAnalysis> {
     if !payload.starts_with(RIFF_MAGIC) || payload.get(RIFF_FORM_OFFSET..RIFF_HEADER_SIZE) != Some(WAVE_FORM) {
         return None;
     }
+    let riff_size = read_u32(payload, RIFF_SIZE_OFFSET)?;
     let mut analysis = WavAnalysis {
-        riff_size: read_u32(payload, RIFF_SIZE_OFFSET)?,
+        riff_size,
         chunks: Vec::new(),
         format: None,
         data_offset: None,
@@ -227,6 +233,7 @@ pub fn analyze_wav(payload: &[u8]) -> Option<WavAnalysis> {
         trailing_bytes: 0,
         trailing_zero: true,
         length: payload.len(),
+        miles_walk: miles_wav_walk(payload, riff_size),
     };
     let mut offset = RIFF_HEADER_SIZE;
     while offset + CHUNK_HEADER_SIZE <= payload.len() && is_chunk_id(payload, offset) {

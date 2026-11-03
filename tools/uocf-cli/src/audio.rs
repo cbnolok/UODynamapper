@@ -164,10 +164,10 @@ pub struct EditArgs {
     /// channels. There is no MP3 encoder, and no resampling.
     #[arg(long)]
     convert: bool,
-    /// Accept, with warnings, a file the Enhanced Client's decoder (Miles 7.2c) takes but whose playback was not
-    /// verified (a resynchronised MP3 stream, a cut last frame, trailing bytes, PCM fields that disagree): for
-    /// trying a file out in a test client, not for a release. A file Miles refuses, or of another kind than the
-    /// entry's extension (a WAV for an .mp3), is refused all the same.
+    /// Accept, with warnings, a file the Enhanced Client's decoder (Miles 7.2c) takes but plays wrongly or in a way
+    /// nothing verified (MPEG-2.5, PCM data that is not whole sample frames): for trying a file out in a test
+    /// client, not for a release. A file Miles refuses or misreads, or of another kind than the entry's extension
+    /// (a WAV for an .mp3), is refused all the same.
     #[arg(long)]
     allow_unverified_format: bool,
 }

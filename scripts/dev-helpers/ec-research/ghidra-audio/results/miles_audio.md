@@ -63,13 +63,14 @@ RIFF data in a `.mp3` entry fails in the MP3 decoder.
 - **Formats** (`SetSampleFile_Impl`, `InitSampleFromWavInfo`):
   - **PCM** (tag 1): 8 or 16 bits per sample. Other depths are not usable, but how they fail depends on the path.
     `InitSampleFromWavInfo` (the body of `AIL_set_sample_info`) refuses them with "Unsupported wave file format.".
-    The 7.2a source of `AIL_set_sample_file` has no such check on the named-file path: a 24 or 32-bit file plays
-    as noise, and a 4-bit one is flagged as ADPCM. That path in 7.2c needs a Ghidra pass.
+    The named-file path has no such check: a 24 or 32-bit file plays as noise, and a 4-bit one is flagged as ADPCM
+    (7.2a source, and the same in 7.2c by `objdump`, see `miles_playback_reference.md`).
     1 or 2 channels; more use the multichannel path.
   - **IMA ADPCM** (tag 0x11, 4 bits) is native. It uses `fact` when present.
   - **WAVE_FORMAT_EXTENSIBLE** (0xFFFE): `cbSize` ≥ 22, SubFormat must be `KSDATAFORMAT_SUBTYPE_PCM`, and
     block align must equal channels × 2 (16-bit).
-  - **Other tags** need an ASI codec with a matching "Input wave tag". The EC ships none for WAV.
+  - **Other tags** need an ASI codec with a matching "Input wave tag". `mssmp3.asi` declares 0x55, so an MP3 in a
+    RIFF `.wav` would reach it (by `objdump`); no shipped entry does this, and we refuse it.
 - **Rate.** Any rate works: `AIL_set_sample_playback_rate(file rate)`, and the mixer resamples. A
   22,048 Hz WAV plays at 22,048 Hz with no correction.
 - **Other chunks** (LIST, bext, iXML, _PMX, ...) are skipped by the walk.

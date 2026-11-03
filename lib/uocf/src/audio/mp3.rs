@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use super::validate::{miles_mp3_seek, MilesMp3Seek};
+use super::validate::{miles_mp3_frames, miles_mp3_seek, MilesMp3Seek};
 
 pub const ID3V2_MAGIC: &[u8] = b"ID3";
 pub(crate) const ID3V2_HEADER_SIZE: usize = 10;
@@ -18,6 +18,8 @@ const ID3V2_FOOTER_SIZE: usize = 10;
 /// ID3v2 sizes are "syncsafe": four bytes of seven bits each.
 const SYNCSAFE_BITS: u32 = 7;
 const SYNCSAFE_BYTE_LIMIT: u8 = 0x80;
+/// The bits of a syncsafe size that its lowest byte holds.
+const SYNCSAFE_LOW_BYTE: usize = 0x7f;
 const SYNCSAFE_BYTES: usize = 4;
 pub const ID3V1_MAGIC: &[u8] = b"TAG";
 pub const ID3V1_SIZE: usize = 128;
@@ -29,7 +31,7 @@ const APE_SIZE_OFFSET: usize = 12;
 pub const MPEG_HEADER_SIZE: usize = 4;
 pub(crate) const SYNC_BYTE: u8 = 0xff;
 pub(crate) const SYNC_MASK: u8 = 0xe0;
-const VERSION_SHIFT: u8 = 3;
+pub(crate) const VERSION_SHIFT: u8 = 3;
 pub(crate) const LAYER_SHIFT: u8 = 1;
 pub(crate) const TWO_BITS: u8 = 0b11;
 /// The layer bits of Layer III.
@@ -268,7 +270,7 @@ impl FrameHeader {
     }
 
     /// Where a Xing/Info header starts: after the header, the CRC and the layer 3 side information.
-    fn xing_offset(&self) -> usize {
+    pub(crate) fn xing_offset(&self) -> usize {
         let side_info = match (self.version, self.channel_mode) {
             (MpegVersion::V1, ChannelMode::Mono) => SIDE_INFO_V1_MONO,
             (MpegVersion::V1, _) => SIDE_INFO_V1_STEREO,
@@ -316,6 +318,15 @@ impl Id3v2Tag {
     /// The tag without its footer: the header and the size its size field gives.
     pub fn length_without_footer(&self) -> usize {
         self.length - if self.flags & ID3V2_FOOTER_FLAG != 0 { ID3V2_FOOTER_SIZE } else { 0 }
+    }
+
+    /// How far `AIL_set_named_sample_file` moves the start of the file for this tag at its start: Miles adds the
+    /// header's size to the lowest size byte and ORs the other size bytes in, ignoring the flags. So a carry out of
+    /// the lowest byte is lost when the next size byte is odd (the skip is then 128 bytes short), and a footer is not
+    /// skipped.
+    pub fn miles_leading_skip(&self) -> usize {
+        let size = self.length_without_footer() - ID3V2_HEADER_SIZE;
+        (size & !SYNCSAFE_LOW_BYTE) | ((size & SYNCSAFE_LOW_BYTE) + ID3V2_HEADER_SIZE)
     }
 
     pub fn label(&self) -> String {
@@ -477,6 +488,10 @@ pub struct MpegAnalysis {
     pub frame_bytes: usize,
     /// Where `mssmp3.asi` starts decoding ([`miles_mp3_seek`]).
     pub miles_seek: MilesMp3Seek,
+    /// The first frame `mssmp3.asi` decodes that is no frame of the stream above ([`miles_mp3_frames`]).
+    pub miles_stray_frame: Option<usize>,
+    /// The first frame of the stream above it never decodes. A cut last frame does not count.
+    pub miles_missed_frame: Option<usize>,
 }
 
 impl MpegAnalysis {
@@ -627,7 +642,10 @@ pub fn analyze_mpeg(payload: &[u8]) -> Option<MpegAnalysis> {
         length: payload.len(),
         frame_bytes: 0,
         miles_seek: miles_mp3_seek(payload),
+        miles_stray_frame: None,
+        miles_missed_frame: None,
     };
+    let mut chain = Vec::new();
     let mut offset = start;
     while offset < tags_start {
         let Some(header) = FrameHeader::parse(&payload[offset..tags_start]) else {
@@ -646,6 +664,7 @@ pub fn analyze_mpeg(payload: &[u8]) -> Option<MpegAnalysis> {
             }
         };
         let frame_end = offset + header.length;
+        chain.push(offset);
         if analysis.frames == 0 {
             analysis.info_header = InfoHeader::parse(&payload[offset..frame_end.min(payload.len())], &header);
         }
@@ -674,6 +693,10 @@ pub fn analyze_mpeg(payload: &[u8]) -> Option<MpegAnalysis> {
     let trailing = &payload[offset..tags_start];
     analysis.tail.trailing_bytes = trailing.len();
     analysis.tail.trailing_zero = trailing.iter().all(|&byte| byte == 0);
+    let miles = miles_mp3_frames(payload);
+    analysis.miles_stray_frame = miles.iter().copied().find(|offset| chain.binary_search(offset).is_err());
+    let whole = chain.len() - usize::from(analysis.truncated_last_frame);
+    analysis.miles_missed_frame = chain[..whole].iter().copied().find(|offset| miles.binary_search(offset).is_err());
     Some(analysis)
 }
 

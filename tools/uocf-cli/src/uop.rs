@@ -82,8 +82,9 @@ pub struct EntryArgs {
     /// Output package: an absolute path, not the source.
     #[arg(long)]
     output: PathBuf,
-    /// For MP3 and WAV entries: accept audio formats no shipped entry has (a file of another kind is still
-    /// refused).
+    /// For MP3 and WAV entries: accept, for a test client, audio the decoder plays wrongly or in a way nothing
+    /// verified (MPEG-2.5, PCM data that is not whole sample frames). A file it refuses or misreads, or of another
+    /// kind, is still refused.
     #[arg(long)]
     allow_unverified_format: bool,
 }

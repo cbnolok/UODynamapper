@@ -95,8 +95,10 @@ MP3 1,544 (all zlib; CBR 1,531, VBR 13; 13 with the last frame cut), text 9 (zli
 Kingdom Reborn plays with its own Miles build, not the Enhanced Client's: its `mss32.dll` is version 7.0x (SHA-256
 `272f65a0...`), the Enhanced Client's 7.2c (`b588b479...`), and the `miles/mssmp3.asi` files differ too
 (`f6bbeccf...` against `0fb784a9...`). `miles_audio.md`'s "KR ships the same `miles` folder" is wrong: what it
-found holds for the Enhanced Client only. So whether 7.2c handles Kingdom Reborn's cut last frames stays
-unverified, and the Kingdom Reborn entries are checked with `--allow-unverified-format`.
+found holds for the Enhanced Client only. The validator follows 7.2c. Its frame seek and its handling of a cut last
+frame are the same in 7.0x (`miles_playback_reference.md`), and all 1,544 MP3s pass it without
+`--allow-unverified-format`, the 13 cut ones with a note. The rest of the tag skip and frame walk was not compared
+with 7.0x beyond that; the WAV walk was not read there, and Kingdom Reborn ships no WAV.
 
 ### Tables (`lib/uocf/src/enhanced/kr_audio.rs`)
 
@@ -187,41 +189,45 @@ entry or slot keeps its bytes.
 - Checked against what the Enhanced Client's decoder plays (`audio::validate::enhanced_format_report`). The client
   checks nothing itself: `SampleSound_Start` hands the whole entry and its name to Miles 7.2c's
   `AIL_set_named_sample_file`. Every shipped MP3 and WAV passes (3,430 entries, `FormatPolicy::VerifiedOnly`).
-  Refused under every policy, with the evidence in `miles_audio.md`:
+  Refused under every policy, with the evidence in `miles_audio.md` and, for the tag skip and the walks,
+  `miles_playback_reference.md` ("What the tag skip and the walks accept"):
 
   | Rule | Evidence |
   |---|---|
   | The content matches the name's extension (`kind_mismatch`) | `SetNamedSampleFile_Impl` picks the decoder by extension; a leading valid ID3v2 (`ID3`, version bytes < 0xFF, syncsafe size) forces MP3 |
   | WAV: `RIFF` with `WAVE` at +8 | `WavInfo_Impl` ("Not a WAV file.") |
-  | WAV: the walk from +12, step `size + (size & 1) + 8`, within the RIFF size, reaches `fmt ` and `data` (an odd chunk before them needs its pad byte) | `WavInfo_Impl`; ids compared case-insensitively (`StrnicmpN`); `fmt ` searched first, `data` again from the first chunk |
+  | WAV: Miles' walk (`validate::miles_wav_walk`) takes the `fmt ` and `data` chunks ours finds: from +12, step `size + (size & 1) + 8` in 32 bits, each step landing below the RIFF size (an odd chunk before them needs its pad byte; `data` must start below the RIFF size) | `WavInfo_Impl`; ids compared case-insensitively (`StrnicmpN`); `fmt ` searched first, `data` again from the first chunk; it does not know the file's length, so a walk that leaves the file or a size that steps back is refused |
+  | WAV, IMA ADPCM: the search for `fact` ends inside the file; block align not 0 | it runs over the whole RIFF size; without `fact` Miles divides by the block align |
   | WAV: `fmt ` of 16 bytes or more | Miles reads the first 16 (16 and 18 both ship) |
   | WAV: PCM of 8 or 16 bits, IMA ADPCM (tag 0x11, 4 bits), or EXTENSIBLE with `cbSize` ≥ 22, `KSDATAFORMAT_SUBTYPE_PCM` and block align = channels × 2 | `SetSampleFile_Impl`, `InitSampleFromWavInfo` ("Unsupported wave file format.", "Not a WAVEFORMATPCMEX file.", "Not KSDATAFORMAT_SUBTYPE_PCM.") |
   | WAV: mono or stereo, rate not 0 | more channels take the multichannel path, which was not read; any rate plays (`AIL_set_sample_playback_rate`, the mixer resamples) |
-  | WAV: a `data` chunk with samples, inside the file | "Invalid or missing data block."; Miles does not clamp the size to the file |
-  | MP3: Layer III (MPEG-1, 2 or 2.5) | `MilesMp3::SeekFrameHeader` rejects layers I, II and reserved, bitrate index 15 and rate index 3 |
-  | MP3: the first header Miles' byte scan locks onto is the stream's first frame (`validate::miles_mp3_seek` simulates it) | `SeekFrameHeader` reads a byte while it is at most 0x2000 bytes past the window start, so a header must start within 0x1FFD bytes; the window starts after the leading ID3v2 tag (`SetNamedSampleFile_Impl`, footer not skipped) and restarts after each inline `TAG` (128 bytes) or valid `ID3` tag (with its footer) it skips; it takes the first sync (`0xFF`, three set bits) that is Layer III with bitrate index ≠ 15 and rate index ≠ 3, and checks no next frame, so a false sync in junk before the stream would be decoded (the 110 shipped files with 720 or 1,044 leading zeros pass) |
-  | MP3: every frame of the first frame's version, layer and rate | later frames must match them; the bitrate and the channel mode are not compared, so VBR plays |
+  | WAV: a `data` chunk with samples, inside the file | "Invalid or missing data block."; Miles clamps the size neither to the file nor to the RIFF size |
+  | MP3: Layer III | `MilesMp3::SeekFrameHeader` rejects layers I, II and reserved, bitrate index 15 and rate index 3 |
+  | MP3: the first header Miles' byte scan locks onto is the stream's first frame (`validate::miles_mp3_seek` simulates it) | `SeekFrameHeader` reads a byte while it is at most 0x2000 bytes past the window start, so a header must start within 0x1FFD bytes; the window starts where Miles' skip of a leading ID3v2 tag ends (`Id3v2Tag::miles_leading_skip`: flags not read, footer not skipped, 128 bytes short when the sum carries and the next size byte is odd) and restarts after each inline `TAG` (128 bytes) or valid `ID3` tag (with its footer) it skips; it takes the first sync (`0xFF`, three set bits) that is Layer III with bitrate index ≠ 15 and rate index ≠ 3, and checks no next frame, so a false sync in junk before the stream would be decoded (the 110 shipped files with 720 or 1,044 leading zeros pass) |
+  | MP3: Miles' walk over the whole file (`validate::miles_mp3_frames`) decodes the frames of the stream and no others | a sync in junk, or in what is left of a tag, is decoded as a frame; more than 8 KiB without a frame ends the stream, and a header of another rate makes it pass over the next frame, so the frames after are lost |
+  | MP3: every frame of the first frame's version, layer and rate | each frame is compared with the last header seen: one that differs is lost and replaces the values, and the playback rate stays the first's; the bitrate and the channel mode are not compared, so VBR plays |
 
   Accepted: VBR, any bitrate, ID3v1 and ID3v2 tags (inline ones are skipped while seeking), the Xing/Info frame
   (decoded as a silent frame), CRC-protected frames (the CRC is skipped). Notes, always accepted: an MP3 stream
   unlike the shipped ones (MPEG-1 32 kHz mono, 44.1 kHz mono/stereo/joint; MPEG-2 16 kHz mono, 22.05 kHz
-  mono/stereo/joint), frames that change the channel mode (no shipped stream does), a legacy WAV unlike 22,048 Hz
-  mono 16-bit, a RIFF size that differs from the file, bytes after the last chunk, and every `legacysounds/` name
-  (the client never plays it).
-- Still unverified, refused unless `--allow-unverified-format` (`FormatPolicy::AllowUnverified`) turns them into
-  warnings, for trying a file out in a test client: an MP3 with a broken frame chain (resyncs), a cut last frame,
-  trailing bytes that are not a tag, an APE tag; a PCM WAV whose byte rate or block align disagree with its
-  channels and bits, or whose data is not whole sample frames. No MPEG rate is left over: the header table holds
-  only the nine rates the decoder takes. It plays all of them, but MPEG-2.5 with the wrong band edges (`miles_audio.md`).
-  Kingdom Reborn's 13 MP3s with a cut last frame fall here.
+  mono/stereo/joint), frames that change the channel mode (no shipped stream does), a break in the frame chain that
+  Miles scans over, a cut last frame (Kingdom Reborn's 13 files), trailing bytes that are not a tag, an APE tag, a PCM
+  WAV whose byte rate or block align disagree with its channels and bits (Miles reads neither), a legacy WAV unlike
+  22,048 Hz mono 16-bit, a RIFF size past the end of the file (it only bounds the walk), bytes after the end it gives,
+  a `data` chunk running past it (Miles plays them), bytes after the last chunk, and every `legacysounds/` name (the
+  client never plays it).
+- Refused unless `--allow-unverified-format` (`FormatPolicy::AllowUnverified`) turns them into warnings, for trying
+  a file out in a test client:
+  - MPEG-2.5. Miles plays it at the right rate, with the band tables of MPEG-2 (`miles_audio.md`); no shipped file is
+    MPEG-2.5. This is known to be wrong rather than unknown, and no MPEG rate is left over: the header table holds
+    only the nine rates the decoder takes.
+  - A PCM WAV whose data is not whole sample frames: the mixer may read one sample frame past the data [7.2a], not
+    checked in 7.2c.
 - Refused here although Miles would take them, deliberately: each is a file no tool should write, and none is
   shipped. They stay refused under every policy.
   - WAV chunk ids in another case (`FMT `, `DATA`): Miles compares them ignoring case, our walk does not.
-  - A chunk whose header runs past RIFF size + 8: our bound is stricter than Miles', which only needs its start
-    below the RIFF size. The reverse case is a known gap: a chunk starting exactly at the RIFF size passes here and
-    fails in Miles (`end` is the file start + the RIFF size, 0x21129cdb). No shipped file has either.
-  - A RIFF size too small to hold the first chunk, even when that chunk is `fmt ` or `data` (Miles checks the
-    first chunk before the bound).
+  - A `fmt ` tag of 0x55 (MP3 in a WAV): `mssmp3.asi` declares that wave tag, so Miles would take it. MP3 data belongs
+    in an `.mp3` entry.
   - `WAVE_FORMAT_EXTENSIBLE` of another sample size than 16 bits (Miles checks only block align = channels × 2).
   - MP3: a free-format bitrate (index 0) and the reserved version bits `01`: `SeekFrameHeader` takes both, but no
     frame length follows from them.

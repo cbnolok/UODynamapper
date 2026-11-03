@@ -425,7 +425,7 @@ fn ui_enhanced_audio(app: &mut UopInspectorApp, _ctx: &egui::Context, ui: &mut e
                 ui,
                 ALLOW_UNVERIFIED_OPTION_ID,
                 "Allow unverified format",
-                "Accept a format the shipped Audio.uop does not show the client playing, with warnings: for a test client only. A file of another kind than the entry's extension is refused all the same",
+                "Accept, with warnings, audio the client's decoder plays wrongly or in a way nothing verified (MPEG-2.5, PCM data that is not whole sample frames): for a test client only. A file the decoder refuses or misreads, or of another kind than the entry's extension, is refused all the same",
             );
             let policy = if allow { FormatPolicy::AllowUnverified } else { FormatPolicy::VerifiedOnly };
             let button = ui

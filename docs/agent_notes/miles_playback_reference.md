@@ -156,6 +156,60 @@ The 326 Enhanced MP3s with no Info frame lose the frame's share of this. The act
 are in its LAME tag, which our census did not collect. A gapless player would remove a gap the client has, so **a
 matching player must not honour the LAME tag**.
 
+## What the tag skip and the walks accept
+
+What `lib/uocf/src/audio/validate.rs` simulates. **[7.2c]**: read in the 7.2a source and checked with `objdump` on
+the shipped binaries, at the addresses given, not in Ghidra. **[7.2a]**: the source only.
+
+**Leading ID3v2 skip [7.2c]** (`mss32.dll` 0x2112b68d to 0x2112b6ee; the sum is also in 7.0x, `miles_audio.md`). It
+looks at the start of the data only. It wants `ID3`, both version bytes below 0xFF and all four size bytes below
+0x80. It reads no flag, so unsynchronisation, an extended header and a footer change nothing. The skip is the three
+upper size bytes shifted into place, ORed with the lowest byte plus 10. So a sum that reaches bit 7 is lost when the
+next size byte is odd, and the scan starts 128 bytes inside the tag. A footer is not skipped: its 10 bytes are
+scanned and count in the window, though they cannot hold a sync. The remaining size is not checked against the file,
+so a tag longer than the file leaves the image.
+
+**Frame scan and walk [7.2c]** (`mssmp3.asi` from 0x26f07080; the frame seek also matches 7.0x):
+
+- One byte at a time, while the read position is at most 0x2000 past the window start.
+- The newest three bytes read as `TAG`: 125 more are consumed, even past the end of the data, and the scan and window
+  restart.
+- The newest three as `ID3`: 7 more are read. A valid header (the same tests) skips its size, plus 10 when the footer
+  flag is set here, and the scan and window restart. A short read ends the stream. An invalid header is passed over
+  in the same window, and its 7 bytes are not looked at for a sync.
+- The older two of the last four as a sync: bitrate index 15, rate index 3 or a layer other than III are passed over,
+  in the same window.
+- The first Layer III header sets the values later ones are compared with: version and sample rate. A later header that
+  differs is lost and replaces them. Nothing looks for the next frame.
+- Side information that does not fit in the data ends the stream ("Invalid MPEG audio stream"). So does running out of
+  window or data, without an error, except at open, which fails.
+- The next scan starts at the header plus the frame length, or at the end of the side information when that is further.
+- Free-format (index 0) and reserved version bits are taken; a free-format frame has data size 0.
+
+**WAV chunk walk [7.2c]** (`mss32.dll` 0x21129cc0 to 0x2112a010), named-file path with a `.wav` name. It never sees
+the file's length.
+
+- The bound is the start of the data plus the RIFF size, not plus 8. So in a well-formed file it falls 8 bytes before
+  the end of the file, and a chunk starting at it or after is out.
+- The first chunk's id is compared before any bound. After that, the step `size + (size & 1) + 8` wraps in 32 bits
+  and the walk stops when the signed 32-bit difference between the next position and the bound is not negative. So a
+  size can step back or in place, a RIFF size past the file lets it read outside, and a RIFF size of more than 2 GiB
+  past the step stops it.
+- `fmt ` and `data` are separate searches from the first chunk. The `fmt ` fields are read without looking at the
+  chunk's size. The byte rate is never read.
+- The `data` length is the chunk's own size, clamped to neither the RIFF size nor the file.
+- IMA ADPCM (tag 0x11, 4 bits) also searches `fact`, over the whole RIFF size. Without one, the sample count divides
+  by the block align (0x21129fea), so a block align of 0 faults.
+
+**WAV types [7.2c]** (0x2112b4c0, 0x2112a030). Tag 1 takes any bit depth: 4 is treated as ADPCM, 16 as 16-bit and every
+other depth as 8-bit, so 24 or 32-bit plays as noise. The block align is used only for ADPCM. Any other tag goes to a
+provider whose "Input wave tag" matches, with raw output: `mssmp3.asi` declares 0x55 (0x26f07850), so an MP3-in-RIFF
+`.wav` reaches it.
+
+**Partial sample frames [7.2a]** (`wavefile.cpp`). The source runs out when its remaining length is 0 or below, and the
+mixer may read a whole sample frame past the end of the data. Not checked in 7.2c, so the validator leaves such a file
+unverified.
+
 ## Streams and one-shot samples
 
 **[7.2a]**. The stream code is among the 7.2c blocks that changed (at 0x211103b0; `AIL_set_file_callbacks` also gained
@@ -271,7 +325,8 @@ Its filter classes may still run, which is part of the same pass.
 - The 11-bit scale quantisation and the 16.16 stepping. Float is fine.
 - The zero-fill bug for a cut last frame, unless a bit-exact comparison is wanted. Decoding the frame with zeros
   is close, and only Kingdom Reborn's 13 files reach it.
-- MPEG-2.5 band table behaviour. No shipped file uses those rates.
+- MPEG-2.5 band table behaviour. No shipped file uses those rates, and the validator refuses them unless asked to
+  allow them for a test client.
 - ADPCM and multichannel paths. No client depends on them for shipped sounds.
 - Stream buffer sizing, and starvation gaps.
 - Mixer latency, beyond being reasonably low.
