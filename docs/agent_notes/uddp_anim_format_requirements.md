@@ -138,8 +138,9 @@ figure the fair one.
 
 - A frame is decoded once per load, then drawn from the atlas. Drawing a crowd costs GPU time; decoding only happens
   the first time an action or body appears.
-- Current zstd 19 costs (Classic / Enhanced): 746 / 879 MB/s; a whole body takes a median of 0.9 / 5.0 ms, at most
-  197 / 363 ms; a per-action batch shows its first frame in a median of 34 / 96 µs, at most 6 / 10 ms.
+- Current zstd 19 costs (Classic / Enhanced): 769 / 1021 MB/s on one thread, boost off, EPP `balance_power`. The largest
+  whole body takes 204 / 404 ms, the largest action at most 21 ms, and the largest (action, direction) 4.5 ms (6.1 ms for
+  `Spider_Female`, whose largest action has a single direction).
 - Upload to the GPU is a separate cost, and those numbers leave it out.
 - Decoding belongs on worker threads, so a slow job delays a mobile's first appearance rather than the frame rate.
 
@@ -211,8 +212,8 @@ Compared with zstd 19 on 25 bodies, index only. Their speeds are from a contende
 | Sorting the palette | Helps only with residuals plus an entropy coder: about −11 % of the Enhanced index plane. Classic gets larger. |
 | One palette per body or one per Enhanced (index, coverage) | Doesn't fit 256 entries: 5.7 % and under 1 % of bodies. |
 | Rank coding, left pixel as reference | Classic worse, Enhanced −4 % |
-| Rank coding with previous-frame context, the smallest lossless result (Enhanced 0.878× BC7, 0.81× shipped) | **Too slow as measured** (*provisional*): 14 MB/s Classic, 40 MB/s Enhanced against 746 / 879 for zstd 19. |
-| Rank coding from a predicted colour, with a coarse lookup | Enhanced sample only 2.8 % over the smallest (Classic 3.5 %), and the fastest rank variant, but still 20 / 127 MB/s (*provisional*). Classic is ruled out; Enhanced depends on the fast path in section 6. |
+| Rank coding with previous-frame context, the smallest lossless result (Enhanced 0.878× BC7, 0.81× shipped) | **Too slow:** 14–15 MB/s Classic, 40–44 MB/s Enhanced against 769 / 1021 for zstd 19. It takes 580 / 1010 ms on the uniform crowd, against the 250 ms line. |
+| Rank coding from a predicted colour, with a coarse lookup | Enhanced sample only 2.8 % over the smallest (Classic 3.5 %), and the fastest rank variant, but still only 20 / 50 MB/s. It doesn't rescue rank coding. |
 | Coverage predicted from edge distance | ×0.956 of coverage, about 11 MB (estimate) |
 
 ### Lossy, measured but not chosen
@@ -269,24 +270,45 @@ Nothing here is final.
   so it needs a background step. MMPX stored indexed costs 0.37× / 0.44× of 2× BC7.
 - **Keeping everything by default.** Leaving out unreached art is at most opt-in. See section 7.
 
-## 6. Still untested
+## 6. Measured since
 
-Measure-only, queued after the timing rerun. The ranking is crowd speed first, size second.
+All six questions now have answers. Full tables are in sections 7 and 8 of
+[the codec proposal](proposals/2026-11-01-mobile-anim-codec.md). Timings: 4 threads, boost off, EPP `balance_power`, no
+GPU upload or disk reads. Crowds are 300 distinct (body, action) pairs: "uniform" treats every existing pair as equally
+likely, and "worst" is the 300 largest (918 / 1231 Mpx, Classic / Enhanced). The line is 250 ms.
 
-1. **Crowd scenario:** 300 distinct (body, action) pairs by real distribution, plus a worst case, on 1 and 4 threads,
-   for whole-body, per-action and per-direction units. Reports time until drawable, the worst job, upload bytes and
-   VRAM.
-2. **Fast prediction path:** ordered palette, residuals, context-split streams, and table-driven decoding instead of
-   per-pixel rANS and palette sorting.
-3. **Motion-compensated prediction, lossless:** the moved previous frame as the predicted colour. Earlier tests only
-   covered unmoved references and exact matches.
-4. **Why the floor is 5.5–5.7 bits:** settled, on every 10th body: it isn't per-frame palette noise. Static surfaces take
-   only 19–22 % of index bits in idle actions and 4–5 % in others, frame-to-frame changes lack the correlation of noise
-   (−0.23 to +0.05, against about −0.5), and Enhanced has one palette per action anyway. Pixels that change or move cost
-   5.9–6.4 bits, and static ones 3.6–5.5 from their neighbours but 2.8–3.7 from the previous frame.
-5. **Classic UOP against Enhanced:** whether they're the same renders, so one could derive from the other when both are
-   installed.
-6. **A real video codec (AV1 4:4:4), lossy:** the likely largest saving and the biggest risk to colour and hue.
+| Candidate, per (action, direction) | Uniform ms | Worst ms | Faced only, worst ms | Disk × shipped |
+|---|---:|---:|---:|---:|
+| LZ4 HC | 3.9 / 9.7 | 80 / 174 | 17 / 35 | 0.88 / 1.23 |
+| BC7, zstd 7, as stored (lossy) | 9.6 / 15.3 | 184 / 231 | not run | 0.82 / 0.96 |
+| zstd 19 | 14.7 / 31.1 | 278 / 496 | 58 / 103 | 0.72 / 1.01 |
+| Luma, MED, zstd 19 | 93 / 128 | 2186 / 2624 | 448 / 539 | 0.78 / 0.92 |
+| Luma, MED, tANS | 147 / 200 | 3287 / 4005 | 684 / 825 | 0.77 / 0.91 |
+| Block motion, tANS | 179 / 239 | 3846 / 4732 | 805 / 973 | 0.74 / 0.86 |
+| Rank + previous | 580 / 1010 | 9112 / 11704 | 1876 / 2381 | 0.67 / 0.80 |
+
+Disk figures for lossless rows are estimates from every 10th body, and Classic compares with the 1060.3 MB the idx files
+reference.
+
+1. **Crowds:** zstd 19 has 8–17× to spare on the uniform crowd. On the worst crowd it passes only when each NPC loads its
+   faced direction first. Whole-body units fail the uniform crowd for every lossless candidate except LZ4 HC.
+2. **Fast prediction path:** table-driven decoding works, but it stays 4–6× slower than plain zstd 19 for at most 9 % less
+   in Enhanced.
+3. **Block motion, lossless:** −4.8 % Classic and −7.8 % Enhanced overall, mostly in idle (−22 % / −24.5 %) and fidget.
+4. **Why the floor is 5.5–5.7 bits:** it isn't per-frame palette noise. Static surfaces take only 19–22 % of index bits in
+   idle actions and 4–5 % in others, frame-to-frame changes lack the correlation of noise (−0.23 to +0.05, against about
+   −0.5), and Enhanced has one palette per action anyway. Pixels that change or move cost 5.9–6.4 bits, and static ones
+   3.6–5.5 from their neighbours but 2.8–3.7 from the previous frame.
+5. **Classic UOP against Enhanced:** not the same renders as stored, so deriving one from the other saves nothing. 0 %
+   share a shape, 1.8 % share RGB555, and coding one against the other costs +38.5 % / +11.8 %. Different action or
+   direction numbering isn't ruled out, though matching frame counts make it unlikely.
+6. **AV1 4:4:4, lossy:** CRF 30 gives 0.57–0.68× BC7 at SSIMULACRA2 84–86, but under 2 % of pixels keep their colour and no
+   hue-flagged pixel stays exact. It needs RGBA8 VRAM or a requantise step, and would miss the line at an estimated
+   851 / 985 ms on the uniform crowd.
+
+**Still not measured:** GPU upload, disk reads, a crowd weighted by how often actions are really played, and a table-driven
+coder for the coverage plane. The `timing` pass failed on memory twice and wasn't retried; `s1` and `s2` time the same
+streams, so the ranking doesn't need it.
 
 TLP used to re-apply boost and `balance_performance` during timed runs. `/etc/tlp.conf` now sets boost off and EPP
 `balance_power` on mains, so new timings are in that state and don't compare in absolute terms with the older EPP
@@ -330,8 +352,8 @@ Other limits:
 
 - The rule describes `classic_7.0.103.0_client.exe` with its shipped `mobtypes.txt`. A shard or mod that edits that
   file can reach these bodies.
-- Bodies 197 and 198 are among the largest in Classic, so the 197 ms worst-case decode above may come from art the
-  client never draws.
+- Bodies 197 and 198 are among the largest in Classic, so the worst-case whole-body decode may come from art the client
+  never draws.
 - Enhanced is much smaller and is a separate rule: about 3.3 MB (bodies 344, 679, 827).
 
 **Default:** keep every entry the idx or UOP table holds. Custom animations (need 8) rule out dropping art by default:
@@ -343,14 +365,15 @@ the install being converted, never from a fixed list of official bodies. Whether
 **Made by the user:** decode speed outranks size. Runtime BC7 is off for now. Upscale before conversion. Format is free
 to change, with no backward compatibility. Official art may use restricted colour; custom art needs 32 bits.
 
+The user set the line: 300 new actions drawable in about 250 ms on 4 threads is fast enough, and faster is better.
+
 **Open:**
 
-| Question | Depends on |
-|---|---|
-| Storage per client | Crowd scenario, fast prediction path, video codec bound |
-| Load unit: per action or per direction | Crowd scenario |
-| Whether any lossy tier is acceptable, and where the quality floor sits (80 suggested) | Contact sheets; the user's eye |
-| Halved frames: pursue with a better interpolator, or drop | Contact sheets |
-| Runtime interpolation for high frame rates | A separate study on the full frame set |
-| Whether to offer an opt-in flag for unreached art | Section 7's trace |
-| What "fast enough" means in numbers | The user: no budget has been set beyond "hundreds on screen, no stutter" |
+| Question | Recommendation | Depends on |
+|---|---|---|
+| Storage per client | Indexed slot planes, lossless, zstd 19, hue in the shader; LZ4 HC is the alternative at about 22 % more disk | The user |
+| Load unit | One stream per (action, direction), faced direction first | The user |
+| Whether any lossy tier is acceptable, and where the quality floor sits | None by default; 80 suggested as a floor | Contact sheets; the user's eye |
+| Halved frames: pursue with a better interpolator, or drop | Keep all frames | Contact sheets |
+| Runtime interpolation for high frame rates | A separate study | The full frame set |
+| Whether to offer an opt-in flag for unreached art | Keep all | Section 7's trace |
