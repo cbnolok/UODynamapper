@@ -42,6 +42,12 @@ Also needed, derived from the above and from how the art works:
 - Every frame's anchor and size, and an existence index per (body, action, direction), so asking whether a frame
   exists never needs a decode.
 - Frame numbers kept stable: `AnimationSequence` frame effects and skipped frames refer to them.
+- **Classic equipment needs the wearer's source and the tile's appearance.** The client tests the UOP flag on the object
+  drawn, not on the id it requests, and a flagged wearer's layer item takes its UOP body from the tile's `tileart.uop`
+  appearance (a gargoyle in tile 42002 draws UOP body 1525, an unflagged id, with no MUL fallback). So the Classic package
+  must carry that tile-to-appearance data, as the Enhanced one does, plus `IsMountBody`'s list. Its reader's `animation()`
+  follows the rule for a mobile's own body only. See
+  [`uop_reachability.md`](../../scripts/dev-helpers/ec-research/ghidra-classic-frames/results/uop_reachability.md).
 
 ## 2. Constraints
 

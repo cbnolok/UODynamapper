@@ -203,6 +203,13 @@ These need a person at the GUI or in a running client; the code side is done.
   - transparent water final pass
 - Keep classic water as the baseline mode and treat enhanced procedural water as benchmark-first.
 
+### Classic Equipment And Mount Animation Sources
+
+- Carry the tile-to-appearance data and `IsMountBody`'s list in the Classic animation package, and add a reader call that
+  takes the object drawn as well as the requested id. Traced in
+  `scripts/dev-helpers/ec-research/ghidra-classic-frames/results/uop_reachability.md`. Do it with the animation format
+  change, before the renderer draws Classic equipment.
+
 ### Static Light Source Follow-Up
 
 - Upgrade the current static-light support from light-mask quads plus approximate local response into a real projected decal path.
