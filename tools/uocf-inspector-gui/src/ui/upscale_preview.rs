@@ -381,3 +381,65 @@ fn total_scale(filters: &[UpscaleFilter]) -> u32 {
         .filter(|filter| !matches!(filter, UpscaleFilter::None))
         .fold(1u32, |scale, filter| scale.saturating_mul(filter.scale_factor()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::{tests::test_app, InspectorImagePreview};
+    use std::cell::Cell;
+    use std::rc::Rc;
+    use std::sync::Arc;
+
+    const SOURCE_KEY: u64 = 1;
+    const SOURCE_SIDE: u32 = 1;
+    const SOURCE_RGBA: [u8; 4] = [0, 0, 0, 0];
+    const PREVIEW_WINDOWS: usize = 2;
+
+    fn draw_frame(app: &mut UopInspectorApp, ctx: &egui::Context, minimized: bool, windows_exist: bool) {
+        let mut input = egui::RawInput::default();
+        input.viewports.entry(egui::ViewportId::ROOT).or_default().minimized = Some(minimized);
+        if windows_exist {
+            for id in [UPSCALE_PREVIEW_ORIGINAL_VIEWPORT_ID, UPSCALE_PREVIEW_UPSCALED_VIEWPORT_ID] {
+                input.viewports.insert(egui::ViewportId::from_hash_of(id), egui::ViewportInfo::default());
+            }
+        }
+        let _ = ctx.run_ui(input, |ui| ui_upscale_preview_window(app, ctx, ui));
+    }
+
+    #[test]
+    fn the_preview_windows_wait_for_a_minimized_main_window() {
+        let mut app = test_app();
+        app.image_preview_sources.insert(
+            SOURCE_KEY,
+            InspectorImagePreview {
+                key: SOURCE_KEY,
+                label: String::new(),
+                width: SOURCE_SIDE,
+                height: SOURCE_SIDE,
+                rgba: Arc::from(SOURCE_RGBA.as_slice()),
+            },
+        );
+        app.current_image_preview_key = Some(SOURCE_KEY);
+        app.show_upscale_preview = true;
+        let ctx = egui::Context::default();
+        ctx.set_embed_viewports(false);
+
+        // eframe drawing a minimized window has no event loop, so it cannot create a window and never calls back:
+        // egui then panics with "the user callback was never called".
+        egui::Context::set_immediate_viewport_renderer(|_, _| ());
+        draw_frame(&mut app, &ctx, true, false);
+
+        let drawn = Rc::new(Cell::new(0));
+        let counter = Rc::clone(&drawn);
+        egui::Context::set_immediate_viewport_renderer(move |ctx, mut viewport| {
+            counter.set(counter.get() + 1);
+            let mut input = egui::RawInput { viewport_id: viewport.ids.this, ..Default::default() };
+            input.viewports.insert(viewport.ids.this, egui::ViewportInfo::default());
+            let _ = ctx.run_ui(input, |ui| (viewport.viewport_ui_cb)(ui));
+        });
+        draw_frame(&mut app, &ctx, false, false);
+        assert_eq!(drawn.get(), PREVIEW_WINDOWS, "they open once the main window is back");
+        draw_frame(&mut app, &ctx, true, true);
+        assert_eq!(drawn.get(), 2 * PREVIEW_WINDOWS, "windows that exist go on being drawn");
+    }
+}
