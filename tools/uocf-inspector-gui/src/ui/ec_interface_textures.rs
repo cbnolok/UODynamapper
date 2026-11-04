@@ -29,6 +29,7 @@ const THUMBNAIL_SIDE: f32 = 32.0;
 const THUMBNAIL_TEXTURE_SIDE: u32 = 64;
 const PREVIEW_ZOOMS: [(f32, &str); 4] = [(1.0, "1x"), (2.0, "2x"), (4.0, "4x"), (8.0, "8x")];
 const EXPORT_FALLBACK_NAME: &str = "interface_texture";
+const EMPTY_IMAGE_NOTE: &str = "This entry is an empty image: a TGA header of 0 x 0 pixels, as shipped.";
 
 /// An image entry of the package.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -150,9 +151,17 @@ fn thumbnail(app: &mut UopInspectorApp, ctx: &egui::Context, loaded: &LoadedUop,
         return known.clone();
     }
     let image = loaded.package.unpack_file_by_hash(entry.hash).ok().flatten().and_then(|payload| decode_thumbnail(&payload, &entry.full_name()));
-    let handle = image.map(|image| ctx.load_texture(format!("interface_thumbnail_{:016x}", entry.hash), image, egui::TextureOptions::NEAREST));
+    // An image that cannot be a texture has no thumbnail; the details say why.
+    let handle = image.and_then(|image| {
+        crate::ui::textures::load_color_image(ctx, format!("interface_thumbnail_{:016x}", entry.hash), image, egui::TextureOptions::NEAREST).ok()
+    });
     app.ec_interface_textures.thumbnails.insert(entry.hash, handle.clone());
     handle
+}
+
+/// Whether an entry is a TGA of no pixels, which the client packages ship.
+fn is_empty_image(payload: &[u8]) -> bool {
+    TgaConvention::of(payload).is_ok_and(|convention| convention.width() == 0 || convention.height() == 0)
 }
 
 /// The stored format of an image entry.
@@ -290,7 +299,7 @@ fn ui_details(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui,
     });
     ui.separator();
     let Some(texture) = texture else {
-        ui.label("This entry does not decode as an image.");
+        ui.label(if is_empty_image(&payload) { EMPTY_IMAGE_NOTE } else { "This entry does not decode as an image." });
         return;
     };
     let (zoom, _) = PREVIEW_ZOOMS[app.ec_interface_textures.zoom_index];
@@ -367,6 +376,7 @@ mod tests {
     fn every_listed_image_of_a_shipped_interface_decodes() {
         const CLIENT_ROOTS_ENV: &str = "UO_EC_CLIENT_ROOTS";
         const DICTIONARY: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../_shared_assets/Dictionary.dic");
+        const TGA_HEADER_BYTES: usize = 18;
         let roots = std::env::var_os(CLIENT_ROOTS_ENV).unwrap_or_else(|| panic!("set {CLIENT_ROOTS_ENV}"));
         let mut dictionary = Dictionary::new();
         dictionary.load_dic(std::path::Path::new(DICTIONARY)).unwrap();
@@ -379,18 +389,27 @@ mod tests {
             let loaded = LoadedUop { path, package };
             let entries = collect_textures(&loaded, &dictionary);
             let mut replaceable = 0;
+            let mut empty = 0;
+            // A TGA read accepts a payload with a zero at the width or height offset, whatever the payload is, so
+            // an empty result only counts as a real empty image when the entry is a bare header.
             let failed: Vec<String> = entries
                 .iter()
                 .filter(|entry| {
                     let payload = loaded.package.unpack_file_by_hash(entry.hash).unwrap().unwrap();
                     let key = uocf::enhanced::entry_edit::package_key(&loaded.path);
                     replaceable += usize::from(uocf::enhanced::entry_image::entry_image_format(&key, entry.hash, &payload).is_some());
-                    decode_thumbnail(&payload, &entry.full_name()).is_none()
+                    let Some(thumbnail) = decode_thumbnail(&payload, &entry.full_name()) else {
+                        return true;
+                    };
+                    let no_pixels = thumbnail.size[0] == 0 || thumbnail.size[1] == 0;
+                    empty += usize::from(no_pixels);
+                    let well_formed = DdsDescription::parse(&payload).is_ok() || TgaConvention::of(&payload).is_ok();
+                    !well_formed || (no_pixels && payload.len() != TGA_HEADER_BYTES)
                 })
                 .map(InterfaceTexture::full_name)
                 .collect();
             println!(
-                "{}: {} images, {} folders, {replaceable} convertible, {} failed: {:?}",
+                "{}: {} images, {} folders, {replaceable} convertible, {empty} empty, {} failed: {:?}",
                 root.display(),
                 entries.len(),
                 count_folders(&entries).len(),
