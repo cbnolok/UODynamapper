@@ -24,7 +24,20 @@ use crate::logic::housing_editor::{
     remove_slot, remove_tile_type, save_housing_bin, save_multi_collection, HousingDocument, HousingDocumentSource,
     HousingEditKey, HousingField, HousingIssueTarget, HousingPieceFilter, HousingSelection,
 };
+use crate::ui::unsaved_changes::TabEditor;
 use crate::ui::{multis, UOP_PATCHER_NOTE};
+
+/// What `housing.bin` is (`ghidra-housing/results/uosa_housing.md`).
+pub(crate) const HOUSING_BIN_HELP: &str = "housing.bin holds the pieces the house customization tool offers: the \
+    walls, floors, roofs, stairs, doors, teleporters and misc pieces a player can place in a customizable house.\n\n\
+    It is one entry of MultiCollection.uop (build/multicollection/housing.bin). The Enhanced Client reads it when \
+    play starts and after a world reset, not when a house is customized.\n\n\
+    Pieces are grouped by tile type: 1 stairs, 2 roof, 3 door, 4 floor, 5 wall, 6 teleporter, 7 misc. In a tile \
+    type, a piece is a category (a row of the customization window) and a group (a sub-row). It also has a feature \
+    mask, compared with the server's feature flags, a tooltip cliloc and three lists of {slot, id}: Solid (the tile \
+    ids of the piece's variants), Multi (the stair block multis) and Window (wall tiles with windows).\n\n\
+    The Classic Client reads the same data from stairs.txt, roof.txt, doors.txt, floors.txt, walls.txt, \
+    teleprts.txt and misc.txt.";
 
 const TREE_PANEL_WIDTH: f32 = 380.0;
 const VALIDATION_PANEL_HEIGHT: f32 = 170.0;
@@ -353,6 +366,47 @@ fn reopen_client_package(app: &mut UopInspectorApp) -> Result<(), String> {
     Ok(())
 }
 
+pub(super) const TAB_EDITOR: TabEditor = TabEditor {
+    tab: ViewMode::Housing,
+    label: "the housing pieces",
+    is_dirty: |app| app.housing_panel.document.as_ref().is_some_and(HousingDocument::is_dirty),
+    save: save_to_the_kind_opened,
+    discard: discard_changes,
+};
+
+/// Saves to a file of the kind the pieces came from.
+fn save_to_the_kind_opened(app: &mut UopInspectorApp) {
+    let Some(document) = app.housing_panel.document.as_ref() else {
+        return;
+    };
+    match document.source().clone() {
+        HousingDocumentSource::ClientPackage(source) => {
+            if let Some(path) = save_file(UOP_FILTER, DEFAULT_MULTI_COLLECTION_FILE_NAME) {
+                save(app, |pieces| save_multi_collection(pieces, &source, &path), &path);
+            }
+        }
+        HousingDocumentSource::HousingBin(_) => {
+            if let Some(path) = save_file(HOUSING_BIN_FILTER, DEFAULT_HOUSING_BIN_FILE_NAME) {
+                save(app, |pieces| save_housing_bin(pieces, &path), &path);
+            }
+        }
+        HousingDocumentSource::Kdl(_) => {
+            if let Some(path) = save_file(KDL_FILTER, DEFAULT_KDL_FILE_NAME) {
+                save(app, |pieces| export_kdl(pieces, &path), &path);
+            }
+        }
+    }
+}
+
+fn discard_changes(app: &mut UopInspectorApp) {
+    let state = &mut app.housing_panel;
+    if let Some(document) = state.document.as_mut() {
+        document.revert_to_opened();
+        document.mark_saved();
+        state.selection = state.selection.and_then(|selection| selection.resolve(document.pieces()));
+    }
+}
+
 fn request_open(app: &mut UopInspectorApp, request: OpenRequest) {
     if app.housing_panel.document.as_ref().is_some_and(HousingDocument::is_dirty) {
         app.housing_panel.pending_open = Some(request);
@@ -400,6 +454,7 @@ fn toolbar(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
     let client_available = app.housing_pieces.is_some() && app.multi_collection_path.is_some();
     let save_source = app.multi_collection_path.clone();
     ui.horizontal_wrapped(|ui| {
+        crate::ui::help_mark(ui, HOUSING_BIN_HELP);
         ui.label("Open:");
         if ui
             .add_enabled(client_available, egui::Button::new("Client MultiCollection.uop"))

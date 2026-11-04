@@ -4,9 +4,11 @@ use crate::app::{
 use crate::ui::{arrow_delta, list_sort_controls, move_selection, multi_editor, sorted_indices_by};
 use eframe::egui;
 use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use uocf::classic::art::static_art_id_for_source;
+use uocf::classic::multi::MultiPart;
 use uocf::enhanced::housing::{housing_tile_type_name, HousingPieces, HousingSlot};
 use uocf::enhanced::tileart::ArtTexture;
 use uocf::enhanced::textures::{ECImageFormat, TextureFile, TextureItem as RawTextureItem};
@@ -27,6 +29,30 @@ struct PreviewPart {
     housing_piece: bool,
 }
 
+/// What the multis tab worked out from the loaded data. egui redraws on every mouse move, so a redraw must not
+/// search the tileart records again, look again for art it found missing, or read `multi.mul` again.
+#[derive(Default)]
+pub(crate) struct MultiPreviewCache {
+    data: MultiPreviewData,
+    tileart_by_tile: Option<HashMap<u32, usize>>,
+    render_info: HashMap<(u16, u8), PartRenderInfo>,
+    missing_art: HashSet<u64>,
+    logged_missing: HashSet<(u16, u8)>,
+    classic_parts: Option<(u32, Arc<Vec<MultiPart>>)>,
+    classic_empty_multis: Option<Arc<HashSet<u32>>>,
+}
+
+/// The data the cache was worked out from, by address: a reload replaces it, an edit moves its revision.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+struct MultiPreviewData {
+    tileart: usize,
+    tileart_revision: u64,
+    dictionary: usize,
+    art: usize,
+    tiledata: usize,
+    multis: usize,
+}
+
 #[derive(Clone, Copy, Default)]
 struct PartRenderInfo {
     is_floor: bool,
@@ -36,6 +62,8 @@ struct PartRenderInfo {
     offset_y: i32,
     texture_id: Option<u32>,
     clip_rect: Option<MultiSourceClip>,
+    /// The source of the art when it is not the selected one: a tile without KR art.
+    art_source: Option<ArtSource>,
 }
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
@@ -67,10 +95,37 @@ const HIDDEN_PART_TINT_ALPHA: u8 = 96;
 const HIDDEN_PART_OUTLINE_WIDTH: f32 = 1.0;
 const HIDDEN_PART_OUTLINE_COLOR: egui::Color32 = egui::Color32::from_rgb(255, 64, 255);
 const MISSING_PART_FILL_COLOR: egui::Color32 = egui::Color32::BLUE;
+/// Where a tile without KR art finds its art: the classic files first, as the official EC draws classic art unless a
+/// tile asks for its new art.
+const KR_ART_FALLBACK_SOURCES: [ArtSource; 3] = [ArtSource::CcUop, ArtSource::Mul, ArtSource::EcUopLegacy];
+const KR_ART_FALLBACK_NOTE: &str = "KR art is optional: Texture.uop has images for only part of the tiles, and \
+    the Enhanced Client draws them only for tileart records with the UseNewArt flag. The other tiles are drawn with their \
+    classic art here, at its own scale.";
 /// Context data key of the "housing.bin pieces" toggle of the MultiCollection.uop view.
 const SHOW_HOUSING_PIECES_ID_SALT: &str = "multi_uop_show_housing_pieces";
 
+fn arc_address<T>(value: &Option<Arc<T>>) -> usize {
+    value.as_ref().map_or(0, |value| Arc::as_ptr(value) as usize)
+}
+
+/// Forgets what was worked out from data that has since been replaced or edited.
+fn refresh_multi_preview_cache(app: &mut UopInspectorApp) {
+    let client = app.client_data.as_ref();
+    let data = MultiPreviewData {
+        tileart: arc_address(&app.ec_tileart_entries),
+        tileart_revision: app.tileart_editor.edits.revision(),
+        dictionary: arc_address(&app.uo_string_dictionary),
+        art: client.map_or(0, |client| Arc::as_ptr(&client.art) as usize),
+        tiledata: client.map_or(0, |client| Arc::as_ptr(&client.tiledata) as usize),
+        multis: client.map_or(0, |client| arc_address(&client.multis)),
+    };
+    if app.multi_preview_cache.data != data {
+        app.multi_preview_cache = MultiPreviewCache { data, ..Default::default() };
+    }
+}
+
 pub fn ui_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
+    refresh_multi_preview_cache(app);
     app.selected_legacy_source = concrete_art_tile_source(app.selected_legacy_source);
 
     let has_classic = app
@@ -105,7 +160,6 @@ pub fn ui_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
             }
             ui.separator();
             ui.label("Art:");
-            let previous_source = app.selected_legacy_source;
             egui::ComboBox::from_id_salt("multis_art_source")
                 .selected_text(art_source_label(app.selected_legacy_source))
                 .show_ui(ui, |ui| {
@@ -114,9 +168,6 @@ pub fn ui_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
                     ui.selectable_value(&mut app.selected_legacy_source, ArtSource::EcUopLegacy, "EC Legacy UOP");
                     ui.selectable_value(&mut app.selected_legacy_source, ArtSource::EcUopKr, "KR/New UOP");
                 });
-            if app.selected_legacy_source != previous_source {
-                clear_multi_preview_failure_logs(app);
-            }
         });
     });
 
@@ -168,12 +219,15 @@ fn ui_classic_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
             let housing_index = app.housing_index.clone();
             housing_multis_filter_checkbox(ui, &mut app.multi_part_filters, housing_index.as_deref());
             let only_housing_multis = housing_multis_filter_active(app.multi_part_filters, housing_index.as_deref());
+            empty_multis_filter_checkbox(ui, &mut app.multi_part_filters);
+            let empty_multis = app.multi_part_filters.hide_empty_multis.then(|| classic_empty_multis(app));
 
             if let Some(client) = &app.client_data {
                 if let Some(multis) = &client.multis {
                     let max_id = multis.max_id();
                     let ids = (0..max_id)
                         .filter(|id| !only_housing_multis || is_housing_multi(housing_index.as_deref(), *id))
+                        .filter(|id| empty_multis.as_ref().is_none_or(|empty| !empty.contains(id)))
                         .collect::<Vec<_>>();
                     let sorted_indices = sorted_indices_by(&ids, sort.ordering(), |left, right| left.cmp(right));
                     let visible_ids: Vec<_> = sorted_indices.iter().map(|index| ids[*index]).collect();
@@ -207,12 +261,7 @@ fn ui_classic_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
         });
 
     egui::CentralPanel::default().show(ui, |ui| {
-        let parts = app
-            .client_data
-            .as_ref()
-            .and_then(|client| client.multis.as_ref())
-            .and_then(|multis| multis.get_parts(app.selected_multi_id).ok())
-            .unwrap_or_default();
+        let parts = classic_multi_parts(app);
         let preview_parts: Vec<_> = parts
             .iter()
             .enumerate()
@@ -259,6 +308,8 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
             let housing_index = app.housing_index.clone();
             housing_multis_filter_checkbox(ui, &mut app.multi_part_filters, housing_index.as_deref());
             let only_housing_multis = housing_multis_filter_active(app.multi_part_filters, housing_index.as_deref());
+            empty_multis_filter_checkbox(ui, &mut app.multi_part_filters);
+            let hide_empty_multis = app.multi_part_filters.hide_empty_multis;
             ui.separator();
 
             let query = app.search_query.to_lowercase();
@@ -268,6 +319,7 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
                     || item.path.to_lowercase().contains(&query)
                     || format!("{:016X}", item.filename_hash).to_lowercase().contains(&query))
                     && (!only_housing_multis || is_housing_multi(housing_index.as_deref(), item.id))
+                    && (!hide_empty_multis || !item.parts.is_empty())
             };
             let sorted_indices = sorted_indices_by(&collection.items, sort.ordering(), |left, right| {
                 match sort.option_index {
@@ -339,6 +391,7 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
             }
             if app.housing_pieces.is_some() {
                 ui.toggle_value(&mut show_housing, "housing.bin pieces");
+                crate::ui::help_mark(ui, crate::ui::housing::HOUSING_BIN_HELP);
             }
         });
         ui.horizontal_wrapped(|ui| multi_editor::toolbar(app, ctx, ui, &mut edits));
@@ -465,6 +518,49 @@ fn housing_multis_filter_checkbox(
     }
 }
 
+fn empty_multis_filter_checkbox(ui: &mut egui::Ui, filters: &mut MultiPartFilters) {
+    ui.checkbox(&mut filters.hide_empty_multis, "Hide empty multis")
+        .on_hover_text("Leave out of this list the entries with no parts.");
+}
+
+/// The parts of the selected classic multi, read once per selection.
+fn classic_multi_parts(app: &mut UopInspectorApp) -> Arc<Vec<MultiPart>> {
+    let id = app.selected_multi_id;
+    if let Some((_, parts)) = app.multi_preview_cache.classic_parts.as_ref().filter(|(cached, _)| *cached == id) {
+        return parts.clone();
+    }
+    let parts = app
+        .client_data
+        .as_ref()
+        .and_then(|client| client.multis.as_ref())
+        .and_then(|multis| multis.get_parts(id).ok())
+        .unwrap_or_default();
+    let parts = Arc::new(parts);
+    app.multi_preview_cache.classic_parts = Some((id, parts.clone()));
+    parts
+}
+
+/// The classic multis with no parts, or that cannot be read. Reading them all is done once, the first time the filter
+/// is on.
+fn classic_empty_multis(app: &mut UopInspectorApp) -> Arc<HashSet<u32>> {
+    if let Some(empty) = &app.multi_preview_cache.classic_empty_multis {
+        return empty.clone();
+    }
+    let empty: HashSet<u32> = app
+        .client_data
+        .as_ref()
+        .and_then(|client| client.multis.as_ref())
+        .map(|multis| {
+            (0..multis.max_id())
+                .filter(|id| multis.get_parts(*id).map_or(true, |parts| parts.is_empty()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let empty = Arc::new(empty);
+    app.multi_preview_cache.classic_empty_multis = Some(empty.clone());
+    empty
+}
+
 /// Whether a part passes the panel filters; the housing.bin filters apply only when housing.bin is loaded.
 fn part_passes_filters(part: &PreviewPart, filters: MultiPartFilters, housing_loaded: bool) -> bool {
     let housing_kept = !housing_loaded
@@ -553,6 +649,7 @@ pub(crate) fn static_tile_thumbnail(
     tile_id: u32,
 ) -> Option<egui::TextureHandle> {
     let item_id = u16::try_from(tile_id).ok()?;
+    refresh_multi_preview_cache(app);
     let source = concrete_art_tile_source(app.selected_legacy_source);
     let info = part_render_info(app, item_id, source);
     cached_multi_part_texture(app, ctx, item_id, &info)
@@ -562,7 +659,6 @@ fn select_multi(app: &mut UopInspectorApp, multi_id: u32, uop_hash: Option<u64>)
     if app.selected_multi_id != multi_id || app.selected_multi_uop_hash != uop_hash {
         app.selected_multi_id = multi_id;
         app.selected_multi_uop_hash = uop_hash;
-        clear_multi_preview_failure_logs(app);
     }
 }
 
@@ -822,14 +918,14 @@ fn draw_preview(
     let span_z = ((max_z as i32) - (min_z as i32)).max(0);
     let tile_w = 22.0f32;
     let tile_h = 22.0f32;
-    let viewport_size = ui.available_size();
+    refresh_multi_preview_cache(app);
     let art_source = concrete_art_tile_source(app.selected_legacy_source);
-    let art_scale = multi_preview_art_scale(art_source);
     let mut sorted_parts: Vec<_> = parts
         .iter()
         .map(|part| {
             let info = part_render_info(app, part.item_id, art_source);
             let texture = get_multi_part_texture(app, ctx, part.item_id, &info);
+            let art_scale = multi_preview_art_scale(info.art_source.unwrap_or(art_source));
             let size = texture
                 .as_ref()
                 .map(|handle| handle.size_vec2() * art_scale)
@@ -844,6 +940,12 @@ fn draw_preview(
             }
         })
         .collect();
+    let fallback_parts = sorted_parts.iter().filter(|part| part.info.art_source.is_some()).count();
+    if fallback_parts > 0 {
+        ui.weak(format!("{fallback_parts} of {} parts have no KR art: drawn with classic art.", sorted_parts.len()))
+            .on_hover_text(KR_ART_FALLBACK_NOTE);
+    }
+    let viewport_size = ui.available_size();
     sorted_parts.sort_by(|a, b| {
         a.part.z.cmp(&b.part.z)
             .then(a.part.y.cmp(&b.part.y))
@@ -1013,6 +1115,12 @@ fn multi_selected_part_id(app: &UopInspectorApp) -> egui::Id {
     egui::Id::new(("multi_selected_part", app.multis_source as u8, app.selected_multi_id))
 }
 
+fn multi_part_art_id(item_id: u16, info: &PartRenderInfo, source: ArtSource) -> u32 {
+    info.texture_id
+        .unwrap_or_else(|| static_art_id_for_source(item_id as u32, source))
+}
+
+/// The art of a part. A part without art is reported once.
 fn get_multi_part_texture(
     app: &mut UopInspectorApp,
     ctx: &egui::Context,
@@ -1021,41 +1129,49 @@ fn get_multi_part_texture(
 ) -> Option<egui::TextureHandle> {
     let texture = cached_multi_part_texture(app, ctx, item_id, info);
     if texture.is_none() {
-        let source = concrete_art_tile_source(app.selected_legacy_source);
-        let art_id = multi_part_art_id(item_id, info, source);
-        log_missing_multi_part_texture(app, item_id, art_id, source);
+        let source = info.art_source.unwrap_or(concrete_art_tile_source(app.selected_legacy_source));
+        if app.multi_preview_cache.logged_missing.insert((item_id, source as u8)) {
+            let art_id = multi_part_art_id(item_id, info, source);
+            log_missing_multi_part_texture(app, item_id, art_id, source);
+        }
     }
     texture
 }
 
-fn multi_part_art_id(item_id: u16, info: &PartRenderInfo, source: ArtSource) -> u32 {
-    info.texture_id
-        .unwrap_or_else(|| static_art_id_for_source(item_id as u32, source))
-}
-
+/// The art of a part, decoded once. Art that could not be had is remembered too: a redraw does not look for it again.
 fn cached_multi_part_texture(
     app: &mut UopInspectorApp,
     ctx: &egui::Context,
     item_id: u16,
     info: &PartRenderInfo,
 ) -> Option<egui::TextureHandle> {
-    let source = concrete_art_tile_source(app.selected_legacy_source);
+    let source = info.art_source.unwrap_or(concrete_art_tile_source(app.selected_legacy_source));
     let art_id = multi_part_art_id(item_id, info, source);
     let key = multi_preview_texture_key(art_id, source, info.clip_rect);
-    app.texture_previews.get(&key).cloned().or_else(|| {
-        let (width, height, pixels) = decode_multi_part_rgba(app, art_id, source, info.clip_rect)?;
-        let image = egui::ColorImage::from_rgba_unmultiplied(
+    if let Some(handle) = app.texture_previews.get(&key) {
+        return Some(handle.clone());
+    }
+    if app.multi_preview_cache.missing_art.contains(&key) {
+        return None;
+    }
+    let texture = decode_multi_part_rgba(app, art_id, source, info.clip_rect).and_then(|(width, height, pixels)| {
+        app.checked_texture(
+            ctx,
+            format!("multi_preview_art_{}_{:?}", art_id, source),
             [width as usize, height as usize],
             &pixels,
-        );
-        let handle = ctx.load_texture(
-            format!("multi_preview_art_{}_{:?}", art_id, source),
-            image,
             egui::TextureOptions::NEAREST,
-        );
-        app.texture_previews.insert(key, handle.clone());
-        Some(handle)
-    })
+        )
+    });
+    match &texture {
+        Some(handle) => {
+            app.texture_previews.insert(key, handle.clone());
+        }
+        None => {
+            app.multi_preview_cache.missing_art.insert(key);
+        }
+    }
+    texture
 }
 
 fn multi_preview_texture_key(art_id: u32, source: ArtSource, clip_rect: Option<MultiSourceClip>) -> u64 {
@@ -1083,7 +1199,7 @@ fn decode_multi_part_rgba(
         return None;
     }
 
-    if scratch.starts_with(b"DDS ") || source != ArtSource::Mul {
+    if art_payload_is_image_file(&scratch, source) {
         if let Some((width, height, pixels)) = decode_multi_uop_art_rgba(&scratch, source) {
             return Some(crop_multi_part_rgba(width, height, pixels, clip_rect));
         }
@@ -1138,6 +1254,13 @@ fn crop_multi_part_rgba(
     (cropped_width, cropped_height, cropped)
 }
 
+/// Whether art is kept in an image file format. `artLegacyMUL.uop` keeps the classic encoding, whatever the `.tga` in
+/// its entry names says: a TGA reader takes 279 of the 11,895 tiles of the shipped multis for 0x0 images, and 82 more
+/// for tiny garbage ones.
+fn art_payload_is_image_file(payload: &[u8], source: ArtSource) -> bool {
+    payload.starts_with(b"DDS ") || !matches!(source, ArtSource::Mul | ArtSource::CcUop)
+}
+
 fn decode_multi_uop_art_rgba(scratch: &[u8], source: ArtSource) -> Option<(u32, u32, Vec<u8>)> {
     let format = if scratch.starts_with(b"DDS ") {
         ECImageFormat::DDS
@@ -1184,9 +1307,7 @@ fn log_missing_multi_part_texture(
             source
         )
     };
-    if !app.logs.iter().any(|log| log == &message) {
-        app.log(message);
-    }
+    app.log_once(message);
 }
 
 fn concrete_art_tile_source(source: ArtSource) -> ArtSource {
@@ -1195,11 +1316,6 @@ fn concrete_art_tile_source(source: ArtSource) -> ArtSource {
         ArtSource::EcUop => ArtSource::EcUopLegacy,
         source => source,
     }
-}
-
-fn clear_multi_preview_failure_logs(app: &mut UopInspectorApp) {
-    app.logs
-        .retain(|log| !log.starts_with("Multi preview "));
 }
 
 fn multi_preview_art_scale(source: ArtSource) -> f32 {
@@ -1211,7 +1327,43 @@ fn multi_preview_art_scale(source: ArtSource) -> f32 {
     }
 }
 
-fn part_render_info(app: &UopInspectorApp, item_id: u16, source: ArtSource) -> PartRenderInfo {
+/// How to draw a part, worked out once per tile and art source.
+fn part_render_info(app: &mut UopInspectorApp, item_id: u16, source: ArtSource) -> PartRenderInfo {
+    let key = (item_id, source as u8);
+    if let Some(info) = app.multi_preview_cache.render_info.get(&key) {
+        return *info;
+    }
+    if app.multi_preview_cache.tileart_by_tile.is_none() {
+        let mut index = HashMap::new();
+        for (position, file) in app.ec_tileart_entries.iter().flat_map(|entries| entries.iter().enumerate()) {
+            index.entry(file.entry.tile_id).or_insert(position);
+        }
+        app.multi_preview_cache.tileart_by_tile = Some(index);
+    }
+    let info = part_render_info_with_fallback(app, item_id, source);
+    app.multi_preview_cache.render_info.insert(key, info);
+    info
+}
+
+/// `source`, or for a tile without KR art the first classic source that has the tile.
+fn part_render_info_with_fallback(app: &UopInspectorApp, item_id: u16, source: ArtSource) -> PartRenderInfo {
+    let info = work_out_part_render_info(app, item_id, source);
+    let Some(art) = app.client_data.as_ref().map(|client| &client.art) else {
+        return info;
+    };
+    if source != ArtSource::EcUopKr || art.has_id_from_source(multi_part_art_id(item_id, &info, source), source) {
+        return info;
+    }
+    KR_ART_FALLBACK_SOURCES
+        .into_iter()
+        .find(|fallback| art.has_id_from_source(static_art_id_for_source(item_id as u32, *fallback), *fallback))
+        .map_or(info, |fallback| PartRenderInfo {
+            art_source: Some(fallback),
+            ..work_out_part_render_info(app, item_id, fallback)
+        })
+}
+
+fn work_out_part_render_info(app: &UopInspectorApp, item_id: u16, source: ArtSource) -> PartRenderInfo {
     let mut info = PartRenderInfo::default();
 
     if let Some(client) = &app.client_data {
@@ -1221,7 +1373,8 @@ fn part_render_info(app: &UopInspectorApp, item_id: u16, source: ArtSource) -> P
     }
 
     if let Some(entries) = &app.ec_tileart_entries {
-        if let Some(file) = entries.iter().find(|file| file.entry.tile_id == item_id as u32) {
+        let position = app.multi_preview_cache.tileart_by_tile.as_ref().and_then(|index| index.get(&(item_id as u32)));
+        if let Some(file) = position.and_then(|position| entries.get(*position)) {
             if let Some(texture) = multi_tileart_texture(app, file, source) {
                 info.texture_id = Some(texture.texture_id);
                 info.clip_rect = Some(MultiSourceClip {
@@ -1267,6 +1420,10 @@ fn multi_tileart_texture(
 mod tests {
     use super::*;
 
+    const MISSING_TILE: u16 = 0x82D1;
+    const TEST_PAYLOAD_BYTES: usize = 32;
+    const REDRAWS: usize = 3;
+
     fn part(hidden: bool, housing_piece: bool) -> PreviewPart {
         PreviewPart {
             source_index: 0,
@@ -1279,6 +1436,47 @@ mod tests {
             hidden,
             housing_piece,
         }
+    }
+
+    #[test]
+    fn classic_art_in_a_uop_is_not_read_as_an_image_file() {
+        let classic_payload = [0u8; TEST_PAYLOAD_BYTES];
+        assert!(!art_payload_is_image_file(&classic_payload, ArtSource::CcUop));
+        assert!(!art_payload_is_image_file(&classic_payload, ArtSource::Mul));
+        assert!(art_payload_is_image_file(&classic_payload, ArtSource::EcUopLegacy));
+        assert!(art_payload_is_image_file(b"DDS ", ArtSource::CcUop));
+    }
+
+    #[test]
+    fn a_missing_part_is_looked_for_and_logged_once_however_many_redraws() {
+        let ctx = egui::Context::default();
+        let mut app = crate::app::tests::test_app();
+        let info = PartRenderInfo::default();
+        let logged = |app: &UopInspectorApp| app.logs.iter().filter(|log| log.contains("Multi preview")).count();
+
+        assert!(get_multi_part_texture(&mut app, &ctx, MISSING_TILE, &info).is_none());
+        let first = logged(&app);
+        assert_eq!(first, 1);
+        for _ in 0..REDRAWS {
+            assert!(get_multi_part_texture(&mut app, &ctx, MISSING_TILE, &info).is_none());
+        }
+        assert_eq!(logged(&app), first);
+    }
+
+    #[test]
+    fn a_part_is_worked_out_once_and_again_after_the_data_changed() {
+        let mut app = crate::app::tests::test_app();
+        refresh_multi_preview_cache(&mut app);
+        part_render_info(&mut app, MISSING_TILE, ArtSource::CcUop);
+        part_render_info(&mut app, MISSING_TILE, ArtSource::CcUop);
+        assert_eq!(app.multi_preview_cache.render_info.len(), 1);
+
+        refresh_multi_preview_cache(&mut app);
+        assert_eq!(app.multi_preview_cache.render_info.len(), 1, "nothing changed");
+
+        app.ec_tileart_entries = Some(Arc::new(Vec::new()));
+        refresh_multi_preview_cache(&mut app);
+        assert!(app.multi_preview_cache.render_info.is_empty());
     }
 
     #[test]

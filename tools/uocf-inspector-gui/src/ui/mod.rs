@@ -15,6 +15,7 @@ mod multi_editor;
 mod tileart_editor;
 pub mod housing;
 pub mod effects;
+mod effects_guide;
 pub mod effects_nif;
 pub mod multimap;
 pub mod hues;
@@ -31,6 +32,8 @@ pub mod ec_interface_textures;
 pub mod classic_fonts;
 pub mod classic_defs;
 pub mod classic_image_import;
+pub mod textures;
+pub(crate) mod unsaved_changes;
 
 /// The state of the read-only Classic file views.
 #[derive(Default)]
@@ -41,9 +44,16 @@ pub struct ClassicFileViews {
     pub defs: classic_defs::ClassicDefsState,
 }
 
+const HELP_MARK: &str = "(?)";
+
 /// Hint shown wherever a `.uop` package is saved.
 pub(crate) const UOP_PATCHER_NOTE: &str = "The official patcher re-downloads edited entries and deletes added ones: \
                                            keep edited packages in a client copy the patcher never runs on.";
+
+/// A "(?)" next to something, whose tooltip explains it.
+pub(crate) fn help_mark(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    ui.weak(HELP_MARK).on_hover_cursor(egui::CursorIcon::Help).on_hover_text(text)
+}
 
 pub(super) fn arrow_delta(ui: &egui::Ui, disabled: bool) -> Option<isize> {
     if disabled {
@@ -196,6 +206,8 @@ mod tests {
 }
 
 pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
+    app.report_gpu_errors();
+    unsaved_changes::hold_tab_switch(app);
     egui::Panel::top("top_panel").show(ui, |ui| {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
@@ -281,21 +293,15 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui
         });
     });
 
+    unsaved_changes::hold_tab_switch(app);
     egui::Panel::bottom("status_bar").show(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.label(&app.status_message);
+            unsaved_changes::save_button(app, ui);
             ui.separator();
-            match &app.settings.dict_path {
-                Some(path) => {
-                    ui.label("DIC:");
-                    ui.label(path.display().to_string());
-                }
-                None => {
-                    ui.weak("No .dic loaded");
-                }
-            }
+            ui.label(&app.status_message);
         });
     });
+    unsaved_changes::leave_tab_window(app, ctx);
 
     let mut show_search_paths = app.show_search_paths;
     if show_search_paths {
@@ -362,7 +368,7 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui
         && app.selected_uop_idx.is_none()
         && !uop_browser::has_visible_uop_explorer_package(app)
     {
-        app.view_mode = crate::app::ViewMode::Home;
+        unsaved_changes::leave_a_tab_that_is_gone(app, crate::app::ViewMode::Home);
     }
 
     match app.view_mode {

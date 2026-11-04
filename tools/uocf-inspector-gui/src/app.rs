@@ -107,6 +107,8 @@ pub struct MultiPartFilters {
     pub show_other_parts: bool,
     /// List only the multis referenced by the housing.bin multi lists.
     pub only_housing_multis: bool,
+    /// Leave out of the list the multis with no parts.
+    pub hide_empty_multis: bool,
 }
 
 impl Default for MultiPartFilters {
@@ -116,6 +118,7 @@ impl Default for MultiPartFilters {
             show_housing_parts: true,
             show_other_parts: true,
             only_housing_multis: false,
+            hide_empty_multis: false,
         }
     }
 }
@@ -1744,6 +1747,13 @@ pub(crate) fn find_client_file_case_insensitive(base_path: &Path, file_name: &st
 pub struct UopInspectorApp {
     pub settings: AppSettings,
     pub logs: Vec<String>,
+    /// What [`Self::log_once`] already logged.
+    logged_once: HashSet<String>,
+    pub(crate) multi_preview_cache: crate::ui::multis::MultiPreviewCache,
+    pub(crate) unsaved_changes: crate::ui::unsaved_changes::UnsavedChanges,
+    /// Why the last image a view asked for has no texture.
+    pub last_texture_problem: Option<String>,
+    gpu_errors: crate::ui::textures::GpuErrors,
     pub show_search_paths: bool,
 
     pub dictionary: Dictionary,
@@ -1916,6 +1926,11 @@ impl UopInspectorApp {
         let mut app = Self {
             settings: settings.clone(),
             logs: Vec::new(),
+            logged_once: HashSet::new(),
+            multi_preview_cache: Default::default(),
+            unsaved_changes: Default::default(),
+            last_texture_problem: None,
+            gpu_errors: Default::default(),
             show_search_paths: false,
 
             dictionary: Dictionary::new(),
@@ -1962,7 +1977,7 @@ impl UopInspectorApp {
             find_hash_query: String::new(),
             hide_empty_uop_entries: true,
             guess_terrain_texture_file_format: false,
-            status_message: "Welcome to UOCF Inspector".to_string(),
+            status_message: String::new(),
             view_mode: settings.last_view_mode.unwrap_or(ViewMode::Home),
             tile_metadata_source: TileMetadataSource::CcTileData,
             hues_source: HuesSource::CcMul,
@@ -2063,6 +2078,9 @@ impl UopInspectorApp {
 
         app.log("UOCF Inspector starting...");
         app.log("Loading previous settings...");
+        if let Some(render_state) = &cc.wgpu_render_state {
+            app.gpu_errors.install(render_state);
+        }
         app.trigger_reload();
 
         app
@@ -2072,6 +2090,48 @@ impl UopInspectorApp {
         let msg = msg.into();
         log::info!("{}", msg);
         self.logs.push(udd_logging::format_message(log::Level::Info, &msg));
+    }
+
+    /// Logs `message` the first time it is reported; for problems found while drawing, which repeat every frame.
+    pub fn log_once(&mut self, message: impl Into<String>) {
+        let message = message.into();
+        if self.logged_once.insert(message.clone()) {
+            self.log(message);
+        }
+    }
+
+    /// Creates a texture, or reports why the image cannot be one (`ui::textures`): in the log and the status bar
+    /// once, and in [`Self::last_texture_problem`] for the view that asked.
+    pub fn checked_texture(
+        &mut self,
+        ctx: &egui::Context,
+        name: impl Into<String>,
+        size: [usize; 2],
+        rgba: &[u8],
+        options: egui::TextureOptions,
+    ) -> Option<egui::TextureHandle> {
+        let name = name.into();
+        match crate::ui::textures::load_rgba(ctx, name.as_str(), size, rgba, options) {
+            Ok(handle) => Some(handle),
+            Err(problem) => {
+                let message = format!("Cannot show {name}: {problem}.");
+                if !self.logged_once.contains(&message) {
+                    self.status_message = message.clone();
+                }
+                self.last_texture_problem = Some(message.clone());
+                self.log_once(message);
+                None
+            }
+        }
+    }
+
+    /// Moves the GPU errors of the renderer to the log and the status bar.
+    pub fn report_gpu_errors(&mut self) {
+        for error in self.gpu_errors.take_unread() {
+            let message = format!("GPU error: {error}");
+            self.status_message = message.clone();
+            self.log_once(message);
+        }
     }
 
     pub fn select_cliloc_file(&mut self, index: usize) {
@@ -2816,15 +2876,13 @@ impl UopInspectorApp {
         };
 
         if self.upscale_original_texture_key != Some(source.key) {
-            let color_image = egui::ColorImage::from_rgba_unmultiplied(
+            self.upscale_original_texture = self.checked_texture(
+                ctx,
+                format!("uocf_upscale_original_{:016X}", source.key),
                 [source.width as usize, source.height as usize],
                 &source.rgba,
-            );
-            self.upscale_original_texture = Some(ctx.load_texture(
-                format!("uocf_upscale_original_{:016X}", source.key),
-                color_image,
                 egui::TextureOptions::NEAREST,
-            ));
+            );
             self.upscale_original_texture_key = Some(source.key);
         }
 
@@ -2891,15 +2949,13 @@ impl UopInspectorApp {
         self.upscale_preview_worker_rx = None;
         self.upscale_preview_worker_key = None;
         if self.current_image_preview_key == Some(result.source_key) {
-            let color_image = egui::ColorImage::from_rgba_unmultiplied(
+            self.upscale_preview_texture = self.checked_texture(
+                ctx,
+                format!("uocf_upscale_preview_{:016X}_{:?}", result.source_key, result.passes),
                 [result.width as usize, result.height as usize],
                 &result.rgba,
-            );
-            self.upscale_preview_texture = Some(ctx.load_texture(
-                format!("uocf_upscale_preview_{:016X}_{:?}", result.source_key, result.passes),
-                color_image,
                 egui::TextureOptions::NEAREST,
-            ));
+            );
             self.upscale_preview_texture_key = Some(texture_key);
             self.upscale_preview_size = [result.width, result.height];
             self.upscale_preview_elapsed_ms = Some(result.elapsed_ms);
@@ -2942,14 +2998,26 @@ impl UopInspectorApp {
         let lower_name = name.to_lowercase();
         if lower_name.ends_with(".bmp") {
             let (width, height, pixels) = uocf::enhanced::hues::decode_hue_image_to_rgba(data).ok()?;
-            let color_image = egui::ColorImage::from_rgba_unmultiplied(
-                [width as usize, height as usize],
-                &pixels,
-            );
-            let handle = ctx.load_texture(name, color_image, Default::default());
+            let handle = self.checked_texture(ctx, name, [width as usize, height as usize], &pixels, Default::default())?;
             self.texture_previews.insert(hash, handle.clone());
             self.register_current_image_preview(hash, name, width, height, &pixels);
             return Some(handle);
+        }
+
+        if let Some(decoded) = crate::ui::textures::decode_classic_uop_entry(&lower_name, data) {
+            return match decoded {
+                Ok((width, height, pixels)) => {
+                    let size = [width as usize, height as usize];
+                    let handle = self.checked_texture(ctx, name, size, &pixels, Default::default())?;
+                    self.texture_previews.insert(hash, handle.clone());
+                    self.register_current_image_preview(hash, name, width, height, &pixels);
+                    Some(handle)
+                }
+                Err(problem) => {
+                    self.last_texture_problem = Some(format!("{name}: {problem}"));
+                    None
+                }
+            };
         }
 
         let format = if lower_name.ends_with(".dds") {
@@ -2975,8 +3043,7 @@ impl UopInspectorApp {
             Ok(img) => {
                 let size = [img.width() as usize, img.height() as usize];
                 let pixels = img.to_rgba8();
-                let color_image = egui::ColorImage::from_rgba_unmultiplied(size, pixels.as_raw());
-                let handle = ctx.load_texture(name, color_image, Default::default());
+                let handle = self.checked_texture(ctx, name, size, pixels.as_raw(), Default::default())?;
                 self.texture_previews.insert(hash, handle.clone());
                 self.register_current_image_preview(
                     hash,
@@ -2987,7 +3054,10 @@ impl UopInspectorApp {
                 );
                 Some(handle)
             }
-            Err(_) => None,
+            Err(error) => {
+                self.last_texture_problem = Some(format!("{name}: {error:#}"));
+                None
+            }
         }
     }
 
@@ -3189,11 +3259,8 @@ impl UopInspectorApp {
             let (width, height, pixels) = gumps.decode_gump(gump_id, &mut scratch).ok()?;
             (u32::from(width), u32::from(height), pixels)
         };
-        let image = egui::ColorImage::from_rgba_unmultiplied(
-            [width as usize, height as usize],
-            &pixels,
-        );
-        let handle = ctx.load_texture(format!("cc_gump_{gump_id}"), image, Default::default());
+        let handle =
+            self.checked_texture(ctx, format!("cc_gump_{gump_id}"), [width as usize, height as usize], &pixels, Default::default())?;
         self.texture_previews.insert(key, handle.clone());
         self.register_current_image_preview(
             key,
@@ -3217,11 +3284,13 @@ impl UopInspectorApp {
                     self.select_image_preview(key);
                     return Some(handle);
                 }
-                let image = egui::ColorImage::from_rgba_unmultiplied(
+                let handle = self.checked_texture(
+                    ctx,
+                    format!("ec_gump_{gump_id}"),
                     [width as usize, height as usize],
                     &pixels,
-                );
-                let handle = ctx.load_texture(format!("ec_gump_{gump_id}"), image, Default::default());
+                    Default::default(),
+                )?;
                 self.texture_previews.insert(key, handle.clone());
                 self.register_current_image_preview(
                     key,
@@ -3322,15 +3391,13 @@ impl UopInspectorApp {
                 }
             }
         }
-        let image = egui::ColorImage::from_rgba_unmultiplied(
+        let handle = self.checked_texture(
+            ctx,
+            format!("uop_art_image_{}_{:?}_h{}", art_id, source, self.selected_hue_id),
             [rgba.width() as usize, rgba.height() as usize],
             rgba.as_raw(),
-        );
-        let handle = ctx.load_texture(
-            format!("uop_art_image_{}_{:?}_h{}", art_id, source, self.selected_hue_id),
-            image,
             Default::default(),
-        );
+        )?;
         self.texture_previews.insert(key, handle.clone());
         self.register_current_image_preview(
             key,
@@ -3379,13 +3446,13 @@ impl UopInspectorApp {
                     if uocf::classic::art::decode_land_tile_from_raw(&scratch, &mut pixels)
                         .is_ok()
                     {
-                        let image =
-                            egui::ColorImage::from_rgba_unmultiplied([44, 44], &pixels[..]);
-                        let handle = ctx.load_texture(
+                        let handle = self.checked_texture(
+                            ctx,
                             format!("cc_land_{}_{:?}_h{}", art_id, source, hue_id),
-                            image,
+                            [44, 44],
+                            &pixels[..],
                             Default::default(),
-                        );
+                        )?;
                         self.texture_previews.insert(key, handle.clone());
                         self.register_current_image_preview(
                             key,
@@ -3431,15 +3498,13 @@ impl UopInspectorApp {
                         }
                     }
 
-                    let image = egui::ColorImage::from_rgba_unmultiplied(
+                    let handle = self.checked_texture(
+                        ctx,
+                        format!("cc_static_{}_{:?}_h{}", art_id, source, hue_id),
                         [w as usize, h as usize],
                         &pixels[..],
-                    );
-                    let handle = ctx.load_texture(
-                        format!("cc_static_{}_{:?}_h{}", art_id, source, hue_id),
-                        image,
                         Default::default(),
-                    );
+                    )?;
                     self.texture_previews.insert(key, handle.clone());
                     self.register_current_image_preview(
                         key,
@@ -3523,18 +3588,16 @@ impl UopInspectorApp {
             sample.right,
             sample.bottom,
         )?;
-        let image = egui::ColorImage::from_rgba_unmultiplied(
-            [width as usize, height as usize],
-            &pixels,
-        );
-        let handle = ctx.load_texture(
+        let handle = self.checked_texture(
+            ctx,
             format!(
                 "animdata_art_{}_{}_{}_h{}",
                 sample.sampled_art_id, sample.texture_id, frame_index, hue_id
             ),
-            image,
+            [width as usize, height as usize],
+            &pixels,
             Default::default(),
-        );
+        )?;
         self.texture_previews.insert(key, handle.clone());
         self.register_current_image_preview(
             key,
@@ -3665,15 +3728,13 @@ impl UopInspectorApp {
         let (width, height, mut pixels) = self.decode_art_item_rgba_from_source(art_id, source)?;
         apply_ec_hue_table_to_rgba(&mut pixels, &hue_table, hueing_mode);
 
-        let image = egui::ColorImage::from_rgba_unmultiplied(
+        let handle = self.checked_texture(
+            ctx,
+            format!("ec_hued_art_{}_{:?}_h{}", art_id, source, hue_id),
             [width as usize, height as usize],
             &pixels,
-        );
-        let handle = ctx.load_texture(
-            format!("ec_hued_art_{}_{:?}_h{}", art_id, source, hue_id),
-            image,
             egui::TextureOptions::NEAREST,
-        );
+        )?;
         self.texture_previews.insert(key, handle.clone());
         self.register_current_image_preview(
             key,
@@ -3771,11 +3832,13 @@ impl UopInspectorApp {
 
         let multimap = Arc::clone(self.cc_multimap.as_ref()?);
         let rgba = multimap.to_rgba8();
-        let image = egui::ColorImage::from_rgba_unmultiplied(
+        let handle = self.checked_texture(
+            ctx,
+            "cc_multimap_rle",
             [multimap.width as usize, multimap.height as usize],
             &rgba,
-        );
-        let handle = ctx.load_texture("cc_multimap_rle", image, Default::default());
+            Default::default(),
+        )?;
         self.multimap_texture = Some(handle.clone());
         self.register_current_image_preview(
             key,
@@ -3811,19 +3874,17 @@ impl UopInspectorApp {
         }
 
         let rgba = preview.image.to_rgba8();
-        let image = egui::ColorImage::from_rgba_unmultiplied(
-            [preview.image.width as usize, preview.image.height as usize],
+        let (width, height) = (preview.image.width, preview.image.height);
+        let label = preview.label.clone();
+        let handle = self.checked_texture(
+            ctx,
+            texture_name,
+            [width as usize, height as usize],
             &rgba,
-        );
-        let handle = ctx.load_texture(texture_name, image, Default::default());
+            Default::default(),
+        )?;
         self.texture_previews.insert(key, handle.clone());
-        self.register_current_image_preview(
-            key,
-            preview.label.clone(),
-            preview.image.width,
-            preview.image.height,
-            &rgba,
-        );
+        self.register_current_image_preview(key, label, width, height, &rgba);
         Some(handle)
     }
 
@@ -3996,11 +4057,13 @@ impl UopInspectorApp {
                     if lower_name.ends_with(".bmp") {
                         let (width, height, pixels) =
                             uocf::enhanced::hues::decode_hue_image_to_rgba(&data).ok()?;
-                        let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                        let handle = self.checked_texture(
+                            ctx,
+                            name,
                             [width as usize, height as usize],
                             &pixels,
-                        );
-                        let handle = ctx.load_texture(name, color_image, egui::TextureOptions::NEAREST);
+                            egui::TextureOptions::NEAREST,
+                        )?;
                         self.texture_previews.insert(preview_key, handle.clone());
                         self.register_current_image_preview(preview_key, name, width, height, &pixels);
                         return Some(handle);
@@ -4026,10 +4089,8 @@ impl UopInspectorApp {
                     if let Ok(img) = tex_file.decode_to_rgba() {
                         let size = [img.width() as usize, img.height() as usize];
                         let pixels = img.to_rgba8();
-                        let color_image =
-                            egui::ColorImage::from_rgba_unmultiplied(size, pixels.as_raw());
                         let handle =
-                            ctx.load_texture(name, color_image, egui::TextureOptions::NEAREST);
+                            self.checked_texture(ctx, name, size, pixels.as_raw(), egui::TextureOptions::NEAREST)?;
                         self.texture_previews.insert(preview_key, handle.clone());
                         self.register_current_image_preview(
                             preview_key,
@@ -4302,6 +4363,11 @@ pub(crate) mod tests {
         UopInspectorApp {
             settings: AppSettings::default(),
             logs: Vec::new(),
+            logged_once: HashSet::new(),
+            multi_preview_cache: Default::default(),
+            unsaved_changes: Default::default(),
+            last_texture_problem: None,
+            gpu_errors: Default::default(),
             show_search_paths: false,
             dictionary: Dictionary::new(),
             uo_string_dictionary: None,

@@ -7,7 +7,8 @@
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
+use std::time::Duration;
 
 use eframe::egui;
 use uocf::enhanced::effect_definition::{
@@ -18,7 +19,7 @@ use uocf::enhanced::effect_definition::{
 use uocf::enhanced::effect_texture::{effect_texture_hash, effect_texture_path, EFFECT_TEXTURE_UOP_NAME};
 use uocf::enhanced::string_dictionary::UoStringDictionary;
 
-use crate::app::{TileArtFileEntry, UopInspectorApp};
+use crate::app::{TileArtFileEntry, UopInspectorApp, ViewMode};
 use crate::logic::effect_files::{
     canonical_script, check_script, decode_texture, latin1_decode, latin1_encode, read_import, EffectFiles, FileFilter,
     FileKind, FileRow, FileStatus, ScriptIssue, ScriptSeverity, IMPORTABLE_EXTENSIONS,
@@ -40,6 +41,7 @@ use crate::logic::effects_editor::{
     ChildList, CollectionSource, DefinitionFilter, DefinitionKind, EffectsDocument, EffectsEditKey, EffectsSelection,
     FileOverride, FileUser, NameIndex, PacketRoute, ParticleKindFilter, PathStep, PACKET_UNREACHABLE_NOTE,
 };
+use crate::ui::unsaved_changes::TabEditor;
 use crate::ui::UOP_PATCHER_NOTE;
 
 const BROWSE_PANEL_WIDTH: f32 = 360.0;
@@ -92,6 +94,18 @@ const HUE_NOTE: &str = "The hue of the object the effect plays on. Only NIF part
     tileart effects. Animation frame effects take the animated object's hue. PropertyFlag definitions keyed by \
     the hue (property 7) play the case for this hue, else their default children.";
 
+/// Share of the preview's height for the picture and its transport controls, until the user drags the line under them.
+const PREVIEW_VIEW_DEFAULT_SHARE: f32 = 0.55;
+const PREVIEW_VIEW_MIN_HEIGHT: f32 = 120.0;
+const MIN_PREVIEW_IMAGE_SIDE: f32 = 48.0;
+/// Rows under the picture: the transport, the time and particle count, and the warning that nothing plays.
+const PREVIEW_CONTROL_ROWS: f32 = 3.0;
+const FILES_LOAD_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const FILES_LOAD_HOVER: &str = "Every file is unpacked once, to learn its kind and name. The tab works meanwhile; the \
+    files, their previews and the checks that need them appear when it ends.";
+const COLLECTION_SOURCE_NEEDED: &str = "Needs an EffectDefinitionCollection.uop as the source of the copy.";
+const GUIDE_HINT: &str = "What each definition does, and how this tab works.";
+
 const UOP_FILTER: (&str, &[&str]) = ("UOP package", &["uop"]);
 const KDL_FILTER: (&str, &[&str]) = ("KDL text", &["kdl"]);
 const EMS_FILTER: (&str, &[&str]) = ("Chaos script", &["ems"]);
@@ -105,11 +119,20 @@ const HEADER_HASH_NOTE: &str = "EffectTexture.uop entries carry a signature head
 const UNDO_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Z);
 const REDO_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Y);
 
+/// An `EffectTexture.uop` being read on a worker thread: opening one unpacks every file, which takes seconds.
+struct FilesLoad {
+    path: PathBuf,
+    result: mpsc::Receiver<Result<EffectFiles, String>>,
+}
+
 /// State of the Effects tab.
 #[derive(Default)]
 pub struct EffectsPanelState {
+    guide_open: bool,
     document: EffectsDocument,
     files: Option<Arc<EffectFiles>>,
+    /// The `EffectTexture.uop` being read.
+    files_load: Option<FilesLoad>,
     /// Increased whenever another collection is opened (the document revisions restart).
     document_generation: u64,
     /// Increased whenever another `EffectTexture.uop` is opened.
@@ -241,7 +264,18 @@ struct PreviewKey {
     settings: SimulationSettings,
 }
 
+/// The lower part of the preview panel: the picture above it keeps its place.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum PreviewSection {
+    #[default]
+    Settings,
+    Parts,
+    Export,
+}
+
 struct PreviewPanel {
+    /// What the lower part of the panel shows.
+    section: PreviewSection,
     settings: SimulationSettings,
     view: ViewSettings,
     moving: bool,
@@ -291,6 +325,7 @@ impl PreviewPanel {
 impl Default for PreviewPanel {
     fn default() -> Self {
         Self {
+            section: PreviewSection::default(),
             settings: SimulationSettings::default(),
             view: ViewSettings::default(),
             moving: false,
@@ -377,6 +412,7 @@ fn hash_of(value: &impl Hash) -> u64 {
 
 pub fn ui_effects(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
     auto_load(app);
+    poll_files_load(app, ctx);
     handle_shortcuts(app, ctx);
     let lookups = lookups(app);
 
@@ -393,12 +429,7 @@ pub fn ui_effects(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui:
     egui::Panel::right("effects_preview")
         .resizable(true)
         .default_size(PREVIEW_PANEL_WIDTH)
-        .show(ui, |ui| {
-            egui::ScrollArea::vertical()
-                .id_salt("effects_preview_scroll")
-                .auto_shrink([false, false])
-                .show(ui, |ui| preview_panel(app, &lookups, ctx, ui));
-        });
+        .show(ui, |ui| preview_panel(app, &lookups, ctx, ui));
     egui::CentralPanel::default().show(ui, |ui| {
         egui::ScrollArea::vertical()
             .id_salt("effects_details_scroll")
@@ -407,6 +438,7 @@ pub fn ui_effects(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui:
     });
     app.effects_panel.scroll_to_selection = false;
     pending_open_window(app, ctx);
+    super::effects_guide::guide_window(ctx, &mut app.effects_panel.guide_open);
 }
 
 /// Opens the effects of the loaded client once, when nothing else is open.
@@ -482,6 +514,55 @@ fn request_open(app: &mut UopInspectorApp, request: OpenRequest) {
     }
 }
 
+/// Starts reading an `EffectTexture.uop`, which replaces the open one and its file changes.
+fn start_files_load(state: &mut EffectsPanelState, path: PathBuf, strings: Option<Arc<UoStringDictionary>>) {
+    let (sender, result) = mpsc::channel();
+    let worker_path = path.clone();
+    std::thread::spawn(move || {
+        // Nobody listens any more when another package was opened meanwhile.
+        let _ = sender.send(EffectFiles::open(&worker_path, strings.as_deref()));
+    });
+    state.files_load = Some(FilesLoad { path, result });
+    state.files = None;
+    state.document.reset_files();
+    state.files_generation += 1;
+    state.thumbnails.clear();
+    state.script_issue_cache.clear();
+    state.script_editor = None;
+    if matches!(state.selection, Some(EffectsSelection::File { .. })) {
+        state.selection = None;
+    }
+}
+
+/// Takes the `EffectTexture.uop` the worker has read, when it is done.
+fn poll_files_load(app: &mut UopInspectorApp, ctx: &egui::Context) {
+    let state = &mut app.effects_panel;
+    let Some(load) = &state.files_load else {
+        return;
+    };
+    let result = match load.result.try_recv() {
+        Ok(result) => result,
+        Err(mpsc::TryRecvError::Empty) => {
+            ctx.request_repaint_after(FILES_LOAD_POLL_INTERVAL);
+            return;
+        }
+        Err(mpsc::TryRecvError::Disconnected) => Err("the reading stopped unexpectedly.".to_owned()),
+    };
+    let path = load.path.clone();
+    state.files_load = None;
+    match result {
+        Ok(files) => {
+            let count = files.rows(&BTreeMap::new()).len();
+            state.files = Some(Arc::new(files));
+            state.files_generation += 1;
+            let message = format!("Effects: opened {count} files from {}.", path.display());
+            app.status_message = message.clone();
+            app.log(message);
+        }
+        Err(error) => state.error = Some(format!("Open failed: {}: {error}", path.display())),
+    }
+}
+
 fn perform_open(app: &mut UopInspectorApp, request: OpenRequest) {
     let strings = app.uo_string_dictionary.clone();
     let client_collection = app.settings.ec_path.as_ref().map(|dir| dir.join(EFFECT_DEFINITION_COLLECTION_UOP_NAME));
@@ -523,21 +604,7 @@ fn perform_open(app: &mut UopInspectorApp, request: OpenRequest) {
         }
     }
     if let Some(path) = files_path {
-        match EffectFiles::open(&path, strings.as_deref()) {
-            Ok(files) => {
-                opened.push(format!("{} files from {}", files.rows(&BTreeMap::new()).len(), path.display()));
-                state.files = Some(Arc::new(files));
-                state.document.reset_files();
-                state.files_generation += 1;
-                state.thumbnails.clear();
-                state.script_issue_cache.clear();
-                state.script_editor = None;
-                if matches!(state.selection, Some(EffectsSelection::File { .. })) {
-                    state.selection = None;
-                }
-            }
-            Err(error) => errors.push(format!("{}: {error}", path.display())),
-        }
+        start_files_load(state, path, strings.clone());
     }
     state.error = (!errors.is_empty()).then(|| format!("Open failed: {}", errors.join("; ")));
     if !opened.is_empty() {
@@ -602,8 +669,11 @@ fn report_saved(app: &mut UopInspectorApp, message: String) {
 
 fn toolbar(app: &mut UopInspectorApp, lookups: &Lookups, ui: &mut egui::Ui) {
     let client_dir = lookups.client_dir.clone();
-    let client_source = lookups.client_paths().into_iter().next().filter(|path| path.exists());
     ui.horizontal_wrapped(|ui| {
+        if ui.button("Guide").on_hover_text(GUIDE_HINT).clicked() {
+            app.effects_panel.guide_open = true;
+        }
+        ui.separator();
         ui.label("Open:");
         if ui
             .add_enabled(client_dir.is_some(), egui::Button::new("Client effects"))
@@ -633,15 +703,14 @@ fn toolbar(app: &mut UopInspectorApp, lookups: &Lookups, ui: &mut egui::Ui) {
 
         ui.separator();
         ui.label("Save:");
-        let state = &app.effects_panel;
-        let save_source = state.document.source().package_path().map(Path::to_path_buf).or(client_source);
+        let save_source = collection_save_source(app, lookups);
         if ui
             .add_enabled(save_source.is_some(), egui::Button::new("Collection .uop..."))
             .on_hover_text(format!(
                 "Writes a copy of the source EffectDefinitionCollection.uop with exactly the edited entries. The \
                  loaded client files are refused as the target.\n{UOP_PATCHER_NOTE}"
             ))
-            .on_disabled_hover_text("Needs an EffectDefinitionCollection.uop as the source of the copy.")
+            .on_disabled_hover_text(COLLECTION_SOURCE_NEEDED)
             .clicked()
         {
             if let (Some(source), Some(path)) = (save_source, save_file(UOP_FILTER, EFFECT_DEFINITION_COLLECTION_UOP_NAME)) {
@@ -702,6 +771,10 @@ fn toolbar(app: &mut UopInspectorApp, lookups: &Lookups, ui: &mut egui::Ui) {
         if let Some(files) = &lookups.files {
             ui.weak(format!("files {}", files.source_path().display()));
         }
+        if let Some(load) = &app.effects_panel.files_load {
+            ui.spinner();
+            ui.weak(format!("reading {}", load.path.display())).on_hover_text(FILES_LOAD_HOVER);
+        }
         ui.label("ℹ").on_hover_text(HEADER_HASH_NOTE);
     });
     if let Some(error) = app.effects_panel.error.clone() {
@@ -712,6 +785,48 @@ fn toolbar(app: &mut UopInspectorApp, lookups: &Lookups, ui: &mut egui::Ui) {
             }
         });
     }
+}
+
+pub(super) const TAB_EDITOR: TabEditor = TabEditor {
+    tab: ViewMode::Effects,
+    label: "the effect collection and the file changes",
+    is_dirty: |app| app.effects_panel.document.is_dirty(),
+    save: save_unsaved_changes,
+    discard: discard_unsaved_changes,
+};
+
+/// The package a saved collection is a copy of.
+fn collection_save_source(app: &UopInspectorApp, lookups: &Lookups) -> Option<PathBuf> {
+    let client_source = lookups.client_paths().into_iter().next().filter(|path| path.exists());
+    app.effects_panel.document.source().package_path().map(Path::to_path_buf).or(client_source)
+}
+
+/// Asks where to write what is unsaved: the collection, then the file changes.
+fn save_unsaved_changes(app: &mut UopInspectorApp) {
+    let lookups = lookups(app);
+    if app.effects_panel.document.collection_dirty() {
+        match collection_save_source(app, &lookups) {
+            Some(source) => {
+                if let Some(path) = save_file(UOP_FILTER, EFFECT_DEFINITION_COLLECTION_UOP_NAME) {
+                    save_collection_to(app, &lookups, &source, &path);
+                }
+            }
+            None => app.effects_panel.error = Some(COLLECTION_SOURCE_NEEDED.to_owned()),
+        }
+    }
+    if app.effects_panel.document.files_dirty() {
+        if let Some(path) = save_file(UOP_FILTER, EFFECT_TEXTURE_UOP_NAME) {
+            save_files_to(app, &lookups, &path);
+        }
+    }
+}
+
+fn discard_unsaved_changes(app: &mut UopInspectorApp) {
+    let state = &mut app.effects_panel;
+    state.document.revert_to_opened();
+    state.document.mark_collection_saved();
+    state.document.mark_files_saved();
+    resolve_selection(state);
 }
 
 fn save_collection_to(app: &mut UopInspectorApp, lookups: &Lookups, source: &Path, output: &Path) {
@@ -1304,6 +1419,13 @@ fn tileart_list(app: &mut UopInspectorApp, lookups: &Lookups, ui: &mut egui::Ui)
 
 fn files_list(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
     let state = &mut app.effects_panel;
+    if let Some(load) = &state.files_load {
+        ui.horizontal_wrapped(|ui| {
+            ui.spinner();
+            ui.label(format!("Reading {}...", load.path.display()));
+        });
+        return;
+    }
     if state.files.is_none() {
         ui.label("No EffectTexture.uop is open.");
         return;
@@ -1381,7 +1503,7 @@ fn details_panel(app: &mut UopInspectorApp, lookups: &Lookups, ctx: &egui::Conte
             ui.label(
                 "Select a collection entry, a tileart record or a file on the left. The 0xC7 packet plays collection \
                  id = packet field - 1 (see the packet paths of an entry); tileart effects play on the items of that \
-                 graphic.",
+                 graphic. Guide, in the toolbar, explains the definitions and this tab.",
             );
         }
         Some(EffectsSelection::Entry { entry }) => entry_details(app, lookups, ui, entry, None),
@@ -1463,6 +1585,9 @@ fn entry_details(app: &mut UopInspectorApp, lookups: &Lookups, ui: &mut egui::Ui
     ui.separator();
     ui.horizontal(|ui| {
         ui.strong("Definitions");
+        if ui.small_button("?").on_hover_text(GUIDE_HINT).clicked() {
+            state.guide_open = true;
+        }
         let kind = add_kind_combo(ui, &mut state.add_kind, "effects_add_top_kind");
         if ui.button("Add").on_hover_text("Adds a top-level definition: they all play together.").clicked() {
             action = Some(EntryAction::AddTop(kind));
@@ -1770,7 +1895,7 @@ fn definition_fields(
         EffectDefinition::PositionOffset(effect) => {
             for (direction, offset) in effect.offsets.iter_mut().enumerate() {
                 let label = format!("Direction {direction}");
-                field(ui, &label, "x, y offset of this direction (inert in this client build).", "offsets", &mut |ui| {
+                field(ui, &label, "x, y offset of this direction: the client reads it only from a mount's animation sequence, to place the rider.", "offsets", &mut |ui| {
                     ui.horizontal(|ui| {
                         let x = ui.add(egui::DragValue::new(&mut offset.x).speed(VALUE_DRAG_SPEED)).changed();
                         let y = ui.add(egui::DragValue::new(&mut offset.y).speed(VALUE_DRAG_SPEED)).changed();
@@ -2306,10 +2431,10 @@ fn texture_view(state: &mut EffectsPanelState, ctx: &egui::Context, ui: &mut egu
     let address = state.document.files().get(&hash).map_or(0, |_| payload_address(payload));
     let stale = state.thumbnails.get(&hash).is_none_or(|thumbnail| thumbnail.payload != address);
     if stale {
-        let texture = decode_texture(payload).map(|image| {
+        let texture = decode_texture(payload).and_then(|image| {
             let size = [image.width() as usize, image.height() as usize];
-            let color_image = egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw());
-            ctx.load_texture(format!("effects_texture_{hash:016x}_{address}"), color_image, egui::TextureOptions::LINEAR)
+            let name = format!("effects_texture_{hash:016x}_{address}");
+            super::textures::load_rgba(ctx, name, size, image.as_raw(), egui::TextureOptions::LINEAR)
         });
         state.thumbnails.insert(hash, Thumbnail { payload: address, texture });
     }
@@ -2442,282 +2567,319 @@ fn preview_panel(app: &mut UopInspectorApp, lookups: &Lookups, ctx: &egui::Conte
         let stamp = (preview.build, simulation.time_ms(), preview.view, hue_atlas.is_some());
         if preview.rendered != Some(stamp) || preview.texture.is_none() {
             let canvas = render_canvas(&scene, simulation, &view, &preview.view, hue_atlas.as_deref());
-            let image = egui::ColorImage::from_rgba_unmultiplied([canvas.width, canvas.height], &canvas.to_rgba8());
-            match preview.texture.as_mut() {
-                Some(texture) => texture.set(image, egui::TextureOptions::LINEAR),
-                None => preview.texture = Some(ctx.load_texture("effects_preview", image, egui::TextureOptions::LINEAR)),
+            let size = [canvas.width, canvas.height];
+            let rgba = canvas.to_rgba8();
+            let max_side = ctx.input(|input| input.max_texture_side);
+            match super::textures::rgba_image_problem(size, rgba.len(), max_side) {
+                Some(problem) => state.error = Some(format!("Cannot show the preview frame: {problem}.")),
+                None => {
+                    let image = egui::ColorImage::from_rgba_unmultiplied(size, &rgba);
+                    match preview.texture.as_mut() {
+                        Some(texture) => texture.set(image, egui::TextureOptions::LINEAR),
+                        None => preview.texture = Some(ctx.load_texture("effects_preview", image, egui::TextureOptions::LINEAR)),
+                    }
+                }
             }
             preview.rendered = Some(stamp);
         }
     }
-    if let Some(texture) = &preview.texture {
-        let side = ui.available_width().min(PREVIEW_RESOLUTION_PX as f32);
-        let response = ui.add(egui::Image::new(texture).fit_to_exact_size(egui::vec2(side, side)).sense(egui::Sense::click_and_drag()));
-        let response = response.on_hover_text(
-            "Drag to pan, right-drag to turn the camera, scroll to zoom, double-click to reset the view.",
-        );
-        if response.dragged_by(egui::PointerButton::Primary) {
-            let scale = PREVIEW_RESOLUTION_PX as f32 / side;
-            let delta = response.drag_delta() * scale;
-            preview.view.pan[0] += delta.x;
-            preview.view.pan[1] += delta.y;
-        }
-        if response.dragged_by(egui::PointerButton::Secondary) {
-            let delta = response.drag_delta() * ORBIT_DEGREES_PER_POINT;
-            preview.view.orbit = preview.view.orbit.turned(-delta.x, delta.y);
-        }
-        if response.hovered() {
-            let scroll = ui.input(|input| input.smooth_scroll_delta.y);
-            if scroll != 0.0 {
-                preview.view.zoom = (preview.view.zoom * (scroll * ZOOM_PER_SCROLL_POINT).exp()).clamp(MIN_ZOOM, MAX_ZOOM);
-            }
-        }
-        if response.double_clicked() {
-            preview.view.zoom = 1.0;
-            preview.view.pan = [0.0; 2];
-            preview.view.orbit = CameraOrbit::default();
-        }
-    }
-
-    // Transport.
-    ui.horizontal(|ui| {
-        if ui.button(if preview.playing { PAUSE_ICON } else { PLAY_ICON }).on_hover_text("Play / pause").clicked() {
-            preview.playing = !preview.playing;
-            if preview.playing && preview.clock_ms >= timeline_ms {
-                preview.clock_ms = 0.0;
-            }
-        }
-        if ui.button(RESTART_ICON).on_hover_text("Restart from 0").clicked() {
-            preview.clock_ms = 0.0;
-        }
-        let mut seconds = preview.clock_ms / MS_PER_SECOND;
-        let slider = egui::Slider::new(&mut seconds, 0.0..=timeline_ms / MS_PER_SECOND).suffix(" s").max_decimals(2);
-        if ui.add(slider).on_hover_text("Scrub: re-simulates from 0 with the same seed.").changed() {
-            preview.clock_ms = seconds * MS_PER_SECOND;
-            preview.playing = false;
-        }
-    });
-    if let Some(simulation) = &preview.simulation {
-        ui.weak(format!(
-            "t = {:.2} s, {} particles{}",
-            simulation.time_ms() as f32 / MS_PER_SECOND,
-            simulation.particle_count(),
-            if simulation.is_drained() { ", finished" } else { "" }
-        ));
-    }
-
-    egui::Grid::new("effects_preview_settings").num_columns(2).show(ui, |ui| {
-        ui.label("Speed");
-        ui.add(egui::Slider::new(&mut preview.speed, MIN_PLAYBACK_SPEED..=MAX_PLAYBACK_SPEED).logarithmic(true).suffix("x"));
-        ui.end_row();
-        ui.label("Timeline");
-        ui.horizontal(|ui| {
-            ui.add(egui::DragValue::new(&mut preview.settings.timeline_s).range(MIN_TIMELINE_S..=MAX_TIMELINE_S).speed(FLOAT_DRAG_SPEED).suffix(" s"));
-            ui.checkbox(&mut preview.repeat, "repeat");
-        });
-        ui.end_row();
-        ui.label("Loop").on_hover_text("The looping flag given to the particles.");
-        egui::ComboBox::from_id_salt("effects_preview_loop").selected_text(preview.settings.loop_mode.label()).show_ui(ui, |ui| {
-            for mode in LoopMode::ALL {
-                ui.selectable_value(&mut preview.settings.loop_mode, mode, mode.label());
-            }
-        });
-        ui.end_row();
-        ui.label("Duration").on_hover_text("Replaces every particle's duration (seconds; for Chaos, the emission time of a looping effect, <= 0: forever).");
-        ui.horizontal(|ui| {
-            ui.checkbox(&mut preview.duration_override, "override");
-            ui.add_enabled(preview.duration_override, egui::DragValue::new(&mut preview.duration_s).speed(FLOAT_DRAG_SPEED).suffix(" s"));
-        });
-        ui.end_row();
-        ui.label("Emitter");
-        ui.horizontal(|ui| {
-            ui.checkbox(&mut preview.moving, "moving");
-            ui.add_enabled(preview.moving, egui::Slider::new(&mut preview.move_speed, 0.0..=MAX_MOVE_SPEED).suffix(" /s"));
-        });
-        ui.end_row();
-        ui.label("Seed");
-        ui.horizontal(|ui| {
-            ui.add(egui::DragValue::new(&mut preview.settings.seed).speed(SEED_DRAG_SPEED));
-            if ui.small_button("next").clicked() {
-                preview.settings.seed = preview.settings.seed.wrapping_add(1);
-            }
-        });
-        ui.end_row();
-        ui.label("LOD setting").on_hover_text("The particle LOD setting LOD definitions play for (UI Low/Medium/High = 1..3).");
-        ui.add(egui::Slider::new(&mut preview.settings.lod_level, 0..=MAX_LOD_LEVEL));
-        ui.end_row();
-        ui.label("Hue").on_hover_text(HUE_NOTE);
-        hue_control(ui, preview, hue_atlas.as_deref(), hue_names.as_deref());
-        ui.end_row();
-        ui.label("Tileart").on_hover_text(
-            "Tileart particles with attach mode 2 (thrown models): UOObject::CreateComponents does not play them on \
-             the world object; they play only in flight.",
-        );
-        ui.checkbox(&mut preview.settings.play_projectile_only, "play attach mode 2 particles anyway");
-        ui.end_row();
-        ui.label("Background");
-        ui.color_edit_button_rgba_unmultiplied(&mut preview.view.background);
-        ui.end_row();
-        ui.label("Overlays");
-        ui.horizontal(|ui| {
-            ui.checkbox(&mut preview.view.show_bounds, "bounds");
-            ui.checkbox(&mut preview.view.show_emitter, "emitter");
-        });
-        ui.end_row();
-        ui.label("Show");
-        ui.horizontal(|ui| {
-            ui.checkbox(&mut preview.view.show_particles, "particles");
-            ui.checkbox(&mut preview.view.show_meshes, "meshes").on_hover_text("NIF geometry and mesh particles.");
-        });
-        ui.end_row();
-        ui.label("Camera").on_hover_text(
-            "Orbit about the view centre. The default is the client's view: effects are camera-aligned billboards, \
-             so the client sees an effect's local frame orthographically along +y with +z up (x right). Changing \
-             it re-simulates (NIF billboards face the camera).",
-        );
-        ui.horizontal(|ui| {
-            let orbit = &mut preview.view.orbit;
-            ui.add(
-                egui::DragValue::new(&mut orbit.yaw_degrees)
-                    .range(MIN_CAMERA_YAW_DEGREES..=MAX_CAMERA_YAW_DEGREES)
-                    .prefix("yaw ")
-                    .suffix(" deg"),
-            )
-            .on_hover_text("Degrees from the client's view direction (+y) toward +x, about +z.");
-            ui.add(
-                egui::DragValue::new(&mut orbit.pitch_degrees)
-                    .range(MIN_CAMERA_PITCH_DEGREES..=MAX_CAMERA_PITCH_DEGREES)
-                    .prefix("pitch ")
-                    .suffix(" deg"),
-            )
-            .on_hover_text("Degrees above the client's view (looking down along +y from +z).");
-            if ui.small_button("Client view").on_hover_text("Orthographic along local +y, +z up.").clicked() {
-                *orbit = CameraOrbit::default();
-            }
-        });
-        ui.end_row();
-        ui.label("Lighting").on_hover_text(LIGHTING_NOTE);
-        ui.horizontal(|ui| {
-            ui.color_edit_button_rgb(&mut preview.view.lighting.ambient).on_hover_text("Ambient light");
-            ui.label("ambient");
-            ui.color_edit_button_rgb(&mut preview.view.lighting.diffuse).on_hover_text("Diffuse light (no direction)");
-            ui.label("diffuse");
-            if ui.small_button("Client").on_hover_text("No light, as the client").clicked() {
-                preview.view.lighting = particle_sim::render::SceneLighting::default();
-            }
-        });
-        ui.end_row();
-        ui.label("Zoom");
-        ui.horizontal(|ui| {
-            ui.add(egui::Slider::new(&mut preview.view.zoom, MIN_ZOOM..=MAX_ZOOM).logarithmic(true));
-            if ui.small_button("Reset view").clicked() {
-                preview.view.zoom = 1.0;
-                preview.view.pan = [0.0; 2];
-            }
-        });
-        ui.end_row();
-    });
-
-    ui.weak(LIGHTING_NOTE);
-    if preview.settings.hue != particle_sim::hued::NO_HUE {
-        match &preview.hue_atlas {
-            Some((_, Err(error))) => ui.colored_label(WARNING_COLOR, format!("Hued parts are drawn unhued: {error}")),
-            None => ui.colored_label(WARNING_COLOR, "Hued parts are drawn unhued: no client directory for Hues.uop."),
-            Some((_, Ok(_))) => match &preview.simulation {
-                Some(simulation) if !simulation.has_hued_parts() => {
-                    ui.weak("No part plays hued (see the parts: Chaos, or hued not set).")
+    egui::Panel::top("effects_preview_view")
+        .frame(egui::Frame::NONE)
+        .resizable(true)
+        .default_size(ui.available_height() * PREVIEW_VIEW_DEFAULT_SHARE)
+        .min_size(PREVIEW_VIEW_MIN_HEIGHT)
+        .show(ui, |ui| {
+            if let Some(texture) = &preview.texture {
+                let controls_height = PREVIEW_CONTROL_ROWS * (ui.spacing().interact_size.y + ui.spacing().item_spacing.y);
+                let room = (ui.available_height() - controls_height).max(MIN_PREVIEW_IMAGE_SIDE);
+                let side = ui.available_width().min(room).min(PREVIEW_RESOLUTION_PX as f32);
+                let image = egui::Image::new(texture).fit_to_exact_size(egui::vec2(side, side)).sense(egui::Sense::click_and_drag());
+                let response = ui.vertical_centered(|ui| ui.add(image)).inner;
+                let response = response.on_hover_text(
+                    "Drag to pan, right-drag to turn the camera, scroll to zoom, double-click to reset the view.",
+                );
+                if response.dragged_by(egui::PointerButton::Primary) {
+                    let scale = PREVIEW_RESOLUTION_PX as f32 / side;
+                    let delta = response.drag_delta() * scale;
+                    preview.view.pan[0] += delta.x;
+                    preview.view.pan[1] += delta.y;
                 }
-                _ => ui.weak("Hued NIF parts: half speed, drawn through the hue atlas."),
-            },
-        };
-    }
-
-    ui.separator();
-    ui.strong("Parts");
-    for (index, part) in scene.parts.iter().enumerate() {
-        let color = if part.status.plays() { OK_COLOR } else { WARNING_COLOR };
-        ui.horizontal_wrapped(|ui| {
-            ui.monospace(crate::logic::effect_preview::path_label(&part.path));
-            ui.colored_label(color, format!("{}: {}", part.kind.label(), part.status.describe()));
-        });
-        let warnings = part.status.warnings();
-        if !warnings.is_empty() {
-            egui::CollapsingHeader::new(format!("{} compile warning(s)", warnings.len()))
-                .id_salt(("effects_preview_part_warnings", index))
-                .show(ui, |ui| {
-                    for warning in warnings {
-                        ui.colored_label(WARNING_COLOR, warning);
+                if response.dragged_by(egui::PointerButton::Secondary) {
+                    let delta = response.drag_delta() * ORBIT_DEGREES_PER_POINT;
+                    preview.view.orbit = preview.view.orbit.turned(-delta.x, delta.y);
+                }
+                if response.hovered() {
+                    let scroll = ui.input(|input| input.smooth_scroll_delta.y);
+                    if scroll != 0.0 {
+                        preview.view.zoom = (preview.view.zoom * (scroll * ZOOM_PER_SCROLL_POINT).exp()).clamp(MIN_ZOOM, MAX_ZOOM);
                     }
-                });
-        }
-    }
-    if !scene.has_playing_parts() {
-        ui.colored_label(WARNING_COLOR, "Nothing previewable plays (see the parts above).");
-    }
-    for note in &scene.notes {
-        ui.weak(note);
-    }
-    for problem in &scene.texture_problems {
-        ui.colored_label(WARNING_COLOR, problem);
-    }
-
-    ui.separator();
-    ui.horizontal_wrapped(|ui| {
-        ui.label("Export");
-        ui.add(egui::DragValue::new(&mut preview.export_frames).range(1..=MAX_EXPORT_FRAMES).suffix(" frames"));
-        let export_sequence = ui.button("PNG sequence...").clicked();
-        let export_sheet = ui.button("Contact sheet...").clicked();
-        if export_sequence || export_sheet {
-            let times = export_times(&preview.settings, preview.export_frames);
-            let frames = render_frames(&scene, &preview.settings, &view, &preview.view, hue_atlas.as_deref(), &times);
-            let result = if export_sequence {
-                crate::dialog::pick_folder()
-                    .map(|dir| write_png_sequence(&frames, &dir, "effect").map(|count| format!("Wrote {count} frames to {}.", dir.display())))
-            } else {
-                save_file(PNG_FILTER, DEFAULT_CONTACT_SHEET_FILE_NAME).map(|path| {
-                    contact_sheet(&frames)
-                        .save(&path)
-                        .map(|()| format!("Wrote the contact sheet {}.", path.display()))
-                        .map_err(|error| format!("failed to write {}: {error}", path.display()))
-                })
-            };
-            match result {
-                Some(Ok(message)) => {
-                    state.error = None;
-                    app.status_message = message;
                 }
-                Some(Err(error)) => state.error = Some(format!("Export failed: {error}")),
-                None => {}
+                if response.double_clicked() {
+                    preview.view.zoom = 1.0;
+                    preview.view.pan = [0.0; 2];
+                    preview.view.orbit = CameraOrbit::default();
+                }
             }
-        }
+
+            // Transport.
+            ui.horizontal(|ui| {
+                if ui.button(if preview.playing { PAUSE_ICON } else { PLAY_ICON }).on_hover_text("Play / pause").clicked() {
+                    preview.playing = !preview.playing;
+                    if preview.playing && preview.clock_ms >= timeline_ms {
+                        preview.clock_ms = 0.0;
+                    }
+                }
+                if ui.button(RESTART_ICON).on_hover_text("Restart from 0").clicked() {
+                    preview.clock_ms = 0.0;
+                }
+                let mut seconds = preview.clock_ms / MS_PER_SECOND;
+                let slider = egui::Slider::new(&mut seconds, 0.0..=timeline_ms / MS_PER_SECOND).suffix(" s").max_decimals(2);
+                if ui.add(slider).on_hover_text("Scrub: re-simulates from 0 with the same seed.").changed() {
+                    preview.clock_ms = seconds * MS_PER_SECOND;
+                    preview.playing = false;
+                }
+            });
+            if let Some(simulation) = &preview.simulation {
+                ui.weak(format!(
+                    "t = {:.2} s, {} particles{}",
+                    simulation.time_ms() as f32 / MS_PER_SECOND,
+                    simulation.particle_count(),
+                    if simulation.is_drained() { ", finished" } else { "" }
+                ));
+            }
+
+            if !scene.has_playing_parts() {
+                ui.colored_label(WARNING_COLOR, "Nothing previewable plays (see Parts).");
+            }
+
+            // A panel keeps the height of its content: without this it would stay as small as it ever was.
+            ui.add_space(ui.available_height().max(0.0));
+        });
+    egui::CentralPanel::no_frame().show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.selectable_value(&mut preview.section, PreviewSection::Settings, "Settings");
+            ui.selectable_value(&mut preview.section, PreviewSection::Parts, format!("Parts ({})", scene.parts.len()));
+            ui.selectable_value(&mut preview.section, PreviewSection::Export, "Export");
+        });
         ui.separator();
-        let target = preview.key.as_ref().map(|key| key.target.clone());
-        let gltf = ui
-            .add_enabled(target.is_some() && scene.has_playing_parts(), egui::Button::new("glTF..."))
-            .on_hover_text(format!("{}\n{EFFECT_GLTF_NOTE}", super::effects_nif::GLTF_EXPORT_NOTE))
-            .on_disabled_hover_text("Nothing previewable plays.");
-        ui.checkbox(&mut preview.gltf_bake, "bake particles").on_hover_text(super::effects_nif::GLTF_BAKE_NOTE);
-        if let (true, Some(target)) = (gltf.clicked(), target) {
-            let name = target_export_name(&target, &state.document, lookups);
-            if let Some(path) = save_file(GLB_FILTER, &glb_file_name(&name)) {
-                let definitions = target_definitions(&target, &state.document, lookups);
-                let overrides = state.document.files().clone();
-                let files = lookups.files.clone();
-                let payload =
-                    move |file: &str| files.as_ref().and_then(|files| files.payload(&overrides, effect_texture_hash(file)));
-                let drafts = state.document.nif_drafts().clone();
-                let nif_drafts = move |file: &str| drafts.get(&effect_texture_hash(file)).map(|draft| Arc::clone(&draft.nif));
-                let sources = GltfSources { payload: &payload, nif_drafts: &nif_drafts };
-                let options = super::effects_nif::gltf_options(preview.gltf_bake);
-                match write_glb(&path, &export_gltf_effect(&name, &scene, &definitions, &sources, &options)) {
-                    Ok(message) => {
-                        state.error = None;
-                        app.status_message = message;
+        egui::ScrollArea::vertical()
+            .id_salt("effects_preview_scroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| match preview.section {
+                PreviewSection::Settings => {
+                    egui::Grid::new("effects_preview_settings").num_columns(2).show(ui, |ui| {
+                        ui.label("Speed");
+                        ui.add(egui::Slider::new(&mut preview.speed, MIN_PLAYBACK_SPEED..=MAX_PLAYBACK_SPEED).logarithmic(true).suffix("x"));
+                        ui.end_row();
+                        ui.label("Timeline");
+                        ui.horizontal(|ui| {
+                            ui.add(egui::DragValue::new(&mut preview.settings.timeline_s).range(MIN_TIMELINE_S..=MAX_TIMELINE_S).speed(FLOAT_DRAG_SPEED).suffix(" s"));
+                            ui.checkbox(&mut preview.repeat, "repeat");
+                        });
+                        ui.end_row();
+                        ui.label("Loop").on_hover_text("The looping flag given to the particles.");
+                        egui::ComboBox::from_id_salt("effects_preview_loop").selected_text(preview.settings.loop_mode.label()).show_ui(ui, |ui| {
+                            for mode in LoopMode::ALL {
+                                ui.selectable_value(&mut preview.settings.loop_mode, mode, mode.label());
+                            }
+                        });
+                        ui.end_row();
+                        ui.label("Duration").on_hover_text("Replaces every particle's duration (seconds; for Chaos, the emission time of a looping effect, <= 0: forever).");
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut preview.duration_override, "override");
+                            ui.add_enabled(preview.duration_override, egui::DragValue::new(&mut preview.duration_s).speed(FLOAT_DRAG_SPEED).suffix(" s"));
+                        });
+                        ui.end_row();
+                        ui.label("Emitter");
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut preview.moving, "moving");
+                            ui.add_enabled(preview.moving, egui::Slider::new(&mut preview.move_speed, 0.0..=MAX_MOVE_SPEED).suffix(" /s"));
+                        });
+                        ui.end_row();
+                        ui.label("Seed");
+                        ui.horizontal(|ui| {
+                            ui.add(egui::DragValue::new(&mut preview.settings.seed).speed(SEED_DRAG_SPEED));
+                            if ui.small_button("next").clicked() {
+                                preview.settings.seed = preview.settings.seed.wrapping_add(1);
+                            }
+                        });
+                        ui.end_row();
+                        ui.label("LOD setting").on_hover_text("The particle LOD setting LOD definitions play for (UI Low/Medium/High = 1..3).");
+                        ui.add(egui::Slider::new(&mut preview.settings.lod_level, 0..=MAX_LOD_LEVEL));
+                        ui.end_row();
+                        ui.label("Hue").on_hover_text(HUE_NOTE);
+                        hue_control(ui, preview, hue_atlas.as_deref(), hue_names.as_deref());
+                        ui.end_row();
+                        ui.label("Tileart").on_hover_text(
+                            "Tileart particles with attach mode 2 (thrown models): UOObject::CreateComponents does not play them on \
+                             the world object; they play only in flight.",
+                        );
+                        ui.checkbox(&mut preview.settings.play_projectile_only, "play attach mode 2 particles anyway");
+                        ui.end_row();
+                        ui.label("Background");
+                        ui.color_edit_button_rgba_unmultiplied(&mut preview.view.background);
+                        ui.end_row();
+                        ui.label("Overlays");
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut preview.view.show_bounds, "bounds");
+                            ui.checkbox(&mut preview.view.show_emitter, "emitter");
+                        });
+                        ui.end_row();
+                        ui.label("Show");
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut preview.view.show_particles, "particles");
+                            ui.checkbox(&mut preview.view.show_meshes, "meshes").on_hover_text("NIF geometry and mesh particles.");
+                        });
+                        ui.end_row();
+                        ui.label("Camera").on_hover_text(
+                            "Orbit about the view centre. The default is the client's view: effects are camera-aligned billboards, \
+                             so the client sees an effect's local frame orthographically along +y with +z up (x right). Changing \
+                             it re-simulates (NIF billboards face the camera).",
+                        );
+                        ui.horizontal(|ui| {
+                            let orbit = &mut preview.view.orbit;
+                            ui.add(
+                                egui::DragValue::new(&mut orbit.yaw_degrees)
+                                    .range(MIN_CAMERA_YAW_DEGREES..=MAX_CAMERA_YAW_DEGREES)
+                                    .prefix("yaw ")
+                                    .suffix(" deg"),
+                            )
+                            .on_hover_text("Degrees from the client's view direction (+y) toward +x, about +z.");
+                            ui.add(
+                                egui::DragValue::new(&mut orbit.pitch_degrees)
+                                    .range(MIN_CAMERA_PITCH_DEGREES..=MAX_CAMERA_PITCH_DEGREES)
+                                    .prefix("pitch ")
+                                    .suffix(" deg"),
+                            )
+                            .on_hover_text("Degrees above the client's view (looking down along +y from +z).");
+                            if ui.small_button("Client view").on_hover_text("Orthographic along local +y, +z up.").clicked() {
+                                *orbit = CameraOrbit::default();
+                            }
+                        });
+                        ui.end_row();
+                        ui.label("Lighting").on_hover_text(LIGHTING_NOTE);
+                        ui.horizontal(|ui| {
+                            ui.color_edit_button_rgb(&mut preview.view.lighting.ambient).on_hover_text("Ambient light");
+                            ui.label("ambient");
+                            ui.color_edit_button_rgb(&mut preview.view.lighting.diffuse).on_hover_text("Diffuse light (no direction)");
+                            ui.label("diffuse");
+                            if ui.small_button("Client").on_hover_text("No light, as the client").clicked() {
+                                preview.view.lighting = particle_sim::render::SceneLighting::default();
+                            }
+                        });
+                        ui.end_row();
+                        ui.label("Zoom");
+                        ui.horizontal(|ui| {
+                            ui.add(egui::Slider::new(&mut preview.view.zoom, MIN_ZOOM..=MAX_ZOOM).logarithmic(true));
+                            if ui.small_button("Reset view").clicked() {
+                                preview.view.zoom = 1.0;
+                                preview.view.pan = [0.0; 2];
+                            }
+                        });
+                        ui.end_row();
+                    });
+
+                    ui.weak(LIGHTING_NOTE);
+                    if preview.settings.hue != particle_sim::hued::NO_HUE {
+                        match &preview.hue_atlas {
+                            Some((_, Err(error))) => ui.colored_label(WARNING_COLOR, format!("Hued parts are drawn unhued: {error}")),
+                            None => ui.colored_label(WARNING_COLOR, "Hued parts are drawn unhued: no client directory for Hues.uop."),
+                            Some((_, Ok(_))) => match &preview.simulation {
+                                Some(simulation) if !simulation.has_hued_parts() => {
+                                    ui.weak("No part plays hued (see the parts: Chaos, or hued not set).")
+                                }
+                                _ => ui.weak("Hued NIF parts: half speed, drawn through the hue atlas."),
+                            },
+                        };
                     }
-                    Err(error) => state.error = Some(error),
+
                 }
-            }
-        }
+                PreviewSection::Parts => {
+                    for (index, part) in scene.parts.iter().enumerate() {
+                        let color = if part.status.plays() { OK_COLOR } else { WARNING_COLOR };
+                        ui.horizontal_wrapped(|ui| {
+                            ui.monospace(crate::logic::effect_preview::path_label(&part.path));
+                            ui.colored_label(color, format!("{}: {}", part.kind.label(), part.status.describe()));
+                        });
+                        let warnings = part.status.warnings();
+                        if !warnings.is_empty() {
+                            egui::CollapsingHeader::new(format!("{} compile warning(s)", warnings.len()))
+                                .id_salt(("effects_preview_part_warnings", index))
+                                .show(ui, |ui| {
+                                    for warning in warnings {
+                                        ui.colored_label(WARNING_COLOR, warning);
+                                    }
+                                });
+                        }
+                    }
+                    for note in &scene.notes {
+                        ui.weak(note);
+                    }
+                    for problem in &scene.texture_problems {
+                        ui.colored_label(WARNING_COLOR, problem);
+                    }
+
+                }
+                PreviewSection::Export => {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label("Export");
+                        ui.add(egui::DragValue::new(&mut preview.export_frames).range(1..=MAX_EXPORT_FRAMES).suffix(" frames"));
+                        let export_sequence = ui.button("PNG sequence...").clicked();
+                        let export_sheet = ui.button("Contact sheet...").clicked();
+                        if export_sequence || export_sheet {
+                            let times = export_times(&preview.settings, preview.export_frames);
+                            let frames = render_frames(&scene, &preview.settings, &view, &preview.view, hue_atlas.as_deref(), &times);
+                            let result = if export_sequence {
+                                crate::dialog::pick_folder()
+                                    .map(|dir| write_png_sequence(&frames, &dir, "effect").map(|count| format!("Wrote {count} frames to {}.", dir.display())))
+                            } else {
+                                save_file(PNG_FILTER, DEFAULT_CONTACT_SHEET_FILE_NAME).map(|path| {
+                                    contact_sheet(&frames)
+                                        .save(&path)
+                                        .map(|()| format!("Wrote the contact sheet {}.", path.display()))
+                                        .map_err(|error| format!("failed to write {}: {error}", path.display()))
+                                })
+                            };
+                            match result {
+                                Some(Ok(message)) => {
+                                    state.error = None;
+                                    app.status_message = message;
+                                }
+                                Some(Err(error)) => state.error = Some(format!("Export failed: {error}")),
+                                None => {}
+                            }
+                        }
+                        ui.separator();
+                        let target = preview.key.as_ref().map(|key| key.target.clone());
+                        let gltf = ui
+                            .add_enabled(target.is_some() && scene.has_playing_parts(), egui::Button::new("glTF..."))
+                            .on_hover_text(format!("{}\n{EFFECT_GLTF_NOTE}", super::effects_nif::GLTF_EXPORT_NOTE))
+                            .on_disabled_hover_text("Nothing previewable plays.");
+                        ui.checkbox(&mut preview.gltf_bake, "bake particles").on_hover_text(super::effects_nif::GLTF_BAKE_NOTE);
+                        if let (true, Some(target)) = (gltf.clicked(), target) {
+                            let name = target_export_name(&target, &state.document, lookups);
+                            if let Some(path) = save_file(GLB_FILTER, &glb_file_name(&name)) {
+                                let definitions = target_definitions(&target, &state.document, lookups);
+                                let overrides = state.document.files().clone();
+                                let files = lookups.files.clone();
+                                let payload =
+                                    move |file: &str| files.as_ref().and_then(|files| files.payload(&overrides, effect_texture_hash(file)));
+                                let drafts = state.document.nif_drafts().clone();
+                                let nif_drafts = move |file: &str| drafts.get(&effect_texture_hash(file)).map(|draft| Arc::clone(&draft.nif));
+                                let sources = GltfSources { payload: &payload, nif_drafts: &nif_drafts };
+                                let options = super::effects_nif::gltf_options(preview.gltf_bake);
+                                match write_glb(&path, &export_gltf_effect(&name, &scene, &definitions, &sources, &options)) {
+                                    Ok(message) => {
+                                        state.error = None;
+                                        app.status_message = message;
+                                    }
+                                    Err(error) => state.error = Some(error),
+                                }
+                            }
+                        }
+                    });
+                }
+            });
     });
 }
 
@@ -2938,6 +3100,8 @@ mod tests {
         path
     }
 
+    const WORKER_POLL: Duration = Duration::from_millis(5);
+
     fn run_frames(app: &mut UopInspectorApp, ctx: &egui::Context) {
         for _ in 0..FRAMES_PER_STATE {
             let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
@@ -2945,6 +3109,43 @@ mod tests {
                 crate::ui::draw_ui(app, &ctx, ui);
             });
         }
+    }
+
+    /// Polls until the worker is done reading the `EffectTexture.uop`.
+    fn wait_for_files(app: &mut UopInspectorApp) {
+        let ctx = egui::Context::default();
+        while app.effects_panel.files_load.is_some() {
+            poll_files_load(app, &ctx);
+            std::thread::sleep(WORKER_POLL);
+        }
+    }
+
+    #[test]
+    fn the_effect_files_are_read_off_the_ui_thread() {
+        let dir = scratch_dir("files_load");
+        let mut app = crate::app::tests::test_app();
+        perform_open(&mut app, OpenRequest::Files(files_package(&dir)));
+        let state = &app.effects_panel;
+        assert!(state.files_load.is_some() && state.files.is_none());
+        let generation = state.files_generation;
+
+        wait_for_files(&mut app);
+        let state = &app.effects_panel;
+        assert!(state.files.is_some() && state.error.is_none());
+        assert!(state.files_generation > generation, "what depends on the files is worked out again");
+    }
+
+    #[test]
+    fn a_package_that_cannot_be_read_is_reported() {
+        let dir = scratch_dir("files_load_failure");
+        let mut app = crate::app::tests::test_app();
+        let missing = dir.join("missing.uop");
+        perform_open(&mut app, OpenRequest::Files(missing.clone()));
+        wait_for_files(&mut app);
+        let state = &app.effects_panel;
+        assert!(state.files.is_none());
+        let error = state.error.as_deref().expect("the failure is shown");
+        assert!(error.starts_with("Open failed") && error.contains("missing.uop"), "{error}");
     }
 
     /// Draws the tab in every browse view and with every kind of selection: nothing may panic and the preview
@@ -2979,7 +3180,11 @@ mod tests {
         }
 
         app.effects_panel.selection = Some(EffectsSelection::Entry { entry: 0 });
-        run_frames(&mut app, &ctx);
+        app.effects_panel.guide_open = true;
+        for section in [PreviewSection::Parts, PreviewSection::Export, PreviewSection::Settings] {
+            app.effects_panel.preview.section = section;
+            run_frames(&mut app, &ctx);
+        }
         let scene = app.effects_panel.preview.scene.clone().expect("the entry is previewed");
         assert!(scene.has_playing_parts());
         let playing: Vec<_> = scene.parts.iter().filter(|part| part.status.plays()).map(|part| &part.status).collect();

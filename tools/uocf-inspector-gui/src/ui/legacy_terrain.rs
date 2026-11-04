@@ -10,7 +10,8 @@ use uocf::uop_container::file::UopFile;
 use uocf::uop_container::package::UopPackage;
 
 use super::UOP_PATCHER_NOTE;
-use crate::app::UopInspectorApp;
+use super::unsaved_changes::TabEditor;
+use crate::app::{UopInspectorApp, ViewMode};
 use crate::logic::legacy_terrain_editor::{LegacyTerrainEditor, LegacyTerrainField};
 
 const ROW_HEIGHT: f32 = 22.0;
@@ -116,6 +117,42 @@ fn entry_definition(ui: &mut egui::Ui, file: &UopFile) {
     });
 }
 
+pub(super) const TAB_EDITOR: TabEditor = TabEditor {
+    tab: ViewMode::UopExplorer,
+    label: "the LegacyTerrain.uop definitions",
+    is_dirty: |app| app.legacy_terrain_editor.as_ref().is_some_and(|editor| editor.edits.is_dirty()),
+    save: |app| {
+        if let Some(mut editor) = app.legacy_terrain_editor.take() {
+            save_with_dialog(app, &mut editor);
+            app.legacy_terrain_editor = Some(editor);
+        }
+    },
+    discard: |app| app.legacy_terrain_editor = None,
+};
+
+fn save_with_dialog(app: &mut UopInspectorApp, editor: &mut LegacyTerrainEditor) {
+    let (name, extensions) = UOP_FILTER;
+    let output =
+        crate::dialog::file_dialog().add_filter(name, extensions).set_file_name(LEGACY_TERRAIN_UOP_NAME).save_file();
+    if let Some(output) = output {
+        match editor.save(&output) {
+            Ok(changes) => {
+                editor.error = None;
+                let message = format!(
+                    "Saved {}: {} replaced, {} added, {} removed.",
+                    output.display(),
+                    changes.replaced,
+                    changes.added,
+                    changes.removed
+                );
+                app.status_message = message.clone();
+                app.log(message);
+            }
+            Err(error) => editor.error = Some(format!("Save failed: {error}")),
+        }
+    }
+}
+
 /// Undo, redo, save and close of the editor; true when the editor is closed.
 fn toolbar(app: &mut UopInspectorApp, ui: &mut egui::Ui, editor: &mut LegacyTerrainEditor) -> bool {
     if ui.add_enabled(editor.edits.can_undo(), egui::Button::new("Undo")).clicked() {
@@ -132,26 +169,7 @@ fn toolbar(app: &mut UopInspectorApp, ui: &mut egui::Ui, editor: &mut LegacyTerr
         ))
         .clicked()
     {
-        let (name, extensions) = UOP_FILTER;
-        let output =
-            crate::dialog::file_dialog().add_filter(name, extensions).set_file_name(LEGACY_TERRAIN_UOP_NAME).save_file();
-        if let Some(output) = output {
-            match editor.save(&output) {
-                Ok(changes) => {
-                    editor.error = None;
-                    let message = format!(
-                        "Saved {}: {} replaced, {} added, {} removed.",
-                        output.display(),
-                        changes.replaced,
-                        changes.added,
-                        changes.removed
-                    );
-                    app.status_message = message.clone();
-                    app.log(message);
-                }
-                Err(error) => editor.error = Some(format!("Save failed: {error}")),
-            }
-        }
+        save_with_dialog(app, editor);
     }
     let dirty = editor.edits.is_dirty();
     let close = ui.button(if dirty { "Discard and close" } else { "Close editor" }).clicked();

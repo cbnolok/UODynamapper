@@ -277,7 +277,11 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
                                     }
                                 }
                                 app.last_frame_time = time;
-                                ctx.request_repaint();
+                            }
+                            // egui draws only on input: wake up for the next frame while playing.
+                            if app.is_playing {
+                                let wait = (app.last_frame_time + frame_delay - time).max(0.0);
+                                ctx.request_repaint_after(Duration::from_secs_f64(wait));
                             }
                         }
 
@@ -351,36 +355,37 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
                                     | frame_idx as u64
                             };
 
-                            let handle = app
-                                .texture_previews
-                                .entry(key)
-                                .or_insert_with(|| {
-                                    let image = egui::ColorImage::from_rgba_unmultiplied(
-                                        [frame.width as usize, frame.height as usize],
-                                        &frame.data[..],
-                                    );
-                                    ctx.load_texture(
+                            let handle = match app.texture_previews.get(&key).cloned() {
+                                Some(handle) => Some(handle),
+                                None => {
+                                    let name = format!("anim_{}_{}_{}", body_id, app.selected_action_id, frame_idx);
+                                    let size = [frame.width as usize, frame.height as usize];
+                                    let handle = app.checked_texture(ctx, name, size, &frame.data[..], Default::default());
+                                    if let Some(handle) = &handle {
+                                        app.texture_previews.insert(key, handle.clone());
+                                    }
+                                    handle
+                                }
+                            };
+                            match handle {
+                                Some(handle) => {
+                                    app.register_current_image_preview(
+                                        key,
                                         format!(
-                                            "anim_{}_{}_{}",
+                                            "animation {} action {} frame {}",
                                             body_id, app.selected_action_id, frame_idx
                                         ),
-                                        image,
-                                        Default::default(),
-                                    )
-                                })
-                                .clone();
-                            app.register_current_image_preview(
-                                key,
-                                format!(
-                                    "animation {} action {} frame {}",
-                                    body_id, app.selected_action_id, frame_idx
-                                ),
-                                frame.width as u32,
-                                frame.height as u32,
-                                &frame.data,
-                            );
+                                        frame.width as u32,
+                                        frame.height as u32,
+                                        &frame.data,
+                                    );
 
-                            ui.image(&handle);
+                                    ui.image(&handle);
+                                }
+                                None => {
+                                    ui.label("(This frame cannot be shown: see the status bar.)");
+                                }
+                            }
                         } else {
                             ui.label("(Empty frame)");
                         }

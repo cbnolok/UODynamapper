@@ -1,5 +1,5 @@
 use eframe::egui;
-use crate::app::{guess_uop_image_format_from_payload, UopInspectorApp};
+use crate::app::{guess_uop_image_format_from_payload, UopInspectorApp, ViewMode};
 use super::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by};
 use uocf::enhanced::client_dialect::ClientDialect;
 use uocf::enhanced::dds_writer::SizeChange;
@@ -12,6 +12,7 @@ use uocf::enhanced::waypoints::{
     KNOWN_WAYPOINTS_PAYLOAD_HASH, WAYPOINTS_PAYLOAD_PATH, WAYPOINTS_UOP_NAME,
 };
 use crate::logic::waypoint_editor::{WaypointDocument, WaypointField};
+use super::unsaved_changes::TabEditor;
 use super::UOP_PATCHER_NOTE;
 use super::legacy_terrain;
 use super::terrain_definition_editor;
@@ -447,6 +448,47 @@ fn ui_integrated_waypoints_view(
     });
 }
 
+pub(super) const WAYPOINTS_TAB_EDITOR: TabEditor = TabEditor {
+    tab: ViewMode::UopExplorer,
+    label: "the waypoint.uop waypoints",
+    is_dirty: |app| app.waypoint_document.as_ref().is_some_and(|document| document.edits.is_dirty()),
+    save: |app| {
+        if let Some(mut document) = app.waypoint_document.take() {
+            save_waypoints_with_dialog(app, &mut document);
+            app.waypoint_document = Some(document);
+        }
+    },
+    discard: |app| app.waypoint_document = None,
+};
+
+pub(super) const TEXT_ENTRIES_TAB_EDITOR: TabEditor = TabEditor {
+    tab: ViewMode::UopExplorer,
+    label: "the edited text entries (one copy of the package each)",
+    is_dirty: |app| app.entry_text_edits.any_unsaved(),
+    save: |app| {
+        for (source, hash, name) in app.entry_text_edits.unsaved_entries() {
+            save_text_entry(app, &source, hash, &name);
+        }
+    },
+    discard: |app| app.entry_text_edits.discard_unsaved(),
+};
+
+fn save_waypoints_with_dialog(app: &mut UopInspectorApp, document: &mut WaypointDocument) {
+    let (name, extensions) = UOP_FILTER;
+    let output = crate::dialog::file_dialog().add_filter(name, extensions).set_file_name(WAYPOINTS_UOP_NAME).save_file();
+    if let Some(output) = output {
+        match document.save(&output) {
+            Ok(()) => {
+                document.error = None;
+                let message = format!("Saved {}.", output.display());
+                app.status_message = message.clone();
+                app.log(message);
+            }
+            Err(error) => document.error = Some(format!("Save failed: {error}")),
+        }
+    }
+}
+
 /// Undo, redo, save and close of the edited waypoints; true when the editor is closed.
 fn waypoint_toolbar(app: &mut UopInspectorApp, ui: &mut egui::Ui, document: &mut WaypointDocument) -> bool {
     if ui.add_enabled(document.edits.can_undo(), egui::Button::new("Undo")).clicked() {
@@ -463,19 +505,7 @@ fn waypoint_toolbar(app: &mut UopInspectorApp, ui: &mut egui::Ui, document: &mut
         ))
         .clicked()
     {
-        let (name, extensions) = UOP_FILTER;
-        let output = crate::dialog::file_dialog().add_filter(name, extensions).set_file_name(WAYPOINTS_UOP_NAME).save_file();
-        if let Some(output) = output {
-            match document.save(&output) {
-                Ok(()) => {
-                    document.error = None;
-                    let message = format!("Saved {}.", output.display());
-                    app.status_message = message.clone();
-                    app.log(message);
-                }
-                Err(error) => document.error = Some(format!("Save failed: {error}")),
-            }
-        }
+        save_waypoints_with_dialog(app, document);
     }
     let dirty = document.edits.is_dirty();
     let close_label = if dirty { "Discard and close" } else { "Close editor" };
@@ -643,11 +673,14 @@ fn ui_generic_preview(
             || guessed_image_name.is_some()
         {
             let texture_name = guessed_image_name.as_deref().unwrap_or(name);
+            app.last_texture_problem = None;
             if let Some(handle) = app.get_uop_texture(ctx, hash, data, texture_name) {
                 ui.label(format!("Image: {}x{}", handle.size()[0], handle.size()[1]));
                 egui::ScrollArea::both().show(ui, |ui| {
                     ui.image(&handle);
                 });
+            } else if let Some(problem) = &app.last_texture_problem {
+                ui.colored_label(ui.visuals().warn_fg_color, problem);
             }
         } else if let Some(source) = app.uop_cache.loaded_uops.get(uop_idx).map(|loaded| loaded.path.clone())
             && app.entry_text_edits.open(&source, hash, data).is_some()
@@ -674,8 +707,10 @@ Lua (5.1 with continue and the bitwise operators) and XML as TinyXML reads it.";
 
 /// The text editor of a text entry (opened in `app.entry_text_edits`): its encoding, the text, and saving a copy.
 fn ui_entry_text_editor(app: &mut UopInspectorApp, ui: &mut egui::Ui, source: &std::path::Path, hash: u64, name: &str) {
-    use crate::logic::entry_text_editor::{check_summary, entry_target, save_entry_copy};
     let Some(edit) = app.entry_text_edits.open(source, hash, &[]) else { return };
+    if edit.name != name {
+        edit.name = name.to_owned();
+    }
     let modified = edit.modified();
     let mut save = false;
     let mut revert = false;
@@ -703,9 +738,15 @@ fn ui_entry_text_editor(app: &mut UopInspectorApp, ui: &mut egui::Ui, source: &s
         app.entry_text_edits.close(source, hash);
         return;
     }
-    if !save {
-        return;
+    if save {
+        save_text_entry(app, source, hash, name);
     }
+}
+
+/// Asks where to write a copy of the package with the edited text entry.
+fn save_text_entry(app: &mut UopInspectorApp, source: &std::path::Path, hash: u64, name: &str) {
+    use crate::logic::entry_text_editor::{check_summary, entry_target, save_entry_copy};
+    let Some(edit) = app.entry_text_edits.open(source, hash, &[]) else { return };
     let bytes = match edit.encoded() {
         Ok(bytes) => bytes,
         Err(error) => {
@@ -722,7 +763,13 @@ fn ui_entry_text_editor(app: &mut UopInspectorApp, ui: &mut egui::Ui, source: &s
     else {
         return;
     };
-    app.status_message = match save_entry_copy(source, &entry_target(name, hash), &bytes, &output) {
+    let saved = save_entry_copy(source, &entry_target(name, hash), &bytes, &output);
+    if saved.is_ok() {
+        if let Some(edit) = app.entry_text_edits.open(source, hash, &[]) {
+            edit.mark_saved();
+        }
+    }
+    app.status_message = match saved {
         Ok(edit) => format!("{:?} {name} ({:?}, {}) in {}. {UOP_PATCHER_NOTE}", edit.write, edit.compression, check_summary(&edit.check), output.display()),
         Err(error) => format!("Failed to save {name}: {error:#}"),
     };

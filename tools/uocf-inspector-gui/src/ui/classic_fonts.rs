@@ -59,10 +59,7 @@ impl Default for ClassicFontsState {
 }
 
 fn texture(ctx: &egui::Context, name: String, image: &FontRgbaImage) -> Option<egui::TextureHandle> {
-    (image.width > 0 && image.height > 0 && !image.rgba.is_empty()).then(|| {
-        let color = egui::ColorImage::from_rgba_unmultiplied([image.width as usize, image.height as usize], &image.rgba);
-        ctx.load_texture(name, color, egui::TextureOptions::NEAREST)
-    })
+    super::textures::load_rgba(ctx, name, [image.width as usize, image.height as usize], &image.rgba, egui::TextureOptions::NEAREST).ok()
 }
 
 fn char_label(codepoint: u32) -> String {

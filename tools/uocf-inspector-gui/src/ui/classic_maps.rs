@@ -188,10 +188,18 @@ fn poll_worker(state: &mut ClassicMapsState, ctx: &egui::Context) {
             state.worker = None;
             match result {
                 Ok((loaded, image)) => {
-                    state.texture = Some(ctx.load_texture(format!("classic_facet_{}", loaded.facet), image, egui::TextureOptions::NEAREST));
+                    match super::textures::load_color_image(ctx, format!("classic_facet_{}", loaded.facet), image, egui::TextureOptions::NEAREST) {
+                        Ok(texture) => {
+                            state.texture = Some(texture);
+                            state.error = None;
+                        }
+                        Err(problem) => {
+                            state.texture = None;
+                            state.error = Some(format!("Cannot show the facet: {problem}."));
+                        }
+                    }
                     state.loaded = Some(loaded);
                     state.pinned = None;
-                    state.error = None;
                 }
                 Err(error) => state.error = Some(error),
             }

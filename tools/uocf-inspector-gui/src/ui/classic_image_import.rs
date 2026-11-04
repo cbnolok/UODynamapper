@@ -63,9 +63,10 @@ impl ClassicImageImport {
         let result = image::open(path)
             .map_err(|error| format!("{}: {error}", path.display()))
             .and_then(|image| files.prepare(id, &image.into_rgba8(), size_change).map_err(|error| format!("{error:#}")));
-        self.preview = result.as_ref().ok().map(|prepared| {
-            let image = egui::ColorImage::from_rgba_unmultiplied([prepared.width as usize, prepared.height as usize], &prepared.rgba);
-            ctx.load_texture(format!("classic_image_import_{}_{id}", files.kind.label()), image, egui::TextureOptions::NEAREST)
+        self.preview = result.as_ref().ok().and_then(|prepared| {
+            let size = [prepared.width as usize, prepared.height as usize];
+            let name = format!("classic_image_import_{}_{id}", files.kind.label());
+            super::textures::load_rgba(ctx, name, size, &prepared.rgba, egui::TextureOptions::NEAREST).ok()
         });
         self.prepared = Some((self.selected, id, result));
     }
