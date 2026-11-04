@@ -229,6 +229,27 @@ The renderer isn't set up for most of this. The web and Android features are com
 the workspace's direct `wgpu` dependency names only Vulkan. WebGL2 has no storage buffers, which the renderer already uses,
 so the web path would need WebGPU.
 
+### Shader paths and filtering
+
+The user's concern (2026-11-04): a per-sprite branch in one shader can reserve registers for the path not taken and slow the
+other path. Vendor limits show how: several Mali Valhall GPUs halve their threads above 32 work registers, and Intel drops from
+SIMD16 to SIMD8 at 64 registers. So each pixel format should get its own pipeline, compiled at load and only for the formats
+the pack holds. Bevy already compiles at runtime, and `shader_defs` remove the other path before compiling (`gpu_picking.rs`).
+A mixed pack pays a pipeline switch wherever draw order forces a change of format. Compiling at load also avoids the mid-game
+stutter the user dislikes in the original client.
+
+Palette indices can't use hardware filtering, which the renderer relies on: `art/main.wesl` samples colour once through the
+hardware sampler after `pixel_art_atlas_uv_iq`. Fetches per pixel with that filter on:
+
+| Layout | Fetches |
+|---|---:|
+| BC1, BC7, ASTC | 1 |
+| Classic R8 | 5 (1 gather, 4 palette reads) |
+| Enhanced RG8 | 6 (2 gathers, 4 palette reads) |
+
+Palette reads come from a small table, so fetch counts don't predict time. This hasn't been measured, and it could count against
+indexed frames as the default on integrated GPUs.
+
 ### What the original clients ship
 
 Enhanced and Kingdom Reborn frames aren't block-compressed on disk: they are AMOU palettes and RLE. Their textures are DDS,
@@ -617,7 +638,8 @@ not counted; Classic 2.52 against 2.42). Its creature-crowd decode is faster (29
 | Storage per client | Indexed slot planes, lossless, zstd 19, hue in the shader; LZ4 HC is the alternative at about 22 % more disk | The user |
 | Load unit | One stream per (action, direction), faced direction first | The user |
 | Where the low-end BC7 tier's quality floor sits, and which RDO level it uses | 80 suggested as a floor | Rows being measured; contact sheets; the user's eye |
-| Whether the low-end tier block-codes only large bodies, and at what size | A per-body choice, with equipment staying lossless. It needs a second shader path and hue from colour on those bodies | Rows being measured |
+| Whether indexed frames stay the default once filtering is counted | Depends on the GPU test: 5 or 6 fetches per pixel against 1 | Being measured |
+| Whether the low-end tier block-codes only large bodies, and at what size | A per-body choice, with equipment staying lossless. It needs a second pipeline and hue from colour on those bodies | Rows being measured |
 | Whether phones and web get their own low-end packs or one Basis Universal pack | Build per platform: the converter already runs on the user's client files, so it can target their device | Rows being measured |
 | Whether the low-end tier uses BC1 (DXT1), BC7 or a mix | BC1 is the only format that halves VRAM on both clients, at 0.5 bytes per pixel. It keeps 3 colours in blocks with transparency, loses Enhanced's anti-aliased edges and needs a smaller hue mask. Classic stays lossless R8 unless BC1 proves acceptable, since BC7 saves it nothing | Rows being measured |
 | Which GPU layout holds frames in VRAM | Decide after the measurement | Resident bytes per layout; atlas waste; shader cost on a GPU |
