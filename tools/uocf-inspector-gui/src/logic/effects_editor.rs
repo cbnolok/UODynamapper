@@ -554,7 +554,8 @@ impl DefinitionKind {
                  definition: it is shared by every object of the same graphic and every play of the entry."
             }
             Self::PositionOffset => {
-                "Key 7: per-direction position offsets. Inert in this client build: nothing reads them."
+                "Key 7: per-direction position offsets. The effect object never reads them; the client reads the \
+                 definition from a mount's animation sequence, to place the rider. No shipped data uses it."
             }
             Self::Wait => {
                 "Key 10: throttle. Plays its children only if the per-definition next time has passed, then sets \

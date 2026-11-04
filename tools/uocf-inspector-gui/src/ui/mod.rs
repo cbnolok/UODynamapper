@@ -14,6 +14,7 @@ mod multi_editor;
 mod tileart_editor;
 pub mod housing;
 pub mod effects;
+mod effects_guide;
 pub mod effects_nif;
 pub mod multimap;
 pub mod hues;

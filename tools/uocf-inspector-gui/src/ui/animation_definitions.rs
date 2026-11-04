@@ -771,7 +771,10 @@ fn effects_window(app: &mut UopInspectorApp, ctx: &egui::Context) {
     let (mut apply, mut close) = (false, false);
     egui::Window::new("Frame effects").collapsible(false).show(ctx, |ui| {
         ui.label(format!("Item {} (0x{:04X}), set {}, frame {}", draft.id, draft.id, draft.set, draft.frame));
-        ui.weak("EffectDefinitionCollection KDL grammar: particle, sound, wait, random, ... One node per effect.");
+        ui.horizontal_wrapped(|ui| {
+            ui.weak("The effects played on the animated object at this frame, one KDL node per effect.");
+            crate::ui::help_mark(ui, crate::ui::effects_guide::EFFECT_KDL_HELP);
+        });
         kdl_editor(ui, &mut draft.text);
         if let Some(error) = &draft.error {
             ui.colored_label(ERROR_COLOR, error);
