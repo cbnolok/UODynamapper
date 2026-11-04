@@ -10,6 +10,8 @@ const UPSCALE_PREVIEW_ORIGINAL_VIEWPORT_WIDTH: f32 = 420.0;
 const UPSCALE_PREVIEW_ORIGINAL_VIEWPORT_HEIGHT: f32 = 520.0;
 const UPSCALE_PREVIEW_UPSCALED_VIEWPORT_WIDTH: f32 = 520.0;
 const UPSCALE_PREVIEW_UPSCALED_VIEWPORT_HEIGHT: f32 = 620.0;
+const UPSCALE_PREVIEW_ORIGINAL_VIEWPORT_ID: &str = "uocf_upscale_preview_original";
+const UPSCALE_PREVIEW_UPSCALED_VIEWPORT_ID: &str = "uocf_upscale_preview_upscaled";
 
 pub fn ui_upscale_preview_window(app: &mut UopInspectorApp, ctx: &egui::Context, _ui: &mut egui::Ui) {
     if !app.show_upscale_preview {
@@ -100,9 +102,13 @@ pub fn ui_upscale_preview_window(app: &mut UopInspectorApp, ctx: &egui::Context,
             });
         });
 
-    if let Some(source) = source.as_ref() {
+    let original_viewport = egui::ViewportId::from_hash_of(UPSCALE_PREVIEW_ORIGINAL_VIEWPORT_ID);
+    let upscaled_viewport = egui::ViewportId::from_hash_of(UPSCALE_PREVIEW_UPSCALED_VIEWPORT_ID);
+    let can_show_viewports = super::can_show_immediate_viewport(ctx, original_viewport)
+        && super::can_show_immediate_viewport(ctx, upscaled_viewport);
+    if let Some(source) = source.as_ref().filter(|_| can_show_viewports) {
         ctx.show_viewport_immediate(
-            egui::ViewportId::from_hash_of("uocf_upscale_preview_original"),
+            original_viewport,
             egui::ViewportBuilder::default()
                 .with_title("Upscale Preview Original")
                 .with_inner_size([
@@ -131,7 +137,7 @@ pub fn ui_upscale_preview_window(app: &mut UopInspectorApp, ctx: &egui::Context,
         );
 
         ctx.show_viewport_immediate(
-            egui::ViewportId::from_hash_of("uocf_upscale_preview_upscaled"),
+            upscaled_viewport,
             egui::ViewportBuilder::default()
                 .with_title("Upscale Preview Upscaled")
                 .with_inner_size([

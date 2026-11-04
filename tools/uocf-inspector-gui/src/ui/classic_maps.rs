@@ -275,11 +275,7 @@ pub fn ui_classic_maps_window(app: &mut UopInspectorApp, ctx: &egui::Context) {
     poll_worker(state, ctx);
     let Some(facet) = state.loaded.as_ref().filter(|_| state.detached).map(|loaded| loaded.facet) else { return };
     let window_id = egui::ViewportId::from_hash_of(MAP_WINDOW_ID);
-    // eframe draws a minimized window outside the event loop, where it cannot create a window: asking for a new
-    // immediate viewport there panics. The window opens once the main one is back.
-    let (root_minimized, window_exists) =
-        ctx.input(|input| (input.viewport().minimized == Some(true), input.raw.viewports.contains_key(&window_id)));
-    if root_minimized && !window_exists {
+    if !super::can_show_immediate_viewport(ctx, window_id) {
         return;
     }
     ctx.show_viewport_immediate(

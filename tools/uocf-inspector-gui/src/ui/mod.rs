@@ -57,6 +57,12 @@ pub(crate) fn help_mark(ui: &mut egui::Ui, text: &str) -> egui::Response {
     ui.weak(HELP_MARK).on_hover_cursor(egui::CursorIcon::Help).on_hover_text(text)
 }
 
+/// Whether the window `id` can be drawn in this frame. eframe draws a minimized window outside the event loop, where it
+/// cannot create a window: asking for a new immediate viewport there panics. The window opens once the main one is back.
+pub(crate) fn can_show_immediate_viewport(ctx: &egui::Context, id: egui::ViewportId) -> bool {
+    ctx.input(|input| input.viewport().minimized != Some(true) || input.raw.viewports.contains_key(&id))
+}
+
 pub(super) fn arrow_delta(ui: &egui::Ui, disabled: bool) -> Option<isize> {
     if disabled {
         return None;
@@ -197,6 +203,25 @@ mod tests {
         let values = [2, 1, 3];
         let indices = sorted_indices_by(&values, Some(true), |left, right| left.cmp(right));
         assert_eq!(indices, vec![2, 0, 1]);
+    }
+
+    #[test]
+    fn a_new_window_waits_for_a_minimized_main_window() {
+        let id = egui::ViewportId::from_hash_of("window");
+        let can_show = |minimized: Option<bool>, window_exists: bool| {
+            let mut input = egui::RawInput::default();
+            input.viewports.entry(egui::ViewportId::ROOT).or_default().minimized = minimized;
+            if window_exists {
+                input.viewports.insert(id, egui::ViewportInfo::default());
+            }
+            let mut result = None;
+            let _ = egui::Context::default().run_ui(input, |ui| result = Some(can_show_immediate_viewport(ui.ctx(), id)));
+            result.unwrap()
+        };
+        assert!(can_show(None, false), "a backend that does not tell");
+        assert!(can_show(Some(false), false));
+        assert!(!can_show(Some(true), false), "eframe would panic");
+        assert!(can_show(Some(true), true), "a window that exists goes on being drawn");
     }
 
     #[test]
