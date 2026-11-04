@@ -30,8 +30,8 @@ mod classes;
 mod lossy;
 mod split;
 mod vram;
-pub(super) use classes::{part_tk, part_tk0};
-pub(super) use lossy::{part_q, part_qc, part_qd, part_qm};
+pub(super) use classes::{part_tk, part_tk0, part_wl};
+pub(super) use lossy::{part_q, part_qc, part_qd, part_qm, part_qw};
 pub(super) use vram::part_v;
 pub(super) use split::part_t9;
 

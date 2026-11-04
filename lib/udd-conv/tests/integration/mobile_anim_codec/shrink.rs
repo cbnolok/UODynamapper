@@ -3209,6 +3209,12 @@ pub(super) fn run(sources: &Sources, bodies: &[BodySource], present: &[(Client, 
     if runs("qm") {
         tiny::part_qm(sources, bodies, present, cc_dir, stride);
     }
+    if runs("qw") {
+        tiny::part_qw(sources, bodies, present, cc_dir);
+    }
+    if runs("wl") {
+        tiny::part_wl(sources, bodies, present, cc_dir);
+    }
     if runs("ts") {
         tiny::part_ts(sources, bodies, present, cc_dir, &only);
     }
