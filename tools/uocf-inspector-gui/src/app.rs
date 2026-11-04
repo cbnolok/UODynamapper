@@ -166,6 +166,8 @@ pub enum GumpSource {
 pub enum GumpViewerTab {
     StandardGumps,
     Paperdoll,
+    /// The native images of the Enhanced Client's `Interface.uop`.
+    InterfaceImages,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
@@ -1099,6 +1101,8 @@ pub enum SoundSource {
     #[default]
     Classic,
     Enhanced,
+    /// `Music/Digital/Config.txt` and the music files of a Classic client.
+    ClassicMusic,
 }
 
 #[derive(Clone)]
@@ -1874,6 +1878,7 @@ pub struct UopInspectorApp {
     pub multimap_zoom: f32,
     /// The Classic maps, fonts and def file views.
     pub classic_file_views: crate::ui::ClassicFileViews,
+    pub ec_interface_textures: crate::ui::ec_interface_textures::EcInterfaceTexturesState,
 
     pub terrain_def_package: Option<Arc<uocf::enhanced::terrain_definition::TerrainDefinitionPackage>>,
     pub terrain_def_files: Option<Arc<Vec<TerrainDefinitionFileEntry>>>,
@@ -2053,6 +2058,7 @@ impl UopInspectorApp {
             selected_cliloc_number: 0,
             multimap_zoom: 0.25,
             classic_file_views: Default::default(),
+            ec_interface_textures: Default::default(),
         };
 
         app.log("UOCF Inspector starting...");
@@ -4414,6 +4420,7 @@ pub(crate) mod tests {
             selected_cliloc_number: 0,
             multimap_zoom: 0.25,
             classic_file_views: Default::default(),
+            ec_interface_textures: Default::default(),
             terrain_def_package: None,
             terrain_def_files: None,
             ec_tileart_entries: None,

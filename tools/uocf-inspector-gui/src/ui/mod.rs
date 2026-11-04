@@ -25,6 +25,8 @@ pub mod string_dictionary;
 pub mod sounds;
 pub mod upscale_preview;
 pub mod classic_maps;
+pub mod classic_music;
+pub mod ec_interface_textures;
 pub mod classic_fonts;
 pub mod classic_defs;
 pub mod classic_image_import;
@@ -33,6 +35,7 @@ pub mod classic_image_import;
 #[derive(Default)]
 pub struct ClassicFileViews {
     pub maps: classic_maps::ClassicMapsState,
+    pub music: classic_music::ClassicMusicState,
     pub fonts: classic_fonts::ClassicFontsState,
     pub defs: classic_defs::ClassicDefsState,
 }
@@ -266,8 +269,8 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui
             if app.uo_string_dictionary.is_some() {
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::StringDictionary, "String Dict");
             }
-            if app.cc_sounds.is_some() || app.ec_audio.is_some() {
-                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Sounds, "Sounds");
+            if app.cc_sounds.is_some() || app.ec_audio.is_some() || app.settings.cc_path.is_some() {
+                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Sounds, "Audio");
             }
             if app.settings.cc_path.is_some() {
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::ClassicMaps, "Maps");
@@ -435,4 +438,5 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui
     }
 
     upscale_preview::ui_upscale_preview_window(app, ctx, ui);
+    classic_maps::ui_classic_maps_window(app, ctx);
 }

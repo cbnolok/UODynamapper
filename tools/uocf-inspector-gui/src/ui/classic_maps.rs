@@ -3,6 +3,8 @@
 //!
 //! A tile takes the colour of its highest static (by its top, `z` plus the `tiledata.mul` height, then by `z`)
 //! when that static's top is not below the land, else the land's colour, as `udd_conv::cc_radar` picks.
+//!
+//! The map zooms at the pointer and can move to a window of its own, which stays open while other tabs are in use.
 
 use color_eyre::eyre::{self, WrapErr};
 use eframe::egui;
@@ -33,7 +35,15 @@ const CHANNEL_REFILL_SHIFT: u32 = 2;
 const MIN_ZOOM: f32 = 0.05;
 const MAX_ZOOM: f32 = 16.0;
 const DEFAULT_ZOOM: f32 = 0.25;
+/// Zoom factor of one press of the zoom buttons.
+const ZOOM_STEP: f32 = 1.25;
+/// Exponent of the zoom factor per point of mouse wheel scroll.
+const WHEEL_ZOOM_RATE: f32 = 0.002;
+const ACTUAL_SIZE_ZOOM: f32 = 1.0;
 const TOOLS_PANEL_WIDTH: f32 = 300.0;
+const MAP_WINDOW_ID: &str = "uocf_classic_maps_window";
+const MAP_WINDOW_WIDTH: f32 = 1000.0;
+const MAP_WINDOW_HEIGHT: f32 = 700.0;
 
 /// A facet read and drawn.
 struct LoadedFacet {
@@ -58,6 +68,10 @@ pub struct ClassicMapsState {
     worker: Option<mpsc::Receiver<Result<(LoadedFacet, egui::ColorImage), String>>>,
     error: Option<String>,
     pinned: Option<(u32, u32)>,
+    /// The map is in its own window.
+    detached: bool,
+    /// The scroll offset for the next frame, after a zoom change.
+    pending_offset: Option<egui::Vec2>,
 }
 
 impl Default for ClassicMapsState {
@@ -72,8 +86,20 @@ impl Default for ClassicMapsState {
             worker: None,
             error: None,
             pinned: None,
+            detached: false,
+            pending_offset: None,
         }
     }
+}
+
+/// The scroll offset that keeps the tile at `anchor` (from the top left of the view) in place when the zoom changes.
+fn anchored_offset(offset: egui::Vec2, anchor: egui::Vec2, old_zoom: f32, new_zoom: f32) -> egui::Vec2 {
+    (offset + anchor) / old_zoom * new_zoom - anchor
+}
+
+/// The zoom at which a whole facet fits a view.
+fn fit_zoom(view: egui::Vec2, width: u32, height: u32) -> f32 {
+    (view.x / width.max(1) as f32).min(view.y / height.max(1) as f32).clamp(MIN_ZOOM, MAX_ZOOM)
 }
 
 fn expand_channel(channel: u8) -> u8 {
@@ -155,33 +181,34 @@ fn facet_name(facet: u32) -> String {
     CLASSIC_FACET_NAMES.get(facet as usize).map_or_else(|| format!("map{facet}"), |name| format!("{facet}: {name}"))
 }
 
+fn poll_worker(state: &mut ClassicMapsState, ctx: &egui::Context) {
+    let Some(worker) = &state.worker else { return };
+    match worker.try_recv() {
+        Ok(result) => {
+            state.worker = None;
+            match result {
+                Ok((loaded, image)) => {
+                    state.texture = Some(ctx.load_texture(format!("classic_facet_{}", loaded.facet), image, egui::TextureOptions::NEAREST));
+                    state.loaded = Some(loaded);
+                    state.pinned = None;
+                    state.error = None;
+                }
+                Err(error) => state.error = Some(error),
+            }
+        }
+        Err(mpsc::TryRecvError::Empty) => ctx.request_repaint(),
+        Err(mpsc::TryRecvError::Disconnected) => {
+            state.worker = None;
+            state.error = Some("the facet reader stopped".to_owned());
+        }
+    }
+}
+
 pub fn ui_classic_maps(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
     let cc_path = app.settings.cc_path.clone();
     let tiledata = app.cc_tiledata.clone();
     let state = &mut app.classic_file_views.maps;
-    if let Some(worker) = &state.worker {
-        match worker.try_recv() {
-            Ok(result) => {
-                state.worker = None;
-                match result {
-                    Ok((loaded, image)) => {
-                        state.texture = Some(ctx.load_texture(format!("classic_facet_{}", loaded.facet), image, egui::TextureOptions::NEAREST));
-                        state.loaded = Some(loaded);
-                        state.pinned = None;
-                        state.error = None;
-                    }
-                    Err(error) => state.error = Some(error),
-                }
-            }
-            Err(mpsc::TryRecvError::Empty) => ctx.request_repaint(),
-            Err(mpsc::TryRecvError::Disconnected) => {
-                state.worker = None;
-                state.error = Some("the facet reader stopped".to_owned());
-            }
-        }
-    }
 
-    let mut hovered = None;
     egui::Panel::left("classic_maps_tools").resizable(true).default_size(TOOLS_PANEL_WIDTH).show(ui, |ui| {
         ui.heading("Maps and statics");
         ui.separator();
@@ -217,42 +244,133 @@ pub fn ui_classic_maps(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut 
             }
             ui.small(&loaded.sources);
         }
-        ui.add(egui::Slider::new(&mut state.zoom, MIN_ZOOM..=MAX_ZOOM).logarithmic(true).text("Zoom"));
+        ui.weak("Wheel or pinch zooms at the pointer, dragging moves the map.");
         ui.weak("Hover a tile for its land and statics; click to keep it.");
     });
 
     egui::CentralPanel::default().show(ui, |ui| {
-        let (Some(loaded), Some(texture)) = (&state.loaded, &state.texture) else {
-            ui.centered_and_justified(|ui| ui.label("Read a facet."));
+        if state.detached {
+            ui.label("The map is in its own window.");
+            if ui.button("Bring it back to this tab").clicked() {
+                state.detached = false;
+            }
             return;
-        };
-        let size = egui::vec2(loaded.width as f32 * state.zoom, loaded.height as f32 * state.zoom);
-        egui::ScrollArea::both().show(ui, |ui| {
-            let response = ui.add(egui::Image::new(texture).fit_to_exact_size(size).sense(egui::Sense::click()));
-            let tile_at = |pos: egui::Pos2| {
-                let offset = (pos - response.rect.min) / state.zoom;
-                (offset.x >= 0.0 && offset.y >= 0.0)
-                    .then(|| (offset.x as u32, offset.y as u32))
-                    .filter(|&(x, y)| x < loaded.width && y < loaded.height)
-            };
-            hovered = response.hover_pos().and_then(tile_at);
-            if response.clicked() {
-                state.pinned = response.interact_pointer_pos().and_then(tile_at);
-            }
-        });
+        }
+        map_view(state, ui);
     });
+}
 
-    if let Some(loaded) = &mut state.loaded {
-        let pinned = state.pinned;
-        egui::Window::new("Tile").default_pos(egui::pos2(TOOLS_PANEL_WIDTH * 2.0, 80.0)).resizable(false).show(ctx, |ui| {
-            for (label, tile) in [("Pointer", hovered), ("Clicked", pinned)] {
-                let Some((x, y)) = tile else { continue };
-                ui.strong(format!("{label}: {x}, {y}"));
-                tile_details(ui, loaded, x, y);
-                ui.separator();
-            }
-        });
+/// The map's own window. It runs every frame, whichever tab is open, so a read finishes and the window stays open
+/// while other tabs are in use.
+pub fn ui_classic_maps_window(app: &mut UopInspectorApp, ctx: &egui::Context) {
+    let state = &mut app.classic_file_views.maps;
+    poll_worker(state, ctx);
+    let Some(facet) = state.loaded.as_ref().filter(|_| state.detached).map(|loaded| loaded.facet) else { return };
+    let window_id = egui::ViewportId::from_hash_of(MAP_WINDOW_ID);
+    // eframe draws a minimized window outside the event loop, where it cannot create a window: asking for a new
+    // immediate viewport there panics. The window opens once the main one is back.
+    let (root_minimized, window_exists) =
+        ctx.input(|input| (input.viewport().minimized == Some(true), input.raw.viewports.contains_key(&window_id)));
+    if root_minimized && !window_exists {
+        return;
     }
+    ctx.show_viewport_immediate(
+        window_id,
+        egui::ViewportBuilder::default()
+            .with_title(format!("Facet {}", facet_name(facet)))
+            .with_inner_size([MAP_WINDOW_WIDTH, MAP_WINDOW_HEIGHT]),
+        |ui, _class| {
+            if ui.input(|input| input.viewport().close_requested()) {
+                state.detached = false;
+            }
+            egui::CentralPanel::default().show(ui, |ui| map_view(state, ui));
+        },
+    );
+}
+
+/// The zoom bar, the map and the tile details, in the tab or in the map's own window.
+fn map_view(state: &mut ClassicMapsState, ui: &mut egui::Ui) {
+    let (Some(loaded), Some(texture)) = (&state.loaded, &state.texture) else {
+        ui.centered_and_justified(|ui| ui.label("Read a facet."));
+        return;
+    };
+    let (width, height) = (loaded.width, loaded.height);
+    let mut zoom = state.zoom;
+    let mut fit = false;
+    ui.horizontal(|ui| {
+        if ui.button("-").on_hover_text("Zoom out").clicked() {
+            zoom /= ZOOM_STEP;
+        }
+        if ui.button("+").on_hover_text("Zoom in").clicked() {
+            zoom *= ZOOM_STEP;
+        }
+        ui.add(egui::Slider::new(&mut zoom, MIN_ZOOM..=MAX_ZOOM).logarithmic(true).text("Zoom"));
+        if ui.button("1:1").on_hover_text("One pixel per tile").clicked() {
+            zoom = ACTUAL_SIZE_ZOOM;
+        }
+        fit = ui.button("Fit").on_hover_text("Show the whole facet").clicked();
+        let can_detach = !ui.ctx().embed_viewports();
+        let label = if state.detached { "Back to the tab" } else { "Open in a separate window" };
+        if ui.add_enabled(can_detach, egui::Button::new(label)).clicked() {
+            state.detached = !state.detached;
+        }
+    });
+    if fit {
+        zoom = fit_zoom(ui.available_size(), width, height);
+    }
+
+    let size = egui::vec2(width as f32 * state.zoom, height as f32 * state.zoom);
+    let mut area = egui::ScrollArea::both().id_salt("classic_maps_map").scroll_source(egui::scroll_area::ScrollSource {
+        scroll_bar: true,
+        drag: egui::scroll_area::DragScroll::Always,
+        mouse_wheel: false,
+    });
+    if let Some(offset) = state.pending_offset.take() {
+        area = area.scroll_offset(offset);
+    }
+    let shown_zoom = state.zoom;
+    let mut pinned = None;
+    let output = area.show(ui, |ui| {
+        let response = ui.add(egui::Image::new(texture).fit_to_exact_size(size).sense(egui::Sense::click()));
+        let tile_at = |pos: egui::Pos2| {
+            let offset = (pos - response.rect.min) / shown_zoom;
+            (offset.x >= 0.0 && offset.y >= 0.0)
+                .then(|| (offset.x as u32, offset.y as u32))
+                .filter(|&(x, y)| x < width && y < height)
+        };
+        if response.clicked() {
+            pinned = Some(response.interact_pointer_pos().and_then(tile_at));
+        }
+        response.hover_pos().and_then(tile_at)
+    });
+    let hovered = output.inner;
+    if let Some(pinned) = pinned {
+        state.pinned = pinned;
+    }
+
+    let pointer = ui.input(|input| input.pointer.hover_pos()).filter(|_| ui.rect_contains_pointer(output.inner_rect));
+    if pointer.is_some() {
+        let (wheel, pinch) = ui.input(|input| (input.smooth_scroll_delta.y, input.zoom_delta()));
+        zoom *= pinch * (wheel * WHEEL_ZOOM_RATE).exp();
+    }
+    let zoom = zoom.clamp(MIN_ZOOM, MAX_ZOOM);
+    if zoom != state.zoom {
+        let anchor = pointer.map_or(output.inner_rect.size() / 2.0, |pos| pos - output.inner_rect.min);
+        state.pending_offset = Some(if fit { egui::Vec2::ZERO } else { anchored_offset(output.state.offset, anchor, state.zoom, zoom) });
+        state.zoom = zoom;
+        ui.ctx().request_repaint();
+    }
+
+    let pinned = state.pinned;
+    let Some(loaded) = &mut state.loaded else { return };
+    egui::Window::new("Tile").default_pos(egui::pos2(TOOLS_PANEL_WIDTH * 2.0, 80.0)).resizable(false).show(ui.ctx(), |ui| {
+        for (label, tile) in [("Pointer", hovered), ("Clicked", pinned)] {
+            let Some((x, y)) = tile else { continue };
+            ui.strong(format!("{label}: {x}, {y}"));
+            tile_details(ui, loaded, x, y);
+            ui.separator();
+        }
+    });
 }
 
 fn tile_details(ui: &mut egui::Ui, loaded: &mut LoadedFacet, x: u32, y: u32) {
@@ -304,6 +422,24 @@ mod tests {
     const FACET: u32 = 4;
     /// A texture side that makes the render scale down.
     const SMALL_TEXTURE_SIDE: u32 = 512;
+    const CLOSE: f32 = 0.001;
+
+    #[test]
+    fn zooming_keeps_the_tile_under_the_anchor_in_place() {
+        let (offset, anchor) = (egui::vec2(300.0, 40.0), egui::vec2(100.0, 60.0));
+        let (old_zoom, new_zoom) = (0.5, 2.0);
+        let tile = (offset + anchor) / old_zoom;
+        let moved = anchored_offset(offset, anchor, old_zoom, new_zoom);
+        let tile_after = (moved + anchor) / new_zoom;
+        assert!((tile - tile_after).length() < CLOSE, "{tile:?} moved to {tile_after:?}");
+    }
+
+    #[test]
+    fn fitting_takes_the_tighter_side_and_stays_in_the_zoom_range() {
+        assert_eq!(fit_zoom(egui::vec2(1000.0, 1000.0), 2000, 500), 0.5);
+        assert_eq!(fit_zoom(egui::vec2(1.0, 1.0), 100_000, 100_000), MIN_ZOOM);
+        assert_eq!(fit_zoom(egui::vec2(100_000.0, 100_000.0), 1, 1), MAX_ZOOM);
+    }
 
     #[test]
     #[ignore = "needs real Classic clients: set UO_CLASSIC_CLIENT_ROOTS and run with --ignored"]

@@ -26,10 +26,10 @@ const SYNTAX_ERROR_COLOR: egui::Color32 = WAYPOINT_ERROR_COLOR;
 const WAYPOINT_WARNING_COLOR: egui::Color32 = egui::Color32::from_rgb(230, 180, 60);
 const UOP_FILTER: (&str, &[&str]) = ("UOP package", &["uop"]);
 
-const REPLACE_FILE_HOVER: &str = "Write a copy of the package with this entry replaced by a file of the same kind \
+pub(super) const REPLACE_FILE_HOVER: &str = "Write a copy of the package with this entry replaced by a file of the same kind \
 (by content: the kind its extension or the current entry has) that parses where uocf has a reader for the entry. \
-A PNG, BMP or JPEG for a TGA, Classic gump or Classic art entry (land or static by its id) can be converted to the entry's format (a TGA keeps its type, \
-depth, RLE packing and footer). The entry keeps its compression flag; the other entries are untouched.";
+A PNG, BMP or JPEG for a DDS, TGA, Classic gump or Classic art entry (land or static by its id) can be converted to the entry's format (a TGA keeps its type, \
+depth, RLE packing and footer, a DDS its pixel format, header and mip rule). The entry keeps its compression flag; the other entries are untouched.";
 
 /// Asks whether to convert `image` to the entry's `format`: `None` cancels, `Some(None)` stores the file as it is.
 fn ask_image_conversion(input: &std::path::Path, image: &image::RgbaImage, format: &EntryImageFormat) -> Option<Option<SizeChange>> {
@@ -66,7 +66,7 @@ fn ask_image_conversion(input: &std::path::Path, image: &image::RgbaImage, forma
 /// Replaces the entry `hash` (named `name` when the name hashes to it) of `package`, loaded from `source`, with a
 /// file the user picks (converted to the entry's image format when the user agrees), written to a copy the user
 /// names.
-fn replace_entry_file(app: &mut UopInspectorApp, source: &std::path::Path, package: &UopPackage, hash: u64, name: &str) {
+pub(super) fn replace_entry_file(app: &mut UopInspectorApp, source: &std::path::Path, package: &UopPackage, hash: u64, name: &str) {
     use crate::logic::entry_text_editor::{check_summary, entry_target, image_to_convert, save_entry_copy, save_entry_image_copy};
     let Some(input) = crate::dialog::file_dialog().set_title("Replace entry with").pick_file() else { return };
     let prepared = (|| -> color_eyre::eyre::Result<Option<(Vec<u8>, Option<(image::RgbaImage, SizeChange)>)>> {

@@ -10,7 +10,7 @@ use uocf::enhanced::audio::{AudioKind, AudioPackage, AUDIO_ENTRY_ROOT};
 use uocf::enhanced::audio_edit::{AudioImportOptions, AudioPackageEditor, AudioTarget};
 
 use crate::app::{SoundPlayer, SoundSource, UopInspectorApp};
-use crate::ui::{list_sort_controls, sorted_indices_by};
+use crate::ui::{classic_music, list_sort_controls, sorted_indices_by};
 
 const SOUNDS_LIST_PANEL_WIDTH: f32 = 280.0;
 /// The replace options, kept in the egui memory.
@@ -18,35 +18,52 @@ const CONVERT_OPTION_ID: &str = "sounds_replace_convert";
 const ALLOW_UNVERIFIED_OPTION_ID: &str = "sounds_replace_allow_unverified";
 
 pub fn ui_sounds(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
-    if app.cc_sounds.is_none() && app.ec_audio.is_none() {
+    let sources = available_sources(app);
+    let Some(&(first, _)) = sources.first() else {
         egui::CentralPanel::default().show(ui, |ui| {
             ui.label("Select a Classic Client path (sound.mul or soundLegacyMUL.uop) or an Enhanced Client path (Audio.uop).");
         });
         return;
-    }
-    match (app.cc_sounds.is_some(), app.ec_audio.is_some()) {
-        (false, true) => app.sound_source = SoundSource::Enhanced,
-        (true, false) => app.sound_source = SoundSource::Classic,
-        _ => {}
+    };
+    if !sources.iter().any(|&(source, _)| source == app.sound_source) {
+        app.sound_source = first;
     }
     match app.sound_source {
         SoundSource::Classic => ui_classic_sounds(app, ctx, ui),
         SoundSource::Enhanced => ui_enhanced_audio(app, ctx, ui),
+        SoundSource::ClassicMusic => classic_music::ui_classic_music(app, ui),
     }
 }
 
-/// The Classic/Enhanced switch, when both are loaded.
-fn source_selector(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
-    if app.cc_sounds.is_some() && app.ec_audio.is_some() {
+/// What the loaded clients have to show, with the switch's labels.
+fn available_sources(app: &UopInspectorApp) -> Vec<(SoundSource, &'static str)> {
+    let mut sources = Vec::new();
+    if app.cc_sounds.is_some() {
+        sources.push((SoundSource::Classic, "Classic"));
+    }
+    if app.ec_audio.is_some() {
+        sources.push((SoundSource::Enhanced, "Enhanced"));
+    }
+    if app.settings.cc_path.is_some() {
+        sources.push((SoundSource::ClassicMusic, "Classic music"));
+    }
+    sources
+}
+
+/// The switch of the audio sources, when there are more than one.
+pub(super) fn source_selector(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
+    let sources = available_sources(app);
+    if sources.len() > 1 {
         ui.horizontal(|ui| {
-            ui.selectable_value(&mut app.sound_source, SoundSource::Classic, "Classic");
-            ui.selectable_value(&mut app.sound_source, SoundSource::Enhanced, "Enhanced");
+            for (source, label) in sources {
+                ui.selectable_value(&mut app.sound_source, source, label);
+            }
         });
     }
 }
 
 /// Starts playback, opening the audio output on first use.
-fn play(app: &mut UopInspectorApp, decoded: eyre::Result<DecodedAudio>, label: &str) {
+pub(super) fn play(app: &mut UopInspectorApp, decoded: eyre::Result<DecodedAudio>, label: &str) {
     let decoded = match decoded {
         Ok(decoded) => decoded,
         Err(e) => {
@@ -71,7 +88,7 @@ fn play(app: &mut UopInspectorApp, decoded: eyre::Result<DecodedAudio>, label: &
     }
 }
 
-fn stop_and_status(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
+pub(super) fn stop_and_status(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
     if ui.button("Stop").clicked() {
         if let Some(player) = &mut app.sound_player {
             player.stop();
@@ -81,7 +98,7 @@ fn stop_and_status(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
     ui.label(if playing { "Playing" } else { "Idle" });
 }
 
-fn save_file(app: &mut UopInspectorApp, default_name: String, filter: (&str, &str), bytes: impl FnOnce() -> eyre::Result<Vec<u8>>) {
+pub(super) fn save_file(app: &mut UopInspectorApp, default_name: String, filter: (&str, &str), bytes: impl FnOnce() -> eyre::Result<Vec<u8>>) {
     let Some(path) = crate::dialog::file_dialog().add_filter(filter.0, &[filter.1]).set_file_name(default_name).save_file() else {
         return;
     };

@@ -1,4 +1,5 @@
 use crate::app::{GumpSource, GumpViewerTab, PaperdollEquipmentInput, UopInspectorApp};
+use crate::ui::ec_interface_textures;
 use crate::ui::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by};
 use eframe::egui;
 use knuffel::Decode;
@@ -248,6 +249,11 @@ pub fn ui_gumps(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::U
                 GumpViewerTab::Paperdoll,
                 "Paperdoll",
             );
+            ui.selectable_value(
+                &mut app.selected_gump_viewer_tab,
+                GumpViewerTab::InterfaceImages,
+                "EC interface images",
+            );
             ui.separator();
             if ui.button("Refresh Lists").clicked() {
                 refresh_gump_lists(app, profiles);
@@ -261,6 +267,7 @@ pub fn ui_gumps(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::U
         match app.selected_gump_viewer_tab {
             GumpViewerTab::StandardGumps => ui_standard_gumps(app, ctx, ui),
             GumpViewerTab::Paperdoll => ui_paperdoll(app, ctx, ui, profiles),
+            GumpViewerTab::InterfaceImages => ec_interface_textures::ui_interface_textures(app, ctx, ui),
         }
     });
 }

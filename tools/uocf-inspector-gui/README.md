@@ -15,13 +15,13 @@ UO asset data during development and research.
 | Tile Metadata | Combined CC tiledata and EC tileart metadata (switchable source). |
 | Animations | Mobile animations from CC `anim*.mul`, CC or EC `AnimationFrame*.uop`; per action, Export frames (PNGs plus KDL) and Replace frames (into copies of the files). |
 | Anim Data | Classic Client `animdata.mul` animation sequence tables. |
-| Gumps | CC or EC gump art (switchable source). |
+| Gumps | CC or EC gump art (switchable source), and the Enhanced Client's own interface images: the DDS and TGA files of `Interface.uop` outside `gumpart`, by folder, with export and replace. |
 | Multis | Multi-tile structures from CC or EC sources. |
 | Hues | CC `hues.mul` or EC `hues.uop` hue tables (switchable source). |
 | Clilocs | Classic Client `Cliloc.*` and Enhanced Client `LocalizedStrings.uop` localized string tables. |
 | Terrain Definition | EC `TerrainDefinition.uop` material entries and texture references. |
 | String Dictionary | EC `string_dictionary.uop` string table. |
-| Sounds | Classic Client `sound.mul` / `soundidx.mul` audio entries. |
+| Audio | Classic Client `sound.mul` / `soundidx.mul` or `soundLegacyMUL.uop` audio entries, Enhanced Client `Audio.uop`, Classic music (`Music/Digital/Config.txt`, its MP3 files, and any MIDI files of the `Music` folder). |
 
 Most views support switching between Classic Client and Enhanced Client sources
 where both exist.
@@ -68,7 +68,7 @@ Multi-tile structure data (`MultiCollection.uop`) is decoded directly from its b
 - Upscale preview is available for art tiles using the image-postprocess
   upscaling algorithms, including color-only vibrance, saturation, selective
   hue boosts, and local-contrast clarity passes.
-- Audio playback is supported in the Sounds view.
+- Audio playback is supported in the Audio view. MIDI files are listed with what they declare, and are not played.
 - See [lib/uocf](../../lib/uocf/README.md) for the underlying parser library.
 
 ## Screenshots
