@@ -95,8 +95,8 @@ const HIDDEN_PART_TINT_ALPHA: u8 = 96;
 const HIDDEN_PART_OUTLINE_WIDTH: f32 = 1.0;
 const HIDDEN_PART_OUTLINE_COLOR: egui::Color32 = egui::Color32::from_rgb(255, 64, 255);
 const MISSING_PART_FILL_COLOR: egui::Color32 = egui::Color32::BLUE;
-/// Where a tile without KR art finds its art: the classic files first, as the Enhanced Client's own classic art is
-/// a copy of them.
+/// Where a tile without KR art finds its art: the classic files first, as the official EC draws classic art unless a
+/// tile asks for its new art.
 const KR_ART_FALLBACK_SOURCES: [ArtSource; 3] = [ArtSource::CcUop, ArtSource::Mul, ArtSource::EcUopLegacy];
 const KR_ART_FALLBACK_NOTE: &str = "KR art is optional: Texture.uop has images for only part of the tiles, and \
     the Enhanced Client draws them only for tileart records with the UseNewArt flag. The other tiles are drawn with their \
@@ -1255,7 +1255,8 @@ fn crop_multi_part_rgba(
 }
 
 /// Whether art is kept in an image file format. `artLegacyMUL.uop` keeps the classic encoding, whatever the `.tga` in
-/// its entry names says, and a TGA reader takes 279 of the 11,895 tiles of the shipped multis for 0x0 images.
+/// its entry names says: a TGA reader takes 279 of the 11,895 tiles of the shipped multis for 0x0 images, and 82 more
+/// for tiny garbage ones.
 fn art_payload_is_image_file(payload: &[u8], source: ArtSource) -> bool {
     payload.starts_with(b"DDS ") || !matches!(source, ArtSource::Mul | ArtSource::CcUop)
 }

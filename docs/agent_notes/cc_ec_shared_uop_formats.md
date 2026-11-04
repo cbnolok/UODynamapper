@@ -102,3 +102,20 @@ the client code; **S** = holds on every shipped file checked; **I** = inferred.
 ## Multi ids
 
 The 2026 `MultiCollection.uop` has multi 9000; ids go up to `0xFFFF` (`MAX_MULTI_COLLECTION_ID`).
+
+## `.tga` entries that are not TGAs
+
+`artLegacyMUL.uop` (`build/artlegacymul/%08d.tga`) and `gumpartLegacyMUL.uop` (`build/gumpartlegacymul/%08d.tga`) keep
+the Classic encoding under a `.tga` name (the Enhanced Client ships the gump package too): art is `u32 flags, u16 w, u16 h, lookup...` or a land diamond
+of 2048 bytes, a gump is `u32 w, u32 h, u32 lookup[h], RLE`. None of the 39,386 Classic art entries has a TGA footer.
+Decide by the package, never by the extension.
+
+`uocf::enhanced::textures::decode_tga_rgba8` hides the mistake: to accept the header-only placeholders it gives an empty
+image for any payload of 18 bytes or more with a zero u16 at the TGA width or height offset, without checking that the
+payload is a TGA. So a blind read of those packages returns `Ok`, measured on the canonical clients: 4,413 of the 4,448
+Classic gumps and 4,341 of the 4,376 Enhanced ones come out 0x0, 1,068 of the Classic art entries too, and others come
+out as tiny garbage images (Classic art 0x4821, of 0xF82 bytes, reads as 2x2). The real header-only entries are 34 in
+`Interface.uop`, all of 18 bytes, and the last one of the Kingdom Reborn `TileArtLegacy.uop`.
+
+An empty image handed to egui is a wgpu validation error, and wgpu's default handler panics. The inspector's textures
+go through `tools/uocf-inspector-gui/src/ui/textures.rs`, which turns that into a message.
