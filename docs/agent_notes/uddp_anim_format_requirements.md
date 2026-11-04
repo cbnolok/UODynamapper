@@ -158,14 +158,46 @@ figure the fair one.
 - Never execute client binaries or write into client folders. Client behaviour comes from static analysis.
 - The test machine has 27 GB of RAM. Benchmarks run one at a time with an 18 GB cap.
 
-### Minimum GPU
+### Minimum GPU and platforms
 
-The bar is the GTX 900 and 10 series and AMD Polaris (the user, 2026-11-04). BC1, BC3, BC7, storage buffers and compute can
-all be used without a fallback. None of the formats discussed here needs anything newer than that. Vulkan versions per GPU,
-and Intel and AMD integrated GPUs, aren't checked yet.
+The user's requirements (2026-11-04):
 
-Phones are out of scope. A WebGPU survey of Android reports BC support at 0 % on ARM Mali, about 25.5 % on Adreno 6xx and
-100 % on Adreno 7xx and 8xx. An Apple forum answer says iOS devices generally lack it. A phone mode would need ASTC or ETC2.
+- Desktop cards: the GTX 900 and 10 series and AMD Polaris are the bar. Vulkan versions per GPU aren't checked yet.
+- Integrated GPUs count, and must hold at least 60 fps. The test machine's Radeon 890M is well above the low end, so it can
+  compare layouts but can't prove this.
+- The ideal reach is web, mobile, Apple, Windows and Linux.
+
+No block format reaches all of these. Vulkan, WebGPU and Metal each expose BC1 to BC7 as one feature, so BC1 reaches no
+device that BC7 misses. Support reported by browsers to web3dsurvey, read 2026-11-04 (the page shows no data date, so treat
+these as indicative):
+
+| Platform | BC1 to BC7 | ETC2 | ASTC |
+|---|---:|---:|---:|
+| Windows | 100 % | 0.02 % | 0.02 % |
+| macOS | 88.33 % | 95.82 % | 95.82 % |
+| Linux | 78.7 % | 71.87 % | 64.71 % |
+| Chrome OS | 81.72 % | 99.78 % | 98.34 % |
+| iOS | 57.28 % | 99.92 % | 99.92 % |
+| Android | 34.87 % | 99.94 % | 99.94 % |
+
+By vendor, BC is 100 % on AMD, Intel and NVIDIA, 79.6 % on Apple, 73.43 % on Qualcomm and 0 % on ARM, Samsung, Huawei and
+Imagination. ASTC is 0 % on AMD and NVIDIA and 19.66 % on Intel.
+
+R8 and RG8 planes need no block format, so a lossless indexed layout is the one path that runs everywhere. A low-end pack
+needs a format per platform, at the same VRAM:
+
+| Bytes per pixel | Desktop | Phones and Apple |
+|---:|---|---|
+| 0.5 | BC1 | ETC2 RGB8A1 |
+| 1 | BC7 | ASTC 4×4 |
+
+Basis Universal is the one single-file route: it transcodes one file to BC, ETC2 or ASTC at load. It adds a transcode step
+on top of zstd, and its small mode (ETC1S) is described by its authors as low to medium quality. It hasn't been measured on
+our data.
+
+The renderer isn't set up for most of this. The web and Android features are commented out in `dynamapper/Cargo.toml`, and
+the workspace's direct `wgpu` dependency names only Vulkan. WebGL2 has no storage buffers, which the renderer already uses,
+so the web path would need WebGPU.
 
 ### What the original clients ship
 
@@ -555,6 +587,7 @@ not counted; Classic 2.52 against 2.42). Its creature-crowd decode is faster (29
 | Storage per client | Indexed slot planes, lossless, zstd 19, hue in the shader; LZ4 HC is the alternative at about 22 % more disk | The user |
 | Load unit | One stream per (action, direction), faced direction first | The user |
 | Where the low-end BC7 tier's quality floor sits, and which RDO level it uses | 80 suggested as a floor | Rows being measured; contact sheets; the user's eye |
+| Whether phones and web get their own low-end packs or one Basis Universal pack | Build per platform: the converter already runs on the user's client files, so it can target their device | Rows being measured |
 | Whether the low-end tier uses BC1 (DXT1), BC7 or a mix | BC1 is the only format that halves VRAM on both clients, at 0.5 bytes per pixel. It keeps 3 colours in blocks with transparency, loses Enhanced's anti-aliased edges and needs a smaller hue mask. Classic stays lossless R8 unless BC1 proves acceptable, since BC7 saves it nothing | Rows being measured |
 | Which GPU layout holds frames in VRAM | Decide after the measurement | Resident bytes per layout; atlas waste; shader cost on a GPU |
 | Runtime interpolation for high frame rates | A separate study | The full frame set |
