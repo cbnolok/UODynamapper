@@ -7,6 +7,7 @@
 pub mod census;
 pub mod convert;
 pub mod decode;
+pub mod midi;
 pub mod mp3;
 pub mod validate;
 pub mod wav;
