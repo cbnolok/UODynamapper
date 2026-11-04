@@ -221,6 +221,7 @@ def run_all(
     tables: str,
     non_texture_zstd: list[str],
     gump_args: list[str],
+    include_animations: bool = True,
 ) -> None:
     ccdir = require_value(ccdir, "usage: just uddconv-all <ccdir> [ecdir] [output_dir] [maps]")
     ensure_output_dir(output_dir)
@@ -263,7 +264,8 @@ def run_all(
             "--statics-output",
             f"{output_dir}/statics{map_id}.uddp",
         )
-    run_animations(ccdir, ecdir, output_dir, cc_anim_format, ec_anim_format, tables)
+    if include_animations:
+        run_animations(ccdir, ecdir, output_dir, cc_anim_format, ec_anim_format, tables)
     run_gumps(ccdir, output_dir, gump_args)
     if ecdir:
         run_ec_gumps(ecdir, output_dir, gump_args)
@@ -279,6 +281,7 @@ def main() -> int:
     all_parser.add_argument("--output-dir", default="target/uddp")
     all_parser.add_argument("--maps", default="0,1,2,3,4,5")
     all_parser.add_argument("--tables", default=DEFAULT_TABLES_DIR)
+    all_parser.add_argument("--no-animations", action="store_true", help="leave out the mobile animation packages")
     add_zstd_arg(all_parser)
     add_format_args(all_parser, prefix="cc-art-")
     add_zstd_arg(all_parser, prefix="cc-art-")
@@ -339,6 +342,7 @@ def main() -> int:
             args.tables,
             non_texture_zstd,
             gump_args,
+            include_animations=not args.no_animations,
         )
     elif args.command == "animations":
         global_zstd = zstd_args_from_namespace(args)
