@@ -158,6 +158,25 @@ figure the fair one.
 - Never execute client binaries or write into client folders. Client behaviour comes from static analysis.
 - The test machine has 27 GB of RAM. Benchmarks run one at a time with an 18 GB cap.
 
+### Frame and stream sizes
+
+Most frames are tiny, but most pixels are in the few large ones. So tiny frames set the number of streams and what each
+stream's overhead costs, while large frames set the disk total and the worst crowd. Measured 2026-11-04 from the shipped
+files, using each frame's declared box. Stream counts assume 5 directions per entry in the UOP files.
+
+| | Classic MUL | Classic UOP | Enhanced |
+|---|---:|---:|---:|
+| Frames | 526,895 | 469,725 | 1,572,711 |
+| Median width × height | 18 × 21 | 73 × 20 | 24 × 27 |
+| Median frame area, px | 391 | 1406 | 680 |
+| Frames that fit 128 × 64 | 88.9 % | 85.0 % | 81.3 % |
+| Pixels in those frames | 26.9 % | 31.2 % | 19.1 % |
+| Streams per (action, direction) | 92,108 | 39,615 | 152,529 |
+| Median frames per stream | 5 | 10 | 10 |
+| Median stream area, px | 2336 | 17,408 | 7563 |
+| Streams up to 4096 px | 66.4 % | 7.7 % | 33.5 % |
+| Pixels in those streams | 9.4 % | 0.4 % | 2.0 % |
+
 ## 3. Desires
 
 Wanted but not required, in the order the user raised them.
@@ -182,7 +201,7 @@ to the needs: some of these may still be useful elsewhere.
 | Attempt | Result | Why it failed |
 |---|---|---|
 | 8×8 block copy from the previous frame | 0.5 % larger | Exact shifts are rare: 3 % of blocks (Classic), under 1 % (Enhanced). |
-| Pixel difference from the previous frame | 14–55 % larger | Palettes differ per frame, and limbs move, so differences are noisy. |
+| Pixel difference from the previous frame | 14–55 % larger | Limbs move, so differences are noisy. Palettes aren't the cause: Enhanced has one per action and still gets larger. |
 | Exact reference frames, including mirrors | Only 17–21 % of pixels match under the best reference | Not enough to pay for signalling it. |
 | Stand action as the reference for other actions | About −1.5 % against per-(action, direction), no better than plain per-action | Poses differ too much. |
 | Frame order by direction | Classic −0.8 %, Enhanced +1.1 % | |
@@ -251,7 +270,7 @@ SSIMULACRA2 is median / minimum unless stated.
 
 Stored vectors are the only workable rebuild, and they tear on limbs and tails. They score 39.6 on large frames and 57
 on die actions. Idle holds up, scoring 91 even with a plain hold. The action labels are still assumptions. The user
-hasn't given a verdict yet; the contact sheets are in `uodynamapper-scratch/anim-codec/halved/`.
+decided on 2026-11-04 to keep all frames.
 
 ### Load and GPU ideas
 
@@ -311,6 +330,20 @@ reference.
 6. **AV1 4:4:4, lossy:** CRF 30 gives 0.57–0.68× BC7 at SSIMULACRA2 84–86, but under 2 % of pixels keep their colour and no
    hue-flagged pixel stays exact. It needs RGBA8 VRAM or a requantise step, and would miss the line at an estimated
    851 / 985 ms on the uniform crowd.
+
+**Outside proposals checked against this data (2026-11-04):**
+
+| Proposal | What the data says | Status |
+|---|---|---|
+| Concatenate each (action, direction) as one indexed stream, whole-frame reuse only, no block modes | This is the recommendation | Agreed |
+| Whole-body streams for Classic | Smallest, but the largest takes 204 ms, against 11 ms for the largest action stream; fails the uniform crowd except with LZ4 HC | Rejected |
+| A coding profile per stream, for tiny and for large or upscaled art | Costs one id byte; fits the size table in section 2 | Agreed; to measure per size bucket |
+| Canonical body palette plus temporal index deltas | The premise of per-frame palette noise is wrong. A master palette gives −2 %, and differences get larger | Rejected for deltas |
+| Dirty rectangles against the previous frame | Static pixels are only 4–5 % of index bits outside idle, about 20 % in idle, which caps the saving | Rejected |
+| Static palette sort at no runtime cost | Sorting alone does nothing for LZ. The gain comes from the residual step, whose decode is what costs | Partly right; see below |
+| Shape and fill as separate planes | Enhanced already splits them; shape coding is about 5 % of its total | To time with a table-driven coder |
+| Cross-action dictionary of 4 × 4 patches | Nothing to gain across bodies; 8 × 8 exact copies are rare. 4 × 4 is untested | To close with a bound |
+| Scanline RLE plus FSE, no LZ, "at memory bandwidth" | Not measured. zstd's history isn't its bottleneck: it's the fastest entropy path measured here | To close with one row |
 
 **Still not measured:** GPU upload, disk reads, a crowd weighted by how often actions are really played, and a table-driven
 coder for the coverage plane. The `timing` pass failed on memory twice and wasn't retried; `s1` and `s2` time the same
@@ -380,7 +413,7 @@ the install being converted, never from a fixed list of official bodies. Whether
 ## 8. Decisions
 
 **Made by the user:** decode speed outranks size. Runtime BC7 is off for now. Upscale before conversion. Format is free
-to change, with no backward compatibility. Official art may use restricted colour; custom art needs 32 bits.
+to change, with no backward compatibility. All frames are kept: no halved tier. Official art may use restricted colour; custom art needs 32 bits.
 
 The user set the line: 300 new actions drawable in about 250 ms on 4 threads is fast enough, and faster is better.
 
@@ -391,6 +424,5 @@ The user set the line: 300 new actions drawable in about 250 ms on 4 threads is 
 | Storage per client | Indexed slot planes, lossless, zstd 19, hue in the shader; LZ4 HC is the alternative at about 22 % more disk | The user |
 | Load unit | One stream per (action, direction), faced direction first | The user |
 | Whether any lossy tier is acceptable, and where the quality floor sits | None by default; 80 suggested as a floor | Contact sheets; the user's eye |
-| Halved frames: pursue with a better interpolator, or drop | Keep all frames | Contact sheets |
 | Runtime interpolation for high frame rates | A separate study | The full frame set |
 | Whether to offer an opt-in flag for unreached art | Keep all | Section 7's trace |

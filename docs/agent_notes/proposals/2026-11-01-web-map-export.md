@@ -635,6 +635,26 @@ The probe also writes a table per crop and setting to `out/per_crop.tsv`.
   - JXL e1 encodes fastest (4.8 ms) but is 69 % larger than WebP lossless.
   - Every lossless output matched its source exactly.
 
+**AVIF and WebP in one process (2026-11-04).** The AVIF timings above include starting the process and writing a PNG,
+so they overstate its cost, its decode most of all. These come from Pillow 13 with libavif 1.4.2 and libwebp 1.6.0, on one
+thread, per 512² tile, averaged over the 11 crops, encode best of 3 and decode best of 7. CPU state: boost off, EPP
+`balance_power`, with one other job running on another core. File sizes match the table above exactly where the setting
+is the same. Pillow doesn't expose sharp YUV, so the WebP lossy rows leave it out, which makes their encode faster than
+the tool's; it doesn't affect decoding.
+
+| Setting | Total KB | Encode ms | Decode ms |
+| --- | ---: | ---: | ---: |
+| WebP q85 m4, no sharp YUV | 663 | 47.8 | 8.3 |
+| WebP q95 m4, no sharp YUV | 1162 | 58.4 | 11.9 |
+| WebP lossless m4 | 2708 | 263.6 | 7.8 |
+| AVIF 4:4:4 s6 q70 | 568 | 301.5 | 10.9 |
+| AVIF 4:4:4 s6 q90 | 1143 | 473.4 | 17.4 |
+| AVIF 4:4:4 s8 q90 | 1168 | 162.9 | 16.9 |
+| AVIF 4:4:4 s4 q90 | 1176 | 3108.5 | 18.1 |
+
+So AVIF decodes 1.3–2.1× slower than WebP, not the 15× the CLI figures suggested. Speed 8 encodes 2.9× faster than speed
+6 for 2 % more bytes; its quality hasn't been scored.
+
 **Disk for Britannia**, scaled from the 6–9 GB estimate for q85 by the bpp ratio:
 
 | Format | Disk |
