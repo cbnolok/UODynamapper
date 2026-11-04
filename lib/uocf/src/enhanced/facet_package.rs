@@ -24,6 +24,7 @@ use crate::enhanced::facet_sector::{
 use crate::uop_container::file::CompressionFlag;
 use crate::uop_container::hash::hash_file_name_single;
 use crate::uop_container::package::{NewEntryCompression, UopPackage};
+use crate::utils::output_file::write_through_temp;
 
 crate::eyre_imports!();
 
@@ -364,12 +365,12 @@ impl EcFacetPackage {
         self.sectors.retain(|sector, _| dirty.contains(sector));
     }
 
-    /// Flushes the edits and saves the package to `path`, keeping the layout of the file it was loaded from.
+    /// Flushes the edits and saves the package to `path`, keeping the layout of the file it was loaded from, through
+    /// a temporary file: a failed save leaves an existing one as it was.
     pub fn save(&mut self, path: impl AsRef<Path>) -> eyre::Result<()> {
         let path = path.as_ref();
         self.flush()?;
-        self.package.finalize_and_save(path).wrap_err_with(|| format!("save {}", path.display()))?;
-        Ok(())
+        write_through_temp(path, |temp| self.package.finalize_and_save(temp).wrap_err_with(|| format!("save {}", path.display())))
     }
 
     fn check_sector(&self, sector: &DecodedEcFacet, id: u32) -> eyre::Result<()> {
@@ -437,10 +438,24 @@ fn check_sector_ids_fit(geometry: &FacetGeometry) -> eyre::Result<()> {
 mod tests {
     use super::*;
     use crate::enhanced::facet_sector::empty_ec_sector;
+    use crate::utils::output_file::block_temp_file;
 
     const FACET: u8 = 3;
     const WIDTH: u32 = 128;
     const HEIGHT: u32 = 100;
+
+    #[test]
+    fn a_failed_save_leaves_the_existing_file() {
+        const EXISTING: &[u8] = b"existing";
+        let dir = std::env::temp_dir().join(format!("uocf_facet_failed_save_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("facet3.uop");
+        std::fs::write(&path, EXISTING).unwrap();
+        block_temp_file(&path);
+        assert!(small_facet().save(&path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), EXISTING);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     /// A 128x100 facet (2x2 sectors, the bottom row partial) with land id `x + y` and z `x - y` on the map and
     /// the shipped delimiters.

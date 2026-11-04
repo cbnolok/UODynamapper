@@ -27,6 +27,7 @@ use crate::classic::map::{
 use crate::uop_container::file::CompressionFlag;
 use crate::uop_container::hash::hash_file_name_single;
 use crate::uop_container::package::{FileReplacement, NewEntryCompression, SaveLayout, UopPackage};
+use crate::utils::output_file::write_through_temp;
 
 crate::eyre_imports!();
 
@@ -249,9 +250,10 @@ impl ClassicMapBlocks {
         out
     }
 
-    /// Writes `mapN.mul` (or `mapNx.mul`).
+    /// Writes `mapN.mul` (or `mapNx.mul`), through a temporary file: a failed write leaves an existing one as it was.
     pub fn write_mul(&self, path: &Path) -> eyre::Result<()> {
-        std::fs::write(path, self.to_mul_bytes()).wrap_err_with(|| format!("write {}", path.display()))
+        let bytes = self.to_mul_bytes();
+        write_through_temp(path, |temp| std::fs::write(temp, &bytes).wrap_err_with(|| format!("write {}", path.display())))
     }
 
     /// The payloads of the `mapNLegacyMUL.uop` entries, in entry order, with the trailing block.
@@ -310,9 +312,9 @@ impl ClassicMapBlocks {
             }
             report.removed += 1;
         }
-        package
-            .finalize_and_save_with_layout(path, layout)
-            .wrap_err_with(|| format!("write {}", path.display()))?;
+        write_through_temp(path, |temp| {
+            package.finalize_and_save_with_layout(temp, layout).wrap_err_with(|| format!("write {}", path.display()))
+        })?;
         Ok(report)
     }
 
@@ -371,8 +373,28 @@ pub(crate) fn size_in_blocks(size: MapSizeCells) -> eyre::Result<MapSizeBlocks> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::output_file::block_temp_file;
 
     const SMALL: MapSizeCells = MapSizeCells { width: 16, height: 24 };
+
+    #[test]
+    fn a_failed_write_leaves_the_existing_files() {
+        const EXISTING: &[u8] = b"existing";
+        let dir = std::env::temp_dir().join(format!("uocf_map_failed_write_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (mul, uop) = (dir.join("map0.mul"), dir.join("map0LegacyMUL.uop"));
+        for path in [&mul, &uop] {
+            std::fs::write(path, EXISTING).unwrap();
+            block_temp_file(path);
+        }
+        let map = numbered(SMALL);
+        assert!(map.write_mul(&mul).is_err());
+        assert!(map.write_uop(&uop, 0, None).is_err());
+        for path in [&mul, &uop] {
+            assert_eq!(std::fs::read(path).unwrap(), EXISTING, "{}", path.display());
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     fn numbered(size: MapSizeCells) -> ClassicMapBlocks {
         let mut map = ClassicMapBlocks::new(size).unwrap();

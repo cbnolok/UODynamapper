@@ -28,6 +28,7 @@ use uocf::kr::facet::kr_land_map::KrLandMap;
 use uocf::map_edition::MapEdition;
 use uocf::uop_container::hash::hash_file_name_single;
 use uocf::uop_container::package::UopPackage;
+use uocf::utils::output_file::write_through_temp;
 use uocf::utils::path::find_file_ignoring_case;
 
 /// The map containers a Classic source folder is searched for, in order.
@@ -440,7 +441,9 @@ fn write_classic(world: &ClassicWorld, request: &ConvertRequest, template: Optio
 }
 
 fn copy_as_it_is(source: &Path, output: &Path, notes: &mut Vec<String>) -> eyre::Result<()> {
-    std::fs::copy(source, output).wrap_err_with(|| format!("copy {} to {}", source.display(), output.display()))?;
+    write_through_temp(output, |temp| {
+        std::fs::copy(source, temp).map(|_| ()).wrap_err_with(|| format!("copy {} to {}", source.display(), output.display()))
+    })?;
     notes.push(format!("Wrote {}: the source file as it is.", output.display()));
     Ok(())
 }

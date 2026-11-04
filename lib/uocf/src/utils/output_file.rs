@@ -58,6 +58,13 @@ pub fn write_through_temp<T>(output: &Path, write: impl FnOnce(&Path) -> eyre::R
     result
 }
 
+/// Makes the next [`write_through_temp`] of `output` fail before it replaces anything, as a full disk does: a folder
+/// stands where its temporary file goes.
+#[cfg(test)]
+pub(crate) fn block_temp_file(output: &Path) {
+    std::fs::create_dir_all(temp_path(output).unwrap()).unwrap();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

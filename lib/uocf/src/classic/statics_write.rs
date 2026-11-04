@@ -25,6 +25,7 @@ use std::path::Path;
 use crate::classic::map::{MapBlock, MapSizeBlocks, MapSizeCells};
 use crate::classic::map_write::size_in_blocks;
 use crate::classic::statics::StaticTile;
+use crate::utils::output_file::write_through_temp;
 
 crate::eyre_imports!();
 
@@ -279,12 +280,15 @@ impl ClassicStaticsBlocks {
         (index, data)
     }
 
-    /// Writes `staidxN.mul` and `staticsN.mul` (or their `x` editions).
+    /// Writes `staidxN.mul` and `staticsN.mul` (or their `x` editions), each through a temporary file. Both are
+    /// written before either replaces anything, so a failed write leaves both existing files as they were.
     pub fn write_mul(&self, index_path: &Path, data_path: &Path) -> eyre::Result<()> {
         let (index, data) = self.to_mul_bytes();
         u32::try_from(data.len()).map_err(|_| eyre!("{} bytes of statics do not fit u32 lookups", data.len()))?;
-        std::fs::write(index_path, index).wrap_err_with(|| format!("write {}", index_path.display()))?;
-        std::fs::write(data_path, data).wrap_err_with(|| format!("write {}", data_path.display()))
+        write_through_temp(index_path, |index_temp| {
+            std::fs::write(index_temp, &index).wrap_err_with(|| format!("write {}", index_path.display()))?;
+            write_through_temp(data_path, |data_temp| std::fs::write(data_temp, &data).wrap_err_with(|| format!("write {}", data_path.display())))
+        })
     }
 
     /// Bakes static difs into the blocks: `lookup` is `stadiflN.mul` (u32 block ids), `index` is `stadifiN.mul`
@@ -320,8 +324,29 @@ impl ClassicStaticsBlocks {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::output_file::block_temp_file;
 
     const SIZE: MapSizeCells = MapSizeCells { width: 16, height: 16 };
+
+    #[test]
+    fn a_failed_write_leaves_both_existing_files() {
+        const EXISTING: &[u8] = b"existing";
+        /// The two files and the folder that blocks the temporary one.
+        const FOLDER_ENTRIES: usize = 3;
+        let dir = std::env::temp_dir().join(format!("uocf_statics_failed_write_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (index, data) = (dir.join("staidx0.mul"), dir.join("statics0.mul"));
+        for path in [&index, &data] {
+            std::fs::write(path, EXISTING).unwrap();
+        }
+        block_temp_file(&data);
+        assert!(ClassicStaticsBlocks::new(SIZE).unwrap().write_mul(&index, &data).is_err());
+        for path in [&index, &data] {
+            assert_eq!(std::fs::read(path).unwrap(), EXISTING, "{}", path.display());
+        }
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), FOLDER_ENTRIES, "no temporary index left behind");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn statics_write_in_the_modern_layout_and_read_back() {

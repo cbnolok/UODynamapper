@@ -38,6 +38,7 @@ use crate::enhanced::facet_package::EcFacetPackage;
 use crate::enhanced::facet_sector::{FacetGeometry, SECTOR_SIDE};
 use crate::map_edition::MapEdition;
 use crate::utils::color::Rgb555;
+use crate::utils::output_file::write_through_temp;
 
 crate::eyre_imports!();
 
@@ -386,7 +387,8 @@ impl FacetRadarDds {
     }
 
     pub fn save(&self, path: &Path) -> eyre::Result<()> {
-        std::fs::write(path, self.to_bytes()).wrap_err_with(|| format!("write {}", path.display()))
+        let bytes = self.to_bytes();
+        write_through_temp(path, |temp| std::fs::write(temp, &bytes).wrap_err_with(|| format!("write {}", path.display())))
     }
 
     /// DXT1-encodes a row-major RGB8 image with the full mip chain.
@@ -653,6 +655,22 @@ fn bc1_index(block: &[u8], x: u32, y: u32) -> usize {
 mod tests {
     use super::*;
     use crate::enhanced::facet_sector::{empty_ec_sector, expected_delimiters};
+    use crate::utils::output_file::block_temp_file;
+
+    #[test]
+    fn a_failed_save_leaves_the_existing_file() {
+        const EXISTING: &[u8] = b"existing";
+        const SIDE: u32 = 4;
+        let dir = std::env::temp_dir().join(format!("uocf_radar_failed_save_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("facet00.dds");
+        std::fs::write(&path, EXISTING).unwrap();
+        block_temp_file(&path);
+        let rgb = vec![0; (SIDE * SIDE) as usize * RGB_CHANNELS];
+        assert!(FacetRadarDds::encode_rgb8(SIDE, SIDE, &rgb).unwrap().save(&path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), EXISTING);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     const FACET: u8 = 2;
     const WIDTH: u32 = 136;
