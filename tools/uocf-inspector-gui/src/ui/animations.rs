@@ -277,7 +277,11 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
                                     }
                                 }
                                 app.last_frame_time = time;
-                                ctx.request_repaint();
+                            }
+                            // egui draws only on input: wake up for the next frame while playing.
+                            if app.is_playing {
+                                let wait = (app.last_frame_time + frame_delay - time).max(0.0);
+                                ctx.request_repaint_after(Duration::from_secs_f64(wait));
                             }
                         }
 
