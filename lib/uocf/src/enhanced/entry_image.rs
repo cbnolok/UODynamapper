@@ -2,7 +2,8 @@
 //! through the entry editor's checks: a `gumpartLegacyMUL.uop` entry becomes a Classic gump encoded as the shipped
 //! ones ([`crate::classic::gump_write`]), an `artLegacyMUL.uop` entry a Classic land tile or static, by the art id
 //! its name hashes from ([`crate::classic::art_write`]), a TGA entry a TGA written as the entry is
-//! ([`crate::enhanced::tga_writer`]: its type, depth, RLE packing and ending).
+//! ([`crate::enhanced::tga_writer`]: its type, depth, RLE packing and ending), a DDS entry a DDS written as the entry
+//! is ([`crate::enhanced::dds_writer`]: its pixel format, header and mip rule).
 //!
 //! The entry's format comes from its package, its hash and its current payload ([`entry_image_format`]); an image
 //! of another size than the entry is refused unless the caller allows it (gump and button layouts assume the
@@ -15,7 +16,7 @@ use crate::audio::validate::FormatPolicy;
 use crate::classic::art::LAND_DIMENSION;
 use crate::classic::art_write::{ArtColors, ArtKind, art_id_of_uop_hash};
 use crate::classic::gump_write::{GumpColors, RgbaConversion};
-use crate::enhanced::dds_writer::SizeChange;
+use crate::enhanced::dds_writer::{encode_dds, DdsDescription, DdsHeaderConvention, SizeChange, SHIPPED_MIP_FILTER};
 use crate::enhanced::entry_edit::{package_key, EntryEdit, EntryTarget, UopEntryEditor};
 use crate::enhanced::image_census::{classify_content, ContentFormat};
 use crate::enhanced::tga_writer::{self, TgaConvention};
@@ -40,6 +41,8 @@ pub enum EntryImageFormat {
     ClassicArt { art_id: u32, kind: ArtKind, size: Option<(u16, u16)> },
     /// A TGA written as the current entry is.
     Tga(TgaConvention),
+    /// A DDS of this size written as the current entry is.
+    Dds { convention: DdsHeaderConvention, width: u32, height: u32 },
 }
 
 impl EntryImageFormat {
@@ -49,6 +52,7 @@ impl EntryImageFormat {
             Self::ClassicArt { art_id, kind: ArtKind::Land, .. } => format!("Classic land tile {art_id:#06x}"),
             Self::ClassicArt { art_id, kind: ArtKind::Static, .. } => format!("Classic static {art_id:#06x}"),
             Self::Tga(convention) => convention.label(),
+            Self::Dds { convention, .. } => format!("DDS {}", convention.format().label()),
         }
     }
 
@@ -58,6 +62,7 @@ impl EntryImageFormat {
             Self::ClassicGump(size) | Self::ClassicArt { size, .. } => size.map(|(width, height)| (u32::from(width), u32::from(height))),
             Self::Tga(convention) if convention.width() == 0 || convention.height() == 0 => None,
             Self::Tga(convention) => Some((u32::from(convention.width()), u32::from(convention.height()))),
+            Self::Dds { width, height, .. } => Some((*width, *height)),
         }
     }
 }
@@ -90,6 +95,11 @@ pub fn entry_image_format(package_key: &str, hash: u64, current: &[u8]) -> Optio
         }
         return GumpColors::decode_uop(current).ok().map(|gump| EntryImageFormat::ClassicGump(Some((gump.width, gump.height))));
     }
+    if let Ok(description) = DdsDescription::parse(current) {
+        let convention = DdsHeaderConvention::of_header(&description).ok()?;
+        let (width, height) = (description.width(), description.height());
+        return convention.format().is_supported().then_some(EntryImageFormat::Dds { convention, width, height });
+    }
     let convention = TgaConvention::of(current).ok()?;
     let is_tga = matches!(classify_content(current).format, ContentFormat::Tga | ContentFormat::TgaTrailing);
     // The 0x0 placeholders, a header alone, classify as binary.
@@ -116,6 +126,7 @@ pub fn encode_entry_image(format: EntryImageFormat, image: &RgbaImage, size_chan
             }
             convention.encode_rgba(image)?
         }
+        EntryImageFormat::Dds { convention, .. } => encode_dds(convention, image, SHIPPED_MIP_FILTER)?,
         EntryImageFormat::ClassicGump(_) => {
             let (gump, conversion) = GumpColors::from_rgba(image.width(), image.height(), image.as_raw())?;
             push_conversion_notes(&mut notes, conversion);
@@ -150,7 +161,7 @@ impl UopEntryEditor {
     /// checks a file.
     pub fn replace_image(&mut self, target: &EntryTarget, image: &RgbaImage, size_change: SizeChange) -> eyre::Result<(EntryImage, EntryEdit)> {
         let format = self.image_format(target)?.ok_or_else(|| {
-            eyre!("{}: the entry {} is no image format uocf converts to (Classic gumps and art, TGA)", self.source().display(), target.label())
+            eyre!("{}: the entry {} is no image format uocf converts to (Classic gumps and art, TGA, DDS)", self.source().display(), target.label())
         })?;
         let label = format.label();
         let converted = encode_entry_image(format, image, size_change).wrap_err_with(|| format!("{}: {label}", target.label()))?;
@@ -162,6 +173,7 @@ impl UopEntryEditor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::enhanced::dds_writer::{decode_dds_levels, DdsHeaderStyle, DdsTextureFormat};
     use crate::enhanced::entry_edit::EntryCheck;
     use crate::uop_container::file::CompressionFlag;
     use crate::uop_container::package::{NewEntryCompression, UopPackage};
@@ -267,6 +279,37 @@ mod tests {
         assert!(editor.replace_image(&target, &RgbaImage::new(3, 1), SizeChange::Refuse).is_err());
         let (converted, _) = editor.replace_image(&EntryTarget::Name(EMPTY.to_owned()), &image, SizeChange::Refuse).unwrap();
         assert_eq!(crate::enhanced::textures::decode_tga_rgba8(&converted.bytes).unwrap(), image);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn replaces_a_dds_with_an_image_in_its_format_and_mip_rule() {
+        const NAME: &str = "data/interface/default/icons/actions/a.dds";
+        const SIDE: u32 = 8;
+        const FULL_CHAIN_LEVELS: u32 = 4;
+        let image = RgbaImage::from_pixel(SIDE, SIDE, image::Rgba([40, 80, 120, 255]));
+        let convention = DdsHeaderStyle::Mipmapped.convention(DdsTextureFormat::A8R8G8B8).unwrap();
+        let current = encode_dds(&convention, &image, SHIPPED_MIP_FILTER).unwrap();
+        let dir = std::env::temp_dir().join(format!("uocf_entry_image_dds_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut package = UopPackage::new_default();
+        package.add_entry_by_name(NAME, &current, NewEntryCompression::Flag(CompressionFlag::None)).unwrap();
+        let path = dir.join("Interface.uop");
+        package.finalize_and_save(&path).unwrap();
+
+        let mut editor = UopEntryEditor::load(&path).unwrap();
+        let target = EntryTarget::Name(NAME.to_owned());
+        let format = editor.image_format(&target).unwrap().unwrap();
+        assert_eq!(format.size(), Some((SIDE, SIDE)));
+        let (unchanged, _) = editor.replace_image(&target, &image, SizeChange::Refuse).unwrap();
+        assert_eq!(unchanged.bytes, current, "the same image encodes to the same bytes");
+
+        let other = RgbaImage::from_pixel(SIDE, SIDE, image::Rgba([200, 10, 30, 255]));
+        let (converted, _) = editor.replace_image(&target, &other, SizeChange::Refuse).unwrap();
+        let (description, levels) = decode_dds_levels(&converted.bytes).unwrap();
+        assert_eq!((description.format, description.mip_count), (DdsTextureFormat::A8R8G8B8, FULL_CHAIN_LEVELS));
+        assert_eq!(levels[0], other);
+        assert!(editor.replace_image(&target, &RgbaImage::new(SIDE * 2, SIDE), SizeChange::Refuse).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
