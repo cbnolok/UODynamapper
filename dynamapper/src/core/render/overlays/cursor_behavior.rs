@@ -33,6 +33,11 @@ use uocf::classic::map::{MapCell, MapCellCoords};
 const FONT_SIZE: f32 = 13.0;
 const CLASSIC_STATIC_ART_ID_OFFSET: u16 = 0x4000;
 const HOVERED_STATIC_HIGHLIGHT_Y_LIFT: f32 = 0.01;
+// The inspector stays a compact panel in the corner: long values wrap inside this width.
+const CURSOR_INSPECT_MAX_WIDTH_PX: f32 = 400.0;
+const CURSOR_INSPECT_MAX_STATICS: usize = 3;
+const CURSOR_INSPECT_NAME_CHARS: usize = 20;
+const CURSOR_INSPECT_NAME_ELLIPSIS: &str = "..";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CursorMode {
@@ -139,6 +144,7 @@ pub fn setup_overlay_cursor_behavior(
                 align_items: AlignItems::Start,
                 justify_content: JustifyContent::Start,
                 padding: UiRect::all(Val::Px(7.0 * settings.app.window.cursor_position_scale)),
+                max_width: Val::Px(CURSOR_INSPECT_MAX_WIDTH_PX * settings.app.window.cursor_position_scale),
                 display: if settings.app.performance.cursor_inspect_overlay_visible() {
                     Display::Flex
                 } else {
@@ -187,7 +193,7 @@ pub fn setup_overlay_cursor_behavior(
                 ))
                 .with_children(|builder| {
                     builder.spawn((
-                        Text::new("Hovered tiles:\n[disabled]"),
+                        Text::new("Cell: [disabled]"),
                         TextFont {
                             font: font.clone().into(),
                             font_size: (FONT_SIZE * scale).into(),
@@ -460,7 +466,7 @@ fn build_cursor_inspect_label(
     tilemeta_res: Option<&TileMetaPackageRes>,
 ) -> String {
     let Some(map_id) = cursor_map_id(player, settings) else {
-        return "Hovered tiles:\n[NA]".to_string();
+        return "Cell: [NA]".to_string();
     };
 
     let hovered_object_line = describe_hovered_object(
@@ -475,16 +481,13 @@ fn build_cursor_inspect_label(
         map_id,
     );
     let Some(hit) = terrain.hit.filter(|hit| hit.logical.m == map_id) else {
-        return format!("Hovered tiles:\ncell=[no terrain surface] map={}\n{}", map_id, hovered_object_line);
+        return format!("Cell: no terrain, map {}\n{}", map_id, hovered_object_line);
     };
     let (cursor_x, cursor_y) = (hit.logical.x, hit.logical.y);
     let land_line = describe_land_tile(map_planes_r, tilemeta_res, map_id, cursor_x, cursor_y);
     let statics_line = describe_static_tiles(
         picking,
         statics_res,
-        tex_art_cc_res,
-        tex_art_ec_res,
-        tex_land_ec_res,
         tilemeta_res,
         map_id,
         cursor_x,
@@ -492,7 +495,7 @@ fn build_cursor_inspect_label(
     );
 
     format!(
-        "Hovered tiles:\ncell=[{}, {}] map={} art_source={:?}\n{}\n{}\n{}",
+        "Cell: {},{} map {} art {:?}\n{}\n{}\n{}",
         cursor_x,
         cursor_y,
         map_id,
@@ -591,10 +594,10 @@ fn describe_hovered_object(
     map_id: u8,
 ) -> String {
     let Some(cursor_pos) = cursor_pos else {
-        return "hovered_object: [no cursor]".to_string();
+        return "Object: [no cursor]".to_string();
     };
     let Some((camera, camera_tf)) = camera else {
-        return "hovered_object: [no camera]".to_string();
+        return "Object: [no camera]".to_string();
     };
 
     let Some(best_match) = find_hovered_static_object(
@@ -606,23 +609,27 @@ fn describe_hovered_object(
         tilemeta_res,
         map_id,
     ) else {
-        return "hovered_object: none".to_string();
+        return "Object: none".to_string();
     };
 
+    let kind = match best_match.kind {
+        HoveredObjectKind::Sprite => "sprite",
+        HoveredObjectKind::Ground => "ground",
+    };
     format!(
-        "hovered_object: xy=[{}, {}] {}",
+        "Object: {}\n  at {},{} {}\n  {}",
+        describe_static_tile_line(tilemeta_res, best_match.tile, Some(best_match.route), picking.art_source()),
         best_match.global_x,
         best_match.global_y,
-        describe_static_tile_details(
+        kind,
+        describe_static_tile_sources(
             tex_art_cc_res,
             tex_art_ec_res,
             tex_land_ec_res,
             tilemeta_res,
             best_match.tile,
-            Some(best_match.kind),
             Some(best_match.route),
-            picking.art_source(),
-        )
+        ),
     )
 }
 
@@ -691,7 +698,7 @@ fn describe_land_tile(
         .get(map_id as usize)
         .and_then(|opt| opt.as_ref())
     else {
-        return "land: [missing map plane]".to_string();
+        return "Land: [missing map plane]".to_string();
     };
 
     let cell = MapCellCoords {
@@ -700,11 +707,11 @@ fn describe_land_tile(
     };
     let block_pos = MapCell::coords_of_parent_block(&cell);
     let Some(block) = plane.block_no_update(block_pos) else {
-        return "land: [uncached block]".to_string();
+        return "Land: [uncached block]".to_string();
     };
     let rel = MapCell::coords_in_block(&cell);
     let Ok(cell) = block.cell(rel.x, rel.y) else {
-        return "land: [invalid cell]".to_string();
+        return "Land: [invalid cell]".to_string();
     };
 
     let meta = tilemeta_res.and_then(|meta| meta.0.land_tile(cell.id as u32));
@@ -716,18 +723,12 @@ fn describe_land_tile(
         .map(|tile| tile.texture_id.to_string())
         .unwrap_or_else(|| "?".to_string());
 
-    format!(
-        "land: id={} z={} tex={} name={}",
-        cell.id, cell.z, texture_id, name
-    )
+    format!("Land: {} z{} tex {} {}", cell.id, cell.z, texture_id, shorten_tile_name(name))
 }
 
 fn describe_static_tiles(
     picking: &mut StaticPickingResources,
     statics_res: &StaticsStoreRes,
-    tex_art_cc_res: Option<&TexArtCcPackageRes>,
-    tex_art_ec_res: Option<&TexArtEcPackageRes>,
-    tex_land_ec_res: Option<&TexLandEcPackageRes>,
     tilemeta_res: Option<&TileMetaPackageRes>,
     map_id: u8,
     x: u16,
@@ -738,7 +739,7 @@ fn describe_static_tiles(
         .get(map_id as usize)
         .and_then(|opt| opt.as_ref())
     else {
-        return "statics: [missing store]".to_string();
+        return "Statics: [missing store]".to_string();
     };
 
     let mut store = store.lock();
@@ -747,7 +748,7 @@ fn describe_static_tiles(
     let local_x = (x & 0x07) as u8;
     let local_y = (y & 0x07) as u8;
     let Ok(block_tiles) = store.block_tiles(block_x, block_y) else {
-        return "statics: [read error]".to_string();
+        return "Statics: [read error]".to_string();
     };
 
     let mut matches = block_tiles
@@ -757,148 +758,135 @@ fn describe_static_tiles(
         .collect::<Vec<_>>();
 
     if matches.is_empty() {
-        return "statics: none".to_string();
+        return "Statics: none".to_string();
     }
 
     matches.sort_unstable_by_key(|tile| std::cmp::Reverse(tile.z));
 
     let summary = matches
         .iter()
-        .take(3)
+        .take(CURSOR_INSPECT_MAX_STATICS)
         .map(|tile| {
-            describe_static_tile_details(
-                tex_art_cc_res,
-                tex_art_ec_res,
-                tex_land_ec_res,
-                tilemeta_res,
-                *tile,
-                None,
-                picking.resolve(tile.graphic, f32::from(x), f32::from(y), tile.z).map(|geometry| geometry.route),
-                picking.art_source(),
-            )
+            let route = picking.resolve(tile.graphic, f32::from(x), f32::from(y), tile.z).map(|geometry| geometry.route);
+            format!("  {}", describe_static_tile_line(tilemeta_res, *tile, route, picking.art_source()))
         })
         .collect::<Vec<_>>()
         .join("\n");
 
-    if matches.len() > 3 {
-        format!("statics: count={} top=\n{}\n...", matches.len(), summary)
+    let hidden = matches.len().saturating_sub(CURSOR_INSPECT_MAX_STATICS);
+    if hidden > 0 {
+        format!("Statics: {}\n{}\n  +{} more", matches.len(), summary, hidden)
     } else {
-        format!("statics: count={}\n{}", matches.len(), summary)
+        format!("Statics: {}\n{}", matches.len(), summary)
     }
 }
 
-fn describe_static_tile_details(
-    tex_art_cc_res: Option<&TexArtCcPackageRes>,
-    tex_art_ec_res: Option<&TexArtEcPackageRes>,
-    tex_land_ec_res: Option<&TexLandEcPackageRes>,
+/// One line per tile: what it is and how it is drawn.
+fn describe_static_tile_line(
     tilemeta_res: Option<&TileMetaPackageRes>,
     tile: uocf::classic::statics::PackedStaticTile,
-    hovered_kind: Option<HoveredObjectKind>,
     route: Option<StaticArtRoute>,
     art_source: Option<crate::configs::settings::ClientTextureSource>,
 ) -> String {
     let graphic = tile.graphic;
-    let z = tile.z;
-    let hue = tile.hue;
     let meta = tilemeta_res.and_then(|meta| meta.0.item_tile(graphic as u32));
     let name = meta
         .map(|item| item.name_ascii())
         .filter(|name| !name.is_empty())
         .unwrap_or("<unnamed>");
-    let cc_texture_id = meta.map(|item| item.cc_texture_id);
-    let (ec_texture_id, ec_tex_branch) = tilemeta_res
-        .and_then(|meta_package| meta_package.0.main_ec_texture_id_with_branch(graphic as u32))
-        .map(|(id, branch)| (Some(id), branch))
-        .unwrap_or((None, "none"));
     let selected_source = match route {
         Some(StaticArtRoute::CcArt(_)) => Some(crate::configs::settings::ClientTextureSource::Cc),
         _ => art_source,
     };
     let renders_wet = !matches!(route, Some(StaticArtRoute::MissingArt)) &&
         static_tile_renders_wet(meta, tilemeta_res.map(|package| package.0.as_ref()), u32::from(graphic), selected_source);
-    let is_surface_like = static_tile_is_surface_like(meta, renders_wet);
-    let tex_art_cc_id = cc_texture_id.map(|id| id.saturating_add(CLASSIC_STATIC_ART_ID_OFFSET as u32));
-    let cc_slot =
-        tex_art_cc_id.and_then(|art_id| tex_art_cc_res.and_then(|package| package.0.present_slot(art_id)));
-    let tex_art_ec_slot = tex_art_ec_res.and_then(|package| package.0.present_slot(graphic as u32));
-    let tex_land_ec_runtime_slot = match route {
-        Some(StaticArtRoute::EcLand(slot)) => Some(slot),
-        _ => None,
-    };
-    let should_resolve_tex_land_ec_slot = tex_land_ec_runtime_slot.is_some();
-    let tex_land_ec_slot = tex_land_ec_runtime_slot
-        .and_then(|slot_id| tex_land_ec_res.and_then(|package| package.0.present_slot(slot_id)));
-    let tex_land_ec_direct_slot = tex_land_ec_res.and_then(|p| p.0.present_slot(graphic as u32));
-    let live_decision = match route {
-        Some(StaticArtRoute::CcArt(slot)) => format!("cc->art:{}", slot),
-        Some(StaticArtRoute::EcArt(slot)) => format!("ec->art:{}", slot),
-        Some(StaticArtRoute::MissingArt) => "ec->missing.tga".into(),
-        Some(StaticArtRoute::EcLand(slot)) => format!("ec->land:{}", slot),
-        None => "unresolved/not_rendered".to_string(),
-    };
-    let hovered_kind_label = match hovered_kind {
-        Some(HoveredObjectKind::Sprite) => " kind=sprite",
-        Some(HoveredObjectKind::Ground) => " kind=ground",
-        None => "",
-    };
-
-    // Split across several shorter lines instead of one long one: a single-line dump of
-    // every diagnostic field ran off the edge of the screen and was unreadable (this is a
-    // debug/dev overlay, so we keep every field, just wrapped instead of truncated).
-    format!(
-        "  id={} z={} hue={} name={} surf={}\n  cc_tex={} ec_tex={} ec_tex_branch={}\n  cc_slot={} tex_art_ec_slot={}\n  tex_land_ec_slot={} tex_land_ec_direct={}\n  live={}{}",
+    format_static_tile_line(
         graphic,
-        z,
-        hue,
+        tile.z,
+        tile.hue,
         name,
-        is_surface_like,
-        optional_u32(cc_texture_id),
-        optional_u32(ec_texture_id),
-        ec_tex_branch,
-        tex_art_cc_id
-            .map(|id| format!("{}:{}", id, slot_presence(cc_slot.is_some())))
-            .unwrap_or_else(|| "?".to_string()),
-        slot_record_summary_u32(graphic as u32, tex_art_ec_slot.map(|slot| slot.page_index)),
-        if should_resolve_tex_land_ec_slot {
-            tex_land_ec_runtime_slot
-                .map(|runtime_slot| {
-                    format!(
-                        "runtime:{} {}",
-                        runtime_slot,
-                        slot_presence(tex_land_ec_slot.is_some())
-                    )
-                })
-                .unwrap_or_else(|| "unresolved".to_string())
-        } else {
-            "not_checked".to_string()
-        },
-        tex_land_ec_direct_slot
-            .map(|slot| slot_record_summary_u32(graphic as u32, Some(slot.page_index)))
-            .unwrap_or_else(|| "absent".to_string()),
-        live_decision,
-        hovered_kind_label,
+        static_tile_is_surface_like(meta, renders_wet),
+        route,
     )
 }
 
-fn optional_u32(value: Option<u32>) -> String {
-    value
-        .map(|value| value.to_string())
-        .unwrap_or_else(|| "?".to_string())
+fn format_static_tile_line(
+    graphic: u16,
+    z: i8,
+    hue: u16,
+    name: &str,
+    is_surface_like: bool,
+    route: Option<StaticArtRoute>,
+) -> String {
+    let mut line = format!("{} z{} {}", graphic, z, shorten_tile_name(name));
+    if hue != 0 {
+        line.push_str(&format!(" hue {}", hue));
+    }
+    if is_surface_like {
+        line.push_str(" surface");
+    }
+    line.push_str(&format!(": {}", static_route_label(route)));
+    line
 }
 
-fn slot_presence(is_present: bool) -> &'static str {
-    if is_present {
-        "present"
-    } else {
-        "missing"
+fn static_route_label(route: Option<StaticArtRoute>) -> String {
+    match route {
+        Some(StaticArtRoute::CcArt(slot)) => format!("cc art {}", slot),
+        Some(StaticArtRoute::EcArt(slot)) => format!("ec art {}", slot),
+        Some(StaticArtRoute::MissingArt) => "missing art".to_string(),
+        Some(StaticArtRoute::EcLand(slot)) => format!("ec land {}", slot),
+        None => "not drawn".to_string(),
     }
 }
 
-fn slot_record_summary_u32(art_id: u32, page_index: Option<u32>) -> String {
-    match page_index {
-        Some(page_index) => format!("{}:present@p{}", art_id, page_index),
-        None => format!("{}:missing", art_id),
+fn shorten_tile_name(name: &str) -> String {
+    match name.char_indices().nth(CURSOR_INSPECT_NAME_CHARS) {
+        Some((end, _)) => format!("{}{}", &name[..end], CURSOR_INSPECT_NAME_ELLIPSIS),
+        None => name.to_string(),
     }
+}
+
+/// The source textures of the hovered tile, naming only the package slots that are absent.
+fn describe_static_tile_sources(
+    tex_art_cc_res: Option<&TexArtCcPackageRes>,
+    tex_art_ec_res: Option<&TexArtEcPackageRes>,
+    tex_land_ec_res: Option<&TexLandEcPackageRes>,
+    tilemeta_res: Option<&TileMetaPackageRes>,
+    tile: uocf::classic::statics::PackedStaticTile,
+    route: Option<StaticArtRoute>,
+) -> String {
+    let graphic = u32::from(tile.graphic);
+    let cc_texture_id = tilemeta_res
+        .and_then(|meta| meta.0.item_tile(graphic))
+        .map(|item| item.cc_texture_id);
+    let ec_texture = tilemeta_res.and_then(|meta| meta.0.main_ec_texture_id_with_branch(graphic));
+    let cc_art_present = cc_texture_id
+        .map(|id| id.saturating_add(CLASSIC_STATIC_ART_ID_OFFSET as u32))
+        .and_then(|art_id| tex_art_cc_res.and_then(|package| package.0.present_slot(art_id)))
+        .is_some();
+    let ec_art_present = tex_art_ec_res.and_then(|package| package.0.present_slot(graphic)).is_some();
+    let ec_land_present = match route {
+        Some(StaticArtRoute::EcLand(slot)) => tex_land_ec_res.and_then(|package| package.0.present_slot(slot)).is_some(),
+        _ => true,
+    };
+
+    let mut sources = format!("tex cc {}", cc_texture_id.map_or("?".to_string(), |id| id.to_string()));
+    match ec_texture {
+        Some((id, branch)) => sources.push_str(&format!(" ec {} ({})", id, branch)),
+        None => sources.push_str(" ec ?"),
+    }
+    let missing: Vec<&str> = [
+        (cc_art_present, "cc art"),
+        (ec_art_present, "ec art"),
+        (ec_land_present, "ec land"),
+    ]
+    .into_iter()
+    .filter_map(|(present, label)| (!present).then_some(label))
+    .collect();
+    if !missing.is_empty() {
+        sources.push_str(&format!("; no {}", missing.join(", ")));
+    }
+    sources
 }
 
 fn sys_teleport_on_click(
@@ -949,5 +937,34 @@ fn sys_teleport_on_click(
             "Teleported to [{}, {}, {}, {}] via cursor",
             hit.logical.x, hit.logical.y, hit.logical.z, hit.logical.m
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_static_line_names_only_what_applies() {
+        assert_eq!(
+            format_static_tile_line(1826, 7, 0, "stone wall", false, Some(StaticArtRoute::CcArt(18210))),
+            "1826 z7 stone wall: cc art 18210",
+        );
+        assert_eq!(
+            format_static_tile_line(6039, -5, 33, "water", true, Some(StaticArtRoute::EcLand(12))),
+            "6039 z-5 water hue 33 surface: ec land 12",
+        );
+        assert_eq!(format_static_tile_line(1, 0, 0, "x", false, None), "1 z0 x: not drawn");
+    }
+
+    #[test]
+    fn long_names_are_cut_on_a_character_boundary() {
+        let long = "a very long tile name that would overflow";
+        let shortened = shorten_tile_name(long);
+        assert_eq!(shortened.chars().count(), CURSOR_INSPECT_NAME_CHARS + CURSOR_INSPECT_NAME_ELLIPSIS.len());
+        assert!(shortened.ends_with(CURSOR_INSPECT_NAME_ELLIPSIS));
+        assert_eq!(shorten_tile_name("short"), "short");
+        assert_eq!(shorten_tile_name(&"\u{e8}".repeat(CURSOR_INSPECT_NAME_CHARS + 1)).chars().count(),
+            CURSOR_INSPECT_NAME_CHARS + CURSOR_INSPECT_NAME_ELLIPSIS.len());
     }
 }
