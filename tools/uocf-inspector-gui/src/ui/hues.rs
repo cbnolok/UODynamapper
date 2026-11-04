@@ -32,6 +32,11 @@ pub fn ui_hues(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui
             if has_ec_hues {
                 ui.selectable_value(&mut app.hues_source, HuesSource::EcUop, "hues.uop");
             }
+            if has_cc_hues || has_ec_hues {
+                ui.separator();
+                let source = app.hues_source;
+                super::hues_editor::bar(app, ui, source);
+            }
         });
     });
 
@@ -148,6 +153,8 @@ fn ui_cc_hues(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui)
                     ui.label(format!("Start: {}", hue.table_start));
                     ui.label(format!("End: {}", hue.table_end));
 
+                    let hue_id = u32::from(app.selected_hue_id);
+                    super::hues_editor::fields(app, ui, HuesSource::CcMul, hue_id);
                     ui_cc_hue_item_preview(app, ctx, ui);
                 }
             }
@@ -469,6 +476,8 @@ fn ui_ec_hues(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui)
                 ui.monospace(format!("0x{:016X}", FIXED_PALETTE_HASH));
                 ui.end_row();
             });
+
+            super::hues_editor::fields(app, ui, HuesSource::EcUop, u32::from(hue_id));
 
             ui.separator();
             ui.label("Selected hue BMP:");

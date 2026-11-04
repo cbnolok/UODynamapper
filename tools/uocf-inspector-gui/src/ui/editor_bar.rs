@@ -11,6 +11,7 @@ const ERROR_COLOR: egui::Color32 = egui::Color32::from_rgb(230, 90, 90);
 const WARNING_COLOR: egui::Color32 = egui::Color32::from_rgb(230, 180, 60);
 const SAVE_HOVER: &str = "Writes a copy. The loaded file itself is refused as the target.";
 
+pub(super) const MUL_FILTER: (&str, &[&str]) = ("MUL file", &["mul"]);
 pub(super) const UOP_FILTER: (&str, &[&str]) = ("UOP package", &["uop"]);
 
 /// What the user asked of the bar this frame.

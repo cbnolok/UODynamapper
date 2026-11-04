@@ -628,7 +628,7 @@ fn push_bgra(out: &mut Vec<u8>, texel: Rgba) {
 
 #[path = "hues_mul_uop_base.rs"]
 mod base;
-pub use base::{build_hues_uop_entries_on_base, convert_hues_mul_to_uop_on_base, BaseReuse};
+pub use base::{build_hues_uop_entries_on_base, convert_hues_mul_to_uop_on_base, put_edited_hues, BaseReuse};
 
 #[cfg(test)]
 #[path = "hues_mul_uop_tests.rs"]

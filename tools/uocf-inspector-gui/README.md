@@ -17,7 +17,7 @@ UO asset data during development and research.
 | Animated items | One tab with a switch: `AnimationDefinition.uop` (Enhanced Client, Kingdom Reborn) and `animdata.mul` (Classic), with the frames played in the chosen art source and hue. `Edit` changes an `animdata.mul` record and saves a copy. |
 | Gumps | CC or EC gump art (switchable source), and the Enhanced Client's own interface images: the DDS and TGA files of `Interface.uop` outside `gumpart`, by folder, with export and replace. |
 | Multis | Multi-tile structures from CC or EC sources. |
-| Hues | CC `hues.mul` or EC `hues.uop` hue tables (switchable source). |
+| Hues | CC `hues.mul` or EC `hues.uop` hue tables (switchable source). `Edit` changes a hue's colours and name (`hues.mul` also its table start and end) and saves a copy; a saved `Hues.uop` changes only the edited hues, by the chosen ramp (interpolated or flat). `Convert` writes the file on the tab in the other format. |
 | Clilocs | Classic Client `Cliloc.*` and Enhanced Client `LocalizedStrings.uop` localized string tables. |
 | Terrain Definition | EC `TerrainDefinition.uop` material entries and texture references. `Edit TerrainDefinition.uop` opens the same editor as the UOP Explorer: every definition, saved to a copy of the package. |
 | String Dictionary | EC `string_dictionary.uop` string table. `Edit` changes a string or adds one (other files name a string by its index, so none can be removed); it saves a copy of the package. |

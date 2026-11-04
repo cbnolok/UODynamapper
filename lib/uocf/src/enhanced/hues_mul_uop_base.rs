@@ -27,13 +27,18 @@ use std::path::Path;
 use color_eyre::eyre::{self, WrapErr};
 
 use super::{
-    assemble_hues_uop_entries, hue_bitmap_file_path, reduce_hue_color, write_hues_uop,
-    HueParts, HueRampMode, HuesUopEntry, Rgba, COLOR_VALUE_MASK, CSV_LINE_END, RGBA_CHANNELS,
-    TEXELS_PER_HUE_COLOR,
+    assemble_hues_uop_entries, decode_argb32_dds, encode_argb32_dds, encode_hue_bitmap, hue_bitmap_file_path,
+    hue_palette_row, hue_swatch_color, reduce_hue_color, write_hues_uop, HueParts, HueRampMode, HuesMulMetadata,
+    HuesUopEntry, Rgba, COLOR_VALUE_MASK, CSV_LINE_END, HUES_MUL_METADATA_PATH, RGBA_CHANNELS, TEXELS_PER_HUE_COLOR,
 };
 use crate::classic::hues::{HueEntry, HuesMul, HUE_COLOR_COUNT, HUE_NAME_LEN};
-use crate::enhanced::hues::{HUENAMES_PATH, HUE_BITMAP_HEIGHT, HUE_BITMAP_WIDTH, HUE_TABLE_ENTRIES};
+use crate::enhanced::entry_edit::UopEntryEditor;
+use crate::enhanced::hues::{
+    atlas_coord_for_hue, FIXED_PALETTE_HASH, HUENAMES_PATH, HUES_ATLAS_PATH, HUE_BITMAP_HEIGHT, HUE_BITMAP_WIDTH,
+    HUE_TABLE_ENTRIES, MAX_EC_HUES,
+};
 use crate::enhanced::uop_entries::refuse_to_overwrite;
+use crate::uop_container::file::CompressionFlag;
 use crate::uop_container::hash::hash_file_name_single;
 use crate::uop_container::package::{LoadMode, UopPackage};
 
@@ -122,6 +127,93 @@ pub fn convert_hues_mul_to_uop_on_base(
     let (entries, reuse) = build_hues_uop_entries_on_base(&hues, &base)?;
     write_hues_uop(&entries, uop_path, filetime)?;
     Ok(reuse)
+}
+
+/// Writes the hues `edited` of `hues` into the `Hues.uop` of `editor`: when its colours changed a hue's bitmap, atlas row
+/// and swatch by the rules with `mode`, and when its name changed its `huenames.csv` line. Everything else keeps its
+/// bytes, so with nothing edited the package is unchanged. The metadata entry is rewritten only in a package that has
+/// one (EA's do not).
+pub fn put_edited_hues(editor: &mut UopEntryEditor, hues: &HuesMul, edited: &[u32], mode: HueRampMode) -> eyre::Result<()> {
+    if edited.is_empty() {
+        return Ok(());
+    }
+    let unpack = |editor: &UopEntryEditor, hash: u64| {
+        editor.package().unpack_file_by_hash(hash).wrap_err("failed to read an entry of the package")
+    };
+    let atlas_hash = hash_file_name_single(HUES_ATLAS_PATH);
+    let names_hash = hash_file_name_single(HUENAMES_PATH);
+    let metadata_hash = hash_file_name_single(HUES_MUL_METADATA_PATH);
+    let mut atlas = unpack(editor, atlas_hash)?.map(|bytes| decode_argb32_dds(&bytes)).transpose().wrap_err("failed to read the hue atlas")?;
+    let mut swatches = unpack(editor, FIXED_PALETTE_HASH)?.map(|bytes| decode_argb32_dds(&bytes)).transpose().wrap_err("failed to read the swatch texture")?;
+    let mut names = unpack(editor, names_hash)?;
+
+    let mut colors_changed = false;
+    for &id in edited {
+        let hue = hues.hue(id).ok_or_else(|| eyre::eyre!("no hue {id}"))?;
+        if let Some(bytes) = names.as_mut() {
+            *bytes = with_name_line(bytes, hue);
+        }
+        let bitmap_hash = hash_file_name_single(&hue_bitmap_file_path(id));
+        if unpack(editor, bitmap_hash)?.and_then(|bitmap| unedited_parts(hue, bitmap)).is_some() {
+            continue;
+        }
+        colors_changed = true;
+        let table = hue_palette_row(&hue.color_table, mode);
+        let swatch = hue_swatch_color(&hue.color_table);
+        editor.put_unchecked(bitmap_hash, &encode_hue_bitmap(&table, swatch), CompressionFlag::Zlib)?;
+        if let Some((width, _, texels)) = atlas.as_mut() {
+            if let Some(coord) = u16::try_from(id).ok().and_then(atlas_coord_for_hue) {
+                let start = coord.y as usize * *width as usize + coord.x as usize;
+                texels[start..start + HUE_TABLE_ENTRIES].copy_from_slice(&table);
+            }
+        }
+        if let Some((side, _, texels)) = swatches.as_mut().filter(|_| id <= u32::from(MAX_EC_HUES)) {
+            let side = *side as usize;
+            texels[(id as usize % side) * side + id as usize / side] = swatch;
+        }
+    }
+    if colors_changed {
+        if let Some((width, height, texels)) = &atlas {
+            editor.put_unchecked(atlas_hash, &encode_argb32_dds(*width, *height, texels), CompressionFlag::Zlib)?;
+        }
+        if let Some((width, height, texels)) = &swatches {
+            editor.put_unchecked(FIXED_PALETTE_HASH, &encode_argb32_dds(*width, *height, texels), CompressionFlag::Zlib)?;
+        }
+    }
+    if let Some(bytes) = &names {
+        editor.put_unchecked(names_hash, bytes, CompressionFlag::Zlib)?;
+    }
+    if editor.package().get_file_by_hash(metadata_hash).is_some() {
+        editor.put_unchecked(metadata_hash, &HuesMulMetadata::from_hues(hues).encode(), CompressionFlag::Zlib)?;
+    }
+    Ok(())
+}
+
+/// `huenames.csv` with the line of `hue` holding its name; unchanged when the line's name is the same, a line added
+/// at the end when the hue has none. The other lines keep their bytes.
+fn with_name_line(names: &[u8], hue: &HueEntry) -> Vec<u8> {
+    let prefix = format!("{}{}", hue.id, char::from(CSV_FIELD_SEPARATOR)).into_bytes();
+    let mut out = Vec::with_capacity(names.len());
+    let mut found = false;
+    for line in names.split_inclusive(|&byte| byte == LINE_FEED) {
+        if !found && (line.starts_with(&prefix) || line.strip_suffix(CSV_LINE_END).is_some_and(|text| text == format!("{}", hue.id).as_bytes())) {
+            found = true;
+            let body = line.strip_suffix(CSV_LINE_END).or(line.strip_suffix(&[LINE_FEED])).unwrap_or(line);
+            if !name_is_unedited(hue, line_name(body)) {
+                out.extend_from_slice(&prefix);
+                out.extend_from_slice(hue.name_bytes());
+                out.extend_from_slice(&line[body.len()..]);
+                continue;
+            }
+        }
+        out.extend_from_slice(line);
+    }
+    if !found {
+        out.extend_from_slice(&prefix);
+        out.extend_from_slice(hue.name_bytes());
+        out.extend_from_slice(CSV_LINE_END);
+    }
+    out
 }
 
 /// The parts of `bitmap` when the client reads it and its table still holds `hue`'s colours.

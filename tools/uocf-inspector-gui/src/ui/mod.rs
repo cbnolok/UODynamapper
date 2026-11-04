@@ -21,6 +21,7 @@ mod effects_guide;
 pub mod effects_nif;
 pub mod multimap;
 pub mod hues;
+pub mod hues_editor;
 pub mod image_export;
 pub mod gumps;
 pub mod clilocs;
@@ -44,6 +45,7 @@ pub(crate) mod test_support {
     use std::path::PathBuf;
 
     pub(crate) const EC_CLIENT_ROOTS_ENV: &str = "UO_EC_CLIENT_ROOTS";
+    pub(crate) const CLASSIC_CLIENT_ROOTS_ENV: &str = "UO_CLASSIC_CLIENT_ROOTS";
 
     /// The client folders the variable lists.
     pub(crate) fn client_roots(variable: &str) -> Vec<PathBuf> {

@@ -38,6 +38,8 @@ const TAB_EDITORS: &[TabEditor] = &[
     super::tiledata_editor::TAB_EDITOR,
     super::clilocs::TAB_EDITOR,
     super::string_dictionary::TAB_EDITOR,
+    super::hues_editor::CLASSIC_TAB_EDITOR,
+    super::hues_editor::ENHANCED_TAB_EDITOR,
     super::classic_music::TAB_EDITOR,
     super::legacy_terrain::TAB_EDITOR,
     super::terrain_definition_editor::TAB_EDITOR,
