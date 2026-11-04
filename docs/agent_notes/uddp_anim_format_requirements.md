@@ -194,6 +194,24 @@ Split by the body's `mobtypes.txt` type (Enhanced ships no such file, so its bod
 | Classic UOP animal | 9.0 % | 27.8 % | 109 × 82 | 8549 | 29.9 % |
 | Classic UOP equipment | 80.0 % | 27.2 % | 70 × 16 declared, 15 × 16 cropped | 1110 declared | 97.9 % |
 
+**Telling equipment apart from a client's own data.** `mobtypes.txt` is Classic's table, and the Classic converter already
+reads it. Enhanced doesn't ship it, but `tileart.uop` can say the same. A body's creature placeholder (tile
+`10000000 + body`) has a body type, which is the action map it plays:
+
+- It plays its own map: a creature.
+- It plays a wearer's map (400 or 666): a human or elf or gargoyle if the placeholder sets race (key 9), else equipment.
+
+Worked out from a cross-tabulation, not yet run as one rule, that gives about 82 % of frames and 21 % of pixels as equipment:
+the same split as the table above. It also catches bodies the table gets wrong, such as 987 (GM robe, listed as `HUMAN`) and
+970 (death shroud, not listed).
+
+**The `Wearable` flag alone isn't enough.** Wearable tiles and their appearance or anim id agree with `mobtypes.txt` on 93–97 %
+of pixels, but point at some real creatures: 10 monster-sized bodies such as 735 (272 × 238, its tile is a "shirt") and the
+gargoyle bodies 666 and 667 (a "shortsword" and a "war mace"). 735 plays its own action map, and 666 and 667 are wearers
+themselves. So those tile anim ids look like old values that collide with reused body ids, which is an inference. In Classic
+`Equipconv.def` also has to be followed: it reaches 21 of the 42 `EQUIPMENT` MUL bodies no tile points at. The other 21 are
+unexplained.
+
 **Empty space inside the frames.** Whole-frame cropping is already in the converters and in every bench figure, and it has
 nothing more to give. What remains is inside the cropped box: only 31–44 % of it is painted, and about half lies outside
 each row's first and last painted pixel. Sampled on every 10th entry; "others" is everything `mobtypes.txt` doesn't call
@@ -207,6 +225,10 @@ equipment. 80 of the sampled Classic UOP frames have no bytes after the header, 
 | Classic MUL others | 1.000 | 0.495 | 0.371 | 4.8 % | 38 × 59 |
 | Classic UOP equipment | 0.337 | 0.397 | 0.309 | 23.8 % | 15 × 16 |
 | Classic UOP others | 0.883 | 0.519 | 0.410 | 1.8 % | 77 × 80 |
+
+Sparse frames take a large share of the rectangles. Among Enhanced bodies worn by a tile, sampled the same way, frames under
+20 % painted are 12.7 % of frames and 7.1 % of painted pixels but 24.6 % of box area. The sparsest large bodies, 1055 to 1058,
+are 15–19 % painted and 30–35 % row spans, so their rows hold separate islands that row spans can't remove.
 
 So a coder fed the rectangle spends bytes and decode time on row transitions. What it saves to store only the row spans is
 being measured.
