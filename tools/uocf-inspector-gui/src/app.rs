@@ -108,6 +108,7 @@ pub struct MultiPartFilters {
     /// List only the multis referenced by the housing.bin multi lists.
     pub only_housing_multis: bool,
     /// Leave out of the list the multis with no parts.
+    pub hide_empty_multis: bool,
 }
 
 impl Default for MultiPartFilters {
@@ -117,6 +118,7 @@ impl Default for MultiPartFilters {
             show_housing_parts: true,
             show_other_parts: true,
             only_housing_multis: false,
+            hide_empty_multis: false,
         }
     }
 }
@@ -1743,6 +1745,7 @@ pub struct UopInspectorApp {
     pub logs: Vec<String>,
     /// What [`Self::log_once`] already logged.
     logged_once: HashSet<String>,
+    pub(crate) multi_preview_cache: crate::ui::multis::MultiPreviewCache,
     /// Why the last image a view asked for has no texture.
     pub last_texture_problem: Option<String>,
     gpu_errors: crate::ui::textures::GpuErrors,
@@ -1918,6 +1921,7 @@ impl UopInspectorApp {
             settings: settings.clone(),
             logs: Vec::new(),
             logged_once: HashSet::new(),
+            multi_preview_cache: Default::default(),
             last_texture_problem: None,
             gpu_errors: Default::default(),
             show_search_paths: false,
@@ -4352,6 +4356,7 @@ pub(crate) mod tests {
             settings: AppSettings::default(),
             logs: Vec::new(),
             logged_once: HashSet::new(),
+            multi_preview_cache: Default::default(),
             last_texture_problem: None,
             gpu_errors: Default::default(),
             show_search_paths: false,
