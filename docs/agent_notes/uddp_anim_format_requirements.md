@@ -192,7 +192,24 @@ Split by the body's `mobtypes.txt` type (Enhanced ships no such file, so its bod
 | Classic MUL equipment | 77.2 % | 20.4 % | 16 × 19 | 312 | 98.4 % |
 | Classic UOP monster | 9.2 % | 42.1 % | 101 × 78 | 7743 | 38.7 % |
 | Classic UOP animal | 9.0 % | 27.8 % | 109 × 82 | 8549 | 29.9 % |
-| Classic UOP equipment | 80.0 % | 27.2 % | 70 × 16 | 1110 | 97.9 % |
+| Classic UOP equipment | 80.0 % | 27.2 % | 70 × 16 declared, 15 × 16 cropped | 1110 declared | 97.9 % |
+
+**Empty space inside the frames.** Whole-frame cropping is already in the converters and in every bench figure, and it has
+nothing more to give. What remains is inside the cropped box: only 31–44 % of it is painted, and about half lies outside
+each row's first and last painted pixel. Sampled on every 10th entry; "others" is everything `mobtypes.txt` doesn't call
+equipment. 80 of the sampled Classic UOP frames have no bytes after the header, so they count as empty and are left out.
+
+| | Cropped ÷ declared | Row spans ÷ cropped | Painted ÷ cropped | Frames with an empty row inside | Median cropped frame |
+|---|---:|---:|---:|---:|---:|
+| Enhanced equipment | 1.000 | 0.454 | 0.389 | 15.7 % | 20 × 23 |
+| Enhanced others | 1.000 | 0.475 | 0.366 | 2.5 % | 77 × 89 |
+| Classic MUL equipment | 1.000 | 0.503 | 0.442 | 13.8 % | 16 × 19 |
+| Classic MUL others | 1.000 | 0.495 | 0.371 | 4.8 % | 38 × 59 |
+| Classic UOP equipment | 0.337 | 0.397 | 0.309 | 23.8 % | 15 × 16 |
+| Classic UOP others | 0.883 | 0.519 | 0.410 | 1.8 % | 77 × 80 |
+
+So a coder fed the rectangle spends bytes and decode time on row transitions. What it saves to store only the row spans is
+being measured.
 
 The same bias is in the crowd numbers: the "uniform" crowd draws every (body, action) pair equally, so it is mostly
 equipment. A crowd of creatures is about 4× its pixels. See section 6.
