@@ -1728,7 +1728,7 @@ enum DefinitionAction {
     SetName(String),
 }
 
-/// The fields of a definition; `editable` false shows them read-only (tileart).
+/// The fields of a definition; `editable` false shows them read-only (tileart: the Tile Metadata tab edits those).
 fn definition_editor(
     ui: &mut egui::Ui,
     state: &mut EffectsPanelState,

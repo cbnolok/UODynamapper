@@ -49,6 +49,16 @@ impl KeyedStore<u64, TileArtEntry> for TileArtStore<'_> {
     }
 }
 
+/// The KDL text of a record's effects while it is typed; `Apply` reads it back into the record.
+#[derive(Debug)]
+pub struct EffectsDraft {
+    pub hash: u64,
+    /// The record's effects when the text was started: a change of them (undo, another record) starts it over.
+    pub source: String,
+    pub text: String,
+    pub error: Option<String>,
+}
+
 /// State of the tileart editor.
 #[derive(Debug, Default)]
 pub struct TileArtEditor {
@@ -58,6 +68,7 @@ pub struct TileArtEditor {
     pub error: Option<String>,
     /// Tile id typed for a duplicated record.
     pub new_tile_id: u32,
+    pub effects_draft: Option<EffectsDraft>,
 }
 
 impl TileArtEditor {
@@ -115,9 +126,12 @@ mod tests {
     use uocf::enhanced::tileart::{
         TaeAppearanceFilter, TaeBodyAppearance, TaeTexture, TaeTextureImage, TILEART_SHADER_BLOCK_PRESENT, TILEART_UOP_NAME,
     };
+    use uocf::enhanced::effect_definition::{effect_definitions_from_kdl, effect_definitions_to_kdl};
     use uocf::uop_container::package::UopPackage;
     use uocf::utils::path::find_file_ignoring_case;
 
+    const STRING_DICTIONARY_NAME: &str = "string_dictionary.uop";
+    const EDITED_EFFECT_KDL: &str = "sound 42\n";
     const EDITED_GENDER: u8 = 1;
     const EDITED_APPEARANCE: u32 = 1234;
     const EDITED_BODY: u32 = 400;
@@ -204,6 +218,16 @@ mod tests {
             save_tileart(&editor.edits, &entries, &source, &output).unwrap();
             assert!(std::fs::read(&output).unwrap() == std::fs::read(&source).unwrap(), "{}: differs after a save without changes", root.display());
 
+            // The Effects group shows a record's effects as this text, and an Apply reads it back.
+            let strings = UoStringDictionary::load(&find_file_ignoring_case(&root, STRING_DICTIONARY_NAME).unwrap()).unwrap();
+            let with_effects: Vec<_> = entries.iter().filter(|file| !file.entry.effects.is_empty()).collect();
+            for file in &with_effects {
+                let text = effect_definitions_to_kdl(&file.entry.effects, Some(&strings));
+                let read = effect_definitions_from_kdl(&text, Some(&strings)).unwrap();
+                assert_eq!(read, file.entry.effects, "tile {}: {text}", file.entry.tile_id);
+            }
+            let effects_count = with_effects.len();
+
             let hash = entries.iter().find(|file| present_block_of(&file.entry).is_some()).unwrap().filename_hash;
             let edited = {
                 let mut rows = collect_tileart_display_rows(&entries, None);
@@ -219,6 +243,8 @@ mod tests {
                     block.tweaks.push(EDITED_TWEAK);
                     block.texture_items.push(TaeTextureImage { name_string_off: EDITED_NAME, texture_stretch: EDITED_TWEAK, ..TaeTextureImage::default() });
                 });
+                let effects = effect_definitions_from_kdl(EDITED_EFFECT_KDL, Some(&strings)).unwrap();
+                editor.edit(&mut store, hash, "effects", |entry| entry.effects = effects);
                 store.value(&hash).unwrap()
             };
             save_tileart(&editor.edits, &entries, &source, &output).unwrap();
@@ -226,9 +252,15 @@ mod tests {
             let read = TileArtEntry::parse_raw(reopened.get_file_by_hash(hash).unwrap()).unwrap();
             assert_eq!(read.appearance_vector, edited.appearance_vector);
             assert_eq!(present_block_of(&read), present_block_of(&edited));
+            assert_eq!(read.effects, edited.effects);
+            assert_eq!(read.effects.len(), 1);
             assert_eq!(read.to_bytes().unwrap(), edited.to_bytes().unwrap());
             std::fs::remove_file(&output).unwrap();
-            println!("{}: same bytes; appearance and texture edits come back ({} records)", root.display(), entries.len());
+            println!(
+                "{}: same bytes; appearance, texture and effect edits come back ({} records, {effects_count} with effects, each the same through KDL)",
+                root.display(),
+                entries.len()
+            );
         }
     }
 }

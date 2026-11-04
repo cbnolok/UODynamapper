@@ -1,13 +1,15 @@
 //! Editing controls of the tileart.uop view of the Tile Metadata tab: the toolbar (edit mode, undo, duplicate,
 //! delete, save) and the record panel (fixed fields, flags, image windows, radar colour, properties, sitting, stack
-//! aliases, appearance filters, texture blocks), which shows the record whether or not it can be edited. The effects
-//! are kept as loaded. The controls collect [`TileArtEdit`]s while the table draws from its copy of the records;
-//! [`apply_edits`] then applies them.
+//! aliases, appearance filters, texture blocks, effects), which shows the record whether or not it can be edited.
+//! The controls collect [`TileArtEdit`]s while the table draws from its copy of the records; [`apply_edits`] then
+//! applies them.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use eframe::egui;
+use uocf::enhanced::effect_definition::{effect_definitions_from_kdl, effect_definitions_to_kdl, EffectDefinition};
+use uocf::enhanced::string_dictionary::UoStringDictionary;
 use uocf::enhanced::tileart::{
     TaeAppearanceFilter, TaeBodyAppearance, TaeFlag, TaeImgOffset, TaeProp, TaeSittingAnimation, TaeStackAlias, TaeTexture,
     TaeTextureImage, TileArtEntry, TILEART_KR_RECORD_VERSION, TILEART_SHADER_BLOCK_COUNT, TILEART_SHADER_BLOCK_ENHANCED,
@@ -15,7 +17,7 @@ use uocf::enhanced::tileart::{
 };
 
 use crate::app::{tileart_property_name, TileArtFileEntry, UopInspectorApp, ViewMode};
-use crate::logic::tileart_editor::{save_tileart, TileArtEditor, TileArtField, TileArtStore};
+use crate::logic::tileart_editor::{save_tileart, EffectsDraft, TileArtEditor, TileArtField, TileArtStore};
 use crate::ui::unsaved_changes::TabEditor;
 use crate::ui::UOP_PATCHER_NOTE;
 
@@ -49,6 +51,8 @@ const SHADER_IMPLEMENTATION_HOVER: &str = "The shader implementation index the c
 const SOURCE_KIND_HOVER: &str = "0 loads the texture, 2 loads it and forces wrap addressing, and any other value makes the client skip it.";
 const SAMPLER_HOVER: &str = "Not read by the client, which binds an item to the shader map at its position.";
 const VALUE_LISTS_HOVER: &str = "The client keeps up to 4 values.";
+const EFFECTS_TEXT_ROWS: usize = 6;
+const EFFECTS_APPLY_HOVER: &str = "Reads the text into the record (undoable). Text that is not applied is not saved.";
 /// The appearance filters a record can gain.
 const NEW_APPEARANCE_FILTERS: [(&str, fn() -> TaeAppearanceFilter); 3] = [
     ("Add by body", || TaeAppearanceFilter::ByOwnerBodyType(Vec::new())),
@@ -186,7 +190,15 @@ pub(super) fn group<R>(columns: &mut [egui::Ui], title: &str, add_fields: impl F
 }
 
 /// The fields of the selected record. `name` is the text of its name index.
-pub(super) fn record_panel(ui: &mut egui::Ui, file: &TileArtFileEntry, name: Option<&str>, editable: bool, edits: &mut Vec<TileArtEdit>) {
+pub(super) fn record_panel(
+    ui: &mut egui::Ui,
+    file: &TileArtFileEntry,
+    name: Option<&str>,
+    strings: Option<&UoStringDictionary>,
+    effects_draft: &mut Option<EffectsDraft>,
+    editable: bool,
+    edits: &mut Vec<TileArtEdit>,
+) {
     let hash = file.filename_hash;
     let entry = &file.entry;
     let mut fields = Fields { hash, editable, edits };
@@ -261,6 +273,7 @@ pub(super) fn record_panel(ui: &mut egui::Ui, file: &TileArtFileEntry, name: Opt
         group(columns, "Stack aliases", |ui| fields.stack_aliases(ui, &entry.stack_alias_vector));
         group(columns, "Appearance filters", |ui| fields.appearance(ui, &entry.appearance_vector));
         group(columns, "Texture blocks", |ui| fields.texture_blocks(ui, entry));
+        group(columns, "Effects", |ui| fields.effects(ui, &entry.effects, strings, effects_draft));
     });
 }
 
@@ -578,6 +591,57 @@ impl Fields<'_> {
                 }
             });
         }
+    }
+
+    /// The record's effects as KDL text, one node per effect, read back as a whole by `Apply`.
+    fn effects(
+        &mut self,
+        ui: &mut egui::Ui,
+        effects: &[EffectDefinition],
+        strings: Option<&UoStringDictionary>,
+        draft: &mut Option<EffectsDraft>,
+    ) {
+        let source = effect_definitions_to_kdl(effects, strings);
+        let hash = self.hash;
+        if !draft.as_ref().is_some_and(|draft| draft.hash == hash && draft.source == source) {
+            *draft = None;
+        }
+        let draft = draft.get_or_insert_with(|| EffectsDraft { hash, text: source.clone(), source, error: None });
+        ui.horizontal_wrapped(|ui| {
+            ui.weak("One KDL node per effect.");
+            crate::ui::help_mark(ui, crate::ui::effects_guide::EFFECT_KDL_HELP);
+        });
+        ui.add(egui::TextEdit::multiline(&mut draft.text).code_editor().desired_rows(EFFECTS_TEXT_ROWS).desired_width(f32::INFINITY));
+        if let Some(error) = &draft.error {
+            ui.colored_label(ERROR_COLOR, error);
+        }
+        if !self.editable {
+            return;
+        }
+        ui.horizontal(|ui| {
+            let changed = draft.text != draft.source;
+            if ui.add_enabled(changed, egui::Button::new("Apply")).on_hover_text(EFFECTS_APPLY_HOVER).clicked() {
+                match effect_definitions_from_kdl(&draft.text, strings) {
+                    Ok(read) if read == effects => {
+                        draft.text.clone_from(&draft.source);
+                        draft.error = None;
+                    }
+                    Ok(read) => {
+                        draft.error = None;
+                        self.edits.push(Box::new(|editor, _| {
+                            editor.edits.break_coalescing();
+                            None
+                        }));
+                        self.push("effects", move |entry| entry.effects = read);
+                    }
+                    Err(error) => draft.error = Some(format!("{error:#}")),
+                }
+            }
+            if ui.add_enabled(changed, egui::Button::new("Reset text")).clicked() {
+                draft.text.clone_from(&draft.source);
+                draft.error = None;
+            }
+        });
     }
 
     fn body_appearances(&mut self, ui: &mut egui::Ui, filter: usize, mappings: &[TaeBodyAppearance]) {

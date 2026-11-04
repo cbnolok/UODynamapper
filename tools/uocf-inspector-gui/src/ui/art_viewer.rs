@@ -688,7 +688,8 @@ fn ui_ec_tileart_table(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut 
                 ui.heading(format!("Selected TileArt {}", file.entry.tile_id));
                 let dictionary = app.uo_string_dictionary.clone();
                 let name = dictionary.as_deref().and_then(|dictionary| dictionary.get_string((file.entry.string_dict_off as usize).checked_sub(1)?));
-                tileart_editor::record_panel(ui, file, name, app.tileart_editor.enabled, &mut edits);
+                let editable = app.tileart_editor.enabled;
+                tileart_editor::record_panel(ui, file, name, dictionary.as_deref(), &mut app.tileart_editor.effects_draft, editable, &mut edits);
                 ui_selected_tileart_details(app, ctx, ui, file);
             });
         });
