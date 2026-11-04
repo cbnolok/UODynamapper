@@ -253,7 +253,8 @@ pub struct DirectionOffset {
 
 /// Key 7: per-direction position offset (confirmed).
 ///
-/// Inert in this client build: the runtime object stores the offsets but nothing reads them.
+/// Played as an effect it does nothing in this client build (the runtime object stores the offsets but nothing reads
+/// them); the client reads the definition from a mount's sequence frame effects to place the rider.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PositionOffsetEffect {
     /// Offsets indexed by direction.
