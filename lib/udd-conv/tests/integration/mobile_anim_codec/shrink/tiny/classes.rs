@@ -897,3 +897,108 @@ pub(in super::super) fn part_tk(sources: &Sources, bodies: &[BodySource], presen
     }
     println!("Load average at the end of part tk {}", load_average());
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Part `wl`: the lossless layouts on every body
+
+const WHOLE_CLASSIC: [&str; 6] = [PLAIN_NAME, "LZ4 HC", "a row spans, zstd 19", "a row spans, LZ4 HC", "a row spans, best dictionary per body", "b painted, runs apart, zstd 19"];
+const WHOLE_ENHANCED: [&str; 10] = [
+    PLAIN_NAME,
+    "LZ4 HC",
+    "a row spans, zstd 19",
+    "b painted, zstd 19",
+    "b painted, coverage row spans, zstd 19",
+    "b painted, coverage every pixel tANS by context",
+    "b painted, coverage runs zstd 19, partial tANS by context",
+    "b painted, coverage row spans, LZ4 HC",
+    "c both planes in row spans, zstd 19",
+    "c both planes in row spans, LZ4 HC",
+];
+
+fn whole_schemes(client: Client) -> Vec<Scheme> {
+    let names: &[&str] = if client == Client::Cc { &WHOLE_CLASSIC } else { &WHOLE_ENHANCED };
+    names
+        .iter()
+        .map(|name| {
+            coders_of(client)
+                .into_iter()
+                .find_map(|coder| match coder {
+                    Coder::New(scheme) if scheme.name == *name => Some(scheme),
+                    _ => None,
+                })
+                .expect("a coder of the ranking")
+        })
+        .collect()
+}
+
+/// A body's sizes under every scheme, per stream, with what's needed to count the palette table and exact duplicates.
+struct WholeRow {
+    class: Class,
+    shared: Vec<u64>,
+    stored: Vec<Vec<u64>>,
+    hashes: Vec<StreamHash>,
+    palettes: Vec<u64>,
+    pixels: u64,
+}
+
+fn whole_row(planes: &Planes, class: Class, schemes: &[Scheme]) -> WholeRow {
+    let needs_dictionaries = schemes.iter().any(|s| matches!(s.index, IndexForm::SpansDictBest));
+    let streams = StreamPlanes::of(planes, None, None, Unit::ActionDirection);
+    let dictionaries = if needs_dictionaries { dictionaries_of(&streams) } else { Dictionaries::none() };
+    let mut atoms = Atoms::default();
+    let (mut shared, mut stored) = (Vec::with_capacity(schemes.len()), Vec::with_capacity(schemes.len()));
+    for scheme in schemes {
+        let coded = coded_of(scheme, &streams, &dictionaries, &mut atoms);
+        shared.push(coded.shared());
+        stored.push((0..streams.streams()).map(|s| coded.stored_of(s)).collect());
+    }
+    let hashes = (0..streams.streams()).map(|n| stream_hash(&streams.layout[n].sizes, &streams.original[n], &streams.mask[n], planes.client)).collect();
+    WholeRow { class, shared, stored, hashes, palettes: palette_hashes(planes), pixels: planes.boxes.iter().map(|f| f.pixels() as u64).sum() }
+}
+
+/// Every body of the set, coded, decoded back and compared, under the layouts still in the running. Sizes only.
+pub(in super::super) fn part_wl(sources: &Sources, bodies: &[BodySource], present: &[(Client, u64, usize)], cc_dir: &Path) {
+    let kinds = BodyKinds::load(cc_dir);
+    let rule = BodyRule::load(&kinds, cc_dir);
+    for client in [Client::Cc, Client::Ec] {
+        let started = Instant::now();
+        let schemes = whole_schemes(client);
+        let of: Vec<usize> = present.iter().filter(|s| s.0 == client).map(|s| s.2).collect();
+        let done = std::sync::atomic::AtomicUsize::new(0);
+        let rows: Vec<WholeRow> = of
+            .par_iter()
+            .map(|&i| {
+                let planes = Planes::from_body(&load_body(sources, &bodies[i]));
+                let class = classes_of(&planes, &rule, &bodies[i]).0;
+                let row = whole_row(&planes, class, &schemes);
+                let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                if n % LIST_ROWS == 0 {
+                    println!("  {}: {n}/{} bodies, {:.0} s", client.label(), of.len(), started.elapsed().as_secs_f64());
+                }
+                row
+            })
+            .collect();
+        let entry_bytes = match client {
+            Client::Cc => CC_PALETTE_ENTRY_BYTES,
+            Client::Ec => EC_PALETTE_ENTRY_BYTES,
+        };
+        let distinct: HashSet<u64> = rows.iter().flat_map(|row| row.palettes.iter().copied()).collect();
+        let palette_bytes = (distinct.len() * PALETTE_COLOURS * entry_bytes) as u64;
+        let streams: usize = rows.iter().map(|row| row.hashes.len()).sum();
+        let pixels: u64 = rows.iter().map(|row| row.pixels).sum();
+        println!("\n#### {}: lossless layouts on every body, {} bodies, {streams} streams, {:.1} Mpx; every stream decoded back and compared; palette table {:.1} MB ({} distinct); {:.0} s", client.label(), rows.len(), pixels as f64 / PIXELS_PER_MEGAPIXEL, mb(palette_bytes), distinct.len(), started.elapsed().as_secs_f64());
+        let labels: Vec<&str> = CLASSES.iter().map(|class| class.label()).collect();
+        println!("\n| layout | total MB, palette table in | x zstd 19 | {} | exact duplicate streams dropped MB |\n|---|---:|---:|{}---:|", labels.join(" | "), "---:|".repeat(CLASSES.len()));
+        let total_of = |c: usize, class: Option<Class>| -> u64 {
+            rows.iter().filter(|row| class.is_none_or(|wanted| row.class == wanted)).map(|row| row.shared[c] + row.stored[c].iter().sum::<u64>()).sum()
+        };
+        for (c, scheme) in schemes.iter().enumerate() {
+            let mut seen = HashSet::<StreamHash>::new();
+            let duplicates: u64 = rows.iter().flat_map(|row| row.hashes.iter().zip(&row.stored[c])).filter(|(hash, _)| !seen.insert(**hash)).map(|(_, &bytes)| bytes).sum();
+            let cells: Vec<String> = CLASSES.iter().map(|&class| format!("{:.1}", mb(total_of(c, Some(class))))).collect();
+            let total = total_of(c, None) + palette_bytes;
+            let plain = total_of(0, None) + palette_bytes;
+            println!("| {} | {:.1} | {:.3} | {} | {:.1} |", scheme.name, mb(total), total as f64 / plain.max(1) as f64, cells.join(" | "), mb(duplicates));
+        }
+    }
+}

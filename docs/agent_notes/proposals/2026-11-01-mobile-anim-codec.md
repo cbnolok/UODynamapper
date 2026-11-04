@@ -2483,6 +2483,642 @@ Share of the scope's MB in R8 or RG8, then in BC1 (padding shifts it slightly). 
 | worst, faced | NPC large | 299 | 250.8 | 501.7, 99.6 % | 126.8, 99.6 % |
 | worst, faced | of all these, above 40000 | 227 | 214.5 | 429.1, 85.2 % | 108.4, 85.2 % |
 
+## 12. The repo's BC7 encoder
+
+**The BC7 rows in this document used a buggy encoder, and so does every package built with `--bc7`.** The repo's encoder can pack a block that decodes differently from what its own search scored. The trace below names the cause, and it runs on a verbatim scratch copy (`bc7-trace`, `lib/udd-image-codecs/src/bc7/{analytical,tables,rdo}.rs` copied unchanged). The copy reproduces the repo's real call byte for byte on the named sample: `cmp` on the decoded output of `lossy.rs`'s `Coder::Bc7` and `Coder::Bleed` rows against the copy's rows, on both clients. **The repo's encoder is unchanged.** The fixes below are a proposal for the user, because they change every package built with BC7.
+
+**What it changes on animation,** SSIMULACRA2 median on the named sample, with zstd 19 scaled to the whole set:
+
+| encoder | Classic | MB | Enhanced | MB |
+|---|---:|---:|---:|---:|
+| repo, as the converter calls it | 61.49 | 987 | 58.31 | 1857 |
+| repo + colour under transparent pixels | 75.01 | 1064 | **28.77** | 1963 |
+| fix A | 61.85 | 987 | 71.10 | 1855 |
+| fix A + colour | **85.86** | 1064 | **77.91** | 1951 |
+| fix A + B, mode 7 on + colour | 86.16 | 1111 | 79.25 | 2009 |
+| **fix C** | **86.31** | 1008 | **86.12** | 1841 |
+| fix C + colour | 85.94 | 1065 | 87.36 | 1943 |
+| fix C + B, mode 7 on + colour | 86.20 | 1112 | 88.12 | 1994 |
+| ISPC basic + colour | 86.44 | 1132 | 88.29 | 2041 |
+| for scale: BC1, `dds` High | 80.62 | 564 | 71.45 | 877 |
+
+**So BC1 against BC7 can't be decided from the repo's BC7 rows.** With fix C, BC7 beats BC1 by 6 points on Classic at 1.8× the disk, and by 15 on Enhanced at 2.1×. The gap to ISPC on Enhanced is most of it a search problem rather than a limit: fix A alone stays 10 points under ISPC, and fix C closes all but 0.8 of them on the median. p5 and the worst body stay 5 to 9 points under ISPC.
+
+**Sample:** every 40th body by pixels, 26 Classic bodies (3221 streams) and 24 Enhanced bodies (4459 streams), classes in the table further down. `q` at every 10th body (103 and 93 bodies) repeats the repo rows.
+
+**Labels:** every BC7 row names its encoder.
+
+- `repo` (`BC7`, `bc7` in `q`, `qc`, `qm`, and all earlier sections): the repo's encoder as the converter calls it. Flags `FLAG_PBIT_OPT_M6 | FLAG_USE_DUAL_PLANE | FLAG_USE_TRIVIAL_M6`.
+- `repo + colour under transparent pixels` (`BC7, colour under transparent pixels`, `bc7-bleed`): the same, with each transparent pixel's colour replaced by its block's alpha-weighted mean before encoding.
+- `fix A`, `fix A + B`, `fix C`: the verbatim copy with the fixes below. Fix C includes fix A. Scratch only.
+- `ISPC basic`: Intel's ISPC compressor through `intel_tex_2` 0.5.0. Scratch only. It's about 700× slower than the repo's path on these one-block-wide strips, which leave its SIMD lanes empty, so that figure isn't its real speed.
+
+### The cause
+
+**Bug A: `encode_mode4` with index flag 0 swaps its weight fields.** This is a real bug, and the converter's flags reach it. BC7 mode 4 stores a 2-bit weight plane and a 3-bit plane in fixed places, and the index flag only says which plane is colour. The code packs the 3-bit plane into the 2-bit field when the flag is 0. The candidate's predicted error uses the intended weights, so it wins the search and then decodes wrong. `pack_mode4_or_5` also runs for opaque blocks with a decorrelated colour channel, so opaque art, land and the radar reach it, not only sprites. The one existing test, `mode4_fused_error_bounds`, calls it with index flag 1 only.
+
+```diff
+--- a/lib/udd-image-codecs/src/bc7/analytical.rs (encode_mode4)
+-    let (p2, p3) = if index_flag == 1 {
+-        (&w1, &w0)
+-    } else {
+-        (&w0, &w1)
+-    };
++    let (p2, p3) = (&w1, &w0);
+```
+
+**Bugs B: real, but the converter's flags don't reach them.** They explain why "all modes" scored worse than the default.
+
+- `encode_mode1` swaps the endpoints of all subsets, and the p-bits, when only the first subset's anchor is inverted.
+- `encode_mode2` does the same.
+- `pack_bc7_rgb`'s 3-subset search offers mode 0 partitions up to 63, in a 4-bit field.
+
+Only `FLAG_USE_2SUBSETS` and `FLAG_USE_3SUBSETS` reach these, and `benches/bc7_encode.rs` is the only caller that sets them.
+
+**Field test.** Each encoder entry point with random endpoints and weights, 20000 blocks a row, against the format's formula, through two independent decoders (`texture2ddecoder`, `dds`). They agree on every count.
+
+| encoder call | blocks | differ | mean squared error a channel |
+|---|---:|---:|---:|
+| `encode_mode0`, partition under 16 | 5123 | 0 | 0 |
+| `encode_mode0`, partition 16 or more (the search offers these) | 14877 | 14877 | 3585.1 |
+| `encode_mode1`, first pixel's weight under 4 | 9969 | 0 | 0 |
+| `encode_mode1`, first pixel's weight 4 or more | 10031 | 10031 | 1606.2 |
+| `encode_mode2`, first pixel's weight under 2 | 10004 | 0 | 0 |
+| `encode_mode2`, first pixel's weight 2 or more | 9996 | 9996 | 3066.3 |
+| `encode_mode3` | 20000 | 0 | 0 |
+| `encode_mode4`, index flag 1, rotations 0 and 1 | 20000 each | 0 | 0 |
+| **`encode_mode4`, index flag 0, rotation 0** | 20000 | **20000** | 2924.7 |
+| **`encode_mode4`, index flag 0, rotation 1** | 20000 | **20000** | 2906.7 |
+| `encode_mode5`, `encode_mode6`, `encode_mode7` | 20000 each | 0 | 0 |
+
+**Transparent black: a limit of the design, not a bit bug.** Error is plain RGBA squared error, so colour under alpha 0 counts as data. In a mixed block that does two things:
+
+- It pulls mode 6's single 4D line toward black.
+- It makes alpha look correlated with colour, so `detect_dp_channel` doesn't offer the separate alpha plane.
+
+Replacing colour under alpha 0 with the block's mean before encoding removes both. An encoder could instead give those pixels zero weight, which is more work.
+
+**Hand-made blocks,** each encoded and then decoded for real. Squared error over the block:
+
+| block | repo | its `pack_mode4_or_5` on alpha | with fix A | ISPC basic |
+|---|---:|---:|---:|---:|
+| half transparent black, half one colour | 8, mode 6 | reports 0, decodes 8 | 8 | 0, mode 5 |
+| half transparent black, two colours | **376052**, mode 4, 3-bit alpha weights | reports and decodes 120368 | 57056 | 104, mode 7 |
+| the same, mean colour under the transparent pixels | 1632, mode 4, 3-bit colour weights | 1632 | 1632 | 368, mode 7 |
+| one colour under coverage levels, colour bled | 486, mode 6 | **reports 1656, decodes 308136** | 486 | 493, mode 6 |
+| the same, one transparent-black pixel | **57706**, mode 6 | reports 1642, decodes 392626 | 57706 | 1594, mode 4 |
+| opaque, red against green and blue | 24, mode 5 | 112876 | 24 | 56, mode 5 |
+
+**Why bleeding helps Classic and hurts Enhanced in the repo's encoder.** Bleeding decorrelates alpha, so the separate-alpha modes 4 and 5 start to win.
+
+- Classic's alpha is 0 or 255, which fits 2-bit alpha weights, and those decode correctly. Only 0.53 % of its mixed blocks take the broken path.
+- Enhanced's alpha is partial, so it wants 3-bit alpha weights: 37.66 % of its partial blocks take the broken path, at 17.88 dB and alpha RMS 119.16.
+- **With fix A, bleeding helps both** (those blocks reach 31.81 dB and alpha RMS 5.17).
+
+**Fix C: the search misses alpha's own plane.** This isn't a wrong bit but a wrong choice, and it mattered more than the bug on Enhanced. Two things stack up in `pack_bc7_rgba`:
+
+- `detect_dp_channel` only offers mode 4 or 5's separate alpha plane when alpha's correlation with each of R, G and B is under 0.35. A sprite's edge has alpha falling with colour, so the plane isn't offered where it would help most.
+- When it is offered, the two candidates are compared by `pack_mode4_or_5`'s estimate rather than by a real decode.
+
+So fix C tries the plane on every block whose alpha varies, decodes both candidates, and keeps the closer one. That's also why the colour step looked so strong under fix A: it worked indirectly, by decorrelating alpha so the plane got offered. With fix C the colour step adds little. Measured with the exact lines proposed below: a scratch copy holding only those lines gives output byte-identical to the measured `bc7-fixc` row on the named sample, both clients (`cmp`). Opaque blocks return to `pack_bc7_rgb` first, so fix C doesn't touch them.
+
+**What each step is worth on the named sample,** SSIMULACRA2 median / p5 / min, zstd 19 MB scaled to the whole set, and encode cost in worker seconds a Mpx at idle:
+
+| encoder | Classic | MB | s/Mpx | Enhanced | MB | s/Mpx |
+|---|---|---:|---:|---|---:|---:|
+| repo | 61.49 / 49.59 / 38.33 | 987 | 0.05 | 58.31 / 45.85 / 44.21 | 1857 | 0.05 |
+| fix A | 61.85 / 50.82 / 45.86 | 987 | 0.05 | 71.10 / 59.09 / 58.70 | 1855 | 0.05 |
+| fix A + colour | 85.86 / 66.40 / 55.41 | 1064 | 0.09 | 77.91 / 66.72 / 62.51 | 1951 | 0.09 |
+| **fix C** | 86.31 / 61.22 / 54.52 | 1008 | 0.14 | 86.12 / 65.25 / 65.08 | 1841 | 0.14 |
+| fix C + colour | 85.94 / 66.41 / 55.44 | 1065 | 0.19 | 87.36 / 70.19 / 70.06 | 1943 | 0.21 |
+| ISPC basic | 86.46 / 68.65 / 62.95 | 1085 | 39 (see Labels) | 86.94 / 74.10 / 70.34 | 1988 | 40 (see Labels) |
+| ISPC basic + colour | 86.44 | 1132 | 42 | 88.29 / 80.18 / 75.74 | 2041 | 36 |
+
+The colour step's worth after fix C: disk +5.7 % on Classic and +5.5 % on Enhanced; median −0.37 and +1.24; p5 +5.19 and +4.94; worst body +0.92 and +4.98. So it buys the tail rather than the median, at about the price of a step of RDO.
+
+**What's left against ISPC is design, not bugs:**
+
+- The converter's flags leave out the subset modes. Mode 7 alone adds 2 to 3 dB on opaque blocks, at 26 to 37× the encode time.
+- Mode 7's path has no least-squares pass and seeds from an RGB axis only.
+- `pack_mode4_or_5` reports `rgb_sse + a_sse / 2`, the mean of two passes rather than the true error, and evaluates mode 5 without the decoder's bit replication.
+- Mode 4's and mode 5's quantisation of the plane is what fix C stops at: Enhanced's partial blocks reach 29.46 dB against ISPC's 30.62, with alpha RMS 7.25 against 7.12, so alpha is level and colour is what remains.
+
+#### What reaches the packages: a sample of each
+
+Each package's raw pages are encoded through the verbatim copy with the converter's flags, then scored against themselves over grey, in 512 px windows with at least 10 % painted. The "as built" row is the same call a `--bc7` build makes. Only the ISPC rows run on every 3rd page, so their zstd figure is not comparable with the others.
+
+| package and sample | encoder | mode 4 with 3-bit alpha weights, % of blocks | their colour dB | zstd 19 MB | painted colour dB | opaque dB | mixed binary dB | mixed partial dB | alpha RMS | SSIMULACRA2 median | p5 | min |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `tex_art_ec`, 9 of 9 pages, 73.4 Mpx | as built today | 1.948 | 17.20 | 41.2 | 29.49 | 37.45 | 25.87 | 22.44 | 21.50 | 53.25 | 4.80 | -50.94 |
+|  | fix A | 1.948 | 34.35 | 41.2 | 32.50 | 39.11 | 26.14 | 28.62 | 7.28 | 71.57 | 64.72 | 52.86 |
+|  | **fix C** | 4.345 | 34.63 | 41.5 | 37.71 | 39.11 | 35.15 | 34.86 | 1.73 | 87.46 | 82.27 | 75.56 |
+|  | fix A + colour | 2.999 | 34.92 | 40.9 | 36.46 | 39.11 | 36.24 | 30.51 | 3.04 | 83.50 | 72.90 | 64.04 |
+|  | fix C + colour | 4.389 | 34.87 | 41.0 | 38.19 | 39.11 | 37.15 | 35.26 | 1.67 | 87.81 | 83.10 | 79.98 |
+|  | fix A + B, mode 7 on + colour | 2.849 | 34.96 | 43.8 | 37.96 | 42.20 | 36.46 | 31.29 | 2.97 | 84.85 | 74.74 | 65.74 |
+|  | ISPC basic | 4.395 | 37.07 | not comparable | 41.93 | 44.79 | 36.71 | 35.75 | 1.10 | 90.55 | 88.31 | 85.82 |
+| `tex_art_cc`, 9 of 46 pages, 37.4 Mpx | as built today | 0.321 | 16.52 | 7.7 | 27.55 | 32.10 | 23.33 | NaN | 12.64 | 64.95 | 52.87 | 47.05 |
+|  | fix A | 0.321 | 28.53 | 7.7 | 28.14 | 34.17 | 23.51 | NaN | 11.42 | 70.16 | 61.67 | 59.18 |
+|  | **fix C** | 0.351 | 29.81 | 8.0 | 33.20 | 34.17 | 31.42 | NaN | 0.56 | 86.80 | 79.56 | 72.60 |
+|  | fix A + colour | 0.359 | 31.49 | 8.4 | 33.59 | 34.17 | 32.39 | NaN | 0.73 | 86.38 | 71.60 | 65.08 |
+|  | fix C + colour | 0.359 | 31.54 | 8.5 | 34.05 | 34.17 | 33.75 | NaN | 0.07 | 87.77 | 80.02 | 75.98 |
+|  | fix A + B, mode 7 on + colour | 0.257 | 31.54 | 8.9 | 35.61 | 37.18 | 33.13 | NaN | 0.62 | 88.53 | 76.17 | 70.51 |
+|  | ISPC basic | 3.906 | 40.23 | not comparable | 36.95 | 38.73 | 34.39 | NaN | 0.52 | 89.37 | 86.87 | 86.56 |
+| `tex_land_cc`, 4 of 4 pages, 16.4 Mpx | as built today | 0.974 | 22.59 | 10.9 | 35.69 | 35.71 | 26.20 | NaN | 0.26 | 74.56 | 62.73 | 57.45 |
+|  | fix A | 0.974 | 35.46 | 10.9 | 36.65 | 36.68 | 26.20 | NaN | 0.26 | 86.32 | 82.38 | 81.74 |
+|  | **fix C** | 0.974 | 35.46 | 10.9 | 36.67 | 36.68 | 32.74 | NaN | 0.03 | 86.42 | 82.38 | 81.74 |
+|  | fix A + colour | 0.975 | 35.46 | 10.9 | 36.68 | 36.68 | 35.92 | NaN | 0.01 | 86.42 | 82.38 | 81.74 |
+|  | fix C + colour | 0.975 | 35.46 | 10.9 | 36.68 | 36.68 | 36.33 | NaN | 0.00 | 86.42 | 82.38 | 81.74 |
+|  | fix A + B, mode 7 on + colour | 0.706 | 35.56 | 12.0 | 38.52 | 38.52 | 36.02 | NaN | 0.01 | 89.18 | 84.77 | 84.12 |
+|  | ISPC basic | 1.802 | 38.57 | not comparable | 40.14 | 40.14 | 37.62 | NaN | 0.06 | 89.79 | 88.93 | 88.76 |
+| `tex_land_ec`, 6 of 6 pages, 19.5 Mpx | as built today | 0.241 | 22.17 | 12.5 | 39.66 | 41.43 | 26.19 | 30.59 | 3.68 | 86.78 | 55.09 | 45.23 |
+|  | fix A | 0.241 | 36.27 | 12.5 | 40.37 | 41.63 | 26.29 | 32.61 | 1.90 | 90.17 | 78.81 | 52.72 |
+|  | **fix C** | 0.931 | 35.03 | 12.5 | 41.30 | 41.63 | 35.90 | 37.09 | 0.64 | 90.60 | 84.64 | 83.84 |
+|  | fix A + colour | 0.284 | 36.00 | 12.5 | 40.36 | 41.63 | 28.89 | 32.24 | 1.40 | 90.34 | 78.81 | 58.38 |
+|  | fix C + colour | 0.927 | 35.09 | 12.5 | 41.34 | 41.63 | 41.40 | 37.27 | 0.63 | 90.60 | 84.64 | 84.20 |
+|  | fix A + B, mode 7 on + colour | 0.247 | 36.04 | 13.8 | 41.82 | 43.45 | 28.93 | 32.98 | 1.37 | 90.76 | 84.31 | 58.40 |
+|  | ISPC basic | 1.389 | 37.86 | not comparable | 44.25 | 44.57 | 39.94 | 36.66 | 0.51 | 92.30 | 91.00 | 90.52 |
+| `tex_aux_ec`, 45 of 503 pages, 0.7 Mpx | as built today | 2.706 | 21.62 | 0.4 | 34.58 | 50.39 | 22.43 | 31.53 | 17.93 | 87.34 | 43.91 | -0.34 |
+|  | fix A | 2.706 | 47.12 | 0.3 | 39.23 | 50.39 | 24.66 | 37.71 | 2.79 | 91.30 | 74.32 | 70.29 |
+|  | **fix C** | 13.914 | 48.64 | 0.4 | 49.33 | 50.39 | 41.83 | 48.63 | 1.06 | 95.09 | 91.90 | 89.86 |
+|  | fix A + colour | 2.953 | 45.51 | 0.3 | 41.66 | 50.39 | 38.56 | 37.80 | 2.18 | 93.16 | 78.41 | 69.54 |
+|  | fix C + colour | 13.479 | 47.83 | 0.4 | 48.96 | 50.39 | 40.36 | 48.11 | 1.09 | 93.65 | 91.90 | 89.76 |
+|  | fix A + B, mode 7 on + colour | 2.948 | 45.51 | 0.3 | 41.66 | 50.40 | 38.57 | 37.80 | 2.18 | 93.16 | 78.41 | 69.54 |
+|  | ISPC basic | 18.699 | 48.54 | not comparable | 52.58 | 56.78 | 43.56 | 47.17 | 1.14 | 96.31 | 93.69 | 90.39 |
+| `effects_ec`, 19 of 177 pages, 0.3 Mpx | as built today | 0.960 | 18.37 | 0.2 | 32.35 | 38.95 | NaN | 29.92 | 12.62 | 86.20 | 46.87 | 31.62 |
+|  | fix A | 0.960 | 34.42 | 0.2 | 34.31 | 40.94 | NaN | 31.87 | 6.52 | 91.46 | 76.61 | 51.07 |
+|  | **fix C** | 3.635 | 32.74 | 0.2 | 39.72 | 40.94 | NaN | 38.80 | 2.69 | 92.92 | 80.65 | 76.61 |
+|  | fix A + colour | 2.688 | 33.80 | 0.2 | 35.72 | 40.94 | NaN | 33.49 | 5.18 | 91.51 | 76.61 | 53.59 |
+|  | fix C + colour | 5.028 | 33.32 | 0.2 | 39.92 | 40.94 | NaN | 39.13 | 2.34 | 92.94 | 80.63 | 76.61 |
+|  | fix A + B, mode 7 on + colour | 2.583 | 33.73 | 0.2 | 37.27 | 43.41 | NaN | 34.90 | 4.97 | 92.13 | 79.45 | 60.54 |
+|  | ISPC basic | 1.325 | 36.42 | not comparable | 45.22 | 46.98 | NaN | 42.67 | 1.10 | 94.65 | 84.43 | 84.43 |
+| `cc_radar`, map 0 (always opaque), 1 of 1 pages, 29.4 Mpx | as built today | 1.386 | 19.05 | 3.7 | 35.97 | 35.97 | NaN | NaN | 0.00 | 54.51 | 13.96 | 0.16 |
+|  | fix A | 1.386 | 36.19 | 3.7 | 40.76 | 40.76 | NaN | NaN | 0.00 | 86.15 | 76.16 | 72.18 |
+|  | **fix C** | 1.386 | 36.19 | 3.7 | 40.76 | 40.76 | NaN | NaN | 0.00 | 86.15 | 76.16 | 72.18 |
+|  | fix A + colour | 1.386 | 36.19 | 3.7 | 40.76 | 40.76 | NaN | NaN | 0.00 | 86.15 | 76.16 | 72.18 |
+|  | fix C + colour | 1.386 | 36.19 | 3.7 | 40.76 | 40.76 | NaN | NaN | 0.00 | 86.15 | 76.16 | 72.18 |
+|  | fix A + B, mode 7 on + colour | 0.559 | 36.35 | 4.1 | 45.30 | 45.30 | NaN | NaN | 0.00 | 89.92 | 80.98 | 78.54 |
+|  | ISPC basic | 0.667 | 36.27 | not comparable | 47.21 | 47.21 | NaN | NaN | 0.01 | 91.52 | 82.49 | 79.20 |
+
+**Real packages agree:** a real `--bc7` `tex_land_cc` build holds 9745 of its 1310720 blocks (0.743 %) in mode 4 with 3-bit alpha weights, in rotations 1 to 3. The sample has 0.974 %, on the raw pages' slightly different layout. `udd-cli tool extract` can't read a `--bc7` art package (`invalid BC7 block payload length: expected 4112784, got 4194304`, `tools/udd-conv-cli/src/extract.rs:513`), so the art packages' counts come from the verbatim copy only.
+
+**`mobile_anim_ec` and `mobile_anim_cc`** are the mobile rows below. Their frames are aligned to 4, so the strips are the atlas's blocks. `docs/TODO.md:85` closed land BC7 RDO using this encoder, so that closure predates this finding.
+
+#### Classic's animations, the named sample: colour PSNR over painted pixels
+
+| encoder | zstd 7 MB | zstd 19 MB | worker s a Mpx, idle | all, dB | opaque, dB | mixed binary, dB | its alpha RMS |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| repo encoder, as the converter calls it | 19.9 | 19.6 | 0.06 | 24.94 | 35.95 | 20.20 | 28.59 |
+| repo encoder, colour under transparent pixels | 21.5 | 21.1 | 0.13 | 34.38 | 35.95 | 32.20 | 8.66 |
+| repo encoder, all modes | 21.8 | 21.6 | 3.07 | 22.50 | 23.04 | 21.53 | 24.34 |
+| fix A | 19.9 | 19.6 | 0.06 | 24.96 | 36.22 | 20.20 | 28.46 |
+| fix A, colour under transparent pixels | 21.5 | 21.1 | 0.13 | 34.79 | 36.22 | 32.74 | 0.12 |
+| fix A + B, mode 7 on | 21.8 | 21.6 | 2.23 | 26.31 | 37.95 | 21.54 | 24.25 |
+| fix A + B, mode 7 on, colour under transparent pixels | 22.4 | 22.1 | 2.51 | 35.59 | 37.95 | 32.79 | 0.35 |
+| fix A + B, all modes | 21.8 | 21.6 | 2.81 | 26.32 | 38.07 | 21.54 | 24.25 |
+| fix A + B, all modes, colour under transparent pixels | 22.4 | 22.1 | 2.67 | 35.63 | 38.07 | 32.79 | 0.35 |
+| fix A only, all modes (B's bugs left in) | 21.8 | 21.6 | 2.55 | 22.51 | 23.04 | 21.54 | 24.25 |
+| ISPC BC7, basic | 21.8 | 21.5 | 38.83 | 35.56 | 38.76 | 32.29 | 0.42 |
+| ISPC BC7, basic, colour under transparent pixels | 22.8 | 22.5 | 41.96 | 36.04 | 38.76 | 33.02 | 0.56 |
+| **fix C** | 20.3 | 20.0 | 0.14 | 34.22 | 36.22 | 31.69 | 0.11 |
+| fix C, colour under transparent pixels | 21.5 | 21.2 | 0.19 | 34.81 | 36.22 | 32.77 | 0.03 |
+| fix C + B, mode 7 on, colour under transparent pixels | 22.4 | 22.1 | 2.07 | 35.60 | 37.95 | 32.82 | 0.32 |
+| fix C, RDO 0.5 | 19.3 | 18.8 | 4.12 | 33.20 | 34.82 | 30.97 | 0.14 |
+| fix C, RDO 1 | 18.4 | 17.9 | 3.62 | 31.82 | 32.93 | 30.11 | 0.24 |
+| fix C, RDO 2 | 17.1 | 16.7 | 2.87 | 29.40 | 29.75 | 28.72 | 0.49 |
+| fix C, colour under transparent pixels, RDO 0.5 | 20.4 | 19.8 | 3.74 | 33.75 | 34.82 | 32.08 | 0.12 |
+| fix C, colour under transparent pixels, RDO 1 | 19.4 | 18.9 | 3.11 | 32.29 | 32.93 | 31.15 | 0.26 |
+| fix C, colour under transparent pixels, RDO 2 | 18.0 | 17.5 | 2.83 | 29.71 | 29.75 | 29.61 | 0.56 |
+| fix C + B, mode 7 on, colour under transparent pixels, RDO 1 | 21.0 | 20.5 | 3.94 | 33.05 | 34.26 | 31.22 | 0.39 |
+
+#### Enhanced's animations, the named sample: colour PSNR over painted pixels
+
+| encoder | zstd 7 MB | zstd 19 MB | worker s a Mpx, idle | all, dB | opaque, dB | mixed binary, dB | its alpha RMS | mixed partial, dB | its alpha RMS |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| repo encoder, as the converter calls it | 42.7 | 42.0 | 0.05 | 25.05 | 34.94 | 24.44 | 18.86 | 22.64 | 29.97 |
+| repo encoder, colour under transparent pixels | 45.2 | 44.4 | 0.10 | 24.10 | 34.94 | 35.74 | 9.29 | 21.64 | 74.09 |
+| repo encoder, all modes | 44.7 | 44.0 | 1.81 | 24.38 | 24.92 | 26.20 | 14.89 | 23.97 | 27.47 |
+| fix A | 42.7 | 42.0 | 0.05 | 25.78 | 35.67 | 24.49 | 18.07 | 23.37 | 22.49 |
+| fix A, colour under transparent pixels | 44.9 | 44.1 | 0.10 | 30.22 | 35.67 | 36.31 | 0.17 | 28.20 | 11.90 |
+| fix A + B, mode 7 on | 44.6 | 44.0 | 1.31 | 27.40 | 38.85 | 26.25 | 14.43 | 24.93 | 19.40 |
+| fix A + B, mode 7 on, colour under transparent pixels | 46.1 | 45.4 | 1.61 | 31.39 | 38.85 | 36.53 | 0.32 | 29.14 | 10.43 |
+| fix A + B, all modes | 44.6 | 44.0 | 1.58 | 27.41 | 39.14 | 26.25 | 14.43 | 24.93 | 19.40 |
+| fix A + B, all modes, colour under transparent pixels | 46.1 | 45.4 | 2.09 | 31.41 | 39.14 | 36.53 | 0.32 | 29.14 | 10.43 |
+| fix A only, all modes (B's bugs left in) | 44.6 | 44.0 | 2.00 | 24.94 | 24.95 | 26.25 | 14.43 | 24.93 | 19.40 |
+| ISPC BC7, basic | 45.6 | 45.0 | 39.70 | 32.86 | 40.22 | 35.43 | 0.59 | 30.62 | 7.12 |
+| ISPC BC7, basic, colour under transparent pixels | 46.8 | 46.1 | 36.43 | 33.97 | 40.22 | 37.11 | 0.48 | 31.84 | 6.06 |
+| **fix C** | 42.5 | 41.6 | 0.14 | 31.30 | 35.67 | 32.57 | 0.48 | 29.46 | 7.25 |
+| fix C, colour under transparent pixels | 44.8 | 43.9 | 0.21 | 32.71 | 35.67 | 36.40 | 0.05 | 31.23 | 6.06 |
+| fix C + B, mode 7 on, colour under transparent pixels | 45.8 | 45.1 | 1.63 | 33.39 | 38.85 | 36.57 | 0.26 | 31.37 | 6.09 |
+| fix C, RDO 0.5 | 40.4 | 39.3 | 3.29 | 30.91 | 34.78 | 31.53 | 1.79 | 29.19 | 7.52 |
+| fix C, RDO 1 | 38.9 | 37.8 | 2.88 | 30.24 | 33.34 | 30.24 | 2.76 | 28.71 | 7.95 |
+| fix C, RDO 2 | 36.5 | 35.5 | 2.78 | 28.83 | 30.73 | 28.50 | 4.59 | 27.71 | 9.04 |
+| fix C, colour under transparent pixels, RDO 0.5 | 42.4 | 41.3 | 3.86 | 32.18 | 34.78 | 34.28 | 1.34 | 30.80 | 6.33 |
+| fix C, colour under transparent pixels, RDO 1 | 40.5 | 39.4 | 3.20 | 31.25 | 33.34 | 32.80 | 2.31 | 30.06 | 6.84 |
+| fix C, colour under transparent pixels, RDO 2 | 37.6 | 36.5 | 3.70 | 29.41 | 30.74 | 30.77 | 3.36 | 28.56 | 8.23 |
+| fix C + B, mode 7 on, colour under transparent pixels, RDO 1 | 42.1 | 41.1 | 4.00 | 31.80 | 35.10 | 32.95 | 2.25 | 30.22 | 6.82 |
+
+#### The named sample's scores, on the animation mosaics
+
+Every 40th body by pixels. MB are this sample's zstd 19 scaled to the whole set, so they run about 2 % under the every-10th rows: the repo's BC7 is 1857 MB here and 1890 MB there on Enhanced. `bc7-before` is byte-identical to `repo`, so it isn't repeated.
+
+**Classic**
+
+| encoder | zstd 19 MB | SSIMULACRA2 median | p5 | min | bodies at 80 or better | RGB PSNR dB |
+|---|---:|---:|---:|---:|---:|---:|
+| BC1 (`dds` High) | 563.9 | 80.62 | 63.85 | 52.47 | 15 of 26 | 28.73 |
+| repo | 987.3 | 61.49 | 49.59 | 38.33 | 5 of 26 | 24.95 |
+| repo + colour | 1064.2 | 75.01 | 60.81 | 49.17 | 6 of 26 | 34.60 |
+| fix A | 987.3 | 61.85 | 50.82 | 45.86 | 5 of 26 | 24.96 |
+| fix A + colour | 1064.1 | 85.86 | 66.40 | 55.41 | 19 of 26 | 34.79 |
+| **fix C** | 1008.1 | 86.31 | 61.22 | 54.52 | 18 of 26 | 34.22 |
+| **fix C, RDO 0.5** | 945.7 | 82.75 | 60.78 | 53.76 | 17 of 26 | 33.20 |
+| **fix C, RDO 1** | 902.9 | 79.32 | 59.56 | 52.26 | 12 of 26 | 31.82 |
+| fix C, RDO 2 | 838.7 | 70.86 | 51.68 | 49.44 | 1 of 26 | 29.40 |
+| fix C + colour | 1065.4 | 85.94 | 66.41 | 55.44 | 19 of 26 | 34.81 |
+| fix C + colour, RDO 0.5 | 999.1 | 83.02 | 64.31 | 55.19 | 17 of 26 | 33.75 |
+| fix C + colour, RDO 1 | 952.5 | 80.68 | 60.29 | 54.56 | 14 of 26 | 32.29 |
+| fix C + colour, RDO 2 | 883.6 | 71.88 | 53.33 | 52.09 | 4 of 26 | 29.71 |
+| fix A + B, mode 7 on + colour | 1111.1 | 86.16 | 67.69 | 58.20 | 19 of 26 | 35.59 |
+| fix C + B, mode 7 on + colour | 1112.1 | 86.20 | 67.70 | 58.22 | 19 of 26 | 35.60 |
+| fix C + B, mode 7 on + colour, RDO 1 | 1033.5 | 81.13 | 66.55 | 57.22 | 15 of 26 | 33.05 |
+| ISPC basic | 1085.3 | 86.46 | 68.65 | 62.95 | 19 of 26 | 35.56 |
+| ISPC basic + colour | 1131.8 | 86.44 | 68.49 | 62.74 | 19 of 26 | 36.04 |
+| ISPC basic + colour, RDO 1 | 1069.3 | 81.95 | 67.95 | 62.03 | 16 of 26 | 33.64 |
+
+**Enhanced**
+
+| encoder | zstd 19 MB | SSIMULACRA2 median | p5 | min | bodies at 80 or better | RGB PSNR dB |
+|---|---:|---:|---:|---:|---:|---:|
+| BC1 (`dds` High) | 876.9 | 71.45 | 28.49 | 16.78 | 5 of 24 | 30.28 |
+| repo | 1856.8 | 58.31 | 45.85 | 44.21 | 2 of 24 | 25.11 |
+| repo + colour | 1963.1 | 28.77 | -1.56 | -11.11 | 1 of 24 | 25.29 |
+| fix A | 1855.4 | 71.10 | 59.09 | 58.70 | 6 of 24 | 25.78 |
+| fix A + colour | 1950.8 | 77.91 | 66.72 | 62.51 | 10 of 24 | 30.29 |
+| **fix C** | 1841.2 | 86.12 | 65.25 | 65.08 | 21 of 24 | 31.33 |
+| **fix C, RDO 0.5** | 1738.0 | 83.58 | 64.14 | 64.12 | 20 of 24 | 30.96 |
+| **fix C, RDO 1** | 1669.8 | 81.38 | 62.91 | 62.89 | 15 of 24 | 30.28 |
+| fix C, RDO 2 | 1568.1 | 74.81 | 59.72 | 59.35 | 6 of 24 | 28.88 |
+| fix C + colour | 1943.1 | 87.36 | 70.19 | 70.06 | 21 of 24 | 32.73 |
+| fix C + colour, RDO 0.5 | 1824.6 | 85.83 | 70.64 | 69.27 | 21 of 24 | 32.21 |
+| fix C + colour, RDO 1 | 1741.0 | 82.47 | 68.79 | 67.42 | 18 of 24 | 31.30 |
+| fix C + colour, RDO 2 | 1614.1 | 76.27 | 65.78 | 62.59 | 6 of 24 | 29.48 |
+| fix A + B, mode 7 on + colour | 2008.5 | 79.25 | 70.98 | 65.92 | 12 of 24 | 31.44 |
+| fix C + B, mode 7 on + colour | 1993.8 | 88.12 | 77.14 | 74.16 | 22 of 24 | 33.42 |
+| fix C + B, mode 7 on + colour, RDO 1 | 1816.4 | 83.68 | 72.10 | 71.60 | 19 of 24 | 31.85 |
+| ISPC basic | 1988.4 | 86.94 | 74.10 | 70.34 | 22 of 24 | 32.89 |
+| ISPC basic + colour | 2040.7 | 88.29 | 80.18 | 75.74 | 23 of 24 | 33.99 |
+| ISPC basic + colour, RDO 1 | 1894.8 | 84.10 | 75.55 | 72.93 | 19 of 24 | 32.41 |
+
+**The same sample by class: MB, then SSIMULACRA2 median / min, RGB PSNR dB.** The older rows don't count bodies by class; the every-10th tables below do. Class sizes in this sample:
+
+- Classic: equipment 11 bodies (6.5 Mpx), NPC small 3 (0.8), NPC medium 7 (20.6), NPC large 2 (19.7), not listed 3 (0.5).
+- Enhanced: equipment 16 (43.5 Mpx), NPC small 1 (1.0), NPC medium 4 (15.4), NPC large 3 (51.3).
+- **Too few bodies to trust a class on its own in small and large,** so the every-10th rows carry the class comparison.
+
+**Classic**
+
+| encoder | equipment MB | score | NPC small MB | score | NPC medium MB | score | NPC large MB | score |
+|---|---:|---|---:|---|---:|---|---:|---|
+| BC1 (`dds` High) | 93.6 | 79.55 / 63.85, 28.24 | 12.7 | 74.59 / 52.47, 25.84 | 245.2 | 81.67 / 79.34, 29.37 | 201.9 | 80.33 / 80.33, 28.46 |
+| repo | 138.3 | 68.10 / 50.82, 21.89 | 20.3 | 49.59 / 38.33, 21.19 | 441.8 | 57.90 / 54.14, 25.40 | 368.3 | 61.49 / 61.49, 26.18 |
+| fix A | 138.3 | 68.59 / 50.82, 21.89 | 20.3 | 53.86 / 45.86, 21.54 | 441.8 | 60.04 / 54.14, 25.40 | 368.3 | 61.48 / 61.48, 26.18 |
+| fix A + colour | 170.8 | 80.68 / 66.40, 33.67 | 23.2 | 81.73 / 55.41, 28.65 | 467.9 | 89.61 / 88.75, 35.44 | 382.4 | 89.44 / 89.44, 35.46 |
+| **fix C** | 152.4 | 78.14 / 61.22, 32.54 | 21.4 | 81.43 / 54.52, 28.17 | 446.0 | 89.20 / 87.45, 34.89 | 369.7 | 89.25 / 89.25, 35.16 |
+| **fix C, RDO 0.5** | 140.6 | 75.81 / 60.78, 31.53 | 20.4 | 80.92 / 53.76, 27.91 | 421.3 | 86.46 / 84.67, 33.76 | 346.5 | 86.11 / 86.11, 34.00 |
+| **fix C, RDO 1** | 135.6 | 73.68 / 59.56, 30.44 | 19.9 | 78.03 / 52.26, 27.51 | 402.5 | 81.26 / 78.62, 32.24 | 329.2 | 81.15 / 81.15, 32.44 |
+| fix C + colour | 171.4 | 80.69 / 66.41, 33.73 | 23.2 | 81.75 / 55.44, 28.66 | 468.2 | 89.61 / 88.79, 35.45 | 382.8 | 89.49 / 89.49, 35.47 |
+| ISPC basic + colour | 175.9 | 81.58 / 68.49, 34.28 | 24.1 | 85.97 / 62.74, 30.60 | 502.7 | 90.34 / 89.33, 36.69 | 408.3 | 90.01 / 90.01, 36.70 |
+
+**Enhanced**
+
+| encoder | equipment MB | score | NPC small MB | score | NPC medium MB | score | NPC large MB | score |
+|---|---:|---|---:|---|---:|---|---:|---|
+| BC1 (`dds` High) | 387.4 | 75.44 / 66.29, 29.05 | 12.2 | 71.45 / 71.45, 26.26 | 133.0 | 58.92 / 49.41, 32.41 | 344.4 | 28.49 / 16.78, 31.39 |
+| repo | 800.8 | 64.51 / 45.85, 23.81 | 25.1 | 58.31 / 58.31, 22.69 | 300.4 | 46.25 / 44.21, 25.00 | 730.5 | 53.49 / 47.40, 27.12 |
+| fix A | 800.1 | 67.18 / 58.70, 24.30 | 25.1 | 62.41 / 62.41, 22.97 | 300.1 | 71.30 / 62.71, 26.49 | 730.1 | 71.10 / 65.22, 27.79 |
+| fix A + colour | 856.6 | 77.91 / 62.51, 29.49 | 26.7 | 71.11 / 71.11, 25.91 | 315.6 | 78.13 / 71.72, 30.96 | 751.9 | 77.55 / 72.99, 31.21 |
+| **fix C** | 794.3 | 86.25 / 65.08, 30.50 | 24.9 | 82.54 / 82.54, 26.89 | 299.0 | 86.12 / 80.83, 31.98 | 723.0 | 85.65 / 83.90, 32.34 |
+| **fix C, RDO 0.5** | 741.1 | 83.43 / 64.12, 30.12 | 24.4 | 80.91 / 80.91, 26.83 | 287.8 | 84.56 / 78.83, 31.62 | 684.9 | 84.54 / 83.21, 31.93 |
+| **fix C, RDO 1** | 712.9 | 80.50 / 62.89, 29.52 | 23.8 | 79.30 / 79.30, 26.61 | 278.9 | 81.38 / 77.21, 30.94 | 654.1 | 81.44 / 80.89, 31.11 |
+| fix C + colour | 853.2 | 87.81 / 70.06, 31.86 | 26.5 | 83.68 / 83.68, 28.15 | 315.0 | 87.21 / 86.37, 34.61 | 748.4 | 87.36 / 84.60, 33.41 |
+| ISPC basic + colour | 889.4 | 88.29 / 75.74, 32.74 | 27.5 | 85.78 / 85.78, 29.75 | 326.0 | 88.18 / 87.89, 35.30 | 797.9 | 88.34 / 87.20, 35.41 |
+
+### The smallest fix: a proposal
+
+**Fix A is approved by the user and lands after this benchmark, through the coordinator. Fix C and the colour step are not decided.** Nothing here is applied: the repo's encoder is unchanged, so no row mixes encoders.
+
+1. **Fix A,** the edit above, plus a regression test: the field test, with the repo's own `decode_bc7_error_bounded` or a dev-dependency decoder as the reference, over every `encode_modeN`, both index flags and all rotations. No disk cost. It's the only change needed to stop blocks decoding differently from what the search scored at the converter's flags.
+2. **Fix C,** the lines below. On top of fix A it costs about 2 % of animation disk on Classic and saves 1 % on Enhanced against the repo's row, and encode goes from 0.05 to 0.14 worker seconds a Mpx. It leaves pixels alone, so nothing can come to depend on it.
+
+   ```diff
+   --- a/lib/udd-image-codecs/src/bc7/analytical.rs (end of pack_bc7_rgba)
+        *block = best_block;
+   +
+   +    // Alpha's own plane can win on blocks the correlation test above doesn't offer it to, and `pack_mode4_or_5` only
+   +    // estimates its error, so the two candidates are compared by decoding them.
+   +    if mn[3] != mx[3] {
+   +        let mut plane_block = [0u8; 16];
+   +        pack_mode4_or_5(&mut plane_block, pixels, ALPHA_PLANE);
+   +        if decoded_error(&plane_block, pixels) < decoded_error(block, pixels) {
+   +            *block = plane_block;
+   +        }
+   +    }
+    }
+   +
+   +const ALPHA_PLANE: usize = 3;
+   +
+   +fn decoded_error(block: &[u8; 16], pixels: &[Pixel; 16]) -> u64 {
+   +    let bits = u128::from_le_bytes(*block);
+   +    super::rdo::decode_bc7_error_bounded::<false>(bits, pixels, 0, false, u64::MAX, None).expect("the encoder writes valid modes")
+   +}
+   --- a/lib/udd-image-codecs/src/bc7/rdo.rs (line 1420)
+   -fn decode_bc7_error_bounded<const COLLECT_STATS: bool>(
+   +pub(super) fn decode_bc7_error_bounded<const COLLECT_STATS: bool>(
+   ```
+
+3. **Colour under transparent pixels,** only if the tail is worth about 5.5 % of disk. After `normalize_to_rgba8888` in the two BC7 entry points of `lib/udd-image-codecs/src/bc7.rs` (lines 707 and 861; 969 and 1094 are the uncompressed RGBA8 path and stay as they are), so the encoder and RDO's target see the same pixels:
+
+   ```diff
+   -    let rgba_pixels = normalize_to_rgba8888(pixels, input_format, extent);
+   +    let mut rgba_pixels = normalize_to_rgba8888(pixels, input_format, extent).into_owned();
+   +    mean_colour_under_transparent(&mut rgba_pixels, extent.width() as usize, extent.height() as usize);
+   ```
+
+   The helper is about 30 lines: per 4×4 block, each pixel with alpha 0 takes the alpha-weighted mean colour of the block. It's kept with the bench's scratch copy (`bc7-trace/src/colour_step.rs`), and on a random 40000-block strip it matches the form measured here (`bleed_strip` in `lossy.rs`) on every block. Check first that nothing reads colour under alpha 0 from a decoded page. It must not go in without fix A: on the repo's encoder it's what drops Enhanced to 28.77.
+4. **Bugs B** (three small edits, in the scratch copy's `make_fixes.py`), only if the subset flags will ever be used. `benches/bc7_encode.rs` sets them today, so any benchmark comparison through those flags has been reading corrupt blocks.
+
+**Packages need a rebuild to benefit:** `tex_art_cc`, `tex_land_cc`, `tex_art_ec`, `tex_land_ec`, `tex_aux_ec`, `mobile_anim_ec`, `mobile_anim_cc`, `effects_ec`, and `cc_radar` when built as BC7. `--jxl` textures don't pass through this encoder.
+
+**`docs/TODO.md:85` closed BC7 RDO on land before this was known.** Those land rows ran on an encoder with bug A, and RDO partly heals corrupt blocks by replacing them, so they should be read again after the fix.
+## 13. Lossy block formats on disk (`q`, `qc`)
+
+**Measure only: the user decides.** A lossy mode would be chosen at pack time for low-end devices, and runtime BC7 stays off. Streams are one per (action, direction), so faced-only loading still works. Each stream's blocks are encoded as a strip in stream order, so RDO's lookback is what zstd sees and it stays inside the stream. Frames are padded to 4×4 blocks; section 11 has the padding's cost.
+
+**Sample:** every 10th body by pixels, 103 Classic and 93 Enhanced bodies. Sizes and scores aren't timed. Every "BC7" row in these tables is **the repo's encoder as the converter calls it, with the bugs in section 12**. The same rows from the fixed scratch copy are in section 12.
+
+**Encoders:**
+
+- BC1 and BC3: `dds` 0.2.0, `CompressionQuality::High`, no dithering. `dds` does punch-through alpha from RGBA (`encode/bc1.rs`, threshold one half), so the repo's `encode_bc1` wasn't enough: it takes RGB only, at Normal. BC3's alpha is BC4 through the same crate.
+- BC7 RDO: the repo's ERT port of `bc7enc_rdo` (`rdo.rs`, BC7 only), lookback 64 blocks.
+- **BC1 "block reuse":** no RDO exists for BC1 in the repo. `lossy.rs` has a small pass written for this measurement. Over the previous 64 blocks it tries a whole earlier block, earlier selectors, or earlier endpoints with recomputed selectors, minimising mean squared error per channel + λ × bits (literal byte 8, matched byte 2). The alpha pattern must survive. These are real measurements of this pass, not the best a BC1 RDO could do.
+
+### What the numbers say
+
+**Does any row beat the lossless candidates on disk at SSIMULACRA2 80 or above?**
+
+| | lossless to beat | rows that do, median at 80 or above | smallest |
+|---|---|---|---|
+| **Classic** | row spans ≈735 MB, zstd 19 ≈761 MB | BC1 (504.2 MB, 83.17), its reuse pass at λ 0.5 and 1, BC3 (583.9 MB, 83.25), BC3 + colour (614.1 MB, 83.70) | **BC1, block reuse λ 1: 445.8 MB, 81.05.** λ 2 falls to 78.45. |
+| **Enhanced** | best in-line assignment ≈1767 MB (section 10), zstd 19 ≈2000 MB | BC3 (1445.4 MB, 82.23), BC3 + colour (1521.8 MB, 84.66) | **BC3: 1445.4 MB, 82.23** |
+
+- **No repo BC7 row beats lossless on disk at 80 or above.** The only one at 80 is Classic with colour and RDO 0.5 (889.5 MB, 81.11). It's larger than lossless, and λ 1 and 2 fall under 80.
+- **Fix C changes that on Enhanced, and only there.** Section 12 has the rows: on the named sample, fix C with RDO 0.5 (1738 MB, 83.58), RDO 1 (1670 MB, 81.38) and fix C + colour with RDO 1 (1741 MB, 82.47) are all under Enhanced's best in-line lossless (≈1767 MB). The every-10th-body rows in section 12 test that again. On Classic, no BC7 row beats lossless at 80: RDO 1 is about 903 MB at 79.32, against ≈735 MB.
+- **BC1 on Enhanced isn't at 80.** 911.2 MB, median 74.90, but p5 51.11 and min −46.34, because one-bit alpha removes anti-aliased edges (below).
+- **Medians hide the worst bodies.** Classic's BC1 has p5 65.67 and min 41.97, and only 71 of 103 bodies reach 80. Enhanced's BC3 + colour has 74 of 93.
+
+**Why not BC3, as the original clients ship?** On these sprites there's no reason yet, and it's a real candidate:
+
+- **At the same VRAM as BC7,** BC3 from `dds` is 23 to 35 % smaller on disk than the repo's BC7 and scores higher than it on both clients, because BC1's colour modes aren't hit by the bug and BC4's alpha plane is independent of colour.
+- **Classic:** BC3 adds nothing over BC1. 583.9 MB against 504.2 MB, at 83.25 against 83.17, since Classic's alpha is one bit and BC1 holds it. It's also twice the VRAM.
+- **Enhanced:** BC3 stays the smallest at 80 or above (1445.4 MB, 82.23; with colour 1521.8 MB, 84.66) and has by far the best coverage: 0.186 levels against 0.51 to 0.61 for BC7 with fix C. BC3_on the named sample, fix C with RDO 0.5 (1738 MB, 83.58), RDO 1 (1670 MB, 81.38) and fix C + colour with RDO 1 (1741 MB, 82.47) are all under Enhanced's best in-line lossless (≈1767 MB). The every-10th-body rows in section 12 test that again. On Classic, no BC7 row beats lossless at 80: RDO 1 is about 903 MB at 79.32, against ≈735 MB.
+- BC3's colour is still BC1's: 4 colours a block on one line. Its RGB PSNR on Enhanced is 29.51 to 30.87 dB, against 31.33 to 32.73 dB for BC7 with fix C and 32.86 to 33.97 dB for ISPC, and its hue error is 1.98 to 2.29 levels against 1.55 to 1.80 for BC7 with fix C.
+
+**Enhanced's coverage as one-bit alpha** (BC1, threshold at one half): 87.89 % of edge pixels move by a level or more, 3.488 levels on average and at worst 8 of 16, and 11.571 % of painted pixels disappear. BC3's BC4 plane moves 0.81 % of edge pixels, 0.186 levels on average. The repo's BC7 moves 37.62 %, and its opaque interiors suffer too: 18.287 % of solid pixels stop being solid.
+
+**Hue:**
+
+- **Enhanced:** the hue table's key is a hueable pixel's red byte. Every block format changes it on 83 to 92 % of hueable pixels. After a real hue, the mean channel error is 2.0 to 3.3 levels, and 14 to 26 % of hued pixels are off by 8 or more. BC1 and BC3 + colour are the best here, at 2.0 levels, because BC7's corrupt blocks count against it.
+- **Classic:** the key is the red byte's top 5 bits. BC1 changes it on 50.70 %, moved 0.707 of 31 on average, with a mean error of 3.102 levels under a full hue. **Partial hue is the weak point:** 81.45 % of grey pixels stop being exactly grey in 8 bits and 41.54 % in 5 bits, so a shader can't tell grey from colour after block coding. That's why Classic would need the masks of section 11. An R8 mask is twice BC1's 0.5 bytes a pixel, a BC4 mask equals it, and a one-bit mask is an eighth of a byte.
+- **Hue flags through a mask:** BC4 and back with a threshold at one half gives 0 wrong flags, on 84876771 Classic and 16533130 Enhanced painted pixels of masked frames. A one-bit mask has none by construction. Section 11 has mask sizes and the share of frames that need none.
+
+**BC1's reuse pass is cheap and honest.** On Classic it saves 5.9 %, 11.6 % and 20.2 % at λ 0.5, 1 and 2, losing 0.8, 2.1 and 4.7 points. Its encode time is 0.9 worker s/Mpx. BC7's RDO saves more on the repo encoder, partly by replacing corrupt blocks, and costs 3 to 8 worker s/Mpx. On the fixed encoder, in section 12, it's cleaner and costs about the same.
+
+**Decode (`qc`):** every block row passes the 250 ms line by a wide margin, because a block row is only zstd in front of the upload. The tables below use the placeholder rule's crowds, so they differ a little from section 9's, and they ran with "background builds on the other cluster", at load 4.6 to 13.9. Read them against each table's own zstd 19 row. On Enhanced creatures, at 4 threads over five directions, plain planes take 100.9 ms, BC7 50 ms, BC3 51 ms and BC1 29 ms.
+
+#### Classic: disk, pack time and quality
+
+| row | block MB | zstd 7 MB | zstd 19 MB | encode, worker s a Mpx | SSIMULACRA2 median | p5 | min | bodies at 80 or better | channel error mean | worst | RGB PSNR dB | painted pixels gone | transparent pixels painted |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| BC7 (repo) | 2510.9 | 891.2 | 873.1 | 0.048 | 67.91 | 51.48 | 23.59 | 20 of 103 | 6.593 | 255 | 26.07 | 0.033 % | 6.701 % |
+| BC7 (repo), RDO lambda 0.5 | 2510.9 | 805.2 | 782.2 | 7.769 | 65.16 | 48.58 | 31.30 | 4 of 103 | 6.723 | 248 | 26.17 | 0.010 % | 6.980 % |
+| BC7 (repo), RDO lambda 1 | 2510.9 | 760.3 | 737.7 | 6.543 | 62.87 | 47.70 | 30.04 | 3 of 103 | 7.204 | 248 | 25.87 | 0.010 % | 7.469 % |
+| BC7 (repo), RDO lambda 2 | 2510.9 | 696.6 | 675.1 | 4.154 | 60.75 | 44.09 | 26.93 | 4 of 103 | 8.185 | 248 | 25.19 | 0.010 % | 7.881 % |
+| BC7 (repo), colour under transparent pixels | 2510.9 | 966.7 | 945.5 | 0.088 | 75.65 | 58.56 | 29.34 | 37 of 103 | 3.199 | 255 | 33.00 | 0.041 % | 0.128 % |
+| BC7 (repo), colour under transparent pixels, RDO lambda 0.5 | 2510.9 | 915.7 | 889.5 | 8.488 | 81.11 | 65.00 | 41.72 | 59 of 103 | 3.494 | 247 | 33.04 | 0.003 % | 0.157 % |
+| BC7 (repo), colour under transparent pixels, RDO lambda 1 | 2510.9 | 872.5 | 846.9 | 2.782 | 78.13 | 64.10 | 41.27 | 45 of 103 | 4.030 | 247 | 31.96 | 0.003 % | 0.202 % |
+| BC7 (repo), colour under transparent pixels, RDO lambda 2 | 2510.9 | 808.2 | 784.1 | 2.521 | 73.82 | 58.70 | 40.33 | 13 of 103 | 5.110 | 247 | 29.89 | 0.003 % | 0.271 % |
+| BC7 (repo), colour under transparent pixels, all modes | 2510.9 | 1011.7 | 994.4 | 3.032 | 68.08 | 43.79 | 18.34 | 28 of 103 | 5.317 | 255 | 25.22 | 0.039 % | 0.189 % |
+| BC1 | 1255.5 | 520.3 | 504.2 | 0.400 | 83.17 | 65.67 | 41.97 | 71 of 103 | 5.045 | 189 | 30.13 | 0.000 % | 0.000 % |
+| BC1, block reuse lambda 0.5 | 1255.5 | 493.0 | 474.3 | 0.922 | 82.37 | 65.65 | 42.22 | 70 of 103 | 5.200 | 189 | 30.03 | 0.000 % | 0.000 % |
+| BC1, block reuse lambda 1 | 1255.5 | 465.8 | 445.8 | 0.915 | 81.05 | 65.55 | 42.09 | 58 of 103 | 5.505 | 189 | 29.80 | 0.000 % | 0.000 % |
+| BC1, block reuse lambda 2 | 1255.5 | 423.5 | 402.3 | 0.924 | 78.45 | 64.47 | 41.86 | 45 of 103 | 6.126 | 189 | 29.25 | 0.000 % | 0.000 % |
+| BC3 (BC1 colour + BC4 coverage) | 2510.9 | 629.0 | 583.9 | 0.358 | 83.25 | 64.44 | 39.87 | 73 of 103 | 5.057 | 189 | 30.23 | 0.000 % | 0.000 % |
+| BC3, colour under transparent pixels | 2510.9 | 657.9 | 614.1 | 0.352 | 83.70 | 65.90 | 42.06 | 77 of 103 | 4.797 | 189 | 30.69 | 0.000 % | 0.000 % |
+
+#### Classic: by class (zstd 19 MB, then SSIMULACRA2 median / min, RGB PSNR dB)
+
+| row | equipment MB | SSIMULACRA2 median / min, RGB PSNR dB | NPC small MB | SSIMULACRA2 median / min, RGB PSNR dB | NPC medium MB | SSIMULACRA2 median / min, RGB PSNR dB | NPC large MB | SSIMULACRA2 median / min, RGB PSNR dB | not listed MB | SSIMULACRA2 median / min, RGB PSNR dB |
+|---|---:|---|---:|---|---:|---|---:|---|---:|---|
+| BC7 (repo) | 166.6 | 71.40 / 32.24, 22.20 | 25.4 | 66.05 / 25.18, 23.23 | 192.9 | 59.75 / 44.10, 26.25 | 473.7 | 63.40 / 60.59, 28.57 | 14.6 | 82.98 / 23.59, 21.38 |
+| BC7 (repo), RDO lambda 0.5 | 134.2 | 67.22 / 41.33, 22.42 | 21.7 | 63.10 / 31.30, 23.31 | 171.3 | 59.46 / 43.67, 26.24 | 442.2 | 63.43 / 58.91, 28.55 | 12.7 | 76.54 / 34.60, 22.09 |
+| BC7 (repo), RDO lambda 1 | 126.3 | 65.10 / 38.19, 22.23 | 20.4 | 60.72 / 30.04, 23.10 | 159.8 | 56.07 / 42.03, 25.90 | 419.1 | 61.69 / 57.84, 28.14 | 12.1 | 73.35 / 31.89, 21.94 |
+| BC7 (repo), RDO lambda 2 | 117.0 | 62.06 / 30.80, 21.84 | 18.8 | 59.72 / 28.59, 22.63 | 143.7 | 52.03 / 38.75, 25.14 | 384.5 | 57.63 / 53.03, 27.18 | 11.2 | 70.68 / 26.93, 21.58 |
+| BC7 (repo), colour under transparent pixels | 195.5 | 78.12 / 47.79, 29.98 | 28.6 | 74.79 / 29.34, 33.13 | 208.6 | 72.46 / 63.18, 33.00 | 496.8 | 72.38 / 66.46, 34.99 | 16.0 | 88.04 / 32.59, 25.36 |
+| BC7 (repo), colour under transparent pixels, RDO lambda 0.5 | 179.4 | 81.11 / 61.85, 30.49 | 27.1 | 82.36 / 41.72, 32.58 | 195.0 | 79.53 / 73.95, 32.78 | 472.8 | 79.00 / 77.66, 34.64 | 15.2 | 84.97 / 49.39, 26.70 |
+| BC7 (repo), colour under transparent pixels, RDO lambda 1 | 171.1 | 77.67 / 60.84, 29.71 | 26.0 | 80.00 / 41.27, 31.48 | 184.4 | 77.32 / 71.70, 31.64 | 450.7 | 76.67 / 74.52, 33.30 | 14.7 | 81.08 / 48.04, 26.44 |
+| BC7 (repo), colour under transparent pixels, RDO lambda 2 | 160.8 | 74.72 / 54.79, 28.26 | 24.3 | 75.04 / 40.33, 29.32 | 168.7 | 70.94 / 58.60, 29.51 | 416.4 | 70.35 / 67.05, 30.83 | 14.0 | 77.40 / 45.17, 25.74 |
+| BC7 (repo), colour under transparent pixels, all modes | 199.7 | 77.03 / 18.34, 25.71 | 29.5 | 65.11 / 27.45, 24.50 | 219.1 | 56.97 / 41.93, 26.32 | 529.7 | 53.24 / 46.24, 24.91 | 16.4 | 88.03 / 20.57, 21.65 |
+| BC1 | 106.5 | 83.50 / 62.88, 27.67 | 15.5 | 84.61 / 41.97, 28.56 | 111.0 | 81.77 / 75.52, 30.74 | 262.6 | 81.49 / 80.64, 31.13 | 8.7 | 85.74 / 54.48, 25.51 |
+| BC1, block reuse lambda 0.5 | 100.6 | 83.05 / 62.85, 27.64 | 15.1 | 84.36 / 42.22, 28.53 | 104.3 | 81.32 / 75.11, 30.62 | 246.0 | 80.93 / 80.63, 30.99 | 8.4 | 85.60 / 53.34, 25.51 |
+| BC1, block reuse lambda 1 | 96.5 | 82.48 / 62.72, 27.56 | 14.6 | 82.11 / 42.09, 28.45 | 98.0 | 79.71 / 73.71, 30.35 | 228.5 | 79.51 / 76.05, 30.67 | 8.2 | 85.36 / 52.88, 25.47 |
+| BC1, block reuse lambda 2 | 90.1 | 81.37 / 62.46, 27.34 | 13.6 | 78.64 / 41.86, 28.18 | 88.6 | 75.26 / 64.42, 29.75 | 202.1 | 74.10 / 67.87, 29.93 | 7.8 | 85.16 / 52.02, 25.37 |
+| BC3 (BC1 colour + BC4 coverage) | 132.1 | 83.25 / 56.94, 27.63 | 19.1 | 84.93 / 39.87, 29.12 | 128.7 | 82.80 / 75.01, 30.78 | 293.4 | 82.14 / 81.71, 31.38 | 10.5 | 86.82 / 54.62, 24.88 |
+| BC3, colour under transparent pixels | 143.8 | 83.87 / 62.95, 28.51 | 20.4 | 85.71 / 42.06, 29.52 | 135.5 | 83.43 / 75.98, 31.30 | 303.3 | 82.00 / 81.43, 31.53 | 11.3 | 86.33 / 54.92, 25.90 |
+
+#### Classic: hue
+
+| row | key changed | moved, mean | worst | full hue channel error, mean | worst | hued pixels off by 8 or more | partial hue error, mean | worst | grey stops being grey, 8 bit | 5 bit | colour becomes grey, 8 bit | 5 bit |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| BC7 (repo) | 50.56 % | 0.962 | 31 | 4.189 | 224 | 46.022 % | 8.838 | 255 | 68.89 % | 47.50 % | 0.427 % | 8.511 % |
+| BC7 (repo), RDO lambda 0.5 | 52.72 % | 0.983 | 31 | 4.276 | 224 | 47.912 % | 9.256 | 255 | 74.68 % | 52.67 % | 0.644 % | 8.826 % |
+| BC7 (repo), RDO lambda 1 | 54.99 % | 1.041 | 31 | 4.527 | 224 | 50.105 % | 9.724 | 255 | 74.93 % | 53.24 % | 0.795 % | 8.823 % |
+| BC7 (repo), RDO lambda 2 | 58.51 % | 1.168 | 31 | 5.084 | 224 | 53.691 % | 10.662 | 255 | 75.47 % | 54.00 % | 0.940 % | 8.824 % |
+| BC7 (repo), colour under transparent pixels | 41.52 % | 0.504 | 31 | 2.148 | 224 | 36.365 % | 5.875 | 255 | 63.34 % | 46.26 % | 0.906 % | 8.695 % |
+| BC7 (repo), colour under transparent pixels, RDO lambda 0.5 | 44.16 % | 0.531 | 30 | 2.262 | 224 | 38.743 % | 6.347 | 255 | 67.32 % | 49.25 % | 1.014 % | 8.816 % |
+| BC7 (repo), colour under transparent pixels, RDO lambda 1 | 47.14 % | 0.595 | 30 | 2.541 | 224 | 41.605 % | 6.902 | 255 | 68.67 % | 50.49 % | 1.115 % | 8.748 % |
+| BC7 (repo), colour under transparent pixels, RDO lambda 2 | 51.70 % | 0.735 | 30 | 3.158 | 224 | 46.223 % | 7.944 | 255 | 69.71 % | 51.66 % | 1.269 % | 8.704 % |
+| BC7 (repo), colour under transparent pixels, all modes | 41.87 % | 0.786 | 31 | 3.418 | 224 | 37.644 % | 7.641 | 255 | 57.28 % | 41.92 % | 1.219 % | 7.046 % |
+| BC1 | 50.70 % | 0.707 | 22 | 3.102 | 160 | 46.511 % | 8.677 | 255 | 81.45 % | 41.54 % | 1.627 % | 5.337 % |
+| BC1, block reuse lambda 0.5 | 52.24 % | 0.725 | 22 | 3.173 | 160 | 47.731 % | 8.900 | 255 | 83.45 % | 43.39 % | 1.813 % | 5.662 % |
+| BC1, block reuse lambda 1 | 55.25 % | 0.765 | 22 | 3.336 | 160 | 50.257 % | 9.244 | 255 | 84.36 % | 44.43 % | 2.158 % | 6.124 % |
+| BC1, block reuse lambda 2 | 59.96 % | 0.847 | 22 | 3.679 | 160 | 54.430 % | 9.894 | 255 | 85.69 % | 46.69 % | 2.558 % | 6.658 % |
+| BC3 (BC1 colour + BC4 coverage) | 51.60 % | 0.713 | 22 | 3.087 | 160 | 46.674 % | 8.817 | 255 | 80.49 % | 41.74 % | 2.909 % | 7.290 % |
+| BC3, colour under transparent pixels | 50.21 % | 0.677 | 22 | 2.959 | 160 | 45.850 % | 8.497 | 255 | 81.73 % | 43.30 % | 1.690 % | 5.566 % |
+
+#### Enhanced: disk, pack time and quality
+
+| row | block MB | zstd 7 MB | zstd 19 MB | encode, worker s a Mpx | SSIMULACRA2 median | p5 | min | bodies at 80 or better | channel error mean | worst | RGB PSNR dB | painted pixels gone | transparent pixels painted |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| BC7 (repo) | 5112.1 | 1924.2 | 1890.4 | 0.056 | 60.36 | 45.10 | 37.36 | 10 of 93 | 6.262 | 255 | 26.49 | 0.081 % | 3.927 % |
+| BC7 (repo), RDO lambda 0.5 | 5112.1 | 1746.5 | 1701.1 | 5.708 | 64.42 | 50.90 | 39.67 | 9 of 93 | 6.433 | 255 | 26.67 | 0.070 % | 3.834 % |
+| BC7 (repo), RDO lambda 1 | 5112.1 | 1646.1 | 1601.2 | 7.886 | 63.31 | 50.78 | 38.77 | 6 of 93 | 6.887 | 255 | 26.38 | 0.093 % | 3.952 % |
+| BC7 (repo), RDO lambda 2 | 5112.1 | 1506.9 | 1464.8 | 4.793 | 60.48 | 50.43 | 36.51 | 4 of 93 | 7.815 | 255 | 25.69 | 0.145 % | 4.089 % |
+| BC7 (repo), colour under transparent pixels | 5112.1 | 2016.3 | 1980.7 | 0.109 | 29.13 | 1.81 | -19.00 | 4 of 93 | 5.608 | 255 | 26.52 | 2.822 % | 9.440 % |
+| BC7 (repo), colour under transparent pixels, RDO lambda 0.5 | 5112.1 | 1812.7 | 1763.8 | 8.369 | 53.11 | 40.48 | 33.20 | 3 of 93 | 5.819 | 255 | 27.04 | 1.015 % | 7.328 % |
+| BC7 (repo), colour under transparent pixels, RDO lambda 1 | 5112.1 | 1730.8 | 1682.1 | 3.773 | 52.64 | 40.38 | 33.11 | 2 of 93 | 6.243 | 255 | 26.78 | 1.033 % | 7.412 % |
+| BC7 (repo), colour under transparent pixels, RDO lambda 2 | 5112.1 | 1603.5 | 1557.9 | 3.523 | 51.85 | 39.60 | 32.52 | 2 of 93 | 7.130 | 255 | 26.14 | 1.074 % | 7.582 % |
+| BC7 (repo), colour under transparent pixels, all modes | 5112.1 | 2098.8 | 2067.1 | 2.511 | 28.02 | 1.73 | -18.33 | 4 of 93 | 7.018 | 255 | 24.09 | 2.708 % | 9.105 % |
+| BC1 | 2556.0 | 939.2 | 911.2 | 0.358 | 74.90 | 51.11 | -46.34 | 17 of 93 | 4.750 | 194 | 30.85 | 11.571 % | 0.000 % |
+| BC1, block reuse lambda 0.5 | 2556.0 | 881.4 | 852.6 | 0.846 | 74.72 | 51.05 | -46.34 | 16 of 93 | 4.932 | 226 | 30.73 | 11.571 % | 0.000 % |
+| BC1, block reuse lambda 1 | 2556.0 | 835.2 | 805.5 | 0.850 | 74.19 | 50.98 | -46.36 | 16 of 93 | 5.214 | 226 | 30.49 | 11.571 % | 0.000 % |
+| BC1, block reuse lambda 2 | 2556.0 | 765.7 | 734.6 | 0.844 | 71.90 | 50.66 | -46.39 | 16 of 93 | 5.789 | 226 | 29.90 | 11.571 % | 0.000 % |
+| BC3 (BC1 colour + BC4 coverage) | 5112.1 | 1518.9 | 1445.4 | 0.392 | 82.23 | 63.06 | 52.69 | 62 of 93 | 5.451 | 223 | 29.51 | 0.149 % | 0.254 % |
+| BC3, colour under transparent pixels | 5112.1 | 1593.1 | 1521.8 | 0.371 | 84.66 | 67.37 | 54.65 | 74 of 93 | 4.693 | 223 | 30.87 | 0.149 % | 0.254 % |
+
+#### Enhanced: by class (zstd 19 MB, then SSIMULACRA2 median / min, RGB PSNR dB)
+
+| row | equipment MB | SSIMULACRA2 median / min, RGB PSNR dB | NPC small MB | SSIMULACRA2 median / min, RGB PSNR dB | NPC medium MB | SSIMULACRA2 median / min, RGB PSNR dB | NPC large MB | SSIMULACRA2 median / min, RGB PSNR dB |
+|---|---:|---|---:|---|---:|---|---:|---|
+| BC7 (repo) | 561.9 | 65.13 / 37.36, 24.89 | 19.9 | 54.79 / 53.97, 23.47 | 348.6 | 58.50 / 48.42, 26.46 | 960.0 | 57.47 / 41.43, 27.80 |
+| BC7 (repo), RDO lambda 0.5 | 477.0 | 66.53 / 39.67, 25.03 | 17.8 | 61.19 / 59.64, 23.55 | 321.1 | 63.80 / 59.69, 26.69 | 885.3 | 63.30 / 55.86, 28.01 |
+| BC7 (repo), RDO lambda 1 | 446.2 | 65.31 / 38.77, 24.79 | 16.7 | 60.08 / 57.88, 23.34 | 303.5 | 63.01 / 58.07, 26.40 | 834.9 | 62.31 / 55.41, 27.64 |
+| BC7 (repo), RDO lambda 2 | 409.8 | 62.16 / 36.51, 24.31 | 15.1 | 57.73 / 52.89, 22.89 | 278.2 | 60.08 / 53.40, 25.71 | 761.6 | 58.69 / 51.62, 26.74 |
+| BC7 (repo), colour under transparent pixels | 606.3 | 37.88 / -19.00, 24.59 | 21.6 | 13.07 / -3.18, 24.03 | 364.1 | 25.75 / 1.81, 26.39 | 988.7 | 21.14 / 0.74, 28.18 |
+| BC7 (repo), colour under transparent pixels, RDO lambda 0.5 | 513.5 | 52.43 / 33.20, 25.36 | 19.0 | 51.62 / 43.83, 24.55 | 329.6 | 54.67 / 44.08, 26.93 | 901.7 | 54.55 / 49.48, 28.43 |
+| BC7 (repo), colour under transparent pixels, RDO lambda 1 | 490.8 | 52.08 / 33.11, 25.18 | 18.2 | 51.37 / 43.04, 24.39 | 315.4 | 54.05 / 42.57, 26.69 | 857.6 | 53.84 / 48.93, 28.08 |
+| BC7 (repo), colour under transparent pixels, RDO lambda 2 | 459.2 | 51.85 / 32.52, 24.78 | 16.9 | 50.35 / 42.29, 23.96 | 292.8 | 51.77 / 41.36, 26.05 | 788.9 | 51.99 / 46.87, 27.18 |
+| BC7 (repo), colour under transparent pixels, all modes | 623.0 | 37.14 / -18.33, 23.54 | 22.1 | 13.60 / -0.68, 23.63 | 377.7 | 24.20 / 1.73, 24.23 | 1044.3 | 20.51 / 0.75, 24.37 |
+| BC1 | 268.5 | 75.41 / 20.55, 30.37 | 9.5 | 66.99 / 62.39, 29.17 | 163.5 | 73.12 / -46.34, 29.79 | 469.8 | 72.37 / 55.03, 31.57 |
+| BC1, block reuse lambda 0.5 | 245.4 | 75.30 / 20.55, 30.25 | 9.3 | 66.97 / 62.37, 29.15 | 158.3 | 73.08 / -46.34, 29.73 | 439.6 | 72.31 / 54.93, 31.42 |
+| BC1, block reuse lambda 1 | 232.2 | 74.70 / 20.55, 30.04 | 9.1 | 66.89 / 62.27, 29.07 | 152.6 | 72.83 / -46.36, 29.59 | 411.7 | 72.21 / 54.64, 31.11 |
+| BC1, block reuse lambda 2 | 214.4 | 73.91 / 20.54, 29.56 | 8.6 | 66.55 / 61.86, 28.79 | 142.5 | 71.42 / -46.39, 29.20 | 369.0 | 69.64 / 53.72, 30.35 |
+| BC3 (BC1 colour + BC4 coverage) | 471.9 | 82.46 / 52.69, 28.22 | 18.1 | 79.69 / 73.93, 27.08 | 272.6 | 81.54 / 74.03, 28.96 | 682.8 | 82.43 / 77.06, 30.75 |
+| BC3, colour under transparent pixels | 507.3 | 84.71 / 54.65, 30.11 | 19.4 | 83.06 / 82.26, 29.35 | 286.3 | 84.66 / 75.26, 30.43 | 708.8 | 84.56 / 78.82, 31.57 |
+
+#### Enhanced: hue
+
+| row | key changed | key moved, mean | worst | hued channel error, mean | worst | hued pixels off by 8 or more |
+|---|---:|---:|---:|---:|---:|---:|
+| BC7 (repo) | 84.81 % | 6.801 | 255 | 2.676 | 240 | 19.009 % |
+| BC7 (repo), RDO lambda 0.5 | 85.77 % | 6.921 | 255 | 2.719 | 240 | 19.766 % |
+| BC7 (repo), RDO lambda 1 | 86.73 % | 7.386 | 255 | 2.902 | 240 | 21.798 % |
+| BC7 (repo), RDO lambda 2 | 87.88 % | 8.385 | 255 | 3.298 | 240 | 25.952 % |
+| BC7 (repo), colour under transparent pixels | 83.96 % | 6.058 | 255 | 2.371 | 240 | 15.198 % |
+| BC7 (repo), colour under transparent pixels, RDO lambda 0.5 | 85.25 % | 6.348 | 255 | 2.484 | 240 | 16.887 % |
+| BC7 (repo), colour under transparent pixels, RDO lambda 1 | 86.25 % | 6.787 | 255 | 2.657 | 240 | 18.929 % |
+| BC7 (repo), colour under transparent pixels, RDO lambda 2 | 87.45 % | 7.749 | 255 | 3.039 | 240 | 23.166 % |
+| BC7 (repo), colour under transparent pixels, all modes | 82.93 % | 7.653 | 255 | 3.016 | 240 | 18.302 % |
+| BC1 | 88.51 % | 5.165 | 193 | 2.012 | 193 | 14.133 % |
+| BC1, block reuse lambda 0.5 | 89.77 % | 5.343 | 226 | 2.076 | 223 | 14.567 % |
+| BC1, block reuse lambda 1 | 90.83 % | 5.646 | 226 | 2.190 | 223 | 15.870 % |
+| BC1, block reuse lambda 2 | 91.98 % | 6.280 | 226 | 2.436 | 223 | 19.257 % |
+| BC3 (BC1 colour + BC4 coverage) | 87.78 % | 5.891 | 220 | 2.294 | 215 | 17.483 % |
+| BC3, colour under transparent pixels | 86.91 % | 5.100 | 222 | 1.983 | 222 | 13.992 % |
+
+#### Enhanced: coverage at edges
+
+| row | edge pixels' error, mean levels | worst | edge pixels off by a level or more | solid pixels no longer solid |
+|---|---:|---:|---:|---:|
+| BC7 (repo) | 1.261 | 15.1 | 37.62 % | 18.287 % |
+| BC7 (repo), RDO lambda 0.5 | 1.257 | 15.1 | 38.48 % | 18.946 % |
+| BC7 (repo), RDO lambda 1 | 1.285 | 15.1 | 39.63 % | 19.471 % |
+| BC7 (repo), RDO lambda 2 | 1.345 | 15.1 | 41.77 % | 20.353 % |
+| BC7 (repo), colour under transparent pixels | 2.373 | 15.1 | 42.05 % | 17.583 % |
+| BC7 (repo), colour under transparent pixels, RDO lambda 0.5 | 1.734 | 15.1 | 40.89 % | 15.191 % |
+| BC7 (repo), colour under transparent pixels, RDO lambda 1 | 1.756 | 15.1 | 41.85 % | 15.517 % |
+| BC7 (repo), colour under transparent pixels, RDO lambda 2 | 1.809 | 15.1 | 43.66 % | 16.047 % |
+| BC7 (repo), colour under transparent pixels, all modes | 2.311 | 15.1 | 40.99 % | 17.339 % |
+| BC1 | 3.488 | 8.0 | 87.89 % | 0.000 % |
+| BC1, block reuse lambda 0.5 | 3.488 | 8.0 | 87.89 % | 0.000 % |
+| BC1, block reuse lambda 1 | 3.488 | 8.0 | 87.89 % | 0.000 % |
+| BC1, block reuse lambda 2 | 3.488 | 8.0 | 87.89 % | 0.000 % |
+| BC3 (BC1 colour + BC4 coverage) | 0.186 | 1.6 | 0.81 % | 0.381 % |
+| BC3, colour under transparent pixels | 0.186 | 1.6 | 0.81 % | 0.381 % |
+
+#### Classic, creatures: 300 pairs of 209 bodies, 132.7 Mpx trimmed; a pair's Mpx: median 0.156, p95 1.19, max 10.09
+
+| candidate | load unit | read from disk MB | all drawable, 1 thread ms | 4 threads ms | within 250 ms on 4 threads | worst job ms | job p95 ms | VRAM stored MB | RGBA8 MB |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| plain planes, zstd 19 | action+direction | 41.2 | 177.8 | 50.0 | yes | 9.2 | 1.5 | 132.7 | 530.7 |
+| plain planes, zstd 19 | facing direction only | 8.2 | 35.7 | 10.3 | yes | 1.9 | 0.3 | 25.8 | 103.2 |
+| BC7 (repo), zstd 19 | action+direction | 47.8 | 140.1 | 39.2 | yes | 6.7 | 1.2 | 135.6 | 530.7 |
+| BC7 (repo), zstd 19 | facing direction only | 9.5 | 27.8 | 8.1 | yes | 1.4 | 0.3 | 26.4 | 103.2 |
+| BC7 (repo), RDO lambda 1, zstd 19 | action+direction | 41.2 | 135.4 | 38.1 | yes | 6.9 | 1.1 | 135.6 | 530.7 |
+| BC7 (repo), RDO lambda 1, zstd 19 | facing direction only | 8.2 | 26.9 | 7.9 | yes | 1.5 | 0.2 | 26.4 | 103.2 |
+| BC7 (repo), colour under transparent pixels, zstd 19 | action+direction | 50.0 | 137.6 | 38.4 | yes | 6.7 | 1.2 | 135.6 | 530.7 |
+| BC7 (repo), colour under transparent pixels, zstd 19 | facing direction only | 10.0 | 27.2 | 8.0 | yes | 1.4 | 0.3 | 26.4 | 103.2 |
+| BC7 (repo), colour under transparent pixels, RDO lambda 1, zstd 19 | action+direction | 44.9 | 136.6 | 38.2 | yes | 6.9 | 1.1 | 135.6 | 530.7 |
+| BC7 (repo), colour under transparent pixels, RDO lambda 1, zstd 19 | facing direction only | 8.9 | 27.0 | 7.9 | yes | 1.4 | 0.2 | 26.4 | 103.2 |
+| BC1, zstd 19 | action+direction | 26.5 | 84.0 | 23.5 | yes | 3.9 | 0.7 | 67.8 | 530.7 |
+| BC1, zstd 19 | facing direction only | 5.3 | 16.7 | 4.8 | yes | 0.8 | 0.1 | 13.2 | 103.2 |
+| BC1, block reuse lambda 1, zstd 19 | action+direction | 24.2 | 89.2 | 24.9 | yes | 4.1 | 0.7 | 67.8 | 530.7 |
+| BC1, block reuse lambda 1, zstd 19 | facing direction only | 4.8 | 17.6 | 5.1 | yes | 0.9 | 0.1 | 13.2 | 103.2 |
+| BC3 (BC1 colour + BC4 coverage), zstd 19 | action+direction | 29.9 | 128.9 | 35.8 | yes | 5.5 | 1.1 | 135.6 | 530.7 |
+| BC3 (BC1 colour + BC4 coverage), zstd 19 | facing direction only | 6.0 | 25.7 | 7.3 | yes | 1.2 | 0.2 | 26.4 | 103.2 |
+
+#### Classic, dressed NPCs: 300 pairs of 258 bodies, 9.7 Mpx trimmed; a pair's Mpx: median 0.020, p95 0.11, max 0.14
+
+| candidate | load unit | read from disk MB | all drawable, 1 thread ms | 4 threads ms | within 250 ms on 4 threads | worst job ms | job p95 ms | VRAM stored MB | RGBA8 MB |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| plain planes, zstd 19 | action+direction | 3.6 | 23.0 | 5.9 | yes | 0.3 | 0.2 | 9.7 | 39.0 |
+| plain planes, zstd 19 | facing direction only | 0.7 | 4.8 | 1.3 | yes | 0.1 | 0.0 | 2.0 | 8.0 |
+| BC7 (repo), zstd 19 | action+direction | 4.8 | 24.1 | 6.2 | yes | 0.2 | 0.2 | 10.8 | 39.0 |
+| BC7 (repo), zstd 19 | facing direction only | 1.0 | 5.1 | 1.3 | yes | 0.1 | 0.0 | 2.2 | 8.0 |
+| BC7 (repo), RDO lambda 1, zstd 19 | action+direction | 3.7 | 21.1 | 5.5 | yes | 0.2 | 0.2 | 10.8 | 39.0 |
+| BC7 (repo), RDO lambda 1, zstd 19 | facing direction only | 0.8 | 4.3 | 1.1 | yes | 0.0 | 0.0 | 2.2 | 8.0 |
+| BC7 (repo), colour under transparent pixels, zstd 19 | action+direction | 5.6 | 22.8 | 5.9 | yes | 0.2 | 0.2 | 10.8 | 39.0 |
+| BC7 (repo), colour under transparent pixels, zstd 19 | facing direction only | 1.1 | 4.8 | 1.2 | yes | 0.1 | 0.0 | 2.2 | 8.0 |
+| BC7 (repo), colour under transparent pixels, RDO lambda 1, zstd 19 | action+direction | 4.9 | 21.4 | 5.5 | yes | 0.2 | 0.2 | 10.8 | 39.0 |
+| BC7 (repo), colour under transparent pixels, RDO lambda 1, zstd 19 | facing direction only | 1.0 | 4.5 | 1.2 | yes | 0.0 | 0.0 | 2.2 | 8.0 |
+| BC1, zstd 19 | action+direction | 3.0 | 16.0 | 4.1 | yes | 0.2 | 0.1 | 5.4 | 39.0 |
+| BC1, zstd 19 | facing direction only | 0.6 | 3.4 | 0.9 | yes | 0.0 | 0.0 | 1.1 | 8.0 |
+| BC1, block reuse lambda 1, zstd 19 | action+direction | 2.7 | 16.5 | 4.2 | yes | 0.2 | 0.1 | 5.4 | 39.0 |
+| BC1, block reuse lambda 1, zstd 19 | facing direction only | 0.6 | 3.5 | 0.9 | yes | 0.0 | 0.0 | 1.1 | 8.0 |
+| BC3 (BC1 colour + BC4 coverage), zstd 19 | action+direction | 3.6 | 25.8 | 6.6 | yes | 0.3 | 0.2 | 10.8 | 39.0 |
+| BC3 (BC1 colour + BC4 coverage), zstd 19 | facing direction only | 0.7 | 5.4 | 1.4 | yes | 0.1 | 0.0 | 2.2 | 8.0 |
+
+#### Enhanced, creatures: 300 pairs of 198 bodies, 198.3 Mpx trimmed; a pair's Mpx: median 0.366, p95 1.99, max 8.19
+
+| candidate | load unit | read from disk MB | all drawable, 1 thread ms | 4 threads ms | within 250 ms on 4 threads | worst job ms | job p95 ms | VRAM stored MB | RGBA8 MB |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| plain planes, zstd 19 | action+direction | 78.5 | 398.1 | 100.9 | yes | 18.1 | 3.6 | 396.6 | 793.1 |
+| plain planes, zstd 19 | facing direction only | 15.7 | 80.6 | 20.6 | yes | 3.2 | 0.7 | 79.9 | 159.7 |
+| BC7 (repo), zstd 19 | action+direction | 73.0 | 196.5 | 50.4 | yes | 8.9 | 1.7 | 202.8 | 793.1 |
+| BC7 (repo), zstd 19 | facing direction only | 14.6 | 39.8 | 11.5 | yes | 1.6 | 0.4 | 40.8 | 159.7 |
+| BC7 (repo), RDO lambda 1, zstd 19 | action+direction | 63.8 | 196.1 | 49.7 | yes | 9.0 | 1.7 | 202.8 | 793.1 |
+| BC7 (repo), RDO lambda 1, zstd 19 | facing direction only | 12.8 | 39.4 | 10.0 | yes | 1.7 | 0.4 | 40.8 | 159.7 |
+| BC7 (repo), colour under transparent pixels, zstd 19 | action+direction | 75.6 | 196.1 | 50.2 | yes | 8.8 | 1.7 | 202.8 | 793.1 |
+| BC7 (repo), colour under transparent pixels, zstd 19 | facing direction only | 15.1 | 39.6 | 10.1 | yes | 1.6 | 0.4 | 40.8 | 159.7 |
+| BC7 (repo), colour under transparent pixels, RDO lambda 1, zstd 19 | action+direction | 65.8 | 193.5 | 50.2 | yes | 8.8 | 1.7 | 202.8 | 793.1 |
+| BC7 (repo), colour under transparent pixels, RDO lambda 1, zstd 19 | facing direction only | 13.2 | 39.2 | 9.9 | yes | 1.6 | 0.4 | 40.8 | 159.7 |
+| BC1, zstd 19 | action+direction | 35.5 | 113.5 | 29.1 | yes | 4.9 | 1.0 | 101.4 | 793.1 |
+| BC1, zstd 19 | facing direction only | 7.1 | 22.8 | 5.8 | yes | 0.9 | 0.2 | 20.4 | 159.7 |
+| BC1, block reuse lambda 1, zstd 19 | action+direction | 33.0 | 120.3 | 30.6 | yes | 5.5 | 1.0 | 101.4 | 793.1 |
+| BC1, block reuse lambda 1, zstd 19 | facing direction only | 6.6 | 24.0 | 6.2 | yes | 1.0 | 0.2 | 20.4 | 159.7 |
+| BC3 (BC1 colour + BC4 coverage), zstd 19 | action+direction | 53.8 | 199.1 | 50.6 | yes | 6.6 | 1.8 | 202.8 | 793.1 |
+| BC3 (BC1 colour + BC4 coverage), zstd 19 | facing direction only | 10.8 | 40.2 | 10.3 | yes | 1.3 | 0.4 | 40.8 | 159.7 |
+
+#### Enhanced, dressed NPCs: 300 pairs of 257 bodies, 15.8 Mpx trimmed; a pair's Mpx: median 0.033, p95 0.17, max 0.25
+
+| candidate | load unit | read from disk MB | all drawable, 1 thread ms | 4 threads ms | within 250 ms on 4 threads | worst job ms | job p95 ms | VRAM stored MB | RGBA8 MB |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| plain planes, zstd 19 | action+direction | 9.9 | 57.6 | 14.6 | yes | 0.8 | 0.5 | 31.6 | 63.2 |
+| plain planes, zstd 19 | facing direction only | 2.0 | 11.6 | 3.0 | yes | 0.2 | 0.1 | 6.4 | 12.7 |
+| BC7 (repo), zstd 19 | action+direction | 8.7 | 32.3 | 8.1 | yes | 0.4 | 0.3 | 17.2 | 63.2 |
+| BC7 (repo), zstd 19 | facing direction only | 1.8 | 6.5 | 1.7 | yes | 0.1 | 0.1 | 3.5 | 12.7 |
+| BC7 (repo), RDO lambda 1, zstd 19 | action+direction | 7.1 | 31.2 | 7.6 | yes | 0.3 | 0.2 | 17.2 | 63.2 |
+| BC7 (repo), RDO lambda 1, zstd 19 | facing direction only | 1.4 | 6.0 | 1.6 | yes | 0.1 | 0.1 | 3.5 | 12.7 |
+| BC7 (repo), colour under transparent pixels, zstd 19 | action+direction | 9.4 | 31.8 | 8.1 | yes | 0.4 | 0.3 | 17.2 | 63.2 |
+| BC7 (repo), colour under transparent pixels, zstd 19 | facing direction only | 1.9 | 6.5 | 1.7 | yes | 0.1 | 0.1 | 3.5 | 12.7 |
+| BC7 (repo), colour under transparent pixels, RDO lambda 1, zstd 19 | action+direction | 7.7 | 28.8 | 7.3 | yes | 0.3 | 0.2 | 17.2 | 63.2 |
+| BC7 (repo), colour under transparent pixels, RDO lambda 1, zstd 19 | facing direction only | 1.5 | 5.9 | 1.5 | yes | 0.1 | 0.1 | 3.5 | 12.7 |
+| BC1, zstd 19 | action+direction | 4.3 | 20.6 | 5.4 | yes | 0.2 | 0.2 | 8.6 | 63.2 |
+| BC1, zstd 19 | facing direction only | 0.9 | 4.2 | 1.1 | yes | 0.0 | 0.0 | 1.7 | 12.7 |
+| BC1, block reuse lambda 1, zstd 19 | action+direction | 3.8 | 20.8 | 5.4 | yes | 0.2 | 0.2 | 8.6 | 63.2 |
+| BC1, block reuse lambda 1, zstd 19 | facing direction only | 0.8 | 4.4 | 1.2 | yes | 0.1 | 0.0 | 1.7 | 12.7 |
+| BC3 (BC1 colour + BC4 coverage), zstd 19 | action+direction | 7.5 | 35.2 | 8.8 | yes | 0.4 | 0.3 | 17.2 | 63.2 |
+| BC3 (BC1 colour + BC4 coverage), zstd 19 | facing direction only | 1.5 | 7.0 | 1.8 | yes | 0.1 | 0.1 | 3.5 | 12.7 |
+
 ## Recommendation
 
 The ranking is crowd speed first and size second, with the user's line of 300 new actions in about 250 ms on 4 threads.

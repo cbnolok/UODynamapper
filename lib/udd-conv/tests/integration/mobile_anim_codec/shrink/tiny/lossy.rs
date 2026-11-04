@@ -76,10 +76,19 @@ const LOSSLESS_NAME: &str = "lossless";
 const BC1_NAME: &str = "bc1";
 const BC7_NAME: &str = "bc7";
 const BC7_BLEED_NAME: &str = "bc7-bleed";
+/// Rows written next to the dump by the scratch copy of the encoder with its field bugs fixed: the mix takes them when they're there.
+const BC7_FIXED_NAMES: [&str; 5] = ["bc7-fixa-bleed", "bc7-fixc", "bc7-fixc-bleed", "bc7-fixc-rdo-1", "bc7-fixc-bleed-rdo-1"];
 const ASTC_MID_NAME: &str = "astc-6";
 const ASTC_BIG_NAME: &str = "astc-8";
 const SIZE_RECORD_BYTES: usize = 24;
 const PREVIEW_DIR_ENV: &str = "MOBILE_ANIM_CODEC_PREVIEW_DIR";
+/// Part `qd` writes only the strips: no rows, no sizes, no crowds, for the whole set's dump.
+const QD_STRIPS_ONLY_ENV: &str = "MOBILE_ANIM_CODEC_QD_STRIPS_ONLY";
+/// Parts `qd` and `qw` on one client, by its tag: the whole set's files are too large to hold both at once.
+const QW_CLIENT_ENV: &str = "MOBILE_ANIM_CODEC_QW_CLIENT";
+/// Part `qw` holds at most about this many pixels of decoded and true frames at once.
+const QW_BATCH_PIXELS: u64 = 300_000_000;
+const QW_WORST_LISTED: usize = 15;
 /// The mix's rows: bodies a format is scored on, and which bodies to name as the worst.
 const WORST_BODIES_NAMED: usize = 3;
 /// Frames too small to say anything aren't picked for a preview.
@@ -763,7 +772,7 @@ fn print_edges(names: &[String], rows: &[Tally]) {
 
 fn print_classes(client: Client, names: &[String], scale: f64, by_class: &[Vec<Tally>]) {
     let classes: Vec<&Class> = CLASSES.iter().filter(|c| by_class[c.at()].first().is_some_and(|t| t.pixels > 0)).collect();
-    let header: Vec<String> = classes.iter().map(|c| format!("{} MB | SSIMULACRA2 median / min, RGB PSNR dB", c.label())).collect();
+    let header: Vec<String> = classes.iter().map(|c| format!("{} MB | SSIMULACRA2 median / min, bodies at {SCORE_LINE} or better, RGB PSNR dB", c.label())).collect();
     println!("\n#### {}: by class: zstd {BEST_ZSTD_LEVEL} on a stream, by this sample's share of the set (x {scale:.3})\n\n| row | {} |\n|---|{}", client.label(), header.join(" | "), "---:|---|".repeat(classes.len()));
     for (r, name) in names.iter().enumerate() {
         let cells: Vec<String> = classes
@@ -771,7 +780,8 @@ fn print_classes(client: Client, names: &[String], scale: f64, by_class: &[Vec<T
             .map(|c| {
                 let tally = &by_class[c.at()][r];
                 let (median, _, min) = scores_of(tally);
-                format!("{:.1} | {median:.2} / {min:.2}, {:.2}", mb(tally.zstd_best) * scale, psnr_of(tally))
+                let good = tally.scores.iter().filter(|&&s| s >= SCORE_LINE).count();
+                format!("{:.1} | {median:.2} / {min:.2}, {good} of {}, {:.2}", mb(tally.zstd_best) * scale, tally.scores.len(), psnr_of(tally))
             })
             .collect();
         println!("| {name} | {} |", cells.join(" | "));
@@ -942,6 +952,11 @@ pub(in super::super) fn part_qc(sources: &Sources, bodies: &[BodySource], presen
 // ---------------------------------------------------------------------------------------------------------------
 // Parts qd and qm
 
+fn wanted_clients() -> Vec<Client> {
+    let wanted = std::env::var(QW_CLIENT_ENV).ok();
+    [Client::Cc, Client::Ec].into_iter().filter(|&client| wanted.as_deref().is_none_or(|tag| tag == client_tag(client))).collect()
+}
+
 fn dump_dir() -> PathBuf {
     PathBuf::from(std::env::var_os(DUMP_DIR_ENV).expect("the dump directory"))
 }
@@ -1062,14 +1077,16 @@ pub(in super::super) fn part_qd(sources: &Sources, bodies: &[BodySource], presen
     let rule = BodyRule::load(&kinds, cc_dir);
     let dir = dump_dir();
     std::fs::create_dir_all(&dir).expect("the dump directory");
-    for client in [Client::Cc, Client::Ec] {
+    for client in wanted_clients() {
         let tag = client_tag(client);
         let count = present.iter().filter(|s| s.0 == client).count().div_ceil(stride);
         let sample = sample_of(present, client, count);
         let mut out = BufWriter::new(std::fs::File::create(dir.join(format!("{tag}.{STRIPS_SUFFIX}"))).expect("the dump file"));
         let file = |name: &str, mark: &str| BufWriter::new(std::fs::File::create(dir.join(format!("{tag}{mark}{name}"))).expect("the dump file"));
         let mut lossless_out = file(LOSSLESS_NAME, SIZES_MARK);
-        let block_rows = [(Coder::Bc1, BC1_NAME), (Coder::Bc7, BC7_NAME), (Coder::Bleed, BC7_BLEED_NAME)];
+        let strips_only = std::env::var_os(QD_STRIPS_ONLY_ENV).is_some();
+        let all_rows = [(Coder::Bc1, BC1_NAME), (Coder::Bc7, BC7_NAME), (Coder::Bleed, BC7_BLEED_NAME)];
+        let block_rows: &[(Coder, &str)] = if strips_only { &[] } else { &all_rows };
         let mut decoded_out: Vec<_> = block_rows.iter().map(|row| file(row.1, DECODED_MARK)).collect();
         let mut sizes_out: Vec<_> = block_rows.iter().map(|row| file(row.1, SIZES_MARK)).collect();
         let mut streams = 0usize;
@@ -1081,8 +1098,12 @@ pub(in super::super) fn part_qd(sources: &Sources, bodies: &[BodySource], presen
             let coded: Vec<_> = strips
                 .par_iter()
                 .map(|strip| {
-                    let plain = plain_planes(&planes, strip);
-                    let lossless = (plain.len() as u64, compress(&plain, PACKER_ZSTD_LEVEL, false).len() as u64, compress(&plain, BEST_ZSTD_LEVEL, false).len() as u64);
+                    let lossless = if strips_only {
+                        (0, 0, 0)
+                    } else {
+                        let plain = plain_planes(&planes, strip);
+                        (plain.len() as u64, compress(&plain, PACKER_ZSTD_LEVEL, false).len() as u64, compress(&plain, BEST_ZSTD_LEVEL, false).len() as u64)
+                    };
                     let rows: Vec<_> = block_rows
                         .iter()
                         .map(|row| {
@@ -1104,6 +1125,9 @@ pub(in super::super) fn part_qd(sources: &Sources, bodies: &[BodySource], presen
             }
         }
         println!("{}: {} bodies, {streams} streams dumped; every {stride}-th body by pixels", client.label(), sample.len());
+        if strips_only {
+            continue;
+        }
 
         // The creature crowd, a pair at a time: all its streams, the faced one marked, for decode rows and the GPU.
         let pairs = crowd::all_pairs(sources, bodies, present, client);
@@ -1161,6 +1185,7 @@ fn mix_rows(client: Client, names: &[String]) -> Vec<MixRow> {
     if client == Client::Ec {
         wanted.splice(1..1, [BC7_NAME, BC7_BLEED_NAME]);
     }
+    wanted.extend(BC7_FIXED_NAMES);
     let mut out = Vec::new();
     for top in std::iter::once(0).chain(MIX_TOPS) {
         for name in &wanted {
@@ -1168,7 +1193,7 @@ fn mix_rows(client: Client, names: &[String]) -> Vec<MixRow> {
                 out.push(MixRow { name: name.to_string(), top, above, below: None });
             }
         }
-        for rest in [BC7_NAME, BC7_BLEED_NAME] {
+        for rest in [BC7_NAME, BC7_BLEED_NAME].into_iter().chain(BC7_FIXED_NAMES) {
             if let (Client::Ec, Some(bc1), Some(bc7), true) = (client, at(BC1_NAME), at(rest), top > 0) {
                 out.push(MixRow { name: format!("{BC1_NAME}, the rest {rest}"), top, above: bc1, below: Some(bc7) });
             }
@@ -1412,6 +1437,113 @@ pub(in super::super) fn part_qm(sources: &Sources, bodies: &[BodySource], presen
             std::fs::create_dir_all(out_dir).expect("the preview directory");
             let mut index = BufWriter::new(std::fs::File::options().create(true).append(true).open(out_dir.join("index.txt")).expect("the preview index"));
             previews(client, tag, &names, &files, &rows, &places, sources, bodies, out_dir, &mut index);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Part `qw`: part `qm` on every body
+
+/// A body of the whole set, its frames decoded and ready to measure.
+struct WholeBody {
+    source: usize,
+    body: Body,
+    planes: Planes,
+    decoded: Vec<Vec<u8>>,
+    class: Class,
+}
+
+fn print_below_line(client: Client, name: &str, rows: &[BodyRow]) {
+    println!("\n#### {}, {name}: bodies under SSIMULACRA2 {SCORE_LINE}, every body measured\n\n| class | bodies | under the line | their share of the class's pixels | their zstd {BEST_ZSTD_LEVEL} MB |\n|---|---:|---:|---:|---:|", client.label());
+    for class in CLASSES {
+        let of: Vec<&BodyRow> = rows.iter().filter(|row| row.class == class).collect();
+        let under: Vec<&&BodyRow> = of.iter().filter(|row| row.tallies[0].scores[0] < SCORE_LINE).collect();
+        let pixels = |list: &mut dyn Iterator<Item = &BodyRow>| list.map(|row| row.tallies[0].pixels).sum::<u64>();
+        println!(
+            "| {} | {} | {} | {:.1} % | {:.1} |",
+            class.label(),
+            of.len(),
+            under.len(),
+            share(pixels(&mut under.iter().map(|row| **row)), pixels(&mut of.iter().copied())),
+            mb(under.iter().map(|row| row.tallies[0].zstd_best).sum::<u64>()),
+        );
+    }
+    let mut order: Vec<&BodyRow> = rows.iter().collect();
+    order.sort_by(|a, b| a.tallies[0].scores[0].total_cmp(&b.tallies[0].scores[0]));
+    let worst: Vec<String> = order.iter().take(QW_WORST_LISTED).map(|row| format!("{} ({}, {:.2}, median {} px)", row.id, row.class.label(), row.tallies[0].scores[0], row.median)).collect();
+    println!("\nThe {QW_WORST_LISTED} lowest: {}", worst.join("; "));
+}
+
+/// Each `<tag>.decoded.<name>` in the dump directory, one after the other, on every body; scores use the same mosaic as part
+/// `qm`. Reads the bodies in the dump's order, so it needs a dump at stride 1.
+pub(in super::super) fn part_qw(sources: &Sources, bodies: &[BodySource], present: &[(Client, u64, usize)], cc_dir: &Path) {
+    let kinds = BodyKinds::load(cc_dir);
+    let rule = BodyRule::load(&kinds, cc_dir);
+    let hues = Hues::load(cc_dir);
+    let dir = dump_dir();
+    for client in wanted_clients() {
+        let tag = client_tag(client);
+        let sample = sample_of(present, client, present.iter().filter(|s| s.0 == client).count());
+        let pixels_of: HashMap<usize, u64> = present.iter().filter(|s| s.0 == client).map(|s| (s.2, s.1)).collect();
+        let tables = if client == Client::Ec { hues.enhanced.len() } else { hues.classic.len() };
+        for (name, path) in decoded_files(&dir, tag) {
+            let started = Instant::now();
+            let mut reader = BufReader::new(std::fs::File::open(&path).expect("a decoded file"));
+            let mut sizes = BufReader::new(std::fs::File::open(dir.join(format!("{tag}{SIZES_MARK}{name}"))).expect("the row's sizes"));
+            let mut rows: Vec<BodyRow> = Vec::with_capacity(sample.len());
+            let mut next = 0usize;
+            while next < sample.len() {
+                let mut batch: Vec<usize> = Vec::new();
+                let mut held = 0u64;
+                while next < sample.len() && (batch.is_empty() || held < QW_BATCH_PIXELS) {
+                    batch.push(sample[next]);
+                    held += pixels_of[&sample[next]];
+                    next += 1;
+                }
+                let loaded: Vec<(usize, Body, Planes, Vec<(usize, Vec<usize>)>)> = batch
+                    .par_iter()
+                    .map(|&i| {
+                        let body = load_body(sources, &bodies[i]);
+                        let planes = Planes::from_body(&body);
+                        let layout = strips_of(&body, &planes).into_iter().map(|strip| (strip.blocks, strip.frames)).collect();
+                        (i, body, planes, layout)
+                    })
+                    .collect();
+                let mut whole: Vec<WholeBody> = Vec::with_capacity(loaded.len());
+                let mut measured_sizes: Vec<(u64, u64, u64)> = Vec::with_capacity(loaded.len());
+                for (source, body, planes, layout) in loaded {
+                    let mut decoded: Vec<Vec<u8>> = vec![Vec::new(); planes.boxes.len()];
+                    let mut sum = (0u64, 0u64, 0u64);
+                    for (blocks, frames) in &layout {
+                        let mut bytes = vec![0u8; blocks * BLOCK_RGBA];
+                        reader.read_exact(&mut bytes).expect("the decoded file holds this stream");
+                        frames_of_strip(&bytes, frames, &planes.boxes, &mut decoded);
+                        let (raw, packer, stored) = read_sizes(&mut sizes);
+                        sum = (sum.0 + raw, sum.1 + packer, sum.2 + stored);
+                    }
+                    let class = classes_of(&planes, &rule, &bodies[source]).0;
+                    whole.push(WholeBody { source, body, planes, decoded, class });
+                    measured_sizes.push(sum);
+                }
+                let scored: Vec<BodyRow> = whole
+                    .par_iter()
+                    .zip(&measured_sizes)
+                    .map(|(item, size)| {
+                        let truth: Vec<&Frame> = item.body.directions.iter().flatten().collect();
+                        let mut tally = Tally::default();
+                        tally_body(&item.planes, &truth, &item.decoded, &hues, &mut tally);
+                        tally.raw = size.0;
+                        tally.zstd_packer = size.1;
+                        tally.zstd_best = size.2;
+                        BodyRow { class: item.class, id: format!("{} {}", item.planes.label, item.source), median: median_area(&item.planes), lossless: 0, tallies: vec![tally], mask_pixels: 0, mask_wrong: 0 }
+                    })
+                    .collect();
+                rows.extend(scored);
+                println!("  {} {name}: {next}/{} bodies, {:.0} s", client.label(), sample.len(), started.elapsed().as_secs_f64());
+            }
+            let names = [name.clone()];
+            print_all(client, &names, 1.0, &rows, tables);
+            print_below_line(client, &name, &rows);
         }
     }
 }

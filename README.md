@@ -46,7 +46,7 @@ Most users are expected to use distributed binaries rather than compile the work
 
 The main app expects shared assets, shaders, fonts, settings under `assets/` (already provided).
 
-Configure the runtime UDDP package path in `assets/settings/runtime_assets.toml`.
+Configure the runtime UDDP package path in `assets/settings/runtime_assets.toml`. Its default, `uddp/`, is relative to the working directory. A path the app saves goes to `cache/settings/runtime_assets.toml`, which overrides that file.
 
 Runtime packages are produced with the conversion tools and then placed in, or linked into, the Dynamapper asset tree. A typical working set includes:
 

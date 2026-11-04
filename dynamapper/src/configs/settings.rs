@@ -396,7 +396,7 @@ where
 }
 
 /// Core settings file contains top-level core and logging sections.
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 struct CoreFile {
     core: SectCore,
@@ -411,17 +411,15 @@ struct GraphicsFile {
 }
 
 pub fn load_from_files() -> eyre::Result<Settings> {
-    let core_data: CoreFile = load_bundled_settings(CORE_CONFIG_FILE)?;
-    // Runtime asset package settings (assets/settings/runtime_assets.toml)
-    let runtime_assets: SectRuntimeAssets = load_bundled_settings(RUNTIME_ASSETS_CONFIG_FILE)?;
-    // User preferences file contains SectApp fields directly at top level
-    // (loaded from the cache dir if present, over the bundled default).
+    // Every file: the bundled default under assets/, then the cache copy the app saved, if any.
+    let core_data: CoreFile = load_user_settings(CORE_CONFIG_FILE)?;
+    let runtime_assets: SectRuntimeAssets = load_user_settings(RUNTIME_ASSETS_CONFIG_FILE)?;
+    // User preferences file contains SectApp fields directly at top level.
     let user_app: SectApp = load_user_settings(USER_PREFERENCES_CONFIG_FILE)?;
     let session_state: SectSessionState = load_user_settings(SESSION_STATE_CONFIG_FILE)?;
-    // Graphics settings loader (cache dir if present, over the bundled default).
     let graphics = load_user_settings::<GraphicsFile>(GRAPHICS_CONFIG_FILE)?.graphics;
-    let keybindings: SectKeybindings = load_bundled_settings(KEYBINDINGS_CONFIG_FILE)?;
-    let world_rendering: SectWorldRendering = load_bundled_settings(WORLD_RENDERING_CONFIG_FILE)?;
+    let keybindings: SectKeybindings = load_user_settings(KEYBINDINGS_CONFIG_FILE)?;
+    let world_rendering: SectWorldRendering = load_user_settings(WORLD_RENDERING_CONFIG_FILE)?;
 
     Ok(Settings {
         core: core_data.core,
@@ -513,30 +511,48 @@ pub fn save_session_state_settings(settings: &Settings) {
     }
 }
 
-pub fn save_keybindings(settings: &Settings) {
-    let assets_path = crate::core::constants::valid_asset_dir();
-    let kb_path = assets_path.join(KEYBINDINGS_CONFIG_FILE);
+/// What the cache copy of the settings file `rel` should hold. There is none while the settings equal the bundled
+/// file, so later edits of that file keep taking effect until the app has something of its own to keep.
+fn cache_copy_contents<T>(rel: &str, value: &T) -> eyre::Result<Option<String>>
+where
+    T: Serialize + serde::de::DeserializeOwned + PartialEq,
+{
+    if *value == load_bundled_settings::<T>(rel)? {
+        return Ok(None);
+    }
+    Ok(Some(toml::to_string_pretty(value)?))
+}
 
-    match toml::to_string_pretty(&settings.keybindings) {
-        Ok(toml_str) => {
-            if let Err(e) = std::fs::write(&kb_path, toml_str) {
-                console_logger::one(
-                    LogSev::Error,
-                    LogAbout::Settings,
-                    &format!("Failed to save keybindings.toml: {}", e),
-                );
-            } else {
-                console_logger::one(LogSev::Info, LogAbout::Settings, "Saved keybindings.toml");
-            }
+/// Writes or removes the cache copy of the settings file `rel`. The bundled file under `assets/` is never written.
+fn save_cache_copy<T>(rel: &str, value: &T)
+where
+    T: Serialize + serde::de::DeserializeOwned + PartialEq,
+{
+    let path = crate::core::constants::valid_cache_dir().join(rel);
+    let saved = cache_copy_contents(rel, value).and_then(|contents| {
+        let Some(contents) = contents else {
+            return match std::fs::remove_file(&path) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
+                _ => Ok(false),
+            };
+        };
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
         }
-        Err(e) => {
-            console_logger::one(
-                LogSev::Error,
-                LogAbout::Settings,
-                &format!("Failed to serialize keybindings: {}", e),
-            );
+        std::fs::write(&path, contents)?;
+        Ok(true)
+    });
+    match saved {
+        Ok(true) => console_logger::one(LogSev::Info, LogAbout::Settings, &format!("Saved {rel}")),
+        Ok(false) => {}
+        Err(error) => {
+            console_logger::one(LogSev::Error, LogAbout::Settings, &format!("Failed to save {rel}: {error:#}"));
         }
     }
+}
+
+pub fn save_keybindings(settings: &Settings) {
+    save_cache_copy(KEYBINDINGS_CONFIG_FILE, &settings.keybindings);
 }
 
 pub fn save_graphics_settings(settings: &Settings) {
@@ -571,98 +587,16 @@ pub fn save_graphics_settings(settings: &Settings) {
 }
 
 pub fn save_core_settings(settings: &Settings) {
-    let assets_path = crate::core::constants::valid_asset_dir();
-    let core_path = assets_path.join(CORE_CONFIG_FILE);
-
-    #[derive(Serialize)]
-    struct CoreWrapper<'a> {
-        core: &'a SectCore,
-        logging: &'a SectLogging,
-    }
-
-    match toml::to_string_pretty(&CoreWrapper {
-        core: &settings.core,
-        logging: &settings.logging,
-    }) {
-        Ok(toml_str) => {
-            if let Err(e) = std::fs::write(&core_path, toml_str) {
-                console_logger::one(
-                    LogSev::Error,
-                    LogAbout::Settings,
-                    &format!("Failed to save core.toml: {}", e),
-                );
-            } else {
-                console_logger::one(LogSev::Info, LogAbout::Settings, "Saved core.toml");
-            }
-        }
-        Err(e) => {
-            console_logger::one(
-                LogSev::Error,
-                LogAbout::Settings,
-                &format!("Failed to serialize core settings: {}", e),
-            );
-        }
-    }
+    let core = CoreFile { core: settings.core.clone(), logging: settings.logging.clone() };
+    save_cache_copy(CORE_CONFIG_FILE, &core);
 }
 
 pub fn save_world_rendering_settings(settings: &Settings) {
-    let assets_path = crate::core::constants::valid_asset_dir();
-    let path = assets_path.join(WORLD_RENDERING_CONFIG_FILE);
-
-    match toml::to_string_pretty(&settings.world_rendering) {
-        Ok(toml_str) => {
-            if let Err(e) = std::fs::write(&path, toml_str) {
-                console_logger::one(
-                    LogSev::Error,
-                    LogAbout::Settings,
-                    &format!("Failed to save world_rendering.toml: {}", e),
-                );
-            } else {
-                console_logger::one(
-                    LogSev::Info,
-                    LogAbout::Settings,
-                    "Saved world_rendering.toml",
-                );
-            }
-        }
-        Err(e) => {
-            console_logger::one(
-                LogSev::Error,
-                LogAbout::Settings,
-                &format!("Failed to serialize world rendering settings: {}", e),
-            );
-        }
-    }
+    save_cache_copy(WORLD_RENDERING_CONFIG_FILE, &settings.world_rendering);
 }
 
 pub fn save_runtime_assets_settings(settings: &Settings) {
-    let assets_path = crate::core::constants::valid_asset_dir();
-    let path = assets_path.join(RUNTIME_ASSETS_CONFIG_FILE);
-
-    match toml::to_string_pretty(&settings.runtime_assets) {
-        Ok(toml_str) => {
-            if let Err(e) = std::fs::write(&path, toml_str) {
-                console_logger::one(
-                    LogSev::Error,
-                    LogAbout::Settings,
-                    &format!("Failed to save runtime_assets.toml: {}", e),
-                );
-            } else {
-                console_logger::one(
-                    LogSev::Info,
-                    LogAbout::Settings,
-                    "Saved runtime_assets.toml",
-                );
-            }
-        }
-        Err(e) => {
-            console_logger::one(
-                LogSev::Error,
-                LogAbout::Settings,
-                &format!("Failed to serialize runtime asset settings: {}", e),
-            );
-        }
-    }
+    save_cache_copy(RUNTIME_ASSETS_CONFIG_FILE, &settings.runtime_assets);
 }
 
 #[derive(Clone, PartialEq)]
@@ -1092,6 +1026,28 @@ mod tests {
 
         assert!(!settings.logging.filters.is_empty());
         assert!(settings.app.window.ui_scale > 0.0);
+    }
+
+    #[test]
+    fn only_settings_that_differ_from_the_bundled_file_get_a_cache_copy() {
+        fn unchanged<T>(rel: &str)
+        where
+            T: Serialize + serde::de::DeserializeOwned + PartialEq,
+        {
+            let bundled = load_bundled_settings::<T>(rel).unwrap_or_else(|error| panic!("{error:#}"));
+            assert!(cache_copy_contents(rel, &bundled).unwrap().is_none(), "{rel}");
+        }
+        unchanged::<CoreFile>(CORE_CONFIG_FILE);
+        unchanged::<SectRuntimeAssets>(RUNTIME_ASSETS_CONFIG_FILE);
+        unchanged::<SectKeybindings>(KEYBINDINGS_CONFIG_FILE);
+        unchanged::<SectWorldRendering>(WORLD_RENDERING_CONFIG_FILE);
+
+        const CHANGED_PATH: &str = "elsewhere/";
+        let mut runtime: SectRuntimeAssets = load_bundled_settings(RUNTIME_ASSETS_CONFIG_FILE).unwrap();
+        runtime.udd_path = CHANGED_PATH.to_string();
+        let contents = cache_copy_contents(RUNTIME_ASSETS_CONFIG_FILE, &runtime).unwrap().expect("a cache copy");
+        let saved: SectRuntimeAssets = toml::from_str(&contents).unwrap();
+        assert_eq!(saved.udd_path, CHANGED_PATH);
     }
 
     #[test]
