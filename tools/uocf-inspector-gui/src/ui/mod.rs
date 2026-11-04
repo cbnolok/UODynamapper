@@ -37,9 +37,16 @@ pub struct ClassicFileViews {
     pub defs: classic_defs::ClassicDefsState,
 }
 
+const HELP_MARK: &str = "(?)";
+
 /// Hint shown wherever a `.uop` package is saved.
 pub(crate) const UOP_PATCHER_NOTE: &str = "The official patcher re-downloads edited entries and deletes added ones: \
                                            keep edited packages in a client copy the patcher never runs on.";
+
+/// A "(?)" next to something, whose tooltip explains it.
+pub(crate) fn help_mark(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    ui.weak(HELP_MARK).on_hover_cursor(egui::CursorIcon::Help).on_hover_text(text)
+}
 
 pub(super) fn arrow_delta(ui: &egui::Ui, disabled: bool) -> Option<isize> {
     if disabled {

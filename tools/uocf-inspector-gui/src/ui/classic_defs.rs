@@ -45,6 +45,57 @@ impl FileKind {
         }
     }
 
+    /// What the file is for, from the client notes (`ghidra-classic-defs`, `ghidra-classic-frames`), the shipped
+    /// files' own comments and `uocf::classic`; it says so where the use in the client was not traced.
+    fn purpose(self) -> &'static str {
+        match self {
+            Self::Targets(name) => match name {
+                "gump.def" => {
+                    "A remap table with a hue. The shipped file's own comment says it is currently used only for the \
+                     paperdoll, and names the columns <orig body> {<new body>} <new hue>. How the client uses it was \
+                     not traced further."
+                }
+                "anim1.def" | "anim2.def" | "anim3.def" | "anim4.def" => {
+                    "A remap table the client loads at start (anim1.def to anim4.def), in the same format as the other \
+                     remap files; the value is 0 in the shipped anim1.def and anim2.def. What the client remaps with \
+                     these tables is not known: it was not traced. The shipped client has only anim1.def and anim2.def."
+                }
+                "art.def" => {
+                    "Supplies art for art ids that have no art record: the client keeps an entry only for an id without \
+                     one. An entry names target art ids and a hue."
+                }
+                "texterr.def" => {
+                    "A remap table with a hue that the client loads at start, in the same format as the other remap \
+                     files. What the client remaps with it is not known: it was not traced."
+                }
+                "body.def" => {
+                    "Remaps a mobile's body to other bodies and a hue (<orig body> {<new body>} <new hue>), when its \
+                     animation is read from the MUL files; UOP animations do not use it. A body below 0x800 that \
+                     bodyconv.def maps for an enabled expansion is not remapped."
+                }
+                "corpse.def" => {
+                    "Remaps the body of a corpse to other bodies and a hue (<orig body> {<new body>} <new hue>), when its \
+                     animation is read from the MUL files; UOP animations do not use it."
+                }
+                _ => "A remap table. Its purpose is not known: it was not traced.",
+            },
+            Self::BodyConv => {
+                "Says which anim file holds a body: for a body, its index in anim2.mul, anim3.mul, anim4.mul and anim5.mul \
+                 to use instead of anim.mul (-1: none), per the shipped file's comment. Only the MUL animation path uses it."
+            }
+            Self::EquipConv => {
+                "Converts an equipment id to another for a given body type. It can also change the gump (0: equipment \
+                 id + 50000, -1: converted id + 50000, else the gump id) and the hue, per the shipped file's comment."
+            }
+            Self::Speech => {
+                "The keywords a server is told the player said: a keyword id with its phrasings, where * is a wildcard. \
+                 Not a remap file."
+            }
+            Self::Skills => "The skill names, and whether each skill has a button (is an action). Its index is Skills.idx.",
+            Self::SkillGroups => "The skill groups: their names and the group of each skill.",
+        }
+    }
+
     fn all() -> impl Iterator<Item = Self> {
         TARGETS_FILES.into_iter().map(Self::Targets).chain([Self::BodyConv, Self::EquipConv, Self::Speech, Self::Skills, Self::SkillGroups])
     }
@@ -209,7 +260,10 @@ pub fn ui_classic_defs(app: &mut UopInspectorApp, _ctx: &egui::Context, ui: &mut
             ui.centered_and_justified(|ui| ui.label("Select a file."));
             return;
         };
-        ui.heading(kind.name());
+        ui.horizontal(|ui| {
+            ui.heading(kind.name());
+            crate::ui::help_mark(ui, kind.purpose());
+        });
         let table = match table {
             Ok(table) => table,
             Err(error) => {
@@ -258,6 +312,16 @@ mod tests {
     use super::*;
 
     const CLIENT_ROOTS_ENV: &str = "UO_CLASSIC_CLIENT_ROOTS";
+
+    #[test]
+    fn every_file_says_what_it_is_for() {
+        for kind in FileKind::all() {
+            assert!(!kind.purpose().is_empty(), "{}", kind.name());
+            if let FileKind::Targets(name) = kind {
+                assert!(!kind.purpose().starts_with("A remap table. Its purpose"), "{name} has no text of its own");
+            }
+        }
+    }
 
     #[test]
     #[ignore = "needs real Classic clients: set UO_CLASSIC_CLIENT_ROOTS and run with --ignored"]
