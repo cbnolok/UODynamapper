@@ -5,6 +5,7 @@ pub mod controls;
 mod diagnostics;
 pub mod export_job;
 pub mod frame_limiter;
+pub mod frame_rate;
 pub mod maps;
 pub mod multis;
 pub mod render;
@@ -373,6 +374,9 @@ pub fn run_bevy_app() -> ExitCode {
         app.add_plugins(WireframePlugin::default()); // Needed to enable wireframe rendering
     }
 
+    app.add_plugins(frame_rate::FrameRatePlugin {
+        registered_by: "Core",
+    });
     app.add_plugins(frame_limiter::FrameLimiterPlugin {
         registered_by: "Core",
     })

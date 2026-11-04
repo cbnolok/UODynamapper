@@ -1,6 +1,6 @@
 use crate::{core::system_sets::StartupSysSet, prelude::*};
 use bevy::color::Srgba;
-use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
+use bevy::diagnostic::DiagnosticsStore;
 use bevy::prelude::*;
 use bevy::text::LineHeight;
 //use bevy::time::common_conditions::on_timer;
@@ -343,6 +343,7 @@ pub fn sys_refresh_process_metrics(
 /// Updates the on-screen text widget with latest metrics.
 pub fn update_performance_text(
     diagnostics: Res<DiagnosticsStore>,
+    frame_rate: Res<crate::core::frame_rate::MeasuredFrameRate>,
     settings: Res<Settings>,
     metrics: Res<ProcessMetrics>,
     land_upload_telemetry: Res<crate::core::render::scene::world::land::LandUploadTelemetry>,
@@ -387,9 +388,7 @@ pub fn update_performance_text(
     use std::fmt::Write;
     let mut buffer = String::with_capacity(1024);
 
-    let fps_val = diagnostics
-        .get(&FrameTimeDiagnosticsPlugin::FPS)
-        .and_then(|diag| diag.smoothed());
+    let fps_val = frame_rate.frames_per_second();
 
     let entity_count = entities.len();
     let chunk_count = land_chunk_count.0;

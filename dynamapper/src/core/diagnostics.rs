@@ -4,7 +4,7 @@ use std::{
 };
 
 use bevy::{
-    diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin},
+    diagnostic::DiagnosticsStore,
     prelude::*,
 };
 use parking_lot::Mutex;
@@ -416,7 +416,6 @@ pub fn add_diagnostics_plugins(app: &mut App, config: &SectWorldRenderingDiagnos
         let mut registry = crate::util_lib::tracked_plugin::plugin_registry()
             .lock()
             .expect("plugin registry poisoned");
-        registry.record("FrameTimeDiagnosticsPlugin", "Core");
         if config.dump_to_console {
             registry.record("RenderDiagnosticsPlugin", "Core");
         }
@@ -424,8 +423,6 @@ pub fn add_diagnostics_plugins(app: &mut App, config: &SectWorldRenderingDiagnos
             registry.record("BevyRenderDiagnosticsPlugin", "Core");
         }
     }
-    app.add_plugins((bevy::diagnostic::FrameTimeDiagnosticsPlugin::default(),));
-
     if config.enable_render_diagnostics || config.log_render_breakdown {
         // Actual GPU time spent in specific passes (e.g., how many milliseconds the GPU took to draw the terrain).
         // Hardware counts like Vertex/Fragment shader invocations and clipper primitives.
@@ -553,6 +550,7 @@ fn sys_dump_configurable_diagnostics(
     time: Res<Time<Real>>,
     settings: Res<Settings>,
     diagnostics: Res<DiagnosticsStore>,
+    frame_rate: Res<crate::core::frame_rate::MeasuredFrameRate>,
     runtime: Res<WorldmapRuntimeDiagnostics>,
     system_timers: Res<WorldmapSystemDiagnostics>,
     cross_app_timers: Res<WorldmapCrossAppDiagnostics>,
@@ -576,14 +574,10 @@ fn sys_dump_configurable_diagnostics(
         return;
     }
 
-    let fps = diagnostics
-        .get(&FrameTimeDiagnosticsPlugin::FPS)
-        .and_then(|diag| diag.smoothed().or_else(|| diag.value()))
+    let fps = frame_rate.frames_per_second()
         .map(|fps| format!("{fps:.0}"))
         .unwrap_or_else(|| "--".to_string());
-    let frame_time = diagnostics
-        .get(&FrameTimeDiagnosticsPlugin::FRAME_TIME)
-        .and_then(|diag| diag.smoothed().or_else(|| diag.value()));
+    let frame_time = frame_rate.frame_ms();
 
     let upload_snapshot = land_upload_telemetry.snapshot();
     let cross_app_snapshot = cross_app_timers.snapshot();

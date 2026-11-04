@@ -62,7 +62,7 @@ def main():
                        'min_sampled_fps': min(fps), 'max_sampled_fps': max(fps)}
             report['fixtures'].append(summary)
             print(f"{name}: median {summary['median_sampled_fps']:.1f} FPS "
-                  f"(smoothed samples {min(fps):.1f}..{max(fps):.1f})", flush=True)
+                  f"(500 ms window samples {min(fps):.1f}..{max(fps):.1f})", flush=True)
         json.dump(report, output, indent=2)
         output.write('\n')
 

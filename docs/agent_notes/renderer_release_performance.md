@@ -6,9 +6,31 @@ tests are in [the performance handoff](../reviews/2026-10-29-renderer-performanc
 Visual fidelity is the current priority; measurements below remain historical evidence.
 
 Use `scripts/dev-helpers/renderer/benchmark.py` against an isolated, already
-running preview. The socket's FPS/frame-time fields are Bevy **smoothed**
-diagnostics. Median/min/max sampled FPS describe that signal, not raw frame
-percentiles or GPU timestamp measurements. Keep its JSON replies as evidence.
+running preview. The socket's FPS/frame-time fields now count frames over 500 ms
+windows (`core/frame_rate.rs`). Median/min/max sampled FPS describe that signal,
+not raw frame percentiles or GPU timestamp measurements. Keep its JSON replies
+as evidence.
+
+The numbers below were measured earlier, from Bevy's smoothed `1/dt`, which reads
+high when frame times vary. Compare them with new runs only as a rough guide.
+
+Checked against wall clock from `total_frames` on a debug binary with vsync off, at
+idle priority beside another job, in KR at the road fixture at 1280x800. The old
+column is from the first run of each limit.
+
+| Limit | Wall clock fps | New window min-max | Old smoothed min-max |
+|---|---|---|---|
+| 30 | 30.0 | 29.2-31.1 | 24.6-41.4 |
+| 60 | 39.2-47.9 over 3 runs | 23.4-58.0 | 24.1-59.7 |
+| None | 56.0-58.6 over 3 runs | 54.8-59.1 | 37.5-62.5 |
+
+On these steady frames the old mean was only about 1.5 % high, so its main fault was
+the spread: it swung between 24.6 and 41.4 at a true 30.0.
+
+The 60 fps limit landed below the unlimited rate in all three runs. Wall clock
+agrees, so the reading is right and the cause is open. Idle priority may delay
+wakeups from the limiter's sleep, so recheck at normal priority before blaming the
+limiter.
 
 ## Measured configuration
 
