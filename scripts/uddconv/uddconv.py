@@ -269,6 +269,17 @@ def run_all(
     run_gumps(ccdir, output_dir, gump_args)
     if ecdir:
         run_ec_gumps(ecdir, output_dir, gump_args)
+        run_pack(
+            "pack-ec-tex-aux",
+            *non_texture_zstd,
+            *source_args,
+            "--tilemeta",
+            f"{output_dir}/tilemeta.uddp",
+            "--output",
+            f"{output_dir}/tex_aux_ec.uddp",
+        )
+        run_pack("pack-terrain-meta", *source_args, "--output", f"{output_dir}/terrain_meta.bin")
+        run_pack("pack-ec-effects", *non_texture_zstd, *source_args, "--output", f"{output_dir}/effects_ec.uddp")
 
 
 def main() -> int:
