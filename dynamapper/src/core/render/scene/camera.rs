@@ -28,6 +28,9 @@ mod perspective;
 pub struct UiCameraResource(pub Option<Entity>);
 
 /* RENDERING MAGIC CONSTANTS */
+const ORTHO_NEAR: f32 = -1000.0;
+const ORTHO_FAR: f32 = 1000.0;
+
 /// sqrt(3) makes the two ground diagonals project to equal lengths at the
 /// isometric pitch. The former trial-and-error value 1.79 stretched the grid.
 pub(crate) const ORTHO_WIDTH_SCALE_FACTOR: f32 = 1.7320508;
@@ -68,14 +71,11 @@ impl RenderZoom {
 pub struct PlayerCamera;
 impl PlayerCamera {
     pub const BASE_OFFSET_FROM_PLAYER: Vec3 = Vec3::new(5.0, 5.0, 5.0);
-    // Preserve the established perspective orbit length (old 50*1.79 Y)
-    // independently of the calibrated lens, which changes projected aspect.
-    pub const BASE_OFFSET_FROM_PLAYER_PERSP: Vec3 = Vec3::new(50.0, 89.5, 50.0);
 
-    pub fn perspective_offset() -> Vec3 {
-        // Preserve the orbit distance/zoom framing, with the art view's pitch.
+    pub fn perspective_offset(window_height: f32, zoom: f32) -> Vec3 {
+        // The orbit distance matches the orthographic framing, with the art view's pitch.
         // The lens supplies vertical stretch instead of changing the camera pose.
-        Vec3::ONE.normalize() * Self::BASE_OFFSET_FROM_PLAYER_PERSP.length()
+        Vec3::ONE.normalize() * perspective::orbit_distance(window_height, zoom)
     }
 }
 
@@ -151,14 +151,14 @@ fn sys_setup_cam(
                 width: ortho_width,
                 height: ortho_height,
             },
-            near: -1000.0,
-            far: 1000.0,
+            near: ORTHO_NEAR,
+            far: ORTHO_FAR,
             ..OrthographicProjection::default_3d()
         })
     };
 
     let offset = if settings.app.window.perspective_camera {
-        PlayerCamera::perspective_offset() * zoom
+        PlayerCamera::perspective_offset(main_window.resolution.height(), zoom)
     } else {
         PlayerCamera::BASE_OFFSET_FROM_PLAYER
     };
@@ -379,8 +379,8 @@ fn sys_update_camera_projection_to_view(
         projection_changed = true;
     } else if transition_to_ortho {
         *proj = Projection::Orthographic(OrthographicProjection {
-            near: -100.0,
-            far: 100.0,
+            near: ORTHO_NEAR,
+            far: ORTHO_FAR,
             ..OrthographicProjection::default_3d()
         });
         projection_changed = true;
@@ -429,6 +429,7 @@ fn sys_camera_follow_player(
     mut last_camera_chunk: Local<Option<(i32, i32)>>,
     settings: Res<Settings>,
     render_zoom: Res<RenderZoom>,
+    windows: Query<&Window>,
 ) {
     let mut camera_transform = match camera_q.single_mut().ok() {
         Some(t) => t,
@@ -440,7 +441,9 @@ fn sys_camera_follow_player(
     };
 
     let offset = if settings.app.window.perspective_camera {
-        PlayerCamera::perspective_offset() * render_zoom.0
+        // The window is gone for the last frames of an exit.
+        let Ok(window) = windows.single() else { return };
+        PlayerCamera::perspective_offset(window.resolution.height(), render_zoom.0)
     } else {
         PlayerCamera::BASE_OFFSET_FROM_PLAYER
     };
@@ -473,6 +476,7 @@ fn sys_camera_zoom(
     mut chunk_recompute_writer: MessageWriter<super::RecomputeVisibleChunksEvent>,
     settings: Res<Settings>,
     mut camera_q: Query<&mut Transform, With<Camera3d>>,
+    windows: Query<&Window>,
 ) {
     // If egui is using the mouse/keyboard, don't zoom
     let ctx = match egui_contexts.ctx_mut() {
@@ -514,12 +518,13 @@ fn sys_camera_zoom(
         let new_zoom = previous_zoom * multiplier;
         zoom_res.write_val(new_zoom);
         if settings.app.window.free_camera && settings.app.window.perspective_camera {
-            if let Ok(mut transform) = camera_q.single_mut() {
+            if let (Ok(mut transform), Ok(window)) = (camera_q.single_mut(), windows.single()) {
                 // Follow perspective applies zoom to its orbit distance. Free
                 // perspective uses the same dolly distance along its current
                 // viewing direction, preserving any manual pan and rotation.
-                let distance = PlayerCamera::perspective_offset().length()
-                    * (zoom_res.0 - previous_zoom);
+                let window_height = window.resolution.height();
+                let distance = perspective::orbit_distance(window_height, zoom_res.0)
+                    - perspective::orbit_distance(window_height, previous_zoom);
                 let backward = *transform.back();
                 transform.translation += backward * distance;
             }
