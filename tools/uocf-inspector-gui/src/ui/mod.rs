@@ -36,6 +36,7 @@ pub mod ec_interface_textures;
 pub mod classic_fonts;
 pub mod classic_fonts_editor;
 pub mod classic_defs;
+pub mod classic_defs_editor;
 pub mod classic_image_import;
 pub mod textures;
 pub(crate) mod unsaved_changes;

@@ -65,6 +65,7 @@ impl Skill {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SkillsFile {
     pub container: IndexedMul,
 }

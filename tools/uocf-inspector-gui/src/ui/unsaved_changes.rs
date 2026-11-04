@@ -42,6 +42,7 @@ const TAB_EDITORS: &[TabEditor] = &[
     super::hues_editor::ENHANCED_TAB_EDITOR,
     super::classic_music::TAB_EDITOR,
     super::classic_fonts_editor::TAB_EDITOR,
+    super::classic_defs_editor::TAB_EDITOR,
     super::legacy_terrain::TAB_EDITOR,
     super::terrain_definition_editor::TAB_EDITOR,
     super::terrain_definition_editor::TERRAIN_TAB_EDITOR,

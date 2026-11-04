@@ -1,6 +1,7 @@
-//! Read-only view of the Classic def and reference data files, read strictly as the client reads them
+//! View of the Classic def and reference data files, read strictly as the client reads them
 //! (`uocf::classic::def_files`, `speech`, `skills`): the remap def files, `bodyconv.def`, `Equipconv.def`,
-//! `speech.mul`, `skills.mul` and `skillgrp.mul`, as tables, with the line and column of a syntax error.
+//! `speech.mul`, `skills.mul` and `skillgrp.mul`, as tables, with the line and column of a syntax error. `Edit` is in
+//! [`super::classic_defs_editor`].
 
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
@@ -11,6 +12,7 @@ use uocf::classic::skills::{SKILL_GROUPS_FILE, SKILLS_DATA_FILE, SkillGroupsFile
 use uocf::classic::speech::{SPEECH_FILE, SpeechFile};
 use uocf::utils::path::find_file_ignoring_case;
 
+use super::classic_defs_editor::DefsEditor;
 use crate::app::UopInspectorApp;
 
 const TARGETS_FILES: [&str; 9] =
@@ -24,7 +26,7 @@ const SHADOWED: &str = "no (an earlier line wins)";
 const OVERRIDDEN: &str = "no (a later line wins)";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum FileKind {
+pub(super) enum FileKind {
     Targets(&'static str),
     BodyConv,
     EquipConv,
@@ -34,7 +36,7 @@ enum FileKind {
 }
 
 impl FileKind {
-    fn name(self) -> &'static str {
+    pub(super) fn name(self) -> &'static str {
         match self {
             Self::Targets(name) => name,
             Self::BodyConv => BODYCONV_FILE,
@@ -96,12 +98,23 @@ impl FileKind {
         }
     }
 
-    fn all() -> impl Iterator<Item = Self> {
+    pub(super) fn all() -> impl Iterator<Item = Self> {
         TARGETS_FILES.into_iter().map(Self::Targets).chain([Self::BodyConv, Self::EquipConv, Self::Speech, Self::Skills, Self::SkillGroups])
     }
 }
 
-struct Table {
+/// A file of the tab, as read.
+#[derive(Clone, PartialEq)]
+pub(super) enum DefFile {
+    Targets(TargetsDefFile),
+    BodyConv(BodyConvDefFile),
+    EquipConv(EquipConvDefFile),
+    Speech(SpeechFile),
+    Skills(SkillsFile),
+    SkillGroups(SkillGroupsFile),
+}
+
+pub(super) struct Table {
     headers: Vec<&'static str>,
     rows: Vec<Vec<String>>,
     summary: String,
@@ -109,9 +122,12 @@ struct Table {
 
 #[derive(Default)]
 pub struct ClassicDefsState {
-    selected: Option<FileKind>,
+    pub(super) selected: Option<FileKind>,
     table: Option<Result<Table, String>>,
+    /// The generation of the editor `table` was built at.
+    table_generation: u64,
     filter: String,
+    pub(super) editor: DefsEditor,
 }
 
 /// The 1-based line numbers of the records of `lines`, with whether the client uses each.
@@ -135,12 +151,27 @@ fn comment(comment: &Option<String>) -> String {
     comment.as_deref().map(str::trim).unwrap_or_default().to_owned()
 }
 
-fn read_table(dir: &Path, kind: FileKind) -> Result<Table, String> {
+pub(super) fn read_file(dir: &Path, kind: FileKind) -> Result<DefFile, String> {
     let path = find_file_ignoring_case(dir, kind.name()).ok_or_else(|| format!("no {} in {}", kind.name(), dir.display()))?;
     let error = |error: color_eyre::eyre::Report| format!("{error:#}");
-    match kind {
-        FileKind::Targets(_) => {
-            let file = TargetsDefFile::load(&path).map_err(error)?;
+    Ok(match kind {
+        FileKind::Targets(_) => DefFile::Targets(TargetsDefFile::load(&path).map_err(error)?),
+        FileKind::BodyConv => DefFile::BodyConv(BodyConvDefFile::load(&path).map_err(error)?),
+        FileKind::EquipConv => DefFile::EquipConv(EquipConvDefFile::load(&path).map_err(error)?),
+        FileKind::Speech => DefFile::Speech(SpeechFile::load(&path).map_err(error)?),
+        FileKind::Skills => DefFile::Skills(SkillsFile::load(dir).map_err(error)?),
+        FileKind::SkillGroups => DefFile::SkillGroups(SkillGroupsFile::load(&path).map_err(error)?),
+    })
+}
+
+pub(super) fn read_table(dir: &Path, kind: FileKind) -> Result<Table, String> {
+    table_of(&read_file(dir, kind)?)
+}
+
+pub(super) fn table_of(file: &DefFile) -> Result<Table, String> {
+    let error = |error: color_eyre::eyre::Report| format!("{error:#}");
+    match file {
+        DefFile::Targets(file) => {
             let mut seen = HashSet::new();
             let rows: Vec<Vec<String>> = record_lines(&file.lines)
                 .map(|(line, record)| {
@@ -160,8 +191,7 @@ fn read_table(dir: &Path, kind: FileKind) -> Result<Table, String> {
             let summary = format!("{} remaps of {} ids; a remap draws one of its targets at random", rows.len(), seen.len());
             Ok(Table { headers: vec!["Line", "Id", "Targets", "Read as", "Value (hue)", "Comment", "Used"], rows, summary })
         }
-        FileKind::BodyConv => {
-            let file = BodyConvDefFile::load(&path).map_err(error)?;
+        DefFile::BodyConv(file) => {
             let records: Vec<_> = record_lines(&file.lines).collect();
             let mut seen = HashSet::new();
             let mut rows: Vec<Vec<String>> = records
@@ -179,8 +209,7 @@ fn read_table(dir: &Path, kind: FileKind) -> Result<Table, String> {
             let summary = format!("{} lines of {} bodies; the 2024 client reads 5 numbers, UO Gold 4", rows.len(), seen.len());
             Ok(Table { headers: vec!["Line", "Body", "anim2, anim3, anim4, anim5, ... bodies (-1: none)", "Comment", "Used"], rows, summary })
         }
-        FileKind::EquipConv => {
-            let file = EquipConvDefFile::load(&path).map_err(error)?;
+        DefFile::EquipConv(file) => {
             let records: Vec<_> = record_lines(&file.lines).collect();
             let mut seen = HashSet::new();
             let mut rows: Vec<Vec<String>> = records
@@ -203,14 +232,12 @@ fn read_table(dir: &Path, kind: FileKind) -> Result<Table, String> {
             let summary = format!("{} conversions; the hue is read as hexadecimal", rows.len());
             Ok(Table { headers: vec!["Line", "Body", "Equipment", "Converted", "Gump", "Hue", "Comment", "Used"], rows, summary })
         }
-        FileKind::Speech => {
-            let file = SpeechFile::load(&path).map_err(error)?;
+        DefFile::Speech(file) => {
             let ids: HashSet<u16> = file.entries.iter().map(|entry| entry.id).collect();
             let rows = file.entries.iter().enumerate().map(|(index, entry)| vec![index.to_string(), entry.id.to_string(), entry.text.clone()]).collect();
             Ok(Table { headers: vec!["Record", "Keyword id", "Text"], rows, summary: format!("{} records of {} keywords", file.entries.len(), ids.len()) })
         }
-        FileKind::Skills => {
-            let file = SkillsFile::load(dir).map_err(error)?;
+        DefFile::Skills(file) => {
             let mut rows = Vec::new();
             for id in 0..file.len() {
                 if let Some(skill) = file.skill(id).map_err(error)? {
@@ -221,8 +248,7 @@ fn read_table(dir: &Path, kind: FileKind) -> Result<Table, String> {
             let summary = format!("{} skills in {} index records", rows.len(), file.len());
             Ok(Table { headers: vec!["Id", "Button", "Name", "Index extra"], rows, summary })
         }
-        FileKind::SkillGroups => {
-            let file = SkillGroupsFile::load(&path).map_err(error)?;
+        DefFile::SkillGroups(file) => {
             let rows = file
                 .skill_groups
                 .iter()
@@ -236,24 +262,38 @@ fn read_table(dir: &Path, kind: FileKind) -> Result<Table, String> {
 }
 
 pub fn ui_classic_defs(app: &mut UopInspectorApp, _ctx: &egui::Context, ui: &mut egui::Ui) {
+    egui::Panel::top("classic_defs_editor_bar").show(ui, |ui| {
+        ui.horizontal_wrapped(|ui| super::classic_defs_editor::bar(app, ui));
+    });
     let cc_path = app.settings.cc_path.clone();
     let state = &mut app.classic_file_views.defs;
     egui::Panel::left("classic_defs_files").resizable(true).default_size(TOOLS_PANEL_WIDTH).show(ui, |ui| {
         ui.heading("Def and data files");
         ui.separator();
-        let Some(cc_path) = cc_path else {
+        let Some(cc_path) = &cc_path else {
             ui.label("Set the CC path (File > Search Paths).");
             return;
         };
         for kind in FileKind::all() {
-            let present = find_file_ignoring_case(&cc_path, kind.name()).is_some();
+            let present = find_file_ignoring_case(cc_path, kind.name()).is_some();
             let response = ui.add_enabled(present, egui::Button::selectable(state.selected == Some(kind), kind.name()));
             if response.clicked() {
                 state.selected = Some(kind);
-                state.table = Some(read_table(&cc_path, kind));
+                state.table = Some(state.editor.table(cc_path, kind));
+                state.editor.clear_row();
             }
         }
     });
+
+    if let (true, Some(kind)) = (state.editor.enabled, state.selected) {
+        egui::Panel::bottom("classic_defs_record").show(ui, |ui| state.editor.record_panel(ui, kind));
+    }
+    if let (Some(kind), Some(cc_path)) = (state.selected, &cc_path) {
+        if state.table_generation != state.editor.generation() {
+            state.table = Some(state.editor.table(cc_path, kind));
+            state.table_generation = state.editor.generation();
+        }
+    }
 
     egui::CentralPanel::default().show(ui, |ui| {
         let (Some(kind), Some(table)) = (state.selected, &state.table) else {
@@ -277,8 +317,14 @@ pub fn ui_classic_defs(app: &mut UopInspectorApp, _ctx: &egui::Context, ui: &mut
             ui.text_edit_singleline(&mut state.filter);
         });
         let filter = state.filter.to_lowercase();
-        let rows: Vec<&Vec<String>> =
-            table.rows.iter().filter(|row| filter.is_empty() || row.iter().any(|cell| cell.to_lowercase().contains(&filter))).collect();
+        let rows: Vec<(usize, &Vec<String>)> = table
+            .rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| filter.is_empty() || row.iter().any(|cell| cell.to_lowercase().contains(&filter)))
+            .collect();
+        let editing = state.editor.enabled;
+        let mut clicked_row = None;
         egui::ScrollArea::horizontal().show(ui, |ui| {
             let mut builder = TableBuilder::new(ui).striped(true).resizable(true).cell_layout(egui::Layout::left_to_right(egui::Align::Center));
             for _ in 1..table.headers.len() {
@@ -295,15 +341,23 @@ pub fn ui_classic_defs(app: &mut UopInspectorApp, _ctx: &egui::Context, ui: &mut
                 })
                 .body(|body| {
                     body.rows(ROW_HEIGHT, rows.len(), |mut row| {
-                        let cells = rows[row.index()];
+                        let (row_index, cells) = rows[row.index()];
+                        let selected = state.editor.is_row(row_index);
                         for cell in cells {
                             row.col(|ui| {
-                                ui.label(cell);
+                                if !editing {
+                                    ui.label(cell);
+                                } else if ui.selectable_label(selected, cell).clicked() {
+                                    clicked_row = Some(row_index);
+                                }
                             });
                         }
                     });
                 });
         });
+        if let Some(row) = clicked_row {
+            state.editor.select_row(kind, row);
+        }
     });
 }
 
