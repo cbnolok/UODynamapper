@@ -18,12 +18,16 @@ use crate::app::{concrete_art_tile_source, UopInspectorApp, ViewMode};
 use crate::logic::animation_definition_editor::{
     frame_effects_kdl, parse_single_kdl, AnimationDefinitionEditor, AnimationDefinitionField,
 };
-use crate::ui::{multis, UOP_PATCHER_NOTE};
+use crate::ui::{animated_items, UOP_PATCHER_NOTE};
 
 const LIST_PANEL_WIDTH: f32 = 260.0;
 const VALIDATION_PANEL_HEIGHT: f32 = 150.0;
 /// Largest side of a frame thumbnail; larger art is scaled down.
 const THUMBNAIL_MAX_SIDE: f32 = 44.0;
+const PREVIEW_ZOOMS: [(f32, &str); 3] = [(1.0, "1x"), (2.0, "2x"), (4.0, "4x")];
+const PREVIEW_DEFAULT_ZOOM_INDEX: usize = 1;
+/// The shortest time a frame stays in the preview, for a stored interval of 0.
+const PREVIEW_MIN_FRAME_SECONDS: f64 = 0.02;
 const TILE_ID_HEX_DIGITS: usize = 4;
 /// Drag speed of the id fields (typing is the main input).
 const ID_DRAG_SPEED: f64 = 0.1;
@@ -63,6 +67,30 @@ pub struct AnimationDefinitionsPanelState {
     effects_draft: Option<EffectsDraft>,
     entry_draft: Option<EntryDraft>,
     validation: Option<ValidationCache>,
+    preview: FramePreview,
+}
+
+/// What the frame preview shows: a frame of a set of the selected item, played at the set's interval.
+#[derive(Default)]
+struct FramePreview {
+    item: Option<u32>,
+    set: u32,
+    frame: usize,
+    playing: bool,
+    last_advance: f64,
+    /// Index into [`PREVIEW_ZOOMS`], `None` for the default.
+    zoom_index: Option<usize>,
+}
+
+/// The frame shown after `frame` of the set `set`: the set's next one, then the first of its successor. `None` stops:
+/// the last frame of a set with no successor (or one that is missing or empty).
+fn next_preview_frame(definition: &AnimationDefinition, set: u32, frame: usize) -> Option<(u32, usize)> {
+    let current = definition.sets.get(&set)?;
+    if frame + 1 < current.frames.len() {
+        return Some((set, frame + 1));
+    }
+    let next = current.next?;
+    definition.sets.get(&next).filter(|set| !set.frames.is_empty()).map(|_| (next, 0))
 }
 
 /// The effects of one frame, edited as KDL text.
@@ -100,6 +128,7 @@ enum Action {
 }
 
 pub fn ui_animation_definitions(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
+    animated_items::source_switch(app, ui);
     auto_open_client(app);
     handle_shortcuts(app, ctx);
     egui::Panel::top("animation_definitions_toolbar").show(ui, |ui| toolbar(app, ui));
@@ -605,8 +634,12 @@ fn details_panel(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
         ui.label("Select a definition in the list.");
         return;
     };
-    let tile_ids: Vec<u32> = definition.sets.values().flat_map(|set| set.frames.iter().map(|frame| frame.tile_id)).collect();
-    let thumbnails: Vec<_> = tile_ids.iter().map(|&tile_id| multis::static_tile_thumbnail(app, ctx, tile_id)).collect();
+    let thumbnails: Vec<_> = definition
+        .sets
+        .values()
+        .flat_map(|set| set.frames.iter().enumerate().map(|(index, frame)| (frame.tile_id, index, set.frames.len())))
+        .map(|(tile_id, index, count)| animated_items::frame_texture(app, ctx, tile_id, index, count))
+        .collect();
     let mut thumbnails = thumbnails.into_iter();
     let keys: Vec<u32> = definition.sets.keys().copied().collect();
     let mut actions = Vec::new();
@@ -647,6 +680,8 @@ fn details_panel(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
         ui.end_row();
     });
 
+    ui.separator();
+    frame_preview(app, ctx, ui, id, &definition);
     ui.separator();
     for (&key, set) in &definition.sets {
         let title = format!("Set {key}: {} frames, {} s per frame", set.frames.len(), set.frame_interval);
@@ -721,6 +756,81 @@ fn details_panel(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
         actions.push(Action::AddSet(id));
     }
     apply_actions(app, actions);
+}
+
+/// The frames themselves: one frame large, played at the set's interval and through its successors, in the chosen art
+/// source and hue.
+fn frame_preview(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui, id: u32, definition: &AnimationDefinition) {
+    let preview = &mut app.animation_definitions_panel.preview;
+    if preview.item != Some(id) || !definition.sets.contains_key(&preview.set) {
+        *preview = FramePreview { item: Some(id), set: definition.start_set, zoom_index: preview.zoom_index, ..FramePreview::default() };
+    }
+    let now = ctx.input(|input| input.time);
+    if preview.playing {
+        let interval = definition.sets.get(&preview.set).map_or(0.0, |set| f64::from(set.frame_interval)).max(PREVIEW_MIN_FRAME_SECONDS);
+        if now - preview.last_advance >= interval {
+            match next_preview_frame(definition, preview.set, preview.frame) {
+                Some((set, frame)) => (preview.set, preview.frame) = (set, frame),
+                None => preview.playing = false,
+            }
+            preview.last_advance = now;
+        }
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64(interval));
+    }
+
+    let set_keys: Vec<u32> = definition.sets.keys().copied().collect();
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Set:");
+        for key in set_keys {
+            if ui.selectable_label(preview.set == key, key.to_string()).clicked() {
+                (preview.set, preview.frame) = (key, 0);
+            }
+        }
+        ui.separator();
+        if ui.button(if preview.playing { "Stop" } else { "Play" }).clicked() {
+            preview.playing = !preview.playing;
+            preview.last_advance = now;
+        }
+        let frame_count = definition.sets.get(&preview.set).map_or(0, |set| set.frames.len());
+        if ui.add_enabled(preview.frame > 0, egui::Button::new("Prev")).clicked() {
+            preview.frame -= 1;
+        }
+        if ui.add_enabled(preview.frame + 1 < frame_count, egui::Button::new("Next")).clicked() {
+            preview.frame += 1;
+        }
+        ui.separator();
+        let zoom_index = preview.zoom_index.get_or_insert(PREVIEW_DEFAULT_ZOOM_INDEX);
+        for (index, (_, label)) in PREVIEW_ZOOMS.iter().enumerate() {
+            ui.selectable_value(zoom_index, index, *label);
+        }
+    });
+    let (set, frame, zoom_index) = (preview.set, preview.frame, preview.zoom_index.unwrap_or(PREVIEW_DEFAULT_ZOOM_INDEX));
+    animated_items::art_source_controls(app, ui);
+    animated_items::hue_controls(app, ui);
+
+    let Some(frames) = definition.sets.get(&set).map(|set| &set.frames).filter(|frames| !frames.is_empty()) else {
+        ui.label("This set has no frames.");
+        return;
+    };
+    let frame = frame.min(frames.len() - 1);
+    let tile_id = frames[frame].tile_id;
+    ui.label(format!("Set {set}, frame {} / {}: tile 0x{tile_id:0TILE_ID_HEX_DIGITS$X}", frame + 1, frames.len()));
+    // The largest frame of the set sets the box, so the buttons above and the rows below stay in place.
+    let textures: Vec<_> = frames.iter().enumerate().map(|(index, frame)| animated_items::frame_texture(app, ctx, frame.tile_id, index, frames.len())).collect();
+    let (zoom, _) = PREVIEW_ZOOMS[zoom_index];
+    let largest = textures.iter().flatten().fold(egui::Vec2::ZERO, |largest, texture| largest.max(texture.size_vec2()));
+    match &textures[frame] {
+        Some(texture) => {
+            let (slot, _) = ui.allocate_exact_size(largest * zoom, egui::Sense::hover());
+            let drawn = texture.size_vec2() * zoom;
+            let image = egui::Image::new(texture).texture_options(egui::TextureOptions::NEAREST);
+            image.paint_at(ui, egui::Rect::from_min_size(slot.center_bottom() - egui::vec2(drawn.x / 2.0, drawn.y), drawn));
+        }
+        None => {
+            ui.allocate_space(largest * zoom);
+            ui.label("This art source has no art for this tile.");
+        }
+    }
 }
 
 fn apply_actions(app: &mut UopInspectorApp, actions: Vec<Action>) {
@@ -832,5 +942,38 @@ fn entry_window(app: &mut UopInspectorApp, ctx: &egui::Context) {
     }
     if close {
         state.entry_draft = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+    use uocf::enhanced::animation_definition::{DefinitionFrame, FrameSet};
+
+    fn set(next: Option<u32>, frame_count: u32) -> FrameSet {
+        let frames = (0..frame_count).map(|tile_id| DefinitionFrame { tile_id, effects: Vec::new() }).collect();
+        FrameSet { next, frame_interval: 0.1, frames }
+    }
+
+    fn definition(sets: impl IntoIterator<Item = (u32, FrameSet)>) -> AnimationDefinition {
+        let sets: BTreeMap<u32, FrameSet> = sets.into_iter().collect();
+        AnimationDefinition { stored_id: 0, start_set: 0, second_set: 0, value: 0.0, sets }
+    }
+
+    #[test]
+    fn the_preview_walks_a_set_then_its_successor_then_stops() {
+        let definition = definition([(0, set(Some(5), 2)), (5, set(None, 1))]);
+        assert_eq!(next_preview_frame(&definition, 0, 0), Some((0, 1)));
+        assert_eq!(next_preview_frame(&definition, 0, 1), Some((5, 0)));
+        assert_eq!(next_preview_frame(&definition, 5, 0), None);
+    }
+
+    #[test]
+    fn the_preview_stops_at_a_missing_or_empty_successor() {
+        let definition = definition([(0, set(Some(9), 1)), (1, set(Some(2), 1)), (2, set(None, 0))]);
+        assert_eq!(next_preview_frame(&definition, 0, 0), None);
+        assert_eq!(next_preview_frame(&definition, 1, 0), None);
+        assert_eq!(next_preview_frame(&definition, 7, 0), None);
     }
 }

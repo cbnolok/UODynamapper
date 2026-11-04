@@ -859,7 +859,7 @@ fn gump_source_detail(source: GumpSource, gump_id: u32) -> String {
     }
 }
 
-fn ui_hue_picker(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
+pub(super) fn ui_hue_picker(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
     let Some(hues) = app
         .client_data
         .as_ref()

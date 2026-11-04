@@ -4,6 +4,7 @@ use std::cmp::Ordering;
 
 pub mod animation_definitions;
 pub mod animations;
+pub mod animated_items;
 pub mod animdata;
 pub mod art_viewer;
 pub mod uop_browser;
@@ -233,7 +234,10 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Multis, "Multis");
             }
             ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Housing, "Housing");
-            ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::AnimationDefinitions, "Animation definitions");
+            let animated_items = matches!(app.view_mode, crate::app::ViewMode::AnimationDefinitions | crate::app::ViewMode::AnimData);
+            if ui.selectable_label(animated_items, "Animated items").clicked() && !animated_items {
+                app.view_mode = crate::app::ViewMode::AnimationDefinitions;
+            }
             ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Effects, "Effects");
             ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Multimap, "Multimap");
             if app.client_data.is_some() || app.ec_hues.is_some() {
@@ -260,9 +264,6 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Gumps, "Gumps");
             }
             ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Animations, "Animations");
-            if app.client_data.as_ref().and_then(|client| client.animdata.as_ref()).is_some() {
-                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::AnimData, "AnimData");
-            }
             if app.terrain_def_package.is_some() {
                 ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::TerrainDefinition, "Terrain Def");
             }

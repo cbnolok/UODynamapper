@@ -3481,14 +3481,24 @@ impl UopInspectorApp {
         _frame_count: usize,
     ) -> Option<egui::TextureHandle> {
         let concrete_source = concrete_art_tile_source(source);
+        let hue_id = self.selected_hue_id;
         if !matches!(concrete_source, ArtSource::EcUopLegacy | ArtSource::EcUopKr) {
+            // The Classic path hues through hues.mul; without it, through Hues.uop.
+            let classic_hues = self.client_data.as_ref().is_some_and(|client| client.hues.is_some());
+            if hue_id != 0 && !classic_hues {
+                let hued = self.get_tex_art_texture_with_ec_hue_from_source(ctx, art_id, source, hue_id);
+                if hued.is_some() {
+                    return hued;
+                }
+            }
             return self.get_tex_art_texture_from_source(ctx, art_id, source);
         }
 
         let sample = self.animdata_tileart_sample(art_id, concrete_source)?;
-        let hue_id = self.selected_hue_id;
+        let hueing_mode = self.selected_ec_hueing_mode;
         let key = 0xAD00_0000_0000_0000u64
             ^ hash_file_name_single(&sample.path)
+            ^ ((hueing_mode as u64) << 56)
             ^ ((concrete_source as u64) << 48)
             ^ ((hue_id as u64) << 32)
             ^ (sample.sampled_art_id as u64);
@@ -3497,8 +3507,13 @@ impl UopInspectorApp {
             return Some(handle);
         }
 
-        let (width, height, pixels) =
+        let (width, height, mut pixels) =
             self.decode_art_item_rgba_from_source(sample.texture_id, concrete_source)?;
+        if hue_id != 0 {
+            if let Some(hue_table) = self.ec_hue_lookup_table(hue_id, hueing_mode) {
+                apply_ec_hue_table_to_rgba(&mut pixels, &hue_table, hueing_mode);
+            }
+        }
         let (width, height, pixels) = crop_rgba_rect(
             width,
             height,
@@ -3711,6 +3726,13 @@ impl UopInspectorApp {
         art.decode_static_tile_from_source(art_id, source, &mut scratch)
             .ok()
             .map(|(width, height, pixels)| (width as u32, height as u32, pixels))
+    }
+
+    /// Whether a package of this file name is loaded.
+    pub fn has_loaded_uop(&self, file_name: &str) -> bool {
+        self.uop_cache.loaded_uops.iter().any(|loaded| {
+            loaded.path.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.eq_ignore_ascii_case(file_name))
+        })
     }
 
     fn ec_hue_lookup_table(&self, hue_id: u16, hueing_mode: EcHueingMode) -> Option<Vec<u8>> {
@@ -4060,6 +4082,9 @@ impl UopInspectorApp {
     }
 }
 
+/// The bitmap row holding a hue's table; the row below it is a flat swatch.
+const EC_HUE_TABLE_ROW: u32 = uocf::enhanced::hues::HUE_TABLE_IMAGE_ROW as u32;
+
 fn build_ec_hue_lookup_table(width: u32, height: u32, pixels: &[u8]) -> Option<Vec<u8>> {
     if width == 0 || height == 0 || pixels.len() != width as usize * height as usize * 4 {
         return None;
@@ -4074,7 +4099,7 @@ fn build_ec_hue_lookup_table(width: u32, height: u32, pixels: &[u8]) -> Option<V
             } else {
                 color_index as u32 * (width - 1) / 31
             };
-            (x, height / 2)
+            (x, EC_HUE_TABLE_ROW)
         } else {
             let y = if height <= 1 {
                 0
@@ -4099,7 +4124,7 @@ fn build_ec_hue_lookup_strip(width: u32, height: u32, pixels: &[u8]) -> Option<V
     let mut table = vec![0u8; color_count * 4];
     for color_index in 0..color_count {
         let (src_x, src_y) = if sample_horizontally {
-            (color_index as u32, height / 2)
+            (color_index as u32, EC_HUE_TABLE_ROW)
         } else {
             (width / 2, color_index as u32)
         };
@@ -4125,14 +4150,9 @@ fn apply_ec_hue_table_to_rgba(
             continue;
         }
 
-        let shade = ec_hue_source_luma(pixel, hueing_mode);
-        let color_index = ec_hue_color_index(pixel, hueing_mode, color_count, shade);
+        let color_index = ec_hue_color_index(pixel, hueing_mode, color_count);
         let src = color_index * 4;
         let color = [hue_table[src], hue_table[src + 1], hue_table[src + 2]];
-        let color = match hueing_mode {
-            EcHueingMode::Cc => color,
-            EcHueingMode::Ec => shade_ec_hue_color(color, shade),
-        };
         pixel[0] = color[0];
         pixel[1] = color[1];
         pixel[2] = color[2];
@@ -4144,33 +4164,13 @@ fn ec_hue_color_index(
     pixel: &[u8],
     hueing_mode: EcHueingMode,
     color_count: usize,
-    shade: u8,
 ) -> usize {
     match hueing_mode {
         EcHueingMode::Cc => {
             (pixel[0] >> 3).min(31) as usize
         }
         EcHueingMode::Ec => {
-            shade as usize * (color_count - 1) / 255
-        }
-    }
-}
-
-fn shade_ec_hue_color(color: [u8; 3], shade: u8) -> [u8; 3] {
-    let shade = u16::from(shade);
-    [
-        ((u16::from(color[0]) * shade) / 255) as u8,
-        ((u16::from(color[1]) * shade) / 255) as u8,
-        ((u16::from(color[2]) * shade) / 255) as u8,
-    ]
-}
-
-fn ec_hue_source_luma(pixel: &[u8], hueing_mode: EcHueingMode) -> u8 {
-    match hueing_mode {
-        EcHueingMode::Cc => ((pixel[0] as u16 + pixel[1] as u16 + pixel[2] as u16) / 3) as u8,
-        EcHueingMode::Ec => {
-            ((pixel[0] as u32 * 54 + pixel[1] as u32 * 182 + pixel[2] as u32 * 19 + 127) / 255)
-                as u8
+            pixel[0] as usize * (color_count - 1) / 255
         }
     }
 }
@@ -4694,29 +4694,27 @@ pub(crate) mod tests {
 
         apply_ec_hue_table_to_rgba(&mut pixels, &hue_table, EcHueingMode::Ec);
 
-        assert_eq!(&pixels[0..4], &[0, 0, 0, 240]);
-        assert_eq!(&pixels[4..8], &[63, 63, 64, 200]);
+        assert_eq!(&pixels[0..4], &[0, 1, 2, 240]);
+        assert_eq!(&pixels[4..8], &[127, 128, 129, 200]);
         assert_eq!(&pixels[8..12], &[255, 255, 255, 128]);
     }
 
     #[test]
-    fn ec_hue_application_shades_flat_hue_colors() {
-        let mut hue_table = vec![0u8; 256 * 4];
-        for color in hue_table.chunks_exact_mut(4) {
-            color.copy_from_slice(&[160, 80, 40, 255]);
+    fn ec_hue_tables_read_the_gradient_row_not_the_swatch() {
+        const WIDTH: u32 = 256;
+        const SWATCH: [u8; 4] = [9, 9, 9, 255];
+        let mut bitmap = Vec::new();
+        for x in 0..WIDTH {
+            bitmap.extend_from_slice(&[x as u8, 0, 0, 255]);
+        }
+        for _ in 0..WIDTH {
+            bitmap.extend_from_slice(&SWATCH);
         }
 
-        let mut pixels = vec![
-            64, 64, 64, 240,
-            128, 128, 128, 200,
-            255, 255, 255, 128,
-        ];
-
-        apply_ec_hue_table_to_rgba(&mut pixels, &hue_table, EcHueingMode::Ec);
-
-        assert_eq!(&pixels[0..4], &[40, 20, 10, 240]);
-        assert_eq!(&pixels[4..8], &[80, 40, 20, 200]);
-        assert_eq!(&pixels[8..12], &[160, 80, 40, 128]);
+        let strip = build_ec_hue_lookup_strip(WIDTH, 2, &bitmap).unwrap();
+        assert_eq!(&strip[100 * 4..101 * 4], &[100, 0, 0, 255]);
+        let table = build_ec_hue_lookup_table(WIDTH, 2, &bitmap).unwrap();
+        assert_eq!(&table[31 * 4..32 * 4], &[255, 0, 0, 255]);
     }
 
     #[test]

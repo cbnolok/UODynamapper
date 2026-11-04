@@ -1,11 +1,12 @@
 use crate::app::{ArtSource, UopInspectorApp};
-use crate::ui::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by};
+use crate::ui::{animated_items, arrow_delta, list_sort_controls, move_selection, sorted_indices_by};
 use eframe::egui;
 use uocf::classic::art::STATIC_TILE_ID_BASE;
 
 const ANIMDATA_LIST_PANEL_WIDTH: f32 = 320.0;
 
 pub fn ui_animdata(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
+    animated_items::source_switch(app, ui);
     let Some(animdata) = app
         .client_data
         .as_ref()
@@ -113,13 +114,8 @@ pub fn ui_animdata(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui
 
         ui.heading(format!("AnimData {}", entry.id));
         ui.separator();
-        ui.horizontal(|ui| {
-            ui.label("Art source:");
-            ui.radio_value(&mut app.selected_animdata_art_source, ArtSource::Mul, "MUL");
-            ui.radio_value(&mut app.selected_animdata_art_source, ArtSource::CcUop, "CC UOP");
-            ui.radio_value(&mut app.selected_animdata_art_source, ArtSource::EcUopLegacy, "EC Legacy UOP");
-            ui.radio_value(&mut app.selected_animdata_art_source, ArtSource::EcUopKr, "KR/New UOP");
-        });
+        animated_items::art_source_controls(app, ui);
+        animated_items::hue_controls(app, ui);
         ui.horizontal(|ui| {
             if ui
                 .button(if app.is_playing { "Stop" } else { "Play" })
@@ -196,7 +192,7 @@ pub fn ui_animdata(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui
                 tile_id
             ));
             if tile_id >= 0 {
-                let art_id = animdata_preview_art_id(entry.id, tile_id as u32, app.selected_animdata_art_source);
+                let art_id = animdata_preview_art_id(tile_id as u32, app.selected_animdata_art_source);
                 ui.label(app.animdata_art_source_request_label(
                     art_id,
                     app.selected_animdata_art_source,
@@ -237,7 +233,7 @@ pub fn ui_animdata(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui
                 ui.label(tile_id.to_string());
 
                 if tile_id >= 0 {
-                    let art_id = animdata_preview_art_id(entry.id, tile_id as u32, app.selected_animdata_art_source);
+                    let art_id = animdata_preview_art_id(tile_id as u32, app.selected_animdata_art_source);
                     if let Some(handle) =
                         app.get_animdata_art_texture_from_source(
                             ctx,
@@ -266,7 +262,7 @@ pub fn ui_animdata(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui
     });
 }
 
-fn animdata_preview_art_id(_entry_id: u32, tile_id: u32, source: ArtSource) -> u32 {
+pub(super) fn animdata_preview_art_id(tile_id: u32, source: ArtSource) -> u32 {
     match source {
         ArtSource::Mul | ArtSource::CcUop => tile_id + STATIC_TILE_ID_BASE,
         ArtSource::EcUop | ArtSource::EcUopLegacy | ArtSource::EcUopKr => {
@@ -282,10 +278,10 @@ mod tests {
 
     #[test]
     fn animdata_preview_maps_mul_static_item_ids_to_classic_art_ids() {
-        assert_eq!(animdata_preview_art_id(0x047B, 0x047B, ArtSource::Mul), 0x447B);
-        assert_eq!(animdata_preview_art_id(0x047B, 0x047B, ArtSource::CcUop), 0x447B);
-        assert_eq!(animdata_preview_art_id(0x047B, 0x047C, ArtSource::EcUopLegacy), 0x047C);
-        assert_eq!(animdata_preview_art_id(0x4001, 0x4002, ArtSource::EcUopLegacy), 0x0002);
-        assert_eq!(animdata_preview_art_id(0x4001, 0x4002, ArtSource::EcUopKr), 0x0002);
+        assert_eq!(animdata_preview_art_id(0x047B, ArtSource::Mul), 0x447B);
+        assert_eq!(animdata_preview_art_id(0x047B, ArtSource::CcUop), 0x447B);
+        assert_eq!(animdata_preview_art_id(0x047C, ArtSource::EcUopLegacy), 0x047C);
+        assert_eq!(animdata_preview_art_id(0x4002, ArtSource::EcUopLegacy), 0x0002);
+        assert_eq!(animdata_preview_art_id(0x4002, ArtSource::EcUopKr), 0x0002);
     }
 }
