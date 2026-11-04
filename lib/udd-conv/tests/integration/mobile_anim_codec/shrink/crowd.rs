@@ -99,7 +99,7 @@ pub(super) struct Tans {
 }
 
 impl Tans {
-    fn from_freqs(freqs: Vec<u16>, for_encoding: bool) -> Tans {
+    pub(super) fn from_freqs(freqs: Vec<u16>, for_encoding: bool) -> Tans {
         if freqs.iter().all(|&f| f == 0) {
             return Tans::default();
         }
@@ -135,7 +135,7 @@ impl Tans {
         Tans { decode, encode, freqs, cums }
     }
 
-    fn encode(&self, symbols: &[u8]) -> Vec<u8> {
+    pub(super) fn encode(&self, symbols: &[u8]) -> Vec<u8> {
         let mut state = TANS_SIZE as u32;
         let mut pushed = Vec::with_capacity(symbols.len());
         for &symbol in symbols.iter().rev() {
@@ -165,7 +165,7 @@ impl Tans {
         out
     }
 
-    fn decode_into(&self, data: &[u8], out: &mut [u8]) {
+    pub(super) fn decode_into(&self, data: &[u8], out: &mut [u8]) {
         let mut state = usize::from(u16::from_le_bytes([data[0], data[1]]));
         let mut at = TANS_STATE_BYTES;
         let (mut buffer, mut have) = (0u64, 0u32);
@@ -574,21 +574,21 @@ fn print_kind(kind: &str, row: &KindRow) {
 // ---------------------------------------------------------------------------------------------------------------
 // Part s1: the crowd, hundreds of distinct (body, action) pairs loaded for one screen
 
-const CROWD_PAIRS: usize = 300;
+pub(super) const CROWD_PAIRS: usize = 300;
 /// A smaller crowd, to try the part out.
 const CROWD_PAIRS_ENV: &str = "MOBILE_ANIM_CODEC_SHRINK_CROWD_PAIRS";
 /// `cc-uniform,cc-worst,ec-uniform,ec-worst`: which scenarios run; all by default.
 const CROWD_SCENARIOS_ENV: &str = "MOBILE_ANIM_CODEC_SHRINK_CROWD_SCENARIOS";
 const CROWD_NO_BC7_ENV: &str = "MOBILE_ANIM_CODEC_SHRINK_CROWD_NO_BC7";
 /// The user's target: this many new actions drawable on `WORKER_THREADS` threads is fast enough.
-const CROWD_TARGET_MS: f64 = 250.0;
+pub(super) const CROWD_TARGET_MS: f64 = 250.0;
 const CROWD_SEED: u64 = 0x2026_1102_C0DE_5EED;
 /// Multiplier spreading a pair's position over its directions, for the direction it happens to face.
 const FACING_HASH: u64 = 2_654_435_761;
-const PALETTE_TEXTURE_BYTES: u64 = (PALETTE_COLOURS * RGBA_CHANNELS) as u64;
+pub(super) const PALETTE_TEXTURE_BYTES: u64 = (PALETTE_COLOURS * RGBA_CHANNELS) as u64;
 const BC7_BLOCK_SIDE: usize = 4;
-const P95: f64 = 0.95;
-const P50: f64 = 0.5;
+pub(super) const P95: f64 = 0.95;
+pub(super) const P50: f64 = 0.5;
 
 const CROWD: [Candidate; 7] = {
     use IndexCoding::{Rank, Residual, Zstd};
@@ -607,13 +607,27 @@ const CROWD: [Candidate; 7] = {
 };
 
 #[derive(Clone, Copy)]
-struct Pair {
+pub(super) struct Pair {
     body: usize,
     action: u16,
     pixels: u64,
 }
 
-fn all_pairs(sources: &Sources, bodies: &[BodySource], present: &[(Client, u64, usize)], client: Client) -> Vec<Pair> {
+impl Pair {
+    pub(super) fn body(&self) -> usize {
+        self.body
+    }
+
+    pub(super) fn action(&self) -> u16 {
+        self.action
+    }
+
+    pub(super) fn pixels(&self) -> u64 {
+        self.pixels
+    }
+}
+
+pub(super) fn all_pairs(sources: &Sources, bodies: &[BodySource], present: &[(Client, u64, usize)], client: Client) -> Vec<Pair> {
     let of: Vec<usize> = present.iter().filter(|s| s.0 == client).map(|s| s.2).collect();
     let rows: Vec<Vec<Pair>> = of
         .par_iter()
@@ -628,7 +642,7 @@ fn all_pairs(sources: &Sources, bodies: &[BodySource], present: &[(Client, u64, 
 }
 
 /// Uniform over the real pairs (partial Fisher-Yates), so their sizes follow the real distribution.
-fn pick_uniform(pairs: &[Pair], count: usize) -> Vec<Pair> {
+pub(super) fn pick_uniform(pairs: &[Pair], count: usize) -> Vec<Pair> {
     let mut order: Vec<usize> = (0..pairs.len()).collect();
     let mut state = CROWD_SEED;
     for n in 0..count.min(order.len()) {
@@ -641,17 +655,17 @@ fn pick_uniform(pairs: &[Pair], count: usize) -> Vec<Pair> {
     order[..count.min(order.len())].iter().map(|&n| pairs[n]).collect()
 }
 
-fn pick_largest(pairs: &[Pair], count: usize) -> Vec<Pair> {
+pub(super) fn pick_largest(pairs: &[Pair], count: usize) -> Vec<Pair> {
     let mut sorted = pairs.to_vec();
     sorted.sort_by_key(|p| std::cmp::Reverse(p.pixels));
     sorted.truncate(count);
     sorted
 }
 
-struct Job<'a> {
-    run: Box<dyn Fn() -> usize + Sync + 'a>,
-    stored: u64,
-    rgba: u64,
+pub(super) struct Job<'a> {
+    pub(super) run: Box<dyn Fn() -> usize + Sync + 'a>,
+    pub(super) stored: u64,
+    pub(super) rgba: u64,
 }
 
 /// The queue on `threads` threads, the fastest of the timing runs: wall seconds, and each job's fastest seconds.
@@ -688,13 +702,13 @@ fn run_jobs(jobs: &[Job], threads: usize) -> (f64, Vec<f64>) {
     (best_wall, best)
 }
 
-fn quantile(values: &[f64], q: f64) -> f64 {
+pub(super) fn quantile(values: &[f64], q: f64) -> f64 {
     let mut sorted = values.to_vec();
     sorted.sort_by(f64::total_cmp);
     sorted.get(((sorted.len() - 1) as f64 * q) as usize).copied().unwrap_or(0.0)
 }
 
-fn print_jobs(name: &str, unit: &str, read: f64, jobs: &[Job]) {
+pub(super) fn print_jobs(name: &str, unit: &str, read: f64, jobs: &[Job]) {
     let (one, per_job) = run_jobs(jobs, 1);
     let (four, _) = run_jobs(jobs, WORKER_THREADS);
     let worst = per_job.iter().copied().fold(0.0, f64::max);
@@ -744,7 +758,7 @@ fn units_of_action(boxes: &[FrameBox], encoded: &Encoded, action: u16) -> Vec<us
 }
 
 /// A copy with only the frames of `actions`, keeping the palettes: action-sized load units only need those to be encoded.
-fn restricted(planes: &Planes, actions: &BTreeSet<u16>) -> Planes {
+pub(super) fn restricted(planes: &Planes, actions: &BTreeSet<u16>) -> Planes {
     let mut boxes = Vec::new();
     let (mut index, mut coverage) = (Vec::new(), Vec::new());
     for frame in planes.boxes.iter().filter(|f| actions.contains(&f.action)) {
@@ -764,12 +778,12 @@ fn read_bytes(encoded: &Encoded, wanted: &[usize]) -> u64 {
         + wanted.iter().map(|&u| &encoded.units[u]).map(|u| (u.index.len() + u.coverage.len() + u.index_tables.len() + u.coverage_tables.len()) as u64).sum::<u64>()
 }
 
-fn facing_unit(position: usize, wanted: &[usize]) -> usize {
+pub(super) fn facing_unit(position: usize, wanted: &[usize]) -> usize {
     wanted[((position as u64).wrapping_mul(FACING_HASH) >> u8::BITS) as usize % wanted.len()]
 }
 
 /// BC7 as today's packer makes it, without atlas pages: zstd 7 on the blocks. Its frames are freed with this call.
-fn bc7_rows(loaded: &[Planes], distinct: &[usize], pairs: &[Pair], position: &HashMap<usize, usize>, wanted_actions: &[BTreeSet<u16>], sources: &Sources, bodies: &[BodySource]) {
+fn bc7_rows(loaded: &[Planes], distinct: &[usize], pairs: &[Pair], position: &HashMap<usize, usize>, wanted_actions: &[BTreeSet<u16>], sources: &Sources, bodies: &[BodySource], stream_rows_only: bool) {
     let blocks: Vec<Vec<Vec<u8>>> = distinct
         .par_iter()
         .zip(loaded)
@@ -806,7 +820,7 @@ fn bc7_rows(loaded: &[Planes], distinct: &[usize], pairs: &[Pair], position: &Ha
             })
             .collect()
     };
-    {
+    if !stream_rows_only {
         let by_unit = bc7_units(Unit::Body);
         let read = by_unit.iter().flatten().map(|u| u.1.len() as u64).sum::<u64>();
         let jobs: Vec<Job> = (0..distinct.len())
@@ -819,6 +833,9 @@ fn bc7_rows(loaded: &[Planes], distinct: &[usize], pairs: &[Pair], position: &Ha
         print_jobs("BC7, zstd 7", "body", mb(read), &jobs);
     }
     for (unit, name) in [(Unit::Action, "action"), (Unit::ActionDirection, "action+direction")] {
+        if stream_rows_only && unit != Unit::ActionDirection {
+            continue;
+        }
         let by_unit = bc7_units(unit);
         let mut read = 0u64;
         let jobs: Vec<Job> = pairs
@@ -834,10 +851,27 @@ fn bc7_rows(loaded: &[Planes], distinct: &[usize], pairs: &[Pair], position: &Ha
             })
             .collect();
         print_jobs("BC7, zstd 7", name, mb(read), &jobs);
+        if stream_rows_only {
+            let mut read = 0u64;
+            let faced: Vec<Job> = pairs
+                .iter()
+                .enumerate()
+                .map(|(n_pair, p)| {
+                    let n = position[&p.body];
+                    let parts: Vec<&(Vec<usize>, Vec<u8>)> = by_unit[n].iter().filter(|u| loaded[n].boxes[u.0[0]].action == p.action).collect();
+                    let chosen: usize = facing_unit(n_pair, &(0..parts.len()).collect::<Vec<usize>>());
+                    let part = parts[chosen];
+                    read += part.1.len() as u64;
+                    let raw = raw_of(n, &part.0);
+                    Job { run: Box::new(move || decompress(&part.1, raw as usize).len()), stored: raw, rgba: rgba_of(n, &part.0) }
+                })
+                .collect();
+            print_jobs("BC7, zstd 7", "facing direction only", mb(read), &faced);
+        }
     }
 }
 
-fn scenario(label: &str, pairs: &[Pair], sources: &Sources, bodies: &[BodySource], only: &[String], with_bc7: bool) {
+pub(super) fn scenario(label: &str, pairs: &[Pair], sources: &Sources, bodies: &[BodySource], only: &[String], with_bc7: bool, stream_rows_only: bool) {
     let distinct: BTreeSet<usize> = pairs.iter().map(|p| p.body).collect();
     let distinct: Vec<usize> = distinct.into_iter().collect();
     let position: HashMap<usize, usize> = distinct.iter().enumerate().map(|(n, &b)| (b, n)).collect();
@@ -860,7 +894,7 @@ fn scenario(label: &str, pairs: &[Pair], sources: &Sources, bodies: &[BodySource
 
     let loaded: Vec<Planes> = distinct.par_iter().map(|&i| Planes::from_body(&load_body(sources, &bodies[i]))).collect();
     if with_bc7 {
-        bc7_rows(&loaded, &distinct, pairs, &position, &wanted_actions, sources, bodies);
+        bc7_rows(&loaded, &distinct, pairs, &position, &wanted_actions, sources, bodies, stream_rows_only);
     }
 
     let chosen: Vec<&Candidate> = CROWD.iter().filter(|c| only.is_empty() || only.iter().any(|filter| c.name.contains(filter.as_str()))).collect();
@@ -868,30 +902,34 @@ fn scenario(label: &str, pairs: &[Pair], sources: &Sources, bodies: &[BodySource
         let started = Instant::now();
         let ordered: Vec<Planes> = loaded.par_iter().map(|planes| reordered(planes, base.order)).collect();
         // Whole bodies.
-        let body_candidate = with_unit(base, Unit::Body);
-        let encoded: Vec<Encoded> = ordered.par_iter().map(|p| encode_checked(p, &body_candidate)).collect();
-        // The tables are built once per job below; a real loader keeps them per body.
-        let tables_started = Instant::now();
-        encoded.iter().zip(&ordered).for_each(|(e, p)| {
-            black_box(shared_models(e, &body_candidate, p.client));
-        });
-        let tables = tables_started.elapsed().as_secs_f64();
-        let candidate = &body_candidate;
-        let jobs: Vec<Job> = (0..distinct.len())
-            .map(|n| {
-                let (planes, encoded) = (&ordered[n], &encoded[n]);
-                let all: Vec<usize> = (0..planes.boxes.len()).collect();
-                let (stored, rgba) = unit_stored(planes, &all);
-                Job { run: Box::new(move || decode_units(planes, encoded, candidate, &[0])), stored, rgba }
-            })
-            .collect();
-        let read: u64 = encoded.iter().map(Encoded::total).sum();
-        print_jobs(base.name, "body", mb(read), &jobs);
-        drop(jobs);
-        drop(encoded);
+        let mut tables = 0.0;
+        if !stream_rows_only {
+            let body_candidate = with_unit(base, Unit::Body);
+            let encoded: Vec<Encoded> = ordered.par_iter().map(|p| encode_checked(p, &body_candidate)).collect();
+            // The tables are built once per job below; a real loader keeps them per body.
+            let tables_started = Instant::now();
+            encoded.iter().zip(&ordered).for_each(|(e, p)| {
+                black_box(shared_models(e, &body_candidate, p.client));
+            });
+            tables = tables_started.elapsed().as_secs_f64();
+            let candidate = &body_candidate;
+            let jobs: Vec<Job> = (0..distinct.len())
+                .map(|n| {
+                    let (planes, encoded) = (&ordered[n], &encoded[n]);
+                    let all: Vec<usize> = (0..planes.boxes.len()).collect();
+                    let (stored, rgba) = unit_stored(planes, &all);
+                    Job { run: Box::new(move || decode_units(planes, encoded, candidate, &[0])), stored, rgba }
+                })
+                .collect();
+            let read: u64 = encoded.iter().map(Encoded::total).sum();
+            print_jobs(base.name, "body", mb(read), &jobs);
+        }
         let small: Vec<Planes> = ordered.iter().zip(&wanted_actions).map(|(p, actions)| restricted(p, actions)).collect();
         drop(ordered);
         for (unit, unit_name) in [(Unit::Action, "action"), (Unit::ActionDirection, "action+direction")] {
+            if stream_rows_only && unit != Unit::ActionDirection {
+                continue;
+            }
             let candidate = with_unit(base, unit);
             let encoded: Vec<Encoded> = small.par_iter().map(|p| encode_checked(p, &candidate)).collect();
             let candidate = &candidate;
@@ -973,10 +1011,10 @@ pub(super) fn part_s1(sources: &Sources, bodies: &[BodySource], present: &[(Clie
         let pairs = all_pairs(sources, bodies, present, client);
         println!("\n{}: {} (body, action) pairs in the set", client.label(), pairs.len());
         if wanted(&uniform) {
-            scenario(&format!("{}, {count} pairs drawn uniformly from the real ones", client.label()), &pick_uniform(&pairs, count), sources, bodies, only, with_bc7);
+            scenario(&format!("{}, {count} pairs drawn uniformly from the real ones", client.label()), &pick_uniform(&pairs, count), sources, bodies, only, with_bc7, false);
         }
         if wanted(&worst) {
-            scenario(&format!("{}, worst case: the {count} largest pairs", client.label()), &pick_largest(&pairs, count), sources, bodies, only, with_bc7);
+            scenario(&format!("{}, worst case: the {count} largest pairs", client.label()), &pick_largest(&pairs, count), sources, bodies, only, with_bc7, false);
         }
     }
     let end = cpu_state();

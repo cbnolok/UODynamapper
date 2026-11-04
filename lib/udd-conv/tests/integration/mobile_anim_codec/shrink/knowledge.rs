@@ -26,8 +26,8 @@ const STAND_ACTION_PEOPLE: u16 = 4;
 const KIND_MONSTER: &str = "MONSTER";
 const KIND_SEA_MONSTER: &str = "SEA_MONSTER";
 const KIND_ANIMAL: &str = "ANIMAL";
-const KIND_HUMAN: &str = "HUMAN";
-const KIND_EQUIPMENT: &str = "EQUIPMENT";
+pub(super) const KIND_HUMAN: &str = "HUMAN";
+pub(super) const KIND_EQUIPMENT: &str = "EQUIPMENT";
 const BODY_DEF_FILE: &str = "Body.def";
 /// The `mobtypes.txt` flag `BodyUsesUopFrames` tests.
 const MOBTYPES_UOP_FLAG: u32 = 0x10000;
@@ -84,7 +84,7 @@ pub(super) fn directions_in_action(boxes: &[FrameBox]) -> Vec<u32> {
 // 1. What the client can never draw
 
 /// The numbers of each Bodyconv.def line, a -1 column being none: (body, the file index per column).
-fn bodyconv_rows(cc_dir: &Path) -> Vec<(u32, Vec<(u8, u32)>)> {
+pub(super) fn bodyconv_rows(cc_dir: &Path) -> Vec<(u32, Vec<(u8, u32)>)> {
     let Some(path) = find_ignoring_case(cc_dir, BODYCONV_DEF_FILE) else { return Vec::new() };
     let Ok(text) = std::fs::read(&path) else { return Vec::new() };
     let mut rows = Vec::new();
