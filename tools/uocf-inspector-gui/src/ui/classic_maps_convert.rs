@@ -213,7 +213,7 @@ fn source_controls(state: &mut ConvertState, classic_dir: &Path, ui: &mut egui::
         return;
     }
     if ui.button("Other folder...").clicked() {
-        if let Some(path) = crate::dialog::file_dialog().pick_folder() {
+        if let Some(path) = crate::dialog::pick_folder() {
             state.dir = Some(path);
         }
     }
@@ -316,7 +316,7 @@ pub(super) fn section(state: &mut ConvertState, classic_dir: &Path, ui: &mut egu
             let ready = !busy && (!state.from_package || state.package.is_some());
             let text = if busy { "Converting..." } else { "Save to a folder..." };
             if ui.add_enabled(ready, egui::Button::new(text)).clicked() {
-                if let Some(output_dir) = crate::dialog::file_dialog().pick_folder() {
+                if let Some(output_dir) = crate::dialog::pick_folder() {
                     start(state, classic_dir, output_dir);
                 }
             }
