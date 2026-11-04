@@ -2279,8 +2279,7 @@ impl UopInspectorApp {
                 .map(|sounds| Arc::new(collect_sound_entries(sounds)));
             self.cc_sounds = loaded_sounds.clone();
             self.cc_sound_entries = loaded_sound_entries.clone();
-            let multimap_path = path.join("multimap.rle");
-            if multimap_path.exists() {
+            if let Some(multimap_path) = find_client_file_case_insensitive(&path, "Multimap.rle") {
                 match uocf::classic::multimap_rle::load_rle(&multimap_path) {
                     Ok(multimap) => {
                         self.cc_multimap = Some(Arc::new(multimap));
