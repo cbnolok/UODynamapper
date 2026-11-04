@@ -191,6 +191,12 @@ needs a format per platform, at the same VRAM:
 | 0.5 | BC1 | ETC2 RGB8A1 |
 | 1 | BC7 | ASTC 4×4 |
 
+At the same size these formats aren't smaller, and their quality gain is modest. Arm's published figures, on general images:
+ASTC 8 bits per pixel is comparable to BC7, and ASTC 6×6 (3.56 bits per pixel) beats BC1 at 4 by about 1.5 dB and ETC2 by
+about 0.7 dB. The 2007 ETC2 paper puts ETC2 about 0.8 dB above S3TC on opaque images. ASTC's real gain for us is that 6×6 keeps
+full alpha below BC1's size, which may keep Enhanced's anti-aliased edges. None of this has been measured on our sprites, and
+big blocks round tiny frames up.
+
 Basis Universal is the one single-file route: it transcodes one file to BC, ETC2 or ASTC at load. It adds a transcode step
 on top of zstd, and its small mode (ETC1S) is described by its authors as low to medium quality. It hasn't been measured on
 our data.
