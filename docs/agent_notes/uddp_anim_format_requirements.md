@@ -178,7 +178,9 @@ files, using each frame's declared box. Stream counts assume 5 directions per en
 | Pixels in those streams | 9.4 % | 0.4 % | 2.0 % |
 
 **Those medians describe equipment, not creatures.** Equipment is about 80 % of all frames, and it pulls every median down.
-Split by the body's `mobtypes.txt` type (Enhanced ships no such file, so its bodies use Classic's table by id):
+Split by the body's `mobtypes.txt` type (Enhanced ships no such file, so its bodies use Classic's table by id). Pixel shares
+in this table count declared boxes. Counted by cropped boxes, Classic UOP is monster 52.0 %, animal 33.0 % and equipment
+12.4 %, which is the basis of the rule's table further down:
 
 | Kind | Share of frames | Share of pixels | Median frame | Median area, px | Fit 128 × 64 |
 |---|---:|---:|---:|---:|---:|
@@ -199,7 +201,7 @@ reads it. Enhanced doesn't ship it, but `tileart.uop` can say the same. A body's
 `10000000 + body`) has a body type, which is the action map it plays:
 
 - It plays its own map: a creature.
-- It plays a wearer's map (400 or 666): a human or elf or gargoyle if the placeholder sets race (key 9), else equipment.
+- It plays a wearer's map (400, 666 or 1253): a human or elf or gargoyle if the placeholder sets race (key 9), else equipment.
 
 **This is the rule to use: the user's call on 2026-11-04, as the strongest and most consistent of the three.** A wearer's map
 isn't hard-coded: it is the body type of any placeholder that sets race. That comes out as 400, 666 and 1253, and only body
@@ -247,8 +249,18 @@ Sparse frames take a large share of the rectangles. Among Enhanced bodies worn b
 20 % painted are 12.7 % of frames and 7.1 % of painted pixels but 24.6 % of box area. The sparsest large bodies, 1055 to 1058,
 are 15–19 % painted and 30–35 % row spans, so their rows hold separate islands that row spans can't remove.
 
-So a coder fed the rectangle spends bytes and decode time on row transitions. What it saves to store only the row spans is
-being measured.
+A coder fed the rectangle spends bytes and decode time on those row transitions, but removing them saves far less than these
+shares suggest. Against the rectangle at zstd 19, on every 10th body:
+
+- **Row spans:** 3.5 % smaller on Classic, 2.9 % on Enhanced.
+- **Both Enhanced planes in row spans:** 6.7 % smaller.
+- **Painted pixels only:** 2.2 % smaller on Classic, 8.6 % on Enhanced. Classic has to store the shape this removes, while
+  Enhanced's coverage plane already holds it.
+- **Frames under 20 % painted:** only 2.5–4 % of the bytes.
+- **Splitting a frame's box at empty rows and columns:** no change in bytes. It saves 3–4 % of the atlas overall: 12–19 % of
+  equipment's and nothing of creatures'.
+
+Section 9 of [the codec proposal](proposals/2026-11-01-mobile-anim-codec.md) has the tables.
 
 The same bias is in the crowd numbers: the "uniform" crowd draws every (body, action) pair equally, so it is mostly
 equipment. A crowd of creatures is about 4× its pixels. See section 6.
@@ -407,27 +419,36 @@ reference.
    hue-flagged pixel stays exact. It needs RGBA8 VRAM or a requantise step, and would miss the line at an estimated
    851 / 985 ms on the uniform crowd.
 
-**The uniform crowd flatters every candidate.** It is mostly equipment (section 2). 300 Enhanced creature pairs would be about
-223 Mpx against its 49.9, so zstd 19 with all five directions would take an estimated 90–140 ms rather than 31 ms, about 2×
-inside the line rather than 8×. Luma + MED would miss it at an estimated 475–570 ms with all five directions, and pass with
-the faced direction only. These are scaled from the rows above; a measured creature crowd is pending.
+**The uniform crowd flatters every candidate.** It is mostly equipment (section 2). Measured on 2026-11-04, decode only, all
+five directions on 4 threads:
 
-**Outside proposals checked against this data (2026-11-04):**
+| Crowd | Classic Mpx | Enhanced Mpx | zstd 19, Classic / Enhanced | Luma + MED, Classic / Enhanced |
+|---|---:|---:|---:|---:|
+| Uniform, 300 pairs | 27.1 | 49.9 | 15 / 31 ms | 93 / 128 ms |
+| Creatures, 300 pairs | 105.6 | 216.6 | 40–43 / 110–120 ms | 305 / 530 ms |
+| Dressed NPCs, 50 × (human + 5 equipment) | 10.1 | 15.6 | 6.5 / 16.5 ms | 37 / 55 ms |
+
+The estimate scaled from the uniform rows was about 223 Mpx and 90–140 ms for Enhanced creatures, so it held. Luma + MED fails
+the line on creatures with all five directions and passes with the faced direction only, at 60 and 112 ms. Repeats of zstd 19
+drift by up to about 5 %, so smaller gaps are ties.
+
+**Outside proposals checked against this data (2026-11-04),** with the rows in section 9 of
+[the codec proposal](proposals/2026-11-01-mobile-anim-codec.md):
 
 | Proposal | What the data says | Status |
 |---|---|---|
 | Concatenate each (action, direction) as one indexed stream, whole-frame reuse only, no block modes | This is the recommendation | Agreed |
 | Whole-body streams for Classic | Smallest, but the largest takes 204 ms, against 11 ms for the largest action stream; fails the uniform crowd except with LZ4 HC | Rejected |
-| A coding profile per stream, for tiny and for large or upscaled art | Costs one id byte; fits the size table in section 2 | Agreed; to measure per size bucket |
-| Canonical body palette plus temporal index deltas | The premise of per-frame palette noise is wrong. A master palette gives −2 %, and differences get larger | Rejected for deltas |
+| A coding profile per stream, for tiny and for large or upscaled art | No size bucket flips a result. Choosing a residual per stream adds nothing on Classic, where plain wins 95 % of streams, and 0.3 % on Enhanced, where left nearly always wins | Not needed to choose a residual. Coders per class are still being measured |
+| Canonical body palette plus temporal index deltas | The premise of per-frame palette noise is wrong. A master palette gives −2 %. Master palette + XOR with the previous frame is 24 % larger on Classic and 13.9 % on Enhanced | Rejected |
 | Dirty rectangles against the previous frame | Static pixels are only 4–5 % of index bits outside idle, about 20 % in idle, which caps the saving | Rejected |
-| Static palette sort at no runtime cost | Sorting alone does nothing for LZ. The gain comes from the residual step, whose decode is what costs | Partly right; see below |
-| Shape and fill as separate planes | Enhanced already splits them; shape coding is about 5 % of its total | To time with a table-driven coder |
-| Cross-action dictionary of 4 × 4 patches | Nothing to gain across bodies; 8 × 8 exact copies are rare. 4 × 4 is untested | To close with a bound |
-| Scanline RLE plus FSE, no LZ, "at memory bandwidth" | Not measured. zstd's history isn't its bottleneck: it's the fastest entropy path measured here | To close with one row |
+| Static palette sort at no runtime cost | Sorting alone does nothing for LZ. A tight left residual now decodes at 0.83× zstd 19's speed on Enhanced, but painted only, with no sort or residual, is 1.5 % smaller at the same speed, so the gain came from dropping transparent pixels. Classic stays 7 % larger | Rejected |
+| Shape and fill as separate planes | Enhanced already splits them. Every-pixel coverage tables save 32 % of that plane, about 6 % of the total, but fail five directions on creatures at 580 ms. Coverage in row spans saves 6.3 % of the plane at 0.95× the speed | Tables rejected; row spans still a candidate |
+| Cross-action dictionary of 4 × 4 patches | Nothing to gain across bodies; 8 × 8 exact copies are rare. Even per body, the 4 × 4 bound counting codebook and block ids is 11.8 % / 20.9 % larger than zstd 19 on the index plane | Closed |
+| Scanline RLE plus FSE, no LZ, "at memory bandwidth" | With semi-adaptive tANS it is 9.7 % / 13.7 % larger than zstd 19 and slower: 151 / 322 ms on creatures against 41 / 120, so Enhanced fails the line. zstd's history isn't its bottleneck | Closed |
 
-**Still not measured:** GPU upload, disk reads, a crowd of creatures rather than mostly equipment, a crowd weighted by how often actions are really played, and a table-driven
-coder for the coverage plane. The `timing` pass failed on memory twice and wasn't retried; `s1` and `s2` time the same
+**Still not measured:** GPU upload, disk reads, a crowd weighted by how often actions are really played, and the row-span and
+painted-only rows of the Enhanced worst crowd. That job stopped at the 18 GB watchdog, and a rerun of those rows is planned. The `timing` pass failed on memory twice and wasn't retried; `s1` and `s2` time the same
 streams, so the ranking doesn't need it.
 
 TLP used to re-apply boost and `balance_performance` during timed runs. `/etc/tlp.conf` now sets boost off and EPP
