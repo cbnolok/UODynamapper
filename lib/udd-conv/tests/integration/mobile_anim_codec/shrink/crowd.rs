@@ -590,7 +590,7 @@ const BC7_BLOCK_SIDE: usize = 4;
 pub(super) const P95: f64 = 0.95;
 pub(super) const P50: f64 = 0.5;
 
-const CROWD: [Candidate; 7] = {
+pub(super) const CROWD: [Candidate; 7] = {
     use IndexCoding::{Rank, Residual, Zstd};
     use Order::{Luma, Original};
     use Predictor::Med;
@@ -669,7 +669,7 @@ pub(super) struct Job<'a> {
 }
 
 /// The queue on `threads` threads, the fastest of the timing runs: wall seconds, and each job's fastest seconds.
-fn run_jobs(jobs: &[Job], threads: usize) -> (f64, Vec<f64>) {
+pub(super) fn run_jobs(jobs: &[Job], threads: usize) -> (f64, Vec<f64>) {
     let mut best_wall = f64::MAX;
     let mut best: Vec<f64> = vec![f64::MAX; jobs.len()];
     for _ in 0..TIMING_RUNS {
@@ -735,7 +735,7 @@ fn print_turn(name: &str, jobs: &[Job]) {
     );
 }
 
-const fn with_unit(candidate: &Candidate, unit: Unit) -> Candidate {
+pub(super) const fn with_unit(candidate: &Candidate, unit: Unit) -> Candidate {
     Candidate { name: candidate.name, order: candidate.order, index: candidate.index, coverage: candidate.coverage, unit }
 }
 
@@ -983,14 +983,14 @@ pub(super) fn scenario(label: &str, pairs: &[Pair], sources: &Sources, bodies: &
     }
 }
 
-fn encode_checked(planes: &Planes, candidate: &Candidate) -> Encoded {
+pub(super) fn encode_checked(planes: &Planes, candidate: &Candidate) -> Encoded {
     let encoded = encode_candidate(planes, candidate);
     verify_round_trip(planes, &encoded, candidate);
     encoded
 }
 
 /// What a load does: the body's tables, then the wanted streams.
-fn decode_units(planes: &Planes, encoded: &Encoded, candidate: &Candidate, wanted: &[usize]) -> usize {
+pub(super) fn decode_units(planes: &Planes, encoded: &Encoded, candidate: &Candidate, wanted: &[usize]) -> usize {
     let shared = shared_models(encoded, candidate, planes.client);
     wanted.iter().map(|&u| decode_unit(&encoded.units[u], &planes.boxes, &planes.palettes, candidate, planes.client, &shared).0.len()).sum()
 }

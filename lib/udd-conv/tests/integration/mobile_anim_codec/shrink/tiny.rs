@@ -10,6 +10,9 @@
 //! - `tc`: these coders in the creature and dressed NPC crowds; `tu`: in the uniform and worst crowds (need a quiet
 //!   machine). `MOBILE_ANIM_CODEC_TINY_ONLY` narrows `tt`, `tc` and `tu` to exact scheme names, separated by `;`.
 //! - `ts`: the candidates of part `s1` and BC7 in the creature and dressed NPC crowds (needs a quiet machine).
+//! - `t9`: frames under a fifth painted, and split boxes, see `split`.
+//! - `tk0`: the `tileart.uop` placeholder rule for equipment against `mobtypes.txt`, per source, see `classes`.
+//! - `tk`: every lossless coder by class of body, and which assignment keeps the crowds inside the line, see `classes`.
 //!
 //! Every table is built from the body being coded: nothing here ships statistics, so custom art round-trips the same.
 
@@ -20,6 +23,11 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use zstd::bulk::{Compressor, Decompressor};
 use zstd::dict::DecoderDictionary;
+
+mod classes;
+mod split;
+pub(super) use classes::{part_tk, part_tk0};
+pub(super) use split::part_t9;
 
 const KIB: usize = 1024;
 /// Stream buckets by pixels (one index byte each), as the census of the requirements document counts streams.
@@ -77,13 +85,17 @@ impl BodyKinds {
         BodyKinds { by_id: body_kinds(cc_dir), conv }
     }
 
-    fn kind(&self, source: &BodySource) -> &str {
-        let id = match source {
+    /// The id the client knows the body by; none for an `anim2+.mul` body no `Bodyconv.def` line reaches.
+    fn id(&self, source: &BodySource) -> Option<u32> {
+        match source {
             BodySource::CcMul { file: 0, body, .. } => Some(u32::from(*body)),
             BodySource::CcMul { file, body, .. } => self.conv.get(&(*file, u32::from(*body))).copied(),
             BodySource::CcUop { body, .. } | BodySource::Ec { body, .. } => Some(*body),
-        };
-        id.and_then(|id| self.by_id.get(&id)).and_then(|kind| kind.split(':').next()).unwrap_or(KIND_UNLISTED)
+        }
+    }
+
+    fn kind(&self, source: &BodySource) -> &str {
+        self.id(source).and_then(|id| self.by_id.get(&id)).and_then(|kind| kind.split(':').next()).unwrap_or(KIND_UNLISTED)
     }
 
     fn group(&self, source: &BodySource) -> Group {
@@ -193,6 +205,9 @@ enum IndexForm {
     SpansDictBest,
     /// Only the painted pixels.
     Painted { shape: ShapeForm, lz4: bool },
+    /// A frame's box cut at empty rows or columns into up to two tight boxes, each a rectangle; their geometry in the
+    /// same frame unless the coverage plane already carries it.
+    Boxes { with_side: bool, lz4: bool },
 }
 
 /// Where a stream of painted pixels finds its exact shape.
@@ -227,6 +242,8 @@ enum CoverageForm {
     RunsContexts,
     /// Only each row's first to last painted pixel, with the rows' starts and ends.
     Spans { lz4: bool },
+    /// The frames' up to two boxes, with their geometry.
+    Boxes { lz4: bool },
 }
 
 const ZSTD_MAGIC_BYTES: usize = 4;
@@ -262,6 +279,7 @@ enum Coding {
     Xor,
     Spans { with_side: bool, lz4: bool, dict: bool },
     Painted { shape: ShapeForm, lz4: bool },
+    Boxes { with_side: bool, lz4: bool },
 }
 
 /// Shared, because several schemes store the same bytes and differ only in how they decode them.
@@ -1047,6 +1065,15 @@ fn encode_index(form: IndexForm, planes: &StreamPlanes, dictionaries: &Dictionar
             body.dictionary = dictionary;
         }
         IndexForm::Painted { shape, lz4 } => body.streams = (0..count).map(|n| painted_stream(planes, n, shape, lz4)).collect(),
+        IndexForm::Boxes { with_side, lz4 } => {
+            body.streams = (0..count)
+                .map(|n| {
+                    let sizes = &planes.layout[n].sizes;
+                    let content = split::box_content(&planes.original[n], &split::frame_cuts(&planes.mask[n], sizes), sizes, with_side);
+                    IndexStream { coding: Coding::Boxes { with_side, lz4 }, symbols: content.len(), data: squeeze(lz4, &content), ..IndexStream::default() }
+                })
+                .collect();
+        }
         IndexForm::PlainFresh | IndexForm::DictBest | IndexForm::SpansDictBest | IndexForm::LeftPredict | IndexForm::Choice { .. } => unreachable!("{form:?} is made from the others"),
     }
     body
@@ -1205,6 +1232,15 @@ fn encode_coverage(form: CoverageForm, planes: &StreamPlanes) -> CoverageBody {
             body.streams = (0..planes.streams())
                 .map(|n| {
                     let content = span_content(&planes.mask[n], &planes.rows[n], &planes.layout[n], true, lz4);
+                    CoverageStream { runs: squeeze(lz4, &content), run_count: content.len(), ..CoverageStream::default() }
+                })
+                .collect();
+        }
+        CoverageForm::Boxes { lz4 } => {
+            body.streams = (0..planes.streams())
+                .map(|n| {
+                    let sizes = &planes.layout[n].sizes;
+                    let content = split::box_content(&planes.mask[n], &split::frame_cuts(&planes.mask[n], sizes), sizes, true);
                     CoverageStream { runs: squeeze(lz4, &content), run_count: content.len(), ..CoverageStream::default() }
                 })
                 .collect();
@@ -1486,11 +1522,12 @@ struct Scratch {
     symbols: Vec<u8>,
     extra: Vec<u8>,
     rows: Vec<Row>,
+    cuts: Vec<split::FrameCuts>,
 }
 
 impl Scratch {
     fn new() -> Scratch {
-        Scratch { context: Decompressor::new().expect("zstd context"), index: Vec::new(), coverage: Vec::new(), symbols: Vec::new(), extra: Vec::new(), rows: Vec::new() }
+        Scratch { context: Decompressor::new().expect("zstd context"), index: Vec::new(), coverage: Vec::new(), symbols: Vec::new(), extra: Vec::new(), rows: Vec::new(), cuts: Vec::new() }
     }
 }
 
@@ -1537,7 +1574,7 @@ const INDEX_TABLES: usize = 2;
 const COVERAGE_TABLES: usize = 2;
 
 fn coverage_stream_decode(form: CoverageForm, stream: &CoverageStream, layout: &StreamLayout, tables: &BodyTables, o: &mut Scratch, expand: bool) {
-    let Scratch { context, coverage, symbols, extra, rows, .. } = o;
+    let Scratch { context, coverage, symbols, extra, rows, cuts, .. } = o;
     match form {
         CoverageForm::ZstdFresh => *coverage = decompress(&stream.runs, layout.pixels),
         CoverageForm::Zstd => unzstd(context, &stream.runs, layout.pixels, coverage),
@@ -1573,11 +1610,20 @@ fn coverage_stream_decode(form: CoverageForm, stream: &CoverageStream, layout: &
                 expand_rows(&symbols[at..], rows, &layout.sizes, coverage);
             }
         }
+        CoverageForm::Boxes { lz4 } => {
+            unpack(lz4, context, &stream.runs, stream.run_count, symbols);
+            let at = split::parse_cuts(symbols, &layout.sizes, cuts);
+            if expand {
+                coverage.clear();
+                coverage.resize(layout.pixels, COVERAGE_TRANSPARENT);
+                split::expand_cuts(&symbols[at..], cuts, &layout.sizes, coverage);
+            }
+        }
     }
 }
 
 fn index_stream_decode(client: Client, stream: &IndexStream, layout: &StreamLayout, tables: &mut BodyTables, o: &mut Scratch, expand: bool) {
-    let Scratch { context, index, coverage, symbols, extra, rows } = o;
+    let Scratch { context, index, coverage, symbols, extra, rows, cuts } = o;
     match stream.coding {
         Coding::ZstdFresh => *index = decompress(&stream.data, layout.pixels),
         Coding::Zstd => unzstd(context, &stream.data, layout.pixels, index),
@@ -1632,6 +1678,15 @@ fn index_stream_decode(client: Client, stream: &IndexStream, layout: &StreamLayo
                 index.clear();
                 index.resize(layout.pixels, 0);
                 expand_rows(&symbols[at..], rows, &layout.sizes, index);
+            }
+        }
+        Coding::Boxes { with_side, lz4 } => {
+            unpack(lz4, context, &stream.data, stream.symbols, symbols);
+            let at = if with_side { split::parse_cuts(symbols, &layout.sizes, cuts) } else { 0 };
+            if expand {
+                index.clear();
+                index.resize(layout.pixels, 0);
+                split::expand_cuts(&symbols[at..], cuts, &layout.sizes, index);
             }
         }
         Coding::Painted { shape, lz4 } => {
@@ -1720,7 +1775,7 @@ impl Coded {
         for stream in 0..planes.streams() {
             self.decode(&planes.layout, stream, &mut tables, &mut o, true);
             let expected = match self.index.streams[stream].coding {
-                Coding::ZstdFresh | Coding::Zstd | Coding::Lz4 | Coding::ZstdDict | Coding::Rle | Coding::Spans { .. } | Coding::Painted { .. } => &planes.original[stream],
+                Coding::ZstdFresh | Coding::Zstd | Coding::Lz4 | Coding::ZstdDict | Coding::Rle | Coding::Spans { .. } | Coding::Painted { .. } | Coding::Boxes { .. } => &planes.original[stream],
                 Coding::LeftPredict | Coding::Left | Coding::Up => &planes.luma[stream],
                 Coding::Xor => &planes.master[stream],
             };
@@ -1917,6 +1972,12 @@ const PAINTED_EC_ZSTD: IndexForm = IndexForm::Painted { shape: ShapeForm::InCove
 const PAINTED_EC_LZ4: IndexForm = IndexForm::Painted { shape: ShapeForm::InCoverage, lz4: true };
 const COVERAGE_SPANS_ZSTD: CoverageForm = CoverageForm::Spans { lz4: false };
 const COVERAGE_SPANS_LZ4: CoverageForm = CoverageForm::Spans { lz4: true };
+const BOXES_SIDE_ZSTD: IndexForm = IndexForm::Boxes { with_side: true, lz4: false };
+const BOXES_SIDE_LZ4: IndexForm = IndexForm::Boxes { with_side: true, lz4: true };
+const BOXES_ALONE_ZSTD: IndexForm = IndexForm::Boxes { with_side: false, lz4: false };
+const BOXES_ALONE_LZ4: IndexForm = IndexForm::Boxes { with_side: false, lz4: true };
+const COVERAGE_BOXES_ZSTD: CoverageForm = CoverageForm::Boxes { lz4: false };
+const COVERAGE_BOXES_LZ4: CoverageForm = CoverageForm::Boxes { lz4: true };
 const SIZE_COVERAGE_FORMS: [CoverageForm; 10] = [
     CoverageForm::Zstd,
     CoverageForm::Lz4,
@@ -1945,6 +2006,7 @@ fn size_index_forms(client: Client) -> Vec<IndexForm> {
 fn coverage_with(form: IndexForm) -> CoverageForm {
     match form {
         IndexForm::Spans { with_side: false, lz4 } => CoverageForm::Spans { lz4 },
+        IndexForm::Boxes { with_side: false, lz4 } => CoverageForm::Boxes { lz4 },
         _ => CoverageForm::Zstd,
     }
 }
@@ -2767,7 +2829,11 @@ const COMMON_SCHEMES: [Scheme; 21] = [
     scheme("a row spans, best dictionary per body, expanded", IndexForm::SpansDictBest, CoverageForm::Zstd),
 ];
 
-const CLASSIC_SCHEMES: [Scheme; 6] = [
+const CLASSIC_SCHEMES: [Scheme; 10] = [
+    scheme("split boxes, zstd 19, expanded", BOXES_SIDE_ZSTD, CoverageForm::Zstd),
+    kept("split boxes, zstd 19, kept as boxes", BOXES_SIDE_ZSTD, CoverageForm::Zstd),
+    scheme("split boxes, LZ4 HC, expanded", BOXES_SIDE_LZ4, CoverageForm::Zstd),
+    kept("split boxes, LZ4 HC, kept as boxes", BOXES_SIDE_LZ4, CoverageForm::Zstd),
     scheme("b painted, runs in the frame, zstd 19, expanded", CC_PAINTED[0], CoverageForm::Zstd),
     kept("b painted, runs in the frame, zstd 19, kept as spans", CC_PAINTED[0], CoverageForm::Zstd),
     scheme("b painted, runs apart, zstd 19, expanded", CC_PAINTED[1], CoverageForm::Zstd),
@@ -2776,7 +2842,11 @@ const CLASSIC_SCHEMES: [Scheme; 6] = [
     kept("b painted, runs in the frame, LZ4 HC, kept as spans", CC_PAINTED[3], CoverageForm::Zstd),
 ];
 
-const ENHANCED_SCHEMES: [Scheme; 29] = [
+const ENHANCED_SCHEMES: [Scheme; 33] = [
+    scheme("split boxes, both planes, zstd 19, expanded", BOXES_ALONE_ZSTD, COVERAGE_BOXES_ZSTD),
+    kept("split boxes, both planes, zstd 19, kept as boxes", BOXES_ALONE_ZSTD, COVERAGE_BOXES_ZSTD),
+    scheme("split boxes, both planes, LZ4 HC, expanded", BOXES_ALONE_LZ4, COVERAGE_BOXES_LZ4),
+    kept("split boxes, both planes, LZ4 HC, kept as boxes", BOXES_ALONE_LZ4, COVERAGE_BOXES_LZ4),
     scheme("zstd 19, coverage runs, tANS", IndexForm::Plain, CoverageForm::Runs),
     scheme("zstd 19, coverage runs with copy-up, tANS", IndexForm::Plain, CoverageForm::RunsUp),
     scheme("zstd 19, coverage runs zstd 19, partial tANS", IndexForm::Plain, CoverageForm::RunsZstd),
@@ -3027,11 +3097,16 @@ fn creature_pairs(pairs: &[Pair], kinds: &BodyKinds, bodies: &[BodySource], coun
 /// `TOWN_NPCS` NPCs of a human body and `TOWN_EQUIPMENT_PER_NPC` equipment bodies, all in one action. Human bodies repeat
 /// (there are few), and equipment bodies repeat only when the action has too few of them.
 fn town_pairs(pairs: &[Pair], kinds: &BodyKinds, bodies: &[BodySource]) -> Vec<Pair> {
-    let of = |kind: &str| -> Vec<Pair> {
-        let list: Vec<Pair> = pairs.iter().copied().filter(|p| p.action() == TOWN_ACTION && kinds.kind(&bodies[p.body()]) == kind).collect();
+    town_of(pairs, &|body| kinds.kind(&bodies[body]) == knowledge::KIND_HUMAN, &|body| kinds.kind(&bodies[body]) == knowledge::KIND_EQUIPMENT)
+}
+
+/// The town, from what says a body is human and what says it is equipment.
+fn town_of(pairs: &[Pair], is_human: &dyn Fn(usize) -> bool, is_equipment: &dyn Fn(usize) -> bool) -> Vec<Pair> {
+    let of = |wanted: &dyn Fn(usize) -> bool| -> Vec<Pair> {
+        let list: Vec<Pair> = pairs.iter().copied().filter(|p| p.action() == TOWN_ACTION && wanted(p.body())).collect();
         crowd::pick_uniform(&list, list.len())
     };
-    let (humans, equipment) = (of(knowledge::KIND_HUMAN), of(knowledge::KIND_EQUIPMENT));
+    let (humans, equipment) = (of(is_human), of(is_equipment));
     assert!(!humans.is_empty() && !equipment.is_empty(), "a town needs human and equipment bodies in action {TOWN_ACTION}");
     let mut out = Vec::with_capacity(TOWN_NPCS * (TOWN_EQUIPMENT_PER_NPC + 1));
     for npc in 0..TOWN_NPCS {
@@ -3095,6 +3170,24 @@ fn tiny_crowd(label: &str, pairs: &[Pair], sources: &Sources, bodies: &[BodySour
         let streams = &prepared[position[&p.body()]].0;
         (0..streams.streams()).filter(|&s| streams.layout[s].action == p.action()).collect()
     }).collect();
+    // What cutting the frames would save of the atlas.
+    let areas: Vec<Vec<(u64, u64)>> = prepared.par_iter().map(|(p, _)| (0..p.streams()).map(|s| split::stream_areas(&p.mask[s], &p.layout[s].sizes)).collect()).collect();
+    let area_of = |faced: bool| -> (u64, u64) {
+        let mut sums = (0u64, 0u64);
+        for (pair, p) in pairs.iter().enumerate() {
+            let n = position[&p.body()];
+            let wanted: Vec<usize> = if faced { vec![crowd::facing_unit(pair, &wanted_of[pair])] } else { wanted_of[pair].clone() };
+            wanted.iter().for_each(|&s| {
+                sums.0 += areas[n][s].0;
+                sums.1 += areas[n][s].1;
+            });
+        }
+        sums
+    };
+    for (faced, name) in [(false, "five directions"), (true, "faced direction")] {
+        let (whole, cut) = area_of(faced);
+        println!("  atlas area, {name}: {:.2} Mpx in one box per frame, {:.2} Mpx with frames cut, {:.1} % saved", whole as f64 / PIXELS_PER_MEGAPIXEL, cut as f64 / PIXELS_PER_MEGAPIXEL, (whole - cut) as f64 * PERCENT / whole.max(1) as f64);
+    }
     let mut atoms: Vec<Atoms> = prepared.iter().map(|_| Atoms::default()).collect();
     for scheme in schemes {
         let started = Instant::now();

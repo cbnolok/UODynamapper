@@ -19,8 +19,8 @@
 //! `MOBILE_ANIM_CODEC_SHRINK_TIME=1` also times the candidates of `b` on one thread, after encoding them in parallel.
 //! `k1`..`k7` (`k`, all of them) and `r`: what knowledge of the data buys, see the `knowledge` module.
 //! `k8`: keep about half of the frames and rebuild the others (lossy), see the `halved` module.
-//! `t` (`t0` kinds and duplicates, `t1` sizes), `tt` (decode), `tc`, `tu` and `ts` (crowds): tiny and large streams, row
-//! spans and painted pixels, see `tiny`.
+//! `t` (`t0` kinds and duplicates, `t1` sizes), `t9` (sparse frames, split boxes), `tt` (decode), `tc`, `tu` and `ts`
+//! (crowds), `tk` (coders by class of body): tiny and large streams, row spans and painted pixels, see `tiny`.
 //! Every lossless candidate is decoded and compared with its source: a mismatch fails the test.
 
 use super::*;
@@ -3182,6 +3182,15 @@ pub(super) fn run(sources: &Sources, bodies: &[BodySource], present: &[(Client, 
     }
     if runs("tu") {
         tiny::part_tc(sources, bodies, present, cc_dir, false);
+    }
+    if runs("t9") {
+        tiny::part_t9(sources, bodies, present, cc_dir, stride);
+    }
+    if runs("tk0") {
+        tiny::part_tk0(sources, bodies, present, cc_dir);
+    }
+    if runs("tk") {
+        tiny::part_tk(sources, bodies, present, cc_dir, stride);
     }
     if runs("ts") {
         tiny::part_ts(sources, bodies, present, cc_dir, &only);

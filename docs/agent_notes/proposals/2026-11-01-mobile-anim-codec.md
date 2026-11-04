@@ -34,6 +34,9 @@ every variant, so it is left out of the payload sizes: 14 MB for Classic and 22 
 | --- | --- |
 | **The recommendation** | **Indexed slot planes, zstd 19, one stream per (action, direction), faced direction first.** Lossless. About 761 MB Classic (0.89× a real BC7 pack, 0.72× shipped) and 2000 MB Enhanced (1.01×, 1.01×). The user decides; section 8 has the alternatives. |
 | **300 new actions on 4 threads** (the user's line: about 250 ms; section 8) | Classic / Enhanced: 14.7 / 31.1 ms uniform, or 3.1 / 7.0 ms faced direction only. The 300 largest pairs take 278 / 496 ms, or 58 / 103 ms faced only. |
+| **The crowd that decides: creatures** (section 9) | 300 pairs of non-equipment bodies, 105.6 / 216.6 Mpx: zstd 19 takes 41 / 120 ms, or 8.4 / 23 ms faced. Luma + MED and block motion now fail with all five directions (305 to 920 ms). A town of 50 dressed NPCs is 6.5 / 16.5 ms. |
+| **Layouts that beat the rectangle** (section 9) | No residual, no tables, no shipped statistics. **Classic, row spans:** −3.5 % at the same crowd speed, ≈ 708 MB with duplicates, ≈ 689 MB with a dictionary per body. **Enhanced, both planes in row spans:** ≈ 1869 MB, −7 %, and faster than the rectangle. **Enhanced, painted only + coverage in row spans:** ≈ 1806 MB, −10 %, 7 % slower, ≈ 1795 MB with duplicates. |
+| **The tight residual decode** (section 9) | Enhanced left: 717 MB/s, 0.83× zstd 19 in the same run, and 133 ms on creatures. Painted only, with no residual, is 1.5 % smaller at the same speed, so the residual isn't needed. |
 | Faster, at a size cost | LZ4 HC: 3.9 / 9.7 ms and 80 / 174 ms on the largest, about 22 % larger on disk. |
 | Smaller, at a speed cost | Enhanced only: luma + MED + zstd 19 is −9 % and 128 ms; block motion + tANS is −14 % and 239 ms. Rank coding is the smallest (0.80× shipped) and fails the line at 1010 ms. |
 | Why is the floor so high? | It isn't per-frame palette noise. Static pixels take 4–5 % of the index bits in most actions; the rest is fine spatial detail at about 6 bits. Enhanced has one palette per action. |
@@ -380,7 +383,7 @@ MOBILE_ANIM_CODEC_PASSES=shrink MOBILE_ANIM_CODEC_SHRINK_PARTS=b,k2 MOBILE_ANIM_
   cargo test --release -p udd-conv --test integration mobile_anim_codec:: -- --ignored --nocapture
 ```
 
-- `MOBILE_ANIM_CODEC_SHRINK_PARTS` picks the parts: `a1,a2,a2p,b,w,c,c7,d,e,f,g,k,k1..k8,r,s1,s3,s4,s4q,s5,s6`.
+- `MOBILE_ANIM_CODEC_SHRINK_PARTS` picks the parts: `a1,a2,a2p,b,w,c,c7,d,e,f,g,k,k1..k8,r,s1,s3,s4,s4q,s5,s6`, and `t0,t1,tt,tc,tu,ts,t9,tk0,tk` (sections 9 and 10).
 - `MOBILE_ANIM_CODEC_SHRINK_ONLY` keeps candidates by name; `MOBILE_ANIM_CODEC_SHRINK_TIME=1` times them.
 - "Every 10th body" means bodies sorted by pixel count: 103 Classic bodies (250 Mpx, 78.6 MB of BC7 + zstd 7) and 93
   Enhanced bodies (480 Mpx, 175.3 MB). Those sample ratios are only as good as the spread by size. `w` rows are the
@@ -1011,13 +1014,540 @@ This is the user's requirement, in [the format requirements](../uddp_anim_format
   same early point, so it's recorded as not measured and wasn't retried. The ranking doesn't need it, since `s1`, `b`
   and `s2` time the same streams. The EPP power tables of section 2 stay as they were.
 - **GPU upload, disk reads and BC7's own `s2` row,** and any frequency-weighted crowd from a real server.
-- **A table-driven coverage path.** rANS on coverage saves 5 % of the total but brings the whole decode down to 150 MB/s
-  (`z19 + rANS coverage` is 1.024 × BC7). A faster coder for it is untested.
+- **A table-driven coverage path:** now measured, in item 6 of section 9. tANS by context keeps rANS's saving and reaches
+  only 183 to 188 MB/s for the whole decode, against rANS's 150.
 - **Reruns.** The `s1` Enhanced worst case ran separately with its memory fixed: BC7 frames freed before candidates, 6
   encoding threads. Its BC7 rows are from the first run, in the same CPU state. That rebuild includes the custom MUL
   fixes, which change no shipped frame. Two single-thread Python jobs overlapped the earlier `b` and `e2` jobs for about
   a minute each, which doesn't change a ratio. In the first timed `b` table the base rows read 590 and 879 MB/s, against
   769 and 1021 here, so those two were discarded.
+
+## 9. Tiny and large streams, creatures and towns (`t`)
+
+Measured 2026-11-04, for the user's decision on the format. No format or shipped code changes. The user has decided to
+keep all frames, so no halved tier appears here. The census behind this section is in section 2 of
+[the format requirements](../uddp_anim_format_requirements.md), and its section 6 lists the outside proposals that
+these rows answer.
+
+| Part | What it measures |
+| --- | --- |
+| `t0` | Kinds and exact duplicate streams, over the whole set (no sampling) |
+| `t1` | Sizes on every 10th body: stream-size buckets, dictionaries, per-stream choice, coverage tables, row spans and painted-only pixels |
+| `tt` | One-thread decode of the same sample |
+| `tc` | The creature and dressed-NPC crowds, for this part's coders |
+| `tu` | The uniform and worst crowds, for the coders that held up |
+| `ts` | The older candidates of section 8 in the creature and dressed-NPC crowds |
+| `t9` | Sparse frames, and frames split into up to 2 boxes |
+| `tk0`, `tk` | The placeholder rule and coders per class: [section 10](#10-coders-per-class-tk) |
+
+`MOBILE_ANIM_CODEC_TINY_ONLY` keeps coders by exact name, separated by `;`.
+
+- **Lossless check:** every coder here decodes again and compares with the original pixels. None failed.
+- **Quiet timings:** `tt`, `tc`, `tu` and `ts` ran one at a time on **boost off, EPP balance_power, platform profile
+  performance**, with the bench as the machine's only CPU load (checked with `ps`), and Ghidra stopped. They
+  compare with section 8's state, not with the EPP power tables. Repeats of zstd 19 show the drift: 667, 672 and 690
+  MB/s for Classic, 866, 872 and 902 for Enhanced; 40.2 to 43.1 ms and 109.5 to 120.1 ms on the creature crowd. **Read
+  differences under about 5 % as ties.** The one job that didn't finish is named under the Enhanced table.
+- **Size jobs** ran at nice 19 and only their bytes are used.
+- **MB/s** always divides the rectangle's bytes by the time, even for a "kept as spans" row that doesn't write them.
+- **Kinds:** every part of this section splits by Classic's `mobtypes.txt`, by id. Enhanced ships none, so its split
+  borrows Classic's, and Classic MUL goes through `Bodyconv.def` for anim2-5. Only `tk` uses the placeholder rule; these
+  parts ran before the rule was settled and keep their split. "Creatures" means monster, animal, sea monster and human.
+- **Disk** is the same estimate as in section 8: the sample scaled by the whole-set zstd 19 row, plus the palette table.
+  Read it as within about 1 %. **× real pack** is against 856.6 / 1987.9 MB and **× shipped** against 1060.3 / 1984.5 MB.
+
+### The crowds
+
+The uniform crowd draws every pair equally, so it is mostly equipment. Equipment is about 80 % of frames at a median of
+20×23 in Enhanced, while Enhanced monsters are 85×94 and hold 52 % of pixels.
+
+| Crowd | Classic: pairs, bodies, Mpx | Enhanced: pairs, bodies, Mpx |
+| --- | ---: | ---: |
+| **Creatures:** 300 distinct (body, action) pairs from non-equipment bodies | 300, 207, 105.6 | 300, 196, 216.6 |
+| **Dressed NPCs:** 50 × (one human + 5 equipment bodies), one action | 300, 263, 10.1 | 300, 259, 15.6 |
+| The same, each distinct pair once | 263, 263, 6.7 | 259, 259, 9.8 |
+| Uniform (section 8) | 300, 251, 27.1 | 300, 241, 49.9 |
+| Worst: the 300 largest pairs (section 8) | 300, 56, 917.9 | 300, 41, 1231.1 |
+
+The scaling estimate for the Enhanced creature crowd was about 223 Mpx, with zstd 19 at 90 to 140 ms and luma + MED
+missing the line with all five directions. **Measured:** 216.6 Mpx, zstd 19 at 110 to 120 ms, luma + MED at 530 ms with
+all five directions and 112 ms faced only.
+
+### The ranking, by the creature crowd
+
+Sorted by the creature crowd with all five directions on 4 threads. Bold passes the 250 ms line on 4 threads. Decode MB/s
+is one thread, per (action, direction). "Kept as spans" leaves out the expansion to the rectangle the atlas needs, so
+it counts only if the renderer keeps spans. Duplicates add one table lookup per stream, too small to time.
+Older rows take their uniform and worst columns from section 8 and their creature and dressed-NPC columns from `ts`,
+where zstd 19 read 42.6 and 115.2 ms, so their ratios hold. All rows are lossless unless the name says otherwise.
+
+**Classic**
+
+| # | Candidate | Creatures, five directions, 1 / 4 threads ms | Creatures, faced, 1 / 4 | Dressed NPCs, five directions, 1 / 4 | Dressed NPCs, faced, 1 / 4 | Uniform, 4 threads, five / faced | Worst, 4 threads, five / faced | Decode MB/s, one thread | Disk MB | × zstd 19 | × real pack | × shipped |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | Row spans (a), LZ4 HC, kept as spans | 35.9 / **10.3** | 7.8 / **2.2** | 6.3 / **1.8** | 1.4 / **0.4** | **3.2** / **0.8** | **65.1** / **14.5** | 2955 | ≈ 892 | 1.17 | 1.04 | 0.84 |
+| 2 | Slot plane, LZ4 HC | 41.9 / **12.0** | 8.7 / **2.5** | 5.4 / **1.6** | 1.1 / **0.4** | **3.8** / **0.9** | **82.8** / **17.2** | 2685 | ≈ 931 | 1.22 | 1.09 | 0.88 |
+| 3 | Row spans (a), LZ4 HC, expanded | 44.1 / **12.6** | 9.2 / **2.7** | 10.2 / **2.7** | 2.3 / **0.7** | **4.2** / **1.0** | **77.1** / **17.1** | 2171 | ≈ 892 | 1.17 | 1.04 | 0.84 |
+| 4 | BC7, zstd 7 (today, stored; not lossless) | 109.7 / **29.1** | 22.5 / **5.9** | 23.7 / **5.6** | 4.5 / **1.3** | **9.6** / not run | **183.8** / not run | not in this run | ≈ 874 | 1.15 | 1.02 | 0.82 |
+| 5 | Row spans (a), zstd 19, kept as spans | 133.2 / **35.7** | 26.7 / **7.3** | 22.0 / **5.7** | 4.7 / **1.2** | **13.6** / **2.9** | 250.4 / **51.6** | 753 | ≈ 735 | 0.97 | 0.86 | 0.69 |
+| 6 | Row spans (a), zstd 19, expanded | 140.7 / **40.2** | 30.3 / **8.3** | 26.0 / **6.7** | 5.4 / **1.5** | **14.2** / **3.2** | 262.2 / **55.4** | 687 | ≈ 735 | 0.97 | 0.86 | 0.69 |
+| 7 | Row spans (a), zstd 19, expanded, duplicates pointed at one blob | 140.7 / **40.2** | 30.3 / **8.3** | 26.0 / **6.7** | 5.4 / **1.5** | **14.2** / **3.2** | 262.2 / **55.4** | 687 | ≈ 708 | 0.93 | 0.83 | 0.67 |
+| 8 | Row spans (a), best dictionary per body, expanded | 141.1 / **40.2** | 30.3 / **8.3** | 27.2 / **7.0** | 5.4 / **1.5** | **13.8** / **3.2** | 286.8 / **60.4** | 702 | ≈ 716 | 0.94 | 0.84 | 0.68 |
+| 9 | Row spans (a), best dictionary per body, duplicates (2 + 3 + 8a) | 141.1 / **40.2** | 30.3 / **8.3** | 27.2 / **7.0** | 5.4 / **1.5** | **13.8** / **3.2** | 286.8 / **60.4** | 702 | ≈ 689 | 0.91 | 0.80 | 0.65 |
+| 10 | Slot plane, zstd 19 | 150.2 / **40.6** | 30.9 / **8.4** | 24.6 / **6.5** | 5.2 / **1.4** | **15.0** / **3.2** | 276.9 / **57.2** | 667 | ≈ 761 | 1.00 | 0.89 | 0.72 |
+| 11 | Slot plane, best dictionary per body | 149.7 / **42.0** | 31.8 / **8.8** | 25.6 / **6.1** | 5.0 / **1.3** | not run | not run | 690 | ≈ 751 | 0.99 | 0.88 | 0.71 |
+| 12 | Slot plane, best dictionary per body, duplicates (2 + 3) | 149.7 / **42.0** | 31.8 / **8.8** | 25.6 / **6.1** | 5.0 / **1.3** | not run | not run | 690 | ≈ 724 | 0.95 | 0.84 | 0.68 |
+| 13 | Painted only (b), runs apart, zstd 19, expanded | 155.0 / **44.0** | 32.9 / **9.0** | 31.1 / **7.9** | 6.3 / **1.7** | **15.1** / **3.5** | 277.4 / **57.1** | 624 | ≈ 744 | 0.98 | 0.87 | 0.70 |
+| 14 | Luma, MED, zstd 19 | 1102 / 305.0 | 222.4 / **59.5** | 142.4 / **37.4** | 29.8 / **7.9** | **93.4** / **21.1** | 2186 / 448.0 | 98 | ≈ 828 | 1.09 | 0.97 | 0.78 |
+| 15 | Luma, MED, 10 streams, zstd 19 | 1455 / 402.9 | 294.5 / **78.7** | 200.7 / **52.5** | 42.4 / **10.9** | **125.7** / **27.6** | 2873 / 593.0 | 70 | ≈ 840 | 1.10 | 0.98 | 0.79 |
+| 16 | Luma, MED, 10 streams, tANS | 1678 / 458.7 | 379.7 / **105.4** | 256.7 / **65.5** | 92.8 / **24.7** | **146.8** / **38.1** | 3287 / 684.0 | 65 | ≈ 813 | 1.07 | 0.95 | 0.77 |
+| 17 | Luma, MED + block motion, tANS | 1952 / 524.0 | 454.1 / **125.3** | 323.2 / **86.3** | 122.7 / **30.8** | **178.6** / **47.1** | 3846 / 805.0 | 55 | ≈ 784 | 1.03 | 0.92 | 0.74 |
+| 18 | Rank + previous frame, rANS (reference) | 6754 / 1762 | 1383 / 361.2 | 1683 / 426.2 | 362.8 / **92.5** | 579.5 / **125.8** | 9112 / 1876 | 12 | ≈ 712 | 0.94 | 0.83 | 0.67 |
+
+**Enhanced**
+
+| # | Candidate | Creatures, five directions, 1 / 4 threads ms | Creatures, faced, 1 / 4 | Dressed NPCs, five directions, 1 / 4 | Dressed NPCs, faced, 1 / 4 | Uniform, 4 threads, five / faced | Worst, 4 threads, five / faced | Decode MB/s, one thread | Disk MB | × zstd 19 | × real pack | × shipped |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | Painted only + coverage row spans, LZ4 HC, kept as spans | 91.5 / **24.1** | 18.8 / **5.2** | 11.4 / **3.1** | 2.4 / **0.7** | **6.7** / **1.6** | pending | 4380 | ≈ 2178 | 1.09 | 1.10 | 1.10 |
+| 2 | Painted only (b), LZ4 HC, kept as spans | 100.2 / **26.8** | 20.9 / **5.7** | 11.0 / **2.9** | 2.3 / **0.7** | **7.0** / **1.7** | pending | 4242 | ≈ 2210 | 1.11 | 1.11 | 1.11 |
+| 3 | Both planes in row spans (c), LZ4 HC, kept as spans | 109.8 / **28.0** | 22.5 / **5.8** | 12.5 / **3.3** | 2.6 / **0.8** | **7.6** / **1.7** | pending | 3896 | ≈ 2253 | 1.13 | 1.13 | 1.14 |
+| 4 | Slot + coverage planes, LZ4 HC | 135.8 / **35.9** | 28.4 / **7.4** | 14.8 / **3.9** | 3.2 / **0.9** | **9.9** / **2.1** | **167.9** / **34.8** | 3047 | ≈ 2446 | 1.22 | 1.23 | 1.23 |
+| 5 | Both planes in row spans (c), LZ4 HC, expanded | 131.7 / **36.4** | 28.4 / **7.5** | 21.5 / **5.7** | 4.5 / **1.2** | **11.6** / **2.6** | pending | 2580 | ≈ 2253 | 1.13 | 1.13 | 1.14 |
+| 6 | BC7, zstd 7 (today, stored; not lossless) | 201.8 / **51.4** | 41.0 / **10.5** | 30.2 / **7.5** | 6.0 / **1.6** | **15.3** / not run | **231.1** / not run | not in this run | ≈ 1904 | 0.95 | 0.96 | 0.96 |
+| 7 | Painted only (b), LZ4 HC, expanded | 258.6 / **67.9** | 53.0 / **14.3** | 39.8 / **10.1** | 8.4 / **2.2** | **19.4** / **4.4** | pending | 1459 | ≈ 2210 | 1.11 | 1.11 | 1.11 |
+| 8 | Painted only + coverage row spans, LZ4 HC, expanded | 262.2 / **68.0** | 53.9 / **14.7** | 44.1 / **11.2** | 9.4 / **2.5** | **21.1** / **4.8** | pending | 1368 | ≈ 2178 | 1.09 | 1.10 | 1.10 |
+| 9 | Painted only + coverage row spans, zstd 19, kept as spans | 332.6 / **85.8** | 69.4 / **18.2** | 45.4 / **11.1** | 9.0 / **2.4** | **24.7** / **5.2** | pending | 1175 | ≈ 1806 | 0.90 | 0.91 | 0.91 |
+| 10 | Painted only (b), zstd 19, kept as spans | 349.9 / **90.3** | 73.0 / **19.0** | 44.6 / **11.2** | 8.9 / **2.4** | **23.8** / **5.8** | pending | 1151 | ≈ 1830 | 0.92 | 0.92 | 0.92 |
+| 11 | Both planes in row spans (c), zstd 19, kept as spans | 361.9 / **92.0** | 72.4 / **18.7** | 47.0 / **12.0** | 10.1 / **2.6** | **25.8** / **5.6** | pending | 1084 | ≈ 1869 | 0.93 | 0.94 | 0.94 |
+| 12 | Both planes in row spans (c), zstd 19, expanded | 389.3 / **100.3** | 78.7 / **20.5** | 55.1 / **14.1** | 11.2 / **2.9** | **29.3** / **6.7** | pending | 960 | ≈ 1869 | 0.93 | 0.94 | 0.94 |
+| 13 | Row spans (a), zstd 19, expanded | 421.4 / **108.6** | 84.8 / **22.3** | 60.6 / **15.3** | 12.3 / **3.1** | **31.2** / **6.9** | 474.9 / **97.4** | 895 | ≈ 1942 | 0.97 | 0.98 | 0.98 |
+| 14 | Slot + coverage planes, zstd 19 | 442.5 / **120.1** | 94.7 / **23.3** | 57.9 / **16.5** | 12.5 / **3.3** | **30.8** / **6.8** | 493.8 / **102.4** | 866 | ≈ 2000 | 1.00 | 1.01 | 1.01 |
+| 15 | Painted only + coverage row spans, zstd 19, expanded | 505.3 / **129.0** | 101.3 / **26.3** | 75.7 / **20.0** | 15.9 / **4.4** | **37.6** / **8.4** | pending | 736 | ≈ 1806 | 0.90 | 0.91 | 0.91 |
+| 16 | Painted only + coverage row spans, zstd 19, expanded, duplicates (2 + 8) | 505.3 / **129.0** | 101.3 / **26.3** | 75.7 / **20.0** | 15.9 / **4.4** | **37.6** / **8.4** | pending | 736 | ≈ 1795 | 0.90 | 0.90 | 0.90 |
+| 17 | Painted only (b), zstd 19, expanded | 504.5 / **130.3** | 103.5 / **27.6** | 77.1 / **19.5** | 15.8 / **4.1** | **36.8** / **8.3** | pending | 754 | ≈ 1830 | 0.92 | 0.92 | 0.92 |
+| 18 | Luma, left, zstd 19, tight (item 4) | 519.6 / **132.9** | 104.5 / **27.0** | 80.4 / **21.9** | 16.7 / **4.6** | **38.3** / **8.6** | 541.1 / **110.4** | 717 | ≈ 1858 | 0.93 | 0.93 | 0.94 |
+| 19 | Luma, left, tight, coverage row spans | 513.5 / **137.9** | 109.9 / **28.5** | 83.1 / **22.5** | 18.2 / **4.7** | **39.9** / **9.0** | 540.7 / **110.2** | 699 | ≈ 1834 | 0.92 | 0.92 | 0.92 |
+| 20 | Plain or left per stream, tight (item 5) | 512.4 / **138.3** | 108.7 / **28.1** | 74.8 / **20.3** | 16.4 / **4.3** | **36.8** / **8.5** | 546.3 / **110.8** | 722 | ≈ 1854 | 0.93 | 0.93 | 0.93 |
+| 21 | Zstd 19, coverage runs zstd 19, partial tANS by context | 749.9 / **202.9** | 216.7 / **55.0** | 176.4 / **45.1** | 97.8 / **25.3** | not run | not run | 531 | ≈ 1968 | 0.98 | 0.99 | 0.99 |
+| 22 | Luma, left, tight, coverage runs zstd 19, partial tANS by context, duplicates (2 + 4 + 6) | 824.0 / **212.5** | 229.9 / **59.3** | 196.9 / **51.7** | 103.0 / **27.1** | not run | not run | 469 | ≈ 1816 | 0.91 | 0.91 | 0.92 |
+| 23 | Painted only, coverage runs zstd 19, partial tANS by context, duplicates | 813.8 / **218.3** | 227.2 / **58.0** | 190.5 / **50.2** | 101.0 / **25.4** | not run | not run | 485 | ≈ 1789 | 0.89 | 0.90 | 0.90 |
+| 24 | Luma, MED, zstd 19 | 2080 / 530.4 | 416.6 / **111.5** | 209.4 / **54.5** | 43.1 / **12.0** | **127.9** / **28.1** | 2624 / 539.0 | 213 | ≈ 1823 | 0.91 | 0.92 | 0.92 |
+| 25 | Painted only, coverage every pixel tANS by context, duplicates | 2316 / 591.2 | 532.6 / **137.2** | 319.7 / **81.1** | 138.2 / **34.6** | not run | not run | 183 | ≈ 1701 | 0.85 | 0.86 | 0.86 |
+| 26 | Luma, left, tight, coverage every pixel tANS by context, duplicates (2 + 4 + 6) | 2334 / 596.0 | 534.9 / **136.7** | 325.6 / **83.9** | 139.4 / **37.1** | not run | not run | 181 | ≈ 1728 | 0.86 | 0.87 | 0.87 |
+| 27 | Luma, MED, 10 streams, zstd 19 | 2688 / 679.9 | 531.3 / **136.4** | 276.1 / **76.0** | 59.6 / **15.5** | **168.9** / **36.8** | 3451 / 707.0 | 157 | ≈ 1845 | 0.92 | 0.93 | 0.93 |
+| 28 | Luma, MED, 10 streams, tANS | 3081 / 781.3 | 655.5 / **176.1** | 350.0 / **91.3** | 113.6 / **29.6** | **199.9** / **53.6** | 4005 / 825.0 | 141 | ≈ 1816 | 0.91 | 0.91 | 0.92 |
+| 29 | Luma, MED + block motion, tANS | 3641 / 919.7 | 784.9 / **200.2** | 431.0 / **111.1** | 147.9 / **37.7** | **239.2** / **65.0** | 4732 / 973.0 | 118 | ≈ 1712 | 0.86 | 0.86 | 0.86 |
+| 30 | Rank + previous frame, rANS (reference) | 11698 / 2961 | 2362 / 597.4 | 2546 / 646.4 | 547.2 / **146.5** | 1010 / **216.4** | 11704 / 2381 | 24 | ≈ 1597 | 0.80 | 0.80 | 0.80 |
+
+**Not measured yet:** the Enhanced worst crowd for the row-span and painted rows marked pending. The `tu` job stopped at
+the 18 GB resident watchdog after 14 of its 26 Enhanced row sets, because coded streams of earlier rows stay cached for
+reuse. All other columns of those rows are complete.
+
+**What the ranking by creatures changes:**
+
+- **Pass or fail:** on the uniform crowd every lossless candidate passes with all five directions except rank coding. On
+  the creature crowd, **luma + MED, its 10-stream form and block motion all fail with all five directions** (Classic
+  305 to 524 ms, Enhanced 530 to 920 ms) and pass only faced (60 to 125 ms, 112 to 200 ms). Rank coding fails both ways.
+  Enhanced's every-pixel coverage tables fail the same way (about 590 ms, 137 faced).
+- **Dressed NPCs are easy.** A town is 10 to 16 Mpx, and everything but rank coding passes with all five directions. A
+  town only separates candidates with tables per body, since their setup doesn't shrink with the pixels: coverage by
+  context costs 2.7× zstd 19 here against 1.7× on creatures.
+- **Row-based layouts move up.** Classic's row spans and Enhanced's both-planes spans are as fast as the rectangle or
+  faster, so they sit above plain zstd 19 and are smaller. No residual row is faster than zstd 19.
+
+### 1. By stream size and kind: do tiny and large streams want different codecs?
+
+| Client | Kind | Stream size | Streams | Mpx | Zstd 19 MB | LZ4 HC ÷ zstd 19 | Luma + left ÷ zstd 19 | Zstd headers and tables, % of zstd 19 |
+|---|---|---|---:|---:|---:|---:|---:|---:|
+| Classic | equipment | up to 4 KiB | 7690 | 11.6 | 4.70 | 1.362 | 1.103 | 11.2 % |
+| Classic | equipment | up to 16 KiB | 2254 | 16.2 | 5.20 | 1.340 | 1.114 | 5.1 % |
+| Classic | equipment | up to 64 KiB | 176 | 6.3 | 1.01 | 1.380 | 1.035 | 2.1 % |
+| Classic | equipment | up to 256 KiB | 24 | 2.0 | 0.28 | 1.240 | 0.996 | 1.1 % |
+| Classic | equipment | all sizes | 10144 | 36.1 | 11.19 | 1.350 | 1.099 | 7.3 % |
+| Classic | creatures | up to 4 KiB | 313 | 0.5 | 0.24 | 1.379 | 1.145 | 10.7 % |
+| Classic | creatures | up to 16 KiB | 632 | 6.6 | 2.83 | 1.210 | 1.065 | 3.3 % |
+| Classic | creatures | up to 64 KiB | 1061 | 34.4 | 12.53 | 1.193 | 1.067 | 1.4 % |
+| Classic | creatures | up to 256 KiB | 459 | 53.9 | 16.25 | 1.189 | 1.064 | 0.7 % |
+| Classic | creatures | larger | 133 | 109.1 | 29.13 | 1.225 | 1.066 | 1.1 % |
+| Classic | creatures | all sizes | 2598 | 204.5 | 60.99 | 1.209 | 1.066 | 1.2 % |
+| Classic | everything | up to 4 KiB | 8550 | 12.5 | 5.13 | 1.366 | 1.106 | 11.3 % |
+| Classic | everything | up to 16 KiB | 3125 | 25.0 | 9.03 | 1.284 | 1.097 | 4.3 % |
+| Classic | everything | up to 64 KiB | 1391 | 47.1 | 15.16 | 1.206 | 1.060 | 1.5 % |
+| Classic | everything | up to 256 KiB | 488 | 56.2 | 16.61 | 1.190 | 1.062 | 0.7 % |
+| Classic | everything | larger | 133 | 109.1 | 29.13 | 1.225 | 1.066 | 1.1 % |
+| Classic | everything | all sizes | 13687 | 249.9 | 75.06 | 1.230 | 1.070 | 2.2 % |
+| Enhanced | equipment | up to 4 KiB | 5718 | 10.2 | 7.61 | 1.344 | 0.921 | 9.7 % |
+| Enhanced | equipment | up to 16 KiB | 5330 | 45.5 | 24.47 | 1.301 | 0.924 | 3.9 % |
+| Enhanced | equipment | up to 64 KiB | 2116 | 60.5 | 25.52 | 1.285 | 0.963 | 1.6 % |
+| Enhanced | equipment | up to 256 KiB | 4 | 0.3 | 0.02 | 1.447 | 0.877 | 3.8 % |
+| Enhanced | equipment | all sizes | 13168 | 116.4 | 57.62 | 1.300 | 0.941 | 3.5 % |
+| Enhanced | creatures | up to 4 KiB | 16 | 0.1 | 0.04 | 1.249 | 0.892 | 5.8 % |
+| Enhanced | creatures | up to 16 KiB | 243 | 2.6 | 1.48 | 1.270 | 0.906 | 3.1 % |
+| Enhanced | creatures | up to 64 KiB | 1077 | 41.8 | 21.89 | 1.206 | 0.910 | 1.0 % |
+| Enhanced | creatures | up to 256 KiB | 1022 | 137.0 | 56.37 | 1.187 | 0.915 | 0.6 % |
+| Enhanced | creatures | larger | 243 | 153.8 | 48.06 | 1.200 | 0.944 | 1.1 % |
+| Enhanced | creatures | all sizes | 2601 | 335.2 | 127.85 | 1.196 | 0.925 | 0.9 % |
+| Enhanced | everything | up to 4 KiB | 5734 | 10.3 | 7.66 | 1.343 | 0.921 | 9.7 % |
+| Enhanced | everything | up to 16 KiB | 5573 | 48.0 | 25.94 | 1.299 | 0.923 | 3.9 % |
+| Enhanced | everything | up to 64 KiB | 3193 | 102.2 | 47.41 | 1.249 | 0.938 | 1.3 % |
+| Enhanced | everything | up to 256 KiB | 1058 | 144.4 | 58.71 | 1.186 | 0.914 | 0.6 % |
+| Enhanced | everything | larger | 301 | 175.0 | 54.11 | 1.198 | 0.937 | 1.1 % |
+| Enhanced | everything | all sizes | 15859 | 479.9 | 193.84 | 1.226 | 0.928 | 1.6 % |
+
+- **No bucket flips a result.** Luma + left loses on Classic and wins on Enhanced in every bucket with more than a few
+  streams. Tiny and large streams don't want different residuals.
+- **LZ4 HC costs most where streams are tiny:** 1.34 to 1.37× zstd 19 up to 4 KiB, against 1.19 to 1.23× above 64 KiB.
+  The time it saves is on large streams, so a mixed rule would use LZ4 HC for large streams and zstd 19 for small ones.
+  [Section 10](#10-coders-per-class-tk) measures that by class.
+- **Overhead is real only in the tiny bucket:** zstd's headers and tables are about 10 to 11 % up to 4 KiB, 0.6 to 1.1 %
+  above 64 KiB, and 2.2 / 1.6 % overall. Equipment carries it: 7.3 / 3.5 % against creatures' 1.2 / 0.9 %.
+
+### 2. Exact duplicate streams
+
+Hashed over the whole set, by the exact plane of each (action, direction). Decode cost is one table lookup. Frame
+metadata stays per stream. Bytes saved, where Enhanced's row spans and painted columns hold coverage in row spans:
+
+| Client | Repeated streams | Mpx | Rectangle MB | Row spans MB | Painted only MB | Luma + left MB | Where they are |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Classic | 2540 of 138426 | 89.39 | 27.73 | 26.94 | 27.92 | 29.53 | **Within creature bodies:** 26.41 MB, 1876 streams |
+| Enhanced (index + coverage) | 1238 of 158133 | 25.82 | 12.34 | 11.91 | 11.25 | 11.96 | **Equipment across bodies:** 8.32 MB; creatures within 1.46 and across 2.55 |
+
+So a pointer saves **3.6 % of Classic** and **0.6 % of Enhanced**. It's the cheapest row here, and per-stream zstd can't
+see it. It needs a hash per stream at pack time and a stream table that can point two entries at one blob.
+
+### 3. Recovering Classic's per-stream cost
+
+Whole-body zstd 19 is 677 MB against 761 MB per stream, a gap of 84 MB. Index plane only, dictionaries counted, each body
+training only on its own streams, with no fixed tables or shipped statistics:
+
+| Coder | Classic: equipment / creatures / total MB | Enhanced: equipment / creatures / total MB | Creature crowd, 4 threads, Classic / Enhanced ms |
+| --- | ---: | ---: | ---: |
+| Zstd 19 per stream | 11.19 / 60.99 / 75.06 | 43.74 / 106.61 / 157.06 | 40.6 / 120.1 |
+| No magic, checksum or content size | 11.14 / 60.98 / 74.99 | 43.68 / 106.59 / 156.98 | 42.8 / 114.6 |
+| Own dictionary, 1 KiB | 11.04 / 62.46 / 76.38 | 43.82 / 108.58 / 159.20 | 45.1 / 118.9 |
+| Own dictionary, 4 KiB | 11.07 / 62.15 / 76.10 | 43.87 / 108.25 / 158.90 | not timed |
+| Own dictionary, 16 KiB | 11.37 / 61.45 / 75.72 | 44.29 / 107.74 / 158.80 | 45.7 / 123.4 |
+| Own dictionary, 64 KiB | 12.23 / 61.30 / 76.44 | 45.46 / 107.87 / 160.09 | not timed |
+| Own dictionary, 256 KiB | 12.34 / 62.26 / 77.62 | 48.11 / 109.75 / 164.67 | 45.8 / 115.7 |
+| Best of those per body, one byte per body | 10.97 / 60.27 / **74.11** | 43.62 / 106.59 / **156.93** | see below |
+
+- **The gap is shared match history, not overhead.** Dropping every optional field saves 0.1 %. A fixed dictionary size
+  loses on total, because it can't repay itself in small bodies. Only a choice per body gains: **−1.3 % on Classic** (65
+  of 103 bodies take one, and 1.46 MB of dictionaries are counted) and −0.1 % on Enhanced (20 of 93).
+- **On row spans it gains more:** Classic's row spans with the best dictionary are 70.57 MB, against 72.43 without.
+- **What a crowd costs when each new body loads its dictionary:** loading is 1.47 ms on one thread for all 207 bodies of
+  the Classic creature crowd (1 KiB), 1.87 ms for 205 (16 KiB) and 2.73 ms for 147 (256 KiB); Enhanced 1.26 ms for 196
+  (1 KiB) and 3.37 ms for 181 (256 KiB). The load is not the cost. Decoding through a dictionary is: +11 to 13 % on
+  Classic's crowd, about level on Enhanced.
+- **Reading the "best dictionary" crowd rows:** the choice was made on each crowd body's few streams, where a dictionary
+  rarely repays itself, so only 1 to 3 bodies in the crowd used one. Those rows are therefore a lower bound on the crowd
+  time. The fixed-size rows above are the upper bound: Classic's row spans with the best dictionary lie between 40.2 and
+  about 45 ms on the creature crowd, inside the line either way.
+
+### 4. A tight residual decode: the main question for Enhanced
+
+The new decode reads the shape first, then runs a prefix sum along each opaque span (`left`) or a vector add against the
+row above (`up`). The per-pixel `predict` stays as the reference.
+
+| Enhanced, 4 threads unless marked | MB/s, one thread | × zstd 19 | Creatures, five / faced ms | Dressed NPCs, five / faced ms | Total MB |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Zstd 19, same run | 866 | 1 | 120.1 / 23.3 | 16.5 / 3.3 | 193.83 |
+| Left, per-pixel `predict` | 449 | 0.52 | 226.1 / 45.8 | 28.7 / 6.3 | 179.83 |
+| **Left, tight** | **717** | **0.83** | **132.9 / 27.0** | **21.9 / 4.6** | 179.83 |
+| Up, tight | 643 | 0.74 | 146.5 / 30.0 | 24.1 / 4.9 | 179.95 |
+
+- **The answer: 0.83× zstd 19 per stream, and 0.80× per action** (772 against 970 MB/s). The 1021 MB/s of section 8 is an
+  earlier run per action; this run's 970 is the fair partner. On the creature crowd the gap is only 1.11×.
+- **Time on the sample's index plane, one thread:** zstd 0.282 s, reading the shape 0.236 s, the walk 0.316 s. Zstd has
+  fewer bytes to write than for the rectangle, so two thirds of the time is now the shape and the walk.
+- **`up` with a vector add is slower than `left`** on both clients (643 against 717 MB/s, 442 against 478), and it isn't
+  smaller.
+- **Classic:** 478 MB/s against 667, 55.6 ms on creatures against 40.6, and still 7 % larger. It stays out.
+- **But the residual no longer earns its place on Enhanced.** Painted only, with no residual and the original palette
+  order (item 8), is 1.5 % smaller at 177.10 MB and decodes at the same speed. What the residual appeared to gain came
+  from dropping the transparent pixels.
+
+### 5. One codec id per stream
+
+Plain or left, whichever is smaller. Totals are whole streams: index, Classic's shape or Enhanced's coverage, and one id
+byte per stream. A stream's palette follows its choice, which adds 0.12 / 0.19 MB on the sample's palette table.
+
+| Client | Coder | Total MB | MB/s | Creatures, five / faced ms | Share picking left: equipment, creatures, not listed |
+| --- | --- | ---: | ---: | ---: | --- |
+| Classic | Plain or left | 75.03 (−0.0 %) | 658 | 41.1 / 8.4 | 5.1 %, 4.7 %, 5.9 % |
+| Classic | Plain, left or up | 74.75 (−0.4 %) | 635 | 43.9 / 9.3 | |
+| Enhanced | Plain or left | 179.24 (−7.5 %) | 722 | 138.3 / 28.1 | 87.7 %, 95.7 %, 100 % |
+| Enhanced | Plain, left or up | 177.13 (−8.6 %) | 677 | 145.8 / 29.5 | |
+
+**A per-stream id adds nothing on Classic,** since plain wins 95 % of streams. On Enhanced the choice is nearly always
+left, so it's worth 0.3 % of the total over left alone, and three-way 1.5 %. Against painted only (item 8) it loses.
+
+### 6. Table-driven coverage (Enhanced)
+
+Tables per body are counted. Coverage MB/s is the plane alone, and "Tables" is the time to build every table of the sample.
+
+| Coverage coder | Equipment / creatures / total MB | Coverage MB/s | Tables, ms | With zstd 19 index, total MB, MB/s, creatures ms | With tight left index, total MB, MB/s, creatures ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Zstd 19 | 13.88 / 21.24 / 36.77 | 1237 | - | 193.83, 866, 120.1 | 179.83, 717, 132.9 |
+| LZ4 HC | total 54.13 | 3525 | - | - | - |
+| Runs + partial values, tANS | total 40.77 | 578 | 3.08 | 197.83, 620, 153.1 | 183.83, 535, 182.1 |
+| Runs with copy-up, tANS | total 40.09 | 579 | 3.19 | 197.16, 619, 154.9 | 183.15, 534, 183.1 |
+| Runs in zstd 19, partial tANS | total 35.75 | 645 | 3.06 | 192.81, 655, 152.6 | 178.80, 560, 162.6 |
+| Runs with copy-up in zstd 19, partial tANS | total 36.03 | 632 | 3.16 | 193.10, 645, 154.1 | 179.09, 558, 165.1 |
+| **Every pixel, tANS by context** | **9.67 / 14.09 / 24.93** | **112** | 27.27 | 181.99, 188, 580.4 | 167.99, 181, 596.0 |
+| Runs in zstd 19, partial tANS by context | total 33.61 | 455 | 24.49 | 190.67, 531, 202.9 | 176.66, 469, 212.5 |
+| Row spans, zstd 19 | total 34.45 | 1171 | - | - | 177.51, 699, 137.9 |
+
+- **tANS doesn't rescue the rANS row.** Every pixel by context keeps rANS's saving (24.93 against 24.40 MB, −32 % of the
+  plane, −6 % of the total) but its coverage decode is 112 MB/s, and the whole row 183 to 188 MB/s against rANS's 150.
+  **It fails five directions on creatures, at 580 ms.** Faced only it passes at 133 ms.
+- **The light forms give almost nothing:** runs and partial values save at most 2.8 % of the plane, and cost about 25 %
+  of the speed.
+- **Row spans on coverage are the cheap win:** −6.3 % of the plane at 0.95× the speed.
+
+### 7. Rows to close
+
+One row each, so they don't come back. Sizes are whole streams against the rectangle at zstd 19 in the same run.
+
+| Idea | Classic MB, MB/s, creatures ms | Enhanced MB, MB/s, creatures ms | Verdict |
+| --- | ---: | ---: | --- |
+| (a) Scanline RLE + semi-adaptive tANS, no LZ, no trained tables | 82.34 (+9.7 %), 190, 151.0 | 220.41 (+13.7 %), 331, 322.3 | **Closed:** larger and slower than zstd 19. Enhanced fails the line |
+| (b) Per-body dictionary of exact 4×4 patches, cost-model bound counting codebook and block ids | +11.8 % on the index plane | +20.9 % on the index plane | **Closed:** the bound alone is already larger, so no decoder was written |
+| (c) Master palette + XOR with the previous frame + zstd 19, per stream | 93.09 (+24.0 %), 609, 45.2 | 220.77 (+13.9 %), 834, 117.4 | **Closed:** about the same speed, and 14 to 24 % larger |
+
+### 8. Row spans and painted-only pixels
+
+The census says about 55 % of each rectangle lies outside the row's first and last painted pixel. Rows, per
+(action, direction):
+
+- **a. Row spans:** the index stream holds each row from its first to its last painted pixel. A side stream holds start
+  and length, raw, against the previous row, or against the same row of the previous frame, whichever is smallest per
+  stream, inside the same zstd frame. Interior holes stay as slot 0.
+- **b. Painted only:** interior holes go too, and an exact shape stream describes them. Enhanced needs no extra shape,
+  since its coverage plane is the shape. Classic's has to be stored. **This is the first measurement of this against the
+  plain rectangle;** earlier shape rows all had a residual or a colour order on top.
+- **c. Enhanced:** both planes in the same row spans, sharing one side stream.
+
+| Client | Layout | Equipment MB | Creatures MB | Not listed MB | Total MB | × rectangle | MB/s, expanded / kept | Creatures, five ms, 4 threads, expanded / kept | Dressed NPCs, five ms, expanded / kept |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Classic | Rectangle, zstd 19 | 11.19 | 60.99 | 2.88 | 75.06 | 1 | 667 | 40.6 | 6.5 |
+| Classic | **a, zstd 19** | 10.80 | 58.88 | 2.75 | **72.43** | **0.965** | **687 / 753** | **40.2 / 35.7** | **6.7 / 5.7** |
+| Classic | b, runs apart, zstd 19 | 11.21 | 59.37 | 2.83 | 73.42 | 0.978 | 624 | 44.0 | 7.9 |
+| Classic | b, runs in the frame, zstd 19 | | | | 74.57 | 0.993 | 620 / 832 | 42.6 / 34.6 | 7.9 / 5.5 |
+| Classic | b, bits apart, zstd 19 | | | | 74.01 | 0.986 | 540 | 49.1 | 8.6 |
+| Classic | **a, best dictionary per body** | 10.45 | 57.50 | 2.62 | **70.57** | **0.940** | 702 | see item 3 | |
+| Classic | Rectangle, LZ4 HC | 15.11 | 73.72 | 3.50 | 92.33 | 1.230 | 2685 | 12.0 | 1.6 |
+| Classic | a, LZ4 HC | 14.39 | 70.61 | 3.36 | 88.37 | 1.177 | 2171 / 2955 | 12.6 / 10.3 | 2.7 / 1.8 |
+| Classic | b, runs in the frame, LZ4 HC | | | | 91.56 | 1.220 | 1569 / 4206 | 17.0 / 7.8 | 3.9 / 1.3 |
+| Enhanced | Rectangle, zstd 19 | 57.62 | 127.85 | 8.36 | 193.83 | 1 | 866 | 120.1 | 16.5 |
+| Enhanced | a, zstd 19 | 56.35 | 123.80 | 8.00 | 188.15 | 0.971 | 895 / 946 | 108.6 / 105.3 | 15.3 / 14.1 |
+| Enhanced | **c, both planes, zstd 19** | 52.94 | 120.17 | 7.78 | **180.90** | **0.933** | **960 / 1084** | **100.3 / 92.0** | **14.1 / 12.0** |
+| Enhanced | **b, zstd 19** | 52.26 | 117.33 | 7.52 | **177.10** | **0.914** | 754 / 1151 | 130.3 / 90.3 | 19.5 / 11.2 |
+| Enhanced | **b + coverage in row spans, zstd 19** | 51.70 | 115.67 | 7.41 | **174.78** | **0.902** | 736 / 1175 | 129.0 / 85.8 | 20.0 / 11.1 |
+| Enhanced | b + coverage every pixel tANS by context | 48.05 | 110.17 | 7.04 | 165.26 | 0.853 | 183 | 591.2 (fails) | 81.1 |
+| Enhanced | Rectangle, LZ4 HC | 74.89 | 152.90 | 9.87 | 237.66 | 1.226 | 3047 | 35.9 | 3.9 |
+| Enhanced | c, LZ4 HC | 66.82 | 142.67 | 9.17 | 218.67 | 1.128 | 2580 / 3896 | 36.4 / 28.0 | 5.7 / 3.3 |
+| Enhanced | b, LZ4 HC | 65.83 | 139.67 | 8.96 | 214.47 | 1.106 | 1459 / 4242 | 67.9 / 26.8 | 10.1 / 2.9 |
+| Enhanced | b + coverage in row spans, LZ4 HC | 64.93 | 137.57 | 8.79 | 211.29 | 1.090 | 1368 / 4380 | 68.0 / 24.1 | 11.2 / 3.1 |
+
+By stream size, zstd 19, against the rectangle in the same bucket:
+
+| Layout | Up to 4 KiB | Up to 16 KiB | Up to 64 KiB | Up to 256 KiB | Larger | All |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Classic, a | 0.979 | 0.960 | 0.964 | 0.963 | 0.965 | 0.965 |
+| Classic, b, runs apart | 1.014 | 0.993 | 0.984 | 0.979 | 0.964 | 0.978 |
+| Enhanced, a | 0.994 | 0.981 | 0.971 | 0.969 | 0.964 | 0.971 |
+| Enhanced, c | 0.901 | 0.919 | 0.927 | 0.941 | 0.942 | 0.933 |
+| Enhanced, b | 0.884 | 0.902 | 0.919 | 0.917 | 0.915 | 0.914 |
+| Enhanced, b + coverage in row spans | 0.879 | 0.893 | 0.907 | 0.905 | 0.901 | 0.902 |
+
+- **Best per client.** **Classic: a,** with the best dictionary if a pack can spend the time. **Enhanced: b + coverage in
+  row spans** for bytes, **c** for speed, since it decodes 1.11× faster than the rectangle while 6.7 % smaller.
+- **Why the two clients differ.** Enhanced's shape is free, because the coverage plane already holds it, so removing holes
+  costs nothing and gains 8.6 %. Classic has to store it, and that eats the gain. Row spans cost Classic only their side
+  stream: 2.29 MB alone in zstd 19 out of 72.43.
+- **Side stream:** against the previous row wins most streams (70 % of Classic's equipment, 93 % of creatures; 76 % and
+  90 % of Enhanced's). On its own, it's 3.2 % of Classic's streams and 2.2 % of Enhanced's.
+- **The gain is alike for equipment and creatures,** at 0.965 each on Classic and 0.897 against 0.905 on Enhanced, so the
+  empty space isn't an equipment effect.
+- **The expansion is the cost.** On Enhanced with b, kept spans are 1.5× faster than expanded: 1151 against 754 MB/s.
+  For c the expansion is much cheaper (960 against 1084), because a whole row of each plane is copied at once.
+- **Combinations.** With duplicates (2): Classic a saves 26.94 MB more, Enhanced b + coverage spans 11.25. With dictionaries
+  (3): Classic gains, 70.57; Enhanced doesn't (a + best dictionary 187.81 against 188.15). With a tight residual (4):
+  it adds nothing, left + coverage spans is 177.51 against b + coverage spans at 174.78. With table-driven coverage (6): b +
+  runs by context 173.94 MB at 218 ms on creatures, b + every pixel by context 165.26 MB failing at 591 ms.
+
+### 9. Sparse frames and split boxes
+
+Frames under 20 % painted, coded apart from the rest, so each set loses the matches between them. Sizes are the sample,
+with coverage counted. The census's split (13 % of worn frames, 25 % of box area, 7 % of painted pixels on Enhanced) counts
+every 10th entry; this one is the codec sample, by `mobtypes.txt`.
+
+| Client, kind | Share of frames / box area / painted, % | Zstd 19 rectangle MB | a | b | Best row × rectangle | Split boxes MB |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Classic equipment, sparse | 11.5 / 31.1 / 10.0 | 1.343 | 1.265 | 1.381 | 0.942 (a) | 1.335 |
+| Classic equipment, the rest | 88.5 / 68.9 / 90.0 | 9.917 | 9.618 | 9.929 | 0.970 (a) | 9.909 |
+| Classic creatures, sparse | 0.8 / 1.8 / 0.8 | 0.553 | 0.523 | 0.538 | 0.946 (a) | 0.553 |
+| Classic creatures, the rest | 99.2 / 98.2 / 99.2 | 60.450 | 58.379 | 58.855 | 0.966 (a) | 60.448 |
+| Enhanced equipment, sparse | 10.2 / 17.1 / 4.0 | 3.835 | 3.686 | 3.198 | 0.804 (b + coverage spans 3.085) | 3.784 |
+| Enhanced equipment, the rest | 89.8 / 82.9 / 96.0 | 53.939 | 52.853 | 49.174 | 0.904 (48.764) | 53.864 |
+| Enhanced creatures, sparse | 2.8 / 4.7 / 2.2 | 3.341 | 3.186 | 2.996 | 0.872 (2.915) | 3.340 |
+| Enhanced creatures, the rest | 97.2 / 95.3 / 97.8 | 124.569 | 120.734 | 114.431 | 0.906 (112.877) | 124.566 |
+
+**Layouts help sparse frames more than the rest,** −15.9 % against −9.5 % on Enhanced and −5.7 % against −3.4 % on Classic,
+**but sparse frames are few bytes:** 4 % of Enhanced's total and 2.5 % of Classic's. They need no rule of their own.
+
+**Split boxes** cut a frame's box at fully empty rows and columns, into up to 2 boxes, when that saves at least 64 pixels.
+
+| | Classic | Enhanced |
+| --- | ---: | ---: |
+| Total, zstd 19 MB, against the rectangle | 75.01 against 75.06 (−0.06 %) | 193.69 against 193.83 (−0.07 %) |
+| Decode MB/s, one thread, expanded / kept / rectangle in the same run | 653 / 698 / 690 | 851 / 910 / 902 |
+| Creatures, 4 threads, five directions, expanded / kept / rectangle ms | 42.5 / 39.1 / 40.2 | 116.0 / 108.2 / 109.5 |
+| Dressed NPCs, 4 threads, five directions, expanded / kept / rectangle ms | 6.7 / 5.9 / 6.0 | 15.9 / 15.0 / 14.7 |
+| Atlas area saved, all frames | 4.2 % | 3.0 % |
+| Atlas area saved, equipment / creatures | 18.6 % / 0.2 % | 12.3 % / 0.0 % |
+| Atlas area saved, sparse equipment | 41.3 % | 48.0 % |
+| Atlas area saved with a 1-pixel gutter, all frames | 4.1 % | 2.9 % |
+| Sample VRAM saved, MB (R8 / RG8) | 10.6 | 29.0 |
+| Atlas area saved, crowds: creatures / dressed NPCs / uniform / worst, five directions | 0.5 / 6.9 / 2.8 / 0.3 % | 0.1 / 4.7 / 3.8 / 0.1 % |
+
+- **It's an atlas row, not a disk row.** Bytes don't move, because an empty row or column costs a match or less, and the
+  geometry takes the rest of what is saved. Decode is about 5 % slower expanded. Keeping the boxes is what saves the area.
+- **Island bodies 1055 to 1058** are the case it's for: 31.3, 20.4, 31.3 and 20.4 % of atlas area saved, and 30.0, 34.7,
+  30.0 and 34.7 % of the box inside row spans. Their bytes still move under 1 % (3.470 → 3.448, 4.954 → 4.940, 3.799 →
+  3.777, 4.920 → 4.908 MB), while b + coverage spans takes 18.4 %, 14.4 %, 17.0 % and 14.6 % off.
+- **It only matters for towns.** A dressed crowd saves 5 to 7 % of its atlas, which is 0.7 MB of VRAM on Classic and 1.5 MB
+  on Enhanced, and a creature crowd nothing. The cost is a second box per frame in the atlas and draw path. **Not worth
+  it for VRAM alone,** as far as these crowds go.
+
+### Which per-stream ideas help creatures, and which only help equipment
+
+| Idea | Equipment | Creatures |
+| --- | --- | --- |
+| Removing zstd's optional fields | −0.4 / −0.1 % | −0.0 / −0.0 % |
+| Duplicates | Enhanced: 8.32 MB across bodies. Classic: 0.41 MB | **Classic: 26.41 MB within bodies.** Enhanced: 4.0 MB |
+| Best dictionary per body | −2.0 / −0.3 % | −1.2 / −0.0 % |
+| Row spans (a) | −3.5 / −2.2 % | −3.5 / −3.2 % |
+| Painted only + coverage spans (Enhanced) | −10.3 % | −9.5 % |
+| Luma + left (Enhanced) | −5.9 % | −7.5 % |
+| Coverage tables (Enhanced coverage plane, every pixel) | −30 % | −34 % |
+| Split boxes | **The atlas: 18.6 / 12.3 %** | Nothing |
+
+Only split boxes and optional fields are equipment ideas. **Everything that moves the disk helps creatures as much, and
+creatures are most of the bytes:** 81 % of Classic's and 66 % of Enhanced's. Duplicates are the one row that splits by
+client: Classic's are creatures within a body, and Enhanced's are equipment across bodies.
+
+### Custom art and shipped statistics
+
+No row in this section depends on shipped statistics: dictionaries and tANS tables are built per body from that body's
+own streams, and spans, shapes and duplicate pointers come from the pixels. Two things to carry into a format:
+
+- **Classic row spans and painted-only treat index 0 as empty.** A custom MUL entry that draws index 0 as opaque black
+  needs the per-batch flag of "Custom MUL animations" in section 8 to turn these layouts off, or a span built from the
+  entry's own runs.
+- **Enhanced painted-only drops the index under coverage 0.** No such pixel can be seen, and the round-trip check found
+  no shipped pixel that needs one on any body coded here. A format that must return such a pixel exactly would need the
+  rectangle for that batch.
+
+
+## 10. Coders per class (`tk`)
+
+The user asked whether equipment and NPCs, and small, medium and large NPCs, want different coders. `t1` answers that
+only for three coders, by kind and by stream size, and stream size isn't body size. `tk` classes bodies by the placeholder
+rule, and its crowds are drawn by that rule, so they can differ slightly from `tc`'s. A Classic body kind in the final format is a
+separate decision.
+
+### The placeholder rule, run as one rule (`tk0`)
+
+The rule looks up the tile `10000000 + body` directly by body id in `tileart.uop`:
+
+1. **A wearer's map** is the body type of any placeholder that sets race (key 9).
+2. **Equipment:** a placeholder with no race whose body type is a wearer's map.
+3. **NPC:** every other placeholder, including those that set race.
+4. **No placeholder:** `mobtypes.txt`, by id.
+
+**The derived wearer set is {400, 666, 1253}, not {400, 666}.** Both clients' `tileart.uop` have 1143 placeholders, of which
+13 set race (400 to 403, 605 to 608, 666, 667, 694, 695, 1253). Body 1253 is its own map and no race-less placeholder
+plays it, so it changes no class: 496 race-less placeholders play 400, 170 play 666, none play 1253.
+
+All pixels here are cropped boxes, which is why Classic UOP's shares differ from counts over declared boxes.
+
+**Enhanced:** 926 bodies, 1572711 frames, 4916.9 Mpx.
+
+| Rule class | `mobtypes.txt` kind | Bodies | % frames | % pixels |
+| --- | --- | ---: | ---: | ---: |
+| equipment (no race, a wearer's map) | EQUIPMENT | 547 | 81.24 | 20.82 |
+| equipment (no race, a wearer's map) | HUMAN | 1 | 0.15 | 0.14 |
+| equipment (no race, a wearer's map) | MONSTER | 1 | 0.15 | 0.05 |
+| equipment (no race, a wearer's map) | not listed | 7 | 1.00 | 0.39 |
+| NPC, sets race | HUMAN | 7 | 1.09 | 1.89 |
+| NPC, other map | ANIMAL | 120 | 4.90 | 23.23 |
+| NPC, other map | EQUIPMENT | 2 | 0.11 | 0.29 |
+| NPC, other map | HUMAN | 1 | 0.02 | 0.02 |
+| NPC, other map | MONSTER | 231 | 10.80 | 52.01 |
+| NPC, other map | SEA_MONSTER | 3 | 0.11 | 0.38 |
+| NPC, other map | not listed | 4 | 0.10 | 0.64 |
+| no placeholder | EQUIPMENT | 2 | 0.32 | 0.16 |
+
+**Classic UOP:** 276 bodies, 469725 frames, 1472.8 Mpx.
+
+| Rule class | `mobtypes.txt` kind | Bodies | % frames | % pixels |
+| --- | --- | ---: | ---: | ---: |
+| equipment (no race, a wearer's map) | EQUIPMENT | 153 | 79.52 | 12.13 |
+| NPC, sets race | HUMAN | 3 | 1.61 | 2.57 |
+| NPC, other map | ANIMAL | 59 | 9.02 | 33.02 |
+| NPC, other map | HUMAN | 1 | 0.07 | 0.05 |
+| NPC, other map | MONSTER | 59 | 9.22 | 52.00 |
+| no placeholder | EQUIPMENT | 1 | 0.55 | 0.23 |
+
+**Classic MUL:** 746 bodies, 526895 frames, 946.2 Mpx.
+
+| Rule class | `mobtypes.txt` kind | Bodies | % frames | % pixels |
+| --- | --- | ---: | ---: | ---: |
+| equipment (no race, a wearer's map) | EQUIPMENT | 364 | 71.70 | 18.52 |
+| equipment (no race, a wearer's map) | HUMAN | 3 | 0.60 | 0.71 |
+| equipment (no race, a wearer's map) | MONSTER | 1 | 0.05 | 0.10 |
+| equipment (no race, a wearer's map) | not listed | 7 | 1.39 | 1.22 |
+| NPC, sets race | HUMAN | 4 | 0.80 | 0.72 |
+| NPC, other map | ANIMAL | 58 | 3.28 | 6.00 |
+| NPC, other map | EQUIPMENT | 2 | 0.40 | 0.06 |
+| NPC, other map | HUMAN | 1 | 0.20 | 0.21 |
+| NPC, other map | MONSTER | 178 | 10.18 | 67.22 |
+| NPC, other map | SEA_MONSTER | 2 | 0.16 | 1.18 |
+| no placeholder | EQUIPMENT | 21 | 2.95 | 0.88 |
+| no placeholder | HUMAN | 1 | 0.20 | 0.06 |
+| no placeholder | MONSTER | 1 | 0.05 | 0.80 |
+| no Bodyconv.def line | not listed | 103 | 8.04 | 2.32 |
+
+| Source | Equipment: bodies, % frames, % pixels | NPC: bodies, % frames, % pixels | Not listed |
+| --- | ---: | ---: | ---: |
+| Enhanced | 558, 82.86, 21.55 | 368, 17.14, 78.45 | none |
+| Classic UOP | 154, 80.08, 12.36 | 122, 19.92, 87.64 | none |
+| Classic MUL | 396, 76.69, 21.43 | 247, 15.27, 76.25 | 103 bodies, 8.04, 2.32 |
+
+Equipment plays 400 in 404 Enhanced bodies and 666 in 152. Classic UOP is the reverse (666 in 152, 400 in 1), and Classic MUL
+plays 400 in 371 and 666 in 4.
+
+With no placeholder, these use `mobtypes.txt`:
+
+- **Enhanced:** 2 bodies, as `ENHANCED_CLIENT_FILES.md` says: 344 (2600 frames, 6.24 Mpx) and 827 (2400, 1.71), both
+  EQUIPMENT. The earlier list of seven came from mapping by appearance.
+- **Classic UOP:** 1 body: 344, 2600 frames, 3.40 Mpx, EQUIPMENT.
+- **Classic MUL:** 23 bodies with an id, 16886 frames, 16.36 Mpx: 21 EQUIPMENT, 988 HUMAN, 796 MONSTER (7.52 Mpx). Another
+  103 bodies in `anim2+.mul` have no `Bodyconv.def` line, so no id at all (42362 frames, 21.97 Mpx): those stay "not listed".
+
+**Largest disagreements with `mobtypes.txt`, where it has a line:**
+
+| Source | Bodies | Mpx | Which |
+| --- | ---: | ---: | --- |
+| Enhanced | 4 | 23.16 | 841 (rule NPC, listed EQUIPMENT, 7.91 Mpx), 987 (equipment, HUMAN, 6.81), 840 (NPC, EQUIPMENT, 6.20), 260 (equipment, MONSTER, 2.24) |
+| Classic UOP | 0 | 0 | None. Inside NPCs, 990 is listed HUMAN but sets no race |
+| Classic MUL | 6 | 8.26 | 994 (equipment, HUMAN, 2.68), 987 (2.05) and 991 (2.00) likewise; 774 (anim file 1 body 42, MONSTER, plays 666, 0.93); 840 (NPC, EQUIPMENT, 0.53); 839 (NPC, body type 187, EQUIPMENT, 0.07) |
+
+Where `mobtypes.txt` has no line, the rule still decides: 11 Enhanced bodies (50.33 Mpx, the largest 105, as an NPC at 28.26
+Mpx, and 970, as equipment at 6.65) and 7 Classic MUL bodies, all equipment (11.58 Mpx, the largest 573 at 6.82). So the rule
+and the file agree on all but 0.5 % of Enhanced's and 0.9 % of Classic MUL's pixels, and on everything in Classic UOP.
 
 ## Recommendation
 
@@ -1062,6 +1592,10 @@ Section 8 has the numbers. **Nothing here is a format change: the user decides.*
 
 | Question | Options | Recommendation |
 | --- | --- | --- |
+| Stream layout (section 9) | rectangle; row spans; Enhanced both planes in row spans; Enhanced painted only + coverage in row spans | **Row spans on Classic.** On Enhanced, **painted only + coverage spans** if disk leads (−10 %, 7 % slower on creatures), **both planes in row spans** if speed leads (−7 %, faster) |
+| Duplicate streams (section 9) | none; a pointer to one blob | **Pointer:** −3.6 % on Classic, −0.6 % on Enhanced, one table lookup |
+| Dictionary per body (section 9) | none; best per body | **None by default.** Classic −2.6 % on row spans, at pack time and a possible +12 % decode. The user may want it for Classic |
+| Split boxes (section 9) | one box per frame; up to 2 | **One.** Bytes don't move, and it saves 5 to 7 % of a town's atlas, under 1.5 MB |
 | Storage of official animations | indexed slot planes with zstd 19; with LZ4 HC; with luma + MED; keep BC7 | **Indexed zstd 19:** lossless, hue in the shader, 0.97× / 1.10× BC7, passes the crowd line |
 | Load unit | whole body (a), per action, or per (action, direction) | **Per (action, direction):** on the uniform crowd, whole-body units fail the line with every lossless candidate but LZ4 HC. Streams cost +12 % / +3 % on disk against whole-body zstd 19 |
 | What to load first | all directions, or the faced one | **The faced one:** 4–5× less decode and VRAM, and only this passes the worst crowd with zstd 19 |
