@@ -436,9 +436,15 @@ jobs:
           path: artifact/dynamapper-windows-arm64-tools/*
           retention-days: ${{ github.ref_name == 'prereleases' && 7 || 90 }}
 
+  # Apple Silicon is the macOS target CI focuses on. x86_64 stays supported: it builds only when a release is published
+  # (the same condition as the publish job, which would otherwise be skipped with it), and a failure doesn't block that
+  # release. macos-15-intel is reported to be the last Intel runner, retiring around fall 2027 (not confirmed by GitHub);
+  # after that, cross-compile this target on the ARM runner.
   build-macos-x86_64:
     name: Build (macOS x86_64)
     runs-on: macos-15-intel
+    if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag' || github.ref_name == 'main'
+    continue-on-error: true
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
