@@ -16,6 +16,11 @@ const MIN_ZOOM: f32 = 1.0;
 const MAX_ZOOM: f32 = 8.0;
 const DEFAULT_ZOOM: f32 = 2.0;
 const CELL_PADDING: f32 = 6.0;
+/// Wide enough for the label below a narrow glyph.
+const CELL_MIN_WIDTH: f32 = 44.0;
+const CELL_LABEL_HEIGHT: f32 = 16.0;
+/// What the frame of a cell adds to its content, on both sides.
+const CELL_FRAME: f32 = 14.0;
 const DEFAULT_SAMPLE: &str = "The quick brown fox jumps over the lazy dog 0123456789";
 const TOOLS_PANEL_WIDTH: f32 = 220.0;
 const SELECTED_STROKE_WIDTH: f32 = 2.0;
@@ -201,19 +206,26 @@ pub fn ui_classic_fonts(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut
         }
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
+                let tallest = state.glyphs.iter().map(|glyph| glyph.size.y).fold(0.0, f32::max);
                 for glyph in &state.glyphs {
+                    // A frame does not wrap by itself: the wrapping layout has to be told its size first.
+                    let width = (glyph.size.x * state.zoom + CELL_PADDING).max(CELL_MIN_WIDTH);
+                    let cell = egui::vec2(width + CELL_FRAME, tallest * state.zoom + CELL_LABEL_HEIGHT + CELL_FRAME);
                     let response = ui
-                        .group(|ui| {
-                            ui.set_min_width(glyph.size.x * state.zoom + CELL_PADDING);
-                            ui.vertical_centered(|ui| {
-                                match &glyph.texture {
-                                    Some(texture) => ui.add(egui::Image::new(texture).fit_to_exact_size(glyph.size * state.zoom)),
-                                    None => ui.weak("-"),
-                                };
-                                ui.small(&glyph.label);
-                            });
+                        .allocate_ui(cell, |ui| {
+                            ui.group(|ui| {
+                                ui.set_min_width(width);
+                                ui.vertical_centered(|ui| {
+                                    match &glyph.texture {
+                                        Some(texture) => ui.add(egui::Image::new(texture).fit_to_exact_size(glyph.size * state.zoom)),
+                                        None => ui.weak("-"),
+                                    };
+                                    ui.small(&glyph.label);
+                                });
+                            })
+                            .response
                         })
-                        .response;
+                        .inner;
                     if editing {
                         let response = response.interact(egui::Sense::click());
                         if response.clicked() {
