@@ -2703,8 +2703,7 @@ impl UopInspectorApp {
             }
 
             // Also load TerrainDefinitionPackage for the ad-hoc viewer
-            let td_path = ec_base_path.join("terraindefinition.uop");
-            if td_path.exists() {
+            if let Some(td_path) = find_client_file_case_insensitive(&ec_base_path, "TerrainDefinition.uop") {
                 self.log(format!(
                     "Parsing TerrainDefinitionPackage from {}",
                     td_path.display()

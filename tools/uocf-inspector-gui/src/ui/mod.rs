@@ -290,64 +290,66 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui
 
             ui.separator();
             
-            ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Home, "Home");
-            if uop_browser::has_visible_uop_explorer_package(app) {
-                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::UopExplorer, "UOP Explorer");
-            }
-            if app.client_data.is_some() {
-                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::TexArtCc, "Art");
-            }
-            if app.client_data.as_ref().and_then(|client| client.multis.as_ref()).is_some()
-                || app.multi_collection.is_some()
-                || app.cc_multimap.is_some()
-            {
-                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Multis, "Multis");
-            }
-            ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Housing, "Housing");
-            let animated_items = matches!(app.view_mode, crate::app::ViewMode::AnimationDefinitions | crate::app::ViewMode::AnimData);
-            if ui.selectable_label(animated_items, "Animated items").clicked() && !animated_items {
-                app.view_mode = crate::app::ViewMode::AnimationDefinitions;
-            }
-            ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Effects, "Effects");
-            ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Multimap, "Multimap");
-            if app.client_data.is_some() || app.ec_hues.is_some() {
-                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Hues, "Hues");
-            }
-            if app.cliloc.is_some() || app.localized_strings.is_some() {
-                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Clilocs, "CliLocs");
-            }
-            if app.cc_tiledata.is_some() || app.ec_tileart_entries.is_some() {
-                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::TileMetadata, "Tile Metadata");
-            }
-            if app.cc_gumps_package.is_some()
-                || app.ec_gumps_package.is_some()
-                || app.cc_gumps.is_some()
-                || app.uop_cache.loaded_uops.iter().any(|loaded| {
-                    loaded
-                        .path
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .map(|name| name.eq_ignore_ascii_case("interface.uop"))
-                        .unwrap_or(false)
-                })
-            {
-                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Gumps, "Gumps");
-            }
-            ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Animations, "Animations");
-            if app.terrain_def_package.is_some() {
-                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::TerrainDefinition, "Terrain Def");
-            }
-            if app.uo_string_dictionary.is_some() {
-                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::StringDictionary, "String Dict");
-            }
-            if app.cc_sounds.is_some() || app.ec_audio.is_some() || app.settings.cc_path.is_some() {
-                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Sounds, "Audio");
-            }
-            if app.settings.cc_path.is_some() {
-                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::ClassicMaps, "Maps");
-                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::ClassicFonts, "Fonts");
-                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::ClassicDefs, "Def files");
-            }
+            ui.horizontal_wrapped(|ui| {
+                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Home, "Home");
+                if uop_browser::has_visible_uop_explorer_package(app) {
+                    ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::UopExplorer, "UOP Explorer");
+                }
+                if app.client_data.is_some() {
+                    ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::TexArtCc, "Art");
+                }
+                if app.client_data.as_ref().and_then(|client| client.multis.as_ref()).is_some()
+                    || app.multi_collection.is_some()
+                    || app.cc_multimap.is_some()
+                {
+                    ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Multis, "Multis");
+                }
+                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Housing, "Housing");
+                let animated_items = matches!(app.view_mode, crate::app::ViewMode::AnimationDefinitions | crate::app::ViewMode::AnimData);
+                if ui.selectable_label(animated_items, "Animated items").clicked() && !animated_items {
+                    app.view_mode = crate::app::ViewMode::AnimationDefinitions;
+                }
+                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Effects, "Effects");
+                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Multimap, "Multimap");
+                if app.client_data.is_some() || app.ec_hues.is_some() {
+                    ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Hues, "Hues");
+                }
+                if app.cliloc.is_some() || app.localized_strings.is_some() {
+                    ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Clilocs, "CliLocs");
+                }
+                if app.cc_tiledata.is_some() || app.ec_tileart_entries.is_some() {
+                    ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::TileMetadata, "Tile Metadata");
+                }
+                if app.cc_gumps_package.is_some()
+                    || app.ec_gumps_package.is_some()
+                    || app.cc_gumps.is_some()
+                    || app.uop_cache.loaded_uops.iter().any(|loaded| {
+                        loaded
+                            .path
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .map(|name| name.eq_ignore_ascii_case("interface.uop"))
+                            .unwrap_or(false)
+                    })
+                {
+                    ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Gumps, "Gumps");
+                }
+                ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Animations, "Animations");
+                if app.terrain_def_package.is_some() {
+                    ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::TerrainDefinition, "Terrain Def");
+                }
+                if app.uo_string_dictionary.is_some() {
+                    ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::StringDictionary, "String Dict");
+                }
+                if app.cc_sounds.is_some() || app.ec_audio.is_some() || app.settings.cc_path.is_some() {
+                    ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::Sounds, "Audio");
+                }
+                if app.settings.cc_path.is_some() {
+                    ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::ClassicMaps, "Maps");
+                    ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::ClassicFonts, "Fonts");
+                    ui.selectable_value(&mut app.view_mode, crate::app::ViewMode::ClassicDefs, "Def files");
+                }
+            });
         });
     });
 
