@@ -95,6 +95,11 @@ tables and GameData, shaders), the fonts, a few stray files (OLE, UTF-16 text, P
 the unknown `MainMisc` binary. What has a reader but no writer: the
 TGA images.
 
+`Interface.uop`'s own images are outside `data/interface/default/textures/gumpart` (the Classic gumps,
+`cc_ec_shared_uop_formats.md`): under `data/interface/default/icons/*`, `default/textures*`, `interfacecore/textures*`
+and `login/textures`. EC 1,878 images in 29 folders, KR 832 in 18, every one a well-formed DDS or TGA of non-zero size;
+the 34 empty images of the package are in `gumpart`. The inspector shows them on the Gumps tab, as EC interface images.
+
 ## Replacement checks
 
 `UopEntryEditor` (`lib/uocf/src/enhanced/entry_edit.rs`) checks every replaced or added file:

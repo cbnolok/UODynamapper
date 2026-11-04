@@ -476,6 +476,12 @@ Facet sizes in the executable (`client_exe::facet_dimensions`,
     the same result on current client data.
   - item `uv_set`: the texture coordinate set index (low byte of the Gamebryo
     texture map flags), 0 or 1.
+  - item `id`: UOETE draws no image window on ids from 1,000,000 on, and
+    shows them smaller as noise textures; the inspector follows it. On tile
+    5118: `build/worldart/20000000` (4x4 white),
+    `build/worldart/20005118` (the art's silhouette), and
+    `build/worldart/01000045` (256x256 grey noise, stretch 16). What the
+    client does with these ids is not traced.
 - Writing (`tileart` module): `TileArtEntry::to_bytes` is the exact inverse of
   `parse_raw`; all 37,756 client records re-encode byte for byte (ignored test
   `tileart_client_records`). The counts are written from the vectors

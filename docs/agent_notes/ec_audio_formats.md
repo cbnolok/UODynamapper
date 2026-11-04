@@ -168,6 +168,15 @@ no `.`, any extension but `mp3` plays nothing, and it loops when the flag is exa
 looping: line 10 `9 britainpos,lop` loops too). Every file named exists. Music folders: current Classic 91 MP3 + 1
 Bink video; UO Gold 40 MP3 + 3 Bink videos. All MP3s CBR.
 
+## MIDI music
+
+No client folder we hold ships a `.mid`, `.midi`, `.rmi` or `.xmi` file, and neither does the OSI patch archive
+listing, so the old music is known only from client strings: UO Gold's `client.exe` names `moonglow.mid`, `cove.mid`
+and others with the path format `music\\%s%s`, and uses `mciSendCommandA` and `midiOutSetVolume`; the current
+`client.exe` still has 49 such names. `lib/uocf/src/audio/midi.rs` reports what a standard MIDI file declares, tested
+on synthetic data only. The workspace has no MIDI synthesizer, so the inspector's Audio tab shows that report and
+exports the file without playing it.
+
 ## Names added to `Dictionary.dic`
 
 2,008 names (commit a99b0b73): 1,668 legacy WAVs, 278 sounds, 57 music (Enhanced and Kingdom Reborn), 5
