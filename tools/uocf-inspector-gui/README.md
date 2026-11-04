@@ -25,6 +25,7 @@ UO asset data during development and research.
 | Fonts | Classic `fonts.mul` and `unifont*.mul` glyphs. `Edit` draws a glyph pixel by pixel, sets its size and fields, imports or exports it as an image, adds or removes a Unicode glyph, and saves a copy of each changed file. |
 | Def files | The Classic remap `.def` files, `bodyconv.def`, `Equipconv.def`, `speech.mul`, `skills.mul` and `skillgrp.mul` as tables. `Edit` changes, adds or removes a row and saves a copy of each changed file; lines not edited keep their bytes. |
 | Multimap | The loaded `Multimap.rle`, and multimaps generated from a DDS, a KTX2 or a client's radar. `Edit` replaces the loaded image with a BMP or PNG and saves a copy; `Save RLE...` and `Save PNG...` save the selected image. |
+| Maps | A Classic facet drawn in radar colours, with the land and statics of a tile. `Convert and save a facet` writes a whole facet from a Classic folder or a facet package to Classic MUL, Classic UOP, an Enhanced Client facet or a Kingdom Reborn facet, at the size of a target client's table or a size you give, with the world map image and the radar image where they apply. There is no tile painter. |
 
 Most views support switching between Classic Client and Enhanced Client sources
 where both exist.

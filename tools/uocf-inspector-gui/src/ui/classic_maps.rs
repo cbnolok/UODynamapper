@@ -5,6 +5,8 @@
 //! when that static's top is not below the land, else the land's colour, as `udd_conv::cc_radar` picks.
 //!
 //! The map zooms at the pointer and can move to a window of its own, which stays open while other tabs are in use.
+//!
+//! The facet's files are not edited here; [`super::classic_maps_convert`] converts and saves a whole facet.
 
 use color_eyre::eyre::{self, WrapErr};
 use eframe::egui;
@@ -72,6 +74,7 @@ pub struct ClassicMapsState {
     detached: bool,
     /// The scroll offset for the next frame, after a zoom change.
     pending_offset: Option<egui::Vec2>,
+    convert: super::classic_maps_convert::ConvertState,
 }
 
 impl Default for ClassicMapsState {
@@ -88,6 +91,7 @@ impl Default for ClassicMapsState {
             pinned: None,
             detached: false,
             pending_offset: None,
+            convert: Default::default(),
         }
     }
 }
@@ -224,6 +228,7 @@ pub fn ui_classic_maps(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut 
             ui.label("Set the CC path (File > Search Paths).");
             return;
         };
+        let classic_dir = cc_path.clone();
         egui::ComboBox::from_id_salt("classic_maps_facet").selected_text(facet_name(state.facet)).show_ui(ui, |ui| {
             for facet in 0..CLASSIC_FACET_NAMES.len() as u32 {
                 ui.selectable_value(&mut state.facet, facet, facet_name(facet));
@@ -254,6 +259,8 @@ pub fn ui_classic_maps(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut 
         }
         ui.weak("Wheel or pinch zooms at the pointer, dragging moves the map.");
         ui.weak("Hover a tile for its land and statics; click to keep it.");
+        ui.separator();
+        super::classic_maps_convert::section(&mut state.convert, &classic_dir, ui, ctx);
     });
 
     egui::CentralPanel::default().show(ui, |ui| {

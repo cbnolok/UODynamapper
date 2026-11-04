@@ -5,6 +5,7 @@ pub mod effect_gltf;
 pub mod effect_preview;
 pub mod effects_editor;
 pub mod entry_text_editor;
+pub mod facet_convert;
 pub mod housing_editor;
 pub mod keyed_edits;
 pub mod legacy_terrain_editor;
