@@ -5,9 +5,10 @@ use eframe::egui;
 use uocf::audio::decode::{decode, decode_classic_pcm, DecodedAudio};
 use uocf::audio::validate::FormatPolicy;
 use uocf::audio::{AudioContent, AudioFormat};
-use uocf::classic::sound_edit::ClassicSoundEditor;
+use uocf::classic::sound::SOUND_HEADER_BYTES;
+use uocf::classic::sound_edit::{sound_header, ClassicSoundEditor};
 use uocf::enhanced::audio::{AudioKind, AudioPackage, AUDIO_ENTRY_ROOT};
-use uocf::enhanced::audio_edit::{AudioImportOptions, AudioPackageEditor, AudioTarget};
+use uocf::enhanced::audio_edit::{AudioImportOptions, AudioPackageEditor, AudioPut, AudioTarget, NewAudio};
 
 use crate::app::{SoundPlayer, SoundSource, UopInspectorApp};
 use crate::ui::{classic_music, list_sort_controls, sorted_indices_by};
@@ -16,6 +17,13 @@ const SOUNDS_LIST_PANEL_WIDTH: f32 = 280.0;
 /// The replace options, kept in the egui memory.
 const CONVERT_OPTION_ID: &str = "sounds_replace_convert";
 const ALLOW_UNVERIFIED_OPTION_ID: &str = "sounds_replace_allow_unverified";
+const SLOT_NAME_OPTION_ID: &str = "sounds_slot_name";
+const NEW_ENTRY_OPTION_ID: &str = "sounds_new_entry";
+const SLOT_NAME_WIDTH: f32 = 180.0;
+const AUDIO_KINDS: [(AudioKind, &str); 3] = [(AudioKind::Sound, "Sound"), (AudioKind::LegacySound, "Legacy sound"), (AudioKind::Music, "Music")];
+const NEW_ENTRY_TEXT_HINT: &str = "data/audio/...";
+const TABLE_PATH_HOVER: &str = "The path of a new table row, as in the table: Sounds\\... for a sound, Music/... for music. An id that has a row takes it from there; leave it empty.";
+const ALLOW_UNVERIFIED_HOVER: &str = "Accept, with warnings, audio the client's decoder plays wrongly or in a way nothing verified (MPEG-2.5, PCM data that is not whole sample frames): for a test client only. A file the decoder refuses or misreads, or of another kind than the entry's extension, is refused all the same";
 
 pub fn ui_sounds(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
     let sources = available_sources(app);
@@ -128,23 +136,79 @@ fn pick_input(mp3: bool) -> Option<std::path::PathBuf> {
     dialog.pick_file()
 }
 
-/// Writes copies of the Classic sound files with `slot` replaced by a picked WAV, into a picked folder.
-fn replace_classic_slot(app: &mut UopInspectorApp, slot: u32, convert: bool) {
+fn save_classic_copies(editor: &mut ClassicSoundEditor, output: &std::path::Path) -> eyre::Result<String> {
+    let written = editor.save_to(output)?;
+    Ok(written.iter().map(|path| path.display().to_string()).collect::<Vec<_>>().join(", "))
+}
+
+/// Writes copies of the Classic sound files into `output`, with `slot` set from `file`, under `name` when given.
+fn write_classic_sound(client: &std::path::Path, slot: u32, file: &[u8], name: Option<&str>, convert: bool, output: &std::path::Path) -> eyre::Result<String> {
+    let mut editor = ClassicSoundEditor::load(client)?;
+    let put = editor.put_sound(slot, file, name, convert)?;
+    let written = save_classic_copies(&mut editor, output)?;
+    Ok(format!("{:?} slot {slot} '{}'{}; wrote {written}.", put.write, put.name, if put.converted { " (converted)" } else { "" }))
+}
+
+/// Writes copies of the Classic sound files into `output`, with `slot` named `name` and its sound kept.
+fn rename_classic_sound(client: &std::path::Path, slot: u32, name: &str, output: &std::path::Path) -> eyre::Result<String> {
+    let mut editor = ClassicSoundEditor::load(client)?;
+    let bytes = editor.slot_bytes(slot)?.ok_or_else(|| eyre::eyre!("slot {slot} is empty"))?;
+    let (header, pcm) = bytes.split_at_checked(SOUND_HEADER_BYTES).ok_or_else(|| eyre::eyre!("slot {slot} has no header"))?;
+    let renamed = [sound_header(Some(name), Some(header))?.as_slice(), pcm].concat();
+    let write = editor.put_slot_bytes(slot, &renamed)?;
+    let written = save_classic_copies(&mut editor, output)?;
+    Ok(format!("{write:?} slot {slot} '{name}'; wrote {written}."))
+}
+
+/// Sets `slot` of copies of the Classic sound files from a picked WAV, into a picked folder.
+fn replace_classic_slot(app: &mut UopInspectorApp, slot: u32, name: Option<&str>, convert: bool) {
     let Some(client) = app.settings.cc_path.clone() else {
         app.status_message = "No Classic Client path.".to_owned();
         return;
     };
     let Some(input) = pick_input(convert) else { return };
     let Some(output) = crate::dialog::pick_folder() else { return };
-    let result = (|| -> eyre::Result<String> {
-        let file = std::fs::read(&input)?;
-        let mut editor = ClassicSoundEditor::load(&client)?;
-        let put = editor.put_sound(slot, &file, None, convert)?;
-        let written = editor.save_to(&output)?;
-        let names: Vec<String> = written.iter().map(|path| path.display().to_string()).collect();
-        Ok(format!("{:?} slot {slot} '{}'{}; wrote {}.", put.write, put.name, if put.converted { " (converted)" } else { "" }, names.join(", ")))
-    })();
-    app.status_message = result.unwrap_or_else(|e| format!("Failed to replace slot {slot}: {e:#}"));
+    let result = std::fs::read(&input).map_err(Into::into).and_then(|file| write_classic_sound(&client, slot, &file, name, convert, &output));
+    app.status_message = result.unwrap_or_else(|e| format!("Failed to set slot {slot}: {e:#}"));
+}
+
+fn rename_classic_slot(app: &mut UopInspectorApp, slot: u32, name: &str) {
+    let Some(client) = app.settings.cc_path.clone() else {
+        app.status_message = "No Classic Client path.".to_owned();
+        return;
+    };
+    let Some(output) = crate::dialog::pick_folder() else { return };
+    app.status_message = rename_classic_sound(&client, slot, name, &output).unwrap_or_else(|e| format!("Failed to rename slot {slot}: {e:#}"));
+}
+
+/// The controls that set a Classic slot from a file, and its name; an empty slot has no sound to keep and needs a name.
+fn classic_slot_controls(app: &mut UopInspectorApp, ui: &mut egui::Ui, slot: u32, empty: bool) {
+    ui.horizontal(|ui| {
+        let convert = convert_checkbox(ui, "Decode any WAV or MP3 at 22050 Hz and downmix it to mono (no resampling)");
+        let id = egui::Id::new(SLOT_NAME_OPTION_ID);
+        let mut name = ui.data_mut(|data| data.get_temp::<String>(id)).unwrap_or_default();
+        ui.label("Name");
+        let hint = if empty { "needed" } else { "kept when empty" };
+        ui.add(egui::TextEdit::singleline(&mut name).hint_text(hint).desired_width(SLOT_NAME_WIDTH));
+        ui.data_mut(|data| data.insert_temp(id, name.clone()));
+        let new_name = (!name.is_empty()).then_some(name.as_str());
+        let text = if empty { "Add sound..." } else { "Replace slot..." };
+        let button = ui.add_enabled(!empty || new_name.is_some(), egui::Button::new(text)).on_hover_text(
+            "Write copies of the sound files, with this slot set from a 16-bit PCM mono 22050 Hz WAV, into another folder",
+        );
+        if button.clicked() {
+            replace_classic_slot(app, slot, new_name, convert);
+        }
+        if empty {
+            return;
+        }
+        let button = ui
+            .add_enabled(new_name.is_some(), egui::Button::new("Rename..."))
+            .on_hover_text("Write copies of the sound files, with only this slot's name changed, into another folder");
+        if button.clicked() {
+            rename_classic_slot(app, slot, &name);
+        }
+    });
 }
 
 /// Writes a copy of the Audio.uop with the entry `name` replaced by a picked file, to a picked path.
@@ -157,21 +221,114 @@ fn replace_ec_entry(app: &mut UopInspectorApp, source: &std::path::Path, name: &
     else {
         return;
     };
-    let result = (|| -> eyre::Result<String> {
-        let file = std::fs::read(&input)?;
-        let mut editor = AudioPackageEditor::load(source)?;
-        let put = editor.replace(&AudioTarget::Name(name.to_owned()), &file, options)?;
-        editor.save_as(&output)?;
-        let warnings = if put.warnings.is_empty() { String::new() } else { format!(" Warnings: {}.", put.warnings.join("; ")) };
-        Ok(format!(
-            "{:?} {name} ({:?}{}) in {}.{warnings}",
-            put.write,
-            put.compression,
-            if put.converted { ", converted" } else { "" },
-            output.display()
-        ))
-    })();
+    let target = AudioTarget::Name(name.to_owned());
+    let result = std::fs::read(&input).map_err(Into::into).and_then(|file| {
+        write_audio_copy(source, &output, |editor| editor.replace(&target, &file, options))
+    });
     app.status_message = result.unwrap_or_else(|e| format!("Failed to replace {name}: {e:#}"));
+}
+
+/// Applies `put` to the `source` Audio.uop and writes the copy to `output`.
+fn write_audio_copy(source: &std::path::Path, output: &std::path::Path, put: impl FnOnce(&mut AudioPackageEditor) -> eyre::Result<AudioPut>) -> eyre::Result<String> {
+    let mut editor = AudioPackageEditor::load(source)?;
+    let put = put(&mut editor)?;
+    editor.save_as(output)?;
+    let warnings = if put.warnings.is_empty() { String::new() } else { format!(" Warnings: {}.", put.warnings.join("; ")) };
+    let rows = if put.tables_with_new_rows.is_empty() { String::new() } else { format!(", with a new row in {}", put.tables_with_new_rows.join(" and ")) };
+    Ok(format!(
+        "{:?} {} ({:?}{}){rows} in {}.{warnings}",
+        put.write,
+        put.name,
+        put.compression,
+        if put.converted { ", converted" } else { "" },
+        output.display()
+    ))
+}
+
+/// What the section that adds an entry to the Audio.uop holds, kept in the egui memory.
+#[derive(Clone)]
+struct NewEntryFields {
+    by_id: bool,
+    kind: AudioKind,
+    id: u32,
+    /// The entry name, or the table path of a new row.
+    text: String,
+    loops: bool,
+}
+
+impl Default for NewEntryFields {
+    fn default() -> Self {
+        Self { by_id: false, kind: AudioKind::Sound, id: 0, text: String::new(), loops: false }
+    }
+}
+
+impl NewEntryFields {
+    fn new_audio(&self) -> NewAudio {
+        if !self.by_id {
+            return NewAudio::Name(self.text.clone());
+        }
+        let path = (!self.text.is_empty()).then(|| self.text.clone());
+        NewAudio::Id { kind: self.kind, id: self.id, path, loops: (self.kind == AudioKind::Music && self.loops).then_some(true) }
+    }
+}
+
+/// Writes a copy of the Audio.uop with a new entry from a picked file, to a picked path.
+fn add_ec_entry(app: &mut UopInspectorApp, source: &std::path::Path, new: &NewAudio, options: AudioImportOptions) {
+    let Some(input) = pick_input(true) else { return };
+    let Some(output) = crate::dialog::file_dialog()
+        .add_filter("UOP package", &["uop"])
+        .set_file_name(uocf::enhanced::audio::AUDIO_UOP_FILE_NAME)
+        .save_file()
+    else {
+        return;
+    };
+    let result = std::fs::read(&input).map_err(Into::into).and_then(|file| {
+        write_audio_copy(source, &output, |editor| editor.add(new, &file, options))
+    });
+    app.status_message = result.unwrap_or_else(|e| format!("Failed to add the entry: {e:#}"));
+}
+
+/// The options of a replace or an add.
+fn import_options(ui: &mut egui::Ui) -> AudioImportOptions {
+    let convert = convert_checkbox(ui, "Convert a file a WAV entry cannot take to 16-bit PCM WAV (no MP3 encoding, no resampling)");
+    let allow = option_checkbox(ui, ALLOW_UNVERIFIED_OPTION_ID, "Allow unverified format", ALLOW_UNVERIFIED_HOVER);
+    AudioImportOptions { policy: if allow { FormatPolicy::AllowUnverified } else { FormatPolicy::VerifiedOnly }, convert }
+}
+
+fn new_entry_section(app: &mut UopInspectorApp, ui: &mut egui::Ui, source: &std::path::Path) {
+    egui::CollapsingHeader::new("Add an entry").id_salt("ec_audio_add").show(ui, |ui| {
+        let id = egui::Id::new(NEW_ENTRY_OPTION_ID);
+        let mut fields = ui.data_mut(|data| data.get_temp::<NewEntryFields>(id)).unwrap_or_default();
+        ui.horizontal(|ui| {
+            ui.selectable_value(&mut fields.by_id, false, "By name");
+            ui.selectable_value(&mut fields.by_id, true, "By table id");
+        });
+        if fields.by_id {
+            ui.horizontal(|ui| {
+                let shown = AUDIO_KINDS.iter().find(|(kind, _)| *kind == fields.kind).map_or("", |(_, label)| label);
+                egui::ComboBox::from_id_salt("ec_audio_add_kind").selected_text(shown).show_ui(ui, |ui| {
+                    for (kind, label) in AUDIO_KINDS {
+                        ui.selectable_value(&mut fields.kind, kind, label);
+                    }
+                });
+                ui.add(egui::DragValue::new(&mut fields.id));
+            });
+            ui.label("Table path").on_hover_text(TABLE_PATH_HOVER);
+            ui.text_edit_singleline(&mut fields.text);
+            if fields.kind == AudioKind::Music {
+                ui.checkbox(&mut fields.loops, "Loops");
+            }
+        } else {
+            ui.label("Entry name");
+            ui.add(egui::TextEdit::singleline(&mut fields.text).hint_text(NEW_ENTRY_TEXT_HINT));
+        }
+        let options = import_options(ui);
+        let ready = fields.by_id || !fields.text.is_empty();
+        if ui.add_enabled(ready, egui::Button::new("Add...")).on_hover_text("Write a copy of the Audio.uop with this entry added").clicked() {
+            add_ec_entry(app, source, &fields.new_audio(), options);
+        }
+        ui.data_mut(|data| data.insert_temp(id, fields));
+    });
 }
 
 fn ui_classic_sounds(app: &mut UopInspectorApp, _ctx: &egui::Context, ui: &mut egui::Ui) {
@@ -271,6 +428,7 @@ fn ui_classic_sounds(app: &mut UopInspectorApp, _ctx: &egui::Context, ui: &mut e
             Ok(Some(sound)) => sound,
             Ok(None) => {
                 ui.label(format!("Sound slot {} is empty.", app.selected_sound_slot));
+                classic_slot_controls(app, ui, app.selected_sound_slot, true);
                 return;
             }
             Err(e) => {
@@ -295,15 +453,7 @@ fn ui_classic_sounds(app: &mut UopInspectorApp, _ctx: &egui::Context, ui: &mut e
                 save_file(app, default_name, ("Wave Audio", "wav"), || Ok(sound.wav_bytes()));
             }
         });
-        ui.horizontal(|ui| {
-            let convert = convert_checkbox(ui, "Decode any WAV or MP3 at 22050 Hz and downmix it to mono (no resampling)");
-            let button = ui.button("Replace slot...").on_hover_text(
-                "Write copies of the sound files, with this slot set from a 16-bit PCM mono 22050 Hz WAV, into another folder",
-            );
-            if button.clicked() {
-                replace_classic_slot(app, sound.slot_id, convert);
-            }
-        });
+        classic_slot_controls(app, ui, sound.slot_id, false);
 
         ui.separator();
         egui::Grid::new("sound_details").striped(true).show(ui, |ui| {
@@ -382,6 +532,7 @@ fn ui_enhanced_audio(app: &mut UopInspectorApp, _ctx: &egui::Context, ui: &mut e
         .show(ui, |ui| {
             source_selector(app, ui);
             ui.heading("Audio.uop");
+            new_entry_section(app, ui, audio.path());
             ui.add(egui::TextEdit::singleline(&mut app.sound_search_query).hint_text("Filter by id or name"));
             let sort = list_sort_controls(ui, "ec_audio_entries", &["Id", "Name"], 0);
             ui.separator();
@@ -437,20 +588,13 @@ fn ui_enhanced_audio(app: &mut UopInspectorApp, _ctx: &egui::Context, ui: &mut e
             }
         });
         ui.horizontal(|ui| {
-            let convert = convert_checkbox(ui, "Convert a file a WAV entry cannot take to 16-bit PCM WAV (no MP3 encoding, no resampling)");
-            let allow = option_checkbox(
-                ui,
-                ALLOW_UNVERIFIED_OPTION_ID,
-                "Allow unverified format",
-                "Accept, with warnings, audio the client's decoder plays wrongly or in a way nothing verified (MPEG-2.5, PCM data that is not whole sample frames): for a test client only. A file the decoder refuses or misreads, or of another kind than the entry's extension, is refused all the same",
-            );
-            let policy = if allow { FormatPolicy::AllowUnverified } else { FormatPolicy::VerifiedOnly };
+            let options = import_options(ui);
             let button = ui
                 .add_enabled(entry.name.is_some(), egui::Button::new("Replace..."))
                 .on_hover_text("Write a copy of the Audio.uop with this entry replaced (keeping its compression)")
                 .on_disabled_hover_text("Only named entries can be replaced");
             if button.clicked() {
-                replace_ec_entry(app, audio.path(), &name, AudioImportOptions { policy, convert });
+                replace_ec_entry(app, audio.path(), &name, options);
             }
         });
 
@@ -515,5 +659,97 @@ fn sanitize_file_stem(value: &str) -> String {
         "sound".to_string()
     } else {
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::test_support::{client_roots, output_path, CLASSIC_CLIENT_ROOTS_ENV, EC_CLIENT_ROOTS_ENV};
+    use uocf::audio::wav::encode_pcm_wav;
+    use uocf::classic::sound::{SoundMap, CHANNELS, MAX_SOUND_ID, NOMINAL_SAMPLE_RATE};
+    use uocf::uop_container::hash::hash_file_name_single;
+
+    const NEW_NAME: &str = "uocf_inspector.wav";
+    const NEW_ENTRY: &str = "data/audio/uocf_inspector_added.wav";
+    const PCM_BYTES: usize = 2048;
+    const ID: u32 = 7;
+    const TABLE_PATH: &str = "Music/Test.mp3";
+
+    fn test_wav() -> Vec<u8> {
+        encode_pcm_wav(NOMINAL_SAMPLE_RATE, CHANNELS, &[0; PCM_BYTES])
+    }
+
+    fn folder_name(prefix: &str, root: &std::path::Path) -> String {
+        format!("{prefix}-{}", root.file_name().unwrap().to_string_lossy().replace(' ', "-"))
+    }
+
+    #[test]
+    fn the_new_entry_fields_name_the_entry_or_the_table_row() {
+        let by_name = NewEntryFields { text: NEW_ENTRY.to_owned(), loops: true, ..NewEntryFields::default() };
+        assert_eq!(by_name.new_audio(), NewAudio::Name(NEW_ENTRY.to_owned()));
+
+        let row = NewEntryFields { by_id: true, kind: AudioKind::Music, id: ID, text: TABLE_PATH.to_owned(), loops: true };
+        assert_eq!(row.new_audio(), NewAudio::Id { kind: AudioKind::Music, id: ID, path: Some(TABLE_PATH.to_owned()), loops: Some(true) });
+
+        let has_row = NewEntryFields { by_id: true, kind: AudioKind::Sound, id: ID, text: String::new(), loops: true };
+        assert_eq!(has_row.new_audio(), NewAudio::Id { kind: AudioKind::Sound, id: ID, path: None, loops: None }, "only music loops");
+    }
+
+    #[test]
+    #[ignore = "needs real Classic clients: set UO_CLASSIC_CLIENT_ROOTS and TMPDIR, and run with --ignored"]
+    fn shipped_classic_sounds_save_the_same_bytes_and_a_rename_and_a_new_slot_come_back() {
+        for root in client_roots(CLASSIC_CLIENT_ROOTS_ENV) {
+            let same = output_path(&folder_name("sound-same", &root));
+            let mut editor = ClassicSoundEditor::load(&root).unwrap();
+            let names: Vec<String> = editor.file_names().into_iter().map(str::to_owned).collect();
+            save_classic_copies(&mut editor, &same).unwrap();
+            for name in &names {
+                assert!(std::fs::read(root.join(name)).unwrap() == std::fs::read(same.join(name)).unwrap(), "{}: {name} differs after a save without changes", root.display());
+            }
+
+            let original = SoundMap::load(&root).unwrap();
+            let slots = 0..=MAX_SOUND_ID;
+            let first = slots.clone().find(|&slot| original.read_slot(slot).unwrap().is_some()).unwrap();
+            let empty = slots.clone().find(|&slot| original.read_slot(slot).unwrap().is_none()).unwrap();
+            let renamed_dir = output_path(&folder_name("sound-renamed", &root));
+            rename_classic_sound(&root, first, NEW_NAME, &renamed_dir).unwrap();
+            let renamed = SoundMap::load(&renamed_dir).unwrap().read_slot(first).unwrap().unwrap();
+            assert_eq!(renamed.name, NEW_NAME);
+            assert!(renamed.pcm_data == original.read_slot(first).unwrap().unwrap().pcm_data, "{}: the sound changed", root.display());
+
+            let added_dir = output_path(&folder_name("sound-added", &root));
+            assert!(write_classic_sound(&root, empty, &test_wav(), None, false, &added_dir).is_err(), "a new slot needs a name");
+            write_classic_sound(&root, empty, &test_wav(), Some(NEW_NAME), false, &added_dir).unwrap();
+            let added = SoundMap::load(&added_dir).unwrap().read_slot(empty).unwrap().unwrap();
+            assert_eq!((added.name.as_str(), added.pcm_data.len()), (NEW_NAME, PCM_BYTES));
+            println!("{}: {names:?} save the same bytes; slot {first} renamed and slot {empty} added come back", root.display());
+            for dir in [same, renamed_dir, added_dir] {
+                std::fs::remove_dir_all(dir).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "needs real clients: set UO_EC_CLIENT_ROOTS and TMPDIR, and run with --ignored"]
+    fn a_shipped_audio_package_saves_the_same_bytes_and_an_added_entry_comes_back() {
+        for root in client_roots(EC_CLIENT_ROOTS_ENV) {
+            let audio = AudioPackage::load(&root).unwrap().unwrap();
+            let same = output_path(&folder_name("audio-same", &root));
+            AudioPackageEditor::load(audio.path()).unwrap().save_as(&same).unwrap();
+            let identical = std::fs::read(&same).unwrap() == std::fs::read(audio.path()).unwrap();
+            assert!(identical, "{}: differs after a save without changes", root.display());
+            std::fs::remove_file(&same).unwrap();
+
+            let output = output_path(&folder_name("audio-added", &root));
+            let options = AudioImportOptions::default();
+            let new = NewAudio::Name(NEW_ENTRY.to_owned());
+            println!("{}", write_audio_copy(audio.path(), &output, |editor| editor.add(&new, &test_wav(), options)).unwrap());
+            let reopened = AudioPackage::load_file(&output).unwrap();
+            let entry = reopened.entry_by_hash(hash_file_name_single(NEW_ENTRY)).unwrap().unwrap();
+            assert!(*entry.payload == *test_wav(), "{}: the entry differs after reopening", root.display());
+            println!("{}: same bytes; an added entry comes back", root.display());
+            std::fs::remove_file(&output).unwrap();
+        }
     }
 }
