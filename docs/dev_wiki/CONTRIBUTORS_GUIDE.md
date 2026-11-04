@@ -77,6 +77,8 @@ Supports **Classic 2D**, **Enhanced Classic**, and **KR-like** modes. Toggled vi
 ## 4. Configuration Files
 Settings are split into modular TOML files under `assets/settings/` (`core.toml`, `graphics.toml`, `runtime_assets.toml`, etc.). Shader presets are in `assets/defaults/shader_presets.toml`.
 
+Those files are the defaults, and the app never writes them. It saves its changes in `cache/settings/` next to `assets/`, and a file there overrides the bundled file of the same name. Delete it to go back to the defaults. Core, runtime asset, keybinding and world rendering settings only get a cache file while they differ from the bundled one.
+
 ---
 
 ## 5. Build & Development
