@@ -16,9 +16,12 @@ use uocf::audio::{name_extension, probe_audio, AudioContent};
 use uocf::classic::music::{
     find_dir_ignoring_case, MusicConfig, LOOP_FLAGS, MUSIC_CONFIG_FILE_NAME, MUSIC_DIGITAL_DIR_NAME, MUSIC_DIR_NAME,
 };
+use uocf::utils::path::find_file_ignoring_case;
 
-use crate::app::UopInspectorApp;
+use crate::app::{UopInspectorApp, ViewMode};
 use crate::ui::sounds::{play, save_file, source_selector, stop_and_status};
+use crate::ui::tiledata_editor::same_file;
+use crate::ui::unsaved_changes::TabEditor;
 
 const LIST_PANEL_WIDTH: f32 = 300.0;
 const NEW_NAME_FIELD_WIDTH: f32 = 160.0;
@@ -28,6 +31,14 @@ const MIDI_EXTENSIONS: [&str; 2] = ["mid", "midi"];
 /// The flag a loop checkbox sets. The client also loops on the other of [`LOOP_FLAGS`], kept while the box stays on.
 const LOOP_FLAG: &str = LOOP_FLAGS[0];
 const MISSING_FILE_COLOR: egui::Color32 = egui::Color32::from_rgb(230, 90, 90);
+
+pub(super) const TAB_EDITOR: TabEditor = TabEditor {
+    tab: ViewMode::Sounds,
+    label: "the lines of the Classic music Config.txt",
+    is_dirty: |app| app.classic_file_views.music.has_unsaved_changes(),
+    save: save_config,
+    discard: revert_config,
+};
 
 /// A row of the list.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -261,6 +272,37 @@ fn midi_rows(analysis: &MidiAnalysis, row: &mut impl FnMut(&str, String)) {
     }
 }
 
+/// Asks where to write `Config.txt`, and writes it. It stays unsaved when the user cancels or the write fails, and the
+/// loaded file is refused.
+fn save_config(app: &mut UopInspectorApp) {
+    let state = &mut app.classic_file_views.music;
+    let Some(config) = &state.config else {
+        return;
+    };
+    let Some(path) = crate::dialog::file_dialog().add_filter("Text", &["txt"]).set_file_name(MUSIC_CONFIG_FILE_NAME).save_file() else {
+        return;
+    };
+    let loaded = find_file_ignoring_case(&config.directory, MUSIC_CONFIG_FILE_NAME);
+    app.status_message = if loaded.is_some_and(|loaded| same_file(&loaded, &path)) {
+        format!("The loaded {MUSIC_CONFIG_FILE_NAME} is refused as the target: save a copy.")
+    } else {
+        match config.save(&path) {
+            Ok(()) => {
+                state.saved_text = config.to_text();
+                format!("Saved {}.", path.display())
+            }
+            Err(error) => format!("Failed to save: {error:#}"),
+        }
+    };
+}
+
+fn revert_config(app: &mut UopInspectorApp) {
+    let state = &mut app.classic_file_views.music;
+    if let Some(client) = state.client.clone() {
+        state.reload(&client);
+    }
+}
+
 /// Save, revert and adding a line, for the whole file.
 fn ui_config_tools(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
     let state = &mut app.classic_file_views.music;
@@ -270,28 +312,17 @@ fn ui_config_tools(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
     }
     let dirty = state.has_unsaved_changes();
     let mut status = None;
+    let (mut save_clicked, mut revert_clicked) = (false, false);
     ui.horizontal(|ui| {
         ui.strong(MUSIC_CONFIG_FILE_NAME);
         if dirty {
             ui.label("(unsaved changes)");
         }
-        if ui.add_enabled(dirty, egui::Button::new("Save as...")).on_hover_text("Write the file to a path you pick. Lines you did not change are written back as read.").clicked() {
-            let path = crate::dialog::file_dialog().add_filter("Text", &["txt"]).set_file_name(MUSIC_CONFIG_FILE_NAME).save_file();
-            if let (Some(path), Some(config)) = (path, &state.config) {
-                match config.save(&path) {
-                    Ok(()) => {
-                        state.saved_text = config.to_text();
-                        status = Some(format!("Saved {}.", path.display()));
-                    }
-                    Err(error) => status = Some(format!("Failed to save: {error:#}")),
-                }
-            }
+        if ui.add_enabled(dirty, egui::Button::new("Save as...")).on_hover_text("Write the file to a path you pick. Lines you did not change are written back as read. The loaded file itself is refused.").clicked() {
+            save_clicked = true;
         }
         if ui.add_enabled(dirty, egui::Button::new("Revert")).clicked() {
-            if let Some(client) = state.client.clone() {
-                state.reload(&client);
-                return;
-            }
+            revert_clicked = true;
         }
         ui.separator();
         ui.label("Add id");
@@ -308,6 +339,12 @@ fn ui_config_tools(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
     });
     if let Some(status) = status {
         app.status_message = status;
+    }
+    if save_clicked {
+        save_config(app);
+    }
+    if revert_clicked {
+        revert_config(app);
     }
 }
 
@@ -398,6 +435,21 @@ mod tests {
         state.config.as_mut().unwrap().set(9, "britainpos", None).unwrap();
         assert!(state.has_unsaved_changes());
         assert_eq!(state.config.as_ref().unwrap().to_text(), "# a comment\r\n0 britain1.mp3,loop\r\n9 britainpos\r\n12  vesper\r\n");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn discarding_takes_the_config_back_to_the_file() {
+        let (dir, state) = state_with_config("discard");
+        let mut app = crate::app::tests::test_app();
+        app.classic_file_views.music = state;
+        assert!(!(TAB_EDITOR.is_dirty)(&app));
+        app.classic_file_views.music.config.as_mut().unwrap().set(9, "britainpos", None).unwrap();
+        assert!((TAB_EDITOR.is_dirty)(&app));
+
+        (TAB_EDITOR.discard)(&mut app);
+        assert!(!(TAB_EDITOR.is_dirty)(&app));
+        assert_eq!(app.classic_file_views.music.config.as_ref().unwrap().to_text(), SAMPLE_CONFIG);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
