@@ -234,6 +234,7 @@ mod tests {
 
 pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
     app.report_gpu_errors();
+    unsaved_changes::hold_app_close(app, ctx);
     unsaved_changes::hold_tab_switch(app);
     egui::Panel::top("top_panel").show(ui, |ui| {
         egui::MenuBar::new().ui(ui, |ui| {
@@ -329,6 +330,7 @@ pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui
         });
     });
     unsaved_changes::leave_tab_window(app, ctx);
+    unsaved_changes::close_app_window(app, ctx);
 
     let mut show_search_paths = app.show_search_paths;
     if show_search_paths {
