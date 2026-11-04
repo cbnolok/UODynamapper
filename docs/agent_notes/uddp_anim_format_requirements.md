@@ -202,10 +202,25 @@ reads it. Enhanced doesn't ship it, but `tileart.uop` can say the same. A body's
 - It plays a wearer's map (400 or 666): a human or elf or gargoyle if the placeholder sets race (key 9), else equipment.
 
 **This is the rule to use: the user's call on 2026-11-04, as the strongest and most consistent of the three.** A wearer's map
-should not need hard-coding, since it is the body type of any placeholder that sets race. A run of the rule on Enhanced and
-Classic, with that derivation, is pending. Worked out from a cross-tabulation so far, it gives about 82 % of frames and 21 % of pixels as equipment:
-the same split as the table above. It also catches bodies the table gets wrong, such as 987 (GM robe, listed as `HUMAN`) and
-970 (death shroud, not listed).
+isn't hard-coded: it is the body type of any placeholder that sets race. That comes out as 400, 666 and 1253, and only body
+1253 plays 1253, so it changes no body's class. Bodies with no placeholder take `mobtypes.txt`. Both clients' `tileart.uop`
+hold the same counts: 1143 placeholders, 13 setting race, 496 without race on 400 and 170 on 666.
+
+| Source (pixels are cropped boxes) | Equipment: bodies, frames, pixels | NPC: bodies, frames, pixels | No class | No placeholder |
+|---|---|---|---|---|
+| Enhanced, 926 bodies, 4917 Mpx | 558, 82.86 %, 21.55 % | 368, 17.14 %, 78.45 % | 0 | 344 and 827 |
+| Classic UOP, 276 bodies, 1473 Mpx | 154, 80.08 %, 12.36 % | 122, 19.92 %, 87.64 % | 0 | 344 |
+| Classic MUL, 746 bodies, 946 Mpx | 396, 76.69 %, 21.43 % | 247, 15.27 %, 76.25 % | 103 bodies, 8.04 %, 2.32 % | 23 bodies, 16.36 Mpx |
+
+The 103 are `anim2+.mul` bodies with no `Bodyconv.def` line, so they have no body id to look up.
+
+Against `mobtypes.txt`, Classic UOP has no disagreement. The largest in the others:
+
+- Equipment by the rule: 987 (`HUMAN`, a GM robe's anim id), 260 (`MONSTER`, a bone armor's appearance), 994 and 991 (`HUMAN`),
+  and without a line 970, 641 and 573.
+- NPC by the rule: 841 and 840 (`EQUIPMENT`), and without a line 105.
+- Inside NPCs: 990 is `HUMAN` and plays its own map with no race, though a Wearable tile points at it. It is 1.1 Mpx in
+  Enhanced and is the one result here that looks doubtful.
 
 **The `Wearable` flag alone isn't enough.** Wearable tiles and their appearance or anim id agree with `mobtypes.txt` on 93–97 %
 of pixels, but point at some real creatures: 10 monster-sized bodies such as 735 (272 × 238, its tile is a "shirt") and the
