@@ -89,7 +89,7 @@ const CLASSIC_MULTI_SIDEBAR_WIDTH: f32 = 250.0;
 const UOP_MULTI_SIDEBAR_WIDTH: f32 = 300.0;
 const MULTIMAP_SIDEBAR_WIDTH: f32 = 260.0;
 /// Classic `multi.mul` part flag set on the parts the client draws.
-const CLASSIC_MULTI_PART_VISIBLE_FLAG: u32 = 0x1;
+pub(super) const CLASSIC_MULTI_PART_VISIBLE_FLAG: u32 = 0x1;
 /// Alpha of the tint applied to hidden parts in the preview.
 const HIDDEN_PART_TINT_ALPHA: u8 = 96;
 const HIDDEN_PART_OUTLINE_WIDTH: f32 = 1.0;
@@ -205,6 +205,31 @@ fn art_source_label(source: ArtSource) -> &'static str {
 }
 
 fn ui_classic_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
+    egui::Panel::top("classic_multi_editor_bar").show(ui, |ui| {
+        ui.horizontal_wrapped(|ui| super::classic_multi_editor::bar(app, ui));
+    });
+    if app.classic_multi_editor.enabled {
+        let id = app.selected_multi_id;
+        let part_id = multi_selected_part_id(app);
+        let selected = ctx.data_mut(|data| data.get_temp::<usize>(part_id));
+        let generation = app.classic_multi_editor.generation();
+        let new_selection = egui::Panel::bottom("classic_multi_part_editor")
+            .show(ui, |ui| super::classic_multi_editor::part_panel(app, ui, id, selected))
+            .inner;
+        match new_selection {
+            Some(Some(index)) => {
+                ctx.data_mut(|data| data.insert_temp(part_id, index));
+            }
+            Some(None) => {
+                ctx.data_mut(|data| data.remove::<usize>(part_id));
+            }
+            None => {}
+        }
+        if app.classic_multi_editor.generation() != generation {
+            app.multi_preview_cache.classic_parts = None;
+            app.multi_preview_cache.classic_empty_multis = None;
+        }
+    }
     egui::Panel::left("classic_multi_sidebar")
         .resizable(true)
         .default_size(CLASSIC_MULTI_SIDEBAR_WIDTH)
@@ -224,7 +249,7 @@ fn ui_classic_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
 
             if let Some(client) = &app.client_data {
                 if let Some(multis) = &client.multis {
-                    let max_id = multis.max_id();
+                    let max_id = app.classic_multi_editor.multi_count().unwrap_or_else(|| multis.max_id());
                     let ids = (0..max_id)
                         .filter(|id| !only_housing_multis || is_housing_multi(housing_index.as_deref(), *id))
                         .filter(|id| empty_multis.as_ref().is_none_or(|empty| !empty.contains(id)))
@@ -529,11 +554,9 @@ fn classic_multi_parts(app: &mut UopInspectorApp) -> Arc<Vec<MultiPart>> {
     if let Some((_, parts)) = app.multi_preview_cache.classic_parts.as_ref().filter(|(cached, _)| *cached == id) {
         return parts.clone();
     }
-    let parts = app
-        .client_data
-        .as_ref()
-        .and_then(|client| client.multis.as_ref())
-        .and_then(|multis| multis.get_parts(id).ok())
+    let edited = app.classic_multi_editor.parts(id);
+    let parts = edited
+        .or_else(|| app.client_data.as_ref().and_then(|client| client.multis.as_ref()).and_then(|multis| multis.get_parts(id).ok()))
         .unwrap_or_default();
     let parts = Arc::new(parts);
     app.multi_preview_cache.classic_parts = Some((id, parts.clone()));
@@ -546,14 +569,16 @@ fn classic_empty_multis(app: &mut UopInspectorApp) -> Arc<HashSet<u32>> {
     if let Some(empty) = &app.multi_preview_cache.classic_empty_multis {
         return empty.clone();
     }
-    let empty: HashSet<u32> = app
-        .client_data
-        .as_ref()
-        .and_then(|client| client.multis.as_ref())
-        .map(|multis| {
-            (0..multis.max_id())
-                .filter(|id| multis.get_parts(*id).map_or(true, |parts| parts.is_empty()))
-                .collect()
+    let edited = app.classic_multi_editor.multi_count().map(|count| {
+        (0..count).filter(|id| app.classic_multi_editor.parts(*id).is_none_or(|parts| parts.is_empty())).collect()
+    });
+    let empty: HashSet<u32> = edited
+        .or_else(|| {
+            app.client_data.as_ref().and_then(|client| client.multis.as_ref()).map(|multis| {
+                (0..multis.max_id())
+                    .filter(|id| multis.get_parts(*id).map_or(true, |parts| parts.is_empty()))
+                    .collect()
+            })
         })
         .unwrap_or_default();
     let empty = Arc::new(empty);

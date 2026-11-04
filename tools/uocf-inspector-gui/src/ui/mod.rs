@@ -31,6 +31,7 @@ mod editor_bar;
 pub mod sounds;
 pub mod upscale_preview;
 pub mod classic_maps;
+pub mod classic_multi_editor;
 pub mod classic_music;
 pub mod ec_interface_textures;
 pub mod classic_fonts;
