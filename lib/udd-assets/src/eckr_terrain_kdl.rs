@@ -181,28 +181,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn snow_terrain_transcode_overrides_parse() {
-        let content = include_str!(
-            "../../../dynamapper/assets/cc_ec_convtables/TerrainTranscodeSnowOverrides.kdl"
-        );
-        let parsed = EckrTerrainRouting::from_str("TerrainTranscodeSnowOverrides.kdl", content)
-            .expect("parse snow terrain transcode overrides");
-        let map = parsed.to_map();
-
-        assert_eq!(parsed.entries.len(), 10);
-        assert_eq!(map.get(&3), Some(&8));
-        assert_eq!(map.get(&196), Some(&8));
-        assert_eq!(map.get(&244), Some(&8));
-        assert_eq!(map.get(&361), Some(&8));
-        assert_eq!(map.get(&36), Some(&63));
-        assert_eq!(map.get(&742), Some(&61));
-        assert_eq!(map.get(&141), None);
-    }
-
-    #[test]
     fn eckr_terrain_routing_accepts_generated_property_rows() {
         let parsed = EckrTerrainRouting::from_str(
-            "KrFacetTranscode.generated.kdl",
+            "routing.kdl",
             r#"
 source client="kr"
 facet_transcodes {
@@ -224,7 +205,7 @@ facet_transcodes {
     #[test]
     fn eckr_terrain_routing_accepts_grouped_routing_rows() {
         let parsed = EckrTerrainRouting::from_str(
-            "KrTerrainRouting.generated.kdl",
+            "routing.kdl",
             r#"
 route client="kr" source="manawydan-tile-dictionary"
 t 5 168 169
@@ -238,21 +219,6 @@ t 6 170
         assert_eq!(map.get(&168), Some(&5));
         assert_eq!(map.get(&169), Some(&5));
         assert_eq!(map.get(&170), Some(&6));
-    }
-
-    #[test]
-    fn kr_generated_routing_file_parses() {
-        let content = include_str!(
-            "../../../dynamapper/assets/cc_ec_convtables/KrTerrainRouting.generated.kdl"
-        );
-        let parsed = EckrTerrainRouting::from_str("KrTerrainRouting.generated.kdl", content)
-            .expect("parse generated KR routing");
-        let map = parsed.to_map();
-
-        assert_eq!(parsed.entries.len(), 175);
-        assert_eq!(map.len(), 1454);
-        assert_eq!(map.get(&168), Some(&5));
-        assert_eq!(map.get(&3), Some(&1));
     }
 
     #[test]
@@ -276,21 +242,11 @@ t 5 168 // trailing note
     }
 
     #[test]
-    fn bundled_routing_files_parse() {
-        for (name, content) in [
-            ("TerrainTranscode.kdl", include_str!("../../../dynamapper/assets/cc_ec_convtables/TerrainTranscode.kdl")),
-            (
-                "EcFacetTranscode.generated.kdl",
-                include_str!("../../../dynamapper/assets/cc_ec_convtables/EcFacetTranscode.generated.kdl"),
-            ),
-            (
-                "KrFacetTranscode.generated.kdl",
-                include_str!("../../../dynamapper/assets/cc_ec_convtables/KrFacetTranscode.generated.kdl"),
-            ),
-        ] {
-            let parsed = EckrTerrainRouting::from_str(name, content).unwrap_or_else(|error| panic!("{error}"));
-            assert!(!parsed.entries.is_empty(), "{name}");
-        }
+    fn bundled_routing_file_parses() {
+        const NAME: &str = "TerrainTranscode.kdl";
+        let content = include_str!("../../../dynamapper/assets/cc_ec_convtables/TerrainTranscode.kdl");
+        let parsed = EckrTerrainRouting::from_str(NAME, content).unwrap_or_else(|error| panic!("{error}"));
+        assert!(!parsed.entries.is_empty(), "{NAME}");
     }
 
     #[test]

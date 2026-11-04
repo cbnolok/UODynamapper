@@ -2647,7 +2647,7 @@ mod tests {
             "--land-output",
             "tex_land_ec.uddp",
             "--land-transcode-kdl",
-            "dynamapper/assets/cc_ec_convtables/KrTerrainRouting.generated.kdl",
+            "dynamapper/assets/cc_ec_convtables/TerrainTranscode.kdl",
             "--bc7",
         ])
         .expect("parse unified ec texture args");
@@ -2671,7 +2671,7 @@ mod tests {
                 assert_eq!(
                     land_transcode_kdl,
                     Some(PathBuf::from(
-                        "dynamapper/assets/cc_ec_convtables/KrTerrainRouting.generated.kdl"
+                        "dynamapper/assets/cc_ec_convtables/TerrainTranscode.kdl"
                     ))
                 );
                 assert!(bc7);
@@ -3460,7 +3460,7 @@ mod tests {
             "uddpack",
             "audit-land-routing-kdl",
             "--routing",
-            "dynamapper/assets/cc_ec_convtables/KrTerrainRouting.generated.kdl",
+            "dynamapper/assets/cc_ec_convtables/TerrainTranscode.kdl",
             "--tex-land-ec",
             "/tmp/tex_land_ec.uddp",
             "--output",
@@ -3476,7 +3476,7 @@ mod tests {
             } => {
                 assert_eq!(
                     routing,
-                    PathBuf::from("dynamapper/assets/cc_ec_convtables/KrTerrainRouting.generated.kdl")
+                    PathBuf::from("dynamapper/assets/cc_ec_convtables/TerrainTranscode.kdl")
                 );
                 assert_eq!(tex_land_ec, PathBuf::from("/tmp/tex_land_ec.uddp"));
                 assert_eq!(output, PathBuf::from("/tmp/land_routing_audit.json"));

@@ -114,8 +114,10 @@ Verified package relationship from `kr-ec-terrain-diff-tool` using:
 
 - KR: `/mnt/dati/_proj_local/_uo_clients/UO - Old KR/`
 - EC: `/mnt/dati/_proj_local/_uo_clients/_Ultima Online Enhanced fp/`
-- KR routing: `KrFacetTranscode.generated.kdl`
-- EC routing/material evidence: `EcFacetTranscode.generated.kdl`
+- KR routing: `KrFacetTranscode.generated.kdl`, from `facet-evidence`
+- EC routing/material evidence: `EcFacetTranscode.generated.kdl`, from `facet-evidence`
+
+Those two files were removed from `dynamapper/assets` on 2026-11-04, with the files below; they are in the git history.
 
 Observed texture-pool containment:
 
@@ -165,12 +167,10 @@ Classic land id
   -> KR-specific material/layer metadata only where proven
 ```
 
-Recommended evidence files:
-
-- `KrFacetTranscode.generated.kdl`: generated KR dictionary/facet evidence; use compact `t cc=... kr=...` rows.
-- `EcFacetTranscode.generated.kdl`: generated EC facet and TerrainDefinition evidence; use compact `t cc=... ec=...` rows plus material/layer evidence.
-- `KrTerrainRouting.generated.kdl`: generated review evidence grouped as `t KR_MATERIAL_ID CC_LAND_ID...`; it is not an active runtime routing mode while it remains equivalent to `TerrainTranscode.kdl` for overlapping ids.
-- `KrEcTerrainDiff.generated.csv`: generated comparison report; do not hand-edit as runtime policy.
+Generated evidence stays out of `dynamapper/assets`, because that folder ships whole in releases and nothing at runtime
+reads this evidence. `KrFacetTranscode.generated.kdl`, `EcFacetTranscode.generated.kdl`, `KrTerrainRouting.generated.kdl`,
+`TerrainTranscodeSnowOverrides.kdl` and `KrEcTerrainDiff.generated.csv` were removed from there on 2026-11-04. Regenerate
+evidence outside the assets folder with the devtools' `facet-evidence` and `kr-ec-terrain-diff` commands.
 
 If future evidence proves a meaningful runtime KR split, use this KDL shape:
 
