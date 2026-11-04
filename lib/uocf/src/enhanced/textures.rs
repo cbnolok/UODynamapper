@@ -230,10 +230,11 @@ pub fn decode_dds_rgba8(bytes: &[u8]) -> eyre::Result<RgbaImage> {
     ImageBuffer::from_raw(size.width, size.height, rgba).ok_or_else(|| eyre::eyre!("Could not map buffer"))
 }
 
-/// Decodes a TGA file to RGBA. A header-only TGA of width or height 0 (the last Kingdom Reborn
-/// `TileArtLegacy.uop` entry) is an empty image.
+/// Decodes a TGA file to RGBA. A header-only TGA of width or height 0 (34 `Interface.uop` entries and the last
+/// Kingdom Reborn `TileArtLegacy.uop` one) is an empty image. A payload with anything after the header is not such a
+/// placeholder, whatever it holds at the offsets of the width and height.
 pub fn decode_tga_rgba8(bytes: &[u8]) -> eyre::Result<RgbaImage> {
-    if bytes.len() >= TGA_HEADER_SIZE {
+    if bytes.len() == TGA_HEADER_SIZE {
         let dimension = |offset: usize| u16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
         if dimension(TGA_WIDTH_OFFSET) == 0 || dimension(TGA_HEIGHT_OFFSET) == 0 {
             return Ok(RgbaImage::new(0, 0));
@@ -453,5 +454,7 @@ mod tests {
         header[TGA_BITS_PER_PIXEL_OFFSET] = TGA_BITS_PER_PIXEL;
         assert_eq!(decode_tga_rgba8(&header).unwrap().dimensions(), (0, 0));
         assert!(decode_tga_rgba8(&header[..TGA_HEADER_SIZE - 1]).is_err());
+        let longer = [&header[..], &[0u8; TGA_HEADER_SIZE]].concat();
+        assert!(decode_tga_rgba8(&longer).is_err(), "a longer payload is not a placeholder");
     }
 }

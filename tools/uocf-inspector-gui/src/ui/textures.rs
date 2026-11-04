@@ -6,8 +6,8 @@
 //! such images:
 //! - The data: `Interface.uop` and the Kingdom Reborn `TileArtLegacy.uop` ship 18-byte header-only 0x0 TGAs.
 //! - Our reading: `gumpartLegacyMUL.uop` and `artLegacyMUL.uop` entries are named `.tga` but hold the classic encoding.
-//!   `decode_tga_rgba8` returns an empty image for any payload with a zero 16-bit word at the TGA's width or height,
-//!   which is most gumps and part of the art. See `decode_classic_uop_entry`.
+//!   `decode_tga_rgba8` used to return an empty image for any payload with a zero 16-bit word at the TGA's width or
+//!   height, which is most gumps and part of the art; it now refuses them. See `decode_classic_uop_entry`.
 //!
 //! So a size is checked here, before anything reaches the GPU, and the caller gets a readable message to show instead.
 

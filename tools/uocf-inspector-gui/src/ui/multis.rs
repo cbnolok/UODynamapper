@@ -1255,8 +1255,8 @@ fn crop_multi_part_rgba(
 }
 
 /// Whether art is kept in an image file format. `artLegacyMUL.uop` keeps the classic encoding, whatever the `.tga` in
-/// its entry names says: a TGA reader takes 279 of the 11,895 tiles of the shipped multis for 0x0 images, and 82 more
-/// for tiny garbage ones.
+/// its entry names says: a TGA reader refuses 279 of the 11,895 tiles of the shipped multis, and takes 82 more for tiny
+/// garbage images.
 fn art_payload_is_image_file(payload: &[u8], source: ArtSource) -> bool {
     payload.starts_with(b"DDS ") || !matches!(source, ArtSource::Mul | ArtSource::CcUop)
 }
