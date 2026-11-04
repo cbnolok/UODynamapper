@@ -54,7 +54,7 @@ pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
             let mut art_search_has_focus = false;
             ui.horizontal(|ui| {
                 ui.label("Search:");
-                let response = ui.text_edit_singleline(&mut app.search_query);
+                let response = ui.text_edit_singleline(&mut app.searches.art);
                 art_search_has_focus |= response.has_focus();
             });
 
@@ -78,7 +78,7 @@ pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
 
             ensure_art_viewer_rows(app);
             if let Some(rows) = app.art_viewer_rows.clone() {
-                let query = app.search_query.trim();
+                let query = app.searches.art.trim();
                 let sort = list_sort_controls(ui, "art_viewer_rows", &["ID", "Name", "Group"], 0);
                 let sorted_indices = sorted_indices_by(&rows, sort.ordering(), |left, right| {
                     match sort.option_index {
@@ -358,7 +358,7 @@ fn ui_tile_metadata_contents(app: &mut UopInspectorApp, ctx: &egui::Context, ui:
     let mut text_has_focus = false;
     ui.horizontal(|ui| {
         ui.label("Search:");
-        let response = ui.text_edit_singleline(&mut app.search_query);
+        let response = ui.text_edit_singleline(&mut app.searches.tile_metadata);
         text_has_focus |= response.has_focus();
     });
     ui.separator();
@@ -376,7 +376,7 @@ fn ui_cc_tiledata_table(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut
     }
     let mut change = None;
     if let (Some(tiledata), Some(rows)) = (app.cc_tiledata.clone(), app.cc_tiledata_rows.clone()) {
-        let query = app.search_query.trim();
+        let query = app.searches.tile_metadata.trim();
         let sort = list_sort_controls(
             ui,
             "cc_tiledata_rows",
@@ -535,7 +535,7 @@ fn ui_ec_tileart_table(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut 
         ui.horizontal_wrapped(|ui| tileart_editor::toolbar(app, ctx, ui, &mut edits));
     }
     if let (Some(entries), Some(rows)) = (app.ec_tileart_entries.clone(), app.ec_tileart_rows.clone()) {
-        let query = app.search_query.trim();
+        let query = app.searches.tile_metadata.trim();
         let sort = list_sort_controls(
             ui,
             "ec_tileart_rows",

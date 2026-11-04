@@ -1739,6 +1739,21 @@ pub(crate) fn find_client_file_case_insensitive(base_path: &Path, file_name: &st
     None
 }
 
+/// What is typed in each tab's search box.
+#[derive(Default)]
+pub struct TabSearches {
+    pub animations: String,
+    pub animdata: String,
+    pub art: String,
+    pub clilocs: String,
+    pub hues: String,
+    pub multis: String,
+    pub string_dictionary: String,
+    pub terrain_definition: String,
+    pub tile_metadata: String,
+    pub uop_browser: String,
+}
+
 pub struct UopInspectorApp {
     pub settings: AppSettings,
     pub logs: Vec<String>,
@@ -1794,7 +1809,7 @@ pub struct UopInspectorApp {
     // pub selected_cc_tile_id: Option<u32>,
     pub selected_legacy_source: ArtSource,
 
-    pub search_query: String,
+    pub searches: TabSearches,
     pub find_hash_query: String,
     pub hide_empty_uop_entries: bool,
     pub guess_terrain_texture_file_format: bool,
@@ -1970,7 +1985,7 @@ impl UopInspectorApp {
             selected_cliloc_file_idx: None,
             // selected_cc_tile_id: None,
             selected_legacy_source: ArtSource::Any,
-            search_query: String::new(),
+            searches: TabSearches::default(),
             find_hash_query: String::new(),
             hide_empty_uop_entries: true,
             guess_terrain_texture_file_format: false,
@@ -4443,7 +4458,7 @@ pub(crate) mod tests {
             selected_localized_file_hash: None,
             selected_cliloc_file_idx: None,
             selected_legacy_source: ArtSource::Any,
-            search_query: String::new(),
+            searches: TabSearches::default(),
             find_hash_query: String::new(),
             hide_empty_uop_entries: true,
             guess_terrain_texture_file_format: false,

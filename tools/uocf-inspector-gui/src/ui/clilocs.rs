@@ -273,7 +273,7 @@ fn search_box(app: &mut UopInspectorApp, ui: &mut egui::Ui) -> bool {
     let mut has_focus = false;
     ui.horizontal(|ui| {
         ui.label("Search:");
-        has_focus = ui.text_edit_singleline(&mut app.search_query).has_focus();
+        has_focus = ui.text_edit_singleline(&mut app.searches.clilocs).has_focus();
     });
     has_focus
 }
@@ -284,7 +284,7 @@ fn cliloc_list(
     entries: &[uocf::classic::cliloc::ClilocEntry],
     search_has_focus: bool,
 ) {
-    let query = app.search_query.trim();
+    let query = app.searches.clilocs.trim();
     let row_height = ui.spacing().interact_size.y;
     let sort = list_sort_controls(ui, "classic_cliloc_entries", &["Number", "Text"], 0);
     let sorted_indices = sorted_indices_by(entries, sort.ordering(), |left, right| {
@@ -353,7 +353,7 @@ fn localized_strings_table(
     rows: &[LocalizedStringDisplayRow],
 ) -> Option<u32> {
     let mut clicked = None;
-    let query = app.search_query.to_lowercase();
+    let query = app.searches.clilocs.to_lowercase();
     let sort = list_sort_controls(ui, "localized_strings_rows", &["ID", "String", "unk"], 0);
     let sorted_indices = sorted_indices_by(rows, sort.ordering(), |left, right| {
         match sort.option_index {

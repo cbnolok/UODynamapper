@@ -43,13 +43,13 @@ pub fn ui_animdata(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui
             let mut search_has_focus = false;
             ui.horizontal(|ui| {
                 ui.label("Search:");
-                let response = ui.text_edit_singleline(&mut app.search_query);
+                let response = ui.text_edit_singleline(&mut app.searches.animdata);
                 search_has_focus |= response.has_focus();
             });
             let sort = list_sort_controls(ui, "animdata_entries", &["ID", "Frames", "Interval"], 0);
             ui.separator();
 
-            let query = app.search_query.to_lowercase();
+            let query = app.searches.animdata.to_lowercase();
             let active_entries = animdata.active_entries().collect::<Vec<_>>();
             let sorted_indices = sorted_indices_by(&active_entries, sort.ordering(), |left, right| {
                 match sort.option_index {

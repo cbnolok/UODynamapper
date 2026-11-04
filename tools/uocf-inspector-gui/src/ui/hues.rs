@@ -311,13 +311,13 @@ fn ui_ec_hues(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui)
             let mut text_has_focus = false;
             ui.horizontal(|ui| {
                 ui.label("Search:");
-                let res = ui.text_edit_singleline(&mut app.search_query);
+                let res = ui.text_edit_singleline(&mut app.searches.hues);
                 text_has_focus |= res.has_focus();
             });
             let sort = list_sort_controls(ui, "ec_hues", &["ID", "Name", "Path", "Hash"], 0);
             ui.separator();
 
-            let query = app.search_query.to_lowercase();
+            let query = app.searches.hues.to_lowercase();
             let hue_ids: Vec<u16> = (1..=MAX_EC_HUES).collect();
             let sorted_indices = sorted_indices_by(&hue_ids, sort.ordering(), |left, right| {
                 match sort.option_index {

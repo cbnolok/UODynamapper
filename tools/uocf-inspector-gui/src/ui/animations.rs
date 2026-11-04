@@ -622,8 +622,8 @@ fn show_mul_animation_tree(
     };
 
     ui.label("Filter:");
-    let filter_response = ui.text_edit_singleline(&mut app.search_query);
-    let query = app.search_query.to_ascii_lowercase();
+    let filter_response = ui.text_edit_singleline(&mut app.searches.animations);
+    let query = app.searches.animations.to_ascii_lowercase();
 
     let mut tree = BTreeMap::<u16, BTreeMap<u16, BTreeMap<u8, MulAnimationTreeEntry>>>::new();
     let mut source_tree = BTreeMap::<u32, (u16, u16, u8, MulAnimationTreeEntry)>::new();
@@ -960,8 +960,8 @@ fn show_uop_animationframe_tree(
     max_height: f32,
 ) {
     ui.label("Filter:");
-    let filter_response = ui.text_edit_singleline(&mut app.search_query);
-    let query = app.search_query.to_ascii_lowercase();
+    let filter_response = ui.text_edit_singleline(&mut app.searches.animations);
+    let query = app.searches.animations.to_ascii_lowercase();
     let Some(entries) =
         collect_uop_animationframe_tree_entries(app, app.selected_legacy_source, &query)
     else {

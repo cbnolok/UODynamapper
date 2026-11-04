@@ -23,7 +23,7 @@ pub fn ui_terrain_definition(app: &mut UopInspectorApp, ctx: &egui::Context, ui:
 
             ui.horizontal(|ui| {
                 ui.label("Search:");
-                ui.text_edit_singleline(&mut app.search_query);
+                ui.text_edit_singleline(&mut app.searches.terrain_definition);
             });
             let sort = list_sort_controls(ui, "terrain_definition_files", &["ID", "Name", "Hash", "Bytes"], 0);
             ui.separator();
@@ -55,10 +55,10 @@ pub fn ui_terrain_definition(app: &mut UopInspectorApp, ctx: &egui::Context, ui:
                     let entry = &file.entry;
                     let name = entry.name.as_deref().unwrap_or("Unknown");
 
-                    if !app.search_query.is_empty() {
-                        if !name.to_lowercase().contains(&app.search_query.to_lowercase()) &&
-                           !entry.id.to_string().contains(&app.search_query) &&
-                           !format!("{:016X}", file.filename_hash).to_lowercase().contains(&app.search_query.to_lowercase()) {
+                    if !app.searches.terrain_definition.is_empty() {
+                        if !name.to_lowercase().contains(&app.searches.terrain_definition.to_lowercase()) &&
+                           !entry.id.to_string().contains(&app.searches.terrain_definition) &&
+                           !format!("{:016X}", file.filename_hash).to_lowercase().contains(&app.searches.terrain_definition.to_lowercase()) {
                             continue;
                         }
                     }

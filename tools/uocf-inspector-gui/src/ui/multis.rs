@@ -302,7 +302,7 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
             let mut search_has_focus = false;
             ui.horizontal(|ui| {
                 ui.label("Search:");
-                search_has_focus = ui.text_edit_singleline(&mut app.search_query).has_focus();
+                search_has_focus = ui.text_edit_singleline(&mut app.searches.multis).has_focus();
             });
             let sort = list_sort_controls(ui, "uop_multi_entries", &["ID", "Path", "Hash", "Parts"], 0);
             let housing_index = app.housing_index.clone();
@@ -312,7 +312,7 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
             let hide_empty_multis = app.multi_part_filters.hide_empty_multis;
             ui.separator();
 
-            let query = app.search_query.to_lowercase();
+            let query = app.searches.multis.to_lowercase();
             let entry_listed = |item: &uocf::enhanced::multis::MultiItem| {
                 (query.is_empty()
                     || item.id.to_string().contains(&query)

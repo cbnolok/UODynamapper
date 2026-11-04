@@ -53,12 +53,12 @@ pub fn ui_string_dictionary(app: &mut UopInspectorApp, _ctx: &egui::Context, ui:
 
         ui.horizontal(|ui| {
             ui.label("Search:");
-            ui.text_edit_singleline(&mut app.search_query);
+            ui.text_edit_singleline(&mut app.searches.string_dictionary);
         });
         let sort = list_sort_controls(ui, "string_dictionary_rows", &["Index", "Offset", "String"], 0);
         ui.separator();
 
-        let query = app.search_query.to_lowercase();
+        let query = app.searches.string_dictionary.to_lowercase();
         let sorted_indices = sorted_indices_by(&rows, sort.ordering(), |left, right| {
             match sort.option_index {
                 1 => string_number(&left.offset).cmp(&string_number(&right.offset)),

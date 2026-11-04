@@ -179,7 +179,7 @@ pub fn ui_uop_browser(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut e
                 let mut text_has_focus = false;
                 ui.horizontal(|ui| {
                     ui.label("Filter:");
-                    let res = ui.text_edit_singleline(&mut app.search_query);
+                    let res = ui.text_edit_singleline(&mut app.searches.uop_browser);
                     text_has_focus |= res.has_focus();
                 });
                 ui.horizontal(|ui| {
@@ -212,7 +212,7 @@ pub fn ui_uop_browser(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut e
                         _ => std::cmp::Ordering::Equal,
                     }
                 });
-                let query = app.search_query.to_lowercase();
+                let query = app.searches.uop_browser.to_lowercase();
                 let visible_hashes: Vec<u64> = sorted_indices
                     .iter()
                     .map(|index| &entry_labels[*index])
