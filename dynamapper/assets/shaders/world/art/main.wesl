@@ -24,7 +24,7 @@ import package::shaders::world::art::art_bindings::{
     item_surface_atlas, item_surface_lookup, item_surface_sampler,
     INV_SQRT_2, BILLBOARD_RIGHT_XZ, FLAT_QUAD_FORWARD_XZ, HEIGHT_SCALE, DEPTH_CLASS_REGULAR, DEPTH_CLASS_BACKGROUND,
     DEPTH_CLASS_FOLIAGE, DEPTH_CLASS_ROOF, DEPTH_CLASS_SURFACE_LIKE_FLOOR, PASS_MODE_OPAQUE,
-    PASS_MODE_TRANSPARENT, PASS_MODE_SHADOW, SURFACE_LIKE_DEPTH_CLASS_OFFSET
+    PASS_MODE_TRANSPARENT, PASS_MODE_SHADOW, SURFACE_LIKE_DEPTH_CLASS_OFFSET, STATIC_INSTANCE_FLAG_LEGACY_ART
 };
 import package::shaders::world::art::hue::{apply_static_hue, apply_ec_sprite_hue, STATIC_HUE_FLAG_APPLY, STATIC_HUE_FLAG_EC_SPRITE};
 import package::shaders::world::art::shading::apply_art_surface_shading;
@@ -419,6 +419,9 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
         let flat_water_energy = global_light.ambient_strength + global_light.land_diffuse_strength * flat_water_lam;
         shaded = vec4<f32>(shaded.rgb * flat_water_energy, shaded.a);
     } else if (!use_ec_item_water) {
+        // Fake normals model KR's WorldArt. Legacy art already has its light painted in, in any
+        // render style, and gains false bright and dark bands along its walls from them.
+        let is_legacy_art = (inst.is_wet_flags & STATIC_INSTANCE_FLAG_LEGACY_ART) != 0u;
         shaded = vec4<f32>(apply_art_surface_shading(
             shaded.rgb,
             uv_in_tile_for_shading,
@@ -427,7 +430,7 @@ fn shade_fragment(in: ArtVertexOutput, sample_index: u32) -> ArtFragmentOutput {
             scene.light_direction,
             global_light.light_color,
             global_light.atmosphere_tint,
-            effects.enable_art_fake_normals,
+            select(effects.enable_art_fake_normals, 0u, is_legacy_art),
             effects.art_shadow_strength,
             effects.art_highlight_strength,
             effects.art_depth_tint_strength,
