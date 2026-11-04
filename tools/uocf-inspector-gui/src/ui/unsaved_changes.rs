@@ -40,6 +40,7 @@ const TAB_EDITORS: &[TabEditor] = &[
     super::classic_music::TAB_EDITOR,
     super::legacy_terrain::TAB_EDITOR,
     super::terrain_definition_editor::TAB_EDITOR,
+    super::terrain_definition_editor::TERRAIN_TAB_EDITOR,
     super::uop_browser::WAYPOINTS_TAB_EDITOR,
     super::uop_browser::TEXT_ENTRIES_TAB_EDITOR,
 ];
@@ -70,6 +71,11 @@ fn dirty_editors(app: &UopInspectorApp, tab: ViewMode) -> Vec<&'static TabEditor
 
 fn all_dirty_editors(app: &UopInspectorApp) -> Vec<&'static TabEditor> {
     TAB_EDITORS.iter().filter(|editor| (editor.is_dirty)(app)).collect()
+}
+
+/// The tab on screen; while a switch is being noticed, the one being left.
+pub(super) fn tab_on_screen(app: &UopInspectorApp) -> ViewMode {
+    app.unsaved_changes.shown_tab.unwrap_or(app.view_mode)
 }
 
 /// Notices a tab switch, and keeps the tab on screen while it has unsaved changes.

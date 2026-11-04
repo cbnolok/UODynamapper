@@ -1,5 +1,5 @@
-//! The TerrainDefinition.uop view of the UOP browser: the selected entry, and the editor of every definition of the
-//! package (`logic/terrain_definition_editor.rs`).
+//! The TerrainDefinition.uop view of the UOP browser and of the Terrain Def tab: the selected entry, and the editor of
+//! every definition of the package (`logic/terrain_definition_editor.rs`).
 
 use std::path::Path;
 
@@ -11,22 +11,42 @@ use uocf::enhanced::terrain_definition::{
 use uocf::uop_container::package::UopPackage;
 
 use super::UOP_PATCHER_NOTE;
-use super::unsaved_changes::TabEditor;
+use super::unsaved_changes::{tab_on_screen, TabEditor};
 use crate::app::{UopInspectorApp, ViewMode};
 use crate::logic::terrain_definition_editor::{TerrainDefinitionEditor, TerrainDefinitionField};
 
 pub(super) const TAB_EDITOR: TabEditor = TabEditor {
     tab: ViewMode::UopExplorer,
     label: "the TerrainDefinition.uop definitions",
-    is_dirty: |app| app.terrain_definition_editor.as_ref().is_some_and(|editor| editor.edits.is_dirty()),
-    save: |app| {
-        if let Some(mut editor) = app.terrain_definition_editor.take() {
-            save_with_dialog(app, &mut editor);
-            app.terrain_definition_editor = Some(editor);
-        }
-    },
-    discard: |app| app.terrain_definition_editor = None,
+    is_dirty: |app| is_dirty(app) && tab_on_screen(app) != ViewMode::TerrainDefinition,
+    save,
+    discard,
 };
+
+/// The same editor on the Terrain Def tab. Only one of the two is dirty at a time, so the question names it once and
+/// its save asks for one path.
+pub(super) const TERRAIN_TAB_EDITOR: TabEditor = TabEditor {
+    tab: ViewMode::TerrainDefinition,
+    label: TAB_EDITOR.label,
+    is_dirty: |app| is_dirty(app) && tab_on_screen(app) == ViewMode::TerrainDefinition,
+    save,
+    discard,
+};
+
+fn is_dirty(app: &UopInspectorApp) -> bool {
+    app.terrain_definition_editor.as_ref().is_some_and(|editor| editor.edits.is_dirty())
+}
+
+fn save(app: &mut UopInspectorApp) {
+    if let Some(mut editor) = app.terrain_definition_editor.take() {
+        save_with_dialog(app, &mut editor);
+        app.terrain_definition_editor = Some(editor);
+    }
+}
+
+fn discard(app: &mut UopInspectorApp) {
+    app.terrain_definition_editor = None;
+}
 
 fn save_with_dialog(app: &mut UopInspectorApp, editor: &mut TerrainDefinitionEditor) {
     let (name, extensions) = UOP_FILTER;
@@ -402,5 +422,78 @@ fn definition_details(
     });
     if definition.validate().iter().any(TerrainDefinitionIssue::crashes_client) {
         ui.colored_label(ERROR_COLOR, "This definition would crash the client.");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::tests::test_app;
+    use crate::ui::test_support::{client_roots, output_path, EC_CLIENT_ROOTS_ENV};
+    use uocf::uop_container::package::UopPackage;
+    use uocf::utils::path::find_file_ignoring_case;
+
+    const MATERIAL: u32 = 3;
+    const EDITED_FIELD: f32 = 2.5;
+
+    fn app_with_an_edit(tab: ViewMode) -> UopInspectorApp {
+        let definition = TerrainDefinitionEntry { id: MATERIAL, ..TerrainDefinitionEntry::default() };
+        let mut package = UopPackage::new_default();
+        let path = uocf::enhanced::terrain_definition::terrain_definition_entry_path(MATERIAL);
+        package.add_file_from_memory(&definition.to_bytes().unwrap(), &path, uocf::uop_container::file::CompressionFlag::Zlib).unwrap();
+        let mut editor = TerrainDefinitionEditor::open(std::path::PathBuf::new(), &package, None).unwrap();
+        editor.edit(MATERIAL, TerrainDefinitionField::Field34, |definition| definition.field_34 = EDITED_FIELD);
+
+        let mut app = test_app();
+        app.terrain_definition_editor = Some(editor);
+        app.view_mode = tab;
+        crate::ui::unsaved_changes::hold_tab_switch(&mut app);
+        app
+    }
+
+    #[test]
+    fn the_editor_is_named_once_for_the_tab_it_is_on_and_discarding_leaves_nothing() {
+        for (tab, on_tab, other) in
+            [(ViewMode::TerrainDefinition, TERRAIN_TAB_EDITOR, TAB_EDITOR), (ViewMode::UopExplorer, TAB_EDITOR, TERRAIN_TAB_EDITOR)]
+        {
+            let mut app = app_with_an_edit(tab);
+            assert!((on_tab.is_dirty)(&app), "{tab:?}");
+            assert!(!(other.is_dirty)(&app), "{tab:?}");
+
+            app.view_mode = ViewMode::Home;
+            crate::ui::unsaved_changes::hold_tab_switch(&mut app);
+            assert_eq!(app.view_mode, tab, "the switch away is held");
+
+            (on_tab.discard)(&mut app);
+            assert!(!(on_tab.is_dirty)(&app) && !(other.is_dirty)(&app), "{tab:?}");
+        }
+    }
+
+    #[test]
+    #[ignore = "needs real Enhanced clients: set UO_EC_CLIENT_ROOTS and TMPDIR, and run with --ignored"]
+    fn a_shipped_package_saves_the_same_bytes_and_an_edit_comes_back_after_reopening() {
+        for root in client_roots(EC_CLIENT_ROOTS_ENV) {
+            let Some(source) = find_file_ignoring_case(&root, uocf::enhanced::terrain_definition::TERRAIN_DEFINITION_UOP_NAME) else {
+                println!("{}: no package", root.display());
+                continue;
+            };
+            let package = UopPackage::load(&source).unwrap();
+            let mut editor = TerrainDefinitionEditor::open(source.clone(), &package, None).unwrap();
+            let output = output_path("TerrainDefinition.uop");
+
+            editor.save(&output).unwrap();
+            let same = std::fs::read(&output).unwrap() == std::fs::read(&source).unwrap();
+            assert!(same, "{}: a save without changes differs", root.display());
+
+            let material = *editor.definitions.keys().next().unwrap();
+            editor.edit(material, TerrainDefinitionField::Field34, |definition| definition.field_34 = EDITED_FIELD);
+            let changes = editor.save(&output).unwrap();
+            assert_eq!(changes.replaced, 1);
+            let reopened = TerrainDefinitionEditor::open(source.clone(), &UopPackage::load(&output).unwrap(), None).unwrap();
+            assert_eq!(reopened.definitions[&material].field_34, EDITED_FIELD);
+            assert_eq!(reopened.definitions.len(), editor.definitions.len());
+            std::fs::remove_file(&output).unwrap();
+            println!("{}: same bytes; the edit of material {material} comes back", root.display());
+        }
     }
 }

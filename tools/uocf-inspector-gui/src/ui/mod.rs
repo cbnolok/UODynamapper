@@ -10,7 +10,7 @@ pub mod animdata_editor;
 pub mod art_viewer;
 pub mod uop_browser;
 mod legacy_terrain;
-mod terrain_definition_editor;
+pub(crate) mod terrain_definition_editor;
 pub mod multis;
 mod multi_editor;
 mod tileart_editor;
@@ -36,6 +36,28 @@ pub mod classic_defs;
 pub mod classic_image_import;
 pub mod textures;
 pub(crate) mod unsaved_changes;
+
+/// What the tests of the editors share.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use std::path::PathBuf;
+
+    pub(crate) const EC_CLIENT_ROOTS_ENV: &str = "UO_EC_CLIENT_ROOTS";
+
+    /// The client folders the variable lists.
+    pub(crate) fn client_roots(variable: &str) -> Vec<PathBuf> {
+        let roots = std::env::var_os(variable).unwrap_or_else(|| panic!("set {variable}"));
+        std::env::split_paths(&roots).collect()
+    }
+
+    /// Where a test writes a file `name`: an absolute path under `TMPDIR`, which the runs on real clients point away
+    /// from them.
+    pub(crate) fn output_path(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("uocf-inspector-{}-{name}", std::process::id()));
+        assert!(path.is_absolute(), "{}", path.display());
+        path
+    }
+}
 
 /// The state of the read-only Classic file views.
 #[derive(Default)]

@@ -1,5 +1,5 @@
 use crate::app::{TerrainDefinitionFileEntry, UopInspectorApp};
-use crate::ui::{list_sort_controls, sorted_indices_by};
+use crate::ui::{list_sort_controls, sorted_indices_by, terrain_definition_editor};
 use eframe::egui;
 use uocf::enhanced::terrain_definition::{TerrainDefinitionEntry, TerrainTextureType};
 use std::collections::BTreeSet;
@@ -13,6 +13,21 @@ pub fn ui_terrain_definition(app: &mut UopInspectorApp, ctx: &egui::Context, ui:
         return;
     };
     let files = files_arc.as_ref();
+    let package = app
+        .uop_cache
+        .loaded_uops
+        .iter()
+        .find(|loaded| terrain_definition_editor::is_terrain_definition_package(&loaded.path))
+        .cloned();
+
+    if let Some(loaded) = package.as_ref().filter(|loaded| terrain_definition_editor::is_editing(app, &loaded.path)) {
+        egui::CentralPanel::default().show(ui, |ui| {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                terrain_definition_editor::ui_terrain_definition_editor(app, ui, &loaded.path, &loaded.package);
+            });
+        });
+        return;
+    }
 
     egui::Panel::left("terrain_def_panel")
         .resizable(true)
@@ -84,6 +99,10 @@ pub fn ui_terrain_definition(app: &mut UopInspectorApp, ctx: &egui::Context, ui:
                 if let Some(hash) = app.selected_terrain_def_hash {
                     app.select_raw_uop_entry("terraindefinition.uop", hash);
                 }
+            }
+            if let Some(loaded) = &package {
+                ui.separator();
+                terrain_definition_editor::ui_terrain_definition_editor(app, ui, &loaded.path, &loaded.package);
             }
         });
     });
