@@ -14,7 +14,7 @@ UO asset data during development and research.
 | CC Tiledata | Classic Client `tiledata.mul` land and item tile metadata. |
 | Tile Metadata | Combined CC tiledata and EC tileart metadata (switchable source): the table on top and the record below, in groups of editable fields and flag checkboxes, with `Edit` to change them. Saves a copy of `tiledata.mul` or `tileart.uop`. A tileart record ends with its textures and their bounding boxes, which follow the image windows. |
 | Animations | Mobile animations from CC `anim*.mul`, CC or EC `AnimationFrame*.uop`; per action, Export frames (PNGs plus KDL) and Replace frames (into copies of the files). |
-| Animated items | One tab with a switch: `AnimationDefinition.uop` (Enhanced Client, Kingdom Reborn) and `animdata.mul` (Classic), with the frames played in the chosen art source and hue. |
+| Animated items | One tab with a switch: `AnimationDefinition.uop` (Enhanced Client, Kingdom Reborn) and `animdata.mul` (Classic), with the frames played in the chosen art source and hue. `Edit` changes an `animdata.mul` record and saves a copy. |
 | Gumps | CC or EC gump art (switchable source), and the Enhanced Client's own interface images: the DDS and TGA files of `Interface.uop` outside `gumpart`, by folder, with export and replace. |
 | Multis | Multi-tile structures from CC or EC sources. |
 | Hues | CC `hues.mul` or EC `hues.uop` hue tables (switchable source). |

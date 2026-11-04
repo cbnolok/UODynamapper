@@ -1,5 +1,5 @@
 use crate::app::{ArtSource, UopInspectorApp};
-use crate::ui::{animated_items, arrow_delta, list_sort_controls, move_selection, sorted_indices_by};
+use crate::ui::{animated_items, animdata_editor, arrow_delta, list_sort_controls, move_selection, sorted_indices_by};
 use eframe::egui;
 use uocf::classic::art::STATIC_TILE_ID_BASE;
 
@@ -22,7 +22,7 @@ pub fn ui_animdata(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui
 
     if animdata
         .get(app.selected_animdata_id)
-        .map(|entry| !entry.is_active())
+        .map(|entry| !entry.is_active() && !app.animdata_editor.enabled)
         .unwrap_or(true)
     {
         if let Some(entry) = animdata.active_entries().next() {
@@ -104,6 +104,7 @@ pub fn ui_animdata(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui
             });
         });
 
+    let mut change = None;
     egui::CentralPanel::default().show(ui, |ui| {
         let Some(entry) = animdata.get(app.selected_animdata_id) else {
             ui.centered_and_justified(|ui| {
@@ -112,7 +113,11 @@ pub fn ui_animdata(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui
             return;
         };
 
+        let editing = app.animdata_editor.enabled;
+        let mut edited = entry.clone();
+        let mut changed = false;
         ui.heading(format!("AnimData {}", entry.id));
+        ui.horizontal(|ui| animdata_editor::toolbar(app, ui, animdata.entries.len()));
         ui.separator();
         animated_items::art_source_controls(app, ui);
         animated_items::hue_controls(app, ui);
@@ -146,18 +151,7 @@ pub fn ui_animdata(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui
             ui.label("Chunk header");
             ui.monospace(format!("0x{:08X}", entry.chunk_header as u32));
             ui.end_row();
-            ui.label("Unknown");
-            ui.label(format!("0x{:02X}", entry.unknown));
-            ui.end_row();
-            ui.label("Frame count");
-            ui.label(entry.frame_count.to_string());
-            ui.end_row();
-            ui.label("Frame interval");
-            ui.label(entry.frame_interval.to_string());
-            ui.end_row();
-            ui.label("Frame start");
-            ui.label(entry.frame_start.to_string());
-            ui.end_row();
+            changed |= animdata_editor::record_fields(ui, &mut edited, editing);
         });
 
         ui.separator();
@@ -229,7 +223,7 @@ pub fn ui_animdata(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui
                 };
                 let tile_id = entry.id as i32 + offset as i32;
                 ui.label(index.to_string());
-                ui.label(offset.to_string());
+                changed |= animdata_editor::frame_offset_field(ui, &mut edited.frames[index], editing);
                 ui.label(tile_id.to_string());
 
                 if tile_id >= 0 {
@@ -259,7 +253,15 @@ pub fn ui_animdata(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui
             ui.separator();
             ui.label(format!("Trailing bytes: {}", animdata.trailing_bytes.len()));
         }
+        if changed {
+            change = Some(edited);
+        }
     });
+    // The copy of the records held here goes first, or storing would copy them again on every edit.
+    drop(animdata);
+    if let Some(entry) = change {
+        animdata_editor::store(app, entry);
+    }
 }
 
 pub(super) fn animdata_preview_art_id(tile_id: u32, source: ArtSource) -> u32 {

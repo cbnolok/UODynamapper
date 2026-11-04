@@ -6,6 +6,7 @@ pub mod animation_definitions;
 pub mod animations;
 pub mod animated_items;
 pub mod animdata;
+pub mod animdata_editor;
 pub mod art_viewer;
 pub mod uop_browser;
 mod legacy_terrain;

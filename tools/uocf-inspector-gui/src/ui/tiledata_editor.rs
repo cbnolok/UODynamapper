@@ -159,7 +159,7 @@ fn save(app: &mut UopInspectorApp) {
     }
 }
 
-fn same_file(left: &std::path::Path, right: &std::path::Path) -> bool {
+pub(super) fn same_file(left: &std::path::Path, right: &std::path::Path) -> bool {
     match (left.canonicalize(), right.canonicalize()) {
         (Ok(left), Ok(right)) => left == right,
         _ => left == right,

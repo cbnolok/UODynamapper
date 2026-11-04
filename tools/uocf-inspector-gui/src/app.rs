@@ -1905,6 +1905,7 @@ pub struct UopInspectorApp {
     pub multi_editor: crate::logic::multi_editor::MultiEditor,
     pub tileart_editor: crate::logic::tileart_editor::TileArtEditor,
     pub tiledata_editor: crate::ui::tiledata_editor::TileDataEditor,
+    pub animdata_editor: crate::ui::animdata_editor::AnimDataEditor,
     pub waypoint_document: Option<crate::logic::waypoint_editor::WaypointDocument>,
     pub legacy_terrain_editor: Option<crate::logic::legacy_terrain_editor::LegacyTerrainEditor>,
     pub terrain_definition_editor: Option<crate::logic::terrain_definition_editor::TerrainDefinitionEditor>,
@@ -2002,6 +2003,7 @@ impl UopInspectorApp {
             multi_editor: Default::default(),
             tileart_editor: Default::default(),
             tiledata_editor: Default::default(),
+            animdata_editor: Default::default(),
             waypoint_document: None,
             legacy_terrain_editor: None,
             terrain_definition_editor: None,
@@ -2155,6 +2157,7 @@ impl UopInspectorApp {
         self.multi_editor = Default::default();
         self.tileart_editor = Default::default();
         self.tiledata_editor = Default::default();
+        self.animdata_editor = Default::default();
         self.waypoint_document = None;
         self.legacy_terrain_editor = None;
         self.terrain_definition_editor = None;
@@ -4538,6 +4541,7 @@ pub(crate) mod tests {
             multi_editor: Default::default(),
             tileart_editor: Default::default(),
             tiledata_editor: Default::default(),
+            animdata_editor: Default::default(),
             waypoint_document: None,
             legacy_terrain_editor: None,
             terrain_definition_editor: None,

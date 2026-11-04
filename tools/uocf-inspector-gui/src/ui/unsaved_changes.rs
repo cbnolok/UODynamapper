@@ -29,6 +29,7 @@ pub(crate) struct TabEditor {
 const TAB_EDITORS: &[TabEditor] = &[
     super::housing::TAB_EDITOR,
     super::animation_definitions::TAB_EDITOR,
+    super::animdata_editor::TAB_EDITOR,
     super::effects::TAB_EDITOR,
     super::multi_editor::TAB_EDITOR,
     super::tileart_editor::TAB_EDITOR,
