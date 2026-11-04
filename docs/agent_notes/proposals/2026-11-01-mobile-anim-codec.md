@@ -410,8 +410,9 @@ MOBILE_ANIM_CODEC_PASSES=shrink MOBILE_ANIM_CODEC_SHRINK_PARTS=b,k2 MOBILE_ANIM_
 | The client's files ("× shipped") | 1235.0 MB | 1984.5 MB |
 
 - **The 6904 MB package is an old pack, not today's packer.** Its file table holds 2522 entries and 7682.9 MB
-  uncompressed. 2291 entries are stored raw and only 225 with zstd, so most BC7 pages were never compressed; 73 % of
-  the atlas area is empty. The real pack above has the same 7682.9 MB of pages, all with zstd, and it passed
+  uncompressed. 2291 entries are stored raw and only 225 with zstd, so most BC7 pages were never compressed. 73 % of
+  the used page area holds no painted pixel, but only 26.5 % is outside the padded frames; section 11 reconciles the
+  two. The real pack above has the same 7682.9 MB of pages and hue masks, all with zstd, and it passed
   `udd-cli tool validate`.
 - **The benchmark's BC7 baseline is about 8–9 % under a real pack,** because it leaves out atlas pages and gutters. To
   read any × BC7 here as × real pack, multiply by 0.913 for Classic and 0.917 for Enhanced. The real packs were measured
@@ -1092,11 +1093,11 @@ where zstd 19 read 42.6 and 115.2 ms, so their ratios hold. All rows are lossles
 | 5 | Row spans (a), zstd 19, kept as spans | 133.2 / **35.7** | 26.7 / **7.3** | 22.0 / **5.7** | 4.7 / **1.2** | **13.6** / **2.9** | 250.4 / **51.6** | 753 | ≈ 735 | 0.97 | 0.86 | 0.69 |
 | 6 | Row spans (a), zstd 19, expanded | 140.7 / **40.2** | 30.3 / **8.3** | 26.0 / **6.7** | 5.4 / **1.5** | **14.2** / **3.2** | 262.2 / **55.4** | 687 | ≈ 735 | 0.97 | 0.86 | 0.69 |
 | 7 | Row spans (a), zstd 19, expanded, duplicates pointed at one blob | 140.7 / **40.2** | 30.3 / **8.3** | 26.0 / **6.7** | 5.4 / **1.5** | **14.2** / **3.2** | 262.2 / **55.4** | 687 | ≈ 708 | 0.93 | 0.83 | 0.67 |
-| 8 | Row spans (a), best dictionary per body, expanded | 141.1 / **40.2** | 30.3 / **8.3** | 27.2 / **7.0** | 5.4 / **1.5** | **13.8** / **3.2** | 286.8 / **60.4** | 702 | ≈ 716 | 0.94 | 0.84 | 0.68 |
-| 9 | Row spans (a), best dictionary per body, duplicates (2 + 3 + 8a) | 141.1 / **40.2** | 30.3 / **8.3** | 27.2 / **7.0** | 5.4 / **1.5** | **13.8** / **3.2** | 286.8 / **60.4** | 702 | ≈ 689 | 0.91 | 0.80 | 0.65 |
+| 8 | Row spans (a), best dictionary per body, expanded | 147.5 / **41.7** | 36.7 / **9.9** | 29.3 / **7.3** | 9.3 / **2.5** | **13.8** / **3.2** | 286.8 / **60.4** | 702 | ≈ 716 | 0.94 | 0.84 | 0.68 |
+| 9 | Row spans (a), best dictionary per body, duplicates (2 + 3 + 8a) | 147.5 / **41.7** | 36.7 / **9.9** | 29.3 / **7.3** | 9.3 / **2.5** | **13.8** / **3.2** | 286.8 / **60.4** | 702 | ≈ 689 | 0.91 | 0.80 | 0.65 |
 | 10 | Slot plane, zstd 19 | 150.2 / **40.6** | 30.9 / **8.4** | 24.6 / **6.5** | 5.2 / **1.4** | **15.0** / **3.2** | 276.9 / **57.2** | 667 | ≈ 761 | 1.00 | 0.89 | 0.72 |
-| 11 | Slot plane, best dictionary per body | 149.7 / **42.0** | 31.8 / **8.8** | 25.6 / **6.1** | 5.0 / **1.3** | not run | not run | 690 | ≈ 751 | 0.99 | 0.88 | 0.71 |
-| 12 | Slot plane, best dictionary per body, duplicates (2 + 3) | 149.7 / **42.0** | 31.8 / **8.8** | 25.6 / **6.1** | 5.0 / **1.3** | not run | not run | 690 | ≈ 724 | 0.95 | 0.84 | 0.68 |
+| 11 | Slot plane, best dictionary per body | 151.4 / **41.8** | 35.5 / **9.9** | 26.3 / **7.0** | 7.8 / **2.1** | not run | not run | 690 | ≈ 751 | 0.99 | 0.88 | 0.71 |
+| 12 | Slot plane, best dictionary per body, duplicates (2 + 3) | 151.4 / **41.8** | 35.5 / **9.9** | 26.3 / **7.0** | 7.8 / **2.1** | not run | not run | 690 | ≈ 724 | 0.95 | 0.84 | 0.68 |
 | 13 | Painted only (b), runs apart, zstd 19, expanded | 155.0 / **44.0** | 32.9 / **9.0** | 31.1 / **7.9** | 6.3 / **1.7** | **15.1** / **3.5** | 277.4 / **57.1** | 624 | ≈ 744 | 0.98 | 0.87 | 0.70 |
 | 14 | Luma, MED, zstd 19 | 1102 / 305.0 | 222.4 / **59.5** | 142.4 / **37.4** | 29.8 / **7.9** | **93.4** / **21.1** | 2186 / 448.0 | 98 | ≈ 828 | 1.09 | 0.97 | 0.78 |
 | 15 | Luma, MED, 10 streams, zstd 19 | 1455 / 402.9 | 294.5 / **78.7** | 200.7 / **52.5** | 42.4 / **10.9** | **125.7** / **27.6** | 2873 / 593.0 | 70 | ≈ 840 | 1.10 | 0.98 | 0.79 |
@@ -1108,23 +1109,23 @@ where zstd 19 read 42.6 and 115.2 ms, so their ratios hold. All rows are lossles
 
 | # | Candidate | Creatures, five directions, 1 / 4 threads ms | Creatures, faced, 1 / 4 | Dressed NPCs, five directions, 1 / 4 | Dressed NPCs, faced, 1 / 4 | Uniform, 4 threads, five / faced | Worst, 4 threads, five / faced | Decode MB/s, one thread | Disk MB | × zstd 19 | × real pack | × shipped |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | Painted only + coverage row spans, LZ4 HC, kept as spans | 91.5 / **24.1** | 18.8 / **5.2** | 11.4 / **3.1** | 2.4 / **0.7** | **6.7** / **1.6** | pending | 4380 | ≈ 2178 | 1.09 | 1.10 | 1.10 |
-| 2 | Painted only (b), LZ4 HC, kept as spans | 100.2 / **26.8** | 20.9 / **5.7** | 11.0 / **2.9** | 2.3 / **0.7** | **7.0** / **1.7** | pending | 4242 | ≈ 2210 | 1.11 | 1.11 | 1.11 |
-| 3 | Both planes in row spans (c), LZ4 HC, kept as spans | 109.8 / **28.0** | 22.5 / **5.8** | 12.5 / **3.3** | 2.6 / **0.8** | **7.6** / **1.7** | pending | 3896 | ≈ 2253 | 1.13 | 1.13 | 1.14 |
+| 1 | Painted only + coverage row spans, LZ4 HC, kept as spans | 91.5 / **24.1** | 18.8 / **5.2** | 11.4 / **3.1** | 2.4 / **0.7** | **6.7** / **1.6** | **104.8** / **24.5** | 4380 | ≈ 2178 | 1.09 | 1.10 | 1.10 |
+| 2 | Painted only (b), LZ4 HC, kept as spans | 100.2 / **26.8** | 20.9 / **5.7** | 11.0 / **2.9** | 2.3 / **0.7** | **7.0** / **1.7** | **117.9** / **24.7** | 4242 | ≈ 2210 | 1.11 | 1.11 | 1.11 |
+| 3 | Both planes in row spans (c), LZ4 HC, kept as spans | 109.8 / **28.0** | 22.5 / **5.8** | 12.5 / **3.3** | 2.6 / **0.8** | **7.6** / **1.7** | **121.3** / **25.2** | 3896 | ≈ 2253 | 1.13 | 1.13 | 1.14 |
 | 4 | Slot + coverage planes, LZ4 HC | 135.8 / **35.9** | 28.4 / **7.4** | 14.8 / **3.9** | 3.2 / **0.9** | **9.9** / **2.1** | **167.9** / **34.8** | 3047 | ≈ 2446 | 1.22 | 1.23 | 1.23 |
-| 5 | Both planes in row spans (c), LZ4 HC, expanded | 131.7 / **36.4** | 28.4 / **7.5** | 21.5 / **5.7** | 4.5 / **1.2** | **11.6** / **2.6** | pending | 2580 | ≈ 2253 | 1.13 | 1.13 | 1.14 |
+| 5 | Both planes in row spans (c), LZ4 HC, expanded | 131.7 / **36.4** | 28.4 / **7.5** | 21.5 / **5.7** | 4.5 / **1.2** | **11.6** / **2.6** | **161.5** / **33.4** | 2580 | ≈ 2253 | 1.13 | 1.13 | 1.14 |
 | 6 | BC7, zstd 7 (today, stored; not lossless) | 201.8 / **51.4** | 41.0 / **10.5** | 30.2 / **7.5** | 6.0 / **1.6** | **15.3** / not run | **231.1** / not run | not in this run | ≈ 1904 | 0.95 | 0.96 | 0.96 |
-| 7 | Painted only (b), LZ4 HC, expanded | 258.6 / **67.9** | 53.0 / **14.3** | 39.8 / **10.1** | 8.4 / **2.2** | **19.4** / **4.4** | pending | 1459 | ≈ 2210 | 1.11 | 1.11 | 1.11 |
-| 8 | Painted only + coverage row spans, LZ4 HC, expanded | 262.2 / **68.0** | 53.9 / **14.7** | 44.1 / **11.2** | 9.4 / **2.5** | **21.1** / **4.8** | pending | 1368 | ≈ 2178 | 1.09 | 1.10 | 1.10 |
-| 9 | Painted only + coverage row spans, zstd 19, kept as spans | 332.6 / **85.8** | 69.4 / **18.2** | 45.4 / **11.1** | 9.0 / **2.4** | **24.7** / **5.2** | pending | 1175 | ≈ 1806 | 0.90 | 0.91 | 0.91 |
-| 10 | Painted only (b), zstd 19, kept as spans | 349.9 / **90.3** | 73.0 / **19.0** | 44.6 / **11.2** | 8.9 / **2.4** | **23.8** / **5.8** | pending | 1151 | ≈ 1830 | 0.92 | 0.92 | 0.92 |
-| 11 | Both planes in row spans (c), zstd 19, kept as spans | 361.9 / **92.0** | 72.4 / **18.7** | 47.0 / **12.0** | 10.1 / **2.6** | **25.8** / **5.6** | pending | 1084 | ≈ 1869 | 0.93 | 0.94 | 0.94 |
-| 12 | Both planes in row spans (c), zstd 19, expanded | 389.3 / **100.3** | 78.7 / **20.5** | 55.1 / **14.1** | 11.2 / **2.9** | **29.3** / **6.7** | pending | 960 | ≈ 1869 | 0.93 | 0.94 | 0.94 |
+| 7 | Painted only (b), LZ4 HC, expanded | 258.6 / **67.9** | 53.0 / **14.3** | 39.8 / **10.1** | 8.4 / **2.2** | **19.4** / **4.4** | 271.0 / **56.0** | 1459 | ≈ 2210 | 1.11 | 1.11 | 1.11 |
+| 8 | Painted only + coverage row spans, LZ4 HC, expanded | 262.2 / **68.0** | 53.9 / **14.7** | 44.1 / **11.2** | 9.4 / **2.5** | **21.1** / **4.8** | 274.5 / **56.9** | 1368 | ≈ 2178 | 1.09 | 1.10 | 1.10 |
+| 9 | Painted only + coverage row spans, zstd 19, kept as spans | 332.6 / **85.8** | 69.4 / **18.2** | 45.4 / **11.1** | 9.0 / **2.4** | **24.7** / **5.2** | 383.9 / **78.7** | 1175 | ≈ 1806 | 0.90 | 0.91 | 0.91 |
+| 10 | Painted only (b), zstd 19, kept as spans | 349.9 / **90.3** | 73.0 / **19.0** | 44.6 / **11.2** | 8.9 / **2.4** | **23.8** / **5.8** | 404.0 / **82.4** | 1151 | ≈ 1830 | 0.92 | 0.92 | 0.92 |
+| 11 | Both planes in row spans (c), zstd 19, kept as spans | 361.9 / **92.0** | 72.4 / **18.7** | 47.0 / **12.0** | 10.1 / **2.6** | **25.8** / **5.6** | 429.2 / **85.9** | 1084 | ≈ 1869 | 0.93 | 0.94 | 0.94 |
+| 12 | Both planes in row spans (c), zstd 19, expanded | 389.3 / **100.3** | 78.7 / **20.5** | 55.1 / **14.1** | 11.2 / **2.9** | **29.3** / **6.7** | 455.0 / **92.9** | 960 | ≈ 1869 | 0.93 | 0.94 | 0.94 |
 | 13 | Row spans (a), zstd 19, expanded | 421.4 / **108.6** | 84.8 / **22.3** | 60.6 / **15.3** | 12.3 / **3.1** | **31.2** / **6.9** | 474.9 / **97.4** | 895 | ≈ 1942 | 0.97 | 0.98 | 0.98 |
 | 14 | Slot + coverage planes, zstd 19 | 442.5 / **120.1** | 94.7 / **23.3** | 57.9 / **16.5** | 12.5 / **3.3** | **30.8** / **6.8** | 493.8 / **102.4** | 866 | ≈ 2000 | 1.00 | 1.01 | 1.01 |
-| 15 | Painted only + coverage row spans, zstd 19, expanded | 505.3 / **129.0** | 101.3 / **26.3** | 75.7 / **20.0** | 15.9 / **4.4** | **37.6** / **8.4** | pending | 736 | ≈ 1806 | 0.90 | 0.91 | 0.91 |
-| 16 | Painted only + coverage row spans, zstd 19, expanded, duplicates (2 + 8) | 505.3 / **129.0** | 101.3 / **26.3** | 75.7 / **20.0** | 15.9 / **4.4** | **37.6** / **8.4** | pending | 736 | ≈ 1795 | 0.90 | 0.90 | 0.90 |
-| 17 | Painted only (b), zstd 19, expanded | 504.5 / **130.3** | 103.5 / **27.6** | 77.1 / **19.5** | 15.8 / **4.1** | **36.8** / **8.3** | pending | 754 | ≈ 1830 | 0.92 | 0.92 | 0.92 |
+| 15 | Painted only + coverage row spans, zstd 19, expanded | 505.3 / **129.0** | 101.3 / **26.3** | 75.7 / **20.0** | 15.9 / **4.4** | **37.6** / **8.4** | 572.5 / **117.1** | 736 | ≈ 1806 | 0.90 | 0.91 | 0.91 |
+| 16 | Painted only + coverage row spans, zstd 19, expanded, duplicates (2 + 8) | 505.3 / **129.0** | 101.3 / **26.3** | 75.7 / **20.0** | 15.9 / **4.4** | **37.6** / **8.4** | 572.5 / **117.1** | 736 | ≈ 1795 | 0.90 | 0.90 | 0.90 |
+| 17 | Painted only (b), zstd 19, expanded | 504.5 / **130.3** | 103.5 / **27.6** | 77.1 / **19.5** | 15.8 / **4.1** | **36.8** / **8.3** | 557.3 / **114.2** | 754 | ≈ 1830 | 0.92 | 0.92 | 0.92 |
 | 18 | Luma, left, zstd 19, tight (item 4) | 519.6 / **132.9** | 104.5 / **27.0** | 80.4 / **21.9** | 16.7 / **4.6** | **38.3** / **8.6** | 541.1 / **110.4** | 717 | ≈ 1858 | 0.93 | 0.93 | 0.94 |
 | 19 | Luma, left, tight, coverage row spans | 513.5 / **137.9** | 109.9 / **28.5** | 83.1 / **22.5** | 18.2 / **4.7** | **39.9** / **9.0** | 540.7 / **110.2** | 699 | ≈ 1834 | 0.92 | 0.92 | 0.92 |
 | 20 | Plain or left per stream, tight (item 5) | 512.4 / **138.3** | 108.7 / **28.1** | 74.8 / **20.3** | 16.4 / **4.3** | **36.8** / **8.5** | 546.3 / **110.8** | 722 | ≈ 1854 | 0.93 | 0.93 | 0.93 |
@@ -1139,9 +1140,10 @@ where zstd 19 read 42.6 and 115.2 ms, so their ratios hold. All rows are lossles
 | 29 | Luma, MED + block motion, tANS | 3641 / 919.7 | 784.9 / **200.2** | 431.0 / **111.1** | 147.9 / **37.7** | **239.2** / **65.0** | 4732 / 973.0 | 118 | ≈ 1712 | 0.86 | 0.86 | 0.86 |
 | 30 | Rank + previous frame, rANS (reference) | 11698 / 2961 | 2362 / 597.4 | 2546 / 646.4 | 547.2 / **146.5** | 1010 / **216.4** | 11704 / 2381 | 24 | ≈ 1597 | 0.80 | 0.80 | 0.80 |
 
-**Not measured yet:** the Enhanced worst crowd for the row-span and painted rows marked pending. The `tu` job stopped at
-the 18 GB resident watchdog after 14 of its 26 Enhanced row sets, because coded streams of earlier rows stay cached for
-reuse. All other columns of those rows are complete.
+**The Enhanced worst crowd of the row-span and painted rows** comes from a second, narrowed run. The first `tu` job
+stopped at the 18 GB resident watchdog after 14 of its 26 Enhanced row sets, because coded streams of earlier rows stay
+cached for reuse. The rerun's zstd 19 row agrees with the first run (497.7 against 493.8 ms, five directions; 101.2
+against 102.4 ms, faced). It ran with background builds on the other cluster.
 
 **What the ranking by creatures changes:**
 
@@ -1239,10 +1241,14 @@ training only on its own streams, with no fixed tables or shipped statistics:
   the Classic creature crowd (1 KiB), 1.87 ms for 205 (16 KiB) and 2.73 ms for 147 (256 KiB); Enhanced 1.26 ms for 196
   (1 KiB) and 3.37 ms for 181 (256 KiB). The load is not the cost. Decoding through a dictionary is: +11 to 13 % on
   Classic's crowd, about level on Enhanced.
-- **Reading the "best dictionary" crowd rows:** the choice was made on each crowd body's few streams, where a dictionary
-  rarely repays itself, so only 1 to 3 bodies in the crowd used one. Those rows are therefore a lower bound on the crowd
-  time. The fixed-size rows above are the upper bound: Classic's row spans with the best dictionary lie between 40.2 and
-  about 45 ms on the creature crowd, inside the line either way.
+- **Reading the "best dictionary" crowd rows:** the first runs chose a dictionary on each crowd body's few streams, where
+  one rarely repays itself, so only 1 to 3 bodies used one and those rows were a lower bound. The creature and dressed
+  columns above come from the rerun that chooses over the whole body, as a real package would, with the dictionary's load
+  included. Its Enhanced rows ran with background builds on the other cluster. Its Classic rows ended two minutes before the job was pinned away from those builds, so they may have shared the machine with them: read them against the zstd 19 row of the same run. The
+  rows stay inside the line, but a dictionary is read once per body: on Classic's creature crowd the faced-only read goes
+  from 6.4 MB to 19.0 MB (slot plane) and from 6.2 MB to 25.6 MB (row spans), and the faced time goes from 8.4 to 9.9 ms (slot plane) and from 8.1 to 9.9 ms (row spans).
+  With dictionaries already loaded the row-span times are 40.1 and 8.9 ms. The uniform and worst columns of these
+  rows still come from the first run. On Enhanced a dictionary saves 0.1 % and doesn't change the order.
 
 ### 4. A tight residual decode: the main question for Enhanced
 
@@ -1548,6 +1554,934 @@ With no placeholder, these use `mobtypes.txt`:
 Where `mobtypes.txt` has no line, the rule still decides: 11 Enhanced bodies (50.33 Mpx, the largest 105, as an NPC at 28.26
 Mpx, and 970, as equipment at 6.65) and 7 Classic MUL bodies, all equipment (11.58 Mpx, the largest 573 at 6.82). So the rule
 and the file agree on all but 0.5 % of Enhanced's and 0.9 % of Classic MUL's pixels, and on everything in Classic UOP.
+
+### Results
+
+Everything timed here is quiet: boost off, EPP `balance_power`, platform profile performance, nothing else running. Size columns aren't affected by that. `tk` draws its crowds through the rule above, not `mobtypes.txt`, so its milliseconds don't match section 9's to the digit. The dictionary rows in `tk`'s crowds pick each body's dictionary over the crowd's streams, which flatters them; `t_tc3` redoes that over the whole body and section 9 has the result. Up to 400 Mpx per class are coded, and equipment at most every 10th body, so whole-set figures scale by pixels.
+
+**The answer:** on Classic a class rule adds nothing. On Enhanced it gains 2.4 % over the best single coder inside the line, by spending the time the small and medium classes leave free, and it leaves almost no margin.
+
+| client | one coder inside the line | best assignment inside the line | best per stream with an id byte, coders that pass alone | no line at all: one coder | no line: per stream with an id byte |
+|---|---|---|---|---|---|
+| Classic | `a row spans, best dictionary per body`, 702.5 MB, 0.934 x zstd 19 | the same coder in all four classes, 702.5 MB | 702.4 MB, 0.934 | same coder, 702.5 MB | 681.6 MB, 0.907 at 25 MB/s |
+| Enhanced | `b painted, coverage runs zstd 19, partial tANS by context`, 1810.8 MB, 0.896 | equipment, small, medium: `b painted, coverage every pixel tANS by context`; large: `b painted, coverage row spans, zstd 19`; 1767.4 MB, 0.874 | 1802.8 MB, 0.892 | rank, 1584.3 MB, 0.784 at 26 MB/s | 1554.8 MB, 0.769 at 30 MB/s |
+
+- **Worst stream's decode time:** 4.30 ms on Classic's assignment and 3.74 ms on Enhanced's, on one thread. Those are below 16.7 ms, so no single stream stalls a frame even on the slower coders.
+- **The crowd line, real, 4 threads, creatures five / faced, dressed NPCs five / faced:** Classic 48.0 / 10.6 / 6.5 / 1.4 ms. Enhanced 232.3 / 57.7 / 81.7 / 34.7 ms, which is 7 % under the line, on this machine's boost-off clock. That's the assignment's limit, not a comfortable pick: the search stops at the first that passes, and the next size down fails.
+- **A class rule against a per-stream id:** on Enhanced, the class assignment beats the per-stream choice by 35 MB because the per-stream column may only use coders that pass alone, while an assignment may use a coder on one class that would fail on all of them. With no line, the per-stream id beats a class rule by 2.2 % on Classic (681.6 against 697.2 MB) and 1.8 % on Enhanced (1554.8 against 1584.0 MB), at decode speeds that fail the crowds.
+- **Why large bodies stay on zstd 19:** they hold 59–63 % of the pixels, so they're the class that has to stay fast. Every-pixel tANS on them is what fails the line.
+- **The uniform and worst crowds weren't part of this search.** On Enhanced's worst crowd every zstd row already misses the line (475–541 ms in section 9, about 4 times the creature crowd), so this assignment would too.
+
+### Classic: bodies, streams, pixels
+
+"Measured" is what this part coded.
+
+| class | bodies | streams | Mpx | painted Mpx | bodies measured | streams measured | Mpx measured | painted Mpx measured |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| equipment | 550 | 104770 | 384.8 | 144.7 | 55 | 10145 | 38.6 | 13.0 |
+| NPC small | 95 | 7072 | 61.9 | 27.5 | 95 | 7072 | 61.9 | 27.5 |
+| NPC medium | 173 | 12235 | 432.5 | 176.7 | 87 | 6152 | 218.6 | 87.5 |
+| NPC large | 101 | 7151 | 1517.8 | 569.9 | 26 | 1781 | 398.0 | 147.6 |
+| not listed | 103 | 7198 | 22.0 | 11.1 | 103 | 7198 | 22.0 | 11.1 |
+
+#### Classic: equipment
+
+| coder | MB | x zstd 19 | bits per painted pixel | decode MB/s, one thread | largest stream ms |
+|---|---:|---:|---:|---:|---:|
+| a row spans, best dictionary per body | 10.18 | 0.935 | 6.27 | 655 | 0.06 |
+| a row spans, zstd 19 | 10.50 | 0.965 | 6.46 | 570 | 0.05 |
+| rank + previous, rANS (reference) | 10.59 | 0.973 | 6.52 | 6 | 3.12 |
+| split boxes, zstd 19 | 10.88 | 1.000 | 6.70 | 644 | 0.04 |
+| zstd 19 | 10.88 | 1.000 | 6.70 | 631 | 0.04 |
+| b painted, runs apart, zstd 19 | 11.00 | 1.011 | 6.77 | 513 | 0.05 |
+| luma, MED + motion, tANS | 11.74 | 1.079 | 7.23 | 88 | 1.08 |
+| luma, MED, 10 streams, tANS | 11.81 | 1.085 | 7.27 | 108 | 0.80 |
+| luma, MED, zstd 19 | 11.95 | 1.098 | 7.36 | 138 | 0.37 |
+| luma, up, tight | 12.06 | 1.108 | 7.42 | 355 | 0.06 |
+| luma, left, tight | 12.25 | 1.125 | 7.54 | 395 | 0.06 |
+| luma, MED, 10 streams, zstd 19 | 13.83 | 1.270 | 8.51 | 97 | 0.60 |
+| a row spans, LZ4 HC | 14.30 | 1.314 | 8.80 | 1670 | 0.01 |
+| split boxes, LZ4 HC | 15.00 | 1.378 | 9.24 | 3381 | 0.01 |
+| LZ4 HC | 15.05 | 1.383 | 9.27 | 3454 | 0.01 |
+| b painted, runs in the frame, LZ4 HC | 15.71 | 1.443 | 9.67 | 1392 | 0.02 |
+
+#### Classic: NPC small
+
+| coder | MB | x zstd 19 | bits per painted pixel | decode MB/s, one thread | largest stream ms |
+|---|---:|---:|---:|---:|---:|
+| a row spans, best dictionary per body | 22.42 | 0.934 | 6.52 | 817 | 0.05 |
+| a row spans, zstd 19 | 23.12 | 0.963 | 6.73 | 701 | 0.05 |
+| rank + previous, rANS (reference) | 23.22 | 0.967 | 6.76 | 6 | 4.23 |
+| b painted, runs apart, zstd 19 | 23.76 | 0.989 | 6.91 | 641 | 0.05 |
+| zstd 19 | 24.01 | 1.000 | 6.99 | 787 | 0.04 |
+| split boxes, zstd 19 | 24.01 | 1.000 | 6.99 | 782 | 0.04 |
+| luma, MED + motion, tANS | 24.48 | 1.019 | 7.12 | 68 | 1.19 |
+| luma, MED, zstd 19 | 25.61 | 1.067 | 7.45 | 127 | 0.44 |
+| luma, MED, 10 streams, tANS | 25.76 | 1.073 | 7.49 | 82 | 0.95 |
+| luma, up, tight | 26.08 | 1.086 | 7.59 | 442 | 0.06 |
+| luma, left, tight | 26.21 | 1.092 | 7.63 | 495 | 0.06 |
+| luma, MED, 10 streams, zstd 19 | 27.60 | 1.150 | 8.03 | 86 | 0.72 |
+| a row spans, LZ4 HC | 28.76 | 1.198 | 8.37 | 2308 | 0.02 |
+| split boxes, LZ4 HC | 30.07 | 1.252 | 8.75 | 4179 | 0.01 |
+| LZ4 HC | 30.07 | 1.252 | 8.75 | 4253 | 0.01 |
+| b painted, runs in the frame, LZ4 HC | 30.69 | 1.278 | 8.93 | 1846 | 0.02 |
+
+#### Classic: NPC medium
+
+| coder | MB | x zstd 19 | bits per painted pixel | decode MB/s, one thread | largest stream ms |
+|---|---:|---:|---:|---:|---:|
+| a row spans, best dictionary per body | 65.11 | 0.916 | 5.95 | 1060 | 0.51 |
+| rank + previous, rANS (reference) | 66.92 | 0.942 | 6.12 | 11 | 17.98 |
+| a row spans, zstd 19 | 68.44 | 0.963 | 6.26 | 969 | 0.52 |
+| b painted, runs apart, zstd 19 | 69.98 | 0.985 | 6.40 | 895 | 0.52 |
+| luma, MED + motion, tANS | 71.04 | 1.000 | 6.49 | 61 | 8.24 |
+| split boxes, zstd 19 | 71.04 | 1.000 | 6.49 | 1071 | 0.47 |
+| zstd 19 | 71.05 | 1.000 | 6.49 | 1071 | 0.47 |
+| luma, MED, zstd 19 | 75.34 | 1.060 | 6.89 | 116 | 4.29 |
+| luma, MED, 10 streams, tANS | 76.07 | 1.071 | 6.95 | 73 | 7.92 |
+| luma, left, tight | 76.22 | 1.073 | 6.97 | 756 | 0.58 |
+| luma, up, tight | 76.58 | 1.078 | 7.00 | 661 | 0.72 |
+| luma, MED, 10 streams, zstd 19 | 77.18 | 1.086 | 7.06 | 81 | 6.75 |
+| a row spans, LZ4 HC | 82.37 | 1.159 | 7.53 | 3517 | 0.16 |
+| split boxes, LZ4 HC | 85.55 | 1.204 | 7.82 | 5275 | 0.14 |
+| LZ4 HC | 85.57 | 1.204 | 7.82 | 5297 | 0.15 |
+| b painted, runs in the frame, LZ4 HC | 86.42 | 1.216 | 7.90 | 2805 | 0.17 |
+
+#### Classic: NPC large
+
+| coder | MB | x zstd 19 | bits per painted pixel | decode MB/s, one thread | largest stream ms |
+|---|---:|---:|---:|---:|---:|
+| rank + previous, rANS (reference) | 108.64 | 0.925 | 5.89 | 22 | 122.59 |
+| a row spans, best dictionary per body | 110.02 | 0.937 | 5.96 | 991 | 4.30 |
+| a row spans, zstd 19 | 112.96 | 0.962 | 6.12 | 1006 | 4.26 |
+| luma, MED + motion, tANS | 113.12 | 0.964 | 6.13 | 60 | 55.19 |
+| b painted, runs apart, zstd 19 | 114.05 | 0.972 | 6.18 | 973 | 3.79 |
+| zstd 19 | 117.39 | 1.000 | 6.36 | 993 | 4.27 |
+| split boxes, zstd 19 | 117.39 | 1.000 | 6.36 | 992 | 4.22 |
+| luma, MED, 10 streams, tANS | 121.19 | 1.032 | 6.57 | 70 | 48.05 |
+| luma, MED, 10 streams, zstd 19 | 121.26 | 1.033 | 6.57 | 79 | 42.57 |
+| luma, MED, zstd 19 | 122.93 | 1.047 | 6.66 | 107 | 31.66 |
+| luma, left, tight | 123.29 | 1.050 | 6.68 | 812 | 4.78 |
+| luma, up, tight | 125.82 | 1.072 | 6.82 | 748 | 4.64 |
+| a row spans, LZ4 HC | 131.99 | 1.124 | 7.16 | 4037 | 1.22 |
+| b painted, runs in the frame, LZ4 HC | 134.96 | 1.150 | 7.32 | 3297 | 1.39 |
+| split boxes, LZ4 HC | 138.38 | 1.179 | 7.50 | 4323 | 1.31 |
+| LZ4 HC | 138.38 | 1.179 | 7.50 | 4360 | 1.30 |
+
+#### Classic: not listed
+
+| coder | MB | x zstd 19 | bits per painted pixel | decode MB/s, one thread | largest stream ms |
+|---|---:|---:|---:|---:|---:|
+| a row spans, best dictionary per body | 8.64 | 0.912 | 6.22 | 571 | 0.15 |
+| rank + previous, rANS (reference) | 9.01 | 0.951 | 6.49 | 5 | 7.44 |
+| a row spans, zstd 19 | 9.23 | 0.974 | 6.64 | 525 | 0.13 |
+| zstd 19 | 9.47 | 1.000 | 6.82 | 602 | 0.12 |
+| split boxes, zstd 19 | 9.48 | 1.001 | 6.82 | 596 | 0.12 |
+| b painted, runs apart, zstd 19 | 9.50 | 1.003 | 6.84 | 472 | 0.13 |
+| luma, MED + motion, tANS | 10.18 | 1.074 | 7.33 | 58 | 2.32 |
+| luma, MED, 10 streams, tANS | 10.33 | 1.090 | 7.43 | 69 | 2.03 |
+| luma, up, tight | 10.38 | 1.096 | 7.48 | 310 | 0.17 |
+| luma, MED, zstd 19 | 10.40 | 1.097 | 7.48 | 104 | 1.25 |
+| luma, left, tight | 10.50 | 1.108 | 7.56 | 342 | 0.15 |
+| a row spans, LZ4 HC | 11.47 | 1.211 | 8.26 | 1757 | 0.03 |
+| luma, MED, 10 streams, zstd 19 | 11.60 | 1.224 | 8.35 | 68 | 1.64 |
+| split boxes, LZ4 HC | 11.96 | 1.263 | 8.61 | 3303 | 0.02 |
+| LZ4 HC | 11.97 | 1.264 | 8.62 | 3449 | 0.02 |
+| b painted, runs in the frame, LZ4 HC | 12.16 | 1.283 | 8.75 | 1458 | 0.03 |
+
+#### Classic: each coder alone in the crowds, 4 threads, ms
+
+| coder | creatures, five directions | creatures, faced direction | dressed NPCs, five directions | dressed NPCs, faced direction | all inside 250 ms |
+|---|---:|---:|---:|---:|---|
+| zstd 19 | 51.5 | 11.5 | 6.2 | 1.3 | yes |
+| LZ4 HC | 15.2 | 3.2 | 1.4 | 0.4 | yes |
+| luma, left, tight | 65.5 | 14.0 | 11.8 | 2.4 | yes |
+| luma, up, tight | 70.2 | 15.1 | 12.1 | 2.6 | yes |
+| a row spans, zstd 19 | 48.2 | 10.5 | 6.7 | 1.5 | yes |
+| a row spans, LZ4 HC | 15.3 | 3.3 | 2.6 | 0.6 | yes |
+| a row spans, best dictionary per body | 48.9 | 11.1 | 6.7 | 1.5 | yes |
+| b painted, runs apart, zstd 19 | 52.7 | 11.8 | 8.1 | 1.8 | yes |
+| b painted, runs in the frame, LZ4 HC | 20.4 | 4.5 | 4.1 | 1.0 | yes |
+| split boxes, zstd 19 | 52.7 | 11.1 | 6.2 | 1.3 | yes |
+| split boxes, LZ4 HC | 14.8 | 3.3 | 1.4 | 0.4 | yes |
+| luma, MED, zstd 19 | 374.6 | 78.5 | 35.6 | 7.6 | no |
+| luma, MED, 10 streams, zstd 19 | 506.6 | 104.5 | 51.0 | 10.8 | no |
+| luma, MED, 10 streams, tANS | 582.2 | 132.2 | 64.6 | 24.1 | no |
+| luma, MED + motion, tANS | 674.7 | 156.0 | 80.8 | 32.2 | no |
+| rank + previous, rANS (reference) | 2150.5 | 441.6 | 371.7 | 81.8 | no |
+
+#### Classic: one coder, the best per class, the best per stream
+
+| way | coders | measured bodies MB | palette table, whole set MB | whole set estimate MB | x zstd 19 | decode MB/s, one thread | largest stream ms |
+|---|---|---:|---:|---:|---:|---:|---:|
+| one coder | zstd 19 | 232.8 | 21.5 | 751.8 | 1.000 | 946 | 4.27 |
+| one coder, any coder | a row spans, best dictionary per body | 216.4 | 21.5 | 702.5 | 0.934 | 946 | 4.30 |
+| best per class, any coder | equipment: a row spans, best dictionary per body; NPC small: a row spans, best dictionary per body; NPC medium: a row spans, best dictionary per body; NPC large: rank + previous, rANS (reference); not listed: a row spans, best dictionary per body | 215.0 | 21.5 | 697.2 | 0.927 | 39 | 122.59 |
+| best per stream, an id byte each, any coder | as the stream prefers | 209.3 | 21.9 | 681.6 | 0.907 | 25 | 74.58 |
+| one coder, coders that keep all crowds inside the line alone | a row spans, best dictionary per body | 216.4 | 21.5 | 702.5 | 0.934 | 946 | 4.30 |
+| best per class, coders that keep all crowds inside the line alone | equipment: a row spans, best dictionary per body; NPC small: a row spans, best dictionary per body; NPC medium: a row spans, best dictionary per body; NPC large: a row spans, best dictionary per body; not listed: a row spans, best dictionary per body | 216.4 | 21.5 | 702.5 | 0.934 | 946 | 4.30 |
+| best per stream, an id byte each, coders that keep all crowds inside the line alone | as the stream prefers | 216.3 | 21.6 | 702.4 | 0.934 | 943 | 4.26 |
+
+streams picking each, any coder: rank + previous, rANS (reference) 48.7 %; a row spans, best dictionary per body 44.5 %; luma, MED + motion, tANS 2.3 %; a row spans, zstd 19 1.9 %; zstd 19 1.0 %; luma, MED, 10 streams, tANS 0.6 %; split boxes, zstd 19 0.5 %; LZ4 HC 0.3 %; b painted, runs apart, zstd 19 0.2 %; luma, up, tight 0.0 %; luma, MED, zstd 19 0.0 %; luma, left, tight 0.0 %; a row spans, LZ4 HC 0.0 %.
+
+streams picking each, coders that keep all crowds inside the line alone: a row spans, best dictionary per body 86.4 %; a row spans, zstd 19 6.0 %; zstd 19 3.8 %; split boxes, zstd 19 1.3 %; b painted, runs apart, zstd 19 1.0 %; LZ4 HC 0.8 %; luma, up, tight 0.6 %; a row spans, LZ4 HC 0.1 %; luma, left, tight 0.1 %; b painted, runs in the frame, LZ4 HC 0.0 %; split boxes, LZ4 HC 0.0 %.
+
+#### Classic: the smallest assignment inside the line
+
+65536 assignments in disk order.
+
+| assignment | whole set estimate MB | x zstd 19 | prediction ms, worst check | real 4 threads ms, per check | passes |
+|---|---:|---:|---:|---|---|
+| equipment: a row spans, best dictionary per body; NPC small: a row spans, best dictionary per body; NPC medium: a row spans, best dictionary per body; NPC large: a row spans, best dictionary per body | 702.5 | 0.934 | 46.6 | 48.0 / 10.6 / 6.5 / 1.4 | yes |
+
+
+| way | coders | measured bodies MB | palette table, whole set MB | whole set estimate MB | x zstd 19 | decode MB/s, one thread | largest stream ms |
+|---|---|---:|---:|---:|---:|---:|---:|
+| assignment | equipment: a row spans, best dictionary per body; NPC small: a row spans, best dictionary per body; NPC medium: a row spans, best dictionary per body; NPC large: a row spans, best dictionary per body | 216.4 | 21.5 | 702.5 | 0.934 | 946 | 4.30 |
+
+### Enhanced: bodies, streams, pixels
+
+"Measured" is what this part coded.
+
+| class | bodies | streams | Mpx | painted Mpx | bodies measured | streams measured | Mpx measured | painted Mpx measured |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| equipment | 558 | 130028 | 1059.6 | 414.3 | 56 | 13187 | 105.6 | 42.7 |
+| NPC small | 51 | 3740 | 64.4 | 26.4 | 51 | 3740 | 64.4 | 26.4 |
+| NPC medium | 187 | 14364 | 873.8 | 354.7 | 63 | 4971 | 300.0 | 121.2 |
+| NPC large | 130 | 10001 | 2919.1 | 1044.9 | 17 | 1395 | 413.1 | 144.9 |
+| not listed | 0 | 0 | 0.0 | 0.0 | 0 | 0 | 0.0 | 0.0 |
+
+#### Enhanced: equipment
+
+| coder | MB | x zstd 19 | bits per painted pixel | decode MB/s, one thread | largest stream ms |
+|---|---:|---:|---:|---:|---:|
+| rank + previous, rANS (reference) | 41.49 | 0.795 | 7.78 | 11 | 6.05 |
+| b painted, coverage every pixel tANS by context | 43.08 | 0.825 | 8.08 | 198 | 1.05 |
+| luma, left, tight, coverage every pixel tANS by context | 44.36 | 0.850 | 8.32 | 196 | 1.07 |
+| luma, MED + motion, tANS | 45.05 | 0.863 | 8.45 | 140 | 1.56 |
+| b painted, coverage runs zstd 19, partial tANS by context | 45.90 | 0.879 | 8.61 | 539 | 0.50 |
+| b painted, coverage row spans, zstd 19 | 46.49 | 0.891 | 8.72 | 807 | 0.15 |
+| b painted, zstd 19 | 47.07 | 0.902 | 8.83 | 891 | 0.15 |
+| c both planes in row spans, zstd 19 | 47.71 | 0.914 | 8.95 | 932 | 0.11 |
+| luma, left, tight, coverage row spans | 47.77 | 0.915 | 8.96 | 783 | 0.18 |
+| luma, MED, zstd 19 | 48.05 | 0.921 | 9.01 | 264 | 0.66 |
+| zstd 19, coverage every pixel tANS by context | 48.21 | 0.924 | 9.04 | 201 | 1.02 |
+| luma, left, tight | 48.35 | 0.926 | 9.07 | 862 | 0.18 |
+| luma, up, tight | 48.53 | 0.930 | 9.10 | 735 | 0.21 |
+| luma, MED, 10 streams, tANS | 49.09 | 0.940 | 9.21 | 171 | 1.25 |
+| luma, MED, 10 streams, zstd 19 | 51.01 | 0.977 | 9.57 | 186 | 0.97 |
+| a row spans, zstd 19 | 51.02 | 0.977 | 9.57 | 892 | 0.12 |
+| split boxes, zstd 19 | 52.02 | 0.997 | 9.75 | 949 | 0.12 |
+| zstd 19 | 52.20 | 1.000 | 9.79 | 929 | 0.12 |
+| b painted, coverage row spans, LZ4 HC | 58.21 | 1.115 | 10.92 | 1725 | 0.06 |
+| b painted, LZ4 HC | 59.15 | 1.133 | 11.09 | 2230 | 0.06 |
+| c both planes in row spans, LZ4 HC | 60.13 | 1.152 | 11.28 | 2624 | 0.03 |
+| a row spans, LZ4 HC | 64.63 | 1.238 | 12.12 | 2914 | 0.03 |
+| split boxes, LZ4 HC | 67.41 | 1.291 | 12.64 | 4641 | 0.02 |
+| LZ4 HC | 68.04 | 1.303 | 12.76 | 4529 | 0.02 |
+
+#### Enhanced: NPC small
+
+| coder | MB | x zstd 19 | bits per painted pixel | decode MB/s, one thread | largest stream ms |
+|---|---:|---:|---:|---:|---:|
+| b painted, coverage every pixel tANS by context | 24.80 | 0.818 | 7.52 | 197 | 2.65 |
+| rank + previous, rANS (reference) | 25.09 | 0.827 | 7.60 | 15 | 17.06 |
+| luma, left, tight, coverage every pixel tANS by context | 25.92 | 0.854 | 7.85 | 192 | 2.73 |
+| luma, MED + motion, tANS | 26.34 | 0.868 | 7.98 | 142 | 6.91 |
+| b painted, coverage runs zstd 19, partial tANS by context | 26.65 | 0.879 | 8.08 | 509 | 2.42 |
+| b painted, coverage row spans, zstd 19 | 26.75 | 0.882 | 8.11 | 943 | 0.30 |
+| b painted, zstd 19 | 27.23 | 0.898 | 8.25 | 1021 | 0.34 |
+| c both planes in row spans, zstd 19 | 27.73 | 0.914 | 8.40 | 1131 | 0.18 |
+| luma, left, tight, coverage row spans | 27.87 | 0.919 | 8.45 | 895 | 0.42 |
+| zstd 19, coverage every pixel tANS by context | 27.90 | 0.920 | 8.46 | 204 | 2.50 |
+| luma, MED, zstd 19 | 27.98 | 0.922 | 8.48 | 291 | 2.32 |
+| luma, up, tight | 28.26 | 0.932 | 8.56 | 802 | 0.52 |
+| luma, MED, 10 streams, tANS | 28.31 | 0.933 | 8.58 | 178 | 6.48 |
+| luma, left, tight | 28.35 | 0.934 | 8.59 | 964 | 0.42 |
+| luma, MED, 10 streams, zstd 19 | 29.07 | 0.958 | 8.81 | 199 | 4.99 |
+| a row spans, zstd 19 | 29.51 | 0.973 | 8.94 | 1092 | 0.22 |
+| zstd 19 | 30.34 | 1.000 | 9.19 | 1139 | 0.21 |
+| split boxes, zstd 19 | 30.34 | 1.000 | 9.19 | 1141 | 0.20 |
+| b painted, coverage row spans, LZ4 HC | 33.53 | 1.105 | 10.16 | 1922 | 0.21 |
+| b painted, LZ4 HC | 34.21 | 1.128 | 10.37 | 2387 | 0.19 |
+| c both planes in row spans, LZ4 HC | 34.91 | 1.151 | 10.58 | 3072 | 0.09 |
+| a row spans, LZ4 HC | 37.26 | 1.228 | 11.29 | 3413 | 0.08 |
+| split boxes, LZ4 HC | 39.02 | 1.286 | 11.83 | 4997 | 0.05 |
+| LZ4 HC | 39.03 | 1.286 | 11.83 | 4965 | 0.05 |
+
+#### Enhanced: NPC medium
+
+| coder | MB | x zstd 19 | bits per painted pixel | decode MB/s, one thread | largest stream ms |
+|---|---:|---:|---:|---:|---:|
+| rank + previous, rANS (reference) | 105.69 | 0.772 | 6.97 | 26 | 10.62 |
+| luma, MED + motion, tANS | 115.92 | 0.847 | 7.65 | 116 | 4.13 |
+| b painted, coverage every pixel tANS by context | 115.95 | 0.847 | 7.65 | 190 | 2.72 |
+| luma, left, tight, coverage every pixel tANS by context | 117.08 | 0.855 | 7.73 | 187 | 2.78 |
+| b painted, coverage runs zstd 19, partial tANS by context | 122.58 | 0.895 | 8.09 | 570 | 1.32 |
+| luma, MED, 10 streams, tANS | 123.23 | 0.900 | 8.13 | 139 | 3.29 |
+| b painted, coverage row spans, zstd 19 | 123.70 | 0.903 | 8.16 | 1063 | 0.51 |
+| luma, MED, zstd 19 | 123.80 | 0.904 | 8.17 | 220 | 1.78 |
+| luma, left, tight, coverage row spans | 124.83 | 0.912 | 8.24 | 999 | 0.59 |
+| luma, MED, 10 streams, zstd 19 | 124.89 | 0.912 | 8.24 | 156 | 2.76 |
+| b painted, zstd 19 | 125.57 | 0.917 | 8.29 | 1064 | 0.52 |
+| luma, up, tight | 126.65 | 0.925 | 8.36 | 847 | 0.68 |
+| luma, left, tight | 126.69 | 0.925 | 8.36 | 986 | 0.59 |
+| zstd 19, coverage every pixel tANS by context | 127.32 | 0.930 | 8.40 | 197 | 2.63 |
+| c both planes in row spans, zstd 19 | 127.70 | 0.933 | 8.43 | 1363 | 0.31 |
+| a row spans, zstd 19 | 132.80 | 0.970 | 8.76 | 1297 | 0.39 |
+| zstd 19 | 136.93 | 1.000 | 9.04 | 1265 | 0.39 |
+| split boxes, zstd 19 | 136.93 | 1.000 | 9.04 | 1266 | 0.38 |
+| b painted, coverage row spans, LZ4 HC | 148.47 | 1.084 | 9.80 | 2458 | 0.30 |
+| b painted, LZ4 HC | 150.64 | 1.100 | 9.94 | 2697 | 0.31 |
+| c both planes in row spans, LZ4 HC | 153.31 | 1.120 | 10.12 | 4654 | 0.12 |
+| a row spans, LZ4 HC | 159.54 | 1.165 | 10.53 | 5040 | 0.11 |
+| split boxes, LZ4 HC | 164.90 | 1.204 | 10.88 | 6366 | 0.08 |
+| LZ4 HC | 164.92 | 1.204 | 10.88 | 6369 | 0.08 |
+
+#### Enhanced: NPC large
+
+| coder | MB | x zstd 19 | bits per painted pixel | decode MB/s, one thread | largest stream ms |
+|---|---:|---:|---:|---:|---:|
+| rank + previous, rANS (reference) | 113.48 | 0.775 | 6.26 | 46 | 86.46 |
+| b painted, coverage every pixel tANS by context | 127.13 | 0.868 | 7.02 | 210 | 22.50 |
+| luma, MED + motion, tANS | 127.47 | 0.870 | 7.04 | 131 | 40.08 |
+| luma, left, tight, coverage every pixel tANS by context | 130.43 | 0.891 | 7.20 | 209 | 22.40 |
+| b painted, coverage runs zstd 19, partial tANS by context | 132.09 | 0.902 | 7.29 | 789 | 5.06 |
+| b painted, coverage row spans, zstd 19 | 132.95 | 0.908 | 7.34 | 1159 | 3.74 |
+| luma, MED, 10 streams, tANS | 133.04 | 0.908 | 7.34 | 152 | 32.25 |
+| luma, MED, 10 streams, zstd 19 | 133.71 | 0.913 | 7.38 | 174 | 27.85 |
+| b painted, zstd 19 | 134.95 | 0.921 | 7.45 | 1164 | 3.78 |
+| luma, MED, zstd 19 | 135.57 | 0.926 | 7.48 | 231 | 21.36 |
+| luma, left, tight, coverage row spans | 136.26 | 0.930 | 7.52 | 1138 | 3.85 |
+| c both planes in row spans, zstd 19 | 137.60 | 0.940 | 7.60 | 1483 | 3.48 |
+| luma, left, tight | 138.26 | 0.944 | 7.63 | 1142 | 3.87 |
+| luma, up, tight | 138.51 | 0.946 | 7.65 | 1034 | 4.02 |
+| zstd 19, coverage every pixel tANS by context | 138.64 | 0.947 | 7.65 | 215 | 22.28 |
+| a row spans, zstd 19 | 141.22 | 0.964 | 7.79 | 1411 | 3.52 |
+| zstd 19 | 146.46 | 1.000 | 8.08 | 1339 | 3.61 |
+| split boxes, zstd 19 | 146.47 | 1.000 | 8.08 | 1330 | 3.64 |
+| b painted, coverage row spans, LZ4 HC | 156.68 | 1.070 | 8.65 | 2536 | 1.85 |
+| b painted, LZ4 HC | 159.05 | 1.086 | 8.78 | 2570 | 1.83 |
+| c both planes in row spans, LZ4 HC | 161.84 | 1.105 | 8.93 | 5299 | 1.08 |
+| a row spans, LZ4 HC | 166.38 | 1.136 | 9.18 | 5179 | 1.10 |
+| split boxes, LZ4 HC | 172.90 | 1.180 | 9.54 | 5172 | 1.11 |
+| LZ4 HC | 172.91 | 1.181 | 9.54 | 5253 | 1.10 |
+
+#### Enhanced: each coder alone in the crowds, 4 threads, ms
+
+| coder | creatures, five directions | creatures, faced direction | dressed NPCs, five directions | dressed NPCs, faced direction | all inside 250 ms |
+|---|---:|---:|---:|---:|---|
+| zstd 19 | 102.4 | 21.0 | 15.2 | 3.2 | yes |
+| LZ4 HC | 31.5 | 6.7 | 4.1 | 0.9 | yes |
+| luma, left, tight | 124.1 | 25.4 | 21.9 | 4.5 | yes |
+| luma, up, tight | 131.4 | 27.0 | 23.3 | 4.8 | yes |
+| a row spans, zstd 19 | 93.9 | 19.4 | 14.8 | 3.1 | yes |
+| a row spans, LZ4 HC | 31.3 | 6.6 | 5.2 | 1.1 | yes |
+| luma, left, tight, coverage row spans | 118.3 | 24.3 | 21.8 | 4.5 | yes |
+| luma, left, tight, coverage every pixel tANS by context | 540.3 | 126.2 | 83.9 | 34.9 | no |
+| zstd 19, coverage every pixel tANS by context | 520.2 | 122.1 | 78.0 | 33.7 | no |
+| b painted, zstd 19 | 114.4 | 23.6 | 18.8 | 3.8 | yes |
+| b painted, coverage row spans, zstd 19 | 113.9 | 23.5 | 19.4 | 4.0 | yes |
+| b painted, coverage every pixel tANS by context | 536.9 | 125.5 | 81.7 | 34.5 | no |
+| b painted, coverage runs zstd 19, partial tANS by context | 195.3 | 55.4 | 48.6 | 25.5 | yes |
+| b painted, LZ4 HC | 59.6 | 12.3 | 10.4 | 2.2 | yes |
+| b painted, coverage row spans, LZ4 HC | 60.9 | 12.7 | 11.6 | 2.5 | yes |
+| c both planes in row spans, zstd 19 | 87.9 | 18.1 | 14.0 | 2.9 | yes |
+| c both planes in row spans, LZ4 HC | 30.3 | 6.5 | 5.6 | 1.2 | yes |
+| split boxes, zstd 19 | 98.0 | 20.1 | 14.5 | 3.0 | yes |
+| split boxes, LZ4 HC | 30.7 | 6.4 | 3.9 | 0.8 | yes |
+| luma, MED, zstd 19 | 451.9 | 91.4 | 52.2 | 10.7 | no |
+| luma, MED, 10 streams, zstd 19 | 598.0 | 120.5 | 70.4 | 14.4 | no |
+| luma, MED, 10 streams, tANS | 688.0 | 149.3 | 88.6 | 28.3 | no |
+| luma, MED + motion, tANS | 820.1 | 181.0 | 109.1 | 36.5 | no |
+| rank + previous, rANS (reference) | 2698.3 | 551.9 | 617.9 | 134.4 | no |
+
+#### Enhanced: one coder, the best per class, the best per stream
+
+| way | coders | measured bodies MB | palette table, whole set MB | whole set estimate MB | x zstd 19 | decode MB/s, one thread | largest stream ms |
+|---|---|---:|---:|---:|---:|---:|---:|
+| one coder | zstd 19 | 365.9 | 33.3 | 2021.1 | 1.000 | 1234 | 3.61 |
+| one coder, any coder | rank + previous, rANS (reference) | 285.7 | 33.3 | 1584.3 | 0.784 | 26 | 86.46 |
+| best per class, any coder | equipment: rank + previous, rANS (reference); NPC small: b painted, coverage every pixel tANS by context; NPC medium: rank + previous, rANS (reference); NPC large: rank + previous, rANS (reference); not listed: zstd 19 | 285.5 | 33.3 | 1584.0 | 0.784 | 29 | 86.46 |
+| best per stream, an id byte each, any coder | as the stream prefers | 278.7 | 35.6 | 1554.8 | 0.769 | 30 | 86.46 |
+| one coder, coders that keep all crowds inside the line alone | b painted, coverage runs zstd 19, partial tANS by context | 327.2 | 33.3 | 1810.8 | 0.896 | 643 | 5.06 |
+| best per class, coders that keep all crowds inside the line alone | equipment: b painted, coverage runs zstd 19, partial tANS by context; NPC small: b painted, coverage runs zstd 19, partial tANS by context; NPC medium: b painted, coverage runs zstd 19, partial tANS by context; NPC large: b painted, coverage runs zstd 19, partial tANS by context; not listed: zstd 19 | 327.2 | 33.3 | 1810.8 | 0.896 | 643 | 5.06 |
+| best per stream, an id byte each, coders that keep all crowds inside the line alone | as the stream prefers | 323.7 | 40.7 | 1802.8 | 0.892 | 760 | 5.06 |
+
+streams picking each, any coder: rank + previous, rANS (reference) 75.6 %; luma, MED + motion, tANS 12.2 %; b painted, coverage every pixel tANS by context 10.8 %; b painted, coverage row spans, zstd 19 0.6 %; b painted, zstd 19 0.4 %; b painted, coverage runs zstd 19, partial tANS by context 0.2 %; luma, left, tight, coverage every pixel tANS by context 0.1 %; luma, MED, 10 streams, tANS 0.0 %; c both planes in row spans, zstd 19 0.0 %; luma, up, tight 0.0 %; zstd 19 0.0 %; LZ4 HC 0.0 %; luma, left, tight 0.0 %; luma, left, tight, coverage row spans 0.0 %; b painted, LZ4 HC 0.0 %; luma, MED, zstd 19 0.0 %.
+
+streams picking each, coders that keep all crowds inside the line alone: b painted, coverage runs zstd 19, partial tANS by context 60.3 %; luma, left, tight, coverage row spans 14.4 %; b painted, coverage row spans, zstd 19 10.5 %; b painted, zstd 19 7.0 %; luma, up, tight 6.7 %; luma, left, tight 0.8 %; b painted, LZ4 HC 0.2 %; c both planes in row spans, zstd 19 0.1 %; LZ4 HC 0.0 %; split boxes, zstd 19 0.0 %; zstd 19 0.0 %.
+
+#### Enhanced: the smallest assignment inside the line
+
+331776 assignments in disk order.
+
+| assignment | whole set estimate MB | x zstd 19 | prediction ms, worst check | real 4 threads ms, per check | passes |
+|---|---:|---:|---:|---|---|
+| equipment: b painted, coverage every pixel tANS by context; NPC small: b painted, coverage every pixel tANS by context; NPC medium: b painted, coverage every pixel tANS by context; NPC large: b painted, coverage row spans, zstd 19 | 1767.4 | 0.874 | 229.7 | 232.3 / 57.7 / 81.7 / 34.7 | yes |
+
+
+| way | coders | measured bodies MB | palette table, whole set MB | whole set estimate MB | x zstd 19 | decode MB/s, one thread | largest stream ms |
+|---|---|---:|---:|---:|---:|---:|---:|
+| assignment | equipment: b painted, coverage every pixel tANS by context; NPC small: b painted, coverage every pixel tANS by context; NPC medium: b painted, coverage every pixel tANS by context; NPC large: b painted, coverage row spans, zstd 19 | 316.8 | 33.3 | 1767.4 | 0.874 | 316 | 3.74 |
+## 11. VRAM
+
+Sizes only, from `MOBILE_ANIM_CODEC_SHRINK_PARTS=v` on the whole set (the tiny tests, not timed), run at idle priority. Everything the GPU holds is counted: pixels, per-frame and per-row tables, tile maps, palettes. A frame entry is 16 bytes in every layout. A palette is 1024 bytes, once per distinct palette in scope. A crowd counts each distinct stream once. BC7 and BC1 hold no palette, and their masks are in the hue table. **Nothing here decides the format; the user does.** Shader cost is in section 15.
+
+**What the numbers say:**
+
+- **Classic's R8 is the same size as BC7 (0.98×), and BC1 or row spans halve it** (0.52×, 0.56×). Enhanced's RG8 is the outlier: 1.93× BC7. Its second plane is what a block format gets back, because coverage is mostly 0 or 16.
+- **Row spans in linear memory reach BC7's size on Enhanced (0.97× BC7) and 0.55× BC7 on Classic.** They carry a row table (smallest entry that works: 3 or 4 bytes for 99.3 % of frames, 127.8 or 160.0 bytes a frame on average, 141.2 or 172.6 bytes if entries must be 4 or 8 bytes for one fetch). They can't use a hardware sampler.
+- **Painted only isn't worth its tables on Classic.** With a row entry and a 32-pixel word (3 fetches) it's larger than row spans; runs searched save 4 % at 3–8 fetches in the worst row of a body. On Enhanced it's 2 % under row spans with 3 fetches, 12 % with the search.
+- **Dicing only beats row spans with no gutter**, and without a gutter hardware filtering doesn't work, so it has the same shader problem as row spans with more tables. With a 1 px gutter, 8×8 costs 0.94× and 0.95× of the rectangle: the gutter takes back almost all it saved.
+- **R8 + BC4 coverage isn't lossless.** 7.61 % of 4×4 blocks don't round back to their 0–16 levels, 0.9971 % of pixels change level (0.01111 levels on average, worst 8 of 16), and 10548812 pixels change between transparent and painted. It's also 1.47× BC7.
+- **Masks erase nothing on Enhanced, but they would on Classic.** Enhanced: 91.8 % of frames need no mask, and R8 masks add 457.5 MB (+9 % on BC7, +18 % on BC1). Classic: if a block format must hue greys under a partial hue, 79.4 % of frames are masked. R8 masks add 2132.9 MB, so BC1 + masks (3391.7 MB) is larger than plain R8 (2419.0 MB). Only one-bit masks (279.2 MB, lossy) keep BC1 under R8: 1537.9 MB. **Classic packs no mask today.**
+- **Every layout's real saving comes second to what's loaded.** A faced-only load is 5× smaller than five directions and about 50× smaller than all actions of a body. Whole pages undo that: under today's reader API a dressed-NPC crowd's 3.0 MB of Enhanced frames holds 804 MB of pages, 269× as much.
+
+### The atlas figures, reconciled
+
+Earlier revisions of this document said the old package's pages are 7682.9 MB with 73 % of the atlas area empty, and also that Enhanced's BC7 pixels are 5106 MB, which would mean about 34 % empty. Both figures are true, and they answer different questions. On Enhanced, the simulated packer's used page area is 6946.6 Mpx, at one byte a pixel in BC7:
+
+| Enhanced, today's packer | Mpx | share of used page area |
+|---|---:|---:|
+| used page area (2339 pages; full page area 7021.0 Mpx) | 6946.6 | 100 % |
+| frames padded to 4×4 blocks | 5106.4 | 73.5 % |
+| frame boxes | 4916.9 | 70.8 % |
+| painted pixels | 1840.2 | 26.5 % |
+
+- **"73 % empty" meant no painted pixel.** It counts transparent pixels inside a frame's box as empty. Those are in the 5106 MB too, so it's not the packer's waste. It's what row spans and painted-only layouts address.
+- **The packer's own waste is 26.5 %** of used page area (1 − 5106.4 / 6946.6): gutters and packing holes.
+- **The 7682.9 MB is BC7 pages plus R8 hue mask pages.** The simulation gives 6946.6 MB of BC7 on 2339 pages, plus 777.7 MB of masks on 231 pages: 7724.4 MB, 0.5 % over the real pack's file table (7682.9 MB in 2522 entries). The real pack has been deleted, so I didn't trace that difference. The 5106 MB counts neither gutters nor masks.
+- **Classic:** 1258 pages, 3467.4 MB of BC7, frame boxes 69.8 %, padded 72.6 %, painted 26.8 %. `mobile_anim_cc` packs no hue mask, so the 3268.7 MB of masks the simulation prints (6736.2 MB together) is hypothetical.
+
+**Would the renderer hold whole pages?** Under today's reader API, yes. `read_page_bytes`, `read_page_rgba` and `AtlasPageCache` work per page, and `read_frame_rgba` decodes the whole page, so an upload holds whole pages. `dynamapper/src` doesn't use these packages yet, so this is what the API implies, not an observed renderer. The page holds frames from sorted body and frame order, so a crowd touches many pages and holds much more than it draws (table below). A dynamic atlas fixes that, whatever the pixel format.
+
+**Atlas waste with a dynamic allocator** (one frame at a time on 2048 pages, 1 px gutter): `guillotiere` 86.6 % frames, shelf 82.4 % on Classic, 86.7 % and 82.3 % on Enhanced. So a real allocator spends about 15 % on gutters and holes, half of today's packer. Treating a stream as one block costs 44 % more pages on Classic and 38 % more on Enhanced. **Churn** adds about 19 % on top of the largest fresh pack with `guillotiere` at 2048 (43 pages against 36 on Classic, 69 against 59 on Enhanced). LRU rounds that end on the small crowd hold pages kept for the large one, so the table's "live's share" of 2–4 % is retained pages, not holes, and a renderer could release them.
+
+#### What the GPU holds, the whole set
+
+Rectangle is R8 on Classic and RG8 on Enhanced. Each client: pixels, tables, palettes, total in MB, then total against its rectangle and against its BC7.
+
+| layout | Classic pixels | tables | palettes | total | x rectangle | x BC7 | Enhanced pixels | tables | palettes | total | x rectangle | x BC7 | fetches | hardware sampler |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
+| rectangle | 2419.0 | 15.9 | 39.54 | 2474.5 | 1.000 | 0.977 | 9833.8 | 25.2 | 32.39 | 9891.3 | 1.000 | 1.928 | 1, then the palette | nearest only, a palette lookup after it |
+| BC7, padded to 4 x 4 | 2517.5 | 15.9 | 0.00 | 2533.4 | 1.024 | 1.000 | 5106.4 | 25.2 | 0.00 | 5131.6 | 0.519 | 1.000 | 1 | yes |
+| BC1, padded to 4 x 4 | 1258.7 | 15.9 | 0.00 | 1274.7 | 0.515 | 0.503 | 2553.2 | 25.2 | 0.00 | 2578.4 | 0.261 | 0.502 | 1 | yes |
+| R8 index + BC4 coverage | - | - | - | - | - | - | 7470.1 | 25.2 | 32.39 | 7527.7 | 0.761 | 1.467 | 2, then the palette | nearest only, a palette lookup after it |
+| row spans, linear memory | 1190.0 | 156.6 | 39.54 | 1386.2 | 0.560 | 0.547 | 4661.6 | 296.6 | 32.39 | 4990.6 | 0.505 | 0.973 | 2, then the palette | no: explicit fetches in the shader |
+| painted only, row entry + 32-pixel word + pixel | 929.9 | 611.3 | 39.54 | 1580.8 | 0.639 | 0.624 | 3680.5 | 1175.1 | 32.39 | 4887.9 | 0.494 | 0.953 | 3, then the palette | no: explicit fetches in the shader |
+| painted only, runs searched in the row | 929.9 | 365.3 | 39.54 | 1334.7 | 0.539 | 0.527 | 3680.5 | 689.0 | 32.39 | 4401.9 | 0.445 | 0.858 | row + log2(runs) + pixel, then the palette | no: explicit fetches in the shader |
+
+**Dicing into tiles** (non-empty tiles plus the tile map; total MB, then against the rectangle). Every row needs a tile map fetch and then a tile fetch, and hardware filtering works only with the gutter.
+
+| tile | dedupe | Classic, no gutter | Classic, 1 px gutter | Enhanced, no gutter | Enhanced, 1 px gutter |
+|---|---|---:|---:|---:|---:|
+| 8 x 8 | no dedupe | 1633.4 (0.660) | 2474.3 (1.000) | 6091.1 (0.616) | 9390.5 (0.949) |
+| 8 x 8 | dedupe in a stream | 1610.4 (0.651) | 2438.4 (0.985) | 6047.9 (0.611) | 9323.1 (0.943) |
+| 8 x 8 | dedupe in a body | 1547.3 (0.625) | 2315.7 (0.936) | 6128.8 (0.620) | 9387.2 (0.949) |
+| 16 x 16 | no dedupe | 2090.4 (0.845) | 2624.8 (1.061) | 7924.7 (0.801) | 10002.2 (1.011) |
+| 16 x 16 | dedupe in a stream | 2073.4 (0.838) | 2603.3 (1.052) | 7896.5 (0.798) | 9966.4 (1.008) |
+| 16 x 16 | dedupe in a body | 1969.1 (0.796) | 2469.9 (0.998) | 7893.8 (0.798) | 9959.9 (1.007) |
+| 32 x 32 | no dedupe | 3087.0 (1.248) | 3476.9 (1.405) | 11658.8 (1.179) | 13152.4 (1.330) |
+| 32 x 32 | dedupe in a stream | 3067.6 (1.240) | 3454.9 (1.396) | 11636.9 (1.176) | 13127.7 (1.327) |
+| 32 x 32 | dedupe in a body | 2934.5 (1.186) | 3304.6 (1.335) | 11625.3 (1.175) | 13114.5 (1.326) |
+
+#### By class: total MB (x rectangle)
+
+**Classic**
+
+| layout | equipment | NPC small | NPC medium | NPC large | not listed |
+|---|---:|---:|---:|---:|---:|
+| rectangle | 430.5 (1.000) | 64.6 (1.000) | 436.5 (1.000) | 1519.7 (1.000) | 23.1 (1.000) |
+| BC7, padded to 4 x 4 | 445.5 (1.035) | 67.4 (1.043) | 451.6 (1.035) | 1543.8 (1.016) | 25.0 (1.086) |
+| BC1, padded to 4 x 4 | 229.0 (0.532) | 34.1 (0.527) | 226.5 (0.519) | 772.3 (0.508) | 12.9 (0.558) |
+| row spans, linear memory | 284.9 (0.662) | 42.0 (0.650) | 249.8 (0.572) | 792.0 (0.521) | 17.5 (0.759) |
+| painted only, row entry + 32-pixel word + pixel | 389.0 (0.903) | 53.1 (0.822) | 285.1 (0.653) | 830.6 (0.547) | 23.0 (0.996) |
+| painted only, runs searched in the row | 340.7 (0.791) | 47.8 (0.739) | 249.1 (0.571) | 677.2 (0.446) | 20.0 (0.869) |
+| dice 8 x 8, dedupe in a body, no gutter | 396.1 (0.920) | 53.7 (0.832) | 278.5 (0.638) | 797.8 (0.525) | 21.1 (0.915) |
+| dice 8 x 8, dedupe in a body, 1 px gutter | 583.9 (1.356) | 81.1 (1.255) | 423.4 (0.970) | 1195.5 (0.787) | 31.9 (1.382) |
+
+**Enhanced**
+
+| layout | equipment | NPC small | NPC medium | NPC large |
+|---|---:|---:|---:|---:|
+| rectangle | 2166.7 (1.000) | 130.1 (1.000) | 1752.7 (1.000) | 5841.8 (1.000) |
+| BC7, padded to 4 x 4 | 1183.5 (0.546) | 69.4 (0.534) | 909.1 (0.519) | 2969.5 (0.508) |
+| BC1, padded to 4 x 4 | 602.2 (0.278) | 35.0 (0.269) | 455.7 (0.260) | 1485.6 (0.254) |
+| R8 index + BC4 coverage | 1688.4 (0.779) | 100.2 (0.770) | 1332.4 (0.760) | 4406.7 (0.754) |
+| row spans, linear memory | 1159.7 (0.535) | 71.0 (0.546) | 906.0 (0.517) | 2853.9 (0.489) |
+| painted only, row entry + 32-pixel word + pixel | 1314.8 (0.607) | 76.2 (0.586) | 915.7 (0.522) | 2581.1 (0.442) |
+| painted only, runs searched in the row | 1196.2 (0.552) | 70.5 (0.542) | 838.5 (0.478) | 2296.7 (0.393) |
+| dice 8 x 8, dedupe in a body, no gutter | 1847.6 (0.853) | 101.2 (0.778) | 1144.5 (0.653) | 3035.5 (0.520) |
+| dice 8 x 8, dedupe in a body, 1 px gutter | 2831.2 (1.307) | 155.7 (1.197) | 1764.9 (1.007) | 4635.4 (0.793) |
+
+#### By crowd: total MB (x rectangle)
+
+**Classic**
+
+| layout | creatures, five | creatures, faced | dressed NPCs, five | dressed NPCs, faced | uniform, five | uniform, faced | worst, five | worst, faced |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| rectangle | 133.4 (1.000) | 26.1 (1.000) | 6.9 (1.000) | 1.6 (1.000) | 27.9 (1.000) | 5.8 (1.000) | 918.3 (1.000) | 189.5 (1.000) |
+| BC7, padded to 4 x 4 | 135.8 (1.018) | 26.4 (1.013) | 7.0 (1.005) | 1.6 (0.954) | 28.4 (1.019) | 5.8 (0.995) | 929.8 (1.013) | 191.8 (1.012) |
+| BC1, padded to 4 x 4 | 68.0 (0.510) | 13.2 (0.507) | 3.6 (0.517) | 0.8 (0.490) | 14.3 (0.513) | 2.9 (0.501) | 465.1 (0.506) | 95.9 (0.506) |
+| row spans, linear memory | 70.7 (0.530) | 14.2 (0.546) | 5.2 (0.753) | 1.3 (0.770) | 16.7 (0.598) | 3.5 (0.610) | 473.0 (0.515) | 96.9 (0.511) |
+| painted only, row entry + 32-pixel word + pixel | 77.1 (0.578) | 15.4 (0.593) | 7.0 (1.013) | 1.7 (1.011) | 19.2 (0.687) | 4.1 (0.701) | 488.5 (0.532) | 99.8 (0.527) |
+| painted only, runs searched in the row | 64.0 (0.480) | 12.9 (0.494) | 6.3 (0.902) | 1.5 (0.909) | 16.4 (0.587) | 3.5 (0.601) | 390.5 (0.425) | 79.7 (0.421) |
+| dice 8 x 8, dedupe in a body, no gutter | 76.3 (0.572) | 15.4 (0.589) | 7.2 (1.043) | 1.7 (1.034) | 19.4 (0.697) | 4.1 (0.712) | 480.0 (0.523) | 97.8 (0.516) |
+| dice 8 x 8, dedupe in a body, 1 px gutter | 116.0 (0.870) | 23.4 (0.896) | 10.7 (1.533) | 2.5 (1.498) | 29.4 (1.055) | 6.2 (1.064) | 719.6 (0.784) | 147.1 (0.776) |
+
+**Enhanced**
+
+| layout | creatures, five | creatures, faced | dressed NPCs, five | dressed NPCs, faced | uniform, five | uniform, faced | worst, five | worst, faced |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| rectangle | 397.1 (1.000) | 80.2 (1.000) | 19.5 (1.000) | 5.8 (1.000) | 100.4 (1.000) | 21.1 (1.000) | 2462.7 (1.000) | 503.9 (1.000) |
+| BC7, padded to 4 x 4 | 203.0 (0.511) | 40.9 (0.510) | 10.7 (0.550) | 3.0 (0.525) | 52.1 (0.518) | 10.8 (0.513) | 1245.4 (0.506) | 254.7 (0.505) |
+| BC1, padded to 4 x 4 | 101.6 (0.256) | 20.5 (0.255) | 5.5 (0.280) | 1.5 (0.267) | 26.1 (0.260) | 5.4 (0.258) | 622.9 (0.253) | 127.4 (0.253) |
+| R8 index + BC4 coverage | 300.2 (0.756) | 60.7 (0.757) | 15.2 (0.782) | 4.5 (0.785) | 76.4 (0.761) | 16.1 (0.764) | 1854.2 (0.753) | 379.4 (0.753) |
+| row spans, linear memory | 192.4 (0.485) | 38.5 (0.480) | 12.1 (0.619) | 3.6 (0.625) | 47.7 (0.475) | 10.3 (0.485) | 1191.8 (0.484) | 244.3 (0.485) |
+| painted only, row entry + 32-pixel word + pixel | 179.2 (0.451) | 36.0 (0.449) | 13.8 (0.708) | 4.0 (0.698) | 46.2 (0.460) | 9.8 (0.465) | 1048.4 (0.426) | 213.6 (0.424) |
+| painted only, runs searched in the row | 161.2 (0.406) | 32.5 (0.405) | 12.8 (0.654) | 3.8 (0.652) | 41.3 (0.412) | 8.8 (0.416) | 917.9 (0.373) | 186.9 (0.371) |
+| dice 8 x 8, dedupe in a body, no gutter | 214.9 (0.541) | 43.1 (0.537) | 18.7 (0.958) | 5.3 (0.921) | 57.5 (0.573) | 12.2 (0.576) | 1165.0 (0.473) | 235.8 (0.468) |
+| dice 8 x 8, dedupe in a body, 1 px gutter | 331.5 (0.835) | 66.4 (0.827) | 28.7 (1.472) | 8.1 (1.399) | 88.6 (0.882) | 18.6 (0.881) | 1777.6 (0.722) | 360.9 (0.716) |
+
+#### 4 x 4 blocks with a transparent pixel
+
+A BC1 block with any transparent pixel drops to three colours, so this predicts its damage. "Among blocks with paint" leaves out wholly transparent blocks, which cost BC1 nothing.
+
+| scope | Classic blocks M | any transparent | wholly transparent | among blocks with paint | Enhanced blocks M | any transparent | wholly transparent | among blocks with paint |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| whole set | 157.3 | 73.1 % | 52.3 % | 43.6 % | 319.2 | 73.7 % | 53.8 % | 43.1 % |
+| equipment | 27.1 | 84.6 % | 43.2 % | 72.9 % | 72.7 | 81.0 % | 45.3 % | 65.3 % |
+| NPC small | 4.2 | 77.9 % | 39.9 % | 63.2 % | 4.3 | 79.0 % | 44.5 % | 62.1 % |
+| NPC medium | 28.1 | 73.2 % | 48.5 % | 47.9 % | 56.7 | 72.0 % | 50.0 % | 44.0 % |
+| NPC large | 96.4 | 69.6 % | 56.8 % | 29.7 % | 185.5 | 71.2 % | 58.6 % | 30.6 % |
+| not listed | 1.5 | 74.1 % | 33.0 % | 61.4 % | - | - | - | - |
+| creatures, five | 8.5 | 69.5 % | 54.6 % | 32.8 % | 12.7 | 72.8 % | 57.1 % | 36.6 % |
+| creatures, faced | 1.6 | 68.9 % | 53.5 % | 33.1 % | 2.6 | 73.0 % | 57.5 % | 36.5 % |
+| dressed NPCs, five | 0.4 | 80.7 % | 35.5 % | 70.0 % | 0.7 | 76.0 % | 37.2 % | 61.7 % |
+| dressed NPCs, faced | 0.1 | 79.4 % | 35.0 % | 68.3 % | 0.2 | 74.8 % | 38.1 % | 59.3 % |
+| uniform, five | 1.8 | 70.5 % | 47.9 % | 43.3 % | 3.2 | 75.7 % | 57.2 % | 43.3 % |
+| uniform, faced | 0.4 | 70.2 % | 47.6 % | 43.1 % | 0.7 | 76.1 % | 57.5 % | 43.7 % |
+| worst, five | 58.1 | 68.9 % | 58.3 % | 25.4 % | 77.8 | 70.5 % | 60.9 % | 24.5 % |
+| worst, faced | 12.0 | 69.2 % | 58.8 % | 25.4 % | 15.9 | 70.7 % | 61.2 % | 24.5 % |
+
+#### What padding costs
+
+x pixels is block pixels over true pixels. Bytes a pixel count a frame's own blocks with no gutter, over its true pixels.
+
+**Classic**
+
+| scope | frame area up to | frames | pixels Mpx | x at 4 x 4 | x at 6 x 6 | x at 8 x 8 | BC1 bytes a pixel | BC7 or ASTC 4 x 4 | ASTC 6 x 6 | ASTC 8 x 8 | 6 x 6 over BC1 | 8 x 8 over BC1 |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| whole set | 64 | 136019 | 4.4 | 1.566 | 2.143 | 2.398 | 0.783 | 1.566 | 0.953 | 0.599 | 1.217 | 0.766 |
+| whole set | 256 | 261144 | 39.3 | 1.270 | 1.458 | 1.691 | 0.635 | 1.270 | 0.648 | 0.423 | 1.020 | 0.665 |
+| whole set | 1024 | 346170 | 183.5 | 1.140 | 1.239 | 1.337 | 0.570 | 1.140 | 0.551 | 0.334 | 0.966 | 0.587 |
+| whole set | all | 996620 | 2419.0 | 1.041 | 1.069 | 1.098 | 0.520 | 1.041 | 0.475 | 0.274 | 0.913 | 0.528 |
+| equipment | 64 | 127569 | 4.1 | 1.568 | 2.139 | 2.417 | 0.784 | 1.568 | 0.951 | 0.604 | 1.212 | 0.770 |
+| equipment | 256 | 239341 | 36.2 | 1.270 | 1.462 | 1.678 | 0.635 | 1.270 | 0.650 | 0.419 | 1.023 | 0.661 |
+| equipment | all | 780234 | 384.8 | 1.125 | 1.215 | 1.304 | 0.563 | 1.125 | 0.540 | 0.326 | 0.960 | 0.580 |
+| NPC small | all | 42120 | 61.9 | 1.079 | 1.134 | 1.188 | 0.539 | 1.079 | 0.504 | 0.297 | 0.934 | 0.551 |
+| NPC medium | all | 80489 | 432.5 | 1.041 | 1.070 | 1.098 | 0.521 | 1.041 | 0.475 | 0.275 | 0.913 | 0.527 |
+| NPC large | all | 51415 | 1517.8 | 1.017 | 1.028 | 1.039 | 0.508 | 1.017 | 0.457 | 0.260 | 0.899 | 0.511 |
+| not listed | all | 42362 | 22.0 | 1.109 | 1.178 | 1.284 | 0.554 | 1.109 | 0.523 | 0.321 | 0.944 | 0.579 |
+
+**Enhanced**
+
+| scope | frame area up to | frames | pixels Mpx | x at 4 x 4 | x at 6 x 6 | x at 8 x 8 | BC1 bytes a pixel | BC7 or ASTC 4 x 4 | ASTC 6 x 6 | ASTC 8 x 8 | 6 x 6 over BC1 | 8 x 8 over BC1 |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| whole set | 64 | 82862 | 3.0 | 1.546 | 1.997 | 2.361 | 0.773 | 1.546 | 0.888 | 0.590 | 1.148 | 0.763 |
+| whole set | 256 | 359626 | 56.2 | 1.255 | 1.435 | 1.661 | 0.628 | 1.255 | 0.638 | 0.415 | 1.016 | 0.661 |
+| whole set | 1024 | 546078 | 325.2 | 1.131 | 1.224 | 1.317 | 0.565 | 1.131 | 0.544 | 0.329 | 0.962 | 0.583 |
+| whole set | all | 1572711 | 4916.9 | 1.039 | 1.065 | 1.093 | 0.519 | 1.039 | 0.473 | 0.273 | 0.912 | 0.526 |
+| equipment | 64 | 82738 | 3.0 | 1.546 | 1.998 | 2.361 | 0.773 | 1.546 | 0.888 | 0.590 | 1.148 | 0.763 |
+| equipment | 256 | 359222 | 56.2 | 1.255 | 1.435 | 1.661 | 0.628 | 1.255 | 0.638 | 0.415 | 1.016 | 0.661 |
+| equipment | all | 1303213 | 1059.6 | 1.097 | 1.166 | 1.238 | 0.549 | 1.097 | 0.518 | 0.309 | 0.944 | 0.564 |
+| NPC small | all | 33440 | 64.4 | 1.070 | 1.116 | 1.165 | 0.535 | 1.070 | 0.496 | 0.291 | 0.927 | 0.545 |
+| NPC medium | all | 137062 | 873.8 | 1.038 | 1.063 | 1.089 | 0.519 | 1.038 | 0.473 | 0.272 | 0.911 | 0.525 |
+| NPC large | all | 98996 | 2919.1 | 1.017 | 1.028 | 1.039 | 0.508 | 1.017 | 0.457 | 0.260 | 0.899 | 0.511 |
+
+#### Hue masks
+
+BC7 and BC1 can't hue by index, so a frame that's neither all hueable nor all kept needs a mask. On Enhanced the flag is the palette's keep-colour byte, and `mobile_anim_ec` packs that mask today. **Classic packs no mask today** (`mobile_anim_cc` has no `FRAME_HUE_*`): its row is what a block-coded Classic format would need, because under a partial hue only grey colours take it.
+
+**Classic**
+
+| scope | none | all | masked | R8 mask MB | BC4 mask MB | one-bit mask MB | BC7 MB | + R8 | + BC4 | + bits | BC1 MB | + R8 | + BC4 | + bits | rectangle MB |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| whole set | 16.2 % | 4.4 % | 79.4 % | 2132.9 | 1108.6 | 279.2 | 2517.5 | 4650.4 | 3626.1 | 2796.7 | 1258.7 | 3391.7 | 2367.3 | 1537.9 | 2419.0 |
+| equipment | 17.6 % | 5.2 % | 77.2 % | 338.8 | 189.4 | 48.5 | 433.0 | 771.8 | 622.4 | 481.5 | 216.5 | 555.3 | 405.9 | 265.0 | 384.8 |
+| NPC small | 17.6 % | 0.4 % | 82.0 % | 52.2 | 28.1 | 7.2 | 66.8 | 118.9 | 94.9 | 73.9 | 33.4 | 85.5 | 61.5 | 40.6 | 61.9 |
+| NPC medium | 7.1 % | 0.4 % | 92.6 % | 392.1 | 204.2 | 51.5 | 450.3 | 842.4 | 654.6 | 501.8 | 225.2 | 617.3 | 429.4 | 276.7 | 432.5 |
+| NPC large | 15.8 % | 0.1 % | 84.0 % | 1331.1 | 676.3 | 169.4 | 1543.0 | 2874.1 | 2219.3 | 1712.4 | 771.5 | 2102.6 | 1447.8 | 940.9 | 1517.8 |
+| not listed | 5.4 % | 6.7 % | 87.9 % | 18.8 | 10.5 | 2.7 | 24.4 | 43.2 | 34.8 | 27.1 | 12.2 | 31.0 | 22.7 | 14.9 | 22.0 |
+| creatures, five | 17.1 % | 0.2 % | 82.7 % | 112.5 | 57.5 | 14.4 | 135.6 | 248.1 | 193.1 | 150.1 | 67.8 | 180.3 | 125.3 | 82.2 | 132.7 |
+| creatures, faced | 16.7 % | 0.0 % | 83.3 % | 21.9 | 11.2 | 2.8 | 26.4 | 48.2 | 37.5 | 29.2 | 13.2 | 35.1 | 24.4 | 16.0 | 25.8 |
+| dressed NPCs, five | 16.4 % | 5.3 % | 78.3 % | 5.3 | 3.0 | 0.8 | 6.8 | 12.1 | 9.8 | 7.5 | 3.4 | 8.7 | 6.4 | 4.2 | 6.0 |
+| dressed NPCs, faced | 15.1 % | 5.6 % | 79.3 % | 1.2 | 0.7 | 0.2 | 1.5 | 2.8 | 2.2 | 1.7 | 0.8 | 2.0 | 1.4 | 0.9 | 1.4 |
+| uniform, five | 15.2 % | 4.2 % | 80.5 % | 25.7 | 13.3 | 3.4 | 28.2 | 53.9 | 41.6 | 31.6 | 14.1 | 39.8 | 27.5 | 17.5 | 27.1 |
+| uniform, faced | 15.8 % | 4.1 % | 80.1 % | 5.1 | 2.6 | 0.7 | 5.7 | 10.8 | 8.4 | 6.4 | 2.9 | 7.9 | 5.5 | 3.5 | 5.5 |
+| worst, five | 7.9 % | 0.0 % | 92.1 % | 859.2 | 435.0 | 108.9 | 929.5 | 1788.7 | 1364.5 | 1038.4 | 464.8 | 1324.0 | 899.8 | 573.6 | 917.9 |
+| worst, faced | 8.0 % | 0.0 % | 92.0 % | 177.4 | 89.8 | 22.5 | 191.8 | 369.2 | 281.6 | 214.2 | 95.9 | 273.3 | 185.7 | 118.4 | 189.4 |
+
+**Enhanced**
+
+| scope | none | all | masked | R8 mask MB | BC4 mask MB | one-bit mask MB | BC7 MB | + R8 | + BC4 | + bits | BC1 MB | + R8 | + BC4 | + bits | rectangle MB |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| whole set | 0.2 % | 91.8 % | 8.0 % | 457.5 | 238.7 | 60.4 | 5106.4 | 5563.9 | 5345.1 | 5166.8 | 2553.2 | 3010.7 | 2791.9 | 2613.6 | 9833.8 |
+| equipment | 0.2 % | 92.3 % | 7.5 % | 187.1 | 99.7 | 25.5 | 1162.6 | 1349.7 | 1262.4 | 1188.1 | 581.3 | 768.4 | 681.1 | 606.8 | 2119.2 |
+| NPC small | 0.0 % | 69.4 % | 30.6 % | 23.4 | 12.5 | 3.2 | 68.9 | 92.3 | 81.4 | 72.1 | 34.5 | 57.9 | 47.0 | 37.7 | 128.8 |
+| NPC medium | 0.0 % | 92.6 % | 7.4 % | 83.5 | 43.1 | 10.8 | 906.9 | 990.4 | 950.0 | 917.8 | 453.5 | 537.0 | 496.5 | 464.3 | 1747.6 |
+| NPC large | 0.0 % | 92.7 % | 7.3 % | 163.5 | 83.4 | 20.9 | 2968.0 | 3131.4 | 3051.3 | 2988.9 | 1484.0 | 1647.5 | 1567.4 | 1504.9 | 5838.2 |
+| creatures, five | 0.0 % | 88.2 % | 11.8 % | 14.7 | 7.6 | 1.9 | 202.8 | 217.5 | 210.3 | 204.7 | 101.4 | 116.1 | 109.0 | 103.3 | 396.6 |
+| creatures, faced | 0.0 % | 87.9 % | 12.1 % | 3.2 | 1.6 | 0.4 | 40.8 | 44.0 | 42.5 | 41.3 | 20.4 | 23.6 | 22.1 | 20.8 | 79.9 |
+| dressed NPCs, five | 0.3 % | 87.7 % | 12.0 % | 2.6 | 1.4 | 0.4 | 10.5 | 13.1 | 11.9 | 10.9 | 5.3 | 7.9 | 6.7 | 5.6 | 19.0 |
+| dressed NPCs, faced | 0.3 % | 81.3 % | 18.3 % | 1.2 | 0.6 | 0.2 | 3.0 | 4.2 | 3.6 | 3.2 | 1.5 | 2.7 | 2.1 | 1.7 | 5.5 |
+| uniform, five | 0.2 % | 93.1 % | 6.7 % | 2.2 | 1.2 | 0.3 | 51.8 | 54.0 | 53.0 | 52.1 | 25.9 | 28.1 | 27.1 | 26.2 | 99.9 |
+| uniform, faced | 0.1 % | 93.2 % | 6.6 % | 0.4 | 0.2 | 0.1 | 10.8 | 11.2 | 11.0 | 10.8 | 5.4 | 5.8 | 5.6 | 5.5 | 20.8 |
+| worst, five | 0.0 % | 97.8 % | 2.2 % | 19.2 | 9.7 | 2.4 | 1245.1 | 1264.3 | 1254.8 | 1247.6 | 622.6 | 641.7 | 632.3 | 625.0 | 2462.1 |
+| worst, faced | 0.0 % | 97.8 % | 2.2 % | 3.8 | 1.9 | 0.5 | 254.6 | 258.4 | 256.5 | 255.1 | 127.3 | 131.1 | 129.2 | 127.8 | 503.5 |
+
+#### Today's packer and whole pages
+
+A renderer using today's reader API (`read_page_bytes`, `read_page_rgba`, `AtlasPageCache`) holds whole pages. The table counts the pages a crowd touches, simulating the packer's own order.
+
+| crowd | load unit | Classic frames' own BC7 MB | pages touched | whole pages MB | x frames' own | Enhanced frames' own BC7 MB | pages touched | whole pages MB | x frames' own | Enhanced with its R8 masks MB |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| creatures | five directions | 135.6 | 260 | 892.8 | 6.58 | 202.8 | 326 | 1139.0 | 5.62 | 1274.1 |
+| creatures | faced only | 26.4 | 209 | 759.5 | 28.81 | 40.8 | 270 | 982.8 | 24.06 | 1112.7 |
+| dressed NPCs | five directions | 6.8 | 151 | 492.0 | 72.58 | 10.5 | 214 | 804.3 | 76.46 | 974.7 |
+| dressed NPCs | faced only | 1.5 | 151 | 492.0 | 321.79 | 3.0 | 213 | 803.7 | 269.05 | 974.1 |
+| uniform | five directions | 28.2 | 207 | 707.0 | 25.04 | 51.8 | 260 | 947.8 | 18.29 | 1051.1 |
+| uniform | faced only | 5.7 | 198 | 682.5 | 119.42 | 10.8 | 244 | 898.0 | 83.25 | 1001.3 |
+| worst | five directions | 929.5 | 580 | 1474.8 | 1.59 | 1245.1 | 724 | 1890.8 | 1.52 | 1958.4 |
+| worst | faced only | 191.8 | 322 | 992.7 | 5.18 | 254.6 | 385 | 1169.0 | 4.59 | 1215.0 |
+
+#### Dynamic allocators, a fresh pack
+
+`guillotiere` 0.7 for guillotine (already a `udd-conv` dependency), a small shelf allocator written in the bench for comparison. A 1 px gutter on each side of each rectangle.
+
+**Classic**
+
+| what | allocator | page side | rectangles | pages | page Mpx | frame Mpx | frames' share | gutters and blocks' gaps | empty |
+|---|---|---:|---|---:|---:|---:|---:|---:|---:|
+| whole set | guillotine | 2048 | each frame | 666 | 2793.4 | 2419.0 | 86.6 % | 4.7 % | 8.7 % |
+| whole set | shelf | 2048 | each frame | 700 | 2936.0 | 2419.0 | 82.4 % | 4.5 % | 13.1 % |
+| whole set | guillotine | 2048 | each stream as one block | 957 | 4013.9 | 2419.0 | 60.3 % | 15.8 % | 24.0 % |
+| whole set | shelf | 2048 | each stream as one block | 1029 | 4315.9 | 2419.0 | 56.0 % | 14.7 % | 29.3 % |
+| whole set | guillotine | 4096 | each frame | 160 | 2684.4 | 2419.0 | 90.1 % | 4.9 % | 5.0 % |
+| whole set | shelf | 4096 | each frame | 175 | 2936.0 | 2419.0 | 82.4 % | 4.5 % | 13.1 % |
+| whole set | guillotine | 4096 | each stream as one block | 201 | 3372.2 | 2419.0 | 71.7 % | 18.8 % | 9.5 % |
+| whole set | shelf | 4096 | each stream as one block | 226 | 3791.7 | 2419.0 | 63.8 % | 16.7 % | 19.5 % |
+| creatures, five directions | guillotine | 2048 | each frame | 35 | 146.8 | 132.7 | 90.4 % | 2.7 % | 6.9 % |
+| creatures, five directions | shelf | 2048 | each frame | 39 | 163.6 | 132.7 | 81.1 % | 2.4 % | 16.5 % |
+| creatures, five directions | guillotine | 2048 | each stream as one block | 47 | 197.1 | 132.7 | 67.3 % | 15.4 % | 17.3 % |
+| creatures, five directions | shelf | 2048 | each stream as one block | 52 | 218.1 | 132.7 | 60.8 % | 13.9 % | 25.3 % |
+| creatures, faced only | guillotine | 2048 | each frame | 7 | 29.4 | 25.8 | 87.9 % | 2.7 % | 9.5 % |
+| creatures, faced only | shelf | 2048 | each frame | 9 | 37.7 | 25.8 | 68.3 % | 2.1 % | 29.6 % |
+| creatures, faced only | guillotine | 2048 | each stream as one block | 10 | 41.9 | 25.8 | 61.5 % | 13.8 % | 24.7 % |
+| creatures, faced only | shelf | 2048 | each stream as one block | 12 | 50.3 | 25.8 | 51.2 % | 11.5 % | 37.2 % |
+| dressed NPCs, five directions | guillotine | 2048 | each frame | 2 | 8.4 | 6.0 | 71.5 % | 12.7 % | 15.8 % |
+| dressed NPCs, five directions | shelf | 2048 | each frame | 2 | 8.4 | 6.0 | 71.5 % | 12.7 % | 15.8 % |
+| dressed NPCs, five directions | guillotine | 2048 | each stream as one block | 3 | 12.6 | 6.0 | 47.7 % | 20.8 % | 31.5 % |
+| dressed NPCs, five directions | shelf | 2048 | each stream as one block | 3 | 12.6 | 6.0 | 47.7 % | 20.8 % | 31.5 % |
+| dressed NPCs, faced only | guillotine | 2048 | each frame | 1 | 4.2 | 1.4 | 32.4 % | 5.5 % | 62.1 % |
+| dressed NPCs, faced only | shelf | 2048 | each frame | 1 | 4.2 | 1.4 | 32.4 % | 5.5 % | 62.1 % |
+| dressed NPCs, faced only | guillotine | 2048 | each stream as one block | 1 | 4.2 | 1.4 | 32.4 % | 14.0 % | 53.6 % |
+| dressed NPCs, faced only | shelf | 2048 | each stream as one block | 1 | 4.2 | 1.4 | 32.4 % | 14.0 % | 53.6 % |
+
+**Enhanced**
+
+| what | allocator | page side | rectangles | pages | page Mpx | frame Mpx | frames' share | gutters and blocks' gaps | empty |
+|---|---|---:|---|---:|---:|---:|---:|---:|---:|
+| whole set | guillotine | 2048 | each frame | 1352 | 5670.7 | 4916.9 | 86.7 % | 4.5 % | 8.8 % |
+| whole set | shelf | 2048 | each frame | 1425 | 5976.9 | 4916.9 | 82.3 % | 4.3 % | 13.5 % |
+| whole set | guillotine | 2048 | each stream as one block | 1870 | 7843.3 | 4916.9 | 62.7 % | 16.1 % | 21.2 % |
+| whole set | shelf | 2048 | each stream as one block | 1979 | 8300.5 | 4916.9 | 59.2 % | 15.2 % | 25.5 % |
+| whole set | guillotine | 4096 | each frame | 328 | 5502.9 | 4916.9 | 89.4 % | 4.6 % | 6.0 % |
+| whole set | shelf | 4096 | each frame | 354 | 5939.1 | 4916.9 | 82.8 % | 4.3 % | 12.9 % |
+| whole set | guillotine | 4096 | each stream as one block | 414 | 6945.8 | 4916.9 | 70.8 % | 18.2 % | 11.0 % |
+| whole set | shelf | 4096 | each stream as one block | 449 | 7533.0 | 4916.9 | 65.3 % | 16.8 % | 17.9 % |
+| creatures, five directions | guillotine | 2048 | each frame | 52 | 218.1 | 198.3 | 90.9 % | 2.8 % | 6.3 % |
+| creatures, five directions | shelf | 2048 | each frame | 58 | 243.3 | 198.3 | 81.5 % | 2.5 % | 16.0 % |
+| creatures, five directions | guillotine | 2048 | each stream as one block | 65 | 272.6 | 198.3 | 72.7 % | 15.9 % | 11.3 % |
+| creatures, five directions | shelf | 2048 | each stream as one block | 72 | 302.0 | 198.3 | 65.7 % | 14.4 % | 20.0 % |
+| creatures, faced only | guillotine | 2048 | each frame | 11 | 46.1 | 39.9 | 86.5 % | 2.6 % | 10.8 % |
+| creatures, faced only | shelf | 2048 | each frame | 12 | 50.3 | 39.9 | 79.3 % | 2.4 % | 18.3 % |
+| creatures, faced only | guillotine | 2048 | each stream as one block | 14 | 58.7 | 39.9 | 68.0 % | 15.4 % | 16.6 % |
+| creatures, faced only | shelf | 2048 | each stream as one block | 17 | 71.3 | 39.9 | 56.0 % | 12.7 % | 31.3 % |
+| dressed NPCs, five directions | guillotine | 2048 | each frame | 3 | 12.6 | 9.5 | 75.7 % | 10.4 % | 13.9 % |
+| dressed NPCs, five directions | shelf | 2048 | each frame | 4 | 16.8 | 9.5 | 56.8 % | 7.8 % | 35.4 % |
+| dressed NPCs, five directions | guillotine | 2048 | each stream as one block | 4 | 16.8 | 9.5 | 56.8 % | 22.9 % | 20.4 % |
+| dressed NPCs, five directions | shelf | 2048 | each stream as one block | 4 | 16.8 | 9.5 | 56.8 % | 22.9 % | 20.4 % |
+| dressed NPCs, faced only | guillotine | 2048 | each frame | 1 | 4.2 | 2.7 | 65.1 % | 7.9 % | 27.0 % |
+| dressed NPCs, faced only | shelf | 2048 | each frame | 1 | 4.2 | 2.7 | 65.1 % | 7.9 % | 27.0 % |
+| dressed NPCs, faced only | guillotine | 2048 | each stream as one block | 2 | 8.4 | 2.7 | 32.6 % | 12.7 % | 54.7 % |
+| dressed NPCs, faced only | shelf | 2048 | each stream as one block | 2 | 8.4 | 2.7 | 32.6 % | 12.7 % | 54.7 % |
+
+#### Churn
+
+Eight rounds, creature crowds and dressed NPCs in turn, five directions, a 1 px gutter. LRU evicts what the round doesn't need, and a page is added only when nothing can be evicted. The "worst round" is the small dressed crowd sitting on pages kept for creatures, so its live share and fragmentation are dominated by retained pages rather than by holes: read peak pages against the budget.
+
+**Classic**
+
+| allocator | page side | rectangles | budget x largest fresh pack | budget pages | peak pages | rounds over budget | streams evicted | worst round: pages | its fresh pack | its live Mpx | live's share of its pages | waste that is fragmentation and cache | peak MB, rectangle format |
+|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| guillotine | 2048 | each frame | 1.00 | 36 | 43 | 6 | 7996 | 43 | 2 | 6.3 | 3.5 % | 98.8 % | 180.4 |
+| shelf | 2048 | each frame | 1.00 | 41 | 45 | 6 | 7958 | 45 | 3 | 6.9 | 3.7 % | 96.9 % | 188.7 |
+| guillotine | 2048 | each frame | 1.25 | 45 | 50 | 6 | 7378 | 50 | 2 | 6.3 | 3.0 % | 99.0 % | 209.7 |
+| shelf | 2048 | each frame | 1.25 | 52 | 52 | 0 | 5586 | 52 | 3 | 6.7 | 3.1 % | 97.2 % | 218.1 |
+| guillotine | 2048 | each stream as one block | 1.00 | 46 | 64 | 6 | 7383 | 64 | 3 | 6.3 | 2.4 % | 97.6 % | 268.4 |
+| shelf | 2048 | each stream as one block | 1.00 | 52 | 67 | 6 | 7378 | 67 | 3 | 6.3 | 2.3 % | 97.7 % | 281.0 |
+| guillotine | 2048 | each stream as one block | 1.25 | 58 | 67 | 6 | 7378 | 67 | 3 | 6.3 | 2.3 % | 97.7 % | 281.0 |
+| shelf | 2048 | each stream as one block | 1.25 | 65 | 67 | 6 | 7351 | 67 | 3 | 6.7 | 2.4 % | 97.9 % | 281.0 |
+| guillotine | 4096 | each frame | 1.00 | 9 | 13 | 6 | 8057 | 13 | 1 | 6.3 | 2.9 % | 95.1 % | 218.1 |
+| shelf | 4096 | each frame | 1.00 | 11 | 11 | 0 | 5882 | 11 | 1 | 6.7 | 3.6 % | 94.4 % | 184.5 |
+| guillotine | 4096 | each frame | 1.25 | 12 | 13 | 6 | 6063 | 13 | 1 | 6.7 | 3.1 % | 95.2 % | 218.1 |
+| shelf | 4096 | each frame | 1.25 | 14 | 14 | 0 | 5408 | 14 | 1 | 6.7 | 2.9 % | 95.6 % | 234.9 |
+| guillotine | 4096 | each stream as one block | 1.00 | 11 | 15 | 6 | 7383 | 15 | 1 | 6.3 | 2.5 % | 95.7 % | 251.7 |
+| shelf | 4096 | each stream as one block | 1.00 | 13 | 17 | 6 | 7383 | 17 | 1 | 6.3 | 2.2 % | 96.3 % | 285.2 |
+| guillotine | 4096 | each stream as one block | 1.25 | 14 | 17 | 6 | 6058 | 17 | 1 | 6.7 | 2.4 % | 96.4 % | 285.2 |
+| shelf | 4096 | each stream as one block | 1.25 | 17 | 18 | 2 | 7323 | 18 | 1 | 6.3 | 2.1 % | 96.5 % | 302.0 |
+
+**Enhanced**
+
+| allocator | page side | rectangles | budget x largest fresh pack | budget pages | peak pages | rounds over budget | streams evicted | worst round: pages | its fresh pack | its live Mpx | live's share of its pages | waste that is fragmentation and cache | peak MB, rectangle format |
+|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| guillotine | 2048 | each frame | 1.00 | 59 | 69 | 6 | 8043 | 69 | 3 | 9.2 | 3.2 % | 98.8 % | 578.8 |
+| shelf | 2048 | each frame | 1.00 | 67 | 73 | 4 | 8041 | 73 | 3 | 9.2 | 3.0 % | 98.9 % | 612.4 |
+| guillotine | 2048 | each frame | 1.25 | 74 | 75 | 6 | 5857 | 75 | 3 | 9.5 | 3.0 % | 99.0 % | 629.1 |
+| shelf | 2048 | each frame | 1.25 | 84 | 84 | 0 | 5050 | 84 | 3 | 9.5 | 2.7 % | 99.1 % | 704.6 |
+| guillotine | 2048 | each stream as one block | 1.00 | 73 | 95 | 6 | 8043 | 95 | 4 | 9.2 | 2.3 % | 98.1 % | 796.9 |
+| shelf | 2048 | each stream as one block | 1.00 | 83 | 106 | 6 | 6647 | 106 | 4 | 8.5 | 1.9 % | 98.1 % | 889.2 |
+| guillotine | 2048 | each stream as one block | 1.25 | 92 | 97 | 6 | 7295 | 97 | 4 | 9.2 | 2.3 % | 98.1 % | 813.7 |
+| shelf | 2048 | each stream as one block | 1.25 | 104 | 109 | 4 | 7559 | 109 | 4 | 9.2 | 2.0 % | 98.3 % | 914.4 |
+| guillotine | 4096 | each frame | 1.00 | 15 | 19 | 6 | 8043 | 19 | 1 | 9.2 | 2.9 % | 97.6 % | 637.5 |
+| shelf | 4096 | each frame | 1.00 | 17 | 20 | 6 | 8043 | 20 | 1 | 9.2 | 2.8 % | 97.7 % | 671.1 |
+| guillotine | 4096 | each frame | 1.25 | 19 | 20 | 6 | 5843 | 20 | 1 | 9.5 | 2.8 % | 97.8 % | 671.1 |
+| shelf | 4096 | each frame | 1.25 | 22 | 22 | 0 | 4990 | 22 | 1 | 9.5 | 2.6 % | 98.0 % | 738.2 |
+| guillotine | 4096 | each stream as one block | 1.00 | 19 | 25 | 6 | 6647 | 25 | 1 | 8.5 | 2.0 % | 98.0 % | 838.9 |
+| shelf | 4096 | each stream as one block | 1.00 | 21 | 26 | 6 | 6667 | 26 | 1 | 8.5 | 1.9 % | 98.1 % | 872.4 |
+| guillotine | 4096 | each stream as one block | 1.25 | 24 | 26 | 6 | 6496 | 26 | 1 | 8.5 | 1.9 % | 98.1 % | 872.4 |
+| shelf | 4096 | each stream as one block | 1.25 | 27 | 28 | 2 | 7723 | 28 | 1 | 9.2 | 2.0 % | 98.4 % | 939.5 |
+
+#### The load unit
+
+MB with each layout's own palettes and tables. Streams and frames are per client.
+
+| crowd | load unit | Classic rectangle | BC7 | BC1 | row spans | painted only | Enhanced rectangle | BC7 | BC1 | row spans | painted only |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| creatures | all actions of each body | 1410.8 | 1438.6 | 720.1 | 746.2 | 812.3 | 4561.7 | 2331.1 | 1166.8 | 2216.8 | 2064.4 |
+| creatures | one action, five directions | 133.4 | 135.8 | 68.0 | 70.7 | 77.1 | 397.1 | 203.0 | 101.6 | 192.4 | 179.2 |
+| creatures | one action, the faced direction | 26.1 | 26.4 | 13.2 | 14.2 | 15.4 | 80.2 | 40.9 | 20.5 | 38.5 | 36.0 |
+| creatures | only the frames on screen, a stream's mean frame | 3.42 | 3.26 | 1.63 | 1.94 | 2.08 | 8.26 | 4.07 | 2.04 | 4.07 | 3.81 |
+| dressed NPCs | all actions of each body | 241.8 | 247.6 | 126.6 | 156.3 | 202.9 | 1221.7 | 660.7 | 335.4 | 689.5 | 750.0 |
+| dressed NPCs | one action, five directions | 6.9 | 7.0 | 3.6 | 5.2 | 7.0 | 19.5 | 10.7 | 5.5 | 12.1 | 13.8 |
+| dressed NPCs | one action, the faced direction | 1.6 | 1.6 | 0.8 | 1.3 | 1.7 | 5.8 | 3.0 | 1.5 | 3.6 | 4.0 |
+| dressed NPCs | only the frames on screen, a stream's mean frame | 0.45 | 0.23 | 0.12 | 0.39 | 0.45 | 0.90 | 0.35 | 0.18 | 0.65 | 0.70 |
+| uniform | all actions of each body | 489.2 | 504.7 | 254.9 | 290.4 | 350.2 | 1936.8 | 1017.2 | 512.6 | 959.9 | 970.9 |
+| uniform | one action, five directions | 27.9 | 28.4 | 14.3 | 16.7 | 19.2 | 100.4 | 52.1 | 26.1 | 47.7 | 46.2 |
+| uniform | one action, the faced direction | 5.8 | 5.8 | 2.9 | 3.5 | 4.1 | 21.1 | 10.8 | 5.4 | 10.3 | 9.8 |
+| uniform | only the frames on screen, a stream's mean frame | 0.87 | 0.63 | 0.32 | 0.62 | 0.69 | 2.40 | 1.09 | 0.55 | 1.31 | 1.27 |
+| worst | all actions of each body | 1262.8 | 1280.9 | 640.7 | 650.5 | 677.6 | 3488.0 | 1766.7 | 883.6 | 1678.2 | 1486.9 |
+| worst | one action, five directions | 918.3 | 929.8 | 465.1 | 473.0 | 488.5 | 2462.7 | 1245.4 | 622.9 | 1191.8 | 1048.4 |
+| worst | one action, the faced direction | 189.5 | 191.8 | 95.9 | 96.9 | 99.8 | 503.9 | 254.7 | 127.4 | 244.3 | 213.6 |
+| worst | only the frames on screen, a stream's mean frame | 15.94 | 16.07 | 8.04 | 8.12 | 8.26 | 40.31 | 20.23 | 10.12 | 19.21 | 16.70 |
+
+#### Bodies and Mpx by a body's median cropped frame area
+
+**Classic**
+
+| class | up to 2500 | up to 10000 | up to 40000 | above |
+|---|---:|---:|---:|---:|
+| equipment | 538, 364.8 | 10, 15.3 | 2, 4.7 | 0, 0.0 |
+| NPC small | 95, 61.9 | 0, 0.0 | 0, 0.0 | 0, 0.0 |
+| NPC medium | 0, 0.0 | 173, 432.5 | 0, 0.0 | 0, 0.0 |
+| NPC large | 0, 0.0 | 0, 0.0 | 88, 825.7 | 13, 692.1 |
+| not listed | 97, 13.2 | 6, 8.8 | 0, 0.0 | 0, 0.0 |
+
+**Enhanced**
+
+| class | up to 2500 | up to 10000 | up to 40000 | above |
+|---|---:|---:|---:|---:|
+| equipment | 523, 772.9 | 35, 286.7 | 0, 0.0 | 0, 0.0 |
+| NPC small | 51, 64.4 | 0, 0.0 | 0, 0.0 | 0, 0.0 |
+| NPC medium | 0, 0.0 | 187, 873.8 | 0, 0.0 | 0, 0.0 |
+| NPC large | 0, 0.0 | 0, 0.0 | 112, 1761.9 | 18, 1157.2 |
+
+#### The low-end mix: VRAM
+
+A per-body choice: a body whose median cropped frame area is above the threshold takes the block format, padded to its blocks; the rest stay R8 or RG8 with palettes. MB with frame entries, without masks, then with R8 masks over the block-coded bodies' masked frames. Classic packs no masks today, and an index layout needs none.
+
+**Classic, total MB**
+
+| layout | whole set | creatures, five | creatures, faced | dressed NPCs, five | dressed NPCs, faced | uniform, five | uniform, faced | worst, five | worst, faced |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| all lossless | 2474.5 | 133.4 | 26.1 | 6.9 | 1.6 | 27.9 | 5.8 | 918.3 | 189.5 |
+| all BC1 | 1274.7 | 68.0 | 13.2 | 3.6 | 0.8 | 14.3 | 2.9 | 465.1 | 95.9 |
+| all ASTC 6 x 6 | 1165.5 | 61.3 | 11.9 | 3.5 | 0.8 | 13.1 | 2.6 | 417.0 | 86.0 |
+| all ASTC 8 x 8 | 680.0 | 35.1 | 6.8 | 2.2 | 0.5 | 7.6 | 1.5 | 236.6 | 48.8 |
+| above 2500: BC1 | 1502.6 | 69.5 | 13.5 | 6.7 | 1.6 | 16.9 | 3.5 | 465.1 | 95.9 |
+| above 2500: ASTC 6 x 6 | 1403.7 | 62.9 | 12.3 | 6.7 | 1.6 | 15.8 | 3.3 | 417.0 | 86.0 |
+| above 2500: ASTC 8 x 8 | 1011.9 | 37.3 | 7.3 | 6.6 | 1.5 | 11.4 | 2.4 | 236.6 | 48.8 |
+| above 10000: BC1 | 1724.8 | 82.3 | 16.2 | 6.9 | 1.6 | 19.1 | 4.0 | 469.2 | 96.7 |
+| above 10000: ASTC 6 x 6 | 1646.5 | 76.9 | 15.2 | 6.9 | 1.6 | 18.2 | 3.8 | 421.6 | 86.9 |
+| above 10000: ASTC 8 x 8 | 1346.4 | 56.5 | 11.3 | 6.9 | 1.6 | 14.6 | 3.2 | 242.8 | 50.0 |
+| above 40000: BC1 | 2132.1 | 106.2 | 20.9 | 6.9 | 1.6 | 23.5 | 4.9 | 596.2 | 122.5 |
+| above 40000: ASTC 6 x 6 | 2095.5 | 103.3 | 20.4 | 6.9 | 1.6 | 23.0 | 4.8 | 561.9 | 115.4 |
+| above 40000: ASTC 8 x 8 | 1959.7 | 92.5 | 18.4 | 6.9 | 1.6 | 21.2 | 4.4 | 434.1 | 88.8 |
+
+**Classic, total MB with R8 masks**
+
+| layout | whole set | creatures, five | creatures, faced | dressed NPCs, five | dressed NPCs, faced | uniform, five | uniform, faced | worst, five | worst, faced |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| all BC1 | 3407.6 | 180.5 | 35.1 | 8.9 | 2.0 | 40.0 | 8.0 | 1324.2 | 273.3 |
+| all ASTC 6 x 6 | 3298.4 | 173.8 | 33.8 | 8.8 | 2.0 | 38.7 | 7.7 | 1276.2 | 263.4 |
+| all ASTC 8 x 8 | 2812.9 | 147.6 | 28.7 | 7.5 | 1.7 | 33.3 | 6.6 | 1095.8 | 226.2 |
+| above 2500: BC1 | 3251.7 | 179.6 | 34.9 | 7.1 | 1.7 | 38.5 | 7.8 | 1324.2 | 273.3 |
+| above 2500: ASTC 6 x 6 | 3152.8 | 173.0 | 33.7 | 7.1 | 1.7 | 37.3 | 7.5 | 1276.2 | 263.4 |
+| above 2500: ASTC 8 x 8 | 2761.0 | 147.4 | 28.7 | 7.0 | 1.7 | 32.9 | 6.7 | 1095.8 | 226.2 |
+| above 10000: BC1 | 3060.5 | 171.8 | 33.4 | 7.0 | 1.7 | 36.3 | 7.4 | 1324.6 | 273.5 |
+| above 10000: ASTC 6 x 6 | 2982.3 | 166.4 | 32.3 | 7.0 | 1.7 | 35.4 | 7.2 | 1277.0 | 263.7 |
+| above 10000: ASTC 8 x 8 | 2682.2 | 146.0 | 28.4 | 7.0 | 1.6 | 31.9 | 6.5 | 1098.2 | 226.8 |
+| above 40000: BC1 | 2785.1 | 157.0 | 30.3 | 6.9 | 1.6 | 32.0 | 6.5 | 1222.5 | 253.1 |
+| above 40000: ASTC 6 x 6 | 2748.6 | 154.1 | 29.8 | 6.9 | 1.6 | 31.5 | 6.4 | 1188.1 | 245.9 |
+| above 40000: ASTC 8 x 8 | 2612.8 | 143.3 | 27.8 | 6.9 | 1.6 | 29.8 | 6.1 | 1060.3 | 219.4 |
+
+**Enhanced, total MB**
+
+| layout | whole set | creatures, five | creatures, faced | dressed NPCs, five | dressed NPCs, faced | uniform, five | uniform, faced | worst, five | worst, faced |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| all lossless | 9891.3 | 397.1 | 80.2 | 19.5 | 5.8 | 100.4 | 21.1 | 2462.7 | 503.9 |
+| all BC1 | 2578.4 | 101.6 | 20.5 | 5.5 | 1.5 | 26.1 | 5.4 | 622.9 | 127.4 |
+| all BC7 | 5131.6 | 203.0 | 40.9 | 10.7 | 3.0 | 52.1 | 10.8 | 1245.4 | 254.7 |
+| all ASTC 6 x 6 | 2352.7 | 91.7 | 18.5 | 5.2 | 1.4 | 23.8 | 5.0 | 557.9 | 114.1 |
+| all ASTC 8 x 8 | 1368.2 | 52.4 | 10.6 | 3.2 | 0.9 | 13.9 | 2.9 | 316.2 | 64.6 |
+| above 2500: BC1 | 3813.9 | 106.6 | 21.5 | 15.0 | 4.1 | 38.3 | 8.3 | 622.9 | 127.4 |
+| above 2500: BC7 | 5902.3 | 206.2 | 41.6 | 16.6 | 4.7 | 59.6 | 12.7 | 1245.4 | 254.7 |
+| above 2500: ASTC 6 x 6 | 3611.1 | 96.9 | 19.6 | 14.9 | 4.1 | 36.2 | 7.8 | 557.9 | 114.1 |
+| above 2500: ASTC 8 x 8 | 2802.7 | 58.3 | 11.8 | 14.2 | 3.8 | 28.0 | 6.1 | 316.2 | 64.6 |
+| above 10000: BC1 | 5535.1 | 171.9 | 34.5 | 19.5 | 5.8 | 53.4 | 11.4 | 630.8 | 128.8 |
+| above 10000: BC7 | 7019.0 | 248.6 | 50.1 | 19.5 | 5.8 | 69.4 | 14.7 | 1250.7 | 255.6 |
+| above 10000: ASTC 6 x 6 | 5384.9 | 164.2 | 32.9 | 19.5 | 5.8 | 51.8 | 11.1 | 566.1 | 115.5 |
+| above 10000: ASTC 8 x 8 | 4809.6 | 134.4 | 26.9 | 19.5 | 5.8 | 45.5 | 9.8 | 325.5 | 66.3 |
+| above 40000: BC1 | 8161.8 | 306.3 | 61.7 | 19.5 | 5.8 | 85.0 | 17.9 | 893.2 | 183.0 |
+| above 40000: BC7 | 8747.0 | 337.1 | 68.0 | 19.5 | 5.8 | 90.2 | 19.0 | 1423.9 | 291.4 |
+| above 40000: ASTC 6 x 6 | 8100.8 | 303.2 | 61.1 | 19.5 | 5.8 | 84.5 | 17.8 | 837.7 | 171.7 |
+| above 40000: ASTC 8 x 8 | 7873.6 | 291.2 | 58.7 | 19.5 | 5.8 | 82.4 | 17.4 | 631.6 | 129.5 |
+| above 2500: BC1, the rest BC7 | 3043.2 | 103.4 | 20.8 | 9.1 | 2.4 | 30.7 | 6.4 | 622.9 | 127.4 |
+| above 10000: BC1, the rest BC7 | 3647.6 | 126.3 | 25.3 | 10.7 | 3.0 | 36.0 | 7.5 | 625.5 | 127.8 |
+| above 40000: BC1, the rest BC7 | 4546.4 | 172.3 | 34.6 | 10.7 | 3.0 | 46.8 | 9.7 | 714.7 | 146.2 |
+
+**Enhanced, total MB with R8 masks**
+
+| layout | whole set | creatures, five | creatures, faced | dressed NPCs, five | dressed NPCs, faced | uniform, five | uniform, faced | worst, five | worst, faced |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| all BC1 | 3035.8 | 116.3 | 23.6 | 8.1 | 2.7 | 28.3 | 5.8 | 642.0 | 131.2 |
+| all BC7 | 5589.0 | 217.7 | 44.1 | 13.3 | 4.2 | 54.2 | 11.2 | 1264.6 | 258.5 |
+| all ASTC 6 x 6 | 2810.2 | 106.4 | 21.6 | 7.8 | 2.6 | 26.0 | 5.4 | 577.1 | 117.9 |
+| all ASTC 8 x 8 | 1825.6 | 67.1 | 13.7 | 5.8 | 2.1 | 16.0 | 3.3 | 335.4 | 68.5 |
+| above 2500: BC1 | 4203.3 | 120.0 | 24.4 | 16.8 | 4.8 | 39.9 | 8.5 | 642.0 | 131.2 |
+| above 2500: BC7 | 6291.7 | 219.5 | 44.5 | 18.4 | 5.4 | 61.2 | 13.0 | 1264.6 | 258.5 |
+| above 2500: ASTC 6 x 6 | 4000.5 | 110.2 | 22.4 | 16.6 | 4.8 | 37.8 | 8.1 | 577.1 | 117.9 |
+| above 2500: ASTC 8 x 8 | 3192.1 | 71.7 | 14.7 | 16.0 | 4.5 | 29.6 | 6.4 | 335.4 | 68.5 |
+| above 10000: BC1 | 5698.5 | 180.7 | 36.4 | 19.5 | 5.8 | 53.4 | 11.4 | 649.9 | 132.6 |
+| above 10000: BC7 | 7182.5 | 257.5 | 52.0 | 19.5 | 5.8 | 69.4 | 14.7 | 1269.8 | 259.4 |
+| above 10000: ASTC 6 x 6 | 5548.4 | 173.0 | 34.8 | 19.5 | 5.8 | 51.8 | 11.1 | 585.3 | 119.4 |
+| above 10000: ASTC 8 x 8 | 4973.1 | 143.2 | 28.8 | 19.5 | 5.8 | 45.5 | 9.8 | 344.7 | 70.1 |
+| above 40000: BC1 | 8161.8 | 306.3 | 61.7 | 19.5 | 5.8 | 85.0 | 17.9 | 893.2 | 183.0 |
+| above 40000: BC7 | 8747.0 | 337.1 | 68.0 | 19.5 | 5.8 | 90.2 | 19.0 | 1423.9 | 291.4 |
+| above 40000: ASTC 6 x 6 | 8100.8 | 303.2 | 61.1 | 19.5 | 5.8 | 84.5 | 17.8 | 837.7 | 171.7 |
+| above 40000: ASTC 8 x 8 | 7873.6 | 291.2 | 58.7 | 19.5 | 5.8 | 82.4 | 17.4 | 631.6 | 129.5 |
+| above 2500: BC1, the rest BC7 | 3500.7 | 118.2 | 24.0 | 11.7 | 3.6 | 32.9 | 6.8 | 642.0 | 131.2 |
+| above 10000: BC1, the rest BC7 | 4105.1 | 141.0 | 28.5 | 13.3 | 4.2 | 38.2 | 7.9 | 644.7 | 131.7 |
+| above 40000: BC1, the rest BC7 | 5003.9 | 187.0 | 37.8 | 13.3 | 4.2 | 49.0 | 10.1 | 733.8 | 150.1 |
+
+#### How much of each crowd each class holds
+
+Share of the scope's MB in R8 or RG8, then in BC1 (padding shifts it slightly). `of all these, above 40000` is a subset of the class rows. A crowd counts each distinct stream once.
+
+**Classic**
+
+| scope | class | streams | Mpx | R8 / RG8 | BC1 |
+|---|---|---:|---:|---:|---:|
+| whole set | equipment | 104770 | 384.8 | 384.8, 15.9 % | 216.5, 17.2 % |
+| whole set | NPC small | 7072 | 61.9 | 61.9, 2.6 % | 33.4, 2.7 % |
+| whole set | NPC medium | 12235 | 432.5 | 432.5, 17.9 % | 225.2, 17.9 % |
+| whole set | NPC large | 7151 | 1517.8 | 1517.8, 62.7 % | 771.5, 61.3 % |
+| whole set | not listed | 7198 | 22.0 | 22.0, 0.9 % | 12.2, 1.0 % |
+| whole set | of all these, above 40000 | 931 | 692.1 | 692.1, 28.6 % | 349.8, 27.8 % |
+| creatures, five | NPC small | 355 | 3.0 | 3.0, 2.2 % | 1.6, 2.4 % |
+| creatures, five | NPC medium | 700 | 26.1 | 26.1, 19.7 % | 13.6, 20.0 % |
+| creatures, five | NPC large | 445 | 103.6 | 103.6, 78.1 % | 52.6, 77.6 % |
+| creatures, five | of all these, above 40000 | 55 | 55.0 | 55.0, 41.4 % | 27.8, 40.9 % |
+| creatures, faced | NPC small | 71 | 0.6 | 0.6, 2.3 % | 0.3, 2.4 % |
+| creatures, faced | NPC medium | 140 | 5.3 | 5.3, 20.6 % | 2.8, 20.9 % |
+| creatures, faced | NPC large | 89 | 19.9 | 19.9, 77.1 % | 10.1, 76.6 % |
+| creatures, faced | of all these, above 40000 | 11 | 10.3 | 10.3, 40.0 % | 5.2, 39.5 % |
+| dressed NPCs, five | equipment | 1237 | 5.3 | 5.3, 88.3 % | 3.0, 88.8 % |
+| dressed NPCs, five | NPC small | 25 | 0.3 | 0.3, 5.4 % | 0.2, 5.2 % |
+| dressed NPCs, five | NPC medium | 15 | 0.4 | 0.4, 6.3 % | 0.2, 6.0 % |
+| dressed NPCs, faced | equipment | 250 | 1.1 | 1.1, 80.0 % | 0.6, 81.0 % |
+| dressed NPCs, faced | NPC small | 9 | 0.1 | 0.1, 8.4 % | 0.1, 8.1 % |
+| dressed NPCs, faced | NPC medium | 6 | 0.2 | 0.2, 11.5 % | 0.1, 10.9 % |
+| uniform, five | equipment | 1135 | 3.7 | 3.7, 13.7 % | 2.1, 14.9 % |
+| uniform, five | NPC small | 85 | 1.0 | 1.0, 3.7 % | 0.5, 3.8 % |
+| uniform, five | NPC medium | 130 | 4.5 | 4.5, 16.5 % | 2.3, 16.6 % |
+| uniform, five | NPC large | 70 | 17.9 | 17.9, 66.0 % | 9.1, 64.5 % |
+| uniform, five | not listed | 50 | 0.1 | 0.1, 0.2 % | 0.0, 0.3 % |
+| uniform, five | of all these, above 40000 | 15 | 8.9 | 8.9, 33.0 % | 4.5, 32.1 % |
+| uniform, faced | equipment | 233 | 0.8 | 0.8, 14.1 % | 0.4, 15.4 % |
+| uniform, faced | NPC small | 17 | 0.2 | 0.2, 3.6 % | 0.1, 3.7 % |
+| uniform, faced | NPC medium | 26 | 1.0 | 1.0, 17.5 % | 0.5, 17.5 % |
+| uniform, faced | NPC large | 14 | 3.5 | 3.5, 64.6 % | 1.8, 63.0 % |
+| uniform, faced | not listed | 10 | 0.0 | 0.0, 0.2 % | 0.0, 0.3 % |
+| uniform, faced | of all these, above 40000 | 3 | 1.8 | 1.8, 33.1 % | 0.9, 32.1 % |
+| worst, five | NPC medium | 25 | 8.4 | 8.4, 0.9 % | 4.3, 0.9 % |
+| worst, five | NPC large | 1471 | 909.5 | 909.5, 99.1 % | 460.5, 99.1 % |
+| worst, five | of all these, above 40000 | 676 | 650.9 | 650.9, 70.9 % | 329.0, 70.8 % |
+| worst, faced | NPC medium | 5 | 1.6 | 1.6, 0.9 % | 0.8, 0.9 % |
+| worst, faced | NPC large | 295 | 187.8 | 187.8, 99.1 % | 95.1, 99.1 % |
+| worst, faced | of all these, above 40000 | 136 | 135.3 | 135.3, 71.5 % | 68.4, 71.3 % |
+
+**Enhanced**
+
+| scope | class | streams | Mpx | R8 / RG8 | BC1 |
+|---|---|---:|---:|---:|---:|
+| whole set | equipment | 130028 | 1059.6 | 2119.2, 21.6 % | 581.3, 22.8 % |
+| whole set | NPC small | 3740 | 64.4 | 128.8, 1.3 % | 34.5, 1.3 % |
+| whole set | NPC medium | 14364 | 873.8 | 1747.6, 17.8 % | 453.5, 17.8 % |
+| whole set | NPC large | 10001 | 2919.1 | 5838.2, 59.4 % | 1484.0, 58.1 % |
+| whole set | of all these, above 40000 | 1471 | 1157.2 | 2314.4, 23.5 % | 585.2, 22.9 % |
+| creatures, five | NPC small | 215 | 3.4 | 6.8, 1.7 % | 1.8, 1.8 % |
+| creatures, five | NPC medium | 735 | 44.0 | 87.9, 22.2 % | 22.8, 22.5 % |
+| creatures, five | NPC large | 550 | 150.9 | 301.8, 76.1 % | 76.7, 75.7 % |
+| creatures, five | of all these, above 40000 | 90 | 60.7 | 121.4, 30.6 % | 30.7, 30.3 % |
+| creatures, faced | NPC small | 43 | 0.7 | 1.4, 1.7 % | 0.4, 1.8 % |
+| creatures, faced | NPC medium | 147 | 8.7 | 17.3, 21.7 % | 4.5, 22.0 % |
+| creatures, faced | NPC large | 110 | 30.6 | 61.2, 76.6 % | 15.6, 76.2 % |
+| creatures, faced | of all these, above 40000 | 18 | 12.3 | 24.7, 30.9 % | 6.2, 30.6 % |
+| dressed NPCs, five | equipment | 1242 | 8.5 | 17.0, 89.4 % | 4.7, 89.8 % |
+| dressed NPCs, five | NPC small | 20 | 0.4 | 0.8, 4.2 % | 0.2, 4.1 % |
+| dressed NPCs, five | NPC medium | 15 | 0.6 | 1.2, 6.4 % | 0.3, 6.1 % |
+| dressed NPCs, faced | equipment | 250 | 1.7 | 3.5, 63.2 % | 1.0, 64.2 % |
+| dressed NPCs, faced | NPC small | 20 | 0.4 | 0.8, 14.5 % | 0.2, 14.4 % |
+| dressed NPCs, faced | NPC medium | 15 | 0.6 | 1.2, 22.3 % | 0.3, 21.4 % |
+| uniform, five | equipment | 1237 | 10.5 | 21.0, 21.0 % | 5.8, 22.2 % |
+| uniform, five | NPC small | 35 | 0.7 | 1.4, 1.4 % | 0.4, 1.4 % |
+| uniform, five | NPC medium | 116 | 7.2 | 14.4, 14.5 % | 3.8, 14.5 % |
+| uniform, five | NPC large | 100 | 31.5 | 63.0, 63.1 % | 16.0, 61.8 % |
+| uniform, five | of all these, above 40000 | 20 | 10.3 | 20.6, 20.7 % | 5.2, 20.2 % |
+| uniform, faced | equipment | 249 | 2.2 | 4.5, 21.4 % | 1.2, 22.6 % |
+| uniform, faced | NPC small | 7 | 0.1 | 0.3, 1.3 % | 0.1, 1.3 % |
+| uniform, faced | NPC medium | 24 | 1.5 | 3.1, 14.9 % | 0.8, 15.0 % |
+| uniform, faced | NPC large | 20 | 6.5 | 13.0, 62.4 % | 3.3, 61.1 % |
+| uniform, faced | of all these, above 40000 | 4 | 2.2 | 4.3, 20.8 % | 1.1, 20.3 % |
+| worst, five | NPC medium | 5 | 5.3 | 10.6, 0.4 % | 2.7, 0.4 % |
+| worst, five | NPC large | 1491 | 1225.8 | 2451.5, 99.6 % | 619.9, 99.6 % |
+| worst, five | of all these, above 40000 | 1131 | 1050.0 | 2100.0, 85.3 % | 530.7, 85.3 % |
+| worst, faced | NPC medium | 1 | 0.9 | 1.9, 0.4 % | 0.5, 0.4 % |
+| worst, faced | NPC large | 299 | 250.8 | 501.7, 99.6 % | 126.8, 99.6 % |
+| worst, faced | of all these, above 40000 | 227 | 214.5 | 429.1, 85.2 % | 108.4, 85.2 % |
 
 ## Recommendation
 

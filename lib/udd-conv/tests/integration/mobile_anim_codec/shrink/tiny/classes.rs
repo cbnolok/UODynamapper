@@ -86,14 +86,14 @@ impl TileRule {
 }
 
 /// The placeholder rule, with `mobtypes.txt` for what has no placeholder.
-struct BodyRule<'a> {
+pub(super) struct BodyRule<'a> {
     kinds: &'a BodyKinds,
     classic: TileRule,
     enhanced: TileRule,
 }
 
 impl<'a> BodyRule<'a> {
-    fn load(kinds: &'a BodyKinds, cc_dir: &Path) -> BodyRule<'a> {
+    pub(super) fn load(kinds: &'a BodyKinds, cc_dir: &Path) -> BodyRule<'a> {
         let ec_dir = std::env::var_os(EC_CLIENT_DIR_ENV).expect("the Enhanced client directory");
         BodyRule { kinds, classic: TileRule::load(cc_dir), enhanced: TileRule::load(Path::new(&ec_dir)) }
     }
@@ -109,7 +109,7 @@ impl<'a> BodyRule<'a> {
         self.kinds.id(source).map_or(Verdict::NoServerBody, |id| self.tiles(source).verdict(id))
     }
 
-    fn group(&self, source: &BodySource) -> Group {
+    pub(super) fn group(&self, source: &BodySource) -> Group {
         match self.verdict(source) {
             Verdict::Equipment => Group::Equipment,
             Verdict::Person | Verdict::Creature => Group::Creature,
@@ -117,7 +117,7 @@ impl<'a> BodyRule<'a> {
         }
     }
 
-    fn is_person(&self, source: &BodySource) -> bool {
+    pub(super) fn is_person(&self, source: &BodySource) -> bool {
         match self.verdict(source) {
             Verdict::Person => true,
             Verdict::Equipment | Verdict::Creature => false,
@@ -255,7 +255,7 @@ pub(in super::super) fn part_tk0(sources: &Sources, bodies: &[BodySource], prese
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Class {
+pub(super) enum Class {
     Equipment,
     Small,
     Medium,
@@ -263,16 +263,16 @@ enum Class {
     Unlisted,
 }
 
-const CLASSES: [Class; 5] = [Class::Equipment, Class::Small, Class::Medium, Class::Large, Class::Unlisted];
+pub(super) const CLASSES: [Class; 5] = [Class::Equipment, Class::Small, Class::Medium, Class::Large, Class::Unlisted];
 /// The classes an assignment chooses a coder for; an unlisted body follows the class of its size.
 const ASSIGNED: [Class; ASSIGNED_CLASSES] = [Class::Equipment, Class::Small, Class::Medium, Class::Large];
 
 impl Class {
-    fn at(self) -> usize {
+    pub(super) fn at(self) -> usize {
         self as usize
     }
 
-    fn label(self) -> &'static str {
+    pub(super) fn label(self) -> &'static str {
         match self {
             Class::Equipment => "equipment",
             Class::Small => "NPC small",
@@ -293,24 +293,33 @@ struct BodyInfo {
     painted: u64,
 }
 
+/// A body's class, and for what the rule can't place, the size class it is assigned as.
+/// A body's median cropped frame area, which its size class comes from.
+pub(super) fn median_area(planes: &Planes) -> u64 {
+    let mut areas: Vec<u64> = planes.boxes.iter().map(|f| f.pixels() as u64).filter(|&area| area > 0).collect();
+    areas.sort_unstable();
+    areas.get(areas.len() / MEDIAN_DIVISOR).copied().unwrap_or(0)
+}
+
+pub(super) fn classes_of(planes: &Planes, rule: &BodyRule, source: &BodySource) -> (Class, Class) {
+    let size = match median_area(planes) {
+        area if area <= NPC_SMALL_TOP => Class::Small,
+        area if area <= NPC_MEDIUM_TOP => Class::Medium,
+        _ => Class::Large,
+    };
+    match rule.group(source) {
+        Group::Equipment => (Class::Equipment, Class::Equipment),
+        Group::Creature => (size, size),
+        Group::Unlisted => (Class::Unlisted, size),
+    }
+}
+
 fn survey(sources: &Sources, bodies: &[BodySource], present: &[(Client, u64, usize)], rule: &BodyRule, client: Client) -> Vec<BodyInfo> {
     let of: Vec<usize> = present.iter().filter(|s| s.0 == client).map(|s| s.2).collect();
     of.par_iter()
         .map(|&i| {
             let planes = Planes::from_body(&load_body(sources, &bodies[i]));
-            let mut areas: Vec<u64> = planes.boxes.iter().map(|f| f.pixels() as u64).filter(|&area| area > 0).collect();
-            areas.sort_unstable();
-            let median = areas.get(areas.len() / MEDIAN_DIVISOR).copied().unwrap_or(0);
-            let size = match median {
-                area if area <= NPC_SMALL_TOP => Class::Small,
-                area if area <= NPC_MEDIUM_TOP => Class::Medium,
-                _ => Class::Large,
-            };
-            let (class, assigned) = match rule.group(&bodies[i]) {
-                Group::Equipment => (Class::Equipment, Class::Equipment),
-                Group::Creature => (size, size),
-                Group::Unlisted => (Class::Unlisted, size),
-            };
+            let (class, assigned) = classes_of(&planes, rule, &bodies[i]);
             let painted = match client {
                 Client::Cc => planes.index.iter().filter(|&&value| value != 0).count(),
                 Client::Ec => planes.coverage.iter().filter(|&&value| value != 0).count(),
