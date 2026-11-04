@@ -1,18 +1,33 @@
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
-use crate::app::{classic_tile_flags_summary, concrete_art_tile_source, tileart_flags_summary, tileart_property_name, ArtSource, ArtViewerRow, TileArtFileEntry, TileMetadataSource, UopInspectorApp, ViewMode};
+use crate::app::{classic_tile_flags_summary, concrete_art_tile_source, ArtSource, ArtViewerRow, TileArtFileEntry, TileMetadataSource, UopInspectorApp, ViewMode};
 use crate::logic::ClientData;
-use super::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by, tileart_editor};
+use super::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by, tileart_editor, tiledata_editor};
 use super::classic_image_import::{ui_classic_image_panel, PreferredContainer};
 use uocf::classic::image_files::ClassicImageKind;
 use std::sync::Arc;
-use uocf::enhanced::tileart::{TaeAppearanceFilter, TaeSittingAnimation, TextureType};
+use uocf::enhanced::tileart::{TaeAppearanceFilter, TaeImgOffset, TextureItem, TextureType, TileArtEntry};
 use uocf::classic::art::{static_art_id_for_source, STATIC_TILE_ID_BASE};
 
 const TILEDATA_TABLE_MIN_WIDTH: f32 = 980.0;
 const TILEART_TABLE_MIN_WIDTH: f32 = 1450.0;
-/// Height of the record editor above the read-only details; it scrolls beyond.
-const TILEART_EDITOR_MAX_HEIGHT: f32 = 320.0;
+/// The property lists are long: the column starts narrower than its text, which shows in full on hover.
+const TILEART_PROPERTIES_WIDTH: f32 = 320.0;
+/// Starting height of a table above the selected record's details; the user can drag it.
+const METADATA_TABLE_HEIGHT: f32 = 300.0;
+/// A table may be dragged this low and still keep its header and a row.
+const METADATA_TABLE_MIN_SCROLLED_HEIGHT: f32 = 40.0;
+/// Largest side of a texture in the Textures section.
+const TEXTURE_PREVIEW_SIDE: f32 = 256.0;
+/// From this id on UOETE draws no bounding box and a smaller image: these are a record's noise and other extra textures,
+/// not the art its windows cut.
+const FIRST_EXTRA_TEXTURE_ID: u32 = 1_000_000;
+const EXTRA_TEXTURE_PREVIEW_SIDE: f32 = 128.0;
+/// Small textures are enlarged up to this, so that the bounding box is easy to read.
+const TEXTURE_PREVIEW_MAX_SCALE: f32 = 3.0;
+const BOUNDING_BOX_COLOR: egui::Color32 = egui::Color32::RED;
+const BOUNDING_BOX_STROKE_WIDTH: f32 = 1.0;
+const WARNING_COLOR: egui::Color32 = egui::Color32::from_rgb(230, 180, 60);
 const ART_VIEWER_LIST_PANEL_WIDTH: f32 = 300.0;
 
 pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
@@ -349,14 +364,18 @@ fn ui_tile_metadata_contents(app: &mut UopInspectorApp, ctx: &egui::Context, ui:
     ui.separator();
 
     match app.tile_metadata_source {
-        TileMetadataSource::CcTileData => ui_cc_tiledata_table(app, ui, text_has_focus),
+        TileMetadataSource::CcTileData => ui_cc_tiledata_table(app, ctx, ui, text_has_focus),
         TileMetadataSource::EcTileArt => ui_ec_tileart_table(app, ctx, ui, text_has_focus),
     }
 }
 
-fn ui_cc_tiledata_table(app: &mut UopInspectorApp, ui: &mut egui::Ui, text_has_focus: bool) {
+fn ui_cc_tiledata_table(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui, text_has_focus: bool) {
     ui.heading("CC TileData Inspector");
-    if let (Some(tiledata), Some(rows)) = (&app.cc_tiledata, app.cc_tiledata_rows.clone()) {
+    if app.cc_tiledata.is_some() {
+        ui.horizontal_wrapped(|ui| tiledata_editor::toolbar(app, ui));
+    }
+    let mut change = None;
+    if let (Some(tiledata), Some(rows)) = (app.cc_tiledata.clone(), app.cc_tiledata_rows.clone()) {
         let query = app.search_query.trim();
         let sort = list_sort_controls(
             ui,
@@ -394,9 +413,12 @@ fn ui_cc_tiledata_table(app: &mut UopInspectorApp, ui: &mut egui::Ui, text_has_f
             tiledata.land_tiles().len(),
             tiledata.item_tiles().len()
         ));
-        egui::ScrollArea::horizontal().auto_shrink([false, true]).show(ui, |ui| {
+        egui::Panel::top("tiledata_table").resizable(true).default_size(METADATA_TABLE_HEIGHT).show(ui, |ui| egui::ScrollArea::horizontal().auto_shrink([false, false]).show(ui, |ui| {
             ui.set_min_width(TILEDATA_TABLE_MIN_WIDTH);
             TableBuilder::new(ui)
+                .auto_shrink([false, false])
+                .min_scrolled_height(METADATA_TABLE_MIN_SCROLLED_HEIGHT)
+                .max_scroll_height(f32::INFINITY)
                 .striped(true)
                 .resizable(true)
                 .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
@@ -494,11 +516,15 @@ fn ui_cc_tiledata_table(app: &mut UopInspectorApp, ui: &mut egui::Ui, text_has_f
                         });
                     });
                 });
-        });
+        }));
 
-        ui_selected_tiledata_details(app, ui);
+        change = egui::CentralPanel::default().show(ui, |ui| ui_selected_tiledata_details(app, ctx, ui, &tiledata)).inner;
     } else {
         ui.label("Select a Classic Client path containing tiledata.mul.");
+    }
+    // The change goes into the loaded tiles, which must not be shared then (the copies above are dropped).
+    if let Some(change) = change {
+        tiledata_editor::apply_change(app, change);
     }
 }
 
@@ -538,24 +564,27 @@ fn ui_ec_tileart_table(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut 
             false
         };
         ui.label(format!("{} tileart.uop entries", entries.len()));
-        egui::ScrollArea::horizontal().auto_shrink([false, true]).show(ui, |ui| {
+        egui::Panel::top("tileart_table").resizable(true).default_size(METADATA_TABLE_HEIGHT).show(ui, |ui| egui::ScrollArea::horizontal().auto_shrink([false, false]).show(ui, |ui| {
             ui.set_min_width(TILEART_TABLE_MIN_WIDTH);
             TableBuilder::new(ui)
+                .auto_shrink([false, false])
+                .min_scrolled_height(METADATA_TABLE_MIN_SCROLLED_HEIGHT)
+                .max_scroll_height(f32::INFINITY)
                 .striped(true)
                 .resizable(true)
                 .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                 .column(Column::auto().at_least(70.0))
                 .column(Column::auto().at_least(70.0))
                 .column(Column::auto().at_least(70.0))
-                .column(Column::auto().at_least(180.0))
+                .column(Column::initial(TILEART_PROPERTIES_WIDTH).at_least(180.0).clip(true))
                 .column(Column::auto().at_least(220.0))
                 .column(Column::auto().at_least(120.0))
                 .column(Column::auto().at_least(80.0))
                 .column(Column::auto().at_least(120.0))
                 .column(Column::auto().at_least(80.0))
-                .column(Column::remainder().at_least(180.0))
                 .column(Column::auto().at_least(90.0))
                 .column(Column::auto().at_least(170.0))
+                .column(Column::remainder().at_least(180.0))
                 .header(20.0, |mut header| {
                     header.col(|ui| {
                         ui.strong("ID");
@@ -585,13 +614,13 @@ fn ui_ec_tileart_table(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut 
                         ui.strong("CC Offset");
                     });
                     header.col(|ui| {
-                        ui.strong("Textures");
-                    });
-                    header.col(|ui| {
                         ui.strong("Sitting");
                     });
                     header.col(|ui| {
                         ui.strong("Appearance");
+                    });
+                    header.col(|ui| {
+                        ui.strong("Textures");
                     });
                 })
                 .body(|body| {
@@ -620,7 +649,7 @@ fn ui_ec_tileart_table(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut 
                             ui.label(&item.body_type);
                         });
                         row.col(|ui| {
-                            ui.label(&item.properties_summary);
+                            ui.label(&item.properties_summary).on_hover_text(&item.properties_summary);
                         });
                         row.col(|ui| {
                             ui.label(&item.flags_summary).on_hover_text(&item.flags_raw);
@@ -638,31 +667,31 @@ fn ui_ec_tileart_table(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut 
                             ui.label(&item.cc_offset);
                         });
                         row.col(|ui| {
-                            ui.label(&item.texture_summary);
-                        });
-                        row.col(|ui| {
                             ui.label(&item.sitting_summary);
                         });
                         row.col(|ui| {
                             ui.label(&item.appearance_summary);
                         });
+                        row.col(|ui| {
+                            ui.label(&item.texture_summary);
+                        });
                     });
                 });
-        });
+        }));
 
-        ui.separator();
-        if let Some(selected_hash) = app.selected_tileart_hash {
-            if let Some(file) = entries.iter().find(|file| file.filename_hash == selected_hash) {
+        egui::CentralPanel::default().show(ui, |ui| {
+            let selected = app.selected_tileart_hash.and_then(|hash| entries.iter().find(|file| file.filename_hash == hash));
+            let Some(file) = selected else {
+                return;
+            };
+            egui::ScrollArea::vertical().id_salt("tileart_record").auto_shrink([false, false]).show(ui, |ui| {
                 ui.heading(format!("Selected TileArt {}", file.entry.tile_id));
-                if app.tileart_editor.enabled {
-                    egui::ScrollArea::vertical()
-                        .id_salt("tileart_record_editor")
-                        .max_height(TILEART_EDITOR_MAX_HEIGHT)
-                        .show(ui, |ui| tileart_editor::record_panel(ui, file, &mut edits));
-                }
+                let dictionary = app.uo_string_dictionary.clone();
+                let name = dictionary.as_deref().and_then(|dictionary| dictionary.get_string((file.entry.string_dict_off as usize).checked_sub(1)?));
+                tileart_editor::record_panel(ui, file, name, app.tileart_editor.enabled, &mut edits);
                 ui_selected_tileart_details(app, ctx, ui, file);
-            }
-        }
+            });
+        });
     } else {
         ui.label("Select an Enhanced Client path containing tileart.uop.");
     }
@@ -670,184 +699,34 @@ fn ui_ec_tileart_table(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut 
     tileart_editor::apply_edits(app, edits);
 }
 
-fn ui_selected_tiledata_details(app: &UopInspectorApp, ui: &mut egui::Ui) {
-    let Some(selected_id) = app.selected_tex_art_cc_id else {
-        return;
-    };
-    let Some(rows) = app.cc_tiledata_rows.as_ref() else {
-        return;
-    };
-    let Some(row) = rows.iter().find(|row| row.art_id == selected_id) else {
-        return;
-    };
-
-    ui.separator();
-    ui.heading(format!("Selected TileData {} {}", row.kind, row.id));
-    egui::Grid::new("tiledata_selected_details").striped(true).show(ui, |ui| {
-        ui.label("Name");
-        ui.label(&row.name);
-        ui.end_row();
-        ui.label("Flags Raw");
-        ui.monospace(&row.flags_raw);
-        ui.end_row();
-        ui.label("Flags Decoded");
-        ui.label(&row.flags_summary);
-        ui.end_row();
-        if row.kind == "Land" {
-            ui.label("Texture ID");
-            ui.label(&row.texture_id);
-            ui.end_row();
-        } else {
-            ui.label("Height");
-            ui.label(&row.height);
-            ui.end_row();
-            ui.label("Weight");
-            ui.label(&row.weight);
-            ui.end_row();
-            ui.label("Quality / Layer / Light");
-            ui.label(&row.quality);
-            ui.end_row();
-            ui.label("Quantity");
-            ui.label(&row.quantity);
-            ui.end_row();
-            ui.label("Animation ID");
-            ui.label(&row.anim_id);
-            ui.end_row();
-            ui.label("Hue Extra");
-            ui.label(&row.hue_extra);
-            ui.end_row();
-            ui.label("Stacking Offset");
-            ui.label(&row.stacking_offset);
-            ui.end_row();
-            ui.label("Value");
-            ui.label(&row.value);
-            ui.end_row();
-        }
-    });
+fn ui_selected_tiledata_details(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui, tiledata: &uocf::classic::tiledata::TileData) -> Option<tiledata_editor::TileChange> {
+    let selected_id = app.selected_tex_art_cc_id?;
+    let rows = app.cc_tiledata_rows.clone()?;
+    let row = rows.iter().find(|row| row.art_id == selected_id)?;
+    let source = concrete_art_tile_source(app.selected_legacy_source);
+    let art = app.get_tex_art_texture_from_source(ctx, selected_id, source);
+    let editable = app.tiledata_editor.enabled;
+    egui::ScrollArea::vertical().id_salt("tiledata_record").auto_shrink([false, false]).show(ui, |ui| {
+        ui.heading(format!("Selected TileData {} {}", row.kind, row.id));
+        tiledata_editor::record_panel(ui, tiledata, selected_id, art.as_ref(), editable)
+    }).inner
 }
 
+/// What the record panel does not draw: the appearance filters (read only) and, last, the textures.
 fn ui_selected_tileart_details(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui, file: &TileArtFileEntry) {
     let entry = &file.entry;
 
-    ui.collapsing("Core", |ui| {
-        egui::Grid::new("tileart_core_details").striped(true).show(ui, |ui| {
-            ui.label("Filename Hash");
-            ui.monospace(format!("0x{:016X}", file.filename_hash));
-            ui.end_row();
-            ui.label("Version");
-            ui.label(entry.version.to_string());
-            ui.end_row();
-            ui.label("String Dict Offset");
-            ui.label(entry.string_dict_off.to_string());
-            ui.end_row();
-            ui.label("Old ID");
-            ui.label(entry.old_id.to_string());
-            ui.end_row();
-            ui.label("Body Type");
-            ui.label(entry.body_type.to_string());
-            ui.end_row();
-            ui.label("Facing");
-            ui.label(entry.facing.to_string());
-            ui.end_row();
-            ui.label("Light Offset");
-            ui.label(format!("{}, {}", entry.light_offset_x, entry.light_offset_y));
-            ui.end_row();
-            ui.label("Radar RGBA");
-            ui.label(format!(
-                "{}, {}, {}, {}",
-                entry.radarcol.r,
-                entry.radarcol.g,
-                entry.radarcol.b,
-                entry.radarcol.a
-            ));
-            ui.end_row();
-        });
-    });
-
-    ui.collapsing("Flags", |ui| {
-        egui::Grid::new("tileart_flags_details").striped(true).show(ui, |ui| {
-            ui.label("Flags1 Raw");
-            ui.monospace(format!("0x{:016X}", entry.flags1.bits()));
-            ui.end_row();
-            ui.label("Flags1 Decoded");
-            ui.label(tileart_flags_summary(entry.flags1));
-            ui.end_row();
-            ui.label("Flags2 Raw");
-            ui.monospace(format!("0x{:016X}", entry.flags2.bits()));
-            ui.end_row();
-            ui.label("Flags2 Decoded");
-            ui.label(tileart_flags_summary(entry.flags2));
-            ui.end_row();
-        });
-    });
-
-    ui.collapsing("Image Windows", |ui| {
-        egui::Grid::new("tileart_image_window_details").striped(true).show(ui, |ui| {
-            ui.label("EC Window");
-            ui.label(format!(
-                "{},{} -> {},{}",
-                entry.ec_img_offset.x_start,
-                entry.ec_img_offset.y_start,
-                entry.ec_img_offset.x_end,
-                entry.ec_img_offset.y_end
-            ));
-            ui.end_row();
-            ui.label("EC Offset");
-            ui.label(format!("{},{}", entry.ec_img_offset.x_off, entry.ec_img_offset.y_off));
-            ui.end_row();
-            ui.label("CC Window");
-            ui.label(format!(
-                "{},{} -> {},{}",
-                entry.cc_img_offset.x_start,
-                entry.cc_img_offset.y_start,
-                entry.cc_img_offset.x_end,
-                entry.cc_img_offset.y_end
-            ));
-            ui.end_row();
-            ui.label("CC Offset");
-            ui.label(format!("{},{}", entry.cc_img_offset.x_off, entry.cc_img_offset.y_off));
-            ui.end_row();
-        });
-    });
-
-    ui.collapsing("Properties", |ui| {
-        egui::Grid::new("tileart_property_details").striped(true).show(ui, |ui| {
-            ui.label("Vector");
-            ui.label("Key");
-            ui.label("Value");
-            ui.end_row();
-            for (vector_name, props) in [
-                ("prop_vector1", entry.prop_vector1.as_slice()),
-                ("prop_vector2", entry.prop_vector2.as_slice()),
-            ] {
-                for prop in props {
-                    ui.label(vector_name);
-                    ui.label(format!("{} ({})", tileart_property_name(prop.id), prop.id));
-                    ui.label(prop.val.to_string());
-                    ui.end_row();
-                }
-            }
-        });
-    });
-
-    ui.collapsing("Stack Aliases", |ui| {
-        if entry.stack_alias_vector.is_empty() {
-            ui.label("none");
-            return;
-        }
-        egui::Grid::new("tileart_stack_alias_details").striped(true).show(ui, |ui| {
-            ui.label("Amount");
-            ui.label("Amount ID");
-            ui.end_row();
-            for alias in &entry.stack_alias_vector {
-                ui.label(alias.amount.to_string());
-                ui.label(alias.amount_id.to_string());
+    ui.collapsing(format!("Appearance: {} (read only)", tileart_appearance_summary(&entry.appearance_vector)), |ui| {
+        egui::Grid::new("tileart_selected_details").striped(true).show(ui, |ui| {
+            for (index, appearance) in entry.appearance_vector.iter().enumerate() {
+                ui.label(format!("Appearance {}", index));
+                ui.label(tileart_appearance_detail(appearance));
                 ui.end_row();
             }
         });
     });
 
-    ui.collapsing("Textures", |ui| {
+    ui.collapsing("Texture blocks (read only)", |ui| {
         egui::Grid::new("tileart_texture_block_details").striped(true).show(ui, |ui| {
             ui.label("Block");
             ui.label("Has");
@@ -876,67 +755,72 @@ fn ui_selected_tileart_details(app: &mut UopInspectorApp, ctx: &egui::Context, u
                 }
             }
         });
+    });
 
-        if let Some(dict) = app.uo_string_dictionary.as_ref() {
-            let art_data = entry.process(dict);
-            ui.separator();
-            ui.label("Resolved texture items");
-            egui::Grid::new("tileart_resolved_texture_details").striped(true).show(ui, |ui| {
-                ui.label("Block.Item");
-                ui.label("Type");
-                ui.label("ID");
-                ui.label("Stretch");
-                ui.label("Path");
-                ui.label("Preview");
-                ui.end_row();
-                for block in art_data.texture_items {
-                    for item in block {
-                        ui.label(format!("{}.{}", item.block_index, item.item_index));
-                        ui.label(tileart_texture_type_label(item.texture_type));
-                        ui.label(item.id.to_string());
-                        ui.label(item.texture_stretch.to_string());
-                        ui.label(&item.path);
-                        if let Some(handle) = app.get_ec_texture_by_id(ctx, item.id) {
-                            let [w, h] = handle.size();
-                            let scale = (128.0 / w.max(1) as f32).min(128.0 / h.max(1) as f32).min(1.0);
-                            ui.add(
-                                egui::Image::new(&handle)
-                                    .fit_to_exact_size(egui::vec2(w as f32 * scale, h as f32 * scale))
-                            );
-                        } else {
-                            ui.label("missing");
-                        }
-                        ui.end_row();
-                    }
+    ui.separator();
+    ui.strong("Textures");
+    let Some(dictionary) = app.uo_string_dictionary.clone() else {
+        ui.label("The texture names are in the string dictionary, which is not loaded.");
+        return;
+    };
+    for (row, block) in entry.process(&dictionary).texture_items.into_iter().enumerate() {
+        egui::ScrollArea::horizontal().id_salt(("tileart_texture_row", row)).auto_shrink([false, true]).show(ui, |ui| {
+            ui.horizontal_top(|ui| {
+                for item in &block {
+                    ui.vertical(|ui| ui_tileart_texture(app, ctx, ui, entry, item));
                 }
             });
-        }
-    });
-
-    ui.collapsing("Sitting And Appearance", |ui| {
-        egui::Grid::new("tileart_selected_details").striped(true).show(ui, |ui| {
-            ui.label("Sitting");
-            ui.label(tileart_sitting_summary(entry.sitting.as_ref()));
-            ui.end_row();
-            ui.label("Appearance");
-            ui.label(tileart_appearance_summary(&entry.appearance_vector));
-            ui.end_row();
-            if let Some(sitting) = &entry.sitting {
-                ui.label("Sitting Values");
-                ui.monospace(format!(
-                    "{}, {}, {}, {}, {}, {}",
-                    sitting.direction_mask, sitting.seat_offset_x, sitting.seat_offset_y,
-                    sitting.window_shift, sitting.field_10, sitting.field_14
-                ));
-                ui.end_row();
-            }
-            for (index, appearance) in entry.appearance_vector.iter().enumerate() {
-                ui.label(format!("Appearance {}", index));
-                ui.label(tileart_appearance_detail(appearance));
-                ui.end_row();
-            }
         });
-    });
+    }
+}
+
+/// The window a texture's art is cut with, as UOETE picks it: legacy art uses the CC window, other art the EC window,
+/// and the noise and mask textures have none.
+fn tileart_texture_window<'a>(entry: &'a TileArtEntry, item: &TextureItem) -> Option<(&'static str, &'a TaeImgOffset)> {
+    if item.id >= FIRST_EXTRA_TEXTURE_ID {
+        return None;
+    }
+    match item.texture_type {
+        TextureType::TileArtLegacy => Some(("CC window", &entry.cc_img_offset)),
+        TextureType::WorldArt | TextureType::TileArtEnhanced => Some(("EC window", &entry.ec_img_offset)),
+        TextureType::Textures | TextureType::Undefined => None,
+    }
+}
+
+/// Whether a window lies inside an image of `size`.
+fn window_fits(window: &TaeImgOffset, size: [usize; 2]) -> bool {
+    window.x_start >= 0
+        && window.y_start >= 0
+        && window.x_end >= window.x_start
+        && window.y_end >= window.y_start
+        && window.x_end as usize <= size[0]
+        && window.y_end as usize <= size[1]
+}
+
+/// One texture of a record, with its bounding box drawn when it has a window.
+fn ui_tileart_texture(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui, entry: &TileArtEntry, item: &TextureItem) {
+    ui.label(format!("{} {}", tileart_texture_type_label(item.texture_type), item.id)).on_hover_text(&item.path);
+    ui.weak(format!("block {}, item {}, stretch {}", item.block_index, item.item_index, item.texture_stretch));
+    let window = tileart_texture_window(entry, item);
+    let Some(handle) = app.tileart_item_texture(ctx, item.texture_type, item.id) else {
+        ui.colored_label(WARNING_COLOR, "missing");
+        return;
+    };
+    let size = handle.size_vec2();
+    let side = if item.id >= FIRST_EXTRA_TEXTURE_ID { EXTRA_TEXTURE_PREVIEW_SIDE } else { TEXTURE_PREVIEW_SIDE };
+    let scale = (side / size.max_elem()).min(TEXTURE_PREVIEW_MAX_SCALE);
+    let image = ui.add(egui::Image::new(&handle).fit_to_exact_size(size * scale).texture_options(egui::TextureOptions::NEAREST));
+    ui.weak(format!("{} x {}", size.x, size.y));
+    let Some((label, window)) = window else {
+        return;
+    };
+    let corner = |x: i32, y: i32| image.rect.min + egui::vec2(x as f32, y as f32) * scale;
+    let bounds = egui::Rect::from_two_pos(corner(window.x_start, window.y_start), corner(window.x_end, window.y_end));
+    ui.painter().rect_stroke(bounds, 0.0, egui::Stroke::new(BOUNDING_BOX_STROKE_WIDTH, BOUNDING_BOX_COLOR), egui::StrokeKind::Outside);
+    ui.label(format!("Box: {label}"));
+    if !window_fits(window, handle.size()) {
+        ui.colored_label(WARNING_COLOR, "The window is not inside this image.");
+    }
 }
 
 fn filtered_metadata_indices<T>(
@@ -961,18 +845,6 @@ fn filtered_metadata_indices<T>(
 
 fn string_number(value: &str) -> u32 {
     value.parse().unwrap_or(u32::MAX)
-}
-
-fn tileart_sitting_summary(sitting: Option<&TaeSittingAnimation>) -> String {
-    if let Some(sitting) = sitting {
-        format!(
-            "yes (directions {}, seat offset {}, {}, window shift {}, unused {}, {})",
-            sitting.direction_mask, sitting.seat_offset_x, sitting.seat_offset_y,
-            sitting.window_shift, sitting.field_10, sitting.field_14
-        )
-    } else {
-        "no".to_string()
-    }
 }
 
 fn tileart_appearance_summary(appearance: &[TaeAppearanceFilter]) -> String {
@@ -1024,4 +896,35 @@ fn tileart_appearance_detail(appearance: &TaeAppearanceFilter) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!("{}: {} records [{}]", label, mappings.len(), pairs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const IMAGE_SIZE: [usize; 2] = [64, 64];
+
+    fn window_label(texture_type: TextureType, id: u32) -> Option<&'static str> {
+        let item = TextureItem { texture_type, id, ..TextureItem::default() };
+        tileart_texture_window(&TileArtEntry::default(), &item).map(|(label, _)| label)
+    }
+
+    #[test]
+    fn a_texture_takes_the_window_of_its_family_and_extra_textures_have_none() {
+        assert_eq!(window_label(TextureType::WorldArt, 5118), Some("EC window"));
+        assert_eq!(window_label(TextureType::TileArtEnhanced, 5118), Some("EC window"));
+        assert_eq!(window_label(TextureType::TileArtLegacy, 5118), Some("CC window"));
+        assert_eq!(window_label(TextureType::Textures, 5118), None);
+        assert_eq!(window_label(TextureType::WorldArt, FIRST_EXTRA_TEXTURE_ID - 1), Some("EC window"));
+        assert_eq!(window_label(TextureType::WorldArt, FIRST_EXTRA_TEXTURE_ID), None);
+    }
+
+    #[test]
+    fn a_window_outside_its_image_does_not_fit() {
+        let window = |x_start, y_start, x_end, y_end| TaeImgOffset { x_start, y_start, x_end, y_end, ..TaeImgOffset::default() };
+        assert!(window_fits(&window(0, 0, 64, 64), IMAGE_SIZE));
+        assert!(!window_fits(&window(0, 0, 65, 64), IMAGE_SIZE));
+        assert!(!window_fits(&window(-1, 0, 64, 64), IMAGE_SIZE));
+        assert!(!window_fits(&window(10, 0, 5, 64), IMAGE_SIZE));
+    }
 }

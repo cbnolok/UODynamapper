@@ -541,6 +541,7 @@ fn push_blocks<Tile, Raw: Pod>(
 
 /* Start of Tiledata struct */
 
+#[derive(Clone)]
 pub struct TileData {
     land_tile_binary_size: LandTileBinSize,
     item_tile_binary_size: ItemTileBinSize,

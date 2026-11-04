@@ -166,5 +166,7 @@ mod tests {
         let first = tileart_entry_hash(FIRST_TILE);
         editor.edit(&mut store, first, "props1", |entry| entry.prop_vector1.push(Default::default()));
         assert_eq!(store.value(&first).unwrap().prop_count1, 1);
+        editor.edit(&mut store, first, "stack_aliases", |entry| entry.stack_alias_vector.push(Default::default()));
+        assert_eq!(store.value(&first).unwrap().stack_alias_count, 1);
     }
 }

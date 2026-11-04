@@ -1025,8 +1025,6 @@ pub struct CcTileDataRow {
     pub quality: String,
     pub quantity: String,
     pub anim_id: String,
-    pub hue_extra: String,
-    pub stacking_offset: String,
     pub value: String,
     pub search_text: String,
 }
@@ -1212,94 +1210,91 @@ fn collect_ec_audio_entries(audio: &AudioPackage) -> Vec<EcAudioListEntry> {
     entries
 }
 
-fn collect_cc_tiledata_rows(tiledata: &TileData) -> Vec<CcTileDataRow> {
+pub(crate) fn collect_cc_tiledata_rows(tiledata: &TileData) -> Vec<CcTileDataRow> {
     let mut rows = Vec::with_capacity(tiledata.land_tiles().len() + tiledata.item_tiles().len());
-
-    for tile in tiledata.land_tiles() {
-        let art_id = tile.tile_id as u32;
-        let id = tile.tile_id.to_string();
-        let name = tile.name_ascii().to_string();
-        let flags_raw = format!("0x{:016X}", tile.flags.internal_flags);
-        let flags_summary = classic_tile_flags_summary(tile.flags);
-        let texture_id = tile.texture_id.to_string();
-        let search_text = format!(
-            "{} land {} {} {} {}",
-            id,
-            name.to_lowercase(),
-            flags_raw.to_lowercase(),
-            flags_summary.to_lowercase(),
-            texture_id
-        );
-        rows.push(CcTileDataRow {
-            art_id,
-            id,
-            kind: "Land",
-            name,
-            flags_raw,
-            flags_summary,
-            texture_id,
-            height: String::new(),
-            weight: String::new(),
-            quality: String::new(),
-            quantity: String::new(),
-            anim_id: String::new(),
-            hue_extra: String::new(),
-            stacking_offset: String::new(),
-            value: String::new(),
-            search_text,
-        });
-    }
-
-    for tile in tiledata.item_tiles() {
-        let art_id = tile.tile_id as u32 + 0x4000;
-        let id = tile.tile_id.to_string();
-        let name = tile.name_ascii().to_string();
-        let flags_raw = format!("0x{:016X}", tile.flags.internal_flags);
-        let flags_summary = classic_tile_flags_summary(tile.flags);
-        let height = tile.height_raw().to_string();
-        let weight = tile.weight.to_string();
-        let quality = tile.quality.to_string();
-        let quantity = tile.quantity.to_string();
-        let anim_id = tile.anim_id.to_string();
-        let hue_extra = tile.hue_extra.to_string();
-        let stacking_offset = tile.stacking_offset.to_string();
-        let value = tile.value.to_string();
-        let search_text = format!(
-            "{} item {} {} {} height {} weight {} quality {} quantity {} anim {} hue {} stack {} value {}",
-            id,
-            name.to_lowercase(),
-            flags_raw.to_lowercase(),
-            flags_summary.to_lowercase(),
-            height,
-            weight,
-            quality,
-            quantity,
-            anim_id,
-            hue_extra,
-            stacking_offset,
-            value
-        );
-        rows.push(CcTileDataRow {
-            art_id,
-            id,
-            kind: "Item",
-            name,
-            flags_raw,
-            flags_summary,
-            texture_id: String::new(),
-            height,
-            weight,
-            quality,
-            quantity,
-            anim_id,
-            hue_extra,
-            stacking_offset,
-            value,
-            search_text,
-        });
-    }
-
+    rows.extend(tiledata.land_tiles().iter().map(cc_land_row));
+    rows.extend(tiledata.item_tiles().iter().map(cc_item_row));
     rows
+}
+
+pub(crate) fn cc_land_row(tile: &uocf::classic::tiledata::LandTile) -> CcTileDataRow {
+    let art_id = tile.tile_id as u32;
+    let id = tile.tile_id.to_string();
+    let name = tile.name_ascii().to_string();
+    let flags_raw = format!("0x{:016X}", tile.flags.internal_flags);
+    let flags_summary = classic_tile_flags_summary(tile.flags);
+    let texture_id = tile.texture_id.to_string();
+    let search_text = format!(
+        "{} land {} {} {} {}",
+        id,
+        name.to_lowercase(),
+        flags_raw.to_lowercase(),
+        flags_summary.to_lowercase(),
+        texture_id
+    );
+    CcTileDataRow {
+        art_id,
+        id,
+        kind: "Land",
+        name,
+        flags_raw,
+        flags_summary,
+        texture_id,
+        height: String::new(),
+        weight: String::new(),
+        quality: String::new(),
+        quantity: String::new(),
+        anim_id: String::new(),
+        value: String::new(),
+        search_text,
+    }
+}
+
+pub(crate) fn cc_item_row(tile: &uocf::classic::tiledata::ItemTile) -> CcTileDataRow {
+    let art_id = tile.tile_id as u32 + 0x4000;
+    let id = tile.tile_id.to_string();
+    let name = tile.name_ascii().to_string();
+    let flags_raw = format!("0x{:016X}", tile.flags.internal_flags);
+    let flags_summary = classic_tile_flags_summary(tile.flags);
+    let height = tile.height_raw().to_string();
+    let weight = tile.weight.to_string();
+    let quality = tile.quality.to_string();
+    let quantity = tile.quantity.to_string();
+    let anim_id = tile.anim_id.to_string();
+    let hue_extra = tile.hue_extra.to_string();
+    let stacking_offset = tile.stacking_offset.to_string();
+    let value = tile.value.to_string();
+    let search_text = format!(
+        "{} item {} {} {} height {} weight {} quality {} quantity {} anim {} hue {} stack {} value {}",
+        id,
+        name.to_lowercase(),
+        flags_raw.to_lowercase(),
+        flags_summary.to_lowercase(),
+        height,
+        weight,
+        quality,
+        quantity,
+        anim_id,
+        hue_extra,
+        stacking_offset,
+        value
+    );
+    CcTileDataRow {
+        art_id,
+        id,
+        kind: "Item",
+        name,
+        flags_raw,
+        flags_summary,
+        texture_id: String::new(),
+        height,
+        weight,
+        quality,
+        quantity,
+        anim_id,
+        value,
+        search_text,
+    }
 }
 
 pub(crate) fn collect_tileart_display_rows(
@@ -1909,6 +1904,7 @@ pub struct UopInspectorApp {
     pub effects_panel: crate::ui::effects::EffectsPanelState,
     pub multi_editor: crate::logic::multi_editor::MultiEditor,
     pub tileart_editor: crate::logic::tileart_editor::TileArtEditor,
+    pub tiledata_editor: crate::ui::tiledata_editor::TileDataEditor,
     pub waypoint_document: Option<crate::logic::waypoint_editor::WaypointDocument>,
     pub legacy_terrain_editor: Option<crate::logic::legacy_terrain_editor::LegacyTerrainEditor>,
     pub terrain_definition_editor: Option<crate::logic::terrain_definition_editor::TerrainDefinitionEditor>,
@@ -2005,6 +2001,7 @@ impl UopInspectorApp {
             effects_panel: Default::default(),
             multi_editor: Default::default(),
             tileart_editor: Default::default(),
+            tiledata_editor: Default::default(),
             waypoint_document: None,
             legacy_terrain_editor: None,
             terrain_definition_editor: None,
@@ -2157,6 +2154,7 @@ impl UopInspectorApp {
         self.ec_tileart_path = None;
         self.multi_editor = Default::default();
         self.tileart_editor = Default::default();
+        self.tiledata_editor = Default::default();
         self.waypoint_document = None;
         self.legacy_terrain_editor = None;
         self.terrain_definition_editor = None;
@@ -3232,6 +3230,35 @@ impl UopInspectorApp {
         None
     }
 
+    /// The image of a tileart texture item, from its family's folder: `worldart` and `tileartlegacy` share ids. It does
+    /// not become the image the upscaler works on, because a record draws several of these per frame.
+    pub fn tileart_item_texture(&mut self, ctx: &egui::Context, texture_type: TileArtTextureType, id: u32) -> Option<egui::TextureHandle> {
+        let own_folder;
+        let folders: &[&str] = match tileart_texture_path_prefix(texture_type) {
+            Some(folder) => {
+                own_folder = [folder];
+                &own_folder
+            }
+            None => &TILEART_ITEM_FOLDERS,
+        };
+        let loaded_uops = self.uop_cache.loaded_uops.clone();
+        for folder in folders {
+            for extension in TILEART_ITEM_IMAGE_EXTENSIONS {
+                let path = format!("{folder}/{id:08}.{extension}");
+                let hash = uocf::uop_container::hash::hash_file_name_single(&path);
+                if let Some(handle) = self.texture_previews.get(&hash) {
+                    return Some(handle.clone());
+                }
+                for loaded in &loaded_uops {
+                    if let Ok(Some(data)) = loaded.package.unpack_file_by_hash(hash) {
+                        return self.get_uop_texture(ctx, hash, &data, &path);
+                    }
+                }
+            }
+        }
+        None
+    }
+
     pub fn get_cc_gump_texture(
         &mut self,
         ctx: &egui::Context,
@@ -4143,6 +4170,11 @@ impl UopInspectorApp {
     }
 }
 
+/// A tileart texture item names `Data\\<family>\\<id>...`; the image is stored in a package at `<folder>/%08d.<extension>`.
+const TILEART_ITEM_IMAGE_EXTENSIONS: [&str; 2] = ["dds", "tga"];
+/// Where to look for an item of a family with no folder of its own (`Data\\Textures`).
+const TILEART_ITEM_FOLDERS: [&str; 3] = ["build/worldart", "build/tileartlegacy", "build/tileartenhanced"];
+
 /// The bitmap row holding a hue's table; the row below it is a flat swatch.
 const EC_HUE_TABLE_ROW: u32 = uocf::enhanced::hues::HUE_TABLE_IMAGE_ROW as u32;
 
@@ -4505,6 +4537,7 @@ pub(crate) mod tests {
             effects_panel: Default::default(),
             multi_editor: Default::default(),
             tileart_editor: Default::default(),
+            tiledata_editor: Default::default(),
             waypoint_document: None,
             legacy_terrain_editor: None,
             terrain_definition_editor: None,

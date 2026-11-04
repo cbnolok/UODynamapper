@@ -1,14 +1,16 @@
 //! Editing controls of the tileart.uop view of the Tile Metadata tab: the toolbar (edit mode, undo, duplicate,
-//! delete, save) and the record editor (fixed fields, flags, image windows, radar colour, properties, sitting). The
-//! shader blocks, stack aliases, appearance filters and effects are kept as loaded. The controls collect
-//! [`TileArtEdit`]s while the table draws from its copy of the records; [`apply_edits`] then applies them.
+//! delete, save) and the record panel (fixed fields, flags, image windows, radar colour, properties, sitting, stack
+//! aliases), which shows the record whether or not it can be edited. The shader blocks, appearance filters and
+//! effects are kept as loaded. The controls collect [`TileArtEdit`]s while the table draws from its copy of the
+//! records; [`apply_edits`] then applies them.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use eframe::egui;
 use uocf::enhanced::tileart::{
-    TaeFlag, TaeProp, TaeSittingAnimation, TileArtEntry, TILEART_SITTING_WORD_COUNT, TILEART_UOP_NAME,
+    TaeFlag, TaeImgOffset, TaeProp, TaeSittingAnimation, TaeStackAlias, TileArtEntry, TILEART_SITTING_WORD_COUNT,
+    TILEART_UOP_NAME,
 };
 
 use crate::app::{tileart_property_name, TileArtFileEntry, UopInspectorApp, ViewMode};
@@ -29,10 +31,27 @@ const DIRTY_MARKER: &str = "*";
 const FLAG_HEX_DIGITS: usize = 16;
 const HOUSE_JOIN_HEX_DIGITS: usize = 4;
 const FLAG_FIELD_WIDTH: f32 = 150.0;
-const FLAG_COLUMNS: usize = 4;
+/// Room for one flag's checkbox and name: a group has as many flag columns as fit.
+const FLAG_CELL_WIDTH: f32 = 140.0;
+/// A record's groups go in as many columns of at least this width as fit.
+const GROUP_MIN_WIDTH: f32 = 330.0;
+/// How much of a field's colour stays while the record is read only: its values must stay readable.
+const READ_ONLY_ALPHA: f32 = 0.85;
+const RADAR_SWATCH_SIDE: f32 = 16.0;
+const FLOAT_SHOWN_DECIMALS: usize = 3;
 /// Sitting words after the direction mask, with their labels.
 const SITTING_SIGNED_WORDS: [&str; TILEART_SITTING_WORD_COUNT - 1] =
     ["seat_offset_x", "seat_offset_y", "window_shift", "field_10", "field_14"];
+
+/// The six stored values of an image window, in the order UOETE lays them out.
+const WINDOW_SLOTS: [(&str, fn(&mut TaeImgOffset) -> &mut i32); 6] = [
+    ("x start", |window| &mut window.x_start),
+    ("y start", |window| &mut window.y_start),
+    ("x end", |window| &mut window.x_end),
+    ("y end", |window| &mut window.y_end),
+    ("x offset", |window| &mut window.x_off),
+    ("y offset", |window| &mut window.y_off),
+];
 
 /// An edit collected while drawing, applied by [`apply_edits`]; it returns the entry to select.
 pub(super) type TileArtEdit = Box<dyn FnOnce(&mut TileArtEditor, &mut TileArtStore) -> Option<u64>>;
@@ -121,93 +140,117 @@ pub(super) fn toolbar(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut e
     }
 }
 
-/// The editor of the selected record.
-pub(super) fn record_panel(ui: &mut egui::Ui, file: &TileArtFileEntry, edits: &mut Vec<TileArtEdit>) {
+/// Draws a record's groups in as many equal columns as fit, the fields readable but locked unless `editable`.
+pub(super) fn record_columns(ui: &mut egui::Ui, editable: bool, add_groups: impl FnOnce(&mut [egui::Ui])) {
+    ui.scope(|ui| {
+        ui.visuals_mut().disabled_alpha = READ_ONLY_ALPHA;
+        ui.add_enabled_ui(editable, |ui| {
+            let count = ((ui.available_width() / GROUP_MIN_WIDTH) as usize).max(1);
+            ui.columns(count, add_groups);
+        });
+    });
+}
+
+/// A titled group of fields, in the column that is the shortest so far.
+pub(super) fn group<R>(columns: &mut [egui::Ui], title: &str, add_fields: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let column = columns
+        .iter_mut()
+        .min_by(|left, right| left.min_rect().bottom().total_cmp(&right.min_rect().bottom()))
+        .expect("a record has at least one column");
+    egui::Frame::group(column.style())
+        .show(column, |ui| {
+            ui.set_width(ui.available_width());
+            ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.strong(title);
+                add_fields(ui)
+            })
+            .inner
+        })
+        .inner
+}
+
+/// The fields of the selected record. `name` is the text of its name index.
+pub(super) fn record_panel(ui: &mut egui::Ui, file: &TileArtFileEntry, name: Option<&str>, editable: bool, edits: &mut Vec<TileArtEdit>) {
     let hash = file.filename_hash;
     let entry = &file.entry;
-    let mut fields = Fields { hash, edits };
-    egui::CollapsingHeader::new("Edit record").default_open(true).show(ui, |ui| {
-        egui::Grid::new(("tileart_edit_core", hash)).num_columns(2).striped(true).show(ui, |ui| {
-            fields.number(ui, "Name index", "name_index", entry.string_dict_off, |entry, value| entry.string_dict_off = value);
-            fields.number(ui, "Stored tile id", "tile_id", entry.tile_id, |entry, value| entry.tile_id = value);
-            fields.number(ui, "Old id", "old_id", entry.old_id, |entry, value| entry.old_id = value);
-            fields.number(ui, "Body type", "body_type", entry.body_type, |entry, value| entry.body_type = value);
-            fields.number(ui, "Facing", "facing", entry.facing, |entry, value| entry.facing = value);
-            fields.float(ui, "World art scale", "world_art_scale", entry.world_art_scale, |entry, value| entry.world_art_scale = value);
-            fields.float(ui, "Legacy art scale", "legacy_art_scale", entry.legacy_art_scale, |entry, value| entry.legacy_art_scale = value);
-            fields.float(ui, "Rotation degrees", "rotation_degrees", entry.rotation_degrees, |entry, value| entry.rotation_degrees = value);
-            fields.float(ui, "Light scale", "light_scale", entry.light_scale, |entry, value| entry.light_scale = value);
-            fields.float(ui, "Light offset x", "light_offset_x", entry.light_offset_x, |entry, value| entry.light_offset_x = value);
-            fields.float(ui, "Light offset y", "light_offset_y", entry.light_offset_y, |entry, value| entry.light_offset_y = value);
-            fields.number(ui, "field_60", "field_60", entry.field_60, |entry, value| entry.field_60 = value);
-            fields.number(ui, "light_field_70", "light_field_70", entry.light_field_70, |entry, value| entry.light_field_70 = value);
-            ui.label("House join bits");
-            let mut bits = entry.house_join_bits;
-            let drag = egui::DragValue::new(&mut bits).speed(VALUE_DRAG_SPEED).hexadecimal(HOUSE_JOIN_HEX_DIGITS, false, true);
-            if ui.add(drag).changed() {
-                fields.push("house_join_bits", move |entry| entry.house_join_bits = bits);
-            }
-            ui.end_row();
-            ui.label("Switches");
-            ui.horizontal(|ui| {
-                fields.toggle(ui, "Has world art", "has_world_art", entry.has_world_art, |entry, value| entry.has_world_art = value);
-                fields.toggle(ui, "Enhanced tileart", "uses_enhanced_tileart", entry.uses_enhanced_tileart, |entry, value| entry.uses_enhanced_tileart = value);
-                fields.toggle(ui, "Alternate animation", "alternate_animation", entry.alternate_animation, |entry, value| entry.alternate_animation = value);
-            });
-            ui.end_row();
-            ui.label("Radar RGBA");
-            ui.horizontal(|ui| {
-                let colour = &entry.radarcol;
-                fields.inline_number(ui, "radar_r", colour.r, |entry, value| entry.radarcol.r = value);
-                fields.inline_number(ui, "radar_g", colour.g, |entry, value| entry.radarcol.g = value);
-                fields.inline_number(ui, "radar_b", colour.b, |entry, value| entry.radarcol.b = value);
-                fields.inline_number(ui, "radar_a", colour.a, |entry, value| entry.radarcol.a = value);
-            });
-            ui.end_row();
-            for (label, field, window, select) in [
-                ("EC window", "ec_window", &entry.ec_img_offset, true),
-                ("CC window", "cc_window", &entry.cc_img_offset, false),
-            ] {
-                ui.label(label).on_hover_text("x start, y start, x end, y end, x offset, y offset");
+    let mut fields = Fields { hash, editable, edits };
+    record_columns(ui, editable, |columns| {
+        group(columns, "Record", |ui| {
+            egui::Grid::new(("tileart_record", hash)).num_columns(2).striped(true).show(ui, |ui| {
+                ui.label("Filename hash");
+                ui.monospace(format!("0x{hash:016X}"));
+                ui.end_row();
+                ui.label("Version");
+                ui.label(entry.version.to_string());
+                ui.end_row();
+                ui.label("Name");
+                ui.label(name.unwrap_or("-"));
+                ui.end_row();
+                fields.number(ui, "Name index", "name_index", entry.string_dict_off, |entry, value| entry.string_dict_off = value);
+                ui.label("Stored tile id");
                 ui.horizontal(|ui| {
-                    let values = [window.x_start, window.y_start, window.x_end, window.y_end, window.x_off, window.y_off];
-                    for (index, current) in values.into_iter().enumerate() {
-                        let mut value = current;
-                        if ui.add(egui::DragValue::new(&mut value).speed(VALUE_DRAG_SPEED)).changed() {
-                            fields.push(field, move |entry| {
-                                let window = if select { &mut entry.ec_img_offset } else { &mut entry.cc_img_offset };
-                                let slots = [
-                                    &mut window.x_start,
-                                    &mut window.y_start,
-                                    &mut window.x_end,
-                                    &mut window.y_end,
-                                    &mut window.x_off,
-                                    &mut window.y_off,
-                                ];
-                                *slots.into_iter().nth(index).expect("six window values") = value;
-                            });
-                        }
-                    }
+                    fields.inline_number(ui, "tile_id", entry.tile_id, |entry, value| entry.tile_id = value);
+                    ui.weak(format!("0x{:04X}", entry.tile_id));
                 });
                 ui.end_row();
-            }
+                fields.number(ui, "Old id", "old_id", entry.old_id, |entry, value| entry.old_id = value);
+                fields.number(ui, "Body type", "body_type", entry.body_type, |entry, value| entry.body_type = value);
+                fields.number(ui, "Facing", "facing", entry.facing, |entry, value| entry.facing = value);
+                fields.number(ui, "field_60", "field_60", entry.field_60, |entry, value| entry.field_60 = value);
+                ui.label("House join bits");
+                let mut bits = entry.house_join_bits;
+                let drag = egui::DragValue::new(&mut bits).speed(VALUE_DRAG_SPEED).hexadecimal(HOUSE_JOIN_HEX_DIGITS, false, true);
+                if ui.add(drag).changed() {
+                    fields.push("house_join_bits", move |entry| entry.house_join_bits = bits);
+                }
+                ui.end_row();
+            });
         });
-
-        for (label, field, flags, flags2) in [("Flags1", "flags1", entry.flags1, false), ("Flags2", "flags2", entry.flags2, true)] {
-            fields.flags(ui, label, field, flags, flags2);
+        group(columns, "Art and light", |ui| {
+            egui::Grid::new(("tileart_art_light", hash)).num_columns(2).striped(true).show(ui, |ui| {
+                fields.float(ui, "World art scale", "world_art_scale", entry.world_art_scale, |entry, value| entry.world_art_scale = value);
+                fields.float(ui, "Legacy art scale", "legacy_art_scale", entry.legacy_art_scale, |entry, value| entry.legacy_art_scale = value);
+                fields.float(ui, "Rotation degrees", "rotation_degrees", entry.rotation_degrees, |entry, value| entry.rotation_degrees = value);
+                fields.float(ui, "Light scale", "light_scale", entry.light_scale, |entry, value| entry.light_scale = value);
+                fields.float(ui, "Light offset x", "light_offset_x", entry.light_offset_x, |entry, value| entry.light_offset_x = value);
+                fields.float(ui, "Light offset y", "light_offset_y", entry.light_offset_y, |entry, value| entry.light_offset_y = value);
+                fields.number(ui, "light_field_70", "light_field_70", entry.light_field_70, |entry, value| entry.light_field_70 = value);
+                ui.label("Radar RGBA");
+                ui.horizontal(|ui| {
+                    let colour = &entry.radarcol;
+                    fields.inline_number(ui, "radar_r", colour.r, |entry, value| entry.radarcol.r = value);
+                    fields.inline_number(ui, "radar_g", colour.g, |entry, value| entry.radarcol.g = value);
+                    fields.inline_number(ui, "radar_b", colour.b, |entry, value| entry.radarcol.b = value);
+                    fields.inline_number(ui, "radar_a", colour.a, |entry, value| entry.radarcol.a = value);
+                    let (swatch, _) = ui.allocate_exact_size(egui::Vec2::splat(RADAR_SWATCH_SIDE), egui::Sense::hover());
+                    ui.painter().rect_filled(swatch, 0.0, egui::Color32::from_rgb(colour.r, colour.g, colour.b));
+                });
+                ui.end_row();
+            });
+            fields.toggle(ui, "Has world art", "has_world_art", entry.has_world_art, |entry, value| entry.has_world_art = value);
+            fields.toggle(ui, "Enhanced tileart", "uses_enhanced_tileart", entry.uses_enhanced_tileart, |entry, value| entry.uses_enhanced_tileart = value);
+            fields.toggle(ui, "Alternate animation", "alternate_animation", entry.alternate_animation, |entry, value| entry.alternate_animation = value);
+        });
+        group(columns, "EC image", |ui| fields.window(ui, "ec_window", &entry.ec_img_offset, |entry| &mut entry.ec_img_offset));
+        group(columns, "CC image", |ui| fields.window(ui, "cc_window", &entry.cc_img_offset, |entry| &mut entry.cc_img_offset));
+        for (label, field, flags, flags2) in [("Flags 1", "flags1", entry.flags1, false), ("Flags 2", "flags2", entry.flags2, true)] {
+            group(columns, label, |ui| fields.flags(ui, field, flags, flags2));
         }
         for (label, field, props, second) in
             [("Properties 1", "props1", &entry.prop_vector1, false), ("Properties 2", "props2", &entry.prop_vector2, true)]
         {
-            fields.props(ui, label, field, props, second);
+            group(columns, label, |ui| fields.props(ui, field, props, second));
         }
-        fields.sitting(ui, entry.sitting.as_ref());
+        group(columns, "Sitting", |ui| fields.sitting(ui, entry.sitting.as_ref()));
+        group(columns, "Stack aliases", |ui| fields.stack_aliases(ui, &entry.stack_alias_vector));
     });
 }
 
 /// Pushes the edits of one record.
 struct Fields<'a> {
     hash: u64,
+    /// Whether rows can be added and deleted: those buttons are left out of a read-only record.
+    editable: bool,
     edits: &'a mut Vec<TileArtEdit>,
 }
 
@@ -261,7 +304,7 @@ impl Fields<'_> {
     fn float(&mut self, ui: &mut egui::Ui, label: &str, field: TileArtField, current: f32, set: fn(&mut TileArtEntry, f32)) {
         ui.label(label);
         let mut value = current;
-        let response = ui.add(egui::DragValue::new(&mut value).speed(FLOAT_DRAG_SPEED));
+        let response = ui.add(egui::DragValue::new(&mut value).speed(FLOAT_DRAG_SPEED).min_decimals(FLOAT_SHOWN_DECIMALS));
         self.session(&response);
         if response.changed() {
             self.push(field, move |entry| set(entry, value));
@@ -276,8 +319,40 @@ impl Fields<'_> {
         }
     }
 
+    /// An image window: its six stored values, each its own field, and the sizes they give, as UOETE shows them.
+    fn window(&mut self, ui: &mut egui::Ui, field: TileArtField, current: &TaeImgOffset, window_of: fn(&mut TileArtEntry) -> &mut TaeImgOffset) {
+        let mut copy = current.clone();
+        egui::Grid::new((field, self.hash)).num_columns(4).striped(true).show(ui, |ui| {
+            for (index, (label, slot)) in WINDOW_SLOTS.into_iter().enumerate() {
+                let mut value = *slot(&mut copy);
+                ui.label(label);
+                let response = ui.add(egui::DragValue::new(&mut value).speed(VALUE_DRAG_SPEED));
+                self.session(&response);
+                if response.changed() {
+                    self.push(field, move |entry| *slot(window_of(entry)) = value);
+                }
+                if index % 2 == 1 {
+                    ui.end_row();
+                }
+            }
+            let (width, height) = (current.x_end.wrapping_sub(current.x_start), current.y_end.wrapping_sub(current.y_start));
+            for (label, value) in [
+                ("Width", width),
+                ("Height", height),
+                ("Width + x offset", width.wrapping_add(current.x_off)),
+                ("Height + y offset", height.wrapping_add(current.y_off)),
+            ] {
+                ui.label(label);
+                ui.label(value.to_string());
+                if label.starts_with("Height") {
+                    ui.end_row();
+                }
+            }
+        });
+    }
+
     /// A 64-bit flag field: the hex value (applied when the field loses focus) and a checkbox per named bit.
-    fn flags(&mut self, ui: &mut egui::Ui, label: &str, field: TileArtField, current: TaeFlag, flags2: bool) {
+    fn flags(&mut self, ui: &mut egui::Ui, field: TileArtField, current: TaeFlag, flags2: bool) {
         let set = move |entry: &mut TileArtEntry, value: TaeFlag| {
             if flags2 {
                 entry.flags2 = value;
@@ -285,124 +360,155 @@ impl Fields<'_> {
                 entry.flags1 = value;
             }
         };
-        egui::CollapsingHeader::new(format!("{label} 0x{:0FLAG_HEX_DIGITS$X}", current.bits()))
-            .id_salt((field, self.hash))
-            .show(ui, |ui| {
-                let buffer_id = ui.make_persistent_id((field, self.hash, "hex"));
-                let mut text = ui
-                    .data_mut(|data| data.get_temp::<String>(buffer_id))
-                    .unwrap_or_else(|| format!("{:0FLAG_HEX_DIGITS$X}", current.bits()));
-                let response = ui.horizontal(|ui| {
-                    ui.label("Hex");
-                    ui.add(egui::TextEdit::singleline(&mut text).desired_width(FLAG_FIELD_WIDTH))
-                }).inner;
-                if response.has_focus() {
-                    ui.data_mut(|data| data.insert_temp(buffer_id, text));
-                } else {
-                    ui.data_mut(|data| data.remove::<String>(buffer_id));
-                    if response.lost_focus() {
-                        match u64::from_str_radix(text.trim().trim_start_matches("0x"), 16) {
-                            Ok(bits) => self.push(field, move |entry| set(entry, TaeFlag::from_bits_retain(bits))),
-                            Err(_) => {
-                                let error = format!("{text:?} is not a hexadecimal flag value");
-                                self.edits.push(Box::new(move |editor, _| {
-                                    editor.error = Some(error);
-                                    None
-                                }));
-                            }
-                        }
+        let buffer_id = ui.make_persistent_id((field, self.hash, "hex"));
+        let mut text = ui
+            .data_mut(|data| data.get_temp::<String>(buffer_id))
+            .unwrap_or_else(|| format!("{:0FLAG_HEX_DIGITS$X}", current.bits()));
+        let response = ui.horizontal(|ui| {
+            ui.label("Val:");
+            ui.add(egui::TextEdit::singleline(&mut text).desired_width(FLAG_FIELD_WIDTH))
+        }).inner;
+        if response.has_focus() {
+            ui.data_mut(|data| data.insert_temp(buffer_id, text));
+        } else {
+            ui.data_mut(|data| data.remove::<String>(buffer_id));
+            if response.lost_focus() {
+                match u64::from_str_radix(text.trim().trim_start_matches("0x"), 16) {
+                    Ok(bits) => self.push(field, move |entry| set(entry, TaeFlag::from_bits_retain(bits))),
+                    Err(_) => {
+                        let error = format!("{text:?} is not a hexadecimal flag value");
+                        self.edits.push(Box::new(move |editor, _| {
+                            editor.error = Some(error);
+                            None
+                        }));
                     }
                 }
-                egui::Grid::new((field, self.hash, "bits")).num_columns(FLAG_COLUMNS).show(ui, |ui| {
-                    let single_bits = TaeFlag::all().iter_names().filter(|(_, flag)| flag.bits().is_power_of_two());
-                    for (column, (name, flag)) in single_bits.enumerate() {
-                        let mut set_bit = current.contains(flag);
-                        if ui.checkbox(&mut set_bit, name).changed() {
-                            let mut value = current;
-                            value.set(flag, set_bit);
-                            self.push(field, move |entry| set(entry, value));
-                        }
-                        if (column + 1) % FLAG_COLUMNS == 0 {
-                            ui.end_row();
-                        }
-                    }
-                });
-            });
+            }
+        }
+        let flag_columns = ((ui.available_width() / FLAG_CELL_WIDTH) as usize).max(1);
+        egui::Grid::new((field, self.hash, "bits")).num_columns(flag_columns).show(ui, |ui| {
+            let single_bits = TaeFlag::all().iter_names().filter(|(_, flag)| flag.bits().is_power_of_two());
+            for (column, (name, flag)) in single_bits.enumerate() {
+                let mut set_bit = current.contains(flag);
+                if ui.checkbox(&mut set_bit, name).changed() {
+                    let mut value = current;
+                    value.set(flag, set_bit);
+                    self.push(field, move |entry| set(entry, value));
+                }
+                if (column + 1) % flag_columns == 0 {
+                    ui.end_row();
+                }
+            }
+        });
     }
 
     /// A property list: key and value per row, add and delete.
-    fn props(&mut self, ui: &mut egui::Ui, label: &str, field: TileArtField, props: &[TaeProp], second: bool) {
-        egui::CollapsingHeader::new(format!("{label} ({})", props.len())).id_salt((field, self.hash)).show(ui, |ui| {
-            egui::Grid::new((field, self.hash, "rows")).striped(true).show(ui, |ui| {
-                for (index, prop) in props.iter().enumerate() {
-                    let (mut key, mut value) = (prop.id, prop.val);
-                    let key_changed = ui.add(egui::DragValue::new(&mut key).speed(VALUE_DRAG_SPEED)).changed();
-                    ui.label(tileart_property_name(key));
-                    let value_changed = ui.add(egui::DragValue::new(&mut value).speed(VALUE_DRAG_SPEED)).changed();
-                    if key_changed || value_changed {
-                        self.push(field, move |entry| {
-                            if let Some(prop) = prop_list(entry, second).get_mut(index) {
-                                *prop = TaeProp { id: key, val: value };
-                            }
-                        });
-                    }
-                    if ui.small_button("Delete").clicked() {
-                        self.push(field, move |entry| {
-                            prop_list(entry, second).remove(index);
-                        });
-                    }
-                    ui.end_row();
+    fn props(&mut self, ui: &mut egui::Ui, field: TileArtField, props: &[TaeProp], second: bool) {
+        egui::Grid::new((field, self.hash, "rows")).striped(true).show(ui, |ui| {
+            for (index, prop) in props.iter().enumerate() {
+                let (mut key, mut value) = (prop.id, prop.val);
+                let key_changed = ui.add(egui::DragValue::new(&mut key).speed(VALUE_DRAG_SPEED)).changed();
+                ui.label(tileart_property_name(key));
+                let value_changed = ui.add(egui::DragValue::new(&mut value).speed(VALUE_DRAG_SPEED)).changed();
+                if key_changed || value_changed {
+                    self.push(field, move |entry| {
+                        if let Some(prop) = prop_list(entry, second).get_mut(index) {
+                            *prop = TaeProp { id: key, val: value };
+                        }
+                    });
                 }
-            });
-            if ui.small_button("Add property").clicked() {
-                self.push(field, move |entry| prop_list(entry, second).push(TaeProp::default()));
+                if self.editable && ui.small_button("Delete").clicked() {
+                    self.push(field, move |entry| {
+                        prop_list(entry, second).remove(index);
+                    });
+                }
+                ui.end_row();
             }
         });
+        if props.is_empty() {
+            ui.weak("none");
+        }
+        if self.editable && ui.small_button("Add property").clicked() {
+            self.push(field, move |entry| prop_list(entry, second).push(TaeProp::default()));
+        }
     }
 
     /// The sitting block: present or not, and its words.
     fn sitting(&mut self, ui: &mut egui::Ui, sitting: Option<&TaeSittingAnimation>) {
         let field = "sitting";
-        egui::CollapsingHeader::new("Sitting").id_salt((field, self.hash)).show(ui, |ui| {
-            let mut present = sitting.is_some();
-            if ui.checkbox(&mut present, "Sitting block").changed() {
-                self.push(field, move |entry| entry.sitting = present.then(TaeSittingAnimation::default));
+        let mut present = sitting.is_some();
+        if ui.checkbox(&mut present, "Sitting block").changed() {
+            self.push(field, move |entry| entry.sitting = present.then(TaeSittingAnimation::default));
+        }
+        let Some(sitting) = sitting else {
+            return;
+        };
+        egui::Grid::new((field, self.hash)).num_columns(2).striped(true).show(ui, |ui| {
+            ui.label("direction_mask");
+            let mut mask = sitting.direction_mask;
+            if ui.add(egui::DragValue::new(&mut mask).speed(VALUE_DRAG_SPEED)).changed() {
+                self.push(field, move |entry| {
+                    if let Some(sitting) = entry.sitting.as_mut() {
+                        sitting.direction_mask = mask;
+                    }
+                });
             }
-            let Some(sitting) = sitting else {
-                return;
-            };
-            ui.horizontal(|ui| {
-                ui.label("direction_mask");
-                let mut mask = sitting.direction_mask;
-                if ui.add(egui::DragValue::new(&mut mask).speed(VALUE_DRAG_SPEED)).changed() {
+            ui.end_row();
+            let values =
+                [sitting.seat_offset_x, sitting.seat_offset_y, sitting.window_shift, sitting.field_10, sitting.field_14];
+            for (index, (label, current)) in SITTING_SIGNED_WORDS.into_iter().zip(values).enumerate() {
+                ui.label(label);
+                let mut value = current;
+                if ui.add(egui::DragValue::new(&mut value).speed(VALUE_DRAG_SPEED)).changed() {
                     self.push(field, move |entry| {
                         if let Some(sitting) = entry.sitting.as_mut() {
-                            sitting.direction_mask = mask;
+                            let words = [
+                                &mut sitting.seat_offset_x,
+                                &mut sitting.seat_offset_y,
+                                &mut sitting.window_shift,
+                                &mut sitting.field_10,
+                                &mut sitting.field_14,
+                            ];
+                            *words.into_iter().nth(index).expect("five signed words") = value;
                         }
                     });
                 }
-                let values =
-                    [sitting.seat_offset_x, sitting.seat_offset_y, sitting.window_shift, sitting.field_10, sitting.field_14];
-                for (index, (label, current)) in SITTING_SIGNED_WORDS.into_iter().zip(values).enumerate() {
-                    ui.label(label);
-                    let mut value = current;
-                    if ui.add(egui::DragValue::new(&mut value).speed(VALUE_DRAG_SPEED)).changed() {
-                        self.push(field, move |entry| {
-                            if let Some(sitting) = entry.sitting.as_mut() {
-                                let words = [
-                                    &mut sitting.seat_offset_x,
-                                    &mut sitting.seat_offset_y,
-                                    &mut sitting.window_shift,
-                                    &mut sitting.field_10,
-                                    &mut sitting.field_14,
-                                ];
-                                *words.into_iter().nth(index).expect("five signed words") = value;
-                            }
-                        });
-                    }
-                }
-            });
+                ui.end_row();
+            }
         });
+    }
+
+    /// The stack aliases: amount and amount id per row, add and delete.
+    fn stack_aliases(&mut self, ui: &mut egui::Ui, aliases: &[TaeStackAlias]) {
+        let field = "stack_aliases";
+        egui::Grid::new((field, self.hash)).striped(true).show(ui, |ui| {
+            for (index, alias) in aliases.iter().enumerate() {
+                let (mut amount, mut amount_id) = (alias.amount, alias.amount_id);
+                ui.label("Amount");
+                let amount_changed = ui.add(egui::DragValue::new(&mut amount).speed(VALUE_DRAG_SPEED)).changed();
+                ui.label("Amount id");
+                let amount_id_changed = ui.add(egui::DragValue::new(&mut amount_id).speed(VALUE_DRAG_SPEED)).changed();
+                if amount_changed || amount_id_changed {
+                    self.push(field, move |entry| {
+                        if let Some(alias) = entry.stack_alias_vector.get_mut(index) {
+                            *alias = TaeStackAlias { amount, amount_id };
+                        }
+                    });
+                }
+                if self.editable && ui.small_button("Delete").clicked() {
+                    self.push(field, move |entry| {
+                        entry.stack_alias_vector.remove(index);
+                    });
+                }
+                ui.end_row();
+            }
+        });
+        if aliases.is_empty() {
+            ui.weak("none");
+        }
+        if self.editable && ui.small_button("Add stack alias").clicked() {
+            self.push(field, |entry| entry.stack_alias_vector.push(TaeStackAlias::default()));
+        }
     }
 }
 

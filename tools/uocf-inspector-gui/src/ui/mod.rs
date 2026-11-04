@@ -13,6 +13,7 @@ mod terrain_definition_editor;
 pub mod multis;
 mod multi_editor;
 mod tileart_editor;
+pub mod tiledata_editor;
 pub mod housing;
 pub mod effects;
 mod effects_guide;
