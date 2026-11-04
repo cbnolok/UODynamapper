@@ -17,6 +17,8 @@ pub const GUMP_ATLAS_METADATA_VERSION: u32 = 2;
 pub const DEFAULT_GUMP_ATLAS_WIDTH: u32 = 2048;
 pub const DEFAULT_GUMP_ATLAS_HEIGHT: u32 = 2048;
 pub const DEFAULT_GUMP_ATLAS_GUTTER: u16 = 1;
+/// The page and slot records are not images, so they never follow the pages into an image codec.
+const GUMP_ATLAS_MANIFEST_COMPRESSION: CompressionFlag = CompressionFlag::ZstdNoDict;
 
 pub const PAPERDOLL_EQUIPMENT_GUMP_ID_START: u32 = 50_001;
 pub const PAPERDOLL_EQUIPMENT_GUMP_ID_END: u32 = 69_999;
@@ -107,7 +109,7 @@ pub fn add_gump_atlas_files(
 
     builder.add_file(AddFileRequest {
         data_type: DataType::Metadata as u8,
-        compression: options.compression,
+        compression: GUMP_ATLAS_MANIFEST_COMPRESSION,
         width: 0,
         height: 0,
         virtual_path: None,
@@ -117,7 +119,7 @@ pub fn add_gump_atlas_files(
     })?;
     builder.add_file(AddFileRequest {
         data_type: DataType::Metadata as u8,
-        compression: options.compression,
+        compression: GUMP_ATLAS_MANIFEST_COMPRESSION,
         width: 0,
         height: 0,
         virtual_path: None,
@@ -572,6 +574,35 @@ mod tests {
 
         assert_eq!(page_manifest_header(&page_manifest), (8, 8, 1, 1));
         assert_eq!(slot_manifest_header(&slot_manifest), (8, 8, 1, 2));
+    }
+
+    #[test]
+    fn gump_atlas_with_image_compression_reads_back() {
+        const GUMP_ID: u32 = PAPERDOLL_EQUIPMENT_GUMP_ID_START;
+        const WIDTH: u16 = 2;
+        const HEIGHT: u16 = 1;
+        let rgba = vec![1, 2, 3, 255, 5, 6, 7, 255];
+        let mut builder = UddpBuilder::new(LookupMode::SparseId);
+        add_gump_atlas_files(
+            &mut builder,
+            vec![DecodedGump {
+                gump_id: GUMP_ID,
+                width: WIDTH,
+                height: HEIGHT,
+                upscale_factor: 1,
+                rgba: rgba.clone(),
+            }],
+            &GumpAtlasOptions {
+                compression: CompressionFlag::JpegXl,
+                ..GumpAtlasOptions::default()
+            },
+        )
+        .unwrap();
+
+        let reader = UddpReader::open(builder.build().unwrap()).unwrap();
+        let package = udd_assets::gumps::GumpsPackage::from_uddp_package(reader).unwrap();
+
+        assert_eq!(package.read_gump_rgba(GUMP_ID).unwrap(), (u32::from(WIDTH), u32::from(HEIGHT), rgba));
     }
 
     #[test]

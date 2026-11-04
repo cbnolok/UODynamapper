@@ -2449,13 +2449,8 @@ where
                 &out_file,
                 &classic_patches.into(),
                 &CcGumpsOptions {
-                    compression: if let Some(level) = zstd {
-                        zstd_compression(level)
-                    } else if jxl {
-                        CompressionFlag::None
-                    } else {
-                        CompressionFlag::ZstdNoDict
-                    },
+                    // Single gumps carry a size header, so they can't go through the image codec.
+                    compression: zstd.map(zstd_compression).unwrap_or(CompressionFlag::ZstdNoDict),
                     atlas_compression: if jxl {
                         zstd.map(|level| jxl_zstd_compression_levels(jxl_level, level))
                             .unwrap_or_else(|| jxl_compression_level(jxl_level))
@@ -2500,13 +2495,8 @@ where
                 &out_file,
                 &EcGumpsOptions {
                     max_id,
-                    compression: if let Some(level) = zstd {
-                        zstd_compression(level)
-                    } else if jxl {
-                        CompressionFlag::None
-                    } else {
-                        CompressionFlag::ZstdNoDict
-                    },
+                    // Single gumps carry a size header, so they can't go through the image codec.
+                    compression: zstd.map(zstd_compression).unwrap_or(CompressionFlag::ZstdNoDict),
                     atlas_compression: if jxl {
                         zstd.map(|level| jxl_zstd_compression_levels(jxl_level, level))
                             .unwrap_or_else(|| jxl_compression_level(jxl_level))
