@@ -13,6 +13,8 @@
 //! - `t9`: frames under a fifth painted, and split boxes, see `split`.
 //! - `tk0`: the `tileart.uop` placeholder rule for equipment against `mobtypes.txt`, per source, see `classes`.
 //! - `tk`: every lossless coder by class of body, and which assignment keeps the crowds inside the line, see `classes`.
+//! - `v`: what the GPU holds under each layout, and atlas waste under real allocators, see `vram`.
+//! - `q`, `qc`, `qd`, `qm`: lossy block formats for low-end devices, see `lossy`.
 //!
 //! Every table is built from the body being coded: nothing here ships statistics, so custom art round-trips the same.
 
@@ -25,8 +27,12 @@ use zstd::bulk::{Compressor, Decompressor};
 use zstd::dict::DecoderDictionary;
 
 mod classes;
+mod lossy;
 mod split;
+mod vram;
 pub(super) use classes::{part_tk, part_tk0};
+pub(super) use lossy::{part_q, part_qc, part_qd, part_qm};
+pub(super) use vram::part_v;
 pub(super) use split::part_t9;
 
 const KIB: usize = 1024;
@@ -366,11 +372,21 @@ fn train_dictionary(samples: &[&[u8]], size: usize) -> Vec<u8> {
 struct Dictionaries {
     plain: Vec<Vec<u8>>,
     spans: Vec<Vec<u8>>,
+    /// What the body's whole set of streams picked, when only some of them are coded: a crowd's few streams would seldom
+    /// repay a dictionary, and the format would choose over the whole body.
+    picks: Option<WholePicks>,
+}
+
+/// The dictionary size a whole body's streams pick, or none; a form that isn't asked for stays none.
+#[derive(Clone, Copy)]
+struct WholePicks {
+    plain: Option<usize>,
+    spans: Option<usize>,
 }
 
 impl Dictionaries {
     fn none() -> Dictionaries {
-        Dictionaries { plain: vec![Vec::new(); DICT_SIZES.len()], spans: vec![Vec::new(); DICT_SIZES.len()] }
+        Dictionaries { plain: vec![Vec::new(); DICT_SIZES.len()], spans: vec![Vec::new(); DICT_SIZES.len()], picks: None }
     }
 
     fn at(size: usize) -> usize {
@@ -383,7 +399,7 @@ fn dictionaries_of(planes: &StreamPlanes) -> Dictionaries {
     let plain: Vec<&[u8]> = planes.original.iter().map(Vec::as_slice).collect();
     let contents: Vec<Vec<u8>> = (0..planes.streams()).map(|n| span_content(&planes.original[n], &planes.rows[n], &planes.layout[n], true, false)).collect();
     let spans: Vec<&[u8]> = contents.iter().map(Vec::as_slice).collect();
-    Dictionaries { plain: train(&plain), spans: train(&spans) }
+    Dictionaries { plain: train(&plain), spans: train(&spans), picks: None }
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1093,6 +1109,19 @@ impl Atoms {
         body
     }
 
+    /// The dictionary size that makes these streams smallest with the dictionary counted, or none.
+    fn best_size(&mut self, none: IndexForm, with: fn(usize) -> IndexForm, planes: &StreamPlanes, dictionaries: &Dictionaries) -> Option<usize> {
+        let total = |b: &IndexBody| b.streams.iter().map(IndexStream::stored).sum::<u64>() + b.shared();
+        let mut best = (None, total(&self.index_of(none, planes, dictionaries)));
+        for size in DICT_SIZES {
+            let other = total(&self.index_of(with(size), planes, dictionaries));
+            if other < best.1 {
+                best = (Some(size), other);
+            }
+        }
+        best.0
+    }
+
     fn index_of(&mut self, form: IndexForm, planes: &StreamPlanes, dictionaries: &Dictionaries) -> IndexBody {
         if let Some(body) = self.index.get(&form) {
             return body.clone();
@@ -1101,26 +1130,20 @@ impl Atoms {
             IndexForm::PlainFresh => self.recoded(IndexForm::Plain, Coding::ZstdFresh, planes, dictionaries),
             IndexForm::LeftPredict => self.recoded(IndexForm::Left, Coding::LeftPredict, planes, dictionaries),
             IndexForm::DictBest => {
-                let total = |b: &IndexBody| b.streams.iter().map(IndexStream::stored).sum::<u64>() + b.shared();
-                let mut best = self.index_of(IndexForm::Bare, planes, dictionaries);
-                for size in DICT_SIZES {
-                    let other = self.index_of(IndexForm::Dict(size), planes, dictionaries);
-                    if total(&other) < total(&best) {
-                        best = other;
-                    }
-                }
+                let size = match dictionaries.picks {
+                    Some(picks) => picks.plain,
+                    None => self.best_size(IndexForm::Bare, IndexForm::Dict, planes, dictionaries),
+                };
+                let mut best = self.index_of(size.map_or(IndexForm::Bare, IndexForm::Dict), planes, dictionaries);
                 best.choice_bytes = DICT_CHOICE_BYTES;
                 best
             }
             IndexForm::SpansDictBest => {
-                let total = |b: &IndexBody| b.streams.iter().map(IndexStream::stored).sum::<u64>() + b.shared();
-                let mut best = self.index_of(SPANS_ZSTD, planes, dictionaries);
-                for size in DICT_SIZES {
-                    let other = self.index_of(IndexForm::SpansDict(size), planes, dictionaries);
-                    if total(&other) < total(&best) {
-                        best = other;
-                    }
-                }
+                let size = match dictionaries.picks {
+                    Some(picks) => picks.spans,
+                    None => self.best_size(SPANS_ZSTD, IndexForm::SpansDict, planes, dictionaries),
+                };
+                let mut best = self.index_of(size.map_or(SPANS_ZSTD, IndexForm::SpansDict), planes, dictionaries);
                 best.choice_bytes = DICT_CHOICE_BYTES;
                 best
             }
@@ -3142,7 +3165,9 @@ fn tiny_crowd(label: &str, pairs: &[Pair], sources: &Sources, bodies: &[BodySour
     });
     let need_master = schemes.iter().any(|s| s.index == IndexForm::Xor);
     let need_dictionaries = schemes.iter().any(|s| matches!(s.index, IndexForm::Dict(_) | IndexForm::DictBest | IndexForm::SpansDict(_) | IndexForm::SpansDictBest));
-    // Dictionaries train on the whole body; only the streams of the wanted actions are coded.
+    let need_plain_pick = schemes.iter().any(|s| s.index == IndexForm::DictBest);
+    let need_spans_pick = schemes.iter().any(|s| s.index == IndexForm::SpansDictBest);
+    // Dictionaries train on the whole body, and the best one is picked over it; only the streams of the wanted actions are coded.
     let prepared: Vec<(StreamPlanes, Dictionaries)> = distinct
         .par_iter()
         .zip(&wanted_actions)
@@ -3150,7 +3175,12 @@ fn tiny_crowd(label: &str, pairs: &[Pair], sources: &Sources, bodies: &[BodySour
             let planes = Planes::from_body(&load_body(sources, &bodies[i]));
             let dictionaries = if need_dictionaries {
                 let whole = StreamPlanes::of(&planes, None, None, Unit::ActionDirection);
-                dictionaries_of(&whole)
+                let mut dictionaries = dictionaries_of(&whole);
+                let mut atoms = Atoms::default();
+                let plain = if need_plain_pick { atoms.best_size(IndexForm::Bare, IndexForm::Dict, &whole, &dictionaries) } else { None };
+                let spans = if need_spans_pick { atoms.best_size(SPANS_ZSTD, IndexForm::SpansDict, &whole, &dictionaries) } else { None };
+                dictionaries.picks = Some(WholePicks { plain, spans });
+                dictionaries
             } else {
                 Dictionaries::none()
             };

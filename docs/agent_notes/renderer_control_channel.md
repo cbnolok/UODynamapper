@@ -18,7 +18,9 @@ recomputation after success, including same-map teleports. Invalid destinations
 leave state untouched. This does not add loading for previously unloaded maps.
 
 `status` exposes current and previously rendered player positions, elapsed time,
-and the existing smoothed FPS/frame-time diagnostics when available. Rendered
+frames counted over the last 500 ms window as `fps` and `frame_ms`, and the running
+`total_frames`. Dividing the change in `total_frames` by wall-clock time checks
+the rate from outside the app. Rendered
 position equality does not establish completion of texture streaming. The
 `art` snapshot reports the collector's map/chunk/instance counts, atlas misses
 and pending sprite/ground pages. A terrain-only wait captured an empty bridge

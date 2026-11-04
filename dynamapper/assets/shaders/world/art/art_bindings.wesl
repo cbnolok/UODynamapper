@@ -99,6 +99,8 @@ const DEPTH_CLASS_BACKGROUND: u32 = 1u;
 const DEPTH_CLASS_FOLIAGE: u32 = 2u;
 const DEPTH_CLASS_ROOF: u32 = 3u;
 const DEPTH_CLASS_SURFACE_LIKE_FLOOR: u32 = 4u;
+// SpriteInstance.is_wet_flags bit.
+const STATIC_INSTANCE_FLAG_LEGACY_ART: u32 = 1024u;
 const PASS_MODE_OPAQUE: u32 = 0u;
 const PASS_MODE_TRANSPARENT: u32 = 1u;
 const PASS_MODE_SHADOW: u32 = 2u;

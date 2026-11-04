@@ -14,8 +14,8 @@ the primary geometry mismatch. That shader experiment was removed.
 
 `camera/perspective.rs` now provides a custom Bevy projection with the existing
 narrow perspective FOV, near/far limits, and vertical lens stretch. The follow
-camera uses the isometric orbit direction while retaining the previous orbit
-distance, preserving horizontal zoom framing. Terrain and art share the lens;
+camera uses the isometric orbit direction at the [orbit distance](#orbit-distance)
+that matches the orthographic framing. Terrain and art share the lens;
 no sprite-only scale, synthetic depth replacement or coordinate-specific roof
 rule is involved. That pitch repair retained the orthographic projection and
 upright-art painter priority at the time.
@@ -58,8 +58,8 @@ roads, bridge and town controls. Temporary routing instrumentation was removed.
 Free perspective previously accepted scroll and +/- input into `RenderZoom`,
 but neither its fixed lens nor its free-movement system consumed that change.
 The input zoom system now moves the free camera along its current backward
-vector by `perspective_offset.length() * (new_zoom - previous_zoom)`. It uses
-the actual clamped zoom, so further input at either limit cannot move the camera.
+vector by the change in [orbit distance](#orbit-distance) between the previous
+and new zoom. It uses the actual clamped zoom, so further input at either limit cannot move the camera.
 This matches the follow camera's distance change at its normal pose and also
 respects a manually panned or rotated free camera. The lens and camera rotation
 are preserved. Orthographic zoom and the follow camera retain their own paths.
@@ -74,12 +74,39 @@ in the Enhanced rotated and unrotated views. The existing lens/frustum/subview
 test and the normal debug build pass. This does not establish arbitrary-angle
 sprite fidelity or full-map streaming at maximum zoom.
 
+## Orbit distance
+
+The follow camera used to orbit at a fixed length of about 114 world units times
+zoom. A fixed FOV shows a fixed world height at a given distance, so on-screen tile
+size depended on the window: that length matched the orthographic view only in a
+window about 892 px high. In a 2880x1692 window tiles came out about 1.9 times too
+large at every zoom. The zoom value did change and the view did follow it, but it
+looked stuck far too close.
+
+`perspective::orbit_distance` now derives the length from the window height, so a
+world unit at the focus covers as many pixels as in the orthographic view at the
+same zoom. Measured as the scale of a 220 px crop at the window centre:
+
+| Check | Result |
+|---|---|
+| Perspective over orthographic, 1280x800, flat land at `(754,1320,10)`, statics off, zoom 0.6, 1.0, 1.6 | 0.99 at each zoom |
+| Same ratio, 2880x1692, town, with statics, zoom 1.0 and 2.69 | 1.03 and 1.01; these frames fit less cleanly |
+| Follow camera, real scroll input, 3 ticks in, then 2 more, compared with the start | 1.515, then 2.00; orthographic gives 1.515, then 2.005 |
+| Follow camera, back to the start, then 3 ticks out | Byte-identical, then 0.65; orthographic is the same |
+| Free camera, 3 ticks in, back, 3 ticks out, back | 1.515, byte-identical, 0.65, 0.04 % of pixels past 2 levels |
+
+Elsewhere from the focus the lens still scales the ground, as any perspective does.
+`compute_visible_chunks` works from orthographic extents with a padding of at least
+two chunks. Captures at zoom 0.6, 1.0 and 1.6 in 1280x800 and at 1.0 and 2.69 in
+2880x1692 were saved; the zoom 0.6 and 2.69 frames were inspected and show no holes
+in the top corners.
+
 ## Exact legacy pixel calibration
 
 The later [height calibration](static_height_calibration.md) replaces the
 empirical 1.79 lens coefficient with sqrt(3) for both cameras. The isometric
-pitch remains unchanged; the previous perspective orbit length is retained
-explicitly with `(50,89.5,50)`, independently of the lens coefficient. Exact
+pitch remains unchanged; the perspective orbit length does not depend on the
+lens coefficient. Exact
 sqrt(2) tile scaling, square upright sprite pixels and four pixels per raw Z
 form one coherent rendering conversion. Original logical XYZ and tile/object
 metadata remain unchanged.

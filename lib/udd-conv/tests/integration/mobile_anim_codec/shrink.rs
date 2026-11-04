@@ -21,6 +21,8 @@
 //! `k8`: keep about half of the frames and rebuild the others (lossy), see the `halved` module.
 //! `t` (`t0` kinds and duplicates, `t1` sizes), `t9` (sparse frames, split boxes), `tt` (decode), `tc`, `tu` and `ts`
 //! (crowds), `tk` (coders by class of body): tiny and large streams, row spans and painted pixels, see `tiny`.
+//! `v` (what the GPU holds per layout, atlas waste, load units), `q`, `qc`, `qd` and `qm` (lossy block formats, their
+//! crowd decode, and streams dumped for and scored from encoders outside the workspace): also in `tiny`.
 //! Every lossless candidate is decoded and compared with its source: a mismatch fails the test.
 
 use super::*;
@@ -3191,6 +3193,21 @@ pub(super) fn run(sources: &Sources, bodies: &[BodySource], present: &[(Client, 
     }
     if runs("tk") {
         tiny::part_tk(sources, bodies, present, cc_dir, stride);
+    }
+    if runs("v") {
+        tiny::part_v(sources, bodies, present, cc_dir);
+    }
+    if runs("q") {
+        tiny::part_q(sources, bodies, present, cc_dir, stride);
+    }
+    if runs("qc") {
+        tiny::part_qc(sources, bodies, present, cc_dir);
+    }
+    if runs("qd") {
+        tiny::part_qd(sources, bodies, present, cc_dir, stride);
+    }
+    if runs("qm") {
+        tiny::part_qm(sources, bodies, present, cc_dir, stride);
     }
     if runs("ts") {
         tiny::part_ts(sources, bodies, present, cc_dir, &only);

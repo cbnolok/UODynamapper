@@ -582,7 +582,7 @@ const CROWD_SCENARIOS_ENV: &str = "MOBILE_ANIM_CODEC_SHRINK_CROWD_SCENARIOS";
 const CROWD_NO_BC7_ENV: &str = "MOBILE_ANIM_CODEC_SHRINK_CROWD_NO_BC7";
 /// The user's target: this many new actions drawable on `WORKER_THREADS` threads is fast enough.
 pub(super) const CROWD_TARGET_MS: f64 = 250.0;
-const CROWD_SEED: u64 = 0x2026_1102_C0DE_5EED;
+pub(super) const CROWD_SEED: u64 = 0x2026_1102_C0DE_5EED;
 /// Multiplier spreading a pair's position over its directions, for the direction it happens to face.
 const FACING_HASH: u64 = 2_654_435_761;
 pub(super) const PALETTE_TEXTURE_BYTES: u64 = (PALETTE_COLOURS * RGBA_CHANNELS) as u64;

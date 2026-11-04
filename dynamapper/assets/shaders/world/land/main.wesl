@@ -682,21 +682,22 @@ fn shade_land(in: VertexOutput, tile: TileUniform, ordered_coverage: bool, world
   let L = scene.light_direction; // normalized by CPU
   let V = normalize(scene.camera_position - in.world_position.xyz);
 
+  // Transition grime has its own toggle and strength, so it does not depend on Grunge.
+  if (visual_profile == 2u && effects.enable_kr_transition_grime == 1u && !use_classic_flat_wet_land_art && !use_ec_liquid) {
+    base_albedo = apply_kr_transition_grime(
+      base_albedo,
+      tile,
+      world_tile,
+      uv_in_tile,
+      in.world_position.xz,
+      effects.kr_transition_grime_strength,
+      grime_mask,
+    );
+  }
   if (effects.enable_grunge == 1u) {
     let raw_ndotl = max(dot(normalize(Nw), normalize(L)), 0.0);
     let slope_shadow = clamp(1.0 - dot(normalize(Nw), vec3<f32>(0.0, 1.0, 0.0)), 0.0, 1.0);
     let grunge_shadow = clamp((1.0 - raw_ndotl) * 0.82 + slope_shadow * 0.28, 0.0, 1.0);
-    if (visual_profile == 2u && effects.enable_kr_transition_grime == 1u && !use_classic_flat_wet_land_art && !use_ec_liquid) {
-      base_albedo = apply_kr_transition_grime(
-        base_albedo,
-        tile,
-        world_tile,
-        uv_in_tile,
-        in.world_position.xz,
-        effects.kr_transition_grime_strength,
-        grime_mask,
-      );
-    }
     let visual_grunge = textureSample(visual_grunge_texture, tex_small_sampler, visual_grunge_uv(in.world_position.xz, visual_profile)).rgb;
     if (use_classic_flat_wet_land_art || use_ec_liquid) {
       // Flat CC terrain water and flat CC art water are one material with two

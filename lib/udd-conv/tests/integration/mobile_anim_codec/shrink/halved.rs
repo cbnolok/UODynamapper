@@ -953,7 +953,7 @@ fn crc32(chunks: &[&[u8]]) -> u32 {
     !crc
 }
 
-fn write_png(path: &Path, w: usize, h: usize, rgb: &[u8]) {
+pub(super) fn write_png(path: &Path, w: usize, h: usize, rgb: &[u8]) {
     let mut encoder = ZlibEncoder::new(Vec::with_capacity(rgb.len() / 2), Compression::default());
     for row in rgb.chunks_exact(w * 3) {
         encoder.write_all(&[0]).expect("zlib");

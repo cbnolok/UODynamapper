@@ -29,7 +29,7 @@ Use a separate terminal/tool call for commands while the bounded preview runs.
 Teleport validates loaded-map bounds and follows the same player/transform update
 and visible-chunk recompute as the UI dialog. `--z` and `--map` are explicit;
 currently unloaded maps are rejected. Status reports player/rendered positions,
-elapsed time, and existing smoothed frame diagnostics when enabled. Its `terrain`
+elapsed time, and the frame rate counted over 500 ms windows. Its `terrain`
 object reports CPU/submitted metadata revisions, pending metadata uploads and the
 number of published terrain-cache chunks. Equal revisions with no pending writes
 establish metadata submission. Its `art` object reports the last collected map,
@@ -148,7 +148,7 @@ python3 scripts/dev-helpers/renderer/benchmark.py \
 
 Defaults allow eight seconds to settle and sample twenty seconds per fixture at
 four requests per second. Allocate enough time in the bounded preview helper.
-The diagnostics are **smoothed**, so their sampled extrema are not raw frame
+Each sample is a 500 ms window, so the sampled extrema are not raw frame
 percentiles. Position agreement does not prove that uploads have settled; check
 captures and upload diagnostics too. Use isolated settings to disable VSync,
 the frame limiter and unfocused throttling for uncapped comparisons. Record the

@@ -5,6 +5,23 @@ in factory presets, bundled shader settings and the saved shader settings
 inspected on 2026-10-30. The art control remains an explicit opt-in in every
 render style; land shading mode does not prohibit it.
 
+Fake normals now apply to KR world art only. Classic sprites have their shading
+painted in, so a per-sprite normal repeats on every tile of a roof or wall and
+draws bright and dark bands at the seams. In a difference image of the Classic
+road fixture this shows as a pillow pattern per roof tile. The collector marks
+legacy sprites with `STATIC_INSTANCE_FLAG_LEGACY_ART` from the same
+`ResolvedArtSprite.legacy_art` that selects their source, and `art/main.wesl`
+turns the effect off for them. This covers legacy sprites in KR view too. Ground
+instances are EC surfaces and are unaffected. The dialog grays the toggle when
+the art source is not EC.
+
+With the toggle checked against unchecked over road, town, swamp, snow, lava and
+bridge, Classic and Enhanced are byte-identical in all six. KR is unchanged from
+before the gate: mean 1.87, 1.03, 0.33, 0, 0.14 and 0.73 levels. Before the gate
+the Classic road fixture differed by 4.08 levels with 57 % of pixels past 2 levels,
+and Enhanced by 1.41 with 20 %. The checks below predate this gate and describe
+the old non-KR behaviour.
+
 The shared `art/shading.wesl` helper already removes rectangular edge cues from
 upright Regular/Background sprites. `ART_UPRIGHT_BILLBOARD_EDGE_PROFILE` and
 `ART_UPRIGHT_BILLBOARD_SIDE_FALLOFF_PROFILE` are both zero. Upright surface-like

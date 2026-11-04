@@ -32,8 +32,9 @@ sqrt(2). At zoom 1, ground X and Y steps project to `(22,-22)` and `(-22,-22)`
 screen pixels. Legacy upright pixels use sqrt(2)/44 horizontally in the XZ
 plane and 1/44 vertically in world Y, giving square projected pixels. One raw
 Z unit uses **4/44 world Y**, giving exactly four screen pixels. The perspective
-lens uses the same coefficient and keeps its established orbit distance and
-isometric pitch. Arbitrary rotated cameras remain views of baked 2D artwork.
+lens uses the same coefficient and the isometric pitch; its orbit distance now
+follows [the orthographic scale](isometric_perspective_projection.md#orbit-distance).
+Arbitrary rotated cameras remain views of baked 2D artwork.
 
 ## Coordinate contract
 
@@ -85,6 +86,49 @@ reproduces the overlap; its visible footprint differs after calibration. The
 older EC-art perspective control also contains it. Keep this as a remaining
 geometry/priority issue, not a successful depth-parity check. Arbitrary-camera
 2D artwork and every EC window/source scale remain outside this acceptance.
+
+## Measured against the client rule
+
+A report that statics look too high led to a pixel check of 14 isolated statics
+on map 0 (plants, cacti, a rock) at Z from -1 to 24, at 1280x800, zoom 1, with the
+focus on each static's own XYZ. Each static gets one capture with statics on and
+one with them off; the difference is its on-screen mask. The source silhouette is
+slid over that mask to find its actual position.
+
+The rules compared, for a tile with its north vertex at the focus:
+
+- Classic: image left `(X-Y)*22 - floor(W/2)`, image bottom `(X+Y)*22 - 4Z + 22`,
+  the flat tile's south vertex. Source: ClassicUO `ee79d7ebc1cc`,
+  `GameObject.cs:152-153` and `View.cs:118-122`. ClassicUO is a reimplementation,
+  so this is evidence for Classic only.
+- Legacy art in EC: the same rule when `x_off = 22 - floor(W/2)` and `y_off = 0`
+  ([trace](../../scripts/dev-helpers/ec-research/ghidra-legacy-art-scale/results/uosa_legacy_art_scale.md),
+  `0x4598d0`, `0x459b00`). The two sources agree.
+- World art in EC: left `south.x - 22 + x_off * s/1.5`, bottom `south.y + y_off * s/1.5`
+  in screen pixels growing down, so a negative `y_off` raises the sprite.
+
+| View | Fitted | Offset from the rule |
+|---|---|---|
+| Classic, CC art | 14 of 14 | exactly 0,0; every opaque source pixel inside the mask |
+| Enhanced, CC art | 14 of 14 | exactly 0,0; every opaque source pixel inside the mask |
+| KR, world art | 14 of 14 | dx 0..+1, dy -1..+1, the rounding of the resampled comparison silhouette; coverage at least 0.95 |
+
+So statics are not higher than the rule in any view, and no anchor changed. Empty
+rows at the bottom of the art make a sprite look like it floats: the fern 3235 has
+21 of them in Classic. KR art reproduces the same visible bottoms through its
+authored `y_off`, for example 6 pixels above the south vertex in both art sets for
+the yucca and the palm, and about 21 for that fern.
+
+Land was checked at one tile with enough contrast, the lone stone at `(754,1320,10)`:
+in Classic the diamond lies within about 2 pixels of the rule. Thirteen other lone
+tiles had textures too noisy for the edge fit, so land placement rests on that tile
+and on the projection tests above.
+
+One known difference remains: the CC-art route uses the Classic offsets in every
+view, so the authored legacy shifts of the EC census (`x_off` off by 1-4 pixels in
+about 3300 records, `y_off` raising by 1-2 pixels in about 170) do not apply in
+Enhanced. Those windows are not in the packages for legacy-sourced slots, so
+honoring them needs a package change.
 
 A subsequent [priority follow-up](static_depth_ordering.md#perspective-tie-bias)
 isolates and repairs that perspective deck overlap: the fixed NDC tie bias grew

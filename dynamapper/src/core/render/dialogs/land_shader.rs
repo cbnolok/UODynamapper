@@ -9,6 +9,7 @@
 use super::super::scene::world::land::mesh_material::*;
 use crate::core::controls::input_actions::ActionToggleShaderSettings;
 use crate::{
+    configs::settings::ClientTextureSource,
     configs::shader_presets::{
         build_save_presets, reset_preset_to_factory, save_shader_settings,
         store_active_preset, FactoryShaderPresets, UniformState,
@@ -54,16 +55,32 @@ fn sys_shader_ui_toggle(
     state.open = !state.open;
 }
 
-/// Basic-Controls "Render Style" presets: `(label, shading_mode, post_process_profile)`.
+/// Basic-Controls "Render Style" presets: `(label, shading_mode, post_process_profile, tooltip)`.
 /// Each style couples the land shading mode with the matching post-process visual
 /// profile so a single pick activates the whole look — notably, KR's grime / color-wash
 /// effects are gated behind `post_process_profile == KR` and would otherwise stay inert.
 /// The Advanced "Visual Profile" selector can still override the profile afterward.
-const RENDER_STYLE_PRESETS: [(&str, u32, u32); 3] = [
-    ("Classic", 0, 0),  // vertex/Gouraud land shading + Neutral profile
-    ("Enhanced", 1, 1), // fragment land shading + EC profile
-    ("KR", 2, 2),       // fragment land shading + KR profile
+const RENDER_STYLE_PRESETS: [(&str, u32, u32, &str); 3] = [
+    ("Classic", 0, 0, "Vertex shading. Aims for original fidelity."),  // vertex/Gouraud land shading + Neutral profile
+    ("Enhanced", 1, 1, "Fragment shading. Subtle improvements."), // fragment land shading + EC profile
+    ("KR", 2, 2, "Fragment shading. Vibrant and painterly."),       // fragment land shading + KR profile
 ];
+
+const PRESET_PERIOD_BUTTONS: [(&str, ShaderPresetPeriod); 4] = [
+    ("Morning", ShaderPresetPeriod::Morning),
+    ("Afternoon", ShaderPresetPeriod::Afternoon),
+    ("Night", ShaderPresetPeriod::Night),
+    ("Cave", ShaderPresetPeriod::Cave),
+];
+
+// The terrain column and both art columns need this content width to sit side by side.
+const SHADER_WINDOW_DEFAULT_POS: [f32; 2] = [16.0, 80.0];
+const SHADER_WINDOW_DEFAULT_WIDTH: f32 = 960.0;
+// Tall enough to open with every section and the buttons below them visible, without scrolling.
+const SHADER_WINDOW_DEFAULT_HEIGHT: f32 = 580.0;
+const THREE_COLUMN_MIN_WIDTH: f32 = 900.0;
+const TWO_COLUMN_MIN_WIDTH: f32 = 600.0;
+const SECTION_SPACING: f32 = 8.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ShaderPresetPeriod {
@@ -154,9 +171,13 @@ fn store_active_and_apply_render_preset(
 
 /// Default screen position of the detached "Advanced Raw Shader Knobs" window.
 /// Placed to the right of the main Land Shader Controls window (whose default
-/// pos is `[16, 80]`) so the long list of low-level sliders opens as a side
+/// pos is `SHADER_WINDOW_DEFAULT_POS`) so the long list of low-level sliders opens as a side
 /// panel instead of stretching the main window past the screen height.
-const ADVANCED_WINDOW_DEFAULT_POS: [f32; 2] = [560.0, 80.0];
+const ADVANCED_WINDOW_DEFAULT_POS: [f32; 2] = [
+    SHADER_WINDOW_DEFAULT_POS[0] + SHADER_WINDOW_DEFAULT_WIDTH + ADVANCED_WINDOW_GAP,
+    SHADER_WINDOW_DEFAULT_POS[1],
+];
+const ADVANCED_WINDOW_GAP: f32 = 12.0;
 
 // ============================== UI SYSTEM ===============================
 // Renders a window with controls for mode, toggles, intensities, colors,
@@ -191,194 +212,99 @@ pub fn land_ui_system(
 
     // `open_mut()` lets the egui title-bar close button sync back to our resource.
     let main_window = egui::Window::new(title)
-        .default_pos([16.0, 80.0])
-        .default_width(640.0)
+        .default_pos(SHADER_WINDOW_DEFAULT_POS)
+        .default_size([SHADER_WINDOW_DEFAULT_WIDTH, SHADER_WINDOW_DEFAULT_HEIGHT])
         .open(&mut window_open)
         .resizable(true)
         .vscroll(true)
         .show(ctx, |ui| {
-            ui.label("Modes: 0=Classic (vertex), 1=Enhanced (fragment), 2=KR-like (fragment).");
-            ui.label(
-                "Classic aims for original fidelity. Enhanced is subtle. KR is vibrant/painterly.",
-            );
-            ui.add_space(6.0);
-
-            ui.collapsing("Basic Controls", |ui| {
-                let mut changed = false;
-
+            // Render Style and time of day pick the preset, so they share the top row.
+            ui.horizontal_wrapped(|ui| {
                 // Render Style couples the land shading mode with the matching
                 // post-process visual profile (see RENDER_STYLE_PRESETS) so one pick
                 // activates the whole look, including the KR-gated effects.
-                ui.horizontal(|ui| {
-                    ui.strong("Render Style:");
-                    let cur_mode = u.effects.shading_mode;
-                    for (label, mode, profile) in RENDER_STYLE_PRESETS {
-                        if ui.selectable_label(cur_mode == mode, label).clicked() {
-                            let period = ShaderPresetPeriod::from_active_key(&u.active_preset);
-                            store_active_and_apply_render_preset(
-                                &mut u,
-                                &mut shader_presets,
-                                mode,
-                                profile,
-                                period,
-                            );
-                            changed = true;
-                        }
-                    }
-                });
-
-                // Render-style gating: controls the current style never consumes are
-                // shown grayed out. Fragment features are inactive in Classic (vertex);
-                // KR-land shading effects need KR shading; KR post effects need the KR
-                // profile. Art (Objects) shading is independent of render style, so those
-                // controls stay enabled in every style.
-                let is_classic = u.effects.shading_mode == 0;
-                let is_fragment = !is_classic;
-                let is_kr_shading = u.effects.shading_mode == 2;
-                let is_kr_profile = u.effects.post_process_profile == 2;
-
-                // Terrain / Objects / Water / Everything are split into collapsible
-                // sub-dropdowns so the panel stays short enough to fit on screen;
-                // each group's body opens with a caption of what it affects.
-                basic_scope_group(ui, "Terrain (land)", "Affects land/ground tiles only.", |ui| {
-                    changed |= slider_en(ui, is_fragment, "Sun Strength", &mut u.land_lighting.diffuse_strength, 0.0..=2.0);
-                    changed |= slider_s(ui, "Terrain Ambient Light", &mut u.lighting.ambient_strength, 0.0..=1.5);
-
-                    let mut land_relief = land_relief_control_value(&u);
-                    if slider_en(ui, is_fragment, "Land Relief", &mut land_relief, 0.0..=1.0) {
-                        apply_land_relief_control(&mut u, land_relief);
-                        changed = true;
-                    }
-                    let mut soft_lighting = soft_lighting_control_value(&u);
-                    if slider_en(ui, is_fragment, "Soft Lighting", &mut soft_lighting, 0.0..=1.0) {
-                        apply_soft_lighting_control(&mut u, soft_lighting);
-                        changed = true;
-                    }
-                    let mut highlights = highlights_control_value(&u);
-                    if slider_en(ui, is_fragment, "Highlights", &mut highlights, 0.0..=1.0) {
-                        apply_highlights_control(&mut u, highlights);
-                        changed = true;
-                    }
-
-                    changed |= slider_en(ui, is_kr_shading, "KR Land Temperature", &mut u.effects.kr_land_temperature_strength, 0.0..=1.5);
-                    changed |= slider_en(ui, is_kr_shading, "KR Land Relief Shadow", &mut u.effects.kr_land_relief_shadow_strength, 0.0..=1.5);
-                    changed |= slider_en(ui, is_kr_shading, "KR Land Shadow Mottle", &mut u.effects.kr_land_shadow_mottle_strength, 0.0..=1.5);
-                    changed |= slider_en(ui, is_kr_profile, "KR Material Contrast", &mut u.effects.kr_land_material_contrast_strength, 0.0..=1.5);
-                    changed |= toggle_en(ui, is_kr_profile, "KR Transition Grime", &mut u.effects.enable_kr_transition_grime);
-                    changed |= slider_en(ui, is_kr_profile, "KR Transition Grime", &mut u.effects.kr_transition_grime_strength, 0.0..=1.0);
-
-                    // Normal maps only apply to EC-atlas land textures (`texture_size == 2`
-                    // in the shader); on a CC art source they are a structural no-op — the
-                    // label states this since there is no global "source is EC" signal here.
-                    changed |= toggle_en(ui, is_fragment, "Normal Maps (EC land only)", &mut u.effects.enable_normal_maps);
-                    changed |= slider_en(ui, is_fragment, "Land Normal Maps (EC land only)", &mut u.effects.land_normal_map_strength, 0.0..=1.0);
-                });
-
-                basic_scope_group(ui, "Objects (art / statics)", "Affects static art sprites only.", |ui| {
-                    if ui.available_width() >= 560.0 {
-                        ui.columns(2, |columns| {
-                            changed |= standard_art_controls(&mut columns[0], &mut u.effects);
-                            changed |= stylized_art_controls(&mut columns[1], &mut u.effects);
-                        });
-                    } else {
-                        changed |= standard_art_controls(ui, &mut u.effects);
-                        ui.separator();
-                        changed |= stylized_art_controls(ui, &mut u.effects);
-                    }
-                });
-
-                basic_scope_group(ui, "Water surfaces", "Affects terrain water and static water surfaces.", |ui| {
-                    changed |= toggle_u32(ui, "Water Animation", &mut u.effects.enable_water_animation);
-                });
-
-                basic_scope_group(ui, "Everything (whole scene)", "Affects both land and art / the full frame.", |ui| {
-                    changed |= slider_s(ui, "Brightness", &mut u.global_lighting, 0.0..=2.0);
-                    // KR's filmic tonemap pre-scales the image darker than EC/Classic;
-                    // this exposes that pre-scale (higher = brighter). Only the KR profile
-                    // uses it, so it is grayed out in the other styles.
-                    changed |= slider_en(ui, is_kr_profile, "KR Tonemap Brightness", &mut u.lighting.kr_tonemap_params.x, 0.02..=1.0);
-                    ui.horizontal(|ui| {
-                        ui.label("Output:");
-                        changed |= toggle_u32(ui, "Tonemap", &mut u.lighting.enable_tonemap);
-                        // "Color Grading" is the master on/off for the same vibrant grading
-                        // whose knobs live under Advanced → "Color Grading (Vibrant)". The
-                        // excess saturation the user sees comes from those defaults, not a
-                        // separate effect — the tooltip makes the relationship explicit.
-                        changed |= toggle_tip(
-                            ui,
-                            "Color Grading",
-                            &mut u.lighting.enable_grading,
-                            "Master on/off for the vibrant color grading tuned under \
-                             Advanced -> Color Grading (Vibrant). If colors look \
-                             oversaturated, lower Saturation / Vibrance there.",
+                ui.strong("Render Style:");
+                let cur_mode = u.effects.shading_mode;
+                let cur_period = ShaderPresetPeriod::from_active_key(&u.active_preset);
+                for (label, mode, profile, tooltip) in RENDER_STYLE_PRESETS {
+                    if ui.selectable_label(cur_mode == mode, label).on_hover_text(tooltip).clicked() {
+                        store_active_and_apply_render_preset(
+                            &mut u,
+                            &mut shader_presets,
+                            mode,
+                            profile,
+                            cur_period,
                         );
-                        changed |= toggle_u32(ui, "Texture Smoothness", &mut u.effects.enable_linear_filtering);
-                    });
-                    ui.horizontal(|ui| {
-                        changed |= toggle_u32(ui, "Grunge", &mut u.effects.enable_grunge);
-                        changed |= toggle_u32(ui, "Fog", &mut u.lighting.enable_fog);
-                        changed |= toggle_en(ui, is_kr_profile, "KR Color Wash", &mut u.effects.enable_kr_color_wash);
-                    });
-                    changed |= slider_s(ui, "Grunge Strength", &mut u.effects.grunge_strength, 0.0..=1.0);
-                    changed |= slider_s(ui, "Light/Static Interaction", &mut u.effects.light_decal_intensity, 0.0..=2.0);
-                    changed |= slider_en(ui, is_kr_profile, "KR Color Wash", &mut u.effects.kr_color_wash_strength, 0.0..=1.5);
-                    changed |= slider_en(ui, is_kr_profile, "KR Color Wash Scale", &mut u.effects.kr_color_wash_scale, 8.0..=160.0);
-                });
-
-                if changed {
-                    u.dirty = true;
+                    }
                 }
-            });
 
-            ui.checkbox(&mut advanced_open, "Show advanced raw shader knobs (opens a side panel on the right)");
+                ui.separator();
 
-            // ------------------------ Presets -------------------------
-            ui.horizontal(|ui| {
-                ui.strong("Presets:");
+                // ------------------------ Presets -------------------------
+                ui.strong("Time of Day:");
                 let mode = u.effects.shading_mode.min(2);
                 let profile = mode;
-
-                if ui.button("Morning").clicked() {
-                    let period = ShaderPresetPeriod::Morning;
-                    store_active_and_apply_render_preset(
-                        &mut u,
-                        &mut shader_presets,
-                        mode,
-                        profile,
-                        period,
-                    );
-                }
-                if ui.button("Afternoon").clicked() {
-                    let period = ShaderPresetPeriod::Afternoon;
-                    store_active_and_apply_render_preset(
-                        &mut u,
-                        &mut shader_presets,
-                        mode,
-                        profile,
-                        period,
-                    );
-                }
-                if ui.button("Night").clicked() {
-                    let period = ShaderPresetPeriod::Night;
-                    store_active_and_apply_render_preset(
-                        &mut u,
-                        &mut shader_presets,
-                        mode,
-                        profile,
-                        period,
-                    );
-                }
-                if ui.button("Cave").clicked() {
-                    let period = ShaderPresetPeriod::Cave;
-                    store_active_and_apply_render_preset(
-                        &mut u,
-                        &mut shader_presets,
-                        mode,
-                        profile,
-                        period,
-                    );
+                for (label, period) in PRESET_PERIOD_BUTTONS {
+                    if ui.selectable_label(cur_period == period, label).clicked() {
+                        store_active_and_apply_render_preset(
+                            &mut u,
+                            &mut shader_presets,
+                            mode,
+                            profile,
+                            period,
+                        );
+                    }
                 }
             });
+            ui.add_space(SECTION_SPACING);
+
+            // Render-style gating: controls the current style never consumes are
+            // shown grayed out. Fragment features are inactive in Classic (vertex);
+            // KR-land shading effects need KR shading; KR post effects need the KR
+            // profile. Art (Objects) shading is independent of render style, so those
+            // controls stay enabled in every style.
+            let gates = RenderStyleGates {
+                is_fragment: u.effects.shading_mode != 0,
+                is_kr_shading: u.effects.shading_mode == 2,
+                is_kr_profile: u.effects.post_process_profile == 2,
+            };
+
+            // Everything is visible at once, and each section is what a control acts on:
+            // the whole frame, then land, then the two kinds of art side by side.
+            let mut changed = whole_scene_controls(ui, &mut u, gates);
+            ui.add_space(SECTION_SPACING);
+            ui.separator();
+
+            let art_source_is_kr = settings.graphics.art_texture_source == ClientTextureSource::Ec;
+            let width = ui.available_width();
+            if width >= THREE_COLUMN_MIN_WIDTH {
+                ui.columns(3, |columns| {
+                    changed |= terrain_controls(&mut columns[0], &mut u, gates);
+                    changed |= standard_art_controls(&mut columns[1], &mut u.effects);
+                    changed |= stylized_art_controls(&mut columns[2], &mut u.effects, art_source_is_kr);
+                });
+            } else if width >= TWO_COLUMN_MIN_WIDTH {
+                ui.columns(2, |columns| {
+                    changed |= terrain_controls(&mut columns[0], &mut u, gates);
+                    changed |= standard_art_controls(&mut columns[1], &mut u.effects);
+                    columns[1].add_space(SECTION_SPACING);
+                    changed |= stylized_art_controls(&mut columns[1], &mut u.effects, art_source_is_kr);
+                });
+            } else {
+                changed |= terrain_controls(ui, &mut u, gates);
+                ui.add_space(SECTION_SPACING);
+                changed |= standard_art_controls(ui, &mut u.effects);
+                ui.add_space(SECTION_SPACING);
+                changed |= stylized_art_controls(ui, &mut u.effects, art_source_is_kr);
+            }
+
+            if changed {
+                u.dirty = true;
+            }
+
+            ui.add_space(SECTION_SPACING);
+            ui.separator();
+            ui.checkbox(&mut advanced_open, "Show advanced raw shader knobs (opens a side panel on the right)");
 
             if ui.button("Reset Current Preset to Factory Defaults").clicked() {
                 let mode = u.effects.shading_mode.min(2);
@@ -409,7 +335,7 @@ pub fn land_ui_system(
     // so the long list of low-level sliders never stretches the main window past
     // the screen height. `.open()` hides this window when the checkbox is off.
     let advanced_position = main_window.as_ref().map(|window|
-        [window.response.rect.right() + 12.0, window.response.rect.top()]
+        [window.response.rect.right() + ADVANCED_WINDOW_GAP, window.response.rect.top()]
     ).unwrap_or(ADVANCED_WINDOW_DEFAULT_POS);
     egui::Window::new("Advanced Raw Shader Knobs")
         .default_pos(advanced_position)
@@ -951,27 +877,95 @@ fn push_uniforms_if_dirty(
 // avoiding overlapping &mut borrows inside the helper.
 
 // Toggle a u32 field as a boolean (0/1). Returns true if the value changed.
-/// Collapsible scope group inside Basic Controls: a titled sub-dropdown whose
-/// body opens with a small caption stating which part of the render it affects.
-/// Splitting the many controls into per-scope dropdowns keeps the panel from
-/// growing taller than the screen. Defaults to open so nothing is hidden on
-/// first show; the user collapses the groups they don't need.
-fn basic_scope_group(
-    ui: &mut egui::Ui,
-    title: &str,
-    scope: &str,
-    add_contents: impl FnOnce(&mut egui::Ui),
-) {
-    egui::CollapsingHeader::new(title)
-        .default_open(true)
-        .show(ui, |ui| {
-            ui.small(scope);
-            add_contents(ui);
-        });
+/// Which controls the active render style consumes.
+#[derive(Clone, Copy)]
+struct RenderStyleGates {
+    is_fragment: bool,
+    is_kr_shading: bool,
+    is_kr_profile: bool,
+}
+
+/// Titled section of the basic controls, with a small caption stating which part of the
+/// render it affects.
+fn section_header(ui: &mut egui::Ui, title: &str, scope: &str) {
+    ui.strong(title);
+    ui.small(scope);
+}
+
+fn whole_scene_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderStyleGates) -> bool {
+    section_header(ui, "Whole scene", "Affects both land and art / the full frame.");
+    let mut changed = false;
+    ui.horizontal_wrapped(|ui| {
+        changed |= toggle_u32(ui, "Tonemap", &mut u.lighting.enable_tonemap);
+        // "Color Grading" is the master on/off for the same vibrant grading
+        // whose knobs live under Advanced → "Color Grading (Vibrant)". The
+        // excess saturation the user sees comes from those defaults, not a
+        // separate effect — the tooltip makes the relationship explicit.
+        changed |= toggle_tip(
+            ui,
+            "Color Grading",
+            &mut u.lighting.enable_grading,
+            "Master on/off for the vibrant color grading tuned under \
+             Advanced -> Color Grading (Vibrant). If colors look \
+             oversaturated, lower Saturation / Vibrance there.",
+        );
+        changed |= toggle_u32(ui, "Texture Smoothness", &mut u.effects.enable_linear_filtering);
+        changed |= toggle_u32(ui, "Fog", &mut u.lighting.enable_fog);
+    });
+    ui.columns(2, |columns| {
+        let ui = &mut columns[0];
+        changed |= slider_s(ui, "Brightness", &mut u.global_lighting, 0.0..=2.0);
+        // KR's filmic tonemap pre-scales the image darker than EC/Classic;
+        // this exposes that pre-scale (higher = brighter). Only the KR profile
+        // uses it, so it is grayed out in the other styles.
+        changed |= slider_en(ui, gates.is_kr_profile, "KR Tonemap Brightness", &mut u.lighting.kr_tonemap_params.x, 0.02..=1.0);
+        changed |= slider_s(ui, "Light/Static Interaction", &mut u.effects.light_decal_intensity, 0.0..=2.0);
+
+        let ui = &mut columns[1];
+        changed |= toggle_slider(ui, true, "Grunge", &mut u.effects.enable_grunge, &mut u.effects.grunge_strength, 0.0..=1.0);
+        changed |= toggle_slider(ui, gates.is_kr_profile, "KR Color Wash", &mut u.effects.enable_kr_color_wash, &mut u.effects.kr_color_wash_strength, 0.0..=1.5);
+        changed |= slider_en(ui, gates.is_kr_profile, "KR Color Wash Scale", &mut u.effects.kr_color_wash_scale, 8.0..=160.0);
+    });
+    changed
+}
+
+fn terrain_controls(ui: &mut egui::Ui, u: &mut UniformState, gates: RenderStyleGates) -> bool {
+    section_header(ui, "Terrain and water", "Land tiles. Water also covers static water surfaces.");
+    let mut changed = toggle_u32(ui, "Water Animation", &mut u.effects.enable_water_animation);
+    changed |= slider_en(ui, gates.is_fragment, "Sun Strength", &mut u.land_lighting.diffuse_strength, 0.0..=2.0);
+    changed |= slider_s(ui, "Terrain Ambient Light", &mut u.lighting.ambient_strength, 0.0..=1.5);
+
+    let mut land_relief = land_relief_control_value(u);
+    if slider_en(ui, gates.is_fragment, "Land Relief", &mut land_relief, 0.0..=1.0) {
+        apply_land_relief_control(u, land_relief);
+        changed = true;
+    }
+    let mut soft_lighting = soft_lighting_control_value(u);
+    if slider_en(ui, gates.is_fragment, "Soft Lighting", &mut soft_lighting, 0.0..=1.0) {
+        apply_soft_lighting_control(u, soft_lighting);
+        changed = true;
+    }
+    let mut highlights = highlights_control_value(u);
+    if slider_en(ui, gates.is_fragment, "Highlights", &mut highlights, 0.0..=1.0) {
+        apply_highlights_control(u, highlights);
+        changed = true;
+    }
+
+    changed |= slider_en(ui, gates.is_kr_shading, "KR Land Temperature", &mut u.effects.kr_land_temperature_strength, 0.0..=1.5);
+    changed |= slider_en(ui, gates.is_kr_shading, "KR Land Relief Shadow", &mut u.effects.kr_land_relief_shadow_strength, 0.0..=1.5);
+    changed |= slider_en(ui, gates.is_kr_shading, "KR Land Shadow Mottle", &mut u.effects.kr_land_shadow_mottle_strength, 0.0..=1.5);
+    changed |= slider_en(ui, gates.is_kr_profile, "KR Material Contrast", &mut u.effects.kr_land_material_contrast_strength, 0.0..=1.5);
+    changed |= toggle_slider(ui, gates.is_kr_profile, "KR Transition Grime", &mut u.effects.enable_kr_transition_grime, &mut u.effects.kr_transition_grime_strength, 0.0..=1.0);
+
+    // Normal maps only apply to EC-atlas land textures (`texture_size == 2`
+    // in the shader); on a CC art source they are a structural no-op — the
+    // label states this since there is no global "source is EC" signal here.
+    changed |= toggle_slider(ui, gates.is_fragment, "Normal Maps (EC land only)", &mut u.effects.enable_normal_maps, &mut u.effects.land_normal_map_strength, 0.0..=1.0);
+    changed
 }
 
 fn standard_art_controls(ui: &mut egui::Ui, effects: &mut LandEffectsUniform) -> bool {
-    ui.strong("Standard art");
+    section_header(ui, "Standard art", "Static art sprites.");
     let mut changed = slider_s(ui, "Shadow Shape", &mut effects.art_shadow_strength, 0.0..=1.0);
     changed |= slider_s(ui, "Contact Shadows", &mut effects.art_contact_shadow_strength, 0.0..=1.0);
     changed |= slider_s(ui, "Mottle", &mut effects.art_mottle_strength, 0.0..=1.5);
@@ -980,13 +974,30 @@ fn standard_art_controls(ui: &mut egui::Ui, effects: &mut LandEffectsUniform) ->
     changed
 }
 
-fn stylized_art_controls(ui: &mut egui::Ui, effects: &mut LandEffectsUniform) -> bool {
-    ui.strong("KR-style art");
-    ui.small("Optional in every render style.");
+fn stylized_art_controls(ui: &mut egui::Ui, effects: &mut LandEffectsUniform, art_source_is_kr: bool) -> bool {
+    section_header(ui, "KR-style art", "Static art sprites. Optional in every render style.");
     let mut changed = slider_s(ui, "Temperature", &mut effects.kr_art_temperature_strength, 0.0..=1.5);
-    changed |= toggle_u32(ui, "Fake Normals", &mut effects.enable_art_fake_normals);
-    changed |= toggle_u32(ui, "Projected Shadows", &mut effects.enable_art_projected_shadows);
-    changed |= slider_s(ui, "Shadow Strength", &mut effects.art_projected_shadow_strength, 0.0..=1.0);
+    changed |= toggle_slider(ui, true, "Projected Shadows", &mut effects.enable_art_projected_shadows, &mut effects.art_projected_shadow_strength, 0.0..=1.0);
+    // Fake normals skip legacy art, so with Classic art selected there is nothing to apply them to.
+    changed |= toggle_en(ui, art_source_is_kr, "Fake Normals (KR art only)", &mut effects.enable_art_fake_normals);
+    changed
+}
+
+/// One row for an effect with a strength: the slider, then the checkbox that switches the effect.
+/// The slider lines up with plain slider rows and grays out while the effect is off.
+fn toggle_slider(
+    ui: &mut egui::Ui,
+    enabled: bool,
+    label: &str,
+    toggle: &mut u32,
+    strength: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        changed |= ui.add_enabled(enabled && *toggle != 0, egui::Slider::new(strength, range)).changed();
+        changed |= toggle_en(ui, enabled, label, toggle);
+    });
     changed
 }
 

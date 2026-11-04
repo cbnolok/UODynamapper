@@ -7,7 +7,7 @@ use input::{ControlInput, InputState, PointerButton, inject_control_input, focus
 use crate::core::{render::scene::world::land::{tile_atlas::TileAtlas, LandUploadTelemetry}, texture_cache::land::coverage::EcTerrainBases};
 use crate::core::{app_states::AppState, render::scene::{player::Player, world::WorldGeoData, RecomputeVisibleChunksEvent}, system_sets::MovementSysSet};
 use crate::prelude::*;
-use bevy::{diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin}, input::{InputSystems, keyboard::KeyCode}, prelude::*, render::view::screenshot::{Screenshot, save_to_disk}, window::PrimaryWindow};
+use bevy::{input::{InputSystems, keyboard::KeyCode}, prelude::*, render::view::screenshot::{Screenshot, save_to_disk}, window::PrimaryWindow};
 use bevy_egui::EguiPreUpdateSet;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -104,7 +104,7 @@ fn poll_control(
     mut player_query: Query<(&mut Player, &mut Transform)>,
     world: Res<WorldGeoData>,
     mut recompute: MessageWriter<RecomputeVisibleChunksEvent>,
-    diagnostics: Option<Res<DiagnosticsStore>>,
+    frame_rate: Res<crate::core::frame_rate::MeasuredFrameRate>,
     atlas: Option<Res<TileAtlas>>,
     uploads: Option<Res<LandUploadTelemetry>>,
     terrain_bases: Option<Res<EcTerrainBases>>,
@@ -150,9 +150,6 @@ fn poll_control(
                     let (player, _) = player_query.single().map_err(|error| error.to_string())?;
                     let position = player.current_pos.map(|p| json!([p.x, p.y, p.z, p.m]));
                     let rendered = player.prev_rendered_pos.map(|p| json!([p.x, p.y, p.z, p.m]));
-                    let fps_path = FrameTimeDiagnosticsPlugin::FPS;
-                    let frame_path = FrameTimeDiagnosticsPlugin::FRAME_TIME;
-                    let metric = |path| diagnostics.as_ref().and_then(|store| store.get(path)).and_then(|value| value.smoothed());
                     let terrain = atlas.as_ref().zip(uploads.as_ref()).map(|(atlas, uploads)| {
                         let uploads = uploads.snapshot();
                         json!({"metadata_revision": atlas.content_revision,
@@ -170,8 +167,9 @@ fn poll_control(
                     }));
                     Ok(json!({"ok": true, "position": position, "rendered_position": rendered,
                         "elapsed_seconds": time.elapsed_secs_f64(),
-                        "fps": metric(&fps_path),
-                        "frame_ms": metric(&frame_path), "terrain": terrain, "art": art,
+                        "fps": frame_rate.frames_per_second(),
+                        "frame_ms": frame_rate.frame_ms(), "total_frames": frame_rate.total_frames(),
+                        "terrain": terrain, "art": art,
                         "picking": picking.as_ref().map(|p| {
                             let (serial, pending, ready, pixel, render_seen, encoded) = p.status();
                             json!({"serial": serial, "pending": pending, "ready": ready, "pixel": pixel,

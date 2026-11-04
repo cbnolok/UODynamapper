@@ -56,7 +56,7 @@ An available normal slot is still not proof of sampled visible fragments.
 | Control | Actual scope and prerequisites |
 | --- | --- |
 | Grunge | Terrain, upright art and ground art; positive `grunge_strength`. Its non-KR response is deliberately much weaker than KR. Current support texture is generated, not established as the original client's support image. |
-| KR Transition Grime | Terrain material boundaries, KR post-process profile, Grunge enabled and positive `kr_transition_grime_strength`. Flat CC water and original EC liquid composition are excluded. Setting ordinary grunge strength to zero retains the separately controlled boundary grime. It is not a whole-scene dirt overlay. |
+| KR Transition Grime | Terrain material boundaries, KR post-process profile and positive `kr_transition_grime_strength`. Flat CC water and original EC liquid composition are excluded. It has its own toggle and strength and no longer depends on Grunge. It is not a whole-scene dirt overlay. |
 | KR Color Wash | Terrain and art, KR post-process profile, positive `kr_color_wash_strength`; bounded, low-frequency warm/cool and value variation. It is intentionally subtle. |
 | Art Projected Shadows | Eligible sprite casters, positive strength, textured art rendering. Ground/flat forms and background/floor depth classes are excluded or suppressed. Empty liquid views are not valid positive controls. These projected sprite silhouettes are distinct from baked art shadows and collected light masks. |
 
@@ -121,6 +121,27 @@ identifies and repairs insertion-dependent equal-distance sorting. Its matched
 town histories are now exact. The subsequent
 [cross-chunk opaque-tie repair](static_depth_ordering.md#equal-priority-sprites-across-chunk-boundaries)
 also closes the independently isolated bridge-edge history case.
+
+## Per-control pixel differences
+
+Off/on pairs on the bundled morning presets at 1280x800, zoom 0.8, with water
+animation paused, fog off and static lights off, over six fixtures: road, town,
+swamp, snow, lava and bridge `(2834,987)`. Values are the mean absolute difference
+in 8-bit levels and, in parentheses, the share of pixels past 2 levels. Repeating a
+capture without a change gives exactly 0.
+
+| Control at its preset strength | Classic | Enhanced | KR | Why |
+|---|---|---|---|---|
+| Normal Maps, 0.45 | 0 | 0 | 0, snow 0.95 (0.7 %) | Only snow has a bump layer. Classic shading skips normals; Enhanced caps them by headroom. |
+| Grunge | 1.11-1.66 (at most 4 %), strength 0.35 | 0.86-1.00 (at most 1.6 %), strength 0.18 | 11.2-18.7, 47-98 % past 8 levels, strength 0.65 | Works. The non-KR response is deliberately weak. |
+| KR Transition Grime, 0.65 | 0 | 0 | 0.25-2.90 (4-66 %), swamp 0.002 | KR profile only, and only at material boundaries. Swamp has almost none in view. |
+| KR Color Wash, 0.55 | 0 | 0 | 0.49-0.86 (at most 0.1 %) | KR profile only, on a scale of 72 tiles, so a small view moves almost uniformly. |
+| Projected Shadows, 0.22 | 0.21-0.46 (2-5 %) | 0.24-0.68 (2-6 %) | 0.20-0.69 (2-6 %), 0 with no casters | Works, around casters only. The bundled KR presets ship with the toggle off. |
+
+Grime sat inside the Grunge branch of `land/main.wesl`, so with Grunge off its own
+checkbox did exactly nothing. It now runs independently; its KR figures above are
+measured with Grunge off. No strength changed. Fake normals are covered
+[in their own note](art_fake_normal_validation.md).
 
 These checks establish control reachability and source ownership, not original
 client pixel parity, normal orientation/filtering parity, every caster's depth,
