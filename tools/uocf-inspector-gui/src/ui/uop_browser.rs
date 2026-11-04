@@ -643,11 +643,14 @@ fn ui_generic_preview(
             || guessed_image_name.is_some()
         {
             let texture_name = guessed_image_name.as_deref().unwrap_or(name);
+            app.last_texture_problem = None;
             if let Some(handle) = app.get_uop_texture(ctx, hash, data, texture_name) {
                 ui.label(format!("Image: {}x{}", handle.size()[0], handle.size()[1]));
                 egui::ScrollArea::both().show(ui, |ui| {
                     ui.image(&handle);
                 });
+            } else if let Some(problem) = &app.last_texture_problem {
+                ui.colored_label(ui.visuals().warn_fg_color, problem);
             }
         } else if let Some(source) = app.uop_cache.loaded_uops.get(uop_idx).map(|loaded| loaded.path.clone())
             && app.entry_text_edits.open(&source, hash, data).is_some()

@@ -2306,10 +2306,10 @@ fn texture_view(state: &mut EffectsPanelState, ctx: &egui::Context, ui: &mut egu
     let address = state.document.files().get(&hash).map_or(0, |_| payload_address(payload));
     let stale = state.thumbnails.get(&hash).is_none_or(|thumbnail| thumbnail.payload != address);
     if stale {
-        let texture = decode_texture(payload).map(|image| {
+        let texture = decode_texture(payload).and_then(|image| {
             let size = [image.width() as usize, image.height() as usize];
-            let color_image = egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw());
-            ctx.load_texture(format!("effects_texture_{hash:016x}_{address}"), color_image, egui::TextureOptions::LINEAR)
+            let name = format!("effects_texture_{hash:016x}_{address}");
+            super::textures::load_rgba(ctx, name, size, image.as_raw(), egui::TextureOptions::LINEAR)
         });
         state.thumbnails.insert(hash, Thumbnail { payload: address, texture });
     }

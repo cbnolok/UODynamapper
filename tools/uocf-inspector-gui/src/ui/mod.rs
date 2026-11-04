@@ -28,6 +28,7 @@ pub mod classic_maps;
 pub mod classic_fonts;
 pub mod classic_defs;
 pub mod classic_image_import;
+pub mod textures;
 
 /// The state of the read-only Classic file views.
 #[derive(Default)]
@@ -199,6 +200,7 @@ mod tests {
 }
 
 pub fn draw_ui(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
+    app.report_gpu_errors();
     egui::Panel::top("top_panel").show(ui, |ui| {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
