@@ -2088,7 +2088,7 @@ impl UopInspectorApp {
     pub fn log(&mut self, msg: impl Into<String>) {
         let msg = msg.into();
         log::info!("{}", msg);
-        self.logs.push(udd_logging::format_message(log::Level::Info, &msg));
+        self.logs.push(msg);
     }
 
     /// Logs `message` the first time it is reported; for problems found while drawing, which repeat every frame.
@@ -4555,7 +4555,7 @@ pub(crate) mod tests {
         assert_eq!(app.logs.len(), 0);
         app.log("hello test");
         assert_eq!(app.logs.len(), 1);
-        assert_eq!(app.logs[0], udd_logging::format_message(log::Level::Info, "hello test"));
+        assert_eq!(app.logs[0], "hello test", "the Home tab shows the text without the terminal's colour codes");
     }
 
     #[test]
