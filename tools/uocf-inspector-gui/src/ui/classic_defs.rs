@@ -1,12 +1,13 @@
 //! View of the Classic def and reference data files, read strictly as the client reads them
 //! (`uocf::classic::def_files`, `speech`, `skills`): the remap def files, `bodyconv.def`, `Equipconv.def`,
-//! `speech.mul`, `skills.mul` and `skillgrp.mul`, as tables, with the line and column of a syntax error. `Edit` is in
-//! [`super::classic_defs_editor`].
+//! `Sound.def`, `Music.def`, `speech.mul`, `skills.mul` and `skillgrp.mul`, as tables, with the line and column of a
+//! syntax error. `Edit` is in [`super::classic_defs_editor`].
 
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
 use std::collections::HashSet;
 use std::path::Path;
+use uocf::classic::audio_def::{DefTranslationTable, MUSIC_DEF_FILE_NAME, SOUND_DEF_FILE_NAME};
 use uocf::classic::def_files::{BodyConvDefFile, DefLine, EquipConvDefFile, TargetsDefFile};
 use uocf::classic::skills::{SKILL_GROUPS_FILE, SKILLS_DATA_FILE, SkillGroupsFile, SkillsFile};
 use uocf::classic::speech::{SPEECH_FILE, SpeechFile};
@@ -17,6 +18,7 @@ use crate::app::UopInspectorApp;
 
 const TARGETS_FILES: [&str; 9] =
     ["gump.def", "anim1.def", "anim2.def", "anim3.def", "anim4.def", "art.def", "texterr.def", "body.def", "corpse.def"];
+const AUDIO_TABLE_FILES: [&str; 2] = [SOUND_DEF_FILE_NAME, MUSIC_DEF_FILE_NAME];
 const BODYCONV_FILE: &str = "bodyconv.def";
 const EQUIPCONV_FILE: &str = "equipconv.def";
 const ROW_HEIGHT: f32 = 18.0;
@@ -30,6 +32,7 @@ pub(super) enum FileKind {
     Targets(&'static str),
     BodyConv,
     EquipConv,
+    AudioTable(&'static str),
     Speech,
     Skills,
     SkillGroups,
@@ -41,6 +44,7 @@ impl FileKind {
             Self::Targets(name) => name,
             Self::BodyConv => BODYCONV_FILE,
             Self::EquipConv => EQUIPCONV_FILE,
+            Self::AudioTable(name) => name,
             Self::Speech => SPEECH_FILE,
             Self::Skills => SKILLS_DATA_FILE,
             Self::SkillGroups => SKILL_GROUPS_FILE,
@@ -89,6 +93,12 @@ impl FileKind {
                 "Converts an equipment id to another for a given body type. It can also change the gump (0: equipment \
                  id + 50000, -1: converted id + 50000, else the gump id) and the hue, per the shipped file's comment."
             }
+            Self::AudioTable(SOUND_DEF_FILE_NAME) => {
+                "Gives a sound id without a slot of its own the slots to play instead, one at random on every play. The \
+                 third field is read but not used for sounds. The client reads a target -1 as 1, and drops a line with \
+                 two targets without a comma between them."
+            }
+            Self::AudioTable(_) => "A sound id table in the format of Sound.def. No client reads it: Classic music is chosen by Music/Digital/Config.txt.",
             Self::Speech => {
                 "The keywords a server is told the player said: a keyword id with its phrasings, where * is a wildcard. \
                  Not a remap file."
@@ -99,7 +109,12 @@ impl FileKind {
     }
 
     pub(super) fn all() -> impl Iterator<Item = Self> {
-        TARGETS_FILES.into_iter().map(Self::Targets).chain([Self::BodyConv, Self::EquipConv, Self::Speech, Self::Skills, Self::SkillGroups])
+        TARGETS_FILES
+            .into_iter()
+            .map(Self::Targets)
+            .chain([Self::BodyConv, Self::EquipConv])
+            .chain(AUDIO_TABLE_FILES.into_iter().map(Self::AudioTable))
+            .chain([Self::Speech, Self::Skills, Self::SkillGroups])
     }
 }
 
@@ -109,6 +124,7 @@ pub(super) enum DefFile {
     Targets(TargetsDefFile),
     BodyConv(BodyConvDefFile),
     EquipConv(EquipConvDefFile),
+    AudioTable(DefTranslationTable),
     Speech(SpeechFile),
     Skills(SkillsFile),
     SkillGroups(SkillGroupsFile),
@@ -158,6 +174,9 @@ pub(super) fn read_file(dir: &Path, kind: FileKind) -> Result<DefFile, String> {
         FileKind::Targets(_) => DefFile::Targets(TargetsDefFile::load(&path).map_err(error)?),
         FileKind::BodyConv => DefFile::BodyConv(BodyConvDefFile::load(&path).map_err(error)?),
         FileKind::EquipConv => DefFile::EquipConv(EquipConvDefFile::load(&path).map_err(error)?),
+        FileKind::AudioTable(name) => {
+            DefFile::AudioTable(DefTranslationTable::load(&path).map_err(error)?.ok_or_else(|| format!("no {name} in {}", dir.display()))?)
+        }
         FileKind::Speech => DefFile::Speech(SpeechFile::load(&path).map_err(error)?),
         FileKind::Skills => DefFile::Skills(SkillsFile::load(dir).map_err(error)?),
         FileKind::SkillGroups => DefFile::SkillGroups(SkillGroupsFile::load(&path).map_err(error)?),
@@ -231,6 +250,21 @@ pub(super) fn table_of(file: &DefFile) -> Result<Table, String> {
             rows.reverse();
             let summary = format!("{} conversions; the hue is read as hexadecimal", rows.len());
             Ok(Table { headers: vec!["Line", "Body", "Equipment", "Converted", "Gump", "Hue", "Comment", "Used"], rows, summary })
+        }
+        DefFile::AudioTable(table) => {
+            let rows: Vec<Vec<String>> = table
+                .iter()
+                .map(|entry| {
+                    let written: Vec<String> = entry.targets.iter().map(i32::to_string).collect();
+                    let read = match (&entry.client_ignored, entry.client_targets()) {
+                        (Some(why), _) => format!("dropped: {why}"),
+                        (None, targets) => targets.unwrap_or_default().iter().map(u32::to_string).collect::<Vec<_>>().join(", "),
+                    };
+                    vec![entry.line.to_string(), entry.id.to_string(), written.join(", "), read, entry.extra.unwrap_or_default().to_string()]
+                })
+                .collect();
+            let summary = format!("{} ids", rows.len());
+            Ok(Table { headers: vec!["Line", "Id", "Targets", "Read as", "Third field"], rows, summary })
         }
         DefFile::Speech(file) => {
             let ids: HashSet<u16> = file.entries.iter().map(|entry| entry.id).collect();

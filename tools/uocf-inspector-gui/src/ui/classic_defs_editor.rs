@@ -8,6 +8,7 @@ use std::str::FromStr;
 
 use color_eyre::eyre;
 use eframe::egui;
+use uocf::classic::audio_def::DefTranslationTable;
 use uocf::classic::def_files::{BodyConvRecord, DefDocument, DefRecord, EquipConvRecord, TargetsRecord};
 use uocf::classic::skills::{Skill, SkillGroupName, SKILLS_INDEX_FILE};
 use uocf::classic::speech::SpeechEntry;
@@ -22,6 +23,8 @@ use crate::ui::unsaved_changes::TabEditor;
 const DEF_FILTER: (&str, &[&str]) = ("Def file", &["def"]);
 const INDEX_EXTENSION: &str = "idx";
 const NEW_SKILL_NAME: &str = "New skill";
+/// How a `Sound.def` being edited is called in the message of a line that would not read back.
+const AUDIO_TABLE_SOURCE: &str = "the edited file";
 const NEW_GROUP_NAME: &str = "New group";
 const YES: &str = "yes";
 const NO: &str = "no";
@@ -134,6 +137,10 @@ fn fields_of(file: &DefFile, row: usize) -> Option<Vec<(&'static str, String)>> 
                 ("Comment", record.comment.clone().unwrap_or_default()),
             ]
         }
+        DefFile::AudioTable(table) => {
+            let entry = table.iter().nth(row)?;
+            vec![("Id", entry.id.to_string()), ("Targets", list_text(&entry.targets, ", ")), ("Third field", entry.extra.unwrap_or_default().to_string())]
+        }
         DefFile::Speech(file) => {
             let entry = file.entries.get(row)?;
             vec![("Keyword id", entry.id.to_string()), ("Text", entry.text.clone())]
@@ -181,6 +188,20 @@ fn apply_fields(file: &mut DefFile, row: usize, values: &[String]) -> Result<(),
             };
             replace_record(document, row, record)
         }
+        DefFile::AudioTable(table) => {
+            let entry = table.iter().nth(row).cloned().ok_or_else(|| format!("no row {row}"))?;
+            let (id, targets, extra) = (number("Id", text(0))?, number_list("Targets", text(1))?, number("Third field", text(2))?);
+            if (id, &targets, extra) == (entry.id, &entry.targets, entry.extra.unwrap_or_default()) {
+                return Ok(());
+            }
+            if id != entry.id {
+                if table.get(id).is_some() {
+                    return Err(format!("Id {id} already has a line: the first line of an id wins, so a second one is refused."));
+                }
+                table.remove(entry.id);
+            }
+            table.set(id, targets, extra).map_err(|error| format!("{error:#}"))
+        }
         DefFile::Speech(file) => {
             let entry = file.entries.get_mut(row).ok_or_else(|| format!("no row {row}"))?;
             *entry = SpeechEntry { id: number("Keyword id", text(0))?, text: text(1).to_owned() };
@@ -224,6 +245,10 @@ fn add_row(file: &mut DefFile) -> Result<(), String> {
             document.push(BodyConvRecord { body: 0, anim_file_bodies: vec![NO_BODY; columns], comment: None });
         }
         DefFile::EquipConv(document) => document.push(EquipConvRecord { body: 0, equipment: 0, converted: 0, gump: 0, hue: 0, comment: None }),
+        DefFile::AudioTable(table) => {
+            let id = table.iter().last().map_or(0, |entry| entry.id + 1);
+            table.set(id, vec![0], 0).map_err(|error| format!("{error:#}"))?;
+        }
         DefFile::Speech(file) => file.entries.push(SpeechEntry { id: 0, text: String::new() }),
         DefFile::Skills(file) => {
             let skill = Skill { action: false, name: NEW_SKILL_NAME.to_owned() };
@@ -240,6 +265,10 @@ fn remove_row(file: &mut DefFile, row: usize) -> Result<(), String> {
         DefFile::Targets(document) => remove_record(document, row),
         DefFile::BodyConv(document) => remove_record(document, row),
         DefFile::EquipConv(document) => remove_record(document, row),
+        DefFile::AudioTable(table) => {
+            let id = table.iter().nth(row).map(|entry| entry.id).ok_or_else(|| format!("no row {row}"))?;
+            table.remove(id);
+        }
         DefFile::Speech(file) => {
             file.entries.remove(row);
         }
@@ -262,6 +291,7 @@ fn check_writes(file: &DefFile) -> Result<(), String> {
     let report = |error: eyre::Report| format!("{error:#}");
     match file {
         DefFile::Targets(_) | DefFile::BodyConv(_) | DefFile::EquipConv(_) => Ok(()),
+        DefFile::AudioTable(table) => DefTranslationTable::parse(AUDIO_TABLE_SOURCE, &table.to_text()).map(drop).map_err(report),
         DefFile::Speech(file) => file.to_bytes().map(drop).map_err(report),
         DefFile::Skills(file) => file.to_bytes().map(drop).map_err(report),
         DefFile::SkillGroups(file) => file.to_bytes().map(drop).map_err(report),
@@ -281,6 +311,7 @@ fn write_copy(file: &EditedDef, output: &Path) -> eyre::Result<()> {
         DefFile::Targets(document) => document.save(output),
         DefFile::BodyConv(document) => document.save(output),
         DefFile::EquipConv(document) => document.save(output),
+        DefFile::AudioTable(table) => table.save(output),
         DefFile::Speech(data) => data.save(output),
         DefFile::Skills(data) => {
             let index = output.with_extension(INDEX_EXTENSION);
@@ -507,6 +538,8 @@ mod tests {
     const SHIPPED_STYLE_LINES: &str = "# a comment\r\n400 {401, 402} 7\r\n  500   {501}   0 # keeps its spacing\r\n";
     const EDITED_ID: &str = "450";
     const EDITED_TEXT: &str = "edited";
+    const EDITED_THIRD_FIELD: &str = "1";
+    const SOUND_DEF_LINES: &str = "# sounds\r\n654 {487} 0\r\n805 {331 0\r\n";
 
     fn small_file() -> DefFile {
         DefFile::Targets(TargetsDefFile::from_bytes(SHIPPED_STYLE_LINES.as_bytes()).unwrap())
@@ -572,15 +605,39 @@ mod tests {
         assert!(remove_row(&mut file, 1).is_ok());
     }
 
+    #[test]
+    fn a_sound_def_row_changes_only_its_line_and_keeps_an_id_to_one_line() {
+        let mut file = DefFile::AudioTable(DefTranslationTable::parse(AUDIO_TABLE_SOURCE, SOUND_DEF_LINES).unwrap());
+        let text = |file: &DefFile| {
+            let DefFile::AudioTable(table) = file else { panic!("not a sound table") };
+            table.to_text()
+        };
+        let values = |id: &str, targets: &str| vec![id.to_owned(), targets.to_owned(), "0".to_owned()];
+
+        apply_fields(&mut file, 0, &values("654", "487")).unwrap();
+        assert_eq!(text(&file), SOUND_DEF_LINES, "a row without changes keeps its line");
+        apply_fields(&mut file, 0, &values("654", "488")).unwrap();
+        assert_eq!(text(&file), "# sounds\r\n654 {488} 0\r\n805 {331 0\r\n");
+        assert!(apply_fields(&mut file, 0, &values("805", "488")).is_err(), "805 has a line");
+        apply_fields(&mut file, 0, &values("654", "487")).unwrap();
+
+        add_row(&mut file).unwrap();
+        assert_eq!(fields_of(&file, 2).unwrap()[0].1, "806");
+        check_writes(&file).unwrap();
+        remove_row(&mut file, 2).unwrap();
+        assert_eq!(text(&file), "# sounds\r\n654 {487} 0\r\n805 {331 0\r\n");
+    }
+
     /// Changes a text in a field every shipped record can take.
     fn edit(kind: FileKind, values: &mut [String]) {
-        let field = match kind {
-            FileKind::Targets(_) => 3,
-            FileKind::BodyConv => 2,
-            FileKind::EquipConv => 5,
-            FileKind::Speech | FileKind::Skills | FileKind::SkillGroups => 1,
+        let (field, value) = match kind {
+            FileKind::Targets(_) => (3, EDITED_TEXT),
+            FileKind::BodyConv => (2, EDITED_TEXT),
+            FileKind::EquipConv => (5, EDITED_TEXT),
+            FileKind::AudioTable(_) => (2, EDITED_THIRD_FIELD),
+            FileKind::Speech | FileKind::Skills | FileKind::SkillGroups => (1, EDITED_TEXT),
         };
-        values[field] = EDITED_TEXT.to_owned();
+        values[field] = value.to_owned();
     }
 
     /// A row whose fields `edit` can change: a named group in `skillgrp.mul`, else the first.
