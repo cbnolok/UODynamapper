@@ -19,7 +19,7 @@ use uocf::enhanced::effect_definition::{
 use uocf::enhanced::effect_texture::{effect_texture_hash, effect_texture_path, EFFECT_TEXTURE_UOP_NAME};
 use uocf::enhanced::string_dictionary::UoStringDictionary;
 
-use crate::app::{TileArtFileEntry, UopInspectorApp};
+use crate::app::{TileArtFileEntry, UopInspectorApp, ViewMode};
 use crate::logic::effect_files::{
     canonical_script, check_script, decode_texture, latin1_decode, latin1_encode, read_import, EffectFiles, FileFilter,
     FileKind, FileRow, FileStatus, ScriptIssue, ScriptSeverity, IMPORTABLE_EXTENSIONS,
@@ -41,6 +41,7 @@ use crate::logic::effects_editor::{
     ChildList, CollectionSource, DefinitionFilter, DefinitionKind, EffectsDocument, EffectsEditKey, EffectsSelection,
     FileOverride, FileUser, NameIndex, PacketRoute, ParticleKindFilter, PathStep, PACKET_UNREACHABLE_NOTE,
 };
+use crate::ui::unsaved_changes::TabEditor;
 use crate::ui::UOP_PATCHER_NOTE;
 
 const BROWSE_PANEL_WIDTH: f32 = 360.0;
@@ -102,6 +103,7 @@ const PREVIEW_CONTROL_ROWS: f32 = 3.0;
 const FILES_LOAD_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const FILES_LOAD_HOVER: &str = "Every file is unpacked once, to learn its kind and name. The tab works meanwhile; the \
     files, their previews and the checks that need them appear when it ends.";
+const COLLECTION_SOURCE_NEEDED: &str = "Needs an EffectDefinitionCollection.uop as the source of the copy.";
 const GUIDE_HINT: &str = "What each definition does, and how this tab works.";
 
 const UOP_FILTER: (&str, &[&str]) = ("UOP package", &["uop"]);
@@ -667,7 +669,6 @@ fn report_saved(app: &mut UopInspectorApp, message: String) {
 
 fn toolbar(app: &mut UopInspectorApp, lookups: &Lookups, ui: &mut egui::Ui) {
     let client_dir = lookups.client_dir.clone();
-    let client_source = lookups.client_paths().into_iter().next().filter(|path| path.exists());
     ui.horizontal_wrapped(|ui| {
         if ui.button("Guide").on_hover_text(GUIDE_HINT).clicked() {
             app.effects_panel.guide_open = true;
@@ -702,15 +703,14 @@ fn toolbar(app: &mut UopInspectorApp, lookups: &Lookups, ui: &mut egui::Ui) {
 
         ui.separator();
         ui.label("Save:");
-        let state = &app.effects_panel;
-        let save_source = state.document.source().package_path().map(Path::to_path_buf).or(client_source);
+        let save_source = collection_save_source(app, lookups);
         if ui
             .add_enabled(save_source.is_some(), egui::Button::new("Collection .uop..."))
             .on_hover_text(format!(
                 "Writes a copy of the source EffectDefinitionCollection.uop with exactly the edited entries. The \
                  loaded client files are refused as the target.\n{UOP_PATCHER_NOTE}"
             ))
-            .on_disabled_hover_text("Needs an EffectDefinitionCollection.uop as the source of the copy.")
+            .on_disabled_hover_text(COLLECTION_SOURCE_NEEDED)
             .clicked()
         {
             if let (Some(source), Some(path)) = (save_source, save_file(UOP_FILTER, EFFECT_DEFINITION_COLLECTION_UOP_NAME)) {
@@ -785,6 +785,48 @@ fn toolbar(app: &mut UopInspectorApp, lookups: &Lookups, ui: &mut egui::Ui) {
             }
         });
     }
+}
+
+pub(super) const TAB_EDITOR: TabEditor = TabEditor {
+    tab: ViewMode::Effects,
+    label: "the effect collection and the file changes",
+    is_dirty: |app| app.effects_panel.document.is_dirty(),
+    save: save_unsaved_changes,
+    discard: discard_unsaved_changes,
+};
+
+/// The package a saved collection is a copy of.
+fn collection_save_source(app: &UopInspectorApp, lookups: &Lookups) -> Option<PathBuf> {
+    let client_source = lookups.client_paths().into_iter().next().filter(|path| path.exists());
+    app.effects_panel.document.source().package_path().map(Path::to_path_buf).or(client_source)
+}
+
+/// Asks where to write what is unsaved: the collection, then the file changes.
+fn save_unsaved_changes(app: &mut UopInspectorApp) {
+    let lookups = lookups(app);
+    if app.effects_panel.document.collection_dirty() {
+        match collection_save_source(app, &lookups) {
+            Some(source) => {
+                if let Some(path) = save_file(UOP_FILTER, EFFECT_DEFINITION_COLLECTION_UOP_NAME) {
+                    save_collection_to(app, &lookups, &source, &path);
+                }
+            }
+            None => app.effects_panel.error = Some(COLLECTION_SOURCE_NEEDED.to_owned()),
+        }
+    }
+    if app.effects_panel.document.files_dirty() {
+        if let Some(path) = save_file(UOP_FILTER, EFFECT_TEXTURE_UOP_NAME) {
+            save_files_to(app, &lookups, &path);
+        }
+    }
+}
+
+fn discard_unsaved_changes(app: &mut UopInspectorApp) {
+    let state = &mut app.effects_panel;
+    state.document.revert_to_opened();
+    state.document.mark_collection_saved();
+    state.document.mark_files_saved();
+    resolve_selection(state);
 }
 
 fn save_collection_to(app: &mut UopInspectorApp, lookups: &Lookups, source: &Path, output: &Path) {

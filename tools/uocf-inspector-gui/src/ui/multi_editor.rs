@@ -8,11 +8,12 @@ use std::sync::Arc;
 use eframe::egui;
 use uocf::enhanced::multis::{MultiItem, MultiItemPart, MULTI_COLLECTION_UOP_NAME};
 
-use crate::app::UopInspectorApp;
+use crate::app::{UopInspectorApp, ViewMode};
 use crate::logic::multi_editor::{
     first_free_multi_id, format_string_ids, new_part, parse_string_ids, save_multi_collection, MultiEditor,
     MultiPartField,
 };
+use crate::ui::unsaved_changes::TabEditor;
 use crate::ui::UOP_PATCHER_NOTE;
 
 const UOP_FILTER: (&str, &[&str]) = ("UOP package", &["uop"]);
@@ -24,6 +25,23 @@ const ERROR_COLOR: egui::Color32 = egui::Color32::from_rgb(230, 90, 90);
 const WARNING_COLOR: egui::Color32 = egui::Color32::from_rgb(230, 180, 60);
 const DIRTY_MARKER: &str = "*";
 const STRING_IDS_FIELD_WIDTH: f32 = 160.0;
+
+pub(super) const TAB_EDITOR: TabEditor = TabEditor {
+    tab: ViewMode::Multis,
+    label: "the MultiCollection.uop multis",
+    is_dirty: |app| app.multi_editor.edits.is_dirty(),
+    save: |app| {
+        if let (Some(source), Some(output)) = (app.multi_collection_path.clone(), save_path()) {
+            save(app, &source, &output);
+        }
+    },
+    discard: |app| {
+        if let Some(collection) = app.multi_collection.as_mut() {
+            app.multi_editor.edits.revert_to_opened(Arc::make_mut(collection));
+            app.multi_editor.edits.mark_saved();
+        }
+    },
+};
 
 /// What to select after an edit.
 pub(super) enum Selection {

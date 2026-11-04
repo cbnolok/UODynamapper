@@ -24,6 +24,7 @@ use crate::logic::housing_editor::{
     remove_slot, remove_tile_type, save_housing_bin, save_multi_collection, HousingDocument, HousingDocumentSource,
     HousingEditKey, HousingField, HousingIssueTarget, HousingPieceFilter, HousingSelection,
 };
+use crate::ui::unsaved_changes::TabEditor;
 use crate::ui::{multis, UOP_PATCHER_NOTE};
 
 /// What `housing.bin` is (`ghidra-housing/results/uosa_housing.md`).
@@ -363,6 +364,47 @@ fn reopen_client_package(app: &mut UopInspectorApp) -> Result<(), String> {
     let client_pieces = app.housing_pieces.clone();
     set_document(app, document, client_pieces);
     Ok(())
+}
+
+pub(super) const TAB_EDITOR: TabEditor = TabEditor {
+    tab: ViewMode::Housing,
+    label: "the housing pieces",
+    is_dirty: |app| app.housing_panel.document.as_ref().is_some_and(HousingDocument::is_dirty),
+    save: save_to_the_kind_opened,
+    discard: discard_changes,
+};
+
+/// Saves to a file of the kind the pieces came from.
+fn save_to_the_kind_opened(app: &mut UopInspectorApp) {
+    let Some(document) = app.housing_panel.document.as_ref() else {
+        return;
+    };
+    match document.source().clone() {
+        HousingDocumentSource::ClientPackage(source) => {
+            if let Some(path) = save_file(UOP_FILTER, DEFAULT_MULTI_COLLECTION_FILE_NAME) {
+                save(app, |pieces| save_multi_collection(pieces, &source, &path), &path);
+            }
+        }
+        HousingDocumentSource::HousingBin(_) => {
+            if let Some(path) = save_file(HOUSING_BIN_FILTER, DEFAULT_HOUSING_BIN_FILE_NAME) {
+                save(app, |pieces| save_housing_bin(pieces, &path), &path);
+            }
+        }
+        HousingDocumentSource::Kdl(_) => {
+            if let Some(path) = save_file(KDL_FILTER, DEFAULT_KDL_FILE_NAME) {
+                save(app, |pieces| export_kdl(pieces, &path), &path);
+            }
+        }
+    }
+}
+
+fn discard_changes(app: &mut UopInspectorApp) {
+    let state = &mut app.housing_panel;
+    if let Some(document) = state.document.as_mut() {
+        document.revert_to_opened();
+        document.mark_saved();
+        state.selection = state.selection.and_then(|selection| selection.resolve(document.pieces()));
+    }
 }
 
 fn request_open(app: &mut UopInspectorApp, request: OpenRequest) {

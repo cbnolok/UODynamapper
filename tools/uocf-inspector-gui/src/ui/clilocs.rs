@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::app::{LocalizedStringDisplayRow, LocalizedStringsSource, UopInspectorApp};
+use crate::app::{LocalizedStringDisplayRow, LocalizedStringsSource, UopInspectorApp, ViewMode};
+use crate::ui::unsaved_changes::TabEditor;
 use crate::ui::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by, UOP_PATCHER_NOTE};
 use eframe::egui;
 use uocf::enhanced::localized_strings::{language_of_hash, write_tables, LocalizedStringTable};
@@ -13,6 +14,18 @@ const KDL_FILTER: (&str, &[&str]) = ("KDL text", &["kdl"]);
 /// Rows of the string editor's text box.
 const EDITOR_TEXT_ROWS: usize = 4;
 
+pub(super) const TAB_EDITOR: TabEditor = TabEditor {
+    tab: ViewMode::Clilocs,
+    label: "the LocalizedStrings.uop tables",
+    is_dirty: |app| app.localized_strings_editor.edits != app.localized_strings_editor.saved_edits,
+    save: |app| save_with_dialog(&mut app.localized_strings_editor),
+    discard: |app| {
+        let editor = &mut app.localized_strings_editor;
+        editor.edits.clear();
+        editor.saved_edits.clear();
+    },
+};
+
 /// Edits of the opened LocalizedStrings.uop: edited tables are kept here, and saved as a copy of the package.
 #[derive(Default)]
 pub struct LocalizedStringsEditor {
@@ -20,6 +33,8 @@ pub struct LocalizedStringsEditor {
     pub source: Option<PathBuf>,
     /// Edited tables, by entry hash.
     edits: BTreeMap<u64, LocalizedStringTable>,
+    /// The edited tables at the last save.
+    saved_edits: BTreeMap<u64, LocalizedStringTable>,
     /// The id typed in the editor, and its draft text.
     id_text: String,
     draft: String,
@@ -428,9 +443,7 @@ fn localized_strings_editor(app: &mut UopInspectorApp, ui: &mut egui::Ui, hash: 
             ))
             .clicked()
         {
-            if let Some(path) = crate::dialog::file_dialog().add_filter(UOP_FILTER.0, UOP_FILTER.1).set_file_name("LocalizedStrings.uop").save_file() {
-                editor.status = Some(save(editor, &path));
-            }
+            save_with_dialog(editor);
         }
         let stem = language_of_hash(hash).map_or_else(|| format!("{hash:016X}"), |language| language.code.to_string());
         if ui.button("Export table KDL...").clicked() {
@@ -468,19 +481,33 @@ fn import_kdl(path: &Path) -> color_eyre::eyre::Result<LocalizedStringTable> {
     LocalizedStringTable::from_kdl_str(&path.display().to_string(), &text)
 }
 
-fn save(editor: &LocalizedStringsEditor, output: &Path) -> String {
+fn save_with_dialog(editor: &mut LocalizedStringsEditor) {
+    let output = crate::dialog::file_dialog()
+        .add_filter(UOP_FILTER.0, UOP_FILTER.1)
+        .set_file_name("LocalizedStrings.uop")
+        .save_file();
+    if let Some(path) = output {
+        let status = save(editor, &path);
+        editor.status = Some(status);
+    }
+}
+
+fn save(editor: &mut LocalizedStringsEditor, output: &Path) -> String {
     let Some(source) = &editor.source else {
         return "No LocalizedStrings.uop is open.".to_string();
     };
     let tables: Vec<(u64, &LocalizedStringTable)> = editor.edits.iter().map(|(hash, table)| (*hash, table)).collect();
     match write_tables(source, output, &tables) {
-        Ok(write) => format!(
-            "Wrote {}: {} tables replaced, {} added, {} unchanged.",
-            output.display(),
-            write.replaced,
-            write.added,
-            write.unchanged
-        ),
+        Ok(write) => {
+            editor.saved_edits = editor.edits.clone();
+            format!(
+                "Wrote {}: {} tables replaced, {} added, {} unchanged.",
+                output.display(),
+                write.replaced,
+                write.added,
+                write.unchanged
+            )
+        }
         Err(error) => format!("Save failed: {error:#}"),
     }
 }

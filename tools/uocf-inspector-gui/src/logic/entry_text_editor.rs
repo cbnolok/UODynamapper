@@ -60,6 +60,10 @@ const XML_START: char = '<';
 pub struct EntryTextEdit {
     pub original: EntryText,
     pub buffer: String,
+    /// The entry's name in the explorer.
+    pub name: String,
+    /// The text of the last saved copy.
+    saved: Option<String>,
     /// The syntax of the entry, once known, and the text last checked with its first error.
     syntax: Option<Option<TextSyntax>>,
     checked: Option<(String, Option<SyntaxError>)>,
@@ -68,6 +72,16 @@ pub struct EntryTextEdit {
 impl EntryTextEdit {
     pub fn modified(&self) -> bool {
         self.buffer != self.original.text
+    }
+
+    /// The text differs from the last saved copy, or from the package when no copy was saved.
+    pub fn has_unsaved_changes(&self) -> bool {
+        self.buffer != *self.saved.as_ref().unwrap_or(&self.original.text)
+    }
+
+    /// Records the current text as saved to a copy: the loaded package does not change, so it stays `modified`.
+    pub fn mark_saved(&mut self) {
+        self.saved = Some(self.buffer.clone());
     }
 
     /// The syntax of the entry named `name` and the first syntax error of the edited text, checked again only when
@@ -100,7 +114,7 @@ impl EntryTextEdits {
         if !self.open.contains_key(&key) {
             let original = EntryText::decode(payload)?;
             let buffer = original.text.clone();
-            self.open.insert(key.clone(), EntryTextEdit { original, buffer, syntax: None, checked: None });
+            self.open.insert(key.clone(), EntryTextEdit { original, buffer, name: String::new(), saved: None, syntax: None, checked: None });
         }
         self.open.get_mut(&key)
     }
@@ -108,6 +122,21 @@ impl EntryTextEdits {
     /// Forgets the edits of the entry.
     pub fn close(&mut self, package: &Path, hash: u64) {
         self.open.remove(&(package.to_path_buf(), hash));
+    }
+
+    pub fn any_unsaved(&self) -> bool {
+        self.open.values().any(EntryTextEdit::has_unsaved_changes)
+    }
+
+    /// Package, hash and name of the entries with unsaved changes.
+    pub fn unsaved_entries(&self) -> Vec<(PathBuf, u64, String)> {
+        let unsaved = self.open.iter().filter(|(_, edit)| edit.has_unsaved_changes());
+        unsaved.map(|((package, hash), edit)| (package.clone(), *hash, edit.name.clone())).collect()
+    }
+
+    /// Forgets the entries with unsaved changes: they open again as they are in the package.
+    pub fn discard_unsaved(&mut self) {
+        self.open.retain(|_, edit| !edit.has_unsaved_changes());
     }
 
     /// How many entries hold unsaved edits.

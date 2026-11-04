@@ -1746,6 +1746,7 @@ pub struct UopInspectorApp {
     /// What [`Self::log_once`] already logged.
     logged_once: HashSet<String>,
     pub(crate) multi_preview_cache: crate::ui::multis::MultiPreviewCache,
+    pub(crate) unsaved_changes: crate::ui::unsaved_changes::UnsavedChanges,
     /// Why the last image a view asked for has no texture.
     pub last_texture_problem: Option<String>,
     gpu_errors: crate::ui::textures::GpuErrors,
@@ -1922,6 +1923,7 @@ impl UopInspectorApp {
             logs: Vec::new(),
             logged_once: HashSet::new(),
             multi_preview_cache: Default::default(),
+            unsaved_changes: Default::default(),
             last_texture_problem: None,
             gpu_errors: Default::default(),
             show_search_paths: false,
@@ -1970,7 +1972,7 @@ impl UopInspectorApp {
             find_hash_query: String::new(),
             hide_empty_uop_entries: true,
             guess_terrain_texture_file_format: false,
-            status_message: "Welcome to UOCF Inspector".to_string(),
+            status_message: String::new(),
             view_mode: settings.last_view_mode.unwrap_or(ViewMode::Home),
             tile_metadata_source: TileMetadataSource::CcTileData,
             hues_source: HuesSource::CcMul,
@@ -4357,6 +4359,7 @@ pub(crate) mod tests {
             logs: Vec::new(),
             logged_once: HashSet::new(),
             multi_preview_cache: Default::default(),
+            unsaved_changes: Default::default(),
             last_texture_problem: None,
             gpu_errors: Default::default(),
             show_search_paths: false,

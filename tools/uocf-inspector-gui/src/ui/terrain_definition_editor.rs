@@ -11,8 +11,45 @@ use uocf::enhanced::terrain_definition::{
 use uocf::uop_container::package::UopPackage;
 
 use super::UOP_PATCHER_NOTE;
-use crate::app::UopInspectorApp;
+use super::unsaved_changes::TabEditor;
+use crate::app::{UopInspectorApp, ViewMode};
 use crate::logic::terrain_definition_editor::{TerrainDefinitionEditor, TerrainDefinitionField};
+
+pub(super) const TAB_EDITOR: TabEditor = TabEditor {
+    tab: ViewMode::UopExplorer,
+    label: "the TerrainDefinition.uop definitions",
+    is_dirty: |app| app.terrain_definition_editor.as_ref().is_some_and(|editor| editor.edits.is_dirty()),
+    save: |app| {
+        if let Some(mut editor) = app.terrain_definition_editor.take() {
+            save_with_dialog(app, &mut editor);
+            app.terrain_definition_editor = Some(editor);
+        }
+    },
+    discard: |app| app.terrain_definition_editor = None,
+};
+
+fn save_with_dialog(app: &mut UopInspectorApp, editor: &mut TerrainDefinitionEditor) {
+    let (name, extensions) = UOP_FILTER;
+    let output =
+        crate::dialog::file_dialog().add_filter(name, extensions).set_file_name(TERRAIN_DEFINITION_UOP_NAME).save_file();
+    if let Some(output) = output {
+        match editor.save(&output) {
+            Ok(changes) => {
+                editor.error = None;
+                let message = format!(
+                    "Saved {}: {} replaced, {} added, {} removed.",
+                    output.display(),
+                    changes.replaced,
+                    changes.added,
+                    changes.removed
+                );
+                app.status_message = message.clone();
+                app.log(message);
+            }
+            Err(error) => editor.error = Some(format!("Save failed: {error}")),
+        }
+    }
+}
 
 const ROW_HEIGHT: f32 = 22.0;
 const TABLE_MAX_HEIGHT: f32 = 320.0;
@@ -104,26 +141,7 @@ fn toolbar(app: &mut UopInspectorApp, ui: &mut egui::Ui, editor: &mut TerrainDef
         ))
         .clicked()
     {
-        let (name, extensions) = UOP_FILTER;
-        let output =
-            crate::dialog::file_dialog().add_filter(name, extensions).set_file_name(TERRAIN_DEFINITION_UOP_NAME).save_file();
-        if let Some(output) = output {
-            match editor.save(&output) {
-                Ok(changes) => {
-                    editor.error = None;
-                    let message = format!(
-                        "Saved {}: {} replaced, {} added, {} removed.",
-                        output.display(),
-                        changes.replaced,
-                        changes.added,
-                        changes.removed
-                    );
-                    app.status_message = message.clone();
-                    app.log(message);
-                }
-                Err(error) => editor.error = Some(format!("Save failed: {error}")),
-            }
-        }
+        save_with_dialog(app, editor);
     }
     let dirty = editor.edits.is_dirty();
     let close = ui.button(if dirty { "Discard and close" } else { "Close editor" }).clicked();

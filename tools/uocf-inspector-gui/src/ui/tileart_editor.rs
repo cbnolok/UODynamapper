@@ -11,8 +11,9 @@ use uocf::enhanced::tileart::{
     TaeFlag, TaeProp, TaeSittingAnimation, TileArtEntry, TILEART_SITTING_WORD_COUNT, TILEART_UOP_NAME,
 };
 
-use crate::app::{tileart_property_name, TileArtFileEntry, UopInspectorApp};
+use crate::app::{tileart_property_name, TileArtFileEntry, UopInspectorApp, ViewMode};
 use crate::logic::tileart_editor::{save_tileart, TileArtEditor, TileArtField, TileArtStore};
+use crate::ui::unsaved_changes::TabEditor;
 use crate::ui::UOP_PATCHER_NOTE;
 
 const UOP_FILTER: (&str, &[&str]) = ("UOP package", &["uop"]);
@@ -414,6 +415,29 @@ fn prop_list(entry: &mut TileArtEntry, second: bool) -> &mut Vec<TaeProp> {
 }
 
 /// Applies the collected edits to the loaded records and moves the selection.
+pub(super) const TAB_EDITOR: TabEditor = TabEditor {
+    tab: ViewMode::TileMetadata,
+    label: "the tileart.uop records",
+    is_dirty: |app| app.tileart_editor.edits.is_dirty(),
+    save: |app| {
+        if let (Some(source), Some(output)) = (app.ec_tileart_path.clone(), save_path()) {
+            save(app, &source, &output);
+        }
+    },
+    discard: |app| {
+        let (Some(entries), Some(rows)) = (app.ec_tileart_entries.as_mut(), app.ec_tileart_rows.as_mut()) else {
+            return;
+        };
+        let mut store = TileArtStore {
+            entries: Arc::make_mut(entries),
+            rows: Arc::make_mut(rows),
+            dictionary: app.uo_string_dictionary.as_deref(),
+        };
+        app.tileart_editor.edits.revert_to_opened(&mut store);
+        app.tileart_editor.edits.mark_saved();
+    },
+};
+
 pub(super) fn apply_edits(app: &mut UopInspectorApp, edits: Vec<TileArtEdit>) {
     if edits.is_empty() {
         return;

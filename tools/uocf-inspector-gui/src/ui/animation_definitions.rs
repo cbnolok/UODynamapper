@@ -18,6 +18,7 @@ use crate::app::{concrete_art_tile_source, UopInspectorApp, ViewMode};
 use crate::logic::animation_definition_editor::{
     frame_effects_kdl, parse_single_kdl, AnimationDefinitionEditor, AnimationDefinitionField,
 };
+use crate::ui::unsaved_changes::TabEditor;
 use crate::ui::{multis, UOP_PATCHER_NOTE};
 
 const LIST_PANEL_WIDTH: f32 = 260.0;
@@ -173,6 +174,31 @@ fn handle_shortcuts(app: &mut UopInspectorApp, ctx: &egui::Context) {
     }
 }
 
+pub(super) const TAB_EDITOR: TabEditor = TabEditor {
+    tab: ViewMode::AnimationDefinitions,
+    label: "the AnimationDefinition.uop entries",
+    is_dirty: |app| app.animation_definitions_panel.editor.as_ref().is_some_and(|editor| editor.edits.is_dirty()),
+    save: |app| {
+        let strings = strings(app);
+        if let Some(path) = package_save_path() {
+            save(app, &path, strings.as_deref());
+        }
+    },
+    discard: |app| {
+        if let Some(editor) = app.animation_definitions_panel.editor.as_mut() {
+            editor.edits.revert_to_opened(&mut editor.definitions);
+            editor.edits.mark_saved();
+        }
+    },
+};
+
+fn package_save_path() -> Option<PathBuf> {
+    crate::dialog::file_dialog()
+        .add_filter(UOP_FILTER.0, UOP_FILTER.1)
+        .set_file_name(ANIMATION_DEFINITION_UOP_NAME)
+        .save_file()
+}
+
 fn request_open(app: &mut UopInspectorApp, path: PathBuf) {
     if app.animation_definitions_panel.editor.as_ref().is_some_and(|editor| editor.edits.is_dirty()) {
         app.animation_definitions_panel.pending_open = Some(path);
@@ -283,8 +309,7 @@ fn toolbar(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
             ))
             .clicked()
         {
-            let file_name = ANIMATION_DEFINITION_UOP_NAME;
-            if let Some(path) = crate::dialog::file_dialog().add_filter(UOP_FILTER.0, UOP_FILTER.1).set_file_name(file_name).save_file() {
+            if let Some(path) = package_save_path() {
                 save(app, &path, strings.as_deref());
             }
         }
