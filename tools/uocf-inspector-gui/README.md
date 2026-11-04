@@ -20,7 +20,7 @@ UO asset data during development and research.
 | Hues | CC `hues.mul` or EC `hues.uop` hue tables (switchable source). |
 | Clilocs | Classic Client `Cliloc.*` and Enhanced Client `LocalizedStrings.uop` localized string tables. |
 | Terrain Definition | EC `TerrainDefinition.uop` material entries and texture references. `Edit TerrainDefinition.uop` opens the same editor as the UOP Explorer: every definition, saved to a copy of the package. |
-| String Dictionary | EC `string_dictionary.uop` string table. |
+| String Dictionary | EC `string_dictionary.uop` string table. `Edit` changes a string or adds one (other files name a string by its index, so none can be removed); it saves a copy of the package. |
 | Audio | Classic Client `sound.mul` / `soundidx.mul` or `soundLegacyMUL.uop` audio entries, Enhanced Client `Audio.uop`, Classic music (`Music/Digital/Config.txt`, its MP3 files, and any MIDI files of the `Music` folder). |
 
 Most views support switching between Classic Client and Enhanced Client sources

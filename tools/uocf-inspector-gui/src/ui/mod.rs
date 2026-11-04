@@ -26,6 +26,7 @@ pub mod gumps;
 pub mod clilocs;
 pub mod terrain_definition;
 pub mod string_dictionary;
+mod editor_bar;
 pub mod sounds;
 pub mod upscale_preview;
 pub mod classic_maps;

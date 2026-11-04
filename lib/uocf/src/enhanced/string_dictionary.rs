@@ -139,6 +139,18 @@ impl UoStringDictionary {
         self.strings.len() - 1
     }
 
+    /// Replaces the string at `string_index`; false when there is none. Other files name a string by its index, so
+    /// strings keep their places and none can be removed.
+    pub fn set_string(&mut self, string_index: usize, string: String) -> bool {
+        match self.strings.get_mut(string_index) {
+            Some(slot) => {
+                *slot = string;
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Returns a string from the dictionary by its index.
     ///
     /// # Arguments
@@ -218,6 +230,11 @@ mod tests {
         assert_eq!(dictionary.len(), 2);
         assert_eq!(dictionary.declared_count(), declared_with_one_missing);
         assert_eq!(dictionary.to_payload_bytes().unwrap(), payload);
+
+        assert!(!dictionary.set_string(2, "none".to_owned()));
+        assert!(dictionary.set_string(1, "BETA".to_owned()));
+        assert_eq!(dictionary.get_string(1), Some("BETA"));
+        assert!(dictionary.set_string(1, "beta".to_owned()));
 
         assert_eq!(dictionary.push_string("gamma".to_owned()), 2);
         assert_eq!(dictionary.declared_count(), declared_with_one_missing + 1);
