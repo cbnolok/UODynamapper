@@ -519,12 +519,22 @@ to change, with no backward compatibility. All frames are kept: no halved tier. 
 
 The user set the line: 300 new actions drawable in about 250 ms on 4 threads is fast enough, and faster is better.
 
+Runtime VRAM counts as well: wasted space there is undesirable (the user, 2026-11-04). Figures so far are pixels × format,
+without atlas waste or tables, and the real measurement is pending.
+
+A lossy BC7 mode for low-end devices is wanted, to reduce disk and VRAM (the user, 2026-11-04). It is chosen at pack time;
+runtime BC7 stays off. What it must deliver is still being measured. So far, per (action, direction), BC7 + zstd 7 is larger
+on disk than the lossless candidates (≈874 / ≈1904 MB). Its VRAM saving is on Enhanced only (5.11 GB against 9.83, hue masks
+not counted; Classic 2.52 against 2.42). Its creature-crowd decode is faster (29 / 51 ms against 41 / 120 for zstd 19).
+
 **Open:**
 
 | Question | Recommendation | Depends on |
 |---|---|---|
 | Storage per client | Indexed slot planes, lossless, zstd 19, hue in the shader; LZ4 HC is the alternative at about 22 % more disk | The user |
 | Load unit | One stream per (action, direction), faced direction first | The user |
-| Whether any lossy tier is acceptable, and where the quality floor sits | None by default; 80 suggested as a floor | Contact sheets; the user's eye |
+| Where the low-end BC7 tier's quality floor sits, and which RDO level it uses | 80 suggested as a floor | Rows being measured; contact sheets; the user's eye |
+| Whether the low-end tier also covers Classic | Classic stays lossless R8 unless BC1 proves acceptable: BC7 saves it nothing | Rows being measured |
+| Which GPU layout holds frames in VRAM | Decide after the measurement | Resident bytes per layout; atlas waste; shader cost on a GPU |
 | Runtime interpolation for high frame rates | A separate study | The full frame set |
 | Whether to offer an opt-in flag for unreached art | Keep all | Section 7's trace |
