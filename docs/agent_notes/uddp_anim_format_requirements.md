@@ -197,6 +197,30 @@ about 0.7 dB. The 2007 ETC2 paper puts ETC2 about 0.8 dB above S3TC on opaque im
 full alpha below BC1's size, which may keep Enhanced's anti-aliased edges. None of this has been measured on our sprites, and
 big blocks round tiny frames up.
 
+Block sizes round tiny frames up, so those nominal rates hold only on large frames. Bytes per frame, with no atlas or gutter:
+
+| Frame | R8 | BC1 | ASTC 6×6 | ASTC 8×8 |
+|---|---:|---:|---:|---:|
+| 20×23, typical equipment | 460 | 240 | 256 | 144 |
+| 85×94, typical monster | 7,990 | 4,224 | 3,840 | 2,112 |
+
+Choosing a codec per client or per size class gains nothing for lossless disk. On Classic the same coder wins every class that
+stays inside the crowd line (702.5 MB either way). On Enhanced the best mix is 1767.4 MB against 1810.8 MB for one coder, or 2.4 %,
+and it takes 232 ms of the 250 ms line. The clients do differ in layout: Classic has to store its shape, and Enhanced's is
+free in coverage.
+
+Size may matter for the low-end tier. Bodies above a median cropped frame of 10,000 px are 5.2 % of Classic's streams and 62.7 %
+of its pixels, and 6.3 % and 59.4 % on Enhanced. Block formats hurt tiny frames most, so block-coding only those bodies could keep
+equipment exact. Pixels × format, whole set, before padding:
+
+| VRAM | Classic | Enhanced |
+|---|---:|---:|
+| Lossless everywhere | 2.42 GB | 9.83 GB |
+| Large bodies BC7, the rest lossless | no gain | 6.91 GB |
+| Large bodies BC1, the rest lossless | 1.66 GB | 5.46 GB |
+| Large bodies ASTC 8×8, the rest lossless (phones and Apple) | 1.28 GB | 4.73 GB |
+| Large bodies BC1, the rest BC7 | not useful | 3.46 GB |
+
 Basis Universal is the one single-file route: it transcodes one file to BC, ETC2 or ASTC at load. It adds a transcode step
 on top of zstd, and its small mode (ETC1S) is described by its authors as low to medium quality. It hasn't been measured on
 our data.
@@ -593,6 +617,7 @@ not counted; Classic 2.52 against 2.42). Its creature-crowd decode is faster (29
 | Storage per client | Indexed slot planes, lossless, zstd 19, hue in the shader; LZ4 HC is the alternative at about 22 % more disk | The user |
 | Load unit | One stream per (action, direction), faced direction first | The user |
 | Where the low-end BC7 tier's quality floor sits, and which RDO level it uses | 80 suggested as a floor | Rows being measured; contact sheets; the user's eye |
+| Whether the low-end tier block-codes only large bodies, and at what size | A per-body choice, with equipment staying lossless. It needs a second shader path and hue from colour on those bodies | Rows being measured |
 | Whether phones and web get their own low-end packs or one Basis Universal pack | Build per platform: the converter already runs on the user's client files, so it can target their device | Rows being measured |
 | Whether the low-end tier uses BC1 (DXT1), BC7 or a mix | BC1 is the only format that halves VRAM on both clients, at 0.5 bytes per pixel. It keeps 3 colours in blocks with transparency, loses Enhanced's anti-aliased edges and needs a smaller hue mask. Classic stays lossless R8 unless BC1 proves acceptable, since BC7 saves it nothing | Rows being measured |
 | Which GPU layout holds frames in VRAM | Decide after the measurement | Resident bytes per layout; atlas waste; shader cost on a GPU |
