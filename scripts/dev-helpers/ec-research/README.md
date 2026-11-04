@@ -95,7 +95,7 @@ The same document covers the facet size table, with a cross-build recipe for pat
 UOKR.exe (Kingdom Reborn) sector format and format deltas (`results/uokr_facets.md`).
 `TerrainDefinition.uop` (the field table, flag bits, floats and an encoder recipe) is decoded in
 [`ghidra-terrain`](ghidra-terrain/README.md).
-Audio is traced in [`ghidra-audio`](ghidra-audio/README.md): the EC sound and music tables and play path (which file plays for a sound id, what a missing entry does), the audio UOP names, what Miles 7.2c (`mss32.dll`, `mssmp3.asi`) accepts as WAV and MP3, the KR `audio_*.csv` grammar, the Classic `Sound.def` parser, sound header and playback rate, and the `CONFIG.TXT` loop flag.
+Audio is traced in [`ghidra-audio`](ghidra-audio/README.md): how the clients drive Miles and DirectSound, with the SDK's names carried to the shipped Miles binaries, the EC sound and music tables and play path (which file plays for a sound id, what a missing entry does), the audio UOP names, what Miles 7.2c (`mss32.dll`, `mssmp3.asi`) accepts as WAV and MP3, the KR `audio_*.csv` grammar, the Classic `Sound.def` parser, sound header and playback rate, and the `CONFIG.TXT` loop flag.
 `Paperdoll.uop` is traced in [`ghidra-paperdoll`](ghidra-paperdoll/README.md): its two entries are the male and female paperdoll image sets in the AMOU format, loaded as `PaperdollFrameSet` assets 0x40 and 0x41 and searched by gender and body or item id.
 The Classic `client.exe` facet table is decoded in [`ghidra-classic-facets`](ghidra-classic-facets/README.md),
 for UO Gold, ML, 5.0.9.1, 6.0.14.3, 7.0.20, 7.0.50 and 7.0.103. It covers the wrap rectangle, file ids,

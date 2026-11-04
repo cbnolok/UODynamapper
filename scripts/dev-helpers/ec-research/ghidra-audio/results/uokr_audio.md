@@ -131,6 +131,73 @@ offset.
 10000. The file-name string is reached only through a table pointer (no direct cross-reference), so the
 reader was not traced.
 
+## Playback: how the client drives Miles
+
+Read in Ghidra on 2026-11-03; Miles here is 7.0x. **confirmed** = read in the code. It is a static reading, not a
+measurement.
+
+**Driver** (`AudioDevice_OpenDriver` 0x007241f3, from `AudioDevice_Startup` 0x007225dd). **confirmed**: 44,100 Hz
+(0xbfd228), 16 bits (0xbfd22c), spec 0x10 (0xbfd234), constants in `.data`. On failure it halves the rate down to
+11,025, then goes to 8 bits. No DS3D, EAX or other provider opens.
+
+**Volume.** **confirmed**:
+
+- A 2D sound (`Sound_StartSample` 0x0072428d): `AIL_set_sample_volume_pan(h, vol, pan)` (0x00724458), so **`v ^ (5/3)`
+  and the pan law apply**, with the same exponent and centre factor in the shipped 7.0x (0x2112afb0). `vol = category *
+  own` (`FUN_007244c3`). Updates and fades are `FUN_0072368c`, `FUN_00723884`, `FUN_00723779`, `FUN_0072391d`.
+- A 3D sound (`Sound_Update3D` 0x00724823): `AIL_calculate_3D_channel_levels` (0x0072492a) with both cone angles at
+  360, outer volume 1, the sound's own minimum and maximum, and the listener's position and rolloff. The result is
+  multiplied by `vol` (linear) and set with `AIL_set_sample_channel_levels` (0x00724974). It runs again each tick when
+  the listener moved (0x00722925). `AIL_set_sample_3D_position` is not imported.
+- The distance units are not determined: the packet position goes through `FUN_0045b6a0`.
+
+**Occlusion**, in the same function. **confirmed**. With `d` the source to listener distance
+(`FUN_0071bd90`):
+
+```text
+t = 0 below 2000, 1 at 18000 or more, else (d - 2000) / 16000
+occlusion = 0.5 * log(400 * t) / log(20), at least 0     when t > 0
+```
+
+So 0 up to `d` = 2040, about 0.88 at `d` = 10000, and 1.0 from 18000. It is set only when it changed (0x00724a6d). In
+7.0x the cut-off is `(1 - occlusion) + 0.01` (0x2111d10a) and the filter is off above 0.999 (0x2112bfd0), so it starts
+just past 2040.
+
+**Distance delay.** **confirmed** for the first call. `Sound_StartSample` adds the `Delay Filter` as the sample's
+stage 2 (0x00724409) when the sound's maximum distance reaches 8000, with `Max Delay Time` 600. `Sound_SetDistanceDelay`
+(0x00724b19) then sets `Mix` to 0 below 8000, and between 8000 and 20000 from 0.05 to 0.4, with `Delay TimeL` and `R`
+from 300 to 600 ms. **probable**: the value it gets on the tick (0x00722932) is the distance, not proven.
+
+**Reverb.** `AIL_set_sample_reverb_levels` is reached (`FUN_00727f65` 0x00728065, `FUN_0072d1d1` 0x0072d924), but the
+function that sets the master reverb (`FUN_00724517`) has no caller, so the wet path has no reverb to send to unless
+7.0x has a non-zero default, which was not checked.
+
+**Music.** **confirmed**, for any sound of the stream type:
+
+- `HandlePlayMusicPacket` (0x00496de0): `id & 0xfff == 0xfff` stops. Otherwise it stops the startup event and the
+  current one, then triggers the new one (`FUN_0072a715`).
+- `Sound_StartStream` (0x00723d1d): the same id and loop only changes the volume. Otherwise the old stream pauses and
+  closes (`FUN_007240f8`), and `AIL_open_stream` opens the new one. Levels are linear (`AIL_set_sample_volume_levels`,
+  `+0x28 * vol`), with `AIL_set_stream_loop_count(0)` when looping. One stream at a time.
+- **No crossfade was traced: a hard cut.** Stopping is immediate too (`FUN_00727bc5`, id 0x8000).
+- **Not determined:** the `audio_music.csv` reader and its `fade-general` and `fade-combat` fields, and that the
+  shipped music rows are of the stream type. `FUN_0072d1d1` is not music but the per-tick ambience manager, which
+  fades through `FUN_00727cd6`.
+
+**Voices.** **confirmed**: handles 1 to 30 are allocated (0x00722658), and the start loop uses index 1 to 29, so **29
+sample voices**. None free returns -5, a drop. There are 31 sound slots, 4,000 sample slots and a table of 99 streams.
+`FUN_0072a90f` applies the polygroups (25 groups): mode 0 refuses at the group's maximum, and mode 1 starts the new
+sound and stops the group's oldest over the maximum (`FUN_00723604`), the client's own FIFO stealing.
+
+**Options** (`ApplyVolumeOptions` 0x00495720). **confirmed**:
+
+- Master (0xc93ad4) reaches `AIL_set_digital_master_volume_level`, linear.
+- **The effects (0xc93ad8) and music (0xc93adc) volumes reach no audio call.** They are only loaded, reset, saved
+  (`%0.2f`) and exposed to Lua. The category setters (`FUN_00723a5a`, `FUN_00723ac6`, `FUN_00723b32`, `FUN_00724131`)
+  have no reference, so the categories stay 1.0 from the constructor `FUN_007223d9`.
+- The enable flags do act: 0xc93ae0 master (sends 0), 0xc93ae1 effects, 0xc93ae2 music (stops the music events).
+- `FUN_00492850` saves and mutes on 0x20021 and restores on 0x20022.
+
 ## What the KR parsers should change
 
 1. **Parse with the client's rules, not a fixed column schema.** That means: the first-field markers, `!`

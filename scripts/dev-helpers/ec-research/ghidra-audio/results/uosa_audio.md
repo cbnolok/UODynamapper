@@ -121,6 +121,75 @@ Already named before this folder: `UOLua::PlaySound` (0x004b5fc0), `UOP::FileExi
   - Dictionary attacks found none of their names: about 0.8 M names built from the CSV, folder and
     file-name parts, and 4.7 M from merged dictionaries.
 
+## Playback: how the client drives Miles
+
+Read in Ghidra on 2026-11-03. **confirmed** = read in the code. It is a static reading, not a measurement: nothing
+was run. "Dead" means that no static reference reaches the code from a live root; a caller through a table that
+Ghidra did not see would change that.
+
+**Live paths.** `PlaySoundById` and `PlayMusicById`, both through `SoundSystem_PlaySample` (0x00884ff9).
+
+**Driver** (`SoundSystem_OpenDriver` 0x008859f1, call at 0x00885a21). **confirmed**: 48,000 Hz (0x00da7038), 16 bits
+(0x00da703c) and spec 0x10 (0x00da7044), constants in `.data`, not config. So the output layout follows the Windows
+speaker setting, and is stereo by default. If the open fails it tries 44,100, 22,050 and 11,025, then the same at 8
+bits. `FUN_008843fe` opens and closes spec 0xE0 (EAX 4) once as a probe and restores the spec.
+
+**Volume** (`SampleSound_ApplyVolume` 0x00898993, the +0x38 slot of the vtable at 0x00ce4964). **confirmed**:
+
+1. `vol = category * own volume`, the own volume clamped to 0..1 and to the cap at +0x10.
+2. `AIL_set_sample_volume_pan(h, 0.81, pan)` (0x00898a1e), with 0.81 a constant (0x00d05070).
+3. `AIL_sample_volume_levels` (0x00898a34), both sides multiplied by `vol`, then `AIL_set_sample_volume_levels`
+   (0x00898a98).
+
+So Miles' `v ^ (5/3)` applies only to the constant, and the volume itself is **linear**. At centre pan the factor is
+`0.81 ^ (5/3) * 0.8123`, about 0.572 or -4.9 dB, times `vol`.
+
+**Distance** (`PlaySoundById` 0x004b5770). **confirmed**: mode 1 is `1 - d * (1/24) * 0.9`, clamped to 0..1, with `d`
+the Euclidean distance to the player object. It goes in as volume and cap. Pan is always 0.5, so **there is no
+positional pan**. Mode 0 is gain 1.0. Pitch is `native_rate * multiplier` through `AIL_set_sample_playback_rate`.
+
+**Music** (`PlayMusicById` 0x004b5a30). **confirmed**:
+
+- A sample, not a stream: `AIL_set_named_sample_file`, then `AIL_set_sample_loop_count(h, 0)` when the CSV loop byte
+  (+0xff) is set. So the **sample loop gap** applies (at least 39 ms for a tagged 44.1 kHz file, see
+  `miles_playback_reference.md`).
+- **No crossfade.** The same id is ignored. A different id goes to `SoundSystem_RequestSampleFile` (0x00884aeb), and
+  `SoundSystem_EndSampleHandles` (0x00884bce) ends the id's playing handles at once. The 3,000 ms passed to
+  `PlaySample` (0x00c9b8a4) is used only as the fade time of a later stop, and there is no fade-in.
+- Id 0xffff stops with that 3 s fade (`SampleSound_Stop` 0x00898ae8), linear in time through the levels.
+- The new file loads asynchronously, so the silence between tracks is the load time.
+- The ducking value at +0x144 is only ever zeroed.
+
+**Filters, reverb, occlusion, 3D.** None on the live paths, as far as static references go:
+
+- `AIL_set_sample_3D_*` run in `SampleSound_StartAtPosition` only when +0x75 is set, by `FUN_00898e63`, from
+  `SoundSystem_PlaySample3D` (0x008851db). Its only caller is `FUN_00892dd7`, whose closure ends in unreferenced
+  roots (0x0087f10c, 0x0088efb6, 0x0088f761, 0x0088f7c8, 0x0088f7ff, 0x0088f832, 0x0088f86c, 0x0088f89f).
+- Two references at 0x00893adb and 0x00893b30 come from code outside any function, so they could not be attributed.
+  That is the weak point of this conclusion.
+- `FUN_008853fc`, the only taker of `StreamSound`, is in the same closure, so `StreamSound` has no live path.
+- The filter adders (`FUN_00897f41`, from `FUN_00889a2f` and `FUN_00898c05`) work on a list filled from zones set only
+  in the dead root 0x0087f10c. `FUN_0087f60a` is called from the sound start and tick, but it finds no zones.
+- `FUN_0087ed30` and `FUN_0087ee3d` have no reference.
+- The MP3 limit of 7 (+0x94, 0x008841d7) applies only when an entry's +0x120 is set, by `AudioConfig_Init`'s
+  closure, which is dead too.
+
+**Voices** (`SoundSystem_Startup` 0x008840e1). **confirmed**: up to 64 handles, the last released, so 63. There are
+96 `SampleSound` and 96 `StreamSound` objects, and 25,000 sample slots. `SoundSystem_FindFreeHandle` (0x008859be)
+returns -1 when none is free and the start returns -5: **the sound is dropped, with no stealing and no priority**. A
+category at volume 0 refuses the start (`FUN_00885e47`, -7).
+
+**Options** (`ApplyVolumeOptions` 0x004b5c00). **confirmed**, all on a 0..1 scale, clamped, stored as `%0.2f`:
+
+| Option | Global | Flag | Reaches Miles as |
+|---|---|---|---|
+| Master | 0x00e33540 | 0x00e3354c | `AIL_set_digital_master_volume_level(drv, 1.0 * master)`, linear |
+| Music | 0x00e33548 | 0x00e3354e | Category 0 (`FUN_004b5de0`), a linear factor in `vol` |
+| Effects | 0x00e33544 | 0x00e3354d | Categories 1 to 4 (`FUN_00885631`), a linear factor in `vol` |
+
+A flag that is off sends 0. `FUN_004b50a0` saves and mutes the master on event 0x28 and restores it on 0x29, probably
+window focus.
+
 ## What the replace/add path should do
 
 1. **EC: write only `data/audio/` + the CSV `FilePath`.** The EC never reads `legacysounds/`, so replacing

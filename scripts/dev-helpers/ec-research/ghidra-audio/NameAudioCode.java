@@ -128,6 +128,25 @@ public class NameAudioCode extends GhidraScript {
         new Entry("009899ef", UOP, "NormalizePath", false, "copies the name, '\\' -> '/', then tolower; no"
             + " trimming and no '//' collapse; used before HashFileName by every UOP lookup",
             "calls:00b6fd76", "calledby:00989fdb", "calledby:0098a29b"),
+        new Entry("008859f1", MYTH_AUDIO, "SoundSystem_OpenDriver", false, "AIL_open_digital_driver with 48000 Hz,"
+            + " 16 bits, spec 0x10 from .data; on failure 44100, 22050, 11025, then 8 bits",
+            "import:_AIL_open_digital_driver@16"),
+        new Entry("00898993", MYTH_AUDIO, "SampleSound_ApplyVolume", false, "category * own volume; volume_pan with"
+            + " the constant 0.81, then both levels times the volume through volume_levels: the volume is linear",
+            "import:_AIL_set_sample_volume_pan@12", "import:_AIL_set_sample_volume_levels@12"),
+        new Entry("00884bce", MYTH_AUDIO, "SoundSystem_EndSampleHandles", false, "ends the playing handles of a"
+            + " sample id at once and frees the data: why a music change is a hard cut",
+            "import:_AIL_end_sample@4", "calledby:00884aeb"),
+        new Entry("008859be", MYTH_AUDIO, "SoundSystem_FindFreeHandle", false, "first free handle or -1; the start"
+            + " returns -5 and the sound is dropped, nothing is stolen", "calledby:00898392"),
+        new Entry("00898ae8", MYTH_AUDIO, "SampleSound_Stop", false, "stop with a fade given in ms: argument 0 uses"
+            + " the sound's fade time, linear in time through the levels", "calls:00897d58"),
+        new Entry("008851db", MYTH_AUDIO, "SoundSystem_PlaySample3D", false, "the 3D play entry: its only caller"
+            + " chain ends in unreferenced roots, so the AIL 3D path is dead by static references",
+            "calls:00898e63", "calledby:00892dd7"),
+        new Entry("004b5c00", UO_AUDIO, "ApplyVolumeOptions", false, "master option to the Miles master level,"
+            + " music to category 0, effects to categories 1 to 4; all linear",
+            "import:_AIL_set_digital_master_volume_level@8", "calls:004b5de0", "calls:00885631"),
     };
 
     private static final Entry[] ENTRIES_UOKR = {
@@ -192,6 +211,26 @@ public class NameAudioCode extends GhidraScript {
             + " double quotes toggle, no trimming", "calledby:004937e0", "calledby:00662fa4"),
         new Entry("00662fa4", UO_CSV, "ReadField", false, "ReadStringField into a caller buffer",
             "calls:00824bf0", "calledby:0072836a"),
+        new Entry("007241f3", MYTH_AUDIO, "AudioDevice_OpenDriver", false, "AIL_open_digital_driver with 44100 Hz,"
+            + " 16 bits, spec 0x10 from .data; halves the rate on failure down to 11025, then 8 bits",
+            "import:_AIL_open_digital_driver@16", "calledby:007225dd"),
+        new Entry("007225dd", MYTH_AUDIO, "AudioDevice_Startup", false, "opens the driver, the Delay Filter and"
+            + " sample handles 1 to 30", "import:_AIL_allocate_sample_handle@4", "string:Delay Filter"),
+        new Entry("0072428d", MYTH_AUDIO, "Sound_StartSample", false, "named file, rate times multiplier,"
+            + " volume_pan for a 2D sound, delay filter when the maximum distance reaches 8000",
+            "import:_AIL_set_named_sample_file@20", "import:_AIL_set_sample_volume_pan@12"),
+        new Entry("00724823", MYTH_AUDIO, "Sound_Update3D", false, "own channel levels from positions, then occlusion"
+            + " from distance: log curve between 2000 and 18000", "import:_AIL_calculate_3D_channel_levels@64",
+            "import:_AIL_set_sample_channel_levels@12", "import:_AIL_set_sample_occlusion@8"),
+        new Entry("00724b19", MYTH_AUDIO, "Sound_SetDistanceDelay", false, "delay filter Mix 0.05 to 0.4 and delay"
+            + " 300 to 600 ms, over 8000 to 20000", "import:_AIL_sample_stage_property@24", "string:Delay TimeL"),
+        new Entry("00723d1d", MYTH_AUDIO, "Sound_StartStream", false, "AIL_open_stream, linear levels, stream loop"
+            + " count 0 when looping; replaces the current stream at once",
+            "import:_AIL_open_stream@12", "import:_AIL_set_stream_loop_count@8"),
+        new Entry("00496de0", UO_AUDIO, "HandlePlayMusicPacket", false, "id & 0xfff == 0xfff stops; otherwise stops"
+            + " the current event and triggers the new one with no crossfade", "calls:0072a715"),
+        new Entry("00495720", UO_AUDIO, "ApplyVolumeOptions", false, "only master reaches Miles; the effects and music"
+            + " volumes reach no audio call, and only their enable flags act", "calledby:004951c0"),
     };
 
     private static final Entry[] ENTRIES_CLASSIC_7_0_103 = {
@@ -232,6 +271,24 @@ public class NameAudioCode extends GhidraScript {
             + " \".mp3\" added when the last 4 characters hold no '.'; the extension must be mp3 (stricmp);"
             + " loops when the flag is exactly \"loop\" or \"lop\" (case-sensitive)",
             "string:MUSIC\\DIGITAL\\", "calls:006b7c08", "calls:0063130e"),
+        new Entry("005fa6b0", CLASSIC_AUDIO, "DirectSound_Init", false, "cooperative level 3, primary buffer set to"
+            + " stereo 16-bit 22048 Hz", "string:Failed to set cooperative level",
+            "string:Failed to create primary sound buffer"),
+        new Entry("005fabe0", CLASSIC_AUDIO, "PlayPositionalSound", false, "volume 0 to -25 dB linear in dB over the"
+            + " wrapped tile distance, pan +-25 dB from screen X, range from the player",
+            "calls:00593ba0", "calls:005fa840"),
+        new Entry("005f99f0", CLASSIC_AUDIO, "Voice_EffectiveVolume", false, "maps a 1/100 dB value through the effects"
+            + " gain: out = -5000 + g * (5000 + v), so gain 0 is -50 dB, not silence", "calledby:005fa510"),
+        new Entry("005f9f50", CLASSIC_AUDIO, "SetEffectsVolume", false, "byte / 255 is the gain of the voices",
+            "calls:005f9da0"),
+        new Entry("005f7c70", CLASSIC_AUDIO, "SetMusicVolume", false, "byte to midiOutSetVolume and to the digital"
+            + " target (byte * 2500 >> 8) - 2500", "calls:005acd90"),
+        new Entry("005adf00", CLASSIC_AUDIO, "DigitalMusic_Pump", false, "2 s fade out and 2 s fade in, linear in dB:"
+            + " the crossfade; a finished track is removed", "calls:005adce0"),
+        new Entry("005f8c80", CLASSIC_AUDIO, "RequestMusic", false, "id up to 0x66 or 0xffff; ignored within 10 s of"
+            + " the last change unless forced or idle", "calls:005f8190"),
+        new Entry("005faa00", CLASSIC_AUDIO, "PlayAmbientLoop", false, "a looping voice from -50 dB, then the tick"
+            + " fades it to -22 dB in steps of 20 per tick", "calls:005fa840", "calledby:0046a1e0"),
     };
 
     private static final Entry[] ENTRIES_GOLD = {

@@ -221,8 +221,9 @@ entry or slot keeps its bytes.
   - MPEG-2.5. Miles plays it at the right rate, with the band tables of MPEG-2 (`miles_audio.md`); no shipped file is
     MPEG-2.5. This is known to be wrong rather than unknown, and no MPEG rate is left over: the header table holds
     only the nine rates the decoder takes.
-  - A PCM WAV whose data is not whole sample frames: the mixer may read one sample frame past the data [7.2a], not
-    checked in 7.2c.
+  - A PCM WAV whose data is not whole sample frames: the mixer reads up to `frame - 1` bytes past the data [7.2c, a
+    static reading], so one source frame of whatever follows, a possible click at the very end
+    (`miles_playback_reference.md`).
 - Refused here although Miles would take them, deliberately: each is a file no tool should write, and none is
   shipped. They stay refused under every policy.
   - WAV chunk ids in another case (`FMT `, `DATA`): Miles compares them ignoring case, our walk does not.

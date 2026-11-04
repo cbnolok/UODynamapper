@@ -149,3 +149,50 @@ holds 1655 entries; its highest id is 1666.
 - **Case-sensitive flags.** `Loop` and `LOOP` do not loop.
 - **One name per line.** Split on spaces, keep the last token, and split it at the first comma.
 - **Names.** A name without an extension gets `.mp3`, and only `.mp3` plays.
+
+## Playback: DirectSound
+
+Read in Ghidra on 2026-11-03. **confirmed** = read in the code. It is a static reading, not a measurement. Volumes and
+pan are DirectSound hundredths of a dB.
+
+**Device** (`DirectSound_Init` 0x005fa6b0). Cooperative level 3, primary buffer flags 0x81, set to stereo 16-bit
+22,048 Hz (`FUN_005f9a30`). The 8 voices (`Voice_CreateBuffer` 0x005f9fb0) are mono 16-bit 22,048 Hz with flags
+0x100e0: pan, volume, frequency and precise position, with no 3D and no effects. What the device really runs at under
+a modern Windows is not settled by a static reading.
+
+**Distance and pan** (`PlayPositionalSound` 0x005fabe0, from the packet handler `FUN_0046a1e0`):
+
+- `R` comes from `FUN_005f17a0`: an override (0x1f6ca80 when 0x1f6ca7d is set), else the player's (`FUN_005b2540`),
+  else 18 (0x746664). `d` is `WrappedTileDistance` (0x00593ba0).
+- `volume = scale * -2500 * min(1, d / R)`, linear in dB: 0 dB at the player, -25 dB at `R` and past it, with no cut-off.
+- `pan = clamp(((s.x - s.y) - (p.x - p.y)) * 0.5 / R, -1, 1) * 2500`, by screen X, negated when 0xaffd5f is set
+  (**probable**: a reverse stereo option). DirectSound pan attenuates the far side, so ±25 dB at the edges.
+- `Voice_Start` (0x005fa510) sets pan (0x5fa572), volume (0x5fa5b5) and frequency (0x5fa5e8). UI sounds play at 0 dB.
+
+**Effects option** (`SetEffectsVolume` 0x005f9f50). The byte over 255 is a gain `g` on each voice, and
+`Voice_EffectiveVolume` (0x005f99f0) gives `out = -5000 + g * (5000 + v)`. That is linear in dB, and `g` = 0 is -50 dB,
+not silence. The enable is `FUN_005fab40`.
+
+**Voices** (`PlaySound` 0x005fa840). Ids above 0x683 are refused. Without the duplicate flag, an id already in a voice
+returns that voice, with no restart. Otherwise it takes a free voice, else **it steals the voice with the lowest
+`GetVolume`**, ties going to the later voice, never the ambient one (0x01f6d4ec).
+
+**Ambient loop** (`PlayAmbientLoop` 0x005faa00). Starts at -50 dB. The tick `FUN_005fa3b0` raises it by 20 per tick up
+to -22 dB and lowers the previous one by 20 per tick until it stops under -49.99 dB, so a change crossfades.
+
+**Music** (`RequestMusic` 0x005f8c80). Ids up to 0x66 or 0xffff, ignored within 10 s of the last change unless forced
+or idle. A random config entry plays (`FUN_005add60`), falling back to MIDI when there is no digital music.
+
+- Its own MP3 decoder, not Miles (`UO::MPEGDecoder`, `FUN_005ac1a0`), into a 0x20000-byte 44,100 Hz stereo 16-bit
+  buffer, with the frequency then set to the decoder's rate.
+- **A real crossfade** (`DigitalMusic_Pump` 0x005adf00): the old track falls 10 hundredths of a dB per 2 ms to -100 dB
+  and is removed after 2 s; the new one starts 10 dB under the target and reaches it in 2 s, linear in dB.
+- A loop rewinds the decoder and keeps filling the same buffer, so it has **none of Miles' sample loop gap**. The
+  decoder's own delay and padding were not read.
+
+**Music option** (`SetMusicVolume` 0x005f7c70). The byte, less 0x01f6d39c, clamped to 0..255, goes to `midiOutSetVolume`
+and to a digital target `(s * 2500 >> 8) - 2500`: 0 is -25 dB, not silence, and 255 is -0.1 dB. There is **no master
+volume**.
+
+**Not used:** reverb, occlusion, DS3D, filters. The buffer flags have no 3D or effects control, and the imports are
+DirectSound, WinMM and Bink only.
