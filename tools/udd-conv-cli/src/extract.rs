@@ -7,7 +7,6 @@ use color_eyre::eyre::{self, WrapErr};
 use image::{ColorType, ImageFormat};
 use rayon::prelude::*;
 use udd_logging::progress::{ProgressBar, ProgressStyle};
-use udd_assets::bc7::{decode_bc7_to_rgba8888, ImageExtent};
 use udd_assets::{TexArtCcPackage, TexArtEcPackage, TexLandEcPackage, TileMetaPackage};
 use udd_assets::tex_land_ec::{
     MISSING_SLOT_ID, MISSING_TERRAIN_LAYER_INDEX, MISSING_TEXTURE_ID,
@@ -71,7 +70,7 @@ fn extract_tex_art_cc(package: &UddpReader, out_dir: &Path) -> eyre::Result<bool
             used_height: page.used_height,
             pixel_format: page.pixel_format,
         }),
-        |page_index| package.read_page_bytes(page_index),
+        |page_index| package.read_page_rgba(page_index),
     )?;
 
     let mut slots_csv = String::from("art_id,kind,page_index,page_tile_index,x,y,width,height\n");
@@ -113,7 +112,7 @@ fn extract_tex_art_ec(package: &UddpReader, out_dir: &Path) -> eyre::Result<bool
             used_height: page.used_height,
             pixel_format: page.pixel_format,
         }),
-        |page_index| package.read_page_bytes(page_index),
+        |page_index| package.read_page_rgba(page_index),
     )?;
 
     let mut slots_csv = String::from("art_id,kind,page_index,page_tile_index,x,y,width,height\n");
@@ -155,7 +154,7 @@ fn extract_tex_land_ec(package: &UddpReader, out_dir: &Path) -> eyre::Result<boo
             used_height: page.used_height,
             pixel_format: page.pixel_format,
         }),
-        |page_index| package.read_page_bytes(page_index),
+        |page_index| package.read_page_rgba(page_index),
     )?;
 
     let metadata_dir = out_dir.join("metadata");
@@ -436,7 +435,7 @@ fn extract_atlas_pages<I, F>(
     atlas_height: u32,
     gutter: u16,
     pages: I,
-    read_page_bytes: F,
+    read_page_rgba: F,
 ) -> eyre::Result<()>
 where
     I: IntoIterator<Item = AtlasPageRow>,
@@ -459,9 +458,7 @@ where
     let extracted_pages = pages
         .par_iter()
         .map(|page| -> eyre::Result<ExtractedAtlasPage> {
-            let encoded = read_page_bytes(page.page_index)?;
-            let rgba =
-                decode_page_to_rgba(&encoded, page.pixel_format, page.used_width, page.used_height)?;
+            let rgba = read_page_rgba(page.page_index)?;
             let png_name = format!("page_{:05}.png", page.page_index);
             write_rgba_png(&pages_dir.join(&png_name), page.used_width, page.used_height, &rgba)?;
             Ok(ExtractedAtlasPage {
@@ -500,21 +497,6 @@ fn progress_bar(len: u64, message: &str) -> ProgressBar {
     pb
 }
 
-fn decode_page_to_rgba(
-    encoded: &[u8],
-    pixel_format: PagePixelFormat,
-    width: u32,
-    height: u32,
-) -> eyre::Result<Vec<u8>> {
-    match pixel_format {
-        PagePixelFormat::Rgba8888 => Ok(encoded.to_vec()),
-        PagePixelFormat::Bc7 => {
-            let extent = ImageExtent::new(width, height).map_err(|e| eyre::eyre!(e.to_string()))?;
-            decode_bc7_to_rgba8888(encoded, extent).map_err(|e| eyre::eyre!(e.to_string()))
-        }
-    }
-}
-
 fn write_rgba_png(path: &Path, width: u32, height: u32, rgba: &[u8]) -> eyre::Result<()> {
     image::save_buffer_with_format(path, rgba, width, height, ColorType::Rgba8, ImageFormat::Png)
         .wrap_err_with(|| format!("write {}", path.display()))
@@ -547,5 +529,101 @@ fn codec_name(codec: Codec) -> &'static str {
         Codec::ZstdNoDict => "ZstdNoDict",
         Codec::ZstdTypeDict => "ZstdTypeDict",
         Codec::JpegXl => "JpegXl",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use udd_assets::tex_art_cc::{page_entry_path, PAGE_MANIFEST_ENTRY_PATH, SLOT_MANIFEST_ENTRY_PATH};
+    use udd_container::{AddFileRequest, CompressionFlag, DataType, LookupMode, UddpBuilder};
+    use udd_conv::bc7::{
+        encode_to_bc7, expected_bc7_byte_len, Bc7EncoderBackend, ImageExtent, RawImageFormat,
+        DEFAULT_BC7_RDO_LAMBDA, DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
+    };
+    use udd_conv::classic_sources::SourceFormatPreference;
+    use udd_conv::tex_art_cc::{
+        pack_tiles_into_pages, serialize_page_manifest, serialize_slot_manifest, ArtTileKind,
+        DecodedArtTile, TexArtCcAtlasOptions,
+    };
+    use udd_conv::upscale::UpscaleFilter;
+
+    const ATLAS_SIDE: u32 = 64;
+    const TILE_SIDE: u16 = 8;
+    const RGBA_BYTES: usize = 4;
+
+    /// The packer stores BC7 pages at the full atlas size, while the page records give the smaller used size.
+    #[test]
+    fn extracts_a_bc7_art_page_stored_at_the_full_atlas_size() {
+        let options = TexArtCcAtlasOptions {
+            atlas_width: ATLAS_SIDE,
+            atlas_height: ATLAS_SIDE,
+            gutter: 1,
+            compression: CompressionFlag::None,
+            upscale: UpscaleFilter::default(),
+            upscale_passes: Vec::new(),
+            upscale_profile: None,
+            pixel_format: PagePixelFormat::Bc7,
+            bc7_rdo_lambda: DEFAULT_BC7_RDO_LAMBDA,
+            bc7_rdo_lookback_blocks: DEFAULT_BC7_RDO_LOOKBACK_BLOCKS,
+            source_preference: SourceFormatPreference::Uop,
+        };
+        let tile = DecodedArtTile {
+            art_id: 0,
+            kind: ArtTileKind::Static,
+            width: TILE_SIDE,
+            height: TILE_SIDE,
+            upscale_factor: 1,
+            upscale_algorithm: 0,
+            draw_offset_x: 0,
+            draw_offset_y: 0,
+            rgba: vec![u8::MAX; usize::from(TILE_SIDE) * usize::from(TILE_SIDE) * RGBA_BYTES],
+        };
+        let (pages, slots) = pack_tiles_into_pages(vec![tile], 1, &options, &|_| {}).unwrap();
+        let extent = ImageExtent::new(ATLAS_SIDE, ATLAS_SIDE).unwrap();
+        let bc7 = encode_to_bc7(
+            &pages[0].pixels,
+            extent,
+            RawImageFormat::Rgba8888,
+            Bc7EncoderBackend::Analytical,
+        )
+        .unwrap();
+        assert_eq!(bc7.blocks().len(), expected_bc7_byte_len(extent));
+        let record = &pages[0].record;
+        assert!(record.used_width < ATLAS_SIDE && record.used_height < ATLAS_SIDE);
+
+        let page_manifest = serialize_page_manifest(&pages, &options).unwrap();
+        let slot_manifest = serialize_slot_manifest(&slots, &options).unwrap();
+        let page_path = page_entry_path(0, PagePixelFormat::Bc7);
+        let entries: [(DataType, &str, &[u8]); 3] = [
+            (DataType::Metadata, PAGE_MANIFEST_ENTRY_PATH, &page_manifest),
+            (DataType::Metadata, SLOT_MANIFEST_ENTRY_PATH, &slot_manifest),
+            (DataType::Texture, &page_path, bc7.blocks()),
+        ];
+        let mut builder = UddpBuilder::new(LookupMode::VirtualPathHash);
+        for (data_type, virtual_path, data) in entries {
+            builder
+                .add_file(AddFileRequest {
+                    data_type: data_type as u8,
+                    compression: CompressionFlag::None,
+                    width: 0,
+                    height: 0,
+                    virtual_path: Some(virtual_path),
+                    path_hash64: None,
+                    id: None,
+                    data,
+                })
+                .unwrap();
+        }
+        let package = UddpReader::open(builder.build().unwrap()).unwrap();
+
+        let dir = std::env::temp_dir().join(format!("udd_extract_bc7_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(extract_tex_art_cc(&package, &dir).unwrap());
+        let image = image::open(dir.join("pages/page_00000.png")).unwrap().into_rgba8();
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        assert_eq!(image.dimensions(), (record.used_width, record.used_height));
+        assert_eq!(image.get_pixel(u32::from(TILE_SIDE) / 2 + 1, u32::from(TILE_SIDE) / 2 + 1).0, [u8::MAX; RGBA_BYTES]);
     }
 }
