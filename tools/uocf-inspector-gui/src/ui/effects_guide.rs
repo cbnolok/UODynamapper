@@ -46,7 +46,7 @@ const TAB_SECTIONS: &[Section] = &[
                (fixed effects, 0xC7 types 2 and 3, and explode effects); the packet paths of an entry are in its details, \
                and the lookup under the list finds the entry of a packet value.\n\n\
                TileArt: the effects stored in a tileart.uop record. They play on the items of that graphic, which gives \
-               them an object: hue and Property flag work. They are read only here.\n\n\
+               them an object: hue and Property flag work. They are read only here; the Tile Metadata tab edits them.\n\n\
                Files: the entries of EffectTexture.uop, which particles name: .nif scenes, .ems Chaos scripts and textures.",
     },
     Section {

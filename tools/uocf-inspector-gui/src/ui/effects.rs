@@ -2134,7 +2134,7 @@ fn tileart_details(app: &mut UopInspectorApp, lookups: &Lookups, ui: &mut egui::
     };
     let name = lookups.tile_name(file).unwrap_or_default();
     ui.heading(format!("Tile 0x{tile_id:0width$X} {name}", width = TILE_ID_HEX_DIGITS));
-    ui.weak("Read only: tileart effects are stored in tileart.uop. They play on the items of this graphic.");
+    ui.weak("Read only here: tileart effects are stored in tileart.uop, and the Tile Metadata tab edits them. They play on the items of this graphic.");
     ui.separator();
     let definitions = &file.entry.effects;
     let selected = (!path.is_empty()).then_some(path);
