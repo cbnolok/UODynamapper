@@ -6,7 +6,7 @@ use super::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by, 
 use super::classic_image_import::{ui_classic_image_panel, PreferredContainer};
 use uocf::classic::image_files::ClassicImageKind;
 use std::sync::Arc;
-use uocf::enhanced::tileart::{TaeAppearanceFilter, TaeImgOffset, TextureItem, TextureType, TileArtEntry};
+use uocf::enhanced::tileart::{TaeImgOffset, TextureItem, TextureType, TileArtEntry};
 use uocf::classic::art::{static_art_id_for_source, STATIC_TILE_ID_BASE};
 
 const TILEDATA_TABLE_MIN_WIDTH: f32 = 980.0;
@@ -712,50 +712,9 @@ fn ui_selected_tiledata_details(app: &mut UopInspectorApp, ctx: &egui::Context, 
     }).inner
 }
 
-/// What the record panel does not draw: the appearance filters (read only) and, last, the textures.
+/// What the record panel does not draw: the textures.
 fn ui_selected_tileart_details(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui, file: &TileArtFileEntry) {
     let entry = &file.entry;
-
-    ui.collapsing(format!("Appearance: {} (read only)", tileart_appearance_summary(&entry.appearance_vector)), |ui| {
-        egui::Grid::new("tileart_selected_details").striped(true).show(ui, |ui| {
-            for (index, appearance) in entry.appearance_vector.iter().enumerate() {
-                ui.label(format!("Appearance {}", index));
-                ui.label(tileart_appearance_detail(appearance));
-                ui.end_row();
-            }
-        });
-    });
-
-    ui.collapsing("Texture blocks (read only)", |ui| {
-        egui::Grid::new("tileart_texture_block_details").striped(true).show(ui, |ui| {
-            ui.label("Block");
-            ui.label("Has");
-            ui.label("Type Offset");
-            ui.label("Items");
-            ui.label("Vectors");
-            ui.end_row();
-            for (block_index, block) in entry.texture_vector.iter().enumerate() {
-                ui.label(block_index.to_string());
-                ui.label(block.has_texture.to_string());
-                ui.label(block.type_string_off.to_string());
-                ui.label(block.texture_items_count.to_string());
-                ui.label(format!(
-                    "technique {} / tweaks {}",
-                    block.technique_count,
-                    block.tweak_count
-                ));
-                ui.end_row();
-                for (item_index, item) in block.texture_items.iter().enumerate() {
-                    ui.label(format!("{}.{}", block_index, item_index));
-                    ui.label(format!("name off {}", item.name_string_off));
-                    ui.label(format!("stretch {}", item.texture_stretch));
-                    ui.label(format!("source_kind {}", item.source_kind));
-                    ui.label(format!("sampler {} / uv_set {}", item.sampler_index, item.uv_set));
-                    ui.end_row();
-                }
-            }
-        });
-    });
 
     ui.separator();
     ui.strong("Textures");
@@ -847,31 +806,6 @@ fn string_number(value: &str) -> u32 {
     value.parse().unwrap_or(u32::MAX)
 }
 
-fn tileart_appearance_summary(appearance: &[TaeAppearanceFilter]) -> String {
-    if appearance.is_empty() {
-        return "none".to_string();
-    }
-
-    let mut by_body = 0usize;
-    let mut by_gender = 0usize;
-    let mut animation_by_body = 0usize;
-    for item in appearance {
-        match item {
-            TaeAppearanceFilter::ByOwnerBodyType(_) => by_body += 1,
-            TaeAppearanceFilter::ByOwnerGender { .. } => by_gender += 1,
-            TaeAppearanceFilter::AnimationByOwnerBodyType(_) => animation_by_body += 1,
-        }
-    }
-
-    format!(
-        "{} filters (body {}, gender {}, animation body {})",
-        appearance.len(),
-        by_body,
-        by_gender,
-        animation_by_body
-    )
-}
-
 fn tileart_texture_type_label(texture_type: TextureType) -> &'static str {
     match texture_type {
         TextureType::Undefined => "Undefined",
@@ -880,22 +814,6 @@ fn tileart_texture_type_label(texture_type: TextureType) -> &'static str {
         TextureType::TileArtEnhanced => "TileArtEnhanced",
         TextureType::Textures => "Textures",
     }
-}
-
-fn tileart_appearance_detail(appearance: &TaeAppearanceFilter) -> String {
-    let (label, mappings) = match appearance {
-        TaeAppearanceFilter::ByOwnerGender { gender, appearance } => {
-            return format!("gender {}: appearance {}", gender, appearance);
-        }
-        TaeAppearanceFilter::ByOwnerBodyType(mappings) => ("body", mappings),
-        TaeAppearanceFilter::AnimationByOwnerBodyType(mappings) => ("animation body", mappings),
-    };
-    let pairs = mappings
-        .iter()
-        .map(|mapping| format!("{}:{}", mapping.body_type, mapping.appearance))
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!("{}: {} records [{}]", label, mappings.len(), pairs)
 }
 
 #[cfg(test)]

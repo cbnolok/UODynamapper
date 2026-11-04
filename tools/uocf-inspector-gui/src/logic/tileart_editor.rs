@@ -111,10 +111,27 @@ pub fn save_tileart(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::test_support::{client_roots, output_path, EC_CLIENT_ROOTS_ENV};
+    use uocf::enhanced::tileart::{
+        TaeAppearanceFilter, TaeBodyAppearance, TaeTexture, TaeTextureImage, TILEART_SHADER_BLOCK_PRESENT, TILEART_UOP_NAME,
+    };
+    use uocf::uop_container::package::UopPackage;
+    use uocf::utils::path::find_file_ignoring_case;
 
+    const EDITED_GENDER: u8 = 1;
+    const EDITED_APPEARANCE: u32 = 1234;
+    const EDITED_BODY: u32 = 400;
+    const EDITED_IMPLEMENTATION: u8 = 2;
+    const EDITED_TECHNIQUE: i32 = 7;
+    const EDITED_TWEAK: f32 = 0.5;
+    const EDITED_NAME: u32 = 3;
     const FIRST_TILE: u32 = 5;
     const SECOND_TILE: u32 = 9;
     const NEW_TILE: u32 = 7;
+
+    fn present_block_of(entry: &TileArtEntry) -> Option<&TaeTexture> {
+        entry.texture_vector.iter().find(|block| block.has_texture == TILEART_SHADER_BLOCK_PRESENT)
+    }
 
     fn entries() -> Vec<TileArtFileEntry> {
         [FIRST_TILE, SECOND_TILE]
@@ -168,5 +185,50 @@ mod tests {
         assert_eq!(store.value(&first).unwrap().prop_count1, 1);
         editor.edit(&mut store, first, "stack_aliases", |entry| entry.stack_alias_vector.push(Default::default()));
         assert_eq!(store.value(&first).unwrap().stack_alias_count, 1);
+    }
+
+    #[test]
+    #[ignore = "needs real Enhanced clients: set UO_EC_CLIENT_ROOTS and TMPDIR, and run with --ignored"]
+    fn a_shipped_tileart_saves_the_same_bytes_and_appearance_and_texture_edits_come_back() {
+        for root in client_roots(EC_CLIENT_ROOTS_ENV) {
+            let source = find_file_ignoring_case(&root, TILEART_UOP_NAME).unwrap();
+            let package = UopPackage::load(&source).unwrap();
+            let mut entries: Vec<TileArtFileEntry> = package
+                .iter_files()
+                .filter(|file| file.has_size())
+                .map(|file| TileArtFileEntry { filename_hash: file.filename_hash(), entry: TileArtEntry::parse_raw(file).unwrap() })
+                .collect();
+            entries.sort_by_key(|file| file.entry.tile_id);
+            let mut editor = TileArtEditor::default();
+            let output = output_path(TILEART_UOP_NAME);
+            save_tileart(&editor.edits, &entries, &source, &output).unwrap();
+            assert!(std::fs::read(&output).unwrap() == std::fs::read(&source).unwrap(), "{}: differs after a save without changes", root.display());
+
+            let hash = entries.iter().find(|file| present_block_of(&file.entry).is_some()).unwrap().filename_hash;
+            let edited = {
+                let mut rows = collect_tileart_display_rows(&entries, None);
+                let mut store = TileArtStore { entries: &mut entries, rows: &mut rows, dictionary: None };
+                editor.edit(&mut store, hash, "appearance", |entry| {
+                    entry.appearance_vector.push(TaeAppearanceFilter::ByOwnerGender { gender: EDITED_GENDER, appearance: EDITED_APPEARANCE });
+                    entry.appearance_vector.push(TaeAppearanceFilter::ByOwnerBodyType(vec![TaeBodyAppearance { body_type: EDITED_BODY, appearance: EDITED_APPEARANCE }]));
+                });
+                editor.edit(&mut store, hash, "texture_blocks", |entry| {
+                    let block = entry.texture_vector.iter_mut().find(|block| block.has_texture == TILEART_SHADER_BLOCK_PRESENT).unwrap();
+                    block.field_04 = EDITED_IMPLEMENTATION;
+                    block.technique.push(EDITED_TECHNIQUE);
+                    block.tweaks.push(EDITED_TWEAK);
+                    block.texture_items.push(TaeTextureImage { name_string_off: EDITED_NAME, texture_stretch: EDITED_TWEAK, ..TaeTextureImage::default() });
+                });
+                store.value(&hash).unwrap()
+            };
+            save_tileart(&editor.edits, &entries, &source, &output).unwrap();
+            let reopened = UopPackage::load(&output).unwrap();
+            let read = TileArtEntry::parse_raw(reopened.get_file_by_hash(hash).unwrap()).unwrap();
+            assert_eq!(read.appearance_vector, edited.appearance_vector);
+            assert_eq!(present_block_of(&read), present_block_of(&edited));
+            assert_eq!(read.to_bytes().unwrap(), edited.to_bytes().unwrap());
+            std::fs::remove_file(&output).unwrap();
+            println!("{}: same bytes; appearance and texture edits come back ({} records)", root.display(), entries.len());
+        }
     }
 }

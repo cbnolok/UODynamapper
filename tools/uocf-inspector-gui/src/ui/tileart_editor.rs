@@ -1,16 +1,17 @@
 //! Editing controls of the tileart.uop view of the Tile Metadata tab: the toolbar (edit mode, undo, duplicate,
 //! delete, save) and the record panel (fixed fields, flags, image windows, radar colour, properties, sitting, stack
-//! aliases), which shows the record whether or not it can be edited. The shader blocks, appearance filters and
-//! effects are kept as loaded. The controls collect [`TileArtEdit`]s while the table draws from its copy of the
-//! records; [`apply_edits`] then applies them.
+//! aliases, appearance filters, texture blocks), which shows the record whether or not it can be edited. The effects
+//! are kept as loaded. The controls collect [`TileArtEdit`]s while the table draws from its copy of the records;
+//! [`apply_edits`] then applies them.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use eframe::egui;
 use uocf::enhanced::tileart::{
-    TaeFlag, TaeImgOffset, TaeProp, TaeSittingAnimation, TaeStackAlias, TileArtEntry, TILEART_SITTING_WORD_COUNT,
-    TILEART_UOP_NAME,
+    TaeAppearanceFilter, TaeBodyAppearance, TaeFlag, TaeImgOffset, TaeProp, TaeSittingAnimation, TaeStackAlias, TaeTexture,
+    TaeTextureImage, TileArtEntry, TILEART_KR_RECORD_VERSION, TILEART_SHADER_BLOCK_COUNT, TILEART_SHADER_BLOCK_ENHANCED,
+    TILEART_SHADER_BLOCK_PRESENT, TILEART_SITTING_WORD_COUNT, TILEART_UOP_NAME,
 };
 
 use crate::app::{tileart_property_name, TileArtFileEntry, UopInspectorApp, ViewMode};
@@ -39,6 +40,21 @@ const GROUP_MIN_WIDTH: f32 = 330.0;
 const READ_ONLY_ALPHA: f32 = 0.85;
 const RADAR_SWATCH_SIDE: f32 = 16.0;
 const FLOAT_SHOWN_DECIMALS: usize = 3;
+/// What the shader blocks of a record draw, by position.
+const TEXTURE_BLOCK_NAMES: [&str; TILEART_SHADER_BLOCK_COUNT] = ["WorldArt", "TileArtLegacy", "TileArtEnhanced", "Light texture"];
+/// The stretch of a new texture item: the client switches the sampler to wrap on any other value.
+const NEW_ITEM_STRETCH: f32 = 1.0;
+const STRING_INDEX_HOVER: &str = "The position of the text in string_dictionary.uop, plus 1. 0 names nothing.";
+const SHADER_IMPLEMENTATION_HOVER: &str = "The shader implementation index the client passes to the shader factory. 0 in all client records.";
+const SOURCE_KIND_HOVER: &str = "0 loads the texture, 2 loads it and forces wrap addressing, and any other value makes the client skip it.";
+const SAMPLER_HOVER: &str = "Not read by the client, which binds an item to the shader map at its position.";
+const VALUE_LISTS_HOVER: &str = "The client keeps up to 4 values.";
+/// The appearance filters a record can gain.
+const NEW_APPEARANCE_FILTERS: [(&str, fn() -> TaeAppearanceFilter); 3] = [
+    ("Add by body", || TaeAppearanceFilter::ByOwnerBodyType(Vec::new())),
+    ("Add by gender", || TaeAppearanceFilter::ByOwnerGender { gender: 0, appearance: 0 }),
+    ("Add animation by body", || TaeAppearanceFilter::AnimationByOwnerBodyType(Vec::new())),
+];
 /// Sitting words after the direction mask, with their labels.
 const SITTING_SIGNED_WORDS: [&str; TILEART_SITTING_WORD_COUNT - 1] =
     ["seat_offset_x", "seat_offset_y", "window_shift", "field_10", "field_14"];
@@ -243,6 +259,8 @@ pub(super) fn record_panel(ui: &mut egui::Ui, file: &TileArtFileEntry, name: Opt
         }
         group(columns, "Sitting", |ui| fields.sitting(ui, entry.sitting.as_ref()));
         group(columns, "Stack aliases", |ui| fields.stack_aliases(ui, &entry.stack_alias_vector));
+        group(columns, "Appearance filters", |ui| fields.appearance(ui, &entry.appearance_vector));
+        group(columns, "Texture blocks", |ui| fields.texture_blocks(ui, entry));
     });
 }
 
@@ -291,7 +309,7 @@ impl Fields<'_> {
         ui: &mut egui::Ui,
         field: TileArtField,
         current: T,
-        set: fn(&mut TileArtEntry, T),
+        set: impl FnOnce(&mut TileArtEntry, T) + 'static,
     ) {
         let mut value = current;
         let response = ui.add(egui::DragValue::new(&mut value).speed(VALUE_DRAG_SPEED));
@@ -303,13 +321,17 @@ impl Fields<'_> {
 
     fn float(&mut self, ui: &mut egui::Ui, label: &str, field: TileArtField, current: f32, set: fn(&mut TileArtEntry, f32)) {
         ui.label(label);
+        self.inline_float(ui, field, current, set);
+        ui.end_row();
+    }
+
+    fn inline_float(&mut self, ui: &mut egui::Ui, field: TileArtField, current: f32, set: impl FnOnce(&mut TileArtEntry, f32) + 'static) {
         let mut value = current;
         let response = ui.add(egui::DragValue::new(&mut value).speed(FLOAT_DRAG_SPEED).min_decimals(FLOAT_SHOWN_DECIMALS));
         self.session(&response);
         if response.changed() {
             self.push(field, move |entry| set(entry, value));
         }
-        ui.end_row();
     }
 
     fn toggle(&mut self, ui: &mut egui::Ui, label: &str, field: TileArtField, current: bool, set: fn(&mut TileArtEntry, bool)) {
@@ -510,6 +532,257 @@ impl Fields<'_> {
             self.push(field, |entry| entry.stack_alias_vector.push(TaeStackAlias::default()));
         }
     }
+
+    fn appearance(&mut self, ui: &mut egui::Ui, filters: &[TaeAppearanceFilter]) {
+        let field = "appearance";
+        for (index, filter) in filters.iter().enumerate() {
+            ui.horizontal(|ui| {
+                ui.label(format!("{index}: {}", appearance_filter_name(filter)));
+                if self.editable && ui.small_button("Delete").clicked() {
+                    self.push(field, move |entry| {
+                        entry.appearance_vector.remove(index);
+                    });
+                }
+            });
+            match filter {
+                TaeAppearanceFilter::ByOwnerGender { gender, appearance } => {
+                    ui.horizontal(|ui| {
+                        ui.label("Gender");
+                        self.inline_number(ui, field, *gender, move |entry, value| {
+                            if let Some(TaeAppearanceFilter::ByOwnerGender { gender, .. }) = entry.appearance_vector.get_mut(index) {
+                                *gender = value;
+                            }
+                        });
+                        ui.label("Appearance");
+                        self.inline_number(ui, field, *appearance, move |entry, value| {
+                            if let Some(TaeAppearanceFilter::ByOwnerGender { appearance, .. }) = entry.appearance_vector.get_mut(index) {
+                                *appearance = value;
+                            }
+                        });
+                    });
+                }
+                TaeAppearanceFilter::ByOwnerBodyType(mappings) | TaeAppearanceFilter::AnimationByOwnerBodyType(mappings) => {
+                    self.body_appearances(ui, index, mappings);
+                }
+            }
+        }
+        if filters.is_empty() {
+            ui.weak("none");
+        }
+        if self.editable {
+            ui.horizontal_wrapped(|ui| {
+                for (label, new_filter) in NEW_APPEARANCE_FILTERS {
+                    if ui.small_button(label).clicked() {
+                        self.push(field, move |entry| entry.appearance_vector.push(new_filter()));
+                    }
+                }
+            });
+        }
+    }
+
+    fn body_appearances(&mut self, ui: &mut egui::Ui, filter: usize, mappings: &[TaeBodyAppearance]) {
+        let field = "appearance";
+        egui::Grid::new(("tileart_body_appearances", self.hash, filter)).striped(true).show(ui, |ui| {
+            for (row, mapping) in mappings.iter().enumerate() {
+                ui.label("Body");
+                self.inline_number(ui, field, mapping.body_type, move |entry, value| {
+                    if let Some(mapping) = body_appearances(entry, filter).and_then(|mappings| mappings.get_mut(row)) {
+                        mapping.body_type = value;
+                    }
+                });
+                ui.label("Appearance");
+                self.inline_number(ui, field, mapping.appearance, move |entry, value| {
+                    if let Some(mapping) = body_appearances(entry, filter).and_then(|mappings| mappings.get_mut(row)) {
+                        mapping.appearance = value;
+                    }
+                });
+                if self.editable && ui.small_button("Delete").clicked() {
+                    self.push(field, move |entry| {
+                        if let Some(mappings) = body_appearances(entry, filter) {
+                            mappings.remove(row);
+                        }
+                    });
+                }
+                ui.end_row();
+            }
+        });
+        if self.editable && ui.small_button("Add body").clicked() {
+            self.push(field, move |entry| {
+                if let Some(mappings) = body_appearances(entry, filter) {
+                    mappings.push(TaeBodyAppearance::default());
+                }
+            });
+        }
+    }
+
+    fn texture_blocks(&mut self, ui: &mut egui::Ui, entry: &TileArtEntry) {
+        let field = "texture_blocks";
+        for (index, block) in entry.texture_vector.iter().enumerate() {
+            if entry.version == TILEART_KR_RECORD_VERSION && index == TILEART_SHADER_BLOCK_ENHANCED {
+                continue;
+            }
+            let mut present = block.has_texture == TILEART_SHADER_BLOCK_PRESENT;
+            let name = TEXTURE_BLOCK_NAMES.get(index).copied().unwrap_or_default();
+            if ui.checkbox(&mut present, format!("Block {index}: {name}")).changed() {
+                self.push(field, move |entry| {
+                    if let Some(block) = entry.texture_vector.get_mut(index) {
+                        *block = present_block(present);
+                    }
+                });
+            }
+            if present {
+                self.texture_block(ui, index, block);
+            }
+        }
+    }
+
+    fn texture_block(&mut self, ui: &mut egui::Ui, index: usize, block: &TaeTexture) {
+        let field = "texture_blocks";
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Shader name").on_hover_text(STRING_INDEX_HOVER);
+            self.inline_number(ui, field, block.type_string_off, move |entry, value| {
+                if let Some(block) = entry.texture_vector.get_mut(index) {
+                    block.type_string_off = value;
+                }
+            });
+            ui.label("Implementation").on_hover_text(SHADER_IMPLEMENTATION_HOVER);
+            self.inline_number(ui, field, block.field_04, move |entry, value| {
+                if let Some(block) = entry.texture_vector.get_mut(index) {
+                    block.field_04 = value;
+                }
+            });
+        });
+        for (item_index, item) in block.texture_items.iter().enumerate() {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(format!("Item {item_index}: name")).on_hover_text(STRING_INDEX_HOVER);
+                self.inline_number(ui, field, item.name_string_off, move |entry, value| {
+                    if let Some(item) = texture_item(entry, index, item_index) {
+                        item.name_string_off = value;
+                    }
+                });
+                ui.label("Source").on_hover_text(SOURCE_KIND_HOVER);
+                self.inline_number(ui, field, item.source_kind, move |entry, value| {
+                    if let Some(item) = texture_item(entry, index, item_index) {
+                        item.source_kind = value;
+                    }
+                });
+                ui.label("Stretch");
+                self.inline_float(ui, field, item.texture_stretch, move |entry, value| {
+                    if let Some(item) = texture_item(entry, index, item_index) {
+                        item.texture_stretch = value;
+                    }
+                });
+                ui.label("Sampler").on_hover_text(SAMPLER_HOVER);
+                self.inline_number(ui, field, item.sampler_index, move |entry, value| {
+                    if let Some(item) = texture_item(entry, index, item_index) {
+                        item.sampler_index = value;
+                    }
+                });
+                ui.label("UV set");
+                self.inline_number(ui, field, item.uv_set, move |entry, value| {
+                    if let Some(item) = texture_item(entry, index, item_index) {
+                        item.uv_set = value;
+                    }
+                });
+                if self.editable && ui.small_button("Delete").clicked() {
+                    self.push(field, move |entry| {
+                        if let Some(block) = entry.texture_vector.get_mut(index) {
+                            block.texture_items.remove(item_index);
+                        }
+                    });
+                }
+            });
+        }
+        if self.editable && ui.small_button("Add item").clicked() {
+            self.push(field, move |entry| {
+                if let Some(block) = entry.texture_vector.get_mut(index) {
+                    block.texture_items.push(new_texture_item(block.texture_items.len()));
+                }
+            });
+        }
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Technique").on_hover_text(VALUE_LISTS_HOVER);
+            for (position, value) in block.technique.iter().enumerate() {
+                self.inline_number(ui, field, *value, move |entry, value| {
+                    if let Some(slot) = entry.texture_vector.get_mut(index).and_then(|block| block.technique.get_mut(position)) {
+                        *slot = value;
+                    }
+                });
+            }
+            if self.editable && ui.small_button("+").clicked() {
+                self.push(field, move |entry| {
+                    if let Some(block) = entry.texture_vector.get_mut(index) {
+                        block.technique.push(0);
+                    }
+                });
+            }
+            if self.editable && !block.technique.is_empty() && ui.small_button("-").clicked() {
+                self.push(field, move |entry| {
+                    if let Some(block) = entry.texture_vector.get_mut(index) {
+                        block.technique.pop();
+                    }
+                });
+            }
+        });
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Tweaks").on_hover_text(VALUE_LISTS_HOVER);
+            for (position, value) in block.tweaks.iter().enumerate() {
+                self.inline_float(ui, field, *value, move |entry, value| {
+                    if let Some(slot) = entry.texture_vector.get_mut(index).and_then(|block| block.tweaks.get_mut(position)) {
+                        *slot = value;
+                    }
+                });
+            }
+            if self.editable && ui.small_button("+").clicked() {
+                self.push(field, move |entry| {
+                    if let Some(block) = entry.texture_vector.get_mut(index) {
+                        block.tweaks.push(0.0);
+                    }
+                });
+            }
+            if self.editable && !block.tweaks.is_empty() && ui.small_button("-").clicked() {
+                self.push(field, move |entry| {
+                    if let Some(block) = entry.texture_vector.get_mut(index) {
+                        block.tweaks.pop();
+                    }
+                });
+            }
+        });
+        ui.separator();
+    }
+}
+
+fn appearance_filter_name(filter: &TaeAppearanceFilter) -> &'static str {
+    match filter {
+        TaeAppearanceFilter::ByOwnerBodyType(_) => "appearance by owner body type",
+        TaeAppearanceFilter::ByOwnerGender { .. } => "appearance by owner gender",
+        TaeAppearanceFilter::AnimationByOwnerBodyType(_) => "animation appearance by owner body type",
+    }
+}
+
+fn body_appearances(entry: &mut TileArtEntry, filter: usize) -> Option<&mut Vec<TaeBodyAppearance>> {
+    match entry.appearance_vector.get_mut(filter)? {
+        TaeAppearanceFilter::ByOwnerBodyType(mappings) | TaeAppearanceFilter::AnimationByOwnerBodyType(mappings) => Some(mappings),
+        TaeAppearanceFilter::ByOwnerGender { .. } => None,
+    }
+}
+
+fn texture_item(entry: &mut TileArtEntry, block: usize, item: usize) -> Option<&mut TaeTextureImage> {
+    entry.texture_vector.get_mut(block)?.texture_items.get_mut(item)
+}
+
+/// A block as the checkbox leaves it: without data either way, and marked present when asked.
+fn present_block(present: bool) -> TaeTexture {
+    if present {
+        TaeTexture { has_texture: TILEART_SHADER_BLOCK_PRESENT, ..TaeTexture::default() }
+    } else {
+        TaeTexture::default()
+    }
+}
+
+/// A new item at `position`: it names no texture until its name is set.
+fn new_texture_item(position: usize) -> TaeTextureImage {
+    TaeTextureImage { texture_stretch: NEW_ITEM_STRETCH, sampler_index: position as u32, ..TaeTextureImage::default() }
 }
 
 fn prop_list(entry: &mut TileArtEntry, second: bool) -> &mut Vec<TaeProp> {

@@ -973,8 +973,10 @@ impl TileArtEntry {
             if texture.has_texture == 1 {
                 let mut items = Vec::new();
                 for (item_index, texture_item) in texture.texture_items.iter().enumerate() {
-                    if let Some(str) =
-                        string_dictionary.get_string((texture_item.name_string_off - 1) as usize)
+                    if let Some(str) = texture_item
+                        .name_string_off
+                        .checked_sub(1)
+                        .and_then(|offset| string_dictionary.get_string(offset as usize))
                     {
                         let raw_path = str.to_string();
                         // normalized_path: lowercased, backslash converted to forward slash
@@ -1010,8 +1012,10 @@ impl TileArtEntry {
         texture_block: &TaeTexture,
         string_dictionary: &UoStringDictionary,
     ) -> TileType {
-        if let Some(shader_name) =
-            string_dictionary.get_string((texture_block.type_string_off - 1) as usize)
+        if let Some(shader_name) = texture_block
+            .type_string_off
+            .checked_sub(1)
+            .and_then(|offset| string_dictionary.get_string(offset as usize))
         {
             match shader_name {
                 WATER_SHADER_NAME => TileType::Liquid,
