@@ -16,10 +16,9 @@ Those last three sit in three columns from 900 points of content width, in two
 from 600, and stack below that. A control with its own toggle and strength shares
 one row, with its slider grayed while it is off. Controls the current style never
 reads are grayed. The KR-style column stays usable in every render style, because
-art shading does not depend on the land style or profile gates. The one exception
-is Fake Normals, grayed unless the art source is EC, because
-[it only applies to KR art](art_fake_normal_validation.md). The helpers return
-their changed flags to the existing dirty and preset-save path.
+art shading does not depend on the land style or profile gates. That includes
+[Fake Normals, which also work on Classic art](art_fake_normal_validation.md). The
+helpers return their changed flags to the existing dirty and preset-save path.
 
 Advanced Effects separates whole-scene processing from water surfaces.
 Advanced Graphics Settings separates whole-scene, terrain and object controls.

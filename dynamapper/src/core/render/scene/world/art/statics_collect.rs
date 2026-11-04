@@ -313,8 +313,6 @@ const TILE_FLAG_ROOF: u64 = 0x1000_0000;
 const TILE_FLAG_WET: u64 = 0x80;
 const STATIC_HUE_FLAG_APPLY: u32 = 1;
 const STATIC_HUE_FLAG_EC_SPRITE: u32 = 2;
-/// `SpriteInstance::is_wet_flags` bit: the sprite is legacy pixel art, not KR WorldArt.
-const STATIC_INSTANCE_FLAG_LEGACY_ART: u32 = 1 << 10;
 const DEFAULT_PRIORITY_HEIGHT: i8 = 10;
 const SURFACE_LIKE_DEPTH_CLASS_OFFSET: f32 = -4.0;
 const STATIC_DEPTH_TIE_BREAK_STEP: f32 = 0.000_001;
@@ -966,7 +964,6 @@ pub struct SpriteInstance {
     /// Tiledata flags packed for the GPU.
     /// Bit 0: is_wet (`static_tile_renders_wet` → animated water UV distortion in sprite shader).
     /// Bit 1: ground surface blend; bits 2..9: NW,N,NE,W,E,SW,S,SE same-material neighbors.
-    /// Bit 10: legacy pixel art, which has no fake normals (see `art/main.wesl`).
     pub is_wet_flags: u32,
     pub hue_id: u32,
     pub hue_flags: u32,
@@ -2531,7 +2528,7 @@ fn emit_billboard_static_instance(
         tile_y: anchored_world_z,
         priority_z_units,
         sort_bias_ordinal: 0,
-        is_wet_flags: sprite_instance_flags(info.is_wet_flags, resolved.legacy_art),
+        is_wet_flags: info.is_wet_flags,
         hue_id,
         hue_flags: hue_flags | if billboard_source == ClientTextureSource::Ec { STATIC_HUE_FLAG_EC_SPRITE } else { 0 },
         flat_quad: if ec_surface { if ec_static_camera_quad(info.tilemeta) { 3 } else { 2 } } else { 0 },
@@ -2540,10 +2537,6 @@ fn emit_billboard_static_instance(
         local_light_rgba,
         color_rgba: [1.0, 1.0, 1.0, static_sprite_opacity(info.tilemeta, resolved.legacy_art && !ec_surface)],
     });
-}
-
-fn sprite_instance_flags(tile_flags: u32, legacy_art: bool) -> u32 {
-    tile_flags | if legacy_art { STATIC_INSTANCE_FLAG_LEGACY_ART } else { 0 }
 }
 
 /// Emit a CC surface-like static (shoreline water) as a flat XZ-plane quad within the
@@ -2609,7 +2602,7 @@ fn emit_cc_surface_like_flat_static_instance(
         tile_y: anchored_world_z,
         priority_z_units,
         sort_bias_ordinal: 0,
-        is_wet_flags: sprite_instance_flags(info.is_wet_flags, resolved.legacy_art),
+        is_wet_flags: info.is_wet_flags,
         hue_id,
         hue_flags,
         flat_quad: 1,
@@ -2908,15 +2901,6 @@ pub fn sys_collect_visible_statics(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_legacy_art_flag_does_not_touch_the_tile_flags() {
-        const WET_AND_ALL_NEIGHBORS: u32 = 0b11_1111_1101;
-        let flags = sprite_instance_flags(WET_AND_ALL_NEIGHBORS, true);
-        assert_eq!(flags & !STATIC_INSTANCE_FLAG_LEGACY_ART, WET_AND_ALL_NEIGHBORS);
-        assert_eq!(flags & STATIC_INSTANCE_FLAG_LEGACY_ART, STATIC_INSTANCE_FLAG_LEGACY_ART);
-        assert_eq!(sprite_instance_flags(WET_AND_ALL_NEIGHBORS, false), WET_AND_ALL_NEIGHBORS);
-    }
 
     fn approx_eq(left: f32, right: f32) {
         assert!((left - right).abs() < 1.0e-6, "left={left} right={right}");

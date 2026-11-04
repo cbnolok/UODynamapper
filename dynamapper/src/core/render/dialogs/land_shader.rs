@@ -9,7 +9,6 @@
 use super::super::scene::world::land::mesh_material::*;
 use crate::core::controls::input_actions::ActionToggleShaderSettings;
 use crate::{
-    configs::settings::ClientTextureSource,
     configs::shader_presets::{
         build_save_presets, reset_preset_to_factory, save_shader_settings,
         store_active_preset, FactoryShaderPresets, UniformState,
@@ -275,27 +274,26 @@ pub fn land_ui_system(
             ui.add_space(SECTION_SPACING);
             ui.separator();
 
-            let art_source_is_kr = settings.graphics.art_texture_source == ClientTextureSource::Ec;
             let width = ui.available_width();
             if width >= THREE_COLUMN_MIN_WIDTH {
                 ui.columns(3, |columns| {
                     changed |= terrain_controls(&mut columns[0], &mut u, gates);
                     changed |= standard_art_controls(&mut columns[1], &mut u.effects);
-                    changed |= stylized_art_controls(&mut columns[2], &mut u.effects, art_source_is_kr);
+                    changed |= stylized_art_controls(&mut columns[2], &mut u.effects);
                 });
             } else if width >= TWO_COLUMN_MIN_WIDTH {
                 ui.columns(2, |columns| {
                     changed |= terrain_controls(&mut columns[0], &mut u, gates);
                     changed |= standard_art_controls(&mut columns[1], &mut u.effects);
                     columns[1].add_space(SECTION_SPACING);
-                    changed |= stylized_art_controls(&mut columns[1], &mut u.effects, art_source_is_kr);
+                    changed |= stylized_art_controls(&mut columns[1], &mut u.effects);
                 });
             } else {
                 changed |= terrain_controls(ui, &mut u, gates);
                 ui.add_space(SECTION_SPACING);
                 changed |= standard_art_controls(ui, &mut u.effects);
                 ui.add_space(SECTION_SPACING);
-                changed |= stylized_art_controls(ui, &mut u.effects, art_source_is_kr);
+                changed |= stylized_art_controls(ui, &mut u.effects);
             }
 
             if changed {
@@ -974,12 +972,11 @@ fn standard_art_controls(ui: &mut egui::Ui, effects: &mut LandEffectsUniform) ->
     changed
 }
 
-fn stylized_art_controls(ui: &mut egui::Ui, effects: &mut LandEffectsUniform, art_source_is_kr: bool) -> bool {
+fn stylized_art_controls(ui: &mut egui::Ui, effects: &mut LandEffectsUniform) -> bool {
     section_header(ui, "KR-style art", "Static art sprites. Optional in every render style.");
     let mut changed = slider_s(ui, "Temperature", &mut effects.kr_art_temperature_strength, 0.0..=1.5);
     changed |= toggle_slider(ui, true, "Projected Shadows", &mut effects.enable_art_projected_shadows, &mut effects.art_projected_shadow_strength, 0.0..=1.0);
-    // Fake normals skip legacy art, so with Classic art selected there is nothing to apply them to.
-    changed |= toggle_en(ui, art_source_is_kr, "Fake Normals (KR art only)", &mut effects.enable_art_fake_normals);
+    changed |= toggle_u32(ui, "Fake Normals", &mut effects.enable_art_fake_normals);
     changed
 }
 

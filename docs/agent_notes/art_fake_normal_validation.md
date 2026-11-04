@@ -5,23 +5,6 @@ in factory presets, bundled shader settings and the saved shader settings
 inspected on 2026-10-30. The art control remains an explicit opt-in in every
 render style; land shading mode does not prohibit it.
 
-Fake normals now apply to KR world art only. Classic sprites have their shading
-painted in, so a per-sprite normal repeats on every tile of a roof or wall and
-draws bright and dark bands at the seams. In a difference image of the Classic
-road fixture this shows as a pillow pattern per roof tile. The collector marks
-legacy sprites with `STATIC_INSTANCE_FLAG_LEGACY_ART` from the same
-`ResolvedArtSprite.legacy_art` that selects their source, and `art/main.wesl`
-turns the effect off for them. This covers legacy sprites in KR view too. Ground
-instances are EC surfaces and are unaffected. The dialog grays the toggle when
-the art source is not EC.
-
-With the toggle checked against unchecked over road, town, swamp, snow, lava and
-bridge, Classic and Enhanced are byte-identical in all six. KR is unchanged from
-before the gate: mean 1.87, 1.03, 0.33, 0, 0.14 and 0.73 levels. Before the gate
-the Classic road fixture differed by 4.08 levels with 57 % of pixels past 2 levels,
-and Enhanced by 1.41 with 20 %. The checks below predate this gate and describe
-the old non-KR behaviour.
-
 The shared `art/shading.wesl` helper already removes rectangular edge cues from
 upright Regular/Background sprites. `ART_UPRIGHT_BILLBOARD_EDGE_PROFILE` and
 `ART_UPRIGHT_BILLBOARD_SIDE_FALLOFF_PROFILE` are both zero. Upright surface-like
@@ -58,3 +41,10 @@ and twelve full native frames (two off baselines reused from the current
 local-light checks). `scripts/validate_art_normals.py` reproduces explicit
 activation by period/mode/fixture; all previews use exact-PID Desktop-4 placement.
 Source settings are restored after each run, and shader/pipeline logs are clean.
+
+## Classic art
+
+Fake normals apply to Classic art too. On Classic art they add bright and dark bands along walls (mean difference 4.08
+levels on the road fixture, 2026-11-04), because that art already has its light painted in. A commit limited them to KR
+art for that reason, and it was reverted the same day: the project owner wants the option available, and turning it off
+is the user's choice. The bundled Classic and Enhanced presets keep it off, and the KR presets keep it on.
