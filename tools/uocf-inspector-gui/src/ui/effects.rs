@@ -94,8 +94,8 @@ const HUE_NOTE: &str = "The hue of the object the effect plays on. Only NIF part
     tileart effects. Animation frame effects take the animated object's hue. PropertyFlag definitions keyed by \
     the hue (property 7) play the case for this hue, else their default children.";
 
-/// Height of the picture and its transport controls, until the user drags the line under them.
-const PREVIEW_VIEW_DEFAULT_HEIGHT: f32 = 400.0;
+/// Share of the preview's height for the picture and its transport controls, until the user drags the line under them.
+const PREVIEW_VIEW_DEFAULT_SHARE: f32 = 0.55;
 const PREVIEW_VIEW_MIN_HEIGHT: f32 = 120.0;
 const MIN_PREVIEW_IMAGE_SIDE: f32 = 48.0;
 /// Rows under the picture: the transport, the time and particle count, and the warning that nothing plays.
@@ -2586,7 +2586,7 @@ fn preview_panel(app: &mut UopInspectorApp, lookups: &Lookups, ctx: &egui::Conte
     egui::Panel::top("effects_preview_view")
         .frame(egui::Frame::NONE)
         .resizable(true)
-        .default_size(PREVIEW_VIEW_DEFAULT_HEIGHT)
+        .default_size(ui.available_height() * PREVIEW_VIEW_DEFAULT_SHARE)
         .min_size(PREVIEW_VIEW_MIN_HEIGHT)
         .show(ui, |ui| {
             if let Some(texture) = &preview.texture {
@@ -2651,6 +2651,9 @@ fn preview_panel(app: &mut UopInspectorApp, lookups: &Lookups, ctx: &egui::Conte
             if !scene.has_playing_parts() {
                 ui.colored_label(WARNING_COLOR, "Nothing previewable plays (see Parts).");
             }
+
+            // A panel keeps the height of its content: without this it would stay as small as it ever was.
+            ui.add_space(ui.available_height().max(0.0));
         });
     egui::CentralPanel::no_frame().show(ui, |ui| {
         ui.horizontal(|ui| {
