@@ -177,6 +177,26 @@ files, using each frame's declared box. Stream counts assume 5 directions per en
 | Streams up to 4096 px | 66.4 % | 7.7 % | 33.5 % |
 | Pixels in those streams | 9.4 % | 0.4 % | 2.0 % |
 
+**Those medians describe equipment, not creatures.** Equipment is about 80 % of all frames, and it pulls every median down.
+Split by the body's `mobtypes.txt` type (Enhanced ships no such file, so its bodies use Classic's table by id):
+
+| Kind | Share of frames | Share of pixels | Median frame | Median area, px | Fit 128 × 64 |
+|---|---:|---:|---:|---:|---:|
+| Enhanced monster | 11.0 % | 52.1 % | 85 × 94 | 7857 | 18.1 % |
+| Enhanced animal | 4.9 % | 23.2 % | 91 × 102 | 8439 | 19.7 % |
+| Enhanced human | 1.3 % | 2.1 % | 44 × 70 | 2925 | 27.5 % |
+| Enhanced equipment | 81.7 % | 21.3 % | 20 × 23 | 484 | 94.4 % |
+| Classic MUL monster | 10.2 % | 67.8 % | 80 × 86 | 6767 | 22.2 % |
+| Classic MUL animal | 3.3 % | 6.0 % | 41 × 48 | 2044 | 66.0 % |
+| Classic MUL human | 1.8 % | 1.7 % | 30 × 57 | 1710 | 95.9 % |
+| Classic MUL equipment | 77.2 % | 20.4 % | 16 × 19 | 312 | 98.4 % |
+| Classic UOP monster | 9.2 % | 42.1 % | 101 × 78 | 7743 | 38.7 % |
+| Classic UOP animal | 9.0 % | 27.8 % | 109 × 82 | 8549 | 29.9 % |
+| Classic UOP equipment | 80.0 % | 27.2 % | 70 × 16 | 1110 | 97.9 % |
+
+The same bias is in the crowd numbers: the "uniform" crowd draws every (body, action) pair equally, so it is mostly
+equipment. A crowd of creatures is about 4× its pixels. See section 6.
+
 ## 3. Desires
 
 Wanted but not required, in the order the user raised them.
@@ -331,6 +351,11 @@ reference.
    hue-flagged pixel stays exact. It needs RGBA8 VRAM or a requantise step, and would miss the line at an estimated
    851 / 985 ms on the uniform crowd.
 
+**The uniform crowd flatters every candidate.** It is mostly equipment (section 2). 300 Enhanced creature pairs would be about
+223 Mpx against its 49.9, so zstd 19 with all five directions would take an estimated 90–140 ms rather than 31 ms, about 2×
+inside the line rather than 8×. Luma + MED would miss it at an estimated 475–570 ms with all five directions, and pass with
+the faced direction only. These are scaled from the rows above; a measured creature crowd is pending.
+
 **Outside proposals checked against this data (2026-11-04):**
 
 | Proposal | What the data says | Status |
@@ -345,7 +370,7 @@ reference.
 | Cross-action dictionary of 4 × 4 patches | Nothing to gain across bodies; 8 × 8 exact copies are rare. 4 × 4 is untested | To close with a bound |
 | Scanline RLE plus FSE, no LZ, "at memory bandwidth" | Not measured. zstd's history isn't its bottleneck: it's the fastest entropy path measured here | To close with one row |
 
-**Still not measured:** GPU upload, disk reads, a crowd weighted by how often actions are really played, and a table-driven
+**Still not measured:** GPU upload, disk reads, a crowd of creatures rather than mostly equipment, a crowd weighted by how often actions are really played, and a table-driven
 coder for the coverage plane. The `timing` pass failed on memory twice and wasn't retried; `s1` and `s2` time the same
 streams, so the ranking doesn't need it.
 

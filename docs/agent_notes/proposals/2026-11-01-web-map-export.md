@@ -688,7 +688,7 @@ at full clock.
 - **The current WebP q85 stays the choice for size.**
   - Its known limit is the 1-px colour edge, which no quality setting fixes.
 
-The Decisions table above still records the approved WebP q85. Switching to lossless is the user's call.
+**Decided by the user on 2026-11-04, with these numbers: WebP q85 stays.**
 
 ## Phases and effort
 
