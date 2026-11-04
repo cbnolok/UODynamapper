@@ -22,6 +22,7 @@ UO asset data during development and research.
 | Terrain Definition | EC `TerrainDefinition.uop` material entries and texture references. `Edit TerrainDefinition.uop` opens the same editor as the UOP Explorer: every definition, saved to a copy of the package. |
 | String Dictionary | EC `string_dictionary.uop` string table. `Edit` changes a string or adds one (other files name a string by its index, so none can be removed); it saves a copy of the package. |
 | Audio | Classic Client `sound.mul` / `soundidx.mul` or `soundLegacyMUL.uop` audio entries, Enhanced Client `Audio.uop`, Classic music (`Music/Digital/Config.txt`, its MP3 files, and any MIDI files of the `Music` folder). |
+| Fonts | Classic `fonts.mul` and `unifont*.mul` glyphs. `Edit` draws a glyph pixel by pixel, sets its size and fields, imports or exports it as an image, adds or removes a Unicode glyph, and saves a copy of each changed file. |
 
 Most views support switching between Classic Client and Enhanced Client sources
 where both exist.

@@ -19,7 +19,14 @@ use std::sync::Arc;
 
 use memmap2::Mmap;
 
+use crate::classic::gump_write::{rgb555_of_rgba, OPAQUE_BLACK, TRANSPARENT, TRANSPARENT_ALPHA};
 use crate::utils::color::color_lut;
+
+/// Bytes of an RGBA pixel.
+const RGBA_CHANNELS: usize = 4;
+const BITS_PER_BYTE: usize = 8;
+/// From this alpha on, a pixel of an image is drawn in a Unicode glyph.
+const DRAWN_ALPHA_MIN: u8 = 128;
 
 pub const ASCII_PRINTABLE_START: u8 = 32;
 pub const ASCII_GLYPH_COUNT: usize = 224;
@@ -71,6 +78,66 @@ impl AsciiFontGlyph {
             rgba,
         })
     }
+
+    /// As [`Self::to_rgba8`], with the pixels of value 0 transparent: what [`Self::set_rgba8`] reads back. Reads the
+    /// pixels there are, so a glyph with too few is shorter.
+    pub fn to_transparent_rgba8(&self) -> FontRgbaImage {
+        let lut = color_lut();
+        let mut rgba = Vec::with_capacity(self.pixels.len() * RGBA_CHANNELS);
+        for &pixel in &self.pixels {
+            if pixel == TRANSPARENT {
+                rgba.extend_from_slice(&[0; RGBA_CHANNELS]);
+            } else {
+                rgba.extend_from_slice(&lut[usize::from(pixel)].to_le_bytes());
+            }
+        }
+        FontRgbaImage { width: u32::from(self.width), height: u32::from(self.height), rgba }
+    }
+
+    /// The pixel of an opaque colour; black is the same as in art and gumps, since 0 is left for transparent.
+    pub fn pixel_of_rgb([red, green, blue]: [u8; 3]) -> u16 {
+        match rgb555_of_rgba(&[red, green, blue]) {
+            TRANSPARENT => OPAQUE_BLACK,
+            pixel => pixel,
+        }
+    }
+
+    /// Replaces the size and pixels with an RGBA image: a transparent pixel is 0, any other its colour. `byte 3` stays.
+    pub fn set_rgba8(&mut self, width: u8, height: u8, rgba: &[u8]) -> eyre::Result<()> {
+        check_image_len(width, height, rgba)?;
+        self.pixels = rgba
+            .chunks_exact(RGBA_CHANNELS)
+            .map(|pixel| if pixel[3] == TRANSPARENT_ALPHA { TRANSPARENT } else { Self::pixel_of_rgb([pixel[0], pixel[1], pixel[2]]) })
+            .collect();
+        self.width = width;
+        self.height = height;
+        Ok(())
+    }
+
+    /// Changes the size: the pixels both sizes have stay, the new ones are 0.
+    pub fn resize(&mut self, width: u8, height: u8) {
+        if (width, height) == (self.width, self.height) {
+            return;
+        }
+        let (old_width, new_width) = (usize::from(self.width), usize::from(width));
+        let mut pixels = vec![TRANSPARENT; new_width * usize::from(height)];
+        for y in 0..usize::from(self.height.min(height)) {
+            for x in 0..old_width.min(new_width) {
+                pixels[y * new_width + x] = self.pixels[y * old_width + x];
+            }
+        }
+        self.pixels = pixels;
+        self.width = width;
+        self.height = height;
+    }
+}
+
+fn check_image_len(width: u8, height: u8, rgba: &[u8]) -> eyre::Result<()> {
+    let expected = usize::from(width) * usize::from(height) * RGBA_CHANNELS;
+    if rgba.len() != expected {
+        eyre::bail!("a {width}x{height} image has {expected} RGBA bytes, not {}", rgba.len());
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,6 +156,61 @@ pub struct UnicodeFontGlyph {
 }
 
 impl UnicodeFontGlyph {
+    /// A glyph with no pixel set and no offset.
+    pub fn blank(width: u8, height: u8) -> Self {
+        Self { offset_x: 0, offset_y: 0, width, height, bitmap: vec![0; unicode_bitmap_len(width, height)] }
+    }
+
+    /// Sets a pixel; false when it is outside the glyph.
+    pub fn set_bit(&mut self, x: usize, y: usize, on: bool) -> bool {
+        let Some(stride) = self.row_stride_bytes() else {
+            return false;
+        };
+        if x >= usize::from(self.width) || y >= usize::from(self.height) {
+            return false;
+        }
+        let Some(byte) = self.bitmap.get_mut(y * stride + x / BITS_PER_BYTE) else {
+            return false;
+        };
+        let mask = 1u8 << (BITS_PER_BYTE - 1 - x % BITS_PER_BYTE);
+        if on {
+            *byte |= mask;
+        } else {
+            *byte &= !mask;
+        }
+        true
+    }
+
+    /// Replaces the size and pixels with an RGBA image: a pixel is drawn when it is opaque and not black, so a light
+    /// mark on either transparency or black reads the same. The offsets stay.
+    pub fn set_rgba8(&mut self, width: u8, height: u8, rgba: &[u8]) -> eyre::Result<()> {
+        check_image_len(width, height, rgba)?;
+        let mut glyph = Self { offset_x: self.offset_x, offset_y: self.offset_y, ..Self::blank(width, height) };
+        for (index, pixel) in rgba.chunks_exact(RGBA_CHANNELS).enumerate() {
+            if pixel[3] >= DRAWN_ALPHA_MIN && pixel[..3].iter().any(|&channel| channel != 0) {
+                glyph.set_bit(index % usize::from(width), index / usize::from(width), true);
+            }
+        }
+        *self = glyph;
+        Ok(())
+    }
+
+    /// Changes the size: the pixels both sizes have stay, the new ones are off.
+    pub fn resize(&mut self, width: u8, height: u8) {
+        if (width, height) == (self.width, self.height) {
+            return;
+        }
+        let mut glyph = Self { offset_x: self.offset_x, offset_y: self.offset_y, ..Self::blank(width, height) };
+        for y in 0..usize::from(self.height.min(height)) {
+            for x in 0..usize::from(self.width.min(width)) {
+                if self.bit_at(x, y).unwrap_or(false) {
+                    glyph.set_bit(x, y, true);
+                }
+            }
+        }
+        *self = glyph;
+    }
+
     pub fn row_stride_bytes(&self) -> Option<usize> {
         if self.width == 0 || self.height == 0 {
             return None;

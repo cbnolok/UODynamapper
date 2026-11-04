@@ -1,30 +1,34 @@
-//! Read-only view of the Classic fonts (`fonts.mul`, `unifont*.mul`) through `uocf::classic::fonts`: the glyphs of
-//! an ASCII font, or a 256-character page of a Unicode font and a sample text.
+//! View of the Classic fonts (`fonts.mul`, `unifont*.mul`) through `uocf::classic::fonts`: the glyphs of an ASCII font,
+//! or a 256-character page of a Unicode font and a sample text. `Edit` is in [`super::classic_fonts_editor`].
 
 use eframe::egui;
 use uocf::classic::fonts::{ASCII_GLYPH_COUNT, ASCII_PRINTABLE_START, ClassicFonts, FontRgbaImage};
 
+use super::classic_fonts_editor::FontsEditor;
 use crate::app::UopInspectorApp;
 
 /// `ClassicFonts` looks for `unifont.mul` to `unifont19.mul`.
 const UNICODE_FONT_SLOTS: usize = 20;
 const PAGE_GLYPHS: u32 = 256;
 const LAST_PAGE: u32 = (u16::MAX as u32 + 1) / PAGE_GLYPHS - 1;
-const FOREGROUND: [u8; 4] = [255, 255, 255, 255];
+pub(super) const FOREGROUND: [u8; 4] = [255, 255, 255, 255];
 const MIN_ZOOM: f32 = 1.0;
 const MAX_ZOOM: f32 = 8.0;
 const DEFAULT_ZOOM: f32 = 2.0;
 const CELL_PADDING: f32 = 6.0;
 const DEFAULT_SAMPLE: &str = "The quick brown fox jumps over the lazy dog 0123456789";
 const TOOLS_PANEL_WIDTH: f32 = 220.0;
+const SELECTED_STROKE_WIDTH: f32 = 2.0;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum FontChoice {
+pub(super) enum FontChoice {
     Ascii(usize),
     Unicode(usize),
 }
 
 struct Glyph {
+    /// Its character or code point.
+    code: u32,
     label: String,
     details: String,
     texture: Option<egui::TextureHandle>,
@@ -40,7 +44,9 @@ pub struct ClassicFontsState {
     /// The glyphs of `built_for`.
     glyphs: Vec<Glyph>,
     sample_texture: Option<(String, egui::TextureHandle)>,
-    built_for: Option<(FontChoice, u32)>,
+    /// The font, the page and the editor's generation.
+    built_for: Option<(FontChoice, u32, u64)>,
+    pub(super) editor: FontsEditor,
 }
 
 impl Default for ClassicFontsState {
@@ -54,6 +60,7 @@ impl Default for ClassicFontsState {
             glyphs: Vec::new(),
             sample_texture: None,
             built_for: None,
+            editor: FontsEditor::default(),
         }
     }
 }
@@ -66,23 +73,28 @@ fn char_label(codepoint: u32) -> String {
     char::from_u32(codepoint).filter(|c| !c.is_control()).map_or_else(|| format!("U+{codepoint:04X}"), |c| c.to_string())
 }
 
-fn build_glyphs(ctx: &egui::Context, fonts: &ClassicFonts, choice: FontChoice, page: u32) -> Vec<Glyph> {
+/// The glyphs of the file being edited when it is open, else of the loaded one.
+fn build_glyphs(ctx: &egui::Context, fonts: &ClassicFonts, editor: &FontsEditor, choice: FontChoice, page: u32) -> Vec<Glyph> {
     let mut glyphs = Vec::new();
     match choice {
         FontChoice::Ascii(font) => {
-            let Some(font_data) = fonts.ascii_font(font) else { return glyphs };
+            let Some(font_data) = editor.ascii_font(font).or_else(|| fonts.ascii_font(font)) else { return glyphs };
             for (index, glyph) in font_data.glyphs.iter().enumerate().take(ASCII_GLYPH_COUNT) {
                 let code = u32::from(ASCII_PRINTABLE_START) + index as u32;
                 let (texture, details) = match glyph.to_rgba8() {
                     Ok(image) => (texture(ctx, format!("ascii_font_{font}_{index}"), &image), format!("{} x {}, byte 3 = {}", glyph.width, glyph.height, glyph.unknown)),
                     Err(error) => (None, format!("{error:#}")),
                 };
-                glyphs.push(Glyph { label: format!("{} ({code})", char_label(code)), details, texture, size: egui::vec2(glyph.width.into(), glyph.height.into()) });
+                glyphs.push(Glyph { code, label: format!("{} ({code})", char_label(code)), details, texture, size: egui::vec2(glyph.width.into(), glyph.height.into()) });
             }
         }
         FontChoice::Unicode(font) => {
             for code in page * PAGE_GLYPHS..(page + 1) * PAGE_GLYPHS {
-                let (texture, details, size) = match fonts.unicode_glyph(font, code as u16) {
+                let glyph = match editor.unicode_file(font) {
+                    Some(file) => Ok(file.glyph(code as u16).cloned()),
+                    None => fonts.unicode_glyph(font, code as u16),
+                };
+                let (texture, details, size) = match glyph {
                     Ok(Some(glyph)) => match glyph.to_rgba8(FOREGROUND, None) {
                         Ok(image) => (
                             texture(ctx, format!("unicode_font_{font}_{code}"), &image),
@@ -94,7 +106,7 @@ fn build_glyphs(ctx: &egui::Context, fonts: &ClassicFonts, choice: FontChoice, p
                     Ok(None) => continue,
                     Err(error) => (None, format!("{error:#}"), egui::Vec2::ZERO),
                 };
-                glyphs.push(Glyph { label: format!("{} U+{code:04X}", char_label(code)), details, texture, size });
+                glyphs.push(Glyph { code, label: format!("{} U+{code:04X}", char_label(code)), details, texture, size });
             }
         }
     }
@@ -110,6 +122,10 @@ fn choice_label(choice: FontChoice) -> String {
 }
 
 pub fn ui_classic_fonts(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
+    let choice = app.classic_file_views.fonts.choice;
+    egui::Panel::top("classic_fonts_editor_bar").show(ui, |ui| {
+        ui.horizontal_wrapped(|ui| super::classic_fonts_editor::bar(app, ui, choice));
+    });
     let cc_path = app.settings.cc_path.clone();
     let state = &mut app.classic_file_views.fonts;
     egui::Panel::left("classic_fonts_tools").resizable(true).default_size(TOOLS_PANEL_WIDTH).show(ui, |ui| {
@@ -123,6 +139,7 @@ pub fn ui_classic_fonts(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut
             state.fonts = Some(ClassicFonts::load(&cc_path).map_err(|error| format!("{error:#}")));
             state.built_for = None;
             state.sample_texture = None;
+            state.editor.forget_unchanged();
         }
         let fonts = match &state.fonts {
             Some(Ok(fonts)) => fonts,
@@ -169,9 +186,14 @@ pub fn ui_classic_fonts(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut
             }
             ui.separator();
         }
-        let wanted = (state.choice, state.page);
+        let editing = state.editor.enabled;
+        if editing {
+            state.editor.glyph_panel(ui, state.choice);
+            ui.separator();
+        }
+        let wanted = (state.choice, state.page, state.editor.generation());
         if state.built_for != Some(wanted) {
-            state.glyphs = build_glyphs(ctx, fonts, state.choice, state.page);
+            state.glyphs = build_glyphs(ctx, fonts, &state.editor, state.choice, state.page);
             state.built_for = Some(wanted);
         }
         if state.glyphs.is_empty() {
@@ -192,7 +214,19 @@ pub fn ui_classic_fonts(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut
                             });
                         })
                         .response;
-                    response.on_hover_text(&glyph.details);
+                    if editing {
+                        let response = response.interact(egui::Sense::click());
+                        if response.clicked() {
+                            state.editor.select(glyph.code);
+                        }
+                        if state.editor.selected() == glyph.code {
+                            let stroke = egui::Stroke::new(SELECTED_STROKE_WIDTH, ui.visuals().selection.bg_fill);
+                            ui.painter().rect_stroke(response.rect, 0.0, stroke, egui::StrokeKind::Inside);
+                        }
+                        response.on_hover_text(&glyph.details);
+                    } else {
+                        response.on_hover_text(&glyph.details);
+                    }
                 }
             });
         });

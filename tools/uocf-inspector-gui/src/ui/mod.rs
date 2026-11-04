@@ -34,6 +34,7 @@ pub mod classic_maps;
 pub mod classic_music;
 pub mod ec_interface_textures;
 pub mod classic_fonts;
+pub mod classic_fonts_editor;
 pub mod classic_defs;
 pub mod classic_image_import;
 pub mod textures;
@@ -62,7 +63,7 @@ pub(crate) mod test_support {
     }
 }
 
-/// The state of the read-only Classic file views.
+/// The state of the Classic file views.
 #[derive(Default)]
 pub struct ClassicFileViews {
     pub maps: classic_maps::ClassicMapsState,
