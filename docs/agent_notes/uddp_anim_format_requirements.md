@@ -158,6 +158,27 @@ figure the fair one.
 - Never execute client binaries or write into client folders. Client behaviour comes from static analysis.
 - The test machine has 27 GB of RAM. Benchmarks run one at a time with an 18 GB cap.
 
+### Minimum GPU
+
+The bar is the GTX 900 and 10 series and AMD Polaris (the user, 2026-11-04). BC1, BC3, BC7, storage buffers and compute can
+all be used without a fallback. None of the formats discussed here needs anything newer than that. Vulkan versions per GPU,
+and Intel and AMD integrated GPUs, aren't checked yet.
+
+Phones are out of scope. A WebGPU survey of Android reports BC support at 0 % on ARM Mali, about 25.5 % on Adreno 6xx and
+100 % on Adreno 7xx and 8xx. An Apple forum answer says iOS devices generally lack it. A phone mode would need ASTC or ETC2.
+
+### What the original clients ship
+
+Enhanced and Kingdom Reborn frames aren't block-compressed on disk: they are AMOU palettes and RLE. Their textures are DDS,
+mostly DXT5 rather than DXT1. DXT5 (BC3) costs the same VRAM as BC7. Which format they use in VRAM after decoding a frame
+hasn't been traced. Share of each package's decompressed DDS bytes:
+
+| Package | Enhanced DXT5 / DXT1 | Kingdom Reborn DXT5 / DXT1 |
+|---|---:|---:|
+| `LegacyTexture.uop` | 100.0 % / 0.0 % | 100.0 % / 0.0 % |
+| `Texture.uop` | 85.4 % / 14.6 % | 96.2 % / 3.8 % |
+| `TerrainTexture.uop` | 95.3 % / 4.7 % | 89.8 % / 10.2 % |
+
 ### Frame and stream sizes
 
 Most frames are tiny, but most pixels are in the few large ones. So tiny frames set the number of streams and what each
@@ -534,7 +555,7 @@ not counted; Classic 2.52 against 2.42). Its creature-crowd decode is faster (29
 | Storage per client | Indexed slot planes, lossless, zstd 19, hue in the shader; LZ4 HC is the alternative at about 22 % more disk | The user |
 | Load unit | One stream per (action, direction), faced direction first | The user |
 | Where the low-end BC7 tier's quality floor sits, and which RDO level it uses | 80 suggested as a floor | Rows being measured; contact sheets; the user's eye |
-| Whether the low-end tier also covers Classic | Classic stays lossless R8 unless BC1 proves acceptable: BC7 saves it nothing | Rows being measured |
+| Whether the low-end tier uses BC1 (DXT1), BC7 or a mix | BC1 is the only format that halves VRAM on both clients, at 0.5 bytes per pixel. It keeps 3 colours in blocks with transparency, loses Enhanced's anti-aliased edges and needs a smaller hue mask. Classic stays lossless R8 unless BC1 proves acceptable, since BC7 saves it nothing | Rows being measured |
 | Which GPU layout holds frames in VRAM | Decide after the measurement | Resident bytes per layout; atlas waste; shader cost on a GPU |
 | Runtime interpolation for high frame rates | A separate study | The full frame set |
 | Whether to offer an opt-in flag for unreached art | Keep all | Section 7's trace |
