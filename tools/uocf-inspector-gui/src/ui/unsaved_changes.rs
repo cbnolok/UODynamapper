@@ -35,6 +35,7 @@ const TAB_EDITORS: &[TabEditor] = &[
     super::effects::TAB_EDITOR,
     super::multi_editor::TAB_EDITOR,
     super::classic_multi_editor::TAB_EDITOR,
+    super::multimap_editor::TAB_EDITOR,
     super::tileart_editor::TAB_EDITOR,
     super::tiledata_editor::TAB_EDITOR,
     super::clilocs::TAB_EDITOR,

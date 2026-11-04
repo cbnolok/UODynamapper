@@ -1772,6 +1772,7 @@ pub struct UopInspectorApp {
     pub string_dictionary_editor: crate::ui::string_dictionary::StringDictionaryEditor,
     pub hues_editor: crate::ui::hues_editor::HuesEditor,
     pub classic_multi_editor: crate::ui::classic_multi_editor::ClassicMultiEditor,
+    pub multimap_editor: crate::ui::multimap_editor::MultimapEditor,
     pub cliloc: Option<Arc<Cliloc>>,
     pub cliloc_files: Vec<ClilocFileEntry>,
     pub localized_strings: Option<Arc<LocalizedStringsPackage>>,
@@ -1954,6 +1955,7 @@ impl UopInspectorApp {
             string_dictionary_editor: Default::default(),
             hues_editor: Default::default(),
             classic_multi_editor: Default::default(),
+            multimap_editor: Default::default(),
             cliloc: None,
             cliloc_files: Vec::new(),
             localized_strings: None,
@@ -2169,6 +2171,7 @@ impl UopInspectorApp {
         self.string_dictionary_editor = Default::default();
         self.hues_editor = Default::default();
         self.classic_multi_editor = Default::default();
+        self.multimap_editor = Default::default();
         self.string_dictionary_raw_hash = None;
         self.client_data = None;
         self.cc_tiledata = None;
@@ -4434,6 +4437,7 @@ pub(crate) mod tests {
             string_dictionary_editor: Default::default(),
             hues_editor: Default::default(),
             classic_multi_editor: Default::default(),
+            multimap_editor: Default::default(),
             cliloc: None,
             cliloc_files: Vec::new(),
             localized_strings: None,

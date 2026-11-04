@@ -24,6 +24,7 @@ UO asset data during development and research.
 | Audio | Classic Client `sound.mul` / `soundidx.mul` or `soundLegacyMUL.uop` audio entries, Enhanced Client `Audio.uop`, Classic music (`Music/Digital/Config.txt`, its MP3 files, and any MIDI files of the `Music` folder). |
 | Fonts | Classic `fonts.mul` and `unifont*.mul` glyphs. `Edit` draws a glyph pixel by pixel, sets its size and fields, imports or exports it as an image, adds or removes a Unicode glyph, and saves a copy of each changed file. |
 | Def files | The Classic remap `.def` files, `bodyconv.def`, `Equipconv.def`, `speech.mul`, `skills.mul` and `skillgrp.mul` as tables. `Edit` changes, adds or removes a row and saves a copy of each changed file; lines not edited keep their bytes. |
+| Multimap | The loaded `Multimap.rle`, and multimaps generated from a DDS, a KTX2 or a client's radar. `Edit` replaces the loaded image with a BMP or PNG and saves a copy; `Save RLE...` and `Save PNG...` save the selected image. |
 
 Most views support switching between Classic Client and Enhanced Client sources
 where both exist.

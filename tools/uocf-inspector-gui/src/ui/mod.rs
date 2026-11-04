@@ -20,6 +20,7 @@ pub mod effects;
 mod effects_guide;
 pub mod effects_nif;
 pub mod multimap;
+pub mod multimap_editor;
 pub mod hues;
 pub mod hues_editor;
 pub mod image_export;

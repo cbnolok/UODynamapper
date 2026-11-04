@@ -51,6 +51,8 @@ pub fn ui_multimap(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui
         .show(ui, |ui| {
             ui.heading("Multimap");
             ui.separator();
+            super::multimap_editor::bar(app, ui);
+            ui.separator();
             loaded_rle_controls(app, ui);
             ui.separator();
             converter_controls(app, ui);
@@ -66,8 +68,9 @@ pub fn ui_multimap(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui
 }
 
 fn loaded_rle_controls(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
+    let dirty = app.multimap_editor.is_dirty();
     ui.horizontal(|ui| {
-        if ui.button("Open RLE...").clicked() {
+        if ui.add_enabled(!dirty, egui::Button::new("Open RLE...")).on_disabled_hover_text("Save or revert the changes first.").clicked() {
             if let Some(path) = crate::dialog::file_dialog()
                 .add_filter("Multimap RLE", &["rle"])
                 .pick_file()
@@ -292,7 +295,9 @@ fn preview_tabs(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
 fn preview_actions(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         if ui.button("Save RLE...").clicked() {
-            if let Some((name, image)) = selected_image(app) {
+            if app.multimap_preview_selection == MultimapPreviewSelection::Loaded {
+                super::multimap_editor::save(app);
+            } else if let Some((name, image)) = selected_image(app) {
                 if let Some(path) = crate::dialog::file_dialog()
                     .add_filter("Multimap RLE", &["rle"])
                     .set_file_name(format!("{name}.rle"))
