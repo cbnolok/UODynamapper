@@ -201,7 +201,9 @@ reads it. Enhanced doesn't ship it, but `tileart.uop` can say the same. A body's
 - It plays its own map: a creature.
 - It plays a wearer's map (400 or 666): a human or elf or gargoyle if the placeholder sets race (key 9), else equipment.
 
-Worked out from a cross-tabulation, not yet run as one rule, that gives about 82 % of frames and 21 % of pixels as equipment:
+**This is the rule to use: the user's call on 2026-11-04, as the strongest and most consistent of the three.** A wearer's map
+should not need hard-coding, since it is the body type of any placeholder that sets race. A run of the rule on Enhanced and
+Classic, with that derivation, is pending. Worked out from a cross-tabulation so far, it gives about 82 % of frames and 21 % of pixels as equipment:
 the same split as the table above. It also catches bodies the table gets wrong, such as 987 (GM robe, listed as `HUMAN`) and
 970 (death shroud, not listed).
 
