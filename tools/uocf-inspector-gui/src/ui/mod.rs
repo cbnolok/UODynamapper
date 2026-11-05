@@ -1,6 +1,9 @@
 use eframe::egui;
 use crate::app::UopInspectorApp;
 use std::cmp::Ordering;
+use std::path::Path;
+use uocf::client_config::login_servers::KINGDOM_REBORN_EXE;
+use uocf::enhanced::client_dialect::ClientDialect;
 
 pub mod animation_definitions;
 pub mod animations;
@@ -298,6 +301,144 @@ pub(crate) fn hovered_zoom_factor(ui: &egui::Ui, rect: egui::Rect) -> f32 {
     if ui.rect_contains_pointer(rect) { ui.input(|input| input.zoom_delta()) } else { NO_ZOOM }
 }
 
+/// Where a tab's data comes from, as every source selector names it.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) enum ClientSource {
+    /// The Classic client's files outside UOP packages (`.mul`, and loose files such as `Cliloc.*`).
+    Mul,
+    /// The Classic client's UOP packages.
+    CcUop,
+    /// Kingdom Reborn data in UOP packages: a Kingdom Reborn client's, or the KR art the Enhanced Client carries.
+    KrUop,
+    /// The Enhanced Client's UOP packages.
+    EcUop,
+}
+
+impl ClientSource {
+    /// Every source, in the order the selectors show them.
+    pub(crate) const ALL: [Self; 4] = [Self::Mul, Self::CcUop, Self::KrUop, Self::EcUop];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Mul => "MUL",
+            Self::CcUop => "CC UOP",
+            Self::KrUop => "KR UOP",
+            Self::EcUop => "EC UOP",
+        }
+    }
+}
+
+/// Whether a tab can show a source, with the tooltip of its button.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(crate) enum SourceAvailability {
+    /// Loaded: the tooltip names what is read and from where.
+    Found(String),
+    /// Not loaded: the button is greyed, and the tooltip says what was looked for and where.
+    Missing(String),
+    /// Never applies to the tab: no button.
+    NotApplicable,
+}
+
+/// The client folder the settings name for the Classic files.
+pub(crate) const CLASSIC_FOLDER: &str = "Classic client";
+/// The client folder the settings name for the Enhanced Client or Kingdom Reborn files.
+pub(crate) const ENHANCED_FOLDER: &str = "Enhanced Client or Kingdom Reborn";
+
+/// `files` of a client folder: found when `loaded`, else missing from `folder`, or no folder set.
+pub(crate) fn folder_files_availability(folder: Option<&Path>, folder_kind: &str, files: &str, loaded: bool) -> SourceAvailability {
+    match folder {
+        None => SourceAvailability::Missing(format!("{files}: no {folder_kind} folder is set.")),
+        Some(folder) if loaded => SourceAvailability::Found(format!("{files} from {}", folder.display())),
+        Some(folder) => SourceAvailability::Missing(format!("No {files} loaded from {} (see the log).", folder.display())),
+    }
+}
+
+/// The source of the Enhanced folder's own packages: KR UOP when it holds a Kingdom Reborn client (`UOKR.exe`), else
+/// EC UOP. Cached per folder in the egui memory, since the check lists the folder.
+pub(crate) fn enhanced_folder_source(ctx: &egui::Context, folder: &Path) -> ClientSource {
+    let id = egui::Id::new(("uocf_enhanced_folder_source", folder));
+    if let Some(source) = ctx.data(|data| data.get_temp::<ClientSource>(id)) {
+        return source;
+    }
+    let source = if ClientDialect::of_client_dir(folder).is_kingdom_reborn() { ClientSource::KrUop } else { ClientSource::EcUop };
+    ctx.data_mut(|data| data.insert_temp(id, source));
+    source
+}
+
+/// `files` of the Enhanced folder shown as `source` (KR UOP or EC UOP), by the client the folder holds: missing when it
+/// holds the other one.
+pub(crate) fn enhanced_files_availability(
+    ctx: &egui::Context,
+    folder: Option<&Path>,
+    source: ClientSource,
+    files: &str,
+    loaded: bool,
+) -> SourceAvailability {
+    if let Some(folder) = folder {
+        if enhanced_folder_source(ctx, folder) != source {
+            return SourceAvailability::Missing(match source {
+                ClientSource::KrUop => format!("No Kingdom Reborn client: {} holds no {KINGDOM_REBORN_EXE}.", folder.display()),
+                _ => format!("No Enhanced Client: {} is a Kingdom Reborn client ({KINGDOM_REBORN_EXE}).", folder.display()),
+            });
+        }
+    }
+    folder_files_availability(folder, ENHANCED_FOLDER, files, loaded)
+}
+
+/// One row of toggle buttons, one per source in [`ClientSource::ALL`] order, `selected` (if any) pressed. A missing
+/// source stays greyed, with its tooltip; a source that does not apply is left out. Returns the source clicked this
+/// frame when it differs from `selected`.
+pub(crate) fn source_choice(
+    ui: &mut egui::Ui,
+    selected: Option<ClientSource>,
+    availability: impl Fn(ClientSource) -> SourceAvailability,
+) -> Option<ClientSource> {
+    source_buttons(ui, selected, availability).0
+}
+
+/// [`source_choice`] over a selection that always names a source; returns whether it changed.
+pub(crate) fn source_selector(
+    ui: &mut egui::Ui,
+    selected: &mut ClientSource,
+    availability: impl Fn(ClientSource) -> SourceAvailability,
+) -> bool {
+    match source_choice(ui, Some(*selected), availability) {
+        Some(source) => {
+            *selected = source;
+            true
+        }
+        None => false,
+    }
+}
+
+/// The buttons of [`source_choice`], with the response of each.
+fn source_buttons(
+    ui: &mut egui::Ui,
+    selected: Option<ClientSource>,
+    availability: impl Fn(ClientSource) -> SourceAvailability,
+) -> (Option<ClientSource>, Vec<(ClientSource, egui::Response)>) {
+    ui.horizontal(|ui| {
+        let mut clicked = None;
+        let mut buttons = Vec::new();
+        for source in ClientSource::ALL {
+            let (enabled, tooltip) = match availability(source) {
+                SourceAvailability::Found(tooltip) => (true, tooltip),
+                SourceAvailability::Missing(tooltip) => (false, tooltip),
+                SourceAvailability::NotApplicable => continue,
+            };
+            let pressed = selected == Some(source);
+            let response = ui.add_enabled(enabled, egui::Button::selectable(pressed, source.label()));
+            let response = if enabled { response.on_hover_text(tooltip) } else { response.on_disabled_hover_text(tooltip) };
+            if response.clicked() && !pressed {
+                clicked = Some(source);
+            }
+            buttons.push((source, response));
+        }
+        (clicked, buttons)
+    })
+    .inner
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -333,6 +474,66 @@ mod tests {
         assert!(can_show(Some(false), false));
         assert!(!can_show(Some(true), false), "eframe would panic");
         assert!(can_show(Some(true), true), "a window that exists goes on being drawn");
+    }
+
+    /// Runs a frame of a source selector with `events`; returns the click and each button with its place and whether
+    /// it is enabled.
+    fn source_selector_frame(
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        selected: Option<ClientSource>,
+        availability: &[SourceAvailability; 4],
+    ) -> (Option<ClientSource>, Vec<(ClientSource, egui::Rect, bool)>) {
+        let mut result = (None, Vec::new());
+        let _ = ctx.run_ui(selector_frame_input(events), |ui| {
+            let (clicked, buttons) = source_buttons(ui, selected, |source| {
+                let index = ClientSource::ALL.iter().position(|&candidate| candidate == source).unwrap();
+                availability[index].clone()
+            });
+            result = (clicked, buttons.into_iter().map(|(source, response)| (source, response.rect, response.enabled())).collect());
+        });
+        result
+    }
+
+    fn selector_frame_input(events: Vec<egui::Event>) -> egui::RawInput {
+        const SCREEN_SIZE: egui::Vec2 = egui::vec2(600.0, 100.0);
+        egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, SCREEN_SIZE)), events, ..Default::default() }
+    }
+
+    fn click_at(pos: egui::Pos2) -> Vec<egui::Event> {
+        let button = |pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+        vec![egui::Event::PointerMoved(pos), button(true), button(false)]
+    }
+
+    #[test]
+    fn the_source_selector_keeps_its_order_and_labels_and_greys_missing_sources() {
+        assert_eq!(ClientSource::ALL.map(ClientSource::label), ["MUL", "CC UOP", "KR UOP", "EC UOP"]);
+        let availability = [
+            SourceAvailability::Found("art.mul".to_string()),
+            SourceAvailability::Missing("no artLegacyMUL.uop".to_string()),
+            SourceAvailability::NotApplicable,
+            SourceAvailability::Found("LegacyTexture.uop".to_string()),
+        ];
+        let ctx = egui::Context::default();
+        let selected = Some(ClientSource::Mul);
+        let (clicked, buttons) = source_selector_frame(&ctx, Vec::new(), selected, &availability);
+        assert_eq!(clicked, None);
+        let shown: Vec<_> = buttons.iter().map(|&(source, _, enabled)| (source, enabled)).collect();
+        assert_eq!(shown, [(ClientSource::Mul, true), (ClientSource::CcUop, false), (ClientSource::EcUop, true)], "KR UOP does not apply");
+        assert!(buttons.windows(2).all(|pair| pair[0].1.max.x <= pair[1].1.min.x), "one row, left to right");
+
+        let place = |wanted: ClientSource| buttons.iter().find(|(source, ..)| *source == wanted).unwrap().1.center();
+        let click = |source| source_selector_frame(&ctx, click_at(place(source)), selected, &availability).0;
+        assert_eq!(click(ClientSource::CcUop), None, "a greyed source is not selectable");
+        assert_eq!(click(ClientSource::Mul), None, "the selected source is no change");
+        assert_eq!(click(ClientSource::EcUop), Some(ClientSource::EcUop));
+
+        let mut selection = ClientSource::Mul;
+        let _ = ctx.run_ui(selector_frame_input(click_at(place(ClientSource::EcUop))), |ui| {
+            let index = |source| ClientSource::ALL.iter().position(|&candidate| candidate == source).unwrap();
+            assert!(source_selector(ui, &mut selection, |source| availability[index(source)].clone()));
+        });
+        assert_eq!(selection, ClientSource::EcUop);
     }
 
     #[test]
