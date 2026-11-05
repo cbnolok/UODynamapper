@@ -138,8 +138,9 @@ Results of 2026-11-03, with a later `--apply` reporting `changes: none` on all f
 
 Tier 0 is the exported names. One pair in the Kingdom Reborn `mss32.dll` was refused on its strings.
 
-The `/libs/mss32.dll` names may not be on disk: on 2026-11-04 its save did not finish (see below), while the other
-three were saved. Running the script with `--apply` again restores them, and nothing else depends on them.
+The `/libs/mss32.dll` save of 2026-11-04 did not finish (see below). On 2026-11-05 `--apply` renamed the same 251
+again and `MilesSaveCurrent20261105.java` (in `~/ghidra_scripts/`) saved it, version 4 to 5, with `DomainFile.save`,
+which doesn't wait for analysis. A later run reported `to rename 0`.
 
 ## GhidraMCP: saves that never return
 
@@ -149,6 +150,8 @@ three were saved. Running the script with `--apply` again restores them, and not
 Why analysis never reports done on that program was not found. A timeout on the caller's side does not stop the thread,
 and each retry takes another. Once all three are taken, the server answers nothing. So do not retry a save that timed
 out: look with `jcmd <pid> Thread.print`, and restart Ghidra if the threads are in `ProgramSaves.awaitAnalysis`.
+To save such a program, run a script that ends its transaction and calls `DomainFile.save` directly, as
+`MilesSaveCurrent20261105.java` does.
 
 ## Probes
 
