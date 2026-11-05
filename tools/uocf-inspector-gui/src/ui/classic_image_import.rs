@@ -20,7 +20,6 @@ const PREVIEW_MAX_HEIGHT: f32 = 240.0;
 pub enum PreferredContainer {
     Mul,
     Uop,
-    Any,
 }
 
 /// The import in progress: the files found, the chosen image and what the encoders made of it.
