@@ -45,7 +45,7 @@ use crate::package_progress::{
     AssetProgressReporter, AssetTaskProgressStage,
     build_and_write_package_with_progress,
 };
-use crate::conversion_tables::TERRAIN_TRANSCODE_KDL;
+use crate::conversion_tables::{EC_TERRAIN_OVERRIDES_KDL, TERRAIN_TRANSCODE_KDL};
 use crate::source_paths::{find_first_existing_file, source_path_label_from_dirs};
 use udd_assets::tex_art_cc::{page_entry_path, PagePixelFormat};
 use uocf::utils::bundled_files;
@@ -169,7 +169,9 @@ pub struct TexLandEcAtlasOptions {
     /// The TerrainTranscode.kdl to embed; when unset, the copy shipped with the tools
     /// ([`TERRAIN_TRANSCODE_KDL`]). The package always carries one: it is the only routing table the runtime reads.
     pub transcode_kdl_path: Option<PathBuf>,
-    /// The EcTerrainOverrides.kdl to apply; when unset, one in the source dirs or the working directory is used.
+    /// The EcTerrainOverrides.kdl to embed; when unset, the copy shipped with the tools
+    /// ([`EC_TERRAIN_OVERRIDES_KDL`]). The package always carries it: it is the only terrain overrides table the runtime
+    /// reads.
     pub terrain_overrides_kdl_path: Option<PathBuf>,
 }
 
@@ -231,7 +233,7 @@ pub struct TexLandEcBuildSummary {
     pub unique_texture_selection_count: u32,
     pub unique_packed_texture_count: u32,
     pub terrain_override_entry_count: u32,
-    pub terrain_override_source: Option<PathBuf>,
+    pub terrain_override_source: PathBuf,
     pub ignored_source_texture_ids: Vec<u32>,
     pub slot_count: u32,
     pub populated_slot_count: u32,
@@ -399,6 +401,7 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_prog
     validate_options(options)?;
     // Before the decode and the packing, so a missing or invalid table fails at once.
     let (transcode_kdl_path, transcode_bytes) = read_transcode_kdl(options.transcode_kdl_path.as_deref())?;
+    let terrain_overrides = read_terrain_overrides_kdl(options.terrain_overrides_kdl_path.as_deref())?;
     let payload_progress_reporter = AssetProgressReporter::new(payload_progress);
     let payload_progress = |progress| payload_progress_reporter.report(progress);
 
@@ -408,30 +411,7 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_prog
         .iter()
         .map(|entry| entry.aliases.len() as u32)
         .sum();
-    let terrain_overrides_kdl_path = if let Some(path) = options.terrain_overrides_kdl_path.as_ref() {
-        if !path.is_file() {
-            eyre::bail!("terrain overrides KDL not found: {}", path.display());
-        }
-        Some(path.clone())
-    } else {
-        find_first_existing_file_in_sources_or_cwd(
-            source_dirs,
-            &[
-                "EcTerrainOverrides.kdl",
-                "cc_ec_convtables/EcTerrainOverrides.kdl",
-                "dynamapper/assets/cc_ec_convtables/EcTerrainOverrides.kdl",
-            ],
-        )
-    };
-    let terrain_overrides = terrain_overrides_kdl_path
-        .as_ref()
-        .map(|path| EcTerrainOverrides::load(path).map(|overrides| (path.clone(), overrides)))
-        .transpose()?
-        .map(|(path, overrides)| LoadedTerrainOverrides { path, overrides });
-    let terrain_override_layers_by_material = terrain_overrides
-        .as_ref()
-        .map(|loaded| terrain_override_layers_by_material(&loaded.overrides))
-        .unwrap_or_default();
+    let terrain_override_layers_by_material = terrain_override_layers_by_material(&terrain_overrides.overrides);
     let terrain_override_texture_ids = terrain_override_layers_by_material
         .values()
         .flat_map(|layers| layers.keys().copied())
@@ -486,16 +466,9 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_prog
     let page_manifest = serialize_page_manifest(&pages, options)?;
     let slot_manifest = serialize_slot_manifest(&slot_records, options)?;
     let terrain_provenance_manifest = serialize_terrain_provenance_manifest(&terrain_provenance)?;
-    let terrain_overrides_manifest = terrain_overrides
-        .as_ref()
-        .map(|loaded| {
-            serialize_terrain_overrides_metadata_from_overrides(&loaded.path, &loaded.overrides)
-        })
-        .transpose()?;
-    let terrain_override_entry_count = terrain_overrides_manifest
-        .as_ref()
-        .map(|manifest| manifest.entry_count)
-        .unwrap_or(0);
+    let terrain_overrides_manifest =
+        serialize_terrain_overrides_metadata_from_overrides(&terrain_overrides.path, &terrain_overrides.overrides)?;
+    let terrain_override_entry_count = terrain_overrides_manifest.entry_count;
 
     info!(
         "Converting EC Land from TerrainDefinition.uop / Texture.uop to {}",
@@ -540,18 +513,16 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_prog
         id: None,
         data: &terrain_provenance_manifest,
     })?;
-    if let Some(manifest) = terrain_overrides_manifest.as_ref() {
-        package.add_file(AddFileRequest {
-            data_type: DataType::Metadata as u8,
-            compression: CompressionFlag::ZstdNoDict,
-            width: 0,
-            height: 0,
-            virtual_path: Some(UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH),
-            path_hash64: None,
-            id: None,
-            data: &manifest.bytes,
-        })?;
-    }
+    package.add_file(AddFileRequest {
+        data_type: DataType::Metadata as u8,
+        compression: CompressionFlag::ZstdNoDict,
+        width: 0,
+        height: 0,
+        virtual_path: Some(UDDP_TERRAIN_OVERRIDES_ENTRY_VPATH),
+        path_hash64: None,
+        id: None,
+        data: &terrain_overrides_manifest.bytes,
+    })?;
 
     info!("Embedding terrain routing from {}", transcode_kdl_path.display());
     package.add_file(AddFileRequest {
@@ -803,7 +774,7 @@ pub fn convert_tex_land_ec_uop_to_tex_land_ec_uddp_from_loaded_sources_with_prog
         unique_texture_selection_count,
         unique_packed_texture_count,
         terrain_override_entry_count,
-        terrain_override_source: terrain_overrides.map(|loaded| loaded.path),
+        terrain_override_source: terrain_overrides.path,
         ignored_source_texture_ids,
         slot_count,
         populated_slot_count,
@@ -848,15 +819,11 @@ struct LoadedTerrainOverrides {
     overrides: EcTerrainOverrides,
 }
 
-fn find_first_existing_file_in_sources_or_cwd(
-    source_dirs: &[PathBuf],
-    file_names: &[&str],
-) -> Option<PathBuf> {
-    find_first_existing_file(source_dirs, file_names).or_else(|| {
-        std::env::current_dir()
-            .ok()
-            .and_then(|cwd| find_first_existing_file(&[cwd], file_names))
-    })
+/// The terrain overrides table to embed, read strictly: the one given, else the copy shipped with the tools.
+fn read_terrain_overrides_kdl(given: Option<&Path>) -> eyre::Result<LoadedTerrainOverrides> {
+    let path = bundled_files::resolve(given, EC_TERRAIN_OVERRIDES_KDL)?;
+    let overrides = EcTerrainOverrides::load(&path)?;
+    Ok(LoadedTerrainOverrides { path, overrides })
 }
 
 fn serialize_terrain_overrides_metadata(
@@ -1945,6 +1912,25 @@ terrain 52 {
         let invalid = dir.join("invalid.kdl");
         std::fs::write(&invalid, "row 1 2\n").unwrap();
         let error = read_transcode_kdl(Some(&invalid)).unwrap_err().to_string();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(error.contains("unknown node `row`"), "{error}");
+    }
+
+    /// No terrain overrides table given: the shipped one. A given table must exist and read strictly.
+    #[test]
+    fn the_terrain_overrides_default_to_the_shipped_table_and_must_be_valid() {
+        let shipped = read_terrain_overrides_kdl(None).expect("the shipped terrain overrides");
+        assert_eq!(shipped.path, EC_TERRAIN_OVERRIDES_KDL.checkout_dir().join(EC_TERRAIN_OVERRIDES_KDL.relative_path()));
+
+        let dir = std::env::temp_dir().join(format!("ec_terrain_overrides_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let missing = dir.join("missing.kdl");
+        let error = read_terrain_overrides_kdl(Some(&missing)).err().expect("a missing table").to_string();
+        assert!(error.contains(&missing.display().to_string()), "{error}");
+
+        let invalid = dir.join("invalid.kdl");
+        std::fs::write(&invalid, "row 1 2\n").unwrap();
+        let error = read_terrain_overrides_kdl(Some(&invalid)).err().expect("an invalid table").to_string();
         let _ = std::fs::remove_dir_all(&dir);
         assert!(error.contains("unknown node `row`"), "{error}");
     }

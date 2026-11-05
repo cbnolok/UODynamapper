@@ -981,7 +981,7 @@ enum Commands {
         tilemeta_use_ec_radarcol: bool,
         #[arg(long, help = "Embed this TerrainTranscode.kdl (the terrain routing table) in tex_land_ec.uddp. Default: the copy shipped with the tools.")]
         land_transcode_kdl: Option<PathBuf>,
-        #[arg(long, help = "Apply this EcTerrainOverrides.kdl to tex_land_ec.uddp. Default: the copy shipped with the tools.")]
+        #[arg(long, help = "Embed this EcTerrainOverrides.kdl (the reviewed terrain layer substitutions) in tex_land_ec.uddp. Default: the copy shipped with the tools.")]
         land_terrain_overrides_kdl: Option<PathBuf>,
         #[arg(long, default_value_t = EC_ART_DEFAULT_ATLAS_PAGE_WIDTH)]
         art_atlas_width: u32,
@@ -1921,13 +1921,11 @@ where
                 land_summary.unique_texture_selection_count,
                 land_summary.unique_packed_texture_count,
             );
-            if let Some(path) = land_summary.terrain_override_source.as_ref() {
-                info!(
-                    "Embedded {} reviewed terrain override entries from '{}'.",
-                    land_summary.terrain_override_entry_count,
-                    path.display()
-                );
-            }
+            info!(
+                "Embedded {} reviewed terrain override entries from '{}'.",
+                land_summary.terrain_override_entry_count,
+                land_summary.terrain_override_source.display()
+            );
             info!(
                 "Wrote {} pages ({}) for {} populated land slots out of {} total slots to '{}'.",
                 land_summary.page_count,
