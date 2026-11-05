@@ -11,7 +11,7 @@ use uocf::enhanced::audio::{AudioKind, AudioPackage, AUDIO_ENTRY_ROOT};
 use uocf::enhanced::audio_edit::{AudioImportOptions, AudioPackageEditor, AudioPut, AudioTarget, NewAudio};
 
 use crate::app::{SoundPlayer, SoundSource, UopInspectorApp};
-use crate::ui::{classic_music, list_sort_controls, sorted_indices_by};
+use crate::ui::{classic_music, go_to_field, list_sort_controls, sorted_indices_by};
 
 const SOUNDS_LIST_PANEL_WIDTH: f32 = 280.0;
 /// The replace options, kept in the egui memory.
@@ -377,6 +377,7 @@ fn ui_classic_sounds(app: &mut UopInspectorApp, _ctx: &egui::Context, ui: &mut e
                 egui::TextEdit::singleline(&mut app.sound_search_query)
                     .hint_text("Filter by slot or name"),
             );
+            let go_to = go_to_field(ui, "sound_entries");
             let sort = list_sort_controls(ui, "sound_entries", &["Slot", "Name", "Duration", "Bytes"], 0);
             ui.separator();
 
@@ -393,16 +394,23 @@ fn ui_classic_sounds(app: &mut UopInspectorApp, _ctx: &egui::Context, ui: &mut e
                         _ => left.slot_id.cmp(&right.slot_id),
                     }
                 });
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    for index in sorted_indices {
+                let visible_indices: Vec<usize> = sorted_indices
+                    .into_iter()
+                    .filter(|&index| {
                         let entry = &entries[index];
-                        if !query.is_empty()
-                            && !entry.slot_id.to_string().contains(&query)
-                            && !entry.name.to_ascii_lowercase().contains(&query)
-                        {
-                            continue;
-                        }
-
+                        query.is_empty()
+                            || entry.slot_id.to_string().contains(&query)
+                            || entry.name.to_ascii_lowercase().contains(&query)
+                    })
+                    .collect();
+                let went_to = go_to.position_in(visible_indices.iter().map(|&index| u64::from(entries[index].slot_id)));
+                if let Some(position) = went_to {
+                    app.selected_sound_slot = entries[visible_indices[position]].slot_id;
+                    app.selected_sound_id = app.selected_sound_slot;
+                }
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    for index in visible_indices {
+                        let entry = &entries[index];
                         let label = if entry.name.is_empty() {
                             format!("{:04}  {:.2}s", entry.slot_id, entry.duration_seconds)
                         } else {
@@ -411,10 +419,12 @@ fn ui_classic_sounds(app: &mut UopInspectorApp, _ctx: &egui::Context, ui: &mut e
                                 entry.slot_id, entry.name, entry.duration_seconds, entry.pcm_bytes
                             )
                         };
-                        if ui
-                            .selectable_label(app.selected_sound_slot == entry.slot_id, label)
-                            .clicked()
-                        {
+                        let selected = app.selected_sound_slot == entry.slot_id;
+                        let response = ui.selectable_label(selected, label);
+                        if went_to.is_some() && selected {
+                            response.scroll_to_me(Some(egui::Align::Center));
+                        }
+                        if response.clicked() {
                             app.selected_sound_slot = entry.slot_id;
                             app.selected_sound_id = entry.slot_id;
                         }
@@ -534,6 +544,7 @@ fn ui_enhanced_audio(app: &mut UopInspectorApp, _ctx: &egui::Context, ui: &mut e
             ui.heading("Audio.uop");
             new_entry_section(app, ui, audio.path());
             ui.add(egui::TextEdit::singleline(&mut app.sound_search_query).hint_text("Filter by id or name"));
+            let go_to = go_to_field(ui, "ec_audio_entries");
             let sort = list_sort_controls(ui, "ec_audio_entries", &["Id", "Name"], 0);
             ui.separator();
             let Some(entries) = app.ec_audio_entries.clone() else { return };
@@ -543,15 +554,23 @@ fn ui_enhanced_audio(app: &mut UopInspectorApp, _ctx: &egui::Context, ui: &mut e
                 1 => left.0.cmp(&right.0),
                 _ => (left.1.is_none(), left.1).cmp(&(right.1.is_none(), right.1)),
             });
-            let mut clicked = None;
+            let visible_indices: Vec<usize> = sorted_indices
+                .into_iter()
+                .filter(|&index| query.is_empty() || rows[index].0.to_ascii_lowercase().contains(&query))
+                .collect();
+            // Entries without an id are not a Go-to target.
+            let numbered: Vec<usize> = visible_indices.iter().copied().filter(|&index| rows[index].1.is_some()).collect();
+            let went_to = go_to.position_in(numbered.iter().filter_map(|&index| rows[index].1).map(u64::from));
+            let mut clicked = went_to.map(|position| entries[numbered[position]].hash);
             egui::ScrollArea::vertical().show(ui, |ui| {
-                for index in sorted_indices {
+                for index in visible_indices {
                     let label = &rows[index].0;
-                    if !query.is_empty() && !label.to_ascii_lowercase().contains(&query) {
-                        continue;
-                    }
                     let hash = entries[index].hash;
-                    if ui.selectable_label(app.selected_ec_audio_hash == Some(hash), label).clicked() {
+                    let response = ui.selectable_label(app.selected_ec_audio_hash == Some(hash), label);
+                    if went_to.is_some() && clicked == Some(hash) {
+                        response.scroll_to_me(Some(egui::Align::Center));
+                    }
+                    if response.clicked() {
                         clicked = Some(hash);
                     }
                 }

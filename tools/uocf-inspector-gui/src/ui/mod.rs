@@ -217,6 +217,72 @@ pub(super) fn sorted_indices_by<T>(
     indices
 }
 
+const GO_TO_HINT: &str = "id or 0x id";
+const GO_TO_FIELD_WIDTH: f32 = 90.0;
+const HEX_ID_PREFIXES: [&str; 2] = ["0x", "0X"];
+const HEX_RADIX: u32 = 16;
+
+/// What a "Go to" field reports in a frame.
+pub(crate) struct GoTo {
+    /// The id typed, in the frame Enter is pressed or "Go" is clicked.
+    pub target: Option<u64>,
+    /// Whether the field has the keyboard: the arrow keys are then its own, not the list's.
+    pub has_focus: bool,
+}
+
+impl GoTo {
+    /// The position in `ids`, the list's ids in the order shown, of the entry to jump to: the typed id, or the nearest.
+    pub(crate) fn position_in(&self, ids: impl IntoIterator<Item = u64>) -> Option<usize> {
+        self.target.and_then(|target| nearest_id_position(ids, target))
+    }
+}
+
+/// A "Go to" field for a list of entries by id, typed in decimal or as 0x hex. Its text lives in egui's memory under
+/// `id_salt`, so a list adopts it without a field of its own. The list selects `GoTo::position_in` and scrolls to it:
+/// `centered_row_offset` for a list drawn with `show_rows`, else `Response::scroll_to_me`.
+pub(crate) fn go_to_field(ui: &mut egui::Ui, id_salt: impl std::hash::Hash + std::fmt::Debug) -> GoTo {
+    let id = ui.make_persistent_id(("uocf_go_to", id_salt));
+    let mut text = ui.data_mut(|data| data.get_temp::<String>(id)).unwrap_or_default();
+    let mut go_to = GoTo { target: None, has_focus: false };
+    ui.horizontal(|ui| {
+        ui.label("Go to:");
+        let response = ui.add(egui::TextEdit::singleline(&mut text).hint_text(GO_TO_HINT).desired_width(GO_TO_FIELD_WIDTH));
+        go_to.has_focus = response.has_focus();
+        let entered = response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+        let parsed = parse_entry_id(&text);
+        let clicked = ui.add_enabled(parsed.is_some(), egui::Button::new("Go")).clicked();
+        if entered || clicked {
+            go_to.target = parsed;
+        }
+        if parsed.is_none() && !text.trim().is_empty() {
+            ui.colored_label(ui.visuals().error_fg_color, "not an id");
+        }
+    });
+    ui.data_mut(|data| data.insert_temp(id, text));
+    go_to
+}
+
+/// An entry id typed in decimal or as 0x hex.
+pub(crate) fn parse_entry_id(text: &str) -> Option<u64> {
+    let text = text.trim();
+    match HEX_ID_PREFIXES.iter().find_map(|prefix| text.strip_prefix(prefix)) {
+        Some(hex) => u64::from_str_radix(hex, HEX_RADIX).ok(),
+        None => text.parse().ok(),
+    }
+}
+
+/// The position in `ids` (any order) of `target`, else of the id nearest to it, the lower one on a tie.
+pub(crate) fn nearest_id_position(ids: impl IntoIterator<Item = u64>, target: u64) -> Option<usize> {
+    ids.into_iter().enumerate().min_by_key(|&(_, id)| (id.abs_diff(target), id)).map(|(position, _)| position)
+}
+
+/// The scroll offset of a `show_rows` list of `row_height` rows that puts row `position` in the middle of the view.
+/// `show_rows` lays out only the rows in view, so `scroll_to_me` can't reach the others.
+pub(crate) fn centered_row_offset(ui: &egui::Ui, position: usize, row_height: f32) -> f32 {
+    let stride = row_height + ui.spacing().item_spacing.y;
+    (position as f32 * stride - (ui.available_height() - stride) / 2.0).max(0.0)
+}
+
 /// The zoom factor of no zoom.
 pub(crate) const NO_ZOOM: f32 = 1.0;
 
@@ -268,6 +334,31 @@ mod tests {
         let values = [2, 1, 3];
         let indices = sorted_indices_by(&values, None, |left, right| left.cmp(right));
         assert_eq!(indices, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn go_to_ids_are_decimal_or_0x_hex() {
+        assert_eq!(parse_entry_id("9504"), Some(9504));
+        assert_eq!(parse_entry_id(" 0x2520 "), Some(9504));
+        assert_eq!(parse_entry_id("0X2520"), Some(9504));
+        assert_eq!(parse_entry_id("2520h"), None);
+        assert_eq!(parse_entry_id("0x"), None);
+        assert_eq!(parse_entry_id(""), None);
+        assert_eq!(parse_entry_id("-1"), None);
+    }
+
+    #[test]
+    fn go_to_picks_the_id_or_the_nearest_in_shown_order() {
+        let shown = [30_u64, 10, 20, 40];
+        assert_eq!(nearest_id_position(shown, 20), Some(2));
+        assert_eq!(nearest_id_position(shown, 22), Some(2));
+        assert_eq!(nearest_id_position(shown, 25), Some(2), "a tie goes to the lower id");
+        assert_eq!(nearest_id_position(shown, 0), Some(1));
+        assert_eq!(nearest_id_position(shown, u64::MAX), Some(3));
+        assert_eq!(nearest_id_position([], 5), None);
+        let go_to = GoTo { target: Some(39), has_focus: false };
+        assert_eq!(go_to.position_in(shown), Some(3));
+        assert_eq!(GoTo { target: None, has_focus: false }.position_in(shown), None);
     }
 }
 

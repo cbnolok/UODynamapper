@@ -1,6 +1,6 @@
 use crate::app::{GumpSource, GumpViewerTab, PaperdollEquipmentInput, UopInspectorApp};
 use crate::ui::ec_interface_textures;
-use crate::ui::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by};
+use crate::ui::{arrow_delta, centered_row_offset, go_to_field, list_sort_controls, move_selection, sorted_indices_by};
 use eframe::egui;
 use knuffel::Decode;
 use std::sync::Arc;
@@ -630,6 +630,7 @@ fn ui_gump_id_list(
     }
 
     let selected_id = parse_u32_field(selected_gump_id).ok();
+    let go_to = go_to_field(ui, (id_salt, "go_to"));
     let sort = list_sort_controls(ui, (id_salt, "gump_ids"), &["ID"], 0);
     let sorted_indices = sorted_indices_by(ids, sort.ordering(), |left, right| left.cmp(right));
     let mut selected = None;
@@ -639,7 +640,7 @@ fn ui_gump_id_list(
         .collect::<Vec<_>>();
     let list_rect = ui.available_rect_before_wrap();
     let keyboard_moved = if ui.rect_contains_pointer(list_rect) {
-        arrow_delta(ui, false)
+        arrow_delta(ui, go_to.has_focus)
             .and_then(|delta| move_selection(&visible_ids, selected_id, delta))
             .map(|gump_id| {
                 selected = Some(gump_id);
@@ -651,27 +652,29 @@ fn ui_gump_id_list(
     };
     let row_height = ui.text_style_height(&egui::TextStyle::Body);
     let max_height = ui.available_height().max(row_height);
-    egui::ScrollArea::vertical()
-        .id_salt(id_salt)
-        .max_height(max_height)
-        .show_rows(ui, row_height, sorted_indices.len(), |ui, range| {
-            for index in range {
-                let gump_id = ids[sorted_indices[index]];
-                let response = ui.add_sized(
-                    egui::vec2(ui.available_width(), row_height),
-                    egui::Button::selectable(
-                        selected_id == Some(gump_id),
-                        format!("{gump_id:>5}  0x{gump_id:04X}"),
-                    ),
-                );
-                if keyboard_moved && selected == Some(gump_id) {
-                    response.scroll_to_me(None);
-                }
-                if response.clicked() {
-                    selected = Some(gump_id);
-                }
+    let mut area = egui::ScrollArea::vertical().id_salt(id_salt).max_height(max_height);
+    if let Some(position) = go_to.position_in(visible_ids.iter().map(|&gump_id| u64::from(gump_id))) {
+        selected = Some(visible_ids[position]);
+        area = area.vertical_scroll_offset(centered_row_offset(ui, position, row_height));
+    }
+    area.show_rows(ui, row_height, sorted_indices.len(), |ui, range| {
+        for index in range {
+            let gump_id = ids[sorted_indices[index]];
+            let response = ui.add_sized(
+                egui::vec2(ui.available_width(), row_height),
+                egui::Button::selectable(
+                    selected_id == Some(gump_id),
+                    format!("{gump_id:>5}  0x{gump_id:04X}"),
+                ),
+            );
+            if keyboard_moved && selected == Some(gump_id) {
+                response.scroll_to_me(None);
             }
-        });
+            if response.clicked() {
+                selected = Some(gump_id);
+            }
+        }
+    });
     selected
 }
 

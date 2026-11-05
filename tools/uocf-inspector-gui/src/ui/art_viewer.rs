@@ -2,7 +2,7 @@ use eframe::egui;
 use egui_extras::{Column, TableBuilder};
 use crate::app::{classic_tile_flags_summary, concrete_art_tile_source, ArtSource, ArtViewerRow, TileArtFileEntry, TileMetadataSource, UopInspectorApp, ViewMode};
 use crate::logic::ClientData;
-use super::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by, tileart_editor, tiledata_editor};
+use super::{arrow_delta, go_to_field, list_sort_controls, move_selection, sorted_indices_by, tileart_editor, tiledata_editor};
 use super::classic_image_import::{ui_classic_image_panel, PreferredContainer};
 use uocf::classic::image_files::ClassicImageKind;
 use std::sync::Arc;
@@ -57,6 +57,8 @@ pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
                 let response = ui.text_edit_singleline(&mut app.searches.art);
                 art_search_has_focus |= response.has_focus();
             });
+            let go_to = go_to_field(ui, "art_viewer_rows");
+            art_search_has_focus |= go_to.has_focus;
 
             ui.separator();
             ui.heading("Hue Options");
@@ -97,6 +99,10 @@ pub fn ui_art_viewer(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
                     if app.selected_tex_art_cc_id.is_some() {
                         app.view_mode = ViewMode::TexArtCc;
                     }
+                    true
+                } else if let Some(position) = go_to.position_in(visible_ids.iter().map(|&art_id| u64::from(art_id))) {
+                    app.selected_tex_art_cc_id = Some(visible_ids[position]);
+                    app.view_mode = ViewMode::TexArtCc;
                     true
                 } else {
                     false

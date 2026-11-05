@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 
 use crate::app::{LocalizedStringDisplayRow, LocalizedStringsSource, UopInspectorApp, ViewMode};
 use crate::ui::unsaved_changes::TabEditor;
-use crate::ui::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by, UOP_PATCHER_NOTE};
+use crate::ui::{
+    arrow_delta, centered_row_offset, go_to_field, list_sort_controls, move_selection, sorted_indices_by, UOP_PATCHER_NOTE,
+};
 use eframe::egui;
 use uocf::enhanced::localized_strings::{language_of_hash, write_tables, LocalizedStringTable};
 
@@ -13,6 +15,8 @@ const UOP_FILTER: (&str, &[&str]) = ("UOP package", &["uop"]);
 const KDL_FILTER: (&str, &[&str]) = ("KDL text", &["kdl"]);
 /// Rows of the string editor's text box.
 const EDITOR_TEXT_ROWS: usize = 4;
+/// Height of a row of the LocalizedStrings table.
+const LOCALIZED_STRINGS_ROW_HEIGHT: f32 = 20.0;
 
 pub(super) const TAB_EDITOR: TabEditor = TabEditor {
     tab: ViewMode::Clilocs,
@@ -284,6 +288,7 @@ fn cliloc_list(
     entries: &[uocf::classic::cliloc::ClilocEntry],
     search_has_focus: bool,
 ) {
+    let go_to = go_to_field(ui, "classic_cliloc_entries");
     let query = app.searches.clilocs.trim();
     let row_height = ui.spacing().interact_size.y;
     let sort = list_sort_controls(ui, "classic_cliloc_entries", &["Number", "Text"], 0);
@@ -298,7 +303,7 @@ fn cliloc_list(
         .iter()
         .map(|index| entries[*index].number)
         .collect::<Vec<_>>();
-    let keyboard_moved = if let Some(delta) = arrow_delta(ui, search_has_focus) {
+    let keyboard_moved = if let Some(delta) = arrow_delta(ui, search_has_focus || go_to.has_focus) {
         if let Some(number) =
             move_selection(&visible_numbers, Some(app.selected_cliloc_number), delta)
         {
@@ -309,7 +314,12 @@ fn cliloc_list(
         false
     };
 
-    egui::ScrollArea::vertical().show_rows(ui, row_height, visible_indices.len(), |ui, row_range| {
+    let mut area = egui::ScrollArea::vertical();
+    if let Some(position) = go_to.position_in(visible_numbers.iter().map(|&number| u64::try_from(number).unwrap_or(u64::MAX))) {
+        app.selected_cliloc_number = visible_numbers[position];
+        area = area.vertical_scroll_offset(centered_row_offset(ui, position, row_height));
+    }
+    area.show_rows(ui, row_height, visible_indices.len(), |ui, row_range| {
         for row in row_range {
             let entry = &entries[visible_indices[row]];
                 let label = format!("{}: {}", entry.number, entry.text);
@@ -353,6 +363,7 @@ fn localized_strings_table(
     rows: &[LocalizedStringDisplayRow],
 ) -> Option<u32> {
     let mut clicked = None;
+    let go_to = go_to_field(ui, "localized_strings_rows");
     let query = app.searches.clilocs.to_lowercase();
     let sort = list_sort_controls(ui, "localized_strings_rows", &["ID", "String", "unk"], 0);
     let sorted_indices = sorted_indices_by(rows, sort.ordering(), |left, right| {
@@ -377,25 +388,29 @@ fn localized_strings_table(
         ui.label("String value");
         ui.end_row();
     });
-    egui::ScrollArea::vertical()
-        .id_salt("localized_strings_rows")
-        .show_rows(ui, 20.0, row_count, |ui, row_range| {
-            egui::Grid::new("localized_strings_visible_rows")
-                .striped(true)
-                    .show(ui, |ui| {
-                        for row_index in row_range {
-                        let source_row_index = matching_rows[row_index];
-                        let row = &rows[source_row_index];
-                        let text = localized_text(entries, row);
-                        if ui.selectable_label(app.localized_strings_editor.id_text == row.id, &row.id).clicked() {
-                            clicked = entries.get(row.entry_index).map(|entry| entry.id);
-                        }
-                        ui.label(&row.unk);
-                        ui.label(text);
-                        ui.end_row();
+    let mut area = egui::ScrollArea::vertical().id_salt("localized_strings_rows");
+    let row_ids = matching_rows.iter().map(|&row_index| u64::try_from(string_number(&rows[row_index].id)).unwrap_or(u64::MAX));
+    if let Some(position) = go_to.position_in(row_ids) {
+        clicked = entries.get(rows[matching_rows[position]].entry_index).map(|entry| entry.id);
+        area = area.vertical_scroll_offset(centered_row_offset(ui, position, LOCALIZED_STRINGS_ROW_HEIGHT));
+    }
+    area.show_rows(ui, LOCALIZED_STRINGS_ROW_HEIGHT, row_count, |ui, row_range| {
+        egui::Grid::new("localized_strings_visible_rows")
+            .striped(true)
+                .show(ui, |ui| {
+                    for row_index in row_range {
+                    let source_row_index = matching_rows[row_index];
+                    let row = &rows[source_row_index];
+                    let text = localized_text(entries, row);
+                    if ui.selectable_label(app.localized_strings_editor.id_text == row.id, &row.id).clicked() {
+                        clicked = entries.get(row.entry_index).map(|entry| entry.id);
                     }
-                });
-        });
+                    ui.label(&row.unk);
+                    ui.label(text);
+                    ui.end_row();
+                }
+            });
+    });
     clicked
 }
 

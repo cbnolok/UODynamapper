@@ -2,7 +2,7 @@ use crate::app::{collect_string_dictionary_rows, UopInspectorApp, ViewMode};
 use crate::logic::entry_text_editor::save_entry_copy;
 use crate::ui::editor_bar::{editor_bar, pick_output, report_saved, BarAction, UOP_FILTER};
 use crate::ui::unsaved_changes::TabEditor;
-use crate::ui::{list_sort_controls, sorted_indices_by};
+use crate::ui::{centered_row_offset, go_to_field, list_sort_controls, sorted_indices_by};
 use eframe::egui;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -220,6 +220,7 @@ pub fn ui_string_dictionary(app: &mut UopInspectorApp, _ctx: &egui::Context, ui:
             ui.label("Search:");
             ui.text_edit_singleline(&mut app.searches.string_dictionary);
         });
+        let go_to = go_to_field(ui, "string_dictionary_rows");
         let sort = list_sort_controls(ui, "string_dictionary_rows", &["Index", "Offset", "String"], 0);
         ui.separator();
 
@@ -250,29 +251,35 @@ pub fn ui_string_dictionary(app: &mut UopInspectorApp, _ctx: &egui::Context, ui:
             });
         let editing = app.string_dictionary_editor.enabled;
         let mut clicked = None;
-        egui::ScrollArea::vertical()
-            .id_salt("string_dictionary_rows")
-            .show_rows(ui, ROW_HEIGHT, row_count, |ui, row_range| {
-                egui::Grid::new("string_dictionary_visible_rows")
-                    .striped(true)
-                    .show(ui, |ui| {
-                        for row_index in row_range {
-                            let source_row_index = matching_rows[row_index];
-                            let row = &rows[source_row_index];
-                            if editing {
-                                let selected = app.string_dictionary_editor.selected == Some(source_row_index);
-                                if ui.selectable_label(selected, &row.index).clicked() {
-                                    clicked = Some(source_row_index);
-                                }
-                            } else {
-                                ui.label(&row.index);
+        let mut area = egui::ScrollArea::vertical().id_salt("string_dictionary_rows");
+        // Go to a string by its index: the row is selected only while editing, as a click would.
+        if let Some(position) = go_to.position_in(matching_rows.iter().map(|&row_index| string_number(&rows[row_index].index))) {
+            if editing {
+                clicked = Some(matching_rows[position]);
+            }
+            area = area.vertical_scroll_offset(centered_row_offset(ui, position, ROW_HEIGHT));
+        }
+        area.show_rows(ui, ROW_HEIGHT, row_count, |ui, row_range| {
+            egui::Grid::new("string_dictionary_visible_rows")
+                .striped(true)
+                .show(ui, |ui| {
+                    for row_index in row_range {
+                        let source_row_index = matching_rows[row_index];
+                        let row = &rows[source_row_index];
+                        if editing {
+                            let selected = app.string_dictionary_editor.selected == Some(source_row_index);
+                            if ui.selectable_label(selected, &row.index).clicked() {
+                                clicked = Some(source_row_index);
                             }
-                            ui.label(&row.offset);
-                            ui.monospace(&row.value);
-                            ui.end_row();
+                        } else {
+                            ui.label(&row.index);
                         }
-                    });
-            });
+                        ui.label(&row.offset);
+                        ui.monospace(&row.value);
+                        ui.end_row();
+                    }
+                });
+        });
         if clicked.is_some() {
             select_string(app, clicked);
         }

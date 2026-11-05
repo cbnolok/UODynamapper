@@ -22,6 +22,7 @@ use crate::app::{UopInspectorApp, ViewMode};
 use crate::ui::sounds::{play, save_file, source_selector, stop_and_status};
 use crate::ui::tiledata_editor::same_file;
 use crate::ui::unsaved_changes::TabEditor;
+use crate::ui::{centered_row_offset, go_to_field};
 
 const LIST_PANEL_WIDTH: f32 = 300.0;
 const NEW_NAME_FIELD_WIDTH: f32 = 160.0;
@@ -155,6 +156,7 @@ pub fn ui_classic_music(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
             ui.colored_label(MISSING_FILE_COLOR, error);
         }
         ui.add(egui::TextEdit::singleline(&mut state.filter).hint_text("Filter by id or name"));
+        let go_to = go_to_field(ui, "classic_music_lines");
         ui.separator();
         let mut rows: Vec<(MusicRow, String)> = Vec::new();
         if let Some(config) = &state.config {
@@ -169,7 +171,22 @@ pub fn ui_classic_music(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
         let selected_row = state.selected.as_ref().map(|selected| selected.row.clone());
         let mut clicked = None;
         let row_height = ui.text_style_height(&egui::TextStyle::Body);
-        egui::ScrollArea::vertical().show_rows(ui, row_height, rows.len(), |ui, range| {
+        let mut area = egui::ScrollArea::vertical();
+        // Go to a line of Config.txt by its id; the files have none.
+        let line_positions: Vec<(usize, u32)> = rows
+            .iter()
+            .enumerate()
+            .filter_map(|(position, (row, _))| match row {
+                MusicRow::Line(id) => Some((position, *id)),
+                MusicRow::File(_) => None,
+            })
+            .collect();
+        if let Some(line) = go_to.position_in(line_positions.iter().map(|&(_, id)| u64::from(id))) {
+            let position = line_positions[line].0;
+            clicked = Some(rows[position].0.clone());
+            area = area.vertical_scroll_offset(centered_row_offset(ui, position, row_height));
+        }
+        area.show_rows(ui, row_height, rows.len(), |ui, range| {
             for (row, label) in &rows[range] {
                 if ui.selectable_label(selected_row.as_ref() == Some(row), label).clicked() {
                     clicked = Some(row.clone());

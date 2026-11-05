@@ -1,6 +1,6 @@
 use crate::app::{concrete_art_tile_source, ArtSource, EcHueingMode, HuesSource, UopInspectorApp};
 use eframe::egui;
-use super::{arrow_delta, list_sort_controls, move_selection, sorted_indices_by};
+use super::{arrow_delta, go_to_field, list_sort_controls, move_selection, sorted_indices_by};
 use uocf::classic::art::{static_art_id_for_source, STATIC_TILE_ID_BASE};
 use uocf::enhanced::hues::{
     atlas_coord_for_hue, hue_bitmap_path, HUE_STRIP_WIDTH, HUES_ATLAS_HEIGHT, HUES_ATLAS_PATH,
@@ -52,6 +52,13 @@ fn ui_cc_hues(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui)
         .default_size(CC_HUES_LIST_PANEL_WIDTH)
         .show(ui, |ui| {
             ui.heading("hues.mul Entries");
+            let mut text_has_focus = false;
+            ui.horizontal(|ui| {
+                ui.label("Search:");
+                text_has_focus |= ui.text_edit_singleline(&mut app.searches.hues).has_focus();
+            });
+            let go_to = go_to_field(ui, "cc_hues");
+            text_has_focus |= go_to.has_focus;
             let sort = list_sort_controls(ui, "cc_hues", &["ID", "Name"], 0);
             ui.separator();
 
@@ -74,13 +81,27 @@ fn ui_cc_hues(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui)
                             _ => left.cmp(right),
                         }
                     });
-                    let visible_hues: Vec<u16> = sorted_indices.iter().map(|index| hue_ids[*index]).collect();
-                    let keyboard_moved = if let Some(delta) = arrow_delta(ui, false) {
+                    let query = app.searches.hues.to_lowercase();
+                    let visible_hues: Vec<u16> = sorted_indices
+                        .iter()
+                        .map(|index| hue_ids[*index])
+                        .filter(|hue_id| {
+                            let name = hues
+                                .get((*hue_id as usize).saturating_sub(1))
+                                .map(|hue| String::from_utf8_lossy(&hue.name).to_lowercase())
+                                .unwrap_or_default();
+                            query.is_empty() || hue_id.to_string().contains(&query) || name.contains(&query)
+                        })
+                        .collect();
+                    let keyboard_moved = if let Some(delta) = arrow_delta(ui, text_has_focus) {
                         if let Some(hue_id) =
                             move_selection(&visible_hues, Some(app.selected_hue_id), delta)
                         {
                             app.selected_hue_id = hue_id;
                         }
+                        true
+                    } else if let Some(position) = go_to.position_in(visible_hues.iter().map(|&hue_id| u64::from(hue_id))) {
+                        app.selected_hue_id = visible_hues[position];
                         true
                     } else {
                         false
@@ -321,6 +342,8 @@ fn ui_ec_hues(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui)
                 let res = ui.text_edit_singleline(&mut app.searches.hues);
                 text_has_focus |= res.has_focus();
             });
+            let go_to = go_to_field(ui, "ec_hues");
+            text_has_focus |= go_to.has_focus;
             let sort = list_sort_controls(ui, "ec_hues", &["ID", "Name", "Path", "Hash"], 0);
             ui.separator();
 
@@ -365,6 +388,11 @@ fn ui_ec_hues(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui)
                     app.selected_ec_hue_hash =
                         ec_hues.bitmap_for_hue(hue_id).map(|entry| entry.filename_hash);
                 }
+                true
+            } else if let Some(position) = go_to.position_in(visible_hues.iter().map(|&hue_id| u64::from(hue_id))) {
+                let hue_id = visible_hues[position];
+                app.selected_ec_hue_id = hue_id;
+                app.selected_ec_hue_hash = ec_hues.bitmap_for_hue(hue_id).map(|entry| entry.filename_hash);
                 true
             } else {
                 false
