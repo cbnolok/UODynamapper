@@ -103,11 +103,17 @@ pub(super) fn source_selector(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
             None => {}
         }
         ui.separator();
-        ui.add_enabled_ui(cc_path.is_some(), |ui| {
-            ui.selectable_value(&mut app.sound_source, SoundSource::ClassicMusic, CLASSIC_MUSIC_LABEL)
-                .on_hover_text(CLASSIC_MUSIC_HOVER)
-                .on_disabled_hover_text(format!("{CLASSIC_MUSIC_HOVER} No {CLASSIC_FOLDER} folder is set."));
-        });
+        // Its label never wraps: in a narrow panel the button moves to the next row whole.
+        let music = egui::Button::selectable(app.sound_source == SoundSource::ClassicMusic, CLASSIC_MUSIC_LABEL)
+            .wrap_mode(egui::TextWrapMode::Extend);
+        if ui
+            .add_enabled(cc_path.is_some(), music)
+            .on_hover_text(CLASSIC_MUSIC_HOVER)
+            .on_disabled_hover_text(format!("{CLASSIC_MUSIC_HOVER} No {CLASSIC_FOLDER} folder is set."))
+            .clicked()
+        {
+            app.sound_source = SoundSource::ClassicMusic;
+        }
     });
 }
 
