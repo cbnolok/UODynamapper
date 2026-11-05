@@ -86,7 +86,6 @@ pub enum EcHueingMode {
 pub enum MultisSource {
     ClassicMul,
     Uop,
-    Multimap,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]

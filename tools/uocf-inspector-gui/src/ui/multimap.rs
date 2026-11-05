@@ -14,6 +14,7 @@ use uocf::classic::multimap_rle::{self, MultimapRleImage, BLACK_PIXEL};
 const GENERATED_PLAIN_KEY: u64 = 0x6F00000000000001;
 const GENERATED_ARTISTIC_KEY: u64 = 0x6F00000000000002;
 const MULTIMAP_TOOLS_PANEL_WIDTH: f32 = 340.0;
+const MULTIMAP_ZOOM_RANGE: std::ops::RangeInclusive<f32> = 0.05..=2.0;
 
 struct GenerateRequest {
     input: GenerateInput,
@@ -351,6 +352,7 @@ fn draw_selected_preview(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mu
     ui.horizontal_wrapped(|ui| {
         ui.label(details.label);
         ui.monospace(format!("{} x {}", details.width, details.height));
+        ui.monospace(format!("pixels {}", details.total_pixels));
         ui.monospace(format!("black {}", details.black_pixels));
         ui.monospace(format!("white {}", details.white_pixels));
     });
@@ -362,10 +364,16 @@ fn draw_selected_preview(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mu
     }
 
     ui.add(
-        egui::Slider::new(&mut app.multimap_zoom, 0.05..=2.0)
+        egui::Slider::new(&mut app.multimap_zoom, MULTIMAP_ZOOM_RANGE)
             .logarithmic(true)
             .text("Zoom"),
     );
+    // Ctrl or Shift and the wheel, or a pinch, zoom the image under the pointer; the wheel alone scrolls it.
+    let zoom = ui.input(|input| input.zoom_delta());
+    if zoom != 1.0 && ui.rect_contains_pointer(ui.available_rect_before_wrap()) {
+        app.multimap_zoom =
+            (app.multimap_zoom * zoom).clamp(*MULTIMAP_ZOOM_RANGE.start(), *MULTIMAP_ZOOM_RANGE.end());
+    }
     let size = egui::vec2(
         details.width as f32 * app.multimap_zoom,
         details.height as f32 * app.multimap_zoom,
@@ -379,6 +387,7 @@ struct PreviewDetails {
     label: String,
     width: u32,
     height: u32,
+    total_pixels: usize,
     black_pixels: usize,
     white_pixels: usize,
     source: Option<String>,
@@ -437,6 +446,7 @@ fn details_for_image(
         label: label.to_string(),
         width: image.width,
         height: image.height,
+        total_pixels,
         black_pixels,
         white_pixels: total_pixels.saturating_sub(black_pixels),
         source,

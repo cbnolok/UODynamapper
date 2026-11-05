@@ -87,7 +87,6 @@ const CLASSIC_STATIC_TILE_PIXEL_WIDTH: f32 = 44.0;
 const ENHANCED_STATIC_TILE_PIXEL_WIDTH: f32 = 64.0;
 const CLASSIC_MULTI_SIDEBAR_WIDTH: f32 = 250.0;
 const UOP_MULTI_SIDEBAR_WIDTH: f32 = 300.0;
-const MULTIMAP_SIDEBAR_WIDTH: f32 = 260.0;
 /// Classic `multi.mul` part flag set on the parts the client draws.
 pub(super) const CLASSIC_MULTI_PART_VISIBLE_FLAG: u32 = 0x1;
 /// Alpha of the tint applied to hidden parts in the preview.
@@ -134,16 +133,9 @@ pub fn ui_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
         .and_then(|client| client.multis.as_ref())
         .is_some();
     let has_uop = app.multi_collection.is_some();
-    let has_multimap = app.cc_multimap.is_some();
 
-    if !source_available(app.multis_source, has_classic, has_uop, has_multimap) {
-        app.multis_source = if has_classic {
-            MultisSource::ClassicMul
-        } else if has_uop {
-            MultisSource::Uop
-        } else {
-            MultisSource::Multimap
-        };
+    if !source_available(app.multis_source, has_classic, has_uop) {
+        app.multis_source = if has_classic { MultisSource::ClassicMul } else { MultisSource::Uop };
     }
 
     egui::Panel::top("multis_source_tabs").show(ui, |ui| {
@@ -154,9 +146,6 @@ pub fn ui_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
             if has_uop {
                 let label = format!("{} MultiCollection.uop", multi_collection_source_label(app));
                 ui.selectable_value(&mut app.multis_source, MultisSource::Uop, label);
-            }
-            if has_multimap {
-                ui.selectable_value(&mut app.multis_source, MultisSource::Multimap, "multimap.rle");
             }
             ui.separator();
             ui.label("Art:");
@@ -174,15 +163,13 @@ pub fn ui_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
     match app.multis_source {
         MultisSource::ClassicMul => ui_classic_multis(app, ctx, ui),
         MultisSource::Uop => ui_uop_multis(app, ctx, ui),
-        MultisSource::Multimap => ui_multimap(app, ctx, ui),
     }
 }
 
-fn source_available(source: MultisSource, has_classic: bool, has_uop: bool, has_multimap: bool) -> bool {
+fn source_available(source: MultisSource, has_classic: bool, has_uop: bool) -> bool {
     match source {
         MultisSource::ClassicMul => has_classic,
         MultisSource::Uop => has_uop,
-        MultisSource::Multimap => has_multimap,
     }
 }
 
@@ -685,80 +672,6 @@ fn select_multi(app: &mut UopInspectorApp, multi_id: u32, uop_hash: Option<u64>)
         app.selected_multi_id = multi_id;
         app.selected_multi_uop_hash = uop_hash;
     }
-}
-
-fn ui_multimap(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
-    let Some(multimap) = app.cc_multimap.clone() else {
-        egui::CentralPanel::default().show(ui, |ui| {
-            ui.centered_and_justified(|ui| {
-                ui.label("multimap.rle is not loaded.");
-            });
-        });
-        return;
-    };
-
-    let black_pixels = multimap
-        .pixels
-        .iter()
-        .filter(|&&pixel| pixel == uocf::classic::multimap_rle::BLACK_PIXEL)
-        .count();
-    let total_pixels = multimap.pixels.len();
-    let white_pixels = total_pixels.saturating_sub(black_pixels);
-
-    egui::Panel::left("multimap_sidebar")
-        .resizable(true)
-        .default_size(MULTIMAP_SIDEBAR_WIDTH)
-        .show(ui, |ui| {
-            ui.heading("multimap.rle");
-            ui.separator();
-            egui::Grid::new("multimap_details").striped(true).show(ui, |ui| {
-                ui.label("Dimensions");
-                ui.label(format!("{} x {}", multimap.width, multimap.height));
-                ui.end_row();
-
-                ui.label("Pixels");
-                ui.label(total_pixels.to_string());
-                ui.end_row();
-
-                ui.label("Black");
-                ui.label(black_pixels.to_string());
-                ui.end_row();
-
-                ui.label("White");
-                ui.label(white_pixels.to_string());
-                ui.end_row();
-
-                ui.label("Source");
-                if let Some(path) = &app.cc_multimap_path {
-                    ui.label(path.display().to_string());
-                } else {
-                    ui.label("Loaded from Classic Client path");
-                }
-                ui.end_row();
-            });
-            ui.separator();
-            ui.add(
-                egui::Slider::new(&mut app.multimap_zoom, 0.05..=1.0)
-                    .logarithmic(true)
-                    .text("Zoom"),
-            );
-        });
-
-    egui::CentralPanel::default().show(ui, |ui| {
-        if let Some(handle) = app.get_multimap_texture(ctx) {
-            let size = egui::vec2(
-                multimap.width as f32 * app.multimap_zoom,
-                multimap.height as f32 * app.multimap_zoom,
-            );
-            egui::ScrollArea::both().show(ui, |ui| {
-                ui.add(egui::Image::new(&handle).fit_to_exact_size(size));
-            });
-        } else {
-            ui.centered_and_justified(|ui| {
-                ui.label("Failed to build multimap texture.");
-            });
-        }
-    });
 }
 
 fn draw_multi_details(
