@@ -42,6 +42,8 @@ const OVERLAY_STROKE_WIDTH: f32 = 1.0;
 const ORIGIN_MARK_RADIUS: f32 = 5.0;
 const WARNING_COLOR: egui::Color32 = egui::Color32::from_rgb(230, 180, 60);
 const PREVIEW_STATE_ID: &str = "tile_metadata_preview";
+/// The lines under a small texture wrap at this width, not at the texture's.
+const MIN_CAPTION_WIDTH: f32 = 160.0;
 
 /// What a shader block draws, by its position and the record version.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -356,7 +358,10 @@ fn texture(
     let image_rect = egui::Rect::from_min_size(room.min + margin - extent.min.to_vec2() * scale, size * scale);
     image(&handle, size * scale).paint_at(ui, image_rect);
     pixel_hover(response, image_rect, scale);
-    ui.weak(format!("{} x {}", size.x, size.y));
+    // The lines under the texture wrap at its width: a wider line would widen the column past the image, and its
+    // start would scroll out of view on the left while the image still shows.
+    ui.set_max_width(room.width().max(MIN_CAPTION_WIDTH));
+    caption(ui, egui::RichText::new(format!("{} x {}", size.x, size.y)).weak());
     let Some(window) = window else {
         return;
     };
@@ -376,15 +381,24 @@ fn texture(
         painter.line_segment([origin - egui::vec2(ORIGIN_MARK_RADIUS, 0.0), origin + egui::vec2(ORIGIN_MARK_RADIUS, 0.0)], stroke);
         painter.line_segment([origin - egui::vec2(0.0, ORIGIN_MARK_RADIUS), origin + egui::vec2(0.0, ORIGIN_MARK_RADIUS)], stroke);
     }
-    ui.weak(format!(
-        "{}: {}, {} to {}, {}; offsets {}, {}",
-        window.label, window.min.x, window.min.y, window.max.x, window.max.y, window.offset.x, window.offset.y
-    ));
+    caption(
+        ui,
+        egui::RichText::new(format!(
+            "{}: {}, {} to {}, {}; offsets {}, {}",
+            window.label, window.min.x, window.min.y, window.max.x, window.max.y, window.offset.x, window.offset.y
+        ))
+        .weak(),
+    );
     if window.is_empty() {
-        ui.weak("The window is empty: no box.");
+        caption(ui, egui::RichText::new("The window is empty: no box.").weak());
     } else if !window.fits(handle.size()) {
-        ui.colored_label(WARNING_COLOR, "The window is not inside this image.");
+        caption(ui, egui::RichText::new("The window is not inside this image.").color(WARNING_COLOR));
     }
+}
+
+/// A line under a texture, wrapped at the column's width.
+fn caption(ui: &mut egui::Ui, text: egui::RichText) {
+    ui.add(egui::Label::new(text).wrap());
 }
 
 fn texture_type_label(texture_type: TextureType) -> &'static str {
