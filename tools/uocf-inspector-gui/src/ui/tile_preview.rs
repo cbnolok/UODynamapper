@@ -1,7 +1,7 @@
 //! The texture preview of the Tile Metadata tab, after UOETE's: every texture a tileart.uop record references, a row
 //! per shader block, with the window the client cuts from the art (the bounding box) and the point its offsets are
 //! measured from drawn over it, each overlay with its own toggle. The record is read every frame, so an edit of a
-//! window or an offset moves its overlay at once. A tiledata.mul tile shows its art alone. Ctrl+wheel or a pinch zooms,
+//! window or an offset moves its overlay at once. A tiledata.mul tile shows its art alone. Shift or Ctrl + wheel, or a pinch, zooms,
 //! anchored at the pointer; the plain wheel scrolls.
 //!
 //! The geometry is `UOTileArt::BuildSpriteDescriptor`'s (`docs/agent_notes/ec_sprite_descriptor_geometry.md`): the
@@ -188,7 +188,7 @@ fn store_state(ui: &egui::Ui, state: PreviewState) {
 fn controls(ui: &mut egui::Ui, state: &mut PreviewState, with_overlays: bool) {
     ui.horizontal_wrapped(|ui| {
         ui.label(format!("Zoom {:.0}%", state.zoom * 100.0))
-            .on_hover_text("Ctrl+wheel or a pinch over the image zooms; the wheel scrolls.");
+            .on_hover_text("Shift or Ctrl + wheel, or a pinch, over the image zooms; the wheel scrolls.");
         if ui.small_button("Reset").clicked() {
             state.zoom = DEFAULT_ZOOM;
             state.pending_offset = Some(egui::Vec2::ZERO);

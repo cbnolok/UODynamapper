@@ -2621,11 +2621,9 @@ fn preview_panel(app: &mut UopInspectorApp, lookups: &Lookups, ctx: &egui::Conte
                     let delta = response.drag_delta() * ORBIT_DEGREES_PER_POINT;
                     preview.view.orbit = preview.view.orbit.turned(-delta.x, delta.y);
                 }
-                if response.hovered() {
-                    let zoom = ui.input(|input| input.zoom_delta());
-                    if zoom != 1.0 {
-                        preview.view.zoom = (preview.view.zoom * zoom).clamp(MIN_ZOOM, MAX_ZOOM);
-                    }
+                let zoom = super::hovered_zoom_factor(ui, response.rect);
+                if zoom != super::NO_ZOOM {
+                    preview.view.zoom = (preview.view.zoom * zoom).clamp(MIN_ZOOM, MAX_ZOOM);
                 }
                 if response.double_clicked() {
                     preview.view.zoom = 1.0;

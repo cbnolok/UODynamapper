@@ -345,11 +345,9 @@ pub fn ui_classic_fonts(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut
         // "Go to" turns the page and fills the grid in the same frame.
         state.scroll_to_found = false;
         // Ctrl or Shift + wheel, or a pinch, over the glyphs zooms them.
-        if ui.rect_contains_pointer(grid.inner_rect) {
-            let zoom = ui.input(|input| input.zoom_delta());
-            if zoom != 1.0 {
-                state.zoom = (state.zoom * zoom).clamp(MIN_ZOOM, MAX_ZOOM);
-            }
+        let zoom = super::hovered_zoom_factor(ui, grid.inner_rect);
+        if zoom != super::NO_ZOOM {
+            state.zoom = (state.zoom * zoom).clamp(MIN_ZOOM, MAX_ZOOM);
         }
     });
 }

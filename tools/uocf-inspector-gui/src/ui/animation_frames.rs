@@ -233,7 +233,7 @@ pub(super) fn anchored_offset(pointer: egui::Vec2, offset: egui::Vec2, factor: f
     ((offset + pointer) * factor - pointer).max(egui::Vec2::ZERO)
 }
 
-/// Zoom of a scrolled view: `zoom_delta` (pinch, Ctrl + wheel) changes it while the pointer is over the view,
+/// Zoom of a scrolled view: `zoom_delta` (pinch, Shift or Ctrl + wheel) changes it while the pointer is over the view,
 /// anchored at the pointer. Plain wheel scrolling is left to the scroll area.
 #[derive(Clone, Copy)]
 pub(super) struct AnchoredZoom {
@@ -442,7 +442,7 @@ pub(super) fn show_player(
                 }
             }
         }
-        ui.weak(format!("zoom {:.0}% (Ctrl + wheel)", app.animations_view.frames.player_zoom.zoom * 100.0));
+        ui.weak(format!("zoom {:.0}% (Shift or Ctrl + wheel)", app.animations_view.frames.player_zoom.zoom * 100.0));
     });
 
     let zoom_offset = app.animations_view.frames.player_zoom.update(ui, PLAYER_ZOOMS);
@@ -487,7 +487,7 @@ pub(super) fn show_grid(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut
     let selected = row_of_direction(frames.is_ec, app.selected_direction).map(|(row, _)| row);
     ui.horizontal(|ui| {
         ui.label("All directions");
-        ui.weak(format!("· zoom {:.0}% (Ctrl + wheel) · click a frame to play it", app.animations_view.frames.grid_zoom.zoom * 100.0));
+        ui.weak(format!("· zoom {:.0}% (Shift or Ctrl + wheel) · click a frame to play it", app.animations_view.frames.grid_zoom.zoom * 100.0));
     });
     let zoom_offset = app.animations_view.frames.grid_zoom.update(ui, GRID_ZOOMS);
     let zoom = app.animations_view.frames.grid_zoom.zoom;
