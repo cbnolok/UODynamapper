@@ -4,12 +4,17 @@ use std::path::{Path, PathBuf};
 use crate::app::{LocalizedStringDisplayRow, LocalizedStringsSource, UopInspectorApp, ViewMode};
 use crate::ui::unsaved_changes::TabEditor;
 use crate::ui::{
-    arrow_delta, centered_row_offset, go_to_field, list_sort_controls, move_selection, sorted_indices_by, UOP_PATCHER_NOTE,
+    arrow_delta, centered_row_offset, enhanced_files_availability, enhanced_folder_source, folder_files_availability,
+    go_to_field, list_sort_controls, move_selection, sorted_indices_by, source_choice, ClientSource,
+    SourceAvailability, CLASSIC_FOLDER, UOP_PATCHER_NOTE,
 };
 use eframe::egui;
 use uocf::enhanced::localized_strings::{language_of_hash, write_tables, LocalizedStringTable};
 
 const CLASSIC_CLILOC_LIST_PANEL_WIDTH: f32 = 320.0;
+/// The Classic string files, when none is loaded.
+const CLILOC_FILES: &str = "Cliloc.*";
+const LOCALIZED_STRINGS_FILE: &str = "LocalizedStrings.uop";
 const LOCALIZED_STRINGS_FILES_PANEL_WIDTH: f32 = 340.0;
 const UOP_FILTER: (&str, &[&str]) = ("UOP package", &["uop"]);
 const KDL_FILTER: (&str, &[&str]) = ("KDL text", &["kdl"]);
@@ -64,11 +69,10 @@ impl LocalizedStringsEditor {
 pub fn ui_clilocs(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
     let has_cliloc = app.cliloc.is_some();
     let has_localized = app.localized_strings.is_some();
-    let cliloc_tab_label = app
+    let cliloc_files = app
         .selected_cliloc_file_idx
         .and_then(|index| app.cliloc_files.get(index))
-        .map(|entry| entry.label.as_str())
-        .unwrap_or("Cliloc");
+        .map_or_else(|| CLILOC_FILES.to_string(), |entry| entry.label.clone());
 
     if app.localized_strings_source == LocalizedStringsSource::Cliloc && !has_cliloc && has_localized {
         app.localized_strings_source = LocalizedStringsSource::LocalizedStringsUop;
@@ -79,23 +83,28 @@ pub fn ui_clilocs(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui:
         app.localized_strings_source = LocalizedStringsSource::Cliloc;
     }
 
+    // The Classic Cliloc.* files are not UOP packages: MUL. The Classic client has no strings in a UOP package: no CC
+    // UOP. LocalizedStrings.uop is KR UOP or EC UOP by the Enhanced folder's client.
     egui::Panel::top("cliloc_source_tabs").show(ui, |ui| {
-        ui.horizontal(|ui| {
-            if has_cliloc {
-                ui.selectable_value(
-                    &mut app.localized_strings_source,
-                    LocalizedStringsSource::Cliloc,
-                    cliloc_tab_label,
-                );
-            }
-            if has_localized {
-                ui.selectable_value(
-                    &mut app.localized_strings_source,
-                    LocalizedStringsSource::LocalizedStringsUop,
-                    "localizedstrings.uop",
-                );
+        let ctx = ui.ctx().clone();
+        let cc_path = app.settings.cc_path.as_deref();
+        let ec_path = app.settings.ec_path.as_deref();
+        let selected = match app.localized_strings_source {
+            LocalizedStringsSource::Cliloc => Some(ClientSource::Mul),
+            LocalizedStringsSource::LocalizedStringsUop => ec_path.map(|folder| enhanced_folder_source(&ctx, folder)),
+        };
+        let clicked = source_choice(ui, selected, |source| match source {
+            ClientSource::Mul => folder_files_availability(cc_path, CLASSIC_FOLDER, &cliloc_files, has_cliloc),
+            ClientSource::CcUop => SourceAvailability::NotApplicable,
+            ClientSource::KrUop | ClientSource::EcUop => {
+                enhanced_files_availability(&ctx, ec_path, source, LOCALIZED_STRINGS_FILE, has_localized)
             }
         });
+        match clicked {
+            Some(ClientSource::Mul) => app.localized_strings_source = LocalizedStringsSource::Cliloc,
+            Some(_) => app.localized_strings_source = LocalizedStringsSource::LocalizedStringsUop,
+            None => {}
+        }
     });
 
     match app.localized_strings_source {
