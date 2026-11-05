@@ -6,6 +6,7 @@ use eframe::egui;
 use knuffel::Decode;
 use std::sync::Arc;
 use std::sync::OnceLock;
+use uocf::classic::gump::GumpContainer;
 use uocf::enhanced::hues::{EcHueTables, HUES_UOP_NAME};
 use uocf::enhanced::textures::{ECImageFormat, TextureFile, TextureItem as RawTextureItem};
 use uocf::uop_container::hash::hash_file_name_single;
@@ -20,6 +21,15 @@ const GUMP_SPLIT_MIN_RATIO: f32 = 0.20;
 const GUMP_SPLIT_MAX_RATIO: f32 = 0.80;
 const PAPERDOLL_PROFILE_KDL: &str =
     include_str!("../../../../dynamapper/assets/runtime_specs/paperdoll/PaperdollProfiles.kdl");
+/// Image preview keys of the gumps of each source, or-ed with the gump id.
+const MUL_GUMP_PREVIEW_KEY: u64 = 0x6D00000000000000;
+const CC_UOP_GUMP_PREVIEW_KEY: u64 = 0x6C00000000000000;
+const EC_GUMP_PREVIEW_KEY: u64 = 0x6E00000000000000;
+/// The gump sources, in the order and with the labels of the source buttons of every tab. There is no KR UOP: the
+/// Enhanced Client's files hold one set of gump images, in `Interface.uop`.
+const GUMP_SOURCES: [(GumpSource, &str); 3] =
+    [(GumpSource::Mul, "MUL"), (GumpSource::CcUop, "CC UOP"), (GumpSource::EcUop, "EC UOP")];
+const INTERFACE_UOP_NAME: &str = "interface.uop";
 /// Image preview keys of the rendered paperdolls, or-ed with the body id.
 const PAPERDOLL_PREVIEW_KEY: u64 = 0x7000000000000000;
 const EC_PAPERDOLL_PREVIEW_KEY: u64 = 0x7100000000000000;
@@ -237,9 +247,46 @@ impl From<PaperdollProfileKdl> for PaperdollProfile {
     }
 }
 
+/// The Classic gump container a source reads; `None` for the Enhanced Client's gumps.
+fn classic_container(source: GumpSource) -> Option<GumpContainer> {
+    match source {
+        GumpSource::Mul => Some(GumpContainer::Mul),
+        GumpSource::CcUop => Some(GumpContainer::Uop),
+        GumpSource::EcUop => None,
+    }
+}
+
+fn source_label(source: GumpSource) -> &'static str {
+    GUMP_SOURCES.iter().find(|(candidate, _)| *candidate == source).map_or("", |(_, label)| label)
+}
+
+/// Whether the loaded client files hold `source`.
+fn source_present(app: &UopInspectorApp, source: GumpSource) -> bool {
+    match classic_container(source) {
+        Some(container) => app.cc_gumps.as_ref().is_some_and(|gumps| gumps.has_container(container)),
+        None => app.uop_cache.loaded_uops.iter().any(|loaded| {
+            loaded.path.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.eq_ignore_ascii_case(INTERFACE_UOP_NAME))
+        }),
+    }
+}
+
+/// The tooltip of a source the loaded files do not hold.
+fn source_missing_text(source: GumpSource) -> &'static str {
+    match source {
+        GumpSource::Mul => "gumpidx.mul and gumpart.mul were not found in the Classic Client folder.",
+        GumpSource::CcUop => "gumpartLegacyMUL.uop was not found in the Classic Client folder.",
+        GumpSource::EcUop => "Interface.uop was not found in the Enhanced Client folder.",
+    }
+}
+
 pub fn ui_gumps(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui) {
     egui::CentralPanel::default().show(ui, |ui| {
         let profiles = paperdoll_profiles();
+        if !source_present(app, app.selected_gump_source) {
+            if let Some(&(source, _)) = GUMP_SOURCES.iter().find(|&&(source, _)| source_present(app, source)) {
+                app.selected_gump_source = source;
+            }
+        }
         if app.gump_list_source != Some(app.selected_gump_source)
             || app.gump_list_profile != app.selected_paperdoll_profile
         {
@@ -247,8 +294,13 @@ pub fn ui_gumps(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::U
         }
 
         ui.horizontal(|ui| {
-            ui.selectable_value(&mut app.selected_gump_source, GumpSource::Classic, "CC");
-            ui.selectable_value(&mut app.selected_gump_source, GumpSource::Enhanced, "EC");
+            for (source, label) in GUMP_SOURCES {
+                let button = egui::Button::selectable(app.selected_gump_source == source, label);
+                let present = source_present(app, source);
+                if ui.add_enabled(present, button).on_disabled_hover_text(source_missing_text(source)).clicked() {
+                    app.selected_gump_source = source;
+                }
+            }
             ui.separator();
             ui.selectable_value(
                 &mut app.selected_gump_viewer_tab,
@@ -387,14 +439,14 @@ fn ui_gump_preview_controls(app: &mut UopInspectorApp, ctx: &egui::Context, ui: 
         Ok(gump_id) => {
             ui.monospace(gump_source_detail(app.selected_gump_source, gump_id));
             ui.horizontal(|ui| {
-                if app.selected_gump_source == GumpSource::Enhanced
+                if app.selected_gump_source == GumpSource::EcUop
                     && ui.button("Open raw entry").clicked()
                 {
                     if !select_or_load_ec_gump_entry(app, gump_id) {
                         app.status_message = "interface.uop entry was not loaded.".to_string();
                     }
                 }
-                if app.selected_gump_source == GumpSource::Classic
+                if app.selected_gump_source == GumpSource::CcUop
                     && ui.button("Open CC UOP entry").clicked()
                 {
                     if !select_or_load_cc_gump_entry(app, gump_id) {
@@ -414,7 +466,11 @@ fn ui_gump_preview_controls(app: &mut UopInspectorApp, ctx: &egui::Context, ui: 
             } else if !app.selected_gump_id.trim().is_empty() {
                 ui.label("Gump not found in the selected source.");
             }
-            if app.selected_gump_source == GumpSource::Classic {
+            if let Some(container) = classic_container(app.selected_gump_source) {
+                let preferred = match container {
+                    GumpContainer::Mul => super::classic_image_import::PreferredContainer::Mul,
+                    GumpContainer::Uop => super::classic_image_import::PreferredContainer::Uop,
+                };
                 ui.separator();
                 super::classic_image_import::ui_classic_image_panel(
                     app,
@@ -422,7 +478,7 @@ fn ui_gump_preview_controls(app: &mut UopInspectorApp, ctx: &egui::Context, ui: 
                     ui,
                     uocf::classic::image_files::ClassicImageKind::Gump,
                     gump_id,
-                    super::classic_image_import::PreferredContainer::Any,
+                    preferred,
                 );
             }
         }
@@ -439,24 +495,18 @@ fn get_panel_gump_texture(
     source: GumpSource,
     gump_id: u32,
 ) -> Option<egui::TextureHandle> {
-    if source == GumpSource::Classic {
-        return app.get_gump_texture(ctx, source, gump_id);
-    }
-
     let key = match source {
-        GumpSource::Classic => 0x6D00000000000000 | u64::from(gump_id),
-        GumpSource::Enhanced => 0x6E00000000000000 | u64::from(gump_id),
-    };
+        GumpSource::Mul => MUL_GUMP_PREVIEW_KEY,
+        GumpSource::CcUop => CC_UOP_GUMP_PREVIEW_KEY,
+        GumpSource::EcUop => EC_GUMP_PREVIEW_KEY,
+    } | u64::from(gump_id);
     if let Some(handle) = app.texture_previews.get(&key).cloned() {
         app.select_image_preview(key);
         return Some(handle);
     }
 
     let (width, height, pixels) = decode_gump_rgba(app, source, gump_id).ok()?;
-    let label = match source {
-        GumpSource::Classic => format!("CC gump {gump_id}"),
-        GumpSource::Enhanced => format!("EC gump {gump_id}"),
-    };
+    let label = format!("{} gump {gump_id}", source_label(source));
     let handle = app.checked_texture(ctx, label.clone(), [width as usize, height as usize], &pixels, Default::default())?;
     app.texture_previews.insert(key, handle.clone());
     app.register_current_image_preview(key, label, width, height, &pixels);
@@ -490,7 +540,7 @@ fn ui_paperdoll(
 
         right.separator();
         right.heading("Paperdoll");
-        let enhanced = app.selected_gump_source == GumpSource::Enhanced;
+        let enhanced = app.selected_gump_source == GumpSource::EcUop;
         if enhanced {
             right.label(EC_PAPERDOLL_NOTE);
         }
@@ -733,25 +783,10 @@ fn refresh_gump_lists(app: &mut UopInspectorApp, profiles: &[PaperdollProfile]) 
 }
 
 fn collect_available_gump_ids(app: &UopInspectorApp, source: GumpSource) -> Vec<u32> {
-    let mut ids = Vec::new();
-    match source {
-        GumpSource::Classic => {
-            if let Some(package) = &app.cc_gumps_package {
-                ids.extend(package.available_gump_ids());
-            }
-            if let Some(gumps) = &app.cc_gumps {
-                ids.extend(gumps.available_gump_ids());
-            }
-        }
-        GumpSource::Enhanced => {
-            if let Some(package) = &app.ec_gumps_package {
-                ids.extend(package.available_gump_ids());
-            }
-            ids.extend(collect_raw_ec_gump_ids(app));
-        }
+    match classic_container(source) {
+        Some(container) => app.cc_gumps.as_ref().map_or_else(Vec::new, |gumps| gumps.available_gump_ids_in(Some(container))),
+        None => collect_raw_ec_gump_ids(app),
     }
-
-    ids
 }
 
 fn collect_raw_ec_gump_ids(app: &UopInspectorApp) -> Vec<u32> {
@@ -871,14 +906,12 @@ fn cc_gump_paths(gump_id: u32) -> [String; 2] {
 
 fn gump_source_detail(source: GumpSource, gump_id: u32) -> String {
     match source {
-        GumpSource::Classic => {
+        GumpSource::Mul => format!("MUL source: gumpidx.mul/gumpart.mul entry {gump_id}"),
+        GumpSource::CcUop => {
             let paths = cc_gump_paths(gump_id);
-            format!(
-                "CC source: gumpidx.mul/gumpart.mul or gumpartLegacyMUL.uop candidates {} / {}",
-                paths[0], paths[1]
-            )
+            format!("CC UOP source: gumpartLegacyMUL.uop candidates {} / {}", paths[0], paths[1])
         }
-        GumpSource::Enhanced => {
+        GumpSource::EcUop => {
             let path = ec_gump_path(gump_id, "tga");
             let hash = hash_file_name_single(&path);
             format!("EC source: interface.uop {path} hash={hash:016X}")
@@ -1221,7 +1254,7 @@ fn render_paperdoll(
     app: &mut UopInspectorApp,
     ctx: &egui::Context,
 ) -> color_eyre::eyre::Result<(egui::TextureHandle, String)> {
-    if app.selected_gump_source == GumpSource::Enhanced {
+    if app.selected_gump_source == GumpSource::EcUop {
         return render_ec_paperdoll(app, ctx);
     }
     let body_id = parse_u32_field(&app.paperdoll_body_id)?;
@@ -1329,22 +1362,17 @@ fn decode_gump_rgba(
     source: GumpSource,
     gump_id: u32,
 ) -> color_eyre::eyre::Result<(u32, u32, Vec<u8>)> {
-    match source {
-        GumpSource::Classic => {
-            if let Some(package) = &app.cc_gumps_package {
-                if let Ok(gump) = package.read_gump_rgba(gump_id) {
-                    return Ok(gump);
-                }
-            }
+    match classic_container(source) {
+        Some(container) => {
             let gumps = app
                 .cc_gumps
                 .as_ref()
                 .ok_or_else(|| color_eyre::eyre::eyre!("CC gump source is not loaded."))?;
             let mut scratch = Vec::new();
-            let (width, height, pixels) = gumps.decode_gump(gump_id, &mut scratch)?;
+            let (width, height, pixels) = gumps.decode_gump_in(Some(container), gump_id, &mut scratch)?;
             Ok((width as u32, height as u32, pixels))
         }
-        GumpSource::Enhanced => decode_ec_gump_rgba(app, gump_id),
+        None => decode_ec_gump_rgba(app, gump_id),
     }
 }
 
@@ -1352,12 +1380,6 @@ fn decode_ec_gump_rgba(
     app: &UopInspectorApp,
     gump_id: u32,
 ) -> color_eyre::eyre::Result<(u32, u32, Vec<u8>)> {
-    if let Some(package) = &app.ec_gumps_package {
-        if let Ok(gump) = package.read_gump_rgba(gump_id) {
-            return Ok(gump);
-        }
-    }
-
     for loaded in &app.uop_cache.loaded_uops {
         let is_interface = loaded
             .path

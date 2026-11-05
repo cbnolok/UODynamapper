@@ -10,7 +10,6 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc};
 use std::time::Instant;
-use udd_assets::GumpsPackage;
 use uocf::classic::art::ArtMap;
 pub use uocf::classic::art::ArtSource;
 use uocf::classic::cliloc::Cliloc;
@@ -158,10 +157,15 @@ pub enum LocalizedStringsSource {
     LocalizedStringsUop,
 }
 
+/// Where the Gumps tab reads gumps.
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum GumpSource {
-    Classic,
-    Enhanced,
+    /// `gumpidx.mul` and `gumpart.mul`.
+    Mul,
+    /// `gumpartLegacyMUL.uop`.
+    CcUop,
+    /// The gump images of the Enhanced Client's `Interface.uop`.
+    EcUop,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
@@ -1556,28 +1560,6 @@ fn collect_localized_string_rows(
         .collect()
 }
 
-fn load_optional_gumps_package(
-    app: &mut UopInspectorApp,
-    base_path: &Path,
-    file_name: &str,
-) -> Option<GumpsPackage> {
-    let package_path = base_path.join(file_name);
-    if !package_path.exists() {
-        return None;
-    }
-
-    match GumpsPackage::load(&package_path) {
-        Ok(package) => {
-            app.log_loaded(&[&package_path], format_args!("{} gumps", package.atlas_slots().len()));
-            Some(package)
-        }
-        Err(error) => {
-            app.log_load_failure(&[&package_path], format_args!("{error:#}"));
-            None
-        }
-    }
-}
-
 /// The file names of `paths`, for a log line: `art.mul and artLegacyMUL.uop`.
 fn client_files_label(paths: &[&Path]) -> String {
     paths
@@ -1753,8 +1735,6 @@ pub struct UopInspectorApp {
     pub cc_tiledata_rows: Option<Arc<Vec<CcTileDataRow>>>,
     pub art_viewer_rows: Option<Arc<Vec<ArtViewerRow>>>,
     pub art_viewer_rows_source: Option<ArtSource>,
-    pub cc_gumps_package: Option<Arc<GumpsPackage>>,
-    pub ec_gumps_package: Option<Arc<GumpsPackage>>,
     pub cc_gumps: Option<Arc<GumpMap>>,
     pub cc_sounds: Option<Arc<SoundMap>>,
     pub cc_sound_entries: Option<Arc<Vec<SoundListEntry>>>,
@@ -1936,8 +1916,6 @@ impl UopInspectorApp {
             cc_tiledata_rows: None,
             art_viewer_rows: None,
             art_viewer_rows_source: None,
-            cc_gumps_package: None,
-            ec_gumps_package: None,
             cc_gumps: None,
             cc_sounds: None,
             cc_sound_entries: None,
@@ -2027,7 +2005,7 @@ impl UopInspectorApp {
             upscale_preview_size: [0, 0],
             upscale_preview_elapsed_ms: None,
             upscale_preview_status: String::new(),
-            selected_gump_source: GumpSource::Classic,
+            selected_gump_source: GumpSource::Mul,
             selected_gump_viewer_tab: GumpViewerTab::StandardGumps,
             selected_gump_id: String::new(),
             standard_gump_ids: Vec::new(),
@@ -2202,8 +2180,6 @@ impl UopInspectorApp {
         self.ec_audio_entries = None;
         self.ec_audio_selected = None;
         self.selected_ec_audio_hash = None;
-        self.cc_gumps_package = None;
-        self.ec_gumps_package = None;
         self.cc_gumps = None;
         self.uop_cache.loaded_uops.clear();
         self.selected_uop_idx = None;
@@ -2245,9 +2221,6 @@ impl UopInspectorApp {
         // 1. Try to load CC assets (mul and uop)
         if let Some(path) = self.settings.cc_path.clone() {
             log::debug!("Loading the Classic client files from {}", path.display());
-            if let Some(package) = load_optional_gumps_package(self, &path, "gumps_cc.uddp") {
-                self.cc_gumps_package = Some(Arc::new(package));
-            }
             let art_res = ArtMap::load(&path);
             let td_res = TileData::load(path.join("tiledata.mul"));
             let gump_files = existing_client_files(&path, &CLASSIC_GUMP_FILE_NAMES);
@@ -2493,10 +2466,6 @@ impl UopInspectorApp {
         // 2. Try to load EC assets (string dictionary and legacy texture)
         if let Some(ec_base_path) = self.settings.ec_path.clone() {
             log::debug!("Loading the Enhanced client files from {}", ec_base_path.display());
-            if let Some(package) = load_optional_gumps_package(self, &ec_base_path, "gumps_ec.uddp") {
-                self.ec_gumps_package = Some(Arc::new(package));
-            }
-
             match AudioPackage::load(&ec_base_path) {
                 Ok(Some(audio)) => {
                     self.ec_audio_entries = Some(Arc::new(collect_ec_audio_entries(&audio)));
@@ -3309,120 +3278,6 @@ impl UopInspectorApp {
             }
         }
         None
-    }
-
-    pub fn get_cc_gump_texture(
-        &mut self,
-        ctx: &egui::Context,
-        gump_id: u32,
-    ) -> Option<egui::TextureHandle> {
-        let key = 0x6D00000000000000 | gump_id as u64;
-        if let Some(handle) = self.texture_previews.get(&key).cloned() {
-            self.select_image_preview(key);
-            return Some(handle);
-        }
-
-        let (width, height, pixels) = if let Some(package) = &self.cc_gumps_package {
-            match package.read_gump_rgba(gump_id) {
-                Ok(gump) => gump,
-                Err(_) => {
-                    let gumps = Arc::clone(self.cc_gumps.as_ref()?);
-                    let mut scratch = Vec::new();
-                    let (width, height, pixels) = gumps.decode_gump(gump_id, &mut scratch).ok()?;
-                    (u32::from(width), u32::from(height), pixels)
-                }
-            }
-        } else {
-            let gumps = Arc::clone(self.cc_gumps.as_ref()?);
-            let mut scratch = Vec::new();
-            let (width, height, pixels) = gumps.decode_gump(gump_id, &mut scratch).ok()?;
-            (u32::from(width), u32::from(height), pixels)
-        };
-        let handle =
-            self.checked_texture(ctx, format!("cc_gump_{gump_id}"), [width as usize, height as usize], &pixels, Default::default())?;
-        self.texture_previews.insert(key, handle.clone());
-        self.register_current_image_preview(
-            key,
-            format!("CC gump {gump_id}"),
-            width,
-            height,
-            &pixels,
-        );
-        Some(handle)
-    }
-
-    pub fn get_ec_gump_texture(
-        &mut self,
-        ctx: &egui::Context,
-        gump_id: u32,
-    ) -> Option<egui::TextureHandle> {
-        if let Some(package) = &self.ec_gumps_package {
-            if let Ok((width, height, pixels)) = package.read_gump_rgba(gump_id) {
-                let key = 0x6E00000000000000 | gump_id as u64;
-                if let Some(handle) = self.texture_previews.get(&key).cloned() {
-                    self.select_image_preview(key);
-                    return Some(handle);
-                }
-                let handle = self.checked_texture(
-                    ctx,
-                    format!("ec_gump_{gump_id}"),
-                    [width as usize, height as usize],
-                    &pixels,
-                    Default::default(),
-                )?;
-                self.texture_previews.insert(key, handle.clone());
-                self.register_current_image_preview(
-                    key,
-                    format!("EC gump {gump_id}"),
-                    width,
-                    height,
-                    &pixels,
-                );
-                return Some(handle);
-            }
-        }
-
-        let loaded_uops = self.uop_cache.loaded_uops.clone();
-        for loaded in &loaded_uops {
-            let is_interface = loaded
-                .path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .map(|name| name.eq_ignore_ascii_case("interface.uop"))
-                .unwrap_or(false);
-            if !is_interface {
-                continue;
-            }
-
-            let candidates = [
-                format!("data/interface/default/textures/gumpart/{:08}.tga", gump_id),
-                format!("data/interface/default/textures/gumpart/{:08}.dds", gump_id),
-            ];
-            for path in candidates {
-                let hash = hash_file_name_single(&path);
-                if let Some(file) = loaded.package.get_file_by_hash(hash) {
-                    if let Ok(data) = file.unpack() {
-                        if let Some(handle) = self.get_uop_texture(ctx, hash, &data, &path) {
-                            return Some(handle);
-                        }
-                    }
-                }
-            }
-        }
-
-        None
-    }
-
-    pub fn get_gump_texture(
-        &mut self,
-        ctx: &egui::Context,
-        source: GumpSource,
-        gump_id: u32,
-    ) -> Option<egui::TextureHandle> {
-        match source {
-            GumpSource::Classic => self.get_cc_gump_texture(ctx, gump_id),
-            GumpSource::Enhanced => self.get_ec_gump_texture(ctx, gump_id),
-        }
     }
 
     fn get_uop_art_image_texture(
@@ -4474,8 +4329,6 @@ pub(crate) mod tests {
             cc_tiledata_rows: None,
             art_viewer_rows: None,
             art_viewer_rows_source: None,
-            cc_gumps_package: None,
-            ec_gumps_package: None,
             cc_gumps: None,
             cc_sounds: None,
             cc_sound_entries: None,
@@ -4540,7 +4393,7 @@ pub(crate) mod tests {
             upscale_preview_size: [0, 0],
             upscale_preview_elapsed_ms: None,
             upscale_preview_status: String::new(),
-            selected_gump_source: GumpSource::Classic,
+            selected_gump_source: GumpSource::Mul,
             selected_gump_viewer_tab: GumpViewerTab::StandardGumps,
             selected_gump_id: String::new(),
             standard_gump_ids: Vec::new(),

@@ -96,6 +96,46 @@ fn gump_map_reads_classic_mul_pair() {
     result.unwrap();
 }
 
+/// Gump 0 in the MUL pair and gump `UOP_ONLY_ID` in a `gumpartLegacyMUL.uop` added to the same map: each container
+/// is read and listed on its own.
+#[test]
+fn gump_map_reads_one_container_when_asked() {
+    const UOP_ONLY_ID: u32 = 1283;
+    let dir = std::env::temp_dir().join(format!("uocf_gump_container_test_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let payload = sample_gump_payload();
+    let mut idx = Vec::new();
+    idx.extend_from_slice(&0u32.to_le_bytes());
+    idx.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    idx.extend_from_slice(&((4u32 << 16) | 2u32).to_le_bytes());
+    std::fs::write(dir.join("gumpidx.mul"), idx).unwrap();
+    std::fs::write(dir.join("gumpart.mul"), &payload).unwrap();
+    let mul_only = GumpMap::load(&dir).unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+
+    let mut uop_payload = Vec::new();
+    uop_payload.write_all(&4u32.to_le_bytes()).unwrap();
+    uop_payload.write_all(&2u32.to_le_bytes()).unwrap();
+    uop_payload.write_all(&payload).unwrap();
+    let mut package = UopPackage::new_default();
+    package
+        .add_file_from_memory(&uop_payload, &uop_gump_candidates(UOP_ONLY_ID)[0], CompressionFlag::None)
+        .unwrap();
+    assert!(mul_only.has_container(GumpContainer::Mul) && !mul_only.has_container(GumpContainer::Uop));
+    let map = mul_only.with_uop(package);
+    assert!(map.has_container(GumpContainer::Uop));
+
+    let mut scratch = Vec::new();
+    assert!(map.decode_gump_in(Some(GumpContainer::Mul), 0, &mut scratch).is_ok());
+    assert!(map.decode_gump_in(Some(GumpContainer::Uop), 0, &mut scratch).is_err());
+    assert!(map.decode_gump_in(Some(GumpContainer::Uop), UOP_ONLY_ID, &mut scratch).is_ok());
+    assert!(map.decode_gump_in(Some(GumpContainer::Mul), UOP_ONLY_ID, &mut scratch).is_err());
+    assert!(map.decode_gump_in(None, UOP_ONLY_ID, &mut scratch).is_ok());
+    assert_eq!(map.available_gump_ids_in(Some(GumpContainer::Mul)), vec![0]);
+    assert_eq!(map.available_gump_ids_in(Some(GumpContainer::Uop)), vec![UOP_ONLY_ID]);
+    assert_eq!(map.available_gump_ids(), vec![0, UOP_ONLY_ID]);
+}
+
 fn write_classic_pair_and_read(dir: &PathBuf) -> std::io::Result<()> {
     let payload = sample_gump_payload();
     let mut idx = std::fs::File::create(dir.join("gumpidx.mul"))?;

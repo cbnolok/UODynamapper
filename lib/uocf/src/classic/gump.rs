@@ -153,6 +153,20 @@ pub fn decode_gump_from_raw(
     Ok(pixel_data_out)
 }
 
+/// The files a Classic gump is read from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GumpContainer {
+    /// `gumpidx.mul` and `gumpart.mul`, with their `verdata.mul` patches.
+    Mul,
+    /// `gumpartLegacyMUL.uop`.
+    Uop,
+}
+
+/// Whether a read limited to `only` (no limit for `None`) reads `container`.
+fn reads(only: Option<GumpContainer>, container: GumpContainer) -> bool {
+    only.is_none_or(|only| only == container)
+}
+
 #[derive(Clone)]
 pub struct GumpMap {
     client_path: PathBuf,
@@ -282,10 +296,23 @@ impl GumpMap {
         self
     }
 
+    /// Whether the map reads `container`.
+    pub fn has_container(&self, container: GumpContainer) -> bool {
+        match container {
+            GumpContainer::Mul => self.idx_file.is_some() && self.gump_mmap.is_some(),
+            GumpContainer::Uop => self.uop_package.is_some(),
+        }
+    }
+
     pub fn available_gump_ids(&self) -> Vec<u32> {
+        self.available_gump_ids_in(None)
+    }
+
+    /// The gump ids of `only` (of every container the map reads for `None`).
+    pub fn available_gump_ids_in(&self, only: Option<GumpContainer>) -> Vec<u32> {
         let mut ids = BTreeSet::new();
 
-        if let (Some(idx), Some(gump_mmap)) = (&self.idx_file, &self.gump_mmap) {
+        if let (Some(idx), Some(gump_mmap), true) = (&self.idx_file, &self.gump_mmap, reads(only, GumpContainer::Mul)) {
             for gump_id in 0..idx.element_count() {
                 let Ok(entry) = idx.element(gump_id) else {
                     continue;
@@ -312,7 +339,7 @@ impl GumpMap {
             }
         }
 
-        if let Some(uop) = &self.uop_package {
+        if let (Some(uop), true) = (&self.uop_package, reads(only, GumpContainer::Uop)) {
             let max_gump_id = self
                 .idx_file
                 .as_ref()
@@ -340,7 +367,7 @@ impl GumpMap {
         gump_id: u32,
         scratch_buffer: &mut Vec<u8>,
     ) -> eyre::Result<GumpDimensions> {
-        match self.resolve_raw_gump_data(gump_id, scratch_buffer)? {
+        match self.resolve_raw_gump_data(None, gump_id, scratch_buffer)? {
             RawGumpData::Borrowed(dimensions, data) => {
                 scratch_buffer.extend_from_slice(data);
                 Ok(dimensions)
@@ -351,12 +378,14 @@ impl GumpMap {
 
     fn resolve_raw_gump_data<'a>(
         &'a self,
+        only: Option<GumpContainer>,
         gump_id: u32,
         scratch_buffer: &mut Vec<u8>,
     ) -> eyre::Result<RawGumpData<'a>> {
         scratch_buffer.clear();
+        let (mul, uop) = (reads(only, GumpContainer::Mul), reads(only, GumpContainer::Uop));
 
-        if let Some(verdata) = &self.verdata {
+        if let (Some(verdata), true) = (&self.verdata, mul) {
             if let Some(entry) = verdata.entry(VerFileId::Gumpart, gump_id as i32) {
                 let dimensions = dimensions_from_extra(entry.extra as u32)?;
                 if classic_gump_payload_is_structurally_valid(entry.length as u32, dimensions) {
@@ -367,7 +396,7 @@ impl GumpMap {
             }
         }
 
-        if let (Some(idx), Some(gump_mmap)) = (&self.idx_file, &self.gump_mmap) {
+        if let (Some(idx), Some(gump_mmap), true) = (&self.idx_file, &self.gump_mmap, mul) {
             if let Ok(entry) = idx.element(gump_id as usize) {
                 let index_patch = self
                     .verdata
@@ -398,7 +427,7 @@ impl GumpMap {
             }
         }
 
-        if let Some(uop) = &self.uop_package {
+        if let (Some(uop), true) = (&self.uop_package, uop) {
             let candidates = uop_gump_candidates(gump_id);
             let candidate_refs = [candidates[0].as_str(), candidates[1].as_str()];
             let mut scratch_hashes = Vec::new();
@@ -422,7 +451,17 @@ impl GumpMap {
         gump_id: u32,
         scratch_raw_buffer: &mut Vec<u8>,
     ) -> eyre::Result<(u16, u16, Vec<u8>)> {
-        let resolved = self.resolve_raw_gump_data(gump_id, scratch_raw_buffer)?;
+        self.decode_gump_in(None, gump_id, scratch_raw_buffer)
+    }
+
+    /// [`Self::decode_gump`] reading `only` (every container the map reads for `None`).
+    pub fn decode_gump_in(
+        &self,
+        only: Option<GumpContainer>,
+        gump_id: u32,
+        scratch_raw_buffer: &mut Vec<u8>,
+    ) -> eyre::Result<(u16, u16, Vec<u8>)> {
+        let resolved = self.resolve_raw_gump_data(only, gump_id, scratch_raw_buffer)?;
         let (dimensions, raw_data) = match resolved {
             RawGumpData::Borrowed(dimensions, data) => (dimensions, data),
             RawGumpData::Scratch(dimensions) => (dimensions, scratch_raw_buffer.as_slice()),
