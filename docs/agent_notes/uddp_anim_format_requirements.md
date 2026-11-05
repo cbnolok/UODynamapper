@@ -678,6 +678,14 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The col
   lossless and is now 0.84× it; BC3 goes from 0.78× to 0.65×. Classic's BC1 is 0.58× lossless, and its BC7 with fix C, 918.4 MB, is still
   larger. The block rows also decode slower than lossless now, because they use zstd: Enhanced BC3 is 50.4 / 10.2 ms and BC7 with fix C 50.9 / 10.3 ms, against 36.4 / 7.5 ms.
 - **The BC7 encoder takes fix C,** which landed the same day.
+- **Classic data that can take partial hue stays lossless: exact greys can't be lost.** The client hues only pixels whose 5-bit channels match
+  (`(c & 0x3FF) == c >> 5`, [traced](../../scripts/dev-helpers/ec-research/ghidra-classic-frames/results/classic_frames.md)), with the red byte as the key. On every Classic body BC1
+  breaks that test on 30.60 % of grey pixels at 5 bits and 84.31 % at 8, and changes the key on 56.19 %. What it covers:
+  - **By tile flag,** in `tiledata.mul`: 107 worn tiles with PartialHue reach 76 animation ids, and 12708 tiles that aren't worn flag their art.
+    Their paperdoll gumps follow, so BC7 for `gumps_cc` can't cover those.
+  - **By the hue's 0x8000 bit, from the server:** ServUO's `RandomSkinHue` sets it, and ClassicUO treats it as partial on any sprite. So bodies that
+    take skin hue stay lossless too. A server can set the bit on any body, so files alone can't close this set.
+  - Enhanced has no such test: it masks the classic bit away and takes hueability from the palette's flag, which `mobile_anim_ec` packs as a mask.
 
 **Open:**
 
@@ -689,7 +697,8 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The col
 | Whether indexed frames stay the default once filtering is counted | Yes: the indexed filter costs 1.43–1.57× BC7 on the Radeon 880M, 2.4–3.1 % of a 60 fps frame in a crowd at 1.5× | The user; one AMD iGPU only |
 | Whether the low-end tier block-codes only large bodies, and at what size | Classic: BC1 above 2500 px, with a median of 81.77 on coded bodies. Enhanced: the same mix with BC7 fix C is 1931.1 MB against 1539.0 MB for BC3 + colour on every body | The user; a second shader path and hue from colour are unbuilt |
 | Whether phones and web get their own low-end packs or one Basis Universal pack | Stay on the universal R8/RG8 pack, and ASTC 4×4 only if VRAM forces it. No Basis row was both smaller and better than the plain format beside it | The user |
-| Whether the low-end tier uses BC1, BC3 or BC7 | Classic BC1. Enhanced BC3 + colour or BC7 with fix C, not BC1 | The user |
+| What a lossy Classic pack draws when a server sets 0x8000 on a block-coded body | An approximate grey test, logged once, or a lossless pack for shards that rely on it | The user |
+| Whether the low-end tier uses BC1, BC3 or BC7 | Classic BC1, only outside the partial hue set above. Enhanced BC3 + colour or BC7 with fix C, not BC1 | The user |
 | Which GPU layout holds frames in VRAM | R8/RG8 with faced-first loading, not whole atlas pages. Row spans in linear memory only if a device proves too small | The user; no low-end device measured |
 | Whether lossy packs take the colour step | Not for what it shows at 1×: about +5 % on disk, and on the sheets it isn't visible at game size on NPCs (the user agreed by eye, 2026-11-05). It clears small specks on a few bodies when zoomed, and halves the pixels under 80 on BC3. **Fractional zoom decides it:** the seam filter's hardware sample (`art/main.wesl`) reads straight RGB, so at seams beside transparent pixels it mixes in the colour stored under them. That is transparent black without the step, and every sheet so far is at 1× with no filter. Storing premultiplied colour is the alternative under test | The user; the zoom test |
 | Runtime interpolation for high frame rates | A separate study | The full frame set |
@@ -710,6 +719,8 @@ are from [the codec proposal](proposals/2026-11-01-mobile-anim-codec.md), on eve
 | One shader with a format branch on every install | 8–26 % slower when every sprite takes the cheap path | Pipelines compiled at startup from the package's formats cost nothing. The branch stays for mixed packages only (2026-11-05) |
 | zstd 19 as the lossless compressor | Enhanced 1881.1 MB before duplicates, 100.3 / 20.5 ms, worst crowd 451.1 / 92.2 ms. LZ4 HC is 2268.0 MB, 36.4 / 7.5 ms, worst 169.5 / 34.9 ms | 2.75× the decode speed is worth 21 % more disk, and LZ4 HC is the only one to pass the worst crowd with five directions (2026-11-05) |
 | Lossless only, or lossy only | | Both paths are supported (2026-11-05) |
+| Classic BC1 on every body | 514.2 MB at 82.90 | Loses exact greys on what can take partial hue (2026-11-05) |
+| Classic BC1 with masks for partial hue | One-bit masks 279.2 MB, with BC1 1537.9 MB of VRAM against 2419.0 MB for R8 | A mask keeps which pixels take the hue, not their grey level, so the hued colour still moves (2026-11-05) |
 | Halved frames | See section 4 | All frames are kept (2026-11-04) |
 | Runtime BC7 | See section 4 | Off for now; possibly later for upscaled animations |
 
