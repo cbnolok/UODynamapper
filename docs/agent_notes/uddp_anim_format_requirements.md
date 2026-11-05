@@ -409,7 +409,7 @@ to the needs: some of these may still be useful elsewhere.
 | Attempt | Result |
 |---|---|
 | Solid zstd with `--long=31` over everything | ×0.990 Classic, ×0.995 Enhanced (the upper bound on this idea) |
-| Trained dictionaries, large bodies as a reference | ×1.000–1.025 |
+| Trained zstd dictionaries, large bodies as a reference | ×1.000–1.025 |
 | Exact duplicate frames; recoloured copies are also counted | About 24 MB Classic, 12 MB Enhanced, none across files |
 | Equipment layers sharing the wearer's shape | ×0.99 or no gain |
 | Same (body, action, direction) in two `AnimationFrame*.uop` files | 0.0 MB |
@@ -674,6 +674,8 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The col
   faced: Enhanced is 2268.0 MB before duplicates at 36.4 / 7.5 ms and 169.5 / 34.9 ms in the worst crowd, against zstd 19's 1881.1 MB
   at 100.3 / 20.5 ms and 451.1 / 92.2 ms, so 2.75× as fast for 21 % more disk. Classic is 888.4 MB at 12.6 / 2.7 ms against zstd 19's
   733.4 MB at 37.0 / 7.5 ms, about 2.9× as fast. The gap reaches 3–4× only if LZ4 HC's frames stay as spans in VRAM.
+  These are level 12, the highest, with no dictionary. LZ4's levels change only the compressor, so the level should cost pack time and nothing at
+  run time (not yet compared between levels). Every dictionary figure in this file is zstd's: LZ4 with one hasn't been measured.
   **This moves the lossy comparisons,** which were all made against zstd 19's sizes. Enhanced's BC7 with fix C, 1900.7 MB, was slightly larger than
   lossless and is now 0.84× it; BC3 goes from 0.78× to 0.65×. Classic's BC1 is 0.58× lossless, and its BC7 with fix C, 918.4 MB, is still
   larger. The block rows also decode slower than lossless now, because they use zstd: Enhanced BC3 is 50.4 / 10.2 ms and BC7 with fix C 50.9 / 10.3 ms, against 36.4 / 7.5 ms.
@@ -682,7 +684,7 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The col
   (`(c & 0x3FF) == c >> 5`, [traced](../../scripts/dev-helpers/ec-research/ghidra-classic-frames/results/classic_frames.md)), with the red byte as the key. On every Classic body BC1
   breaks that test on 30.60 % of grey pixels at 5 bits and 84.31 % at 8, and changes the key on 56.19 %. What it covers:
   - **By tile flag,** in `tiledata.mul`: 107 worn tiles with PartialHue reach 76 animation ids, and 12708 tiles that aren't worn flag their art.
-    Their paperdoll gumps follow, so BC7 for `gumps_cc` can't cover those.
+    Their paperdoll gumps probably follow: traced in the Enhanced client (`UOPaperdoll::BuildImage`), not in Classic. BC7 for `gumps_cc` needs this check.
   - **By the hue's 0x8000 bit, from the server:** ServUO's `RandomSkinHue` sets it, and ClassicUO treats it as partial on any sprite. So bodies that
     take skin hue stay lossless too. A server can set the bit on any body, so files alone can't close this set.
   - Enhanced has no such test: it masks the classic bit away and takes hueability from the palette's flag, which `mobile_anim_ec` packs as a mask.
@@ -697,6 +699,7 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The col
 | Whether indexed frames stay the default once filtering is counted | Yes: the indexed filter costs 1.43–1.57× BC7 on the Radeon 880M, 2.4–3.1 % of a 60 fps frame in a crowd at 1.5× | The user; one AMD iGPU only |
 | Whether the low-end tier block-codes only large bodies, and at what size | Classic: BC1 above 2500 px, with a median of 81.77 on coded bodies. Enhanced: the same mix with BC7 fix C is 1931.1 MB against 1539.0 MB for BC3 + colour on every body | The user; a second shader path and hue from colour are unbuilt |
 | Whether phones and web get their own low-end packs or one Basis Universal pack | Stay on the universal R8/RG8 pack, and ASTC 4×4 only if VRAM forces it. No Basis row was both smaller and better than the plain format beside it | The user |
+| LZ4 HC with a dictionary | Not measured. LZ4 reads only a dictionary's last 64 KiB and has no entropy stage, so zstd's −3.0 % per body doesn't carry over. The rows being run: trained per body, the body's standing stream, one shared per package | The bench, then the user |
 | What a lossy Classic pack draws when a server sets 0x8000 on a block-coded body | An approximate grey test, logged once, or a lossless pack for shards that rely on it | The user |
 | Whether the low-end tier uses BC1, BC3 or BC7 | Classic BC1, only outside the partial hue set above. Enhanced BC3 + colour or BC7 with fix C, not BC1 | The user |
 | Which GPU layout holds frames in VRAM | R8/RG8 with faced-first loading, not whole atlas pages. Row spans in linear memory only if a device proves too small | The user; no low-end device measured |
@@ -720,7 +723,7 @@ are from [the codec proposal](proposals/2026-11-01-mobile-anim-codec.md), on eve
 | zstd 19 as the lossless compressor | Enhanced 1881.1 MB before duplicates, 100.3 / 20.5 ms, worst crowd 451.1 / 92.2 ms. LZ4 HC is 2268.0 MB, 36.4 / 7.5 ms, worst 169.5 / 34.9 ms | 2.75× the decode speed is worth 21 % more disk, and LZ4 HC is the only one to pass the worst crowd with five directions (2026-11-05) |
 | Lossless only, or lossy only | | Both paths are supported (2026-11-05) |
 | Classic BC1 on every body | 514.2 MB at 82.90 | Loses exact greys on what can take partial hue (2026-11-05) |
-| Classic BC1 with masks for partial hue | One-bit masks 279.2 MB, with BC1 1537.9 MB of VRAM against 2419.0 MB for R8 | A mask keeps which pixels take the hue, not their grey level, so the hued colour still moves (2026-11-05) |
+| Classic BC1 with masks for partial hue | One-bit masks 279.2 MB, with BC1 1537.9 MB of VRAM against 2419.0 MB for R8 | Not chosen: the user keeps this data lossless (2026-11-05). A mask would keep which pixels take the hue, but BC1 still moves their grey level, which picks the hue's colour |
 | Halved frames | See section 4 | All frames are kept (2026-11-04) |
 | Runtime BC7 | See section 4 | Off for now; possibly later for upscaled animations |
 
@@ -754,7 +757,7 @@ are from [the codec proposal](proposals/2026-11-01-mobile-anim-codec.md), on eve
 | Option | Figures | Returns if |
 |---|---|---|
 | Row spans held in linear memory | 0.97× BC7's VRAM, lossless, 1.99–2.13× BC7 on the GPU | A device proves too small for RG8 |
-| Dictionary per body | Classic −3.0 %, 711.1 MB; reads 25.6 MB instead of 6.2 MB for a faced crowd | The user wants it for Classic |
+| zstd dictionary per body | Classic −3.0 %, 711.1 MB; reads 25.6 MB instead of 6.2 MB for a faced crowd | The user wants it for Classic |
 | BC1 with block reuse, λ 1 | Classic, every 10th: 445.8 MB at 81.05 | The crops pass the user's eye |
 | ASTC 4×4 | Every 10th, Classic / Enhanced: 1022.2 / 2128.9 MB at 90.41 / 87.62 | VRAM forces it on a phone; larger than lossless on disk |
 | ASTC 6×6, ETC2 RGB8A1 | 75.28 / 73.08 and 74.05 / 71.63, both under the 80 line. ETC2 loses 11.582 % of Enhanced's painted pixels | The user accepts them by eye |
