@@ -312,6 +312,82 @@ impl UpscaleFilter {
         }
     }
 
+    /// Whether the filter's output can stay in indexed storage: it adds no colour that isn't in the
+    /// input and keeps alpha binary. Measured on 44 Classic animation frames (small, medium and large
+    /// bodies and a worn item) and 20 Classic gumps: these filters only copy source pixels, and every
+    /// other one blends, adding colours on all 64 samples. A new filter is classified the same way,
+    /// by measuring it, and added to the test list below.
+    pub fn keeps_palette(self) -> bool {
+        match self {
+            Self::None => true,
+            Self::Nearest2x => true,
+            Self::Nearest3x => true,
+            Self::Nearest4x => true,
+            Self::Bilinear2x => false,
+            Self::Bilinear3x => false,
+            Self::Bilinear4x => false,
+            Self::CatmullRom2x => false,
+            Self::CatmullRom3x => false,
+            Self::CatmullRom4x => false,
+            Self::Lanczos3_2x => false,
+            Self::Lanczos3_3x => false,
+            Self::Lanczos3_4x => false,
+            Self::SuperSai2x => false,
+            Self::FsrEasu2x => false,
+            Self::FsrEasu3x => false,
+            Self::FsrEasu4x => false,
+            Self::FsrEasuRcas2x => false,
+            Self::FsrEasuRcas3x => false,
+            Self::FsrEasuRcas4x => false,
+            Self::KLDepixelize2x => true,
+            Self::KLDepixelize3x => true,
+            Self::KLDepixelize4x => true,
+            Self::Nedi2x => false,
+            Self::TwoSai2x => false,
+            Self::SuperEagle2x => false,
+            Self::Lq2x => false,
+            // Unlike LQ 2x and 4x, LQ 3x picks one of the four neighbours per output pixel, as Scale3x does.
+            Self::Lq3x => true,
+            Self::Lq4x => false,
+            Self::Hq2xSimple => false,
+            Self::Hq3xSimple => false,
+            Self::Hq4xSimple => false,
+            Self::Hq2xTrue => false,
+            Self::Hq3xTrue => false,
+            Self::Hq4xTrue => false,
+            Self::Epx2x => true,
+            Self::Epx3x => true,
+            Self::Epx4x => true,
+            Self::Xbrz2x => false,
+            Self::Xbrz3x => false,
+            Self::Xbrz4x => false,
+            Self::SuperXbr2x => false,
+            Self::Cut1_2x => false,
+            Self::Cut2_2x => false,
+            Self::Cut3_2x => false,
+            Self::ScaleFx2x => true,
+            Self::ScaleFx3x => true,
+            Self::ScaleFx4x => true,
+            Self::OmniScale2x => false,
+            Self::OmniScale3x => false,
+            Self::OmniScale4x => false,
+            Self::Jinc2_2x => false,
+            Self::Jinc2_3x => false,
+            Self::Jinc2_4x => false,
+            Self::Jinc2Sharp2x => false,
+            Self::Jinc2Sharp3x => false,
+            Self::Jinc2Sharp4x => false,
+            Self::Jinc2Sharper2x => false,
+            Self::Jinc2Sharper3x => false,
+            Self::Jinc2Sharper4x => false,
+            Self::Jinc2Sharpest2x => false,
+            Self::Jinc2Sharpest3x => false,
+            Self::Jinc2Sharpest4x => false,
+            Self::Mmpx2x => true,
+            Self::Mmpx4x => true,
+        }
+    }
+
     pub fn apply(&self, width: u32, height: u32, rgba: &[u8]) -> (u32, u32, Vec<u8>) {
         if matches!(self, Self::None) || rgba.is_empty() {
             return (width, height, rgba.to_vec());
@@ -740,6 +816,168 @@ mod tests {
             assert_eq!(last_filter, UpscaleFilter::None);
             assert_eq!(pixels.len(), rgba.len());
             assert_eq!(pixels.chunks_exact(4).map(|pixel| pixel[3]).collect::<Vec<_>>(), vec![11, 22, 33, 44]);
+        }
+    }
+
+    /// Every filter, so each one's palette classification is checked. A new filter goes here too.
+    const ALL_FILTERS: [UpscaleFilter; 65] = [
+        UpscaleFilter::None,
+        UpscaleFilter::Nearest2x,
+        UpscaleFilter::Nearest3x,
+        UpscaleFilter::Nearest4x,
+        UpscaleFilter::Bilinear2x,
+        UpscaleFilter::Bilinear3x,
+        UpscaleFilter::Bilinear4x,
+        UpscaleFilter::CatmullRom2x,
+        UpscaleFilter::CatmullRom3x,
+        UpscaleFilter::CatmullRom4x,
+        UpscaleFilter::Lanczos3_2x,
+        UpscaleFilter::Lanczos3_3x,
+        UpscaleFilter::Lanczos3_4x,
+        UpscaleFilter::SuperSai2x,
+        UpscaleFilter::FsrEasu2x,
+        UpscaleFilter::FsrEasu3x,
+        UpscaleFilter::FsrEasu4x,
+        UpscaleFilter::FsrEasuRcas2x,
+        UpscaleFilter::FsrEasuRcas3x,
+        UpscaleFilter::FsrEasuRcas4x,
+        UpscaleFilter::KLDepixelize2x,
+        UpscaleFilter::KLDepixelize3x,
+        UpscaleFilter::KLDepixelize4x,
+        UpscaleFilter::Nedi2x,
+        UpscaleFilter::TwoSai2x,
+        UpscaleFilter::SuperEagle2x,
+        UpscaleFilter::Lq2x,
+        UpscaleFilter::Lq3x,
+        UpscaleFilter::Lq4x,
+        UpscaleFilter::Hq2xSimple,
+        UpscaleFilter::Hq3xSimple,
+        UpscaleFilter::Hq4xSimple,
+        UpscaleFilter::Hq2xTrue,
+        UpscaleFilter::Hq3xTrue,
+        UpscaleFilter::Hq4xTrue,
+        UpscaleFilter::Epx2x,
+        UpscaleFilter::Epx3x,
+        UpscaleFilter::Epx4x,
+        UpscaleFilter::Xbrz2x,
+        UpscaleFilter::Xbrz3x,
+        UpscaleFilter::Xbrz4x,
+        UpscaleFilter::SuperXbr2x,
+        UpscaleFilter::Cut1_2x,
+        UpscaleFilter::Cut2_2x,
+        UpscaleFilter::Cut3_2x,
+        UpscaleFilter::ScaleFx2x,
+        UpscaleFilter::ScaleFx3x,
+        UpscaleFilter::ScaleFx4x,
+        UpscaleFilter::OmniScale2x,
+        UpscaleFilter::OmniScale3x,
+        UpscaleFilter::OmniScale4x,
+        UpscaleFilter::Jinc2_2x,
+        UpscaleFilter::Jinc2_3x,
+        UpscaleFilter::Jinc2_4x,
+        UpscaleFilter::Jinc2Sharp2x,
+        UpscaleFilter::Jinc2Sharp3x,
+        UpscaleFilter::Jinc2Sharp4x,
+        UpscaleFilter::Jinc2Sharper2x,
+        UpscaleFilter::Jinc2Sharper3x,
+        UpscaleFilter::Jinc2Sharper4x,
+        UpscaleFilter::Jinc2Sharpest2x,
+        UpscaleFilter::Jinc2Sharpest3x,
+        UpscaleFilter::Jinc2Sharpest4x,
+        UpscaleFilter::Mmpx2x,
+        UpscaleFilter::Mmpx4x,
+    ];
+
+    /// The opaque colours of the synthetic indexed frames. No opaque black, so transparent pixels
+    /// bled into opaque ones show up as a new colour.
+    const TEST_PALETTE: [[u8; 3]; 6] =
+        [[200, 40, 30], [30, 160, 60], [40, 60, 210], [240, 220, 120], [90, 90, 90], [12, 8, 20]];
+    const TRANSPARENT_PIXEL: [u8; 4] = [0, 0, 0, 0];
+    const ALPHA_TRANSPARENT: u8 = 0;
+    const ALPHA_OPAQUE: u8 = 255;
+    const RGBA_BYTES: usize = 4;
+    /// Sides of the synthetic frames: odd and unequal, so no filter only ever sees a power of two.
+    const NOISE_WIDTH: u32 = 23;
+    const NOISE_HEIGHT: u32 = 19;
+    const SHAPES_WIDTH: u32 = 29;
+    const SHAPES_HEIGHT: u32 = 25;
+    /// Numerical Recipes' 32-bit LCG, for a reproducible noise frame; its low bits are weak, so
+    /// draws use the high half.
+    const LCG_MULTIPLIER: u32 = 1_664_525;
+    const LCG_INCREMENT: u32 = 1_013_904_223;
+    const LCG_SEED: u32 = 0x5EED;
+    const LCG_HIGH_HALF_SHIFT: u32 = 16;
+    /// One noise pixel in this many is transparent.
+    const NOISE_TRANSPARENT_ONE_IN: u32 = 5;
+    /// The shapes frame: a striped ellipse, two one-pixel lines and a grid of isolated dots.
+    const ELLIPSE_RADIUS_SQUARED: i32 = 60;
+    const ELLIPSE_Y_STRETCH: i32 = 2;
+    const STRIPE_WIDTH: i32 = 3;
+    const SHALLOW_LINE_RUN: i32 = 2;
+    const DOT_PERIOD_X: i32 = 7;
+    const DOT_PERIOD_Y: i32 = 5;
+    const DOT_PHASE_X: i32 = 3;
+    const DOT_PHASE_Y: i32 = 1;
+    const LINE_COLOUR: usize = 0;
+    const DOT_COLOUR: usize = 4;
+
+    fn indexed_pixel(index: Option<usize>) -> [u8; 4] {
+        index.map_or(TRANSPARENT_PIXEL, |index| {
+            let [r, g, b] = TEST_PALETTE[index];
+            [r, g, b, ALPHA_OPAQUE]
+        })
+    }
+
+    fn noise_frame() -> Vec<u8> {
+        let mut state = LCG_SEED;
+        (0..NOISE_WIDTH * NOISE_HEIGHT)
+            .flat_map(|_| {
+                state = state.wrapping_mul(LCG_MULTIPLIER).wrapping_add(LCG_INCREMENT);
+                let draw = state >> LCG_HIGH_HALF_SHIFT;
+                let index = (draw % NOISE_TRANSPARENT_ONE_IN != 0)
+                    .then(|| (draw / NOISE_TRANSPARENT_ONE_IN) as usize % TEST_PALETTE.len());
+                indexed_pixel(index)
+            })
+            .collect()
+    }
+
+    fn shapes_frame() -> Vec<u8> {
+        let (centre_x, centre_y) = (SHAPES_WIDTH as i32 / 2, SHAPES_HEIGHT as i32 / 2);
+        (0..SHAPES_HEIGHT as i32)
+            .flat_map(|y| (0..SHAPES_WIDTH as i32).map(move |x| (x, y)))
+            .flat_map(|(x, y)| {
+                let (dx, dy) = (x - centre_x, y - centre_y);
+                let index = if dx * dx + ELLIPSE_Y_STRETCH * dy * dy < ELLIPSE_RADIUS_SQUARED {
+                    Some(((x + y) / STRIPE_WIDTH) as usize % TEST_PALETTE.len())
+                } else if x == y || x == SHALLOW_LINE_RUN * y {
+                    Some(LINE_COLOUR)
+                } else if x % DOT_PERIOD_X == DOT_PHASE_X && y % DOT_PERIOD_Y == DOT_PHASE_Y {
+                    Some(DOT_COLOUR)
+                } else {
+                    None
+                };
+                indexed_pixel(index)
+            })
+            .collect()
+    }
+
+    /// Whether `rgba` has a pixel indexed storage can't hold: partial alpha, or an opaque colour
+    /// outside the test palette.
+    fn leaves_palette(rgba: &[u8]) -> bool {
+        rgba.chunks_exact(RGBA_BYTES).any(|pixel| match pixel[3] {
+            ALPHA_TRANSPARENT => false,
+            ALPHA_OPAQUE => !TEST_PALETTE.contains(&[pixel[0], pixel[1], pixel[2]]),
+            _ => true,
+        })
+    }
+
+    #[test]
+    fn palette_keeping_filters_add_no_colour_and_keep_alpha_binary() {
+        let frames = [(NOISE_WIDTH, NOISE_HEIGHT, noise_frame()), (SHAPES_WIDTH, SHAPES_HEIGHT, shapes_frame())];
+        for filter in ALL_FILTERS {
+            let left = frames.iter().any(|(width, height, rgba)| leaves_palette(&filter.apply(*width, *height, rgba).2));
+            // Blending filters must trip too, or these frames couldn't catch a misclassified one.
+            assert_eq!(left, !filter.keeps_palette(), "{filter:?}: keeps_palette() is {}", filter.keeps_palette());
         }
     }
 
