@@ -2,7 +2,7 @@
 //! save that writes a copy through `TileData::to_bytes`. A tile keeps every byte the controls do not change, the block
 //! headers and the unknown fields included. Field meanings follow `uocf::classic::tiledata`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use eframe::egui;
@@ -19,7 +19,12 @@ const MUL_FILTER: (&str, &[&str]) = ("MUL file", &["mul"]);
 const ITEM_ART_ID_BASE: u32 = uocf::classic::art::STATIC_TILE_ID_BASE;
 /// Room for one flag's checkbox and name: the group has as many flag columns as fit.
 const FLAG_CELL_WIDTH: f32 = 140.0;
+/// Digits of the flag value in a file with 64-bit flags, and in one with 32-bit flags.
 const FLAG_HEX_DIGITS: usize = 16;
+const NARROW_FLAG_HEX_DIGITS: usize = 8;
+/// The first bit a file with 32-bit flags cannot store.
+const FIRST_WIDE_FLAG_BIT: u32 = u32::BITS;
+const NARROW_FLAGS_NOTE: &str = "This tiledata.mul stores 32 flag bits (the layout before High Seas): bits 32 and up cannot be set.";
 const FLAG_FIELD_WIDTH: f32 = 150.0;
 const NAME_FIELD_WIDTH: f32 = 160.0;
 /// Drag speed of the number fields (typing is the main input).
@@ -81,6 +86,8 @@ pub struct TileDataEditor {
     /// The tiles as they were before the first change since loading or saving; `Some` is the one unsaved state.
     opened: Option<Arc<TileData>>,
     error: Option<String>,
+    /// The folder of the last save: the next save starts there.
+    last_output_dir: Option<PathBuf>,
 }
 
 impl TileDataEditor {
@@ -131,32 +138,46 @@ pub(super) fn toolbar(app: &mut UopInspectorApp, ui: &mut egui::Ui) {
     }
 }
 
-fn source_path(app: &UopInspectorApp) -> Option<PathBuf> {
-    find_file_ignoring_case(app.settings.cc_path.as_deref()?, TILEDATA_FILE_NAME)
-}
-
 fn save(app: &mut UopInspectorApp) {
     let Some(tiledata) = app.cc_tiledata.clone() else {
         return;
     };
     let (name, extensions) = MUL_FILTER;
-    let Some(output) = crate::dialog::file_dialog().add_filter(name, extensions).set_file_name(TILEDATA_FILE_NAME).save_file() else {
+    let mut dialog = crate::dialog::file_dialog().add_filter(name, extensions).set_file_name(TILEDATA_FILE_NAME);
+    if let Some(directory) = app.tiledata_editor.last_output_dir.clone().or_else(std::env::home_dir) {
+        dialog = dialog.set_directory(directory);
+    }
+    let Some(output) = dialog.save_file() else {
         return;
     };
-    if source_path(app).is_some_and(|source| same_file(&source, &output)) {
-        app.tiledata_editor.error = Some("The loaded tiledata.mul is refused as the target: save a copy.".to_owned());
-        return;
-    }
-    match tiledata.save(&output) {
+    let client_dir = app.settings.cc_path.clone();
+    match save_copy(&tiledata, client_dir.as_deref(), &output) {
         Ok(()) => {
             app.tiledata_editor.opened = None;
             app.tiledata_editor.error = None;
+            app.tiledata_editor.last_output_dir = output.parent().map(Path::to_path_buf);
             let message = format!("Saved {}.", output.display());
             app.status_message = message.clone();
             app.log(message);
         }
         Err(error) => app.tiledata_editor.error = Some(format!("Save failed: {error:#}")),
     }
+}
+
+/// Writes `tiledata` to `output`, outside the client folder `client_dir`: neither into that folder nor over its
+/// tiledata.mul through a link.
+fn save_copy(tiledata: &TileData, client_dir: Option<&Path>, output: &Path) -> color_eyre::eyre::Result<()> {
+    if let Some(client_dir) = client_dir {
+        color_eyre::eyre::ensure!(
+            !output.parent().is_some_and(|folder| same_file(folder, client_dir)),
+            "{} is in the client folder: save the copy in another folder",
+            output.display()
+        );
+        if let Some(source) = find_file_ignoring_case(client_dir, TILEDATA_FILE_NAME) {
+            uocf::utils::output_file::refuse_same_file([source.as_path()], output, "loaded tiledata.mul")?;
+        }
+    }
+    tiledata.save(output)
 }
 
 pub(super) fn same_file(left: &std::path::Path, right: &std::path::Path) -> bool {
@@ -197,7 +218,8 @@ pub(super) fn record_panel(ui: &mut egui::Ui, tiledata: &TileData, art_id: u32, 
             TileChange::Land(_, tile) => &mut tile.flags,
             TileChange::Item(_, tile) => &mut tile.flags,
         };
-        group(columns, "Flags", |ui| changed |= flag_fields(ui, art_id, flags));
+        let wide = tiledata.has_64_bit_flags();
+        group(columns, "Flags", |ui| changed |= flag_fields(ui, art_id, flags, wide));
         group(columns, "Art", |ui| match art {
             Some(art) => {
                 let scale = (ART_PREVIEW_SIDE / art.size_vec2().max_elem()).min(1.0);
@@ -266,17 +288,20 @@ fn item_fields(ui: &mut egui::Ui, tile: &mut ItemTile) -> bool {
     changed
 }
 
-/// The flag value (applied when the field loses focus) and a checkbox per named bit.
-fn flag_fields(ui: &mut egui::Ui, art_id: u32, flags: &mut Flags) -> bool {
+/// The flag value (applied when the field loses focus) and a checkbox per named bit. In a file with 32-bit flags
+/// (`wide` false) the upper bits stay clear: their checkboxes are off and a larger value is not taken.
+fn flag_fields(ui: &mut egui::Ui, art_id: u32, flags: &mut Flags, wide: bool) -> bool {
     let mut changed = false;
+    let digits = if wide { FLAG_HEX_DIGITS } else { NARROW_FLAG_HEX_DIGITS };
     let buffer_id = ui.make_persistent_id(("tiledata_flags_hex", art_id));
     let mut text = ui
         .data_mut(|data| data.get_temp::<String>(buffer_id))
-        .unwrap_or_else(|| format!("{:0FLAG_HEX_DIGITS$X}", flags.internal_flags));
+        .unwrap_or_else(|| format!("{:0digits$X}", flags.internal_flags));
     let response = ui
         .horizontal(|ui| {
             ui.label("Val:");
-            ui.add(egui::TextEdit::singleline(&mut text).desired_width(FLAG_FIELD_WIDTH))
+            let response = ui.add(egui::TextEdit::singleline(&mut text).desired_width(FLAG_FIELD_WIDTH));
+            if wide { response } else { response.on_hover_text(NARROW_FLAGS_NOTE) }
         })
         .inner;
     if response.has_focus() {
@@ -284,7 +309,7 @@ fn flag_fields(ui: &mut egui::Ui, art_id: u32, flags: &mut Flags) -> bool {
     } else {
         ui.data_mut(|data| data.remove::<String>(buffer_id));
         if response.lost_focus() {
-            if let Ok(bits) = u64::from_str_radix(text.trim().trim_start_matches("0x"), 16) {
+            if let Some(bits) = parse_flags(&text, wide) {
                 changed |= bits != flags.internal_flags;
                 flags.internal_flags = bits;
             }
@@ -295,7 +320,11 @@ fn flag_fields(ui: &mut egui::Ui, art_id: u32, flags: &mut Flags) -> bool {
         for (column, (bit, name)) in FLAG_BITS.into_iter().enumerate() {
             let mask = 1u64 << bit;
             let mut set = flags.internal_flags & mask != 0;
-            if ui.checkbox(&mut set, name).changed() {
+            let storable = wide || bit < FIRST_WIDE_FLAG_BIT;
+            let response = ui.add_enabled(storable, egui::Checkbox::new(&mut set, name));
+            if !storable {
+                response.on_disabled_hover_text(NARROW_FLAGS_NOTE);
+            } else if response.changed() {
                 flags.internal_flags = if set { flags.internal_flags | mask } else { flags.internal_flags & !mask };
                 changed = true;
             }
@@ -305,6 +334,14 @@ fn flag_fields(ui: &mut egui::Ui, art_id: u32, flags: &mut Flags) -> bool {
         }
     });
     changed
+}
+
+/// A typed flag value (hex, `0x` optional); None when it is not hex or does not fit the file's flags.
+fn parse_flags(text: &str, wide: bool) -> Option<u64> {
+    let text = text.trim();
+    let digits = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")).unwrap_or(text);
+    let bits = u64::from_str_radix(digits, 16).ok()?;
+    (wide || bits >> FIRST_WIDE_FLAG_BIT == 0).then_some(bits)
 }
 
 /// Stores a tile's new contents in the loaded tiles (a copy of what the rest of the app holds) and in its table row.
@@ -380,6 +417,43 @@ mod tests {
     }
 
     #[test]
+    fn a_32_bit_file_takes_no_upper_flag_bits() {
+        const LOW: u64 = 0x40;
+        const UPPER: u64 = 1 << FIRST_WIDE_FLAG_BIT;
+        assert_eq!(parse_flags("0x40", false), Some(LOW));
+        assert_eq!(parse_flags(" 40 ", true), Some(LOW));
+        assert_eq!(parse_flags(&format!("{UPPER:X}"), false), None);
+        assert_eq!(parse_flags(&format!("0X{UPPER:X}"), true), Some(UPPER));
+        assert_eq!(parse_flags("not hex", true), None);
+    }
+
+    /// A save goes anywhere but the client folder, and a link to the loaded file elsewhere is refused too.
+    #[test]
+    fn a_save_refuses_the_client_folder() {
+        let app = app_with_an_edited_tile();
+        let tiledata = app.cc_tiledata.as_ref().unwrap();
+        let root = std::env::temp_dir().join(format!("inspector_tiledata_save_{}", std::process::id()));
+        let client_dir = root.join("client");
+        let output_dir = root.join("copies");
+        std::fs::create_dir_all(&client_dir).unwrap();
+        std::fs::create_dir_all(&output_dir).unwrap();
+        let source = client_dir.join(TILEDATA_FILE_NAME);
+        std::fs::write(&source, tiledata.to_bytes().unwrap()).unwrap();
+
+        assert!(save_copy(tiledata, Some(&client_dir), &source).is_err());
+        assert!(save_copy(tiledata, Some(&client_dir), &client_dir.join("copy.mul")).is_err());
+        let link = output_dir.join("link.mul");
+        std::fs::hard_link(&source, &link).unwrap();
+        assert!(save_copy(tiledata, Some(&client_dir), &link).is_err());
+
+        let output = output_dir.join(TILEDATA_FILE_NAME);
+        save_copy(tiledata, Some(&client_dir), &output).unwrap();
+        assert_eq!(std::fs::read(&output).unwrap(), tiledata.to_bytes().unwrap());
+        assert_eq!(TileData::load(output).unwrap().item_tiles()[EDITED_TILE].weight, EDITED_WEIGHT);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn a_new_name_zeroes_the_rest_of_the_field() {
         let mut name = [b'x'; 8];
         store_name(&mut name, "ab");
@@ -401,6 +475,10 @@ mod tests {
             let bytes = std::fs::read(&path).unwrap();
             let mut tiledata = TileData::load(path).unwrap();
             assert_eq!(tiledata.to_bytes().unwrap(), bytes, "{}", root.display());
+            let copy = std::env::temp_dir().join(format!("inspector_tiledata_copy_{}.mul", std::process::id()));
+            save_copy(&tiledata, Some(&root), &copy).unwrap();
+            assert_eq!(std::fs::read(&copy).unwrap(), bytes, "{}: saved copy", root.display());
+            std::fs::remove_file(&copy).unwrap();
 
             let tile = &mut tiledata.item_tiles_mut()[ITEM_INDEX];
             tile.weight = tile.weight.wrapping_add(1);

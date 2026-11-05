@@ -699,8 +699,13 @@ impl TileData {
         Ok(out)
     }
 
+    /// Writes [`to_bytes`](Self::to_bytes) to `path` through a temporary file in its folder: a failed save leaves
+    /// `path` as it was.
     pub fn save(&self, path: &std::path::Path) -> eyre::Result<()> {
-        std::fs::write(path, self.to_bytes()?).wrap_err_with(|| format!("Write tiledata.mul at '{}'", path.display()))
+        let bytes = self.to_bytes()?;
+        crate::utils::output_file::write_through_temp(path, |temp| {
+            std::fs::write(temp, &bytes).wrap_err_with(|| format!("Write tiledata.mul at '{}'", temp.display()))
+        })
     }
 
     pub fn load(file_path: PathBuf) -> eyre::Result<TileData> {
@@ -1038,5 +1043,40 @@ mod tests {
         assert_eq!(item.flags.internal_flags, u64::from(LOW_FLAGS));
         assert_eq!(tiledata.land_tiles()[FLAGGED_LAND_TILE].flags.internal_flags, u64::from(LOW_FLAGS));
         assert!(item.flags.impassable() && !item.flags.nohouse());
+    }
+
+    /// A save that cannot finish (here a 32-bit file holding an upper flag bit, then a full disk) leaves the file.
+    #[test]
+    fn a_failed_save_leaves_the_file_as_it_was() {
+        const OLD_CONTENTS: &[u8] = b"old";
+        let item_blocks = (1 + ItemTileMaxIdxRev::Revision1 as usize) / ItemTile::TILES_PER_BLOCK;
+        let bytes = tiledata_bytes(
+            LandTileBinSize::Classic as usize,
+            ItemTileBinSize::Classic as usize,
+            item_blocks,
+            u64::from(LOW_FLAGS),
+            std::mem::size_of::<u32>(),
+        );
+        let mut tiledata = load("failed_save", &bytes);
+        let dir = std::env::temp_dir().join(format!("uocf_tiledata_failed_save_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let output = dir.join("tiledata.mul");
+        std::fs::write(&output, OLD_CONTENTS).unwrap();
+
+        crate::utils::output_file::block_temp_file(&output);
+        assert!(tiledata.save(&output).is_err());
+        assert_eq!(std::fs::read(&output).unwrap(), OLD_CONTENTS);
+        std::fs::remove_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&output, OLD_CONTENTS).unwrap();
+
+        tiledata.item_tiles_mut()[FLAGGED_ITEM_TILE].flags.internal_flags = HIGH_FLAGS;
+        assert!(tiledata.save(&output).is_err());
+        assert_eq!(std::fs::read(&output).unwrap(), OLD_CONTENTS);
+
+        tiledata.item_tiles_mut()[FLAGGED_ITEM_TILE].flags.internal_flags = u64::from(LOW_FLAGS);
+        tiledata.save(&output).unwrap();
+        assert_eq!(std::fs::read(&output).unwrap(), bytes);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
