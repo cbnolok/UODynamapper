@@ -1,8 +1,9 @@
 # UDDP mobile animation format: needs, constraints, desires, failed attempts
 
-Status (2026-11-02): **no format chosen yet.** This file says what the format has to do and what we already tried, so
-nobody repeats a dead end. The measurements and their method are in
-[`proposals/2026-11-01-mobile-anim-codec.md`](proposals/2026-11-01-mobile-anim-codec.md), and the benchmark is
+Status (2026-11-05): **measuring is finished and no format is chosen yet: the user decides.** This file says what the format
+has to do and what we already tried, so nobody repeats a dead end. The measurements and their method are in
+[`proposals/2026-11-01-mobile-anim-codec.md`](proposals/2026-11-01-mobile-anim-codec.md), which ends with the recommendation
+and the list of decisions, and the benchmark is
 `lib/udd-conv/tests/integration/mobile_anim_codec.rs` with `mobile_anim_codec/shrink*`.
 
 Reading the numbers:
@@ -10,13 +11,13 @@ Reading the numbers:
 - "× BC7" compares with the benchmark's BC7 + zstd estimate: 782.5 MB Classic, 1823.3 MB Enhanced, per body with no
   atlas or gutters. It flatters BC7 slightly, because real packs are larger:
 
-  | | Benchmark estimate | Pack from today's packer (`--bc7 --zstd`, not installed) | Installed today |
+  | | Benchmark estimate | Pack from the packer of the time (`--bc7 --zstd`, not installed) | Installed in early November, since removed |
   |---|---:|---:|---:|
   | Classic | 782.5 MB | 856.6 MB | 985.6 MB (30 Jun) |
   | Enhanced | 1823.3 MB | 1987.9 MB | 6904 MB (30 Oct) |
 
-  The installed Enhanced package predates compression: 2291 of its 2522 entries are stored raw, and 73 % of its atlas
-  area is empty.
+  That Enhanced package predated compression: 2291 of its 2522 entries were stored raw, and 73 % of its atlas area holds no
+  painted pixel. The packer's own waste is 26.5 %; the rest is the empty space inside padded frame boxes.
 - Timings are one thread, boost off, EPP power, unless marked otherwise. Numbers marked *provisional* come from a run
   whose CPU state changed before it ended.
 
@@ -284,7 +285,8 @@ files, using each frame's declared box. Stream counts assume 5 directions per en
 **Those medians describe equipment, not creatures.** Equipment is about 80 % of all frames, and it pulls every median down.
 Split by the body's `mobtypes.txt` type (Enhanced ships no such file, so its bodies use Classic's table by id). Pixel shares
 in this table count declared boxes. Counted by cropped boxes, Classic UOP is monster 52.0 %, animal 33.0 % and equipment
-12.4 %, which is the basis of the rule's table further down:
+12.4 %, which is the basis of the rule's table further down. A later `mobtypes.txt` split of Classic MUL that also counts
+bodies the table doesn't list gives equipment 75.0 % / 19.5 % and not listed 9.4 % / 3.5 %; the rows below leave those out:
 
 | Kind | Share of frames | Share of pixels | Median frame | Median area, px | Fit 128 × 64 |
 |---|---:|---:|---:|---:|---:|
@@ -354,7 +356,9 @@ Sparse frames take a large share of the rectangles. Among Enhanced bodies worn b
 are 15–19 % painted and 30–35 % row spans, so their rows hold separate islands that row spans can't remove.
 
 A coder fed the rectangle spends bytes and decode time on those row transitions, but removing them saves far less than these
-shares suggest. Against the rectangle at zstd 19, on every 10th body:
+shares suggest. On every body, against the rectangle at zstd 19: row spans −3.6 % on Classic and −2.9 % on Enhanced, both
+Enhanced planes in row spans −6.6 %, painted pixels only −8.4 %, and painted pixels with coverage in row spans −9.6 %. The
+same rows on every 10th body, with the sparse-frame shares, which move with the sample:
 
 - **Row spans:** 3.5 % smaller on Classic, 2.9 % on Enhanced.
 - **Both Enhanced planes in row spans:** 6.7 % smaller.
@@ -380,8 +384,8 @@ Wanted but not required, in the order the user raised them.
   stored frames as key frames and interpolate the movement between them, probably at runtime.
 - **Fewer stored frames if interpolation can rebuild them** (the halving idea below).
 - **Runtime BC7** as a later option, possibly for upscaled animations, to save VRAM. Off for now by the user's decision.
-- **Do clearly better than the 20-year-old clients.** Classic already does (0.64× of the referenced shipped data). Enhanced
-  does not yet (0.98×).
+- **Do clearly better than the 20-year-old clients.** On every body, Classic does: 0.67× of the referenced shipped data.
+  Enhanced is only slightly better: 0.94× at the best crowd speed, 0.91× when disk leads, and it pays with RG8's VRAM.
 
 ## 4. Failed attempts
 
@@ -489,8 +493,23 @@ Nothing here is final.
 
 ## 6. Measured since
 
-All six questions now have answers. Full tables are in sections 7 and 8 of
-[the codec proposal](proposals/2026-11-01-mobile-anim-codec.md). Timings: 4 threads, boost off, EPP `balance_power`, no
+**Final rows (2026-11-05), every body, lossless, zstd 19, one stream per (action, direction).** Sections 9–17 and the
+recommendation of [the codec proposal](proposals/2026-11-01-mobile-anim-codec.md) hold every row and the method.
+
+| Row | Disk | × real BC7 pack / shipped | Creature crowd, five directions / faced | VRAM, whole set |
+|---|---:|---:|---:|---:|
+| Classic: row spans, duplicates as pointers | 706.5 MB | 0.82 / 0.67 | 37.0 / 7.5 ms | R8 2474.5 MB |
+| Enhanced, speed first: both planes in row spans, duplicates as pointers | 1869.6 MB | 0.94 / 0.94 | 100.3 / 20.5 ms | RG8 9891.3 MB |
+| Enhanced, disk first: painted only + coverage spans, duplicates as pointers | 1808.7 MB | 0.91 / 0.91 | 129.0 / 26.3 ms | RG8 9891.3 MB |
+
+These layouts fail the line on the worst crowd with five directions (about 260–550 ms) and pass it when each NPC loads its
+faced direction first (about 55–112 ms), so faced-first loading is part of the recommendation.
+
+The close call is Enhanced on desktop: BC3 + colour under transparent pixels is 1539.0 MB at SSIMULACRA2 84.52 / 66.43 / 46.73
+(median, p5, min) and half the VRAM of RG8, but 204 of 926 bodies score under 80, hue has to work from colour, which no real
+renderer does yet, and phones need another pack.
+
+The six questions below came first. Their tables are in sections 7 and 8 of the proposal. Timings: 4 threads, boost off, EPP `balance_power`, no
 GPU upload or disk reads. Crowds are 300 distinct (body, action) pairs: "uniform" treats every existing pair as equally
 likely, and "worst" is the 300 largest (918 / 1231 Mpx, Classic / Enhanced). The line is 250 ms.
 
@@ -543,17 +562,19 @@ drift by up to about 5 %, so smaller gaps are ties.
 |---|---|---|
 | Concatenate each (action, direction) as one indexed stream, whole-frame reuse only, no block modes | This is the recommendation | Agreed |
 | Whole-body streams for Classic | Smallest, but the largest takes 204 ms, against 11 ms for the largest action stream; fails the uniform crowd except with LZ4 HC | Rejected |
-| A coding profile per stream, for tiny and for large or upscaled art | No size bucket flips a result. Choosing a residual per stream adds nothing on Classic, where plain wins 95 % of streams, and 0.3 % on Enhanced, where left nearly always wins | Not needed to choose a residual. Coders per class are still being measured |
+| A coding profile per stream, for tiny and for large or upscaled art | No size bucket flips a result. Choosing a residual per stream adds nothing on Classic, where plain wins 95 % of streams, and 0.3 % on Enhanced, where left nearly always wins | Not needed to choose a residual. Coders per class gain nothing on Classic and 2.4 % on Enhanced, with almost no margin on the line |
 | Canonical body palette plus temporal index deltas | The premise of per-frame palette noise is wrong. A master palette gives −2 %. Master palette + XOR with the previous frame is 24 % larger on Classic and 13.9 % on Enhanced | Rejected |
 | Dirty rectangles against the previous frame | Static pixels are only 4–5 % of index bits outside idle, about 20 % in idle, which caps the saving | Rejected |
 | Static palette sort at no runtime cost | Sorting alone does nothing for LZ. A tight left residual now decodes at 0.83× zstd 19's speed on Enhanced, but painted only, with no sort or residual, is 1.5 % smaller at the same speed, so the gain came from dropping transparent pixels. Classic stays 7 % larger | Rejected |
-| Shape and fill as separate planes | Enhanced already splits them. Every-pixel coverage tables save 32 % of that plane, about 6 % of the total, but fail five directions on creatures at 580 ms. Coverage in row spans saves 6.3 % of the plane at 0.95× the speed | Tables rejected; row spans still a candidate |
+| Shape and fill as separate planes | Enhanced already splits them. Every-pixel coverage tables save 32 % of that plane, about 6 % of the total, but fail five directions on creatures at 580 ms. Coverage in row spans saves 6.3 % of the plane at 0.95× the speed | Tables rejected; row spans are a final candidate |
 | Cross-action dictionary of 4 × 4 patches | Nothing to gain across bodies; 8 × 8 exact copies are rare. Even per body, the 4 × 4 bound counting codebook and block ids is 11.8 % / 20.9 % larger than zstd 19 on the index plane | Closed |
 | Scanline RLE plus FSE, no LZ, "at memory bandwidth" | With semi-adaptive tANS it is 9.7 % / 13.7 % larger than zstd 19 and slower: 151 / 322 ms on creatures against 41 / 120, so Enhanced fails the line. zstd's history isn't its bottleneck | Closed |
 
-**Still not measured:** GPU upload, disk reads, a crowd weighted by how often actions are really played, and the row-span and
-painted-only rows of the Enhanced worst crowd. That job stopped at the 18 GB watchdog, and a rerun of those rows is planned. The `timing` pass failed on memory twice and wasn't retried; `s1` and `s2` time the same
-streams, so the ranking doesn't need it.
+**Still not measured:** any low-end GPU, Mali or Apple GPU cost, hue from colour or a second shader path in a real renderer,
+upload over PCIe to a discrete card, ETC2 RGBA8, BC3 in the GPU test, BC3 + colour's decode, disk reads, and a crowd weighted by
+how often actions are really played. GPU upload and shader cost were measured headless on one Radeon 880M (section 15), as ratios
+that say nothing about low-end hardware. The `timing` pass failed on memory twice and wasn't retried; `s1` and `s2` time the
+same streams, so the ranking doesn't need it.
 
 TLP used to re-apply boost and `balance_performance` during timed runs. `/etc/tlp.conf` now sets boost off and EPP
 `balance_power` on mains, so new timings are in that state and don't compare in absolute terms with the older EPP
@@ -623,13 +644,19 @@ to change, with no backward compatibility. All frames are kept: no halved tier. 
 
 The user set the line: 300 new actions drawable in about 250 ms on 4 threads is fast enough, and faster is better.
 
-Runtime VRAM counts as well: wasted space there is undesirable (the user, 2026-11-04). Figures so far are pixels × format,
-without atlas waste or tables, and the real measurement is pending.
+Runtime VRAM counts as well: wasted space there is undesirable (the user, 2026-11-04). Section 11 of the proposal has the
+measured layouts, with tables and palettes counted: Classic / Enhanced MB are R8 or RG8 2474.5 / 9891.3, BC7 2533.4 / 5131.6,
+BC1 1274.7 / 2578.4, row spans in linear memory 1386.2 / 4990.6. Whole atlas pages aren't a sensible unit: they turn 3.0 MB of
+a dressed crowd's frames into 804 MB.
 
-A lossy BC7 mode for low-end devices is wanted, to reduce disk and VRAM (the user, 2026-11-04). It is chosen at pack time;
-runtime BC7 stays off. What it must deliver is still being measured. So far, per (action, direction), BC7 + zstd 7 is larger
-on disk than the lossless candidates (≈874 / ≈1904 MB). Its VRAM saving is on Enhanced only (5.11 GB against 9.83, hue masks
-not counted; Classic 2.52 against 2.42). Its creature-crowd decode is faster (29 / 51 ms against 41 / 120 for zstd 19).
+A lossy block mode for low-end devices is wanted, to reduce disk and VRAM (the user, 2026-11-04). It is chosen at pack time;
+runtime BC7 stays off. The final rows: on Classic, BC1 above 2500 px with lossless R8 below is 523.5 MB, with a median of 81.77
+on the coded bodies, and every BC7 row is larger than lossless. On Enhanced, BC3 + colour is 1539.0 MB at 84.52 and BC7 with fix C
+is 1900.7 MB at 85.40, at the same VRAM; BC1's one-bit alpha takes its min to −47.93.
+
+The repo's BC7 encoder had a real bug at the converter's flags: mode 4 with index flag 0 packed each weight plane into the other's
+field. The user approved that fix, and it landed on 2026-11-05. Any BC7 figure from before that date and not labelled with a fixed
+encoder reads the bug: section 12 of the proposal has the details, and two further encoder changes that wait for the user.
 
 **Open:**
 
@@ -637,11 +664,12 @@ not counted; Classic 2.52 against 2.42). Its creature-crowd decode is faster (29
 |---|---|---|
 | Storage per client | Indexed slot planes, lossless, zstd 19, hue in the shader; LZ4 HC is the alternative at about 22 % more disk | The user |
 | Load unit | One stream per (action, direction), faced direction first | The user |
-| Where the low-end BC7 tier's quality floor sits, and which RDO level it uses | 80 suggested as a floor | Rows being measured; contact sheets; the user's eye |
-| Whether indexed frames stay the default once filtering is counted | Depends on the GPU test: 5 or 6 fetches per pixel against 1 | Being measured |
-| Whether the low-end tier block-codes only large bodies, and at what size | A per-body choice, with equipment staying lossless. It needs a second pipeline and hue from colour on those bodies | Rows being measured |
-| Whether phones and web get their own low-end packs or one Basis Universal pack | Build per platform: the converter already runs on the user's client files, so it can target their device | Rows being measured |
-| Whether the low-end tier uses BC1 (DXT1), BC7 or a mix | BC1 is the only format that halves VRAM on both clients, at 0.5 bytes per pixel. It keeps 3 colours in blocks with transparency, loses Enhanced's anti-aliased edges and needs a smaller hue mask. Classic stays lossless R8 unless BC1 proves acceptable, since BC7 saves it nothing | Rows being measured |
-| Which GPU layout holds frames in VRAM | Decide after the measurement | Resident bytes per layout; atlas waste; shader cost on a GPU |
+| Where the low-end tier's quality floor sits, and which RDO level it uses | 80 as a floor, no RDO unless a target needs it | The user's eye: `blocks-preview/` crops; there are no BC3 crops yet |
+| Whether indexed frames stay the default once filtering is counted | Yes: the indexed filter costs 1.43–1.57× BC7 on the Radeon 880M, 2.4–3.1 % of a 60 fps frame in a crowd at 1.5× | The user; one AMD iGPU only |
+| Whether the low-end tier block-codes only large bodies, and at what size | Classic: BC1 above 2500 px, with a median of 81.77 on coded bodies. Enhanced: the same mix with BC7 fix C is 1931.1 MB against 1539.0 MB for BC3 + colour on every body | The user; a second shader path and hue from colour are unbuilt |
+| Whether phones and web get their own low-end packs or one Basis Universal pack | Stay on the universal R8/RG8 pack, and ASTC 4×4 only if VRAM forces it. No Basis row was both smaller and better than the plain format beside it | The user |
+| Whether the low-end tier uses BC1, BC3 or BC7 | Classic BC1. Enhanced BC3 + colour or BC7 with fix C, not BC1 | The user |
+| Which GPU layout holds frames in VRAM | R8/RG8 with faced-first loading, not whole atlas pages. Row spans in linear memory only if a device proves too small | The user; no low-end device measured |
+| Whether the BC7 encoder takes fix C and colour under transparent pixels | Fix C yes; the colour step is about +5 % on disk for a better p5 and min | The user |
 | Runtime interpolation for high frame rates | A separate study | The full frame set |
 | Whether to offer an opt-in flag for unreached art | Keep all | Section 7's trace |
