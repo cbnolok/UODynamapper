@@ -70,6 +70,41 @@ struct PartRenderInfo {
     art_source: Option<ArtSource>,
 }
 
+/// The list of the Multis tab the arrow keys move: the one last clicked.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum MultisListFocus {
+    /// The multis on the left.
+    #[default]
+    Multis,
+    /// The components of the selected multi.
+    Components,
+}
+
+/// Gives the arrow keys to the list `focus` when the pointer is pressed in `ui`, the area of that list.
+fn focus_list_on_press(ui: &egui::Ui, focus: MultisListFocus) {
+    let rect = ui.max_rect();
+    // The press is read first: the input lock is held inside `ui.input`, and `layer_id_at` takes it again.
+    let press = ui.input(|input| input.pointer.primary_pressed().then(|| input.pointer.interact_pos()).flatten());
+    let pressed = press.is_some_and(|pos| rect.contains(pos) && ui.ctx().layer_id_at(pos) == Some(ui.layer_id()));
+    if pressed {
+        ui.ctx().data_mut(|data| data.insert_temp(egui::Id::new(MULTIS_LIST_FOCUS_ID_SALT), focus));
+    }
+}
+
+/// The arrow key step for the list `focus`: none unless it was the last clicked, or while a text field takes the keys.
+fn list_arrow_delta(ui: &egui::Ui, focus: MultisListFocus) -> Option<isize> {
+    let focused = ui
+        .ctx()
+        .data_mut(|data| data.get_temp::<MultisListFocus>(egui::Id::new(MULTIS_LIST_FOCUS_ID_SALT)))
+        .unwrap_or_default();
+    arrow_delta(ui, focused != focus || ui.ctx().egui_wants_keyboard_input())
+}
+
+/// Whether a multi or tile id matches a search: its decimal digits, or its `0x` hex form.
+fn id_matches_search(id: u32, query: &str) -> bool {
+    query.is_empty() || id.to_string().contains(query) || format!("{id:#x}").contains(query)
+}
+
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
 struct MultiSourceClip {
     left: i32,
@@ -99,6 +134,8 @@ const TILEART_SCALE_OF_ONE_CLASSIC_PIXEL: f32 = 1.5;
 /// Side of the box drawn for a part without art, in classic pixels.
 const MISSING_PART_SIDE: f32 = 14.0;
 const CLASSIC_MULTI_SIDEBAR_WIDTH: f32 = 250.0;
+const MULTIS_LIST_FOCUS_ID_SALT: &str = "multis_list_focus";
+const COMPONENTS_SEARCH_ID_SALT: &str = "multi_components_search";
 const UOP_MULTI_SIDEBAR_WIDTH: f32 = 300.0;
 /// Classic `multi.mul` part flag set on the parts the client draws.
 pub(super) const CLASSIC_MULTI_PART_VISIBLE_FLAG: u32 = 0x1;
@@ -242,6 +279,12 @@ fn ui_classic_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
                 ui.label("ID:");
                 ui.add(egui::DragValue::new(&mut app.selected_multi_id));
             });
+            ui.horizontal(|ui| {
+                ui.label("Search:");
+                ui.text_edit_singleline(&mut app.searches.multis)
+                    .on_hover_text("Multi ids holding these digits, or a 0x hex id.");
+            });
+            let query = app.searches.multis.trim().to_lowercase();
             let sort = list_sort_controls(ui, "classic_multi_entries", &["ID"], 0);
             let housing_index = app.housing_index.clone();
             housing_multis_filter_checkbox(ui, &mut app.multi_part_filters, housing_index.as_deref());
@@ -255,10 +298,11 @@ fn ui_classic_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
                     let ids = (0..max_id)
                         .filter(|id| !only_housing_multis || is_housing_multi(housing_index.as_deref(), *id))
                         .filter(|id| empty_multis.as_ref().is_none_or(|empty| !empty.contains(id)))
+                        .filter(|id| id_matches_search(*id, &query))
                         .collect::<Vec<_>>();
                     let sorted_indices = sorted_indices_by(&ids, sort.ordering(), |left, right| left.cmp(right));
                     let visible_ids: Vec<_> = sorted_indices.iter().map(|index| ids[*index]).collect();
-                    let keyboard_moved = if let Some(delta) = arrow_delta(ui, false) {
+                    let keyboard_moved = if let Some(delta) = list_arrow_delta(ui, MultisListFocus::Multis) {
                         if let Some(id) = move_selection(&visible_ids, Some(app.selected_multi_id), delta) {
                             select_multi(app, id, None);
                         }
@@ -285,6 +329,7 @@ fn ui_classic_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
                     });
                 }
             }
+            focus_list_on_press(ui, MultisListFocus::Multis);
         });
 
     egui::CentralPanel::default().show(ui, |ui| {
@@ -326,10 +371,9 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
                 ui.monospace(path.display().to_string());
             }
             ui.separator();
-            let mut search_has_focus = false;
             ui.horizontal(|ui| {
                 ui.label("Search:");
-                search_has_focus = ui.text_edit_singleline(&mut app.searches.multis).has_focus();
+                ui.text_edit_singleline(&mut app.searches.multis);
             });
             let sort = list_sort_controls(ui, "uop_multi_entries", &["ID", "Path", "Hash", "Parts"], 0);
             let housing_index = app.housing_index.clone();
@@ -366,7 +410,7 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
                 .get(app.selected_multi_id)
                 .map(|item| (item.id, item.filename_hash))
                 .or_else(|| app.selected_multi_uop_hash.map(|hash| (app.selected_multi_id, hash)));
-            let keyboard_moved = if let Some(delta) = arrow_delta(ui, search_has_focus) {
+            let keyboard_moved = if let Some(delta) = list_arrow_delta(ui, MultisListFocus::Multis) {
                 if let Some((id, hash)) = move_selection(&visible_entries, selected_entry, delta) {
                     select_multi(app, id, Some(hash));
                 }
@@ -400,6 +444,7 @@ fn ui_uop_multis(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::
                     }
                 }
             });
+            focus_list_on_press(ui, MultisListFocus::Multis);
         });
 
     let show_housing_id = egui::Id::new(SHOW_HOUSING_PIECES_ID_SALT);
@@ -775,7 +820,30 @@ fn draw_multi_details(
             egui::vec2(component_width, available.y),
             egui::Layout::top_down(egui::Align::Min),
             |ui| {
+                focus_list_on_press(ui, MultisListFocus::Components);
                 ui.heading("Components");
+                let search_id = egui::Id::new(COMPONENTS_SEARCH_ID_SALT);
+                let mut search = ui.ctx().data_mut(|data| data.get_temp::<String>(search_id)).unwrap_or_default();
+                ui.horizontal(|ui| {
+                    ui.label("Search:");
+                    ui.text_edit_singleline(&mut search)
+                        .on_hover_text("Components whose item id holds these digits, or a 0x hex id.");
+                });
+                let query = search.trim().to_lowercase();
+                ui.ctx().data_mut(|data| data.insert_temp(search_id, search));
+                let listed: Vec<&PreviewPart> =
+                    parts.iter().filter(|part| id_matches_search(u32::from(part.item_id), &query)).collect();
+                let keyboard_moved = match list_arrow_delta(ui, MultisListFocus::Components) {
+                    Some(delta) => {
+                        let listed_indices: Vec<usize> = listed.iter().map(|part| part.source_index).collect();
+                        if let Some(index) = move_selection(&listed_indices, selected_part_index, delta) {
+                            selected_part_index = Some(index);
+                            ui.ctx().data_mut(|data| data.insert_temp(selected_part_id, index));
+                        }
+                        true
+                    }
+                    None => false,
+                };
                 egui::ScrollArea::vertical()
                     .id_salt(("multi_parts_scroll", app.multis_source as u8, app.selected_multi_id))
                     .auto_shrink([false, false])
@@ -789,10 +857,11 @@ fn draw_multi_details(
                             ui.label("Flags");
                             ui.label("Notes");
                             ui.end_row();
-                            for part in parts {
+                            for part in listed {
                                 let index = part.source_index;
                                 let selected = selected_part_index == Some(index);
                                 let mut clicked = false;
+                                let mut first_cell = true;
                                 for text in [
                                     part.item_id.to_string(),
                                     part.x.to_string(),
@@ -801,7 +870,12 @@ fn draw_multi_details(
                                     part.flags.clone(),
                                     part_notes(part),
                                 ] {
-                                    clicked |= ui.selectable_label(selected, part_cell_text(part, text)).clicked();
+                                    let response = ui.selectable_label(selected, part_cell_text(part, text));
+                                    if keyboard_moved && selected && first_cell {
+                                        response.scroll_to_me(Some(egui::Align::Center));
+                                    }
+                                    first_cell = false;
+                                    clicked |= response.clicked();
                                 }
                                 if clicked {
                                     selected_part_index = Some(index);
@@ -1417,6 +1491,76 @@ mod tests {
             hidden,
             housing_piece,
         }
+    }
+
+    /// Runs a frame of two lists side by side, the multis left and the components right; returns their arrow steps.
+    fn two_lists_frame(ctx: &egui::Context, events: Vec<egui::Event>) -> (Option<isize>, Option<isize>) {
+        const SCREEN_SIDE: f32 = 400.0;
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::Vec2::splat(SCREEN_SIDE))),
+            events,
+            ..Default::default()
+        };
+        let mut steps = (None, None);
+        let _ = ctx.run_ui(input, |ui| {
+            ui.columns(2, |columns| {
+                focus_list_on_press(&columns[0], MultisListFocus::Multis);
+                focus_list_on_press(&columns[1], MultisListFocus::Components);
+                steps = (
+                    list_arrow_delta(&columns[0], MultisListFocus::Multis),
+                    list_arrow_delta(&columns[1], MultisListFocus::Components),
+                );
+            });
+        });
+        steps
+    }
+
+    #[test]
+    fn the_arrow_keys_move_the_list_clicked_last() {
+        const LEFT: egui::Pos2 = egui::pos2(50.0, 50.0);
+        const RIGHT: egui::Pos2 = egui::pos2(350.0, 50.0);
+        let press = |pos| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        let down = || {
+            vec![egui::Event::Key {
+                key: egui::Key::ArrowDown,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }]
+        };
+        let ctx = egui::Context::default();
+        assert_eq!(two_lists_frame(&ctx, down()), (Some(1), None));
+        two_lists_frame(&ctx, press(RIGHT));
+        assert_eq!(two_lists_frame(&ctx, down()), (None, Some(1)));
+        two_lists_frame(&ctx, press(LEFT));
+        assert_eq!(two_lists_frame(&ctx, down()), (Some(1), None));
+    }
+
+    #[test]
+    fn a_search_matches_decimal_digits_or_a_hex_id() {
+        const ID: u32 = 0x812D;
+        assert!(id_matches_search(ID, ""));
+        assert!(id_matches_search(ID, "3306"));
+        assert!(id_matches_search(ID, "0x812d"));
+        assert!(id_matches_search(ID, "812d"));
+        assert!(!id_matches_search(ID, "0x812e"));
     }
 
     #[test]
