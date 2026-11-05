@@ -4884,6 +4884,104 @@ R8 and RG8 exist on every GPU in scope, web and phones included, so this path ne
 | Enhanced | painted + coverage spans, zstd 19 | 1819.9 | 9834.0 | 433.4 / 85.2 | 129.0 / 26.3 | 20.0 / 4.4 | lossless | exact, by index |
 | Enhanced | section 10's assignment (coverage tANS on all but large) | 1761.7 | 9834.0 | 396.6 / 79.9 | 232.3 / 57.7 | 81.7 / 34.7 | lossless | exact, by index |
 
+## 18. LZ4 HC with a dictionary (scratch bench: `lz4dict`, `timed`)
+
+**Measure only: the user decides.** Every dictionary figure above is zstd's. These are LZ4 HC's. The decoder only looks back 64 KiB, so no dictionary here is larger, and a stream gains nothing from one past its first 64 KiB of output.
+
+The layouts are the ones in the crowd tables: Classic in row spans, Enhanced with both planes in row spans, expanded after decoding, on every body. Every row keeps one stream per (action, direction), each plane its own LZ4 block. HC level 12 unless a row says otherwise. Every stream under rows a to d was decoded back and compared byte for byte, dictionary in its own buffer. On every 10th body the same was done for levels 9, 10 and 11 and for the prefix path of rows b and c.
+
+**How to read them:**
+
+- **Disk** counts the palette table (19.8 and 32.4 MB, the same in every row) and the dictionaries' own bytes. The best-per-body row adds one byte per body for the choice. Row c's dictionary is a stored stream, so it adds nothing. Row d adds its dictionary once per package.
+- **Won** is the share of bodies smaller with the dictionary, its bytes included, than without.
+- **Decode** is the creature and dressed NPC crowds on 1 / 4 threads, in ms, including expansion. Trained and shared dictionaries are already in memory when the clock starts, so reading them is not in the time, as disk reads aren't in any crowd row. **Read** is the crowd's compressed bytes, dictionaries included: creatures five / faced, dressed five / faced.
+- **Apart** keeps the dictionary in its own buffer. **Prefix** copies it directly before the output, and the copy is in the time. `LZ4_decompress_safe_usingDict` in `lz4.c` (lz4 1.10.0) picks its path from the addresses: `dictSize == 0` is the plain decoder; `dictStart + dictSize == dest` is the prefix path (`withPrefix64k` from 64 KiB − 1 up, `withSmallPrefix` below); anything else is `forceExtDict`. Rows b, c and d all decode through this call. Every row makes one fresh output allocation per plane, as the baseline's `lz4::block::decompress` does; a prefix row's is larger by the dictionary.
+- **Timing state:** boost off, EPP balance_power, platform profile performance, on the first L3 cluster. **Read a row against row a of the same table.** Same crowds as section 9 (the same expanded bytes), but row a doesn't reproduce section 9's times, in either direction:
+
+| client | row a here: creatures five, faced, dressed five, faced; 1 / 4 threads | section 9 |
+|---|---|---|
+| Classic | 49.4 / 14.2, 9.8 / 3.0, 9.4 / 2.4, 1.9 / 0.6 | 44.1 / 12.6, 9.2 / 2.7, 10.2 / 2.7, 2.3 / 0.7 |
+| Enhanced | 114.3 / 29.4, 23.3 / 6.1, 20.1 / 5.2, 4.3 / 1.1 | 131.7 / 36.4, 28.4 / 7.5, 21.5 / 5.7, 4.5 / 1.2 |
+
+This bench is a separate build with the repo's release profile, and the cause of that drift isn't known. Between two runs of this bench, a row's one-thread time moved by a median of 0.9 % on Classic and 1.2 % on Enhanced. Don't mix these times with section 9's.
+
+### Classic, row spans, 1022 bodies
+
+| row | disk MB | × no dictionary | won | creatures, five | creatures, faced | dressed, five | dressed, faced | read MB |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| a, no dictionary | 888.4 | 1.0000 |  | 49.4 / 14.2 | 9.8 / 3.0 | 9.4 / 2.4 | 1.9 / 0.6 | 46.9 / 9.3, 4.8 / 1.0 |
+| b, trained 4 KiB, apart | 875.8 | 0.9858 | 98.1 % | 57.4 / 16.3 | 11.7 / 3.6 | 11.9 / 3.0 | 2.4 / 0.6 | 47.7 / 10.5, 5.8 / 2.2 |
+| b, trained 4 KiB, prefix | 875.8 | 0.9858 | 98.1 % | 49.4 / 14.0 | 10.0 / 3.0 | 9.2 / 2.4 | 1.9 / 0.5 | 47.7 / 10.5, 5.8 / 2.2 |
+| b, trained 16 KiB, apart | 863.7 | 0.9722 | 86.5 % | 64.7 / 18.2 | 13.2 / 4.0 | 13.6 / 3.5 | 2.8 / 0.8 | 50.6 / 13.9, 8.8 / 5.4 |
+| b, trained 16 KiB, prefix | 863.7 | 0.9722 | 86.5 % | 49.9 / 14.3 | 10.3 / 3.1 | 9.9 / 2.6 | 2.0 / 0.6 | 50.6 / 13.9, 8.8 / 5.4 |
+| b, trained 64 KiB, apart | 855.6 | 0.9630 | 54.6 % | 71.2 / 19.9 | 15.0 / 4.4 | 14.3 / 3.6 | 2.7 / 0.8 | 62.7 / 27.2, 14.3 / 11.2 |
+| b, trained 64 KiB, prefix | 855.6 | 0.9630 | 54.6 % | 51.8 / 14.8 | 11.0 / 3.3 | 11.2 / 2.9 | 2.3 / 0.7 | 62.7 / 27.2, 14.3 / 11.2 |
+| b, best per body including none, apart | 851.1 | 0.9580 | 98.1 % | 71.4 / 19.9 | 15.5 / 4.5 | 14.5 / 3.8 | 2.9 / 0.8 | 60.7 / 25.0, 14.0 / 10.9 |
+| b, best per body including none, prefix | 851.1 | 0.9580 | 98.1 % | 51.5 / 14.7 | 10.8 / 3.3 | 11.1 / 2.9 | 2.4 / 0.7 | 60.7 / 25.0, 14.0 / 10.9 |
+| c, own standing stream, apart | 873.3 | 0.9829 | 100.0 % | 70.1 / 19.7 | 18.3 / 5.3 | 11.9 / 3.1 | 2.6 / 0.7 | 52.5 / 15.8, 5.0 / 1.2 |
+| c, own standing stream, prefix | 873.3 | 0.9829 | 100.0 % | 56.6 / 16.1 | 15.6 / 4.6 | 10.1 / 2.6 | 2.2 / 0.6 | 52.5 / 15.8, 5.0 / 1.2 |
+| d, one shared 64 KiB per plane | 872.0 | 0.9815 | 100.0 % | 56.1 / 15.9 | 11.4 / 3.4 | 12.3 / 3.2 | 2.4 / 0.7 | 46.5 / 9.3, 4.6 / 0.9 |
+| for scale: zstd 19, no dictionary (disk from section 16) | 733.4 | 0.8255 |  | 167.0 / 46.8 | 33.0 / 9.7 | 24.4 / 6.3 | 5.1 / 1.4 | 39.6 / 7.9, 3.4 / 0.7 |
+
+### Enhanced, both planes in row spans, 926 bodies
+
+| row | disk MB | × no dictionary | won | creatures, five | creatures, faced | dressed, five | dressed, faced | read MB |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| a, no dictionary | 2268.0 | 1.0000 |  | 114.3 / 29.4 | 23.3 / 6.1 | 20.1 / 5.2 | 4.3 / 1.1 | 84.0 / 16.8, 11.0 / 2.2 |
+| b, trained 4 KiB, apart | 2239.8 | 0.9876 | 99.7 % | 133.1 / 34.0 | 27.0 / 7.1 | 26.5 / 6.8 | 5.5 / 1.5 | 85.9 / 19.1, 13.1 / 4.6 |
+| b, trained 4 KiB, prefix | 2239.8 | 0.9876 | 99.7 % | 114.5 / 29.4 | 23.3 / 6.2 | 19.8 / 5.1 | 4.2 / 1.1 | 85.9 / 19.1, 13.1 / 4.6 |
+| b, trained 16 KiB, apart | 2222.7 | 0.9800 | 97.4 % | 146.8 / 37.4 | 30.2 / 8.0 | 29.5 / 7.5 | 5.9 / 1.6 | 92.5 / 26.3, 19.9 / 11.7 |
+| b, trained 16 KiB, prefix | 2222.7 | 0.9800 | 97.4 % | 115.9 / 29.6 | 23.9 / 6.3 | 21.1 / 5.5 | 4.4 / 1.2 | 92.5 / 26.3, 19.9 / 11.7 |
+| b, trained 64 KiB, apart | 2235.9 | 0.9858 | 69.0 % | 154.2 / 39.6 | 32.5 / 8.6 | 30.6 / 7.9 | 6.0 / 1.6 | 119.2 / 54.0, 41.6 / 33.9 |
+| b, trained 64 KiB, prefix | 2235.9 | 0.9858 | 69.0 % | 121.6 / 31.0 | 25.4 / 6.8 | 25.3 / 6.5 | 5.7 / 1.5 | 119.2 / 54.0, 41.6 / 33.9 |
+| b, best per body including none, apart | 2220.0 | 0.9788 | 99.7 % | 148.0 / 37.7 | 30.6 / 8.1 | 30.9 / 7.9 | 6.1 / 1.6 | 95.5 / 29.5, 32.2 / 24.3 |
+| b, best per body including none, prefix | 2220.0 | 0.9788 | 99.7 % | 116.6 / 29.9 | 24.1 / 6.3 | 23.3 / 6.0 | 5.2 / 1.4 | 95.5 / 29.5, 32.2 / 24.3 |
+| c, own standing stream, apart | 2234.8 | 0.9853 | 100.0 % | 163.5 / 41.8 | 47.2 / 12.4 | 27.3 / 7.1 | 6.8 / 1.8 | 99.2 / 33.8, 12.2 / 3.6 |
+| c, own standing stream, prefix | 2234.8 | 0.9853 | 100.0 % | 136.6 / 35.1 | 42.1 / 10.9 | 22.2 / 5.7 | 5.9 / 1.5 | 99.2 / 33.8, 12.2 / 3.6 |
+| d, one shared 64 KiB per plane | 2203.0 | 0.9713 | 100.0 % | 145.3 / 37.3 | 29.7 / 7.8 | 28.1 / 7.3 | 5.9 / 1.6 | 82.8 / 16.5, 10.4 / 2.1 |
+| for scale: zstd 19, no dictionary (disk from section 16) | 1881.1 | 0.8294 |  | 342.1 / 87.0 | 69.5 / 18.0 | 53.6 / 13.5 | 10.9 / 2.8 | 71.0 / 14.2, 8.6 / 1.7 |
+
+### Stream sizes and the 64 KiB window
+
+Per plane stream, so a Classic body has one per (action, direction) and Enhanced two.
+
+| client | plane streams | stored median / p95 KiB | raw median / p95 KiB | share of streams with raw over 64 KiB | share of stored bytes in those streams | share of raw bytes past offset 64 KiB |
+|---|---:|---|---|---:|---:|---:|
+| Classic | 138426 | 1.1 / 22.0 | 1.5 / 32.6 | 2.6 % | 48.9 % | 32.9 % |
+| Enhanced | 316266 | 1.8 / 25.8 | 3.1 / 65.1 | 5.1 % | 48.6 % | 33.7 % |
+
+### Rows c and d in detail
+
+- **Row c, Classic.** The dictionary is the last 64 KiB of the third stored direction of the standing action, on 1017 bodies. 5 bodies have fewer than three, and use the last one. 0 have no standing stream; the rule for those would be the body's longest stream. That stream is stored without a dictionary and costs no disk, but the crowd must read and unpack it whether or not it draws it, and that is in the row's time and read columns. What the crowd reads only for this: creatures 6.3 MB at five directions (282 of 300 pairs), 6.6 MB faced (298 of 300); dressed NPCs 0.3 MB at five directions (300 of 300 pairs), 0.3 MB faced (300 of 300).
+- **Row c, Enhanced.** The dictionary is the last 64 KiB of the third stored direction of the standing action, on 923 bodies. 3 bodies have fewer than three, and use the last one. 0 have no standing stream; the rule for those would be the body's longest stream. That stream is stored without a dictionary and costs no disk, but the crowd must read and unpack it whether or not it draws it, and that is in the row's time and read columns. What the crowd reads only for this: creatures 16.3 MB at five directions (274 of 300 pairs), 17.3 MB faced (292 of 300); dressed NPCs 1.4 MB at five directions (300 of 300 pairs), 1.4 MB faced (300 of 300).
+- **Row d.** Trained per plane on every n-th stream, with n chosen to give about 200 MiB of samples. Classic has one dictionary of 64 KiB. Enhanced has two, one per plane, so 128 KiB. No per-body reads. Timed apart only.
+
+### Row e: HC levels, no dictionary, every 10th body
+
+Disk has no palette table. Encode is worker seconds summed over threads, on the same CPUs as the crowds. "LZ4 only" is the decompress calls alone on one thread, every stream in the sample, best of 3; "expanded" adds the span expansion. The crowd columns are the same run as the tables above, on the whole crowd, 1 / 4 threads.
+
+| client | level | disk MB | × level 12 | encode worker s | LZ4 only ms | expanded ms | creatures, five | creatures, faced | dressed, five |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Classic | 9 | 70.5 | 1.0030 | 6.1 | 52.9 | 101.5 | 49.6 / 14.2 | 10.0 / 3.0 | 9.0 / 2.3 |
+| Classic | 10 | 70.4 | 1.0017 | 9.2 | 53.0 | 101.8 | 49.6 / 14.2 | 10.0 / 3.0 | 9.0 / 2.3 |
+| Classic | 11 | 70.3 | 1.0003 | 19.2 | 52.7 | 101.6 | 49.1 / 14.1 | 10.0 / 3.0 | 8.9 / 2.3 |
+| Classic | 12 | 70.3 | 1.0000 | 17.7 | 53.0 | 102.1 | 49.5 / 14.0 | 9.9 / 3.0 | 9.0 / 2.3 |
+| Enhanced | 9 | 264.2 | 1.0064 | 49.9 | 250.2 | 406.6 | 117.2 / 30.1 | 23.7 / 6.3 | 19.9 / 5.1 |
+| Enhanced | 10 | 264.3 | 1.0068 | 65.6 | 250.1 | 409.2 | 117.4 / 30.0 | 23.6 / 6.3 | 19.5 / 5.1 |
+| Enhanced | 11 | 263.0 | 1.0015 | 192.3 | 246.7 | 405.1 | 115.4 / 29.6 | 23.4 / 6.3 | 19.6 / 5.2 |
+| Enhanced | 12 | 262.6 | 1.0000 | 175.8 | 245.7 | 403.5 | 115.0 / 29.3 | 23.3 / 6.2 | 19.5 / 5.1 |
+
+LZ4's readme says every level shares one decoder, and the times agree. **Decode doesn't depend on the level here:** LZ4 only, the levels sit within 0.6 % of each other on Classic and 1.8 % on Enhanced, where level 12 is the fastest. **So level 12's pack time costs nothing at run time.** Level 12 also encodes faster than level 11 on both clients, and on Enhanced level 10 comes out larger than level 9.
+
+### What the tables show
+
+- **Classic, trained, creatures at five directions on one thread, over row a:** apart +16 / +31 / +44 % at 4 / 16 / 64 KiB; prefix +0 / +1 / +5 %.
+- **Enhanced, trained, creatures at five directions on one thread, over row a:** apart +16 / +28 / +35 % at 4 / 16 / 64 KiB; prefix +0 / +1 / +6 %.
+- **The 250 ms line:** every row here passes on 4 threads. The slowest cell in these tables is 41.8 ms, at five directions.
+- **Sizes:** the smallest row is the best per body on Classic (×0.9580) and the one shared dictionary on Enhanced (×0.9713). A 64 KiB dictionary per body is larger than 16 KiB on Enhanced, because the dictionaries themselves come to 101.9 MB.
+- **Against zstd:** zstd's shared dictionary gave ×1.003 to ×1.025 (section 7), so a shared dictionary helps LZ4 and doesn't help zstd. Zstd's best dictionary per body gave ×0.970 on Classic (711.1 against 733.4 MB). Zstd 19 with no dictionary stays smaller than every LZ4 row, at the time shown in each table's last row.
+- **The window:** about half the stored bytes are in the few streams over 64 KiB, and a third of the raw bytes lie past offset 64 KiB, where no dictionary reaches.
+
 ## Recommendation
 
 The ranking is crowd speed first and size second, with the user's line of 300 new actions in about 250 ms on 4 threads, and faster is better among rows that pass. Section 17 has one table per platform group. **Nothing here is a format change: the user decides.**
