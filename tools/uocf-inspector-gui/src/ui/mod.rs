@@ -396,21 +396,6 @@ pub(crate) fn source_choice(
     source_buttons(ui, selected, availability).0
 }
 
-/// [`source_choice`] over a selection that always names a source; returns whether it changed.
-pub(crate) fn source_selector(
-    ui: &mut egui::Ui,
-    selected: &mut ClientSource,
-    availability: impl Fn(ClientSource) -> SourceAvailability,
-) -> bool {
-    match source_choice(ui, Some(*selected), availability) {
-        Some(source) => {
-            *selected = source;
-            true
-        }
-        None => false,
-    }
-}
-
 /// The buttons of [`source_choice`], with the response of each.
 fn source_buttons(
     ui: &mut egui::Ui,
@@ -528,12 +513,12 @@ mod tests {
         assert_eq!(click(ClientSource::Mul), None, "the selected source is no change");
         assert_eq!(click(ClientSource::EcUop), Some(ClientSource::EcUop));
 
-        let mut selection = ClientSource::Mul;
+        let mut chosen = None;
         let _ = ctx.run_ui(selector_frame_input(click_at(place(ClientSource::EcUop))), |ui| {
             let index = |source| ClientSource::ALL.iter().position(|&candidate| candidate == source).unwrap();
-            assert!(source_selector(ui, &mut selection, |source| availability[index(source)].clone()));
+            chosen = source_choice(ui, selected, |source| availability[index(source)].clone());
         });
-        assert_eq!(selection, ClientSource::EcUop);
+        assert_eq!(chosen, Some(ClientSource::EcUop), "the public selector returns the click");
     }
 
     #[test]
