@@ -665,7 +665,7 @@ is 1900.7 MB at 85.40, at the same VRAM; BC1's one-bit alpha takes its min to �
 The repo's BC7 encoder had a real bug at the converter's flags: mode 4 with index flag 0 packed each weight plane into the other's
 field. The user approved that fix, and it landed on 2026-11-05. Any BC7 figure from before that date and not labelled with a fixed
 encoder reads the bug: section 12 of the proposal has the details. Fix C, the search change that lets alpha have its own plane, landed
-the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The colour step is still undecided.
+the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The user dropped the colour step on 2026-11-05 (below).
 
 **Made by the user on 2026-11-05:**
 
@@ -726,6 +726,18 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The col
     take skin hue stay lossless too. A server can set the bit on any body, so files alone can't close this set.
   - Enhanced has no such test: it masks the classic bit away and takes hueability from the palette's flag, which `mobile_anim_ec` packs as a mask.
 
+- **Block formats store premultiplied colour, and lossy packs don't take the colour step** (the user, 2026-11-05). At a fractional
+  zoom such as 1.0114, straight alpha darkens the edges by 1.5–2 points, and the renderer's current statics path by 6–19. Premultiplied
+  storage removes the bias (+0.0), as filtering by hand does, at no cost. The colour step only helped the straight path.
+- **LZ4 HC takes no dictionary** (the user, 2026-11-05). On Classic, the best per-body dictionary, with a prefix, saves 4.2 % (851.1 MB
+  against 888.4) and decodes 0–5 % slower; separate dictionaries decode 16–44 % slower.
+- **Indexed frames are upscaled with MMPX; filters that add colours go only to RGBA or block storage** (the user, 2026-11-05). MMPX adds
+  no colours, so its output stays indexable. xBRZ adds 13–43 % new colours, reaching 2316–23703 colours. The converter GUI greys out, and the
+  CLI refuses, what can't work, with the reason in the tooltip or error:
+  - **Indexed storage** (Classic, or Enhanced palette frames): only filters that keep the palette and keep alpha binary, and no block format.
+  - **RGBA storage** (Classic or Enhanced converted to RGBA, custom 32-bit art): every filter, and BC1, BC3 or BC7.
+  - Which filters keep the palette is measured on real frames, not assumed from the algorithm's name.
+
 **Open:**
 
 | Question | Recommendation | Depends on |
@@ -736,10 +748,8 @@ the same day ([`bc7_alpha_plane_search.md`](bc7_alpha_plane_search.md)). The col
 | Whether indexed frames stay the default once filtering is counted | Yes: the indexed filter costs 1.43–1.57× BC7 on the Radeon 880M, 2.4–3.1 % of a 60 fps frame in a crowd at 1.5× | The user; one AMD iGPU only |
 | Whether the low-end tier block-codes only large bodies, and at what size | Classic: BC1 above 2500 px, with a median of 81.77 on coded bodies, measured before equipment and humanoids were kept lossless and being re-measured. Enhanced: the same mix with BC7 fix C is 1931.1 MB against 1539.0 MB for BC3 + colour on every body | The user; a second shader path and hue from colour are unbuilt |
 | Whether phones and web get their own low-end packs or one Basis Universal pack | Stay on the universal R8/RG8 pack, and ASTC 4×4 only if VRAM forces it. No Basis row was both smaller and better than the plain format beside it | The user |
-| LZ4 HC with a dictionary | Not measured. LZ4 reads only a dictionary's last 64 KiB and has no entropy stage, so zstd's −3.0 % per body doesn't carry over. The rows being run: trained per body, the body's standing stream, one shared per package | The bench, then the user |
 | Whether the low-end tier uses BC1, BC3 or BC7 | Classic BC1, on creatures only. Enhanced BC3 + colour or BC7 with fix C, not BC1 | The user |
 | Which GPU layout holds frames in VRAM | R8/RG8 with faced-first loading, not whole atlas pages. Row spans in linear memory only if a device proves too small | The user; no low-end device measured |
-| Whether lossy packs take the colour step | Not for what it shows at 1×: about +5 % on disk, and on the sheets it isn't visible at game size on NPCs (the user agreed by eye, 2026-11-05). It clears small specks on a few bodies when zoomed, and halves the pixels under 80 on BC3. **Fractional zoom decides it:** the seam filter's hardware sample (`art/main.wesl`) reads straight RGB, so at seams beside transparent pixels it mixes in the colour stored under them. That is transparent black without the step, and every sheet so far is at 1× with no filter. Storing premultiplied colour is the alternative under test | The user; the zoom test |
 | Runtime interpolation for high frame rates | A separate study | The full frame set |
 | Whether to offer an opt-in flag for unreached art | Keep all | Section 7's trace |
 
@@ -758,6 +768,10 @@ are from [the codec proposal](proposals/2026-11-01-mobile-anim-codec.md), on eve
 | One shader with a format branch on every install | 8–26 % slower when every sprite takes the cheap path | Pipelines compiled at startup from the package's formats cost nothing. The branch stays for mixed packages only (2026-11-05) |
 | zstd 19 as the lossless compressor | Enhanced 1881.1 MB before duplicates, 100.3 / 20.5 ms, worst crowd 451.1 / 92.2 ms. LZ4 HC is 2268.0 MB, 36.4 / 7.5 ms, worst 169.5 / 34.9 ms | 2.75× the decode speed is worth 21 % more disk, and LZ4 HC is the only one to pass the worst crowd with five directions (2026-11-05) |
 | Lossless only, or lossy only | | Both paths are supported (2026-11-05) |
+| Straight alpha in block formats | Edge bias at a 1.0114 zoom: −1.5 to −2 points, −6 to −19 on the current statics path | Premultiplied storage removes it at no cost (2026-11-05) |
+| The colour step on lossy packs | About +5 % on disk; it helped only straight alpha | Premultiplied storage, and it isn't visible at game size (2026-11-05) |
+| LZ4 HC with a dictionary | Classic: 851.1 MB against 888.4 (−4.2 %) with a per-body dictionary and prefix, 0–5 % slower; separate dictionaries 16–44 % slower | 4 % of disk isn't worth slower loads and the extra data (2026-11-05) |
+| xBRZ and other colour-adding filters on indexed frames | xBRZ adds 13–43 % new colours, so frames leave the 256-colour palette | MMPX adds none. xBRZ stays for RGBA and block storage (2026-11-05) |
 | Classic BC1 on every body | 514.2 MB at 82.90 | Loses exact greys on what can take partial hue (2026-11-05) |
 | Classic BC1 with masks for partial hue | One-bit masks 279.2 MB, with BC1 1537.9 MB of VRAM against 2419.0 MB for R8 | Not chosen: the user keeps this data lossless (2026-11-05). A mask would keep which pixels take the hue, but BC1 still moves their grey level, which picks the hue's colour |
 | Halved frames | See section 4 | All frames are kept (2026-11-04) |
