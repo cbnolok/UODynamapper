@@ -736,9 +736,7 @@ pub struct AnimationFrameUopEntry {
     pub action_id: Option<u16>,
     pub direction: Option<u8>,
     pub group_id: Option<u8>,
-    pub block_index: Option<u32>,
     pub source_index: u32,
-    pub frame_count: usize,
 }
 
 pub struct AnimationFrameUopScanResult {
@@ -1792,7 +1790,6 @@ pub struct UopInspectorApp {
     pub entry_text_edits: crate::logic::entry_text_editor::EntryTextEdits,
     pub terrain_texture_guess_names: HashMap<usize, Arc<HashMap<u64, String>>>,
     pub animationframe_uop_entries: HashMap<(u8, usize), Arc<Vec<AnimationFrameUopEntry>>>,
-    pub animationframe_uop_frame_counts: HashMap<(usize, usize, u64, u8), usize>,
     pub animationframe_uop_worker_rx: Option<mpsc::Receiver<AnimationFrameUopScanResult>>,
     pub animationframe_uop_worker_key: Option<(u8, usize)>,
     pub selected_animationframe_file_hash: Option<u64>,
@@ -1874,6 +1871,7 @@ pub struct UopInspectorApp {
     pub multi_part_filters: MultiPartFilters,
     pub housing_panel: crate::ui::housing::HousingPanelState,
     pub animation_definitions_panel: crate::ui::animation_definitions::AnimationDefinitionsPanelState,
+    pub animations_view: crate::ui::animations::AnimationsView,
     pub localized_strings_editor: crate::ui::clilocs::LocalizedStringsEditor,
     pub effects_panel: crate::ui::effects::EffectsPanelState,
     pub multi_editor: crate::logic::multi_editor::MultiEditor,
@@ -1976,6 +1974,7 @@ impl UopInspectorApp {
             multi_part_filters: MultiPartFilters::default(),
             housing_panel: Default::default(),
             animation_definitions_panel: Default::default(),
+            animations_view: Default::default(),
             localized_strings_editor: Default::default(),
             effects_panel: Default::default(),
             multi_editor: Default::default(),
@@ -1993,7 +1992,6 @@ impl UopInspectorApp {
             entry_text_edits: Default::default(),
             terrain_texture_guess_names: HashMap::new(),
             animationframe_uop_entries: HashMap::new(),
-            animationframe_uop_frame_counts: HashMap::new(),
             animationframe_uop_worker_rx: None,
             animationframe_uop_worker_key: None,
             selected_animationframe_file_hash: None,
@@ -2140,6 +2138,7 @@ impl UopInspectorApp {
         self.tileart_editor = Default::default();
         self.tiledata_editor = Default::default();
         self.animdata_editor = Default::default();
+        self.animations_view = Default::default();
         self.waypoint_document = None;
         self.legacy_terrain_editor = None;
         self.terrain_definition_editor = None;
@@ -2182,7 +2181,6 @@ impl UopInspectorApp {
         self.uop_entry_payloads.clear();
         self.terrain_texture_guess_names.clear();
         self.animationframe_uop_entries.clear();
-        self.animationframe_uop_frame_counts.clear();
         self.animationframe_uop_worker_rx = None;
         self.animationframe_uop_worker_key = None;
         self.selected_animationframe_file_hash = None;
@@ -4461,7 +4459,6 @@ pub(crate) mod tests {
             entry_text_edits: Default::default(),
             terrain_texture_guess_names: HashMap::new(),
             animationframe_uop_entries: HashMap::new(),
-            animationframe_uop_frame_counts: HashMap::new(),
             animationframe_uop_worker_rx: None,
             animationframe_uop_worker_key: None,
             selected_animationframe_file_hash: None,
@@ -4532,6 +4529,7 @@ pub(crate) mod tests {
             multi_part_filters: MultiPartFilters::default(),
             housing_panel: Default::default(),
             animation_definitions_panel: Default::default(),
+            animations_view: Default::default(),
             localized_strings_editor: Default::default(),
             effects_panel: Default::default(),
             multi_editor: Default::default(),
