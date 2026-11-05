@@ -27,10 +27,59 @@ column is from the first run of each limit.
 On these steady frames the old mean was only about 1.5 % high, so its main fault was
 the spread: it swung between 24.6 and 41.4 at a true 30.0.
 
-The 60 fps limit landed below the unlimited rate in all three runs. Wall clock
-agrees, so the reading is right and the cause is open. Idle priority may delay
-wakeups from the limiter's sleep, so recheck at normal priority before blaming the
-limiter.
+The 60 fps limit landed below the unlimited rate in all three runs of that test.
+A recheck on 2026-11-05 clears the limiter: at normal priority on a quiet machine it
+holds 60 fps and costs nothing. That run changed both the priority and the competing
+job, so it doesn't separate them. Wall clock fps from `total_frames`, three runs per
+cell, in the morning preset at the road fixture at 1280x800, vsync off, boost off, EPP
+`balance_power`, on the rebuilt packages:
+
+| Binary | Preset | Limit 60 | No limit |
+|---|---|---|---|
+| Dev | Classic | 59.50-59.99 | 59.50-64.53 |
+| Dev | Enhanced | 59.77-60.00 | 61.05-61.57 |
+| Dev | KR | 59.48-59.90 | 60.30-60.45 |
+| Release | Classic | 59.98-60.00 | 85.10-85.62 |
+| Release | Enhanced | 59.97-60.01 | 85.74-90.23 |
+| Release | KR | 60.00 | 82.79-87.25 |
+
+## Frame rate by window size (2026-11-05)
+
+Release binary from `just build-local-workspace-release --bin dynamapper` at 53956480, on
+the rebuilt packages, on the Radeon 880M, with boost off and EPP `balance_power`. Morning
+presets, zoom 0.8, no limit, vsync off, anti-aliasing off. Wall clock fps from `total_frames`
+over 15 seconds after an 8 second settle, one run per cell. Sizes are what the app reported.
+
+| Window | Mpx | Preset | Road | Bridge | Lava | Town |
+|---|---:|---|---:|---:|---:|---:|
+| 1280x800 | 1.02 | Classic | 84.1 | 142.3 | 227.1 | 97.5 |
+| 1280x800 | 1.02 | Enhanced | 85.1 | 141.5 | 148.3 | 91.9 |
+| 1280x800 | 1.02 | KR | 88.3 | 140.6 | 110.9 | 94.6 |
+| 1900x1080 | 2.05 | Classic | 74.3 | 134.2 | 210.5 | 92.8 |
+| 1900x1080 | 2.05 | Enhanced | 73.3 | 89.6 | 78.1 | 87.9 |
+| 1900x1080 | 2.05 | KR | 66.3 | 67.1 | 53.9 | 60.8 |
+| 2880x1080 | 3.11 | Classic | 74.5 | 145.4 | 241.1 | 97.6 |
+| 2880x1080 | 3.11 | Enhanced | 60.6 | 61.9 | 49.5 | 60.2 |
+| 2880x1080 | 3.11 | KR | 41.7 | 44.9 | 32.9 | 41.7 |
+| 2880x1692, maximized | 4.87 | Classic | 75.9 | 116.1 | 163.8 | 94.0 |
+| 2880x1692, maximized | 4.87 | Enhanced | 37.9 | 39.7 | 32.2 | 38.6 |
+| 2880x1692, maximized | 4.87 | KR | 26.3 | 29.4 | 21.5 | 26.3 |
+
+Above about 2 Mpx, Enhanced and KR scale with pixels: frame rate × Mpx stays near 185 and
+130, so per-pixel GPU cost sets their rate. Classic barely moves with window size, so
+something other than pixels limits it. The road and town fixtures top out near the same rate in
+every preset at small sizes, which also points away from pixels there. This doesn't attribute time
+to passes.
+
+KR at lava at 1900x1080 is the only cell under 60 fps at that size. At the screen's own width,
+Enhanced and KR are under the integrated-GPU bar of 60 fps almost everywhere. A scratch rewrite in
+[the animation codec proposal](proposals/2026-11-01-mobile-anim-codec.md) (section 15) suggests where
+to look first: splitting `art/main.wesl` took billboards from 7754 to 2549 instructions.
+
+**Check the size a preview really got.** On this 2880x1800 screen, a window requesting two-thirds of
+the screen's width or height or more comes up maximized in that direction: 1920x1080 became 2880x1080,
+and 1920x1200 became 2880x1692. The app passes on the size it's given, so this looks like the
+desktop's doing. Read `window.logical_size` from `status`, and request 1900 or less for a 1080p-class test.
 
 ## Measured configuration
 
