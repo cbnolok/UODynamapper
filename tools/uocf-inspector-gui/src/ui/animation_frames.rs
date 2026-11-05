@@ -2,6 +2,7 @@
 //! a column per frame.
 
 use crate::app::UopInspectorApp;
+use crate::ui::animation_hue::{apply_frame_hue, FrameHue};
 use crate::ui::image_export::{export_rgba_png, sanitize_file_stem};
 use eframe::egui;
 use std::collections::HashMap;
@@ -38,6 +39,8 @@ pub(super) struct FrameImage {
     pub center_x: i16,
     pub center_y: i16,
     pub rgba: Vec<u8>,
+    /// Enhanced frames: the pixels whose palette colour takes the hue.
+    pub hue_mask: Option<Vec<u8>>,
     /// Enhanced frames: the 1-based local frame number.
     pub number: Option<u16>,
 }
@@ -50,6 +53,7 @@ impl FrameImage {
             center_x: frame.center_x,
             center_y: frame.center_y,
             rgba: frame.data,
+            hue_mask: None,
             number: None,
         }
     }
@@ -123,6 +127,7 @@ impl ActionFrames {
                         center_x: decoded.center_x,
                         center_y: decoded.center_y,
                         rgba: decoded.data,
+                        hue_mask: Some(decoded.hue_mask),
                         number: Some(entry.frame_number),
                     });
                 }
@@ -297,18 +302,32 @@ pub(super) fn decoded_frames(app: &mut UopInspectorApp, key: u64, decode: impl F
     frames
 }
 
-/// What the textures of the decoded action are drawn with; a change drops them.
-fn texture_key(app: &UopInspectorApp) -> u64 {
-    app.animations_view.frames.decoded.as_ref().map_or(0, |(key, _)| *key)
+/// The hue the frames are drawn with (see `animation_hue::frame_hue`) and its key.
+pub(super) type DrawnHue = (FrameHue, u64);
+
+/// What the textures of the decoded action are drawn with: the decoded frames and the hue. A change drops them.
+fn texture_key(app: &UopInspectorApp, hue: &DrawnHue) -> u64 {
+    let decoded = app.animations_view.frames.decoded.as_ref().map_or(0, |(key, _)| *key);
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    (decoded, hue.1).hash(&mut hasher);
+    hasher.finish()
 }
 
-/// The pixels image `index` is drawn with.
-fn drawn_rgba(image: &FrameImage) -> Vec<u8> {
-    image.rgba.clone()
+/// The pixels `image` is drawn with: its own under the hue.
+fn drawn_rgba(image: &FrameImage, hue: &DrawnHue) -> Vec<u8> {
+    let mut rgba = image.rgba.clone();
+    apply_frame_hue(&mut rgba, image.hue_mask.as_deref(), &hue.0);
+    rgba
 }
 
-fn frame_texture(app: &mut UopInspectorApp, ctx: &egui::Context, frames: &ActionFrames, index: usize) -> Option<egui::TextureHandle> {
-    let key = texture_key(app);
+fn frame_texture(
+    app: &mut UopInspectorApp,
+    ctx: &egui::Context,
+    frames: &ActionFrames,
+    index: usize,
+    hue: &DrawnHue,
+) -> Option<egui::TextureHandle> {
+    let key = texture_key(app, hue);
     let state = &mut app.animations_view.frames;
     if state.textures_key != key {
         state.textures.clear();
@@ -321,7 +340,7 @@ fn frame_texture(app: &mut UopInspectorApp, ctx: &egui::Context, frames: &Action
     let texture = (image.width > 0 && image.height > 0)
         .then(|| {
             let size = [usize::from(image.width), usize::from(image.height)];
-            app.checked_texture(ctx, format!("animation_frame_{key:016x}_{index}"), size, &drawn_rgba(image), Default::default())
+            app.checked_texture(ctx, format!("animation_frame_{key:016x}_{index}"), size, &drawn_rgba(image, hue), Default::default())
         })
         .flatten();
     app.animations_view.frames.textures.insert(index, texture.clone());
@@ -366,7 +385,14 @@ fn advance_playback(app: &mut UopInspectorApp, ctx: &egui::Context, frame_count:
 }
 
 /// The selected direction's frames, one at a time, at the player zoom; `name` names exported files.
-pub(super) fn show_player(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui, frames: &ActionFrames, name: &str) {
+pub(super) fn show_player(
+    app: &mut UopInspectorApp,
+    ctx: &egui::Context,
+    ui: &mut egui::Ui,
+    frames: &ActionFrames,
+    hue: &DrawnHue,
+    name: &str,
+) {
     let Some((row_index, mirrored)) = row_of_direction(frames.is_ec, app.selected_direction).filter(|(row, _)| *row < frames.rows.len()) else {
         ui.label(format!("Direction {} is not one of this source's directions.", app.selected_direction));
         return;
@@ -394,7 +420,8 @@ pub(super) fn show_player(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &m
             }
             if image.width > 0 && image.height > 0 && ui.button("Export PNG").clicked() {
                 let stem = sanitize_file_stem(&format!("{name}_dir_{}_frame_{frame_index}", row.direction), "animation_frame");
-                match export_rgba_png(format!("{stem}.png"), u32::from(image.width), u32::from(image.height), &image.rgba) {
+                let rgba = drawn_rgba(image, hue);
+                match export_rgba_png(format!("{stem}.png"), u32::from(image.width), u32::from(image.height), &rgba) {
                     Ok(Some(path)) => app.status_message = format!("Exported animation frame to {path}."),
                     Ok(None) => {}
                     Err(error) => app.status_message = format!("Failed to export animation frame: {error}"),
@@ -414,7 +441,7 @@ pub(super) fn show_player(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &m
     if let Some(offset) = zoom_offset {
         area = area.scroll_offset(offset);
     }
-    let texture = image_index.and_then(|index| frame_texture(app, ctx, frames, index));
+    let texture = image_index.and_then(|index| frame_texture(app, ctx, frames, index, hue));
     let output = area.show(ui, |ui| {
         let (slot, _) = ui.allocate_exact_size(largest, egui::Sense::hover());
         match &texture {
@@ -428,21 +455,21 @@ pub(super) fn show_player(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &m
 
     if let (Some(index), Some(_)) = (image_index, &texture) {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        ("animation_player", texture_key(app), index).hash(&mut hasher);
+        ("animation_player", texture_key(app, hue), index).hash(&mut hasher);
         let preview_key = hasher.finish();
         if app.animations_view.frames.previewed == Some(preview_key) {
             app.select_image_preview(preview_key);
         } else {
             let image = &frames.images[index];
             let label = format!("{name} direction {} frame {frame_index}", row.direction);
-            app.register_current_image_preview(preview_key, label, u32::from(image.width), u32::from(image.height), &drawn_rgba(image));
+            app.register_current_image_preview(preview_key, label, u32::from(image.width), u32::from(image.height), &drawn_rgba(image, hue));
             app.animations_view.frames.previewed = Some(preview_key);
         }
     }
 }
 
 /// Every stored direction as a row of frame thumbnails; a click shows that frame in the player.
-pub(super) fn show_grid(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui, frames: &ActionFrames) {
+pub(super) fn show_grid(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut egui::Ui, frames: &ActionFrames, hue: &DrawnHue) {
     let selected = row_of_direction(frames.is_ec, app.selected_direction).map(|(row, _)| row);
     ui.horizontal(|ui| {
         ui.label("All directions");
@@ -468,7 +495,7 @@ pub(super) fn show_grid(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut
                     let (rect, response) = ui.allocate_exact_size(cell, egui::Sense::click());
                     let is_selected = selected == Some(row_index) && app.current_frame_idx.min(row.frames.len() - 1) == column;
                     ui.painter().rect_filled(rect, CELL_ROUNDING, ui.visuals().extreme_bg_color);
-                    match image_index.and_then(|index| frame_texture(app, ctx, frames, index).map(|texture| (index, texture))) {
+                    match image_index.and_then(|index| frame_texture(app, ctx, frames, index, hue).map(|texture| (index, texture))) {
                         Some((index, texture)) => {
                             paint_bottom_centred(ui, &texture, rect, zoom, false);
                             let image = &frames.images[index];

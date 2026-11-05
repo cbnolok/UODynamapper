@@ -5,6 +5,7 @@ use std::cmp::Ordering;
 pub mod animation_definitions;
 pub mod animations;
 mod animation_frames;
+mod animation_hue;
 mod animation_list;
 pub mod animated_items;
 pub mod animdata;

@@ -2,6 +2,7 @@ use crate::app::{
     AnimationFrameUopEntry, AnimationFrameUopScanResult, ArtSource, UopInspectorApp,
 };
 use crate::ui::animation_frames::{self, ActionFrames, FramesViewState};
+use crate::ui::animation_hue::{self, AnimationHueState};
 use crate::ui::animation_list::{self, ActionKey, ActionSource, AnimationListState};
 use color_eyre::eyre;
 use eframe::egui;
@@ -21,6 +22,7 @@ use uocf::uop_container::hash::hash_file_name_single;
 pub(crate) struct AnimationsView {
     pub(super) list: AnimationListState,
     pub(super) frames: FramesViewState,
+    pub(super) hue: AnimationHueState,
 }
 
 const ANIMATION_CONTROLS_PANEL_WIDTH: f32 = 280.0;
@@ -198,15 +200,18 @@ pub fn ui_animations(app: &mut UopInspectorApp, ctx: &egui::Context, ui: &mut eg
             }
         });
         show_action_file_controls(app, ui, key);
+        let is_ec = is_ec_source(app.selected_legacy_source);
+        animation_hue::hue_picker(app, ui, is_ec);
         if let Some(error) = &frames.error {
             ui.label(format!("Error loading animation: {error}"));
             return;
         }
         ui.separator();
         let name = format!("{}_body_{}_action_{}", animation_source_label(app.selected_legacy_source), key.body, key.action);
-        animation_frames::show_player(app, ctx, ui, &frames, &name);
+        let hue = animation_hue::frame_hue(app, is_ec);
+        animation_frames::show_player(app, ctx, ui, &frames, &hue, &name);
         ui.separator();
-        animation_frames::show_grid(app, ctx, ui, &frames);
+        animation_frames::show_grid(app, ctx, ui, &frames, &hue);
     });
 }
 
